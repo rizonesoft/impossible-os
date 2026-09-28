@@ -407,7 +407,7 @@ Cross-section dedup / future-spec drift prevention. None of these items is an ac
 
 - [x] `bash scripts/build.sh` clean build with TODO-04 sources -> `=== BUILD OK ===`.
 - [x] `bash scripts/test.sh SUITE=boot` -> all `test_firmware_*` cases PASS (2639 kernel + 16 user-mode total this session).
-- [/] QEMU OVMF: `[BOOT] firmware tables: 17 cataloged, 9 validated, 6 degraded` confirmed via smoke. `firmware-tables.json` disk-write blocked by D05 T04 §15 VFS cluster (in-memory builder verified equivalent on the round-trip fixture).
+- [x] QEMU OVMF smoke 2026-09-28: `firmware tables: 16 cataloged, 9 validated, 6 degraded, 2 PC-class table(s) absent` and `wrote X:\Diag\firmware-tables.json (4318 bytes)`; the disk write is live since D05 T04 §15.
 - [ ] VirtualBox EFI (ACPI + SMBIOS, no FPDT/ESRT): boot succeeds; firmware report flags FPDT + ESRT as absent (not degraded).
 - [ ] Bare-metal laptop + desktop: every active firmware quirk is logged + included in the BlackBox report; no silent table-validation failures on serial.
 - [ ] Commit: `"docs/firmware: TODO-04 verification complete"`

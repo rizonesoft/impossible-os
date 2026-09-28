@@ -1,8 +1,6 @@
 {
   "_comment": "TODO files with no documentation page yet. Shrink-only: scripts/site/build.py --update-baseline removes entries, never adds them (except when creating this file).",
   "undocumented": [
-    "todo/01-boot-platform/TODO-05-boot-device-discovery.md",
-    "todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md",
     "todo/01-boot-platform/TODO-11-interrupt-timer-arch.md",
     "todo/01-boot-platform/TODO-12-early-entropy-random-seed.md",
     "todo/01-boot-platform/TODO-15-visual-post-display.md",

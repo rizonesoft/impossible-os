@@ -6,6 +6,7 @@ Welcome to the Impossible OS documentation -- a 64-bit operating system built fr
 
 | Category                                          | Description                                                |
 | ------------------------------------------------- | ---------------------------------------------------------- |
+| [🥾 Boot Platform](boot/index.md)                 | UEFI loader, boot_info handoff, boot entries, CPU bringup  |
 | [🧠 Kernel](kernel/index.md)                     | Boot chain, memory management, scheduler, IPC              |
 | [💾 Storage](storage/index.md)                    | Storage controllers, partitioning, filesystems             |
 | [🌐 Networking](networking/index.md)              | Network drivers and protocols                              |

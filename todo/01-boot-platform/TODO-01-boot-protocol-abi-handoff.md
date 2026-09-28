@@ -71,7 +71,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 
 | ⭐  | Order | Deliverable                                        | Depends On                         | Status |
 | --- | :---: | -------------------------------------------------- | ---------------------------------- | :----: |
-| 💎  |   1   | Canonical boot_info field ownership table          | --                                 |  [/]   |
+| 💎  |   1   | Canonical boot_info field ownership table          | --                                 |  [x]   |
 | 💎  |   2   | Generated ABI manifest and offset fingerprint      | §1                                 |  [x]   |
 | 💎  |   3   | Full bootloader/kernel mirror drift checker        | §2                                 |  [x]   |
 | 💎  |   4   | Optional payload descriptor array                  | §1                                 |  [x]   |

@@ -55,7 +55,7 @@ file_patterns:
 | 💎  |   2   | §2 Map existing docs pages to their roadmap files                        | §1         |  [x]   |
 | ⭐  |   3   | §3 Documentation page contract, template and create-todo step            | §1         |  [x]   |
 | 💎  |   4   | §4 Document: Infrastructure (9 roadmap files)                            | §2, §3     |  [x]   |
-| 💎  |   5   | §5 Document: Boot platform, part 1 (10 roadmap files)                    | §2, §3     |  [ ]   |
+| 💎  |   5   | §5 Document: Boot platform, part 1 (10 roadmap files)                    | §2, §3     |  [x]   |
 | 💎  |   6   | §6 Document: Boot platform, part 2 (10 roadmap files)                    | §2, §3     |  [ ]   |
 | 💎  |   7   | §7 Document: Boot platform, part 3 (9 roadmap files)                     | §2, §3     |  [ ]   |
 | 💎  |   8   | §8 Document: Kernel core, part 1 (12 roadmap files)                      | §2, §3     |  [ ]   |
@@ -230,26 +230,39 @@ Write docs pages that meet the §3 contract for the 9 roadmap files below. Read 
 
 ## 5. Document: Boot platform, part 1
 
+> **Spawned-by:** root
+
 Write docs pages that meet the §3 contract for the 10 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md` (TODO-01 -- Boot Protocol ABI & Handoff Contract)
-  - `todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md` (TODO-02 -- UEFI Bootloader Hardening & Secure Boot)
-  - `todo/01-boot-platform/TODO-03-bootloader-error-recovery.md` (TODO-03 -- Bootloader Error Recovery & ELF Hardening)
-- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/01-boot-platform/TODO-04-firmware-table-platform-inventory.md` (TODO-04 -- Firmware Table & Platform Inventory)
-  - `todo/01-boot-platform/TODO-05-boot-device-discovery.md` (TODO-05 -- Boot Device Discovery & Fallback Chain)
-  - `todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md` (TODO-06 -- Boot Media, Image Pipeline & Installer Handoff)
-- [ ] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md` (TODO-07 -- Boot Entry Store, Menu & Policy)
-  - `todo/01-boot-platform/TODO-08-alternate-boot-protocols.md` (TODO-08 -- Alternate Boot Protocols & Compatibility Boundary)
-  - `todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md` (TODO-09 -- CPU Boot Sequencing & AP Hardening)
-- [ ] Pages in `docs/boot/` for the next 1 roadmap files, each with its `covers=` directive
-  - `todo/01-boot-platform/TODO-10-bare-metal-hardening.md` (TODO-10 -- Bare Metal Boot Hardening)
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: boot platform, part 1 documentation pages"`
+- [x] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md` (TODO-01 -- Boot Protocol ABI & Handoff Contract): `boot-protocol-abi-overview.md`
+  - `todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md` (TODO-02 -- UEFI Bootloader Hardening & Secure Boot): `uefi-hardening-overview.md`
+  - `todo/01-boot-platform/TODO-03-bootloader-error-recovery.md` (TODO-03 -- Bootloader Error Recovery & ELF Hardening): `bootloader-error-recovery.md`
+- [x] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-04-firmware-table-platform-inventory.md` (TODO-04 -- Firmware Table & Platform Inventory): `firmware-platform-inventory.md`
+  - `todo/01-boot-platform/TODO-05-boot-device-discovery.md` (TODO-05 -- Boot Device Discovery & Fallback Chain): `boot-device-discovery.md`
+  - `todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md` (TODO-06 -- Boot Media, Image Pipeline & Installer Handoff): `boot-media-image-pipeline.md`
+- [x] Pages in `docs/boot/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md` (TODO-07 -- Boot Entry Store, Menu & Policy): `boot-entries-menu-policy.md`
+  - `todo/01-boot-platform/TODO-08-alternate-boot-protocols.md` (TODO-08 -- Alternate Boot Protocols & Compatibility Boundary): `alternate-boot-protocols.md`
+  - `todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md` (TODO-09 -- CPU Boot Sequencing & AP Hardening): `cpu-boot-sequencing.md`
+- [x] Pages in `docs/boot/` for the next 1 roadmap files, each with its `covers=` directive
+  - `todo/01-boot-platform/TODO-10-bare-metal-hardening.md` (TODO-10 -- Bare Metal Boot Hardening): `bare-metal-hardening.md`
+- [x] The eight files §2 had mapped kept their reference pages, none in the §3 part order, so each gained a contract-shaped overview page linking them; TODO-05 and TODO-09 had no page at all
+  - Every command, script and serial line the pages quote was checked against the tree (the drafted `bootcfg` flags, a `Booted from:` log line and a `uefi_runtime.c` loader-variable claim were wrong and were corrected).
+- [x] Created `docs/boot/index.md` (the folder had 19 pages and no index) with Roadmap Overviews and Reference Documents tables, added Boot Platform to `docs/index.md`, then ran `python3 scripts/site/build.py --update-baseline` (194 to 192 entries)
+- [x] Roadmap drift found while writing, fixed in place: TODO-01 §1 IO row `[/]` to `[x]` (its follow-up shipped as §21), TODO-04 Verification OVMF item `[/]` to `[x]` (JSON disk write live), TODO-06 OS Comparison UKI and build-host rows
+- [x] Commit: `"docs: boot platform, part 1 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check --skip-stats` prints `site: OK` with 40/232 TODO files documented; `python3 scripts/site/build.py --out /tmp/s5site` renders all ten pages plus `index.html` under `docs/boot/`
+
+> **Notes:**
+> - **What shipped:** ten contract-shaped overview pages in `docs/boot/`, one per boot-platform roadmap file 01 to 10, plus the folder's first `index.md`.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so §22's freshness check flags it when the code it describes changes.
+> - **Downstream:** the 19 reference pages keep their `covers=` claims; the overviews link them as deep dives rather than copying them.
+> - **Found on the way:** three stale roadmap claims (TODO-01 §1 IO row, TODO-04 Verification, TODO-06 OS Comparison) corrected in the same commit.
 
 ---
 

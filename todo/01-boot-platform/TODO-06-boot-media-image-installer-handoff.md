@@ -451,9 +451,9 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 | ⭐  | Signed artifact manifest at boot       | ❌ SBAT/dbx only (coarser)              | ❌ SBAT/dbx only (coarser)    | 🟡 §7 partial -- v18 trust surface                                    |
 | ⭐  | Trust-landscape exposed to attestation | ⚠️ split across MSFT_SecureBootSettings | ⚠️ scattered (mokutil, dmesg) | ✅ §7 boot_info v18 + HKLM Trust\*                                    |
 | ⭐  | Offline artifact inspector (1 tool)    | ❌ separate tools per format            | ❌ separate tools per format  | 🟡 §8 partial -- raw/VHD/VHDX/VDI/ISO inspect+JSON; sig blocked on §7 |
-| ⭐  | UKI as a release artifact format       | ❌ no UKI ecosystem                     | ✅ systemd-boot UKI           | ⬜ planned -- §11                                                     |
+| ⭐  | UKI as a release artifact format       | ❌ no UKI ecosystem                     | ✅ systemd-boot UKI           | 🟡 §11 partial: UKI `.cmdline` media-role override shipped            |
 | 💎  | Network-boot kernel + manifest         | ⚠️ WDS / iPXE chainload                 | ✅ PXE + HTTP boot + dracut   | ⬜ planned -- §11 + T25                                               |
-| ⭐  | Native Windows + Linux build hosts     | ✅ MSBuild / WDK / ADK only             | ✅ shell tooling only         | ⬜ planned -- §12 PS1 + bat parity                                    |
+| ⭐  | Native Windows + Linux build hosts     | ✅ MSBuild / WDK / ADK only             | ✅ shell tooling only         | ✅ §12-§14 PS1 + bat parity                                           |
 
 > **After parity items:** Impossible OS will match Windows + Linux on USB/ISO/VHD/installer-detection fundamentals once §1-§6 ship. The exclusive items push beyond: a release-key-signed artifact manifest the bootloader verifies before loading the kernel (§7) goes further than SBAT/dbx alone, a single offline inspector covering raw + VHD + VHDX + VDI + ISO formats (§8) consolidates what both ecosystems split across `qemu-img` / `wimlib-imagex` / `xorriso` / `7z` / `VBoxManage`, and §12 dual-host build tooling means a developer can produce a release artifact on either Windows (no WSL) or Linux without losing byte-identical reproducibility.
 
