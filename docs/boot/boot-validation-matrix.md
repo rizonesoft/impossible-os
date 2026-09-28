@@ -45,8 +45,11 @@ The self-check prints `boot-reliability self-check OK`. `scripts/test-tooling.sh
 On a host with QEMU, a live reliability run boots the image repeatedly:
 
 ```bash
-python3 tools/boot-cert/boot_reliability.py --platform qemu-tcg --tier stable --cold 3 --warm 2
+python3 tools/boot-cert/boot_reliability.py --platform qemu-tcg --tier stable --row-id boot-cert-matrix \
+    --build-id <build> --machine-id <host> --cold 3 --warm 2
 ```
+
+Pass `--row-id` with a row that exists in `boot-cert.yml`: the default, `boot-reliability`, is not a matrix row, so `python3 tools/boot-cert/lint.py --results <run-dir>/results.json` rejects results written with it.
 
 For the separate smoke gate, `bash scripts/test-smoke-matrix.sh` prints one line per leg and ends with `SMOKE MATRIX PASSED` or `SMOKE MATRIX FAILED`.
 

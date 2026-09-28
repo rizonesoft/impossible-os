@@ -53,7 +53,7 @@ title: "TODO-27 -- UEFI Advanced Features"
 | 💎  |   5   | Secure Boot extended state + enforcement      | T02 §5         |  [/]   |
 | 💎  |   6   | SMBIOS extended type parsing                  | T02 §4         |  [x]   |
 | 💎  |   7   | DBX revocation list sync                      | T02 §2, §5     |  [/]   |
-| 💎  |   8   | Firmware advisor live refresh + fixtures      | §2, 07/T03 §7  |  [ ]   |
+| 💎  |   8   | Firmware advisor live refresh + fixtures      | §2, D07T03 §7  |  [ ]   |
 
 ---
 

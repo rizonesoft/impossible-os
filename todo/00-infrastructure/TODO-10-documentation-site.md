@@ -332,7 +332,7 @@ Write docs pages that meet the §3 contract for the 9 roadmap files below. Read 
   - TODO-21 §2 Notes still called `--ab` dormant; the tool's `--ab` help said 4 partitions.
   - TODO-27 §2 named a nonexistent `firmware_cmd.c` and sent two follow-ups to a "§8" that did not exist; that is now TODO-27 §8, with reciprocal XREFs to `07-networking/TODO-03 §7` and the gzip owner `02-kernel-core/TODO-03 §4`.
   - Review found FAT32 replace-existing deletes the old file before the rename can fail, so the boot-trend publish is not atomic; filed in `05-storage-filesystems/TODO-04 §18`.
-- [ ] Commit: `"docs: boot platform, part 3 documentation pages"`
+- [x] Commit: `"docs: boot platform, part 3 documentation pages"` (`58653c408`)
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
@@ -343,6 +343,10 @@ Write docs pages that meet the §3 contract for the 9 roadmap files below. Read 
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so §22's freshness check flags it when the code it describes changes.
 > - **Downstream:** the BlackBox, boot-lab and health/trend reference pages keep their `covers=` claims; the overviews link them rather than copying them.
 > - **Found on the way:** TODO-27 gained §8 as the real owner of its dangling "§8" follow-ups; TODO-21 notes and the `make-system-disk` help text were corrected.
+> - **Filed:** FAT32 replace-existing is not crash-safe (`05-storage-filesystems/TODO-04 §18`); `boot_reliability.py`'s default `--row-id` is not a matrix row (`01-boot-platform/TODO-28 §9`).
+
+> **Verified:** 2026-09-28 | commit `58653c408` | 7/7 items | build OK | site: OK, 54/232 documented; tests 34646 kernel + 17 user-mode PASS; smoke PASS
+> **Quality reviewed:** 2026-09-28 | Codex 5x (adversarial x2, adversarial post-ship, consistency, perf) | 13M fixed, 0 open | scope: N/A (docs-only; re-adversarial skipped: docs-only fixes)
 
 ---
 

@@ -216,6 +216,8 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 - [ ] Define required gates for nightly, release candidate, and stable.
 - [ ] Fail release packaging when required gates fail.
 - [ ] Keep history so regressions are visible.
+- [/] Refuse results whose `row_id` is not a matrix row: `boot_reliability.py --row-id` defaults to `boot-reliability`, which `boot-cert.yml` does not declare, so default runs fail `lint.py --results`
+  - Parked with this section (the gate is where membership is enforced); fix direction is to require `--row-id` or declare a reliability row. Found by the 00-infrastructure/TODO-10 §7 docs review.
 - [ ] Commit: `"ci: boot certification release gate"`
 
 **Test checkpoint:** `build/reports/boot-cert.html` is generated from result JSON; a required-gate failure (per nightly / RC / stable tier) fails release packaging; prior-run history is retained so regressions are visible.

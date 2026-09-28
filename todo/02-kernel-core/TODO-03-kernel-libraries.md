@@ -224,6 +224,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [/] Decompression output > 4 KiB: consumer-owned via the workspace allocator hook (`mz_alloc_func`/`m_pAlloc`), not a hidden per-call allocation
 - [/] Core API must be REWRITTEN around an explicit workspace object (caller owns allocation + serialization); the workspace-free `mz_compress`/`mz_uncompress`/`zip_*` draft is not SMP-safe here
 - [/] Use gzip decompression for HTTP `Content-Encoding: gzip` -- the first real consumer; it owns the inflate workspace -> XREF `07-networking/TODO-03-http-tls.md`
+- [/] Second gzip consumer: the firmware advisor's LVFS metadata refresh -> XREF: `01-boot-platform/TODO-27 §8` (item: "Live metadata refresh"); it borrows the HTTP consumer's workspace, so it adds no new owner
 - [/] Compress a known 8 KiB buffer; decompress; verify byte-for-byte integrity -- DEFERRED with the port
 - [/] Open a ZIP archive from memory; list entries; extract one; verify against a known SHA-256 (Monocypher Blake2b from §5) -- DEFERRED with the port
 
