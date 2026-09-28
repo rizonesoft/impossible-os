@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/03-memory-concurrency/TODO-06-scheduler-enhancement.md sources=include/kernel/sched/task.h,src/kernel/sched/task.c,src/kernel/drivers/lapic.c,src/kernel/nt/nt_process.c,include/kernel/nt/service_numbers.h,src/kernel/test/test_sched.c reviewed=2026-09-28 order=6 -->
+<!-- docs: covers=todo/03-memory-concurrency/TODO-06-scheduler-enhancement.md sources=include/kernel/sched/task.h,src/kernel/sched/task.c,src/kernel/drivers/lapic.c,src/kernel/nt/nt_process.c,include/kernel/nt/service_numbers.h,src/kernel/test/test_sched.c,src/kernel/sched/mutex.c reviewed=2026-09-28 order=6 -->
 # Scheduler
 
 ## What is it?

@@ -517,8 +517,11 @@ Write docs pages that meet the §3 contract for the 11 roadmap files below. Read
 > **Notes:**
 > - **What shipped:** eleven contract-shaped overview pages in a new `docs/memory/` folder, one per memory and concurrency roadmap file, with a folder index and a docs home row.
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the code it describes changes.
-> - **Status honesty:** only TODO-01 §12 and TODO-06 §11 are complete on their own tables; every page says what is built, what exists under another owner and what is only planned.
+> - **Status honesty:** only TODO-06 §11 is complete on its own table (TODO-01 §12 is partial); every page says what is built, what exists under another owner and what is only planned.
 > - **Found on the way:** the swap pager is never initialised at boot, `smp_rendezvous_begin()` has no production caller, and the mutex wait queue and pipe slot claims are still unlocked; all four already have owning roadmap items.
+
+> **Verified:** 2026-09-28 | commit `6bdf71330` | 8/8 items | build OK | site: OK, 100/232 documented; tests 34646 kernel + 17 user-mode PASS; smoke PASS
+> **Quality reviewed:** 2026-09-28 | Codex 5x (adversarial x2, adversarial post-ship, consistency, perf) | 19M fixed, 0 open | scope: N/A (docs-only; no source changed; re-adversarial skipped: docs-only fixes)
 
 ---
 

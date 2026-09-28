@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md sources=include/kernel/mm/vmm.h,src/kernel/mm/vmm.c,include/kernel/ob/ob_section.h,src/kernel/ob/ob_section.c,src/kernel/nt/nt_section.c,include/kernel/ob/ob_job.h,src/kernel/nt/nt_memory.c,src/kernel/test/test_vmm.c reviewed=2026-09-28 order=5 -->
+<!-- docs: covers=todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md sources=include/kernel/mm/vmm.h,src/kernel/mm/vmm.c,include/kernel/ob/ob_section.h,src/kernel/ob/ob_section.c,src/kernel/nt/nt_section.c,include/kernel/ob/ob_job.h,src/kernel/nt/nt_memory.c,src/kernel/test/test_vmm.c,src/kernel/sched/task.c,src/kernel/main/boot_hw.c,include/kernel/sched/syscall.h reviewed=2026-09-28 order=5 -->
 # Advanced Virtual Memory
 
 ## What is it?
@@ -7,7 +7,7 @@ The virtual memory features beyond basic mapping: copy-on-write `fork`, large pa
 
 ## How does it work?
 
-**Large pages.** The kernel direct map uses 2 MiB pages, which `vmm_split_huge_page()` breaks into 4 KiB pages when a caller needs finer permissions. On CPUs that report 1 GiB page support (`CPU_FEATURE_PAGE1GB`), `vmm_promote_to_1g()` runs during Phase 1 ([`boot_hw.c`](../../src/kernel/main/boot_hw.c)) and folds eligible identity-map ranges into 1 GiB pages, and `vmm_map_huge_1g()` maps an aligned 1 GiB range directly ([`vmm.h`](../../include/kernel/mm/vmm.h)). There is no user-facing large-page allocation.
+**Large pages.** The kernel direct map uses 2 MiB pages, which `vmm_split_huge_page()` breaks into 4 KiB pages when a caller needs finer permissions. On CPUs that report 1 GiB page support (`CPU_FEATURE_PAGE1GB`), `vmm_promote_to_1g()` runs during Phase 0 ([`boot_hw.c`](../../src/kernel/main/boot_hw.c)) and folds eligible identity-map ranges into 1 GiB pages, and `vmm_map_huge_1g()` maps an aligned 1 GiB range directly ([`vmm.h`](../../include/kernel/mm/vmm.h)). There is no user-facing large-page allocation.
 
 **`fork`.** `SYS_FORK` (5) creates a child process with `task_fork()`, but pages are not shared copy-on-write: the fork-then-exec path gives the child private frames through `vmm_remap_user_page()`, and the frame allocator has no reference counts.
 

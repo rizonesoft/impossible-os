@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/03-memory-concurrency/TODO-02-memory-security.md sources=include/kernel/cpu_security.h,src/kernel/cpu_security.c,include/kernel/kpti.h,src/kernel/kpti.c,src/kernel/security/wx.c,include/kernel/nt/mitigation_policy.h,src/kernel/test/test_cpu_security.c reviewed=2026-09-28 order=2 -->
+<!-- docs: covers=todo/03-memory-concurrency/TODO-02-memory-security.md sources=include/kernel/cpu_security.h,src/kernel/cpu_security.c,include/kernel/kpti.h,src/kernel/kpti.c,src/kernel/security/wx.c,include/kernel/nt/mitigation_policy.h,src/kernel/test/test_cpu_security.c,src/kernel/mm/vmm.c,src/kernel/main/boot_hw.c reviewed=2026-09-28 order=2 -->
 # Memory Security Hardening
 
 ## What is it?
@@ -9,7 +9,7 @@ The set of CPU and page-table defences that stop a memory bug from becoming code
 
 This roadmap overlaps the [Kernel Security Hardening](../kernel/kernel-security-hardening.md) roadmap, which owns SMEP, SMAP, KASLR and KPTI and holds their code. Four of this file's eight sections are marked superseded by it, and this page describes the shared code from the memory side.
 
-No-execute is on. `cpu_enable_nx()` in [`cpu_security.c`](../../src/kernel/cpu_security.c) sets `EFER.NXE`, and the VMM's `vmm_apply_nx_policy()` marks data pages no-execute during Phase 1; [`wx.c`](../../src/kernel/security/wx.c) then makes `.text` and `.rodata` read-only with `kernel_wx_protect()` and `kernel_rodata_protect()`.
+No-execute is on. `cpu_enable_nx()` in [`cpu_security.c`](../../src/kernel/cpu_security.c) sets `EFER.NXE`, and the VMM's `vmm_apply_nx_policy()` marks data pages no-execute during Phase 0; [`wx.c`](../../src/kernel/security/wx.c) then makes `.text` and `.rodata` read-only with `kernel_wx_protect()` and `kernel_rodata_protect()`.
 
 SMEP and SMAP have complete enable paths, `cpu_enable_smep()` and `cpu_enable_smap()`, declared in [`cpu_security.h`](../../include/kernel/cpu_security.h). They skip turning the CR4 bits on because the shared boot page tables carry the User bit on kernel pages, so enabling SMEP would fault on the kernel's own code. The user-copy side is already in place: `copy_from_user()` and `copy_to_user()` bracket the copy with `stac`/`clac` through `KERNEL_ACCESS_USER_BEGIN` and `KERNEL_ACCESS_USER_END`, and recover from a fault on a bad user pointer through the `__uaccess_copy_from`/`__uaccess_copy_to` fixups, so enabling SMAP later changes no caller.
 

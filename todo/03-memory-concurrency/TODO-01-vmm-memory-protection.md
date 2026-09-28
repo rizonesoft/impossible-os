@@ -361,7 +361,7 @@ Expose per-process memory statistics: working set size, peak working set, page f
 | 💎  | Heap canaries           | ✅ debug heap         | ✅ SLUB debug         | ⬜ §9 tail canary        |
 | 💎  | Memory leak detector    | ✅ Driver Verifier    | ✅ kmemleak           | ⬜ §10 memleak cmd       |
 | 💎  | UC MMIO mapping         | ✅ MmMapIoSpace       | ✅ ioremap_uc         | ⬜ §11 vmm_map_mmio      |
-| 💎  | Per-process page map    | ✅ ZwMapViewOfSection | ✅ do_mmap PTE walk   | ✅ §12 done              |
+| 💎  | Per-process page map    | ✅ ZwMapViewOfSection | ✅ do_mmap PTE walk   | ⚠️ §12 partial           |
 | 💎  | Auto-growing stacks     | ✅ PE StackReserve    | ✅ RLIMIT_STACK       | ⬜ §13 guard page expand |
 | 💎  | Pin pages (mlock)       | ✅ VirtualLock        | ✅ mlock(2)           | ⬜ §14 NtLockVirtualMem  |
 | ⭐  | Commit charge tracking  | ✅ hard commit limit  | ⚠️ overcommit default | ⬜ §15 deterministic     |

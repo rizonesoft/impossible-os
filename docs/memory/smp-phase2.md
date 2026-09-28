@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/03-memory-concurrency/TODO-07-smp-phase2.md sources=include/kernel/barrier.h,include/kernel/smp.h,include/kernel/vectors.h,include/kernel/rcu.h,src/kernel/smp/smp.c,src/kernel/rcu.c,src/kernel/cpu_security.c,src/kernel/test/test_smp_rendezvous.c,src/kernel/test/test_smp_lifecycle.c reviewed=2026-09-28 order=7 -->
+<!-- docs: covers=todo/03-memory-concurrency/TODO-07-smp-phase2.md sources=include/kernel/barrier.h,include/kernel/smp.h,include/kernel/vectors.h,include/kernel/rcu.h,src/kernel/smp/smp.c,src/kernel/rcu.c,src/kernel/cpu_security.c,src/kernel/test/test_smp_rendezvous.c,src/kernel/test/test_smp_lifecycle.c,src/kernel/sched/task.c reviewed=2026-09-28 order=7 -->
 # SMP Phase 2
 
 ## What is it?

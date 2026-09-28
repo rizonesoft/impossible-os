@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/03-memory-concurrency/TODO-08-advanced-sync.md sources=include/kernel/sched/spinlock.h,include/kernel/sched/mutex.h,src/kernel/sched/mutex.c,include/kernel/sched/event.h,src/kernel/sched/event.c,src/kernel/nt/nt_sync.c,src/kernel/test/test_nt_sync.c,src/kernel/test/test_ipc.c reviewed=2026-09-28 order=8 -->
+<!-- docs: covers=todo/03-memory-concurrency/TODO-08-advanced-sync.md sources=include/kernel/sched/spinlock.h,include/kernel/sched/mutex.h,src/kernel/sched/mutex.c,include/kernel/sched/event.h,src/kernel/sched/event.c,src/kernel/nt/nt_sync.c,src/kernel/test/test_nt_sync.c,src/kernel/test/test_ipc.c,src/kernel/sched/task.c reviewed=2026-09-28 order=8 -->
 # Synchronisation Primitives
 
 ## What is it?
