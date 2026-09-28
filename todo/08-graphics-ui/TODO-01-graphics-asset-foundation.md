@@ -221,6 +221,11 @@ Decided 2026-09-28: when any section, the unattended run included, needs an icon
   - Refusal control: a fixture that references `icon_get_by_name("no_such_icon")` fails; a name with both a source and a row passes
 - [ ] Draft mode in the engine (a fourth state beside hand-authored, generated, per-size override): `status: draft` in the icon's definition, generated from the nearest parts and a named metaphor, passing every §8 validation
 - [ ] `icon-engine draft <name> --metaphor <part>[,<overlay>] --needed-by <todo#section>` writes the definition, the spec row and the Drafts awaiting polish row in one step, so the run needs no hand drawing
+- [ ] No part fits: `icon-engine part new <name>` scaffolds a draft parametric part, so a draft icon composes a new reusable part instead of a one-off drawing
+  - The part follows token colours, top-left light and the small-size rules
+  - Floor when no credible part can be drawn: the tile-plus-glyph draft (standard rounded tile, category colour, primitive line glyph)
+  - Draft parts get a drafts row; polishing a part re-generates every icon that uses it (§8 fingerprints)
+  - Refusal control: a draft icon whose definition inlines raw paths instead of referencing a part fails validation, so one-offs cannot bypass the library
 - [ ] Promotion: polishing a draft (a definition edit, or a hand edit that makes it hand-authored) removes its drafts row; the check refuses a drafts row whose icon is no longer a draft, and a draft with no row
 - [ ] The /design page and the docs coverage page show drafts with a "draft" badge, so what still needs polish is visible without reading the table
 - [ ] Unit tests: inventory finds all four reference kinds; missing check pass and fail; draft generation is deterministic and validates; promotion clears the row; a hand edit of a draft is never overwritten

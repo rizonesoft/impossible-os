@@ -103,6 +103,8 @@ A missing icon is never shipped as the generic fallback and never parked as a st
 2. Draw it from the existing parts and metaphors (the This PC monitor, the folder, the document, the drive), following the palette, the small-size rules and the system SVG profile. Until the icon engine exists, that means an SVG in `resources/icons/src/`; afterwards, a generated definition.
 3. List it in [Drafts awaiting polish](#drafts-awaiting-polish) with the section that needed it.
 
+**When no part fits.** Most new icons are an existing part plus an overlay (a drive with a badge, a document with a glyph). When the icon needs an object nothing in the library draws, such as a printer or a camera, the draft adds that object as a **new part** first, drawn to the same rules (palette tokens, light from the top left, the small-size rules), and the icon then composes it. The part is listed in the drafts table too, so polishing it improves every icon that uses it, and the next icon that needs a printer reuses it instead of drawing its own. If an object cannot be drawn credibly even as a simple part, the floor is the **tile plus glyph** draft: the standard rounded tile in the icon's category colour with a simple line glyph built from primitives. It is plain but on-palette, legible and clearly named, which the generic fallback is not.
+
 A draft is a real, validated icon, so the feature works and looks consistent on day one. Polish comes later, by hand or in the definition, and it persists: a hand edit makes the icon **hand-authored**, which the engine never rewrites. Polishing an icon removes its row from the drafts table.
 
 ### Drafts awaiting polish
