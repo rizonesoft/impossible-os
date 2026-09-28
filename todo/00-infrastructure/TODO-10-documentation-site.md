@@ -292,7 +292,7 @@ Write docs pages that meet the §3 contract for the 10 roadmap files below. Read
 - [x] Added the ten pages to `docs/boot/index.md` Roadmap Overviews, then ran `python3 scripts/site/build.py --update-baseline` (192 to 184 entries)
 - [x] Roadmap drift found while writing, fixed in place in TODO-15, TODO-16 and TODO-17
   - TODO-15 and TODO-16 "Current state" callouts said their test files were missing; TODO-15 cited a nonexistent `Last POST code:` serial line; TODO-17 sections 1-4 cited POST codes `0xD700`-`0xD703` that never shipped.
-- [ ] Commit: `"docs: boot platform, part 2 documentation pages"`
+- [x] Commit: `"docs: boot platform, part 2 documentation pages"` (`9f9356c89`)
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
@@ -303,6 +303,9 @@ Write docs pages that meet the §3 contract for the 10 roadmap files below. Read
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so §22's freshness check flags it when the code it describes changes.
 > - **Downstream:** the TPM and diagnostics overviews link the existing `pcr-allocation.md` and `boot-timeline-schema.md` reference pages rather than copying them.
 > - **Found on the way:** stale test-file, serial-line and POST-code claims in TODO-15, TODO-16 and TODO-17 corrected in the same commit.
+
+> **Verified:** 2026-09-28 | commit `9f9356c89` | 8/8 items | build OK | site: OK, 48/232 documented; tests 34646 kernel + 17 user-mode PASS; smoke PASS
+> **Quality reviewed:** 2026-09-28 | Codex 5x (adversarial x2, adversarial post-ship, consistency, perf) | 15M fixed, 0 open | scope: N/A (docs-only; re-adversarial skipped: docs-only fixes)
 
 ---
 

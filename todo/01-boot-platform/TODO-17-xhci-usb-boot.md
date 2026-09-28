@@ -61,7 +61,7 @@ Verify and fix the existing xHCI controller initialization. Currently logs "No x
 - [x] Map xHCI BAR0 via `vmm_map_mmio_uc()` (MMIO registers need UC mapping)
 - [x] Commit: `"drivers: xHCI controller bring-up verified on QEMU + bare metal"`
 
-**Test checkpoint:** Serial shows `xHCI vX.Y ready, N slots, N ports, N intrs, N scratchpads`. POST codes 0xD750 (handoff) and 0xD751 (controller running). Test on: QEMU `run-usb`, bare metal.
+**Test checkpoint:** Serial shows `xHCI vX.Y ready, N slots, N ports, N intrs, N scratchpads`. POST code 0xD750 (handoff); 0xD751 follows a successful inherit but precedes full init on the ordinary path, so the `ready` line is the success marker. Test on: QEMU `run-usb`, bare metal.
 > **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | live path via `make run-usb-ci` (TCG) + bare metal; `test_usb_boot.c` pending (Unit Tests).
 > **Notes:**
 > - Shipped: xHCI controller bring-up (`xhci.c`) -- PCI discovery (0x0C/0x03/0x30), halt/reset, DCBAA, command+event rings, BAR0 via `vmm_map_mmio_uc`, Intel XUSB2PR routing.
