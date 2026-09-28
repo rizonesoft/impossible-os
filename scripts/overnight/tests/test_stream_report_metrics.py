@@ -510,6 +510,29 @@ def test_context_stats_floor_percentiles_and_sidechain_excluded():
         assert s1["context_floor_tokens"] == 60_100, s1        # run-level, not reset
         assert s1["context_max_tokens"] == 500_005, s1
 
+def test_subagent_lines_are_labelled():
+    # 2026-09-28: subagent tool and error lines carry `sub `, main-loop lines do
+    # not, so a transcript count of main-loop work is not inflated by the fleet.
+    with tempfile.TemporaryDirectory() as d:
+        mp = pathlib.Path(d) / "m.jsonl"
+        out = _run([
+            _assistant(_usage(o=1), [("Grep", {"pattern": "main_search"})], msg_id="m1"),
+            _assistant(_usage(o=1), [("WebSearch", {"query": "sub_search"})], parent="toolu_x", msg_id="s1"),
+            {"type": "user", "parent_tool_use_id": "toolu_x", "message": {"content": [
+                {"type": "tool_result", "is_error": True, "content": "sub failure"}]}},
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "is_error": True, "content": "main failure"}]}},
+            {"type": "result", "result": "done", "usage": _usage(o=1)},
+        ], mp)
+        lines = out.splitlines()
+        main_tool = [l for l in lines if "main_search" in l]
+        sub_tool = [l for l in lines if "sub_search" in l]
+        assert main_tool and " tool: Grep" in main_tool[0] and " sub tool:" not in main_tool[0], main_tool
+        assert sub_tool and " sub tool: WebSearch" in sub_tool[0], sub_tool
+        assert any(" sub tool error: sub failure" in l for l in lines), lines
+        assert any(" tool error: main failure" in l and " sub " not in l for l in lines), lines
+
+
 if __name__ == "__main__":
     test_two_sections_split_on_progress()
     test_model_confirmed_matches_expected_no_warning()
@@ -536,5 +559,6 @@ if __name__ == "__main__":
     test_bash_command_clip_survives_a_compound_command()
     test_hook_advisories_surface_from_attachment_events()
     test_context_stats_floor_percentiles_and_sidechain_excluded()
+    test_subagent_lines_are_labelled()
     print("PASS: stream-report metrics")
 

@@ -690,26 +690,35 @@ def handle(event: dict, metrics: "SectionMetrics") -> None:
             metrics.note_model(message.get("model"))
         metrics.add_usage(message.get("usage"), msg_id=message.get("id"),
                           sidechain=sidechain)
+        # SUBAGENT lines are labelled `sub ` (2026-09-28): unlabelled, a
+        # researcher's WebSearch or an explorer's Grep read exactly like the main
+        # loop's, so every transcript count of "main-loop" work mixed in work
+        # that was already offloaded. `tool: Bash` still matches both kinds;
+        # `HH:MM:SS tool:` now matches the main loop only.
+        sub = "sub " if sidechain else ""
         for block in message.get("content") or []:
             if block.get("type") == "text" and block.get("text"):
-                emit(block["text"])
+                emit(sub + block["text"])
             elif block.get("type") == "tool_use":
                 name = block.get("name", "unknown")
                 metrics.add_tool(name, block.get("input"), sidechain=sidechain)
                 summary = summarize_tool(name, block.get("input"))
-                emit(f"tool: {name}  {summary}".rstrip())
+                emit(f"{sub}tool: {name}  {summary}".rstrip())
                 if name == "Bash":
                     cmd = (block.get("input") or {}).get("command") or ""
                     if "run_phase_guard.py progress" in cmd:
                         metrics.flush("progress")
     elif kind == "user":
         # surface failed tool results so overnight logs flag errors inline.
+        # A subagent's failed call is labelled `sub ` like its tool lines, so
+        # refusal counts separate the main loop from the fleet.
+        sub = "sub " if event.get("parent_tool_use_id") else ""
         for block in (event.get("message") or {}).get("content") or []:
             if not isinstance(block, dict):
                 continue
             if block.get("type") == "tool_result" and block.get("is_error"):
                 msg = _result_text(block.get("content"))
-                emit(f"tool error: {_clip(msg)}" if msg else "tool error")
+                emit(f"{sub}tool error: {_clip(msg)}" if msg else f"{sub}tool error")
                 continue
             # ADVISORY HOOK OUTPUT (2026-07-31). Only is_error results were
             # surfaced, so a hook that emits a systemMessage instead of blocking

@@ -13,7 +13,7 @@ where the run spent its time, context, and tool calls -- never the raw log.
 
 ## Log format
 
-Each line is `HH:MM:SS <narrator text>` or `HH:MM:SS tool: <Tool>  <label> $ <command...>`
+Each line is `HH:MM:SS <narrator text>` or `HH:MM:SS tool: <Tool>  <label> $ <command...>`; since 2026-09-28 a SUBAGENT's lines carry `sub ` (`HH:MM:SS sub tool: ...`, `sub tool error: ...`), so count main-loop work with `HH:MM:SS tool:` and never mix the two. Logs older than that do not label subagent lines: say so when a count depends on the split
 (command truncated with `...`). Header lines name the driver, todo file, and model.
 There are NO token counters in the log -- cost is INFERRED from operation counts,
 payload sizes (files read, command output shapes), and time spent.
