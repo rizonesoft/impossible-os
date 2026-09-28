@@ -11,11 +11,11 @@ title: "TODO-16 -- Bluetooth Full Stack"
 > **Goal:** Build the complete Bluetooth stack -- HCI transport layer, chipset firmware loading (Intel AX200-BT, Realtek RTL8761B), L2CAP, SDP, HID profile, A2DP/SBC audio streaming with AVRCP, RFCOMM/SPP, BLE/GATT, pairing manager, and system UI (`bluetooth.cpl`, `btctl` shell) -- enabling wireless keyboards, mice, headphones, and game controllers essential on every modern laptop.
 
 > [!IMPORTANT]
-> **Partial foundation:** `04-drivers-hardware/TODO-10-usb-stack.md §13` defines `bt_hci_usb.c` with `hci_send_command()` / `hci_recv_event()` / `hci_send_acl()` / `hci_recv_acl()` and `bt_hci_ops_t` registration. This TODO builds the full protocol stack on top of that transport stub. The `bt_hci_usb.c` stub must be completed before §1 here can proceed -- verify it is in place. All cryptographic operations (A2DP random seed in §8 and SSP pairing in §9) must use constant-time comparison to prevent timing side-channels.
+> **Partial foundation:** `04-drivers-hardware/TODO-10-usb-stack.md §13` plans `bt_hci_usb.c` (not yet written; that section is open) with `hci_send_command()` / `hci_recv_event()` / `hci_send_acl()` / `hci_recv_acl()` and `bt_hci_ops_t` registration. This TODO builds the full protocol stack on top of that transport stub. The `bt_hci_usb.c` stub must be completed before §1 here can proceed -- verify it is in place. All cryptographic operations (A2DP random seed in §8 and SSP pairing in §9) must use constant-time comparison to prevent timing side-channels.
 
 ## Inputs
 
-- `src/kernel/drivers/bt_hci_usb.c` (→ XREF: `04-drivers-hardware/TODO-10-usb-stack.md §13`) -- USB HCI transport: `hci_send_command()`, `hci_recv_event()`, `hci_send_acl()`, `hci_recv_acl()`; `bt_hci_ops_t` registration point
+- `src/kernel/drivers/bt_hci_usb.c`, not yet written (→ XREF: `04-drivers-hardware/TODO-10-usb-stack.md §13`) -- USB HCI transport: `hci_send_command()`, `hci_recv_event()`, `hci_send_acl()`, `hci_recv_acl()`; `bt_hci_ops_t` registration point
 - `src/kernel/drivers/hid_parser.c` (→ XREF: `04-drivers-hardware/TODO-12-i2c-touchpad.md §5`) -- HID report descriptor parser reused by Bluetooth HID profile (§6)
 - → XREF: `04-drivers-hardware/TODO-04-security-hardware.md §2` -- `hwrng_read()` required for SSP pairing nonce (§9) and A2DP SBC bitpool random seed
 - → XREF: `11-apps` domain -- audio routing: when A2DP headphones connect (§8), the audio subsystem switches `audio_get_active()` to the BT A2DP device; coordinate with the audio mixer TODO
@@ -251,7 +251,7 @@ Implement `btctl` as a built-in shell command matching Linux `bluetoothctl` synt
 
 | ⭐  | Feature                                      | 🪟 Win11                                                 | 🐧 Linux                                                         | 🚀 Impossible OS                                                                |
 | --- | -------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| ⚠️  | HCI transport (USB) -- commands, events, ACL | ✅ `BTHUSB.sys`; full HCI over USB                       | ✅ `btusb.c`; full HCI; `hci_register_dev()`                     | ⚠️ §8 -- Partial -- `bt_hci_usb.c` stub (TODO-10                                |
+| ⚠️  | HCI transport (USB) -- commands, events, ACL | ✅ `BTHUSB.sys`; full HCI over USB                       | ✅ `btusb.c`; full HCI; `hci_register_dev()`                     | ⬜ §1 -- `bt_hci_usb.c` not written yet (TODO-10                                |
 | 💎  | Chipset firmware loading                     | ✅ Firmware embedded in `ibtusb.sys` /                   | ✅ `btintel.c`/`btrtl.c`; firmware from `linux-firmware`; loaded | ⬜ §2 -- Intel TLV vendor opcode download,                                      |
 | 💎  | L2CAP channel multiplexing + MTU negotiation | ✅ `bthport.sys`; L2CAP in-kernel                        | ✅ `l2cap_core.c`; in-kernel; `l2cap_sock`                       | ⬜ §3 -- 32-channel table, sig handle, `l2cap_connect/send/disconnect`          |
 | 💎  | SDP service discovery + local SDP server     | ✅ `bthserv.dll`; SDP in user-space via                  | ✅ `sdp.c` in BlueZ user-space (`bluetoothd`)                    | ⬜ §4 -- `ServiceSearchAttributeRequest`, PSM/channel extraction, local records |

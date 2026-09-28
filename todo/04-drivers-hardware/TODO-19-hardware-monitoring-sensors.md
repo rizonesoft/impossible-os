@@ -9,7 +9,7 @@ title: "TODO-19 -- Hardware Monitoring, Sensors & Environmental Devices"
 # TODO-19 -- Hardware Monitoring, Sensors & Environmental Devices
 
 > **Goal:** Add a hardware-monitoring and sensor class stack for temperature, fan, voltage, battery-side sensors, ambient light, accelerometers, tablet/lid posture sensors, chassis intrusion, jack detection, and platform-specific embedded-controller readings. This makes laptops, desktops, tablets, and workstations observable without each driver inventing private APIs.
-> **Current state:** ACPI power work covers battery and thermal policy, but there is no generic sensor class, no `hwmon`-style API, no user-visible sensor inventory, and no consistent event path for environmental devices.
+> **Current state:** ACPI power work (TODO-03) plans battery and thermal policy, but today only an ECDT-found EC transport exists and it stays disabled (`src/kernel/drivers/acpi_ec.c`); there is no generic sensor class, no `hwmon`-style API, no user-visible sensor inventory, and no consistent event path for environmental devices.
 
 ## Inputs
 

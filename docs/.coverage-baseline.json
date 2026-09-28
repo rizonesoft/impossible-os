@@ -1,18 +1,6 @@
 {
   "_comment": "TODO files with no documentation page yet. Shrink-only: scripts/site/build.py --update-baseline removes entries, never adds them (except when creating this file).",
   "undocumented": [
-    "todo/04-drivers-hardware/TODO-14-network-drivers.md",
-    "todo/04-drivers-hardware/TODO-15-wifi-drivers.md",
-    "todo/04-drivers-hardware/TODO-16-bluetooth.md",
-    "todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md",
-    "todo/04-drivers-hardware/TODO-18-audio-drivers.md",
-    "todo/04-drivers-hardware/TODO-19-hardware-monitoring-sensors.md",
-    "todo/04-drivers-hardware/TODO-20-serial-parallel-debug-io.md",
-    "todo/04-drivers-hardware/TODO-21-game-controller-haptics.md",
-    "todo/04-drivers-hardware/TODO-22-camera-imaging-devices.md",
-    "todo/04-drivers-hardware/TODO-23-printing-scanning-device-path.md",
-    "todo/04-drivers-hardware/TODO-24-docking-thunderbolt-usb4-expansion.md",
-    "todo/04-drivers-hardware/TODO-25-driver-hardware-certification-matrix.md",
     "todo/05-storage-filesystems/TODO-01-block-storage-hardening.md",
     "todo/05-storage-filesystems/TODO-02-ntfs-readwrite.md",
     "todo/05-storage-filesystems/TODO-03-volume-management-automount.md",

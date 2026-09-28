@@ -11,14 +11,14 @@ title: "TODO-14 -- Network Drivers"
 > **Goal:** Expand the Impossible OS wired NIC roster beyond the working RTL8139 by delivering Intel e1000, VirtIO-net, RTL8169/8111, Intel igc (2.5 GbE), and RTL8125 (2.5 GbE) as loadable `.kmod` modules, add a WiFi 802.11 MAC-layer stub plus Intel iwlwifi and Realtek rtw89 device stubs, and maintain a complete license-tracking record for all ported files.
 
 > [!IMPORTANT]
-> **Already complete:** RTL8139 built-in driver (`src/kernel/drivers/rtl8139.c`) -- functional, uses port I/O, registers with `ethernet_receive()`. The kernel module loader from `04-drivers-hardware/TODO-05-kernel-module-system.md` is a prerequisite for all loadable-module sections below. WiFi stubs (§8–§10) are **P4 stretch** -- placeholder infrastructure only; no firmware or WPA supplicant implementation is expected here.
+> **Already complete:** RTL8139 built-in driver (`src/kernel/drivers/rtl8139.c`) -- functional, uses port I/O, hands received frames to `net_rx()` in `src/kernel/net/ethernet.c` (via `sys_wq`); `ethernet.c` calls `rtl8139_send()` / `rtl8139_get_mac()` by name, so no NIC driver table exists yet (see §2). The kernel module loader from `04-drivers-hardware/TODO-05-kernel-module-system.md` is a prerequisite for all loadable-module sections below. WiFi stubs (§8–§10) are **P4 stretch** -- placeholder infrastructure only; no firmware or WPA supplicant implementation is expected here.
 
 ## Inputs
 
-- [`src/kernel/drivers/rtl8139.c`](../../src/kernel/drivers/rtl8139.c) -- reference for the existing NIC registration and `ethernet_receive()` call pattern
+- [`src/kernel/drivers/rtl8139.c`](../../src/kernel/drivers/rtl8139.c) -- reference for the existing NIC bring-up and `net_rx()` call pattern
 - [`src/kernel/drivers/virtio/virtio.c`](../../src/kernel/drivers/virtio/virtio.c) -- VirtIO transport (reused by VirtIO-net)
 - → XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md` -- kernel module loader, `EXPORT_SYMBOL`, `blkdev_register`/`net_ops` HAL vtables; must be complete before §2–§6
-- → XREF: `07-networking` domain -- `ethernet_receive(buf, len)` is the hook into the protocol stack; NIC modules call this on RX; no networking protocol changes needed here
+- → XREF: `07-networking` domain -- `net_rx(data, len)` (`src/kernel/net/ethernet.c`) is the hook into the protocol stack; NIC modules call this on RX; no networking protocol changes needed here
 - → XREF: `04-drivers-hardware/TODO-08-core-driver-enhancements.md §3` -- MSI/MSI-X interrupt support used by e1000, igc, and RTL8125 for high-performance interrupt delivery
 
 ## Outcome
@@ -71,7 +71,7 @@ Create `LICENSES/` with the BSD-2-Clause and MIT license texts, and `NOTICE.md` 
 
 ## 2. Intel e1000 Module `[Sonnet]`
 
-Port the Intel e1000 driver (BSD-2 source; SerenityOS reference) as a loadable `.kmod`. PCI match on common VirtualBox/QEMU e1000 device IDs. 16-entry TX+RX descriptor rings. IRQ handler drains RX descriptors into `ethernet_receive()`.
+Port the Intel e1000 driver (BSD-2 source; SerenityOS reference) as a loadable `.kmod`. PCI match on common VirtualBox/QEMU e1000 device IDs. 16-entry TX+RX descriptor rings. IRQ handler drains RX descriptors into `net_rx()`.
 
 **Files:** `src/modules/e1000/e1000.c` (new), `include/kernel/drivers/e1000.h` (new)
 
@@ -84,7 +84,8 @@ Port the Intel e1000 driver (BSD-2 source; SerenityOS reference) as a loadable `
 - [ ] Allocate 16-entry TX descriptor ring + 16 × 2 KiB TX buffers (physically contiguous); write `TDBAL`/`TDBAH`/`TDLEN`/`TDH`/`TDT`
 - [ ] Allocate 16-entry RX descriptor ring + 16 × 2 KiB RX buffers; write `RDBAL`/`RDBAH`/`RDLEN`/`RDH`/`RDT`; set `RCTL` (EN, BAM, BSEX=0, BSIZE=2K)
 - [ ] `e1000_send(buf, len)`: write descriptor `addr`+`len`+`CMD_EOP|RS`; bump `TDT`; poll `DD` bit for completion
-- [ ] IRQ handler: check `ICR`; on `RXT0` (RX timer): walk RX descriptors with `DD` set, call `ethernet_receive(desc.buf, desc.length)`, recycle descriptor, advance `RDT`
+- [ ] IRQ handler: check `ICR`; on `RXT0` (RX timer): walk RX descriptors with `DD` set, call `net_rx(desc.buf, desc.length)`, recycle descriptor, advance `RDT`
+- [ ] Add the `net_ops_t` NIC table to `include/kernel/net/net.h`; route `eth_send()` / `net_init()` through it and register RTL8139 first (`ethernet.c` calls `rtl8139_*` directly today)
 - [ ] Register `net_ops_t e1000_ops = { .send = e1000_send, .get_mac = e1000_get_mac }` via kernel module HAL
 - [ ] Boot log: `[e1000] MAC %02x:%02x:... @ BAR0 0x%lx`
 - [ ] Add to `NOTICE.md`: ported from SerenityOS `Kernel/Net/Intel/E1000NetworkAdapter.cpp` (BSD-2)
@@ -97,13 +98,13 @@ Port VirtIO-net as a loadable module reusing the existing VirtIO transport (`vir
 **Files:** `src/modules/virtio_net/virtio_net.c` (new), `include/kernel/drivers/virtio_net.h` (new)
 
 > [!NOTE]
-> → XREF: `04-drivers-hardware/TODO-09-hypervisor-abstraction.md §8` -- VirtIO GPU (§8 there) uses the same VirtIO transport pattern. VirtIO-net uses the same `virtio_init_device()`, `virtq_add_buf()`, `virtq_kick()` primitives from `virtio.c`.
+> → XREF: `04-drivers-hardware/TODO-09-hypervisor-abstraction.md §8` -- VirtIO GPU (§8 there) uses the same VirtIO transport pattern. VirtIO-net uses the same `virtio_pci_init()`, `virtq_init()`, `virtq_add_buf()`, `virtq_kick()`, `virtq_get_buf()` primitives (`include/kernel/drivers/virtio/virtio.h`).
 
 - [ ] PCI match: `{ 0x1AF4, 0x1000 }` (legacy), `{ 0x1AF4, 0x1041 }` (modern virtio 1.0)
 - [ ] Negotiate features: `VIRTIO_NET_F_MAC` (bit 5), `VIRTIO_NET_F_STATUS` (bit 16)
 - [ ] Read MAC from VirtIO net config space (bytes 0–5 of device-specific config)
 - [ ] RX queue (queue 0): pre-fill all descriptors with `virtio_net_hdr_t (12 bytes) + 1514 bytes` RX buffers; kick queue after fill
-- [ ] RX ISR: drain used ring; for each used buffer, skip `sizeof(virtio_net_hdr_t)` header, call `ethernet_receive(buf + hdr_size, len - hdr_size)`; recycle descriptor back to available ring; kick
+- [ ] RX ISR: drain used ring; for each used buffer, skip `sizeof(virtio_net_hdr_t)` header, call `net_rx(buf + hdr_size, len - hdr_size)`; recycle descriptor back to available ring; kick
 - [ ] TX queue (queue 1): `virtio_net_send(buf, len)`: prepend zeroed `virtio_net_hdr_t`; add to available ring; kick queue 1; wait for used-ring notification (or poll timeout)
 - [ ] Register `net_ops_t virtio_net_ops` via module HAL
 - [ ] Boot log: `[virtio-net] MAC %02x:%02x:... (modern=%d)`
@@ -122,7 +123,7 @@ Port the RTL8169 gigabit driver as a loadable module using FreeBSD `re(4)` (BSD-
 - [ ] Allocate 256-entry RX descriptor ring + 256 × 1536 byte RX buffers; set `RCR` (AB|AM|APM|AAP, RX buffer size field)
 - [ ] Write descriptor ring physical addresses to `TNPDS` / `RDSAR` registers; set `TCR`, enable `TE`/`RE` in `CR`
 - [ ] `rtl8169_send`: write TX descriptor (OWN|FS|LS|len); bump `TxDescIndex`; write `0x40` to `TPPoll` to trigger TX
-- [ ] ISR: check `IntrStatus`; ACK by writing back; process RX ring (OWN bit clear → `ethernet_receive`); recycle RX descriptors
+- [ ] ISR: check `IntrStatus`; ACK by writing back; process RX ring (OWN bit clear → `net_rx`); recycle RX descriptors
 - [ ] Register `net_ops_t rtl8169_ops`; add to `NOTICE.md` (FreeBSD `re(4)`, BSD-2)
 - [ ] Boot log: `[rtl8169] MAC %02x:%02x:... PCI %04x:%04x`
 - [ ] Commit: `"modules: RTL8169/8111 -- DMA rings, ISR RX drain, FreeBSD re(4) port"`

@@ -1,6 +1,6 @@
 # Hardware
 
-Drivers and hardware support: PCI and Plug and Play, interrupt controllers, ACPI and power, security hardware, kernel modules, device firmware, the Device Manager, core built-in drivers, hypervisor guest support, USB, input, touchpads, storage controllers and bare-metal validation.
+Drivers and hardware support: PCI and Plug and Play, interrupt controllers, ACPI and power, security hardware, kernel modules, device firmware, the Device Manager, core built-in drivers, hypervisor guest support, USB, input, touchpads, storage controllers, networking, Wi-Fi, Bluetooth, display, audio, sensors, serial and debug I/O, game controllers, cameras, printers, docks, and driver and bare-metal certification.
 
 ## Roadmap Overviews
 
@@ -21,6 +21,18 @@ One page per drivers and hardware roadmap file, each following the [page contrac
 | [Input System](input-system.md) | PS/2 keyboard and mouse, merged input sources, planned layouts and wheel |
 | [I2C and Precision Touchpad](i2c-touchpad.md) | Why I2C touchpads do not work yet and the planned stack |
 | [Storage Controllers and Removable Media](storage-controllers.md) | Block-device table, AHCI, ATAPI, VirtIO-blk, USB and NVMe disks |
+| [Network Drivers](network-drivers.md) | The built-in RTL8139, the Ethernet layer, planned e1000, VirtIO-net and 2.5 GbE modules |
+| [Wi-Fi Drivers](wifi-drivers.md) | Planned Wi-Fi manager, chip drivers, WPA2 supplicant and `netsh wlan` |
+| [Bluetooth](bluetooth.md) | Planned in-kernel HCI, L2CAP, profiles, pairing and `btctl` |
+| [GPU and Display Drivers](gpu-display-drivers.md) | GOP framebuffer, Bochs page flip, planned display drivers and multi-head |
+| [Audio Drivers](audio-drivers.md) | Planned audio interface, AC97, HDA, VirtIO Sound and USB audio |
+| [Hardware Monitoring and Sensors](hardware-monitoring-sensors.md) | The embedded controller transport, planned sensor class and events |
+| [Serial, Parallel and Debug I/O](serial-parallel-debug-io.md) | The kernel console UART and crash path, planned COM devices, LPT, GPIO and SPI |
+| [Game Controllers and Haptics](game-controllers.md) | Why gamepads are ignored today, planned controller class and rumble |
+| [Cameras and Imaging Devices](camera-imaging.md) | Planned UVC driver, privacy enforcement and scanner class |
+| [Printing and Scanning Device Path](printing-scanning.md) | Planned USB printer class, IPP-over-USB hand-off and multifunction devices |
+| [Docking, Thunderbolt and USB4](docking-thunderbolt-usb4.md) | Planned dock topology, Thunderbolt security and external DMA report |
+| [Driver Hardware Certification Matrix](driver-certification-matrix.md) | Boot certification today, planned per-driver matrix and release gate |
 
 ## Validation
 

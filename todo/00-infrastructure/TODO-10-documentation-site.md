@@ -63,7 +63,7 @@ file_patterns:
 | 💎  |  10   | §10 Document: Kernel core, part 3 (12 roadmap files)                     | §2, §3     |  [x]   |
 | 💎  |  11   | §11 Document: Memory and concurrency (11 roadmap files)                  | §2, §3     |  [x]   |
 | 💎  |  12   | §12 Document: Drivers and hardware, part 1 (13 roadmap files)            | §2, §3     |  [x]   |
-| 💎  |  13   | §13 Document: Drivers and hardware, part 2 (12 roadmap files)            | §2, §3     |  [ ]   |
+| 💎  |  13   | §13 Document: Drivers and hardware, part 2 (12 roadmap files)            | §2, §3     |  [x]   |
 | 💎  |  14   | §14 Document: Storage and filesystems (14 roadmap files)                 | §2, §3     |  [ ]   |
 | 💎  |  15   | §15 Document: Networking (11 roadmap files)                              | §2, §3     |  [ ]   |
 | 💎  |  16   | §16 Document: Desktop foundation and graphics, part 1 (14 roadmap files) | §2, §3     |  [ ]   |
@@ -576,26 +576,39 @@ Write docs pages that meet the §3 contract for the 13 roadmap files below. Read
 
 Write docs pages that meet the §3 contract for the 12 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/04-drivers-hardware/TODO-14-network-drivers.md` (TODO-14 -- Network Drivers)
-  - `todo/04-drivers-hardware/TODO-15-wifi-drivers.md` (TODO-15 -- WiFi Hardware Drivers)
-  - `todo/04-drivers-hardware/TODO-16-bluetooth.md` (TODO-16 -- Bluetooth Full Stack)
-- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md` (TODO-17 -- GPU & Display Drivers)
-  - `todo/04-drivers-hardware/TODO-18-audio-drivers.md` (TODO-18 -- Audio Drivers)
-  - `todo/04-drivers-hardware/TODO-19-hardware-monitoring-sensors.md` (TODO-19 -- Hardware Monitoring, Sensors & Environmental Devices)
-- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/04-drivers-hardware/TODO-20-serial-parallel-debug-io.md` (TODO-20 -- Serial, Parallel, GPIO/SPI & Debug I/O Devices)
-  - `todo/04-drivers-hardware/TODO-21-game-controller-haptics.md` (TODO-21 -- Game Controllers, HID Force Feedback & Haptics)
-  - `todo/04-drivers-hardware/TODO-22-camera-imaging-devices.md` (TODO-22 -- Camera, Video Capture & Imaging Devices)
-- [ ] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/04-drivers-hardware/TODO-23-printing-scanning-device-path.md` (TODO-23 -- Printing, Scanning & Imaging Peripheral Device Path)
-  - `todo/04-drivers-hardware/TODO-24-docking-thunderbolt-usb4-expansion.md` (TODO-24 -- Docking, Thunderbolt, USB4 & External Expansion)
-  - `todo/04-drivers-hardware/TODO-25-driver-hardware-certification-matrix.md` (TODO-25 -- Driver Hardware Certification Matrix)
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: drivers and hardware, part 2 documentation pages"`
+- [x] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-14-network-drivers.md` (TODO-14 -- Network Drivers): `network-drivers.md`
+  - `todo/04-drivers-hardware/TODO-15-wifi-drivers.md` (TODO-15 -- WiFi Hardware Drivers): `wifi-drivers.md`
+  - `todo/04-drivers-hardware/TODO-16-bluetooth.md` (TODO-16 -- Bluetooth Full Stack): `bluetooth.md`
+- [x] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-17-gpu-display-drivers.md` (TODO-17 -- GPU & Display Drivers): `gpu-display-drivers.md`
+  - `todo/04-drivers-hardware/TODO-18-audio-drivers.md` (TODO-18 -- Audio Drivers): `audio-drivers.md`
+  - `todo/04-drivers-hardware/TODO-19-hardware-monitoring-sensors.md` (TODO-19 -- Hardware Monitoring, Sensors & Environmental Devices): `hardware-monitoring-sensors.md`
+- [x] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-20-serial-parallel-debug-io.md` (TODO-20 -- Serial, Parallel, GPIO/SPI & Debug I/O Devices): `serial-parallel-debug-io.md`
+  - `todo/04-drivers-hardware/TODO-21-game-controller-haptics.md` (TODO-21 -- Game Controllers, HID Force Feedback & Haptics): `game-controllers.md`
+  - `todo/04-drivers-hardware/TODO-22-camera-imaging-devices.md` (TODO-22 -- Camera, Video Capture & Imaging Devices): `camera-imaging.md`
+- [x] Pages in `docs/hardware/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/04-drivers-hardware/TODO-23-printing-scanning-device-path.md` (TODO-23 -- Printing, Scanning & Imaging Peripheral Device Path): `printing-scanning.md`
+  - `todo/04-drivers-hardware/TODO-24-docking-thunderbolt-usb4-expansion.md` (TODO-24 -- Docking, Thunderbolt, USB4 & External Expansion): `docking-thunderbolt-usb4.md`
+  - `todo/04-drivers-hardware/TODO-25-driver-hardware-certification-matrix.md` (TODO-25 -- Driver Hardware Certification Matrix): `driver-certification-matrix.md`
+- [x] No roadmap file had a page, so all twelve are new; every quoted symbol, constant and log string was checked in the tree and every roadmap anchor resolves under the site check
+- [x] Added every new page to the Roadmap Overviews table in `docs/hardware/index.md`, then ran `python3 scripts/site/build.py --update-baseline` (119 to 107 entries)
+- [x] Roadmap drift found while writing, fixed in place in TODO-14, 15, 16, 17 and 19
+  - TODO-14 and 15 named a receive hook (`ethernet_receive()`, `net_receive_ethernet()`) and `virtio_init_device()` that do not exist; they now name `net_rx()` and the real VirtIO calls, and TODO-14 §2 owns the missing `net_ops_t` table.
+  - TODO-16 called `bt_hci_usb.c` an existing stub; it is not written. TODO-17 claimed DISPI mode-setting, `g_fb` and `memcpy_to_fb` (none exist) and marked its fallback Done.
+  - TODO-19 said ACPI already covers battery and thermal policy; only a disabled EC transport exists.
+- [x] Commit: `"docs: drivers and hardware, part 2 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check` prints `site: OK` with 125/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** twelve contract-shaped overview pages in `docs/hardware/`, one per drivers and hardware roadmap file 14 to 25, listed in `docs/hardware/index.md`.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the code it describes changes.
+> - **Status honesty:** none of the twelve roadmaps has a shipped section; each page says what works today (the RTL8139, the GOP framebuffer, the console UART, the disabled EC) and why the rest does not.
+> - **Found on the way:** the Ethernet layer is hard-wired to the RTL8139, so no second NIC can register until TODO-14 §2 adds a driver table.
 
 ---
 

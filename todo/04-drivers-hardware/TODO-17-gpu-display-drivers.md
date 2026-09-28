@@ -11,7 +11,7 @@ title: "TODO-17 -- GPU & Display Drivers"
 > **Goal:** Deliver modesetting, 2D acceleration, and hardware cursor for all primary development targets (VMSVGA, VirtIO-GPU, Bochs/BGA) as loadable modules behind a clean `display_device_t` vtable, ensure the existing VBE/GOP framebuffer registers as a fallback, and add P3/P4 modesetting stubs for Intel HD/UHD iGPU and AMD APU Vega/RDNA to position the OS for real-hardware display support.
 
 > [!IMPORTANT]
-> **Already complete:** VBE/GOP linear framebuffer (`src/kernel/drivers/framebuffer.c`) -- pixels write to screen; VBE DISPI registers are already in use for mode-setting. This TODO extracts that code into a proper `display_device_t` backend, adds three accelerated GPU modules, and defines the vtable abstraction so the compositor (`src/desktop/`) calls `display_flush_rect()` instead of writing directly to a raw framebuffer pointer.
+> **Already complete:** VBE/GOP linear framebuffer (`src/kernel/drivers/framebuffer.c`) -- pixels write to screen; the Bochs VBE DISPI registers are used only to probe the ID and set `VIRT_HEIGHT` / `Y_OFFSET` for page flipping (`fb_init()`, `fb_swap()`); the mode itself comes from GOP, so §3 writes the XRES/YRES/BPP/ENABLE mode-set rather than extracting it. This TODO extracts that code into a proper `display_device_t` backend, adds three accelerated GPU modules, and defines the vtable abstraction so the compositor (`src/desktop/`) calls `display_flush_rect()` instead of writing directly to a raw framebuffer pointer.
 
 ## Inputs
 
@@ -55,7 +55,7 @@ Define the `display_device_t` abstraction. All GPU modules register against it; 
 **Files:** `include/kernel/drivers/display_device.h` (new), `src/kernel/drivers/display_device.c` (new), `src/kernel/gfx/gfx_core.c` (update)
 
 > [!IMPORTANT]
-> This is the architectural pivot point for all display work. It must land first (order 1 in the implementation table). After this section, no code outside `src/modules/*/` and `src/kernel/drivers/framebuffer.c` should access `g_fb.base` directly -- all pixel flushes go through `display_flush_rect()`.
+> This is the architectural pivot point for all display work. It must land first (order 1 in the implementation table). After this section, no code outside `src/modules/*/` and `src/kernel/drivers/framebuffer.c` should write VRAM directly (today `fb_swap()` / `fb_swap_rect()` in `framebuffer.c`, called from `src/kernel/main/compositor.c`) -- all pixel flushes go through `display_flush_rect()`.
 
 - [ ] Define:
   ```c
@@ -69,10 +69,10 @@ Define the `display_device_t` abstraction. All GPU modules register against it; 
       void  (*get_info)(uint32_t *w, uint32_t *h, uint32_t *bpp, void **fb_base);
   } display_device_t;
   ```
-- [ ] `display_register(display_device_t *dev)` -- add to sorted list by `priority`; call `dev->set_mode(g_fb.w, g_fb.h, 32)` to activate
+- [ ] `display_register(display_device_t *dev)` -- add to sorted list by `priority`; call `dev->set_mode(fb_get_width(), fb_get_height(), 32)` to activate
 - [ ] `display_get_active()` -- return highest-priority registered device
 - [ ] `DISPLAY_PRIORITY_ACCEL = 100` (VMSVGA, VirtIO-GPU), `DISPLAY_PRIORITY_STANDARD = 50` (Bochs/BGA), `DISPLAY_PRIORITY_FALLBACK = 1` (VBE/GOP)
-- [ ] Update `gfx_core.c`: replace `memcpy_to_fb(dst, src, len)` / `fb_swap()` with calls to `display_flush_rect(0, 0, w, h)` via `display_get_active()`
+- [ ] Update `src/kernel/main/compositor.c`: replace `fb_swap()` / `fb_swap_rect()` with `display_flush_rect()` via `display_get_active()`
 - [ ] Update compositor dirty-region tracker to call `display_flush_rect(dirty.x, dirty.y, dirty.w, dirty.h)` on each frame
 - [ ] Commit: `"kernel: display_device_t vtable -- register/get_active, priority system, gfx_core hook"`
 
@@ -85,9 +85,9 @@ Wrap the existing VBE/GOP linear framebuffer in a `display_device_t` at lowest p
 > [!NOTE]
 > After §3 extracts the Bochs/BGA DISPI code, `framebuffer.c` retains only the GOP linear framebuffer setup (boot-time mode already set by UEFI) and becomes the `DISPLAY_PRIORITY_FALLBACK` backend. No mode-set calls needed -- GOP already configured the resolution at boot.
 
-- [ ] Implement `display_device_t vbe_gop_display`: `set_mode` = no-op (GOP mode fixed at boot); `flush_rect` = no-op (pixels already in LFB; no presentation needed for direct-write framebuffer); `page_flip` = no-op; `get_info` = returns `g_fb.*`
-- [ ] Call `display_register(&vbe_gop_display)` from `framebuffer_init()` after `g_fb` is populated
-- [ ] Verify compositor still reaches desktop on bare-metal after §1 switch -- `g_fb.base` pointer is still valid via `get_info()`
+- [ ] Implement `display_device_t vbe_gop_display`: `set_mode` = no-op (GOP mode fixed at boot); `flush_rect` = copy the rect from the RAM back buffer to VRAM (today's `fb_swap_rect()`); `page_flip` = no-op; `get_info` = `fb_get_*()`
+- [ ] Call `display_register(&vbe_gop_display)` at the end of `fb_init()`
+- [ ] Verify compositor still reaches desktop on bare-metal after §1 switch -- the back buffer is still valid via `get_info()`
 - [ ] Boot log: `[DISPLAY] VBE/GOP fallback registered (%ux%u)`
 - [ ] Commit: `"drivers: VBE/GOP display_device_t fallback -- lowest-priority registration, bare-metal safe"`
 
@@ -217,7 +217,7 @@ Detect AMD APU (Vega iGPU on Ryzen 2000–5000, RDNA on Ryzen 6000+) by PCI disp
 | 💎  | VMware/VMSVGA 2D FIFO acceleration + hardware cursor   | ✅ `vmswitch.sys` / `vm3dmp.sys` SVGA driver                        | ✅ `vmwgfx` DRM driver; FIFO commands;               | ⬜ §5 `RECT_FILL`/`RECT_COPY`/`UPDATE` FIFO, `DEFINE_CURSOR`, VirtualBox display |
 | 💎  | VirtIO-GPU scanout pipeline + hardware cursor          | ✅ `viogpu.sys` WDDM miniport                                       | ✅ `virtio-gpu` DRM driver; scanout resources;       | ⬜ §4 -- RESOURCE_CREATE/SET_SCANOUT/FLUSH, cursorq, display event resize        |
 | 💎  | Bochs/BGA VBE DISPI mode-set + Y_OFFSET page-flip      | ✅ `vgapnp.sys` VGA compatible; no Y_OFFSET                         | ✅ `bochs-drm` DRM driver; Y_OFFSET double-buffering | ⬜ §3 -- extract from `framebuffer.c`, double-height VIRT_HEIGHT,                |
-| 💎  | VBE/GOP bare-metal fallback                            | ✅ UEFI GOP fallback for pre-driver                                 | ✅ `efifb` / `vesafb` framebuffer fallback           | ✅ §2 -- Done -- (register existing `framebuffer.c`                              |
+| 💎  | VBE/GOP bare-metal fallback                            | ✅ UEFI GOP fallback for pre-driver                                 | ✅ `efifb` / `vesafb` framebuffer fallback           | ⚠️ §2 -- `framebuffer.c` works; not yet a backend                                |
 | 💎  | Intel HD/UHD iGPU modesetting                          | ✅ `igdkmd64.sys` WDDM driver; full display                         | ✅ `i915` DRM driver; KMS modesetting;               | ⬜ §7 -- PRM-based clean-room, GMBUS EDID, pipe/transcoder/plane                 |
 | 💎  | AMD APU Vega/RDNA display modesetting                  | ✅ `amdkmpfd.sys` WDDM; DCN display engine                          | ✅ `amdgpu` DRM; DCN modesetting; GPUOpen            | ⬜ §8 -- GPUOpen clean-room, DCN OTG+DPP, EDID                                   |
 | 💎  | Multi-head: compositor spans/mirrors monitors          | ✅ `NtQueryDisplayConfig` / `NtSetDisplayConfig`; multi-monitor DWM | ✅ `xrandr`; DRM connector enumeration; compositor   | ⬜ §6 `display_get_head[]`, compositor per-head buffer, `NtQueryDisplayConfig`   |
@@ -227,12 +227,12 @@ Detect AMD APU (Vega iGPU on Ryzen 2000–5000, RDNA on Ryzen 6000+) by PCI disp
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
-- [ ] QEMU Bochs (`-device bochs-display`): boot log `[DISPLAY] VBE DISPI Bochs ...`; desktop renders; compositor calls `display_flush_rect()` (not raw `g_fb.base` writes)
+- [ ] QEMU Bochs (`-device bochs-display`): boot log `[DISPLAY] VBE DISPI Bochs ...`; desktop renders; compositor calls `display_flush_rect()` (not `fb_swap()`)
 - [ ] QEMU VirtIO-GPU (`-device virtio-vga`): boot log `[virtio-gpu] Scanout %ux%u`; hardware cursor moves smoothly; resize QEMU window → `wm_display_resized()` fires
 - [ ] VirtualBox VMSVGA: boot log `[VMSVGA] SVGA II %ux%u FIFO`; hardware cursor visible; resize VM window → display adapts
 - [ ] Bare metal (no GPU module loaded): `[DISPLAY] VBE/GOP fallback registered`; desktop reaches GUI unchanged
 - [ ] `display_get_active()` returns highest-priority registered device; priority order: VMSVGA=ACCEL(100) > VirtIO-GPU=ACCEL(100) > Bochs=STANDARD(50) > VBE/GOP=FALLBACK(1)
-- [ ] `rg "g_fb\.base" src/desktop/ src/kernel/gfx/` → 0 matches (all flushed via vtable after §1)
+- [ ] `rg "fb_swap(_rect)?\(" src/kernel/main/compositor.c` → 0 matches (all flushed via vtable after §1)
 - [ ] Multi-head: QEMU `-device virtio-vga -device virtio-vga` → `[DISPLAY] 2 head(s) registered`; compositor allocates two back-buffers
 - [ ] `NtQueryDisplayConfig` syscall returns `STATUS_SUCCESS` with correct width/height for each head
 - [ ] Commit: `"drivers: GPU display -- display_device_t vtable, VMSVGA, VirtIO-GPU, Bochs, multi-head"`
