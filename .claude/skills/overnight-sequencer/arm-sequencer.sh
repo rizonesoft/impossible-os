@@ -590,6 +590,10 @@ echo "  monitor (from any dir): bash $REPO_ROOT/scripts/overnight/overnight-moni
 echo "  reports: $REPO_ROOT/.claude/overnight/reports/latest.log (created at first launch)"
 echo "  scheduler: repo-vendored (scripts/overnight/), no external plugin dependency"
 echo "  disarm: bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm"
+# Arming starts a countdown (v19 capture, 2026-09-03): an attended edit begun
+# after the arm was swept into the run's first commit 3 minutes later. Say so.
+_first_fire=$(systemctl --user show "$UNIT.timer" -p NextElapseUSecRealtime --value 2>/dev/null || true)
+echo "  DEADLINE: the tree must be CLEAN by the first launch (${_first_fire:-the next timer tick}); do not begin an attended edit you cannot land before then -- disarm, land it, and re-arm instead."
 # Reached only if every statement above ran. The EXIT trap reads this to decide
 # between a clean summary and the did-not-complete WARN, and it is the last
 # assignment on purpose: anything added below must move it further down.

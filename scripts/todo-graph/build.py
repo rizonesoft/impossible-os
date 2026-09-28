@@ -35,14 +35,15 @@
 #      is written and any previous cache is left byte-identical -- see
 #      "THE PRODUCER GENERATION WINDOW" below.
 #
-# Performance target: under 2s wall-clock for ~86 TODO files. Strategy:
+# Performance target: linear in corpus bytes, held by test_build.sh Test 7 as a
+# CPU-time rate (250 ms per MiB of todo/, floor 2 s; 118-153 ms/MiB measured on
+# 2026-09-28 at ~13.5 MB). The original target was 2 s wall-clock for ~86 files.
+# Strategy:
 #   - Single batched `git log` call gets created_at + last_active_at
 #     timestamps for every file in one process invocation.
 #   - YAML parsing uses PyYAML (declared in scripts/setup-deps.sh).
 #   - All other parsing is pure-stdlib regex + string ops.
 #
-# Today the repo has 223 tracked TODO files; even at that scale the
-# expected wall-clock is well under 2s on a dev machine.
 # ============================================================================
 
 import argparse

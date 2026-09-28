@@ -2287,7 +2287,14 @@ print('first_noio=%s' % first('no-io-row'))" 2>/dev/null || echo 'parse_failed=1
         ERRORS=$((ERRORS + LINT24_UNKNOWN))
     fi
     if [ "${LINT24_WARN:-0}" -gt 0 ] 2>/dev/null; then
-        echo -e "${YELLOW}warn${NC}: Check 24 (reachability) ${LINT24_ITEMS} open \`- [ ]\` item(s) across ${LINT24_WARN} Deferred section(s); repair shape is \`- [/]\` naming the blocker"
+        # A missing cache means the per-file fallback ran and the count is
+        # PARTIAL (192 vs the true 1417, 2026-09-03). Say so, as Check 7 does,
+        # rather than printing an 8x undercount as a verdict. Every `build.sh
+        # clean` and every smoke test deletes the cache.
+        LINT24_PARTIAL=''
+        [ -f "$REPO_ROOT/build/todo-cache.json" ] || \
+            LINT24_PARTIAL=' (cache absent -- PARTIAL count; run bash scripts/todo-graph/build-and-validate.sh --keep-cache)'
+        echo -e "${YELLOW}warn${NC}: Check 24 (reachability) ${LINT24_ITEMS} open \`- [ ]\` item(s) across ${LINT24_WARN} Deferred section(s); repair shape is \`- [/]\` naming the blocker${LINT24_PARTIAL}"
         WARNINGS=$((WARNINGS + 1))
     fi
 fi

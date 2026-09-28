@@ -4152,7 +4152,7 @@ def test_raw_html_is_not_rewritten_section48():
     # at 16 MiB). Both in-suite forms would have been read as code defects.
     # A subprocess measures the code; this process cannot.
     probe = r'''
-import sys, time, gc
+import sys, time, gc, resource
 sys.path.insert(0, "scripts")
 import todo_fence as tf
 UNITS = [("dense `<`", "<"), ("dense `</3`", "</3"), ("dense `<!x`", "<!x"),
@@ -4171,13 +4171,26 @@ for name, unit in UNITS:
     # quadratic, and it is size-independent, so the smaller pair keeps the
     # discrimination at a quarter of the allocation. This suite shares a
     # machine with timing-sensitive harnesses in the same pack.
-    for size in (2 * MiB, 8 * MiB):
-        doc = head + unit * (size // len(unit)) + tail
-        t0 = time.monotonic_ns()
-        tf.scan_text(doc).prose_html_boundary_mask()
-        times.append((time.monotonic_ns() - t0) / 1e9)
-        del doc
-        gc.collect()
+    # USER CPU time, sizes INTERLEAVED, best of five. Wall time moved this ratio
+    # between 9.7x and 14.8x on identical bytes (2026-09-04 to 09-27) because the
+    # pack runs suites beside builds and QEMU. Process time (user + system) still
+    # read 8.5x inside the pack on 2026-09-28 while standalone runs sat at
+    # 3.4-4.4x: page-fault system time and a load that changed between an
+    # all-small phase and an all-big phase. User time drops the first, the
+    # interleave exposes both sizes to the same load, and the minimum discards
+    # slowed rounds (load only ever adds time). The threshold is unchanged.
+    docs = [head + unit * (size // len(unit)) + tail for size in (2 * MiB, 8 * MiB)]
+    best = [None, None]
+    for _ in range(5):
+        for k, doc in enumerate(docs):
+            gc.collect()
+            t0 = resource.getrusage(resource.RUSAGE_SELF).ru_utime
+            tf.scan_text(doc).prose_html_boundary_mask()
+            dt = resource.getrusage(resource.RUSAGE_SELF).ru_utime - t0
+            best[k] = dt if best[k] is None else min(best[k], dt)
+    times.extend(best)
+    del docs
+    gc.collect()
     print("%s\t%.4f\t%.4f" % (name, times[0], times[1]))
 '''
     proc = subprocess.run([sys.executable, "-c", probe], capture_output=True,

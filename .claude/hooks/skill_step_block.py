@@ -612,6 +612,43 @@ def _heuristic_check_steps_1_2_3(d: dict, root: str, entry: dict) -> None:
         )
 
 
+# Paths whose commits need no build or review step: roadmap and docs text.
+_DOCS_ONLY_PREFIXES = ("todo/", "docs/")
+
+
+def _tree_is_docs_only(root: str) -> bool:
+    """True when EVERY change in the working tree -- staged, unstaged and
+    untracked -- is under todo/ or docs/. A single command can only commit
+    what exists in the tree, so such a commit cannot be skipping a build or a
+    review of code: a deferral, a shape repair or a close-out sweep. Any other
+    changed path (or an unreadable status) keeps the gate in force.
+
+    v19 capture (2026-09-03): the gate refused 3 of 4 commits in one file's
+    pass, each a TODO-only deferral or sweep, and the answer was always the
+    same opt-out; 2026-09-27/28 an attended session paid it about eight times.
+    """
+    try:
+        r = subprocess.run(["git", "-C", root, "status", "--porcelain", "-z", "--untracked-files=all"],
+                           capture_output=True, text=True, timeout=10)
+    except Exception:
+        return False
+    if r.returncode != 0:
+        return False
+    entries = [e for e in r.stdout.split("\0") if e]
+    paths = []
+    skip_next = False
+    for e in entries:
+        if skip_next:                      # the ORIGINAL path of a rename/copy
+            paths.append(e)
+            skip_next = False
+            continue
+        code, path = e[:2], e[3:]
+        paths.append(path)
+        if code[0] in "RC" or code[1] in "RC":
+            skip_next = True
+    return bool(paths) and all(p.startswith(_DOCS_ONLY_PREFIXES) for p in paths)
+
+
 def main() -> int:
     try:
         d = json.load(sys.stdin)
@@ -700,6 +737,9 @@ def main() -> int:
             except Exception:
                 pass
     if not missing:
+        return 0
+
+    if d.get("tool_name") == "Bash" and _tree_is_docs_only(root):
         return 0
 
     # Bootstrap: the terminal "commit + push" step (19 for implement,

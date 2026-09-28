@@ -56,7 +56,7 @@ Never bypass the gate via `SKIP_PHASE1_BLOCK`. Verification reads are SLICES (`R
    - `src/boot/` -> `Agent(subagent_type="boot-quality-auditor", ...)` (Sonnet; UEFI/EBS/ABI/POST16 gates)
 
    **When a fresh same-diff auditor dispatch returned its walk, its findings ARE the mechanical gate pass** -- triage them per `superpowers:receiving-code-review` (verify each at file:line); do NOT also re-read the domain skill file and re-walk all gates in this session. Measured 2026-07-03 (run-20260702-141810.log): all 8 auditor dispatches were followed within seconds by a full main-session `kernel-code-quality/SKILL.md` read + inline re-walk -- pure duplication on a diff that still gets the two step-8 Codex quality dispatches plus adversarial. The main-session full walk is REQUIRED only when the auditor was not dispatched or its dispatch failed:
-   - `src/boot/` -> read and walk `boot-code-quality` (all 10 gates)
+   - `src/boot/` -> read and walk `boot-code-quality` (every gate)
    - `src/kernel/` -> read and walk `kernel-code-quality` (all 10 gates)
    - `src/desktop/` -> `desktop-code-quality` | `src/shell/` -> `shell-code-quality` | `user/` -> `userland-code-quality` (no auditor agents exist for these three yet -- always walk them yourself)
    Record any gate failures (the auditor's + any you catch during triage) as findings.
@@ -71,6 +71,8 @@ Never bypass the gate via `SKIP_PHASE1_BLOCK`. Verification reads are SLICES (`R
    bash scripts/codex-dispatch.sh '[review-kind: consistency] <todo-path> <consistency prompt>'
    ```
    **Prompt shape:** start with `[review-kind: consistency]` plus the TODO path + `§<N>`. Use [`codex-prompt-template.md`](codex-prompt-template.md) (consistency section). Angles: struct layout must match byte-for-byte across kernel + bootloader mirrors, constants defined in one place (no silent duplication with drift potential), API contracts (signature + error-code semantics match consumer expectations), ABI schemas (NVRAM variable name + GUID + attrs + size match producer/consumer), SSDT row ↔ function ↔ registration consistency, Win32 vs NT semantics, same narrowing / truncation / padding patterns applied uniformly across cross-file changes.
+
+   **A stale documentation claim means re-read the WHOLE section body once, not re-grep.** When a consistency round names a claim that contradicts the code, fix it and then read the section body top to bottom before re-dispatching. A grep built from the spellings you already know cannot find superseded behaviour described in WORDS ("draws no QR", "returns the number of rows drawn"); measured 2026-09-05, TODO-03 section 23, six rounds (~1 hour) of patch-and-re-grep, cleared in one read.
 
    **8b. Performance dispatch.** Invoke `codex-perf-review` via the plugin:
    ```bash

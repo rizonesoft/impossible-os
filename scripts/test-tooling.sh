@@ -828,7 +828,13 @@ if [ -f "$FENCE_TEST" ]; then
     if [ "$?" = "0" ]; then
         t_pass "scripts/tests/test_todo_fence.py PASS ($(printf '%s\n' "$FENCE_OUT" | tail -1))"
     else
-        t_fail "scripts/tests/test_todo_fence.py FAIL ($(printf '%s\n' "$FENCE_OUT" | tail -3 | tr '\n' ' '))"
+        # Quote the NAMED failure block ("test_todo_fence FAIL (N):" and the
+        # assertions under it), not `tail -3`: the suite's last lines are its
+        # fixtures' ordinary diagnostic stdout, printed on passing runs too, and
+        # quoting them sent eight 2026-09 triages after healthy fixtures.
+        _FENCE_WHY=$(printf '%s\n' "$FENCE_OUT" | awk '/FAIL \(/ {p=1; print; next} p && /^ *- / {print; next} p {exit}' | tr '\n' ' ')
+        [ -n "$_FENCE_WHY" ] || _FENCE_WHY=$(printf '%s\n' "$FENCE_OUT" | tail -3 | tr '\n' ' ')
+        t_fail "scripts/tests/test_todo_fence.py FAIL ($_FENCE_WHY)"
         _tt_nested_fail_detail "test_todo_fence" "$FENCE_OUT"
     fi
 else

@@ -36,6 +36,23 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# ONE MATRIX PER WORKTREE (v19 capture, 2026-09-05). Two concurrent runs share
+# build/smoke-matrix/ and the built image, and both reported "4/4 legs failed"
+# with legs ending in 0-5 s -- indistinguishable from a real boot regression --
+# while the same tree passed 4/4 alone. Serialise like scripts/test-tooling.sh:
+# wait for the other run, refuse loudly only if it is still running afterwards.
+_SM_LOCK="${TMPDIR:-/tmp}/impossible-os-smoke-matrix.$(printf '%s' "$REPO_ROOT" | cksum | cut -d' ' -f1).lock"
+_SM_WAIT="${SMOKE_MATRIX_LOCK_TIMEOUT:-1200}"
+if command -v flock >/dev/null 2>&1 && { exec 8>"$_SM_LOCK"; } 2>/dev/null; then
+    if ! flock -n 8 2>/dev/null; then
+        echo "test-smoke-matrix: another matrix is running in this worktree; waiting up to ${_SM_WAIT}s (lock: $_SM_LOCK)" >&2
+        if ! flock -w "$_SM_WAIT" 8 2>/dev/null; then
+            echo "test-smoke-matrix: REFUSING to start -- another matrix still holds the lock after ${_SM_WAIT}s; two runs in one worktree fail each other's legs." >&2
+            exit 3
+        fi
+    fi
+fi
+
 GREEN='\033[0;32m'; RED='\033[0;31m'; DIM='\033[0;90m'; CYAN='\033[0;36m'; NC='\033[0m'
 
 # engine:cpus. KVM first: it is the fastest, so a break that both engines see is

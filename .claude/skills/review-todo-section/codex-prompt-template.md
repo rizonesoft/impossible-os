@@ -105,6 +105,11 @@ Adversarial review angles (mandatory; cover ALL):
 - ABI mismatch: struct layout, calling convention, error-code semantics
 - resource leaks on error paths
 - bounds on untrusted input (user-mode, disk, network)
+- (control-flow refactor routing call sites through a new predicate/enum/tier)
+  enumerate EVERY value of the new predicate and state what the user gets on
+  each path, INCLUDING values no branch handles -- a missing branch is not in
+  the diff, so diff-scoped angles cannot see it (2026-09-05: five approvals
+  over a tier chain with no NONE arm)
 
 For each finding: file:line, severity (Critical/High/Medium/Low),
 specific evidence, and proposed fix. Do NOT propose stylistic changes.

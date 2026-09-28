@@ -440,6 +440,15 @@ def _load_cache(root):
         if exc.reason in _CACHE_FALLBACK_REASONS:
             _CACHE_LOADED.update(missing=True, resolved=True,
                                  root=canonical)
+            # LABEL the degraded read (v19 capture, 2026-09-03): without the
+            # cache the per-file fallback reported 192 open items where the
+            # truth was 1417, exit 1 and empty stderr, so every consumer read
+            # an 8x undercount as an honest verdict. The JSON is unchanged;
+            # the notice is on stderr, where lint and humans see it.
+            sys.stderr.write(
+                "todo-reachability: build/todo-cache.json is missing -- per-file "
+                "fallback, counts are PARTIAL; rebuild with "
+                "bash scripts/todo-graph/build-and-validate.sh --keep-cache\n")
             return _CACHE
         # NOT a silent degrade. See EXIT_INFRA above: the cache exists and
         # cannot be trusted, so the audit refuses rather than quietly answering

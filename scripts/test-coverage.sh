@@ -2,7 +2,7 @@
 # =============================================================================
 # test-coverage.sh -- Scan kernel test files and report coverage
 #
-# Scans src/kernel/test/test_*.c for TEST_ASSERT calls and
+# Scans src/kernel/test/test_*.c for TEST_ASSERT* calls (comments excluded) and
 # test_suite_register calls to produce a coverage summary.
 #
 # Usage:
@@ -39,6 +39,20 @@ declare -a SUITE_NAMES=()
 TOTAL_ASSERTIONS=0
 TOTAL_SUITES=0
 
+# Assertion CALLS per file, computed in ONE python pass (a per-file spawn cost
+# ~2.5s on every build): occurrences of `TEST_ASSERT...(` outside comments.
+declare -A ASSERT_CALLS=()
+while IFS=$'\t' read -r _cf _cn; do ASSERT_CALLS["$_cf"]=$_cn; done < <(python3 - "$TEST_DIR"/test_*.c <<'PYEOF'
+import re, sys
+for path in sys.argv[1:]:
+    t = open(path, errors="replace").read()
+    t = re.sub(r"/\*.*?\*/", " ", t, flags=re.S)
+    t = re.sub(r"//[^\n]*", "", t)
+    n = len(re.findall(r"\bTEST_ASSERT[A-Z0-9_]*\s*\(", t))
+    print(path + "\t" + str(n))
+PYEOF
+)
+
 for f in "$TEST_DIR"/test_*.c; do
     [ -f "$f" ] || continue
     basename="$(basename "$f" .c)"
@@ -46,8 +60,11 @@ for f in "$TEST_DIR"/test_*.c; do
     [ "$basename" = "test_runner" ] && continue
     name="${basename#test_}"
 
-    # Count TEST_ASSERT calls (grep -c returns 0 with exit 1 on no match)
-    asserts=$(grep -c 'TEST_ASSERT' "$f" 2>/dev/null) || asserts=0
+    # Count TEST_ASSERT* CALLS: occurrences of `TEST_ASSERT...(` outside
+    # comments. A plain `grep -c` counted LINES, so a comment naming the macro
+    # counted as an assertion and two asserts on one line counted once
+    # (v19 capture, 2026-09-03; corpus moved 15570 -> 15535 when fixed).
+    asserts=${ASSERT_CALLS[$f]:-0}
 
     # Count test_suite_register / test_suite_register_cat calls
     suites=$(grep -c 'test_suite_register' "$f" 2>/dev/null) || suites=0
