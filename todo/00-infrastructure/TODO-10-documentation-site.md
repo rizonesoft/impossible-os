@@ -16,6 +16,7 @@ file_patterns:
 # TODO-10 -- Documentation Site and Documentation Corpus
 
 > **Validated:** 2026-09-28 | validate-todo-file clean (structure / IO table / XREF / test wiring)
+> **Gap-audited:** 2026-09-28 | gap-audit + codex-gap-audit; 8 findings filed (§23 link check, new §24 versioned docs, new §25 search + accessibility, reciprocal D12 T06 §2/§8)
 
 > **Goal:** Every roadmap file under `todo/` gets real documentation, published at [impossibleos.co/docs](https://impossibleos.co/docs/) and generated from Markdown in `docs/`, and no published fact (release date, repository owner, counts, design tokens, links) can drift from its source. A TODO file is the plan; its docs page is what a user, contributor or operator reads to understand what shipped.
 
@@ -42,7 +43,9 @@ file_patterns:
 - Every roadmap file has at least one docs page that meets the §3 contract, and `docs/.coverage-baseline.json` is empty.
 - A new roadmap file cannot be committed without its docs page (Check 30 already refuses it once the baseline stops listing it).
 - A docs page that describes code which has since changed is flagged (§22).
-- The site has a sitemap, per-page last-updated dates, better search, and a docs snapshot per release (§23).
+- The site has a sitemap, per-page last-updated dates and a scheduled external-link check (§23).
+- Every OS and SDK release keeps a docs snapshot pinned to its own commit, and the SDK API reference is published (§24).
+- Search finds API identifiers anywhere on a page, and the docs UI passes keyboard and screen-reader checks (§25).
 
 ## Implementation Order
 
@@ -70,7 +73,9 @@ file_patterns:
 | 💎  |  20   | §20 Document: Applications and accessories (15 roadmap files)            | §2, §3     |  [ ]   |
 | 💎  |  21   | §21 Document: SDK, release, ports and research (21 roadmap files)        | §2, §3     |  [ ]   |
 | ⭐  |  22   | §22 Doc freshness: `sources=` and a stale-page warning                   | §3         |  [x]   |
-| 💎  |  23   | §23 Site polish: sitemap, last-updated, search, release snapshots        | §1         |  [ ]   |
+| 💎  |  23   | §23 Site polish: sitemap, last-updated, link health, OpenGraph           | §1         |  [ ]   |
+| 💎  |  24   | §24 Versioned release docs: retention, pinned refs, SDK reference        | §1, §23    |  [ ]   |
+| 💎  |  25   | §25 Docs search completeness and accessibility                           | §1         |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -722,22 +727,59 @@ A page that was right when written goes wrong when its code changes. Neither Win
 
 ---
 
-## 23. Site Polish: Sitemap, Last-Updated, Search, Release Snapshots
+## 23. Site Polish: Sitemap, Last-Updated, Link Health, OpenGraph
+
+> **Spawned-by:** root
 
 - [ ] Emit `sitemap.xml` and `robots.txt` for the landing page, the design page and every docs page, with `lastmod` from git; the Pages workflow must fetch full history (`fetch-depth: 0`) for this
 - [ ] Show "Last updated <date>" in each docs page footer from `git log -1 --format=%cs -- <page>`
-- [ ] Improve search: index H2/H3 text with anchors so a hit jumps to the section, and rank title > heading > body; keep `search.json` under 2 MB
-- [ ] Release snapshots: when a `v*` tag is pushed, build the docs at that tag into `docs/<version>/` of the published site and add a version picker; `main` stays the default
 - [ ] Add Open Graph and canonical URL tags to docs pages from `project.json`
+- [ ] Scheduled external-link check (the `linkcheck` equivalent): a weekly workflow HEAD/GETs every external `http(s)` link in `docs/**` and `gh-pages/`, with retry and an allowlist; never per-commit, since Check 30 covers internal links only
 - [x] Landing page feature claims verified against the code and rendered from data
   - Every claim checked (mapper pass plus Codex): removed false ones (per-CPU run queues, CFS, "no legacy IDE polling", GPU acceleration, TCP "in progress", VirtIO-net, `WriteFile` in the SDK, a shipped shim chain, "zero legacy bloat"); planned work is now called planned, including Linux binary support in the pillars and meta text.
   - Cards live in `gh-pages/features.json` (`owners`, `sources`) and render into `{{feature_cards}}`; the "N roadmap sections to go" line is computed with the todo-graph producer's `extract_implementation_order`, and a dead owner, untracked source or dash fails `build.py --check`. Test: `FeatureCards` in `scripts/site/tests/test_build.py`.
 - [x] GitHub About box (description, homepage, topics) derives from `project.json` and is drift-checked
   - `scripts/site/repo_meta.py`: `tagline` is the description, `site_url` the homepage, `topics` the topics; `--apply` writes them with `gh repo edit` and re-diffs, `--check` compares the live repo. Applied 2026-09-27 (removed the em dash, `http` homepage, added 5 topics).
   - Offline `validate()` (shape, dashes, https, GitHub topic rule, case-folded duplicates) runs in `build.py --check`; `.github/workflows/repo-metadata.yml` runs the live check on change and daily, so a GitHub UI edit turns it red. 4 tests in `scripts/site/tests/test_build.py`.
-- [ ] Commit: `"site: sitemap, last-updated dates, section search, release doc snapshots"`
+- [ ] Commit: `"site: sitemap, last-updated dates, external link check, OpenGraph"`
 
-**Test checkpoint:** the deployed site serves `https://impossibleos.co/sitemap.xml` listing every docs page; a search for a section heading lands on that section; a test tag build produces a versioned docs tree locally. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
+**Test checkpoint:** the deployed site serves `https://impossibleos.co/sitemap.xml` listing every docs page; each docs page footer shows its last-updated date; the link-check workflow reports a planted dead external link in a fixture and passes on the real tree. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
+
+---
+
+## 24. Versioned Release Docs: Retention, Pinned Refs, SDK Reference
+
+> **Spawned-by:** §23 (split)
+
+A release snapshot is only useful if it survives later deploys and still points at the code it describes. Today every deploy publishes a fresh whole-site artifact (`.github/workflows/pages.yml`), `site-live.yml` repairs drift by redeploying `main`, and `scripts/site/build.py` hardcodes `main` in source, image and edit links (`build.py:310`, `:335`, `:435`, `:699`).
+
+- [ ] Release snapshots: when a `v*` tag is pushed, build the docs at that tag into `docs/<version>/` of the published site and add a version picker; `main` stays the default
+- [ ] Version manifest (for example `gh-pages/versions.json`) is the authoritative list of retained releases; every deploy AND every `site-live.yml` repair assembles `main` plus each listed release tree
+- [ ] `scripts/site/verify_live.py` verifies every retained release tree, not just the files of the current `main` build
+- [ ] Add a release ref and URL base to rendering: source, directory, image and edit links pin to the release commit; nav, search index and canonical URLs are scoped to that version
+- [ ] Two version namespaces: OS `v*` and SDK `sdk/v*` (created by D12 T06 §8 `release-sdk.sh`) each trigger a snapshot under their own path
+- [ ] Publish the SDK API reference that D12 T06 §2 `gendoc` writes to `sdk/docs/api-reference/` under `docs/sdk/api/` for `main` and per SDK tag -> XREF: `D12 T06 §2`
+- [ ] Tests: two releases then a `main` deploy and a repair leave both releases served; a release page links to its tag commit after `main` deletes the referenced file; an `sdk/v*` fixture tag publishes reference pages matching its headers
+- [ ] Commit: `"site: retained, version-pinned release docs and SDK API reference"`
+
+**Test checkpoint:** after two test tags and a later `main` deploy, `verify_live.py` passes for `main` and both release trees; a release page's source link resolves at its tag; `docs/sdk/api/` renders on the local build. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
+
+---
+
+## 25. Docs Search Completeness and Accessibility
+
+> **Spawned-by:** §23 (split)
+
+Search drops content today: the indexer keeps only plain `text` tokens (inline code and code blocks are skipped, `build.py:374`) and truncates each page to 4,000 characters (`build.py:955`), so documented API names such as `boot_health_publish_json` return no hits. Result selection is visual only (`gh-pages/docs-template.html:205`), which a screen reader cannot follow.
+
+- [ ] Improve search: index H2/H3 text with anchors so a hit jumps to the section, and rank title > heading > body; keep `search.json` under 2 MB
+- [ ] Index inline-code identifiers, code examples and late-page text; meet the size budget with per-section records or index shards, never by silently dropping content
+- [ ] Search box follows the W3C ARIA combobox pattern: `role=combobox`, `aria-expanded`, `aria-controls`, `aria-activedescendant` on arrow keys, results in a `listbox` with `option` roles
+- [ ] Static accessibility checks in `build.py`'s check mode: every image has non-empty alt text, heading levels do not skip, every page has exactly one H1
+- [ ] Tests: a search fixture finds an inline-code identifier and a match past character 4,000; the a11y check rejects a missing alt and an H2 to H4 skip
+- [ ] Commit: `"site: complete search index and accessible search and pages"`
+
+**Test checkpoint:** searching `boot_health_publish_json` on the local build returns its page; keyboard-only navigation of search results is announced by a screen reader (NVDA or Orca); the check mode reports a planted missing alt text. Test on: WSL2 dev host; Windows with NVDA.
 
 ---
 
@@ -750,12 +792,15 @@ A page that was right when written goes wrong when its code changes. Neither Win
 | ⭐  | Every subsystem has a docs page  | ⚠️ Public APIs only      | ⚠️ Uneven                  | ⬜ §4-§21 coverage gate   |
 | ⭐  | Facts derived from one source    | ❌ Manual                | ❌ Manual                  | ✅ §1 `project.json`      |
 | ⭐  | Stale narrative page detection   | ❌ Review dates          | ❌ Not tracked             | ✅ §22 `sources=` warns   |
-| 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ⬜ §23 snapshots          |
-| 💎  | Site search                      | ✅ Full search           | ✅ Sphinx search           | ⚠️ §1 basic, §23 sections |
+| 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ⬜ §24 retained snapshots |
+| 💎  | Site search                      | ✅ Full search           | ✅ Sphinx search           | ⚠️ §1 basic, §25 full     |
+| 💎  | External link rot check          | ✅ Learn link validation | ✅ Sphinx `linkcheck`      | ⬜ §23 weekly workflow    |
+| 💎  | Published API reference          | ✅ Learn API reference   | ✅ kernel-doc              | ⬜ §24 from D12 T06 §2    |
+| 💎  | Accessible docs UI               | ✅ WCAG conformance      | ⚠️ Theme-dependent         | ⬜ §25 ARIA + checks      |
 
 > **After §1-§3:** the pipeline, the gate and the page contract exist; coverage is measured and cannot regress.
 > **After §4-§21:** every roadmap file is documented and the baseline is empty.
-> **After §22-§23:** stale pages are flagged and the site matches mainstream docs portals on navigation, versions and search.
+> **After §22-§25:** stale pages are flagged and the site matches mainstream docs portals on navigation, versions, search and accessibility.
 
 ---
 
@@ -774,6 +819,7 @@ A page that was right when written goes wrong when its code changes. Neither Win
   - `gen_theme_header.check()` is empty on the committed tree
   - Scripts that do not parse, GitHub About-box validation and diff, and feature cards (open-section count, escaping, dead owner, untracked source, dash)
   - Freshness on a throwaway repo: stale then fresh after a revert, deletion under a source directory, committed and uncommitted pure renames, a merge resolution as baseline, raw file names, literal pathspecs, editing vs merge, per-card baselines, `reviewed` bumps, merged card sources
+- [ ] Extend `scripts/site/tests/test_build.py` with the §24 cases (release retention across deploys, ref-pinned links, `sdk/v*` namespace) and the §25 cases (inline-code search hit, match past 4,000 chars, missing alt, heading skip)
 - [x] Register the suite in `scripts/test-tooling.sh` (runs on every tooling pass; it takes about 2 s, so it is not path-scoped)
 - [x] Commit: `"test: site generator unit tests"` (landed with the section 1-2 review)
 

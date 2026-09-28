@@ -120,6 +120,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
   - `kernel32.md`, `user32.md`, `gdi32.md`, `ntdll.md`, `shell32.md`, `msvcrt.md`, `ixui.md`
   - Index page `api-reference/README.md` with alphabetical function → file links
 - [ ] **`make docs`** target: runs `tools/gendoc` on all headers; places output in `sdk/docs/api-reference/`; then copies `sdk/docs/` to `build/sdk-staging/docs/` for packaging
+- [ ] Keep `sdk/docs/api-reference/` renderable by the docs site (plain Markdown, relative links) so D00 T10 §24 can publish it under `docs/sdk/api/` -> XREF: `D00 T10 §24`
 
 ---
 
@@ -304,6 +305,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
   7. Push: `git push origin sdk/v${VERSION}`
   8. GitHub Release: `gh release create sdk/v${VERSION} build/impossible-os-sdk-${VERSION}.zip build/impossible-os-sdk-${VERSION}.zip.sha256 --title "Impossible OS SDK v${VERSION}" --notes-file sdk/docs/CHANGELOG.md`
   9. Print: `SDK v${VERSION} released → https://github.com/rizonesoft/impossible-os/releases/tag/sdk/v${VERSION}`
+- [ ] The pushed `sdk/v${VERSION}` tag triggers the versioned docs snapshot owned by D00 T10 §24; verify `impossibleos.co/docs/sdk/v${VERSION}/` serves the reference for that tag -> XREF: `D00 T10 §24`
 - [ ] **`sdk-update` shell command** (on-OS):
   - Read `HKLM\SYSTEM\SDK\InstalledVersion` (set by `D10T09 §10` SDK installer)
   - Fetch `https://sdk.impossible-os.dev/latest` → get `latest_version` string (via `SYS_PING`-equivalent HTTP GET)
