@@ -54,7 +54,7 @@ file_patterns:
 | ⭐  |   1   | §1 Site generator, project facts, coverage and drift gate                | --         |  [x]   |
 | 💎  |   2   | §2 Map existing docs pages to their roadmap files                        | §1         |  [x]   |
 | ⭐  |   3   | §3 Documentation page contract, template and create-todo step            | §1         |  [x]   |
-| 💎  |   4   | §4 Document: Infrastructure (9 roadmap files)                            | §2, §3     |  [ ]   |
+| 💎  |   4   | §4 Document: Infrastructure (9 roadmap files)                            | §2, §3     |  [x]   |
 | 💎  |   5   | §5 Document: Boot platform, part 1 (10 roadmap files)                    | §2, §3     |  [ ]   |
 | 💎  |   6   | §6 Document: Boot platform, part 2 (10 roadmap files)                    | §2, §3     |  [ ]   |
 | 💎  |   7   | §7 Document: Boot platform, part 3 (9 roadmap files)                     | §2, §3     |  [ ]   |
@@ -209,7 +209,7 @@ Write docs pages that meet the §3 contract for the 9 roadmap files below. Read 
   - Rewriting 13,943-word `development-tooling.md` or the transfer runbooks into the contract order would have destroyed their reference structure; the overview carries Limits, comparison and See also, and links the reference as the deep dive.
   - `github-setup.md`: corrected the stale "`www` CNAME still targets `rizonetech.github.io`" line (a public resolver returned `rizonesoft.github.io` on 2026-09-28).
 - [x] Added every new page to `docs/infrastructure/index.md` (new Roadmap Overviews table), then ran `python3 scripts/site/build.py --update-baseline` (196 to 194 entries)
-- [ ] Commit: `"docs: infrastructure documentation pages"`
+- [x] Commit: `"docs: infrastructure documentation pages"` (`dfcd162db`)
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
@@ -221,6 +221,9 @@ Write docs pages that meet the §3 contract for the 9 roadmap files below. Read 
 > - **Downstream:** the reference pages §2 mapped keep their `covers=` claims; the overviews link them rather than copying them.
 > - **Found on the way:** `github-setup.md` still said the `www` CNAME pointed at `rizonetech` (fixed); the TODO-09 validation tail asserts pre-move-back state (filed operator-gated in TODO-09 §8).
 > - **Scope boundary:** the eight host-tools pages moved to §26.
+
+> **Verified:** 2026-09-28 | commit `dfcd162db` | 6/6 items | build OK | site: OK, 38/232 documented; tests 34646 kernel + 17 user-mode PASS; smoke PASS
+> **Quality reviewed:** 2026-09-28 | Codex 5x (adversarial x2, adversarial post-ship, consistency, perf) | 13M fixed, 0 open | scope: N/A (docs-only; re-adversarial skipped: docs-only fixes)
 
 
 ---

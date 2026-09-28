@@ -18,12 +18,12 @@ sequenceDiagram
     L->>B: create task, exec, wait with timeout
     B-->>L: [UTEST-BEGIN] ... [PASS]/[FAIL] ... [UTEST-END], exit code
   end
-  L-->>Host: per-binary records, then "=== N passed, N failed, N skipped of N total ==="
+  L-->>Host: framed per-binary records, then a framed summary
   Host->>Host: optional JUnit XML and JSON artifacts in build/
 ```
 
 - **Test binaries.** Each file in [`user/test/`](../../user/test/) exercises one area: syscalls, the C library, IPC, processes, file I/O, Win32 thunks, the ELF, PE32+ and EIF loaders, fault injection, stress and performance. They are built by the normal build and copied onto the system disk.
-- **Assertion header.** [`user/include/test.h`](../../user/include/test.h) is a header-only set of macros (`UTEST_BEGIN`, `UTEST_ASSERT`, `UTEST_SKIP`, `UTEST_END`) that print markers over `SYS_WRITE` and set the exit code. No kernel headers are involved; a test sees only the user ABI.
+- **Assertion header.** [`user/include/test.h`](../../user/include/test.h) is a header-only set of macros (`UTEST_BEGIN`, `UTEST_ASSERT`, `UTEST_SKIP`, `UTEST_END`) that print markers over `SYS_WRITE` and count results; `UTEST_END` reports the counts to the kernel, and `main` returns the failure count as its exit code. No kernel headers are involved; a test sees only the user ABI.
 - **Launcher.** [`test_usermode.c`](../../src/kernel/test/test_usermode.c) scans the disk for `test_*.exe`, runs the binaries one at a time with a timeout, and classifies each result from its exit status, the timeout, and the counters `UTEST_END` submits through the `SYS_TEST_REPORT` syscall. The printed markers are diagnostics for people, not verdict inputs. A binary that exits 0 without reaching `UTEST_END` still counts as passed, and is tallied as unreported.
 - **Output formats.** Plain text is always on; TAP, JUnit XML and JSON are opt-in. The formats and their gates are described in [User-Mode Test Output Formats](../testing/usermode-output-formats.md).
 - **Kernel-side coverage.** The launcher's pure helpers have their own unit tests in [`test_usermode_launcher.c`](../../src/kernel/test/test_usermode_launcher.c), run by the [kernel test harness](kernel-test-harness.md).
@@ -63,7 +63,7 @@ bash scripts/test.sh UTEST_FILTER='test_loader_*'  # only the loader binaries
 bash scripts/test.sh JSON=1                        # also writes build/test-results.json
 ```
 
-The launcher prints `UTEST: === N passed, N failed, N skipped of N total ===` at the end of the user-mode run. Which platforms are expected to pass which binaries, and how to treat known-flaky patterns, is in the [User-Mode Test Environment Matrix](../testing/usermode-env-matrix.md).
+The launcher ends the user-mode run with a summary of the form `=== N passed, N failed, N skipped of N total ===`, logged under a per-boot framed tag (`UTEST-<8 hex digits>:`) rather than a bare `UTEST:`. A test binary writes to the same serial line and could print a lookalike, so `scripts/test.sh` accepts only records carrying the frame; consumers must do the same, as [User-Mode Test Output Formats](../testing/usermode-output-formats.md) describes. Which platforms are expected to pass which binaries, and how to treat known-flaky patterns, is in the [User-Mode Test Environment Matrix](../testing/usermode-env-matrix.md).
 
 ## What is not implemented yet?
 

@@ -33,7 +33,7 @@ Dependencies are tracked at two levels. File-level `depends_on` frontmatter is s
 | Command | Purpose |
 | ------- | ------- |
 | `bash scripts/todo-graph/build-and-validate.sh` | Rebuild the cache and run the validator (`make todo-graph`) |
-| `python3 scripts/todo-graph/query.py section-ready` | Sections whose dependencies have all shipped |
+| `python3 scripts/todo-graph/query.py section-ready` | Open sections that waited on another file and no longer do (sections with no cross-file dependency are excluded by design, so this is not a list of all runnable work) |
 | `python3 scripts/todo-graph/query.py section-blocked` / `section-blocking` | What waits on what, ranked |
 | `python3 scripts/todo-graph/query.py backlinks <id>` | Every reference to a roadmap file |
 | `python3 scripts/todo-graph/query.py deferred-by <id>` | Stamps that parked work on a file |
@@ -68,6 +68,7 @@ The remaining gaps are parked and operator-gated:
 
 - **Parser residuals.** The Markdown scanner does not model multi-line link reference definitions or the interaction of lazy continuation lines with nested containers; both need a backtracking block parser, and three attempts were reverted on measurement. See [HTML Blocks Join the Tracker](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#42-html-blocks-join-the-tracker-and-the-terminal-contract-carries-the-block-kind).
 - **Control-plane parsers.** Several hooks and runner scripts still carry their own fence and clause parsing instead of the shared tracker, and the rewrite hook still swallows two failure classes; all are control-plane edits parked for an operator: [section 37](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#37-one-clause-parser-decides-how-many-destinations-a-clause-names), [section 38](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#38-every-gate-parser-adopts-the-shared-fence-tracker), [section 29](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#29---fix-line-numbers-reports-success-over-targets-it-could-not-resolve). Whether Check 7 should delegate unresolved symbols to the LSP bridge is an operator decision: [section 11](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#11-count-what-check-7-cannot-resolve-instead-of-skipping-it).
+- **Inline scanner.** The code-span scanner still marks span ends with an in-band NUL character; no roadmap line triggers it today, but a NUL outside a code span would. One Accepted stamp in another roadmap file names a tier rather than a section number, so its reference is dropped from the graph until that stamp is corrected. Both are parked in [section 44](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#44-the-inline-scanner-honours-commonmark-precedence-and-the-table-cell-reaches-it-unmodified).
 - **Push-hook fixture.** The pre-push hook passes the pushed commit to the identity gate, and that caller contract is pinned, but no end-to-end fixture yet pushes a commit whose OID differs from `HEAD`. See [The Hook Certifies Repository HEAD](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#57-the-hook-certifies-repository-head-not-the-commit-being-pushed).
 
 ## How does it compare with Windows 11 and Linux?

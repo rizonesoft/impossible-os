@@ -3,7 +3,7 @@
 
 ## What is it?
 
-The desktop and UI test framework tests the graphical desktop automatically: it captures the screen, injects keyboard and mouse input, reads back terminal text and window-manager state, and compares screenshots against reference images. It replaces "boot it, look at the screen, move the mouse" with checks that run in CI and fail on a black screen, a dead button or a terminal that drops characters.
+The desktop and UI test framework tests the graphical desktop automatically: it captures the screen, injects keyboard and mouse input, reads back terminal text and window-manager state, and compares screenshots against reference images. It replaces "boot it, look at the screen, move the mouse" with checks that run in CI: today they catch a black or unrendered desktop and exercise the input, terminal and window-manager APIs in isolation, while end-to-end interaction tests against a running shell are still planned.
 
 ## How does it work?
 
@@ -63,6 +63,7 @@ The repository does not yet commit reference images (`tests/references/` holds o
 
 - **Multi-monitor and DPI matrix.** The per-output snapshot API exists, but only one output is available until a multi-output virtio-gpu driver lands, so most matrix cells skip: [Multi-Monitor and DPI Scaling Test Matrix](../../todo/00-infrastructure/TODO-05-desktop-ui-test-framework.md#13-multi-monitor-and-dpi-scaling-test-matrix).
 - **WCAG sweep.** `make test-wcag` runs a scaffold that reports a pending result until the UI automation tree provider exists: [WCAG Sweep Over Automation Tree](../../todo/00-infrastructure/TODO-05-desktop-ui-test-framework.md#14-wcag-sweep-over-automation-tree).
+- **Live interaction.** Desktop suites run in the kernel test phase, before the shell starts, so the terminal `dir` roundtrip test synthesises the shell's output instead of driving the real `cmd.exe`. A late-phase harness that runs after desktop init is planned in the [Desktop Test Late-Phase Harness](../../todo/09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md#1-post-desktop-init-test-harness), with failure capture ([section 2](../../todo/09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md#2-failure-capture-hook-and-artifact-bundle)) and lock-safe snapshots of the framebuffer and terminal ([section 4](../../todo/09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md#4-snapshot-time-read-side-sync)).
 - **Visual references.** No reference screenshots are committed yet, so visual regression is advisory: the suite skips every scenario without a reference and passes. Seeding them is `make update-ui-refs` plus a reviewed commit.
 - Host-side capture and input use the QEMU monitor, so they do not work on VirtualBox or bare metal; the kernel-side hooks do.
 
