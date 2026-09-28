@@ -19,7 +19,7 @@ Ship the runtime machinery that uses the warm-kernel-update handoff ABI from [01
 
 - [01-boot-platform/TODO-01 §14 Warm-Kernel-Update Handoff ABI](../01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#14-warm-kernel-update-handoff-abi): the ABI contract this runtime implements.
 - [src/kernel/main/boot_warm_update.c](../../src/kernel/main/boot_warm_update.c): validator this runtime calls from `boot_hw.c` after `boot_payload_validate`.
-- Linux 6.16 Kexec Handover (KHO) + Live Update Orchestrator (LUO) as the industry reference.
+- Linux Kexec Handover (KHO, merged in 6.16) + Live Update Orchestrator (LUO, merged later on top of KHO) as the industry reference.
 
 ## Outcome
 
@@ -39,7 +39,7 @@ Ship the runtime machinery that uses the warm-kernel-update handoff ABI from [01
 | 💎  |   6   | Incoming-kernel reattach path (splice memory, restore) | D01 T01 §14       |  [ ]   |
 | 💎  |   7   | Live-update syscall + `nt_live_update` SSDT entry      | §5, §6            |  [ ]   |
 
-> 💎 = parity work: Linux 6.16 KHO + LUO set the baseline for cloud/server kernel replacement without VM bounce.
+> 💎 = parity work: Linux KHO (6.16) + LUO (later) set the baseline for cloud/server kernel replacement without VM bounce.
 
 ---
 
@@ -126,17 +126,17 @@ Syscall interface (`nt_live_update`) with an SSDT entry that user-space privileg
 
 ## OS Comparison
 
-| ⭐  | Feature                      | 🪟 Win11                   | 🐧 Linux                     | 🚀 Impossible OS                |
-| --- | ---------------------------- | -------------------------- | ---------------------------- | ------------------------------- |
-| 💎  | Live kernel replacement      | ⚠️ Hot Patch (closed)      | ✅ 6.16 Kexec Handover + LUO | ⬜ runtime machinery (ABI done) |
-| 💎  | User-process preservation    | ⚠️ Hot Patch scope limited | ✅ KHO preserves VMs         | ⬜ §1 folio preservation        |
-| 💎  | Subsystem-state continuation | ❌                         | ✅ LUO continuation          | ⬜ §2 quiesce callback registry |
+| ⭐  | Feature                      | 🪟 Win11                   | 🐧 Linux                    | 🚀 Impossible OS                |
+| --- | ---------------------------- | -------------------------- | --------------------------- | ------------------------------- |
+| 💎  | Live kernel replacement      | ⚠️ Hot Patch (closed)      | ✅ KHO (6.16) + LUO (later) | ⬜ runtime machinery (ABI done) |
+| 💎  | User-process preservation    | ⚠️ Hot Patch scope limited | ✅ KHO preserves VMs        | ⬜ §1 folio preservation        |
+| 💎  | Subsystem-state continuation | ❌                         | ✅ LUO continuation         | ⬜ §2 quiesce callback registry |
 
 > Impossible OS starts with the ABI contract already in place (TODO-01 §14); this TODO builds the runtime that uses it.
 
 ## Unit Tests
 
-> **Note:** Runtime tests will be wired as each implementation section lands. The ABI-surface validator is already covered by `src/kernel/test/test_boot_warm_update.c` (10 suites in `TEST_CAT_BOOT`).
+> **Note:** Runtime tests will be wired as each implementation section lands. The ABI-surface validator is already covered by `src/kernel/test/test_boot_warm_update.c` (14 suites in `TEST_CAT_BOOT`), and the sealed selection plus its reservation by `src/kernel/test/test_boot_reserved.c`.
 
 ## Verification
 

@@ -61,7 +61,7 @@ file_patterns:
 | 💎  |   8   | §8 Document: Kernel core, part 1 (12 roadmap files)                      | §2, §3     |  [x]   |
 | 💎  |   9   | §9 Document: Kernel core, part 2 (12 roadmap files)                      | §2, §3     |  [x]   |
 | 💎  |  10   | §10 Document: Kernel core, part 3 (12 roadmap files)                     | §2, §3     |  [x]   |
-| 💎  |  11   | §11 Document: Memory and concurrency (11 roadmap files)                  | §2, §3     |  [ ]   |
+| 💎  |  11   | §11 Document: Memory and concurrency (11 roadmap files)                  | §2, §3     |  [x]   |
 | 💎  |  12   | §12 Document: Drivers and hardware, part 1 (13 roadmap files)            | §2, §3     |  [ ]   |
 | 💎  |  13   | §13 Document: Drivers and hardware, part 2 (12 roadmap files)            | §2, §3     |  [ ]   |
 | 💎  |  14   | §14 Document: Storage and filesystems (14 roadmap files)                 | §2, §3     |  [ ]   |
@@ -486,25 +486,39 @@ Write docs pages that meet the §3 contract for the 12 roadmap files below. Read
 
 Write docs pages that meet the §3 contract for the 11 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/memory/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/03-memory-concurrency/TODO-01-vmm-memory-protection.md` (TODO-01 -- VMM Memory Protection & Diagnostics)
-  - `todo/03-memory-concurrency/TODO-02-memory-security.md` (TODO-02 -- Memory Security Hardening)
-  - `todo/03-memory-concurrency/TODO-03-advanced-allocator.md` (TODO-03 -- Advanced Kernel Allocator)
-- [ ] Pages in `docs/memory/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/03-memory-concurrency/TODO-04-pager-reclaim-working-set.md` (TODO-04 -- Pager, Reclaim, and Working Set Manager)
-  - `todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md` (TODO-05 -- Advanced Virtual Memory)
-  - `todo/03-memory-concurrency/TODO-06-scheduler-enhancement.md` (TODO-06 -- Scheduler Enhancement)
-- [ ] Pages in `docs/memory/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/03-memory-concurrency/TODO-07-smp-phase2.md` (TODO-07 -- SMP Phase 2)
-  - `todo/03-memory-concurrency/TODO-08-advanced-sync.md` (TODO-08 -- Advanced Synchronisation Primitives)
-  - `todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md` (TODO-09 -- Win32 IPC Extensions & Async I/O)
-- [ ] Pages in `docs/memory/` for the next 2 roadmap files, each with its `covers=` directive
-  - `todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md` (TODO-10 -- Concurrency & Memory Diagnostics)
-  - `todo/03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md` (TODO-11: Warm-Kernel-Update Runtime)
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: memory and concurrency documentation pages"`
+- [x] Pages in `docs/memory/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/03-memory-concurrency/TODO-01-vmm-memory-protection.md` (TODO-01 -- VMM Memory Protection & Diagnostics): `vmm-memory-protection.md`
+  - `todo/03-memory-concurrency/TODO-02-memory-security.md` (TODO-02 -- Memory Security Hardening): `memory-security.md`
+  - `todo/03-memory-concurrency/TODO-03-advanced-allocator.md` (TODO-03 -- Advanced Kernel Allocator): `advanced-allocator.md`
+- [x] Pages in `docs/memory/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/03-memory-concurrency/TODO-04-pager-reclaim-working-set.md` (TODO-04 -- Pager, Reclaim, and Working Set Manager): `pager-reclaim-working-set.md`
+  - `todo/03-memory-concurrency/TODO-05-advanced-virtual-memory.md` (TODO-05 -- Advanced Virtual Memory): `advanced-virtual-memory.md`
+  - `todo/03-memory-concurrency/TODO-06-scheduler-enhancement.md` (TODO-06 -- Scheduler Enhancement): `scheduler.md`
+- [x] Pages in `docs/memory/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/03-memory-concurrency/TODO-07-smp-phase2.md` (TODO-07 -- SMP Phase 2): `smp-phase2.md`
+  - `todo/03-memory-concurrency/TODO-08-advanced-sync.md` (TODO-08 -- Advanced Synchronisation Primitives): `advanced-sync.md`
+  - `todo/03-memory-concurrency/TODO-09-win32-ipc-extensions.md` (TODO-09 -- Win32 IPC Extensions & Async I/O): `win32-ipc-extensions.md`
+- [x] Pages in `docs/memory/` for the next 2 roadmap files, each with its `covers=` directive
+  - `todo/03-memory-concurrency/TODO-10-concurrency-diagnostics.md` (TODO-10 -- Concurrency & Memory Diagnostics): `concurrency-diagnostics.md`
+  - `todo/03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md` (TODO-11: Warm-Kernel-Update Runtime): `warm-kernel-update.md`
+- [x] No 03 roadmap file had a page, so all eleven are new; every quoted symbol, constant and log string was checked in the tree and every roadmap link against its heading's slug
+  - Most roadmap Implementation Order rows are still `[ ]` while related code shipped under other owners (guard pages, heap redzones, 1 GiB pages, sections, Job Objects, IOCP pool, barriers), so each page describes that code and keeps the roadmap section open.
+- [x] Created `docs/memory/index.md` listing the eleven pages, added a Memory and Concurrency row to `docs/index.md`, then ran `python3 scripts/site/build.py --update-baseline` (143 to 132 entries)
+- [x] Roadmap drift found while writing, fixed in place in TODO-04, 05, 06, 07, 10 and 11
+  - TODO-04 claimed a working swap pager: `swap_init()` has no caller outside `test_swap.c`, so a normal boot never swaps; the current-state line now says so and names the §1 owner.
+  - TODO-06 described a hardcoded LAPIC ICR (it is calibrated by `lapic_timer_calibrate()`); TODO-07 quoted TLB vector `0xE0` (`0xFE`) and nonexistent `smp/smp.h`, `smp/barriers.h`, `sched.c` paths; TODO-05 cited `src/kernel/lz4` and stale `nt_section.c` lines.
+  - TODO-10 said the default stack is 64 KB (8 KiB, already guarded by `task_create()`); TODO-11 counted 10 warm-update suites (14).
+- [x] Commit: `"docs: memory and concurrency documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check` prints `site: OK` with 100/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** eleven contract-shaped overview pages in a new `docs/memory/` folder, one per memory and concurrency roadmap file, with a folder index and a docs home row.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the code it describes changes.
+> - **Status honesty:** only TODO-01 §12 and TODO-06 §11 are complete on their own tables; every page says what is built, what exists under another owner and what is only planned.
+> - **Found on the way:** the swap pager is never initialised at boot, `smp_rendezvous_begin()` has no production caller, and the mutex wait queue and pipe slot claims are still unlocked; all four already have owning roadmap items.
 
 ---
 

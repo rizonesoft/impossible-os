@@ -97,7 +97,7 @@ After `vmm_unmap()` or `mprotect()` modifies a PTE in a shared address space, al
 - [ ] Also hook `tlb_shootdown()` into `vmm_unmap_user_page()` so live per-process shrink/free is cross-CPU coherent (consumer: `02-kernel-core/TODO-21 §3` brk/sbrk shrink defers here)
 - [ ] Also hook `tlb_shootdown()` into `vmm_install_guard_page()`/`vmm_uninstall_guard_page()` -- guards install at RUNTIME, so a stale remote translation can overrun a guard silently (consumer: `02-kernel-core/TODO-21 §19`)
 - [ ] Single-CPU fast path: if `cpu_mask` has only the local CPU bit set, just `invlpg(vaddr)` without IPI overhead
-- [ ] Boot log: `[SMP] TLB shootdown IPI registered (vector 0xE0)`
+- [ ] Boot log: `[SMP] TLB shootdown IPI registered (vector 0xFE)` (`VECTOR_IPI_TLB_SHOOTDOWN` is reserved at `0xFE` in `include/kernel/vectors.h`)
 - [ ] `smp_call_function(cpu, fn, arg)` cross-CPU synchronous call (same IPI+ack pattern): first consumer is BSP delegation of timer-resolution transitions (`timer_set_tick_hz` refuses AP callers today; `KeSetTimerResolution` rolls back AP-side requests -- `src/kernel/time/timer_resolution.c`, filed from `01-boot-platform/TODO-11` §6 review)
   - Second consumer: runtime PAT re-broadcast + divergent-AP MTRR reprogram (SDM 11.11.8) is parked on this call -> XREF: `01-boot-platform/TODO-09 §8` (item: "PARKED (needs SMP IPI rendezvous): runtime PAT re-broadcast + divergent-AP MTRR reprogram"). §8 ships a warn-only audit until an all-CPU rendezvous exists; a fire-and-forget IPI is NOT sufficient.
 - [ ] `irq_send_ipi(cpu, vector)` arch-neutral wrapper over `lapic_send_ipi()` in `src/kernel/irq.c`; retrofit direct callers so neutral code drops `kernel/drivers/lapic.h` (filed from `01-boot-platform/TODO-11` §10)
@@ -188,7 +188,7 @@ Replace the current `scheduler_disable()` RCU read-side primitive with a per-CPU
 
 Provide `cpu_up(id)` and `cpu_down(id)` kernel functions that manage the online CPU set. `cpu_down` migrates all tasks off the target CPU's run queue and sends an INIT IPI to park the AP in its spin loop. `cpu_up` re-activates a parked AP and re-initialises its run queue.
 
-**Files:** `src/kernel/smp/smp.c`, `include/kernel/smp/smp.h`, `src/kernel/sched/sched.c`
+**Files:** `src/kernel/smp/smp.c`, `include/kernel/smp.h`, `src/kernel/sched/task.c`
 
 - [ ] Add `cpu_state_t` enum per CPU: `CPU_OFFLINE`, `CPU_ONLINE`, `CPU_GOING_OFFLINE`; stored in `g_cpu_state[MAX_CPUS]`
 - [ ] `cpu_down(id)`: set state to `CPU_GOING_OFFLINE`; wait for target CPU to reach scheduler idle; drain its run queue -- `steal_work(local_rq, &g_rq[id])` moving all threads; send INIT IPI to park AP; set state `CPU_OFFLINE`
@@ -206,7 +206,7 @@ Provide `cpu_up(id)` and `cpu_down(id)` kernel functions that manage the online 
 
 Define `READ_ONCE(x)` and `WRITE_ONCE(x, val)` as volatile-cast + compiler barrier macros. Annotate all intentionally racy per-CPU accesses (owner field in §5, `nr_running` sampling in §4, `rcu_preempt_cnt` in §6) to eliminate compiler-induced load/store elimination and reordering.
 
-**Files:** `include/kernel/smp/barriers.h` (new or extend `include/kernel/sched/spinlock.h`)
+**Files:** `include/kernel/barrier.h` (already defines `barrier()`, `mb()`, `rmb()`, `wmb()` and the `smp_mb()` family; add the new macros beside them)
 
 - [ ] `#define READ_ONCE(x)    (*(const volatile typeof(x) *)&(x))`
 - [ ] `#define WRITE_ONCE(x, v) (*(volatile typeof(x) *)&(x) = (v))`
@@ -220,7 +220,7 @@ Define `READ_ONCE(x)` and `WRITE_ONCE(x, val)` as volatile-cast + compiler barri
 
 During SMP bringup each AP executes CPUID and reports its feature flags to the BSP. The BSP computes the intersection; the result becomes the system-wide `cpu_features` mask used for context-switch state save selection (`XSAVE` vs `FXSAVE`). Any AP that fails the mandatory feature check (SSE2, NX) is left offline.
 
-**Files:** `src/kernel/smp/smp.c`, `include/kernel/smp/smp.h`, `src/kernel/sched/sched.c`
+**Files:** `src/kernel/smp/smp.c`, `include/kernel/smp.h`, `src/kernel/sched/task.c`
 
 > [!IMPORTANT]
 > This must run during AP bringup (before the AP enters the scheduler for the first time) so that the feature mask is stable before the first `XSAVE`-capable thread is scheduled. Do not query features lazily per context switch.

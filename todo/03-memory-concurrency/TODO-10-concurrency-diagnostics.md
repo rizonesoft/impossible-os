@@ -66,7 +66,7 @@ Map a `PROT_NONE` page immediately below each thread's stack at `thread_create()
 **Files:** `src/kernel/sched/sched.c`, `src/kernel/mm/vmm.c`, `include/kernel/mm/vmm.h`
 
 > [!CAUTION]
-> Thread stacks must be allocated via `pmm_alloc_contiguous()` -- default stack is 64 KB, well over the 4 KB `kmalloc` limit. The guard page has no physical backing frame; it is a VMM-only mapping with `PROT_NONE`. Unmap it on `thread_exit()` / `thread_destroy()` before freeing the stack.
+> Thread stacks must be allocated via `pmm_alloc_contiguous()` -- kernel task stacks are `TASK_STACK_SIZE` (8 KiB), over the 4 KB `kmalloc` limit. Kernel task stacks already carry a guard today: `task_create()` allocates one extra page and calls `vmm_install_guard_page()` (`src/kernel/sched/task.c`), and the page-fault handler prints its label. The guard page has no physical backing frame. Unmap it on `thread_exit()` / `thread_destroy()` before freeing the stack.
 
 - [ ] Add `guard_page_va` (`uintptr_t`) field to `task_t`; set during `thread_create()`
 - [ ] `vmm_map_guard(va, PAGE_SIZE)` -- map one page at `va` as `PROT_NONE` (no read, write, exec); no physical frame backing

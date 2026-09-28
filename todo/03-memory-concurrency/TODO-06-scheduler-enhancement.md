@@ -11,7 +11,7 @@ title: "TODO-06 -- Scheduler Enhancement"
 > **Goal:** Evolve the current round-robin dispatcher into a production-quality scheduler: O(1) priority queues, starvation-proof dynamic aging, CFS vruntime fair sharing, `SCHED_FIFO`/`SCHED_RR`/`SCHED_DEADLINE` real-time classes, CPU affinity, accurate tick calibration via RDTSC+HPET, a unified `/sys/sched` stats view, CPU frequency scaling hooks for ACPI P-states, and dynamic resource-driven thread limits instead of a tiny fixed per-process slot ceiling.
 
 > [!IMPORTANT]
-> The current scheduler tick source is the LAPIC timer with a hardcoded ICR. On Hyper-V Gen 2, the actual bus frequency differs, making quanta unpredictable. §8 tick calibration fixes this and is a hard prerequisite for accurate CFS vruntime accounting in §3. Do not implement §3 before §8 is done.
+> The current scheduler tick source is the LAPIC timer, calibrated at boot by `lapic_timer_calibrate()` (`src/kernel/drivers/lapic.c`: MSR/CPUID frequency, else HPET, PM timer or PIT). It does not yet expose the nanosecond tick interval `g_tick_ns` or a Hyper-V synthetic-timer path. §8 tick calibration adds those and is a hard prerequisite for accurate CFS vruntime accounting in §3. Do not implement §3 before §8 is done.
 
 ## Inputs
 
@@ -186,7 +186,7 @@ Expose per-thread scheduler metrics as a readable VFS file -- class, priority, v
 
 ## 8. Scheduler Tick Calibration
 
-Replace the hardcoded LAPIC ICR with a measured RDTSC + HPET calibration that produces accurate nanosecond tick intervals on any hardware. Fall back to the Hyper-V synthetic timer on Gen 2 VMs where HPET is absent.
+Build on the existing `lapic_timer_calibrate()` waterfall to produce accurate nanosecond tick intervals on any hardware. Fall back to the Hyper-V synthetic timer on Gen 2 VMs where HPET is absent.
 
 **Files:** `src/kernel/drivers/lapic.c`, `include/kernel/drivers/lapic.h`, `src/kernel/sched/sched.c`
 
@@ -392,7 +392,7 @@ Two shipped sections are already blocked on this and neither owns it, which is w
 | 💎  | Per-thread kernel stack      | ✅ per-KTHREAD        | ✅ per-task_struct         | ✅ §11 per-thread rsp0    |
 | 💎  | Resource-driven thread limit | ✅ memory/quota bound | ✅ pid/task + memory bound | ⬜ §12 dynamic table      |
 
-> Parity: matches Win11+Linux on priority queues, aging, RT classes, affinity, tick calibration, cpufreq, per-thread kernel stacks. EDF deadline scheduling and unified /sys/sched thread snapshot are exclusive.
+> Parity: matches Win11+Linux on priority queues, aging, RT classes, affinity, tick calibration, cpufreq, per-thread kernel stacks. EDF deadline scheduling (with GRUB reclaim) is Linux parity (`SCHED_DEADLINE`, `SCHED_FLAG_RECLAIM`) and beyond Win11; the unified /sys/sched thread snapshot is exclusive.
 
 ## Unit Tests
 

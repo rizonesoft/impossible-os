@@ -8,6 +8,7 @@ Welcome to the Impossible OS documentation -- a 64-bit operating system built fr
 | ------------------------------------------------- | ---------------------------------------------------------- |
 | [🥾 Boot Platform](boot/index.md)                 | UEFI loader, boot_info handoff, boot entries, CPU bringup  |
 | [🧠 Kernel](kernel/index.md)                     | Boot chain, memory management, scheduler, IPC              |
+| [🧮 Memory and Concurrency](memory/index.md)       | Virtual memory, heap, paging, scheduler, SMP, sync, IPC     |
 | [💾 Storage](storage/index.md)                    | Storage controllers, partitioning, filesystems             |
 | [🌐 Networking](networking/index.md)              | Network drivers and protocols                              |
 | [🎨 Graphics](graphics/index.md)                  | 2D rendering, compositing, desktop shell                   |

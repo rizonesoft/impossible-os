@@ -141,7 +141,10 @@ Allow callers to communicate access patterns and reclaim committed pages without
 - [ ] Implement `NtUnmapViewOfSection(process, base)` -- remove PTE mappings for the view; decrement section refcount; free frames when refcount reaches 0
 - [ ] COW view: if section is opened `PAGE_WRITECOPY`, mark pages read-only; write fault → copy frame, install in faulting process, remove from shared frame list
 - [ ] Win32 wrappers: `CreateFileMapping` → `NtCreateSection`; `MapViewOfFile` → `NtMapViewOfSection`; `UnmapViewOfFile` → `NtUnmapViewOfSection`
-- [ ] **Retrofit `src/kernel/nt/nt_section.c` once per-process page tables exist**: today `NtMapViewOfSection_handler` returns `STATUS_ACCESS_DENIED` for non-current `ProcessHandle` (`nt_section.c:182`) and `NtUnmapViewOfSection_handler` has a symmetric guard (`nt_section.c:235`). When §5 lands (install PTEs pointing to section frames into the target process's VMM), remove both guards and route the map/unmap through `target->vmm`. This auto-closes TODO-06 §18 Accepted #2 (cross-process map / other-process NtUnmapViewOfSection).
+- [ ] **Retrofit `src/kernel/nt/nt_section.c` once per-process page tables exist**: remove the current-process guards on map and unmap
+  - Today `NtMapViewOfSection_handler` returns `STATUS_ACCESS_DENIED` for a non-current `ProcessHandle` (`nt_section.c:192`) and `NtUnmapViewOfSection_handler` has a symmetric guard (`nt_section.c:255`).
+  - When §5 lands (install PTEs pointing to section frames into the target process's VMM), remove both guards and route the map/unmap through `target->vmm`.
+  - This auto-closes TODO-06 §18 Accepted #2 (cross-process map / other-process NtUnmapViewOfSection).
 - [ ] **Implement `SEC_RESERVE` sparse pagefile-backed sections**: today `src/kernel/ob/ob_section.c::ObCreateSectionEx` always calls `pmm_alloc_contiguous(page_count)` + `memset(0)` for pagefile-backed sections even when `AllocationAttributes & SEC_RESERVE` is set. Spec-correct behavior: reserve the address range in the section (track `page_count` as reserved but allocate no physical frames); install zero-page PTEs on `NtMapViewOfSection`; on first write fault, allocate a frame from PMM and install writable PTE. Requires demand paging from TODO-01 §3 (`→ XREF: 03-memory-concurrency/TODO-01-vmm-memory-protection.md §3`). This auto-closes TODO-06 §18 Accepted #3 (SEC_RESERVE-only sparse pagefile sections).
 - [ ] Commit: `"mm: Section Object -- NtCreateSection / NtMapViewOfSection / NtUnmapViewOfSection"`
 
@@ -192,7 +195,7 @@ LZ4-compress pages that would otherwise be written to the pagefile under `MM_PRE
 > → XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md §5` -- `vmalloc` is the backing store for compressed page data; it must be ready before this section is implemented.
 > → XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md §8` -- compressed memory is triggered by the `MM_PRESSURE_HIGH` callback.
 > → XREF: `03-memory-concurrency/TODO-04-pager-reclaim-working-set.md §3,§5` -- reclaim decides when anonymous pages are offered to compressed backing and when they fall through to the pagefile; keep victim policy authoritative there.
-> LZ4 is already vendored in the kernel (`src/kernel/lz4`). If it is not, add it before this section.
+> LZ4 is already vendored in the kernel (`src/libs/lz4`).
 
 - [ ] Reserve a `vmalloc` pool of configurable size (default: 25% of RAM, read from Registry `HKLM\SYSTEM\Memory\ZramSizeMiB`)
 - [ ] Register a `MM_PRESSURE_HIGH` callback: on high pressure, intercept page eviction before pagefile write → attempt LZ4-compress the page
