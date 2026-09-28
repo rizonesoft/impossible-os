@@ -13,7 +13,7 @@ The only network path a forwarder could use is `udp_send()` in [`udp.c`](../../s
 
 **Planned design.**
 
-1. **Formatting.** Each level maps to a syslog severity (debug 7, info 6, warning 4, error 3, fatal 2) with the kernel facility, and each message becomes `<PRI>1 TIMESTAMP HOSTNAME APPNAME - - - MSG`, with the subsystem tag as the app name. A kernel entry's own timestamp counts from boot, so the date and time must come from the wall clock at send time.
+1. **Formatting.** Each level maps to a syslog severity (debug 7, info 6, warning 4, error 3, fatal 2) with the kernel facility, and each message becomes `<PRI>1 TIMESTAMP HOSTNAME APPNAME - - - MSG`, with the subsystem tag as the app name. A kernel entry's own timestamp counts from boot, so the date and time are reconstructed as the disk log already does it: the current wall clock minus the entry's age. Entries sent late, after the network comes up, therefore keep the time they were logged.
 2. **Configuration.** `HKLM\SYSTEM\Logs\SyslogServer` holds the server's IPv4 address and `SyslogPort` an optional port (default 514). Both are read when disk logging starts, and each new entry is sent from the disk flush path.
 3. **Resilience.** Entries logged before the network is up wait in the ring and are sent once it is; a network outage never blocks the flush; and sending is rate-limited like the rest of the log.
 

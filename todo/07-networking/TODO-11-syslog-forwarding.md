@@ -50,7 +50,7 @@ title: "TODO-11 -- Remote Syslog Forwarding (RFC 5424)"
 - [ ] Map klog levels to RFC 5424 severity: `DEBUG→7`, `INFO→6`, `WARN→4`, `ERROR→3`, `FATAL→2`
 - [ ] Facility: `LOG_KERN (0)` -- PRI = facility × 8 + severity
 - [ ] Format each packet: `<PRI>1 TIMESTAMP HOSTNAME APPNAME - - - MSG`
-  - TIMESTAMP: ISO 8601 UTC from the wall clock (`KeQuerySystemTime()`) at send time, e.g. `2026-04-02T01:55:00Z`; `klog_entry_t.timestamp` counts 10 ms units since boot, not wall time
+  - TIMESTAMP: ISO 8601 UTC of the EVENT, not of the send: reuse the reconstruction in `format_entry()` (`src/kernel/klog_disk.c:249-268`), which subtracts the entry's age (`klog_entry_t.timestamp`, 10 ms units since boot) from `KeQuerySystemTime()`; a delayed-drain test must show queued entries keep their original times and spacing
   - HOSTNAME: `ImpossibleOS` (or from Registry if configured)
   - APPNAME: subsystem tag from klog entry
 - [ ] Implement `syslog_send(const klog_entry_t *entry)` -- formats + sends via `udp_send()`

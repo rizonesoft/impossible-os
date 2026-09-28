@@ -47,7 +47,7 @@ title: "TODO-07 -- Web Browser"
 | 💎  |   2   | §2 HTML parser + DOM tree -- tokenizer, tag/attr/children, essential 20 tags                         | §1 (window infrastructure proven; browser_t struct established)           |  [ ]   |
 | 💎  |   3   | §3 Tab management -- `browser_tab_t`, tab bar UI, Ctrl+T/W/Tab, 16-tab limit                        | §1 (single-tab browser must exist before tabs are abstracted)             |  [ ]   |
 | 💎  |   4   | §4 Block/inline layout engine -- block flow, inline flow, word wrap, vertical scroll, clip           | §2 (DOM tree is the layout engine's input); §3 tabs for per-tab viewport  |  [ ]   |
-| 💎  |   5   | §5 Image loading -- `<img src>` HTTP fetch + `image_load_mem`, inline blit, alt text                 | §2 (DOM `<img>` node); §4 layout (image occupies a block box)             |  [ ]   |
+| 💎  |   5   | §5 Image loading -- `<img src>` HTTP fetch + `image_load_mem`, inline blit, alt text                 | §2 (DOM `<img>` node); §4 layout; 08-graphics-ui/TODO-01 §5 decoder fix   |  [ ]   |
 | 💎  |   6   | §6 CSS parser + style engine -- tokenizer, cascade, box model, computed styles                       | §4 layout (must be stable before CSS modifies box dimensions)             |  [ ]   |
 | 💎  |   7   | §7 JavaScript stub -- `<script>` detection, `[JavaScript disabled]` placeholder, `window`/`document` | §2 DOM (`<script>` tag captured in tokenizer)                             |  [ ]   |
 | 💎  |   8   | §8 Bookmarks manager -- `bookmarks.json`, Ctrl+D add/edit, dropdown, HTML import/export             | §3 tabs (bookmarks are per-browser, not per-tab); §1 address bar          |  [ ]   |
@@ -141,6 +141,7 @@ Block flow (top-to-bottom): each block-level element (`div`, `p`, `h*`, `ul`, `t
 > [!NOTE]
 > `<img>` node detected during DOM walk: `dom_find_attr(node, "src")` → URL. Relative URL resolution: same logic as link de-relativization in §1. `http_get(img_url, img_buf, max_img_size)` where `max_img_size = 8 * 1024 * 1024` (8 MB cap); use `pmm_alloc_contiguous()` for the fetch buffer. After fetch: `image_load_mem(&img, img_buf, img_len)`. If `width`/`height` attributes present: scale image using nearest-neighbour resize (simple `gfx_blit_scaled()`); else: use `img.width × img.height`. Render: in `layout_paint()` when box `display == BLOCK && dom_node->tag == "img"`: call `gfx_blit(win, img.pixels, box_x, box_y, img.width, img.height)`. Alt text fallback: if `http_get` returns -errno or `image_load_mem` returns -1: draw `[img: alt_text]` as a text box.
 
+- [ ] Blocked until `08-graphics-ui/TODO-01-graphics-asset-foundation.md` §5 (item: "Fix the stb_image realloc shim") lands: web images are untrusted, and `image_load_mem()` over-reads on some PNGs today
 - [ ] `browser_load_image(img_url, base_url, &img_out)` → 0 or -errno: resolve relative URL; `pmm_alloc_contiguous(8 MiB)` for fetch buffer; `http_get` or `https_get`; `image_load_mem`; free fetch buffer
 - [ ] Cache decoded images by URL: `img_cache[16] { char url[2048]; image_t img; }` -- check cache before re-fetching; evict LRU on overflow
 - [ ] In `layout_build()`: for `<img>` nodes: call `browser_load_image()`; store `image_t *` in `layout_box_t` extra data; set box `w`/`h` from img dimensions (clamped to viewport width)

@@ -20,7 +20,7 @@ title: "TODO-06 -- NTP, Network Status & Win32 Winsock"
 - `src/kernel/net/icmp.c` -- existing IPv4 ping (`icmp_ping_got_reply`, `icmp_send_echo`); extend with ICMPv6 echo and CLI flags
 - `src/kernel/net/icmp6.c` -- ICMPv6 Echo Request (type 128) / Echo Reply (type 129) from TODO-04 §3
 - `src/kernel/sched/syscall.c` -- `SYS_PING=15` already dispatches to `icmp_send_echo()`; extend for IPv6
-- `include/kernel/time/ntp_adj.h` -- `ke_ntp_adjtime()` slews offsets up to 1 s and steps larger ones; the client never calls `uefi_set_time()` itself
+- `include/kernel/time/ntp_adj.h` + `include/kernel/time/wall_clock.h` -- sourced clock: `ke_ntp_adjtime()` (slew up to 1 s, step above, offsets over 10 years rejected); unsourced clock: validated `KeSetSystemTime()` bootstrap; never `uefi_set_time()`
 - `include/kernel/nt/filetime.h` -- `FILETIME` type (100-ns since 1601); NTP-to-FILETIME conversion utility
 - `include/registry.h` -- `RegSetValueEx`/`RegGetValue`/`HKLM` for NTP Registry keys; also firewall and net config keys
 - `include/kernel/net/net.h` + `net_interface` from TODO-01 §5 -- per-interface `rx_bytes`/`tx_bytes`/`rx_packets`/`tx_packets`/`rx_errors`/`tx_errors` counter fields
@@ -35,7 +35,7 @@ title: "TODO-06 -- NTP, Network Status & Win32 Winsock"
 ## Outcome
 
 - DHCP lease renewal daemon: T1/T2/expiry states, automatic REQUEST renewal, `netif` IP/gateway/DNS updated on renewal.
-- `ntp_sync()` queries `pool.ntp.org`, converts NTP timestamp to FILETIME, hands the offset to `ke_ntp_adjtime()` (slew up to 1 s, step above); retries 3×; runs every 24 h.
+- `ntp_sync()` queries `pool.ntp.org`, converts NTP timestamp to FILETIME, validates the reply against its own request, then disciplines a sourced clock through `ke_ntp_adjtime()` (10-year rejection kept) or bootstraps an unsourced one with `KeSetSystemTime()`; retries 3×; runs every 24 h.
 - `ifconfig` shows all interfaces (MAC, IPv4, IPv6, MTU, RX/TX stats); manual IP/up/down config.
 - System tray shows 🌐 connected / ⚠ disconnected icon with IP tooltip; `net_stats()` API used by Task Manager.
 - `ping` extended: `-6`/`-4`/`-c N`/`-t`; ICMPv6 Echo Request/Reply for IPv6 targets.
@@ -88,15 +88,23 @@ Parse DHCP option 51 (lease time) in ACK. Derive T1 (50% of lease) and T2 (87.5%
 **Files:** `src/kernel/net/ntp.c` (new), `include/kernel/net/ntp.h` (new)
 
 > [!NOTE]
-> This is `[Opus]` -- NTP timestamp conversion and slew-mode clock adjustment are subtle algorithm design problems with no prior implementation in Impossible OS. **NTP packet** (RFC 5905 §7.3): 48 bytes; byte 0 = `(LI<<6) | (VN<<3) | Mode` = `0x1B` (LI=0, VN=3, Mode=3 client); bytes 1–3 = stratum/poll/precision = 0/6/0xEC; bytes 4–47 = 0. **Transmit Timestamp** offset 40: two uint32_t (big-endian): NTP seconds since 1900-01-01 + fractional seconds. **NTP→FILETIME conversion**: NTP epoch offset = `2208988800` seconds (difference between 1900 and 1970 epochs); FILETIME = (NTP_seconds - 2208988800 + 11644473600) × 10,000,000 (100-ns intervals from 1601). **Slew or step**: already implemented kernel-side by `ke_ntp_adjtime()` (`include/kernel/time/ntp_adj.h`, 1 s step threshold, 500 ppm slew cap); this client only measures the offset and calls it. **DNS for NTP**: `dns_resolve("pool.ntp.org", &ntp_ip)` -- use one NTP server from the pool; rotate to backup `0.pool.ntp.org` on timeout.
+> This is `[Opus]` -- NTP timestamp conversion and slew-mode clock adjustment are subtle algorithm design problems with no prior implementation in Impossible OS. **NTP packet** (RFC 5905 §7.3): 48 bytes; byte 0 = `(LI<<6) | (VN<<3) | Mode` = `0x1B` (LI=0, VN=3, Mode=3 client); bytes 1-3 = stratum/poll/precision = 0/6/0xEC; bytes 4-39 = 0; bytes 40-47 (transmit timestamp) = a fresh random 64-bit value per request (`csprng_fill()`), kept as the outstanding request id that the reply's origin timestamp must echo. **Transmit Timestamp** offset 40: two uint32_t (big-endian): NTP seconds since 1900-01-01 + fractional seconds. **NTP→FILETIME conversion**: NTP epoch offset = `2208988800` seconds (difference between 1900 and 1970 epochs); FILETIME = (NTP_seconds - 2208988800 + 11644473600) × 10,000,000 (100-ns intervals from 1601). **Slew or step**: already implemented kernel-side by `ke_ntp_adjtime()` (`include/kernel/time/ntp_adj.h`, 1 s step threshold, 500 ppm slew cap); this client only measures the offset and calls it. **DNS for NTP**: `dns_resolve("pool.ntp.org", &ntp_ip)` -- use one NTP server from the pool; rotate to backup `0.pool.ntp.org` on timeout.
 
 - [ ] `struct ntp_packet { uint8_t flags; uint8_t stratum; uint8_t poll; uint8_t precision; uint32_t root_delay; uint32_t root_disp; uint32_t ref_id; uint32_t ref_ts_s, ref_ts_f; uint32_t orig_ts_s, orig_ts_f; uint32_t rx_ts_s, rx_ts_f; uint32_t tx_ts_s, tx_ts_f; } __attribute__((packed));` in `ntp.h`
-- [ ] `ntp_build_request(buf)`: set `flags=0x1B`; all other fields 0; 48 bytes
-- [ ] `ntp_parse_response(buf, len, &ntp_secs, &ntp_frac)` → 0 or -EINVAL: validate `len >= 48`; extract `tx_ts_s`/`tx_ts_f` (big-endian); `ntp_secs = ntohl(buf->tx_ts_s)`
+- [ ] `ntp_build_request(buf, &xchg)`: `flags=0x1B`; transmit = fresh non-zero `csprng_fill()` value as `xchg.req_id`, local send time `xchg.t1`, deadline; rest 0; 48 bytes
+- [ ] `ntp_parse_response(buf, len, &reply)` → 0 or -EINVAL: `len >= 48`; decode LI, version, mode, stratum and the origin, receive and transmit timestamps (big-endian)
 - [ ] `ntp_to_filetime(ntp_secs)` → `uint64_t filetime`: `filetime = ((uint64_t)(ntp_secs - 2208988800ULL + 11644473600ULL)) * 10000000ULL`
-- [ ] `ntp_apply_time(ntp_secs)`: clock unsourced or offset over `NTP_STEP_MAX_NS`: set it with `KeSetSystemTime()`; else `ke_ntp_adjtime()`; log which
-  - `ke_ntp_adjtime()` returns nothing and silently ignores a correction while `wall_clock_time_sourced()` is 0 (`wall_clock.c:704-714`, a machine with no UEFI or RTC time) or when the offset exceeds 10 years (`:589-591`), so those cases need the absolute set.
-  - Write `LastNTPSync` only after `ke_ntp_get_status()` shows the new sync (or the absolute set happened); acceptance tests: no firmware time, and a clock more than ten years wrong.
+- [ ] `ntp_apply_time(ntp_secs)`: sourced clock -> `ke_ntp_adjtime()` (its 10-year `NTP_STEP_MAX_NS` rejection stands); unsourced clock -> validated `KeSetSystemTime()` bootstrap; log which
+  - `ke_ntp_adjtime()` returns nothing and silently ignores any correction while `wall_clock_time_sourced()` is 0 (`wall_clock.c:704-714`, a machine with no UEFI or RTC time), so only that case sets the time absolutely.
+  - A sourced clock whose offset exceeds `NTP_STEP_MAX_NS` is NOT forced: that guard (`wall_clock.c:589-591`) exists against hostile or garbage replies, and `KeSetSystemTime()` accepts any time past 1601 (`:251-262`), so a zero transmit timestamp would move the clock back to 1900.
+  - Before either path, validate the reply against the ONE outstanding exchange, taken and cleared atomically under the client lock so a racing timeout or second reply cannot reuse it: an unexpired exchange must exist; origin non-zero and equal to `req_id` (RFC 5905 A.5.1); mode 4; version 3 or 4; LI not 3 (unsynchronized); stratum 1-15, and stratum 0 is a kiss-o'-death that backs off and is never applied; receive and transmit non-zero.
+  - The offset comes from all four timestamps (`xchg.t1`, receive, transmit, local arrival), not the transmit time alone. The bootstrap also requires a second server to agree. Write `LastNTPSync` only after `ke_ntp_get_status()` or the absolute set confirms it.
+  - Tests, each asserting the clock, NTP status and `LastNTPSync` stay unchanged: malformed reply, replay after completion, zero origin after timeout and after completion, LI=3 with a valid nonce and in-bound offset, and a kiss-o'-death.
+- [ ] Reject replies whose server timing is poor: decode root delay, root dispersion and reference time; refuse root distance over 1.5 s (RFC 5905 MAXDIST) and a reference time after transmit
+  - Filed 2026-09-29 by the review of `00-infrastructure/TODO-10` section 15: a fresh, nonce-matching reply with a huge root dispersion passes every other check, and freshness says nothing about accuracy (RFC 5905 A.5.1.1). Valid-nonce tests for both rejections.
+- [ ] Discard a measurement that spans a local clock change, applied atomically: add to `src/kernel/time/wall_clock.c` a generation-checked `ke_ntp_adjtime` variant and a set-only-while-unsourced bootstrap
+  - The client lock cannot serialise `NtSetSystemTime`: a manual correction between `t1` and arrival turns an accurate reply into a large stale offset, and an unsourced check followed by `KeSetSystemTime()` can overwrite a source set meanwhile. The wall clock already keeps a private generation (`wall_floor_clamp()`, `wall_clock.h:95-101`); expose it for this. Deterministic concurrent-set tests.
+  - Reciprocal: `02-kernel-core/TODO-08-time-filetime-management.md` section 17 carries a parked pointer to this item.
 - [ ] `ntp_sync()` → 0 or -errno: `dns_resolve("pool.ntp.org", &ip)`; open UDP reply handler on ephemeral port; `udp_send(ip, ephemeral_port, 123, pkt, 48)`; spin-poll 3 s for reply; on timeout: retry up to 3×; on success: `ntp_apply_time()`; write Registry keys
 - [ ] Registry writes: `RegSetValueEx(HKLM, "SYSTEM\\Time\\LastNTPSync", ...)` (DWORD Unix timestamp); `RegSetValueEx(HKLM, "SYSTEM\\Time\\NTPServer", ...)` (SZ "pool.ntp.org"); `RegSetValueEx(HKLM, "SYSTEM\\Time\\TimeZone", ...)` (SZ "UTC")
 - [ ] `ntp_sync_thread()`: `ntp_sync()` at boot; `ksleep(86400000)` (24 h); loop

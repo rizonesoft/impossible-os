@@ -18,7 +18,7 @@ This roadmap finishes the everyday networking tools around the core stack: DHCP 
 **Planned design.**
 
 1. DHCP renewal: lease time, renewal (T1) and rebinding (T2) timers, and a renewal thread.
-2. An NTP client that queries `pool.ntp.org` on UDP port 123 at boot and every 24 hours, hands the measured offset to `ke_ntp_adjtime()`, and records the last sync in the Registry. Because `ke_ntp_adjtime()` ignores corrections when the machine never had a firmware clock, and offsets over ten years, the client sets the time outright with `KeSetSystemTime()` in those cases.
+2. An NTP client that queries `pool.ntp.org` on UDP port 123 at boot and every 24 hours, hands the measured offset to `ke_ntp_adjtime()`, and records the last sync in the Registry. Because `ke_ntp_adjtime()` ignores corrections on a machine that never had a firmware clock, the client sets the time outright with `KeSetSystemTime()` in that one case, after validating the reply. On a clock that already has a source, the kernel's rejection of offsets over ten years stays in force, so one malformed reply cannot move the clock by decades.
 3. Per-interface byte, packet and error counters, a `net_stats()` call and a connected or disconnected icon in the notification area.
 4. `ifconfig` for several interfaces with IPv6, MTU and counters, plus manual address, up and down.
 5. `ping` that waits for replies, with `-4`, `-6`, `-c N` and `-t`.

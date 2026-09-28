@@ -516,6 +516,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 - [x] All anchor writers coordinate on `s_ntp_lock` (order `s_ntp_lock -> s_lock`): a non-NTP `KeSetSystemTime` clears NTP status (`source="none"`, slew/freq 0) atomically with the swap, so a manual set never leaves a stale `"ntp"`
 - [x] Continuous per-tick freq/slew APPLICATION: shipped in §19 (`ke_ntp_discipline_tick` applier behind the generation-aware wall floor).
 - [x] Commit: `"kernel: time -- NTP clock phase and frequency adjustment hooks"`
+- [/] Generation-checked `ke_ntp_adjtime` variant and set-only-while-unsourced bootstrap: owned by its first consumer -> XREF: `07-networking/TODO-06-ntp-status-winsock.md` §2 (item: "Discard a measurement that spans a local clock change")
 
 > **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | NTP tests (tick adjust, step-target valid, reject preserves, source label, manual-set invalidates) + absurd-set reject, 283 kernel tests, 0 failures
 > **Notes:**

@@ -44,7 +44,7 @@ title: "TODO-10 -- PDF Viewer & Document Reader"
 | 💎  |   3   | §3 Page tree -- catalog → Pages, MediaBox, Contents stream, recursive Kids                       | §2 (dict/array deref needed to traverse page tree)                   |  [ ]   |
 | 💎  |   4   | §4 Content stream interpreter -- text operators (BT/ET/Tf/Td/Tj), path (m/l/S/f), state (q/Q/cm) | §3 (page dict provides Contents stream obj IDs)                     |  [ ]   |
 | 💎  |   5   | §5 Font handling -- embedded TrueType/Type1, ToUnicode CMap, stb_truetype render, system fallback | §4 (Tf operator is the font context for text rendering)              |  [ ]   |
-| 💎  |   6   | §6 Image rendering -- XObject images + inline, FlateDecode+DCTDecode, CMYK→RGB, fb_blit         | §4 (Do operator invokes image XObject); §2 (stream decompression)    |  [ ]   |
+| 💎  |   6   | §6 Image rendering -- XObject images + inline, FlateDecode+DCTDecode, CMYK→RGB, fb_blit         | §4 (Do operator); §2 (streams); 08-graphics-ui/TODO-01 §5 decoder fix |  [ ]   |
 | 💎  |   7   | §7 Page renderer -- rasterize to bitmap, composite text+graphics+images, DPI scaling             | §5 fonts + §6 images (all content types must render before compositor) |  [ ]   |
 | 💎  |   8   | §8 PDF viewer app -- scroll, zoom, navigation, thumbnail sidebar, text search, print            | §7 (renderer must produce pixel buffers before viewer can display)   |  [/]   |
 | 💎  |   9   | §9 PDF from HTTP -- `https_get` pipe to viewer, pdf:/https: URL, no disk write                  | §8 (viewer app must be ready to accept in-memory buffer); TODO-03    |  [ ]   |
@@ -171,6 +171,7 @@ Inline images and XObject images. Decompress: FlateDecode (`stbi_zlib_decode_buf
 - [ ] `pdf_decode_cmyk(data, len, w, h, &img)`: apply CMYK→RGB formula per pixel; output ARGB32
 - [ ] `pdf_render_image(ctx, img, x, y, w_pts, h_pts)`: transform `(x, y, w, h)` from PDF user space to screen pixels via CTM + Y-flip + DPI scale; `image_scale(&scaled, &src_img, screen_w, screen_h)` if dimensions differ; `fb_blit(screen_x, screen_y, scaled.pixels, screen_w, screen_h, screen_w*4)` into page render buffer
 - [ ] Inline image parser: in `pdf_interp.c` handle `BI` → parse abbreviated key/value pairs (e.g., `/CS /RGB /BPC 8`) until `ID`; read pixel data until `EI`; call `pdf_decode_*`
+- [ ] Blocked until `08-graphics-ui/TODO-01-graphics-asset-foundation.md` §5 (item: "Fix the stb_image realloc shim") lands: PDF image streams are untrusted input to `image_load_mem()`
 - [ ] Commit: `"apps/pdf: image rendering -- FlateDecode+DCT decode, CMYK→RGB, CTM transform, fb_blit"`
 
 ## 7. Page Renderer `[Opus]`

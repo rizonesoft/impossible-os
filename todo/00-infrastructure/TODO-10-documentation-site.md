@@ -691,6 +691,7 @@ Write docs pages that meet the §3 contract for the 11 roadmap files below. Read
   - TODO-08 named Monocypher's BLAKE2b `crypto_eddsa_*` for `ssh-ed25519` (needs the SHA-512 `crypto_ed25519_*`), a nonexistent ChaCha20-Poly1305 call with 32-byte keys and HKDF (OpenSSH's construction needs 64-byte keys and RFC 4253 derivation), and an unported MIT library that is vendored and compiled.
   - TODO-06 planned its own TSC slew and `uefi_set_time()` although `ke_ntp_adjtime()` ships; TODO-02 planned syscalls 39-49, now taken; TODO-09 placed `base64_decode()` in a nonexistent `tls.c` and stored passwords in plaintext against `11-apps/TODO-04` section 6.
   - TODO-10 (PDF) called stb_truetype bounds-checked for embedded fonts; its header disclaims untrusted fonts, so a bounds-checked path is now a filed prerequisite.
+  - TODO-06's NTP client contract was rewritten against RFC 5905 during review (fresh request nonce, one outstanding exchange, LI and kiss-o'-death checks, sourced clocks keep the ten-year guard); TODO-11 syslog keeps event time; TODO-07 section 5 and TODO-10 section 6 now wait on the image-decoder fix.
   - Smaller fixes: `ethernet_receive()` is `net_rx()` (TODO-04), stale cross-section numbers (TODO-03, 04, 05, 07, 08), a claimed UDP checksum pattern that does not exist (TODO-01), and directory-less XREFs and an RTC timestamp for syslog (TODO-11).
 - [x] Code defects found while writing, filed in owning sections rather than fixed (docs-only section)
   - `07-networking/TODO-01` section 1: `ipv4_handle()` accepts IHL below 5 and `total_len < hdr_len`, and `udp_handle()` trusts the UDP length, so one malformed broadcast makes the DHCP parser read past the frame.
@@ -710,6 +711,11 @@ Write docs pages that meet the §3 contract for the 11 roadmap files below. Read
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the network code it describes changes.
 > - **Status honesty:** no networking roadmap section has shipped; pages describe what runs today (IPv4, ICMP, one-shot DHCP, send-only `ping`, `ifconfig`) and which vendored pieces already exist (Mbed TLS unbuilt, Monocypher built, stb zlib).
 > - **Scope boundary:** the app windows for browser, mail, SSH, FTP and PDF are documented with the apps roadmaps (section 20); these pages cover the protocol and engine halves.
+
+> **Verified:** 2026-09-29 | commit `5f71cff17` | 8/8 items | build OK | site: OK, 150/232 documented; tests 34646 kernel + 17 user-mode PASS; lint 0 errors
+> **Accepted:** [H] NTP replies need root-distance and reference-time checks (reason: unbuilt NTP client design) -> XREF: 07-networking/TODO-06 §2 (item: "Reject replies whose server timing is poor" at line 103)
+> **Accepted:** [H] NTP measurement spanning a local clock change must be discarded (reason: needs a time-service API) -> XREF: 07-networking/TODO-06 §2 (item: "Discard a measurement that spans a local clock change" at line 105)
+> **Quality reviewed:** 2026-09-29 | Codex 30x (adversarial, consistency, perf, re-adversarial) | 6H+18M fixed, 2H accepted, 0 open | scope: N/A (docs-only; no source changed; parity research and test coverage N/A)
 
 ---
 
