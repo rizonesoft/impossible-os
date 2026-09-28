@@ -170,7 +170,7 @@ This section owns the LOG-NOISE half only. The underlying performance defect -- 
 | --- | ------------------------------------ | ------------------------------- | -------------------------------------- | ---------------------------------------- |
 | 💎  | Gate on unexpected kernel log output | ⚠️ WHQL/HLK scans, post-hoc     | ⚠️ selftests + `dmesg` diff, per-suite | ⬜ §2 runner-side, suite-attributed      |
 | ⭐  | Expected diagnostic output declared  | ❌ no equivalent                | ❌ no equivalent                       | ⬜ §1 declared at the emission site      |
-| 💎  | Smoke gate reads its own log         | ✅ boot-critical ETW checks     | ✅ CI greps `dmesg` for oops/WARN      | ⚠️ §3 today: 2 markers + 9 fatal strings |
+| 💎  | Smoke gate reads its own log         | ✅ boot-critical ETW checks     | ✅ CI greps `dmesg` for oops/WARN      | ✅ §3 unbaselined `[FAIL]` fails the run |
 | ⭐  | "Check disabled" reported distinctly | ⚠️ HLK marks unsupported as N/A | ⚠️ selftests print SKIP inconsistently | ⬜ §4 disabled != passed, in the summary |
 
 ## Unit Tests

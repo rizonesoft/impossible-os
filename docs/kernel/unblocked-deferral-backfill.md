@@ -15,7 +15,7 @@ The triage showed that parked item text goes stale. The registry items blamed a 
 
 | Section | What it backfills | Related page |
 | --- | --- | --- |
-| 1. Registry tree SMP synchronization and hive durability | A lock for the registry tree; journal, dual-log recovery and lazy writer | [Registry](registry.md) |
+| 1. Registry tree SMP synchronization and hive durability | A lock for the registry tree; dual-log recovery, boot-time hive loading and a lazy writer | [Registry](registry.md) |
 | 2. Registry save/restore hive bodies | `RegSaveKey`/`RegRestoreKey` I/O behind the already-shipped privilege checks | [Registry](registry.md) |
 | 3. Quota enforcement and job memory accounting | Enforcing stored working-set and pagefile limits; real job memory figures | [Kernel Resource Accounting and Quotas](kernel-resource-accounting-quotas.md) |
 | 4. Module identity and ELF unwind registration | Build-ID identity; `.eh_frame_hdr` registration for ELF modules | [Binary Format System](binary-format-system.md) |
@@ -34,7 +34,7 @@ python3 scripts/overnight/stranded_deferrals.py --gate
 
 ## What is not implemented yet?
 
-- **Registry SMP safety and hive durability.** No lock exists in `registry.c`, `registry_load_hives()` is not called, and the journal and lazy writer do not exist ([Registry Tree SMP Synchronization and Hive Durability](../../todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md#1-registry-tree-smp-synchronization-and-hive-durability)).
+- **Registry SMP safety and hive durability.** No lock exists in `registry.c` and `registry_load_hives()` is not called. Saving already writes a `.log` journal and a `.bak` copy before renaming into place (`hive_save()`); what is missing is the dual-log scheme with safe replay, and a periodic lazy writer ([Registry Tree SMP Synchronization and Hive Durability](../../todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md#1-registry-tree-smp-synchronization-and-hive-durability)).
 - **Hive save and restore.** The privilege checks shipped; the I/O behind them does not succeed yet ([Registry Save/Restore Hive Bodies and Transactional Load](../../todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md#2-registry-saverestore-hive-bodies-and-transactional-load)).
 - **Quota enforcement.** Working-set and pagefile limits are stored and returned but not enforced ([Quota Enforcement and Job Memory Accounting](../../todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md#3-quota-enforcement-and-job-memory-accounting)).
 - **ELF unwind and module identity.** ELF modules register no unwind data (PE modules have `.pdata`), and module identity is a bare name ([Module Identity and ELF Unwind Registration](../../todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md#4-module-identity-and-elf-unwind-registration)).

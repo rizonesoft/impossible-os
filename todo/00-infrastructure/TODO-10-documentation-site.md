@@ -477,6 +477,9 @@ Write docs pages that meet the §3 contract for the 12 roadmap files below. Read
 > - **Status honesty:** five of the twelve roadmaps (KD, health orchestrator, logging v2, serial-log gate, deferral backfill) are almost wholly unbuilt, and their pages say so in the first paragraph rather than describing the plan as behaviour.
 > - **Found on the way:** roadmap text had drifted from the code in TODO-28, 29, 31, 34 and TODO-A, and was corrected in place, including TODO-34's smoke gate (shipped in `6fbf3719a`) and TODO-31's `kernel_config_t` guards; no new work needed filing.
 
+> **Verified:** 2026-09-28 | commit `d551d8272` | 8/8 items | build OK | site: OK, 89/232 documented; tests 34646 kernel + 17 user-mode PASS
+> **Quality reviewed:** 2026-09-28 | Codex 5x (adversarial x2, adversarial post-ship, consistency, perf) | 22M fixed, 0 open | scope: N/A (docs-only; no source changed; re-adversarial skipped: docs-only fixes)
+
 ---
 
 ## 11. Document: Memory and concurrency

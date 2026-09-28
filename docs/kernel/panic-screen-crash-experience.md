@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/02-kernel-core/TODO-28-bsod-ux-enhancements.md sources=src/kernel/panic.c,include/kernel/panic.h,src/kernel/bsod_icon.h,src/kernel/symtab.c reviewed=2026-09-28 order=28 -->
+<!-- docs: covers=todo/02-kernel-core/TODO-28-bsod-ux-enhancements.md sources=src/kernel/panic.c,include/kernel/panic.h,src/kernel/bsod_icon.h,src/kernel/symtab.c,src/kernel/exec.c reviewed=2026-09-28 order=28 -->
 # Panic Screen and Crash Experience
 
 ## What is it?

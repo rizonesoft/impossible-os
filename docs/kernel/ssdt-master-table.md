@@ -37,7 +37,7 @@ It collects every `ssdt_register()` call and every `NTSTATUS Nt*` handler, check
 ## What is not implemented yet?
 
 - **263 unregistered rows (55.1%).** They span every range, with large blocks in debug and exception services (owned by the [Exception Dispatch and SEH](../../todo/02-kernel-core/TODO-23-exception-dispatch-seh.md) and [Kernel Debugger](../../todo/02-kernel-core/TODO-29-kernel-debugger-kd-protocol.md) roadmaps), power (the [Power Management](../../todo/02-kernel-core/TODO-26-power-management.md) roadmap) and the kernel transaction manager.
-- **59 partial rows (12.4%).** A handler exists but is incomplete, for example IRP-based file controls such as `NtDeviceIoControlFile` and `NtFsControlFile`, and hive save and restore, whose I/O is owned by the [Unblocked-Deferral Backfill](../../todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md#2-registry-saverestore-hive-bodies-and-transactional-load) roadmap.
+- **59 partial rows (12.4%).** A handler exists but is incomplete, for example IRP-based file controls such as `NtDeviceIoControlFile` and `NtFsControlFile`, and `NtSaveKey`/`NtRestoreKey`, which pass their privilege checks and then return `STATUS_NOT_SUPPORTED` because resolving their `FileHandle` to a path does not exist yet; that item is parked in the [Registry Completion](../../todo/02-kernel-core/TODO-14-registry-completion.md#2-advanced-key-operations) roadmap.
 
 Each open row is owned by the roadmap section named in its `Owner` column, which is where the work is tracked; the ledger has no sections of its own.
 

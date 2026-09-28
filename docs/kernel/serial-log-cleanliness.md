@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/02-kernel-core/TODO-34-serial-log-signal-to-noise.md sources=src/kernel/test/test_runner.c,include/kernel/test/test.h,src/kernel/klog.c,scripts/test-smoke.sh,scripts/test.sh,src/kernel/boot_perf_budget.c,src/kernel/sched/dpc.c reviewed=2026-09-28 order=34 -->
+<!-- docs: covers=todo/02-kernel-core/TODO-34-serial-log-signal-to-noise.md sources=src/kernel/test/test_runner.c,include/kernel/test/test.h,src/kernel/klog.c,scripts/test-smoke.sh,scripts/test.sh,src/kernel/boot_perf_budget.c,src/kernel/sched/dpc.c,scripts/log-baseline.txt,src/kernel/main/boot_desktop.c reviewed=2026-09-28 order=34 -->
 # Serial Log Cleanliness
 
 ## What is it?
