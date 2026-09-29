@@ -12,7 +12,7 @@ title: "TODO-12 -- Long-Term Features"
 **Goal:** Track the advanced features that elevate Impossible OS to a mature production platform -- developer tools, kernel/user-mode debugger, touch/gamepad input, print, TTS, software OpenGL, multi-user sessions, telemetry, and parental controls.
 
 > [!IMPORTANT]
-> **Depends on:** Core OS complete -- ring-3 PE execution (`TODO-07`), Win32 API surface (`TODO-08`), audio system (`10-platform-services/TODO-01`), user accounts (`10-platform-services/TODO-03 §*`), IxUI (`TODO-08 §13`). No section here is a prerequisite for any other active TODO.
+> **Depends on:** Core OS complete -- ring-3 PE execution (`TODO-07`), Win32 API surface (`TODO-08`), audio system (`10-platform-services/TODO-01`), user accounts (`09-desktop-shell/TODO-06-security-accounts.md`), IxUI (`TODO-08 §13`). No section here is a prerequisite for any other active TODO.
 > **Long-term scope:** Nothing in this TODO is P0 or P1. All sections are P2–P4 power-user and ecosystem features. Each section is independently implementable.
 
 ---
@@ -25,9 +25,9 @@ title: "TODO-12 -- Long-Term Features"
 - The user-mode debugger (§2) uses hardware debug registers (`DR0`–`DR7`) for hardware breakpoints and `INT3` patching for software breakpoints -- both require ring-0 kernel support with a `DR`-read/write syscall.
 - TTS engine: prompt specifies **eSpeak-NG** (LGPL); the old TODO used **SAM** (public domain, ~2 K lines). Use SAM as the initial port (simpler), with eSpeak-NG as the upgrade path.
 - OpenGL: prompt specifies **TinyGL** (~5 K lines, zlib license) -- already named in `todo-old`. No existing OpenGL infrastructure.
-- Multi-user sessions (§8) depend on user accounts and a per-session compositor surface; overlaps with `10-platform-services/TODO-03` (accounts) and `08-graphics-ui/TODO-02` (compositor) -- cross-link, don't duplicate.
-- Telemetry (§9) is **opt-in only**, zero by default. `HKLM\SYSTEM\Privacy\Telemetry = 0`.
-- Parental controls (§10) hook into `SYS_CREATEPROCESS` to block apps -- that hook point is in the kernel process creation path (`TODO-07 §7`).
+- Multi-user sessions (§9) depend on user accounts and a per-session compositor surface; overlaps with `09-desktop-shell/TODO-06` (accounts) and `08-graphics-ui/TODO-08-window-manager.md` (window manager and compositor surfaces) -- cross-link, don't duplicate.
+- Telemetry (§10) is **opt-in only**, zero by default. `HKLM\SYSTEM\Privacy\Telemetry = 0`.
+- Parental controls (§11) hook into `SYS_CREATEPROCESS` to block apps -- that hook point is in the kernel process creation path (`TODO-07 §7`).
 
 ---
 
@@ -44,8 +44,8 @@ title: "TODO-12 -- Long-Term Features"
 | → XREF: `10-platform-services/TODO-01`             | `audio_play()` -- TTS PCM output                                                  |
 | → XREF: `10-platform-services/TODO-08 §10–13`      | IxUI windows -- debug console, parcon.cpl, gamepad settings                       |
 | → XREF: `04-drivers-hardware/TODO-10-usb-stack.md` | USB HID -- touch digitizer and gamepad hardware input                             |
-| → XREF: `08-graphics-ui/TODO-02`                   | Compositor -- per-session backbuffer for multi-user                               |
-| → XREF: `10-platform-services/TODO-03 §*`          | User accounts and per-user registry hives (parental controls)                     |
+| → XREF: `08-graphics-ui/TODO-08`                   | Compositor -- per-session backbuffer for multi-user                               |
+| → XREF: `09-desktop-shell/TODO-06`                 | User accounts and per-user registry hives (parental controls)                     |
 
 ---
 
@@ -66,19 +66,19 @@ title: "TODO-12 -- Long-Term Features"
 
 ## Implementation Order
 
-| #   | Section                                                    | Tag        | Dep                                              | Mark |
-| --- | ---------------------------------------------------------- | ---------- | ------------------------------------------------ | ---- |
-| 1   | Kernel debugger (GDB RSP stub)                             | `[Opus]`   | serial                                           | 💎   |
-| 2   | User-mode debugger (`debugger.exe`, Win32 debug API)       | `[Opus]`   | §1, TODO-07 §7                                   | 💎   |
-| 3   | Developer tools (F12 console, memmap, strace, FPS overlay) | `[Sonnet]` | TODO-08 §2                                       | ⭐   |
-| 4   | Touch input + gesture recognizer                           | `[Opus]`   | XREF: 04-drivers-hardware/TODO-09                | 💎   |
-| 5   | Gamepad / controller input + XInput stubs                  | `[Sonnet]` | XREF: 04-drivers-hardware/TODO-09                | 💎   |
-| 6   | Print support (PDF export + IPP stretch)                   | `[Sonnet]` | TODO-08 §11                                      | 💎   |
-| 7   | Text-to-speech (SAM port → eSpeak-NG upgrade)              | `[Sonnet]` | TODO-01 (audio)                                  | 💎   |
-| 8   | Software OpenGL (TinyGL port)                              | `[Opus]`   | TODO-08 §11 (GDI)                                | 💎   |
-| 9   | Multi-user session management + fast switching             | `[Opus]`   | TODO-03 (accounts), XREF: 08-graphics-ui/TODO-02 | 💎   |
-| 10  | Telemetry (opt-in, anonymous)                              | `[Sonnet]` | TODO-08 §2                                       | 💎   |
-| 11  | Parental controls (`parcon.cpl`)                           | `[Sonnet]` | TODO-03 (accounts), TODO-07 §7                   | 💎   |
+| #   | Section                                                    | Tag        | Dep                                             | Mark |
+| --- | ---------------------------------------------------------- | ---------- | ----------------------------------------------- | ---- |
+| 1   | Kernel debugger (GDB RSP stub)                             | `[Opus]`   | serial                                          | 💎   |
+| 2   | User-mode debugger (`debugger.exe`, Win32 debug API)       | `[Opus]`   | §1, TODO-07 §7                                  | 💎   |
+| 3   | Developer tools (F12 console, memmap, strace, FPS overlay) | `[Sonnet]` | TODO-08 §2                                      | ⭐   |
+| 4   | Touch input + gesture recognizer                           | `[Opus]`   | XREF: 04-drivers-hardware/TODO-11               | 💎   |
+| 5   | Gamepad / controller input + XInput stubs                  | `[Sonnet]` | XREF: 04-drivers-hardware/TODO-21               | 💎   |
+| 6   | Print support (PDF export + IPP stretch)                   | `[Sonnet]` | TODO-08 §11                                     | 💎   |
+| 7   | Text-to-speech (SAM port → eSpeak-NG upgrade)              | `[Sonnet]` | TODO-01 (audio)                                 | 💎   |
+| 8   | Software OpenGL (TinyGL port)                              | `[Opus]`   | TODO-08 §11 (GDI)                               | 💎   |
+| 9   | Multi-user session management + fast switching             | `[Opus]`   | D09T06 (accounts), XREF: 08-graphics-ui/TODO-08 | 💎   |
+| 10  | Telemetry (opt-in, anonymous)                              | `[Sonnet]` | TODO-08 §2                                      | 💎   |
+| 11  | Parental controls (`parcon.cpl`)                           | `[Sonnet]` | D09T06 (accounts), TODO-07 §7                   | 💎   |
 
 ---
 
@@ -264,7 +264,7 @@ Port TinyGL (~5 K lines, zlib license) to render to the Impossible OS framebuffe
 
 ## 9. Multi-User Session Management + Fast Switching `[Opus]`
 
-Per-user sessions with isolated compositor surfaces. Depends on user accounts (`TODO-03`) and compositor (`08-graphics-ui/TODO-02`).
+Per-user sessions with isolated compositor surfaces. Depends on user accounts (`09-desktop-shell/TODO-06`) and the window manager (`08-graphics-ui/TODO-08`).
 
 - [ ] Create `include/kernel/session.h`:
   - `struct user_session { uint32_t uid; char username[64]; gfx_surface_t *desktop_surface; int *window_list; uint32_t process_count; uint8_t active; }`

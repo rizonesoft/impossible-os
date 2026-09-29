@@ -24,8 +24,8 @@ title: "TODO-06 -- SDK Distribution & Developer Experience"
 >   INT3 + DR* breakpoints. This TODO adds call-stack display, disassembler, and
 >   source-level debug on top of that foundation.
 >
-> **Scope boundary**: §2 (docs) extends `D10T09 §11` basic getting-started + porting guide;
-> §6 (debugger enhancements) extends `D10T12 §3`; §1 (packaging) extends `D10T09 §10`
+> **Scope boundary**: §2 (docs) extends `D10T09 §10` basic getting-started + porting guide;
+> §6 (debugger enhancements) extends `D10T12 §2`; §1 (packaging) extends `D10T09 §9`
 > installer. Do not re-specify the base compiler, import lib generation, or core debugger
 > already owned by those TODOs.
 >
@@ -38,9 +38,9 @@ title: "TODO-06 -- SDK Distribution & Developer Experience"
 
 - `sdk/include/` -- all headers from `D10T08 §15` + `D10T09 §1 §2` -- §1 packaging
 - `sdk/lib/` -- `kernel32.lib`, `user32.lib`, `gdi32.lib`, `ntdll.lib`, `libc.lib`, `libixui.a` -- §1 §8
-- `sdk/tools/` -- `tcc.exe`, `make.exe` from `D10T09 §5 §9` -- §1 §8
+- `sdk/tools/` -- `tcc.exe`, `make.exe` from `D10T09 §5 §8` -- §1 §8
 - `tools/` (host-side build tools) -- `jpg2raw.c`, `irespack.c` -- §2 `gendoc.c` pattern
-- `10-platform-services/TODO-09-compiler-sdk.md §11` (→ XREF) -- basic `getting-started.md`, `porting-guide.md`
+- `10-platform-services/TODO-09-compiler-sdk.md §10` (→ XREF) -- basic `getting-started.md`, `porting-guide.md`
 - `10-platform-services/TODO-08-win32-api-surface.md §15` (→ XREF) -- SDK headers + `impossible-cc`
 - `10-platform-services/TODO-12-long-term-features.md §3` (→ XREF) -- base `debugger.exe`; this TODO adds on top
 - `include/kernel/sched/syscall.h` -- PIT interrupt path for profiler (§4); `SYS_PROFILER_START/STOP`
@@ -66,12 +66,12 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 
 | Step | Section                                          | 💎/⭐ | Dependency                                                 |
 | ---- | ------------------------------------------------ | ----- | ---------------------------------------------------------- |
-| 1    | SDK packaging (`make sdk`, ZIP, SHA-256)         | 💎    | `D10T08 §15`; `D10T09 §10`; miniz ZIP writer               |
-| 2    | SDK documentation (`gendoc.c`, Markdown API ref) | ⭐    | §1 headers in place; `D10T09 §11` basic docs               |
+| 1    | SDK packaging (`make sdk`, ZIP, SHA-256)         | 💎    | `D10T08 §15`; `D10T09 §9`; miniz ZIP writer                |
+| 2    | SDK documentation (`gendoc.c`, Markdown API ref) | ⭐    | §1 headers in place; `D10T09 §10` basic docs               |
 | 3    | Code samples (7 projects)                        | 💎    | §1 SDK installed; TCC compiles samples                     |
 | 4    | Sampling profiler (`profile` command)            | ⭐    | PIT interrupt; `struct task` RIP access; symbol resolution |
 | 5    | Unit test framework (`itest.h`)                  | ⭐    | §1 headers; `TODO-01 §8` host-side test pattern            |
-| 6    | Debugger enhancements (call stack, disasm)       | 💎    | `D10T12 §3` base debugger; ELF/PE symbol tables            |
+| 6    | Debugger enhancements (call stack, disasm)       | 💎    | `D10T12 §2` base debugger; ELF/PE symbol tables            |
 | 7    | IxUI starter templates (`ixui-new`)              | ⭐    | §1 SDK; TCC (`D10T09 §5`); §4 samples as template basis    |
 | 8    | SDK release pipeline (`release-sdk.sh`)          | ⭐    | §1 zip + SHA-256; GitHub CLI; Registry SDK version         |
 
@@ -114,7 +114,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 - [ ] **Hand-authored docs** (not generated -- create as static Markdown):
   - `sdk/docs/getting-started.md`: prerequisites (QEMU or real hardware), install steps, "Hello World" console + window in 5 min
   - `sdk/docs/ixui-guide.md`: window lifecycle, layout model, all built-in controls, theming with `theme_set()`, event handling patterns
-  - `sdk/docs/porting-guide.md`: extends `D10T09 §11`; adds PE vs ELF differences, Win32 gotchas, `#include <windows.h>` on Impossible OS
+  - `sdk/docs/porting-guide.md`: extends `D10T09 §10`; adds PE vs ELF differences, Win32 gotchas, `#include <windows.h>` on Impossible OS
   - `sdk/docs/faq.md`: 20 common questions (compile errors, missing symbols, DLL stubs, etc.)
 - [ ] **`api-reference/` structure**:
   - `kernel32.md`, `user32.md`, `gdi32.md`, `ntdll.md`, `shell32.md`, `msvcrt.md`, `ixui.md`
@@ -307,7 +307,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
   9. Print: `SDK v${VERSION} released → https://github.com/rizonesoft/impossible-os/releases/tag/sdk/v${VERSION}`
 - [ ] The pushed `sdk/v${VERSION}` tag triggers the versioned docs snapshot owned by D00 T10 §24; verify `impossibleos.co/docs/sdk/v${VERSION}/` serves the reference for that tag -> XREF: `D00 T10 §24`
 - [ ] **`sdk-update` shell command** (on-OS):
-  - Read `HKLM\SYSTEM\SDK\InstalledVersion` (set by `D10T09 §10` SDK installer)
+  - Read `HKLM\SYSTEM\SDK\InstalledVersion` (set by `D10T09 §9` SDK installer)
   - Fetch `https://sdk.impossible-os.dev/latest` → get `latest_version` string (via `SYS_PING`-equivalent HTTP GET)
   - If `latest_version > installed_version`: prompt `"SDK update available: {latest}. Download? [Y/n]"`
   - On yes: download ZIP, verify SHA-256, extract to `C:\Impossible\Include\` + `C:\Impossible\Bin\`, update `HKLM\SYSTEM\SDK\InstalledVersion`

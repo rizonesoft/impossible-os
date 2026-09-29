@@ -69,7 +69,7 @@ file_patterns:
 | 💎  |  16   | §16 Document: Desktop foundation and graphics, part 1 (14 roadmap files) | §2, §3     |  [x]   |
 | 💎  |  17   | §17 Document: Graphics and UI, part 2 (9 roadmap files)                  | §2, §3     |  [x]   |
 | 💎  |  18   | §18 Document: Desktop shell (14 roadmap files)                           | §2, §3     |  [x]   |
-| 💎  |  19   | §19 Document: Platform services (15 roadmap files)                       | §2, §3     |  [ ]   |
+| 💎  |  19   | §19 Document: Platform services (15 roadmap files)                       | §2, §3     |  [x]   |
 | 💎  |  20   | §20 Document: Applications and accessories (15 roadmap files)            | §2, §3     |  [ ]   |
 | 💎  |  21   | §21 Document: SDK, release, ports and research (21 roadmap files)        | §2, §3     |  [ ]   |
 | ⭐  |  22   | §22 Doc freshness: `sources=` and a stale-page warning                   | §3         |  [x]   |
@@ -881,32 +881,52 @@ Write docs pages that meet the §3 contract for the 14 roadmap files below. Read
 
 ## 19. Document: Platform services
 
+**Design:** n/a -- a documentation-writing section; the pages it writes describe the design, they do not draw UI
+
 Write docs pages that meet the §3 contract for the 15 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/services/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/10-platform-services/TODO-01-audio-system.md` (TODO-01 -- Audio System & Media Player)
-  - `todo/10-platform-services/TODO-02-paint-app.md` (TODO-02 -- Paint App & Image Tools)
-  - `todo/10-platform-services/TODO-03-updates-packages.md` (TODO-03 -- System Updates & IPKG Package Manager)
-- [ ] Pages in `docs/services/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/10-platform-services/TODO-04-restore-recovery.md` (TODO-04 -- System Restore, Recovery & Observability)
-  - `todo/10-platform-services/TODO-05-screensaver-widgets-display.md` (TODO-05 -- Screensaver, Widgets & Display)
-  - `todo/10-platform-services/TODO-06-accessibility.md` (TODO-06 -- Accessibility Features)
-- [ ] Pages in `docs/services/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/10-platform-services/TODO-07-win32-pe-loader.md` (TODO-07 -- Native Win32 Execution & PE Loader)
-  - `todo/10-platform-services/TODO-08-win32-api-surface.md` (TODO-08 -- Win32 API Surface Completion)
-  - `todo/10-platform-services/TODO-09-compiler-sdk.md` (TODO-09 -- C/C++ Compiler & SDK)
-- [ ] Pages in `docs/services/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/10-platform-services/TODO-10-linux-compat.md` (TODO-10 -- Linux ELF Compatibility Layer)
-  - `todo/10-platform-services/TODO-11-installer-iso.md` (TODO-11 -- OS Installer & ISO Build)
-  - `todo/10-platform-services/TODO-12-long-term-features.md` (TODO-12 -- Long-Term Features)
-- [ ] Pages in `docs/services/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/10-platform-services/TODO-A-user32-export-master-table.md` (TODO-A -- user32.dll Export Master Table)
-  - `todo/10-platform-services/TODO-B-comctl32-export-master-table.md` (TODO-B -- comctl32.dll Export Master Table)
-  - `todo/10-platform-services/TODO-C-shell32-export-master-table.md` (TODO-C -- shell32.dll Export Master Table)
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: platform services documentation pages"`
+- [x] Pages in `docs/services/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/10-platform-services/TODO-01-audio-system.md` (TODO-01 -- Audio System & Media Player): `audio-system.md`
+  - `todo/10-platform-services/TODO-02-paint-app.md` (TODO-02 -- Paint App & Image Tools): `paint-app.md`
+  - `todo/10-platform-services/TODO-03-updates-packages.md` (TODO-03 -- System Updates & IPKG Package Manager): `updates-packages.md`
+- [x] Pages in `docs/services/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/10-platform-services/TODO-04-restore-recovery.md` (TODO-04 -- System Restore, Recovery & Observability): `restore-recovery.md`
+  - `todo/10-platform-services/TODO-05-screensaver-widgets-display.md` (TODO-05 -- Screensaver, Widgets & Display): `screensaver-widgets-display.md`
+  - `todo/10-platform-services/TODO-06-accessibility.md` (TODO-06 -- Accessibility Features): `accessibility.md`
+- [x] Pages in `docs/services/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/10-platform-services/TODO-07-win32-pe-loader.md` (TODO-07 -- Native Win32 Execution & PE Loader): `win32-pe-loader.md`
+  - `todo/10-platform-services/TODO-08-win32-api-surface.md` (TODO-08 -- Win32 API Surface Completion): `win32-api-surface.md`
+  - `todo/10-platform-services/TODO-09-compiler-sdk.md` (TODO-09 -- C/C++ Compiler & SDK): `compiler-sdk.md`
+- [x] Pages in `docs/services/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/10-platform-services/TODO-10-linux-compat.md` (TODO-10 -- Linux ELF Compatibility Layer): `linux-compat.md`
+  - `todo/10-platform-services/TODO-11-installer-iso.md` (TODO-11 -- OS Installer & ISO Build): `installer-iso.md`
+  - `todo/10-platform-services/TODO-12-long-term-features.md` (TODO-12 -- Long-Term Features): `long-term-features.md`
+- [x] Pages in `docs/services/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/10-platform-services/TODO-A-user32-export-master-table.md` (TODO-A -- user32.dll Export Master Table): `user32-exports.md`
+  - `todo/10-platform-services/TODO-B-comctl32-export-master-table.md` (TODO-B -- comctl32.dll Export Master Table): `comctl32-exports.md`
+  - `todo/10-platform-services/TODO-C-shell32-export-master-table.md` (TODO-C -- shell32.dll Export Master Table): `shell32-exports.md`
+- [x] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline` (58 to 43 entries)
+  - `docs/services/` is new: its `index.md` holds a Platform Services roadmap table, and `docs/index.md` gains a Platform Services category row.
+- [x] Roadmap drift found while writing, fixed in place
+  - Shipped work described as missing: `TODO-07` said there were no PE structs, no `STAR`/`LSTAR` setup and the GDT selectors in the wrong order (all three shipped; the loader shipped under `02-kernel-core/TODO-17`); `TODO-10` said no SYSV stack exists (`task_exec()` builds it for every exec) and that exec probes PE first (it matches magic bytes).
+  - Planned work described as shipped: `TODO-01` said an AC97 driver exists and claimed syscalls 60 and 61 (collide with the Win32 ABI plan); `TODO-04` planned `LOG_SECURITY=4` (4 is `LOG_FATAL`) and relied on `registry_backup()` (`RegSaveKey()` returns `ERROR_NOT_SUPPORTED`); `TODO-05` said `kevent_log()` had shipped.
+  - Implementation Order and numbering: `TODO-04` table rows used an old section numbering; the domain `INDEX.md` summaries for `TODO-09` and `TODO-10` were off by one; `TODO-09`, `TODO-10` and `TODO-12` notes cited wrong own sections.
+  - Stale owners and paths: the export tables named `TODO-11` for the file now numbered `08-graphics-ui/TODO-14`, and `TODO-C` gave `CommandLineToArgvW` the wrong owner; `TODO-05`, `TODO-06`, `TODO-08`, `TODO-11` and `TODO-12` cited wrong sections or files for the lock screen, wallpaper, animation engine, TEB setup, OOBE, accounts and compositor.
+  - Inbound references: `15-installer-release/TODO-01`, `TODO-02`, `TODO-03`, `TODO-04`, `01-boot-platform/TODO-06`, `11-apps/TODO-10`, `12-user-platform-sdk/TODO-03`, `TODO-04`, `TODO-06` and `18-future-research/TODO-03`, `TODO-05` now cite the right `TODO-04`, `TODO-07` to `TODO-12` sections.
+- [x] Code defects found while writing, filed in owning open sections rather than fixed (docs-only section)
+  - `10-platform-services/TODO-07` section 8: stale comments in `exec.c`, `syscall.h` (`SYS_EXEC` arguments) and `task.c`.
+  - `10-platform-services/TODO-08` section 2: the test shim's two header comments disagree with its code (the process ID and tick count are TEB and `KUSER_SHARED_DATA` reads; only the file calls use `INT 0x80`).
+- [x] Commit: `"docs: platform services documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check` prints `site: OK` with 189/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** fifteen contract-shaped pages in a new `docs/services/` folder, one per platform services roadmap file, listed in its index and linked from the docs home page.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the loader, exec, Registry, logging, GPT or input code it describes changes.
+> - **Status honesty:** no section of these fifteen roadmaps has shipped; the pages describe what runs today (the kernel PE loader and import tables, the SYSV start-up stack, `events.jsonl`, crash reports, release images) and link the owning sections.
+> - **Scope boundary:** kernel, boot, storage, graphics and desktop pages stay authoritative for the loader internals, SSDT, logging, GPT and widgets; these pages link them.
 
 ---
 

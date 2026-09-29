@@ -45,27 +45,27 @@ Every **named** `shell32.dll` export that appears on a shipping Windows 11 machi
 
 ## Tier 1 -- Paths, icons, folder resolution (from TODO-08 Section 12)
 
-| Export               | Category     | Owner                     | Done | Notes                                                     |
-| -------------------- | ------------ | ------------------------- | ---- | --------------------------------------------------------- |
-| `ExtractIconExA`     | Icon         | T08 Section 12            | [ ]  | PE / ico / system                                         |
-| `ExtractIconExW`     | Icon         | T08 Section 12            | [ ]  |                                                           |
-| `SHGetFileInfoA`     | File info    | T08 Section 12            | [ ]  |                                                           |
-| `SHGetFileInfoW`     | File info    | T08 Section 12            | [ ]  |                                                           |
-| `SHGetStockIconInfo` | Icon         | T08 Section 12            | [ ]  | SIID_* mapping; index maps stay `TODO-11` Section 1       |
-| `LoadIconA`          | Icon         | T08 Section 12 / `TODO-A` | [ ]  | Overlap with user32                                       |
-| `LoadIconW`          | Icon         | T08 Section 12 / `TODO-A` | [ ]  |                                                           |
-| `LoadImageA`         | Icon         | T08 Section 12            | [ ]  |                                                           |
-| `LoadImageW`         | Icon         | T08 Section 12            | [ ]  |                                                           |
-| `DestroyIcon`        | Icon         | T08 Section 12            | [ ]  |                                                           |
-| `SHGetFolderPathA`   | Known folder | T08 Section 12            | [ ]  | CSIDL mapping in `TODO-08`                                |
-| `SHGetFolderPathW`   | Known folder | T08 Section 12            | [ ]  |                                                           |
-| `PathCombineA`       | Path         | T08 Section 12            | [ ]  |                                                           |
-| `PathCombineW`       | Path         | T08 Section 12            | [ ]  |                                                           |
-| `PathAppendA`        | Path         | T08 Section 12            | [ ]  |                                                           |
-| `PathAppendW`        | Path         | T08 Section 12            | [ ]  |                                                           |
-| `PathFileExistsA`    | Path         | T08 Section 12            | [ ]  | VFS                                                       |
-| `PathFileExistsW`    | Path         | T08 Section 12            | [ ]  |                                                           |
-| `CommandLineToArgvW` | Process      | `TODO-14` Section 15      | [ ]  | **Owner `TODO-14`**; row here for shell32 discoverability |
+| Export               | Category     | Owner                     | Done | Notes                                                                    |
+| -------------------- | ------------ | ------------------------- | ---- | ------------------------------------------------------------------------ |
+| `ExtractIconExA`     | Icon         | T08 Section 12            | [ ]  | PE / ico / system                                                        |
+| `ExtractIconExW`     | Icon         | T08 Section 12            | [ ]  |                                                                          |
+| `SHGetFileInfoA`     | File info    | T08 Section 12            | [ ]  |                                                                          |
+| `SHGetFileInfoW`     | File info    | T08 Section 12            | [ ]  |                                                                          |
+| `SHGetStockIconInfo` | Icon         | T08 Section 12            | [ ]  | SIID_* mapping; index maps stay `TODO-14` Section 1                      |
+| `LoadIconA`          | Icon         | T08 Section 12 / `TODO-A` | [ ]  | Overlap with user32                                                      |
+| `LoadIconW`          | Icon         | T08 Section 12 / `TODO-A` | [ ]  |                                                                          |
+| `LoadImageA`         | Icon         | T08 Section 12            | [ ]  |                                                                          |
+| `LoadImageW`         | Icon         | T08 Section 12            | [ ]  |                                                                          |
+| `DestroyIcon`        | Icon         | T08 Section 12            | [ ]  |                                                                          |
+| `SHGetFolderPathA`   | Known folder | T08 Section 12            | [ ]  | CSIDL mapping in `TODO-08`                                               |
+| `SHGetFolderPathW`   | Known folder | T08 Section 12            | [ ]  |                                                                          |
+| `PathCombineA`       | Path         | T08 Section 12            | [ ]  |                                                                          |
+| `PathCombineW`       | Path         | T08 Section 12            | [ ]  |                                                                          |
+| `PathAppendA`        | Path         | T08 Section 12            | [ ]  |                                                                          |
+| `PathAppendW`        | Path         | T08 Section 12            | [ ]  |                                                                          |
+| `PathFileExistsA`    | Path         | T08 Section 12            | [ ]  | VFS                                                                      |
+| `PathFileExistsW`    | Path         | T08 Section 12            | [ ]  |                                                                          |
+| `CommandLineToArgvW` | Process      | `D02T22` Section 15       | [ ]  | **Owner `02-kernel-core/TODO-22`**; row here for shell32 discoverability |
 
 ## Tier 1b -- Shell execute (from TODO-08 Section 14)
 
@@ -564,7 +564,7 @@ Microsoft does not publish one MSDN page per `shell32.dll` export. Use two layer
 
 | ⭐  | Feature                             | 🪟 Win11                             | 🐧 Linux                       | 🚀 Impossible OS                                             |
 | --- | ----------------------------------- | ------------------------------------ | ------------------------------ | ------------------------------------------------------------ |
-| 💎  | Shell paths + icons (`shell32.dll`) | shell32 `SH*` APIs + icon index maps | `xdg-user-dir` + desktop files | Tier 1 rows; icon index kernel maps stay per `TODO-11` Notes |
+| 💎  | Shell paths + icons (`shell32.dll`) | shell32 `SH*` APIs + icon index maps | `xdg-user-dir` + desktop files | Tier 1 rows; icon index kernel maps stay per `TODO-14` Notes |
 
 ## Unit Tests
 

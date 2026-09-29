@@ -11,20 +11,20 @@ title: "TODO-04 -- NTDLL & User-Mode Runtime"
 > **Goal:** Build `ntdll.dll` -- the user-mode runtime sitting between every Win32 program
 > and the kernel. Provides the process heap (`RtlHeap`), PE DLL loader (`LdrLoadDll`), TLS,
 > vectored exception handling, process CRT startup, and the fiber API. The stubs already
-> placed in `D10T08 §2` become real implementations here; `HeapAlloc`/`LoadLibrary` in
+> placed in `D10T08 §4` become real implementations here; `HeapAlloc`/`LoadLibrary` in
 > `kernel32.dll` forward to these Rtl/Ldr functions.
 
 > [!IMPORTANT]
 > **Prerequisites complete before starting:**
-> - `10-platform-services/TODO-07 §9` -- `pe_exec()` with minimal TEB (`stack_base/limit/self`,
+> - `10-platform-services/TODO-07 §7` -- `pe_exec()` with minimal TEB (`stack_base/limit/self`,
 >   `FS_BASE` MSR) and minimal PEB (`ImageBaseAddress`, `ProcessParameters.CommandLine`).
 >   This TODO **extends** TEB with `TlsSlots[64]`, `ExceptionList`, and `Tib.FiberData`; and
 >   extends PEB with `ProcessHeap`, `Ldr` (module list), `TlsBitmap`. (The VEH/VCH list heads are
 >   ntdll process-global state, NOT a TEB field -- see §5.)
-> - `10-platform-services/TODO-08 §2` -- `ntdll.dll` minimal stubs
+> - `10-platform-services/TODO-08 §4` -- `ntdll.dll` minimal stubs
 >   (`RtlInitUnicodeString`, `NtCurrentTeb`, `RtlGetVersion`, `NtAllocateVirtualMemory`).
 >   Stubs are replaced/completed here without breaking their export table entries.
-> - `10-platform-services/TODO-08 §3` -- `VirtualAlloc`/`VirtualFree` already wired;
+> - `10-platform-services/TODO-08 §5` -- `VirtualAlloc`/`VirtualFree` already wired;
 >   `HeapAlloc`/`HeapFree`/`GetProcessHeap` call through to `RtlAllocateHeap` (§2 here).
 > - `10-platform-services/TODO-08 §7` -- `LoadLibrary`/`GetProcAddress`/`FreeLibrary`
 >   already wired; they forward to `LdrLoadDll`/`LdrGetProcedureAddress` (§3 here).
@@ -42,16 +42,16 @@ title: "TODO-04 -- NTDLL & User-Mode Runtime"
 ## Inputs
 
 - `include/kernel/sched/task.h` -- `struct task`, `TEB`, `PEB` fields; extend in this TODO
-- `include/win32/types.h` -- `HANDLE`, `DWORD`, `BOOL`, `NTSTATUS` -- `D10T08 §5`
+- `include/win32/types.h` -- `HANDLE`, `DWORD`, `BOOL`, `NTSTATUS` -- `D10T08 §1`
 - `include/pe.h` -- `IMAGE_TLS_DIRECTORY`, `IMAGE_DATA_DIRECTORY` -- `TODO-07 §3`
-- `include/kernel/mm/vmm.h` -- `vmm_alloc_user()`, `VirtualAlloc`/`VirtualFree` -- `D10T08 §3`
+- `include/kernel/mm/vmm.h` -- `vmm_alloc_user()`, `VirtualAlloc`/`VirtualFree` -- `D10T08 §5`
 - `include/kernel/syscall.h` -- syscall numbers for `SYS_VIRTUALALLOC`, `SYS_VIRTUALFREE`
 - `08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md` (XREF) -- `NtGdi*` / `NtUser*` syscall stub indices in `ntdll_syscalls.asm` must match Table 1; router contract in `08-graphics-ui/TODO-16-win32k-shadow-native-api.md`
-- `src/win32/ntdll.c` -- existing minimal stubs from `D10T08 §2` (extend, do not duplicate)
+- `src/win32/ntdll.c` -- existing minimal stubs from `D10T08 §4` (extend, do not duplicate)
 - `10-platform-services/TODO-07-win32-pe-loader.md §9` (→ XREF) -- TEB/PEB minimal setup
 - `10-platform-services/TODO-08-win32-api-surface.md §2 §3 §7` (→ XREF) -- stubs + VirtualAlloc + LoadLibrary forwards
 - `02-kernel-core/TODO-23-exception-dispatch-seh.md §8` (→ XREF) -- SEH frame walk; VEH fallback
-- `user/lib/crt0_pe.asm` -- existing from `TODO-07 §6`; extend for static initializers (§7)
+- `user/lib/crt0_pe.asm` -- existing from `TODO-07 §9`; extend for static initializers (§7)
 
 ---
 
@@ -69,11 +69,11 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 | Step | Section                                                   | 💎/⭐ | Dependency                                                            |
 | ---- | --------------------------------------------------------- | ----- | --------------------------------------------------------------------- |
-| 1    | ntdll.dll structure + TEB/PEB extensions                  | 💎    | `TODO-07 §9`; `D10T08 §2` stubs                                       |
-| 2    | RtlHeap process heap allocator                            | 💎    | §1; `VirtualAlloc` (`D10T08 §3`)                                      |
+| 1    | ntdll.dll structure + TEB/PEB extensions                  | 💎    | `TODO-07 §7`; `D10T08 §4` stubs                                       |
+| 2    | RtlHeap process heap allocator                            | 💎    | §1; `VirtualAlloc` (`D10T08 §5`)                                      |
 | 3    | LdrLoadDll PE DLL loader                                  | 💎    | §1; `TODO-07 §4 §5 §7`; `D10T08 §7`                                   |
 | 4    | Thread-local storage (TLS + PE TLS callbacks)             | 💎    | §1 TEB extensions; `TODO-07 §3` TLS data dir                          |
-| 5    | Vectored exception handling (VEH)                         | 💎    | §1 TEB VEH chain; `D10T08 §3` VirtualAlloc; `D10T10 §3` SEH fallback  |
+| 5    | Vectored exception handling (VEH)                         | 💎    | §1 TEB VEH chain; `D10T08 §5` VirtualAlloc; `D10T10 §3` SEH fallback  |
 | 6    | Process startup (CRT0)                                    | 💎    | §2 heap init; §3 Ldr init; §4 TLS init; §5 VEH                        |
 | 7    | User-mode libc shims (`user/lib/libc.lib`)                | 💎    | §6 CRT0; `kernel32.dll` stubs                                         |
 | 8    | Fiber API                                                 | ⭐    | §1 TEB FiberData; §6 thread-to-fiber conversion                       |
@@ -154,8 +154,8 @@ are available via `CreateFiber`/`SwitchToFiber`.
       UNICODE_STRING BaseDllName;
   } LDR_DATA_TABLE_ENTRY;
   ```
-- [ ] **`pe_exec()` extension** (in `TODO-07 §9` code): allocate full TEB; populate `TlsSlots[]` all-NULL; allocate `PEB_LDR_DATA`; set `PEB.ProcessHeap` after `RtlCreateHeap` (§2) from CRT0 (§7). VEH/VCH heads init in `VehInit()` (§5), not here
-- [ ] **Fixed VA mapping**: `ntdll.dll` PE optional header `ImageBase = 0x7FF000000000`; `pe_resolve_imports()` maps it there; `GS:[0x30]` → TEB self-pointer already set by `TODO-07 §9`
+- [ ] **`pe_exec()` extension** (in `TODO-07 §7` code): allocate full TEB; populate `TlsSlots[]` all-NULL; allocate `PEB_LDR_DATA`; set `PEB.ProcessHeap` after `RtlCreateHeap` (§2) from CRT0 (§7). VEH/VCH heads init in `VehInit()` (§5), not here
+- [ ] **Fixed VA mapping**: `ntdll.dll` PE optional header `ImageBase = 0x7FF000000000`; `pe_resolve_imports()` maps it there; `GS:[0x30]` → TEB self-pointer already set by `TODO-07 §7`
 - [ ] **`ntdll_syscalls.asm`**: one stub per Nt* function:
   ```nasm
   global NtWriteFile

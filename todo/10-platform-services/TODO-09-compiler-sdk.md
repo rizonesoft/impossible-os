@@ -22,7 +22,7 @@ title: "TODO-09 -- C/C++ Compiler & SDK"
 - `SYS_FORK=5`, `SYS_EXEC=6`, `SYS_MMAP=37` already defined in `include/kernel/sched/syscall.h`. `mmap_region_t` exists in `include/kernel/mm/mmap.h`. `thread_create()` exists in `include/kernel/sched/task.h`. TCC only requires `CreateFile`/`ReadFile`/`WriteFile` + `VirtualAlloc` for its core operation -- far lighter than GCC.
 - `sdk/include/impossible/windows.h` already exists; `sdk/docs/api-reference.md` and `sdk/examples/hello.c` are present -- build on these rather than replacing.
 - TCC already supports PE output natively with `-m64` -- minimal patching needed (include paths + temp dir).
-- GCC/Clang (§8) is a **long-term** goal requiring `fork()`/`exec()` process spawning, large virtual memory, and `libgmp`/`libmpfr`/`libmpc` prerequisites -- tracked here but not a blocker for TCC milestones.
+- GCC/Clang (§11) is a **long-term** goal requiring `fork()`/`exec()` process spawning, large virtual memory, and `libgmp`/`libmpfr`/`libmpc` prerequisites -- tracked here but not a blocker for TCC milestones.
 - SDK headers (`§1–2`) overlap with `TODO-08 §5` (Win32 types) and `TODO-08 §15` (SDK); this TODO focuses on the **on-OS** headers installed at `C:\Impossible\Include\` and the TCC build pipeline; `TODO-08 §15` covers the host cross-compile SDK (`impossible-cc`).
 - Import libraries (`§3`) are COFF `.lib` stub files for the PE linker -- distinct from `libixui.a` (static library produced in `TODO-08 §13`).
 

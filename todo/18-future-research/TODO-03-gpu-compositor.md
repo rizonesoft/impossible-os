@@ -20,7 +20,7 @@ title: "TODO-03 -- GPU-Accelerated Compositor"
 > the GPU path; it does NOT modify the existing compositor.
 >
 > **TinyGL software OpenGL** (~5 K lines, zlib) is specced in
-> `10-platform-services/TODO-12 §7`; §3 here assesses the *upgrade path* from TinyGL
+> `10-platform-services/TODO-12 §8`; §3 here assesses the *upgrade path* from TinyGL
 > to Mesa lavapipe (CPU Vulkan) -- it does not re-specify the TinyGL port itself.
 >
 > **IOMMU driver** is a hard prerequisite for DMA-safe GPU memory (§3) and is documented
@@ -42,7 +42,7 @@ title: "TODO-03 -- GPU-Accelerated Compositor"
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous()` -- §3 GPU-visible memory allocator
 - `include/kernel/mm/vmm.h` -- `vmm_map_page()` -- §3 IOMMU-safe GPU buffer mapping
 - `include/kernel/sched/syscall.h` -- next free syscall number -- §3 `SYS_GPU_*` additions
-- `10-platform-services/TODO-12-long-term-features.md §7` (→ XREF) -- TinyGL port; §3 here assesses upgrade to Mesa lavapipe from TinyGL baseline
+- `10-platform-services/TODO-12-long-term-features.md §8` (→ XREF) -- TinyGL port; §3 here assesses upgrade to Mesa lavapipe from TinyGL baseline
 - `13-future-research/TODO-02-hypervisor.md §5 §6` (→ XREF) -- virtio-gpu stretch mentioned there; IOMMU prerequisite documented there; §1 §4 here build on that analysis
 - `TODO-06-android-app-compatibility.md` (→ XREF) -- TODO-06 section 5 guest framebuffer to host compositor; VirtIO-GPU scanout ties to sections 1 and 5 here
 - `src/kernel/drivers/virtio/virtio.c` -- existing guest-side VirtIO transport; §1 VirtIO-GPU driver extends this
@@ -65,7 +65,7 @@ compositor to 4K 120 Hz.
 | Step | Section                                          | 💎/⭐ | Dependency                                                 |
 | ---- | ------------------------------------------------ | ----- | ---------------------------------------------------------- |
 | 1    | GPU access strategy (option comparison)          | ⭐    | existing VirtIO transport; IOMMU analysis (TODO-02 §6)     |
-| 2    | TinyGL → Mesa lavapipe upgrade research          | ⭐    | `D10T12 §7` TinyGL baseline                                |
+| 2    | TinyGL → Mesa lavapipe upgrade research          | ⭐    | `D10T12 §8` TinyGL baseline                                |
 | 3    | Display engine research (AMD DCN + Intel Arc)    | ⭐    | bare-metal GPU strategy from §1                            |
 | 4    | Vulkan kernel driver architecture                | ⭐    | §1 option selection; `pmm_alloc_contiguous`; syscall table |
 | 5    | Compositor GPU path design                       | ⭐    | §4 Vulkan API; `wm.h` compositor internals                 |
@@ -109,9 +109,9 @@ compositor to 4K 120 Hz.
 ## 2. TinyGL → Mesa lavapipe Upgrade Research `[Sonnet]`
 
 > Assesses upgrade path from TinyGL (OpenGL 1.1) to Mesa lavapipe (CPU Vulkan, no GPU
-> required). TinyGL baseline is specced in `TODO-12 §7`.
+> required). TinyGL baseline is specced in `TODO-12 §8`.
 
-- [ ] **TinyGL baseline** (from `TODO-12 §7`): `~5 K LOC`, OpenGL 1.1, renders to `gfx_surface_t`; `glFlush()` → `gfx_blit()`; covers: `glBegin/glEnd`, matrices, z-buffer, texture mapping
+- [ ] **TinyGL baseline** (from `TODO-12 §8`): `~5 K LOC`, OpenGL 1.1, renders to `gfx_surface_t`; `glFlush()` → `gfx_blit()`; covers: `glBegin/glEnd`, matrices, z-buffer, texture mapping
 - [ ] **Mesa lavapipe assessment**:
   - Mesa is ~10M LOC total; `lavapipe` (CPU Vulkan, `LLVMpipe` backend) is the isolated target
   - Key isolatable modules: `src/gallium/drivers/llvmpipe/` (~80 K LOC), `src/gallium/auxiliary/` (shared utils), `include/vulkan/vulkan.h` (Khronos headers)
@@ -132,7 +132,7 @@ compositor to 4K 120 Hz.
 | Mesa `lavapipe`         | ~80 K + LLVM         | All above + LLVM port                             | Vulkan 1.3          |
 | Zink (OpenGL on Vulkan) | Needs lavapipe first | As above                                          | Bridges GL → Vulkan |
 
-- [ ] **Recommended path**: TinyGL stays as the immediate baseline (already specced in `TODO-12 §7`); Mesa `softpipe` becomes the Phase 2 software renderer after libc shims and `dlopen` are complete; lavapipe deferred to Phase 3
+- [ ] **Recommended path**: TinyGL stays as the immediate baseline (already specced in `TODO-12 §8`); Mesa `softpipe` becomes the Phase 2 software renderer after libc shims and `dlopen` are complete; lavapipe deferred to Phase 3
 - [ ] **`vkd3d-proton` compatibility layer assessment**: runs Direct3D 12 apps on Vulkan ICD; requires a working Vulkan ICD (lavapipe or VirtIO-GPU) as prerequisite; enables Windows game compatibility; defer to Phase 3
 
 ---

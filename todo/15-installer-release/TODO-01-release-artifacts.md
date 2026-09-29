@@ -20,7 +20,7 @@ title: "TODO-01 -- Disk Image, USB & Release Artifacts"
 > `set-version.sh` script, Registry baking, and `winver.exe`. Do not re-specify the
 > base `version.h` constants.
 >
-> **ISO script already specced**: `10-platform-services/TODO-11-installer-iso.md §6`
+> **ISO script already specced**: `10-platform-services/TODO-11-installer-iso.md §1`
 > owns `scripts/make-iso.sh` (El Torito + EFI, no GRUB, `make iso` target,
 > `sha256sum`). §4 here extends it with Joliet+Rock Ridge, versioned filename, and
 > `README.txt` -- do not duplicate the base ISO build.
@@ -40,9 +40,9 @@ title: "TODO-01 -- Disk Image, USB & Release Artifacts"
 
 - `include/kernel/version.h` + `include/build_info.h` -- existing version scheme; extend in §1
 - `scripts/build.sh` -- existing build script; extend with `make release` / `make iso` hooks
-- `scripts/make-iso.sh` (from `TODO-11 §6`) -- base ISO build; extend in §8
+- `scripts/make-iso.sh` (from `TODO-11 §1`) -- base ISO build; extend in §8
 - `09-desktop-shell/TODO-07-cng-crypto.md §7` (→ XREF) -- `codesign_sign(path, priv_key)` / `codesign_verify(path)`; used in §5
-- `10-platform-services/TODO-11-installer-iso.md §6` (→ XREF) -- `make iso` target; §8 extends it
+- `10-platform-services/TODO-11-installer-iso.md §1` (→ XREF) -- `make iso` target; §8 extends it
 - `10-platform-services/TODO-03-update-delivery.md` (→ XREF) -- consumes `release-{version}.json` from §4
 - `src/boot/uefi/bootx64.c` -- bootloader source; extend with optional kernel signature check in §5
 - `include/kernel/uefi_runtime.h` -- UEFI variable access for Secure Boot toggle check -- §5
@@ -68,7 +68,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 | 1    | Versioning scheme (`set-version.sh`, `winver.exe`)        | 💎    | Extends existing `version.h` + `build_info.h`            |
 | 2    | GPT disk image release (`release-image.sh`, zstd)         | 💎    | §1 version baked; existing `build/system-disk.img`       |
 | 3    | USB-bootable image (`make-usb.sh` + `usb_creator.c`)      | 💎    | §2 compressed image                                      |
-| 4    | Bootable ISO (Joliet+Rock Ridge, versioned, `README.txt`) | 💎    | `D10T11 §6` base ISO; §6 version                         |
+| 4    | Bootable ISO (Joliet+Rock Ridge, versioned, `README.txt`) | 💎    | `D10T11 §1` base ISO; §6 version                         |
 | 5    | Code signing (`sign-release.sh`, bootloader verify)       | 💎    | `D09T07 §7` `codesign_sign/verify`; §1–§4 artifacts      |
 | 6    | Artifact manifest (`release-{version}.json`)              | ⭐    | §2–§5 all artifacts; `TODO-03` consumer                  |
 | 7    | VM image variants (VMDK/VHD/VHDX + `.ovf`)                | 💎    | §2 raw image; `qemu-img` installed                       |
@@ -143,7 +143,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 
 ## 4. Bootable ISO (Joliet + Rock Ridge) `[Sonnet]`
 
-> Extends `10-platform-services/TODO-11-installer-iso.md §6` -- adds Joliet+Rock Ridge
+> Extends `10-platform-services/TODO-11-installer-iso.md §1` -- adds Joliet+Rock Ridge
 > extensions, versioned output filename, and `README.txt` at ISO root.
 
 **Modification to `scripts/make-iso.sh`**

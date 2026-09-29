@@ -23,12 +23,12 @@ title: "TODO-06 -- Accessibility Features"
 - `include/registry.h` -- `HKLM\SYSTEM\Accessibility\*`, `HKCU\Software\Impossible\Display\ScaleFactor` -- §1-8 all Registry keys
 - `include/kernel/timer.h` -- `system_get_ticks()` -- §3 sticky key timing, §5 magnifier follow rate
 - `include/desktop/controls.h` (TODO-05) -- `CTRL_SLIDER`, `CTRL_CHECKBOX`, `CTRL_DROPDOWN` -- §8 ease.cpl
-- `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §4 ease.cpl
-- `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §4 sticky keys audio + visual cue
-- → XREF: `08-graphics-ui/TODO-03-theme-system.md §8, §9` -- theme system (`theme_reload()`, `WM_THEME_CHANGED`, `THEME_FLUENT_HIGH_CONTRAST`); §5 depends on that
+- `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §8 ease.cpl
+- `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §3 sticky keys audio + visual cue
+- → XREF: `08-graphics-ui/TODO-03-theme-system.md §8, §9` -- theme system (`theme_reload()`, `WM_THEME_CHANGED`, `THEME_FLUENT_HIGH_CONTRAST`); §1 depends on that
 - → XREF: `08-graphics-ui/TODO-09` -- DPI scale factor + `WM_DPI_CHANGED` broadcast; §2 depends on that
-- → XREF: `08-graphics-ui/TODO-07` -- animation engine (`anim_set_enabled()`); §9 reduced motion depends on that
-- → XREF: `09-desktop-shell/TODO-11 §5` -- `ease.cpl` stub registered in Control Panel; §4 implements it
+- → XREF: `08-graphics-ui/TODO-04-animation-engine.md` -- animation engine (`anim_set_enabled()`); §7 reduced motion depends on that
+- → XREF: `09-desktop-shell/TODO-11 §5` -- `ease.cpl` stub registered in Control Panel; §8 implements it
 - → XREF: `D00 T05 §4, §11` -- the desktop UI test framework reuses `mouse_event_inject()` (§6) for input injection and record/replay; do not redefine the primitive in the test framework
 
 ## Outcome

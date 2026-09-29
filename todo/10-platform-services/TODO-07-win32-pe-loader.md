@@ -8,14 +8,14 @@ title: "TODO-07 -- Native Win32 Execution & PE Loader"
 
 # TODO-07 -- Native Win32 Execution & PE Loader
 
-> **Goal:** Impossible OS is natively Win32 -- PE32+ is the native binary format and Win32 is the native API. This TODO fixes ring-3 execution (current ABI is `INT 0x80` / Linux-style, no STAR/LSTAR setup), migrates to Windows x64 syscall ABI (`SYSCALL` + RCX/RDX/R8/R9), and delivers the full PE loader stack that makes Win32 user-mode programs work natively.
+> **Goal:** Impossible OS is natively Win32 -- PE32+ is the native binary format and Win32 is the native API. This TODO proves ring-3 `SYSCALL` execution for PE programs (the MSRs are set up, but user programs still use `INT 0x80`), moves them to the Windows x64 syscall ABI (`SYSCALL` + RCX/RDX/R8/R9), and completes the PE loader stack (relocations, callable imports, user CRT) that makes Win32 user-mode programs work natively.
 
 > [!IMPORTANT]
-> **Already exists**: GDT user segments `GDT_USER_CODE=0x18`, `GDT_USER_DATA=0x20` defined; `gdt_set_tss_rsp0()` exists. `task_create_user()` + `user_stack_base` in `struct task`. `task_exec()` in `task.h`. `elf_load(data, size)` + `struct elf_load_result` in `elf.h`. `vfs_open/read/close()`. `user/lib/crt0.asm` (ELF `_start` + `INT 0x80`), `user/include/syscall.h` (Linux-style `RDI/RSI/RDX` ABI). **Current ABI is `INT 0x80`** -- no `MSR_STAR/LSTAR/SFMASK` setup, no `syscall_entry` handler for `SYSCALL` instruction. **GDT note**: current selectors 0x18/0x20; STAR MSR encoding for SYSRET requires: `STAR[63:48]` = `GDT_USER_CODE - 16` so SYSRET can add 16 to get user CS; existing GDT layout must be verified/adjusted. **Existing kernel syscall numbers** (`SYS_EXIT=3`, `SYS_GETPROCS=10`, `SYS_KILL=11`, etc.) are stable -- Windows x64 ABI just changes the calling convention, not these numbers. **No PE structs** anywhere in codebase.
+> **Already exists** (re-checked 2026-09-29 against code): GDT user segments are already in SYSRET order, `GDT_USER_DATA=0x18` below `GDT_USER_CODE=0x20` (`include/kernel/gdt.h`, static-asserted); `gdt_set_tss_rsp0()` exists. `STAR`/`LSTAR`/`FMASK` are programmed by `syscall_init_fast()` (`src/kernel/sched/syscall_fast.c`) with the entry stub in `src/kernel/sched/syscall_entry.asm`, which dispatches into the SSDT; `INT 0x80` and `INT 0x2E` remain live and the ELF test programs still use `INT 0x80`. The kernel PE loader shipped under `02-kernel-core/TODO-17-binary-system.md`: PE32+ structs in `include/kernel/pe.h`, `pe_validate()` and `pe_load()` in `src/kernel/pe.c` (AMD64 only, fixed `ImageBase` >= 16 MiB, no relocations), by-name import binding that writes SSDT service numbers into the IAT, `.pdata` registration, and the `kernel32.dll` (14) and `ntdll.dll` (96) built-in tables. `exec_load_fmt()` picks ELF, EIF or PE by magic bytes (`src/kernel/exec.c`). `task_create_user()`, `task_exec()`, `elf_load()`, `vfs_open/read/close()` and `user/lib/crt0.asm` (ELF `_start` + `INT 0x80`) exist. **Existing kernel syscall numbers** (`SYS_EXIT=3`, `SYS_GETPROCS=10`, `SYS_KILL=11`, etc.) are stable. **Still missing:** relocations, callable imports, a PE user CRT, and any PE program using `SYSCALL` directly.
 
 ## Inputs
 
-- `include/kernel/gdt.h` -- `GDT_USER_CODE=0x18`, `GDT_USER_DATA=0x20`, `GDT_TSS_SEG=0x28`; `gdt_set_tss_rsp0()` -- §1 STAR MSR encoding; GDT layout verification
+- `include/kernel/gdt.h` -- `GDT_USER_DATA=0x18`, `GDT_USER_CODE=0x20` (SYSRET order, static-asserted); `gdt_set_tss_rsp0()` -- §1 STAR MSR encoding
 - `include/kernel/sched/task.h` -- `task_create_user()`, `user_stack_base`, `kernel_rsp`, `task_exec()` -- §7 PE execution process setup
 - `include/kernel/elf.h` -- `elf_load(data, size)`, `struct elf_load_result` -- §8 format precedence; PE tried first, ELF fallback
 - `include/kernel/sched/syscall.h` -- existing `SYS_*` constants -- §2 ABI extension; new Win32-named constants added alongside
@@ -25,7 +25,7 @@ title: "TODO-07 -- Native Win32 Execution & PE Loader"
 - `user/include/syscall.h` -- existing Linux-style ABI (extend with Windows x64 ABI wrapper macros) -- §2, §9
 - → XREF: `02-kernel-core/TODO-15-security-reference-monitor.md` -- privilege model; §1 SYSRET ring transition is the security boundary
 - → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md` -- SMEP/SMAP; §1 ring-3 execution must respect kernel page protections
-- → XREF: `02-kernel-core/TODO-17-binary-system.md` -- scope overlap: PE header structs, section loader, import resolver (including API-set + delay-load/bound import handling), and base relocation are authoritative in TODO-08 (kernel-level binary format infrastructure). This TODO focuses on Win32 subsystem integration: SYSCALL/SYSRET ABI, user CRT, and `pe_exec()` process launch. §1–§6 here should consume the kernel PE loader from TODO-08 §7–§10,§19 rather than re-implementing.
+- → XREF: `02-kernel-core/TODO-17-binary-system.md` -- scope overlap: PE header structs, section loader, import resolver (including API-set + delay-load/bound import handling), and base relocation are authoritative in `02-kernel-core/TODO-17-binary-system.md` (kernel-level binary format infrastructure, where `pe.h` and `pe.c` shipped). This TODO focuses on Win32 subsystem integration: SYSCALL/SYSRET ABI, user CRT, and process launch. §3–§6 here should consume and extend that loader rather than re-implementing it.
 - → XREF: `10-platform-services/TODO-08` (next) -- Win32 API stubs (CreateFile/ReadFile/CreateProcess/CreateWindow); §6 IAT resolution depends on those stubs being present
 
 ## Outcome
@@ -196,6 +196,7 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
 - [ ] `valid_pe_sig(const uint8_t *header512)` inline helper -- `e_magic + e_lfanew range + PE\0\0` check
 - [ ] Shell `exec` command + `file_assoc_open(".exe", ...)` → route to `exec_load()`
 - [ ] `klog(LOG_INFO, "exec", "format=PE32+/ELF/unknown")` for each launch
+- [ ] Refresh stale exec comments: `src/kernel/exec.c:5` says only ELF is supported (ELF, EIF and PE32+ all register), `syscall.h:21` documents `SYS_EXEC(name, len)` (it takes path, argv, envp), `task.c` cites PE loading as future work
 - [ ] Commit: `"kernel: exec_load -- PE32+ first, ELF fallback, format probe, .exe file assoc"`
 
 ## 9. Minimal User-Mode Runtime `[Sonnet]`

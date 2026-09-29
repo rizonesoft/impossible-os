@@ -11,28 +11,28 @@ title: "TODO-01 -- Audio System & Media Player"
 > **Goal:** Build the complete software audio stack -- abstraction layer, multi-stream mixer, codec decoders (WAV/MP3/OGG/FLAC), unified loader, and the media player app + volume control UI on top. Hardware drivers live in `04-drivers-hardware/TODO-18-audio-drivers.md`.
 
 > [!IMPORTANT]
-> **Already exists**: AC97 hardware driver in `04-drivers-hardware/TODO-18-audio-drivers.md` (provides `ac97_play(pcm, samples)`, `ac97_stop()`, `ac97_set_volume(0–100)`, DMA buffer feeding). `pmm_alloc_contiguous()` for large PCM buffers. `registry_get/set()`. `CTRL_SLIDER` widget (TODO-05 forward dep). System sounds WAV hooks already wired in `09-desktop-shell/TODO-02` §4 (they call `audio_play()` once §1 exists). **Missing**: all of `src/kernel/audio.c`, `audio_mixer.c`, codec libs (`dr_wav.h`, `dr_mp3.h`, `stb_vorbis`), media player app, volume popup. **Syscalls**: `SYS_AUDIO_PLAY=60`, `SYS_AUDIO_VOLUME=61` (next after `SYS_PRIVILEGE_REQUEST=59`). **PMM rule**: all PCM buffers > 4 KB must use `pmm_alloc_contiguous()` -- `kmalloc` heap is only 2 MiB.
+> **Already exists** (re-checked 2026-09-29): no audio driver yet; `04-drivers-hardware/TODO-18-audio-drivers.md` (all open) plans an `audio_device_t` vtable over AC97, HDA, VirtIO Sound and USB Audio, which §1 here consumes and must not duplicate. `pmm_alloc_contiguous()` for large PCM buffers. `RegGetDword()`/`RegSetDword()` in `include/registry.h`. `CTRL_SLIDER` widget (TODO-05 forward dep). System sounds are planned in `09-desktop-shell/TODO-02` §7 (they call `audio_play()` once §1 exists). **Missing**: all of `src/kernel/audio.c`, `audio_mixer.c`, codec libs (`dr_wav.h`, `dr_mp3.h`, `stb_vorbis`), media player app, volume popup. **Syscalls**: `SYS_AUDIO_PLAY` and `SYS_AUDIO_VOLUME`, numbers to be assigned at implementation (the highest assigned `SYS_*` is 48, and 60-73 are claimed by the Win32 ABI plan in `TODO-07` §2). **PMM rule**: all PCM buffers > 4 KB must use `pmm_alloc_contiguous()` -- `kmalloc` heap is only 2 MiB.
 
 ## Inputs
 
-- `include/kernel/drivers/ac97.h` (TODO-10) -- `ac97_play/stop/set_volume()` -- §1 driver registration
+- `include/kernel/drivers/audio_device.h` (`04-drivers-hardware/TODO-18` §1, planned) -- `audio_device_t` vtable -- §1 driver registration
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous()`, `pmm_free_contiguous()` -- §2 PCM DMA buffers, §3-6 decoded clip buffers
 - `include/kernel/fs/vfs.h` -- `vfs_open/read/close()` -- §3-6 codec file loading
 - `include/registry.h` -- `HKLM\SYSTEM\Sound\Volume`, `HKCU\Software\Impossible\MediaPlayer\*` -- §1 volume persist, §8 playlist persist
-- `include/kernel/sched/syscall.h` -- `SYS_AUDIO_PLAY=60`, `SYS_AUDIO_VOLUME=61` (add)
+- `include/kernel/sched/syscall.h` -- `SYS_AUDIO_PLAY`, `SYS_AUDIO_VOLUME` (add; numbers assigned at implementation)
 - `include/kernel/timer.h` -- `sched_task_add()` -- §8 next-track, §9 OSD dismiss
 - `include/desktop/controls.h` (TODO-05) -- `CTRL_SLIDER`, `CTRL_LISTVIEW`, `CTRL_TABSTRIP` -- §8 seek/vol slider, playlist, §10 mmsys.cpl
 - `include/desktop/wm.h` -- `wm_create_window()` -- §8 media player window, §9 volume overlay pill
 - `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §9 track-change toast
 - `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §10 mmsys.cpl applet
 - → XREF: `04-drivers-hardware/TODO-18-audio-drivers.md` -- AC97 + Intel HDA hardware drivers; §1 here depends on that
-- → XREF: `09-desktop-shell/TODO-02 §4` -- system sound WAV hooks (`SOUND_STARTUP`, `SOUND_ERROR`, etc.) call `audio_play()` once §1 is live
+- → XREF: `09-desktop-shell/TODO-02 §7` -- system sound WAV hooks (`SOUND_STARTUP`, `SOUND_ERROR`, etc.) call `audio_play()` once §1 is live
 - → XREF: `09-desktop-shell/TODO-11 §3` -- `mmsys.cpl` Control Panel entry; §10 here implements it
 - → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §8` -- quick settings volume slider that §9 binds to audio; `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §4` -- system cluster volume glyph
 
 ## Outcome
 
-- `audio_play/stop/set_volume/get_volume/is_playing()` kernel API; `SYS_AUDIO_PLAY=60` / `SYS_AUDIO_VOLUME=61`.
+- `audio_play/stop/set_volume/get_volume/is_playing()` kernel API; `SYS_AUDIO_PLAY` / `SYS_AUDIO_VOLUME`.
 - 8-stream PCM mixer (INT32 accumulate, clamp, master volume, mute silence).
 - `audio_load_wav/mp3/ogg/flac()` decoders; `audio_load(path)` unified dispatch.
 - Media player app: transport controls, seek bar, volume slider, ID3 tags, playlist, repeat/shuffle.
@@ -41,29 +41,29 @@ title: "TODO-01 -- Audio System & Media Player"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                               | Depends On                                                                                | Status |
-| --- | :---: | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 Audio abstraction -- `audio_device`, `audio_init/play/stop/volume`, Registry, syscalls | AC97 driver (TODO-10); `registry_set/get`; add `SYS_AUDIO_PLAY=60`, `SYS_AUDIO_VOLUME=61` |  [ ]   |
-| ⭐  |   2   | §2 Audio mixer -- 8-stream INT32 accumulate + clamp, DMA feed, mute, per-stream handles   | §1 audio abstraction; `pmm_alloc_contiguous()` for mix buffer                             |  [ ]   |
-| 💎  |   3   | §3 WAV decoder -- `dr_wav.h` vendor, `kmalloc/kfree` redirect, `audio_load_wav()`         | §1; `vfs_open/read()`                                                                     |  [ ]   |
-| 💎  |   4   | §4 MP3 decoder -- `dr_mp3.h` vendor, `audio_load_mp3()`, linear resampler                 | §1; `vfs_open/read()`                                                                     |  [ ]   |
-| 💎  |   5   | §5 OGG Vorbis -- `stb_vorbis.c` impl file, `audio_load_ogg()`                             | §1; `vfs_open/read()`                                                                     |  [ ]   |
-| 💎  |   6   | §6 FLAC decoder (stretch) -- `dr_flac.h` vendor, `audio_load_flac()`                      | §1; `vfs_open/read()`                                                                     |  [ ]   |
-| ⭐  |   7   | §7 Unified loader -- `audio_load(path)` extension dispatch → clip                         | §3 + §4 + §5 + §6                                                                         |  [ ]   |
-| 💎  |   8   | §8 Media player app -- transport, seek bar, ID3v2 tags, playlist, file assoc              | §7; `CTRL_SLIDER`; `CTRL_LISTVIEW`; `dialog_file_open()` (TODO-05)                        |  [ ]   |
-| 💎  |   9   | §9 Volume -- quick settings binding, volume-key overlay pill, glyph                       | §1; quick settings (D08 T09 §8); `sched_task_add()` for OSD dismiss                       |  [ ]   |
-| 💎  |  10   | §10 `mmsys.cpl` -- master vol + mute + device selector + system sounds + test             | §1 + §9; `include/cpl.h` (TODO-11); `CTRL_SLIDER`                                         |  [ ]   |
+| ⭐  | Order | Deliverable                                                                               | Depends On                                                                                                        | Status |
+| --- | :---: | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 Audio abstraction -- `audio_device`, `audio_init/play/stop/volume`, Registry, syscalls | audio driver (`04-drivers-hardware/TODO-18`); `RegSetDword/RegGetDword`; add `SYS_AUDIO_PLAY`, `SYS_AUDIO_VOLUME` |  [ ]   |
+| ⭐  |   2   | §2 Audio mixer -- 8-stream INT32 accumulate + clamp, DMA feed, mute, per-stream handles   | §1 audio abstraction; `pmm_alloc_contiguous()` for mix buffer                                                     |  [ ]   |
+| 💎  |   3   | §3 WAV decoder -- `dr_wav.h` vendor, `kmalloc/kfree` redirect, `audio_load_wav()`         | §1; `vfs_open/read()`                                                                                             |  [ ]   |
+| 💎  |   4   | §4 MP3 decoder -- `dr_mp3.h` vendor, `audio_load_mp3()`, linear resampler                 | §1; `vfs_open/read()`                                                                                             |  [ ]   |
+| 💎  |   5   | §5 OGG Vorbis -- `stb_vorbis.c` impl file, `audio_load_ogg()`                             | §1; `vfs_open/read()`                                                                                             |  [ ]   |
+| 💎  |   6   | §6 FLAC decoder (stretch) -- `dr_flac.h` vendor, `audio_load_flac()`                      | §1; `vfs_open/read()`                                                                                             |  [ ]   |
+| ⭐  |   7   | §7 Unified loader -- `audio_load(path)` extension dispatch → clip                         | §3 + §4 + §5 + §6                                                                                                 |  [ ]   |
+| 💎  |   8   | §8 Media player app -- transport, seek bar, ID3v2 tags, playlist, file assoc              | §7; `CTRL_SLIDER`; `CTRL_LISTVIEW`; `dialog_file_open()` (TODO-05)                                                |  [ ]   |
+| 💎  |   9   | §9 Volume -- quick settings binding, volume-key overlay pill, glyph                       | §1; quick settings (D08 T09 §8); `sched_task_add()` for OSD dismiss                                               |  [ ]   |
+| 💎  |  10   | §10 `mmsys.cpl` -- master vol + mute + device selector + system sounds + test             | §1 + §9; `include/cpl.h` (TODO-11); `CTRL_SLIDER`                                                                 |  [ ]   |
 
 ---
 
 ## 1. Audio Abstraction Layer `[Sonnet]`
 
-`struct audio_device` (name, sample_rate, channels, bits_per_sample, play_fn/stop_fn/volume_fn). `audio_init()` detects and registers sound hardware. `audio_play/stop/set_volume/get_volume/is_playing()`. Volume persisted in Registry. `SYS_AUDIO_PLAY=60`, `SYS_AUDIO_VOLUME=61`.
+`struct audio_device` (name, sample_rate, channels, bits_per_sample, play_fn/stop_fn/volume_fn). `audio_init()` detects and registers sound hardware. `audio_play/stop/set_volume/get_volume/is_playing()`. Volume persisted in Registry. `SYS_AUDIO_PLAY`, `SYS_AUDIO_VOLUME`.
 
 **Files:** `src/kernel/audio.c` (new), `include/audio.h` (new)
 
 > [!NOTE]
-> `audio_init()`: probe AC97 first via `ac97_probe()` → if found, register `g_audio_dev`; HDA probe stretch. `audio_play(const int16_t *pcm, uint32_t samples, uint32_t sample_rate)`: calls `g_audio_dev.play_fn()`; if `sample_rate != g_audio_dev.sample_rate`: resample via §4 linear interpolation stub. `audio_stop()`: `g_audio_dev.stop_fn()`. `audio_set_volume(0–100)`: clamp → `g_audio_dev.volume_fn(v)` + `registry_set("HKLM\\SYSTEM\\Sound\\Volume", REG_DWORD, &v, 4)`. `audio_get_volume()`: `registry_get(...)` → or cached `g_volume`. `audio_is_playing()`: atomic flag set/cleared in play_fn/stop_fn. **Syscalls**: `SYS_AUDIO_PLAY=60` (args: pcm_user_ptr, samples, sample_rate → copies via `vmm_copy_from_user`, calls `audio_play()`); `SYS_AUDIO_VOLUME=61` (args: volume 0–100 or -1 to query → set or get).
+> `audio_init()`: probe AC97 first via `ac97_probe()` → if found, register `g_audio_dev`; HDA probe stretch. `audio_play(const int16_t *pcm, uint32_t samples, uint32_t sample_rate)`: calls `g_audio_dev.play_fn()`; if `sample_rate != g_audio_dev.sample_rate`: resample via §4 linear interpolation stub. `audio_stop()`: `g_audio_dev.stop_fn()`. `audio_set_volume(0–100)`: clamp → `g_audio_dev.volume_fn(v)` + `registry_set("HKLM\\SYSTEM\\Sound\\Volume", REG_DWORD, &v, 4)`. `audio_get_volume()`: `registry_get(...)` → or cached `g_volume`. `audio_is_playing()`: atomic flag set/cleared in play_fn/stop_fn. **Syscalls**: `SYS_AUDIO_PLAY` (args: pcm_user_ptr, samples, sample_rate → copies via `vmm_copy_from_user`, calls `audio_play()`); `SYS_AUDIO_VOLUME` (args: volume 0–100 or -1 to query → set or get).
 
 - [ ] `include/audio.h`: `struct audio_device`, `struct audio_clip { int16_t *pcm; uint32_t samples; uint32_t sample_rate; uint8_t channels; }`, API prototypes
 - [ ] `src/kernel/audio.c`: `g_audio_dev`, `g_volume`, `g_is_playing` globals
@@ -71,9 +71,9 @@ title: "TODO-01 -- Audio System & Media Player"
 - [ ] `audio_play(pcm, samples, sample_rate)` -- dispatch; basic sample-rate mismatch passthrough (resampler stub until §4)
 - [ ] `audio_stop()`, `audio_set_volume(v)`, `audio_get_volume()`, `audio_is_playing()`
 - [ ] Registry persist: `HKLM\SYSTEM\Sound\Volume`, `HKLM\SYSTEM\Sound\Mute`
-- [ ] `SYS_AUDIO_PLAY=60` in `syscall.h` + syscall handler: copy PCM from user, call `audio_play()`
-- [ ] `SYS_AUDIO_VOLUME=61`: set or query; update Registry
-- [ ] Commit: `"kernel: audio abstraction layer -- audio_device, play/stop/volume, SYS_AUDIO_PLAY=60"`
+- [ ] `SYS_AUDIO_PLAY` in `syscall.h` (next free number) + syscall handler: copy PCM from user, call `audio_play()`
+- [ ] `SYS_AUDIO_VOLUME`: set or query; update Registry
+- [ ] Commit: `"kernel: audio abstraction layer -- audio_device, play/stop/volume, SYS_AUDIO_PLAY"`
 
 ## 2. Audio Mixer `[Opus]`
 
@@ -179,7 +179,7 @@ Vendor `dr_flac.h` (public domain, ~5000 lines). Same redirect pattern. `audio_l
 - [ ] `void audio_clip_free(audio_clip *clip)` -- PMM or kmalloc branch based on internal `clip->pmm_backed` flag
 - [ ] `void audio_play_file(const char *path)` convenience: `audio_load()` → `audio_play()` → `audio_clip_free()` (fire and forget)
 - [ ] Plug into `SYS_AUDIO_PLAY` handler: if args contain path string instead of raw PCM → route to `audio_load()` then `audio_play()`
-- [ ] System sounds in `09-desktop-shell/TODO-02 §4` call `audio_play_file(SOUND_STARTUP_PATH)` -- confirm API match
+- [ ] System sounds in `09-desktop-shell/TODO-02 §7` call `audio_play_file(SOUND_STARTUP_PATH)` -- confirm API match
 - [ ] Test: `audio_load("test.ogg")` → non-NULL; `audio_load("test.xyz")` → NULL + klog
 - [ ] Commit: `"kernel: audio_load -- unified format dispatch, audio_play_file, audio_clip_free"`
 
@@ -256,7 +256,7 @@ Control Panel Sound applet: master volume slider + mute + output device selector
 | 💎  | WAV decoder                                    | ✅ MFMediaSource; DirectShow; built-in WAV support | ✅ libsndfile; FFmpeg; GStreamer; ALSA `aplay`       | ⬜ §3 -- `dr_wav.h` + `kmalloc/kfree` redirect; PMM                        |
 | 💎  | MP3 decoder -- `dr_mp3.h` + linear resampler   | ✅ Media Foundation MP3 decoder; WMP;              | ✅ FFmpeg; mpg123; GStreamer bad plugins             | ⬜ §4 -- `dr_mp3.h`; linear interpolation resampler for                    |
 | 💎  | OGG Vorbis decoder -- `stb_vorbis`, PMM arena  | ⚠️ No native OGG support; requires                 | ✅ libvorbis; FFmpeg; GStreamer; native in           | ⬜ §5 -- `stb_vorbis` PMM arena (`realloc`-free); `audio_load_ogg()`       |
-| 💎  | FLAC decoder (stretch) -- `dr_flac.h` lossless | ⚠️ No native FLAC; requires Windows                | ✅ libFLAC; FFmpeg; GStreamer; native in             | ⬜ §6 -- (stretch) -- ; `dr_flac.h`; always                                |
+| 💎  | FLAC decoder (stretch) -- `dr_flac.h` lossless | ✅ Media Foundation FLAC decoder (Windows 10+)     | ✅ libFLAC; FFmpeg; GStreamer; native in             | ⬜ §6 -- (stretch) -- ; `dr_flac.h`; always                                |
 | ⭐  | Unified loader                                 | ❌ No single API; requires per-format              | ⚠️ FFmpeg `avformat_open_input` is unified but       | ⬜ §7 -- `⭐` single `audio_load(path)` → `audio_clip                      |
 | 💎  | Media player                                   | ✅ Windows Media Player / Groove                   | ✅ Rhythmbox; Banshee; Clementine; mpv; VLC;         | ⬜ §8 -- `⭐` in-kernel ID3v2 parser (no                                   |
 | 💎  | Volume slider, mute, keyboard OSD              | ✅ System tray volume flyout; OSD                  | ✅ PulseAudio / PipeWire tray icon                   | ⬜ §9 -- in-kernel compositor OSD (no notify                               |
@@ -268,7 +268,7 @@ Control Panel Sound applet: master volume slider + mute + output device selector
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
 - [ ] QEMU: boot → startup chime plays (system sounds WAV via `audio_play_file()`)
-- [ ] `audio_set_volume(50)` in shell (or `SYS_AUDIO_VOLUME=61`) → volume halved; `audio_get_volume()` → 50
+- [ ] `audio_set_volume(50)` in shell (or `SYS_AUDIO_VOLUME`) → volume halved; `audio_get_volume()` → 50
 - [ ] Play 8-stream test: 8 simultaneous WAV clips → all audible; no clipping distortion
 - [ ] Load `.mp3` → `audio_load_mp3()` → non-NULL clip; play → audible; rate mismatch → resampler triggered
 - [ ] Load `.ogg` → `audio_load_ogg()` → non-NULL; play → audible

@@ -26,7 +26,7 @@ title: "TODO-04 -- Release QA & Platform Certification"
 > working correctly.
 >
 > **Post-install OOBE trigger** (`HKLM\SYSTEM\FirstBoot=1`) verified in
-> `10-platform-services/TODO-11 §4`; §5 here checks it passes on the Hyper-V VM.
+> `10-platform-services/TODO-11 §8`; §5 here checks it passes on the Hyper-V VM.
 >
 > **Win32 compat CI gate** (`scripts/compat-check.sh`) is owned by
 > `12-user-platform-sdk/TODO-07 §12`; §9 here lists it as a sign-off gating condition --
@@ -41,7 +41,7 @@ title: "TODO-04 -- Release QA & Platform Certification"
 - `03-memory-concurrency/TODO-10-concurrency-diagnostics.md` (→ XREF) -- `KASAN=1`, `LOCKDEP=1` build flags; stack guard pages; heap canaries; §9 QA build profile
 - `01-boot-platform/TODO-09-cpu-boot-sequencing.md §4` (→ XREF) -- `HV_TSC_ENLIGHTENMENT` detection; `boot_info.hv_flags`; §4 Hyper-V boot dependency
 - `01-boot-platform/TODO-14-boot-diagnostics.md` (→ XREF) -- `[READY]` serial marker; `boot_stage_history[]`; §2 §3 serial output parsing
-- `10-platform-services/TODO-11-installer-iso.md §4` (→ XREF) -- post-install first boot + OOBE trigger verification; §5 Hyper-V certification baseline test
+- `10-platform-services/TODO-11-installer-iso.md §8` (→ XREF) -- post-install first boot + OOBE trigger verification; §5 Hyper-V certification baseline test
 - `12-user-platform-sdk/TODO-07-win32-compat-matrix.md §12` (→ XREF) -- `scripts/compat-check.sh` Tier 1–7 gate; §9 sign-off gating condition
 - `12-installer-release/TODO-01-release-artifacts.md §1 §5` (→ XREF) -- `OS_VERSION_STRING`, `increment-build.sh`, code signing; §7 checklist items
 - `12-installer-release/TODO-03-update-server.md §5` (→ XREF) -- `promote-release.sh` stable promotion; §8 final step
@@ -67,7 +67,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 | 2    | QEMU validation (`qemu-test.sh`)         | ⭐    | §1 test suite; `build.sh run`                                |
 | 3    | Performance benchmarks                   | ⭐    | §2 QEMU; `01-boot-platform/TODO-14` boot stage timing        |
 | 4    | Crash analytics review (QA build + soak) | 💎    | `D03T10` KASAN flags; `D02T27` crash dumps                   |
-| 5    | Hyper-V certification                    | 💎    | §1; `D10T11 §4` OOBE; `TODO-04 §3` HV detect                 |
+| 5    | Hyper-V certification                    | 💎    | §1; `D10T11 §8` OOBE; `TODO-04 §3` HV detect                 |
 | 6    | VirtualBox certification                 | 💎    | §1; §5 (parallel)                                            |
 | 7    | Real hardware checklist                  | 💎    | §4 soak pass; §5 §6 VM pass                                  |
 | 8    | Release readiness checklist              | ⭐    | §1–§7 all done; compat gate (D12T07 §12)                     |
@@ -141,7 +141,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 - [ ] **Unattended install**: attach `ci-answer.ini` (from `TODO-02 §7`); `Start-VM`; `Wait-VM -State Off -Timeout 600` (install completes + reboots)
 - [ ] **Post-install boot from VHDX**: remove ISO DVD; `Start-VM`; wait for desktop serial `[READY]`
 - [ ] **Required certification tests** (all must PASS):
-  1. Post-install first boot triggers OOBE (→ XREF `TODO-11 §4`): `HKLM\SYSTEM\FirstBoot=1` set, OOBE window opens
+  1. Post-install first boot triggers OOBE (→ XREF `TODO-11 §8`): `HKLM\SYSTEM\FirstBoot=1` set, OOBE window opens
   2. Hypervisor detected: `HKLM\HARDWARE\VM\HypervisorVendor == "Microsoft Hv"` (→ XREF `TODO-04 §3`)
   3. TSC enlightenment active: `boot_info.hv_flags & HV_TSC_ENLIGHTENMENT` set; timer uses `HV_X64_MSR_TIME_REF_COUNT`
   4. All `scripts/run-tests.sh` regression tests pass on Hyper-V instance

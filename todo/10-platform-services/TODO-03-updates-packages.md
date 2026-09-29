@@ -17,20 +17,20 @@ title: "TODO-03 -- System Updates & IPKG Package Manager"
 
 - `include/kernel/net/http.h` (07-networking/TODO-03-http-tls.md §3) -- `http_get(url, buf, max, &len)`, `http_get_to_file(url, path, progress_cb)` -- §1 version check, §2 download
 - `include/cng.h` (TODO-07-cng §1) -- `cng_sha256(data, len, out32)` -- §2 integrity verification
-- `include/kernel/zip.h` (TODO-04 §6) -- `zip_open/extract/list/close()` -- §3 update apply, §8 app install
+- `include/kernel/zip.h` (`09-desktop-shell/TODO-04` §4) -- `zip_open/extract/list/close()` -- §3 update apply, §8 app install
 - `include/registry.h` -- `HKLM\SYSTEM\Version`, `HKLM\SOFTWARE\{name}\*`, `HKLM\SYSTEM\Update\*` -- §1 version compare, §6 install manifest, §8 app list
 - `include/kernel/fs/vfs.h` -- `vfs_mkdir/rename/unlink/stat()` -- §3 file replace, §6 install, §7 uninstall
 - `include/desktop/shortcut.h` (TODO-02 §4) -- `shortcut_create(path, target, icon)` -- §6 Start Menu + Desktop shortcuts
 - `include/desktop/file_assoc.h` (TODO-02 §1) -- `file_assoc_set(ext, prog_id, app_path)` -- §6 `.ipkg` association + app assoc
-- `include/desktop/controls.h` (TODO-05) -- `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR`, `CTRL_WIZARDPAGE`, `dialog_confirm()` -- §3 wuapp, §6 wizard, §8 appwiz
-- `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §8 `wuapp.cpl`, §4 `appwiz.cpl`
+- `include/desktop/controls.h` (TODO-05) -- `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR`, `CTRL_WIZARDPAGE`, `dialog_confirm()` -- §4 wuapp, §6 wizard, §8 appwiz
+- `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §4 `wuapp.cpl`, §8 `appwiz.cpl`
 - `include/kernel/sched/task.h` -- `sched_task_add()` -- §4 boot auto-check background task
-- `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §5 "Update available" toast
+- `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §4 "Update available" toast
 - → XREF: `07-networking/TODO-03` -- HTTPS client; §1 + §9 depend on HTTP GET being available
 - → XREF: `09-desktop-shell/TODO-07` -- `cng_sha256()`; §2 verify depends on crypto module
-- → XREF: `09-desktop-shell/TODO-04 §6` -- ZIP/IPKG extract; §3 and §8 depend on `zip_extract()`
+- → XREF: `09-desktop-shell/TODO-04 §4` -- ZIP/IPKG extract; §3 and §8 depend on `zip_extract()`
 - → XREF: `10-platform-services/TODO-04 §2` -- system restore point; §3 update-apply and §8 app install call `restore_create()` before making changes
-- → XREF: `09-desktop-shell/TODO-11 §5` -- `appwiz.cpl` stub registered in Control Panel; §4 implements it
+- → XREF: `09-desktop-shell/TODO-11 §4` -- `appwiz.cpl` stub registered in Control Panel; §8 implements it
 
 ## Outcome
 
@@ -223,9 +223,9 @@ Read `HKLM\SOFTWARE\{name}\InstallPath`, reverse install: delete files, remove r
 
 **Design:** [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame), [`controls.md#cards-and-settings-rows`](../../docs/design/controls.md#cards-and-settings-rows)
 
-List all installed apps from `HKLM\SOFTWARE\*`: Name, Version, Size, Install Date. Search/filter. [Uninstall] per row → `uninstaller_run()`. Part of Control Panel. Stub registered in TODO-11 §5.
+List all installed apps from `HKLM\SOFTWARE\*`: Name, Version, Size, Install Date. Search/filter. [Uninstall] per row → `uninstaller_run()`. Part of Control Panel. Stub registered in `09-desktop-shell/TODO-11` §4.
 
-**Files:** `src/apps/control/applets/appwiz.c` (implement the stub from TODO-11 §9)
+**Files:** `src/apps/control/applets/appwiz.c` (implement the stub from `09-desktop-shell/TODO-11` §4)
 
 > [!NOTE]
 > `CTRL_LISTVIEW` (4 columns: Name 180 / Version 80 / Size 70 / Install Date 100 px); sortable. Populate: enumerate `HKLM\SOFTWARE\*` subkeys; for each: read `Version`, `EstimatedSize`, `InstallDate`; filter out system keys (Impossible, Classes, etc.) by checking for `InstallPath` presence. **Search bar**: `CTRL_TEXTBOX` at top; on type: filter `CTRL_LISTVIEW` rows to name substring match. **[Uninstall] button**: enabled when row selected; click → `uninstaller_run(selected_name)` → refresh list. **App icon**: read 16×16 icon for each row from `HKLM\SOFTWARE\{name}\Icon` path (if set); fall back to default app icon. **Double-click row**: show app properties dialog (name, version, publisher, install path, install date, size, description).

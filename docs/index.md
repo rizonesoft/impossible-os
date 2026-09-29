@@ -13,6 +13,7 @@ Welcome to the Impossible OS documentation -- a 64-bit operating system built fr
 | [🌐 Networking](networking/index.md)              | Network drivers and protocols                              |
 | [🖥️ Desktop](desktop/index.md)                   | Window manager, compositor, input, controls, desktop shell |
 | [🎨 Graphics](graphics/index.md)                  | 2D drawing, text, themes, animation, widgets, accessibility |
+| [🧩 Platform Services](services/index.md)         | Win32 and Linux programs, SDK, audio, updates, recovery, installer |
 | [⚙️ Hardware](hardware/index.md)                 | CPU architecture, bus protocols, firmware, interrupts       |
 | [🔧 Infrastructure](infrastructure/index.md)      | Build system, CI/CD, tooling                               |
 | [🚀 Getting Started](getting-started/index.md)    | Setup guides and emulator configuration                    |

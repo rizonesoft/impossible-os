@@ -27,7 +27,7 @@ title: "TODO-08 -- Win32 API Surface Completion"
 - `wm_create_window()` and `wm_destroy_window()` exist in `include/desktop/wm.h`; `CTRL_BUTTON`, `CTRL_LABEL`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR` exist in `include/desktop/controls.h`. Win32 window/control classes map to these.
 - `kmalloc`/`kfree` in `include/kernel/mm/heap.h` are the backing store for `HeapAlloc`/`HeapFree`. User-mode `VirtualAlloc` maps to `vmm_alloc_user()` (defined in `TODO-07`).
 - File I/O exports (`CreateFile`, `ReadFile`, `WriteFile`, `CloseHandle`, etc.) are **native** Impossible OS API -- `kernel32.dll` simply re-exports the same function pointers.
-- `GetLastError`/`SetLastError` store the error code in `TEB.LastErrorValue` (per-thread, set up in `TODO-07 §9`).
+- `GetLastError`/`SetLastError` store the error code in `TEB.LastErrorValue` (per-thread, set up in `TODO-07 §7`).
 - `CTRL_LISTVIEW`, `CTRL_TREEVIEW`, `CTRL_TABSTRIP`, `CTRL_CHECKBOX`, `CTRL_RADIO` widgets are defined in `TODO-04` (08-graphics-ui domain); this TODO may reference but not implement them.
 - The IxUI toolkit (`sdk/include/ixui.h`) is the **native** Impossible OS GUI framework -- it wraps `wm_create_window()` and the compositor directly, not a Win32 emulation layer.
 
@@ -35,21 +35,21 @@ title: "TODO-08 -- Win32 API Surface Completion"
 
 ## Inputs
 
-| Path                                                      | Purpose                                                |
-| --------------------------------------------------------- | ------------------------------------------------------ |
-| `include/kernel/sched/mutex.h`                            | `mutex_t`, `mutex_init/lock/unlock`                    |
-| `include/kernel/sched/semaphore.h`                        | `semaphore_t`, `sem_init/wait/signal`                  |
-| `include/kernel/sched/event.h`                            | `event_t`, `event_init/set/reset/wait`                 |
-| `include/kernel/mm/heap.h`                                | `kmalloc`, `kfree`                                     |
-| `include/desktop/wm.h`                                    | `wm_create_window`, `wm_destroy_window`                |
-| `include/desktop/controls.h`                              | `CTRL_*` widget types                                  |
-| `include/kernel/sched/task.h`                             | `task_t`, `handle_table[]`, TEB base                   |
-| `include/kernel/sched/abi.h`                              | Win32 `SYS_*` constants (`TODO-07 §2`)                 |
-| `include/pe.h`                                            | PE32+ structs, export directory types (`TODO-07 §3`)   |
-| `src/win32/pe_loader.c`                                   | `pe_exec()`, `pe_load()` (`TODO-07 §4–7`)              |
-| `todo-old/510-Long-Term-Stretch/TODO-510-Native-Win32.md` | §5–9 migration source                                  |
-| → XREF: `TODO-07 §1–9`                                    | Ring-3, SYSCALL ABI, PE loader, TEB/PEB, `exec_load()` |
-| → XREF: `08-graphics-ui/TODO-04`                          | `CTRL_LISTVIEW`, `CTRL_TREEVIEW`, `CTRL_TABSTRIP`      |
+| Path                                                      | Purpose                                                       |
+| --------------------------------------------------------- | ------------------------------------------------------------- |
+| `include/kernel/sched/mutex.h`                            | `mutex_t`, `mutex_init/lock/unlock`                           |
+| `include/kernel/sched/semaphore.h`                        | `semaphore_t`, `sem_init/wait/signal`                         |
+| `include/kernel/sched/event.h`                            | `event_t`, `event_init/set/reset/wait`                        |
+| `include/kernel/mm/heap.h`                                | `kmalloc`, `kfree`                                            |
+| `include/desktop/wm.h`                                    | `wm_create_window`, `wm_destroy_window`                       |
+| `include/desktop/controls.h`                              | `CTRL_*` widget types                                         |
+| `include/kernel/sched/task.h`                             | `task_t`, `handle_table[]`, TEB base                          |
+| `include/kernel/sched/abi.h`                              | Win32 `SYS_*` constants (`TODO-07 §2`)                        |
+| `include/kernel/pe.h`                                     | PE32+ structs, export directory types (shipped; `TODO-07 §3`) |
+| `src/kernel/pe.c`                                         | `pe_load()` shipped; process launch (`TODO-07 §4–7`)          |
+| `todo-old/510-Long-Term-Stretch/TODO-510-Native-Win32.md` | §5–9 migration source                                         |
+| → XREF: `TODO-07 §1–9`                                    | Ring-3, SYSCALL ABI, PE loader, TEB/PEB, `exec_load()`        |
+| → XREF: `08-graphics-ui/TODO-04`                          | `CTRL_LISTVIEW`, `CTRL_TREEVIEW`, `CTRL_TABSTRIP`             |
 
 ---
 
@@ -72,12 +72,12 @@ title: "TODO-08 -- Win32 API Surface Completion"
 | 2   | Console & Process API (`kernel32.dll` tier 1)               | `[Sonnet]` | §1             | 💎   |
 | 3   | C Runtime (`msvcrt.dll`)                                    | `[Sonnet]` | §1             | 💎   |
 | 4   | NT Runtime stubs (`ntdll.dll`)                              | `[Sonnet]` | §1             | 💎   |
-| 5   | Memory Management API                                       | `[Sonnet]` | §1, TODO-07 §9 | 💎   |
+| 5   | Memory Management API                                       | `[Sonnet]` | §1, TODO-07 §7 | 💎   |
 | 6   | Synchronization API                                         | `[Sonnet]` | §1             | 💎   |
 | 7   | DLL Loading API (`LoadLibrary`/`GetProcAddress`)            | `[Opus]`   | §2, TODO-07 §7 | 💎   |
 | 8   | Error API (`GetLastError`, `FormatMessage`, debug output)   | `[Sonnet]` | §1             | 💎   |
 | 9   | Unimplemented Function Logger                               | `[Sonnet]` | §2–8           | ⭐   |
-| 10  | Window Management (`user32.dll`)                            | `[Sonnet]` | §1, TODO-07 §9 | 💎   |
+| 10  | Window Management (`user32.dll`)                            | `[Sonnet]` | §1, TODO-07 §7 | 💎   |
 | 11  | GDI Rendering (`gdi32.dll`)                                 | `[Sonnet]` | §10            | 💎   |
 | 12  | Shell & Icon API (`shell32.dll`)                            | `[Sonnet]` | §10            | 💎   |
 | 13  | IxUI Native Toolkit (`sdk/include/ixui.h`)                  | `[Opus]`   | §10–11         | ⭐   |
@@ -119,7 +119,7 @@ Create `src/win32/kernel32.c`. File I/O functions are **re-exports** of the nati
 - [ ] `GetConsoleWindow()` → return the HWND of the associated console window (or NULL)
 - [ ] File I/O re-exports (same function pointers as native kernel): `CreateFileA/W`, `ReadFile`, `WriteFile`, `CloseHandle`, `SetFilePointer`, `GetFileSize`, `FindFirstFileA/W`, `FindNextFileA/W`, `FindClose`, `DeleteFileA`, `CreateDirectoryA`, `RemoveDirectoryA`, `MoveFileA`, `CopyFileA`, `GetFileAttributesA`, `GetCurrentDirectoryA`, `SetCurrentDirectoryA`
 - [ ] `ExitProcess(code)` → `SYS_EXIT`
-- [ ] `GetCommandLineA/W()` → read from `PEB.CommandLine` (set in `TODO-07 §9`)
+- [ ] `GetCommandLineA/W()` → read from `PEB.CommandLine` (set in `TODO-07 §7`)
 - [ ] `GetModuleHandleA/W(name)` → NULL → return current `ImageBase`; named → walk PEB loaded-modules list
 - [ ] `GetCurrentProcessId()` → `SYS_GETCURRENTPID`
 - [ ] `GetCurrentThreadId()` → current thread ID from scheduler
@@ -129,6 +129,7 @@ Create `src/win32/kernel32.c`. File I/O functions are **re-exports** of the nati
 - [ ] `GetExitCodeProcess(hProcess, lpExitCode)` → read exit code from completed task
 - [ ] Registry re-exports (already implemented): `RegOpenKeyExA/W`, `RegQueryValueExA/W`, `RegSetValueExA/W`, `RegCloseKey`, `RegCreateKeyExA/W`, `RegEnumKeyExA/W`
 - [ ] Firmware variable trampolines for kernel32 exports reserved in [`src/kernel/pe.c`](../../src/kernel/pe.c) `s_kernel32_exports[]` (TODO-02 firmware variable + table surface XREF). Each implements ANSI/Wide name conversion, EFI_GUID string parsing (`{8be4df61-93ca-11d2-aa0d-00e098032b8c}` form), and dispatches the existing `SSDT_NtQuerySystemEnvironmentValueEx` / `SSDT_NtSetSystemEnvironmentValueEx` / `SSDT_NtQuerySystemInformation` slots. Privilege gating (`SE_SYSTEM_ENVIRONMENT_NAME` for the Set path) defers to the privilege table TODO. Trampolines: `GetFirmwareEnvironmentVariableA/W`, `SetFirmwareEnvironmentVariableA/W`, `GetSystemFirmwareTable`, `EnumSystemFirmwareTables`. Without these the kernel32 imports resolve but first calls decode arguments wrong (Codex design F1 2026-04-29 against the kernel-side reservation).
+- [ ] Align the test shim's comments when `kernel32.dll` lands: `win32.h` says the file calls use SYSCALL and `win32.c` says all five use `INT 0x80`; only the file calls do (pid reads gs:0x40, ticks read KUSD)
 - [ ] Pseudo-console host: the console implementation backs `CreatePseudoConsole` / `ResizePseudoConsole` / `ClosePseudoConsole` -> XREF: `09-desktop-shell/TODO-08-terminal.md` §8 (Pseudo-Console (ConPTY))
 - [ ] Commit: `"win32: kernel32.dll console + process API"`
 

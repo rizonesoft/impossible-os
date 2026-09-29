@@ -11,7 +11,7 @@ title: "TODO-05 -- Screensaver, Widgets & Display"
 > **Goal:** Add the idle/lock experience, desktop widget layer, and display management that round out the desktop shell. The compositor, GFX library, and GOP mode list are already available -- this TODO builds the user-facing idle, decoration, and display features directly on top.
 
 > [!IMPORTANT]
-> **Already exists**: `gfx_acrylic()`, `gfx_draw_line()`, `gfx_fill_circle()`, `gfx_fill_rect()` in `gfx.h`. `FONT_MONO`, `FONT_UI` in `font_mgr.h`. `system_get_ticks()`, `uptime()` in `timer.h`. `boot_info->gop_modes[]` + `gop_mode_count` + `gop_mode_selected` in `boot_info.h` -- full GOP mode list available at boot. `fb_lock_compositor()` / `fb_unlock_compositor()`. `wallpaper_set()` (TODO-07 forward dep). Lock screen (TODO-06 §7 forward dep). `sched_get_task_list()` / `cpu_ticks` (TODO-12 §1 forward dep for CPU meter widget). `pmm_get_total_frames()` / `pmm_get_free_frames()`. `image_load()` for bouncing logo PNG. `ttf_draw_string()`. **Missing**: `g_last_input_ticks` idle tracking in WM (add 1 line); screensaver `scr_entry_fn` API; widget manager + lifecycle; GOP runtime `SetMode` (not available post-ExitBootServices -- `display_set_mode()` is a stretch requiring VirtIO-GPU MMIO). **`LOG_SECURITY` + `kevent_log()`** already done in TODO-04 §1.
+> **Already exists**: `gfx_acrylic()`, `gfx_draw_line()`, `gfx_fill_circle()`, `gfx_fill_rect()` in `gfx.h`. `FONT_MONO`, `FONT_UI` in `font_mgr.h`. `system_get_ticks()`, `uptime()` in `timer.h`. `boot_info->gop_modes[]` + `gop_mode_count` + `gop_mode_selected` in `boot_info.h` -- full GOP mode list available at boot. `fb_lock_compositor()` / `fb_unlock_compositor()`. `wallpaper_set()` (`08-graphics-ui/TODO-09` §3 forward dep). Lock screen (`09-desktop-shell/TODO-06` §8 forward dep). `sched_get_task_list()` / `cpu_ticks` (`09-desktop-shell/TODO-12` §7 forward dep for CPU meter widget). `pmm_get_total_frames()` / `pmm_get_free_frames()`. `image_load()` for bouncing logo PNG. `ttf_draw_string()`. **Missing**: `g_last_input_ticks` idle tracking in WM (add 1 line); screensaver `scr_entry_fn` API; widget manager + lifecycle; GOP runtime `SetMode` (not available post-ExitBootServices -- `display_set_mode()` is a stretch requiring VirtIO-GPU MMIO).
 
 ## Inputs
 
@@ -25,11 +25,11 @@ title: "TODO-05 -- Screensaver, Widgets & Display"
 - `include/registry.h` -- `HKCU\Software\Impossible\Screensaver\*`, `HKCU\Software\Impossible\Widgets\{id}\*`, `HKLM\HARDWARE\Display\*` -- §1 settings, §3 widget positions, §5 current mode
 - `include/desktop/wm.h` -- WM input event loop (add `g_last_input_ticks`); `wm_create_window()` -- §1 idle hook, §4 widget overlay
 - `include/desktop/controls.h` (TODO-05) -- `CTRL_DROPDOWN`, `CTRL_SLIDER`, `CTRL_CHECKBOX` -- §5 desk.cpl
-- `include/cpl.h` (TODO-11) -- `CPlApplet_t` -- §9 desk.cpl mode picker update
-- → XREF: `09-desktop-shell/TODO-06 §7` -- Win+L lock screen; §2 calls lock screen on screensaver dismiss when `RequirePassword=1`
-- → XREF: `09-desktop-shell/TODO-07 §2` -- `wallpaper_set()`; §1 bouncing logo screensaver reads wallpaper path; §3 widget manager sits above wallpaper layer
-- → XREF: `09-desktop-shell/TODO-11 §7` -- `desk.cpl` resolution dropdown; §9 here populates it with GOP mode list
-- → XREF: `10-platform-services/TODO-12 §1` -- `sched_get_task_list()` + `cpu_ticks`; §5 CPU meter widget depends on that
+- `include/cpl.h` (TODO-11) -- `CPlApplet_t` -- §5 desk.cpl mode picker update
+- → XREF: `09-desktop-shell/TODO-06 §8` -- Win+L lock screen; §2 calls lock screen on screensaver dismiss when `RequirePassword=1`
+- → XREF: `08-graphics-ui/TODO-09 §3` -- `wallpaper_set()`; §1 bouncing logo screensaver reads wallpaper path; §3 widget manager sits above wallpaper layer
+- → XREF: `09-desktop-shell/TODO-11 §3` -- `desk.cpl` resolution dropdown; §5 here populates it with GOP mode list
+- → XREF: `09-desktop-shell/TODO-12 §7` -- `sched_get_task_list()` + `cpu_ticks`; §4 CPU meter widget depends on that
 
 ## Outcome
 

@@ -22,7 +22,7 @@ title: "TODO-05 -- AI/ML Native Inference Runtime"
 > on top of those foundations -- do not re-specify kernel XSAVE initialization.
 >
 > **C++ support** (for `ggml` C++ bindings and `llama.cpp`) depends on
-> `10-platform-services/TODO-09 §3` (GCC/G++ long-term). The ggml C99 core
+> `10-platform-services/TODO-09 §11` (GCC/G++ long-term). The ggml C99 core
 > (`src/ggml.c`) does NOT require C++; §2 targets the C99 core only. C++ bindings
 > are a post-compiler stretch.
 >
@@ -40,7 +40,7 @@ title: "TODO-05 -- AI/ML Native Inference Runtime"
 
 - `02-kernel-core/TODO-09-x86-64-architecture.md §1` (→ XREF) -- XSAVE design; `CR4.OSXSAVE`; `XSETBV(XCR0, AVX_MASK)` -- §4 per-thread XSAVE context builds on this
 - `01-boot-platform/TODO-09-cpu-boot-sequencing.md §5` (→ XREF) -- Phase 1 XSAVE & PCID activation window; §4 adds per-thread XSAVE area after §5 finalizes OSXSAVE (XSAVE areas are PMM-backed, not TEB)
-- `10-platform-services/TODO-09-compiler-sdk.md §3` (→ XREF) -- GCC/G++ C++ support; ggml C++ bindings depend on this (stretch, post-C99 core)
+- `10-platform-services/TODO-09-compiler-sdk.md §11` (→ XREF) -- GCC/G++ C++ support; ggml C++ bindings depend on this (stretch, post-C99 core)
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous(count)` -- §4 model tensor allocation (128 MB–4 GB contiguous regions)
 - `include/kernel/mm/vmm.h` -- `vmm_map_page()` -- §4 user-mode tensor memory mapping
 - `include/kernel/sched/task.h` -- `task_t`, `TEB` -- §3 XSAVE area in TEB per thread
@@ -87,7 +87,7 @@ the ggml port and XSAVE context switch work end-to-end.
 
 - [ ] **Option B -- ONNX Runtime** (MIT, ~500 K LOC C++):
   - Full ONNX graph execution; ONNX operator set ~170 ops; supports vision + NLP models
-  - C++ STL dependency (vectors, maps, strings, exceptions, RTTI) -- requires `TODO-09 §3` GCC/G++ first
+  - C++ STL dependency (vectors, maps, strings, exceptions, RTTI) -- requires `TODO-09 §11` GCC/G++ first
   - **Feasibility**: ❌ not achievable within 6 months; blocked by C++ compiler + STL port; defer to Phase 2
 
 - [ ] **Option C -- Minimal custom runtime** (~5 K LOC):
@@ -312,7 +312,7 @@ the ggml port and XSAVE context switch work end-to-end.
   - **GPU inference roadmap** (from §6): VirtIO-GPU dependencies, estimated speedup, blocking items
   - **Blocking dependencies summary**:
     1. `D02T09 §1` + `TODO-04 §5` XSAVE activation before §4 can be implemented
-    2. `TODO-09 §3` GCC/G++ before C++ ggml bindings
+    2. `TODO-09 §11` GCC/G++ before C++ ggml bindings
     3. `TODO-03 §6` Vulkan driver before GPU inference
     4. PMM large-allocation extension (ML pool reservation) before models > 4 GB
 - [ ] **QEMU prototype** (in `ai/ggml-spike` branch):

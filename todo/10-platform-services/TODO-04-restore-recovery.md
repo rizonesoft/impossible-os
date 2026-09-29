@@ -11,17 +11,17 @@ title: "TODO-04 -- System Restore, Recovery & Observability"
 > **Goal:** Make Impossible OS survivable when things go wrong -- restore points, system rollback, the F8 recovery environment, factory reset, startup repair, first-boot setup wizard, event log, crash dump viewer, and disk cleanup. This is the full OS safety net.
 
 > [!IMPORTANT]
-> **Already exists**: `klog(LOG_INFO/WARN/ERROR, source, fmt)` + `klog_entry_t` + `klog_get_ring()` in `klog.h`. `zip_create/add_file/extract/close()` from TODO-04-recycle-zip-scheduler (forward dep). `cng_sha256()` from TODO-07-cng (forward dep). `registry_backup/restore()` from TODO-02-kernel-core (forward dep -- Registry hive backup). `kernel_panic()` exists; `TODO-27-crash-dump-generation.md` adds full dump; §9 here adds on-boot prompt + viewer on top. `CTRL_LISTVIEW`, `CTRL_TABSTRIP`, `dialog_confirm()`, `CTRL_PROGRESSBAR` from TODO-05. `CTRL_MENUBAR` + `ttf_draw_string(FONT_UI)`. `sched_task_add()`. `notify_send()`. **Missing**: restore point CRUD, event log (`kevent_log()`), recovery environment, first-boot wizard, all CPL applets here. **`LOG_SECURITY`**: add new log level to `klog.h` (between `LOG_ERROR` and a new `LOG_SECURITY=4`). **Note on overlap**: §9 crash dump viewer builds on `02-kernel-core/TODO-27`; §8 event log adds a separate persistent structured event store on top of klog's ring buffer.
+> **Already exists**: `klog(LOG_INFO/WARN/ERROR, source, fmt)` + `klog_entry_t` + `klog_get_ring()` in `klog.h`. `zip_create/add_file/extract/close()` from TODO-04-recycle-zip-scheduler (forward dep). `cng_sha256()` from TODO-07-cng (forward dep). `RegSaveKey()`/`RegRestoreKey()` are declared in `include/registry.h` but return `ERROR_NOT_SUPPORTED` today (hive save and restore are owned by `02-kernel-core/TODO-14-registry-completion.md`). `kernel_panic()` exists; `TODO-27-crash-dump-generation.md` adds full dump; §6 here adds on-boot prompt + viewer on top. `CTRL_LISTVIEW`, `CTRL_TABSTRIP`, `dialog_confirm()`, `CTRL_PROGRESSBAR` from TODO-05. `CTRL_MENUBAR` + `ttf_draw_string(FONT_UI)`. `sched_task_add()`. `notify_send()`. **Missing**: restore point CRUD, event log (`kevent_log()`), recovery environment, first-boot wizard, all CPL applets here. **`LOG_SECURITY`**: `LOG_FATAL` already takes value 4 in `klog.h`, so security events need the next free value or a type field in `events.jsonl` (§1 decides). **Note on overlap**: §6 crash dump viewer builds on `02-kernel-core/TODO-27`; §1 event log adds a separate persistent structured event store on top of klog's ring buffer.
 
 ## Inputs
 
-- `include/kernel/klog.h` -- `klog()`, `klog_entry_t`, `klog_get_ring()`; extend with `LOG_SECURITY=4` -- §8 event log
+- `include/kernel/klog.h` -- `klog()`, `klog_entry_t`, `klog_get_ring()`; add a security level (4 is `LOG_FATAL`) -- §1 event log
 - `include/kernel/zip.h` (TODO-04 §6) -- `zip_create/add_file/close/open/extract()` -- §2 restore ZIP, §4 rollback extract
 - `include/cng.h` (TODO-07 §1) -- `cng_sha256()` -- §2 rollback integrity verify, §7 kernel ELF verify
-- `include/registry.h` -- `registry_backup()`, `registry_restore()`, `HKLM\SYSTEM\Restore\*`, `HKLM\SYSTEM\FirstBoot` -- §1, §2, §7
+- `include/registry.h` -- `RegSaveKey()`, `RegRestoreKey()` (return `ERROR_NOT_SUPPORTED` today), `HKLM\SYSTEM\Restore\*`, `HKLM\SYSTEM\FirstBoot` -- §1, §2, §7
 - `include/kernel/fs/vfs.h` -- `vfs_mkdir/rename/unlink/readdir/stat()` -- §1 restore dir, §2 file replace, §5 factory reset
 - `include/kernel/fs/gpt.h` -- `gpt_write_header()`, CRC recompute -- §6 startup repair
-- `include/kernel/uefi_runtime.h` -- `EFI_ResetSystem()`, NVRAM boot entry `SetVariable` -- §6 UEFI boot entry repair, §5 restart
+- `include/kernel/uefi_runtime.h` -- `uefi_reset()`, NVRAM boot entry `uefi_set_variable()` -- §6 UEFI boot entry repair, §5 restart
 - `include/kernel/sched/task.h` -- `sched_task_add()` -- §8 log rotate task, §10 weekly cleanup task
 - `include/kernel/timer.h` -- `uptime()`, `system_get_ticks()` -- §1 restore point timestamps
 - `include/desktop/controls.h` (TODO-05) -- `CTRL_LISTVIEW`, `CTRL_TABSTRIP`, `dialog_confirm()`, `CTRL_PROGRESSBAR` -- §2 rstrui.cpl, §8 event viewer, §10 cleanup UI
@@ -29,10 +29,10 @@ title: "TODO-04 -- System Restore, Recovery & Observability"
 - `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §10 on-boot crash report prompt
 - `include/desktop/wm.h` -- `wm_create_window()` -- §7 first-boot wizard, §9 crash report viewer
 - → XREF: `02-kernel-core/TODO-27` -- crash dump generation (registers, stack trace); §9 here adds on-boot prompt + formatted viewer on top
-- → XREF: `08-graphics-ui/TODO-03 §3` -- F8 boot-time keyboard intercept lives there; §6 here implements the recovery menu content behind that intercept
-- → XREF: `10-platform-services/TODO-03 §5` -- `update_apply()` and `installer_open()` call `restore_create()` from §1 here
-- → XREF: `09-desktop-shell/TODO-04 §1` -- built-in scheduler tasks include `klog_rotate`; §7 event log rotate uses same scheduler slot
-- → XREF: `09-desktop-shell/TODO-06 §5` -- user account creation used in §7 first-boot wizard
+- → XREF: `08-graphics-ui/TODO-13 §5` -- F8 boot-time menu and intercept live there; §7 here implements the recovery content behind it
+- → XREF: `10-platform-services/TODO-03 §3, §6` -- `update_apply()` and `installer_open()` call `restore_create()` from §2 here
+- → XREF: `09-desktop-shell/TODO-04 §7` -- built-in scheduler tasks include `klog_rotate`; §1 event log rotate uses same scheduler slot
+- → XREF: `09-desktop-shell/TODO-06 §3` -- user account creation used in §5 first-boot wizard
 
 ## Outcome
 
@@ -42,7 +42,7 @@ title: "TODO-04 -- System Restore, Recovery & Observability"
 - Factory reset: typed-"YES" confirmation; recreate default dir tree + first-boot flag.
 - Startup repair: GPT CRC recompute, UEFI boot entry rewrite, kernel ELF SHA-256 verify, registry hive repair.
 - First-boot wizard: timezone, region, keyboard, user account, wallpaper, update check, [Finish].
-- `kevent_log()` structured event log: rolling 1 MiB file; `LOG_SECURITY=4`; Event Viewer applet.
+- `kevent_log()` structured event log on the existing `events.jsonl` stream; security events; Event Viewer.
 - Crash report: on-boot prompt + formatted dump viewer (from TODO-16 base).
 - Disk cleanup: `C:\Temp`, Recycle Bin, old restore points, cached packages; weekly scheduled.
 
@@ -50,30 +50,30 @@ title: "TODO-04 -- System Restore, Recovery & Observability"
 
 | ⭐  | Order | Deliverable                                                                                          | Depends On                                                                              | Status |
 | --- | :---: | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §8 Event log -- `kevent_log()`, `LOG_SECURITY=4`, rolling file, `CTRL_TABSTRIP` Event Viewer applet  | `klog_get_ring()` (exists); `vfs_write()`; `sched_task_add()` rotate task             |  [ ]   |
-| 💎  |   2   | §1 Restore point creation -- `restore_create/list/delete()`, ZIP archive, Registry CRUD, max-evict   | `zip_create/add_file()` (TODO-04); `registry_backup()` (02-kernel-core/TODO-14-registry-completion.md); `vfs_mkdir()`  |  [ ]   |
-| 💎  |   3   | §2 System rollback -- `restore_rollback()`, SHA-256 manifest verify, ZIP extract, hive restore       | §2; `cng_sha256()` (TODO-07); `zip_extract()` (TODO-04); `registry_restore()`         |  [ ]   |
-| 💎  |   4   | §3 `rstrui.cpl` -- calendar timeline, [Create], [Restore], [Delete]                                  | §2 + §3; `CTRL_LISTVIEW`; `include/cpl.h` (TODO-11)                                   |  [ ]   |
-| 💎  |   5   | §7 First-boot wizard -- 6-page OOBE; timezone/keyboard/user/wallpaper; `HKLM\SYSTEM\FirstBoot`       | `auth_create_user()` (TODO-06); `wallpaper_set()` (TODO-07); `update_check()` (TODO-03) |  [ ]   |
-| 💎  |   6   | §9 Crash dump viewer -- on-boot `notify_send()` prompt + formatted dump viewer window                 | D02T27 crash dump file; `vfs_stat()`; `wm_create_window()`; `notify_send()` (TODO-09)|  [ ]   |
-| ⭐  |   7   | §4 F8 recovery environment -- text-mode boot menu; 15-command recovery shell                         | `08-graphics-ui/TODO-03 §3` F8 intercept; VGA text mode or serial output              |  [ ]   |
-| 💎  |   8   | §5 Factory reset -- typed-YES confirm; wipe user data + apps; recreate dir tree + FirstBoot flag     | §4 recovery env; `vfs_unlink/rmdir()`; `HKLM\SYSTEM\FirstBoot`                        |  [ ]   |
-| ⭐  |   9   | §6 Startup repair -- GPT CRC, UEFI boot entry rewrite, kernel ELF SHA-256, registry hive repair      | `gpt_write_header()`; `uefi_runtime.h`; `cng_sha256()`; §4 recovery env              |  [ ]   |
-| 💎  |  10   | §10 Disk cleanup -- scan Temp/Recycle/old-restore/cached-pkgs, space per category, weekly schedule   | §1 restore list; `trash_count/size()` (TODO-04); `sched_task_add()`                   |  [ ]   |
+| 💎  |   1   | §1 Event log -- `kevent_log()`, security events on `events.jsonl`, Event Viewer (13-tools-accessories)  | `klog_get_ring()` (exists); `vfs_write()`; `sched_task_add()` rotate task             |  [ ]   |
+| 💎  |   2   | §2 Restore point creation -- `restore_create/list/delete()`, ZIP archive, Registry CRUD, max-evict   | `zip_create/add_file()` (TODO-04); `registry_backup()` (02-kernel-core/TODO-14-registry-completion.md); `vfs_mkdir()`  |  [ ]   |
+| 💎  |   3   | §3 System rollback -- `restore_rollback()`, SHA-256 manifest verify, ZIP extract, hive restore       | §2; `cng_sha256()` (TODO-07); `zip_extract()` (TODO-04); `registry_restore()`         |  [ ]   |
+| 💎  |   4   | §4 `rstrui.cpl` -- calendar timeline, [Create], [Restore], [Delete]                                  | §2 + §3; `CTRL_LISTVIEW`; `include/cpl.h` (TODO-11)                                   |  [ ]   |
+| 💎  |   5   | §5 First-boot wizard -- 6-page OOBE; timezone/keyboard/user/wallpaper; `HKLM\SYSTEM\FirstBoot`       | `auth_create_user()` (TODO-06); `wallpaper_set()` (TODO-07); `update_check()` (TODO-03) |  [ ]   |
+| 💎  |   6   | §6 Crash dump viewer -- on-boot `notify_send()` prompt + formatted dump viewer window                 | D02T27 crash dump file; `vfs_stat()`; `wm_create_window()`; `notify_send()` (TODO-09)|  [ ]   |
+| ⭐  |   7   | §7 F8 recovery environment -- text-mode boot menu; 15-command recovery shell                         | `08-graphics-ui/TODO-13 §5` F8 menu; boot framebuffer or serial output              |  [ ]   |
+| 💎  |   8   | §8 Factory reset -- typed-YES confirm; wipe user data + apps; recreate dir tree + FirstBoot flag     | §7 recovery env; `vfs_unlink/rmdir()`; `HKLM\SYSTEM\FirstBoot`                        |  [ ]   |
+| ⭐  |   9   | §9 Startup repair -- GPT CRC, UEFI boot entry rewrite, kernel ELF SHA-256, registry hive repair      | `gpt_write_header()`; `uefi_runtime.h`; `cng_sha256()`; §7 recovery env              |  [ ]   |
+| 💎  |  10   | §10 Disk cleanup -- scan Temp/Recycle/old-restore/cached-pkgs, space per category, weekly schedule   | §2 restore list; `trash_count/size()` (TODO-04); `sched_task_add()`                   |  [ ]   |
 
 ---
 
 ## 1. Event Log `[Sonnet]`
 
-`struct kernel_event` (type INFO/WARN/ERROR/SECURITY, source[32], message[256], unix_ts). Add `LOG_SECURITY=4` to `klog.h`. `kevent_log()` appends to rolling `X:\Logs\events.log` (max 1 MiB, rotate on overflow). Event Viewer applet: `CTRL_TABSTRIP` filter by type/source, date range, export.
+`struct kernel_event` (type INFO/WARN/ERROR/SECURITY, source[32], message[256], unix_ts). Add a security level to `klog.h` (value 4 is already `LOG_FATAL`, so take the next free value). `kevent_log()` appends to rolling `X:\Logs\events.log` (max 1 MiB, rotate on overflow). Event Viewer applet: `CTRL_TABSTRIP` filter by type/source, date range, export.
 
 **Files:** `src/kernel/event_log.c` (new), `include/kernel/event_log.h` (new)
 
 > [!NOTE]
-> Extend `klog.h`: add `LOG_SECURITY = 4` constant. `kevent_log(type, source, msg)`: format as `"{unix_ts}|{type}|{source}|{msg}\n"` → append to VFS file `X:\Logs\events.log`. If file > 1 MiB: rotate: `vfs_rename("events.log", "events.1.log")`; optionally compress via `zip_create("events.1.log.zip")`. Log events at call sites: app install/uninstall → `kevent_log(LOG_INFO, "installer", "Installed %s %s")`. Login → `kevent_log(LOG_SECURITY, "auth", "Login: %s")`. Logout → `kevent_log(LOG_SECURITY, "auth", "Logout: %s")`. Permission denied → `kevent_log(LOG_SECURITY, "vfs", "Access denied: %s by uid %u")`. Crash/panic → `kevent_log(LOG_ERROR, "kernel", "Panic: %s at %p")`. Service start/stop → `kevent_log(LOG_INFO, "service", "%s started/stopped")`. **Rotate task**: `sched_task_add("event_rotate", event_rotate_task, 3600, 1)` (hourly check). **Event Viewer**: `eventvwr.cpl` `CTRL_TABSTRIP` tabs: All Events / Errors / Security / Info. `CTRL_LISTVIEW` (Time, Type, Source, Message). [Filter by date]: `dialog_input()` date range → filter in-memory. [Export]: `dialog_file_save("*.log")` → `vfs_write()` raw log lines. `CTRL_TEXTBOX` source filter.
+> Extend `klog.h`: add a `LOG_SECURITY` constant at the next free value (4 is `LOG_FATAL`). `kevent_log(type, source, msg)`: format as `"{unix_ts}|{type}|{source}|{msg}\n"` → append to VFS file `X:\Logs\events.log`. If file > 1 MiB: rotate: `vfs_rename("events.log", "events.1.log")`; optionally compress via `zip_create("events.1.log.zip")`. Log events at call sites: app install/uninstall → `kevent_log(LOG_INFO, "installer", "Installed %s %s")`. Login → `kevent_log(LOG_SECURITY, "auth", "Login: %s")`. Logout → `kevent_log(LOG_SECURITY, "auth", "Logout: %s")`. Permission denied → `kevent_log(LOG_SECURITY, "vfs", "Access denied: %s by uid %u")`. Crash/panic → `kevent_log(LOG_ERROR, "kernel", "Panic: %s at %p")`. Service start/stop → `kevent_log(LOG_INFO, "service", "%s started/stopped")`. **Rotate task**: `sched_task_add("event_rotate", event_rotate_task, 3600, 1)` (hourly check). **Event Viewer**: `eventvwr.cpl` `CTRL_TABSTRIP` tabs: All Events / Errors / Security / Info. `CTRL_LISTVIEW` (Time, Type, Source, Message). [Filter by date]: `dialog_input()` date range → filter in-memory. [Export]: `dialog_file_save("*.log")` → `vfs_write()` raw log lines. `CTRL_TEXTBOX` source filter.
 
 - [ ] `include/kernel/event_log.h`: `struct kernel_event { log_level_t type; char source[32]; char msg[256]; uint64_t ts; }`, `kevent_log()` prototype
-- [ ] Add `LOG_SECURITY = 4` to `klog.h` enum; update klog level string table
+- [ ] Add `LOG_SECURITY` to the `klog.h` enum after `LOG_FATAL` (4); update klog level string table
 - [ ] `src/kernel/event_log.c`: `kevent_log()` -- format + VFS append; 1 MiB size check + rotate
 - [ ] `sched_task_add("event_rotate", event_rotate_check, 3600, 1)` in kernel init
 - [ ] Wire `kevent_log()` at: auth login/logout; UAC elevation; permission denied (VFS); service start/stop; app install/uninstall; kernel panic
@@ -274,7 +274,7 @@ Rewrite UEFI boot entry, recompute GPT header CRCs, verify kernel ELF SHA-256 vs
 
 | ⭐  | Feature                                   | 🪟 Win11                                        | 🐧 Linux                                                       | 🚀 Impossible OS                                                             |
 | --- | ----------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| 💎  | Event log -- structured persistent events | ✅ Windows Event Log: XML structured;           | ✅ systemd journal (`journalctl`); syslog; `/var/log/*`;       | ⬜ §1 -- `kevent_log()` + `LOG_SECURITY=4`; rolling 1                        |
+| 💎  | Event log -- structured persistent events | ✅ Windows Event Log: XML structured;           | ✅ systemd journal (`journalctl`); syslog; `/var/log/*`;       | ⬜ §1 -- `kevent_log()` + `LOG_SECURITY`; rolling 1                          |
 | 💎  | Restore points                            | ✅ System Restore: VSS shadow copies;           | ⚠️ No built-in; Btrfs/ZFS snapshots; `snapper`;                | ⬜ §2 -- `⭐` explicit ZIP + registry                                        |
 | 💎  | System rollback                           | ✅ System Restore: VSS revert; registry         | ⚠️ No built-in; filesystem snapshots only;                     | ⬜ §3 -- `cng_sha256()` manifest check before any                            |
 | 💎  | Recovery environment                      | ✅ WinRE: graphical; Startup Repair; Command    | ✅ Recovery mode; GRUB single-user; `init=/bin/bash`;          | ⬜ §7 -- `[Opus]` text-mode F8 menu; 15-command                              |

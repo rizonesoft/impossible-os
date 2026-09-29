@@ -11,7 +11,7 @@ title: "TODO-A -- user32.dll Export Master Table"
 > **Goal:** Single authoritative checklist of **user32.dll** exports (and grouped stubs) for Impossible OS Win32 compatibility. Implementation narrative stays in `TODO-08-win32-api-surface.md` Section 10 and kernel-side stubs in `../08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md`. **NtUser** shadow SSDT indices live only in `../08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md`; this file links Win32 **names** to owners, not syscall numbers.
 
 > [!IMPORTANT]
-> **Tiers:** Tier 1 and Tier 2 are **implementation sequencing** slices (compat matrix Tier 6 to 7 gates first). **Completeness** is the union of Tier 1, Tier 2, and the **Tier 3 roster** (every other named export from the scaffold below) plus the **ordinal-only** account in the methodology section. **Done column:** `[x]` only when the export is callable from a PE and matches documented behavior; `[/]` partial; `[ ]` missing. **Owner `NO_OWNING_TODO`:** no leaf TODO assigns this symbol yet (open a subsection in `TODO-08` or `TODO-11` before implementing).
+> **Tiers:** Tier 1 and Tier 2 are **implementation sequencing** slices (compat matrix Tier 6 to 7 gates first). **Completeness** is the union of Tier 1, Tier 2, and the **Tier 3 roster** (every other named export from the scaffold below) plus the **ordinal-only** account in the methodology section. **Done column:** `[x]` only when the export is callable from a PE and matches documented behavior; `[/]` partial; `[ ]` missing. **Owner `NO_OWNING_TODO`:** no leaf TODO assigns this symbol yet (open a subsection in `TODO-08` or `../08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` before implementing). **Owner `T14`** is that `08-graphics-ui` TODO-14 (formerly numbered TODO-11).
 
 ## On-disk and naming contract
 
@@ -33,60 +33,60 @@ title: "TODO-A -- user32.dll Export Master Table"
 
 ## Outcome
 
-Every **named** `user32.dll` export that appears on a shipping Windows 11 machine is either listed in Tier 1, Tier 2, or the Tier 3 roster, or is an **ordinal-only** export captured in the methodology section. Owner + Done + Notes stay authoritative here; `TODO-08` Section 10 and `TODO-11` reference rows instead of duplicating inventories.
+Every **named** `user32.dll` export that appears on a shipping Windows 11 machine is either listed in Tier 1, Tier 2, or the Tier 3 roster, or is an **ordinal-only** export captured in the methodology section. Owner + Done + Notes stay authoritative here; `TODO-08` Section 10 and `../08-graphics-ui/TODO-14` reference rows instead of duplicating inventories.
 
 ## Implementation Order
 
 | Order | Deliverable                                                                                                                    | Status |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------ | ------ |
-| 1     | Tier 1 rows below kept in sync with Section 10 / T11 implementation                                                            | [ ]    |
-| 2     | Tier 2 rows below kept in sync with TODO-11 Sections 2 through 8                                                               | [ ]    |
+| 1     | Tier 1 rows below kept in sync with Section 10 / T14 implementation                                                            | [ ]    |
+| 2     | Tier 2 rows below kept in sync with TODO-14 Sections 2 through 8                                                               | [ ]    |
 | 3     | Run PE export dump on pinned Win11 `user32.dll`; file deltas vs Wine scaffold in Notes column (new symbols, renames, ordinals) | [ ]    |
-| 4     | Replace `NO_OWNING_TODO` owners in Tier 3 as `TODO-08` / `TODO-11` / `TODO-05` subsections are opened                          | [ ]    |
+| 4     | Replace `NO_OWNING_TODO` owners in Tier 3 as `TODO-08` / `TODO-14` / `TODO-05` subsections are opened                          | [ ]    |
 
 ## Tier 1 -- Core window class and message pump (from TODO-08 Section 10)
 
 | Export             | Category | Owner                          | Done | Notes                                                    |
 | ------------------ | -------- | ------------------------------ | ---- | -------------------------------------------------------- |
-| `RegisterClassExA` | Class    | T08 Section 10 / T11 Section 5 | [ ]  | Per-process class table                                  |
-| `RegisterClassExW` | Class    | T08 Section 10 / T11 Section 5 | [ ]  | Thin UTF-16 wrapper when UNICODE                         |
-| `CreateWindowExA`  | Window   | T08 Section 10 / T11 Section 5 | [ ]  | Maps to WM create                                        |
-| `CreateWindowExW`  | Window   | T08 Section 10 / T11 Section 5 | [ ]  |                                                          |
-| `ShowWindow`       | Window   | T08 Section 10 / T11 Section 5 | [ ]  | `wm_minimize` / show per TODO-06                         |
-| `DestroyWindow`    | Window   | T08 Section 10 / T11 Section 5 | [ ]  |                                                          |
-| `GetMessageA`      | Message  | T08 Section 10 / T11 Section 6 | [ ]  | Blocking queue                                           |
-| `GetMessageW`      | Message  | T08 Section 10 / T11 Section 6 | [ ]  |                                                          |
-| `TranslateMessage` | Message  | T08 Section 10 / T11 Section 6 | [ ]  | WM_KEYDOWN to WM_CHAR                                    |
-| `DispatchMessageA` | Message  | T08 Section 10 / T11 Section 6 | [ ]  | WNDPROC dispatch                                         |
-| `DispatchMessageW` | Message  | T08 Section 10 / T11 Section 6 | [ ]  |                                                          |
+| `RegisterClassExA` | Class    | T08 Section 10 / T14 Section 5 | [ ]  | Per-process class table                                  |
+| `RegisterClassExW` | Class    | T08 Section 10 / T14 Section 5 | [ ]  | Thin UTF-16 wrapper when UNICODE                         |
+| `CreateWindowExA`  | Window   | T08 Section 10 / T14 Section 5 | [ ]  | Maps to WM create                                        |
+| `CreateWindowExW`  | Window   | T08 Section 10 / T14 Section 5 | [ ]  |                                                          |
+| `ShowWindow`       | Window   | T08 Section 10 / T14 Section 5 | [ ]  | `wm_minimize` / show per TODO-06                         |
+| `DestroyWindow`    | Window   | T08 Section 10 / T14 Section 5 | [ ]  |                                                          |
+| `GetMessageA`      | Message  | T08 Section 10 / T14 Section 6 | [ ]  | Blocking queue                                           |
+| `GetMessageW`      | Message  | T08 Section 10 / T14 Section 6 | [ ]  |                                                          |
+| `TranslateMessage` | Message  | T08 Section 10 / T14 Section 6 | [ ]  | WM_KEYDOWN to WM_CHAR                                    |
+| `DispatchMessageA` | Message  | T08 Section 10 / T14 Section 6 | [ ]  | WNDPROC dispatch                                         |
+| `DispatchMessageW` | Message  | T08 Section 10 / T14 Section 6 | [ ]  |                                                          |
 | `DefWindowProcA`   | Message  | T05 subsystem Section 3        | [ ]  | See `../12-user-platform-sdk/TODO-05-win32-subsystem.md` |
 | `DefWindowProcW`   | Message  | T05 subsystem Section 3        | [ ]  |                                                          |
-| `PostQuitMessage`  | Message  | T08 Section 10 / T11 Section 6 | [ ]  |                                                          |
-| `PostMessageA`     | Message  | T08 Section 10 / T11 Section 6 | [ ]  |                                                          |
-| `PostMessageW`     | Message  | T08 Section 10 / T11 Section 6 | [ ]  |                                                          |
-| `SendMessageA`     | Message  | T08 Section 10 / T11 Section 6 | [ ]  |                                                          |
-| `SendMessageW`     | Message  | T08 Section 10 / T11 Section 6 | [ ]  |                                                          |
+| `PostQuitMessage`  | Message  | T08 Section 10 / T14 Section 6 | [ ]  |                                                          |
+| `PostMessageA`     | Message  | T08 Section 10 / T14 Section 6 | [ ]  |                                                          |
+| `PostMessageW`     | Message  | T08 Section 10 / T14 Section 6 | [ ]  |                                                          |
+| `SendMessageA`     | Message  | T08 Section 10 / T14 Section 6 | [ ]  |                                                          |
+| `SendMessageW`     | Message  | T08 Section 10 / T14 Section 6 | [ ]  |                                                          |
 | `MessageBoxA`      | Dialog   | T08 Section 10 / T07 SYS       | [ ]  | Syscall 71 path                                          |
 | `MessageBoxW`      | Dialog   | T08 Section 10 / T07 SYS       | [ ]  |                                                          |
-| `SetWindowTextA`   | Window   | T08 Section 10 / T11 Section 5 | [ ]  |                                                          |
-| `SetWindowTextW`   | Window   | T08 Section 10 / T11 Section 5 | [ ]  |                                                          |
-| `GetClientRect`    | Window   | T08 Section 10 / T11 Section 5 | [ ]  |                                                          |
+| `SetWindowTextA`   | Window   | T08 Section 10 / T14 Section 5 | [ ]  |                                                          |
+| `SetWindowTextW`   | Window   | T08 Section 10 / T14 Section 5 | [ ]  |                                                          |
+| `GetClientRect`    | Window   | T08 Section 10 / T14 Section 5 | [ ]  |                                                          |
 
-## Tier 2 -- TODO-11 stub suite (extend rows as Sections 2 to 8 land)
+## Tier 2 -- TODO-14 stub suite (extend rows as Sections 2 to 8 land)
 
 | Export             | Category   | Owner         | Done | Notes                                                 |
 | ------------------ | ---------- | ------------- | ---- | ----------------------------------------------------- |
-| `GetDC`            | GDI bridge | T11 Section 2 | [ ]  | USER entry; pairs with gdi32 when TODO-D exists       |
-| `ReleaseDC`        | GDI bridge | T11 Section 2 | [ ]  |                                                       |
-| `LoadCursorA`      | Resource   | T11 Section 7 | [ ]  | Maps shell cursors                                    |
-| `LoadCursorW`      | Resource   | T11 Section 7 | [ ]  |                                                       |
-| `LoadIconA`        | Resource   | T11 Section 7 | [ ]  | Shell index maps: see TODO-C Notes for index-map-only |
-| `LoadIconW`        | Resource   | T11 Section 7 | [ ]  |                                                       |
-| `GetSystemMetrics` | Metrics    | T11 Section 7 | [ ]  |                                                       |
-| `InvalidateRect`   | Paint      | T11 Section 5 | [ ]  |                                                       |
-| `GetOpenFileNameA` | Dialog     | T11 Section 8 | [ ]  |                                                       |
-| `GetSaveFileNameA` | Dialog     | T11 Section 8 | [ ]  |                                                       |
-| `ChooseColorA`     | Dialog     | T11 Section 8 | [ ]  |                                                       |
+| `GetDC`            | GDI bridge | T14 Section 2 | [ ]  | USER entry; pairs with gdi32 when TODO-D exists       |
+| `ReleaseDC`        | GDI bridge | T14 Section 2 | [ ]  |                                                       |
+| `LoadCursorA`      | Resource   | T14 Section 7 | [ ]  | Maps shell cursors                                    |
+| `LoadCursorW`      | Resource   | T14 Section 7 | [ ]  |                                                       |
+| `LoadIconA`        | Resource   | T14 Section 7 | [ ]  | Shell index maps: see TODO-C Notes for index-map-only |
+| `LoadIconW`        | Resource   | T14 Section 7 | [ ]  |                                                       |
+| `GetSystemMetrics` | Metrics    | T14 Section 7 | [ ]  |                                                       |
+| `InvalidateRect`   | Paint      | T14 Section 5 | [ ]  |                                                       |
+| `GetOpenFileNameA` | Dialog     | T14 Section 8 | [ ]  |                                                       |
+| `GetSaveFileNameA` | Dialog     | T14 Section 8 | [ ]  |                                                       |
+| `ChooseColorA`     | Dialog     | T14 Section 8 | [ ]  |                                                       |
 
 ## Export inventory methodology (Win11 completeness)
 

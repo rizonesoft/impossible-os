@@ -23,7 +23,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 > `08-graphics-ui/TODO-06-widget-dialogs.md` -- do not build a custom combo widget here; add
 > `CTRL_COMBOBOX` to TODO-05 if it is not yet present when §3 is implemented.
 >
-> Print (§7) depends on `pdf_begin/draw_text/end` from `10-platform-services/TODO-12 §8` --
+> Print (§7) depends on `pdf_begin/draw_text/end` from `10-platform-services/TODO-12 §6` --
 > implement §7 only after the print subsystem is available.
 
 ---
@@ -39,7 +39,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 - `include/desktop/file_assoc.h` (→ XREF `09-desktop-shell/TODO-02 §1`) -- `file_assoc_set(ext, prog_id, path)` -- §6
 - `include/registry.h` -- `reg_get_string`, `reg_set_string` -- §6 recent files
 - `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_stat`
-- `10-platform-services/TODO-12-long-term-features.md §8` -- `pdf_begin`, `pdf_draw_text`, `pdf_draw_rect`, `pdf_end` -- §2 print stretch
+- `10-platform-services/TODO-12-long-term-features.md §6` -- `pdf_begin`, `pdf_draw_text`, `pdf_draw_rect`, `pdf_end` -- §2 print stretch
 
 ---
 
@@ -59,7 +59,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 | 4    | Toolbar + Menus                     | 💎    | §3 rendering, `CTRL_COMBOBOX`, `dialog_color`                   |
 | 5    | Formatting Interactions             | 💎    | §3 + §4 stable                                                  |
 | 6    | File Operations + File Associations | 💎    | §2 RTF reader/writer, `dialog_file_open/save`, `file_assoc_set` |
-| 7    | Print (Stretch)                     | 💎    | §3 layout, `pdf_begin/draw_text/end` D10T12 §8                  |
+| 7    | Print (Stretch)                     | 💎    | §3 layout, `pdf_begin/draw_text/end` D10T12 §6                  |
 
 ---
 
@@ -209,11 +209,12 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 
 ## 7. Print (Stretch) `[Sonnet]`
 
-> → XREF: `10-platform-services/TODO-12-long-term-features.md §8` -- `pdf_begin/draw_text/end`.
+> → XREF: `10-platform-services/TODO-12-long-term-features.md §6` -- `pdf_begin/draw_text/end`.
 
 - [ ] **Pagination**: compute page height in points (A4 = 841.89 pt or Letter = 792 pt); walk layout lines (§3); break when accumulated height exceeds page height minus margins
 - [ ] **Print preview window**: `wm_create_window("Print Preview", 800, 600)` -- renders each page as a thumbnail bitmap; `[← Prev]` `[Next →]` navigation; `[Close Preview]`
-- [ ] **File→Print**: call `pdf_begin(out_path, page_width_pt, page_height_pt)` from TODO-12 §8; for each page: `pdf_begin_page()` → for each layout line on page: `pdf_draw_text(x, y, text, font_name, size_pt, color)` → for each decorated run: `pdf_draw_rect` for background fills, underlines; `pdf_end_page()`; `pdf_end()`
+- [ ] **File→Print**: export the document through the PDF writer from TODO-12 §6, one PDF page per layout page
+  - Per page: `pdf_begin(out_path, page_width_pt, page_height_pt)`, then `pdf_begin_page()`, `pdf_draw_text(x, y, text, font_name, size_pt, color)` per layout line, `pdf_draw_rect` for background fills and underlines, `pdf_end_page()`; finish with `pdf_end()`
 - [ ] **Print dialog**: `dialog_confirm("Print to PDF?\nOutput: C:\\Users\\{name}\\Documents\\{filename}.pdf", MB_OKCANCEL)` → on OK: run pagination + PDF export; toast `"Document exported to {path}"`
 - [ ] **Page Setup**: paper size dropdown (A4/Letter/A5), margin inputs (top/bottom/left/right in mm); stored in `HKCU\Software\Impossible\WordPad\PageSetup\*`
 

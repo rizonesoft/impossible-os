@@ -20,7 +20,7 @@ title: "TODO-02 -- Unattended Installation & Deployment"
 > same pipeline -- do not re-specify partitioning, format, or file-copy logic.
 >
 > **OOBE trigger** (`HKLM\SYSTEM\FirstBoot=1`) and first-boot wizard are owned by
-> `10-platform-services/TODO-04 §1`; `auth_create_user()` is owned by `TODO-06`.
+> `10-platform-services/TODO-04 §5`; `auth_create_user()` is owned by `TODO-06`.
 > Answer-file user creation (§2) calls these existing APIs -- do not re-specify them.
 >
 > **Kernel cmdline** is available via `boot_info->cmdline[BOOT_CONF_CMDLINE_MAX]`
@@ -34,8 +34,8 @@ title: "TODO-02 -- Unattended Installation & Deployment"
 ## Inputs
 
 - `10-platform-services/TODO-11-installer-iso.md` (→ XREF) -- `installer_copy_files`, `gpt_create`, `ixfs_format`, `InstallerMode`, `setup.log`; unattended path (§7) runs through same pipeline
-- `10-platform-services/TODO-04-restore-recovery.md §1` (→ XREF) -- OOBE (`HKLM\SYSTEM\FirstBoot=1`); answer-file sets values OOBE would collect
-- `10-platform-services/TODO-06-auth-security.md` (→ XREF) -- `auth_create_user(username, password, privilege)` -- §2 §3
+- `10-platform-services/TODO-04-restore-recovery.md §5` (→ XREF) -- OOBE (`HKLM\SYSTEM\FirstBoot=1`); answer-file sets values OOBE would collect
+- `09-desktop-shell/TODO-06-security-accounts.md` (→ XREF) -- `auth_create_user(username, password, privilege)` -- §2 §3
 - `12-user-platform-sdk/TODO-06-sdk-distribution.md §1` (→ XREF) -- `ipkg_create.exe` for OEM package format -- §4
 - `include/kernel/boot_info.h` -- `boot_info->cmdline` -- §2 `answer=<path>` kernel cmdline token
 - `include/kernel/fs/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_readdir`, `vfs_unlink` -- §1 §2 §4 §5
@@ -61,7 +61,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 | ---- | -------------------------------------- | ----- | ----------------------------------------------------------------- |
 | 1    | Answer file format + INI parser        | ⭐    | `vfs_read`; `boot_info->cmdline`                                  |
 | 2    | Unattended install mode                | 💎    | §1; `D10T11` installer pipeline; `auth_create_user`               |
-| 3    | `sysprep.exe` (generalize + SID clear) | 💎    | `auth_create_user` (`D10T06`); `csprng_fill` for SID              |
+| 3    | `sysprep.exe` (generalize + SID clear) | 💎    | `auth_create_user` (`D09T06`); `csprng_fill` for SID              |
 | 4    | OEM customization (`$OEM$` layout)     | ⭐    | §1 answer file; `ipkg_create.exe` (D12T06 §1)                     |
 | 5    | WIM / image capture (`imagex.exe`)     | 💎    | `vfs_readdir` full tree; `monocypher` SHA-1 for single-instancing |
 | 6    | Network boot (PXE + TFTP server)       | 💎    | §2 unattended; UDP sockets; DHCP proxy                            |

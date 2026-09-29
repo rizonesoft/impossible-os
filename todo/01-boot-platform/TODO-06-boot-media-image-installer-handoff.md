@@ -146,7 +146,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 
 ## 4. Hybrid ISO / El Torito UEFI Boot
 
-> **Scope boundary:** [`10-platform-services/TODO-11 §6`](../10-platform-services/TODO-11-installer-iso.md) owns `scripts/make-iso.sh` (El Torito + EFI hybrid, no GRUB). [`15-installer-release/TODO-01 §4/§8`](../15-installer-release/TODO-01-release-artifacts.md) extends it with Joliet+Rock Ridge + versioned filename. This section validates UEFI boot from the ISO and requires manifest embedding at `/IPOS/manifest.json`.
+> **Scope boundary:** [`10-platform-services/TODO-11 §1`](../10-platform-services/TODO-11-installer-iso.md) owns `scripts/make-iso.sh` (El Torito + EFI hybrid, no GRUB). [`15-installer-release/TODO-01 §4/§8`](../15-installer-release/TODO-01-release-artifacts.md) extends it with Joliet+Rock Ridge + versioned filename. This section validates UEFI boot from the ISO and requires manifest embedding at `/IPOS/manifest.json`.
 
 - [x] `scripts/release/build-iso.sh` extracts ESP from `disk.img` and runs xorriso (`-no-emul-boot -e EFI/esp.img -isohybrid-gpt-basdat`); UEFI-only, no BIOS El Torito entry. Joliet+Rock Ridge metadata; SOURCE_DATE_EPOCH=0 for byte-identical reruns.
 - [x] `/IPOS/manifest.json` embedded via `build-manifest.sh build --format iso`; `/IPOS/installer/` + `/IPOS/recovery/` placeholder dirs ship with `.placeholder` sentinels for forward-compatible role-detection wiring.

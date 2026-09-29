@@ -12,7 +12,7 @@ title: "TODO-10 -- Linux ELF Compatibility Layer"
 **Goal:** Add a secondary ELF/POSIX compatibility layer so statically-linked Linux x86-64 binaries (busybox, coreutils, musl-static apps) run unmodified on Impossible OS -- "WSL in reverse", without modifying the host binary.
 
 > [!IMPORTANT]
-> **Depends on:** `TODO-07 §1–8` -- ring-3 execution, `SYSCALL`/`SYSRET`, `exec_load()` PE-first format probe. The Linux compat layer registers as the ELF fallback path in `exec_load()`.
+> **Depends on:** `TODO-07 §1–8` -- ring-3 execution, `SYSCALL`/`SYSRET`, `exec_load_fmt()` magic-byte format dispatch. The Linux compat layer hooks the ELF result rather than registering a new loader (the registry is sealed at boot).
 > **Not a prerequisite for Win32:** This layer is purely additive. PE/Win32 remains the native format; Linux ELF support is a secondary compatibility shim.
 > **Continues from:** `todo-old/510-Long-Term-Stretch/TODO-540-Linux.md` (migrated).
 
@@ -20,12 +20,12 @@ title: "TODO-10 -- Linux ELF Compatibility Layer"
 
 ## Important Notes
 
-- `elf_load()` already exists in `src/kernel/elf.c` and parses ELF64 headers + maps `PT_LOAD` segments (`include/kernel/elf.h`). It **does not** set up the SYSV user stack (auxv, `argv`, `envp`) required for a Linux process start -- that is new work in §2.
+- `elf_load()` already exists in `src/kernel/elf.c` and parses ELF64 headers + maps `PT_LOAD` segments (`include/kernel/elf.h`). The SYSV user stack (`argc`, `argv`, `envp`, auxv) is already built for EVERY exec in `task_exec()` (`src/kernel/sched/task.c`, UID/GID 0), so §2 reuses it and adds only the Linux-specific parts.
 - The existing `elf_load()` is also used for the **kernel ELF** (`kernel.exe`) loaded by the bootloader; modifications must not break kernel loading. The Linux compat layer needs a separate `elf_linux_load()` path.
-- `exec_load()` (defined in `TODO-07 §8`) already probes PE first, ELF second -- the Linux handler hooks into the ELF branch by setting a `task->is_linux_elf` flag.
+- `exec_load_fmt()` (`src/kernel/exec.c`) picks ELF, EIF or PE by magic bytes, not PE-first, and its format registry is sealed after `exec_init()`; the Linux handler hooks the ELF result in `task_exec()` (which already stashes the format name) by setting a `task->is_linux_elf` flag.
 - `SYS_FORK=5`, `SYS_EXEC=6`, `SYS_MMAP=37` are already defined in `include/kernel/sched/syscall.h`. Linux syscall numbers are entirely different (Linux `read=0`, `write=1`, etc.) -- the compat layer maintains its own translation table.
 - The Linux SYSV calling convention uses `RDI`, `RSI`, `RDX`, `R10`, `R8`, `R9` for args -- the **opposite** register order from the Win32 ABI (`RCX`, `RDX`, `R8`, `R9`). The syscall entry dispatcher must branch on `task->is_linux_elf` before touching registers.
-- No dynamic ELF support in this TODO -- static binaries only. `PT_INTERP` (dynamic linker) → return `ENOEXEC`. This is tracked in §8 as a future stretch.
+- No dynamic ELF support in this TODO -- static binaries only. `PT_INTERP` (dynamic linker) → return `ENOEXEC`. This is tracked in §11 as a future stretch.
 - Per-process Linux fd table (int → `HANDLE`) is distinct from the Win32 `handle_table[]` in `struct task` -- it is a parallel structure only present when `is_linux_elf` is set.
 
 ---
@@ -42,9 +42,9 @@ title: "TODO-10 -- Linux ELF Compatibility Layer"
 | `include/kernel/mm/heap.h`                                     | `kmalloc`/`kfree` for compat structs                                                                                                                                                  |
 | `include/kernel/fs/vfs.h`                                      | `vfs_open`, `vfs_read`, `vfs_stat`, `vfs_readdir` -- back POSIX file ops                                                                                                              |
 | → XREF: `TODO-07 §1,8`                                         | Ring-3 `SYSCALL`/`SYSRET` entry; `exec_load()` format probe (ELF branch)                                                                                                              |
-| → XREF: `TODO-08 §4,5`                                         | `CreateFile`/`ReadFile`/`WriteFile` Win32 wrappers; `VirtualAlloc`/`VirtualFree`                                                                                                      |
+| → XREF: `TODO-08 §2,5`                                         | `CreateFile`/`ReadFile`/`WriteFile` Win32 wrappers; `VirtualAlloc`/`VirtualFree`                                                                                                      |
 | → XREF: `02-kernel-core/TODO-21-process-model-extensions.md`   | Task flags, scheduler integration for `SIGCHLD` delivery                                                                                                                              |
-| → XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §15` | Fault-to-signal mapping and signal frame setup for Linux compat processes; §8 of this TODO registers signal handlers via `rt_sigaction`, TODO-10 §15 delivers faults as POSIX signals |
+| → XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §15` | Fault-to-signal mapping and signal frame setup for Linux compat processes; §8 of this TODO registers signal handlers via `rt_sigaction`, TODO-23 §15 delivers faults as POSIX signals |
 
 ---
 

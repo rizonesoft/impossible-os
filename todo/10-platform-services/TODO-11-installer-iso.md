@@ -13,7 +13,7 @@ title: "TODO-11 -- OS Installer & ISO Build"
 
 > [!IMPORTANT]
 > **Depends on:** `TODO-07 §9` (ring-3 PE execution) and `TODO-08 §10–13` (IxUI windows, user32, gdi32) for the installer GUI. GPT + FAT32 + IXFS format APIs must be available: `fat32_format()` (`include/kernel/fs/fat32.h`), `ixfs_format()` (`include/kernel/fs/ixfs.h`), `gpt_parse()` (`include/kernel/fs/gpt.h`), `blkdev_count()` (`include/kernel/drivers/blkdev.h`).
-> **Overlap:** §3 (first-boot wizard) XREFs `TODO-04-restore-recovery §1` (OOBE wizard in this domain); do not duplicate that wizard; trigger it from here.
+> **Overlap:** §8 (first-boot trigger) XREFs `TODO-04-restore-recovery §5` (OOBE wizard in this domain); do not duplicate that wizard; trigger it from here.
 
 ---
 
@@ -41,7 +41,7 @@ title: "TODO-11 -- OS Installer & ISO Build"
 | `include/registry.h`                        | `registry_set()` for `InstallerMode`, `FirstBoot` flags      |
 | `src/boot/uefi/bootx64.c`                   | Existing bootloader -- copy to ISO `EFI/BOOT/BOOTX64.EFI`    |
 | `scripts/build.sh`                          | Add `make iso` target here                                   |
-| → XREF: `10-platform-services/TODO-04 §1`   | OOBE first-boot wizard (do not re-implement -- trigger only) |
+| → XREF: `10-platform-services/TODO-04 §5`   | OOBE first-boot wizard (do not re-implement -- trigger only) |
 | → XREF: `05-storage-filesystems/TODO-08 §5` | GPT partition table write (reuse if available)               |
 | → XREF: `TODO-08 §10–13`                    | IxUI window/message/GDI stack for installer GUI              |
 
@@ -167,7 +167,7 @@ Implement `gpt_create()` and `gpt_commit()` in `src/kernel/fs/gpt.c` (header: `i
 
 - [ ] `gpt_new(dev)` → allocate and zero `struct gpt_table`; generate random disk GUID (`getrandom()` or kernel RNG); set `disk_guid`
 - [ ] `gpt_add_partition(table, name, type_guid, lba_start, lba_end, attributes)` → append entry to `table->entries[]`; validate no overlaps; return partition index or error
-- [ ] GPT GUID constants: `GPT_TYPE_EFI_SYSTEM` = `{C12A7328-F81F-11D2-BA4B-00A0C93EC93B}` ; `GPT_TYPE_BASIC_DATA` = `{EBD0A0A2-B9E5-4433-87C0-68B6B72699C7}`
+- [ ] GPT GUID constants: reuse `GPT_GUID_EFI_SYSTEM` and `GPT_GUID_IXFS` from `include/kernel/fs/gpt.h` (ESP first, IXFS system second)
 - [ ] `gpt_commit(table, dev)`:
   - Write MBR protective partition (LBA 0): type `0xEE`, full disk span
   - Write primary GPT header at LBA 1: signature `"EFI PART"`, version 1.0, header CRC32 (zeroed field during CRC calc), partition table LBA = 2, entry size = 128, entry count, first/last usable LBAs
@@ -245,7 +245,7 @@ Install `BOOTX64.EFI` to the ESP and register a UEFI boot entry so the firmware 
 - [ ] Write `HKLM\SYSTEM\InstallerMode = 0` to installed registry hive (ensures normal boot path next time)
 - [ ] Write `HKLM\SYSTEM\InstallDate` = current timestamp (for system info display)
 - [ ] Screen G `[Reboot Now]` → eject ISO media (clear QEMU `-cdrom` equivalent) + ACPI reset via UEFI runtime `ResetSystem(EfiResetCold)`
-- [ ] On first boot from installed disk: kernel reads `FirstBoot=1` → launches OOBE wizard from `TODO-04 §1` (timezone, keyboard, user account, wallpaper, updates); OOBE wizard writes `FirstBoot=0` when complete
+- [ ] On first boot from installed disk: kernel reads `FirstBoot=1` → launches OOBE wizard from `TODO-04 §5` (timezone, keyboard, user account, wallpaper, updates); OOBE wizard writes `FirstBoot=0` when complete
 - [ ] Commit: `"installer: post-install first boot and OOBE trigger"`
 
 ---

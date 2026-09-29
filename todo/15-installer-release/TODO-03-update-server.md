@@ -22,7 +22,7 @@ title: "TODO-03 -- Update Server Infrastructure"
 > required in `TODO-03 §1`.
 >
 > **On-OS telemetry sender** (`telemetry_record_event`, rotating log, `privacy.cpl`)
-> is owned by `10-platform-services/TODO-12 §9`; §2 here builds only the server
+> is owned by `10-platform-services/TODO-12 §10`; §2 here builds only the server
 > receiver (Cloudflare Worker → D1 → Grafana). Do not re-specify the on-OS client.
 >
 > **Release artifacts** (disk image, ISO, code signing, `release-{ver}.json` manifest)
@@ -34,7 +34,7 @@ title: "TODO-03 -- Update Server Infrastructure"
 ## Inputs
 
 - `10-platform-services/TODO-03-updates-packages.md §1` (→ XREF) -- `update_check()` INI client; §1 here changes the endpoint to JSON and notes the parse upgrade required there
-- `10-platform-services/TODO-12-long-term-features.md §9` (→ XREF) -- `telemetry_record_event()`; HTTP POST stretch; §2 here builds the receiving server
+- `10-platform-services/TODO-12-long-term-features.md §10` (→ XREF) -- `telemetry_record_event()`; HTTP POST stretch; §2 here builds the receiving server
 - `12-installer-release/TODO-01-release-artifacts.md §6` (→ XREF) -- `release-{version}.json` artifact manifest; §4 here consumes it for CDN upload
 - `12-installer-release/TODO-01-release-artifacts.md §1` (→ XREF) -- `OS_VERSION_STRING`, `increment-build.sh`; §5 promotion pipeline increments and tags versions
 - `12-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) -- `release-sdk.sh`; §5 promotion coordinates SDK + OS release
@@ -61,10 +61,10 @@ and Cloudflare R2 -- no live server to maintain.
 | 1    | Version manifest API (JSON schema + GitHub Pages)            | 💎    | `D10T03 §1` client parse upgrade                           |
 | 2    | CDN & hosting (GitHub Releases + Cloudflare R2)              | 💎    | `TODO-01 §6` artifact manifest                             |
 | 3    | Release promotion pipeline (dev→beta→stable)                 | ⭐    | §1; §2; `TODO-01 §1` versioning                            |
-| 4    | IPKG package repository (index.json + `ipkg` commands)       | 💎    | `D10T03 §6–6` IPKG installer                               |
+| 4    | IPKG package repository (index.json + `ipkg` commands)       | 💎    | `D10T03 §6` IPKG installer                                 |
 | 5    | Package submission (CI validation + `ipkg-sign`)             | ⭐    | §4; `TODO-01 §5` code signing key                          |
-| 6    | Update delta packages (`make-delta.sh` + client delta-first) | ⭐    | §1 manifest `delta_url` field; `D10T03 §9` client download |
-| 7    | Telemetry pipeline (Cloudflare Worker + D1 + Grafana)        | ⭐    | `D10T12 §9` OS-side sender                                 |
+| 6    | Update delta packages (`make-delta.sh` + client delta-first) | ⭐    | §1 manifest `delta_url` field; `D10T03 §2` client download |
+| 7    | Telemetry pipeline (Cloudflare Worker + D1 + Grafana)        | ⭐    | `D10T12 §10` OS-side sender                                |
 | 8    | Status page (GitHub Actions health checks + incident log)    | ⭐    | §1 §2 §4 §7 all live                                       |
 
 ---
@@ -230,7 +230,7 @@ and Cloudflare R2 -- no live server to maintain.
 ## 7. Telemetry Pipeline `[Sonnet]`
 
 > Server-side receiver only. On-OS sender (`telemetry_record_event`, privacy.cpl,
-> `Telemetry=0` default) is specced in `10-platform-services/TODO-12 §9`.
+> `Telemetry=0` default) is specced in `10-platform-services/TODO-12 §10`.
 
 - [ ] **Cloudflare Worker** (`workers/telemetry-receiver.js`):
   - `POST https://telemetry.impossible-os.dev/api/v1/report`

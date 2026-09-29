@@ -39,7 +39,7 @@ Every **named** `comctl32.dll` export that appears on a shipping Windows 11 mach
 | Order | Deliverable                                                                                                   | Status |
 | ----- | ------------------------------------------------------------------------------------------------------------- | ------ |
 | 1     | Tier 1 rows kept in sync with PE loader + `TODO-08` when `comctl32` is wired                                  | [ ]    |
-| 2     | Tier 2 roadmap bullets updated when `TODO-04` / `TODO-11` gain matching control APIs                          | [ ]    |
+| 2     | Tier 2 roadmap bullets updated when `TODO-06` / `TODO-14` gain matching control APIs                          | [ ]    |
 | 3     | Dump exports from pinned Win11 `comctl32.dll`; merge deltas into Tier 3 Notes (new names, forwards, ordinals) | [ ]    |
 | 4     | Replace `NO_OWNING_TODO` in Tier 3 as owning TODO sections are opened                                         | [ ]    |
 
@@ -55,9 +55,9 @@ Every **named** `comctl32.dll` export that appears on a shipping Windows 11 mach
 
 These are **families** to split into real `comctl32` exports in Tier 3 over time. They are not alternate spellings of the Tier 3 rows.
 
-- **Image list APIs:** implement as `ImageList_*` exports from Tier 3; Owner splits between `TODO-11` (GDI-backed lists) and `TODO-08` (DLL export table).
-- **List view:** `ListView_*` exports line up with `CTRL_LISTVIEW` in `../08-graphics-ui/TODO-05-widget-library-core.md` plus `../08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` when Win32 shims wrap the widget.
-- **Tree view:** `TreeView_*` exports line up with `CTRL_TREEVIEW` in the same TODO-04 file.
+- **Image list APIs:** implement as `ImageList_*` exports from Tier 3; Owner splits between `../08-graphics-ui/TODO-14` (GDI-backed lists) and `TODO-08` (DLL export table).
+- **List view:** `ListView_*` exports line up with `CTRL_LISTVIEW` in `../08-graphics-ui/TODO-06-widget-dialogs.md` (Section 1 ListView) plus `../08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` when Win32 shims wrap the widget.
+- **Tree view:** `TreeView_*` exports line up with `CTRL_TREEVIEW` in `../08-graphics-ui/TODO-06-widget-dialogs.md` (Section 2 TreeView).
 
 ## Export inventory methodology (Win11 completeness)
 
