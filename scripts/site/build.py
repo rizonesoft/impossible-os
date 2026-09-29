@@ -24,8 +24,9 @@ Modes:
   --sync             rewrite project regions in tracked Markdown in place
   --update-baseline  SHRINK the coverage baseline (never adds entries)
   --release REF      render only the docs tree as it was at commit REF into
-                     <out>/docs/<REF>/, every repository link pinned to REF's
-                     full SHA (keeping release trees published is roadmap work)
+                     <out>/docs/<REF>/, every link to main or to REF itself
+                     pinned to REF's full SHA (keeping release trees published
+                     is roadmap work)
 
 Stdlib plus the vendored markdown-it-py under tools/vendor/, so the output is
 identical on every host and in CI. Deterministic: stable ordering, no
@@ -282,6 +283,106 @@ class _AnchorParser(HTMLParser):
     handle_startendtag = handle_starttag
 
 
+# Raw HTML in docs pages is an ALLOWLIST, not a list of known-bad shapes: every
+# denylist round found another construct that hides a link from the checker
+# (srcset, srcdoc, CSS url(), foreign content). Links go through `href` on <a>
+# and `src` on <img>, which the rewriter validates and pins; the other allowed
+# attributes carry no URL. The corpus used none of what this refuses (surveyed
+# 2026-09-29: no raw HTML attributes at all outside comments).
+RAW_HTML_LINK_ATTRS = {"a": "href", "img": "src"}
+RAW_HTML_ATTRS = frozenset({
+    "alt", "title", "id", "name", "class", "width", "height", "align", "valign", "border",
+    "open", "colspan", "rowspan", "scope", "headers", "start", "reversed", "type", "lang",
+    "dir", "role", "hidden"})
+# Every element that takes the HTML tokenizer out of normal parsing, per the
+# HTML Standard's "in body" insertion mode: RCDATA (title, textarea), RAWTEXT
+# (style, xmp, iframe, noembed, noframes, and noscript when scripting is on),
+# script data (script), PLAINTEXT (plaintext), and the foreign-content roots
+# (svg, math). Inside any of them a browser and html.parser can disagree about
+# where markup is, so the set is closed by the standard, not by examples.
+RAW_HTML_REFUSED_TAGS = {
+    **dict.fromkeys(("title", "textarea"), "RCDATA text"),
+    **dict.fromkeys(("style", "xmp", "iframe", "noembed", "noframes", "noscript"), "raw text"),
+    "script": "script code", "plaintext": "plain text to the end of the page",
+    "svg": "foreign content", "math": "foreign content"}
+
+
+class _RawAttrs(HTMLParser):
+    """The net under Renderer.rewrite_raw_html, reading a raw HTML fragment the
+    way a browser does. It records every <a href>/<img src> by character offset
+    (so the tag scanner must have rewritten exactly that tag: text inside
+    <script>/<style> cannot stand in for it), and `refused` names the first
+    thing outside the allowlist: a tag in RAW_HTML_REFUSED_TAGS, an attribute
+    outside RAW_HTML_ATTRS (aria-* aside) or a link attribute on another tag.
+    It also refuses markup where the parser would read on past the point a
+    browser resumes parsing elements: `<!-->` or `<!--->` with more text before
+    a later `-->`, and any marked section (`<![...`, however the parser routes
+    it); `<!DOCTYPE>` and processing instructions too, as no page needs them.
+    Other bogus comments (`<!x>`) and a bare `<!-->` end where a browser ends
+    them, so they pass."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.links: dict[int, int] = {}
+        self.refused = ""
+        self._text = text
+        self._line_starts = [0] + [m.end() for m in re.finditer("\n", text)]
+
+    def _offset(self) -> int:
+        line, col = self.getpos()
+        return self._line_starts[line - 1] + col
+
+    def _refuse(self, why: str) -> None:
+        self.refused = self.refused or why
+
+    def handle_starttag(self, tag, attrs):
+        if tag in RAW_HTML_REFUSED_TAGS:
+            self._refuse(f"<{tag}> ({RAW_HTML_REFUSED_TAGS[tag]})")
+        n = 0
+        for k, v in attrs:
+            if k == RAW_HTML_LINK_ATTRS.get(tag):
+                if v is not None:
+                    n += 1
+            elif k not in RAW_HTML_ATTRS and not k.startswith("aria-"):
+                self._refuse(f"the attribute {k}= on <{tag}>")
+        if n:
+            self.links[self._offset()] = n
+
+    handle_startendtag = handle_starttag
+
+    def handle_comment(self, data):
+        # Classified by the source OPENER, not the text: `<!--[note]-->` is an
+        # ordinary comment, `<![IGNORE[>` a marked section the parser routed here.
+        off = self._offset()
+        opener = self._text[off:off + 4]
+        if opener.startswith("<!["):
+            self._refuse("a marked section (<![...)")
+        elif opener == "<!--" and data.startswith((">", "->")):
+            self._refuse("text after <!--> or <!---> that a browser reads as markup")
+
+    def handle_decl(self, decl):
+        self._refuse("a declaration")
+
+    def unknown_decl(self, data):
+        self._refuse("a marked section (<![...)")
+
+    def handle_pi(self, data):
+        self._refuse("a processing instruction")
+
+    @classmethod
+    def scan(cls, html_text: str) -> "_RawAttrs":
+        p = cls(html_text)
+        p.feed(html_text)
+        # html.parser holds an unfinished trailing tag back and drops it at
+        # close(), while the page template's next `>` would complete it in a
+        # browser, attributes and all. Anything left that opens like markup is
+        # refused; a bare `a < b` is data and has already been consumed.
+        if re.match(r"<[A-Za-z/!?]", p.rawdata):
+            p._refuse("an unfinished tag at the end of a raw HTML block")
+        p.close()
+        return p
+
+
 def html_anchors(html_text: str) -> set[str]:
     p = _AnchorParser()
     p.feed(html_text)
@@ -518,11 +619,21 @@ class Renderer:
             kind, at = "rawhost", 3
         else:
             return None
-        # GitHub names the branch as `main` or as the full ref `refs/heads/main`.
-        if seg[at:at + 3] == ["refs", "heads", "main"]:
-            rest = "/".join(raw[at + 3:])
-        elif seg[at:at + 1] == ["main"]:
-            rest = "/".join(raw[at + 1:])
+        if any("/" in x for x in seg):     # `rel%2Fv2`: GitHub reads a slash there, the matcher could not
+            self.errors.append(f"docs/{page.rel}: repository link with an encoded slash; write it with /: {url}")
+            return url
+        # GitHub names the branch as `main` or `refs/heads/main`, and this release's
+        # own tag as `<tag>` or `refs/tags/<tag>` (a tag can be moved, so it pins
+        # too). A link naming any other ref already names what its author meant.
+        # The match depends on the commit alone, never on which refs a checkout
+        # holds, so a release tree stays byte-reproducible (verify_live.py): a
+        # branch named `main/...` or `<tag>/...` would make such a URL ambiguous
+        # on GitHub too, and the repository does not create one.
+        tag = RELEASE.split("/")
+        for ref in (["refs", "heads", "main"], ["main"], ["refs", "tags", *tag], tag):
+            if seg[at:at + len(ref)] == ref:
+                rest = "/".join(raw[at + len(ref):])
+                break
         else:
             return None
         fragment = urlsplit(url).fragment      # the parser dropped it; the written one is what a reader follows
@@ -698,21 +809,44 @@ class Renderer:
 
     def rewrite_raw_html(self, page: Page, html_text: str) -> str:
         """Raw HTML href/src get the same rewriting and validation as Markdown links.
-        Values are entity-decoded before use and escaped exactly once on output."""
+        Values are entity-decoded before use and escaped exactly once on output.
+
+        The rewriter is a tag scanner, and a browser also reads tags it does not
+        (`<a/href=...>`), so html.parser is the net (`_RawAttrs`): an <a href> or
+        <img src> the scanner did not rewrite at that exact tag fails the build,
+        and so does anything outside the raw-HTML allowlist."""
+        seen = _RawAttrs.scan(html_text)
+        if seen.refused:
+            self.errors.append(f"docs/{page.rel}: raw HTML may not contain {seen.refused}: links are "
+                               f"checked and pinned only as <a href> and <img src>")
+        rewritten: dict[int, int] = {}      # tag offset -> href/src the scanner rewrote there
+        here = [0]
+
         def attr_sub(m: re.Match) -> str:
             name, value = m.group(2), m.group(4)
             if value is None or name.lower() not in ("href", "src"):
                 return m.group(0)
+            rewritten[here[0]] = rewritten.get(here[0], 0) + 1
             raw = value[1:-1] if value[:1] in ("\"", "\'") else value
             url = html.unescape(raw)
+            if not self.md.validateLink(url):     # the scheme policy Markdown links get (javascript:, vbscript:...)
+                self.errors.append(f"docs/{page.rel}: raw HTML {name.lower()}= with a URL Markdown would refuse: "
+                                   f"{url[:80]}")
+                return m.group(0)
             new = self.rewrite_href(page, url) if name.lower() == "href" else self.rewrite_img(page, url)
             return f'{m.group(1)}{name}="{html.escape(new, quote=True)}"'
 
         def tag_sub(m: re.Match) -> str:
             if m.group(0).startswith("<!--"):
                 return m.group(0)
+            here[0] = m.start()
             return "<" + m.group(1) + self.ATTR_RE.sub(attr_sub, m.group(2)) + m.group(3)
-        return self.TAG_RE.sub(tag_sub, html_text)
+        out = self.TAG_RE.sub(tag_sub, html_text)
+        if any(rewritten.get(off) != n for off, n in seen.links.items()):
+            self.errors.append(f"docs/{page.rel}: raw HTML the link rewriter cannot read (an href or src it "
+                               f"would leave unchecked); put whitespace between a tag's name and attributes: "
+                               f"{' '.join(html_text.split())[:120]}")
+        return out
 
     def rewrite_img(self, page: Page, src: str) -> str:
         if not src or re.match(r"^[a-z][a-z0-9+.-]*:", src):
@@ -1613,6 +1747,11 @@ def prepare_release(ref: str) -> Path | None:
     if not all(VERSION_SEGMENT_RE.fullmatch(p) for p in parts):
         raise ReleaseError(f"release ref {ref!r}: each /-separated part must match "
                            f"{VERSION_SEGMENT_RE.pattern} (it becomes the docs/<version>/ path)")
+    if parts[0] in ("main", "refs"):
+        # A link naming blob/main/v1/x could mean branch main or tag main/v1;
+        # refusing the name keeps every pinned link unambiguous.
+        raise ReleaseError(f"release ref {ref!r}: a version may not start with main/ or refs/ "
+                           f"(it would be ambiguous with the branch in repository links)")
     r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], cwd=REPO,
                        capture_output=True, text=True)
     if r.returncode != 0:

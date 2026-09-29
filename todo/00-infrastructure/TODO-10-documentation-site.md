@@ -1150,22 +1150,27 @@ A page that was right when written goes wrong when its code changes. Neither Win
 A release snapshot is only useful if it still points at the code it describes. Before this section `scripts/site/build.py` hardcoded `main` in source, directory, image, edit and coverage links, so a page built at a tag would have linked to whatever `main` holds now. This section makes the renderer ref-aware; retaining and serving the release trees is §29, and the SDK namespace and API reference are §30 (split 2026-09-29: seven work items is more than one worker context, and the SDK half is blocked on D12 T06 §2/§8).
 
 - [x] Release ref and URL base in rendering: `build.py --release REF` (`prepare_release()`) renders REF's tree into `docs/<REF>/`, links pinned to its full SHA
-  - `LINK_REF` pins relative source, directory, image, edit, coverage and freshness links; `Renderer.pin_absolute()` also pins absolute same-repo `blob|tree/main` and raw URLs as Node's WHATWG `URL` resolves them (pages parsed once, `collect()` feeds one `linkcheck.browser_urls()` batch, an unresolved link fails closed; historical owners too), and `pin_mermaid()` the URL operand of diagram `click` statements.
+  - `LINK_REF` pins relative source, directory, image, edit, coverage and freshness links; `Renderer.pin_absolute()` also pins absolute same-repo `blob|tree|raw` links naming `main` or the release's own tag, and raw-host URLs, as Node's WHATWG `URL` resolves them (pages parsed once, `collect()` feeds one `linkcheck.browser_urls()` batch, an unresolved link fails closed; historical owners too), and `pin_mermaid()` the URL operand of diagram `click` statements.
   - `DOCS_BASE` scopes canonical URLs, `search.json` and `SITE_ROOT`; nav and search URLs are docs-root relative. Only the docs tree is emitted (no landing, sitemap, robots).
-  - Publishing facts come from today's `project.json`; a ref that is not a plain name, names no commit or predates the site (both `v26.3.18-alpha` tags) is refused. Render errors hard-fail; current-commit hygiene checks are skipped.
-- [x] Tests: `ReleaseDocs` (6 cases): pinned links after `main` deletes the file and moves owner, nested `rel/v2` path, dead absolute link, refusals, default build unpinned
+  - Publishing facts come from today's `project.json`; a ref that is not a plain name, starts with `main/` or `refs/`, names no commit or predates the site (both `v26.3.18-alpha` tags) is refused. Render errors hard-fail; current-commit hygiene checks are skipped.
+- [x] Tests: `ReleaseDocs` (7 cases): pinned links after `main` deletes the file and moves owner, nested `rel/v2` path, dead links, refusals, default build unpinned
+- [x] Raw HTML is an allowlist in every build (`RAW_HTML_ATTRS`): links only as `<a href>`/`<img src>`, checked per tag by an html.parser net behind the scanner (post-ship review)
+  - Refused: any other attribute (`srcset`, `srcdoc`, `style`, handlers), every tokenizer-switching element (script, style, noscript, iframe, textarea, title, svg, math...), `<![` sections, DOCTYPE, PIs, text between `<!-->` and a later `-->`, an unfinished trailing tag, a URL Markdown refuses (`javascript:`), and an encoded slash in a repository link.
 - [x] Commit: `"site: version-pinned rendering for release docs"`
 
 **Test checkpoint:** a fixture tag's release build links to its commit after `main` deletes the file and changes owner; a release build of `84f61e28a` pins 4,850 blob and 64 tree links with no `main` link left outside code; the default build's bytes are unchanged apart from freshness state. Test on: WSL2 dev host.
 
-> **Test runner:** host-side `python3 scripts/site/tests/test_build.py` (class `ReleaseDocs`, 6 cases; needs `node`) | validation: `python3 scripts/site/build.py --release <ref> --check`
+> **Test runner:** host-side `python3 scripts/site/tests/test_build.py` (class `ReleaseDocs`, 7 cases; needs `node`) | validation: `python3 scripts/site/build.py --release <ref> --check`
 
 > **Notes:**
 > - **What shipped:** `scripts/site/build.py --release REF` renders the docs tree as it was at REF into `docs/<REF>/`, every repository link pinned to REF's full SHA.
-> - **How it integrates:** three module globals (`LINK_REF`, `DOCS_BASE`, `RELEASE`) default to today's values, so the main site build is unchanged; inputs come from the existing `snapshot()`.
+> - **How it integrates:** module globals default to today's values, so the main build is byte-identical; the raw HTML allowlist and its html.parser net apply to every build.
 > - **Downstream:** section 29 assembles retained release trees beside `main` and verifies them live; section 30 adds the `sdk/v*` namespace and API reference.
 > - **Canonical doc:** [`docs/infrastructure/documentation-site.md`](../../docs/infrastructure/documentation-site.md) "How are docs for a release built?".
-> - **Scope boundary:** nothing publishes a release tree yet, and pre-site tags cannot be rendered.
+> - **Scope boundary:** nothing publishes a release tree yet; pre-site tags and names starting `main/` or `refs/` are refused; converting the tag scanner is section 28.
+
+> **Verified:** 2026-09-29 | commit `f3a1a8b1d` | 4/4 items | build OK | site tests 95/95 PASS, kernel 34646 + 17 user PASS; release build of `84f61e28a` pins every repository link, default build byte-identical
+> **Quality reviewed:** 2026-09-29 | Codex 58x (design, test-coverage, adversarial x20, consistency x18, perf x18) | 3H+35M+1L fixed, 0 open | scope: N/A (host tooling and docs; no kernel, boot or desktop code)
 
 ---
 
@@ -1247,6 +1252,7 @@ Promotion of two review classes into automation, filed under the reviewer-to-aut
 
 - [ ] A lint check that fails on regex-based HTML or URL parsing in `scripts/site/*.py`: tags, attributes, anchors and URLs go through markdown-it, `html.parser` or Node's WHATWG `URL`
   - `Renderer.TAG_RE` / `ATTR_RE` in `scripts/site/build.py` (the raw-HTML href/src rewriter) is the remaining instance: convert it to `html.parser` or record it on a named allowlist with its reason.
+  - Measured 2026-09-29 (section 24 post-ship review): the scanner skips browser-accepted tags such as `<a/href=...>` and `alt=""src=...`; section 24 added an html.parser net that fails the build on them, so converting the rewriter would retire that net. Section 24 fixed 27 more `parser-approximation` findings (40 in the class).
   - Include a control that must fire: a fixture file with an `<a\s+href=` regex is reported.
 - [ ] A seeded stress test for `scripts/site/linkcheck.py` `run_checks`: random delays injected at request, redirect resolution and worker hand-off
   - Invariants: every link is answered or reported unanswered at the budget; a parser failure never ends green; no host ever exceeds `PER_HOST` concurrent requests.

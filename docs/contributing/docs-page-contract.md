@@ -1,4 +1,4 @@
-<!-- docs: order=1 sources=scripts/site/build.py reviewed=2026-09-29T21:00 -->
+<!-- docs: order=1 sources=scripts/site/build.py reviewed=2026-09-29T21:50 -->
 # Documentation Page Contract
 
 Every roadmap file under `todo/` gets at least one docs page, and every page follows this contract. A roadmap file is the plan; its docs page tells a user, contributor or operator what actually shipped, how to use it, and what is still missing. Start from the [page template](_template.md).
@@ -44,6 +44,7 @@ A page that documents code declares both `sources=` and `reviewed=`. The page is
 - Every figure has a source: code, test output, or a specification section.
 - 400 to 1500 words per page. Split a larger topic into linked pages rather than letting one page grow.
 - Link, do not copy. Point at the header, the roadmap section or the spec instead of pasting a struct or a table that will drift.
+- Prefer Markdown links and images. Raw HTML may link only with `href` on `<a>` and `src` on `<img>`, with plain presentational attributes (`alt`, `title`, `id`, `class`, `width`, `height`, `aria-*` and similar) and whitespace between a tag's name and its attributes; anything else, including `srcset`, `style`, raw-text elements such as `<script>`, `<style>`, `<noscript>` and `<iframe>`, `<svg>`, `<![` sections, `<!DOCTYPE>` and `<!-->` followed by more text, fails the build.
 
 ## Where does each domain's page go?
 

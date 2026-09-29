@@ -812,7 +812,11 @@ class ReleaseDocs(unittest.TestCase):
                    "[ghraw](https://@GH@/o/impossible-os/raw/main/img.png) "
                    "[fullref](https://@GH@/o/impossible-os/raw/refs/heads/main/img.png) "
                    "[hostref](https://raw.githubusercontent.com/o/impossible-os/refs/heads/main/img.png) "
-                   "[blobref](https://@GH@/o/impossible-os/blob/refs/heads/main/src/x.c)\n\n"
+                   "[blobref](https://@GH@/o/impossible-os/blob/refs/heads/main/src/x.c) "
+                   "[tagref](https://@GH@/o/impossible-os/blob/v1/src/x.c) "
+                   "[fulltag](https://@GH@/o/impossible-os/blob/refs/tags/v1/src/x.c) "
+                   "[slashtag](https://@GH@/o/impossible-os/blob/rel/v2/src/x.c) "
+                   "[gitlab](https://gitlab.com/o/impossible-os/-/tree/feature%2Fdocs)\n\n"
                    "<a href=\"https://@GH@\\o\\impossible-os\\blob\\main\\src\\x.c\">backslash</a>\n\n"
                    "`https://@GH@/o/impossible-os/blob/main/src/x.c`\n")
         self.write("docs/sub/page.md", "<!-- docs: covers=todo/01-x/TODO-01-a.md sources=src/x.c -->\n"
@@ -874,6 +878,10 @@ class ReleaseDocs(unittest.TestCase):
         self.assertIn(f'href="https://@GH@/n/impossible-os/raw/{self.sha}/img.png">fullref', page)
         self.assertIn(f'href="https://raw.githubusercontent.com/n/impossible-os/{self.sha}/img.png">hostref', page)
         self.assertIn(f'href="{blob}">blobref', page)
+        self.assertIn(f'href="{blob}">tagref', page)                             # the release's own tag
+        self.assertIn(f'href="{blob}">fulltag', page)
+        self.assertIn('href="https://@GH@/o/impossible-os/blob/rel/v2/src/x.c">slashtag', page)  # another ref
+        self.assertIn('href="https://gitlab.com/o/impossible-os/-/tree/feature%2Fdocs">gitlab', page)
         self.assertIn(f'href="https://@GH@/n/impossible-os/blob/{self.sha}/docs/sub/page.md#sub"', page)
         self.assertIn("<code>https://@GH@/o/impossible-os/blob/main/src/x.c</code>", page)  # code is text
         self.assertIn('href="https://example.invalid/docs/v1/"', page)             # version-scoped canonical
@@ -918,11 +926,15 @@ class ReleaseDocs(unittest.TestCase):
         self.assertEqual(self.release("rel/v2"), 0)
         page = self.read("docs/rel/v2/index.html")
         self.assertIn('href="https://example.invalid/docs/rel/v2/"', page)
+        self.assertIn(f'href="https://@GH@/n/impossible-os/blob/{self.sha}/src/x.c">slashtag', page)
+        self.assertIn('href="https://@GH@/o/impossible-os/blob/v1/src/x.c">tagref', page)
         self.assertIn('href="../../../icon.png"', page)
         # An absolute link into this repository must exist in the release tree.
         self.write("docs/index.md", "# Home\n\n[gone](https://@GH@/o/impossible-os/blob/main/nope.c)\n"
                                     "[gone2](http://@GH@/o/impossible-os/blob/main/nope2.c)\n"
                                     "[gone3](https://@GH@/o/impossible-os/raw/main/nope3.png)\n"
+                                    "<picture><source srcset=\"https://@GH@/o/impossible-os/raw/main/img.png 2x\"></picture>\n"
+                                    "[encslash](https://@GH@/o/impossible-os/blob/rel%2Fv2/src/x.c)\n"
                                     "![gone4](https://raw.githubusercontent.com/o/impossible-os/refs/heads/main/nope4.png)\n"
                                     "[frag](https://@GH@/o/impossible-os/blob/main/docs/sub/page.md#missing)\n\n"
                                     "```mermaid\ngraph TD\n  click a \"https://@GH@/o/impossible-os/blob/main/x\n```\n")
@@ -940,10 +952,13 @@ class ReleaseDocs(unittest.TestCase):
         self.assertIn("(not in that tree): https://@GH@/o/impossible-os/raw/main/nope3.png", msgs)
         self.assertIn("(not in that tree): https://raw.githubusercontent.com/o/impossible-os/refs/heads/main/nope4.png", msgs)
         self.assertIn("cannot read a Mermaid click line at release v3", msgs)
+        self.assertIn("raw HTML may not contain the attribute srcset= on <source>", msgs)
+        self.assertIn("repository link with an encoded slash", msgs)
 
     def test_refusals(self):
         self.fixture()
         for ref, why in (("../x", "must match"), ("-v", "must match"), ("v1/", "must match"),
+                         ("main/v1", "may not start with main/"), ("refs/tags/v1", "may not start with"),
                          ("nope", "does not name a commit")):
             with self.assertRaises(B.ReleaseError) as cm:
                 B.prepare_release(ref)
@@ -961,6 +976,84 @@ class ReleaseDocs(unittest.TestCase):
         with self.assertRaises(B.ReleaseError) as cm:
             B.prepare_release("v0")
         self.assertIn("predates the docs site", str(cm.exception))
+
+    def test_raw_html_the_scanner_cannot_read_fails_in_every_build(self):
+        # Browser-accepted shapes the tag scanner skips: html.parser is the net.
+        page = B.Page(src=Path("docs/p.md"), rel="p.md", url="p.html")
+        for release in (None, "v9"):
+            B.RELEASE = release
+            for frag, why in (('<img/srcset="u.png 2x">', "srcset"),
+                              ('<img alt=""srcset="u.png 2x">', "srcset"),
+                              ('<img src="a.png" srcset="u.png 2x">', "srcset"),
+                              ('<a/href="https://example.invalid/">x</a>', "cannot read"),
+                              ('<img alt=""src="https://example.invalid/i.png">', "cannot read"),
+                              ('<div><style>/* <a href="https://example.invalid/"> */</style>\n'
+                               '<a/href="https://example.invalid/real">real</a></div>', "cannot read"),
+                              ('<div><script>var s = \'<a href="https://example.invalid/">\';</script>'
+                               '<a/href="https://example.invalid/real">r</a></div>', "cannot read"),
+                              ('<div><svg><style><img srcset="u.png 2x"></style></svg></div>', "foreign content"),
+                              ('<p><MATH><mi>x</mi></MATH></p>', "foreign content"),
+                              ('<div><!--><a href="https://example.invalid/">s</a><svg></svg><!-- end --></div>',
+                               "text after <!-->"),
+                              ('<!--->b<a href="https://example.invalid/">c</a>-->', "text after <!-->"),
+                              ('<![CDATA[><a/href="https://example.invalid/">x</a>]]>', "marked section"),
+                              ('<div><![IGNORE[x]]></div>', "marked section"),
+                              ('<div><![IGNORE[></div>', "marked section"),
+                              ('<!DOCTYPE html>', "declaration"),
+                              ('<?xml version="1.0"?>', "processing instruction"),
+                              ('<!-- a --!> <a/href="https://example.invalid/">y</a>', "cannot read"),
+                              ('<iframe srcdoc="&lt;a href=x&gt;"></iframe>', "<iframe>"),
+                              ('<video src="https://example.invalid/v.mp4"></video>', "src= on <video>"),
+                              ('<p style="background:url(https://example.invalid/b.png)">x</p>', "style="),
+                              ('<style>p{background:url(https://example.invalid/b.png)}</style>', "<style>"),
+                              ('<script>location="https://example.invalid/"</script>', "<script>"),
+                              ('<img src="a.png" onerror="x()">', "onerror="),
+                              ('<div srcdoc="x">d</div>', "srcdoc="),
+                              ('<a href="https://example.invalid/" download="f">f</a>', "download="),
+                              ('<noscript><p title="</noscript><script>alert(1)</script>">x</p></noscript>', "<noscript>"),
+                              ('<textarea><a/href="x"></textarea>', "<textarea>"),
+                              ('<xmp>x</xmp>', "<xmp>"), ('<plaintext>x', "<plaintext>"),
+                              ('<noembed>x</noembed>', "<noembed>"), ('<title>x</title>', "<title>"),
+                              ('<a href="javascript:alert(1)">x</a>', "Markdown would refuse"),
+                              ('<a href="JaVaScRiPt&#58;alert(1)">x</a>', "Markdown would refuse"),
+                              ('<img src="vbscript:x">', "Markdown would refuse"),
+                              ('<div>\n<img src="https://example.invalid/m" onerror="alert(1)"', "unfinished tag"),
+                              ('<a href="javascript:alert(1)"', "unfinished tag")):
+                errors: list[str] = []
+                r = B.Renderer(dict(FACTS, _historical_owners=[]), {}, errors)
+                r.browser = {}
+                r.rewrite_raw_html(page, frag)
+                self.assertTrue(any(why in e for e in errors), (release, frag, errors))
+        # Through Markdown: a page ending in an unfinished tag, which the page
+        # template's next `>` would complete in a browser.
+        for release in (None, "v9"):
+            B.RELEASE = release
+            errors = []
+            r = B.Renderer(dict(FACTS, _historical_owners=[]), {}, errors)
+            r.browser = {}
+            r.render(B.Page(src=Path("docs/q.md"), rel="q.md", url="q.html"),
+                     '# Q\n\n<div>\n<img src="https://example.invalid/m" onerror="alert(1)"')
+            self.assertTrue(any("unfinished tag" in e for e in errors), (release, errors))
+        B.RELEASE = None
+        errors = []
+        B.Renderer(dict(FACTS, _historical_owners=[]), {}, errors).rewrite_raw_html(
+            page, '<a href="https://example.invalid/">ok</a><!-- <a/href="x"> -->\n'
+                  '<p>\n  <img src="https://example.invalid/i.png" alt="x"> <a\n href="https://example.invalid/y">y</a></p>')
+        self.assertEqual(errors, [])          # a readable tag, and a comment, pass
+        # Forms a browser and the parser end at the same place: the next tag is
+        # still seen and rewritten, so they pass (the documented contract).
+        for frag in ('<!ENTITY x "y"><a href="https://example.invalid/">a</a>',
+                     '<!-->' + '<a href="https://example.invalid/">b</a>',
+                     '<!x><a href="https://example.invalid/">c</a>',
+                     'text <!--[note] ordinary comment --><a href="https://example.invalid/">d</a>',
+                     '<p>\n<!--[TODO: refresh screenshot]-->\n<img src="https://example.invalid/e.png"></p>',
+                     '<details open><summary title="t">s</summary><a class="c" id="i" aria-label="l" '
+                     'href="https://example.invalid/f">f</a><img alt="a" width="10" height="10" '
+                     'src="https://example.invalid/g.png"></details>',
+                     'see <path> and <query>', 'a < b and 3 <4'):
+            errors = []
+            B.Renderer(dict(FACTS, _historical_owners=[]), {}, errors).rewrite_raw_html(page, frag)
+            self.assertEqual(errors, [], frag)
 
     def test_an_unresolved_absolute_link_fails_closed(self):
         errors: list[str] = []
