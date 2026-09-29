@@ -29,7 +29,7 @@ flowchart LR
 ```
 
 1. **pl_mpeg integration.** Vendor the library with its allocator pointed at the kernel's page allocator and its file access through the VFS; read width, height, frame rate and duration.
-2. **Colour conversion.** BT.601 YCbCr to RGB in fixed point, with an SSE2 path that converts four pixels at a time, fast enough to finish well inside one frame period.
+2. **Colour conversion.** BT.601 YCbCr to RGB in fixed point, with an SSE2 path that converts four pixels at a time. Finishing inside one frame period is a target to be measured per resolution, not yet a result.
 3. **A/V sync.** A three-frame RGB ring, each frame shown when its timestamp matches the wall clock; audio goes to a mixer stream, and drift beyond 200 ms drops or repeats a frame.
 4. **Player UI.** Letterboxing at the right aspect ratio, a seek bar, a time display, a volume slider, and fullscreen with controls that hide after three seconds.
 5. **Files and playlist.** File associations for `.mpg`, `.mpeg`, `.avi` and `.mp4`, drag and drop, a command-line argument, recent files, and a playlist with loop and shuffle.

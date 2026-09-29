@@ -91,7 +91,8 @@ Graphical version with filterable table.
 
 Watch for new events and update the display.
 
-- [ ] Poll `events.jsonl` file size every 1s; if grown, read new lines; if it shrank, the file rotated: re-open and read from the start
+- [ ] Poll `events.jsonl` every 1s and read appended lines; detect rotation by file identity, not size (the writer renames the file and creates a new one)
+  - A new file can reach the old size between polls; on rotation, read the rest of the old generation from `events.jsonl.1` if it is still plain text, else show a gap marker. Test equal-size and larger replacements.
 - [ ] Scroll-to-bottom on new entries (if already at bottom)
 - [ ] Toolbar toggle: "Live" / "Paused"
 - [ ] Commit: `"tools: eventview.exe live tail mode"`

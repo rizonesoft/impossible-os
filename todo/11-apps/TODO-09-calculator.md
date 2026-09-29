@@ -118,6 +118,8 @@ title: "TODO-09 -- Calculator"
 
 ## 4. Scientific Mode `[Sonnet]`
 
+- [/] Blocked on `02-kernel-core/TODO-03-kernel-libraries.md` §2 (item: "Unify float/double special values"): double `kmath_cos`/`kmath_acos`/`kmath_pow`/`kmath_sqrt` are font-grade
+  - `kmath_acos(1.0)` returns about 0.254 (a four-term polynomial) and `kmath_cos` loops forever on infinity; the cos, acos, x^y and square-root keys need the hardened path.
 - [ ] **Window resize**: switching to Scientific → resize to 560×480; adds 2 extra button columns on left (total layout becomes: function columns | existing numpad); mode toolbar updates active tab
 - [x] Trig and log functions already ship: `kmath_sin`/`kmath_tan`/`kmath_atan`/`kmath_exp`/`kmath_log` (`include/libc/math.h:235,245,255,336,353`) and `KM_PI`; define an `e` constant locally, none exists
 - [ ] **Degree/Radian toggle**: `[DEG]` `[RAD]` button (toggles `g_deg_mode`); when `DEG`: multiply input by `π/180` before trig calls; display shows current mode

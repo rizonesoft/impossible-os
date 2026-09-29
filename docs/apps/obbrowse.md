@@ -14,7 +14,7 @@ Enumeration is already reachable from a user-mode program:
 - **Syscalls.** `SYS_OPENDIROBJ` (42) and `SYS_QUERYDIROBJ` (43) call `NtOpenDirectoryObject()` and `NtQueryDirectoryObject()` ([`ob.h`](../../include/kernel/ob/ob.h), [`ob.c`](../../src/kernel/ob/ob.c)).
 - **Wrappers.** `sys_opendirobj(path, access)` and `sys_querydirobj(dir, buf, count, &ctx)` ([`syscall.h`](../../user/include/syscall.h)) pack the count and a resume cookie into one argument, and `sys_closehandle()` closes the directory.
 - **Rows.** Each entry is an `OBJECT_DIRECTORY_INFORMATION` row of 96 bytes: a 64-byte name and a 32-byte type name, pinned by static asserts.
-- **One row per call.** This legacy syscall carries no buffer length, so the kernel returns exactly one row per call and the caller loops on the cookie ([`syscall.c`](../../src/kernel/sched/syscall.c)). A multi-row path exists through the native SSDT handler.
+- **One row per call.** This legacy syscall carries no buffer length, so the kernel returns exactly one row per call and the caller loops on the cookie ([`syscall.c`](../../src/kernel/sched/syscall.c)). A multi-row path (up to 16 rows) exists through the native SSDT handler. Either way each call rescans the directory from its first entry under a spinlock with interrupts off, so walking a directory of n entries costs about n squared over two steps; that is harmless for today's small directories and is filed as a prerequisite before the GUI refreshes large ones.
 
 ```mermaid
 sequenceDiagram

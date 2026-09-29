@@ -3,13 +3,13 @@
 
 ## What is it?
 
-Calculator is the planned three-mode calculator: Standard, Scientific and Programmer, with a history panel, memory keys, keyboard input and copy to clipboard. The desktop shell's utilities roadmap already plans a basic Standard calculator and lists the other modes as stretch goals; this roadmap turns those into full sections. Nothing is built yet, but the maths library the scientific mode needs has already shipped.
+Calculator is the planned three-mode calculator: Standard, Scientific and Programmer, with a history panel, memory keys, keyboard input and copy to clipboard. The desktop shell's utilities roadmap already plans a basic Standard calculator and lists the other modes as stretch goals; this roadmap turns those into full sections. Nothing is built yet; most of the maths the scientific mode needs has shipped, but four double functions are still font-grade.
 
 ## How does it work?
 
 **Today.** There is no calculator program. What it will use:
 
-- **Maths.** [`math.h`](../../include/libc/math.h) and [`kmath.h`](../../include/kernel/kmath.h) already provide `kmath_sin()`, `kmath_cos()`, `kmath_tan()`, `kmath_asin()`, `kmath_acos()`, `kmath_atan()`, `kmath_exp()`, `kmath_log()`, `kmath_log10()`, `kmath_pow()`, `kmath_sqrt()` and `kmath_fmod()`, so the scientific keys need no new maths code.
+- **Maths.** [`math.h`](../../include/libc/math.h) provides `kmath_sin()`, `kmath_tan()`, `kmath_asin()`, `kmath_atan()`, `kmath_exp()`, `kmath_log()` and `kmath_log10()`. The double `kmath_cos()`, `kmath_acos()`, `kmath_pow()` and `kmath_sqrt()` in [`kmath.h`](../../include/kernel/kmath.h) are font-grade helpers kept for the TrueType rasterizer: `kmath_acos(1.0)` returns about 0.254 instead of 0, and `kmath_cos()` never returns for an infinite input. The scientific keys need those unified onto the hardened float path first.
 - **Drawing.** `gfx_fill_rounded_rect()`, `gfx_fill_rect()` and `gfx_draw_rect()` ([`gfx.h`](../../include/gfx.h)) for the keypad.
 - **Design tokens.** Keypad button size, tab height, corner radius and animation timing come from generated `THEME_*` constants ([`theme_tokens.h`](../../include/desktop/theme_tokens.h)), not literals.
 - **Windows.** `wm_create_window(title, x, y, w, h, flags)` ([`wm.h`](../../include/desktop/wm.h)); a fixed-size window is one without `WM_FLAG_RESIZABLE`.
@@ -34,7 +34,8 @@ stateDiagram-v2
 
 | Interface | Status |
 | --- | --- |
-| `kmath_*` functions | Shipped |
+| `kmath_sin()`, `kmath_tan()`, `kmath_atan()`, `kmath_exp()`, `kmath_log()` | Shipped |
+| Accurate double `kmath_cos()`, `kmath_acos()`, `kmath_pow()`, `kmath_sqrt()` | Planned: today's are font-grade, and unifying them is deferred in the kernel libraries roadmap |
 | `gfx_fill_rounded_rect()` and the other `gfx_*` calls, `THEME_*` tokens | Shipped |
 | `calc_t` and the calculator engine | Planned in this roadmap and the utilities roadmap |
 | `clipboard_set()` | Planned in the [Clipboard](../desktop/clipboard.md) roadmap |
@@ -50,17 +51,17 @@ The utilities roadmap ([Task Manager, Device Manager and Core Utilities](../desk
 
 ## What is not implemented yet?
 
-No calculator code exists yet; only the maths functions section 4 relies on have shipped:
+No calculator code exists yet, and only part of the maths section 4 relies on is ready:
 
 - [Standard Calculator UI](../../todo/11-apps/TODO-09-calculator.md#1-standard-calculator-ui-sonnet)
 - [Arithmetic Engine](../../todo/11-apps/TODO-09-calculator.md#2-arithmetic-engine-sonnet)
 - [Memory and History](../../todo/11-apps/TODO-09-calculator.md#3-memory--history-sonnet), which needs the clipboard
-- [Scientific Mode](../../todo/11-apps/TODO-09-calculator.md#4-scientific-mode-sonnet)
+- [Scientific Mode](../../todo/11-apps/TODO-09-calculator.md#4-scientific-mode-sonnet), which waits on the double maths unification in the [Kernel Embedded Libraries](../kernel/kernel-libraries.md) roadmap
 - [Programmer Mode](../../todo/11-apps/TODO-09-calculator.md#5-programmer-mode-sonnet)
 
 ## How does it compare with Windows 11 and Linux?
 
-Windows Calculator has Standard, Scientific and Programmer modes, a history and memory sidebar, word sizes and all four number bases on screen at once, plus graphing and unit conversion. On Linux, GNOME Calculator and KCalc cover scientific and programmer work with fewer programmer conveniences. The Impossible OS plan matches the Windows three-mode layout, including the clickable bit row, on the kernel's own maths library. It does not exist yet.
+Windows Calculator has Standard, Scientific and Programmer modes, a history and memory sidebar, word sizes and all four number bases on screen at once, plus graphing and unit conversion. On Linux, GNOME Calculator and KCalc cover scientific and programmer work with fewer programmer conveniences. The Impossible OS plan matches the Windows three-mode layout, including the clickable bit row, on the kernel's own maths library once its double functions are hardened. It does not exist yet.
 
 ## See also
 

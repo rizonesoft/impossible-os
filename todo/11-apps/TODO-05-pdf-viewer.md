@@ -89,6 +89,8 @@ title: "TODO-05 -- PDF Viewer"
   - [ ] If `/Pages`: iterate `/Kids` array recursively; inherit `/MediaBox` from this node if child lacks one
   - [ ] If `/Page`: append `node_id` to `page_refs[]`
   - [ ] Max 4096 pages; `page_refs[]` allocated with `pmm_alloc_contiguous()`
+  - [ ] Bound the walk on untrusted input: a visited set for cycles (a `/Pages` node naming itself or a sibling), a maximum depth and a total node budget; same for nested Form XObjects in §4
+    - The 1,024-object cache bounds memory, not traversal: a two-node cycle emits no pages and recurses forever. Add cyclic and deeply nested fixture PDFs.
 - [ ] Per-page descriptor `struct pdf_page { obj_id, gen, media_box[4] (x0,y0,x1,y1 in points), contents_id, resources_id }` -- populated during flatten pass
 - [ ] `pdf_page_count()` returns total number of pages
 - [ ] `pdf_get_page(n)` returns pointer to `struct pdf_page` for 0-based page index

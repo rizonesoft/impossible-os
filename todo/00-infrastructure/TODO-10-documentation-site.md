@@ -975,6 +975,9 @@ Write docs pages that meet the §3 contract for the 15 roadmap files below. Read
   - Duplicated apps: Notepad (`09-desktop-shell/TODO-10`), Calculator, screenshot and archive manager (`09-desktop-shell/TODO-12`, `08-graphics-ui/TODO-09` §5); Wi-Fi parked on its owner `04-drivers-hardware/TODO-15`.
   - Unowned or unvetted: WebP and TIFF decoders (`TODO-11` §1), NetSurf/Dillo and pl_mpeg licence gates (`TODO-01` §6, `TODO-06` §1); WordPad's font lookup now points at `08-graphics-ui/TODO-02` §1-§2.
 - [x] Commit: `"docs: applications and accessories documentation pages"`
+- [x] Post-ship review fixes (adversarial, consistency and perf legs)
+  - Pages: `calculator.md` no longer calls the double `kmath_cos`/`kmath_acos`/`kmath_pow`/`kmath_sqrt` ready (font-grade); `event-viewer.md` describes `dropped` as a per-window snapshot and rotation as rename-and-recreate; `pdf-viewer.md`, `obbrowse.md` and `video-player.md` state traversal bounds, the quadratic directory walk and an unmeasured frame target.
+  - Roadmaps: `TODO-09` §4 parked on the kernel libraries' double-maths unification; `13-tools-accessories/TODO-02` §3 follows rotation by identity; `TODO-05` §2 and `07-networking/TODO-10` §3 bound the page-tree walk; ObBrowse §2 files the O(n^2) walk; `TODO-06` §2 uses SSE2 unpacks, not SSSE3 `_mm_shuffle_epi8`; the Photos table no longer claims §1 done.
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
@@ -985,6 +988,9 @@ Write docs pages that meet the §3 contract for the 15 roadmap files below. Read
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the image, font, network, crypto, Object Manager or logging code it describes changes.
 > - **Status honesty:** no app in these roadmaps exists; the pages describe what runs today (image and font calls, `ping`, `sysinfo.exe`, the directory-object syscalls, `events.jsonl`) and link the owning sections.
 > - **Scope boundary:** where a networking, desktop or graphics roadmap owns the engine or a duplicate app, the page names that owner and links its page instead of restating it.
+
+> **Verified:** 2026-09-29 | commit `c98bf1cf8` | 10/10 items | build OK | site: OK, 204/232 documented; tests 34646 kernel + 17 user-mode PASS
+> **Quality reviewed:** 2026-09-29 | Codex 4x (adversarial, adversarial post-ship, consistency, perf) | 1H+7M fixed, 0 open | scope: N/A (docs-only; no source changed; parity research and test coverage N/A; re-adversarial skipped: docs and roadmap-text fixes)
 
 ---
 

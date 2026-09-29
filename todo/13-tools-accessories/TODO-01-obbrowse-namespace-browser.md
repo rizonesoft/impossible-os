@@ -66,6 +66,8 @@ Wrap the existing kernel syscalls for use from user-mode code.
 
 Text-based namespace tree -- works before GUI is needed.
 
+- [ ] Enumeration is O(n^2): each cookie call rescans the directory list from its head under the IRQ-off `dir->lock` (`src/kernel/ob/ob.c` `NtQueryDirectoryObject`)
+  - Fine for today's small directories; before the GUI refreshes large ones, add a mutation-safe resume cursor or a bounded snapshot in `ob.c` and measure lock hold time.
 - [ ] Create `user/apps/obbrowse.c`:
   - Open root `\` via `ob_open_directory("\\")`
   - Recursive enumeration: for each entry, if type is `Directory`, recurse

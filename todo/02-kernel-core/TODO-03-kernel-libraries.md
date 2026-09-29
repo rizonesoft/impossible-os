@@ -161,7 +161,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [x] `kmath_cbrt` -- `exp(log/3)` seed + 2 Newton steps; preserves sign, zero, +/-inf
 
 - [/] Unify float/double special values: hardened float `cosf`/`acosf`/`sqrtf`/`powf` diverge from font-grade `kmath.h` double `cos`/`acos`/`pow`/`sqrt`.
-      - Blocked on: `kmath.h` ODR ownership. Promoting the doubles (or adding hardened non-overlapping names) changes what the font rasterizer computes, so it needs an stb golden-raster baseline first. Owned by this section; no cross-TODO owner.
+      - Blocked on: `kmath.h` ODR ownership. Promoting the doubles (or adding hardened non-overlapping names) changes what the font rasterizer computes, so it needs an stb golden-raster baseline first. Owned by this section; `11-apps/TODO-09-calculator.md` §4 (item: "Blocked on `02-kernel-core/TODO-03-kernel-libraries.md` §2") waits on it.
 
 - [x] Commit: `"libc: floating-point math -- sin/tan/asin/atan/atan2/exp/log/cbrt + float variants"`
 

@@ -105,7 +105,7 @@ title: "TODO-06 -- Video Player"
   - [ ] Process 4 pixels per iteration using 128-bit XMM registers (`__m128i`)
   - [ ] Load 4× Y values into one XMM; broadcast one Cb and one Cr across lanes
   - [ ] Apply BT.601 multipliers via `_mm_mulhi_epi16` / `_mm_add_epi16`
-  - [ ] Pack to `_mm_packus_epi16` (clamped uint8); interleave into RGBA with `_mm_shuffle_epi8`
+  - [ ] Pack to `_mm_packus_epi16` (clamped uint8); interleave into BGRA with `_mm_unpacklo_epi8`/`_mm_unpacklo_epi16` (SSE2; `_mm_shuffle_epi8` is SSSE3 and would need a CPUID-dispatched path)
   - [ ] Store 4 ARGB pixels with `_mm_storeu_si128`
   - [ ] Fallback: compile `#ifdef __SSE2__` guard; scalar path used if SSE2 unavailable
 - [ ] Benchmark: log `yuv_convert: {w}×{h} frame in {elapsed_us} µs` at debug build; target < 1 frame period ms

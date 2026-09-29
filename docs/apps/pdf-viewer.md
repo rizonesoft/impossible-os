@@ -27,7 +27,7 @@ flowchart LR
 ```
 
 1. **Structure parser.** Find `startxref`, walk the cross-reference table, read the trailer's `/Root`, and cache up to 1,024 objects.
-2. **Page tree.** Flatten nested `Kids` arrays, inherit `MediaBox`, and expose `pdf_page_count()` and `pdf_get_page()`.
+2. **Page tree.** Flatten nested `Kids` arrays with a cycle check, a depth cap and a node budget (a PDF is untrusted input, and a page tree can point back at itself), inherit `MediaBox`, and expose `pdf_page_count()` and `pdf_get_page()`.
 3. **Stream decompression.** `FlateDecode`, `ASCIIHexDecode`, `ASCII85Decode` and raw streams.
 4. **Content renderer.** Text operators (`BT`, `ET`, `Tf`, `Td`, `Tj`, `TJ`), path operators (`m`, `l`, `c`, `re`, `f`, `S`, `B`), the current transformation matrix, the graphics state stack and colours, then images through `image_load_mem()`.
 5. **Viewer.** A toolbar with previous, next, a page box, zoom, fit width and fit page; the page centred with a shadow; scroll bars; Ctrl plus wheel zoom; and a status bar.

@@ -13,9 +13,9 @@ Event Viewer is the planned `eventview.exe`: a viewer for the kernel's structure
 {"ts":12340,"lvl":"INFO","sub":"ob","cpu":0,"pid":0,"tid":0,"msg":"...","dropped":0}
 ```
 
-- **Fields.** `ts` is milliseconds since boot, not wall-clock time; `lvl` is one of `DEBUG`, `INFO`, `WARN`, `ERROR` or `FATAL`; `sub` is the subsystem tag; `cpu`, `pid` and `tid` say where the event came from; `msg` is the escaped message; `dropped` is how many messages from that subsystem the rate limiter has dropped so far.
+- **Fields.** `ts` is milliseconds since boot, not wall-clock time; `lvl` is one of `DEBUG`, `INFO`, `WARN`, `ERROR` or `FATAL`; `sub` is the subsystem tag; `cpu`, `pid` and `tid` say where the event came from; `msg` is the escaped message; `dropped` is a snapshot, taken at flush time, of how many messages the rate limiter has dropped for that subsystem in its current window; it resets when the window expires, so it is neither a running total nor tied to the event on its line.
 - **Location.** `X:\Logs\events.jsonl` when the BlackBox partition is mounted, otherwise `C:\Impossible\System\Logs\events.jsonl`.
-- **Rotation.** The file is rotated like the text log when it grows, so a reader cannot assume it only ever grows.
+- **Rotation.** When the file grows too large the writer renames it and creates a new `events.jsonl`, keeping up to three older generations (`.1` to `.3`, possibly LZ4-compressed), so a reader has to notice a new file even when it is already as large as the old one.
 
 **Planned design.**
 
@@ -52,7 +52,7 @@ Nothing in this roadmap has started:
 
 - [Console-Mode Log Viewer](../../todo/13-tools-accessories/TODO-02-event-viewer.md#1-console-mode-log-viewer)
 - [GUI Event Viewer](../../todo/13-tools-accessories/TODO-02-event-viewer.md#2-gui-event-viewer), whose Security filter needs security events that are not logged yet
-- [Live Tail and Auto-Refresh](../../todo/13-tools-accessories/TODO-02-event-viewer.md#3-live-tail-and-auto-refresh), which has to follow the file across rotation
+- [Live Tail and Auto-Refresh](../../todo/13-tools-accessories/TODO-02-event-viewer.md#3-live-tail-and-auto-refresh), which has to follow the file across rotation by identity rather than size, and mark any events it could not read
 
 Two limits come from the log itself. Times are milliseconds since boot, so a date-range filter needs a wall-clock reference the file does not carry. And the log is not signed: the HMAC chain planned in the [System Logging](../kernel/system-logging.md) roadmap is deferred, so the viewer cannot promise the events were not edited.
 
