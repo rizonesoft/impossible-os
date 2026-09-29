@@ -18,7 +18,7 @@ title: "TODO-02 -- Environment Variables & Process ABI"
 > [!IMPORTANT]
 > **Canonical implementation is `02-kernel-core/TODO-22-environment-variables.md`.**
 > That TODO fully specifies: `struct task` environ/argv fields, `env_get/set/unset/copy`,
-> system default variable population from Registry, `%VAR%` depth-limited expansion,
+> system default variable population from Registry, single-pass `%VAR%` expansion,
 > `NtQuery/SetEnvironmentVariable` SSDT wiring, all Win32 API wrappers
 > (`GetEnvironmentVariableA/W`, `SetEnvironmentVariableA/W`, `ExpandEnvironmentStringsA/W`,
 > `GetEnvironmentStringsW`, `GetCommandLineA/W`), PATH lookup, `SET`/`ECHO` shell commands,
@@ -90,7 +90,7 @@ int         env_list(struct task *t, char *buf, size_t max);    /* all KEY=VALUE
 int         env_copy(struct task *dst, const struct task *src); /* deep-copy for fork/spawn */
 void        env_free(struct task *t);                           /* on task exit */
 int         env_expand(struct task *t, const char *in,
-                       char *out, size_t max);                  /* %VAR% substitution, depth 4 */
+                       char *out, size_t max);                  /* %VAR% substitution, single pass */
 int         env_expand_path(struct task *t, const char *templ,
                              const char *argv0, const char *filepath,
                              char *out, size_t max);            /* %1–%9 file-assoc substitution */
@@ -132,7 +132,7 @@ int         env_expand_path(struct task *t, const char *templ,
 
 ## 3. `%VAR%` Expansion + `env_expand_path` `[Sonnet]`
 
-> `env_expand` (depth-limited `%VAR%` substitution) is implemented in `02-kernel-core/TODO-22 §3`.
+> `env_expand` (single-pass `%VAR%` substitution with a work budget) is implemented in `02-kernel-core/TODO-22 §3`.
 > `env_expand_path` is **new** -- not in TODO-14 -- and is specified here.
 
 **Source file:** `src/kernel/env_path.c` (extends `src/kernel/env.c`)
@@ -149,7 +149,7 @@ int         env_expand_path(struct task *t, const char *templ,
   - After `%1`–`%9` substitution, run `env_expand()` on the result to also resolve `%VAR%` references in the template
   - Return bytes written (not including null); if output would overflow `max`, truncate + null
 - [ ] **`%%` rule**: single `%` escape; works in both `env_expand` and `env_expand_path`
-- [ ] Depth limit 4: if a substituted value itself contains `%VAR%`, recursion capped at 4 passes; return partial on depth 5 + `klog(WARN, "env", "expand depth limit")`
+- [ ] Single pass, as shipped in `env_expand()`: a substituted value containing `%OTHER%` stays literal (no recursion); work beyond `ENV_EXPAND_WORK_MAX` is refused
 - [ ] Write `env_expand_path` test: template `"C:\\Impossible\\System32\\notepad.exe %1"`, filepath `"C:\\Users\\Default\\doc.txt"` → output `"C:\\Impossible\\System32\\notepad.exe \"C:\\Users\\Default\\doc.txt\""`
 
 ---
@@ -257,7 +257,7 @@ int         env_expand_path(struct task *t, const char *templ,
 | --- | ------------------------------------------------------------ | -------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------ |
 | 💎  | Per-process `KEY=VALUE` environ array                        | ✅ `PEB->ProcessParameters->Environment` UTF-16 block          | ✅ `execve` `envp[]`; `environ` global     | ⬜ §1 -- `D02T22 `; `struct task` environ        |
 | 💎  | System default variables                                     | ✅ Registry `HKLM\SYSTEM\...\Environment` + `HKCU\Environment` | ✅ `/etc/environment` + PAM + `~/.profile` | ⬜ §2 -- `D02T22 `; same dual-hive Registry      |
-| 💎  | `%VAR%` expansion                                            | ✅ CMD `%VAR%` + `ExpandEnvironmentStrings`                    | ✅ `$VAR` / `${VAR}` (shell-level)         | ⬜ §3 -- `D02T22 `; depth-4 cap prevents         |
+| 💎  | `%VAR%` expansion                                            | ✅ CMD `%VAR%` + `ExpandEnvironmentStrings`                    | ✅ `$VAR` / `${VAR}` (shell-level)         | ⬜ §3 -- `D02T22 `; single pass, work-budgeted   |
 | ⭐  | `env_expand_path` `%1`–`%9` file-assoc template substitution | ✅ `ShellExecute` HKCR command template (`%1`                  | ⚠️ `xdg-open` delegates to desktop; no     | ⬜ §3 -- (this TODO); quote-wraps filepath; also |
 | 💎  | `SYS_GETENV` / `SYS_SETENV` syscalls                         | ✅ `NtQueryEnvironmentVariable` / `NtSetEnvironmentVariable`   | ✅ `getenv`/`setenv` via CRT (no direct    | ⬜ §5 -- `D02T22 `; SSDT + user-mode             |
 | 💎  | PATH lookup + executable-not-found error                     | ✅ `SearchPath`; `where.exe` utility                           | ✅ `execvp` + shell `type`/`which`         | ⬜ §7 -- `D02T22 ` + §6 (session                 |
@@ -279,7 +279,7 @@ Run `bash scripts/build.sh run` for each verification step.
 
 - [ ] **env_get/set**: `env_set(task, "FOO", "bar")` → `env_get(task, "FOO") == "bar"`; `env_get(task, "foo") == "bar"` (case-insensitive); `env_unset` → `env_get` returns NULL
 - [ ] **env_init_defaults**: fresh `task_exec` → `env_get("PATH")` non-null, contains `C:\Impossible\Bin`; `env_get("TEMP")` = `C:\Temp\`; `env_get("USERNAME")` = `"Default"` (or current user)
-- [ ] **`%VAR%` expansion**: shell `echo %PATH%` → prints PATH value; `echo %%` → prints `%`; undefined `echo %NOPE%` → prints `%NOPE%` literal; depth-limit: 5-level self-referencing var → partial result without hang
+- [ ] **`%VAR%` expansion**: shell `echo %PATH%` → prints PATH value; `echo %%` → prints `%`; undefined `echo %NOPE%` → prints `%NOPE%` literal; a value containing `%OTHER%` prints literally (single pass)
 - [ ] **`env_expand_path`**: template `"notepad.exe %1"`, filepath `"C:\file.txt"` → `"notepad.exe \"C:\\file.txt\""`; `%0` → argv0; `%2` with only one arg → empty string substitution
 - [ ] **`SYS_SETENV`**: user-mode `SetEnvironmentVariableA("X", "42")` → `GetEnvironmentVariableA("X", buf, 8)` → `buf == "42"`, return 2; `SetEnvironmentVariableA("X", NULL)` → subsequent `GetEnvironmentVariableA` returns 0 + `ERROR_ENVVAR_NOT_FOUND`
 - [ ] **PATH lookup**: `where notepad` → prints `C:\Impossible\System32\notepad.exe`; `where nonexistent_cmd` → exit code 1; session cache: second `where notepad` uses cache (serial log shows "cache hit")

@@ -85,7 +85,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 **Output files:** `src/libs/libc/string.c`, `include/libc/string.h`
 
 - [ ] Rescope against `02-kernel-core/TODO-03-kernel-libraries.md`: it shipped string (§1), maths (§2), Monocypher and CSPRNG (§5) and cJSON (§6); miniz (§4) and Mbed TLS (§7) are vendored with deferred ports
-  - Real paths are `src/libc/`, `include/libc/math.h`, `src/kernel/csprng.c` and `src/libs/cjson/`, not `src/libs/libc/` or `include/libs/`; keep only the deltas (ZIP writer, TLS client, `stb_image_write` consolidation, host tests).
+  - Real paths are `src/libc/`, `include/libc/math.h`, `src/kernel/csprng.c` and `src/libs/cjson/`, not `src/libs/libc/` or `include/libs/`; reconcile symbol by symbol and keep the deltas: ZIP writer, TLS client, STB consolidation, host tests, and the still-absent `kmath_remainder()`, `KMATH_*` constants, `strcasestr()`, `itoa()` and `strtoull()`.
 - [ ] **Audit** existing string functions: scan `src/kernel/` for `memset`, `memcpy`, `strlen`, `snprintf` definitions; list duplicates across `panic.c`, `log.c`, and any other files
 - [ ] **Memory functions** (implement or consolidate):
   - `memset(dst, c, n)`, `memcpy(dst, src, n)`, `memmove(dst, src, n)`, `memcmp(a, b, n)`, `memchr(s, c, n)`

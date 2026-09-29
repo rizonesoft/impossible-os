@@ -54,8 +54,8 @@ The kernel libraries roadmap, `02-kernel-core/TODO-03`, owns this ground. It shi
 
 ## What is not implemented yet?
 
-- [String Library Consolidation](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#1-string-library-consolidation-sonnet): `strcasestr()`, `itoa()` and `strtoull()` are not confirmed present
-- [Math Library Extension](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#2-math-library-extension-sonnet): the functions shipped; the checklist is not yet closed against them
+- [String Library Consolidation](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#1-string-library-consolidation-sonnet): `strcasestr()`, `itoa()` and `strtoull()` do not exist yet
+- [Math Library Extension](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#2-math-library-extension-sonnet): most functions shipped in `math.h`; `kmath_remainder()` and the `KMATH_PI`, `KMATH_E`, `KMATH_SQRT2` and `KMATH_LN2` constants are still missing
 - [miniz ZIP Writer and Stream Extension](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#3-miniz-zip-writer--stream-extension-sonnet)
 - [monocypher, CSPRNG and SYS_GETRANDOM](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#4-monocypher--csprng--sys_getrandom-opus): shipped as `NtGetRandom` under the kernel libraries roadmap
 - [cJSON](../../todo/12-user-platform-sdk/TODO-01-kernel-libraries.md#5-cjson-sonnet): shipped; the roadmap's lowercase file names and `cJSON_InitHooks()` set-up do not match the tree

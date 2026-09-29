@@ -1030,7 +1030,10 @@ Write docs pages that meet the §3 contract for the 12 roadmap files below. Read
   - Kernel modules: `12-user-platform-sdk/TODO-03` vs `04-drivers-hardware/TODO-05` §1/§4; update client: `15-installer-release/TODO-03` vs `10-platform-services/TODO-03` §1.
   - Rescope items where the owner has shipped: `12-user-platform-sdk/TODO-01` vs `02-kernel-core/TODO-03`, `TODO-02` vs `02-kernel-core/TODO-22`, `TODO-05`'s CSRSS path vs `02-kernel-core/TODO-24` §10.
   - Policy: `15-installer-release/TODO-05` §1 extends the shipped `release.yml` and scopes its stable-tag pre-release cleanup, which deletes newer candidates too; §3 reconciles DCO sign-off and branch protection with the zero-trailer, main-only workflow.
-- [ ] Commit: `"docs: sdk and release documentation pages"`
+- [x] Commit: `"docs: sdk and release documentation pages"`
+- [x] Post-ship review fixes (adversarial, consistency and perf legs)
+  - Pages: `ntdll-user-runtime.md` no longer calls the PEB binary-compatible (version fields and TLS bitmap sit at 32-bit offsets) and scopes the `RCX` hand-off to process entry; `process-environment-abi.md` describes single-pass expansion and `.EXE`-only `PATHEXT`; `release-qa.md` states which boot-matrix legs skip.
+  - Roadmaps: `12-user-platform-sdk/TODO-01` keeps the absent `kmath_remainder()`, `KMATH_*` and string functions in its rescope; `TODO-02` drops the stale depth-4 expansion spec; `TODO-04` §3 bounds the recursive DLL import walk.
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
@@ -1041,6 +1044,9 @@ Write docs pages that meet the §3 contract for the 12 roadmap files below. Read
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the environment, PE, TEB/PEB, release workflow or test scripts it describes change.
 > - **Status honesty:** almost nothing in these roadmaps is built; the pages describe the shipped substrate (TEB/PEB, `env_*`, `NtGetRandom`, the export tables, `release.yml`, the smoke and artifact boot tests) and link the owning sections.
 > - **Scope boundary:** the architecture-ports and future-research pages moved to §27; where another roadmap owns an engine or has shipped the work, the page names it and links its page instead of restating it.
+
+> **Verified:** 2026-09-29 | commit `21d964ee8` | 10/10 items | build OK | site: OK, 215/232 documented; tests 34646 kernel + 17 user-mode PASS
+> **Quality reviewed:** 2026-09-29 | Codex 4x (adversarial, adversarial post-ship, consistency, perf) | 1H+8M fixed, 0 open | scope: N/A (docs-only; no source changed; parity research and test coverage N/A; re-adversarial skipped: docs and roadmap-text fixes)
 
 ---
 

@@ -10,9 +10,9 @@ This roadmap is the developer contract for a process's environment and command l
 **Today.** Each task owns a private environment in the kernel:
 
 - **Storage.** [`env.h`](../../include/kernel/env.h) provides `env_get_copy()`, `env_set()`, `env_unset()`, `env_copy()` and `env_free()`. There is deliberately no public `env_get()` returning a pointer, because a pointer into another task's block could change under the caller; callers get a copy.
-- **Defaults and expansion.** `env_init_defaults()` seeds a new task from the Registry, and `env_expand()` expands `%VAR%` with a depth and size budget.
+- **Defaults and expansion.** `env_init_defaults()` seeds a new task from the Registry, and `env_expand()` expands `%VAR%` in a single pass: a value that itself contains `%OTHER%` stays literal. Output is truncated at the caller's buffer size, and work beyond `ENV_EXPAND_WORK_MAX` is refused.
 - **Native calls.** User mode reads and writes variables through `NtQueryEnvironmentVariable` (`0x03DD`) and `NtSetEnvironmentVariable` (`0x03DE`), listed in [`service_numbers.h`](../../include/kernel/nt/service_numbers.h) and registered by [`nt_env.c`](../../src/kernel/nt/nt_env.c). There are no `SYS_GETENV` or `SYS_SETENV` numbers.
-- **Search path.** `env_search_path()` and the `SearchPathW`/`SearchPathA` entry points in [`env_searchpath.h`](../../include/kernel/env_searchpath.h) resolve a file name against a search path; `PATHEXT` extension ordering lives in `env.c`.
+- **Search path.** `env_search_path()` and the `SearchPathW`/`SearchPathA` entry points in [`env_searchpath.h`](../../include/kernel/env_searchpath.h) resolve a file name against a search path. `PATHEXT` is seeded as `.EXE` only, and iterating it belongs to the shell's command lookup, which is not built.
 - **Command lines.** The kernel has `CommandLineToArgvW()` with the Windows quoting rules. In user mode, [`cmd_tokenize()`](../../user/include/stdlib.h) in [`stdlib.c`](../../user/lib/stdlib.c) splits a line in place using the same rules, and the shell, [`cmd.c`](../../user/cmd.c), uses it for every command.
 
 **Planned design.** On top of that: `env_expand_path()` for `%1` to `%9` file-association templates, an eight-entry command lookup cache in the shell, a `.profile` script run at shell start, and the `set`, `env` and `where` commands.

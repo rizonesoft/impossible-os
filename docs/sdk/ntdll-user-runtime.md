@@ -9,16 +9,16 @@ This roadmap plans `ntdll.dll`, the user-mode library every Windows program load
 
 **Today: the kernel side.** Several pieces ntdll needs are already in place:
 
-- **TEB and PEB.** The thread and process environment blocks are defined in [`teb.h`](../../include/kernel/ob/teb.h) and [`peb.h`](../../include/kernel/ob/peb.h) with the Windows x64 offsets pinned by static asserts: `ProcessEnvironmentBlock` at `gs:[0x60]`, `LastErrorValue` at `gs:[0x68]`, 64 `TlsSlots` at `0x1480`, and in the PEB `Ldr` at `0x18`, `ProcessParameters` at `0x20` and the TLS bitmap at `0x230`. The loader list types (`PEB_LDR_DATA`, `LDR_DATA_TABLE_ENTRY`) exist, but the loader data is still a placeholder.
+- **TEB and PEB.** The thread and process environment blocks are defined in [`teb.h`](../../include/kernel/ob/teb.h) and [`peb.h`](../../include/kernel/ob/peb.h) with their offsets pinned by static asserts. The TEB matches Windows x64 (`ProcessEnvironmentBlock` at `gs:[0x60]`, `LastErrorValue` at `gs:[0x68]`, 64 `TlsSlots` at `0x1480`), as do the PEB's `Ldr` at `0x18` and `ProcessParameters` at `0x20`. The PEB's version fields and TLS bitmap do not: they sit at the 32-bit offsets (`OSMajorVersion` at `0xA4` rather than `0x118`, `TlsBitmap` at `0x230`), a known defect deferred in the PEB roadmap's [section 17](../../todo/02-kernel-core/TODO-11-peb-teb-user-abi.md#17-peb-x64-version-field-offsets). The loader list types (`PEB_LDR_DATA`, `LDR_DATA_TABLE_ENTRY`) exist, but the loader data is still a placeholder.
 - **TLS slots.** The kernel allocates slots per process with `tls_alloc(pid)` and `tls_free(pid, index)` ([`task.h`](../../include/kernel/sched/task.h)).
-- **Start-up hand-off.** A new ring-3 thread starts with the PEB address in `RCX`, the Win64 first argument, where a future `LdrpInitialize` will read it ([`task.c`](../../src/kernel/sched/task.c)). Today's ELF [`crt0.asm`](../../user/lib/crt0.asm) ignores it.
+- **Start-up hand-off.** A new process's first thread starts with the PEB address in `RCX`, the Win64 first argument, where a future `LdrpInitialize` will read it ([`task.c`](../../src/kernel/sched/task.c)). Today's ELF [`crt0.asm`](../../user/lib/crt0.asm) ignores it. Threads created later with `uthread_create()` start with `RCX` zero and their argument in `RDI`.
 - **Import binding.** The PE loader knows 96 `ntdll` export names and binds each import to its native service number through `pe_ntdll_export_ssdt()` ([`pe.c`](../../src/kernel/pe.c)). That is a lookup table, not a loaded DLL.
 
-**Planned design.** A real `ntdll.dll` mapped into every process: a free-list process heap with coalescing, a recursive PE DLL loader that maintains the PEB loader list, PE TLS callbacks on top of the kernel slots, a VEH list tried before frame-based SEH, a PE start-up routine that reads `ProcessParameters`, fibers switched by a small assembly routine, per-process atom tables and WNF publish and subscribe.
+**Planned design.** A real `ntdll.dll` mapped into every process: a free-list process heap with coalescing, a recursive PE DLL loader that maintains the PEB loader list (the roadmap's draft adds a module to the list only after resolving its imports, so two DLLs importing each other would recurse without bound; section 3 now carries the in-progress marking, depth cap and unwinding), PE TLS callbacks on top of the kernel slots, a VEH list tried before frame-based SEH, a PE start-up routine that reads `ProcessParameters`, fibers switched by a small assembly routine, per-process atom tables and WNF publish and subscribe.
 
 ```mermaid
 flowchart LR
-    K[kernel creates thread] -->|RCX = PEB| L[LdrpInitialize]
+    K[kernel starts process] -->|RCX = PEB| L[LdrpInitialize]
     L --> H[RtlCreateHeap]
     L --> D[LdrLoadDll imports]
     D --> T[TLS callbacks]
@@ -29,9 +29,9 @@ flowchart LR
 
 | Interface | Status |
 | --- | --- |
-| `TEB`, `PEB`, `PEB_LDR_DATA`, `LDR_DATA_TABLE_ENTRY` layouts | Shipped (kernel headers; loader data is a placeholder) |
+| `TEB`, `PEB`, `PEB_LDR_DATA`, `LDR_DATA_TABLE_ENTRY` layouts | Shipped (kernel headers; PEB version fields at 32-bit offsets; loader data is a placeholder) |
 | `tls_alloc()`, `tls_free()` | Shipped (kernel) |
-| PEB in `RCX` at thread start | Shipped |
+| PEB in `RCX` at process entry | Shipped (later threads get `RCX` zero) |
 | `pe_ntdll_export_ssdt()` and the 96-name import table | Shipped |
 | `RtlCreateHeap()`, `RtlAllocateHeap()`, `RtlFreeHeap()` | Planned in section 2 |
 | `LdrLoadDll()`, `LdrGetProcedureAddress()` | Planned in section 3 |
@@ -68,7 +68,7 @@ The TEB and PEB layouts belong to the [PEB, TEB and the User-Mode ABI](../kernel
 
 ## How does it compare with Windows 11 and Linux?
 
-On Windows, `ntdll.dll` provides the low-fragmentation heap, the loader and its PEB list, TLS, vectored handlers and fibers, and every process loads it. Linux splits the same jobs between glibc (`malloc()`, `pthread_key_create()`, `makecontext()`), the dynamic linker `ld-linux.so` and signals. Impossible OS follows the Windows layout so unmodified PE programs find what they expect at the same offsets; the kernel structures are already binary-compatible, which is the part that is hardest to change later.
+On Windows, `ntdll.dll` provides the low-fragmentation heap, the loader and its PEB list, TLS, vectored handlers and fibers, and every process loads it. Linux splits the same jobs between glibc (`malloc()`, `pthread_key_create()`, `makecontext()`), the dynamic linker `ld-linux.so` and signals. Impossible OS follows the Windows layout so unmodified PE programs find what they expect at the same offsets; the TEB and the first PEB fields already match, and the PEB's version fields and TLS bitmap must move to their x64 offsets before a Win64 program can read them.
 
 ## See also
 

@@ -7,11 +7,11 @@ This roadmap is the quality gate a release must pass: a whole-OS regression suit
 
 ## How does it work?
 
-**Today.** The project already tests every commit and every artifact format, through scripts the roadmap does not name:
+**Today.** The project already tests every push and has boot tests for every artifact format, through scripts the roadmap does not name:
 
 - **Unit suites.** [`test.sh`](../../scripts/test.sh) boots the kernel test runner and the user-mode test programs; it runs after every kernel commit and in CI.
 - **Boot to userspace.** [`test-smoke.sh`](../../scripts/test-smoke.sh) boots the image and checks for `Boot complete` and the `C:\>` prompt; [`test-smoke-matrix.sh`](../../scripts/test-smoke-matrix.sh) repeats that on TCG and KVM at one and two CPUs.
-- **Every artifact format.** [`boot-matrix.sh`](../../scripts/ci/boot-matrix.sh) boots each release format, with per-format tests such as [`boot-test-iso.sh`](../../scripts/release/boot-test-iso.sh), [`boot-test-vhdx.sh`](../../scripts/release/boot-test-vhdx.sh) and [`boot-test-vbox.sh`](../../scripts/release/boot-test-vbox.sh), which boots the VDI in VirtualBox.
+- **Artifact formats.** [`boot-matrix.sh`](../../scripts/ci/boot-matrix.sh) boots each release format that has been built, with per-format tests such as [`boot-test-iso.sh`](../../scripts/release/boot-test-iso.sh), [`boot-test-vhdx.sh`](../../scripts/release/boot-test-vhdx.sh) and [`boot-test-vbox.sh`](../../scripts/release/boot-test-vbox.sh), which boots the VDI in VirtualBox. It skips a leg whose artifact or tool is missing (ISO, VHDX, VDI, VirtualBox, a USB loop device without privileges) and always skips WHPX, and it reports PASS when no leg failed, so a PASS does not mean every leg ran.
 - **CI.** [`build.yml`](../../.github/workflows/build.yml) builds and tests on every push to `main`; a hardware report issue form collects results from real machines.
 - **WHPX.** `scripts/machines/run-qemu.ps1 -Accel whpx -Headless` boots the image under the Windows hypervisor from WSL.
 

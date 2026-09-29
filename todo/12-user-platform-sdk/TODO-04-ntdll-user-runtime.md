@@ -209,6 +209,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
   2. `C:\Impossible\System32\`
   3. `C:\Impossible\Bin\`
   4. Each dir in `PATH` env var
+- [ ] Bound the recursive import walk: mark a module as loading before resolving its imports (mutual imports must not recurse), cap dependency depth, and unwind partial loads on failure
 - [ ] **`NTSTATUS LdrLoadDll(path, flags, basename, HMODULE *out)`**:
   1. Scan `PEB.Ldr->InLoadOrderModuleList` by `BaseDllName` (case-insensitive); if found: increment `LDR_DATA_TABLE_ENTRY.LoadCount`; `*out = DllBase`; return `STATUS_SUCCESS`
   2. Resolve full path via search order above; `NtOpenFile` + `NtReadFile` into `VirtualAlloc` buffer
