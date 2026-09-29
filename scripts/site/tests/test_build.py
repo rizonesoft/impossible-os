@@ -1050,7 +1050,11 @@ class LinkCheck(unittest.TestCase):
                     return
                 if path == "/slow" or route == "/stall":
                     time.sleep(3)
-                if route in ("/caf%C3%A9", "/live", "/a/live", "/a%5Eb", "/__proto__"):
+                # `/a^b` and `/a%5Eb` are one resource to a real server, and which
+                # one Node sends depends on its URL-parser build: the official
+                # builds encode `^` in a path, Ubuntu's apt nodejs and the CI
+                # runner's do not (main went red on exactly this, 2026-09-29).
+                if route in ("/caf%C3%A9", "/live", "/a/live", "/a%5Eb", "/a^b", "/__proto__"):
                     self.send_response(200)
                     self.send_header("Content-Length", "0")
                     self.end_headers()
