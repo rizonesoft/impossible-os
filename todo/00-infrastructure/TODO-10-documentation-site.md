@@ -75,7 +75,7 @@ file_patterns:
 | ⭐  |  22   | §22 Doc freshness: `sources=` and a stale-page warning                   | §3                          |  [x]   |
 | 💎  |  23   | §23 Site polish: sitemap, last-updated, link health, OpenGraph           | §1                          |  [x]   |
 | 💎  |  24   | §24 Versioned release docs: pinned refs, version-scoped rendering        | §1, §23                     |  [x]   |
-| 💎  |  25   | §25 Docs search completeness and accessibility                           | §1                          |  [ ]   |
+| 💎  |  25   | §25 Docs search completeness and accessibility                           | §1                          |  [x]   |
 | 💎  |  26   | §26 Document: Host tools (8 roadmap files)                               | §2, §3                      |  [ ]   |
 | 💎  |  27   | §27 Document: Architecture ports and future research (9 roadmap files)   | §2, §3                      |  [ ]   |
 | ⭐  |  28   | §28 Review-class nets for site tooling: real parsers, scheduler stress   | §23                         |  [ ]   |
@@ -1180,14 +1180,24 @@ A release snapshot is only useful if it still points at the code it describes. B
 
 Search drops content today: the indexer keeps only plain `text` tokens (inline code and code blocks are skipped, `build.py:374`) and truncates each page to 4,000 characters (`build.py:955`), so documented API names such as `boot_health_publish_json` return no hits. Result selection is visual only (`gh-pages/docs-template.html:205`), which a screen reader cannot follow.
 
-- [ ] Improve search: index H2/H3 text with anchors so a hit jumps to the section, and rank title > heading > body; keep `search.json` under 2 MB
-- [ ] Index inline-code identifiers, code examples and late-page text; meet the size budget with per-section records or index shards, never by silently dropping content
-- [ ] Search box follows the W3C ARIA combobox pattern: `role=combobox`, `aria-expanded`, `aria-controls`, `aria-activedescendant` on arrow keys, results in a `listbox` with `option` roles
-- [ ] Static accessibility checks in `build.py`'s check mode: every image has non-empty alt text, heading levels do not skip, every page has exactly one H1
-- [ ] Tests: a search fixture finds an inline-code identifier and a match past character 4,000; the a11y check rejects a missing alt and an H2 to H4 skip
-- [ ] Commit: `"site: complete search index and accessible search and pages"`
+- [x] Section search: `Renderer.render` splits each page into H2/H3 records (H3 carries its H2 as a heading path) that link to the section anchor; the client ranks title 10 > heading 4 > body 1, best record per page
+- [x] Full-text index: records keep prose, inline code, code blocks, alt text and raw HTML text; `search_files()` writes a `search.json` manifest plus content-addressed shards, and any file over 2 MB fails the build
+- [x] Search box is a W3C ARIA combobox over a `listbox` of `option`s: `aria-activedescendant` on arrows, polite status region, Enter only on a selected option; manifest hits show first, shards merge in
+- [x] Static a11y checks for the current tree (`a11y_findings()`): one H1, first; no level skip; no raw HTML headings; rendered Markdown alt non-empty; raw `<img>` needs `alt` (`alt=""` = decorative)
+- [x] Tests: `SearchAndAccessibility` finds an inline-code identifier and a word past character 4,000, rejects a missing alt and an H2 to H4 skip; `search_harness.js` drives the shipped combobox in Node
+- [/] Screen-reader pass with NVDA on Windows and Orca on Linux: keyboard-only result navigation is announced. operator-gated (needs a desktop with a screen reader; no headless equivalent)
+- [x] Commit: `"site: complete search index and accessible search and pages"`
 
 **Test checkpoint:** searching `boot_health_publish_json` on the local build returns its page; keyboard-only navigation of search results is announced by a screen reader (NVDA or Orca); the check mode reports a planted missing alt text. Test on: WSL2 dev host; Windows with NVDA.
+
+> **Test runner:** `python3 scripts/site/tests/test_build.py SearchAndAccessibility` (6 tests) plus `ReleaseDocs.test_accessibility_fails_the_current_tree_but_not_a_published_release`; the whole file runs under `bash scripts/test-tooling.sh`.
+
+> **Notes:**
+> - Shipped: per-section full-text records, a manifest plus content-addressed shards (2,667 records, six shards, 2.8 MB, 0.9 MB gzipped, measured 2026-09-29) and an ARIA 1.2 combobox.
+> - Integrates through `search_files()` and `SEARCH_V2_MARK`: a template carrying `data-search-index="2"` gets v2; an older release template keeps the flat index it was published with.
+> - A11y findings fail only the current tree (like `check_design_lines`); the corpus had zero violations when the check landed.
+> - Canonical doc: `docs/infrastructure/documentation-site.md` "How does the docs search work?"; style rule in `docs/contributing/docs-page-contract.md`.
+> - Out of scope: the screen-reader pass is operator-gated; landing pages under `gh-pages/` are not checked by `a11y_findings()`.
 
 ---
 
@@ -1309,10 +1319,10 @@ The SDK has its own release line (`sdk/v*` tags from D12 T06 §8 `release-sdk.sh
 | ⭐  | Facts derived from one source    | ❌ Manual                | ❌ Manual                  | ✅ §1 `project.json`      |
 | ⭐  | Stale narrative page detection   | ❌ Review dates          | ❌ Not tracked             | ✅ §22 `sources=` warns   |
 | 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ⚠️ §24 renders, §29 keeps |
-| 💎  | Site search                      | ✅ Full search           | ✅ Sphinx search           | ⚠️ §1 basic, §25 full     |
+| 💎  | Site search                      | ✅ Full search           | ✅ Sphinx search           | ✅ §25 full text, anchors |
 | 💎  | External link rot check          | ✅ Learn link validation | ✅ Sphinx `linkcheck`      | ✅ §23 weekly workflow    |
 | 💎  | Published API reference          | ✅ Learn API reference   | ✅ kernel-doc              | ⬜ §30 from D12 T06 §2    |
-| 💎  | Accessible docs UI               | ✅ WCAG conformance      | ⚠️ Theme-dependent         | ⬜ §25 ARIA + checks      |
+| 💎  | Accessible docs UI               | ✅ WCAG conformance      | ⚠️ Theme-dependent         | ⚠️ §25 ARIA, SR test open |
 
 > **After §1-§3:** the pipeline, the gate and the page contract exist; coverage is measured and cannot regress.
 > **After §4-§21 and §26:** every roadmap file is documented and the baseline is empty.

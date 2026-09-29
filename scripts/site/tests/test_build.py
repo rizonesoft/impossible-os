@@ -230,6 +230,261 @@ class Scripts(unittest.TestCase):
         self.assertEqual(errors, [])
 
 
+class SearchAndAccessibility(unittest.TestCase):
+    LONG = "Filler words for a long page. " * 160          # ~4,800 characters: past the old 4,000 cut
+    PAGE = ("# API\n\nIntro text.\n\n## Prerequisites\n\nInstall things.\n\n### Fedora\n\n"
+            "Call `boot_health_publish_json` after boot.\n\n```c\nint code_block_only_ident;\n```\n\n"
+            "## Late\n\n" + LONG + "zebrafinch is the last word.\n\n![A diagram of the flow](../x.png)\n")
+
+    def setUp(self):
+        self.saved = (B.REPO, B.ROOT, B.SOURCE, B._FILESET, B._DIRSET, B.SEARCH_BUDGET, B.SEARCH_SHARD_TARGET)
+
+    def tearDown(self):
+        (B.REPO, B.ROOT, B.SOURCE, B._FILESET, B._DIRSET, B.SEARCH_BUDGET, B.SEARCH_SHARD_TARGET) = self.saved
+        B.set_root(B.ROOT)
+
+    def pages(self, extra: dict[str, str] | None = None):
+        root = fixture_repo()
+        (root / "x.png").write_bytes(b"png")
+        (root / "docs" / "index.md").write_text("# Home\n", encoding="utf-8")   # the shared fixture's dead links
+        (root / "docs" / "api.md").write_text(self.PAGE, encoding="utf-8")
+        for rel, text in (extra or {}).items():
+            (root / "docs" / rel).write_text(text, encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+        B.REPO, B.SOURCE, B._FILESET, B._DIRSET = root, "worktree", None, None
+        B.set_root(root)
+        errors: list[str] = []
+        pages, _ = B.load_pages(FACTS, errors)
+        return pages, errors
+
+    @staticmethod
+    def records(files: dict[str, bytes]):
+        m = json.loads(files["search.json"])
+        texts: list[str] = []
+        for name, count in m["shards"]:
+            shard = json.loads(files[name])
+            self_hash = __import__("hashlib").sha256(files[name]).hexdigest()[:16]
+            assert name == f"search-{self_hash}.json", name          # content-addressed
+            assert len(shard) == count, (name, len(shard), count)
+            texts += shard
+        assert len(texts) == len(m["s"])
+        return [(m["p"][pg][1], anchor, heading, texts[i]) for i, (pg, anchor, heading) in enumerate(m["s"])]
+
+    def find(self, recs, word):
+        return [(u, a, h) for u, a, h, x in recs if word in x]
+
+    def test_index_keeps_code_late_text_and_the_heading_path(self):
+        pages, errors = self.pages()
+        self.assertEqual(errors, [])
+        files = B.search_files(pages, True, errors)
+        self.assertEqual(errors, [])
+        recs = self.records(files)
+        self.assertEqual(self.find(recs, "boot_health_publish_json"),
+                         [("api.html", "fedora", "Prerequisites \u203a Fedora")])   # inline code, H2 context
+        self.assertEqual(self.find(recs, "code_block_only_ident"), [("api.html", "fedora", "Prerequisites \u203a Fedora")])
+        late = [x for u, a, h, x in recs if a == "late"][0]
+        self.assertGreater(late.index("zebrafinch"), 4000)                             # nothing truncated
+        self.assertIn("A diagram of the flow", late)                                    # image alt text
+        self.assertFalse(any("Intro text" in x for u, a, h, x in recs if a))           # records do not overlap
+        self.assertTrue(any(a == "" and "Intro text" in x for u, a, h, x in recs))
+
+    def test_raw_html_text_and_alt_are_searchable_as_rendered(self):
+        pages, errors = self.pages({"raw.md": (
+            '# Raw\n\nCall raw_<b>inline</b>_joined_name and <img src="../x.png" alt="inlinealtword"> here.\n\n'
+            '<div>block_<code>joined</code>_ident wbr_<wbr>joined_ident</div>\n<p>alpha</p><p>beta</p>\n\n'
+            '<img src="../x.png" alt="blockaltword">\n')})
+        self.assertEqual(errors, [])
+        recs = self.records(B.search_files(pages, True, errors))
+        for word in ("raw_inline_joined_name", "inlinealtword", "block_joined_ident", "wbr_joined_ident", "blockaltword"):
+            self.assertEqual(self.find(recs, word), [("raw.html", "", "")], word)
+        self.assertTrue(self.find(recs, "alpha beta"))             # block elements still separate words
+        self.assertEqual(pages["raw.md"].a11y, [])
+        pages, errors = self.pages({"titled.md": "<!-- docs: title=API Reference -->\n# h1_only_identifier\n\nx\n"})
+        recs = self.records(B.search_files(pages, True, errors))
+        self.assertEqual(self.find(recs, "h1_only_identifier"), [("titled.html", "", "")])
+        self.assertNotIn("API", [x for u, a, h, x in recs if u == "api.html" and a == ""][0])  # an H1 that IS the title
+        pages, errors = self.pages({"head.md": '# Head\n\n## API ![headingaltword](../x.png) <img src="../x.png" '
+                                               'alt="rawheadingalt">\n\nbody\n'})
+        recs = self.records(B.search_files(pages, True, errors))
+        for word in ("headingaltword", "rawheadingalt"):
+            self.assertEqual(self.find(recs, word), [("head.html", "api--", "API")], word)   # GitHub slug of "API  "
+
+    def test_legacy_template_gets_the_flat_index_it_was_published_with(self):
+        pages, errors = self.pages()
+        files = B.search_files(pages, False, errors)
+        self.assertEqual(list(files), ["search.json"])
+        flat = json.loads(files["search.json"])
+        api = [p for p in flat if p["u"] == "api.html"][0]
+        self.assertEqual(sorted(api), ["h", "t", "u", "x"])
+        self.assertLessEqual(len(api["x"]), 4000)
+
+    def test_shards_split_and_an_oversized_file_fails_instead_of_dropping_text(self):
+        pages, errors = self.pages()
+        B.SEARCH_SHARD_TARGET = 200
+        files = B.search_files(pages, True, errors)
+        self.assertGreater(len(files), 3)
+        self.assertEqual(errors, [])
+        self.assertTrue(self.find(self.records(files), "zebrafinch"))
+        B.SEARCH_BUDGET = 1000
+        B.search_files(pages, True, errors)
+        self.assertTrue(any("over the 1,000-byte budget" in e for e in errors), errors)
+
+    def test_accessibility_rules(self):
+        pages, _ = self.pages({
+            "noalt.md": "# No alt\n\n![](../x.png)\n",
+            "skip.md": "# Skip\n\n## Two\n\n#### Four\n",
+            "two.md": "# One\n\n# Another\n",
+            "none.md": "## No title\n",
+            "raw.md": '# Raw\n\n<img src="../x.png">\n\n<img src="../x.png" alt="">\n\n<h3>deep</h3>\n',
+            "codealt.md": "# Code alt\n\n![`boot_health_publish_json`](../x.png)\n",
+            "ok.md": '# Fine\n\n## A\n\n### B\n\n## C\n\n![alt *em*](../x.png) <img src="../x.png" alt="">\n'})
+        self.assertEqual([f.split(":")[0] for f in pages["codealt.md"].a11y], ["image without alt text"])  # renders alt=""
+        self.assertEqual(pages["api.md"].a11y, [])
+        self.assertEqual(pages["ok.md"].a11y, [])
+        self.assertEqual([f.split(":")[0] for f in pages["noalt.md"].a11y], ["image without alt text"])
+        self.assertEqual(pages["skip.md"].a11y, ["heading level skips from H2 to H4 at 'Four'"])
+        self.assertEqual(pages["two.md"].a11y, ["2 H1 headings; a page has exactly one"])
+        self.assertEqual(len(pages["none.md"].a11y), 2)                       # no H1, and does not start with one
+        raw = pages["raw.md"].a11y
+        self.assertEqual(len(raw), 3, raw)                  # raw heading, H1 to H3, missing alt; alt="" is fine
+        self.assertTrue(any("without an alt attribute" in f for f in raw))
+        self.assertTrue(any("H1 to H3" in f for f in raw))
+        self.assertTrue(any(f.startswith("raw HTML <h3>: write it as a Markdown heading") for f in raw))
+
+    @unittest.skipUnless(__import__("shutil").which("node"), "node not installed")
+    def test_combobox_as_shipped(self):
+        pages, errors = self.pages()
+        files = B.search_files(pages, True, errors)
+        tpl = (B.REPO_REAL / "gh-pages" / "docs-template.html").read_text(encoding="utf-8")
+        self.assertIn(B.SEARCH_V2_MARK, tpl)
+        script = [m for m in re.findall(r"<script>(.*?)</script>", tpl, re.S) if "search.json" in m]
+        self.assertEqual(len(script), 1)
+        script = script[0].replace("%ROOT%", "")
+
+        def drive(steps, fail_once=(), delay=None, missing=(), files2=None):
+            payload = {"script": script,
+                       "files": {k: v.decode("utf-8") for k, v in files.items() if k not in missing},
+                       "files2": {k: v.decode("utf-8") for k, v in (files2 or {}).items()},
+                       "steps": steps, "fail_once": list(fail_once), "delay": delay or {}}
+            r = subprocess.run(["node", str(HERE / "search_harness.js")], input=json.dumps(payload),
+                               capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            out = json.loads(r.stdout)
+            self.assertEqual(out["errors"], [])
+            drive.fetches = out["fetches"]
+            return out["snaps"]
+
+        s = drive([["input", "zebrafinch"], ["key", "Escape"], ["flush", None], ["snap", "dismissed"],
+                   ["input", "boot_health_publish_json"], ["flush", None], ["snap", "found"],
+                   ["key", "ArrowDown"], ["snap", "selected"],
+                   ["key", "Escape"], ["key", "Enter"], ["snap", "hidden-enter"],
+                   ["input", "prerequisites fedora"], ["flush", None], ["key", "Enter"], ["snap", "unselected-enter"],
+                   ["key", "ArrowDown"], ["key", "Enter"], ["snap", "chosen"],
+                   ["input", "zebrafinch"], ["flush", None], ["snap", "late"],
+                   ["input", "nosuchwordanywhere"], ["flush", None], ["snap", "none"],
+                   ["input", "zebrafinch"], ["flush", None], ["blur", None], ["snap", "blurred"]])
+        self.assertFalse(s["dismissed"]["shown"])                            # a late load does not reopen
+        found = s["found"]
+        self.assertEqual(found["expanded"], "true")
+        self.assertEqual([o["href"] for o in found["options"]], ["api.html#fedora"])
+        self.assertIsNone(found["active"])
+        self.assertIn("1 result", found["status"])
+        self.assertEqual(s["selected"]["active"], "search-opt-0")
+        self.assertEqual(s["selected"]["options"][0]["selected"], "true")
+        self.assertEqual(s["hidden-enter"]["href"], "start")                 # Escape then Enter goes nowhere
+        self.assertEqual(s["hidden-enter"]["expanded"], "false")
+        self.assertIsNone(s["hidden-enter"]["active"])
+        self.assertEqual(s["unselected-enter"]["href"], "start")
+        self.assertEqual(s["chosen"]["href"], "api.html#fedora")
+        self.assertEqual((s["chosen"]["expanded"], s["chosen"]["shown"], s["chosen"]["active"]),
+                         ("false", False, None))                      # a same-page fragment does not reload
+        self.assertEqual([o["href"] for o in s["late"]["options"]], ["api.html#late"])
+        self.assertEqual((s["none"]["options"], s["none"]["msg"], s["none"]["status"], s["none"]["expanded"]),
+                         ([], "No results", "No results", "false"))
+        self.assertFalse(s["blurred"]["shown"])
+        s = drive([["input", "zebrafinch"], ["flush", None], ["click", 0], ["snap", "clicked"]])
+        self.assertEqual((s["clicked"]["expanded"], s["clicked"]["shown"]), ("false", False))
+
+        # Ranking: title 10 > heading 4 > body 1, one result per page, its best section.
+        pages, errors = self.pages({
+            "body.md": "# Body page\n\nmentions quokka once.\n",
+            "head.md": "# Heading page\n\n## Intro\n\nquokka in the body.\n\n## The quokka section\n\nx\n",
+            "title.md": "# Quokka reference\n\nplain.\n",
+            "move.md": "# Wombat guide\n\n## Alpha\n\nx\n\n## Beta\n\nthe wombat lives here.\n"})
+        files = B.search_files(pages, True, errors)
+        s = drive([["input", "quokka"], ["flush", None], ["snap", "ranked"]])
+        self.assertEqual([o["href"] for o in s["ranked"]["options"]],
+                         ["title.html", "head.html#the-quokka-section", "body.html"])
+        # The selected page stays selected when its shard moves the best section (and so the href).
+        late_shard = json.loads(files["search.json"])["shards"][0][0]
+        s = drive([["input", "wombat"], ["flush", None], ["key", "ArrowDown"], ["snap", "pre"], ["wait", 400],
+                   ["snap", "moved"], ["key", "Enter"], ["snap", "went"]], delay={late_shard: 300})
+        self.assertEqual([o["href"] for o in s["pre"]["options"]], ["move.html"])        # title only, so far
+        self.assertEqual(s["moved"]["options"][0]["href"], "move.html#beta")
+        self.assertEqual((s["moved"]["active"], s["moved"]["options"][0]["selected"]), ("search-opt-0", "true"))
+        self.assertEqual(s["went"]["href"], "move.html#beta")
+
+        shard = json.loads(files["search.json"])["shards"][0][0]
+        s = drive([["input", "zebrafinch"], ["flush", None], ["snap", "failed"],
+                   ["input", "zebrafinch"], ["flush", None], ["snap", "retried"]], fail_once=[shard])
+        self.assertIn("did not load", s["failed"]["msg"])                  # body text lives in the failed shard
+        self.assertIn("type again to retry", s["failed"]["status"])
+        self.assertEqual(s["failed"]["options"], [])
+        self.assertEqual([o["href"] for o in s["retried"]["options"]], ["api.html#late"])
+        self.assertEqual(s["retried"]["msg"], "")
+        s = drive([["input", "zebrafinch"], ["flush", None], ["snap", "failed"],
+                   ["input", "zebrafinch"], ["flush", None], ["snap", "retried"]], fail_once=["search.json"])
+        self.assertIn("unavailable", s["failed"]["msg"])
+        self.assertEqual([o["href"] for o in s["retried"]["options"]], ["api.html#late"])
+
+        # Progressive: a title match shows while the shard is still loading, and a
+        # search dismissed meanwhile stays closed when the shard lands.
+        s = drive([["input", "api"], ["flush", None], ["snap", "early"], ["wait", 400], ["snap", "full"],
+                   ["input", "zebrafinch"], ["flush", None], ["snap", "cached"]], delay={shard: 300})
+        self.assertIn("api.html", [o["href"] for o in s["early"]["options"]])
+        self.assertIn("Searching the full text", s["early"]["msg"])
+        self.assertIn("still searching", s["early"]["status"])
+        self.assertEqual(s["full"]["msg"], "")
+        self.assertNotIn("still searching", s["full"]["status"])
+        self.assertEqual([o["href"] for o in s["cached"]["options"]], ["api.html#late"])
+        s = drive([["input", "api"], ["flush", None], ["key", "Escape"], ["wait", 400], ["snap", "dismissed"]],
+                  delay={shard: 300})
+        self.assertFalse(s["dismissed"]["shown"])
+        # A shard that never loads is fetched once per typed search, never in a loop.
+        drive([["input", "zebrafinch"], ["wait", 150], ["input", "zebrafinch2"], ["wait", 150]], missing=[shard])
+        self.assertEqual(drive.fetches[shard], 2)
+        self.assertEqual(drive.fetches["search.json"], 2)                   # the retry starts from the manifest
+        # A deploy that replaces the shards under an open page: the typed retry
+        # fetches the new manifest and finds the text in the new shard.
+        (B.ROOT / "docs" / "api.md").write_text(self.PAGE + "\nRedeployed with kiwibird.\n", encoding="utf-8")
+        pages2, _ = B.load_pages(FACTS, [])
+        files2 = B.search_files(pages2, True, [])
+        new_shard = json.loads(files2["search.json"])["shards"][0][0]
+        self.assertNotEqual(new_shard, shard)
+        s = drive([["input", "zebrafinch"], ["flush", None], ["deploy", None], ["wait", 400], ["snap", "stale"],
+                   ["input", "kiwibird"], ["flush", None], ["flush", None], ["snap", "redeployed"]],
+                  delay={shard: 300}, files2=files2)
+        self.assertIn("did not load", s["stale"]["msg"])
+        self.assertEqual([o["href"] for o in s["redeployed"]["options"]], ["api.html#late"])
+        self.assertEqual((drive.fetches.get(new_shard), drive.fetches["search.json"]), (1, 2))
+        # One shard failed while another is still pending: the typed retry does not wait for it.
+        B.SEARCH_SHARD_TARGET = 300
+        files = B.search_files(pages2, True, [])
+        names = [n for n, _ in json.loads(files["search.json"])["shards"]]
+        self.assertGreater(len(names), 2)
+        s = drive([["input", "kiwibird"], ["wait", 100], ["snap", "mixed"], ["input", "kiwibird"], ["wait", 100]],
+                  missing=[names[0]], delay={names[1]: 3000})
+        self.assertIn("Searching the full text", s["mixed"]["msg"])       # still loading names[1]
+        self.assertEqual(drive.fetches["search.json"], 2)
+        # A typed query never lets the last query's selection be chosen while its results load.
+        s = drive([["input", "api"], ["wait", 100], ["key", "ArrowDown"], ["snap", "old"],
+                   ["input", "zebrafinch"], ["key", "ArrowDown"], ["key", "Enter"], ["snap", "during"]],
+                  missing=[names[0]], delay={"search.json": 50})
+        self.assertEqual(s["old"]["active"], "search-opt-0")
+        self.assertEqual((s["during"]["href"], s["during"]["active"], s["during"]["expanded"]), ("start", None, "false"))
+        self.assertEqual(s["during"]["options"], [])                         # old links are gone, not just unselected
+
+
 class FeatureCards(unittest.TestCase):
     _use, setUp, tearDown = RawHtmlAndBaseline._use, RawHtmlAndBaseline.setUp, RawHtmlAndBaseline.tearDown
 
@@ -920,6 +1175,26 @@ class ReleaseDocs(unittest.TestCase):
         self.assertIn('href="https://@GH@/oldo/impossible-os/blob/main/src/x.c#L1"', page)   # left as written
         self.assertIn('click b href &quot;https://@GH@/o/impossible-os/blob/main/src/x.c&quot;', page)
         self.assertIn('/blob/main/todo/01-x/TODO-01-a.md', self.fold(files["docs/coverage.html"].decode("utf-8")))
+
+    def test_accessibility_fails_the_current_tree_but_not_a_published_release(self):
+        self.fixture()
+        self.write("docs/sub/page.md", "<!-- docs: covers=todo/01-x/TODO-01-a.md sources=src/x.c -->\n"
+                                       "# Sub\n\n[home](../index.md)\n\n#### Too deep\n")
+        self.write("src/x.c", "int x;\n")
+        self.write("img.png", "png")
+        self.write("docs/design/tokens.json", (B.REPO_REAL / "docs/design/tokens.json").read_text(encoding="utf-8"))
+        self.write("docs/design/scope.json", '{"shell_files": [], "ui_title_pattern": "^$"}')
+        self.git("add", "-A")
+        self.git("commit", "-q", "--no-verify", "-m", "v3 skips a heading level")
+        self.git("tag", "v3")
+        self.assertEqual(self.release("v3"), 0)                     # published as it was
+        flat = json.loads((self.out / "docs/v3/search.json").read_text(encoding="utf-8"))
+        self.assertIsInstance(flat, list)                             # its template predates the v2 index
+        B.set_root(self.root)
+        B.LINK_REF, B.DOCS_BASE, B.RELEASE = "main", "docs/", None
+        errors: list[str] = []
+        B.build(B.load_project(), errors)
+        self.assertIn("docs/sub/page.md: accessibility: heading level skips from H1 to H4 at 'Too deep'", errors)
 
     def test_nested_version_path_and_dead_absolute_link(self):
         self.fixture()

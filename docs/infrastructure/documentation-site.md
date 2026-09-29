@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-10-documentation-site.md sources=scripts/site/build.py,scripts/site/freshness.py,scripts/site/repo_meta.py,.github/workflows/pages.yml,.githooks/post-commit,scripts/site/render-brand.sh,scripts/site/verify_live.py,.github/workflows/site-live.yml,scripts/site/linkcheck.py,.github/workflows/linkcheck.yml,gh-pages/docs-template.html reviewed=2026-09-29T21:50 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-10-documentation-site.md sources=scripts/site/build.py,scripts/site/freshness.py,scripts/site/repo_meta.py,.github/workflows/pages.yml,.githooks/post-commit,scripts/site/render-brand.sh,scripts/site/verify_live.py,.github/workflows/site-live.yml,scripts/site/linkcheck.py,.github/workflows/linkcheck.yml,gh-pages/docs-template.html reviewed=2026-09-29T23:50 -->
 # Documentation Site
 
 The documentation you are reading is generated from the Markdown files in the repository's `docs/` folder and published to [impossibleos.co/docs](https://impossibleos.co/docs/) on every push to `main`. The same generator builds the landing page and the [desktop design mockup](https://impossibleos.co/design/), and it refuses a commit when anything published would disagree with its source.
@@ -13,7 +13,17 @@ The documentation you are reading is generated from the Markdown files in the re
 - gives each page a canonical URL, Open Graph and Twitter card tags, and a description taken from its first paragraph, so a shared link previews with the page's own summary;
 - shows "Last updated" in the page footer: the date of the last commit on `main` that touched the page (`git log -1 --format=%cs`, with a merge that changed the page counting as that change);
 - turns `> [!NOTE]`-style alerts into callouts and ` ```mermaid ` blocks into diagrams;
-- writes `search.json` for the search box, and `sitemap.xml` plus `robots.txt` for search engines. The sitemap lists every published page except those marked `noindex` (the 404 page), each with its source file's last commit date as `lastmod`.
+- writes the search index for the search box (see below), and `sitemap.xml` plus `robots.txt` for search engines. The sitemap lists every published page except those marked `noindex` (the 404 page), each with its source file's last commit date as `lastmod`.
+
+## How does the docs search work?
+
+Each page is split into records at its H2 and H3 headings. A record holds every word a reader sees in that section: prose, inline code, code blocks, image alt text and raw HTML text, so an API name such as `boot_health_publish_json` is found wherever it is written. An H3 record carries its H2 in its heading path ("Prerequisites › Fedora"), so a query naming both still lands in one record. `search.json` is a small manifest of pages and sections; the text lives in shards named by their content hash (`search-<hash>.json`, cut at about 512 KB). The manifest names each shard with its record count, so a manifest and a shard from different deploys can never be read together. Any index file over 2 MB fails the build: content is never dropped to fit. Measured 2026-09-29: 2,667 records in six shards, 2.8 MB in total (0.9 MB gzipped), and a 166 KB manifest.
+
+The browser fetches the manifest on the first keystroke and shows title and heading matches at once; each shard's text merges in as it arrives and the results are scored again, with a "Searching the full text" note until the last one lands. After a shard fails to load, the next search the reader types starts again from a revalidated manifest, since a deploy may have replaced the shards; nothing is retried in a loop. Each record is scored: a term in the page title counts 10, in the heading path 4, in the body 1, and every term must match. The best record per page is shown, linked to its section anchor. The search box is a W3C ARIA combobox over a listbox: arrow keys move `aria-activedescendant`, Enter opens only a selected result, Escape closes the list and keeps the text, and a polite status region announces the result count. A release tree rendered with `--release` keeps the flat index its own template reads; the template opts into this format with `data-search-index="2"`.
+
+## Which accessibility rules does the check enforce?
+
+Every docs page of the current tree must have exactly one H1, first; no heading may be more than one level deeper than the one before it; and every image needs alt text. A Markdown image is judged by the alt text it renders to (``![`x`](y)`` renders an empty one), so it always needs plain alt text; raw HTML may write `alt=""` for a decorative image but may not omit the attribute. Headings must be Markdown: a raw HTML `<h2>` gets no anchor, contents entry or search section, so it fails the check. A release is published as it was and is not re-judged.
 
 Dates need full history. In a shallow clone the check still runs, with a warning and no dates, but writing the site is refused, because the same commit would then publish different bytes.
 
@@ -124,7 +134,7 @@ bash scripts/site/render-brand.sh        # re-render README brand images
 
 ## What is not done yet?
 
-The roadmap for the site is [TODO-10](../../todo/00-infrastructure/TODO-10-documentation-site.md): pages for the remaining roadmap files, section-level search, accessible search results, keeping release snapshots published across deploys (rendering one exists, see above) and the SDK API reference.
+The roadmap for the site is [TODO-10](../../todo/00-infrastructure/TODO-10-documentation-site.md): pages for the remaining roadmap files, keeping release snapshots published across deploys (rendering one exists, see above) and the SDK API reference.
 
 ## How does this compare with Windows and Linux?
 

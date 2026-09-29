@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 from html.parser import HTMLParser
 import datetime as _dt
+import hashlib
 import html
 import json
 import os
@@ -390,6 +391,88 @@ def html_anchors(html_text: str) -> set[str]:
     return p.found
 
 
+# Phrasing elements a browser runs together with the text around them, so the
+# search text must not split `boot_<b>health</b>` into two words. Any other tag
+# (a paragraph, a cell, a line break) separates words.
+PHRASING_TAGS = frozenset({
+    "a", "abbr", "b", "bdi", "bdo", "cite", "code", "data", "del", "dfn", "em", "i", "ins", "kbd",
+    "mark", "q", "s", "samp", "small", "span", "strong", "sub", "sup", "time", "u", "var", "wbr"})
+
+
+class _HtmlOutline(HTMLParser):
+    """Headings, images and text of a raw HTML fragment, in document order, so the
+    accessibility checks and the search index read raw HTML as they read Markdown.
+    An <img> records its alt as None when the attribute is absent and "" when it
+    is present and empty (the explicit decorative-image form); its alt text is
+    part of the searchable text, as it is of what a screen reader announces."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.events: list[tuple[str, object]] = []    # ("h", level) | ("img", alt or None)
+        self.parts: list[str] = []
+
+    @property
+    def text(self) -> str:
+        return "".join(self.parts)
+
+    def handle_starttag(self, tag, attrs):
+        if re.fullmatch(r"h[1-6]", tag):
+            self.events.append(("h", int(tag[1])))
+        elif tag == "img":
+            alts = [v for k, v in attrs if k == "alt"]
+            alt = (alts[0] or "") if alts else None
+            self.events.append(("img", alt))
+            self.parts.append(f" {alt or ''} ")
+            return
+        if tag not in PHRASING_TAGS:
+            self.parts.append(" ")
+
+    handle_startendtag = handle_starttag
+
+    def handle_endtag(self, tag):
+        if tag not in PHRASING_TAGS:
+            self.parts.append(" ")
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+    @classmethod
+    def scan(cls, html_text: str) -> "_HtmlOutline":
+        p = cls()
+        p.feed(html_text)
+        p.close()
+        return p
+
+
+def a11y_findings(outline: list[tuple[str, object, str]]) -> list[str]:
+    """Static accessibility rules over a page's headings and images in document
+    order: exactly one H1, first; no heading deeper than one level below the one
+    before it; every image described. A raw HTML heading is refused outright: it
+    gets no anchor, no contents entry and no search section of its own. A Markdown image cannot say "decorative"
+    apart from "forgotten", so it needs alt text; raw HTML may write alt="" for a
+    decorative image (WCAG H67) but may not omit the attribute."""
+    found: list[str] = []
+    levels = [(v, where) for kind, v, where in outline if kind in ("h", "raw-h")]
+    found.extend(f"raw HTML <h{v}>: write it as a Markdown heading, which is what the page's anchors, "
+                 f"contents and search sections are built from: {where}" for kind, v, where in outline if kind == "raw-h")
+    h1s = sum(1 for v, _ in levels if v == 1)
+    if h1s != 1:
+        found.append(f"{h1s} H1 headings; a page has exactly one")
+    if levels and levels[0][0] != 1:
+        found.append(f"the first heading is H{levels[0][0]} ({levels[0][1]!r}); a page starts with its H1")
+    for (prev, _), (level, where) in zip(levels, levels[1:]):
+        if level > prev + 1:
+            found.append(f"heading level skips from H{prev} to H{level} at {where!r}")
+    for kind, alt, where in outline:
+        if kind == "md-img" and not str(alt).strip():
+            found.append(f"image without alt text: {where}")
+        elif kind == "img" and alt is None:
+            found.append(f"raw <img> without an alt attribute (alt=\"\" marks a decorative one): {where}")
+        elif kind == "img" and alt and not str(alt).strip():
+            found.append(f"raw <img> with blank alt text: {where}")
+    return found
+
+
 def heading_title(inline, breaks: str = "") -> str:
     """An inline token's text: text and code spans, markup dropped. A line break
     becomes `breaks`: nothing for a heading id (GitHub drops it), a space for
@@ -504,8 +587,10 @@ class Page:
     body: str = ""
     toc: list[tuple[int, str, str]] = field(default_factory=list)
     anchors: set[str] = field(default_factory=set)
-    text: str = ""
+    text: str = ""                                     # plain text tokens only: the legacy search index
     summary: str = ""                                  # first top-level paragraph (meta description)
+    records: list[tuple[str, str, str]] = field(default_factory=list)  # search: (anchor, heading path, text)
+    a11y: list[str] = field(default_factory=list)      # accessibility findings, reported for the current tree
 
 
 def out_path(url: str) -> str:
@@ -757,6 +842,14 @@ class Renderer:
         env = env if env is not None else {}
         slugger = Slugger()
         plain: list[str] = []
+        # Search records, one per H2/H3 section plus the part above the first,
+        # holding EVERY word a reader can see there: prose, code spans, code
+        # blocks, image alt text and raw HTML text. An H3 carries its H2 in the
+        # heading path, so a query naming both still lands in one record.
+        records: list[tuple[str, str, list[str]]] = [("", "", [])]
+        h2 = ""
+        heading_inline = -1                   # the inline token of an H1-H3: its text is the heading, not body
+        outline: list[tuple[str, object, str]] = []   # headings and images in order, for a11y_findings
         for i, tok in enumerate(tokens):
             if tok.type == "paragraph_open" and tok.level == 0 and not page.summary:
                 page.summary = " ".join(heading_title(tokens[i + 1], breaks=" ").split())
@@ -767,19 +860,52 @@ class Renderer:
                 tok.attrSet("id", slug)
                 page.anchors.add(slug)
                 level = int(tok.tag[1])
+                outline.append(("h", level, title.strip()))
                 if level == 1 and not page.title:
                     page.title = title.strip()
                 if level in (2, 3):
                     page.toc.append((level, slug, title.strip()))
+                    h2 = title.strip() if level == 2 else h2
+                    path = title.strip() if level == 2 or not h2 else f"{h2} \u203a {title.strip()}"
+                    records.append((slug, path, []))
+                # An H1 is the page title; its text is body only where a title= directive
+                # overrides it, so a word shown there stays findable.
+                if level in (2, 3) or (level == 1 and title.strip() == page.title):
+                    heading_inline = i + 1
             if tok.type == "inline":
+                words: list[str] = []
+                shown: list[str] = []         # alt and raw HTML text: the part a heading's title leaves out
                 for child in tok.children or []:
                     if child.type == "link_open":
                         child.attrSet("href", self.rewrite_href(page, child.attrGet("href") or ""))
                     elif child.type == "image":
+                        # The alt a browser gets: markup stripped, so ![`x`](y) renders alt="".
+                        alt = self.md.renderer.renderInlineAsText(child.children, self.md.options, env)
+                        outline.append(("md-img", alt, child.attrGet("src") or ""))
+                        words.append(f" {alt} ")
+                        shown.append(alt)
                         child.attrSet("src", self.rewrite_img(page, child.attrGet("src") or ""))
                     elif child.type == "text":
                         plain.append(child.content)
+                        words.append(child.content)
+                    elif child.type == "code_inline":
+                        words.append(child.content)
+                    elif child.type in ("softbreak", "hardbreak"):
+                        words.append(" ")
+                    elif child.type == "html_inline":
+                        seen = _HtmlOutline.scan(child.content)
+                        outline.extend(("raw-" + k if k == "h" else k, v, child.content.strip()[:80])
+                                       for k, v in seen.events)
+                        words.append(seen.text)
+                        shown.append(seen.text)
+                records[-1][2].append("".join(words) if i != heading_inline else " ".join(shown))
+            if tok.type in ("fence", "code_block"):
+                records[-1][2].append(tok.content)
             if tok.type == "html_block":
+                seen = _HtmlOutline.scan(tok.content)
+                outline.extend(("raw-" + k if k == "h" else k, v, " ".join(tok.content.split())[:80])
+                               for k, v in seen.events)
+                records[-1][2].append(seen.text)
                 tok.content = self.rewrite_raw_html(page, tok.content)
             if tok.type == "inline":
                 for child in tok.children or []:
@@ -797,6 +923,8 @@ class Renderer:
         body = re.sub(r"</table>", "</table></div>", body)
         page.body = body
         page.text = " ".join(plain)
+        page.records = [(anchor, path, " ".join(" ".join(parts).split())) for anchor, path, parts in records]
+        page.a11y = a11y_findings(outline)
         if not page.title:
             page.title = page.rel
 
@@ -1444,6 +1572,63 @@ ASSET_DIRS = (
 )
 
 
+SEARCH_V2_MARK = 'data-search-index="2"'   # the template reads the sharded v2 index
+SEARCH_BUDGET = 2 * 1024 * 1024            # bytes, per file: search.json and every shard
+SEARCH_SHARD_TARGET = 512 * 1024           # a shard is cut once it would pass this
+
+
+def _json_bytes(value) -> bytes:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+def search_files(pages: dict[str, Page], v2: bool, errors: list[str]) -> dict[str, bytes]:
+    """The client-side search index, as {path under the docs root: bytes}.
+
+    v2 (a template carrying SEARCH_V2_MARK): search.json is a manifest of pages
+    and sections, [page index, anchor, heading path], and the full text of each
+    section lives in shards named by their content hash. The manifest names
+    every shard with its record count, so a manifest and a shard from different
+    builds can never be read together: a stale manifest names shards the new
+    deploy does not have, and the client refuses a count that does not add up.
+    Nothing is dropped to meet the budget; a file over it fails the build.
+
+    Legacy: a release tree's own template may predate v2 and read the flat
+    [{t,u,h,x}] index it was published with, so it gets that, unchanged."""
+    ordered = sorted(pages.values(), key=lambda p: p.rel)
+    if not v2:
+        return {"search.json": _json_bytes([{"t": p.title, "u": p.url or "./", "h": [t for _, _, t in p.toc],
+                                             "x": p.text[:4000]} for p in ordered])}
+    plist: list[list[str]] = []
+    sections: list[list] = []
+    shards: list[list[str]] = [[]]
+    size = 0
+    for n, page in enumerate(ordered):
+        plist.append([page.title, page.url or "./"])
+        for anchor, path, text in page.records:
+            sections.append([n, anchor, path])
+            cost = len(_json_bytes(text)) + 1
+            if shards[-1] and size + cost > SEARCH_SHARD_TARGET:
+                shards.append([])
+                size = 0
+            shards[-1].append(text)
+            size += cost
+    out: dict[str, bytes] = {}
+    names: list[list] = []
+    for shard in shards:
+        if not shard:
+            continue
+        data = _json_bytes(shard)
+        name = f"search-{hashlib.sha256(data).hexdigest()[:16]}.json"
+        out[name] = data
+        names.append([name, len(shard)])
+    out = {"search.json": _json_bytes({"v": 2, "p": plist, "s": sections, "shards": names}), **out}
+    for name, data in out.items():
+        if len(data) > SEARCH_BUDGET:
+            errors.append(f"search index {name} is {len(data):,} bytes, over the {SEARCH_BUDGET:,}-byte budget "
+                          f"(content is never dropped to fit; cut more shards or split the page)")
+    return out
+
+
 def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
     """Return {site-relative path: bytes} for the whole site."""
     files: dict[str, bytes] = {}
@@ -1512,9 +1697,13 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
                 errors.append(f"gh-pages/{name}: generated by build.py; remove the hand-written copy")
         files["sitemap.xml"] = sitemap(facts, files, sources, dates)
         files["robots.txt"] = (f"User-agent: *\nAllow: /\n\nSitemap: {site_url(facts, 'sitemap.xml')}\n").encode("utf-8")
-    index = [{"t": p.title, "u": p.url or "./", "h": [t for _, _, t in p.toc], "x": p.text[:4000]}
-             for p in sorted(pages.values(), key=lambda p: p.rel)]
-    files[f"{DOCS_BASE}search.json"] = json.dumps(index, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if landing:
+        # Page hygiene of the CURRENT tree, like check_design_lines: a release is
+        # published as it was.
+        for page in all_pages.values():
+            errors.extend(f"docs/{page.rel}: accessibility: {f}" for f in page.a11y)
+    for name, data in search_files(pages, SEARCH_V2_MARK in tpl, errors).items():
+        files[f"{DOCS_BASE}{name}"] = data
     build.undocumented = undocumented  # type: ignore[attr-defined]
     return files
 
