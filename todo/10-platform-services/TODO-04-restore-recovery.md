@@ -79,7 +79,7 @@ title: "TODO-04 -- System Restore, Recovery & Observability"
 - [ ] Wire `kevent_log()` at: auth login/logout; UAC elevation; permission denied (VFS); service start/stop; app install/uninstall; kernel panic
 - [/] Superseded: the event viewer UI is implemented by `13-tools-accessories/TODO-02-event-viewer.md §2` (`eventview.exe`, with a Security filter over this log); do not build a second viewer (`eventvwr.cpl`)
   - Unique leftovers handed to that owner: date range filter and an [Export] button
-- [ ] Use the log that already ships: `src/kernel/klog_disk.c` writes `X:\Logs\events.jsonl` (JSON Lines, `{"ts","level","tag","msg"}`) and rotates it
+- [ ] Use the log that already ships: `src/kernel/klog_disk.c` writes `X:\Logs\events.jsonl` (JSON Lines, `{"ts","lvl","sub","cpu","pid","tid","msg","dropped"}`) and rotates it
   - `kevent_log()` appends to `events.jsonl` with a `"type"` field (INFO/WARN/ERROR/SECURITY) instead of creating a second pipe-delimited `events.log`; the Event Viewer (`13-tools-accessories/TODO-02`) reads that one file
 - [ ] Commit: `"kernel: event log -- kevent_log, LOG_SECURITY, rolling file, rotate"`
 

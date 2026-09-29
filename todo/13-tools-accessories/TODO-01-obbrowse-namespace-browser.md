@@ -11,7 +11,7 @@ title: "TODO-01 -- ObBrowse: Object Namespace Browser"
 > **Goal:** A user-mode GUI tool (`obbrowse.exe`) that displays the kernel object namespace as a tree -- like Windows WinObj or Process Explorer's handle viewer. Shows directory objects (`\`, `\Device`, `\BaseNamedObjects`, `\DosDevices`, `\Sessions`), object types, reference counts, and security descriptors. Essential for kernel development debugging and verifying Object Manager correctness.
 
 > [!IMPORTANT]
-> **Current state:** The kernel Object Manager namespace is fully functional (11 built-in types, 6 root directories). `NtOpenDirectoryObject` + `NtQueryDirectoryObject` syscalls exist (`SYS_OPENDIROBJ`, `SYS_QUERYDIROBJ`). No user-mode tool to browse it -- only visible via serial log (`ob: Namespace: \, \Device, \KernelObjects, ...`).
+> **Current state:** The kernel Object Manager namespace is fully functional (the built-in types `ob_init()` registers, 6 root directories). `NtOpenDirectoryObject` + `NtQueryDirectoryObject` syscalls exist (`SYS_OPENDIROBJ`, `SYS_QUERYDIROBJ`). No user-mode tool to browse it -- only visible via serial log (`ob: Namespace: \, \Device, \KernelObjects, ...`).
 
 ---
 
@@ -19,8 +19,8 @@ title: "TODO-01 -- ObBrowse: Object Namespace Browser"
 
 - `include/kernel/ob/ob.h` -- `NtOpenDirectoryObject`, `NtQueryDirectoryObject`, `OBJECT_DIRECTORY_INFORMATION`
 - `include/kernel/ob/ob_ns.h` -- `ObLookupObjectByName`
-- `src/kernel/sched/syscall.c` -- `SYS_OPENDIROBJ` (line 381), `SYS_QUERYDIROBJ` (line 392)
-- `src/kernel/ob/ob_ns.c` -- namespace root directories (line 350)
+- `src/kernel/sched/syscall.c` -- `SYS_OPENDIROBJ` (line 1212), `SYS_QUERYDIROBJ` (line 1223, one row per call)
+- `src/kernel/ob/ob_ns.c` -- namespace root directories (`ob_ns_init()`, lines 533-545) and two symbolic links
 - → XREF: `02-kernel-core/TODO-05-object-manager.md` -- OB implementation (was TODO-03, deferred this tool)
 - → XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` -- unit test wiring for test_register_obbrowse()
 
@@ -55,14 +55,9 @@ title: "TODO-01 -- ObBrowse: Object Namespace Browser"
 
 Wrap the existing kernel syscalls for use from user-mode code.
 
-- [ ] Create `user/include/ob_browse.h` with:
-  ```c
-  int ob_open_directory(const char *path);     /* returns handle */
-  int ob_query_directory(int handle, OB_DIR_INFO *buf, int max, int *count);
-  void ob_close(int handle);
-  ```
-- [ ] Implement wrappers using `SYS_OPENDIROBJ`, `SYS_QUERYDIROBJ`, `SYS_CLOSEHANDLE`
-- [ ] Test: open `\` → enumerate → expect `Device`, `KernelObjects`, `BaseNamedObjects`
+- [x] Wrappers already ship: `sys_opendirobj()`, `sys_querydirobj()` and `sys_closehandle()` (`user/include/syscall.h:327,339,300`) over `SYS_OPENDIROBJ`, `SYS_QUERYDIROBJ`, `SYS_CLOSEHANDLE`
+- [x] Test: `user/test/test_syscall.c` opens `\`, reads rows with `sys_querydirobj()` and closes the handle
+- [ ] Add `user/include/ob_browse.h`: a directory-walk helper over the `sys_*` wrappers and a public mirror of the 96-byte `OBJECT_DIRECTORY_INFORMATION` row (today only a test-local copy exists)
 - [ ] Commit: `"tools: user-mode OB directory enumeration syscall wrappers"`
 
 ---
@@ -128,15 +123,14 @@ Enhanced display with per-type icons and security info.
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_obbrowse()` (XREF: `00-infrastructure/TODO-03-kernel-test-harness.md`).
+> These are user-mode checks: a kernel test cannot issue ring-3 syscalls. Extend `user/test/test_syscall.c`, which already covers open, query and close.
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
-- [ ] Create `src/kernel/test/test_obbrowse.c` with:
+- [ ] Extend `user/test/test_syscall.c` with:
   - `SYS_OPENDIROBJ("\\")` returns valid handle from user mode
   - `SYS_QUERYDIROBJ` returns entries with non-empty names
   - Root directory contains at least 3 entries (Device, KernelObjects, BaseNamedObjects)
   - Opening nonexistent directory returns error
-- [ ] Register in `test_runner_init()`: `test_register_obbrowse()`
 - [ ] Commit: `"test: add obbrowse syscall test suite"`
 
 ---
@@ -146,6 +140,6 @@ Enhanced display with per-type icons and security info.
 - [ ] `bash scripts/build.sh clean` → `=== BUILD OK ===`
 - [ ] QEMU WHPX: `C:\> obbrowse` prints namespace tree with `\Device`, `\BaseNamedObjects`
 - [ ] QEMU WHPX: GUI version shows tree with expandable directories
-- [ ] Object count matches `ob: Registered 11 built-in types` from boot log
+- [ ] Object type count matches the `Registered %u built-in types` line in the boot log
 - [ ] Bare metal: obbrowse.exe runs correctly on real hardware
 - [ ] Commit: `"tools: obbrowse.exe verified -- namespace browser complete"`

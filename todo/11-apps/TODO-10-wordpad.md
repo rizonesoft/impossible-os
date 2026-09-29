@@ -20,8 +20,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 > scratch.
 >
 > `CTRL_COMBOBOX` (font family + size combo-boxes in §4) is planned in
-> `08-graphics-ui/TODO-06-widget-dialogs.md` -- do not build a custom combo widget here; add
-> `CTRL_COMBOBOX` to TODO-05 if it is not yet present when §3 is implemented.
+> `08-graphics-ui/TODO-05-widget-library-core.md` §5 -- do not build a custom combo widget here.
 >
 > Print (§7) depends on `pdf_begin/draw_text/end` from `10-platform-services/TODO-12 §6` --
 > implement §7 only after the print subsystem is available.
@@ -35,9 +34,9 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_mark_dirty()`
 - `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR_VERT`, `CTRL_SCROLLBAR_HORIZ`, `CTRL_COMBOBOX` (→ `08-graphics-ui/TODO-05`)
 - `include/kernel/clipboard.h` (→ XREF `09-desktop-shell/TODO-01 §1`) -- `clipboard_set/get(CLIP_TEXT, ...)` -- §5 cut/copy/paste
-- `08-graphics-ui/TODO-06-widget-dialogs.md §3` -- `dialog_file_open()`, `dialog_file_save()`, `dialog_color()` -- §3 color picker, §6 file ops
+- `08-graphics-ui/TODO-06-widget-dialogs.md §8` -- `dialog_file_open()`, `dialog_file_save()`, `dialog_color()` -- §4 color picker, §6 file ops
 - `include/desktop/file_assoc.h` (→ XREF `09-desktop-shell/TODO-02 §1`) -- `file_assoc_set(ext, prog_id, path)` -- §6
-- `include/registry.h` -- `reg_get_string`, `reg_set_string` -- §6 recent files
+- `include/registry.h` -- `RegGetString`, `RegSetString` -- §6 recent files
 - `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_stat`
 - `10-platform-services/TODO-12-long-term-features.md §6` -- `pdf_begin`, `pdf_draw_text`, `pdf_draw_rect`, `pdf_end` -- §2 print stretch
 
@@ -129,6 +128,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 
 **Source file:** `src/apps/wordpad/wordpad_render.c`
 
+- [ ] Look fonts up through `font_mgr_find_family()` and the bold/italic/weight matching of `08-graphics-ui/TODO-02-text-font-internationalization.md` §1-§2, not a local `ttf_get_by_name()`; `font_mgr.h` has fixed slots only today
 - [ ] **Canvas area**: below toolbar (40 px) and ruler (20 px); left margin 60 px (`g_left_margin_px`); right margin 60 px; `CTRL_SCROLLBAR_VERT` on right
 - [ ] **Line layout** (`layout_line` struct: run pointers + y-pos + height + baseline):
   - [ ] For each paragraph, iterate runs; measure each run word by word via `ttf_measure_width(font_for_run, word)`
@@ -136,7 +136,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
   - [ ] Track line height = `max(run_height for runs on line)`; track baseline = `max(font_ascent)`
   - [ ] Paragraph spacing: add `para_fmt.space_before_pt` before first line, `space_after_pt` after last line
 - [ ] **Rendering**: for each visible line, for each run on that line:
-  - [ ] `ttf_font_t *f = ttf_get_by_name(run->fmt.font_name, run->fmt.font_size_pt)` (fallback to `FONT_BODY` if name not found)
+  - [ ] `ttf_font_t *f = ttf_get_by_name(run->fmt.font_name, run->fmt.font_size_pt)` (read as the family lookup of the item above) (fallback to `FONT_UI` if name not found)
   - [ ] Apply bold via `ttf_get_bold()` / italic via `ttf_get_italic()` (or TTF style variants if loaded)
   - [ ] `ttf_draw_string(surface, f, x, baseline_y, run->text, run->fmt.fg_color)`
   - [ ] Underline: `gfx_draw_line(surface, x, baseline_y+2, x+run_w, baseline_y+2, fg_color, 1)`
@@ -171,7 +171,7 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
   - [ ] `File`: New, Open, Save, Save As, Recent Files, Print (§7), Exit
   - [ ] `Edit`: Undo, Redo, Cut, Copy, Paste, Select All, Find (Ctrl+F)
   - [ ] `View`: Word Wrap (toggle), Ruler (toggle), Status Bar (toggle), Zoom submenu
-  - [ ] `Insert`: Date/Time (`time_now()` → formatted string `YYYY-MM-DD HH:MM` inserted at cursor), horizontal rule (insert `─────` string)
+  - [ ] `Insert`: Date/Time (wall-clock time from `include/kernel/time/wall_clock.h`; no `time_now()` exists → formatted string `YYYY-MM-DD HH:MM` inserted at cursor), horizontal rule (insert `─────` string)
   - [ ] `Format`: Font dialog (extended version of toolbar controls in a dialog), Paragraph dialog (indent + spacing + alignment fields), Bullets (toggle simple bullet list: prepend `• ` to each selected para)
 - [ ] **Status bar** (`THEME_SIZE_STATUS_BAR_HEIGHT` (24), caption style): `Page {n} of {total}` left; `{cursor_line}, {cursor_col}` center; `{encoding}` right
 

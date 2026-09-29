@@ -46,23 +46,23 @@
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     675 |     155545 |
-| **JSON** (`.json`)          |      21 |       3185 |
+| **Markdown** (`.md`)        |     691 |     156728 |
+| **JSON** (`.json`)          |      21 |       3170 |
 | **YAML** (`.yml`/`.yaml`)   |      15 |       1971 |
 | **HTML** (`.html`)          |      22 |       2575 |
 | **CSS** (`.css`)            |       1 |        458 |
 | **Config** (`.cfg`/`.conf`) |       1 |        105 |
-| **Subtotal**                | **735** | **163839** |
+| **Subtotal**                | **751** | **165007** |
 
 ## Grand Total
 
 |                                                      |    Files |       Lines |
 | ---------------------------------------------------- | -------: | ----------: |
 | **Core code + tooling**                              | **1370** |  **701706** |
-| **Supporting text + metadata**                       |  **735** |  **163839** |
-| **Written here**                                     | **2105** |  **865545** |
+| **Supporting text + metadata**                       |  **751** |  **165007** |
+| **Written here**                                     | **2121** |  **866713** |
 | **Vendored ([third-party](src/libs/PROVENANCE.md))** |      590 |      476279 |
-| **All lines in tree**                                | **2695** | **1341824** |
+| **All lines in tree**                                | **2711** | **1342992** |
 
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,7 +77,7 @@
 
 |                       |         Linux |     Windows |         Impossible OS |
 | --------------------- | ------------: | ----------: | --------------------: |
-| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,341,824 |
+| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,342,992 |
 | **Developers**        | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**         |      33 years |    40 years | 6 month(s), 26 day(s) |
 
@@ -88,4 +88,4 @@
 
 ---
 
-*Last updated: 2026-09-29 06:19 · commit `be3b6b05d`*
+*Last updated: 2026-09-29 06:56 · commit `5b424ac12`*

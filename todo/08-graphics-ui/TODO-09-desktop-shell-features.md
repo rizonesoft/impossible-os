@@ -162,6 +162,7 @@ Intercept PrintScreen in keyboard handler. `screenshot_capture_full()`: copy com
 > [!NOTE]
 > PrintScreen scancode: `0xE037` (extended) or `0x54` (regular PS/2 make code). Detect in the desktop keyboard handler. Back buffer: `wm_composite()` renders to a screen-sized `uint32_t *` buffer; `screenshot_capture_full()` wraps it as `image_t { .pixels = back_buffer, .width = fb_get_width(), .height = fb_get_height() }` then calls `image_save_png()`. Filename: `rtc_read(&t)`; format as `Screenshot_%04u%02u%02u_%02u%02u%02u.png`. Path: `C:\\Users\\Default\\Pictures\\` -- create dir if not exists via `vfs_mkdir()`. Clipboard: for PrintScreen-only (no modifier), call `clipboard_set_bitmap(back_buffer, fb_w, fb_h)` (stub until clipboard TODO); log to serial if clipboard not ready. Toast: `desktop_toast("Screenshot saved to Pictures", ICON_INFO)` stub -- logs to serial if TODO-09 not live.
 
+- [ ] Settle screenshot ownership with `11-apps/TODO-12-screenshot-archive.md` (item: "Settle screenshot ownership"): its §1-§2 restate this capture under `src/apps/snip/`
 - [ ] `void screenshot_capture_full(const char *filepath)`: wrap back buffer as `image_t`; `image_save_png(img, filepath)` → 0 or -errno
 - [ ] `void screenshot_capture_window(int handle, const char *filepath)`: get `win->x, y, width, height`; copy that rect from back buffer; scale to `image_t`; `image_save_png()`
 - [ ] `void screenshot_auto_path(char *buf, uint32_t max)`: `rtc_read(&t)`; `snprintf(buf, max, "C:\\Users\\Default\\Pictures\\Screenshot_%04u%02u%02u_%02u%02u%02u.png", ...)`

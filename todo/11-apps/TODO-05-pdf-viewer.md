@@ -15,7 +15,7 @@ title: "TODO-05 -- PDF Viewer"
 
 > [!IMPORTANT]
 > miniz (`mz_uncompress`) must be ported before §3 stream decompression --
-> `→ XREF: 02-kernel-core/TODO-32 §3`.
+> `→ XREF: 02-kernel-core/TODO-03-kernel-libraries.md §4` (vendored, not yet built). The compiled `stbi_zlib_decode_buffer()` in `include/stb_image.h` also inflates.
 > `image_load_mem()` from `include/kernel/image.h` is the image decode path (JPEG/PNG/BMP) -- no
 > separate stbi call needed for most cases; use `stbi_load_from_memory()` directly only for
 > color-space conversions not handled by the wrapper.
@@ -27,10 +27,10 @@ title: "TODO-05 -- PDF Viewer"
 
 ## Inputs
 
-- `02-kernel-core/TODO-03-kernel-libraries.md §5` -- `mz_uncompress(dst, &dst_len, src, src_len)` (miniz FlateDecode)
+- `02-kernel-core/TODO-03-kernel-libraries.md §4` -- `mz_uncompress(dst, &dst_len, src, src_len)` (miniz FlateDecode)
 - `include/kernel/image.h` -- `image_load_mem(img, data, size)` -- §5 image rendering
 - `include/font_mgr.h` -- `ttf_get(slot, px)`, `ttf_draw_string()`, `ttf_draw_char()`, `ttf_measure_width()` -- §4 text rendering
-- `include/gfx.h` -- `gfx_create_surface()`, `gfx_fill_rect()`, `gfx_blit()`, `gfx_drop_shadow()`, `gfx_scale_blit()` -- §4–§6
+- `include/gfx.h` -- `gfx_surface_create()`, `gfx_fill_rect()`, `gfx_blit()`, `gfx_drop_shadow()`, `gfx_scale_blit()` (planned; not in `gfx.h` yet) -- §4–§6
 - `include/desktop/controls.h` -- `CTRL_SCROLLBAR` (`CTRL_SCROLLBAR_VERT`/`CTRL_SCROLLBAR_HORIZ`), `CTRL_TEXTBOX`, `CTRL_BUTTON` -- §6
 - `include/desktop/wm.h` -- `wm_create_window()` -- §6
 - `include/desktop/file_assoc.h` (→ XREF `09-desktop-shell/TODO-02 §1`) -- `file_assoc_set(ext, prog_id, app_path)` -- §9
@@ -51,7 +51,7 @@ title: "TODO-05 -- PDF Viewer"
 | ---- | -------------------------------- | ----- | -------------------------------------- |
 | 1    | PDF Structure Parser             | 💎    | VFS file load                          |
 | 2    | Page Tree Traversal              | 💎    | §1 object resolver                     |
-| 3    | Stream Decompression             | 💎    | §2 stream refs, miniz `D12T01 §3`      |
+| 3    | Stream Decompression             | 💎    | §2 stream refs, miniz `D02T03 §4`      |
 | 4    | Content Stream Renderer          | 💎    | §3 decompressed streams, TTF font_mgr  |
 | 5    | Image Rendering                  | 💎    | §3, `image_load_mem`                   |
 | 6    | PDF Viewer UI                    | 💎    | §4 + §5 page surface, controls.h, wm.h |
@@ -115,13 +115,13 @@ title: "TODO-05 -- PDF Viewer"
 
 **Source file:** `src/apps/pdfview/pdf_render.c`
 
-- [ ] Allocate page surface: `gfx_create_surface(page_width_px, page_height_px)` where `page_width_px = media_box_width_pts × (dpi / 72.0)` at current zoom; fill white `gfx_fill_rect(..., GFX_COLOR_WHITE)`
+- [ ] Allocate page surface: `gfx_surface_create(&page, page_width_px, page_height_px)` where `page_width_px = media_box_width_pts × (dpi / 72.0)` at current zoom; fill white `gfx_fill_rect(..., GFX_COLOR_WHITE)`
 - [ ] Content stream tokenizer: scan decompressed bytes; tokenize into operands (numbers, strings `(...)`, names `/foo`, arrays `[...]`, hex strings `<...>`) and operators (alphabetic keywords)
 - [ ] **Graphics state** (current transform `cm[6]`, current path, fill/stroke color, line width)
 - [ ] **Text state** (font name, font size, text matrix Tm, leading, char/word spacing)
 - [ ] **Operator dispatch** -- key operators:
   - [ ] `BT` / `ET`: begin/end text block; reset text matrix to identity
-  - [ ] `Tf fontname size`: set current font; lookup in page Resources `/Font` dict → map to system font via `ttf_get()` (fallback: `FONT_BODY` for proportional, `FONT_MONO` for monospace)
+  - [ ] `Tf fontname size`: set current font; lookup in page Resources `/Font` dict → map to system font via `ttf_get()` (fallback: `FONT_UI` for proportional, `FONT_MONO` for monospace)
   - [ ] `Td x y` / `TD x y`: move text position; update text matrix
   - [ ] `Tm a b c d e f`: set text matrix directly
   - [ ] `Tj (string)`: show string -- decode PDF string bytes → UTF-8; call `ttf_draw_string(surface, font, x_px, y_px, text, color)`
@@ -233,7 +233,7 @@ title: "TODO-05 -- PDF Viewer"
 - [ ] `pdfview.exe` without args → open-file dialog (`dialog_file_open()`) filtered to `*.pdf`
 - [ ] Open from File Manager double-click → `file_assoc_open()` routes to `pdfview.exe` with path arg
 - [ ] Open from browser download (→ XREF `11-apps/TODO-01 §8`) → same launch path
-- [ ] Open from email attachment (→ XREF `11-apps/TODO-04 §6`) → viewer window per attachment click
+- [ ] Open from email attachment (→ XREF `11-apps/TODO-04 §4`) → viewer window per attachment click
 - [ ] Recent files: `HKCU\Software\Impossible\PDFViewer\RecentFiles` (up to 10 paths, MRU order)
 
 ---

@@ -32,18 +32,18 @@ title: "TODO-01 -- Web Browser"
 
 ## Inputs
 
-| Path                                          | Purpose                                                       |
-| --------------------------------------------- | ------------------------------------------------------------- |
-| `07-networking/TODO-03-http-tls.md`           | `http_get`, `https_get`, `http_post`, redirect + chunked TE   |
-| `include/font_mgr.h`                          | `ttf_draw_string`, `ttf_measure_width`, `ttf_draw_char`       |
-| `include/kernel/image.h`                      | `image_load_mem()` -- decode JPEG/PNG from HTTP response      |
-| `include/desktop/wm.h`                        | `wm_create_window`, `wm_destroy_window`                       |
-| `include/desktop/controls.h`                  | `CTRL_BUTTON`, `CTRL_LABEL`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR` |
-| `08-graphics-ui/TODO-05`                      | `CTRL_TABSTRIP` (16 tabs, accent underline)                   |
-| `include/registry.h`                          | `registry_get/set()` -- homepage, search engine, bookmarks    |
-| → XREF: `07-networking/TODO-03`               | HTTP/HTTPS client -- mandatory prerequisite                   |
-| → XREF: `08-graphics-ui/TODO-05`              | `CTRL_TABSTRIP` -- browser tabs widget                        |
-| → XREF: `10-platform-services/TODO-08 §10–11` | IxUI `user32`/`gdi32` for window + rendering in user-mode     |
+| Path                                          | Purpose                                                                   |
+| --------------------------------------------- | ------------------------------------------------------------------------- |
+| `07-networking/TODO-03-http-tls.md`           | `http_get`, `https_get`, `http_post`, redirect + chunked TE               |
+| `include/font_mgr.h`                          | `ttf_draw_string`, `ttf_measure_width`, `ttf_draw_char`                   |
+| `include/kernel/image.h`                      | `image_load_mem()` -- decode JPEG/PNG from HTTP response                  |
+| `include/desktop/wm.h`                        | `wm_create_window`, `wm_destroy_window`                                   |
+| `include/desktop/controls.h`                  | `CTRL_BUTTON`, `CTRL_LABEL`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR`             |
+| `08-graphics-ui/TODO-05`                      | `CTRL_TABSTRIP` (16 tabs, accent underline)                               |
+| `include/registry.h`                          | `RegGetString()` / `RegSetString()` -- homepage, search engine, bookmarks |
+| → XREF: `07-networking/TODO-03`               | HTTP/HTTPS client -- mandatory prerequisite                               |
+| → XREF: `08-graphics-ui/TODO-05`              | `CTRL_TABSTRIP` -- browser tabs widget                                    |
+| → XREF: `10-platform-services/TODO-08 §10–11` | IxUI `user32`/`gdi32` for window + rendering in user-mode                 |
 
 ---
 
@@ -77,6 +77,10 @@ title: "TODO-01 -- Web Browser"
 
 ~500 lines. Proves the full network → render pipeline end-to-end.
 
+- [ ] Settle engine vs app ownership with `07-networking/TODO-07-web-browser.md` (item: "Settle engine vs app ownership") before coding: §1-§5 here restate its engine
+  - Names differ: header `include/apps/browser.h` vs `include/apps/browser/browser.h`, `dom_parse`/`dom_free` vs `html_parse`/`dom_free_tree`, a 16- vs 32-entry history.
+  - Storage differs: `HKCU\Software\Impossible\Browser\` vs `HKCU\Software\ImpossibleBrowser`, and bookmarks in the Registry here vs `bookmarks.json` there.
+  - Keep one engine spec, XREF the other, and keep §7 chrome here (TODO-07 already marks its tab bar drawing superseded by §7).
 - [ ] Create `src/apps/browser/browser.c` + `include/apps/browser.h`
 - [ ] `browser_fetch(url, buf, max)` → call `https_get(url, buf, max)` (falls back to `http_get` if port 80); return HTTP status code; log to serial on error
 - [ ] HTML stripper: char-by-char state machine: `STATE_TEXT` / `STATE_IN_TAG` / `STATE_IN_COMMENT`; accumulate non-tag characters; collapse runs of whitespace (space, `\t`, `\n`, `\r`) to single space; strip `&lt;`/`&gt;`/`&amp;`/`&nbsp;` entities
@@ -182,6 +186,7 @@ Adds styling to the layout engine. Stretch goal -- only start after §3 is compl
 
 Evaluate before investing in §2–§5. A port may deliver a full browser faster than building from scratch.
 
+- [ ] Licence gate first: read the NetSurf and Dillo LICENSE files; a GPL-2.0-only upstream cannot be combined with this GPL-3.0-only project (CLAUDE.md vendor-first rule)
 - [ ] **NetSurf** (GPL, ~200 K lines): has a custom layout engine (Hubbub HTML parser + LibCSS), Amiga/RISC OS/framebuffer backends already exist -- the framebuffer backend maps closely to Impossible OS `gfx_surface_t`
   - Prerequisites already met: TCP, DNS, TLS, framebuffer, TTF fonts
   - Evaluate: `#include` audit (POSIX deps: `stdio.h`, `string.h`, `stdlib.h` -- all need kernel substitutes)

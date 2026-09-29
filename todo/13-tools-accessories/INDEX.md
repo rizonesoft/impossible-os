@@ -13,7 +13,7 @@ System diagnostic tools, namespace browsers, and administrative utilities that s
 - End-user applications (browser, email, media player). Put those in [11 Apps](../11-apps/INDEX.md).
 - Desktop shell components (file manager, terminal, control panel). Put those in [09 Desktop Shell](../09-desktop-shell/INDEX.md).
 - Build-time host tools (scripts, compilers). Put those in [00 Infrastructure](../00-infrastructure/INDEX.md).
-- SDK tools for third-party developers. Put those in [15 SDK Tools](../15-sdk-tools/INDEX.md).
+- SDK tools for third-party developers. Put those in [12 User Platform SDK](../12-user-platform-sdk/INDEX.md).
 
 ## Active TODOs
 

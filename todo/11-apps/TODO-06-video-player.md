@@ -19,7 +19,7 @@ title: "TODO-06 -- Video Player"
 > `→ XREF: 10-platform-services/TODO-01 §2`.
 > All video frame buffers and PCM decode buffers are large (frame = width × height × 4 bytes) --
 > **always use `pmm_alloc_contiguous()` for these**; `kmalloc` heap is only 2 MiB.
-> SSE2 is available (`-msse2` is already in the kernel build flags) but the kernel uses
+> SSE2 is available (`-msse2` builds only separate SIMD objects such as `src/kernel/gfx/gfx_simd.c`) but the kernel uses
 > `-mno-sse` / `-mno-sse2` by default; the player app compiles separately as a user-mode EIF
 > with SSE2 enabled.
 
@@ -34,7 +34,7 @@ title: "TODO-06 -- Video Player"
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_set_fullscreen()`, `wm_mark_dirty()`
 - `include/desktop/file_assoc.h` -- `file_assoc_set(ext, prog_id, path)` (→ XREF `09-desktop-shell/TODO-02 §1`)
 - `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_enum_keys`
-- `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_stat` -- file I/O for pl_mpeg + SRT
+- `include/kernel/fs/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_stat` -- file I/O for pl_mpeg + SRT
 
 ---
 
@@ -63,7 +63,8 @@ title: "TODO-06 -- Video Player"
 
 **Source file:** `src/apps/player/pl_mpeg_port.c`; copy `PL_MPEG_IMPLEMENTATION` header to `include/libs/pl_mpeg.h`
 
-- [ ] Copy `pl_mpeg.h` (single-header, ~3500 lines, public domain) to `include/libs/pl_mpeg.h`
+- [ ] Licence gate before vendoring: read pl_mpeg's licence in the upstream header (this file said public domain, unverified), then add `src/libs/PROVENANCE.md` and `CREDITS.md` rows
+- [ ] Copy `pl_mpeg.h` (single-header, ~3500 lines; licence to be read from the upstream header, see the item above) to `include/libs/pl_mpeg.h`
 - [ ] Redirect allocator macros before `#define PL_MPEG_IMPLEMENTATION`:
   ```c
   #define PLMPEG_MALLOC(sz)      pmm_alloc_contiguous(PAGES(sz))

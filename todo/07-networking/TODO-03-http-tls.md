@@ -111,6 +111,7 @@ Define `struct url`. Parse `http://host:port/path?query#fragment` and `https://`
 > [!NOTE]
 > Progress bar format: `[====>     ] 45% 128 KB / 284 KB  @ 512 KB/s`. Update every 100 ms using `uptime_ms()` delta and bytes-received counter; on terminals narrower than 80 chars, omit the bar and print only the percentage. Content-Length unknown (chunked or server omits): display `?? KB` for total and omit percentage. `-o file` flag: `vfs_open()` + `vfs_write()` loop; flush on close. Default (no `-o`): write to stdout via `SYS_WRITE`. `ftp://` detection: print `[wget] FTP not yet supported, use ftp:// TODO-05` and return -ENOTSUP. `wget` and `curl` share the same download engine (`http_get`/`http_post`) -- only the output destination differs.
 
+- [ ] Settle one FTP and wget/curl spec with `11-apps/TODO-02-ftp-wget-wifi.md` (item: "Settle one FTP and wget/curl spec"): its §3-§4 restate wget/curl with `-O` and another progress helper
 - [ ] `wget_download(url_str, out_fd, &progress_cb)` shared engine: `url_parse` + `http_get` / `https_get`; stream body in 4 KiB chunks; invoke `progress_cb(received, total)` every chunk
 - [ ] `cmd_wget(argc, argv)`: parse `-o filename` flag; open output fd; call `wget_download`; close; print final stats
 - [ ] `cmd_curl(argc, argv)`: always stdout fd; call `wget_download`; print final stats

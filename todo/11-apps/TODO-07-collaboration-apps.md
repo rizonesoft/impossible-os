@@ -28,14 +28,14 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 - `07-networking/TODO-06-ntp-status-winsock.md §4–§7` -- `ping`, `traceroute`, `ifconfig`, `netstat`, `nslookup`, `arp_cache_dump()` already specified there
 - `include/kernel/net/net.h` -- `icmp_send_echo()`, `SYS_PING=15`, `dns_resolve()`, `dns_resolve_reverse()`
 - `07-networking/TODO-03-http-tls.md` -- `http_get()`, `https_get()`, `tls_connect()`, `tls_send()`, `tls_recv()`
-- `07-networking/TODO-02-dns-sockets.md §3` -- `kern_socket()`, `kern_connect()`, `kern_send()`, `kern_recv()`, `kern_close()`
+- `07-networking/TODO-02-dns-sockets.md §5` (and §6 for `kern_bind`/`kern_listen`) -- `kern_socket()`, `kern_connect()`, `kern_send()`, `kern_recv()`, `kern_close()`
 - `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_TEXTBOX`, `CTRL_LISTVIEW`, `CTRL_SCROLLBAR_VERT`
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_mark_dirty()`
 - `include/gfx.h` -- `gfx_blit()`, `gfx_fill_rect()`, `gfx_surface_create()`
-- `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_enum_keys`
+- `include/registry.h` -- `RegSetString`, `RegGetString`, `RegEnumKeyEx`
 - `include/kernel/scheduler_tasks.h` -- `sched_task_add()` (→ XREF `09-desktop-shell/TODO-04 §6`)
-- `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_mkdir`
-- `notify_send(title, body, icon_id, timeout_ms)` / `SYS_NOTIFY_SEND=54` (→ XREF `08-graphics-ui/TODO-09 §6`)
+- `include/kernel/fs/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create` (`vfs_mkdir` is not declared yet)
+- `notify_send(title, body, icon_id, timeout_ms)` / `SYS_NOTIFY_SEND=54` (→ XREF `08-graphics-ui/TODO-11 §5`)
 
 ---
 
@@ -163,10 +163,10 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 > → XREF: `07-networking/TODO-06-ntp-status-winsock.md §6` -- `traceroute` (TTL probe + rDNS).
 >
 > Both commands are fully specified in TODO-06. This section registers them as shell commands
-> in `src/shell/` and ensures the `tracert` alias is wired. No new protocol code here.
+> in the shell (`user/cmd.c`; `src/shell/` is empty) and ensures the `tracert` alias is wired. No new protocol code here.
 
-- [ ] Shell command `ping` registered in `src/shell/cmd_ping.c` → calls `icmp_send_echo_request()` (already in `src/kernel/net/icmp.c`); flags `-t`, `-c N`, `-4`, `-6` as specified in TODO-06 §5
-- [ ] Shell command `traceroute` (+ `tracert` alias) in `src/shell/cmd_traceroute.c` → TTL 1..30 UDP probe loop + `dns_resolve_reverse()` as specified in TODO-06 §6
+- [ ] Extend the existing `cmd_ping` in `user/cmd.c` (today four echoes via `SYS_PING`, no flags, replies only in the kernel log) over `icmp_send_echo()` (`src/kernel/net/icmp.c`); flags `-t`, `-c N`, `-4`, `-6` as specified in TODO-06 §5
+- [ ] Shell command `traceroute` (+ `tracert` alias) in `user/cmd.c` → TTL 1..30 UDP probe loop + `dns_resolve_reverse()` as specified in TODO-06 §6
 - [ ] Both commands print summary to serial + terminal: RTT per hop, packet loss %, `* * *` for non-responding hops
 
 ---
@@ -178,11 +178,11 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 > → XREF: `07-networking/TODO-02-dns-sockets.md` -- `nslookup` (specified in DNS TODO).
 > This section adds only the two gap commands not covered in TODO-06: `arp -a` and `route print`.
 
-**Source file:** `src/shell/cmd_arp.c`; `src/shell/cmd_route.c`
+**Source file:** `user/cmd.c` (the shell; `src/shell/` is empty)
 
 - [ ] **`arp -a`**: call `arp_cache_dump(buf, sizeof(buf))` (added to `src/kernel/net/arp.c` in TODO-06 §8); print each entry as `  {IP}    {MAC}    {age_ms}ms` with column alignment; no-entries case: print `ARP cache is empty`
 - [ ] **`arp -d <ip>`**: remove specific entry -- `arp_cache_delete(ip)` (new function in `arp.c`); print `Entry for {ip} deleted`
-- [ ] **`route print`**: enumerate the kernel routing table (`struct route_entry[] g_routes` in `src/kernel/net/ip.c`):
+- [ ] **`route print`**: enumerate a new kernel routing table (`struct route_entry[] g_routes` in `src/kernel/net/ip.c`; today `ip.c` sends off-link traffic to the one `net_cfg.gateway`):
   - [ ] Columns: `Destination`, `Netmask`, `Gateway`, `Interface`, `Metric`
   - [ ] Print in same format as Windows `route print` output (two sections: IPv4 Route Table, then Active Routes header)
   - [ ] Include default route (0.0.0.0/0.0.0.0 → gateway) and loopback (127.0.0.0/255.0.0.0)

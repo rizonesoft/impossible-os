@@ -17,10 +17,9 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 > `todo-old/310-Core-Apps/TODO-370-Utility-Apps.md` are migrated here.
 > **Do not delete that file** -- remaining sections are covered in TODO-13.
 >
-> **Scope overlap:** `09-desktop-shell/TODO-12-utilities.md §8` specifies the Win+Shift+S
-> region capture flow and `§7` specifies Archive Manager as utility stubs. This TODO is the
-> full app-layer companion -- implement here; add `→ XREF` from TODO-12-utilities §8+§2 to
-> this file when implementing those sections.
+> **Scope overlap:** `09-desktop-shell/TODO-12-utilities.md §4` specifies the Win+Shift+S
+> region capture flow and `§5` specifies Archive Manager; `08-graphics-ui/TODO-09` §5 owns basic
+> PrtSc capture. Ownership is being settled by the items at the top of §1 and §4 below.
 >
 > **Global hotkeys** use `struct hotkey_entry` + `hotkey_table[32]` from
 > `08-graphics-ui/TODO-08-window-manager.md §5`.
@@ -37,17 +36,17 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 - `include/kernel/drivers/framebuffer.h` -- `fb_get_backbuffer()`, `fb_get_width()`, `fb_get_height()` -- §1 full-screen capture
 - `include/kernel/image.h` -- `image_save_png()`, `image_save_bmp()`, `image_load_mem()` -- §1 §2 §3 save
 - `include/gfx.h` -- `gfx_fill_rect()`, `gfx_blit()`, `gfx_draw_rect()`, `gfx_surface_create()` -- §2 overlay, §3 annotate
-- `include/desktop/wm.h` -- `wm_create_window()` (z_order=32767 for overlay), `wm_mark_dirty()`, `wm_get_focused()` -- §1 §2 §3
+- `include/desktop/wm.h` -- `wm_create_window()` (z_order=32767 for overlay), `wm_mark_dirty()`, `wm_get_focused_window()`, `wm_get_window_rect()` -- §1 §2 §3
 - `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_LISTVIEW`, `CTRL_SCROLLBAR_VERT`, `CTRL_STATUSBAR`, `CTRL_PROGRESSBAR` -- §3 §4
 - `08-graphics-ui/TODO-08-window-manager.md §5` (→ XREF) -- `struct hotkey_entry`, `hotkey_table[]`, `MOD_WIN/MOD_ALT/MOD_SHIFT`, `KEY_PRINTSCREEN` -- §1 §2 global hotkeys
-- `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §6` (→ XREF) -- `notify_send(title, body, icon_id, timeout_ms)` -- §1 §4 toast
+- `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §5` (→ XREF) -- `notify_send(title, body, icon_id, timeout_ms)` -- §1 §4 toast
 - `09-desktop-shell/TODO-01-clipboard.md §1` (→ XREF) -- `clipboard_set(CLIP_IMAGE, &img)` -- §1 §2 copy to clipboard
-- `08-graphics-ui/TODO-06-widget-dialogs.md §2` (→ XREF) -- `dialog_file_open()`, `dialog_file_save()` -- §2 §3 §5
-- `include/registry.h` -- `reg_get_string`, `reg_set_string` -- §3 recent captures, §4 last extract path
+- `08-graphics-ui/TODO-06-widget-dialogs.md §8` (→ XREF) -- `dialog_file_open()`, `dialog_file_save()` -- §2 §3 §5
+- `include/registry.h` -- `RegGetString`, `RegSetString` -- §3 recent captures, §4 last extract path
 - `include/desktop/file_assoc.h` (→ XREF `09-desktop-shell/TODO-02 §1`) -- `file_assoc_set()` -- §3
-- `02-kernel-core/TODO-03-kernel-libraries.md §6` (→ XREF) -- `zip_open`, `zip_entry_count`, `zip_find`, `zip_read`, `zip_close` -- §6 §3 read
+- `02-kernel-core/TODO-03-kernel-libraries.md §4` (→ XREF) -- `zip_open`, `zip_entry_count`, `zip_find`, `zip_read`, `zip_close` -- §6 §3 read
 - `09-desktop-shell/TODO-04-recycle-zip-scheduler.md §4` (→ XREF) -- `zip_create`, `zip_add_file`, `zip_extract`, `zip_extract_file`, `zip_list` -- §6 §5 write
-- `include/kernel/fs/vfs.h` -- `vfs_create`, `vfs_write`, `vfs_mkdir`, `vfs_stat` -- §1 §4 §5 file output
+- `include/kernel/fs/vfs.h` -- `vfs_create`, `vfs_write`, `vfs_stat` (`vfs_mkdir` is not declared yet) -- §1 §4 §5 file output
 - `include/kernel/timer.h` -- `system_get_ticks()`, `time_now()` -- §1 timestamp filename, §3 delay
 
 ---
@@ -74,6 +73,8 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 
 **Source file:** `src/apps/snip/screenshot.c`; header `include/apps/snip/screenshot.h`
 
+- [ ] Settle screenshot ownership (item: "Settle screenshot ownership") before coding: `08-graphics-ui/TODO-09` §5 owns PrtSc and Alt+PrtSc (`src/desktop/screenshot.c`)
+  - `09-desktop-shell/TODO-12-utilities.md` §4 owns Win+Shift+S; this file restates both under `src/apps/snip/`. Keep capture in one place and only the snipping window and annotation here.
 - [ ] **`screenshot_full()`**:
   - [ ] `uint32_t *fb = fb_get_backbuffer()` → copy `fb_w * fb_h * 4` bytes into `image_t g_capture` (allocated via `pmm_alloc_contiguous`)
   - [ ] Build path: `"C:\\Users\\{name}\\Pictures\\Screenshots\\Screenshot_{YYYY-MM-DD_HH-MM-SS}.png"` using `time_now()` fields
@@ -88,9 +89,9 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 - [ ] **`screenshot_region(int x, int y, int w, int h)`**: same as window but with caller-supplied rect
 - [ ] **Global hotkey registration** (called from `snip_init()` at desktop startup):
   - [ ] `hotkey_table[N] = { .modifiers=0, .scancode=KEY_PRINTSCREEN, .handler=screenshot_full }`
-  - [ ] `hotkey_table[N+1] = { .modifiers=MOD_ALT, .scancode=KEY_PRINTSCREEN, .handler=screenshot_active_window }` -- `screenshot_active_window()` = `screenshot_window(wm_get_focused())`
+  - [ ] `hotkey_table[N+1] = { .modifiers=MOD_ALT, .scancode=KEY_PRINTSCREEN, .handler=screenshot_active_window }` -- `screenshot_active_window()` = `screenshot_window(wm_get_focused_window())`
   - [ ] `hotkey_table[N+2] = { .modifiers=MOD_WIN|MOD_SHIFT, .scancode=KEY_S, .handler=snip_region_start }` -- launches region select (§2)
-- [ ] **`screenshot_active_window()`**: wrapper that calls `screenshot_window(wm_get_focused())`
+- [ ] **`screenshot_active_window()`**: wrapper that calls `screenshot_window(wm_get_focused_window())`
 
 ---
 
@@ -133,7 +134,7 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
   - [ ] **Mode selector**: Rectangle, Window, Full screen and Freeform as toggle buttons (the same modes as the snipping toolbar of `docs/design/shell.md#snipping-toolbar`); default Rectangle
   - [ ] **Delay selector** (dropdown / radio): `0 s | 1 s | 3 s | 5 s`; default 0 s
   - [ ] `[New]` button → if delay > 0: countdown OSD (`"3… 2… 1…"` centred, display style `THEME_TYPE_DISPLAY_*` 68/92, `text_primary` over the `smoke` scrim); then perform capture per selected mode
-  - [ ] Full screen mode → `screenshot_full()` directly; Window mode → `screenshot_window(wm_get_focused())` (minimize Snip Tool first); Rectangular → `snip_region_start()` (§2)
+  - [ ] Full screen mode → `screenshot_full()` directly; Window mode → `screenshot_window(wm_get_focused_window())` (minimize Snip Tool first); Rectangular → `snip_region_start()` (§2)
 - [ ] **Recent captures grid** (home screen, below mode/delay bar):
   - [ ] 3-column thumbnail grid; load from `HKCU\Software\Impossible\SnipTool\RecentCaptures\{0..9}` paths; `image_scale(&thumb, &img, 120, 80, IMAGE_FIT_FIT)`; click → open in annotation view
 - [ ] **Annotation view** (when capture is available):
@@ -153,6 +154,7 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 
 **Source file:** `src/apps/archiver/archiver.c`; binary: `archiver.exe`
 
+- [ ] Settle archive manager ownership with `09-desktop-shell/TODO-12-utilities.md` §5 (item: "Settle archive manager ownership"): both plan `src/apps/archiver/archiver.c`; keep one spec
 - [ ] **Main window** `wm_create_window("Archive Manager -- {filename}", 700, 500, WM_RESIZABLE)`:
   - [ ] Toolbar: `[Extract All]` `[Add Files]` `[New Archive]` `[Delete Selected]` + path bar showing current virtual path inside archive
   - [ ] `CTRL_LISTVIEW` file list -- columns: Name (250 px), Type (80 px), Size (80 px), Compressed (90 px), Modified (130 px); icon from `icon_get_for_ext(entry_name_ext)`
@@ -200,7 +202,7 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 | ⭐  | Feature                                                        | 🪟 Win11                                   | 🐧 Linux                               | 🚀 Impossible OS                                                  |
 | --- | -------------------------------------------------------------- | ------------------------------------------ | -------------------------------------- | ----------------------------------------------------------------- |
 | 💎  | PrtSc → full-screen PNG capture + clipboard                    | ✅ PrtSc copies to clipboard; Win+PrtSc    | ✅ GNOME screenshot / flameshot        | ⬜ §1 -- `fb_get_backbuffer` + `image_save_png` + `clipboard_set` |
-| 💎  | Alt+PrtSc → active window capture                              | ✅ Alt+PrtSc copies window to clipboard    | ✅ GNOME screenshot                    | ⬜ §1 -- `wm_get_focused` + `wm_get_window_rect` crop             |
+| 💎  | Alt+PrtSc → active window capture                              | ✅ Alt+PrtSc copies window to clipboard    | ✅ GNOME screenshot                    | ⬜ §1 -- `wm_get_focused_window` + `wm_get_window_rect` crop      |
 | ⭐  | Win+Shift+S → rubber-band region with clear-region dim overlay | ✅ Snipping Tool (Win+Shift+S)             | ✅ flameshot / gnome-screenshot --area | ⬜ §2 -- z_order=32767 overlay, clear-region blit +               |
 | 💎  | Snipping Tool with mode/delay selector + annotation            | ✅ Snipping Tool (full app)                | ✅ flameshot (annotate)                | ⬜ §3 -- mode/delay, pen/highlighter strokes, crop, undo          |
 | ⭐  | Post-capture floating toolbar                                  | ✅ Snipping Tool post-capture bar          | ⚠️ flameshot (basic)                   | ⬜ §2 -- auto-dismiss 5 s panel with                              |

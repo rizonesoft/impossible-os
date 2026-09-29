@@ -19,7 +19,7 @@ title: "TODO-04 -- Email Client"
 > search bar, read/unread state), CNG credential encryption specifics (`cng_aes256gcm_encrypt`
 > with user login KEK), contacts CSV path and autocomplete wiring, spam/junk filter (not covered
 > in TODO-09), taskbar badge + system tray envelope icon, and the 5-minute `sched_task_add` poll.
-> Implement §1–§3 in coordination with TODO-09 §2–§5; do not re-implement what TODO-09 already
+> Implement §1–§3 in coordination with TODO-09 §2–§4; do not re-implement what TODO-09 already
 > specifies -- use XREFs to stay aligned.
 >
 > Mbed TLS (`tls_connect`, `tls_send`, `tls_recv`) must be complete before STARTTLS/TLS work
@@ -31,7 +31,7 @@ title: "TODO-04 -- Email Client"
 
 ## Inputs
 
-- `07-networking/TODO-09-email-client.md` -- canonical protocol implementation reference (§1 parser, §2 SMTP, §4 POP3, §5 IMAP, §8 GUI, §9 compose, §10 contacts, §11 search)
+- `07-networking/TODO-09-email-client.md` -- canonical protocol implementation reference (§1 parser, §2 SMTP, §3 POP3, §4 IMAP, §5 accounts, §7 GUI, §8 compose, §9 contacts, §10 search)
 - `include/kernel/net/tls.h` -- `tls_connect(fd, hostname)`, `tls_send()`, `tls_recv()`, `tls_close()` (→ XREF `07-networking/TODO-03`)
 - `include/kernel/net/dns.h` -- `dns_resolve(hostname, &ip)`
 - `include/kernel/cng/cng.h` -- `cng_aes256gcm_encrypt()`, `cng_aes256gcm_decrypt()` (→ XREF `09-desktop-shell/TODO-07 §1`)
@@ -42,7 +42,7 @@ title: "TODO-04 -- Email Client"
 - `include/kernel/scheduler_tasks.h` (→ XREF `09-desktop-shell/TODO-04 §6`) -- `sched_task_add(name, cb, interval_s, enabled)`
 - `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_create_key`, `reg_delete_key`
 - `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_mkdir`, `vfs_unlink`
-- `notify_send(title, body, icon_id, timeout_ms)` / `SYS_NOTIFY_SEND=54` (→ XREF `08-graphics-ui/TODO-09 §6`)
+- `notify_send(title, body, icon_id, timeout_ms)` / `SYS_NOTIFY_SEND=54` (→ XREF `08-graphics-ui/TODO-11 §5`)
 
 ---
 
@@ -60,7 +60,7 @@ title: "TODO-04 -- Email Client"
 | 2    | POP3 Client + Message Storage         | 💎    | §1 complete                                             |
 | 3    | IMAP Client (Stretch)                 | 💎    | §1 complete, TLS                                        |
 | 4    | Three-Panel Email GUI                 | 💎    | §2 complete, controls.h, wm.h                           |
-| 5    | Compose Window                        | 💎    | §4 complete, §7 contacts                                |
+| 5    | Compose Window                        | 💎    | §4 complete, §8 contacts                                |
 | 6    | Account Management + Credential Store | ⭐    | CNG TODO-07 §1+§4, Registry                             |
 | 7    | Auto-Check + Notifications + Tray     | ⭐    | §2 complete, 09-desktop-shell/TODO-04 §6, TODO-09 §5+§6 |
 | 8    | Contacts Store                        | 💎    | VFS, §5 compose window                                  |
@@ -90,7 +90,7 @@ title: "TODO-04 -- Email Client"
 
 ## 2. POP3 Client + Message Storage `[Sonnet]`
 
-> → XREF: `07-networking/TODO-09-email-client.md §4` -- base implementation spec.
+> → XREF: `07-networking/TODO-09-email-client.md §3` -- base implementation spec.
 
 **Source file:** `src/apps/mail/pop3.c`; header `include/apps/mail/pop3.h`
 
@@ -110,7 +110,7 @@ title: "TODO-04 -- Email Client"
 
 ## 3. IMAP Client (Stretch) `[Opus]`
 
-> → XREF: `07-networking/TODO-09-email-client.md §5` -- base implementation spec.
+> → XREF: `07-networking/TODO-09-email-client.md §4` -- base implementation spec.
 > This section adds IDLE push notification and flag sync detail.
 
 **Source file:** `src/apps/mail/imap.c`; header `include/apps/mail/imap.h`
@@ -133,7 +133,7 @@ title: "TODO-04 -- Email Client"
 
 **Owner of:** the work planned in `07-networking/TODO-09 §7`, which is superseded there so there is one implementation.
 
-> → XREF: `07-networking/TODO-09-email-client.md §8`
+> → XREF: `07-networking/TODO-09-email-client.md §7`
 
 **Source file:** `src/apps/mail/mail.c`; window title `Mail`
 
@@ -157,7 +157,7 @@ Layout (per `docs/design/shell.md#app-window-layout`): account sidebar 280 px | 
 
 **Owner of:** the work planned in `07-networking/TODO-09 §8`, which is superseded there so there is one implementation.
 
-> → XREF: `07-networking/TODO-09-email-client.md §9`
+> → XREF: `07-networking/TODO-09-email-client.md §8`
 
 **Source file:** `src/apps/mail/compose.c`
 
@@ -174,14 +174,14 @@ Layout (per `docs/design/shell.md#app-window-layout`): account sidebar 280 px | 
 
 ## 6. Account Management + Credential Store `[Sonnet]`
 
-> → XREF: `07-networking/TODO-09-email-client.md §6` -- base spec.
+> → XREF: `07-networking/TODO-09-email-client.md §5` -- base spec.
 > This section specifies the CNG AES-256-GCM credential encryption and Registry layout.
 
 **Source file:** `src/apps/mail/mail_account.c`
 
 - [ ] `acct_add(name, email, smtp_host, smtp_port, pop3_host, pop3_port, user, pass)`:
   - [ ] Registry key: `HKCU\Software\Impossible\Mail\Accounts\{name}\` with values: `Email`, `SmtpHost`, `SmtpPort`, `Pop3Host`, `Pop3Port`, `User`, `EncPass`, `EncPassNonce`, `EncPassTag`
-  - [ ] Password encryption: `cng_keystore_get_kek(kek)` → `csprng_read(nonce, 12)` → `cng_aes256gcm_encrypt(kek, nonce, pass, strlen(pass), enc_out, tag)` → store hex-encoded `EncPass`/`EncPassNonce`/`EncPassTag`
+  - [ ] Password encryption: `cng_keystore_get_kek(kek)` → `csprng_fill(nonce, 12)` → `cng_aes256gcm_encrypt(kek, nonce, pass, strlen(pass), enc_out, tag)` → store hex-encoded `EncPass`/`EncPassNonce`/`EncPassTag`
 - [ ] `acct_load(name, &acct)`: read Registry → `cng_key_store_get` or direct AES-GCM decrypt with stored nonce/tag → fill `mail_account_t` struct with plaintext password in RAM (zeroed after use)
 - [ ] `acct_list(names[], max)`: enumerate `HKCU\Software\Impossible\Mail\Accounts\` subkeys
 - [ ] `acct_delete(name)`: `reg_delete_key(HKCU\Software\Impossible\Mail\Accounts\{name})`; remove local mail folders
@@ -196,7 +196,7 @@ Layout (per `docs/design/shell.md#app-window-layout`): account sidebar 280 px | 
 
 **Owner of:** the work planned in `07-networking/TODO-09 §6`, which is superseded there so there is one implementation.
 
-> → XREF: `07-networking/TODO-09-email-client.md §7` -- base spec.
+> → XREF: `07-networking/TODO-09-email-client.md §6` -- base spec.
 
 **Source file:** `src/apps/mail/mail_notify.c`; `mail_systray.c`
 
@@ -212,10 +212,12 @@ Layout (per `docs/design/shell.md#app-window-layout`): account sidebar 280 px | 
 
 ## 8. Contacts Store `[Sonnet]`
 
-> → XREF: `07-networking/TODO-09-email-client.md §10` -- base spec.
+> → XREF: `07-networking/TODO-09-email-client.md §9` -- base spec.
 
 **Source file:** `src/apps/mail/contacts.c`; header `include/apps/mail/contacts.h`
 
+- [ ] Settle one contacts store and mail folder with `07-networking/TODO-09-email-client.md` (item: "Settle one contacts store") before coding §8
+  - Contacts: `contacts.csv` under `C:\Users\{name}\AppData\Mail\` here vs `contacts.json` under `C:\Users\Default\AppData\` there (its §9); messages sit under `{name}` here and `Default` there.
 - [ ] **Storage**: `C:\Users\{name}\AppData\Mail\contacts.csv` -- one row per contact, fields: `Name,Email,Phone` (UTF-8, comma-separated, first row = header)
 - [ ] `contact_load_all(contacts[], max)` → `vfs_open` + parse CSV line-by-line → fill `struct contact { name[128], email[256], phone[64] }[256]`
 - [ ] `contact_lookup(partial_email, results[], max)` → scan loaded contacts, return entries where `strstr(c->email, partial_email)` (case-insensitive) or `strstr(c->name, partial_email)`

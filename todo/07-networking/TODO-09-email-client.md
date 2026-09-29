@@ -214,6 +214,7 @@ Parse `From:` addresses from all received messages into a contacts cache. Autoco
 > [!NOTE]
 > `contacts.json` format: `[{"name":"Alice Smith","email":"alice@example.com","count":5}, …]` -- flat array, sorted by `count` descending (most-contacted first). After each `pop3_sync()`/`imap_sync()`: parse `From:` header of each new message; extract display name + email address (RFC 2822 format: `"Display Name" <email@host>` or bare `email@host`); if email not in contacts: add with `count=1`; else: increment `count`. Autocomplete in compose: in `ctrl_handle_key()` for To/CC textbox fields: if current input matches a contact email/name prefix: show a dropdown popup with up to 5 matching contacts; Enter/click selects and appends `"Name" <email>`. JSON I/O: hand-written serializer/deserializer (same pattern as browser bookmarks in TODO-07 §8).
 
+- [ ] Settle one contacts store with `11-apps/TODO-04-email-client.md` (item: "Settle one contacts store"): it plans `contacts.csv` under the user's own folder, not `contacts.json` under `Default`
 - [ ] `contact_t { char name[128]; char email[256]; uint32_t count; }` + `contacts[512]` + `contact_count`
 - [ ] `contacts_load(path)` → count: `vfs_open` + read JSON; parse array of `{name,email,count}` objects
 - [ ] `contacts_save(path)`: serialize all contacts to JSON; `vfs_write()`

@@ -22,7 +22,7 @@ title: "TODO-13 -- Calendar, Sticky Notes & Utility Apps"
 >
 > **Scope overlaps -- cross-reference, do not re-specify:**
 > - Calendar base (Zeller grid, events pane, add-event dialog, taskbar flyout) →
->   `09-desktop-shell/TODO-12-utilities.md §7`; this TODO adds **recurring events** and
+>   `09-desktop-shell/TODO-12-utilities.md §6`; this TODO adds **recurring events** and
 >   **`.ics` export** only.
 > - Font Manager app (preview, install/remove, `ttf_mgr_reload`) →
 >   `09-desktop-shell/TODO-02-file-associations-resources.md §8`; this TODO adds **OS/2
@@ -35,8 +35,8 @@ title: "TODO-13 -- Calendar, Sticky Notes & Utility Apps"
 
 ## Inputs
 
-- `include/registry.h` -- `reg_get/set_string`, `reg_delete_key`, `reg_enum_subkeys` -- §1 events, §2 sticky persist, §5 color history
-- `include/kernel/time.h` -- `time_now()`, `time_to_datetime()`, `time_format()` -- §1 ICS timestamps, §2 auto-save
+- `include/registry.h` -- `RegGetString`/`RegSetString`, `RegDeleteKey`, `RegEnumKeyEx` (the `reg_*` calls below are shorthand for these) -- §1 events, §2 sticky persist, §5 color history
+- `include/kernel/time/wall_clock.h` -- wall-clock time (no `time_now()`, `time_to_datetime()` or `time_format()` exist yet) -- §1 ICS timestamps, §2 auto-save
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_set_flag(WM_FLAG_NO_FOCUS)`, `wm_set_flag(WM_FLAG_ALWAYS_ON_TOP)`, `wm_set_fullscreen()` -- §2 §4 §5
 - `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR_VERT`, `CTRL_STATUSBAR` -- §2 §3 §4 §6 §7
 - `include/gfx.h` -- `gfx_fill_rect()`, `gfx_draw_line()`, `gfx_blit()` -- §1 grid, §5 magnifier loupe
@@ -45,15 +45,15 @@ title: "TODO-13 -- Calendar, Sticky Notes & Utility Apps"
 - `include/kernel/clipboard.h` (→ XREF `09-desktop-shell/TODO-01 §1`) -- `clipboard_set(CLIP_TEXT, ...)` -- §5 HEX copy
 - `include/kernel/cpuid.h` -- `cpuid_get()` → `brand`, `vendor`, `model`, `cores`, `threads` -- §3
 - `include/kernel/acpi.h` -- `acpi_get_cpu_count()`, `acpi_get_cpu_info()` -- §3
-- `include/kernel/smbios.h` -- `struct smbios_system_info`, `smbios_get_system_info()` -- §3
+- `include/kernel/smbios.h` -- `struct smbios_system_info`, `smbios_get_info()` -- §3
 - `include/kernel/mm/pmm.h` -- `pmm_get_total_frames()`, `pmm_get_free_frames()` -- §3
 - `include/kernel/drivers/blkdev.h` -- `blkdev_count()`, `blkdev_list()` -- §3 disk list
 - `include/font_mgr.h` -- `ttf_get(slot, px)`, `ttf_draw_string()`, `ttf_measure_width()` -- §6 font preview
 - `include/kernel/fs/vfs.h` -- `vfs_readdir`, `vfs_open`, `vfs_read`, `vfs_write`, `vfs_stat` -- §1 ICS save, §3 export, §6 font listing
-- `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §6` (→ XREF) -- `notify_send()` -- §7 install toast
+- `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §5` (→ XREF) -- `notify_send()` -- §7 install toast
 - `09-desktop-shell/TODO-03-service-manager.md §8` (→ XREF) -- `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` autostart -- §9 sticky notes startup
 - `08-graphics-ui/TODO-08-window-manager.md §5` (→ XREF) -- `hotkey_table[]`, `MOD_WIN|MOD_SHIFT`, `MOD_WIN|MOD_CTRL` -- §4 OSK hotkey, §5 color picker hotkey
-- `09-desktop-shell/TODO-12-utilities.md §7` (→ XREF) -- `calendar_open_at_date()`, Zeller formula, add-event dialog -- §1 base
+- `09-desktop-shell/TODO-12-utilities.md §6` (→ XREF) -- `calendar_open_at_date()`, Zeller formula, add-event dialog -- §1 base
 - `09-desktop-shell/TODO-02-file-associations-resources.md §8` (→ XREF) -- `fontmgr.exe`, `ttf_mgr_reload()` -- §6 base
 
 ---
@@ -68,9 +68,9 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 | Step | Section                                      | 💎/⭐ | Dependency                                                      |
 | ---- | -------------------------------------------- | ----- | --------------------------------------------------------------- |
-| 1    | Calendar App (Recurring Events + ICS Export) | 💎    | `09-desktop-shell/TODO-12 §7` base calendar complete            |
+| 1    | Calendar App (Recurring Events + ICS Export) | 💎    | `09-desktop-shell/TODO-12 §6` base calendar complete            |
 | 2    | Sticky Notes                                 | 💎    | `wm_create_window(WM_FLAG_ALWAYS_ON_TOP)`, Registry persist     |
-| 3    | System Information (`sysinfo.exe`)           | 💎    | `cpuid_get`, `smbios_get_system_info`, `pmm_*`, `blkdev_count`  |
+| 3    | System Information (`sysinfo.exe`)           | 💎    | `cpuid_get`, `smbios_get_info`, `pmm_*`, `blkdev_count`         |
 | 4    | On-Screen Keyboard                           | 💎    | `keyboard_inject_scancode`, `WM_FLAG_NO_FOCUS`, `hotkey_table`  |
 | 5    | Color Picker                                 | ⭐    | `fb_get_backbuffer`, `hotkey_table`, `clipboard_set(CLIP_TEXT)` |
 | 6    | Font Manager (OS/2 + Unicode Coverage)       | 💎    | `09-desktop-shell/TODO-02 §8` base fontmgr complete             |
@@ -83,7 +83,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
 > Base calendar grid, add-event dialog, and taskbar flyout are specified in
-> `09-desktop-shell/TODO-12-utilities.md §7` -- implement those first.
+> `09-desktop-shell/TODO-12-utilities.md §6` -- implement those first.
 > This section adds **recurring events** and **`.ics` export** only.
 
 **Source file:** `src/apps/calendar/calendar_recur.c` (extension of `calendar.c`)
@@ -136,6 +136,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 **Source file:** `src/apps/sysinfo/sysinfo.c`; header `include/apps/sysinfo/sysinfo.h`
 
+- [ ] `sysinfo.exe` already ships as a CLI (`user/sysinfo/sysinfo.c`, subcommand `firmware-updates`, run by the shell's `sysinfo`); extend that binary or rename this app, never ship two of the same name
 - [ ] **Data gathering** (`sysinfo_gather(struct sys_summary *out)` -- shared with `sysdm.cpl`):
   - [ ] CPU: `cpuid_get()->brand` (model name), `cpuid_get()->vendor`, physical cores = `acpi_get_cpu_count()`, logical threads = `cpuid_get()->threads_per_core * cores`
   - [ ] RAM: `pmm_get_total_frames() * 4096 / (1024*1024)` → total MiB; `pmm_get_free_frames()` → free MiB
@@ -145,7 +146,7 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
   - [ ] Uptime: `system_get_ticks() / 1000` → seconds → format `"{d}d {h}h {m}m {s}s"`
   - [ ] Hostname: `reg_get_string("HKLM\\SYSTEM\\ComputerName\\ActiveComputerName", "ComputerName")`
   - [ ] IP: from `net_get_ip()` or `reg_get_string` cached DHCP lease
-  - [ ] SMBIOS: `smbios_get_system_info()` → `struct smbios_system_info` → `manufacturer`, `product_name`, `serial_number`
+  - [ ] SMBIOS: `smbios_get_info()` → `struct smbios_system_info` → `sys_manufacturer`, `sys_product`, `sys_serial`
 - [ ] **Main window** `wm_create_window("System Information", 600, 500, WM_RESIZABLE)`:
   - [ ] Two-column read-only table: bold label (left 180 px) + value (remaining); rows: OS Version, Build, Computer Name, Manufacturer, Product, CPU, Cores/Threads, RAM Total, RAM Free, Display, Disk(s), IP Address, Uptime, SMBIOS Serial
   - [ ] `CTRL_SCROLLBAR_VERT` if rows exceed window height

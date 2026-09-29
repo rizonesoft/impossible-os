@@ -17,9 +17,9 @@ title: "TODO-02 -- Event Viewer (Log Viewer)"
 
 ## Inputs
 
-- `src/kernel/klog_disk.c` -- writes `events.jsonl` (JSONL format: `{"ts":N,"level":"INFO","tag":"net","msg":"..."}`)
+- `src/kernel/klog_disk.c` -- writes `events.jsonl` (JSONL format: `{"ts":N,"lvl":"INFO","sub":"net","cpu":N,"pid":N,"tid":N,"msg":"...","dropped":N}`; `ts` is milliseconds since boot)
 - `include/kernel/klog.h` -- `log_level_t` enum (DEBUG=0, INFO=1, WARN=2, ERROR=3, FATAL=4)
-- `X:\Logs\events.jsonl` -- on-disk event log
+- `X:\Logs\events.jsonl` -- on-disk event log (`C:\Impossible\System\Logs\events.jsonl` when BlackBox is not mounted; rotated like `kernel.log`)
 - → XREF: `02-kernel-core/TODO-04-system-logging.md` -- JSON Lines event format (was TODO-02 §6)
 - → XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` -- unit test wiring
 
@@ -56,11 +56,11 @@ title: "TODO-02 -- Event Viewer (Log Viewer)"
 Text-based event log reader -- works before GUI is needed.
 
 - [ ] Create `user/apps/eventview.c`
-- [ ] Open and parse `X:\Logs\events.jsonl` line by line
-- [ ] Parse each JSON line for `ts`, `level`, `tag`, `msg` fields (minimal JSON parser or string scan)
-- [ ] Print formatted table: `[HH:MM:SS] [LEVEL] [tag] message`
+- [ ] Open and parse `events.jsonl` line by line from the active log directory (`X:\Logs\`, else `C:\Impossible\System\Logs\`)
+- [ ] Parse each JSON line for `ts`, `lvl`, `sub`, `msg` fields (plus `cpu`, `pid`, `tid`, `dropped`) (minimal JSON parser or string scan)
+- [ ] Print formatted table: `[+HH:MM:SS.mmm since boot] [LEVEL] [sub] message`
 - [ ] Colour output: green for INFO, yellow for WARN, red for ERROR/FATAL
-- [ ] Optional filter args: `eventview --level WARN` shows WARN+ only, `eventview --tag net` filters by subsystem
+- [ ] Optional filter args: `eventview --level WARN` shows WARN+ only, `eventview --sub net` filters by subsystem
 - [ ] Commit: `"tools: console-mode eventview.exe -- JSONL log viewer"`
 
 ---
@@ -71,9 +71,10 @@ Text-based event log reader -- works before GUI is needed.
 
 Graphical version with filterable table.
 
+- [ ] Date range needs a wall-clock anchor: `ts` is milliseconds since boot, and the log carries no boot wall-clock stamp; decide here between adding one (a new logging-roadmap item) and filtering by uptime
 - [ ] 800×500 window: toolbar (filters) + scrollable table
 - [ ] Table columns: Time, Level, Subsystem, Message (list view per `docs/design/controls.md#list-tree-and-grid-views`)
-- [ ] Security filter: include `LOG_SECURITY` events from the kernel event log of `10-platform-services/TODO-04 §1` (`X:\Logs\events.log`), which supersedes the `eventvwr.cpl` viewer planned there
+- [ ] Security filter: include `SECURITY` events that `kevent_log()` of `10-platform-services/TODO-04 §1` will append to `events.jsonl` with a `type` field (not yet shipped), which supersedes the `eventvwr.cpl` viewer planned there
 - [ ] Level column: level name as text plus the matching status glyph (info / warning / error) in `status_info` / `status_caution` / `status_critical` per `docs/design/controls.md#status-colours`
   - Levels use the status glyph plus text in the matching `status_*` colour per `docs/design/controls.md#status-colours` (never colour alone).
 - [ ] Filter bar: level dropdown (All/INFO/WARN/ERROR), subsystem dropdown, text search field
@@ -90,7 +91,7 @@ Graphical version with filterable table.
 
 Watch for new events and update the display.
 
-- [ ] Poll `events.jsonl` file size every 1s; if grown, read new lines
+- [ ] Poll `events.jsonl` file size every 1s; if grown, read new lines; if it shrank, the file rotated: re-open and read from the start
 - [ ] Scroll-to-bottom on new entries (if already at bottom)
 - [ ] Toolbar toggle: "Live" / "Paused"
 - [ ] Commit: `"tools: eventview.exe live tail mode"`
@@ -115,7 +116,7 @@ Watch for new events and update the display.
 - [ ] Create `src/kernel/test/test_eventview.c` with:
   - `events.jsonl` exists after boot with debug=1
   - File contains at least 10 entries
-  - Each line is valid JSON with `ts`, `level`, `tag`, `msg` fields
+  - Each line is valid JSON with `ts`, `lvl`, `sub`, `cpu`, `pid`, `tid`, `msg`, `dropped` fields
 - [ ] Register in `test_runner_init()`: `test_register_eventview()`
 - [ ] Commit: `"test: add event viewer JSONL validation test suite"`
 

@@ -41,7 +41,7 @@ title: "TODO-02 -- FTP Client, wget/curl & WiFi"
 | `08-graphics-ui/TODO-05 §*`                        | `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR` -- FTP GUI + WiFi settings panel                 |
 | → XREF: `07-networking/TODO-03`                    | HTTP/HTTPS client -- mandatory for wget/curl                                         |
 | → XREF: `11-apps/TODO-01 §2`                       | HTML link extractor for `wget -r` recursive crawl                                    |
-| → XREF: `04-drivers-hardware/TODO-10-usb-stack.md` | USB HID stack -- USB WiFi adapter driver prerequisite                                |
+| → XREF: `04-drivers-hardware/TODO-10-usb-stack.md` | USB Stack Completion -- USB WiFi adapter driver prerequisite                         |
 
 ---
 
@@ -64,7 +64,7 @@ title: "TODO-02 -- FTP Client, wget/curl & WiFi"
 | 3   | `wget` command (HTTP/HTTPS + progress)                    | `[Sonnet]` | 07-networking/TODO-03       | 💎   |
 | 4   | `curl` command (full flag set)                            | `[Sonnet]` | §3                          | 💎   |
 | 5   | FTP GUI client (dual-pane, stretch)                       | `[Sonnet]` | §1, 08-graphics-ui/TODO-05  | 💎   |
-| 6   | WiFi framework (stretch)                                  | `[Opus]`   | 04-drivers-hardware/TODO-09 | 💎   |
+| 6   | WiFi framework (stretch)                                  | `[Opus]`   | 04-drivers-hardware/TODO-15 | 💎   |
 
 ---
 
@@ -72,6 +72,10 @@ title: "TODO-02 -- FTP Client, wget/curl & WiFi"
 
 Create `src/apps/ftp/ftp.c` + `include/apps/ftp.h`. Pure protocol layer -- no UI, no shell integration.
 
+- [ ] Settle one FTP and one wget/curl spec (item: "Settle one FTP and wget/curl spec") before coding: §1-§4 restate other roadmaps
+  - FTP core and shell: `07-networking/TODO-08-ssh-ftp-clients.md` §1-§2 (header `include/apps/ftp/ftp.h`, `ftp_session_t`, `ftp_mkd`/`ftp_rmd`/`ftp_dele`, 4 KiB chunks); it assigns only the GUI (§5) here.
+  - wget/curl: `07-networking/TODO-03-http-tls.md` §4 (`-o` not `-O`, `wget_progress_bar`, an FTP stub returning -ENOTSUP).
+  - Keep one spec per tool; the flag set, `progress_bar_print()` and the GUI are the unique content here.
 - [ ] `struct ftp_session { int ctrl_sock; char host[256]; char cwd[512]; uint8_t logged_in; }`
 - [ ] `ftp_connect(host, user, pass)`:
   - `kern_connect(host, 21)` → control socket
@@ -136,7 +140,8 @@ Implements the full `wget` command-line tool backed by `http_get()`/`https_get()
 - [ ] `wget -O <file> <url>` → explicit output filename (or `-O -` for stdout)
 - [ ] `wget -q <url>` → quiet mode (no progress, no status messages; errors still to stderr)
 - [ ] `wget -c <url>` → resume: if output file exists, read its size → set `Range: bytes=N-` HTTP header in request; append to existing file
-- [ ] `wget -r <url>` → recursive: fetch HTML page; extract `<a href>` links (call `html_extract_links()` from `TODO-01 §1`); limit to same domain + max 2 levels deep; save each file preserving URL directory structure under `./hostname/path/`; max 100 files
+- [ ] `wget -r <url>` → recursive: fetch HTML page; extract `<a href>` links; same domain, max 2 levels deep, max 100 files, saved under `./hostname/path/`
+  - Link extraction: `TODO-01` specifies no extractor yet (its §1 keeps a `link_list[64]`); share one with it rather than writing a second.
 - [ ] `wget --no-check-certificate <url>` → skip TLS cert verification (calls `https_get_insecure()` variant)
 - [ ] Progress: `https_get()` streams response → parse `Content-Length` header → call `progress_bar_print(bytes_received, content_length, elapsed_ms)` per 64 KiB chunk
 - [ ] Error messages: `wget: cannot resolve host`, `wget: HTTP 404 Not Found`, `wget: TLS handshake failed`
@@ -190,6 +195,8 @@ Standalone `ftpgui.exe` with a dual-pane file manager layout. Depends on `CTRL_L
 
 > Long-term stretch goal. Requires USB host stack (`04-drivers-hardware/TODO-10-usb-stack.md`) and real hardware or QEMU virtio-wifi. Do not start until §1–5 are complete.
 
+- [/] Owned by `04-drivers-hardware/TODO-15-wifi-drivers.md` (device vtable, 802.11 frames, WPA2 supplicant, RTL8188, `ncpa.cpl` tab); this section predates it and names other headers
+  - Build Wi-Fi there, not here; keep only anything TODO-15 does not cover. Also note monocypher has no PBKDF2, HMAC-SHA1 or AES, which WPA2 needs.
 - [ ] Create `include/kernel/drivers/wifi.h`:
   - `struct wifi_network { char ssid[33]; uint8_t bssid[6]; int8_t signal_dbm; uint8_t security; /* WIFI_OPEN/WEP/WPA2/WPA3 */ uint8_t channel; }`
   - `wifi_scan(networks, max)` → active probe requests + passive beacon listen; return count

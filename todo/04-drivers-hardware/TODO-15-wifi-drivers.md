@@ -62,6 +62,7 @@ Define `wifi_device_t` vtable and `wifi_manager.c` singleton. Expose `SYS_WIFI_S
 > [!NOTE]
 > `wifi_manager.c` is the single source of truth for WiFi state. It owns the `wifi_scan_results[]` list, the current `wifi_state_t` FSM state, and the `active_device` pointer. No other code modifies WiFi state directly -- all changes go through `wifi_manager_*` functions. This is the equivalent of Windows `WLAN AutoConfig Service` but in-kernel without a service daemon.
 
+- [ ] Absorb `11-apps/TODO-02-ftp-wget-wifi.md` §6 (item: "Owned by `04-drivers-hardware/TODO-15-wifi-drivers.md`"): its older Wi-Fi plan is parked on this file; fold in anything it covers that this file does not
 - [ ] Define:
   ```c
   typedef struct {

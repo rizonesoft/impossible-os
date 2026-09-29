@@ -14,11 +14,11 @@ title: "TODO-03 -- SSH Client"
 > lower layers.
 
 > [!IMPORTANT]
-> `07-networking/TODO-08-ssh-ftp-clients.md §2–§9` is the canonical SSH **protocol** implementation
+> `07-networking/TODO-08-ssh-ftp-clients.md §4–§9` is the canonical SSH **protocol** implementation
 > spec (transport, auth, channel, shell command, SSH agent, SFTP subsystem). This TODO extends
 > that with the richer wire-format details from the prompt spec, Registry-backed TOFU/known-hosts,
 > Windows-style SSH config file parsing, SCP protocol flow, and sftp interactive UI.
-> Implement §1–§3 here in parallel with or after TODO-08 §2–§6; do not re-implement what
+> Implement §1–§3 here in parallel with or after TODO-08 §4–§6; do not re-implement what
 > TODO-08 already specifies -- use XREFs to stay aligned.
 >
 > Monocypher (Curve25519 / ChaCha20-Poly1305 / Ed25519) **must** be ported before any crypto
@@ -29,10 +29,10 @@ title: "TODO-03 -- SSH Client"
 ## Inputs
 
 - `include/desktop/terminal.h` -- `terminal_open()`, `terminal_puts()`, `terminal_trygetchar()`, `TERM_COLS`, `TERM_ROWS`
-- `07-networking/TODO-08-ssh-ftp-clients.md §2–§9` -- SSH protocol reference spec
-- `07-networking/TODO-02-dns-sockets.md §3` -- `kern_socket`, `kern_connect`, `kern_send`, `kern_recv`, `kern_close`, `dns_resolve`
-- `02-kernel-core/TODO-03-kernel-libraries.md §6` -- monocypher: `crypto_x25519_*`, `crypto_chacha20_*`, `crypto_poly1305_*`, `crypto_ed25519_*`, `crypto_blake2b_*`, `csprng_fill`
-- `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_create_key`
+- `07-networking/TODO-08-ssh-ftp-clients.md §4–§9` -- SSH protocol reference spec
+- `07-networking/TODO-02-dns-sockets.md §5` (sockets) and §1-§3 (`dns_resolve`) -- `kern_socket`, `kern_connect`, `kern_send`, `kern_recv`, `kern_close`, `dns_resolve`
+- `02-kernel-core/TODO-03-kernel-libraries.md §5` -- monocypher: `crypto_x25519_*`, `crypto_chacha20_*`, `crypto_poly1305_*`, `crypto_ed25519_*`, `crypto_blake2b_*`, `csprng_fill`
+- `include/registry.h` -- `RegSetString`, `RegGetString`, `RegCreateKeyEx` (the `reg_*` calls below are shorthand for these)
 - `11-apps/TODO-02-ftp-wget-wifi.md §2` -- `progress_bar_print(done, total, elapsed_ms)` helper
 
 ---
@@ -59,8 +59,8 @@ title: "TODO-03 -- SSH Client"
 
 ## 1. SSH2 Transport Layer `[Opus]`
 
-> → XREF: `07-networking/TODO-08-ssh-ftp-clients.md §2` -- base implementation spec.
-> This section specifies the HKDF-SHA256 key derivation, ChaCha20-Poly1305 packet framing, and
+> → XREF: `07-networking/TODO-08-ssh-ftp-clients.md §4` -- base implementation spec.
+> This section specifies the RFC 4253 key derivation, ChaCha20-Poly1305 packet framing, and
 > sequence-number tracking details that §4 of TODO-08 leaves implicit.
 
 **Source file:** `src/apps/ssh/ssh_transport.c`; header `include/apps/ssh/ssh.h`
@@ -71,23 +71,22 @@ title: "TODO-03 -- SSH Client"
 - [ ] `SSH_MSG_KEX_ECDH_INIT` (byte 30): generate ephemeral Curve25519 keypair via `crypto_x25519_public_key(client_pub, client_priv)` using `csprng_fill(client_priv, 32)`; send `client_pub[32]`
 - [ ] Recv `SSH_MSG_KEX_ECDH_REPLY` (byte 31): parse server host key blob (type + key bytes); parse server ephemeral pubkey `server_pub[32]`; parse server signature over exchange hash H
 - [ ] Compute shared secret: `crypto_x25519(shared, client_priv, server_pub)` → `shared[32]`
-- [ ] Derive session keys via HKDF-SHA256:
-  - `H = Blake2b(V_C || V_S || I_C || I_S || K_S || Q_C || Q_S || K)` -- exchange hash
+- [ ] Derive session keys per RFC 4253 section 7.2 (what OpenSSH expects; not HKDF):
+  - `H = SHA-256(V_C || V_S || I_C || I_S || K_S || Q_C || Q_S || K)` -- the `curve25519-sha256` exchange hash (RFC 8731), via `include/kernel/crypto/sha256.h`
   - `session_id = H` (first key exchange only)
-  - `enc_key_c2s[32] = HKDF-SHA256(K || H, "C", session_id)`; `enc_key_s2c[32]` with "D"
-  - `mac_key_c2s[32]` with "E"; `mac_key_s2c[32]` with "F"
-  - `iv_c2s[12]` with "A"; `iv_s2c[12]` with "B"
-- [ ] Verify server host key signature: `crypto_ed25519_check(sig, server_pubkey, H)` → reject on mismatch
-- [ ] Store server host key fingerprint: `crypto_blake2b(fingerprint, 16, host_key, host_key_len)` → hex string for TOFU (§4)
+  - Each key is `SHA-256(K || H || X || session_id)` with X = "A" to "F", extended by `SHA-256(K || H || K1 || ...)` when more bytes are needed
+  - `chacha20-poly1305@openssh.com` takes a 64-byte key per direction ("C" client to server, "D" server to client) and uses no MAC key and no IV
+- [ ] Verify server host key signature: `crypto_ed25519_check(sig, server_pubkey, H, 32)` → reject on mismatch
+- [ ] Store server host key fingerprint: SHA-256 of the host key blob, shown as `SHA256:<base64>` (the OpenSSH format) for TOFU (§4)
 - [ ] `SSH_MSG_NEWKEYS` (byte 21): send then recv; activate ChaCha20-Poly1305 AEAD for all subsequent packets:
-  - Packet format: 4-byte encrypted length (ChaCha20 block 0, key `enc_key_c2s`) + encrypted payload (ChaCha20 blocks 1+) + 16-byte Poly1305 tag
-  - Sequence numbers: `uint32_t seq_send = 0`, `seq_recv = 0`; increment after each packet sent/received; used as ChaCha20 counter
+  - Packet format: the 4-byte length is encrypted with the second 32 key bytes, the payload with the first 32 from block 1, and block 0 of the first key gives the Poly1305 key for the 16-byte tag
+  - Sequence numbers: `uint32_t seq_send = 0`, `seq_recv = 0`; increment after each packet sent/received; used as the ChaCha20 nonce
 
 ---
 
 ## 2. SSH Authentication `[Opus]`
 
-> → XREF: `07-networking/TODO-08-ssh-ftp-clients.md §3`
+> → XREF: `07-networking/TODO-08-ssh-ftp-clients.md §5`
 
 **Source file:** `src/apps/ssh/ssh_auth.c`
 
@@ -100,7 +99,7 @@ title: "TODO-03 -- SSH Client"
   - [ ] On `SSH_MSG_USERAUTH_SUCCESS`: proceed to §3
 - [ ] Stretch -- public key auth (Ed25519):
   - [ ] Keypair path: `C:\Users\{name}\AppData\ssh\id_ed25519` (private, 64 bytes) + `id_ed25519.pub` (public, 32 bytes)
-  - [ ] Auto-generate on first use: `csprng_fill(seed, 32)` → `crypto_ed25519_key_pair(pub, priv, seed)` → write both files; print `"Generating new Ed25519 key pair... done."`
+  - [ ] Auto-generate on first use: `csprng_fill(seed, 32)` → `crypto_ed25519_key_pair(secret_key, public_key, seed)` → write both files; print `"Generating new Ed25519 key pair... done."`
   - [ ] `SSH_MSG_USERAUTH_REQUEST` with method `"publickey"`, algorithm `"ssh-ed25519"`, public key blob; query only (no sig) first
   - [ ] On `SSH_MSG_USERAUTH_PK_OK`: send request again with `TRUE` + signature: `crypto_ed25519_sign(sig, priv, session_id || USERAUTH_REQUEST_blob)`
 
@@ -131,6 +130,8 @@ title: "TODO-03 -- SSH Client"
 
 **Source file:** `src/apps/ssh/ssh_main.c`; shell command registration in `src/shell/cmd_ssh.c`
 
+- [ ] Settle the host-trust store with `07-networking/TODO-08-ssh-ftp-clients.md` (item: "Settle the host-trust store") before coding §4: the two files disagree
+  - Known hosts: a `known_hosts` file under `AppData\SSH` there, the Registry key below here; key folder `AppData\SSH` there vs `AppData\ssh` here; banner and TERM strings differ too.
 - [ ] `ssh [user@]host [-p port] [-i keyfile]` -- parse args: extract user (before `@`), host (after `@`), optional `-p port`, optional `-i keyfile`
 - [ ] `dns_resolve(host, &ip)` → fail with `"ssh: could not resolve host: {host}"`
 - [ ] Opens new terminal window for the SSH session (or reuses current if launched from terminal)
@@ -168,7 +169,7 @@ title: "TODO-03 -- SSH Client"
 
 ## 6. SSH Config File `[Sonnet]`
 
-> → XREF: `10-platform-services/TODO-08 §4` -- `GetEnvironmentVariableA` for username resolution
+> → XREF: `10-platform-services/TODO-08 §2` -- `GetEnvironmentVariableA` for username resolution
 
 **Source file:** `src/apps/ssh/ssh_config.c`
 
@@ -219,15 +220,15 @@ title: "TODO-03 -- SSH Client"
 ## OS Comparison
 
 
-| ⭐  | Feature                                           | 🪟 Win11                                         | 🐧 Linux                  | 🚀 Impossible OS                                             |
-| --- | ------------------------------------------------- | ------------------------------------------------ | ------------------------- | ------------------------------------------------------------ |
-| 💎  | SSH2 transport -- ChaCha20-Poly1305 + HKDF-SHA256 | ✅ OpenSSH via `ssh.exe`                         | ✅ OpenSSH                | ⬜ §1 -- monocypher crypto; HKDF-SHA256 key derivation       |
-| 💎  | Password + pubkey (Ed25519) auth                  | ✅ OpenSSH                                       | ✅ OpenSSH                | ⬜ §2 -- Ed25519 auto-generate on first use                  |
-| 💎  | Interactive PTY relay + ANSI rendering            | ✅ OpenSSH + Windows Terminal                    | ✅ OpenSSH + any terminal | ⬜ §3 -- relay via `terminal_puts()`/`terminal_trygetchar()` |
-| ⭐  | TOFU fingerprint stored in Registry               | ✅ OpenSSH uses `%USERPROFILE%\.ssh\known_hosts` | ✅ `~/.ssh/known_hosts`   | ⬜ §4 -- `HKCU\Software\Impossible\SSH\KnownHosts\{host}`    |
-| 💎  | SCP file transfer with progress                   | ✅ OpenSSH `scp.exe`                             | ✅ OpenSSH `scp`          | ⬜ §5 -- SCP C-mode protocol, 64 KiB                         |
-| ⭐  | Windows-style SSH config                          | ✅ `%USERPROFILE%\.ssh\config`                   | ✅ `~/.ssh/config`        | ⬜ §6 -- IxUI Registry fallback + auto-create                |
-| 💎  | Interactive SFTP subsystem                        | ✅ OpenSSH `sftp.exe`                            | ✅ OpenSSH `sftp`         | ⬜ §7 -- (Stretch) -- ; `SSH2_FXP_*` protocol                |
+| ⭐  | Feature                                            | 🪟 Win11                                         | 🐧 Linux                  | 🚀 Impossible OS                                                |
+| --- | -------------------------------------------------- | ------------------------------------------------ | ------------------------- | --------------------------------------------------------------- |
+| 💎  | SSH2 transport -- ChaCha20-Poly1305 + RFC 4253 KDF | ✅ OpenSSH via `ssh.exe`                         | ✅ OpenSSH                | ⬜ §1 -- monocypher crypto; RFC 4253 section 7.2 key derivation |
+| 💎  | Password + pubkey (Ed25519) auth                   | ✅ OpenSSH                                       | ✅ OpenSSH                | ⬜ §2 -- Ed25519 auto-generate on first use                     |
+| 💎  | Interactive PTY relay + ANSI rendering             | ✅ OpenSSH + Windows Terminal                    | ✅ OpenSSH + any terminal | ⬜ §3 -- relay via `terminal_puts()`/`terminal_trygetchar()`    |
+| ⭐  | TOFU fingerprint stored in Registry                | ✅ OpenSSH uses `%USERPROFILE%\.ssh\known_hosts` | ✅ `~/.ssh/known_hosts`   | ⬜ §4 -- `HKCU\Software\Impossible\SSH\KnownHosts\{host}`       |
+| 💎  | SCP file transfer with progress                    | ✅ OpenSSH `scp.exe`                             | ✅ OpenSSH `scp`          | ⬜ §5 -- SCP C-mode protocol, 64 KiB                            |
+| ⭐  | Windows-style SSH config                           | ✅ `%USERPROFILE%\.ssh\config`                   | ✅ `~/.ssh/config`        | ⬜ §6 -- IxUI Registry fallback + auto-create                   |
+| 💎  | Interactive SFTP subsystem                         | ✅ OpenSSH `sftp.exe`                            | ✅ OpenSSH `sftp`         | ⬜ §7 -- (Stretch) -- ; `SSH2_FXP_*` protocol                   |
 
 Impossible OS stores known hosts natively in the Registry (no hidden dotfiles), auto-generates
 Ed25519 keys on first use, and routes PTY I/O directly through the native terminal API -- no POSIX

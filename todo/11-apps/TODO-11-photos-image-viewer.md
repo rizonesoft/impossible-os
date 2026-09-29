@@ -8,7 +8,7 @@ title: "TODO-11 -- Photos (Image Viewer)"
 
 # TODO-11 -- Photos (Image Viewer)
 
-> **Goal:** Build `photos.exe` -- the system image viewer for JPEG, PNG, BMP, GIF, and WEBP.
+> **Goal:** Build `photos.exe` -- the system image viewer for JPEG, PNG, BMP, GIF and TGA (WEBP and TIFF need a decoder first; see §1).
 > `stb_image` and `gfx_blit()` are already complete; this TODO wires them into a full
 > Photos-style app with folder navigation, thumbnail strip, slideshow, EXIF panel, and
 > non-destructive rotate/crop/auto-enhance editing.
@@ -23,7 +23,8 @@ title: "TODO-11 -- Photos (Image Viewer)"
 > `include/kernel/image.h` and are complete -- use them directly.
 >
 > **Set as Wallpaper** writes to `HKCU\Control Panel\Desktop\Wallpaper` via
-> `reg_set_string()` then signals the desktop shell to reload via `desktop_draw_wallpaper()`.
+> `RegSetString()` then calls `wallpaper_set()` from `08-graphics-ui/TODO-09` §3 (planned). Today the desktop reads
+> `HKLM\SYSTEM\Theme\Wallpaper` once at start-up and `desktop_draw_wallpaper()` only redraws the loaded image.
 >
 > **EXIF parsing** (§6) is novel infrastructure with no prior Impossible OS precedent; treat
 > it as a minimal inline reader rather than a general-purpose TIFF library.
@@ -37,10 +38,10 @@ title: "TODO-11 -- Photos (Image Viewer)"
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_mark_dirty()`, `wm_set_fullscreen()` -- §1 §4
 - `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_SCROLLBAR_HORIZ`, `CTRL_STATUSBAR`, `CTRL_LISTVIEW` -- §3 §4
 - `include/kernel/fs/vfs.h` -- `vfs_open`, `vfs_readdir`, `vfs_stat`, `vfs_get_name` -- §3 folder scan
-- `include/registry.h` -- `reg_get_string`, `reg_set_string` -- §4 Set as Wallpaper, §5 interval, §8 recent files
-- `include/desktop/desktop.h` -- `desktop_draw_wallpaper()` -- §4 wallpaper reload after set
+- `include/registry.h` -- `RegGetString`, `RegSetString` -- §4 Set as Wallpaper, §5 interval, §8 recent files
+- `08-graphics-ui/TODO-09-desktop-shell-features.md §3` -- `wallpaper_set(path, mode)` (planned) -- §4 wallpaper reload after set
 - `include/desktop/file_assoc.h` (→ XREF `09-desktop-shell/TODO-02 §1`) -- `file_assoc_set()` -- §8
-- `08-graphics-ui/TODO-06-widget-dialogs.md §2` -- `dialog_file_open()` -- §1 open dialog
+- `08-graphics-ui/TODO-06-widget-dialogs.md §8` -- `dialog_file_open()` -- §1 open dialog
 - `include/kernel/timer.h` -- `system_get_ticks()` -- §2 zoom debounce, §5 slideshow timer
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous()` -- §6 EXIF IFD buffer, §7 scratch pixels
 
@@ -75,6 +76,7 @@ All major image formats are registered to `photos.exe`.
 
 **Source file:** `src/apps/photos/photos.c`; header `include/apps/photos/photos.h`
 
+- [ ] WebP and TIFF have no decoder: stb_image is built for JPEG, PNG, BMP, GIF and TGA only (`src/kernel/image.c`); pick a licence-checked decoder or drop `.webp`/`.tif` from §1, §3 and §8
 - [ ] `wm_create_window("Photos", 900, 650, WM_RESIZABLE)` -- main window
 - [ ] On open: `image_load(&g_img, path)` → `image_scale(&g_display, &g_img, canvas_w, canvas_h, IMAGE_FIT_FIT)` → `gfx_blit(surface, 0, 0, display.pixels, display.width, display.height)`
 - [ ] Neutral background: `gfx_fill_rect(surface, 0, 0, canvas_w, canvas_h, THEME_<THEME>_WINDOW_BG)` (the current theme's `window_bg`, dark or light) before blit -- letterbox/pillarbox bands are always visible
@@ -124,16 +126,16 @@ All major image formats are registered to `photos.exe`.
   - [ ] `[◀]` Previous, `[▶]` Next (§3 folder nav)
   - [ ] `[🔍+]` Zoom In, `[🔍−]` Zoom Out, `[⊡]` Fit to Window (sets `g_fit_mode = true`)
   - [ ] `[↺]` Rotate Left (−90°), `[↻]` Rotate Right (+90°) → §7 rotate
-  - [ ] `[🗑]` Delete: `vfs_delete(filepath)`; advance to next image
+  - [ ] `[🗑]` Delete: `vfs_unlink(filepath)`; advance to next image
   - [ ] `[💾]` Save / `[📋]` Copy to Clipboard (`clipboard_set(CLIP_IMAGE, &g_img)`)
 - [ ] **Menu bar**: `File  Edit  View  Help`
   - [ ] `File`: Open, Save, Save As (PNG/BMP format selector), Set as Wallpaper, Properties (→ §6 EXIF panel toggle), Recent Files (10-entry), Exit
   - [ ] `Edit`: Copy, Paste (load clipboard image), Rotate Left/Right, Crop (→ §7), Auto-enhance (→ §7), Undo
   - [ ] `View`: Zoom In/Out/100%/Fit, Thumbnail Strip (toggle), EXIF Panel (toggle), Slideshow, Fullscreen (F11 → `wm_set_fullscreen`)
 - [ ] **Set as Wallpaper**:
-  - [ ] `reg_set_string("HKCU\\Control Panel\\Desktop\\Wallpaper", filepath)`
-  - [ ] `reg_set_string("HKCU\\Control Panel\\Desktop\\WallpaperStyle", "10")` (10 = Fill, the design default per `docs/design/shell.md#desktop`; 2 = stretch and 6 = fit stay user choices in Personalize)
-  - [ ] Call `desktop_draw_wallpaper()` to reload immediately
+  - [ ] `RegSetString()` of `HKCU\Control Panel\Desktop\Wallpaper` = filepath
+  - [ ] `RegSetString()` of `HKCU\Control Panel\Desktop\WallpaperStyle` = `"10"` (10 = Fill, the design default per `docs/design/shell.md#desktop`; 2 = stretch and 6 = fit stay user choices in Personalize)
+  - [ ] Call `wallpaper_set(filepath, mode)` (`08-graphics-ui/TODO-09` §3) to reload immediately; `desktop_draw_wallpaper()` cannot reload
   - [ ] Toast: `"Wallpaper updated"`
 
 ---
@@ -147,7 +149,7 @@ All major image formats are registered to `photos.exe`.
   - [ ] Each frame: alpha = `elapsed_ms / 300.0`; composite: `pixel = prev*(1-alpha) + next*alpha` for each pixel in canvas -- iterate `uint32_t *` pixels; extract BGRA channels; blend; write back
   - [ ] On transition complete: free `prev_surf`; swap `next_surf` → `prev_surf`
 - [ ] **Controls during slideshow**: Escape exits to windowed; Space pauses/resumes; Left/Right manual advance; mouse move → show OSD for 3 s
-- [ ] **Slideshow interval dialog**: Settings → `dialog_input("Interval (seconds):", "5")` → parse int → clamp 1–60 → `reg_set_string`
+- [ ] **Slideshow interval dialog**: Settings → `dialog_input("Interval (seconds):", "5")` → parse int → clamp 1–60 → `RegSetString`
 
 ---
 
@@ -214,7 +216,7 @@ All major image formats are registered to `photos.exe`.
   - `".bmp"` → `photos.exe`
   - `".gif"` → `photos.exe`
   - `".webp"` → `photos.exe`
-  - `".tif"`, `".tiff"` → `photos.exe` (load via `image_load`; TGA/TIFF decoded by stb_image)
+  - `".tif"`, `".tiff"` → `photos.exe` (needs the TIFF decoder from §1; stb_image decodes TGA but not TIFF)
 - [ ] **"Open with Photos" context menu verb** registered for all above types
 - [ ] **Recent files**: `HKCU\Software\Impossible\Photos\RecentFiles\{0..9}` (10 MRU); shown in `File→Recent`
 - [ ] **Properties dialog** (`File→Properties`): reuse the EXIF panel content (§6) in a `MessageBox`-style modal: dimensions, file size, format, EXIF table
@@ -224,21 +226,21 @@ All major image formats are registered to `photos.exe`.
 ## OS Comparison
 
 
-| ⭐  | Feature                                           | 🪟 Win11                            | 🐧 Linux                              | 🚀 Impossible OS                                              |
-| --- | ------------------------------------------------- | ----------------------------------- | ------------------------------------- | ------------------------------------------------------------- |
-| 💎  | JPEG/PNG/BMP/GIF image display                    | ✅ Photos (stb_image-like decoders) | ✅ eog / gwenview                     | ✅ §1 -- Done -- `image_load` + `gfx_blit`                    |
-| 💎  | Fit-to-window with aspect-ratio letterbox         | ✅ Photos (auto-fit on open)        | ✅ eog / feh                          | ⬜ §1 -- `IMAGE_FIT_FIT` + centered blit on                   |
-| 💎  | Smooth mouse-wheel zoom with cursor pivot         | ✅ Photos                           | ✅ gwenview                           | ⬜ §2 -- pivot math keeps cursor pixel                        |
-| 💎  | Folder navigation                                 | ✅ Photos                           | ✅ eog                                | ⬜ §3 -- `vfs_readdir` alphabetic sort, wrap-around           |
-| 💎  | Thumbnail strip                                   | ✅ Photos (film-strip view)         | ✅ gwenview                           | ⬜ §3 -- 80×60 lazy-cached thumbs, LRU eviction               |
-| 💎  | Set image as desktop wallpaper                    | ✅ Photos (right-click)             | ✅ feh / Nautilus                     | ⬜ §4 -- `reg_set_string` + `desktop_draw_wallpaper()` reload |
-| 💎  | Slideshow with crossfade                          | ✅ Photos (slideshow view)          | ✅ eog / feh                          | ⬜ §5 -- `system_get_ticks` timer, alpha-blend crossfade      |
-| ⭐  | EXIF metadata panel                               | ✅ Photos (Properties)              | ⚠️ eog (basic EXIF); gwenview (full)  | ⬜ §6 -- inline TIFF/IFD reader, GPS decimal                  |
-| 💎  | Rotate 90°/180°/270° with EXIF orientation update | ✅ Photos                           | ✅ eog                                | ⬜ §7 -- pixel-level CW/CCW rotate + EXIF                     |
-| ⭐  | Rubber-band crop with rule-of-thirds overlay      | ✅ Photos (crop tool)               | ✅ gwenview                           | ⬜ §7 -- drag handles, inverse-zoom transform, in-place       |
-| ⭐  | Auto-enhance via per-channel histogram stretch    | ✅ Photos (auto-enhance)            | ⚠️ eog (no auto-enhance); GIMP (full) | ⬜ §7 -- 1%/99% percentile clamp, linear RGB                  |
+| ⭐  | Feature                                           | 🪟 Win11                            | 🐧 Linux                              | 🚀 Impossible OS                                         |
+| --- | ------------------------------------------------- | ----------------------------------- | ------------------------------------- | -------------------------------------------------------- |
+| 💎  | JPEG/PNG/BMP/GIF image display                    | ✅ Photos (stb_image-like decoders) | ✅ eog / gwenview                     | ✅ §1 -- Done -- `image_load` + `gfx_blit`               |
+| 💎  | Fit-to-window with aspect-ratio letterbox         | ✅ Photos (auto-fit on open)        | ✅ eog / feh                          | ⬜ §1 -- `IMAGE_FIT_FIT` + centered blit on              |
+| 💎  | Smooth mouse-wheel zoom with cursor pivot         | ✅ Photos                           | ✅ gwenview                           | ⬜ §2 -- pivot math keeps cursor pixel                   |
+| 💎  | Folder navigation                                 | ✅ Photos                           | ✅ eog                                | ⬜ §3 -- `vfs_readdir` alphabetic sort, wrap-around      |
+| 💎  | Thumbnail strip                                   | ✅ Photos (film-strip view)         | ✅ gwenview                           | ⬜ §3 -- 80×60 lazy-cached thumbs, LRU eviction          |
+| 💎  | Set image as desktop wallpaper                    | ✅ Photos (right-click)             | ✅ feh / Nautilus                     | ⬜ §4 -- `RegSetString` + `wallpaper_set()` reload       |
+| 💎  | Slideshow with crossfade                          | ✅ Photos (slideshow view)          | ✅ eog / feh                          | ⬜ §5 -- `system_get_ticks` timer, alpha-blend crossfade |
+| ⭐  | EXIF metadata panel                               | ✅ Photos (Properties)              | ⚠️ eog (basic EXIF); gwenview (full)  | ⬜ §6 -- inline TIFF/IFD reader, GPS decimal             |
+| 💎  | Rotate 90°/180°/270° with EXIF orientation update | ✅ Photos                           | ✅ eog                                | ⬜ §7 -- pixel-level CW/CCW rotate + EXIF                |
+| ⭐  | Rubber-band crop with rule-of-thirds overlay      | ✅ Photos (crop tool)               | ✅ gwenview                           | ⬜ §7 -- drag handles, inverse-zoom transform, in-place  |
+| ⭐  | Auto-enhance via per-channel histogram stretch    | ✅ Photos (auto-enhance)            | ⚠️ eog (no auto-enhance); GIMP (full) | ⬜ §7 -- 1%/99% percentile clamp, linear RGB             |
 
-Impossible OS Photos delivers the same zero-dependency image pipeline (one `image_load` call covers JPEG/PNG/BMP/GIF/WEBP/TGA) with a richer EXIF side panel and rule-of-thirds crop overlay -- features absent from basic Linux viewers -- without pulling in any external imaging framework.
+Impossible OS Photos delivers the same zero-dependency image pipeline (one `image_load` call covers JPEG/PNG/BMP/GIF/TGA) with a richer EXIF side panel and rule-of-thirds crop overlay -- features absent from basic Linux viewers -- without pulling in any external imaging framework.
 
 ---
 

@@ -12,26 +12,25 @@ title: "TODO-09 -- Calculator"
 > gap-free history side-panel, memory registers, keyboard input, and clipboard integration.
 
 > [!IMPORTANT]
-> **Base implementation spec:** `09-desktop-shell/TODO-12-utilities.md §3` covers the fixed
+> **Base implementation spec:** `09-desktop-shell/TODO-12-utilities.md §2` covers the fixed
 > 320×480 px window, 5×4 button grid, two-operand model, C/CE/⌫/±/1/x/x²/√, memory M±/R/C/S,
 > and keyboard shortcuts. This TODO is the full-app companion that adds: (a) calculation
 > history panel not specified in TODO-12; (b) full Scientific mode with degree/radian toggle;
 > (c) full Programmer mode with BYTE/WORD/DWORD/QWORD word-size selector.
 >
-> `kmath_sin`, `kmath_tan`, `kmath_atan`, `kmath_log`, `kmath_exp` are **missing** from
-> `kmath.h` -- add them in §4 (`kmath_sin` via Taylor series, `kmath_tan` = `sin/cos`,
-> `kmath_log` via ln series, `kmath_exp` via Taylor).
+> `kmath_sin`, `kmath_tan`, `kmath_atan`, `kmath_asin`, `kmath_log`, `kmath_log10` and `kmath_exp` already ship in
+> `include/libc/math.h` (which includes `kmath.h`); §4 uses them, it does not add them.
 > Noted in `09-desktop-shell/TODO-12-utilities.md` Important Notes.
 
 ---
 
 ## Inputs
 
-- `09-desktop-shell/TODO-12-utilities.md §3` -- base calculator spec (window, button grid, two-operand model, memory ops)
-- `include/kernel/kmath.h` -- `kmath_sqrt`, `kmath_pow`, `kmath_cos`, `kmath_acos`, `kmath_floor`, `kmath_fabs`, `kmath_fmod`; §4 adds `kmath_sin/tan/atan/log/exp`
+- `09-desktop-shell/TODO-12-utilities.md §2` -- base calculator spec (window, button grid, two-operand model, memory ops)
+- `include/kernel/kmath.h` -- `kmath_sqrt`, `kmath_pow`, `kmath_cos`, `kmath_acos`, `kmath_floor`, `kmath_fabs`, `kmath_fmod`; `include/libc/math.h` adds `kmath_sin/tan/atan/asin/log/log10/exp` and `KM_PI`
 - `include/gfx.h` -- `gfx_fill_rounded_rect(s, x, y, w, h, radius, color)`, `gfx_fill_rect()`, `gfx_draw_rect()`
 - `include/font_mgr.h` -- `ttf_draw_string()`, `ttf_measure_width()`, `ttf_get(FONT_UI, px)`
-- `include/desktop/wm.h` -- `wm_create_window(x, y, w, h, title, WM_FLAG_NO_RESIZE)`
+- `include/desktop/wm.h` -- `wm_create_window(title, x, y, w, h, flags)`; a fixed window omits `WM_FLAG_RESIZABLE`
 - `include/kernel/clipboard.h` (→ XREF `09-desktop-shell/TODO-01 §1`) -- `clipboard_set(CLIP_TEXT, data, size)` -- §3 history copy
 - `include/desktop/controls.h` -- `CTRL_SCROLLBAR_VERT` -- §3 history scroll
 
@@ -50,7 +49,7 @@ title: "TODO-09 -- Calculator"
 | 1    | Standard Calculator UI | 💎    | `gfx_fill_rounded_rect`, `ttf_draw_string`, `wm_create_window` |
 | 2    | Arithmetic Engine      | 💎    | §1 complete                                                    |
 | 3    | Memory + History       | ⭐    | §2 complete, `clipboard_set`                                   |
-| 4    | Scientific Mode        | 💎    | §2 complete, `kmath_sin/tan/log/exp` additions                 |
+| 4    | Scientific Mode        | 💎    | §2 complete; `kmath_*` trig and log (shipped)                  |
 | 5    | Programmer Mode        | 💎    | §2 complete                                                    |
 
 ---
@@ -59,11 +58,13 @@ title: "TODO-09 -- Calculator"
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome), [`controls.md#which-rules-apply-to-every-control`](../../docs/design/controls.md#which-rules-apply-to-every-control)
 
-> → XREF: `09-desktop-shell/TODO-12-utilities.md §3` -- window size, button layout, display area, button rendering detail.
+> → XREF: `09-desktop-shell/TODO-12-utilities.md §2` -- window size, button layout, display area, button rendering detail.
 
 **Source file:** `src/apps/calc/calc.c`; header `include/apps/calc/calc.h`
 
-- [ ] `wm_create_window(200, 150, 320, 480, "Calculator", WM_FLAG_NO_RESIZE)` -- fixed, non-resizable
+- [ ] Reconcile with `09-desktop-shell/TODO-12-utilities.md` §2 (item: "Reconcile Calculator spec") before coding: both specify the keypad and engine
+  - Header `include/apps/calc/calc.h` here vs `include/apps/calc.h` there, and `calc_t` fields differ; keep §2 there as the base and build only history, Scientific and Programmer here.
+- [ ] `wm_create_window("Calculator", 200, 150, 320, 480, WM_DEFAULT_FLAGS & ~WM_FLAG_RESIZABLE)` -- fixed, non-resizable
 - [ ] **Display area** (top 80 px, right-aligned):
   - [ ] Small operation preview line: `"{operand} {op}"` e.g. `"42 +"` (12 px font, gray)
   - [ ] Current number: right-aligned in display box, 28 px font; shrink font at 12+ digits
@@ -82,7 +83,7 @@ title: "TODO-09 -- Calculator"
 
 ## 2. Arithmetic Engine `[Sonnet]`
 
-> → XREF: `09-desktop-shell/TODO-12-utilities.md §3` -- two-operand model, division-by-zero, keyboard shortcuts.
+> → XREF: `09-desktop-shell/TODO-12-utilities.md §2` -- two-operand model, division-by-zero, keyboard shortcuts.
 
 - [ ] **State**: `typedef struct { char display[32]; double operand; char op; int after_op; int has_error; double memory; int mode; int deg_mode; } calc_t;`
 - [ ] **Two-operand model**: `operand1` → press `op` → `operand2` → `=` → `result`
@@ -118,13 +119,7 @@ title: "TODO-09 -- Calculator"
 ## 4. Scientific Mode `[Sonnet]`
 
 - [ ] **Window resize**: switching to Scientific → resize to 560×480; adds 2 extra button columns on left (total layout becomes: function columns | existing numpad); mode toolbar updates active tab
-- [ ] **Missing kmath additions** (add to `include/kernel/kmath.h`):
-  - [ ] `kmath_sin(x)` -- Taylor series: `Σ (−1)^n × x^(2n+1) / (2n+1)!`, converge to 1e-12; reduce angle mod `2π` first
-  - [ ] `kmath_tan(x)` = `kmath_sin(x) / kmath_cos(x)`; guard for cos = 0 → return `∞` (large sentinel)
-  - [ ] `kmath_atan(x)` -- Taylor for `|x| < 1`; use identity `atan(x) = π/2 - atan(1/x)` for `|x| > 1`
-  - [ ] `kmath_log(x)` -- natural log via `kmath_pow(e, y) = x` convergence or series; `#define KMATH_E 2.718281828459045`
-  - [ ] `kmath_exp(x)` -- `Σ x^n / n!`; converge to 1e-12
-  - [ ] `#define KMATH_PI 3.141592653589793`
+- [x] Trig and log functions already ship: `kmath_sin`/`kmath_tan`/`kmath_atan`/`kmath_exp`/`kmath_log` (`include/libc/math.h:235,245,255,336,353`) and `KM_PI`; define an `e` constant locally, none exists
 - [ ] **Degree/Radian toggle**: `[DEG]` `[RAD]` button (toggles `g_deg_mode`); when `DEG`: multiply input by `π/180` before trig calls; display shows current mode
 - [ ] **Scientific button layout** (2 extra columns × 5 rows):
   - [ ] Col A: `sin` `cos` `tan` `log` `ln`
@@ -168,7 +163,7 @@ title: "TODO-09 -- Calculator"
 | 💎  | Standard two-operand arithmetic + rounded-rect button grid    | ✅ Windows Calculator                      | ✅ GNOME Calculator / KCalc     | ⬜ §1–§2 -- `gfx_fill_rounded_rect`, hover/press states |
 | 💎  | Memory register                                               | ✅ Windows Calculator                      | ✅ GNOME Calculator             | ⬜ §3 -- single double register, M indicator            |
 | ⭐  | History panel with click-to-copy-to-clipboard                 | ✅ Windows Calculator (history sidebar)    | ⚠️ GNOME: history list only; no | ⬜ §3 -- 20-entry ring, `clipboard_set` on click,       |
-| 💎  | Scientific mode                                               | ✅ Windows Calculator Scientific           | ✅ GNOME Calculator Scientific  | ⬜ §4 -- add `kmath_sin/tan/log/exp`, deg/rad toggle    |
+| 💎  | Scientific mode                                               | ✅ Windows Calculator Scientific           | ✅ GNOME Calculator Scientific  | ⬜ §4 -- shipped `kmath_*` trig/log, deg/rad toggle     |
 | 💎  | Programmer mode                                               | ✅ Windows Calculator Programmer           | ✅ KCalc Numeral System         | ⬜ §5 -- simultaneous multi-base display, bit-flip row  |
 | ⭐  | BYTE/WORD/DWORD/QWORD word-size selector in Programmer mode   | ✅ Windows Calculator (word-size selector) | ⚠️ KCalc: no per-type clipping  | ⬜ §5 -- `uint64_t` clamp to selected width             |
 | ⭐  | All 4 bases (HEX/DEC/OCT/BIN) shown at once, clickable switch | ✅ Windows Calculator (shows all 4         | ⚠️ KCalc: one base at a         | ⬜ §5 -- 4 always-visible rows, active-row highlight    |

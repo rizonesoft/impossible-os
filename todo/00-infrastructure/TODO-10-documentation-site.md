@@ -70,7 +70,7 @@ file_patterns:
 | 💎  |  17   | §17 Document: Graphics and UI, part 2 (9 roadmap files)                  | §2, §3     |  [x]   |
 | 💎  |  18   | §18 Document: Desktop shell (14 roadmap files)                           | §2, §3     |  [x]   |
 | 💎  |  19   | §19 Document: Platform services (15 roadmap files)                       | §2, §3     |  [x]   |
-| 💎  |  20   | §20 Document: Applications and accessories (15 roadmap files)            | §2, §3     |  [ ]   |
+| 💎  |  20   | §20 Document: Applications and accessories (15 roadmap files)            | §2, §3     |  [x]   |
 | 💎  |  21   | §21 Document: SDK, release, ports and research (21 roadmap files)        | §2, §3     |  [ ]   |
 | ⭐  |  22   | §22 Doc freshness: `sources=` and a stale-page warning                   | §3         |  [x]   |
 | 💎  |  23   | §23 Site polish: sitemap, last-updated, link health, OpenGraph           | §1         |  [ ]   |
@@ -939,32 +939,52 @@ Write docs pages that meet the §3 contract for the 15 roadmap files below. Read
 
 ## 20. Document: Applications and accessories
 
+**Design:** n/a -- a documentation-writing section; the pages it writes describe the design, they do not draw UI
+
 Write docs pages that meet the §3 contract for the 15 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/apps/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/11-apps/TODO-01-web-browser.md` (TODO-01 -- Web Browser)
-  - `todo/11-apps/TODO-02-ftp-wget-wifi.md` (TODO-02 -- FTP Client, wget/curl & WiFi)
-  - `todo/11-apps/TODO-03-ssh-client.md` (TODO-03 -- SSH Client)
-- [ ] Pages in `docs/apps/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/11-apps/TODO-04-email-client.md` (TODO-04 -- Email Client)
-  - `todo/11-apps/TODO-05-pdf-viewer.md` (TODO-05 -- PDF Viewer)
-  - `todo/11-apps/TODO-06-video-player.md` (TODO-06 -- Video Player)
-- [ ] Pages in `docs/apps/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/11-apps/TODO-07-collaboration-apps.md` (TODO-07 -- Collaboration & Network Client Apps)
-  - `todo/11-apps/TODO-08-notepad.md` (TODO-08 -- Notepad)
-  - `todo/11-apps/TODO-09-calculator.md` (TODO-09 -- Calculator)
-- [ ] Pages in `docs/apps/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/11-apps/TODO-10-wordpad.md` (TODO-10 -- WordPad (Rich Text Editor))
-  - `todo/11-apps/TODO-11-photos-image-viewer.md` (TODO-11 -- Photos (Image Viewer))
-  - `todo/11-apps/TODO-12-screenshot-archive.md` (TODO-12 -- Screenshot Tool & Archive Manager)
-- [ ] Pages in `docs/apps/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/11-apps/TODO-13-calendar-utilities.md` (TODO-13 -- Calendar, Sticky Notes & Utility Apps)
-  - `todo/13-tools-accessories/TODO-01-obbrowse-namespace-browser.md` (TODO-01 -- ObBrowse: Object Namespace Browser)
-  - `todo/13-tools-accessories/TODO-02-event-viewer.md` (TODO-02 -- Event Viewer (Log Viewer))
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: applications and accessories documentation pages"`
+- [x] Pages in `docs/apps/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/11-apps/TODO-01-web-browser.md` (TODO-01 -- Web Browser): `web-browser.md`
+  - `todo/11-apps/TODO-02-ftp-wget-wifi.md` (TODO-02 -- FTP Client, wget/curl & WiFi): `ftp-wget-wifi.md`
+  - `todo/11-apps/TODO-03-ssh-client.md` (TODO-03 -- SSH Client): `ssh-client.md`
+- [x] Pages in `docs/apps/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/11-apps/TODO-04-email-client.md` (TODO-04 -- Email Client): `email-client.md`
+  - `todo/11-apps/TODO-05-pdf-viewer.md` (TODO-05 -- PDF Viewer): `pdf-viewer.md`
+  - `todo/11-apps/TODO-06-video-player.md` (TODO-06 -- Video Player): `video-player.md`
+- [x] Pages in `docs/apps/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/11-apps/TODO-07-collaboration-apps.md` (TODO-07 -- Collaboration & Network Client Apps): `collaboration-apps.md`
+  - `todo/11-apps/TODO-08-notepad.md` (TODO-08 -- Notepad): `notepad.md`
+  - `todo/11-apps/TODO-09-calculator.md` (TODO-09 -- Calculator): `calculator.md`
+- [x] Pages in `docs/apps/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/11-apps/TODO-10-wordpad.md` (TODO-10 -- WordPad (Rich Text Editor)): `wordpad.md`
+  - `todo/11-apps/TODO-11-photos-image-viewer.md` (TODO-11 -- Photos (Image Viewer)): `photos.md`
+  - `todo/11-apps/TODO-12-screenshot-archive.md` (TODO-12 -- Screenshot Tool & Archive Manager): `screenshot-archive.md`
+- [x] Pages in `docs/apps/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/11-apps/TODO-13-calendar-utilities.md` (TODO-13 -- Calendar, Sticky Notes & Utility Apps): `calendar-utilities.md`
+  - `todo/13-tools-accessories/TODO-01-obbrowse-namespace-browser.md` (TODO-01 -- ObBrowse: Object Namespace Browser): `obbrowse.md`
+  - `todo/13-tools-accessories/TODO-02-event-viewer.md` (TODO-02 -- Event Viewer (Log Viewer)): `event-viewer.md`
+- [x] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline` (43 to 28 entries)
+  - `docs/apps/` is new: its `index.md` holds an Applications and Accessories roadmap table, and `docs/index.md` gains an Applications category row.
+- [x] Roadmap drift found while writing, fixed in place
+  - Wrong section numbers: `TODO-03` to `07-networking/TODO-08` (off by two) and the socket and Monocypher sections; `TODO-04` to `07-networking/TODO-09` (off by one); `TODO-09` and `TODO-13` to `09-desktop-shell/TODO-12` (calculator §2, calendar §6); the dialog, toast and miniz sections cited by `TODO-05`, `TODO-08`, `TODO-10`, `TODO-11`, `TODO-12`, `TODO-13`.
+  - Wrong facts: `TODO-03` specified an HKDF key schedule over a BLAKE2b exchange hash that no SSH server speaks (now RFC 4253 section 7.2 over SHA-256); `13-tools-accessories/TODO-02` and `10-platform-services/TODO-04` gave the `events.jsonl` keys as `level`/`tag` (the writer emits `lvl`/`sub` and five more); `TODO-09` asked to add `kmath_sin` and friends, which ship; `TODO-11` claimed stb_image decodes WebP and TIFF.
+  - Shipped work described as missing: the ObBrowse wrappers (`sys_opendirobj()`, `sys_querydirobj()`), `sysinfo.exe`, and the shell's `ping` in `user/cmd.c` (the roadmaps pointed at an empty `src/shell/`).
+  - Wrong names: `reg_*` for `RegGetString`/`RegSetString`, `smbios_get_system_info` for `smbios_get_info`, `wm_get_focused` for `wm_get_focused_window`, `FONT_BODY`, `gfx_create_surface`, `csprng_read`, `vfs_delete`, and `include/kernel/vfs.h`; the `11-apps` and `13-tools-accessories` indexes had wrong domain numbers and dead links.
+- [x] Ownership conflicts found while writing, filed on both sides rather than decided (docs-only section)
+  - Engine vs app: browser (`07-networking/TODO-07`), FTP and wget/curl (`07-networking/TODO-08`, `TODO-03`), SSH host-trust store (`07-networking/TODO-08`), contacts store (`07-networking/TODO-09`).
+  - Duplicated apps: Notepad (`09-desktop-shell/TODO-10`), Calculator, screenshot and archive manager (`09-desktop-shell/TODO-12`, `08-graphics-ui/TODO-09` §5); Wi-Fi parked on its owner `04-drivers-hardware/TODO-15`.
+  - Unowned or unvetted: WebP and TIFF decoders (`TODO-11` §1), NetSurf/Dillo and pl_mpeg licence gates (`TODO-01` §6, `TODO-06` §1); WordPad's font lookup now points at `08-graphics-ui/TODO-02` §1-§2.
+- [x] Commit: `"docs: applications and accessories documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check` prints `site: OK` with 204/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** fifteen contract-shaped pages in a new `docs/apps/` folder, one per apps and tools roadmap file, listed in its index and linked from the docs home page.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the image, font, network, crypto, Object Manager or logging code it describes changes.
+> - **Status honesty:** no app in these roadmaps exists; the pages describe what runs today (image and font calls, `ping`, `sysinfo.exe`, the directory-object syscalls, `events.jsonl`) and link the owning sections.
+> - **Scope boundary:** where a networking, desktop or graphics roadmap owns the engine or a duplicate app, the page names that owner and links its page instead of restating it.
 
 ---
 
