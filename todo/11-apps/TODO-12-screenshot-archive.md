@@ -27,7 +27,7 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 > PrtSc = full screen, Alt+PrtSc = active window, Win+Shift+S = region select.
 >
 > **ZIP write API** (`zip_create`, `zip_add_file`, `zip_extract`, `zip_list`) defined in
-> `09-desktop-shell/TODO-04-recycle-zip-scheduler.md §6` -- implement §6 of that TODO before
+> `09-desktop-shell/TODO-04-recycle-zip-scheduler.md §4` -- implement §4 of that TODO before
 > building Archive Manager write operations.
 
 ---
@@ -46,7 +46,7 @@ title: "TODO-12 -- Screenshot Tool & Archive Manager"
 - `include/registry.h` -- `reg_get_string`, `reg_set_string` -- §3 recent captures, §4 last extract path
 - `include/desktop/file_assoc.h` (→ XREF `09-desktop-shell/TODO-02 §1`) -- `file_assoc_set()` -- §3
 - `02-kernel-core/TODO-03-kernel-libraries.md §6` (→ XREF) -- `zip_open`, `zip_entry_count`, `zip_find`, `zip_read`, `zip_close` -- §6 §3 read
-- `09-desktop-shell/TODO-04-recycle-zip-scheduler.md §6` (→ XREF) -- `zip_create`, `zip_add_file`, `zip_extract`, `zip_extract_file`, `zip_list` -- §6 §5 write
+- `09-desktop-shell/TODO-04-recycle-zip-scheduler.md §4` (→ XREF) -- `zip_create`, `zip_add_file`, `zip_extract`, `zip_extract_file`, `zip_list` -- §6 §5 write
 - `include/kernel/fs/vfs.h` -- `vfs_create`, `vfs_write`, `vfs_mkdir`, `vfs_stat` -- §1 §4 §5 file output
 - `include/kernel/timer.h` -- `system_get_ticks()`, `time_now()` -- §1 timestamp filename, §3 delay
 

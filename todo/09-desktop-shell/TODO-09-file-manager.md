@@ -11,12 +11,12 @@ title: "TODO-09 -- File Manager"
 > **Goal:** Build the primary file browsing application -- a production-quality File Manager with four-zone window layout, sidebar quick access + drives, icon and detail views with column sort, full file operations (copy/cut/paste/delete/rename/new folder), context menus, inline search, drag-and-drop, and stretch advanced features (preview pane, tabs, breadcrumb) that rival Windows Explorer.
 
 > [!IMPORTANT]
-> **Already exists**: `icon_for_extension(ext)` + `icon_draw()` + `icon_draw_scaled()` in `icon_store.h`. `vfs_readdir(dir_node, idx)`, `vfs_finddir(dir_node, name)`, `vfs_stat(path, stat)`, `vfs_rename(old, new)`, `vfs_create(path, type)`, `vfs_open/read/write`, `vfs_unlink` in `vfs.h`. `vfs_mkdir()` for new folder. **No `src/apps/` directory** -- create `src/apps/filemgr/filemgr.c`. **No `vfs_copy()`** -- implement `filemgr_copy_file(src, dst)` as a read+write loop with a PMM 64 KiB copy buffer. **Forward dependencies** (must be completed before the stated sections): `context_menu_show()` (08-graphics-ui/TODO-09 §1), `CTRL_LISTVIEW` (08-graphics-ui/TODO-06 §1) / `CTRL_TABSTRIP` (08-graphics-ui/TODO-05 §6), `clipboard_set/get(CLIP_FILES)` (TODO-01 §1), `file_assoc_open()` (TODO-02 §1), `trash_delete/restore()` (TODO-04 §2), `search_query_scoped()` (TODO-05 §4), `wm_drag_start()` (08-graphics-ui/TODO-08 §7 drag-drop). Complete sections in order: core layout → sidebar → view modes → file operations → context menus → file search → drag-and-drop → advanced features.
+> **Already exists**: `icon_for_extension(ext)` + `icon_draw()` + `icon_draw_scaled()` in `icon_store.h`. `vfs_readdir(dir_node, idx)`, `vfs_finddir(dir_node, name)`, `vfs_stat(path, stat)`, `vfs_rename(old, new)`, `vfs_create(path, type)`, `vfs_open/read/write`, `vfs_unlink` in `vfs.h`. New folders via `vfs_create(path, VFS_DIRECTORY)` (there is no public `vfs_mkdir()`; `mkdir` is a per-filesystem node op). **No `src/apps/` directory** -- create `src/apps/filemgr/filemgr.c`. **No `vfs_copy()`** -- implement `filemgr_copy_file(src, dst)` as a read+write loop with a PMM 64 KiB copy buffer. **Forward dependencies** (must be completed before the stated sections): `context_menu_show()` (08-graphics-ui/TODO-09 §1), `CTRL_LISTVIEW` (08-graphics-ui/TODO-06 §1) / `CTRL_TABSTRIP` (08-graphics-ui/TODO-05 §6), `clipboard_set/get(CLIP_FILES)` (TODO-01 §1), `file_assoc_open()` (TODO-02 §1), `trash_delete/restore()` (TODO-04 §2), `search_query_scoped()` (TODO-05 §4), `wm_drag_start()` (08-graphics-ui/TODO-08 §7 drag-drop). Complete sections in order: core layout → sidebar → view modes → file operations → context menus → file search → drag-and-drop → advanced features.
 
 ## Inputs
 
 - [`TODO-13-explorer-shell-host.md`](TODO-13-explorer-shell-host.md) (XREF) shell host process model + `ShellExecute` wiring; this file stays the deep four-zone file manager UX
-- `include/kernel/fs/vfs.h` -- `vfs_readdir`, `vfs_stat`, `vfs_rename`, `vfs_create`, `vfs_unlink`, `vfs_open/read/write`, `vfs_mkdir` -- all file operations and directory listing
+- `include/kernel/fs/vfs.h` -- `vfs_readdir`, `vfs_stat`, `vfs_rename`, `vfs_create`, `vfs_unlink`, `vfs_open/read/write` -- all file operations (folders via `vfs_create(path, VFS_DIRECTORY)`) and directory listing
 - `include/icon_store.h` -- `icon_for_extension()`, `icon_draw()`, `icon_draw_scaled()` -- icon grid rendering
 - `include/gfx.h` -- `gfx_fill_rect()`, `gfx_surface_t`, `ttf_draw_string()` -- cell and label rendering
 - `include/font_mgr.h` -- `ttf_get(FONT_UI, px)`, `ttf_draw_string()` -- filename labels, status bar
@@ -49,16 +49,16 @@ title: "TODO-09 -- File Manager"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                              | Depends On                                                                                    | Status |
-| --- | :---: | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 File Explorer frame -- title bar, address row, command bar, nav history, `vfs_readdir` listing        | `vfs_readdir`, `icon_for_extension`, `file_assoc_open` (TODO-02), `wm_create_window` (exist) |  [ ]   |
-| 💎  |   2   | §2 Navigation pane -- design-order folders, This PC, drives, Network, accent selection bar               | §1 core layout; `vfs_stat` (exists); drive letter enumeration via VFS                        |  [ ]   |
-| 💎  |   3   | §3 View modes -- Icon grid (48 px), Detail table (sortable columns), multi-select, Registry persist       | §1+§2; `CTRL_LISTVIEW` (D08 T06 §1); `time_format()` (TODO-10); `icon_draw_scaled()` (exists)  |  [ ]   |
-| 💎  |   4   | §4 File operations -- copy/cut/paste, delete (trash), rename (F2 inline), new folder, progress, Ctrl+Z  | §3 selection; `clipboard_set(CLIP_FILES)` (TODO-01); `trash_delete()` (TODO-04)             |  [ ]   |
-| 💎  |   5   | §5 Context menus -- file/folder/empty-area menus; Properties dialog with permissions                     | §3 selection; §4 ops; `context_menu_show()` (D08 T09 §1); `file_assoc_open()` (TODO-02)        |  [ ]   |
-| 💎  |   6   | §6 File search -- toolbar search bar, `search_query_scoped()`, 150 ms debounce, clear-to-restore          | §1 toolbar; `search_query_scoped()` (TODO-05 §4); §2 file area                              |  [ ]   |
-| 💎  |   7   | §7 Drag and drop -- file→desktop, file→trash, file→other window, drop-onto; drag ghost + count badge     | §3 selection; §4 file ops; `wm_drag_start()` (08-graphics-ui/TODO-08 §7; §8)                                   |  [ ]   |
-| ⭐  |   8   | §8 Advanced -- preview pane, `CTRL_TABSTRIP` tabs, breadcrumb address bar, FTP/UNC path stub             | §1–§7; `CTRL_TABSTRIP` (D08 T05 §6); `stb_image` (exists)                                      |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                            | Depends On                                                                                    | Status |
+| --- | :---: | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 File Explorer frame -- title bar, address row, command bar, nav history, `vfs_readdir` listing      | `vfs_readdir`, `icon_for_extension`, `file_assoc_open` (TODO-02), `wm_create_window` (exist)  |  [ ]   |
+| 💎  |   2   | §2 Navigation pane -- design-order folders, This PC, drives, Network, accent selection bar             | §1 core layout; `vfs_stat` (exists); drive letter enumeration via VFS                         |  [ ]   |
+| 💎  |   3   | §3 View modes -- Icon grid (48 px), Detail table (sortable columns), multi-select, Registry persist    | §1+§2; `CTRL_LISTVIEW` (D08 T06 §1); `time_format()` (TODO-10); `icon_draw_scaled()` (exists) |  [ ]   |
+| 💎  |   4   | §4 File operations -- copy/cut/paste, delete (trash), rename (F2 inline), new folder, progress, Ctrl+Z | §3 selection; `clipboard_set(CLIP_FILES)` (TODO-01); `trash_delete()` (TODO-04)               |  [ ]   |
+| 💎  |   5   | §5 Context menus -- file/folder/empty-area menus; Properties dialog with permissions                   | §3 selection; §4 ops; `context_menu_show()` (D08 T09 §1); `file_assoc_open()` (TODO-02)       |  [ ]   |
+| 💎  |   6   | §6 File search -- toolbar search bar, `search_query_scoped()`, 150 ms debounce, clear-to-restore       | §1 toolbar; `search_query_scoped()` (TODO-05 §4); §2 file area                                |  [ ]   |
+| 💎  |   7   | §7 Drag and drop -- file→desktop, file→trash, file→other window, drop-onto; drag ghost + count badge   | §3 selection; §4 file ops; `wm_drag_start()` (08-graphics-ui/TODO-08 §7)                      |  [ ]   |
+| ⭐  |   8   | §8 Advanced -- preview pane, `CTRL_TABSTRIP` tabs, breadcrumb address bar, FTP/UNC path stub           | §1–§7; `CTRL_TABSTRIP` (D08 T05 §6); `stb_image` (exists)                                     |  [ ]   |
 
 ---
 
@@ -147,7 +147,7 @@ Ctrl+C → `clipboard_set(CLIP_FILES, path_list)`. Ctrl+X → cut mark. Ctrl+V �
 - [ ] `void filemgr_paste(void)` -- `clipboard_get(CLIP_FILES)`; for each path: copy or `vfs_rename`; refresh
 - [ ] `void filemgr_delete_selected(int permanent)` -- permanent: `vfs_unlink()`; else: `trash_delete()` + store in `g_last_trash_name`
 - [ ] `void filemgr_rename_inline(int entry_idx)` -- replace cell label with `CTRL_TEXTBOX`; Enter=confirm; Escape=cancel; char filter
-- [ ] `void filemgr_new_folder(void)` -- `vfs_mkdir(new_path)` + auto-trigger rename inline
+- [ ] `void filemgr_new_folder(void)` -- `vfs_create(new_path, VFS_DIRECTORY)` + auto-trigger rename inline
 - [ ] `void filemgr_progress_show/update/hide(...)` -- non-modal 300×120 window; progress bar + speed label + Cancel
 - [ ] Keyboard handler: `Ctrl+C` → copy; `Ctrl+X` → cut; `Ctrl+V` → paste; `Del` → trash; `Shift+Del` → permanent; `F2` → rename; `Ctrl+Shift+N` → new folder; `Ctrl+Z` → undo
 - [ ] Name-conflict dialog on copy and move: Replace, Skip, or Keep both (renames to `name (2).ext`), with "Do this for the next N conflicts" and a side-by-side size and date comparison

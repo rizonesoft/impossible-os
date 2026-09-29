@@ -69,12 +69,15 @@ title: "TODO-08 -- Terminal Emulator"
 - [ ] `#define TERM_COLS_MAX 200`, `#define TERM_SCROLLBACK 2000` replacing `TERM_COLS=80`, `TERM_ROWS=20`
 - [ ] `#define TERM_ATTR_BOLD 0x01`, `TERM_ATTR_UNDERLINE 0x02`, `TERM_ATTR_INVERSE 0x04`, `TERM_ATTR_BLINK 0x08`
 - [ ] `typedef struct terminal { terminal_cell_t *grid; int cols; int rows; int visible_rows; int cursor_row; int cursor_col; int viewport_top; int shell_pid; int stdin_pipe; int stdout_pipe; ansi_state_t ansi; sel_t selection; ... } terminal_t;`
-- [ ] `terminal_t *terminal_create(int x, int y, int w, int h)` -- allocate PMM grid; `pipe_create`×2; `task_create_user("cmd.exe", ...)` with pipes; `#define TERM_PAGES 1300`
+- [ ] `terminal_t *terminal_create(int x, int y, int w, int h)` -- allocate PMM grid; `pipe_create`×2; `task_create_user("cmd.exe", ...)` with pipes; `TERM_PAGES` sized from `sizeof(terminal_cell_t)`
 - [ ] `void terminal_destroy(terminal_t *t)` -- `pmm_free_contiguous(grid)`, close pipes, `signal_send(pid, SIGKILL)`
 - [ ] `void terminal_poll_shell(terminal_t *t)` -- non-blocking `pipe_read(stdout_pipe, buf, 256)`; call `terminal_put_char()` per byte
 - [ ] `void terminal_put_char(terminal_t *t, uint32_t cp)` -- write to `grid[cursor_row * cols + cursor_col]`; advance cursor
 - [ ] WM keyboard handler: `pipe_write(t->stdin_pipe, &ch, 1)` on printable chars + function keys
 - [ ] Keep `terminal_puts(s, len)` entry point wired to `terminal_put_char()` for backward compat
+- [ ] Size check: `terminal_cell_t` above is 16 bytes unpacked, so 200 x 2000 cells need about 1,563 pages (the earlier 1,300 assumed a packed 13-byte cell)
+- [ ] Keep the test seams `terminal_get_buffer()`, `terminal_buffer_contains()` and `terminal_test_force_open/close()` (`include/desktop/terminal.h`) working over the new grid; the desktop test suite depends on them
+- [ ] One shell per terminal: Start > Terminal (`src/desktop/desktop.c`) calls `task_create(shell_loader_func, ...)` even when `terminal_open()` returned early because the window exists, so each click adds a `cmd.exe` reading the same input ring
 - [ ] Commit: `"terminal: cell grid rewrite -- terminal_cell_t, 200×2000 PMM grid, shell pipe, Unicode codepoints"`
 
 ## 2. Character Rendering `[Sonnet]`

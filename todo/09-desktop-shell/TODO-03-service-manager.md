@@ -43,17 +43,17 @@ title: "TODO-03 -- Service Manager & Core Daemons"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                    | Depends On                                                                       | Status |
-| --- | :---: | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §9 User account stub -- `user_account_t`, default user, home dirs, `HKU\{user}` hive           | `vfs_mkdir`, `RegSetValueEx` (both exist)                                       |  [ ]   |
-| ⭐  |   2   | §1 Service manager core -- `struct service`, 32-slot table, `svc_start/stop/restart/status`   | §9 user (service Registry paths use HKLM); `signal_send`, `task_exec` (exist)  |  [ ]   |
-| ⭐  |   3   | §3 Auto-restart & crash recovery -- `svc_monitor_tick()`, exponential backoff, FAILED state    | §1 service table must exist before monitor can iterate it                       |  [ ]   |
-| 💎  |   4   | §4 Graceful degradation -- `critical` BSOD gate, `sc list` state display                      | §3 monitor (FAILED state set by monitor; degradation acts on it)                |  [ ]   |
-| 💎  |   5   | §5 `sc` shell command -- `sc list/start/stop/restart/status`                                   | §4 (displays all states including FAILED)                                       |  [ ]   |
-| 💎  |   6   | §2 Built-in services -- `netd/ntpd/registryd/indexd` definitions, dependency order            | §5 `sc` stable (so services are observable); networking + NTP exist             |  [ ]   |
-| 💎  |   7   | §6 Notification service -- `kernel_notification` queue, `knotify_send()`, compositor drain    | §6 built-in services use `knotify_send()` for network up/down events            |  [ ]   |
-| 💎  |   8   | §7 Autostart programs -- Startup `.lnk` scan, `Run`/`RunOnce` Registry execution              | §7 `knotify_send()` (autostart failures notify via knotify); §9 user home path  |  [ ]   |
-| 💎  |   9   | §8 Win32 system info stubs -- `GetSystemInfo/GetVersionExA/GetComputerNameA/GetTempPathA/...`  | §9 user (GetUserNameA reads current user name); `kernel32` stub table (TODO-11) |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                   | Depends On                                                                                   | Status |
+| --- | :---: | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 User account stub -- `user_account_t`, default user, home dirs, `HKU\{user}` hive          | `vfs_create()` with the directory type (no public `vfs_mkdir`), `RegSetValueEx` (both exist) |  [ ]   |
+| ⭐  |   2   | §2 Service manager core -- `struct service`, 32-slot table, `svc_start/stop/restart/status`   | §1 user (service Registry paths use HKLM); `signal_send`, `task_exec` (exist)                |  [ ]   |
+| ⭐  |   3   | §3 Auto-restart & crash recovery -- `svc_monitor_tick()`, exponential backoff, FAILED state   | §2 service table must exist before monitor can iterate it                                    |  [ ]   |
+| 💎  |   4   | §4 Graceful degradation -- `critical` BSOD gate, `sc list` state display                      | §3 monitor (FAILED state set by monitor; degradation acts on it)                             |  [ ]   |
+| 💎  |   5   | §5 `sc` shell command -- `sc list/start/stop/restart/status`                                  | §4 (displays all states including FAILED)                                                    |  [ ]   |
+| 💎  |   6   | §6 Built-in services -- `netd/ntpd/registryd/indexd` definitions, dependency order            | §5 `sc` stable (so services are observable); networking + NTP exist                          |  [ ]   |
+| 💎  |   7   | §7 Notification service -- `kernel_notification` queue, `knotify_send()`, compositor drain    | §6 built-in services use `knotify_send()` for network up/down events                         |  [ ]   |
+| 💎  |   8   | §8 Autostart programs -- Startup `.lnk` scan, `Run`/`RunOnce` Registry execution              | §7 `knotify_send()` (autostart failures notify via knotify); §1 user home path               |  [ ]   |
+| 💎  |   9   | §9 Win32 system info stubs -- `GetSystemInfo/GetVersionExA/GetComputerNameA/GetTempPathA/...` | §1 user (GetUserNameA reads current user name); `kernel32` stub table (TODO-11)              |  [ ]   |
 
 ---
 

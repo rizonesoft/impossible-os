@@ -68,7 +68,7 @@ file_patterns:
 | 💎  |  15   | §15 Document: Networking (11 roadmap files)                              | §2, §3     |  [x]   |
 | 💎  |  16   | §16 Document: Desktop foundation and graphics, part 1 (14 roadmap files) | §2, §3     |  [x]   |
 | 💎  |  17   | §17 Document: Graphics and UI, part 2 (9 roadmap files)                  | §2, §3     |  [x]   |
-| 💎  |  18   | §18 Document: Desktop shell (14 roadmap files)                           | §2, §3     |  [ ]   |
+| 💎  |  18   | §18 Document: Desktop shell (14 roadmap files)                           | §2, §3     |  [x]   |
 | 💎  |  19   | §19 Document: Platform services (15 roadmap files)                       | §2, §3     |  [ ]   |
 | 💎  |  20   | §20 Document: Applications and accessories (15 roadmap files)            | §2, §3     |  [ ]   |
 | 💎  |  21   | §21 Document: SDK, release, ports and research (21 roadmap files)        | §2, §3     |  [ ]   |
@@ -825,31 +825,50 @@ Write docs pages that meet the §3 contract for the 9 roadmap files below. Read 
 
 ## 18. Document: Desktop shell
 
+**Design:** n/a -- a documentation-writing section; the pages it writes describe the design, they do not draw UI
+
 Write docs pages that meet the §3 contract for the 14 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/09-desktop-shell/TODO-01-clipboard.md` (TODO-01 -- Clipboard System)
-  - `todo/09-desktop-shell/TODO-02-file-associations-resources.md` (TODO-02 -- File Associations, Shortcuts & System Resources)
-  - `todo/09-desktop-shell/TODO-03-service-manager.md` (TODO-03 -- Service Manager & Core Daemons)
-- [ ] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md` (TODO-04 -- Recycle Bin, ZIP & Task Scheduler)
-  - `todo/09-desktop-shell/TODO-05-file-search.md` (TODO-05 -- File Search & Indexing)
-  - `todo/09-desktop-shell/TODO-06-security-accounts.md` (TODO-06 -- Security & User Accounts)
-- [ ] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/09-desktop-shell/TODO-07-cng-crypto.md` (TODO-07 -- CNG Crypto & Certificate Store)
-  - `todo/09-desktop-shell/TODO-08-terminal.md` (TODO-08 -- Terminal Emulator)
-  - `todo/09-desktop-shell/TODO-09-file-manager.md` (TODO-09 -- File Manager)
-- [ ] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/09-desktop-shell/TODO-10-notepad.md` (TODO-10 -- Notepad Text Editor)
-  - `todo/09-desktop-shell/TODO-11-control-panel.md` (TODO-11 -- Control Panel & Settings)
-  - `todo/09-desktop-shell/TODO-12-utilities.md` (TODO-12 -- Task Manager, Device Manager & Core Utilities)
-- [ ] Pages in `docs/desktop/` for the next 2 roadmap files, each with its `covers=` directive
-  - `todo/09-desktop-shell/TODO-13-explorer-shell-host.md` (TODO-13 -- Explorer Shell Host (explorer.exe))
-  - `todo/09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md` (TODO-14 -- Desktop Test Late-Phase Harness and Artifact Bundle)
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: desktop shell documentation pages"`
+- [x] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/09-desktop-shell/TODO-01-clipboard.md` (TODO-01 -- Clipboard System): `clipboard.md`
+  - `todo/09-desktop-shell/TODO-02-file-associations-resources.md` (TODO-02 -- File Associations, Shortcuts & System Resources): `file-associations.md`
+  - `todo/09-desktop-shell/TODO-03-service-manager.md` (TODO-03 -- Service Manager & Core Daemons): `service-manager.md`
+- [x] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/09-desktop-shell/TODO-04-recycle-zip-scheduler.md` (TODO-04 -- Recycle Bin, ZIP & Task Scheduler): `recycle-bin-zip-scheduler.md`
+  - `todo/09-desktop-shell/TODO-05-file-search.md` (TODO-05 -- File Search & Indexing): `file-search.md`
+  - `todo/09-desktop-shell/TODO-06-security-accounts.md` (TODO-06 -- Security & User Accounts): `security-accounts.md`
+- [x] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/09-desktop-shell/TODO-07-cng-crypto.md` (TODO-07 -- CNG Crypto & Certificate Store): `cng-crypto.md`
+  - `todo/09-desktop-shell/TODO-08-terminal.md` (TODO-08 -- Terminal Emulator): `terminal.md`
+  - `todo/09-desktop-shell/TODO-09-file-manager.md` (TODO-09 -- File Manager): `file-manager.md`
+- [x] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/09-desktop-shell/TODO-10-notepad.md` (TODO-10 -- Notepad Text Editor): `notepad.md`
+  - `todo/09-desktop-shell/TODO-11-control-panel.md` (TODO-11 -- Control Panel & Settings): `control-panel.md`
+  - `todo/09-desktop-shell/TODO-12-utilities.md` (TODO-12 -- Task Manager, Device Manager & Core Utilities): `utilities.md`
+- [x] Pages in `docs/desktop/` for the next 2 roadmap files, each with its `covers=` directive
+  - `todo/09-desktop-shell/TODO-13-explorer-shell-host.md` (TODO-13 -- Explorer Shell Host (explorer.exe)): `explorer-shell-host.md`
+  - `todo/09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md` (TODO-14 -- Desktop Test Late-Phase Harness and Artifact Bundle): `desktop-test-late-phase.md`
+- [x] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline` (71 to 58 entries)
+  - `docs/desktop/index.md` gains a Desktop Shell Roadmaps table; `docs/design/shell.md` already covered `TODO-09`, and the new page covers it too, as a subsystem page that links the spec.
+- [x] Roadmap drift found while writing, fixed in place
+  - Implementation Order: the Order column did not match the section in `09-desktop-shell/TODO-01` and `TODO-02` (rows now in section order, the build sequence kept in Depends On); the section labels were shifted in `TODO-03`, `TODO-06`, `TODO-07`, `TODO-10` and `TODO-12`; `TODO-13` row 2 named the wrong section.
+  - Code claims: `TODO-01`, `TODO-05` and `TODO-07` listed planned APIs as shipped and syscall numbers above the highest assigned `SYS_*` (48); `TODO-04` said miniz was missing (vendored, unbuilt); `TODO-07` said SHA-256 was missing and ignored the vendored Mbed TLS and the shipped `ntfs_efs.c` parser; `TODO-06` Monocypher vendoring items are marked done.
+  - Stale names and paths: `csprng_read` and `crypto_argon2i` (now `csprng_fill` and `crypto_argon2`), `vfs_mkdir`, `registry_get/set`, `src/shell/cmds.c` (the shell is `user/cmd.c`), `kmath_sin` (already in `libc/math.h`), the object manager path in `TODO-14`, and its `TEST_PENDING` claim for a passing synthesized test.
+  - Inbound references: code signing is `TODO-07` section 7, not 9 (`15-installer-release/TODO-01`, `01-boot-platform/TODO-06`); the ZIP API is `TODO-04` section 4 and the scheduler section 6 (`11-apps/TODO-04`, `TODO-07`, `TODO-12`).
+- [x] Code defects and design conflicts found while writing, filed in owning open sections rather than fixed (docs-only section)
+  - `09-desktop-shell/TODO-08` section 1: Start > Terminal starts another `cmd.exe` on every click even when the terminal is open; the 200 by 2000 grid needs about 1,563 pages for a 16-byte cell; the test seams must survive the rewrite.
+  - `09-desktop-shell/TODO-13` section 1: the desktop, taskbar and window manager run in the kernel, so `explorer.exe` ownership and its `C:\Windows` path need deciding first.
+- [x] Commit: `"docs: desktop shell documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check` prints `site: OK` with 174/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** fourteen contract-shaped pages in `docs/desktop/`, one per desktop shell roadmap file, each listed in a new Desktop Shell Roadmaps table in the folder index.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the shell, terminal, security, crypto or test code it describes changes.
+> - **Status honesty:** only `TODO-14` sections 6 to 8 have shipped; the other pages describe what runs today (the 80 by 20 terminal, `cmd.exe` built-ins, the kernel CSPRNG, tokens, hashes and Monocypher, vendored but unbuilt miniz and Mbed TLS) and link the owning sections.
+> - **Scope boundary:** the design specs in `docs/design/` stay authoritative for visuals, and the kernel, storage and networking pages stay authoritative for the CSPRNG, tokens, VFS, NTFS and TLS; these pages link them.
 
 ---
 

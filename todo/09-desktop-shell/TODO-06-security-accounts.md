@@ -35,8 +35,8 @@ title: "TODO-06 -- Security & User Accounts"
 
 ## Outcome
 
-- `csprng_read(buf, len)` fills cryptographically secure random bytes from RDRAND + PIT jitter entropy pool.
-- monocypher vendored freestanding; `auth_hash_password()` using `crypto_argon2i` + 16-byte salt; constant-time verify.
+- `csprng_fill(buf, len)` from the kernel CSPRNG (`include/kernel/csprng.h`) supplies every salt and nonce.
+- monocypher vendored freestanding; `auth_hash_password()` using Monocypher `crypto_argon2()` + 16-byte salt; constant-time verify.
 - `user_account_t` Registry-backed; `auth_create/delete/change_password`; Admin + optional Guest on first boot.
 - `auth_login(user, pass)` → verify → load `HKU\{name}` hive → set kernel current-user state.
 - Full-screen login screen (blurred wallpaper, avatar, bullet-masked password, Power/Network/Accessibility icons).
@@ -48,19 +48,19 @@ title: "TODO-06 -- Security & User Accounts"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                           | Depends On                                                                            | Status |
-| --- | :---: | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | :----: |
-| ⭐  |   1   | §1 CSPRNG -- consume kernel `csprng_fill()` (shipped in D02T03 §5; ad-hoc pool retired)               | `02-kernel-core/TODO-03` §5 (shipped)                                                 |  [/]   |
-| ⭐  |   2   | §2 Password hashing -- monocypher vendor, `crypto_argon2i`, `auth_hash/verify_password`               | §11 CSPRNG (salt generation); `kmalloc` (argon2i work-area)                          |  [ ]   |
-| 💎  |   3   | §1 User account system -- `user_account_t`, Registry CRUD, Admin + Guest first boot                   | §2 password hashing; Registry (exists)                                                |  [ ]   |
-| 💎  |   4   | §3 Authentication API -- `auth_login/logout/get_current_user`, `HKU\{name}` hive load/unload          | §1 account system; Registry hive load                                                 |  [ ]   |
-| 💎  |   5   | §4 User home directories -- `vfs_mkdir` on `auth_create_user()`, `%USERPROFILE%`, shell CWD            | §1 account system; `vfs_mkdir` (exists)                                               |  [ ]   |
-| 💎  |   6   | §5 Login screen UI -- full-screen blurred bg, OS logo, avatar, bullet-masked textbox, sign-in button   | §3 auth API; `CTRL_TEXTBOX` (exists); `gfx_blur_rect()` (exists); WM z-order         |  [ ]   |
-| 💎  |   7   | §6 Login flow -- multi-avatar strip, shake animation, lockout, auto-login, profile load                | §5 login UI; §3 auth; D08 T09 §3 `wallpaper_set()`; D08 T04 animation engine            |  [ ]   |
-| 💎  |   8   | §7 Lock screen -- Win+L overlay, blurred desktop capture, clock, password resume same session          | §6 login flow; compositor back-buffer blur                                            |  [ ]   |
-| 💎  |   9   | §8 User switching -- Start Menu avatar → Switch/Sign out, fast-user-switch session stub                | §6 login flow; TODO-09 Start Menu user area                                           |  [ ]   |
-| ⭐  |  10   | §9 File permissions -- wire `ixfs_check_perm()` into `vfs_open/write/exec`; FAT32 fallback            | §1 user accounts (uid available); `ixfs_check_perm()` (exists in ixfs.h)            |  [ ]   |
-| ⭐  |  11   | §10 UAC elevation -- `privilege_request(reason)` consent dialog, process token, `SYS_PRIVILEGE_REQUEST=59` | §3 auth API; §9 permissions; D08 T06 §8 dialog; `task_t` priv token                |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                                | Depends On                                                                               | Status |
+| --- | :---: | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | :----: |
+| ⭐  |   1   | §1 CSPRNG -- consume kernel `csprng_fill()` (shipped in D02T03 §5; ad-hoc pool retired)                    | `02-kernel-core/TODO-03` §5 (shipped)                                                    |  [/]   |
+| ⭐  |   2   | §2 Password hashing -- vendored monocypher `crypto_argon2()`, `auth_hash/verify_password`                  | §1 CSPRNG (salt generation); `pmm_alloc_contiguous` (Argon2 work area)                   |  [ ]   |
+| 💎  |   3   | §3 User account system -- `user_account_t`, Registry CRUD, Admin + Guest first boot                        | §2 password hashing; Registry (exists)                                                   |  [ ]   |
+| 💎  |   4   | §4 Authentication API -- `auth_login/logout/get_current_user`, `HKU\{name}` hive load/unload               | §3 account system; Registry hive load                                                    |  [ ]   |
+| 💎  |   5   | §5 User home directories -- `vfs_create()` directories on `auth_create_user()`, `%USERPROFILE%`, shell CWD | §3 account system; `vfs_create()` with the directory type (no public `vfs_mkdir`)        |  [ ]   |
+| 💎  |   6   | §6 Login screen UI -- full-screen blurred bg, OS logo, avatar, bullet-masked textbox, sign-in button       | §4 auth API; `CTRL_TEXTBOX` (exists); `gfx_blur_rect()` (exists); WM z-order             |  [ ]   |
+| 💎  |   7   | §7 Login flow -- multi-avatar strip, shake animation, lockout, auto-login, profile load                    | §6 login UI; §4 auth; D08 T09 §3 `wallpaper_set()`; D08 T04 animation engine             |  [ ]   |
+| 💎  |   8   | §8 Lock screen -- Win+L overlay, blurred desktop capture, clock, password resume same session              | §7 login flow; compositor back-buffer blur                                               |  [ ]   |
+| 💎  |   9   | §9 User switching -- Start Menu avatar → Switch/Sign out, fast-user-switch session stub                    | §7 login flow; 08-graphics-ui/TODO-11 Start Menu user area                               |  [ ]   |
+| ⭐  |  10   | §10 File permissions -- wire `ixfs_check_perm()` into `vfs_open/write/exec`; FAT32 fallback                | §3 user accounts (uid available); `ixfs_check_perm()` (exists in ixfs.h, no callers yet) |  [ ]   |
+| ⭐  |  11   | §11 UAC elevation -- `privilege_request(reason)` consent dialog, process token, `SYS_PRIVILEGE_REQUEST=59` | §4 auth API; §10 permissions; D08 T06 §8 dialog; `task_t` priv token                     |  [ ]   |
 
 ---
 
@@ -78,18 +78,17 @@ The kernel CSPRNG SHIPPED 2026-06-12 in `02-kernel-core/TODO-03` §5: `src/kerne
 
 ## 2. Password Hashing `[Opus]`
 
-Vendor monocypher (public domain, ~1.5 K lines) at `src/libs/monocypher/`. `crypto_argon2i` password hashing (memory-hard, GPU-resistant). 16-byte random salt via `csprng_read()`. Constant-time compare.
+Monocypher 4.0.2 is already vendored and built at `src/libs/monocypher/` (BSD-2-Clause OR CC0-1.0, `src/libs/PROVENANCE.md`). Password hashing uses `crypto_argon2()` (memory-hard, GPU-resistant; the config selects Argon2i or Argon2id). 16-byte random salt via `csprng_fill()`. Constant-time compare.
 
-**Files:** `src/libs/monocypher/monocypher.c` (vendor), `include/libs/monocypher.h` (vendor), `src/kernel/auth.c` (new), `include/kernel/auth.h` (new)
+**Files:** `src/libs/monocypher/monocypher.h` (vendored), `src/kernel/auth.c` (new), `include/kernel/auth.h` (new)
 
 > [!NOTE]
 > `[Opus]` due to: security-critical cryptography (password hashing), constant-time compare (timing side-channel prevention), and memory-hard KDF (argon2i work-area allocation). monocypher is available at https://monocypher.org (C99, public domain, ~1500 lines, single `.c` file, no libc dependencies except `<stdint.h>` and `<stddef.h>`). Use same `libc_shim.h` + freestanding compile strategy as miniz (TODO-04 §3). **Argon2i params**: `m_cost=4096` (4 MiB work-area via `kmalloc`), `passes=3`, `lane_width=1`, `tag_length=64`. Work-area: `kmalloc(4 * 1024 * 1024)` -- this is within the 2 MiB heap limit risk; use `pmm_alloc_contiguous()` instead for the 4 MiB argon2i work-area. Salt: `csprng_read(salt, 16)`. Stored hash format (Registry, base64-like hex): `{salt_hex32}{hash_hex128}` = 160-char string. **Constant-time compare**: `crypto_verify64(a, b)` from monocypher -- use this instead of `memcmp` for hash comparison.
 
-- [ ] Vendor monocypher: `src/libs/monocypher/monocypher.c` + `include/libs/monocypher.h`; Makefile freestanding compile rule
+- [x] Vendor monocypher: shipped 2026-06-12 at `src/libs/monocypher/{monocypher,monocypher-ed25519}.{c,h}` and compiled by the `src/libs` glob in the `Makefile`; `test_klibs.c` already runs an Argon2id smoke test
 - [ ] `void auth_hash_password(const char *password, const uint8_t salt[16], char hash_out[160])` -- argon2i; PMM work-area; hex-encode result
 - [ ] `int auth_verify_password(const char *password, const char *stored_hash)` -- decode stored salt; rehash; `crypto_verify64()` constant-time compare; return 1 on match
-- [ ] `krealloc` / `libc_shim.h` pattern from TODO-04 §3 reused for monocypher build
-- [ ] Makefile: monocypher compile rule with `-ffreestanding -O2 -include include/kernel/libc_shim.h`
+- [x] Freestanding build: not needed as a separate step; monocypher compiles unmodified in the kernel build with no `libc_shim.h`
 - [ ] Boot log: `klog(LOG_OK, "auth", "monocypher argon2i ready (m=%u passes=%u)", 4096, 3)`
 - [ ] Commit: `"security: password hashing -- monocypher argon2i, 16-byte salt, constant-time verify"`
 

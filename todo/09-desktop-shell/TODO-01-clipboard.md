@@ -11,7 +11,7 @@ title: "TODO-01 -- Clipboard System"
 > **Goal:** Build the kernel clipboard from scratch -- PMM-backed buffer, format enum, syscalls, Ctrl+C/X/V wiring with SIGINT passthrough for terminals, Win32 `SetClipboardData/GetClipboardData` stubs, clipboard history (Win+V popup, 25-entry ring), and multi-format support. This is the P0 prerequisite before text editing, copy/paste in File Manager, terminal selection, and all Win32 clipboard APIs work.
 
 > [!IMPORTANT]
-> **Already exists**: `kmalloc(size)` in `include/kernel/mm/heap.h` (≤ 4 KB allocations). `pmm_alloc_contiguous(count)` in `include/kernel/mm/pmm.h` (> 4 KB, page-aligned). `CTRL_TEXTBOX` in `include/desktop/controls.h` (text input widget -- Ctrl+C/V wired here). `wm_get_focused_handle()` from TODO-11 §2 (needed by §7 to identify target control). `context_menu_show()` (08-graphics-ui/TODO-09 §1) + `wm_create_window()` for Win+V history popup. `time_now()` from TODO-10 §1 for history timestamps. Win32 clipboard stubs table in TODO-11's `user32` layer. **Missing**: everything clipboard-related -- no `clipboard_set`, no `CLIP_*` enum, no `SYS_CLIPBOARD_*`, no history, no Ctrl+C/X/V global dispatch. **Syscalls**: `SYS_CLIPBOARD_SET=56`, `SYS_CLIPBOARD_GET=57` (next free after `SYS_TIME=55`). Complete sections in order: kernel buffer → Win32 stubs → multi-format → keyboard wiring → history.
+> **Already exists**: `kmalloc(size)` in `include/kernel/mm/heap.h` (≤ 4 KB allocations). `pmm_alloc_contiguous(count)` in `include/kernel/mm/pmm.h` (> 4 KB, page-aligned). `CTRL_TEXTBOX` in `include/desktop/controls.h` (text input widget; 128-char buffer, no selection fields yet, so §2 adds them). `wm_get_focused_window()` in `include/desktop/wm.h` (identifies the target window). `wm_create_window()` for the Win+V history popup. **Planned elsewhere, not yet shipped**: `context_menu_show()` (08-graphics-ui/TODO-09 §1), `time_now()` (08-graphics-ui/TODO-12 §1) for history timestamps, the `user32` stub table (08-graphics-ui/TODO-14). **Keyboard path today**: the driver turns Ctrl+C into SIGINT and returns before any window sees it (`keyboard.c`), so §2 must change that path. **Missing**: everything clipboard-related -- no `clipboard_set`, no `CLIP_*` enum, no `SYS_CLIPBOARD_*`, no history, no Ctrl+C/X/V global dispatch. **Syscalls**: `SYS_CLIPBOARD_SET=56`, `SYS_CLIPBOARD_GET=57` are proposed numbers only: the highest assigned `SYS_*` is 48 and there is no `SYS_TIME` (`include/kernel/sched/syscall.h`); confirm the next free numbers (or an SSDT entry) at implementation time. Complete sections in order: kernel buffer (§1) → Win32 stubs (§3) → multi-format (§5) → keyboard wiring (§2) → history (§4).
 
 ## Inputs
 
@@ -39,13 +39,13 @@ title: "TODO-01 -- Clipboard System"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                  | Depends On                                                                          | Status |
-| --- | :---: | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 Kernel clipboard buffer -- `clip_format_t`, `clipboard_t`, `set/get/has/clear`, syscalls  | `kmalloc`, `pmm_alloc_contiguous` (both exist)                                      |  [ ]   |
-| 💎  |   2   | §3 Win32 clipboard stubs -- `OpenClipboard/SetClipboardData/GetClipboardData/EmptyClipboard` | §1 API must exist; TODO-11 USER32 stub table structure                              |  [ ]   |
-| 💎  |   3   | §5 Multi-format clipboard -- `clipboard_set_multi()`, parallel format slots                  | §1 (extends the single-format buffer to multi-slot)                                 |  [ ]   |
-| ⭐  |   4   | §2 Keyboard shortcut wiring -- Ctrl+C/X/V to focused control, SIGINT passthrough             | §1 + §3 multi-format (paste can deliver text format); `CTRL_TEXTBOX`                |  [ ]   |
-| ⭐  |   5   | §4 Clipboard history -- 25-entry ring, Win+V popup, entry restore + paste                    | §4 keyboard wiring (Win+V hotkey in same dispatch table); §1 `clipboard_set()` hook |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                  | Depends On                                                                                                                 | Status |
+| --- | :---: | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 Kernel clipboard buffer -- `clip_format_t`, `clipboard_t`, `set/get/has/clear`, syscalls  | `kmalloc`, `pmm_alloc_contiguous` (both exist)                                                                             |  [ ]   |
+| ⭐  |   2   | §2 Keyboard shortcut wiring -- Ctrl+C/X/V to focused control, SIGINT passthrough             | §1 + §5 multi-format (paste can deliver text format); `CTRL_TEXTBOX` selection; keyboard driver Ctrl+C path (`keyboard.c`) |  [ ]   |
+| 💎  |   3   | §3 Win32 clipboard stubs -- `OpenClipboard/SetClipboardData/GetClipboardData/EmptyClipboard` | §1 API must exist; USER32 stub table (08-graphics-ui/TODO-14)                                                              |  [ ]   |
+| ⭐  |   4   | §4 Clipboard history -- 25-entry ring, Win+V popup, entry restore + paste                    | §2 keyboard wiring (Win+V hotkey in same dispatch table); §1 `clipboard_set()` hook                                        |  [ ]   |
+| 💎  |   5   | §5 Multi-format clipboard -- `clipboard_set_multi()`, parallel format slots                  | §1 (extends the single-format buffer to multi-slot)                                                                        |  [ ]   |
 
 ---
 

@@ -18,7 +18,7 @@ title: "TODO-14 -- Desktop Test Late-Phase Harness and Artifact Bundle"
 | Path / TODO                                                                                                                                         | Purpose                                                                                                          |
 | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | [`../00-infrastructure/TODO-05-desktop-ui-test-framework.md`](../00-infrastructure/TODO-05-desktop-ui-test-framework.md) §1, §5, §10, §11, §13, §15 | Deferred cross-section items tracked here                                                                        |
-| [`../02-kernel-core/TODO-03-object-manager.md`](../02-kernel-core/TODO-03-object-manager.md)                                                        | Ob pseudo-file driver pattern for §6 `\\?\ObjectManager\FrameStats`                                              |
+| [`../02-kernel-core/TODO-05-object-manager.md`](../02-kernel-core/TODO-05-object-manager.md)                                                        | Ob pseudo-file driver pattern for §6 `\\?\ObjectManager\FrameStats`                                              |
 | [`../08-graphics-ui/INDEX.md`](../08-graphics-ui/INDEX.md)                                                                                          | True domain home for §5 virtio-gpu multi-output driver -- migrate when a specific virtio-gpu TODO is filed there |
 | `src/kernel/main/boot_desktop.c`                                                                                                                    | Phase where the late-phase hook attaches                                                                         |
 | `src/kernel/test/test_runner.c`                                                                                                                     | Dispatch site where the late-phase category runs                                                                 |
@@ -54,7 +54,8 @@ Adds a late-phase test category (`TEST_CAT_DESKTOP_LATE` or a "late" tag on `TES
 
 - [ ] Decide harness shape: (a) new `TEST_CAT_DESKTOP_LATE` category dispatched from `src/kernel/main/boot_desktop.c` after compositor init, (b) second pass of existing `TEST_CAT_DESKTOP` filtered by a "late" tag on each suite, (c) host-driver pattern where `scripts/test-desktop.sh` injects input via `qemu-input.sh sendstring` and reads back through a debug syscall. Pick one; document the trade-off in the commit message.
 - [ ] Implement the dispatch site: whichever approach, the late test run must execute with the compositor running, the keyboard IRQ path live, and `vfs_open("X:\\test-artifacts\\<test>\\...")` able to succeed.
-- [ ] Port the `TEST_PENDING` cmd.exe `dir` roundtrip case at `src/kernel/test/test_desktop.c:~370` (`test_terminal_dir_roundtrip_synthesized`) to the late category; assert `terminal_get_buffer()` contains the echoed `dir` + at least one directory entry within 500 ms of Enter injection.
+- [ ] Add the real cmd.exe `dir` roundtrip to the late category; assert `terminal_get_buffer()` contains the echoed `dir` + at least one directory entry within 500 ms of Enter injection.
+  - It complements the passing synthesized case `test_terminal_dir_roundtrip_synthesized` in `src/kernel/test/test_desktop.c`, which feeds its own echo because the shell is not running in the test phase.
 - [ ] Ensure `test_desktop_reset()` still fires between late-category suites (or an analogous reset) so each suite starts from a clean WM + terminal + keyboard state.
 - [ ] Commit: `"test: post-desktop-init late-phase test harness"`
 
@@ -114,7 +115,8 @@ Unblocks TODO-05 §13's 5 pending matrix cells. ~1500 LOC of VirtIO 1.2 GPU impl
 
 - [ ] `src/kernel/drivers/virtio_gpu.c` + `include/kernel/drivers/virtio_gpu.h`: VirtIO 1.2 GPU device init (feature negotiation, controlq + cursorq ring setup, per-output display-info probe).
 - [ ] Implement `RESOURCE_CREATE_2D`, `RESOURCE_ATTACH_BACKING`, `SET_SCANOUT`, `RESOURCE_FLUSH`, `GET_DISPLAY_INFO` command submission paths.
-- [ ] Multi-scanout framebuffer manager: replace the single `back_buf` in `src/kernel/drivers/framebuffer.c` with an N-output array keyed by `output_index`. `fb_get_output_count()` returns the virtio-gpu display count (up to `max_outputs=3` per §13's `boot.conf test_monitors=` matrix). `fb_snapshot_monitor(i)` routes to `back_buf[i]`.
+- [ ] Multi-scanout framebuffer manager: replace the single `back_buf` in `src/kernel/drivers/framebuffer.c` with an N-output array keyed by `output_index`
+  - The shipped single-output stubs change: `fb_get_output_count()` (always 1 today) returns the virtio-gpu display count (up to `max_outputs=3` per §13's `boot.conf test_monitors=` matrix). `fb_snapshot_monitor(i)` routes to `back_buf[i]`.
 - [ ] Compositor layout across primary + secondary outputs: taskbar on primary only, windows positioned by `boot_config.test_monitors_count`. Ship a minimal placement policy; GNOME-Shell-equivalent multi-monitor layout is out of scope for §5.
 - [ ] Flip the 5 `[SKIP]` cells in `scripts/debug/desktop/run-matrix-desktop-tests.bat` to live runs; assert per-output non-black captures.
 - [ ] Commit: `"drivers: virtio-gpu multi-output + fb-manager N-output retrofit"`
@@ -212,7 +214,7 @@ TODO-05 §10 shipped the kernel-side counters + `wm_get_frame_stats()` reader. T
 > Every section above defines its own test checkpoint; the unit-test targets below mirror those checkpoints as concrete kernel-side assertions. The late-phase harness (§1) must land before §2-§4 tests can run; §5-§8 tests are independent.
 
 - [ ] `test_late_phase_dispatch_runs_after_compositor` (§1): assert the late category runs AFTER `compositor_run()` reaches its event loop and BEFORE the shell prompt appears on serial.
-- [ ] `test_terminal_dir_roundtrip_real` (§1): inject `dir\n` via keyboard; within 500 ms `terminal_get_buffer()` contains the literal echo + at least one dir entry. (Replaces the §5 `TEST_PENDING` case.)
+- [ ] `test_terminal_dir_roundtrip_real` (§1): inject `dir\n` via keyboard; within 500 ms `terminal_get_buffer()` contains the literal echo + at least one dir entry. (Complements the synthesized case, which stays as the test-phase check.)
 - [ ] `test_artifact_bundle_contents` (§2): force-fail a canary late suite; `build/test-artifacts/<canary>/` has `screen.png` (>= PNG magic + IHDR), `serial.log` (non-empty), `etw.bin` (parseable per schema), `wm.json` (parseable, at least one window).
 - [ ] `test_artifact_retention_trims_oldest` (§2): synthesize 11 bundle dirs with increasing mtimes; run the retention trim; assert exactly 10 remain and the oldest is gone.
 - [ ] `test_artifact_replace_on_rerun` (§2): write a bundle for `<t>`; re-run `<t>`; only the second bundle is present.

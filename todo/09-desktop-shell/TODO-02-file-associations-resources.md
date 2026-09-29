@@ -42,17 +42,17 @@ title: "TODO-02 -- File Associations, Shortcuts & System Resources"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                       | Depends On                                                                      | Status |
-| --- | :---: | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 Extension-to-app mapping -- `file_assoc_get_app/icon/set/open` via HKCR                        | `RegGetValue` (exists); `icon_for_extension` (exists); `task_exec` (exists)     |  [ ]   |
-| 💎  |   2   | §2 Default associations on first boot -- write HKCR defaults for built-in file types              | §1 API must exist before writing default entries that §1 will later read        |  [ ]   |
-| 💎  |   3   | §4 Shortcut files (.lnk) -- INI parse/execute/create; `shortcut_execute()` stub                   | §1 (`.lnk` association → `shortcut_execute()`); `vfs_read` (exists)             |  [ ]   |
-| 💎  |   4   | §5 Desktop shortcut integration -- .lnk detection, arrow overlay, Start Menu, first-boot defaults | §3 shortcut parse; D08 T08 §4 desktop icon rendering                            |  [ ]   |
-| 💎  |   5   | §6 Recycle Bin icon states -- `trash_count()`, ICON_RECYCLE_BIN_EMPTY/FULL, right-click menu      | §1 `file_assoc_open()` for double-click "Open Recycle Bin"; §4 context menu     |  [ ]   |
-| 💎  |   6   | §3 Open With dialog -- app list popup, "Always use" writes HKCR default                           | §2 defaults (app list sourced from HKCR); §5 context menu (`context_menu_show`) |  [ ]   |
-| 💎  |   7   | §7 System sounds -- WAV parser, PCM → audio stub, Registry enable, startup chime                  | §6 (first-boot associations must be stable); audio TODO-10 forward ref          |  [ ]   |
-| 💎  |   8   | §8 Font manager app -- list/preview/install/remove TTF, set default                               | §7 stable; `ttf_get()` + `vfs_readdir()` (both exist)                           |  [ ]   |
-| 💎  |   9   | §9 Icon extraction -- EIF SVG and PE ICO resources at any size                                    | §1                                                                              |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                       | Depends On                                                                                                                                  | Status |
+| --- | :---: | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 Extension-to-app mapping -- `file_assoc_get_app/icon/set/open` via HKCR                        | `RegGetValue` (exists); `icon_for_extension` (exists); `task_exec` (exists)                                                                 |  [ ]   |
+| 💎  |   2   | §2 Default associations on first boot -- write HKCR defaults for built-in file types              | §1 API must exist before writing default entries that §1 will later read                                                                    |  [ ]   |
+| 💎  |   3   | §3 Open With dialog -- app list popup, "Always use" writes HKCR default                           | §2 defaults (app list sourced from HKCR); `context_menu_show()` (08-graphics-ui/TODO-09 §1)                                                 |  [ ]   |
+| 💎  |   4   | §4 Shortcut files (.lnk) -- INI parse/execute/create; `shortcut_execute()` stub                   | §1 (`.lnk` association → `shortcut_execute()`); `vfs_read` (exists)                                                                         |  [ ]   |
+| 💎  |   5   | §5 Desktop shortcut integration -- .lnk detection, arrow overlay, Start Menu, first-boot defaults | §4 shortcut parse; D08 T08 §4 desktop icon rendering                                                                                        |  [ ]   |
+| 💎  |   6   | §6 Recycle Bin icon states -- `trash_count()`, ICON_RECYCLE_BIN_EMPTY/FULL, right-click menu      | §1 `file_assoc_open()` for double-click "Open Recycle Bin"; `context_menu_show()` (08-graphics-ui/TODO-09 §1); `trash_count()` (TODO-04 §1) |  [ ]   |
+| 💎  |   7   | §7 System sounds -- WAV parser, PCM → audio stub, Registry enable, startup chime                  | §2 (first-boot associations must be stable); audio driver 04-drivers-hardware/TODO-18 forward ref                                           |  [ ]   |
+| 💎  |   8   | §8 Font manager app -- list/preview/install/remove TTF, set default                               | §7 stable; `ttf_get()` + `vfs_readdir()` (both exist)                                                                                       |  [ ]   |
+| 💎  |   9   | §9 Icon extraction -- EIF SVG and PE ICO resources at any size                                    | §1                                                                                                                                          |  [ ]   |
 
 ---
 

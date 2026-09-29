@@ -40,15 +40,15 @@ title: "TODO-10 -- Notepad Text Editor"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                      | Depends On                                                                              | Status |
-| --- | :---: | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- | :----: |
-| ⭐  |   1   | §1 Gap buffer -- `text_buffer_t`, O(1) insert/delete, PMM backing, doubling, load/save           | `pmm_alloc_contiguous` (exists); `vfs_read/write` (exists)                             |  [ ]   |
-| 💎  |   2   | §2 Text rendering -- visible-line loop, `ttf_draw_string`, I-beam blink, keyboard nav            | §1 gap buffer; `ttf_draw_string` + `ttf_measure_width` (exist); `system_get_ticks()`  |  [ ]   |
-| 💎  |   3   | §6 Undo/redo -- 200-action stack, every insert/delete logged, Ctrl+Z/Y                           | §1 gap buffer (must be wired from day 1); §2 rendering (visible state after undo)     |  [ ]   |
-| 💎  |   4   | §3 File menu -- `CTRL_MENUBAR`, New/Open/Save/Save As, `modified` flag, "Save changes?" dialog   | §1 gap buffer (load/save); `CTRL_MENUBAR` + `dialog_file_open/save` (D08 T06 §4, §8)         |  [ ]   |
-| 💎  |   5   | §4 Editing features -- mouse cursor, click+drag select, Ctrl+A/C/X/V, scrollbar, word wrap, status bar | §1-§3; `clipboard_set/get(CLIP_TEXT)` (TODO-01); `CTRL_STATUSBAR` (D08 T06 §5)    |  [ ]   |
-| 💎  |   6   | §5 Find & Replace -- Ctrl+F find toolbar, Ctrl+H dialog, match highlight, Ctrl+G Go to line      | §1-§4; `dialog_input()` (D08 T06 §8); §3 selection (Replace All uses select + paste)     |  [ ]   |
-| 💎  |   7   | §7 Stretch -- line number gutter, `.c/.h/.asm/.md` syntax highlight, Ctrl++/−/0 font zoom        | §1-§6; `theme_get(THEME_ACCENT)` (TODO-01)                                             |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                            | Depends On                                                                           | Status |
+| --- | :---: | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ | :----: |
+| ⭐  |   1   | §1 Gap buffer -- `text_buffer_t`, O(1) insert/delete, PMM backing, doubling, load/save                 | `pmm_alloc_contiguous` (exists); `vfs_read/write` (exists)                           |  [ ]   |
+| 💎  |   2   | §2 Text rendering -- visible-line loop, `ttf_draw_string`, I-beam blink, keyboard nav                  | §1 gap buffer; `ttf_draw_string` + `ttf_measure_width` (exist); `system_get_ticks()` |  [ ]   |
+| 💎  |   3   | §3 Undo/redo -- 200-action stack, every insert/delete logged, Ctrl+Z/Y                                 | §1 gap buffer (must be wired from day 1); §2 rendering (visible state after undo)    |  [ ]   |
+| 💎  |   4   | §4 File menu -- `CTRL_MENUBAR`, New/Open/Save/Save As, `modified` flag, "Save changes?" dialog         | §1 gap buffer (load/save); `CTRL_MENUBAR` + `dialog_file_open/save` (D08 T06 §4, §8) |  [ ]   |
+| 💎  |   5   | §5 Editing features -- mouse cursor, click+drag select, Ctrl+A/C/X/V, scrollbar, word wrap, status bar | §1-§4; `clipboard_set/get(CLIP_TEXT)` (TODO-01); `CTRL_STATUSBAR` (D08 T06 §5)       |  [ ]   |
+| 💎  |   6   | §6 Find & Replace -- Ctrl+F find toolbar, Ctrl+H dialog, match highlight, Ctrl+G Go to line            | §1-§5; `dialog_input()` (D08 T06 §8); §5 selection (Replace All uses select + paste) |  [ ]   |
+| 💎  |   7   | §7 Stretch -- line number gutter, `.c/.h/.asm/.md` syntax highlight, Ctrl++/−/0 font zoom              | §1-§6; `theme_get()` accent (08-graphics-ui/TODO-03 §2)                              |  [ ]   |
 
 ---
 

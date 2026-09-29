@@ -33,7 +33,7 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_mark_dirty()`
 - `include/gfx.h` -- `gfx_blit()`, `gfx_fill_rect()`, `gfx_surface_create()`
 - `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_enum_keys`
-- `include/kernel/scheduler_tasks.h` -- `sched_task_add()` (→ XREF `09-desktop-shell/TODO-04 §8`)
+- `include/kernel/scheduler_tasks.h` -- `sched_task_add()` (→ XREF `09-desktop-shell/TODO-04 §6`)
 - `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_mkdir`
 - `notify_send(title, body, icon_id, timeout_ms)` / `SYS_NOTIFY_SEND=54` (→ XREF `08-graphics-ui/TODO-09 §6`)
 

@@ -18,7 +18,7 @@ title: "TODO-12 -- Task Manager, Device Manager & Core Utilities"
 - `include/kernel/sched/task.h` -- `struct task`, `task_get_by_pid()`, `SYS_GETPROCS=10` -- §1 process list; add `cpu_ticks` for CPU%
 - `include/kernel/drivers/pci.h` -- `pci_scan()`, `struct pci_device`, `pci_find_device()` -- §2 device tree; add `pci_get_all_devices()`
 - `include/kernel/image.h` -- `image_load/scale/save_bmp()` -- §5 image viewer, §6 screenshot
-- `include/kernel/kmath.h` -- `kmath_sqrt/pow/fabs` -- §3 calculator; add `kmath_sin/cos/tan/log`
+- `include/kernel/kmath.h` -- `kmath_sqrt/pow/fabs/cos` -- §2 calculator; `sin/tan/log/exp` already in `include/libc/math.h`
 - `include/kernel/mm/pmm.h` -- `pmm_get_total_frames()`, `pmm_get_free_frames()` -- §1 RAM bar, §9 system info
 - `include/kernel/cpuid.h` -- `cpuid_get()->brand/vendor/model` -- §9 system info
 - `include/kernel/acpi.h` -- `acpi_get_cpu_count()` -- §9 system info
@@ -47,17 +47,17 @@ title: "TODO-12 -- Task Manager, Device Manager & Core Utilities"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                               | Depends On                                                                                 | Status |
-| --- | :---: | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | :----: |
-| 💎  |   1   | §4 Shell commands -- `cd/pwd/mkdir/rmdir/cp/mv/rm/touch/whoami/date/free`, `>`/`>>`       | `vfs_create/rename/unlink/mkdir` (exist); `auth_get_current_user()` (TODO-06)             |  [ ]   |
-| 💎  |   2   | §3 Calculator -- button grid, two-operand, memory, division-by-zero, keyboard              | `kmath_sqrt/pow` (exist); `gfx_fill_rounded_rect()` (exists or TODO-04 WM)               |  [ ]   |
-| 💎  |   3   | §5 Image Viewer -- `image_load/scale`, fit/zoom/pan, prev/next folder, slideshow           | `image_load/scale` (exist); `vfs_readdir` (exists); `wallpaper_set()` (D08 T09 §3)          |  [ ]   |
-| ⭐  |   4   | §6 Screenshot enhancements -- Win+Shift+S region select, dim overlay, rubber-band, escape  | D08 T09 §5 screenshot module; `image_save_bmp()` (exists); `clipboard_set()` (TODO-01)   |  [ ]   |
-| 💎  |   5   | §7 Archive Manager -- browse `.zip`, Extract All, Add Files, New archive                   | `zip_open/extract/list/add_file()` (TODO-04 §6); `dialog_file_open()` (D08 T06 §8)         |  [ ]   |
-| ⭐  |   6   | §8 Calendar -- month grid, events pane, Registry events, taskbar clock integration         | `time_now/to_datetime()` (TODO-10); Registry (exists); TODO-10 §3 taskbar clock flyout   |  [ ]   |
-| 💎  |   7   | §1 Task Manager -- `cpu_ticks` in task_t, `sched_get_task_list()`, rolling charts, End Task | add `cpu_ticks` to `struct task`; `pmm_get_free_frames()` (exists); Ctrl+Shift+Esc      |  [ ]   |
-| 💎  |   8   | §2 Device Manager -- `pci_get_all_devices()`, `CTRL_TREEVIEW` category tree, properties    | `pci_scan()` (exists); add `pci_get_all_devices()`; `CTRL_TREEVIEW` (D08 T06 §2)           |  [ ]   |
-| 💎  |   9   | §9 System Info -- `CTRL_TABSTRIP` tabs, CPU/RAM/disk/PCI summary, export to text           | §1 + §2 data; `CTRL_TABSTRIP` (D08 T05 §6); `cpuid_get()->brand` (exists)                  |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                 | Depends On                                                                                                                                            | Status |
+| --- | :---: | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 Shell commands -- `cd/pwd/mkdir/rmdir/cp/mv/rm/touch/whoami/date/free`, `>`/`>>`         | `vfs_create/rename/unlink` (exist; directories via `vfs_create`); `auth_get_current_user()` (TODO-06)                                                 |  [ ]   |
+| 💎  |   2   | §2 Calculator -- button grid, two-operand, memory, division-by-zero, keyboard               | `kmath_sqrt/pow` (exist); `sin/cos/tan/log` in `include/libc/math.h` (exist); `gfx_fill_rounded_rect()` (exists)                                      |  [ ]   |
+| 💎  |   3   | §3 Image Viewer -- `image_load/scale`, fit/zoom/pan, prev/next folder, slideshow            | `image_load/scale` (exist); `vfs_readdir` (exists); `wallpaper_set()` (D08 T09 §3)                                                                    |  [ ]   |
+| ⭐  |   4   | §4 Screenshot enhancements -- Win+Shift+S region select, dim overlay, rubber-band, escape   | D08 T09 §5 screenshot module; `image_save_bmp()` (exists); `clipboard_set()` (TODO-01)                                                                |  [ ]   |
+| 💎  |   5   | §5 Archive Manager -- browse `.zip`, Extract All, Add Files, New archive                    | `zip_open/extract/list/add_file()` (TODO-04 §4); `dialog_file_open()` (D08 T06 §8)                                                                    |  [ ]   |
+| ⭐  |   6   | §6 Calendar -- month grid, events pane, Registry events, taskbar clock integration          | `time_now/to_datetime()` (08-graphics-ui/TODO-12 §1); Registry (exists); 08-graphics-ui/TODO-12 §3 taskbar clock                                      |  [ ]   |
+| 💎  |   7   | §7 Task Manager -- `cpu_ticks` in task_t, `sched_get_task_list()`, rolling charts, End Task | per-task `user_time_ns`/`kernel_time_ns` already in `struct task` (reuse before adding `cpu_ticks`); `pmm_get_free_frames()` (exists); Ctrl+Shift+Esc |  [ ]   |
+| 💎  |   8   | §8 Device Manager -- `pci_get_all_devices()`, `CTRL_TREEVIEW` category tree, properties     | `pci_scan()` (exists); add `pci_get_all_devices()`; `CTRL_TREEVIEW` (D08 T06 §2)                                                                      |  [ ]   |
+| 💎  |   9   | §9 System Info -- `CTRL_TABSTRIP` tabs, CPU/RAM/disk/PCI summary, export to text            | §7 + §8 data; `CTRL_TABSTRIP` (D08 T05 §6); `cpuid_get()->brand` (exists)                                                                             |  [ ]   |
 
 ---
 
@@ -67,7 +67,7 @@ title: "TODO-12 -- Task Manager, Device Manager & Core Utilities"
 
 `cd`, `pwd`, `mkdir`, `rmdir`, `cp`, `mv`, `rm`, `touch`, `whoami`, `date`, `free`. Output redirect `>` and `>>`. Stretch: tab completion, pipe `|`, `&&` chaining.
 
-**Files:** `src/shell/cmds.c` (extend)
+**Files:** `user/cmd.c` (extend; the shell is the user-mode `cmd.exe`, so directory and file commands need syscalls, not direct VFS calls)
 
 > [!NOTE]
 > **`cd <path>`**: `vfs_finddir_path(path)` → update `g_cwd`; handle relative paths (prepend `g_cwd`). **`pwd`**: print `g_cwd`. **`mkdir <path>`**: `vfs_mkdir(abs_path)`. **`rmdir <path>`**: `vfs_unlink(path)` if directory and empty (check `vfs_readdir()` returns NULL on first call). **`cp <src> <dst>`**: use `filemgr_copy_file()` pattern (PMM 64 KiB buffer). **`mv <src> <dst>`**: `vfs_rename(src, dst)`. **`rm <path>`**: `vfs_unlink(path)` (warn: no trash). **`touch <path>`**: `vfs_stat()` → if exists: update mtime (via `ixfs_set_mtime()` stub); else: `vfs_create(path, VFS_TYPE_FILE)`. **`whoami`**: `auth_get_current_user()->username` (TODO-06). **`date`**: `time_now()` → `time_format()`. **`free`**: `pmm_get_total_frames() * 4096` total; `pmm_get_free_frames() * 4096` free; print in KiB. **Output redirect**: in shell line parser: if token `>` found: open file for write (truncate); route `kprintf` fd to file node. `>>` appends. **Tab completion stretch**: on Tab: scan `g_cwd` via `vfs_readdir()`; filter by prefix; complete unique match or print ambiguous list. **Pipe `|` stretch**: split command at `|`; `pipe_create(fds)`; left side `>` to fds[1]; right side reads from fds[0]. **`&&` stretch**: run left; if exit code 0 → run right.
@@ -104,7 +104,7 @@ Compact fixed window; 5×4 button grid; two-operand model; `gfx_fill_rounded_rec
 - [ ] Division by zero, overflow → `"Error"` display; next digit clears
 - [ ] Memory ops: MS → `memory = val`; MR → display `memory`; M+ → `memory += val`; M− → `memory -= val`; MC → `memory = 0`
 - [ ] Keyboard handler in WM `WM_KEYDOWN`: map VK_NUMPAD0–9 + operators + Enter/Backspace/Delete/Escape
-- [ ] Stretch: `double kmath_sin(double x)`, `kmath_cos`, `kmath_tan`, `kmath_log` added to `kmath.h`
+- [ ] Stretch: scientific mode on the existing `sin/cos/tan/log` in `include/libc/math.h` (no new `kmath_*` needed)
 - [ ] Stretch: Scientific layout toggle (expand window to 480 px); Programmer base picker
 - [ ] Commit: `"calc: calculator -- 5×4 grid, two-operand model, memory, keyboard, rounded-rect buttons"`
 

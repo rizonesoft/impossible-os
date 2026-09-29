@@ -224,7 +224,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 
 ## 7. Artifact Signing and Manifest Verification
 
-> **Scope boundary:** [`09-desktop-shell/TODO-07 §9`](../09-desktop-shell/TODO-07-cng-crypto.md) owns Ed25519 PE32+ COSI-trailer signing primitives (`codesign_sign` / `codesign_verify`). [`15-installer-release/TODO-01 §5`](../15-installer-release/TODO-01-release-artifacts.md) owns the host-side release-signing script. This section owns the bootloader-side verification path -- the path that runs at every boot and refuses load on mismatch -- which is the genuine ⭐ competitive edge.
+> **Scope boundary:** [`09-desktop-shell/TODO-07 §7`](../09-desktop-shell/TODO-07-cng-crypto.md) owns Ed25519 PE32+ COSI-trailer signing primitives (`codesign_sign` / `codesign_verify`). [`15-installer-release/TODO-01 §5`](../15-installer-release/TODO-01-release-artifacts.md) owns the host-side release-signing script. This section owns the bootloader-side verification path -- the path that runs at every boot and refuses load on mismatch -- which is the genuine ⭐ competitive edge.
 
 > **Status (2026-05-06):** [/] partial-ship. Item 4 shipped (boot_info v18 SBAT/dbx/trust-landscape). Items 1-3 blocked on absent crypto: bootloader is freestanding UEFI and cannot call kernel `cng_*`; needs vendored Ed25519+SHA-256 verify subset tracked in [`09-desktop-shell/TODO-07 §1`](../09-desktop-shell/TODO-07-cng-crypto.md) plus host-side signing in [`15-installer-release/TODO-01 §5`](../15-installer-release/TODO-01-release-artifacts.md).
 

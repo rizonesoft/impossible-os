@@ -25,7 +25,7 @@ title: "TODO-01 -- Disk Image, USB & Release Artifacts"
 > `sha256sum`). §4 here extends it with Joliet+Rock Ridge, versioned filename, and
 > `README.txt` -- do not duplicate the base ISO build.
 >
-> **Code signing already specced**: `09-desktop-shell/TODO-07-cng-crypto.md §9` owns
+> **Code signing already specced**: `09-desktop-shell/TODO-07-cng-crypto.md §7` owns
 > Ed25519 PE32+ COSI-trailer signing + `codesign_sign/verify()` + optional enforcement
 > in `task_create_user()`. §5 here adds the **release script** that calls those functions
 > and the **bootloader-side kernel verification** path -- do not re-specify the crypto or
@@ -41,7 +41,7 @@ title: "TODO-01 -- Disk Image, USB & Release Artifacts"
 - `include/kernel/version.h` + `include/build_info.h` -- existing version scheme; extend in §1
 - `scripts/build.sh` -- existing build script; extend with `make release` / `make iso` hooks
 - `scripts/make-iso.sh` (from `TODO-11 §6`) -- base ISO build; extend in §8
-- `09-desktop-shell/TODO-07-cng-crypto.md §9` (→ XREF) -- `codesign_sign(path, priv_key)` / `codesign_verify(path)`; used in §5
+- `09-desktop-shell/TODO-07-cng-crypto.md §7` (→ XREF) -- `codesign_sign(path, priv_key)` / `codesign_verify(path)`; used in §5
 - `10-platform-services/TODO-11-installer-iso.md §6` (→ XREF) -- `make iso` target; §8 extends it
 - `10-platform-services/TODO-03-update-delivery.md` (→ XREF) -- consumes `release-{version}.json` from §4
 - `src/boot/uefi/bootx64.c` -- bootloader source; extend with optional kernel signature check in §5

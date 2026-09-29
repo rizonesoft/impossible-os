@@ -39,7 +39,7 @@ title: "TODO-04 -- Email Client"
 - `include/desktop/controls.h` -- `ctrl_create_button`, `ctrl_create_textbox`, `ctrl_create_listview`, `ctrl_create_scrollbar`
 - `include/desktop/wm.h` -- `wm_create_window()`
 - `include/desktop/systray.h` (→ XREF `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §4`) -- `tray_register()`, `tray_unregister()`
-- `include/kernel/scheduler_tasks.h` (→ XREF `09-desktop-shell/TODO-04 §8`) -- `sched_task_add(name, cb, interval_s, enabled)`
+- `include/kernel/scheduler_tasks.h` (→ XREF `09-desktop-shell/TODO-04 §6`) -- `sched_task_add(name, cb, interval_s, enabled)`
 - `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_create_key`, `reg_delete_key`
 - `include/kernel/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_mkdir`, `vfs_unlink`
 - `notify_send(title, body, icon_id, timeout_ms)` / `SYS_NOTIFY_SEND=54` (→ XREF `08-graphics-ui/TODO-09 §6`)
@@ -54,17 +54,17 @@ title: "TODO-04 -- Email Client"
 
 ## Implementation Order
 
-| Step | Section                               | 💎/⭐ | Dependency                             |
-| ---- | ------------------------------------- | ----- | -------------------------------------- |
-| 1    | SMTP Client                           | 💎    | Mbed TLS TODO-03, DNS TODO-02          |
-| 2    | POP3 Client + Message Storage         | 💎    | §1 complete                            |
-| 3    | IMAP Client (Stretch)                 | 💎    | §1 complete, TLS                       |
-| 4    | Three-Panel Email GUI                 | 💎    | §2 complete, controls.h, wm.h          |
-| 5    | Compose Window                        | 💎    | §4 complete, §7 contacts               |
-| 6    | Account Management + Credential Store | ⭐    | CNG TODO-07 §1+§4, Registry            |
-| 7    | Auto-Check + Notifications + Tray     | ⭐    | §2 complete, TODO-04 §8, TODO-09 §5+§6 |
-| 8    | Contacts Store                        | 💎    | VFS, §5 compose window                 |
-| 9    | Spam & Junk Filter                    | ⭐    | §4 complete, Registry                  |
+| Step | Section                               | 💎/⭐ | Dependency                                              |
+| ---- | ------------------------------------- | ----- | ------------------------------------------------------- |
+| 1    | SMTP Client                           | 💎    | Mbed TLS TODO-03, DNS TODO-02                           |
+| 2    | POP3 Client + Message Storage         | 💎    | §1 complete                                             |
+| 3    | IMAP Client (Stretch)                 | 💎    | §1 complete, TLS                                        |
+| 4    | Three-Panel Email GUI                 | 💎    | §2 complete, controls.h, wm.h                           |
+| 5    | Compose Window                        | 💎    | §4 complete, §7 contacts                                |
+| 6    | Account Management + Credential Store | ⭐    | CNG TODO-07 §1+§4, Registry                             |
+| 7    | Auto-Check + Notifications + Tray     | ⭐    | §2 complete, 09-desktop-shell/TODO-04 §6, TODO-09 §5+§6 |
+| 8    | Contacts Store                        | 💎    | VFS, §5 compose window                                  |
+| 9    | Spam & Junk Filter                    | ⭐    | §4 complete, Registry                                   |
 
 ---
 

@@ -36,8 +36,8 @@ title: "TODO-13 -- Explorer Shell Host (`explorer.exe`)"
 | Order | Deliverable                                                                                                                  | Depends On                                                        | Status |
 | :---: | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | :----: |
 |   1   | Minimal `explorer.exe` PE (message loop, hidden or minimal main HWND)                                                        | D10 T07 §7; D10 T08 §10; TODO-A-user32-export-master-table Tier 1 |  [ ]   |
-|   2   | Wire `SHGetFolderPath` subset for Desktop / Startup paths                                                                    | D10 T08 §12; D10 TODO-C Tier 1                                    |  [ ]   |
-|   3   | Taskbar heartbeat: integrate with [`../08-graphics-ui/TODO-10-taskbar.md`](../08-graphics-ui/TODO-10-taskbar.md) window list | D08 08-graphics-ui/TODO-10-taskbar.md §5                          |  [ ]   |
+|   2   | Shell32 dependency gate: klog and fail boot under the strict gate while Tier 1/1b `shell32` exports are open                 | D10 T08 §12; D10 TODO-C Tier 1                                    |  [ ]   |
+|   3   | Taskbar heartbeat: integrate with [`../08-graphics-ui/TODO-10-taskbar.md`](../08-graphics-ui/TODO-10-taskbar.md) window list | 08-graphics-ui/TODO-10-taskbar.md §1 window list                  |  [ ]   |
 |   4   | `ShellExecute` open verb to filemgr or assoc target                                                                          | D10 T08 §14; D09 T09                                              |  [ ]   |
 |   5   | Boot selection: `explorer.exe` default; installer override unchanged                                                         | D10 T11 §2                                                        |  [ ]   |
 
@@ -47,6 +47,8 @@ title: "TODO-13 -- Explorer Shell Host (`explorer.exe`)"
 
 - [ ] Place built `explorer.exe` on the image at `C:\Windows\explorer.exe` (same leaf name as Windows; parent may be `Impossible` vs `Windows` only where the image policy already standardizes, document in commit if parent path differs).
 - [ ] Desktop init: if not installer mode, `pe_exec("C:\\Windows\\explorer.exe")` (or documented canonical path) after compositor ready.
+- [ ] Resolve the ownership split before wiring: the desktop, taskbar and window manager run in the kernel today, so say what `explorer.exe` owns
+  - Today `boot_desktop.c` calls `wm_init()` and `desktop_init()`, starts `C:\cmd.exe` through `shell_loader_func()` and enters `compositor_run()`; `src/desktop/` draws the taskbar and Start menu. Also choose `C:\Windows\explorer.exe` versus the canonical `C:\Impossible\System32\` and record why.
 - [ ] Commit: `"desktop: explorer shell host PE on disk + boot wire"`
 
 ## 2. Shell32 dependency gate
