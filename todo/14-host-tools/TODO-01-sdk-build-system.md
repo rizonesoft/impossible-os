@@ -43,11 +43,12 @@ sdk/
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                        | Depends On | Status |
-| --- | :---: | ---------------------------------- | ---------- | :----: |
-| 💎  |   1   | 🐧 Linux build script (bash)       | --         |  [x]   |
-| 💎  |   2   | Dependency detection and reporting | §1         |  [x]   |
-| 💎  |   3   | Auto-discovery of SDK tool dirs    | §1         |  [x]   |
+| ⭐  | Order | Deliverable                         | Depends On | Status |
+| --- | :---: | ----------------------------------- | ---------- | :----: |
+| 💎  |   1   | 🐧 Linux build script (bash)        | --         |  [x]   |
+| 💎  |   2   | Dependency detection and reporting  | §1         |  [x]   |
+| 💎  |   3   | Auto-discovery of SDK tool dirs     | §1         |  [x]   |
+| 💎  |   4   | SDK tools in CI, honest skip report | §1, §2     |  [ ]   |
 
 ---
 
@@ -98,6 +99,25 @@ Build discovers new tools automatically -- add a directory to `sdk/src/`, it get
 **Test checkpoint (Linux):**
 - Dir without Makefile is silently skipped
 - Tools built in alphabetical order
+
+---
+
+## 4. SDK Tools in CI and Honest Skip Reporting
+
+> **Spawned-by:** root
+
+Found while writing the host-tools docs pages (`00-infrastructure/TODO-10` §26): the build reports success for tools it never built, and nothing runs it, so the SDK drifted from the kernel unnoticed.
+
+**Files:** `sdk/build.sh`, `sdk/src/ixfs-mount/Makefile`, a CI workflow or `scripts/test-tooling.sh`
+
+- [ ] Report a tool its Makefile skipped (missing libfuse3) as `SKIPPED`, not `OK`, and count it apart from built tools
+  - Measured 2026-09-30 on WSL2 without libfuse3: `[1/1] Building ixfs-mount...  OK` and `1 tools built`, while `sdk/tools/` stayed empty.
+  - Needs a Makefile-to-script signal (an exit code or a marker file), not a grep of make's output.
+- [ ] Build the SDK and run `test_ixfs_core` against a freshly built image on every push that touches `sdk/` or the IXFS headers, with libfuse3 installed so `ixfs-mount` really compiles
+  - Today no workflow, lint check or tooling suite runs `sdk/build.sh`; the IXFS inode-size drift in TODO-02 §6 went unseen because of it. -> XREF: `14-host-tools/TODO-02-ixfs-mount.md` §6 (item: "Add a regression net")
+- [ ] Commit: `"sdk: report skipped tools honestly and build the SDK in CI"`
+
+**Test checkpoint:** on a host without libfuse3 the summary reads `0 built, 1 skipped`; with it, CI builds `ixfs-mount` and `test_ixfs_core` lists a non-empty root directory.
 
 ---
 

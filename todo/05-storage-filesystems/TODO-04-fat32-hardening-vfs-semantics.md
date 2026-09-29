@@ -468,6 +468,13 @@ From the stamped section 16:
   - The section's own Notes accept "leaves dst missing", but its title and callers (TODO-29 §3 `boot_trend_publish_json()`) describe the publish as atomic; the docs page now says it is not.
   - Fix direction: rename the source into place first (or keep the old dirent until the new one is durable), so every failure leaves either the old or the new file.
 
+From the TODO-10 §26 docs pass (2026-09-30), measured on the image the smoke test had just booted:
+- [ ] BlackBox volume fails `fsck.fat -n` after ONE boot: `X:\Tools` `.` slot overwritten by a 0-byte `BOOT-R~1.JSO`, and `X:\Diag\boot-reserved.json` missing with its LFN orphaned
+  - Repro: `bash scripts/test-smoke.sh`; `dd` the partition out at `BB_OFFSET` from `build/system-disk.img.info`; `fsck.fat -n <copy>`. Writer: `boot_reserved.c:822` (`vfs_open` CREATE+TRUNC on `X:\Diag\boot-reserved.json`).
+  - Diag holds 12 LFN files on 1-sector clusters, so that create needs a directory extension; an SFN landing in ANOTHER directory's first slot points at the extension path. Not root-caused.
+  - Same run, still to triage: orphaned LFN `random-seed.new` (the seed rename), a 0-byte `Logs\Serial\Serial_26092901.log` holding a cluster chain, and FSInfo free count off by 38 (dirty bit set, so possibly the hard stop).
+  - Also confirmed on disk: the `~1` collision in the rename item above. LFN `boot-trend.json.tmp` sits over SFN `BOOT-T~1.JSO` with a wrong checksum, and `X:\Perf\boot-timeline.json` is absent.
+
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---

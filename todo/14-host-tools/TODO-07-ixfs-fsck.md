@@ -53,6 +53,8 @@ $ ixfs-fsck --repair build/system-disk.img 3
 ## 1. Superblock Validation
 Verify superblock magic, version, sizes, and field consistency.
 
+- [ ] Reconcile with the shipped kernel checker before writing any pass: build the host tool from `ixfs_fsck()` logic, not a second implementation
+  - `src/kernel/fs/ixfs/ixfs_fsck.c` (owner `01-boot-platform/TODO-22` §3) already checks superblock CRC32C, data checksums, refcounts, snapshots and the journal, and repairs only a safe subset; this plan predates it and omits those checks.
 - [ ] Magic number matches IXFS signature
 - [ ] Version is supported (v2)
 - [ ] Block size is power of 2 (4096)

@@ -53,7 +53,9 @@ $ crash-decode serial.log
 ## 1. Serial Log Parser
 Extract the BSOD register dump block from a serial log or stdin.
 
-- [ ] Detect BSOD block: find `Stop code:` and `Register Dump` markers
+- [ ] Detect both panic formats in `src/kernel/panic.c`: the compact serial-only `[PANIC]` block and the full `Stop code:` block
+  - Compact: `RIP= CS= ERR=`, `CR2= CR3=`. Full: `--- Register Dump ---` and `--- Stack Trace ---`, which `printk()` mirrors to serial when it renders; an early crash leaves only the compact one.
+- [ ] Also read `C:\Impossible\System\crashdump.log` (written at panic time) and `X:\Crash\last-panic.txt` (written on the NEXT boot from the preserved record)
 - [ ] Extract: RIP, CR2, CR3, CS, SS, RFLAGS, error code, all GP registers
 - [ ] Extract: stack trace addresses (if available)
 - [ ] Also accept manual input: `crash-decode --rip 0x800000 --cr2 0x800000 --err 0x15`

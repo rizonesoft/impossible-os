@@ -55,6 +55,7 @@ $ disk-inspect build/system-disk.img
 ## 1. GPT Partition Table Parser
 Read and display GPT header, partition entries, type GUIDs.
 
+- [ ] Reuse `tools/bootimg/bootimg.py inspect`, which already lists every GPT partition (name, type GUID, filesystem, label, size, LBA range) for raw/VHD/VHDX/VDI/ISO images, instead of writing a second GPT reader
 - [ ] Parse GPT header (LBA 1): signature, partition count, entry size
 - [ ] Parse partition entries: name, type GUID, start/end LBA, attributes
 - [ ] Identify known types: EFI System, Basic Data, IXFS (by GUID)

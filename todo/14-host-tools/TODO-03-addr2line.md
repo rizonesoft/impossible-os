@@ -12,8 +12,8 @@ title: "TODO-03 -- ixfs-addr2line (Enhanced Address Resolver)"
 
 ## Inputs
 
-- [`build/kernel.sym`](../../build/kernel.sym) -- symbol map (nm output, address → name)
-- [`build/kernel.map`](../../build/kernel.map) -- linker map (section layout)
+- `build/kernel.map` -- `llvm-nm-19 -n` text output (address, type, name), written on every kernel link (`Makefile`)
+- `build/kernel.sym` -- packed binary `KSYM` table made from `kernel.map` by `tools/convert_symmap.py` (32-byte names, truncated at 31 chars); the kernel's own `symtab.c` reads it, a host tool should read `kernel.map`
 - [`include/kernel/boot_init.h`](../../include/kernel/boot_init.h) -- POST code definitions
 - Kernel source tree (`src/`) -- for source context display
 
@@ -51,14 +51,14 @@ $ ixfs-addr2line --crash RIP=0x800000 CR2=0x800000 ERR=0x15
 ---
 
 ## 1. Symbol Map Parser
-Parse `build/kernel.sym` (nm format: `address T symbol_name`) and `build/kernel.map` for section boundaries.
+Parse `build/kernel.map` (nm format: `address T symbol_name`); section boundaries come from the ELF section headers of `build/kernel.exe` (`kernel.map` is nm output, not a linker map).
 
 **Files:** `sdk/src/addr2line/addr2line.c`
 
-- [ ] Parse kernel.sym: build sorted array of (address, name) pairs
+- [ ] Parse kernel.map: build sorted array of (address, name) pairs
 - [ ] Binary search: find closest symbol ≤ input address
 - [ ] Show: `function_name + offset` (e.g., `isr_handler+0x42`)
-- [ ] Parse kernel.map: extract .text, .data, .bss section ranges
+- [ ] Read .text, .data, .bss section ranges from the ELF section headers of `build/kernel.exe`
 - [ ] Identify which section the address falls in
 - [ ] Commit: `"sdk: addr2line symbol resolver from kernel.sym"`
 
@@ -89,8 +89,8 @@ Map a CR2 or address to known memory regions (kernel text, heap, user ELF, frame
 
 **Files:** `sdk/src/addr2line/regions.c`
 
-- [ ] Known regions: kernel text (0x101000-0x1B5000), heap (0x57E000-0x77E000), user ELF (0x800000-0x900000), framebuffer (0x80000000), LAPIC (0xFEE00000), IOAPIC (0xFEC00000)
-- [ ] Parse kernel.map for exact section boundaries
+- [ ] Known regions from `include/kernel/mm/memmap.h` (the address-space source of truth), not hard-coded: kernel image, heap, user range, framebuffer, LAPIC, IOAPIC
+- [ ] Use the ELF section headers of `build/kernel.exe` for exact image boundaries
 - [ ] Output: `CR2 0x800000 → user ELF entry (0x800000-0x815020)`
 - [ ] Commit: `"sdk: addr2line memory region mapper"`
 

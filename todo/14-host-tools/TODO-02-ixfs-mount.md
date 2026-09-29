@@ -66,6 +66,7 @@ sdk/tools/                  # Compiled output (gitignored)
 | 💎  |   3   | 🐧 Linux FUSE mount (read-only) | §2         |  [x]   |
 | 💎  |   4   | Write support                   | §3         |  [x]   |
 | 💎  |   5   | USB auto-mount script           | §3         |  [x]   |
+| 💎  |   6   | Resync SDK parser with IXFS v2  | §1, §4     |  [ ]   |
 
 ---
 
@@ -156,6 +157,28 @@ Script to detect USB drives with IXFS partitions and mount them automatically.
 - Plug USB boot drive, run `./mount-ixfs-usb.sh` -- output: `Mounted IXFS from /dev/sdb2 at /mnt/ixfs`
 - `ls /mnt/ixfs/` shows IXFS root directory
 - `fusermount -u /mnt/ixfs` -- clean unmount
+
+---
+
+## 6. Resync the SDK Parser with the IXFS v2 On-Disk Format
+
+> **Spawned-by:** root
+
+Found while writing the host-tools docs pages (`00-infrastructure/TODO-10` §26). Sections 1-5 are marked shipped, but the parser no longer reads images the current kernel makes, and its write path ignores metadata the kernel now verifies. Until this lands, `docs/host-tools/ixfs-mount.md` tells users not to mount real images read-write.
+
+**Files:** `sdk/src/ixfs-mount/ixfs-structs.h`, `ixfs-core.c`, `ixfs-fuse-linux.c`, `test_ixfs_core.c`, `sdk/scripts/extract-logs.sh`
+
+- [ ] Pad the SDK `struct ixfs_inode` to 128 bytes to match `include/kernel/fs/ixfs.h`, and pin both it and `struct ixfs_dir_entry` (256) with `_Static_assert`
+  - The SDK copy has no `i_reserved[36]` and is 92 bytes; the kernel was padded in `161d194bd`. Measured 2026-09-30: `test_ixfs_core build/system-disk.img 3` finds the superblock and lists an empty root.
+- [ ] Refuse a read-write mount unless every metadata structure the kernel checks is maintained, or maintain them
+  - The kernel keeps a CRC32C data-block checksum table, a journal, block refcounts and snapshots; `ixfs-core.c` updates none of them, so a host write leaves blocks the kernel reports as corrupt.
+- [ ] Implement cross-directory rename (or return `EXDEV`): `ixfs_fuse_rename` resolves only the source's parent, so `mv a/x b/y` renames `x` to `y` inside `a/`
+- [ ] Implement truncate to a non-zero size and free blocks on truncate to zero (today size 0 returns success without freeing; any other size returns `ENOSYS`)
+- [ ] Update the usage examples (`:2` is now the BlackBox FAT32 partition; IXFS is `:3`, and `:4` under the A/B layout) in the tool, its header comment, this file and `sdk/scripts/extract-logs.sh`
+- [ ] Add a regression net: build `test_ixfs_core`, run it on a freshly built image and assert the root lists `Impossible` -> XREF: `14-host-tools/TODO-01-sdk-build-system.md` §4 (item: "Build the SDK and run `test_ixfs_core`")
+- [ ] Commit: `"sdk: resync ixfs-mount with the IXFS v2 on-disk format"`
+
+**Test checkpoint:** `test_ixfs_core build/system-disk.img 3` lists the root directory including `Impossible/`; a read-write mount either refuses with a clear message or produces an image the kernel's `ixfs_fsck()` reports clean.
 
 ---
 

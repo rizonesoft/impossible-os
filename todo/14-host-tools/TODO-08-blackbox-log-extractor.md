@@ -11,7 +11,7 @@ title: "TODO-08 -- BlackBox Log Extractor"
 > **Goal:** Host-side tools (Linux + Windows) that extract, view, and analyze logs from the BlackBox partition (`X:\`) inside raw disk images or mounted drives. Enables Claude Code, CI pipelines, and developers to read kernel logs, crash dumps, boot timelines, and events.jsonl without booting the OS. Solves the "not verifiable from serial log, requires filesystem inspection" gap in TODO-02 verification.
 
 > [!IMPORTANT]
-> **Current state:** No host-side tool can read logs from the disk image. Verification items in TODO-02 (network.log content, boot.log content, events.jsonl parsing, rotation, crash_recovery.log) are all blocked on filesystem inspection. Serial output is limited to ~5000 chars when pasted into Claude Code. This tool closes that gap.
+> **Current state (corrected 2026-09-30):** `scripts/tools/read-blackbox.sh` (mtools) already extracts the whole BlackBox volume, offset from `<image>.info` and label checked; the gaps are a self-contained reader, filtering, decompression and Windows. Originally written as: No host-side tool can read logs from the disk image. Verification items in TODO-02 (network.log content, boot.log content, events.jsonl parsing, rotation, crash_recovery.log) are all blocked on filesystem inspection. Serial output is limited to ~5000 chars when pasted into Claude Code. This tool closes that gap.
 
 ## Inputs
 
@@ -89,6 +89,9 @@ Extract the entire BlackBox partition content to a local directory.
 - [ ] Print summary: N files extracted, total size
 - [ ] Skip empty directories (create them but note "empty")
 - [ ] Overwrite existing output dir with `--force` flag
+- [ ] Refuse a non-empty output directory unless `--force` clears it first: `read-blackbox.sh` copies into an existing folder and removes nothing, so a reused folder mixes two images' artifacts
+- [ ] Wrap or replace `scripts/tools/read-blackbox.sh` (keep its `.info` offset lookup and `BLACKBOX` label check) rather than ship a second extractor beside it
+- [ ] Retire or redirect `sdk/scripts/extract-logs.sh`: it mounts partition 2 through `ixfs-mount` and reads `Impossible/System/Logs`, but partition 2 is now the FAT32 BlackBox volume and logs live in `X:\Logs\`
 - [ ] Commit: `"tools: blackbox extract -- dump BlackBox partition to local directory"`
 
 **Test checkpoint:** `blackbox extract build/system-disk.img /tmp/bb` creates `/tmp/bb/Logs/kernel.log`, `/tmp/bb/Boot/*.LOG`, etc. Files match what the OS wrote.

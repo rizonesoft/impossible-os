@@ -76,7 +76,7 @@ file_patterns:
 | 💎  |  23   | §23 Site polish: sitemap, last-updated, link health, OpenGraph           | §1                          |  [x]   |
 | 💎  |  24   | §24 Versioned release docs: pinned refs, version-scoped rendering        | §1, §23                     |  [x]   |
 | 💎  |  25   | §25 Docs search completeness and accessibility                           | §1                          |  [x]   |
-| 💎  |  26   | §26 Document: Host tools (8 roadmap files)                               | §2, §3                      |  [ ]   |
+| 💎  |  26   | §26 Document: Host tools (8 roadmap files)                               | §2, §3                      |  [x]   |
 | 💎  |  27   | §27 Document: Architecture ports and future research (9 roadmap files)   | §2, §3                      |  [ ]   |
 | ⭐  |  28   | §28 Review-class nets for site tooling: real parsers, scheduler stress   | §23                         |  [ ]   |
 | 💎  |  29   | §29 Retained release trees: snapshots, manifest, live verification       | §24                         |  [ ]   |
@@ -1208,23 +1208,43 @@ Search drops content today: the indexer keeps only plain `text` tokens (inline c
 
 > **Spawned-by:** §4 (split)
 
+**Design:** n/a -- a documentation-writing section; the pages it writes describe the design, they do not draw UI
+
 Write docs pages that meet the §3 contract for the 8 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Split out of §4 because 17 pages is more than one worker context; the host-tools files share one folder and no dependency on the infrastructure pages.
 
-- [ ] Pages in `docs/host-tools/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/14-host-tools/TODO-01-sdk-build-system.md` (TODO-01 -- SDK Build System)
-  - `todo/14-host-tools/TODO-02-ixfs-mount.md` (TODO-02 -- IXFS Mount (Linux))
-  - `todo/14-host-tools/TODO-03-addr2line.md` (TODO-03 -- ixfs-addr2line (Enhanced Address Resolver))
-- [ ] Pages in `docs/host-tools/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/14-host-tools/TODO-04-crash-decode.md` (TODO-04 -- crash-decode (Post-Mortem Crash Analyzer))
-  - `todo/14-host-tools/TODO-05-serial-analyze.md` (TODO-05 -- serial-analyze (Boot Log Analyzer))
-  - `todo/14-host-tools/TODO-06-disk-inspect.md` (TODO-06 -- disk-inspect (Disk Image Browser))
-- [ ] Pages in `docs/host-tools/` for the next 2 roadmap files, each with its `covers=` directive
-  - `todo/14-host-tools/TODO-07-ixfs-fsck.md` (TODO-07 -- ixfs-fsck (Filesystem Consistency Checker))
-  - `todo/14-host-tools/TODO-08-blackbox-log-extractor.md` (TODO-08 -- BlackBox Log Extractor)
-- [ ] Add `docs/host-tools/index.md` (the folder's first pages), add every new page to it, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: host tools documentation pages"`
+- [x] Pages in `docs/host-tools/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/14-host-tools/TODO-01-sdk-build-system.md` (TODO-01 -- SDK Build System): `sdk-build-system.md`
+  - `todo/14-host-tools/TODO-02-ixfs-mount.md` (TODO-02 -- IXFS Mount (Linux)): `ixfs-mount.md`
+  - `todo/14-host-tools/TODO-03-addr2line.md` (TODO-03 -- ixfs-addr2line (Enhanced Address Resolver)): `addr2line.md`
+- [x] Pages in `docs/host-tools/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/14-host-tools/TODO-04-crash-decode.md` (TODO-04 -- crash-decode (Post-Mortem Crash Analyzer)): `crash-decode.md`
+  - `todo/14-host-tools/TODO-05-serial-analyze.md` (TODO-05 -- serial-analyze (Boot Log Analyzer)): `serial-analyze.md`
+  - `todo/14-host-tools/TODO-06-disk-inspect.md` (TODO-06 -- disk-inspect (Disk Image Browser)): `disk-inspect.md`
+- [x] Pages in `docs/host-tools/` for the next 2 roadmap files, each with its `covers=` directive
+  - `todo/14-host-tools/TODO-07-ixfs-fsck.md` (TODO-07 -- ixfs-fsck (Filesystem Consistency Checker)): `ixfs-fsck.md`
+  - `todo/14-host-tools/TODO-08-blackbox-log-extractor.md` (TODO-08 -- BlackBox Log Extractor): `blackbox-extractor.md`
+- [x] Add `docs/host-tools/index.md` (the folder's first pages), add every new page to it, then run `python3 scripts/site/build.py --update-baseline` (17 to 9 entries)
+  - `docs/index.md` gains a Host Tools row.
+- [x] Roadmap drift found while writing, fixed in place
+  - `14-host-tools/INDEX.md` described a WinFsp Windows driver and `ixfs-mount.exe` that never existed; `TODO-03` read `build/kernel.sym` as nm text (it is the binary `KSYM` table; the text is `kernel.map`) and hard-coded an old address map; `TODO-05` named an `ERROR` level tag (the kernel prints `[FAIL]`).
+  - `TODO-08`'s "no host-side tool can read logs" was false: `scripts/tools/read-blackbox.sh` already extracts the volume.
+- [x] Defects found while writing, filed with evidence rather than fixed (docs-only section)
+  - `14-host-tools/TODO-02` §6 (new): the SDK `struct ixfs_inode` is 92 bytes against the kernel's 128, so `ixfs-mount` lists an empty root on current images; its write path skips checksums, journal, refcounts and snapshots; rename ignores the destination directory.
+  - `14-host-tools/TODO-01` §4 (new): `sdk/build.sh` reports a skipped tool as built, and nothing in CI runs it.
+  - `05-storage-filesystems/TODO-04` §18: `fsck.fat -n` on the BlackBox volume after one boot finds an overwritten `.` entry, orphaned long names and a lost `boot-timeline.json`.
+  - `01-boot-platform/TODO-22` §8 (new, from this section's adversarial review): the kernel fsck's bitmap reconcile still runs after an inode read failure and can free live blocks; `docs/boot/recovery-partition.md` now says so.
+  - Reconcile items: `TODO-06` §1 reuses `bootimg.py inspect`, `TODO-07` §1 builds on the kernel's `ixfs_fsck()`, `TODO-08` §3 wraps `read-blackbox.sh` and retires `sdk/scripts/extract-logs.sh`, `TODO-05` §4 shares one comparison engine with `TODO-08` §6.
+- [x] Commit: `"docs: host tools documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any `todo/14-host-tools/` file; each page renders on the local build. Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check --skip-stats` prints `site: OK` with 223/232 TODO files documented; a deliberately broken anchor in `ixfs-mount.md` fails the check (control)
+
+> **Notes:**
+> - **What shipped:** eight contract-shaped pages and an index in a new `docs/host-tools/` folder, linked from the docs home page; the baseline drops from 17 to 9 undocumented files.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when `sdk/`, the panic path, the symbol map, the fsck code or the BlackBox reader changes.
+> - **Status honesty:** only `sdk/build.sh` and `ixfs-mount` exist, and the pages say `ixfs-mount` is behind the kernel's format; the six planned tools each name the shipped stand-in (`llvm-addr2line-19`, `bootimg.py inspect`, `boot_timeline.py`, `read-blackbox.sh`, the kernel `ixfs_fsck()`).
+> - **Scope boundary:** no SDK or kernel code changed; the IXFS parser drift, SDK CI and the BlackBox FAT32 corruption are filed in their owning roadmaps.
 
 ---
 

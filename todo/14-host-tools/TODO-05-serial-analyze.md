@@ -48,9 +48,9 @@ $ serial-analyze --compare boot1.log boot2.log
 ---
 
 ## 1. Log Parser
-Parse serial log format: `[timestamp] [level] subsys: message` and `[PHASEn] STEP (0xNNNN)`.
+Parse serial log format: `[  t.ttt] [cpu:N] [LEVEL] SUBSYS: message` (no `[cpu:N]` on the earliest lines) and the bare `[PHASEn] STEP (0xNNNN)` progress lines.
 
-- [ ] Extract: timestamp (float seconds), log level (OK/WARN/INFO/ERROR), subsystem, message
+- [ ] Extract: timestamp (float seconds), log level (`[INFO]` debug, `[ OK ]` info, `[WARN]`, `[FAIL]` error, `[CRIT]` fatal then halt; `src/kernel/klog.c` `level_prefix`), subsystem, message
 - [ ] Extract: phase transitions (`[PHASE0]`, `[PHASE1]`, etc.)
 - [ ] Extract: POST codes and subsystem names
 - [ ] Extract: boot timing steps from the `BOOT: [PHASE0] +Nms` block
@@ -76,6 +76,7 @@ Extract and categorize all warnings and errors.
 Compare two serial logs and detect regressions.
 
 - [ ] `serial-analyze --compare old.log new.log`
+- [ ] Share one comparison engine with `blackbox boot --compare`, which compares the same boot steps from `boot-timeline.json` -> XREF: `14-host-tools/TODO-08-blackbox-log-extractor.md` §6 (item: "`--compare`")
 - [ ] Per-phase delta: show time increase/decrease
 - [ ] Per-subsystem delta: flag significant slowdowns (>20%)
 - [ ] New warnings: show warnings in new log that weren't in old
