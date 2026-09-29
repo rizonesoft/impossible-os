@@ -88,7 +88,15 @@ pushed_files() {
 # touches what the suite actually covers. An unconditional pre-push run would
 # tax every docs commit and would simply be disabled.
 TOOLING_PATHS_RE='^(scripts/lint/|scripts/todo-graph/|scripts/test-tooling\.sh|\.claude/hooks/)'
-TOOLING_HITS="$(pushed_files | sort -u | grep -E "$TOOLING_PATHS_RE" || true)"
+# A Check 7 baseline bump alone is not a tooling change. A docs section that
+# ticks a satisfied item moves the stub-lint `total`, and the sanctioned repair
+# edits only this data file -- which then pulled the whole pack in behind the
+# push (~15-23 min each, twice in the 2026-09-28 canary). Nothing in the pack
+# reads its tracked numbers (the one real-baseline fixture derives them from the
+# cache), the pre-commit lint already validates it against the corpus, and CI
+# still runs the full pack. Any OTHER tooling path in the same push still gates.
+TOOLING_EXEMPT_RE='^scripts/lint/stub-lint-baseline\.json$'
+TOOLING_HITS="$(pushed_files | sort -u | grep -E "$TOOLING_PATHS_RE" | grep -vE "$TOOLING_EXEMPT_RE" || true)"
 if [ -n "$TOOLING_HITS" ]; then
   echo ""
   echo "Pre-push: tooling change in this push -- gating on scripts/test-tooling.sh:"

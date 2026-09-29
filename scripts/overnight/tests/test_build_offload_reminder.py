@@ -411,6 +411,7 @@ def _main():
     test_v08_wrapped_route_inside_a_loop_is_still_wrapped()
     test_v10_a_heredoc_fed_to_a_SHELL_is_executable()
     test_v10_data_heredocs_are_still_not_invocations()
+    test_the_sequencer_skill_j1_block_passes_the_hook_unchanged()
     print("PASS: build_offload_reminder exemption + P3.4 BLOCK + dedup + lint-exempt"
           " + R2 bypass shapes + follow log + v08 argv-attribution")
 
@@ -517,6 +518,29 @@ def test_v10_data_heredocs_are_still_not_invocations():
                 "tee f.md <<'EOF'\n**Test checkpoint:** bash scripts/test.sh\nEOF"):
         assert mod._blocking_match(cmd) is None, f"false positive: {cmd!r}"
 
+
+
+def test_the_sequencer_skill_j1_block_passes_the_hook_unchanged():
+    """2026-09-29: the skill's J1 block was a bare `build.sh && test.sh &&
+    test-smoke.sh` chain that this hook refused, so the doctrine was not
+    runnable as written. Every command in the rewritten block must pass
+    untouched, and the old bare chain must still be caught."""
+    import re
+    skill = (HOOK.parent.parent / "skills/overnight-sequencer/SKILL.md").read_text(encoding="utf-8")
+    anchor = skill.index("run-artifact.sh j1-build")
+    block = skill[skill.rindex("```bash", 0, anchor):skill.index("```", anchor)]
+    cmds = [l.strip() for l in block.splitlines()[1:] if l.strip() and not l.strip().startswith("#")]
+    assert any("j1-smoke" in c for c in cmds) and cmds[-1].startswith("python3 scripts/overnight/receipts.py"), cmds
+    mod = _load()
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / ".claude/state").mkdir(parents=True)
+        for c in cmds:
+            rc, out, err = _run_main(mod, c, root)
+            assert rc == 0 and out.strip() == "" and err.strip() == "", (c, rc, out, err)
+        bare = "bash scripts/build.sh && bash scripts/test.sh QUIET=1 && bash scripts/test-smoke.sh"
+        rc, out, err = _run_main(mod, bare, root)
+        assert _acted(mod, rc, out, err), ("the old bare J1 chain must still be caught", rc, out, err)
 
 if __name__ == "__main__":
     _main()

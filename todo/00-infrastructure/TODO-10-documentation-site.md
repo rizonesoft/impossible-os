@@ -167,7 +167,7 @@ Every later section writes pages against this contract, so it must exist first a
 - [x] Mapped each domain to its docs folder in the contract (a table), adding each missing folder with an `index.md` when its first page lands
   - 00 infrastructure, 01 boot, 02 kernel, 03 memory, 04 hardware, 05 storage, 06 and 09 desktop, 07 networking, 08 graphics
   - 10 services, 11 and 13 apps (as §20 places them), 12 sdk, 14 host-tools, 15 release, 16 ports, 17 hardening (no roadmap files yet), 18 research; design specs stay in `docs/design/`
-- [/] Upgrade create-todo's existing docs-page step (`.claude/skills/create-todo/SKILL.md:87`) to the contract and template, dropping its provisional fallback: operator-gated (control plane), filed in `overnight-runner-improvements-v20.md`
+- [x] Upgrade create-todo's existing docs-page step (`.claude/skills/create-todo/SKILL.md:87`) to the contract and template, dropping its provisional fallback: done attended at the 2026-09-29 canary close-out (`overnight-runner-improvements-v20.md`)
   - A new roadmap file ships with a docs page from `_template.md` whose Limits section states nothing is implemented yet
   - Needed because Check 30 refuses an undocumented new roadmap file
 - [x] Added the contract to `docs/index.md` (category row and quick link) and linked it from `CONTRIBUTING.md` (new "Documentation Pages" subsection under Code Style)

@@ -132,6 +132,21 @@ def test_launcher_handles_a_stop_verdict_instead_of_dying_on_it():
     for owed in ("disarm_timers", "notify.sh", "run-status.py"):
         assert owed in stop_block, f"stop path no longer performs {owed}"
 
+
+def test_every_launcher_stop_clears_the_run_state():
+    """2026-09-29: the deadline stop disarmed the timers but left
+    sequencer-run.json `active: true`, so attended_repair_guard kept blocking
+    git verbs for hours with nothing running. Every stop path that disarms the
+    timers must also clear the run cursor, as --disarm does."""
+    src = (REPO / "scripts" / "overnight" / "overnight-launch.sh").read_text(encoding="utf-8")
+    lines = src.splitlines()
+    calls = [i for i, l in enumerate(lines) if l.strip() == "disarm_timers"]
+    assert len(calls) >= 2, f"expected the deadline and fixpoint stops, found {len(calls)}"
+    for i in calls:
+        window = "\n".join(lines[max(0, i - 8):i])
+        assert 'run_phase_guard.py" clear' in window, (
+            f"overnight-launch.sh:{i + 1} disarms the timers without clearing the run state")
+
 if __name__ == "__main__":
     test_no_deadline_runs_to_fixpoint()
     test_future_deadline_continues_and_reports_remaining()
@@ -142,4 +157,5 @@ if __name__ == "__main__":
     test_noship_limit_is_configurable()
     test_deadline_takes_precedence_over_a_healthy_streak()
     test_launcher_handles_a_stop_verdict_instead_of_dying_on_it()
+    test_every_launcher_stop_clears_the_run_state()
     print("PASS: deadline + abort criteria")

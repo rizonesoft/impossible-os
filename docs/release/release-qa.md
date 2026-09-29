@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/15-installer-release/TODO-04-release-qa.md sources=scripts/test.sh,scripts/test-smoke.sh,scripts/test-smoke-matrix.sh,scripts/ci/boot-matrix.sh,scripts/release/boot-test-vbox.sh,scripts/release/boot-test-vhdx.sh,scripts/release/boot-test-iso.sh,.github/workflows/build.yml reviewed=2026-09-29 order=6 -->
+<!-- docs: covers=todo/15-installer-release/TODO-04-release-qa.md sources=scripts/test.sh,scripts/test-smoke.sh,scripts/test-smoke-matrix.sh,scripts/ci/boot-matrix.sh,scripts/release/boot-test-vbox.sh,scripts/release/boot-test-vhdx.sh,scripts/release/boot-test-iso.sh,.github/workflows/build.yml reviewed=2026-09-29T19:00 order=6 -->
 # Release QA and Platform Certification
 
 ## What is it?

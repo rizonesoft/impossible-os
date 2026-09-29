@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md sources=src/kernel/test/test_desktop.c,include/kernel/drivers/framebuffer.h,src/kernel/drivers/framebuffer.c,include/desktop/terminal.h,src/desktop/wm.c,src/kernel/ob/ob_info_file.c,scripts/test-desktop.sh,scripts/test-visual-regression.sh,.github/workflows/visual-regression.yml,.github/workflows/build.yml reviewed=2026-09-29 order=20 -->
+<!-- docs: covers=todo/09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md sources=src/kernel/test/test_desktop.c,include/kernel/drivers/framebuffer.h,src/kernel/drivers/framebuffer.c,include/desktop/terminal.h,src/desktop/wm.c,src/kernel/ob/ob_info_file.c,scripts/test-desktop.sh,scripts/test-visual-regression.sh,.github/workflows/visual-regression.yml,.github/workflows/build.yml reviewed=2026-09-29T19:00 order=20 -->
 # Desktop Test Late-Phase Harness
 
 ## What is it?

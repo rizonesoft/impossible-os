@@ -131,6 +131,10 @@ if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" != "1" ] && [ -f "$SCRIPT_DIR/deadline-ch
     python3 "$SCRIPT_DIR/collect-questions.py" "$PROJECT_DIR" --stamp "$(date -Is)" >/dev/null 2>&1 || true
     bash "$SCRIPT_DIR/notify.sh" "$PROJECT_DIR" fixpoint "Overnight run stopped: ${DEADLINE_OUT}" 2>/dev/null || true
     rm -f "$ARMED_MARKER_FILE" 2>/dev/null || true
+    # Clear the run cursor as --disarm does. Without this the deadline stop left
+    # sequencer-run.json `active: true`, and attended_repair_guard went on
+    # blocking git verbs for hours after the run had ended (2026-09-29).
+    python3 "$PROJECT_DIR/.claude/hooks/run_phase_guard.py" clear "deadline stop: ${DEADLINE_OUT}" 2>/dev/null || true
     disarm_timers
     exit 0
   fi
@@ -151,6 +155,7 @@ if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" != "1" ] && [ "${OVERNIGHT_SEQUENCER_FORC
       bash "$SCRIPT_DIR/notify.sh" "$PROJECT_DIR" fixpoint "Overnight queue 100% finished -- sequencer disarmed." 2>/dev/null || true
       rm -f "$BACKOFF_FILE" 2>/dev/null || true
       rm -f "$ARMED_MARKER_FILE" 2>/dev/null || true  # launcher-side lifecycle end mirrors the fixpoint CLI's disarm
+      python3 "$PROJECT_DIR/.claude/hooks/run_phase_guard.py" clear "fixpoint stop (oracle DONE)" 2>/dev/null || true
       disarm_timers
       exit 0
       ;;

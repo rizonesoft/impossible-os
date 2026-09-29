@@ -101,11 +101,20 @@ def _canonical_run_root() -> str:
 
 
 def _run_state() -> dict | None:
-    """The live run's phase-guard state, or None when no run is active."""
-    p = os.path.join(_canonical_run_root(), ".claude", "state",
-                     "sequencer-run.json")
+    """The live run's phase-guard state, or None when no run is active.
+
+    A run is live only while BOTH its state says `active` AND the armed marker
+    exists. The marker is written at arm and removed by every stop path
+    (--disarm, the launcher's deadline and fixpoint stops), whereas `active`
+    outlived a finished run: observed 2026-09-29, the deadline stop left it
+    true and this guard kept blocking git verbs for hours with nothing running.
+    """
+    state_dir = os.path.join(_canonical_run_root(), ".claude", "state")
+    if not os.path.exists(os.path.join(state_dir, "sequencer-armed")):
+        return None
     try:
-        with open(p, "r", encoding="utf-8") as fh:
+        with open(os.path.join(state_dir, "sequencer-run.json"), "r",
+                  encoding="utf-8") as fh:
             d = json.load(fh)
     except Exception:
         return None

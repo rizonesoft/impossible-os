@@ -80,6 +80,10 @@ consumed as a real flag rather than read as prose. Two outcomes, both silent:
 Fix: wrap the flag in backticks -- \`$BAD_FLAG\` -- which the companion's
 tokenizer leaves as an ordinary word (only ' and " are quotes there), and which
 is the right markdown for naming an option anyway.
+
+The backtick must TOUCH the flag. A code span with a space before the flag,
+such as \`git diff $BAD_FLAG\`, still splits into a bare $BAD_FLAG token and is
+refused again: write \`git diff\` \`$BAD_FLAG\`, or name the option in prose.
 EOF
         exit 2
         ;;

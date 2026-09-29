@@ -83,6 +83,7 @@ When `status: "completed"`, the same JSON contains `finalMessage` (the review te
    - The existing code it integrates with (file paths, key functions)
    - Known constraints (SMP safety, freestanding kernel, identity mapping, bare metal)
    - Specific questions: "Is this approach correct?", "What edge cases are missing?", "What could this break?"
+   - **When the section parses a standard format** (Markdown, HTML, URLs, HTTP headers, JSON, a spec'd binary format), name the reference implementation the plan will CALL and ask the reviewer to object to every hand-rolled part. "Which existing parser should this delegate to?" is the question; "what edge cases does my parser miss?" invites a spiral. Measured 2026-09-29, TODO-10 section 23: 20 review rounds and 62 dispatches, most of them teaching hand-written parsers the specs they approximated; every spiral ended only when the real parser (markdown-it, `html.parser`, Node's WHATWG `URL`) replaced the approximation.
 4. **Dispatch to Codex plugin:**
    ```bash
    bash scripts/codex-dispatch.sh '[review-kind: design] <todo-path> <design review prompt>'

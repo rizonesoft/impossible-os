@@ -405,6 +405,20 @@ if [ -n "$ARM_PRIMARY" ] && [ "$ARM_PRIMARY" = "$ARM_FALLBACK" ]; then
   echo "      fallback identically). Consider --fallback-model sonnet." >&2
 fi
 
+# ---- Fresh breaker + a token that authenticates (2026-09-28 canary) ---------
+# An explicit arm starts clean: a finished run's backoff and no-ship streak made
+# the next arm refuse (the DRYRUN below honours the backoff) and then stop at
+# once. reset-breaker.sh skips itself while a run is live. The token probe makes
+# one tiny authenticated call so a revoked token refuses HERE, attended, instead
+# of dying at launch; --skip-preflight skips it with the rest of the gate.
+bash "$REPO_ROOT/scripts/overnight/reset-breaker.sh" "$REPO_ROOT" "$UNIT" || true
+if [ "$ARM_SKIP_PREFLIGHT" != "1" ]; then
+  if ! bash "$REPO_ROOT/scripts/overnight/token-probe.sh" "$CLAUDE_TOKEN_ENV_FILE"; then
+    echo "REFUSED to arm: the long-lived token does not authenticate (see above)." >&2
+    exit 1
+  fi
+fi
+
 # ---- Pre-arm health gate (guardrail Layer 3) --------------------------------
 # Refuse to arm into a broken control plane: runner-doctor + a launcher DRYRUN
 # + the runner test suite must all pass. A red host or a broken launcher used

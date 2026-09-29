@@ -433,9 +433,14 @@ git fetch -q origin main && [ -z "$(git log --oneline @{u}..HEAD)" ] && echo "PU
   and `receipts.py:270`, so it could only be learned by triggering the very
   refuse-fix-refuse cascade the message warns about:
   ```bash
-  bash scripts/build.sh && bash scripts/test.sh QUIET=1 && bash scripts/test-smoke.sh   # SMOKE LAST, no rebuild after it
+  bash scripts/overnight/run-artifact.sh j1-build -- bash scripts/build.sh
+  bash scripts/overnight/run-artifact.sh j1-test -- bash scripts/test.sh QUIET=1
+  bash scripts/overnight/run-artifact.sh j1-smoke -- bash scripts/test-smoke.sh
   python3 scripts/overnight/receipts.py record-rollover .
   ```
+  Each step goes through `run-artifact.sh` (the build-offload hook refuses the
+  bare scripts in SECTIONS), in this order, SMOKE LAST, with no rebuild after it.
+  Stop at the first non-zero verdict.
   Then run `python3 .claude/hooks/run_phase_guard.py rollover`:
   - **VERIFIED** (clean tree incl. untracked, nothing unpushed, todo-graph
     rebuild OK, content-bound build + test + smoke receipts valid, no

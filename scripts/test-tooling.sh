@@ -261,7 +261,12 @@ t_pass() {
 
 t_fail() {
     FAIL=$((FAIL + 1))
-    FAILURES+=("$1")
+    # Keep the detail with the name: the pre-push gate runs --quiet, where the
+    # detail line below is not printed, so a refusal used to show only the
+    # assertion's NAME and could not be triaged from the push log (2026-09-29).
+    local _d="${2:-}"
+    _d="${_d//$'\n'/ }"
+    FAILURES+=("$1${_d:+ :: ${_d:0:400}}")
     [ "$QUIET" = "0" ] && echo -e "  ${RED}FAIL${NC}  $1"
     [ -n "${2:-}" ] && [ "$QUIET" = "0" ] && echo -e "        ${DIM}${2}${NC}"
 }
@@ -4918,7 +4923,7 @@ fi
 # solo work). Both are asserted against a real payload, not read off the source.
 _arg_payload='{"tool_name":"Bash","tool_input":{"command":"git add -A"}}'
 _arg_state="$REPO_ROOT/.claude/state/sequencer-run.json"
-if [ -f "$_arg_state" ] && python3 -c "import json,sys;sys.exit(0 if json.load(open('$_arg_state')).get('active') is True else 1)" 2>/dev/null; then
+if [ -f "$_arg_state" ] && [ -e "$REPO_ROOT/.claude/state/sequencer-armed" ] && python3 -c "import json,sys;sys.exit(0 if json.load(open('$_arg_state')).get('active') is True else 1)" 2>/dev/null; then
     if printf '%s' "$_arg_payload" | OVERNIGHT_SEQUENCER_RUN=1 python3 "$REPO_ROOT/.claude/hooks/attended_repair_guard.py" >/dev/null 2>&1; then
         t_pass "attended_repair_guard_inert_in_run  OVERNIGHT_SEQUENCER_RUN=1 never blocks"
     else

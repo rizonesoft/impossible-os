@@ -83,8 +83,42 @@ def test_guard_is_still_inert_with_no_active_run():
     assert mod._run_state() is None or mod._run_state().get("active") is True
 
 
+def _guard_in(root, command="git add -A"):
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(root))
+    env.pop("OVERNIGHT_SEQUENCER_RUN", None)
+    env.pop("ATTENDED_REPAIR_OVERRIDE", None)
+    payload = '{"tool_name":"Bash","tool_input":{"command":"%s"}}' % command
+    return subprocess.run([sys.executable, str(HOOK)], input=payload, env=env,
+                          cwd=str(root), capture_output=True, text=True, timeout=30)
+
+
+def test_live_needs_the_armed_marker_as_well_as_active_state():
+    """2026-09-29: a deadline stop left `active: true` with the marker gone, and
+    the guard blocked git verbs for hours with nothing running. Live now means
+    active state AND the armed marker; the refusal direction must still hold."""
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        state = root / ".claude/state"
+        state.mkdir(parents=True)
+        (state / "sequencer-run.json").write_text(
+            '{"active": true, "phase": "SECTIONS", "file": "todo/x.md", "section_idx": 3}')
+        stale = _guard_in(root)
+        assert stale.returncode == 0, ("stale active state without a marker must not block",
+                                       stale.stderr)
+        (state / "sequencer-armed").write_text("")
+        live = _guard_in(root)
+        assert live.returncode == 2 and "attended-repair BLOCK" in live.stderr, \
+            ("a live run (active + marker) must still block git add -A", live.returncode, live.stderr)
+        scoped = _guard_in(root, "git add todo/a.md")
+        assert scoped.returncode == 0, ("explicit paths stay allowed while live", scoped.stderr)
+        (state / "sequencer-run.json").write_text('{"active": false}')
+        cleared = _guard_in(root)
+        assert cleared.returncode == 0, ("cleared state with a marker must not block", cleared.stderr)
+
+
 if __name__ == "__main__":
     test_resolves_primary_from_the_primary()
     test_resolves_primary_from_a_linked_worktree()
     test_guard_is_still_inert_with_no_active_run()
+    test_live_needs_the_armed_marker_as_well_as_active_state()
     print("PASS: attended-repair guard resolves the primary worktree")

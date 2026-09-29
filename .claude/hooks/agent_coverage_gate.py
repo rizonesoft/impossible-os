@@ -166,11 +166,16 @@ def main() -> int:
     if not fp:
         return 0
     # A subagent's own reads are the work being delegated; never gate them.
+    # Identity comes from POSITIVE agent markers (agent_id, agent_type,
+    # agent_transcript_path, a subagent transcript path), not from
+    # `transcript_path` alone: a subagent's payload carries the PARENT's
+    # transcript path, so the path test read every subagent as the main session
+    # (2026-09-28 canary: 61 subagent Reads refused in one cycle). Same fix as
+    # websearch_offload_gate's 2026-07-31 one.
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import runner_bash_guard
-        if runner_bash_guard._is_subagent_transcript(
-                str(d.get("transcript_path") or "")):
+        if runner_bash_guard.is_subagent_payload(d):
             return 0
     except Exception:
         pass
@@ -223,14 +228,15 @@ def _selftest() -> int:  # noqa: C901
         finally:
             sys.stdin = old
 
-    def run_read(path, session="s1", transcript="/x/main.jsonl", **ti):
+    def run_read(path, session="s1", transcript="/x/main.jsonl", payload=None, **ti):
         old = sys.stdin
         try:
             body = {"file_path": path}
             body.update(ti)
-            sys.stdin = io.StringIO(json.dumps({
-                "tool_name": "Read", "session_id": session,
-                "transcript_path": transcript, "tool_input": body}))
+            d = {"tool_name": "Read", "session_id": session,
+                 "transcript_path": transcript, "tool_input": body}
+            d.update(payload or {})
+            sys.stdin = io.StringIO(json.dumps(d))
             err = io.StringIO()
             with contextlib.redirect_stderr(err):
                 rc = main()
@@ -256,6 +262,15 @@ def _selftest() -> int:  # noqa: C901
     # Subagent reads are the delegated work itself.
     check("subagent-free",
           run_read("/r/task.c", transcript="/p/agent-x.jsonl")[0] == 0)
+    # The REAL subagent payload shape: the parent's transcript path plus an
+    # agent marker. Before 2026-09-29 this read was refused (61 in one cycle).
+    for _ in range(4):
+        check("subagent-with-parent-transcript-free",
+              run_read("/r/src/kernel/quota/quota.c", transcript="/x/main.jsonl",
+                       payload={"agent_id": "a1b2c3", "agent_type": "section-context-mapper"})[0] == 0)
+    # Refusal direction: the main session, with no agent marker, is still blocked.
+    rm = run_read("/r/src/kernel/quota/quota.c")
+    check("main-still-blocks-after-subagent-reads", rm[0] == 2 and "BLOCK" in rm[1])
     # A different session starts clean.
     check("other-session-free", run_read("/r/task.c", session="s2")[0] == 0)
     # Non-covering agent types establish no coverage.

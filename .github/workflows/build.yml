@@ -22,10 +22,13 @@ on:
         default: false
         type: boolean
 
-# Cancel in-progress builds when a newer push arrives
+# Every push to main gets its own verdict; only a pull request cancels its
+# superseded runs. Grouping main by ref and cancelling left 16 of 30 runs
+# without a verdict in the 2026-09-28 canary, and a test broken by cae757fbe
+# surfaced only on a later push because its own run was cancelled.
 concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
+  group: build-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
