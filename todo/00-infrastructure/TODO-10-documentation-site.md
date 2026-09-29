@@ -44,41 +44,43 @@ file_patterns:
 - A new roadmap file cannot be committed without its docs page (Check 30 already refuses it once the baseline stops listing it).
 - A docs page that describes code which has since changed is flagged (§22).
 - The site has a sitemap, per-page last-updated dates and a scheduled external-link check (§23).
-- Every OS and SDK release keeps a docs snapshot pinned to its own commit, and the SDK API reference is published (§24).
+- Every OS and SDK release keeps a docs snapshot pinned to its own commit, and the SDK API reference is published (§24, §29, §30).
 - Search finds API identifiers anywhere on a page, and the docs UI passes keyboard and screen-reader checks (§25).
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                              | Depends On | Status |
-| --- | :---: | ------------------------------------------------------------------------ | ---------- | :----: |
-| ⭐  |   1   | §1 Site generator, project facts, coverage and drift gate                | --         |  [x]   |
-| 💎  |   2   | §2 Map existing docs pages to their roadmap files                        | §1         |  [x]   |
-| ⭐  |   3   | §3 Documentation page contract, template and create-todo step            | §1         |  [x]   |
-| 💎  |   4   | §4 Document: Infrastructure (9 roadmap files)                            | §2, §3     |  [x]   |
-| 💎  |   5   | §5 Document: Boot platform, part 1 (10 roadmap files)                    | §2, §3     |  [x]   |
-| 💎  |   6   | §6 Document: Boot platform, part 2 (10 roadmap files)                    | §2, §3     |  [x]   |
-| 💎  |   7   | §7 Document: Boot platform, part 3 (9 roadmap files)                     | §2, §3     |  [x]   |
-| 💎  |   8   | §8 Document: Kernel core, part 1 (12 roadmap files)                      | §2, §3     |  [x]   |
-| 💎  |   9   | §9 Document: Kernel core, part 2 (12 roadmap files)                      | §2, §3     |  [x]   |
-| 💎  |  10   | §10 Document: Kernel core, part 3 (12 roadmap files)                     | §2, §3     |  [x]   |
-| 💎  |  11   | §11 Document: Memory and concurrency (11 roadmap files)                  | §2, §3     |  [x]   |
-| 💎  |  12   | §12 Document: Drivers and hardware, part 1 (13 roadmap files)            | §2, §3     |  [x]   |
-| 💎  |  13   | §13 Document: Drivers and hardware, part 2 (12 roadmap files)            | §2, §3     |  [x]   |
-| 💎  |  14   | §14 Document: Storage and filesystems (14 roadmap files)                 | §2, §3     |  [x]   |
-| 💎  |  15   | §15 Document: Networking (11 roadmap files)                              | §2, §3     |  [x]   |
-| 💎  |  16   | §16 Document: Desktop foundation and graphics, part 1 (14 roadmap files) | §2, §3     |  [x]   |
-| 💎  |  17   | §17 Document: Graphics and UI, part 2 (9 roadmap files)                  | §2, §3     |  [x]   |
-| 💎  |  18   | §18 Document: Desktop shell (14 roadmap files)                           | §2, §3     |  [x]   |
-| 💎  |  19   | §19 Document: Platform services (15 roadmap files)                       | §2, §3     |  [x]   |
-| 💎  |  20   | §20 Document: Applications and accessories (15 roadmap files)            | §2, §3     |  [x]   |
-| 💎  |  21   | §21 Document: SDK and release (12 roadmap files)                         | §2, §3     |  [x]   |
-| ⭐  |  22   | §22 Doc freshness: `sources=` and a stale-page warning                   | §3         |  [x]   |
-| 💎  |  23   | §23 Site polish: sitemap, last-updated, link health, OpenGraph           | §1         |  [x]   |
-| 💎  |  24   | §24 Versioned release docs: retention, pinned refs, SDK reference        | §1, §23    |  [ ]   |
-| 💎  |  25   | §25 Docs search completeness and accessibility                           | §1         |  [ ]   |
-| 💎  |  26   | §26 Document: Host tools (8 roadmap files)                               | §2, §3     |  [ ]   |
-| 💎  |  27   | §27 Document: Architecture ports and future research (9 roadmap files)   | §2, §3     |  [ ]   |
-| ⭐  |  28   | §28 Review-class nets for site tooling: real parsers, scheduler stress   | §23        |  [ ]   |
+| ⭐  | Order | Deliverable                                                              | Depends On                  | Status |
+| --- | :---: | ------------------------------------------------------------------------ | --------------------------- | :----: |
+| ⭐  |   1   | §1 Site generator, project facts, coverage and drift gate                | --                          |  [x]   |
+| 💎  |   2   | §2 Map existing docs pages to their roadmap files                        | §1                          |  [x]   |
+| ⭐  |   3   | §3 Documentation page contract, template and create-todo step            | §1                          |  [x]   |
+| 💎  |   4   | §4 Document: Infrastructure (9 roadmap files)                            | §2, §3                      |  [x]   |
+| 💎  |   5   | §5 Document: Boot platform, part 1 (10 roadmap files)                    | §2, §3                      |  [x]   |
+| 💎  |   6   | §6 Document: Boot platform, part 2 (10 roadmap files)                    | §2, §3                      |  [x]   |
+| 💎  |   7   | §7 Document: Boot platform, part 3 (9 roadmap files)                     | §2, §3                      |  [x]   |
+| 💎  |   8   | §8 Document: Kernel core, part 1 (12 roadmap files)                      | §2, §3                      |  [x]   |
+| 💎  |   9   | §9 Document: Kernel core, part 2 (12 roadmap files)                      | §2, §3                      |  [x]   |
+| 💎  |  10   | §10 Document: Kernel core, part 3 (12 roadmap files)                     | §2, §3                      |  [x]   |
+| 💎  |  11   | §11 Document: Memory and concurrency (11 roadmap files)                  | §2, §3                      |  [x]   |
+| 💎  |  12   | §12 Document: Drivers and hardware, part 1 (13 roadmap files)            | §2, §3                      |  [x]   |
+| 💎  |  13   | §13 Document: Drivers and hardware, part 2 (12 roadmap files)            | §2, §3                      |  [x]   |
+| 💎  |  14   | §14 Document: Storage and filesystems (14 roadmap files)                 | §2, §3                      |  [x]   |
+| 💎  |  15   | §15 Document: Networking (11 roadmap files)                              | §2, §3                      |  [x]   |
+| 💎  |  16   | §16 Document: Desktop foundation and graphics, part 1 (14 roadmap files) | §2, §3                      |  [x]   |
+| 💎  |  17   | §17 Document: Graphics and UI, part 2 (9 roadmap files)                  | §2, §3                      |  [x]   |
+| 💎  |  18   | §18 Document: Desktop shell (14 roadmap files)                           | §2, §3                      |  [x]   |
+| 💎  |  19   | §19 Document: Platform services (15 roadmap files)                       | §2, §3                      |  [x]   |
+| 💎  |  20   | §20 Document: Applications and accessories (15 roadmap files)            | §2, §3                      |  [x]   |
+| 💎  |  21   | §21 Document: SDK and release (12 roadmap files)                         | §2, §3                      |  [x]   |
+| ⭐  |  22   | §22 Doc freshness: `sources=` and a stale-page warning                   | §3                          |  [x]   |
+| 💎  |  23   | §23 Site polish: sitemap, last-updated, link health, OpenGraph           | §1                          |  [x]   |
+| 💎  |  24   | §24 Versioned release docs: pinned refs, version-scoped rendering        | §1, §23                     |  [ ]   |
+| 💎  |  25   | §25 Docs search completeness and accessibility                           | §1                          |  [ ]   |
+| 💎  |  26   | §26 Document: Host tools (8 roadmap files)                               | §2, §3                      |  [ ]   |
+| 💎  |  27   | §27 Document: Architecture ports and future research (9 roadmap files)   | §2, §3                      |  [ ]   |
+| ⭐  |  28   | §28 Review-class nets for site tooling: real parsers, scheduler stress   | §23                         |  [ ]   |
+| 💎  |  29   | §29 Retained release trees: snapshots, manifest, live verification       | §24                         |  [ ]   |
+| 💎  |  30   | §30 SDK release docs and API reference                                   | §29, D12 T06 §2, D12 T06 §8 |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -1141,22 +1143,17 @@ A page that was right when written goes wrong when its code changes. Neither Win
 
 ---
 
-## 24. Versioned Release Docs: Retention, Pinned Refs, SDK Reference
+## 24. Versioned Release Docs: Pinned Refs and Version-Scoped Rendering
 
 > **Spawned-by:** §23 (split)
 
-A release snapshot is only useful if it survives later deploys and still points at the code it describes. Today every deploy publishes a fresh whole-site artifact (`.github/workflows/pages.yml`), `site-live.yml` repairs drift by redeploying `main`, and `scripts/site/build.py` hardcodes `main` in source, image and edit links (`build.py:310`, `:335`, `:435`, `:699`).
+A release snapshot is only useful if it still points at the code it describes. Today `scripts/site/build.py` hardcodes `main` in source, image and edit links (`build.py:310`, `:335`, `:435`, `:699`), so a page built at a tag would link to whatever `main` holds now. This section makes the renderer ref-aware; retaining and serving the release trees is §29, and the SDK namespace and API reference are §30 (split 2026-09-29: seven work items is more than one worker context, and the SDK half is blocked on D12 T06 §2/§8).
 
-- [ ] Release snapshots: when a `v*` tag is pushed, build the docs at that tag into `docs/<version>/` of the published site and add a version picker; `main` stays the default
-- [ ] Version manifest (for example `gh-pages/versions.json`) is the authoritative list of retained releases; every deploy AND every `site-live.yml` repair assembles `main` plus each listed release tree
-- [ ] `scripts/site/verify_live.py` verifies every retained release tree, not just the files of the current `main` build
 - [ ] Add a release ref and URL base to rendering: source, directory, image and edit links pin to the release commit; nav, search index and canonical URLs are scoped to that version
-- [ ] Two version namespaces: OS `v*` and SDK `sdk/v*` (created by D12 T06 §8 `release-sdk.sh`) each trigger a snapshot under their own path
-- [ ] Publish the SDK API reference that D12 T06 §2 `gendoc` writes to `sdk/docs/api-reference/` under `docs/sdk/api/` for `main` and per SDK tag -> XREF: `D12 T06 §2`
-- [ ] Tests: two releases then a `main` deploy and a repair leave both releases served; a release page links to its tag commit after `main` deletes the referenced file; an `sdk/v*` fixture tag publishes reference pages matching its headers
-- [ ] Commit: `"site: retained, version-pinned release docs and SDK API reference"`
+- [ ] Tests: a page rendered at a release ref links to its tag commit after `main` deletes the referenced file; with no ref given, the output is byte-identical to today's
+- [ ] Commit: `"site: version-pinned rendering for release docs"`
 
-**Test checkpoint:** after two test tags and a later `main` deploy, `verify_live.py` passes for `main` and both release trees; a release page's source link resolves at its tag; `docs/sdk/api/` renders on the local build. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
+**Test checkpoint:** a local build at `v26.3.18-alpha.821` produces source links that resolve at that tag; the default build's bytes are unchanged. Test on: WSL2 dev host.
 
 ---
 
@@ -1248,6 +1245,41 @@ Promotion of two review classes into automation, filed under the reviewer-to-aut
 
 ---
 
+## 29. Retained Release Trees: Snapshots, Manifest, Live Verification
+
+> **Spawned-by:** §24 (split)
+
+**Design:** n/a -- host tooling and CI workflows; the version picker reuses the existing docs template controls
+
+A release snapshot must survive later deploys. Today every deploy publishes a fresh whole-site artifact (`.github/workflows/pages.yml`) and `site-live.yml` repairs drift by redeploying `main`, so anything not rebuilt from `main` disappears on the next push. Uses §24's ref-aware renderer.
+
+- [ ] Release snapshots: when a `v*` tag is pushed, build the docs at that tag into `docs/<version>/` of the published site and add a version picker; `main` stays the default
+- [ ] Version manifest (for example `gh-pages/versions.json`) is the authoritative list of retained releases; every deploy AND every `site-live.yml` repair assembles `main` plus each listed release tree
+- [ ] `scripts/site/verify_live.py` verifies every retained release tree, not just the files of the current `main` build
+- [ ] Tests: two releases then a `main` deploy and a repair leave both releases served and byte-verified
+- [ ] Commit: `"site: retained release docs trees and version manifest"`
+
+**Test checkpoint:** after two test tags and a later `main` deploy, `verify_live.py` passes for `main` and both release trees. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
+
+---
+
+## 30. SDK Release Docs and API Reference
+
+> **Spawned-by:** §24 (split)
+
+**Design:** n/a -- generated reference pages rendered by the existing docs template
+
+The SDK has its own release line (`sdk/v*` tags from D12 T06 §8 `release-sdk.sh`) and its own API reference (D12 T06 §2 `gendoc`). Neither producer exists yet, so this section waits on them; it reuses §29's retention machinery with a second namespace.
+
+- [ ] Two version namespaces: OS `v*` and SDK `sdk/v*` (created by D12 T06 §8 `release-sdk.sh`) each trigger a snapshot under their own path -> XREF: `D12 T06 §8`
+- [ ] Publish the SDK API reference that D12 T06 §2 `gendoc` writes to `sdk/docs/api-reference/` under `docs/sdk/api/` for `main` and per SDK tag -> XREF: `D12 T06 §2`
+- [ ] Tests: an `sdk/v*` fixture tag publishes reference pages matching its headers, under the SDK path and not the OS path
+- [ ] Commit: `"site: SDK release docs and API reference"`
+
+**Test checkpoint:** `docs/sdk/api/` renders on the local build; an `sdk/v*` fixture tag lands under its own path. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
+
+---
+
 ## OS Comparison
 
 | ⭐  | Feature                          | 🪟 Win11                 | 🐧 Linux                   | 🚀 Impossible OS          |
@@ -1257,10 +1289,10 @@ Promotion of two review classes into automation, filed under the reviewer-to-aut
 | ⭐  | Every subsystem has a docs page  | ⚠️ Public APIs only      | ⚠️ Uneven                  | ⬜ §4-§21, §26 coverage   |
 | ⭐  | Facts derived from one source    | ❌ Manual                | ❌ Manual                  | ✅ §1 `project.json`      |
 | ⭐  | Stale narrative page detection   | ❌ Review dates          | ❌ Not tracked             | ✅ §22 `sources=` warns   |
-| 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ⬜ §24 retained snapshots |
+| 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ⬜ §29 retained snapshots |
 | 💎  | Site search                      | ✅ Full search           | ✅ Sphinx search           | ⚠️ §1 basic, §25 full     |
 | 💎  | External link rot check          | ✅ Learn link validation | ✅ Sphinx `linkcheck`      | ✅ §23 weekly workflow    |
-| 💎  | Published API reference          | ✅ Learn API reference   | ✅ kernel-doc              | ⬜ §24 from D12 T06 §2    |
+| 💎  | Published API reference          | ✅ Learn API reference   | ✅ kernel-doc              | ⬜ §30 from D12 T06 §2    |
 | 💎  | Accessible docs UI               | ✅ WCAG conformance      | ⚠️ Theme-dependent         | ⬜ §25 ARIA + checks      |
 
 > **After §1-§3:** the pipeline, the gate and the page contract exist; coverage is measured and cannot regress.
@@ -1284,7 +1316,7 @@ Promotion of two review classes into automation, filed under the reviewer-to-aut
   - `gen_theme_header.check()` is empty on the committed tree
   - Scripts that do not parse, GitHub About-box validation and diff, and feature cards (open-section count, escaping, dead owner, untracked source, dash)
   - Freshness on a throwaway repo: stale then fresh after a revert, deletion under a source directory, committed and uncommitted pure renames, a merge resolution as baseline, raw file names, literal pathspecs, editing vs merge, per-card baselines, `reviewed` bumps, merged card sources
-- [ ] Extend `scripts/site/tests/test_build.py` with the §24 cases (release retention across deploys, ref-pinned links, `sdk/v*` namespace) and the §25 cases (inline-code search hit, match past 4,000 chars, missing alt, heading skip)
+- [ ] Extend `scripts/site/tests/test_build.py` with the §24/§29/§30 cases (ref-pinned links, release retention across deploys, `sdk/v*` namespace) and the §25 cases (inline-code search hit, match past 4,000 chars, missing alt, heading skip)
 - [x] Register the suite in `scripts/test-tooling.sh` (runs on every tooling pass; it takes about 2 s, so it is not path-scoped)
 - [x] Commit: `"test: site generator unit tests"` (landed with the section 1-2 review)
 
