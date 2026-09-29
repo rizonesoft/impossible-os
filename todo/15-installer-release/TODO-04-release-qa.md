@@ -18,18 +18,18 @@ title: "TODO-04 -- Release QA & Platform Certification"
 > reviews and triages them but does not implement the dump format or writer.
 >
 > **KASAN / stack guard pages / heap canaries** are implemented by
-> `03-memory-concurrency/TODO-09`; §9 here enables those flags in the QA build profile
+> `03-memory-concurrency/TODO-10`; §8 here enables those flags in the QA build profile
 > and uses them -- it does not re-specify the sanitiser internals.
 >
 > **Hyper-V hypervisor detection** (`boot_info.hv_flags`, MSR clock) is implemented in
-> `01-boot-platform/TODO-09 §4`; the Hyper-V cert run (§4 here) depends on that detection
+> `01-boot-platform/TODO-09 §4`; the Hyper-V cert run (§3 here) depends on that detection
 > working correctly.
 >
 > **Post-install OOBE trigger** (`HKLM\SYSTEM\FirstBoot=1`) verified in
-> `10-platform-services/TODO-11 §8`; §5 here checks it passes on the Hyper-V VM.
+> `10-platform-services/TODO-11 §8`; §3 here checks it passes on the Hyper-V VM.
 >
 > **Win32 compat CI gate** (`scripts/compat-check.sh`) is owned by
-> `12-user-platform-sdk/TODO-07 §12`; §9 here lists it as a sign-off gating condition --
+> `12-user-platform-sdk/TODO-07 §12`; §7 here lists it as a sign-off gating condition --
 > do not re-specify the compat gate runner.
 
 ---
@@ -38,13 +38,13 @@ title: "TODO-04 -- Release QA & Platform Certification"
 
 - `01-boot-platform/TODO-28-boot-validation-certification-matrix.md` (-> XREF) -- boot-platform certification subset (boot-cert matrix schema, boot-path/firmware/Secure-Boot/recovery/network-boot gates, repeat-boot flake reliability); this TODO owns whole-OS release QA. VM launchers (§2-§4) + hardware checklist (§5) are the shared harness TODO-28 §2/§7 consume; the 30-min idle soak (§2) + crash-analytics soak (§8) stay here while TODO-28 owns repeat-BOOT flake detection.
 - `02-kernel-core/TODO-27-crash-dump-generation.md` (-> XREF) -- `X:\Crash\` (BlackBox, -> XREF: TODO-17 §8); minidump format; §6 crash triage
-- `03-memory-concurrency/TODO-10-concurrency-diagnostics.md` (→ XREF) -- `KASAN=1`, `LOCKDEP=1` build flags; stack guard pages; heap canaries; §9 QA build profile
+- `03-memory-concurrency/TODO-10-concurrency-diagnostics.md` (→ XREF) -- `KASAN=1`, `LOCKDEP=1` build flags; stack guard pages; heap canaries; §8 QA build profile
 - `01-boot-platform/TODO-09-cpu-boot-sequencing.md §4` (→ XREF) -- `HV_TSC_ENLIGHTENMENT` detection; `boot_info.hv_flags`; §4 Hyper-V boot dependency
 - `01-boot-platform/TODO-14-boot-diagnostics.md` (→ XREF) -- `[READY]` serial marker; `boot_stage_history[]`; §2 §3 serial output parsing
-- `10-platform-services/TODO-11-installer-iso.md §8` (→ XREF) -- post-install first boot + OOBE trigger verification; §5 Hyper-V certification baseline test
-- `12-user-platform-sdk/TODO-07-win32-compat-matrix.md §12` (→ XREF) -- `scripts/compat-check.sh` Tier 1–7 gate; §9 sign-off gating condition
-- `12-installer-release/TODO-01-release-artifacts.md §1 §5` (→ XREF) -- `OS_VERSION_STRING`, `increment-build.sh`, code signing; §7 checklist items
-- `12-installer-release/TODO-03-update-server.md §5` (→ XREF) -- `promote-release.sh` stable promotion; §8 final step
+- `10-platform-services/TODO-11-installer-iso.md §8` (→ XREF) -- post-install first boot + OOBE trigger verification; §3 Hyper-V certification baseline test
+- `12-user-platform-sdk/TODO-07-win32-compat-matrix.md §12` (→ XREF) -- `scripts/compat-check.sh` Tier 1–7 gate; §7 sign-off gating condition
+- `15-installer-release/TODO-01-release-artifacts.md §1 §5` (→ XREF) -- `OS_VERSION_STRING`, `increment-build.sh`, code signing; §7 checklist items
+- `15-installer-release/TODO-03-update-server.md §3` (→ XREF) -- `promote-release.sh` stable promotion; §8 final step
 - `scripts/build.sh` -- `bash scripts/build.sh run` for QEMU; QA build flags; §1 §2 §6
 - `include/kernel/drivers/` -- driver coverage for §5 hardware checklist
 
@@ -298,7 +298,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 > run the 30-minute soak, and add kernel assertions that prevent recurrence.
 >
 > **KASAN / stack guard pages** (referenced here) are implemented in
-> `03-memory-concurrency/TODO-09`; §9 enables those build flags, does not re-specify them.
+> `03-memory-concurrency/TODO-10`; §8 enables those build flags, does not re-specify them.
 > **Crash dump format + writer** are specified in `02-kernel-core/TODO-27`.
 
 - [ ] **QA build profile** (add to `scripts/build.sh` as `bash scripts/build.sh qa`):

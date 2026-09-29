@@ -63,11 +63,11 @@ available. `.profile` is sourced on startup and persists env changes across rebo
 
 | Step | Section                                    | 💎/⭐ | Dependency                             |
 | ---- | ------------------------------------------ | ----- | -------------------------------------- |
-| 1    | Per-process environ storage (SDK contract) | 💎    | `D02T14 §2` complete                   |
-| 2    | System default variables                   | 💎    | `D02T14 §3` complete; Registry mounted |
-| 3    | `%VAR%` expansion + `env_expand_path`      | 💎    | `D02T14 §4` complete                   |
-| 4    | SYS_GETENV / SYS_SETENV / SYS_UNSETENV     | 💎    | `D02T14 §6` complete                   |
-| 5    | PATH-based command lookup + session cache  | 💎    | `D02T14 §8`; `vfs_stat`                |
+| 1    | Per-process environ storage (SDK contract) | 💎    | `D02T22 §1` complete                   |
+| 2    | System default variables                   | 💎    | `D02T22 §2` complete; Registry mounted |
+| 3    | `%VAR%` expansion + `env_expand_path`      | 💎    | `D02T22 §3` complete                   |
+| 4    | SYS_GETENV / SYS_SETENV / SYS_UNSETENV     | 💎    | `D02T22 §5` complete                   |
+| 5    | PATH-based command lookup + session cache  | 💎    | `D02T22 §7`; `vfs_stat`                |
 | 6    | argv / argc process ABI + `cmd_tokenize`   | 💎    | `TODO-04 §1` complete                  |
 | 7    | Shell `.profile` startup script            | 💎    | §5 PATH lookup, §6 cmd_tokenize        |
 | 8    | `set` / `echo` / `env` / `where` commands  | 💎    | §1–§5 all complete                     |
@@ -96,6 +96,8 @@ int         env_expand_path(struct task *t, const char *templ,
                              char *out, size_t max);            /* %1–%9 file-assoc substitution */
 ```
 
+- [ ] Rescope against `02-kernel-core/TODO-22-environment-variables.md`, which shipped the storage, defaults, expansion, `NtQueryEnvironmentVariable`/`NtSetEnvironmentVariable`, search path and `CommandLineToArgvW` this file restates
+  - Real names: `env_get_copy()` (no public `env_get()`), SSDT `NtQueryEnvironmentVariable` (no `SYS_GETENV`), `cmd_tokenize()` in `user/lib/stdlib.c` and the shell in `user/cmd.c`; keep `env_expand_path`, the PATH cache, `.profile` and the shell commands.
 - [ ] Verify `include/kernel/env.h` exports all the above after TODO-14 §2 is complete
 - [ ] `env_get` is **case-insensitive** (`PATH` == `path`); this is the Windows contract
 - [ ] `env_list` is the backing function for `GetEnvironmentStrings` and the `set` command
@@ -186,7 +188,7 @@ int         env_expand_path(struct task *t, const char *templ,
 
 ## 6. argv / argc Process ABI + `cmd_tokenize` `[Sonnet]`
 
-> Initial user stack layout (argc / argv / envp pushed before `iretq`): `02-kernel-core/TODO-11 §2`.
+> Initial user stack layout (argc / argv / envp pushed before `iretq`): `02-kernel-core/TODO-11 §7`.
 > This section specifies **`cmd_tokenize`** -- the command-line tokenizer that produces the
 > `argv[]` the kernel pushes, and the Win32 contract apps read via `GetCommandLineA`.
 
@@ -253,15 +255,15 @@ int         env_expand_path(struct task *t, const char *templ,
 
 | ⭐  | Feature                                                      | 🪟 Win11                                                       | 🐧 Linux                                   | 🚀 Impossible OS                                 |
 | --- | ------------------------------------------------------------ | -------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------ |
-| 💎  | Per-process `KEY=VALUE` environ array                        | ✅ `PEB->ProcessParameters->Environment` UTF-16 block          | ✅ `execve` `envp[]`; `environ` global     | ⬜ §1 -- `D02T14 `; `struct task` environ        |
-| 💎  | System default variables                                     | ✅ Registry `HKLM\SYSTEM\...\Environment` + `HKCU\Environment` | ✅ `/etc/environment` + PAM + `~/.profile` | ⬜ §2 -- `D02T14 `; same dual-hive Registry      |
-| 💎  | `%VAR%` expansion                                            | ✅ CMD `%VAR%` + `ExpandEnvironmentStrings`                    | ✅ `$VAR` / `${VAR}` (shell-level)         | ⬜ §3 -- `D02T14 `; depth-4 cap prevents         |
+| 💎  | Per-process `KEY=VALUE` environ array                        | ✅ `PEB->ProcessParameters->Environment` UTF-16 block          | ✅ `execve` `envp[]`; `environ` global     | ⬜ §1 -- `D02T22 `; `struct task` environ        |
+| 💎  | System default variables                                     | ✅ Registry `HKLM\SYSTEM\...\Environment` + `HKCU\Environment` | ✅ `/etc/environment` + PAM + `~/.profile` | ⬜ §2 -- `D02T22 `; same dual-hive Registry      |
+| 💎  | `%VAR%` expansion                                            | ✅ CMD `%VAR%` + `ExpandEnvironmentStrings`                    | ✅ `$VAR` / `${VAR}` (shell-level)         | ⬜ §3 -- `D02T22 `; depth-4 cap prevents         |
 | ⭐  | `env_expand_path` `%1`–`%9` file-assoc template substitution | ✅ `ShellExecute` HKCR command template (`%1`                  | ⚠️ `xdg-open` delegates to desktop; no     | ⬜ §3 -- (this TODO); quote-wraps filepath; also |
-| 💎  | `SYS_GETENV` / `SYS_SETENV` syscalls                         | ✅ `NtQueryEnvironmentVariable` / `NtSetEnvironmentVariable`   | ✅ `getenv`/`setenv` via CRT (no direct    | ⬜ §5 -- `D02T14 `; SSDT + user-mode             |
-| 💎  | PATH lookup + executable-not-found error                     | ✅ `SearchPath`; `where.exe` utility                           | ✅ `execvp` + shell `type`/`which`         | ⬜ §7 -- `D02T14 ` + §6 (session                 |
+| 💎  | `SYS_GETENV` / `SYS_SETENV` syscalls                         | ✅ `NtQueryEnvironmentVariable` / `NtSetEnvironmentVariable`   | ✅ `getenv`/`setenv` via CRT (no direct    | ⬜ §5 -- `D02T22 `; SSDT + user-mode             |
+| 💎  | PATH lookup + executable-not-found error                     | ✅ `SearchPath`; `where.exe` utility                           | ✅ `execvp` + shell `type`/`which`         | ⬜ §7 -- `D02T22 ` + §6 (session                 |
 | 💎  | `cmd_tokenize` with Win32 quote/escape rules                 | ✅ `CommandLineToArgvW`                                        | ✅ POSIX shell word-splitting              | ⬜ §6 -- `\"` inside quotes, `\\` before         |
 | 💎  | `CommandLineToArgvW` Win32 stub                              | ✅ `shell32.dll` `CommandLineToArgvW`                          | ❌ Not applicable (different model)        | ⬜ §6 -- adapter over `cmd_tokenize`             |
-| 💎  | `.profile` sourced on shell startup                          | ✅ `HKCU\...\Run` / PowerShell profile                         | ✅ `~/.profile` / `~/.bashrc`              | ⬜ §8 -- `D02T14 ` + §8; default                 |
+| 💎  | `.profile` sourced on shell startup                          | ✅ `HKCU\...\Run` / PowerShell profile                         | ✅ `~/.profile` / `~/.bashrc`              | ⬜ §8 -- `D02T22 ` + §8; default                 |
 | 💎  | `set`/`echo`/`env`/`where` shell built-ins                   | ✅ CMD `set`/`echo`/`where`                                    | ✅ `export`/`echo`/`env`/`which`           | ⬜ §8 -- `echo.` blank-line idiom + `set         |
 
 Impossible OS merges the Windows `%1`–`%9` file-association template model with `env_expand`

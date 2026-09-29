@@ -71,12 +71,13 @@ file_patterns:
 | 💎  |  18   | §18 Document: Desktop shell (14 roadmap files)                           | §2, §3     |  [x]   |
 | 💎  |  19   | §19 Document: Platform services (15 roadmap files)                       | §2, §3     |  [x]   |
 | 💎  |  20   | §20 Document: Applications and accessories (15 roadmap files)            | §2, §3     |  [x]   |
-| 💎  |  21   | §21 Document: SDK, release, ports and research (21 roadmap files)        | §2, §3     |  [ ]   |
+| 💎  |  21   | §21 Document: SDK and release (12 roadmap files)                         | §2, §3     |  [x]   |
 | ⭐  |  22   | §22 Doc freshness: `sources=` and a stale-page warning                   | §3         |  [x]   |
 | 💎  |  23   | §23 Site polish: sitemap, last-updated, link health, OpenGraph           | §1         |  [ ]   |
 | 💎  |  24   | §24 Versioned release docs: retention, pinned refs, SDK reference        | §1, §23    |  [ ]   |
 | 💎  |  25   | §25 Docs search completeness and accessibility                           | §1         |  [ ]   |
 | 💎  |  26   | §26 Document: Host tools (8 roadmap files)                               | §2, §3     |  [ ]   |
+| 💎  |  27   | §27 Document: Architecture ports and future research (9 roadmap files)   | §2, §3     |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -994,43 +995,52 @@ Write docs pages that meet the §3 contract for the 15 roadmap files below. Read
 
 ---
 
-## 21. Document: SDK, release, ports and research
+## 21. Document: SDK and release
 
-Write docs pages that meet the §3 contract for the 21 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
+> **Spawned-by:** root
 
-- [ ] Pages in `docs/sdk/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/12-user-platform-sdk/TODO-01-kernel-libraries.md` (TODO-01 -- Kernel Embedded Libraries)
-  - `todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md` (TODO-02 -- Environment Variables & Process ABI)
-  - `todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md` (TODO-03 -- ELF Relocations & Kernel Module System)
-- [ ] Pages in `docs/sdk/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md` (TODO-04 -- NTDLL & User-Mode Runtime)
-  - `todo/12-user-platform-sdk/TODO-05-win32-subsystem.md` (TODO-05 -- Win32 Subsystem Server (CSRSS))
-  - `todo/12-user-platform-sdk/TODO-06-sdk-distribution.md` (TODO-06 -- SDK Distribution & Developer Experience)
-- [ ] Page in `docs/sdk/` for the next roadmap file, with its `covers=` directive
-  - `todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md` (TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder)
-- [ ] Pages in `docs/release/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/15-installer-release/TODO-01-release-artifacts.md` (TODO-01 -- Disk Image, USB & Release Artifacts)
-  - `todo/15-installer-release/TODO-02-unattended-install.md` (TODO-02 -- Unattended Installation & Deployment)
-  - `todo/15-installer-release/TODO-03-update-server.md` (TODO-03 -- Update Server Infrastructure)
-- [ ] Pages in `docs/release/` for the next 2 roadmap files, each with its `covers=` directive
-  - `todo/15-installer-release/TODO-04-release-qa.md` (TODO-04 -- Release QA & Platform Certification)
-  - `todo/15-installer-release/TODO-05-github-release-community.md` (TODO-05 -- GitHub Releases & Community Launch)
-- [ ] Pages in `docs/ports/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/16-architecture-ports/TODO-01-arch-abstraction-layer.md` (TODO-01 -- Architecture Abstraction Layer)
-  - `todo/16-architecture-ports/TODO-02-aarch64-kernel-port.md` (TODO-02 -- AArch64 Kernel Port)
-  - `todo/16-architecture-ports/TODO-03-smp-scaling-processor-groups.md` (TODO-03 -- SMP Scaling & Processor Groups)
-- [ ] Pages in `docs/research/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/18-future-research/TODO-01-multi-arch-port.md` (TODO-01 -- ARM64 & RISC-V Architecture Port)
-  - `todo/18-future-research/TODO-02-hypervisor.md` (TODO-02 -- Type-1 Hypervisor (ImpossibleHV))
-  - `todo/18-future-research/TODO-03-gpu-compositor.md` (TODO-03 -- GPU-Accelerated Compositor)
-- [ ] Pages in `docs/research/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/18-future-research/TODO-04-secureboot-tpm.md` (TODO-04 -- Secure Boot, TPM 2.0 & Measured Boot)
-  - `todo/18-future-research/TODO-05-ai-ml-runtime.md` (TODO-05 -- AI/ML Native Inference Runtime)
-  - `todo/18-future-research/TODO-06-android-app-compatibility.md` (TODO-06 -- Android App Compatibility (Research Spike))
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: sdk, release, ports and research documentation pages"`
+**Design:** n/a -- a documentation-writing section; the pages it writes describe the design, they do not draw UI
+
+Write docs pages that meet the §3 contract for the 12 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page. The architecture-ports and future-research files moved to §27 because 21 pages is more than one worker context.
+
+- [x] Pages in `docs/sdk/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/12-user-platform-sdk/TODO-01-kernel-libraries.md` (TODO-01 -- Kernel Embedded Libraries): `embedded-libraries.md`
+  - `todo/12-user-platform-sdk/TODO-02-env-vars-process-abi.md` (TODO-02 -- Environment Variables & Process ABI): `process-environment-abi.md`
+  - `todo/12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md` (TODO-03 -- ELF Relocations & Kernel Module System): `elf-relocations-modules.md`
+- [x] Pages in `docs/sdk/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/12-user-platform-sdk/TODO-04-ntdll-user-runtime.md` (TODO-04 -- NTDLL & User-Mode Runtime): `ntdll-user-runtime.md`
+  - `todo/12-user-platform-sdk/TODO-05-win32-subsystem.md` (TODO-05 -- Win32 Subsystem Server (CSRSS)): `win32-subsystem.md`
+  - `todo/12-user-platform-sdk/TODO-06-sdk-distribution.md` (TODO-06 -- SDK Distribution & Developer Experience): `sdk-distribution.md`
+- [x] Page in `docs/sdk/` for the next roadmap file, with its `covers=` directive
+  - `todo/12-user-platform-sdk/TODO-07-win32-compat-matrix.md` (TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder): `win32-compat-matrix.md`
+- [x] Pages in `docs/release/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/15-installer-release/TODO-01-release-artifacts.md` (TODO-01 -- Disk Image, USB & Release Artifacts): skipped, §2 mapped it to `boot-artifacts.md` and `boot-artifact-manifest.md`, which meet the contract
+  - `todo/15-installer-release/TODO-02-unattended-install.md` (TODO-02 -- Unattended Installation & Deployment): `unattended-install.md`
+  - `todo/15-installer-release/TODO-03-update-server.md` (TODO-03 -- Update Server Infrastructure): `update-server.md`
+- [x] Pages in `docs/release/` for the next 2 roadmap files, each with its `covers=` directive
+  - `todo/15-installer-release/TODO-04-release-qa.md` (TODO-04 -- Release QA & Platform Certification): `release-qa.md`
+  - `todo/15-installer-release/TODO-05-github-release-community.md` (TODO-05 -- GitHub Releases & Community Launch): `github-release-community.md`
+- [x] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline` (28 to 17 entries)
+  - `docs/sdk/` and `docs/release/index.md` are new (the release folder had three pages and no index); `docs/index.md` gains SDK and Release rows.
+- [x] Roadmap drift found while writing, fixed in place
+  - Wrong section numbers: every `15-installer-release` cross-reference to `TODO-03` (§9/§5 for §2/§3), the domain written as `12-installer-release`, `TODO-04`'s own §4/§5/§9 and its sanitizer owner (`03-memory-concurrency/TODO-10`), `TODO-02`'s wizard (§3), and all five files' labels in `15-installer-release/INDEX.md`.
+  - SDK: `12-user-platform-sdk/TODO-01` miniz (§4, not §6); `TODO-02` environment owner (`D02T22`, sections realigned) and initial stack (`02-kernel-core/TODO-11` §7); `TODO-05` GDI table and user32 stubs (`08-graphics-ui/TODO-14` §2), controls (`TODO-05`) and dialogs (`TODO-06` §8); `TODO-06` samples (§3) and a version grep that cannot parse the multi-line macros.
+  - Shipped work described as missing: `scripts/generate-changelog.sh` and `scripts/release/build-iso.sh` named in `15-installer-release/TODO-03`; a dead Hyper-V anchor in `docs/infrastructure/development-tooling.md`.
+- [x] Ownership conflicts found while writing, filed on both sides where both are open, rather than decided (docs-only section)
+  - Kernel modules: `12-user-platform-sdk/TODO-03` vs `04-drivers-hardware/TODO-05` §1/§4; update client: `15-installer-release/TODO-03` vs `10-platform-services/TODO-03` §1.
+  - Rescope items where the owner has shipped: `12-user-platform-sdk/TODO-01` vs `02-kernel-core/TODO-03`, `TODO-02` vs `02-kernel-core/TODO-22`, `TODO-05`'s CSRSS path vs `02-kernel-core/TODO-24` §10.
+  - Policy: `15-installer-release/TODO-05` §1 extends the shipped `release.yml` and scopes its stable-tag pre-release cleanup, which deletes newer candidates too; §3 reconciles DCO sign-off and branch protection with the zero-trailer, main-only workflow.
+- [ ] Commit: `"docs: sdk and release documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check` prints `site: OK` with 215/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** eleven contract-shaped pages, seven in a new `docs/sdk/` folder and four in `docs/release/`, each listed in its folder index and linked from the docs home page.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the environment, PE, TEB/PEB, release workflow or test scripts it describes change.
+> - **Status honesty:** almost nothing in these roadmaps is built; the pages describe the shipped substrate (TEB/PEB, `env_*`, `NtGetRandom`, the export tables, `release.yml`, the smoke and artifact boot tests) and link the owning sections.
+> - **Scope boundary:** the architecture-ports and future-research pages moved to §27; where another roadmap owns an engine or has shipped the work, the page names it and links its page instead of restating it.
 
 ---
 
@@ -1157,6 +1167,33 @@ Write docs pages that meet the §3 contract for the 8 roadmap files below. Read 
 - [ ] Commit: `"docs: host tools documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any `todo/14-host-tools/` file; each page renders on the local build. Test on: WSL2 dev host.
+
+---
+
+## 27. Document: Architecture ports and future research
+
+> **Spawned-by:** §21 (split)
+
+**Design:** n/a -- a documentation-writing section; the pages it writes describe the design, they do not draw UI
+
+Write docs pages that meet the §3 contract for the 9 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page. Split out of §21 because 21 pages is more than one worker context; these files share no pages or folders with the SDK and release pages.
+
+- [ ] Pages in `docs/ports/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/16-architecture-ports/TODO-01-arch-abstraction-layer.md` (TODO-01 -- Architecture Abstraction Layer)
+  - `todo/16-architecture-ports/TODO-02-aarch64-kernel-port.md` (TODO-02 -- AArch64 Kernel Port)
+  - `todo/16-architecture-ports/TODO-03-smp-scaling-processor-groups.md` (TODO-03 -- SMP Scaling & Processor Groups)
+- [ ] Pages in `docs/research/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/18-future-research/TODO-01-multi-arch-port.md` (TODO-01 -- ARM64 & RISC-V Architecture Port)
+  - `todo/18-future-research/TODO-02-hypervisor.md` (TODO-02 -- Type-1 Hypervisor (ImpossibleHV))
+  - `todo/18-future-research/TODO-03-gpu-compositor.md` (TODO-03 -- GPU-Accelerated Compositor)
+- [ ] Pages in `docs/research/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/18-future-research/TODO-04-secureboot-tpm.md` (TODO-04 -- Secure Boot, TPM 2.0 & Measured Boot)
+  - `todo/18-future-research/TODO-05-ai-ml-runtime.md` (TODO-05 -- AI/ML Native Inference Runtime)
+  - `todo/18-future-research/TODO-06-android-app-compatibility.md` (TODO-06 -- Android App Compatibility (Research Spike))
+- [ ] Add `docs/ports/index.md` and `docs/research/index.md` if absent, add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
+- [ ] Commit: `"docs: architecture ports and future research documentation pages"`
+
+**Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any `todo/16-architecture-ports/` or `todo/18-future-research/` file named here; each page renders on the local build. Test on: WSL2 dev host.
 
 ---
 

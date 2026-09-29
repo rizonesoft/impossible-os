@@ -561,7 +561,7 @@ The full launcher matrix -- with accelerator semantics, artifact paths, debugger
 | `scripts/machines/storage/`               | AHCI / VirtIO / NVMe / USB storage scenarios               |
 | `scripts/machines/fs/`                    | Filesystem-specific harnesses                              |
 
-Hyper-V certification is owned by release validation (see [Release QA roadmap -- Hyper-V Certification section](../../todo/15-installer-release/TODO-04-release-qa.md#hyper-v-certification-owned-by-release-validation)), not the developer matrix.
+Hyper-V certification is owned by release validation (see [Release QA roadmap -- Hyper-V Certification section](../../todo/15-installer-release/TODO-04-release-qa.md#3-hyper-v-certification-sonnet)), not the developer matrix.
 
 ---
 

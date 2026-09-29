@@ -16,15 +16,15 @@ title: "TODO-05 -- GitHub Releases & Community Launch"
 
 > [!IMPORTANT]
 > **Upload machinery** (`gh release upload` for disk image, ISO, VM images, SDK ZIP)
-> is specced in `12-installer-release/TODO-03 §9` (`scripts/upload-release.sh`) and
+> is specced in `15-installer-release/TODO-03 §2` (`scripts/upload-release.sh`) and
 > `12-user-platform-sdk/TODO-06 §8` (`scripts/release-sdk.sh`). The `create-release.sh`
 > here **orchestrates** those scripts; do not re-specify artifact upload logic.
 >
-> **`gen-changelog.sh`** is specced in `12-installer-release/TODO-03 §5`; §9 here
+> **`gen-changelog.sh`** is specced in `15-installer-release/TODO-03 §3`; §2 here
 > consumes it to draft the `CHANGELOG.md` update -- do not re-specify the script.
 >
 > **`scripts/promote-release.sh`** (stable promotion, git tag push) is specced in
-> `12-installer-release/TODO-03 §5`; `create-release.sh` (§1 here) runs after
+> `15-installer-release/TODO-03 §3`; `create-release.sh` (§1 here) runs after
 > `promote-release.sh` completes.
 >
 > **Code signing** (`sign-release.sh`, Ed25519) is specced in `TODO-01 §5`; §1 here
@@ -38,9 +38,9 @@ title: "TODO-05 -- GitHub Releases & Community Launch"
 
 ## Inputs
 
-- `12-installer-release/TODO-03-update-server.md §9 §5` (→ XREF) -- `upload-release.sh`; `promote-release.sh`; `gen-changelog.sh`; §1 §9 orchestration
-- `12-installer-release/TODO-01-release-artifacts.md §1 §5` (→ XREF) -- `OS_VERSION_STRING`; signed artifacts; §1 release workflow
-- `12-installer-release/TODO-04-release-qa.md §1` (→ XREF) -- `release-checklist.md` PR template; §2 sign-off gate before `create-release.sh`
+- `15-installer-release/TODO-03-update-server.md §2 §3` (→ XREF) -- `upload-release.sh`; `promote-release.sh`; `gen-changelog.sh`; §1 §2 orchestration
+- `15-installer-release/TODO-01-release-artifacts.md §1 §5` (→ XREF) -- `OS_VERSION_STRING`; signed artifacts; §1 release workflow
+- `15-installer-release/TODO-04-release-qa.md §1` (→ XREF) -- `release-checklist.md` PR template; §2 sign-off gate before `create-release.sh`
 - `12-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) -- `release-sdk.sh`; SDK ZIP artifact; §1 coordinate
 - `12-user-platform-sdk/TODO-07-win32-compat-matrix.md §12` (→ XREF) -- `compat-check.sh` score; §5 §8 roadmap metric
 - `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md` -- existing files to overhaul
@@ -67,8 +67,8 @@ outsiders can track progress without reading 100+ TODO files.
 | ---- | ----------------------------------------------- | ----- | ----------------------------------------------------- |
 | 1    | Contribution guide overhaul (`CONTRIBUTING.md`) | 💎    | `scripts/build.sh`; existing file                     |
 | 2    | Issue & PR templates (`.github/`)               | ⭐    | §1; existing templates                                |
-| 3    | Changelog discipline (`CHANGELOG.md`)           | 💎    | `gen-changelog.sh` (TODO-03 §5)                       |
-| 4    | GitHub release workflow (`create-release.sh`)   | 💎    | `TODO-01 §5` signing; `D10T03 §9 §5`; SDK `D12T06 §8` |
+| 3    | Changelog discipline (`CHANGELOG.md`)           | 💎    | `gen-changelog.sh` (TODO-03 §3)                       |
+| 4    | GitHub release workflow (`create-release.sh`)   | 💎    | `TODO-01 §5` signing; `D15T03 §2 §3`; SDK `D12T06 §8` |
 | 5    | README overhaul                                 | ⭐    | §4 (download links); desktop screenshot               |
 | 6    | Project website (`docs/website/`)               | ⭐    | §5 content; §4 release links                          |
 | 7    | Community channels (Discussions + Discord)      | 💎    | §6 live; §4 release announcements webhook             |
@@ -80,12 +80,15 @@ outsiders can track progress without reading 100+ TODO files.
 
 **Source:** `scripts/create-release.sh`; `.github/workflows/release.yml`
 
+- [ ] Scope the stable-tag pre-release cleanup in `release.yml:355-383` to versions older than the stable tag; today it deletes every listed pre-release and its tag, newer release candidates included
+- [ ] Start from the shipped `.github/workflows/release.yml` rather than a second tag-triggered workflow
+  - It already handles `v*` CalVer tags, pre-release cleanup and `scripts/generate-changelog.sh`; `15-installer-release/TODO-03` §2 also specs `upload-release.yml` on the same tag.
 - [ ] **`scripts/create-release.sh <version> <channel>`**:
   1. Preflight: verify `release-checklist.md` PR was merged (check git log for `release: {version}` commit); verify `build/impossible-os-{version}.img.zst.sha256` exists (artifacts built + signed by `TODO-01 §5`)
   2. Create annotated tag: `git tag -a "v{version}" -m "Impossible OS {version}"` + `git push origin "v{version}"`
   3. Determine release flags: `channel=beta` → `--prerelease`; `channel=stable` → full release
   4. `gh release create "v{version}" --title "Impossible OS {version}" --notes-file docs/changelog/{version}.md [--prerelease if beta] --draft`
-  5. Upload OS artifacts (delegate to `scripts/upload-release.sh {version}` from `TODO-03 §9`)
+  5. Upload OS artifacts (delegate to `scripts/upload-release.sh {version}` from `TODO-03 §2`)
   6. Upload SDK ZIP (delegate to `scripts/release-sdk.sh` from `TODO-06 §8`, pass `--upload-only` flag)
   7. Publish draft: `gh release edit "v{version}" --draft=false`
   8. Post Discord announcement webhook (§7): `curl -X POST $DISCORD_RELEASES_WEBHOOK -d "{\"content\":\"...\"}"` with version, download URL, changelog summary
@@ -132,6 +135,7 @@ outsiders can track progress without reading 100+ TODO files.
 
 **Source:** `CONTRIBUTING.md` (overhaul existing file)
 
+- [ ] Reconcile the DCO sign-off and "no direct pushes to `main`" items with the repo's zero-trailer commit policy and main-only workflow (`CONTRIBUTING.md`, `CLAUDE.md`) before writing them into the guide
 - [ ] **Sections** (rewrite `CONTRIBUTING.md` to cover):
   - **Canonical source of truth**: `D00 T01 §1-§7` owns setup/build/test/hook/workflow command truth; `CONTRIBUTING.md` summarizes the supported path and links back instead of inventing parallel commands
   - **Development setup**: WSL2 + Ubuntu 22.04 recommended; `bash scripts/setup.sh` installs all dependencies (clang-19, nasm, lld-19, QEMU, OVMF); Windows native not supported (WSL2 only); macOS not supported
@@ -322,9 +326,9 @@ outsiders can track progress without reading 100+ TODO files.
 - [ ] **GitHub Milestones → TODO domain mapping**:
   ```
   v1.0-kernel       → 01-boot-platform, 02-kernel-core, 03-memory-concurrency, 04-drivers-hardware
-  v1.0-desktop      → 05-filesystem-storage, 07-networking, 08-graphics-ui, 09-desktop-shell
+  v1.0-desktop      → 05-storage-filesystems, 06-desktop-foundation, 07-networking, 08-graphics-ui, 09-desktop-shell
   v1.0-apps         → 10-platform-services, 11-apps
-  v1.0-release      → 12-installer-release
+  v1.0-release      → 15-installer-release
   v1.1-compat       → 12-user-platform-sdk
   ```
 - [ ] **`scripts/sync-milestones.sh`**: for each milestone, `gh milestone create` (if not exists) with description = domain `INDEX.md` first paragraph + due date; `gh milestone edit` if exists; idempotent (safe to run repeatedly)

@@ -72,7 +72,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 | 4    | Sampling profiler (`profile` command)            | ⭐    | PIT interrupt; `struct task` RIP access; symbol resolution |
 | 5    | Unit test framework (`itest.h`)                  | ⭐    | §1 headers; `TODO-01 §8` host-side test pattern            |
 | 6    | Debugger enhancements (call stack, disasm)       | 💎    | `D10T12 §2` base debugger; ELF/PE symbol tables            |
-| 7    | IxUI starter templates (`ixui-new`)              | ⭐    | §1 SDK; TCC (`D10T09 §5`); §4 samples as template basis    |
+| 7    | IxUI starter templates (`ixui-new`)              | ⭐    | §1 SDK; TCC (`D10T09 §5`); §3 samples as template basis    |
 | 8    | SDK release pipeline (`release-sdk.sh`)          | ⭐    | §1 zip + SHA-256; GitHub CLI; Registry SDK version         |
 
 ---
@@ -83,7 +83,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 
 - [ ] **`make sdk` target**: invoke `scripts/sdk-package.sh` after a successful `make` (check `build/build.log` tail); fail fast if build log does not end `=== BUILD OK ===`
 - [ ] **`scripts/sdk-package.sh`**:
-  1. Read version string from `HKLM\SYSTEM\Version` Registry key (or `include/kernel/version.h` constant at build time): `SDK_VERSION=$(grep KERNEL_VERSION include/kernel/version.h | awk '{print $3}')`
+  1. Read version string from `HKLM\SYSTEM\Version` Registry key (or `include/kernel/version.h` constant at build time): join `VERSION_MAJOR`, `VERSION_MINOR` and `VERSION_PATCH` from `include/kernel/version.h` (the `KERNEL_VERSION_*` macros are multi-line string concatenations, so a one-line grep of them cannot work)
   2. Assemble staging directory `build/sdk-staging/`:
      - `sdk-staging/include/` ← `sdk/include/` (all headers)
      - `sdk-staging/lib/` ← `sdk/lib/kernel32.lib user32.lib gdi32.lib ntdll.lib libc.lib libixui.a shell32.lib msvcrt.lib`
@@ -300,7 +300,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
   2. Run `make sdk` (§1) -- verify ZIP exists
   3. Run `sha256sum` -- verify `.sha256` file matches
   4. Run `make test` (§5) -- verify all tests pass; abort if exit code ≠ 0
-  5. Read version: `VERSION=$(grep KERNEL_VERSION include/kernel/version.h | awk '{print $3}')`
+  5. Read version: join `VERSION_MAJOR`, `VERSION_MINOR` and `VERSION_PATCH` from `include/kernel/version.h`, as §1 does
   6. Tag: `git tag sdk/v${VERSION} -m "SDK release ${VERSION}"`
   7. Push: `git push origin sdk/v${VERSION}`
   8. GitHub Release: `gh release create sdk/v${VERSION} build/impossible-os-sdk-${VERSION}.zip build/impossible-os-sdk-${VERSION}.zip.sha256 --title "Impossible OS SDK v${VERSION}" --notes-file sdk/docs/CHANGELOG.md`

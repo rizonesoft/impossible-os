@@ -80,6 +80,8 @@ at link time. `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands work. The GOT/P
 
 **Source file:** `src/kernel/elf_reloc.c`; extend `include/kernel/elf.h`
 
+- [ ] Reconcile with `04-drivers-hardware/TODO-05-kernel-module-system.md` (item: "Reconcile kernel module ownership") before coding: one loader, one symbol table, one set of names
+  - §1, §3, §4 and §8 here restate that file's §1 symbol table and §4 module loader with other names (`kmod_load`/`ksym_lookup`/`src/kernel/kmod.c` here, `module_load`/`ksymtab.h`/`.ksymtab` there).
 - [ ] **Extend `include/kernel/elf.h`** with missing ELF section structures:
   ```c
   #define ET_REL          1      /* relocatable object */

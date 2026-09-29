@@ -22,11 +22,11 @@ title: "TODO-03 -- Update Server Infrastructure"
 > required in `TODO-03 §1`.
 >
 > **On-OS telemetry sender** (`telemetry_record_event`, rotating log, `privacy.cpl`)
-> is owned by `10-platform-services/TODO-12 §10`; §2 here builds only the server
+> is owned by `10-platform-services/TODO-12 §10`; §7 here builds only the server
 > receiver (Cloudflare Worker → D1 → Grafana). Do not re-specify the on-OS client.
 >
 > **Release artifacts** (disk image, ISO, code signing, `release-{ver}.json` manifest)
-> are owned by `12-installer-release/TODO-01`; §4 here wires those artifacts into CDN
+> are owned by `15-installer-release/TODO-01`; §2 here wires those artifacts into CDN
 > upload scripts -- the artifact manifest is the source of record for artifact URLs.
 
 ---
@@ -34,11 +34,11 @@ title: "TODO-03 -- Update Server Infrastructure"
 ## Inputs
 
 - `10-platform-services/TODO-03-updates-packages.md §1` (→ XREF) -- `update_check()` INI client; §1 here changes the endpoint to JSON and notes the parse upgrade required there
-- `10-platform-services/TODO-12-long-term-features.md §10` (→ XREF) -- `telemetry_record_event()`; HTTP POST stretch; §2 here builds the receiving server
-- `12-installer-release/TODO-01-release-artifacts.md §6` (→ XREF) -- `release-{version}.json` artifact manifest; §4 here consumes it for CDN upload
-- `12-installer-release/TODO-01-release-artifacts.md §1` (→ XREF) -- `OS_VERSION_STRING`, `increment-build.sh`; §5 promotion pipeline increments and tags versions
-- `12-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) -- `release-sdk.sh`; §5 promotion coordinates SDK + OS release
-- `scripts/build.sh`, `scripts/make-iso.sh`, `scripts/sign-release.sh` -- build pipeline inputs for §4 and §5
+- `10-platform-services/TODO-12-long-term-features.md §10` (→ XREF) -- `telemetry_record_event()`; HTTP POST stretch; §7 here builds the receiving server
+- `15-installer-release/TODO-01-release-artifacts.md §6` (→ XREF) -- `release-{version}.json` artifact manifest; §2 here consumes it for CDN upload
+- `15-installer-release/TODO-01-release-artifacts.md §1` (→ XREF) -- `OS_VERSION_STRING`, `increment-build.sh`; §3 promotion pipeline increments and tags versions
+- `12-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) -- `release-sdk.sh`; §3 promotion coordinates SDK + OS release
+- `scripts/build.sh`, `scripts/release/build-iso.sh` (shipped), `scripts/sign-release.sh` (planned in `15-installer-release/TODO-01` §5) -- build pipeline inputs for §2 and §3
 - `include/kernel/net/http.h` -- `http_get()` format change note for §1 (client parse)
 
 ---
@@ -74,6 +74,8 @@ and Cloudflare R2 -- no live server to maintain.
 **Hosting:** GitHub Pages (`gh-pages` branch of `rizonesoft/impossible-os-updates`)
 **URL:** `GET https://impossible-os.dev/api/version?channel=<channel>`
 
+- [ ] Reconcile client-side changes with `10-platform-services/TODO-03-updates-packages.md` (item: "Reconcile update client ownership")
+  - The JSON parse change (§1 here), `ipkg search/install/update/upgrade` (§4) and `update_apply_delta()` (§6) edit the client that file owns.
 - [ ] **JSON manifest schema** (one static `.json` file per channel):
   ```json
   {
@@ -136,6 +138,7 @@ and Cloudflare R2 -- no live server to maintain.
   3. Commit + push; print `"Rolled back {channel} to {previous-version}"`
 - [ ] **Sign-off checklist** (`docs/release-checklist.md`): before stable promotion -- build passes on clean run, all Tier 1–5 compat tests green (TODO-07 §12 CI gate), release ISO boots in QEMU, SHA-256 sidecar files present, code signing verified, changelog written
 - [ ] **`scripts/gen-changelog.sh <old-version> <new-version>`**: `git log v{old}..v{new} --oneline --no-merges`; group by conventional-commit scope (kernel/boot/desktop/drivers/etc.); output `docs/changelog/{new-version}.md` in Markdown
+  - Extend the shipped `scripts/generate-changelog.sh`, which `release.yml` already runs, rather than adding a second script.
 
 ---
 

@@ -67,6 +67,8 @@ title: "TODO-03 -- System Updates & IPKG Package Manager"
 > [!NOTE]
 > `HKLM\SYSTEM\Version` stores current version as string `"1.0.0"` (set at build time in kernel init). `update_check(struct update_info *out)`: `http_get("https://impossible-os.dev/api/version", buf, 1024, &len)` → parse response: expected INI format `[Version]\nLatest=1.0.1\nURL=https://...\nSHA256=abc...\nSize=102400\nType=HOTFIX\nDesc=...`. Compare: `strcmp(latest_ver, current_ver)` -- if equal: `UPDATE_CURRENT`; else: fill `out` → `UPDATE_AVAILABLE`. On HTTP error or parse fail: `klog_warn("update_check: %s", err)` → `UPDATE_ERROR`. Version string comparison: split on `.`; compare major/minor/patch as integers. Timeout: `http_get_timeout = 10 s` to avoid boot hang if network is down. Cache last result in `HKLM\SYSTEM\Update\LastCheck` (timestamp) + `LastResult` (0/1/2).
 
+- [ ] Reconcile update client ownership with `15-installer-release/TODO-03-update-server.md` (item: "Reconcile client-side changes")
+  - That file's §1, §4 and §6 change `update_check()` to JSON and add `ipkg` repository commands and delta apply to this file's client.
 - [ ] `include/kernel/update.h`: `struct update_info`, `UPDATE_AVAILABLE/CURRENT/ERROR` enum, `update_check/download/verify/apply()` prototypes
 - [ ] `src/kernel/update.c`: `update_check(struct update_info *out)` -- `http_get()` + INI parse + version compare
 - [ ] Version string comparison: split `"1.0.0"` → `{1, 0, 0}`; compare element-wise

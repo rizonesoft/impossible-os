@@ -58,6 +58,8 @@ Export ~60 core kernel functions into a `.ksymtab` linker section. The module lo
 
 **Files:** `src/kernel/main/ksymtab.c` (new), `include/kernel/ksymtab.h` (new), `src/kernel/kernel.ld` (linker script)
 
+- [ ] Reconcile kernel module ownership with `12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md` (item: "Reconcile with `04-drivers-hardware/TODO-05-kernel-module-system.md`")
+  - Its §1, §3, §4 and §8 restate this file's §1 and §4 under other names.
 - [ ] Define `ksym_entry_t { const char *name; void *addr; }` in `include/kernel/ksymtab.h`
 - [ ] `EXPORT_SYMBOL(fn)` macro: `static ksym_entry_t __ksym_##fn __attribute__((section(".ksymtab"), used)) = { #fn, (void *)&fn }`
 - [ ] Add `.ksymtab` section to `kernel.ld`; align to 8 bytes; provide `__ksymtab_start` / `__ksymtab_end` symbols

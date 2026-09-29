@@ -15,6 +15,8 @@ Welcome to the Impossible OS documentation -- a 64-bit operating system built fr
 | [🎨 Graphics](graphics/index.md)                  | 2D drawing, text, themes, animation, widgets, accessibility |
 | [🧩 Platform Services](services/index.md)         | Win32 and Linux programs, SDK, audio, updates, recovery, installer |
 | [📦 Applications](apps/index.md)                  | Browser, mail, viewers, Notepad, Calculator, accessories, system tools |
+| [🛠️ SDK and User Platform](sdk/index.md)          | Libraries, environment ABI, modules, ntdll, Win32 subsystem, SDK, compatibility |
+| [🚢 Release and Installation](release/index.md)     | Release artifacts, unattended install, updates, release QA, community launch |
 | [⚙️ Hardware](hardware/index.md)                 | CPU architecture, bus protocols, firmware, interrupts       |
 | [🔧 Infrastructure](infrastructure/index.md)      | Build system, CI/CD, tooling                               |
 | [🚀 Getting Started](getting-started/index.md)    | Setup guides and emulator configuration                    |

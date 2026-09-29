@@ -128,7 +128,7 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 **Source:** extends `src/installer/installer.c`
 
 - [ ] **Answer-file check at installer start**: `answer_parse()` (§1); if answer file found and `InstallMode != Interactive`: set `g_unattended = 1`; skip all `wm_create_window` / `CTRL_*` UI creation; log `[setup] Unattended mode: answer file {path}`
-- [ ] **Unattended execution path** (mirrors wizard pages from `TODO-11 §5`, executed sequentially):
+- [ ] **Unattended execution path** (mirrors wizard pages from `TODO-11 §3`, executed sequentially):
   1. Disk selection: use `answer.disk.disk_index`; validate `blkdev_count() > disk_index`; log selected disk
   2. Partition: call `gpt_create()` + `gpt_add_partition(EFI, efi_size_mb)` + `gpt_add_partition(SYSTEM, remaining)`; log partition layout
   3. Format: `fat32_format(esp, "ESP")` + `ixfs_format(sys, "Impossible")`; log
