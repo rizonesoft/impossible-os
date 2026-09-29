@@ -17,8 +17,8 @@ title: "TODO-04 -- Animation Engine"
 
 - `include/kernel/drivers/pit.h` -- `PIT_TARGET_FREQ = 100` (Hz); `pit_get_ticks()` for raw tick counter
 - `include/kernel/timer.h` -- `system_get_ticks()` for monotonic counter used in delta_ms calculation
-- `include/desktop/wm.h` -- `wm_composite()` (compositor entry point), `wm_mark_dirty()`, `wm_move_window()`, `wm_resize_window()`, `struct wm_window { int32_t x, y; uint32_t width, height; }` -- extended in §4 to hold `wm_anim_state_t`
-- `include/registry.h` -- `RegGetValue()`, `HKCU` -- used in §5 to read `EnableAnimations` + `AnimationSpeed`
+- `include/desktop/wm.h` -- `wm_composite()` (compositor entry point), `wm_mark_dirty()`, `wm_move_window()`, `wm_resize_window()`, `struct wm_window { int32_t x, y; uint32_t width, height; }` -- extended in §5 to hold `wm_anim_state_t`
+- `include/registry.h` -- `RegGetValue()`, `HKCU` -- used in §4 to read `EnableAnimations` + `AnimationSpeed`
 - `include/desktop/theme.h` (TODO-03) -- `theme_get()` must be available before §5 window transitions
 - → XREF: `08-graphics-ui/TODO-03-theme-system.md` -- prerequisite; `theme_get()` must be live before animated windows can paint correctly
 - Related (no stable XREF target): `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` (Start Menu) -- depends on §3 animation manager being live; Start Menu slide-up uses `gfx_tween_start()`
@@ -42,7 +42,7 @@ title: "TODO-04 -- Animation Engine"
 | 💎  |   3   | §3 Global animation manager -- 64-slot table, `add/cancel/tick`, compositor wiring, delta cap        | §1 + §2 (manages `gfx_tween_t*`, dispatches easing fns)                   |  [ ]   |
 | 💎  |   4   | §4 Registry controls -- `EnableAnimations` + `AnimationSpeed` DWORDs, reduce-motion path            | §3 (`anim_mgr_add` must check flag; `AnimationSpeed` scales duration)      |  [ ]   |
 | 💎  |   5   | §5 Window transition animations -- `wm_anim_state_t`, open/close/minimize/restore/maximize/snap/menu | §3 manager + §4 registry (speed multiplier needed before wiring transitions) |  [ ]   |
-| ⭐  |   6   | §6 Spring physics -- `spring_t`, Hooke's law integer ODE, `spring_settled()`                         | §3 (springs registered with manager; settled check drives `wm_mark_dirty`) |  [ ]   |
+| ⭐  |   6   | §6 Spring physics -- `spring_t`, Hooke's law integer ODE, `spring_settled()`                         | §3 (caller-driven like the manager tick; settled check drives `wm_mark_dirty`) |  [ ]   |
 | 💎  |   7   | §7 Compositor integration checklist -- dirty-frame gating, VSync delta cap, reduce-motion audit      | §5 + §6 (all animation types must be wired before integration audit)       |  [ ]   |
 
 ---
@@ -120,7 +120,9 @@ Fixed table of 64 `gfx_tween_t*` pointers. `anim_mgr_add(tw)` registers; `anim_m
 - [ ] `int anim_mgr_any_active(void)` → `anim_count > 0` -- used by compositor to decide if redraw is needed
 - [ ] Wire in `wm_composite()`: call `anim_mgr_tick()` as the first statement; after tick: if `anim_mgr_any_active()`: `wm_mark_dirty()`
 - [ ] Log: `[anim] init; self-test passed` at startup; `[anim] table full -- drop tween` if add fails
-- [ ] Derive `delta_ms` from `mono_ns()` or `system_get_freq()` rather than `PIT_TARGET_FREQ`: the tick rate changes when the LAPIC timer takes over (`pit_set_freq()`), so a fixed 100 Hz divisor mis-times every tween
+- [ ] Derive `delta_ms` from `mono_ns()`, not a tick count over `PIT_TARGET_FREQ`: `KeSetTimerResolution()` retunes the tick rate at runtime (`timer_set_tick_hz()`), so ticks counted across a change mis-time the tween
+  - `lapic_timer_set_hz()` rebases monotonic time for exactly this reason (`lapic.c:1358-1370`); test a tween spanning a resolution change
+  - Found by the `00-infrastructure/TODO-10-documentation-site.md` §16 review; verified at source
   - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"gfx/anim: anim_mgr -- 64-slot table, tick/add/cancel, wired into wm_composite()"`
 
@@ -169,6 +171,8 @@ Per-window `wm_anim_state_t` with tweens for x, y, w, h, opacity, scale (in 16.1
   - Close fades over `THEME_MOTION_FAST_MS`; menus and flyouts never scale (`docs/design/shell.md#materials`, "Flyout and menu motion")
 - [ ] Compositor in `wm.c`: after `anim_mgr_tick()`: for each window: apply `win->anim.x.current`, `y.current`, `w.current`, `h.current`; if `anim.scale.active || anim.opacity.active`: use alpha-blend blit path; else: fast blit
 - [ ] Call `wm_anim_open()` from `wm_create_window()` (after buffer allocation, before first composite)
+- [ ] Reconcile `wm_anim_snap()` with `08-graphics-ui/TODO-08` §3, which calls it with a zone rectangle for six layouts: take a target rect computed inside the work area, not a LEFT/RIGHT side with full `screen_h`
+  - Found by the `00-infrastructure/TODO-10-documentation-site.md` §16 review; verified at source
 - [ ] Commit: `"desktop/wm_anim: window open/close/minimize/restore/maximize/snap/menu animations"`
 
 ## 6. Spring Physics `[Opus]`

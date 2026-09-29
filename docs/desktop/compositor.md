@@ -9,19 +9,19 @@ The compositor is the kernel loop that turns the desktop into pixels: it reads t
 
 `compositor_run()` in [`compositor.c`](../../src/kernel/main/compositor.c) runs forever as the kernel's first task (PID 0), which never leaves the loop. Each pass it:
 
-1. Merges pointer input from the PS/2, USB, VirtIO tablet and VirtualBox sources, reading up to 4 packets per pass (12 under TCG emulation) so a burst of motion collapses into one frame.
+1. Merges pointer input from the PS/2, USB, VirtIO tablet and VirtualBox sources. It waits for input interrupts up to 4 times (12 under TCG emulation), re-reading the shared pointer state after each, so a burst of motion collapses into one frame.
 2. Dispatches a moved cursor or changed button to `desktop_handle_click()` first, then to `wm_handle_mouse()` if the desktop did not take it.
 3. Decides whether a full frame is needed: the first frame, a button change, a drag, any window marking itself dirty, or the taskbar clock's minute changing.
 4. If so, renders the Command Prompt and Control Gallery client buffers (skipped while a window is being dragged), drains queued Alt+F4 closes, and calls `wm_composite()`.
 5. `wm_composite()` in [`wm.c`](../../src/desktop/wm.c) always repaints the full screen, back to front: wallpaper, desktop icons, each window's decorations and client pixels in stacking order, the taskbar, then the Start menu.
 6. Draws the cursor and presents. During a drag it copies only the drag rectangle and the cursor rectangle to video memory; otherwise it copies the whole back buffer.
-7. If nothing changed but the cursor moved, it skips the composite and swaps just the old and new cursor rectangles.
+7. If nothing changed but the cursor moved, it skips the composite and copies one rectangle bounding the old and new cursor positions, with interrupts disabled during the copy. A small move copies a few pixels; a large jump of an absolute pointer can copy most of the screen.
 
 ```mermaid
 flowchart TD
     I[merge pointer input] --> D[desktop, then WM hit test]
     D --> N{anything dirty?}
-    N -- no, cursor moved --> C[swap cursor rects only]
+    N -- no, cursor moved --> C[copy one box around old + new cursor]
     N -- yes --> R[client renders + pending closes]
     R --> W[wm_composite: full repaint]
     W --> S{dragging?}
@@ -33,7 +33,7 @@ flowchart TD
 
 Dirtiness is one atomic flag (`needs_redraw` in `wm.c`), not a list of rectangles, so any change repaints everything. The general-purpose dirty tracker `gfx_dirty_*` in [`gfx.h`](../../include/gfx.h) (32 rectangles) is not used by the compositor. A clipped wallpaper repaint, `desktop_draw_wallpaper_rect()` in [`desktop.c`](../../src/desktop/desktop.c), exists but has no callers.
 
-**Frame timing.** Every presented frame is timed from the start of frame work to the present, and counted against a 16.67 ms budget. `struct wm_frame_stats` in [`wm.h`](../../include/desktop/wm.h) counts frames presented, queued, late and dropped, guarded by a sequence lock so readers on other CPUs see a consistent snapshot. Each present also emits an ETW event.
+**Frame timing.** Every full-composite frame, including drag frames, is timed from the start of frame work to the present and counted against a 16.67 ms budget. Input batching before that point and cursor-only copies are not timed or counted. `struct wm_frame_stats` in [`wm.h`](../../include/desktop/wm.h) counts frames presented, queued, late and dropped, guarded by a sequence lock so readers on other CPUs see a consistent snapshot. Each timed present also emits an ETW event.
 
 **VSync.** None. [`framebuffer.c`](../../src/kernel/drivers/framebuffer.c) can page-flip on Bochs VGA hardware, but nothing waits for vertical blank.
 

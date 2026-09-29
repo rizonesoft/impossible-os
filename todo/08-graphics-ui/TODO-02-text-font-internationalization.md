@@ -73,7 +73,7 @@ Create the catalog layer that turns "slot 0/1/2" into a real system font invento
 - [ ] Retire or strictly quarantine `src/desktop/font.c` bitmap rendering so legacy ASCII drawing cannot silently bypass the main font stack
 - [ ] Emit `klog(LOG_INFO, "FONT", ...)` lines for catalog reload, added families, and failed font probes
 - [ ] Fix `load_ttf_slot()` releasing a font that fails to parse with `kfree()` (`gfx_text.c:325,331`): the buffer comes from `pmm_alloc_contiguous()` in `load_ttf_file()`, so free it with `pmm_free_contiguous()`
-  - Decide the short-read path too: it keeps the pages on purpose today (`gfx_text.c:284`, "acceptable for boot-time assets"), which stops being true once fonts install and remove at runtime (this section)
+  - `load_ttf_file()` rejects only `bytes_read <= 0` (`gfx_text.c:282-293`) and then reports the full file size, so a positive short read hands a partly unread buffer to stb_truetype; require a complete read before parsing and free the PMM pages on every failure (the error path keeps them today)
   - A corrupt or truncated file in `C:\Impossible\Fonts\` reaches this at desktop start
   - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"font: catalog foundation -- enumerate families, default stacks, install/remove, reload"`

@@ -215,14 +215,13 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 
 Win32-compatible `MessageBox()` (exact `MB_*`/`ID*` constants, 32 px status glyphs in the status colours (`docs/design/controls.md#dialog`), modal dimming, word-wrap). `dialog_file_open/save` (TreeView + ListView + TextBox + Dropdown). `dialog_input`. `dialog_color` (hue wheel + SV square + hex TextBox). `SYS_MSGBOX` (next free number) syscall. `msgbox` shell command.
 
-**Files:** `src/desktop/dialogs.c` (new), `include/desktop/dialogs.h` (new), icon assets + build pipeline (new), `include/kernel/sched/syscall.h` (extend)
+**Files:** `src/desktop/dialogs.c` (new), `include/desktop/dialogs.h` (new), `include/kernel/sched/syscall.h` (extend)
 
 > [!NOTE]
 > This is `[Opus]` -- the dialog system has three novel aspects for Impossible OS: (1) **modal overlay**: `wm_create_window()` for the dialog, then dim the owner window (or the whole screen for system dialogs) with the `smoke` scrim token (`theme_get()->colors.smoke`, `#4D000000`) re-applied each compositor frame while modal is open; close = `wm_destroy_window(modal_wh)` + undim; (2) **color picker hue wheel**: rasterize a 128 px diameter hue circle at init time (iterate pixels, compute HSV angle for each pixel, convert to RGB); SV square (128×128): for current hue H, each pixel is `HSV(H, x/128, y/128)` → RGB; mouse-drag in either → update color; (3) **word-wrapped MessageBox body**: implement `dialog_text_measure_wrap(text, max_w, font_size)` → line_count and `dialog_text_draw_wrap()` to render. `MessageBox` Win32 constants: `MB_OK=0x0`, `MB_OKCANCEL=0x1`, `MB_ABORTRETRYIGNORE=0x2`, `MB_YESNOCANCEL=0x3`, `MB_YESNO=0x4`, `MB_RETRYCANCEL=0x5`; icons `MB_ICONERROR=0x10`, `MB_ICONWARNING=0x30`, `MB_ICONINFO=0x40`, `MB_ICONQUESTION=0x20`; `MB_SYSTEMMODAL=0x1000` dims parent. Returns `IDOK=1`, `IDCANCEL=2`, `IDABORT=3`, `IDRETRY=4`, `IDIGNORE=5`, `IDYES=6`, `IDNO=7`. SYS_MSGBOX: user-mode syscall `int SYS_MSGBOX(const char *text, const char *caption, uint32_t uType)` → return ID; handler in `sys_msgbox()` in `syscall.c` calls `MessageBox()` on the desktop thread.
 
-- [ ] **Icon assets**
-  - error, warning, info and question icons are added to the original icon set first (`resources/icons/src/`, specified in `docs/design/icons.md`), then rendered by `scripts/convert-icons.sh` and packed like the other system icons
-  - no separate `assets/` tree
+- [ ] **Status glyphs**: per `docs/design/controls.md#dialog` these are glyphs, not colour icons; draw the existing `ICON_ERROR`, `ICON_WARNING`, `ICON_INFO`, `ICON_QUESTION` (`icon_store.h`) at `THEME_SIZE_MESSAGE_ICON` in the status colours
+  - no new colour icons and no separate `assets/` tree
 - [ ] `include/desktop/dialogs.h`: `MB_*` constants (exact Win32 values), `ID*` return codes, all dialog function signatures
 - [ ] `int MessageBox(int parent_wh, const char *text, const char *caption, uint32_t uType)` in `dialogs.c`: parse `uType` for button set + icon
   - create a centred dialog per `docs/design/controls.md#dialog`: width between `THEME_SIZE_DIALOG_MIN_WIDTH` (320) and `THEME_SIZE_DIALOG_MAX_WIDTH` (548), `THEME_RADIUS_DIALOG` (8), `window_bg`, `THEME_ELEV_WINDOW_ACTIVE_*`, over the `smoke` scrim

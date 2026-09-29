@@ -62,7 +62,7 @@ Add `WM_FLAG_MINIMIZED=0x40`, `WM_FLAG_MAXIMIZED=0x80`, `WM_FLAG_SNAPPED=0x100` 
 **Files:** `src/desktop/wm.c` (extend), `include/desktop/wm.h` (extend)
 
 > [!NOTE]
-> `wm_minimize(handle)`: if already minimized, return. Set `WM_FLAG_MINIMIZED`; clear `WM_FLAG_VISIBLE`; `wm_anim_minimize(handle, tx, ty, tw, th)` where `(tx, ty, tw, th)` is the taskbar button rect (pass `0, screen_h - TASKBAR_H, 48, TASKBAR_H` as a placeholder until TODO-08 taskbar provides the exact rect). `wm_maximize(handle)`: save `win->saved_x/y/w/h`; compute usable area = `(0, 0, fb_w, fb_h - TASKBAR_H)`; `wm_move_window()` + `wm_resize_window()` to usable area; set `WM_FLAG_MAXIMIZED`; clear `WM_FLAG_SNAPPED`; `wm_anim_maximize(handle)`. `wm_restore(handle)`: if minimized: set `WM_FLAG_VISIBLE`; `wm_move_window/resize` to saved; `wm_anim_restore()`; clear `WM_FLAG_MINIMIZED`; if maximized: `wm_move_window/resize` to saved; clear `WM_FLAG_MAXIMIZED`; `wm_anim_restore()`. Registry: persist `HKCU\Software\Impossible\Shell\Windows\{title}\State` (MINIMIZED/MAXIMIZED/RESTORED DWORD) + `X/Y/W/H` on each state change.
+> `wm_minimize(handle)`: if already minimized, return. Set `WM_FLAG_MINIMIZED`; clear `WM_FLAG_VISIBLE`; `wm_anim_minimize(handle, tx, ty, tw, th)` where `(tx, ty, tw, th)` is the taskbar button rect (pass `0, screen_h - TASKBAR_H, 48, TASKBAR_H` as a placeholder until the `TODO-10` taskbar provides the exact rect). `wm_maximize(handle)`: save `win->saved_x/y/w/h`; compute usable area = `(0, 0, fb_w, fb_h - TASKBAR_H)`; `wm_move_window()` + `wm_resize_window()` to usable area; set `WM_FLAG_MAXIMIZED`; clear `WM_FLAG_SNAPPED`; `wm_anim_maximize(handle)`. `wm_restore(handle)`: if minimized: set `WM_FLAG_VISIBLE`; `wm_move_window/resize` to saved; `wm_anim_restore()`; clear `WM_FLAG_MINIMIZED`; if maximized: `wm_move_window/resize` to saved; clear `WM_FLAG_MAXIMIZED`; `wm_anim_restore()`. Registry: persist `HKCU\Software\Impossible\Shell\Windows\{title}\State` (MINIMIZED/MAXIMIZED/RESTORED DWORD) + `X/Y/W/H` on each state change.
 
 - [ ] `#define WM_FLAG_MINIMIZED 0x40`, `WM_FLAG_MAXIMIZED 0x80`, `WM_FLAG_SNAPPED 0x100` in `wm.h`
 - [ ] `int32_t saved_x, saved_y; uint32_t saved_w, saved_h;` fields in `struct wm_window`
@@ -70,7 +70,7 @@ Add `WM_FLAG_MINIMIZED=0x40`, `WM_FLAG_MAXIMIZED=0x80`, `WM_FLAG_SNAPPED=0x100` 
 - [ ] `void wm_maximize(int handle)` -- save rect; resize to usable area; animate; set flag
 - [ ] `void wm_restore(int handle)` -- return to saved rect; animate; clear flag
 - [ ] `wm_handle_mouse()`: double-click on titlebar (two clicks within 300 ms) → `wm_maximize/restore`
-- [ ] `#define TASKBAR_H 48` in `wm.h` (placeholder; overridden by taskbar init in TODO-08)
+- [ ] `#define TASKBAR_H 48` in `wm.h` (placeholder; overridden by taskbar init in `TODO-10`)
 - [ ] Registry persist: write state + rect on change; read on desktop restart
 - [ ] Log: `[wm] window %d: minimize → maximized rect saved [%d %d %u %u]`
 - [ ] Make `wm_destroy_window()` tear down per-window state (`wm.c:325-357`): it clears neither `dragging`/`drag_active` nor the slot's controls (`ctrl_destroy_all()` has no production caller)

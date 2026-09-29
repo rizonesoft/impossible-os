@@ -754,6 +754,7 @@ Write docs pages that meet the §3 contract for the 14 roadmap files below. Read
   - `08-graphics-ui/TODO-02` section 1: a font that fails to parse is freed with `kfree()` although it came from `pmm_alloc_contiguous()`.
   - `08-graphics-ui/TODO-08` section 1: `wm_destroy_window()` leaves drag state set and the slot's controls alive; section 2 gains the missing edge-resize implementing item.
   - `08-graphics-ui/TODO-05` section 1 (control slot reuse, press-fires-click, `ctrl_set_text(NULL)`), `TODO-10` section 1 (taskbar hit-test geometry), `TODO-04` sections 3 and 6 (frame clock, spring arithmetic), `06-desktop-foundation/TODO-03` section 5 (stale terminal handle after close).
+  - Cross-roadmap contract conflicts found in review, filed rather than designed: two hotkey tables (`06-desktop-foundation/TODO-03` section 4 versus `08-graphics-ui/TODO-08` section 5) and `wm_anim_snap()` taking a side where its caller passes a zone rectangle (`TODO-04` section 5); `TODO-06` section 8 now draws the existing status glyphs, as the dialog design requires, instead of adding colour icons.
 - [x] Commit: `"docs: desktop foundation and graphics, part 1 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
@@ -765,6 +766,9 @@ Write docs pages that meet the §3 contract for the 14 roadmap files below. Read
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the desktop or graphics code it describes changes.
 > - **Status honesty:** no section of these fourteen roadmaps has shipped; pages describe what runs today (full-repaint compositor, four controls, three static icons, Latin-1 TrueType text, generated but unused theme tokens) and link the owning sections.
 > - **Scope boundary:** the design specs in `docs/design/` stay authoritative for visuals; these pages link them. Taskbar, Start menu and Win32k pages are section 17.
+
+> **Verified:** 2026-09-29 | commit `893870691` | 9/9 items | build OK | site: OK, 156/232 documented; tests 34646 kernel + 17 user-mode PASS; smoke PASS
+> **Quality reviewed:** 2026-09-29 | Codex 4x (adversarial, adversarial post-ship, consistency, perf) | 13M fixed, 0 open | scope: N/A (docs-only; no source changed; parity research and test coverage N/A; re-adversarial skipped: docs-only fixes)
 
 ---
 

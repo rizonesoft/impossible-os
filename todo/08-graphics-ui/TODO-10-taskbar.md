@@ -21,12 +21,12 @@ title: "TODO-10 -- Taskbar"
 - `include/kernel/sched/syscall.h` -- `SYS_MSGBOX=51`; `SYS_TASKBAR_SET_PROGRESS=52`, `SYS_JUMPLIST_NOTIFY=53` added in §4+§6
 - `include/kernel/sched/task.h` -- `task_exec(data, size)` -- used by §5 pinned app launch
 - `include/registry.h` -- `RegGetValue/SetValueEx` -- used by §5 pins, §6 jump lists, §7 auto-hide, §8 customization
-- `include/kernel/gfx/anim_mgr.h` (TODO-02) -- `anim_mgr_add()`, `GFX_EASE_IN_CUBIC/OUT_CUBIC` -- used by §7 auto-hide slide tween
-- `include/desktop/context_menu.h` (TODO-07 §1) -- `context_menu_show()` -- used by §2 and §7
-- `include/desktop/dpi.h` (TODO-07 §4) -- `DPI_SCALE()`, `WM_DPI_CHANGED` -- used by §8 sizing
+- `include/kernel/gfx/anim_mgr.h` (TODO-04) -- `anim_mgr_add()`, `GFX_EASE_IN_CUBIC/OUT_CUBIC` -- used by §7 auto-hide slide tween
+- `include/desktop/context_menu.h` (TODO-09 §1) -- `context_menu_show()` -- used by §2 and §7
+- `include/desktop/dpi.h` (TODO-09 §4) -- `DPI_SCALE()`, `WM_DPI_CHANGED` -- used by §8 sizing
 - → XREF: `08-graphics-ui/TODO-08-window-manager.md` -- §1 window list wires to `wm_minimize/maximize/restore`; §3 Aero Peek temporarily overrides compositor window opacity
 - → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §1` -- context menu engine must exist before §2 right-click and §7 jump list popup; §9 vdesk present for "Move to Desktop ►"
-- Related (no stable XREF target): `09-desktop-shell/TODO-01-*` (notifications/TODO-09) -- §5 progress badge toast is a forward ref; use serial log stub until TODO-09 live
+- Related (no stable XREF target): `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` (notifications) -- §5 progress badge toast is a forward ref; use serial log stub until TODO-09 live
 
 ## Outcome
 
@@ -178,7 +178,7 @@ Right-click pinned or window button → jump list popup above context menu showi
 **Files:** `src/desktop/taskbar_jumplist.c` (new), `include/desktop/taskbar.h` (extend), `include/kernel/sched/syscall.h` (extend)
 
 > [!NOTE]
-> Jump list popup is a separate overlay window at z_order=26000 (above context menu at 25000 from TODO-07 §1). Layout: the context menu geometry and menu acrylic of `docs/design/shell.md#context-menus` (256 px wide, 32 px items, radius 8); sections: "Recent" (up to 10 items, each with icon + filename); "Pinned" (manually pinned items -- stub); "Tasks" (app-defined, stub). Popup appears immediately above the context menu if a jump list exists for the app; if empty, skip popup and show only the context menu. **Syscall**: `sys_jumplist_notify(const char *path, uint32_t len)` -- kernel side: `current_task->name` as key; write path to `HKCU\Software\Impossible\Shell\JumpLists\{name}\Recent[]` (ring buffer of 10 entries).
+> Jump list popup is a separate overlay window at z_order=26000 (above context menu at 25000 from TODO-09 §1). Layout: the context menu geometry and menu acrylic of `docs/design/shell.md#context-menus` (256 px wide, 32 px items, radius 8); sections: "Recent" (up to 10 items, each with icon + filename); "Pinned" (manually pinned items -- stub); "Tasks" (app-defined, stub). Popup appears immediately above the context menu if a jump list exists for the app; if empty, skip popup and show only the context menu. **Syscall**: `sys_jumplist_notify(const char *path, uint32_t len)` -- kernel side: `current_task->name` as key; write path to `HKCU\Software\Impossible\Shell\JumpLists\{name}\Recent[]` (ring buffer of 10 entries).
 
 - [ ] `#define SYS_JUMPLIST_NOTIFY 53` in `syscall.h`
 - [ ] `sys_jumplist_notify(const char *path, uint32_t len)` kernel handler: validate path; append to Registry ring buffer (max 10 entries); `RegSetValueEx("RecentN", path)` + `RegSetValueEx("RecentCount", count)`

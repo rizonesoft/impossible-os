@@ -10,7 +10,7 @@ This roadmap adds the heavier controls that real applications are built from, an
 **Today.** None of these controls or dialogs exists. What they will build on:
 
 - The [control library](../desktop/control-library.md) in [`controls.c`](../../src/desktop/controls.c): per-window control tables, mouse dispatch, and `ctrl_destroy()`, which today marks a control empty but does not free anything the control owns.
-- The icon store ([`icon_store.h`](../../include/icon_store.h)), which already has monochrome information, warning, error and question glyphs, check marks, chevrons and list and grid glyphs. The colour status icons a message box needs are not in the icon set yet.
+- The icon store ([`icon_store.h`](../../include/icon_store.h)), which already has monochrome information, warning, error and question glyphs, check marks, chevrons and list and grid glyphs. The message box uses those status glyphs in the matching status colours, as the [dialog design](../design/controls.md#dialog) requires; it needs no new colour icons.
 - Size tokens already generated into `theme_tokens.h`: 32 pixel list rows, a 48 pixel command bar, dialogs between 320 and 548 pixels wide with an 80 pixel footer, a 32 pixel message icon, and a tooltip up to 320 pixels wide shown after 400 ms.
 - System calls in [`syscall.h`](../../include/kernel/sched/syscall.h); `SYS_MSGBOX` will take the next free number rather than a fixed one.
 

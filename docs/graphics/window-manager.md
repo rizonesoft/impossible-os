@@ -56,7 +56,7 @@ Drag windows by the title bar and close them with the close button or Alt+F4 (`b
 - [Minimize / Maximize / Restore](../../todo/08-graphics-ui/TODO-08-window-manager.md#1-minimize--maximize--restore-sonnet), which also owns a teardown defect found while writing these pages: destroying a window mid-drag leaves the drag flag set, and the slot's controls are not released.
 - [Window Decorations](../../todo/08-graphics-ui/TODO-08-window-manager.md#2-window-decorations-sonnet), including the edge resize drag that is still missing.
 - [Snap Layouts](../../todo/08-graphics-ui/TODO-08-window-manager.md#3-snap-layouts-sonnet) and [Desktop Icons](../../todo/08-graphics-ui/TODO-08-window-manager.md#4-desktop-icons-sonnet).
-- [Keyboard Shortcuts and Task Switching](../../todo/08-graphics-ui/TODO-08-window-manager.md#5-keyboard-shortcuts--task-switching-sonnet) and [Alt+Tab Task Switcher](../../todo/08-graphics-ui/TODO-08-window-manager.md#6-alttab-task-switcher-opus).
+- [Keyboard Shortcuts and Task Switching](../../todo/08-graphics-ui/TODO-08-window-manager.md#5-keyboard-shortcuts--task-switching-sonnet), whose hotkey table overlaps the one planned in [Global Hotkey Dispatch Table](../../todo/06-desktop-foundation/TODO-03-input-system.md#4-global-hotkey-dispatch-table) (reconciliation filed there), and [Alt+Tab Task Switcher](../../todo/08-graphics-ui/TODO-08-window-manager.md#6-alttab-task-switcher-opus).
 - [Drag and Drop](../../todo/08-graphics-ui/TODO-08-window-manager.md#7-drag-and-drop-opus) and [Compositor Performance](../../todo/08-graphics-ui/TODO-08-window-manager.md#8-compositor-performance-opus).
 - Window motion comes from the [Animation Engine](animation-engine.md) and colours from the [Theme System](theme-system.md).
 

@@ -86,6 +86,9 @@ Register system-wide hotkeys that intercept before window routing.
 - [ ] `wm_register_hotkey(scancode, modifiers, handler)` -- add to table
 - [ ] Table checked first in `input_dispatch()` -- if match, call handler and consume event
 - [ ] Register defaults: Alt+Tab, Alt+F4, Win+D, Win+L, PrintScreen
+- [ ] Reconcile with `08-graphics-ui/TODO-08` §5, which also plans a hotkey table (`hotkeys.c`, `uint8_t` modifiers): keep one table and one modifier contract, with the other roadmap registering through it
+  - `06-desktop-foundation/TODO-01` §4 already names TODO-08 §5 as the hotkey owner; this section's table would be a second one
+  - Found by the `00-infrastructure/TODO-10-documentation-site.md` §16 review; verified at source
 - [ ] Commit
 
 **Test checkpoint:** Alt+F4 closes window. PrintScreen captures to file (placeholder log).
