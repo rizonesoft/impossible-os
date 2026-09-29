@@ -120,12 +120,14 @@ Simple shortcut format: target path + optional icon override.
 **Design:** [`shell.md#desktop`](../../docs/design/shell.md#desktop), [`icons.md#system-icons`](../../docs/design/icons.md#system-icons)
 Show correct icon based on file extension.
 
-**Files:** `src/desktop/desktop.c`
+**Files:** `src/kernel/icon_store.c`, `include/icon_store.h`
 
-- [ ] Icons by extension from the closed set in `docs/design/icons.md#system-icons`: `.exe` = `exe_default`, `.dll` = `dll_default`, `.txt`/`.log`/`.conf`/`.ini` = `text_file`, `.jpg`/`.png`/`.bmp` = `file_image`, `.zip` = `file_archive`
+- [ ] Icons by extension from the closed set in `docs/design/icons.md#system-icons`: `.exe` = `exe_default`, `.dll` = `dll_default`, `.txt`/`.md`/`.log`/`.cfg`/`.conf`/`.ini` = `text_file`, `.jpg`/`.png`/`.bmp` = `file_image`, `.zip` = `file_archive`
 - [ ] Directories use `folder_closed`
 - [ ] Unknown extension: `file_default`; never invent an icon outside the set (a new type needs a new icon in `resources/icons/src/` first)
-- [ ] Icon lookup: `desktop_icon_for_extension(ext)` -- returns IRES icon handle
+- [ ] Extend the shipped `icon_for_extension(ext)` (`icon_store.c`, returns `system_icon_t`) rather than adding a second lookup
+  - Add icon IDs for `file_image`, `file_archive`, `user_folder` and `network`, whose SVGs exist but have no `system_icon_t` entry
+- [ ] Accept an extension without its leading dot and compare case-insensitively (`TXT`, `txt`); today both fall to `ICON_FILE_DEFAULT`, and the comment claiming the dot is skipped has no code
 - [ ] Future: read icon from `.exe` PE resources (deferred)
 - [ ] Commit
 

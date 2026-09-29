@@ -8,18 +8,18 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
 
 # TODO-05 -- Extended Widget Library: Core Controls
 
-> **Goal:** Add the 6 most-needed missing controls to `controls.c`: Checkbox, Radio Button, Dropdown/ComboBox, Slider/TrackBar, Progress Bar, and Tab Strip. These are required by every Settings applet and app UI. All new controls use `theme_get()->field` from day one. The indeterminate progress bar uses the animation engine tween from TODO-02. The dropdown floating popup uses the WM `z_order` overlay mechanism.
+> **Goal:** Add the 6 most-needed missing controls to `controls.c`: Checkbox, Radio Button, Dropdown/ComboBox, Slider/TrackBar, Progress Bar, and Tab Strip. These are required by every Settings applet and app UI. All new controls use `theme_get()->field` from day one. The indeterminate progress bar uses the animation engine tween from TODO-04. The dropdown floating popup uses the WM `z_order` overlay mechanism.
 
 > [!IMPORTANT]
-> **Already implemented** -- do not re-implement: `CTRL_BUTTON`, `CTRL_LABEL`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR`; `ctrl_draw_all()`, `ctrl_handle_mouse()`, `ctrl_handle_key()`, `ctrl_set_text/get_text/set_enabled`. `gfx_fill_rounded_rect(s, x, y, w, h, radius, color)` and `gfx_fill_circle(s, cx, cy, r, color)` are in `include/gfx.h`. `z_order` field is in `struct wm_window` -- set to a high value for dropdown overlay. All new controls must use `theme_get()->field` (never hardcoded hex); `CTRL_COLOR_*` constants in `controls.h` will be removed by TODO-01 migration -- do not add new ones. TODO-02 `anim_mgr_add()` drives the indeterminate progress bar tween. `CTRL_MAX_PER_WINDOW = 32` is the per-window control limit -- counts against all 6 new types combined with existing controls. Complete sections in order: Checkbox → Radio → Slider → Progress Bar → Dropdown → Tab Strip → Theming → Accessibility.
+> **Already implemented** -- do not re-implement: `CTRL_BUTTON`, `CTRL_LABEL`, `CTRL_TEXTBOX`, `CTRL_SCROLLBAR`; `ctrl_draw_all()`, `ctrl_handle_mouse()`, `ctrl_handle_key()`, `ctrl_set_text/get_text/set_enabled`. `gfx_fill_rounded_rect(s, x, y, w, h, radius, color)` and `gfx_fill_circle(s, cx, cy, r, color)` are in `include/gfx.h`. `z_order` field is in `struct wm_window` -- set to a high value for dropdown overlay. All new controls must use `theme_get()->field` (never hardcoded hex); `CTRL_COLOR_*` constants in `controls.h` will be removed by TODO-03 migration -- do not add new ones. TODO-04 `anim_mgr_add()` drives the indeterminate progress bar tween. `CTRL_MAX_PER_WINDOW = 32` is the per-window control limit -- counts against all 6 new types combined with existing controls. Complete sections in order: Checkbox → Radio → Slider → Progress Bar → Dropdown → Tab Strip → Theming → Accessibility.
 
 ## Inputs
 
 - `include/desktop/controls.h` -- `enum ctrl_type`, `struct control`, `CTRL_MAX_PER_WINDOW=32`; extend with 6 new type enum values and new API declarations
 - `src/desktop/controls.c` -- extend `ctrl_draw_all()`, `ctrl_handle_mouse()`, `ctrl_handle_key()` dispatch tables for new types
 - `include/gfx.h` -- `gfx_fill_rounded_rect()`, `gfx_fill_circle()`, `gfx_fill_rect_alpha()` for new control rendering
-- `include/desktop/theme.h` (TODO-01) -- `theme_get()->colors.<token>` (design colour tokens) + `THEME_SIZE_*` / `THEME_RADIUS_*` -- all colours and geometry for new controls, per `docs/design/controls.md`
-- `include/kernel/gfx/anim_mgr.h` (TODO-02) -- `anim_mgr_add()`, `gfx_tween_start()` for indeterminate progress bar animation
+- `include/desktop/theme.h` (TODO-03) -- `theme_get()->colors.<token>` (design colour tokens) + `THEME_SIZE_*` / `THEME_RADIUS_*` -- all colours and geometry for new controls, per `docs/design/controls.md`
+- `include/kernel/gfx/anim_mgr.h` (TODO-04) -- `anim_mgr_add()`, `gfx_tween_start()` for indeterminate progress bar animation
 - `include/desktop/wm.h` -- `wm_create_window()` + `z_order` field for dropdown floating popup overlay
 - → XREF: `08-graphics-ui/TODO-03-theme-system.md` -- prerequisite; `theme_get()` must be live and `CTRL_COLOR_*` migration done before new controls paint correctly
 - → XREF: `08-graphics-ui/TODO-04-animation-engine.md` -- prerequisite for §3 indeterminate progress bar; `anim_mgr_add()` must be available
@@ -39,11 +39,11 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
 
 | ⭐  | Order | Deliverable                                                                                  | Depends On                                                                | Status |
 | --- | :---: | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 Checkbox -- `CTRL_CHECKBOX`, 20 px box radius 4, accent checked state, focus rings        | Existing `gfx_fill_rounded_rect`; `theme_get()` (TODO-01)                 |  [ ]   |
+| 💎  |   1   | §1 Checkbox -- `CTRL_CHECKBOX`, 20 px box radius 4, accent checked state, focus rings        | Existing `gfx_fill_rounded_rect`; `theme_get()` (TODO-03)                 |  [ ]   |
 | 💎  |   2   | §2 Radio button -- `CTRL_RADIO`, 20 px circle + 12 px dot, group mutual exclusion            | §1 (same struct extension pattern; group_id field added alongside)        |  [ ]   |
-| 💎  |   3   | §4 Slider -- `CTRL_SLIDER`, track + thumb drag, horiz/vert, real-time callback               | §1 (same `on_change` callback type established in §1)                     |  [ ]   |
-| 💎  |   4   | §5 Progress bar -- `CTRL_PROGRESSBAR`, determinate + indeterminate tween mode                | §3 slider (determinate fill is same pattern); TODO-02 `anim_mgr_add()`    |  [ ]   |
-| 💎  |   5   | §3 Dropdown -- `CTRL_DROPDOWN`, floating popup via WM z-order overlay, keyboard navigation   | All of §1–4 done (dropdown is most complex; isolated until others stable) |  [ ]   |
+| 💎  |   3   | §3 Slider -- `CTRL_SLIDER`, track + thumb drag, horiz/vert, real-time callback               | §1 (same `on_change` callback type established in §1)                     |  [ ]   |
+| 💎  |   4   | §4 Progress bar -- `CTRL_PROGRESSBAR`, determinate + indeterminate tween mode                | §3 slider (determinate fill is same pattern); TODO-04 `anim_mgr_add()`    |  [ ]   |
+| 💎  |   5   | §5 Dropdown -- `CTRL_DROPDOWN`, floating popup via WM z-order overlay, keyboard navigation   | All of §1–4 done (dropdown is most complex; isolated until others stable) |  [ ]   |
 | 💎  |   6   | §6 Tab strip -- `CTRL_TABSTRIP`, tab headers, accent underline, keyboard arrow navigation    | §5 dropdown (all input-capture patterns established)                      |  [ ]   |
 | 💎  |   7   | §7 Theming -- confirm all new controls use `theme_get()` only; remove any CTRL_COLOR_* usage | §6 (all controls must exist before audit)                                 |  [ ]   |
 | ⭐  |   8   | §8 Accessibility stubs -- `ctrl_get_accessible_name/role()` for all 8 types                  | §7 (all control types must be registered before role table is complete)   |  [ ]   |
@@ -71,6 +71,11 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
 - [ ] Draw case in `ctrl_draw_all()`: 20 x 20 box, radius 4 (`THEME_SIZE_CHECK_BOX`, `THEME_RADIUS_CHECK_BOX`); unchecked `control_fill` + `control_strong_stroke`, checked `accent` + glyph in `text_on_accent`; hover/pressed fills; label 8 px right
 - [ ] `void ctrl_draw_focus_ring(gfx_surface_t *s, int32_t x, int32_t y, int32_t w, int32_t h, int32_t r)`: shared two-ring keyboard focus visual used by every control
 - [ ] Mouse handler: click on box (or label) toggles `checked`; calls `on_change`
+- [ ] Fix the existing control library defects before adding types: `ctrl_destroy()` never frees its slot (ids come from `cw->count`), buttons fire `on_click` on press, and `ctrl_set_text(NULL)` dereferences NULL
+  - Slot reuse: `controls.c:129-143`, `:405-416`; a window can create only 32 controls in its lifetime
+  - Press versus release: `controls.c:851-859` sets and clears `CTRL_STATE_PRESSED` in one call, so the pressed style never draws
+  - `ctrl_set_text()`: `controls.c:1089` passes the pointer to `ctrl_strcpy()` unchecked, unlike the create paths
+  - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"controls: CTRL_CHECKBOX -- box+checkmark, checked/hover/focus/disabled states"`
 
 ## 2. Radio Button `[Sonnet]`
@@ -125,7 +130,7 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
 **Files:** `src/desktop/controls.c` (extend), `include/desktop/controls.h` (extend)
 
 > [!NOTE]
-> `CTRL_PROGRESSBAR` union field: `struct { uint8_t value; uint8_t mode; gfx_tween_t slide_tween; int32_t slide_pos; } progressbar;`. `PROGRESSBAR_DETERMINATE=0`, `PROGRESSBAR_INDETERMINATE=1`. Determinate draw: 1 px track centred vertically, 3 px accent bar of `value * w / 100` px, rounded ends. Indeterminate: on mode switch `gfx_tween_start(&pb->slide_tween, -w*3/10, w, 2000, GFX_EASE_STANDARD)` looping via `on_complete`; draw the 3 px accent segment of width `w*3/10` at `slide_tween.current`, clipped to the track. Indeterminate mode when `anim_mgr` not yet initialized (pre-TODO-02): fall back to determinate fill at 50%.
+> `CTRL_PROGRESSBAR` union field: `struct { uint8_t value; uint8_t mode; gfx_tween_t slide_tween; int32_t slide_pos; } progressbar;`. `PROGRESSBAR_DETERMINATE=0`, `PROGRESSBAR_INDETERMINATE=1`. Determinate draw: 1 px track centred vertically, 3 px accent bar of `value * w / 100` px, rounded ends. Indeterminate: on mode switch `gfx_tween_start(&pb->slide_tween, -w*3/10, w, 2000, GFX_EASE_STANDARD)` looping via `on_complete`; draw the 3 px accent segment of width `w*3/10` at `slide_tween.current`, clipped to the track. Indeterminate mode when `anim_mgr` not yet initialized (pre-TODO-04): fall back to determinate fill at 50%.
 
 - [ ] `CTRL_PROGRESSBAR` in `enum ctrl_type`; `PROGRESSBAR_DETERMINATE=0`, `PROGRESSBAR_INDETERMINATE=1` in `controls.h`
 - [ ] Union field as above (includes `gfx_tween_t` embedded directly -- no heap allocation)
@@ -193,15 +198,15 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
 
 **Design:** [`index.md#how-does-this-relate-to-the-theme-system`](../../docs/design/index.md#how-does-this-relate-to-the-theme-system), [`shell.md#materials`](../../docs/design/shell.md#materials)
 
-Audit all 6 new controls and confirm zero hardcoded hex colors. All color references use `theme_get()->field`. Remove any `CTRL_COLOR_*` constants if still present after TODO-01 migration. Existing controls (Button, Label, TextBox, ScrollBar) already migrated by TODO-01.
+Audit all 6 new controls and confirm zero hardcoded hex colors. All color references use `theme_get()->field`. Remove any `CTRL_COLOR_*` constants if still present after TODO-03 migration. Existing controls (Button, Label, TextBox, ScrollBar) already migrated by TODO-03.
 
 **Files:** `src/desktop/controls.c`, `include/desktop/controls.h`
 
 > [!NOTE]
-> This section is an audit pass, not new code. The 6 new controls were written against `theme_get()` from the start. This section verifies: (1) `rg "0x[0-9A-Fa-f]{6}" src/desktop/controls.c` returns zero results outside comments; (2) `CTRL_COLOR_*` constants are removed from `controls.h` (replaced by TODO-01); (3) every new `_draw` case uses only `theme_get()->` references. If any slip-through literal is found: fix it here.
+> This section is an audit pass, not new code. The 6 new controls were written against `theme_get()` from the start. This section verifies: (1) `rg "0x[0-9A-Fa-f]{6}" src/desktop/controls.c` returns zero results outside comments; (2) `CTRL_COLOR_*` constants are removed from `controls.h` (replaced by TODO-03); (3) every new `_draw` case uses only `theme_get()->` references. If any slip-through literal is found: fix it here.
 
 - [ ] `rg "0x[0-9A-Fa-f]{6}" src/desktop/controls.c` → zero results (excluding comments)
-- [ ] `CTRL_COLOR_*` constants absent from `controls.h` (removed by TODO-01 migration)
+- [ ] `CTRL_COLOR_*` constants absent from `controls.h` (removed by TODO-03 migration)
 - [ ] Each control's draw code uses only design tokens
   - `theme_get()->colors.control_fill*`, `subtle_fill_*`, `accent*`, `text_*`, `stroke_*`, `control_strong_stroke`, `focus_*`, and `THEME_SIZE_*` / `THEME_RADIUS_*` for geometry (`docs/design/controls.md`)
 - [ ] Commit: `"controls: theming audit -- all new controls use theme_get() only, CTRL_COLOR_* removed"`

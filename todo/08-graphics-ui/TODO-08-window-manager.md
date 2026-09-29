@@ -11,7 +11,7 @@ title: "TODO-08 -- Window Manager Enhancements"
 > **Goal:** Elevate the basic WM (create/move/resize/close) to a Windows 11-quality experience: proper Mica titlebar decorations with Fluent chrome buttons, minimize/maximize/restore with state persistence, snap layouts (hover-popup + keyboard), desktop icons (load/draw/launch/drag), global hotkeys + Win+D/M/Alt+F4, Alt+Tab thumbnail switcher, file drag-and-drop, and compositor dirty-rect optimization for 60 fps frame gating.
 
 > [!IMPORTANT]
-> **Existing WM**: `wm_move_window`, `wm_resize_window`, `wm_focus_window`, `wm_mark_dirty`, `wm_handle_mouse`, `wm_window_at`, `wm_get_cursor_context`, `wm_get_drag_dirty_rect` all exist. **Missing from `struct wm_window`**: no `saved_rect`, no `WM_FLAG_MINIMIZED/MAXIMIZED` -- these are added in §1. `FONT_UI_BOLD` in `include/font_mgr.h` for title text. `gfx_mica(s, x, y, w, h, wallpaper, tint)` exists for Mica titlebar. `desktop_get_wallpaper_surface()` provides the wallpaper. `task_create_user()` in `include/kernel/sched/task.h` launches user processes. TODO-02 `wm_anim_state_t` is embedded in `struct wm_window` for all animation. Complete sections in order: decorations → minimize/maximize/restore → snap layouts → compositor performance → desktop icons → keyboard shortcuts → Alt+Tab → drag and drop.
+> **Existing WM**: `wm_move_window`, `wm_resize_window`, `wm_focus_window`, `wm_mark_dirty`, `wm_handle_mouse`, `wm_window_at`, `wm_get_cursor_context`, `wm_get_drag_dirty_rect` all exist. **Missing from `struct wm_window`**: no `saved_rect`, no `WM_FLAG_MINIMIZED/MAXIMIZED` -- these are added in §1. `FONT_UI_BOLD` in `include/font_mgr.h` for title text. `gfx_mica(s, x, y, w, h, wallpaper, tint)` exists for Mica titlebar. `desktop_get_wallpaper_surface()` provides the wallpaper. `task_create_user()` in `include/kernel/sched/task.h` launches user processes. TODO-04 `wm_anim_state_t` is embedded in `struct wm_window` for all animation. Complete sections in order: decorations → minimize/maximize/restore → snap layouts → compositor performance → desktop icons → keyboard shortcuts → Alt+Tab → drag and drop.
 
 ## Inputs
 
@@ -19,12 +19,12 @@ title: "TODO-08 -- Window Manager Enhancements"
 - `include/gfx.h` -- `gfx_mica()`, `gfx_drop_shadow()`, `gfx_fill_rounded_rect()` for decoration rendering
 - `include/font_mgr.h` -- `FONT_UI_BOLD`, `FONT_UI` for title and status text
 - `include/desktop/desktop.h` -- `desktop_get_wallpaper_surface()` for Mica titlebar tint source
-- `include/desktop/theme.h` (TODO-01) -- `theme_get()->colors` (`window_bg_inactive`, `subtle_fill_*`, `caption_close_hover`, `stroke_surface`, `focus_outer`) + `mat.mica` for decoration colours
-- `include/kernel/gfx/wm_anim.h` (TODO-02) -- `wm_anim_minimize/restore/maximize/snap` for animated transitions
+- `include/desktop/theme.h` (TODO-03) -- `theme_get()->colors` (`window_bg_inactive`, `subtle_fill_*`, `caption_close_hover`, `stroke_surface`, `focus_outer`) + `mat.mica` for decoration colours
+- `include/kernel/gfx/wm_anim.h` (TODO-04) -- `wm_anim_minimize/restore/maximize/snap` for animated transitions
 - `include/kernel/sched/task.h` -- `task_create_user(entry, name)` for desktop icon double-click launch
 - `include/registry.h` -- Registry persistence for window state + desktop icon positions
 - → XREF: `08-graphics-ui/TODO-04-animation-engine.md` -- `wm_anim_state_t` fields in `struct wm_window` prerequisite for §1 minimize/maximize animations
-- Related (no stable XREF target): `09-desktop-shell/TODO-01-*` (taskbar) -- minimize animation target rect requires taskbar button position; taskbar height defines usable area for maximize
+- Related (no stable XREF target): `08-graphics-ui/TODO-10-taskbar.md` (taskbar) -- minimize animation target rect requires taskbar button position; taskbar height defines usable area for maximize
 
 ## Outcome
 
@@ -40,14 +40,14 @@ title: "TODO-08 -- Window Manager Enhancements"
 
 | ⭐  | Order | Deliverable                                                                                              | Depends On                                                                 | Status |
 | --- | :---: | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §2 Window decorations -- Mica titlebar, Fluent chrome buttons, resize handles                           | `gfx_mica`, `FONT_UI_BOLD`, `theme_get()` (TODO-01) all must be live      |  [ ]   |
-| 💎  |   2   | §1 Min/max/restore -- WM_FLAG_MINIMIZED/MAXIMIZED, saved_rect, `wm_minimize/maximize/restore`           | §1 (chrome buttons trigger these; animation from TODO-02)                  |  [ ]   |
-| 💎  |   3   | §3 Snap layouts -- hover-popup (4 zones), Win+←/→/↑/↓ keyboard snap, edge-drag preview                | §2 (maximize button hover is the trigger; snap uses wm_maximize geometry)  |  [ ]   |
-| 💎  |   4   | §8 Compositor performance -- dirty-rect union, frame-skip when idle, frame-time warning                | §2 (min/max/restore are the biggest dirty-rect drivers; optimize after they work) |  [ ]   |
-| 💎  |   5   | §4 Desktop icons -- load from VFS, draw+select+launch, drag reposition, registry persistence           | §1 decorations done (desktop renders behind windows)                       |  [ ]   |
-| 💎  |   6   | §5 Keyboard shortcuts -- global hotkey table, Win+D/M/Shift+M/L, Alt+F4, Win+number                   | §2 (wm_minimize/restore needed for Win+M/D); §5 desktop icons for Win+D   |  [ ]   |
-| 💎  |   7   | §6 Alt+Tab switcher -- thumbnail capture, overlay panel, 150 ms fade, focus on release                 | §5 (hotkey table registers Alt+Tab); §2 (min state affects thumbnail list) |  [ ]   |
-| 💎  |   8   | §7 Drag and drop -- desktop icon drag, file drag from FM to desktop, window move/resize extend         | §5 desktop icons (icon drag extends their existing mouse handling)          |  [ ]   |
+| 💎  |   2   | §2 Window decorations -- Mica titlebar, Fluent chrome buttons, resize handles                           | `gfx_mica`, `FONT_UI_BOLD`, `theme_get()` (TODO-03) all must be live      |  [ ]   |
+| 💎  |   1   | §1 Min/max/restore -- WM_FLAG_MINIMIZED/MAXIMIZED, saved_rect, `wm_minimize/maximize/restore`           | §2 (chrome buttons trigger these; animation from TODO-04)                  |  [ ]   |
+| 💎  |   3   | §3 Snap layouts -- hover-popup (4 zones), Win+←/→/↑/↓ keyboard snap, edge-drag preview                | §1, §2 (maximize button hover is the trigger; snap uses wm_maximize geometry)  |  [ ]   |
+| 💎  |   8   | §8 Compositor performance -- dirty-rect union, frame-skip when idle, frame-time warning                | §1 (min/max/restore are the biggest dirty-rect drivers; optimize after they work) |  [ ]   |
+| 💎  |   4   | §4 Desktop icons -- load from VFS, draw+select+launch, drag reposition, registry persistence           | §2 decorations done (desktop renders behind windows)                       |  [ ]   |
+| 💎  |   5   | §5 Keyboard shortcuts -- global hotkey table, Win+D/M/Shift+M/L, Alt+F4, Win+number                   | §1 (wm_minimize/restore needed for Win+M/D); §4 desktop icons for Win+D   |  [ ]   |
+| 💎  |   6   | §6 Alt+Tab switcher -- thumbnail capture, overlay panel, 150 ms fade, focus on release                 | §5 (hotkey table registers Alt+Tab); §1 (min state affects thumbnail list) |  [ ]   |
+| 💎  |   7   | §7 Drag and drop -- desktop icon drag, file drag from FM to desktop, window move/resize extend         | §4 desktop icons (icon drag extends their existing mouse handling)          |  [ ]   |
 
 ---
 
@@ -73,6 +73,10 @@ Add `WM_FLAG_MINIMIZED=0x40`, `WM_FLAG_MAXIMIZED=0x80`, `WM_FLAG_SNAPPED=0x100` 
 - [ ] `#define TASKBAR_H 48` in `wm.h` (placeholder; overridden by taskbar init in TODO-08)
 - [ ] Registry persist: write state + rect on change; read on desktop restart
 - [ ] Log: `[wm] window %d: minimize → maximized rect saved [%d %d %u %u]`
+- [ ] Make `wm_destroy_window()` tear down per-window state (`wm.c:325-357`): it clears neither `dragging`/`drag_active` nor the slot's controls (`ctrl_destroy_all()` has no production caller)
+  - Alt+F4 during a title-bar drag leaves `wm_is_dragging()` true, so the compositor skips client renders and keeps presenting a stale drag rectangle (`compositor.c:309,379`)
+  - A reused slot inherits the dead window's controls because controls are keyed by window handle (`controls.c:70-90`)
+  - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"wm: minimize/maximize/restore -- WM_FLAG_MINIMIZED/MAXIMIZED, saved_rect, Registry persist"`
 
 ## 2. Window Decorations `[Sonnet]`
@@ -97,6 +101,9 @@ Per `docs/design/shell.md#window-chrome`: corner radius `THEME_RADIUS_WINDOW` (8
 - [ ] Drop shadow from the elevation tokens: `THEME_ELEV_WINDOW_ACTIVE_Y/_BLUR/_ALPHA` (16/32/94) for the focused window, `THEME_ELEV_WINDOW_INACTIVE_*` (8/16/48) for the rest; corner radius `THEME_RADIUS_WINDOW`; none when maximized
 - [ ] Window chrome to `docs/design/shell.md#window-chrome`: radius 8 (today `WM_CORNER_RADIUS` is 6), active/inactive elevation, 46 px caption buttons with 10 px glyphs, close hover `caption_close_hover`
   - Replace the `WM_COLOR_*` literals in `include/desktop/wm.h` with `THEME_*` tokens
+- [ ] Implement the edge and corner resize drag: pressing in the `WM_RESIZE_MARGIN` zone resizes through `wm_resize_window()`; today only the cursor shape changes (`wm.c:1385-1403`) and nothing calls `wm_resize_window()`
+  - Owner of the resize work superseded in `06-desktop-foundation/TODO-01` §2, which previously had no implementing item here
+  - Grab zone per `docs/design/shell.md#window-chrome`; add an overflow check on `width * height * 4` in `wm_resize_window()` and `wm_create_window()`
 - [ ] Commit: `"wm: decorations -- Mica titlebar, Fluent chrome buttons, hover states, drop shadow"`
 
 ## 3. Snap Layouts `[Sonnet]`
@@ -128,7 +135,7 @@ Per `docs/design/shell.md#snap-layouts`: hovering the maximize button for `THEME
 
 **Owner of:** the work planned in `06-desktop-foundation/TODO-05 §1 and TODO-06 §1, §3, §4`, which is superseded there so the shell has one implementation.
 
-`struct desktop_icon` (name, path, icon_id, x, y). Load from `C:\Users\Default\Desktop\` at startup via `vfs_readdir()`. Per `docs/design/shell.md#desktop`: icons sit in a column-major grid from the top-left, `THEME_SIZE_DESKTOP_MARGIN` (8) from the screen edges, in `THEME_SIZE_DESKTOP_CELL_WIDTH` x `THEME_SIZE_DESKTOP_CELL_HEIGHT` (76 x 86) cells; each draws a `THEME_SIZE_DESKTOP_ICON` (48) icon 6 px from the top of the cell and a two-line caption label in `desktop_label` with the `desktop_label_shadow` shadow. Hover: 12% white fill + 16% white 1 px stroke; selection: `selection_fill` + `selection_stroke`; radius 4. Single-click select, double-click launch via `task_create_user`. Drag to reposition snaps to the 76 x 86 cell grid. Right-click → context menu (TODO-07). Registry persistence for icon positions.
+`struct desktop_icon` (name, path, icon_id, x, y). Load from `C:\Users\Default\Desktop\` at startup via `vfs_readdir()`. Per `docs/design/shell.md#desktop`: icons sit in a column-major grid from the top-left, `THEME_SIZE_DESKTOP_MARGIN` (8) from the screen edges, in `THEME_SIZE_DESKTOP_CELL_WIDTH` x `THEME_SIZE_DESKTOP_CELL_HEIGHT` (76 x 86) cells; each draws a `THEME_SIZE_DESKTOP_ICON` (48) icon 6 px from the top of the cell and a two-line caption label in `desktop_label` with the `desktop_label_shadow` shadow. Hover: 12% white fill + 16% white 1 px stroke; selection: `selection_fill` + `selection_stroke`; radius 4. Single-click select, double-click launch via `task_create_user`. Drag to reposition snaps to the 76 x 86 cell grid. Right-click → context menu (`08-graphics-ui/TODO-09` §1). Registry persistence for icon positions.
 
 **Files:** `src/desktop/desktop_icons.c` (new), `include/desktop/desktop_icons.h` (new), `src/desktop/desktop.c` (extend)
 
@@ -161,9 +168,9 @@ Global hotkey dispatch table. Win+D (show-desktop toggle), Win+M (minimize all),
 - [ ] Win+D toggle: minimize-all + set `g_show_desktop`; second press restore from saved list
 - [ ] Win+M / Win+Shift+M: iterate `wm_state.windows[]`; minimize/restore
 - [ ] Win+L: `lock_screen()` owned by `09-desktop-shell/TODO-06 §8` (`docs/design/shell.md#lock-and-sign-in-screens`); until it lands, log `[hotkeys] lock requested` and do nothing (no placeholder screen)
-- [ ] Alt+F4: `wm_destroy_window(wm_get_focused())`
+- [ ] Alt+F4: move the shipped hard-coded check (`keyboard.c` IRQ and inject paths -> `wm_close_focused_window()`, drained by `wm_process_pending_closes()`) into the table; keep the IRQ-safe deferred close
 - [ ] Win+←/→/↑/↓: dispatch to `wm_snap()` / `wm_maximize()` / `wm_restore()` from §3
-- [ ] Win+1..9: stub for taskbar pinned apps (no-op until TODO-08 taskbar provides the pin list)
+- [ ] Win+1..9: stub for taskbar pinned apps (no-op until the `TODO-10` taskbar provides the pin list)
 - [ ] `int hotkeys_handle(uint8_t modifiers, uint8_t scancode)` → 1 if consumed, 0 if pass-through; called from desktop keyboard loop before focused window
 - [ ] Commit: `"desktop: hotkeys -- Win+D/M/Shift+M/L, Alt+F4, Win+arrows, Win+number, dispatch table"`
 
@@ -198,7 +205,7 @@ Per `docs/design/shell.md#alttab`: a row of window thumbnails centred on screen 
 
 **Design:** [`shell.md#window-chrome`](../../docs/design/shell.md#window-chrome)
 
-Intra-desktop: drag desktop icon to reposition (§4 extends). File drag from File Manager to desktop (create shortcut/copy). Window title-bar drag → move (exists, verify). Window edge/corner drag → resize (exists, verify). Visual drag ghost: semi-transparent copy of the dragged element rendered at cursor position.
+Intra-desktop: drag desktop icon to reposition (§4 extends). File drag from File Manager to desktop (create shortcut/copy). Window title-bar drag → move (exists, verify). Window edge/corner drag → resize (does NOT exist: only the resize cursor is shown, `wm_get_cursor_context()`; implemented in §2). Visual drag ghost: semi-transparent copy of the dragged element rendered at cursor position.
 
 **Files:** `src/desktop/dragdrop.c` (new), `include/desktop/dragdrop.h` (new), `src/desktop/wm.c` (extend)
 

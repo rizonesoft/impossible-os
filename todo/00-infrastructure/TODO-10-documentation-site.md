@@ -66,7 +66,7 @@ file_patterns:
 | 💎  |  13   | §13 Document: Drivers and hardware, part 2 (12 roadmap files)            | §2, §3     |  [x]   |
 | 💎  |  14   | §14 Document: Storage and filesystems (14 roadmap files)                 | §2, §3     |  [x]   |
 | 💎  |  15   | §15 Document: Networking (11 roadmap files)                              | §2, §3     |  [x]   |
-| 💎  |  16   | §16 Document: Desktop foundation and graphics, part 1 (14 roadmap files) | §2, §3     |  [ ]   |
+| 💎  |  16   | §16 Document: Desktop foundation and graphics, part 1 (14 roadmap files) | §2, §3     |  [x]   |
 | 💎  |  17   | §17 Document: Graphics and UI, part 2 (9 roadmap files)                  | §2, §3     |  [ ]   |
 | 💎  |  18   | §18 Document: Desktop shell (14 roadmap files)                           | §2, §3     |  [ ]   |
 | 💎  |  19   | §19 Document: Platform services (15 roadmap files)                       | §2, §3     |  [ ]   |
@@ -723,29 +723,48 @@ Write docs pages that meet the §3 contract for the 11 roadmap files below. Read
 
 Write docs pages that meet the §3 contract for the 14 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/06-desktop-foundation/TODO-01-wm-completion.md` (TODO-01 -- Window Manager Completion)
-  - `todo/06-desktop-foundation/TODO-02-compositor-optimization.md` (TODO-02 -- Compositor Optimization)
-  - `todo/06-desktop-foundation/TODO-03-input-system.md` (TODO-03 -- Input System)
-- [ ] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/06-desktop-foundation/TODO-04-control-library.md` (TODO-04 -- Control Library Completion)
-  - `todo/06-desktop-foundation/TODO-05-desktop-shell.md` (TODO-05 -- Desktop Shell Completion)
-  - `todo/06-desktop-foundation/TODO-06-desktop-icons.md` (TODO-06 -- Desktop Icon System)
-- [ ] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/08-graphics-ui/TODO-01-graphics-asset-foundation.md` (TODO-01 -- Advanced 2D Graphics and Visual Asset Foundation)
-  - `todo/08-graphics-ui/TODO-02-text-font-internationalization.md` (TODO-02 -- Text, Font, and Internationalization Foundation)
-  - `todo/08-graphics-ui/TODO-03-theme-system.md` (TODO-03 -- Theme System)
-- [ ] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/08-graphics-ui/TODO-04-animation-engine.md` (TODO-04 -- Animation Engine)
-  - `todo/08-graphics-ui/TODO-05-widget-library-core.md` (TODO-05 -- Extended Widget Library: Core Controls)
-  - `todo/08-graphics-ui/TODO-06-widget-dialogs.md` (TODO-06 -- Extended Widget Library: Complex Controls & Dialogs)
-- [ ] Pages in `docs/graphics/` for the next 2 roadmap files, each with its `covers=` directive
-  - `todo/08-graphics-ui/TODO-07-ui-accessibility-automation-ime.md` (TODO-07 -- UI Accessibility, Automation, and IME Foundation)
-  - `todo/08-graphics-ui/TODO-08-window-manager.md` (TODO-08 -- Window Manager Enhancements)
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: desktop foundation and graphics, part 1 documentation pages"`
+- [x] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/06-desktop-foundation/TODO-01-wm-completion.md` (TODO-01 -- Window Manager Completion): `window-management.md`
+  - `todo/06-desktop-foundation/TODO-02-compositor-optimization.md` (TODO-02 -- Compositor Optimization): `compositor.md`
+  - `todo/06-desktop-foundation/TODO-03-input-system.md` (TODO-03 -- Input System): `input-system.md`
+- [x] Pages in `docs/desktop/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/06-desktop-foundation/TODO-04-control-library.md` (TODO-04 -- Control Library Completion): `control-library.md`
+  - `todo/06-desktop-foundation/TODO-05-desktop-shell.md` (TODO-05 -- Desktop Shell Completion): `desktop-shell.md`
+  - `todo/06-desktop-foundation/TODO-06-desktop-icons.md` (TODO-06 -- Desktop Icon System): `desktop-icons.md`
+- [x] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/08-graphics-ui/TODO-01-graphics-asset-foundation.md` (TODO-01 -- Advanced 2D Graphics and Visual Asset Foundation): `graphics-assets.md`
+  - `todo/08-graphics-ui/TODO-02-text-font-internationalization.md` (TODO-02 -- Text, Font, and Internationalization Foundation): `text-fonts.md`
+  - `todo/08-graphics-ui/TODO-03-theme-system.md` (TODO-03 -- Theme System): `theme-system.md`
+- [x] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/08-graphics-ui/TODO-04-animation-engine.md` (TODO-04 -- Animation Engine): `animation-engine.md`
+  - `todo/08-graphics-ui/TODO-05-widget-library-core.md` (TODO-05 -- Extended Widget Library: Core Controls): `widget-library.md`
+  - `todo/08-graphics-ui/TODO-06-widget-dialogs.md` (TODO-06 -- Extended Widget Library: Complex Controls & Dialogs): `complex-controls-dialogs.md`
+- [x] Pages in `docs/graphics/` for the next 2 roadmap files, each with its `covers=` directive
+  - `todo/08-graphics-ui/TODO-07-ui-accessibility-automation-ime.md` (TODO-07 -- UI Accessibility, Automation, and IME Foundation): `accessibility-ime.md`
+  - `todo/08-graphics-ui/TODO-08-window-manager.md` (TODO-08 -- Window Manager Enhancements): `window-manager.md`
+- [x] New `docs/desktop/index.md`, rewritten placeholder `docs/graphics/index.md`, a Desktop row in `docs/index.md`, then `python3 scripts/site/build.py --update-baseline` (82 to 76 entries)
+  - The old graphics index listed `rendering/` and `desktop/` subfolders that never existed.
+  - Eight of the fourteen files were already covered by `docs/design/` spec pages; the new pages cover them too, as subsystem pages that link the spec rather than repeat it.
+- [x] Roadmap drift found while writing, fixed in place
+  - Implementation Order: the Order column (which the oracle reads as the section number) pointed at the wrong bodies in `08-graphics-ui/TODO-06` (six rows) and `TODO-08` (seven rows); section labels were swapped in `TODO-04` (rows 4 and 5) and `TODO-05` (rows 3 to 5); Depends On cells in both carried pre-renumbering numbers.
+  - Stale cross-references: theme is `TODO-03` not `TODO-01`, animation `TODO-04` not `TODO-02`, the dropdown overlay `TODO-05` not `TODO-04`, the context menu engine `TODO-09` section 1 not `TODO-07`, IME `08-graphics-ui/TODO-07` not `TODO-16`, the USER syscalls `TODO-15` not `TODO-12`, and the taskbar and Start menu files are `08-graphics-ui/TODO-10` and `TODO-11`, not `09-desktop-shell`.
+  - Code claims: `06-desktop-foundation/TODO-01` and `TODO-02` preambles now state the shipped Alt+F4, resize cursors, drag rectangle and frame timing; `TODO-03` Bug B names the real key route (`terminal_key_input()`, no WM focus check); `TODO-06` section 6 extends the shipped `icon_for_extension()`; `08-graphics-ui/TODO-08` no longer claims edge resize or `wm_get_focused()` exist.
+- [x] Code defects found while writing, filed in owning open sections rather than fixed (docs-only section)
+  - `08-graphics-ui/TODO-01` section 4: the Xcursor loader frees low frames by passing a frame number to `pmm_free_frame()`, copies oversize cursor images past their 24x24 slot, and the ICO and `icons.ires` parsers do not bound offsets.
+  - `08-graphics-ui/TODO-02` section 1: a font that fails to parse is freed with `kfree()` although it came from `pmm_alloc_contiguous()`.
+  - `08-graphics-ui/TODO-08` section 1: `wm_destroy_window()` leaves drag state set and the slot's controls alive; section 2 gains the missing edge-resize implementing item.
+  - `08-graphics-ui/TODO-05` section 1 (control slot reuse, press-fires-click, `ctrl_set_text(NULL)`), `TODO-10` section 1 (taskbar hit-test geometry), `TODO-04` sections 3 and 6 (frame clock, spring arithmetic), `06-desktop-foundation/TODO-03` section 5 (stale terminal handle after close).
+- [x] Commit: `"docs: desktop foundation and graphics, part 1 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check` prints `site: OK` with 156/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** fourteen contract-shaped pages, six in the new `docs/desktop/` and eight in `docs/graphics/`, one per roadmap file, each listed in its folder index.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the desktop or graphics code it describes changes.
+> - **Status honesty:** no section of these fourteen roadmaps has shipped; pages describe what runs today (full-repaint compositor, four controls, three static icons, Latin-1 TrueType text, generated but unused theme tokens) and link the owning sections.
+> - **Scope boundary:** the design specs in `docs/design/` stay authoritative for visuals; these pages link them. Taskbar, Start menu and Win32k pages are section 17.
 
 ---
 

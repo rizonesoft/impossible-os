@@ -11,7 +11,7 @@ title: "TODO-01 -- Window Manager Completion"
 > **Goal:** Superseded. The window manager completion work planned here is owned by `08-graphics-ui/TODO-08-window-manager.md`, which implements it to `docs/design/shell.md` (window chrome, snap layouts, Alt+Tab). Each section below points at its owner so no second implementation is built.
 
 > [!IMPORTANT]
-> The existing `wm.c` (1143 lines) has window create/destroy/move/focus/z-order and title bar decorations with Mica effect. What's missing: minimize, maximize, restore, resize-by-edge, snap layouts, and system hotkeys. The `TODO: wm_minimize()` and `TODO: wm_maximize()` stubs are already in the code.
+> The existing `wm.c` has window create/destroy/move/focus/z-order, title bar decorations with Mica effect, resize cursors at the edges, and Alt+F4 (`wm_close_focused_window()`). What's missing: minimize, maximize, restore, the resize drag itself, snap layouts, and every other system hotkey. The `TODO: wm_minimize()` and `TODO: wm_maximize()` stubs are already in the code.
 
 ## Inputs
 

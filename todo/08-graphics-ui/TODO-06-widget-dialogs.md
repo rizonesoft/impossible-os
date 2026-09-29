@@ -11,20 +11,20 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 > **Goal:** Add the 7 complex controls and the complete dialog system needed to build the File Manager, Notepad, Registry Editor, and Control Panel: ListView (details + icon-grid), TreeView (hierarchical expand/collapse), Toolbar (icon buttons + overflow), MenuBar (horizontal menu + popup dropdowns), StatusBar (multi-pane), GroupBox + Separator (visual grouping), Tooltip (hover popup + animation), and the full dialog system (Win32-compatible `MessageBox`, file Open/Save, input, color picker, `SYS_MSGBOX` syscall).
 
 > [!IMPORTANT]
-> `CTRL_MAX_PER_WINDOW = 32` means each control counts against the per-window slot budget -- ListView and TreeView must store row/node data **outside** the `struct control` union. Use `pmm_alloc_contiguous()` for data arrays > 4 KB (e.g., more than ~170 rows @ 24 bytes each). Each control stores only a pointer + metadata in the union; the data buffer is freed in a new `ctrl_destroy(wh, id)` destructor. Dropdown floating popup mechanism (z_order=9999, borderless `wm_create_window`) is established in TODO-04 §5 -- use the same pattern for Toolbar overflow, MenuBar dropdowns, and Tooltip popups. `anim_mgr_add()` from TODO-02 drives the Tooltip fade-in. All colors via `theme_get()` -- no hardcoded hex. `tools/convert_icon.py` exists and handles the icon-to-C-array conversion for msgbox icons. The legacy SYS_ table uses 1-26 and 33-48 today (`include/kernel/sched/syscall.h`), and `07-networking/TODO-02-dns-sockets.md` §7 will take the next 12 numbers for sockets, so `SYS_MSGBOX` takes the next free number at implementation time, not a fixed one (allocation policy: `02-kernel-core/TODO-12-native-api-ssdt.md` §33). Complete sections in order: GroupBox → StatusBar → Toolbar → Tooltip → ListView → TreeView → MenuBar → Dialog system.
+> `CTRL_MAX_PER_WINDOW = 32` means each control counts against the per-window slot budget -- ListView and TreeView must store row/node data **outside** the `struct control` union. Use `pmm_alloc_contiguous()` for data arrays > 4 KB (e.g., more than ~170 rows @ 24 bytes each). Each control stores only a pointer + metadata in the union; the data buffer is freed in a new `ctrl_destroy(wh, id)` destructor. Dropdown floating popup mechanism (z_order=9999, borderless `wm_create_window`) is established in TODO-05 §5 -- use the same pattern for Toolbar overflow, MenuBar dropdowns, and Tooltip popups. `anim_mgr_add()` from TODO-04 drives the Tooltip fade-in. All colors via `theme_get()` -- no hardcoded hex. `tools/convert_icon.py` exists and handles the icon-to-C-array conversion for msgbox icons. The legacy SYS_ table uses 1-26 and 33-48 today (`include/kernel/sched/syscall.h`), and `07-networking/TODO-02-dns-sockets.md` §7 will take the next 12 numbers for sockets, so `SYS_MSGBOX` takes the next free number at implementation time, not a fixed one (allocation policy: `02-kernel-core/TODO-12-native-api-ssdt.md` §33). Complete sections in order: GroupBox → StatusBar → Toolbar → Tooltip → ListView → TreeView → MenuBar → Dialog system.
 
 ## Inputs
 
 - `include/desktop/controls.h` -- extend `enum ctrl_type` with 7 new values; add `ctrl_destroy(wh, id)` destructor; `CTRL_MAX_PER_WINDOW = 32` applies
 - `src/desktop/controls.c` -- extend `ctrl_draw_all/handle_mouse/handle_key` dispatch tables
 - `include/gfx.h` -- `gfx_fill_rounded_rect`, `gfx_fill_circle`, `gfx_fill_rect_alpha`, `gfx_drop_shadow` for new control rendering
-- `include/desktop/theme.h` (TODO-01) -- `theme_get()` for all colors; `accent_hover`, `surface_variant`, `border`, `shadow`
-- `include/kernel/gfx/anim_mgr.h` (TODO-02) -- `anim_mgr_add()` + `gfx_ease_decelerate` for Tooltip fade-in tween
+- `include/desktop/theme.h` (TODO-03) -- `theme_get()` for all colors; `accent_hover`, `surface_variant`, `border`, `shadow`
+- `include/kernel/gfx/anim_mgr.h` (TODO-04) -- `anim_mgr_add()` + `gfx_ease_decelerate` for Tooltip fade-in tween
 - `include/desktop/wm.h` -- `wm_create_window()` + `z_order` overlay for Toolbar overflow, MenuBar dropdowns, Tooltip; `wm_create_window()` for modal dialog
 - `include/kernel/sched/syscall.h` -- extend with `SYS_MSGBOX` (next free number) for user-mode MessageBox access
 - `scripts/convert-icons.sh` + `resources/icons/src/` -- message box icons join the original icon set (`docs/design/icons.md`)
 - → XREF: `08-graphics-ui/TODO-05-widget-library-core.md` -- `CTRL_DROPDOWN` overlay pattern + `CTRL_SCROLLBAR` used by ListView/TreeView; must be complete before this TODO starts
-- Related (no stable XREF target): `08-graphics-ui/TODO-07-*` (context menu) -- MenuBar popup dropdown may be refactored to share context menu engine once it exists; this TODO implements a self-contained popup
+- Related (no stable XREF target): `08-graphics-ui/TODO-09` §1 (context menu engine) -- MenuBar popup dropdown may be refactored to share context menu engine once it exists; this TODO implements a self-contained popup
 
 ## Outcome
 
@@ -43,14 +43,14 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 
 | ⭐  | Order | Deliverable                                                                                | Depends On                                                                          | Status |
 | --- | :---: | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §6 GroupBox + Separator -- visual-only border + line controls; zero interaction            | Nothing; standalone                                                                 |  [ ]   |
-| 💎  |   2   | §5 StatusBar -- multi-pane bottom bar; text + icon per pane                                | §6 (GroupBox establishes the visual-only control extension pattern)                 |  [ ]   |
-| 💎  |   3   | §3 Toolbar -- flat icon buttons, toggle state, separator, overflow `>>` chevron popup      | TODO-04 overlay pattern (z_order=9999 from dropdown) re-used for chevron            |  [ ]   |
-| 💎  |   4   | §7 Tooltip -- 400 ms hover delay, themed layer popup, applied to all chrome                | §3 toolbar (toolbar buttons are first tooltip recipients); TODO-02 `anim_mgr_add()` |  [ ]   |
-| 💎  |   5   | §1 ListView -- details mode (columns + sort + multi-select) + icon-grid mode + scrollbar   | §4 tooltip (list items receive tooltips); external data buffer pattern              |  [ ]   |
-| 💎  |   6   | §2 TreeView -- hierarchical nodes, expand/collapse, indent, scrollbar, keyboard nav        | §5 ListView (same external data + scrollbar integration pattern)                    |  [ ]   |
-| 💎  |   7   | §4 MenuBar -- horizontal menu bar, popup dropdown, Alt-navigation, accelerators            | §3 toolbar (popup uses same z_order overlay); TODO-04 dropdown pattern              |  [ ]   |
-| 💎  |   8   | §8 Dialog system -- `MessageBox`, file Open/Save, input dialog, color picker, `SYS_MSGBOX` | §5+§6 (file dialog uses ListView + TreeView); §3 (nav toolbar); §7 modal            |  [ ]   |
+| 💎  |   6   | §6 GroupBox + Separator -- visual-only border + line controls; zero interaction            | Nothing; standalone                                                                 |  [ ]   |
+| 💎  |   5   | §5 StatusBar -- multi-pane bottom bar; text + icon per pane                                | §6 (GroupBox establishes the visual-only control extension pattern)                 |  [ ]   |
+| 💎  |   3   | §3 Toolbar -- flat icon buttons, toggle state, separator, overflow `>>` chevron popup      | TODO-05 overlay pattern (z_order=9999 from dropdown) re-used for chevron            |  [ ]   |
+| 💎  |   7   | §7 Tooltip -- 400 ms hover delay, themed layer popup, applied to all chrome                | §3 toolbar (toolbar buttons are first tooltip recipients); TODO-04 `anim_mgr_add()` |  [ ]   |
+| 💎  |   1   | §1 ListView -- details mode (columns + sort + multi-select) + icon-grid mode + scrollbar   | §7 tooltip (list items receive tooltips); external data buffer pattern              |  [ ]   |
+| 💎  |   2   | §2 TreeView -- hierarchical nodes, expand/collapse, indent, scrollbar, keyboard nav        | §1 ListView (same external data + scrollbar integration pattern)                    |  [ ]   |
+| 💎  |   4   | §4 MenuBar -- horizontal menu bar, popup dropdown, Alt-navigation, accelerators            | §3 toolbar (popup uses same z_order overlay); TODO-05 dropdown pattern              |  [ ]   |
+| 💎  |   8   | §8 Dialog system -- `MessageBox`, file Open/Save, input dialog, color picker, `SYS_MSGBOX` | §1+§2 (file dialog uses ListView + TreeView); §3 (nav toolbar)                      |  [ ]   |
 | 💎  |   9   | §9 Info bar control -- severity strip with glyph, action, close                            | §8                                                                                  |  [ ]   |
 
 ---

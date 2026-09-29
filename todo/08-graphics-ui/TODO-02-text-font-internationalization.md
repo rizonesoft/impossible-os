@@ -72,6 +72,10 @@ Create the catalog layer that turns "slot 0/1/2" into a real system font invento
 - [ ] Add install/remove/refresh helpers for `.ttf`, `.otf`, and future collection files, including boot-time rescan of `C:\Impossible\Fonts\`
 - [ ] Retire or strictly quarantine `src/desktop/font.c` bitmap rendering so legacy ASCII drawing cannot silently bypass the main font stack
 - [ ] Emit `klog(LOG_INFO, "FONT", ...)` lines for catalog reload, added families, and failed font probes
+- [ ] Fix `load_ttf_slot()` releasing a font that fails to parse with `kfree()` (`gfx_text.c:325,331`): the buffer comes from `pmm_alloc_contiguous()` in `load_ttf_file()`, so free it with `pmm_free_contiguous()`
+  - Decide the short-read path too: it keeps the pages on purpose today (`gfx_text.c:284`, "acceptable for boot-time assets"), which stops being true once fonts install and remove at runtime (this section)
+  - A corrupt or truncated file in `C:\Impossible\Fonts\` reaches this at desktop start
+  - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"font: catalog foundation -- enumerate families, default stacks, install/remove, reload"`
 
 **Test checkpoint:** `font_mgr_list()` returns the expected built-in families; changing the default UI font updates the reported default stack; serial shows `"FONT: catalog reload"` with family count and no stale slot-only assumptions. Test on: QEMU WHPX + TCG; bare metal.
@@ -110,7 +114,7 @@ Build the reusable editing primitives that controls, Notepad, terminal, and IME 
 
 - [ ] Add caret metrics, codepoint-to-pixel hit-testing, and grapheme-safe left/right/home/end movement helpers
 - [ ] Add selection-range to rectangle mapping so controls and editors can render exact highlight quads for wrapped text
-- [ ] Add composition-underlines and pre-edit range hooks so the IME work in `TODO-16` can overlay inline composition cleanly
+- [ ] Add composition-underlines and pre-edit range hooks so the IME work in `TODO-07` §4 can overlay inline composition cleanly
 - [ ] Add shared helpers for clipboard range extraction, replace-selection, and selection expansion by word/line
 - [ ] Update text controls and terminal integration points to consume the shared caret/hit-test API rather than bespoke pixel math
 - [ ] Add `klog(LOG_INFO, "TEXT", "caret hit-test idx=%u")` bring-up logging for editor paths

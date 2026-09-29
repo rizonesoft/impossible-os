@@ -15,7 +15,7 @@ title: "TODO-03 -- Input System"
 - [`src/desktop/wm.c`](../../src/desktop/wm.c) -- `wm_handle_mouse()`, basic focus
 - [`src/desktop/controls.c`](../../src/desktop/controls.c) -- `ctrl_handle_key()`, `ctrl_handle_mouse()`
 - [`src/kernel/drivers/keyboard.c`](../../src/kernel/drivers/keyboard.c) -- PS/2 keyboard driver, scancode to ASCII
-- -> XREF: `D08 T16 §4` -- IME and composition work builds on the key-event and focus-routing pipeline owned here
+- -> XREF: `D08 T07 §4` -- IME and composition work builds on the key-event and focus-routing pipeline owned here
 
 ## Outcome
 
@@ -106,12 +106,15 @@ The cursor visibly jumps or moves irregularly when it moves over a window. Likel
 ### Bug B: Keyboard input delayed or requires click on Command Prompt
 When the terminal window is visually focused, typing either appears after a 1-2 second delay, or doesn't appear until the user clicks on the terminal. Likely cause: keyboard events are not being routed to the terminal because the WM focus state doesn't match the visual state, or the terminal's key handler isn't being called on every key event.
 
-- [ ] Audit keyboard event routing: ISR → `wm_handle_key()` → focused window → terminal
-- [ ] Check if `wm_get_focused()` returns the terminal after it's created (may lose focus to gallery)
+- [ ] Audit keyboard event routing: today the ISR sends every key to `terminal_key_input()` whenever `terminal_is_open()` (`keyboard.c`), with no WM focus check; route through the §2 pipeline
+- [ ] Check if `wm_get_focused_window()` returns the terminal after it's created (may lose focus to gallery)
 - [ ] Check if terminal has a key event handler registered with the WM
 - [ ] Verify no event queue overflow or stale event coalescing drops keystrokes
 - [ ] Test: type immediately after boot without clicking -- text appears instantly
 
+- [ ] Clear the terminal's handle when its window is destroyed by the caption close button or Alt+F4: only `terminal_close()` resets `term_handle` (`terminal.c:128-133`)
+  - Afterwards `terminal_is_open()` stays 1, keys still route to the dead terminal (`keyboard.c:286-292`), and Start > Terminal cannot reopen it (`terminal.c:88-89`); a candidate cause of Bug B
+  - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"desktop: fix bare-metal input bugs -- mouse jump + keyboard focus"`
 
 **Test checkpoint:** Mouse moves smoothly across window edges on bare metal. Typing in terminal works immediately without clicking. Test on: bare metal i5-4210U, QEMU.

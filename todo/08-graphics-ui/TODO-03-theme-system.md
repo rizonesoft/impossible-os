@@ -19,8 +19,8 @@ title: "TODO-03 -- Theme System"
 - `include/registry.h` -- `RegGetValue()`, `RegSetValueEx()`, `HKCU` handle -- used in §4 (Registry load)
 - `src/desktop/desktop.c`, `wm.c`, `controls.c`, `terminal.c`, `gallery.c` -- confirmed sources of hardcoded hex colors to be replaced in §6 (migration)
 - `include/desktop/wm.h` -- WM message constants and window list -- extended in §7 to add `WM_THEME_CHANGED` and `wm_post_message_all()`
-- Related (no stable XREF target): `08-graphics-ui/TODO-02-*` (future controls TODO) -- must use `theme_get()->field` from day one; this TODO is a hard prerequisite for all graphics-ui work
-- Related (no stable XREF target): `09-desktop-shell/TODO-01-*` (future desktop shell TODO) -- Start Menu, taskbar, compositor all depend on theme tokens being live
+- Related (no stable XREF target): `08-graphics-ui/TODO-05-widget-library-core.md` (controls TODO) -- must use `theme_get()->field` from day one; this TODO is a hard prerequisite for all graphics-ui work
+- Related (no stable XREF target): `08-graphics-ui/TODO-10-taskbar.md` and `TODO-11-startmenu-tray-notifications.md` (desktop shell) -- Start Menu, taskbar, compositor all depend on theme tokens being live
 
 ## Outcome
 

@@ -57,7 +57,7 @@ Create the canonical semantic tree that turns windows and controls into accessib
 - [ ] Add `ui_node_t`, `ui_role_t`, `ui_state_t`, `ui_action_t`, and `ui_value_t` in a new `include/ui_access.h` plus `src/desktop/ui_access_tree.c`
 - [ ] Model parent/child relationships for top-level windows, child windows, controls, menu items, list rows, tree nodes, and text surfaces
 - [ ] Extend control and window metadata so names, descriptions, checked/selected/expanded states, current values, and supported actions are published through one API
-- [ ] Upgrade the simple `ctrl_get_accessible_name/role()` plan from `TODO-04 §8` into real provider-backed node data instead of loose string helpers
+- [ ] Upgrade the simple `ctrl_get_accessible_name/role()` plan from `TODO-05 §8` into real provider-backed node data instead of loose string helpers
 - [ ] Add explicit lifetime rules and stable node IDs so assistive and automation clients can survive redraws and focus changes
 - [ ] Log node-tree rebuilds and invalid node references with `klog(LOG_INFO, "UIA", ...)` or `LOG_WARN` when invariants are violated
 - [ ] Commit: `"uia: semantic tree foundation -- nodes, roles, states, values, action descriptors"`
@@ -97,7 +97,7 @@ Build the shared pre-edit and commit pipeline needed for multilingual text entry
 
 - [ ] Add `ime_context_t`, `ime_preedit_t`, and candidate-list structures in a new `include/ime.h` plus `src/desktop/ime.c`
 - [ ] Integrate IME context ownership with the focus and key-event pipeline from `D06 T03`, including composition start/update/commit/cancel
-- [ ] Add pre-edit rendering hooks for inline composition underlines, caret affinity, and candidate windows on top of the shared text foundation from `TODO-15`
+- [ ] Add pre-edit rendering hooks for inline composition underlines, caret affinity, and candidate windows on top of the shared text foundation from `TODO-02` §4
 - [ ] Define keyboard-layout and input-method module boundaries so basic layout switching and full IME engines can share one dispatch path
 - [ ] Add `klog(LOG_INFO, "IME", "compose len=%u candidates=%u")` observability for bring-up and parity debugging
 - [ ] Commit: `"ime: composition framework -- context ownership, preedit, candidate lists, commit/cancel flow"`
@@ -108,7 +108,7 @@ Build the shared pre-edit and commit pipeline needed for multilingual text entry
 
 Connect the semantics and IME foundation to the roadmap items that sit above it without duplicating ownership.
 
-- [ ] Wire Win32k accessibility and IME-facing roadmap work in `TODO-12 §21,§22` to this provider model instead of inventing separate per-syscall metadata
+- [ ] Wire Win32k accessibility and IME-facing roadmap work in `TODO-15 §21,§22` to this provider model instead of inventing separate per-syscall metadata
 - [ ] Wire `D10 T06` assistive features to semantic focus/value events where appropriate, but keep user-facing feature UX ownership in that platform-services TODO
 - [ ] Add desktop and control-level notifications for `WM_GETOBJECT`-style accessibility queries, focus announcements, and `WM_INPUTLANGCHANGE`-style layout changes
 - [ ] Update menu, dialog, list, tree, terminal, and text-control plans to consume provider and composition hooks where they touch semantics or IME

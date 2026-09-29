@@ -1,12 +1,6 @@
 {
   "_comment": "TODO files with no documentation page yet. Shrink-only: scripts/site/build.py --update-baseline removes entries, never adds them (except when creating this file).",
   "undocumented": [
-    "todo/06-desktop-foundation/TODO-01-wm-completion.md",
-    "todo/06-desktop-foundation/TODO-02-compositor-optimization.md",
-    "todo/06-desktop-foundation/TODO-03-input-system.md",
-    "todo/08-graphics-ui/TODO-02-text-font-internationalization.md",
-    "todo/08-graphics-ui/TODO-04-animation-engine.md",
-    "todo/08-graphics-ui/TODO-07-ui-accessibility-automation-ime.md",
     "todo/08-graphics-ui/TODO-13-boot-splash-recovery.md",
     "todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md",
     "todo/08-graphics-ui/TODO-15-win32k-shadow-ssdt.md",

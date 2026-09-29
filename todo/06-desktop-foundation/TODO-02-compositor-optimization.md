@@ -11,7 +11,7 @@ title: "TODO-02 -- Compositor Optimization"
 > **Goal:** Dirty-rect compositing is owned by `08-graphics-ui/TODO-08-window-manager.md` §8; sections 1-4 here are superseded pointers with only their unique leftovers, and §5 (terminal boot bleed) stays owned here. Original aim: replace the full-screen redraw compositor with dirty-rect tracking so only changed regions are redrawn. Target: 60fps compositing on 1280x720, <5ms per frame on idle desktop (only clock ticks).
 
 > [!IMPORTANT]
-> The existing compositor (`wm_composite()`) redraws the entire screen every frame. Infrastructure for dirty rects exists (`drag_dirty_*` fields) but isn't used. This TODO makes the compositor production-grade.
+> The existing compositor (`wm_composite()`) redraws the entire screen whenever anything is dirty. The only partial path is the drag rectangle (`drag_dirty_*`, `wm_get_drag_dirty_rect()`), which narrows the copy to video memory but not the repaint; `desktop_draw_wallpaper_rect()` exists with no callers, and frame timing (`wm_frame_stats`) already ships. This TODO makes the compositor production-grade.
 
 ## Inputs
 

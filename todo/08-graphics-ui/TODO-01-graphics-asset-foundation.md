@@ -123,6 +123,17 @@ Unify the current image, icon, and cursor code into one size-selection and theme
 - [ ] SVG-first (decided 2026-09-28): system icons, cursors and shell glyphs ship as SVG and are rasterised on demand at the exact size, scale and theme through §7
   - `icons.ires` shrinks to a small PNG fallback for contexts that run before the SVG renderer (boot splash, BSOD, early desktop); PNG, ICO, BMP and JPEG stay fully supported for Win32 apps and user images
 - [ ] Runtime theming: an icon's colours come from `docs/design/tokens.json` token names recorded in its SVG, so light, dark, accent and high contrast re-tint the same source instead of shipping separate files
+- [ ] Fix the Xcursor loader's temp-buffer release (`cursor.c:485,493`): it passes a frame number to `pmm_free_frame()`, which takes an address, so it frees low frames and leaks the buffer
+  - Release the buffer with `pmm_free_contiguous()` on both the short-read and the normal path
+  - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
+- [ ] Bound each decoded Xcursor image to its 24x24 pool slot (`cursor.c:418-438`, `:519-525`): the size nearest 24 is copied whatever its dimensions, up to 256x256
+  - A cursor file without a 24 px image overflows into the next shape's slot and later past the 48x48 `saved_under` buffer in `cursor_draw()`
+  - Reject or downscale oversize images; a unit test feeds a 32 px-only file
+  - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
+- [ ] Bounds-check the ICO and `icons.ires` parsers against the file size: `ico.c:242` computes `offset + dsize` in 32 bits (wraps), and `icon_store.c:186-195` trusts `icon_count` and `name_offset`
+  - `decode_bmp_dib()` also never checks the pixel rows and AND mask against the entry size
+  - Both parse files read from disk; `ico.c` has no callers yet, `icons.ires` loads at every desktop start
+  - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"gfx: visual asset pipeline -- theme-aware icon/cursor selection, scalable asset metadata, CUR/ANI support"`
 
 **Test checkpoint:** Requesting the same icon at 16/32/64 px returns deterministic best-fit variants; high-contrast and large-cursor modes resolve the expected asset family; serial shows `"GFX: asset resolve theme="` with chosen size and format. Test on: QEMU WHPX + TCG; bare metal.

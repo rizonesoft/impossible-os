@@ -11,7 +11,7 @@ title: "TODO-04 -- Animation Engine"
 > **Goal:** Build a time-based tween engine with 16.16 fixed-point easing functions, a global animation manager ticked inside `wm_composite()`, per-window transition animations (open/close/minimize/restore/maximize/snap/menu popup), Registry-driven speed and reduce-motion controls, and integer spring physics for natural elastic effects. Animations are the prerequisite for every animated desktop surface: Start Menu slide, notification slide-in, context menu pop, and window open/close all depend on this tick being live inside the compositor loop.
 
 > [!IMPORTANT]
-> `PIT_TARGET_FREQ = 100` Hz (from `include/kernel/drivers/pit.h`) → `delta_ms = (current_ticks - last_ticks) × 10`; cap at 33 ms per frame to prevent jump-cuts after preemption. `system_get_ticks()` from `include/kernel/timer.h` is the monotonic tick source. `wm_composite()` in `include/desktop/wm.h` is the compositor entry point -- `anim_mgr_tick()` is called at its top. `wm_mark_dirty()` forces a redraw. All tween arithmetic uses 16.16 fixed-point integers; no `float` or `double` anywhere. `theme_get()` (TODO-01) must be live before §4 window transitions so themed titlebar colors are available when windows animate open. Complete sections in order: tween → easing → manager → registry → window transitions → spring → compositor integration.
+> `PIT_TARGET_FREQ = 100` Hz (from `include/kernel/drivers/pit.h`) → `delta_ms = (current_ticks - last_ticks) × 10`; cap at 33 ms per frame to prevent jump-cuts after preemption. `system_get_ticks()` from `include/kernel/timer.h` is the monotonic tick source. `wm_composite()` in `include/desktop/wm.h` is the compositor entry point -- `anim_mgr_tick()` is called at its top. `wm_mark_dirty()` forces a redraw. All tween arithmetic uses 16.16 fixed-point integers; no `float` or `double` anywhere. `theme_get()` (TODO-03) must be live before §5 window transitions so themed titlebar colors are available when windows animate open. Complete sections in order: tween → easing → manager → registry → window transitions → spring → compositor integration.
 
 ## Inputs
 
@@ -19,10 +19,10 @@ title: "TODO-04 -- Animation Engine"
 - `include/kernel/timer.h` -- `system_get_ticks()` for monotonic counter used in delta_ms calculation
 - `include/desktop/wm.h` -- `wm_composite()` (compositor entry point), `wm_mark_dirty()`, `wm_move_window()`, `wm_resize_window()`, `struct wm_window { int32_t x, y; uint32_t width, height; }` -- extended in §4 to hold `wm_anim_state_t`
 - `include/registry.h` -- `RegGetValue()`, `HKCU` -- used in §5 to read `EnableAnimations` + `AnimationSpeed`
-- `include/desktop/theme.h` (TODO-01) -- `theme_get()` must be available before §4 window transitions
+- `include/desktop/theme.h` (TODO-03) -- `theme_get()` must be available before §5 window transitions
 - → XREF: `08-graphics-ui/TODO-03-theme-system.md` -- prerequisite; `theme_get()` must be live before animated windows can paint correctly
-- Related (no stable XREF target): `09-desktop-shell/TODO-01-*` (Start Menu) -- depends on §3 animation manager being live; Start Menu slide-up uses `gfx_tween_start()`
-- Related (no stable XREF target): `09-desktop-shell/TODO-02-*` (Notifications) -- slide-in notifications depend on §1 tween + §4 manager
+- Related (no stable XREF target): `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` (Start Menu) -- depends on §3 animation manager being live; Start Menu slide-up uses `gfx_tween_start()`
+- Related (no stable XREF target): `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` (Notifications) -- slide-in notifications depend on §1 tween + §3 manager
 
 ## Outcome
 
@@ -40,8 +40,8 @@ title: "TODO-04 -- Animation Engine"
 | 💎  |   1   | §1 Core tween engine -- `gfx_tween_t`, `tween_start/update/value`, 16.16 fixed-point                 | Nothing; standalone                                                       |  [ ]   |
 | 💎  |   2   | §2 Easing functions -- LINEAR, IN/OUT/IN_OUT QUAD+CUBIC, BOUNCE, BACK                                | §1 (easing_fn pointer type defined in `gfx_animate.h`)                    |  [ ]   |
 | 💎  |   3   | §3 Global animation manager -- 64-slot table, `add/cancel/tick`, compositor wiring, delta cap        | §1 + §2 (manages `gfx_tween_t*`, dispatches easing fns)                   |  [ ]   |
-| 💎  |   4   | §5 Registry controls -- `EnableAnimations` + `AnimationSpeed` DWORDs, reduce-motion path            | §3 (`anim_mgr_add` must check flag; `AnimationSpeed` scales duration)      |  [ ]   |
-| 💎  |   5   | §4 Window transition animations -- `wm_anim_state_t`, open/close/minimize/restore/maximize/snap/menu | §3 manager + §4 registry (speed multiplier needed before wiring transitions) |  [ ]   |
+| 💎  |   4   | §4 Registry controls -- `EnableAnimations` + `AnimationSpeed` DWORDs, reduce-motion path            | §3 (`anim_mgr_add` must check flag; `AnimationSpeed` scales duration)      |  [ ]   |
+| 💎  |   5   | §5 Window transition animations -- `wm_anim_state_t`, open/close/minimize/restore/maximize/snap/menu | §3 manager + §4 registry (speed multiplier needed before wiring transitions) |  [ ]   |
 | ⭐  |   6   | §6 Spring physics -- `spring_t`, Hooke's law integer ODE, `spring_settled()`                         | §3 (springs registered with manager; settled check drives `wm_mark_dirty`) |  [ ]   |
 | 💎  |   7   | §7 Compositor integration checklist -- dirty-frame gating, VSync delta cap, reduce-motion audit      | §5 + §6 (all animation types must be wired before integration audit)       |  [ ]   |
 
@@ -120,6 +120,8 @@ Fixed table of 64 `gfx_tween_t*` pointers. `anim_mgr_add(tw)` registers; `anim_m
 - [ ] `int anim_mgr_any_active(void)` → `anim_count > 0` -- used by compositor to decide if redraw is needed
 - [ ] Wire in `wm_composite()`: call `anim_mgr_tick()` as the first statement; after tick: if `anim_mgr_any_active()`: `wm_mark_dirty()`
 - [ ] Log: `[anim] init; self-test passed` at startup; `[anim] table full -- drop tween` if add fails
+- [ ] Derive `delta_ms` from `mono_ns()` or `system_get_freq()` rather than `PIT_TARGET_FREQ`: the tick rate changes when the LAPIC timer takes over (`pit_set_freq()`), so a fixed 100 Hz divisor mis-times every tween
+  - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"gfx/anim: anim_mgr -- 64-slot table, tick/add/cancel, wired into wm_composite()"`
 
 ## 4. Registry Controls `[Sonnet]`
@@ -131,7 +133,7 @@ Fixed table of 64 `gfx_tween_t*` pointers. `anim_mgr_add(tw)` registers; `anim_m
 **Files:** `src/kernel/gfx/anim_mgr.c` (extend), `include/kernel/gfx/anim_mgr.h` (extend)
 
 > [!NOTE]
-> Read both values once in `anim_mgr_init()` and cache in `static int g_anim_enabled` and `static uint32_t g_anim_speed`. Scaled duration: `effective_duration = (duration_ms * g_anim_speed) / 100`; clamp `g_anim_speed` to `[50, 200]`. Snap path: if `!g_anim_enabled`: in `anim_mgr_add()`, immediately set `tw->current = tw->to; tw->active = 0`; call `tw->on_complete` if set; return 0 (don't add to table). Re-read settings on `WM_THEME_CHANGED` (TODO-01 §8) so a settings change takes effect immediately without restart.
+> Read both values once in `anim_mgr_init()` and cache in `static int g_anim_enabled` and `static uint32_t g_anim_speed`. Scaled duration: `effective_duration = (duration_ms * g_anim_speed) / 100`; clamp `g_anim_speed` to `[50, 200]`. Snap path: if `!g_anim_enabled`: in `anim_mgr_add()`, immediately set `tw->current = tw->to; tw->active = 0`; call `tw->on_complete` if set; return 0 (don't add to table). Re-read settings on `WM_THEME_CHANGED` (TODO-03 §8) so a settings change takes effect immediately without restart.
 
 - [ ] `static int g_anim_enabled = 1` and `static uint32_t g_anim_speed = 100` in `anim_mgr.c`
 - [ ] `void anim_mgr_load_settings(void)`: `RegGetValue(HKCU, key, "EnableAnimations", RRF_RT_DWORD, …)` → `g_anim_enabled`; same for `AnimationSpeed`; clamp speed to [50, 200]; fallback to defaults on error
@@ -186,6 +188,9 @@ Per-window `wm_anim_state_t` with tweens for x, y, w, h, opacity, scale (in 16.1
 - [ ] `int spring_settled(const spring_t *sp)` → `abs(sp->vel) < 128 && abs(sp->pos - sp->target) < 256`
 - [ ] `void spring_set_target(spring_t *sp, int32_t new_target)` -- change target mid-flight without resetting velocity (natural direction change)
 - [ ] Apply to: scroll overshoot in scroll view (future `controls.c` scrollbar); window restore bounce: after `wm_anim_restore()` completes, run a spring with k=131072 (2.0), d=65536 (1.0) for a subtle bounce overshoot on y
+- [ ] Recheck the spring constants and arithmetic before implementing: `k * (pos - target) >> 16` overflows `int32_t` once the displacement reaches 0.5, and d=1.5 with k=1.0 is underdamped (critical is d=2.0)
+  - With time in seconds and unit mass the settle time is several seconds, not the ~500 ms the section states
+  - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"gfx/spring: integer Hooke's law spring -- critically-damped default, spring_settled, substep"`
 
 ## 7. Compositor Integration `[Sonnet]`

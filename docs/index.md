@@ -11,7 +11,8 @@ Welcome to the Impossible OS documentation -- a 64-bit operating system built fr
 | [🧮 Memory and Concurrency](memory/index.md)       | Virtual memory, heap, paging, scheduler, SMP, sync, IPC     |
 | [💾 Storage](storage/index.md)                    | Storage controllers, partitioning, filesystems             |
 | [🌐 Networking](networking/index.md)              | Network drivers and protocols                              |
-| [🎨 Graphics](graphics/index.md)                  | 2D rendering, compositing, desktop shell                   |
+| [🖥️ Desktop](desktop/index.md)                   | Window manager, compositor, input, controls, desktop shell |
+| [🎨 Graphics](graphics/index.md)                  | 2D drawing, text, themes, animation, widgets, accessibility |
 | [⚙️ Hardware](hardware/index.md)                 | CPU architecture, bus protocols, firmware, interrupts       |
 | [🔧 Infrastructure](infrastructure/index.md)      | Build system, CI/CD, tooling                               |
 | [🚀 Getting Started](getting-started/index.md)    | Setup guides and emulator configuration                    |

@@ -82,6 +82,10 @@ title: "TODO-10 -- Taskbar"
   - Task view button: a 40 px subtle button with the Task view glyph, opening Task View (`08-graphics-ui/TODO-09 §9`)
   - Every size and colour comes from `include/desktop/theme_tokens.h` (`THEME_SIZE_TASKBAR_*`, `THEME_MAT_*_TASKBAR_*`); no hex literal survives in the taskbar draw path
   - Acrylic from `gfx_acrylic()` is cached per surface and recomputed only when the region behind the taskbar changes
+- [ ] Unify the taskbar window-button geometry: drawing and clicks use 100 px with no flag filter (`desktop.c:515`, `:1108`) but the hand-cursor test uses 120 px and `flags & 0x01` (`desktop.c:1209`)
+  - The click loop is also not bounded by the drawn list's right edge (`desktop.c:1112` versus `:518`), so clicks can land on buttons that were never drawn
+  - One shared geometry helper for draw, click and cursor
+  - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"taskbar: window list -- taskbar_entry, add/remove/active/flash wired from WM events"`
 
 ## 2. Taskbar Button Context Menu `[Sonnet]`
