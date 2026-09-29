@@ -58,3 +58,10 @@ Carry the baselines forward. A measurement without one is an anecdote.
 ## Found live this cycle
 
 <!-- The run files here. Nothing yet: v21 opened at close-out, before the next arm. -->
+
+- [ ] Reasoning: a hostile-input guard built as a DENYLIST cost eight review rounds before the switch to an ALLOWLIST ended the class (TODO-10 section 24, 2026-09-29)
+  - Observed: the raw-HTML net of `scripts/site/build.py` (commits `f3a1a8b1d`, `f2255bd87`) gained one refused shape per round: srcset, then srcdoc, svg, CDATA, abrupt comments, noscript, unfinished tags. Each was a real, measured bypass, and each fix only named that shape.
+  - Inferred, not tested: an attribute and tag allowlist at round 3 would have closed rounds 4-12. The corpus used no raw HTML attributes at all (surveyed live), so the allowlist cost nothing. The doctrine rule "three failures of one class -> take the structurally different alternative" was applied at round 3 for URL parsing (WHATWG via Node), but not for HTML, because each HTML finding looked like a different class.
+  - Second, smaller lesson: a fix that makes output depend on checkout state (a `git for-each-ref` inventory for longest-ref resolution) was accepted from a review and then had to be reverted, because it broke byte-reproducibility. A review suggestion that trades an invariant for a hypothetical deserves the invariant check BEFORE implementation.
+  - Cost: 58 Codex dispatches on one host-tooling section (20 adversarial, 18 consistency, 18 perf, design, test-coverage) and about 2h35m of wall-clock.
+  - Obvious fix (not applied, control-plane text): in the review-loop guidance, treat "each round names a new SHAPE of the same boundary (input the checker cannot see)" as one class for the three-failures rule, and ask "denylist or allowlist?" at the first such finding.
