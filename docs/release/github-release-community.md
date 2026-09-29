@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/15-installer-release/TODO-05-github-release-community.md sources=.github/workflows/release.yml,scripts/generate-changelog.sh,CONTRIBUTING.md,CHANGELOG.md,.github/PULL_REQUEST_TEMPLATE.md,.github/ISSUE_TEMPLATE/config.yml,CODE_OF_CONDUCT.md,project.json reviewed=2026-09-29 order=7 -->
+<!-- docs: covers=todo/15-installer-release/TODO-05-github-release-community.md sources=.github/workflows/release.yml,scripts/generate-changelog.sh,CONTRIBUTING.md,CHANGELOG.md,.github/PULL_REQUEST_TEMPLATE.md,.github/ISSUE_TEMPLATE/config.yml,CODE_OF_CONDUCT.md,project.json reviewed=2026-09-29T08:30 order=7 -->
 # GitHub Releases and Community Launch
 
 ## What is it?

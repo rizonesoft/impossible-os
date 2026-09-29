@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-10-documentation-site.md sources=scripts/site/build.py,scripts/site/freshness.py,scripts/site/repo_meta.py,.github/workflows/pages.yml,.githooks/post-commit,scripts/site/render-brand.sh,scripts/site/verify_live.py,.github/workflows/site-live.yml reviewed=2026-09-28 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-10-documentation-site.md sources=scripts/site/build.py,scripts/site/freshness.py,scripts/site/repo_meta.py,.github/workflows/pages.yml,.githooks/post-commit,scripts/site/render-brand.sh,scripts/site/verify_live.py,.github/workflows/site-live.yml,scripts/site/linkcheck.py,.github/workflows/linkcheck.yml,gh-pages/docs-template.html reviewed=2026-09-29 -->
 # Documentation Site
 
 The documentation you are reading is generated from the Markdown files in the repository's `docs/` folder and published to [impossibleos.co/docs](https://impossibleos.co/docs/) on every push to `main`. The same generator builds the landing page and the [desktop design mockup](https://impossibleos.co/design/), and it refuses a commit when anything published would disagree with its source.
@@ -8,10 +8,14 @@ The documentation you are reading is generated from the Markdown files in the re
 `scripts/site/build.py` reads every `docs/**/*.md` file, converts it with the vendored markdown-it-py 3.0.0, and wraps it in `gh-pages/docs-template.html`. On the way it:
 
 - builds the left navigation from the folder tree, titling each folder from its `index.md`;
-- adds heading anchors using GitHub's slug rules, so links written for GitHub keep working on the site;
+- adds heading anchors using GitHub's slug rules (a repeated heading takes the first free `-1`, `-2` suffix), so links written for GitHub keep working on the site;
 - rewrites links: a link to another `docs/` page becomes a site link, and a link to code or a roadmap file becomes a GitHub link;
+- gives each page a canonical URL, Open Graph and Twitter card tags, and a description taken from its first paragraph, so a shared link previews with the page's own summary;
+- shows "Last updated" in the page footer: the date of the last commit on `main` that touched the page (`git log -1 --format=%cs`, with a merge that changed the page counting as that change);
 - turns `> [!NOTE]`-style alerts into callouts and ` ```mermaid ` blocks into diagrams;
-- writes `search.json` for the search box.
+- writes `search.json` for the search box, and `sitemap.xml` plus `robots.txt` for search engines. The sitemap lists every published page except those marked `noindex` (the 404 page), each with its source file's last commit date as `lastmod`.
+
+Dates need full history. In a shallow clone the check still runs, with a warning and no dates, but writing the site is refused, because the same commit would then publish different bytes.
 
 The Pages workflow (`.github/workflows/pages.yml`) runs the drift check first, then builds into `_site/` and deploys. Nothing generated is committed.
 
@@ -44,6 +48,7 @@ What a page must contain, where it goes and how to start one is set by the [Docu
 | Drift | Example |
 | --- | --- |
 | Dead link or anchor in `docs/` | a page linking a renamed roadmap file |
+| Dead anchor into a roadmap file or other Markdown outside `docs/` | `TODO-21-ab-boot-rollback.md#3-bootloader-slot-selection-logic` after the heading lost "Logic"; checked against GitHub's heading ids for that file |
 | Stale project region | README still showing an old release date |
 | Unknown `{{key}}` in a template | a typo in `gh-pages/index.html` |
 | Repository URL naming another owner | a leftover `rizonetech/impossible-os` link after the move back |
@@ -86,6 +91,17 @@ It runs in two places. The Pages workflow's `verify` job runs it after every dep
 
 Browsers and the CDN may still show a page up to ten minutes old (GitHub Pages sends `Cache-Control: max-age=600`), so a change you pushed can look missing for a few minutes after the deploy turns green.
 
+## How are external links checked?
+
+Links to other websites rot, but checking them on every commit would make a push depend on someone else's server. `scripts/site/linkcheck.py` collects every `http(s)` link a reader can follow in `docs/` and the rendered `gh-pages/` templates (not URLs inside code), and `.github/workflows/linkcheck.yml` runs it every Monday. Each link is tried with `HEAD`, then `GET` when a server refuses `HEAD` or says the page is gone, with retries. Redirects are followed without reading any response body, at most four requests go to one host at a time, and the run has a 15-minute budget, after which unanswered links are reported rather than lost to a cancelled job:
+
+| Result | Meaning | Effect |
+| --- | --- | --- |
+| `DEAD` | HTTP 404 or 410, the host name no longer exists, or the link is malformed as written | fails the run |
+| `UNVERIFIED` | 401, 403, 429, 5xx, timeouts, TLS errors, refused connections, a temporary DNS failure, or any failure through a proxy that is not an HTTP answer | reported, never failed, never counted as healthy |
+
+The first run on 2026-09-29 found three rotted links (a moved plugin repository, a deleted upstream issue and a removed VS Code extension), which were fixed. Links that are unreachable by design, such as GitHub settings pages that return 404 to a signed-out client, go in `scripts/site/linkcheck-allow.txt`, one URL prefix per line with its reason; an entry that no longer matches any link is reported as stale.
+
 ## How do I work on the site?
 
 ```bash
@@ -93,12 +109,13 @@ python3 scripts/site/build.py            # build into build/site/
 python3 -m http.server -d build/site     # preview at http://localhost:8000/docs/
 python3 scripts/site/build.py --check    # what CI runs
 python3 scripts/site/build.py --sync     # rewrite project regions
+python3 scripts/site/linkcheck.py        # external link check (network)
 bash scripts/site/render-brand.sh        # re-render README brand images
 ```
 
 ## What is not done yet?
 
-The roadmap for the site is [TODO-10](../../todo/00-infrastructure/TODO-10-documentation-site.md): a written contract for what a docs page contains, pages for the remaining roadmap files, a sitemap, last-updated dates, section-level search and per-release snapshots.
+The roadmap for the site is [TODO-10](../../todo/00-infrastructure/TODO-10-documentation-site.md): pages for the remaining roadmap files, section-level search, accessible search results and per-release snapshots.
 
 ## How does this compare with Windows and Linux?
 

@@ -30,7 +30,7 @@ Recognized in `boot_menu_run()` once the menu is on screen. The pre-menu F11 pro
 | End       | Jump to last entry.                                                                                 |
 | Enter     | Boot the selected entry.                                                                            |
 | Esc       | Boot the currently-highlighted entry without further interaction (alias for Enter).                 |
-| F8        | Safe-mode override. Writes `boot_config.boot_mode = 1` directly so kernel-side observers (KUSD `SafeBootMode` population, bare-metal hardening guards) see the operator intent regardless of which envelope kind was highlighted. Consumer wire-up to KUSD `SafeBootMode` is owned by the [kernel configuration policy section on Safe Mode mirroring](../../todo/02-kernel-core/TODO-02-kernel-configuration-policy.md#5-safe-mode-policy-and-effective-safe-mode). |
+| F8        | Safe-mode override. Writes `boot_config.boot_mode = 1` directly so kernel-side observers (KUSD `SafeBootMode` population, bare-metal hardening guards) see the operator intent regardless of which envelope kind was highlighted. Consumer wire-up to KUSD `SafeBootMode` is owned by the [kernel configuration policy section on Safe Mode mirroring](../../todo/02-kernel-core/TODO-02-kernel-configuration-policy.md#5-safe-mode-and-recovery-policy-object). |
 | F10       | Reboot into firmware setup via the narrow `OsIndications` `BOOT_TO_FW_UI` path. See "F10 narrow path" below. |
 | F11       | Force-show menu. Probed BEFORE the should-show gate so the operator can override forced-selection paths (HOTKEY / WATCHDOG / AB_TRY_STATE / RECOVERY_REQUEST / FALLBACK_*). |
 

@@ -42,12 +42,12 @@ The seed must produce a byte-identical store on every run. Two implications:
 
 The dual-slot layout and `root="A"` vs `root="B"` partition-selection semantics belong to the [A/B-rollback feature](../../todo/01-boot-platform/TODO-21-ab-boot-rollback.md), currently UNSHIPPED. Today the bootloader's `load_kernel()` reads only the `kernel` path from a SPLIT envelope; `root` is informational. If `slot-b` shipped active, the policy ladder would select it on a slot-a failure but `load_kernel()` would load the same `\boot\kernel.exe` -- falsifying any rollback claim audit reports.
 
-`flags=[]` means the policy ladder's `entry_passes_filter()` rejects slot-b with `BOOT_REJECT_REASON_NOT_ACTIVE` before considering its sort_key. The entry is visible in `bootcfg list` and exists as the committed contract for when [bootloader slot selection logic](../../todo/01-boot-platform/TODO-21-ab-boot-rollback.md#3-bootloader-slot-selection-logic) ships dual-slot semantics; until then it is dormant.
+`flags=[]` means the policy ladder's `entry_passes_filter()` rejects slot-b with `BOOT_REJECT_REASON_NOT_ACTIVE` before considering its sort_key. The entry is visible in `bootcfg list` and exists as the committed contract for when [bootloader slot selection logic](../../todo/01-boot-platform/TODO-21-ab-boot-rollback.md#3-bootloader-slot-selection) ships dual-slot semantics; until then it is dormant.
 
 When the bootloader-slot-selection logic ships:
 - It gains a `root`-aware partition lookup in `load_kernel()`.
 - The seed flips slot-b's `flags` to `["active"]` (single one-line edit in `_seed_store()` plus a re-seed of every staged ESP via the next release-image rebuild).
-- The mark-good machinery ([kernel `mark_boot_successful()` syscall](../../todo/01-boot-platform/TODO-21-ab-boot-rollback.md#5-kernel-mark_boot_successful-syscall)) starts decrementing the slot-b BLS counter independently of slot-a.
+- The mark-good machinery ([kernel `mark_boot_successful()` syscall](../../todo/01-boot-platform/TODO-21-ab-boot-rollback.md#5-kernel-mark_boot_successful)) starts decrementing the slot-b BLS counter independently of slot-a.
 
 ### Why recovery ships active but kind-filtered
 
@@ -76,7 +76,7 @@ If a future builder stages the kernel elsewhere, it MUST either (a) re-seed with
 
 The original §16 plan included a first-boot self-seed branch: if the bootloader sees missing `bootentries.json` + present recovery partition + a known-good slot id, synthesize the 3-entry default atomically. This handles wiped-ESP recovery (operator destroys ESP, kernel is still on slot-A, recovery partition still has `recovery.exe`).
 
-This branch is DEFERRED until the [recovery-partition disk layout](../../todo/01-boot-platform/TODO-22-recovery-partition.md#1-recovery-partition-in-disk-layout) and [A/B dual-slot disk layout](../../todo/01-boot-platform/TODO-21-ab-boot-rollback.md#2-dual-slot-disk-layout-in-build-system) both ship. Without those producers:
+This branch is DEFERRED until the [recovery-partition disk layout](../../todo/01-boot-platform/TODO-22-recovery-partition.md#1-recovery-partition-in-disk-layout) and [A/B dual-slot disk layout](../../todo/01-boot-platform/TODO-21-ab-boot-rollback.md#2-dual-slot-disk-layout) both ship. Without those producers:
 
 - The "recovery partition present" check has no GPT layout to inspect.
 - The "known-good slot id" check has no per-slot health metadata to read.

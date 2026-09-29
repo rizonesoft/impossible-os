@@ -1,4 +1,4 @@
-<!-- docs: order=1 sources=scripts/site/build.py reviewed=2026-09-28 -->
+<!-- docs: order=1 sources=scripts/site/build.py reviewed=2026-09-29 -->
 # Documentation Page Contract
 
 Every roadmap file under `todo/` gets at least one docs page, and every page follows this contract. A roadmap file is the plan; its docs page tells a user, contributor or operator what actually shipped, how to use it, and what is still missing. Start from the [page template](_template.md).
@@ -8,7 +8,7 @@ Every roadmap file under `todo/` gets at least one docs page, and every page fol
 A page has these parts, in this order:
 
 1. **The directive, then the H1.** Line 1 is the `docs:` directive (see [the directive](#what-goes-in-the-directive)); the H1 names the subsystem the way a user would say it ("Boot Menu", not "TODO-12 Boot Menu Implementation").
-2. **Overview.** What it is and why it exists, answer first, in 2 to 4 sentences.
+2. **Overview.** What it is and why it exists, answer first, in 2 to 4 sentences. The first paragraph becomes the page's search-result and link-preview description (cut at 160 characters), so make its opening sentence stand on its own.
 3. **How it works.** Architecture, data flow and the key structures. Add a Mermaid diagram (a ` ```mermaid ` block) where a picture helps more than a paragraph.
 4. **Interfaces.** Public functions, syscalls, file formats, Registry keys and configuration options, each with a link to its source (`../../src/...` or `../../include/...`).
 5. **Using it.** The operator or developer guide: the commands to run and the output to expect.

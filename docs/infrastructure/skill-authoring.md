@@ -76,7 +76,7 @@ Two canonical shapes cover every skill in the repo. Pick the one that matches yo
 Both shapes share universal constraints:
 
 - **No restated doctrine.** Link to CLAUDE.md sections instead; invariant is that CLAUDE.md is the only place a rule is defined.
-- **No Unicode en/em dashes** (U+2013, U+2014). ASCII `--` only, per the project rule in [`CLAUDE.md`](../../CLAUDE.md#no-unicode-dashes-enem-ascii-only).
+- **No Unicode en/em dashes** (U+2013, U+2014). ASCII `--` only, per the project rule in [`CLAUDE.md`](../../CLAUDE.md#code-style-ascii-dashes-no-bare-section-refs).
 - **No `[Opus]` / `[Sonnet]` model tags** on headings; they drift as models change. Model Roles in CLAUDE.md owns the policy.
 
 If your skill needs a shape neither A nor B covers, update this document BEFORE shipping the skill -- the [AI Workflow Regression Suite](../../todo/00-infrastructure/TODO-02-ai-development-system.md#9-ai-workflow-regression-suite) enforces shape compliance, so unlisted shapes will be flagged.
@@ -90,7 +90,7 @@ If your skill needs a shape neither A nor B covers, update this document BEFORE 
 **Forbidden patterns:**
 
 - No restated doctrine. Skills reference `CLAUDE.md` sections instead. Invariant: the one rule that `CLAUDE.md` owns, the skill must not redefine.
-- No Unicode en/em dashes (U+2013, U+2014) anywhere in SKILL.md. ASCII `--` only, per the project rule in [`CLAUDE.md`](../../CLAUDE.md#no-unicode-dashes-enem-ascii-only).
+- No Unicode en/em dashes (U+2013, U+2014) anywhere in SKILL.md. ASCII `--` only, per the project rule in [`CLAUDE.md`](../../CLAUDE.md#code-style-ascii-dashes-no-bare-section-refs).
 - No `[Opus]` / `[Sonnet]` model tags on headings; they drift as models change. The Model Roles section of CLAUDE.md names the policy.
 
 ---

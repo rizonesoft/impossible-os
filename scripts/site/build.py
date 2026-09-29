@@ -42,6 +42,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from urllib.parse import unquote
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -223,9 +224,130 @@ def tracked_files(*pathspecs: str) -> list[Path]:
 # --------------------------------------------------------------------------
 
 def github_slug(text: str) -> str:
-    s = text.strip().lower()
-    s = re.sub(r"[^\w\- ]", "", s, flags=re.UNICODE)
-    return s.replace(" ", "-")
+    """GitHub's heading id rule: lowercase, keep word characters as Ruby's
+    `\\p{Word}` defines them (letters, combining marks, decimal digits, connector
+    punctuation such as `_`), hyphens and spaces, drop everything else, then turn
+    spaces into hyphens. Nothing is trimmed: a heading ending in `&#x20;` keeps
+    its trailing hyphen, as on github.com."""
+    out = []
+    for ch in text.lower():
+        cat = unicodedata.category(ch)
+        if ch in "- " or cat[0] in "LM" or cat in ("Nd", "Pc"):
+            out.append(ch)
+    return "".join(out).replace(" ", "-")
+
+
+class Slugger:
+    """GitHub's heading ids (github-slugger): a repeated slug takes the first free
+    `-N` suffix and every id handed out is reserved, so the headings `Foo`, `Foo`,
+    `Foo-1` get `foo`, `foo-1`, `foo-1-1`."""
+
+    def __init__(self) -> None:
+        self.seen: dict[str, int] = {}
+
+    def slug(self, text: str) -> str:
+        base = s = github_slug(text)
+        while s in self.seen:
+            self.seen[base] += 1
+            s = f"{base}-{self.seen[base]}"
+        self.seen[s] = 0
+        return s
+
+
+RAW_ANCHOR_RE = re.compile(r'<a\s+(?:id|name)="([^"]+)"')
+
+
+def heading_title(inline, breaks: str = "") -> str:
+    """An inline token's text: text and code spans, markup dropped. A line break
+    becomes `breaks`: nothing for a heading id (GitHub drops it), a space for
+    prose, so a wrapped paragraph does not run its words together."""
+    return "".join(c.content if c.type in ("text", "code_inline") else breaks
+                   for c in (inline.children or []) if c.type in ("text", "code_inline", "softbreak", "hardbreak"))
+
+
+def raw_anchors(tokens) -> set[str]:
+    """Explicit <a id="..."> / <a name="..."> anchors in raw HTML only, so one quoted
+    inside a code example is not mistaken for a real anchor."""
+    found: set[str] = set()
+    for tok in tokens:
+        if tok.type == "html_block":
+            found.update(RAW_ANCHOR_RE.findall(tok.content))
+        elif tok.type == "inline":
+            for c in tok.children or []:
+                if c.type == "html_inline":
+                    found.update(RAW_ANCHOR_RE.findall(c.content))
+    return found
+
+
+_MD_ANCHORS: dict[str, set[str]] = {}
+ANCHOR_CACHE = REPO / "build" / "site-anchor-cache.json"
+
+
+def _anchor_cache_version() -> str:
+    """Anything that could change an anchor set: this file (slug rules) and the parser."""
+    import hashlib
+    import markdown_it
+    return hashlib.sha256(Path(__file__).read_bytes() + markdown_it.__version__.encode()).hexdigest()[:16]
+
+
+class AnchorCache:
+    """Full-parse anchor sets of Markdown link targets, keyed by content hash.
+
+    The gate must agree with a real Markdown parse (a line scanner tried here
+    diverged on reference links, list-indented fences and inline HTML), but a
+    full parse of the ~12 MB of roadmap files that docs pages link into costs
+    ~5 s. Keyed by content, a result can never be stale, so every commit after
+    the first re-parses only the targets it changed. The file lives under the
+    ignored build/ directory; a missing, corrupt or other-version cache is simply
+    rebuilt, and nothing published depends on it."""
+
+    def __init__(self, path: Path) -> None:
+        self.path, self.version, self.dirty = path, _anchor_cache_version(), False
+        self.entries: dict[str, list[str]] = {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        entries = data.get("entries") if isinstance(data, dict) and data.get("version") == self.version else None
+        if isinstance(entries, dict):
+            # Keep only well-formed entries; anything else is a miss and is re-parsed.
+            self.entries = {k: v for k, v in entries.items()
+                            if isinstance(v, list) and all(isinstance(a, str) for a in v)}
+
+    def anchors(self, text: str) -> set[str]:
+        import hashlib
+        key = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        hit = self.entries.get(key)
+        if hit is not None:
+            return set(hit)
+        tokens = make_md().parse(text, {})
+        slugger = Slugger()
+        found = {slugger.slug(heading_title(tokens[i + 1])) for i, t in enumerate(tokens) if t.type == "heading_open"}
+        found |= raw_anchors(tokens)
+        self.entries[key], self.dirty = sorted(found), True
+        return found
+
+    def save(self) -> None:
+        if not self.dirty:
+            return
+        try:   # write-then-rename, so a concurrent build never reads half a file
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(f".{os.getpid()}.tmp")
+            tmp.write_text(json.dumps({"version": self.version, "entries": self.entries}), encoding="utf-8")
+            os.replace(tmp, self.path)
+        except OSError:
+            pass   # a cache that cannot be written only costs time
+        self.dirty = False
+
+
+def markdown_anchors(repo_rel: str, cache: "AnchorCache | None" = None) -> set[str]:
+    """The fragment ids GitHub gives a tracked Markdown file outside docs/ (a link
+    from a docs page to it resolves on github.com, not on the site)."""
+    path = str(ROOT / repo_rel)   # keyed by full path: ROOT moves to a snapshot
+    if path not in _MD_ANCHORS:
+        text = Path(path).read_text(encoding="utf-8")
+        _MD_ANCHORS[path] = (cache or AnchorCache(ANCHOR_CACHE)).anchors(text)
+    return _MD_ANCHORS[path]
 
 
 @dataclass
@@ -242,6 +364,7 @@ class Page:
     toc: list[tuple[int, str, str]] = field(default_factory=list)
     anchors: set[str] = field(default_factory=set)
     text: str = ""
+    summary: str = ""                                  # first top-level paragraph (meta description)
 
 
 def out_path(url: str) -> str:
@@ -305,6 +428,7 @@ class Renderer:
         self.errors = errors
         self.md = make_md()
         self.pending_anchor_checks: list[tuple[str, str, str]] = []
+        self.pending_md_anchor_checks: list[tuple[str, str, str]] = []   # into tracked .md outside docs/
 
     def blob_url(self, repo_rel: str) -> str:
         return f"{self.facts['repo_url']}/blob/main/{repo_rel}"
@@ -342,22 +466,22 @@ class Renderer:
             if rel == "index.html" or rel.endswith("/index.html"):
                 rel = rel[: -len("index.html")] or "./"
             return rel + (f"#{frag}" if frag else "")
+        if frag and repo_rel.endswith(".md"):
+            self.pending_md_anchor_checks.append((page.rel, repo_rel, frag))
         return self.blob_url(repo_rel) + (f"#{frag}" if frag else "")
 
     def render(self, page: Page, text: str) -> None:
         env: dict = {}
         tokens = self.md.parse(text, env)
-        used: dict[str, int] = {}
+        slugger = Slugger()
         plain: list[str] = []
         for i, tok in enumerate(tokens):
+            if tok.type == "paragraph_open" and tok.level == 0 and not page.summary:
+                page.summary = " ".join(heading_title(tokens[i + 1], breaks=" ").split())
             if tok.type == "heading_open":
                 inline = tokens[i + 1]
-                title = "".join(c.content for c in (inline.children or []) if c.type in ("text", "code_inline"))
-                slug = github_slug(title)
-                n = used.get(slug, 0)
-                used[slug] = n + 1
-                if n:
-                    slug = f"{slug}-{n}"
+                title = heading_title(inline)
+                slug = slugger.slug(title)
                 tok.attrSet("id", slug)
                 page.anchors.add(slug)
                 level = int(tok.tag[1])
@@ -382,9 +506,7 @@ class Renderer:
             if tok.type == "fence" and tok.info.strip() == "mermaid":
                 tok.type = "html_block"
                 tok.content = f'<pre class="mermaid">{html.escape(tok.content)}</pre>\n'
-        # Explicit <a id="..."> / <a name="..."> anchors authored as raw HTML.
-        for m in re.finditer(r'<a\s+(?:id|name)="([^"]+)"', text):
-            page.anchors.add(m.group(1))
+        page.anchors |= raw_anchors(tokens)
         body = self.md.renderer.render(tokens, self.md.options, env)
         body = ALERT_RE.sub(lambda m: f'<blockquote class="alert alert-{m.group(1).lower()}"><p class="alert-title">{m.group(1).title()}</p><p>', body)
         body = re.sub(r"<li>\[ \]", '<li class="task"><input type="checkbox" disabled>', body)
@@ -439,6 +561,11 @@ class Renderer:
             target = self.pages.get(doc_rel)
             if target is not None and unquote(frag) not in target.anchors:
                 self.errors.append(f"docs/{src_rel}: dead anchor: {doc_rel}#{frag}")
+        cache = AnchorCache(ANCHOR_CACHE)
+        for src_rel, repo_rel, frag in self.pending_md_anchor_checks:
+            if unquote(frag) not in markdown_anchors(repo_rel, cache):
+                self.errors.append(f"docs/{src_rel}: dead anchor (no such GitHub heading id): {repo_rel}#{frag}")
+        cache.save()
 
 
 # --------------------------------------------------------------------------
@@ -607,6 +734,45 @@ def tracked_sources() -> tuple[set[str], set[str]]:
     return _TRACKED
 
 
+DATE_HEADER_RE = re.compile(r"\x01\d{4}-\d{2}-\d{2}")
+
+
+def last_updated() -> dict[str, str] | None:
+    """{repo path: YYYY-MM-DD} for every file under docs/ and gh-pages/: the
+    committer date of the last commit on the first-parent line that touched it,
+    as `git log -1 --format=%cs -- <path>` gives it, in one git process.
+
+    `--first-parent --diff-merges=first-parent` counts a merge that changed a page (a conflict
+    resolution) as a change on the main line; plain `log` prints no files for a
+    merge and would date the page earlier. `--no-renames` dates a renamed page
+    at its rename. The commit is HEAD for a worktree or index build and the
+    snapshot ref otherwise, so a page is dated by what is committed, and a page
+    with no commit yet has no date. None in a shallow clone, where the oldest
+    fetched commit would be misread as the last change."""
+    if git("rev-parse", "--is-shallow-repository").strip() == "true":
+        return None
+    ref = "HEAD" if SOURCE in ("worktree", "index") else SOURCE
+    if subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], cwd=REPO,
+                      capture_output=True).returncode != 0:
+        return {}   # unborn HEAD: nothing is committed, so nothing has a date
+    # Every output-shaping setting is pinned on the command line, so a host's git
+    # config (log.diffMerges=combined, log.showSignature) cannot change the bytes.
+    out = git("-c", "log.showSignature=false", "log", "--first-parent", "--diff-merges=first-parent",
+              "--no-renames", "-z", "--name-only", "--format=%x01%cs", ref, "--", "docs", "gh-pages")
+    dates: dict[str, str] = {}
+    date = ""
+    # NUL-separated tokens. A commit header is exactly "\x01YYYY-MM-DD"; a path
+    # is limited to docs/ or gh-pages/, so it can never take that shape, and a
+    # path containing \x01 (legal in a file name) stays one token.
+    for tok in out.split("\0"):
+        tok = tok.lstrip("\n")
+        if DATE_HEADER_RE.fullmatch(tok):
+            date = tok[1:]
+        elif tok and date:
+            dates.setdefault(tok, date)
+    return dates
+
+
 def check_sources(where: str, sources: list[str], errors: list[str]) -> None:
     files, dirs = tracked_sources()
     for src in sources:
@@ -694,16 +860,40 @@ def toc_html(page: Page) -> str:
     return f'<nav class="toc"><p>On this page</p><ul>{items}</ul></nav>'
 
 
-def render_page(tpl: str, facts: dict, pages: dict[str, Page], page: Page) -> str:
+def site_url(facts: dict, path: str) -> str:
+    """Absolute published URL of a site path; a trailing index.html is the directory."""
+    if path == "index.html" or path.endswith("/index.html"):
+        path = path[: -len("index.html")]
+    return facts["site_url"].rstrip("/") + "/" + path
+
+
+def description(facts: dict, page: Page) -> str:
+    """The page's first paragraph, cut on a word boundary: what a search result or
+    a link preview shows. Pages that open with no paragraph get a generic line."""
+    text = page.summary or f"{facts['name']} documentation: {page.title}"
+    if len(text) > 160:
+        text = text[:157].rsplit(" ", 1)[0].rstrip(",;:") + "..."
+    return text
+
+
+def render_page(tpl: str, facts: dict, pages: dict[str, Page], page: Page, updated: str = "") -> str:
     root = depth_prefix(page.url)
-    edit = f"{facts['repo_url']}/blob/main/docs/{page.rel}"
-    return (tpl.replace("%TITLE%", html.escape(page.title))
-               .replace("%ROOT%", root)
-               .replace("%SITE_ROOT%", root + "../")
-               .replace("%NAV%", nav_html(pages, page, root))
-               .replace("%TOC%", toc_html(page))
-               .replace("%BODY%", page.body)
-               .replace("%EDIT%", edit))
+    stamp = (f'<span>Last updated <time datetime="{updated}">{updated}</time></span>' if updated else "")
+    values = {
+        "TITLE": html.escape(page.title),
+        "DESCRIPTION": html.escape(description(facts, page)),
+        "CANONICAL": html.escape(site_url(facts, "docs/" + out_path(page.url))),
+        "ROOT": root,
+        "SITE_ROOT": root + "../",
+        "NAV": nav_html(pages, page, root),
+        "TOC": toc_html(page),
+        "BODY": page.body,
+        "UPDATED": stamp,
+        "EDIT": f"{facts['repo_url']}/blob/main/docs/{page.rel}",
+    }
+    # One pass over the TEMPLATE: text substituted in (a page body that mentions
+    # %EDIT%, a title with %ROOT%) is never itself rescanned for placeholders.
+    return re.sub(r"%([A-Z_]+)%", lambda m: values.get(m.group(1), m.group(0)), tpl)
 
 
 FRESH_LABEL = {"fresh": "up to date", "stale": "sources changed", "editing": "being updated",
@@ -897,6 +1087,26 @@ def design_tokens_css() -> str:
     return "\n".join(out)
 
 
+NOINDEX_RE = re.compile(r'<meta\s+name="robots"\s+content="[^"]*\bnoindex\b', re.I)
+
+
+def sitemap(facts: dict, files: dict[str, bytes], sources: dict[str, str], dates: dict[str, str]) -> bytes:
+    """sitemap.xml over every published HTML page except those whose head says
+    noindex (404.html), derived from the output map so a new page is listed
+    without being named anywhere. `lastmod` is the source file's last commit
+    date; a generated page (the coverage page) has none."""
+    rows = []
+    for rel in sorted(files):
+        if not rel.endswith(".html") or NOINDEX_RE.search(files[rel].decode("utf-8", "replace")):
+            continue
+        when = dates.get(sources.get(rel, ""), "")
+        rows.append(f"  <url><loc>{html.escape(site_url(facts, rel))}</loc>"
+                    + (f"<lastmod>{when}</lastmod>" if when else "") + "</url>\n")
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+            + "".join(rows) + "</urlset>\n").encode("utf-8")
+
+
 ASSET_DIRS = (
     ("resources/icons/src", "icons", (".svg",)),
     ("resources/brand", "brand", (".svg", ".png")),
@@ -907,6 +1117,7 @@ ASSET_DIRS = (
 def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
     """Return {site-relative path: bytes} for the whole site."""
     files: dict[str, bytes] = {}
+    sources: dict[str, str] = {}   # site path -> the tracked file it is rendered from ("" = generated)
     facts = dict(facts, design_tokens_css=design_tokens_css())
     # Only when a template uses it: a snapshot of an older tree has no features.json.
     if any("{{feature_cards}}" in f.read_text(encoding="utf-8", errors="replace")
@@ -928,6 +1139,7 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
             data = render_template(data.decode("utf-8"), facts, f"gh-pages/{rel}", errors).encode("utf-8")
         if rel not in ("docs-template.html", FEATURES_FILE):
             files[rel] = data
+            sources[rel] = f"gh-pages/{rel}"
     # 2. Docs.
     pages, _ = load_pages(facts, errors)
     check_design_lines(pages, errors)
@@ -947,11 +1159,21 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
                           "gh-pages/docs-template.html", errors)
     all_pages = dict(pages)
     all_pages[cov.rel] = cov
+    dates = last_updated()
+    build.shallow = dates is None  # type: ignore[attr-defined]
+    dates = dates or {}
     for page in all_pages.values():
         out = out_path(page.url)
-        rendered = render_page(tpl, facts, all_pages, page)
+        updated = "" if page is cov else dates.get(f"docs/{page.rel}", "")
+        rendered = render_page(tpl, facts, all_pages, page, updated)
         rendered = render_template(rendered, facts, f"docs/{page.rel}", []) if page is cov else rendered
         files[f"docs/{out}"] = rendered.encode("utf-8")
+        sources[f"docs/{out}"] = "" if page is cov else f"docs/{page.rel}"
+    for name in ("sitemap.xml", "robots.txt"):
+        if name in files:
+            errors.append(f"gh-pages/{name}: generated by build.py; remove the hand-written copy")
+    files["sitemap.xml"] = sitemap(facts, files, sources, dates)
+    files["robots.txt"] = (f"User-agent: *\nAllow: /\n\nSitemap: {site_url(facts, 'sitemap.xml')}\n").encode("utf-8")
     index = [{"t": p.title, "u": p.url or "./", "h": [t for _, _, t in p.toc], "x": p.text[:4000]}
              for p in sorted(pages.values(), key=lambda p: p.rel)]
     files["docs/search.json"] = json.dumps(index, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -1199,6 +1421,12 @@ def run(args: argparse.Namespace) -> int:
 
     files = build(facts, errors)
     undocumented = build.undocumented  # type: ignore[attr-defined]
+    # A shallow clone cannot date pages. A check may still run there (warned), but
+    # a written site would publish different bytes for the same commit, which
+    # verify_live.py would then report as drift, so writing one is refused.
+    shallow = build.shallow  # type: ignore[attr-defined]
+    if shallow and not (args.check or args.freshness or args.update_baseline):
+        errors.append("shallow clone: page dates need full history (fetch-depth: 0); refusing to write the site")
 
     import freshness
     records = build.freshness  # type: ignore[attr-defined]
@@ -1245,6 +1473,9 @@ def run(args: argparse.Namespace) -> int:
         w = freshness.warning(r)
         if w:
             print(f"WARN: {w}", file=sys.stderr)
+    if shallow:
+        print("WARN: shallow clone: docs pages carry no last-updated dates and sitemap.xml no lastmod",
+              file=sys.stderr)
 
     if not args.check:
         if args.out.exists():

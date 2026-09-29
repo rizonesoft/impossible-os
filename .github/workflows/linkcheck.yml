@@ -1,0 +1,30 @@
+name: External link check
+
+# Weekly, never per commit: external sites are slow, flaky and not ours, so a
+# dead third-party link must not block a push. Internal links (files, anchors,
+# GitHub heading ids) are checked on every commit by build.py --check (lint
+# Check 30). A red run here lists each DEAD link (404/410 or a host that no
+# longer exists) with the page and line that cites it; UNVERIFIED links (bot
+# walls, rate limits, outages) are reported but never fail the run. Fix the
+# page, or add a prefix with its reason to scripts/site/linkcheck-allow.txt.
+
+on:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  linkcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check every external link in docs/ and gh-pages/
+        run: python3 scripts/site/linkcheck.py

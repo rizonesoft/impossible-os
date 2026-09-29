@@ -1,0 +1,5 @@
+# External links scripts/site/linkcheck.py does not fetch. One URL prefix per
+# line, then `  # <reason>`. Keep this short: an entry hides rot as well as noise.
+https://github.com/organizations/rizonetech/settings/  # org admin pages: 404 to a signed-out client by design (repository-transfer runbook)
+https://github.com/rizonesoft/impossible-os/settings  # repo admin pages: 404 to a signed-out client by design
+https://github.com/rizonetech/impossible-os/settings  # repo admin pages of the pre-transfer owner, cited by the transfer runbook: 404 signed out

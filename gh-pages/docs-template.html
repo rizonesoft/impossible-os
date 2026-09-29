@@ -4,7 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>%TITLE% · {{name}} Docs</title>
-<meta name="description" content="{{name}} documentation: %TITLE%">
+<meta name="description" content="%DESCRIPTION%">
+<link rel="canonical" href="%CANONICAL%">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="{{name}}">
+<meta property="og:title" content="%TITLE%">
+<meta property="og:description" content="%DESCRIPTION%">
+<meta property="og:url" content="%CANONICAL%">
+<meta name="twitter:card" content="summary">
 <link rel="icon" type="image/png" href="%SITE_ROOT%icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -150,6 +157,7 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
     </article>
     <div class="page-foot">
       <span>{{name}} is free software under the {{license}} license.</span>
+      %UPDATED%
       <a href="%EDIT%">Edit this page on GitHub</a>
     </div>
   </main>

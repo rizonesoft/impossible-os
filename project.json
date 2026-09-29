@@ -27,6 +27,7 @@
   "historical_owner_files": [
     "docs/infrastructure/repository-transfer-preflight.md",
     "docs/infrastructure/repository-move-back-runbook.md",
-    "todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md"
+    "todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md",
+    "scripts/site/linkcheck-allow.txt"
   ]
 }

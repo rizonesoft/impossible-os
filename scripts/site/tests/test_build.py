@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -713,6 +714,564 @@ class VerifyLive(unittest.TestCase):
         self.assertEqual(self.V.live_path("index.html"), "")
         self.assertEqual(self.V.live_path("docs/index.html"), "docs/")
         self.assertEqual(self.V.live_path("logo.svg"), "logo.svg")
+
+
+def git_env(date: str | None = None) -> dict:
+    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+    if date:
+        env.update(GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
+    return env
+
+
+class SitePolish(unittest.TestCase):
+    """Section 23: GitHub heading ids, anchors into non-docs Markdown, page dates,
+    head tags, sitemap."""
+
+    def setUp(self):
+        self.saved = (B.REPO, B.ROOT, B.SOURCE, B._FILESET, B._DIRSET, B.ANCHOR_CACHE)
+        self.root = Path(tempfile.mkdtemp(prefix="polish-"))
+        B.ANCHOR_CACHE = self.root / "anchor-cache.json"
+
+    def tearDown(self):
+        B.REPO, B.ROOT, B.SOURCE, B._FILESET, B._DIRSET, B.ANCHOR_CACHE = self.saved
+        B.set_root(B.ROOT)
+
+    def git(self, *args, date=None, cwd=None):
+        return subprocess.run(["git", *args], cwd=cwd or self.root, check=True, env=git_env(date),
+                              capture_output=True, text=True).stdout
+
+    def write(self, rel, text):
+        (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (self.root / rel).write_text(text, encoding="utf-8")
+
+    def commit(self, msg, date):
+        self.git("add", "-A")
+        self.git("commit", "-q", "--no-verify", "-m", msg, date=date)
+
+    def use(self, root, source="worktree"):
+        B.REPO, B.SOURCE, B._FILESET, B._DIRSET = root, source, None, None
+        B.ROOT, B.DOCS = root, root / "docs"
+
+    def test_slugger_reserves_every_generated_id(self):
+        s = B.Slugger()
+        self.assertEqual([s.slug(t) for t in ("Foo", "Foo", "Foo-1", "Foo")], ["foo", "foo-1", "foo-1-1", "foo-2"])
+        self.assertEqual(B.github_slug("5. Kernel `mark_boot_successful()` \U0001F680"), "5-kernel-mark_boot_successful-")
+
+    def test_anchors_into_non_docs_markdown_use_github_ids(self):
+        self.git("init", "-q")
+        self.write("todo/t.md", "# T\n\n## 5. Kernel `mark_boot_successful()`\n\n## Dup\n\n## Dup\n\n"
+                               "```html\n<a id=\"in-code\"></a>\n```\n\n<a id=\"real\"></a>\n")
+        self.write("docs/p.md", "# P\n\n[a](../todo/t.md#5-kernel-mark_boot_successful)\n[b](../todo/t.md#dup-1)\n"
+                               "[c](../todo/t.md#real)\n[d](../todo/t.md#in-code)\n[e](../todo/t.md#dup-2)\n"
+                               "[f](../todo/t.md)\n")
+        self.commit("fixture", "2026-01-01T00:00:00Z")
+        self.use(self.root)
+        errors: list[str] = []
+        B.load_pages(FACTS, errors)
+        # An anchor quoted inside a code block is not an anchor; a third "Dup" does not exist.
+        self.assertEqual(sorted(e.rsplit("#", 1)[1] for e in errors), ["dup-2", "in-code"], errors)
+        self.assertTrue(all("no such GitHub heading id" in e for e in errors))
+
+    def test_dates_follow_the_first_parent_line_including_merges(self):
+        self.git("init", "-q", "-b", "main")
+        self.write("docs/a.md", "# A\n")
+        self.write("docs/b.md", "# B\n")
+        self.commit("start", "2026-01-01T12:00:00Z")
+        self.git("checkout", "-q", "-b", "side")
+        self.write("docs/a.md", "# A changed on a side branch\n")
+        self.commit("side edit", "2026-02-01T12:00:00Z")
+        self.git("checkout", "-q", "main")
+        self.write("docs/b.md", "# B2\n")
+        self.commit("main edit", "2026-03-01T12:00:00Z")
+        self.git("merge", "-q", "--no-ff", "--no-edit", "side", date="2026-04-01T12:00:00Z")
+        self.write("docs/new.md", "# New, never committed\n")
+        self.use(self.root)
+        dates = B.last_updated()
+        # a.md reached main through the merge: it is dated by the merge, not its first commit.
+        self.assertEqual(dates["docs/a.md"], "2026-04-01")
+        self.assertEqual(dates["docs/b.md"], "2026-03-01")
+        self.assertNotIn("docs/new.md", dates)
+        # A pinned ref dates by that commit's history.
+        B.SOURCE = self.git("rev-parse", "HEAD~1").strip()
+        self.assertEqual(B.last_updated()["docs/a.md"], "2026-01-01")
+
+    def test_shallow_clone_has_no_dates_and_unborn_head_has_none(self):
+        self.git("init", "-q")
+        self.use(self.root)
+        self.assertEqual(B.last_updated(), {})
+        for n in range(2):
+            self.write("docs/a.md", f"# A{n}\n")
+            self.commit(f"c{n}", f"2026-0{n + 1}-01T00:00:00Z")
+        shallow = Path(tempfile.mkdtemp(prefix="polish-shallow-")) / "c"
+        subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{self.root}", str(shallow)], check=True,
+                       capture_output=True)
+        self.use(shallow)
+        self.assertIsNone(B.last_updated())
+
+    def test_slug_normalisation_follows_github(self):
+        self.assertEqual(B.github_slug("a "), "a-")                     # `# a&#x20;`: nothing is trimmed
+        self.assertEqual(B.github_slug("Cafe\u0301 x"), "cafe\u0301-x")  # combining marks are word characters
+        self.assertEqual(B.github_slug("x\u00b2 \u2167"), "x-")          # No/Nl numbers are not
+        self.assertEqual(B.github_slug("A_b-C d.e"), "a_b-c-de")
+
+    def test_anchor_gate_uses_a_real_parse(self):
+        # Shapes a line scanner got wrong (round-2 review): a heading after a line
+        # of inline HTML, a fence inside a list, a reference link in a heading, and
+        # an anchor that is only an indented code example.
+        B.ANCHOR_CACHE = self.root / "cache.json"
+        self.write("todo/t.md", "<em>intro</em>\n## Real heading\n\n- item\n\n    ```\n    ## Example\n    ```\n\n"
+                               "## After list\n\n# [Label][ref]\n\n[ref]: https://example.invalid/\n\n"
+                               "    <a id=\"fake\"></a>\n")
+        self.use(self.root)
+        got = B.markdown_anchors("todo/t.md")
+        self.assertTrue({"real-heading", "after-list", "label"} <= got, got)
+        self.assertFalse({"example", "fake", "labelref"} & got, got)
+
+    def test_anchor_cache_is_keyed_by_content_and_version(self):
+        path = self.root / "cache.json"
+        c = B.AnchorCache(path)
+        self.assertEqual(c.anchors("# A\n"), {"a"})
+        c.save()
+        data = json.loads(path.read_text())
+        self.assertEqual(data["version"], B._anchor_cache_version())
+        key = next(iter(data["entries"]))
+        data["entries"][key] = ["sentinel"]            # a hit is served from the cache, by content
+        path.write_text(json.dumps(data))
+        self.assertEqual(B.AnchorCache(path).anchors("# A\n"), {"sentinel"})
+        self.assertEqual(B.AnchorCache(path).anchors("# B\n"), {"b"})   # other content: parsed
+        data["version"] = "other"
+        path.write_text(json.dumps(data))
+        self.assertEqual(B.AnchorCache(path).anchors("# A\n"), {"a"})   # another version: ignored
+        path.write_text("{not json")
+        self.assertEqual(B.AnchorCache(path).anchors("# A\n"), {"a"})   # corrupt: rebuilt
+        v = B._anchor_cache_version()
+        for bad in ({"version": v, "entries": None}, {"version": v, "entries": []}, [1, 2],
+                    {"version": v, "entries": {key: {"x": 1}}}, {"version": v, "entries": {key: [1]}}):
+            path.write_text(json.dumps(bad))
+            self.assertEqual(B.AnchorCache(path).anchors("# A\n"), {"a"}, bad)   # malformed: a miss
+        c = B.AnchorCache(path)
+        c.anchors("# C\n")
+        c.save()
+        self.assertEqual(json.loads(path.read_text())["version"], B._anchor_cache_version())
+
+    def test_dates_ignore_git_config_and_odd_file_names(self):
+        self.git("init", "-q", "-b", "main")
+        self.write("docs/a.md", "# A\n")
+        self.commit("start", "2026-01-01T12:00:00Z")
+        self.git("checkout", "-q", "-b", "side")
+        self.write("docs/a.md", "# A2\n")
+        self.commit("side", "2026-02-01T12:00:00Z")
+        self.git("checkout", "-q", "main")
+        self.write("docs/b.md", "# B\n")
+        self.commit("main", "2026-03-01T12:00:00Z")
+        self.git("merge", "-q", "--no-ff", "--no-edit", "side", date="2026-04-01T12:00:00Z")
+        self.write("docs/x\x01oops.md", "# X\n")
+        self.write("docs/index.md", "# I\n")
+        self.commit("odd name", "2026-05-01T12:00:00Z")
+        self.use(self.root)
+        plain = B.last_updated()
+        self.git("config", "log.diffMerges", "combined")
+        self.git("config", "log.showSignature", "true")
+        self.assertEqual(B.last_updated(), plain)
+        self.assertEqual(plain["docs/a.md"], "2026-04-01")
+        self.assertEqual(plain["docs/index.md"], "2026-05-01")
+        self.assertEqual(plain["docs/x\x01oops.md"], "2026-05-01")
+
+    def test_run_refuses_to_write_a_site_from_a_shallow_clone(self):
+        from unittest import mock
+        from contextlib import redirect_stderr
+        import argparse
+        import io
+        out = self.root / "site"
+
+        def fake_build(facts, errors):
+            fake_build.undocumented, fake_build.freshness = [], []
+            return {"index.html": b"x"}
+        quiet = {name: mock.patch.object(B, name, lambda *a, **k: None) for name in (
+            "check_regions", "check_owner_urls", "check_donate_links", "check_count_badge", "check_icon_renders",
+            "check_scripts", "check_baseline")}
+
+        def run(shallow, check):
+            fake_build.shallow = shallow
+            args = argparse.Namespace(sync_head=None, emit_head=None, sync=None, freshness=False,
+                                      update_baseline=False, check=check, skip_stats=False, out=out, quiet=True)
+            err = io.StringIO()
+            with mock.patch.object(B, "build", fake_build), redirect_stderr(err):
+                for p in quiet.values():
+                    p.start()
+                try:
+                    fake_build.__dict__["shallow"] = shallow
+                    rc = B.run(args)
+                finally:
+                    for p in quiet.values():
+                        p.stop()
+            return rc, err.getvalue()
+
+        rc, err = run(shallow=True, check=False)
+        self.assertEqual(rc, 1)
+        self.assertIn("refusing to write the site", err)
+        self.assertFalse(out.exists())
+        rc, err = run(shallow=True, check=True)
+        self.assertEqual(rc, 0)
+        self.assertIn("WARN: shallow clone", err)
+        self.assertFalse(out.exists())
+        rc, _ = run(shallow=False, check=False)
+        self.assertEqual(rc, 0)
+        self.assertEqual((out / "index.html").read_bytes(), b"x")
+
+    def test_page_template_is_substituted_in_one_pass(self):
+        facts = dict(FACTS, site_url="https://site.invalid", name="OS")
+        page = B.Page(src=Path("docs/k/x.md"), rel="k/x.md", url="k/x.html", title="X %ROOT%",
+                      body="<p>see %EDIT% and %UPDATED%</p>", summary="word " * 40)
+        tpl = ("<title>%TITLE%</title><meta content=\"%DESCRIPTION%\"><link href=\"%CANONICAL%\">"
+               "%BODY%<footer>%UPDATED%<a href=\"%EDIT%\"></a></footer>%NOT_A_KEY%")
+        out = B.render_page(tpl, facts, {}, page, "2026-09-28")
+        self.assertIn("<title>X %ROOT%</title>", out)
+        self.assertIn("<p>see %EDIT% and %UPDATED%</p>", out)          # body text is never rescanned
+        self.assertIn('href="https://site.invalid/docs/k/x.html"', out)
+        self.assertIn('<time datetime="2026-09-28">2026-09-28</time>', out)
+        self.assertIn("%NOT_A_KEY%", out)
+        desc = re.search(r'<meta content="([^"]*)"', out).group(1)
+        self.assertLessEqual(len(desc), 160)
+        self.assertTrue(desc.endswith("word..."))
+        self.assertEqual(B.site_url(facts, "docs/index.html"), "https://site.invalid/docs/")
+        self.assertNotIn("<time", B.render_page(tpl, facts, {}, page, ""))
+
+    def test_summary_is_the_first_top_level_paragraph(self):
+        self.git("init", "-q")
+        self.write("docs/p.md", "# P\n\n> [!NOTE]\n> not this\n\n- nor this\n\nThis `one` *here*,\nwrapped\\\nand broken.\n\n"
+                               "Not the second.\n")
+        self.use(self.root)
+        errors: list[str] = []
+        pages, _ = B.load_pages(FACTS, errors)
+        self.assertEqual(pages["p.md"].summary, "This one here, wrapped and broken.")
+
+    def test_sitemap_lists_indexable_pages_with_their_dates(self):
+        facts = dict(FACTS, site_url="https://site.invalid/")
+        files = {"index.html": b"<html>", "404.html": b'<meta name="robots" content="noindex, follow">',
+                 "docs/index.html": b"x", "docs/coverage.html": b"x", "design/controls.html": b"x",
+                 "logo.svg": b"<svg/>", "docs/search.json": b"[]"}
+        sources = {"index.html": "gh-pages/index.html", "docs/index.html": "docs/index.md",
+                   "docs/coverage.html": "", "design/controls.html": "gh-pages/design/controls.html"}
+        dates = {"gh-pages/index.html": "2026-01-02", "docs/index.md": "2026-03-04"}
+        xml = B.sitemap(facts, files, sources, dates).decode()
+        locs = re.findall(r"<loc>([^<]*)</loc>", xml)
+        self.assertEqual(locs, ["https://site.invalid/design/controls.html", "https://site.invalid/docs/coverage.html",
+                                "https://site.invalid/docs/", "https://site.invalid/"])
+        self.assertIn("<loc>https://site.invalid/</loc><lastmod>2026-01-02</lastmod>", xml)
+        self.assertIn("<loc>https://site.invalid/docs/coverage.html</loc></url>", xml)
+        from xml.dom import minidom
+        minidom.parseString(xml)   # well-formed
+
+
+class LinkCheck(unittest.TestCase):
+    """scripts/site/linkcheck.py: collection skips code and preconnect hints; a
+    404/410 or a missing host is DEAD; bot walls, outages and temporary DNS
+    failures are UNVERIFIED, never dead and never ok."""
+
+    @classmethod
+    def setUpClass(cls):
+        import http.server
+        import threading
+        import linkcheck as L
+        cls.L = L
+
+        hits = cls.hits = {}
+        conc = cls.conc = [0, 0]   # active, peak
+        lock = threading.Lock()
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def answer(self, body):
+                path = self.path
+                route = path.split("?")[0]
+                hits[path] = hits.get(path, 0) + 1
+                if path.startswith("/conc"):
+                    with lock:
+                        conc[0] += 1
+                        conc[1] = max(conc[1], conc[0])
+                    time.sleep(0.2)
+                    with lock:
+                        conc[0] -= 1
+                    self.send_response(200)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                redirects = {"/redir-rel": (302, "ok"), "/redir-gone": (301, f"{cls.base}/gone"),
+                             "/redir-down": (307, "/down"), "/loop": (302, "/loop"), "/redir-none": (302, None),
+                             "/redir-empty": (302, ""), "/redir-file": (302, "file:///dev/null"),
+                             "/redir-bad": (302, "https://[broken/path"), "/redir-hostless": (302, "https:///no-host")}
+                if path.startswith("/redir-conc"):
+                    redirects[path] = (302, f"{cls.base}/conc{path[len('/redir-conc'):]}")
+                if route == "/redir-stall":
+                    redirects[path] = (302, f"{cls.base}/stall{path[len('/redir-stall'):]}")
+                if path in redirects or route in redirects:
+                    code, loc = redirects.get(path) or redirects[route]
+                    self.send_response(code)
+                    if loc is not None:
+                        self.send_header("Location", loc)
+                    self.send_header("Content-Length", "2")
+                    self.end_headers()
+                    return
+                if path == "/big-redirect":
+                    # A redirect announcing a huge body it never sends: any read() blocks.
+                    self.send_response(302)
+                    self.send_header("Location", "/ok")
+                    self.send_header("Content-Length", "1000000000")
+                    self.end_headers()
+                    self.wfile.flush()
+                    time.sleep(3)
+                    return
+                if path == "/slow" or route == "/stall":
+                    time.sleep(3)
+                if route == "/bad-header":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "multipart/mixed; boundary*=undefined''foo")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                code = {"/ok": 200, "/gone": 404, "/removed": 410, "/down": 503, "/wall": 403, "/slow": 200,
+                        "/counted": 200, "/stall": 200}.get(route)
+                if path == "/nohead":
+                    code = 405 if self.command == "HEAD" else 200
+                if path == "/head-gone":
+                    code = 404 if self.command == "HEAD" else 200
+                if path == "/flaky":
+                    code = 503 if hits[path] == 1 else 200
+                self.send_response(code or 404)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                if body:
+                    self.wfile.write(b"ok")
+
+            def do_HEAD(self):
+                self.answer(False)
+
+            def do_GET(self):
+                self.answer(True)
+
+        cls.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        cls.base = f"http://127.0.0.1:{cls.srv.server_address[1]}"
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+
+    def test_http_verdicts(self):
+        got = self.L.run_checks([f"{self.base}/{p}" for p in ("ok", "gone", "removed", "down", "wall", "nohead")],
+                                retries=2, wait=0.01, timeout=5)
+        verdicts = {u.rsplit("/", 1)[1]: v for u, (v, _) in got.items()}
+        self.assertEqual(verdicts, {"ok": "OK", "nohead": "OK", "gone": "DEAD", "removed": "DEAD",
+                                    "down": "UNVERIFIED", "wall": "UNVERIFIED"})
+
+    def test_redirects_retries_and_head_refusals(self):
+        b = self.base
+        got = self.L.run_checks([f"{b}/redir-rel", f"{b}/redir-gone", f"{b}/redir-down", f"{b}/loop",
+                                 f"{b}/head-gone", f"{b}/flaky"], retries=2, wait=0.01, timeout=5)
+        verdicts = {u.rsplit("/", 1)[1]: v for u, v in got.items()}
+        self.assertEqual(verdicts["redir-rel"], ("OK", ""))
+        self.assertEqual(verdicts["redir-gone"], ("DEAD", "HTTP 404"))        # the destination decides
+        self.assertEqual(verdicts["redir-down"], ("UNVERIFIED", "HTTP 503"))
+        self.assertEqual(verdicts["loop"][0], "UNVERIFIED")
+        self.assertIn("redirects", verdicts["loop"][1])
+        self.assertEqual(verdicts["head-gone"], ("OK", ""))                   # HEAD 404, GET 200: healthy
+        self.assertEqual(verdicts["flaky"], ("OK", ""))                       # recovered on the retry
+        self.assertEqual(self.hits["/flaky"], 2)
+        before = self.hits.get("/gone", 0)
+        self.assertEqual(self.L.check(f"{b}/gone", 3, 0.01, 5)[0], "DEAD")
+        self.assertEqual(self.hits["/gone"] - before, 6)                      # 3 attempts x (HEAD + GET)
+
+    def test_unfollowable_redirects_are_unverified_and_cost_one_link(self):
+        b = self.base
+        urls = [f"{b}/redir-none", f"{b}/redir-empty"] + [f"{b}/redir-file?{i}" for i in range(5)] + [f"{b}/ok"]
+        start = time.monotonic()
+        got = self.L.run_checks(urls, retries=1, wait=0, timeout=5, budget=30)
+        self.assertLess(time.monotonic() - start, 10)     # dead workers would stall the host until the budget
+        self.assertEqual(got[f"{b}/ok"], ("OK", ""))
+        self.assertEqual(got[f"{b}/redir-none"], ("UNVERIFIED", "HTTP 302 without a usable Location"))
+        self.assertEqual(got[f"{b}/redir-empty"][0], "UNVERIFIED")
+        for i in range(5):
+            v, why = got[f"{b}/redir-file?{i}"]
+            self.assertEqual(v, "UNVERIFIED")
+            self.assertIn("non-HTTP", why)
+
+    def test_a_stalled_redirect_target_does_not_starve_other_hosts(self):
+        # 16 links on one host redirect to a second host that stalls; a dead link
+        # on the first host must still be checked long before the stall ends.
+        port = self.srv.server_address[1]
+        urls = [f"http://localhost:{port}/redir-stall?{i}" for i in range(16)] + [f"http://localhost:{port}/gone"]
+        start = time.monotonic()
+        got = self.L.run_checks(urls, retries=1, wait=0, timeout=10, budget=1.5)
+        self.assertLess(time.monotonic() - start, 2.5)
+        self.assertEqual(got[f"http://localhost:{port}/gone"], ("DEAD", "HTTP 404"))
+        self.assertIn("budget", got[f"http://localhost:{port}/redir-stall?0"][1])
+
+    def test_a_malformed_link_is_dead_and_does_not_stop_the_rest(self):
+        found: dict[str, list[str]] = {}
+        self.L.markdown_links('# T\n\n<a href="https://[broken/path#part">x</a> [ok](' + self.base + '/ok)\n'
+                              '[p](http://example.invalid:abc/p) [h](https:///no-host)\n', "docs/t.md", found)
+        self.assertIn("https://[broken/path", found)       # a fragment is cut without parsing the URL
+        got = self.L.run_checks(sorted(found) + [f"{self.base}/redir-bad"], retries=1, wait=0, timeout=5, budget=30)
+        self.assertEqual(got[f"{self.base}/ok"], ("OK", ""))
+        for bad in ("https://[broken/path", "http://example.invalid:abc/p", "https:///no-host"):
+            self.assertEqual(got[bad][0], "DEAD", bad)
+            self.assertIn("malformed URL", got[bad][1])
+        # Host names the HTTP client refuses: decided without any network request.
+        self.assertEqual(got[f"{self.base}/redir-bad"], ("UNVERIFIED", "HTTP 302 to a malformed Location"))
+        odd = ["https://exa%20mple.invalid/", "https://exa mple.invalid/", "https://ex%00a.invalid/"]
+        start = time.monotonic()
+        got = self.L.run_checks(odd, retries=3, wait=5, timeout=5, budget=30)
+        self.assertLess(time.monotonic() - start, 2)      # final at once: no retry backoff
+        for bad in odd:
+            self.assertEqual(got[bad][0], "DEAD", bad)
+            self.assertIn("malformed URL", got[bad][1])
+        # The same exception types raised while PARSING a response are the server's
+        # doing: retried, and never DEAD.
+        got = self.L.run_checks([f"{self.base}/bad-header"], retries=3, wait=0, timeout=5, budget=30)
+        self.assertEqual(got[f"{self.base}/bad-header"][0], "UNVERIFIED")
+        self.assertEqual(self.hits["/bad-header"], 3)
+        # A host-less absolute Location is not grafted onto this host (no request for /no-host).
+        got = self.L.run_checks([f"{self.base}/redir-hostless"], retries=1, wait=0, timeout=5, budget=30)
+        self.assertEqual(got[f"{self.base}/redir-hostless"], ("UNVERIFIED", "HTTP 302 to a malformed Location"))
+        self.assertNotIn("/no-host", self.hits)
+
+    def test_through_a_proxy_only_an_http_answer_is_dead(self):
+        # A path with a space is refused before any connection: DEAD when fetched
+        # directly, but through a proxy the failure may be the proxy's own.
+        link = "http://example.invalid/a b"
+        saved, env = (self.L.PROXIES, self.L.OPENER), {k: os.environ.get(k) for k in ("no_proxy", "NO_PROXY")}
+        try:
+            for k in env:
+                os.environ.pop(k, None)
+            self.L.PROXIES = {"http": "http://proxy.invalid:bad"}   # a broken proxy, not a broken link
+            self.L.OPENER = self.L.make_opener(self.L.PROXIES)
+            got = self.L.run_checks([link], retries=1, wait=0, timeout=5, budget=30)[link]
+            self.assertEqual(got[0], "UNVERIFIED")
+            self.assertIn("through a proxy", got[1])
+            # no_proxy decides the route exactly as urllib does: bypassed, the link itself is judged.
+            os.environ["no_proxy"] = "example.invalid"
+            got = self.L.run_checks([link], retries=1, wait=0, timeout=5, budget=30)[link]
+            self.assertEqual(got[0], "DEAD")
+            self.assertIn("malformed URL", got[1])
+        finally:
+            self.L.PROXIES, self.L.OPENER = saved
+            for k, v in env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_per_host_limit_covers_redirect_hops(self):
+        port = self.srv.server_address[1]
+        self.conc[1] = 0
+        urls = [f"http://localhost:{port}/redir-conc?{i}" for i in range(8)] + \
+               [f"http://127.0.0.1:{port}/conc?d{i}" for i in range(8)]
+        got = self.L.run_checks(urls, retries=1, wait=0, timeout=5, budget=60)
+        self.assertTrue(all(v == ("OK", "") for v in got.values()), got)
+        self.assertLessEqual(self.conc[1], self.L.PER_HOST)
+
+    def test_no_body_is_read_and_the_budget_bounds_the_run(self):
+        start = time.monotonic()
+        self.assertEqual(self.L.check(f"{self.base}/big-redirect", 1, 0, 10), ("OK", ""))
+        self.assertLess(time.monotonic() - start, 2.5)    # a read() of the redirect body would block 3 s
+        start = time.monotonic()
+        got = self.L.run_checks([f"{self.base}/slow", f"{self.base}/ok"], retries=1, wait=0, timeout=10, budget=0.8)
+        self.assertLess(time.monotonic() - start, 2.5)
+        self.assertEqual(got[f"{self.base}/ok"], ("OK", ""))
+        self.assertEqual(got[f"{self.base}/slow"][0], "UNVERIFIED")
+        self.assertIn("budget", got[f"{self.base}/slow"][1])
+
+    def test_main_exit_codes_allowlist_and_list(self):
+        from contextlib import redirect_stdout, redirect_stderr
+        import io
+        b = self.base
+        allow = Path(tempfile.mkdtemp(prefix="allow-")) / "allow.txt"
+        saved = (self.L.collect, self.L.ALLOWLIST)
+
+        def run(links, allow_text, *argv):
+            allow.write_text(allow_text, encoding="utf-8")
+            self.L.collect, self.L.ALLOWLIST = (lambda: links), allow
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = self.L.main(["--retries", "1", "--wait", "0", *argv])
+            return rc, out.getvalue(), err.getvalue()
+        try:
+            rc, out, _ = run({f"{b}/ok": ["docs/a.md:3"], f"{b}/down": ["docs/a.md:4"]}, "")
+            self.assertEqual(rc, 0)                                  # unverified never fails
+            self.assertIn(f"UNVERIFIED  {b}/down  (HTTP 503)  docs/a.md:4", out)
+            rc, out, _ = run({f"{b}/gone": ["docs/a.md:9"]}, "")
+            self.assertEqual(rc, 1)
+            self.assertIn(f"DEAD        {b}/gone  (HTTP 404)  docs/a.md:9", out)
+            rc, out, _ = run({"https:///no-host": ["docs/a.md:2"], f"{b}/ok": ["docs/a.md:3"]}, "")
+            self.assertEqual(rc, 1)                                  # a malformed link fails the run
+            self.assertIn("DEAD        https:///no-host  (malformed URL (no host name))  docs/a.md:2", out)
+            n = self.hits.get("/counted", 0)
+            rc, out, err = run({f"{b}/counted": ["docs/a.md:1"]},
+                               f"{b}/counted  # fixture reason\nhttps://unused.invalid/  # nothing links here\n")
+            self.assertEqual((rc, self.hits.get("/counted", 0)), (0, n))  # allowlisted: never fetched
+            self.assertIn("STALE ALLOW https://unused.invalid/", out)
+            self.assertIn("1 allowlisted", err)
+            rc, _, err = run({f"{b}/ok": ["docs/a.md:1"]}, "https://bad.invalid/\n")
+            self.assertEqual(rc, 1)                                  # an entry without a reason is an error
+            self.assertIn("allow.txt:1", err)
+            rc, out, _ = run({f"{b}/counted": ["docs/a.md:1"]}, "", "--list")
+            self.assertEqual((rc, self.hits.get("/counted", 0)), (0, n))  # --list checks nothing
+            self.assertIn(f"{b}/counted  docs/a.md:1", out)
+            rc, _, _ = run({}, "")
+            self.assertEqual(rc, 0)
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+                self.L.main(["--retries", "x"])
+            self.assertEqual(cm.exception.code, 2)
+        finally:
+            self.L.collect, self.L.ALLOWLIST = saved
+
+    def test_dns_failures_are_dead_only_when_definite(self):
+        import socket
+        import urllib.error
+        nx = urllib.error.URLError(socket.gaierror(socket.EAI_NONAME, "Name or service not known"))
+        again = urllib.error.URLError(socket.gaierror(socket.EAI_AGAIN, "Temporary failure in name resolution"))
+        self.assertEqual(self.L.classify_error(nx)[0], "DEAD")
+        self.assertEqual(self.L.classify_error(again)[0], "UNVERIFIED")
+        self.assertEqual(self.L.classify_error(urllib.error.URLError(ConnectionRefusedError()))[0], "UNVERIFIED")
+        self.assertEqual(self.L.classify_error(urllib.error.URLError(TimeoutError()))[0], "UNVERIFIED")
+
+    def test_collection_skips_code_and_host_hints(self):
+        out: dict[str, list[str]] = {}
+        self.L.markdown_links("# T\n\n[a](https://a.invalid/x#frag) <https://b.invalid/>\n`https://code.invalid/`\n\n"
+                              "```\nhttps://fence.invalid/\n```\n\n<p><a href=\"https://raw.invalid/\">r</a></p>\n\n"
+                              "![i](https://img.invalid/i.png) [rel](../x.md)\n", "docs/t.md", out)
+        self.assertEqual(sorted(out), ["https://a.invalid/x", "https://b.invalid/", "https://img.invalid/i.png",
+                                       "https://raw.invalid/"])
+        self.assertEqual(out["https://raw.invalid/"], ["docs/t.md:10"])
+        page: dict[str, list[str]] = {}
+        self.L.html_links('<link rel="preconnect" href="https://fonts.invalid">\n<link href="https://css.invalid/s.css" '
+                          'rel="stylesheet">\n<script src=\'https://js.invalid/a.js\'></script>', "gh-pages/i.html", 1, page)
+        self.assertEqual(sorted(page), ["https://css.invalid/s.css", "https://js.invalid/a.js"])
+        tricky: dict[str, list[str]] = {}
+        self.L.html_links('<!-- <a href="https://commented.invalid/">old</a> -->\n'
+                          '<a data-href="https://data.invalid/">x</a>\n'
+                          '<a title="use href=https://title.invalid/ here" href="https://real.invalid/">y</a>\n'
+                          '<a title="a > b" href="https://after-gt.invalid/">z</a>', "gh-pages/t.html", 1, tricky)
+        self.assertEqual(tricky, {"https://real.invalid/": ["gh-pages/t.html:3"],
+                                  "https://after-gt.invalid/": ["gh-pages/t.html:4"]})
+
+    def test_allowlist_needs_a_reason(self):
+        p = Path(tempfile.mkdtemp(prefix="allow-")) / "allow.txt"
+        p.write_text("# comment\nhttps://ok.invalid/  # admin page, 404 signed out\nhttps://bare.invalid/\nnot-a-url  # why\n")
+        prefixes, errors = self.L.load_allowlist(p)
+        self.assertEqual(prefixes, ["https://ok.invalid/"])
+        self.assertEqual(len(errors), 2)
+
+    def test_weekly_workflow_runs_the_checker(self):
+        import yaml
+        wf = yaml.safe_load((B.REPO / ".github" / "workflows" / "linkcheck.yml").read_text(encoding="utf-8"))
+        self.assertTrue(wf[True]["schedule"])      # PyYAML reads the bare key `on` as True
+        steps = [s.get("run", "") for s in wf["jobs"]["linkcheck"]["steps"]]
+        self.assertIn("python3 scripts/site/linkcheck.py", steps)
 
 
 class PageContract(unittest.TestCase):

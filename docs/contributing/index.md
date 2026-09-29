@@ -1,4 +1,4 @@
-<!-- docs: sources=scripts/site/build.py reviewed=2026-09-28 -->
+<!-- docs: sources=scripts/site/build.py reviewed=2026-09-29 -->
 # Contributing to the Docs
 
 How documentation pages are written, where they go and how they are kept accurate.

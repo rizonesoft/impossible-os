@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/15-installer-release/TODO-03-update-server.md sources=scripts/generate-changelog.sh,.github/workflows/release.yml,.github/workflows/pages.yml,project.json,gh-pages/CNAME,scripts/site/verify_live.py reviewed=2026-09-29 order=5 -->
+<!-- docs: covers=todo/15-installer-release/TODO-03-update-server.md sources=scripts/generate-changelog.sh,.github/workflows/release.yml,.github/workflows/pages.yml,project.json,gh-pages/CNAME,scripts/site/verify_live.py reviewed=2026-09-29T08:30 order=5 -->
 # Update Server Infrastructure
 
 ## What is it?

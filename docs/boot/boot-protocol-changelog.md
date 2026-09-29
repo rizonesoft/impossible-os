@@ -131,7 +131,7 @@ Both halves of the ABI (the kernel header at `include/kernel/boot_info.h` and th
 Adds three boot_info fields populated by the UEFI bootloader's pre-load ESP sanity gate so the kernel knows the partition was structurally validated before any code was loaded.
 
 - **Commit**: [`fb0c6520`](https://github.com/rizonesoft/impossible-os/commit/fb0c6520) "boot: ESP integrity check (GPT type GUID + FAT32 BPB + required-files batch)"
-- **TODO**: [`02-uefi-hardening-secureboot.md` §13](../../todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md#13-esp-integrity-check)
+- **TODO**: [`02-uefi-hardening-secureboot.md` §13](../../todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md#13-efi-system-partition-integrity-check)
 - **Fields added**: `esp_size_mb` (uint32), `esp_filesystem_type` (uint8 -- FAT32 / FAT16 / unknown), `esp_type_guid_valid` (uint8 -- 1 if the ESP partition's GPT type GUID matched the expected `C12A7328-F81F-11D2-BA4B-00A0C93EC93B`).
 - **Producer contract**: bootloader runs `esp_integrity_check()` before `load_kernel()`; halts via `boot_fatal()` on GPT type GUID mismatch, FAT32 BPB validation failure, or any required-file (BOOTX64.EFI, kernel.exe, boot.conf) missing. On success the three fields are stamped into boot_info as a structural-validity attestation the kernel can echo into BlackBox.
 - **Consumer contract**: `boot_phase0` reads the fields after header validation and surfaces them through the `[BOOT-INTEGRITY]` klog line. A future attestation consumer can chain them into the SRTM PCR replay alongside the v10 UKI flag.
