@@ -33,7 +33,7 @@ title: "TODO-16 -- Win32k Shadow Native API (SSDT Table 1 Router)"
 | Step | Deliverable                                                             | Depends On                   | Status |
 | ---- | ----------------------------------------------------------------------- | ---------------------------- | ------ |
 | 1    | Table 1 base, bounds check, dispatch to Win32k handler array            | `02-kernel-core/TODO-12` §4  | [ ]    |
-| 2    | `win32k_init()` registration order after compositor prerequisites       | `02-kernel-core/TODO-12` §1  | [ ]    |
+| 2    | `win32k_init()` registration order after compositor prerequisites       | `08-graphics-ui/TODO-15` §1  | [ ]    |
 | 3    | Extend or reuse per-process syscall filter bitmap for shadow indices    | `02-kernel-core/TODO-12` §25 | [ ]    |
 | 4    | Public constants in `include/kernel/nt/win32k_ssdt.h` matching `TODO-A` | `TODO-A`                     | [ ]    |
 | 5    | Co-review `KeUserModeCallback` usage with `02-kernel-core/TODO-12` §26  | `02-kernel-core/TODO-12` §26 | [ ]    |
@@ -77,5 +77,5 @@ Co-review note (owned by `02-kernel-core/TODO-12-native-api-ssdt.md §26`): Win3
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` then `tail -1 build/build.log` shows `=== BUILD OK ===`
-- [ ] Serial shows shadow SSDT registration line with expected service count once `02-kernel-core/TODO-12` §1 is complete
+- [ ] Serial shows the shadow SSDT registration line once `08-graphics-ui/TODO-15` §1 lands, with a count equal to the handler waves registered so far
 - [ ] All four platforms from `CLAUDE.md` (QEMU WHPX, QEMU TCG, VirtualBox, bare metal) when Win32k init is enabled

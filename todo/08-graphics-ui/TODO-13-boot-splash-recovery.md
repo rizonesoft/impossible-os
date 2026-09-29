@@ -135,7 +135,7 @@ Poll PS/2 keyboard data port (0x60) for 2 seconds during early boot. F8 key dete
   - Options: Normal, Safe Mode, Recovery Shell, Last Known Good, System Restore, Factory Reset, Startup Repair
 - [ ] Number key scancodes for early polling: `0x02`..`0x08` = 1..7
 - [ ] `boot_f8_apply_mode()`: check the boot mode; if `LAST_KNOWN_GOOD`: `vfs_copy("C:\\HKLM.backup", "C:\\HKLM")` before registry_init; if `RECOVERY`: skip to recovery shell after minimal init; `SAFE` needs nothing extra (gates above)
-- [ ] Call `boot_f8_poll()` from `kernel_main()` immediately after `fb_init()` (framebuffer must be live) but before `boot_splash_init()` (so F8 menu can own the screen)
+- [ ] Take the menu choice where it can still reach policy: the UEFI boot menu (preferred) or Phase 0 before `kernel_config_publish()` (`boot_hw.c`); the published config is immutable, so a post-`fb_init()` pick needs a designed transition
 - [ ] Safe Mode watermark: after desktop would start, if `BOOT_MODE_SAFE`: render "Safe Mode" text at all 4 corners in red using `boot_font_render()` every frame
 - [ ] Canonical recovery menu (the F8 menu in `10-platform-services/TODO-04 §7` is superseded by this one): add System Restore, Factory Reset and Startup Repair entries that hand off to `recovery_dispatch()` owned there
 - [ ] Commit: `"boot/f8: early PS/2 poll, text-mode boot menu, boot_mode_t, safe/recovery/LKG modes"`

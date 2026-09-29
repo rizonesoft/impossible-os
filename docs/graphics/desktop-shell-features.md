@@ -9,7 +9,7 @@ This roadmap plans the desktop-level shell features that sit between the wallpap
 
 **Today.** All shell code lives in [`desktop.c`](../../src/desktop/desktop.c), described in [Desktop Shell Today](../desktop/desktop-shell.md). What already exists toward this roadmap:
 
-- **Wallpaper (partial, section 3).** `load_wallpaper()` reads `Wallpaper` and `WallpaperMode` from `HKLM\SYSTEM\Theme` once at startup, falling back to `C:\Impossible\Web\Wallpaper\default.jpg`, then decodes and scales the image with one of the five fit modes in [`image.h`](../../include/kernel/image.h). There is no reload, no Registry watch and no API to change it while running. The roadmap plans the Windows location (`HKCU\Control Panel\Desktop`), so the move from the shipped key is part of section 3.
+- **Wallpaper (partial, section 3).** `load_wallpaper()` reads `Wallpaper` and `WallpaperMode` from `HKLM\SYSTEM\Theme` once at startup, falling back to `C:\Impossible\Web\Wallpaper\default.jpg`, then decodes and scales the image with one of the five fit modes in [`image.h`](../../include/kernel/image.h). There is no reload, no Registry watch and no API to change it while running, and the Registry values are re-seeded every boot. The roadmap plans the Windows location (`HKCU\Control Panel\Desktop`), so the move from the shipped key is part of section 3.
 - **Right-click (section 2).** None. `desktop_handle_click()` ignores every button except the left one, and the three desktop icons have no actions.
 - **DPI, screenshots, night light, Focus, Quick Settings, virtual desktops.** No code. The generated [theme tokens](theme-system.md) already carry the spec sizes these sections will use (a 256 pixel menu, a 360 pixel flyout, the desktop icon grid), but no C file includes them yet.
 
@@ -48,7 +48,7 @@ flowchart LR
 
 ## How do I use it?
 
-Set `WallpaperMode` to `fill`, `fit`, `center`, `tile` or `stretch` under `HKLM\SYSTEM\Theme` and reboot to see the fit modes (`bash scripts/build.sh run`). No test reaches the shell code yet; the desktop suite (`bash scripts/test.sh SUITE=desktop`) covers the window manager and input around it.
+The wallpaper and its fit mode cannot be changed persistently yet: every boot re-seeds the Registry defaults (`stretch`) and saved hives are never loaded, which [Registry Tree SMP Synchronization and Hive Durability](../../todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md#1-registry-tree-smp-synchronization-and-hive-durability) owns. Boot the desktop with `bash scripts/build.sh run` to see the default. No test reaches the shell code yet; the desktop suite (`bash scripts/test.sh SUITE=desktop`) covers the window manager and input around it.
 
 ## What is not implemented yet?
 

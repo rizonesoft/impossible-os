@@ -803,6 +803,10 @@ Write docs pages that meet the §3 contract for the 9 roadmap files below. Read 
   - `08-graphics-ui/TODO-13` section 5: safe mode is resolved but only the code-integrity gate reads it, so it does not skip the desktop or network; the F8 plan now builds on the bootloader's F8.
   - `08-graphics-ui/TODO-10` section 1: the Start button is drawn at x 4-51 but hit-tested at x 2-49.
 - [x] Commit: `"docs: graphics and ui, part 2 documentation pages"`
+- [x] Post-ship review fixes (adversarial, consistency, perf legs)
+  - `08-graphics-ui/TODO-13` section 5: the F8 choice must be made before `kernel_config_publish()` (`boot_hw.c`), because the published config is immutable and the safe-mode gates read it.
+  - `desktop-shell-features.md` no longer tells readers to change `WallpaperMode` and reboot: every boot re-seeds the Registry defaults.
+  - `08-graphics-ui/TODO-16`: the registration prerequisite is `08-graphics-ui/TODO-15` section 1, not the kernel NTSTATUS section; `TODO-12` section 3 checks the clock every second but repaints only when its text changes.
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
@@ -813,6 +817,9 @@ Write docs pages that meet the §3 contract for the 9 roadmap files below. Read 
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the shell, time, splash, PE or SSDT code it describes changes.
 > - **Status honesty:** no section of these nine roadmaps has shipped; pages describe what runs today (a static taskbar and Start menu, the FILETIME clock, the splash and bootloader F8, an empty shadow table) and link the owning sections.
 > - **Scope boundary:** the design specs in `docs/design/` stay authoritative for visuals; the kernel pages `docs/kernel/time-filetime.md` and `docs/kernel/native-api-ssdt.md` stay authoritative for the clock and the main SSDT, and these pages link them.
+
+> **Verified:** 2026-09-29 | commit `9d820f058` | 8/8 items | build OK | site: OK, 161/232 documented; tests 34646 kernel + 17 user-mode PASS; smoke PASS
+> **Quality reviewed:** 2026-09-29 | Codex 4x (adversarial, adversarial post-ship, consistency, perf) | 9M+1L fixed, 0 open | scope: N/A (docs-only; no source changed; parity research and test coverage N/A; re-adversarial skipped: docs-only fixes)
 
 ---
 

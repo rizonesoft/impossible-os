@@ -17,7 +17,7 @@ This roadmap plans the user-facing side of time: formatted dates and times, a na
 
 1. **Kernel time API**: `time_now()`, `time_now_local()`, `time_to_datetime()` and `time_set()`, which now have to wrap the FILETIME clock rather than keep their own boot anchor.
 2. **Formatting**: `strftime`-style patterns and the short and long date formats.
-3. **Taskbar clock**: the design's caption-sized clock, updated every second, with the calendar in the shared 360 pixel flyout.
+3. **Taskbar clock**: the design's caption-sized clock, checked every second but repainted only when its text changes, with the calendar in the shared 360 pixel flyout.
 4. **Date and time page**: a Settings page to set the time, the zone and the format.
 5. **Time-zone database**: about 30 named zones with daylight saving rules.
 6. **Monotonic uptime**: a millisecond uptime and a days field for the shell command.
