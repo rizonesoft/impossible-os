@@ -74,7 +74,7 @@ file_patterns:
 | 💎  |  21   | §21 Document: SDK and release (12 roadmap files)                         | §2, §3                      |  [x]   |
 | ⭐  |  22   | §22 Doc freshness: `sources=` and a stale-page warning                   | §3                          |  [x]   |
 | 💎  |  23   | §23 Site polish: sitemap, last-updated, link health, OpenGraph           | §1                          |  [x]   |
-| 💎  |  24   | §24 Versioned release docs: pinned refs, version-scoped rendering        | §1, §23                     |  [ ]   |
+| 💎  |  24   | §24 Versioned release docs: pinned refs, version-scoped rendering        | §1, §23                     |  [x]   |
 | 💎  |  25   | §25 Docs search completeness and accessibility                           | §1                          |  [ ]   |
 | 💎  |  26   | §26 Document: Host tools (8 roadmap files)                               | §2, §3                      |  [ ]   |
 | 💎  |  27   | §27 Document: Architecture ports and future research (9 roadmap files)   | §2, §3                      |  [ ]   |
@@ -1147,13 +1147,25 @@ A page that was right when written goes wrong when its code changes. Neither Win
 
 > **Spawned-by:** §23 (split)
 
-A release snapshot is only useful if it still points at the code it describes. Today `scripts/site/build.py` hardcodes `main` in source, image and edit links (`build.py:310`, `:335`, `:435`, `:699`), so a page built at a tag would link to whatever `main` holds now. This section makes the renderer ref-aware; retaining and serving the release trees is §29, and the SDK namespace and API reference are §30 (split 2026-09-29: seven work items is more than one worker context, and the SDK half is blocked on D12 T06 §2/§8).
+A release snapshot is only useful if it still points at the code it describes. Before this section `scripts/site/build.py` hardcoded `main` in source, directory, image, edit and coverage links, so a page built at a tag would have linked to whatever `main` holds now. This section makes the renderer ref-aware; retaining and serving the release trees is §29, and the SDK namespace and API reference are §30 (split 2026-09-29: seven work items is more than one worker context, and the SDK half is blocked on D12 T06 §2/§8).
 
-- [ ] Add a release ref and URL base to rendering: source, directory, image and edit links pin to the release commit; nav, search index and canonical URLs are scoped to that version
-- [ ] Tests: a page rendered at a release ref links to its tag commit after `main` deletes the referenced file; with no ref given, the output is byte-identical to today's
-- [ ] Commit: `"site: version-pinned rendering for release docs"`
+- [x] Release ref and URL base in rendering: `build.py --release REF` (`prepare_release()`) renders REF's tree into `docs/<REF>/`, links pinned to its full SHA
+  - `LINK_REF` pins relative source, directory, image, edit, coverage and freshness links; `Renderer.pin_absolute()` also pins absolute same-repo `blob|tree/main` and raw URLs as Node's WHATWG `URL` resolves them (pages parsed once, `collect()` feeds one `linkcheck.browser_urls()` batch, an unresolved link fails closed; historical owners too), and `pin_mermaid()` the URL operand of diagram `click` statements.
+  - `DOCS_BASE` scopes canonical URLs, `search.json` and `SITE_ROOT`; nav and search URLs are docs-root relative. Only the docs tree is emitted (no landing, sitemap, robots).
+  - Publishing facts come from today's `project.json`; a ref that is not a plain name, names no commit or predates the site (both `v26.3.18-alpha` tags) is refused. Render errors hard-fail; current-commit hygiene checks are skipped.
+- [x] Tests: `ReleaseDocs` (6 cases): pinned links after `main` deletes the file and moves owner, nested `rel/v2` path, dead absolute link, refusals, default build unpinned
+- [x] Commit: `"site: version-pinned rendering for release docs"`
 
-**Test checkpoint:** a local build at `v26.3.18-alpha.821` produces source links that resolve at that tag; the default build's bytes are unchanged. Test on: WSL2 dev host.
+**Test checkpoint:** a fixture tag's release build links to its commit after `main` deletes the file and changes owner; a release build of `84f61e28a` pins 4,850 blob and 64 tree links with no `main` link left outside code; the default build's bytes are unchanged apart from freshness state. Test on: WSL2 dev host.
+
+> **Test runner:** host-side `python3 scripts/site/tests/test_build.py` (class `ReleaseDocs`, 6 cases; needs `node`) | validation: `python3 scripts/site/build.py --release <ref> --check`
+
+> **Notes:**
+> - **What shipped:** `scripts/site/build.py --release REF` renders the docs tree as it was at REF into `docs/<REF>/`, every repository link pinned to REF's full SHA.
+> - **How it integrates:** three module globals (`LINK_REF`, `DOCS_BASE`, `RELEASE`) default to today's values, so the main site build is unchanged; inputs come from the existing `snapshot()`.
+> - **Downstream:** section 29 assembles retained release trees beside `main` and verifies them live; section 30 adds the `sdk/v*` namespace and API reference.
+> - **Canonical doc:** [`docs/infrastructure/documentation-site.md`](../../docs/infrastructure/documentation-site.md) "How are docs for a release built?".
+> - **Scope boundary:** nothing publishes a release tree yet, and pre-site tags cannot be rendered.
 
 ---
 
@@ -1256,6 +1268,7 @@ A release snapshot must survive later deploys. Today every deploy publishes a fr
 - [ ] Release snapshots: when a `v*` tag is pushed, build the docs at that tag into `docs/<version>/` of the published site and add a version picker; `main` stays the default
 - [ ] Version manifest (for example `gh-pages/versions.json`) is the authoritative list of retained releases; every deploy AND every `site-live.yml` repair assembles `main` plus each listed release tree
 - [ ] `scripts/site/verify_live.py` verifies every retained release tree, not just the files of the current `main` build
+- [ ] A version path never collides with a `main` docs folder or another release: refuse a tag whose `docs/<version>/` path is a docs directory or page on `main` (a tag named `boot` would overwrite `docs/boot/`)
 - [ ] Tests: two releases then a `main` deploy and a repair leave both releases served and byte-verified
 - [ ] Commit: `"site: retained release docs trees and version manifest"`
 
@@ -1289,7 +1302,7 @@ The SDK has its own release line (`sdk/v*` tags from D12 T06 §8 `release-sdk.sh
 | ⭐  | Every subsystem has a docs page  | ⚠️ Public APIs only      | ⚠️ Uneven                  | ⬜ §4-§21, §26 coverage   |
 | ⭐  | Facts derived from one source    | ❌ Manual                | ❌ Manual                  | ✅ §1 `project.json`      |
 | ⭐  | Stale narrative page detection   | ❌ Review dates          | ❌ Not tracked             | ✅ §22 `sources=` warns   |
-| 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ⬜ §29 retained snapshots |
+| 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ⚠️ §24 renders, §29 keeps |
 | 💎  | Site search                      | ✅ Full search           | ✅ Sphinx search           | ⚠️ §1 basic, §25 full     |
 | 💎  | External link rot check          | ✅ Learn link validation | ✅ Sphinx `linkcheck`      | ✅ §23 weekly workflow    |
 | 💎  | Published API reference          | ✅ Learn API reference   | ✅ kernel-doc              | ⬜ §30 from D12 T06 §2    |

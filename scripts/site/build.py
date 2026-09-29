@@ -23,6 +23,9 @@ Modes:
                      or missing a new undocumented TODO
   --sync             rewrite project regions in tracked Markdown in place
   --update-baseline  SHRINK the coverage baseline (never adds entries)
+  --release REF      render only the docs tree as it was at commit REF into
+                     <out>/docs/<REF>/, every repository link pinned to REF's
+                     full SHA (keeping release trees published is roadmap work)
 
 Stdlib plus the vendored markdown-it-py under tools/vendor/, so the output is
 identical on every host and in CI. Deterministic: stable ordering, no
@@ -39,12 +42,13 @@ import json
 import os
 import posixpath
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 import unicodedata
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -68,6 +72,14 @@ DEFAULT_OUT = REPO / "build" / "site"
 SNAP_PATHS = ["project.json", "COUNT.md", "docs", "todo", "gh-pages", "resources/icons/src",
               "resources/brand", "resources/backgrounds", "resources/icons/color", "include/desktop/theme_tokens.h", "*.md"]
 SOURCE = "worktree"          # "worktree" | "index" | a commit ref
+# Release rendering (--release). The defaults reproduce the main-branch site byte
+# for byte; a release build pins every repository link to the release commit and
+# publishes under docs/<version>/ instead of docs/.
+LINK_REF = "main"            # the git ref every blob/tree/raw link names
+DOCS_BASE = "docs/"          # site path the docs tree is published under
+RELEASE: str | None = None   # the version path segment(s) of a release build
+VERSION_SEGMENT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+PUBLISH_KEYS = ("site_url", "docs_url", "repo_url", "owner", "repo")
 _FILESET: set[str] | None = None
 _DIRSET: set[str] | None = None
 
@@ -457,16 +469,127 @@ class Renderer:
         self.md = make_md()
         self.pending_anchor_checks: list[tuple[str, str, str]] = []
         self.pending_md_anchor_checks: list[tuple[str, str, str]] = []   # into tracked .md outside docs/
+        # Release builds only: absolute links as a browser resolves them. None on
+        # the collecting pass, which records every candidate in `absolute`.
+        self.browser: dict[str, str | None] | None = None
+        self.absolute: set[str] = set()
 
     def blob_url(self, repo_rel: str) -> str:
-        return f"{self.facts['repo_url']}/blob/main/{repo_rel}"
+        return f"{self.facts['repo_url']}/blob/{LINK_REF}/{repo_rel}"
+
+    def raw_url(self, repo_rel: str) -> str:
+        return f"https://raw.githubusercontent.com/{self.facts['owner']}/{self.facts['repo']}/{LINK_REF}/{repo_rel}"
+
+    def pin_absolute(self, page: Page, url: str) -> str | None:
+        """A release build pins absolute links into this repository's `main` too:
+        a page that spells out https://github.com/<owner>/impossible-os/blob/main/X
+        would otherwise send a reader of an old release to today's X. The link is
+        matched as a browser resolves it, by Node's WHATWG `URL` (`self.browser`,
+        filled between the two release render passes): scheme, host, default
+        port, dot segments, backslashes and credentials are the parser's answer,
+        never a hand-written approximation. Owners compare case-insensitively and
+        include the historical ones. The target must exist in the release tree,
+        and a Markdown fragment must be a GitHub heading id there. Returns None for
+        anything that is not such a link, and always None outside a release build,
+        so the main site is unchanged."""
+        if RELEASE is None:
+            return None
+        if self.browser is None:
+            self.absolute.add(url)
+            return None
+        if url not in self.browser:     # fail closed: an unresolved link must never ship as written
+            self.errors.append(f"docs/{page.rel}: absolute link was not resolved before pinning: {url}")
+            return url
+        resolved = self.browser[url]
+        if not resolved:
+            return None
+        parts = urlsplit(resolved)
+        if parts.scheme not in ("http", "https") or parts.port is not None:
+            return None
+        raw = parts.path.split("/")
+        seg = [unquote(x) for x in raw]
+        owners = {o.lower() for o in [self.facts["owner"], *self.facts.get("_historical_owners", [])]}
+        host = (parts.hostname or "").rstrip(".")
+        if len(seg) < 4 or seg[1].lower() not in owners or seg[2].lower() != self.facts["repo"].lower():
+            return None
+        if host == "github.com" and seg[3] in ("blob", "tree", "raw"):
+            kind, at = seg[3], 4
+        elif host == "raw.githubusercontent.com":
+            kind, at = "rawhost", 3
+        else:
+            return None
+        # GitHub names the branch as `main` or as the full ref `refs/heads/main`.
+        if seg[at:at + 3] == ["refs", "heads", "main"]:
+            rest = "/".join(raw[at + 3:])
+        elif seg[at:at + 1] == ["main"]:
+            rest = "/".join(raw[at + 1:])
+        else:
+            return None
+        fragment = urlsplit(url).fragment      # the parser dropped it; the written one is what a reader follows
+        repo_rel = unquote(rest).rstrip("/")
+        files, dirs = fileset()
+        exists = (repo_rel in dirs or repo_rel == "") if kind == "tree" else repo_rel in files
+        if not exists:
+            self.errors.append(f"docs/{page.rel}: dead link at release {RELEASE} (not in that tree): {url}")
+            return url
+        if kind == "blob" and fragment and repo_rel.endswith(".md"):
+            self.pending_md_anchor_checks.append((page.rel, repo_rel, fragment))
+        if kind == "rawhost":
+            pinned = self.raw_url(rest)
+        else:
+            pinned = f"{self.facts['repo_url']}/{kind}/{LINK_REF}" + (f"/{rest}" if rest else "")
+        return pinned + (f"?{parts.query}" if parts.query else "") + (f"#{fragment}" if fragment else "")
+
+    def pin_mermaid(self, page: Page, source: str) -> str:
+        """Diagram click targets are links a reader follows, so a release pins them
+        like any other (the TODO graph links every roadmap file). Each line is
+        tokenized with shlex, which reads Mermaid's double-quoted strings, with `;`
+        as punctuation so statements split there and a terminator never joins the
+        URL. Only the URL operand of a `click <node> ["href"] "<url>"` statement is
+        pinned; a tooltip or target after it is text. A `%%` line is a Mermaid
+        comment and `#` is ordinary text (`fill:#fff`), never a shell comment. A
+        line naming `click` that cannot be tokenized fails the release rather than
+        keep a `main` link."""
+        if RELEASE is None:
+            return source
+        out = []
+        for line in source.split("\n"):
+            if line.lstrip().startswith("%%"):
+                out.append(line)
+                continue
+            lex = shlex.shlex(line, posix=True, punctuation_chars=";")
+            lex.whitespace_split = True
+            lex.quotes, lex.escape = '"', ""   # Mermaid strings: double quotes, no escapes; `Bob's` is text
+            lex.commenters = ""
+            try:
+                tokens = list(lex)
+            except ValueError:
+                if "click" in line:
+                    self.errors.append(f"docs/{page.rel}: cannot read a Mermaid click line at release {RELEASE}: "
+                                       f"{line.strip()}")
+                out.append(line)
+                continue
+            stmt: list[str] = []
+            for tok in tokens + [";"]:
+                if tok != ";":
+                    stmt.append(tok)
+                    continue
+                if len(stmt) >= 3 and stmt[0] == "click":
+                    url = stmt[3] if stmt[2] == "href" and len(stmt) >= 4 else stmt[2]
+                    pinned = self.pin_absolute(page, url)
+                    if pinned is not None and pinned != url:
+                        line = line.replace(f'"{url}"', f'"{pinned}"')
+                stmt = []
+            out.append(line)
+        return "\n".join(out)
 
     def rewrite_href(self, page: Page, href: str) -> str:
         if href.startswith("#") and len(href) > 1:
             self.pending_anchor_checks.append((page.rel, page.rel, href[1:]))
             return href
         if not href or href.startswith(("#", "mailto:")) or re.match(r"^[a-z][a-z0-9+.-]*:", href):
-            return href
+            pinned = self.pin_absolute(page, href) if href else None
+            return href if pinned is None else pinned
         path, _, frag = href.partition("#")
         target = Path(os.path.normpath(page.src.parent / unquote(path)))
         try:
@@ -484,7 +607,7 @@ class Renderer:
             if repo_rel.startswith("docs/") and idx in files:
                 target, repo_rel = ROOT / idx, idx
             else:
-                return f"{self.facts['repo_url']}/tree/main/{repo_rel}"
+                return f"{self.facts['repo_url']}/tree/{LINK_REF}/{repo_rel}"
         if repo_rel.startswith("docs/") and repo_rel.endswith(".md"):
             doc_rel = repo_rel[len("docs/"):]
             if frag:
@@ -498,9 +621,29 @@ class Renderer:
             self.pending_md_anchor_checks.append((page.rel, repo_rel, frag))
         return self.blob_url(repo_rel) + (f"#{frag}" if frag else "")
 
-    def render(self, page: Page, text: str) -> None:
-        env: dict = {}
-        tokens = self.md.parse(text, env)
+    def collect(self, page: Page, tokens) -> None:
+        """Release builds: offer every link of a parsed page to the same rewriters
+        render() uses, discarding the results, so pin_absolute() records each
+        absolute link for the browser resolution pass. Tokens are not modified."""
+        for tok in tokens:
+            if tok.type == "inline":
+                for child in tok.children or []:
+                    if child.type == "link_open":
+                        self.rewrite_href(page, child.attrGet("href") or "")
+                    elif child.type == "image":
+                        self.rewrite_img(page, child.attrGet("src") or "")
+                    elif child.type == "html_inline":
+                        self.rewrite_raw_html(page, child.content)
+            elif tok.type == "html_block":
+                self.rewrite_raw_html(page, tok.content)
+            elif tok.type == "fence" and tok.info.strip() == "mermaid":
+                self.pin_mermaid(page, tok.content)
+
+    def render(self, page: Page, text: str, tokens=None, env: dict | None = None) -> None:
+        if tokens is None:
+            env = {}
+            tokens = self.md.parse(text, env)
+        env = env if env is not None else {}
         slugger = Slugger()
         plain: list[str] = []
         for i, tok in enumerate(tokens):
@@ -533,7 +676,7 @@ class Renderer:
                         child.content = self.rewrite_raw_html(page, child.content)
             if tok.type == "fence" and tok.info.strip() == "mermaid":
                 tok.type = "html_block"
-                tok.content = f'<pre class="mermaid">{html.escape(tok.content)}</pre>\n'
+                tok.content = f'<pre class="mermaid">{html.escape(self.pin_mermaid(page, tok.content))}</pre>\n'
         page.anchors |= raw_anchors(tokens)
         body = self.md.renderer.render(tokens, self.md.options, env)
         body = ALERT_RE.sub(lambda m: f'<blockquote class="alert alert-{m.group(1).lower()}"><p class="alert-title">{m.group(1).title()}</p><p>', body)
@@ -573,7 +716,8 @@ class Renderer:
 
     def rewrite_img(self, page: Page, src: str) -> str:
         if not src or re.match(r"^[a-z][a-z0-9+.-]*:", src):
-            return src
+            pinned = self.pin_absolute(page, src) if src else None
+            return src if pinned is None else pinned
         target = Path(os.path.normpath(page.src.parent / unquote(src)))
         try:
             repo_rel = target.relative_to(ROOT).as_posix()
@@ -582,7 +726,7 @@ class Renderer:
         if repo_rel not in fileset()[0]:
             self.errors.append(f"docs/{page.rel}: missing image (not a tracked file): {src}")
             return src
-        return f"https://raw.githubusercontent.com/{self.facts['owner']}/{self.facts['repo']}/main/{repo_rel}"
+        return self.raw_url(repo_rel)
 
     def check_anchors(self) -> None:
         for src_rel, doc_rel, frag in self.pending_anchor_checks:
@@ -809,11 +953,17 @@ def check_sources(where: str, sources: list[str], errors: list[str]) -> None:
 
 
 def load_pages(facts: dict, errors: list[str]) -> tuple[dict[str, Page], Renderer]:
+    """Render every docs page. Each page is parsed once. A release build then
+    keeps the parsed tokens and walks them through the same link rewriters with
+    their results discarded, which only collects the absolute links; one Node
+    process resolves them all as a browser would, and the single render pins
+    against that answer. The main build renders each page as it is read."""
     pages: dict[str, Page] = {}
     for src in sorted(DOCS.rglob("*.md")):
         rel = src.relative_to(DOCS).as_posix()
         pages[rel] = Page(src=src, rel=rel, url=page_url(rel))
     r = Renderer(facts, pages, errors)
+    parsed: dict[str, tuple[str, list, dict]] = {}
     for page in pages.values():
         text = page.src.read_text(encoding="utf-8")
         d = parse_directives(text)
@@ -826,7 +976,25 @@ def load_pages(facts: dict, errors: list[str]) -> tuple[dict[str, Page], Rendere
             page.order = int(d["order"])
         if "title" in d:
             page.title = d["title"]
-        r.render(page, text)
+        if RELEASE is None:
+            r.render(page, text)                    # stream: the main build keeps no token trees
+        else:
+            env: dict = {}
+            parsed[page.rel] = (text, r.md.parse(text, env), env)
+    if RELEASE is not None:
+        probe = Renderer(facts, pages, [])          # its errors and anchor checks are the render's to report
+        for page in pages.values():
+            probe.collect(page, parsed[page.rel][1])
+        r.browser = {}
+        if probe.absolute:
+            import linkcheck  # noqa: E402  (sibling module, like freshness: the one WHATWG URL bridge)
+            try:
+                r.browser = linkcheck.browser_urls(sorted(probe.absolute))
+            except linkcheck.NormalizeError as e:
+                errors.append(f"release {RELEASE}: cannot resolve absolute links, so none could be pinned: {e}")
+        for page in pages.values():
+            text, tokens, env = parsed.pop(page.rel)
+            r.render(page, text, tokens, env)
     r.check_anchors()
     return pages, r
 
@@ -910,14 +1078,14 @@ def render_page(tpl: str, facts: dict, pages: dict[str, Page], page: Page, updat
     values = {
         "TITLE": html.escape(page.title),
         "DESCRIPTION": html.escape(description(facts, page)),
-        "CANONICAL": html.escape(site_url(facts, "docs/" + out_path(page.url))),
+        "CANONICAL": html.escape(site_url(facts, DOCS_BASE + out_path(page.url))),
         "ROOT": root,
-        "SITE_ROOT": root + "../",
+        "SITE_ROOT": root + "../" * DOCS_BASE.count("/"),
         "NAV": nav_html(pages, page, root),
         "TOC": toc_html(page),
         "BODY": page.body,
         "UPDATED": stamp,
-        "EDIT": f"{facts['repo_url']}/blob/main/docs/{page.rel}",
+        "EDIT": f"{facts['repo_url']}/blob/{LINK_REF}/docs/{page.rel}",
     }
     # One pass over the TEMPLATE: text substituted in (a page body that mentions
     # %EDIT%, a title with %ROOT%) is never itself rescanned for placeholders.
@@ -941,7 +1109,7 @@ def freshness_table(records) -> str:
     stale = sum(1 for r in records if r.state == "stale")
     rows = []
     for r in sorted(records, key=lambda r: (r.state != "stale", r.kind, r.name)):
-        name = (f'<a href="{{{{repo_url}}}}/blob/main/{html.escape(r.name)}">{html.escape(r.name[5:])}</a>'
+        name = (f'<a href="{{{{repo_url}}}}/blob/{LINK_REF}/{html.escape(r.name)}">{html.escape(r.name[5:])}</a>'
                 if r.kind == "page" else f"Landing page card: {html.escape(r.name)}")
         srcs = ", ".join(f"<code>{html.escape(x)}</code>" for x in r.sources)
         state = html.escape(fresh_label(r))
@@ -974,7 +1142,7 @@ def coverage_page(pages: dict[str, Page], covered: dict[str, list[str]], records
             docs = covered[t]
             links = ", ".join(f'<a href="{pages[d].url or "./"}">{html.escape(pages[d].title)}</a>' for d in docs) \
                 or '<span class="missing">not yet documented</span>'
-            rows.append(f'<tr><td><a href="{{{{repo_url}}}}/blob/main/{t}">{html.escape(todo_title(t))}</a></td><td>{links}</td></tr>')
+            rows.append(f'<tr><td><a href="{{{{repo_url}}}}/blob/{LINK_REF}/{t}">{html.escape(todo_title(t))}</a></td><td>{links}</td></tr>')
         rows.append("</tbody></table></div>")
     pct = (100 * done // total) if total else 100
     body = (f"<h1 id=\"documentation-coverage\">Documentation coverage</h1>"
@@ -1146,19 +1314,22 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
     """Return {site-relative path: bytes} for the whole site."""
     files: dict[str, bytes] = {}
     sources: dict[str, str] = {}   # site path -> the tracked file it is rendered from ("" = generated)
-    facts = dict(facts, design_tokens_css=design_tokens_css())
+    # A release build publishes its docs tree only; the landing pages, assets,
+    # sitemap and robots.txt belong to the main site.
+    landing = RELEASE is None
+    facts = dict(facts, design_tokens_css=design_tokens_css()) if landing else dict(facts)
     # Only when a template uses it: a snapshot of an older tree has no features.json.
-    if any("{{feature_cards}}" in f.read_text(encoding="utf-8", errors="replace")
-           for f in SITE_SRC.rglob("*.html")):
+    if landing and any("{{feature_cards}}" in f.read_text(encoding="utf-8", errors="replace")
+                       for f in SITE_SRC.rglob("*.html")):
         facts["feature_cards"] = feature_cards(facts, errors)
-    for src_dir, dest, exts in ASSET_DIRS:
+    for src_dir, dest, exts in (ASSET_DIRS if landing else ()):
         base = ROOT / src_dir
         if base.is_dir():
             for f in sorted(base.iterdir()):
                 if f.is_file() and f.suffix in exts:
                     files[f"{dest}/{f.name}"] = f.read_bytes()
     # 1. Landing site templates.
-    for src in sorted(SITE_SRC.rglob("*")):
+    for src in (sorted(SITE_SRC.rglob("*")) if landing else ()):
         if src.is_dir():
             continue
         rel = src.relative_to(SITE_SRC).as_posix()
@@ -1170,10 +1341,14 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
             sources[rel] = f"gh-pages/{rel}"
     # 2. Docs.
     pages, _ = load_pages(facts, errors)
-    check_design_lines(pages, errors)
     covered, undocumented = coverage(pages, errors)
-    for page in pages.values():
-        check_sources(f"docs/{page.rel}", page.sources, errors)
+    if landing:
+        # Roadmap and sources= hygiene judge the CURRENT commit; a release is
+        # published as it was, so only rendering errors (dead links, images,
+        # anchors, unknown covers=) fail a release build.
+        check_design_lines(pages, errors)
+        for page in pages.values():
+            check_sources(f"docs/{page.rel}", page.sources, errors)
     import freshness
     freshness.REPO = REPO
     page_sources = {f"docs/{p.rel}": p.sources for p in pages.values() if p.sources}
@@ -1195,16 +1370,17 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
         updated = "" if page is cov else dates.get(f"docs/{page.rel}", "")
         rendered = render_page(tpl, facts, all_pages, page, updated)
         rendered = render_template(rendered, facts, f"docs/{page.rel}", []) if page is cov else rendered
-        files[f"docs/{out}"] = rendered.encode("utf-8")
-        sources[f"docs/{out}"] = "" if page is cov else f"docs/{page.rel}"
-    for name in ("sitemap.xml", "robots.txt"):
-        if name in files:
-            errors.append(f"gh-pages/{name}: generated by build.py; remove the hand-written copy")
-    files["sitemap.xml"] = sitemap(facts, files, sources, dates)
-    files["robots.txt"] = (f"User-agent: *\nAllow: /\n\nSitemap: {site_url(facts, 'sitemap.xml')}\n").encode("utf-8")
+        files[f"{DOCS_BASE}{out}"] = rendered.encode("utf-8")
+        sources[f"{DOCS_BASE}{out}"] = "" if page is cov else f"docs/{page.rel}"
+    if landing:
+        for name in ("sitemap.xml", "robots.txt"):
+            if name in files:
+                errors.append(f"gh-pages/{name}: generated by build.py; remove the hand-written copy")
+        files["sitemap.xml"] = sitemap(facts, files, sources, dates)
+        files["robots.txt"] = (f"User-agent: *\nAllow: /\n\nSitemap: {site_url(facts, 'sitemap.xml')}\n").encode("utf-8")
     index = [{"t": p.title, "u": p.url or "./", "h": [t for _, _, t in p.toc], "x": p.text[:4000]}
              for p in sorted(pages.values(), key=lambda p: p.rel)]
-    files["docs/search.json"] = json.dumps(index, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    files[f"{DOCS_BASE}search.json"] = json.dumps(index, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     build.undocumented = undocumented  # type: ignore[attr-defined]
     return files
 
@@ -1390,11 +1566,23 @@ def main() -> int:
                     help="read every input from the INDEX (pre-commit), not the working tree")
     ap.add_argument("--skip-stats", action="store_true",
                     help="do not compare stat_* regions (pre-commit; post-commit re-syncs them)")
+    ap.add_argument("--release", metavar="REF",
+                    help="render only the docs tree as it was at commit REF into <out>/docs/<REF>/, "
+                         "every repository link pinned to REF's full SHA")
     args = ap.parse_args()
+    if args.release is not None and (args.staged or args.sync is not None or args.sync_head or args.emit_head
+                                     or args.update_baseline or args.freshness or args.skip_stats):
+        ap.error("--release combines only with --check, --out and --quiet")
     args.out = args.out.resolve()
     snap = None
     try:
-        if args.sync_head or args.emit_head:
+        if args.release is not None:
+            try:
+                snap = prepare_release(args.release)
+            except ReleaseError as e:
+                print(f"ERROR: {e}", file=sys.stderr)
+                return 1
+        elif args.sync_head or args.emit_head:
             snap = snapshot(args.ref)
         elif args.staged:
             snap = snapshot("index")
@@ -1402,6 +1590,46 @@ def main() -> int:
     finally:
         if snap is not None:
             shutil.rmtree(snap, ignore_errors=True)
+
+
+class ReleaseError(Exception):
+    pass
+
+
+RELEASE_FACTS: dict = {}     # publishing facts of the CURRENT tree, applied over a release's own
+
+
+def prepare_release(ref: str) -> Path | None:
+    """Resolve REF, materialise its tree and switch rendering to release mode.
+
+    The version path is REF itself, so every /-separated part must be a plain
+    name (no `..`, no leading dash, nothing git would read as revision syntax).
+    Links pin to the full SHA rather than the tag, because a tag can be moved and
+    a published page must keep naming the commit it was built from. Publishing
+    facts (site, repository, owner) come from the current tree: the repository has
+    changed owners before, and the release is served from today's site."""
+    global LINK_REF, DOCS_BASE, RELEASE, RELEASE_FACTS
+    parts = ref.split("/")
+    if not all(VERSION_SEGMENT_RE.fullmatch(p) for p in parts):
+        raise ReleaseError(f"release ref {ref!r}: each /-separated part must match "
+                           f"{VERSION_SEGMENT_RE.pattern} (it becomes the docs/<version>/ path)")
+    r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], cwd=REPO,
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise ReleaseError(f"release ref {ref!r} does not name a commit")
+    sha = r.stdout.strip()
+    current = json.loads((REPO / "project.json").read_text(encoding="utf-8"))
+    snap = snapshot(sha)
+    missing = [p for p in ("project.json", "gh-pages/docs-template.html", "COUNT.md",
+                           "docs/test-coverage/coverage.json") if not (ROOT / p).is_file()]
+    if missing or not DOCS.is_dir():
+        shutil.rmtree(snap, ignore_errors=True)
+        raise ReleaseError(f"release ref {ref!r} ({sha[:12]}) predates the docs site: no "
+                           + ", ".join(missing or ["docs/"]))
+    LINK_REF, DOCS_BASE, RELEASE = sha, f"docs/{ref}/", ref
+    RELEASE_FACTS = {k: current[k] for k in PUBLISH_KEYS if isinstance(current.get(k), str)}
+    RELEASE_FACTS["_historical_owners"] = list(current.get("historical_owners", []))
+    return snap
 
 
 def sync_head(files: list[str], facts: dict, errors: list[str]) -> int:
@@ -1430,6 +1658,10 @@ def sync_head(files: list[str], facts: dict, errors: list[str]) -> int:
 def run(args: argparse.Namespace) -> int:
     facts = load_project()
     errors: list[str] = []
+    if RELEASE is not None:
+        owners = RELEASE_FACTS["_historical_owners"] + facts["_historical_owners"]
+        facts.update(RELEASE_FACTS)
+        facts["_historical_owners"] = sorted(set(owners))
 
     if args.sync_head:
         return sync_head(args.sync_head, facts, errors)
@@ -1476,18 +1708,20 @@ def run(args: argparse.Namespace) -> int:
         print(f"baseline: {len(json.loads(BASELINE.read_text(encoding='utf-8'))['undocumented'])} undocumented TODO file(s)")
         return 0
 
-    check_regions(facts, errors, write=False, skip_stats=args.skip_stats)
-    check_owner_urls(facts, errors)
-    check_donate_links(facts, errors)
-    check_count_badge(errors)
-    check_icon_renders(errors)
     check_scripts(files, errors)
-    check_baseline(undocumented, errors)
-    sys.path.insert(0, str(REPO / "scripts" / "site"))
-    import gen_theme_header  # noqa: E402  (sibling module; set_root() repoints it at a snapshot)
-    errors.extend(gen_theme_header.check())
-    import repo_meta  # noqa: E402  (offline half; the live GitHub comparison is repo-metadata.yml)
-    errors.extend(repo_meta.validate(json.loads(PROJECT_FILE.read_text(encoding="utf-8"))))
+    if RELEASE is None:
+        # Repository hygiene of the CURRENT commit; a release is published as it was.
+        check_regions(facts, errors, write=False, skip_stats=args.skip_stats)
+        check_owner_urls(facts, errors)
+        check_donate_links(facts, errors)
+        check_count_badge(errors)
+        check_icon_renders(errors)
+        check_baseline(undocumented, errors)
+        sys.path.insert(0, str(REPO / "scripts" / "site"))
+        import gen_theme_header  # noqa: E402  (sibling module; set_root() repoints it at a snapshot)
+        errors.extend(gen_theme_header.check())
+        import repo_meta  # noqa: E402  (offline half; the live GitHub comparison is repo-metadata.yml)
+        errors.extend(repo_meta.validate(json.loads(PROJECT_FILE.read_text(encoding="utf-8"))))
 
     if errors:
         for e in errors:
@@ -1517,6 +1751,7 @@ def run(args: argparse.Namespace) -> int:
         total = len(todo_files())
         print(f"site: OK ({len(files)} files, {docs} doc pages, "
               f"{total - len(undocumented)}/{total} TODO files documented)"
+              + (f" [release {RELEASE} @ {LINK_REF[:12]}]" if RELEASE is not None else "")
               + ("" if args.check else f" -> {args.out}"))
     return 0
 

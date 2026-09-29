@@ -6,9 +6,13 @@ Run: python3 scripts/site/tests/test_build.py
 
 from __future__ import annotations
 
+import argparse
+import contextlib
+import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,6 +24,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
 import build as B  # noqa: E402
+B.REPO_REAL = B.REPO   # the real checkout, for fixtures that borrow a canonical input
 import gen_theme_header as G  # noqa: E402
 
 FACTS = {"repo_url": "https://example.invalid/o/impossible-os", "owner": "o", "repo": "impossible-os",
@@ -722,6 +727,258 @@ def git_env(date: str | None = None) -> dict:
     if date:
         env.update(GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
     return env
+
+
+@unittest.skipUnless(shutil.which("node"), "release builds resolve links with Node's WHATWG URL")
+class ReleaseDocs(unittest.TestCase):
+    """Section 24: a docs tree rendered at a release commit keeps linking to that
+    commit after main moves on, and is published under docs/<version>/.
+
+    Repository URLs are spelled with an @GH@ host placeholder, expanded on write
+    and folded back on read, so this file never carries a literal repository URL
+    for an invented owner (the drift check's owner scan would rightly flag one)."""
+
+    TEMPLATE = ('<link rel="canonical" href="%CANONICAL%"><link rel="icon" href="%SITE_ROOT%icon.png">'
+                '<a class="edit" href="%EDIT%">edit</a><a class="home" href="%ROOT%">docs</a>%BODY%')
+
+    def setUp(self):
+        self.saved = (B.REPO, B.ROOT, B.SOURCE, B._FILESET, B._DIRSET, B.ANCHOR_CACHE,
+                      B.LINK_REF, B.DOCS_BASE, B.RELEASE, B.RELEASE_FACTS)
+        self.root = Path(tempfile.mkdtemp(prefix="release-"))
+        self.out = Path(tempfile.mkdtemp(prefix="release-out-"))
+        self.snaps: list[Path] = []
+        B.ANCHOR_CACHE = self.root / "anchor-cache.json"
+
+    def tearDown(self):
+        (B.REPO, B.ROOT, B.SOURCE, B._FILESET, B._DIRSET, B.ANCHOR_CACHE,
+         B.LINK_REF, B.DOCS_BASE, B.RELEASE, B.RELEASE_FACTS) = self.saved
+        B.set_root(B.ROOT)
+        for s in self.snaps:
+            shutil.rmtree(s, ignore_errors=True)
+
+    def git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.root, check=True, env=git_env("2026-05-01T00:00:00Z"),
+                              capture_output=True, text=True).stdout
+
+    def write(self, rel, text):
+        (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (self.root / rel).write_text(text.replace("@GHU@", "GitHub" + ".com").replace("@GH@", "github" + ".com"),
+                                     encoding="utf-8")
+
+    @staticmethod
+    def fold(text):
+        return text.replace("github" + ".com", "@GH@")
+
+    def read(self, rel):
+        return self.fold((self.out / rel).read_text(encoding="utf-8"))
+
+    def project(self, owner, historical):
+        return json.dumps({"name": "Fixture OS", "tagline": "t", "owner": owner, "repo": "impossible-os",
+                           "repo_url": f"https://@GH@/{owner}/impossible-os",
+                           "site_url": "https://example.invalid", "docs_url": "https://example.invalid/docs/",
+                           "release_date": "2028-08-08", "historical_owners": historical})
+
+    def fixture(self):
+        """v1 has src/x.c, img.png and a docs page linking them every way a page can;
+        the next commit on main deletes both and moves the repository to owner "n"."""
+        self.git("init", "-q", "-b", "main")
+        self.write("project.json", self.project("o", ["oldo"]))
+        self.write("COUNT.md", "x\n")
+        self.write("docs/test-coverage/coverage.json", '{"total_suites": 1, "total_assertions": 2}')
+        self.write("gh-pages/docs-template.html", self.TEMPLATE)
+        self.write("src/x.c", "int x;\n")
+        self.write("img.png", "png")
+        self.write("docs/index.md",
+                   "# Home\n\n[rel](../src/x.c) [dir](../src)\n"
+                   "[abs](https://@GH@/oldo/impossible-os/blob/main/src/x.c#L1)\n"
+                   "[absdir](https://@GHU@/O/Impossible-OS/tree/main/src)\n"
+                   "[other](https://@GH@/someone/else/blob/main/src/x.c)\n"
+                   "![r](../img.png) ![a](https://raw.githubusercontent.com/o/impossible-os/main/img.png)\n"
+                   "<a href=\"https://@GH@/o/impossible-os/blob/main/src/x.c\">raw html</a>\n\n"
+                   "```mermaid\ngraph TD\n  a[\"A\"]\n  click a \"https://@GH@/o/impossible-os/blob/main/src/x.c\"\n"
+                   "  click b href \"https://@GH@/o/impossible-os/blob/main/src/x.c\" \"tip\" _blank;\n"
+                   "  c[\"Bob's\"]; d-->c; click c \"https://@GH@/o/impossible-os/blob/main/src/x.c\"\n"
+                   "\tclick\td \"https://@GH@/o/impossible-os/blob/main/src/x.c\" \"https://@GH@/o/impossible-os/blob/main/tip.c\"\n"
+                   "  style e fill:#fff; click e \"https://@GH@/o/impossible-os/blob/main/src/x.c\"\n"
+                   "  %% click f \"https://@GH@/o/impossible-os/blob/main/commented.c\n"
+                   "  click g \"http://@GH@:80/o/impossible-os/blob/main/src/x.c\"\n```\n\n"
+                   "[http](http://@GH@/o/impossible-os/blob/main/src/x.c) "
+                   "[port](https://@GH@:443/o/impossible-os/blob/main/src/x.c) "
+                   "[enc](https://@GH@/%6F/impossible-os/blob/m%61in/src/x.c) "
+                   "[user](https://u@@GH@/o/impossible-os/blob/main/src/x.c) "
+                   "[frag](https://@GH@/o/impossible-os/blob/main/docs/sub/page.md#sub) "
+                   "[dot](https://@GH@/./o/impossible-os/blob/x/../main/src/x.c) "
+                   "[encdot](https://@GH@/o/impossible-os/blob/x/%2e%2e/main/src/x.c) "
+                   "[ghraw](https://@GH@/o/impossible-os/raw/main/img.png) "
+                   "[fullref](https://@GH@/o/impossible-os/raw/refs/heads/main/img.png) "
+                   "[hostref](https://raw.githubusercontent.com/o/impossible-os/refs/heads/main/img.png) "
+                   "[blobref](https://@GH@/o/impossible-os/blob/refs/heads/main/src/x.c)\n\n"
+                   "<a href=\"https://@GH@\\o\\impossible-os\\blob\\main\\src\\x.c\">backslash</a>\n\n"
+                   "`https://@GH@/o/impossible-os/blob/main/src/x.c`\n")
+        self.write("docs/sub/page.md", "<!-- docs: covers=todo/01-x/TODO-01-a.md sources=src/x.c -->\n"
+                                       "# Sub\n\n[home](../index.md)\n")
+        self.write("todo/01-x/TODO-01-a.md", "# TODO-01 -- A\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "--no-verify", "-m", "v1")
+        self.git("tag", "v1")
+        self.git("tag", "rel/v2")
+        self.sha = self.git("rev-parse", "v1^{commit}").strip()
+        (self.root / "src" / "x.c").unlink()
+        (self.root / "img.png").unlink()
+        self.write("project.json", self.project("n", ["o", "oldo"]))
+        self.git("add", "-A")
+        self.git("commit", "-q", "--no-verify", "-m", "main moves on")
+        B.REPO, B.SOURCE, B._FILESET, B._DIRSET = self.root, "worktree", None, None
+        B.set_root(self.root)
+
+    def release(self, ref):
+        snap = B.prepare_release(ref)
+        self.snaps.append(snap)
+        args = argparse.Namespace(check=False, out=self.out, quiet=True, sync=None, sync_head=None,
+                                  emit_head=None, update_baseline=False, freshness=False, skip_stats=False,
+                                  staged=False, release=ref, ref="HEAD")
+        return B.run(args)
+
+    def test_release_links_pin_to_the_tag_commit_after_main_deletes_the_file(self):
+        self.fixture()
+        self.assertEqual(self.release("v1"), 0)
+        self.assertEqual(sorted(p.relative_to(self.out).as_posix() for p in self.out.rglob("*") if p.is_file()),
+                         ["docs/v1/coverage.html", "docs/v1/index.html", "docs/v1/search.json",
+                          "docs/v1/sub/page.html"])
+        page = self.read("docs/v1/index.html")
+        blob = f"https://@GH@/n/impossible-os/blob/{self.sha}/src/x.c"
+        self.assertIn(f'href="{blob}"', page)                                     # relative link
+        self.assertIn(f'href="https://@GH@/n/impossible-os/tree/{self.sha}/src"', page)
+        self.assertIn(f'href="{blob}#L1"', page)                                  # historical owner, fragment kept
+        self.assertIn(f'href="https://@GH@/n/impossible-os/tree/{self.sha}/src"', page)
+        self.assertIn('href="https://@GH@/someone/else/blob/main/src/x.c"', page)   # another repo
+        self.assertIn(f'src="https://raw.githubusercontent.com/n/impossible-os/{self.sha}/img.png"', page)
+        self.assertEqual(page.count(f'src="https://raw.githubusercontent.com/n/impossible-os/{self.sha}/img.png"'), 2)
+        self.assertIn(f'href="{blob}">raw html', page)
+        self.assertIn(f'click a &quot;{blob}&quot;', page)                          # diagram click target
+        self.assertIn(f'click b href &quot;{blob}&quot; &quot;tip&quot; _blank;', page)   # terminator kept apart
+        self.assertIn(f'd--&gt;c; click c &quot;{blob}&quot;', page)              # a statement after `;`
+        self.assertIn(f'click\td &quot;{blob}&quot; &quot;https://@GH@/o/impossible-os/blob/main/tip.c&quot;',
+                      page)                                                      # tab, tooltip is text
+        self.assertIn(f'href="{blob}">port', page)
+        self.assertIn(f'href="{blob}">http', page)
+        self.assertIn(f'fill:#fff; click e &quot;{blob}&quot;', page)            # `#` is not a comment
+        self.assertIn('%% click f &quot;https://@GH@/o/impossible-os/blob/main/commented.c', page)
+        self.assertIn(f'click g &quot;{blob}&quot;', page)
+        self.assertIn(f'href="{blob}">enc', page)
+        self.assertIn(f'href="{blob}">user', page)       # credentials do not change where a browser goes
+        self.assertIn(f'href="{blob}">dot', page)
+        self.assertIn(f'href="{blob}">encdot', page)
+        self.assertIn(f'href="{blob}">backslash', page)
+        self.assertIn(f'href="https://@GH@/n/impossible-os/raw/{self.sha}/img.png">ghraw', page)
+        self.assertIn(f'href="https://@GH@/n/impossible-os/raw/{self.sha}/img.png">fullref', page)
+        self.assertIn(f'href="https://raw.githubusercontent.com/n/impossible-os/{self.sha}/img.png">hostref', page)
+        self.assertIn(f'href="{blob}">blobref', page)
+        self.assertIn(f'href="https://@GH@/n/impossible-os/blob/{self.sha}/docs/sub/page.md#sub"', page)
+        self.assertIn("<code>https://@GH@/o/impossible-os/blob/main/src/x.c</code>", page)  # code is text
+        self.assertIn('href="https://example.invalid/docs/v1/"', page)             # version-scoped canonical
+        self.assertIn(f'href="https://@GH@/n/impossible-os/blob/{self.sha}/docs/index.md"', page)
+        self.assertIn('href="../../icon.png"', page)                               # site root is two levels up
+        sub = self.read("docs/v1/sub/page.html")
+        self.assertIn('href="https://example.invalid/docs/v1/sub/page.html"', sub)
+        self.assertIn('<a href="../">home</a>', sub)
+        self.assertIn('href="../../../icon.png"', sub)
+        self.assertNotIn("/blob/main/docs", sub)
+        cov = self.read("docs/v1/coverage.html")
+        self.assertIn(f'href="https://@GH@/n/impossible-os/blob/{self.sha}/todo/01-x/TODO-01-a.md"', cov)
+        self.assertIn(f'href="https://@GH@/n/impossible-os/blob/{self.sha}/docs/sub/page.md"', cov)
+        self.assertNotIn("/blob/main/", cov)
+        self.assertIn("up to date", cov)          # freshness is judged at the release, not today's main
+
+    def test_default_build_keeps_main_links_and_the_whole_site(self):
+        self.fixture()
+        self.write("gh-pages/index.html", "<p>{{name}}</p>")
+        self.write("docs/design/tokens.json", (B.REPO_REAL / "docs/design/tokens.json").read_text(encoding="utf-8"))
+        self.write("docs/design/scope.json", '{"shell_files": [], "ui_title_pattern": "^$"}')
+        self.write("src/x.c", "int x;\n")
+        self.write("img.png", "png")
+        self.git("add", "-A")
+        self.git("commit", "-q", "--no-verify", "-m", "landing")
+        errors: list[str] = []
+        files = B.build(B.load_project(), errors)
+        self.assertEqual(errors, [])
+        for name in ("index.html", "sitemap.xml", "robots.txt", "docs/index.html", "docs/search.json",
+                     "docs/coverage.html", "docs/sub/page.html"):
+            self.assertIn(name, files)
+        page = self.fold(files["docs/index.html"].decode("utf-8"))
+        self.assertIn('href="https://example.invalid/docs/"', page)
+        self.assertIn('href="../icon.png"', page)
+        self.assertIn('href="https://@GH@/n/impossible-os/blob/main/docs/index.md"', page)
+        self.assertIn('href="https://@GH@/oldo/impossible-os/blob/main/src/x.c#L1"', page)   # left as written
+        self.assertIn('click b href &quot;https://@GH@/o/impossible-os/blob/main/src/x.c&quot;', page)
+        self.assertIn('/blob/main/todo/01-x/TODO-01-a.md', self.fold(files["docs/coverage.html"].decode("utf-8")))
+
+    def test_nested_version_path_and_dead_absolute_link(self):
+        self.fixture()
+        self.assertEqual(self.release("rel/v2"), 0)
+        page = self.read("docs/rel/v2/index.html")
+        self.assertIn('href="https://example.invalid/docs/rel/v2/"', page)
+        self.assertIn('href="../../../icon.png"', page)
+        # An absolute link into this repository must exist in the release tree.
+        self.write("docs/index.md", "# Home\n\n[gone](https://@GH@/o/impossible-os/blob/main/nope.c)\n"
+                                    "[gone2](http://@GH@/o/impossible-os/blob/main/nope2.c)\n"
+                                    "[gone3](https://@GH@/o/impossible-os/raw/main/nope3.png)\n"
+                                    "![gone4](https://raw.githubusercontent.com/o/impossible-os/refs/heads/main/nope4.png)\n"
+                                    "[frag](https://@GH@/o/impossible-os/blob/main/docs/sub/page.md#missing)\n\n"
+                                    "```mermaid\ngraph TD\n  click a \"https://@GH@/o/impossible-os/blob/main/x\n```\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "--no-verify", "-m", "dead")
+        self.git("tag", "v3")
+        B.LINK_REF, B.DOCS_BASE, B.RELEASE = "main", "docs/", None
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(self.release("v3"), 1)
+        msgs = self.fold(err.getvalue())
+        self.assertIn("dead link at release v3 (not in that tree): https://@GH@/o/impossible-os/blob/main/nope.c", msgs)
+        self.assertIn("no such GitHub heading id): docs/sub/page.md#missing", msgs)
+        self.assertIn("(not in that tree): http://@GH@/o/impossible-os/blob/main/nope2.c", msgs)
+        self.assertIn("(not in that tree): https://@GH@/o/impossible-os/raw/main/nope3.png", msgs)
+        self.assertIn("(not in that tree): https://raw.githubusercontent.com/o/impossible-os/refs/heads/main/nope4.png", msgs)
+        self.assertIn("cannot read a Mermaid click line at release v3", msgs)
+
+    def test_refusals(self):
+        self.fixture()
+        for ref, why in (("../x", "must match"), ("-v", "must match"), ("v1/", "must match"),
+                         ("nope", "does not name a commit")):
+            with self.assertRaises(B.ReleaseError) as cm:
+                B.prepare_release(ref)
+            self.assertIn(why, str(cm.exception))
+        self.git("checkout", "-q", "--orphan", "old")
+        self.git("rm", "-rq", "--cached", ".")
+        for f in list(self.root.iterdir()):
+            if f.name != ".git":
+                shutil.rmtree(f) if f.is_dir() else f.unlink()
+        self.write("README.md", "# old\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "--no-verify", "-m", "pre-site")
+        self.git("tag", "v0")
+        self.git("checkout", "-q", "-f", "main")
+        with self.assertRaises(B.ReleaseError) as cm:
+            B.prepare_release("v0")
+        self.assertIn("predates the docs site", str(cm.exception))
+
+    def test_an_unresolved_absolute_link_fails_closed(self):
+        errors: list[str] = []
+        r = B.Renderer(dict(FACTS, _historical_owners=[]), {}, errors)
+        r.browser = {}                        # the render pass, with nothing collected
+        B.RELEASE = "v9"
+        page = B.Page(src=Path("docs/p.md"), rel="p.md", url="p.html")
+        url = "https://github" + ".com/o/impossible-os/blob/main/x"
+        self.assertEqual(r.pin_absolute(page, url), url)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("not resolved before pinning", errors[0])
+
+    def test_default_build_is_not_pinned(self):
+        r = B.Renderer(dict(FACTS, _historical_owners=[]), {}, [])
+        url = "https://github" + ".com/o/impossible-os/blob/main/x"
+        self.assertIsNone(r.pin_absolute(None, url))
+        self.assertEqual(r.blob_url("x"), "https://example.invalid/o/impossible-os/blob/main/x")
+        self.assertEqual(r.pin_mermaid(None, f'click a "{url}"'), f'click a "{url}"')
 
 
 class SitePolish(unittest.TestCase):

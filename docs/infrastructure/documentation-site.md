@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-10-documentation-site.md sources=scripts/site/build.py,scripts/site/freshness.py,scripts/site/repo_meta.py,.github/workflows/pages.yml,.githooks/post-commit,scripts/site/render-brand.sh,scripts/site/verify_live.py,.github/workflows/site-live.yml,scripts/site/linkcheck.py,.github/workflows/linkcheck.yml,gh-pages/docs-template.html reviewed=2026-09-29 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-10-documentation-site.md sources=scripts/site/build.py,scripts/site/freshness.py,scripts/site/repo_meta.py,.github/workflows/pages.yml,.githooks/post-commit,scripts/site/render-brand.sh,scripts/site/verify_live.py,.github/workflows/site-live.yml,scripts/site/linkcheck.py,.github/workflows/linkcheck.yml,gh-pages/docs-template.html reviewed=2026-09-29T21:00 -->
 # Documentation Site
 
 The documentation you are reading is generated from the Markdown files in the repository's `docs/` folder and published to [impossibleos.co/docs](https://impossibleos.co/docs/) on every push to `main`. The same generator builds the landing page and the [desktop design mockup](https://impossibleos.co/design/), and it refuses a commit when anything published would disagree with its source.
@@ -91,6 +91,14 @@ It runs in two places. The Pages workflow's `verify` job runs it after every dep
 
 Browsers and the CDN may still show a page up to ten minutes old (GitHub Pages sends `Cache-Control: max-age=600`), so a change you pushed can look missing for a few minutes after the deploy turns green.
 
+## How are docs for a release built?
+
+`python3 scripts/site/build.py --release <ref>` renders the docs tree as it was at a tagged commit into `build/site/docs/<ref>/`, for example `docs/v1.2.0/`. The inputs come from that commit, not the working tree, so pages, links and last-updated dates are the release's own. Every link into the repository, including absolute `github.com/.../blob/main/...` links, raw image URLs and diagram `click` targets, is rewritten to the release's full commit SHA rather than the tag, because a tag can be moved. A reader following a release page's source link therefore lands on the code that release shipped, even after `main` deletes the file. Absolute links are matched as a browser resolves them, by Node's WHATWG `URL` parser (the same bridge the link checker uses), so `http`, a default port, `./` and `../` segments, backslashes or credentials in a link cannot hide it, and a release build needs `node`. Links written inside code are text and stay as written.
+
+Canonical URLs, the search index and the navigation are scoped to the version path. Only the docs tree is written: the landing pages, sitemap and `robots.txt` belong to the `main` site. The owner, repository and site URLs come from today's `project.json`, since the repository has changed owners before and the release is served from today's site.
+
+A release build fails on a dead link, image or anchor judged against the release's own tree, but skips the hygiene checks that judge the current commit (project regions, coverage baseline, design lines, `sources=` paths). A ref that is not a plain name (each `/`-separated part matches `[A-Za-z0-9][A-Za-z0-9._-]*`), does not name a commit, or predates the docs site is refused; the two `v26.3.18-alpha` tags predate it. Keeping several releases published beside `main` across deploys is [retained release trees](../../todo/00-infrastructure/TODO-10-documentation-site.md#29-retained-release-trees-snapshots-manifest-live-verification) on the roadmap, and the SDK's own release line and API reference follow in [SDK release docs](../../todo/00-infrastructure/TODO-10-documentation-site.md#30-sdk-release-docs-and-api-reference).
+
 ## How are external links checked?
 
 Links to other websites rot, but checking them on every commit would make a push depend on someone else's server. `scripts/site/linkcheck.py` collects every `http(s)` link a reader can follow in `docs/` and the rendered `gh-pages/` templates (not URLs inside code), and `.github/workflows/linkcheck.yml` runs it every Monday. Each link is first put in the form a browser would request, using the WHATWG URL parser in Node, which also resolves every redirect (so a link written in raw HTML and the same link in Markdown get one verdict; if Node is missing, fails or times out, the run stops with exit 2 rather than guess), then tried with `HEAD`, then `GET` when a server refuses `HEAD` or says the page is gone, with retries. Redirects are followed without reading any response body, at most four requests go to one host at a time, and the run has a 15-minute budget, after which unanswered links are reported rather than lost to a cancelled job:
@@ -109,13 +117,14 @@ python3 scripts/site/build.py            # build into build/site/
 python3 -m http.server -d build/site     # preview at http://localhost:8000/docs/
 python3 scripts/site/build.py --check    # what CI runs
 python3 scripts/site/build.py --sync     # rewrite project regions
+python3 scripts/site/build.py --release v1.2.0   # docs as they were at a release tag
 python3 scripts/site/linkcheck.py        # external link check (network)
 bash scripts/site/render-brand.sh        # re-render README brand images
 ```
 
 ## What is not done yet?
 
-The roadmap for the site is [TODO-10](../../todo/00-infrastructure/TODO-10-documentation-site.md): pages for the remaining roadmap files, section-level search, accessible search results and per-release snapshots.
+The roadmap for the site is [TODO-10](../../todo/00-infrastructure/TODO-10-documentation-site.md): pages for the remaining roadmap files, section-level search, accessible search results, keeping release snapshots published across deploys (rendering one exists, see above) and the SDK API reference.
 
 ## How does this compare with Windows and Linux?
 
