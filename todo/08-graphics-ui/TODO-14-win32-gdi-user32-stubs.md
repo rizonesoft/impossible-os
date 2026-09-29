@@ -11,7 +11,7 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 > **Goal:** Build the Win32 GDI (graphics device context) and USER32 (window/message) stub layer that lets PE32+ applications call standard Windows drawing and windowing APIs against Impossible OS without modification. This is the prerequisite bridge for the Win32 compatibility layer in `02-kernel-core`.
 
 > [!IMPORTANT]
-> **Already exists**: All graphics primitives (`gfx_draw_line`, `gfx_fill_rect`, `gfx_draw_rect`, `gfx_fill_circle`, `gfx_blit_alpha`, `gfx_surface_create/destroy`, `gfx_surface_t`) in `gfx.h`. Font system (`ttf_draw_string`, `ttf_get`, `FONT_UI`, `FONT_UI_BOLD`) in `font_mgr.h`. Window manager (`wm_create_window`, `wm_destroy_window`, `wm_move_window`, `wm_resize_window`, `wm_focus_window`, `wm_mark_dirty`) in `wm.h`. Cursor shapes (`cursor_set_shape`, `CURSOR_ARROW/HAND/TEXT/MOVE/WAIT/CROSSHAIR/FORBIDDEN/RESIZE_*`) in `cursor.h`. Icon system (`icon_get`, `icon_for_extension`) in `icon_store.h`. `MessageBox`, `dialog_file_open/save`, `dialog_color` from TODO-05. `wm_minimize/maximize/restore/set_title` from TODO-06. **Missing**: all Win32 handle types (`HDC`, `HBITMAP`, etc.), GDI DC object table, shell icon index maps, USER32 message-loop infrastructure, `WM_*` constant IDs. **Scope boundary**: this TODO is stubs only -- each Win32 API wraps an existing Impossible OS primitive; the full Win32 PE loader and syscall thunking belong to `02-kernel-core`. Complete sections in order: icon map → GDI DC → GDI drawing → GDI text → cursor/icon/metrics → USER32 windows → USER32 message loop → dialogs.
+> **Already exists**: All graphics primitives (`gfx_draw_line`, `gfx_fill_rect`, `gfx_draw_rect`, `gfx_fill_circle`, `gfx_blit_alpha`, `gfx_surface_create/destroy`, `gfx_surface_t`) in `gfx.h`. Font system (`ttf_draw_string`, `ttf_get`, `FONT_UI`, `FONT_UI_BOLD`) in `font_mgr.h`. Window manager (`wm_create_window`, `wm_destroy_window`, `wm_move_window`, `wm_resize_window`, `wm_focus_window`, `wm_mark_dirty`) in `wm.h`. Cursor shapes (`cursor_set_shape`, `CURSOR_ARROW/HAND/TEXT/MOVE/WAIT/CROSSHAIR/FORBIDDEN/RESIZE_*`) in `cursor.h`. Icon system (`icon_get`, `icon_for_extension`) in `icon_store.h`. `MessageBox`, `dialog_file_open/save`, `dialog_color` are planned in `TODO-06` §8 and `wm_minimize/maximize/restore/set_title` in `TODO-08` §1; neither exists yet (checked 2026-09-29), and `struct wm_window` has no message queue or window procedure. PE imports resolve only from `kernel32.dll` and `ntdll.dll` today (`src/kernel/pe.c`). **Missing**: all Win32 handle types (`HDC`, `HBITMAP`, etc.), GDI DC object table, shell icon index maps, USER32 message-loop infrastructure, `WM_*` constant IDs. **Scope boundary**: this TODO is stubs only -- each Win32 API wraps an existing Impossible OS primitive; the full Win32 PE loader belongs to `10-platform-services/TODO-07`, and the kernel `NtGdi`/`NtUser` calls to `08-graphics-ui/TODO-15`. Complete sections in order: icon map → GDI DC → GDI drawing → GDI text → cursor/icon/metrics → USER32 windows → USER32 message loop → dialogs.
 >
 > **USER32 export rows:** authoritative per-export checklist and Done bits live in [`../10-platform-services/TODO-A-user32-export-master-table.md`](../10-platform-services/TODO-A-user32-export-master-table.md) (do not maintain a second export inventory in this file).
 
@@ -23,9 +23,10 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 - `include/cursor.h` -- `cursor_set_shape()`, `cursor_shape_t` enum -- used by §7 `LoadCursor/SetCursor`
 - `include/icon_store.h` -- `icon_get()`, `icon_for_extension()`, `system_icon_t` -- used by §1 shell icon map and §7 `LoadIcon`
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous()`, `pmm_free()` -- used by §2 `CreateCompatibleBitmap` to back `HBITMAP`
-- `include/desktop/controls.h` (TODO-05) -- `MessageBox()`, `dialog_file_open/save()`, `dialog_color()` -- wrapped by §8
-- `include/desktop/wm.h` -- `wm_minimize()`, `wm_maximize()`, `wm_restore()`, `wm_set_title()` (TODO-06) -- used by §5 `ShowWindow`
-- Related (no stable XREF target): `02-kernel-core/TODO-*` (Win32 compatibility layer) -- this TODO is a direct prerequisite; PE32+ loader will call these GDI/USER32 stubs from user-mode via syscall thunks
+- `include/desktop/dialogs.h` (planned in `TODO-06` §8) -- `MessageBox()`, `dialog_file_open/save()`, `dialog_color()` -- wrapped by §8
+- `include/desktop/wm.h` -- `wm_minimize()`, `wm_maximize()`, `wm_restore()`, `wm_set_title()` (planned in `TODO-08` §1) -- used by §5 `ShowWindow`
+- → XREF: `10-platform-services/TODO-07-win32-pe-loader.md` -- this TODO is a direct prerequisite; the PE32+ loader resolves `user32.dll` / `gdi32.dll` imports to these stubs
+- → XREF: `08-graphics-ui/TODO-15-win32k-shadow-ssdt.md` -- the kernel `NtGdi*` / `NtUser*` calls these stubs will eventually thunk to
 - → XREF: `08-graphics-ui/TODO-06-widget-dialogs.md §8` -- `MessageBox()`, `dialog_file_open/save()`, `dialog_color()` must exist before §8 dialog wrappers
 - → XREF: `08-graphics-ui/TODO-08-window-manager.md` -- `wm_minimize/maximize/restore/set_title` must exist before §5 `ShowWindow` wiring
 - → XREF: `08-graphics-ui/TODO-01-graphics-asset-foundation.md §1-§5` -- GDI drawing, bitmaps, icons, and cursors must reuse the native graphics/asset foundation rather than fork a second raster stack
@@ -50,10 +51,10 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 | 💎  |   2   | §2 GDI device context stubs -- handle types, 256-slot object table, `GetDC/CreateCompatibleDC` | `gfx_surface_create()`, `pmm_alloc_contiguous()` (exist)               |  [ ]   |
 | 💎  |   3   | §3 GDI drawing -- `SetPixel/LineTo/Rectangle/Ellipse/FillRect/BitBlt/StretchBlt`            | §2 DC table (all drawing ops take `HDC` first)                              |  [ ]   |
 | 💎  |   4   | §4 GDI text -- `TextOutA/DrawTextA/CreateFontA/GetTextMetricsA`                              | §2 DC table; `ttf_draw_string/ttf_get` (exist)                             |  [ ]   |
-| 💎  |   5   | §7 Cursor/icon/metrics -- `LoadCursor/SetCursor/LoadIcon/GetSystemMetrics`                   | §1 icon map; `cursor_set_shape()` (exists)                                  |  [ ]   |
-| 💎  |   6   | §5 USER32 windows -- `CreateWindowExA/ShowWindow/DestroyWindow/SetWindowTextA/GetClientRect` | §2 DC (window DC); WM `wm_minimize/maximize/restore/set_title` (TODO-06)   |  [ ]   |
-| ⭐  |   7   | §6 USER32 message loop -- `GetMessageA/TranslateMessage/DispatchMessageA`, per-window queue  | §5 windows (queue is per-window); novel kernel infrastructure               |  [ ]   |
-| 💎  |   8   | §8 USER32 dialogs -- `MessageBoxA/GetOpenFileNameA/GetSaveFileNameA/ChooseColorA`            | §6 message loop (modal dialogs run their own inner loop); TODO-05 dialogs  |  [ ]   |
+| 💎  |   7   | §7 Cursor/icon/metrics -- `LoadCursor/SetCursor/LoadIcon/GetSystemMetrics`                   | §1 icon map; `cursor_set_shape()` (exists)                                  |  [ ]   |
+| 💎  |   5   | §5 USER32 windows -- `CreateWindowExA/ShowWindow/DestroyWindow/SetWindowTextA/GetClientRect` | §2 DC (window DC); WM `wm_minimize/maximize/restore/set_title` (TODO-08 §1) |  [ ]   |
+| ⭐  |   6   | §6 USER32 message loop -- `GetMessageA/TranslateMessage/DispatchMessageA`, per-window queue  | §5 windows (queue is per-window); novel kernel infrastructure               |  [ ]   |
+| 💎  |   8   | §8 USER32 dialogs -- `MessageBoxA/GetOpenFileNameA/GetSaveFileNameA/ChooseColorA`            | §6 message loop (modal dialogs run their own inner loop); TODO-06 §8 dialogs |  [ ]   |
 
 ---
 
@@ -61,18 +62,18 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 
 **Design:** [`icons.md#system-icons`](../../docs/design/icons.md#system-icons), [`icons.md#the-set`](../../docs/design/icons.md#the-set)
 
-`shell32_icon_map[]` and `imageres_icon_map[]` tables mapping Windows shell32.dll / imageres.dll icon indices to `system_icon_t`. `icon_t *win32_shell_icon(int dll, int index)`. Used by `LoadIcon(NULL, MAKEINTRESOURCE(...))` and any Win32 app that hardcodes shell icon indices.
+`shell32_icon_map[]` and `imageres_icon_map[]` tables mapping Windows shell32.dll / imageres.dll icon indices to `system_icon_t`. `icon_bitmap_t *win32_shell_icon(int dll, int index)`. Used by `LoadIcon(NULL, MAKEINTRESOURCE(...))` and any Win32 app that hardcodes shell icon indices.
 
 **Files:** `src/desktop/win32/win32_icons.c` (new), `include/desktop/win32/win32_icons.h` (new)
 
 > [!NOTE]
-> Shell32 icon indices are documented in MSDN. Common ones: 0=generic app, 1=document, 2=window, 3=open folder, 4=closed folder, 8=disk drive, 13=music note, 23=video, 28=trash empty, 29=trash full, 51=network, 160=text file, 165=image file. Imageres.dll: 1=computer, 15=folder, 54=user, 97=network. Define two static arrays `shell32_map[]` and `imageres_map[]` of `{ int index; system_icon_t icon; }` pairs; look up with linear search (small table, cache-friendly). `#define WIN32_DLL_SHELL32 1`, `#define WIN32_DLL_IMAGERES 2`. For unmapped indices: return `icon_get(ICON_APP_GENERIC, 16)`.
+> Shell32 icon indices are documented in MSDN. Common ones: 0=generic app, 1=document, 2=window, 3=open folder, 4=closed folder, 8=disk drive, 13=music note, 23=video, 28=trash empty, 29=trash full, 51=network, 160=text file, 165=image file. Imageres.dll: 1=computer, 15=folder, 54=user, 97=network. Define two static arrays `shell32_map[]` and `imageres_map[]` of `{ int index; system_icon_t icon; }` pairs; look up with linear search (small table, cache-friendly). `#define WIN32_DLL_SHELL32 1`, `#define WIN32_DLL_IMAGERES 2`. For unmapped indices: return `icon_get(ICON_EXE_DEFAULT, 16)`.
 
 - [ ] `typedef struct { int index; system_icon_t icon; } win32_icon_map_entry_t;` in `win32_icons.h`
 - [ ] `#define WIN32_DLL_SHELL32 1`, `#define WIN32_DLL_IMAGERES 2`
 - [ ] `static const win32_icon_map_entry_t shell32_icon_map[]` -- ~30 entries covering the most common shell32 indices
 - [ ] `static const win32_icon_map_entry_t imageres_icon_map[]` -- ~15 entries for imageres.dll
-- [ ] `icon_bitmap_t *win32_shell_icon(int dll, int index)` -- linear search; fallback to `icon_get(ICON_APP_GENERIC, 16)`
+- [ ] `icon_bitmap_t *win32_shell_icon(int dll, int index)` -- linear search; fallback to `icon_get(ICON_EXE_DEFAULT, 16)`
 - [ ] `system_icon_t win32_idi_to_sysicon(uintptr_t idi)` -- maps Win32 `IDI_APPLICATION=32512`, `IDI_ERROR=32513`, `IDI_QUESTION=32514`, `IDI_WARNING=32515`, `IDI_INFORMATION=32516` to corresponding `system_icon_t` values
 - [ ] Commit: `"win32: shell icon index map -- shell32/imageres tables, win32_shell_icon(), IDI_* mapping"`
 

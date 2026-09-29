@@ -11,7 +11,10 @@ title: "TODO-12 -- Kernel Time & Taskbar Clock"
 > **Goal:** Build the full kernel wall-clock API on top of the existing CMOS RTC driver -- `time_now()`, timezone handling, `time_to_datetime()`, NTP hook, `strftime`-style formatting, a minimal embedded timezone table with DST rules, the taskbar clock with a calendar flyout, and a Date/Time Control Panel applet.
 
 > [!IMPORTANT]
-> **Already exists**: `struct rtc_time { second, minute, hour, day, month, year, weekday }` + `rtc_read(struct rtc_time *t)` + `rtc_init()` in `include/kernel/drivers/rtc.h`. `system_get_ticks()` + `PIT_TARGET_FREQ=100` Hz in `include/kernel/drivers/pit.h` / `include/kernel/timer.h`. `uptime()` (returns seconds) already declared in `timer.h`. `SYS_UPTIME=12` in `syscall.h`. `EFI_TIME.timezone` (int16_t minutes-from-UTC) in `uefi_runtime.h` for initial timezone seed. **Conflict**: prompt cites `SYS_TIME=17`, but `SYS_LOG=17` is already assigned; use **`SYS_TIME=55`** (next free after `SYS_NOTIFY_SEND=54`). **Missing**: `time_now()`, `time_to_datetime()`, `time_set()`, timezone system, `time_format()`, `uptime_ms()`, taskbar clock flyout + calendar, Control Panel applet, timezone table with DST. FILETIME epoch (100 ns ticks since 1601) and HPET/TSC calibration belong to `02-kernel-core/TODO-17` -- this TODO handles the civil calendar layer only. Complete sections in order: kernel time API → monotonic uptime extension → formatting → timezone database → taskbar clock → Control Panel applet.
+> **Already exists**: `struct rtc_time { second, minute, hour, day, month, year, weekday }` + `rtc_read(struct rtc_time *t)` + `rtc_init()` in `include/kernel/drivers/rtc.h`. `system_get_ticks()` + `PIT_TARGET_FREQ=100` Hz in `include/kernel/drivers/pit.h` / `include/kernel/timer.h`. `uptime()` (returns seconds) already declared in `timer.h`. `SYS_UPTIME=12` in `syscall.h`. `EFI_TIME.timezone` (int16_t minutes-from-UTC) in `uefi_runtime.h` for initial timezone seed. **Conflict**: prompt cites `SYS_TIME=17`, but `SYS_LOG=17` is already assigned; use the next free legacy number for `SYS_TIME` (drafted as 55; legacy `SYS_*` numbers end at 48 today). **Missing**: `time_now()`, `time_to_datetime()`, `time_set()`, timezone system, `time_format()`, `uptime_ms()`, taskbar clock flyout + calendar, Control Panel applet, timezone table with DST. FILETIME epoch (100 ns ticks since 1601) and HPET/TSC calibration belong to `02-kernel-core/TODO-08-time-filetime-management.md` -- this TODO handles the civil calendar layer only.
+
+> [!WARNING]
+> **Written before the kernel clock shipped (corrected 2026-09-29).** A FILETIME wall clock already exists: `wall_clock_init()` seeds from UEFI GetTime then `rtc_try_read()`, `KeQuerySystemTime()` / `KeSetSystemTime()` read and set it, NTP disciplines it through `ke_ntp_adjtime()`, and `timezone_set()` / `filetime_to_local()` apply a bias (`include/kernel/time/wall_clock.h`, `include/kernel/time/timezone.h`). `uptime_ns()` exists in `timer.h`. A basic taskbar clock is already drawn in `src/desktop/desktop.c` (12 h time over `YYYY/MM/DD`, from `KeQuerySystemTime()`). §1 must wrap that clock, not add a second one; see its first item. Complete sections in order: kernel time API → monotonic uptime extension → formatting → timezone database → taskbar clock → Control Panel applet.
 
 ## Inputs
 
@@ -21,13 +24,13 @@ title: "TODO-12 -- Kernel Time & Taskbar Clock"
 - `include/kernel/sched/syscall.h` -- `SYS_UPTIME=12` exists; `SYS_TIME=55` added in §1
 - `include/registry.h` -- `RegGetValue/SetValueEx` -- §2 reads `Use24Hour` + `DateFormat`; §4 persists timezone + NTP flag; §5 timezone selection
 - `include/kernel/uefi_runtime.h` -- `EFI_TIME.timezone` (int16 minutes from UTC) -- §1 `time_init()` seeds initial timezone offset
-- `include/desktop/systray.h` (TODO-09 §5) -- system tray draw area -- §4 taskbar clock draws inside the tray right zone
-- `include/kernel/gfx/anim_mgr.h` (TODO-02) -- `anim_mgr_add()` -- §3 flyout fade + 12 px rise (`THEME_MOTION_NORMAL_MS`)
+- `include/desktop/systray.h` (`08-graphics-ui/TODO-11` §4, not built) -- system tray draw area -- §4 taskbar clock draws inside the tray right zone
+- `include/kernel/gfx/anim_mgr.h` (`08-graphics-ui/TODO-04`, not built) -- `anim_mgr_add()` -- §3 flyout fade + 12 px rise (`THEME_MOTION_NORMAL_MS`)
 - `include/gfx.h` -- `gfx_fill_rounded_rect()`, `gfx_acrylic()` -- §3 flyout panel, §4 Control Panel clock face
 - `include/desktop/wm.h` -- `wm_create_window()`, `z_order` -- §3 the shared notifications-and-calendar flyout
 - → XREF: `07-networking/TODO-06-ntp-status-winsock.md` -- NTP sync calls `time_set(new_unix)` from this TODO; §1 `time_set()` must be the single authority for wall-clock updates
-- Related (no stable XREF target): `02-kernel-core/TODO-17-*` (HPET/TSC) -- FILETIME 100 ns ticks and high-resolution monotonic clock live there; this TODO only handles the civil calendar (seconds resolution)
-- → XREF: `08-graphics-ui/TODO-10-taskbar.md §2` -- system tray provides the right-edge draw area where the clock lives (§1 draws inside it)
+- → XREF: `02-kernel-core/TODO-08-time-filetime-management.md` -- the shipped FILETIME wall clock, NTP discipline and high-resolution monotonic clock live there; this TODO only handles the civil calendar (seconds resolution)
+- → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §4` -- system tray provides the right-edge draw area where the clock lives (§3 draws inside it)
 
 ## Outcome
 
@@ -36,7 +39,7 @@ title: "TODO-12 -- Kernel Time & Taskbar Clock"
 - `time_format(dt, buf, fmt)` with `%H/%I/%M/%S/%p/%Y/%m/%d/%A/%a/%B/%b` and Registry 24h/date-format control.
 - Embedded 30+ entry timezone table with DST rules; `time_set_timezone(offset_min)`.
 - Taskbar clock draws the time over the date beside the bell; click → the shared 360 px notifications-and-calendar flyout (`docs/design/shell.md#notifications-and-calendar`).
-- `datetime.cpl` Control Panel applet: analog + digital clock, timezone picker, date picker, NTP sync button.
+- Date & time settings page (`timedate.cpl`, alias `datetime.cpl`): settings rows for time, date, timezone and NTP sync; no analog clock face.
 - `uptime_ms()` (uint64) + `uptime` shell command. `SYS_TIME=55` syscall.
 
 ## Implementation Order
@@ -44,11 +47,11 @@ title: "TODO-12 -- Kernel Time & Taskbar Clock"
 | ⭐  | Order | Deliverable                                                                              | Depends On                                                             | Status |
 | --- | :---: | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | :----: |
 | 💎  |   1   | §1 Kernel time API -- `time_init/now/now_local/to_datetime/datetime_to_time/set/set_tz` | `rtc_read()`, `system_get_ticks()` (both exist); `SYS_TIME=55`        |  [ ]   |
-| 💎  |   2   | §6 Monotonic uptime -- `uptime_ms()` uint64, `uptime` shell command                     | §1 (`time_init()` must run at boot before `uptime_ms()` callers)      |  [ ]   |
-| 💎  |   3   | §2 Time formatting -- `time_format()` with strftime specifiers, Registry 24h/date-fmt   | §1 `struct datetime` must exist                                        |  [ ]   |
-| 💎  |   4   | §5 Timezone database -- embedded `tz_entry[]` table, DST rules, `tz_find_by_name()`    | §3 formatting (DST applies before formatting local time)               |  [ ]   |
-| 💎  |   5   | §3 Taskbar clock -- time over date, 1 s update, calendar in the shared 360 px flyout | §3 formatting (clock uses `time_format()`); §4 tz table; TODO-09 tray |  [ ]   |
-| 💎  |   6   | §4 Date/time Control Panel -- analog+digital clock face, tz dropdown, NTP sync button   | §5 clock flyout (calendar widget reused in applet); §4 tz table        |  [ ]   |
+| 💎  |   6   | §6 Monotonic uptime -- `uptime_ms()` uint64, `uptime` shell command                     | §1 (`time_init()` must run at boot before `uptime_ms()` callers)      |  [ ]   |
+| 💎  |   2   | §2 Time formatting -- `time_format()` with strftime specifiers, Registry 24h/date-fmt   | §1 `struct datetime` must exist                                        |  [ ]   |
+| 💎  |   5   | §5 Timezone database -- embedded `tz_entry[]` table, DST rules, `tz_find_by_name()`    | §2 formatting (DST applies before formatting local time)               |  [ ]   |
+| 💎  |   3   | §3 Taskbar clock -- time over date, 1 s update, calendar in the shared 360 px flyout | §2 formatting (clock uses `time_format()`); §5 tz table; TODO-11 tray |  [ ]   |
+| 💎  |   4   | §4 Date/time settings page -- time, date, tz dropdown, NTP sync rows (no clock face)   | §3 clock flyout (calendar widget reused in the page); §5 tz table      |  [ ]   |
 
 ---
 
@@ -59,20 +62,20 @@ title: "TODO-12 -- Kernel Time & Taskbar Clock"
 **Files:** `src/kernel/time.c` (new), `include/kernel/time.h` (new)
 
 > [!NOTE]
-> Unix epoch conversion from `struct rtc_time`: use a portable days-since-epoch calculation: `days = days_from_epoch(year, month, day)` where `days_from_epoch()` counts days from 1970-01-01 using a standard Gregorian algorithm (no floats). `g_boot_unix = days * 86400 + hour*3600 + minute*60 + second`. `time_now()` adds `(system_get_ticks() - g_boot_ticks) / PIT_TARGET_FREQ` -- integer division; resolution = 1 s (fine for civil time). `time_to_datetime(ts, tz_offset_min)`: add `tz_offset_min * 60` to ts; compute year (subtract 365/366-day epochs); month (subtract month lengths accounting for leap year); day, hour, minute, second. Weekday: Tomohiko Sakamoto's algorithm or Zeller's congruence (integer only). **Leap year**: `(y%4==0 && y%100!=0) || y%400==0`. `g_ntp_offset_secs` is `int32_t` (signed -- NTP can correct backward); set atomically by `time_set()` which is called from `07-networking/TODO-06`'s NTP client. **SYS_TIME conflict**: prompt cites number 17 but `SYS_LOG=17` is taken; use `SYS_TIME=55`.
+> **Superseded by the warning in the preamble for the clock source; the calendar arithmetic below still applies to `time_to_datetime()`.** Unix epoch conversion from `struct rtc_time`: use a portable days-since-epoch calculation: `days = days_from_epoch(year, month, day)` where `days_from_epoch()` counts days from 1970-01-01 using a standard Gregorian algorithm (no floats). `g_boot_unix = days * 86400 + hour*3600 + minute*60 + second`. `time_now()` adds `(system_get_ticks() - g_boot_ticks) / PIT_TARGET_FREQ` -- integer division; resolution = 1 s (fine for civil time). `time_to_datetime(ts, tz_offset_min)`: add `tz_offset_min * 60` to ts; compute year (subtract 365/366-day epochs); month (subtract month lengths accounting for leap year); day, hour, minute, second. Weekday: Tomohiko Sakamoto's algorithm or Zeller's congruence (integer only). **Leap year**: `(y%4==0 && y%100!=0) || y%400==0`. `g_ntp_offset_secs` is `int32_t` (signed -- NTP can correct backward); set atomically by `time_set()` which is called from `07-networking/TODO-06`'s NTP client. **SYS_TIME conflict**: prompt cites number 17 but `SYS_LOG=17` is taken; use `SYS_TIME=55`.
 
 - [ ] `typedef int64_t time_t;` in `include/kernel/time.h`
 - [ ] `struct datetime { uint16_t year; uint8_t month, day, hour, minute, second, weekday; int16_t tz_offset_min; };`
-- [ ] `static int64_t g_boot_unix`, `g_boot_ticks`, `g_ntp_offset_secs`; `static int32_t g_tz_offset_min` in `time.c`
-- [ ] `void time_init(void)`: `rtc_read(&t)`; `g_boot_unix = rtc_to_unix(&t)`; `g_boot_ticks = system_get_ticks()`; seed `g_tz_offset_min` from `HKLM\SYSTEM\DateTime\TimezoneOffsetMin` (fallback: try `EFI_TIME.timezone` from boot_info)
-- [ ] `int64_t time_now(void)`: `return g_boot_unix + (int64_t)(system_get_ticks() - g_boot_ticks) / PIT_TARGET_FREQ + g_ntp_offset_secs;`
-- [ ] `int64_t time_now_local(void)`: `return time_now() + (int64_t)g_tz_offset_min * 60;`
+- [ ] No private clock state in `time.c`: every read goes through `KeQuerySystemTime()` and `timezone_get()`, so `wall_clock.c` (NTP, `NtSetSystemTime()`) stays the only writer
+- [ ] `void time_init(void)`: load the saved zone from `HKLM\SYSTEM\DateTime\TimezoneOffsetMin` into `timezone_set()` (fallback: `EFI_TIME.timezone`); no clock seeding, `wall_clock_init()` already did it
+- [ ] `int64_t time_now(void)`: `return filetime_to_unix_seconds(KeQuerySystemTime());`
+- [ ] `int64_t time_now_local(void)`: `return filetime_to_unix_seconds(filetime_to_local(KeQuerySystemTime()));`
 - [ ] `void time_to_datetime(int64_t ts, int16_t tz_offset_min, struct datetime *out)` -- full Gregorian decomposition with leap-year arithmetic; weekday via Zeller's or Tomohiko algorithm
 - [ ] `int64_t datetime_to_time(const struct datetime *dt)` -- inverse: days-from-epoch × 86400 + time-of-day; subtract `tz_offset_min * 60`
-- [ ] `void time_set(int64_t new_unix)`: update `g_ntp_offset_secs = new_unix - (g_boot_unix + elapsed)` to keep `g_boot_unix` stable (avoid jumps affecting running timers); called by NTP client
-- [ ] `void time_set_timezone(int16_t offset_min)`: `g_tz_offset_min = offset_min`; `RegSetValueEx("HKLM\\SYSTEM\\DateTime\\TimezoneOffsetMin", offset_min)`
+- [ ] `void time_set(int64_t new_unix)`: convert to FILETIME and call `KeSetSystemTime()` for privileged callers (settings page); NTP keeps using `ke_ntp_adjtime()`, not this
+- [ ] `void time_set_timezone(int16_t offset_min)`: `timezone_set()` with the new bias; `RegSetValueEx("HKLM\\SYSTEM\\DateTime\\TimezoneOffsetMin", offset_min)`
 - [ ] `#define SYS_TIME 55` in `syscall.h`; `sys_time()` handler returns `time_now()`; wire into dispatch table
-- [ ] `time_init()` called from `kernel_main()` after `rtc_init()` and before any driver that needs wall-clock
+- [ ] `time_init()` called after `wall_clock_init()` and `timezone_init()` in `src/kernel/main/boot_storage.c`
 - [ ] Commit: `"time: kernel time API -- time_init/now/local/to_datetime/set/set_tz, SYS_TIME=55"`
 
 ## 2. Time Formatting `[Sonnet]`
@@ -100,8 +103,9 @@ Render the time over the date in the caption style (12/16), right-aligned in a `
 **Files:** `src/desktop/clock_tray.c` (new), `include/desktop/clock_tray.h` (new)
 
 > [!NOTE]
-> 1 s update: in `systray_draw()` (TODO-09 §5), compare `system_get_ticks()` against `g_last_clock_ticks`; if delta ≥ `PIT_TARGET_FREQ`: `time_to_datetime(time_now_local(), g_tz_offset_min, &g_clock_dt)`; `time_format_clock(&g_clock_dt, g_clock_str, 8)`; `g_last_clock_ticks = system_get_ticks()`; `wm_mark_dirty()`. **Calendar**: drawn in the lower part of the shared 360 px notifications-and-calendar flyout (`docs/design/shell.md#notifications-and-calendar`), below the notification list of `08-graphics-ui/TODO-11 §6`; there is no separate clock popup and no large-time header. Layout: a month title row ("September 2026" in body strong) with previous/next chevron buttons on the right; 7-column day-of-week headers in the caption style, `text_secondary`; 6 rows x 7 columns of 40 px day cells. Today: `gfx_fill_circle(s, cx, cy, 20, theme_get()->colors.accent)` with the number in `text_on_accent`; other-month days in `text_tertiary`. Close on outside click. Month navigation: local `g_cal_year/month` state, not tied to system clock.
+> 1 s update: in `systray_draw()` (`TODO-11` §4), compare `system_get_ticks()` against `g_last_clock_ticks`; if delta ≥ `PIT_TARGET_FREQ`: `time_to_datetime(time_now_local(), g_tz_offset_min, &g_clock_dt)`; `time_format_clock(&g_clock_dt, g_clock_str, 8)`; `g_last_clock_ticks = system_get_ticks()`; `wm_mark_dirty()`. **Calendar**: drawn in the lower part of the shared 360 px notifications-and-calendar flyout (`docs/design/shell.md#notifications-and-calendar`), below the notification list of `08-graphics-ui/TODO-11 §6`; there is no separate clock popup and no large-time header. Layout: a month title row ("September 2026" in body strong) with previous/next chevron buttons on the right; 7-column day-of-week headers in the caption style, `text_secondary`; 6 rows x 7 columns of 40 px day cells. Today: `gfx_fill_circle(s, cx, cy, 20, theme_get()->colors.accent)` with the number in `text_on_accent`; other-month days in `text_tertiary`. Close on outside click. Month navigation: local `g_cal_year/month` state, not tied to system clock.
 
+- [ ] Replace the clock in `desktop_draw_taskbar()` (not a new one); its `rtc_read()` fallback formats a zero date without CMOS, so check `rtc_try_read()` / `rtc_time_plausible()` first
 - [ ] `void clock_tray_draw(gfx_surface_t *s, int32_t x, int32_t y, int32_t w)`: call `time_format_clock()` every `PIT_TARGET_FREQ` ticks; draw `g_clock_str` right-aligned in tray zone; date string below if taskbar height permits
 - [ ] `void clock_flyout_open(void)`: open the shared 360 px flyout (flyout acrylic, radius 8, `THEME_ELEV_FLYOUT_*`) anchored 12 px from the right edge and 12 px above the taskbar; draw the notification list then the calendar
 - [ ] `void clock_flyout_close(void)`: `wm_destroy_window(flyout_wh)`; called on outside click
@@ -121,12 +125,12 @@ The Date & time page of the Settings / Control Panel host (`09-desktop-shell/TOD
 **Files:** `src/desktop/datetime_cpl.c` (new), `include/desktop/datetime_cpl.h` (new)
 
 > [!NOTE]
-> Open from Control Panel or right-click clock flyout "Adjust date/time". Window: 400×480 px. **Analog clock**: 120 px diameter circle; hour hand length 35 px, minute 50 px, second 60 px; angles computed from `%H/%M/%S` via integer trigonometry (`sin/cos` approximation using a 64-entry lookup table in `kmath.h` if it exists, else integer line drawing via Bresenham). Redraw every 1 s. **Digital**: `time_format()` "%H:%M:%S" below the dial. **Date picker**: reuse `clock_draw_calendar()` from §3 as a shared helper; user can click a day to select it. **Timezone dropdown**: `CTRL_DROPDOWN` populated from `tz_table[]` (§5); current selection from `g_tz_offset_min`; on select → `time_set_timezone()`. **"Set" button**: read time-field text inputs + selected date from calendar; call `datetime_to_time()` → `time_set()`; persist `HKLM\SYSTEM\DateTime\*` fields. **"Sync NTP Now" button**: call `ntp_sync_now()` stub (real implementation in `07-networking/TODO-06`); show "Syncing…" / "Synced" status label.
+> **Superseded by the lead above (no standalone window, no analog face); kept only for the calendar, timezone and Set details.** Open from Control Panel or right-click clock flyout "Adjust date/time". Window: 400×480 px. **Analog clock**: 120 px diameter circle; hour hand length 35 px, minute 50 px, second 60 px; angles computed from `%H/%M/%S` via integer trigonometry (`sin/cos` approximation using a 64-entry lookup table in `kmath.h` if it exists, else integer line drawing via Bresenham). Redraw every 1 s. **Digital**: `time_format()` "%H:%M:%S" below the dial. **Date picker**: reuse `clock_draw_calendar()` from §3 as a shared helper; user can click a day to select it. **Timezone dropdown**: `CTRL_DROPDOWN` populated from `tz_table[]` (§5); current selection from `g_tz_offset_min`; on select → `time_set_timezone()`. **"Set" button**: read time-field text inputs + selected date from calendar; call `datetime_to_time()` → `time_set()`; persist `HKLM\SYSTEM\DateTime\*` fields. **"Sync NTP Now" button**: call `ntp_sync_now()` stub (real implementation in `07-networking/TODO-06`); show "Syncing…" / "Synced" status label.
 
 - [ ] `void datetime_page_build(settings_page_t *pg)`: registers as the `timedate.cpl` page with the host (`09-desktop-shell/TODO-11 §3`); page title "Date & time"
 - [ ] Rows: "Set time automatically" (toggle, NTP), "Time zone" (combo box from `tz_get_all()` of §5), "Adjust for daylight saving time automatically" (toggle), "Use 24-hour clock" (toggle, `HKLM\SYSTEM\DateTime\Use24Hour`)
 - [ ] "Set the date and time manually": "Change" button, disabled while automatic time is on, opens a dialog (`controls.md#dialog`) with a date picker (`controls.md#date-picker`) and hour/minute text boxes; OK → `datetime_to_time()` → `time_set()`
-- [ ] "Sync now" row: button + caption "Last successful sync: HH:MM" (`text_secondary`); `ntp_sync_now()`; shows a progress ring while syncing
+- [ ] "Sync now" row: button + caption "Last successful sync: HH:MM" (`text_secondary`); `ntp_sync()` (`07-networking/TODO-06`); shows a progress ring while syncing
 - [ ] Commit: `"datetime: Date & time settings page -- automatic time, time zone, DST, 24-hour, manual change dialog, sync now"`
 
 ## 5. Timezone Database `[Sonnet]`
@@ -168,14 +172,14 @@ Embedded minimal timezone table: UTC, UTC±1 through ±14, plus named entries (U
 ## OS Comparison
 
 
-| ⭐  | Feature                 | 🪟 Win11                                                               | 🐧 Linux                                                                    | 🚀 Impossible OS                                                     |
-| --- | ----------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| 💎  | Kernel time API         | ✅ `GetSystemTime`, `SystemTimeToTzSpecificLocalTime`, `SetSystemTime` | ✅ `clock_gettime(CLOCK_REALTIME)`, `mktime`, `localtime_r`, `settimeofday` | ⬜ §1 -- `time_now()` = boot CMOS +                                  |
-| 💎  | Time formatting         | ✅ `strftime`, `GetTimeFormat`, locale-aware                           | ✅ `strftime()` + locale; `date` utility                                    | ⬜ §2 -- 13 specifiers; hand-coded (no `-nostdinc`                   |
-| 💎  | Taskbar clock           | ✅ System tray clock; click →                                          | ✅ GNOME clock indicator; KDE clock                                         | ⬜ §3 -- shared 360 px flyout with calendar                          |
-| 💎  | Date/Time Control Panel | ✅ Settings → Time & Language                                          | ✅ GNOME Settings date-time; `timedatectl`; KDE                             | ⬜ §4 -- analog clock face with integer                              |
-| 💎  | Timezone database       | ✅ Bundled `tzdata` in Windows; DST                                    | ✅ IANA `tzdata` package; `zoneinfo` files;                                 | ⬜ §5 -- 30-entry embedded table; `tz_is_dst()` Nth-weekday-of-month |
-| 💎  | Monotonic uptime        | ✅ `GetTickCount64()` (ms); `QueryPerformanceCounter()` (ns)           | ✅ `clock_gettime(CLOCK_MONOTONIC)`; `uptime` command; `/proc/uptime`       | ⬜ §6 -- `uptime_ms()` uint64; `uptime` shell cmd                    |
+| ⭐  | Feature                 | 🪟 Win11                                                               | 🐧 Linux                                                                    | 🚀 Impossible OS                                                            |
+| --- | ----------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| 💎  | Kernel time API         | ✅ `GetSystemTime`, `SystemTimeToTzSpecificLocalTime`, `SetSystemTime` | ✅ `clock_gettime(CLOCK_REALTIME)`, `mktime`, `localtime_r`, `settimeofday` | ⬜ §1 -- `time_now()` = boot CMOS +                                         |
+| 💎  | Time formatting         | ✅ `strftime`, `GetTimeFormat`, locale-aware                           | ✅ `strftime()` + locale; `date` utility                                    | ⬜ §2 -- 13 specifiers; hand-coded (no `-nostdinc`                          |
+| 💎  | Taskbar clock           | ✅ System tray clock; click →                                          | ✅ GNOME clock indicator; KDE clock                                         | ⬜ §3 -- shared 360 px flyout with calendar                                 |
+| 💎  | Date/Time Control Panel | ✅ Settings → Time & Language                                          | ✅ GNOME Settings date-time; `timedatectl`; KDE                             | ⬜ §4 -- settings rows (no clock face); was: analog clock face with integer |
+| 💎  | Timezone database       | ✅ Bundled `tzdata` in Windows; DST                                    | ✅ IANA `tzdata` package; `zoneinfo` files;                                 | ⬜ §5 -- 30-entry embedded table; `tz_is_dst()` Nth-weekday-of-month        |
+| 💎  | Monotonic uptime        | ✅ `GetTickCount64()` (ms); `QueryPerformanceCounter()` (ns)           | ✅ `clock_gettime(CLOCK_MONOTONIC)`; `uptime` command; `/proc/uptime`       | ⬜ §6 -- `uptime_ms()` uint64; `uptime` shell cmd                           |
 
 > **After §1–§6:** Impossible OS has a complete civil-time stack. No libc, no `tzdata` package -- the timezone table and `time_format()` are hand-coded directly in the kernel, making the total footprint under 2 KB of static data. The 30-entry timezone table covers all major world regions with proper DST rules.
 
@@ -187,7 +191,7 @@ Embedded minimal timezone table: UTC, UTC±1 through ±14, plus named entries (U
 - [ ] `time_format(&dt, buf, sizeof(buf), "%A, %B %d %Y %I:%M %p")` → e.g. `"Thursday, March 26 2026 10:30 AM"`
 - [ ] `time_set_timezone(-300)` (US Eastern UTC-5) → `time_now_local()` = `time_now() - 18000`
 - [ ] Taskbar clock shows `HH:MM`; updates every second; click → the shared 360 px flyout opens above the taskbar with notifications and the calendar; today is an accent circle; the chevrons navigate months
-- [ ] Control Panel `datetime.cpl`: analog clock hands rotate every second; timezone dropdown populated with all 30 entries; select "US/Pacific" → clock shows PDT/PST offset; "Sync NTP Now" → serial log `[ntp] sync requested`
+- [ ] Date & time page: time and date rows update every second; timezone dropdown populated with all 30 entries; select "US/Pacific" → clock shows PDT/PST offset; "Sync NTP Now" → serial log `[ntp] sync requested`
 - [ ] DST test: set timezone "US/Eastern" + set date to second Sunday of March → `tz_is_dst()` returns 1 at 02:00 → clock shows UTC-4 instead of UTC-5
 - [ ] `uptime` shell command → "Xd Xh Xm Xs" format; matches `SYS_UPTIME` syscall value
 - [ ] `uptime_ms()` > 0 after boot; `system_get_ticks()` is uint64 (no overflow warning from compiler)

@@ -11,7 +11,7 @@ title: "TODO-11 -- Start Menu, System Tray & Notifications"
 > **Goal:** Complete the Start Menu (live data loading, app launching, search), build the system tray (overflow chevron and the network/volume/battery cluster that opens quick settings), deliver the full toast notification pipeline with user-mode syscall, and add the notification center with history and per-app settings. Every surface follows `docs/design/shell.md`.
 
 > [!IMPORTANT]
-> **Already exists**: `desktop_draw_start_menu()` in `desktop.h` -- a drawn-but-static stub (layout/Acrylic panel is done). `icon_get(system_icon_t id, uint32_t size)` in `icon_store.h` for icon rendering. `vfs_readdir(dir_node, index)` + `vfs_finddir(dir_node, name)` for app directory scanning. `task_exec(data, size)` for launching apps. `anim_mgr_add()` + `GFX_EASE_OUT_CUBIC` (TODO-02) for all slide animations. `context_menu_show()` (TODO-07 §1) for the Power button flyout. `gfx_acrylic()` for panel backgrounds. `CTRL_SLIDER` (TODO-04) for the volume flyout slider. `g_focus_mode` + `focus_mode_allows_toast()` (TODO-07 §9) for DND suppression. **Missing**: Start Menu data loading, app launch wiring, search bar, system tray struct + icons, toast queue + animation, notification center, per-app settings. **Syscalls**: `SYS_MSGBOX=51`, `SYS_TASKBAR_SET_PROGRESS=52`, `SYS_JUMPLIST_NOTIFY=53` are taken; `SYS_NOTIFY_SEND=54`. Complete sections in order: data loading → interaction → search → system tray → toasts → notification center → notification settings.
+> **Already exists**: `desktop_draw_start_menu()` in `desktop.h` -- a static 450x344 two-column Acrylic panel in `src/desktop/desktop.c` (hard-coded entries; only Terminal, About and Power act, Power calls `acpi_shutdown()` with no confirmation). `icon_get(system_icon_t id, uint32_t size)` in `icon_store.h` for icon rendering. `vfs_readdir(dir_node, index)` + `vfs_finddir(dir_node, name)` for app directory scanning. `task_exec(data, size)` for launching apps. `anim_mgr_add()` + `GFX_EASE_OUT_CUBIC` (`TODO-04`, not built) for all slide animations. `context_menu_show()` (`TODO-09` §1, not built) for the Power button flyout. `gfx_acrylic()` for panel backgrounds. `CTRL_SLIDER` (`TODO-05` §3, not built) for the volume flyout slider. `g_focus_mode` + `focus_mode_allows_toast()` (`TODO-09` §7, not built) for DND suppression. **Missing**: Start Menu data loading, app launch wiring, search bar, system tray struct + icons, toast queue + animation, notification center, per-app settings. **Syscalls**: legacy `SYS_*` numbers end at 48 today, and the message box, progress and jump-list calls are planned but unallocated; `SYS_NOTIFY_SEND` (drafted as 54) takes the next free number when §5 adds it. Complete sections in order: data loading → interaction → search → system tray → toasts → notification center → notification settings.
 
 ## Inputs
 
@@ -21,15 +21,15 @@ title: "TODO-11 -- Start Menu, System Tray & Notifications"
 - `include/kernel/sched/task.h` -- `task_exec(data, size)` -- used by §2 to launch pinned and All apps entries
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_composite()`, `wm_mark_dirty()`, `z_order` -- used by §4 tray flyouts, §5 toast overlay, §6 notification center
 - `include/gfx.h` -- `gfx_acrylic()`, `gfx_fill_rounded_rect()`, `gfx_drop_shadow()` -- Start Menu panel + tray flyouts + toast + notification center
-- `include/kernel/gfx/anim_mgr.h` (TODO-02) -- `anim_mgr_add()`, `GFX_EASE_OUT_CUBIC/IN_CUBIC` -- §2 slide open, §3 toast slide-in/out, §6 panel slide-in
-- `include/desktop/context_menu.h` (TODO-07 §1) -- `context_menu_show()` -- used by §2 Power button flyout (Shut Down / Restart / Sleep / Lock)
-- `include/desktop/theme.h` (TODO-01) -- `theme_get()` -- all panel and toast colors use theme tokens
+- `include/kernel/gfx/anim_mgr.h` (`TODO-04`, not built) -- `anim_mgr_add()`, `GFX_EASE_OUT_CUBIC/IN_CUBIC` -- §2 slide open, §3 toast slide-in/out, §6 panel slide-in
+- `include/desktop/context_menu.h` (`TODO-09` §1, not built) -- `context_menu_show()` -- used by §2 Power button flyout (Shut Down / Restart / Sleep / Lock)
+- `include/desktop/theme.h` (`TODO-03` §2, not built) -- `theme_get()` -- all panel and toast colors use theme tokens
 - `include/registry.h` -- `RegGetValue/SetValueEx` -- §1 pinned apps, §7 per-app notification settings
-- `include/kernel/sched/syscall.h` -- `SYS_NOTIFY_SEND=54` added in §5; `SYS_EXEC=6` exists for app launch
-- `include/desktop/focus_mode.h` (TODO-07 §9) -- `focus_mode_allows_toast()` -- §5 toast send checks DND mode
-- → XREF: `08-graphics-ui/TODO-05-widget-library-core.md §5` -- `CTRL_SLIDER` used in §6 volume flyout slider
-- → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §9` -- Focus/DND mode must exist before §5 toast suppression
-- → XREF: `08-graphics-ui/TODO-10-taskbar.md §5` -- system tray icons (§2) are drawn at the right of the taskbar window list; taskbar draw loop must be stable first
+- `include/kernel/sched/syscall.h` -- `SYS_NOTIFY_SEND` added in §5 at the next free number; `SYS_EXEC=6` exists for app launch
+- `include/desktop/focus_mode.h` (`TODO-09` §7, not built) -- `focus_mode_allows_toast()` -- §5 toast send checks DND mode
+- → XREF: `08-graphics-ui/TODO-05-widget-library-core.md §3` -- `CTRL_SLIDER` used in §6 volume flyout slider
+- → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §7` -- Focus/DND mode must exist before §5 toast suppression
+- → XREF: `08-graphics-ui/TODO-10-taskbar.md §1` -- system tray icons (§4) are drawn at the right of the taskbar window list; taskbar draw loop must be stable first
 
 ## Outcome
 
@@ -47,10 +47,10 @@ title: "TODO-11 -- Start Menu, System Tray & Notifications"
 | ⭐  | Order | Deliverable                                                                                   | Depends On                                                             | Status |
 | --- | :---: | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | :----: |
 | 💎  |   1   | §1 Start Menu data + Windows 11 layout -- pins grid, all apps, recommended                    | `vfs_readdir`, `icon_get`, `task_exec` (all exist)                     |  [ ]   |
-| 💎  |   2   | §2 Start Menu interaction -- toggle, launch, All apps view, power + user menus                | §1 data (must exist before wiring clicks); TODO-02 `anim_mgr`          |  [ ]   |
-| 💎  |   3   | §3 Search filtering -- prefix match, accent highlight, arrow-nav, no-results state            | §2 (search bar is part of the open menu interaction)                   |  [ ]   |
-| 💎  |   4   | §4 System tray -- overflow chevron, system cluster → quick settings, glyphs                   | §3 (Start Menu stable); TODO-08 §5 taskbar draw loop stable            |  [ ]   |
-| ⭐  |   5   | §5 Toast notifications -- `notify_send()` queue, slide-in/out, stacking, `SYS_NOTIFY_SEND=54` | §4 (tray bell icon; DND mode from TODO-07 §6)                          |  [ ]   |
+| 💎  |   2   | §2 Start Menu interaction -- toggle, launch, All apps view, power + user menus                | §1 data (must exist before wiring clicks); TODO-04 `anim_mgr`          |  [ ]   |
+| 💎  |   3   | §3 Search filtering -- substring match, accent highlight, arrow-nav, no-results state         | §2 (search bar is part of the open menu interaction)                   |  [ ]   |
+| 💎  |   4   | §4 System tray -- overflow chevron, system cluster → quick settings, glyphs                   | §3 (Start Menu stable); TODO-10 §1 taskbar draw loop stable            |  [ ]   |
+| ⭐  |   5   | §5 Toast notifications -- `notify_send()` queue, slide-in/out, stacking, `SYS_NOTIFY_SEND=54` | §4 (tray bell icon; DND mode from TODO-09 §7)                          |  [ ]   |
 | 💎  |   6   | §6 Notification center -- shared flyout, history, dismiss/clear, 100-entry log                | §5 (history comes from toast queue); §4 (bell icon is the entry point) |  [ ]   |
 | 💎  |   7   | §7 Notification settings -- per-app Registry toggle + sound, Settings page                    | §6 (notification center lists registered apps; settings wires to that) |  [ ]   |
 
@@ -228,7 +228,7 @@ The bell beside the clock (and a clock click) opens the shared notifications-and
 | --- | ----------------------- | ----------------------------------------------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------- |
 | 💎  | Start Menu data loading | ✅ Start Menu from Start layout                                   | ✅ GNOME App Grid from `.desktop`                      | ⬜ §1 -- VFS scan of `C:\Impossible\Bin\` +                                   |
 | 💎  | Start Menu interaction  | ✅ Win key toggle; click launch;                                  | ✅ GNOME Activities overlay; KDE Kickoff;              | ⬜ §2 -- `task_exec()` launch; dual `anim_mgr` tween                          |
-| 💎  | Start Menu search       | ✅ Start Menu search bar; instant                                 | ✅ GNOME search (Activities); KDE Runner               | ⬜ §3 -- `kstrcasestr` prefix match; accent-color highlight                   |
+| 💎  | Start Menu search       | ✅ Start Menu search bar; instant                                 | ✅ GNOME search (Activities); KDE Runner               | ⬜ §3 -- `kstrcasestr` substring match; accent-color highlight                |
 | 💎  | System tray             | ✅ System Tray with volume/network/battery/keyboard/bell; fly-out | ✅ GNOME system indicators; KDE system                 | ⬜ §4 -- `tray_register/unregister`; volume `CTRL_SLIDER` flyout; conditional |
 | ⭐  | Toast notifications     | ✅ WinRT `ToastNotification`; stacking; action buttons;           | ✅ `libnotify` / `notify-send`; GNOME/KDE notification | ⬜ §5 -- `⭐` kernel-native queue without a                                   |
 | 💎  | Notification center     | ✅ Win+N notification center; grouped by                          | ✅ GNOME notification list (since 3.18);               | ⬜ §6 -- 100-entry Registry ring; "N min                                      |

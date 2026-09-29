@@ -11,7 +11,7 @@ title: "TODO-09 -- Desktop Shell Features"
 > **Goal:** Complete the full suite of desktop-level shell features -- context menu engine, desktop right-click menu, wallpaper engine with fit modes, DPI scaling, PrintScreen screenshot, night light compositor LUT, Focus/DND mode, quick settings flyout, and virtual desktops. This brings the desktop to Windows 11 feature parity on the shell layer.
 
 > [!IMPORTANT]
-> **Already exists**: `image_fit_t` (STRETCH/FILL/FIT/CENTER/TILE), `image_scale(dst, src, w, h, mode)`, `image_save_png(img, path)`, `image_load(img, path)`, `desktop_draw_wallpaper()`, `desktop_get_wallpaper_surface()`, `desktop_copy_wallpaper_rect()` -- wallpaper plumbing is partially done; §3 completes `wallpaper_set(path, mode)` and Registry watch. `fb_get_width/height()` for screen dims. `rtc_read(struct rtc_time *t)` in `include/kernel/drivers/rtc.h` for screenshot timestamp. `wm_post_message_all()` (TODO-01) for broadcasting `WM_DPI_CHANGED`. `gfx_acrylic()` for context menu background. **Missing**: context menu engine, `g_dpi_pct`/`DPI_SCALE`, screenshot API, night light LUT, quick settings panel, virtual desktops. TODO-09 notifications (toast) is a forward dependency for screenshot toast and DND mode -- use a `desktop_toast(msg, icon)` stub that logs to serial if TODO-09 is not yet live. Complete sections in order: wallpaper → DPI → context menu engine → desktop right-click → screenshot → night light → focus/DND → quick settings → virtual desktops.
+> **Already exists**: `image_fit_t` (STRETCH/FILL/FIT/CENTER/TILE), `image_scale(dst, src, w, h, mode)`, `image_save_png(img, path)`, `image_load(img, path)`, `desktop_draw_wallpaper()`, `desktop_get_wallpaper_surface()`, `desktop_copy_wallpaper_rect()` -- wallpaper plumbing is partially done; §3 completes `wallpaper_set(path, mode)` and Registry watch. `fb_get_width/height()` for screen dims. `rtc_read(struct rtc_time *t)` in `include/kernel/drivers/rtc.h` for screenshot timestamp. `wm_post_message_all()` for broadcasting `WM_DPI_CHANGED` is NOT built yet: it is planned in `08-graphics-ui/TODO-03` section 8 (Hot-Reload). `gfx_acrylic()` for context menu background. **Missing**: context menu engine, `g_dpi_pct`/`DPI_SCALE`, screenshot API, night light LUT, quick settings panel, virtual desktops. TODO-09 notifications (toast) is a forward dependency for screenshot toast and DND mode -- use a `desktop_toast(msg, icon)` stub that logs to serial if TODO-09 is not yet live. Complete sections in order: wallpaper → DPI → context menu engine → desktop right-click → screenshot → night light → focus/DND → quick settings → virtual desktops.
 
 ## Inputs
 
@@ -19,14 +19,14 @@ title: "TODO-09 -- Desktop Shell Features"
 - `include/desktop/desktop.h` -- `desktop_draw_wallpaper()`, `desktop_get_wallpaper_surface()` -- extended in §3
 - `include/kernel/drivers/framebuffer.h` -- `fb_get_width()`, `fb_get_height()` -- used by §4 DPI auto-detect and §5 screenshot
 - `include/kernel/drivers/rtc.h` -- `rtc_read(struct rtc_time *)` -- used by §5 screenshot filename
-- `include/desktop/wm.h` -- `wm_composite()`, `wm_mark_dirty()`, `wm_create_window()`, `z_order` -- used by §1 context menu overlay and §7 virtual desktops
-- `include/gfx.h` -- `gfx_acrylic()`, `gfx_fill_rounded_rect()`, `gfx_drop_shadow()` -- used by §1 context menu and §6 quick settings
-- `include/desktop/theme.h` (TODO-01) -- `theme_get()`, `WM_THEME_CHANGED` -- §3 wallpaper reload triggered here; `WM_DPI_CHANGED` added in §4
-- `include/kernel/gfx/anim_mgr.h` (TODO-02) -- `anim_mgr_add()`, `gfx_ease_decelerate/accelerate` -- quick settings open + vdesk fade
-- `include/registry.h` -- `RegGetValue/SetValueEx` -- used by §3 wallpaper, §4 DPI, §5 screenshot path, §8 night light, §9 focus mode
-- → XREF: `08-graphics-ui/TODO-08-window-manager.md` -- desktop right-click (§2) and quick settings (§6) depend on WM overlay being live; `wm_post_message_all()` used for `WM_DPI_CHANGED`
-- Related (no stable XREF target): `09-desktop-shell/TODO-01-*` (taskbar) -- §7 virtual desktops needs per-desktop taskbar button group
-- Related (no stable XREF target): `09-notifications/TODO-01-*` (TODO-09 notifications) -- §6 screenshot toast and §10 DND mode depend on toast API; use stub until TODO-09 is live
+- `include/desktop/wm.h` -- `wm_composite()`, `wm_mark_dirty()`, `wm_create_window()`, `z_order` -- used by §1 context menu overlay and §9 virtual desktops
+- `include/gfx.h` -- `gfx_acrylic()`, `gfx_fill_rounded_rect()`, `gfx_drop_shadow()` -- used by §1 context menu and §8 quick settings
+- `include/desktop/theme.h` (planned in `08-graphics-ui/TODO-03` sections 2 and 8, not built) -- `theme_get()`, `WM_THEME_CHANGED` -- §3 wallpaper reload triggered here; `WM_DPI_CHANGED` added in §4
+- `include/kernel/gfx/anim_mgr.h` (planned in `08-graphics-ui/TODO-04`, not built) -- `anim_mgr_add()`, `gfx_ease_decelerate/accelerate` -- quick settings open + vdesk fade
+- `include/registry.h` -- `RegGetValue/SetValueEx` -- used by §3 wallpaper, §4 DPI, §5 screenshot path, §6 night light, §7 focus mode
+- → XREF: `08-graphics-ui/TODO-08-window-manager.md` -- desktop right-click (§2) and quick settings (§8) depend on WM overlay being live; `wm_post_message_all()` used for `WM_DPI_CHANGED`
+- → XREF: `08-graphics-ui/TODO-10-taskbar.md` -- §9 virtual desktops needs a per-desktop taskbar button group
+- → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` §5 (toasts) -- §5 screenshot toast and §7 DND mode depend on the toast API; use a stub until it is live
 
 ## Outcome
 
@@ -42,15 +42,15 @@ title: "TODO-09 -- Desktop Shell Features"
 
 | ⭐  | Order | Deliverable                                                                                          | Depends On                                                                  | Status |
 | --- | :---: | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §3 Wallpaper engine -- `wallpaper_set()`, fit modes, cache, Registry watch + reload                 | `image_load/scale`, `desktop_draw_wallpaper()` (already exist)             |  [ ]   |
-| 💎  |   2   | §4 DPI scaling -- `g_dpi_pct`, `DPI_SCALE()`, auto-detect, `WM_DPI_CHANGED` broadcast              | §3 (wallpaper re-scale needed on DPI change); TODO-01 `wm_post_message_all` |  [ ]   |
-| 💎  |   3   | §1 Context menu engine -- `context_menu_show/hide`, Acrylic popup, submenus, keyboard nav           | §2 DPI (context menu item heights use `DPI_SCALE`)                          |  [ ]   |
-| 💎  |   4   | §2 Desktop right-click menu -- view/sort/refresh/new/paste/settings items using §1 engine           | §3 context menu engine (§1 must exist before wiring desktop menus)          |  [ ]   |
+| 💎  |   3   | §3 Wallpaper engine -- `wallpaper_set()`, fit modes, cache, Registry watch + reload                 | `image_load/scale`, `desktop_draw_wallpaper()` (already exist)             |  [ ]   |
+| 💎  |   4   | §4 DPI scaling -- `g_dpi_pct`, `DPI_SCALE()`, auto-detect, `WM_DPI_CHANGED` broadcast              | §3 (wallpaper re-scale needed on DPI change); TODO-03 §8 `wm_post_message_all` |  [ ]   |
+| 💎  |   1   | §1 Context menu engine -- `context_menu_show/hide`, Acrylic popup, submenus, keyboard nav           | §4 DPI (context menu item heights use `DPI_SCALE`)                          |  [ ]   |
+| 💎  |   2   | §2 Desktop right-click menu -- view/sort/refresh/new/paste/settings items using §1 engine           | §1 context menu engine (must exist before wiring desktop menus)             |  [ ]   |
 | 💎  |   5   | §5 Screenshot -- PrintScreen hook, full + window capture, `image_save_png`, clipboard, toast stub  | §3 wallpaper done (compositor back buffer is clean wallpaper+windows frame) |  [ ]   |
-| 💎  |   6   | §8 Night light -- compositor LUT (warm RGB shift), Registry schedule, kernel timer                  | §5 (compositor is confirmed stable before adding LUT pass)                  |  [ ]   |
-| 💎  |   7   | §9 Focus / DND -- Registry-backed mode enum, toast suppression filter, quick-settings tile hook     | §6 night light (both are quick-settings tiles; wire together)               |  [ ]   |
-| 💎  |   8   | §6 Quick settings flyout -- anchored 360 px, six toggles, brightness/volume sliders, footer       | §6+§7 night light + focus (tiles must be wired); §3 context menu (for panel) |  [ ]   |
-| ⭐  |   9   | §7 Virtual desktops -- 8 desktops, per-desktop Z-order, Win+Ctrl keys, Task View overlay           | §8 quick settings (task view is another overlay; patterns established)      |  [ ]   |
+| 💎  |   6   | §6 Night light -- compositor LUT (warm RGB shift), Registry schedule, kernel timer                  | §5 (compositor is confirmed stable before adding LUT pass)                  |  [ ]   |
+| 💎  |   7   | §7 Focus / DND -- Registry-backed mode enum, toast suppression filter, quick-settings tile hook     | §6 night light (both are quick-settings tiles; wire together)               |  [ ]   |
+| 💎  |   8   | §8 Quick settings flyout -- anchored 360 px, six toggles, brightness/volume sliders, footer       | §6, §7 night light + focus (tiles must be wired); §1 context menu (for panel) |  [ ]   |
+| ⭐  |   9   | §9 Virtual desktops -- 8 desktops, per-desktop Z-order, Win+Ctrl keys, Task View overlay           | §8 quick settings (task view is another overlay; patterns established)      |  [ ]   |
 
 ---
 
@@ -96,7 +96,7 @@ Right-click on wallpaper → the desktop menu in the order fixed by `docs/design
 **Files:** `src/desktop/desktop.c` (extend), `src/desktop/desktop_rightclick.c` (new)
 
 > [!NOTE]
-> Wire into `desktop_handle_mouse()`: if right-click at position not covered by any window (`wm_window_at(mx, my) == -1`): call `context_menu_show(mx, my, desktop_menu_items, count)`. Submenus use `MENU_SUBMENU` flag and a pointer to child `context_menu_t` arrays defined as static tables. Item callbacks: View submenu → `desktop_icons_set_size(SMALL/MEDIUM/LARGE)` stub (icon size persisted to Registry); Sort By → `desktop_icons_sort(by)`; Refresh → `desktop_icons_init()` re-scan; New → `dialog_input("File name:", ...)` + `vfs_create()`; Paste → clipboard paste stub; Display Settings → `desktop_open_display_settings()` (opens Control Panel applet); Personalize → same with Personalization tab.
+> Wire into a new `desktop_handle_mouse()` (today only `desktop_handle_click()` exists, and it ignores every button but left): if right-click at position not covered by any window (`wm_window_at(mx, my) == -1`): call `context_menu_show(mx, my, desktop_menu_items, count)`. Submenus use `MENU_SUBMENU` flag and a pointer to child `context_menu_t` arrays defined as static tables. Item callbacks: View submenu → `desktop_icons_set_size(SMALL/MEDIUM/LARGE)` stub (icon size persisted to Registry); Sort By → `desktop_icons_sort(by)`; Refresh → `desktop_icons_init()` re-scan; New → `dialog_input("File name:", ...)` + `vfs_create()`; Paste → clipboard paste stub; Display Settings → `desktop_open_display_settings()` (opens Control Panel applet); Personalize → same with Personalization tab.
 
 - [ ] `static struct menu_item desktop_menu[]` + view/sort/new submenu arrays in `desktop_rightclick.c`
 - [ ] `void desktop_show_context_menu(int32_t x, int32_t y)` -- calls `context_menu_show()` with desktop menu
@@ -118,7 +118,7 @@ Right-click on wallpaper → the desktop menu in the order fixed by `docs/design
 **Files:** `src/desktop/wallpaper.c` (new), `include/desktop/wallpaper.h` (new), `src/desktop/desktop.c` (extend)
 
 > [!NOTE]
-> Existing `desktop_draw_wallpaper()` draws a pre-loaded wallpaper; `wallpaper_set()` is the new entrypoint that replaces the hardcoded wallpaper load. **Cache strategy**: scale to exact screen resolution `(fb_get_width(), fb_get_height())` once; store as `uint32_t *g_wallpaper_scaled` (allocated via `pmm_alloc_contiguous(w*h*4)`). On every `desktop_draw_wallpaper()` call: `memcpy(screen, g_wallpaper_scaled, w*h*4)` (O(n) blit; no per-frame decode). Registry watch: poll `HKCU\Control Panel\Desktop\WallPaper` every 5 s in a background tick (called from `desktop_tick()`); if value changes: free old buffer, reload, re-scale. `background_color`: if `image_load()` fails: fill screen with `RegGetValue("BackgroundColor", DWORD)`. Acrylic/Mica consumers (`gfx_mica`, acrylic_cache) are automatically updated because they read `desktop_get_wallpaper_surface()` each time.
+> Existing `desktop_draw_wallpaper()` draws a pre-loaded wallpaper; `wallpaper_set()` is the new entrypoint that replaces the startup-only `load_wallpaper()` in `src/desktop/desktop.c`, which reads `Wallpaper` + `WallpaperMode` under `HKLM\SYSTEM\Theme` (seeded in `src/kernel/registry.c`); migrate those values to the HKCU keys. **Cache strategy**: scale to exact screen resolution `(fb_get_width(), fb_get_height())` once; store as `uint32_t *g_wallpaper_scaled` (allocated via `pmm_alloc_contiguous(w*h*4)`). On every `desktop_draw_wallpaper()` call: `memcpy(screen, g_wallpaper_scaled, w*h*4)` (O(n) blit; no per-frame decode). Registry watch: poll `HKCU\Control Panel\Desktop\WallPaper` every 5 s in a background tick (called from `desktop_tick()`); if value changes: free old buffer, reload, re-scale. `background_color`: if `image_load()` fails: fill screen with `RegGetValue("BackgroundColor", DWORD)`. Acrylic/Mica consumers (`gfx_mica`, acrylic_cache) are automatically updated because they read `desktop_get_wallpaper_surface()` each time.
 
 - [ ] `void wallpaper_set(const char *path, image_fit_t mode)` in `wallpaper.c`: `image_load()`; `image_scale()` to screen dims; store in `g_wallpaper_scaled`; `wm_mark_dirty()`
 - [ ] `void wallpaper_init(void)`: read `HKCU\Control Panel\Desktop\WallPaper` + `WallpaperStyle` (default: the theme's silk wallpaper in Fill mode); call `wallpaper_set()`; fallback to `background_color` DWORD on error

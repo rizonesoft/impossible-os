@@ -11,14 +11,14 @@ title: "TODO-10 -- Taskbar"
 > **Goal:** Build the full taskbar -- window list with active/flash/progress, right-click context menus, Aero Peek window preview, progress badges with a user-mode syscall, pinned app launchers, jump lists, auto-hide, and taskbar customization (alignment, search and Task view visibility; the bar stays 48 px and bottom-docked per `docs/design/shell.md#taskbar`). This makes the taskbar the primary desktop chrome it must be, matching Windows 11 feature-for-feature.
 
 > [!IMPORTANT]
-> **Already exists**: `TASKBAR_HEIGHT=48` + `desktop_draw_taskbar()` + `desktop_in_taskbar()` in `desktop.h` -- a basic stub that draws the bar background and a Start button. `gfx_blit_alpha(dst, dx, dy, src, sx, sy, sw, sh, alpha)` for Aero Peek opacity. `task_exec(data, size)` and `task_create_user(entry, name)` for launching pinned apps. Context menu engine `context_menu_show()` (TODO-07 §1) must exist before §2 and §6. `WM_DPI_CHANGED` + `DPI_SCALE()` (TODO-07 §4) for §8 sizing. Animation engine `anim_mgr_add()` / `GFX_EASE_IN/OUT_CUBIC` (TODO-02) for §7 auto-hide. **Missing**: window list struct, progress badge, peek, pins, jump lists, auto-hide, customization. Complete sections in order: window list → pinned apps → context menu → progress badges → Aero Peek → jump lists → auto-hide → customization.
+> **Already exists**: `TASKBAR_HEIGHT=48` + `desktop_draw_taskbar()` + `desktop_in_taskbar()` in `desktop.h` -- a basic bar in `src/desktop/desktop.c` that draws the background, a left-anchored Start button, one 100 px text button per window (raise + focus on click) and the clock. `gfx_blit_alpha(dst, dx, dy, src, alpha)` (whole surface, global alpha) for Aero Peek opacity. `task_exec(data, size)` and `task_create_user(entry, name)` for launching pinned apps. Context menu engine `context_menu_show()` (`08-graphics-ui/TODO-09` §1) must exist before §2 and §6. `WM_DPI_CHANGED` + `DPI_SCALE()` (`TODO-09` §4) for §8 sizing. Animation engine `anim_mgr_add()` / `GFX_EASE_IN/OUT_CUBIC` (`TODO-04`) for §7 auto-hide. None of these, nor `wm_minimize()`, exists yet. **Missing**: window list struct, progress badge, peek, pins, jump lists, auto-hide, customization. Complete sections in order: window list → pinned apps → context menu → progress badges → Aero Peek → jump lists → auto-hide → customization.
 
 ## Inputs
 
 - `include/desktop/desktop.h` -- `TASKBAR_HEIGHT`, `desktop_draw_taskbar()`, `desktop_in_taskbar()` -- extended throughout
-- `include/desktop/wm.h` -- `wm_window`, `wm_focus_window()`, `wm_minimize()`, `wm_restore()`, `wm_maximize()`, `wm_post_message_all()` -- used by §1 window list and §3 Aero Peek
+- `include/desktop/wm.h` -- `wm_window`, `wm_focus_window()`; planned `wm_minimize()`, `wm_restore()`, `wm_maximize()` (`TODO-08` §1) and `wm_post_message_all()` (`TODO-03` §8) -- used by §1 window list and §3 Aero Peek
 - `include/gfx.h` -- `gfx_blit_alpha()`, `gfx_fill_rounded_rect()`, `gfx_drop_shadow()` -- used by §1, §3 peek, §6 jump list popup
-- `include/kernel/sched/syscall.h` -- `SYS_MSGBOX=51`; `SYS_TASKBAR_SET_PROGRESS=52`, `SYS_JUMPLIST_NOTIFY=53` added in §4+§6
+- `include/kernel/sched/syscall.h` -- legacy `SYS_*` numbers end at 48 today; the progress and jump-list calls (drafted as 52 and 53) take the next free numbers when §4 and §6 add them
 - `include/kernel/sched/task.h` -- `task_exec(data, size)` -- used by §5 pinned app launch
 - `include/registry.h` -- `RegGetValue/SetValueEx` -- used by §5 pins, §6 jump lists, §7 auto-hide, §8 customization
 - `include/kernel/gfx/anim_mgr.h` (TODO-04) -- `anim_mgr_add()`, `GFX_EASE_IN_CUBIC/OUT_CUBIC` -- used by §7 auto-hide slide tween
@@ -26,7 +26,7 @@ title: "TODO-10 -- Taskbar"
 - `include/desktop/dpi.h` (TODO-09 §4) -- `DPI_SCALE()`, `WM_DPI_CHANGED` -- used by §8 sizing
 - → XREF: `08-graphics-ui/TODO-08-window-manager.md` -- §1 window list wires to `wm_minimize/maximize/restore`; §3 Aero Peek temporarily overrides compositor window opacity
 - → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §1` -- context menu engine must exist before §2 right-click and §7 jump list popup; §9 vdesk present for "Move to Desktop ►"
-- Related (no stable XREF target): `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` (notifications) -- §5 progress badge toast is a forward ref; use serial log stub until TODO-09 live
+- Related (no stable XREF target): `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` (notifications) -- §5 progress badge toast is a forward ref; use serial log stub until TODO-11 §5 is live
 
 ## Outcome
 
@@ -43,14 +43,14 @@ title: "TODO-10 -- Taskbar"
 
 | ⭐  | Order | Deliverable                                                                                            | Depends On                                                                | Status |
 | --- | :---: | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 Window list -- `taskbar_entry`, add/remove/active wired from WM events, flash, draw                 | `wm_window`, `wm_focus/minimize` (TODO-06) must exist                     |  [ ]   |
-| 💎  |   2   | §5 Pinned apps -- load/save Registry pins, icon-only buttons, combined when running                    | §1 window list (combined button logic)                                    |  [ ]   |
-| 💎  |   3   | §2 Context menu -- right-click window button → Close/Restore/Minimize/Move to Desktop                  | §1 window list + §5 pins; `context_menu_show()` (TODO-07 §1)              |  [ ]   |
+| 💎  |   1   | §1 Window list -- `taskbar_entry`, add/remove/active wired from WM events, flash, draw                 | `wm_window`, `wm_focus/minimize` (TODO-08 §1) must exist                  |  [ ]   |
+| 💎  |   5   | §5 Pinned apps -- load/save Registry pins, icon-only buttons, combined when running                    | §1 window list (combined button logic)                                    |  [ ]   |
+| 💎  |   2   | §2 Context menu -- right-click window button → Close/Restore/Minimize/Move to Desktop                  | §1 window list + §5 pins; `context_menu_show()` (TODO-09 §1)              |  [ ]   |
 | 💎  |   4   | §4 Progress badges -- `taskbar_set_progress()`, thin bar at icon bottom, `SYS_TASKBAR_SET_PROGRESS=52` | §1 window list (drawn on window buttons)                                  |  [ ]   |
-| ⭐  |   5   | §3 Aero Peek -- 500 ms hover, compositor opacity override, "Show Desktop" strip                        | §1 window list; `gfx_blit_alpha`; `wm_composite` modification (TODO-06)   |  [ ]   |
+| ⭐  |   3   | §3 Aero Peek -- 500 ms hover, compositor opacity override, "Show Desktop" strip                        | §1 window list; `gfx_blit_alpha`; `wm_composite` modification (TODO-08)   |  [ ]   |
 | 💎  |   6   | §6 Jump lists -- recent files popup above context menu, `SYS_JUMPLIST_NOTIFY=53`                       | §2 context menu (jump list is shown above it); §5 pins (per-app Registry) |  [ ]   |
-| 💎  |   7   | §7 Auto-hide -- slide off/on with anim_mgr tween, mouse proximity trigger                              | §1–§6 stable; TODO-02 `anim_mgr_add()` must exist                         |  [ ]   |
-| 💎  |   8   | §8 Customization -- alignment, search/Task view visibility, pins, Settings page                        | §7 (auto-hide is a customization option too); TODO-07 §4 DPI              |  [ ]   |
+| 💎  |   7   | §7 Auto-hide -- slide off/on with anim_mgr tween, mouse proximity trigger                              | §1–§6 stable; TODO-04 `anim_mgr_add()` must exist                         |  [ ]   |
+| 💎  |   8   | §8 Customization -- alignment, search/Task view visibility, pins, Settings page                        | §7 (auto-hide is a customization option too); TODO-09 §4 DPI              |  [ ]   |
 
 ---
 
@@ -85,6 +85,7 @@ title: "TODO-10 -- Taskbar"
 - [ ] Unify the taskbar window-button geometry: drawing and clicks use 100 px with no flag filter (`desktop.c:515`, `:1108`) but the hand-cursor test uses 120 px and `flags & 0x01` (`desktop.c:1209`)
   - The click loop is also not bounded by the drawn list's right edge (`desktop.c:1112` versus `:518`), so clicks can land on buttons that were never drawn
   - One shared geometry helper for draw, click and cursor
+  - The Start button has the same split: it is drawn at x 4-51 but hit-tested at x 2-49 (`desktop.c:460` versus `:992`); found in §17 of the same docs roadmap
   - Found while writing the docs pages (`00-infrastructure/TODO-10-documentation-site.md` §16); verified at source, not reproduced at runtime
 - [ ] Commit: `"taskbar: window list -- taskbar_entry, add/remove/active/flash wired from WM events"`
 
@@ -97,7 +98,7 @@ Right-click window button → `context_menu_show()`: Close, Restore/Maximize (to
 **Files:** `src/desktop/taskbar_winlist.c` (extend), `src/desktop/taskbar_ctxmenu.c` (new)
 
 > [!NOTE]
-> Detect right-click on window button in `desktop_handle_mouse()`. Menu items are dynamic: if window is maximized → show "Restore"; else → show "Maximize". If already minimized → hide "Minimize". "Move to Desktop ►" submenu: list `vdesk_name(i)` for each active virtual desktop (TODO-07 §9); callback → `vdesk_move_window(win, i)`. "Pin to taskbar" toggles `entry->pinned`; persist to Registry. All items wire to `wm_*` functions.
+> Detect right-click on window button in a new `desktop_handle_mouse()` (today `desktop_handle_click()` handles the left button only). Menu items are dynamic: if window is maximized → show "Restore"; else → show "Maximize". If already minimized → hide "Minimize". "Move to Desktop ►" submenu: list `vdesk_name(i)` for each active virtual desktop (TODO-09 §9); callback → `vdesk_move_window(win, i)`. "Pin to taskbar" toggles `entry->pinned`; persist to Registry. All items wire to `wm_*` functions.
 
 - [ ] `void taskbar_show_win_menu(taskbar_entry_t *entry, int32_t mx, int32_t my)` -- build `menu_item[]` array based on window state; call `context_menu_show(mx, my, items, count)`
 - [ ] Menu items: `Close` → `wm_destroy_window(entry->win)`; `Restore/Maximize` → toggle; `Minimize` → `wm_minimize(entry->win)` (hide if already minimized)
@@ -116,7 +117,7 @@ Hover a window button for `THEME_MOTION_TASKBAR_PREVIEW_DELAY_MS` (400) → the 
 **Files:** `src/desktop/taskbar_peek.c` (new), `include/desktop/wm.h` (extend), `src/desktop/wm.c` (extend compositor)
 
 > [!NOTE]
-> This is `[Opus]` -- Aero Peek requires a novel per-window temporary opacity field in the compositor. Currently `wm_composite()` blits all visible windows at full opacity. The change: add `uint8_t peek_alpha` to `struct wm_window` (default 255); compositor: use `gfx_blit_alpha(dst, win->x, win->y, &win_surf, 0, 0, win->w, win->h, win->peek_alpha)` instead of full-opacity blit. On peek start: iterate all entries except the hovered window; set `win->peek_alpha = 25`; `wm_mark_dirty()`. On peek end: restore all `win->peek_alpha = 255`. **500 ms hover timer**: in `taskbar_tick()` per entry: increment `hover_ms` by tick delta; if `hover_ms >= 500` and not yet in peek: `taskbar_peek_start(entry)`. On mouse-leave: `hover_ms = 0`; `taskbar_peek_end()`. **Show Desktop strip**: `THEME_SIZE_SHOW_DESKTOP_WIDTH` (8) px at the far right; hover → peek all windows (no hovered exception); click → `wm_toggle_show_desktop()` (minimizes all, toggle restores). The compositor `gfx_blit_alpha` call replaces the unconditional `fb_blit` per window -- this is the core architectural change.
+> This is `[Opus]` -- Aero Peek requires a novel per-window temporary opacity field in the compositor. Currently `wm_composite()` blits all visible windows at full opacity. The change: add `uint8_t peek_alpha` to `struct wm_window` (default 255); compositor: use `gfx_blit_alpha(dst, win->x, win->y, &win_surf, win->peek_alpha)` instead of full-opacity blit. On peek start: iterate all entries except the hovered window; set `win->peek_alpha = 25`; `wm_mark_dirty()`. On peek end: restore all `win->peek_alpha = 255`. **500 ms hover timer**: in `taskbar_tick()` per entry: increment `hover_ms` by tick delta; if `hover_ms >= 500` and not yet in peek: `taskbar_peek_start(entry)`. On mouse-leave: `hover_ms = 0`; `taskbar_peek_end()`. **Show Desktop strip**: `THEME_SIZE_SHOW_DESKTOP_WIDTH` (8) px at the far right; hover → peek all windows (no hovered exception); click → `wm_toggle_show_desktop()` (minimizes all, toggle restores). The compositor `gfx_blit_alpha` call replaces the unconditional `fb_blit` per window -- this is the core architectural change.
 
 - [ ] `uint8_t peek_alpha` field in `struct wm_window` (default 255); `uint16_t hover_ms` in `taskbar_entry_t`
 - [ ] `void taskbar_peek_start(taskbar_entry_t *peeked_entry)`: set `win->peek_alpha = 25` for all windows except `peeked_entry->win`; `wm_mark_dirty()`
@@ -137,7 +138,7 @@ Hover a window button for `THEME_MOTION_TASKBAR_PREVIEW_DELAY_MS` (400) → the 
 **Files:** `src/desktop/taskbar_winlist.c` (extend), `include/desktop/taskbar.h` (extend), `include/kernel/sched/syscall.h` (extend)
 
 > [!NOTE]
-> The progress bar is a 3 px tall strip at the very bottom of the window button, spanning `(pct * button_w / 100)` pixels. Colour map (`docs/design/shell.md#taskbar` Badges): NORMAL = `accent`, PAUSED = `status_caution`, ERROR = `status_critical`; theme tokens, no literals. State is stored in `entry->progress_pct` (0–100) and `entry->progress_state`. `taskbar_draw_winlist()` checks `entry->progress_state != TASKBAR_PROGRESS_NONE` and draws the strip after the button fill. **Syscall**: `sys_taskbar_set_progress(pid, pct, state)` -- kernel side looks up the window belonging to `pid` via `task_get_window(pid)`, then calls `taskbar_set_progress(win, pct, state)`.
+> The progress bar is a 3 px tall strip at the very bottom of the window button, spanning `(pct * button_w / 100)` pixels. Colour map (`docs/design/shell.md#taskbar` Badges): NORMAL = `accent`, PAUSED = `status_caution`, ERROR = `status_critical`; theme tokens, no literals. State is stored in `entry->progress_pct` (0–100) and `entry->progress_state`. `taskbar_draw_winlist()` checks `entry->progress_state != TASKBAR_PROGRESS_NONE` and draws the strip after the button fill. **Syscall**: `sys_taskbar_set_progress(pid, pct, state)` -- kernel side looks up the window belonging to `pid` via a new `task_get_main_window(pid)` (no such helper exists yet), then calls `taskbar_set_progress(win, pct, state)`.
 
 - [ ] `#define TASKBAR_PROGRESS_NONE    0`, `NORMAL=1`, `PAUSED=2`, `ERROR=3` in `taskbar.h`
 - [ ] `void taskbar_set_progress(wm_window_t *win, uint8_t pct, uint8_t state)` -- find entry by win; update `progress_pct/state`; `wm_mark_dirty()`
@@ -239,7 +240,7 @@ The taskbar is always `THEME_SIZE_TASKBAR_HEIGHT` (48) tall and docked to the bo
 | ⭐  | Feature             | 🪟 Win11                                                                | 🐧 Linux                                                | 🚀 Impossible OS                                            |
 | --- | ------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------- |
 | 💎  | Window list         | ✅ Centred icon buttons, running indicator pills,                       | ✅ GNOME dash-to-panel, KDE task manager;               | ⬜ §1 -- `taskbar_entry_t` 64-slot array; indicator pill    |
-| 💎  | Button context menu | ✅ Right-click taskbar button → window                                  | ✅ KDE right-click task; GNOME extension;               | ⬜ §2 -- uses `context_menu_show()` (TODO-07 §1); virtual   |
+| 💎  | Button context menu | ✅ Right-click taskbar button → window                                  | ✅ KDE right-click task; GNOME extension;               | ⬜ §2 -- uses `context_menu_show()` (TODO-09 §1); virtual   |
 | ⭐  | Aero Peek           | ✅ DWM Aero Peek (GPU composited);                                      | ⚠️ KDE Peek effect (GPU shader);                        | ⬜ §3 -- `⭐` software `gfx_blit_alpha` per-window alpha    |
 | 💎  | Progress badges     | ✅ `ITaskbarList3::SetProgressValue/State`; used by Explorer, Edge,     | ✅ Unity `libunity`; KDE `KStatusNotifierItem`; taskbar | ⬜ §4 -- 3 px bar at icon                                   |
 | 💎  | Pinned apps         | ✅ Pin to taskbar; combined pin+window;                                 | ✅ GNOME Favorites (`gsettings`); KDE pinned            | ⬜ §5 -- max 16 pins; CSV in                                |

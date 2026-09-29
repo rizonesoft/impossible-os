@@ -11,7 +11,7 @@ title: "TODO-15 -- Win32k Shadow SSDT (NtGdi / NtUser)"
 > **Goal:** Build the Win32k shadow System Service Descriptor Table (SSDT Table 1) -- the kernel-mode dispatch layer for all GDI and USER32 syscalls. In Windows, `win32k.sys` handles ~1300 `NtGdiXxx` and `NtUserXxx` entries. User-mode `gdi32.dll` and `user32.dll` call into this table via `syscall` with service numbers starting at `0x1000`. The **canonical slot table** for all reserved indices is [`TODO-A-Win32k-Shadow-SSDT-Master-Table.md`](TODO-A-Win32k-Shadow-SSDT-Master-Table.md). This file owns **implementation** (handlers, compositor integration, tests). **Router and syscall contract** for Table 1 live in [`TODO-16-win32k-shadow-native-api.md`](TODO-16-win32k-shadow-native-api.md).
 
 > [!IMPORTANT]
-> **Current state:** The compositor, window manager, GDI primitives (`gfx_*`), font system (`ttf_*`), cursor shapes, and icon store all exist as kernel-mode C APIs. There is NO shadow SSDT, no `NtGdiXxx`/`NtUserXxx` dispatch, and no user-mode thunking. Win32 apps currently cannot call GDI/USER32 functions via syscall. The existing `SYS_WAIT_MESSAGE=75`, `SYS_GETMESSAGE=74`, `SYS_REGISTERCLASS=76`, `SYS_FINDWINDOW=77` in TODO-05-win32-subsystem are placeholders that need migration to the shadow SSDT.
+> **Current state:** The compositor, window manager, GDI primitives (`gfx_*`), font system (`ttf_*`), cursor shapes, and icon store all exist as kernel-mode C APIs. The shadow table exists in `src/kernel/nt/ssdt.c` (1,024 slots, every one the `STATUS_NOT_IMPLEMENTED` stub, with the syscall filter, pledge gate and audit already applied), but no `NtGdiXxx`/`NtUserXxx` handler is registered and there is no user-mode thunking. Win32 apps currently cannot call GDI/USER32 functions via syscall. The `SYS_WAIT_MESSAGE=75`, `SYS_GETMESSAGE=74`, `SYS_REGISTERCLASS=76`, `SYS_FINDWINDOW=77` numbers planned in `12-user-platform-sdk/TODO-05-win32-subsystem` are not defined in code, so §12 has nothing to remove; it only has to keep them out of the main table.
 
 ## Inputs
 
@@ -20,13 +20,13 @@ title: "TODO-15 -- Win32k Shadow SSDT (NtGdi / NtUser)"
 - [`include/desktop/wm.h`](../../include/desktop/wm.h) -- `wm_create_window`, `wm_destroy_window`, `wm_move_window`, `wm_focus_window`, `wm_mark_dirty`
 - [`include/cursor.h`](../../include/cursor.h) -- `cursor_set_shape`, `cursor_shape_t`
 - [`include/icon_store.h`](../../include/icon_store.h) -- `icon_get`, `icon_for_extension`
-- → XREF: `02-kernel-core/TODO-12-native-api-ssdt.md §5` -- main SSDT infrastructure; shadow SSDT (Table 1) placeholder allocated there; service numbers 0x1000+ dispatched to this table
+- → XREF: `02-kernel-core/TODO-12-native-api-ssdt.md §4` -- main SSDT infrastructure; shadow SSDT (Table 1) placeholder allocated there; service numbers 0x1000+ dispatched to this table
 - → XREF: `08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md` -- authoritative 1300-row index map (function name, owner, done flag)
 - → XREF: `08-graphics-ui/TODO-16-win32k-shadow-native-api.md` -- Table 1 routing, bounds, NTSTATUS contract, static asserts vs `TODO-A`
 - → XREF: `08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` -- user-mode GDI/USER32 stub layer; this TODO provides the kernel-mode dispatch those stubs call into
 - → XREF: `12-user-platform-sdk/TODO-05-win32-subsystem.md` -- CSRSS loads win32k; message queue infrastructure (SYS_WAIT_MESSAGE etc.) migrates to this shadow SSDT
 - → XREF: `08-graphics-ui/TODO-08-window-manager.md` -- `wm_minimize/maximize/restore/set_title` wrapped by NtUserXxx
-- → XREF: `02-kernel-core/TODO-12-native-api-ssdt.md §25` -- KeUserModeCallback dispatch infrastructure; NtUserDispatchMessage and NtUserSendMessage call KeUserModeCallback to invoke user-mode window procedures
+- → XREF: `02-kernel-core/TODO-12-native-api-ssdt.md §26` -- KeUserModeCallback dispatch infrastructure; NtUserDispatchMessage and NtUserSendMessage call KeUserModeCallback to invoke user-mode window procedures
 - → XREF: `08-graphics-ui/TODO-05-widget-library-core.md` -- control painting routed through GDI DC
 - → XREF: `08-graphics-ui/TODO-01-graphics-asset-foundation.md §1-§6` -- drawing, bitmaps, icons, cursors, and display surfaces must reuse the native graphics foundation
 - → XREF: `08-graphics-ui/TODO-02-text-font-internationalization.md §1-§6` -- font, text, layout, and run-cache work is owned there and consumed here
@@ -44,13 +44,13 @@ title: "TODO-15 -- Win32k Shadow SSDT (NtGdi / NtUser)"
 
 | ⭐  | Order | Deliverable                                      | Depends On                                             | Status |
 | --- | :---: | ------------------------------------------------ | ------------------------------------------------------ | :----: |
-| 💎  |   1   | Shadow SSDT infrastructure (Table 1 dispatch)    | TODO-05 §3                                             |  [ ]   |
+| 💎  |   1   | Shadow SSDT infrastructure (Table 1 dispatch)    | 02-kernel-core/TODO-12 §4                              |  [ ]   |
 | 💎  |   2   | GDI device context (DC) object table             | §1                                                     |  [ ]   |
 | 💎  |   3   | GDI drawing syscalls (line, rect, ellipse, blit) | §2                                                     |  [ ]   |
 | 💎  |   4   | GDI text and font syscalls                       | §2                                                     |  [ ]   |
 | 💎  |   5   | GDI bitmap and DIB syscalls                      | §2                                                     |  [ ]   |
 | 💎  |   6   | GDI pen, brush, and region syscalls              | §2                                                     |  [ ]   |
-| 💎  |   7   | USER window management syscalls                  | §1, TODO-06                                            |  [ ]   |
+| 💎  |   7   | USER window management syscalls                  | §1, TODO-08                                            |  [ ]   |
 | 💎  |   8   | USER message queue syscalls                      | §7                                                     |  [ ]   |
 | 💎  |   9   | USER input and cursor syscalls                   | §7                                                     |  [ ]   |
 | 💎  |  10   | USER menu and accelerator syscalls               | §7                                                     |  [ ]   |
@@ -78,16 +78,17 @@ title: "TODO-15 -- Win32k Shadow SSDT (NtGdi / NtUser)"
 ---
 
 ## 1. Shadow SSDT Infrastructure (Table 1 Dispatch)
-Register the Win32k shadow SSDT as Table 1 in the SSDT dispatcher. Service numbers `0x1000–0x1FFF` are routed to this table. (→ XREF: TODO-12-native-api-ssdt.md §5)
+Register the Win32k shadow SSDT as Table 1 in the SSDT dispatcher. Service numbers `0x1000–0x13FF` (table selector bits 13:12 = 1, `SSDT_SHADOW_MAX` = 1,024 slots) are routed to this table. (→ XREF: TODO-12-native-api-ssdt.md §4)
 
 - [ ] Create `include/kernel/nt/win32k_ssdt.h`:
   - `WIN32K_SSDT_TABLE` -- same structure as main SSDT but separate function pointer array
   - `WIN32K_SERVICE_BASE = 0x1000` -- offset for shadow table indices
-- [ ] In `syscall_dispatch`: if `(service_number & 0x1000)`, dispatch to shadow SSDT at `index = service_number & 0x0FFF`
+- [x] `ssdt_dispatch()` routes by the table selector `(n >> SSDT_TABLE_SHIFT) & 3` (1 = shadow) at `index = n & SSDT_INDEX_MASK`; selectors 2-3 return `STATUS_INVALID_PARAMETER` (shipped, `src/kernel/nt/ssdt.c`)
+- [ ] Fit the 1,300-row plan into `SSDT_SHADOW_MAX` (1,024 in `ssdt.h`): 419 `TODO-A` rows at `0x1400`-`0x15A2` cannot register; grow the table and the 16-word filter bitmap, or renumber
 - [ ] Create `src/kernel/win32k/win32k_init.c`:
   - `win32k_init()` -- register all NtGdiXxx and NtUserXxx handlers in shadow SSDT
   - Called during Phase 3 init (after compositor is ready)
-- [ ] Unimplemented shadow slots return `STATUS_NOT_IMPLEMENTED`
+- [x] Unimplemented shadow slots return `STATUS_NOT_IMPLEMENTED`: `ssdt_init()` fills all 1,024 with `ssdt_stub_not_implemented`, and an index past `max` returns it too (shipped, `src/kernel/nt/ssdt.c`)
 - [ ] Commit: `"kernel: win32k -- shadow SSDT Table 1 dispatch infrastructure"`
 
 **Test checkpoint:** `syscall_dispatch(0x1000)` routes to shadow SSDT, not main SSDT. Unimplemented shadow slot returns `STATUS_NOT_IMPLEMENTED`. Serial: `"win32k: shadow SSDT registered, 1300 services"` once the full table from `TODO-A` is registered.
@@ -544,7 +545,7 @@ Shadow Table 1 routing and syscall contract (parallel to kernel `TODO-05`): [`TO
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_win32k.c` with:
-  - Shadow SSDT dispatch: `syscall(0x1000)` routes to `NtGdiCreateCompatibleDC`; `syscall(0xFFFF)` returns `STATUS_NOT_IMPLEMENTED`
+  - Shadow SSDT dispatch: `syscall(0x1000)` routes to `NtGdiCreateCompatibleDC`; an empty slot such as `syscall(0x13FF)` returns `STATUS_NOT_IMPLEMENTED`, and `syscall(0x3000)` (selector 3) returns `STATUS_INVALID_PARAMETER`
   - `NtGdiGetDC(hwnd)` returns valid HDC; `NtGdiReleaseDC` succeeds
   - `NtGdiCreatePen(PS_SOLID, 1, 0xFF0000)` returns valid HPEN; `NtGdiDeleteObjectApp` frees it
   - `NtGdiSelectObject` into DC changes active pen

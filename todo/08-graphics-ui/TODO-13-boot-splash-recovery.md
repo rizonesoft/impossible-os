@@ -11,7 +11,7 @@ title: "TODO-13 -- Boot Splash & F8 Recovery"
 > **Goal:** Complete the graphical boot experience and the F8 recovery path. BSOD core (panic, crash dump, auto-restart) is done. This TODO adds: `boot_splash_progress(pct)` thin progress bar + 8-step fade-to-black in `boot_splash_finish()`, the canonical logo mark from the existing `os_logo.h` pipeline, boot progress milestone constants wired into subsystem inits, an early-boot F8 text menu (PS/2 raw polling before keyboard IRQ), Registry-based crash loop protection, and a BSOD auto-restart validation test plan.
 
 > [!IMPORTANT]
-> **Already implemented** -- do not re-implement: arc ring spinner (`include/kernel/spinner.h`, `include/kernel/gfx/arc_ring.h`), `boot_font_render()` TTF status text, `boot_splash_init/status/tick/finish/abort/active` stubs, `boot_splash_start_animation()`. **Missing from `boot_splash.c`**: `boot_splash_progress(pct)` (no thin progress bar yet), milestone constants, fade-to-black (stub exists but fade loop not implemented), logo build pipeline, F8 boot menu, crash loop protection. `klog(level, subsystem, fmt)` from `include/kernel/klog.h` is the serial logging function. `uefi_reboot()` from `include/kernel/uefi_runtime.h` is the reboot call. `keyboard_inject_scancode()` in `include/kernel/drivers/keyboard.h` exists, but F8 polling at early boot requires direct PS/2 port reads (IRQ not yet live). Complete sections in order: build pipeline → splash renderer → spinner confirm → milestones → F8 menu → crash loop → BSOD validation.
+> **Already implemented** -- do not re-implement: arc ring spinner (`include/kernel/spinner.h`, `include/kernel/gfx/arc_ring.h`), `boot_font_render()` TTF status text, `boot_splash_init/status/tick/finish/abort/active` (fully implemented in `src/kernel/boot_splash.c`, including a 5-frame fade-in and fade-out and the `os_logo.h` logo from the `tools/convert_icon.py` pipeline), `boot_splash_start_animation()`, and an F8 safe-mode hotkey in the UEFI boot menu (`src/boot/uefi/bootx64.c`, sets `boot_mode = 1`). **Missing from `boot_splash.c`**: `boot_splash_progress(pct)` (no thin progress bar yet), milestone constants, the design's 8-step fade and layout values, and a kernel-side F8 recovery menu. Crash loop protection moved to `02-kernel-core/TODO-28`. `klog(level, subsystem, fmt)` from `include/kernel/klog.h` is the serial logging function. `uefi_reboot()` from `include/kernel/uefi_runtime.h` is the reboot call. `keyboard_inject_scancode()` in `include/kernel/drivers/keyboard.h` exists, but F8 polling at early boot requires direct PS/2 port reads (IRQ not yet live). Complete sections in order: build pipeline → splash renderer → spinner confirm → milestones → F8 menu → crash loop → BSOD validation.
 
 ## Inputs
 
@@ -37,13 +37,13 @@ title: "TODO-13 -- Boot Splash & F8 Recovery"
 
 | ⭐  | Order | Deliverable                                                                                               | Depends On                                                              | Status |
 | --- | :---: | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §3 Build pipeline -- splash draws the canonical logo from `os_logo.h`                                     | Nothing; standalone host-side tool                                      |  [ ]   |
-| 💎  |   2   | §1 Boot splash renderer -- `boot_splash_progress(pct)`, thin bar, fade-to-black in `boot_splash_finish()` | §3 (logo C array must exist before splash can show it at runtime)       |  [ ]   |
-| 💎  |   3   | §2 Loading spinner -- confirm `spinner_draw_faded()` integrated into fade path; no re-implementation      | §1 (fade loop calls `spinner_draw_faded()` at each of 8 steps)          |  [ ]   |
+| 💎  |   3   | §3 Build pipeline -- splash draws the canonical logo from `os_logo.h`                                     | Nothing; standalone host-side tool                                      |  [ ]   |
+| 💎  |   1   | §1 Boot splash renderer -- `boot_splash_progress(pct)`, thin bar, fade-to-black in `boot_splash_finish()` | §3 (logo C array must exist before splash can show it at runtime)       |  [ ]   |
+| 💎  |   2   | §2 Loading spinner -- confirm `spinner_draw_faded()` integrated into fade path; no re-implementation      | §1 (fade loop calls `spinner_draw_faded()` at each of 8 steps)          |  [ ]   |
 | 💎  |   4   | §4 Boot progress milestones -- `BOOT_MILESTONE_*` constants + `boot_splash_milestone()` call sites        | §1 (`boot_splash_progress()` must exist before milestones can drive it) |  [ ]   |
 | ⭐  |   5   | §5 F8 boot menu -- early PS/2 polling, text-mode menu, `boot_mode_t`, boot flag propagation               | §1 (splash must be functional so F8 path can abort it cleanly)          |  [ ]   |
-| 💎  |   6   | ~~§6 Crash loop protection~~ → MOVED to `TODO-21 §7-§8`                                                   | --                                                                      |  N/A   |
-| 💎  |   7   | ~~§7 BSOD validation~~ → MOVED to `TODO-21` Verification                                                  | --                                                                      |  N/A   |
+| 💎  |   6   | ~~§6 Crash loop protection~~ → MOVED to `TODO-28 §7-§8`                                                   | --                                                                      |  N/A   |
+| 💎  |   7   | ~~§7 BSOD validation~~ → MOVED to `TODO-28` Verification                                                  | --                                                                      |  N/A   |
 
 ---
 
@@ -60,7 +60,7 @@ Extend existing `boot_splash.c` with: (a) `boot_splash_progress(uint8_t pct)`: a
 
 - [ ] `void boot_splash_progress(uint8_t pct)` in `src/kernel/boot_splash.c`: scanline fill; update static `g_progress_pct` to avoid full redraw if pct unchanged
 - [ ] Add `void boot_splash_progress(uint8_t pct);` declaration to `include/kernel/boot_splash.h`
-- [ ] `boot_splash_finish()`: implement 8-step fade loop: `spinner_draw_faded(255 - step*32)` + framebuffer alpha-overlay + `pit_delay_ms(16)` per step; then spinner_stop; clear to black
+- [ ] `boot_splash_finish()`: replace the shipped 5-frame fade (67 ms steps) with the design's 8 steps: `spinner_draw_faded(255 - step*32)` + alpha overlay + `sleep_ms(16)` (no `pit_delay_ms` exists); then stop and clear
 - [ ] `boot_splash_init()`: black background; alpha-blend `OS_LOGO_FOR_HEIGHT(fb_h)` centred horizontally with its centre at 40% of `fb_h`; `THEME_SIZE_BOOT_SPINNER` (40) white dot-ring spinner centred at 70%
 - [ ] `boot_splash_status(msg)` already calls `boot_font_render`; add `klog(LOG_INFO, "boot", "%s", msg)` at the top of the function body so serial output is never lost
 - [ ] Commit: `"boot/splash: progress bar, fade-to-black, logo alpha-blend, klog in status"`
@@ -104,7 +104,7 @@ The splash uses the canonical logo mark (`resources/brand/logo.svg`, spec in `do
 
 8 `BOOT_MILESTONE_*` constants mapping to progress percentages and status strings. `boot_splash_milestone(id)` calls `boot_splash_progress(pct)` + `boot_splash_status(msg)` + `boot_splash_tick()`. Called from each subsystem's `_init()` function.
 
-**Files:** `include/kernel/boot_splash.h` (extend), `src/kernel/main/boot_hw.c`, `boot_storage.c`, `boot_desktop.c` (extend)
+**Files:** `include/kernel/boot_splash.h` (extend), `src/kernel/main/boot_interrupts.c`, `boot_storage.c`, `boot_desktop.c`, `boot_init.c` (extend; these already hold the 38 `boot_splash_status()` call sites, `boot_hw.c` holds none)
 
 > [!NOTE]
 > Milestone table: `PMM=10 "Initializing memory..."`, `ACPI=20 "Reading hardware tables..."`, `DRIVERS=35 "Loading drivers..."`, `FS=50 "Mounting filesystems..."`, `NETWORK=60 "Starting network..."`, `REGISTRY=70 "Loading configuration..."`, `DESKTOP=85 "Starting desktop..."`, `DONE=100 "Welcome to Impossible OS"`. Each milestone call also triggers `klog(LOG_INFO, "boot", "[%u%%] %s", pct, msg)` so serial output mirrors the splash. `boot_splash_tick()` advances the arc ring animation one frame between milestones so the spinner keeps rotating during blocking init.
@@ -120,19 +120,21 @@ The splash uses the canonical logo mark (`resources/brand/logo.svg`, spec in `do
 
 **Design:** n/a -- drawn before the compositor exists, on the boot framebuffer; follows the boot splash and boot error screen styles, not the desktop
 
-Poll PS/2 keyboard data port (0x60) for 2 seconds during early boot. F8 key detected → draw text-mode boot menu (dark bg, PSF/boot_font, numbered options). Selections: (1) Normal, (2) Safe Mode, (3) Recovery Shell, (4) Last Known Good. Set `g_boot_mode` global; propagate to all subsequent init steps.
+Poll PS/2 keyboard data port (0x60) for 2 seconds during early boot. F8 key detected → draw text-mode boot menu (dark bg, PSF/boot_font, numbered options). Selections: (1) Normal, (2) Safe Mode, (3) Recovery Shell, (4) Last Known Good. Record the choice in the existing boot mode (`config.boot_mode` resolved to `safe_mode_t`), extended with Recovery and Last Known Good; propagate to all subsequent init steps.
 
 **Files:** `src/kernel/boot_f8.c` (new), `include/kernel/boot_f8.h` (new), `src/kernel/main/boot_hw.c` (extend)
 
 > [!NOTE]
 > This is `[Opus]` -- early-boot keyboard polling runs before PS/2 IRQ (IRQ 1) is live and before the keyboard driver is initialized. Use direct PS/2 port I/O: `while (inb(0x64) & 1) { scan = inb(0x60); ... }` (status port 0x64, data port 0x60). F8 scan code: `0x42` (make), `0xC2` (break). Poll loop: `uint64_t start = system_get_ticks(); while ((system_get_ticks() - start) < 20) { /* 20 ticks = 200 ms at 100 Hz; do 10 × 200 ms = 2 s total */ ... }`. Text-mode menu: uses `boot_font_render()` to draw numbered options directly to framebuffer (no gfx lib); draw dark background (`gfx_fill_rect` if gfx is available, else manual scanline) then menu lines. **Boot mode flags**: `typedef enum { BOOT_MODE_NORMAL=0, BOOT_MODE_SAFE, BOOT_MODE_RECOVERY, BOOT_MODE_LAST_KNOWN_GOOD } boot_mode_t;` in `boot_f8.h`; `extern boot_mode_t g_boot_mode;` -- checked by all subsequent init functions. Safe mode: `BOOT_MODE_SAFE` skips network init, skips desktop, boots to terminal only, draws "Safe Mode" watermark text in all four screen corners. Recovery Shell: `BOOT_MODE_RECOVERY` skips registry + filesystem init, goes directly to serial-attached `recovery_shell()`. Last Known Good: before normal init, copy `HKLM.backup` over `HKLM` Registry hive file.
 
-- [ ] `boot_mode_t` enum + `extern boot_mode_t g_boot_mode;` in `include/kernel/boot_f8.h`
-- [ ] `void boot_f8_poll(void)` in `src/kernel/boot_f8.c`: 10-iteration loop; each: scan PS/2 status+data ports; if F8 scan code `0x42` detected: call `boot_f8_show_menu()`; if no F8 in 2 s: `g_boot_mode = BOOT_MODE_NORMAL`; return
-- [ ] `void boot_f8_show_menu(void)` -- clear framebuffer to `0xFF1A1A28`; `boot_font_render()` header "Impossible OS Recovery" and 7 numbered options; poll `1`–`7` or arrows + Enter; set `g_boot_mode`
+- [ ] Reuse the shipped F8 path: the UEFI boot menu's F8 sets `boot_mode = 1` and the kernel resolves `safe_mode_t`; build on those instead of a separate `g_boot_mode`
+- [ ] Make safe mode skip what it names: gate the desktop, network, third-party modules and services on `kernel_safe_mode_allows()`; today only `ci_policy.c` reads it
+- [ ] Extend the existing boot mode (`config.boot_mode` + `safe_mode_t` in `include/kernel/config.h`) with Recovery and Last Known Good values; no separate `g_boot_mode`
+- [ ] `void boot_f8_poll(void)` in `src/kernel/boot_f8.c`: 10-iteration loop; each: scan PS/2 status+data ports; if F8 scan code `0x42` detected: call `boot_f8_show_menu()`; if no F8 in 2 s: keep the bootloader's `boot_mode` (never reset it); return
+- [ ] `void boot_f8_show_menu(void)` -- clear framebuffer to `0xFF1A1A28`; `boot_font_render()` header "Impossible OS Recovery" and 7 numbered options; poll `1`–`7` or arrows + Enter; set the boot mode
   - Options: Normal, Safe Mode, Recovery Shell, Last Known Good, System Restore, Factory Reset, Startup Repair
 - [ ] Number key scancodes for early polling: `0x02`..`0x08` = 1..7
-- [ ] `boot_f8_apply_mode()`: check `g_boot_mode`; if `LAST_KNOWN_GOOD`: `vfs_copy("C:\\HKLM.backup", "C:\\HKLM")` before registry_init; if `RECOVERY`: skip to recovery shell after minimal init; if `SAFE`: set `g_skip_network=1`, `g_skip_desktop=1`
+- [ ] `boot_f8_apply_mode()`: check the boot mode; if `LAST_KNOWN_GOOD`: `vfs_copy("C:\\HKLM.backup", "C:\\HKLM")` before registry_init; if `RECOVERY`: skip to recovery shell after minimal init; `SAFE` needs nothing extra (gates above)
 - [ ] Call `boot_f8_poll()` from `kernel_main()` immediately after `fb_init()` (framebuffer must be live) but before `boot_splash_init()` (so F8 menu can own the screen)
 - [ ] Safe Mode watermark: after desktop would start, if `BOOT_MODE_SAFE`: render "Safe Mode" text at all 4 corners in red using `boot_font_render()` every frame
 - [ ] Canonical recovery menu (the F8 menu in `10-platform-services/TODO-04 §7` is superseded by this one): add System Restore, Factory Reset and Startup Repair entries that hand off to `recovery_dispatch()` owned there
@@ -140,7 +142,7 @@ Poll PS/2 keyboard data port (0x60) for 2 seconds during early boot. F8 key dete
 
 ## 6. [MOVED] Crash Loop Protection
 
-> **Moved to `02-kernel-core/TODO-28-bsod-ux-enhancements.md §7-§8`.** Crash loop tracking (NVRAM stats + consecutive crash counter) and safe mode suggestion are owned by TODO-21 alongside all other panic screen behavior.
+> **Moved to `02-kernel-core/TODO-28-bsod-ux-enhancements.md §7-§8`.** Crash loop tracking (NVRAM stats + consecutive crash counter) and safe mode suggestion are owned by TODO-28 alongside all other panic screen behavior.
 
 ## 7. [MOVED] BSOD Auto-Restart Validation
 

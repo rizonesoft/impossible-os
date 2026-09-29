@@ -8,7 +8,7 @@ title: "Win32k Shadow SSDT Master Table"
 
 # Win32k Shadow SSDT Master Table
 
-> **SSDT Table 1.** Service numbers in the `0x1000+` range dispatch to Win32k (`NtGdi*` / `NtUser*`), separate from the main native SSDT (Table 0) in [`../02-kernel-core/TODO-A-SSDT-Master-Table.md`](../02-kernel-core/TODO-A-SSDT-Master-Table.md). Each range has headroom for future additions. The `§` column references [`TODO-15-win32k-shadow-ssdt.md`](TODO-15-win32k-shadow-ssdt.md). Routing, NTSTATUS contract, and filter/audit hooks for Table 1 are in [`TODO-16-win32k-shadow-native-api.md`](TODO-16-win32k-shadow-native-api.md).
+> **SSDT Table 1.** Service numbers in the `0x1000+` range dispatch to Win32k (`NtGdi*` / `NtUser*`), separate from the main native SSDT (Table 0) in [`../02-kernel-core/TODO-A-SSDT-Master-Table.md`](../02-kernel-core/TODO-A-SSDT-Master-Table.md). Range headings are labels, not reservations: several overlap their neighbours, while every row index is unique (checked 2026-09-29). **Capacity:** the table holds 1,024 slots (`SSDT_SHADOW_MAX`, `0x1000`-`0x13FF`), so the 419 rows at `0x1400` and above cannot register as numbered until `TODO-15` §1 resolves it. The `§` column references [`TODO-15-win32k-shadow-ssdt.md`](TODO-15-win32k-shadow-ssdt.md). Routing, NTSTATUS contract, and filter/audit hooks for Table 1 are in [`TODO-16-win32k-shadow-native-api.md`](TODO-16-win32k-shadow-native-api.md).
 
 
 **0x1000–0x100F: GDI Device Context and Object Management**
@@ -1456,7 +1456,7 @@ title: "Win32k Shadow SSDT Master Table"
 | 0x15A1 | NtUserSetSystemMenu2                       | §10 | T12   | [ ]  |
 | 0x15A2 | NtUserSetThreadDesktop2                    | §25 | T12   | [ ]  |
 
-> **Total: 1300 shadow SSDT entries** across 28 functional ranges -- full Windows 11 win32k.sys parity plus 55 Impossible OS exclusive graphics extensions. All entries initially return `STATUS_NOT_IMPLEMENTED` until their owning section is implemented.
+> **Total: 1300 shadow SSDT entries** across 29 functional ranges -- full Windows 11 win32k.sys parity plus 55 Impossible OS exclusive graphics extensions. All entries initially return `STATUS_NOT_IMPLEMENTED` until their owning section is implemented.
 
 **Test checkpoint:** `syscall_dispatch(0x1FFF)` (or first out-of-table shadow index) returns `STATUS_NOT_IMPLEMENTED`, not crash. `syscall_dispatch(0x1000)` reaches the Win32k handler registered for `NtGdiCreateCompatibleDC` once `TODO-12` §1 is wired. Serial: `"win32k: shadow SSDT registered, 1300 services"` during init when the table is fully populated.
 

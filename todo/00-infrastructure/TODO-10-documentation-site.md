@@ -67,7 +67,7 @@ file_patterns:
 | 💎  |  14   | §14 Document: Storage and filesystems (14 roadmap files)                 | §2, §3     |  [x]   |
 | 💎  |  15   | §15 Document: Networking (11 roadmap files)                              | §2, §3     |  [x]   |
 | 💎  |  16   | §16 Document: Desktop foundation and graphics, part 1 (14 roadmap files) | §2, §3     |  [x]   |
-| 💎  |  17   | §17 Document: Graphics and UI, part 2 (9 roadmap files)                  | §2, §3     |  [ ]   |
+| 💎  |  17   | §17 Document: Graphics and UI, part 2 (9 roadmap files)                  | §2, §3     |  [x]   |
 | 💎  |  18   | §18 Document: Desktop shell (14 roadmap files)                           | §2, §3     |  [ ]   |
 | 💎  |  19   | §19 Document: Platform services (15 roadmap files)                       | §2, §3     |  [ ]   |
 | 💎  |  20   | §20 Document: Applications and accessories (15 roadmap files)            | §2, §3     |  [ ]   |
@@ -778,22 +778,41 @@ Write docs pages that meet the §3 contract for the 14 roadmap files below. Read
 
 Write docs pages that meet the §3 contract for the 9 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page.
 
-- [ ] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/08-graphics-ui/TODO-09-desktop-shell-features.md` (TODO-09 -- Desktop Shell Features)
-  - `todo/08-graphics-ui/TODO-10-taskbar.md` (TODO-10 -- Taskbar)
-  - `todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md` (TODO-11 -- Start Menu, System Tray & Notifications)
-- [ ] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/08-graphics-ui/TODO-12-clock-time.md` (TODO-12 -- Kernel Time & Taskbar Clock)
-  - `todo/08-graphics-ui/TODO-13-boot-splash-recovery.md` (TODO-13 -- Boot Splash & F8 Recovery)
-  - `todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` (TODO-14 -- Win32 GDI / USER32 Desktop API Stubs)
-- [ ] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/08-graphics-ui/TODO-15-win32k-shadow-ssdt.md` (TODO-15 -- Win32k Shadow SSDT (NtGdi / NtUser))
-  - `todo/08-graphics-ui/TODO-16-win32k-shadow-native-api.md` (TODO-16 -- Win32k Shadow Native API (SSDT Table 1 Router))
-  - `todo/08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md` (Win32k Shadow SSDT Master Table)
-- [ ] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: graphics and ui, part 2 documentation pages"`
+- [x] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/08-graphics-ui/TODO-09-desktop-shell-features.md` (TODO-09 -- Desktop Shell Features): `desktop-shell-features.md`
+  - `todo/08-graphics-ui/TODO-10-taskbar.md` (TODO-10 -- Taskbar): `taskbar.md`
+  - `todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md` (TODO-11 -- Start Menu, System Tray & Notifications): `start-menu-tray-notifications.md`
+- [x] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/08-graphics-ui/TODO-12-clock-time.md` (TODO-12 -- Kernel Time & Taskbar Clock): `clock-time.md`
+  - `todo/08-graphics-ui/TODO-13-boot-splash-recovery.md` (TODO-13 -- Boot Splash & F8 Recovery): `boot-splash-recovery.md`
+  - `todo/08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` (TODO-14 -- Win32 GDI / USER32 Desktop API Stubs): `win32-gdi-user32.md`
+- [x] Pages in `docs/graphics/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/08-graphics-ui/TODO-15-win32k-shadow-ssdt.md` (TODO-15 -- Win32k Shadow SSDT (NtGdi / NtUser)): `win32k-shadow-ssdt.md`
+  - `todo/08-graphics-ui/TODO-16-win32k-shadow-native-api.md` (TODO-16 -- Win32k Shadow Native API (SSDT Table 1 Router)): `win32k-shadow-router.md`
+  - `todo/08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md` (Win32k Shadow SSDT Master Table): `win32k-shadow-master-table.md`
+- [x] Add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline` (76 to 71 entries)
+  - Four of the nine files (TODO-09 to TODO-12) were already covered by `docs/design/shell.md`; the new pages cover them too, as subsystem pages that link the spec.
+- [x] Roadmap drift found while writing, fixed in place
+  - Implementation Order: the Order column did not match the section in `08-graphics-ui/TODO-09`, `TODO-10`, `TODO-12`, `TODO-13` and `TODO-14` (and four `TODO-09` labels named the wrong section); Depends On cells named pre-renumbering sections there and in `TODO-11`, `TODO-15` and `TODO-16`, whose bare `TODO-12` the graph parser read as the graphics clock roadmap (now `02-kernel-core/TODO-12`, checked with `extract_implementation_order()`).
+  - Stale owners: the old `TODO-01`/`TODO-02`/`TODO-06`/`TODO-07` numbers for theme, animation, window manager and shell features; the native API as `02-kernel-core/TODO-05` in `TODO-15`/`TODO-16`; FILETIME as `TODO-17`; crash-loop protection as `TODO-21` (now `TODO-28`).
+  - Code claims: `TODO-12` now says the FILETIME clock and a taskbar clock ship; `TODO-13` that the splash, fade, logo pipeline and a bootloader F8 exist; `TODO-14` that no dialogs or `wm_minimize()` exist yet; `TODO-15`/`TODO-16` that the shadow table exists, with the shipped routing and stub items marked done; the `TODO-12` section 1 and `TODO-13` section 5 checklists now build on the existing clock and boot mode instead of a second clock and a `g_boot_mode`; `SYS_*` numbers above 48 are no longer described as taken.
+  - `TODO-A`: 29 range headings, not 28; the headings overlap but the 1,300 row indexes are unique.
+- [x] Code defects and design conflicts found while writing, filed in owning open sections rather than fixed (docs-only section)
+  - `08-graphics-ui/TODO-15` section 1: `SSDT_SHADOW_MAX` is 1,024, so 419 master-table rows at `0x1400`-`0x15A2` cannot register.
+  - `08-graphics-ui/TODO-12` section 1: the planned Unix clock would be a second clock with its own anchor, a fixed PIT divisor and an unchecked `rtc_read()` seed; section 3: the taskbar clock's fallback formats a zero date without CMOS.
+  - `08-graphics-ui/TODO-13` section 5: safe mode is resolved but only the code-integrity gate reads it, so it does not skip the desktop or network; the F8 plan now builds on the bootloader's F8.
+  - `08-graphics-ui/TODO-10` section 1: the Start button is drawn at x 4-51 but hit-tested at x 2-49.
+- [x] Commit: `"docs: graphics and ui, part 2 documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check` prints `site: OK` with 161/232 TODO files documented
+
+> **Notes:**
+> - **What shipped:** nine contract-shaped pages in `docs/graphics/`, one per roadmap file (shell features, taskbar, Start menu, clock, boot splash, GDI/USER32, and the three Win32k shadow SSDT files), each in the folder index.
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the shell, time, splash, PE or SSDT code it describes changes.
+> - **Status honesty:** no section of these nine roadmaps has shipped; pages describe what runs today (a static taskbar and Start menu, the FILETIME clock, the splash and bootloader F8, an empty shadow table) and link the owning sections.
+> - **Scope boundary:** the design specs in `docs/design/` stay authoritative for visuals; the kernel pages `docs/kernel/time-filetime.md` and `docs/kernel/native-api-ssdt.md` stay authoritative for the clock and the main SSDT, and these pages link them.
 
 ---
 
