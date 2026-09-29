@@ -3,7 +3,7 @@
 
 ## What is it?
 
-This roadmap collects the power-user and ecosystem features that come after the core OS: a GDB kernel debug stub and a user-mode debugger, developer tools, touch gestures, gamepads with an XInput layer, printing to PDF, text to speech, software OpenGL through a TinyGL port, multi-user sessions with fast switching, opt-in telemetry and parental controls. All eleven sections are P2 to P4 and none has shipped. Each one is meant to be buildable on its own, and none blocks another roadmap.
+This roadmap collects the power-user and ecosystem features that come after the core OS: a GDB kernel debug stub and a user-mode debugger, developer tools, touch gestures, gamepads with an XInput layer, printing to PDF, text to speech, software OpenGL through a TinyGL port, multi-user sessions with fast switching, opt-in telemetry and parental controls. All eleven sections are P2 to P4 and none has shipped. Most can be built on their own, but the user-mode debugger builds on the kernel debug stub, and other roadmaps wait on three of them: the SDK debugger work on the user-mode debugger, WordPad printing on the PDF writer, and GPU compositor research on the TinyGL port.
 
 ## How does it work?
 

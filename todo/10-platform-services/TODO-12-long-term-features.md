@@ -13,7 +13,7 @@ title: "TODO-12 -- Long-Term Features"
 
 > [!IMPORTANT]
 > **Depends on:** Core OS complete -- ring-3 PE execution (`TODO-07`), Win32 API surface (`TODO-08`), audio system (`10-platform-services/TODO-01`), user accounts (`09-desktop-shell/TODO-06-security-accounts.md`), IxUI (`TODO-08 §13`). No section here is a prerequisite for any other active TODO.
-> **Long-term scope:** Nothing in this TODO is P0 or P1. All sections are P2–P4 power-user and ecosystem features. Each section is independently implementable.
+> **Long-term scope:** Nothing in this TODO is P0 or P1. All sections are P2–P4 power-user and ecosystem features. Most sections stand alone, but §2 builds on §1, and other roadmaps consume §2 (SDK debugger), §6 (WordPad printing) and §8 (GPU compositor research).
 
 ---
 

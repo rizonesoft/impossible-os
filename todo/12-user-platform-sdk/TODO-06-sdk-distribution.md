@@ -19,7 +19,7 @@ title: "TODO-06 -- SDK Distribution & Developer Experience"
 >   libs (`kernel32.lib`, `user32.lib`, `gdi32.lib`, `ntdll.lib`), `impossible-cc` wrapper.
 > - `10-platform-services/TODO-09` -- TCC compiler, `libc.lib`, IxUI toolkit (`libixui.a`),
 >   `make` utility, basic SDK installer to `C:\Impossible\Include\` + `C:\Impossible\Bin\`.
-> - `10-platform-services/TODO-12 §3` -- base `debugger.exe` with `SYS_DEBUG_ATTACH/DETACH`,
+> - `10-platform-services/TODO-12 §2` -- base `debugger.exe` with `SYS_DEBUG_ATTACH/DETACH`,
 >   `ReadProcessMemory`/`WriteProcessMemory`/`GetThreadContext`/`WaitForDebugEvent`,
 >   INT3 + DR* breakpoints. This TODO adds call-stack display, disassembler, and
 >   source-level debug on top of that foundation.
@@ -42,7 +42,7 @@ title: "TODO-06 -- SDK Distribution & Developer Experience"
 - `tools/` (host-side build tools) -- `jpg2raw.c`, `irespack.c` -- §2 `gendoc.c` pattern
 - `10-platform-services/TODO-09-compiler-sdk.md §10` (→ XREF) -- basic `getting-started.md`, `porting-guide.md`
 - `10-platform-services/TODO-08-win32-api-surface.md §15` (→ XREF) -- SDK headers + `impossible-cc`
-- `10-platform-services/TODO-12-long-term-features.md §3` (→ XREF) -- base `debugger.exe`; this TODO adds on top
+- `10-platform-services/TODO-12-long-term-features.md §2` (→ XREF) -- base `debugger.exe`; this TODO adds on top
 - `include/kernel/sched/syscall.h` -- PIT interrupt path for profiler (§4); `SYS_PROFILER_START/STOP`
 - `include/kernel/sched/task.h` -- `struct task`, per-task CPU ticks -- §4 profiler RIP sampling
 - `include/kernel/elf.h` -- ELF symbol table scan for profiler symbol resolution -- §4 §6
@@ -234,7 +234,7 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 
 ## 6. Debugger Enhancements `[Opus]`
 
-> Extends `10-platform-services/TODO-12 §3` base debugger. Novel additions: `.pdata`
+> Extends `10-platform-services/TODO-12 §2` base debugger. Novel additions: `.pdata`
 > section unwind, x86-64 disassembler, source-level debug map. Complex algorithm design.
 
 **Source:** `src/tools/debugger/` (extends existing `debugger.exe`)

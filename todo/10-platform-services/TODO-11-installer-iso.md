@@ -12,7 +12,7 @@ title: "TODO-11 -- OS Installer & ISO Build"
 **Goal:** Deliver a bootable ISO and graphical installer that make Impossible OS distributable and installable on real hardware -- the capstone that transforms the OS from a QEMU-only raw disk image into a product that ships.
 
 > [!IMPORTANT]
-> **Depends on:** `TODO-07 §9` (ring-3 PE execution) and `TODO-08 §10–13` (IxUI windows, user32, gdi32) for the installer GUI. GPT + FAT32 + IXFS format APIs must be available: `fat32_format()` (`include/kernel/fs/fat32.h`), `ixfs_format()` (`include/kernel/fs/ixfs.h`), `gpt_parse()` (`include/kernel/fs/gpt.h`), `blkdev_count()` (`include/kernel/drivers/blkdev.h`).
+> **Depends on:** `TODO-07 §7` (ring-3 PE execution) and `TODO-08 §10–13` (IxUI windows, user32, gdi32) for the installer GUI. GPT + FAT32 + IXFS format APIs must be available: `fat32_format()` (`include/kernel/fs/fat32.h`), `ixfs_format()` (`include/kernel/fs/ixfs.h`), `gpt_parse()` (`include/kernel/fs/gpt.h`), `blkdev_count()` (`include/kernel/drivers/blkdev.h`).
 > **Overlap:** §8 (first-boot trigger) XREFs `TODO-04-restore-recovery §5` (OOBE wizard in this domain); do not duplicate that wizard; trigger it from here.
 
 ---

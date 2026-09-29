@@ -48,8 +48,8 @@ title: "TODO-04 -- NTDLL & User-Mode Runtime"
 - `include/kernel/syscall.h` -- syscall numbers for `SYS_VIRTUALALLOC`, `SYS_VIRTUALFREE`
 - `08-graphics-ui/TODO-A-Win32k-Shadow-SSDT-Master-Table.md` (XREF) -- `NtGdi*` / `NtUser*` syscall stub indices in `ntdll_syscalls.asm` must match Table 1; router contract in `08-graphics-ui/TODO-16-win32k-shadow-native-api.md`
 - `src/win32/ntdll.c` -- existing minimal stubs from `D10T08 §4` (extend, do not duplicate)
-- `10-platform-services/TODO-07-win32-pe-loader.md §9` (→ XREF) -- TEB/PEB minimal setup
-- `10-platform-services/TODO-08-win32-api-surface.md §2 §3 §7` (→ XREF) -- stubs + VirtualAlloc + LoadLibrary forwards
+- `10-platform-services/TODO-07-win32-pe-loader.md §7` (→ XREF) -- TEB/PEB minimal setup
+- `10-platform-services/TODO-08-win32-api-surface.md §4 §5 §7` (→ XREF) -- stubs + VirtualAlloc + LoadLibrary forwards
 - `02-kernel-core/TODO-23-exception-dispatch-seh.md §8` (→ XREF) -- SEH frame walk; VEH fallback
 - `user/lib/crt0_pe.asm` -- existing from `TODO-07 §9`; extend for static initializers (§7)
 

@@ -213,8 +213,8 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 
 - [ ] **Pagination**: compute page height in points (A4 = 841.89 pt or Letter = 792 pt); walk layout lines (§3); break when accumulated height exceeds page height minus margins
 - [ ] **Print preview window**: `wm_create_window("Print Preview", 800, 600)` -- renders each page as a thumbnail bitmap; `[← Prev]` `[Next →]` navigation; `[Close Preview]`
-- [ ] **File→Print**: export the document through the PDF writer from TODO-12 §6, one PDF page per layout page
-  - Per page: `pdf_begin(out_path, page_width_pt, page_height_pt)`, then `pdf_begin_page()`, `pdf_draw_text(x, y, text, font_name, size_pt, color)` per layout line, `pdf_draw_rect` for background fills and underlines, `pdf_end_page()`; finish with `pdf_end()`
+- [ ] **File→Print**: export the document through the PDF writer from TODO-12 §6: one `pdf_begin()`, one PDF page per layout page, one `pdf_end()`
+  - Once: `pdf_begin(out_path, page_width_pt, page_height_pt)`. Per page: `pdf_begin_page()`, `pdf_draw_text(x, y, text, font_name, size_pt, color)` per layout line, `pdf_draw_rect` for background fills and underlines, `pdf_end_page()`. After the last page: `pdf_end()` once
 - [ ] **Print dialog**: `dialog_confirm("Print to PDF?\nOutput: C:\\Users\\{name}\\Documents\\{filename}.pdf", MB_OKCANCEL)` → on OK: run pagination + PDF export; toast `"Document exported to {path}"`
 - [ ] **Page Setup**: paper size dropdown (A4/Letter/A5), margin inputs (top/bottom/left/right in mm); stored in `HKCU\Software\Impossible\WordPad\PageSetup\*`
 

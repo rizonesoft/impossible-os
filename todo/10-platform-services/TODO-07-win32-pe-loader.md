@@ -128,6 +128,7 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
 - [ ] Handle `SizeOfImage` > VMM user space guard: `klog_err()` + return `PE_ERR_ALLOC`
 - [ ] Handle section `raw_size=0` (BSS-only sections): just zero `virtual_size` bytes
 - [ ] Test: load `hello.exe` PE32+ binary → `entry_va_out` points within mapped image; no crash on validation
+- [ ] Complete `pe_load()` rollback: `pe_rollback()` (`src/kernel/pe.c`) unmaps a contiguous prefix, missing sections past an RVA gap; `pe_map_one_page()` leaks its frame when `vmm_map_page()` fails (`pmm_free_frame()` now exists)
 - [ ] Commit: `"kernel: pe_load -- header validation, section mapping, BSS zero, vmm_alloc_user at ImageBase"`
 
 ## 5. Base Relocations `[Sonnet]`

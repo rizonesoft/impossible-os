@@ -916,7 +916,11 @@ Write docs pages that meet the §3 contract for the 15 roadmap files below. Read
 - [x] Code defects found while writing, filed in owning open sections rather than fixed (docs-only section)
   - `10-platform-services/TODO-07` section 8: stale comments in `exec.c`, `syscall.h` (`SYS_EXEC` arguments) and `task.c`.
   - `10-platform-services/TODO-08` section 2: the test shim's two header comments disagree with its code (the process ID and tick count are TEB and `KUSER_SHARED_DATA` reads; only the file calls use `INT 0x80`).
+  - `10-platform-services/TODO-07` section 4 (post-ship review): `pe_rollback()` unmaps only a contiguous prefix, and a failed page map leaks its frame.
 - [x] Commit: `"docs: platform services documentation pages"`
+- [x] Post-ship review fixes (adversarial, consistency and perf legs)
+  - Pages: `win32-pe-loader.md` no longer claims complete rollback on failure; `long-term-features.md` names the sections other roadmaps depend on instead of calling all of them independent.
+  - Roadmaps: `11-apps/TODO-10` calls `pdf_begin()` and `pdf_end()` once per document again; the last stale `TODO-07`, `TODO-08` and `TODO-12` section references in `12-user-platform-sdk/TODO-04`, `TODO-06` and `10-platform-services/TODO-11` are fixed; `TODO-12` no longer calls every section independent.
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
@@ -927,6 +931,9 @@ Write docs pages that meet the §3 contract for the 15 roadmap files below. Read
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the loader, exec, Registry, logging, GPT or input code it describes changes.
 > - **Status honesty:** no section of these fifteen roadmaps has shipped; the pages describe what runs today (the kernel PE loader and import tables, the SYSV start-up stack, `events.jsonl`, crash reports, release images) and link the owning sections.
 > - **Scope boundary:** kernel, boot, storage, graphics and desktop pages stay authoritative for the loader internals, SSDT, logging, GPT and widgets; these pages link them.
+
+> **Verified:** 2026-09-29 | commit `23711536a` | 10/10 items | build OK | site: OK, 189/232 documented; tests 34646 kernel + 17 user-mode PASS
+> **Quality reviewed:** 2026-09-29 | Codex 4x (adversarial, adversarial post-ship, consistency, perf) | 9M fixed, 0 open | scope: N/A (docs-only; no source changed; parity research and test coverage N/A; re-adversarial skipped: docs and roadmap-text fixes)
 
 ---
 
