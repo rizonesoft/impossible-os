@@ -179,7 +179,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 ## 5. Code Signing `[Opus]`
 
 > Security-critical: bootloader-side kernel signature verification is novel (no prior
-> Impossible OS bootloader verification path). Extends `TODO-07 §9` release pipeline.
+> Impossible OS bootloader verification path). Extends `09-desktop-shell/TODO-07 §7` code signing.
 
 **Source:** `scripts/sign-release.sh`; modification to `src/boot/uefi/bootx64.c`
 
@@ -194,7 +194,8 @@ shows `Impossible OS 1.0 (Build 22000)`.
      - `gpg --batch --detach-sign --armor "build/impossible-os-${VER}.img.zst"` → `.img.zst.asc`
      - GPG key from `GPG_SIGNING_KEY` GitHub Actions secret
   5. Print manifest of signed artifacts
-- [ ] **`tools/codesign_host.c`**: host-side signing tool using the same Ed25519 COSI-trailer logic as `codesign_sign()` (→ XREF `TODO-07 §9`); compiled with `gcc -O2`; reads PE/ELF file, signs with `crypto_ed25519_sign` (monocypher linked as host library), appends 100-byte trailer; replaces input file in-place
+- [ ] **`tools/codesign_host.c`**: host-side signing tool using the same Ed25519 COSI-trailer logic as `codesign_sign()` (→ XREF `09-desktop-shell/TODO-07 §7`)
+  - Compiled with `gcc -O2`; reads PE/ELF file, signs with `crypto_ed25519_sign` (monocypher linked as host library), appends 100-byte trailer; replaces input file in-place
 - [ ] **Bootloader-side kernel signature verification** in `src/boot/uefi/bootx64.c`:
   - After loading `kernel.exe` into memory (existing step): check if last 4 bytes of ELF data == `0x434F5349` ("COSI" magic)
   - Read `HKLM\SYSTEM\SecureBoot\Enforce` (or scan UEFI variable `ImpossibleOSSecureBoot` if Registry not yet mounted): value 0 = log only, 1 = enforce (halt on bad signature)

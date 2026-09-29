@@ -7,7 +7,7 @@ The clipboard is the system-wide buffer behind Copy, Cut and Paste, plus the Win
 
 ## How does it work?
 
-**Today.** No clipboard exists, and the one shortcut the plan builds on behaves differently from what the plan assumes. The keyboard driver turns Ctrl plus a letter into a control code, and for code 3 (Ctrl+C) it calls `signal_ctrl_c()` and returns ([`keyboard.c`](../../src/kernel/drivers/keyboard.c)). `signal_ctrl_c()` sends SIGINT to the foreground process group, or does nothing when there is none ([`signal.c`](../../src/kernel/ipc/signal.c)). So Ctrl+C never reaches the terminal or a text box today. The text box control stores up to 128 characters and a cursor position, with no selection fields ([`controls.h`](../../include/desktop/controls.h)). What does exist for the future feature is presentation only: the `ICON_CUT`, `ICON_COPY`, `ICON_PASTE` and `ICON_CLIPBOARD` icons ([`icon_store.h`](../../include/icon_store.h)) and the history popup size tokens `THEME_SIZE_CLIPBOARD_WIDTH` (360) and `THEME_SIZE_CLIPBOARD_MAX_HEIGHT` (480) ([`theme_tokens.h`](../../include/desktop/theme_tokens.h)).
+**Today.** No clipboard exists, and the one shortcut the plan builds on behaves differently from what the plan assumes. The keyboard driver turns Ctrl plus a letter into a control code, and for code 3 (Ctrl+C) it calls `signal_ctrl_c()` and returns ([`keyboard.c`](../../src/kernel/drivers/keyboard.c)). `signal_ctrl_c()` sends SIGINT to the console's foreground process group, or does nothing when there is none ([`signal.c`](../../src/kernel/ipc/signal.c)). No foreground group is set today, because `cmd.exe` never claims the console, and pending signals are not delivered yet ([Process Model Extensions](../kernel/process-model-extensions.md)), so Ctrl+C currently does nothing at all: it neither interrupts a program nor reaches the terminal or a text box. The text box control stores up to 128 characters and a cursor position, with no selection fields ([`controls.h`](../../include/desktop/controls.h)). What does exist for the future feature is presentation only: the `ICON_CUT`, `ICON_COPY`, `ICON_PASTE` and `ICON_CLIPBOARD` icons ([`icon_store.h`](../../include/icon_store.h)) and the history popup size tokens `THEME_SIZE_CLIPBOARD_WIDTH` (360) and `THEME_SIZE_CLIPBOARD_MAX_HEIGHT` (480) ([`theme_tokens.h`](../../include/desktop/theme_tokens.h)).
 
 **Planned design.**
 
@@ -39,7 +39,7 @@ flowchart LR
 
 ## How do I use it?
 
-It cannot be used yet. Ctrl+C in the terminal interrupts the running program, which is the only clipboard-adjacent behaviour today.
+It cannot be used yet. Ctrl+C is taken by the keyboard driver for SIGINT, and since the shell sets no foreground group it has no effect today.
 
 ## What is not implemented yet?
 

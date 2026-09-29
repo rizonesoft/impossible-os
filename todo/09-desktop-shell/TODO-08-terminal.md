@@ -41,16 +41,16 @@ title: "TODO-08 -- Terminal Emulator"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                            | Depends On                                                                               | Status |
-| --- | :---: | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | :----: |
-| ⭐  |   1   | §1 Terminal cell grid -- `terminal_cell_t`, 200×2000 PMM grid, shell pipe, Unicode codepoint storage   | `pmm_alloc_contiguous`, `pipe_create/read/write` (exist); replaces existing 80×20 grid |  [ ]   |
-| 💎  |   2   | §2 Character rendering -- cell bg fill + `ttf_draw_char`, cursor blink, `\n\r\b\t` control chars       | §1 grid; `FONT_MONO` + `ttf_draw_char` (exist)                                         |  [ ]   |
-| 💎  |   3   | §3 ANSI escape parser -- SGR, cursor move (H/A/B/C/D), erase (J/K), cursor show/hide, save/restore     | §1 grid (parser writes to cells); §2 rendering (visual output)                          |  [ ]   |
-| 💎  |   4   | §4 Scrollback & selection -- 2000-row history, wheel scroll, scrollbar, click+drag, Ctrl+Shift+C/V     | §1 grid; §2 rendering; TODO-01 `clipboard_set/get()` (forward dep for copy/paste)      |  [ ]   |
-| 💎  |   5   | §5 Resize handling -- `terminal_resize(w, h)`, recalc visible cols/rows, `SIGWINCH=28` to shell        | §1 grid; `signal_send()` (exists); `#define SIGWINCH 28` added to `signal.h`           |  [ ]   |
-| 💎  |   6   | §6 Registry settings -- FontName, FontSize, CursorStyle, CursorBlink, Opacity, ScrollbackLines         | §1-§5 all complete; Registry (exists); `WM_THEME_CHANGED` (TODO-01 theme)              |  [ ]   |
-| 💎  |   7   | §7 Advanced features -- tabs, Acrylic bg, split panes, hyperlink detect + Ctrl+click                   | §1–§6 complete; `gfx_acrylic()` (exists); `anim_mgr_add()` (D08 T04)                  |  [ ]   |
-| 💎 | 8 | §8 Pseudo-console (ConPTY) -- any console program in a tab | §3, §6 | [ ] |
+| ⭐  | Order | Deliverable                                                                                          | Depends On                                                                                                                                          | Status |
+| --- | :---: | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | :----: |
+| ⭐  |   1   | §1 Terminal cell grid -- `terminal_cell_t`, 200×2000 PMM grid, shell pipe, Unicode codepoint storage | `pmm_alloc_contiguous`, `pipe_create/read/write` (exist); replaces existing 80×20 grid; Ctrl+C end to end needs D02 T21 §14 `signal_check()` wiring |  [ ]   |
+| 💎  |   2   | §2 Character rendering -- cell bg fill + `ttf_draw_char`, cursor blink, `\n\r\b\t` control chars     | §1 grid; `FONT_MONO` + `ttf_draw_char` (exist)                                                                                                      |  [ ]   |
+| 💎  |   3   | §3 ANSI escape parser -- SGR, cursor move (H/A/B/C/D), erase (J/K), cursor show/hide, save/restore   | §1 grid (parser writes to cells); §2 rendering (visual output)                                                                                      |  [ ]   |
+| 💎  |   4   | §4 Scrollback & selection -- 2000-row history, wheel scroll, scrollbar, click+drag, Ctrl+Shift+C/V   | §1 grid; §2 rendering; TODO-01 `clipboard_set/get()` (forward dep for copy/paste)                                                                   |  [ ]   |
+| 💎  |   5   | §5 Resize handling -- `terminal_resize(w, h)`, recalc visible cols/rows, `SIGWINCH=28` to shell      | §1 grid; `signal_send()` (exists); `#define SIGWINCH 28` added to `signal.h`                                                                        |  [ ]   |
+| 💎  |   6   | §6 Registry settings -- FontName, FontSize, CursorStyle, CursorBlink, Opacity, ScrollbackLines       | §1-§5 all complete; Registry (exists); `WM_THEME_CHANGED` (TODO-01 theme)                                                                           |  [ ]   |
+| 💎  |   7   | §7 Advanced features -- tabs, Acrylic bg, split panes, hyperlink detect + Ctrl+click                 | §1–§6 complete; `gfx_acrylic()` (exists); `anim_mgr_add()` (D08 T04)                                                                                |  [ ]   |
+| 💎  |   8   | §8 Pseudo-console (ConPTY) -- any console program in a tab                                           | §3, §6                                                                                                                                              |  [ ]   |
 
 ---
 
@@ -77,6 +77,8 @@ title: "TODO-08 -- Terminal Emulator"
 - [ ] Keep `terminal_puts(s, len)` entry point wired to `terminal_put_char()` for backward compat
 - [ ] Size check: `terminal_cell_t` above is 16 bytes unpacked, so 200 x 2000 cells need about 1,563 pages (the earlier 1,300 assumed a packed 13-byte cell)
 - [ ] Keep the test seams `terminal_get_buffer()`, `terminal_buffer_contains()` and `terminal_test_force_open/close()` (`include/desktop/terminal.h`) working over the new grid; the desktop test suite depends on them
+- [ ] Shell claims the console: `cmd.exe` calls `setsid` + `tcsetpgrp` at startup and puts each foreground command in the foreground group, so Ctrl+C interrupts it
+  - Today `signal_ctrl_c()` (`src/kernel/ipc/signal.c`) is a no-op because the console foreground group is 0 (`src/kernel/ipc/pgroup.c`) and nothing in `user/cmd.c` sets it; the kernel primitives shipped in 02-kernel-core/TODO-21 §17, whose scope boundary names this TODO as the consumer. End-to-end interruption also needs signal delivery, owned by 02-kernel-core/TODO-21 §14 (item: "Wire `signal_check()` into the scheduler / kernel-entry boundary") and 10-platform-services/TODO-10 §8 (item: "`SIGINT` delivery (signal 2)"); this item covers claiming the console only.
 - [ ] One shell per terminal: Start > Terminal (`src/desktop/desktop.c`) calls `task_create(shell_loader_func, ...)` even when `terminal_open()` returned early because the window exists, so each click adds a `cmd.exe` reading the same input ring
 - [ ] Commit: `"terminal: cell grid rewrite -- terminal_cell_t, 200×2000 PMM grid, shell pipe, Unicode codepoints"`
 

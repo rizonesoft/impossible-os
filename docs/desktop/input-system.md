@@ -37,7 +37,7 @@ flowchart LR
 
 ## How do I use it?
 
-Type in the Command Prompt after boot. Arrow keys recall shell history, Ctrl+C interrupts the running program, and Alt+F4 closes the focused window. Input tests run with `bash scripts/test.sh SUITE=desktop`.
+Type in the Command Prompt after boot. Arrow keys recall shell history and Alt+F4 closes the focused window. Ctrl+C does not interrupt a program yet: `cmd.exe` sets no console foreground group, and a pending signal is never delivered because nothing calls `signal_check()` ([Process Model Extensions](../kernel/process-model-extensions.md)). Input tests run with `bash scripts/test.sh SUITE=desktop`.
 
 ## What is not implemented yet?
 

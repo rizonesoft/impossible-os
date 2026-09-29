@@ -37,7 +37,7 @@ This roadmap extends the desktop test framework so tests can run against the liv
 
 ## How do I use it?
 
-Run the desktop smoke test with `make test-desktop` (or `bash scripts/test-desktop.sh`); it prints `monitor=unix` or `monitor=tcp` for the transport it chose. Run the visual regression pass with `make test-visual-regression`, and seed reference images with `make update-ui-refs`. The kernel desktop suites run with `bash scripts/test.sh SUITE=desktop`.
+Run the desktop smoke test with `bash scripts/test-desktop.sh`; it prints `monitor=unix` or `monitor=tcp` for the transport it chose. Run the visual regression pass with `make test-visual` and seed reference images with `make update-ui-refs`. The kernel desktop suites, which run before the desktop starts, are `make test-desktop` (the same as `bash scripts/test.sh SUITE=desktop`).
 
 ## What is not implemented yet?
 

@@ -40,16 +40,16 @@ title: "TODO-04 -- Recycle Bin, ZIP & Task Scheduler"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                               | Depends On                                                                 | Status |
-| --- | :---: | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 Recycle bin core -- `trash_delete/restore/restore_all/empty/count/size`, meta INI      | `vfs_rename/unlink/stat`, `time_now()` (both exist/planned)               |  [ ]   |
-| 💎  |   2   | §2 Recycle Bin as a File Explorer location -- details view, command bar, restore/delete | §1 core must exist; D08 T06 §1 `CTRL_LISTVIEW`; D08 T09 §1 `context_menu_show` |  [ ]   |
-| 💎  |   3   | §3 miniz integration -- vendor at `src/libs/miniz/`, kmalloc redirect, freestanding build | `kmalloc/kfree` (exist); no other deps                                    |  [ ]   |
-| 💎  |   4   | §4 ZIP kernel API -- `zip_create/add_file/extract/extract_file/list` over miniz            | §3 miniz must be compiled and linkable                                    |  [ ]   |
-| 💎  |   5   | §5 ZIP shell commands -- `zip`, `unzip`, `unzip -l`                                        | §4 ZIP API                                                                 |  [ ]   |
-| 💎  |   6   | §6 Task scheduler core -- 16-slot `sched_task_t` table, `sched_task_tick()`, add/remove   | `system_get_ticks()`, `PIT_TARGET_FREQ` (exist); workqueue from TODO-03   |  [ ]   |
-| 💎  |   7   | §7 Built-in tasks -- NTP/log-rotate/search-index/registry-flush scheduled entries         | §6 scheduler table; `registry_flush()`, `ntp_sync()` (both exist)        |  [ ]   |
-| 💎  |   8   | §8 `at` shell command -- `at HH:MM cmd`, `at list`, `at cancel`                           | §6 scheduler (one-shot entries use `interval=0`); `time_now()` (TODO-10) |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                               | Depends On                                                                     | Status |
+| --- | :---: | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | :----: |
+| 💎  |   1   | §1 Recycle bin core -- `trash_delete/restore/restore_all/empty/count/size`, meta INI                      | `vfs_rename/unlink/stat`, `time_now()` (both exist/planned)                    |  [ ]   |
+| 💎  |   2   | §2 Recycle Bin as a File Explorer location -- details view, command bar, restore/delete                   | §1 core must exist; D08 T06 §1 `CTRL_LISTVIEW`; D08 T09 §1 `context_menu_show` |  [ ]   |
+| 💎  |   3   | §3 miniz integration -- consume the vendored `src/libs/miniz/` port, ZIP workspace owner, round-trip test | 02-kernel-core/TODO-03 §4 workspace-based miniz port                           |  [ ]   |
+| 💎  |   4   | §4 ZIP kernel API -- `zip_create/add_file/extract/extract_file/list` over miniz                           | §3 miniz must be compiled and linkable                                         |  [ ]   |
+| 💎  |   5   | §5 ZIP shell commands -- `zip`, `unzip`, `unzip -l`                                                       | §4 ZIP API                                                                     |  [ ]   |
+| 💎  |   6   | §6 Task scheduler core -- 16-slot `sched_task_t` table, `sched_task_tick()`, add/remove                   | `system_get_ticks()`, `PIT_TARGET_FREQ` (exist); workqueue from TODO-03        |  [ ]   |
+| 💎  |   7   | §7 Built-in tasks -- NTP/log-rotate/search-index/registry-flush scheduled entries                         | §6 scheduler table; `registry_flush()`, `ntp_sync()` (both exist)              |  [ ]   |
+| 💎  |   8   | §8 `at` shell command -- `at HH:MM cmd`, `at list`, `at cancel`                                           | §6 scheduler (one-shot entries use `interval=0`); `time_now()` (TODO-10)       |  [ ]   |
 
 ---
 
@@ -99,20 +99,18 @@ As on Windows 11, the Recycle Bin opens as a File Explorer location, not a separ
 
 ## 3. miniz ZIP Library Integration `[Sonnet]`
 
-Vendor miniz (MIT, ~5 K lines, single-file C) at `src/libs/miniz/miniz.c` + `include/libs/miniz.h`. Redirect `MZ_MALLOC/FREE/REALLOC` to `kmalloc/kfree`. Compile with `-ffreestanding -O2 -nostdinc`. Round-trip inflate/deflate test.
+miniz is already vendored at `src/libs/miniz/` (MIT) and excluded from the build. Its freestanding port is owned by 02-kernel-core/TODO-03 §4, which rejects a `kmalloc` redirect: the inflate (~43 KiB) and deflate (~150 KiB) states exceed the 4 KiB `kmalloc` ceiling, so the port takes a caller-owned workspace. This section consumes that port: it owns the ZIP workspace for the §4 API and the round-trip test.
 
-**Files:** `src/libs/miniz/miniz.c` (vendor), `include/libs/miniz.h` (vendor), `Makefile` (extend)
+**Files:** `src/libs/miniz/` (vendored; build port in 02-kernel-core/TODO-03 §4), `src/kernel/zip.c` (workspace owner, new)
 
 > [!NOTE]
-> miniz is available at https://github.com/richgel999/miniz (single MIT-licensed `.c` file, ~5500 lines). Add `src/libs/miniz/` to the Makefile with its own compile rule. **Memory redirectors** at the top of `miniz.c` (before the include guard body): `#define MZ_MALLOC(sz) kmalloc(sz)`, `#define MZ_FREE(p) kfree(p)`, `#define MZ_REALLOC(p, ns) krealloc(p, ns)` -- add `krealloc(ptr, new_size)` to `heap.h` if missing (allocate new + memcpy + free old). **Freestanding guards**: miniz includes `<stdlib.h>` + `<string.h>` -- add `-include include/kernel/libc_shim.h` compile option for miniz only, where `libc_shim.h` provides `memcpy/memset/memcmp/memmove` via kernel equivalents. **Test**: add `src/libs/miniz/miniz_test.c` with `miniz_test()`: compress "Hello miniz world" → decompress → assert match; call from `kernel_main` with `#ifdef DEBUG_MINIZ` guard; log result to serial.
+> **Superseded 2026-09-29:** the Makefile rule and the `MZ_MALLOC`/`MZ_REALLOC` to `kmalloc`/`krealloc` redirect described in this note are rejected by the owning port in 02-kernel-core/TODO-03 §4 (the states exceed the `kmalloc` ceiling); follow the workspace items below instead. miniz is available at https://github.com/richgel999/miniz (single MIT-licensed `.c` file, ~5500 lines). Add `src/libs/miniz/` to the Makefile with its own compile rule. **Memory redirectors** at the top of `miniz.c` (before the include guard body): `#define MZ_MALLOC(sz) kmalloc(sz)`, `#define MZ_FREE(p) kfree(p)`, `#define MZ_REALLOC(p, ns) krealloc(p, ns)` -- add `krealloc(ptr, new_size)` to `heap.h` if missing (allocate new + memcpy + free old). **Freestanding guards**: miniz includes `<stdlib.h>` + `<string.h>` -- add `-include include/kernel/libc_shim.h` compile option for miniz only, where `libc_shim.h` provides `memcpy/memset/memcmp/memmove` via kernel equivalents. **Test**: add `src/libs/miniz/miniz_test.c` with `miniz_test()`: compress "Hello miniz world" → decompress → assert match; call from `kernel_main` with `#ifdef DEBUG_MINIZ` guard; log result to serial.
 
-- [ ] Download and vendor `miniz.c` + `miniz.h` into `src/libs/miniz/` (do not modify upstream logic)
-- [ ] Prepend memory macro redirectors to top of a `miniz_config.h` included before miniz
-- [ ] `krealloc(void *ptr, size_t new_size)` stub in `heap.c/h`: `kmalloc(new_size)` + `memcpy` + `kfree(old)` -- if not already present
-- [ ] Add `libc_shim.h` providing `size_t`, `memcpy`, `memset`, `memmove`, `memcmp` → kernel equivalents
-- [ ] Makefile: `$(LIBS_DIR)/miniz/miniz.o: ... -include include/kernel/libc_shim.h -ffreestanding -O2`
+- [x] Vendor `miniz.c` + `miniz.h`: already in `src/libs/miniz/` (recorded in `src/libs/PROVENANCE.md`), shipped by 02-kernel-core/TODO-03 §4
+- [ ] Depends on the workspace-based miniz port in 02-kernel-core/TODO-03 §4 (compile rule and allocator contract); no `kmalloc` redirect and no second build rule here
+- [ ] ZIP workspace owner: one caller-owned inflate/deflate workspace for the §4 API, allocated with `pmm_alloc_contiguous()` and serialized by the ZIP layer
 - [ ] `miniz_test()` in `src/libs/miniz/miniz_test.c`: round-trip test; `klog(LOG_INFO, "miniz", "round-trip: %s", ok ? "PASS" : "FAIL")`
-- [ ] Commit: `"libs: vendor miniz -- kmalloc/kfree redirect, freestanding build, round-trip test"`
+- [ ] Commit: `"zip: miniz integration -- ZIP workspace owner over the kernel miniz port, round-trip test"`
 
 ## 4. ZIP Kernel API `[Sonnet]`
 

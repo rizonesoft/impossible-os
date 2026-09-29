@@ -42,42 +42,44 @@ title: "TODO-07 -- CNG Crypto & Certificate Store"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                                          | Depends On                                                                                                                           | Status |
-| --- | :---: | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | :----: |
-| ⭐  |   1   | §1 Crypto primitives -- `cng_*` over new AES-256-GCM, HMAC-SHA256, RSA-2048 and the shipped SHA-256, X25519, BLAKE2b | monocypher (vendored, built); `csprng_fill()` (kernel CSPRNG); `crypto/sha256.c` (exists); Mbed TLS port (02-kernel-core/TODO-03 §7) |  [ ]   |
-| 💎  |   2   | §2 TLS handshake helper -- `cng_tls_prf()`, `cng_rsa_pkcs1_sign/verify()`                                            | §1 primitives (SHA-256, RSA); used by 07-networking/TODO-03 Mbed TLS                                                                 |  [ ]   |
-| ⭐  |   3   | §3 X.509 cert store -- DER parser, Registry store, CA bundle, chain verification                                     | §1 SHA-256 (thumbprint), §1 RSA (chain verify); Registry (exists)                                                                    |  [ ]   |
-| ⭐  |   4   | §4 Key store -- per-user AES-256-GCM encrypted key storage in `HKCU\SECURITY\Keys\*`                                 | §1 AES-256-GCM; §3 cert store; `auth_get_current_uid()` (TODO-06)                                                                    |  [ ]   |
-| 💎  |   5   | §5 BCrypt API -- `BCryptOpenAlgorithmProvider/Encrypt/Hash/GenRandom`; `bcrypt.dll` stub table                       | §1 all primitives; `csprng_fill()` (exists)                                                                                          |  [ ]   |
-| 💎  |   6   | §6 NCrypt API -- `NCryptOpenStorageProvider/OpenKey/Encrypt/Import`; `ncrypt.dll` stub table                         | §4 key store; §5 BCrypt                                                                                                              |  [ ]   |
-| ⭐  |   7   | §7 Code signing -- `codesign_sign/verify()` on PE32+; optional enforcement via Registry                              | §1 RSA/Ed25519; §3 cert store; PE32+ format (02-kernel-core/TODO-17 binary system)                                                   |  [ ]   |
-| ⭐  |   8   | §8 EFS integration -- `efs_encrypt/decrypt_file()`, `$EFS` NTFS attribute, transparent data path                     | §1 AES-256-GCM + RSA; §4 key store; NTFS driver (TODO-02-ntfs-readwrite) and its existing `ntfs_efs.c` $EFS parser                   |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                                          | Depends On                                                                                                                                         | Status |
+| --- | :---: | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | :----: |
+| ⭐  |   1   | §1 Crypto primitives -- `cng_*` over new AES-256-GCM, HMAC-SHA256, RSA-2048 and the shipped SHA-256, X25519, BLAKE2b | monocypher (vendored, built); `csprng_fill()` (kernel CSPRNG); `crypto/sha256.c` (exists); Mbed TLS port (02-kernel-core/TODO-03 §7)               |  [ ]   |
+| 💎  |   2   | §2 TLS handshake helper -- `cng_tls_prf()`, `cng_rsa_pkcs1_sign/verify()`                                            | §1 primitives (SHA-256, RSA); used by 07-networking/TODO-03 Mbed TLS                                                                               |  [ ]   |
+| ⭐  |   3   | §3 X.509 cert store -- DER parser, Registry store, CA bundle, chain verification                                     | §1 SHA-256 (thumbprint), §1 RSA (chain verify); Registry (exists)                                                                                  |  [ ]   |
+| ⭐  |   4   | §4 Key store -- per-user AES-256-GCM encrypted key storage in `HKCU\SECURITY\Keys\*`                                 | §1 AES-256-GCM; §3 cert store; `auth_get_current_uid()` (TODO-06)                                                                                  |  [ ]   |
+| 💎  |   5   | §5 BCrypt API -- `BCryptOpenAlgorithmProvider/Encrypt/Hash/GenRandom`; `bcrypt.dll` stub table                       | §1 all primitives; `csprng_fill()` (exists)                                                                                                        |  [ ]   |
+| 💎  |   6   | §6 NCrypt API -- `NCryptOpenStorageProvider/OpenKey/Encrypt/Import`; `ncrypt.dll` stub table                         | §4 key store; §5 BCrypt                                                                                                                            |  [ ]   |
+| ⭐  |   7   | §7 Code signing -- `codesign_sign/verify()` on PE32+; optional enforcement via Registry                              | §1 RSA/Ed25519; §3 cert store; PE32+ format (02-kernel-core/TODO-17 binary system)                                                                 |  [ ]   |
+| ⭐  |   8   | §8 EFS integration -- `efs_encrypt/decrypt_file()`, `$EFS` NTFS attribute, transparent data path                     | §1 AES-256 sector mode (CBC or XTS) + RSA-OAEP unwrap, the contract `ntfs_efs.c` stubs specify; §4 key store; NTFS driver (TODO-02-ntfs-readwrite) |  [ ]   |
 
 ---
 
 ## 1. Crypto Primitives `[Opus]`
 
-AES-256-GCM encrypt/decrypt (pure-C, no SSE2); SHA-256 (32-byte digest); HMAC-SHA256; BLAKE2b-256 via monocypher; ECDH Curve25519 via monocypher `crypto_x25519()`; RSA-2048 keygen/encrypt/decrypt via bundled mini-RSA.
+`cng_*` wrappers: AES-256-GCM and RSA-2048 over the vendored Mbed TLS 3.6.2 (`src/libs/mbedtls/`, freestanding port owned by 02-kernel-core/TODO-03 §7); SHA-256 and SHA-1 over the shipped `src/kernel/crypto/`; HMAC-SHA256 over the shipped SHA-256; BLAKE2b-256 and ECDH Curve25519 via monocypher.
 
-**Files:** `src/kernel/cng/cng_primitives.c` (new), `include/kernel/cng/cng_primitives.h` (new), `src/libs/tiny_aes/` (vendor), `src/libs/mini_rsa/` (vendor or implement)
+**Files:** `src/kernel/cng/cng_primitives.c` (new), `include/kernel/cng/cng_primitives.h` (new), `src/libs/mbedtls/` (vendored; build port per 02-kernel-core/TODO-03 §7)
 
 > [!NOTE]
-> `[Opus]` due to: security-critical cryptography (every misuse leaks secrets), RSA modular exponentiation design (novel, no prior Impossible OS precedent), and AES-GCM integration combining two separate algorithm components. **AES-256-GCM**: vendor `tiny-AES-c` (MIT, ~200 lines, `src/libs/tiny_aes/aes.c`) for AES-256-ECB block cipher; implement GCM mode manually (`cng_gcm_encrypt/decrypt`): GHASH via 128-bit carry-less multiply (pure C via `uint64_t` split); Counter Mode (CTR) using AES-ECB block; authenticate ciphertext with GHASH; return tag in `tag_out[16]`; verify tag on decrypt with `cng_consttime_compare(tag, expected, 16)` -- returning -1 on mismatch without revealing which bytes differ. **SHA-256**: vendor a single-file public-domain SHA-256 (e.g., `src/libs/sha256/sha256.c`, 250 lines, no libc); same freestanding compile flags + `libc_shim.h`. **HMAC-SHA256**: implement over SHA-256 directly (inner+outer padding pattern, 64-byte block). **ECDH X25519**: `cng_ecdh_curve25519(priv[32], pub[32], shared_out[32])` = `crypto_x25519(shared_out, priv, pub)` -- thin wrapper. **RSA-2048**: vendor `LibTomMath` or a ~1000-line mini-RSA (big-integer modular exponentiation for PKCS#1 v1.5 2048-bit). RSA work-area via `pmm_alloc_contiguous()`. `cng_rsa2048_keygen(pub_out, priv_out)`: generate two 1024-bit primes using Miller-Rabin primality test seeded from `csprng_read()`.
+> **Superseded 2026-09-29:** the tiny-AES-c, hand-written SHA-256 and mini-RSA plan in this note is replaced by wrappers over Mbed TLS and the shipped kernel hashes (vendor-first, see the preamble); the `cng_*` API shapes below stand. `[Opus]` due to: security-critical cryptography (every misuse leaks secrets), RSA modular exponentiation design (novel, no prior Impossible OS precedent), and AES-GCM integration combining two separate algorithm components. **AES-256-GCM**: vendor `tiny-AES-c` (MIT, ~200 lines, `src/libs/tiny_aes/aes.c`) for AES-256-ECB block cipher; implement GCM mode manually (`cng_gcm_encrypt/decrypt`): GHASH via 128-bit carry-less multiply (pure C via `uint64_t` split); Counter Mode (CTR) using AES-ECB block; authenticate ciphertext with GHASH; return tag in `tag_out[16]`; verify tag on decrypt with `cng_consttime_compare(tag, expected, 16)` -- returning -1 on mismatch without revealing which bytes differ. **SHA-256**: vendor a single-file public-domain SHA-256 (e.g., `src/libs/sha256/sha256.c`, 250 lines, no libc); same freestanding compile flags + `libc_shim.h`. **HMAC-SHA256**: implement over SHA-256 directly (inner+outer padding pattern, 64-byte block). **ECDH X25519**: `cng_ecdh_curve25519(priv[32], pub[32], shared_out[32])` = `crypto_x25519(shared_out, priv, pub)` -- thin wrapper. **RSA-2048**: vendor `LibTomMath` or a ~1000-line mini-RSA (big-integer modular exponentiation for PKCS#1 v1.5 2048-bit). RSA work-area via `pmm_alloc_contiguous()`. `cng_rsa2048_keygen(pub_out, priv_out)`: generate two 1024-bit primes using Miller-Rabin primality test seeded from `csprng_read()`.
 
-- [ ] Vendor `tiny-AES-c` at `src/libs/tiny_aes/`; freestanding Makefile rule
+- [ ] Depend on the Mbed TLS freestanding port (02-kernel-core/TODO-03 §7) for AES, GCM and RSA; no second AES or RSA implementation
+- [ ] EFS primitives for §8: AES-256 sector mode (CBC or XTS, per the Windows fixture) and RSA-OAEP decrypt/encrypt, both over Mbed TLS
 - [ ] `int cng_aes256gcm_encrypt(const uint8_t key[32], const uint8_t nonce[12], const uint8_t *plain, size_t plen, uint8_t *cipher_out, uint8_t tag_out[16])` -- AES-CTR + GHASH
 - [ ] `int cng_aes256gcm_decrypt(...)` -- verify GHASH tag first (constant-time); decrypt; return -1 on tag mismatch
-- [ ] Vendor or implement SHA-256 at `src/libs/sha256/sha256.c`; freestanding Makefile rule
+- [x] SHA-256 source: already shipped as `sha256()` in `include/kernel/crypto/sha256.h` (NIST vectors in `test_sha256.c`); `cng_sha256()` wraps it
 - [ ] `void cng_sha256(const uint8_t *data, size_t len, uint8_t hash_out[32])`
 - [ ] `void cng_hmac_sha256(const uint8_t *key, size_t klen, const uint8_t *data, size_t dlen, uint8_t mac_out[32])`
 - [ ] `void cng_blake2b256(const uint8_t *data, size_t len, uint8_t hash_out[32])` -- thin wrapper: `crypto_blake2b(out, 32, data, len)`
 - [ ] `void cng_ecdh_curve25519(const uint8_t priv[32], const uint8_t pub[32], uint8_t shared_out[32])` -- `crypto_x25519()` wrapper
-- [ ] `int cng_rsa2048_keygen(uint8_t pub_out[256], uint8_t priv_out[512])` -- Miller-Rabin prime generation; `csprng_read()` seeded
+- [ ] `int cng_rsa2048_keygen(uint8_t pub_out[256], uint8_t priv_out[512])` -- over Mbed TLS RSA; seeded from `csprng_fill()`, refused unless `csprng_crypto_ok()`
 - [ ] `int cng_rsa2048_encrypt(const uint8_t pub[256], const uint8_t *plain, size_t plen, uint8_t cipher_out[256])` -- PKCS#1 v1.5 padding
 - [ ] `int cng_rsa2048_decrypt(const uint8_t priv[512], const uint8_t cipher[256], uint8_t *plain_out, size_t *plen_out)` -- PKCS#1 v1.5 unpad; constant-time
 - [ ] `static int cng_consttime_compare(const uint8_t *a, const uint8_t *b, size_t n)` -- no early return; XOR-fold
-- [ ] `void cng_sha1(const uint8_t *data, size_t len, uint8_t hash_out[20])` -- SHA-1 (160-bit); needed by WIM file format (-> XREF: 15-installer-release/TODO-02 §5), Windows-compatible service SID derivation (-> XREF: 02-kernel-core/TODO-15 §16), and WPA2 PBKDF2 (-> XREF: 04-drivers-hardware/TODO-15 §5)
-- [ ] Vendor minimal Ed25519+SHA-256 verify subset under `src/boot/uefi/crypto/` callable from `bootx64.c` pre-EBS as `boot_sha256()` + `boot_ed25519_verify()`; bootloader cannot link kernel `cng_*`. Consumer: 01-boot-platform/TODO-06 §7 items 1-3.
+- [ ] `void cng_sha1(const uint8_t *data, size_t len, uint8_t hash_out[20])` -- wraps the shipped `sha1()`
+  - Needed by WIM file format (-> XREF: 15-installer-release/TODO-02 §5), Windows-compatible service SID derivation (-> XREF: 02-kernel-core/TODO-15 §16), and WPA2 PBKDF2 (-> XREF: 04-drivers-hardware/TODO-15 §5)
+- [ ] Bootloader verify subset callable from `bootx64.c` pre-EBS: SHA-256 already exists header-only in `include/boot/sha256_boot.h`; add `boot_ed25519_verify()`; bootloader cannot link kernel `cng_*`. Consumer: 01-boot-platform/TODO-06 §7 items 1-3.
 - [ ] Boot log: `klog(LOG_OK, "cng", "primitives ready: AES-256-GCM SHA-256 SHA-1 HMAC RSA-2048 X25519 BLAKE2b")`
 - [ ] Commit: `"cng: crypto primitives -- AES-256-GCM, SHA-256, SHA-1, HMAC, RSA-2048, X25519, BLAKE2b"`
 
@@ -98,7 +100,7 @@ AES-256-GCM encrypt/decrypt (pure-C, no SSE2); SHA-256 (32-byte digest); HMAC-SH
 
 ## 3. X.509 Certificate Store `[Opus]`
 
-`struct x509_cert` (subject, issuer, public_key, validity, DER buffer). `cng_cert_parse_der()` minimal DER parser. `cng_cert_store_add/find/verify_chain()`. Mozilla CA bundle loaded at boot.
+`struct x509_cert` (subject, issuer, public_key, validity, DER buffer). `cng_cert_parse_der()` over Mbed TLS `x509_crt` (vendored), shared with the 07-networking/TODO-03 §6 CA store rather than a second parser. `cng_cert_store_add/find/verify_chain()`. Mozilla CA bundle loaded at boot.
 
 **Files:** `src/kernel/cng/cng_cert.c` (new), `include/kernel/cng/cng_cert.h` (new), `resources/ca-bundle.der` (embedded)
 
@@ -106,12 +108,12 @@ AES-256-GCM encrypt/decrypt (pure-C, no SSE2); SHA-256 (32-byte digest); HMAC-SH
 > `[Opus]` due to: ASN.1/DER parsing (novel format, no prior parser), X.509 chain verification (security-critical: incorrect implementation breaks TLS), and embedded CA bundle integration. **DER parser scope**: parse TBSCertificate for `subject` (CN), `issuer` (CN), `subjectPublicKeyInfo` (RSA public key bytes), `validity` (notBefore/notAfter as `int64_t` UTC seconds), `serialNumber`. Skip unrecognized extensions without error (only fail on critical extensions with `OID` we cannot parse). `cng_cert_parse_der(buf, len, cert_out)` fills `x509_cert_t`; stores DER buffer pointer (not copied -- caller owns memory). **Thumbprint**: `cng_sha256(DER_buf, DER_len, thumbprint)`. Registry store: `HKLM\SECURITY\Certificates\{thumbprint_hex}\DER` (binary value), `\Subject`, `\Issuer`, `\Expiry`. **Chain verification**: `cng_cert_verify_chain(leaf, store)` -- find issuer in store by `leaf->issuer == candidate->subject`; verify `cng_rsa_pkcs1_verify(issuer->pub_key, leaf->tbscert_der, tbscert_len, leaf->signature)`; recurse to root; root must be self-signed AND present in store. **CA bundle**: embed Mozilla's CA bundle as a binary DER sequence at `resources/ca-bundle.der`; `cng_cert_store_load_bundle()` called from `kernel_main()` after CNG init; parses sequence and calls `cng_cert_store_add()` for each.
 
 - [ ] `typedef struct x509_cert { char subject_cn[64]; char issuer_cn[64]; uint8_t pub_key[256]; int64_t not_before; int64_t not_after; uint8_t thumbprint[32]; const uint8_t *der_buf; size_t der_len; uint8_t signature[256]; } x509_cert_t;`
-- [ ] `int cng_cert_parse_der(const uint8_t *buf, size_t len, x509_cert_t *out)` -- minimal ASN.1/DER walk; subject/issuer/pubkey/validity
+- [ ] `int cng_cert_parse_der(const uint8_t *buf, size_t len, x509_cert_t *out)` -- wraps `mbedtls_x509_crt_parse_der()`; fills subject/issuer/pubkey/validity
 - [ ] `int cng_cert_store_add(const x509_cert_t *cert)` -- persist to `HKLM\SECURITY\Certificates\{thumbprint_hex}\*`
 - [ ] `int cng_cert_store_find(const char *subject_cn, x509_cert_t *out)` -- scan Registry; parse DER; fill `out`
 - [ ] `int cng_cert_verify_chain(const x509_cert_t *leaf, int max_depth)` -- recursive issuer lookup + RSA signature verify
 - [ ] `void cng_cert_store_load_bundle(void)` -- load `resources/ca-bundle.der`; parse; bulk `cng_cert_store_add()`
-- [ ] Validity check: `cng_cert_is_expired(cert)` -- compare `cert->not_after` to `time_now()` (TODO-10)
+- [ ] Validity check: `cng_cert_is_expired(cert)` -- compare `cert->not_after` to `time_now()` (08-graphics-ui/TODO-12 §1)
 - [ ] Boot log: `klog(LOG_OK, "cng", "cert store: %u CA roots loaded", root_count)`
 - [ ] Commit: `"cng: X.509 cert store -- DER parser, Registry store, CA bundle, chain verification"`
 
@@ -196,21 +198,26 @@ Per-user private key storage encrypted at rest with AES-256-GCM. `cng_key_store_
 
 ## 8. EFS Integration `[Opus]`
 
-`efs_encrypt_file(path)` generates 256-bit content key, AES-256-GCM encrypts file, RSA-wraps key in `$EFS` attribute. `efs_decrypt_file(path)` reverses. Transparent in NTFS data path.
+`efs_encrypt_file(path)` generates a 256-bit file key (FEK), encrypts the file with AES-256 in the sector-based mode Windows EFS uses (CBC or XTS with an IV derived from the file offset, as the `ntfs_efs.c` stubs document), and RSA-OAEP-wraps the FEK into the Windows-format `$EFS` stream. AES-256-GCM is not used here: it is not the Windows EFS format. `efs_decrypt_file(path)` reverses. The NTFS driver already parses `$EFS` (a `$LOGGED_UTILITY_STREAM`, type 0x100, named `$EFS`, with DDF entries) and routes encrypted reads and writes through `src/kernel/fs/ntfs/ntfs_efs.c`; this section fills that file's unwrap and cipher stubs and adds the write-side stream, so files stay compatible with Windows.
 
-**Files:** `src/kernel/cng/efs.c` (new), `include/kernel/cng/efs.h` (new), `src/kernel/fs/ntfs.c` (extend)
+**Files:** `src/kernel/cng/efs.c` (new), `include/kernel/cng/efs.h` (new), `src/kernel/fs/ntfs/ntfs_efs.c` (fill the stubs), `include/kernel/fs/ntfs.h`
 
 > [!NOTE]
-> `[Opus]` due to: security-critical (file encryption in kernel VFS hot path), NTFS attribute extension (`$EFS` is an NTFS alternate data stream concept), and transparent encryption/decryption in the NTFS data path (must be invisible to VFS callers). **`$EFS` attribute format** (simplified, stored as named NTFS attribute `$EFS`): 4-byte magic `0x45465300` + 32-byte nonce + 16-byte GCM tag + 256-byte RSA-wrapped content key. `efs_encrypt_file(path)`: (a) `csprng_read(ck, 32)` -- random content key; (b) `csprng_read(nonce, 12)` -- random nonce; (c) `vfs_read(path, ...)` → plaintext buffer; (d) `cng_aes256gcm_encrypt(ck, nonce, plain, plen, cipher, tag)` -- allocate cipher buffer via `pmm_alloc_contiguous`; (e) `cng_rsa2048_encrypt(user_pub_key, ck, 32, wrapped_key)` -- wrap content key with user RSA pub key; (f) write `$EFS` NTFS attribute; (g) overwrite file data with ciphertext. `efs_decrypt_file(path)`: read `$EFS` → `cng_rsa2048_decrypt(user_priv_key, wrapped_key, ck)` → `cng_aes256gcm_decrypt(ck, nonce, cipher, clen, plain, tag)`. **Transparent hook**: NTFS read path -- after reading file data, if `$EFS` attribute present: decrypt inline before returning to VFS caller. NTFS write path -- if `$EFS` set: encrypt before writing to disk. Only for authenticated users with matching RSA key.
+> **Superseded 2026-09-29:** the custom `$EFS` layout below (magic `0x45465300`, `NTFS_ATTR_EFS = 0x40`) is replaced by the Windows format the shipped parser reads; do not add a second on-disk format. `[Opus]` due to: security-critical (file encryption in kernel VFS hot path), NTFS attribute extension (`$EFS` is an NTFS alternate data stream concept), and transparent encryption/decryption in the NTFS data path (must be invisible to VFS callers). **`$EFS` attribute format** (simplified, stored as named NTFS attribute `$EFS`): 4-byte magic `0x45465300` + 32-byte nonce + 16-byte GCM tag + 256-byte RSA-wrapped content key. `efs_encrypt_file(path)`: (a) `csprng_read(ck, 32)` -- random content key; (b) `csprng_read(nonce, 12)` -- random nonce; (c) `vfs_read(path, ...)` → plaintext buffer; (d) `cng_aes256gcm_encrypt(ck, nonce, plain, plen, cipher, tag)` -- allocate cipher buffer via `pmm_alloc_contiguous`; (e) `cng_rsa2048_encrypt(user_pub_key, ck, 32, wrapped_key)` -- wrap content key with user RSA pub key; (f) write `$EFS` NTFS attribute; (g) overwrite file data with ciphertext. `efs_decrypt_file(path)`: read `$EFS` → `cng_rsa2048_decrypt(user_priv_key, wrapped_key, ck)` → `cng_aes256gcm_decrypt(ck, nonce, cipher, clen, plain, tag)`. **Transparent hook**: NTFS read path -- after reading file data, if `$EFS` attribute present: decrypt inline before returning to VFS caller. NTFS write path -- if `$EFS` set: encrypt before writing to disk. Only for authenticated users with matching RSA key.
 
-- [ ] `int efs_encrypt_file(const char *path)` -- content key gen; AES-256-GCM encrypt; RSA wrap; write `$EFS` attr
-- [ ] `int efs_decrypt_file(const char *path)` -- read `$EFS`; RSA unwrap; AES-256-GCM decrypt; return plaintext
-- [ ] `$EFS` attribute: add `NTFS_ATTR_EFS = 0x40` constant; `ntfs_write_efs_attr(inode, efs_data, efs_len)` / `ntfs_read_efs_attr(inode, efs_buf, len)`
-- [ ] Transparent NTFS read hook: `ntfs_read_data()` → if `NTFS_ATTR_EFS` present → `efs_decrypt_inline(data, len, efs_attr)`
-- [ ] Transparent NTFS write hook: `ntfs_write_data()` → if EFS-marked → `efs_encrypt_inline(data, len)` before disk write
+- [ ] `int efs_encrypt_file(const char *path)` -- FEK gen; AES-256 sector-mode encrypt; RSA-OAEP wrap into a DDF entry; write the `$EFS` stream
+- [ ] `int efs_decrypt_file(const char *path)` -- read `$EFS`; RSA-OAEP unwrap the FEK; AES-256 sector-mode decrypt; return plaintext
+- [ ] Interoperability fixture: a file encrypted by Windows 11 EFS with a known test certificate decrypts to its known plaintext; the cipher mode (CBC vs XTS) is taken from that fixture, not assumed
+- [ ] `$EFS` stream: reuse the shipped `ntfs_efs_parse()` for reads; add the write side of the same `$LOGGED_UTILITY_STREAM` layout (no new attribute type)
+- [ ] Transparent read: fill `ntfs_efs_unwrap_fek()` and `ntfs_efs_decrypt_data()` so the existing `ntfs_read_encrypted_data()` path returns plaintext
+- [ ] Transparent write: fill `ntfs_efs_encrypt_data()` so the existing `ntfs_write_encrypted_data()` path encrypts before the disk write
+- [ ] Raw ciphertext write before filling that stub: `ntfs_write_encrypted_data()` writes through `ntfs_write_data()`, whose encrypted branch calls it again
+  - The loop is `src/kernel/fs/ntfs/ntfs_efs.c` (write via `ntfs_write_data()`) to `src/kernel/fs/ntfs/ntfs_data_write.c` (`NTFS_ATTR_FLAG_ENCRYPTED` branch). It is dormant only because the cipher stub fails first; add a raw write that bypasses EFS dispatch while keeping journaling and allocation, and test that a write then read-back encrypts exactly once.
+- [ ] Offset-aware cipher API: pass the file offset to `ntfs_efs_encrypt_data()` / `ntfs_efs_decrypt_data()` so the sector IV can be derived, read whole sectors, and read-modify-write partial sectors
+  - Today both take only key, buffer and length, and the read and write paths drop the offset. The interoperability fixture covers nonzero-offset, unaligned and cross-sector reads and writes.
 - [ ] `int efs_is_encrypted(const char *path)` → check `$EFS` attribute presence
 - [ ] Right-click File Manager context menu stub: "Encrypt" / "Decrypt" → `efs_encrypt/decrypt_file()` (forward ref to File Manager TODO)
-- [ ] Commit: `"cng: EFS -- efs_encrypt/decrypt_file, $EFS NTFS attr, AES-256-GCM+RSA key wrap, transparent data path"`
+- [ ] Commit: `"cng: EFS -- efs_encrypt/decrypt_file, Windows $EFS stream, AES-256 sector mode + RSA-OAEP key wrap, transparent data path"`
 
 ---
 

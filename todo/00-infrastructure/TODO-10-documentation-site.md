@@ -859,6 +859,10 @@ Write docs pages that meet the §3 contract for the 14 roadmap files below. Read
   - `09-desktop-shell/TODO-08` section 1: Start > Terminal starts another `cmd.exe` on every click even when the terminal is open; the 200 by 2000 grid needs about 1,563 pages for a 16-byte cell; the test seams must survive the rewrite.
   - `09-desktop-shell/TODO-13` section 1: the desktop, taskbar and window manager run in the kernel, so `explorer.exe` ownership and its `C:\Windows` path need deciding first.
 - [x] Commit: `"docs: desktop shell documentation pages"`
+- [x] Post-ship review fixes (adversarial, consistency, perf legs and three consistency confirmation rounds)
+  - Pages: `desktop-test-late-phase.md` names the real targets (`make test-visual`; `make test-desktop` is the kernel suite); `clipboard.md`, `terminal.md` and `input-system.md` say Ctrl+C does nothing today (`cmd.exe` sets no foreground group and pending signals are not delivered).
+  - `09-desktop-shell/TODO-07` sections 1, 3 and 8 now wrap Mbed TLS and the shipped hashes, and section 8 follows the Windows `$EFS` contract of `ntfs_efs.c` (AES-256 sector mode, RSA-OAEP) with an interop fixture, a raw ciphertext write that breaks the dormant `ntfs_write_data()` recursion, and an offset-aware cipher API.
+  - `09-desktop-shell/TODO-04` section 3 consumes the workspace-based miniz port of `02-kernel-core/TODO-03` section 4; `TODO-08` section 1 files `cmd.exe` claiming the console, with delivery owned by `02-kernel-core/TODO-21` section 14 and `10-platform-services/TODO-10` section 8; the last CNG signing references moved to section 7.
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any file named in this section; each page renders on the local build (`python3 scripts/site/build.py`, then open `build/site/docs/`). Test on: WSL2 dev host.
 
@@ -869,6 +873,9 @@ Write docs pages that meet the §3 contract for the 14 roadmap files below. Read
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when the shell, terminal, security, crypto or test code it describes changes.
 > - **Status honesty:** only `TODO-14` sections 6 to 8 have shipped; the other pages describe what runs today (the 80 by 20 terminal, `cmd.exe` built-ins, the kernel CSPRNG, tokens, hashes and Monocypher, vendored but unbuilt miniz and Mbed TLS) and link the owning sections.
 > - **Scope boundary:** the design specs in `docs/design/` stay authoritative for visuals, and the kernel, storage and networking pages stay authoritative for the CSPRNG, tokens, VFS, NTFS and TLS; these pages link them.
+
+> **Verified:** 2026-09-29 | commit `800620e90` | 10/10 items | build OK | site: OK, 174/232 documented; tests 34646 kernel + 17 user-mode PASS; smoke PASS
+> **Quality reviewed:** 2026-09-29 | Codex 7x (adversarial, adversarial post-ship, consistency x4, perf) | 3H+9M fixed, 0 open | scope: N/A (docs-only; no source changed; parity research and test coverage N/A; re-adversarial skipped: docs and roadmap-text fixes)
 
 ---
 
