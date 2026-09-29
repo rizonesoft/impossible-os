@@ -1656,7 +1656,7 @@ _arc_case() {  # <desc> <want_flag:yes|no> <agent-body-file-content> [filename]
     printf '%s' "$body" > "$ARC_REPO/.claude/agents/$fname"
     out=$(cd "$ARC_REPO" && bash scripts/lint.sh 2>&1) || true
     if [ "$want_flag" = "yes" ]; then
-        if echo "$out" | grep -q "$fname.*\(allowlist\|RUNNER_ROSTER\|hard rules\)"; then
+        if echo "$out" | grep -q "$fname.*\(allowlist\|RUNNER_ROSTER\|hard rules\|alias\|OPUS_ROSTER\|model:\)"; then
             t_pass "lint_agent_runner_class: $desc (flagged)"; else
             t_fail "lint_agent_runner_class: $desc" "expected flag, got: $(echo "$out" | grep "$fname" | head -1)"; fi
     else
@@ -1668,30 +1668,64 @@ _arc_case() {  # <desc> <want_flag:yes|no> <agent-body-file-content> [filename]
 }
 _arc_case "analyst with Bash is flagged" yes '---
 name: synthetic
+model: sonnet
 tools: Bash, Read
 ---
 body'
 _arc_case "rostered runner + marker + hard rules + Bash/Read/Grep/Glob passes" no '---
 name: checks-runner
+model: sonnet
 tools: Bash, Read, Grep, Glob
 ---
 <!-- agent-class: runner -->
 ## Forbidden -- hard rules
 body' checks-runner.md
+_arc_case "analyst without a model line is flagged" yes '---
+name: synthetic
+tools: Read, Grep
+---
+body'
+_arc_case "dated model ID is flagged (alias required)" yes '---
+name: synthetic
+model: claude-sonnet-5
+tools: Read, Grep
+---
+body'
+_arc_case "opus outside OPUS_ROSTER is flagged" yes '---
+name: synthetic
+model: opus
+tools: Read, Grep
+---
+body'
+_arc_case "kernel-quality-auditor off opus is flagged" yes '---
+name: kernel-quality-auditor
+model: sonnet
+tools: Read, Grep, Glob
+---
+body' kernel-quality-auditor.md
+_arc_case "kernel-quality-auditor on opus passes" no '---
+name: kernel-quality-auditor
+model: opus
+tools: Read, Grep, Glob
+---
+body' kernel-quality-auditor.md
 _arc_case "rostered runner missing hard-rules section is flagged" yes '---
 name: checks-runner
+model: sonnet
 tools: Bash, Read, Grep, Glob
 ---
 <!-- agent-class: runner -->
 body' checks-runner.md
 _arc_case "runner with Edit is flagged" yes '---
 name: synthetic
+model: sonnet
 tools: Bash, Read, Edit
 ---
 <!-- agent-class: runner -->
 body'
 _arc_case "runner marker NOT in roster is flagged (spoof guard)" yes '---
 name: synthetic
+model: sonnet
 tools: Bash, Read, Grep, Glob
 ---
 <!-- agent-class: runner -->
@@ -1699,6 +1733,7 @@ tools: Bash, Read, Grep, Glob
 body'
 _arc_case "runner with WebSearch is flagged" yes '---
 name: synthetic
+model: sonnet
 tools: Bash, Read, WebSearch
 ---
 <!-- agent-class: runner -->
