@@ -26,5 +26,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The checker parses every URL with Node's WHATWG URL (preinstalled on the
+      # runner) and refuses to run without it, so say so first if it is missing.
+      - name: Node is available
+        run: node --version
+
       - name: Check every external link in docs/ and gh-pages/
         run: python3 scripts/site/linkcheck.py

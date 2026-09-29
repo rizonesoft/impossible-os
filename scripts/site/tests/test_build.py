@@ -824,9 +824,15 @@ class SitePolish(unittest.TestCase):
                                "## After list\n\n# [Label][ref]\n\n[ref]: https://example.invalid/\n\n"
                                "    <a id=\"fake\"></a>\n")
         self.use(self.root)
+        self.write("todo/h.md", "# H\n\n<!-- <a id=\"deleted\"></a> -->\n\n<a class=\"bookmark\" id=\"live\"></a>\n\n"
+                               "Text <a name='single'></a> here.\n")
+        self.use(self.root)
         got = B.markdown_anchors("todo/t.md")
         self.assertTrue({"real-heading", "after-list", "label"} <= got, got)
         self.assertFalse({"example", "fake", "labelref"} & got, got)
+        got = B.markdown_anchors("todo/h.md")
+        self.assertTrue({"live", "single"} <= got, got)       # any attribute order, either quote
+        self.assertNotIn("deleted", got)                        # a commented-out anchor is gone
 
     def test_anchor_cache_is_keyed_by_content_and_version(self):
         path = self.root / "cache.json"
@@ -854,6 +860,22 @@ class SitePolish(unittest.TestCase):
         c.anchors("# C\n")
         c.save()
         self.assertEqual(json.loads(path.read_text())["version"], B._anchor_cache_version())
+        # A cache that cannot be written, nor its temporary file removed, only costs time.
+        from unittest import mock
+        c = B.AnchorCache(path)
+        c.anchors("# E\n")
+        with mock.patch.object(Path, "write_text", side_effect=PermissionError("ro")), \
+                mock.patch.object(Path, "unlink", side_effect=PermissionError("ro")):
+            c.save()
+        # Saving keeps only what this run used: an edited file replaces its entry.
+        c = B.AnchorCache(path)
+        c.anchors("# C\n")
+        c.anchors("# D\n")
+        c.save()
+        c = B.AnchorCache(path)
+        c.anchors("# D\n")
+        c.save()
+        self.assertEqual(list(json.loads(path.read_text())["entries"].values()), [["d"]])
 
     def test_dates_ignore_git_config_and_odd_file_names(self):
         self.git("init", "-q", "-b", "main")
@@ -1000,10 +1022,11 @@ class LinkCheck(unittest.TestCase):
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
-                redirects = {"/redir-rel": (302, "ok"), "/redir-gone": (301, f"{cls.base}/gone"),
+                redirects = {"/redir-proto": (302, "__proto__"), "/redir-space": (302, "/live "), "/redir-utf8": (302, "/caf\u00c3\u00a9"),
+                             "/redir-rel": (302, "ok"), "/redir-gone": (301, f"{cls.base}/gone"),
                              "/redir-down": (307, "/down"), "/loop": (302, "/loop"), "/redir-none": (302, None),
                              "/redir-empty": (302, ""), "/redir-file": (302, "file:///dev/null"),
-                             "/redir-bad": (302, "https://[broken/path"), "/redir-hostless": (302, "https:///no-host")}
+                             "/redir-bad": (302, "https://[broken/path"), "/redir-hostless": (302, "http://exa mple/")}
                 if path.startswith("/redir-conc"):
                     redirects[path] = (302, f"{cls.base}/conc{path[len('/redir-conc'):]}")
                 if route == "/redir-stall":
@@ -1027,6 +1050,11 @@ class LinkCheck(unittest.TestCase):
                     return
                 if path == "/slow" or route == "/stall":
                     time.sleep(3)
+                if route in ("/caf%C3%A9", "/live", "/a/live", "/a%5Eb", "/__proto__"):
+                    self.send_response(200)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 if route == "/bad-header":
                     self.send_response(200)
                     self.send_header("Content-Type", "multipart/mixed; boundary*=undefined''foo")
@@ -1113,11 +1141,11 @@ class LinkCheck(unittest.TestCase):
     def test_a_malformed_link_is_dead_and_does_not_stop_the_rest(self):
         found: dict[str, list[str]] = {}
         self.L.markdown_links('# T\n\n<a href="https://[broken/path#part">x</a> [ok](' + self.base + '/ok)\n'
-                              '[p](http://example.invalid:abc/p) [h](https:///no-host)\n', "docs/t.md", found)
+                              '[p](http://example.invalid:abc/p) <a href="http://exa mple.invalid/">h</a>\n', "docs/t.md", found)
         self.assertIn("https://[broken/path", found)       # a fragment is cut without parsing the URL
         got = self.L.run_checks(sorted(found) + [f"{self.base}/redir-bad"], retries=1, wait=0, timeout=5, budget=30)
         self.assertEqual(got[f"{self.base}/ok"], ("OK", ""))
-        for bad in ("https://[broken/path", "http://example.invalid:abc/p", "https:///no-host"):
+        for bad in ("https://[broken/path", "http://example.invalid:abc/p", "http://exa mple.invalid/"):
             self.assertEqual(got[bad][0], "DEAD", bad)
             self.assertIn("malformed URL", got[bad][1])
         # Host names the HTTP client refuses: decided without any network request.
@@ -1134,29 +1162,27 @@ class LinkCheck(unittest.TestCase):
         got = self.L.run_checks([f"{self.base}/bad-header"], retries=3, wait=0, timeout=5, budget=30)
         self.assertEqual(got[f"{self.base}/bad-header"][0], "UNVERIFIED")
         self.assertEqual(self.hits["/bad-header"], 3)
-        # A host-less absolute Location is not grafted onto this host (no request for /no-host).
+        # A Location a browser cannot parse is the far server's fault: unverified, never grafted here.
         got = self.L.run_checks([f"{self.base}/redir-hostless"], retries=1, wait=0, timeout=5, budget=30)
         self.assertEqual(got[f"{self.base}/redir-hostless"], ("UNVERIFIED", "HTTP 302 to a malformed Location"))
-        self.assertNotIn("/no-host", self.hits)
+        self.assertFalse([p for p in self.hits if "mple" in p])
 
     def test_through_a_proxy_only_an_http_answer_is_dead(self):
-        # A path with a space is refused before any connection: DEAD when fetched
-        # directly, but through a proxy the failure may be the proxy's own.
-        link = "http://example.invalid/a b"
+        # A dead link behind a broken proxy: the proxy fails before any answer, so
+        # nothing is known about the link. Bypassed by no_proxy, the server answers 404.
+        link = f"{self.base}/gone"
         saved, env = (self.L.PROXIES, self.L.OPENER), {k: os.environ.get(k) for k in ("no_proxy", "NO_PROXY")}
         try:
             for k in env:
                 os.environ.pop(k, None)
-            self.L.PROXIES = {"http": "http://proxy.invalid:bad"}   # a broken proxy, not a broken link
+            self.L.PROXIES = {"http": "http://proxy.invalid:bad"}
             self.L.OPENER = self.L.make_opener(self.L.PROXIES)
             got = self.L.run_checks([link], retries=1, wait=0, timeout=5, budget=30)[link]
             self.assertEqual(got[0], "UNVERIFIED")
             self.assertIn("through a proxy", got[1])
             # no_proxy decides the route exactly as urllib does: bypassed, the link itself is judged.
-            os.environ["no_proxy"] = "example.invalid"
-            got = self.L.run_checks([link], retries=1, wait=0, timeout=5, budget=30)[link]
-            self.assertEqual(got[0], "DEAD")
-            self.assertIn("malformed URL", got[1])
+            os.environ["no_proxy"] = "127.0.0.1"
+            self.assertEqual(self.L.run_checks([link], retries=1, wait=0, timeout=5, budget=30)[link], ("DEAD", "HTTP 404"))
         finally:
             self.L.PROXIES, self.L.OPENER = saved
             for k, v in env.items():
@@ -1164,6 +1190,112 @@ class LinkCheck(unittest.TestCase):
                     os.environ.pop(k, None)
                 else:
                     os.environ[k] = v
+
+    def test_unicode_links_get_one_verdict_in_markdown_and_html(self):
+        found: dict[str, list[str]] = {}
+        self.L.markdown_links(f"# T\n\n[m]({self.base}/caf\u00e9)\n\n<a href=\"{self.base}/caf\u00e9?q=\u00e9 x\">h</a>\n",
+                              "docs/t.md", found)
+        self.assertEqual(len(found), 2, found)                  # encoded by Markdown, raw in HTML
+        got = self.L.run_checks(sorted(found), retries=1, wait=0, timeout=5, budget=30)
+        self.assertEqual(set(got.values()), {("OK", "")}, got)
+        sent = self.L.browser_urls(["http://h/caf%C3%A9?a=%20b", "http://h/document[1]", "http://h/document?",
+                                    "http://h/a b?x y'z#frag"])
+        self.assertEqual(sent, {"http://h/caf%C3%A9?a=%20b": "http://h/caf%C3%A9?a=%20b",   # escapes kept
+                                "http://h/document[1]": "http://h/document[1]",             # as a browser sends it
+                                "http://h/document?": "http://h/document?",                 # empty query kept
+                                "http://h/a b?x y'z#frag": "http://h/a%20b?x%20y%27z"})     # fragment never sent
+
+    def test_links_are_requested_as_a_browser_would(self):
+        b = self.base
+        written = [f"{b}/live ", f"\t{b}/li\nve", f"{b}/a/../live", f"{b}/a/%2e%2e/live", f"{b}/a\\live", f"{b}/a^b"]
+        got = self.L.run_checks(written, retries=1, wait=0, timeout=5, budget=30)
+        self.assertEqual(got, {u: ("OK", "") for u in written})
+        self.assertEqual(self.L.browser_urls(["http://h/a b#frag", "http://[x"]),
+                         {"http://h/a b#frag": "http://h/a%20b", "http://[x": None})
+
+    def test_the_url_parser_failing_is_the_checkers_error_not_a_verdict(self):
+        b = self.base
+        self.assertEqual(self.L.check(f"{b}/redir-space", 1, 0, 5), ("OK", ""))   # Location resolved like a browser
+        self.assertEqual(self.L.check(f"{b}/redir-utf8", 1, 0, 5), ("OK", ""))    # raw UTF-8 Location bytes
+        self.assertEqual(self.L.check(f"{b}/redir-proto", 1, 0, 5), ("OK", ""))   # a Location named __proto__
+        saved = self.L.NODE_URL
+        try:
+            self.L.NODE_URL = "process.exit(3)"
+            with self.assertRaises(self.L.NormalizeError):
+                self.L.run_checks([f"{b}/ok"], retries=1, wait=0, timeout=5, budget=30)
+            from contextlib import redirect_stderr, redirect_stdout
+            import io
+            err = io.StringIO()
+            saved_collect = self.L.collect
+            self.L.collect = lambda: {f"{b}/ok": ["docs/a.md:1"]}
+            try:
+                with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                    self.assertEqual(self.L.main(["--retries", "1"]), 2)
+            finally:
+                self.L.collect = saved_collect
+            self.assertIn("linkcheck cannot run", err.getvalue())
+            # A parser that works up front but fails while resolving a redirect
+            # also stops the run: a broken checker never exits green.
+            self.L.NODE_URL = ('const [l, b] = JSON.parse(require("fs").readFileSync(0, "utf8"));'
+                               'if (b !== null) process.exit(3); const o = {};'
+                               'for (const u of l) o[u] = new URL(u).href; process.stdout.write(JSON.stringify(o));')
+            with self.assertRaises(self.L.NormalizeError):
+                self.L.run_checks([f"{b}/redir-rel", f"{b}/ok"], retries=1, wait=0, timeout=5, budget=30)
+            # ... even when the worker is slow to handle the failure and the budget
+            # runs out in between: the failure is published before the parser call
+            # stops counting as in flight.
+            real_step = self.L.step
+
+            def slow_step(*args, **kw):
+                try:
+                    return real_step(*args, **kw)
+                except self.L.NormalizeError:
+                    time.sleep(0.6)
+                    raise
+            self.L.step = slow_step
+            try:
+                with self.assertRaises(self.L.NormalizeError):
+                    self.L.run_checks([f"{b}/redir-rel"], retries=1, wait=0, timeout=5, budget=0.2)
+            finally:
+                self.L.step = real_step
+            # A parser call that outlives even the grace after the budget fails closed.
+            real_resolve = self.L.resolve_location
+            self.L.resolve_location = lambda loc, base, t: time.sleep(4)
+            try:
+                start = time.monotonic()
+                with self.assertRaises(self.L.NormalizeError) as cm:
+                    self.L.run_checks([f"{b}/redir-rel"], retries=1, wait=0, timeout=0.3, budget=0.2)
+                self.assertIn("still running", str(cm.exception))
+                self.assertLess(time.monotonic() - start, 3.5)
+            finally:
+                self.L.resolve_location = real_resolve
+            # Undecodable parser output is the same parser failure, never a verdict.
+            self.L.NODE_URL = ('const [l, b] = JSON.parse(require("fs").readFileSync(0, "utf8"));'
+                               'if (b !== null) { process.stderr.write(Buffer.from([0xff])); process.exit(3); }'
+                               'const o = {}; for (const u of l) o[u] = new URL(u).href; process.stdout.write(JSON.stringify(o));')
+            with self.assertRaises(self.L.NormalizeError):
+                self.L.run_checks([f"{b}/redir-rel"], retries=1, wait=0, timeout=5, budget=30)
+            # ... and so does one that STALLS on a redirect when the budget runs out first.
+            self.L.NODE_URL = self.L.NODE_URL.replace("process.exit(3)", "setTimeout(() => {}, 20000)")
+            start = time.monotonic()
+            with self.assertRaises(self.L.NormalizeError):
+                self.L.run_checks([f"{b}/redir-rel"], retries=1, wait=0, timeout=1, budget=0.3)
+            self.assertLess(time.monotonic() - start, 4)
+            self.L.NODE_URL = "setTimeout(() => {}, 20000)"       # a stalled parser respects the budget
+            start = time.monotonic()
+            with self.assertRaises(self.L.NormalizeError):
+                self.L.run_checks([f"{b}/ok"], retries=1, wait=0, timeout=5, budget=0.5)
+            self.assertLess(time.monotonic() - start, 3)
+        finally:
+            self.L.NODE_URL = saved
+
+    def test_nothing_starts_after_the_deadline(self):
+        # The up-front parse alone outlasts a 1 ms budget: no request may start.
+        n = self.hits.get("/counted", 0)
+        got = self.L.run_checks([f"{self.base}/counted"], retries=1, wait=0, timeout=5, budget=0.001)
+        self.assertIn("budget", got[f"{self.base}/counted"][1])
+        time.sleep(0.2)
+        self.assertEqual(self.hits.get("/counted", 0), n)
 
     def test_per_host_limit_covers_redirect_hops(self):
         port = self.srv.server_address[1]
@@ -1206,9 +1338,9 @@ class LinkCheck(unittest.TestCase):
             rc, out, _ = run({f"{b}/gone": ["docs/a.md:9"]}, "")
             self.assertEqual(rc, 1)
             self.assertIn(f"DEAD        {b}/gone  (HTTP 404)  docs/a.md:9", out)
-            rc, out, _ = run({"https:///no-host": ["docs/a.md:2"], f"{b}/ok": ["docs/a.md:3"]}, "")
+            rc, out, _ = run({"http://exa mple.invalid/": ["docs/a.md:2"], f"{b}/ok": ["docs/a.md:3"]}, "")
             self.assertEqual(rc, 1)                                  # a malformed link fails the run
-            self.assertIn("DEAD        https:///no-host  (malformed URL (no host name))  docs/a.md:2", out)
+            self.assertIn("DEAD        http://exa mple.invalid/  (malformed URL", out)
             n = self.hits.get("/counted", 0)
             rc, out, err = run({f"{b}/counted": ["docs/a.md:1"]},
                                f"{b}/counted  # fixture reason\nhttps://unused.invalid/  # nothing links here\n")

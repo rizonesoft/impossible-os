@@ -32,6 +32,7 @@ timestamps.
 from __future__ import annotations
 
 import argparse
+from html.parser import HTMLParser
 import datetime as _dt
 import html
 import json
@@ -254,7 +255,26 @@ class Slugger:
         return s
 
 
-RAW_ANCHOR_RE = re.compile(r'<a\s+(?:id|name)="([^"]+)"')
+class _AnchorParser(HTMLParser):
+    """`id` and `name` of <a> tags in raw HTML, any attribute order or quoting;
+    HTMLParser skips comments, so a commented-out anchor is not an anchor."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.found: set[str] = set()
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            self.found.update(v for k, v in attrs if k in ("id", "name") and v)
+
+    handle_startendtag = handle_starttag
+
+
+def html_anchors(html_text: str) -> set[str]:
+    p = _AnchorParser()
+    p.feed(html_text)
+    p.close()
+    return p.found
 
 
 def heading_title(inline, breaks: str = "") -> str:
@@ -271,11 +291,11 @@ def raw_anchors(tokens) -> set[str]:
     found: set[str] = set()
     for tok in tokens:
         if tok.type == "html_block":
-            found.update(RAW_ANCHOR_RE.findall(tok.content))
+            found |= html_anchors(tok.content)
         elif tok.type == "inline":
             for c in tok.children or []:
                 if c.type == "html_inline":
-                    found.update(RAW_ANCHOR_RE.findall(c.content))
+                    found |= html_anchors(c.content)
     return found
 
 
@@ -299,11 +319,14 @@ class AnchorCache:
     ~5 s. Keyed by content, a result can never be stale, so every commit after
     the first re-parses only the targets it changed. The file lives under the
     ignored build/ directory; a missing, corrupt or other-version cache is simply
-    rebuilt, and nothing published depends on it."""
+    rebuilt, and nothing published depends on it. Saving keeps only the entries
+    this run used, so editing a large roadmap file replaces its entry instead of
+    adding one more per version forever."""
 
     def __init__(self, path: Path) -> None:
         self.path, self.version, self.dirty = path, _anchor_cache_version(), False
         self.entries: dict[str, list[str]] = {}
+        self.used: set[str] = set()
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -317,6 +340,7 @@ class AnchorCache:
     def anchors(self, text: str) -> set[str]:
         import hashlib
         key = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        self.used.add(key)
         hit = self.entries.get(key)
         if hit is not None:
             return set(hit)
@@ -328,16 +352,20 @@ class AnchorCache:
         return found
 
     def save(self) -> None:
-        if not self.dirty:
+        keep = {k: v for k, v in self.entries.items() if k in self.used}
+        if not self.dirty and len(keep) == len(self.entries):
             return
+        tmp = self.path.with_suffix(f".{os.getpid()}.tmp")
         try:   # write-then-rename, so a concurrent build never reads half a file
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(f".{os.getpid()}.tmp")
-            tmp.write_text(json.dumps({"version": self.version, "entries": self.entries}), encoding="utf-8")
+            tmp.write_text(json.dumps({"version": self.version, "entries": keep}), encoding="utf-8")
             os.replace(tmp, self.path)
         except OSError:
-            pass   # a cache that cannot be written only costs time
-        self.dirty = False
+            try:   # a cache that cannot be written only costs time, and neither can its cleanup
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self.entries, self.dirty = keep, False
 
 
 def markdown_anchors(repo_rel: str, cache: "AnchorCache | None" = None) -> set[str]:

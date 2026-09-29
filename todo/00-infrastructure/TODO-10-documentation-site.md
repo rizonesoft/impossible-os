@@ -78,6 +78,7 @@ file_patterns:
 | 💎  |  25   | §25 Docs search completeness and accessibility                           | §1         |  [ ]   |
 | 💎  |  26   | §26 Document: Host tools (8 roadmap files)                               | §2, §3     |  [ ]   |
 | 💎  |  27   | §27 Document: Architecture ports and future research (9 roadmap files)   | §2, §3     |  [ ]   |
+| ⭐  |  28   | §28 Review-class nets for site tooling: real parsers, scheduler stress   | §23        |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -1109,8 +1110,8 @@ A page that was right when written goes wrong when its code changes. Neither Win
   - `render_page()` substitutes placeholders in one pass over the template, so a body or title that mentions `%EDIT%` is no longer rewritten.
 - [x] Weekly external link check: `scripts/site/linkcheck.py` run by `.github/workflows/linkcheck.yml` (Mondays), never per commit
   - Collects links a reader can follow (Markdown links, autolinks, images; raw-HTML `href`/`src` via `HTMLParser`, so comments and `data-href` are not links; not code; not `preconnect` hints) from `docs/` and the rendered `gh-pages/`.
-  - HEAD, then GET when HEAD is refused or says gone; redirects followed by hand (http(s) only), no body ever read, an unfollowable 3xx is UNVERIFIED; 4 requests per host including redirect hops; a 900 s budget reports stragglers.
-  - Fails only on DEAD (404, 410, host not found, a malformed link); 401/403/429/5xx, timeouts, TLS errors, refused connections and temporary DNS failure (`EAI_AGAIN`, design review) are UNVERIFIED and reported, never failed.
+  - Requested in browser form (Node's WHATWG `URL`); HEAD, then GET when HEAD is refused or says gone; redirects followed by hand (http(s) only), no body ever read, an unfollowable 3xx is UNVERIFIED; 4 requests per host including redirect hops; a 900 s budget reports stragglers.
+  - Of link verdicts, only DEAD fails the run (404, 410, host not found, a malformed link); a checker failure (Node missing, failing or timing out) exits 2; 401/403/429/5xx, timeouts, TLS errors, refused connections and temporary DNS failure (`EAI_AGAIN`, design review) are UNVERIFIED and reported, never failed.
   - Allowlist `scripts/site/linkcheck-allow.txt` needs a reason per prefix and reports stale entries. First run found 3 rotted links (fixed) and 8 admin-only GitHub settings URLs (allowlisted).
 - [x] Landing page feature claims verified against the code and rendered from data
   - Every claim checked (mapper pass plus Codex): removed false ones (per-CPU run queues, CFS, "no legacy IDE polling", GPU acceleration, TCP "in progress", VirtIO-net, `WriteFile` in the SDK, a shipped shim chain, "zero legacy bloat"); planned work is now called planned, including Linux binary support in the pillars and meta text.
@@ -1126,14 +1127,17 @@ A page that was right when written goes wrong when its code changes. Neither Win
 
 **Test checkpoint:** the deployed site serves `https://impossibleos.co/sitemap.xml` listing every docs page; each docs page footer shows its last-updated date; the link-check workflow reports a planted dead external link in a fixture and passes on the real tree. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
 
-> **Test runner:** host-side `python3 scripts/site/tests/test_build.py` (classes `SitePolish` 12 cases, `LinkCheck` 13 cases against a local HTTP server) | validation: `python3 scripts/site/build.py --check`, `python3 scripts/site/linkcheck.py` (network)
+> **Test runner:** host-side `python3 scripts/site/tests/test_build.py` (classes `SitePolish` 12 cases, `LinkCheck` 17 cases against a local HTTP server) | validation: `python3 scripts/site/build.py --check`, `python3 scripts/site/linkcheck.py` (network)
 
 > **Notes:**
 > - **What shipped:** `build.py` emits `sitemap.xml`, `robots.txt`, git-dated page footers and canonical/Open Graph tags, and checks anchors into non-docs Markdown; `linkcheck.py` plus a weekly workflow check external links.
 > - **How it integrates:** every new output is part of the byte-reproducible build, so `verify_live.py` covers `sitemap.xml` and `robots.txt` like any other file; the anchor check runs in lint Check 30.
 > - **Downstream:** section 24 scopes canonical URLs and `lastmod` per release; section 25 improves the search index that the same render pass feeds.
 > - **Canonical doc:** [`docs/infrastructure/documentation-site.md`](../../docs/infrastructure/documentation-site.md) "How are external links checked?".
-> - **Scope boundary:** no `og:image` (the site has no preview artwork yet); the link check reports but never fails on ambiguous answers.
+> - **Scope boundary:** no `og:image` (the site has no preview artwork yet); the link check needs Node, reports but never fails on ambiguous answers, and exits 2 when it cannot judge.
+
+> **Verified:** 2026-09-29 | commit `84f61e28a` | 6/6 items | build OK | site tests 88/88 PASS, kernel 34646 + 17 user PASS; live sitemap.xml 305 URLs; linkcheck workflow run 36538003044 green, 0 dead
+> **Quality reviewed:** 2026-09-29 | Codex 62x (design, test-coverage, adversarial x20, consistency x20, perf x20) | 2H+49M fixed, 0 open | scope: N/A (host tooling, workflow and docs; no kernel, boot or desktop code)
 
 ---
 
@@ -1221,6 +1225,26 @@ Write docs pages that meet the §3 contract for the 9 roadmap files below. Read 
 - [ ] Commit: `"docs: architecture ports and future research documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any `todo/16-architecture-ports/` or `todo/18-future-research/` file named here; each page renders on the local build. Test on: WSL2 dev host.
+
+---
+
+## 28. Review-Class Nets for Site Tooling: Real Parsers, Scheduler Stress
+
+> **Spawned-by:** root
+
+**Design:** n/a -- host tooling; no UI
+
+Promotion of two review classes into automation, filed under the reviewer-to-automation rule. Measured 2026-09-29 with `python3 scripts/overnight/finding-ledger.py classes`: `parser-approximation` 13 fixed (11 from the site-polish section's reviews: a heading line scanner, an HTML attribute regex, three hand-written URL serializers, a Latin-1 header, a raw-anchor regex) and `scheduling` 3 (all in the link checker). Each was caught by a Codex round; nothing deterministic would catch the next one.
+
+- [ ] A lint check that fails on regex-based HTML or URL parsing in `scripts/site/*.py`: tags, attributes, anchors and URLs go through markdown-it, `html.parser` or Node's WHATWG `URL`
+  - `Renderer.TAG_RE` / `ATTR_RE` in `scripts/site/build.py` (the raw-HTML href/src rewriter) is the remaining instance: convert it to `html.parser` or record it on a named allowlist with its reason.
+  - Include a control that must fire: a fixture file with an `<a\s+href=` regex is reported.
+- [ ] A seeded stress test for `scripts/site/linkcheck.py` `run_checks`: random delays injected at request, redirect resolution and worker hand-off
+  - Invariants: every link is answered or reported unanswered at the budget; a parser failure never ends green; no host ever exceeds `PER_HOST` concurrent requests.
+  - Run at least 200 seeds in under 30 s, and prove the net with a control: reverting the failure-publication order in `resolve()` must fail it.
+- [ ] Commit: `"site: automation for parser-approximation and scheduling review classes"`
+
+**Test checkpoint:** `bash scripts/lint.sh` reports the fixture control and nothing in the real tree; `python3 scripts/site/tests/test_build.py` runs the stress test green and the control red. Test on: WSL2 dev host.
 
 ---
 
