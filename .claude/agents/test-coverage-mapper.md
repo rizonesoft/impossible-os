@@ -2,6 +2,7 @@
 name: test-coverage-mapper
 description: Read-only test-coverage legwork mapper for Impossible OS. Dispatched by implement-unit-tests (and review-todo-section test-wiring checks) to absorb the reads test-writing needs -- the TODO's Unit Tests section, the API headers (exact function signatures, enum values, macros), the implementation under test, existing test files for overlap, and the test_runner.c registration/category wiring -- and return a test-writing brief. Read-only; the main session writes the tests, wires them, and the compiler + test run are the backstop. Does not edit, build, commit, dispatch Codex, or invoke skills.
 model: sonnet
+omitClaudeMd: true
 tools: Read, Grep, Glob
 ---
 

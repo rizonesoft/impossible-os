@@ -1378,12 +1378,31 @@ RUNNER_ALLOWED = {"Bash", "Read", "Grep", "Glob"}
 # Runner class is roster-gated: the marker ALONE cannot mint a runner. Adding a
 # runner is a deliberate act that edits this roster (and gets reviewed).
 RUNNER_ROSTER = {"checks-runner.md", "git-historian.md", "gh-query-runner.md"}
+# Model pins are ALIASES so every agent follows the newest release of its tier
+# with no edit (Sonnet 5 -> 5.5 happened that way, 2026-09-29). A dated ID such
+# as `claude-sonnet-5` freezes the agent on an old model, and a missing line
+# silently inherits the session model (Opus). Opus is roster-gated like the
+# runner class: kernel-quality-auditor stays on Opus by operator decision
+# (2026-09-29), and any other agent moving up is a deliberate roster edit.
+MODEL_ALIASES = {"sonnet", "opus", "haiku", "inherit"}
+OPUS_ROSTER = {"kernel-quality-auditor.md"}
 viol = []
 for path in sorted(glob.glob(os.path.join(root, ".claude/agents/*.md"))):
     rel = os.path.relpath(path, root)
     base = os.path.basename(path)
     with open(path, encoding="utf-8") as f:
         text = f.read()
+    mm = re.search(r'^model:\s*(\S*)\s*$', text, re.M)
+    mln = text[:mm.start()].count('\n') + 1 if mm else 1
+    model = mm.group(1).strip('"\'') if mm else ""
+    if not mm:
+        viol.append((rel, 1, "no `model:` line (the agent would inherit the session model, usually Opus); pin an alias: sonnet, opus, haiku"))
+    elif model not in MODEL_ALIASES:
+        viol.append((rel, mln, f"`model: {model}` is not an alias; use one of sonnet, opus, haiku, inherit so the agent follows the newest release"))
+    elif model == "opus" and base not in OPUS_ROSTER:
+        viol.append((rel, mln, "`model: opus` but not in Check 14 OPUS_ROSTER (moving an agent to Opus is a deliberate roster edit in scripts/lint.sh)"))
+    if base in OPUS_ROSTER and model != "opus":
+        viol.append((rel, mln, "in OPUS_ROSTER but not `model: opus` (kernel-quality-auditor stays on Opus by operator decision 2026-09-29)"))
     if re.search(r'^<!--\s*agent-tools-exempt:\s*\S', text, re.M):
         continue
     has_marker = bool(re.search(r'^<!--\s*agent-class:\s*runner\s*-->', text, re.M))

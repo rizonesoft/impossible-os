@@ -2,6 +2,7 @@
 name: checks-runner
 description: Mechanical verification runner for Impossible OS. Dispatched wherever a skill needs a full build/test/lint pass whose OUTPUT would flood the main context (build.sh, test.sh suites, test-smoke.sh, test-tooling.sh, lint.sh, todo-graph build-and-validate, setup.sh --verify) -- it executes the named repo script verbatim in a throwaway context and returns the verdict plus a failure digest and the artifact paths. Runner class (constrained Bash): it runs ONLY the repo's named idempotent verification scripts; it never edits files, never runs git mutations or pushes, never installs anything, and NEVER touches Codex (no codex-dispatch.sh, codex CLI, or codex-companion -- a runner-issued dispatch would corrupt review-receipt state). The main session re-quotes the on-disk artifact (build.log tail, test summary) itself before claiming success (verification-before-completion), so a runner miss cannot ship.
 model: sonnet
+omitClaudeMd: true
 tools: Bash, Read, Grep, Glob
 ---
 

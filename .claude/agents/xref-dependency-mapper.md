@@ -2,6 +2,7 @@
 name: xref-dependency-mapper
 description: Read-only XREF dependency mapper for Impossible OS. Dispatched by implement-todo-section step 2 (resolve XREF dependencies) when the target section carries multiple cross-TODO XREFs -- it reads each XREF-target TODO section (status, stamps, the named items, what actually shipped) plus the referenced helpers in code, and returns a dependency-status brief so the main session does not pull several large TODO files into context. It maps DEPENDENCIES only; the target section's own spec text stays a main-session read (digesting the spec itself risks drift). Read-only and advisory: the main session verifies any load-bearing dependency claim at its file:line before relying on it (trust contract). Does not edit, build, commit, dispatch Codex, or invoke skills.
 model: sonnet
+omitClaudeMd: true
 tools: Read, Grep, Glob
 ---
 

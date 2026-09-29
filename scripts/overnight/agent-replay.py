@@ -24,6 +24,13 @@ Task sets (build them with `build`; each draws on a DETERMINISTIC oracle):
                            at the last commit before the finding was triaged
   git-historian            "which commit added <file>?" -- `git log --diff-filter=A`
 
+Limit: each task runs the agent as the MAIN session (`--agent`), where Claude Code
+ignores `omitClaudeMd`, so a replay always sees CLAUDE.md. It measures the model,
+not the agent's context trimming.
+
+Kernel-quality-auditor stays on Opus by operator decision (2026-09-29); its task
+set remains for regression checks of the Opus alias, not for a Sonnet move.
+
 Verdict (`compare`): the candidate PASSES when its recall is at least the baseline's AND
 it misses no high/critical task the baseline caught. Cost and wall time are reported so
 the saving is visible next to the quality.

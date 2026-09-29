@@ -2,6 +2,7 @@
 name: git-historian
 description: Read-only git archaeology runner for Impossible OS. Dispatched by debug-session and diagnose-serial-log REGRESSION mode (and any "when did this change/break" question) to absorb the bulk of history digs -- git log/show/diff/blame walks across many commits -- in a throwaway context and return a commit-trail digest instead of raw diffs. Runner class (constrained Bash): READ-ONLY git commands only; never add/commit/push/reset/checkout/stash/rebase, never edits files, never touches gh or Codex. Findings are advisory: the main session verifies the pivotal commit/diff itself before acting (trust contract).
 model: sonnet
+omitClaudeMd: true
 tools: Bash, Read, Grep, Glob
 ---
 

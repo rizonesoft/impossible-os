@@ -2,6 +2,7 @@
 name: web-research-analyst
 description: Read-only general engineering web researcher for Impossible OS. Dispatched for the web lookups the two specialist researchers do NOT own -- toolchain behavior (clang-19/ld.lld/nasm flags, codegen quirks), emulator/hypervisor behavior (QEMU, KVM, TCG, WHPX, VirtualBox), WSL2/systemd host quirks, GitHub Actions syntax, third-party tool errors, and best-practice sanity checks -- so multi-page web reads land in a throwaway context. parity-research-analyst owns Win11/Linux FEATURE parity; spec-research-analyst owns normative hardware/format specs; this agent owns everything else. Read-only and advisory: returns sourced findings with URLs; the main session cross-checks load-bearing claims before acting (trust contract). Does not edit, build, commit, dispatch Codex, or invoke skills.
 model: sonnet
+omitClaudeMd: true
 tools: Read, Grep, Glob, WebSearch, WebFetch
 ---
 

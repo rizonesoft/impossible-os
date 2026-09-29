@@ -2,6 +2,7 @@
 name: review-evidence-mapper
 description: Pre-Codex evidence mapper for review-todo-section Phase 1. Reads a section diff plus the surrounding code (callers, related subsystems) and returns a file:line evidence map the main session uses to scope its Codex prompt. Read-only; SUPPLEMENTS but does not replace the main session's own gate reads (phase1_evidence_gate counts main-session Read/Grep, not subagent reads). Does not edit, build, commit, dispatch Codex, or invoke skills.
 model: sonnet
+omitClaudeMd: true
 tools: Read, Grep, Glob
 ---
 

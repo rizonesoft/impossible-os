@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-02-ai-development-system.md sources=.claude/agents,.claude/hooks/MANIFEST.md,scripts/codex-dispatch.sh,scripts/audit-ai-system.sh reviewed=2026-09-28T15:35 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-02-ai-development-system.md sources=.claude/agents,.claude/hooks/MANIFEST.md,scripts/codex-dispatch.sh,scripts/audit-ai-system.sh reviewed=2026-09-29 -->
 # AI Development System -- Ownership Map
 
 > Canonical reference for who-owns-what across the Impossible OS AI surface. `CLAUDE.md` links here from its "Skills" section; [`docs/infrastructure/index.md`](index.md) lists this doc so it is discoverable from the Infrastructure landing page. Roadmap ownership lives in the [AI Development System roadmap](../../todo/00-infrastructure/TODO-02-ai-development-system.md).
@@ -369,6 +369,8 @@ Claude Code ships a handful of built-in subagents (`claude-code-guide`, `Explore
 | `general-purpose`   | Full-tool-access agent for multi-step research or lookups that would otherwise burn parent context        | Used when a task legitimately needs >3 search-rounds in isolation. |
 | `Plan`              | Software-architect agent for designing implementation strategies                                          | Overlaps with `codex-design-review`; prefer Codex on kernel code. |
 | `statusline-setup`  | One-shot status line configuration helper                                                                 | Cosmetic only.                                                   |
+
+The repo's own specialist agents in `.claude/agents/` carry two cost settings, both enforced or measured (2026-09-29). Every agent pins its model with an alias (`sonnet`, `opus`, `haiku`, `inherit`), never a dated ID, so it follows the newest release of its tier: lint Check 14 refuses anything else, and roster-gates `opus` to `kernel-quality-auditor`, which stays on Opus by operator decision. The 14 evidence-gathering agents also set `omitClaudeMd: true`, which cut a fresh dispatch's starting context from ~44K tokens to ~4.5K; the seven whose verdicts rest on `CLAUDE.md` doctrine keep it. A `fork` is different: it inherits the whole parent context and model, so `fork_context_guard.py` refuses one from a context above 150K tokens unless its prompt says `[fork-ok: <reason>]`.
 
 Skills (`.claude/skills/`) are the primary repo-tracked surface for workflows; subagents complement them for exploration and context preservation. Neither bypasses the `receiving-code-review` gate on external-reviewer output.
 

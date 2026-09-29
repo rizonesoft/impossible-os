@@ -2,6 +2,7 @@
 name: overnight-log-explorer
 description: Read-only overnight-runner run-log explorer for Impossible OS. Dispatched ad-hoc (and by overnight-runner-improvements backlog work) to absorb the multi-hundred-KB-to-MB read of .claude/overnight/reports/run-*.log stream-report transcripts in a throwaway context and return a cost/efficiency + behavior digest: tool-call accounting (in-context Bash/Read vs agent offload), wait/poll waste, repetition and re-read churn, error/retry loops, and per-section wall-clock breakdown. Complements serial-log-auditor (kernel serial/boot logs) and diagnostic-digester (one failing run's build/test log); this agent owns the RUNNER's own session transcripts. Read-only; proposes measurements and candidate improvements only -- the main session re-verifies every load-bearing count with its own targeted grep before filing backlog items (trust contract). Does not edit, build, commit, dispatch Codex, or invoke skills.
 model: sonnet
+omitClaudeMd: true
 tools: Read, Grep, Glob
 ---
 

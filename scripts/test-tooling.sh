@@ -5037,6 +5037,11 @@ if python3 "$REPO_ROOT/.claude/hooks/agent_coverage_gate.py" --selftest >/dev/nu
 else
     t_fail "agent_coverage_gate_selftest  embedded selftest failed"
 fi
+if python3 "$REPO_ROOT/.claude/hooks/fork_context_guard.py" --selftest >/dev/null 2>&1; then
+    t_pass "fork_context_guard_selftest  large-context fork refused, small and marked pass"
+else
+    t_fail "fork_context_guard_selftest  embedded selftest failed"
+fi
 if python3 "$REPO_ROOT/.claude/hooks/_advisory_budget.py" --selftest >/dev/null 2>&1; then
     t_pass "advisory_budget_selftest  per-session injection budget green"
 else

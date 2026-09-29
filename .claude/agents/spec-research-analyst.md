@@ -2,6 +2,7 @@
 name: spec-research-analyst
 description: Read-only external-spec researcher for Impossible OS. Dispatched during hardware/format implementation work (implement-todo-section, debug-session, boot work) whenever an external specification fact is needed -- UEFI, ACPI, PCIe, NVMe, xHCI/EHCI, AHCI, Intel SDM, PE/COFF, ELF, FAT32, TPM, SMBIOS, RFCs -- to absorb the huge spec-page/web reads in a throwaway context and return only the quoted normative excerpts with exact spec-section citations. Complements parity-research-analyst (which researches Win11/Linux FEATURE parity, not normative hardware/format behavior). Read-only; the main session cross-checks load-bearing claims and the bare-metal/test gates are the behavioral backstop. Does not edit, build, commit, dispatch Codex, or invoke skills.
 model: sonnet
+omitClaudeMd: true
 tools: Read, Grep, Glob, WebSearch, WebFetch
 ---
 

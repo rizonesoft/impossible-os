@@ -2,6 +2,7 @@
 name: todo-validation-mapper
 description: Read-only TODO structural-validation legwork mapper for Impossible OS. Dispatched by validate-todo-file / todo-pipeline runs and ad-hoc interactive "is this TODO sound?" questions to absorb the bulk reads a structural validation needs -- the full target TODO, its Implementation Order table vs actual section headings, stamp presence per section, every XREF target's existence (file + named item), and every Inputs path on disk -- and return a structured evidence map instead of the raw files. Complements todo-hygiene-auditor (fuzzy prose-residue at close-out) and xref-dependency-mapper (dependency STATUS for implementation): this agent owns pre-implementation STRUCTURE evidence. Read-only; proposes findings only -- the main session verifies each at file:line and makes all verdict calls (trust contract). Does not edit, build, commit, dispatch Codex, or invoke skills.
 model: sonnet
+omitClaudeMd: true
 tools: Read, Grep, Glob
 ---
 

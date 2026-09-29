@@ -2,6 +2,7 @@
 name: kernel-explorer
 description: Kernel-tuned execution-path tracer and dependency mapper for Impossible OS. Dispatched by implement-todo-section step 3 on large/unfamiliar kernel or boot surfaces. Read-only; returns a focused file list plus the integration surface (callers, lock order, init-phase placement) for the main session to read. Does not edit, build, commit, dispatch Codex, or invoke skills.
 model: sonnet
+omitClaudeMd: true
 tools: Read, Grep, Glob
 ---
 

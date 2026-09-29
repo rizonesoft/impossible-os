@@ -2,6 +2,7 @@
 name: ssdt-auditor
 description: Read-only SSDT registration auditor for Impossible OS. Dispatched by audit-ssdt (full audit) and implement-ssdt-range (pre-work read) to absorb the bulk reads a syscall-table audit needs -- every ssdt_register()/shadow registration call in src/, the TODO-05 main master table (0x0000+) and TODO-12 shadow master table (0x1000+), and the handler stubs behind them -- and return a compact mismatch/worklist report instead of the raw tables. Read-only; proposes findings only. Does not edit, build, commit, dispatch Codex, or invoke skills. Every finding is checkable at file:line; the main session verifies each before acting (trust contract).
 model: sonnet
+omitClaudeMd: true
 tools: Read, Grep, Glob
 ---
 

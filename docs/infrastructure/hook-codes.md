@@ -130,6 +130,15 @@ types, and any path the agent never touched are all exempt.
 
 Kill switch: `AGENT_COVERAGE_DISABLE=1`.
 
+## FORK-* (fork_context_guard.py)
+
+### FORK-CONTEXT
+A `fork` dispatch was refused because the parent context is above 150K tokens. A fork inherits this session's whole conversation and model and re-reads that context on every turn, so a fork from a large Opus session costs several times a named Sonnet agent doing the same legwork (measured 2026-09-29: ~$8 against ~$1).
+
+Dispatch a named agent (section-context-mapper, kernel-explorer, a researcher) with a self-contained prompt instead. When the task genuinely needs this conversation, re-dispatch the fork with `[fork-ok: <reason>]` in its prompt. Small-context forks are never refused.
+
+Kill switch: `FORK_CONTEXT_GUARD_DISABLE=1`.
+
 ## SEARCH-* (search_offload_gate.py) -- RETIRED 2026-07-28
 
 ### SEARCH-OFFLOAD (retired -- no longer emitted)

@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md sources=.claude/hooks/MANIFEST.md,scripts/audit-hooks.sh,scripts/audit-ai-system.sh,.claude/hooks/section_commit_gate.py,.claude/hooks/receiving_review_required.py,.claude/hooks/codex_model_flag_block.py reviewed=2026-09-28 order=9 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md sources=.claude/hooks/MANIFEST.md,scripts/audit-hooks.sh,scripts/audit-ai-system.sh,.claude/hooks/section_commit_gate.py,.claude/hooks/receiving_review_required.py,.claude/hooks/codex_model_flag_block.py reviewed=2026-09-29 order=9 -->
 # Automation Hardening
 
 ## What is it?

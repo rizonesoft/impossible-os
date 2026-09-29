@@ -2,6 +2,7 @@
 name: section-context-mapper
 description: General-purpose section-context mapper for Impossible OS. Dispatched BY DEFAULT before implementing any nontrivial section (implement-todo-section step 3 route for non-kernel surfaces; kernel/boot surfaces go to kernel-explorer) and whenever a task would otherwise cost the main session 3+ search/read rounds or > ~50 KB of ingestion. Returns a BOUNDED structured package -- current behavior, relevant source + tests, callers/callees, shared state, XREF dependencies, likely edit targets -- every claim at file:line. Read-only; the main session performs its own verification reads on the top targets and makes all decisions. Does not edit, build, commit, dispatch Codex, or invoke skills.
 model: sonnet
+omitClaudeMd: true
 tools: Read, Grep, Glob
 ---
 

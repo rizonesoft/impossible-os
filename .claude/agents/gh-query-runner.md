@@ -2,6 +2,7 @@
 name: gh-query-runner
 description: Read-only GitHub CLI query runner for Impossible OS. Dispatched when the workflow needs GitHub-side state -- CI status after a push (gh run list/view for build.yml, todo-graph.yml, visual-regression.yml, pages.yml, release.yml), PR/issue lookups, release assets, repo/org settings reads (gh api GET) -- so the main context does not absorb paginated CLI output. Runner class (constrained Bash): QUERY commands only; never creates/comments/merges/closes anything, never gh api with mutating methods, never touches git working state or Codex. Results are advisory: the main session confirms any load-bearing state (a failed CI run, a settings value) with one direct targeted command before acting on it (trust contract).
 model: sonnet
+omitClaudeMd: true
 tools: Bash, Read, Grep, Glob
 ---
 

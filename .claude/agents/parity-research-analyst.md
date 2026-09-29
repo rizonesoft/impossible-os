@@ -2,6 +2,7 @@
 name: parity-research-analyst
 description: Win11/Linux parity and feature-completeness researcher for Impossible OS. Two modes. todo-plan mode (dispatched by gap-audit-todo Phase 2-3): web-research a domain and build a feature inventory + gap classification for a TODO plan. implemented-code mode (dispatched by review-todo-section steps 9-12): parity + false-completeness fresh-eyes on shipped code. Read-only; returns a structured inventory/findings for the main session. Does not edit TODOs, commit, dispatch Codex, or invoke skills.
 model: sonnet
+omitClaudeMd: true
 tools: Read, Grep, Glob, WebSearch, WebFetch
 ---
 
