@@ -2,14 +2,15 @@
 // the search combobox is tested as shipped rather than re-implemented in a test.
 // stdin: {"script": "<the template script, %ROOT% already substituted>",
 //         "files": {"search.json": "...", "search-<hash>.json": "..."},
+//         "cached": {"file name": "what the browser cache serves unless the fetch says cache: no-cache"},
 //         "steps": [["input", "text"] | ["key", "ArrowDown"] | ["blur", null] | ["click", <option index>] |
 //                   ["flush", null] | ["wait", <ms>] | ["snap", "label"]],
 //         "fail_once": ["name of a file whose first fetch fails", ...],
 //         "delay": {"file name": <ms before its fetch answers>},
 //         "files2": {the files a ["deploy", null] step swaps in}}
-// stdout: {"snaps": {"label": {expanded, active, shown, options: [{id, href, selected, text}], msg, status, href}},
+// stdout: {"snaps": {"label": {expanded, active, shown, options: [{id, href, selected, text}], msg, status, href, renders}},
 //          "errors": [every unhandled promise rejection, which the page would swallow silently],
-//          "fetches": {"file name": times fetched}}
+//          "fetches": {"file name": times fetched}, "revalidated": {"file name": times fetched with cache: no-cache}}
 'use strict';
 const vm = require('vm');
 
@@ -24,7 +25,8 @@ function unescape(s) {
 
 class El {
   constructor(id) { this.id = id; this.attrs = {}; this.style = {}; this.hidden = false; this.textContent = '';
-                    this.handlers = {}; this._html = ''; this.options = []; this.value = ''; this.tagName = 'DIV'; }
+                    this.handlers = {}; this._html = ''; this.options = []; this.value = ''; this.tagName = 'DIV';
+                    this.renders = 0; }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
   removeAttribute(k) { delete this.attrs[k]; }
@@ -37,6 +39,7 @@ class El {
   }
   set innerHTML(h) {
     this._html = h;
+    if (h) this.renders++;
     this.options = [];
     const re = /<a role="option" id="([^"]+)"[^>]*href="([^"]*)">(.*?)<\/a>/g;
     let m;
@@ -72,13 +75,17 @@ doc.activeElement = { tagName: 'BODY' };
 const loc = { href: 'start' };
 
 const fetches = {};
-function fetchStub(url) {
+const revalidated = {};
+function fetchStub(url, opts) {
   const name = url.replace(/^.*\//, '');
   fetches[name] = (fetches[name] || 0) + 1;
+  if (opts && opts.cache === 'no-cache') revalidated[name] = (revalidated[name] || 0) + 1;
   return new Promise((resolve) => setTimeout(() => {
     if (failOnce.has(name)) {
       failOnce.delete(name);
       resolve({ ok: false, status: 503, json: () => Promise.reject(new Error('503')) });
+    } else if (name in (input.cached || {}) && !(opts && opts.cache === 'no-cache')) {
+      resolve({ ok: true, status: 200, json: () => Promise.resolve(JSON.parse(input.cached[name])) });
     } else if (!(name in input.files)) {
       resolve({ ok: false, status: 404, json: () => Promise.reject(new Error('404')) });
     } else {
@@ -97,7 +104,7 @@ function key(k) {
   const e = { key: k, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
   els.q.fire('keydown', e);
 }
-function flush() { return new Promise((r) => setTimeout(r, 20)); }
+function flush() { return new Promise((r) => setTimeout(r, 60)); }   // past the 16 ms refresh coalescing
 function snap() {
   const list = els.results;
   return {
@@ -109,6 +116,7 @@ function snap() {
     msg: els['results-msg'].hidden ? '' : els['results-msg'].textContent,
     status: els['search-status'].textContent,
     href: loc.href,
+    renders: list.renders,          // non-empty result lists drawn so far: one per scoring pass
   };
 }
 
@@ -124,5 +132,5 @@ function snap() {
     else if (op === 'wait') await new Promise((r) => setTimeout(r, arg));
     else if (op === 'snap') snaps[arg] = snap();
   }
-  process.stdout.write(JSON.stringify({ snaps, errors, fetches }));
+  process.stdout.write(JSON.stringify({ snaps, errors, fetches, revalidated }));
 })();

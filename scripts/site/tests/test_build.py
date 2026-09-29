@@ -276,7 +276,7 @@ class SearchAndAccessibility(unittest.TestCase):
     def test_index_keeps_code_late_text_and_the_heading_path(self):
         pages, errors = self.pages()
         self.assertEqual(errors, [])
-        files = B.search_files(pages, True, errors)
+        files = B.search_files(pages, "v2", errors)
         self.assertEqual(errors, [])
         recs = self.records(files)
         self.assertEqual(self.find(recs, "boot_health_publish_json"),
@@ -294,24 +294,32 @@ class SearchAndAccessibility(unittest.TestCase):
             '<div>block_<code>joined</code>_ident wbr_<wbr>joined_ident</div>\n<p>alpha</p><p>beta</p>\n\n'
             '<img src="../x.png" alt="blockaltword">\n')})
         self.assertEqual(errors, [])
-        recs = self.records(B.search_files(pages, True, errors))
+        recs = self.records(B.search_files(pages, "v2", errors))
         for word in ("raw_inline_joined_name", "inlinealtword", "block_joined_ident", "wbr_joined_ident", "blockaltword"):
             self.assertEqual(self.find(recs, word), [("raw.html", "", "")], word)
         self.assertTrue(self.find(recs, "alpha beta"))             # block elements still separate words
         self.assertEqual(pages["raw.md"].a11y, [])
         pages, errors = self.pages({"titled.md": "<!-- docs: title=API Reference -->\n# h1_only_identifier\n\nx\n"})
-        recs = self.records(B.search_files(pages, True, errors))
+        recs = self.records(B.search_files(pages, "v2", errors))
         self.assertEqual(self.find(recs, "h1_only_identifier"), [("titled.html", "", "")])
         self.assertNotIn("API", [x for u, a, h, x in recs if u == "api.html" and a == ""][0])  # an H1 that IS the title
         pages, errors = self.pages({"head.md": '# Head\n\n## API ![headingaltword](../x.png) <img src="../x.png" '
                                                'alt="rawheadingalt">\n\nbody\n'})
-        recs = self.records(B.search_files(pages, True, errors))
+        recs = self.records(B.search_files(pages, "v2", errors))
         for word in ("headingaltword", "rawheadingalt"):
             self.assertEqual(self.find(recs, word), [("head.html", "api--", "API")], word)   # GitHub slug of "API  "
 
+    def test_each_template_gets_the_layout_it_reads(self):
+        self.assertEqual(B.search_layout("<input>"), "flat")
+        self.assertEqual(B.search_layout('<input data-search-index="2">'), "v2")
+        pages, errors = self.pages()
+        self.assertEqual(json.loads(B.search_files(pages, "v2", errors)["search.json"])["v"], 2)
+        self.assertIsInstance(json.loads(B.search_files(pages, "flat", errors)["search.json"]), list)
+        self.assertEqual(errors, [])
+
     def test_legacy_template_gets_the_flat_index_it_was_published_with(self):
         pages, errors = self.pages()
-        files = B.search_files(pages, False, errors)
+        files = B.search_files(pages, "flat", errors)
         self.assertEqual(list(files), ["search.json"])
         flat = json.loads(files["search.json"])
         api = [p for p in flat if p["u"] == "api.html"][0]
@@ -321,12 +329,12 @@ class SearchAndAccessibility(unittest.TestCase):
     def test_shards_split_and_an_oversized_file_fails_instead_of_dropping_text(self):
         pages, errors = self.pages()
         B.SEARCH_SHARD_TARGET = 200
-        files = B.search_files(pages, True, errors)
+        files = B.search_files(pages, "v2", errors)
         self.assertGreater(len(files), 3)
         self.assertEqual(errors, [])
         self.assertTrue(self.find(self.records(files), "zebrafinch"))
         B.SEARCH_BUDGET = 1000
-        B.search_files(pages, True, errors)
+        B.search_files(pages, "v2", errors)
         self.assertTrue(any("over the 1,000-byte budget" in e for e in errors), errors)
 
     def test_accessibility_rules(self):
@@ -354,15 +362,15 @@ class SearchAndAccessibility(unittest.TestCase):
     @unittest.skipUnless(__import__("shutil").which("node"), "node not installed")
     def test_combobox_as_shipped(self):
         pages, errors = self.pages()
-        files = B.search_files(pages, True, errors)
+        files = B.search_files(pages, "v2", errors)
         tpl = (B.REPO_REAL / "gh-pages" / "docs-template.html").read_text(encoding="utf-8")
-        self.assertIn(B.SEARCH_V2_MARK, tpl)
+        self.assertEqual(B.search_layout(tpl), "v2")
         script = [m for m in re.findall(r"<script>(.*?)</script>", tpl, re.S) if "search.json" in m]
         self.assertEqual(len(script), 1)
         script = script[0].replace("%ROOT%", "")
 
-        def drive(steps, fail_once=(), delay=None, missing=(), files2=None):
-            payload = {"script": script,
+        def drive(steps, fail_once=(), delay=None, missing=(), files2=None, cached=None):
+            payload = {"script": script, "cached": cached or {},
                        "files": {k: v.decode("utf-8") for k, v in files.items() if k not in missing},
                        "files2": {k: v.decode("utf-8") for k, v in (files2 or {}).items()},
                        "steps": steps, "fail_once": list(fail_once), "delay": delay or {}}
@@ -371,7 +379,7 @@ class SearchAndAccessibility(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
             out = json.loads(r.stdout)
             self.assertEqual(out["errors"], [])
-            drive.fetches = out["fetches"]
+            drive.fetches, drive.revalidated = out["fetches"], out["revalidated"]
             return out["snaps"]
 
         s = drive([["input", "zebrafinch"], ["key", "Escape"], ["flush", None], ["snap", "dismissed"],
@@ -411,7 +419,7 @@ class SearchAndAccessibility(unittest.TestCase):
             "head.md": "# Heading page\n\n## Intro\n\nquokka in the body.\n\n## The quokka section\n\nx\n",
             "title.md": "# Quokka reference\n\nplain.\n",
             "move.md": "# Wombat guide\n\n## Alpha\n\nx\n\n## Beta\n\nthe wombat lives here.\n"})
-        files = B.search_files(pages, True, errors)
+        files = B.search_files(pages, "v2", errors)
         s = drive([["input", "quokka"], ["flush", None], ["snap", "ranked"]])
         self.assertEqual([o["href"] for o in s["ranked"]["options"]],
                          ["title.html", "head.html#the-quokka-section", "body.html"])
@@ -436,6 +444,7 @@ class SearchAndAccessibility(unittest.TestCase):
                    ["input", "zebrafinch"], ["flush", None], ["snap", "retried"]], fail_once=["search.json"])
         self.assertIn("unavailable", s["failed"]["msg"])
         self.assertEqual([o["href"] for o in s["retried"]["options"]], ["api.html#late"])
+        self.assertEqual(drive.revalidated.get("search.json"), 1)   # the retry bypasses a cached manifest
 
         # Progressive: a title match shows while the shard is still loading, and a
         # search dismissed meanwhile stays closed when the shard lands.
@@ -458,7 +467,7 @@ class SearchAndAccessibility(unittest.TestCase):
         # fetches the new manifest and finds the text in the new shard.
         (B.ROOT / "docs" / "api.md").write_text(self.PAGE + "\nRedeployed with kiwibird.\n", encoding="utf-8")
         pages2, _ = B.load_pages(FACTS, [])
-        files2 = B.search_files(pages2, True, [])
+        files2 = B.search_files(pages2, "v2", [])
         new_shard = json.loads(files2["search.json"])["shards"][0][0]
         self.assertNotEqual(new_shard, shard)
         s = drive([["input", "zebrafinch"], ["flush", None], ["deploy", None], ["wait", 400], ["snap", "stale"],
@@ -467,15 +476,36 @@ class SearchAndAccessibility(unittest.TestCase):
         self.assertIn("did not load", s["stale"]["msg"])
         self.assertEqual([o["href"] for o in s["redeployed"]["options"]], ["api.html#late"])
         self.assertEqual((drive.fetches.get(new_shard), drive.fetches["search.json"]), (1, 2))
+        # A browser still caching the flat index of an older deploy recovers on the
+        # next typed search, which revalidates the manifest.
+        flat = B.search_files(pages2, "flat", [])["search.json"].decode("utf-8")
+        kept = files
+        files = B.search_files(pages2, "v2", [])
+        s = drive([["input", "kiwibird"], ["flush", None], ["snap", "cached"],
+                   ["input", "kiwibird"], ["flush", None], ["flush", None], ["snap", "fresh"]],
+                  cached={"search.json": flat})
+        self.assertIn("unavailable", s["cached"]["msg"])
+        self.assertEqual([o["href"] for o in s["fresh"]["options"]], ["api.html#late"])
+        files = kept
         # One shard failed while another is still pending: the typed retry does not wait for it.
         B.SEARCH_SHARD_TARGET = 300
-        files = B.search_files(pages2, True, [])
+        files = B.search_files(pages2, "v2", [])
         names = [n for n, _ in json.loads(files["search.json"])["shards"]]
         self.assertGreater(len(names), 2)
         s = drive([["input", "kiwibird"], ["wait", 100], ["snap", "mixed"], ["input", "kiwibird"], ["wait", 100]],
                   missing=[names[0]], delay={names[1]: 3000})
         self.assertIn("Searching the full text", s["mixed"]["msg"])       # still loading names[1]
         self.assertEqual(drive.fetches["search.json"], 2)
+        # Shards landing together are scored once, not once each.
+        # A title query draws on every scoring pass, so each uncoalesced shard would add one.
+        kept = files
+        B.SEARCH_SHARD_TARGET = 100
+        files = B.search_files(pages2, "v2", [])
+        self.assertGreaterEqual(len(json.loads(files["search.json"])["shards"]), 5)
+        s = drive([["input", "api"], ["wait", 200], ["snap", "burst"]])
+        self.assertLessEqual(s["burst"]["renders"], 3, s["burst"])            # manifest pass + coalesced shard pass(es)
+        self.assertIn("api.html", [o["href"] for o in s["burst"]["options"]])
+        files = kept
         # A typed query never lets the last query's selection be chosen while its results load.
         s = drive([["input", "api"], ["wait", 100], ["key", "ArrowDown"], ["snap", "old"],
                    ["input", "zebrafinch"], ["key", "ArrowDown"], ["key", "Enter"], ["snap", "during"]],

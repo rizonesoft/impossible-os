@@ -189,7 +189,7 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
   var q = document.getElementById('q'), pop = document.getElementById('results-pop'),
       list = document.getElementById('results'), msg = document.getElementById('results-msg'),
       status = document.getElementById('search-status');
-  var idx = null, loading = null, shards = [], gen = 0, open = false, pending = false, sel = -1, opts = [], optPages = [];
+  var idx = null, loading = null, revalidate = false, refreshTimer = 0, shards = [], gen = 0, open = false, pending = false, sel = -1, opts = [], optPages = [];
   function json(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }
   // The manifest alone answers title and heading queries, so results show at
   // once; each shard fills in its sections' text as it arrives and the search
@@ -201,11 +201,13 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
     // and a transient failure costs one manifest while the loaded shards come
     // back from the browser cache. A refresh after a shard lands never retries,
     // or a lasting failure would loop.
-    var fresh = false;
+    // A manifest that failed to load or parse is revalidated too: the browser
+    // may be holding a cached copy the deploy has since replaced.
     var failed = shards.some(function (sh) { return sh.state === 3; });
-    if (idx && retry && failed) { idx = null; shards = []; fresh = true; }
+    if (idx && retry && failed) { idx = null; shards = []; revalidate = true; }
     if (idx) return Promise.resolve(idx);
     if (!loading) {
+      var fresh = revalidate;
       loading = fetch(root + 'search.json', fresh ? { cache: 'no-cache' } : undefined).then(json).then(function (m) {
         if (!m || m.v !== 2 || !Array.isArray(m.p) || !Array.isArray(m.s) || !Array.isArray(m.shards)) {
           throw new Error('unknown index format');
@@ -221,8 +223,9 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
         fetchShards(idx, shards);
         return idx;
       });
-      // A failed load is forgotten, so the next keystroke retries it.
-      loading.then(function () { loading = null; }, function () { loading = null; });
+      // A failed load is forgotten, so the next keystroke retries it, revalidated.
+      loading.then(function () { loading = null; revalidate = false; },
+                   function () { loading = null; revalidate = true; });
     }
     return loading;
   }
@@ -239,7 +242,13 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
         }
         sh.state = 2;
       }).catch(function () { sh.state = 3; }).then(function () {
-        if (idx === mine && pop.style.display === 'block' && q.value.trim()) run(true);   // never reopens a dismissed search
+        // Shards landing together (a warm cache) are scored once, not once each.
+        if (idx === mine && !refreshTimer) {
+          refreshTimer = setTimeout(function () {
+            refreshTimer = 0;
+            if (idx && pop.style.display === 'block' && q.value.trim()) run(true);   // never reopens a dismissed search
+          }, 16);
+        }
       });
     });
   }

@@ -81,6 +81,7 @@ file_patterns:
 | ⭐  |  28   | §28 Review-class nets for site tooling: real parsers, scheduler stress   | §23                         |  [ ]   |
 | 💎  |  29   | §29 Retained release trees: snapshots, manifest, live verification       | §24                         |  [ ]   |
 | 💎  |  30   | §30 SDK release docs and API reference                                   | §29, D12 T06 §2, D12 T06 §8 |  [ ]   |
+| 💎  |  31   | §31 Docs search quality and automated accessibility audit                | §25                         |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -1190,14 +1191,16 @@ Search drops content today: the indexer keeps only plain `text` tokens (inline c
 
 **Test checkpoint:** searching `boot_health_publish_json` on the local build returns its page; keyboard-only navigation of search results is announced by a screen reader (NVDA or Orca); the check mode reports a planted missing alt text. Test on: WSL2 dev host; Windows with NVDA.
 
-> **Test runner:** `python3 scripts/site/tests/test_build.py SearchAndAccessibility` (6 tests) plus `ReleaseDocs.test_accessibility_fails_the_current_tree_but_not_a_published_release`; the whole file runs under `bash scripts/test-tooling.sh`.
+> **Test runner:** `python3 scripts/site/tests/test_build.py SearchAndAccessibility` (7 tests) plus `ReleaseDocs.test_accessibility_fails_the_current_tree_but_not_a_published_release`; the whole file runs under `bash scripts/test-tooling.sh`.
 
 > **Notes:**
 > - Shipped: per-section full-text records, a manifest plus content-addressed shards (2,667 records, six shards, 2.8 MB, 0.9 MB gzipped, measured 2026-09-29) and an ARIA 1.2 combobox.
-> - Integrates through `search_files()` and `SEARCH_V2_MARK`: a template carrying `data-search-index="2"` gets v2; an older release template keeps the flat index it was published with.
+> - Integrates through `search_layout()`: a template carrying `data-search-index="2"` gets v2; an older release template keeps the flat index it was published with.
 > - A11y findings fail only the current tree (like `check_design_lines`); the corpus had zero violations when the check landed.
 > - Canonical doc: `docs/infrastructure/documentation-site.md` "How does the docs search work?"; style rule in `docs/contributing/docs-page-contract.md`.
 > - Out of scope: the screen-reader pass is operator-gated; landing pages under `gh-pages/` are not checked by `a11y_findings()`.
+> **Verified:** 2026-09-30 | commit `c73146aa3` | 6/7 items (screen-reader pass operator-gated) | build OK | site tests 103/103 PASS, kernel 34646 + 17 user PASS; planted missing alt and H2 to H4 skip reported by the check mode
+> **Quality reviewed:** 2026-09-30 | Codex 37x (design, test-coverage, adversarial x12, re-adversarial, consistency x11, perf x11) | 2H+26M fixed, 0 open | scope: N/A (host site tooling and docs; no kernel, boot or desktop code)
 
 ---
 
@@ -1309,6 +1312,25 @@ The SDK has its own release line (`sdk/v*` tags from D12 T06 §8 `release-sdk.sh
 
 ---
 
+## 31. Docs Search Quality and Automated Accessibility Audit
+
+> **Spawned-by:** §25 (review)
+> **User impact:** a reader cannot see where the match is on the page a result opens, a search for `map` ranks every `bitmap` page as high as the `map` API, results stop at 12 with no page to share, and a contrast or focus regression in the docs UI ships unnoticed until someone runs a screen reader.
+
+The §25 index finds every word, but ranking is plain substring matching with three fixed weights, nothing is highlighted, and the only accessibility checks are static structure rules. Parity research on 2026-09-30 compared it with Sphinx and Read the Docs search, which highlight matches on the target page and offer a results page.
+
+- [ ] Highlight matches: `<mark>` the query terms in result snippets, and pass `?highlight=` so the opened page marks the first match in the linked section
+- [ ] Ranking: prefer whole-word and identifier-boundary matches over substrings, support a `"quoted phrase"`, and decide on stemming after measuring precision on the live corpus
+- [ ] Results page: `search.html?q=` lists every hit, not only 12, allows more than one section per page, and can be shared by URL
+- [ ] Automated WCAG audit of the built docs pages in CI (axe-core or pa11y, pinned per the vendor-first rule): contrast, focus visibility, landmarks, a skip link, `aria-current` in the navigation
+- [ ] Discoverability: show the `/` shortcut in a hint, and check the search box and results on narrow screens
+- [ ] Tests: harness cases for highlighting and whole-word ranking; the audit fails on a fixture page with a planted contrast error
+- [ ] Commit: `"site: search highlighting, ranking and automated accessibility audit"`
+
+**Test checkpoint:** searching `map` on the local build ranks a page naming the `map` identifier above one that only says `bitmap`; the opened page marks the match; the CI audit reports a planted contrast failure. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
+
+---
+
 ## OS Comparison
 
 | ⭐  | Feature                          | 🪟 Win11                 | 🐧 Linux                   | 🚀 Impossible OS          |
@@ -1319,14 +1341,14 @@ The SDK has its own release line (`sdk/v*` tags from D12 T06 §8 `release-sdk.sh
 | ⭐  | Facts derived from one source    | ❌ Manual                | ❌ Manual                  | ✅ §1 `project.json`      |
 | ⭐  | Stale narrative page detection   | ❌ Review dates          | ❌ Not tracked             | ✅ §22 `sources=` warns   |
 | 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ⚠️ §24 renders, §29 keeps |
-| 💎  | Site search                      | ✅ Full search           | ✅ Sphinx search           | ✅ §25 full text, anchors |
+| 💎  | Site search                      | ✅ Full search           | ✅ Sphinx search           | ⚠️ §25 text, §31 ranking  |
 | 💎  | External link rot check          | ✅ Learn link validation | ✅ Sphinx `linkcheck`      | ✅ §23 weekly workflow    |
 | 💎  | Published API reference          | ✅ Learn API reference   | ✅ kernel-doc              | ⬜ §30 from D12 T06 §2    |
 | 💎  | Accessible docs UI               | ✅ WCAG conformance      | ⚠️ Theme-dependent         | ⚠️ §25 ARIA, SR test open |
 
 > **After §1-§3:** the pipeline, the gate and the page contract exist; coverage is measured and cannot regress.
 > **After §4-§21 and §26:** every roadmap file is documented and the baseline is empty.
-> **After §22-§25:** stale pages are flagged and the site matches mainstream docs portals on navigation, versions, search and accessibility.
+> **After §22-§25 and §31:** stale pages are flagged and the site matches mainstream docs portals on navigation, versions, search and accessibility.
 
 ---
 

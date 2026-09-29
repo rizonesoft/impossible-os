@@ -1572,32 +1572,46 @@ ASSET_DIRS = (
 )
 
 
-SEARCH_V2_MARK = 'data-search-index="2"'   # the template reads the sharded v2 index
-SEARCH_BUDGET = 2 * 1024 * 1024            # bytes, per file: search.json and every shard
+# Which index a docs template reads, named by the template itself. A release
+# tree is rendered with ITS OWN template, so every layout ever shipped stays
+# emittable. There is one URL, search.json, and it carries one schema at a time:
+#   flat   no marker: the [{t,u,h,x}] index (templates before section 25)
+#   v2     data-search-index="2": the sharded v2 manifest (since commit c73146aa3)
+# A page holding a cached copy of the other schema recovers on its next typed
+# search, which revalidates the manifest after a failed load.
+SEARCH_LAYOUTS = (('data-search-index="2"', "v2"),)
+SEARCH_BUDGET = 2 * 1024 * 1024            # bytes, per file: the v2 manifest and every shard
 SEARCH_SHARD_TARGET = 512 * 1024           # a shard is cut once it would pass this
+
+
+def search_layout(template: str) -> str:
+    return next((layout for mark, layout in SEARCH_LAYOUTS if mark in template), "flat")
 
 
 def _json_bytes(value) -> bytes:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
-def search_files(pages: dict[str, Page], v2: bool, errors: list[str]) -> dict[str, bytes]:
-    """The client-side search index, as {path under the docs root: bytes}.
+def search_files(pages: dict[str, Page], layout: str, errors: list[str]) -> dict[str, bytes]:
+    """The client-side search index for a template's layout (search_layout()),
+    as {path under the docs root: bytes}.
 
-    v2 (a template carrying SEARCH_V2_MARK): search.json is a manifest of pages
-    and sections, [page index, anchor, heading path], and the full text of each
-    section lives in shards named by their content hash. The manifest names
-    every shard with its record count, so a manifest and a shard from different
-    builds can never be read together: a stale manifest names shards the new
-    deploy does not have, and the client refuses a count that does not add up.
-    Nothing is dropped to meet the budget; a file over it fails the build.
+    The v2 manifest lists pages and sections, [page index, anchor, heading path],
+    with the full text of each section in shards named by their content hash.
+    It names every shard with its record count, so a manifest and a shard from
+    different builds can never be read together: a stale manifest names shards
+    the new deploy does not have, and the client refuses a count that does not
+    add up. Nothing in v2 is dropped to meet the budget; a v2 file over it fails
+    the build.
 
-    Legacy: a release tree's own template may predate v2 and read the flat
-    [{t,u,h,x}] index it was published with, so it gets that, unchanged."""
+    The flat index, for a release tree whose template predates v2, cuts each page
+    at 4,000 characters exactly as that template was published with; it is not
+    held to the v2 budget, since it must render the old tree as it was."""
     ordered = sorted(pages.values(), key=lambda p: p.rel)
-    if not v2:
+    if layout == "flat":
         return {"search.json": _json_bytes([{"t": p.title, "u": p.url or "./", "h": [t for _, _, t in p.toc],
                                              "x": p.text[:4000]} for p in ordered])}
+    out: dict[str, bytes] = {}
     plist: list[list[str]] = []
     sections: list[list] = []
     shards: list[list[str]] = [[]]
@@ -1612,7 +1626,6 @@ def search_files(pages: dict[str, Page], v2: bool, errors: list[str]) -> dict[st
                 size = 0
             shards[-1].append(text)
             size += cost
-    out: dict[str, bytes] = {}
     names: list[list] = []
     for shard in shards:
         if not shard:
@@ -1702,7 +1715,7 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
         # published as it was.
         for page in all_pages.values():
             errors.extend(f"docs/{page.rel}: accessibility: {f}" for f in page.a11y)
-    for name, data in search_files(pages, SEARCH_V2_MARK in tpl, errors).items():
+    for name, data in search_files(pages, search_layout(tpl), errors).items():
         files[f"{DOCS_BASE}{name}"] = data
     build.undocumented = undocumented  # type: ignore[attr-defined]
     return files

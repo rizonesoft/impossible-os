@@ -1,4 +1,4 @@
-<!-- docs: order=1 sources=scripts/site/build.py reviewed=2026-09-29T23:50 -->
+<!-- docs: order=1 sources=scripts/site/build.py reviewed=2026-09-30T01:10 -->
 # Documentation Page Contract
 
 Every roadmap file under `todo/` gets at least one docs page, and every page follows this contract. A roadmap file is the plan; its docs page tells a user, contributor or operator what actually shipped, how to use it, and what is still missing. Start from the [page template](_template.md).
