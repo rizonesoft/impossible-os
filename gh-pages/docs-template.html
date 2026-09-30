@@ -440,10 +440,10 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
     for (var i = 0; i < terms.length; i++) {
       var best = 0;
       for (var f = 0; f < 3; f++) {
-        // A one-letter term is judged as a word in titles and headings only: in
-        // body text it occurs hundreds of thousands of times and a whole-word `e`
-        // tells a reader nothing, so there it counts as found and no more.
-        var m = f === 2 && terms[i].w.length === 1 ? (fields[f][1].indexOf(terms[i].w) >= 0 ? { c: 1 } : null)
+        // A term of one or two letters is judged as a word in titles and headings
+        // only: in body text it occurs hundreds of thousands of times, and testing
+        // every occurrence costs a frame per keystroke, so there it counts as found.
+        var m = f === 2 && terms[i].w.length < 3 ? (fields[f][1].indexOf(terms[i].w) >= 0 ? { c: 1 } : null)
                                                    : find(terms[i], fields[f][0], fields[f][1]);
         if (!m) continue;
         s[4 - m.c] += fields[f][2];
@@ -552,7 +552,7 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
   var BATCH = 100, paged = null;
   function pageItem(h, p) {
     var r0 = h.secs[0][1];
-    return '<li><h2><a href="' + esc(root + r0.u + '?highlight=' + encodeURIComponent(p.q)) + '">' +
+    return '<li><h2><a href="' + esc(link(r0, p.q)) + '">' +
       esc(r0.t) + '</a></h2><ul>' + h.secs.map(function (sr) {
         var r = sr[1];
         return '<li><a href="' + esc(link(r, p.q)) + '">' + esc(r.h || 'Introduction') + '</a><p>' +

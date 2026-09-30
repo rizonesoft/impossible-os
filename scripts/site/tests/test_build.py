@@ -666,9 +666,10 @@ class SearchAndAccessibility(unittest.TestCase):
         opened = s["opened"]
         self.assertEqual(opened["value"], "wombat")
         self.assertEqual(opened["page"].count("<h2>"), 15)
-        self.assertEqual(opened["page"].count('#first"'), 15)
+        self.assertEqual(opened["page"].count('#first"'), 30)                 # each section link, and each title link
         self.assertEqual(opened["page"].count('#second"'), 15)
         self.assertIn("15 pages, 30 sections", opened["page"])
+        self.assertIn('<h2><a href="many00.html?highlight=wombat#first">', opened["page"])   # the title opens the best section
         self.assertEqual(s["typed"]["url"], "?q=wombat%20two")
         self.assertEqual(s["typed"]["pageRenders"] - s["opened"]["pageRenders"], 1)          # typing pauses, then one search
         self.assertIn("<mark>two</mark>", s["typed"]["page"])

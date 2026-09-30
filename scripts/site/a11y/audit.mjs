@@ -1,4 +1,4 @@
-// Automated accessibility audit of the built docs site (TODO-10 section 31).
+// Automated accessibility audit of the built docs site (see docs/infrastructure/docs-search-and-accessibility.md).
 //
 //   node scripts/site/a11y/audit.mjs <site dir>             audit every docs page
 //   node scripts/site/a11y/audit.mjs <site dir> control     prove the audit fails on planted defects
@@ -86,6 +86,44 @@ function focusFindings(scope) {
     const color = layer.match(/rgba?\([^)]*\)/)[0];
     return seen(color) && (layer.slice(color.length).match(/-?[\d.]+px/g) || []).some((n) => parseFloat(n) !== 0);
   };
+  // Colours as {r, g, b, a} (0-255, alpha 0-1), from rgb()/rgba() or Chromium's
+  // color(srgb ...) form (what color-mix() computes to).
+  const rgba = (c) => {
+    let m = /^rgba?\(([^)]*)\)/.exec(c);
+    if (m) { const v = m[1].split(/[\s,/]+/).filter(Boolean).map(Number); return { r: v[0], g: v[1], b: v[2], a: v.length > 3 ? v[3] : 1 }; }
+    m = /^color\(srgb ([^)]*)\)/.exec(c);
+    if (m) { const v = m[1].split(/[\s/]+/).filter(Boolean).map(Number); return { r: v[0] * 255, g: v[1] * 255, b: v[2] * 255, a: v.length > 3 ? v[3] : 1 }; }
+    return null;
+  };
+  const over = (top, under) => ({ r: top.r * top.a + under.r * (1 - top.a), g: top.g * top.a + under.g * (1 - top.a),
+                                  b: top.b * top.a + under.b * (1 - top.a), a: 1 });
+  // What sits behind an element's outline: its ancestors' backgrounds, composited
+  // down to an opaque one (white if the page itself paints none).
+  const backdrop = (el) => {
+    const layers = [];
+    for (let n = el.parentElement; n; n = n.parentElement) {
+      const c = rgba(getComputedStyle(n).backgroundColor);
+      if (c && c.a > 0) { layers.push(c); if (c.a >= 1) break; }
+    }
+    return layers.reduceRight((under, top) => over(top, under), { r: 255, g: 255, b: 255, a: 1 });
+  };
+  const lum = (c) => [c.r, c.g, c.b].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; })
+    .reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+  // WCAG 1.4.11: a focus indicator needs 3:1 against what is behind it. An
+  // indicator painted INSIDE the control (an inset shadow, an outline with a
+  // negative offset) sits on the control's own background; one outside it sits
+  // on the ancestors'.
+  // `ctx` carries the element's captured background and caches its backdrop, so
+  // the ancestor walk runs at most once per focused element.
+  const stands = (color, ctx, inside) => {
+    const c = rgba(color);
+    if (!c || c.a === 0) return false;
+    const own = inside ? rgba(ctx.bg) : null;
+    let bg = own && own.a >= 1 ? own : (ctx.backdrop || (ctx.backdrop = backdrop(ctx.el)));
+    if (own && own.a > 0 && own.a < 1) bg = over(own, bg);
+    const x = lum(over(c, bg)), y = lum(bg);
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05) >= 3;
+  };
   // A border edge paints when it has a style, a width and a visible colour.
   const edgePaints = (c, e) => !['none', 'hidden'].includes(c[`border${e}Style`]) &&
     parseFloat(c[`border${e}Width`]) > 0 && seen(c[`border${e}Color`]);
@@ -105,11 +143,15 @@ function focusFindings(scope) {
     // An indicator is a VISIBLE change on focus: a transparent outline, or a
     // shadow the element always wears, is no indicator at all.
     const after = look(el), cs = getComputedStyle(el);
-    const outline = cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0 && seen(cs.outlineColor) &&
+    const ctx = { el, bg: after.bg, backdrop: null };
+    const outline = cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0 &&
+      stands(cs.outlineColor, ctx, parseFloat(cs.outlineOffset) < 0) &&
       (after.outline !== before.outline);
-    // Only what focus ADDED counts: a new shadow layer that paints, or a border edge that changed and paints.
+    // Only what focus ADDED counts: a new shadow layer that paints and stands out,
+    // or a border edge that changed and paints.
     const old = new Set(layers(before.shadow));
-    const shadow = layers(after.shadow).some((l) => !old.has(l) && paints(l));
+    const shadow = layers(after.shadow).some((l) => !old.has(l) && paints(l) &&
+      stands(l.match(/rgba?\([^)]*\)/)[0], ctx, /\binset\b/.test(l)));
     const border = EDGES.some((e, i) => after.edges[i] !== before.edges[i] && edgePaints(cs, e));
     // Text: a new colour that shows, or a decoration (an underline) that paints.
     const text = (after.color !== before.color && seen(cs.color)) ||
@@ -149,10 +191,15 @@ function currentFindings() {
   return same ? [] : [`aria-current marks ${a.pathname}, not this page`];
 }
 
+// axe's "needs review" results (it could not decide, e.g. text over an image):
+// not failures, but counted per rule and printed, so the audit never passes over
+// them silently.
+const needsReview = {};
 async function axeFindings(page) {
   if (!(await page.evaluate(() => typeof window.axe === 'object'))) await page.addScriptTag({ content: AXE });
   const res = await page.evaluate((tags) => window.axe.run(document, {
-    runOnly: { type: 'tag', values: tags }, resultTypes: ['violations'] }), TAGS);
+    runOnly: { type: 'tag', values: tags }, resultTypes: ['violations', 'incomplete'] }), TAGS);
+  res.incomplete.forEach((v) => { needsReview[v.id] = (needsReview[v.id] || 0) + v.nodes.length; });
   return res.violations.flatMap((v) => v.nodes.map((n) => `axe ${v.id} (${v.impact}): ${v.help} at ${n.target.join(' ')}`));
 }
 
@@ -356,6 +403,11 @@ async function control(root) {
     '#planted-addlayer:focus-visible { outline: none; box-shadow: 0 0 0 2px #155cde, 0 0 0 4px transparent; } ' +
     '#planted-leftok { border-left: 3px solid transparent; } ' +
     '#planted-underline { text-decoration: none; } ' +
+    '#planted-blend:focus-visible { outline: 2px solid #f6f8fc; } ' +
+    '#planted-inset { background: #0f172a; color: #ffffff; } ' +
+    '#planted-inset:focus-visible { outline: none; box-shadow: inset 0 0 0 2px #0f172a; } ' +
+    '#planted-insetok { background: #ffffff; color: #0f172a; } ' +
+    '#planted-insetok:focus-visible { outline: none; box-shadow: inset 0 0 0 2px #0a6ccf; } ' +
     '#planted-underline:focus-visible { outline: none; text-decoration: underline; text-decoration-color: transparent; } ' +
     '#planted-leftok:focus-visible { outline: none; border-left-color: #155cde; } ' +
     '@media (prefers-color-scheme: dark) { #planted-dark:focus-visible { outline: none; } } ' +
@@ -369,6 +421,9 @@ async function control(root) {
     '<p><a id="planted-addlayer" href="#planted-contrast">Planted link that adds only a transparent layer</a></p>' +
     '<p><a id="planted-leftok" href="#planted-contrast">A correct left-border indicator</a></p>' +
     '<p><a id="planted-underline" href="#planted-contrast">Planted link that adds a transparent underline</a></p>' +
+    '<p><a id="planted-blend" href="#planted-contrast">Planted link whose ring is the page colour</a></p>' +
+    '<p><a id="planted-inset" href="#planted-contrast">Planted link whose inset ring is its own colour</a></p>' +
+    '<p><a id="planted-insetok" href="#planted-contrast">A correct inset ring</a></p>' +
     '<p><a id="planted-dark" href="#planted-contrast">Planted link without a ring in the dark theme</a></p>' +
     '<p style="position: relative"><a id="planted-covered" href="#planted-contrast">Planted covered link</a>' +
     '<span style="position: absolute; inset: 0; background: #ffffff"></span></p>' +
@@ -406,6 +461,10 @@ async function control(root) {
                 ['unpainted focus border', /focus-visible: no focus indicator on a#planted-border(?![\w-])/],
                 ['transparent added shadow layer', /focus-visible: no focus indicator on a#planted-addlayer(?![\w-])/],
                 ['transparent added underline', /focus-visible: no focus indicator on a#planted-underline(?![\w-])/],
+                ['ring the colour of the page', /\[desktop light\] focus-visible: no focus indicator on a#planted-blend(?![\w-])/],
+                // Light theme: there the page behind is light, so only reading the control's own dark
+                // background catches this ring (the dark theme would flag it for the wrong reason).
+                ['inset ring the colour of the control', /\[desktop light\] focus-visible: no focus indicator on a#planted-inset(?![\w-])/],
                 ['result link focus ring', /\[results\] results: focus-visible: no focus indicator on a\[href="[^"]*highlight=boot/],
                 ['dark-theme focus ring', /\[desktop dark\] focus-visible: no focus indicator on a#planted-dark(?![\w-])/],
                 ['open-drawer focus ring', /\[phone\] drawer open: focus-visible: no focus indicator on a\[href=/],
@@ -416,7 +475,8 @@ async function control(root) {
                 ['current on an unlisted page', /planted-unlisted\.html .*aria-current: marks 1 link\(s\) on a page the navigation does not list/]];
   const missed = want.filter(([, re]) => !findings.some((f) => re.test(f))).map(([n]) => n);
   // And a correct indicator the audit must NOT report.
-  if (findings.some((f) => /#planted-leftok/.test(f))) missed.push('(false failure on a correct left-border indicator)');
+  if (findings.some((f) => /focus-visible: .*#planted-leftok(?![\w-])/.test(f))) missed.push('(false failure on a correct left-border indicator)');
+  if (findings.some((f) => /focus-visible: .*#planted-insetok(?![\w-])/.test(f))) missed.push('(false failure on a correct inset ring)');
   if (missed.length) {
     console.log(`a11y control: FAIL -- the audit did not report the planted ${missed.join(', ')} defect(s)`);
     findings.forEach((f) => console.log('  ' + f));
@@ -443,6 +503,9 @@ async function audit(root) {
     }
   } finally { await browser.close(); server.close(); }
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
+  const review = Object.entries(needsReview).sort((a, b) => b[1] - a[1]);
+  console.log(review.length ? `a11y: axe could not decide (needs review): ${review.map(([id, n]) => `${id} ${n}`).join(', ')}`
+                            : 'a11y: axe left nothing for review');
   const runs = urls.length * VIEWPORTS.length * THEMES.length;
   if (findings.length) {
     findings.forEach((f) => console.log(f));

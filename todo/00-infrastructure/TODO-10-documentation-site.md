@@ -83,6 +83,7 @@ file_patterns:
 | 💎  |  30   | §30 SDK release docs and API reference                                   | §29, D12 T06 §2, D12 T06 §8 |  [/]   |
 | 💎  |  31   | §31 Docs search quality and automated accessibility audit                | §25                         |  [x]   |
 | ⭐  |  32   | §32 Review-class nets: fail direction and bounded waits in site tooling  | §28, §29                    |  [ ]   |
+| 💎  |  33   | §33 Docs search typo tolerance and wider accessibility audit             | §31                         |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -1413,11 +1414,11 @@ The SDK has its own release line (`sdk/v*` tags from D12 T06 §8 `release-sdk.sh
 The §25 index finds every word, but ranking is plain substring matching with three fixed weights, nothing is highlighted, and the only accessibility checks are static structure rules. Parity research on 2026-09-30 compared it with Sphinx and Read the Docs search, which highlight matches on the target page and offer a results page.
 
 - [x] Highlight: `snippet()` marks every term (each slice escaped alone); links carry `?highlight=`, and `markMatch()` marks the first match in the linked section, word first
-- [x] Ranking: `score()` ranks terms-matched-as-words, then word, stem and substring weights; identifier and camelCase parts are words; `"phrases"`; lemma-bounded stemming chosen by measurement
+- [x] Ranking: `score()` ranks terms-matched-as-words, then word, stem and substring weights; identifier and camelCase parts are words; `"phrases"`; whole-word suffix stemming chosen by measurement
 - [x] Results page: `results_page()` emits noindex `search.html`; it lists every page and all matching sections, keeps `?q=` current; popup Enter or "Show all" opens it
 - [x] WCAG audit: `scripts/site/a11y/audit.mjs` runs axe-core 4.13.0 via playwright-core 1.63.0 (lockfile-pinned) on every page x 2 widths x 2 themes, plus skip-link, focus and aria-current checks; pages.yml `a11y` job
 - [x] Discoverability: a `/` key hint with `aria-keyshortcuts`; below 820px the popup spans the screen and the closed nav drawer is `inert`; the audit runs at 375px
-- [x] Tests: harness ranking, parsing, snippet and results-page cases; browser tests of the marked match; the audit's control fails unless 16 planted defects (contrast, focus, skip link, aria-current) are reported
+- [x] Tests: harness ranking, parsing, snippet and results-page cases; browser tests of the marked match; the audit's control fails unless 18 planted defects (contrast, focus, skip link, aria-current) are reported
 - [x] Commit: `"site: search highlighting, ranking and automated accessibility audit"`
 
 **Test checkpoint:** searching `map` on the local build ranks a page naming the `map` identifier above one that only says `bitmap`; the opened page marks the match; the CI audit reports a planted contrast failure. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
@@ -1429,7 +1430,10 @@ The §25 index finds every word, but ranking is plain substring matching with th
 > - The first audit found 38,653 violations, all fixed at source: muted text at 4.41:1, links nested in nav `<summary>`, colour-only links, unscrollable code and tables, unlabelled task boxes, light alert titles.
 > - Stemming measured on 308 pages: 270 of 300 inflected queries missed base-form pages; a plain stem is 86.2% precise, so only a stem ending a word (plus an inflection) counts, ranked below exact words.
 > - Canonical doc: `docs/infrastructure/docs-search-and-accessibility.md`; pages.yml's deploy needs the `a11y` job (control first, about five minutes).
-> - Out of scope: the NVDA/Orca screen-reader pass stays operator-gated in §25; landing pages under `gh-pages/` are not audited.
+> - Out of scope: the NVDA/Orca screen-reader pass stays operator-gated in §25; typo tolerance and auditing the landing pages and forced colours are owned by §33.
+> **Verified:** 2026-09-30 | commit `b540d55a8` | 7/7 items | build OK | site tests 148/148 PASS, a11y control 18/18 planted defects reported, full audit 309 pages x 4 variants plus states no findings, kernel 34646 + 17 user PASS
+> **Deferred:** [M] the computed-style focus check rejects a valid ring layered over a permanent inset shadow (reason: fourth heuristic round; no site CSS uses it) -> XREF: 00-infrastructure/TODO-10 §33 (item: "Judge focus indicators from rendered pixels" at line 1468)
+> **Quality reviewed:** 2026-09-30 | Codex 59x (design, test-coverage, adversarial x20, re-adversarial, consistency x18, perf x18) | 2H+59M+6L fixed, 1 open | scope: N/A (host site tooling and docs; no kernel, boot or desktop code)
 
 ---
 
@@ -1448,6 +1452,25 @@ Promotion of two review classes into automation under the reviewer-to-automation
 - [ ] Commit: `"site: fail-direction and bounded-wait lint for site tooling"`
 
 **Test checkpoint:** each control fixture fires on its marked lines and no others; `bash scripts/lint.sh` passes on the tree with every waiver carrying a reason. Test on: WSL2 dev host.
+
+---
+
+## 33. Docs Search Typo Tolerance and Wider Accessibility Audit
+
+> **Spawned-by:** §31 (review)
+> **User impact:** a reader who misspells a term (`interupt`) gets "No results" with no way forward, and a contrast or focus defect on the landing page, or one that appears only under Windows High Contrast, ships unchecked.
+
+§31's post-ship parity review (2026-09-30) compared the shipped search and audit with MkDocs Material, Sphinx and Algolia DocSearch. Two gaps a reader would hit were left: search has no tolerance for a misspelled term, and the browser audit covers the docs pages only, in the default colour mode.
+
+- [ ] Typo tolerance: a term that matches nothing is retried at edit distance 1 (terms of 5 or more letters) as the lowest ranking tier, and the results page offers "Did you mean" for it
+- [ ] Audit the landing pages under `gh-pages/` (home, 404, design mockup, error pages) with the same axe, skip-link and focus checks as the docs pages
+- [ ] Audit the docs pages under `forced-colors: active` and `prefers-reduced-motion: reduce` emulation, each with a planted control that must fail
+- [ ] Judge focus indicators from rendered pixels: per focus-style signature, compare an unfocused and a focused screenshot and require a 3:1 change over the perimeter, replacing the computed-style colour model
+  - That model accepts no layered indicator: a ring drawn over a permanent inset shadow is rejected against the control's own background (§31 post-ship review). Keep the 18-plant control and add this layered case as a must-pass.
+- [ ] Tests: a harness case for a misspelled term and its suggestion; the control reports a planted forced-colors defect
+- [ ] Commit: `"site: search typo tolerance and wider accessibility audit"`
+
+**Test checkpoint:** searching `interupt` on the local build lists the interrupt pages and suggests `interrupt`; the audit reports a planted forced-colors defect and passes the landing pages. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
 
 ---
 
