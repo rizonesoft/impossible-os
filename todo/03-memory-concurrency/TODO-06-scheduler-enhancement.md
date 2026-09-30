@@ -368,6 +368,8 @@ Two shipped sections are already blocked on this and neither owns it, which is w
 - [ ] Move `xsave_area` and `fpu_used` from `struct task` to `struct thread`, and audit every reader of both fields rather than only the scheduler's
 - [ ] Allocate and free the per-thread area on the thread lifecycle, not the task lifecycle, keeping the existing `xsave_size_max` sizing and 64-byte alignment
   - `pmm_alloc_contiguous()` is the existing allocator here, and it does not zero: the area needs FCW `0x037F` at offset 0 and MXCSR `0x1F80` at offset 24 before first use, exactly as the task-scoped path does today.
+- [ ] Fail closed when the area cannot be allocated: `nm_handler()` in `task.c` sets `fpu_used` before checking `xsave_area` and skips the clean load, so the thread runs on the previous owner's registers
+  - Found by the TODO-10 section 27 review, 2026-09-30. The save path then also skips it (NULL area), so its own state is lost. Retry, terminate or block, but never run on stale state; add an allocation-failure test.
 - [ ] Save and restore the area in BOTH `schedule()` and `schedule_now()`; a cooperative yield that skips the save is the same corruption with a narrower window
 - [ ] Add a regression test that fails on the CURRENT shared-buffer model: two threads of one process write distinct SIMD register patterns, yield to each other, and each reads its own pattern back
 - [ ] Report what the move costs per thread and confirm the kernel image still links, because `xsave_size_max` on an AMX-capable CPU is several KiB and the thread table is sized in the hundreds

@@ -58,7 +58,7 @@ The IOMMU driver that GPU passthrough needs has no owner yet; section 6 records 
 
 ## How does it compare with Windows 11 and Linux?
 
-Windows 11 ships Hyper-V, a Type-1 hypervisor that also underpins its virtualization-based security, with second-level address translation, synthetic VMBus devices, checkpoints, live migration and Discrete Device Assignment for GPUs. Linux ships KVM as a kernel module with EPT, relies on QEMU for virtio devices and snapshots, and passes GPUs through with VFIO and IOMMU groups. Impossible OS has none of these (sections 2 to 6). The planned difference is the build flag: without `ENABLE_HYPERVISOR` the kernel carries none of the code, and a later phase would run Impossible OS as its own guest.
+Windows 11 ships Hyper-V, a Type-1 hypervisor that also underpins its virtualization-based security, with second-level address translation, synthetic VMBus devices, checkpoints and live migration; whole-GPU passthrough through Discrete Device Assignment is a Windows Server Hyper-V feature that Microsoft does not support on client Windows 11. Linux ships KVM as a kernel module with EPT, relies on QEMU for virtio devices and snapshots, and passes GPUs through with VFIO and IOMMU groups. Impossible OS has none of these (sections 2 to 6). The planned difference is the build flag: without `ENABLE_HYPERVISOR` the kernel carries none of the code, and a later phase would run Impossible OS as its own guest.
 
 ## See also
 

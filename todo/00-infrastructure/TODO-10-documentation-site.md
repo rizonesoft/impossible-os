@@ -1284,6 +1284,9 @@ Write docs pages that meet the §3 contract for the 9 roadmap files below. Read 
   - `16-architecture-ports/TODO-01` section 2: the move list names 13 files against 9 `.asm` sources and ~104 inline-asm files; an inventory item now leads the section. `TODO-02` section 1: choose ACPI or Devicetree for hardware discovery.
   - `18-future-research/TODO-03` section 5: reconcile `display_plane_ops_t` with the `display_device_t` table `04-drivers-hardware/TODO-17` already plans for the same VirtIO-GPU driver.
 - [x] Commit: `"docs: architecture ports and future research documentation pages"`
+- [x] Post-ship review fixes (adversarial, consistency and perf legs)
+  - Pages: `ai-ml-runtime.md` states the XSAVE allocation-failure hole and the AVX-512 throttle guard (select on `g_cpu.xcr0_active`); `gpu-compositor.md` drops a blur cache that does not render; `hypervisor.md` puts DDA on Windows Server; `secure-boot-tpm.md` tracks the loader, PCR-allocation and seal sources.
+  - Roadmaps: `03-memory-concurrency/TODO-06` section 16 gains the fail-closed `#NM` allocation item; `08-graphics-ui/TODO-08` section 2 gains the dead `acrylic_cache` item; `02-kernel-core/TODO-09` OS Comparison rows now say per-task XSAVE and AVX memops; `18-future-research/TODO-02` DDA row and `TODO-03` compositor description corrected.
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any `todo/16-architecture-ports/` or `todo/18-future-research/` file named here; each page renders on the local build. Test on: WSL2 dev host.
 
@@ -1294,6 +1297,9 @@ Write docs pages that meet the §3 contract for the 9 roadmap files below. Read 
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when `MAX_CPUS`, the MADT parser, XSAVE, the TPM code or the compositor changes.
 > - **Status honesty:** no ports or research roadmap has started; the pages say so and name what already ships elsewhere (per-process XSAVE, TPM replay/seal/quote, CPUID hypervisor and VT-x detection).
 > - **Scope boundary:** no kernel code changed; the online-mask limit, silent CPU drop, arch inventory and display-abstraction overlap are filed in their owning roadmaps.
+
+> **Verified:** 2026-09-30 | commit `a1b0408f0` | 8/8 items | build OK | site: OK, 232/232 documented; tests 34646 kernel + 17 user-mode PASS; broken-anchor control fails the check
+> **Quality reviewed:** 2026-09-30 | Codex 4x (adversarial, adversarial post-ship, consistency, perf) | 2H+7M fixed, 0 open | scope: N/A (docs-only; no source changed; parity research and test coverage N/A; re-adversarial skipped: docs and roadmap-text fixes verified at source)
 
 ---
 

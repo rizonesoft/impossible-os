@@ -341,7 +341,7 @@ loop works end-to-end before committing to full implementation.
 | 💎  | virtio device emulation for guests         | ✅ Hyper-V synthetic VMBus devices (no                | ✅ QEMU virtio-blk/net/gpu + KVM acceleration | ⬜ §4 -- host-side virtio MMIO + split-ring                    |
 | 💎  | VM snapshot + pause-and-copy               | ✅ Hyper-V checkpoints; VMMS snapshot API             | ✅ QEMU savevm / libvirt snapshot             | ⬜ §5 -- VMCS + memory serialisation to                        |
 | 💎  | Live migration research                    | ✅ Hyper-V live migration (RDMA or                    | ✅ KVM live migration (iterative dirty        | ⬜ §5 -- research; EPT dirty bits; blocking:                   |
-| ⭐  | GPU passthrough                            | ✅ Hyper-V DDA (Discrete Device Assignment),          | ✅ VFIO passthrough + IOMMU groups            | ⬜ §6 -- research only; blocking: IOMMU driver                 |
+| ⭐  | GPU passthrough                            | ⚠️ DDA on Windows Server only, not client Win11       | ✅ VFIO passthrough + IOMMU groups            | ⬜ §6 -- research only; blocking: IOMMU driver                 |
 | ⭐  | Public hypervisor design doc + phased plan | ✅ Hyper-V: architecture docs on Learn.microsoft.com; | ✅ KVM: open source; architecture in          | ⬜ §7 -- `hypervisor-design.md` with VMCS layout, guest        |
 
 Impossible OS's `⭐` advantage: ImpossibleHV is designed as an integral kernel subsystem

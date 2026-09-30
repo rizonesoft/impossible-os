@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/18-future-research/TODO-04-secureboot-tpm.md sources=src/kernel/entropy.c,src/kernel/tpm_transport.c,src/kernel/tpm_replay.c,include/kernel/tpm_seal.h,src/kernel/tpm_attest.c,scripts/sign-efi.sh,scripts/test-swtpm.sh reviewed=2026-09-30 order=4 -->
+<!-- docs: covers=todo/18-future-research/TODO-04-secureboot-tpm.md sources=src/boot/uefi/bootx64.c,src/kernel/entropy.c,src/kernel/tpm_transport.c,src/kernel/tpm_replay.c,src/kernel/tpm_pcr_alloc.c,include/kernel/tpm_pcr_alloc.h,src/kernel/tpm_seal.c,include/kernel/tpm_seal.h,src/kernel/tpm_attest.c,scripts/sign-efi.sh,scripts/test-swtpm.sh reviewed=2026-09-30 order=4 -->
 # Secure Boot, TPM 2.0 and Measured Boot (Research)
 
 ## What is it?

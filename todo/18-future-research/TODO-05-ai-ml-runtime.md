@@ -111,7 +111,7 @@ the ggml port and XSAVE context switch work end-to-end.
 ## 2. SIMD Enablement for User Mode `[Opus]`
 
 > [!NOTE]
-> **Shipped since this spike was written (verified 2026-09-30):** `cpu_configure_xcr0()` (`src/kernel/cpuid.c`) enables AVX and AVX-512 state, and each `struct task` (process) gets a lazily allocated `xsave_area` (`#NM` in `src/kernel/sched/task.c`) saved with XSAVEOPT on switch, per `02-kernel-core/TODO-09` §1-§3. The area is per PROCESS, so sibling threads share it; per-thread areas are owned by `03-memory-concurrency/TODO-06` §16. The kernel also uses AVX2/AVX-512 in its memops, so the "kernel never uses AVX" bullet below is stale. Still open here: per-thread areas (via that owner), `TEB.XSaveArea`, the benchmark.
+> **Shipped since this spike was written (verified 2026-09-30):** `cpu_configure_xcr0()` (`src/kernel/cpuid.c`) enables AVX and AVX-512 state (the AVX-512 bits are cleared again if `simd_enable_avx512()`'s throttle guard trips, so select paths on `g_cpu.xcr0_active`, not CPUID), and each `struct task` (process) gets a lazily allocated `xsave_area` (`#NM` in `src/kernel/sched/task.c`) saved with XSAVEOPT on switch, per `02-kernel-core/TODO-09` §1-§3. The area is per PROCESS, so sibling threads share it; per-thread areas are owned by `03-memory-concurrency/TODO-06` §16. The kernel also uses AVX2/AVX-512 in its memops, so the "kernel never uses AVX" bullet below is stale. Still open here: per-thread areas (via that owner), `TEB.XSaveArea`, the benchmark.
 
 > Hardware-interface primitives: `CR4.OSXSAVE`, `XSETBV(XCR0, ...)`, per-thread XSAVE
 > area in TEB, XSAVE/XRSTOR on context switch. Security-critical: corrupting a thread's

@@ -616,8 +616,8 @@ From the stamped section 9:
 | --- | --------------------- | --------------------------- | -------------------------- | ------------------ |
 | 💎  | CPUID feature gates   | ✅ KeQueryFeature API       | ✅ cpu_has() x86/cpu       | ✅ cpuid_init      |
 | 💎  | AMD ext CPUID         | ✅ HAL ext leaves 8000xxxx  | ✅ amd.c + topo ext        | ✅ §1              |
-| 💎  | XSAVE per thread      | ✅ KTHREAD XSAVE area       | ✅ fpu__alloc lazy FPU     | ✅ §1 Done         |
-| 💎  | AVX memops in kernel  | ✅ RtlCopyMemory via NT HAL | ✅ kernel_fpu_begin + kfpu | ⚠️ §2 GFX only     |
+| 💎  | XSAVE per thread      | ✅ KTHREAD XSAVE area       | ✅ fpu__alloc lazy FPU     | ⚠️ §1 per task     |
+| 💎  | AVX memops in kernel  | ✅ RtlCopyMemory via NT HAL | ✅ kernel_fpu_begin + kfpu | ✅ §2 memops + GFX |
 | 💎  | AVX-512 + throttle    | ✅ context-switch aware     | ✅ eager FPU, power cgroup | ✅ §3 Done         |
 | 💎  | Central safe MSR      | ✅ HalMsrRead + #GP safe    | ✅ rdmsr_safe() extable    | ✅ §4 Done         |
 | 💎  | UMIP                  | ✅ CR4.UMIP on boot         | ✅ 4.15+ on boot           | ✅ §5 Done         |

@@ -15,8 +15,8 @@ title: "TODO-03 -- GPU-Accelerated Compositor"
 > prioritised plan for reaching 4K 120 Hz desktop compositing.
 
 > [!IMPORTANT]
-> **Current compositor** is CPU-based: `wm_composite()` + `gfx_blit()` + dirty-rect
-> tracking + PMM acrylic blur cache (`acrylic_cache` in `wm.h`). This TODO researches
+> **Current compositor** is CPU-based: `wm_composite()` + `gfx_blit()` full-frame repaint
+> (dirty rects are `08-graphics-ui/TODO-08` §8); `acrylic_cache` is allocated for dialogs but never drawn. This TODO researches
 > the GPU path; it does NOT modify the existing compositor.
 >
 > **TinyGL software OpenGL** (~5 K lines, zlib) is specced in
