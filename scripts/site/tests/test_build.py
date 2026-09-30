@@ -2203,6 +2203,13 @@ class RealParsers(unittest.TestCase):
         f.write_text("import re\nP = 'x'\nP = '<'\nA = 'a'\nA = 'b'\nre.compile(f'{P}{A}{A}{A}{A}{A}{A}>')\n",
                      encoding="utf-8")
         self.assertTrue(any("too complex" in m for _, m in C.check_file(f)), C.check_file(f))
+        # Names that double at every step are refused before the string is built.
+        f.write_text("import re\nP0 = 'x'\nre.compile(P0)\n" + "".join(
+            f"P{i} = P{i - 1} + P{i - 1}\nre.compile(P{i})\n" for i in range(1, 40)), encoding="utf-8")
+        start = time.monotonic()
+        found = C.check_file(f)
+        self.assertLess(time.monotonic() - start, 2.0)
+        self.assertTrue(any("too complex" in m for _, m in found), found)
         # Repeats of an ambiguous name multiply combinations, not distinct strings: the
         # work stays bounded and the pattern is still judged in full.
         f.write_text("import re\nA = 'x'\nA = 'xx'\nre.compile(f'" + "{A}" * 40 + "')\n"
@@ -2237,6 +2244,15 @@ class RealParsers(unittest.TestCase):
             errors = []
             B.check_scripts({"p.html": f"{tag}{broken}</script>".encode()}, errors)
             self.assertTrue(errors, tag)                  # the browser keeps the first attribute
+        # A comment html.parser reads past where a browser ends it would hide a script.
+        for page in (b"<!--><script>const x = ;</script>-->", b"<!---><script>const x = ;</script>-->",
+                     b"<![CDATA[<script>const x = ;</script>]]>"):
+            errors = []
+            B.check_scripts({"p.html": page}, errors)
+            self.assertTrue(errors, page)
+        errors = []
+        B.check_scripts({"p.html": b"<!DOCTYPE html><!-- ok --><script>const x = 1;</script>"}, errors)
+        self.assertEqual(errors, [])
         errors = []
         B.check_scripts({"p.html": b"<script/>const a = ;</script>"}, errors)
         self.assertTrue(any("self-closing <script/>" in e for e in errors), errors)
@@ -2247,6 +2263,30 @@ class RealParsers(unittest.TestCase):
         self.assertFalse(B.is_noindex('<meta name="robots" content="xnoindex">'))
         self.assertFalse(B.is_noindex('<meta name="googlebot" content="noindex">'))
         self.assertFalse(B.is_noindex('<!-- <meta name="robots" content="noindex"> -->'))
+
+    def test_page_facts_are_cached_by_content(self):
+        path = Path(tempfile.mkdtemp(prefix="page-cache-")) / "c.json"
+        page = b'<meta name="robots" content="noindex"><script>var a = 1;</script><script>var a = 1;</script>'
+        c = B._PageFactsCache(path)
+        first = c.get(page)
+        c.save()
+        again = B._PageFactsCache(path)
+        self.assertIn(__import__("hashlib").sha256(page).hexdigest(), again.pages)   # served from disk
+        self.assertEqual(again.get(page), first)
+        self.assertEqual(first, B.PageFacts(True, ["var a = 1;", "var a = 1;"], 0, ""))
+        # A tampered or malformed entry is a miss: the page is parsed again, never trusted.
+        broken = b"<script>const x = ;</script>"
+        key = __import__("hashlib").sha256(broken).hexdigest()
+        good = __import__("hashlib").sha256(b"const x = 1;").hexdigest()
+        for pages, scripts in (({key: [False, [good], 0, ""]}, {good: "const x = 2;"}),   # digest mismatch
+                               ({key: [False, {}, 0, ""]}, {}),                          # wrong shape
+                               ({key: [0, [], 0, ""]}, {}),                              # not a bool
+                               ({key: [False, [], -1, ""]}, {})):
+            path.write_text(json.dumps({"version": B._anchor_cache_version(), "pages": pages, "scripts": scripts}),
+                            encoding="utf-8")
+            self.assertEqual(B._PageFactsCache(path).get(broken).scripts, ["const x = ;"], pages)
+        path.write_text("{not json", encoding="utf-8")
+        self.assertEqual(B._PageFactsCache(path).get(page), first)                  # a corrupt cache is a miss
 
     def test_url_helpers(self):
         self.assertEqual(B.url_scheme("http://[broken/path"), "http")
@@ -2270,6 +2310,8 @@ class RealParsers(unittest.TestCase):
         for bad in ("12%2C34", "1234x", "", "1%2C2345"):
             self.assertIsNone(B.count_badge(f"![l]({badge.format(bad)})\n"), bad)
         self.assertIsNone(B.count_badge("no badge here\n"))
+        # A repeated src: the browser shows the first image, so the second is no badge.
+        self.assertIsNone(B.count_badge(f'<img src="https://example.invalid/logo.png" src="{badge.format("1%2C234")}">\n'))
         self.assertIsNone(B.count_badge(f"`{badge.format('1%2C234')}`\n"))   # a URL in code is not an image
 
 

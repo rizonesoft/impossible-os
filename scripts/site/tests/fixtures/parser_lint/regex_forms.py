@@ -37,7 +37,7 @@ O = re.match(r"\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?", "")  # expect: clean
 P = re.split(r"\s+(?=[a-z_]+=)", "")  # expect: clean
 Q = re.compile(r"docs/design/([a-z0-9_-]+\.md)(?:#([A-Za-z0-9_-]+))?")  # expect: clean
 R = re.compile(r"src/kernel/[a-z_]+\.c")  # expect: clean
-S = re.compile(r"a\s*<\s*b")  # expect: clean
+S = re.compile(r"a\s+<\s+b")  # expect: clean
 T = re.compile(r"<!-- keep -->")  # parser-allow: a fixture waiver with a long enough reason  # expect: clean
 U = re.compile(r"<b>")  # parser-allow: short  # expect: flag
 V = 1  # parser-allow: a waiver on a line with no regex is stale  # expect: flag
@@ -55,3 +55,7 @@ AE = re.compile(f"{_OPEN}")  # expect: flag
 AF = re.compile(r"covers=(\S+)")  # expect: clean
 AG = re.compile(r"(?P<key>[a-z_]+)=(?P<value>[^\s]+)")  # expect: clean
 AH = re.compile(rf"{'x'}\d+")  # expect: clean
+AI = re.compile(r"<\s*(\w+)[^>]*>")  # expect: flag
+AJ = re.compile(r"<\s*/?\s*[a-z][^>]*>")  # expect: flag
+AK = re.compile(r"<\s*img\b[^>]*>")  # expect: flag
+AL = re.compile(r"x < \d+")  # expect: clean

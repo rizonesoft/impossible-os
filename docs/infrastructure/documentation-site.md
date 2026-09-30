@@ -68,6 +68,7 @@ What a page must contain, where it goes and how to start one is set by the [Docu
 | Coverage regression | a new roadmap file with no docs page |
 | A `sources=` path that is not a tracked file or directory | a page naming a file that was renamed or never committed |
 | JavaScript that does not parse | a stray `});` that stops the landing page countdown and hides every section that fades in on scroll |
+| A published page the HTML parser and a browser read differently | a `<!-->` comment or a self-closing `<script/>` that would hide a script from the syntax check |
 | Bad GitHub About-box values | a description with a dash, an `http` homepage, or an invalid topic in `project.json` |
 | Landing page feature card with a dead owner or source | a card in `gh-pages/features.json` naming a renamed roadmap file or deleted source path |
 

@@ -14,7 +14,8 @@ It reads each file's AST and folds every pattern handed to the `re` module
 through `import re as x`, `from re import compile`, and names bound to string
 constants anywhere in the file, including concatenations. A folded pattern is
 reported when it reads markup (`<` opening a tag-like construct: a letter,
-`/`, `!`, `?`, a class `[`, a group `(`, an escape, `.` or `^`; or an `href`,
+`/`, `!`, `?`, a class `[`, a group `(`, an escape, `.` or `^`, after any
+optional whitespace; or an `href`,
 `src` or `srcset` attribute name) or URL structure (`://`, `http`, `mailto:`,
 `www.`, a registered-domain suffix such as `\\.com`, or RFC 3986's scheme
 grammar, a character class holding `+` and `.` followed by `:`).
@@ -54,6 +55,7 @@ MIN_REASON = 20
 MAX_FOLDS = 64            # distinct candidate strings per expression; more is reported as unreadable
 MAX_STEPS = 20_000        # fold steps per call site; past it the pattern is reported as unreadable
 MAX_DEPTH = 8             # nested names and concatenations; deeper is reported, never silently cut
+MAX_PATTERN = 16_384      # characters in one folded candidate; longer is reported as unreadable
 TAG_START = frozenset("/!?[(\\.^")
 DOMAIN_SUFFIXES = ("com", "org", "net", "io", "co", "dev", "app", "edu", "gov")
 ATTR_NAMES = ("href", "srcset", "src")
@@ -165,8 +167,17 @@ def classify(pattern: str) -> str:
         j = i + 1
         while p[j:j + 1] == ")":                 # `(?<=<)a`: the `<` a lookbehind requires, then the tag name
             j += 1
+        # Optional whitespace (`\s*`, `\s?`, ` *`) can match nothing, so `<\s*img` still reads
+        # `<img`; only REQUIRED whitespace (`\s+`, a bare space) or a digit makes a comparison.
+        while True:
+            if p.startswith(("\\s*", "\\s?"), j):
+                j += 3
+            elif p.startswith((" *", " ?"), j):
+                j += 2
+            else:
+                break
         nxt = p[j:j + 1]
-        if nxt == "\\" and p[j + 1:j + 2] in ("s", "d", ""):   # `<\s`, `<\d`: a comparison, never a tag
+        if nxt == " " or (nxt == "\\" and p[j + 1:j + 2] in ("s", "d", "")):   # `< b`, `<\s+b`, `<\d`
             continue
         if nxt and (nxt.isascii() and nxt.isalpha() or nxt in TAG_START):
             return f"markup ({p[i:i + 12]!r})"
@@ -248,9 +259,14 @@ class _Scan(ast.NodeVisitor):
     def concat(self, parts: list[list[str]]) -> list[str]:
         """Every concatenation of one candidate per part, deduplicated after each
         part, so no step enumerates more than MAX_FOLDS x MAX_FOLDS strings however
-        many parts repeat an ambiguous name (`f"{A}{A}...{A}"`)."""
+        many parts repeat an ambiguous name (`f"{A}{A}...{A}"`). A candidate longer
+        than MAX_PATTERN is refused BEFORE it is built: names that double at each
+        step would otherwise allocate without bound while every other limit holds."""
         acc = [""]
         for part in parts:
+            longest = max(map(len, acc)) + max(map(len, part))
+            if longest > MAX_PATTERN:
+                raise _TooComplex()
             acc = self.bounded(a + b for a in acc for b in part)
         return acc
 
@@ -352,7 +368,8 @@ def check_file(path: Path) -> list[tuple[int, str]]:
                 found.append((at, f"parser-allow waiver needs a reason of {MIN_REASON}+ characters"))
             continue
         if patterns is None:
-            found.append((call.lineno, f"regex pattern too complex to fold ({MAX_FOLDS} candidates, {MAX_STEPS} steps, {MAX_DEPTH} levels); build it from "
+            found.append((call.lineno, f"regex pattern too complex to fold ({MAX_FOLDS} candidates, {MAX_STEPS} steps, {MAX_DEPTH} levels, "
+                                       f"{MAX_PATTERN} characters); build it from "
                                        f"plain constants, or waive it with `# {WAIVER} <reason>`"))
             continue
         shown = next(p for p in patterns if classify(p))

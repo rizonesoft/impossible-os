@@ -1662,29 +1662,6 @@ def design_tokens_css() -> str:
     return "\n".join(out)
 
 
-class _HeadMeta(HTMLParser):
-    """Whether a page asks robots not to index it: a <meta name="robots"> whose
-    content lists `noindex` (either attribute order, any quoting or case)."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.noindex = False
-
-    def handle_starttag(self, tag, attrs):
-        a = first_attrs(attrs)
-        if tag == "meta" and (a.get("name") or "").strip().lower() == "robots":
-            self.noindex |= "noindex" in (a.get("content") or "").lower().replace(",", " ").split()
-
-    handle_startendtag = handle_starttag
-
-
-def is_noindex(page_html: str) -> bool:
-    p = _HeadMeta()
-    p.feed(page_html)
-    p.close()
-    return p.noindex
-
-
 def sitemap(facts: dict, files: dict[str, bytes], sources: dict[str, str], dates: dict[str, str]) -> bytes:
     """sitemap.xml over every published HTML page except those whose head says
     noindex (404.html), derived from the output map so a new page is listed
@@ -1692,7 +1669,7 @@ def sitemap(facts: dict, files: dict[str, bytes], sources: dict[str, str], dates
     date; a generated page (the coverage page) has none."""
     rows = []
     for rel in sorted(files):
-        if not rel.endswith(".html") or is_noindex(files[rel].decode("utf-8", "replace")):
+        if not rel.endswith(".html") or page_facts(files[rel]).noindex:
             continue
         when = dates.get(sources.get(rel, ""), "")
         rows.append(f"  <url><loc>{html.escape(site_url(facts, rel))}</loc>"
@@ -2024,27 +2001,40 @@ def is_classic_script(attrs: list[tuple[str, str | None]]) -> bool:
     return kind == "" or kind in JS_MIME_TYPES
 
 
-class _InlineScripts(HTMLParser):
-    """The source of every classic inline <script> (no src=), as the HTML
-    tokenizer delimits it: from the start tag to the first `</script`, comments
-    and strings inside notwithstanding. A self-closing `<script/>` is counted in
-    `self_closing`: HTML ignores that slash and reads what follows as script,
-    which html.parser does not, so the caller refuses it."""
+class _PageScan(HTMLParser):
+    """One html.parser pass over a complete published page, collecting what the
+    checks need: whether a <meta name="robots"> lists `noindex`; the source of
+    every classic inline <script> (no src=), from its start tag to the first
+    `</script`; how many self-closing `<script/>` tags it has (HTML ignores that
+    slash and reads what follows as script, which html.parser does not); and
+    the first comment the two parsers end in different places (`<!-->`,
+    `<!--->` or a marked section), inside which html.parser would hide a script
+    or a meta tag that a browser runs or reads."""
 
-    def __init__(self) -> None:
+    def __init__(self, text: str) -> None:
         super().__init__(convert_charrefs=False)
+        self.noindex = False
         self.scripts: list[str] = []
         self.self_closing = 0
+        self.ambiguous = ""
         self._cur: list[str] | None = None
+        self._text = text
+        self._line_starts: list[int] | None = None   # built on the first comment only
 
     def handle_starttag(self, tag, attrs):
-        if tag == "script":
-            classic = is_classic_script(attrs) and not any(k == "src" for k, _ in attrs)
+        if tag == "meta":
+            a = first_attrs(attrs)
+            if (a.get("name") or "").strip().lower() == "robots":
+                self.noindex |= "noindex" in (a.get("content") or "").lower().replace(",", " ").split()
+        elif tag == "script":
+            classic = is_classic_script(attrs) and "src" not in first_attrs(attrs)
             self._cur = [] if classic else None
 
     def handle_startendtag(self, tag, attrs):
         if tag == "script":
             self.self_closing += 1
+        else:
+            self.handle_starttag(tag, attrs)
 
     def handle_data(self, data):
         if self._cur is not None and self.cdata_elem == "script":
@@ -2056,13 +2046,118 @@ class _InlineScripts(HTMLParser):
         if tag == "script":
             self._cur = None
 
+    def handle_comment(self, data):
+        if self._line_starts is None:
+            starts, at = [0], self._text.find("\n")
+            while at != -1:
+                starts.append(at + 1)
+                at = self._text.find("\n", at + 1)
+            self._line_starts = starts
+        line, col = self.getpos()
+        start = self._line_starts[line - 1] + col
+        opener = self._text[start:start + 5]
+        if not self.ambiguous and (opener.startswith("<![") or (opener.startswith("<!--") and data.startswith((">", "->")))):
+            self.ambiguous = f"a comment a browser ends earlier than html.parser does ({opener}...)"
 
-def inline_scripts(page_html: str) -> tuple[list[str], int]:
-    """(classic inline script sources, number of self-closing <script/> tags)."""
-    p = _InlineScripts()
-    p.feed(page_html)
-    p.close()
-    return p.scripts, p.self_closing
+    def unknown_decl(self, data):
+        self.ambiguous = self.ambiguous or "a marked section (<![...)"
+
+
+@dataclass
+class PageFacts:
+    noindex: bool
+    scripts: list[str]
+    self_closing: int
+    ambiguous: str
+
+
+PAGE_CACHE = REPO / "build" / "site-page-cache.json"
+
+
+class _PageFactsCache:
+    """PageFacts of published pages keyed by content hash, like AnchorCache: a
+    full html.parser pass over every page costs about 2 s a check, and a hit
+    can never be stale. Script sources are stored once, by their own hash."""
+
+    def __init__(self, path: Path) -> None:
+        self.path, self.version, self.dirty = path, _anchor_cache_version(), False
+        self.pages: dict[str, list] = {}
+        self.scripts: dict[str, str] = {}
+        self.memo: dict[str, PageFacts] = {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if isinstance(data, dict) and data.get("version") == self.version:
+            pages, scripts = data.get("pages"), data.get("scripts")
+            if isinstance(pages, dict) and isinstance(scripts, dict):
+                # A cache can only ever cost a re-parse: a script whose text no longer
+                # hashes to its key, or an entry of any other shape, is dropped and
+                # its page parsed again, so no stored fact can stand in for the page.
+                self.scripts = {k: v for k, v in scripts.items()
+                                if isinstance(v, str) and hashlib.sha256(v.encode("utf-8")).hexdigest() == k}
+                self.pages = {k: v for k, v in pages.items() if self._well_formed(v)}
+
+    def _well_formed(self, entry) -> bool:
+        return (isinstance(entry, list) and len(entry) == 4 and type(entry[0]) is bool
+                and isinstance(entry[1], list) and all(isinstance(k, str) and k in self.scripts for k in entry[1])
+                and type(entry[2]) is int and entry[2] >= 0 and isinstance(entry[3], str))
+
+    def get(self, data: bytes) -> PageFacts:
+        key = hashlib.sha256(data).hexdigest()
+        if key in self.memo:
+            return self.memo[key]
+        hit = self.pages.get(key)
+        if hit is not None:
+            noindex, script_keys, self_closing, ambiguous = hit
+            facts = PageFacts(noindex, [self.scripts[k] for k in script_keys], self_closing, ambiguous)
+        else:
+            text = data.decode("utf-8", "replace")
+            p = _PageScan(text)
+            p.feed(text)
+            p.close()
+            facts = PageFacts(p.noindex, p.scripts, p.self_closing, p.ambiguous)
+            keys = []
+            for src in facts.scripts:
+                k = hashlib.sha256(src.encode("utf-8")).hexdigest()
+                self.scripts[k] = src
+                keys.append(k)
+            self.pages[key], self.dirty = [facts.noindex, keys, facts.self_closing, facts.ambiguous], True
+        self.memo[key] = facts
+        return facts
+
+    def save(self) -> None:
+        """Keep only the pages this run read, and the scripts they use."""
+        used = {k: self.pages[k] for k in self.memo if k in self.pages}
+        if not self.dirty and len(used) == len(self.pages):
+            return
+        scripts = {k: self.scripts[k] for v in used.values() for k in v[1] if k in self.scripts}
+        tmp = self.path.with_suffix(f".{os.getpid()}.tmp")
+        try:   # write-then-rename, so a concurrent build never reads half a file
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps({"version": self.version, "pages": used, "scripts": scripts}), encoding="utf-8")
+            os.replace(tmp, self.path)
+        except OSError:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self.pages, self.dirty = used, False
+
+
+_PAGE_FACTS: _PageFactsCache | None = None
+
+
+def page_facts(data: bytes | str) -> PageFacts:
+    """PageFacts of one published page (see _PageScan), cached by content."""
+    global _PAGE_FACTS
+    if _PAGE_FACTS is None:
+        _PAGE_FACTS = _PageFactsCache(PAGE_CACHE)
+    return _PAGE_FACTS.get(data.encode("utf-8") if isinstance(data, str) else data)
+
+
+def is_noindex(page_html: str) -> bool:
+    return page_facts(page_html).noindex
 
 
 NODE_SYNTAX_CHECK = r"""
@@ -2080,21 +2175,26 @@ def check_scripts(files: dict[str, bytes], errors: list[str]) -> None:
     """Every classic script the site ships must PARSE. One syntax error stops the whole
     block, so a stray brace on the landing page froze the countdown and left every
     scroll-revealed section invisible, while every link and fact check stayed green.
-    Needs `node` (present locally and on the Actions runner); skipped when absent."""
-    node = shutil.which("node")
-    if not node:
-        return
+    Needs `node` (present locally and on the Actions runner); skipped when absent. The
+    page checks that need no node (self-closing <script/>, ambiguous comments) always run."""
     seen: dict[str, str] = {}
     for rel, data in sorted(files.items()):
         if rel.endswith(".js"):
             seen.setdefault(data.decode("utf-8", "replace"), rel)
         elif rel.endswith(".html"):
-            sources, self_closing = inline_scripts(data.decode("utf-8", "replace"))
-            if self_closing:
+            facts = page_facts(data)
+            if facts.self_closing:
                 errors.append(f"{rel}: a self-closing <script/> is not closed in HTML (a browser reads what "
                               f"follows as script); write <script></script>")
-            for i, src in enumerate(sources):
+            if facts.ambiguous:
+                errors.append(f"{rel}: {facts.ambiguous}; a script or meta tag inside it would go unchecked")
+            for i, src in enumerate(facts.scripts):
                 seen.setdefault(src, f"{rel} (inline script {i + 1})")
+    if _PAGE_FACTS is not None:
+        _PAGE_FACTS.save()
+    node = shutil.which("node")
+    if not node:
+        return
     batch = json.dumps([[name, src] for src, name in seen.items()])
     r = subprocess.run([node, "-e", NODE_SYNTAX_CHECK], input=batch, capture_output=True, text=True)
     if r.returncode not in (0, 1):
@@ -2112,8 +2212,9 @@ class _ImgSrcs(HTMLParser):
         self.srcs: list[str] = []
 
     def handle_starttag(self, tag, attrs):
-        if tag == "img":
-            self.srcs.extend(v for k, v in attrs if k == "src" and v)
+        src = first_attrs(attrs).get("src") if tag == "img" else None   # a repeated src: the first stands
+        if src:
+            self.srcs.append(src)
 
     handle_startendtag = handle_starttag
 
