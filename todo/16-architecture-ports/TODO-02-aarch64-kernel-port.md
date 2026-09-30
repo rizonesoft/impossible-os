@@ -57,6 +57,7 @@ Port `src/boot/uefi/bootx64.c` to produce a `BOOTAA64.EFI` for ARM UEFI systems.
 - [ ] PE/COFF machine type: `IMAGE_FILE_MACHINE_ARM64` (0xAA64)
 - [ ] Same GOP, boot.conf, memory map, ExitBootServices flow
 - [ ] Jump to kernel at EL1 (most UEFI firmware drops to EL1 before boot services)
+- [ ] Decide how the ARM kernel discovers hardware: ACPI (as the x86 path does) or the Devicetree QEMU `virt` can pass; record it in the boot_info handoff
 - [ ] Commit: `"arch: AArch64 UEFI bootloader (BOOTAA64.EFI)"`
 
 ---

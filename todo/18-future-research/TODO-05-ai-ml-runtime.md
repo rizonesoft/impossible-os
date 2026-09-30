@@ -16,7 +16,7 @@ title: "TODO-05 -- AI/ML Native Inference Runtime"
 
 > [!IMPORTANT]
 > **XSAVE activation** (`CR4.OSXSAVE`, `XSETBV`, XSAVE area layout) is owned by
-> `02-kernel-core/TODO-28 §1` (XSAVE design) and `01-boot-platform/TODO-09 §6`
+> `02-kernel-core/TODO-09` §1 (XSAVE design) and `01-boot-platform/TODO-09 §6`
 > (Phase 1 XSAVE & PCID activation window). §3 here adds the **per-thread user-mode
 > XSAVE context** (YMM/ZMM save area in TEB, context-switch XSAVE/XRSTOR discipline)
 > on top of those foundations -- do not re-specify kernel XSAVE initialization.
@@ -109,6 +109,9 @@ the ggml port and XSAVE context switch work end-to-end.
 ---
 
 ## 2. SIMD Enablement for User Mode `[Opus]`
+
+> [!NOTE]
+> **Shipped since this spike was written (verified 2026-09-30):** `cpu_configure_xcr0()` (`src/kernel/cpuid.c`) enables AVX and AVX-512 state, and each `struct task` (process) gets a lazily allocated `xsave_area` (`#NM` in `src/kernel/sched/task.c`) saved with XSAVEOPT on switch, per `02-kernel-core/TODO-09` §1-§3. The area is per PROCESS, so sibling threads share it; per-thread areas are owned by `03-memory-concurrency/TODO-06` §16. The kernel also uses AVX2/AVX-512 in its memops, so the "kernel never uses AVX" bullet below is stale. Still open here: per-thread areas (via that owner), `TEB.XSaveArea`, the benchmark.
 
 > Hardware-interface primitives: `CR4.OSXSAVE`, `XSETBV(XCR0, ...)`, per-thread XSAVE
 > area in TEB, XSAVE/XRSTOR on context switch. Security-critical: corrupting a thread's
@@ -281,7 +284,7 @@ the ggml port and XSAVE context switch work end-to-end.
 
 ## 6. GPU Inference Research (Stretch) `[Sonnet]`
 
-> Depends entirely on `13-future-research/TODO-03` Vulkan driver being available.
+> Depends entirely on `18-future-research/TODO-03` Vulkan driver being available.
 > Research-only section; no prototype code.
 
 - [ ] **ggml Vulkan backend** (`ggml-vulkan.c` in upstream): uses Vulkan compute shaders for SGEMM; once VirtIO-GPU Vulkan is available (TODO-03 §6), enable by building with `GGML_VULKAN=1`

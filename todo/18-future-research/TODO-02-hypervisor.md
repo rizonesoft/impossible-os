@@ -25,7 +25,7 @@ title: "TODO-02 -- Type-1 Hypervisor (ImpossibleHV)"
 > guests). These are different code paths -- do not conflate them.
 >
 > **Hypervisor detection** (CPUID `0x40000000`, `boot_info.hv_flags`) is owned by
-> `01-boot-platform/TODO-09 §4`; §1 here uses `cpu_data.cpuid_features` to detect
+> `01-boot-platform/TODO-09 §4`; §1 here uses `cpu_has(CPU_FEATURE_VMX)` / `cpu_has(CPU_FEATURE_SVM)` (`src/kernel/cpuid.c`) to detect
 > `VMXE` / `SVM` support -- it reads that data, does not re-specify detection.
 >
 > **PMM and VMM APIs** (`pmm_alloc_contiguous`, `vmm_map_page`) already exist and are
@@ -43,9 +43,9 @@ title: "TODO-02 -- Type-1 Hypervisor (ImpossibleHV)"
 - `include/kernel/mm/vmm.h` -- `vmm_map_page(virt, phys, flags)` -- §3 EPT setup, guest memory mapping
 - `include/kernel/sched/task.h` -- `task_t` (per-vCPU state), `task_create` -- §2 vCPU scheduling
 - `include/kernel/drivers/lapic.h` -- LAPIC IPI for inter-vCPU signalling -- §2 §3
-- `01-boot-platform/TODO-09-cpu-boot-sequencing.md §4` (→ XREF) -- CPUID feature flags (`cpu_data.cpuid_features`); `VMXE` bit detection uses data collected there
+- `01-boot-platform/TODO-09-cpu-boot-sequencing.md §4` (→ XREF) -- CPUID feature flags (`cpu_has()`, `include/kernel/cpuid.h`); `VMXE` bit detection uses data collected there
 - `02-kernel-core/TODO-10-kernel-security-hardening.md` (→ XREF) -- SMEP/SMAP/CET on VMX host; must stay active in host CR4 across VM entries/exits
-- `02-kernel-core/TODO-09-x86-64-architecture.md` (→ XREF) -- MSR read/write infrastructure (`rdmsr_safe`, `wrmsr`); used by VMXON and VMCS field access
+- `02-kernel-core/TODO-09-x86-64-architecture.md` (→ XREF) -- MSR read/write infrastructure (`msr_try_read()`, `msr_write()`); used by VMXON and VMCS field access
 - `src/kernel/drivers/virtio/virtio.c` -- guest-side VirtIO transport (reference for §4 host-side emulation design; understand the split-ring format from the guest's perspective)
 - Intel SDM Vol. 3C (VMX chapter) -- VMCS layout, VM entry/exit, EPT, VPID
 - AMD APM Vol. 2 (SVM chapter) -- VMCB (VM Control Block), nested paging, VMSAVE/VMLOAD
@@ -65,15 +65,15 @@ loop works end-to-end before committing to full implementation.
 
 ## Implementation Order
 
-| Step | Section                                                      | 💎/⭐ | Dependency                                                |
-| ---- | ------------------------------------------------------------ | ----- | --------------------------------------------------------- |
-| 1    | VT-x/AMD-V gap analysis (CPU feature + VMCS field audit)     | ⭐    | Intel SDM Vol. 3C; `cpu_data.cpuid_features` (TODO-04 §3) |
-| 2    | Minimal hypervisor design (VMCS layout + VMX root setup)     | ⭐    | §1; `pmm_alloc_contiguous`; `wrmsr`                       |
-| 3    | Minimal Linux guest POC (`bzImage` VMLAUNCH + serial output) | ⭐    | §2; `vmm_map_page` for EPT; Linux boot protocol           |
-| 4    | virtio device emulation design (host-side blk + net)         | ⭐    | §3 VM I/O exits; guest-side virtio reference              |
-| 5    | Snapshot & live migration research                           | ⭐    | §3 running VM; EPT dirty tracking                         |
-| 6    | GPU passthrough research (VT-d / AMD-Vi feasibility)         | ⭐    | §2 design; IOMMU prerequisite analysis                    |
-| 7    | Research deliverables (`hypervisor-design.md`)               | ⭐    | §1–§6 complete                                            |
+| Step | Section                                                      | 💎/⭐ | Dependency                                      |
+| ---- | ------------------------------------------------------------ | ----- | ----------------------------------------------- |
+| 1    | VT-x/AMD-V gap analysis (CPU feature + VMCS field audit)     | ⭐    | Intel SDM Vol. 3C; `cpu_has()` feature bits     |
+| 2    | Minimal hypervisor design (VMCS layout + VMX root setup)     | ⭐    | §1; `pmm_alloc_contiguous`; `wrmsr`             |
+| 3    | Minimal Linux guest POC (`bzImage` VMLAUNCH + serial output) | ⭐    | §2; `vmm_map_page` for EPT; Linux boot protocol |
+| 4    | virtio device emulation design (host-side blk + net)         | ⭐    | §3 VM I/O exits; guest-side virtio reference    |
+| 5    | Snapshot & live migration research                           | ⭐    | §3 running VM; EPT dirty tracking               |
+| 6    | GPU passthrough research (VT-d / AMD-Vi feasibility)         | ⭐    | §2 design; IOMMU prerequisite analysis          |
+| 7    | Research deliverables (`hypervisor-design.md`)               | ⭐    | §1–§6 complete                                  |
 
 ---
 
@@ -83,7 +83,7 @@ loop works end-to-end before committing to full implementation.
 > SDM Vol. 3C (VMX) and AMD APM Vol. 2 (SVM). Documents VMCS field layout, EPT
 > structure, and VM exit reason taxonomy that the rest of the spike builds on.
 
-- [ ] **CPU feature detection** (using `cpu_data.cpuid_features` from `TODO-04 §3`):
+- [ ] **CPU feature detection** (using `cpu_has(CPU_FEATURE_VMX/SVM)`; `cpuid.c` already logs VT-x lock/enable via `msr_try_read(0x3A)` and AMD-V NPT/ASIDs):
   - Intel VMX: `cpuid(0x1).ecx bit 5` (`VMX` = `CPUID_ECX_VMX`); also check `IA32_FEATURE_CONTROL` MSR (`0x3A`) bit 2 (VMXON outside SMX enabled) + bit 0 (locked)
   - AMD SVM: `cpuid(0x80000001).ecx bit 2` (`SVM`); check `VM_CR` MSR (`0xC0010114`) SVMDIS bit
   - Report: `"[HV] Intel VMX available"` / `"[HV] AMD-V available"` / `"[HV] No virtualization support"`

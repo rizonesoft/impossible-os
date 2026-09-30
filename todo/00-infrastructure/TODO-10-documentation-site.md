@@ -77,7 +77,7 @@ file_patterns:
 | 💎  |  24   | §24 Versioned release docs: pinned refs, version-scoped rendering        | §1, §23                     |  [x]   |
 | 💎  |  25   | §25 Docs search completeness and accessibility                           | §1                          |  [x]   |
 | 💎  |  26   | §26 Document: Host tools (8 roadmap files)                               | §2, §3                      |  [x]   |
-| 💎  |  27   | §27 Document: Architecture ports and future research (9 roadmap files)   | §2, §3                      |  [ ]   |
+| 💎  |  27   | §27 Document: Architecture ports and future research (9 roadmap files)   | §2, §3                      |  [x]   |
 | ⭐  |  28   | §28 Review-class nets for site tooling: real parsers, scheduler stress   | §23                         |  [ ]   |
 | 💎  |  29   | §29 Retained release trees: snapshots, manifest, live verification       | §24                         |  [ ]   |
 | 💎  |  30   | §30 SDK release docs and API reference                                   | §29, D12 T06 §2, D12 T06 §8 |  [ ]   |
@@ -1262,22 +1262,38 @@ Write docs pages that meet the §3 contract for the 8 roadmap files below. Read 
 
 Write docs pages that meet the §3 contract for the 9 roadmap files below. Read each roadmap file and the code it names; document what exists today and link the roadmap sections for what does not. Skip a file only if §2 already mapped a page to it and that page meets the contract; otherwise extend or write the page. Split out of §21 because 21 pages is more than one worker context; these files share no pages or folders with the SDK and release pages.
 
-- [ ] Pages in `docs/ports/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/16-architecture-ports/TODO-01-arch-abstraction-layer.md` (TODO-01 -- Architecture Abstraction Layer)
-  - `todo/16-architecture-ports/TODO-02-aarch64-kernel-port.md` (TODO-02 -- AArch64 Kernel Port)
-  - `todo/16-architecture-ports/TODO-03-smp-scaling-processor-groups.md` (TODO-03 -- SMP Scaling & Processor Groups)
-- [ ] Pages in `docs/research/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/18-future-research/TODO-01-multi-arch-port.md` (TODO-01 -- ARM64 & RISC-V Architecture Port)
-  - `todo/18-future-research/TODO-02-hypervisor.md` (TODO-02 -- Type-1 Hypervisor (ImpossibleHV))
-  - `todo/18-future-research/TODO-03-gpu-compositor.md` (TODO-03 -- GPU-Accelerated Compositor)
-- [ ] Pages in `docs/research/` for the next 3 roadmap files, each with its `covers=` directive
-  - `todo/18-future-research/TODO-04-secureboot-tpm.md` (TODO-04 -- Secure Boot, TPM 2.0 & Measured Boot)
-  - `todo/18-future-research/TODO-05-ai-ml-runtime.md` (TODO-05 -- AI/ML Native Inference Runtime)
-  - `todo/18-future-research/TODO-06-android-app-compatibility.md` (TODO-06 -- Android App Compatibility (Research Spike))
-- [ ] Add `docs/ports/index.md` and `docs/research/index.md` if absent, add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline`
-- [ ] Commit: `"docs: architecture ports and future research documentation pages"`
+- [x] Pages in `docs/ports/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/16-architecture-ports/TODO-01-arch-abstraction-layer.md` (TODO-01 -- Architecture Abstraction Layer): `arch-abstraction-layer.md`
+  - `todo/16-architecture-ports/TODO-02-aarch64-kernel-port.md` (TODO-02 -- AArch64 Kernel Port): `aarch64-kernel-port.md`
+  - `todo/16-architecture-ports/TODO-03-smp-scaling-processor-groups.md` (TODO-03 -- SMP Scaling & Processor Groups): `smp-scaling-processor-groups.md`
+- [x] Pages in `docs/research/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/18-future-research/TODO-01-multi-arch-port.md` (TODO-01 -- ARM64 & RISC-V Architecture Port): `multi-arch-port.md`
+  - `todo/18-future-research/TODO-02-hypervisor.md` (TODO-02 -- Type-1 Hypervisor (ImpossibleHV)): `hypervisor.md`
+  - `todo/18-future-research/TODO-03-gpu-compositor.md` (TODO-03 -- GPU-Accelerated Compositor): `gpu-compositor.md`
+- [x] Pages in `docs/research/` for the next 3 roadmap files, each with its `covers=` directive
+  - `todo/18-future-research/TODO-04-secureboot-tpm.md` (TODO-04 -- Secure Boot, TPM 2.0 & Measured Boot): `secure-boot-tpm.md`
+  - `todo/18-future-research/TODO-05-ai-ml-runtime.md` (TODO-05 -- AI/ML Native Inference Runtime): `ai-ml-runtime.md`
+  - `todo/18-future-research/TODO-06-android-app-compatibility.md` (TODO-06 -- Android App Compatibility (Research Spike)): `android-app-compatibility.md`
+- [x] Add `docs/ports/index.md` and `docs/research/index.md` (both folders were new), add every new page to its folder `index.md`, then run `python3 scripts/site/build.py --update-baseline` (9 to 0 entries: every roadmap file now has a page)
+  - `docs/index.md` gains Architecture Ports and Future Research rows.
+- [x] Roadmap drift found while writing, fixed in place
+  - `18-future-research/TODO-03`, `TODO-04`, `TODO-05` pointed at a nonexistent `13-future-research/` folder; `TODO-02` named `cpu_data.cpuid_features` and `rdmsr_safe` (the code has `cpu_has()` and `msr_try_read()`); `TODO-03` named `fb_flip()` (the API is `fb_swap()`/`fb_swap_rect()`).
+  - `TODO-05` said the kernel never uses AVX and that per-thread XSAVE was missing, and pointed at `02-kernel-core/TODO-28` (BSOD UX) for XSAVE; a NOTE now records that XCR0, per-process XSAVE with XSAVEOPT and AVX memops ship under `02-kernel-core/TODO-09`, and that per-thread areas are `03-memory-concurrency/TODO-06` §16. `TODO-04` gained a NOTE listing what `01-boot-platform/TODO-13` shipped and that §2 image measurement stays open here.
+- [x] Defects and gaps found while writing, filed in the owning roadmaps (docs-only section)
+  - `16-architecture-ports/TODO-03` section 1: the 32-bit online mask caps `MAX_CPUS` at 32, MADT records past `MAX_CPUS` are dropped with no log line, and a BSP listed after the 16th usable record forces BSP-only boot.
+  - `16-architecture-ports/TODO-01` section 2: the move list names 13 files against 9 `.asm` sources and ~104 inline-asm files; an inventory item now leads the section. `TODO-02` section 1: choose ACPI or Devicetree for hardware discovery.
+  - `18-future-research/TODO-03` section 5: reconcile `display_plane_ops_t` with the `display_device_t` table `04-drivers-hardware/TODO-17` already plans for the same VirtIO-GPU driver.
+- [x] Commit: `"docs: architecture ports and future research documentation pages"`
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any `todo/16-architecture-ports/` or `todo/18-future-research/` file named here; each page renders on the local build. Test on: WSL2 dev host.
+
+> **Test runner:** N/A (docs pages only) | validation: `python3 scripts/site/build.py --check --skip-stats` prints `site: OK` with 232/232 TODO files documented; a deliberately broken anchor in `aarch64-kernel-port.md` fails the check (control)
+
+> **Notes:**
+> - **What shipped:** nine contract-shaped pages and two indexes in new `docs/ports/` and `docs/research/` folders, linked from the docs home page; the coverage baseline is now empty (232/232).
+> - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when `MAX_CPUS`, the MADT parser, XSAVE, the TPM code or the compositor changes.
+> - **Status honesty:** no ports or research roadmap has started; the pages say so and name what already ships elsewhere (per-process XSAVE, TPM replay/seal/quote, CPUID hypervisor and VT-x detection).
+> - **Scope boundary:** no kernel code changed; the online-mask limit, silent CPU drop, arch inventory and display-abstraction overlap are filed in their owning roadmaps.
 
 ---
 

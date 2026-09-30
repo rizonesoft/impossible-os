@@ -1,14 +1,4 @@
 {
   "_comment": "TODO files with no documentation page yet. Shrink-only: scripts/site/build.py --update-baseline removes entries, never adds them (except when creating this file).",
-  "undocumented": [
-    "todo/16-architecture-ports/TODO-01-arch-abstraction-layer.md",
-    "todo/16-architecture-ports/TODO-02-aarch64-kernel-port.md",
-    "todo/16-architecture-ports/TODO-03-smp-scaling-processor-groups.md",
-    "todo/18-future-research/TODO-01-multi-arch-port.md",
-    "todo/18-future-research/TODO-02-hypervisor.md",
-    "todo/18-future-research/TODO-03-gpu-compositor.md",
-    "todo/18-future-research/TODO-04-secureboot-tpm.md",
-    "todo/18-future-research/TODO-05-ai-ml-runtime.md",
-    "todo/18-future-research/TODO-06-android-app-compatibility.md"
-  ]
+  "undocumented": []
 }

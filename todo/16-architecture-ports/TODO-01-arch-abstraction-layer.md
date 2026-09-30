@@ -80,6 +80,8 @@ Move x86-64-specific source files from `src/kernel/` to `src/kernel/arch/x86_64/
 
 **Files to move:**
 
+- [ ] Inventory the real arch surface before moving: 9 `.asm` sources and ~104 files with inline asm (2026-09-30), incl. `barrier.h`, `spinlock.h`, `switch_context.asm`, `kpti_trampoline.asm`
+  - The 13-file list below omits `switch_context.asm`, `gdt_asm.asm`, `kpti_trampoline.asm`, `retpoline.asm`, `except_seh.asm`, `rtl/unwind_asm.asm`, and the barrier/spin-wait/XSAVE inline asm every subsystem includes; the section 1 HAL must cover what the inventory finds.
 - [ ] `gdt.c` -> `arch/x86_64/gdt.c`
 - [ ] `idt.c` -> `arch/x86_64/idt.c`
 - [ ] `isr_stubs.asm` -> `arch/x86_64/isr_stubs.asm`

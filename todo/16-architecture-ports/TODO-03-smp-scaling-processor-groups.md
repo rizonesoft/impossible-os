@@ -43,6 +43,9 @@ title: "TODO-03 -- SMP Scaling & Processor Groups"
 ## 1. Raise MAX_CPUS and Dynamic Per-CPU Allocation
 
 - [ ] Increase `MAX_CPUS` from 16 to 256 in `acpi.h`
+- [ ] Widen the online mask first: `smp_online_mask()` returns `uint32_t` and `smp.c` asserts `MAX_CPUS <= SMP_ONLINE_MASK_BITS` (32), so any raise past 32 needs a multi-word mask
+- [ ] Log dropped CPUs: `acpi.c` MADT parsing stores LAPIC/x2APIC records only while `cpu_count < MAX_CPUS` and drops the rest with no log line (x2APIC ids > 255 already get a summary WARN)
+- [ ] Always keep the BSP: if it is listed after the 16th usable MADT record the truncated set lacks it and `acpi.c` falls back to BSP-only, so a >16-CPU machine can boot single-core
 - [ ] Convert static per-CPU arrays to dynamic allocation where needed (DPC queues, spinlock arrays)
 - [ ] Verify boot still works with 1, 2, and 16 CPUs after the increase
 - [ ] Commit: `"kernel: smp -- raise MAX_CPUS to 256"`

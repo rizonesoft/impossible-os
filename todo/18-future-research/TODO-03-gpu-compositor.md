@@ -24,7 +24,7 @@ title: "TODO-03 -- GPU-Accelerated Compositor"
 > to Mesa lavapipe (CPU Vulkan) -- it does not re-specify the TinyGL port itself.
 >
 > **IOMMU driver** is a hard prerequisite for DMA-safe GPU memory (§3) and is documented
-> as a blocker in `13-future-research/TODO-02 §6`; the VirtIO-GPU path (§1 Option A)
+> as a blocker in `18-future-research/TODO-02 §6`; the VirtIO-GPU path (§1 Option A)
 > avoids IOMMU by using the hypervisor as a DMA safety boundary -- the recommended
 > first step precisely because it sidesteps this blocker.
 >
@@ -43,7 +43,7 @@ title: "TODO-03 -- GPU-Accelerated Compositor"
 - `include/kernel/mm/vmm.h` -- `vmm_map_page()` -- §3 IOMMU-safe GPU buffer mapping
 - `include/kernel/sched/syscall.h` -- next free syscall number -- §3 `SYS_GPU_*` additions
 - `10-platform-services/TODO-12-long-term-features.md §8` (→ XREF) -- TinyGL port; §3 here assesses upgrade to Mesa lavapipe from TinyGL baseline
-- `13-future-research/TODO-02-hypervisor.md §5 §6` (→ XREF) -- virtio-gpu stretch mentioned there; IOMMU prerequisite documented there; §1 §4 here build on that analysis
+- `18-future-research/TODO-02-hypervisor.md §5 §6` (→ XREF) -- virtio-gpu stretch mentioned there; IOMMU prerequisite documented there; §1 §4 here build on that analysis
 - `TODO-06-android-app-compatibility.md` (→ XREF) -- TODO-06 section 5 guest framebuffer to host compositor; VirtIO-GPU scanout ties to sections 1 and 5 here
 - `src/kernel/drivers/virtio/virtio.c` -- existing guest-side VirtIO transport; §1 VirtIO-GPU driver extends this
 - `src/kernel/gfx/` -- `gfx_simd.c`, `arc_ring.c`, `gfx_text.c` -- current CPU compositor internals
@@ -210,11 +210,12 @@ compositor to 4K 120 Hz.
 
 **Source:** design only; production code gated on §4 Vulkan API availability
 
+- [ ] **Reconcile with `display_device_t`**: `04-drivers-hardware/TODO-17` §1/§4 already plans the VirtIO-GPU module behind `display_device_t`; define `display_plane_ops_t` as an extension of it, not a second display abstraction
 - [ ] **Window surface → GPU texture model**:
   - Each window gets a `gpu_buf_t window_tex` (2D resource on GPU); allocated once on `wm_create_window()`
   - On each frame: if `window->dirty_rect` is non-zero: `VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D` for dirty region only; clear `dirty_rect`; else: reuse existing GPU texture (zero CPU copy)
   - CPU `gfx_surface_t` backing buffer (`window->surface`) is still maintained for app rendering; GPU texture is a shadow copy uploaded on demand
-- [ ] **Compositor frame pipeline** (replaces `wm_composite()` + `fb_flip()`):
+- [ ] **Compositor frame pipeline** (replaces `wm_composite()` + `fb_swap()`/`fb_swap_rect()`):
   1. **Dirty scan**: iterate all windows; for each with non-empty `dirty_rect`: upload changed region via `VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D`
   2. **Wallpaper texture**: `desktop_get_wallpaper_surface()` → upload to GPU resource `wallpaper_tex` once (re-upload only on wallpaper change)
   3. **Acrylic/blur**: GPU blur pass on `wallpaper_tex` → `blur_tex`; replaces current CPU PMM blur in `wm.h`; GPU blur via fragment shader or `VIRTIO_GPU_BLOB_MEM_HOST3D` command

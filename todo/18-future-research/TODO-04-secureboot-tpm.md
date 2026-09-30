@@ -13,6 +13,9 @@ title: "TODO-04 -- Secure Boot, TPM 2.0 & Measured Boot"
 > disk encryption sealed to TPM PCR policy, vTPM emulation for ImpossibleHV guests,
 > and a research document covering the full attestation story.
 
+> [!NOTE]
+> **Largely superseded (verified 2026-09-30):** the TPM transport, boot-time TPM entropy (`entropy_collect_tpm()`), event-log replay, PCR sealing (incl. the `tpm_seal_fde_key()` hook), and `tpm2_quote()` shipped under `01-boot-platform/TODO-13`; the PCR plan there assigns the kernel ABI manifest to PCR 11. That is ABI identity, NOT executable identity: §2's image hashes stay open, and TODO-13 §16 keeps the loader's kernel-image digest (PCR 8) owned HERE; runtime kernel measurement is `04-drivers-hardware/TODO-04` §7. Still research-only here: §2 image measurement, PK/KEK/db enrollment (§3), whole-disk FDE (§4), vTPM (§5), the periodic reseed (§1).
+
 > [!IMPORTANT]
 > **Secure Boot shim** (rhboot/shim, MOK key pair, `HKLM\SYSTEM\SecureBoot`) is
 > owned by `01-boot-platform/TODO-02`; §1 here adds the **PK/KEK/db enrollment
@@ -32,7 +35,7 @@ title: "TODO-04 -- Secure Boot, TPM 2.0 & Measured Boot"
 > already in monocypher (`crypto_argon2i()`).
 >
 > **vTPM for ImpossibleHV** (§5 here) complements
-> `13-future-research/TODO-02 §7` (hypervisor deliverables); the two TODOs are
+> `18-future-research/TODO-02 §7` (hypervisor deliverables); the two TODOs are
 > designed together. This is research-level only -- no production vTPM code until
 > ImpossibleHV Phase 2 lands.
 
@@ -44,7 +47,7 @@ title: "TODO-04 -- Secure Boot, TPM 2.0 & Measured Boot"
 - `04-drivers-hardware/TODO-04-security-hardware.md §6` (→ XREF) -- TPM 2.0 command driver (CRB/FIFO, STARTUP, PCR_Read/Extend, GetRandom, PCR[10] kernel integrity); §2 here adds CSPRNG feed + QEMU swtpm
 - `09-desktop-shell/TODO-07-cng-crypto.md §1` (→ XREF) -- `cng_sha256()`, AES-256-GCM, `csprng_read()`; §4 FDE adds AES-256-XTS (XTS mode extension to §1) + Argon2i KDF
 - `12-user-platform-sdk/TODO-01` (→ XREF, if CSPRNG integration) -- entropy pool that `tpm2_get_random()` feeds into -- §2 CSPRNG integration
-- `13-future-research/TODO-02-hypervisor.md` (→ XREF) -- ImpossibleHV Phase 2 multi-vCPU; §3 vTPM is a companion feature for that phase
+- `18-future-research/TODO-02-hypervisor.md` (→ XREF) -- ImpossibleHV Phase 2 multi-vCPU; §3 vTPM is a companion feature for that phase
 - `src/kernel/tpm.c` -- existing 312-line PCR event log parser; §2 extends it with command driver (cross-ref `TODO-11 §8`)
 - `include/libs/monocypher.h` -- `crypto_argon2i()` for password-based key derivation in §4 FDE recovery key
 - `src/boot/uefi/bootx64.c` -- bootloader; §1 and §3 add signature verification + PCR extension calls here
@@ -220,7 +223,7 @@ bare-metal deployment.
 ## 5. vTPM for ImpossibleHV Guests `[Sonnet]`
 
 > Each VM guest in ImpossibleHV gets an isolated virtual TPM with independent PCR
-> hierarchy and sealed key material. Extends `13-future-research/TODO-02` (ImpossibleHV
+> hierarchy and sealed key material. Extends `18-future-research/TODO-02` (ImpossibleHV
 > Phase 2); §5 is design-only in this spike.
 
 - [ ] **vTPM architecture**:
