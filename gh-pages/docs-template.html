@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>%TITLE% · {{name}} Docs</title>
 <meta name="description" content="%DESCRIPTION%">
-<link rel="canonical" href="%CANONICAL%">
+%ROBOTS%<link rel="canonical" href="%CANONICAL%">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="{{name}}">
 <meta property="og:title" content="%TITLE%">
@@ -22,7 +22,7 @@
 <style>
 :root {
   --bg: #0a0e1a; --bg-2: #111827; --card: #151b2e; --card-2: #1a2138;
-  --text: #eef2ff; --text-2: #a3b1c6; --muted: #6b7a90;
+  --text: #eef2ff; --text-2: #a3b1c6; --muted: #7d8ca3;
   --accent: #2eb5f0; --accent-2: #155cde; --accent-3: #40daf2;
   --border: rgba(148,163,184,.14); --glass: rgba(10,14,26,.72);
   --code-bg: #0d1322; --shadow: 0 10px 30px rgba(0,0,0,.35);
@@ -31,40 +31,54 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     --bg: #f6f8fc; --bg-2: #ffffff; --card: #ffffff; --card-2: #eef2f8;
-    --text: #0f172a; --text-2: #334155; --muted: #64748b;
+    --text: #0f172a; --text-2: #334155; --muted: #5b6b80;
     --accent: #0a6ccf; --accent-2: #155cde; --accent-3: #0891b2;
     --border: rgba(15,23,42,.12); --glass: rgba(246,248,252,.78);
     --code-bg: #f1f5f9; --shadow: 0 10px 30px rgba(15,23,42,.08);
+    --note: #0369a1; --tip: #047857; --important: #6d28d9; --warning: #b45309; --caution: #b91c1c;
   }
 }
 :root[data-theme="light"] {
   --bg: #f6f8fc; --bg-2: #ffffff; --card: #ffffff; --card-2: #eef2f8;
-  --text: #0f172a; --text-2: #334155; --muted: #64748b;
+  --text: #0f172a; --text-2: #334155; --muted: #5b6b80;
   --accent: #0a6ccf; --accent-2: #155cde; --accent-3: #0891b2;
   --border: rgba(15,23,42,.12); --glass: rgba(246,248,252,.78);
   --code-bg: #f1f5f9; --shadow: 0 10px 30px rgba(15,23,42,.08);
+  --note: #0369a1; --tip: #047857; --important: #6d28d9; --warning: #b45309; --caution: #b91c1c;
 }
 *, *::before, *::after { box-sizing: border-box; }
 html { scroll-padding-top: 84px; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15.5px/1.7 Inter, -apple-system, "Segoe UI", sans-serif; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
+/* A link inside running text is underlined: colour alone does not mark it (WCAG 1.4.1). */
+article :is(p, li, td, blockquote) a { text-decoration: underline; text-underline-offset: 2px; }
 header.top { position: sticky; top: 0; z-index: 20; height: 64px; display: flex; align-items: center; gap: 18px; padding: 0 20px;
   background: var(--glass); backdrop-filter: blur(20px) saturate(140%); -webkit-backdrop-filter: blur(20px) saturate(140%); border-bottom: 1px solid var(--border); }
 .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font: 700 1.02rem "Plus Jakarta Sans", Inter, sans-serif; letter-spacing: .4px; white-space: nowrap; }
 .brand img { width: 30px; height: 30px; }
 .brand small { color: var(--muted); font-weight: 600; }
 .search { position: relative; flex: 1; max-width: 420px; margin-left: auto; }
-.search input { width: 100%; height: 38px; padding: 0 12px 0 36px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); color: var(--text); font: inherit; font-size: 14px; }
+.search input { width: 100%; height: 38px; padding: 0 36px 0 36px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); color: var(--text); font: inherit; font-size: 14px; }
 .search input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .search svg { position: absolute; left: 11px; top: 11px; width: 16px; height: 16px; color: var(--muted); }
-.results { position: absolute; top: 44px; left: 0; right: 0; max-height: 60vh; overflow: auto; background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); display: none; }
+.key-hint { position: absolute; right: 9px; top: 9px; min-width: 20px; height: 20px; padding: 0 5px; border: 1px solid var(--border); border-radius: 5px; background: var(--card-2);
+  color: var(--text-2); font: 12px/18px "JetBrains Mono", ui-monospace, monospace; text-align: center; pointer-events: none; }
+.search input:focus ~ .key-hint, .search input:not(:placeholder-shown) ~ .key-hint { display: none; }
+.results { position: absolute; top: 44px; left: 0; right: 0; overflow: hidden; background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); display: none; }
+/* The listbox itself scrolls: arrow keys move through it from the search box (aria-activedescendant). */
+.results [role=listbox] { max-height: 60vh; overflow: auto; }
 .results [role=option] { display: block; padding: 10px 14px; color: var(--text); border-bottom: 1px solid var(--border); }
 .results [role=option]:hover, .results [aria-selected=true] { background: var(--card-2); text-decoration: none; }
 .results [aria-selected=true] { outline: 2px solid var(--accent); outline-offset: -2px; }
 .results .sec { display: block; color: var(--text-2); font-size: 13px; }
 .results small { display: block; color: var(--muted); font-size: 12.5px; }
 .results-msg { margin: 0; padding: 10px 14px; color: var(--muted); font-size: 14px; }
+mark { background: #fde68a; color: #0f172a; border-radius: 3px; padding: 0 .1em; }
+.skip-link { position: absolute; left: 12px; top: -60px; z-index: 30; padding: 8px 14px; border-radius: 10px; background: #155cde; color: #fff; font-weight: 600; }
+.skip-link:focus { top: 12px; }
+a:focus-visible, button:focus-visible, summary:focus-visible, select:focus-visible, [tabindex="0"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+main:focus:not(:focus-visible) { outline: none; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .top-links { display: flex; gap: 16px; align-items: center; font-size: 14px; }
 .top-links a { color: var(--text-2); }
@@ -74,18 +88,18 @@ header.top { position: sticky; top: 0; z-index: 20; height: 64px; display: flex;
 .version:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .version-note { max-width: 860px; margin: 0 0 22px; padding: 10px 14px; border-left: 3px solid var(--warning); border-radius: 0 10px 10px 0; background: var(--card); color: var(--text-2); font-size: 14px; }
 .layout { display: grid; grid-template-columns: 280px minmax(0, 1fr) 220px; max-width: 1480px; margin: 0 auto; }
-aside.side { position: sticky; top: 64px; height: calc(100vh - 64px); overflow: auto; padding: 22px 14px 40px 20px; border-right: 1px solid var(--border); font-size: 14px; }
-aside.side ul { list-style: none; margin: 0; padding: 0 0 0 10px; }
-aside.side > ul { padding-left: 0; }
-aside.side li { margin: 1px 0; }
-aside.side a { display: block; padding: 4px 10px; border-radius: 8px; color: var(--text-2); }
-aside.side a:hover { background: var(--card-2); text-decoration: none; color: var(--text); }
-aside.side a.active { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--text); font-weight: 600; }
-aside.side summary { cursor: pointer; padding: 4px 6px; border-radius: 8px; color: var(--text); font-weight: 600; list-style: none; display: flex; align-items: center; gap: 4px; }
-aside.side summary::before { content: "›"; display: inline-block; width: 14px; transition: transform .15s; color: var(--muted); }
-aside.side details[open] > summary::before { transform: rotate(90deg); }
-aside.side summary a { padding: 0; color: inherit; }
-aside.side summary a:hover { background: none; }
+nav.side { position: sticky; top: 64px; height: calc(100vh - 64px); overflow: auto; padding: 22px 14px 40px 20px; border-right: 1px solid var(--border); font-size: 14px; }
+nav.side ul { list-style: none; margin: 0; padding: 0 0 0 10px; }
+nav.side > ul { padding-left: 0; }
+nav.side li { margin: 1px 0; }
+nav.side a { display: block; padding: 4px 10px; border-radius: 8px; color: var(--text-2); }
+nav.side a:hover { background: var(--card-2); text-decoration: none; color: var(--text); }
+nav.side a.active { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--text); font-weight: 600; }
+nav.side summary { cursor: pointer; padding: 4px 6px; border-radius: 8px; color: var(--text); font-weight: 600; list-style: none; display: flex; align-items: center; gap: 4px; }
+nav.side summary::before { content: "›"; display: inline-block; width: 14px; transition: transform .15s; color: var(--muted); }
+nav.side details[open] > summary::before { transform: rotate(90deg); }
+nav.side summary a { padding: 0; color: inherit; }
+nav.side summary a:hover { background: none; }
 main { min-width: 0; padding: 36px 48px 80px; }
 article { max-width: 860px; }
 article h1 { font: 800 2.2rem/1.2 "Plus Jakarta Sans", Inter, sans-serif; margin: 0 0 18px; letter-spacing: -.3px; }
@@ -105,6 +119,7 @@ pre.mermaid { background: var(--card); text-align: center; }
 table { border-collapse: collapse; width: 100%; font-size: 14px; }
 th, td { padding: 9px 12px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
 th { background: var(--card-2); font-weight: 600; }
+td a { overflow-wrap: anywhere; }
 tr:last-child td { border-bottom: 0; }
 blockquote { margin: 1em 0; padding: 10px 16px; border-left: 3px solid var(--border); background: var(--card); border-radius: 0 10px 10px 0; color: var(--text-2); }
 blockquote.alert { border-left-color: var(--note); }
@@ -127,25 +142,40 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
 @media (max-width: 1180px) { .layout { grid-template-columns: 260px minmax(0, 1fr); } .toc-col { display: none; } }
 @media (max-width: 820px) {
   .layout { grid-template-columns: minmax(0, 1fr); }
-  aside.side { position: fixed; z-index: 15; left: 0; top: 64px; width: 86vw; max-width: 320px; background: var(--bg-2); transform: translateX(-100%); transition: transform .2s; }
-  body.nav-open aside.side { transform: none; box-shadow: var(--shadow); }
+  nav.side { position: fixed; z-index: 15; left: 0; top: 64px; width: 86vw; max-width: 320px; background: var(--bg-2); transform: translateX(-100%); transition: transform .2s; }
+  .results { position: fixed; top: 64px; left: 8px; right: 8px; }
+  .results [role=listbox] { max-height: calc(100vh - 130px); }
+  body.nav-open nav.side { transform: none; box-shadow: var(--shadow); }
   .menu-btn { display: grid; }
   main { padding: 24px 16px 60px; }
   .top-links .hide-sm, .brand small { display: none; }
   article h1 { font-size: 1.8rem; }
 }
+@media (max-width: 480px) {
+  .brand .name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .key-hint { display: none; }
+  .search input { padding-right: 12px; }
+}
+.hits { list-style: none; margin: 1em 0; padding: 0; }
+.hits > li { margin: 0 0 22px; }
+.hits h2 { margin: 0 0 4px; padding: 0; border: 0; font-size: 1.15rem; }
+.hits ul { margin: 0; padding-left: 18px; }
+.hits p { margin: 2px 0 10px; color: var(--text-2); font-size: 14px; }
 </style>
 </head>
 <body>
+<a class="skip-link" href="#content">Skip to content</a>
 <header class="top">
-  <button class="icon-btn menu-btn" aria-label="Toggle navigation" onclick="document.body.classList.toggle('nav-open')">
+  <button class="icon-btn menu-btn" id="menu" aria-label="Toggle navigation" aria-controls="side" aria-expanded="false">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
   </button>
-  <a class="brand" href="%ROOT%"><img src="%SITE_ROOT%logo.svg" alt=""> {{name}} <small>Docs</small></a>
+  <a class="brand" href="%ROOT%"><img src="%SITE_ROOT%logo.svg" alt=""> <span class="name">{{name}}</span> <small>Docs</small></a>
   <div class="search">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
     <input id="q" type="search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="results"
-      placeholder="Search the docs" autocomplete="off" aria-label="Search the docs" data-search-index="2">
+      placeholder="Search the docs" autocomplete="off" aria-label="Search the docs" aria-keyshortcuts="/"
+      data-search-index="2" data-search-page="search.html">
+    <kbd class="key-hint" aria-hidden="true">/</kbd>
     <div class="results" id="results-pop">
       <div role="listbox" id="results" aria-label="Search results"></div>
       <p class="results-msg" id="results-msg" aria-hidden="true" hidden></p>
@@ -163,8 +193,8 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
   </div>
 </header>
 <div class="layout">
-  <aside class="side">%NAV%</aside>
-  <main>
+  <nav class="side" id="side" aria-label="Documentation">%NAV%</nav>
+  <main id="content" tabindex="-1">
     <p class="version-note" id="version-note" role="note" hidden></p>
     <article>
 %BODY%
@@ -188,14 +218,87 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
     document.documentElement.dataset.theme = next;
     try { localStorage.setItem('ios-docs-theme', next); } catch (e) {}
   });
+  // Navigation drawer: below 820px the sidebar is off-screen until opened, and
+  // while it is closed it is inert, so Tab never lands on a link nobody can see.
+  var side = document.getElementById('side'), menu = document.getElementById('menu');
+  var narrow = typeof matchMedia === 'function' ? matchMedia('(max-width: 820px)') : null;
+  function syncNav() {
+    var shown = document.body.classList.contains('nav-open');
+    if (menu) menu.setAttribute('aria-expanded', shown ? 'true' : 'false');
+    var hide = !!(narrow && narrow.matches && !shown);
+    // Focus inside a drawer about to become inert (say the window narrowed under
+    // it) goes to the menu button, never to nowhere.
+    if (side && hide && menu && side.contains(document.activeElement)) menu.focus();
+    if (side) side.inert = hide;
+  }
+  function closeNav(refocus) {
+    if (!document.body.classList.contains('nav-open')) return;
+    document.body.classList.remove('nav-open');
+    syncNav();
+    if (refocus) menu.focus();
+  }
+  if (menu && side) {
+    // Opening the drawer moves focus into it (its first link), so Tab walks the
+    // navigation next rather than the header behind it.
+    menu.addEventListener('click', function () {
+      document.body.classList.toggle('nav-open');
+      syncNav();
+      var first = document.body.classList.contains('nav-open') && narrow && narrow.matches &&
+                  side.querySelector('a[href], summary');
+      if (first) first.focus();
+    });
+    // Leaving the phone width closes the drawer, so it never reappears over the page later.
+    if (narrow && narrow.addEventListener) narrow.addEventListener('change', function () {
+      if (!narrow.matches) document.body.classList.remove('nav-open');
+      syncNav();
+    });
+    // The open drawer covers the page, so it closes when focus lands outside both
+    // the drawer and its menu button (the page's links, or the skip link's target,
+    // would otherwise be focused out of sight), and on Escape.
+    document.addEventListener('focusin', function (e) {
+      var to = e.target;
+      if (narrow && narrow.matches && to && to !== menu && !side.contains(to)) closeNav(false);
+    });
+    document.addEventListener('keydown', function (e) {
+      // The search box's own Escape (it prevents the default) is left to the search box.
+      if (e.key === 'Escape' && !e.defaultPrevented && document.body.classList.contains('nav-open')) closeNav(true);
+    });
+    syncNav();
+  }
   // Search: an ARIA 1.2 combobox over a listbox (W3C APG "list autocomplete").
   // The index is a manifest (search.json) plus content-addressed shards holding
   // the full text of every section; see search_files() in scripts/site/build.py.
   var q = document.getElementById('q'), pop = document.getElementById('results-pop'),
       list = document.getElementById('results'), msg = document.getElementById('results-msg'),
-      status = document.getElementById('search-status');
-  var idx = null, loading = null, revalidate = false, refreshTimer = 0, shards = [], gen = 0, open = false, pending = false, sel = -1, opts = [], optPages = [];
+      status = document.getElementById('search-status'), hitsEl = document.getElementById('search-page'),
+      allPage = q.getAttribute('data-search-page');
+  var current = '', idx = null, loading = null, revalidate = false, refreshTimer = 0, shards = [], gen = 0, open = false, pending = false, sel = -1, opts = [], optPages = [];
+  var SHOWN = 12;
   function json(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }
+  // Every index request (manifest and shards) must answer, body and all, within
+  // DEADLINE or it is aborted and fails: a stalled request can never hold search
+  // on "Searching" for good, and one that answers late is ignored. `inflight`
+  // holds the live requests of the current index, aborted when it is replaced.
+  var DEADLINE = 15000, inflight = [];
+  function fetchJson(url, opts) {
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null, o = {};
+    if (opts && opts.cache) o.cache = opts.cache;
+    if (ctl) { o.signal = ctl.signal; inflight.push(ctl); }
+    return new Promise(function (ok, fail) {
+      var timer = setTimeout(function () { if (ctl) ctl.abort(); fail(new Error('timed out: ' + url)); }, DEADLINE);
+      function done() {
+        clearTimeout(timer);
+        var k = inflight.indexOf(ctl);
+        if (k >= 0) inflight.splice(k, 1);
+      }
+      fetch(url, o.cache || o.signal ? o : undefined).then(json)
+        .then(function (v) { done(); ok(v); }, function (e) {
+          if (ctl) ctl.abort();                                     // an error status's body is not read either
+          done();
+          fail(e);
+        });
+    });
+  }
   // The manifest alone answers title and heading queries, so results show at
   // once; each shard fills in its sections' text as it arrives and the search
   // on screen is scored again.
@@ -209,11 +312,14 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
     // A manifest that failed to load or parse is revalidated too: the browser
     // may be holding a cached copy the deploy has since replaced.
     var failed = shards.some(function (sh) { return sh.state === 3; });
-    if (idx && retry && failed) { idx = null; shards = []; revalidate = true; }
+    if (idx && retry && failed) {
+      idx = null; shards = []; revalidate = true;
+      inflight.splice(0).forEach(function (c) { c.abort(); });     // the old index's requests are no longer wanted
+    }
     if (idx) return Promise.resolve(idx);
     if (!loading) {
       var fresh = revalidate;
-      loading = fetch(root + 'search.json', fresh ? { cache: 'no-cache' } : undefined).then(json).then(function (m) {
+      loading = fetchJson(root + 'search.json', fresh ? { cache: 'no-cache' } : null).then(function (m) {
         if (!m || m.v !== 2 || !Array.isArray(m.p) || !Array.isArray(m.s) || !Array.isArray(m.shards)) {
           throw new Error('unknown index format');
         }
@@ -234,27 +340,29 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
     }
     return loading;
   }
-  // Shard state: 0 not fetched, 1 fetching, 2 loaded, 3 failed. A shard that
-  // lands after its index was replaced is dropped.
+  // Shard state: 0 not fetched, 1 fetching, 2 loaded, 3 failed (including past
+  // the deadline). A shard that lands after its index was replaced is dropped;
+  // after a failure the next typed search starts again from the manifest.
   function fetchShards(mine, list) {
     list.forEach(function (sh) {
       sh.state = 1;
-      fetch(root + sh.name).then(json).then(function (a) {
+      function settle() {
+        // Shards landing together (a warm cache) are scored once, not once each.
+        if (idx === mine && !refreshTimer) {
+          refreshTimer = setTimeout(function () {
+            refreshTimer = 0;
+            if (idx && current.trim() && (hitsEl || pop.style.display === 'block')) run(true);   // never reopens a dismissed search
+          }, 16);
+        }
+      }
+      fetchJson(root + sh.name, null).then(function (a) {
         if (!Array.isArray(a) || a.length !== sh.count) throw new Error('shard ' + sh.name + ' does not match the index');
         for (var i = 0; i < a.length; i++) {
           mine[sh.at + i].x = String(a[i]);
           mine[sh.at + i].xl = mine[sh.at + i].x.toLowerCase();
         }
         sh.state = 2;
-      }).catch(function () { sh.state = 3; }).then(function () {
-        // Shards landing together (a warm cache) are scored once, not once each.
-        if (idx === mine && !refreshTimer) {
-          refreshTimer = setTimeout(function () {
-            refreshTimer = 0;
-            if (idx && pop.style.display === 'block' && q.value.trim()) run(true);   // never reopens a dismissed search
-          }, 16);
-        }
-      });
+      }).catch(function () { sh.state = 3; }).then(settle);
     });
   }
   function progress() {
@@ -265,7 +373,142 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
     });
     return st;
   }
+  // Query terms: whitespace-separated words, or a "quoted phrase" as one term
+  // (an unclosed quote runs to the end). A word ending in -s, -es, -ed or -ing
+  // also carries its stem, so "interrupts" finds a page that says "interrupt".
+  function parse(text) {
+    var out = [], seen = Object.create(null), re = /"([^"]*)"?|(\S+)/g, m;   // no inherited keys: `constructor` is a term
+    while ((m = re.exec(text.toLowerCase()))) {
+      var w = (m[1] !== undefined ? m[1] : m[2]).replace(/\s+/g, ' ').trim();
+      if (!w || seen[w]) continue;
+      seen[w] = 1;
+      var st = w.indexOf(' ') < 0 && /^(.{4,}?)(ing|es|ed|s)$/.exec(w);
+      out.push({ w: w, stem: st ? st[1] : '' });
+    }
+    return out;
+  }
+  // Word boundaries are judged on the original-case text, so camelCase and
+  // snake_case parts count as words: `map` is a word in vmm_map_page and in
+  // mapPage, but not in bitmap. A field whose lowercase form changed length is
+  // judged on the lowercase text instead, so offsets always line up.
+  // Character classes with an ASCII fast path: a one-letter query tests every
+  // occurrence in 2.7 million characters, and the Unicode regexes are the slow part.
+  var ALNUM = /[\p{L}\p{N}]/u, UPPER = /\p{Lu}/u, LOWISH = /[\p{Ll}\p{N}]/u;
+  function alnum(c) {
+    var k = c.charCodeAt(0);
+    return k < 128 ? (k >= 48 && k <= 57) || (k >= 65 && k <= 90) || (k >= 97 && k <= 122) : ALNUM.test(c);
+  }
+  function upper(c) { var k = c.charCodeAt(0); return k < 128 ? k >= 65 && k <= 90 : UPPER.test(c); }
+  function lowish(c) { var k = c.charCodeAt(0); return k < 128 ? (k >= 48 && k <= 57) || (k >= 97 && k <= 122) : LOWISH.test(c); }
+  var TAIL = ['', 's', 'es', 'ed', 'd', 'ing'], STEM_TAIL = ['', 'e', 's', 'es', 'ed', 'd', 'ing'];
+  function startsWord(o, i) {
+    return i === 0 || !alnum(o[i - 1]) || (lowish(o[i - 1]) && upper(o[i]));
+  }
+  function endsWord(o, e) { return e >= o.length || !alnum(o[e]) || (lowish(o[e - 1]) && upper(o[e])); }
+  function wordEnd(o, l, j, tails) {
+    if (endsWord(o, j)) return j;
+    var c = l[j];
+    if (c !== 's' && c !== 'e' && c !== 'd' && c !== 'i') return -1;         // no ending can follow
+    for (var k = 1; k < tails.length; k++) {
+      if (l.startsWith(tails[k], j) && endsWord(o, j + tails[k].length)) return j + tails[k].length;
+    }
+    return -1;
+  }
+  // The best occurrence of a term in one text: class 3 a whole word (a plural
+  // or tense ending may follow), 2 the stem of an inflected term as a word,
+  // 1 inside a longer word, or null. [a, b) is where it sits.
+  function find(t, o, l) {
+    if (o.length !== l.length) o = l;
+    var i, e, sub = l.indexOf(t.w);
+    for (i = sub; i >= 0; i = l.indexOf(t.w, i + 1)) {
+      if (startsWord(o, i) && (e = wordEnd(o, l, i + t.w.length, TAIL)) >= 0) return { c: 3, a: i, b: e };
+    }
+    if (t.stem) {
+      for (i = l.indexOf(t.stem); i >= 0; i = l.indexOf(t.stem, i + 1)) {
+        if (startsWord(o, i) && (e = wordEnd(o, l, i + t.stem.length, STEM_TAIL)) >= 0) return { c: 2, a: i, b: e };
+      }
+    }
+    return sub >= 0 ? { c: 1, a: sub, b: sub + t.w.length } : null;
+  }
+  // A record's score: [terms found as whole words, weight of word matches,
+  // weight of stem matches, weight of substring matches], compared in that
+  // order with field weights title 10, heading 4, body 1. Covering every term
+  // as a word comes first, so one title word never outranks a page that says
+  // every term; within that, `map` in a body beats `bitmap` in a title.
+  function score(r, terms) {
+    var s = [0, 0, 0, 0], fields = [[r.t, r.tl, 10], [r.h, r.hl, 4], [r.x, r.xl, 1]];
+    for (var i = 0; i < terms.length; i++) {
+      var best = 0;
+      for (var f = 0; f < 3; f++) {
+        // A one-letter term is judged as a word in titles and headings only: in
+        // body text it occurs hundreds of thousands of times and a whole-word `e`
+        // tells a reader nothing, so there it counts as found and no more.
+        var m = f === 2 && terms[i].w.length === 1 ? (fields[f][1].indexOf(terms[i].w) >= 0 ? { c: 1 } : null)
+                                                   : find(terms[i], fields[f][0], fields[f][1]);
+        if (!m) continue;
+        s[4 - m.c] += fields[f][2];
+        if (m.c > best) best = m.c;
+      }
+      if (!best) return null;
+      if (best === 3) s[0]++;
+    }
+    return s;
+  }
+  function cmp(a, b) {
+    for (var i = 0; i < 4; i++) if (a[i] !== b[i]) return b[i] - a[i];
+    return 0;
+  }
   function esc(s) { return s.replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  // A snippet around the best match in the section text, with every term
+  // marked. Terms are found in the text itself and each slice escaped on its
+  // own, so a mark never splits an entity.
+  function snippet(r, terms) {
+    var o = r.x.length === r.xl.length ? r.x : r.xl, l = r.xl, lead = null, marks = [];
+    terms.forEach(function (t) {
+      var m = find(t, o, l);
+      if (m && (!lead || m.c > lead.c || (m.c === lead.c && m.a < lead.a))) lead = m;
+    });
+    var from = lead ? Math.max(0, lead.a - 50) : 0, to = Math.min(o.length, lead ? lead.a + 90 : 120);
+    while (from > 0 && from < lead.a && alnum(o[from - 1])) from++;       // start on a word
+    while (lead && to < o.length && to < lead.b + 150 && alnum(o[to])) to++;  // and end on one
+    terms.forEach(function (t) {
+      [t.w, t.stem].forEach(function (w, k) {
+        for (var i = w ? l.indexOf(w, from) : -1; i >= 0 && i < to; i = l.indexOf(w, i + 1)) {
+          var e = k ? wordEnd(o, l, i + w.length, STEM_TAIL) : i + w.length;
+          if (k && (e < 0 || !startsWord(o, i))) continue;
+          marks.push([i, Math.min(e, to)]);
+        }
+      });
+    });
+    marks.sort(function (a, b) { return a[0] - b[0] || b[1] - a[1]; });
+    var out = from > 0 ? '…' : '', at = from;
+    marks.forEach(function (m) {
+      if (m[1] <= at) return;
+      var a = Math.max(m[0], at);
+      out += esc(o.slice(at, a)) + '<mark>' + esc(o.slice(a, m[1])) + '</mark>';
+      at = m[1];
+    });
+    return out + esc(o.slice(at, to)) + (to < o.length ? '…' : '');
+  }
+  // Links carry the query that found them, never what the box holds by then.
+  function link(r, query) {
+    return root + r.u + '?highlight=' + encodeURIComponent(query) + (r.a ? '#' + r.a : '');
+  }
+  // Every page with a record matching every term, best first, each holding its
+  // matching sections best first.
+  function search(records, terms) {
+    var pages = {};
+    records.forEach(function (r) {
+      var s = score(r, terms);
+      if (!s) return;
+      (pages[r.pg] = pages[r.pg] || []).push([s, r]);
+    });
+    var hits = Object.keys(pages).map(function (k) {
+      var secs = pages[k].sort(function (a, b) { return cmp(a[0], b[0]) || a[1].i - b[1].i; });
+      return { s: secs[0][0], pg: +k, secs: secs };
+    });
+    return hits.sort(function (a, b) { return cmp(a.s, b.s) || a.pg - b.pg; });
+  }
   function say(text) { status.textContent = text; }
   function select(i) {
     sel = i;
@@ -296,16 +539,104 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
     open = count > 0;
     q.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
+  function allResults(query) { return root + allPage + '?q=' + encodeURIComponent(query); }
+  function note(st) {
+    return st === 'loading' ? ', still searching the full text' :
+           st === 'failed' ? '. Part of the search index did not load; type again to retry' : '';
+  }
+  // The results page (search.html?q=): every matching page, and every matching
+  // section of each, as ordinary links. Typing keeps the URL shareable.
+  // Pages are drawn until BATCH sections are on screen (a page is never split);
+  // "Show more results" draws the next BATCH. Only drawn sections get snippets,
+  // so a broad query costs the scoring and one batch, not megabytes of markup.
+  var BATCH = 100, paged = null;
+  function pageItem(h, p) {
+    var r0 = h.secs[0][1];
+    return '<li><h2><a href="' + esc(root + r0.u + '?highlight=' + encodeURIComponent(p.q)) + '">' +
+      esc(r0.t) + '</a></h2><ul>' + h.secs.map(function (sr) {
+        var r = sr[1];
+        return '<li><a href="' + esc(link(r, p.q)) + '">' + esc(r.h || 'Introduction') + '</a><p>' +
+          snippet(r, p.terms) + '</p></li>';
+      }).join('') + '</ul></li>';
+  }
+  // Draws the next batch; `append` adds it after what is on screen (Show more),
+  // otherwise everything up to the limit is drawn afresh (a new search or a refresh).
+  function drawPage(append) {
+    var p = paged, html = '', i = append ? p.drawn : 0, secs = append ? p.secs : 0;
+    for (; i < p.hits.length && secs < p.limit; i++) { html += pageItem(p.hits[i], p); secs += p.hits[i].secs.length; }
+    p.drawn = i;
+    p.secs = secs;
+    p.html = (append ? p.html : '') + html;
+    var left = p.hits.length - i, btn = left ? '<button type="button" id="search-more">Show more results (' + left +
+      (left === 1 ? ' more page' : ' more pages') + ')</button>' : '';
+    var ol = append && hitsEl.querySelector ? hitsEl.querySelector('ol.hits') : null,
+        row = ol ? hitsEl.querySelector('#more-row') : null;
+    if (ol && row && ol.insertAdjacentHTML) {
+      ol.insertAdjacentHTML('beforeend', html);
+      row.innerHTML = btn;
+    } else {
+      hitsEl.innerHTML = p.head + (i ? '<ol class="hits">' + p.html + '</ol>' : '') + '<p id="more-row">' + btn + '</p>';
+    }
+  }
+  // The results page draws once, when the full text has loaded (or failed to):
+  // a list that re-ranked itself as shards landed would move or drop the result
+  // a keyboard reader was on. Until then it says it is searching.
+  var settledFor = null;   // [query, index] the results page last drew from a settled index
+  function showPage(hits, terms, st, again, query) {
+    // A refresh queued by a shard that landed before the typing pause ended finds
+    // the list already drawn from the settled index: it must not draw it again.
+    if (again === true && settledFor && settledFor[0] === query && settledFor[1] === idx) return;
+    if (st === 'loading') {
+      if (again !== true && hitsEl.getAttribute('data-state') !== 'loading') {
+        hitsEl.setAttribute('data-state', st);
+        paged = null;
+        hitsEl.innerHTML = '<p>Searching the full text\u2026</p>';
+        say('Searching the full text');
+      }
+      return;
+    }
+    hitsEl.setAttribute('data-state', st);
+    var n = 0;
+    hits.forEach(function (h) { n += h.secs.length; });
+    var sum = hits.length ? hits.length + (hits.length === 1 ? ' page, ' : ' pages, ') + n +
+              (n === 1 ? ' section' : ' sections') : 'No results';
+    paged = { hits: hits, terms: terms, q: query, limit: BATCH, drawn: 0, secs: 0, html: '',
+              head: '<p>' + esc(sum + (st === 'failed' ? '. Part of the search index did not load; type again to retry.' : '')) +
+                    '</p>' };
+    drawPage(false);
+    settledFor = [query, idx];
+    say(sum + note(st));
+  }
   function run(again) {
     // A refresh keeps the selection on the same PAGE: a shard can move its best section and so its href.
     var my = ++gen, keep = again === true && sel >= 0 ? optPages[sel] : -1;
-    var terms = q.value.toLowerCase().split(/\s+/).filter(Boolean);
-    if (!terms.length) { close(); say(''); return; }
+    // A refresh re-runs the search on screen: on the results page the box may
+    // already hold newer text waiting for the typing pause.
+    if (again !== true) current = q.value;
+    var terms = parse(current), query = current.trim();
+    if (hitsEl && again !== true && typeof history !== 'undefined' && history.replaceState) {
+      history.replaceState(null, '', query ? '?q=' + encodeURIComponent(query) : location.pathname);
+    }
+    if (!terms.length) {
+      if (hitsEl) {
+        hitsEl.innerHTML = '<p>Type in the search box above to search the documentation.</p>';
+        hitsEl.setAttribute('data-state', 'empty');
+        say('');
+        return;
+      }
+      close(); say(''); return;
+    }
     pending = true;
+    // The results page says it is searching before the index answers (the manifest can be slow),
+    // and a search that will replace a failed index clears the old list first: its links
+    // belong to the last query, not the one now in the address.
+    if (hitsEl && again !== true && (!idx || shards.some(function (sh) { return sh.state === 3; }))) {
+      showPage([], terms, 'loading', false, query);
+    }
     // A typed query's results replace the last one's, so the old ones go at once:
     // none may be chosen by key or pointer while the new ones load. With the index
     // loaded they are back within a microtask, before anything is painted.
-    if (again !== true) {
+    if (again !== true && !hitsEl) {
       select(-1);
       list.innerHTML = '';
       list.hidden = true;
@@ -315,80 +646,221 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
     load(again !== true).then(function (records) {
       if (my !== gen) return;
       pending = false;
-      var best = {};
-      records.forEach(function (r) {
-        var s = 0;
-        for (var i = 0; i < terms.length; i++) {
-          var w = terms[i], k = 0;
-          if (r.tl.indexOf(w) >= 0) k += 10;
-          if (r.hl.indexOf(w) >= 0) k += 4;
-          if (r.xl.indexOf(w) >= 0) k += 1;
-          if (!k) return;
-          s += k;
-        }
-        if (!best[r.pg] || s > best[r.pg][0]) best[r.pg] = [s, r];
-      });
-      var hits = Object.keys(best).map(function (k) { return best[k]; });
-      hits.sort(function (a, b) { return b[0] - a[0] || a[1].pg - b[1].pg; });
+      records.forEach(function (r, i) { r.i = i; });
+      var hits = search(records, terms), st = progress();
+      if (hitsEl) { showPage(hits, terms, st, again, query); return; }
       var total = hits.length;
-      hits = hits.slice(0, 12);
-      var html = hits.map(function (hp, n) {
-        var r = hp[1], j = -1;
-        for (var i = 0; i < terms.length && j < 0; i++) j = r.xl.indexOf(terms[i]);
-        var snip = j >= 0 ? (j > 50 ? '\u2026' : '') + r.x.slice(Math.max(0, j - 50), j + 90) : r.x.slice(0, 120);
+      hits = hits.slice(0, SHOWN);
+      var html = hits.map(function (h, n) {
+        var r = h.secs[0][1];
         return '<a role="option" id="search-opt-' + n + '" tabindex="-1" aria-selected="false" href="' +
-          esc(root + r.u + (r.a ? '#' + r.a : '')) + '">' + esc(r.t) +
-          (r.h ? '<span class="sec">' + esc(r.h) + '</span>' : '') + '<small>' + esc(snip) + '</small></a>';
+          esc(link(r, query)) + '">' + esc(r.t) +
+          (r.h ? '<span class="sec">' + esc(r.h) + '</span>' : '') + '<small>' + snippet(r, terms) + '</small></a>';
       }).join('');
-      var st = progress();
-      show(html, hits.length, st === 'loading' ? 'Searching the full text\u2026' :
+      if (allPage && total > hits.length) {
+        html += '<a role="option" id="search-opt-all" class="all" tabindex="-1" aria-selected="false" href="' +
+          esc(allResults(query)) + '">Show all ' + total + ' results</a>';
+      }
+      show(html, hits.length, st === 'loading' ? 'Searching the full text…' :
            st === 'failed' ? 'Part of the search index did not load. Type again to retry.' : hits.length ? '' : 'No results');
-      optPages = hits.map(function (hp) { return hp[1].pg; });
+      optPages = hits.map(function (h) { return h.pg; });
       if (keep >= 0 && optPages.indexOf(keep) >= 0) select(optPages.indexOf(keep));
       // Announced once per search, not again for every shard that arrives.
       if (again !== true || st !== 'loading') {
         say((total ? (total > hits.length ? 'Showing ' + hits.length + ' of ' + total + ' results' :
-                      total + (total === 1 ? ' result' : ' results')) + ', use the arrow keys to choose one' : 'No results') +
-            (st === 'loading' ? ', still searching the full text' :
-             st === 'failed' ? '. Part of the search index did not load; type again to retry' : ''));
+                      total + (total === 1 ? ' result' : ' results')) + ', use the arrow keys to choose one' +
+                     (allPage ? ' or press Enter for all results' : '') : 'No results') + note(st));
       }
     }, function () {
       if (my !== gen) return;
       pending = false;
-      show('', 0, 'Search is unavailable right now. Type again to retry.');
+      if (hitsEl) {
+        hitsEl.innerHTML = '<p>Search is unavailable right now. Type again to retry.</p>';
+        hitsEl.setAttribute('data-state', 'unavailable');
+      }
+      else show('', 0, 'Search is unavailable right now. Type again to retry.');
       say('Search is unavailable right now. Type again to retry.');
     });
   }
-  q.addEventListener('input', run);
-  q.addEventListener('focus', function () { if (q.value.trim() && !open) run(); });
-  q.addEventListener('keydown', function (e) {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (!open || !opts.length) { if (!pending && q.value.trim()) run(); return; }
-      var down = e.key === 'ArrowDown';
-      select(sel < 0 ? (down ? 0 : opts.length - 1) : Math.max(0, Math.min(opts.length - 1, sel + (down ? 1 : -1))));
-    } else if (e.key === 'Enter') {
-      // A section on this page only changes the fragment, so close before going.
-      if (open && sel >= 0) { e.preventDefault(); var go = opts[sel].getAttribute('href'); close(); location.href = go; }
-    } else if (e.key === 'Escape') {
-      // APG: Escape collapses an open popup (or cancels one still loading) and
-      // keeps the text; with nothing open it clears the text.
-      var visible = pop.style.display === 'block' || pending;
-      e.preventDefault();
-      close();
-      if (!visible && q.value) { q.value = ''; say(''); }
-    }
-  });
+  function param(name) {
+    var m = new RegExp('[?&]' + name + '=([^&#]*)').exec(location.search || '');
+    try { return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : ''; } catch (e) { return ''; }
+  }
+  if (hitsEl) {
+    // On the results page the box searches the page itself; there is no popup.
+    ['role', 'aria-autocomplete', 'aria-expanded', 'aria-activedescendant'].forEach(function (a) { q.removeAttribute(a); });
+    q.setAttribute('aria-controls', 'search-page');
+    q.value = param('q');
+    // Typing re-searches once the reader pauses, not on every keystroke.
+    var typing = 0;
+    q.addEventListener('input', function () { clearTimeout(typing); typing = setTimeout(run, 150); });
+    hitsEl.addEventListener('click', function (e) {
+      if (!paged || !e.target || e.target.id !== 'search-more') return;
+      var from = paged.drawn;
+      paged.limit += BATCH;
+      drawPage(true);
+      // Focus moves to the first newly drawn result, where the reader was heading.
+      var next = hitsEl.querySelectorAll ? hitsEl.querySelectorAll('ol.hits > li > h2 > a')[from] : null;
+      if (next) next.focus();
+      say('Showing ' + paged.drawn + ' of ' + paged.hits.length + ' pages');
+    });
+    run();
+  } else {
+    q.addEventListener('input', run);
+    q.addEventListener('focus', function () { if (q.value.trim() && !open) run(); });
+    q.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!open || !opts.length) { if (!pending && q.value.trim()) run(); return; }
+        var down = e.key === 'ArrowDown';
+        select(sel < 0 ? (down ? 0 : opts.length - 1) : Math.max(0, Math.min(opts.length - 1, sel + (down ? 1 : -1))));
+      } else if (e.key === 'Enter') {
+        // A section on this page only changes the fragment, so close before going.
+        // With nothing chosen, Enter opens every result on the results page.
+        if (open && sel >= 0) { e.preventDefault(); var go = opts[sel].getAttribute('href'); close(); location.href = go; }
+        else if (allPage && parse(q.value).length) { e.preventDefault(); var all = allResults(q.value.trim()); close(); location.href = all; }
+      } else if (e.key === 'Escape') {
+        // APG: Escape collapses an open popup (or cancels one still loading) and
+        // keeps the text; with nothing open it clears the text.
+        var visible = pop.style.display === 'block' || pending;
+        e.preventDefault();
+        close();
+        if (!visible && q.value) { q.value = ''; say(''); }
+      }
+    });
+    document.addEventListener('click', function (e) { if (!e.target.closest('.search')) close(); });
+    list.addEventListener('click', function (e) { if (e.target.closest('[role=option]')) close(); });
+    q.addEventListener('blur', function (e) {
+      if (!e.relatedTarget || !e.relatedTarget.closest || !e.relatedTarget.closest('.search')) close();
+    });
+  }
   document.addEventListener('keydown', function (e) {
     if (e.key === '/' && document.activeElement !== q && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
       e.preventDefault(); q.focus();
     }
   });
-  document.addEventListener('click', function (e) { if (!e.target.closest('.search')) close(); });
-  list.addEventListener('click', function (e) { if (e.target.closest('[role=option]')) close(); });
-  q.addEventListener('blur', function (e) {
-    if (!e.relatedTarget || !e.relatedTarget.closest || !e.relatedTarget.closest('.search')) close();
-  });
+  // Lowercases text one code point at a time and records where each lowercase
+  // offset came from, so a match found in lowercase marks the same characters
+  // in the original even where lowercasing changes the length (İ becomes two).
+  function lowered(text) {
+    var low = '', at = [], i = 0;
+    for (var ch of text) {
+      var l = ch.toLowerCase();
+      for (var k = 0; k < l.length; k++) at.push(i);
+      low += l;
+      i += ch.length;
+    }
+    at.push(text.length);
+    return { low: low, at: at };
+  }
+  // A page opened from a search result (?highlight=) marks the first match in
+  // the linked section: from its heading to the next H2 or H3, or the text
+  // before the first one when the link has no fragment. The section's text is
+  // read as the index reads it (text nodes joined, whitespace collapsed), so a
+  // phrase that runs into inline code still matches; the match is then marked
+  // in each text node it covers. A whole-word match is preferred to one inside
+  // a longer word. Only text nodes are split, so code keeps its text, and
+  // diagrams, scripts and the title are never touched.
+  var BLOCK = 'p, li, td, th, pre, blockquote, dd, dt, figcaption, h1, h2, h3, h4, h5, h6, div, article';
+  var SPACES = /[ \n\t\r\f\u00a0]+/g, SPACE = /[ \n\t\r\f\u00a0]/;
+  // A text node's text as the index reads it: whitespace runs as one space, and
+  // none at all after a space that came before it.
+  function collapse(v, prev) {
+    var c = v.replace(SPACES, ' ');
+    return prev === ' ' && c[0] === ' ' ? c.slice(1) : c;
+  }
+  // The raw offset in v of collapsed character k (or the offset just past it,
+  // for the end of a range), walking the same rule as collapse().
+  function rawAt(v, prev, k, after) {
+    var seen = -1, ws = false, p = prev;
+    for (var i = 0; i < v.length; i++) {
+      ws = SPACE.test(v[i]);
+      if (ws && p === ' ') continue;
+      p = ws ? ' ' : v[i];
+      if (++seen === k) return after ? i + 1 : i;
+    }
+    return v.length;
+  }
+  function markMatch() {
+    var terms = parse(param('highlight')), art = document.querySelector('article');
+    if (!terms.length || !art || !document.createTreeWalker) return;
+    var id = '', start = null, inside = true;
+    try { id = decodeURIComponent((location.hash || '').slice(1)); } catch (e) { return; }
+    if (id) {
+      start = document.getElementById(id);
+      if (!start || !art.contains(start)) return;
+      inside = false;
+    }
+    // Each text node contributes its text with whitespace collapsed, and `parts`
+    // records where each begins in the joined text, one entry per node. Raw
+    // offsets are worked out afterwards, and only for the nodes the match covers.
+    var walk = document.createTreeWalker(art, 5 /* elements and text */), n, parts = [], pieces = [], len = 0,
+        prev = ' ', block = null;
+    while ((n = walk.nextNode())) {
+      if (n.nodeType === 1) {
+        if (n === start) inside = true;
+        else if (/^H[1-3]$/.test(n.tagName) && (start || n.tagName !== 'H1')) { if (inside) break; }
+        continue;
+      }
+      if (!inside || n.parentNode.closest('h1, script, style, svg, pre.mermaid, mark')) continue;
+      var b = n.parentNode.closest(BLOCK);
+      if (b !== block && prev !== ' ') { pieces.push(' '); len++; prev = ' '; }   // blocks part words
+      block = b;
+      var c = collapse(n.nodeValue, prev);
+      if (!c) continue;
+      parts.push({ n: n, at: len, before: prev, len: c.length });
+      pieces.push(c);
+      len += c.length;
+      prev = c[c.length - 1];
+    }
+    var txt = pieces.join(''), low = txt.toLowerCase(), at = null, best = null;
+    if (low.length !== txt.length) { var lw = lowered(txt); low = lw.low; at = lw.at; }   // İ and friends
+    terms.forEach(function (t) {
+      var m = find(t, txt, low);
+      if (m && (!best || m.c > best.c || (m.c === best.c && m.a < best.a))) best = m;
+    });
+    if (!best) return;
+    // The raw characters the match covers, per text node, marked from the last node back.
+    var a = at ? at[best.a] : best.a, e = at ? at[best.b] : best.b, spans = [];
+    parts.forEach(function (pt) {
+      var from = Math.max(a, pt.at) - pt.at, to = Math.min(e, pt.at + pt.len) - pt.at;
+      if (from < to) spans.push({ n: pt.n, a: rawAt(pt.n.nodeValue, pt.before, from, false),
+                                  b: rawAt(pt.n.nodeValue, pt.before, to - 1, true) });
+    });
+    var first = null;
+    for (var s = spans.length - 1; s >= 0; s--) {
+      var hit = spans[s].n.splitText(spans[s].a);
+      hit.splitText(spans[s].b - spans[s].a);
+      var mk = document.createElement('mark');
+      mk.className = 'search-hit';
+      hit.parentNode.replaceChild(mk, hit);
+      mk.appendChild(hit);
+      first = mk;
+    }
+    // Scrolled into view at the next frame, when the page is laid out anyway:
+    // doing it now would force a layout of the whole page while it is still loading.
+    if (first && first.scrollIntoView) {
+      (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : setTimeout)(function () {
+        first.scrollIntoView({ block: 'nearest' });
+      });
+    }
+  }
+  // Choosing another section of the same page from its results only changes the
+  // fragment, so the page does not reload: the old mark goes and the new section
+  // is marked.
+  function remark() {
+    Array.prototype.forEach.call(document.querySelectorAll('mark.search-hit'), function (mk) {
+      var parent = mk.parentNode;
+      while (mk.firstChild) parent.insertBefore(mk.firstChild, mk);
+      parent.removeChild(mk);
+      parent.normalize();
+    });
+    markMatch();
+  }
+  if (typeof location.search === 'string') {
+    markMatch();
+    if (typeof window !== 'undefined') window.addEventListener('hashchange', remark);
+  }
   // Version picker. docs/versions.json lists main and every retained release
   // (scripts/site/releases.py); it stays hidden until there is a second version.
   // Switching keeps the reader on the same page when the other version has it.

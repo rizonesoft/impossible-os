@@ -113,3 +113,6 @@ debug-tmp/
 # gen-user-abi.py filters DEP_ONLY_FLAGS and test-tooling.sh strips -MMD/-MP.
 # If one reappears, find the probe that forgot to strip rather than widening
 # this ignore: a .d in the root always means a compile ran with the wrong cwd.
+
+# Docs accessibility audit dependencies (scripts/site/a11y/package-lock.json pins them)
+scripts/site/a11y/node_modules/

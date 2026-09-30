@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/14-host-tools/TODO-01-sdk-build-system.md sources=sdk/build.sh,sdk/src/ixfs-mount/Makefile,.gitignore reviewed=2026-09-30 order=1 -->
+<!-- docs: covers=todo/14-host-tools/TODO-01-sdk-build-system.md sources=sdk/build.sh,sdk/src/ixfs-mount/Makefile,.gitignore reviewed=2026-09-30T07:50 order=1 -->
 # SDK Build System
 
 ## What is it?

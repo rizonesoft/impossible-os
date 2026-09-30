@@ -76,7 +76,7 @@ Impossible OS implements behavior defined by external specifications. Implementi
 
 ## Development tools
 
-Tools used to build or validate Impossible OS are not redistributed with it and impose no attribution obligation on the shipped artifacts. They are acknowledged here as a matter of record: clang, ld.lld and llvm-addr2line (Apache-2.0 WITH LLVM-exception), NASM (BSD-2-Clause), QEMU (GPL-2.0), swtpm and libtpms (used only as a TPM test emulator, never linked or vendored), and OVMF/EDK2 firmware used for testing (BSD-2-Clause-Patent).
+Tools used to build or validate Impossible OS are not redistributed with it and impose no attribution obligation on the shipped artifacts. They are acknowledged here as a matter of record: clang, ld.lld and llvm-addr2line (Apache-2.0 WITH LLVM-exception), NASM (BSD-2-Clause), QEMU (GPL-2.0), swtpm and libtpms (used only as a TPM test emulator, never linked or vendored), OVMF/EDK2 firmware used for testing (BSD-2-Clause-Patent), and axe-core 4.13.0 (MPL-2.0) with playwright-core 1.63.0 (Apache-2.0), which audit the docs site's accessibility in CI and are pinned by `scripts/site/a11y/package-lock.json`.
 
 ### Vendored host tools
 

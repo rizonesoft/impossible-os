@@ -63,8 +63,44 @@ jobs:
         with:
           path: _site
 
+  # Every docs page in Chromium at a desktop and a phone width, light and dark:
+  # axe-core (WCAG 2.2 A/AA plus best practice) and the skip-link, focus and
+  # aria-current checks axe lacks, plus the search states. The control run first
+  # proves the audit reports planted defects. Runs beside the build; the deploy
+  # waits for both. Versions are pinned by scripts/site/a11y/package-lock.json.
+  a11y:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet PyYAML
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: scripts/site/a11y/package-lock.json
+
+      - name: Install the audit (axe-core, playwright-core and its Chromium)
+        run: |
+          npm ci --prefix scripts/site/a11y --no-audit --no-fund
+          node scripts/site/a11y/node_modules/playwright-core/cli.js install --with-deps chromium
+
+      - name: Build site
+        run: python3 scripts/site/build.py --out _site
+
+      - name: The audit reports planted defects (control)
+        run: node scripts/site/a11y/audit.mjs _site control
+
+      - name: Accessibility audit of every docs page
+        run: node scripts/site/a11y/audit.mjs _site
+
   deploy:
-    needs: build
+    needs: [build, a11y]
     runs-on: ubuntu-latest
     environment:
       name: github-pages

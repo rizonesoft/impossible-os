@@ -667,6 +667,7 @@ class Page:
     summary: str = ""                                  # first top-level paragraph (meta description)
     records: list[tuple[str, str, str]] = field(default_factory=list)  # search: (anchor, heading path, text)
     a11y: list[str] = field(default_factory=list)      # accessibility findings, reported for the current tree
+    noindex: bool = False                              # generated pages search engines should not list
 
 
 def out_path(url: str) -> str:
@@ -689,11 +690,22 @@ def page_url(rel: str) -> str:
 def make_md() -> MarkdownIt:
     md = MarkdownIt("commonmark", {"html": True, "linkify": False, "typographer": False})
     md.enable(["table", "strikethrough"])
-    # Every Markdown table scrolls inside its own wrapper on a narrow screen.
-    md.add_render_rule("table_open", lambda self, tokens, idx, options, env: '<div class="table-wrap"><table>\n')
+    # Every Markdown table scrolls inside its own wrapper on a narrow screen. The
+    # wrapper and every code block take focus, so a keyboard can scroll them too.
+    md.add_render_rule("table_open", lambda self, tokens, idx, options, env:
+                       '<div class="table-wrap" tabindex="0"><table>\n')
+    for name in ("fence", "code_block"):
+        md.add_render_rule(name, _focusable_pre(md.renderer.rules[name]))
     md.add_render_rule("table_close", lambda self, tokens, idx, options, env: "</table></div>\n")
     md.add_render_rule("blockquote_open", _render_blockquote_open)
     return md
+
+
+def _focusable_pre(default):
+    def render(self, tokens, idx, options, env) -> str:
+        out = default(tokens, idx, options, env)
+        return '<pre tabindex="0">' + out[len("<pre>"):] if out.startswith("<pre>") else out
+    return render
 
 
 ALERT_KINDS = ("NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION")
@@ -734,7 +746,8 @@ def mark_alerts_and_tasks(tokens) -> None:
                     kids[0].content = kids[0].content.lstrip()
         elif tok.type == "list_item_open" and para.hidden and first.content[:3] in ("[ ]", "[x]", "[X]"):
             box = Token("html_inline", "", 0)
-            box.content = f'<input type="checkbox"{" checked" if first.content[1] != " " else ""} disabled>'
+            box.content = (f'<input type="checkbox"{" checked" if first.content[1] != " " else ""} disabled '
+                           'aria-label="Task">')
             first.content = first.content[3:]
             tok.attrSet("class", "task")
             inline.children.insert(0, box)
@@ -1040,7 +1053,8 @@ class Renderer:
                         child.content = self.rewrite_raw_html(page, child.content)
             if tok.type == "fence" and tok.info.strip() == "mermaid":
                 tok.type = "html_block"
-                tok.content = f'<pre class="mermaid">{html.escape(self.pin_mermaid(page, tok.content))}</pre>\n'
+                tok.content = (f'<pre class="mermaid" tabindex="0">{html.escape(self.pin_mermaid(page, tok.content))}'
+                               '</pre>\n')
         page.anchors |= raw_anchors(tokens)
         mark_alerts_and_tasks(tokens)
         body = self.md.renderer.render(tokens, self.md.options, env)
@@ -1402,19 +1416,23 @@ def nav_html(pages: dict[str, Page], current: Page, rel_root: str) -> str:
 
     def emit(node: dict, prefix: str) -> None:
         items = sorted(node["pages"], key=lambda p: (0 if p.rel.endswith("index.md") else 1, p.order, p.title.lower()))
-        out.append("<ul>")
+        out.append("<ul>" + node.get("lead", ""))
         for p in items:
             if prefix and p.rel.endswith("index.md"):
                 continue
-            cls = ' class="active"' if p is current else ""
+            cls = ' class="active" aria-current="page"' if p is current else ""
             out.append(f'<li><a{cls} href="{rel_root}{p.url or "./"}">{html.escape(p.title)}</a></li>')
         for name in sorted(node["dirs"], key=lambda n: section_title(pages, prefix, n).lower()):
             sub = node["dirs"][name]
             idx = pages.get(f"{prefix}{name}/index.md")
             title = html.escape(section_title(pages, prefix, name))
             open_attr = " open" if current.rel.startswith(f"{prefix}{name}/") else ""
-            head = (f'<a href="{rel_root}{idx.url}">{title}</a>' if idx else title)
-            out.append(f"<li><details{open_attr}><summary>{head}</summary>")
+            # The summary only opens and closes the group: a link inside it would
+            # nest one control in another. The group's index page leads its list.
+            out.append(f"<li><details{open_attr}><summary>{title}</summary>")
+            if idx:
+                cur = ' class="active" aria-current="page"' if idx is current else ""
+                sub = dict(sub, lead=f'<li><a{cur} href="{rel_root}{idx.url}">Overview</a></li>')
             emit(sub, f"{prefix}{name}/")
             out.append("</details></li>")
         out.append("</ul>")
@@ -1432,7 +1450,7 @@ def toc_html(page: Page) -> str:
         return ""
     items = "".join(
         f'<li class="l{lvl}"><a href="#{slug}">{html.escape(t)}</a></li>' for lvl, slug, t in page.toc)
-    return f'<nav class="toc"><p>On this page</p><ul>{items}</ul></nav>'
+    return f'<nav class="toc" aria-label="On this page"><p>On this page</p><ul>{items}</ul></nav>'
 
 
 def site_url(facts: dict, path: str) -> str:
@@ -1469,6 +1487,8 @@ def render_page(tpl: str, facts: dict, pages: dict[str, Page], page: Page, updat
         # which version this page belongs to, and its path inside that version.
         "DOCS_VERSION": html.escape(RELEASE or "main"),
         "PAGE_PATH": html.escape(page.url),
+        # Kept out of search engines and so out of sitemap.xml: the results page.
+        "ROBOTS": '<meta name="robots" content="noindex">\n' if page.noindex else "",
     }
     # One pass over the TEMPLATE: text substituted in (a page body that mentions
     # %EDIT%, a title with %ROOT%) is never itself rescanned for placeholders.
@@ -1537,6 +1557,25 @@ def coverage_page(pages: dict[str, Page], covered: dict[str, list[str]], records
     p = Page(src=DOCS / "coverage.md", rel="coverage.md", url="coverage.html", title="Documentation coverage",
              order=9999)
     p.body = body
+    return p
+
+
+SEARCH_PAGE_MARK = 'data-search-page="search.html"'
+
+
+def results_page(tpl: str, pages: dict[str, Page], errors: list[str]) -> Page | None:
+    """The search results page, search.html?q=: every matching page and section,
+    filled in by the template's own search script. Generated only for a template
+    whose search box names it, so a release tree rendered with an older template
+    gets none. It is noindex, which also keeps it out of sitemap.xml."""
+    if SEARCH_PAGE_MARK not in tpl:
+        return None
+    for page in pages.values():
+        if page.url == "search.html":
+            errors.append(f"docs/{page.rel}: search.html is the generated search results page; rename this page")
+    p = Page(src=DOCS / "search.md", rel="search.md", url="search.html", title="Search", order=9999, noindex=True)
+    p.body = ('<h1 id="search">Search</h1>\n'
+              '<div id="search-page"><noscript><p>Searching the documentation needs JavaScript.</p></noscript></div>')
     return p
 
 
@@ -1812,6 +1851,7 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
                           "gh-pages/docs-template.html", errors)
     all_pages = dict(pages)
     all_pages[cov.rel] = cov
+    found = results_page(tpl, pages, errors)
     dates = last_updated()
     build.shallow = dates is None  # type: ignore[attr-defined]
     dates = dates or {}
@@ -1822,6 +1862,10 @@ def build(facts: dict, errors: list[str]) -> dict[str, bytes]:
         rendered = render_template(rendered, facts, f"docs/{page.rel}", []) if page is cov else rendered
         files[f"{DOCS_BASE}{out}"] = rendered.encode("utf-8")
         sources[f"{DOCS_BASE}{out}"] = "" if page is cov else f"docs/{page.rel}"
+    if found:
+        # Rendered against the pages it searches, and so absent from their navigation.
+        files[f"{DOCS_BASE}{found.url}"] = render_page(tpl, facts, all_pages, found).encode("utf-8")
+        sources[f"{DOCS_BASE}{found.url}"] = ""
     if landing:
         for name in ("sitemap.xml", "robots.txt"):
             if name in files:

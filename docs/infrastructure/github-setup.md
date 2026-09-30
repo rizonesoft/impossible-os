@@ -71,14 +71,14 @@ graph TD
 
 **Badges (shields.io):**
 
-| Badge         | Status                                              |             |
-| ------------- | --------------------------------------------------- | ----------- |
-| Build Status  | Deferred -- links to CI workflow when available      |             |
-| License       | `GPL-3.0-only`                                      |             |
-| Platform      | `x86_64`                                            |             |
-| Boot          | `UEFI`                                              |             |
-| Language      | `C                                                  | x86-64 ASM` |
-| Lines of Code | `84k+` -- auto-tracked via COUNT.md post-commit hook |             |
+| Badge         | Status                                               |
+| ------------- | ---------------------------------------------------- |
+| Build Status  | Deferred -- links to CI workflow when available      |
+| License       | `GPL-3.0-only`                                       |
+| Platform      | `x86_64`                                             |
+| Boot          | `UEFI`                                               |
+| Language      | `C \| x86-64 ASM`                                    |
+| Lines of Code | `84k+` -- auto-tracked via COUNT.md post-commit hook |
 
 ### CONTRIBUTING.md
 
@@ -224,13 +224,13 @@ graph LR
 | `docs/getting-started/virtualbox.md` | VirtualBox setup guide         |
 | `build/build.log`                    | Build log                      |
 
-| Setting        | Detail                                                  |      |             |
-| -------------- | ------------------------------------------------------- | ---- | ----------- |
-| Pre-release    | Auto-detected via regex: `-(alpha                       | beta | rc)` in tag |
-| Changelog      | `git log --pretty` between previous tag and HEAD        |      |             |
-| VDI conversion | `VBoxManage convertfromraw` (from `virtualbox` package) |      |             |
-| Permissions    | `contents: write` (for release creation)                |      |             |
-| LLVM cache     | Shared key with `build.yml`                             |      |             |
+| Setting        | Detail                                                    |
+| -------------- | --------------------------------------------------------- |
+| Pre-release    | Auto-detected via regex: `-(alpha\|beta\|rc)` in tag      |
+| Changelog      | `git log --pretty` between previous tag and HEAD          |
+| VDI conversion | `VBoxManage convertfromraw` (from `virtualbox` package)   |
+| Permissions    | `contents: write` (for release creation)                  |
+| LLVM cache     | Shared key with `build.yml`                               |
 
 ### Stale Issue Cleanup (`stale.yml`)
 

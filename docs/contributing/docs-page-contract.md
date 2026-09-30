@@ -1,4 +1,4 @@
-<!-- docs: order=1 sources=scripts/site/build.py reviewed=2026-09-30T04:40 -->
+<!-- docs: order=1 sources=scripts/site/build.py reviewed=2026-09-30T07:40 -->
 # Documentation Page Contract
 
 Every roadmap file under `todo/` gets at least one docs page, and every page follows this contract. A roadmap file is the plan; its docs page tells a user, contributor or operator what actually shipped, how to use it, and what is still missing. Start from the [page template](_template.md).
@@ -43,13 +43,14 @@ A page that documents code declares both `sources=` and `reviewed=`. The page is
 - Question-shaped H2 headings where natural ("How does X start?"), so the page answers what a reader searches for.
 - Every figure has a source: code, test output, or a specification section.
 - 400 to 1500 words per page. Split a larger topic into linked pages rather than letting one page grow.
+- In a table cell, write a literal `|` as `\|`, inside code too; a bare one starts a new column.
 - Link, do not copy. Point at the header, the roadmap section or the spec instead of pasting a struct or a table that will drift.
 - One H1 per page, first, and no skipped heading levels (an H2 is followed by an H3, not an H4). Write headings in Markdown, never raw HTML `<h2>`. Every image has alt text that says what it shows; raw HTML may use `alt=""` only for a purely decorative image. The build checks all three.
 - Prefer Markdown links and images. Raw HTML may link only with `href` on `<a>` and `src` on `<img>`, with plain presentational attributes (`alt`, `title`, `id`, `class`, `width`, `height`, `aria-*` and similar) and whitespace between a tag's name and its attributes; anything else, including `srcset`, `style`, raw-text elements such as `<script>`, `<style>`, `<noscript>` and `<iframe>`, `<svg>`, `<![` sections, `<!DOCTYPE>` and `<!-->` followed by more text, fails the build.
 
 ## Where does each domain's page go?
 
-Each roadmap domain maps to one docs folder. When a folder receives its first page, add an `index.md` for it too, since the navigation titles a folder from its index.
+Each roadmap domain maps to one docs folder. When a folder receives its first page, add an `index.md` for it too, since the navigation titles a folder from its index and lists the index first, as the folder's Overview.
 
 | Roadmap domain                 | Docs folder              |
 | ------------------------------ | ------------------------ |

@@ -1,0 +1,11 @@
+{
+  "name": "impossible-os-docs-a11y",
+  "private": true,
+  "description": "Automated accessibility audit of the built docs site (see docs/infrastructure/docs-search-and-accessibility.md). Dev-only: never part of the site or the OS image.",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "dependencies": {
+    "axe-core": "4.13.0",
+    "playwright-core": "1.63.0"
+  }
+}

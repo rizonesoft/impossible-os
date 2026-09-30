@@ -6,17 +6,25 @@
 //         "steps": [["input", "text"] | ["key", "ArrowDown"] | ["blur", null] | ["click", <option index>] |
 //                   ["flush", null] | ["wait", <ms>] | ["snap", "label"]],
 //         "fail_once": ["name of a file whose first fetch fails", ...],
+//         "stall_once": ["name of a file whose first fetch never answers", ...],
 //         "delay": {"file name": <ms before its fetch answers>},
 //         "files2": {the files a ["deploy", null] step swaps in},
 //         "version": {"version": "<data-version>", "page": "<data-page>"} adds the version picker,
 //         "heads": ["full URL a HEAD request finds", ...],
-//         "head_delay": {"full URL": <ms before its HEAD answers>}, "head_fail": ["full URL whose HEAD rejects", ...]}
+//         "head_delay": {"full URL": <ms before its HEAD answers>}, "head_fail": ["full URL whose HEAD rejects", ...],
+//         "attrs": {"q": {"data-search-page": "search.html"}} sets attributes before the script runs,
+//         "page": {"search": "?q=..."} makes this the search results page, opened at that query string,
+//         "deadline_ms": <ms> stands in for the page's 15 s shard deadline}
+// Results page step: ["more", null] presses its "Show more results" button.
 // Version picker steps: ["change", <option index>] picks a version; ["note-click", null] follows the
 // old-version notice's link.
-// stdout: {"snaps": {"label": {expanded, active, shown, options: [{id, href, selected, text}], msg, status, href, renders,
+// stdout: {"snaps": {"label": {expanded, active, shown, options: [{id, href, selected, text, html}], msg, status, href, renders,
+//                               page: the results page's HTML, pageRenders: times it was drawn,
+//                               url: its last history.replaceState URL, value: the box's text,
 //                               picker: {hidden, options: [{value, text, selected}]}}},
 //          "errors": [every unhandled promise rejection, which the page would swallow silently],
-//          "fetches": {"file name": times fetched}, "revalidated": {"file name": times fetched with cache: no-cache}}
+//          "fetches": {"file name": times fetched}, "revalidated": {"file name": times fetched with cache: no-cache},
+//          "aborted": {"file name": times the page aborted a request for it}}
 'use strict';
 const vm = require('vm');
 
@@ -24,6 +32,7 @@ const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const errors = [];
 process.on('unhandledRejection', (e) => errors.push(String(e && e.stack || e)));
 const failOnce = new Set(input.fail_once || []);
+const stallOnce = new Set(input.stall_once || []);
 
 function unescape(s) {
   return s.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -54,6 +63,7 @@ class El {
       o.inSearch = true;
       o.attrs = { role: 'option', 'aria-selected': 'false', href: unescape(m[2]) };
       o.text = unescape(m[3].replace(/<[^>]+>/g, ' '));
+      o.html = m[3];
       this.options.push(o);
     }
   }
@@ -68,6 +78,8 @@ const els = {};
   els[id].inSearch = id !== 'theme';
 });
 els.q.tagName = 'INPUT';
+Object.entries((input.attrs || {}).q || {}).forEach(([k, v]) => els.q.setAttribute(k, v));
+if (input.page) els['search-page'] = new El('search-page');
 if (input.version) {
   els.version = new El('version');
   els.version.hidden = true;
@@ -86,10 +98,12 @@ const doc = {
   head: { appendChild() {} },
 };
 doc.activeElement = { tagName: 'BODY' };
-const loc = { href: 'start' };
+const loc = { href: 'start', search: input.page ? input.page.search : undefined, pathname: '/docs/search.html' };
+const hist = { url: null, replaceState(state, title, url) { this.url = url; } };
 
 const fetches = {};
 const revalidated = {};
+const aborted = {};
 function fetchStub(url, opts) {
   if (opts && opts.method === 'HEAD') {
     const found = (input.heads || []).includes(url);
@@ -100,7 +114,17 @@ function fetchStub(url, opts) {
   const name = url.replace(/^.*\//, '');
   fetches[name] = (fetches[name] || 0) + 1;
   if (opts && opts.cache === 'no-cache') revalidated[name] = (revalidated[name] || 0) + 1;
-  return new Promise((resolve) => setTimeout(() => {
+  // An abort rejects a request still waiting and is counted whenever it comes,
+  // including after an error status arrived (its body is then never read).
+  let rejectIt = null;
+  if (opts && opts.signal) {
+    opts.signal.addEventListener('abort', () => {
+      aborted[name] = (aborted[name] || 0) + 1;
+      if (rejectIt) rejectIt(new Error('AbortError'));
+    });
+  }
+  if (stallOnce.has(name)) { stallOnce.delete(name); return new Promise((_, reject) => { rejectIt = reject; }); }   // never answers
+  return new Promise((resolve, reject) => { rejectIt = reject; later(() => {
     if (failOnce.has(name)) {
       failOnce.delete(name);
       resolve({ ok: false, status: 503, json: () => Promise.reject(new Error('503')) });
@@ -111,12 +135,21 @@ function fetchStub(url, opts) {
     } else {
       resolve({ ok: true, status: 200, json: () => Promise.resolve(JSON.parse(input.files[name])) });
     }
-  }, (input.delay || {})[name] || 1));
+  }, (input.delay || {})[name] || 1); });
 }
+// A long timer (a stalled fetch, the page's shard deadline) never keeps the
+// harness alive; "deadline_ms" shortens the page's own long timers so a test can
+// reach the deadline without waiting 15 s.
+function later(f, ms) {
+  const t = setTimeout(f, ms);
+  if (ms >= 10000) t.unref();
+  return t;
+}
+function pageTimeout(f, ms) { return later(f, ms >= 10000 && input.deadline_ms ? input.deadline_ms : ms); }
 
 const ctx = vm.createContext({
-  document: doc, location: loc, fetch: fetchStub, localStorage: { setItem() {} },
-  matchMedia: () => ({ matches: false }), setTimeout, Promise, Array, Object, JSON, Math, Error,
+  document: doc, location: loc, history: hist, fetch: fetchStub, RegExp, localStorage: { setItem() {} },
+  matchMedia: () => ({ matches: false }), setTimeout: pageTimeout, clearTimeout, Promise, AbortController, Array, Object, JSON, Math, Error,
 });
 vm.runInContext(input.script, ctx);
 
@@ -132,7 +165,11 @@ function snap() {
     active: els.q.getAttribute('aria-activedescendant'),
     shown: els['results-pop'].style.display === 'block',
     options: list.options.map((o) => ({ id: o.id, href: o.getAttribute('href'),
-                                        selected: o.getAttribute('aria-selected'), text: o.text })),
+                                        selected: o.getAttribute('aria-selected'), text: o.text, html: o.html })),
+    page: els['search-page'] ? els['search-page'].innerHTML : null,
+    pageRenders: els['search-page'] ? els['search-page'].renders : null,
+    url: hist.url,
+    value: els.q.value,
     msg: els['results-msg'].hidden ? '' : els['results-msg'].textContent,
     status: els['search-status'].textContent,
     href: loc.href,
@@ -154,6 +191,7 @@ function snap() {
     else if (op === 'key') key(arg);
     else if (op === 'blur') els.q.fire('blur', { relatedTarget: null });
     else if (op === 'click') els.results.fire('click', { target: els.results.options[arg] });
+    else if (op === 'more') els['search-page'].fire('click', { target: { id: 'search-more' } });
     else if (op === 'deploy') input.files = input.files2;          // the site is redeployed under the page
     else if (op === 'change') { els.version.value = els.version.children[arg].value; els.version.fire('change', {}); }
     else if (op === 'note-click') {
@@ -164,5 +202,5 @@ function snap() {
     else if (op === 'wait') await new Promise((r) => setTimeout(r, arg));
     else if (op === 'snap') snaps[arg] = snap();
   }
-  process.stdout.write(JSON.stringify({ snaps, errors, fetches, revalidated }));
+  process.stdout.write(JSON.stringify({ snaps, errors, fetches, revalidated, aborted }));
 })();

@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md sources=project.json,docs/infrastructure/repository-transfer-preflight.md,docs/infrastructure/repository-move-back-runbook.md,.github/workflows/pages.yml reviewed=2026-09-30 order=10 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md sources=project.json,docs/infrastructure/repository-transfer-preflight.md,docs/infrastructure/repository-move-back-runbook.md,.github/workflows/pages.yml reviewed=2026-09-30T07:50 order=10 -->
 # Repository Ownership and Transfers
 
 ## Where does the repository live?

@@ -81,7 +81,7 @@ file_patterns:
 | ⭐  |  28   | §28 Review-class nets for site tooling: real parsers, scheduler stress   | §23                         |  [x]   |
 | 💎  |  29   | §29 Retained release trees: snapshots, manifest, live verification       | §24                         |  [x]   |
 | 💎  |  30   | §30 SDK release docs and API reference                                   | §29, D12 T06 §2, D12 T06 §8 |  [/]   |
-| 💎  |  31   | §31 Docs search quality and automated accessibility audit                | §25                         |  [ ]   |
+| 💎  |  31   | §31 Docs search quality and automated accessibility audit                | §25                         |  [x]   |
 | ⭐  |  32   | §32 Review-class nets: fail direction and bounded waits in site tooling  | §28, §29                    |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
@@ -1198,7 +1198,7 @@ Search drops content today: the indexer keeps only plain `text` tokens (inline c
 > - Shipped: per-section full-text records, a manifest plus content-addressed shards (2,667 records, six shards, 2.8 MB, 0.9 MB gzipped, measured 2026-09-29) and an ARIA 1.2 combobox.
 > - Integrates through `search_layout()`: a template carrying `data-search-index="2"` gets v2; an older release template keeps the flat index it was published with.
 > - A11y findings fail only the current tree (like `check_design_lines`); the corpus had zero violations when the check landed.
-> - Canonical doc: `docs/infrastructure/documentation-site.md` "How does the docs search work?"; style rule in `docs/contributing/docs-page-contract.md`.
+> - Canonical doc: `docs/infrastructure/docs-search-and-accessibility.md` "How does the docs search work?"; style rule in `docs/contributing/docs-page-contract.md`.
 > - Out of scope: the screen-reader pass is operator-gated; landing pages under `gh-pages/` are not checked by `a11y_findings()`.
 > **Verified:** 2026-09-30 | commit `c73146aa3` | 6/7 items (screen-reader pass operator-gated) | build OK | site tests 103/103 PASS, kernel 34646 + 17 user PASS; planted missing alt and H2 to H4 skip reported by the check mode
 > **Quality reviewed:** 2026-09-30 | Codex 37x (design, test-coverage, adversarial x12, re-adversarial, consistency x11, perf x11) | 2H+26M fixed, 0 open | scope: N/A (host site tooling and docs; no kernel, boot or desktop code)
@@ -1412,15 +1412,24 @@ The SDK has its own release line (`sdk/v*` tags from D12 T06 §8 `release-sdk.sh
 
 The §25 index finds every word, but ranking is plain substring matching with three fixed weights, nothing is highlighted, and the only accessibility checks are static structure rules. Parity research on 2026-09-30 compared it with Sphinx and Read the Docs search, which highlight matches on the target page and offer a results page.
 
-- [ ] Highlight matches: `<mark>` the query terms in result snippets, and pass `?highlight=` so the opened page marks the first match in the linked section
-- [ ] Ranking: prefer whole-word and identifier-boundary matches over substrings, support a `"quoted phrase"`, and decide on stemming after measuring precision on the live corpus
-- [ ] Results page: `search.html?q=` lists every hit, not only 12, allows more than one section per page, and can be shared by URL
-- [ ] Automated WCAG audit of the built docs pages in CI (axe-core or pa11y, pinned per the vendor-first rule): contrast, focus visibility, landmarks, a skip link, `aria-current` in the navigation
-- [ ] Discoverability: show the `/` shortcut in a hint, and check the search box and results on narrow screens
-- [ ] Tests: harness cases for highlighting and whole-word ranking; the audit fails on a fixture page with a planted contrast error
-- [ ] Commit: `"site: search highlighting, ranking and automated accessibility audit"`
+- [x] Highlight: `snippet()` marks every term (each slice escaped alone); links carry `?highlight=`, and `markMatch()` marks the first match in the linked section, word first
+- [x] Ranking: `score()` ranks terms-matched-as-words, then word, stem and substring weights; identifier and camelCase parts are words; `"phrases"`; lemma-bounded stemming chosen by measurement
+- [x] Results page: `results_page()` emits noindex `search.html`; it lists every page and all matching sections, keeps `?q=` current; popup Enter or "Show all" opens it
+- [x] WCAG audit: `scripts/site/a11y/audit.mjs` runs axe-core 4.13.0 via playwright-core 1.63.0 (lockfile-pinned) on every page x 2 widths x 2 themes, plus skip-link, focus and aria-current checks; pages.yml `a11y` job
+- [x] Discoverability: a `/` key hint with `aria-keyshortcuts`; below 820px the popup spans the screen and the closed nav drawer is `inert`; the audit runs at 375px
+- [x] Tests: harness ranking, parsing, snippet and results-page cases; browser tests of the marked match; the audit's control fails unless 16 planted defects (contrast, focus, skip link, aria-current) are reported
+- [x] Commit: `"site: search highlighting, ranking and automated accessibility audit"`
 
 **Test checkpoint:** searching `map` on the local build ranks a page naming the `map` identifier above one that only says `bitmap`; the opened page marks the match; the CI audit reports a planted contrast failure. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
+
+> **Test runner:** `python3 scripts/site/tests/test_build.py SearchAndAccessibility` (ranking, snippets, results page) and `ReleaseDocs.test_in_a_browser_the_match_is_marked_and_the_audit_catches_planted_defects` (skips without `npm ci --prefix scripts/site/a11y`); full audit `node scripts/site/a11y/audit.mjs <site dir>`.
+
+> **Notes:**
+> - Shipped: coverage-first word/stem/substring ranking, phrases, marked snippets and destinations, `search.html` results page, and a Chromium audit (axe-core plus skip-link, focus and aria-current checks).
+> - The first audit found 38,653 violations, all fixed at source: muted text at 4.41:1, links nested in nav `<summary>`, colour-only links, unscrollable code and tables, unlabelled task boxes, light alert titles.
+> - Stemming measured on 308 pages: 270 of 300 inflected queries missed base-form pages; a plain stem is 86.2% precise, so only a stem ending a word (plus an inflection) counts, ranked below exact words.
+> - Canonical doc: `docs/infrastructure/docs-search-and-accessibility.md`; pages.yml's deploy needs the `a11y` job (control first, about five minutes).
+> - Out of scope: the NVDA/Orca screen-reader pass stays operator-gated in §25; landing pages under `gh-pages/` are not audited.
 
 ---
 
@@ -1452,10 +1461,10 @@ Promotion of two review classes into automation under the reviewer-to-automation
 | ⭐  | Facts derived from one source    | ❌ Manual                | ❌ Manual                  | ✅ §1 `project.json`      |
 | ⭐  | Stale narrative page detection   | ❌ Review dates          | ❌ Not tracked             | ✅ §22 `sources=` warns   |
 | 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ✅ §24 renders, §29 keeps |
-| 💎  | Site search                      | ✅ Full search           | ✅ Sphinx search           | ⚠️ §25 text, §31 ranking  |
+| 💎  | Site search                      | ✅ Full search           | ✅ Sphinx search           | ✅ §25 text, §31 ranking  |
 | 💎  | External link rot check          | ✅ Learn link validation | ✅ Sphinx `linkcheck`      | ✅ §23 weekly workflow    |
 | 💎  | Published API reference          | ✅ Learn API reference   | ✅ kernel-doc              | ⬜ §30 from D12 T06 §2    |
-| 💎  | Accessible docs UI               | ✅ WCAG conformance      | ⚠️ Theme-dependent         | ⚠️ §25 ARIA, SR test open |
+| 💎  | Accessible docs UI               | ✅ WCAG conformance      | ⚠️ Theme-dependent         | ✅ §31 axe in CI, SR open |
 
 > **After §1-§3:** the pipeline, the gate and the page contract exist; coverage is measured and cannot regress.
 > **After §4-§21, §26 and §27:** every roadmap file is documented and the baseline is empty (9 files remain after §26, all §27's).
@@ -1478,6 +1487,7 @@ Promotion of two review classes into automation under the reviewer-to-automation
   - `gen_theme_header.check()` is empty on the committed tree
   - Scripts that do not parse, GitHub About-box validation and diff, and feature cards (open-section count, escaping, dead owner, untracked source, dash)
   - Freshness on a throwaway repo: stale then fresh after a revert, deletion under a source directory, committed and uncommitted pure renames, a merge resolution as baseline, raw file names, literal pathspecs, editing vs merge, per-card baselines, `reviewed` bumps, merged card sources
+  - §31: ranking (a word beats a substring, every term as a word first, phrases, stems), marked snippets, the results page, and a browser test of the marked match and the audit control
 - [ ] Extend `scripts/site/tests/test_build.py` with the §24/§29/§30 cases (ref-pinned links, release retention across deploys, `sdk/v*` namespace) and the §25 cases (inline-code search hit, match past 4,000 chars, missing alt, heading skip)
 - [x] Register the suite in `scripts/test-tooling.sh` (runs on every tooling pass; it takes about 2 s, so it is not path-scoped)
 - [x] Commit: `"test: site generator unit tests"` (landed with the section 1-2 review)

@@ -21,6 +21,7 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+A11Y = HERE.parent / "a11y"                     # the browser audit (npm ci --prefix scripts/site/a11y)
 sys.path.insert(0, str(HERE.parent))
 
 import build as B  # noqa: E402
@@ -230,6 +231,11 @@ class Scripts(unittest.TestCase):
         self.assertEqual(errors, [])
 
 
+def bare(href: str) -> str:
+    """A result link without its ?highlight= query: the page and section it opens."""
+    return re.sub(r"\?highlight=[^#]*", "", href)
+
+
 class SearchAndAccessibility(unittest.TestCase):
     LONG = "Filler words for a long page. " * 160          # ~4,800 characters: past the old 4,000 cut
     PAGE = ("# API\n\nIntro text.\n\n## Prerequisites\n\nInstall things.\n\n### Fedora\n\n"
@@ -369,8 +375,8 @@ class SearchAndAccessibility(unittest.TestCase):
         self.assertEqual(len(script), 1)
         script = script[0].replace("%ROOT%", "")
 
-        def drive(steps, fail_once=(), delay=None, missing=(), files2=None, cached=None):
-            payload = {"script": script, "cached": cached or {},
+        def drive(steps, fail_once=(), delay=None, missing=(), files2=None, cached=None, attrs=None, page=None):
+            payload = {"script": script, "cached": cached or {}, "attrs": attrs or {}, "page": page,
                        "files": {k: v.decode("utf-8") for k, v in files.items() if k not in missing},
                        "files2": {k: v.decode("utf-8") for k, v in (files2 or {}).items()},
                        "steps": steps, "fail_once": list(fail_once), "delay": delay or {}}
@@ -394,19 +400,19 @@ class SearchAndAccessibility(unittest.TestCase):
         self.assertFalse(s["dismissed"]["shown"])                            # a late load does not reopen
         found = s["found"]
         self.assertEqual(found["expanded"], "true")
-        self.assertEqual([o["href"] for o in found["options"]], ["api.html#fedora"])
+        self.assertEqual([bare(o["href"]) for o in found["options"]], ["api.html#fedora"])
         self.assertIsNone(found["active"])
         self.assertIn("1 result", found["status"])
         self.assertEqual(s["selected"]["active"], "search-opt-0")
         self.assertEqual(s["selected"]["options"][0]["selected"], "true")
-        self.assertEqual(s["hidden-enter"]["href"], "start")                 # Escape then Enter goes nowhere
+        self.assertEqual(bare(s["hidden-enter"]["href"]), "start")                 # Escape then Enter goes nowhere
         self.assertEqual(s["hidden-enter"]["expanded"], "false")
         self.assertIsNone(s["hidden-enter"]["active"])
-        self.assertEqual(s["unselected-enter"]["href"], "start")
-        self.assertEqual(s["chosen"]["href"], "api.html#fedora")
+        self.assertEqual(bare(s["unselected-enter"]["href"]), "start")
+        self.assertEqual(bare(s["chosen"]["href"]), "api.html#fedora")
         self.assertEqual((s["chosen"]["expanded"], s["chosen"]["shown"], s["chosen"]["active"]),
                          ("false", False, None))                      # a same-page fragment does not reload
-        self.assertEqual([o["href"] for o in s["late"]["options"]], ["api.html#late"])
+        self.assertEqual([bare(o["href"]) for o in s["late"]["options"]], ["api.html#late"])
         self.assertEqual((s["none"]["options"], s["none"]["msg"], s["none"]["status"], s["none"]["expanded"]),
                          ([], "No results", "No results", "false"))
         self.assertFalse(s["blurred"]["shown"])
@@ -421,16 +427,16 @@ class SearchAndAccessibility(unittest.TestCase):
             "move.md": "# Wombat guide\n\n## Alpha\n\nx\n\n## Beta\n\nthe wombat lives here.\n"})
         files = B.search_files(pages, "v2", errors)
         s = drive([["input", "quokka"], ["flush", None], ["snap", "ranked"]])
-        self.assertEqual([o["href"] for o in s["ranked"]["options"]],
+        self.assertEqual([bare(o["href"]) for o in s["ranked"]["options"]],
                          ["title.html", "head.html#the-quokka-section", "body.html"])
         # The selected page stays selected when its shard moves the best section (and so the href).
         late_shard = json.loads(files["search.json"])["shards"][0][0]
         s = drive([["input", "wombat"], ["flush", None], ["key", "ArrowDown"], ["snap", "pre"], ["wait", 400],
                    ["snap", "moved"], ["key", "Enter"], ["snap", "went"]], delay={late_shard: 300})
-        self.assertEqual([o["href"] for o in s["pre"]["options"]], ["move.html"])        # title only, so far
-        self.assertEqual(s["moved"]["options"][0]["href"], "move.html#beta")
+        self.assertEqual([bare(o["href"]) for o in s["pre"]["options"]], ["move.html"])        # title only, so far
+        self.assertEqual(bare(s["moved"]["options"][0]["href"]), "move.html#beta")
         self.assertEqual((s["moved"]["active"], s["moved"]["options"][0]["selected"]), ("search-opt-0", "true"))
-        self.assertEqual(s["went"]["href"], "move.html#beta")
+        self.assertEqual(bare(s["went"]["href"]), "move.html#beta")
 
         shard = json.loads(files["search.json"])["shards"][0][0]
         s = drive([["input", "zebrafinch"], ["flush", None], ["snap", "failed"],
@@ -438,24 +444,24 @@ class SearchAndAccessibility(unittest.TestCase):
         self.assertIn("did not load", s["failed"]["msg"])                  # body text lives in the failed shard
         self.assertIn("type again to retry", s["failed"]["status"])
         self.assertEqual(s["failed"]["options"], [])
-        self.assertEqual([o["href"] for o in s["retried"]["options"]], ["api.html#late"])
+        self.assertEqual([bare(o["href"]) for o in s["retried"]["options"]], ["api.html#late"])
         self.assertEqual(s["retried"]["msg"], "")
         s = drive([["input", "zebrafinch"], ["flush", None], ["snap", "failed"],
                    ["input", "zebrafinch"], ["flush", None], ["snap", "retried"]], fail_once=["search.json"])
         self.assertIn("unavailable", s["failed"]["msg"])
-        self.assertEqual([o["href"] for o in s["retried"]["options"]], ["api.html#late"])
+        self.assertEqual([bare(o["href"]) for o in s["retried"]["options"]], ["api.html#late"])
         self.assertEqual(drive.revalidated.get("search.json"), 1)   # the retry bypasses a cached manifest
 
         # Progressive: a title match shows while the shard is still loading, and a
         # search dismissed meanwhile stays closed when the shard lands.
         s = drive([["input", "api"], ["flush", None], ["snap", "early"], ["wait", 400], ["snap", "full"],
                    ["input", "zebrafinch"], ["flush", None], ["snap", "cached"]], delay={shard: 300})
-        self.assertIn("api.html", [o["href"] for o in s["early"]["options"]])
+        self.assertIn("api.html", [bare(o["href"]) for o in s["early"]["options"]])
         self.assertIn("Searching the full text", s["early"]["msg"])
         self.assertIn("still searching", s["early"]["status"])
         self.assertEqual(s["full"]["msg"], "")
         self.assertNotIn("still searching", s["full"]["status"])
-        self.assertEqual([o["href"] for o in s["cached"]["options"]], ["api.html#late"])
+        self.assertEqual([bare(o["href"]) for o in s["cached"]["options"]], ["api.html#late"])
         s = drive([["input", "api"], ["flush", None], ["key", "Escape"], ["wait", 400], ["snap", "dismissed"]],
                   delay={shard: 300})
         self.assertFalse(s["dismissed"]["shown"])
@@ -474,7 +480,7 @@ class SearchAndAccessibility(unittest.TestCase):
                    ["input", "kiwibird"], ["flush", None], ["flush", None], ["snap", "redeployed"]],
                   delay={shard: 300}, files2=files2)
         self.assertIn("did not load", s["stale"]["msg"])
-        self.assertEqual([o["href"] for o in s["redeployed"]["options"]], ["api.html#late"])
+        self.assertEqual([bare(o["href"]) for o in s["redeployed"]["options"]], ["api.html#late"])
         self.assertEqual((drive.fetches.get(new_shard), drive.fetches["search.json"]), (1, 2))
         # A browser still caching the flat index of an older deploy recovers on the
         # next typed search, which revalidates the manifest.
@@ -485,7 +491,7 @@ class SearchAndAccessibility(unittest.TestCase):
                    ["input", "kiwibird"], ["flush", None], ["flush", None], ["snap", "fresh"]],
                   cached={"search.json": flat})
         self.assertIn("unavailable", s["cached"]["msg"])
-        self.assertEqual([o["href"] for o in s["fresh"]["options"]], ["api.html#late"])
+        self.assertEqual([bare(o["href"]) for o in s["fresh"]["options"]], ["api.html#late"])
         files = kept
         # One shard failed while another is still pending: the typed retry does not wait for it.
         B.SEARCH_SHARD_TARGET = 300
@@ -504,15 +510,268 @@ class SearchAndAccessibility(unittest.TestCase):
         self.assertGreaterEqual(len(json.loads(files["search.json"])["shards"]), 5)
         s = drive([["input", "api"], ["wait", 200], ["snap", "burst"]])
         self.assertLessEqual(s["burst"]["renders"], 3, s["burst"])            # manifest pass + coalesced shard pass(es)
-        self.assertIn("api.html", [o["href"] for o in s["burst"]["options"]])
+        self.assertIn("api.html", [bare(o["href"]) for o in s["burst"]["options"]])
         files = kept
         # A typed query never lets the last query's selection be chosen while its results load.
         s = drive([["input", "api"], ["wait", 100], ["key", "ArrowDown"], ["snap", "old"],
                    ["input", "zebrafinch"], ["key", "ArrowDown"], ["key", "Enter"], ["snap", "during"]],
                   missing=[names[0]], delay={"search.json": 50})
         self.assertEqual(s["old"]["active"], "search-opt-0")
-        self.assertEqual((s["during"]["href"], s["during"]["active"], s["during"]["expanded"]), ("start", None, "false"))
+        self.assertEqual((bare(s["during"]["href"]), s["during"]["active"], s["during"]["expanded"]), ("start", None, "false"))
         self.assertEqual(s["during"]["options"], [])                         # old links are gone, not just unselected
+
+    def harness(self, files, steps, **kw):
+        tpl = (B.REPO_REAL / "gh-pages" / "docs-template.html").read_text(encoding="utf-8")
+        script = [m for m in re.findall(r"<script>(.*?)</script>", tpl, re.S) if "search.json" in m][0]
+        payload = {"script": script.replace("%ROOT%", ""), "files": {k: v.decode("utf-8") for k, v in files.items()},
+                   "steps": steps, **kw}
+        r = subprocess.run(["node", str(HERE / "search_harness.js")], input=json.dumps(payload),
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)
+        self.assertEqual(out["errors"], [])
+        self.fetches, self.aborted = out["fetches"], out["aborted"]
+        return out["snaps"]
+
+    def test_navigation_marks_the_current_page_and_leads_each_folder_with_its_overview(self):
+        pages, _ = self.pages({"kernel/sched.md": "# Scheduler\n\nx\n"})
+        for rel, target in (("index.md", "./"), ("kernel/index.md", "kernel/"), ("kernel/sched.md", "kernel/sched.html"),
+                            ("api.md", "api.html")):
+            nav = B.nav_html(pages, pages[rel], "")
+            self.assertEqual(nav.count('aria-current="page"'), 1, rel)
+            self.assertIn(f'aria-current="page" href="{target}"', nav, rel)
+            self.assertIn('<summary>Kernel</summary>', nav)                 # a summary holds no link
+            self.assertNotRegex(nav, r"<summary>[^<]*<a")
+            self.assertEqual(nav.count('>Overview</a>'), 1)                 # the folder's index leads its list
+        self.assertIn('<li><a class="active" aria-current="page" href="kernel/">Overview</a></li>',
+                      B.nav_html(pages, pages["kernel/index.md"], ""))
+        self.assertIn('<li><a href="kernel/">Overview</a></li>', B.nav_html(pages, pages["kernel/sched.md"], ""))
+
+    def test_results_page_is_generated_only_for_a_template_that_names_it(self):
+        pages, _ = self.pages()
+        errors: list[str] = []
+        self.assertIsNone(B.results_page('<input data-search-index="2">', pages, errors))   # an older release template
+        found = B.results_page(f"<input {B.SEARCH_PAGE_MARK}>", pages, errors)
+        self.assertEqual((errors, found.url, found.noindex), ([], "search.html", True))
+        self.assertNotIn("aria-current", B.nav_html(pages, found, ""))     # the navigation does not list it
+        self.assertEqual(found.records, [])                                # and it is not itself searchable
+        pages, _ = self.pages({"search.md": "# Search tips\n\nx\n"})
+        B.results_page(B.SEARCH_PAGE_MARK, pages, errors)
+        self.assertEqual(errors, ["docs/search.md: search.html is the generated search results page; rename this page"])
+
+    @unittest.skipUnless(__import__("shutil").which("node"), "node not installed")
+    def test_query_parsing_stems_ties_and_snippet_edges(self):
+        filler = " ".join(f"w{n}" for n in range(30))
+        pages, errors = self.pages({
+            "proto.md": "# Proto\n\nThe constructor and __proto__ keys.\n",
+            "exact.md": "# Exact\n\nInterrupts happen.\n",
+            "stem.md": "# Stem\n\nOne interrupt.\n",
+            "sub.md": "# Sub\n\nUninterruptsafe code.\n",
+            "test.md": "# Tee\n\nThe test harness.\n",
+            "tester.md": "# Person\n\nA tester person.\n",
+            "only.md": "# Only\n\nA map of it.\n",
+            "tie-a.md": "# Tie A\n\nquagga here.\n",
+            "tie-b.md": "# Tie B\n\nquagga here.\n",
+            "long.md": f"# Long\n\n{filler} target {'y' * 78} zuluzulu tail {filler}\n"})
+        files = B.search_files(pages, "v2", errors)
+        self.assertEqual(errors, [])
+        s = self.harness(files, [["input", "constructor"], ["flush", None], ["snap", "ctor"],
+                                 ["input", "class __proto__"], ["flush", None], ["snap", "proto"],
+                                 ["input", "interrupts"], ["flush", None], ["snap", "tiers"],
+                                 ["input", "testing"], ["flush", None], ["snap", "testing"],
+                                 ["input", "TESTED tested"], ["flush", None], ["snap", "dupes"],
+                                 ["input", "maps"], ["flush", None], ["snap", "short"],
+                                 ["input", "quagga"], ["flush", None], ["snap", "tie"],
+                                 ["input", "target zuluzulu"], ["flush", None], ["snap", "long"]])
+        hrefs = lambda k: [bare(o["href"]) for o in s[k]["options"]]
+        self.assertEqual(hrefs("ctor"), ["proto.html"])                     # inherited object keys are terms
+        self.assertEqual(hrefs("proto"), [])                                # `class` is nowhere, so nothing matches
+        self.assertEqual(hrefs("tiers"), ["exact.html", "stem.html", "sub.html"])   # word, then stem, then substring
+        self.assertEqual(hrefs("testing"), ["test.html"])                   # the stem needs a word end: not `tester`
+        self.assertEqual(hrefs("dupes"), ["test.html"])
+        self.assertEqual(hrefs("short"), [])                                # a stem is at least four letters
+        self.assertEqual(hrefs("tie"), ["tie-a.html", "tie-b.html"])        # equal scores keep page order
+        long = s["long"]["options"][0]["html"].split("<small>", 1)[1].rsplit("</small>", 1)[0]
+        self.assertRegex(long, r"^\u2026w\d+ ")                                  # cut 50 back, on a word start
+        self.assertIn("<mark>target</mark>", long)
+        self.assertIn("<mark>zuluzulu</mark>", long)                          # a mark is never cut at the window edge
+        self.assertTrue(long.endswith("\u2026"))
+        self.assertEqual(long.count("<mark>"), long.count("</mark>"))
+        s = self.harness(files, [["input", '""'], ["flush", None], ["snap", "empty"], ["input", '"  "'], ["flush", None],
+                                 ["snap", "blank"]])
+        self.assertEqual((s["empty"]["shown"], s["blank"]["shown"], self.fetches), (False, False, {}))
+
+    @unittest.skipUnless(__import__("shutil").which("node"), "node not installed")
+    def test_ranking_prefers_whole_words_and_every_term(self):
+        pages, errors = self.pages({
+            "bitmap.md": "# Bitmap fonts\n\nA bitmap font draws glyphs.\n",
+            "mapapi.md": "# Memory calls\n\n## Paging\n\nCall `vmm_map_page` to map one page.\n",
+            "camel.md": "# Camel case\n\nThe mapPage helper.\n",
+            "mapt.md": "# Map API\n\nIt writes the framebuffer.\n",
+            "mem.md": "# Memory API\n\nA map buffer holds it.\n",
+            "irq.md": "# IRQ routing\n\nEach interrupt is routed.\n",
+            "tags.md": "# Markup\n\nThe `<map>` element & friends.\n"})
+        files = B.search_files(pages, "v2", errors)
+        self.assertEqual(errors, [])
+        s = self.harness(files, [["input", "map"], ["flush", None], ["snap", "map"],
+                                 ["input", "map buffer"], ["flush", None], ["snap", "two"],
+                                 ["input", '"map buffer"'], ["flush", None], ["snap", "phrase"],
+                                 ["input", '"buffer holds'], ["flush", None], ["snap", "unclosed"],
+                                 ["input", "interrupts"], ["flush", None], ["snap", "stem"],
+                                 ["input", "element map"], ["flush", None], ["snap", "escaped"]])
+        order = [bare(o["href"]) for o in s["map"]["options"]]
+        # A page naming the `map` identifier (or the camelCase part of mapPage) ranks
+        # above one whose only match is inside `bitmap`, even in its title.
+        self.assertLess(order.index("mapapi.html#paging"), order.index("bitmap.html"))
+        self.assertLess(order.index("camel.html"), order.index("bitmap.html"))
+        self.assertEqual(order[0], "mapt.html")                               # a title word beats a body word
+        # Every term found as a word beats one title word plus a substring (the design-review counterexample).
+        self.assertEqual([bare(o["href"]) for o in s["two"]["options"]][:2], ["mem.html", "mapt.html"])
+        self.assertEqual([bare(o["href"]) for o in s["phrase"]["options"]], ["mem.html"])
+        self.assertEqual([bare(o["href"]) for o in s["unclosed"]["options"]], ["mem.html"])
+        self.assertEqual([bare(o["href"]) for o in s["stem"]["options"]], ["irq.html"])   # interrupts -> interrupt
+        self.assertIn("<mark>interrupt</mark>", s["stem"]["options"][0]["html"])
+        # Snippets mark every term and escape the text around each mark on its own.
+        html = s["escaped"]["options"][0]["html"]
+        self.assertIn("&lt;<mark>map</mark>&gt; <mark>element</mark> &amp; friends", html)
+        self.assertNotIn("<map>", html)
+        # The link carries the query for the opened page to mark.
+        self.assertTrue(s["stem"]["options"][0]["href"].startswith("irq.html?highlight=interrupts"))
+        self.assertIn("?highlight=element%20map", s["escaped"]["options"][0]["href"])
+
+    @unittest.skipUnless(__import__("shutil").which("node"), "node not installed")
+    def test_results_page_lists_every_hit_and_keeps_a_shareable_url(self):
+        extra = {f"many{n:02}.md": f"# Many {n}\n\n## First\n\nwombat one.\n\n## Second\n\nwombat two.\n" for n in range(15)}
+        pages, errors = self.pages(extra)
+        files = B.search_files(pages, "v2", errors)
+        attrs = {"q": {"data-search-page": "search.html"}}
+        # The popup shows 12 and offers the rest; Enter with nothing chosen opens them all.
+        s = self.harness(files, [["input", "wombat"], ["flush", None], ["snap", "pop"], ["key", "Enter"], ["snap", "went"]],
+                         attrs=attrs)
+        opts = s["pop"]["options"]
+        self.assertEqual(len(opts), 13)
+        self.assertEqual((opts[-1]["id"], opts[-1]["href"], opts[-1]["text"]),
+                         ("search-opt-all", "search.html?q=wombat", "Show all 15 results"))
+        self.assertIn("press Enter for all results", s["pop"]["status"])
+        self.assertEqual(s["went"]["href"], "search.html?q=wombat")
+        # Without a results page (an older template) Enter still needs a chosen option.
+        s = self.harness(files, [["input", "wombat"], ["flush", None], ["key", "Enter"], ["snap", "stay"]])
+        self.assertEqual(s["stay"]["href"], "start")
+        self.assertEqual(len(s["stay"]["options"]), 12)
+        # The results page: every page, every matching section, and a URL that follows the box.
+        s = self.harness(files, [["flush", None], ["snap", "opened"], ["input", "wombat"], ["input", "wombat t"],
+                                 ["input", "wombat two"], ["wait", 250], ["snap", "typed"],
+                                 ["input", "<img src=x onerror=alert(1)>"], ["wait", 250], ["snap", "hostile"]],
+                         attrs=attrs, page={"search": "?q=wombat"})
+        opened = s["opened"]
+        self.assertEqual(opened["value"], "wombat")
+        self.assertEqual(opened["page"].count("<h2>"), 15)
+        self.assertEqual(opened["page"].count('#first"'), 15)
+        self.assertEqual(opened["page"].count('#second"'), 15)
+        self.assertIn("15 pages, 30 sections", opened["page"])
+        self.assertEqual(s["typed"]["url"], "?q=wombat%20two")
+        self.assertEqual(s["typed"]["pageRenders"] - s["opened"]["pageRenders"], 1)          # typing pauses, then one search
+        self.assertIn("<mark>two</mark>", s["typed"]["page"])
+        self.assertNotIn("<img", s["hostile"]["page"])
+        self.assertEqual(s["hostile"]["url"], "?q=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E")
+        # A damaged shared link opens an empty search instead of breaking the page.
+        s = self.harness(files, [["flush", None], ["snap", "bad"]], attrs=attrs, page={"search": "?q=%E0%A4%A"})
+        self.assertEqual(s["bad"]["value"], "")
+        self.assertIn("Type in the search box", s["bad"]["page"])
+        self.assertEqual(self.fetches, {})
+        s = self.harness(files, [["flush", None], ["snap", "plus"]], attrs=attrs, page={"search": "?q=wombat+two%26x"})
+        self.assertEqual(s["plus"]["value"], "wombat two&x")
+        # The results page when the index fails: it says so, and the next typed search recovers.
+        s = self.harness(files, [["flush", None], ["snap", "down"], ["input", "wombat"], ["wait", 250], ["snap", "up"]],
+                         attrs=attrs, page={"search": "?q=wombat"}, fail_once=["search.json"])
+        self.assertIn("unavailable", s["down"]["page"])
+        self.assertIn("15 pages, 30 sections", s["up"]["page"])
+        shard = json.loads(files["search.json"])["shards"][0][0]
+        s = self.harness(files, [["wait", 50], ["snap", "early"], ["wait", 400], ["snap", "late"]],
+                         attrs=attrs, page={"search": "?q=wombat"}, delay={shard: 300})
+        # The list is drawn once, when the full text is in: nothing on screen can re-rank under a reader.
+        self.assertEqual((s["early"]["page"], s["early"]["status"]), ("<p>Searching the full text\u2026</p>",
+                                                                      "Searching the full text"))
+        self.assertIn("15 pages, 30 sections", s["late"]["page"])
+        self.assertEqual(s["late"]["pageRenders"], 2)                         # the notice, then the list, once
+        # A broad query draws 100 sections at a time; the button draws the next batch.
+        extra = {f"lot{n:02}.md": f"# Lot {n}\n\n## First\n\nnumbat one.\n\n## Second\n\nnumbat two.\n" for n in range(60)}
+        pages, errors = self.pages(extra)
+        files = B.search_files(pages, "v2", errors)
+        s = self.harness(files, [["flush", None], ["snap", "first"], ["input", "zzzq"], ["more", None], ["snap", "more"],
+                                 ["wait", 250], ["snap", "typed"]], attrs=attrs, page={"search": "?q=numbat"})
+        self.assertIn("60 pages, 120 sections", s["first"]["page"])
+        self.assertEqual(s["first"]["page"].count("<h2>"), 50)
+        self.assertIn("Show more results (10 more pages)", s["first"]["page"])
+        self.assertEqual(s["more"]["page"].count("<h2>"), 60)
+        self.assertNotIn("search-more", s["more"]["page"])
+        self.assertIn("Showing 60 of 60 pages", s["more"]["status"])
+        # Text typed but not yet searched never leaks into the links of the results on screen.
+        self.assertEqual(set(re.findall(r"highlight=([^#\"]*)", s["more"]["page"])), {"numbat"})
+        self.assertIn("No results", s["typed"]["page"])
+        # A shard landing just before the typing pause ends queues a refresh; the list the typed search
+        # drew from the settled index is not drawn a second time.
+        extra = {f"many{n:02}.md": f"# Many {n}\n\n## First\n\nwombat one.\n\n## Second\n\nwombat two.\n" for n in range(15)}
+        pages, errors = self.pages(extra)
+        files = B.search_files(pages, "v2", errors)
+        shard = json.loads(files["search.json"])["shards"][0][0]
+        s = self.harness(files, [["wait", 30], ["input", "wombat two"], ["wait", 400], ["snap", "settled"]],
+                         attrs=attrs, page={"search": "?q=wombat"}, delay={shard: 175})
+        self.assertIn("15 pages, 15 sections", s["settled"]["page"])
+        self.assertEqual(s["settled"]["pageRenders"], 2)                      # the notice, then the list, once
+        # A stalled shard cannot hold the page on "Searching" for good: past the deadline it counts as
+        # failed, the matches found so far are shown with a retry note, and a late arrival changes nothing.
+        B.SEARCH_SHARD_TARGET = 200
+        files = B.search_files(pages, "v2", errors)
+        names = [n for n, _ in json.loads(files["search.json"])["shards"]]
+        self.assertGreater(len(names), 2)
+        s = self.harness(files, [["wait", 150], ["snap", "waiting"], ["wait", 400], ["snap", "timed"]],
+                         attrs=attrs, page={"search": "?q=wombat"}, delay={names[0]: 100000}, deadline_ms=300)
+        self.assertIn("Searching the full text", s["waiting"]["page"])
+        self.assertIn("did not load; type again to retry", s["timed"]["page"])
+        self.assertIn("<h2>", s["timed"]["page"])
+        # A manifest that never answers: the page says it is searching at once, gives up at the deadline,
+        # and the next typed search fetches a fresh manifest and finds the results.
+        s = self.harness(files, [["wait", 50], ["snap", "asked"], ["wait", 400], ["snap", "gave-up"],
+                                 ["input", "wombat"], ["wait", 400], ["snap", "retried"]],
+                         attrs=attrs, page={"search": "?q=wombat"}, stall_once=["search.json"], deadline_ms=300)
+        self.assertEqual((s["asked"]["page"], s["asked"]["status"]), ("<p>Searching the full text\u2026</p>",
+                                                                      "Searching the full text"))
+        self.assertIn("unavailable", s["gave-up"]["page"])
+        self.assertIn("15 pages, 30 sections", s["retried"]["page"])
+        self.assertEqual(self.fetches["search.json"], 2)
+        self.assertEqual(self.aborted, {"search.json": 1})                     # the stalled request was cancelled
+        # A shard that failed with an error status is aborted too (its body is never read), and a retry
+        # cancels the old index's shard still stalled; nothing healthy is aborted.
+        s = self.harness(files, [["wait", 100], ["input", "wombat"], ["wait", 400], ["snap", "again"]],
+                         attrs=attrs, page={"search": "?q=wombat"}, fail_once=[names[1]], stall_once=[names[0]],
+                         deadline_ms=5000)
+        self.assertEqual(self.aborted, {names[1]: 1, names[0]: 1})
+        self.assertIn("15 pages, 30 sections", s["again"]["page"])
+        # A new query after a failed shard replaces the index; until it answers, the old query's links are gone.
+        s = self.harness(files, [["wait", 400], ["snap", "partial"], ["input", "one"], ["wait", 200], ["snap", "refetch"],
+                                 ["wait", 500], ["snap", "new"]], attrs=attrs, page={"search": "?q=wombat"},
+                         fail_once=[names[1]], delay={"search.json": 250})
+        self.assertIn("did not load", s["partial"]["page"])
+        self.assertEqual((s["refetch"]["page"], s["refetch"]["url"]), ("<p>Searching the full text\u2026</p>", "?q=one"))
+        self.assertIn("15 pages, 15 sections", s["new"]["page"])
+        missing = {k: v for k, v in files.items() if k != names[1]}
+        s = self.harness(missing, [["wait", 550], ["snap", "both"]], attrs=attrs, page={"search": "?q=wombat"},
+                         delay={names[0]: 100000}, deadline_ms=300)
+        self.assertIn("did not load; type again to retry", s["both"]["page"])
+        # Heading matches arrive with the manifest and body matches with the shards: the reader sees
+        # neither the partial list nor a redraw, only the complete one.
+        extra = {f"grow{n:03}.md": f"# Page {n}\n\n## Dugong notes\n\ny\n\n## Plain\n\ndugong in the body.\n"
+                 for n in range(150)}
+        pages, errors = self.pages(extra)
+        files = B.search_files(pages, "v2", errors)
+        shards = {name: 400 for name, _ in json.loads(files["search.json"])["shards"]}
+        s = self.harness(files, [["flush", None], ["snap", "titles"], ["wait", 600], ["snap", "full"]],
+                         attrs=attrs, page={"search": "?q=dugong"}, delay=shards)
+        self.assertNotIn("<h2>", s["titles"]["page"])
+        self.assertIn("150 pages, 300 sections", s["full"]["page"])
+        self.assertEqual(s["full"]["page"].count("<h2>"), 50)                 # 100 sections, two per page
+        self.assertEqual(s["full"]["pageRenders"], 2)
 
 
 class FeatureCards(unittest.TestCase):
@@ -1205,6 +1464,94 @@ class ReleaseDocs(unittest.TestCase):
         self.assertIn('href="https://@GH@/oldo/impossible-os/blob/main/src/x.c#L1"', page)   # left as written
         self.assertIn('click b href &quot;https://@GH@/o/impossible-os/blob/main/src/x.c&quot;', page)
         self.assertIn('/blob/main/todo/01-x/TODO-01-a.md', self.fold(files["docs/coverage.html"].decode("utf-8")))
+
+    @unittest.skipUnless(shutil.which("node") and (A11Y / "node_modules" / "playwright-core").is_dir()
+                         and (os.environ.get("CHROME") or list(Path.home().glob(".cache/ms-playwright/chromium-*"))),
+                         "the browser tools are not installed (npm ci --prefix scripts/site/a11y, then "
+                         "node scripts/site/a11y/node_modules/playwright-core/cli.js install chromium)")
+    def test_in_a_browser_the_match_is_marked_and_the_audit_catches_planted_defects(self):
+        self.fixture()
+        self.write("gh-pages/index.html", "<p>{{name}}</p>")
+        self.write("docs/design/tokens.json", (B.REPO_REAL / "docs/design/tokens.json").read_text(encoding="utf-8"))
+        self.write("docs/design/scope.json", '{"shell_files": [], "ui_title_pattern": "^$"}')
+        self.write("gh-pages/docs-template.html",       # the shipped template, script and all
+                   (B.REPO_REAL / "gh-pages" / "docs-template.html").read_text(encoding="utf-8")
+                   .replace("{{license}}", "GPL-3.0-only"))           # a fact this fixture's project.json lacks
+        self.write("src/x.c", "int x;\n")
+        self.write("img.png", "png")
+        self.write("docs/sub/code.md", "# Code\n\nwombat before any heading.\n\n## Intro\n\nwombat in the intro.\n\n"
+                                       "## Use\n\nCall it:\n\n```c\nint wombat_call(void);\n```\n\nThen a wombat.\n\n"
+                                       "## Accents\n\nThe \u0130 map here.\n\n## Words\n\nA bitmap first, then the map.\n\n"
+                                       "## Calls\n\nCall   `boot_hook_x` after boot.\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "--no-verify", "-m", "code page")
+        errors: list[str] = []
+        files = B.build(B.load_project(), errors)
+        self.assertEqual(errors, [])
+        site = Path(tempfile.mkdtemp(prefix="site-browser-"))
+        for rel, data in files.items():
+            (site / rel).parent.mkdir(parents=True, exist_ok=True)
+            (site / rel).write_bytes(data)
+
+        def probe(path, then=None):
+            r = subprocess.run(["node", str(A11Y / "probe.mjs"), str(site), path, *([then] if then else [])],
+                               capture_output=True, text=True, timeout=120)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            out = json.loads(r.stdout)
+            self.assertEqual(out["errors"], [], path)
+            return out
+
+        # The first match in the linked section, inside code without changing the code's text.
+        got = probe("/docs/sub/code.html?highlight=wombat_call#use")
+        self.assertEqual(got["marks"], [{"text": "wombat_call", "section": "use", "code": True}])
+        self.assertEqual(got["pre"], ["int wombat_call(void);\n"])
+        # A whole word is preferred: `wombat` is a word inside wombat_call (the underscore is a boundary).
+        self.assertEqual(probe("/docs/sub/code.html?highlight=wombat#intro")["marks"],
+                         [{"text": "wombat", "section": "intro", "code": False}])
+        # No fragment: the text before the first section, never the title.
+        self.assertEqual(probe("/docs/sub/code.html?highlight=code%20wombat")["marks"],
+                         [{"text": "wombat", "section": "", "code": False}])
+        self.assertEqual(probe("/docs/sub/code.html?highlight=absentword#use")["marks"], [])
+        # Lowercasing \u0130 adds a character; the mark still covers exactly the match.
+        got = probe("/docs/sub/code.html?highlight=map#accents")
+        self.assertEqual(got["marks"], [{"text": "map", "section": "accents", "code": False}])
+        self.assertIn("The \u0130 map here.", got["text"])
+        # A later whole word beats an earlier match inside a longer word.
+        self.assertEqual(probe("/docs/sub/code.html?highlight=map#words")["marks"],
+                         [{"text": "map", "section": "words", "code": False}])
+        self.assertIn("A bitmap first", probe("/docs/sub/code.html?highlight=map#words")["text"])
+        # A phrase the index matched across inline code (and collapsed whitespace) is marked in each node it covers.
+        got = probe("/docs/sub/code.html?highlight=%22call%20boot_hook_x%22#calls")
+        self.assertEqual(got["marks"], [{"text": "Call ", "section": "calls", "code": False},
+                                        {"text": "boot_hook_x", "section": "calls", "code": True}])
+        self.assertIn("Call   boot_hook_x after boot.", got["text"])
+        # Choosing another section of the same page only changes the fragment: the old mark goes, the new
+        # section is marked, and the text is as it was.
+        got = probe("/docs/sub/code.html?highlight=wombat", "#intro")
+        self.assertEqual(got["marks"], [{"text": "wombat", "section": "intro", "code": False}])
+        self.assertIn("wombat before any heading.", got["text"])
+        # A fragment that is missing, outside the article or malformed marks nothing and breaks nothing.
+        for bad in ("?highlight=wombat#nosuchid", "?highlight=wombat#side", "?highlight=wombat#%E0%A4%A",
+                    "?highlight=%E0%A4%A#use"):
+            self.assertEqual(probe("/docs/sub/code.html" + bad)["marks"], [], bad)
+        hostile = probe("/docs/sub/code.html?highlight=%3Cb%20class%3Dinjected%3Ewombat%3C%2Fb%3E#use")
+        self.assertFalse(hostile["injected"])
+        # The results page lists the page and never turns the query into markup.
+        got = probe("/docs/search.html?q=%3Cimg%20src%3Dx%3E%20wombat")
+        self.assertFalse(got["injected"])
+        self.assertIn("No results", got["search"])            # the query's first term matches nothing
+        got = probe("/docs/search.html?q=wombat")
+        self.assertIn("Code", got["search"])
+        self.assertIn("1 page, 3 sections", got["search"])
+        results = files["docs/search.html"].decode("utf-8")
+        self.assertIn('<meta name="robots" content="noindex">', results)
+        self.assertNotIn("search.html", files["sitemap.xml"].decode("utf-8"))
+        self.assertIn("docs/sub/code.html", files["sitemap.xml"].decode("utf-8"))
+        # The audit's controls: it must report a planted contrast failure and a removed focus ring.
+        r = subprocess.run(["node", str(A11Y / "audit.mjs"), str(site), "control"], capture_output=True, text=True,
+                           timeout=300)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("a11y control: OK", r.stdout)
 
     def test_accessibility_fails_the_current_tree_but_not_a_published_release(self):
         self.fixture()
@@ -2990,14 +3337,20 @@ class RealParsers(unittest.TestCase):
         for plain in ("> just a quote\n", "> [!note] lower case is text\n", "> `[!NOTE]` in code\n"):
             self.assertNotIn("alert", self.render(plain), plain)
         body = self.render("- [ ] open\n- [x] done\n- [X] DONE\n")
-        self.assertIn('<li class="task"><input type="checkbox" disabled> open</li>', body)
-        self.assertIn('<li class="task"><input type="checkbox" checked disabled> done</li>', body)
-        self.assertIn('<li class="task"><input type="checkbox" checked disabled> DONE</li>', body)
+        self.assertIn('<li class="task"><input type="checkbox" disabled aria-label="Task"> open</li>', body)
+        self.assertIn('<li class="task"><input type="checkbox" checked disabled aria-label="Task"> done</li>', body)
+        self.assertIn('<li class="task"><input type="checkbox" checked disabled aria-label="Task"> DONE</li>', body)
         loose = self.render("- [ ] a\n\n- [ ] b\n")
         self.assertNotIn("task", loose)                  # a loose list item is a paragraph, as before
         self.assertIn("<p>[ ] a</p>", loose)
+        body = self.render("```c\nint x < 1;\n```\n\n```\nplain\n```\n\n    indented\n\n```mermaid\ngraph LR\n```\n")
+        self.assertEqual(body.count('<pre tabindex="0">'), 3, body)           # fenced with and without a language, indented
+        self.assertEqual(body.count('<pre class="mermaid" tabindex="0">'), 1)
+        self.assertEqual(body.count("<pre"), 4)
+        self.assertIn('<pre tabindex="0"><code class="language-c">int x &lt; 1;', body)
+        self.assertEqual(B._focusable_pre(lambda *a: "<div>x</div>")(None, [], 0, {}, {}), "<div>x</div>")
         body = self.render("| a | b |\n| - | - |\n| 1 | 2 |\n")
-        self.assertEqual((body.count('<div class="table-wrap"><table>'), body.count("</table></div>")), (1, 1))
+        self.assertEqual((body.count('<div class="table-wrap" tabindex="0"><table>'), body.count("</table></div>")), (1, 1))
         self.assertEqual(body.count("<table"), 1)
 
     def test_raw_links_are_judged_in_the_form_a_browser_parses(self):

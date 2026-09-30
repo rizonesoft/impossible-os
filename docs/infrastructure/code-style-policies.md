@@ -56,7 +56,7 @@ Anything else is a bare reference and must be rewritten.
 
 A fill column makes a section visibly inconsistent with the file around it, and it turns every later edit into a reflow: change one clause and the whole paragraph has to be re-broken by hand. Measured 2026-07-28 on `todo/02-kernel-core/TODO-21-process-model-extensions.md`, after two sections were authored at 120 columns:
 
-| | lines | avg width | max width |
+| Region | lines | avg width | max width |
 |---|---|---|---|
 | sections 19-20 | 73 | 102 | 121 |
 | rest of file | 542 | 209 | 3655 |
