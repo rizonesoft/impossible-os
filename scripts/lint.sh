@@ -2861,6 +2861,39 @@ else
 fi
 
 # ============================================================================
+# Check 31: the site tooling parses HTML and URLs with real parsers
+# ============================================================================
+# scripts/site/check_parsers.py reports any regex in scripts/site/*.py that
+# reads markup or URL structure; tags and attributes go through html.parser or
+# markdown-it, URLs through urllib.parse or Node's WHATWG URL. Promoted from the
+# `parser-approximation` review class (40 fixed findings by 2026-09-29, every
+# one caught by a Codex round). A regex over this repo's own syntax carries a
+# `# parser-allow: <reason>` waiver. The control run must report every marked
+# line of its fixture: a detector that goes quiet is an ERROR, not a pass.
+# ~0.2s, so it runs on every commit. Skip via SKIP_LINT_SITE_PARSERS=1.
+if [ "${SKIP_LINT_SITE_PARSERS:-0}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 31 (site parsers) skipped via SKIP_LINT_SITE_PARSERS=1"
+    WARNINGS=$((WARNINGS + 1))
+elif [ ! -f "$REPO_ROOT/scripts/site/check_parsers.py" ]; then
+    :   # throwaway fixture repos (scripts/test-tooling.sh) carry no site tooling
+else
+    PARSERS_RC=0
+    PARSERS_OUT=$(python3 "$REPO_ROOT/scripts/site/check_parsers.py" 2>&1) || PARSERS_RC=$?
+    if [ "$PARSERS_RC" -ne 0 ]; then
+        printf '%s\n' "$PARSERS_OUT" | sed 's/^/  /'
+        echo -e "${RED}error${NC}: Check 31 (site parsers) -- parse HTML/URLs with html.parser, markdown-it or urllib.parse"
+        ERRORS=$((ERRORS + 1))
+    fi
+    CONTROL_RC=0
+    CONTROL_OUT=$(python3 "$REPO_ROOT/scripts/site/check_parsers.py" --control 2>&1) || CONTROL_RC=$?
+    if [ "$CONTROL_RC" -ne 0 ]; then
+        printf '%s\n' "$CONTROL_OUT" | sed 's/^/  /'
+        echo -e "${RED}error${NC}: Check 31 (site parsers) -- the control fixture was misjudged; the detector cannot be trusted"
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

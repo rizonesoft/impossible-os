@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-02-ai-development-system.md sources=CLAUDE.md,AGENTS.md,.claude/skills/README.md,.claude/skills/TEMPLATE.md,scripts/test-ai-system.sh reviewed=2026-09-29T15:30 order=3 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-02-ai-development-system.md sources=CLAUDE.md,AGENTS.md,.claude/skills/README.md,.claude/skills/TEMPLATE.md,scripts/test-ai-system.sh reviewed=2026-09-30 order=3 -->
 # AI Development System
 
 ## What is it?

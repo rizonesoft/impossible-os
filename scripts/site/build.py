@@ -40,6 +40,7 @@ from html.parser import HTMLParser
 import datetime as _dt
 import hashlib
 import html
+import html.entities
 import json
 import os
 import posixpath
@@ -50,7 +51,7 @@ import subprocess
 import sys
 import tempfile
 import unicodedata
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -61,6 +62,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 import todo_fence  # noqa: E402  (the shared `## N.` heading rule)
 
 from markdown_it import MarkdownIt  # noqa: E402  (vendored, path set above)
+from markdown_it.token import Token  # noqa: E402
 
 PROJECT_FILE = ROOT / "project.json"
 SITE_SRC = ROOT / "gh-pages"
@@ -158,9 +160,12 @@ def snapshot(source: str) -> Path:
     return tmp
 TEMPLATE_EXTS = {".html", ".js", ".css", ".json", ".xml", ".txt", ".svg", ""}
 
+# parser-allow: this repo's own project-region markers, rewritten in place by --sync byte for byte
 REGION_RE = re.compile(r"(?<!`)<!-- project:([a-z_]+) -->(.*?)<!-- /project -->", re.S)  # not inside `code`
 TEMPLATE_RE = re.compile(r"\{\{([a-z_]+)\}\}")
+# parser-allow: this repo's own `<!-- docs: -->` page directive, read from the Markdown source
 DIRECTIVE_RE = re.compile(r"<!--\s*docs:\s*(.*?)\s*-->", re.S)
+# parser-allow: finds repository mentions in any text, links or not (a clone command in a code block)
 REPO_URL_RE = re.compile(r"github\.com/([A-Za-z0-9-]+)/impossible-os\b")
 
 
@@ -279,7 +284,8 @@ class _AnchorParser(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         if tag == "a":
-            self.found.update(v for k, v in attrs if k in ("id", "name") and v)
+            a = first_attrs(attrs)
+            self.found.update(v for v in (a.get("id"), a.get("name")) if v)
 
     handle_startendtag = handle_starttag
 
@@ -308,13 +314,73 @@ RAW_HTML_REFUSED_TAGS = {
     "svg": "foreign content", "math": "foreign content"}
 
 
+def url_scheme(url: str) -> str:
+    """The scheme a link names ("https", "mailto"; "" for a path relative to the
+    page), by urlsplit's reading of RFC 3986's scheme grammar (a letter, then
+    letters, digits, `+`, `-` or `.`), lower-cased as browsers read it: `1:x.md`
+    and `+x:y.png` are relative paths. urlsplit validates the authority too and
+    raises on a malformed one (`http://[broken`); that URL still names its
+    scheme, so the part before the authority is read on its own."""
+    try:
+        return urlsplit(url).scheme
+    except ValueError:
+        return urlsplit(url.partition("//")[0] + "//").scheme
+
+
+def has_scheme(url: str) -> bool:
+    return bool(url_scheme(url))
+
+
+_C0_OR_SPACE = "".join(chr(c) for c in range(0x21))
+
+
+def browser_url_input(url: str) -> str:
+    """`url` after the WHATWG URL parser's first steps: leading and trailing C0
+    controls and spaces stripped, every ASCII tab, LF and CR removed. What a
+    browser does before it reads the scheme, so a policy on schemes must see
+    this form, not the attribute value as written."""
+    return url.strip(_C0_OR_SPACE).replace("\t", "").replace("\n", "").replace("\r", "")
+
+
+_LEGACY_REFS = frozenset(k for k in html.entities.html5 if not k.endswith(";"))
+_LEGACY_MAX = max(map(len, _LEGACY_REFS))   # 6 (`middot`): no longer prefix can match
+
+
+def ambiguous_charref(raw: str) -> str:
+    """The first named character reference in `raw` that html.unescape decodes
+    but a browser, inside an attribute value, keeps as text ("" when none).
+    Both decode `&name;`; without the `;`, html.unescape also decodes the
+    longest legacy prefix (`&copy`, `&not`), while the HTML Standard's
+    character-reference state leaves an unterminated reference alone in an
+    attribute when the next character is alphanumeric or `=`
+    (`?a=1&copy=2`, `&notit;`). html.parser decodes attribute values with
+    html.unescape, so a tag the rewriter re-serializes from them would change."""
+    i = raw.find("&")
+    while i != -1:
+        j = i + 1
+        while j < len(raw) and raw[j].isascii() and raw[j].isalnum():
+            j += 1
+        name = raw[i + 1:j]
+        if name and not (raw[j:j + 1] == ";" and len(name) < 64 and name + ";" in html.entities.html5):
+            for k in range(min(len(name), _LEGACY_MAX), 0, -1):
+                if name[:k] in _LEGACY_REFS:
+                    after = raw[i + 1 + k:i + 2 + k]
+                    if (after.isascii() and after.isalnum()) or after == "=":
+                        return raw[i:j + 1] if raw[j:j + 1] == ";" else raw[i:j]
+                    break
+        i = raw.find("&", i + 1)
+    return ""
+
+
 class _RawAttrs(HTMLParser):
-    """The net under Renderer.rewrite_raw_html, reading a raw HTML fragment the
-    way a browser does. It records every <a href>/<img src> by character offset
-    (so the tag scanner must have rewritten exactly that tag: text inside
-    <script>/<style> cannot stand in for it), and `refused` names the first
-    thing outside the allowlist: a tag in RAW_HTML_REFUSED_TAGS, an attribute
-    outside RAW_HTML_ATTRS (aria-* aside) or a link attribute on another tag.
+    """What Renderer.rewrite_raw_html rewrites, read from a raw HTML fragment the
+    way a browser does. `links` holds every <a href>/<img src> start tag with its
+    character offset, its source text and its parsed attributes, so the rewriter
+    replaces exactly the tags the parser saw (text inside <script>/<style> is
+    never one), and `refused` names the first thing outside the allowlist: a tag
+    in RAW_HTML_REFUSED_TAGS, an attribute outside RAW_HTML_ATTRS (aria-* aside),
+    a link attribute on another tag, or, in a link tag, a character reference
+    the parser would decode differently from a browser (`ambiguous_charref`).
     It also refuses markup where the parser would read on past the point a
     browser resumes parsing elements: `<!-->` or `<!--->` with more text before
     a later `-->`, and any marked section (`<![...`, however the parser routes
@@ -324,7 +390,7 @@ class _RawAttrs(HTMLParser):
 
     def __init__(self, text: str) -> None:
         super().__init__(convert_charrefs=True)
-        self.links: dict[int, int] = {}
+        self.links: list[tuple[int, str, str, list[tuple[str, str | None]], bool]] = []
         self.refused = ""
         self._text = text
         self._line_starts = [0] + [m.end() for m in re.finditer("\n", text)]
@@ -336,7 +402,7 @@ class _RawAttrs(HTMLParser):
     def _refuse(self, why: str) -> None:
         self.refused = self.refused or why
 
-    def handle_starttag(self, tag, attrs):
+    def _start(self, tag, attrs, closed: bool) -> None:
         if tag in RAW_HTML_REFUSED_TAGS:
             self._refuse(f"<{tag}> ({RAW_HTML_REFUSED_TAGS[tag]})")
         n = 0
@@ -347,9 +413,18 @@ class _RawAttrs(HTMLParser):
             elif k not in RAW_HTML_ATTRS and not k.startswith("aria-"):
                 self._refuse(f"the attribute {k}= on <{tag}>")
         if n:
-            self.links[self._offset()] = n
+            raw = self.get_starttag_text() or ""
+            bad = ambiguous_charref(raw)
+            if bad:
+                self._refuse(f"the character reference {bad} in a link tag (a browser keeps it as text "
+                             f"inside an attribute; write & as &amp;)")
+            self.links.append((self._offset(), raw, tag, attrs, closed))
 
-    handle_startendtag = handle_starttag
+    def handle_starttag(self, tag, attrs):
+        self._start(tag, attrs, False)
+
+    def handle_startendtag(self, tag, attrs):
+        self._start(tag, attrs, True)
 
     def handle_comment(self, data):
         # Classified by the source OPENER, not the text: `<!--[note]-->` is an
@@ -378,6 +453,7 @@ class _RawAttrs(HTMLParser):
         # close(), while the page template's next `>` would complete it in a
         # browser, attributes and all. Anything left that opens like markup is
         # refused; a bare `a < b` is data and has already been consumed.
+        # parser-allow: the HTML tokenizer's own tag-open rule, applied to what html.parser left unread
         if re.match(r"<[A-Za-z/!?]", p.rawdata):
             p._refuse("an unfinished tag at the end of a raw HTML block")
         p.close()
@@ -597,6 +673,12 @@ def out_path(url: str) -> str:
     return url + "index.html" if (url == "" or url.endswith("/")) else url
 
 
+def url_safe_path(rel: str) -> bool:
+    """Whether a docs path can stand as a URL path as written: nothing to
+    percent-encode, and no `:` to read as a scheme (`javascript:x.md`)."""
+    return bool(rel) and all(c.isascii() and (c.isalnum() or c in "._-/") for c in rel)
+
+
 def page_url(rel: str) -> str:
     p = rel[:-3]  # strip .md
     if p == "index" or p.endswith("/index"):
@@ -607,11 +689,55 @@ def page_url(rel: str) -> str:
 def make_md() -> MarkdownIt:
     md = MarkdownIt("commonmark", {"html": True, "linkify": False, "typographer": False})
     md.enable(["table", "strikethrough"])
+    # Every Markdown table scrolls inside its own wrapper on a narrow screen.
+    md.add_render_rule("table_open", lambda self, tokens, idx, options, env: '<div class="table-wrap"><table>\n')
+    md.add_render_rule("table_close", lambda self, tokens, idx, options, env: "</table></div>\n")
+    md.add_render_rule("blockquote_open", _render_blockquote_open)
     return md
 
 
-ALERT_RE = re.compile(
-    r"<blockquote>\s*<p>\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(?:<br\s*/?>)?\s*", re.S)
+ALERT_KINDS = ("NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION")
+
+
+def _render_blockquote_open(self, tokens, idx, options, env) -> str:
+    kind = tokens[idx].meta.get("alert")
+    if not kind:
+        return self.renderToken(tokens, idx, options, env)
+    return f'<blockquote class="alert alert-{kind.lower()}"><p class="alert-title">{kind.title()}</p>'
+
+
+def mark_alerts_and_tasks(tokens) -> None:
+    """GitHub's alert blockquotes (`> [!NOTE]`) and task-list items (`- [ ]`,
+    `- [x]`), read from the token stream rather than from rendered HTML. An alert
+    is a blockquote whose first paragraph opens with the marker: the marker and
+    the line break after it are dropped and the blockquote renders with its
+    title. A task is a tight list item whose text opens with `[ ]` or `[x]`."""
+    for i, tok in enumerate(tokens[:-2]):
+        para, inline = tokens[i + 1], tokens[i + 2]
+        if para.type != "paragraph_open" or inline.type != "inline" or not inline.children:
+            continue
+        first = inline.children[0]
+        if first.type != "text":
+            continue
+        if tok.type == "blockquote_open":
+            kind = next((k for k in ALERT_KINDS if first.content.startswith(f"[!{k}]")), None)
+            if kind is None:
+                continue
+            tok.meta["alert"] = kind
+            first.content = first.content[len(kind) + 3:].lstrip()
+            kids = inline.children
+            if not first.content:
+                kids.pop(0)
+                if kids and kids[0].type in ("softbreak", "hardbreak"):
+                    kids.pop(0)
+                if kids and kids[0].type == "text":
+                    kids[0].content = kids[0].content.lstrip()
+        elif tok.type == "list_item_open" and para.hidden and first.content[:3] in ("[ ]", "[x]", "[X]"):
+            box = Token("html_inline", "", 0)
+            box.content = f'<input type="checkbox"{" checked" if first.content[1] != " " else ""} disabled>'
+            first.content = first.content[3:]
+            tok.attrSet("class", "task")
+            inline.children.insert(0, box)
 
 
 
@@ -783,7 +909,7 @@ class Renderer:
         if href.startswith("#") and len(href) > 1:
             self.pending_anchor_checks.append((page.rel, page.rel, href[1:]))
             return href
-        if not href or href.startswith(("#", "mailto:")) or re.match(r"^[a-z][a-z0-9+.-]*:", href):
+        if not href or href.startswith(("#", "mailto:")) or has_scheme(href):
             pinned = self.pin_absolute(page, href) if href else None
             return href if pinned is None else pinned
         path, _, frag = href.partition("#")
@@ -812,7 +938,8 @@ class Renderer:
             rel = posixpath.relpath(out_path(page_url(doc_rel)), here_dir)
             if rel == "index.html" or rel.endswith("/index.html"):
                 rel = rel[: -len("index.html")] or "./"
-            return rel + (f"#{frag}" if frag else "")
+            # Percent-encoded as a path: a page named `a:b.md` must not read as the scheme `a:`.
+            return quote(rel, safe="/") + (f"#{frag}" if frag else "")
         if frag and repo_rel.endswith(".md"):
             self.pending_md_anchor_checks.append((page.rel, repo_rel, frag))
         return self.blob_url(repo_rel) + (f"#{frag}" if frag else "")
@@ -915,12 +1042,8 @@ class Renderer:
                 tok.type = "html_block"
                 tok.content = f'<pre class="mermaid">{html.escape(self.pin_mermaid(page, tok.content))}</pre>\n'
         page.anchors |= raw_anchors(tokens)
+        mark_alerts_and_tasks(tokens)
         body = self.md.renderer.render(tokens, self.md.options, env)
-        body = ALERT_RE.sub(lambda m: f'<blockquote class="alert alert-{m.group(1).lower()}"><p class="alert-title">{m.group(1).title()}</p><p>', body)
-        body = re.sub(r"<li>\[ \]", '<li class="task"><input type="checkbox" disabled>', body)
-        body = re.sub(r"<li>\[[xX]\]", '<li class="task"><input type="checkbox" checked disabled>', body)
-        body = re.sub(r"<table>", '<div class="table-wrap"><table>', body)
-        body = re.sub(r"</table>", "</table></div>", body)
         page.body = body
         page.text = " ".join(plain)
         page.records = [(anchor, path, " ".join(" ".join(parts).split())) for anchor, path, parts in records]
@@ -928,56 +1051,47 @@ class Renderer:
         if not page.title:
             page.title = page.rel
 
-    # A tag scanner, not a bare attribute regex: comments pass through untouched, and
-    # attributes are consumed one name=value pair at a time, so text inside another
-    # attribute's value (title="use href=x") is never mistaken for a link.
-    _VAL = r'(?:"[^"]*"|\'[^\']*\'|[^\s"\'=<>`]+)'
-    TAG_RE = re.compile(r'<!--.*?-->|<([A-Za-z][\w:-]*)((?:\s+[^\s=/>"\']+(?:\s*=\s*' + _VAL + r')?)*)(\s*/?>)', re.S)
-    ATTR_RE = re.compile(r'(\s+)([^\s=/>"\']+)(?:(\s*=\s*)(' + _VAL + r'))?')
-
     def rewrite_raw_html(self, page: Page, html_text: str) -> str:
         """Raw HTML href/src get the same rewriting and validation as Markdown links.
-        Values are entity-decoded before use and escaped exactly once on output.
-
-        The rewriter is a tag scanner, and a browser also reads tags it does not
-        (`<a/href=...>`), so html.parser is the net (`_RawAttrs`): an <a href> or
-        <img src> the scanner did not rewrite at that exact tag fails the build,
-        and so does anything outside the raw-HTML allowlist."""
+        html.parser finds the tags (`_RawAttrs`), so every <a href> and <img src>
+        a browser reads is one the rewriter sees, whatever its spelling
+        (`<a/href=...>`, `alt=""src=...`), and text in a comment or in another
+        attribute's value is never mistaken for one. Each such start tag is
+        re-serialized from its parsed attributes: names as the parser reports
+        them, values escaped exactly once, href/src rewritten. Anything else in
+        the fragment is left byte for byte."""
         seen = _RawAttrs.scan(html_text)
         if seen.refused:
             self.errors.append(f"docs/{page.rel}: raw HTML may not contain {seen.refused}: links are "
                                f"checked and pinned only as <a href> and <img src>")
-        rewritten: dict[int, int] = {}      # tag offset -> href/src the scanner rewrote there
-        here = [0]
-
-        def attr_sub(m: re.Match) -> str:
-            name, value = m.group(2), m.group(4)
-            if value is None or name.lower() not in ("href", "src"):
-                return m.group(0)
-            rewritten[here[0]] = rewritten.get(here[0], 0) + 1
-            raw = value[1:-1] if value[:1] in ("\"", "\'") else value
-            url = html.unescape(raw)
-            if not self.md.validateLink(url):     # the scheme policy Markdown links get (javascript:, vbscript:...)
-                self.errors.append(f"docs/{page.rel}: raw HTML {name.lower()}= with a URL Markdown would refuse: "
-                                   f"{url[:80]}")
-                return m.group(0)
-            new = self.rewrite_href(page, url) if name.lower() == "href" else self.rewrite_img(page, url)
-            return f'{m.group(1)}{name}="{html.escape(new, quote=True)}"'
-
-        def tag_sub(m: re.Match) -> str:
-            if m.group(0).startswith("<!--"):
-                return m.group(0)
-            here[0] = m.start()
-            return "<" + m.group(1) + self.ATTR_RE.sub(attr_sub, m.group(2)) + m.group(3)
-        out = self.TAG_RE.sub(tag_sub, html_text)
-        if any(rewritten.get(off) != n for off, n in seen.links.items()):
-            self.errors.append(f"docs/{page.rel}: raw HTML the link rewriter cannot read (an href or src it "
-                               f"would leave unchecked); put whitespace between a tag's name and attributes: "
-                               f"{' '.join(html_text.split())[:120]}")
-        return out
+        out, pos = [], 0
+        for off, raw, tag, attrs, closed in seen.links:
+            if not raw or html_text[off:off + len(raw)] != raw or off < pos:
+                self.errors.append(f"docs/{page.rel}: raw HTML the link rewriter cannot place (a tag the parser "
+                                   f"reported is not where it said): {' '.join(html_text.split())[:120]}")
+                continue
+            parts = []
+            for name, value in attrs:
+                if value is not None and name == RAW_HTML_LINK_ATTRS[tag]:
+                    # The scheme policy Markdown links get (javascript:, vbscript:, ...), applied to
+                    # the URL a browser parses: `java&#9;script:` is javascript: once tabs go.
+                    if not (self.md.validateLink(value) and self.md.validateLink(browser_url_input(value))):
+                        self.errors.append(f"docs/{page.rel}: raw HTML {name}= with a URL Markdown would refuse: "
+                                           f"{value[:80]}")
+                    else:
+                        value = self.rewrite_href(page, value) if tag == "a" else self.rewrite_img(page, value)
+                        if not self.md.validateLink(browser_url_input(value)):   # what is emitted, too
+                            self.errors.append(f"docs/{page.rel}: raw HTML {name}= rewritten to a URL Markdown "
+                                               f"would refuse: {value[:80]}")
+                parts.append(f" {name}" if value is None else f' {name}="{html.escape(value, quote=True)}"')
+            out.append(html_text[pos:off])
+            out.append(f"<{tag}{''.join(parts)}{' /' if closed else ''}>")
+            pos = off + len(raw)
+        out.append(html_text[pos:])
+        return "".join(out)
 
     def rewrite_img(self, page: Page, src: str) -> str:
-        if not src or re.match(r"^[a-z][a-z0-9+.-]*:", src):
+        if not src or has_scheme(src):
             pinned = self.pin_absolute(page, src) if src else None
             return src if pinned is None else pinned
         target = Path(os.path.normpath(page.src.parent / unquote(src)))
@@ -1223,6 +1337,9 @@ def load_pages(facts: dict, errors: list[str]) -> tuple[dict[str, Page], Rendere
     pages: dict[str, Page] = {}
     for src in sorted(DOCS.rglob("*.md")):
         rel = src.relative_to(DOCS).as_posix()
+        if not url_safe_path(rel):
+            errors.append(f"docs/{rel}: a page path may use only ASCII letters, digits, `.`, `_`, `-` and `/`, "
+                          f"because it becomes the page's URL in navigation, search and the sitemap")
         pages[rel] = Page(src=src, rel=rel, url=page_url(rel))
     r = Renderer(facts, pages, errors)
     parsed: dict[str, tuple[str, list, dict]] = {}
@@ -1545,7 +1662,27 @@ def design_tokens_css() -> str:
     return "\n".join(out)
 
 
-NOINDEX_RE = re.compile(r'<meta\s+name="robots"\s+content="[^"]*\bnoindex\b', re.I)
+class _HeadMeta(HTMLParser):
+    """Whether a page asks robots not to index it: a <meta name="robots"> whose
+    content lists `noindex` (either attribute order, any quoting or case)."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.noindex = False
+
+    def handle_starttag(self, tag, attrs):
+        a = first_attrs(attrs)
+        if tag == "meta" and (a.get("name") or "").strip().lower() == "robots":
+            self.noindex |= "noindex" in (a.get("content") or "").lower().replace(",", " ").split()
+
+    handle_startendtag = handle_starttag
+
+
+def is_noindex(page_html: str) -> bool:
+    p = _HeadMeta()
+    p.feed(page_html)
+    p.close()
+    return p.noindex
 
 
 def sitemap(facts: dict, files: dict[str, bytes], sources: dict[str, str], dates: dict[str, str]) -> bytes:
@@ -1555,7 +1692,7 @@ def sitemap(facts: dict, files: dict[str, bytes], sources: dict[str, str], dates
     date; a generated page (the coverage page) has none."""
     rows = []
     for rel in sorted(files):
-        if not rel.endswith(".html") or NOINDEX_RE.search(files[rel].decode("utf-8", "replace")):
+        if not rel.endswith(".html") or is_noindex(files[rel].decode("utf-8", "replace")):
             continue
         when = dates.get(sources.get(rel, ""), "")
         rows.append(f"  <url><loc>{html.escape(site_url(facts, rel))}</loc>"
@@ -1774,19 +1911,40 @@ def check_owner_urls(facts: dict, errors: list[str]) -> None:
                               f"project.json says '{facts['owner']}'")
 
 
-DONATE_RE = re.compile(r"paypal\.com/donate/?\?hosted_button_id=([A-Za-z0-9]+)")
+_URL_STOPS = str.maketrans({c: " " for c in " \t\"'<>()[]`|"})   # characters that end a URL in running text
+
+
+def donate_buttons(text: str) -> list[str]:
+    """The hosted_button_id of every PayPal donate link in a line of any file
+    (Markdown, HTML, JSON, prose), in order. A mention naming no button (this
+    docstring) is not a donation link. A link is delimited from the text around it by characters a URL
+    cannot carry unescaped, then read by urlsplit and parse_qs, so the button
+    is found in any parameter position and `&amp;` in HTML reads as `&`."""
+    found: list[str | None] = []
+    for word in html.unescape(text).translate(_URL_STOPS).split():
+        at = word.lower().find("paypal.com/donate")
+        if at < 0:
+            continue
+        try:
+            parts = urlsplit("https://" + word[at:])
+        except ValueError:
+            continue
+        if parts.path.rstrip("/").lower() != "/donate":
+            continue
+        found.extend(parse_qs(parts.query).get("hosted_button_id", []))
+    return found
 
 
 def check_donate_links(facts: dict, errors: list[str]) -> None:
     """Every PayPal donate link in the tree must be project.json's `donate_url`:
     templates use {{donate_url}}, and a hand-typed link (README, docs) that
     names another button fails here, so an old donation link cannot survive."""
-    want = DONATE_RE.search(facts.get("donate_url", ""))
-    if not want:
+    want = donate_buttons(facts.get("donate_url", ""))
+    if len(want) != 1:
         errors.append("project.json: donate_url is missing or is not a PayPal donate link")
         return
     where = ["--cached"] if SOURCE == "index" else ([SOURCE] if SOURCE != "worktree" else [])
-    proc = subprocess.run(["git", "grep", "-nIE", *where, "-e", DONATE_RE.pattern, "--", ":!src/libs"],
+    proc = subprocess.run(["git", "grep", "-nIiF", *where, "-e", "paypal.com/donate", "--", ":!src/libs"],
                           cwd=REPO, capture_output=True, text=True)
     if proc.returncode not in (0, 1):
         errors.append(f"donate link scan failed (git grep rc={proc.returncode}): {proc.stderr.strip()}")
@@ -1795,10 +1953,10 @@ def check_donate_links(facts: dict, errors: list[str]) -> None:
         if SOURCE not in ("worktree", "index"):
             line = line.split(":", 1)[1]
         rel, lineno, content = line.split(":", 2)
-        for m in DONATE_RE.finditer(content):
-            if m.group(1) != want.group(1):
-                errors.append(f"{rel}:{lineno}: PayPal donate link uses button {m.group(1)}, "
-                              f"project.json donate_url uses {want.group(1)}")
+        for button in donate_buttons(content):
+            if button != want[0]:
+                errors.append(f"{rel}:{lineno}: PayPal donate link uses button {button}, "
+                              f"project.json donate_url uses {want[0]}")
 
 
 ICON_SIZES = (16, 24, 32, 48, 64, 72, 96, 128, 256)  # must match SIZES in scripts/convert-icons.sh
@@ -1831,7 +1989,82 @@ def check_icon_renders(errors: list[str]) -> None:
                       f"{' ...' if len(changed) > 6 else ''}); run: bash scripts/convert-icons.sh and commit the PNGs")
 
 
-INLINE_SCRIPT_RE = re.compile(r"<script(?![^>]*\b(?:src|type)=)[^>]*>(.*?)</script>", re.S | re.I)
+# The HTML Standard's JavaScript MIME type essence matches: a <script> whose type is
+# one of these (or absent, or empty) is a classic script.
+JS_MIME_TYPES = frozenset({
+    "application/ecmascript", "application/javascript", "application/x-ecmascript", "application/x-javascript",
+    "text/ecmascript", "text/javascript", "text/javascript1.0", "text/javascript1.1", "text/javascript1.2",
+    "text/javascript1.3", "text/javascript1.4", "text/javascript1.5", "text/jscript", "text/livescript",
+    "text/x-ecmascript", "text/x-javascript"})
+
+
+def first_attrs(attrs: list[tuple[str, str | None]]) -> dict[str, str | None]:
+    """A start tag's attributes as a browser keeps them: a repeated attribute is
+    dropped and the FIRST value stands (HTML Standard, attribute name state);
+    `dict(attrs)` would keep the last."""
+    out: dict[str, str | None] = {}
+    for k, v in attrs:
+        out.setdefault(k, v)
+    return out
+
+
+def is_classic_script(attrs: list[tuple[str, str | None]]) -> bool:
+    """Whether a <script> start tag makes a classic script, by the HTML Standard's
+    "prepare the script element": the type attribute, or `text/` + a non-empty
+    language attribute when type is absent; empty means JavaScript. Modules and
+    data blocks (application/ld+json) are not classic scripts."""
+    a = first_attrs(attrs)
+    if "type" in a:
+        kind = a["type"] or ""
+    elif a.get("language"):
+        kind = "text/" + a["language"]
+    else:
+        kind = ""
+    kind = kind.strip(" \t\n\f\r").lower()
+    return kind == "" or kind in JS_MIME_TYPES
+
+
+class _InlineScripts(HTMLParser):
+    """The source of every classic inline <script> (no src=), as the HTML
+    tokenizer delimits it: from the start tag to the first `</script`, comments
+    and strings inside notwithstanding. A self-closing `<script/>` is counted in
+    `self_closing`: HTML ignores that slash and reads what follows as script,
+    which html.parser does not, so the caller refuses it."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.scripts: list[str] = []
+        self.self_closing = 0
+        self._cur: list[str] | None = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "script":
+            classic = is_classic_script(attrs) and not any(k == "src" for k, _ in attrs)
+            self._cur = [] if classic else None
+
+    def handle_startendtag(self, tag, attrs):
+        if tag == "script":
+            self.self_closing += 1
+
+    def handle_data(self, data):
+        if self._cur is not None and self.cdata_elem == "script":
+            self._cur.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "script" and self._cur is not None:
+            self.scripts.append("".join(self._cur))
+        if tag == "script":
+            self._cur = None
+
+
+def inline_scripts(page_html: str) -> tuple[list[str], int]:
+    """(classic inline script sources, number of self-closing <script/> tags)."""
+    p = _InlineScripts()
+    p.feed(page_html)
+    p.close()
+    return p.scripts, p.self_closing
+
+
 NODE_SYNTAX_CHECK = r"""
 const vm = require("vm");
 let bad = 0;
@@ -1856,8 +2089,12 @@ def check_scripts(files: dict[str, bytes], errors: list[str]) -> None:
         if rel.endswith(".js"):
             seen.setdefault(data.decode("utf-8", "replace"), rel)
         elif rel.endswith(".html"):
-            for i, m in enumerate(INLINE_SCRIPT_RE.finditer(data.decode("utf-8", "replace"))):
-                seen.setdefault(m.group(1), f"{rel} (inline script {i + 1})")
+            sources, self_closing = inline_scripts(data.decode("utf-8", "replace"))
+            if self_closing:
+                errors.append(f"{rel}: a self-closing <script/> is not closed in HTML (a browser reads what "
+                              f"follows as script); write <script></script>")
+            for i, src in enumerate(sources):
+                seen.setdefault(src, f"{rel} (inline script {i + 1})")
     batch = json.dumps([[name, src] for src, name in seen.items()])
     r = subprocess.run([node, "-e", NODE_SYNTAX_CHECK], input=batch, capture_output=True, text=True)
     if r.returncode not in (0, 1):
@@ -1869,14 +2106,56 @@ def check_scripts(files: dict[str, bytes], errors: list[str]) -> None:
 COUNT_TOTAL_RE = re.compile(r"\*\*All lines in tree\*\*\s*\|\s*\*\*\d+\*\*\s*\|\s*\*\*(\d+)\*\*")
 
 
+class _ImgSrcs(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.srcs: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "img":
+            self.srcs.extend(v for k, v in attrs if k == "src" and v)
+
+    handle_startendtag = handle_starttag
+
+
+def count_badge(readme: str) -> int | None:
+    """The line count README's shields.io badge shows (`/badge/lines-1%2C349%2C692-<colour>`),
+    or None when there is no such badge. Images are read as a browser would see
+    them: Markdown images through markdown-it, raw <img> (the form
+    .githooks/post-commit writes) through html.parser. The count must be the
+    comma-grouped number the hook renders."""
+    srcs: list[str] = []
+    for tok in make_md().parse(readme, {}):
+        chunks = [tok] if tok.type == "html_block" else (tok.children or []) if tok.type == "inline" else []
+        for c in chunks:
+            if c.type == "image":
+                srcs.append(c.attrGet("src") or "")
+            elif c.type in ("html_block", "html_inline"):
+                p = _ImgSrcs()
+                p.feed(c.content)
+                p.close()
+                srcs.extend(p.srcs)
+    for src in srcs:
+        try:
+            parts = urlsplit(src)
+        except ValueError:
+            continue
+        if parts.hostname != "img.shields.io" or not parts.path.startswith("/badge/lines-"):
+            continue
+        message = unquote(parts.path[len("/badge/lines-"):]).split("-", 1)[0]
+        digits = message.replace(",", "")
+        if digits.isascii() and digits.isdigit() and message == f"{int(digits):,}":
+            return int(digits)
+    return None
+
+
 def check_count_badge(errors: list[str]) -> None:
     count = (ROOT / "COUNT.md").read_text(encoding="utf-8")
     m = COUNT_TOTAL_RE.search(count)
-    b = re.search(r"img\.shields\.io/badge/lines-([0-9]+(?:%2C[0-9]{3})*)-", (ROOT / "README.md").read_text(encoding="utf-8"))
-    if not m or not b:
+    shown = count_badge((ROOT / "README.md").read_text(encoding="utf-8"))
+    if not m or shown is None:
         errors.append("README/COUNT.md: line-count badge or COUNT.md total not found")
         return
-    shown = int(b.group(1).replace("%2C", ""))      # the exact count, comma-grouped
     if shown != int(m.group(1)):
         errors.append(f"README.md: line-count badge says {shown:,}, COUNT.md says {int(m.group(1)):,} "
                       f"(run: COUNT_ONLY=1 bash .githooks/post-commit)")

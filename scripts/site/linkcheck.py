@@ -74,9 +74,14 @@ import build as B  # noqa: E402  (sibling: vendored markdown-it, facts, tracked 
 
 ALLOWLIST = B.REPO / "scripts" / "site" / "linkcheck-allow.txt"
 USER_AGENT = "Mozilla/5.0 (compatible; impossible-os-linkcheck/1; +https://impossibleos.co/)"
-HTTP_RE = re.compile(r"^https?://", re.I)
 PER_HOST = 4        # concurrent requests to one host, so a page full of GitHub links is not a burst
 MAX_REDIRECTS = 10
+
+def is_http(url: str) -> bool:
+    """Whether a link is an http(s) URL, by the scheme urlsplit reads (any case,
+    leading spaces and controls stripped as a browser strips them)."""
+    return B.url_scheme(url) in ("http", "https")
+
 
 DEAD, UNVERIFIED, OK = "DEAD", "UNVERIFIED", "OK"
 MD = B.make_md()
@@ -96,11 +101,11 @@ class _LinkParser(HTMLParser):
         self.found: list[tuple[str, int]] = []
 
     def handle_starttag(self, tag, attrs):
-        a = {k.lower(): v or "" for k, v in attrs}
+        a = {k: v or "" for k, v in B.first_attrs(attrs).items()}   # a repeated attribute: the first stands
         if tag == "link" and {"preconnect", "dns-prefetch"} & set(a.get("rel", "").lower().split()):
             return   # a connection hint names a host, not a page
         for key in ("href", "src"):
-            if HTTP_RE.match(a.get(key, "")):
+            if is_http(a.get(key, "")):
                 self.found.append((a[key], self.getpos()[0]))
 
     handle_startendtag = handle_starttag
@@ -129,7 +134,7 @@ def markdown_links(text: str, where: str, out: dict[str, list[str]]) -> None:
                 url = c.attrGet("src") or ""
             elif c.type == "html_inline":
                 html_links(c.content, where, line, out)
-            if HTTP_RE.match(url):
+            if url and is_http(url):
                 out.setdefault(url.split("#", 1)[0], []).append(f"{where}:{line}")
 
 
@@ -164,7 +169,7 @@ def load_allowlist(path: Path) -> tuple[list[str], list[str]]:
             continue
         m = re.fullmatch(r"(\S+)\s+#\s*(.*)", line)
         url, reason = (m.group(1), m.group(2)) if m else (line, "")
-        if not HTTP_RE.match(url) or len(reason.strip()) < 8:
+        if not is_http(url) or len(reason.strip()) < 8:
             errors.append(f"{path.name}:{n}: expected '<http(s) url prefix>  # <reason>', got {raw!r}")
             continue
         prefixes.append(url)
@@ -352,7 +357,7 @@ def header_url(value: str) -> str:
 def request(url: str, method: str, timeout: float) -> tuple[int, str | None]:
     """ONE request, no redirect followed and no body read: (status, the Location
     of a redirect, or None). Anything but http(s) is refused before connecting."""
-    if not HTTP_RE.match(url):
+    if not is_http(url):
         raise urllib.error.URLError(f"redirect to a non-HTTP URL: {url[:80]}")
     _PHASE.connected = _PHASE.proxied = False
     try:
@@ -428,7 +433,7 @@ def step(job: Job, retries: int, wait: float, timeout: float,
                 # Resolved as a browser resolves it against the current URL. A
                 # NormalizeError propagates: it stops the run, it is no verdict.
                 target = resolve(location, job.url, timeout) or ""
-                if target and not HTTP_RE.match(target):
+                if target and not is_http(target):
                     outcome = (UNVERIFIED, f"redirect to a non-HTTP URL: {target[:80]}")
                 elif not target or malformed(target):   # the scheduler keys the next hop by its host
                     outcome = (UNVERIFIED, f"HTTP {code} to a malformed Location")
@@ -516,13 +521,17 @@ def run_checks(urls: list[str], retries: int, wait: float, timeout: float, worke
     def worker() -> None:
         while (job := take()) is not None:
             host = urlsplit(job.url).netloc.lower()
-            follow, outcome, broken = None, (UNVERIFIED, "checker error"), None
+            follow, outcome, broken, closed_out = None, (UNVERIFIED, "checker error"), None, False
             try:
                 follow, outcome = step(job, retries, wait, timeout, resolve)
             except NormalizeError as e:
                 broken = e
             except _Closed:
-                pass   # the run already returned this link as unanswered
+                # The budget ran out before this link's redirect could be resolved:
+                # it is unanswered, which the run reports as such. Publishing an
+                # outcome here would label it a checker error whenever this lands
+                # before the coordinator takes its copy of the results.
+                closed_out = True
             except Exception as e:  # noqa: BLE001  (a bug must cost one link, never the host's queue)
                 follow, outcome = None, (UNVERIFIED, f"checker error: {type(e).__name__}: {e}")
             finally:
@@ -533,7 +542,7 @@ def run_checks(urls: list[str], retries: int, wait: float, timeout: float, worke
                             fatal.append(broken)
                     elif follow is not None:
                         queues[urlsplit(follow.url).netloc.lower()].append(follow)
-                    else:
+                    elif not closed_out:
                         results[job.origin] = outcome
                     cond.notify_all()
 

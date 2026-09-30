@@ -78,7 +78,7 @@ file_patterns:
 | 💎  |  25   | §25 Docs search completeness and accessibility                           | §1                          |  [x]   |
 | 💎  |  26   | §26 Document: Host tools (8 roadmap files)                               | §2, §3                      |  [x]   |
 | 💎  |  27   | §27 Document: Architecture ports and future research (9 roadmap files)   | §2, §3                      |  [x]   |
-| ⭐  |  28   | §28 Review-class nets for site tooling: real parsers, scheduler stress   | §23                         |  [ ]   |
+| ⭐  |  28   | §28 Review-class nets for site tooling: real parsers, scheduler stress   | §23                         |  [x]   |
 | 💎  |  29   | §29 Retained release trees: snapshots, manifest, live verification       | §24                         |  [ ]   |
 | 💎  |  30   | §30 SDK release docs and API reference                                   | §29, D12 T06 §2, D12 T06 §8 |  [ ]   |
 | 💎  |  31   | §31 Docs search quality and automated accessibility audit                | §25                         |  [ ]   |
@@ -100,7 +100,7 @@ One generator owns every published surface, so no fact is maintained in two plac
 - [x] Vendored markdown-it-py 3.0.0 and mdurl 0.1.2 (MIT) under `tools/vendor/`, with PROVENANCE and CREDITS rows and a COUNT.md vendored-tree exclusion
 - [x] Check 30 judges the commit, not the working tree: `--staged` snapshots the index; post-commit syncs from a pinned HEAD snapshot (`--sync-head` / `--emit-head --ref`, batched `cat-file`) (Codex review 2026-09-27)
 - [x] Link and image existence is judged against tracked files only (ignored build artifacts never satisfy a link); same-page and percent-encoded anchors are validated (Codex review)
-- [x] Raw HTML `href`/`src` are rewritten and validated through a tag scanner that skips comments and other attributes' values, decoding entities and escaping once (Codex re-adversarial)
+- [x] Raw HTML `href`/`src` are rewritten and validated through a tag scanner that skips comments and other attributes' values, decoding entities and escaping once (Codex re-adversarial); html.parser replaced the scanner in section 28
 - [x] The coverage baseline cannot grow: additions are measured against the previously committed baseline (Pages checks out `fetch-depth: 2`); the one exception is re-adding a falsely claimed path with a written `growth_reasons` entry (Codex review)
 - [x] A dirty working README no longer skips the sync: the hook commits a synced README blob through a private index (5 re-adversarial rounds)
   - Held under the real `index.lock`, with a compare-and-swap on HEAD, real parents (shallow-safe), and signal-safe single-owner lock cleanup.
@@ -1155,7 +1155,7 @@ A release snapshot is only useful if it still points at the code it describes. B
   - `DOCS_BASE` scopes canonical URLs, `search.json` and `SITE_ROOT`; nav and search URLs are docs-root relative. Only the docs tree is emitted (no landing, sitemap, robots).
   - Publishing facts come from today's `project.json`; a ref that is not a plain name, starts with `main/` or `refs/`, names no commit or predates the site (both `v26.3.18-alpha` tags) is refused. Render errors hard-fail; current-commit hygiene checks are skipped.
 - [x] Tests: `ReleaseDocs` (7 cases): pinned links after `main` deletes the file and moves owner, nested `rel/v2` path, dead links, refusals, default build unpinned
-- [x] Raw HTML is an allowlist in every build (`RAW_HTML_ATTRS`): links only as `<a href>`/`<img src>`, checked per tag by an html.parser net behind the scanner (post-ship review)
+- [x] Raw HTML is an allowlist in every build (`RAW_HTML_ATTRS`): links only as `<a href>`/`<img src>`, checked per tag by an html.parser net behind the scanner (post-ship review); the parser became the rewriter in section 28
   - Refused: any other attribute (`srcset`, `srcdoc`, `style`, handlers), every tokenizer-switching element (script, style, noscript, iframe, textarea, title, svg, math...), `<![` sections, DOCTYPE, PIs, text between `<!-->` and a later `-->`, an unfinished trailing tag, a URL Markdown refuses (`javascript:`), and an encoded slash in a repository link.
 - [x] Commit: `"site: version-pinned rendering for release docs"`
 
@@ -1311,16 +1311,33 @@ Write docs pages that meet the §3 contract for the 9 roadmap files below. Read 
 
 Promotion of two review classes into automation, filed under the reviewer-to-automation rule. Measured 2026-09-29 with `python3 scripts/overnight/finding-ledger.py classes`: `parser-approximation` 13 fixed (11 from the site-polish section's reviews: a heading line scanner, an HTML attribute regex, three hand-written URL serializers, a Latin-1 header, a raw-anchor regex) and `scheduling` 3 (all in the link checker). Each was caught by a Codex round; nothing deterministic would catch the next one.
 
-- [ ] A lint check that fails on regex-based HTML or URL parsing in `scripts/site/*.py`: tags, attributes, anchors and URLs go through markdown-it, `html.parser` or Node's WHATWG `URL`
-  - `Renderer.TAG_RE` / `ATTR_RE` in `scripts/site/build.py` (the raw-HTML href/src rewriter) is the remaining instance: convert it to `html.parser` or record it on a named allowlist with its reason.
-  - Measured 2026-09-29 (section 24 post-ship review): the scanner skips browser-accepted tags such as `<a/href=...>` and `alt=""src=...`; section 24 added an html.parser net that fails the build on them, so converting the rewriter would retire that net. Section 24 fixed 27 more `parser-approximation` findings (40 in the class).
-  - Include a control that must fire: a fixture file with an `<a\s+href=` regex is reported.
-- [ ] A seeded stress test for `scripts/site/linkcheck.py` `run_checks`: random delays injected at request, redirect resolution and worker hand-off
-  - Invariants: every link is answered or reported unanswered at the budget; a parser failure never ends green; no host ever exceeds `PER_HOST` concurrent requests.
-  - Run at least 200 seeds in under 30 s, and prove the net with a control: reverting the failure-publication order in `resolve()` must fail it.
-- [ ] Commit: `"site: automation for parser-approximation and scheduling review classes"`
+- [x] Lint Check 31 (`scripts/site/check_parsers.py`) fails on any regex in `scripts/site/*.py` that reads markup or URL structure; tags go through `html.parser`/markdown-it, URLs through `urllib.parse`
+  - AST fold of every pattern reaching `re.*`, through `import re as x`, `from re import compile` and named string constants (concatenations included); waiver `# parser-allow: <reason>` read from comment tokens, stale waivers reported.
+  - `Renderer.TAG_RE`/`ATTR_RE` retired: `_RawAttrs` (html.parser) now finds every `<a href>`/`<img src>` and `rewrite_raw_html` re-serializes exactly those tags from the parsed attributes, so `<a/href=...>` is rewritten, not refused.
+  - A character reference html.unescape decodes but a browser keeps inside an attribute (`&copy=2`, `&notit;`) is refused in a link tag (`ambiguous_charref`), so a re-serialized tag always means what its source meant (design review).
+  - Also converted: alert, task-list and table wrappers to markdown-it token rules (`mark_alerts_and_tasks`, `make_md` render rules); `is_noindex`/`inline_scripts` to html.parser; scheme tests to `url_scheme`/`has_scheme` (urlsplit: `1:x.md` stays relative).
+  - Raw `href`/`src` are held to Markdown's scheme policy in the form a browser parses (`browser_url_input`: tabs and newlines removed), so `java&#9;script:` is refused; classic scripts are chosen by the HTML Standard's type rules and a self-closing `<script/>` fails (adversarial review).
+  - A docs path outside ASCII letters, digits, `._-/` fails the build (`url_safe_path`: it becomes a URL in navigation, search and the sitemap), body links are percent-encoded paths and re-checked after rewriting; a repeated attribute keeps its first value everywhere (`first_attrs`), as in a browser (adversarial review rounds 2-3).
+  - Also converted: donate links to `donate_buttons` (urlsplit + parse_qs, any parameter order, `&amp;` decoded); the README count badge to `count_badge` (Markdown image tokens plus raw `<img>` via html.parser); linkcheck `HTTP_RE` to `is_http`.
+  - Four waivers remain, each over this repo's own syntax or a deliberate lexical check: `REGION_RE`, `DIRECTIVE_RE`, `REPO_URL_RE` (repository mentions in any text) and the tokenizer tag-open test on html.parser's unread remainder.
+  - Control: `--control` judges 35 marked lines of `scripts/site/tests/fixtures/parser_lint/regex_forms.py` (tag, class, lookbehind and attribute forms, quoted `id="`, f-string constants, aliases, waivers); lint errors if any is misjudged.
+- [x] A seeded stress test for `scripts/site/linkcheck.py` `run_checks` (`LinkCheckStress`): random delays at request, redirect resolution and worker hand-off, 200 seeds in about 11 s
+  - Invariants: every link answered or reported unanswered at the budget, answers match the fake network's; a fake URL-parser failure always raises; no host above `PER_HOST` in flight (and the limit is reached).
+  - Control: a mutant without the failure publication in `resolve()`'s `finally` must fail; a scripted interleaving (failure after the deadline, worker publication held on an Event) catches it deterministically (design review).
+  - Found a real defect on its first run (seed 71): a worker whose redirect the spent budget refused (`_Closed`) published `("UNVERIFIED", "checker error")` when it beat the coordinator; now the link stays unanswered and reports the budget.
+  - That defect has its own deterministic test on a fake clock, which fails with the fix reverted.
+- [x] Commit: `"site: automation for parser-approximation and scheduling review classes"`
 
 **Test checkpoint:** `bash scripts/lint.sh` reports the fixture control and nothing in the real tree; `python3 scripts/site/tests/test_build.py` runs the stress test green and the control red. Test on: WSL2 dev host.
+
+> **Test runner:** `python3 scripts/site/tests/test_build.py` (116 tests, `RealParsers` and `LinkCheckStress` included) and `python3 scripts/site/check_parsers.py --control` (35/35 fixture lines) on the WSL2 dev host; no kernel test surface (host tooling).
+
+> **Notes:**
+> - **What shipped:** lint Check 31 (`check_parsers.py` + fixture control), html.parser raw-HTML rewriter, markdown-it token rules, urlsplit URL helpers, and the seeded `run_checks` stress with a mutant control.
+> - **Integration:** every site build and `build.py --check` uses the new parsers; the full site built byte-identical to the pre-change tree apart from freshness rows.
+> - **Downstream:** a new regex over HTML or URLs in the site scripts now fails at commit, not in a Codex round; the stress found and fixed a budget mislabel in `linkcheck.py`.
+> - **Canonical doc:** [Documentation Site](../../docs/infrastructure/documentation-site.md), "Why does no site script parse HTML with a regex?".
+> - **Scope boundary:** the check covers `re` patterns in `scripts/site/*.py`; hand-written string slicing and other directories are outside it.
 
 ---
 

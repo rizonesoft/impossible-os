@@ -142,7 +142,7 @@ class RawHtmlAndBaseline(unittest.TestCase):
         errors: list[str] = []
         pages, _ = B.load_pages(FACTS, errors)
         body = pages["forms.md"].body
-        self.assertIn('HREF="kernel/"', body)
+        self.assertIn('<a href="kernel/">a</a>', body)             # re-serialized from the parsed tag
         self.assertIn('?a=1&amp;b=2"', body)          # escaped exactly once
         self.assertNotIn("&amp;amp;", body)
         self.assertTrue(any("missing.md" in e for e in errors), errors)
@@ -1282,20 +1282,22 @@ class ReleaseDocs(unittest.TestCase):
             B.prepare_release("v0")
         self.assertIn("predates the docs site", str(cm.exception))
 
-    def test_raw_html_the_scanner_cannot_read_fails_in_every_build(self):
-        # Browser-accepted shapes the tag scanner skips: html.parser is the net.
+    def test_raw_html_outside_the_allowlist_fails_in_every_build(self):
+        # html.parser reads the fragment as a browser does; what it cannot vouch for is refused.
         page = B.Page(src=Path("docs/p.md"), rel="p.md", url="p.html")
         for release in (None, "v9"):
             B.RELEASE = release
             for frag, why in (('<img/srcset="u.png 2x">', "srcset"),
                               ('<img alt=""srcset="u.png 2x">', "srcset"),
                               ('<img src="a.png" srcset="u.png 2x">', "srcset"),
-                              ('<a/href="https://example.invalid/">x</a>', "cannot read"),
-                              ('<img alt=""src="https://example.invalid/i.png">', "cannot read"),
                               ('<div><style>/* <a href="https://example.invalid/"> */</style>\n'
-                               '<a/href="https://example.invalid/real">real</a></div>', "cannot read"),
+                               '<a/href="https://example.invalid/real">real</a></div>', "<style>"),
                               ('<div><script>var s = \'<a href="https://example.invalid/">\';</script>'
-                               '<a/href="https://example.invalid/real">r</a></div>', "cannot read"),
+                               '<a/href="https://example.invalid/real">r</a></div>', "<script>"),
+                              # html.unescape decodes a legacy prefix a browser keeps inside an attribute.
+                              ('<a href="https://example.invalid/?a=1&copy=2">c</a>', "&copy"),
+                              ('<img alt="&notit;" src="https://example.invalid/n.png">', "&not"),
+                              ('<a href="https://example.invalid/" title="&ampx">t</a>', "&amp"),
                               ('<div><svg><style><img srcset="u.png 2x"></style></svg></div>', "foreign content"),
                               ('<p><MATH><mi>x</mi></MATH></p>', "foreign content"),
                               ('<div><!--><a href="https://example.invalid/">s</a><svg></svg><!-- end --></div>',
@@ -1306,7 +1308,6 @@ class ReleaseDocs(unittest.TestCase):
                               ('<div><![IGNORE[></div>', "marked section"),
                               ('<!DOCTYPE html>', "declaration"),
                               ('<?xml version="1.0"?>', "processing instruction"),
-                              ('<!-- a --!> <a/href="https://example.invalid/">y</a>', "cannot read"),
                               ('<iframe srcdoc="&lt;a href=x&gt;"></iframe>', "<iframe>"),
                               ('<video src="https://example.invalid/v.mp4"></video>', "src= on <video>"),
                               ('<p style="background:url(https://example.invalid/b.png)">x</p>', "style="),
@@ -1359,6 +1360,25 @@ class ReleaseDocs(unittest.TestCase):
             errors = []
             B.Renderer(dict(FACTS, _historical_owners=[]), {}, errors).rewrite_raw_html(page, frag)
             self.assertEqual(errors, [], frag)
+        # Spellings a regex tag scanner used to skip are the tags a browser reads, so
+        # they are rewritten like any other: re-serialized, the link validated.
+        for frag, want in (('<a/href="https://example.invalid/">x</a>', '<a href="https://example.invalid/">x</a>'),
+                           ('<img alt=""src="https://example.invalid/i.png">',
+                            '<img alt="" src="https://example.invalid/i.png">'),
+                           ('<!-- a --!> <a/href="https://example.invalid/y">y</a>',
+                            '<!-- a --!> <a href="https://example.invalid/y">y</a>'),
+                           ('<a title="&copy; 2026 &amp; on" href=\'https://example.invalid/?a=1&amp;b=2\'>c</a>',
+                            '<a title="\u00a9 2026 &amp; on" href="https://example.invalid/?a=1&amp;b=2">c</a>'),
+                           ('<p>kept <!-- <a href="x"> --> as is</p><img src="https://example.invalid/z.png" alt="z"/>',
+                            '<p>kept <!-- <a href="x"> --> as is</p><img src="https://example.invalid/z.png" alt="z" />')):
+            errors = []
+            got = B.Renderer(dict(FACTS, _historical_owners=[]), {}, errors).rewrite_raw_html(page, frag)
+            self.assertEqual((got, errors), (want, []), frag)
+        # A javascript: link is refused whatever the spelling that hid it from a scanner.
+        errors = []
+        B.Renderer(dict(FACTS, _historical_owners=[]), {}, errors).rewrite_raw_html(
+            page, '<a/href="javascript:alert(1)">x</a>')
+        self.assertTrue(any("Markdown would refuse" in e for e in errors), errors)
 
     def test_an_unresolved_absolute_link_fails_closed(self):
         errors: list[str] = []
@@ -2063,6 +2083,404 @@ class LinkCheck(unittest.TestCase):
         self.assertTrue(wf[True]["schedule"])      # PyYAML reads the bare key `on` as True
         steps = [s.get("run", "") for s in wf["jobs"]["linkcheck"]["steps"]]
         self.assertIn("python3 scripts/site/linkcheck.py", steps)
+
+
+class RealParsers(unittest.TestCase):
+    """Section 28: the site scripts read HTML with html.parser and markdown-it
+    tokens and URLs with urllib.parse, and each helper holds at its edges."""
+
+    def render(self, text: str) -> str:
+        page = B.Page(src=Path("docs/q.md"), rel="q.md", url="q.html")
+        r = B.Renderer(dict(FACTS, _historical_owners=[]), {}, [])
+        r.browser = {}
+        r.render(page, "# Q\n\n" + text)
+        return page.body
+
+    def test_alerts_tasks_and_tables_come_from_tokens(self):
+        body = self.render("> [!NOTE]\n> Body text\n")
+        self.assertIn('<blockquote class="alert alert-note"><p class="alert-title">Note</p><p>Body text</p>', body)
+        body = self.render("> [!TIP]  \n> After a hard break\n")
+        self.assertIn('<p class="alert-title">Tip</p><p>After a hard break</p>', body)
+        body = self.render("> [!WARNING] on the same line\n")
+        self.assertIn('<p class="alert-title">Warning</p><p>on the same line</p>', body)
+        for plain in ("> just a quote\n", "> [!note] lower case is text\n", "> `[!NOTE]` in code\n"):
+            self.assertNotIn("alert", self.render(plain), plain)
+        body = self.render("- [ ] open\n- [x] done\n- [X] DONE\n")
+        self.assertIn('<li class="task"><input type="checkbox" disabled> open</li>', body)
+        self.assertIn('<li class="task"><input type="checkbox" checked disabled> done</li>', body)
+        self.assertIn('<li class="task"><input type="checkbox" checked disabled> DONE</li>', body)
+        loose = self.render("- [ ] a\n\n- [ ] b\n")
+        self.assertNotIn("task", loose)                  # a loose list item is a paragraph, as before
+        self.assertIn("<p>[ ] a</p>", loose)
+        body = self.render("| a | b |\n| - | - |\n| 1 | 2 |\n")
+        self.assertEqual((body.count('<div class="table-wrap"><table>'), body.count("</table></div>")), (1, 1))
+        self.assertEqual(body.count("<table"), 1)
+
+    def test_raw_links_are_judged_in_the_form_a_browser_parses(self):
+        page = B.Page(src=Path("docs/p.md"), rel="p.md", url="p.html")
+        for release in (None, "v9"):
+            B.RELEASE = release
+            try:
+                for href in ("java&#9;script:alert(1)", "java&#10;script:alert(1)", "java&#13;script:alert(1)",
+                             "&#1; javascript:alert(1)", " JAVASCRIPT:alert(1)", "vb&#9;script:x"):
+                    errors: list[str] = []
+                    r = B.Renderer(dict(FACTS, _historical_owners=[]), {}, errors)
+                    r.browser = {}
+                    r.rewrite_raw_html(page, f'<a href="{href}">x</a>')
+                    self.assertTrue(any("Markdown would refuse" in e for e in errors), (release, href, errors))
+                errors = []
+                r = B.Renderer(dict(FACTS, _historical_owners=[]), {}, errors)
+                r.browser = {}
+                r.render(B.Page(src=Path("docs/q.md"), rel="q.md", url="q.html"),
+                         '# Q\n\n<a href="java&#9;script:alert(1)">x</a>\n')
+                self.assertTrue(any("Markdown would refuse" in e for e in errors), (release, errors))
+            finally:
+                B.RELEASE = None
+
+    def test_a_rewritten_link_never_reads_as_a_scheme(self):
+        # A tracked page whose name starts like a scheme is refused outright (its URL
+        # appears in navigation, search and the sitemap), and a body link to it is
+        # percent-encoded, so `javascript:alert(1).html` is never emitted.
+        saved = (B.REPO, B.ROOT, B.SOURCE, B._FILESET, B._DIRSET)
+        try:
+            root = fixture_repo()
+            (root / "docs" / "javascript:alert(1).md").write_text("# Colon\n", encoding="utf-8")
+            (root / "docs" / "c.md").write_text('# C\n\n<a href="javascript%3Aalert(1).md">r</a> [m](javascript%3Aalert(1).md)\n',
+                                                encoding="utf-8")
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                       GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+            for cmd in (["add", "-A"], ["commit", "-q", "-m", "colon", "--no-verify"]):
+                subprocess.run(["git", *cmd], cwd=root, check=True, env=env, capture_output=True)
+            RawHtmlAndBaseline._use(self, root)
+            errors: list[str] = []
+            pages, _ = B.load_pages(FACTS, errors)
+            body = pages["c.md"].body
+            self.assertNotIn('href="javascript:', body)
+            self.assertEqual(body.count('href="javascript%3Aalert%281%29.html"'), 2, body)
+            self.assertFalse([e for e in errors if "c.md" in e], errors)
+            self.assertTrue(any("javascript:alert(1).md: a page path may use only" in e for e in errors), errors)
+            self.assertFalse(B.url_safe_path("a b.md") or B.url_safe_path("x:y.md") or B.url_safe_path("caf\u00e9.md"))
+            self.assertTrue(B.url_safe_path("kernel/boot-flow_2.md"))
+        finally:
+            B.REPO, B.ROOT, B.SOURCE, B._FILESET, B._DIRSET = saved
+            B.set_root(B.ROOT)
+
+    def test_a_repeated_attribute_keeps_its_first_value(self):
+        self.assertEqual(B.first_attrs([("type", "a"), ("id", None), ("type", "b")]), {"type": "a", "id": None})
+        self.assertTrue(B.is_noindex('<meta name="robots" name="x" content="noindex" content="index">'))
+        self.assertFalse(B.is_noindex('<meta name="x" name="robots" content="noindex">'))
+        self.assertEqual(B.html_anchors('<a id="first" id="second" name="n"></a>'), {"first", "n"})
+        import linkcheck as L
+        out: dict[str, list[str]] = {}
+        L.html_links('<a href="https://example.invalid/first" href="https://example.invalid/second">x</a>', "f", 1, out)
+        self.assertEqual(list(out), ["https://example.invalid/first"])
+
+    def test_check_parsers_folding_is_linear_and_cycle_safe(self):
+        import check_parsers as C
+        d = Path(tempfile.mkdtemp(prefix="parsers-"))
+        f = d / "chain.py"
+        f.write_text("import re\nP = '<a>'\n" + "P = P\n" * 200 + "A = B\nB = A + '<b'\nX = re.compile(P)\nY = re.compile(A)\n",
+                     encoding="utf-8")
+        start = time.monotonic()
+        found = C.check_file(f)
+        self.assertLess(time.monotonic() - start, 2.0)
+        self.assertEqual([n for n, _ in found], [205, 206], found)
+        # A fold cut short by a cycle is not cached: call order cannot hide a pattern.
+        f.write_text("import re\nA = '<'\nB = A\nA = B\nre.compile(A)\nre.compile(B + 'a>')\n", encoding="utf-8")
+        self.assertEqual([n for n, _ in C.check_file(f)], [6], C.check_file(f))
+        # A pattern whose fold outgrows the step budget is reported, never passed.
+        for body in ("".join(f"X{i} = X{i - 1} + X{i - 1}\n" for i in range(1, 40)) + "re.compile(X39)\n",):
+            f.write_text("import re\nX0 = 'a'\nX0 = X0\n" + body, encoding="utf-8")
+            start = time.monotonic()
+            found = C.check_file(f)
+            self.assertLess(time.monotonic() - start, 5.0)
+            self.assertTrue(any("too complex" in m for _, m in found), found)
+        f.write_text("import re\nX0 = 'a'\nX0 = X0\n" + "".join(f"X{i} = X{i - 1} + X{i - 1}\n" for i in range(1, 40))
+                     + "re.compile(X39)  # parser-allow: a deliberately deep fixture, waived like any other\n",
+                     encoding="utf-8")
+        self.assertEqual(C.check_file(f), [])
+        # More candidates than the check reads is reported, never judged on the first 64.
+        f.write_text("import re\nP = 'x'\nP = '<'\nA = 'a'\nA = 'b'\nre.compile(f'{P}{A}{A}{A}{A}{A}{A}>')\n",
+                     encoding="utf-8")
+        self.assertTrue(any("too complex" in m for _, m in C.check_file(f)), C.check_file(f))
+        # Repeats of an ambiguous name multiply combinations, not distinct strings: the
+        # work stays bounded and the pattern is still judged in full.
+        f.write_text("import re\nA = 'x'\nA = 'xx'\nre.compile(f'" + "{A}" * 40 + "')\n"
+                     "re.compile('<b' + " + " + ".join(["A"] * 40) + ")\n", encoding="utf-8")
+        start = time.monotonic()
+        found = C.check_file(f)
+        self.assertLess(time.monotonic() - start, 2.0)
+        self.assertEqual([n for n, _ in found], [5], found)
+        f.write_text("import re\nP = 'x'\nP = '<'\nre.compile(P + 'b>')\n", encoding="utf-8")
+        self.assertEqual([n for n, _ in C.check_file(f)], [4])       # few candidates: every one is judged
+
+    def test_a_long_ampersand_run_is_linear(self):
+        frag = '<a href="https://example.invalid/?' + "&" + "a" * 300_000 + '">x</a>'
+        start = time.monotonic()
+        B._RawAttrs.scan(frag)
+        self.assertLess(time.monotonic() - start, 2.0)
+        self.assertEqual(B.ambiguous_charref("&middotx"), "&middotx")   # the longest legacy name, then text
+        self.assertEqual(B.ambiguous_charref("&middot; &amp; &#38; &nosuch"), "")
+
+    @unittest.skipUnless(shutil.which("node"), "node not installed")
+    def test_classic_scripts_are_chosen_by_type(self):
+        broken = "function ( {"
+        for tag, parsed in (("<script TYPE>", True), ('<script type = " Text/JavaScript ">', True),
+                            ('<script type="">', True), ('<script language="javascript">', True),
+                            ('<script type="module">', False), ('<script type="application/ld+json">', False),
+                            ('<script src="x.js">', False)):
+            errors: list[str] = []
+            B.check_scripts({"p.html": f"{tag}{broken}</script>".encode()}, errors)
+            self.assertEqual(bool(errors), parsed, (tag, errors))
+        for tag in ('<script type="text/javascript" type="application/ld+json">',
+                    '<script language="javascript" language="x" >'):
+            errors = []
+            B.check_scripts({"p.html": f"{tag}{broken}</script>".encode()}, errors)
+            self.assertTrue(errors, tag)                  # the browser keeps the first attribute
+        errors = []
+        B.check_scripts({"p.html": b"<script/>const a = ;</script>"}, errors)
+        self.assertTrue(any("self-closing <script/>" in e for e in errors), errors)
+
+    def test_noindex_is_read_from_the_meta_tag(self):
+        self.assertTrue(B.is_noindex('<meta content="noindex" name="robots">'))
+        self.assertTrue(B.is_noindex("<META NAME='Robots' CONTENT='NoIndex, NoFollow'>"))
+        self.assertFalse(B.is_noindex('<meta name="robots" content="xnoindex">'))
+        self.assertFalse(B.is_noindex('<meta name="googlebot" content="noindex">'))
+        self.assertFalse(B.is_noindex('<!-- <meta name="robots" content="noindex"> -->'))
+
+    def test_url_helpers(self):
+        self.assertEqual(B.url_scheme("http://[broken/path"), "http")
+        self.assertEqual(B.url_scheme("HTTPS://Example.invalid/"), "https")
+        self.assertEqual(B.url_scheme(" \tjavascript:x"), "javascript")
+        for rel in ("1:x.md", "+x:y.png", "docs/a.md", "#frag", "//host/x", ""):
+            self.assertEqual(B.url_scheme(rel), "", rel)
+        self.assertEqual(B.browser_url_input("\x01 java\tscr\nipt:x \x00"), "javascript:x")
+
+    def test_donate_buttons_and_count_badge(self):
+        pp = "https://www.paypal.com/donate/"
+        self.assertEqual(B.donate_buttons(f'<a href="{pp}?locale=en&amp;hosted_button_id=AAA">'), ["AAA"])
+        self.assertEqual(B.donate_buttons(f"[a]({pp}?hosted_button_id=AAA) and {pp}?hosted_button_id=BBB"),
+                         ["AAA", "BBB"])
+        self.assertEqual(B.donate_buttons(f"{pp}?hosted_button_id=AAA&hosted_button_id=BBB"), ["AAA", "BBB"])
+        self.assertEqual(B.donate_buttons("see paypal.com/donate for how buttons work"), [])
+        self.assertEqual(B.donate_buttons("https://www.paypal.com/donatex?hosted_button_id=Z"), [])
+        badge = "https://img.shields.io/badge/lines-{}-blueviolet"
+        self.assertEqual(B.count_badge(f"![lines]({badge.format('1%2C234')})\n"), 1234)
+        self.assertEqual(B.count_badge(f'<p>\n  <img src="{badge.format("1%2C325%2C572")}" alt="L" />\n</p>\n'), 1325572)
+        for bad in ("12%2C34", "1234x", "", "1%2C2345"):
+            self.assertIsNone(B.count_badge(f"![l]({badge.format(bad)})\n"), bad)
+        self.assertIsNone(B.count_badge("no badge here\n"))
+        self.assertIsNone(B.count_badge(f"`{badge.format('1%2C234')}`\n"))   # a URL in code is not an image
+
+
+class LinkCheckStress(unittest.TestCase):
+    """linkcheck.run_checks under seeded random scheduling: the network, the URL
+    parser and the worker hand-off are fakes that sleep a random few
+    milliseconds, so each seed interleaves the workers, the per-host slots,
+    redirects, retries and the budget differently. Invariants, every seed:
+    every link is answered or reported unanswered at the budget, and an answer
+    is the right one; a URL-parser failure never ends green; no host ever has
+    more than PER_HOST requests in flight. The control is a mutant whose
+    resolve() stops publishing its failure before the call stops counting as in
+    flight: a scripted interleaving (the failure lands after the deadline, the
+    worker's own publication held back) must catch it."""
+
+    SEEDS = 200
+    HOSTS = ("a.test", "b.test", "c.test")
+    KINDS = ("ok", "gone", "down", "flaky", "redir")
+    EXPECT = {"ok": ("OK", ""), "gone": ("DEAD", "HTTP 404"), "down": ("UNVERIFIED", "HTTP 503"),
+              "flaky": ("OK", ""), "redir": ("OK", "")}
+
+    @classmethod
+    def setUpClass(cls):
+        import linkcheck as L
+        cls.L = L
+
+    @staticmethod
+    def mutant(L):
+        """linkcheck with the resolve() failure publication removed: only the
+        worker publishes the failure, after the call has stopped counting."""
+        import types
+        src = Path(L.__file__).read_text(encoding="utf-8")
+        old = ("                if failure is not None and failure not in fatal:\n"
+               "                    fatal.append(failure)\n"
+               "                parsing[0] -= 1\n")
+        assert src.count(old) == 1, "the control's mutation no longer applies: update it with resolve()"
+        m = types.ModuleType("linkcheck_mutant")
+        m.__file__ = L.__file__
+        sys.modules[m.__name__] = m                  # dataclasses resolve the defining module by name
+        try:
+            exec(compile(src.replace(old, "                parsing[0] -= 1\n"), L.__file__, "exec"), m.__dict__)
+        finally:
+            del sys.modules[m.__name__]
+        return m
+
+    def run_seed(self, L, seed: int) -> tuple[list[str], int]:
+        """(violations, peak in-flight requests on one host) for one seed."""
+        import random
+        import threading
+        from urllib.parse import urlsplit
+        rng = random.Random(seed)
+        lock = threading.Lock()
+        inflight: dict[str, int] = {}
+        peak, calls, failed = [0], {}, []
+        fail = seed % 4 == 0                        # this seed's URL parser fails on one redirect
+        urls = [f"http://{rng.choice(self.HOSTS)}/{rng.choice(self.KINDS)}/{i}" for i in range(rng.randint(8, 30))]
+        if fail:
+            urls.append(f"http://{rng.choice(self.HOSTS)}/redir-fail/x")
+        short = rng.random() < 0.3                  # a budget that runs out mid-run
+        budget = rng.uniform(0.002, 0.03) if short else 20.0
+
+        def delay():
+            with lock:
+                d = rng.uniform(0, 0.003)
+            time.sleep(d)
+
+        def request(url, method, timeout):
+            host = urlsplit(url).netloc
+            with lock:
+                inflight[host] = inflight.get(host, 0) + 1
+                peak[0] = max(peak[0], inflight[host])
+                calls[url] = calls.get(url, 0) + 1
+                n = calls[url]
+            try:
+                delay()
+                kind = urlsplit(url).path.split("/")[1]
+                if kind == "flaky" and n == 1:
+                    raise TimeoutError("timed out")
+                return {"gone": (404, None), "down": (503, None), "redir": (301, "/hop"),
+                        "redir-fail": (302, "/fail")}.get(kind, (200, None))
+            finally:
+                with lock:
+                    inflight[host] -= 1
+
+        def resolve_location(location, base, timeout):
+            delay()
+            if location == "/fail":
+                with lock:
+                    failed.append(base)
+                raise L.NormalizeError("fake URL parser failure")
+            host = self.HOSTS[(self.HOSTS.index(urlsplit(base).netloc) + 1) % len(self.HOSTS)]
+            return f"http://{host}/ok{urlsplit(base).path}"
+
+        real_step = L.step
+
+        def step(*a, **kw):                          # the worker hand-off: between an answer and its publication
+            try:
+                out = real_step(*a, **kw)
+            except BaseException:
+                delay()
+                raise
+            delay()
+            return out
+
+        return self.drive(L, urls, budget, short, request, resolve_location, step, failed, peak)
+
+    def drive(self, L, urls, budget, short, request, resolve_location, step, failed, peak, release=None):
+        import threading
+        saved = (L.request, L.resolve_location, L.step, L.browser_urls)
+        before = set(threading.enumerate())
+        L.request, L.resolve_location, L.step = request, resolve_location, step
+        L.browser_urls = lambda us, base=None, timeout=0: {u: u for u in us}
+        got, raised, bad = None, None, []
+        try:
+            try:
+                got = L.run_checks(urls, retries=3, wait=0.001, timeout=0.5, budget=budget)
+            except L.NormalizeError as e:
+                raised = e
+            if release is not None:
+                release.set()
+            for t in set(threading.enumerate()) - before:
+                t.join(5)
+                if t.is_alive():
+                    bad.append("a worker outlived its run")
+        finally:
+            L.request, L.resolve_location, L.step, L.browser_urls = saved
+        if failed and raised is None:
+            bad.append(f"a URL-parser failure ended green: {sorted(got.items())[:3]}")
+        if raised is not None and not failed:
+            bad.append(f"the run failed with no parser failure: {raised}")
+        if got is not None:
+            if set(got) != set(urls):
+                bad.append(f"links missing from the result: {sorted(set(urls) - set(got))[:3]}")
+            for u, v in got.items():
+                if v[1].startswith("not finished within"):
+                    if not short:
+                        bad.append(f"{u} unanswered without the budget running out")
+                elif v != self.EXPECT.get(u.split("/")[3]):
+                    bad.append(f"{u}: {v}")
+        if peak[0] > L.PER_HOST:
+            bad.append(f"{peak[0]} requests in flight on one host (limit {L.PER_HOST})")
+        return bad, peak[0]
+
+    def publication_race(self, L) -> list[str]:
+        """The interleaving the publication order exists for, scripted: a redirect's
+        URL parser is called before the deadline and fails after it, while the
+        worker's own publication of that failure is held until the run returns."""
+        import threading
+        release, failed, peak = threading.Event(), [], [0]
+
+        def resolve_location(location, base, timeout):
+            time.sleep(0.15)
+            failed.append(base)
+            raise L.NormalizeError("fake URL parser failure")
+
+        real_step = L.step
+
+        def step(*a, **kw):
+            try:
+                return real_step(*a, **kw)
+            except L.NormalizeError:
+                release.wait(5)
+                raise
+
+        return self.drive(L, ["http://a.test/redir-fail/x"], 0.05, True, lambda url, method, timeout: (302, "/fail"),
+                          resolve_location, step, failed, peak, release=release)[0]
+
+    def stress(self, L) -> tuple[list[str], int]:
+        bad, peak = [], 0
+        for seed in range(self.SEEDS):
+            v, p = self.run_seed(L, seed)
+            bad.extend(f"seed {seed}: {x}" for x in v)
+            peak = max(peak, p)
+            if seed % 50 == 0:
+                bad.extend(f"seed {seed} (publication race): {x}" for x in self.publication_race(L))
+        return bad, peak
+
+    def test_seeded_stress_holds_every_invariant(self):
+        start = time.monotonic()
+        bad, peak = self.stress(self.L)
+        elapsed = time.monotonic() - start
+        self.assertEqual(bad, [])
+        self.assertEqual(peak, self.L.PER_HOST)     # the per-host limit was actually under pressure
+        self.assertLess(elapsed, 30, f"{self.SEEDS} seeds took {elapsed:.1f} s")
+
+    def test_a_redirect_the_budget_closes_is_unanswered_not_a_checker_error(self):
+        # Found by the stress (seed 71): a worker whose redirect resolution was refused
+        # by the spent budget published ("UNVERIFIED", "checker error") whenever it beat
+        # the coordinator to the results. Scripted with a fake clock: the budget runs
+        # out while the first request is on the wire, and the worker answers first.
+        import threading
+        import types
+        L, now, before = self.L, [0.0], set(threading.enumerate())
+
+        def request(url, method, timeout):
+            now[0] = 100.0
+            return 301, "/hop"
+        saved = (L.time, L.request, L.browser_urls)
+        L.time, L.request = types.SimpleNamespace(monotonic=lambda: now[0]), request
+        L.browser_urls = lambda us, base=None, timeout=0: {u: u for u in us}
+        try:
+            got = L.run_checks(["http://a.test/redir/1"], retries=1, wait=0, timeout=0.5, budget=10)
+            for t in set(threading.enumerate()) - before:
+                t.join(5)
+        finally:
+            L.time, L.request, L.browser_urls = saved
+        self.assertEqual(got, {"http://a.test/redir/1": ("UNVERIFIED", "not finished within the 10 s budget")})
+
+    def test_the_stress_catches_a_reverted_publication_order(self):
+        bad, _ = self.stress(self.mutant(self.L))
+        self.assertTrue(any("publication race" in b and "ended green" in b for b in bad), bad[:5])
 
 
 class PageContract(unittest.TestCase):
