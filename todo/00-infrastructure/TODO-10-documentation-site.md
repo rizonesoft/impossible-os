@@ -1232,9 +1232,12 @@ Write docs pages that meet the §3 contract for the 8 roadmap files below. Read 
   - `14-host-tools/TODO-02` §6 (new): the SDK `struct ixfs_inode` is 92 bytes against the kernel's 128, so `ixfs-mount` lists an empty root on current images; its write path skips checksums, journal, refcounts and snapshots; rename ignores the destination directory.
   - `14-host-tools/TODO-01` §4 (new): `sdk/build.sh` reports a skipped tool as built, and nothing in CI runs it.
   - `05-storage-filesystems/TODO-04` §18: `fsck.fat -n` on the BlackBox volume after one boot finds an overwritten `.` entry, orphaned long names and a lost `boot-timeline.json`.
-  - `01-boot-platform/TODO-22` §8 (new, from this section's adversarial review): the kernel fsck's bitmap reconcile still runs after an inode read failure and can free live blocks; `docs/boot/recovery-partition.md` now says so.
+  - `01-boot-platform/TODO-22` §8 (new, from this section's reviews): kernel fsck repairs are not gated on read failures (bitmap reconcile, dangling-dirent clear, snapshot scan); `docs/boot/recovery-partition.md` now says so.
   - Reconcile items: `TODO-06` §1 reuses `bootimg.py inspect`, `TODO-07` §1 builds on the kernel's `ixfs_fsck()`, `TODO-08` §3 wraps `read-blackbox.sh` and retires `sdk/scripts/extract-logs.sh`, `TODO-05` §4 shares one comparison engine with `TODO-08` §6.
 - [x] Commit: `"docs: host tools documentation pages"`
+- [x] Post-ship review fixes (adversarial, consistency and perf legs)
+  - Pages: `crash-decode.md` states that `last-panic.txt` needs a warm reset of the same VM and the `Previous crash evidence found` line; `ixfs-fsck.md` names all three read-failure repair gaps; page claims now match the roadmap corrections made in the same commit.
+  - Roadmaps: `01-boot-platform/TODO-22` §8 widened to the dirent and snapshot read-failure paths; `14-host-tools/TODO-08` §6 reads `Perf/boot-timeline.json` (no per-session files exist); `TODO-01` §4 depends on `TODO-02` §6; `extract-logs.sh` has one owner.
 
 **Test checkpoint:** `python3 scripts/site/build.py --check` prints `site: OK`; `docs/.coverage-baseline.json` no longer lists any `todo/14-host-tools/` file; each page renders on the local build. Test on: WSL2 dev host.
 
@@ -1245,6 +1248,9 @@ Write docs pages that meet the §3 contract for the 8 roadmap files below. Read 
 > - **How it integrates:** each page declares `covers=`, `sources=` and `reviewed=`, so the freshness check flags it when `sdk/`, the panic path, the symbol map, the fsck code or the BlackBox reader changes.
 > - **Status honesty:** only `sdk/build.sh` and `ixfs-mount` exist, and the pages say `ixfs-mount` is behind the kernel's format; the six planned tools each name the shipped stand-in (`llvm-addr2line-19`, `bootimg.py inspect`, `boot_timeline.py`, `read-blackbox.sh`, the kernel `ixfs_fsck()`).
 > - **Scope boundary:** no SDK or kernel code changed; the IXFS parser drift, SDK CI and the BlackBox FAT32 corruption are filed in their owning roadmaps.
+
+> **Verified:** 2026-09-30 | commit `b74939c76` | 8/8 items | build OK | site: OK, 223/232 documented; tests 34646 kernel + 17 user-mode PASS; smoke PASS; `fsck.fat -n` finding reproduced on a fresh image
+> **Quality reviewed:** 2026-09-30 | Codex 4x (adversarial, adversarial post-ship, consistency, perf) | 3H+9M fixed, 0 open | scope: N/A (docs-only; no source changed; parity research and test coverage N/A; re-adversarial skipped: docs and roadmap-text fixes)
 
 ---
 
@@ -1357,7 +1363,7 @@ The §25 index finds every word, but ranking is plain substring matching with th
 | --- | -------------------------------- | ------------------------ | -------------------------- | ------------------------- |
 | 💎  | Docs generated from in-tree text | ⚠️ Learn, separate repos | ✅ Sphinx `Documentation/` | ✅ §1 `docs/` to site     |
 | ⭐  | Build fails on dead doc links    | ❌ Not enforced          | ⚠️ Warnings only           | ✅ §1 Check 30 error      |
-| ⭐  | Every subsystem has a docs page  | ⚠️ Public APIs only      | ⚠️ Uneven                  | ⬜ §4-§21, §26 coverage   |
+| ⭐  | Every subsystem has a docs page  | ⚠️ Public APIs only      | ⚠️ Uneven                  | ⚠️ §4-§21, §26; §27 open  |
 | ⭐  | Facts derived from one source    | ❌ Manual                | ❌ Manual                  | ✅ §1 `project.json`      |
 | ⭐  | Stale narrative page detection   | ❌ Review dates          | ❌ Not tracked             | ✅ §22 `sources=` warns   |
 | 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ⚠️ §24 renders, §29 keeps |
@@ -1367,7 +1373,7 @@ The §25 index finds every word, but ranking is plain substring matching with th
 | 💎  | Accessible docs UI               | ✅ WCAG conformance      | ⚠️ Theme-dependent         | ⚠️ §25 ARIA, SR test open |
 
 > **After §1-§3:** the pipeline, the gate and the page contract exist; coverage is measured and cannot regress.
-> **After §4-§21 and §26:** every roadmap file is documented and the baseline is empty.
+> **After §4-§21, §26 and §27:** every roadmap file is documented and the baseline is empty (9 files remain after §26, all §27's).
 > **After §22-§25 and §31:** stale pages are flagged and the site matches mainstream docs portals on navigation, versions, search and accessibility.
 
 ---

@@ -72,7 +72,7 @@ In the smoke run of 2026-09-30 the stripped log had 421 `[ OK ]`, 130 `[INFO]`, 
 - [Boot Comparison](../../todo/14-host-tools/TODO-05-serial-analyze.md#4-boot-comparison)
 - [HTML Report](../../todo/14-host-tools/TODO-05-serial-analyze.md#5-html-report)
 
-The roadmap's example names level tags `OK`, `WARN`, `INFO` and `ERROR`; the kernel's error tag is `[FAIL]`, and a fatal error prints `[CRIT]` just before the machine halts, which the smoke test treats as a failure on sight. It also describes the timing block as `BOOT: [PHASE0] +Nms`, which matches the lines above apart from the leading timestamp and CPU. Its per-subsystem timings and boot comparison overlap the shipped timeline renderer and the planned `blackbox boot --compare` in the [BlackBox extractor roadmap](../../todo/14-host-tools/TODO-08-blackbox-log-extractor.md#6-blackbox-boot----show-boot-timeline-from-json), which works from the same data in JSON form; building one comparison engine for both is the cheaper route.
+The parser has to treat `[CRIT]` as the most severe tag: a fatal error prints it just before the machine halts, and the smoke test fails on sight of it. The roadmap's per-subsystem timings and boot comparison overlap the shipped timeline renderer and the planned `blackbox boot --compare` in the [BlackBox extractor roadmap](../../todo/14-host-tools/TODO-08-blackbox-log-extractor.md#6-blackbox-boot----show-boot-timeline-from-json), which compares the same steps from two captured `boot-timeline.json` files; section 4 now plans one comparison engine for both.
 
 ## How does it compare with Windows 11 and Linux?
 

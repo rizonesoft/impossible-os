@@ -3,7 +3,7 @@
 
 ## What is it?
 
-`ixfs-mount` mounts an IXFS partition from a disk image or a USB drive as an ordinary Linux directory through libfuse3, so a developer can browse and copy Impossible OS files without booting the OS. It is an SDK tool built by [`sdk/build.sh`](sdk-build-system.md), with its own copy of the IXFS parser that uses host types instead of kernel headers. All five roadmap sections are marked shipped, but **the tool no longer reads images made by the current kernel correctly**, and its write path does not maintain the metadata the kernel now checks. Read [What is not implemented yet?](#what-is-not-implemented-yet) before mounting anything you care about.
+`ixfs-mount` mounts an IXFS partition from a disk image or a USB drive as an ordinary Linux directory through libfuse3, so a developer can browse and copy Impossible OS files without booting the OS. It is an SDK tool built by [`sdk/build.sh`](sdk-build-system.md), with its own copy of the IXFS parser that uses host types instead of kernel headers. The first five roadmap sections are marked shipped, but **the tool no longer reads images made by the current kernel correctly**, and its write path does not maintain the metadata the kernel now checks. Read [What is not implemented yet?](#what-is-not-implemented-yet) before mounting anything you care about.
 
 ## How does it work?
 
@@ -66,7 +66,7 @@ Lookup test: Impossible/ not found in root
 
 ## What is not implemented yet?
 
-All of the following are filed in [Resync the SDK Parser with the IXFS v2 On-Disk Format](../../todo/14-host-tools/TODO-02-ixfs-mount.md#6-resync-the-sdk-parser-with-the-ixfs-v2-on-disk-format).
+All of the following are filed in section 6 of the roadmap, [Resync the SDK Parser with the IXFS v2 On-Disk Format](../../todo/14-host-tools/TODO-02-ixfs-mount.md#6-resync-the-sdk-parser-with-the-ixfs-v2-on-disk-format).
 
 - **The inode size is wrong.** The kernel's `struct ixfs_inode` is 128 bytes, 32 per block, pinned by a `_Static_assert` in `ixfs.h`; the SDK copy has no `i_reserved` padding and is 92 bytes. Every inode past number 0 is read from the wrong offset, which is why the root directory above lists nothing. The kernel was padded in commit `161d194bd` and the copy was never updated.
 - **Writes skip metadata the kernel checks.** The kernel keeps a CRC32C table for data blocks, a write-ahead journal, block refcounts and snapshots (see [IXFS Advanced Features](../storage/ixfs-advanced.md)); the SDK write path updates none of them. Do not mount a real image read-write.

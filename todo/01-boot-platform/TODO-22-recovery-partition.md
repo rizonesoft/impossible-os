@@ -52,7 +52,7 @@ title: "TODO-22 -- Recovery Partition & Self-Repair"
 | 💎  |   5   | Boot metadata reset                                                          | §2, T21 §1               |  [/]   |
 | 💎  |   6   | NVRAM boot entry reconstruction                                              | §2                       |  [/]   |
 | ⭐  |   7   | Recovery UI with status display                                              | §2–§6                    |  [/]   |
-| 💎  |   8   | Gate fsck bitmap repair on a complete inode scan                             | §3                       |  [ ]   |
+| 💎  |   8   | Gate fsck repairs on complete, readable scans                                | §3                       |  [ ]   |
 
 > 💎 = parity -- Windows WinRE and Chrome OS recovery both provide these.
 > ⭐ = exclusive -- clear status display during recovery with step-by-step progress.
@@ -237,21 +237,24 @@ User-visible recovery interface with clear status.
 
 ---
 
-## 8. Gate IXFS fsck Bitmap Repair on a Complete Inode Scan
+## 8. Gate IXFS fsck Repairs on Complete, Readable Scans
 
 > **Spawned-by:** root
 
-> **User impact:** a recovery run that hits one unreadable inode can mark that file's live blocks free, and the next write reuses them, corrupting the file the check was meant to protect.
+> **User impact:** a recovery run that hits one transient read failure can free a file's live blocks or delete its directory entry, destroying the file the check was meant to protect.
 
-Found by the Codex adversarial review of the host-tools docs pages (`00-infrastructure/TODO-10` §26) and verified at source. §3's contract says a partial walk disables every freeing pass; the bitmap reconcile is not covered by that guard.
+Found by the Codex adversarial review of the host-tools docs pages (`00-infrastructure/TODO-10` §26) and verified at source. §3's contract says a partial walk disables every freeing pass; three read-failure paths escape that guard.
 
 **Files:** `src/kernel/fs/ixfs/ixfs_fsck.c`, `src/kernel/test/test_ixfs_fsck.c`
 
 - [ ] Refuse the pass-7 bitmap reconcile in fix mode when the pass-3 table scan skipped any inode or the directory walk failed
   - Pass 3 skips an inode it cannot read (`ixfs_fsck.c:442-444`, only `inode_errors++`), so its blocks never enter `expected`; pass 7 (`:676-678`) is gated only on `structural_corruption`, and `ixfs_fsck_reconcile_bitmap` clears every allocated bit absent from `expected` (`:176-185`).
   - Report-only is still fine: count the mismatches, change nothing, and return the "untrustworthy" status.
-- [ ] Correct the header claim (`ixfs_fsck.c:17`) so it names every pass the guard covers, and add a regression test: an injected inode-read failure plus fix mode leaves the on-disk bitmap unchanged
-- [ ] Commit: `"recovery: gate IXFS fsck bitmap repair on a complete inode scan"`
+- [ ] Never clear a directory entry because its target inode could not be READ (`ixfs_fsck.c:575-585` treats a read failure as dangling); clear only a target proven free
+- [ ] Treat an unreadable snapshot-table block (`ixfs_fsck.c:491-492`, silent `continue`) as an incomplete reference graph that blocks every freeing pass
+- [ ] Correct the header claim (`ixfs_fsck.c:17`) so it names every pass the guard covers
+- [ ] Regression tests: an injected inode-read failure, a failed target-inode read and a failed snapshot-block read each leave the bitmap and dirents unchanged in fix mode
+- [ ] Commit: `"recovery: gate IXFS fsck repairs on complete, readable scans"`
 
 **Test checkpoint:** the new `test_ixfs_fsck.c` case fails before the fix and passes after; `bash scripts/test.sh SUITE=fs` is green.
 

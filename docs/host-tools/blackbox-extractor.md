@@ -68,7 +68,7 @@ Three problems affect what you extract today:
 
 - **The volume the OS writes is not clean.** `fsck.fat -n` on the partition after one boot reports a `Tools` folder whose `.` entry was overwritten, orphaned long-name entries, a long name whose checksum no longer matches its short name, and a wrong free-cluster count. mtools then shows some files by short name only (`BOOT-T~1.JSO`) and `Diag\boot-reserved.json` is missing. These are kernel FAT32 defects, filed with a reproduction in [section 18 of the FAT32 hardening roadmap](../../todo/05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md#18-post-ship-follow-up-backfill-orphan-cohort-2026-07-31), next to the short-name collision behind the lost `boot-timeline.json`.
 - **`sdk/scripts/extract-logs.sh` looks in the wrong place.** It mounts partition 2 through `ixfs-mount` and reads `Impossible/System/Logs`; partition 2 is now the FAT32 BlackBox volume, and logs moved there. Use `read-blackbox.sh`.
-- **The roadmap's opening claim that no host tool can read the logs is out of date**, and its plan should wrap or replace `read-blackbox.sh` rather than add a parallel extractor. Both points are filed in [section 3](../../todo/14-host-tools/TODO-08-blackbox-log-extractor.md#3-blackbox-extract----dump-all-logs-to-local-directory).
+- **The roadmap now builds on the script.** Its opening claim that no host tool could read the logs was corrected on 2026-09-30, and [section 3](../../todo/14-host-tools/TODO-08-blackbox-log-extractor.md#3-blackbox-extract----dump-all-logs-to-local-directory) now wraps or replaces `read-blackbox.sh` instead of adding a second extractor beside it.
 
 ## How does it compare with Windows 11 and Linux?
 

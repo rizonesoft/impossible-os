@@ -3,7 +3,7 @@
 
 ## What is it?
 
-`sdk/build.sh` builds the host-side SDK tools: programs that run on the developer's Linux machine and work with Impossible OS formats, such as the IXFS mount tool. It is separate from the kernel build on purpose. The kernel uses the `clang-19 --target=x86_64-elf` cross toolchain through [`scripts/build.sh`](../../scripts/build.sh); SDK tools use the host's own C compiler and host libraries. All three sections of the roadmap have shipped.
+`sdk/build.sh` builds the host-side SDK tools: programs that run on the developer's Linux machine and work with Impossible OS formats, such as the IXFS mount tool. It is separate from the kernel build on purpose. The kernel uses the `clang-19 --target=x86_64-elf` cross toolchain through [`scripts/build.sh`](../../scripts/build.sh); SDK tools use the host's own C compiler and host libraries. The first three sections of the roadmap have shipped; section 4, honest skip reporting and a CI build, is open.
 
 ## How does it work?
 

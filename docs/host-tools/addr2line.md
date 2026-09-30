@@ -62,7 +62,7 @@ The first command prints the function name and `file:line`; the second shows the
 - [Memory Region Mapper](../../todo/14-host-tools/TODO-03-addr2line.md#4-memory-region-mapper)
 - [Full Crash Decode Mode](../../todo/14-host-tools/TODO-03-addr2line.md#5-full-crash-decode-mode)
 
-Two parts of the roadmap need settling before section 1 is built. It describes `build/kernel.sym` as nm text; the text form is `kernel.map`, and `kernel.sym` is the binary table, whose 31-character names are too short for some kernel symbols. Its region list (kernel text at `0x101000`, heap at `0x57E000`) is a snapshot of an old layout; the address space is defined in [`include/kernel/mm/memmap.h`](../../include/kernel/mm/memmap.h) (see [Kernel Address Space](../infrastructure/kernel-address-space.md)), and a region mapper should read it from there rather than hard-code it. The tool's `ixfs-` prefix is also historical: it has nothing to do with IXFS.
+Two design points are settled in the roadmap as of 2026-09-30. The host tool reads `kernel.map`, not `kernel.sym`, whose 31-character names are too short for some kernel symbols. The region mapper takes the address space from [`include/kernel/mm/memmap.h`](../../include/kernel/mm/memmap.h) (see [Kernel Address Space](../infrastructure/kernel-address-space.md)) and section bounds from the ELF headers, instead of the fixed addresses the first draft listed. The tool's `ixfs-` prefix is also historical: it has nothing to do with IXFS.
 
 ## How does it compare with Windows 11 and Linux?
 

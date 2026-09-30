@@ -129,13 +129,12 @@ Structured event log viewer with filtering.
 
 ## 6. `blackbox boot` -- Show Boot Timeline from JSON
 
-Parse boot timeline JSON and display formatted boot timing analysis.
+Parse boot timeline JSON and display formatted boot timing analysis. The volume keeps ONE timeline, the latest boot's `Perf/boot-timeline.json` (schema: `docs/boot/boot-timeline-schema.md`); `Boot/` holds `history.jsonl` and `health.jsonl` events, not per-session timelines (corrected 2026-09-30).
 
-- [ ] `blackbox boot <disk.img>` -- find latest boot session in Boot/ directory
-- [ ] Parse YYMMDDN.json boot timeline entries
+- [ ] `blackbox boot <disk.img>` -- read `Perf/boot-timeline.json` from the BlackBox volume
+- [ ] Parse it with the same validation as `tools/boot-timeline/boot_timeline.py` (required keys, record ceiling, `source` values) -- reuse that module rather than a second parser
 - [ ] Display: phase, step name, start time, duration, sorted by duration (longest first)
-- [ ] `--session YYMMDDN` -- view a specific boot session (not just latest)
-- [ ] `--compare` -- compare two boot sessions side by side (regression detection)
+- [ ] `--compare A B` -- compare two captured timelines (two images, or two extracted `boot-timeline.json` files), since the volume keeps only the latest; share the engine with `14-host-tools/TODO-05` §4
 - [ ] Total boot time summary at the bottom
 - [ ] Commit: `"tools: blackbox boot -- boot timeline viewer and comparison"`
 

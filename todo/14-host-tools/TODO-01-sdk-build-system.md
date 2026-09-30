@@ -43,12 +43,12 @@ sdk/
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                         | Depends On | Status |
-| --- | :---: | ----------------------------------- | ---------- | :----: |
-| 💎  |   1   | 🐧 Linux build script (bash)        | --         |  [x]   |
-| 💎  |   2   | Dependency detection and reporting  | §1         |  [x]   |
-| 💎  |   3   | Auto-discovery of SDK tool dirs     | §1         |  [x]   |
-| 💎  |   4   | SDK tools in CI, honest skip report | §1, §2     |  [ ]   |
+| ⭐  | Order | Deliverable                         | Depends On     | Status |
+| --- | :---: | ----------------------------------- | -------------- | :----: |
+| 💎  |   1   | 🐧 Linux build script (bash)        | --             |  [x]   |
+| 💎  |   2   | Dependency detection and reporting  | §1             |  [x]   |
+| 💎  |   3   | Auto-discovery of SDK tool dirs     | §1             |  [x]   |
+| 💎  |   4   | SDK tools in CI, honest skip report | §1, §2, T02 §6 |  [ ]   |
 
 ---
 
@@ -117,7 +117,7 @@ Found while writing the host-tools docs pages (`00-infrastructure/TODO-10` §26)
   - Today no workflow, lint check or tooling suite runs `sdk/build.sh`; the IXFS inode-size drift in TODO-02 §6 went unseen because of it. -> XREF: `14-host-tools/TODO-02-ixfs-mount.md` §6 (item: "Add a regression net")
 - [ ] Commit: `"sdk: report skipped tools honestly and build the SDK in CI"`
 
-**Test checkpoint:** on a host without libfuse3 the summary reads `0 built, 1 skipped`; with it, CI builds `ixfs-mount` and `test_ixfs_core` lists a non-empty root directory.
+**Test checkpoint:** on a host without libfuse3 the summary reads `0 built, 1 skipped`; with it, CI builds `ixfs-mount` and `test_ixfs_core` lists a non-empty root directory. That last check needs the parser fix in `14-host-tools/TODO-02` §6 first; the skip reporting and the CI build do not.
 
 ---
 

@@ -166,7 +166,7 @@ Script to detect USB drives with IXFS partitions and mount them automatically.
 
 Found while writing the host-tools docs pages (`00-infrastructure/TODO-10` §26). Sections 1-5 are marked shipped, but the parser no longer reads images the current kernel makes, and its write path ignores metadata the kernel now verifies. Until this lands, `docs/host-tools/ixfs-mount.md` tells users not to mount real images read-write.
 
-**Files:** `sdk/src/ixfs-mount/ixfs-structs.h`, `ixfs-core.c`, `ixfs-fuse-linux.c`, `test_ixfs_core.c`, `sdk/scripts/extract-logs.sh`
+**Files:** `sdk/src/ixfs-mount/ixfs-structs.h`, `ixfs-core.c`, `ixfs-fuse-linux.c`, `test_ixfs_core.c`
 
 - [ ] Pad the SDK `struct ixfs_inode` to 128 bytes to match `include/kernel/fs/ixfs.h`, and pin both it and `struct ixfs_dir_entry` (256) with `_Static_assert`
   - The SDK copy has no `i_reserved[36]` and is 92 bytes; the kernel was padded in `161d194bd`. Measured 2026-09-30: `test_ixfs_core build/system-disk.img 3` finds the superblock and lists an empty root.
@@ -174,7 +174,8 @@ Found while writing the host-tools docs pages (`00-infrastructure/TODO-10` §26)
   - The kernel keeps a CRC32C data-block checksum table, a journal, block refcounts and snapshots; `ixfs-core.c` updates none of them, so a host write leaves blocks the kernel reports as corrupt.
 - [ ] Implement cross-directory rename (or return `EXDEV`): `ixfs_fuse_rename` resolves only the source's parent, so `mv a/x b/y` renames `x` to `y` inside `a/`
 - [ ] Implement truncate to a non-zero size and free blocks on truncate to zero (today size 0 returns success without freeing; any other size returns `ENOSYS`)
-- [ ] Update the usage examples (`:2` is now the BlackBox FAT32 partition; IXFS is `:3`, and `:4` under the A/B layout) in the tool, its header comment, this file and `sdk/scripts/extract-logs.sh`
+- [ ] Update the usage examples in the tool, its header comment and this file: `:2` is now the BlackBox FAT32 partition; IXFS is `:3` (and `:4` under A/B)
+  - `sdk/scripts/extract-logs.sh` is not re-pointed here: `14-host-tools/TODO-08` §3 retires it, since logs now live on the BlackBox volume.
 - [ ] Add a regression net: build `test_ixfs_core`, run it on a freshly built image and assert the root lists `Impossible` -> XREF: `14-host-tools/TODO-01-sdk-build-system.md` §4 (item: "Build the SDK and run `test_ixfs_core`")
 - [ ] Commit: `"sdk: resync ixfs-mount with the IXFS v2 on-disk format"`
 

@@ -12,7 +12,7 @@
 - **A compact emergency block, on serial only**: `[PANIC] <description>`, an `at <file>` line, then `RIP= CS= ERR=`, `CR2= CR3=`, and two lines of general registers as hexadecimal. An early crash may leave only this.
 - **The full block, on the crash screen and mirrored to serial** (every `printk()` line goes to both, see [`src/kernel/printk.c`](../../src/kernel/printk.c)): `Stop code:`, `Description:`, `Source:`, `Error code:`, `RIP:`, `CR2:`, then `--- Register Dump ---` with every general register, RFLAGS, CR2, CR3, CS and SS, and `--- Stack Trace ---` with each frame already symbolised as `#N  address  name+0xoffset`.
 
-At panic time the kernel also tries to save a text dump to `C:\Impossible\System\crashdump.log`. The crash record it preserves is written out as `X:\Crash\last-panic.txt` on the BlackBox partition (or `C:\Impossible\System\Logs\` without BlackBox) only on the next successful boot, so a VM halted at the crash screen has no such file yet, or an older one. A user-mode crash writes a JSON report under `X:\Crash\WER\` ([`src/kernel/wer.c`](../../src/kernel/wer.c)). The minidump layout in [`include/kernel/crashdump.h`](../../include/kernel/crashdump.h) is the planned binary format, covered on [Crash Dump Generation](../kernel/crash-dump-generation.md).
+At panic time the kernel also tries to save a text dump to `C:\Impossible\System\crashdump.log`. The crash record it preserves lives in a reserved page of RAM, like Linux's `ramoops`, and survives only a warm reset of the same machine (see [`include/kernel/panic.h`](../../include/kernel/panic.h)). The next boot restores it, logs `[PANIC] Previous crash evidence found (STOP ... rip=...)`, and writes it as `X:\Crash\last-panic.txt` on the BlackBox partition (or `C:\Impossible\System\Logs\` without BlackBox). Relaunching QEMU or power-cycling loses the record, so a `last-panic.txt` without that log line on the same boot belongs to an older crash. A user-mode crash writes a JSON report under `X:\Crash\WER\` ([`src/kernel/wer.c`](../../src/kernel/wer.c)). The minidump layout in [`include/kernel/crashdump.h`](../../include/kernel/crashdump.h) is the planned binary format, covered on [Crash Dump Generation](../kernel/crash-dump-generation.md).
 
 **Planned design.**
 
@@ -49,7 +49,8 @@ Until the tool exists, take the RIP from either block and resolve it by hand:
 ```bash
 grep -n -A6 '\[PANIC\]' build/smoke-test.stripped.log
 llvm-addr2line-19 -e build/kernel.exe -f -C <RIP>
-# after the next boot, into a fresh directory:
+# only after a warm reset of the SAME VM, and only if that boot logged
+# 'Previous crash evidence found'; do not rebuild or rerun the smoke test first:
 out=build/blackbox-$(date +%Y%m%d-%H%M%S)
 bash scripts/tools/read-blackbox.sh build/system-disk.img "$out"
 cat "$out"/Crash/last-panic.txt
@@ -64,7 +65,7 @@ The repository's `diagnose-serial-log` skill is the current structured route: it
 - [Timeline Extraction](../../todo/14-host-tools/TODO-04-crash-decode.md#3-timeline-extraction)
 - [Root Cause Hypothesis Engine](../../todo/14-host-tools/TODO-04-crash-decode.md#4-root-cause-hypothesis-engine)
 
-The roadmap assumes a single dump format with `Stop code:` and `Register Dump` markers. The serial log carries both blocks when the full one renders, and only the compact `[PANIC]` block when the crash is too early, so section 1 has to parse both. The roadmap's timeline section expects `[PHASE0]`-style markers with timestamps; the serial log has `[PHASEn] STEP (0xNNNN)` progress lines without a time, and the per-step times appear only in the boot-step timing block printed late in boot (see [Boot Log Analyzer](serial-analyze.md)), so a crash before that block has step order but no step times.
+Section 1 now parses both formats: the serial log carries both blocks when the full one renders, and only the compact `[PANIC]` block when the crash is too early. The roadmap's timeline section expects `[PHASE0]`-style markers with timestamps; the serial log has `[PHASEn] STEP (0xNNNN)` progress lines without a time, and the per-step times appear only in the boot-step timing block printed late in boot (see [Boot Log Analyzer](serial-analyze.md)), so a crash before that block has step order but no step times.
 
 ## How does it compare with Windows 11 and Linux?
 
