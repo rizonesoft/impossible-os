@@ -1465,6 +1465,10 @@ def render_page(tpl: str, facts: dict, pages: dict[str, Page], page: Page, updat
         "BODY": page.body,
         "UPDATED": stamp,
         "EDIT": f"{facts['repo_url']}/blob/{LINK_REF}/docs/{page.rel}",
+        # The version picker (scripts/site/releases.py writes docs/versions.json):
+        # which version this page belongs to, and its path inside that version.
+        "DOCS_VERSION": html.escape(RELEASE or "main"),
+        "PAGE_PATH": html.escape(page.url),
     }
     # One pass over the TEMPLATE: text substituted in (a page body that mentions
     # %EDIT%, a title with %ROOT%) is never itself rescanned for placeholders.
@@ -2313,6 +2317,15 @@ class ReleaseError(Exception):
 
 
 RELEASE_FACTS: dict = {}     # publishing facts of the CURRENT tree, applied over a release's own
+# A commit whose tree lacks any of these predates the docs site and cannot be rendered.
+SITE_ERA_FILES = ("project.json", "gh-pages/docs-template.html", "COUNT.md", "docs/test-coverage/coverage.json")
+
+
+def is_site_era(commit: str) -> bool:
+    """Whether a release build of COMMIT can run, judged without materialising it
+    (scripts/site/releases.py skips earlier tags rather than failing on them)."""
+    return all(subprocess.run(["git", "cat-file", "-e", f"{commit}:{p}"], cwd=REPO,
+                              capture_output=True).returncode == 0 for p in (*SITE_ERA_FILES, "docs"))
 
 
 def prepare_release(ref: str) -> Path | None:
@@ -2341,8 +2354,7 @@ def prepare_release(ref: str) -> Path | None:
     sha = r.stdout.strip()
     current = json.loads((REPO / "project.json").read_text(encoding="utf-8"))
     snap = snapshot(sha)
-    missing = [p for p in ("project.json", "gh-pages/docs-template.html", "COUNT.md",
-                           "docs/test-coverage/coverage.json") if not (ROOT / p).is_file()]
+    missing = [p for p in SITE_ERA_FILES if not (ROOT / p).is_file()]
     if missing or not DOCS.is_dir():
         shutil.rmtree(snap, ignore_errors=True)
         raise ReleaseError(f"release ref {ref!r} ({sha[:12]}) predates the docs site: no "
@@ -2351,6 +2363,33 @@ def prepare_release(ref: str) -> Path | None:
     RELEASE_FACTS = {k: current[k] for k in PUBLISH_KEYS if isinstance(current.get(k), str)}
     RELEASE_FACTS["_historical_owners"] = list(current.get("historical_owners", []))
     return snap
+
+
+def check_release_paths(files: dict[str, bytes], errors: list[str]) -> None:
+    """A main page or directory may not take a path a retained release is published
+    at (scripts/site/releases.py): the deploy would refuse to assemble. Judged
+    against the store commit this checkout last fetched, so it runs offline and
+    is skipped where no store has been fetched; the deploy repeats it against the
+    live store either way."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import releases  # noqa: E402  (sibling module)
+    r = subprocess.run(["git", "show", f"{releases.STORE_REF}:{releases.MANIFEST}"], cwd=REPO,
+                       capture_output=True, text=True)
+    stored = []
+    if r.returncode == 0:
+        try:
+            stored = [e["version"] for e in json.loads(r.stdout).get("releases", [])
+                      if isinstance(e, dict) and isinstance(e.get("version"), str)]
+        except (ValueError, AttributeError):
+            errors.append(f"{releases.BRANCH}: {releases.MANIFEST} is not valid JSON")
+    if releases.PUBLISHED in files:
+        errors.append(f"{releases.PUBLISHED}: reserved for the version picker's manifest (releases.py)")
+    main_files = set(files) - {releases.PUBLISHED}
+    for v in stored:
+        hit = releases.collisions(v, main_files) if releases.valid_version(v) else []
+        hit = [h for h in hit if h != releases.PUBLISHED]
+        if hit:
+            errors.append(f"docs path {hit[0]} collides with retained release {v} (docs/{v}/); rename the page")
 
 
 def sync_head(files: list[str], facts: dict, errors: list[str]) -> int:
@@ -2438,6 +2477,11 @@ def run(args: argparse.Namespace) -> int:
         check_count_badge(errors)
         check_icon_renders(errors)
         check_baseline(undocumented, errors)
+        if args.check:
+            # Source check only: a rebuild for verify_live must not judge against
+            # whatever store this checkout fetched last; its assembly from the
+            # pinned store enforces the same rule.
+            check_release_paths(files, errors)
         sys.path.insert(0, str(REPO / "scripts" / "site"))
         import gen_theme_header  # noqa: E402  (sibling module; set_root() repoints it at a snapshot)
         errors.extend(gen_theme_header.check())

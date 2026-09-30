@@ -1399,6 +1399,826 @@ class ReleaseDocs(unittest.TestCase):
         self.assertEqual(r.pin_mermaid(None, f'click a "{url}"'), f'click a "{url}"')
 
 
+@unittest.skipUnless(shutil.which("node"), "release builds resolve links with Node's WHATWG URL")
+class RetainedReleases(unittest.TestCase):
+    """Section 29: release trees frozen on the store survive every later deploy and
+    repair, and are byte-verified live beside main (scripts/site/releases.py)."""
+
+    TEMPLATE = ReleaseDocs.TEMPLATE + '<select id="version" data-version="%DOCS_VERSION%" data-page="%PAGE_PATH%"></select>'
+    git = ReleaseDocs.git
+    write = ReleaseDocs.write
+    project = ReleaseDocs.project
+
+    def setUp(self):
+        import releases as R
+        import verify_live as V
+        self.R, self.V = R, V
+        self.saved_r = R.REPO
+        ReleaseDocs.setUp(self)
+        self.store = Path(tempfile.mkdtemp(prefix="store-"))
+        self.dirs = [self.store]
+
+    def tearDown(self):
+        self.R.REPO = self.saved_r
+        ReleaseDocs.tearDown(self)
+        for d in self.dirs:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def tmpdir(self, prefix):
+        d = Path(tempfile.mkdtemp(prefix=prefix))
+        self.dirs.append(d)
+        return d
+
+    def commit(self, msg, tag=None):
+        self.git("add", "-A")
+        self.git("commit", "-q", "--no-verify", "-m", msg)
+        if tag:
+            self.git("tag", tag)
+        return self.git("rev-parse", "HEAD").strip()
+
+    def home(self, text):
+        self.write("docs/index.md", f"# Home\n\n{text}\n\n[sub](sub/page.md)\n")
+
+    def fixture(self, presite=False):
+        self.git("init", "-q", "-b", "main")
+        if presite:                       # a tag cut before the docs site existed
+            self.write("README.md", "old\n")
+            self.commit("old", "v0")
+        self.write("project.json", self.project("o", []))
+        self.write("COUNT.md", "x\n")
+        self.write("docs/test-coverage/coverage.json", '{"total_suites": 1, "total_assertions": 2}')
+        self.write("gh-pages/docs-template.html", self.TEMPLATE)
+        self.write("gh-pages/index.html", "<p>{{name}}</p>")
+        self.write("docs/design/tokens.json", (B.REPO_REAL / "docs/design/tokens.json").read_text(encoding="utf-8"))
+        self.write("docs/design/scope.json", '{"shell_files": [], "ui_title_pattern": "^$"}')
+        self.write("docs/sub/page.md", "<!-- docs: covers=todo/01-x/TODO-01-a.md -->\n# Sub\n\n[home](../index.md)\n")
+        self.write("todo/01-x/TODO-01-a.md", "# TODO-01 -- A\n")
+        self.home("First release.")
+        self.sha1 = self.commit("v1", "v1")
+        self.home("Second release.")
+        self.sha2 = self.commit("v2", "v2")
+        self.home("Main moves on.")
+        self.commit("main")
+        self.R.REPO = self.root
+        self.main_mode()
+
+    def main_mode(self):
+        B.REPO, B.SOURCE, B._FILESET, B._DIRSET = self.root, "worktree", None, None
+        B.LINK_REF, B.DOCS_BASE, B.RELEASE, B.RELEASE_FACTS = "main", "docs/", None, {}
+        B.set_root(self.root)
+
+    def build_main(self):
+        self.main_mode()
+        errors: list[str] = []
+        files = B.build(B.load_project(), errors)
+        self.assertEqual(errors, [])
+        site = self.tmpdir("site-")
+        for rel, data in files.items():
+            (site / rel).parent.mkdir(parents=True, exist_ok=True)
+            (site / rel).write_bytes(data)
+        return site
+
+    def render(self, tag, out):
+        snap = B.prepare_release(tag)
+        self.snaps.append(snap)
+        args = argparse.Namespace(check=False, out=out, quiet=True, sync=None, sync_head=None, emit_head=None,
+                                  update_baseline=False, freshness=False, skip_stats=False, staged=False,
+                                  release=tag, ref="HEAD")
+        try:
+            self.assertEqual(B.run(args), 0)
+        finally:
+            self.main_mode()
+
+    def deploy(self, live):
+        """One Pages deploy: a whole-site artifact of main plus every retained tree."""
+        site = self.build_main()
+        self.assertEqual(self.R.assemble(site, self.store), [])
+        for child in list(live.iterdir()):
+            shutil.rmtree(child) if child.is_dir() else child.unlink()
+        shutil.copytree(site, live, dirs_exist_ok=True)
+
+    def serve(self, live):
+        import functools
+        import http.server
+        import threading
+        class Quiet(http.server.SimpleHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=str(live)))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        return f"http://127.0.0.1:{srv.server_address[1]}/"
+
+    def verify(self, base):
+        """verify_live.py's comparison against a FRESH build assembled from the store."""
+        fresh = self.build_main()
+        self.assertEqual(self.R.assemble(fresh, self.store), [])
+        return self.V.compare(fresh, base, "t")
+
+    def test_two_releases_survive_a_main_deploy_and_a_repair(self):
+        self.fixture()
+        rendered: list[str] = []
+
+        def render(tag, out):
+            rendered.append(tag)
+            self.render(tag, out)
+
+        main_site = self.build_main()
+        self.assertEqual(self.R.publish(self.store, main_site, render=render, new_store=True), ["v1", "v2"])
+        # A later run (a queued tag run, or a re-run after the push) renders nothing again.
+        self.assertEqual(self.R.publish(self.store, main_site, render=render), [])
+        self.assertEqual(rendered, ["v1", "v2"])
+        manifest = json.loads((self.store / "versions.json").read_text(encoding="utf-8"))
+        self.assertEqual([(r["version"], r["commit"]) for r in manifest["releases"]],
+                         [("v1", self.sha1), ("v2", self.sha2)])
+        self.assertTrue((self.store / "README.md").is_file())
+
+        live = self.tmpdir("live-")
+        base = self.serve(live)
+        self.deploy(live)
+        self.home("Later main.")
+        self.commit("later")
+        self.deploy(live)                                           # a main deploy after both releases
+        read = lambda rel: (live / rel).read_text(encoding="utf-8")  # noqa: E731
+        self.assertIn("Later main.", read("docs/index.html"))
+        self.assertIn("First release.", read("docs/v1/index.html"))
+        self.assertIn("Second release.", read("docs/v2/index.html"))
+        for v in ("v1", "v2"):
+            self.assertEqual(self.R.tree_digest(live / "docs" / v), self.R.tree_digest(self.store / v))
+        self.assertEqual(json.loads(read("docs/versions.json"))["versions"],
+                         [{"name": "main", "path": ""}, {"name": "v2", "path": "v2/"}, {"name": "v1", "path": "v1/"}])
+        self.assertIn('data-version="main" data-page=""', read("docs/index.html"))
+        self.assertIn('data-version="v1" data-page="sub/page.html"', read("docs/v1/sub/page.html"))
+        self.assertEqual(self.verify(base), [])
+
+        (live / "docs" / "v1" / "sub" / "page.html").unlink()       # a deploy that lost a release
+        (live / "docs" / "v2" / "index.html").write_text("stale", encoding="utf-8")
+        self.assertEqual(self.verify(base), ["MISSING     docs/v1/sub/page.html", "DIFFERS     docs/v2/index.html"])
+        self.deploy(live)                                           # the site-live repair: redeploy main
+        self.assertEqual(self.verify(base), [])
+
+    def test_publish_skips_presite_and_unversioned_tags_and_refuses_a_moved_tag(self):
+        self.fixture(presite=True)
+        self.git("tag", "vx/rc")                                    # not one path segment: never listed
+        self.git("tag", "v1+rc")                                    # one segment, not a version name
+        main_site = self.build_main()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(self.R.publish(self.store, main_site, render=self.render, new_store=True), ["v1", "v2"])
+        self.assertIn("skipping tag v0: it predates the docs site", out.getvalue())
+        self.assertIn("skipping tag 'v1+rc'", out.getvalue())
+        self.assertNotIn("vx/rc", out.getvalue())
+        self.assertEqual(self.R.publish(self.store, main_site, only=["v2"], render=self.render), [])
+        self.git("tag", "-f", "v1", "HEAD")                         # the tag moved after publication
+        with self.assertRaisesRegex(self.R.StoreError, "a published release is frozen"):
+            self.R.publish(self.store, main_site, render=self.render)
+
+    def test_collision_rule_and_version_names(self):
+        c = self.R.collisions
+        self.assertEqual(c("v1", {"docs/v1/index.html", "docs/v10/index.html"}), ["docs/v1/index.html"])
+        self.assertEqual(c("v1", {"docs/v1"}), ["docs/v1"])                 # a file at the tree's root
+        self.assertEqual(c("v1", {"docs"}), ["docs"])                       # a file where a parent dir goes
+        self.assertEqual(c("v1", {"docs/v1.html", "docs/v1x/a.html"}), [])
+        self.assertEqual(c("versions.json", set()), ["docs/versions.json"])  # the picker's manifest is reserved
+        ok, bad = ("v1", "v1.2.0", "v26.3.18-alpha", "v2_rc"), ("1.0", "V1", "v1/rc", "v..", "v1..2", "", "v1 x")
+        self.assertEqual([self.R.valid_version(v) for v in ok], [True] * len(ok))
+        self.assertEqual([self.R.valid_version(v) for v in bad], [False] * len(bad))
+
+    def fake_tree(self, text="t"):
+        tree = self.tmpdir("tree-")
+        (tree / "sub").mkdir()
+        (tree / "index.html").write_text(text, encoding="utf-8")
+        (tree / "sub" / "page.html").write_text("p", encoding="utf-8")
+        return tree
+
+    def test_add_refusals(self):
+        main_site = self.tmpdir("main-")
+        (main_site / "docs" / "v9").mkdir(parents=True)
+        (main_site / "docs" / "v9" / "index.html").write_text("main page", encoding="utf-8")
+        add, err = self.R.add, self.R.StoreError
+        self.assertEqual(add(self.store, main_site, self.fake_tree(), "v1", "a" * 40), "added")
+        self.assertEqual(add(self.store, main_site, self.fake_tree("other"), "v1", "a" * 40), "present")
+        with self.assertRaisesRegex(err, "frozen"):
+            add(self.store, main_site, self.fake_tree(), "v1", "b" * 40)
+        with self.assertRaisesRegex(err, "one path segment"):
+            add(self.store, main_site, self.fake_tree(), "v2/rc", "a" * 40)
+        with self.assertRaisesRegex(err, "collides with the main site at docs/v9/index.html"):
+            add(self.store, main_site, self.fake_tree(), "v9", "a" * 40)
+        with self.assertRaisesRegex(err, "is empty"):
+            add(self.store, main_site, self.tmpdir("empty-"), "v2", "a" * 40)
+        (self.store / "v3").mkdir()
+        with self.assertRaisesRegex(err, "does not list it"):
+            add(self.store, main_site, self.fake_tree(), "v3", "a" * 40)
+        self.assertEqual((self.store / "v1" / "index.html").read_text(encoding="utf-8"), "t")   # frozen bytes kept
+
+    def test_assemble_refuses_before_writing_anything(self):
+        main_site = self.tmpdir("main-")
+        (main_site / "docs").mkdir()
+        (main_site / "docs" / "index.html").write_text("main", encoding="utf-8")
+        self.R.add(self.store, main_site, self.fake_tree(), "v1", "a" * 40)
+        self.R.add(self.store, main_site, self.fake_tree(), "v2", "b" * 40)
+        (self.store / "v7").mkdir()                                  # not listed: never published
+        (self.store / "v7" / "x.html").write_text("x", encoding="utf-8")
+        before = sorted(p.as_posix() for p in main_site.rglob("*"))
+
+        (self.store / "v2" / "index.html").write_text("tampered", encoding="utf-8")
+        errors = self.R.assemble(main_site, self.store)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("release v2: stored tree does not match its manifest digest", errors[0])
+        self.assertEqual(sorted(p.as_posix() for p in main_site.rglob("*")), before)
+
+        (self.store / "v2" / "index.html").write_text("t", encoding="utf-8")
+        (main_site / "docs" / "v1").mkdir()                           # main later took the release's path
+        (main_site / "docs" / "v1" / "index.html").write_text("main", encoding="utf-8")
+        shutil.rmtree(self.store / "v2")
+        errors = self.R.assemble(main_site, self.store)
+        self.assertEqual([e.split(":")[0] for e in errors], ["release v1", "release v2"])
+        self.assertIn("collides with the main site at docs/v1/index.html", errors[0])
+        self.assertIn("its tree is missing from the store", errors[1])
+        self.assertFalse((main_site / "docs" / "versions.json").exists())
+
+        shutil.rmtree(main_site / "docs" / "v1")
+        manifest = json.loads((self.store / "versions.json").read_text(encoding="utf-8"))
+        manifest["releases"] = manifest["releases"][:1]
+        (self.store / "versions.json").write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertEqual(self.R.assemble(main_site, self.store), [])
+        self.assertTrue((main_site / "docs" / "v1" / "sub" / "page.html").is_file())
+        self.assertFalse((main_site / "docs" / "v7").exists())
+
+        for bad in ("{", '{"schema": 2, "releases": []}', '{"schema": 1, "releases": [{"version": "v1"}]}',
+                    '{"schema": 1, "releases": [' + ",".join(['{"version": "v1", "commit": "a", "files": 1, "digest": "d"}'] * 2) + "]}"):
+            (self.store / "versions.json").write_text(bad, encoding="utf-8")
+            with self.assertRaises(self.R.StoreError):
+                self.R.assemble(self.tmpdir("site-"), self.store)
+        self.assertEqual(self.R.assemble(self.tmpdir("site-"), None), [])    # no store yet: main alone
+        with self.assertRaisesRegex(self.R.StoreError, "full store commit SHA"):
+            self.R.assemble_from(self.tmpdir("site-"), "--upload-pack=x")
+
+    def test_store_loss_and_links_are_refused(self):
+        main_site = self.tmpdir("main-")
+        (main_site / "docs").mkdir()
+        (main_site / "docs" / "index.html").write_text("main", encoding="utf-8")
+        self.R.add(self.store, main_site, self.fake_tree(), "v1", "a" * 40)
+        before = sorted(p.as_posix() for p in main_site.rglob("*"))
+        (self.store / "versions.json").unlink()                     # a populated store lost its manifest
+        with self.assertRaisesRegex(self.R.StoreError, "no versions.json; refusing"):
+            self.R.assemble(main_site, self.store)
+        self.assertEqual(sorted(p.as_posix() for p in main_site.rglob("*")), before)
+
+        store = self.tmpdir("store2-")
+        self.R.add(store, main_site, self.fake_tree(), "v1", "a" * 40)
+        outside = self.tmpdir("outside-")
+        (outside / "injected.html").write_text("not frozen", encoding="utf-8")
+        (store / "v1" / "extra").symlink_to(outside, target_is_directory=True)   # the digest walk cannot see in
+        errors = self.R.assemble(main_site, store)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("release v1: extra: not a regular file or directory", errors[0])
+        self.assertFalse((main_site / "docs" / "v1").exists())
+        tree = self.fake_tree()
+        (tree / "link.html").symlink_to(tree / "index.html")
+        with self.assertRaisesRegex(self.R.StoreError, "link.html: not a regular file"):
+            self.R.add(self.tmpdir("store3-"), main_site, tree, "v2", "a" * 40)
+
+    def test_new_store_gets_a_manifest_and_a_deleted_store_is_refused(self):
+        self.git("init", "-q", "-b", "main")
+        self.write("README.md", "x\n")
+        self.commit("no site yet")
+        self.R.REPO = self.root
+        self.main_mode()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.R.publish(self.store, self.tmpdir("main-"), render=self.render, new_store=True), [])
+        self.assertEqual(json.loads((self.store / "versions.json").read_text(encoding="utf-8")),
+                         {"schema": 1, "releases": []})              # an empty store is still a store
+        site = self.tmpdir("site-")
+        self.assertEqual(self.R.assemble(site, self.store), [])
+        self.assertEqual(json.loads((site / "docs" / "versions.json").read_text(encoding="utf-8"))["versions"],
+                         [{"name": "main", "path": ""}])
+
+        orig = (self.R.remote_store_sha, self.R.live_store_evidence)
+        self.R.remote_store_sha = lambda remote="origin": None      # no docs-releases branch on the remote
+        self.R.live_store_evidence = lambda timeout=30.0: []              # and the live site never listed a release
+        try:
+            self.assertEqual(self.R.assemble_from(self.tmpdir("site-"), "remote")[0], "none")  # before any release
+            self.R.live_store_evidence = lambda timeout=30.0: ["release v1"]   # every tag gone, but the site served v1
+            with self.assertRaisesRegex(self.R.StoreError, "shows a store existed .release v1.; restore the branch"):
+                self.R.assemble_from(self.tmpdir("site-"), "remote")
+
+            def unreadable(timeout=30.0):
+                raise self.R.StoreError("cannot read the live docs/versions.json: HTTP 503")
+            self.R.live_store_evidence = unreadable                       # proves nothing: refuse
+            with self.assertRaisesRegex(self.R.StoreError, "HTTP 503"):
+                self.R.assemble_from(self.tmpdir("site-"), "remote")
+            self.R.live_store_evidence = lambda timeout=30.0: []
+            self.wipe()
+            self.fixture()                                           # now v1 and v2 exist
+            self.assertEqual(self.R.assemble_from(self.tmpdir("site-"), "remote")[0], "none")  # first tags: new store
+            self.assertEqual(self.R.deletable_tags(), {})            # no store: release.yml keeps v1 and v2
+            sha = self.store_commit({"schema": 1, "releases": [
+                {"version": "v1", "commit": self.sha1, "files": 1, "digest": "d"}]})
+            self.R.remote_store_sha = lambda remote="origin": sha
+            self.assertEqual(self.R.deletable_tags(), {})            # listed, but no tree: not retained
+            store = self.tmpdir("store-")
+            self.R.add(store, self.tmpdir("main-"), self.fake_tree(), "v1", self.sha1)
+            sha = self.store_commit_dir(store)
+            self.R.remote_store_sha = lambda remote="origin": sha
+            self.assertEqual(self.R.deletable_tags(), {"v1": self.sha1})   # stored: safe; v2 (unfrozen) kept
+            (store / "v1" / "index.html").write_text("tampered", encoding="utf-8")
+            sha = self.store_commit_dir(store)
+            self.R.remote_store_sha = lambda remote="origin": sha
+            self.assertEqual(self.R.deletable_tags(), {})            # tree no longer matches its digest
+            self.git("tag", "-a", "-m", "annotated", "v3", self.sha2)
+            sha = self.store_commit({"schema": 1, "releases": [
+                {"version": "v1", "commit": self.sha2, "files": 1, "digest": "d"}],
+                "retired": [{"version": "v3", "commit": self.sha2}]})
+            self.R.remote_store_sha = lambda remote="origin": sha
+            v3 = self.git("rev-parse", "refs/tags/v3").strip()
+            self.assertNotEqual(v3, self.sha2)                          # an annotated tag's own object
+            self.assertEqual(self.R.deletable_tags(), {"v3": v3})       # v1 moved off its frozen commit: kept
+            self.wipe()
+            self.fixture(presite=True)
+            sha = self.store_commit({"schema": 1, "releases": []})
+            self.R.remote_store_sha = lambda remote="origin": sha
+            self.assertEqual(list(self.R.deletable_tags()), ["v0"])  # older than the site: safe
+        finally:
+            self.R.remote_store_sha, self.R.live_store_evidence = orig
+
+    def store_commit_dir(self, store):
+        env = dict(git_env("2026-05-01T00:00:00Z"), GIT_INDEX_FILE=str(self.tmpdir("idx-") / "index"),
+                   GIT_WORK_TREE=str(store))
+        run = lambda *a: subprocess.run(["git", *a], cwd=self.root, env=env, check=True,  # noqa: E731
+                                        capture_output=True, text=True).stdout.strip()
+        run("add", "-A", ".")
+        return run("commit-tree", run("write-tree"), "-m", "store")
+
+    def wipe(self):
+        for child in self.root.iterdir():
+            shutil.rmtree(child) if child.is_dir() else child.unlink()
+
+    def store_commit(self, manifest):
+        env = git_env("2026-05-01T00:00:00Z")
+        run = lambda *a, inp=None: subprocess.run(["git", *a], cwd=self.root, env=env, check=True,  # noqa: E731
+                                                  capture_output=True, text=True, input=inp).stdout.strip()
+        blob = run("hash-object", "-w", "--stdin", inp=json.dumps(manifest))
+        return run("commit-tree", run("mktree", inp=f"100644 blob {blob}\tversions.json\n"), "-m", "store")
+
+    def test_publish_guards_manifest_moved_tags_and_budget(self):
+        self.fixture(presite=True)
+        main_site = self.build_main()
+        (self.store / ".git").write_text("gitdir: x\n", encoding="utf-8")   # a worktree's marker is not content
+        (self.store / "v1").mkdir()
+        (self.store / "v1" / "index.html").write_text("retained", encoding="utf-8")
+        with self.assertRaisesRegex(self.R.StoreError, "no versions.json; restore it from the branch history"):
+            self.R.publish(self.store, main_site, render=self.render)   # not declared new: never initialised
+        with self.assertRaisesRegex(self.R.StoreError, "no versions.json but holds v1"):
+            self.R.publish(self.store, main_site, render=self.render, new_store=True)
+        self.assertFalse((self.store / "versions.json").exists())
+        shutil.rmtree(self.store / "v1")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.R.publish(self.store, main_site, render=self.render, new_store=True), ["v1", "v2"])
+        self.git("tag", "-f", "v1", "v0")                            # moved to a commit older than the site
+        with self.assertRaisesRegex(self.R.StoreError, "release v1: stored from .* a published release is frozen"):
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.R.publish(self.store, main_site, render=self.render)
+
+        size = self.R.tree_bytes(main_site, self.R.site_files(main_site))
+        with self.assertRaisesRegex(self.R.StoreError, "release v3: the site would be .* over the"):
+            self.R.add(self.store, main_site, self.fake_tree(), "v3", "a" * 40, budget=size)
+        self.assertFalse((self.store / "v3").exists())
+        site = self.build_main()
+        errors = self.R.assemble(site, self.store, budget=size)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("retire an old release first", errors[0])
+        self.assertFalse((site / "docs" / "versions.json").exists())
+
+    def test_remote_lookup_and_materialise_failure_directions(self):
+        calls: list[tuple] = []
+
+        def fake(results):
+            def git(*args, check=True):
+                calls.append(args)
+                rc, out, err = results.get(args[0], (0, "", ""))
+                return subprocess.CompletedProcess(["git", *args], rc, out, err)
+            return git
+
+        orig_git, orig_popen = self.R.git, self.R.subprocess.Popen
+        try:
+            self.R.git = fake({"ls-remote": (2, "", "")})
+            self.assertIsNone(self.R.remote_store_sha())
+            self.assertEqual([c[0] for c in calls], ["ls-remote"])        # absent: nothing fetched
+            calls.clear()
+            self.R.git = fake({"ls-remote": (128, "", "could not read")})
+            with self.assertRaisesRegex(self.R.StoreError, "cannot query origin"):
+                self.R.remote_store_sha()
+            self.assertEqual([c[0] for c in calls], ["ls-remote"])        # never falls back to a stale local ref
+            calls.clear()
+            self.R.git = fake({"fetch": (1, "", "network down")})
+            with self.assertRaisesRegex(self.R.StoreError, "cannot fetch docs-releases"):
+                self.R.remote_store_sha()
+            self.assertNotIn("rev-parse", [c[0] for c in calls])
+            self.R.git = fake({"rev-parse": (0, "c" * 40 + "\n", "")})
+            self.assertEqual(self.R.remote_store_sha(), "c" * 40)
+
+            self.R.git = fake({"rev-parse": (1, "", ""), "fetch": (1, "", "not our ref")})
+            with self.assertRaisesRegex(self.R.StoreError, "is not available: not our ref"):
+                self.R.materialise("d" * 40, self.tmpdir("m-"))
+            self.R.git = fake({"rev-parse": (0, "d" * 40 + "\n", "")})
+
+            def popen(data, rc, err=b""):
+                class P:
+                    def __init__(self, cmd, stdout=None, stderr=None, **kw):
+                        stderr.write(err)
+                        self.stdout, self.rc = io.BytesIO(data), rc
+
+                    def kill(self):
+                        self.rc = self.rc if self.rc else -9
+
+                    def wait(self):
+                        return self.rc
+                return P
+            self.R.subprocess.Popen = popen(b"", 128, b"bad object")
+            with self.assertRaisesRegex(self.R.StoreError, "git archive failed: bad object"):
+                self.R.materialise("d" * 40, self.tmpdir("m-"))
+            buf = io.BytesIO()
+            import tarfile
+            with tarfile.open(fileobj=buf, mode="w") as t:
+                info = tarfile.TarInfo("../escape.html")
+                info.size = 1
+                t.addfile(info, io.BytesIO(b"x"))
+            self.R.subprocess.Popen = popen(buf.getvalue(), 0)
+            dest = self.tmpdir("m-")
+            with self.assertRaisesRegex(self.R.StoreError, "cannot extract"):
+                self.R.materialise("d" * 40, dest / "store")
+            self.assertFalse((dest / "escape.html").exists())
+        finally:
+            self.R.git, self.R.subprocess.Popen = orig_git, orig_popen
+
+    def test_cli_contracts(self):
+        main_site = self.tmpdir("main-")
+        (main_site / "docs").mkdir()
+        (main_site / "docs" / "index.html").write_text("main", encoding="utf-8")
+        self.R.add(self.store, main_site, self.fake_tree(), "v1", "a" * 40)
+        out = self.tmpdir("gh-") / "output"
+
+        def releases_main(*argv):
+            old = sys.argv
+            sys.argv = ["releases.py", *argv]
+            try:
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    return self.R.main()
+            except SystemExit as e:
+                return e.code
+            finally:
+                sys.argv = old
+
+        self.assertEqual(releases_main("assemble", "--site", str(main_site), "--store", str(self.store),
+                                       "--github-output", str(out)), 2)   # a directory has no commit to pin
+        self.assertFalse(out.exists())
+        self.assertEqual(releases_main("assemble", "--site", str(main_site), "--store", str(self.store)), 0)
+        (self.store / "v1" / "index.html").write_text("tampered", encoding="utf-8")
+        site2 = self.tmpdir("site-")
+        self.assertEqual(releases_main("assemble", "--site", str(site2), "--store", str(self.store)), 1)
+        orig = self.R.assemble_from
+        self.R.assemble_from = lambda site, releases: ("e" * 40, ["refused"])
+        try:
+            self.assertEqual(releases_main("assemble", "--site", str(site2), "--releases", "e" * 40,
+                                           "--github-output", str(out)), 1)
+            self.assertFalse(out.exists())                                    # no receipt for a refusal
+        finally:
+            self.R.assemble_from = orig
+        self.assertEqual(releases_main("assemble", "--site", str(site2), "--releases", "main"), 1)
+        self.assertEqual(releases_main("assemble", "--site", str(site2)), 2)   # no source given
+
+        V = self.V
+        compared: list[Path] = []
+        build = ("import sys, pathlib; o = pathlib.Path(sys.argv[sys.argv.index('--out') + 1]); "
+                 "(o / 'docs').mkdir(parents=True); (o / 'docs' / 'index.html').write_text('main')")
+        assemble_ok = ("import sys, pathlib; pathlib.Path(sys.argv[sys.argv.index('--github-output') + 1])"
+                       ".write_text('store=' + 's' * 40 + chr(10))")
+        assemble_bad = "import sys; sys.stderr.write('release v1: digest'); sys.exit(1)"
+        hang = "import time; time.sleep(60)"
+
+        def verify_main(*argv, build=build, assemble=assemble_ok):
+            old = (sys.argv, V.BUILD_CMD, V.RELEASES_CMD, V.compare)
+            sys.argv = ["verify_live.py", *argv]
+            V.BUILD_CMD, V.RELEASES_CMD = [sys.executable, "-c", build], [sys.executable, "-c", assemble]
+            V.compare = lambda built, *a, **k: compared.append(built) or []
+            try:
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    return V.main()
+            except SystemExit as e:
+                return e.code
+            finally:
+                sys.argv, V.BUILD_CMD, V.RELEASES_CMD, V.compare = old
+
+        self.assertEqual(verify_main("--releases", ""), 2)                   # a lost workflow output
+        self.assertEqual(verify_main("--built", str(main_site), "--releases", "none"), 2)
+        self.assertEqual(verify_main("--base", "http://x.invalid/", "--releases", "none", assemble=assemble_bad), 2)
+        self.assertEqual(compared, [])                                       # refused before comparing
+        for stage in ("build", "assemble"):                                  # the deadline covers preparation
+            start = time.time()
+            self.assertEqual(verify_main("--base", "http://x.invalid/", "--deadline", "1", **{stage: hang}), 2)
+            self.assertLess(time.time() - start, 10, stage)
+        self.assertEqual(compared, [])
+        self.assertEqual(verify_main("--base", "http://x.invalid/", "--releases", "none"), 0)
+        self.assertEqual(len(compared), 1)
+
+    def test_first_release_tag_starts_a_new_store(self):
+        self.fixture()                                               # v1 and v2 exist, no store branch yet
+        orig = (self.R.remote_store_sha, self.R.live_store_evidence)
+        self.R.remote_store_sha = lambda remote="origin": None
+        self.R.live_store_evidence = lambda timeout=30.0: []               # nothing ever deployed from a store
+        old = sys.argv
+        try:
+            sys.argv = ["releases.py", "store-sha"]
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(self.R.main(), 0)                   # docs-release.yml's bootstrap path
+            self.assertEqual(out.getvalue(), "none\n")
+            self.R.live_store_evidence = lambda timeout=30.0: ["release v1"]   # a store existed and was lost
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(self.R.main(), 1)
+        finally:
+            sys.argv = old
+            self.R.remote_store_sha, self.R.live_store_evidence = orig
+
+    def test_the_live_picker_keeps_proof_of_a_store_after_every_release_is_retired(self):
+        pe, pm = self.R.picker_evidence, self.R.picker_manifest
+        self.assertEqual(pe(json.loads(pm([]))), [])                           # main alone, never a store
+        self.assertEqual(pe(json.loads(pm([], from_store=True))), ["its picker was assembled from the store"])
+        self.assertEqual(pe(json.loads(pm([{"version": "v1"}], from_store=True))),
+                         ["release v1", "its picker was assembled from the store"])
+        with self.assertRaises(self.R.StoreError):
+            pe({"schema": 1})
+        site = self.tmpdir("site-")
+        self.assertEqual(self.R.assemble(site, self.store if (self.store / "versions.json").exists() else None), [])
+        self.assertNotIn('"store"', (site / "docs" / "versions.json").read_text(encoding="utf-8"))
+        self.R.write_manifest(self.store, [])                                  # an empty but real store
+        self.assertEqual(self.R.assemble(site := self.tmpdir("site-"), self.store), [])
+        self.assertEqual(pe(json.loads((site / "docs" / "versions.json").read_text(encoding="utf-8"))),
+                         ["its picker was assembled from the store"])
+        orig = self.R.live_store_evidence
+        self.R.live_store_evidence = lambda timeout=30.0: ["its picker was assembled from the store"]
+        try:
+            with self.assertRaisesRegex(self.R.StoreError, "shows a store existed"):
+                self.R.check_store_absent_is_new()                             # every release retired, then lost
+        finally:
+            self.R.live_store_evidence = orig
+
+    def test_a_fully_retired_store_that_lost_its_manifest_is_refused(self):
+        (self.store / "README.md").write_text("store", encoding="utf-8")      # all a fully retired store holds
+        rendered: list[str] = []
+        with self.assertRaisesRegex(self.R.StoreError, "no versions.json; restore it"):
+            self.R.publish(self.store, self.tmpdir("main-"), render=lambda t, o: rendered.append(t))
+        self.assertEqual(sorted(p.name for p in self.store.iterdir()), ["README.md"])   # nothing written
+        self.assertEqual(rendered, [])
+
+    def test_a_killed_child_leaves_no_temporary_store(self):
+        record = self.tmpdir("rec-") / "path"
+        child = (f"import tempfile, time, pathlib; d = tempfile.mkdtemp(prefix='release-store-'); "
+                 f"pathlib.Path(d, 'big').write_bytes(b'x' * 1000); pathlib.Path({str(record)!r}).write_text(d); "
+                 f"time.sleep(60)")
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(self.V.run_bounded([sys.executable, "-c", child], time.time() + 1.5, Path(tmp)))
+            leaked = Path(record.read_text())
+            self.assertTrue(str(leaked).startswith(tmp))                       # created under the parent's dir
+        self.assertFalse(leaked.exists())                                      # removed with it
+
+    def test_a_listed_release_never_falls_back_to_the_presite_rule(self):
+        self.fixture(presite=True)
+        store = self.tmpdir("store-")
+        self.R.add(store, self.tmpdir("main-"), self.fake_tree(), "v1", self.sha1)
+        shutil.rmtree(store / "v1")                                  # its tree is gone from the store
+        sha = self.store_commit_dir(store)
+        orig = self.R.remote_store_sha
+        self.R.remote_store_sha = lambda remote="origin": sha
+        try:
+            self.git("tag", "-f", "v1", "v0")                        # and the tag moved to a pre-site commit
+            self.assertEqual(sorted(self.R.deletable_tags()), ["v0"])   # v1 stays: listed, not verified
+        finally:
+            self.R.remote_store_sha = orig
+
+    def test_retired_release_stays_off_the_site(self):
+        self.fixture()
+        main_site = self.build_main()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.R.publish(self.store, main_site, render=self.render, new_store=True), ["v1", "v2"])
+        errors = self.R.assemble(self.build_main(), self.store, budget=1)
+        self.assertIn("move its entry from `releases` to `retired` in versions.json", errors[0])
+        manifest = json.loads((self.store / "versions.json").read_text(encoding="utf-8"))
+        manifest["retired"] = [{"version": "v1", "commit": self.sha1}]      # the operator's procedure
+        manifest["releases"] = [r for r in manifest["releases"] if r["version"] != "v1"]
+        (self.store / "versions.json").write_text(json.dumps(manifest), encoding="utf-8")
+        shutil.rmtree(self.store / "v1")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.R.publish(self.store, main_site, render=self.render), [])   # not re-frozen
+        self.home("Third release.")
+        self.commit("v3", "v3")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.R.publish(self.store, main_site, render=self.render), ["v3"])
+        self.assertEqual(json.loads((self.store / "versions.json").read_text(encoding="utf-8"))["retired"],
+                         [{"version": "v1", "commit": self.sha1}])      # a later freeze keeps the record
+        site = self.build_main()
+        self.assertEqual(self.R.assemble(site, self.store), [])
+        self.assertFalse((site / "docs" / "v1").exists())
+        self.assertEqual([v["name"] for v in json.loads((site / "docs" / "versions.json").read_text())["versions"]],
+                         ["main", "v3", "v2"])
+        self.git("tag", "-f", "v1", "HEAD")                          # a retired tag moved is still a moved release
+        with self.assertRaisesRegex(self.R.StoreError, "release v1: stored from"):
+            self.R.publish(self.store, main_site, render=self.render)
+        manifest["retired"].append({"version": "v2", "commit": self.sha2})     # retained AND retired
+        (self.store / "versions.json").write_text(json.dumps(dict(manifest, releases=manifest["releases"])),
+                                                  encoding="utf-8")
+        with self.assertRaisesRegex(self.R.StoreError, "both retained and retired"):
+            self.R.load_manifest(self.store)
+
+    def test_release_cleanup_deletes_only_confirmed_tags(self):
+        """release.yml's pre-release cleanup, run as shipped against a mocked API."""
+        import yaml
+        wf = yaml.safe_load((B.REPO_REAL / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+        step = [st for st in wf["jobs"]["release"]["steps"] if st.get("name") == "Clean up old pre-releases"][0]
+        self.assertEqual(step["env"]["DOCS_DELETABLE"], "${{ steps.docs_deletable.outputs.tags }}")
+        harness = r"""
+const refs = {v1: 'a1', v3: 'moved', v5: 'e5'};
+const calls = [];
+const github = {rest: {
+  repos: {listReleases: async () => ({data: ['v1', 'v2', 'v3', 'v4', 'v5'].map((t, i) =>
+            ({id: i, tag_name: t, name: t, prerelease: t !== 'v5'}))}),
+          deleteRelease: async ({release_id}) => calls.push('release ' + release_id)},
+  git: {getRef: async ({ref}) => { const t = ref.slice(5); if (!(t in refs)) throw new Error('404');
+                                    return {data: {object: {sha: refs[t]}}}; },
+        deleteRef: async ({ref}) => calls.push('delete ' + ref)}}};
+const context = {repo: {owner: 'o', repo: 'r'}};
+console.log = () => {};
+(async () => { SCRIPT
+})().then(() => process.stdout.write(JSON.stringify(calls)));
+"""
+
+        def run(env):
+            r = subprocess.run(["node", "-e", harness.replace("SCRIPT", step["with"]["script"])],
+                               env=dict(os.environ, DOCS_DELETABLE=env), capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return json.loads(r.stdout)
+
+        # v1 confirmed and unmoved; v2 not confirmed; v3 moved since; v4 already gone.
+        calls = run(json.dumps({"v1": "a1", "v3": "c3", "v4": "d4"}))
+        self.assertEqual([c for c in calls if c.startswith("delete")], ["delete tags/v1"])
+        self.assertEqual(len([c for c in calls if c.startswith("release")]), 4)   # releases still go
+        for env in ("", "[]", '["v1"]', "null", "{"):                            # unknown: keep every tag
+            self.assertEqual([c for c in run(env) if c.startswith("delete")], [], env)
+
+    def test_every_checked_file_gets_exactly_one_verdict_at_the_deadline(self):
+        built, live = self.tmpdir("built-"), self.tmpdir("live-")
+        for i in range(40):
+            (built / f"f{i:02}.html").write_text("new", encoding="utf-8")
+            (live / f"f{i:02}.html").write_text("old", encoding="utf-8")     # every file has drifted
+        base = self.serve(live)
+        for cut in (0.0, 0.01, 0.03, 0.08, 5.0):                            # before, during and after the fetches
+            out = self.V.compare(built, base, "t", deadline=time.time() + cut)
+            self.assertEqual(sorted(self.V.failed_paths(out)), [f"f{i:02}.html" for i in range(40)], (cut, out))
+            self.assertTrue(all(l.startswith(("DIFFERS", "UNVERIFIED")) for l in out))
+
+    def test_verify_process_exits_at_the_deadline_with_a_trickling_site(self):
+        import http.server
+        import threading
+
+        class Trickle(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", "1000")
+                self.end_headers()
+                try:
+                    for _ in range(1000):                                    # one byte every 50 ms: never times out
+                        self.wfile.write(b"x")
+                        self.wfile.flush()
+                        time.sleep(0.05)
+                except OSError:
+                    pass
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Trickle)
+        srv.daemon_threads = True
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        built = self.tmpdir("built-")
+        (built / "index.html").write_text("x", encoding="utf-8")
+        start = time.time()
+        r = subprocess.run([sys.executable, str(HERE.parent / "verify_live.py"), "--built", str(built),
+                            "--base", f"http://127.0.0.1:{srv.server_address[1]}/", "--deadline", "1"],
+                           capture_output=True, text=True, timeout=60)
+        self.assertLess(time.time() - start, 10)                             # not the 50 s the body takes
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("UNVERIFIED  index.html: run deadline passed", r.stdout)
+
+    def test_verify_deadline_bounds_a_hung_site(self):
+        import http.server
+        import threading
+
+        class Slow(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                time.sleep(3)
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Slow)
+        srv.daemon_threads = True
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        built = self.tmpdir("built-")
+        for i in range(20):
+            (built / f"f{i:02}.html").write_text(str(i), encoding="utf-8")
+        start = time.time()
+        out = self.V.compare(built, f"http://127.0.0.1:{srv.server_address[1]}/", "t", deadline=time.time() + 0.5)
+        self.assertLess(time.time() - start, 2.5)                   # not 20 files x 3 s
+        self.assertEqual(len(out), 20)
+        self.assertTrue(all(line.startswith("UNVERIFIED  f") and line.endswith(": run deadline passed")
+                            for line in out), out)
+        self.assertEqual(self.V.failed_paths(out)[:2], ["f00.html", "f01.html"])
+
+    def test_verify_samples_release_trees_and_retries_only_failures(self):
+        built = self.tmpdir("built-")
+        (built / "docs" / "v1").mkdir(parents=True)
+        (built / "index.html").write_text("m", encoding="utf-8")
+        (built / "docs" / "index.html").write_text("m", encoding="utf-8")
+        for i in range(40):
+            (built / "docs" / "v1" / f"p{i:02}.html").write_text(str(i), encoding="utf-8")
+        (built / "docs" / "v1" / "index.html").write_text("v1", encoding="utf-8")
+        (built / "docs" / "versions.json").write_text(self.R.picker_manifest([{"version": "v1"}]).decode(),
+                                                      encoding="utf-8")
+        every = self.V.select_files(built, 0, 0)
+        self.assertEqual(len(every), 44)
+        seen: set[str] = set()
+        for day in range(5):                                        # 41 files / sample 10 -> stride 5
+            pick = self.V.select_files(built, 10, day)
+            self.assertIn("docs/v1/index.html", pick)
+            self.assertTrue({"index.html", "docs/index.html", "docs/versions.json"} <= set(pick))
+            self.assertLessEqual(len([f for f in pick if f.startswith("docs/v1/")]), 10)
+            seen |= set(pick)
+        self.assertEqual(seen, set(every))                          # every file within `stride` days
+        self.assertEqual(self.V.failed_paths(["MISSING     docs/a.html", "DIFFERS     b.css",
+                                               "UNREACHABLE docs/c.html: timed out", "EMPTY BUILD: nothing"]),
+                         ["docs/a.html", "b.css", "docs/c.html"])
+
+    def test_check_refuses_a_main_page_on_a_retained_release_path(self):
+        self.fixture()
+        env = git_env("2026-05-01T00:00:00Z")
+        run = lambda *a, inp=None: subprocess.run(["git", *a], cwd=self.root, env=env, check=True,  # noqa: E731
+                                                  capture_output=True, text=True, input=inp).stdout.strip()
+        blob = run("hash-object", "-w", "--stdin",
+                   inp='{"schema": 1, "releases": [{"version": "v1", "commit": "a", "files": 1, "digest": "d"}]}')
+        tree = run("mktree", inp=f"100644 blob {blob}\tversions.json\n")
+        run("update-ref", self.R.STORE_REF, run("commit-tree", tree, "-m", "store"))
+        errors: list[str] = []
+        B.check_release_paths({"docs/index.html": b"", "docs/v10/index.html": b""}, errors)
+        self.assertEqual(errors, [])
+        B.check_release_paths({"docs/v1/index.html": b"", "docs/versions.json": b""}, errors)
+        self.assertEqual(len(errors), 2, errors)
+        self.assertIn("docs/versions.json: reserved for the version picker", errors[0])
+        self.assertIn("docs path docs/v1/index.html collides with retained release v1", errors[1])
+
+    def test_picker_as_shipped(self):
+        tpl = (B.REPO_REAL / "gh-pages" / "docs-template.html").read_text(encoding="utf-8")
+        self.assertIn('data-version="%DOCS_VERSION%" data-page="%PAGE_PATH%" hidden', tpl)
+        script = [m for m in re.findall(r"<script>(.*?)</script>", tpl, re.S) if "versions.json" in m]
+        self.assertEqual(len(script), 1)
+        script = script[0].replace("%ROOT%", "").replace("%SITE_ROOT%", "/")
+
+        def drive(versions, steps, heads=(), delay=None, fail=()):
+            payload = {"script": script, "files": {"versions.json": json.dumps(versions)}, "steps": steps,
+                       "version": {"version": "v1", "page": "sub/page.html"}, "heads": list(heads),
+                       "head_delay": delay or {}, "head_fail": list(fail)}
+            r = subprocess.run(["node", str(HERE / "search_harness.js")], input=json.dumps(payload),
+                               capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            out = json.loads(r.stdout)
+            self.assertEqual(out["errors"], [])
+            return out["snaps"]
+
+        three = {"schema": 1, "versions": [{"name": "main", "path": ""}, {"name": "v2", "path": "v2/"},
+                                           {"name": "v1", "path": "v1/"}, {"name": "evil", "path": "//x.invalid/"}]}
+        s = drive(three, [["flush", None], ["snap", "loaded"], ["change", 1], ["flush", None], ["snap", "same-page"],
+                          ["change", 0], ["flush", None], ["snap", "fallback"]], heads=["/docs/v2/sub/page.html"])
+        self.assertFalse(s["loaded"]["picker"]["hidden"])
+        self.assertEqual(s["loaded"]["picker"]["options"],
+                         [{"value": "", "text": "main", "selected": False},
+                          {"value": "v2/", "text": "v2", "selected": False},
+                          {"value": "v1/", "text": "v1", "selected": True}])     # the unsafe path is dropped
+        self.assertEqual(s["same-page"]["href"], "/docs/v2/sub/page.html")         # the page exists there
+        self.assertEqual(s["fallback"]["href"], "/docs/")                          # it does not: version root
+        s = drive(three, [["flush", None], ["change", 1], ["change", 0], ["wait", 120], ["snap", "latest"]],
+                  heads=["/docs/v2/sub/page.html"], delay={"/docs/v2/sub/page.html": 60})
+        self.assertEqual(s["latest"]["href"], "/docs/")        # the slower, superseded v2 probe does not navigate
+        s = drive(three, [["flush", None], ["change", 1], ["flush", None], ["snap", "rejected"]],
+                  fail=["/docs/v2/sub/page.html"])
+        self.assertEqual(s["rejected"]["href"], "/docs/v2/")    # a failed probe falls back to the version root
+        one = {"schema": 1, "versions": [{"name": "main", "path": ""}]}
+        self.assertTrue(drive(one, [["flush", None], ["snap", "s"]])["s"]["picker"]["hidden"])
+        self.assertTrue(drive({"broken": True}, [["flush", None], ["snap", "s"]])["s"]["picker"]["hidden"])
+
+
 class SitePolish(unittest.TestCase):
     """Section 23: GitHub heading ids, anchors into non-docs Markdown, page dates,
     head tags, sitemap."""

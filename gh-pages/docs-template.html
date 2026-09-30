@@ -70,6 +70,8 @@ header.top { position: sticky; top: 0; z-index: 20; height: 64px; display: flex;
 .top-links a { color: var(--text-2); }
 .icon-btn { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); color: var(--text-2); cursor: pointer; display: grid; place-items: center; }
 .menu-btn { display: none; }
+.version { height: 36px; padding: 0 8px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); color: var(--text-2); font: inherit; font-size: 13px; cursor: pointer; }
+.version:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .layout { display: grid; grid-template-columns: 280px minmax(0, 1fr) 220px; max-width: 1480px; margin: 0 auto; }
 aside.side { position: sticky; top: 64px; height: calc(100vh - 64px); overflow: auto; padding: 22px 14px 40px 20px; border-right: 1px solid var(--border); font-size: 14px; }
 aside.side ul { list-style: none; margin: 0; padding: 0 0 0 10px; }
@@ -153,6 +155,7 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
     <a class="hide-sm" href="%SITE_ROOT%">Home</a>
     <a class="hide-sm" href="%ROOT%coverage.html">Coverage</a>
     <a class="hide-sm" href="{{repo_url}}">GitHub</a>
+    <select class="version" id="version" aria-label="Documentation version" data-version="%DOCS_VERSION%" data-page="%PAGE_PATH%" hidden></select>
     <button class="icon-btn" id="theme" aria-label="Toggle light or dark theme">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
     </button>
@@ -384,6 +387,34 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
   q.addEventListener('blur', function (e) {
     if (!e.relatedTarget || !e.relatedTarget.closest || !e.relatedTarget.closest('.search')) close();
   });
+  // Version picker. docs/versions.json lists main and every retained release
+  // (scripts/site/releases.py); it stays hidden until there is a second version.
+  // Switching keeps the reader on the same page when the other version has it.
+  var vsel = document.getElementById('version');
+  if (vsel && typeof fetch === 'function') {
+    var docsRoot = '%SITE_ROOT%docs/';
+    fetch(docsRoot + 'versions.json').then(json).then(function (m) {
+      var vs = (m && m.versions || []).filter(function (v) {
+        return v && typeof v.name === 'string' && /^(v[A-Za-z0-9._-]*\/)?$/.test(v.path);
+      });
+      if (vs.length < 2) return;
+      vs.forEach(function (v) {
+        var o = document.createElement('option');
+        o.value = v.path;
+        o.textContent = v.name;
+        o.selected = v.name === vsel.dataset.version;
+        vsel.appendChild(o);
+      });
+      vsel.hidden = false;
+      var picked = 0;   // only the latest choice navigates, however its probe and earlier ones resolve
+      vsel.addEventListener('change', function () {
+        var mine = ++picked, base = docsRoot + vsel.value, target = base + vsel.dataset.page;
+        function go(url) { if (mine === picked) location.href = url; }
+        fetch(target, { method: 'HEAD' }).then(function (r) { go(r.ok ? target : base); },
+                                               function () { go(base); });
+      });
+    }).catch(function () {});
+  }
   if (document.querySelector('pre.mermaid')) {
     var s = document.createElement('script');
     s.src = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js';

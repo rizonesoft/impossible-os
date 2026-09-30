@@ -79,7 +79,7 @@ file_patterns:
 | 💎  |  26   | §26 Document: Host tools (8 roadmap files)                               | §2, §3                      |  [x]   |
 | 💎  |  27   | §27 Document: Architecture ports and future research (9 roadmap files)   | §2, §3                      |  [x]   |
 | ⭐  |  28   | §28 Review-class nets for site tooling: real parsers, scheduler stress   | §23                         |  [x]   |
-| 💎  |  29   | §29 Retained release trees: snapshots, manifest, live verification       | §24                         |  [ ]   |
+| 💎  |  29   | §29 Retained release trees: snapshots, manifest, live verification       | §24                         |  [x]   |
 | 💎  |  30   | §30 SDK release docs and API reference                                   | §29, D12 T06 §2, D12 T06 §8 |  [ ]   |
 | 💎  |  31   | §31 Docs search quality and automated accessibility audit                | §25                         |  [ ]   |
 
@@ -1352,14 +1352,31 @@ Promotion of two review classes into automation, filed under the reviewer-to-aut
 
 A release snapshot must survive later deploys. Today every deploy publishes a fresh whole-site artifact (`.github/workflows/pages.yml`) and `site-live.yml` repairs drift by redeploying `main`, so anything not rebuilt from `main` disappears on the next push. Uses §24's ref-aware renderer.
 
-- [ ] Release snapshots: when a `v*` tag is pushed, build the docs at that tag into `docs/<version>/` of the published site and add a version picker; `main` stays the default
-- [ ] Version manifest (for example `gh-pages/versions.json`) is the authoritative list of retained releases; every deploy AND every `site-live.yml` repair assembles `main` plus each listed release tree
-- [ ] `scripts/site/verify_live.py` verifies every retained release tree, not just the files of the current `main` build
-- [ ] A version path never collides with a `main` docs folder or another release: refuse a tag whose `docs/<version>/` path is a docs directory or page on `main` (a tag named `boot` would overwrite `docs/boot/`)
-- [ ] Tests: two releases then a `main` deploy and a repair leave both releases served and byte-verified
-- [ ] Commit: `"site: retained release docs trees and version manifest"`
+- [x] Release snapshots: `docs-release.yml` (tag push, daily, dispatch) runs `releases.py publish`, freezing every site-era `v*` tag the store lacks onto orphan branch `docs-releases`
+  - Reconciling all missing tags survives GitHub's one-pending-run concurrency; a stored same-commit tag is skipped (re-runs resume), a moved tag fails; `release.yml` deletes only tags `releases.py deletable` confirms (stored or retired at the frozen commit, or pre-site), re-reading each ref first; a stored tag counts only if its tree matches its digest.
+  - Version picker in `gh-pages/docs-template.html` (`%DOCS_VERSION%`, `%PAGE_PATH%`): hidden below two versions, same page when it exists, else that version's root; only the latest choice navigates.
+- [x] Version manifest: the store's `versions.json` (version, commit, file count, digest) is authoritative; every deploy runs `releases.py assemble`, which copies each tree to `docs/<v>/` and writes `docs/versions.json`
+  - Refused before anything is written: digest mismatch, missing tree, symlink or non-regular entry, missing manifest, unreadable store, a site over 900 MB, or a lost store.
+  - A missing branch counts as new only when the live `docs/versions.json` lists no release and lacks the `store` marker; `store-sha` refuses otherwise, and `publish --new-store` alone writes a first manifest, so a lost store is never rebuilt.
+- [x] Retirement: a `retired` list in `versions.json` keeps a release off the site and out of `publish`; the budget refusal names the procedure
+- [/] Choosing which old releases to retire once the 900 MB budget binds (~35 releases at 24 MB each): operator-gated, a product decision
+- [x] `verify_live.py` assembles the retained trees exactly as a deploy does (`--releases remote|none|<sha>`); `pages.yml` verify uses the store SHA its build pinned, `site-live.yml` the live store
+  - All of `main` every run; releases SAMPLED: index plus a slice of 25 rotating every six hours (`--release-sample`); retries refetch only failures; a whole-run 20-minute deadline kills a slow build or assembly process group and gives each unfinished file one UNVERIFIED verdict.
+- [x] Collision rule (`releases.collisions`): a version is one segment `v[A-Za-z0-9._-]*`; refused when a main file is `docs/<v>`, under it, or at an ancestor, or it is `docs/versions.json`
+  - Checked at freeze time and at every assemble; `build.py --check` repeats it against the last fetched store (`check_release_paths`).
+- [x] Tests: `RetainedReleases` (23 cases): two releases survive a later main deploy, drift is caught and repaired, plus refusals, failure directions, CLI exit codes and the picker driven in Node
+- [x] Commit: `"site: retained release docs trees and version manifest"`
 
 **Test checkpoint:** after two test tags and a later `main` deploy, `verify_live.py` passes for `main` and both release trees. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
+
+> **Test runner:** host-side `python3 scripts/site/tests/test_build.py RetainedReleases` (23 cases; needs `node`) | whole file under `bash scripts/test-tooling.sh`
+
+> **Notes:**
+> - **What shipped:** `scripts/site/releases.py` freezes release docs trees on the `docs-releases` branch and assembles them into every deploy, with a version picker in the docs template.
+> - **How it integrates:** `docs-release.yml` publishes, `pages.yml` assembles and pins the store SHA for verify, `site-live.yml` verifies and repairs, `release.yml` keeps tags whose docs are not frozen.
+> - **Downstream:** section 30 publishes the SDK release line through the same store; the first site-era `v*` tag is the first live exercise of the workflow.
+> - **Canonical doc:** [`docs/infrastructure/documentation-site.md`](../../docs/infrastructure/documentation-site.md) "How do release docs stay published after later deploys?".
+> - **Scope boundary:** retained trees are never re-rendered; retiring one (a `retired` entry) is an operator-gated edit of the store branch, and release trees are verified by rotating sample.
 
 ---
 
@@ -1372,6 +1389,7 @@ A release snapshot must survive later deploys. Today every deploy publishes a fr
 The SDK has its own release line (`sdk/v*` tags from D12 T06 §8 `release-sdk.sh`) and its own API reference (D12 T06 §2 `gendoc`). Neither producer exists yet, so this section waits on them; it reuses §29's retention machinery with a second namespace.
 
 - [ ] Two version namespaces: OS `v*` and SDK `sdk/v*` (created by D12 T06 §8 `release-sdk.sh`) each trigger a snapshot under their own path -> XREF: `D12 T06 §8`
+  - §29's store takes one-segment `v*` versions only (`releases.VERSION_RE`, `valid_version`); `sdk/v*` widens that rule and the tag listing in `tag_commits()`, keeping `collisions()`'s ancestor check.
 - [ ] Publish the SDK API reference that D12 T06 §2 `gendoc` writes to `sdk/docs/api-reference/` under `docs/sdk/api/` for `main` and per SDK tag -> XREF: `D12 T06 §2`
 - [ ] Tests: an `sdk/v*` fixture tag publishes reference pages matching its headers, under the SDK path and not the OS path
 - [ ] Commit: `"site: SDK release docs and API reference"`
@@ -1405,10 +1423,10 @@ The §25 index finds every word, but ranking is plain substring matching with th
 | --- | -------------------------------- | ------------------------ | -------------------------- | ------------------------- |
 | 💎  | Docs generated from in-tree text | ⚠️ Learn, separate repos | ✅ Sphinx `Documentation/` | ✅ §1 `docs/` to site     |
 | ⭐  | Build fails on dead doc links    | ❌ Not enforced          | ⚠️ Warnings only           | ✅ §1 Check 30 error      |
-| ⭐  | Every subsystem has a docs page  | ⚠️ Public APIs only      | ⚠️ Uneven                  | ⚠️ §4-§21, §26; §27 open  |
+| ⭐  | Every subsystem has a docs page  | ⚠️ Public APIs only      | ⚠️ Uneven                  | ✅ §4-§21, §26, §27       |
 | ⭐  | Facts derived from one source    | ❌ Manual                | ❌ Manual                  | ✅ §1 `project.json`      |
 | ⭐  | Stale narrative page detection   | ❌ Review dates          | ❌ Not tracked             | ✅ §22 `sources=` warns   |
-| 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ⚠️ §24 renders, §29 keeps |
+| 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ✅ §24 renders, §29 keeps |
 | 💎  | Site search                      | ✅ Full search           | ✅ Sphinx search           | ⚠️ §25 text, §31 ranking  |
 | 💎  | External link rot check          | ✅ Learn link validation | ✅ Sphinx `linkcheck`      | ✅ §23 weekly workflow    |
 | 💎  | Published API reference          | ✅ Learn API reference   | ✅ kernel-doc              | ⬜ §30 from D12 T06 §2    |

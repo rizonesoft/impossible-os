@@ -7,8 +7,13 @@
 //                   ["flush", null] | ["wait", <ms>] | ["snap", "label"]],
 //         "fail_once": ["name of a file whose first fetch fails", ...],
 //         "delay": {"file name": <ms before its fetch answers>},
-//         "files2": {the files a ["deploy", null] step swaps in}}
-// stdout: {"snaps": {"label": {expanded, active, shown, options: [{id, href, selected, text}], msg, status, href, renders}},
+//         "files2": {the files a ["deploy", null] step swaps in},
+//         "version": {"version": "<data-version>", "page": "<data-page>"} adds the version picker,
+//         "heads": ["full URL a HEAD request finds", ...],
+//         "head_delay": {"full URL": <ms before its HEAD answers>}, "head_fail": ["full URL whose HEAD rejects", ...]}
+// Version picker steps: ["change", <option index>] picks a version.
+// stdout: {"snaps": {"label": {expanded, active, shown, options: [{id, href, selected, text}], msg, status, href, renders,
+//                               picker: {hidden, options: [{value, text, selected}]}}},
 //          "errors": [every unhandled promise rejection, which the page would swallow silently],
 //          "fetches": {"file name": times fetched}, "revalidated": {"file name": times fetched with cache: no-cache}}
 'use strict';
@@ -53,6 +58,7 @@ class El {
   }
   get innerHTML() { return this._html; }
   querySelectorAll(sel) { return sel === '[role=option]' ? this.options : []; }
+  appendChild(c) { this.children = (this.children || []).concat([c]); }
 }
 
 const els = {};
@@ -61,6 +67,11 @@ const els = {};
   els[id].inSearch = id !== 'theme';
 });
 els.q.tagName = 'INPUT';
+if (input.version) {
+  els.version = new El('version');
+  els.version.hidden = true;
+  els.version.dataset = input.version;
+}
 const docHandlers = {};
 const doc = {
   documentElement: { dataset: {} },
@@ -77,6 +88,12 @@ const loc = { href: 'start' };
 const fetches = {};
 const revalidated = {};
 function fetchStub(url, opts) {
+  if (opts && opts.method === 'HEAD') {
+    const found = (input.heads || []).includes(url);
+    const fail = (input.head_fail || []).includes(url);
+    return new Promise((resolve, reject) => setTimeout(() => (fail ? reject(new Error('network'))
+      : resolve({ ok: found, status: found ? 200 : 404 })), (input.head_delay || {})[url] || 1));
+  }
   const name = url.replace(/^.*\//, '');
   fetches[name] = (fetches[name] || 0) + 1;
   if (opts && opts.cache === 'no-cache') revalidated[name] = (revalidated[name] || 0) + 1;
@@ -117,6 +134,9 @@ function snap() {
     status: els['search-status'].textContent,
     href: loc.href,
     renders: list.renders,          // non-empty result lists drawn so far: one per scoring pass
+    picker: els.version ? { hidden: els.version.hidden,
+                            options: (els.version.children || []).map((o) => ({ value: o.value, text: o.textContent,
+                                                                                selected: !!o.selected })) } : null,
   };
 }
 
@@ -128,6 +148,7 @@ function snap() {
     else if (op === 'blur') els.q.fire('blur', { relatedTarget: null });
     else if (op === 'click') els.results.fire('click', { target: els.results.options[arg] });
     else if (op === 'deploy') input.files = input.files2;          // the site is redeployed under the page
+    else if (op === 'change') { els.version.value = els.version.children[arg].value; els.version.fire('change', {}); }
     else if (op === 'flush') await flush();
     else if (op === 'wait') await new Promise((r) => setTimeout(r, arg));
     else if (op === 'snap') snaps[arg] = snap();

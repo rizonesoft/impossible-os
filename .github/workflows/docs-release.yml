@@ -1,0 +1,83 @@
+name: Release docs
+
+# Freeze the docs of every release tag onto the docs-releases branch, then
+# redeploy the site so each release is served at docs/<version>/ beside main.
+# scripts/site/releases.py does the work; the branch holds rendered trees plus
+# versions.json and is written only here.
+#
+# Every run reconciles ALL site-era v* tags the store lacks, not just the tag
+# that triggered it: GitHub keeps one pending run per concurrency group and
+# cancels the rest, so a tag whose run was cancelled is frozen by the next run.
+# A re-run after a push that succeeded finds its release stored and just
+# redeploys; a tag moved to another commit fails instead of replacing a
+# published release. The daily run catches a tag whose own run never happened
+# (release.yml keeps such tags instead of deleting them) and redeploys only
+# when it froze something.
+
+on:
+  push:
+    tags: ['v*']
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # push the docs-releases branch
+  actions: write    # dispatch pages.yml
+
+concurrency:
+  group: docs-release
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      # main, not the tag: the collision check judges today's site, and the
+      # tooling that renders a release is today's.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0   # every tag, and full history for page dates
+
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet PyYAML
+
+      - name: Build main (what a release path must not collide with)
+        run: python3 scripts/site/build.py --out "$RUNNER_TEMP/main-site" --quiet
+
+      - name: Open the store
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          sha=$(python3 scripts/site/releases.py store-sha)
+          if [ "$sha" = none ]; then
+            # store-sha prints none only when no store ever existed (a lost one exits 1).
+            git worktree add --orphan -b docs-releases "$RUNNER_TEMP/store"
+            echo "NEW_STORE=--new-store" >> "$GITHUB_ENV"
+          else
+            git worktree add -B docs-releases "$RUNNER_TEMP/store" "$sha"
+          fi
+
+      - name: Freeze every release tag the store lacks
+        run: python3 scripts/site/releases.py publish --store "$RUNNER_TEMP/store" --main-site "$RUNNER_TEMP/main-site" $NEW_STORE
+
+      - name: Push the store
+        id: store
+        working-directory: ${{ runner.temp }}/store
+        run: |
+          git add -A
+          if git diff --cached --quiet; then echo "store unchanged"; exit 0; fi
+          git commit -q -m "docs-releases: freeze release docs (run $GITHUB_RUN_ID)"
+          git push origin docs-releases
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Redeploy the site with every retained release
+        if: steps.store.outputs.changed == 'true' || github.event_name != 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main --repo "$GITHUB_REPOSITORY"

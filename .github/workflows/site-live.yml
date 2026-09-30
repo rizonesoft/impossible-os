@@ -7,6 +7,8 @@ name: Live site drift
 # the red run is the report and the redeploy is the repair; the redeploy's own
 # verify job then proves the repair worked. It never redeploys from a
 # workflow_run, so a build that cannot match the live site cannot loop.
+# The comparison includes every retained release tree on the docs-releases
+# branch (scripts/site/releases.py), and the redeploy puts them back.
 
 on:
   schedule:
@@ -31,9 +33,9 @@ jobs:
       - name: Install PyYAML
         run: python3 -m pip install --quiet PyYAML
 
-      - name: Live site is byte-identical to main
+      - name: Live site is byte-identical to main and the retained releases
         id: verify
-        run: python3 scripts/site/verify_live.py --retries 3 --wait 60
+        run: python3 scripts/site/verify_live.py --retries 3 --wait 60 --releases remote
 
       - name: Repair -- redeploy main
         if: failure() && steps.verify.outcome == 'failure'

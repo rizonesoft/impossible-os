@@ -30,6 +30,8 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      store: ${{ steps.releases.outputs.store }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,6 +45,15 @@ jobs:
 
       - name: Build site
         run: python3 scripts/site/build.py --out _site
+
+      # Retained release docs trees live frozen on the docs-releases branch
+      # (docs-release.yml writes them). Every deploy puts them all back, or the
+      # upload below would drop them from the site. The store commit used is
+      # pinned for the verify job, so a release frozen meanwhile cannot make a
+      # correct deploy read as drift.
+      - name: Add retained release docs trees
+        id: releases
+        run: python3 scripts/site/releases.py assemble --site _site --releases remote --github-output "$GITHUB_OUTPUT"
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -67,7 +78,7 @@ jobs:
   # commit's build. Fetch every built file back from the live site and compare
   # bytes (the build is reproducible); retries cover CDN propagation.
   verify:
-    needs: deploy
+    needs: [build, deploy]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,4 +89,4 @@ jobs:
         run: python3 -m pip install --quiet PyYAML
 
       - name: Live site is byte-identical to this commit's build
-        run: python3 scripts/site/verify_live.py --retries 6 --wait 30
+        run: python3 scripts/site/verify_live.py --retries 6 --wait 30 --releases "${{ needs.build.outputs.store }}"
