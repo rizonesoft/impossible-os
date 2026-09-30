@@ -72,6 +72,7 @@ header.top { position: sticky; top: 0; z-index: 20; height: 64px; display: flex;
 .menu-btn { display: none; }
 .version { height: 36px; padding: 0 8px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); color: var(--text-2); font: inherit; font-size: 13px; cursor: pointer; }
 .version:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.version-note { max-width: 860px; margin: 0 0 22px; padding: 10px 14px; border-left: 3px solid var(--warning); border-radius: 0 10px 10px 0; background: var(--card); color: var(--text-2); font-size: 14px; }
 .layout { display: grid; grid-template-columns: 280px minmax(0, 1fr) 220px; max-width: 1480px; margin: 0 auto; }
 aside.side { position: sticky; top: 64px; height: calc(100vh - 64px); overflow: auto; padding: 22px 14px 40px 20px; border-right: 1px solid var(--border); font-size: 14px; }
 aside.side ul { list-style: none; margin: 0; padding: 0 0 0 10px; }
@@ -164,6 +165,7 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
 <div class="layout">
   <aside class="side">%NAV%</aside>
   <main>
+    <p class="version-note" id="version-note" role="note" hidden></p>
     <article>
 %BODY%
     </article>
@@ -390,7 +392,8 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
   // Version picker. docs/versions.json lists main and every retained release
   // (scripts/site/releases.py); it stays hidden until there is a second version.
   // Switching keeps the reader on the same page when the other version has it.
-  var vsel = document.getElementById('version');
+  // A release page also says it is not the current docs, linking to main.
+  var vsel = document.getElementById('version'), vnote = document.getElementById('version-note');
   if (vsel && typeof fetch === 'function') {
     var docsRoot = '%SITE_ROOT%docs/';
     fetch(docsRoot + 'versions.json').then(json).then(function (m) {
@@ -407,12 +410,23 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
       });
       vsel.hidden = false;
       var picked = 0;   // only the latest choice navigates, however its probe and earlier ones resolve
-      vsel.addEventListener('change', function () {
-        var mine = ++picked, base = docsRoot + vsel.value, target = base + vsel.dataset.page;
+      function open(path) {
+        var mine = ++picked, base = docsRoot + path, target = base + vsel.dataset.page;
         function go(url) { if (mine === picked) location.href = url; }
         fetch(target, { method: 'HEAD' }).then(function (r) { go(r.ok ? target : base); },
                                                function () { go(base); });
-      });
+      }
+      vsel.addEventListener('change', function () { open(vsel.value); });
+      if (vnote && vsel.dataset.version !== 'main') {
+        var lead = document.createElement('span'), link = document.createElement('a');
+        lead.textContent = 'You are reading the documentation for ' + vsel.dataset.version + ', an earlier release. ';
+        link.textContent = 'Read the current documentation';
+        link.setAttribute('href', docsRoot + vsel.dataset.page);
+        link.addEventListener('click', function (e) { e.preventDefault(); open(''); });
+        vnote.appendChild(lead);
+        vnote.appendChild(link);
+        vnote.hidden = false;
+      }
     }).catch(function () {});
   }
   if (document.querySelector('pre.mermaid')) {

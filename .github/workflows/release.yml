@@ -394,27 +394,22 @@ jobs:
               await github.rest.repos.deleteRelease({ owner, repo, release_id: release.id });
 
               // Delete the tag, unless its docs are not frozen yet
-              // Deleted only while the ref still names the object that was judged safe;
-              // a tag moved since then is kept (the API has no conditional delete, so
-              // the re-read narrows the window to one request).
+              // Deleted only while the ref still names the object that was judged safe.
+              // A push lease makes that check and the delete one atomic step on the
+              // server, so a tag moved in between is kept (the REST API has no
+              // conditional delete).
               const expected = Object.prototype.hasOwnProperty.call(deletable, release.tag_name)
                 ? deletable[release.tag_name] : null;
-              let current = null;
-              if (expected) {
-                try {
-                  current = (await github.rest.git.getRef({ owner, repo, ref: `tags/${release.tag_name}` })).data.object.sha;
-                } catch (e) {
-                  console.log(`  Tag ${release.tag_name} already deleted or not found`);
-                }
-              }
               if (!expected) {
                 console.log(`  Keeping tag ${release.tag_name}: its docs are not in docs-releases yet`);
-              } else if (current !== null && current !== expected) {
-                console.log(`  Keeping tag ${release.tag_name}: it moved since it was judged safe`);
-              } else if (current !== null) try {
-                await github.rest.git.deleteRef({ owner, repo, ref: `tags/${release.tag_name}` });
-              } catch (e) {
-                console.log(`  Tag ${release.tag_name} already deleted or not found`);
+              } else {
+                try {
+                  require('child_process').execFileSync('git', ['push',
+                    `--force-with-lease=refs/tags/${release.tag_name}:${expected}`,
+                    'origin', `:refs/tags/${release.tag_name}`], { stdio: 'inherit' });
+                } catch (e) {
+                  console.log(`  Keeping tag ${release.tag_name}: it moved since it was judged safe, or is already gone`);
+                }
               }
 
               deleted++;

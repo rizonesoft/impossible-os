@@ -9,7 +9,7 @@ This roadmap plans the server side of updates: a JSON version manifest per relea
 
 **Today.** Two pieces of release plumbing exist, neither of which is an update server:
 
-- **GitHub releases.** [`release.yml`](../../.github/workflows/release.yml) runs when a `v*` tag is pushed: it builds the images, regenerates the changelog with [`generate-changelog.sh`](../../scripts/generate-changelog.sh), publishes a GitHub release, and on a stable tag deletes every listed pre-release and its tag, whatever its version, keeping only tags whose docs are not frozen yet.
+- **GitHub releases.** [`release.yml`](../../.github/workflows/release.yml) runs when a `v*` tag is pushed: it builds the images, regenerates the changelog with [`generate-changelog.sh`](../../scripts/generate-changelog.sh), publishes a GitHub release, and on a stable tag deletes every listed pre-release and its tag, whatever its version, keeping the tags from after the docs site whose docs are not frozen yet.
 - **The website.** [`pages.yml`](../../.github/workflows/pages.yml) builds and deploys the site on every push to `main`, and [`verify_live.py`](../../scripts/site/verify_live.py) checks the live copy byte for byte. Each release tag also freezes that release's documentation and publishes it at `docs/<version>/` beside `main` ([Documentation Site](../infrastructure/documentation-site.md#how-do-release-docs-stay-published-after-later-deploys)). The site's address comes from [`project.json`](../../project.json) and [`CNAME`](../../gh-pages/CNAME): <!-- project:site_url -->https://impossibleos.co<!-- /project -->.
 
 There is no version manifest, CDN upload, promotion script, package index, telemetry endpoint or status page, and no update client in the OS polls for one.

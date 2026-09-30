@@ -80,7 +80,9 @@ outsiders can track progress without reading 100+ TODO files.
 
 **Source:** `scripts/create-release.sh`; `.github/workflows/release.yml`
 
-- [ ] Scope the stable-tag pre-release cleanup in `release.yml:355-383` to versions older than the stable tag; today it deletes every listed pre-release and its tag, newer release candidates included
+- [ ] Scope the stable-tag pre-release cleanup (`release.yml` step "Clean up old pre-releases") to versions older than the stable tag; today it deletes every listed pre-release, newer release candidates included
+  - Its tag deletion is already gated on docs retention (`releases.py deletable`, lease push; `00-infrastructure/TODO-10` §29); this item is the version-order rule.
+- [x] `scripts/generate-changelog.sh` lists only `v*` release tags, and reads `git log` with `tformat` so the oldest commit of each section is no longer dropped (found by the `00-infrastructure/TODO-10` §29 changelog regression test)
 - [ ] Start from the shipped `.github/workflows/release.yml` rather than a second tag-triggered workflow
   - It already handles `v*` CalVer tags, pre-release cleanup and `scripts/generate-changelog.sh`; `15-installer-release/TODO-03` §2 also specs `upload-release.yml` on the same tag.
 - [ ] **`scripts/create-release.sh <version> <channel>`**:

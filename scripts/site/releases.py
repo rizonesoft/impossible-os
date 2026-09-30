@@ -29,6 +29,8 @@ Commands:
   assemble  --site DIR --releases remote|none|<store sha> [--github-output FILE]
   assemble  --site DIR --store DIR       copy every retained tree into DIR/docs/<version>/
                                          and write DIR/docs/versions.json for the picker
+  push-store                             push the store branch and, if the remote lacks it,
+                                         the docs-releases-root marker in one atomic push
   store-sha                              print the remote store's commit, or `none` when no
                                          store ever existed (a lost one is refused, exit 1)
   deletable                              JSON {tag: ref object} release.yml may delete: tags
@@ -51,13 +53,11 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 BRANCH = "docs-releases"
+MARKER_TAG = "docs-releases-root"   # pushed when the store is first created; never moved or deleted
 STORE_REF = f"refs/remotes/origin/{BRANCH}"
 MANIFEST = "versions.json"          # at the store root
 PUBLISHED = "docs/versions.json"    # in the site, read by the docs template's picker
@@ -204,27 +204,12 @@ def over_budget(total: int, budget: int) -> str | None:
             f"move its entry from `releases` to `retired` in {MANIFEST} and delete its directory")
 
 
-def picker_manifest(releases: list[dict], from_store: bool = False) -> bytes:
+def picker_manifest(releases: list[dict]) -> bytes:
     """docs/versions.json: `main` first, then releases newest first; paths are
-    relative to the site's docs/ directory. `store` marks a site assembled from a
-    store, which is the durable proof a store existed even once every release in
-    it has been retired (see check_store_absent_is_new)."""
+    relative to the site's docs/ directory."""
     versions = [{"name": "main", "path": ""}] + [{"name": r["version"], "path": r["version"] + "/"}
                                                  for r in reversed(releases)]
-    data = {"schema": SCHEMA, "versions": versions}
-    if from_store:
-        data["store"] = True
-    return (json.dumps(data, separators=(",", ":")) + "\n").encode()
-
-
-def picker_evidence(data) -> list[str]:
-    """What a published picker manifest says about a store having existed."""
-    if not isinstance(data, dict) or not isinstance(data.get("versions"), list):
-        raise StoreError(f"the live {PUBLISHED} is not a picker manifest")
-    evidence = [f"release {v.get('name')}" for v in data["versions"] if isinstance(v, dict) and v.get("path")]
-    if data.get("store"):
-        evidence.append("its picker was assembled from the store")
-    return evidence
+    return (json.dumps({"schema": SCHEMA, "versions": versions}, separators=(",", ":")) + "\n").encode()
 
 
 def assemble(site: Path, store: Path | None, budget: int = SITE_BUDGET) -> list[str]:
@@ -265,7 +250,7 @@ def assemble(site: Path, store: Path | None, budget: int = SITE_BUDGET) -> list[
     for r in releases:
         copy_tree(store / r["version"], site / "docs" / r["version"], inventory[r["version"]])  # type: ignore[operator]
     (site / PUBLISHED).parent.mkdir(parents=True, exist_ok=True)
-    (site / PUBLISHED).write_bytes(picker_manifest(releases, from_store=store is not None))
+    (site / PUBLISHED).write_bytes(picker_manifest(releases))
     return []
 
 
@@ -464,37 +449,53 @@ def tag_objects() -> dict[str, str]:
     return dict(line.split(" ", 1) for line in out.splitlines() if " " in line)
 
 
-def live_store_evidence(timeout: float = 30.0) -> list[str]:
-    """What the LIVE site's picker says about a store having existed: the durable
-    record kept outside the store branch. A 404 means no store was ever deployed;
-    any other failure raises, since it proves nothing either way."""
-    site = json.loads((REPO / "project.json").read_text(encoding="utf-8"))["site_url"].rstrip("/")
-    req = urllib.request.Request(f"{site}/{PUBLISHED}?v={int(time.time())}",
-                                 headers={"User-Agent": "impossible-os-releases", "Cache-Control": "no-cache"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = json.loads(r.read(1_000_000))
-        return picker_evidence(data)
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return []
-        raise StoreError(f"cannot read the live {PUBLISHED}: HTTP {e.code}")
-    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
-        raise StoreError(f"cannot read the live {PUBLISHED}: {e}")
+def store_marker_exists(remote: str = "origin") -> bool:
+    """Whether MARKER_TAG exists on the remote: the durable record that a store
+    was ever created, pushed beside the branch when the store is first made.
+    It lives in the repository, not in the replaceable Pages deployment, so a
+    site rollback or a missing picker cannot erase it. A failed query raises."""
+    r = git("ls-remote", "--exit-code", remote, f"refs/tags/{MARKER_TAG}", check=False)
+    if r.returncode == 2:
+        return False
+    if r.returncode != 0:
+        raise StoreError(f"cannot query {remote} for {MARKER_TAG}: {r.stderr.strip()}")
+    return True
+
+
+def push_store(remote: str = "origin") -> str:
+    """Publish the local store branch, and the marker tag when the remote lacks
+    it, in ONE atomic push: either both land or neither does, so a store can
+    never exist on the remote without the marker that makes its loss detectable.
+    Returns "pushed branch", "pushed marker" or "up to date"."""
+    local = git("rev-parse", "--verify", "--quiet", f"refs/heads/{BRANCH}", check=False).stdout.strip()
+    if not local:
+        raise StoreError(f"no local {BRANCH} branch to push")
+    r = git("ls-remote", "--heads", remote, BRANCH, check=False)
+    if r.returncode != 0:
+        raise StoreError(f"cannot query {remote} for {BRANCH}: {r.stderr.strip()}")
+    remote_sha = r.stdout.split()[0] if r.stdout.strip() else None
+    refspecs = []
+    if remote_sha != local:
+        refspecs.append(f"refs/heads/{BRANCH}:refs/heads/{BRANCH}")
+    if not store_marker_exists(remote):
+        refspecs.append(f"{local}:refs/tags/{MARKER_TAG}")
+    if not refspecs:
+        return "up to date"
+    p = git("push", "--atomic", remote, *refspecs, check=False)
+    if p.returncode != 0:
+        raise StoreError(f"push of {' '.join(refspecs)} refused, nothing published: {p.stderr.strip()}")
+    return "pushed branch" if remote_sha != local else "pushed marker"
 
 
 def check_store_absent_is_new() -> None:
-    """With no store branch, refuse unless nothing was ever published through one.
-    Recreating a LOST store from the surviving tags would silently drop every
-    release whose tag was since cleaned up, and every retirement record. The
-    evidence is the live site's picker, which lives outside the branch, lists the
-    deployed releases and carries a `store` marker once any deploy used a store
-    (so retiring every release does not erase it); a release TAG proves nothing
-    here, since the first tag always arrives before the store exists."""
-    live = live_store_evidence()
-    if live:
-        raise StoreError(f"the {BRANCH} branch is missing but the live site shows a store existed "
-                         f"({'; '.join(live[:3])}); restore the branch from its last commit")
+    """With no store branch, refuse unless no store was ever created. Recreating
+    a LOST store from the surviving tags would silently drop every release whose
+    tag was since cleaned up, and every retirement record. The evidence is
+    MARKER_TAG; a release TAG proves nothing here, since the first tag always
+    arrives before the store exists."""
+    if store_marker_exists():
+        raise StoreError(f"the {BRANCH} branch is missing but tag {MARKER_TAG} shows a store was created; "
+                         f"restore the branch from its last commit")
 
 
 def assemble_from(site: Path, releases: str) -> tuple[str, list[str]]:
@@ -531,6 +532,7 @@ def main() -> int:
     src.add_argument("--releases", help="`remote`, `none`, or a store commit")
     a.add_argument("--github-output", type=Path, help="append store=<sha|none> for later jobs (with --releases)")
     sub.add_parser("store-sha")
+    sub.add_parser("push-store", help="push the store branch and, when missing, its marker tag atomically")
     sub.add_parser("deletable", help="print the tags release.yml may delete, JSON {tag: ref object}")
     args = ap.parse_args()
     if args.cmd == "assemble" and args.store is not None and args.github_output:
@@ -539,6 +541,9 @@ def main() -> int:
     try:
         if args.cmd == "deletable":
             print(json.dumps(deletable_tags()))
+            return 0
+        if args.cmd == "push-store":
+            print(push_store())
             return 0
         if args.cmd == "store-sha":
             sha = remote_store_sha()

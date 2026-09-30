@@ -11,7 +11,8 @@
 //         "version": {"version": "<data-version>", "page": "<data-page>"} adds the version picker,
 //         "heads": ["full URL a HEAD request finds", ...],
 //         "head_delay": {"full URL": <ms before its HEAD answers>}, "head_fail": ["full URL whose HEAD rejects", ...]}
-// Version picker steps: ["change", <option index>] picks a version.
+// Version picker steps: ["change", <option index>] picks a version; ["note-click", null] follows the
+// old-version notice's link.
 // stdout: {"snaps": {"label": {expanded, active, shown, options: [{id, href, selected, text}], msg, status, href, renders,
 //                               picker: {hidden, options: [{value, text, selected}]}}},
 //          "errors": [every unhandled promise rejection, which the page would swallow silently],
@@ -71,6 +72,8 @@ if (input.version) {
   els.version = new El('version');
   els.version.hidden = true;
   els.version.dataset = input.version;
+  els['version-note'] = new El('version-note');
+  els['version-note'].hidden = true;
 }
 const docHandlers = {};
 const doc = {
@@ -137,6 +140,10 @@ function snap() {
     picker: els.version ? { hidden: els.version.hidden,
                             options: (els.version.children || []).map((o) => ({ value: o.value, text: o.textContent,
                                                                                 selected: !!o.selected })) } : null,
+    note: els['version-note'] ? { hidden: els['version-note'].hidden,
+                                  text: (els['version-note'].children || []).map((c) => c.textContent).join(''),
+                                  href: ((els['version-note'].children || [])[1] || { attrs: {} }).attrs.href || null }
+                              : null,
   };
 }
 
@@ -149,6 +156,10 @@ function snap() {
     else if (op === 'click') els.results.fire('click', { target: els.results.options[arg] });
     else if (op === 'deploy') input.files = input.files2;          // the site is redeployed under the page
     else if (op === 'change') { els.version.value = els.version.children[arg].value; els.version.fire('change', {}); }
+    else if (op === 'note-click') {
+      const e = { defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+      els['version-note'].children[1].fire('click', e);
+    }
     else if (op === 'flush') await flush();
     else if (op === 'wait') await new Promise((r) => setTimeout(r, arg));
     else if (op === 'snap') snaps[arg] = snap();

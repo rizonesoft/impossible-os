@@ -1695,21 +1695,21 @@ class RetainedReleases(unittest.TestCase):
         self.assertEqual(json.loads((site / "docs" / "versions.json").read_text(encoding="utf-8"))["versions"],
                          [{"name": "main", "path": ""}])
 
-        orig = (self.R.remote_store_sha, self.R.live_store_evidence)
+        orig = (self.R.remote_store_sha, self.R.store_marker_exists)
         self.R.remote_store_sha = lambda remote="origin": None      # no docs-releases branch on the remote
-        self.R.live_store_evidence = lambda timeout=30.0: []              # and the live site never listed a release
+        self.R.store_marker_exists = lambda remote="origin": False  # and no store was ever created
         try:
             self.assertEqual(self.R.assemble_from(self.tmpdir("site-"), "remote")[0], "none")  # before any release
-            self.R.live_store_evidence = lambda timeout=30.0: ["release v1"]   # every tag gone, but the site served v1
-            with self.assertRaisesRegex(self.R.StoreError, "shows a store existed .release v1.; restore the branch"):
+            self.R.store_marker_exists = lambda remote="origin": True    # the branch was lost, the marker says so
+            with self.assertRaisesRegex(self.R.StoreError, "tag docs-releases-root shows a store was created"):
                 self.R.assemble_from(self.tmpdir("site-"), "remote")
 
-            def unreadable(timeout=30.0):
-                raise self.R.StoreError("cannot read the live docs/versions.json: HTTP 503")
-            self.R.live_store_evidence = unreadable                       # proves nothing: refuse
-            with self.assertRaisesRegex(self.R.StoreError, "HTTP 503"):
+            def unreadable(remote="origin"):
+                raise self.R.StoreError("cannot query origin for docs-releases-root: timeout")
+            self.R.store_marker_exists = unreadable                  # proves nothing: refuse
+            with self.assertRaisesRegex(self.R.StoreError, "cannot query origin"):
                 self.R.assemble_from(self.tmpdir("site-"), "remote")
-            self.R.live_store_evidence = lambda timeout=30.0: []
+            self.R.store_marker_exists = lambda remote="origin": False
             self.wipe()
             self.fixture()                                           # now v1 and v2 exist
             self.assertEqual(self.R.assemble_from(self.tmpdir("site-"), "remote")[0], "none")  # first tags: new store
@@ -1741,7 +1741,7 @@ class RetainedReleases(unittest.TestCase):
             self.R.remote_store_sha = lambda remote="origin": sha
             self.assertEqual(list(self.R.deletable_tags()), ["v0"])  # older than the site: safe
         finally:
-            self.R.remote_store_sha, self.R.live_store_evidence = orig
+            self.R.remote_store_sha, self.R.store_marker_exists = orig
 
     def store_commit_dir(self, store):
         env = dict(git_env("2026-05-01T00:00:00Z"), GIT_INDEX_FILE=str(self.tmpdir("idx-") / "index"),
@@ -1925,9 +1925,9 @@ class RetainedReleases(unittest.TestCase):
 
     def test_first_release_tag_starts_a_new_store(self):
         self.fixture()                                               # v1 and v2 exist, no store branch yet
-        orig = (self.R.remote_store_sha, self.R.live_store_evidence)
+        orig = (self.R.remote_store_sha, self.R.store_marker_exists)
         self.R.remote_store_sha = lambda remote="origin": None
-        self.R.live_store_evidence = lambda timeout=30.0: []               # nothing ever deployed from a store
+        self.R.store_marker_exists = lambda remote="origin": False   # no store was ever created
         old = sys.argv
         try:
             sys.argv = ["releases.py", "store-sha"]
@@ -1935,35 +1935,52 @@ class RetainedReleases(unittest.TestCase):
             with contextlib.redirect_stdout(out):
                 self.assertEqual(self.R.main(), 0)                   # docs-release.yml's bootstrap path
             self.assertEqual(out.getvalue(), "none\n")
-            self.R.live_store_evidence = lambda timeout=30.0: ["release v1"]   # a store existed and was lost
+            self.R.store_marker_exists = lambda remote="origin": True    # a store existed and was lost
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(self.R.main(), 1)
         finally:
             sys.argv = old
-            self.R.remote_store_sha, self.R.live_store_evidence = orig
+            self.R.remote_store_sha, self.R.store_marker_exists = orig
 
-    def test_the_live_picker_keeps_proof_of_a_store_after_every_release_is_retired(self):
-        pe, pm = self.R.picker_evidence, self.R.picker_manifest
-        self.assertEqual(pe(json.loads(pm([]))), [])                           # main alone, never a store
-        self.assertEqual(pe(json.loads(pm([], from_store=True))), ["its picker was assembled from the store"])
-        self.assertEqual(pe(json.loads(pm([{"version": "v1"}], from_store=True))),
-                         ["release v1", "its picker was assembled from the store"])
-        with self.assertRaises(self.R.StoreError):
-            pe({"schema": 1})
-        site = self.tmpdir("site-")
-        self.assertEqual(self.R.assemble(site, self.store if (self.store / "versions.json").exists() else None), [])
-        self.assertNotIn('"store"', (site / "docs" / "versions.json").read_text(encoding="utf-8"))
-        self.R.write_manifest(self.store, [])                                  # an empty but real store
-        self.assertEqual(self.R.assemble(site := self.tmpdir("site-"), self.store), [])
-        self.assertEqual(pe(json.loads((site / "docs" / "versions.json").read_text(encoding="utf-8"))),
-                         ["its picker was assembled from the store"])
-        orig = self.R.live_store_evidence
-        self.R.live_store_evidence = lambda timeout=30.0: ["its picker was assembled from the store"]
-        try:
-            with self.assertRaisesRegex(self.R.StoreError, "shows a store existed"):
-                self.R.check_store_absent_is_new()                             # every release retired, then lost
-        finally:
-            self.R.live_store_evidence = orig
+    def test_the_store_marker_is_a_tag_on_the_remote_not_a_deploy(self):
+        self.fixture()
+        bare = self.tmpdir("origin-") / "o.git"
+        self.git("init", "-q", "--bare", str(bare))
+        self.git("remote", "add", "origin", str(bare))
+        self.assertFalse(self.R.store_marker_exists())                          # never created
+        self.git("push", "-q", "origin", f"{self.sha1}:refs/tags/docs-releases-root")
+        self.assertTrue(self.R.store_marker_exists())                           # created once, survives the branch
+        with self.assertRaisesRegex(self.R.StoreError, "tag docs-releases-root shows a store was created"):
+            self.R.check_store_absent_is_new()
+        self.git("remote", "set-url", "origin", str(self.tmpdir("gone-") / "missing.git"))
+        with self.assertRaisesRegex(self.R.StoreError, "cannot query origin"):
+            self.R.store_marker_exists()                                        # unreachable is not "absent"
+        wf = (B.REPO_REAL / ".github/workflows/docs-release.yml").read_text(encoding="utf-8")
+        self.assertIn("result=$(python3 scripts/site/releases.py push-store)", wf)
+
+    def test_the_store_and_its_marker_are_pushed_atomically(self):
+        self.fixture()
+        bare = self.tmpdir("origin-") / "o.git"
+        self.git("init", "-q", "--bare", str(bare))
+        self.git("remote", "add", "origin", str(bare))
+        self.git("branch", "docs-releases", self.sha1)                          # a new local store
+        # A per-ref `update` hook refuses only the tag; a pre-receive refusal would
+        # reject the whole push atomic or not, and prove nothing about atomicity.
+        hook = bare / "hooks" / "update"
+        hook.write_text("#!/bin/sh\ncase $1 in refs/tags/*) exit 1;; esac\nexit 0\n")
+        hook.chmod(0o755)                                                       # the marker push is refused
+        with self.assertRaisesRegex(self.R.StoreError, "refused, nothing published"):
+            self.R.push_store()
+        branches = subprocess.run(["git", "ls-remote", "--heads", str(bare)], capture_output=True, text=True).stdout
+        self.assertEqual(branches, "")                                          # so the branch did not land either
+        hook.unlink()
+        self.assertEqual(self.R.push_store(), "pushed branch")                  # both, in one push
+        self.assertTrue(self.R.store_marker_exists())
+        self.assertEqual(self.R.push_store(), "up to date")
+        self.git("branch", "-f", "docs-releases", self.sha2)                    # a later freeze: branch only
+        self.assertEqual(self.R.push_store(), "pushed branch")
+        self.git("push", "-q", "origin", ":refs/tags/docs-releases-root")      # a store from before the marker
+        self.assertEqual(self.R.push_store(), "pushed marker")                  # backfilled
 
     def test_a_fully_retired_store_that_lost_its_manifest_is_refused(self):
         (self.store / "README.md").write_text("store", encoding="utf-8")      # all a fully retired store holds
@@ -1972,6 +1989,33 @@ class RetainedReleases(unittest.TestCase):
             self.R.publish(self.store, self.tmpdir("main-"), render=lambda t, o: rendered.append(t))
         self.assertEqual(sorted(p.name for p in self.store.iterdir()), ["README.md"])   # nothing written
         self.assertEqual(rendered, [])
+
+    def test_changelog_ignores_the_store_marker_tag(self):
+        def at(date, *args):   # distinct dates: the script orders tags by creator date
+            subprocess.run(["git", *args], cwd=self.root, check=True, env=git_env(date), capture_output=True)
+        self.git("init", "-q", "-b", "main")
+        for n, (msg, tag) in enumerate((("chore: init", None), ("feat: first feature", "v1"),
+                                        ("fix: second fix", "v2"))):
+            self.write("a.txt", f"{n}\n")
+            at(f"2026-05-0{n + 1}T00:00:00Z", "add", "-A")
+            at(f"2026-05-0{n + 1}T00:00:00Z", "commit", "-q", "--no-verify", "-m", msg)
+            if tag:
+                self.git("tag", tag)
+        self.git("checkout", "-q", "--orphan", "store")
+        self.git("rm", "-rq", "--cached", ".")
+        self.write("versions.json", "{}\n")
+        at("2026-05-09T00:00:00Z", "add", "versions.json")
+        at("2026-05-09T00:00:00Z", "commit", "-q", "--no-verify", "-m", "docs-releases: store")
+        self.git("tag", "docs-releases-root")                            # the newest tag of all
+        self.git("checkout", "-q", "-f", "main")
+        r = subprocess.run(["bash", str(B.REPO_REAL / "scripts/generate-changelog.sh")], cwd=self.root,
+                           env=git_env(), capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        log = (self.root / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertNotIn("docs-releases-root", log)                      # no false release section
+        self.assertNotIn("docs-releases: store", log)                    # nor its foreign history
+        self.assertIn("first feature", log)
+        self.assertIn("second fix", log)
 
     def test_a_killed_child_leaves_no_temporary_store(self):
         record = self.tmpdir("rec-") / "path"
@@ -2039,19 +2083,29 @@ class RetainedReleases(unittest.TestCase):
         step = [st for st in wf["jobs"]["release"]["steps"] if st.get("name") == "Clean up old pre-releases"][0]
         self.assertEqual(step["env"]["DOCS_DELETABLE"], "${{ steps.docs_deletable.outputs.tags }}")
         harness = r"""
-const refs = {v1: 'a1', v3: 'moved', v5: 'e5'};
+const refs = {v1: 'a1', v3: 'moved', v5: 'e5'};   // the remote's tags, as a lease would see them
 const calls = [];
 const github = {rest: {
   repos: {listReleases: async () => ({data: ['v1', 'v2', 'v3', 'v4', 'v5'].map((t, i) =>
             ({id: i, tag_name: t, name: t, prerelease: t !== 'v5'}))}),
           deleteRelease: async ({release_id}) => calls.push('release ' + release_id)},
-  git: {getRef: async ({ref}) => { const t = ref.slice(5); if (!(t in refs)) throw new Error('404');
-                                    return {data: {object: {sha: refs[t]}}}; },
-        deleteRef: async ({ref}) => calls.push('delete ' + ref)}}};
+  git: {deleteRef: async ({ref}) => calls.push('UNLEASED delete ' + ref)}}};
 const context = {repo: {owner: 'o', repo: 'r'}};
 console.log = () => {};
-(async () => { SCRIPT
-})().then(() => process.stdout.write(JSON.stringify(calls)));
+{
+  // git push --force-with-lease=refs/tags/T:EXPECTED origin :refs/tags/T, as the server applies it:
+  // refused unless the ref still names EXPECTED.
+  const require = (m) => m !== 'child_process' ? null : {execFileSync: (cmd, args) => {
+    const lease = args.find((a) => a.startsWith('--force-with-lease='));
+    const [ref, want] = lease.slice('--force-with-lease='.length).split(':');
+    const tag = ref.replace('refs/tags/', '');
+    if (cmd !== 'git' || args[0] !== 'push' || args[args.length - 1] !== ':' + ref) throw new Error('bad argv');
+    if (refs[tag] !== want) throw new Error('stale info');
+    calls.push('delete ' + ref);
+  }};
+  (async () => { SCRIPT
+  })().then(() => process.stdout.write(JSON.stringify(calls)));
+}
 """
 
         def run(env):
@@ -2062,10 +2116,10 @@ console.log = () => {};
 
         # v1 confirmed and unmoved; v2 not confirmed; v3 moved since; v4 already gone.
         calls = run(json.dumps({"v1": "a1", "v3": "c3", "v4": "d4"}))
-        self.assertEqual([c for c in calls if c.startswith("delete")], ["delete tags/v1"])
+        self.assertEqual([c for c in calls if "delete" in c], ["delete refs/tags/v1"])   # only by lease
         self.assertEqual(len([c for c in calls if c.startswith("release")]), 4)   # releases still go
         for env in ("", "[]", '["v1"]', "null", "{"):                            # unknown: keep every tag
-            self.assertEqual([c for c in run(env) if c.startswith("delete")], [], env)
+            self.assertEqual([c for c in run(env) if "delete" in c], [], env)
 
     def test_every_checked_file_gets_exactly_one_verdict_at_the_deadline(self):
         built, live = self.tmpdir("built-"), self.tmpdir("live-")
@@ -2186,9 +2240,9 @@ console.log = () => {};
         self.assertEqual(len(script), 1)
         script = script[0].replace("%ROOT%", "").replace("%SITE_ROOT%", "/")
 
-        def drive(versions, steps, heads=(), delay=None, fail=()):
+        def drive(versions, steps, heads=(), delay=None, fail=(), version="v1"):
             payload = {"script": script, "files": {"versions.json": json.dumps(versions)}, "steps": steps,
-                       "version": {"version": "v1", "page": "sub/page.html"}, "heads": list(heads),
+                       "version": {"version": version, "page": "sub/page.html"}, "heads": list(heads),
                        "head_delay": delay or {}, "head_fail": list(fail)}
             r = subprocess.run(["node", str(HERE / "search_harness.js")], input=json.dumps(payload),
                                capture_output=True, text=True, timeout=60)
@@ -2207,6 +2261,16 @@ console.log = () => {};
                           {"value": "v2/", "text": "v2", "selected": False},
                           {"value": "v1/", "text": "v1", "selected": True}])     # the unsafe path is dropped
         self.assertEqual(s["same-page"]["href"], "/docs/v2/sub/page.html")         # the page exists there
+        self.assertFalse(s["loaded"]["note"]["hidden"])                           # a release says it is not current
+        self.assertEqual(s["loaded"]["note"]["text"], "You are reading the documentation for v1, an earlier "
+                                                      "release. Read the current documentation")
+        self.assertEqual(s["loaded"]["note"]["href"], "/docs/sub/page.html")
+        s2 = drive(three, [["flush", None], ["note-click", None], ["flush", None], ["snap", "s"]],
+                   heads=["/docs/sub/page.html"])
+        self.assertEqual(s2["s"]["href"], "/docs/sub/page.html")                   # to main's copy of the page
+        on_main = drive(three, [["flush", None], ["snap", "s"]], version="main")["s"]
+        self.assertFalse(on_main["picker"]["hidden"])
+        self.assertTrue(on_main["note"]["hidden"])                                # main is the current docs
         self.assertEqual(s["fallback"]["href"], "/docs/")                          # it does not: version root
         s = drive(three, [["flush", None], ["change", 1], ["change", 0], ["wait", 120], ["snap", "latest"]],
                   heads=["/docs/v2/sub/page.html"], delay={"/docs/v2/sub/page.html": 60})

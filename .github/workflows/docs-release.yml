@@ -56,7 +56,8 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           sha=$(python3 scripts/site/releases.py store-sha)
           if [ "$sha" = none ]; then
-            # store-sha prints none only when no store ever existed (a lost one exits 1).
+            # store-sha prints none only when no store was ever created: no branch and no
+            # docs-releases-root tag (a lost store exits 1).
             git worktree add --orphan -b docs-releases "$RUNNER_TEMP/store"
             echo "NEW_STORE=--new-store" >> "$GITHUB_ENV"
           else
@@ -66,15 +67,21 @@ jobs:
       - name: Freeze every release tag the store lacks
         run: python3 scripts/site/releases.py publish --store "$RUNNER_TEMP/store" --main-site "$RUNNER_TEMP/main-site" $NEW_STORE
 
-      - name: Push the store
+      # The branch and, the first time, the docs-releases-root marker go in ONE
+      # atomic push (releases.py push-store): a store can never exist on the
+      # remote without the marker that makes its loss detectable.
+      - name: Push the store and its marker
         id: store
         working-directory: ${{ runner.temp }}/store
         run: |
           git add -A
-          if git diff --cached --quiet; then echo "store unchanged"; exit 0; fi
-          git commit -q -m "docs-releases: freeze release docs (run $GITHUB_RUN_ID)"
-          git push origin docs-releases
-          echo "changed=true" >> "$GITHUB_OUTPUT"
+          if ! git diff --cached --quiet; then
+            git commit -q -m "docs-releases: freeze release docs (run $GITHUB_RUN_ID)"
+          fi
+          cd "$GITHUB_WORKSPACE"
+          result=$(python3 scripts/site/releases.py push-store)
+          echo "$result"
+          if [ "$result" = "pushed branch" ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; fi
 
       - name: Redeploy the site with every retained release
         if: steps.store.outputs.changed == 'true' || github.event_name != 'schedule'

@@ -69,9 +69,11 @@ DISPLAY_ORDER=(
     "Other"
 )
 
-# Get all tags sorted by date (newest first)
+# Get all release tags sorted by date (newest first). Only v* tags are releases:
+# docs-releases-root (scripts/site/releases.py) marks the orphan docs store and
+# would otherwise become a false section and a range boundary into foreign history.
 get_tags() {
-    git tag --sort=-creatordate 2>/dev/null
+    git tag --list 'v*' --sort=-creatordate 2>/dev/null
 }
 
 # Generate a section for a range of commits
@@ -110,7 +112,10 @@ generate_section() {
         else
             entries[$category]="$entry"
         fi
-    done < <(git log --pretty=format:"%H|%s" "$from".."$to" 2>/dev/null)
+    # tformat, not format: format emits no newline after the last commit, so
+    # `read` dropped the oldest commit of every section (a one-commit release
+    # came out empty).
+    done < <(git log --pretty=tformat:"%H|%s" "$from".."$to" 2>/dev/null)
 
     # Check if any entries exist
     local has_entries=0

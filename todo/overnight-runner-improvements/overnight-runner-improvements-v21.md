@@ -85,3 +85,12 @@ Carry the baselines forward. A measurement without one is an anecdote.
   - Observed: `cd sdk/src/ixfs-mount && make test >/dev/null 2>&1; ./test_ixfs_core ...` was refused as a bare in-context test run. That target only compiles `test_ixfs_core` with the host gcc (`sdk/src/ixfs-mount/Makefile`, `test:` rule); it runs no suite and produces two lines of output.
   - Worked around by calling gcc directly, which is exactly what the block was meant to route through `run-artifact.sh`; the route is the finding.
   - Obvious fix (not applied, control plane): exempt a `make` whose `-C` or preceding `cd` target is under `sdk/`, or match `make test-*` and the repo-root `make test` only.
+- [ ] Reasoning: a green failure-injection test proved nothing until its mutation control ran; a `pre-receive` refusal rejects the whole push, atomic or not (TODO-10 section 29, 2026-09-30)
+  - Observed: the test for `releases.py push_store` (branch plus marker tag in one `git push --atomic`) injected a `pre-receive` hook refusing tags. With `--atomic` removed the test still passed, because a pre-receive refusal rejects every ref. A per-ref `update` hook refusing only the tag made the control fire while the shipped code passed.
+  - Tested: both directions, control run before and after the hook change. The same session's changelog regression first failed for a PRE-EXISTING reason (the script dropped the oldest commit of each section), found only because the fixture was minimal.
+  - Lesson: inject a fault at the granularity of the property under test, and run the control that removes the property before trusting a green.
+- [ ] Reasoning: the lost-store proof moved four times before it lived outside everything it protects (TODO-10 section 29, 2026-09-30)
+  - Observed: evidence that a docs store once existed went release tags (blocked the first release, which precedes the store), then the live picker manifest (erased by a Pages rollback or 404), then a `store` flag in that manifest (same weakness), then a marker tag pushed atomically with the branch. Each step was a real review finding.
+  - Inferred, not tested: asking "what replaceable thing does this evidence live in?" at design time would have gone straight to a durable repository ref.
+  - Cost: about four of the section's eleven review rounds (12 Codex dispatches).
+  - Filed for automation: `00-infrastructure/TODO-10` §32 (lint nets for the `fail-open` and `unbounded-wait` classes this section drove past the promotion threshold).

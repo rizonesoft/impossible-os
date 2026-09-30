@@ -82,6 +82,7 @@ file_patterns:
 | 💎  |  29   | §29 Retained release trees: snapshots, manifest, live verification       | §24                         |  [x]   |
 | 💎  |  30   | §30 SDK release docs and API reference                                   | §29, D12 T06 §2, D12 T06 §8 |  [ ]   |
 | 💎  |  31   | §31 Docs search quality and automated accessibility audit                | §25                         |  [ ]   |
+| ⭐  |  32   | §32 Review-class nets: fail direction and bounded waits in site tooling  | §28, §29                    |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -1353,23 +1354,24 @@ Promotion of two review classes into automation, filed under the reviewer-to-aut
 A release snapshot must survive later deploys. Today every deploy publishes a fresh whole-site artifact (`.github/workflows/pages.yml`) and `site-live.yml` repairs drift by redeploying `main`, so anything not rebuilt from `main` disappears on the next push. Uses §24's ref-aware renderer.
 
 - [x] Release snapshots: `docs-release.yml` (tag push, daily, dispatch) runs `releases.py publish`, freezing every site-era `v*` tag the store lacks onto orphan branch `docs-releases`
-  - Reconciling all missing tags survives GitHub's one-pending-run concurrency; a stored same-commit tag is skipped (re-runs resume), a moved tag fails; `release.yml` deletes only tags `releases.py deletable` confirms (stored or retired at the frozen commit, or pre-site), re-reading each ref first; a stored tag counts only if its tree matches its digest.
+  - Reconciling all missing tags survives GitHub's one-pending-run concurrency; a stored same-commit tag is skipped (re-runs resume), a moved tag fails; `release.yml` deletes only tags `releases.py deletable` confirms (stored or retired at the frozen commit, or pre-site), by a `--force-with-lease` push; a stored tag counts only if its tree matches its digest.
   - Version picker in `gh-pages/docs-template.html` (`%DOCS_VERSION%`, `%PAGE_PATH%`): hidden below two versions, same page when it exists, else that version's root; only the latest choice navigates.
+  - A release page shows an earlier-release notice linking to main's copy of the page (post-ship review, parity with Read the Docs and Docusaurus).
+  - `generate-changelog.sh` lists only `v*` tags, so the marker is no false release; recorded in `15-installer-release/TODO-05` §1 with a `tformat` fix found by the same test.
 - [x] Version manifest: the store's `versions.json` (version, commit, file count, digest) is authoritative; every deploy runs `releases.py assemble`, which copies each tree to `docs/<v>/` and writes `docs/versions.json`
   - Refused before anything is written: digest mismatch, missing tree, symlink or non-regular entry, missing manifest, unreadable store, a site over 900 MB, or a lost store.
-  - A missing branch counts as new only when the live `docs/versions.json` lists no release and lacks the `store` marker; `store-sha` refuses otherwise, and `publish --new-store` alone writes a first manifest, so a lost store is never rebuilt.
+  - A missing branch counts as new only without tag `docs-releases-root`, which `push-store` sends atomically with the branch; `store-sha` refuses otherwise, and only `publish --new-store` writes a first manifest.
 - [x] Retirement: a `retired` list in `versions.json` keeps a release off the site and out of `publish`; the budget refusal names the procedure
-- [/] Choosing which old releases to retire once the 900 MB budget binds (~35 releases at 24 MB each): operator-gated, a product decision
 - [x] `verify_live.py` assembles the retained trees exactly as a deploy does (`--releases remote|none|<sha>`); `pages.yml` verify uses the store SHA its build pinned, `site-live.yml` the live store
   - All of `main` every run; releases SAMPLED: index plus a slice of 25 rotating every six hours (`--release-sample`); retries refetch only failures; a whole-run 20-minute deadline kills a slow build or assembly process group and gives each unfinished file one UNVERIFIED verdict.
 - [x] Collision rule (`releases.collisions`): a version is one segment `v[A-Za-z0-9._-]*`; refused when a main file is `docs/<v>`, under it, or at an ancestor, or it is `docs/versions.json`
   - Checked at freeze time and at every assemble; `build.py --check` repeats it against the last fetched store (`check_release_paths`).
-- [x] Tests: `RetainedReleases` (23 cases): two releases survive a later main deploy, drift is caught and repaired, plus refusals, failure directions, CLI exit codes and the picker driven in Node
+- [x] Tests: `RetainedReleases` (25 cases): two releases survive a later main deploy, drift is caught and repaired, plus refusals, failure directions, CLI exit codes and the picker driven in Node
 - [x] Commit: `"site: retained release docs trees and version manifest"`
 
 **Test checkpoint:** after two test tags and a later `main` deploy, `verify_live.py` passes for `main` and both release trees. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
 
-> **Test runner:** host-side `python3 scripts/site/tests/test_build.py RetainedReleases` (23 cases; needs `node`) | whole file under `bash scripts/test-tooling.sh`
+> **Test runner:** host-side `python3 scripts/site/tests/test_build.py RetainedReleases` (25 cases; needs `node`) | whole file under `bash scripts/test-tooling.sh`
 
 > **Notes:**
 > - **What shipped:** `scripts/site/releases.py` freezes release docs trees on the `docs-releases` branch and assembles them into every deploy, with a version picker in the docs template.
@@ -1377,6 +1379,8 @@ A release snapshot must survive later deploys. Today every deploy publishes a fr
 > - **Downstream:** section 30 publishes the SDK release line through the same store; the first site-era `v*` tag is the first live exercise of the workflow.
 > - **Canonical doc:** [`docs/infrastructure/documentation-site.md`](../../docs/infrastructure/documentation-site.md) "How do release docs stay published after later deploys?".
 > - **Scope boundary:** retained trees are never re-rendered; retiring one (a `retired` entry) is an operator-gated edit of the store branch, and release trees are verified by rotating sample.
+> **Verified:** 2026-09-30 | commit `74c512644` | 7/7 items | build OK | site tests 142/142 PASS (RetainedReleases 25/25, mutation controls fired for every guard), kernel 34646 + 17 user PASS
+> **Quality reviewed:** 2026-09-30 | Codex 36x (design, test-coverage, adversarial x12, consistency x11, perf x11) | 22H+20M fixed, 0 open | scope: N/A (host site tooling, CI workflows and docs; no kernel, boot or desktop code)
 
 ---
 
@@ -1414,6 +1418,24 @@ The §25 index finds every word, but ranking is plain substring matching with th
 - [ ] Commit: `"site: search highlighting, ranking and automated accessibility audit"`
 
 **Test checkpoint:** searching `map` on the local build ranks a page naming the `map` identifier above one that only says `bitmap`; the opened page marks the match; the CI audit reports a planted contrast failure. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
+
+---
+
+## 32. Review-Class Nets: Fail Direction and Bounded Waits in Site Tooling
+
+> **Spawned-by:** root
+
+**Design:** n/a -- host tooling; no UI
+
+Promotion of two review classes into automation under the reviewer-to-automation rule, the way §28 promoted `parser-approximation`. Measured 2026-09-30 with `python3 scripts/overnight/finding-ledger.py classes`: `fail-open` 12 fixed and `unbounded-wait` 4 fixed, all in this TODO and nearly all from §29, where missing or unreadable state kept being read as "empty" (a store without a manifest, a 404 picker, an absent branch) and waits had no overall bound (a trickling HTTP body, a stalled git fetch). `toctou` (4 fixed) is recorded but not promoted: whether two reads can disagree depends on what happens between them, which a syntactic check cannot see. Capture-file measurement: `todo/overnight-runner-improvements/overnight-runner-improvements-v21.md` "the lost-store proof moved four times".
+
+- [ ] Lint check over `scripts/site/*.py` (AST): an `except` handler or a missing-input branch that returns an empty value (`[]`, `{}`, `set()`, `None`, `""`) needs a `# fail-direction: <why empty is safe>` comment, or the check fails
+  - Control fixture with marked lines that must fire (`except OSError: return []`) and must not (re-raise, a waived handler), run like Check 31's `--control`.
+- [ ] Lint check over `scripts/site/*.py` (AST): every `urllib.request.urlopen`, `subprocess.run`/`Popen` and `git` helper call passes a `timeout=` or sits under a caller-owned deadline named by a `# deadline: <owner>` comment
+- [ ] Wire both into `scripts/lint.sh` beside Check 31 and into `bash scripts/test-tooling.sh`, then waive or fix every current hit with its reason
+- [ ] Commit: `"site: fail-direction and bounded-wait lint for site tooling"`
+
+**Test checkpoint:** each control fixture fires on its marked lines and no others; `bash scripts/lint.sh` passes on the tree with every waiver carrying a reason. Test on: WSL2 dev host.
 
 ---
 
