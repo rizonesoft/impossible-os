@@ -76,3 +76,12 @@ Carry the baselines forward. A measurement without one is an anecdote.
   - Tested: the new case is fully covered by revalidating the manifest after a failed load (a harness `cached` test with a mutation control that fired). The URL split was never needed.
   - Inferred: when a rejected finding returns with a new case, first ask what the smallest change is that covers only that case, and whether the proposed remedy touches a contract that is already deployed (a URL, a schema, a file name). A published URL is an ABI.
   - Cost: two extra three-leg rounds (6 Codex dispatches) and about 20 minutes.
+- [ ] Reasoning: a docs page written from a source-file HEADER inherited its false safety claim; header prose is a claim to verify, not a fact to copy (TODO-10 section 26, 2026-09-30)
+  - Observed: `docs/host-tools/ixfs-fsck.md` repeated `ixfs_fsck.c:17` ("a partial directory walk disables every freeing pass"). Two review rounds then found three read-failure paths that header does not cover (pass-7 reconcile, dangling-dirent clear, snapshot skip), filed as `01-boot-platform/TODO-22` section 8.
+  - Same session, same shape, caught by self-check before review: "the recovery flow calls `ixfs_fsck`" (nothing calls it) and "the SDK parser ignores inline data" (it reads it at `ixfs-core.c:221`).
+  - Inferred, not tested: for a docs section, a grep for callers plus one read of each guard the page names would have caught all five before the first dispatch; each cost a finding round.
+  - What worked: running the tools the pages describe (`sdk/build.sh`, `test_ixfs_core`, `bootimg.py inspect`, `read-blackbox.sh`, `fsck.fat -n`) found four real defects no prose read would have: the 92-vs-128-byte inode drift, the "OK" report for a skipped tool, and the BlackBox FAT32 corruption.
+- [ ] `build_offload_reminder` blocks a HOST SDK tool's `make test`, which is not the kernel suite (2026-09-30, TODO-10 section 26)
+  - Observed: `cd sdk/src/ixfs-mount && make test >/dev/null 2>&1; ./test_ixfs_core ...` was refused as a bare in-context test run. That target only compiles `test_ixfs_core` with the host gcc (`sdk/src/ixfs-mount/Makefile`, `test:` rule); it runs no suite and produces two lines of output.
+  - Worked around by calling gcc directly, which is exactly what the block was meant to route through `run-artifact.sh`; the route is the finding.
+  - Obvious fix (not applied, control plane): exempt a `make` whose `-C` or preceding `cd` target is under `sdk/`, or match `make test-*` and the repo-root `make test` only.
