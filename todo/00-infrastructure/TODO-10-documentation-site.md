@@ -80,7 +80,7 @@ file_patterns:
 | 💎  |  27   | §27 Document: Architecture ports and future research (9 roadmap files)   | §2, §3                      |  [x]   |
 | ⭐  |  28   | §28 Review-class nets for site tooling: real parsers, scheduler stress   | §23                         |  [x]   |
 | 💎  |  29   | §29 Retained release trees: snapshots, manifest, live verification       | §24                         |  [x]   |
-| 💎  |  30   | §30 SDK release docs and API reference                                   | §29, D12 T06 §2, D12 T06 §8 |  [ ]   |
+| 💎  |  30   | §30 SDK release docs and API reference                                   | §29, D12 T06 §2, D12 T06 §8 |  [/]   |
 | 💎  |  31   | §31 Docs search quality and automated accessibility audit                | §25                         |  [ ]   |
 | ⭐  |  32   | §32 Review-class nets: fail direction and bounded waits in site tooling  | §28, §29                    |  [ ]   |
 
@@ -1392,13 +1392,16 @@ A release snapshot must survive later deploys. Today every deploy publishes a fr
 
 The SDK has its own release line (`sdk/v*` tags from D12 T06 §8 `release-sdk.sh`) and its own API reference (D12 T06 §2 `gendoc`). Neither producer exists yet, so this section waits on them; it reuses §29's retention machinery with a second namespace.
 
-- [ ] Two version namespaces: OS `v*` and SDK `sdk/v*` (created by D12 T06 §8 `release-sdk.sh`) each trigger a snapshot under their own path -> XREF: `D12 T06 §8`
+- [/] Two version namespaces: OS `v*` and SDK `sdk/v*` (created by D12 T06 §8 `release-sdk.sh`) each trigger a snapshot under their own path; blocked: no `sdk/v*` producer yet -> XREF: `D12 T06 §8`
   - §29's store takes one-segment `v*` versions only (`releases.VERSION_RE`, `valid_version`); `sdk/v*` widens that rule and the tag listing in `tag_commits()`, keeping `collisions()`'s ancestor check.
-- [ ] Publish the SDK API reference that D12 T06 §2 `gendoc` writes to `sdk/docs/api-reference/` under `docs/sdk/api/` for `main` and per SDK tag -> XREF: `D12 T06 §2`
-- [ ] Tests: an `sdk/v*` fixture tag publishes reference pages matching its headers, under the SDK path and not the OS path
-- [ ] Commit: `"site: SDK release docs and API reference"`
+- [/] Publish the SDK API reference that D12 T06 §2 `gendoc` writes to `sdk/docs/api-reference/` under `docs/sdk/api/` for `main` and per SDK tag; blocked: `gendoc` absent -> XREF: `D12 T06 §2`
+- [/] Tests: an `sdk/v*` fixture tag publishes reference pages matching its headers, under the SDK path and not the OS path; blocked on the two items above (D12 T06 §2, §8)
+- [/] Commit: `"site: SDK release docs and API reference"`; blocked with the items above
 
 **Test checkpoint:** `docs/sdk/api/` renders on the local build; an `sdk/v*` fixture tag lands under its own path. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
+
+> **Verified:** 2026-09-30 | 0/4 items (deferred) | build N/A | both producers absent: no `tools/gendoc.c`, no `scripts/release-sdk.sh`, and D12 T06 is unvalidated
+> **Deferred:** [M] publishing needs the generated reference and the `sdk/v*` tag line, neither of which exists; widening §29's `VERSION_RE` with no producer would add an untested namespace to the retained-release store with nothing to exercise it -> XREF: 12-user-platform-sdk/TODO-06 §2 (item: "Keep `sdk/docs/api-reference/` renderable by the docs site") + 12-user-platform-sdk/TODO-06 §8 (item: "The pushed `sdk/v${VERSION}` tag triggers the versioned docs snapshot")
 
 ---
 
