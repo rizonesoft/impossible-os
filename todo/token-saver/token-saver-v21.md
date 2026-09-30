@@ -37,3 +37,8 @@ Carried with baselines. A measurement without one is an anecdote.
 ## Found live this cycle
 
 <!-- The run files here. Nothing yet: v21 opened at close-out, before the next arm. -->
+- [ ] A confirming three-leg Codex wave is required after every staged byte change, so a one-line audit tweak late in review costs three dispatches and about eight minutes (TODO-10 section 31, 2026-09-30)
+  - Observed: the post-ship review of section 31 ran four confirming waves (12 dispatches) after the main review approved; three were for single-function changes in `scripts/site/a11y/audit.mjs` (a dev-only audit script, not shipped code) that the prior wave's own findings prompted.
+  - Mechanism: the section-commit gate binds each kind's receipt to the staged content, so any edit re-stales all three legs; `review_convergence.py` treats `scripts/` as outside every kind's scope and cannot say CONVERGED.
+  - Measured cost: 12 of 59 dispatches (20%) for the section, about 32 minutes wall-clock.
+  - Idea, not applied (control plane): let a leg that APPROVED keep its receipt across a later change confined to files it was not asked about, e.g. perf and consistency across an audit-script-only edit.
