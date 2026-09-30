@@ -53,8 +53,13 @@ GIT_TIMEOUT = 300   # every call is local and sub-second; a hung git fails the c
 def _git(*args: str, ok=(0,)) -> subprocess.CompletedProcess:
     # --literal-pathspecs: a tracked file named ":x" or "*.c" is that file, never
     # pathspec magic (`--` stops option parsing, not pathspec interpretation).
-    r = subprocess.run(["git", "--literal-pathspecs", *args], cwd=REPO, capture_output=True, text=True,
-                       timeout=GIT_TIMEOUT)
+    try:
+        r = subprocess.run(["git", "--literal-pathspecs", *args], cwd=REPO, capture_output=True, text=True,
+                           timeout=GIT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        # A RuntimeError, like every other git failure here, so the page or card reads
+        # "unknown" (a warning) instead of the timeout aborting the whole build or lint.
+        raise RuntimeError(f"git {' '.join(args[:3])} did not finish within {GIT_TIMEOUT} s") from None
     if r.returncode not in ok:
         raise RuntimeError(f"git {' '.join(args[:3])} failed: {r.stderr.strip()[:200]}")
     return r
@@ -251,11 +256,13 @@ def check_cards(source: str, shallow: bool, in_merge: bool) -> list[Record]:
     """One record per feature card. Each card's baseline is the commit that last
     changed THAT card (its title, text, owners or sources), so editing one card
     does not mark the others as reviewed."""
-    now = {"worktree": lambda: _cards_at(None), "index": _cards_from_index}.get(source, lambda: _cards_at(source))()
-    history = [] if shallow else _git("log", "--first-parent", "--format=%H", _base_rev(source), "--",
-                                      FEATURES).stdout.split()
+    try:
+        now = {"worktree": lambda: _cards_at(None), "index": _cards_from_index}.get(source, lambda: _cards_at(source))()
+    except RuntimeError as e:                 # the card file itself unreadable: one unknown record, said so
+        return [Record("card", FEATURES, [], state="unknown", error=str(e))]
     cache: dict[str, dict] = {}
-    reader = _BlobReader() if history else None
+    history: list[str] = []
+    reader = None
 
     def version(i: int) -> dict:                                # fetched LAZILY, newest first,
         if history[i] not in cache:                             # through ONE cat-file process
@@ -264,6 +271,11 @@ def check_cards(source: str, shallow: bool, in_merge: bool) -> list[Record]:
 
     try:
         try:
+            # Inside the handler: a history query that fails or times out makes every
+            # card "unknown", never an aborted build.
+            history = [] if shallow else _git("log", "--first-parent", "--format=%H", _base_rev(source), "--",
+                                              FEATURES).stdout.split()
+            reader = _BlobReader() if history else None
             head_cards = version(0) if history else {}
             recs = _judge_cards(now, history, version, head_cards, source, shallow, in_merge)
         finally:
@@ -427,6 +439,9 @@ def with_head_sources(page_sources: dict[str, list[str]], pages: list[str], pars
 def check_all(pages: dict[str, list[str]], source: str) -> list[Record]:
     """`pages` maps a repo-relative docs path to its declared sources."""
     from concurrent.futures import ThreadPoolExecutor
+    # The shared probes are NOT caught: if git cannot answer them (or times out), the
+    # check fails with the reason, which is bounded and fails closed. Only one page's
+    # or one card's history reads "unknown".
     if source in ("worktree", "index") and not has_head():
         # Before the first commit there is no history to compare against.
         return [Record("page", p, s, state="new") for p, s in sorted(pages.items())]

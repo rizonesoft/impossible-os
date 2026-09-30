@@ -2902,7 +2902,7 @@ fi
 # Check 33: every subprocess, pipe, thread or HTTP wait has a finite timeout or
 # a `# deadline: <owner>` naming the caller-owned bound. Each control fixture
 # must be judged exactly as marked, so a detector that goes quiet is an ERROR.
-# ~0.3s together. Skip via SKIP_LINT_SITE_NETS=1.
+# ~1.5s for all four runs (measured 2026-09-30). Skip via SKIP_LINT_SITE_NETS=1.
 if [ "${SKIP_LINT_SITE_NETS:-0}" = "1" ]; then
     echo -e "${YELLOW}warn${NC}: Checks 32-33 (site fail direction, bounded waits) skipped via SKIP_LINT_SITE_NETS=1"
     WARNINGS=$((WARNINGS + 1))

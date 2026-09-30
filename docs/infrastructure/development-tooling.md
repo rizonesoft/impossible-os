@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/build.sh,scripts/setup.sh,scripts/test.sh,scripts/lint.sh,scripts/debug.sh,scripts/run-qemu.sh reviewed=2026-09-30T12:40 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/build.sh,scripts/setup.sh,scripts/test.sh,scripts/lint.sh,scripts/debug.sh,scripts/run-qemu.sh reviewed=2026-09-30T14:20 -->
 # Development Tooling & Automation
 
 > Complete build system, test framework, asset pipeline, and development utilities for Impossible OS.

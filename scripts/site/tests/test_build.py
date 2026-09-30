@@ -4107,6 +4107,73 @@ class FailureNets(unittest.TestCase):
         self.assertTrue(pidfile.exists(), "the helper never started")
         self.assertTrue(self.gone(int(pidfile.read_text())), "git's helper outlived the supervisor's kill")
 
+    def test_reconvergent_aliases_trace_in_linear_time(self):
+        chain = "".join(f"t{i} = t{i - 1} if flag else t{i - 1}\n" for i in range(1, 60))
+        for first, want in (("1", []), ("None", [63])):
+            text = f"import subprocess\nflag = 1\nt0 = {first}\n{chain}subprocess.run(['x'], timeout=t59)\n"
+            start = time.monotonic()
+            self.assertEqual(self.lines("bounded-wait", text), want)
+            self.assertLess(time.monotonic() - start, 2.0)
+
+    def test_cyclic_reconvergent_aliases_are_exact_and_linear(self):
+        chain = "".join(f"t{i} = t{i - 1} if flag else t{i - 1}\n" for i in range(1, 60))
+        for first, want in (("1", []), ("None", [64])):
+            text = (f"import subprocess\nflag = 1\nt0 = {first}\n{chain}t0 = t59\n"
+                    "subprocess.run(['x'], timeout=t59)\n")
+            start = time.monotonic()
+            self.assertEqual(self.lines("bounded-wait", text), want)   # the cycle t0 -> t59 -> t0 finds no None
+            self.assertLess(time.monotonic() - start, 2.0)
+
+    def test_freshness_git_timeout_reads_unknown(self):
+        import freshness as F
+        orig = F.subprocess.run
+        F.subprocess.run = lambda *a, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired(a[0], k["timeout"]))
+        try:
+            with self.assertRaises(RuntimeError) as cm:           # the type every unknown-state handler catches
+                F._git("log", "-1")
+            self.assertIn("did not finish within", str(cm.exception))
+        finally:
+            F.subprocess.run = orig
+        # And through the callers: a failing card-history query makes the cards "unknown"
+        # with the reason; a failing SHARED probe propagates (tested below).
+        orig_git = F._git
+        def failing(*args, **kw):
+            if args[0] == "log":
+                raise RuntimeError("git log did not finish within 300 s")
+            return orig_git(*args, **kw)
+        F._git = failing
+        try:
+            recs = F.check_cards("worktree", shallow=False, in_merge=False)
+            self.assertTrue(recs and all(r.state == "unknown" and "did not finish" in r.error for r in recs), recs)
+        finally:
+            F._git = orig_git
+        # A shared probe that fails stops the check with its reason (fail-closed), and
+        # never returns a partial record set that silently drops the cards.
+        orig_shallow = F.is_shallow
+        F.is_shallow = lambda: (_ for _ in ()).throw(RuntimeError("git rev-parse failed"))
+        try:
+            with self.assertRaises(RuntimeError):
+                F.check_all({"docs/a.md": ["src"]}, "worktree")
+        finally:
+            F.is_shallow = orig_shallow
+
+    def test_a_stalled_store_archive_ends_at_its_limit(self):
+        import releases as R
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=R.REPO, check=True, capture_output=True,
+                              text=True).stdout.strip()
+        orig, saved = R.subprocess.Popen, R.ARCHIVE_TIMEOUT
+        # An archive that never streams; every other git call (subprocess.run uses Popen too) runs for real.
+        R.subprocess.Popen = lambda cmd, **k: orig(["sh", "-c", "exec sleep 30"] if cmd[1:2] == ["archive"] else cmd, **k)
+        R.ARCHIVE_TIMEOUT = 0.5
+        try:
+            start = time.monotonic()
+            with self.assertRaises(R.StoreError) as cm:
+                R.materialise(head, self.dir / "m")
+            self.assertIn("did not finish within", str(cm.exception))
+            self.assertLess(time.monotonic() - start, 5.0)
+        finally:
+            R.subprocess.Popen, R.ARCHIVE_TIMEOUT = orig, saved
+
     def test_a_detached_descendant_cannot_hold_run_bounded(self):
         import verify_live as V
         pidfile = self.dir / "detached.pid"

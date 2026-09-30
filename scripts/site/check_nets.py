@@ -99,6 +99,7 @@ PROBE_FUNCS = frozenset({"os.path.exists", "os.path.lexists", "os.path.isfile", 
 SUBPROCESS_TIMED = frozenset({"subprocess.run", "subprocess.call", "subprocess.check_call",
                               "subprocess.check_output"})
 ERROR_CHANNEL = "errors"
+MAX_STEPS = 20_000        # name-tracing steps per timeout; past it the timeout counts as unbounded (reported)
 DEFS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
 COMPS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 
@@ -490,17 +491,29 @@ class BoundedWait:
                 self.call(n, bindings)
             stack.extend(ast.iter_child_nodes(n))
 
-    def unbounded(self, v: ast.expr | None, bindings: dict[str, list[ast.expr]], seen: frozenset = frozenset()) -> bool:
-        while isinstance(v, ast.NamedExpr):   # `timeout=(t := None)` is the value it binds
-            v = v.value
-        if v is None or (isinstance(v, ast.Constant) and v.value is None):
-            return True
-        if isinstance(v, ast.IfExp):
-            return self.unbounded(v.body, bindings, seen) or self.unbounded(v.orelse, bindings, seen)
-        key = (id(bindings), getattr(v, "id", None))
-        if isinstance(v, ast.Name) and v.id in bindings and key not in seen:
-            # Each value is resolved in the scope that wrote it, never the caller's.
-            return any(self.unbounded(b, env, seen | {key}) for b, env in bindings[v.id])
+    def unbounded(self, v: ast.expr | None, bindings: dict) -> bool:
+        """Whether a `None` can reach V. That is plain reachability over the binding
+        graph, so one search with one visited set per query expands each
+        (scope, name) once, cycles and reconverging aliases included, and is exact.
+        Past MAX_STEPS the timeout counts as unbounded, so a pattern too large to
+        read is reported rather than passed."""
+        stack: list[tuple[ast.expr | None, dict]] = [(v, bindings)]
+        visited: set[tuple[int, str]] = set()
+        steps = 0
+        while stack:
+            steps += 1
+            if steps > MAX_STEPS:
+                return True
+            v, env = stack.pop()
+            while isinstance(v, ast.NamedExpr):   # `timeout=(t := None)` is the value it binds
+                v = v.value
+            if v is None or (isinstance(v, ast.Constant) and v.value is None):
+                return True
+            if isinstance(v, ast.IfExp):
+                stack += [(v.body, env), (v.orelse, env)]
+            elif isinstance(v, ast.Name) and v.id in env and (id(env), v.id) not in visited:
+                visited.add((id(env), v.id))
+                stack += [(b, scope) for b, scope in env[v.id]]   # resolved where each value was written
         return False
 
     @staticmethod

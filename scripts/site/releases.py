@@ -53,6 +53,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -86,6 +87,7 @@ class StoreError(Exception):
 GIT_TIMEOUT = 300      # local git: sub-second here, so a hang is a fault, not a slow repository
 NET_TIMEOUT = 1200     # fetch, ls-remote and push of the store; docs-release.yml's job allows 60 minutes
 RENDER_TIMEOUT = 1200  # one release render; a normal one takes seconds, so this only catches a hang
+ARCHIVE_TIMEOUT = 1200  # streaming one store commit out of git; local disk speed, so this only catches a hang
 
 
 def git(*args: str, check: bool = True, timeout: float = GIT_TIMEOUT) -> subprocess.CompletedProcess:
@@ -409,8 +411,16 @@ def materialise(ref: str, dest: Path) -> str:
     dest.mkdir(parents=True, exist_ok=True)
     # Streamed, never buffered: the store grows with every release.
     with tempfile.TemporaryFile() as err:
-        # deadline: a hung local archive is owned by the caller's limit (verify_live's deadline or the job's)
+        # deadline: the timer below kills the archive ARCHIVE_TIMEOUT after it starts, for every caller
         proc = subprocess.Popen(["git", "archive", "--format=tar", sha], cwd=REPO, stdout=subprocess.PIPE, stderr=err)
+        expired = threading.Event()
+
+        def expire() -> None:
+            expired.set()
+            proc.kill()   # the stream then ends, so a read blocked on it returns
+        timer = threading.Timer(ARCHIVE_TIMEOUT, expire)
+        timer.daemon = True
+        timer.start()
         bad = None
         try:
             with tarfile.open(fileobj=proc.stdout, mode="r|") as t:
@@ -419,12 +429,15 @@ def materialise(ref: str, dest: Path) -> str:
             bad = e
             proc.kill()
         finally:
+            timer.cancel()
             proc.stdout.close()
             try:
                 rc = proc.wait(timeout=GIT_TIMEOUT)   # its stdout is closed: a live archive dies of SIGPIPE
             except subprocess.TimeoutExpired:
                 proc.kill()
                 rc = proc.wait(timeout=GIT_TIMEOUT)
+        if expired.is_set():
+            raise StoreError(f"store commit {sha[:12]}: git archive did not finish within {ARCHIVE_TIMEOUT} s")
         if rc not in (0, -9) or (rc == -9 and bad is None):
             err.seek(0)
             raise StoreError(f"store commit {sha[:12]}: git archive failed: {err.read().decode(errors='replace').strip()}")

@@ -1454,21 +1454,21 @@ Promotion of two review classes into automation under the reviewer-to-automation
   - A waiver belongs to one finding (its first line, the line above, or a span line no other finding starts on); one claimed twice excuses neither; imports and names resolve per lexical scope (class bodies, comprehensions, `global`, aliases and defaults read where written). Control: 79 marked lines.
 - [x] Wired as lint Checks 32-33 beside Check 31 (`SKIP_LINT_SITE_NETS=1`); `FailureNets` in `scripts/site/tests/test_build.py` runs under `test-tooling.sh`; every first-run hit (26 per rule) fixed or waived with its reason
   - Fixed fail-open: `baseline_reference` (a shallow clone or unreadable parent was a first creation; `commit_state` proves unborn or root), icon renders left without sources, `releases.site_files` on a missing site, unparseable or malformed card history (now "unknown").
-  - Fixed unbounded: timeouts on every git, node, gh and rsvg call; release git and renders raise `StoreError`; `verify_live` fetch and compare always carry a deadline; `linkcheck` `take()` never sleeps past it; the freshness batch reader has a kill timer.
-- [/] Kill the transport helpers of a git call that timed out on its own; blocked: needs per-call containment the site tooling lacks
-  - It must survive reparenting (a child subreaper or a cgroup) and stay inside the supervisor's process group; a separate group escaped `verify_live` (round 2). In CI the helper dies with the job.
+  - Fixed unbounded: timeouts on every git, node, gh and rsvg call; release git and renders raise `StoreError`; `verify_live` fetch and compare always carry a deadline; `linkcheck` `take()` never sleeps past it; the freshness batch reader and the store archive stream have kill timers; a freshness timeout reads "unknown" for that page or card, and fails the check with its reason in a shared probe.
 - [x] Commit: `"site: fail-direction and bounded-wait lint for site tooling"`
 
 **Test checkpoint:** each control fixture fires on its marked lines and no others; `bash scripts/lint.sh` passes on the tree with every waiver carrying a reason. Test on: WSL2 dev host.
 
-> **Test runner:** `python3 scripts/site/tests/test_build.py FailureNets` (15 tests: controls, mutants, rule edges, real-git baseline history, timeout and supervisor cases) and `python3 scripts/site/check_nets.py --rule <fail-direction|bounded-wait> --control` (42 and 79 marked lines) on the WSL2 dev host; no kernel test surface (host tooling).
+> **Test runner:** `python3 scripts/site/tests/test_build.py FailureNets` (19 tests: controls, mutants, rule edges, real-git baseline history, timeout and supervisor cases) and `python3 scripts/site/check_nets.py --rule <fail-direction|bounded-wait> --control` (42 and 79 marked lines) on the WSL2 dev host; no kernel test surface (host tooling).
 
 > **Notes:**
 > - **What shipped:** `scripts/site/check_nets.py` (two AST rules with comment waivers and fixture controls) as lint Checks 32-33, plus the fail-closed and bounded-wait fixes its first run found in the site scripts.
-> - **Integration:** `bash scripts/lint.sh` runs both rules and both controls on every commit (~0.3 s); `test-tooling.sh` runs `FailureNets` through the site suite.
+> - **Integration:** `bash scripts/lint.sh` runs both rules and both controls on every commit (~1.5 s); `test-tooling.sh` runs `FailureNets` through the site suite.
 > - **Downstream:** a new empty fallback or unbounded wait in `scripts/site/*.py` now fails at commit instead of in a Codex round; `toctou` stays unpromoted (not syntactic).
 > - **Canonical doc:** [Documentation Site](../../docs/infrastructure/documentation-site.md), "How does the site tooling avoid failing open or hanging?".
-> - **Scope boundary:** one file's syntax (no `getattr`/`partial`, no probe stored then tested, no `nonlocal` write-back, no loop or comprehension targets); a helper that outlives a timed-out git is the parked item above.
+> - **Scope boundary:** one file's syntax (no `getattr`/`partial`, no probe stored then tested, no `nonlocal` write-back, no loop or comprehension targets); a transport helper outliving a git that timed out on its own is a documented limit, not filed (no user impact: it ends with the CI job).
+> **Verified:** 2026-09-30 | commit `6d9d45177` | 4/4 items | build OK | tests 34646 kernel + 17 user-mode PASS; site suite 167 OK (FailureNets 19); controls 42/42 and 79/79; lint Checks 32-33 clean on the tree
+> **Quality reviewed:** 2026-09-30 | Codex 12x (adversarial post-ship, re-adversarial x3, consistency x4, perf x4) | 0H+10M+1L fixed, 0 open | scope: N/A (host site tooling; no kernel/boot/desktop code, parity research N/A; implementation rounds: design 3M, adversarial x11 and test-coverage x3 fixed before ship, helper containment reverted and documented)
 
 ---
 
