@@ -83,8 +83,22 @@ class StoreError(Exception):
     pass
 
 
-def git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], cwd=REPO, check=check, capture_output=True, text=True)
+GIT_TIMEOUT = 300      # local git: sub-second here, so a hang is a fault, not a slow repository
+NET_TIMEOUT = 1200     # fetch, ls-remote and push of the store; docs-release.yml's job allows 60 minutes
+RENDER_TIMEOUT = 1200  # one release render; a normal one takes seconds, so this only catches a hang
+
+
+def git(*args: str, check: bool = True, timeout: float = GIT_TIMEOUT) -> subprocess.CompletedProcess:
+    """git in the CALLER's process group, so a supervisor that kills that group
+    (verify_live's run deadline) takes git and its transport helpers with it. On
+    this call's own timeout git is killed and reaped and the call raises
+    StoreError; a helper git started can outlive it until the group is killed,
+    because nothing here contains a process that has been reparented."""
+    try:
+        return subprocess.run(["git", *args], cwd=REPO, check=check, capture_output=True, text=True,
+                              timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise StoreError(f"git {' '.join(args[:2])} did not finish within {timeout:.0f} s") from None
 
 
 def valid_version(v: str) -> bool:
@@ -133,7 +147,7 @@ def load_manifest(store: Path | None, required: bool = False) -> list[dict]:
     if not (store / MANIFEST).is_file():
         if required:
             raise StoreError(f"the store has no {MANIFEST}; refusing to publish without its releases")
-        return []
+        return []   # fail-direction: not assembling; publish ensures a manifest (or a verified new store) first
     try:
         data = json.loads((store / MANIFEST).read_text(encoding="utf-8"))
     except ValueError as e:
@@ -162,7 +176,7 @@ def load_retired(store: Path) -> dict[str, str]:
     """{version: frozen commit} of every release an operator retired from the site."""
     load_manifest(store)   # validates the whole file, `retired` included
     if not (store / MANIFEST).is_file():
-        return {}
+        return {}   # fail-direction: only publish's verified new store lacks one, and it has retired nothing
     data = json.loads((store / MANIFEST).read_text(encoding="utf-8"))
     return {r["version"]: r["commit"] for r in data.get("retired", [])}
 
@@ -189,7 +203,11 @@ def collisions(version: str, main_files: set[str]) -> list[str]:
 
 
 def site_files(site: Path) -> set[str]:
-    return set(tree_files(site)) if site.is_dir() else set()
+    """Every file of a built main site. A missing site RAISES: read as empty it
+    would clear every collision and undercount the size budget."""
+    if not site.is_dir():
+        raise StoreError(f"main site {site} is not a directory; build it before freezing or assembling")
+    return set(tree_files(site))
 
 
 def tree_bytes(root: Path, files) -> int:
@@ -302,8 +320,12 @@ def tag_commits() -> list[tuple[str, str]]:
 
 def render_release(tag: str, out: Path) -> None:
     """Render TAG's docs tree into out/docs/<tag>/ with the site generator."""
-    r = subprocess.run([sys.executable, str(REPO / "scripts/site/build.py"), "--release", tag,
-                        "--out", str(out), "--quiet"], cwd=REPO, capture_output=True, text=True)
+    try:
+        r = subprocess.run([sys.executable, str(REPO / "scripts/site/build.py"), "--release", tag,
+                            "--out", str(out), "--quiet"], cwd=REPO, capture_output=True, text=True,
+                           timeout=RENDER_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise StoreError(f"release {tag}: render did not finish within {RENDER_TIMEOUT} s") from None
     if r.returncode != 0:
         raise StoreError(f"release {tag}: render failed (rc {r.returncode})\n{r.stderr}")
 
@@ -363,12 +385,13 @@ def remote_store_sha(remote: str = "origin") -> str | None:
     """Fetch the store branch and return its commit; None when the branch does not
     exist yet. A failed lookup RAISES: publishing without the releases would
     delete every one of them from the live site."""
-    r = git("ls-remote", "--exit-code", "--heads", remote, BRANCH, check=False)
+    r = git("ls-remote", "--exit-code", "--heads", remote, BRANCH, check=False, timeout=NET_TIMEOUT)
     if r.returncode == 2:
-        return None
+        return None   # fail-direction: rc 2 is only "no such ref"; every other failure raises below
     if r.returncode != 0:
         raise StoreError(f"cannot query {remote} for {BRANCH}: {r.stderr.strip()}")
-    f = git("fetch", "--no-tags", "--quiet", remote, f"+refs/heads/{BRANCH}:{STORE_REF}", check=False)
+    f = git("fetch", "--no-tags", "--quiet", remote, f"+refs/heads/{BRANCH}:{STORE_REF}", check=False,
+            timeout=NET_TIMEOUT)
     if f.returncode != 0:
         raise StoreError(f"cannot fetch {BRANCH}: {f.stderr.strip()}")
     return git("rev-parse", "--verify", f"{STORE_REF}^{{commit}}").stdout.strip()
@@ -378,7 +401,7 @@ def materialise(ref: str, dest: Path) -> str:
     """Extract the store at REF (a commit, fetched from origin when absent) into dest."""
     r = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", check=False)
     if r.returncode != 0:
-        f = git("fetch", "--no-tags", "--quiet", "origin", ref, check=False)
+        f = git("fetch", "--no-tags", "--quiet", "origin", ref, check=False, timeout=NET_TIMEOUT)
         r = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", check=False)
         if r.returncode != 0:
             raise StoreError(f"store commit {ref} is not available: {f.stderr.strip()}")
@@ -386,6 +409,7 @@ def materialise(ref: str, dest: Path) -> str:
     dest.mkdir(parents=True, exist_ok=True)
     # Streamed, never buffered: the store grows with every release.
     with tempfile.TemporaryFile() as err:
+        # deadline: a hung local archive is owned by the caller's limit (verify_live's deadline or the job's)
         proc = subprocess.Popen(["git", "archive", "--format=tar", sha], cwd=REPO, stdout=subprocess.PIPE, stderr=err)
         bad = None
         try:
@@ -396,7 +420,11 @@ def materialise(ref: str, dest: Path) -> str:
             proc.kill()
         finally:
             proc.stdout.close()
-            rc = proc.wait()
+            try:
+                rc = proc.wait(timeout=GIT_TIMEOUT)   # its stdout is closed: a live archive dies of SIGPIPE
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                rc = proc.wait(timeout=GIT_TIMEOUT)
         if rc not in (0, -9) or (rc == -9 and bad is None):
             err.seek(0)
             raise StoreError(f"store commit {sha[:12]}: git archive failed: {err.read().decode(errors='replace').strip()}")
@@ -454,7 +482,7 @@ def store_marker_exists(remote: str = "origin") -> bool:
     was ever created, pushed beside the branch when the store is first made.
     It lives in the repository, not in the replaceable Pages deployment, so a
     site rollback or a missing picker cannot erase it. A failed query raises."""
-    r = git("ls-remote", "--exit-code", remote, f"refs/tags/{MARKER_TAG}", check=False)
+    r = git("ls-remote", "--exit-code", remote, f"refs/tags/{MARKER_TAG}", check=False, timeout=NET_TIMEOUT)
     if r.returncode == 2:
         return False
     if r.returncode != 0:
@@ -470,7 +498,7 @@ def push_store(remote: str = "origin") -> str:
     local = git("rev-parse", "--verify", "--quiet", f"refs/heads/{BRANCH}", check=False).stdout.strip()
     if not local:
         raise StoreError(f"no local {BRANCH} branch to push")
-    r = git("ls-remote", "--heads", remote, BRANCH, check=False)
+    r = git("ls-remote", "--heads", remote, BRANCH, check=False, timeout=NET_TIMEOUT)
     if r.returncode != 0:
         raise StoreError(f"cannot query {remote} for {BRANCH}: {r.stderr.strip()}")
     remote_sha = r.stdout.split()[0] if r.stdout.strip() else None
@@ -481,7 +509,7 @@ def push_store(remote: str = "origin") -> str:
         refspecs.append(f"{local}:refs/tags/{MARKER_TAG}")
     if not refspecs:
         return "up to date"
-    p = git("push", "--atomic", remote, *refspecs, check=False)
+    p = git("push", "--atomic", remote, *refspecs, check=False, timeout=NET_TIMEOUT)
     if p.returncode != 0:
         raise StoreError(f"push of {' '.join(refspecs)} refused, nothing published: {p.stderr.strip()}")
     return "pushed branch" if remote_sha != local else "pushed marker"

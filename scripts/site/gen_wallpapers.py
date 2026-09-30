@@ -163,7 +163,7 @@ def render(svg_path: Path, jpg_path: Path, width: int = 2560, height: int = 1440
     with tempfile.TemporaryDirectory() as tmp:
         png = Path(tmp) / "w.png"
         subprocess.run(["rsvg-convert", "-w", str(width), "-h", str(height), str(svg_path), "-o", str(png)],
-                       check=True)
+                       check=True, timeout=120)   # one render takes seconds; a hang fails the run
         px = np.asarray(Image.open(png).convert("RGB"), dtype=np.float32)
     # DITHER: smooth dark gradients band into visible stripes at 8 bits per
     # channel. Fixed-seed noise of +/-1.5 levels breaks the bands up and keeps

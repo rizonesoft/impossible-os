@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-10-documentation-site.md sources=gh-pages/docs-template.html,scripts/site/build.py,scripts/site/a11y/audit.mjs,.github/workflows/pages.yml reviewed=2026-09-30 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-10-documentation-site.md sources=gh-pages/docs-template.html,scripts/site/build.py,scripts/site/a11y/audit.mjs,.github/workflows/pages.yml reviewed=2026-09-30T12:40 -->
 # Docs Search and Accessibility
 
 The docs site searches the full text of every page in the reader's browser, ranks whole words above fragments, marks the match on the page a result opens, and offers a results page that can be shared as a link. Accessibility is checked twice: every build checks heading and alt-text rules statically, and the Pages workflow audits the current tree's docs pages in a real browser with axe-core plus checks for the skip link, keyboard focus and the current-page marker. Retained release trees are published as they were and are outside that browser gate. The site's build and publishing are described in [Documentation Site](documentation-site.md).

@@ -41,6 +41,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 BUILD_CMD = [sys.executable, str(REPO / "scripts/site/build.py")]
 RELEASES_CMD = [sys.executable, str(REPO / "scripts/site/releases.py")]
+RUN_DEADLINE = 1200.0   # seconds for the whole run: the --deadline default, under the workflow's 20 minutes
+KILL_GRACE = 10.0       # after the process group is killed, how long its pipes may take to close
 
 
 def run_bounded(cmd: list[str], stop: float, tmp: Path) -> subprocess.CompletedProcess | None:
@@ -51,14 +53,22 @@ def run_bounded(cmd: list[str], stop: float, tmp: Path) -> subprocess.CompletedP
     removes: a killed child never runs its own cleanup, and an extracted store
     can be hundreds of megabytes."""
     child_tmp = Path(tempfile.mkdtemp(prefix="child-", dir=tmp))
+    # deadline: communicate(timeout=) below holds it to `stop`, then the whole process group is killed
     proc = subprocess.Popen(cmd, cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                             start_new_session=True, env=dict(os.environ, TMPDIR=str(child_tmp)))
     try:
         out, err = proc.communicate(timeout=max(1.0, stop - time.time()))
     except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGKILL)
-        proc.communicate()
-        return None
+        try:
+            proc.communicate(timeout=KILL_GRACE)   # the group is dead, so its pipes close at once
+        except subprocess.TimeoutExpired:
+            # A process that left the group (it called setsid) still holds a pipe and is
+            # out of reach of killpg: stop reading, close the pipes, and reap the leader.
+            proc.stdout.close()
+            proc.stderr.close()
+            proc.wait(timeout=KILL_GRACE)
+        return None   # fail-direction: None is "outlived the deadline"; main() reports it and exits non-zero
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
@@ -80,16 +90,16 @@ class DeadlinePassed(Exception):
     pass
 
 
-def fetch(url: str, timeout: float = 30.0, deadline: float | None = None) -> bytes | None:
+def fetch(url: str, deadline: float, timeout: float = 30.0) -> bytes | None:
     """The body at URL, None on 404. Read in chunks so a body that trickles in
-    forever stops at `deadline` instead of holding the run past it."""
+    forever stops at `deadline` (a time.time() value) instead of holding the run past it."""
     req = urllib.request.Request(url, headers={"User-Agent": "impossible-os-verify-live",
                                                "Cache-Control": "no-cache"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:   # deadline: the read1 loop checks `deadline`
             chunks = []
             while True:
-                if deadline is not None and time.time() > deadline:
+                if time.time() > deadline:
                     raise DeadlinePassed()
                 chunk = r.read1(65536)   # what has arrived, so the deadline is checked as bytes trickle in
                 if not chunk:
@@ -97,7 +107,7 @@ def fetch(url: str, timeout: float = 30.0, deadline: float | None = None) -> byt
                 chunks.append(chunk)
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            return None
+            return None   # fail-direction: None is the 404 verdict, which compare() reports as MISSING
         raise
 
 
@@ -121,7 +131,7 @@ def select_files(built: Path, sample: int, slot: int) -> list[str]:
         versions = json.loads((built / "docs" / "versions.json").read_text(encoding="utf-8"))["versions"]
         roots = [f"docs/{v['path']}" for v in versions if v.get("path")]
     except (OSError, ValueError, KeyError, TypeError):
-        roots = []
+        roots = []   # fail-direction: with no release roots nothing is sampled out, so every file is verified
     keep = [f for f in files if not any(f.startswith(r) for r in roots)]
     for r in roots:
         tree = [f for f in files if f.startswith(r)]
@@ -145,9 +155,12 @@ def compare(built: Path, base: str, bust: str, only: list[str] | None = None,
     Every file gets exactly one verdict: its own result, or UNVERIFIED when
     `deadline` (a time.time() value) passes first. Results are recorded under a
     lock and the deadline takes a snapshot under the same lock, so a request that
-    finishes at the deadline is either counted or reported, never lost. The
+    finishes at the deadline is either counted or reported, never lost. With no
+    `deadline` the run gets RUN_DEADLINE from now, so no wait is ever unbounded. The
     workers are daemon threads, so one stuck in a slow read cannot keep the
     process alive after the verdict (an executor's workers are joined at exit)."""
+    if deadline is None:
+        deadline = time.time() + RUN_DEADLINE
     files = ([built / f for f in only] if only is not None
              else sorted(p for p in built.rglob("*") if p.is_file()))
     rels = [p.relative_to(built).as_posix() for p in files]
@@ -191,8 +204,8 @@ def compare(built: Path, base: str, bust: str, only: list[str] | None = None,
         threading.Thread(target=worker, daemon=True).start()
     with lock:
         while len(verdicts) < len(rels):
-            remaining = None if deadline is None else deadline - time.time()
-            if remaining is not None and remaining <= 0:
+            remaining = deadline - time.time()
+            if remaining <= 0:
                 break
             lock.wait(remaining)
         closed = True
@@ -213,7 +226,7 @@ def main() -> int:
     ap.add_argument("--wait", type=float, default=30.0, help="seconds between attempts")
     ap.add_argument("--release-sample", type=int, default=25,
                     help="files per retained release tree per run, rotating every six hours (0 = every file)")
-    ap.add_argument("--deadline", type=float, default=1200.0,
+    ap.add_argument("--deadline", type=float, default=RUN_DEADLINE,
                     help="seconds for the whole run, retries included; unfinished files report UNVERIFIED")
     ap.add_argument("--releases", default="remote",
                     help="retained release trees to add to a fresh build: remote (default), none, or a store commit")

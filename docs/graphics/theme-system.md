@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/08-graphics-ui/TODO-03-theme-system.md sources=include/desktop/theme_tokens.h,docs/design/tokens.json,scripts/site/gen_theme_header.py,src/kernel/registry.c,include/desktop/wm.h,src/desktop/wm.c reviewed=2026-09-29 order=3 -->
+<!-- docs: covers=todo/08-graphics-ui/TODO-03-theme-system.md sources=include/desktop/theme_tokens.h,docs/design/tokens.json,scripts/site/gen_theme_header.py,src/kernel/registry.c,include/desktop/wm.h,src/desktop/wm.c reviewed=2026-09-30 order=3 -->
 # Theme System
 
 ## What is it?

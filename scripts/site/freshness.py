@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -46,10 +47,14 @@ class Record:
     error: str = ""               # why the state is "unknown" when it is not a shallow clone
 
 
+GIT_TIMEOUT = 300   # every call is local and sub-second; a hung git fails the check instead of holding it
+
+
 def _git(*args: str, ok=(0,)) -> subprocess.CompletedProcess:
     # --literal-pathspecs: a tracked file named ":x" or "*.c" is that file, never
     # pathspec magic (`--` stops option parsing, not pathspec interpretation).
-    r = subprocess.run(["git", "--literal-pathspecs", *args], cwd=REPO, capture_output=True, text=True)
+    r = subprocess.run(["git", "--literal-pathspecs", *args], cwd=REPO, capture_output=True, text=True,
+                       timeout=GIT_TIMEOUT)
     if r.returncode not in ok:
         raise RuntimeError(f"git {' '.join(args[:3])} failed: {r.stderr.strip()[:200]}")
     return r
@@ -124,6 +129,7 @@ def _baseline_record(raw: str) -> tuple[str, str, str] | None:
 def _blob_in(source: str, path: str) -> str | None:
     if source == "worktree":
         p = REPO / path
+        # fail-direction: an absent path has no blob: it differs from HEAD (editing) and matches no deleted file
         return _git("hash-object", str(p)).stdout.strip() if p.is_file() else None
     spec = f":{path}" if source == "index" else f"{source}:{path}"
     r = _git("rev-parse", "--verify", "--quiet", spec, ok=(0, 1, 128))
@@ -224,11 +230,11 @@ def _cards_at(rev: str | None) -> dict[str, dict]:
         else:
             r = _git("show", f"{rev}:{FEATURES}", ok=(0, 128))
             if r.returncode:
-                return {}
+                return {}   # fail-direction: no card file at REV has no cards; build.py's card check refuses that tree
             text = r.stdout
         cards = json.loads(text).get("cards", [])
     except (OSError, ValueError, AttributeError):
-        return {}
+        return {}   # fail-direction: build.py's card check fails the same build on an unreadable or invalid file
     return {c.get("title"): _card_key(c) for c in cards}
 
 
@@ -310,9 +316,20 @@ class _BlobReader:
     """A persistent `git cat-file --batch`: one process for every historical
     version read, instead of one `git show` per version."""
 
-    def __init__(self):
+    def __init__(self, limit: float = GIT_TIMEOUT):
+        # deadline: the timer below kills the reader `limit` seconds after it starts, ending any read in EOF
         self.proc = subprocess.Popen(["git", "cat-file", "--batch"], cwd=REPO,
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        # Every caller (a local lint run included, which has no supervisor) gets the
+        # same bound: a stalled read cannot hold the check, the card reads "unknown".
+        self.limit, self.expired = limit, False
+        self.timer = threading.Timer(limit, self._expire)
+        self.timer.daemon = True
+        self.timer.start()
+
+    def _expire(self) -> None:
+        self.expired = True
+        self.proc.kill()
 
     def read(self, spec: str) -> str | None:
         """The object's text, None ONLY for git's explicit "<spec> missing"; any
@@ -324,6 +341,8 @@ class _BlobReader:
         except (BrokenPipeError, OSError) as e:
             raise RuntimeError(f"git cat-file --batch is not running: {e}") from e
         line = self.proc.stdout.readline()
+        if not line and self.expired:
+            raise RuntimeError(f"git cat-file --batch did not answer within {self.limit:.0f} s")
         parts = line.split()
         if len(parts) == 2 and parts[1] == b"missing":
             return None
@@ -336,33 +355,45 @@ class _BlobReader:
         return data[:-1].decode("utf-8", "replace")
 
     def close(self):
+        self.timer.cancel()
         try:
             self.proc.stdin.close()
         except OSError:
             pass
-        rc = self.proc.wait()
+        try:
+            rc = self.proc.wait(timeout=GIT_TIMEOUT)   # stdin is closed, so a healthy cat-file exits at once
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+            raise RuntimeError(f"git cat-file --batch did not exit {GIT_TIMEOUT} s after its input closed") from None
         if rc not in (0, None):
             raise RuntimeError(f"git cat-file --batch exited with status {rc}")
 
 
 def _parse_cards(text: str | None) -> dict[str, dict]:
-    if not text:
-        return {}
+    """The cards of one historical version. None is git's explicit "missing": the
+    file did not exist then, so no card did. A version that does not parse, or
+    holds anything but a list of card objects, RAISES, so the card reads as
+    "unknown" rather than dated by a later commit (fresher than it is)."""
+    if text is None:
+        return {}   # git said the file is missing at that commit, so no card existed there
     try:
-        cards = json.loads(text).get("cards", [])
-    except (ValueError, AttributeError):
-        return {}
-    return {c.get("title"): _card_key(c) for c in cards if isinstance(c, dict)}
+        data = json.loads(text)
+    except ValueError as e:
+        raise RuntimeError(f"{FEATURES} does not parse at a commit in its history: {e}") from None
+    cards = data.get("cards") if isinstance(data, dict) else None
+    if not isinstance(cards, list) or not all(isinstance(c, dict) for c in cards):
+        raise RuntimeError(f"{FEATURES} at a commit in its history is not a list of card objects")
+    return {c.get("title"): _card_key(c) for c in cards}
 
 
 def _cards_from_index() -> dict[str, dict]:
     r = _git("show", f":{FEATURES}", ok=(0, 128))
     if r.returncode:
-        return {}
+        return {}   # fail-direction: no staged card file has no cards; build.py's card check refuses that index
     try:
         cards = json.loads(r.stdout).get("cards", [])
     except ValueError:
-        return {}
+        return {}   # fail-direction: build.py's card check fails the same build on an invalid staged file
     return {c.get("title"): _card_key(c) for c in cards}
 
 
@@ -372,7 +403,7 @@ def has_head() -> bool:
 
 def head_text(path: str) -> str | None:
     r = _git("show", f"HEAD:{path}", ok=(0, 128))
-    return r.stdout if r.returncode == 0 else None
+    return r.stdout if r.returncode == 0 else None   # fail-direction: HEAD lacks the page, so it adds no sources
 
 
 def with_head_sources(page_sources: dict[str, list[str]], pages: list[str], parse,

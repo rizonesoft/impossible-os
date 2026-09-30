@@ -92,7 +92,7 @@ def generate() -> str:
 
 def check() -> list[str]:
     want = generate()
-    have = HEADER.read_text(encoding="utf-8") if HEADER.exists() else ""
+    have = HEADER.read_text(encoding="utf-8") if HEADER.exists() else ""   # fail-direction: a missing header differs and is reported
     if want != have:
         return [f"{HEADER.relative_to(ROOT)} is out of date with docs/design/tokens.json "
                 f"(run: python3 scripts/site/gen_theme_header.py)"]

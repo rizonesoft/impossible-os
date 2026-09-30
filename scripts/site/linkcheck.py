@@ -362,6 +362,7 @@ def request(url: str, method: str, timeout: float) -> tuple[int, str | None]:
     _PHASE.connected = _PHASE.proxied = False
     try:
         req = urllib.request.Request(url, method=method, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
+        # deadline: no body is read, only the status; run_checks's budget owns the run
         with OPENER.open(req, timeout=timeout) as r:
             return r.status, None
     except MALFORMED as e:
@@ -369,6 +370,7 @@ def request(url: str, method: str, timeout: float) -> tuple[int, str | None]:
             raise
         raise NotFormed(str(e)) from e
     except urllib.error.HTTPError as e:
+        # fail-direction: only a redirect carries a Location; any other status is judged by its code
         location = e.headers.get("Location") if e.code in REDIRECTS else None
         e.close()
         return e.code, (header_url(location) if location else None)
@@ -495,7 +497,9 @@ def run_checks(urls: list[str], retries: int, wait: float, timeout: float, worke
                             busy[host] += 1
                             return q.pop(i)
                         soonest = job.not_before if soonest is None else min(soonest, job.not_before)
-                cond.wait(None if soonest is None else max(0.0, soonest - now))
+                # Never past the deadline: with no delayed job queued, a hand-off notifies
+                # sooner, and without one this wakes to return None at the deadline.
+                cond.wait(max(0.0, (deadline if soonest is None else min(soonest, deadline)) - now))
             return None
 
     def resolve(location: str, base: str, t: float) -> str | None:

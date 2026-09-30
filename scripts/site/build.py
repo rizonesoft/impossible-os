@@ -88,9 +88,48 @@ _FILESET: set[str] | None = None
 _DIRSET: set[str] | None = None
 
 
+# Every git call the site build makes is local and finishes in well under a second
+# on this repository; the limit turns a hung git (a stuck lock, a wedged filesystem)
+# into a failed build instead of a job held until its workflow limit (check_nets.py).
+GIT_TIMEOUT = 300
+NODE_TIMEOUT = 120
+
+
 def git(*args: str, binary: bool = False):
-    out = subprocess.run(["git", *args], cwd=REPO, check=True, capture_output=True).stdout
+    out = subprocess.run(["git", *args], cwd=REPO, check=True, capture_output=True, timeout=GIT_TIMEOUT).stdout
     return out if binary else out.decode()
+
+
+def has_commit(ref: str) -> bool:
+    """Whether REF resolves to a commit. False does not say why: see commit_state()."""
+    return subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], cwd=REPO,
+                          capture_output=True, timeout=GIT_TIMEOUT).returncode == 0
+
+
+def commit_state(ref: str) -> str:
+    """"ok" when REF (HEAD or HEAD~1) resolves to a commit, "unborn" when HEAD's
+    branch has no commit yet, "root" when HEAD is a root commit so HEAD~1 has
+    nothing to name. Each absence is PROVED from the repository, never inferred
+    from a failed lookup: a shallow boundary or an unreadable object raises
+    RuntimeError, because reading it as "nothing came before" would switch off
+    every check that compares against the previous commit."""
+    if has_commit(ref):
+        return "ok"
+    if ref == "HEAD":
+        branch = subprocess.run(["git", "symbolic-ref", "-q", "HEAD"], cwd=REPO, capture_output=True,
+                                text=True, timeout=GIT_TIMEOUT).stdout.strip()
+        if branch and subprocess.run(["git", "show-ref", "--verify", "--quiet", branch], cwd=REPO,
+                                     capture_output=True, timeout=GIT_TIMEOUT).returncode == 1:
+            return "unborn"
+        raise RuntimeError("HEAD does not resolve to a readable commit")
+    if ref == "HEAD~1" and has_commit("HEAD"):
+        if git("rev-parse", "--is-shallow-repository").strip() == "true":
+            raise RuntimeError("this shallow clone lacks HEAD~1; fetch full history (actions/checkout fetch-depth: 0)")
+        header = git("cat-file", "commit", "HEAD").split("\n\n", 1)[0]
+        if not any(line.startswith("parent ") for line in header.splitlines()):
+            return "root"
+        raise RuntimeError("HEAD names a parent that git cannot read")
+    raise RuntimeError(f"{ref} does not resolve to a readable commit")
 
 
 def fileset() -> tuple[set[str], set[str]]:
@@ -138,12 +177,12 @@ def snapshot(source: str) -> Path:
         f == p or f.startswith(p + "/") or (p == "*.md" and f.endswith(".md")) for p in SNAP_PATHS))
     if source == "index":
         subprocess.run(["git", "checkout-index", "-z", "--stdin", f"--prefix={tmp}/"], cwd=REPO, check=True,
-                       input="\0".join(want).encode(), capture_output=True)
+                       input="\0".join(want).encode(), capture_output=True, timeout=GIT_TIMEOUT)
     else:
         # One `git cat-file --batch` for every blob instead of a `git show` per file
         # (measured: 797 processes / 3.2 s down to one process / ~0.5 s).
         proc = subprocess.run(["git", "cat-file", "--batch"], cwd=REPO, check=True, capture_output=True,
-                              input="".join(f"{source}:{f}\n" for f in want).encode())
+                              input="".join(f"{source}:{f}\n" for f in want).encode(), timeout=GIT_TIMEOUT)
         out, pos = proc.stdout, 0
         for f in want:
             nl = out.index(b"\n", pos)
@@ -602,7 +641,7 @@ class AnchorCache:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return
+            return   # fail-direction: a missing or corrupt cache is a cold one; every entry is rebuilt from source
         entries = data.get("entries") if isinstance(data, dict) and data.get("version") == self.version else None
         if isinstance(entries, dict):
             # Keep only well-formed entries; anything else is a miss and is re-parsed.
@@ -1112,7 +1151,7 @@ class Renderer:
         try:
             repo_rel = target.relative_to(ROOT).as_posix()
         except ValueError:
-            repo_rel = ""
+            repo_rel = ""   # fail-direction: outside the repository is untracked, which the next line reports
         if repo_rel not in fileset()[0]:
             self.errors.append(f"docs/{page.rel}: missing image (not a tracked file): {src}")
             return src
@@ -1224,20 +1263,33 @@ def check_design_lines(pages: dict[str, Page], errors: list[str]) -> None:
                         errors.append(f"{rel}:{line}: section {num}: dead design anchor docs/design/{fname}#{anchor}")
 
 
-def baseline_reference() -> set[str] | None:
+def baseline_reference(errors: list[str]) -> set[str] | None:
     """The previously COMMITTED baseline the candidate is measured against: HEAD's
     copy when the candidate differs from HEAD (a commit being made), otherwise
     HEAD~1's (CI checking a commit that already landed). None when no prior copy
-    exists (first creation), which is the only way the list may start non-empty."""
+    exists (first creation), which is the only way the list may start non-empty.
+
+    Only a proved absence (commit_state: an unborn HEAD, the parent of a root
+    commit) or a commit without the file is a first creation. A shallow clone
+    missing the parent, or a commit git cannot read, is an error: read as "no prior
+    copy" either would let the baseline grow unchecked."""
     rel = "docs/.coverage-baseline.json"
+    # fail-direction: with no candidate file every committed copy differs from it, so HEAD's copy is the reference
     cand = BASELINE.read_bytes() if BASELINE.exists() else b""
     for ref in ("HEAD", "HEAD~1"):
-        proc = subprocess.run(["git", "show", f"{ref}:{rel}"], cwd=REPO, capture_output=True)
-        if proc.returncode != 0:
+        try:
+            state = commit_state(ref)
+        except RuntimeError as e:
+            errors.append(f"coverage: the shrink-only baseline cannot be measured: {e}")
             return None
-        if ref == "HEAD" and proc.stdout == cand and SOURCE in ("worktree", "index"):
+        if state != "ok":
+            return None   # proved: nothing was committed before this
+        if not git("ls-tree", "--name-only", ref, "--", rel).strip():
+            return None
+        committed = git("show", f"{ref}:{rel}", binary=True)
+        if ref == "HEAD" and committed == cand and SOURCE in ("worktree", "index"):
             continue  # unchanged against HEAD: compare with the commit before it
-        return set(json.loads(proc.stdout.decode("utf-8"))["undocumented"])
+        return set(json.loads(committed.decode("utf-8"))["undocumented"])
     return None
 
 
@@ -1258,8 +1310,10 @@ def shrink_baseline(data: dict | None, undocumented: list[str]) -> dict:
 
 
 def check_baseline(undocumented: list[str], errors: list[str]) -> None:
+    # fail-direction: no baseline file lists no undocumented TODO, the strictest reading (every one is reported)
     baseline = set(json.loads(BASELINE.read_text(encoding="utf-8"))["undocumented"]) if BASELINE.exists() else set()
-    prior = baseline_reference()
+    prior = baseline_reference(errors)
+    # fail-direction: no baseline file carries no growth reasons, so no growth is excused
     reasons = json.loads(BASELINE.read_text(encoding="utf-8")).get("growth_reasons", {}) if BASELINE.exists() else {}
     if prior is not None:
         for t in sorted(baseline - prior):
@@ -1314,9 +1368,8 @@ def last_updated() -> dict[str, str] | None:
     if git("rev-parse", "--is-shallow-repository").strip() == "true":
         return None
     ref = "HEAD" if SOURCE in ("worktree", "index") else SOURCE
-    if subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], cwd=REPO,
-                      capture_output=True).returncode != 0:
-        return {}   # unborn HEAD: nothing is committed, so nothing has a date
+    if ref == "HEAD" and commit_state(ref) == "unborn":
+        return {}   # an unborn HEAD has nothing committed, so no page has a date
     # Every output-shaping setting is pinned on the command line, so a host's git
     # config (log.diffMerges=combined, log.showSignature) cannot change the bytes.
     out = git("-c", "log.showSignature=false", "log", "--first-parent", "--diff-merges=first-parent",
@@ -1919,7 +1972,7 @@ def check_owner_urls(facts: dict, errors: list[str]) -> None:
     where = ["--cached"] if SOURCE == "index" else ([SOURCE] if SOURCE != "worktree" else [])
     proc = subprocess.run(["git", "grep", "-nIE", *where, "-e", r"github\.com/[A-Za-z0-9-]+/impossible-os\b", "--",
                            ":!src/libs", ":!src/kernel/acpica"],
-                          cwd=REPO, capture_output=True, text=True)
+                          cwd=REPO, capture_output=True, text=True, timeout=GIT_TIMEOUT)
     if proc.returncode not in (0, 1):  # 1 = no match; anything else is a failed search, not a clean one
         errors.append(f"owner URL scan failed (git grep rc={proc.returncode}): {proc.stderr.strip()}")
         return
@@ -1970,7 +2023,7 @@ def check_donate_links(facts: dict, errors: list[str]) -> None:
         return
     where = ["--cached"] if SOURCE == "index" else ([SOURCE] if SOURCE != "worktree" else [])
     proc = subprocess.run(["git", "grep", "-nIiF", *where, "-e", "paypal.com/donate", "--", ":!src/libs"],
-                          cwd=REPO, capture_output=True, text=True)
+                          cwd=REPO, capture_output=True, text=True, timeout=GIT_TIMEOUT)
     if proc.returncode not in (0, 1):
         errors.append(f"donate link scan failed (git grep rc={proc.returncode}): {proc.stderr.strip()}")
         return
@@ -1992,7 +2045,11 @@ def check_icon_renders(errors: list[str]) -> None:
     import hashlib
     src, stamp = ROOT / "resources" / "icons" / "src", ROOT / "resources" / "icons" / "color" / "SOURCES.sha256"
     if not src.is_dir():
-        return
+        left = [p for p in (stamp, *sorted(stamp.parent.glob("*/*.png"))) if p.is_file()]
+        if left:
+            errors.append(f"resources/icons/color: {len(left)} committed icon file(s) (a stamp or renders) but "
+                          f"resources/icons/src is missing, so they cannot be checked against their sources")
+        return   # fail-direction: with neither sources, a stamp nor renders the tree has no icon set to check
     color = stamp.parent
     # The stamp binds sources AND outputs ("<sha256>  src/<name>.svg" per source,
     # "<sha256>  <size>/<name>.png" per render); both sides are re-hashed from the
@@ -2135,7 +2192,7 @@ class _PageFactsCache:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return
+            return   # fail-direction: a missing or corrupt cache is a cold one; every entry is rebuilt from source
         if isinstance(data, dict) and data.get("version") == self.version:
             pages, scripts = data.get("pages"), data.get("scripts")
             if isinstance(pages, dict) and isinstance(scripts, dict):
@@ -2244,7 +2301,8 @@ def check_scripts(files: dict[str, bytes], errors: list[str]) -> None:
     if not node:
         return
     batch = json.dumps([[name, src] for src, name in seen.items()])
-    r = subprocess.run([node, "-e", NODE_SYNTAX_CHECK], input=batch, capture_output=True, text=True)
+    r = subprocess.run([node, "-e", NODE_SYNTAX_CHECK], input=batch, capture_output=True, text=True,
+                       timeout=NODE_TIMEOUT)
     if r.returncode not in (0, 1):
         errors.append(f"script syntax check could not run: {r.stderr.strip()[:200]}")
     for line in r.stdout.splitlines():
@@ -2369,7 +2427,8 @@ def is_site_era(commit: str) -> bool:
     """Whether a release build of COMMIT can run, judged without materialising it
     (scripts/site/releases.py skips earlier tags rather than failing on them)."""
     return all(subprocess.run(["git", "cat-file", "-e", f"{commit}:{p}"], cwd=REPO,
-                              capture_output=True).returncode == 0 for p in (*SITE_ERA_FILES, "docs"))
+                              capture_output=True, timeout=GIT_TIMEOUT).returncode == 0
+               for p in (*SITE_ERA_FILES, "docs"))
 
 
 def prepare_release(ref: str) -> Path | None:
@@ -2392,7 +2451,7 @@ def prepare_release(ref: str) -> Path | None:
         raise ReleaseError(f"release ref {ref!r}: a version may not start with main/ or refs/ "
                            f"(it would be ambiguous with the branch in repository links)")
     r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], cwd=REPO,
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, timeout=GIT_TIMEOUT)
     if r.returncode != 0:
         raise ReleaseError(f"release ref {ref!r} does not name a commit")
     sha = r.stdout.strip()
@@ -2418,7 +2477,7 @@ def check_release_paths(files: dict[str, bytes], errors: list[str]) -> None:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import releases  # noqa: E402  (sibling module)
     r = subprocess.run(["git", "show", f"{releases.STORE_REF}:{releases.MANIFEST}"], cwd=REPO,
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, timeout=GIT_TIMEOUT)
     stored = []
     if r.returncode == 0:
         try:
@@ -2507,6 +2566,7 @@ def run(args: argparse.Namespace) -> int:
         return 1 if errors else 0
 
     if args.update_baseline:
+        # fail-direction: no file yet is the documented first creation, from the current undocumented set
         data = json.loads(BASELINE.read_text(encoding="utf-8")) if BASELINE.exists() else None
         BASELINE.write_text(json.dumps(shrink_baseline(data, undocumented), indent=2) + "\n", encoding="utf-8")
         print(f"baseline: {len(json.loads(BASELINE.read_text(encoding='utf-8'))['undocumented'])} undocumented TODO file(s)")

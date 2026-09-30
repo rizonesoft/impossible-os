@@ -2143,8 +2143,10 @@ class RetainedReleases(unittest.TestCase):
         calls: list[tuple] = []
 
         def fake(results):
-            def git(*args, check=True):
+            def git(*args, check=True, timeout=None):
                 calls.append(args)
+                if args[0] in ("fetch", "ls-remote", "push"):   # a network call is never left unbounded
+                    self.assertEqual(timeout, self.R.NET_TIMEOUT, args)
                 rc, out, err = results.get(args[0], (0, "", ""))
                 return subprocess.CompletedProcess(["git", *args], rc, out, err)
             return git
@@ -2181,7 +2183,7 @@ class RetainedReleases(unittest.TestCase):
                     def kill(self):
                         self.rc = self.rc if self.rc else -9
 
-                    def wait(self):
+                    def wait(self, timeout=None):
                         return self.rc
                 return P
             self.R.subprocess.Popen = popen(b"", 128, b"bad object")
@@ -3810,6 +3812,323 @@ class PageContract(unittest.TestCase):
         links = re.findall(r"\]\(([^)#]+)", self.TEMPLATE.read_text(encoding="utf-8"))
         self.assertTrue(links)
         self.assertEqual([l for l in links if not l.startswith(("../contributing/", "https://"))], [])
+
+
+class FailureNets(unittest.TestCase):
+    """Section 32: fail-direction and bounded-wait lint (check_nets.py), and the
+    fail-closed fixes its first run over the site scripts led to."""
+
+    def setUp(self):
+        import check_nets
+        self.C = check_nets
+        self.dir = Path(tempfile.mkdtemp(prefix="nets-"))
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def lines(self, rule: str, text: str) -> list[int]:
+        f = self.dir / "case.py"
+        f.write_text(text, encoding="utf-8")
+        return [n for n, _ in self.C.check_file(f, rule)]
+
+    def test_controls_fire_and_the_tree_is_clean(self):
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            for rule in self.C.RULES:
+                self.assertEqual(self.C.control(rule), 0, (rule, out.getvalue()))
+                self.assertEqual(self.C.run(self.C.default_files(), rule), 0, (rule, out.getvalue()))
+
+    def test_a_detector_that_goes_quiet_fails_its_control(self):
+        # A rule that no longer recognises a missing-input probe must fail the
+        # control, not pass it: the fixture's probe branches and ternaries go unreported.
+        orig = self.C._probe
+        self.C._probe = lambda *a, **k: ""
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(self.C.control("fail-direction"), 1)
+            self.assertIn("expected flag, got clean", out.getvalue())
+        finally:
+            self.C._probe = orig
+        orig = self.C.BoundedWait.unbounded
+        self.C.BoundedWait.unbounded = lambda *a, **k: False
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(self.C.control("bounded-wait"), 1)
+        finally:
+            self.C.BoundedWait.unbounded = orig
+
+    def test_an_unmarked_report_fails_the_control(self):
+        fx = self.dir / "fixtures" / "fail_direction"
+        fx.mkdir(parents=True)
+        (fx / "c.py").write_text("def f(p):\n    try:\n        return p.read()\n    except OSError:\n"
+                                 "        return []\n", encoding="utf-8")
+        orig, self.C.FIXTURES, orig_repo = self.C.FIXTURES, self.dir / "fixtures", self.C.REPO
+        self.C.REPO = self.dir
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(self.C.control("fail-direction"), 1)   # no marker at all: "marks no lines"
+            (fx / "c.py").write_text("def f(p):\n    try:\n        return p.read()  # expect: clean\n"
+                                     "    except OSError:\n        return []\n", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(self.C.control("fail-direction"), 1)
+            self.assertIn("carries no expect marker", out.getvalue())
+        finally:
+            self.C.FIXTURES, self.C.REPO = orig, orig_repo
+
+    def test_usage_errors(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            for argv in ([], ["--rule"], ["--rule", "nope"], ["--rule", "bounded-wait", "--x"],
+                         ["--rule", "bounded-wait", "--control", "extra"]):
+                self.assertEqual(self.C.main(argv), 2, argv)
+
+    def test_fail_direction_edges(self):
+        # A nested function starts clean, and the error channel only counts on the SAME path.
+        self.assertEqual(self.lines("fail-direction", "def f(p, errors):\n    try:\n        p.read()\n"
+                                    "    except OSError:\n        if p:\n            errors.append('x')\n"
+                                    "        return []\n"), [7])
+        self.assertEqual(self.lines("fail-direction", "import os.path as op\ndef f(p):\n"
+                                    "    if not op.isdir(p):\n        return None\n"), [4])
+        # A helper returning a probe through another helper is still a probe (fixpoint).
+        self.assertEqual(self.lines("fail-direction", "def a(p):\n    return p.exists()\ndef b(p):\n"
+                                    "    return a(p)\ndef c(p):\n    return [] if not b(p) else [p]\n"), [6])
+        # Nested ternary arms, and a waiver above a multi-line statement.
+        self.assertEqual(self.lines("fail-direction", "def f(p, q):\n"
+                                    "    return (1 if q else None) if p.is_file() else 2\n"), [2])
+        self.assertEqual(self.lines("fail-direction", "def f(p):\n    if not p.is_file():\n"
+                                    "        # fail-direction: absent means default, exercised by the callers\n"
+                                    "        return {\n        }\n"), [])
+
+    def test_bounded_wait_edges(self):
+        self.assertEqual(self.lines("bounded-wait", "import subprocess\ndef f(cmd, t=None):\n"
+                                    "    subprocess.run(cmd, timeout=t)\n"), [3])       # a None-default parameter
+        self.assertEqual(self.lines("bounded-wait", "import subprocess\ndef f(cmd, t=5):\n"
+                                    "    subprocess.run(cmd, timeout=t)\n"), [])
+        self.assertEqual(self.lines("bounded-wait", "import subprocess\nT = None\ndef f(cmd):\n"
+                                    "    subprocess.run(cmd, timeout=T)\n"), [4])       # a module-level None
+        self.assertEqual(self.lines("bounded-wait", "def f(p, args):\n    p.wait(*args)\n"), [2])   # a splat
+        self.assertEqual(self.lines("bounded-wait", "import urllib.request as ur\ndef mk():\n"
+                                    "    return ur.build_opener()\nO = mk()\ndef f(u):\n"
+                                    "    O.open(u, timeout=3)\n"), [6])                 # factory-built opener
+        # A HTTP call with no socket timeout is reported even under a deadline waiver.
+        found = self.C.check_file(self._write("from urllib.request import urlopen\ndef f(u):\n"
+                                              "    urlopen(u)  # deadline: the caller's watchdog kills this run\n"),
+                                  "bounded-wait")
+        self.assertEqual([n for n, _ in found], [3])
+        self.assertIn("no finite timeout", found[0][1])
+
+    def _write(self, text: str) -> Path:
+        f = self.dir / "w.py"
+        f.write_text(text, encoding="utf-8")
+        return f
+
+    GIT_ENV = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+
+    def repo(self, *baselines) -> Path:
+        """A repository with one commit per entry: the baseline's undocumented list, or
+        None for a commit without the file (an empty tuple of entries: unborn)."""
+        root = Path(tempfile.mkdtemp(prefix="base-", dir=self.dir))
+        run = lambda *a: subprocess.run(["git", *a], cwd=root, check=True, env=self.GIT_ENV, capture_output=True)
+        run("init", "-q")
+        f = root / "docs" / ".coverage-baseline.json"
+        f.parent.mkdir()
+        for i, listed in enumerate(baselines):
+            if listed is None:
+                (root / "docs" / "x.md").write_text(str(i), encoding="utf-8")
+                f.unlink(missing_ok=True)
+            else:
+                f.write_text(json.dumps({"undocumented": listed}), encoding="utf-8")
+            run("add", "-A")
+            run("commit", "-q", "-m", str(i), "--no-verify")
+        return root
+
+    def reference(self, root: Path, candidate: list | None = None):
+        """baseline_reference() against ROOT, with the worktree copy set to CANDIDATE."""
+        saved = (B.REPO, B.ROOT, B.SOURCE, B._FILESET, B._DIRSET)
+        try:
+            B.REPO, B.SOURCE, B._FILESET, B._DIRSET = root, "worktree", None, None
+            B.set_root(root)
+            if candidate is not None:
+                B.BASELINE.parent.mkdir(exist_ok=True)
+                B.BASELINE.write_text(json.dumps({"undocumented": candidate}), encoding="utf-8")
+            errors: list[str] = []
+            return B.baseline_reference(errors), errors
+        finally:
+            B.REPO, B.ROOT, B.SOURCE, B._FILESET, B._DIRSET = saved
+            B.set_root(B.ROOT)
+
+    def test_baseline_reference_against_real_history(self):
+        full = self.repo(["a", "b"], ["a"])
+        self.assertEqual(self.reference(full), ({"a", "b"}, []))            # unchanged: compared with HEAD~1
+        self.assertEqual(self.reference(full, ["a", "c"]), ({"a"}, []))     # an edit: compared with HEAD
+        self.assertEqual(self.reference(self.repo(["a"])), (None, []))      # HEAD is a root commit
+        self.assertEqual(self.reference(self.repo(None), ["a"]), (None, []))    # committed without the file
+        self.assertEqual(self.reference(self.repo(), ["a"]), (None, []))    # unborn HEAD
+        # A depth-1 clone has HEAD and lacks HEAD~1: that is not a first creation.
+        shallow = self.dir / "shallow"
+        subprocess.run(["git", "clone", "-q", "--depth", "1", full.as_uri(), str(shallow)], check=True,
+                       capture_output=True, env=self.GIT_ENV)
+        got, errors = self.reference(shallow)
+        self.assertIsNone(got)
+        self.assertTrue(any("shallow clone lacks HEAD~1" in e for e in errors), errors)
+        # A parent git cannot read is not a first creation either.
+        broken = Path(shutil.copytree(full, self.dir / "broken"))
+        parent = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=broken, check=True, capture_output=True,
+                                text=True).stdout.strip()
+        (broken / ".git" / "objects" / parent[:2] / parent[2:]).unlink()
+        got, errors = self.reference(broken, ["a"])   # the candidate matches HEAD, so HEAD~1 is needed
+        self.assertIsNone(got)
+        self.assertTrue(any("parent that git cannot read" in e for e in errors), errors)
+
+    def test_icon_renders_without_sources_are_an_error(self):
+        saved = B.ROOT
+        try:
+            root = self.dir / "r"
+            (root / "resources" / "icons" / "color").mkdir(parents=True)
+            B.ROOT = root
+            errors: list[str] = []
+            B.check_icon_renders(errors)
+            self.assertEqual(errors, [])                          # no icon set at all: nothing to check
+            (root / "resources" / "icons" / "color" / "SOURCES.sha256").write_text("x  src/a.svg\n")
+            B.check_icon_renders(errors)
+            self.assertTrue(any("resources/icons/src is missing" in e for e in errors), errors)
+        finally:
+            B.ROOT = saved
+
+    def test_release_and_freshness_readers_fail_closed(self):
+        import releases as R
+        import freshness as F
+        with self.assertRaises(R.StoreError):
+            R.site_files(self.dir / "absent")
+        self.assertEqual(F._parse_cards(None), {})              # git said "missing": no card then
+        with self.assertRaises(RuntimeError):
+            F._parse_cards("{not json")                          # "unknown", never "fresher than it is"
+        with self.assertRaises(RuntimeError):
+            F._parse_cards("")
+        orig = R.subprocess.run
+        R.subprocess.run = lambda *a, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired(a[0], k["timeout"]))
+        try:
+            with self.assertRaises(R.StoreError):
+                R.render_release("v1", self.dir)
+        finally:
+            R.subprocess.run = orig
+
+    def gone(self, pid: int, within: float = 5.0) -> bool:
+        stop = time.monotonic() + within
+        while time.monotonic() < stop:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            with contextlib.suppress(ChildProcessError):
+                os.waitpid(pid, os.WNOHANG)
+            time.sleep(0.05)
+        return False
+
+    def test_a_timed_out_git_is_bounded(self):
+        # git is killed and reaped at its timeout and the call raises. A helper it
+        # started can outlive it (parked in section 32); the supervisor case below
+        # shows the process group still takes it down.
+        import releases as R
+        pidfile = self.dir / "helper.pid"
+        start = time.monotonic()
+        try:
+            with self.assertRaises(R.StoreError) as cm:
+                R.git("-c", f"alias.slow=!sh -c 'echo $$ > {pidfile}; exec sleep 30'", "slow", timeout=1)
+            self.assertIn("did not finish within 1 s", str(cm.exception))
+            self.assertLess(time.monotonic() - start, 5.0)
+        finally:
+            with contextlib.suppress(OSError, ValueError):
+                os.kill(int(pidfile.read_text()), 9)
+        self.assertEqual(R.git("rev-parse", "--is-inside-work-tree").stdout.strip(), "true")
+        with self.assertRaises(subprocess.CalledProcessError):
+            R.git("rev-parse", "--verify", "no-such-ref-anywhere")
+        self.assertEqual(R.git("rev-parse", "--verify", "no-such-ref-anywhere", check=False).returncode, 128)
+
+    def test_a_stalled_blob_reader_ends_at_its_limit(self):
+        import freshness as F
+        orig = F.subprocess.Popen
+        F.subprocess.Popen = lambda cmd, **k: orig(["sh", "-c", "exec sleep 30"], **k)   # a cat-file that never answers
+        try:
+            reader = F._BlobReader(limit=0.5)
+        finally:
+            F.subprocess.Popen = orig
+        start = time.monotonic()
+        with self.assertRaises(RuntimeError) as cm:
+            reader.read("HEAD:x")
+        self.assertIn("did not answer within", str(cm.exception))
+        self.assertLess(time.monotonic() - start, 5.0)
+        with self.assertRaises(RuntimeError):
+            reader.close()                                   # killed: a non-zero exit is reported, not hidden
+
+    def test_a_shared_waiver_excuses_neither_identical_finding(self):
+        found = self.C.check_file(self._write("def f(p):\n    p.wait(); p.wait()  # deadline: a comment owned by one\n"),
+                                  "bounded-wait")
+        self.assertEqual(len(found), 1, found)                     # both land on line 2 with one message
+        self.assertIn("claimed by 2 findings", found[0][1])
+        found = self.C.check_file(self._write("def f(a):\n    return (1 if a.exists() else '', 2 if a.exists() else '')"
+                                              "  # fail-direction: shared by two ternary fallbacks\n"), "fail-direction")
+        self.assertTrue(found and "claimed by 2 findings" in found[0][1], found)
+
+    def test_malformed_card_history_reads_unknown(self):
+        import freshness as F
+        card = {"title": "T", "text": "x", "owners": [], "sources": [], "reviewed": "2026-01-01"}
+        for bad in ('{"cards": "invalid"}', '{"cards": [null]}', '{"cards": null}', '[]'):
+            root = Path(tempfile.mkdtemp(prefix="cards-", dir=self.dir))
+            run = lambda *a: subprocess.run(["git", *a], cwd=root, check=True, env=self.GIT_ENV, capture_output=True)
+            run("init", "-q")
+            f = root / "gh-pages" / "features.json"
+            f.parent.mkdir()
+            for text in (bad, json.dumps({"cards": [card]})):
+                f.write_text(text, encoding="utf-8")
+                run("add", "-A")
+                run("commit", "-q", "-m", "c", "--no-verify")
+            saved = F.REPO
+            F.REPO = root
+            try:
+                recs = F.check_cards("worktree", shallow=False, in_merge=False)
+            finally:
+                F.REPO = saved
+            self.assertEqual([(r.name, r.state) for r in recs], [("T", "unknown")], (bad, recs))
+            self.assertIn("not a list of card objects" if bad != "[]" else "card objects", recs[0].error)
+
+    def test_a_supervisor_kill_takes_releases_git_with_it(self):
+        # verify_live kills its child's process group at the run deadline; a git that
+        # releases.py started must be in that group, or it outlives the verifier.
+        import verify_live as V
+        pidfile = self.dir / "supervised.pid"
+        child = ("import sys; sys.path.insert(0, %r)\nimport releases\n"
+                 "releases.git('-c', \"alias.slow=!sh -c 'echo $$ > %s; exec sleep 30'\", 'slow', timeout=60)\n"
+                 % (str(HERE.parent), pidfile))
+        saved = V.KILL_GRACE
+        V.KILL_GRACE = 1.0
+        try:
+            stop = time.time() + 2.0
+            self.assertIsNone(V.run_bounded([sys.executable, "-c", child], stop, self.dir))
+        finally:
+            V.KILL_GRACE = saved
+        self.assertTrue(pidfile.exists(), "the helper never started")
+        self.assertTrue(self.gone(int(pidfile.read_text())), "git's helper outlived the supervisor's kill")
+
+    def test_a_detached_descendant_cannot_hold_run_bounded(self):
+        import verify_live as V
+        pidfile = self.dir / "detached.pid"
+        # The child forks a grandchild that leaves the process group (setsid) with the
+        # pipes still open, then outlives the deadline itself.
+        child = ("import os, sys, time\n"
+                 "if os.fork() == 0:\n"
+                 "    os.setsid()\n"
+                 f"    open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
+                 "    time.sleep(30)\n"
+                 "    os._exit(0)\n"
+                 "time.sleep(30)\n")
+        saved = V.KILL_GRACE
+        V.KILL_GRACE = 0.5
+        try:
+            start = time.monotonic()
+            self.assertIsNone(V.run_bounded([sys.executable, "-c", child], time.time() + 1.0, self.dir))
+            self.assertLess(time.monotonic() - start, 5.0)
+        finally:
+            V.KILL_GRACE = saved
+            with contextlib.suppress(OSError, ValueError):
+                os.kill(int(pidfile.read_text()), 9)
 
 
 if __name__ == "__main__":

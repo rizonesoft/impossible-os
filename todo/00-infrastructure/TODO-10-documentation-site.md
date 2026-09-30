@@ -82,7 +82,7 @@ file_patterns:
 | 💎  |  29   | §29 Retained release trees: snapshots, manifest, live verification       | §24                         |  [x]   |
 | 💎  |  30   | §30 SDK release docs and API reference                                   | §29, D12 T06 §2, D12 T06 §8 |  [/]   |
 | 💎  |  31   | §31 Docs search quality and automated accessibility audit                | §25                         |  [x]   |
-| ⭐  |  32   | §32 Review-class nets: fail direction and bounded waits in site tooling  | §28, §29                    |  [ ]   |
+| ⭐  |  32   | §32 Review-class nets: fail direction and bounded waits in site tooling  | §28, §29                    |  [x]   |
 | 💎  |  33   | §33 Docs search typo tolerance and wider accessibility audit             | §31                         |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
@@ -1445,13 +1445,30 @@ The §25 index finds every word, but ranking is plain substring matching with th
 
 Promotion of two review classes into automation under the reviewer-to-automation rule, the way §28 promoted `parser-approximation`. Measured 2026-09-30 with `python3 scripts/overnight/finding-ledger.py classes`: `fail-open` 12 fixed and `unbounded-wait` 4 fixed, all in this TODO and nearly all from §29, where missing or unreadable state kept being read as "empty" (a store without a manifest, a 404 picker, an absent branch) and waits had no overall bound (a trickling HTTP body, a stalled git fetch). `toctou` (4 fixed) is recorded but not promoted: whether two reads can disagree depends on what happens between them, which a syntactic check cannot see. Capture-file measurement: `todo/overnight-runner-improvements/overnight-runner-improvements-v21.md` "the lost-store proof moved four times".
 
-- [ ] Lint check over `scripts/site/*.py` (AST): an `except` handler or a missing-input branch that returns an empty value (`[]`, `{}`, `set()`, `None`, `""`) needs a `# fail-direction: <why empty is safe>` comment, or the check fails
-  - Control fixture with marked lines that must fire (`except OSError: return []`) and must not (re-raise, a waived handler), run like Check 31's `--control`.
-- [ ] Lint check over `scripts/site/*.py` (AST): every `urllib.request.urlopen`, `subprocess.run`/`Popen` and `git` helper call passes a `timeout=` or sits under a caller-owned deadline named by a `# deadline: <owner>` comment
-- [ ] Wire both into `scripts/lint.sh` beside Check 31 and into `bash scripts/test-tooling.sh`, then waive or fix every current hit with its reason
-- [ ] Commit: `"site: fail-direction and bounded-wait lint for site tooling"`
+- [x] Check 32 (`scripts/site/check_nets.py --rule fail-direction`): an empty value on an `except` or missing-input path needs `# fail-direction: <why>`
+  - Paths: `except` handlers; `if` branches testing `.exists()`, `.is_file()`, `.returncode`, `subprocess.run` or a local helper returning one; probed ternaries (lambda bodies included); `contextlib.suppress`.
+  - A branch that first `errors.append`s the failure is failing closed and exempt (not `extend`, which may add nothing); `(x := None)` is its value.
+  - Control: 42 marked lines in `scripts/site/tests/fixtures/fail_direction/cases.py`; a detector that stops seeing probes fails it (mutation tested).
+- [x] Check 33 (`--rule bounded-wait`): `subprocess.run`, `.wait()`, `.join()`, `.communicate()` need a finite timeout or `# deadline: <owner>`
+  - `None`, a `None` default or ternary arm, a walrus `None`, a splat, or a name the scope or an enclosing one binds to those is not finite; `Popen` and HTTP (`urlopen`, any `build_opener` receiver) always name the owner.
+  - A waiver belongs to one finding (its first line, the line above, or a span line no other finding starts on); one claimed twice excuses neither; imports and names resolve per lexical scope (class bodies, comprehensions, `global`, aliases and defaults read where written). Control: 79 marked lines.
+- [x] Wired as lint Checks 32-33 beside Check 31 (`SKIP_LINT_SITE_NETS=1`); `FailureNets` in `scripts/site/tests/test_build.py` runs under `test-tooling.sh`; every first-run hit (26 per rule) fixed or waived with its reason
+  - Fixed fail-open: `baseline_reference` (a shallow clone or unreadable parent was a first creation; `commit_state` proves unborn or root), icon renders left without sources, `releases.site_files` on a missing site, unparseable or malformed card history (now "unknown").
+  - Fixed unbounded: timeouts on every git, node, gh and rsvg call; release git and renders raise `StoreError`; `verify_live` fetch and compare always carry a deadline; `linkcheck` `take()` never sleeps past it; the freshness batch reader has a kill timer.
+- [/] Kill the transport helpers of a git call that timed out on its own; blocked: needs per-call containment the site tooling lacks
+  - It must survive reparenting (a child subreaper or a cgroup) and stay inside the supervisor's process group; a separate group escaped `verify_live` (round 2). In CI the helper dies with the job.
+- [x] Commit: `"site: fail-direction and bounded-wait lint for site tooling"`
 
 **Test checkpoint:** each control fixture fires on its marked lines and no others; `bash scripts/lint.sh` passes on the tree with every waiver carrying a reason. Test on: WSL2 dev host.
+
+> **Test runner:** `python3 scripts/site/tests/test_build.py FailureNets` (15 tests: controls, mutants, rule edges, real-git baseline history, timeout and supervisor cases) and `python3 scripts/site/check_nets.py --rule <fail-direction|bounded-wait> --control` (42 and 79 marked lines) on the WSL2 dev host; no kernel test surface (host tooling).
+
+> **Notes:**
+> - **What shipped:** `scripts/site/check_nets.py` (two AST rules with comment waivers and fixture controls) as lint Checks 32-33, plus the fail-closed and bounded-wait fixes its first run found in the site scripts.
+> - **Integration:** `bash scripts/lint.sh` runs both rules and both controls on every commit (~0.3 s); `test-tooling.sh` runs `FailureNets` through the site suite.
+> - **Downstream:** a new empty fallback or unbounded wait in `scripts/site/*.py` now fails at commit instead of in a Codex round; `toctou` stays unpromoted (not syntactic).
+> - **Canonical doc:** [Documentation Site](../../docs/infrastructure/documentation-site.md), "How does the site tooling avoid failing open or hanging?".
+> - **Scope boundary:** one file's syntax (no `getattr`/`partial`, no probe stored then tested, no `nonlocal` write-back, no loop or comprehension targets); a helper that outlives a timed-out git is the parked item above.
 
 ---
 

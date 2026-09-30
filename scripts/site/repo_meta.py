@@ -96,7 +96,10 @@ def diff(want: dict, have: dict) -> list[str]:
 
 
 def gh(*args: str) -> str:
-    r = subprocess.run(["gh", *args], capture_output=True, text=True)
+    try:
+        r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        raise SystemExit(f"repo_meta: gh {' '.join(args[:2])} did not answer within 120 s") from None
     if r.returncode != 0:
         raise SystemExit(f"repo_meta: gh {' '.join(args[:2])} failed: {r.stderr.strip()}")
     return r.stdout

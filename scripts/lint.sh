@@ -2894,6 +2894,43 @@ else
 fi
 
 # ============================================================================
+# Checks 32-33: the site tooling fails closed and bounds every wait
+# ============================================================================
+# scripts/site/check_nets.py, promoted from the `fail-open` (12 fixed) and
+# `unbounded-wait` (4 fixed) review classes by 2026-09-30. Check 32: an empty
+# value on an except or missing-input path carries `# fail-direction: <why>`.
+# Check 33: every subprocess, pipe, thread or HTTP wait has a finite timeout or
+# a `# deadline: <owner>` naming the caller-owned bound. Each control fixture
+# must be judged exactly as marked, so a detector that goes quiet is an ERROR.
+# ~0.3s together. Skip via SKIP_LINT_SITE_NETS=1.
+if [ "${SKIP_LINT_SITE_NETS:-0}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Checks 32-33 (site fail direction, bounded waits) skipped via SKIP_LINT_SITE_NETS=1"
+    WARNINGS=$((WARNINGS + 1))
+elif [ ! -f "$REPO_ROOT/scripts/site/check_nets.py" ]; then
+    :   # throwaway fixture repos (scripts/test-tooling.sh) carry no site tooling
+else
+    for NETS_SPEC in "32:fail-direction:mark why an empty value is the safe reading" \
+                     "33:bounded-wait:pass a finite timeout or name the caller-owned deadline"; do
+        NETS_NUM=${NETS_SPEC%%:*}; NETS_REST=${NETS_SPEC#*:}
+        NETS_RULE=${NETS_REST%%:*}; NETS_HINT=${NETS_REST#*:}
+        NETS_RC=0
+        NETS_OUT=$(python3 "$REPO_ROOT/scripts/site/check_nets.py" --rule "$NETS_RULE" 2>&1) || NETS_RC=$?
+        if [ "$NETS_RC" -ne 0 ]; then
+            printf '%s\n' "$NETS_OUT" | sed 's/^/  /'
+            echo -e "${RED}error${NC}: Check $NETS_NUM (site $NETS_RULE) -- $NETS_HINT"
+            ERRORS=$((ERRORS + 1))
+        fi
+        NETS_RC=0
+        NETS_OUT=$(python3 "$REPO_ROOT/scripts/site/check_nets.py" --rule "$NETS_RULE" --control 2>&1) || NETS_RC=$?
+        if [ "$NETS_RC" -ne 0 ]; then
+            printf '%s\n' "$NETS_OUT" | sed 's/^/  /'
+            echo -e "${RED}error${NC}: Check $NETS_NUM (site $NETS_RULE) -- the control fixture was misjudged; the detector cannot be trusted"
+            ERRORS=$((ERRORS + 1))
+        fi
+    done
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
