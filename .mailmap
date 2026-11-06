@@ -1,0 +1,4 @@
+# A test fixture's identity leaked into this repo's git config from 2026-08-08 to
+# 2026-11-06, so 674 commits on main carry it. Those commits are not rewritten;
+# this maps them for git log, blame and shortlog. GitHub's pages do not read it.
+Derick Payne <8640728+rizonesoft@users.noreply.github.com> s24 magic fixture <t@example.invalid>

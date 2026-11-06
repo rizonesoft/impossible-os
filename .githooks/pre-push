@@ -28,6 +28,15 @@ STDIN_DATA="$(cat)"
 
 EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
+# ---- No test-fixture identity reaches the remote ------------------------------
+# Runs first and costs one `git log`, so a bad author is refused before any suite.
+if [ "${SKIP_PUSH_IDENTITY_CHECK:-}" != "1" ] && [ -f "$REPO_ROOT/scripts/check-push-identity.py" ]; then
+  while read -r _idl _idloid _idr _idroid; do
+    [ -n "${_idloid:-}" ] || continue
+    python3 "$REPO_ROOT/scripts/check-push-identity.py" "$_idloid" "$_idroid" || exit 1
+  done <<< "$STDIN_DATA"
+fi
+
 # ---- Branch policy: main + gh-pages only -------------------------------------
 #
 # This repo is main-only by decision (CI fires on main; long-lived branches were
