@@ -8616,7 +8616,10 @@ gate_seed_tree() {   # $1 = destination path
     # (Codex perf, section 16). Hardlinks are safe here: git never rewrites an
     # existing object, the fixture only ADDS commits, and removing the clone
     # cannot affect the source through a hardlink.
-    git clone --quiet --local "$REPO_ROOT" "$1" >/dev/null 2>&1 || return 1
+    # No explicit --local: a path clone already hardlinks, and only the explicit flag
+    # dies when it cannot. /tmp is tmpfs on Ubuntu 26.04, so that made every fixture
+    # clone fail; left implicit, git falls back to a copy.
+    git clone --quiet "$REPO_ROOT" "$1" >/dev/null 2>&1 || return 1
     (
         cd "$1" || exit 1
         git config user.email "test@example.invalid"
@@ -24767,14 +24770,18 @@ S30_MUT="$TMP_DIR/query_s30_mut.py"
 python3 - "$QUERY_PY" "$S30_MUT" <<'MUTEOF'
 import sys, pathlib
 src = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-needle = "                   history=profile.requires_history)"
+needle = "                   history=profile.requires_history and check_stale)"
 assert src.count(needle) == 1, f"s30 mutation needle appears {src.count(needle)}x"
 pathlib.Path(sys.argv[2]).write_text(
     src.replace(needle, "                   history=False)", 1), encoding="utf-8")
 MUTEOF
 S30D=$(s30_repo)
 S30D_N=$(s30_reruns "$S30D" stale 'git commit -q --amend -m "c0 reworded"' 0 "$S30_MUT")
-if [ "$S30D_N" = "0" ]; then
+# A stale needle wrote no mutant, and a query that cannot start re-runs nothing, so
+# this used to pass while proving nothing. No mutant is a failure, not a pass.
+if [ ! -s "$S30_MUT" ]; then
+    t_fail "section 30: the history-axis mutant was not written (stale needle?)"
+elif [ "$S30D_N" = "0" ]; then
     t_pass "section 30: MUTATION -- with the history axis disarmed the amend is invisible again (fixture is sensitive)"
 else
     t_fail "section 30: disarmed mutant still re-ran $S30D_N time(s); 30a proves nothing"
