@@ -498,7 +498,7 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 > - **Canonical doc** -- `include/kernel/except.h` VEH shared ABI block.
 > - **Scope boundary** -- §10 owns the shared node/disposition ABI; TODO-04 §5 owns the list head, lock, add/remove APIs, and the walk; TODO-11 owns the TEB layout (no VEH field added).
 > **Verified:** 2026-07-19 | commit `6bf93677` | 4/4 items | build OK | tests 387/387 PASS
-> **Accepted:** [H] VEH re-entrancy/lifetime -- a handler may call `RemoveVectoredExceptionHandler` or fault into nested dispatch, so the 24-byte node is provisional; the re-entrant-dispatch protocol is ntdll's -> XREF: `12-user-platform-sdk/TODO-04 §5` (item: "Re-entrant dispatch + removal safety" at line 290)
+> **Accepted:** [H] VEH re-entrancy/lifetime -- a handler may call `RemoveVectoredExceptionHandler` or fault into nested dispatch, so the 24-byte node is provisional; the re-entrant-dispatch protocol is ntdll's -> XREF: `12-user-platform-sdk/TODO-04 §5` (item: "Re-entrant dispatch + removal safety" at line 293)
 > **Quality reviewed:** 2026-07-19 | Codex 6x (design, adversarial, re-adversarial, consistency, perf) | 4H+3M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"rtl: implement Vectored Exception Handler (VEH) list"`
@@ -605,7 +605,7 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 > **Verified:** 2026-07-18 | ship `c2d25f63` + review fixes | 4/4 items | build OK | smoke PASS (KVM 2.66s) | 21775 kernel + 16 user PASS
 > **Accepted:** [H] ALPC recv raw-`memcpy` concurrent-unmap DoS (pre-existing; §13 provides the fix primitive, does not regress it) -> XREF: `02-kernel-core/TODO-24 §7` (item: "Recv-buffer TOCTOU DoS: `alpc_receive_only` + `alpc_sync_request`" at line 311)
 > **Accepted:** [H] `KERNEL_ACCESS_USER_BEGIN/END` BSP-global `cpu_has` SMAP gate #UDs on a feature-skewed AP (shared macro; `copy_*_user` affected identically) -> XREF: `02-kernel-core/TODO-10 §2` (item: "`KERNEL_ACCESS_USER_BEGIN/END` gate on BSP-global `cpu_has`" at line 143)
-> **Accepted:** [H] Fixed-size query handlers probe the raw user `Length`, so §13's full-range `ProbeForWrite` touch is an O(pages) DoS (caller-side; NtQueryTimer exemplar) -> XREF: `02-kernel-core/TODO-12 §10` (item: "Fixed-size query handlers probe the raw user `Length`" at line 549)
+> **Accepted:** [H] Fixed-size query handlers probe the raw user `Length`, so §13's full-range `ProbeForWrite` touch is an O(pages) DoS (caller-side; NtQueryTimer exemplar) -> XREF: `02-kernel-core/TODO-12 §10` (item: "Fixed-size query handlers probe the raw user `Length`" at line 550)
 > **Quality reviewed:** 2026-07-18 | Codex 10x (design, adversarial x4, re-adversarial, consistency x2, perf x2) | 1C+3H+4M fixed, 3H accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"kernel: add try_copy_{from,to}_user + ProbeForWrite page-touch; re-register #PF"`

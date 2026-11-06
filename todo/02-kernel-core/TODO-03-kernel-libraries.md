@@ -310,8 +310,8 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > - Canonical doc: `include/kernel/json.h`.
 > - Scope boundary: cJSON internals stay vendored (`src/libs/cjson/`); crypto/TLS in §5/§7, compression in §3/§4.
 > **Verified:** 2026-06-20 | commit `bae54b79` | 7/9 items | build OK | tests 394 kernel + 16 user PASS (TCG)
-> **Deferred:** [M] cJSON writes shared `global_error` per parse (SMP race, not reentrant) (reason: benign today -- no wrapper consumer reads the cJSON error pointer; locking across a kmalloc-heavy parse is worse) -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §6 (item: "Make kernel cJSON parse reentrant" at line 292)
-> **Deferred:** [M] near-cap JSON of many small nodes can transiently pressure the 2 MiB heap (reason: per-alloc bounded by kmalloc 4 KiB ceiling + graceful failure; only file consumer is self-written boot-time cache) -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §6 (item: "Bound parse heap for untrusted JSON" at line 294)
+> **Deferred:** [M] cJSON writes shared `global_error` per parse (SMP race, not reentrant) (reason: benign today -- no wrapper consumer reads the cJSON error pointer; locking across a kmalloc-heavy parse is worse) -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §6 (item: "Make kernel cJSON parse reentrant" at line 293)
+> **Deferred:** [M] near-cap JSON of many small nodes can transiently pressure the 2 MiB heap (reason: per-alloc bounded by kmalloc 4 KiB ceiling + graceful failure; only file consumer is self-written boot-time cache) -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §6 (item: "Bound parse heap for untrusted JSON" at line 295)
 > **Quality reviewed:** 2026-06-20 | Codex 8x (design, adversarial-impl, adversarial, consistency, perf, re-adversarial) | 2H+3M fixed, 2M deferred | scope: kernel-code-quality
 
 ---
@@ -351,7 +351,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 **Test checkpoint:** `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` return 0; kernel links with `src/libs/mbedtls/` objects only via this port; serial shows entropy hook OK. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] Source now vendored 2026-06-20 (Mbed TLS 3.6.2 LTS in `src/libs/mbedtls/`), so the prior fetch-blocker is cleared -- but the freestanding TLS port is large (config trim to the required subset, entropy hook to `csprng_fill`, CSPRNG/AES/SHA wiring, record-layer interop tests) and has no in-tree consumer until networking. Deferred on scope/effort, not on a blocker; pull forward when `07-networking/TODO-03 §3` (HTTPS) needs it. The tree is excluded from the C-source auto-glob until ported. -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §7 (item: "Clone Mbed TLS source into `src/libs/mbedtls/`" at line 323)
+> **Deferred:** [H] Source now vendored 2026-06-20 (Mbed TLS 3.6.2 LTS in `src/libs/mbedtls/`), so the prior fetch-blocker is cleared -- but the freestanding TLS port is large (config trim to the required subset, entropy hook to `csprng_fill`, CSPRNG/AES/SHA wiring, record-layer interop tests) and has no in-tree consumer until networking. Deferred on scope/effort, not on a blocker; pull forward when `07-networking/TODO-03 §3` (HTTPS) needs it. The tree is excluded from the C-source auto-glob until ported. -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §7 (item: "Clone Mbed TLS source into `src/libs/mbedtls/`" at line 324)
 
 ---
 

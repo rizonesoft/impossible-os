@@ -123,7 +123,7 @@ Select the best monotonic source available: invariant TSC → HPET → ACPI PMTM
 > - Canonical: `src/kernel/time/mono_clock.c`.
 > - Scope boundary: §2 owns source selection + the PMTMR clocksource; the drift watchdog is §18; ordered-`rdtsc` / AP-TSC-sync is §3.
 > **Verified:** 2026-06-27 | commit `54345492` | 8/8 items | build OK | 208 kernel + 16 user PASS | smoke PASS (TCG 2.6s)
-> **Accepted:** [H] a multi-second tick quiesce can lose 24-bit PMTMR wraps (the monotonic floor blocks backward steps meanwhile) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §18 (item: "PMTMR epoch refresh across tick quiesce" at line 540)
+> **Accepted:** [H] a multi-second tick quiesce can lose 24-bit PMTMR wraps (the monotonic floor blocks backward steps meanwhile) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §18 (item: "PMTMR epoch refresh across tick quiesce" at line 541)
 > **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1H accepted (per-tick PMTMR-read deferral resolved in §16: read retained, amortized) | scope: kernel-code-quality
 
 ---
@@ -449,7 +449,7 @@ When the system enters S3 (suspend-to-RAM) or S4 (hibernate), the timer interrup
 > - Canonical: `src/kernel/time/wall_clock.c` (primitive); resume owner is power management.
 > - Scope boundary: §14 owns the bias-application primitive; the S3/S4 resume hook + RTC wake alarm are TODO-26 (power management).
 > **Verified:** 2026-06-27 | primitive shipped (§7) | 1/5 items | build OK | resume path deferred
-> **Deferred:** [H] resume bias tracking (RTC/UEFI sleep-delta -> `ke_suspend_bias_update`, wall-clock base advance, logging, RTC wake alarm) -- needs the S3/S4 resume path -> XREF: 02-kernel-core/TODO-26-power-management.md §3 (item: "`pm_s3_wakeup_entry`" at line 263)
+> **Deferred:** [H] resume bias tracking (RTC/UEFI sleep-delta -> `ke_suspend_bias_update`, wall-clock base advance, logging, RTC wake alarm) -- needs the S3/S4 resume path -> XREF: 02-kernel-core/TODO-26-power-management.md §3 (item: "`pm_s3_wakeup_entry`" at line 264)
 > **Quality reviewed:** 2026-06-27 | scope: N/A (infra-blocked defer; the shipped `ke_suspend_bias_update` primitive was quality-reviewed under §7)
 
 ---
@@ -560,7 +560,7 @@ Continuously cross-check the active monotonic clock source against a reference a
 > - Canonical: `src/kernel/time/mono_clock.c`.
 > - Scope boundary: §18 owns clocksource qualification + drift demotion; NTP wall-time discipline is §19; AP TSC sync stays §3-deferred; S3 resume is power-management.
 > **Verified:** 2026-06-27 | commit `10613f9a` | 6/9 items | build OK | tests 291/291 PASS | smoke PASS (TCG 2.53s)
-> **Deferred:** [H] PMTMR-reference watchdog monitoring (auto-monitoring is HPET-reference-only; PMTMR wrap unboundable by an independent continuous clock) -> XREF: 02-kernel-core/TODO-08 §18 (item: "PMTMR-reference watchdog monitoring" at line 542)
+> **Deferred:** [H] PMTMR-reference watchdog monitoring (auto-monitoring is HPET-reference-only; PMTMR wrap unboundable by an independent continuous clock) -> XREF: 02-kernel-core/TODO-08 §18 (item: "PMTMR-reference watchdog monitoring" at line 543)
 > **Deferred:** [M] per-CPU/batched `mono_floor` fast path for the always-on TSC read -> XREF: 02-kernel-core/TODO-08 §18 (item: "Optimization (perf review [M])" at line 542)
 > **Quality reviewed:** 2026-06-27 | Codex 12x (design, adversarial, consistency, perf, re-adversarial) | 8H+3M+1L fixed, 3 deferred | scope: kernel-code-quality
 

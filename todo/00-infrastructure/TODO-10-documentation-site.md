@@ -1432,7 +1432,7 @@ The §25 index finds every word, but ranking is plain substring matching with th
 > - Canonical doc: `docs/infrastructure/docs-search-and-accessibility.md`; pages.yml's deploy needs the `a11y` job (control first, about five minutes).
 > - Out of scope: the NVDA/Orca screen-reader pass stays operator-gated in §25; typo tolerance and auditing the landing pages and forced colours are owned by §33.
 > **Verified:** 2026-09-30 | commit `b540d55a8` | 7/7 items | build OK | site tests 148/148 PASS, a11y control 18/18 planted defects reported, full audit 309 pages x 4 variants plus states no findings, kernel 34646 + 17 user PASS
-> **Deferred:** [M] the computed-style focus check rejects a valid ring layered over a permanent inset shadow (reason: fourth heuristic round; no site CSS uses it) -> XREF: 00-infrastructure/TODO-10 §33 (item: "Judge focus indicators from rendered pixels" at line 1468)
+> **Deferred:** [M] the computed-style focus check rejects a valid ring layered over a permanent inset shadow (reason: fourth heuristic round; no site CSS uses it) -> XREF: 00-infrastructure/TODO-10 §33 (item: "Judge focus indicators from rendered pixels" at line 1485)
 > **Quality reviewed:** 2026-09-30 | Codex 59x (design, test-coverage, adversarial x20, re-adversarial, consistency x18, perf x18) | 2H+59M+6L fixed, 1 open | scope: N/A (host site tooling and docs; no kernel, boot or desktop code)
 
 ---

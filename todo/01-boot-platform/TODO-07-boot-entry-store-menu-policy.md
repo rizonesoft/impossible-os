@@ -254,7 +254,7 @@ Pre-EBS user-visible selector. GOP for graphical, UEFI text protocol + serial mi
 > - Scope boundary: §6 owns renderer + countdown + input + filter; indicators + hotkeys + `hide_when_alone` are §7; demote-not-drop visual is §9.
 
 > **Verified:** 2026-05-09 | commit `b4a076c4` (review fixup over `34ae373c`) | 5/6 items + 1 deferred | build OK | smoke PASS (KVM 2.49s)
-> **Deferred:** [M] Dirty-rectangle repaint for `boot_menu_render` (full-band redraw on 4K GOP causes key-repeat jank) -> XREF: 01-boot-platform/TODO-07 §6 (item: "Dirty-rectangle repaint for `boot_menu_render()`" at line 237)
+> **Deferred:** [M] Dirty-rectangle repaint for `boot_menu_render` (full-band redraw on 4K GOP causes key-repeat jank) -> XREF: 01-boot-platform/TODO-07 §6 (item: "Dirty-rectangle repaint for `boot_menu_render()`" at line 241)
 > **Quality reviewed:** 2026-05-09 | Codex 8x (design + adversarial + test-coverage + 3 re-adversarial + consistency + perf) | 4H+5M fixed, 1M deferred | scope: boot-code-quality
 
 ---
@@ -438,8 +438,8 @@ Per-decision audit. Disk-first (BlackBox JSONL) -- NVRAM is exceptional-only bec
 > - Scope boundary: §12 owns codes + sticky + JSONL + mutation log. §14 flips `last_outcome` (deferred). [`TODO-23`](TODO-23-boot-watchdog.md) produces `watchdog_rollback_request`.
 
 > **Verified:** 2026-05-10 | commit `38517fcc` | 7/7 items | build OK | smoke PASS (KVM 2.41s, seq=1) | tests 32/32 bootcfg + 22 boot_audit
-> **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 592)
-> **Deferred:** [L] Audit JSONL rotation on FAT32 LFN -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit JSONL rotation on FAT32 LFN" at line 594)
+> **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 596)
+> **Deferred:** [L] Audit JSONL rotation on FAT32 LFN -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit JSONL rotation on FAT32 LFN" at line 598)
 > **Quality reviewed:** 2026-05-10 | Codex 12x (design + adversarial 2x + test-coverage + re-adversarial 5x + adversarial-impl 4x + consistency + perf) | 7H+5M+0L fixed, 0 open, 2L deferred-XREF | scope: kernel-code-quality + boot-code-quality
 
 ---
@@ -612,7 +612,7 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
 > - Scope boundary: §17 owns aggregation + status. New tests for covered behavior belong in their owner sections; dual-write testability + FAT32 LFN belong elsewhere.
 
 > **Verified:** 2026-05-19 | commit `27c6d2c8` (impl) + `a6e2124e` (commit-row flip) | 4/14 items + 5 partial + 5 blocked | build OK (no source changes; verified during §16 commit `17ee74f9`) | lint clean
-> **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 592)
+> **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 596)
 > **Deferred:** [L] Audit JSONL rotation on FAT32 LFN -> XREF: 05-storage-filesystems/TODO-04 §16 (item: "Refuses non-first-cluster destinations until cross-cluster LFN removal lands" at line 393)
 > **Quality reviewed:** 2026-05-19 | Codex 8x (adversarial 6x + consistency + perf) | 0C+1H+9M fixed, 0 open | scope: N/A (docs-only aggregation section)
 
@@ -743,7 +743,7 @@ Found by the §19 consistency review, which reproduced it with a 290-byte CRC-co
 > - Scope boundary: the 16 KiB store size cap has host over-cap coverage (`test_validate.py` `_oversize_file`, a 17 KiB store) but no coverage at the boundary on either side and none at all firmware-side; filed as §22, and this section does not touch it.
 
 > **Verified:** 2026-09-05 | commit `598bc0749` | 5/5 items | build OK | 34089 kernel + 17 user tests, 6317 boot-suite, 141 host validator cases, 6 standalone parser cases, smoke matrix 4/4, lint 0 errors
-> **Accepted:** [M] Every store-rejection path logs only to serial, so a rejected store boots the fallback with nothing on screen; the error-screen facility exists but is never invoked (reason: owned by the no-silent-failure TODO, whose Goal sentence covers it) -> XREF: 01-boot-platform/TODO-03-bootloader-error-recovery.md §22 (item: "Render the existing error screen (or a non-fatal variant of it) when the store is rejected, carrying the `boot_entries_reject_code_t` and the `selection_reason`, so the user sees WHICH failure happened rather than a fallback boot" at line 791)
+> **Accepted:** [M] Every store-rejection path logs only to serial, so a rejected store boots the fallback with nothing on screen; the error-screen facility exists but is never invoked (reason: owned by the no-silent-failure TODO, whose Goal sentence covers it) -> XREF: 01-boot-platform/TODO-03-bootloader-error-recovery.md §22 (item: "Render the existing error screen (or a non-fatal variant of it) when the store is rejected, carrying the `boot_entries_reject_code_t` and the `selection_reason`, so the user sees WHICH failure happened rather than a fallback boot" at line 793)
 > **Deferred:** [M] A corrupt store has no shadow copy, no A/B pair and no regeneration route, only one hardcoded fallback entry (reason: needs a model decision this section cannot make) -> XREF: 01-boot-platform/TODO-07-boot-entry-store-menu-policy.md §23 (item: "Decide the model and record it: a shadow copy of the last-known-good store, an A/B pair for the store itself, or regeneration from a source of truth")
 > **Deferred:** [L] The 16 KiB size cap has no boundary coverage on either side and no firmware coverage at all (reason: needs a scratch-backed fixture the 2048-byte static cannot provide) -> XREF: 01-boot-platform/TODO-07-boot-entry-store-menu-policy.md §22 (item: "Kernel cases at 16383, 16384 and 16385 bytes, with the `crc32` header near EOF so the locate is exercised at the boundary too")
 > **Quality reviewed:** 2026-09-05 | Codex 8x (design, test-coverage, adversarial x3, consistency x2, perf x2, re-adversarial) | 0H+7M+2L fixed, 0 open | scope: boot-code-quality

@@ -102,7 +102,7 @@ New header and source file providing the result type, readiness oracle, and prog
 >
 > **Verified:** 2026-06-20 | commit `0d72fce6` | 11/11 items | build OK
 > **Accepted:** [H] async-timeout AP not quiesced before sequential fallback (driver-global corruption, `async_init=1`) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Quiesce the AP on async timeout before sequential fallback" at line 559) (still deferred -- `async_init=1`-only, see §13 Deferred stamp)
-> **Accepted:** [M] `boot_async_group` numeric worst-pick lets BOOT_DEFERRED outrank BOOT_FATAL -> XREF: 02-kernel-core/TODO-01 §13 (item: "Explicit `boot_result_t` severity rank in `boot_async_group`" at line 566) (RESOLVED 2026-06-20 by §13 commit 308eb661: `boot_result_severity()` FATAL>DEGRADED>DEFERRED>OK applied at all 3 worst-pick sites)
+> **Accepted:** [M] `boot_async_group` numeric worst-pick lets BOOT_DEFERRED outrank BOOT_FATAL -> XREF: 02-kernel-core/TODO-01 §13 (item: "Explicit `boot_result_t` severity rank in `boot_async_group`" at line 567) (RESOLVED 2026-06-20 by §13 commit 308eb661: `boot_result_severity()` FATAL>DEGRADED>DEFERRED>OK applied at all 3 worst-pick sites)
 > **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 1M fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -575,8 +575,8 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 
 > **Verified:** 2026-06-20 | commit `308eb661` | 10/13 items | build OK | tests 2836+16 PASS
 > **Deferred:** [H] async timeout marks the AP done+FATAL without quiescing it, so `boot_phase2` reruns storage concurrently (driver corruption) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Quiesce the AP on async timeout before sequential fallback" at line 559)
-> **Deferred:** [H] async storage init runs inside `async_ipi_handler` (interrupt gate, IF cleared), so a sleepable driver (NVMe `sleep_ms`/`hlt`) hangs the AP into the 10s timeout -> XREF: 02-kernel-core/TODO-01 §13 (item: "Run async AP storage init in an IF-enabled worker" at line 567)
-> **Deferred:** [M] async-group `BOOT_DEFERRED` aggregation ranks below DEGRADED with no `boot_phase2` DEFERRED branch, so a not-ready async step records LOADED (latent; no async step returns DEFERRED yet) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Define async-group `BOOT_DEFERRED` aggregation" at line 569)
+> **Deferred:** [H] async storage init runs inside `async_ipi_handler` (interrupt gate, IF cleared), so a sleepable driver (NVMe `sleep_ms`/`hlt`) hangs the AP into the 10s timeout -> XREF: 02-kernel-core/TODO-01 §13 (item: "Run async AP storage init in an IF-enabled worker" at line 568)
+> **Deferred:** [M] async-group `BOOT_DEFERRED` aggregation ranks below DEGRADED with no `boot_phase2` DEFERRED branch, so a not-ready async step records LOADED (latent; no async step returns DEFERRED yet) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Define async-group `BOOT_DEFERRED` aggregation" at line 570)
 > **Quality reviewed:** 2026-06-20 | Codex 6x (adversarial x2, consistency, perf, re-adversarial x2) | 1H+2M fixed, 2H+1M deferred | scope: kernel-code-quality
 
 The default `async_init=0` path (sequential, shipped + tested) is unaffected; all three deferred items gate only the experimental `async_init=1` parallel path. The timeout-publication race (a late AP completion overwriting a fired timeout's FATAL) was fixed this pass with a BSP-local sticky `timed_out` flag.

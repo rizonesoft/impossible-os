@@ -203,7 +203,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Canonical doc:** [`include/kernel/nt/nls_locale.h`](../../include/kernel/nt/nls_locale.h).
 > - **Scope boundary:** §6 owns records + registry-policy query binding + MUI fallback. Privileged setter -> SRM; WM_SETTINGCHANGE -> TODO-15 §25; tz display -> clock-time §5; CP_THREAD_ACP + hive-refresh deferred (blocked).
 > **Verified:** 2026-07-04 | commit `cea10cbc` | 4/9 items | build OK | nls 75/75 PASS
-> **Accepted:** [M] WM_SETTINGCHANGE(intl) locale-change broadcast -> XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserBroadcastSystemMessage" at line 447)
+> **Accepted:** [M] WM_SETTINGCHANGE(intl) locale-change broadcast -> XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserBroadcastSystemMessage" at line 452)
 > **Accepted:** [M] locale-formatted timezone display names -> XREF: 08-graphics-ui/TODO-12-clock-time.md §5 (item: "Timezone database" at line 49)
 > **Deferred:** [M] privileged NtSetDefaultLocale/UILanguage binding stays fail-closed pending the SRM privilege check -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "Registry policy" at line 186)
 > **Deferred:** [M] per-thread CP_THREAD_ACP wiring needs per-thread locale storage -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "Per-thread `CP_THREAD_ACP`" at line 191)
