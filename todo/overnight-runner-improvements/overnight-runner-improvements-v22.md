@@ -60,6 +60,11 @@ v21 closed 10 resolved, 3 rejected, 0 not reproduced, 1 carried. The successor i
 - [ ] Add a clean-container tier (`CI_CONTAINER=1`) beside `CI_PARITY=1`, running the suites in the pinned CI image before a push
   - Operator-approved 2026-11-06. It would have caught the `apt-key` removal locally; the local gates remain and CI stays the authority, because a container pass only predicts the verdict. Settled by building it.
 
+- [ ] CI's LLVM install stalls intermittently on the Azure Ubuntu mirror: seen twice in about ten runs on 2026-11-06, once using `Build`'s whole 40 minutes
+  - The step's 10-minute limit now fails fast and shows it stuck after the `llvm-19-dev` download (47 MB). `Acquire::http::Timeout=30` did not break the stall. Inferred, not tested: `--no-install-recommends` could avoid that package, since a clean-container install with that flag took 21 s. A stalled `Build` reads as `cancelled`, not red, so `ci-check.py` reports a completed drought rather than `ours_red`. Settled by measuring how often it recurs, then trimming the package set or retrying the step.
+- [ ] Split the tooling pack out of `Build Impossible OS` into its own job, so a failure shows sooner and the OS verdict stops waiting about 20 minutes behind it
+  - Operator-raised 2026-11-06: each CI-only failure cost a 30-minute cycle. Keep the required check's name stable when splitting. The clean-container tier above removes most of those cycles; this shortens the rest.
+
 ## Standing measurement obligations
 
 Carry the baselines forward. A measurement without one is an anecdote.
