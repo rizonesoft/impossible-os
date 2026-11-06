@@ -15,4 +15,4 @@
 #
 # Recorded 2026-07-27 from the local ubuntu-24.04 apt package; ubuntu-latest was
 # on the same package line at the time. Confirm against a CI log on next refresh.
-8.2.2
+10.2.1
