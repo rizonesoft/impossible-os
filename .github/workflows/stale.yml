@@ -23,7 +23,7 @@ env:
 jobs:
   stale:
     name: Close Stale Issues & PRs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - uses: actions/stale@v9

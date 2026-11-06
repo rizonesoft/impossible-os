@@ -42,7 +42,7 @@ env:
 jobs:
   build:
     name: Build Impossible OS
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # A runaway backstop, NOT a performance budget -- and it has now been eaten
     # by suite growth twice. 15 became a live gate on 2026-08-04 (last green
     # 30864937433 at 14m52s, 8s of margin; run 31056543625 then had `Stale-ABI
@@ -336,7 +336,7 @@ jobs:
   # is compiled out under this flavor, so there is nothing to run.
   build-release-flavor:
     name: Build (KERNEL_TESTS=off release flavor)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
 
     steps:

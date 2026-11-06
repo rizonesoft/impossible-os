@@ -49,7 +49,7 @@ env:
 jobs:
   validate:
     name: build + validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
 
     # Cancellable: a newer run's verdict subsumes an older one's, because this
@@ -134,7 +134,7 @@ jobs:
   # ==========================================================================
   identity-gate:
     name: resolver identity gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
 
     concurrency:

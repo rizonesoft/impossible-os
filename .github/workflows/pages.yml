@@ -29,7 +29,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       store: ${{ steps.releases.outputs.store }}
     steps:
@@ -69,7 +69,7 @@ jobs:
   # proves the audit reports planted defects. Runs beside the build; the deploy
   # waits for both. Versions are pinned by scripts/site/a11y/package-lock.json.
   a11y:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -101,7 +101,7 @@ jobs:
 
   deploy:
     needs: [build, a11y]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -115,7 +115,7 @@ jobs:
   # bytes (the build is reproducible); retries cover CDN propagation.
   verify:
     needs: [build, deploy]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
         with:

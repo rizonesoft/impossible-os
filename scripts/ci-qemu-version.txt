@@ -2,7 +2,7 @@
 #
 # NOT the selector. CI_PARITY=1 selects /usr/bin/qemu-system-x86_64 (the distro
 # apt package), which is what .github/workflows/build.yml installs via
-# 'apt-get install qemu-system-x86' on ubuntu-latest. Selecting by PACKAGE rather
+# 'apt-get install qemu-system-x86' on the runner. Selecting by PACKAGE rather
 # than by version is what keeps the gate tracking CI when the runner image moves.
 #
 # This file exists so that move is DETECTED rather than assumed away: when the
@@ -13,6 +13,6 @@
 # and say where it came from. Do not copy the local version without checking CI
 # -- that defeats the entire point of the assertion.
 #
-# Recorded 2026-07-27 from the local ubuntu-24.04 apt package; ubuntu-latest was
-# on the same package line at the time. Confirm against a CI log on next refresh.
+# Recorded 2026-11-06: workflows pin ubuntu-26.04, and this machine is on the same
+# package line. Confirm against a CI log on next refresh.
 10.2.1

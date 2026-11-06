@@ -32,6 +32,7 @@ Every code change below carries a refusal-direction control, and each was mutati
 - **Every agent at `effort: medium`, and `gh-query-runner` on Haiku.** Check 14 refuses a missing or different effort line. Control: a fixture agent without it and one at `high` both fail lint. Replay tasks for the agent are in `scripts/overnight/replay/gh-query-runner.jsonl`.
 - **Host toolchain repair after the Ubuntu 26.04 upgrade.** GCC 15's C23 default broke a host tool (`HOST_CC` now pins `gnu11`) and binutils 2.46 removed `efi-app-x86_64` (the loader recipe now names `pei-x86-64` and `efi-app`). Both failed only on a clean build, so every smoke leg failed while incremental builds stayed green. `setup.sh --verify` also failed NASM 3.01's two-part version as unparseable. `/tmp` is now tmpfs, so an explicit `git clone --local` fixture could not hardlink across filesystems; it now lets git fall back to a copy. Controls: `test_host_cc_std.py`, `test_efi_image_format.py`, `test_setup_tool_versions.py`. Codex found no EFI or ABI regression, but neither binutils 2.42 nor real firmware was exercised: watch the first CI run, and boot the image on bare metal.
 - **Commit identity.** A test fixture's name sat in `.git/config` from 2026-08-08, so 674 commits on `main` carry it. The `test_build.sh:38` guard stops the leak, the setting is removed, `.mailmap` maps the history for git (operator decision: no rewrite, GitHub's pages still show it), and `.githooks/pre-push` refuses a new fixture identity. Controls in `test_push_identity.py`. Watch: `git config --get-all user.name` must read one real name after every gated push.
+- **CI follows a pinned image.** Every workflow names `ubuntu-26.04`, so the OS moves only in a commit. A failing nested suite now names its `[FAIL]` lines in the log; they were indented, so the digest never matched them. Controls: `test_ci_toolchain_install.py`, `test_nested_fail_digest.py`.
 - **Doctrine:** the review, implement, sequencer and docs-contract rules listed above. Also corrected: the review skill's description of convergence scopes and of receipt freshness (commit-bound, with a 30-minute window only for legacy entries), the stale reviewer model name in two docs, and `CLAUDE.md`'s claim that the arm catches a forgotten close-out.
 
 ## Carried forward from v21 -- open
@@ -54,6 +55,9 @@ v21 closed 10 resolved, 3 rejected, 0 not reproduced, 1 carried. The successor i
   - Observed at this close-out; this answers the standing restart-survivability question with a yes. Inferred, not tested: only the live run writes the file, so nothing refreshes it after a stop. The mechanism is unconfirmed. Settled by finding the writer and having the stop path, or the reader, mark it stale.
 - [ ] `quality-review-section` and `codex-review-todo` are never scheduled, so no review looks across sections of a file
   - Observed: neither name appears in `run_phase_guard.py` or the sequencer skill. Every automatic Codex review is section-scoped, plus the file-level gap audit before implementation. Whether that gap costs anything is unmeasured. Settled by running `codex-review-todo` once on a closed file and counting cross-section findings.
+
+- [ ] Add a clean-container tier (`CI_CONTAINER=1`) beside `CI_PARITY=1`, running the suites in the pinned CI image before a push
+  - Operator-approved 2026-11-06. It would have caught the `apt-key` removal locally; the local gates remain and CI stays the authority, because a container pass only predicts the verdict. Settled by building it.
 
 ## Standing measurement obligations
 

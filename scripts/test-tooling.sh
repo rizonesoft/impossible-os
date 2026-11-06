@@ -776,8 +776,8 @@ _tt_nested_fail_detail() {
     fi
     # The lines that name the defect. Bounded so a cascade cannot flood the push
     # log; the file above carries everything.
-    printf '%s\n' "$out" | grep -E '^\[FAIL\]|(^|[[:space:]])FAIL[: ]|rc=13[0-9]|Traceback|Error:' \
-        | grep -vE '^\[test_build\] ' | head -20 | sed 's/^/    | /'
+    printf '%s\n' "$out" | grep -E '^[[:space:]]*\[FAIL\]|(^|[[:space:]])FAIL[: ]|rc=13[0-9]|Traceback|Error:' \
+        | grep -vE '^\[test_build\] |\[PASS\]' | head -20 | sed 's/^/    | /'
 }
 
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[todo-graph]${NC}"

@@ -2916,7 +2916,12 @@ def watch_loop(run_once, todo_root: Path, quiet: bool, history: bool = False):
             # readable while inotifywait keeps running, and a pipe nobody drains
             # eventually fills and blocks the writer -- deadlocking the watcher
             # on its own diagnostics.
-            _await_watches_established(errf)
+            _await_watches_established(errf, proc)
+            # inotifywait exits at once on a tree with no todo/ directory, and an
+            # event loop on a dead pipe would never tick again. Poll instead.
+            if proc.poll() is not None:
+                proc = None
+        if proc is not None:
             # Read through the RAW descriptor. Calling `proc.stdout.readline()`
             # here would buffer the burst in user space where `select` cannot
             # see it, which is exactly what made the drain below return 0.
@@ -3016,7 +3021,7 @@ def watch_loop(run_once, todo_root: Path, quiet: bool, history: bool = False):
         return
 
 
-def _await_watches_established(errf) -> bool:
+def _await_watches_established(errf, proc) -> bool:
     """Block until inotifywait reports its watches are live, or time out.
 
     THE OPENING QUERY MUST NOT OUTRUN THE WATCH (Codex design review, section
@@ -3039,6 +3044,10 @@ def _await_watches_established(errf) -> bool:
             if WATCH_ARM_SENTINEL in errf.read().decode("utf-8", "replace"):
                 return True
         except (OSError, ValueError):
+            return False
+        # A process that has exited will never report anything: waiting out the
+        # timeout only delays the opening answer past what a caller will accept.
+        if proc.poll() is not None:
             return False
         time.sleep(0.01)
     return False

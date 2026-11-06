@@ -4149,7 +4149,7 @@ utest_prune_records
 # Why this tier has to exist: a fork+exec frame-handoff bug survived 297 commits
 # and a green local suite because it only reproduced on the QEMU CI installs.
 # The dev host runs a custom /usr/local build; CI runs `apt-get install
-# qemu-system-x86` on ubuntu-latest with no reliable /dev/kvm. Different engine,
+# qemu-system-x86` on the pinned runner image with no reliable /dev/kvm. Different engine,
 # different timing, different bug -- and the local runs never saw it.
 #
 # The selection is DERIVED, not pinned to a version string: CI installs the
