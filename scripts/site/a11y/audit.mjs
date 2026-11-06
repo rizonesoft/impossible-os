@@ -170,6 +170,14 @@ function focusFindings(scope) {
       const x = Math.min(Math.max(b.left + b.width / 2, 0), innerWidth - 1);
       const y = Math.min(Math.max(b.top + b.height / 2, 0), innerHeight - 1);
       top = document.elementFromPoint(x, y);
+      // An ancestor under the point proves nothing on its own: a link clipped by a
+      // scroll box has only the page behind it, and the page contains the link.
+      for (let a = el.parentElement; a; a = a.parentElement) {
+        const o = getComputedStyle(a);
+        if (o.overflowX === 'visible' && o.overflowY === 'visible') continue;
+        const c = a.getBoundingClientRect();
+        if (x < c.left || x > c.right || y < c.top || y > c.bottom) { top = a; return false; }
+      }
       return !top || top === el || el.contains(top) || top.contains(el);
     });
     if (!shown) out.push(`focus-visible: ${describe(el)} is covered by ${describe(top)} when focused`);
@@ -427,6 +435,8 @@ async function control(root) {
     '<p><a id="planted-dark" href="#planted-contrast">Planted link without a ring in the dark theme</a></p>' +
     '<p style="position: relative"><a id="planted-covered" href="#planted-contrast">Planted covered link</a>' +
     '<span style="position: absolute; inset: 0; background: #ffffff"></span></p>' +
+    '<div class="table-wrap" style="width: 300px"><table><tr><td><div style="width: 240px">x</div></td>' +
+    '<td><a id="planted-clipok" style="white-space: nowrap" href="#planted-contrast">A link a wide table partly clips</a></td></tr></table></div>' +
     '<div style="position: fixed; left: 0; top: 0; transform: translateX(-100%)"><a id="planted-offscreen" ' +
     'href="#planted-contrast">A link in a closed drawer that is not inert</a></div>');
   const b = src.replace('<a class="skip-link" href="#content">Skip to content</a>', '')
@@ -477,6 +487,9 @@ async function control(root) {
   // And a correct indicator the audit must NOT report.
   if (findings.some((f) => /focus-visible: .*#planted-leftok(?![\w-])/.test(f))) missed.push('(false failure on a correct left-border indicator)');
   if (findings.some((f) => /focus-visible: .*#planted-insetok(?![\w-])/.test(f))) missed.push('(false failure on a correct inset ring)');
+  // A link a wide table partly clips must scroll into view when focused (the site's
+  // own behaviour: browsers leave it mostly hidden, so this fails if that handler goes).
+  if (findings.some((f) => /focus-visible: .*#planted-clipok(?![\w-])/.test(f))) missed.push('(a partly clipped table link stayed covered when focused)');
   if (missed.length) {
     console.log(`a11y control: FAIL -- the audit did not report the planted ${missed.join(', ')} defect(s)`);
     findings.forEach((f) => console.log('  ' + f));

@@ -259,6 +259,14 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
       var to = e.target;
       if (narrow && narrow.matches && to && to !== menu && !side.contains(to)) closeNav(false);
     });
+    // A browser scrolls a fully hidden focused link into view but leaves a partly
+    // clipped one where it is, so Tab could land on a link a wide table mostly hides.
+    document.addEventListener('focusin', function (e) {
+      var to = e.target;
+      if (to && to.closest && !to.classList.contains('table-wrap') && to.closest('.table-wrap')) {
+        to.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+    });
     document.addEventListener('keydown', function (e) {
       // The search box's own Escape (it prevents the default) is left to the search box.
       if (e.key === 'Escape' && !e.defaultPrevented && document.body.classList.contains('nav-open')) closeNav(true);
