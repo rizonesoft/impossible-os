@@ -18,9 +18,11 @@ positive evidence the review happened -- satisfying the step, not bypassing it.
 """
 from __future__ import annotations
 
+import atexit
 import importlib.util
 import json
 import pathlib
+import shutil
 import sys
 import tempfile
 
@@ -39,6 +41,7 @@ def _load():
 
 def _root_with(state):
     d = pathlib.Path(tempfile.mkdtemp())
+    atexit.register(shutil.rmtree, d, ignore_errors=True)
     (d / ".claude/state").mkdir(parents=True)
     (d / ".claude/state/review-convergence.json").write_text(
         json.dumps(state), encoding="utf-8")

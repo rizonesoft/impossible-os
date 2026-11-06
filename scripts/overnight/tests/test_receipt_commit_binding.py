@@ -41,8 +41,10 @@ copy-then-commit became a no-op and `git commit` failed outright. It failed
 loudly that time. The dangerous version of the same drift is the one that
 fails quietly.
 """
+import atexit
 import importlib.util
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -87,6 +89,7 @@ def _clone():
     either way, which is the only thing the fixture needs.
     """
     d = pathlib.Path(tempfile.mkdtemp(prefix="receipt-bind."))
+    atexit.register(shutil.rmtree, d, ignore_errors=True)
     root = d / "c"
     subprocess.run(["git", "clone", "-q", "--no-hardlinks", str(REPO), str(root)],
                    check=True, capture_output=True)

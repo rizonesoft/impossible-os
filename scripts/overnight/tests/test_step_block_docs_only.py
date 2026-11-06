@@ -14,8 +14,10 @@ and a rename whose ORIGINAL path is source all keep the gate in force.
 """
 from __future__ import annotations
 
+import atexit
 import importlib.util
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,6 +37,7 @@ def _load():
 
 def _repo():
     root = pathlib.Path(tempfile.mkdtemp(prefix="ssb-docs-"))
+    atexit.register(shutil.rmtree, root, ignore_errors=True)
     def git(*a):
         subprocess.run(["git", "-C", str(root), *a], check=True, capture_output=True)
     git("init", "-q")
