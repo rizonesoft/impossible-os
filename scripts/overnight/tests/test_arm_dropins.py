@@ -101,6 +101,13 @@ def main() -> int:
         check(f"{fn} returns 0", rc == 0, f"rc={rc}")
         check(f"{fn} survives set -e", "SURVIVED" in out)
 
+    # The writer's effort is pinned by default; inherit stays reachable, and it must
+    # still clear the variable so the drop-in writes no effort line.
+    with open(ARM, encoding="utf-8") as fh:
+        arm_text = fh.read()
+    check("arm default effort is medium", 'ARM_EFFORT="medium"' in arm_text)
+    check("--effort inherit still clears it", '[ "$ARM_EFFORT" = "inherit" ] && ARM_EFFORT=""' in arm_text)
+
     if fails:
         print("test_arm_dropins FAIL:")
         for f in sorted(set(fails)):

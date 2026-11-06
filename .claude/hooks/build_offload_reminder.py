@@ -425,11 +425,68 @@ def _match_suite_invocation(cmd: str):
             if m:
                 return m
         return None
-    for seg in segs:
+    for idx, seg in enumerate(segs):
         hit = _segment_invocation(seg)
         if hit:
+            if hit.startswith("make ") and _make_runs_in_host_sdk(cmd, segs, idx):
+                continue
             return _Hit(hit)
     return None
+
+
+def _under_host_sdk(path: str, base: str) -> bool:
+    """True when `path`, resolved against `base`, is `sdk/` or below it. Anything
+    the shell would still expand is not a path this can judge."""
+    root = _repo_root()
+    if not root or any(ch in path for ch in "$`*?~"):
+        return False
+    sdk = os.path.realpath(os.path.join(str(root), "sdk"))
+    target = os.path.realpath(os.path.join(base, path))
+    return target == sdk or target.startswith(sdk + os.sep)
+
+
+def _make_runs_in_host_sdk(cmd: str, segs, idx: int) -> bool:
+    """A `make test` under `sdk/` builds a host tool with the host compiler; it is
+    not the kernel suite this gate reroutes (v21 finding: `sdk/src/ixfs-mount`'s
+    `test:` rule only compiles `test_ixfs_core`).
+
+    Accepted shapes only: `make -C <sdk dir> test` and a command that OPENS with
+    `cd <sdk dir> && make test`. Everything else keeps blocking: `;` would run make
+    in the repo root if the cd failed, a second `cd` can walk back out, and `-f`
+    can name the root Makefile from anywhere."""
+    try:
+        toks = shlex.split(segs[idx])
+    except ValueError:
+        return False
+    make_at = next((i for i, t in enumerate(toks)
+                    if t.rsplit("/", 1)[-1] == "make"), None)
+    if make_at is None:
+        return False
+    args = toks[make_at + 1:]
+    if any(a in ("-f", "--file", "--makefile") or a.startswith(("-f", "--file=", "--makefile="))
+           for a in args):
+        return False
+    base = os.getcwd()
+    if idx == 1:
+        try:
+            first = shlex.split(segs[0])
+        except ValueError:
+            return False
+        if (len(first) == 2 and first[0] == "cd" and cmd.startswith(segs[0])
+                and cmd[len(segs[0]):].lstrip().startswith("&&")):
+            if any(ch in first[1] for ch in "$`*?~"):
+                return False
+            base = os.path.realpath(os.path.join(base, first[1]))
+    elif idx != 0:
+        return False
+    for i, a in enumerate(args):
+        if a in ("-C", "--directory") and i + 1 < len(args):
+            return _under_host_sdk(args[i + 1], base)
+        if a.startswith("--directory="):
+            return _under_host_sdk(a.split("=", 1)[1], base)
+        if a.startswith("-C") and len(a) > 2:
+            return _under_host_sdk(a[2:], base)
+    return _under_host_sdk(".", base)
 
 # `{matched}` carries the SEGMENT the matcher actually fired on, not just the
 # script name. WHY (2026-07-31): a run filed this hook for blocking a heredoc

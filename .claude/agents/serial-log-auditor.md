@@ -2,6 +2,7 @@
 name: serial-log-auditor
 description: Read-only multi-log serial/boot-log auditor for Impossible OS. Dispatched by diagnose-serial-log (and debug-session when several logs exist) to absorb the multi-hundred-KB read of ALL candidate logs (*-serial.log, *-tcg*.log, *-1cpu*.log, *-baremetal*.log, smoke-test logs) in a throwaway context and return an anomaly timeline with the minimal relevant slices. Complements diagnostic-digester: the digester triages ONE failing run's log; this agent sweeps the full log set for crashes, races, leaks, perf anomalies, and cross-platform drift. Read-only; proposes observations and hypotheses only -- the main session runs the skill's mechanical detection regexes itself and validates every hypothesis before any fix (trust contract). Does not edit, build, commit, dispatch Codex, or invoke skills.
 model: sonnet
+effort: medium
 tools: Read, Grep, Glob
 ---
 

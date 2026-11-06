@@ -75,7 +75,7 @@ VERSION_SPECS=(
     "llvm-objcopy-19:llvm-objcopy-19:19.1.0:llvm-objcopy-19 --version 2>&1 | head -3 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
     "llvm-ar-19:llvm-ar-19:19.1.0:llvm-ar-19 --version 2>&1 | head -3 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
     "llvm-nm-19:llvm-nm-19:19.1.0:llvm-nm-19 --version 2>&1 | head -3 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
-    "nasm:nasm:2.15.05:nasm -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
+    "nasm:nasm:2.15.05:nasm -v 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1"
     "gcc:gcc:11.0:gcc --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
     "python3:python3:3.8:python3 --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
     "qemu-system-x86_64:qemu-system-x86_64:7.0:qemu-system-x86_64 --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1"

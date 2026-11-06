@@ -2,6 +2,7 @@
 name: concurrency-evidence-mapper
 description: Concurrency-evidence inventory for Impossible OS kernel code. Dispatched by review-todo-section step 7 (before/alongside kernel-quality-auditor) and by implement-todo-section on SMP-heavy sections to inventory locks, atomics, IRQ context, ownership, refcounts, and teardown paths across a section diff -- WITHOUT issuing any safety verdict. The Opus kernel-quality-auditor remains the authoritative SMP/lock-order/bare-metal specialist net; this mapper shrinks the evidence set it (and the main session) must gather. Read-only; every claim at file:line. Does not edit, build, commit, dispatch Codex, or invoke skills.
 model: sonnet
+effort: medium
 tools: Read, Grep, Glob
 ---
 

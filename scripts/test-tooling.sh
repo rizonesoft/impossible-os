@@ -1661,7 +1661,7 @@ _arc_case() {  # <desc> <want_flag:yes|no> <agent-body-file-content> [filename]
     printf '%s' "$body" > "$ARC_REPO/.claude/agents/$fname"
     out=$(cd "$ARC_REPO" && bash scripts/lint.sh 2>&1) || true
     if [ "$want_flag" = "yes" ]; then
-        if echo "$out" | grep -q "$fname.*\(allowlist\|RUNNER_ROSTER\|hard rules\|alias\|OPUS_ROSTER\|model:\)"; then
+        if echo "$out" | grep -q "$fname.*\(allowlist\|RUNNER_ROSTER\|hard rules\|alias\|OPUS_ROSTER\|model:\|effort:\)"; then
             t_pass "lint_agent_runner_class: $desc (flagged)"; else
             t_fail "lint_agent_runner_class: $desc" "expected flag, got: $(echo "$out" | grep "$fname" | head -1)"; fi
     else
@@ -1671,15 +1671,30 @@ _arc_case() {  # <desc> <want_flag:yes|no> <agent-body-file-content> [filename]
     fi
     rm -f "$ARC_REPO/.claude/agents/$fname"
 }
+_arc_case "agent with no effort line is flagged" yes '---
+name: synthetic
+model: sonnet
+tools: Read
+---
+body'
+_arc_case "agent at high effort is flagged" yes '---
+name: synthetic
+model: sonnet
+effort: high
+tools: Read
+---
+body'
 _arc_case "analyst with Bash is flagged" yes '---
 name: synthetic
 model: sonnet
+effort: medium
 tools: Bash, Read
 ---
 body'
 _arc_case "rostered runner + marker + hard rules + Bash/Read/Grep/Glob passes" no '---
 name: checks-runner
 model: sonnet
+effort: medium
 tools: Bash, Read, Grep, Glob
 ---
 <!-- agent-class: runner -->
@@ -1693,30 +1708,35 @@ body'
 _arc_case "dated model ID is flagged (alias required)" yes '---
 name: synthetic
 model: claude-sonnet-5
+effort: medium
 tools: Read, Grep
 ---
 body'
 _arc_case "opus outside OPUS_ROSTER is flagged" yes '---
 name: synthetic
 model: opus
+effort: medium
 tools: Read, Grep
 ---
 body'
 _arc_case "kernel-quality-auditor off opus is flagged" yes '---
 name: kernel-quality-auditor
 model: sonnet
+effort: medium
 tools: Read, Grep, Glob
 ---
 body' kernel-quality-auditor.md
 _arc_case "kernel-quality-auditor on opus passes" no '---
 name: kernel-quality-auditor
 model: opus
+effort: medium
 tools: Read, Grep, Glob
 ---
 body' kernel-quality-auditor.md
 _arc_case "rostered runner missing hard-rules section is flagged" yes '---
 name: checks-runner
 model: sonnet
+effort: medium
 tools: Bash, Read, Grep, Glob
 ---
 <!-- agent-class: runner -->
@@ -1724,6 +1744,7 @@ body' checks-runner.md
 _arc_case "runner with Edit is flagged" yes '---
 name: synthetic
 model: sonnet
+effort: medium
 tools: Bash, Read, Edit
 ---
 <!-- agent-class: runner -->
@@ -1731,6 +1752,7 @@ body'
 _arc_case "runner marker NOT in roster is flagged (spoof guard)" yes '---
 name: synthetic
 model: sonnet
+effort: medium
 tools: Bash, Read, Grep, Glob
 ---
 <!-- agent-class: runner -->
@@ -1739,6 +1761,7 @@ body'
 _arc_case "runner with WebSearch is flagged" yes '---
 name: synthetic
 model: sonnet
+effort: medium
 tools: Bash, Read, WebSearch
 ---
 <!-- agent-class: runner -->

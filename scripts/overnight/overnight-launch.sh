@@ -394,10 +394,9 @@ MODEL_ARGS=()
 OVERNIGHT_MODEL_EFFECTIVE="${OVERNIGHT_MODEL:-opus}"
 [ "$OVERNIGHT_MODEL_EFFECTIVE" != "inherit" ] && MODEL_ARGS+=(--model "$OVERNIGHT_MODEL_EFFECTIVE")
 MODEL_ARGS+=(--fallback-model "${OVERNIGHT_FALLBACK_MODEL:-sonnet}")
-# Effort pin (A/B knob, 2026-07-11): unset/`inherit` keeps the CLI's saved
-# default (this host inherits High). Set OVERNIGHT_EFFORT=medium via
-# `arm-sequencer.sh --effort medium` to run an A/B leg; stream-report tags
-# every metrics record with the effective effort so runs are comparable.
+# Effort pin: arm-sequencer.sh writes OVERNIGHT_EFFORT=medium by default (operator
+# decision 2026-11-06). Unset/`inherit` keeps the CLI's saved default. stream-report
+# tags every metrics record with the effective effort so runs are comparable.
 if [ -n "${OVERNIGHT_EFFORT:-}" ] && [ "$OVERNIGHT_EFFORT" != "inherit" ]; then
   MODEL_ARGS+=(--effort "$OVERNIGHT_EFFORT")
 fi

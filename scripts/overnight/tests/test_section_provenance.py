@@ -170,6 +170,50 @@ def test_park_into_a_section_this_commit_stamps_is_refused():
         assert "- [x]" in err and "OPEN section" in err and "user-impact" in err, err
 
 
+VERIFIED = "> **Verified:** 2026-09-30 | commit `abc1234` | 0/1 items | build OK\n"
+DEFERRED = "> **Deferred:** both producers are absent\n"
+OTHER = "XREF: [SDK](../12-user-platform-sdk/TODO-06-sdk.md#2-x)"
+
+
+def test_whole_section_deferral_on_a_named_owner_is_allowed():
+    with tempfile.TemporaryDirectory() as d:
+        root, env = _repo(d)
+        _stage(root, env, "todo/00-infrastructure/TODO-01-x.md",
+               BASE + "- [/] waits for the producer -> " + OTHER + "\n\n"
+                      + VERIFIED + DEFERRED)
+        rc, err = _run(root, env)
+        assert "STAMPING" not in err, err
+
+
+def test_owner_xref_on_a_continuation_line_counts():
+    with tempfile.TemporaryDirectory() as d:
+        root, env = _repo(d)
+        _stage(root, env, "todo/00-infrastructure/TODO-01-x.md",
+               BASE + "- [/] waits for the producer\n  " + OTHER + "\n\n"
+                      + VERIFIED + DEFERRED)
+        rc, err = _run(root, env)
+        assert "STAMPING" not in err, err
+
+
+def test_deferral_without_an_external_owner_is_still_refused():
+    """Refusal-direction controls: the carve-out needs BOTH the Deferred stamp and
+    an XREF to ANOTHER file on the parked item itself."""
+    cases = {
+        "no xref": BASE + "- [/] leftover\n\n" + VERIFIED + DEFERRED,
+        "xref to this same file": BASE + "- [/] leftover -> XREF: [me](TODO-01-x.md#1-x)\n\n"
+                                  + VERIFIED + DEFERRED,
+        "owner but not deferred": BASE + "- [/] leftover -> " + OTHER + "\n\n" + VERIFIED,
+        "owner named on another item only": BASE + "- [/] has owner -> " + OTHER + "\n"
+                                            "- [/] leftover\n\n" + VERIFIED + DEFERRED,
+    }
+    for name, body in cases.items():
+        with tempfile.TemporaryDirectory() as d:
+            root, env = _repo(d)
+            _stage(root, env, "todo/00-infrastructure/TODO-01-x.md", body)
+            rc, err = _run(root, env)
+            assert rc == 1 and "STAMPING" in err, (name, rc, err)
+
+
 def test_park_into_an_already_closed_section_still_works():
     """The SANCTIONED cross-section park. Refusing this would break the only
     documented way to file into a section that has already shipped."""

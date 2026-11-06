@@ -5,7 +5,10 @@
 
 # Tools (LLVM toolchain: Clang is a universal cross-compiler via --target)
 CC      := clang-19
-HOST_CC := gcc
+# Host tools share kernel headers, which are gnu11 and define their own `bool`. Pin
+# the standard the kernel builds with: GCC 15 defaults to C23, where `bool` is a
+# keyword and those headers stop compiling (Ubuntu 26.04 host, 2026-11-06).
+HOST_CC := gcc -std=gnu11
 
 # Host-arch gate for boot_info ABI manifest dumpers lives inside each
 # recipe: it probes $(HOST_CC) -dumpmachine at execution time so a

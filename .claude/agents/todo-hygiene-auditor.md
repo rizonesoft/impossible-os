@@ -2,6 +2,7 @@
 name: todo-hygiene-auditor
 description: Read-only TODO-hygiene auditor for Impossible OS. Dispatched during complete-todo-file close-out to read a TODO and return a checkable punch-list of the FUZZY-residue hygiene issues that deterministic tools cannot enumerate -- prose claims that contradict the code, a Notes block that drifted from what shipped, a stamp whose description does not match its section, and BLOCKED items whose blocker names no clear owner. Does NOT re-find what scripts/todo-hygiene.py, scripts/todo-graph/validate.py, or sequencer_triage.py already own (placeholders, dangling XREFs, section stamps). Read-only; proposes a punch-list only. Does not edit, build, commit, dispatch Codex, or invoke skills. Every item is checkable at file:line; the main session verifies each before applying it (trust contract).
 model: sonnet
+effort: medium
 tools: Read, Grep, Glob
 ---
 

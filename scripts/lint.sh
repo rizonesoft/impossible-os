@@ -1385,6 +1385,9 @@ RUNNER_ROSTER = {"checks-runner.md", "git-historian.md", "gh-query-runner.md"}
 # runner class: kernel-quality-auditor stays on Opus by operator decision
 # (2026-09-29), and any other agent moving up is a deliberate roster edit.
 MODEL_ALIASES = {"sonnet", "opus", "haiku", "inherit"}
+# Every agent runs at medium by operator decision (2026-11-06). A missing line
+# silently inherits the session's effort, so absence is refused like a wrong value.
+AGENT_EFFORT = "medium"
 OPUS_ROSTER = {"kernel-quality-auditor.md"}
 viol = []
 for path in sorted(glob.glob(os.path.join(root, ".claude/agents/*.md"))):
@@ -1403,6 +1406,10 @@ for path in sorted(glob.glob(os.path.join(root, ".claude/agents/*.md"))):
         viol.append((rel, mln, "`model: opus` but not in Check 14 OPUS_ROSTER (moving an agent to Opus is a deliberate roster edit in scripts/lint.sh)"))
     if base in OPUS_ROSTER and model != "opus":
         viol.append((rel, mln, "in OPUS_ROSTER but not `model: opus` (kernel-quality-auditor stays on Opus by operator decision 2026-09-29)"))
+    em = re.search(r'^effort:\s*(\S*)\s*$', text, re.M)
+    if not em or em.group(1).strip('"\'') != AGENT_EFFORT:
+        eln = text[:em.start()].count('\n') + 1 if em else 1
+        viol.append((rel, eln, f"`effort: {AGENT_EFFORT}` is required on every agent (operator decision 2026-11-06)"))
     if re.search(r'^<!--\s*agent-tools-exempt:\s*\S', text, re.M):
         continue
     has_marker = bool(re.search(r'^<!--\s*agent-class:\s*runner\s*-->', text, re.M))

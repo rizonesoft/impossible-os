@@ -500,7 +500,7 @@ Migrated from GCC to Clang-19/LLD-19:
 | Clean build (-j12) | 8.0s             | 6.8s                             |
 
 > [!CAUTION]
-> **UEFI bootloader PE/COFF conversion:** `llvm-objcopy` does NOT support `--target efi-app-x86_64`. The pipeline uses GNU `objcopy` for the EFI conversion step: Clang → ELF → GNU objcopy → PE/COFF.
+> **UEFI bootloader PE/COFF conversion:** `llvm-objcopy` cannot write the PE image this step needs. The pipeline uses GNU `objcopy` with `-O pei-x86-64 --subsystem efi-app` (binutils 2.46 removed the older `efi-app-x86_64` target): Clang → ELF → GNU objcopy → PE/COFF.
 
 > [!WARNING]
 > Clang is stricter about `-Wunused-function` on static inline helpers. 11 port I/O helpers across 7 driver files needed `__attribute__((unused))`.
@@ -1249,7 +1249,7 @@ The MCP SDK is OPTIONAL per [`scripts/setup-deps.sh`](../../scripts/setup-deps.s
 ## Gotchas
 
 > [!CAUTION]
-> **`llvm-objcopy` cannot produce EFI binaries.** The UEFI bootloader pipeline must use GNU `objcopy` for the `--target efi-app-x86_64` conversion. Do not replace with `llvm-objcopy-19`.
+> **`llvm-objcopy` cannot produce EFI binaries.** The UEFI bootloader pipeline must use GNU `objcopy` for the `-O pei-x86-64 --subsystem efi-app` conversion. Do not replace with `llvm-objcopy-19`.
 
 > [!CAUTION]
 > **clangd speaks LSP, not MCP.** Adding clangd as an MCP server causes infinite "refreshing" hang. Use clangd via editor LSP extensions only.

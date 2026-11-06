@@ -206,7 +206,7 @@ The doctrine match is intentional: §3 of TODO-08 walks "advisory hook reminders
 
 ## External-Reviewer Contract (Codex)
 
-Codex participates in the AI workflow as the **sole adversarial reviewer**, not an authoritative instruction layer. The hierarchy invariant #3 ("External reviewers return findings, never edits") pins the rule; this section names the contract concretely so a contributor or a new reviewer tool can be wired without guessing. The previous Copilot CLI subordinate-reviewer wrapper (`scripts/copilot-review.sh` + `.github/copilot-instructions.md`) was retired wholesale 2026-04-28; Codex GPT-5.5 is now the only external reviewer the repo wires to a Claude skill.
+Codex participates in the AI workflow as the **sole adversarial reviewer**, not an authoritative instruction layer. The hierarchy invariant #3 ("External reviewers return findings, never edits") pins the rule; this section names the contract concretely so a contributor or a new reviewer tool can be wired without guessing. The previous Copilot CLI subordinate-reviewer wrapper (`scripts/copilot-review.sh` + `.github/copilot-instructions.md`) was retired wholesale 2026-04-28; Codex is now the only external reviewer the repo wires to a Claude skill (its model is set centrally in `~/.codex/config.toml`, see the [Codex invocation policy](codex-invocation-policy.md)).
 
 ### Reviewer, not authority (the invariant)
 

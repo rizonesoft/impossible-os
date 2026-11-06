@@ -2,6 +2,7 @@
 name: diagnostic-digester
 description: Failure-log digester for Impossible OS. Dispatched on a build/test/smoke/Codex failure to read the full serial/build log + failing output in a throwaway context and return a structured digest -- candidate root-cause hypotheses, offending file:line refs, and the minimal relevant log slice -- so the main session does not swallow a multi-hundred-KB log. Read-only; proposes hypotheses only. Does not propose or apply fixes, edit, build, commit, dispatch Codex, or invoke skills. The main session validates each hypothesis before any fix (trust-contract).
 model: sonnet
+effort: medium
 tools: Read, Grep, Glob
 ---
 

@@ -85,7 +85,8 @@ TODO_PATHS = ["todo"]
 # `--exclude-standard` -- an accident of .gitignore, not a property of the
 # design. Runtime state is not reviewable content and does not belong here.
 TOOLING_PATHS = ["scripts", ".claude/hooks", ".claude/skills", ".claude/agents",
-                 ".claude/settings.json", ".githooks", ".github", "docs"]
+                 ".claude/settings.json", ".githooks", ".github", "docs",
+                 "gh-pages"]
 
 # SCOPE NAME -> PATHS, as a mapping rather than a two-way branch. The previous
 # `SRC_PATHS if s == "src" else TODO_PATHS` silently resolved EVERY unknown

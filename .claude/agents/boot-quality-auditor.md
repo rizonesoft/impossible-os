@@ -2,6 +2,7 @@
 name: boot-quality-auditor
 description: UEFI bootloader quality auditor for Impossible OS. Dispatched by review-todo-section step 7 on sections touching src/boot/. Walks the boot-code-quality gates against a section diff (UEFI error handling, EBS boundary, boot_info ABI sync, framebuffer guards, POST16 coverage, fallback chains). Read-only; returns findings for the main session to triage. Does not edit, build, commit, dispatch Codex, or invoke skills.
 model: sonnet
+effort: medium
 tools: Read, Grep, Glob
 ---
 

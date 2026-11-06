@@ -2,6 +2,7 @@
 name: kernel-quality-auditor
 description: SMP and bare-metal quality auditor for Impossible OS kernel code. Dispatched by review-todo-section step 7 on sections touching src/kernel/ or include/kernel/. Walks the kernel-code-quality gates plus the bare-metal-gotchas doc against a section diff, with SMP/lock-order/bare-metal correctness as the lead dimension. Read-only; returns findings for the main session to triage. Does not edit, build, commit, dispatch Codex, or invoke skills.
 model: opus
+effort: medium
 tools: Read, Grep, Glob
 ---
 

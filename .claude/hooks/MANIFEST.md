@@ -235,6 +235,10 @@ No `hooks/hooks.json` shipped. Plugin contributes the legacy-analyst / business-
 
 No `hooks/hooks.json` shipped. Plugin contributes Claude Code setup/config helper skills + commands only. Listed here so audit-hooks.sh can recognize the absence as authorised, not drift.
 
+### `php-lsp@claude-plugins-official` (unknown version)
+
+No `hooks/hooks.json` shipped. Plugin contributes a PHP language server only (checked 2026-11-06: LICENSE and README, no hooks file).
+
 ### `commit-commands@claude-plugins-official` (unknown version)
 
 No `hooks/hooks.json` shipped. Plugin contributes commit slash-commands only. Listed here so audit-hooks.sh can recognize the absence as authorised, not drift.

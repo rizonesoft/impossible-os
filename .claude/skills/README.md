@@ -95,4 +95,4 @@ Subagents in [`../agents/`](../agents/) that the skills above delegate work to. 
 | [todo-validation-mapper](../agents/todo-validation-mapper.md) | sonnet | `validate-todo-file` / `todo-pipeline` legwork + ad-hoc TODO structure checks |
 | [checks-runner](../agents/checks-runner.md) | sonnet (runner) | `implement-todo-section` step 16 + `review-todo-section` build + `complete-todo-file` verification |
 | [git-historian](../agents/git-historian.md) | sonnet (runner) | `debug-session` + `diagnose-serial-log` regression pass |
-| [gh-query-runner](../agents/gh-query-runner.md) | sonnet (runner) | `complete-todo-file` post-push CI check + GitHub state queries |
+| [gh-query-runner](../agents/gh-query-runner.md) | haiku (runner) | `complete-todo-file` post-push CI check + GitHub state queries |

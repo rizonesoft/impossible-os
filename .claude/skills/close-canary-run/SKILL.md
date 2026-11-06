@@ -191,7 +191,9 @@ grep -n "FILE such findings" .claude/state/live-gotchas.md
 
 `arm-sequencer.sh` REFUSES to arm while the newest capture file is closed, so a
 forgotten step 4 is caught at arm time rather than by findings vanishing into a
-closed file mid-run.
+closed file mid-run. A close-out that never happened is not refused, because the
+file stays open: the arm prints a WARNING when `## Found live this cycle` already
+holds items with no verdict, so keep that heading and leave it empty in vNN+1.
 
 ## 5. Verify, commit, push
 

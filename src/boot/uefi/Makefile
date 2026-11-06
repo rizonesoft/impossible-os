@@ -10,7 +10,7 @@
 CC      := clang-19
 AS      := nasm
 LD      := ld.lld-19
-OBJCOPY := objcopy   # GNU objcopy — llvm-objcopy lacks efi-app-x86_64 target
+OBJCOPY := objcopy   # GNU objcopy; llvm-objcopy cannot write the PE image this recipe needs
 
 CFLAGS  := --target=x86_64-elf -ffreestanding -fno-stack-protector -fno-stack-check \
            -fshort-wchar -mno-red-zone -fpic -fno-plt \
@@ -127,7 +127,7 @@ $(OUTDIR)/BOOTX64.EFI: bootx64.so sbat.csv
 	    -j .rel -j .rela -j .rel.* -j .rela.* \
 	    -j .reloc \
 	    -j .sbat \
-	    --target efi-app-x86_64 \
+	    -O pei-x86-64 --subsystem efi-app \
 	    $< $@
 	@echo "[EFI] $@ created ($$(wc -c < $@ | tr -d ' ') bytes)"
 

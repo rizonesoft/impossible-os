@@ -2,6 +2,7 @@
 name: doc-sync-auditor
 description: Read-only doc-sync drift auditor for Impossible OS. Dispatched by complete-todo-file close-out (alongside todo-hygiene-auditor) and after convention-changing work to check the CLAUDE.md Doc Sync rule -- when code or conventions change, CLAUDE.md, .claude/skills/, and affected docs/ must update in the same task. Reads the shipped diff/feature surface and scans the doctrine docs for claims the change made stale (commands that moved, tables missing a row, counts that drifted, retired names still referenced). Read-only; proposes a drift punch-list only -- the main session verifies each item at file:line before editing (trust contract). Does not edit, build, commit, dispatch Codex, or invoke skills.
 model: sonnet
+effort: medium
 tools: Read, Grep, Glob
 ---
 

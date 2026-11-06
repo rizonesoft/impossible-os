@@ -16,6 +16,7 @@ spec.loader.exec_module(R)
 
 LOC = {"kind": "locs", "values": ["src/kernel/drivers/serial.c:1097"]}
 SHA = {"kind": "commit", "values": ["41d4fd39b"]}
+TEXT = {"kind": "text", "values": ["a11y", "Accessibility audit of every docs page"]}
 CASES = [
     ("exact file:line", LOC, "HIGH src/kernel/drivers/serial.c:1097 lock dropped early", True),
     ("basename only, within tolerance", LOC, "serial.c:1103 races the ISR", True),
@@ -36,6 +37,9 @@ CASES = [
      'checked serial.c:1097 and it is fine\n```json\n{"findings": [{"file": "src/kernel/drivers/serial.c", "line": 40}]}\n```', False),
     ("envelope present: the finding's own summary can carry the location", LOC,
      '```json\n{"findings": [{"file": "src/kernel/drivers/serial.c", "line": 1, "summary": "see serial.c:1095-1098"}]}\n```', True),
+    ("job and step both named", TEXT, "ANSWER: job `a11y` failed at step Accessibility Audit Of Every Docs Page", True),
+    ("the job without the step is not the answer", TEXT, "ANSWER: job a11y failed", False),
+    ("the step without the job is not the answer", TEXT, "failed in accessibility audit of every docs page", False),
     ("short sha present", SHA, "It was added in 41d4fd3 (acpica: vendor)", True),
     ("full sha present", SHA, "41d4fd39b2c0ffee added it", True),
     ("different sha", SHA, "added in 41d4fd4aa", False),

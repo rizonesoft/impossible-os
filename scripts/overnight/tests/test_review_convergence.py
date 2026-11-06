@@ -121,6 +121,24 @@ def test_tooling_sections_are_visible_to_every_kind():
         "a scripts/ change must move the fingerprint, or the gate is blind to it"
 
 
+def test_site_templates_are_visible_and_unrelated_paths_are_not():
+    """gh-pages/ holds the shipped site templates, and a template-only fix used to
+    answer CONVERGED without a look. Control: a path outside every scope must
+    still leave the fingerprint alone, or the gate would never converge."""
+    m = _rc_mod()
+    scopes = ("src", "tooling")
+    for rel, moves in (("gh-pages/.conv-scope-probe.tmp", True),
+                       (".conv-scope-probe.tmp", False)):
+        probe = REPO / rel
+        before = m._fingerprint(REPO, scopes)
+        probe.write_text("probe")
+        try:
+            after = m._fingerprint(REPO, scopes)
+        finally:
+            probe.unlink(missing_ok=True)
+        assert (before != after) == moves, (rel, moves)
+
+
 def test_unchanged_tree_still_converges():
     """REFUSAL CONTROL. Widening the scope must not make the gate unable to
     converge -- a gate that always redispatches is as useless as one that never

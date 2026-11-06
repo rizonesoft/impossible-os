@@ -73,6 +73,14 @@ for _cap_dir in "$REPO_ROOT/todo/token-saver" "$REPO_ROOT/todo/overnight-runner-
     } >&2
     exit 1
   fi
+  _unverdicted="$(python3 "$REPO_ROOT/scripts/overnight/capture-open-findings.py" "$_cap_dir/$_newest" 2>/dev/null || echo 0)"
+  if [ "${_unverdicted:-0}" -gt 0 ]; then
+    {
+      echo "WARNING: $_newest already holds $_unverdicted finding(s) with no verdict."
+      echo "  Unless this re-arms the same cycle, a close-out was skipped and this"
+      echo "  run's findings will mix with them. Run Skill(close-canary-run) first."
+    } >&2
+  fi
 done
 
 LOCAL_ARM="$REPO_ROOT/scripts/overnight/overnight-arm.sh"
@@ -343,11 +351,10 @@ fi
 WITH_BROWSER=0
 ARM_PRIMARY="opus"         # runner default: Opus primary (see policy block above)
 ARM_FALLBACK="sonnet"      # transient overload fallback; primary re-tried each turn
-ARM_EFFORT=""              # empty = inherit the CLI's saved default (High on this
-                           # host). A/B knob: --effort medium pins the run's
-                           # reasoning effort; metrics records carry the value so
-                           # medium-vs-high legs are comparable. Default stays
-                           # inherit-High until quality holds on medium.
+ARM_EFFORT="medium"        # the writer runs at medium by operator decision (2026-11-06),
+                           # pinned rather than left to the saved CLI default.
+                           # --effort <level> overrides, --effort inherit restores
+                           # the saved default; metrics records carry the value.
 ARM_FORCE=0                # --force: arm despite an unproven control-plane change
 ARM_SKIP_PREFLIGHT=0       # --skip-preflight: skip the pre-arm health gate
 # --hours N: bound the run. Written to .claude/state/run-deadline and enforced

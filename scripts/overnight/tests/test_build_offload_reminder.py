@@ -48,6 +48,39 @@ def _run_main(mod, cmd, root):
     return rc, out, err
 
 
+def test_host_sdk_make_test_passes_and_the_root_suite_still_blocks():
+    """v21 finding: a host SDK tool's `make test` was rerouted as the kernel suite.
+    Controls: every way of ending up in the repo root must still block."""
+    import os
+    mod = _load()
+    repo = HOOK.parent.parent.parent
+    mod._repo_root = lambda: repo
+    old = os.getcwd()
+    os.chdir(repo)
+    try:
+        for cmd in ("cd sdk/src/ixfs-mount && make test",
+                    "make -C sdk/src/ixfs-mount test",
+                    "make --directory=sdk/src/ixfs-mount test"):
+            assert mod._match_suite_invocation(cmd) is None, cmd
+        for cmd in ("make test",
+                    "make test-mm",
+                    "cd sdk/src/ixfs-mount; make test",
+                    "cd sdk/src/ixfs-mount || make test",
+                    "cd sdk && cd .. && make test",
+                    "cd sdk/../ && make test",
+                    "cd $D && make test",
+                    "make -C sdk/.. test",
+                    "make -C sdk -f ../Makefile test",
+                    "cd sdk && make -f ../Makefile test",
+                    "cd sdk && make -C .. test",
+                    "cd sdk && make test && cd .. && make test",
+                    "cd sdk && make test && bash scripts/test.sh",
+                    "cd sdk-evil && make test"):
+            assert mod._match_suite_invocation(cmd) is not None, cmd
+    finally:
+        os.chdir(old)
+
+
 def test_wrapped_command_is_exempt():
     mod = _load()
     with tempfile.TemporaryDirectory() as d:

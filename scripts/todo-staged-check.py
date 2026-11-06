@@ -556,9 +556,24 @@ def added_sections(added, heads_view):
 # the user-impact test and do not file it. All three keep the work reachable.
 _PARK_RE = re.compile(r"^\s*- \[/\]")
 _STAMP_RE = re.compile(r"^>\s*\*\*(Verified|Quality reviewed):\*\*")
+_DEFER_STAMP_RE = re.compile(r"^>\s*\*\*Deferred:\*\*")
+_PARK_XREF_RE = re.compile(r"XREF:\s*(?:\[[^\]]*\]\()?([\w./-]+\.md)")
 
 
-def _park_into_shipping_section(lines, heads_view, added):
+def _park_names_other_todo(lines, lineno, path):
+    """Does the `- [/]` item at 1-based `lineno` XREF a DIFFERENT TODO file, on its
+    lead line or an indented continuation line?"""
+    block = [lines[lineno - 1]]
+    for ln in lines[lineno:]:
+        if not ln.startswith((" ", "\t")) or not ln.strip():
+            break
+        block.append(ln)
+    own = os.path.basename(path)
+    return any(os.path.basename(m) != own
+               for m in _PARK_XREF_RE.findall("\n".join(block)))
+
+
+def _park_into_shipping_section(lines, heads_view, added, path=""):
     """[(lineno, section_heading, text)] for `- [/]` items this commit ADDS to a
     section it is ALSO stamping in the same commit.
 
@@ -592,8 +607,17 @@ def _park_into_shipping_section(lines, heads_view, added):
                           for n in rng if n - 1 < len(lines))
         if not stamped_now:
             continue
+        # A section parked WHOLE on a named external owner is not a review finding
+        # being disposed of: the owner side carries the reciprocal item, and the
+        # stranded sweep is its re-open path. Refused 4 times on one documentation
+        # section (v21 finding), where the doctrine's own shape could only land through
+        # SKIP_TODO_STAGED_CHECK, which silences every other check here too.
+        deferred_now = any(n in added_nos and _DEFER_STAMP_RE.match(lines[n - 1])
+                           for n in rng if n - 1 < len(lines))
         for n in rng:
             if n in added_nos and n - 1 < len(lines) and _PARK_RE.match(lines[n - 1]):
+                if deferred_now and _park_names_other_todo(lines, n, path):
+                    continue
                 out.append((n, heads.get(start, "?"), lines[n - 1].strip()[:90]))
     return out
 
@@ -758,7 +782,7 @@ def main(argv) -> int:
             wrapped.append((f, col))
         for n, w, cell in _oscomp_over_cap(vis, added):
             oscomp.append((f, n, w, cell))
-        for n, head, text in _park_into_shipping_section(vis, sec_vis, added):
+        for n, head, text in _park_into_shipping_section(vis, sec_vis, added, f):
             parked.append((f, n, head, text))
         # THE SECTION-AWARE CHECKS GET THE LOGICAL ADDITIONS, the line-based
         # ones keep the raw diff. A section can be created by a container edit

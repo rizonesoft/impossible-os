@@ -133,7 +133,43 @@ def build_git_historian(limit: int | None, seed: int) -> list[dict]:
     return tasks
 
 
-BUILDERS = {"kernel-quality-auditor": build_kernel_auditor, "git-historian": build_git_historian}
+def _gh_json(*a):
+    return json.loads(subprocess.run(["gh", *a], cwd=REPO, capture_output=True, text=True,
+                                     check=True, timeout=120).stdout)
+
+
+def build_gh_query_runner(limit: int | None, seed: int) -> list[dict]:
+    """Known answers from finished CI runs, which GitHub never changes. Failure
+    digests carry `high`: that is the agent's real job, and `compare` fails a
+    candidate that misses a high task the baseline caught. `failed` is checked
+    first, so a limit keeps them."""
+    head = git("rev-parse", "HEAD").strip()
+    fields = "databaseId,conclusion,headSha,workflowName"
+    runs = _gh_json("run", "list", "--branch", "main", "--limit", "300", "--json", fields)
+    random.Random(seed).shuffle(runs)
+    tasks, failed, plain = [], 0, 0
+    for r in sorted(runs, key=lambda r: r["conclusion"] != "failure"):
+        rid = r["databaseId"]
+        if r["conclusion"] == "failure" and failed < 8:
+            jobs = _gh_json("api", f"repos/{{owner}}/{{repo}}/actions/runs/{rid}/jobs")["jobs"]
+            steps = [(j["name"], s["name"]) for j in jobs for s in j.get("steps", [])
+                     if s.get("conclusion") == "failure"]
+            if len(steps) != 1:
+                continue              # no single right answer
+            failed += 1
+            tasks.append({"id": f"failed-{rid}", "commit": head, "severity": "high",
+                          "prompt": f"In GitHub Actions run {rid}, which job and which step failed?",
+                          "expect": {"kind": "text", "values": list(steps[0])}})
+        elif r["conclusion"] == "success" and plain < 12:
+            plain += 1
+            tasks.append({"id": f"sha-{rid}", "commit": head, "severity": None,
+                          "prompt": f"Which commit did GitHub Actions run {rid} build? Give its sha.",
+                          "expect": {"kind": "commit", "values": [r["headSha"]]}})
+    return tasks[:limit] if limit else tasks
+
+
+BUILDERS = {"kernel-quality-auditor": build_kernel_auditor, "git-historian": build_git_historian,
+            "gh-query-runner": build_gh_query_runner}
 
 
 
@@ -183,6 +219,8 @@ def _text_locations(text: str) -> list:
 def score(expect: dict, text: str) -> bool:
     if expect["kind"] == "commit":
         return any(re.search(r"\b" + re.escape(v[:7]) + r"[0-9a-f]*\b", text) for v in expect["values"])
+    if expect["kind"] == "text":
+        return all(v.lower() in text.lower() for v in expect["values"])
     if expect["kind"] == "locs":
         cands = _finding_locations(text)
         for v in expect["values"]:
