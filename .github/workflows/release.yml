@@ -55,9 +55,14 @@ jobs:
       # No actions/cache on the /usr LLVM paths: unprivileged tar cannot
       # restore root-owned paths (tar exit 2, hit 2026-06-11 in build.yml).
       - name: Install LLVM ${{ env.LLVM_VERSION }}
+        # A hung apt once used this job's whole 40 minutes with nothing in the log, and
+        # GitHub reports that as `cancelled`. Fail fast and show what apt was doing.
+        timeout-minutes: 10
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
+          sudo -E apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
+          sudo -E apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
             clang-${{ env.LLVM_VERSION }} \
             lld-${{ env.LLVM_VERSION }} \
             llvm-${{ env.LLVM_VERSION }}
