@@ -32,10 +32,11 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # ---- Required tools (see "Host Bootstrap Contract" in the canonical doc) ----
-# Sentinel format: "check:label"; "check" is a command name, the marker __OVMF_CODE__,
-# or the marker __OVMF_VARS__. Kept in one array so install, verify, and the doc
+# Sentinel format: "check:label"; "check" is a command name, or a marker
+# (__OVMF_CODE__, __OVMF_VARS__, __GNU_TIMEOUT__) with its own branch. Kept in one array so install, verify, and the doc
 # stay aligned. Every entry below maps to an exact Makefile command or path.
 REQUIRED_SENTINELS=(
+    "__GNU_TIMEOUT__:GNU timeout (the gates rely on it killing a stalled child; Ubuntu 26.04 defaults to uutils)"
     "clang-19:clang-19 (Makefile CC)"
     "ld.lld-19:ld.lld-19 (Makefile LD)"
     "llvm-objcopy-19:llvm-objcopy-19 (Makefile OBJCOPY)"
@@ -176,6 +177,14 @@ verify_tools() {
                     echo -e "  ${GREEN}OK${NC}   $label  ($found)"
                 else
                     echo -e "  ${RED}MISS${NC} $label  (expected at ${OVMF_VARS_CANDIDATES[0]})"
+                    missing=$((missing + 1))
+                fi
+                ;;
+            __GNU_TIMEOUT__)
+                if timeout --version 2>/dev/null | head -1 | grep -q 'GNU coreutils'; then
+                    echo -e "  ${GREEN}OK${NC}   $label"
+                else
+                    echo -e "  ${RED}MISS${NC} $label  (fix: sudo apt-get install --allow-remove-essential coreutils-from-gnu coreutils-from-uutils-)"
                     missing=$((missing + 1))
                 fi
                 ;;
@@ -415,7 +424,7 @@ check_versions() {
     local sent check
     for sent in "${REQUIRED_SENTINELS[@]}"; do
         check="${sent%%:*}"
-        case "$check" in __OVMF_CODE__|__OVMF_VARS__) continue ;; esac
+        case "$check" in __OVMF_CODE__|__OVMF_VARS__|__GNU_TIMEOUT__) continue ;; esac
         local found=0 vs
         for vs in "${VERSION_SPECS[@]}"; do
             [ "${vs%%:*}" = "$check" ] && { found=1; break; }

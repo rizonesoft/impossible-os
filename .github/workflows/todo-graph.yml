@@ -64,6 +64,18 @@ jobs:
         with:
           fetch-depth: 0  # full history so the PR base (--diff baseline) is reachable
 
+      # Ubuntu 26.04 defaults to uutils, whose `timeout -s KILL` leaves a stalled child
+      # running, so the identity gate's time bounds stop holding. Same tools as dev hosts.
+      - name: Use GNU coreutils
+        timeout-minutes: 5
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
+          sudo -E apt-get install -y --allow-remove-essential -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            coreutils-from-gnu coreutils-from-uutils-
+          timeout --version | grep -q 'GNU coreutils'
+
       - name: Install PyYAML (build.py dependency)
         run: python3 -m pip install --quiet PyYAML jsonschema
 
@@ -146,6 +158,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # the base may be several pushes back
+
+      # Ubuntu 26.04 defaults to uutils, whose `timeout -s KILL` leaves a stalled child
+      # running, so the identity gate's time bounds stop holding. Same tools as dev hosts.
+      - name: Use GNU coreutils
+        timeout-minutes: 5
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
+          sudo -E apt-get install -y --allow-remove-essential -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            coreutils-from-gnu coreutils-from-uutils-
+          timeout --version | grep -q 'GNU coreutils'
 
       - name: Install PyYAML (build.py dependency)
         run: python3 -m pip install --quiet PyYAML jsonschema

@@ -6873,7 +6873,7 @@ text = open(sys.argv[1]).read()
 def block(name):
     m = re.search(name + r"=\(\s*(.*?)\)", text, re.S)
     return re.findall(r'"([^":]+):', m.group(1)) if m else []
-req = [c for c in block("REQUIRED_SENTINELS") if not c.startswith("__OVMF")]
+req = [c for c in block("REQUIRED_SENTINELS") if not c.startswith("__")]
 floors = set(block("VERSION_SPECS"))
 print(",".join(c for c in req if c not in floors))
 PYEOF

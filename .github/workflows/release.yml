@@ -54,6 +54,18 @@ jobs:
       # ── Install LLVM (clang-19, lld-19, llvm-19) ───────────────────────
       # No actions/cache on the /usr LLVM paths: unprivileged tar cannot
       # restore root-owned paths (tar exit 2, hit 2026-06-11 in build.yml).
+      # Ubuntu 26.04 defaults to uutils, whose `timeout -s KILL` leaves a stalled child
+      # running, so the identity gate's time bounds stop holding. Same tools as dev hosts.
+      - name: Use GNU coreutils
+        timeout-minutes: 5
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
+          sudo -E apt-get install -y --allow-remove-essential -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            coreutils-from-gnu coreutils-from-uutils-
+          timeout --version | grep -q 'GNU coreutils'
+
       - name: Install LLVM ${{ env.LLVM_VERSION }}
         # A hung apt once used this job's whole 40 minutes with nothing in the log, and
         # GitHub reports that as `cancelled`. Fail fast and show what apt was doing.
