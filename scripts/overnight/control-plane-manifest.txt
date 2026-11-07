@@ -94,3 +94,4 @@ scripts/overnight/supervisor.py
 scripts/overnight/heartbeat.sh
 scripts/overnight/run-common.sh
 scripts/run.sh
+scripts/overnight/ship_count.py

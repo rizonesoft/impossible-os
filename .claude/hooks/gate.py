@@ -37,7 +37,7 @@ LOGGABLE = frozenset({
 FROZEN = frozenset({
     ".claude/hooks/gate.py", ".claude/hooks/run_phase_guard.py", ".claude/settings.json",
     "scripts/run.sh", "scripts/overnight/run-common.sh", "scripts/overnight/heartbeat.sh",
-    "scripts/overnight/supervisor.py",
+    "scripts/overnight/supervisor.py", "scripts/overnight/ship_count.py",
 })
 
 

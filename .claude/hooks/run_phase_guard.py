@@ -1626,21 +1626,16 @@ def _derive_section_idx(todo_path):
 
 
 def ship_limit_reached(root):
-    """True once a bounded run's sections have their final stamp and are pushed. Any
-    doubt reads as not reached, so the guard keeps the session working."""
+    """True once a bounded run's sections have shipped and are pushed, counted by their
+    Implementation Order rows turning `[x]` (scripts/overnight/ship_count.py). Any doubt
+    reads as not reached, so the guard keeps the session working."""
     try:
         limit, start = (root / ".claude/state/run-ship-limit").read_text().split()[:2]
-        r = subprocess.run(["git", "-C", str(root), "diff", "--no-color", "--unified=0",
-                            f"{start}..@{{u}}", "--", "todo"],
-                           capture_output=True, text=True, timeout=30)
-    except (OSError, ValueError, subprocess.SubprocessError):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/overnight"))
+        import ship_count
+        return ship_count.ships_between(root, start, "@{u}") >= int(limit)
+    except Exception:
         return False  # fail-direction: an unbounded or unreadable run keeps going
-    if r.returncode != 0:
-        return False
-    # Net, because correcting a stamp replaces it and ships nothing.
-    added = len(re.findall(r"(?m)^\+> \*\*Quality reviewed:\*\*", r.stdout))
-    removed = len(re.findall(r"(?m)^-> \*\*Quality reviewed:\*\*", r.stdout))
-    return added - removed >= int(limit)
 
 
 def handle_stop():

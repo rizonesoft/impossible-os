@@ -203,6 +203,10 @@ def _stop(armed=True, fixpoint=False, oracle="NEEDS_WORK", rollover=False):
             del os.environ["OVERNIGHT_SEQUENCER_RUN"]
 
 
+def ROW(n, status):
+    return f"| s | {n} | Section {n} | none | [{status}] |\n"
+
+
 def _bounded(d):
     root = pathlib.Path(d)
     def git(*a):
@@ -213,7 +217,7 @@ def _bounded(d):
     subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
     (root / ".gitignore").write_text("origin.git\n.claude/\n")
     (root / "todo").mkdir()
-    (root / "todo/T.md").write_text("x\n")
+    (root / "todo/T.md").write_text(ROW(1, " "))
     git("add", "-A")
     git("commit", "-qm", "start")
     branch = subprocess.run(["git", "-C", str(root), "branch", "--show-current"],
@@ -227,20 +231,19 @@ def _bounded(d):
     return root, git
 
 
-def test_a_bounded_run_stops_only_once_the_section_is_stamped_and_pushed():
+def test_a_bounded_run_stops_only_once_the_section_is_shipped_and_pushed():
     import run_phase_guard as g
     with tempfile.TemporaryDirectory() as d:
         root, git = _bounded(d)
         assert not g.ship_limit_reached(root), "nothing shipped yet"
-        # The first stamp alone is not the end of a section.
-        (root / "todo/T.md").write_text("x\n> **Verified:** a\n")
+        (root / "todo/T.md").write_text(ROW(1, "/") + "> **Verified:** a\n")
+        git("add", "-A")
+        git("commit", "-qm", "work in progress")
+        git("push", "-q")
+        assert not g.ship_limit_reached(root), "a row in progress is not a ship"
+        (root / "todo/T.md").write_text(ROW(1, "x") + "> **Verified:** a\n> **Quality reviewed:** b\n")
         git("add", "-A")
         git("commit", "-qm", "ship")
-        git("push", "-q")
-        assert not g.ship_limit_reached(root), "Verified alone must not count"
-        (root / "todo/T.md").write_text("x\n> **Verified:** a\n> **Quality reviewed:** b\n")
-        git("add", "-A")
-        git("commit", "-qm", "review")
         assert not g.ship_limit_reached(root), "not pushed yet"
         git("push", "-q")
         assert g.ship_limit_reached(root)
@@ -251,9 +254,9 @@ def test_git_colour_settings_do_not_hide_a_ship():
     with tempfile.TemporaryDirectory() as d:
         root, git = _bounded(d)
         git("config", "color.ui", "always")
-        (root / "todo/T.md").write_text("x\n> **Quality reviewed:** b\n")
+        (root / "todo/T.md").write_text(ROW(1, "x"))
         git("add", "-A")
-        git("commit", "-qm", "review")
+        git("commit", "-qm", "ship")
         git("push", "-q")
         assert g.ship_limit_reached(root)
 
@@ -262,18 +265,64 @@ def test_refusal_correcting_a_stamp_ships_nothing():
     import run_phase_guard as g
     with tempfile.TemporaryDirectory() as d:
         root, git = _bounded(d)
-        (root / "todo/T.md").write_text("x\n> **Quality reviewed:** old\n")
+        (root / "todo/T.md").write_text(ROW(1, "x") + "> **Quality reviewed:** old\n")
         git("add", "-A")
         git("commit", "-qm", "before the run")
         git("push", "-q")
         start = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
                                capture_output=True, text=True).stdout.strip()
         (root / ".claude/state/run-ship-limit").write_text(f"1 {start}\n")
-        (root / "todo/T.md").write_text("x\n> **Quality reviewed:** corrected\n")
+        (root / "todo/T.md").write_text(ROW(1, "x") + "> **Quality reviewed:** corrected\n")
         git("add", "-A")
         git("commit", "-qm", "correct a stamp")
         git("push", "-q")
         assert not g.ship_limit_reached(root)
+
+
+def test_refusal_editing_a_shipped_row_is_not_a_ship():
+    import run_phase_guard as g
+    with tempfile.TemporaryDirectory() as d:
+        root, git = _bounded(d)
+        (root / "todo/T.md").write_text(ROW(1, "x"))
+        git("add", "-A")
+        git("commit", "-qm", "shipped earlier")
+        git("push", "-q")
+        start = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                               capture_output=True, text=True).stdout.strip()
+        (root / ".claude/state/run-ship-limit").write_text(f"1 {start}\n")
+        (root / "todo/T.md").write_text(ROW(1, "x").replace("Section 1", "Renamed"))
+        git("add", "-A")
+        git("commit", "-qm", "rename the row")
+        git("push", "-q")
+        assert not g.ship_limit_reached(root)
+
+
+def test_a_reopened_section_shipping_again_reaches_the_bound():
+    import run_phase_guard as g
+    with tempfile.TemporaryDirectory() as d:
+        root, git = _bounded(d)
+        (root / "todo/T.md").write_text(ROW(1, "/") + "> **Quality reviewed:** august\n")
+        git("add", "-A")
+        git("commit", "-qm", "reopened")
+        git("push", "-q")
+        start = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                               capture_output=True, text=True).stdout.strip()
+        (root / ".claude/state/run-ship-limit").write_text(f"1 {start}\n")
+        (root / "todo/T.md").write_text(ROW(1, "x") + "> **Quality reviewed:** november\n")
+        git("add", "-A")
+        git("commit", "-qm", "ship again")
+        git("push", "-q")
+        assert g.ship_limit_reached(root)
+
+
+def test_the_real_first_run_counts_as_one_ship():
+    """Known answer: the 2026-11-08 bounded run shipped TODO-04 s56 between these."""
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import ship_count
+    probe = subprocess.run(["git", "-C", str(REPO), "cat-file", "-e", "200486a0b"],
+                           capture_output=True)
+    if probe.returncode == 0:
+        assert ship_count.ships_between(REPO, "6b2eae2ac", "200486a0b") == 1
 
 
 def test_refusal_an_unbounded_run_or_a_bad_limit_never_reads_as_reached():

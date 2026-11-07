@@ -11,6 +11,10 @@ sys.path.insert(0, str(HERE.parent))
 import supervisor as sup  # noqa: E402
 
 T0 = 1_800_000_000
+
+
+def ROW(n, status):
+    return f"| s | {n} | Section {n} | none | [{status}] |\n"
 HOUR = 3600
 
 
@@ -275,7 +279,9 @@ def test_a_dirty_tree_keeps_the_undo_for_later():
 def test_health_counts_one_section_once_and_flags_a_stall_and_clears_it():
     with tempfile.TemporaryDirectory() as d:
         root, alerts = _fixture(d)
-        _commit(root, "todo/T.md", "> **Verified:** 2026-11-07\n> **Quality reviewed:** x\n")
+        _commit(root, "todo/T.md", ROW(1, " "))
+        sup.check(root, False, T0 + 30)
+        _commit(root, "todo/T.md", ROW(1, "x") + "> **Verified:** a\n> **Quality reviewed:** b\n")
         h = sup.check(root, False, T0 + 60)
         assert h["sections_shipped_today"] == 1, h
         assert not h["repair_needed"]
@@ -283,7 +289,9 @@ def test_health_counts_one_section_once_and_flags_a_stall_and_clears_it():
         assert h["repair_needed"] is True and h["hours_since_ship"] > 6, h
         assert any("Nothing has shipped" in a for a in alerts), alerts
         assert json.loads((root / ".claude/overnight/run-health.json").read_text())["repair_needed"]
-        _commit(root, "todo/T.md", "> **Verified:** 2026-11-07\n> **Quality reviewed:** x\n> **Quality reviewed:** y\n")
+        _commit(root, "todo/T.md", ROW(1, "x") + ROW(2, " "))
+        sup.check(root, False, T0 + 8 * HOUR - 60)
+        _commit(root, "todo/T.md", ROW(1, "x") + ROW(2, "x"))
         h = sup.check(root, False, T0 + 8 * HOUR)
         assert h["repair_needed"] is False, h
 
@@ -292,18 +300,29 @@ def test_git_colour_settings_do_not_hide_a_ship():
     with tempfile.TemporaryDirectory() as d:
         root, _ = _fixture(d)
         _git(root, "config", "color.ui", "always")
-        _commit(root, "todo/T.md", "> **Quality reviewed:** x\n")
+        _commit(root, "todo/T.md", ROW(1, "/"))
+        sup.check(root, False, T0 + 30)
+        _commit(root, "todo/T.md", ROW(1, "x"))
         assert sup.check(root, False, T0 + 60)["sections_shipped_total"] == 1
 
 
-def test_correcting_a_stamp_is_not_a_ship():
+def test_refusal_correcting_a_stamp_is_not_a_ship():
     with tempfile.TemporaryDirectory() as d:
         root, _ = _fixture(d)
-        _commit(root, "todo/T.md", "> **Quality reviewed:** old\n")
+        _commit(root, "todo/T.md", ROW(1, "x") + "> **Quality reviewed:** old\n")
         sup.check(root, False, T0 + 60)
-        _commit(root, "todo/T.md", "> **Quality reviewed:** corrected\n")
-        h = sup.check(root, False, T0 + 120)
-        assert h["sections_shipped_total"] == 1, h
+        _commit(root, "todo/T.md", ROW(1, "x") + "> **Quality reviewed:** corrected\n")
+        assert sup.check(root, False, T0 + 120)["sections_shipped_total"] == 0
+
+
+def test_a_reopened_section_shipping_again_counts():
+    # 2026-11-08: TODO-04 s56 replaced its August stamps and a stamp count read zero.
+    with tempfile.TemporaryDirectory() as d:
+        root, _ = _fixture(d)
+        _commit(root, "todo/T.md", ROW(1, "/") + "> **Quality reviewed:** august\n")
+        sup.check(root, False, T0 + 60)
+        _commit(root, "todo/T.md", ROW(1, "x") + "> **Quality reviewed:** november\n")
+        assert sup.check(root, False, T0 + 120)["sections_shipped_total"] == 1
 
 
 def test_health_reports_no_dollars():
