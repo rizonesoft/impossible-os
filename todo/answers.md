@@ -152,3 +152,22 @@ The ALPC ABI needs 8-11 arguments, but `SSDT_HANDLER` and `zw_dispatch` carry 6 
 - **B: a validated argument pack by pointer.** The 6-word handler stays, and only the wide syscalls take a pointer to a probed struct. Nothing else changes, but these syscalls no longer match the Windows calling shape.
 
 Recommended: A, because Win32 is the native surface and `TODO-12` §3 already has to read stack arguments. This comes from reading the code, not a design review.
+
+## Q10 (TODO-04 §10): where does the log-integrity verifier key live?
+
+The design review found that keeping the key under `HKLM` proves nothing: an attacker who can rewrite the log can rewrite the key and every HMAC too. The section needs an anchor outside the mutable log domain, and this is a security-architecture choice no item in the tree makes.
+
+- **A: TPM-sealed.** Strongest, and it ships (`01-boot-platform/TODO-13`), but machines without a TPM get no integrity chain.
+- **B: protected UEFI NVRAM.** Works without a TPM, but anything that can write the variable can replace the key.
+
+Recommended: A, with a logged warning and integrity disabled where no TPM exists, matching the item's WARN+disable wording. This comes from reading the TODO and the review note, not a new design review. Blocks TODO-04 §10.
+
+A: (pending)
+
+## Q11 (TODO-04 §11): may the run define the ETW event-metadata wire ABI?
+
+Today's scalar per-session masks cannot hold two providers with different policies, and events carry no provider or keyword. The recorded fix is a versioned metadata record, a per-session provider table, broadcast routing and two-phase registration. It extends the §7 syscall surface, which CLAUDE.md reserves as an ABI change. Nothing in the tree consumes the current shape outside the kernel's own tests, as far as the item text records; that was not re-checked here.
+
+Recommended: approve it, keeping the existing channel call as the legacy path the item already describes. Blocks TODO-04 §11 and the section behind it (line 428's stamp).
+
+A: (pending)
