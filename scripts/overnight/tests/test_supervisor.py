@@ -72,6 +72,31 @@ def test_refusal_a_change_the_run_worked_with_is_not_reverted():
         assert (root / ".claude/hooks/x.py").exists()
 
 
+def test_a_product_commit_vouches_only_for_what_came_before_it():
+    # Review, 2026-11-07: both within one heartbeat, the later hook edit was forgotten.
+    with tempfile.TemporaryDirectory() as d:
+        root, _ = _fixture(d)
+        _commit(root, ".claude/hooks/early.py", "x\n")
+        _commit(root, "src/a.c", "1\n")
+        _commit(root, ".claude/hooks/late.py", "x\n")
+        h = sup.check(root, True, T0 + 60)
+        assert h["machinery_commits_pending"] == 1, h
+        h = sup.check(root, True, T0 + 3 * HOUR + 120)
+        assert len(h["machinery_reverts"]) == 1, h
+        assert not (root / ".claude/hooks/late.py").exists()
+        assert (root / ".claude/hooks/early.py").exists()
+
+
+def test_a_commit_mixing_product_and_machinery_counts_as_produced():
+    with tempfile.TemporaryDirectory() as d:
+        root, _ = _fixture(d)
+        (root / ".claude/hooks").mkdir(parents=True)
+        (root / ".claude/hooks/m.py").write_text("x\n")
+        _commit(root, "src/a.c", "1\n")
+        h = sup.check(root, True, T0 + 60)
+        assert h["machinery_commits_pending"] == 0, h
+
+
 def test_a_fix_on_top_of_a_bad_commit_undoes_as_one_batch():
     # Review, 2026-11-07: undoing only the fix would have restored the bug.
     with tempfile.TemporaryDirectory() as d:

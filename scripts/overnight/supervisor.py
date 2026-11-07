@@ -141,17 +141,14 @@ def check(root: Path, idle: bool, now: int) -> dict:
     head = git(root, "rev-parse", "HEAD").stdout.strip()
     new = commits_since(root, state.get("head") or head)
     shipped = 0
-    produced = False
-    for sha in reversed(new):
+    for sha in reversed(new):  # oldest first: a product commit vouches only for what came before it
         files = files_of(root, sha)
         shipped += ships_in(root, sha)
         if any(not is_machinery(f) for f in files):
-            produced = True
-        if any(is_machinery(f) for f in files):
+            pending = []
+        elif files:
             order += 1
             pending.append({"sha": sha, "seen": now, "order": order})
-    if produced:
-        pending = []  # the run worked with these changes in place
 
     reverted, pending = undo(root, state, pending, now, idle)
     state["head"] = git(root, "rev-parse", "HEAD").stdout.strip()
