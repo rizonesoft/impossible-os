@@ -202,3 +202,14 @@ A verifier-side challenge does not exist in the tree, so `TPM2_MakeCredential` /
 Recommended: leave both parked until a platform service needs remote attestation, since no consumer exists. Blocks the placeholder in §9 and credential activation in §13.
 
 A: (pending)
+
+## Q15 (TODO-24 §5): must MarkGood be gated on the durable health-record write?
+
+`append_health_record`'s return is discarded at `boot_health_check.c:629`, and the next boot can consume `ImpossibleOS-MarkGood` and delete the boot counter, which cannot be undone. The honest-write retrofit is open regardless; this asks only whether `X:\Boot\health.jsonl` is authoritative for the mark-good decision.
+
+- **A: gate it.** No durable record, no MarkGood. A full or failing log volume could then roll a healthy OS back.
+- **B: decouple it.** MarkGood follows the health verdict, and a record-write failure is logged as a failure. A healthy boot can leave no durable evidence.
+
+Recommended: B, because a diagnostics volume should not decide which OS slot runs. `git stash@{2}` holds earlier WIP labelled as this decision; I did not read its diff. Blocks one item in §5.
+
+A: (pending)

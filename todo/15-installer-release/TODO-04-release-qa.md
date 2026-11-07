@@ -354,5 +354,5 @@ automated CI gates with human sign-off in a single auditable record.
 - [ ] **Hardware checklist**: human tester fills in checklist on 3 machines; all critical rows `Pass`; results committed to `docs/guides/hardware-test-results/`
 - [ ] **Benchmark + regression gate**: run twice on same config → JSON values within 5% (stability); artificially slow PMM (inject 1 µs sleep per alloc in QA build) → benchmark flags > 25% regression → `promote-release.sh` blocked
 - [ ] **Release checklist**: create release branch PR; verify template auto-populates checklist; merge blocked until all items `[x]` + maintainer approval
-- [ ] **Crash triage**: generate a deliberate kernel panic in QA build; dump appears in `CrashDumps\`; debugger resolves PC to function name; NEW issue created; `KERNEL_ASSERT` added at trigger point; re-run soak → assert fires before panic
+- [ ] **Crash triage**: generate a deliberate kernel panic in QA build; dump appears in `X:\Crash\`; debugger resolves PC to function name; NEW issue created; `KERNEL_ASSERT` added at trigger point; re-run soak → assert fires before panic
 - [ ] Commit: `"qa: regression suite, QEMU validation, Hyper-V/VirtualBox cert, hardware checklist, benchmarks, release readiness checklist, crash analytics"`

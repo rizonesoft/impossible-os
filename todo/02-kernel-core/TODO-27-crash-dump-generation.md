@@ -37,6 +37,7 @@ title: "TODO-27 -- Crash Dump Generation"
 - → XREF: `TODO-26-power-management.md §4` -- S4 hibernate partition GPT GUID reused as the raw dump partition backing store (§7); both share the same raw-write path
 - → XREF: `TODO-28-bsod-ux-enhancements.md` §13 -- BSOD progress UI (`panic_set_progress`) while the dump writer runs; T28 owns on-screen UX, this TODO owns dump bytes and completion callbacks
 - → XREF: `TODO-10-kernel-security-hardening.md` -- `CrashDumpEncryption` design and `X:\Crash\` default SDDL: security review gates with T10 before enforcement code in §9 or §6
+- → XREF: `01-boot-platform/TODO-24-blackbox-service-partition.md §7` -- owns the `X:\Crash\` destination these dump writers target
 
 > [!NOTE]
 > **Planned doc (not in tree yet):** §10 creates `docs/kernel/crashdump-policy-interop.md` on the first §10 documentation commit. Until then, do not list that path under Inputs as a required on-disk anchor.

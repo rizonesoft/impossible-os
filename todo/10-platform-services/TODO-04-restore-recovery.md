@@ -165,7 +165,7 @@ Runs when `HKLM\SYSTEM\FirstBoot=1`. 6 pages: Welcome, Timezone/Region, Keyboard
 
 **Owner of:** the work planned in `02-kernel-core/TODO-27 §8 (unexpected-shutdown prompt)`, which is superseded there so there is one implementation.
 
-On next boot after crash (dump file present in `CrashDumps\`): `notify_send()` prompt "System shut down unexpectedly. [View Report] [Dismiss]". Crash report viewer window: formatted dump (registers, stack, loaded drivers, PMM stats, last serial lines).
+On next boot after crash (dump file present in `X:\Crash\`): `notify_send()` prompt "System shut down unexpectedly. [View Report] [Dismiss]". Crash report viewer window: formatted dump (registers, stack, loaded drivers, PMM stats, last serial lines).
 
 **Files:** `src/apps/crashview/crashview.c` (new)
 
@@ -255,7 +255,7 @@ Rewrite UEFI boot entry, recompute GPT header CRCs, verify kernel ELF SHA-256 vs
 > - **Cached update packages** (`C:\Temp\*.ipkg`): `vfs_readdir()` filter by `.ipkg`
 > - **Crash dumps** (`X:\Crash\Archived\*`): sum sizes (-> XREF: TODO-17 §8)
 > - **App logs** (`X:\Logs\events.*.log`): sum rotated log files (not current)
-> Total space at bottom: "Total: {N} MB will be freed". [Clean up system files] button: for each checked category → delete files; show `CTRL_PROGRESSBAR` during deletion; refresh sizes. **Weekly task**: `sched_task_add("disk_cleanup", disk_cleanup_auto, 7*86400, 1)` -- runs silently, clears Temp + Archived CrashDumps + old logs (> 7 days); `kevent_log(LOG_INFO, "cleanup", "Auto disk cleanup: freed %llu KB")`.
+> Total space at bottom: "Total: {N} MB will be freed". [Clean up system files] button: for each checked category → delete files; show `CTRL_PROGRESSBAR` during deletion; refresh sizes. **Weekly task**: `sched_task_add("disk_cleanup", disk_cleanup_auto, 7*86400, 1)` -- runs silently, clears Temp + archived dumps in `X:\Crash\` + old logs (> 7 days); `kevent_log(LOG_INFO, "cleanup", "Auto disk cleanup: freed %llu KB")`.
 
 - [ ] `void cleanup_open(void)` -- `wm_create_window()`; scan all categories; display checkboxes + sizes
 - [ ] Category scan: `cleanup_scan_temp()`, `cleanup_scan_recycle()`, `cleanup_scan_restore(keep_n=3)`, `cleanup_scan_ipkg()`, `cleanup_scan_crashdumps()`, `cleanup_scan_logs()`
@@ -295,7 +295,7 @@ Rewrite UEFI boot entry, recompute GPT header CRCs, verify kernel ELF SHA-256 vs
 - [ ] `eventview.exe` (`13-tools-accessories/TODO-02 §2`) Security filter shows the login event with correct timestamp
 - [ ] F8 at boot → text-mode menu appears; select "Recovery Shell" → `ls C:\` prints directory; `pwd` returns current path
 - [ ] First-boot (`HKLM\SYSTEM\FirstBoot=1`): boot → OOBE wizard appears; complete all pages; reboot → OOBE does not appear again
-- [ ] Crash dump present in `CrashDumps\`: on boot → `notify_send()` prompt shown; [View] → crash viewer window with register tab
+- [ ] Crash dump present in `X:\Crash\`: on boot → `notify_send()` prompt shown; [View] → crash viewer window with register tab
 - [ ] Disk cleanup: open → all 6 categories show sizes; check Temp + Recycle → [Clean] → `C:\Temp\` emptied; Recycle Bin empty
 - [ ] `restore_rollback(ts)` called (from rstrui.cpl): SHA-256 verify passes; confirmation dialog shown; on Yes → 3-s overlay + reboot
 - [ ] Commit: `"recovery: restore points, rollback, OOBE wizard, event log, crash viewer, F8 recovery, cleanup -- all complete"`

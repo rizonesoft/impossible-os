@@ -52,17 +52,17 @@ title: "TODO-24 -- BlackBox Service Partition"
 | 💎  |   2   | Build pipeline -- format and populate BlackBox                 | §1         |  [x]   |
 | 💎  |   3   | Kernel mount -- discover "BlackBox" GPT name, mount X:         | §1         |  [x]   |
 | 💎  |   4   | Directory skeleton -- create dirs on first boot                | §3         |  [x]   |
-| 💎  |   5   | Klog migration -- move all log output to X:\Logs\              | §3, §4     |  [/]   |
+| 💎  |   5   | Klog migration -- move all log output to X:\Logs\              | §3, §4     |  [ ]   |
 | 💎  |   6   | Boot logs -- per-boot session files to X:\Boot\                | §3, §4     |  [x]   |
 | 💎  |   7   | Crash dump path -- crash_recovery.log to X:\Crash\             | §3, §4     |  [x]   |
 | 💎  |   8   | Perf and diag -- boot-profile, hwdump to X:\Perf\ and X:\Diag\ | §3, §4     |  [x]   |
 | 💎  |   9   | Host tools -- SDK reads BlackBox from disk image               | §1, §2     |  [x]   |
-| 💎  |  10   | Disk space management -- log aging, quota, cleanup             | §5         |  [/]   |
+| 💎  |  10   | Disk space management -- log aging, quota, cleanup             | §5         |  [ ]   |
 | 💎  |  11   | FAT32 volume label -- set "BLACKBOX" at format time            | §2         |  [x]   |
 | 💎  |  12   | Partition health -- fsck on mount, dirty-bit check             | §3, T09 §6 |  [/]   |
-| ⭐  |  13   | WER staging area -- error reports in X:\Crash\WER\             | §4, §7     |  [/]   |
+| ⭐  |  13   | WER staging area -- error reports in X:\Crash\WER\             | §4, §7     |  [ ]   |
 | 💎  |  14   | A/B layout compatibility -- 4+ partition coexistence           | §1         |  [x]   |
-| 💎  |  15   | Boot platform TODO updates -- XREFs and domain sync            | §1-§14     |  [/]   |
+| 💎  |  15   | Boot platform TODO updates -- XREFs and domain sync            | §1-§14     |  [x]   |
 | 💎  |  16   | Crash/WER report retention in partition cleanup                | §10, §13   |  [x]   |
 
 > 💎 = parity -- Windows has a recovery/diagnostic partition; Linux has /var/log separation.
@@ -190,13 +190,13 @@ Redirect all kernel log output from `C:\Impossible\System\Logs\` to `X:\Logs\`.
   - Work: a per-CPU `klog_in_disk_flush` flag (or an existing vfs/ixfs-in-flight marker) in `src/kernel/klog_disk.c` `klog_disk_flush()`, or a `klog_no_flush()` variant used from fs-layer emitters.
   - Blocker: do not land a fix until the sole-C:\ boot scenario is reproduced. Flagged by a diagnose-serial-log Codex review 2026-04-18; X:\ was mounted in the captured log so the path was never exercised, and the hazard stays latent until a BlackBox mount fails.
   - The reentrancy regression test lands with the guard, built on `00-infrastructure/TODO-03` §1 (`test_add_fault`) + §6 fault-injection hardening to force the BlackBox-absent path.
-- [/] **Durable-write + write-success honesty retrofit for X:\ diagnostic writers.** Three writers ack success without a durability / exact-length boundary, so a failed or non-durable write is silently treated as done:
+- [ ] **Durable-write + write-success honesty retrofit for X:\ diagnostic writers.** Three writers ack success without a durability / exact-length boundary, so a failed or non-durable write is silently treated as done:
   - `append_health_record` return is discarded (`src/kernel/main/boot_health_check.c:629`), then `mark_entry_successful_from_ctr()` writes `ImpossibleOS-MarkGood` on PASS (`boot_health_check.c:640-645`); the helper does `vfs_write()` + `vfs_close()` with no `vfs_flush()`, so a non-durable health record can still let the next boot consume MarkGood and DELETE the boot counter (irreversible boot-state). Safety-relevant, not cosmetic.
   - `audit_write_sequence` / `audit_append_file` (`src/kernel/main/boot_audit.c`) ack NVRAM triggers after write+close alone (same gap; durable-write predicate prototyped in a held git-stash).
   - `wer_write_crash_report` (`src/kernel/wer.c:175-181`, the §13 WER producer -- XREF §13) ignores the `vfs_write`/`vfs_close` returns, has no `vfs_flush`, and logs `"Crash report: ..."` success whenever `vfs_open` succeeded, so a truncated/empty report reads as staged.
   - Work: add a shared `boot_durable_write_ok(wr, expected, flush, close)` predicate; gate each writer on exact-length `vfs_write` + `vfs_flush()` + clean `vfs_close` (boundary from `01-boot/TODO-12` §6) and log an explicit failure path instead of false success.
-  - Parked, and the MarkGood-gating half is `operator-gated`: whether a non-durable health record may still let the next boot consume MarkGood and delete the boot counter is an irreversible boot-state policy call, not an implementation choice. The retrofit itself is TODO-24-owned with no external blocker.
-  - **DEFER (operator-reserved decision; NOT a run-stop):** whether MarkGood must be gated on the durable health-record write (is `X:\Boot\health.jsonl` authoritative for the mark-good decision?) is a deliberate design decision reserved for the operator. The unattended runner must DEFER this sub-item (`[/]` + Deferred stamp + XREF to this line) and ADVANCE -- it must NOT stop, disarm, or decide it autonomously (per `todo/TODO-Claude-Overnight-Runner.md` session-exit policy). The decoupled-choice WIP is held in a git stash pending operator confirm. The write-honesty fix for the audit + WER writers is NOT blocked by this and may proceed.
+  - Reopened 2026-11-07: the retrofit is this file's own, with no outside blocker, and it covers all three writers. Only the MarkGood question is parked, as the next item.
+- [/] Decide whether MarkGood must be gated on the durable health-record write: awaiting-answer Q15. Whatever the answer, the record write reports its failure honestly.
 - [x] Commit: `"kernel: migrate klog output from C:\\ to X:\\Logs\\"`
 
 **Test checkpoint:** Serial shows `"klog: writing to X:\Logs\Serial_YYMMDDN.log"`. All subsystem logs appear under `X:\Logs\`. On a disk without BlackBox, fallback message: `"klog: BlackBox not mounted, using C:\\"`. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
@@ -207,8 +207,8 @@ Redirect all kernel log output from `C:\Impossible\System\Logs\` to `X:\Logs\`.
 > - klog output migrated from `C:\Impossible\System\Logs\` to `X:\Logs\` via the runtime `klog_dir` global (`KLOG_DIR_BLACKBOX` primary, `KLOG_DIR_FALLBACK` C:\), resolved at `klog_disk_init()`.
 > - All log paths (`kernel.log`, subsystem logs, `events.jsonl`, `crash_recovery.log`, `boot-profile.log`, `Serial\`) build from `klog_dir` at runtime; C:\ fallback with a warning when X: is unmounted.
 > - Two hardening items remain open and are DEFERRED below (latent reentrancy guard + durable-write honesty); the core migration is shipped and exercised (smoke shows `X:\Logs` active).
-> **Deferred:** [M] klog_disk_flush C:\-fallback re-entrancy guard is latent until the BlackBox-mount-fail (sole-C:\) path is reproduced with fault injection -> XREF: 01-boot-platform/TODO-24 §5 (item: "klog_disk_flush re-entrancy guard when C:\ fallback is active" at line 187); depends on 00-infrastructure/TODO-03 §1 (test_add_fault) + §6
-> **Deferred:** [H] durable-write/write-success honesty retrofit for X:\ diagnostic writers (health/audit/WER ack without vfs_flush); MarkGood-gating is an operator-reserved decision (line 190), retrofit is substantial follow-up -> XREF: 01-boot-platform/TODO-24 §5 (item: "Durable-write + write-success honesty retrofit for X:\ diagnostic writers" at line 193)
+> **Note:** 2026-11-07, Deferred stamp retired: [M] the re-entrancy guard parks on `02-kernel-core/TODO-04` §15, named in its item, which holds an open row.
+> **Note:** 2026-11-07, Deferred stamp retired: [H] durable-write retrofit reopened; MarkGood gating is now `todo/answers.md` Q15.
 
 ---
 
@@ -321,11 +321,11 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 - [/] If critically low after cleanup: LOG_ERROR fires, but the C:\ redirect (`klog_using_blackbox=0`) is defeated by `klog_resolve_dir()` at `boot_storage.c:607` re-setting the flag -- durable-fallback fix deferred below
 - [/] Durable low-space C:\ fallback: sticky `klog_blackbox_forced_off` honored by `klog_resolve_dir` -> XREF: 02-kernel-core/TODO-04 §15 (item: "Durable low-space C: fallback for the critical-low redirect")
   - Fixes the `[/]` item above: the critical-low redirect must survive the later `klog_resolve_dir` call that re-sets the flag. (`klog_disk.c`)
-- [/] Boot\ retention precision: delete oldest by the `YYMMDDNN` filename, not `vfs_readdir` slot order (FAT32 slot reuse breaks monotonic age) -- collect into a bounded array, sort, prune the surplus. (`boot_storage.c` ~371)
-- [/] Harden cleanup path builders: `path[64]` silently truncates long names (wrong `vfs_unlink` target) -- use `VFS_MAX_PATH` + fail-closed skip on overflow for both the Boot\ and Logs\ builders.
-- [/] Budget + batch the unbounded Logs\ delete loop (`boot_storage.c` ~414): bounded victim list, cap per-boot deletes/bytes/time, pet `boot_progress()` between batches -- a full volume can stall boot past the WDAT watchdog.
-- [/] Wire `MaxBootSessions`/`MinFreeMiB` from registry `HKLM\SYSTEM\BlackBox` (hardcoded 10/16 at `boot_storage.c:357,438`); closes the item-310 deferral.
-  - The four `boot_storage.c` items above are parked, not blocked: they are TODO-24-owned follow-ups with no external prerequisite. Re-opening this file is what they wait on, so they carry no cross-TODO owner and the stranded-deferral sweep will not surface them.
+- [ ] Boot\ retention precision: delete oldest by the `YYMMDDNN` filename, not `vfs_readdir` slot order (FAT32 slot reuse breaks monotonic age) -- collect into a bounded array, sort, prune the surplus. (`boot_storage.c` ~371)
+- [ ] Harden cleanup path builders: `path[64]` silently truncates long names (wrong `vfs_unlink` target) -- use `VFS_MAX_PATH` + fail-closed skip on overflow for both the Boot\ and Logs\ builders.
+- [ ] Budget + batch the unbounded Logs\ delete loop (`boot_storage.c` ~414): bounded victim list, cap per-boot deletes/bytes/time, pet `boot_progress()` between batches -- a full volume can stall boot past the WDAT watchdog.
+- [ ] Wire `MaxBootSessions`/`MinFreeMiB` from registry `HKLM\SYSTEM\BlackBox` (hardcoded 10/16 at `boot_storage.c:357,438`); closes the item-310 deferral.
+  - Reopened 2026-11-07: these four have no outside prerequisite. `path[64]` and both hardcoded limits are still in `boot_storage.c` (now `:682`, `:721`, `:662`, `:759`), so the line numbers above have drifted. The critical-low redirect above stays with `02-kernel-core/TODO-04` §15.
 - [x] Commit: `"kernel: BlackBox disk space management -- log aging and quota enforcement"`
 
 **Test checkpoint:** Fill BlackBox with dummy files until < 10% free. Boot -> serial shows cleanup message with freed space. Boot sessions beyond 10 are pruned. Verify on QEMU WHPX, TCG, VirtualBox.
@@ -334,10 +334,10 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 > - Disk-space cleanup runs when X:\ FAT32 is <10% free: prunes Boot\ sessions beyond MaxBootSessions(10) + rotated `*.log.N`/`*.jsonl.N` in Logs\, rechecks free, then aims to fall back to C:\ if still critical.
 > - Review hardened two hazards: the rotated-log matcher now requires `VFS_FILE` + a `.log`/`.jsonl` infix (was deleting any `.<digit>` name), and the freed-bytes display is clamped against uint64 underflow.
 > - Four refinements remain open (`[/]` -- items above): durable low-space C:\ fallback (redirect currently defeated by `klog_resolve_dir`), oldest-by-filename retention, path-builder hardening, registry-backed quota config.
-> **Deferred:** [M] §10 critical-low C:\ redirect is defeated by `klog_resolve_dir()` re-setting the flag -> XREF: 01-boot-platform/TODO-24 §10 (item: "Durable low-space C:\ fallback" at line 322)
-> **Deferred:** [M] Boot\ retention deletes `vfs_readdir` slot order, not oldest-by-filename -> XREF: 01-boot-platform/TODO-24 §10 (item: "Boot\ retention precision" at line 324)
-> **Deferred:** [M] cleanup path builders silently truncate long names (`path[64]`) -> XREF: 01-boot-platform/TODO-24 §10 (item: "Harden cleanup path builders" at line 325)
-> **Deferred:** [M] `MaxBootSessions`/`MinFreeMiB` hardcoded, not registry-backed -> XREF: 01-boot-platform/TODO-24 §10 (item: "Wire `MaxBootSessions`/`MinFreeMiB`" at line 327)
+> **Note:** 2026-11-07, Deferred stamp retired: [M] critical-low redirect parks on `02-kernel-core/TODO-04` §15, named in its item.
+> **Note:** 2026-11-07, Deferred stamp retired: [M] Boot\ retention order reopened.
+> **Note:** 2026-11-07, Deferred stamp retired: [M] cleanup path truncation reopened.
+> **Note:** 2026-11-07, Deferred stamp retired: [M] registry-backed limits reopened.
 
 ---
 
@@ -390,10 +390,10 @@ FAT32 has a "dirty" bit (byte 0x41 in BPB, bit 0 of the word). If the OS crashed
 > - At BlackBox mount `fat32_is_dirty()` reads the FAT[1] clean-shutdown bit (27); a dirty volume runs `fat32_run_fsck(vol,1)`; `mark_dirty` on mount, `mark_clean` at `acpi_shutdown` (acpi.c:940).
 > - Consistency-verified happy path: the constant has one definition, shutdown reaches `mark_clean` for X:, and `is_dirty` is populated at init before §3's BlackBox dirty check.
 > - Four FAT32-robustness hardenings (open `[/]` items) are DEFERRED -- malformed/external-FAT defenses on shared `fat32_core.c`/`fat32_fsck.c`; the kernel-formatted BlackBox volume is trusted.
-> **Deferred:** [H] FAT[1] reserved high bits (28-31) zeroed by both marker writers -> XREF: 01-boot-platform/TODO-24 §12 (item: "FAT[1] high-nibble preservation" at line 375)
-> **Deferred:** [H] torn FAT-mirror marker write -> false-clean -> skips fsck (no error propagation) -> XREF: 01-boot-platform/TODO-24 §12 (item: "FAT marker write error propagation" at line 377)
-> **Deferred:** [H] fsck `walk_directory` recurses on directory cycles -> stack exhaustion -> XREF: 01-boot-platform/TODO-24 §12 (item: "fsck cycle guard" at line 379)
-> **Deferred:** [H] fsck repair writes outside FAT on forged BPB geometry -> XREF: 01-boot-platform/TODO-24 §12 (item: "fsck BPB geometry validation" at line 381)
+> **Deferred:** [H] FAT[1] reserved high bits (28-31) zeroed by both marker writers -> XREF: 05-storage-filesystems/TODO-04 §6 (item: "FAT[1] high-nibble preservation")
+> **Deferred:** [H] torn FAT-mirror marker write -> false-clean -> skips fsck (no error propagation) -> XREF: 05-storage-filesystems/TODO-04 §6 (item: "FAT marker write error propagation")
+> **Deferred:** [H] fsck `walk_directory` recurses on directory cycles -> stack exhaustion -> XREF: 05-storage-filesystems/TODO-04 §6 (item: "fsck cycle guard")
+> **Deferred:** [H] fsck repair writes outside FAT on forged BPB geometry -> XREF: 05-storage-filesystems/TODO-04 §6 (item: "fsck BPB geometry validation")
 
 ---
 
@@ -410,9 +410,9 @@ Windows Error Reporting (WER) stages error reports in `C:\ProgramData\Microsoft\
 - [x] Wired into the user-fault exception terminal (`except.c`, before `panic_screen`); the idt.c unhandled-vector fallback is `panic_screen`-only (TODO-23 §12)
 - [x] Filename: `PID_YYYYMMDDHHMMSS.json` (timestamp from wall clock)
 - [x] Falls back to C:\ when BlackBox not mounted
-- [/] WER in exception path: `wer_write_crash_report` (`except.c` user-fault terminal) does vfs I/O in the fault handler -- reentrancy/deadlock if the fault was in FS code; move off the exception path or make it lock-free + preallocated. [§13]
-- [/] WER open-failure observability: on `vfs_open` NULL the writer returns silently -- emit a panic-safe serial-only diagnostic (normal `klog` may re-enter VFS here). [§13]
-  - Both WER items are parked without a cross-TODO owner ON PURPOSE: the code lives in `except.c` / `wer.c`, which `02-kernel-core/TODO-23` owns, but none of its three open sections (18 unwind fixtures, 19 telemetry flavor, 20 kernel-SEH arming) covers WER persistence, and filing into a stamped one is a black hole. Naming an owner would need a new section there.
+- [ ] WER in exception path: `wer_write_crash_report` (`except.c` user-fault terminal) does vfs I/O in the fault handler -- reentrancy/deadlock if the fault was in FS code; move off the exception path or make it lock-free + preallocated. [§13]
+- [ ] WER open-failure observability: on `vfs_open` NULL the writer returns silently -- emit a panic-safe serial-only diagnostic (normal `klog` may re-enter VFS here). [§13]
+  - Reopened 2026-11-07: these two were parked here on purpose because `02-kernel-core/TODO-23` has no WER section, so this section is their owner. Nothing outside blocks them.
 - [x] Commit: `"kernel: WER-style crash report staging in X:\\Crash\\WER\\"`
 
 **Test checkpoint:** Trigger a user-mode general fault that routes through `except.c` (e.g. `#UD` from an illegal instruction). `X:\Crash\WER\` contains a JSON report with PID, exception code, and the crash frames. Note: a NULL dereference is a `#PF` handled by `vmm.c`, whose terminal emits only the serial WER line (`WerpReportFault`), not a JSON report -- a safe JSON path for #PF is deferred with the exception-path VFS-safety work (TODO-23 §12 design decision). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
@@ -422,8 +422,8 @@ Windows Error Reporting (WER) stages error reports in `C:\ProgramData\Microsoft\
 > - Fixed a JSON-injection bug: `t->name` is now escaped (`"`,`\`,control -> `\u00XX`) with a `pos<820` bound, so a crafted/long name can't break the report or overflow `buf[1536]` (re-adversarial-confirmed margin).
 > - Two robustness items remain open (`[/]`): WER persistence runs in the exception path (FS-reentrancy/deadlock risk) and open-failure is silent; the write-honesty (flush/return-check) is owned by §5's durable-write retrofit.
 > **Accepted:** [M] WER writer ignores `vfs_write`/`vfs_close` returns + no `vfs_flush` (false success) -> XREF: 01-boot-platform/TODO-24 §5 (item: "Durable-write + write-success honesty retrofit for X:\ diagnostic writers" at line 193)
-> **Deferred:** [H] WER persistence does VFS I/O in the exception path (reentrancy/deadlock if fault was in FS) -> XREF: 01-boot-platform/TODO-24 §13 (item: "WER in exception path" at line 413)
-> **Deferred:** [M] WER open-failure is a silent drop with no panic-safe diagnostic -> XREF: 01-boot-platform/TODO-24 §13 (item: "WER open-failure observability" at line 414)
+> **Note:** 2026-11-07, Deferred stamp retired: [H] WER VFS I/O in the exception path reopened.
+> **Note:** 2026-11-07, Deferred stamp retired: [M] WER open-failure diagnostic reopened.
 
 ---
 
@@ -458,12 +458,12 @@ Update cross-references across affected TODOs.
 - [x] `TODO-10-bare-metal-hardening.md`: follow-up ownership cleanup landed; TODO-10 now treats log, crash, perf, and diagnostic file paths as prerequisites owned here
 - [x] `TODO-14-boot-diagnostics.md`: crash dump paths updated to `X:\Crash\`
 - [x] `TODO-27-crash-dump-generation.md`: all `C:\Impossible\System\CrashDumps\` -> `X:\Crash\`
-- [/] `TODO-04-restore-recovery.md` (domain 10): crash dump paths PARTLY updated -- lines 157/286 still describe dumps in `CrashDumps\` rather than `X:\Crash\` (deferred below)
-- [/] `TODO-04-release-qa.md` (domain 15): crash dump collection PARTLY updated -- line 356 still references `CrashDumps\` (deferred below)
+- [x] `TODO-04-restore-recovery.md` (domain 10): crash dump paths updated to `X:\Crash\`
+- [x] `TODO-04-release-qa.md` (domain 15): crash dump collection updated to `X:\Crash\`
 - [x] `TODO-24` current state block: updated from 2-partition to 3-partition
 - [x] CLAUDE.md: no stale references (does not mention partition layout)
-- [/] Finish cross-domain crash-dump sync: `CrashDumps\` -> `X:\Crash\` in TODO-04-restore-recovery + TODO-04-release-qa; add reciprocal TODO-24 owner XREFs to TODO-27-crash-dump-generation (§7) + TODO-27-uefi-advanced (§8). [§15]
-  - Parked: TODO-24-owned bookkeeping spanning four other TODO files, no external blocker. Left for a pass that re-opens this file rather than done piecemeal from a drain.
+- [x] Finish cross-domain crash-dump sync: `CrashDumps\` -> `X:\Crash\` in TODO-04-restore-recovery + TODO-04-release-qa; add reciprocal TODO-24 owner XREFs to TODO-27-crash-dump-generation (§7) + TODO-27-uefi-advanced (§8). [§15]
+  - Done 2026-11-07 in the drain commit that closed this item: the two path sync edits, plus XREFs in `02-kernel-core/TODO-27` and `01-boot-platform/TODO-27`. Text only; section still needs its review stamps.
 - [x] Commit: `"docs: update XREFs for BlackBox partition migration"`
 
 **Test checkpoint:** All referenced TODO files have correct XREFs. No stale `C:\Impossible\System\Logs\` references remain in active TODO files.
@@ -471,8 +471,8 @@ Update cross-references across affected TODOs.
 > **Notes:**
 > - Propagated the C:\ -> X:\ log/crash/perf/diag path migration across boot-platform + cross-domain TODOs (TODO-04 logging, TODO-10, TODO-14, TODO-27); fixed the current-state callout + a wrong evidence line-ref this review.
 > - Corrected the stale current-state A/B count (4 -> 6 partitions) to match §14's realized layout.
-> - Incomplete (open `[/]`/`[ ]`): two cross-domain TODOs still describe dumps in `CrashDumps\` and two TODO-27 consumers lack reciprocal TODO-24 ownership XREFs -- deferred below.
-> **Deferred:** [M] cross-domain crash-dump path sync incomplete + missing reciprocal TODO-24 owner XREFs -> XREF: 01-boot-platform/TODO-24 §15 (item: "Finish cross-domain crash-dump sync" at line 465)
+> - The two cross-domain paths and reciprocal XREFs were finished 2026-11-07.
+> **Note:** 2026-11-07, Deferred stamp retired: the sync it named is done.
 
 ---
 
