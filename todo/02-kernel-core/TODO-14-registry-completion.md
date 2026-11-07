@@ -70,9 +70,9 @@ title: "TODO-14 -- Registry System Completion"
 | 💎  |   1   | Access rights, API limits, FILETIME & RegFlushKey | TODO-05 §2,§3, TODO-08 §1 |  [/]   |
 | 💎  |   2   | Advanced key ops (copy, rename, save, volatile)   | §1                        |  [/]   |
 | 💎  |   3   | Change notifications (core + exclusive extras)    | §2                        |  [/]   |
-| 💎  |   4   | Nt/Zw registry syscalls & pointer validation      | §1, TODO-12 §14, §15      |  [/]   |
-| 💎  |   5   | advapi32.dll compat (A/W, HKCR, error map)        | §4                        |  [/]   |
-| 💎  |   6   | Registry virtualization & .reg import/export      | §5                        |  [/]   |
+| 💎  |   4   | Nt/Zw registry syscalls & pointer validation      | §1, TODO-12 §14, §15      |  [ ]   |
+| 💎  |   5   | advapi32.dll compat (A/W, HKCR, error map)        | §4                        |  [ ]   |
+| 💎  |   6   | Registry virtualization & .reg import/export      | §5                        |  [ ]   |
 | 💎  |   7   | `regedit` shell tool                              | §4                        |  [/]   |
 | ⭐  |   8   | Advanced hive features (dual-log, delta, compact) | §4                        |  [/]   |
 | ⭐  |   9   | Transactions, search API & snapshot/diff          | §2, §3, §8                |  [/]   |
@@ -80,7 +80,7 @@ title: "TODO-14 -- Registry System Completion"
 | 💎  |  11   | KTM Transaction syscalls wired to SSDT            | §9, TODO-12 §14, §15      |  [/]   |
 | 💎  |  12   | Registry symlink completion (create, open-link)   | §2, §4                    |  [/]   |
 | ⭐  |  13   | Schema-validated registry keys                    | §3, §4                    |  [/]   |
-| 💎  |  14   | Registry SMP synchronization                      | TODO-12 §14               |  [/]   |
+| 💎  |  14   | Registry SMP synchronization                      | TODO-12 §14               |  [ ]   |
 | 💎  |  15   | Value size expansion (16 KiB names, 1 MiB data)   | §1, §14                   |  [/]   |
 | 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort)  | --                        |  [ ]   |
 
@@ -263,7 +263,8 @@ title: "TODO-14 -- Registry System Completion"
   ZwXxx aliases for each -- kernel-mode bypass wrappers
   ```
 - [ ] Syscalls marked `--` need SSDT index allocation in TODO-12 §14/§15; add to the registry block (0x0090--0x00AA range or extended range)
-- [ ] Transacted key ops: `NtCreateKeyTransacted` (0x0091), `NtOpenKeyTransacted` (0x0093), `NtOpenKeyTransactedEx` bind the op to a KTM `TransactionHandle` (XREF §9, §11); NULL handle = non-transacted
+- [/] Transacted key ops: `NtCreateKeyTransacted` (0x0091), `NtOpenKeyTransacted` (0x0093), `NtOpenKeyTransactedEx` bind the op to a KTM `TransactionHandle` (XREF §9, §11); NULL handle = non-transacted
+  - Waits on s9 and s11: there is no KTM transaction object to bind to.
 - [ ] `NtLoadKey2(TargetKey, SourceFile, Flags)`: flag-scoped load; `NtLoadKey3`: extended-parameter array (`CmExtendedParameterFileAccessToken` for token-scoped load), not a bare token arg
 - [ ] `NtUnloadKey2(TargetKey, Flags)`: `REG_FORCE_UNLOAD (0x1)` unloads a hive with open handles; `NtSaveMergedKeys(High, Low, FileHandle)`: High-over-Low precedence merge to one `.hive` file
 - [ ] `ObjectAttributes` for key paths: `RootDirectory` handle + `ObjectName` (`UNICODE_STRING` for future UTF-16; for now accept UTF-8 `ANSI_STRING` wrapper); resolve absolute paths starting with `\Registry\Machine` → `HKLM`, `\Registry\User\{SID}` → `HKCU`
@@ -302,7 +303,8 @@ title: "TODO-14 -- Registry System Completion"
   - `KeySetLayerInformation` (6): layered-key set metadata -- DEFERRED with layered keys / hive stacking (see Deferred features note)
 - [ ] `NtNotifyChangeKey`: **replace the existing `STATUS_NOT_IMPLEMENTED` stub** in `src/kernel/nt/nt_registry.c::NtNotifyChangeKey_handler` (currently tagged `SCOPE-GAP-ALLOWED: blocked on TODO-14 §4`) with real wiring: validates `KeyHandle`, resolves to `reg_key_t`, calls `reg_notify_register()` from §4; if `Asynchronous == FALSE`, blocks calling thread on the watcher's semaphore (interruptible via APC). Remove the `SCOPE-GAP-ALLOWED` comment when the stub is replaced.
 - [ ] Win32 `RegNotifyChangeKeyValue`(hKey, hEvent, fAsync): KEY_NOTIFY-gated; references hEvent (`ObReferenceObjectByHandle`, deref on close); sync semaphore + `ERROR_KEY_DELETED`; `RegCloseKey` handle-scoped unregister -> XREF §3
-- [ ] APC completion: if `ApcRoutine != NULL`, queue a user-mode APC to the calling thread when the notification fires (→ XREF `05-storage-filesystems/TODO-05-win32-file-io-api.md §9`)
+- [/] APC completion: if `ApcRoutine != NULL`, queue a user-mode APC to the calling thread when the notification fires (→ XREF `05-storage-filesystems/TODO-05-win32-file-io-api.md §9`)
+  - Owner: `02-kernel-core/TODO-07-irql-model-dpcs` s12 (item: "User-mode APC delivery"), parked on ring-3 delivery.
 - [ ] `NtNotifyChangeMultipleKeys(MasterKeyHandle, Count, SubordinateObjects[], ...)`: register notifications on `MasterKeyHandle` plus up to `Count` additional subordinate keys in a single call; fires when *any* of the watched keys changes; shares implementation with §3 but registers multiple watchers atomically
 - [ ] `NtSetInformationKey(KeyHandle, KeySetInfoClass, KeySetInfo, Length)`: set key metadata; initial implementation covers `KeyWriteTimeInformation` (set `LastWriteTime`) and `KeyControlFlagsInformation` (set virtualization control flags -- see §6)
 - [ ] `NtQueryMultipleValueKey(KeyHandle, ValueEntries[], EntryCount, ValueBuffer, BufferLength, RequiredLength)`: query multiple values in a single syscall; `ValueEntries` is an array of `KEY_VALUE_ENTRY` structs (name + type + data offset); reduces syscall overhead for batch reads (e.g., reading 10 display settings at once)
@@ -330,33 +332,40 @@ title: "TODO-14 -- Registry System Completion"
 > - Also deferred: kernel-wide `nt_decode_unicode_string` UTF-16 retrofit, HKEY->OB migration, `KeyNodeInformation` completion, transacted ops (KTM), ProbeForRead/Write (SEH).
 > - Canonical doc: registry NT surface in [`src/kernel/nt/nt_registry.c`](../../src/kernel/nt/nt_registry.c).
 > - Scope boundary: §4 is a >10-item mega-section -- the info-class enums + UTF-16 decode + OB migration warrant a section split before a fresh implementation pass.
-> **Deferred:** [H] `NtNotifyChangeKey` + Win32 `RegNotifyChangeKeyValue` wiring blocked on safe watcher lifecycle (handle-close unregister + event deref) -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 274)
-> **Deferred:** [M] user-mode pointer validation on all Nt args -> XREF: 02-kernel-core/TODO-14 §4 (item: "Wrap every user-mode pointer argument in" at line 270)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] `NtNotifyChangeKey` + Win32 `RegNotifyChangeKeyValue` wiring blocked on safe watcher lifecycle (handle-close unregister + event deref)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] user-mode pointer validation on all Nt args
 
 ---
 
 ## 5. advapi32.dll Win32 Compatibility
 
-- [ ] All `RegXxx` functions that take string arguments have an `A` variant (UTF-8 / ANSI) and a `W` variant (UTF-16LE `WCHAR*`)
-- [ ] `A` variants: call the internal UTF-8 kernel API directly (already exists)
-- [ ] `W` variants: `wchar_to_utf8(src_w, buf, len)` → call internal UTF-8 API → convert any UTF-8 string results back to UTF-16LE via `utf8_to_wchar(src, buf, len)` before returning to caller
+- [/] All `RegXxx` functions that take string arguments have an `A` variant (UTF-8 / ANSI) and a `W` variant (UTF-16LE `WCHAR*`)
+  - No advapi32 exists in the tree. Owner: `12-user-platform-sdk/TODO-07` s10 (item: "advapi32 `RegXxx` A/W exports"). Also waits on s4.
+- [/] `A` variants: call the internal UTF-8 kernel API directly (already exists)
+  - No advapi32 exists in the tree. Owner: `12-user-platform-sdk/TODO-07` s10 (item: "advapi32 `RegXxx` A/W exports"). Also waits on s4.
+- [/] `W` variants: `wchar_to_utf8(src_w, buf, len)` → call internal UTF-8 API → convert any UTF-8 string results back to UTF-16LE via `utf8_to_wchar(src, buf, len)` before returning to caller
+  - No advapi32 exists in the tree. Owner: `12-user-platform-sdk/TODO-07` s10 (item: "advapi32 `RegXxx` A/W exports"). Also waits on s4.
 - [ ] `wchar_to_utf8` / `utf8_to_wchar`: implement in `src/libs/libc/wchar.c` (BMP-only initially; no surrogate pair support needed for registry paths); use existing `libc` string helpers
 
-- [ ] Full advapi32 `RegXxx` export surface (Outcome parity): `RegLoadKey` / `RegUnLoadKey` / `RegReplaceKey` / `RegSaveKeyEx`, plus `RegLoadAppKey` (private per-process hive, auto-unloads on last `RegCloseKey`)
-- [ ] advapi32 utility wrappers: `RegSetKeyValue` / `RegDeleteKeyValue`, `RegQueryMultipleValues` (over §4 `NtQueryMultipleValueKey`), `RegOpenCurrentUser` / `RegOpenUserClassesRoot` / `RegOverridePredefKey`
-- [ ] advapi32 transacted wrappers `Reg{Create,Open,Delete}KeyTransacted` (pair with §4 transacted syscalls); implement or explicitly defer each documented export
+- [/] Full advapi32 `RegXxx` export surface (Outcome parity): `RegLoadKey` / `RegUnLoadKey` / `RegReplaceKey` / `RegSaveKeyEx`, plus `RegLoadAppKey` (private per-process hive, auto-unloads on last `RegCloseKey`)
+  - No advapi32 exists in the tree. Owner: `12-user-platform-sdk/TODO-07` s10 (item: "advapi32 `RegXxx` A/W exports"). Also waits on s4.
+- [/] advapi32 utility wrappers: `RegSetKeyValue` / `RegDeleteKeyValue`, `RegQueryMultipleValues` (over §4 `NtQueryMultipleValueKey`), `RegOpenCurrentUser` / `RegOpenUserClassesRoot` / `RegOverridePredefKey`
+  - No advapi32 exists in the tree. Owner: `12-user-platform-sdk/TODO-07` s10 (item: "advapi32 `RegXxx` A/W exports"). Also waits on s4.
+- [/] advapi32 transacted wrappers `Reg{Create,Open,Delete}KeyTransacted` (pair with §4 transacted syscalls); implement or explicitly defer each documented export
+  - No advapi32 exists in the tree. Owner: `12-user-platform-sdk/TODO-07` s10 (item: "advapi32 `RegXxx` A/W exports"). Also waits on s4.
 
 - [ ] `HKEY_CLASSES_ROOT` read path: `RegOpenKeyEx(HKCR, sub_key, ...)` → first look in `HKCU\Software\Classes\<sub_key>`; if not found, look in `HKLM\SOFTWARE\Classes\<sub_key>`; return whichever is found first
 - [ ] `HKCR` write path: `RegCreateKeyEx(HKCR, sub_key, ...)` → always write to `HKCU\Software\Classes\<sub_key>` (per-user override)
 - [ ] `RegEnumKeyEx(HKCR, ...)`: merge results from both HKCU\Software\Classes and HKLM\SOFTWARE\Classes, deduplicate by name, return union; HKCU entries shadow HKLM entries with same name
 
 - [ ] `reg_ntstatus_to_win32(NTSTATUS)` table: `STATUS_OBJECT_NAME_NOT_FOUND` → `ERROR_FILE_NOT_FOUND`, `STATUS_ACCESS_DENIED` → `ERROR_ACCESS_DENIED`, `STATUS_BUFFER_TOO_SMALL` → `ERROR_MORE_DATA`, `STATUS_NO_MORE_ENTRIES` → `ERROR_NO_MORE_ITEMS`, `STATUS_INSUFFICIENT_RESOURCES` → `ERROR_OUTOFMEMORY`, default → `ERROR_INVALID_FUNCTION`
-- [ ] Win32 API wrappers call `SetLastError(reg_ntstatus_to_win32(status))` on failure before returning; `GetLastError()` returns the correct code
+- [/] Win32 API wrappers call `SetLastError(reg_ntstatus_to_win32(status))` on failure before returning; `GetLastError()` returns the correct code
+  - No advapi32 exists in the tree. Owner: `12-user-platform-sdk/TODO-07` s10 (item: "advapi32 `RegXxx` A/W exports"). Also waits on s4.
 
 - [ ] **Tracing toggle** ⭐ -- `HKLM\SYSTEM\Registry\TraceEnabled = 1` (default 0) enables per-call tracing: each `RegXxx` call logs to the serial log at `LOG_TRACE` level: `[REG] RegSetValueEx HKLM\System\Display Width=1920 (pid=42)` with PID, key path, value name, type, and `NTSTATUS` result
 - [ ] `reg_trace(func_name, hKey, value_name, type, status)` helper function; only evaluated when `reg_trace_enabled` global is 1 (set from `HKLM\SYSTEM\Registry\TraceEnabled` on `registry_init`)
 
-- [ ] Commit: `"kernel/registry: advapi32 A/W shims, HKCR merged view, error mapping, API tracing"`
+- [/] Commit: `"kernel/registry: advapi32 A/W shims, HKCR merged view, error mapping, API tracing"` Waits on: the parked items above.
 
 **Test checkpoint:** `RegOpenKeyExW(HKLM, L"SYSTEM\\Display", ...)` succeeds (UTF-16 path resolves). `RegOpenKeyExA(HKCR, "myapp.doc")` → reads HKCU\Software\Classes first, falls back to HKLM. Failed `RegQueryValueEx` → `GetLastError()` returns `ERROR_FILE_NOT_FOUND`. API trace: `TraceEnabled=1` → serial log shows `"[REG] RegSetValueEx HKLM\\... Width=1920 (pid=N)"`. Test on: QEMU WHPX + TCG.
 
@@ -365,7 +374,7 @@ title: "TODO-14 -- Registry System Completion"
 > - Also blocked: `reg_resolve_hkcr` is HKLM-only (no HKCU-first / write-redirect / dedup-enum overlay); RegCloseKey needs the HKEY->OB handle migration (§4) or user open/close loops exhaust the 128-handle pool.
 > - Canonical doc: registry Win32 surface in [`include/registry.h`](../../include/registry.h).
 > - Scope boundary: §5 blocked on user-mode advapi32 surfacing (PE loader / user-mode libc) + HKEY->OB migration (§4) + HKCR overlay; wchar helpers ride with the §4 UTF-16 cluster.
-> **Deferred:** [H] A/W advapi32 Reg* variants + export surface need a real user-mode advapi32 trampoline + the HKEY->OB handle migration before they can execute -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 274)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] A/W advapi32 Reg* variants + export surface need a real user-mode advapi32 trampoline + the HKEY->OB handle migration before they can execute
 
 ---
 
@@ -375,7 +384,8 @@ title: "TODO-14 -- Registry System Completion"
 - [ ] Condition for redirect: `current_task()->Token->IntegrityLevelSid == SeILMedium` AND write is to `HKLM\SOFTWARE` subtree AND the key does not have `REG_FLAG_READONLY` AND the calling process is NOT running elevated (→ XREF `TODO-15-security-reference-monitor.md §6`)
 - [ ] `NtCreateKey` / `NtSetValueKey`: check for virtualization condition before the write; if active, silently rewrite the path to VirtualStore and notify caller of success -- the caller is unaware of the redirect
 - [ ] Read path: `NtOpenKey` / `NtQueryValueKey` for virtualized paths: try VirtualStore first; fall back to real HKLM path
-- [ ] **Virtualization control flags** -- per-key opt-out via `NtSetInformationKey(KeyControlFlagsInformation)`:
+- [/] **Virtualization control flags** -- per-key opt-out via `NtSetInformationKey(KeyControlFlagsInformation)`:
+  - Waits on s4 (item: "`NtSetInformationKey`"): the control-flag path does not exist yet.
   - `REG_KEY_DONT_VIRTUALIZE (0x02)`: disable virtualization for this key; writes from low-IL processes fail with `STATUS_ACCESS_DENIED` instead of being silently redirected
   - `REG_KEY_DONT_SILENT_FAIL (0x04)`: when set and virtualization would apply, the write fails loudly instead of being redirected; debugging aid for app developers
   - `REG_KEY_RECURSE_FLAG (0x08)`: apply the parent's control flags to all children recursively
@@ -403,7 +413,8 @@ title: "TODO-14 -- Registry System Completion"
     - `hex(b):...` → `REG_QWORD`
   - `@="..."` → sets the default value (empty name `""`)
   - Skip blank lines and `;` comment lines
-- [ ] `regedit import <file>` shell wrapper
+- [/] `regedit import <file>` shell wrapper
+  - Waits on s7, which owns the `regedit` command. `reg_import` itself is free.
 
 - [ ] `reg_export(hKey, path)` -- recursive export of a key sub-tree:
   - Write `Windows Registry Editor Version 5.00\r\n\r\n` header
@@ -411,19 +422,21 @@ title: "TODO-14 -- Registry System Completion"
   - For each value: encode according to type (reverse of §6 parse rules)
   - For `REG_SZ` values: escape `\` → `\\`, `"` → `\"`
   - Recurse into sub-keys; write empty line between key sections
-- [ ] `regedit export HKLM\SOFTWARE\Test output.reg` shell wrapper
+- [/] `regedit export HKLM\SOFTWARE\Test output.reg` shell wrapper
+  - Waits on s7, which owns the `regedit` command. `reg_export` itself is free.
 
 - [ ] Commit: `"kernel/registry: virtualization redirect, .reg import/export"`
 
 **Test checkpoint:** Low-IL process writes `HKLM\SOFTWARE\Test` → redirected to `HKCU\Software\VirtualStore\MACHINE\SOFTWARE\Test`. Read: VirtualStore value returned first. `REG_KEY_DONT_VIRTUALIZE` on key → low-IL write → `STATUS_ACCESS_DENIED`. `.reg` round-trip: export → delete → import → all values restored byte-for-byte. Serial log: `"[REG] Virtualize: %s -> VirtualStore\\%s"`. Test on: QEMU WHPX + TCG.
 
-> **Deferred:** [H] registry virtualization (low-IL `HKLM\SOFTWARE`->VirtualStore redirect) + `.reg` import/export blocked on the per-process token IntegrityLevel infra (TODO-15 §6 MIC) + the non-existent `NtSetInformationKey` control-flag path; also rides on §5 -> XREF: 02-kernel-core/TODO-14 §6 (item: "Condition for redirect" at line 375)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] registry virtualization (low-IL `HKLM\SOFTWARE`->VirtualStore redirect) + `.reg` import/export blocked on the per-process token IntegrityLevel infra (TODO-15 §6 MIC) + the non-existent `NtSetInformationKey` control-flag path; also rides on §5
 
 ---
 
 ## 7. `regedit` Shell Tool
 
-- [ ] `regedit list <path>` -- list immediate sub-key names and value names + types under `<path>`; format:
+- [/] `regedit list <path>` -- list immediate sub-key names and value names + types under `<path>`; format:
+  - Waits on s4 (item: "Migrate HKEY to OB handle table"): a raw HKEY cannot reach ring-3 safely.
   ```
   HKLM\SYSTEM\Display
     Keys:   (none)
@@ -431,18 +444,28 @@ title: "TODO-14 -- Registry System Completion"
             Height   REG_DWORD  1080
             Depth    REG_DWORD  32
   ```
-- [ ] `regedit query <path> <valueName>` -- print a single value; format: `HKLM\SYSTEM\Display\Width = 1920 (REG_DWORD)`
-- [ ] `regedit set <path> <valueName> <type> <data>` -- write a value; `type` is one of `REG_SZ`, `REG_DWORD`, `REG_QWORD`, `REG_BINARY`, `REG_MULTI_SZ`; `data` is the string representation (hex for binary, decimal for DWORD/QWORD, comma-separated hex bytes for binary)
-- [ ] `regedit delete <path> [<valueName>]` -- without `valueName`: delete the key and all children (`RegDeleteTree`); with `valueName`: delete only the named value (`RegDeleteValue`)
-- [ ] `regedit tree <path> [--depth N]` -- recursive ASCII tree; default depth 4; `--depth 0` = unlimited
-- [ ] `regedit export <path> <file>` -- call `reg_export` (§6)
-- [ ] `regedit import <file>` -- call `reg_import` (§6)
+- [/] `regedit query <path> <valueName>` -- print a single value; format: `HKLM\SYSTEM\Display\Width = 1920 (REG_DWORD)`
+  - Waits on s4 (item: "Migrate HKEY to OB handle table"): a raw HKEY cannot reach ring-3 safely.
+- [/] `regedit set <path> <valueName> <type> <data>` -- write a value; `type` is one of `REG_SZ`, `REG_DWORD`, `REG_QWORD`, `REG_BINARY`, `REG_MULTI_SZ`;
+  - `data` is the string representation (hex for binary, decimal for DWORD/QWORD, comma-separated hex bytes for binary)
+  - Waits on s4 (item: "Migrate HKEY to OB handle table"): a raw HKEY cannot reach ring-3 safely.
+- [/] `regedit delete <path> [<valueName>]` -- without `valueName`: delete the key and all children (`RegDeleteTree`); with `valueName`: delete only the named value (`RegDeleteValue`)
+  - Waits on s4 (item: "Migrate HKEY to OB handle table"): a raw HKEY cannot reach ring-3 safely.
+- [/] `regedit tree <path> [--depth N]` -- recursive ASCII tree; default depth 4; `--depth 0` = unlimited
+  - Waits on s4 (item: "Migrate HKEY to OB handle table"): a raw HKEY cannot reach ring-3 safely.
+- [/] `regedit export <path> <file>` -- call `reg_export` (§6)
+  - Waits on s6 (`reg_export`) and s4.
+- [/] `regedit import <file>` -- call `reg_import` (§6)
+  - Waits on s6 (`reg_import`) and s4.
 
-- [ ] Unknown path → print `Error: key not found: <path>`
-- [ ] Access denied → print `Error: access denied (KEY_WRITE required)`
-- [ ] Invalid type string → print `Error: unknown type '<type>'; valid: REG_SZ REG_DWORD REG_QWORD REG_BINARY REG_MULTI_SZ`
+- [/] Unknown path → print `Error: key not found: <path>`
+  - Waits on s4 (item: "Migrate HKEY to OB handle table"): a raw HKEY cannot reach ring-3 safely.
+- [/] Access denied → print `Error: access denied (KEY_WRITE required)`
+  - Waits on s4 (item: "Migrate HKEY to OB handle table"): a raw HKEY cannot reach ring-3 safely.
+- [/] Invalid type string → print `Error: unknown type '<type>'; valid: REG_SZ REG_DWORD REG_QWORD REG_BINARY REG_MULTI_SZ`
+  - Waits on s4 (item: "Migrate HKEY to OB handle table"): a raw HKEY cannot reach ring-3 safely.
 
-- [ ] Commit: `"shell: regedit list/query/set/delete/tree/export/import subcommands"`
+- [/] Commit: `"shell: regedit list/query/set/delete/tree/export/import subcommands"` Waits on: the items above.
 
 **Test checkpoint:** `regedit list HKLM\SYSTEM\Display` → shows Width/Height/Depth with types. `regedit set HKLM\Test val1 REG_DWORD 42` + `regedit query HKLM\Test val1` → `42 (REG_DWORD)`. `regedit delete HKLM\Test` → key removed. `regedit tree HKLM --depth 2` → ASCII tree output. Invalid path → `"Error: key not found: ..."`. Test on: QEMU WHPX + TCG.
 
@@ -460,7 +483,7 @@ title: "TODO-14 -- Registry System Completion"
 - [x] Harden `hive_load` value parsing (`registry.c:2515`, nested-key 2371): unchecked `pos += vdata_size` lets a crafted hive move `pos` past `data_size`. Use subtraction bounds + final `pos == data_size` check. XREF: TODO-12 §15.
 - [/] Make `hive_load` transactional -- PARTIAL: validate pass (apply=0) catches malformed input before any live mutation, but apply still mutates incrementally with no rollback; full staging -> §14 reload-transactionality. XREF: TODO-12 §15.
 - [x] `hive_validate_file` checks only the header CRC, then `hive_best_source` promotes a header-valid `.hive.log` over a good main hive before any data parse (`registry.c:2265-2305`). Validate the full candidate before promotion. XREF: TODO-12 §15.
-- [/] DEFERRED: hive_parse_key recursion capped at HIVE_MAX_PARSE_DEPTH (12) for 8 KiB stack safety; full-depth support needs an iterative parser. -> XREF: 02-kernel-core/TODO-14 §10 (item: "Iterative/heap-backed hive parser" at the §10 checklist)
+- [/] DEFERRED: hive_parse_key recursion capped at HIVE_MAX_PARSE_DEPTH (12) for 8 KiB stack safety; full-depth support needs an iterative parser. -> XREF: 02-kernel-core/TODO-14 §16 (item: "Iterative/heap-backed hive parser" at the §10 checklist)
 - [/] DEFERRED (boot-mount coupled, GPF history): wire `registry_load_hives()` into boot after defaults (needs C:); loads on-disk `ExternalEntropy`, so secure-delete MUST land together. -> XREF: `01-boot-platform/TODO-12 §9`
 - [/] DEFERRED (with load trio): secure one-shot deletion across main + journal + `.bak` before cross-reboot absorb; then drop the `registry_persistence_active()` gate. -> XREF: `01-boot-platform/TODO-12 §9`
 - [/] DEFERRED (with load trio): per-hive flush status (`registry_flush_hive_checked()`) so an unrelated dirty hive failing can't discard a persisted SYSTEM one-shot. -> XREF: `01-boot-platform/TODO-12 §9`
@@ -505,7 +528,7 @@ title: "TODO-14 -- Registry System Completion"
 > - Scope boundary: durability DEFERRED -- delta-flush needs §14 SMP lock; dual-log/load-wiring/secure-delete need boot TODO-12 §9; chkregistry needs user-mode surface (§7); compaction needs a non-monotonic allocator.
 > **Verified:** 2026-07-04 | commit `dd29fad8` | 3/21 items | build OK | abi 1149/0 PASS + smoke PASS 3.1s
 > **Deferred:** [H] hive_load apply pass mutates the live tree with no rollback + load-capacity preflight counts total records not missing allocations -> XREF: 02-kernel-core/TODO-14 §14 (item: "reload transactionality" at the §14 checklist)
-> **Deferred:** [H] hive_parse_key recursion capped at HIVE_MAX_PARSE_DEPTH (12) for 8 KiB stack safety; full depth needs an iterative parser -> XREF: 02-kernel-core/TODO-14 §10 (item: "Iterative/heap-backed hive parser" at the §10 checklist)
+> **Deferred:** [H] hive_parse_key recursion capped at HIVE_MAX_PARSE_DEPTH (12) for 8 KiB stack safety; full depth needs an iterative parser -> XREF: 02-kernel-core/TODO-14 §16 (item: "Iterative/heap-backed hive parser")
 > **Deferred:** [M] registry_load_hives double-reads (best_source validates then hive_load re-parses) -> XREF: 02-kernel-core/TODO-14 §8 (item: "double-reads" at the §8 checklist)
 > **Quality reviewed:** 2026-07-04 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 3H+2M fixed, 2H+1M deferred | scope: kernel-code-quality
 
@@ -531,7 +554,7 @@ title: "TODO-14 -- Registry System Completion"
 - [/] DEFERRED (frees shared pool slots -- needs the §14 lock): **Orphan GC** ⭐ `reg_gc_orphans()` -- free pool slots for `active` keys unreachable from any root; auto-run on `registry_flush` if orphan count > 10.
 - [/] DEFERRED (per-task tracking + NtSetValueKey hook -- needs §14 lock): **Per-PID quota** ⭐ track per-task registry bytes in `struct task`; > `QuotaBytes` (50 MiB) -> `STATUS_QUOTA_EXCEEDED`; reset on exit.
 
-- [ ] Commit: `"kernel/registry: transactions, search API, snapshot/diff, orphan GC, per-PID quota"`
+- [/] Commit: `"kernel/registry: transactions, search API, snapshot/diff, orphan GC, per-PID quota"` Waits on: the items above.
 
 **Test checkpoint:** `RegBeginTransaction` + `RegSetValueEx` + `RegCommitTransaction` → value visible. `RegAbortTransaction` → value absent. Conflict: two concurrent txns modify same key → second commit → `STATUS_REGISTRY_TRANSACTION_CONFLICT`. `RegFindKey(HKLM, "Disp*")` → finds `Display`. `RegTakeSnapshot` + modify + `RegDiffSnapshots` → `REG_DIFF_MODIFIED`. Per-PID quota at 50 MiB → exceed → `STATUS_QUOTA_EXCEEDED`. Serial log: `"[REG] Transaction commit: %u mutations applied"`. Test on: QEMU WHPX + TCG.
 
@@ -542,26 +565,37 @@ title: "TODO-14 -- Registry System Completion"
 
 ## 10. Performance Optimisations
 
-- [ ] Replace the linked-list `reg_key_t.children` with a fixed-size FNV-1a hash map; `REG_CHILD_BUCKETS = 16` (already defined in `registry.h`); each bucket is a pointer to a chain of children with the same hash bucket
-- [ ] `reg_child_lookup(parent, name)` → O(1) average vs. O(n) linear scan
-- [ ] Load factor tracking: if any bucket chain length > 8, double the bucket count (re-hash into `pmm_alloc_contiguous` if > pool threshold)
-- [ ] `RegQueryInfoKey` reports the new `MaxSubKeyNameLen` correctly after the hash expansion
+- [/] Replace the linked-list `reg_key_t.children` with a fixed-size FNV-1a hash map; `REG_CHILD_BUCKETS = 16` (already defined in `registry.h`); each bucket is a pointer to a chain of children with the same hash bucket
+  - Waits on s14: this adds registry state that needs the SMP lock and deferred dispatch.
+- [/] `reg_child_lookup(parent, name)` → O(1) average vs. O(n) linear scan
+  - Waits on s14: this adds registry state that needs the SMP lock and deferred dispatch.
+- [/] Load factor tracking: if any bucket chain length > 8, double the bucket count (re-hash into `pmm_alloc_contiguous` if > pool threshold)
+  - Waits on s14: this adds registry state that needs the SMP lock and deferred dispatch.
+- [/] `RegQueryInfoKey` reports the new `MaxSubKeyNameLen` correctly after the hash expansion
+  - Waits on s14: this adds registry state that needs the SMP lock and deferred dispatch.
 
-- [ ] `hive_open_mmap(path)` -- map the hive file directly into kernel address space via `NtMapViewOfSection` (→ XREF `TODO-05-object-manager.md §7`); keys/values reference offsets into the mapped region instead of the static pool
-- [ ] Zero-copy reads: `RegQueryValueEx` for a mapped hive reads directly from the mapped page; no `memcpy` for read-only queries
-- [ ] Dirty page tracking: maintain `dirty_bitmap` (§8) over the mapped region; on flush, only `msync` dirty pages to disk
-- [ ] Prerequisite: `NtMapViewOfSection` must be stable (→ XREF `TODO-05-object-manager.md §7`); implement after that TODO
+- [/] `hive_open_mmap(path)` -- map the hive file directly into kernel address space via `NtMapViewOfSection` (→ XREF `TODO-05-object-manager.md §7`); keys/values reference offsets into the mapped region instead of the static pool
+  - Waits on s14: this adds registry state that needs the SMP lock and deferred dispatch.
+- [/] Zero-copy reads: `RegQueryValueEx` for a mapped hive reads directly from the mapped page; no `memcpy` for read-only queries
+  - Waits on s14: this adds registry state that needs the SMP lock and deferred dispatch.
+- [/] Dirty page tracking: maintain `dirty_bitmap` (§8) over the mapped region; on flush, only `msync` dirty pages to disk
+  - Waits on s14: this adds registry state that needs the SMP lock and deferred dispatch.
+- [/] Prerequisite: `NtMapViewOfSection` must be stable (→ XREF `TODO-05-object-manager.md §7`); implement after that TODO
+  - Waits on s14: this adds registry state that needs the SMP lock and deferred dispatch.
 
-- [ ] Redesign the on-disk hive format to use variable-size "cells" in a B-tree structure matching NT hive internals (`regf` format):
+- [/] Redesign the on-disk hive format to use variable-size "cells" in a B-tree structure matching NT hive internals (`regf` format):
+  - Waits on s14: this adds registry state that needs the SMP lock and deferred dispatch.
   - `HIVE_BLOCK` header (`regf` signature, sequence numbers, checksum)
   - Allocated cells: `NK_RECORD` (named key), `VK_RECORD` (value key), `SK_RECORD` (security key), `LF_RECORD` / `LH_RECORD` (sub-key lists)
   - Free cells: linked list of free space blocks
-- [ ] Benefit: random-access reads without loading the entire hive into RAM; a 20 MiB hive can be queried for a single value by reading only 3--4 disk sectors (header + NK record + VK record)
-- [ ] Compatibility: the B-tree format is compatible with Windows NT hive internals; external `chntpw` and `python-registry` tools can read it
-- [ ] Prerequisite: §10 (mmap) and §8 (compaction) should be stable first
+- [/] Benefit: random-access reads without loading the entire hive into RAM; a 20 MiB hive can be queried for a single value by reading only 3--4 disk sectors (header + NK record + VK record)
+  - Waits on s14: this adds registry state that needs the SMP lock and deferred dispatch.
+- [/] Compatibility: the B-tree format is compatible with Windows NT hive internals; external `chntpw` and `python-registry` tools can read it
+  - Waits on s14: this adds registry state that needs the SMP lock and deferred dispatch.
+- [/] Prerequisite: §10 (mmap) and §8 (compaction) should be stable first
+  - Waits on s14: this adds registry state that needs the SMP lock and deferred dispatch.
 
-- [ ] Iterative/heap-backed hive parser: replace `hive_parse_key` recursion (capped at HIVE_MAX_PARSE_DEPTH=12 for 8 KiB-stack safety) with a heap-backed parse stack so hives up to REG_MAX_KEY_DEPTH round-trip. -> XREF: 02-kernel-core/TODO-14 §8
-- [ ] Commit: `"kernel/registry: hash map child lookup, mmap hive, B-tree cell format"`
+- [/] Commit: `"kernel/registry: hash map child lookup, mmap hive, B-tree cell format"` Waits on: the items above.
 
 **Test checkpoint:** Hash map: create 100 children under one key → `reg_child_lookup` finds each by name. Load factor: bucket chain > 8 triggers rehash. Mmap hive: `hive_open_mmap` → `RegQueryValueEx` reads directly from mapped page (zero-copy). B-tree: write hive in `regf` format → external `python-registry` tool parses it. Serial log: `"[REG] Hash map: bucket_count=%u max_chain=%u"`. Test on: QEMU WHPX + TCG.
 
@@ -574,15 +608,25 @@ title: "TODO-14 -- Registry System Completion"
 
 Register the full Kernel Transaction Manager (KTM) syscall surface in the SSDT for transactional registry, file, and resource management. (→ XREF `TODO-12-native-api-ssdt.md §14, §15`)
 
-- [ ] Implement KTM Transaction Manager syscalls: `NtCreateTransactionManager` (0x01A0), `NtOpenTransactionManager` (0x01A1)
-- [ ] Implement Transaction syscalls: `NtCreateTransaction` (0x01A2), `NtOpenTransaction` (0x01A3), `NtCommitTransaction` (0x01A4), `NtRollbackTransaction` (0x01A5), `NtQueryInformationTransaction` (0x01A6), `NtSetInformationTransaction` (0x01A7)
-- [ ] Implement Resource Manager syscalls: `NtCreateResourceManager` (0x01A8), `NtOpenResourceManager` (0x01A9), `NtQueryInformationResourceManager` (0x01AA), `NtSetInformationResourceManager` (0x01AB)
-- [ ] Implement Enlistment syscalls: `NtCreateEnlistment` (0x01AC), `NtOpenEnlistment` (0x01AD), `NtQueryInformationEnlistment` (0x01AE), `NtSetInformationEnlistment` (0x01AF), `NtPrepareEnlistment` (0x01B0), `NtPrePrepareEnlistment` (0x01B1), `NtCommitEnlistment` (0x01B2), `NtRollbackEnlistment` (0x01B3)
-- [ ] Implement Recovery syscalls: `NtRecoverTransactionManager` (0x01B4), `NtRecoverResourceManager` (0x01B5), `NtRecoverEnlistment` (0x01B6)
-- [ ] Implement misc KTM: `NtPropagationComplete` (0x01B7), `NtPropagationFailed` (0x01B8), `NtFreezeTransactions` (0x01B9), `NtThawTransactions` (0x01BA)
-- [ ] Implement Registry Transaction syscalls: `NtCreateRegistryTransaction` (0x01BB), `NtOpenRegistryTransaction` (0x01BC), `NtCommitRegistryTransaction` (0x01BD), `NtRollbackRegistryTransaction` (0x01BE)
-- [ ] All functions return `NTSTATUS`
-- [ ] Commit: `"kernel/registry: wire KTM transaction syscalls to SSDT (0x01A0--0x01BE)"`
+- [/] Implement KTM Transaction Manager syscalls: `NtCreateTransactionManager` (0x01A0), `NtOpenTransactionManager` (0x01A1)
+  - Waits on s9 (item: "RegBeginTransaction"), which waits on s14.
+- [/] Implement Transaction syscalls: `NtCreateTransaction` (0x01A2), `NtOpenTransaction` (0x01A3), `NtCommitTransaction` (0x01A4), `NtRollbackTransaction` (0x01A5), `NtQueryInformationTransaction` (0x01A6),
+  - `NtSetInformationTransaction` (0x01A7)
+  - Waits on s9 (item: "RegBeginTransaction"), which waits on s14.
+- [/] Implement Resource Manager syscalls: `NtCreateResourceManager` (0x01A8), `NtOpenResourceManager` (0x01A9), `NtQueryInformationResourceManager` (0x01AA), `NtSetInformationResourceManager` (0x01AB)
+  - Waits on s9 (item: "RegBeginTransaction"), which waits on s14.
+- [/] Implement Enlistment syscalls: `NtCreateEnlistment` (0x01AC), `NtOpenEnlistment` (0x01AD), `NtQueryInformationEnlistment` (0x01AE), `NtSetInformationEnlistment` (0x01AF), `NtPrepareEnlistment` (0x01B0),
+  - `NtPrePrepareEnlistment` (0x01B1), `NtCommitEnlistment` (0x01B2), `NtRollbackEnlistment` (0x01B3)
+  - Waits on s9 (item: "RegBeginTransaction"), which waits on s14.
+- [/] Implement Recovery syscalls: `NtRecoverTransactionManager` (0x01B4), `NtRecoverResourceManager` (0x01B5), `NtRecoverEnlistment` (0x01B6)
+  - Waits on s9 (item: "RegBeginTransaction"), which waits on s14.
+- [/] Implement misc KTM: `NtPropagationComplete` (0x01B7), `NtPropagationFailed` (0x01B8), `NtFreezeTransactions` (0x01B9), `NtThawTransactions` (0x01BA)
+  - Waits on s9 (item: "RegBeginTransaction"), which waits on s14.
+- [/] Implement Registry Transaction syscalls: `NtCreateRegistryTransaction` (0x01BB), `NtOpenRegistryTransaction` (0x01BC), `NtCommitRegistryTransaction` (0x01BD), `NtRollbackRegistryTransaction` (0x01BE)
+  - Waits on s9 (item: "RegBeginTransaction"), which waits on s14.
+- [/] All functions return `NTSTATUS`
+  - Waits on s9 (item: "RegBeginTransaction"), which waits on s14.
+- [/] Commit: `"kernel/registry: wire KTM transaction syscalls to SSDT (0x01A0--0x01BE)"` Waits on: the items above.
 
 **Test checkpoint:** `NtCreateTransactionManager` + `NtCreateTransaction` + `NtCommitTransaction` round-trip succeeds. `NtRollbackTransaction` reverts changes. `NtCreateRegistryTransaction` + `NtCommitRegistryTransaction` atomically applies registry mutations. Test on: QEMU WHPX, QEMU TCG, VirtualBox, and bare metal.
 
@@ -595,14 +639,15 @@ Register the full Kernel Transaction Manager (KTM) syscall surface in the SSDT f
 
 Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution in `reg_resolve_path()` are already implemented. This section completes the symlink surface: creation via NT API, link-open semantics, built-in symlinks, and loop detection.
 
-- [ ] `REG_OPTION_CREATE_LINK (0x02)` -- when passed as `CreateOptions` to `NtCreateKey` / `RegCreateKeyEx`, the created key is marked as a symbolic link (`REG_FLAG_LINK`); the caller must immediately set the default (unnamed) value to a `REG_LINK` type string containing the target path; if no `REG_LINK` value is set before the key is used, path resolution treats it as a dead link and returns `STATUS_OBJECT_NAME_NOT_FOUND`
-- [ ] `REG_OPTION_OPEN_LINK (0x08)` -- when passed as `OpenOptions` to `NtOpenKeyEx`, open the link key itself rather than following the symlink; without this flag, `NtOpenKey` transparently follows the link (existing behavior); `RegOpenKeyEx` does NOT support this flag -- it always follows links (Win32 contract)
-- [ ] Symlink loop detection: `reg_resolve_path()` already follows `REG_LINK` transparently; add a `max_link_depth = 32` counter; if exceeded, return `STATUS_REPARSE_POINT_NOT_RESOLVED`; prevents infinite loops from circular symlinks (`A → B → A`)
-- [ ] Built-in symlinks created during `registry_populate_defaults()`:
-  - `\Registry\Machine\System\CurrentControlSet` → `\Registry\Machine\System\ControlSet001` (selected by `Select` / `Current` value)
-  - `\Registry\Machine\Software\Classes` → `\Registry\Machine\Software\Classes` (physical; HKCR overlay is handled by §5 merge logic, not a symlink)
-- [ ] `regedit` shell tool (§7): `regedit list` output marks symlink keys with `→ <target>` suffix; `regedit tree` follows symlinks but marks them with `[LINK]`
-- [ ] Commit: `"kernel/registry: REG_OPTION_CREATE_LINK, REG_OPTION_OPEN_LINK, symlink loop detection"`
+- [/] `REG_OPTION_CREATE_LINK (0x02)` -- when passed as `CreateOptions` to `NtCreateKey` / `RegCreateKeyEx`, the created key is marked as a symbolic link (`REG_FLAG_LINK`);
+  - the caller must immediately set the default (unnamed) value to a `REG_LINK` type string containing the target path; if no `REG_LINK` value is set before the key is used, path resolution treats it as a dead link and returns `STATUS_OBJECT_NAME_NOT_FOUND`
+  - Waits on s4 (item: "Migrate HKEY to OB handle table"): a raw HKEY cannot reach ring-3 safely.
+- [/] `REG_OPTION_OPEN_LINK (0x08)` -- when passed as `OpenOptions` to `NtOpenKeyEx`, open the link key itself rather than following the symlink; without this flag, `NtOpenKey` transparently follows the link (existing behavior);
+  - `RegOpenKeyEx` does NOT support this flag -- it always follows links (Win32 contract)
+  - Waits on s4 (item: "Migrate HKEY to OB handle table"): a raw HKEY cannot reach ring-3 safely.
+- [/] `regedit` shell tool (§7): `regedit list` output marks symlink keys with `→ <target>` suffix; `regedit tree` follows symlinks but marks them with `[LINK]`
+  - Waits on s7.
+- [/] Commit: `"kernel/registry: REG_OPTION_CREATE_LINK, REG_OPTION_OPEN_LINK, symlink loop detection"` Waits on: the items above.
 
 **Test checkpoint:** Create a symlink key `HKLM\Test\Link` → `HKLM\Test\Target` via `NtCreateKey(REG_OPTION_CREATE_LINK)` + `NtSetValueKey(REG_LINK)`. `NtOpenKey("HKLM\\Test\\Link")` transparently returns target key. `NtOpenKeyEx("HKLM\\Test\\Link", REG_OPTION_OPEN_LINK)` returns the link key itself. Create circular symlink `A → B → A`; `NtOpenKey("A")` returns `STATUS_REPARSE_POINT_NOT_RESOLVED` (not infinite loop). `CurrentControlSet` symlink resolves to `ControlSet001`. Serial log: `"[REG] Symlink resolve: %s -> %s (depth=%u)"`. Test on: QEMU WHPX + TCG.
 
@@ -616,20 +661,27 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 > [!TIP]
 > Neither Windows 11 nor Linux provides built-in type-schema enforcement for their configuration stores. Win11 registry accepts any type for any value -- a `REG_DWORD` can be overwritten with `REG_SZ` without warning. Linux dconf has external XML schema files validated by GSettings, but the dconf binary store itself enforces nothing. Impossible OS embeds optional per-key type schemas directly in the registry, catching mistyped writes at the kernel level before they corrupt configuration state.
 
-- [ ] Define schema storage convention: `HKLM\SYSTEM\Schema\<relative_key_path>` contains metadata values describing the schema for `HKLM\<relative_key_path>`:
+- [/] Define schema storage convention: `HKLM\SYSTEM\Schema\<relative_key_path>` contains metadata values describing the schema for `HKLM\<relative_key_path>`:
+  - Waits on s14 and s4: this hooks the write path.
   - `_AllowedTypes` (REG_MULTI_SZ): list of allowed `REG_*` type names, e.g., `"REG_DWORD\0REG_QWORD\0"`
   - `_MinValue` (REG_QWORD): minimum value for `REG_DWORD` / `REG_QWORD` writes
   - `_MaxValue` (REG_QWORD): maximum value for `REG_DWORD` / `REG_QWORD` writes
   - `_MaxDataSize` (REG_DWORD): maximum data size in bytes for `REG_BINARY` / `REG_SZ` / `REG_MULTI_SZ`
   - `_Required` (REG_MULTI_SZ): list of value names that must exist (checked on key creation / deletion)
   - `_ReadOnly` (REG_DWORD): if 1, all values under this key are immutable after first write (boot-time lock)
-- [ ] `reg_validate_schema(key_path, value_name, type, data, data_size)` → `NTSTATUS`: called from `RegSetValueEx` / `NtSetValueKey` before mutation; returns `STATUS_OBJECT_TYPE_MISMATCH` for type violations, `STATUS_INTEGER_OVERFLOW` for range violations, `STATUS_BUFFER_OVERFLOW` for size violations
-- [ ] Schema lookup: `reg_find_schema(key_path)` → looks up `HKLM\SYSTEM\Schema\<key_path>`; result is cached in `reg_key_t.cached_schema` pointer (invalidated on schema key change via §3 watcher); if no schema key exists, validation is skipped (opt-in, not opt-out)
-- [ ] Pre-populate schemas for critical system keys:
+- [/] `reg_validate_schema(key_path, value_name, type, data, data_size)` → `NTSTATUS`: called from `RegSetValueEx` / `NtSetValueKey` before mutation;
+  - returns `STATUS_OBJECT_TYPE_MISMATCH` for type violations, `STATUS_INTEGER_OVERFLOW` for range violations, `STATUS_BUFFER_OVERFLOW` for size violations
+  - Waits on s14 and s4: this hooks the write path.
+- [/] Schema lookup: `reg_find_schema(key_path)` → looks up `HKLM\SYSTEM\Schema\<key_path>`; result is cached in `reg_key_t.cached_schema` pointer (invalidated on schema key change via §3 watcher);
+  - if no schema key exists, validation is skipped (opt-in, not opt-out)
+  - Waits on s14 and s4: this hooks the write path.
+- [/] Pre-populate schemas for critical system keys:
+  - Waits on s14 and s4: this hooks the write path.
   - `HKLM\SYSTEM\Display`: `Width`/`Height` = `REG_DWORD`, range `[640, 7680]`; `Depth` = `REG_DWORD`, range `[8, 32]`
   - `HKLM\SYSTEM\Registry\*`: `AuditEnabled`/`TraceEnabled`/`QuotaEnabled` = `REG_DWORD`, range `[0, 1]`
-- [ ] `regedit schema <path>` -- show the schema for a key (types, ranges, required values); print `(no schema)` if none defined
-- [ ] Commit: `"kernel/registry: schema-validated keys -- type, range, and size enforcement"`
+- [/] `regedit schema <path>` -- show the schema for a key (types, ranges, required values); print `(no schema)` if none defined
+  - Waits on s7.
+- [/] Commit: `"kernel/registry: schema-validated keys -- type, range, and size enforcement"` Waits on: the items above.
 
 **Test checkpoint:** Set schema on `HKLM\Test\SchemaKey`: `_AllowedTypes = "REG_DWORD"`, `_MinValue = 0`, `_MaxValue = 100`. `RegSetValueEx("Value", REG_DWORD, 50)` → succeeds. `RegSetValueEx("Value", REG_DWORD, 200)` → `STATUS_INTEGER_OVERFLOW`. `RegSetValueEx("Value", REG_SZ, "hello")` → `STATUS_OBJECT_TYPE_MISMATCH`. Key with no schema → all writes succeed (opt-in). Serial log: `"[REG] Schema reject: %s type=%u expected=%s"`. Test on: QEMU WHPX + TCG.
 
@@ -646,27 +698,27 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 > [!WARNING]
 > **Design-review-confirmed prerequisites (2026-07-04, Codex `b9pq875ym`).** A naive coarse spinlock does NOT work here; four hard constraints must be designed first: (1) **IRQ context** -- `RegCreateKeyEx`/`RegSetString`/`RegSetDword`/`RegCloseKey` run in ISR context via `ahci_hotplug_check` (`ahci_core.c` `ahci_irq_body`), so `reg_lock` must be `spin_lock_irqsave`, and the lock must NOT be held across `hive_save`/`hive_load`/`registry_flush` PMM+VFS I/O (an ISR would spin behind disk I/O). (2) **Reentrant callbacks** -- `reg_dispatch_notify` fires watcher callbacks synchronously inside every mutation, and a LIVE test (`test_registry_notify_reentrant`) re-enters `RegSetValueEx` from a callback; a non-recursive lock held across the notify call deadlocks. Requires DEFERRED dispatch: under lock, apply + collect watcher payload snapshots (callback, ctx, change_type, COPIED key_path + value_name, generation) into a bounded array, release lock, then fire lock-free. (3) **Watcher lifetime** -- `RegUnregisterNotify` frees watchers immediately, so a deferred `{fn,ctx}` array is a UAF; needs a generation/epoch or in-flight refcount. (4) **Depth guard** -- global `reg_dispatch_depth` must become per-thread/per-CPU once dispatch is outside the lock (else unrelated CPUs share the budget = silent notification loss). Non-trivial wrappers (`RegRenameKey` walks the tree before `RegRenameKeyDirect`) must lock their FULL body, not just the callee.
 
-- [/] DEFERRED (needs the redesign in the WARNING above): declare `static spinlock_t reg_lock` (irqsave) in `registry.c`; static `SPINLOCK_INIT`.
-- [/] DEFERRED: `spin_lock_irqsave` wrap write-path entry points -- `RegCreateKeyEx`, `RegOpenKeyEx`, `RegCloseKey`, `RegDeleteKey`, `RegDeleteTree`, `RegDeleteKeyDirect`.
-- [/] DEFERRED: `RegSetValueEx`, `RegDeleteValue` under the lock (both fire notify -> need the deferred-dispatch redesign first).
-- [/] DEFERRED: read-path entry points `RegQueryValueEx`, `RegGetValue`, `RegEnumKeyEx`, `RegEnumValue`, `RegQueryInfoKey` under the lock (single spinlock v1).
-- [/] DEFERRED: pool allocators (`reg_alloc_key`/`reg_alloc_value`/`reg_alloc_handle`/`reg_free_handle`) + `reg_create_child`/`reg_walk_path` called lock-held; non-recursive, never self-lock.
+- [ ] declare `static spinlock_t reg_lock` (irqsave) in `registry.c`; static `SPINLOCK_INIT`.
+- [ ] `spin_lock_irqsave` wrap write-path entry points -- `RegCreateKeyEx`, `RegOpenKeyEx`, `RegCloseKey`, `RegDeleteKey`, `RegDeleteTree`, `RegDeleteKeyDirect`.
+- [ ] `RegSetValueEx`, `RegDeleteValue` under the lock (both fire notify -> need the deferred-dispatch redesign first).
+- [ ] read-path entry points `RegQueryValueEx`, `RegGetValue`, `RegEnumKeyEx`, `RegEnumValue`, `RegQueryInfoKey` under the lock (single spinlock v1).
+- [ ] pool allocators (`reg_alloc_key`/`reg_alloc_value`/`reg_alloc_handle`/`reg_free_handle`) + `reg_create_child`/`reg_walk_path` called lock-held; non-recursive, never self-lock.
 - [ ] Extract the `registry_init` two-pool allocation into a pure transaction helper with injectable alloc/free, so the partial-rollback branch (value pool fails after key pool succeeds) gets coverage -> XREF: `02-kernel-core/TODO-33 §10`
-- [/] DEFERRED: cross-call hazards -- `RegRenameKey` locks its FULL body (pre-callee walk is a TOCTOU race); `Reg{Set,Get}{Dword,String}` wrappers stay lock-free, lock in the `RegSetValueEx`/`RegQueryValueEx` callee.
-- [/] DEFERRED: `reg_dispatch_notify` -> deferred dispatch (snapshot payload under lock, fire lock-free) + watcher refcount/epoch (RegUnregisterNotify frees = UAF) + per-CPU depth. -> XREF: 02-kernel-core/TODO-14 §3
-- [/] DEFERRED: `hive_save`/`hive_load`/`registry_flush`/`registry_save_all`/`registry_load_hives` -- lock only the tree-walk portion, release before PMM+VFS I/O (ISR must not spin behind disk I/O).
-- [/] DEFERRED: `hive_load` reload transactionality: hold lock across validate-to-apply; preflight counts MISSING allocs not total; roll back partial mutations on apply-fail into an existing key. -> XREF: 02-kernel-core/TODO-14 §8
-- [/] DEFERRED: SMP stress tests -- concurrent create/delete/enum; unregister-during-dispatch (UAF); unrelated-CPU dispatch depth; RegRenameKey racing delete/rename. WHPX 2 vCPU.
-- [/] DEFERRED: upgrade to rwlock if profiling shows read contention (spinlock is v1).
-- [/] DEFERRED: KCB cache globals (`reg_kcb_cache`/`reg_kcb_clock`/counters, §2) written on every `reg_walk_path` hop -- covered by `reg_lock` above. -> XREF: 02-kernel-core/TODO-14 §2
-- [/] DEFERRED: notification-engine SMP (§3) -- watcher slot-claim + `reg_watcher_next_id` + per-key list head-insert + `reg_dispatch_depth` covered by the lock + deferred-dispatch redesign. -> XREF §3
+- [ ] cross-call hazards -- `RegRenameKey` locks its FULL body (pre-callee walk is a TOCTOU race); `Reg{Set,Get}{Dword,String}` wrappers stay lock-free, lock in the `RegSetValueEx`/`RegQueryValueEx` callee.
+- [ ] `reg_dispatch_notify` -> deferred dispatch (snapshot payload under lock, fire lock-free) + watcher refcount/epoch (RegUnregisterNotify frees = UAF) + per-CPU depth. -> XREF: 02-kernel-core/TODO-14 §3
+- [ ] `hive_save`/`hive_load`/`registry_flush`/`registry_save_all`/`registry_load_hives` -- lock only the tree-walk portion, release before PMM+VFS I/O (ISR must not spin behind disk I/O).
+- [ ] `hive_load` reload transactionality: hold lock across validate-to-apply; preflight counts MISSING allocs not total; roll back partial mutations on apply-fail into an existing key. -> XREF: 02-kernel-core/TODO-14 §8
+- [ ] SMP stress tests -- concurrent create/delete/enum; unregister-during-dispatch (UAF); unrelated-CPU dispatch depth; RegRenameKey racing delete/rename. WHPX 2 vCPU.
+- [/] Upgrade to rwlock if profiling shows read contention (spinlock is v1). Waits on: the lock, then a profile.
+- [ ] KCB cache globals (`reg_kcb_cache`/`reg_kcb_clock`/counters, §2) written on every `reg_walk_path` hop -- covered by `reg_lock` above. -> XREF: 02-kernel-core/TODO-14 §2
+- [ ] notification-engine SMP (§3) -- watcher slot-claim + `reg_watcher_next_id` + per-key list head-insert + `reg_dispatch_depth` covered by the lock + deferred-dispatch redesign. -> XREF §3
 - [ ] Batched atomic multi-value write under one `reg_lock` hold (default + `Path` pair) so `app_paths_register`/`app_paths_lookup` (TODO-22 §17) get an atomic write + consistent read snapshot -> XREF: 02-kernel-core/TODO-22 §17
 - [ ] Commit: `"kernel/registry: SMP-safe registry with spinlock around all pool and tree operations"`
 
 **Test checkpoint:** Two tasks concurrently creating and deleting keys under `\Registry\Machine\Software\SmpTest` for 1000 iterations. No kernel fault, no duplicate handles, enumeration sees consistent child counts. `RegQueryInfoKey` returns correct `lpcSubKeys` under concurrent mutation. Serial log: `"[REG] SMP lock: %u contention events"` (informational). Test on: QEMU WHPX (2 vCPU).
 
-> **Test runner:** N/A (deferred, no code) | validation: on implementation, `scripts\debug\kernel\run-abi-tests.bat` + WHPX 2-vCPU SMP stress
-> **Deferred:** [H] Registry SMP lock deferred pending a notification-engine deferred-dispatch redesign (payload snapshots + watcher refcount/epoch), IRQ-safe (`spin_lock_irqsave`) lock boundaries that exclude hive PMM+VFS I/O, and per-CPU dispatch depth (design review `b9pq875ym`; a naive coarse lock deadlocks the live reentrant-callback test) -- see the WARNING callout -> XREF: 02-kernel-core/TODO-14 §14 (item: "reg_dispatch_notify" at the §14 checklist)
+> **Test runner:** N/A (no code yet) | validation: on implementation, `scripts\debug\kernel\run-abi-tests.bat` + WHPX 2-vCPU SMP stress
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] Registry SMP lock deferred pending a notification-engine deferred-dispatch redesign (payload snapshots + watcher refcount/epoch), IRQ-safe (`spin_lock_irqsave`) lock boundaries that exclude hive PMM+VFS I/O, and per-CPU dispatch depth (design review `b9pq875ym`; a naive coarse lock deadlocks the live reentrant-callback test) -- see the WARNING callout
 
 ---
 
@@ -677,13 +729,19 @@ Raise registry value-name and value-data limits to Windows 11 parity (16 383-cha
 > [!WARNING]
 > **Bare-metal hazard:** the kernel stack is 8 KiB (`TASK_STACK_SIZE`). Five `uint8_t buf[REG_MAX_VALUE_SIZE]` stack buffers (`registry.c:1296`, `2380`, `2524`; `nt_registry.c:360`, `595`) MUST be converted to heap/PMM-backed BEFORE raising `REG_MAX_VALUE_SIZE`, or the first large-value call guard-page-faults. SMP locking stays with §14.
 
-- [ ] Migrate `reg_value_t.name` (`char[256]`) to hybrid inline-or-pointer: inline <=255 chars, `pmm_alloc_contiguous` for longer; raise `REG_MAX_VALUE_NAME` to 16383; keep the empty-name tombstone (`registry.c:1355`) pointer-safe
-- [ ] Migrate `reg_value_t.data` (`uint8_t[512]`) to pointer-backed for data > 512 bytes; raise `REG_MAX_VALUE_SIZE` to 1048576; update `reg_alloc_value` + free paths
-- [ ] Convert the five oversized stack buffers to heap/PMM-backed: `registry.c:1296` (RegGetValue expand), `2380` (hive_deserialize_key), `2524` (hive_load root), `nt_registry.c:360` + `595` (NtQueryValueKey/enum)
-- [ ] Update on-disk wire format (`hive_serialize_key`/`hive_deserialize_key`, `registry.c:2049`/`2344`): name len is u16 (16383 fits), data len already u32; bump `HIVE_VERSION` only if record layout changes + add a v1 read path
-- [ ] Free heap-backed name/data on value delete + key free; no leak on `RegDeleteValue` / `RegDeleteKey` / hive unload
-- [ ] Charge registry names/data bytes and watchers via `quota_charge_current` once value slots are reusable; route `hive_parse_value` through the same transaction so hive load cannot bypass the cap. -> XREF: `02-kernel-core/TODO-25 §6`
-- [ ] Commit: `"kernel/registry: value size expansion to 16KiB names + 1MiB data (heap-backed)"`
+- [/] Migrate `reg_value_t.name` (`char[256]`) to hybrid inline-or-pointer: inline <=255 chars, `pmm_alloc_contiguous` for longer; raise `REG_MAX_VALUE_NAME` to 16383; keep the empty-name tombstone (`registry.c:1355`) pointer-safe
+  - Waits on s14: the heap-backed migration must land under the lock.
+- [/] Migrate `reg_value_t.data` (`uint8_t[512]`) to pointer-backed for data > 512 bytes; raise `REG_MAX_VALUE_SIZE` to 1048576; update `reg_alloc_value` + free paths
+  - Waits on s14: the heap-backed migration must land under the lock.
+- [/] Convert the five oversized stack buffers to heap/PMM-backed: `registry.c:1296` (RegGetValue expand), `2380` (hive_deserialize_key), `2524` (hive_load root), `nt_registry.c:360` + `595` (NtQueryValueKey/enum)
+  - Waits on s14: the heap-backed migration must land under the lock.
+- [/] Update on-disk wire format (`hive_serialize_key`/`hive_deserialize_key`, `registry.c:2049`/`2344`): name len is u16 (16383 fits), data len already u32; bump `HIVE_VERSION` only if record layout changes + add a v1 read path
+  - Waits on s14: the heap-backed migration must land under the lock.
+- [/] Free heap-backed name/data on value delete + key free; no leak on `RegDeleteValue` / `RegDeleteKey` / hive unload
+  - Waits on s14: the heap-backed migration must land under the lock.
+- [/] Charge registry names/data bytes and watchers via `quota_charge_current` once value slots are reusable; route `hive_parse_value` through the same transaction so hive load cannot bypass the cap. -> XREF: `02-kernel-core/TODO-25 §6`
+  - Waits on s14: the heap-backed migration must land under the lock.
+- [/] Commit: `"kernel/registry: value size expansion to 16KiB names + 1MiB data (heap-backed)"` Waits on: the items above.
 
 **Test checkpoint:** `RegSetValueEx` with a 4096-byte `REG_BINARY` succeeds; a 1 MiB value round-trips through `hive_save`/`hive_load`; a 300-char value name round-trips; no kernel-stack guard fault on a large-value query. Serial log: `"[REG] large value: name=%u data=%u bytes"`. Test on: QEMU WHPX + TCG.
 
@@ -700,6 +758,16 @@ From the stamped section 2:
 - [ ] `RegSaveKey`/`RegRestoreKey` hive I/O bodies: design ready (see design-of-record)
   - Design of record (both `hive_save`/`hive_load` already exist and work, called elsewhere at `registry.c:4111`): `RegSaveKey` (`registry.c:2282`) bound-copies `lpFile` into a stack `char[VFS_MAX_PATH]` (no TOCTOU on the caller pointer), calls `hive_save(key, kpath)`, maps failure to the existing `ERROR_REGISTRY_IO_FAILED`. `RegRestoreKey` (`registry.c:2308`) does the same bounded copy, then stages into a scratch `reg_key_t` LOCAL STACK variable (zeroed, name copied from the live key -- not pool-allocated itself since nothing links to it yet) and calls `hive_load(kpath, &scratch)`, which pool-allocates descendants via the existing `reg_create_child`/`reg_alloc_key` path (already capacity-checked against `REG_KEY_POOL_SIZE`/`REG_VALUE_POOL_SIZE` before parsing, `registry.c:3977-3981`). On success: tombstone-free the live key's OLD children via the existing `reg_delete_subtree` (same non-reclaiming pool semantics as every other delete path -- `reg_key_pool` is a monotonic bump allocator) plus `reg_free_values(key)`, swap in `scratch.children[]`/`child_count`/`values`/`value_count`, then RE-PARENT every direct child (`c->parent = key`) since `hive_load` pointed them at `&scratch`, which is about to go out of scope as a dangling pointer if left unfixed. On failure: return `ERROR_FILE_NOT_FOUND`, original subtree untouched; any pool slots the scratch parse already consumed before hitting the failure are abandoned, matching the existing non-reclaim characteristic of every delete path (not a new problem). `dwFlags` (`REG_FORCE_RESTORE`) is unmodeled -- this always does a full atomic replace, which is a superset of the flag's semantics, so silently accepting it either way should be safe; not independently verified by Codex due to the outage below.
   - Blocked 2026-09-03 ~16:53-16:57: 5 consecutive Codex design-review dispatches for this design all failed identically with `unexpected status 404 Not Found` from `chatgpt.com/backend-api/codex/responses` (external outage, not a local config problem -- `codex-companion.mjs setup --json` confirmed CLI/auth/node/npm all ready). The design above is UNREVIEWED; treat it as a starting point for the redo, not as accepted.
+
+From the stamped section 10:
+- [ ] Iterative/heap-backed hive parser: replace `hive_parse_key` recursion (capped at HIVE_MAX_PARSE_DEPTH=12 for 8 KiB-stack safety) with a heap-backed parse stack so hives up to REG_MAX_KEY_DEPTH round-trip. -> XREF: 02-kernel-core/TODO-14 §8
+
+From the stamped section 12:
+- [ ] Symlink loop detection: `reg_resolve_path()` already follows `REG_LINK` transparently; add a `max_link_depth = 32` counter; if exceeded, return `STATUS_REPARSE_POINT_NOT_RESOLVED`; prevents infinite loops from circular symlinks (`A → B → A`)
+  - The walk has no bound today: `registry.c:974-981` recurses through `reg_walk_path` per link, so a link cycle overflows the kernel stack.
+- [ ] Built-in symlinks created during `registry_populate_defaults()`:
+  - `\Registry\Machine\System\CurrentControlSet` → `\Registry\Machine\System\ControlSet001` (selected by `Select` / `Current` value)
+  - `\Registry\Machine\Software\Classes` → `\Registry\Machine\Software\Classes` (physical; HKCR overlay is handled by §5 merge logic, not a symlink)
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 

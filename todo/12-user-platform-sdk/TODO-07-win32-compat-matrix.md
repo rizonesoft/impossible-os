@@ -272,6 +272,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 **~100+ additional functions** adds: `advapi32.dll` (security descriptors, `CryptAcquireContext`, `CryptGenRandom`, `OpenSCManager`, `CreateService`, `QueryServiceStatus`), `shell32.dll` (`SHGetFolderPath`, `SHBrowseForFolder`, `ShellExecuteA`, `ExtractIconEx`, `SHGetFileInfo`), extended GDI (`BitBlt`, `StretchBlt`, `CreateCompatibleBitmap`, `GetPixel`, `SetPixel`, `Polygon`, `Arc`, `CreateFont`, `GetTextMetrics`), `comctl32.dll` stub (`InitCommonControlsEx`)
 
+- [ ] advapi32 `RegXxx` A/W exports: the user-mode surface `02-kernel-core/TODO-14` s5 waits on (item: "Full advapi32 `RegXxx` export surface")
 - [ ] **`tier8/tier8_shell.c`**: `ShellExecuteA(NULL, "open", "notepad.exe", NULL, NULL, SW_SHOW)` → note-pad opens; `SHGetFolderPath(NULL, CSIDL_DESKTOP, ...)` → prints desktop path
   - Expected: notepad opens; path printed as `C:\Users\Default\Desktop`
 - [ ] **`tier8/tier8_gdi.c`**: create compatible DC; `BitBlt` from window DC to off-screen; `GetPixel` reads expected color; `SelectObject` font → `TextOut`; verify metrics via `GetTextMetrics`
