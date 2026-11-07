@@ -25,6 +25,10 @@
 #include "kernel/timer.h"
 #include "kernel/smp.h"
 #include "kernel/types.h"
+#include "kernel/sched/event.h"
+
+#define DPC_WORKER_BLOCK_WAIT_TICKS 200u
+#define EVENT_SETTLE_SPINS 50000000u
 
 /* Shared flag set by test thread to prove it ran */
 static volatile int g_thread_ran = 0;
@@ -604,6 +608,215 @@ static void test_vector_to_irql_boundaries(void)
     TEST_ASSERT_EQ(vector_to_irql(VECTOR_IPI_RESCHEDULE), IPI_LEVEL, "reschedule IPI -> IPI");
     TEST_ASSERT_EQ(vector_to_irql(VECTOR_IPI_TLB_SHOOTDOWN), IPI_LEVEL, "TLB IPI -> IPI");
     TEST_ASSERT_EQ(vector_to_irql(0xFF), HIGH_LEVEL, "spurious 0xFF -> HIGH");
+}
+
+/* ---- event_t wait queue ---- */
+
+/* The fixtures mark the running thread blocked, so they stay inside an IRQ-off
+ * window (no tick can schedule it away) and restore it before leaving. */
+static void test_event_prepare_block_recheck(void)
+{
+    event_t ev;
+    struct thread *thr = thread_current();
+    uint32_t saved_state, state_signalled, state_queued, waiters_signalled;
+    uint32_t waiters_once, waiters_twice;
+    struct event *saved_on;
+    int r_signalled, r_once, r_twice;
+    uint64_t flags;
+
+    TEST_ASSERT(thr != (struct thread *)0, "test runs on a thread");
+    event_init(&ev, "test_prepare", EVENT_AUTO_RESET, 0);
+
+    flags = local_irq_save();
+    saved_state = thr->state;
+    saved_on = thr->event_blocked_on;
+
+    /* A signal that landed after event_wait's check must stop the block. */
+    atomic_set(&ev.state, 1);
+    r_signalled = event_prepare_block(&ev);
+    state_signalled = thr->state;
+    waiters_signalled = ev.num_waiters;
+
+    atomic_set(&ev.state, 0);
+    r_once = event_prepare_block(&ev);
+    state_queued = thr->state;
+    waiters_once = ev.num_waiters;
+    r_twice = event_prepare_block(&ev);
+    waiters_twice = ev.num_waiters;
+
+    thr->event_blocked_on = saved_on;
+    thr->state = saved_state;
+    local_irq_restore(flags);
+
+    TEST_ASSERT_EQ(r_signalled, EVENT_BLOCK_SIGNALLED, "set event does not block");
+    TEST_ASSERT_EQ(state_signalled, saved_state, "set event leaves the thread runnable");
+    TEST_ASSERT_EQ(waiters_signalled, 0u, "set event does not queue");
+    TEST_ASSERT_EQ(r_once, EVENT_BLOCK_QUEUED, "clear event queues");
+    TEST_ASSERT_EQ(state_queued, (uint32_t)THREAD_BLOCKED, "clear event blocks");
+    TEST_ASSERT_EQ(waiters_once, 1u, "one queue entry");
+    TEST_ASSERT_EQ(r_twice, EVENT_BLOCK_QUEUED, "retry still blocks");
+    TEST_ASSERT_EQ(waiters_twice, 1u, "retry reuses its entry");
+}
+
+/* A full queue must leave the thread runnable: blocked with no entry, nothing
+ * could ever wake it. */
+static void test_event_prepare_block_full_queue(void)
+{
+    event_t ev;
+    struct thread *thr = thread_current();
+    uint32_t saved_state, state_after;
+    int r;
+    uint64_t flags;
+
+    TEST_ASSERT(thr != (struct thread *)0, "test runs on a thread");
+    event_init(&ev, "test_full", EVENT_MANUAL_RESET, 0);
+    for (uint32_t i = 0; i < EVENT_MAX_WAITERS; i++) {
+        ev.waiter_tasks[i] = 0xFFFFFFF0u;   /* no such task */
+        ev.waiter_threads[i] = i;
+    }
+    ev.num_waiters = EVENT_MAX_WAITERS;
+
+    flags = local_irq_save();
+    saved_state = thr->state;
+    r = event_prepare_block(&ev);
+    state_after = thr->state;
+    thr->state = saved_state;
+    local_irq_restore(flags);
+
+    TEST_ASSERT_EQ(r, EVENT_BLOCK_NO_SLOT, "full queue reports no slot");
+    TEST_ASSERT_EQ(state_after, saved_state, "full queue leaves the thread runnable");
+    TEST_ASSERT_EQ(ev.num_waiters, (uint32_t)EVENT_MAX_WAITERS, "full queue unchanged");
+}
+
+/* Auto-reset: stale entries ahead of a blocked waiter must not take the wake, and
+ * blocked is not enough to be live: a thread blocked on another event is stale. */
+static void test_event_auto_set_skips_stale(void)
+{
+    event_t ev, other;
+    struct task *cur = task_current();
+    struct thread *thr = thread_current();
+    uint32_t saved_state, state_elsewhere, state_here, waiters_after;
+    struct event *saved_on;
+    uint64_t flags;
+
+    TEST_ASSERT(thr != (struct thread *)0, "test runs on a thread");
+    event_init(&other, "test_other", EVENT_AUTO_RESET, 0);
+    event_init(&ev, "test_stale", EVENT_AUTO_RESET, 0);
+
+    flags = local_irq_save();
+    saved_state = thr->state;
+    saved_on = thr->event_blocked_on;
+
+    ev.waiter_tasks[0] = cur->pid;
+    ev.waiter_threads[0] = thr->id;
+    ev.num_waiters = 1;
+    thr->event_blocked_on = &other;
+    thr->state = THREAD_BLOCKED;
+    event_set(&ev);
+    state_elsewhere = thr->state;
+
+    atomic_set(&ev.state, 0);
+    ev.waiter_tasks[0] = 0xFFFFFFF0u;       /* no such task */
+    ev.waiter_threads[0] = 0;
+    ev.waiter_tasks[1] = cur->pid;
+    ev.waiter_threads[1] = thr->id;
+    ev.waiter_tasks[2] = 0xFFFFFFF1u;       /* later entry stays queued */
+    ev.waiter_threads[2] = 0;
+    ev.num_waiters = 3;
+    thr->event_blocked_on = &ev;
+    thr->state = THREAD_BLOCKED;
+    event_set(&ev);
+    state_here = thr->state;
+    waiters_after = ev.num_waiters;
+
+    thr->event_blocked_on = saved_on;
+    thr->state = saved_state;
+    local_irq_restore(flags);
+
+    TEST_ASSERT_EQ(state_elsewhere, (uint32_t)THREAD_BLOCKED,
+                   "thread blocked on another event is not woken");
+    TEST_ASSERT_EQ(state_here, (uint32_t)THREAD_READY, "blocked waiter gets the wake");
+    TEST_ASSERT_EQ(waiters_after, 1u, "stale head and woken entry both left");
+    TEST_ASSERT_EQ(ev.waiter_tasks[0], 0xFFFFFFF1u, "later entry moved to the head");
+}
+
+/* A consumer on another CPU may free the event as soon as it returns, so it must
+ * not return while a setter still holds the event lock. The test plays the setter
+ * mid-event_set: state published, lock held. */
+static event_t           s_settle_ev;
+static volatile uint32_t s_settle_done;
+
+static void settle_consumer_dpc(struct _KDPC *dpc, void *ctx, void *a1, void *a2)
+{
+    (void)dpc; (void)ctx; (void)a1; (void)a2;
+    (void)event_try_consume(&s_settle_ev);
+    __atomic_store_n(&s_settle_done, 1, __ATOMIC_RELEASE);
+}
+
+static void test_event_consume_waits_for_setter(void)
+{
+    KDPC dpc;
+    uint32_t me = smp_this_cpu()->cpu_id, slot;
+    uint32_t spins, done_under_lock;
+    uint64_t flags;
+
+    for (slot = 1; slot < MAX_CPUS; slot++) {
+        if (slot != me && smp_cpu_is_online(slot))
+            break;
+    }
+    if (slot == MAX_CPUS) {
+        TEST_SKIP("no second online CPU to target");
+        return;
+    }
+
+    event_init(&s_settle_ev, "test_settle", EVENT_AUTO_RESET, 0);
+    s_settle_done = 0;
+    KeInitializeDpc(&dpc, settle_consumer_dpc, (void *)0);
+    KeSetTargetProcessorDpc(&dpc, (uint8_t)slot);
+
+    spin_lock_irqsave(&s_settle_ev.lock, &flags);
+    atomic_set(&s_settle_ev.state, 1);
+    KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
+    /* Long enough for the AP to reach the state, which its CAS then consumes. */
+    for (spins = 0; atomic_read(&s_settle_ev.state) && spins < EVENT_SETTLE_SPINS; spins++)
+        __asm__ volatile("pause");
+    for (spins = 0; spins < EVENT_SETTLE_SPINS / 100u; spins++)
+        __asm__ volatile("pause");
+    done_under_lock = __atomic_load_n(&s_settle_done, __ATOMIC_ACQUIRE);
+    spin_unlock_irqrestore(&s_settle_ev.lock, flags);
+
+    for (spins = 0; !__atomic_load_n(&s_settle_done, __ATOMIC_ACQUIRE) &&
+                    spins < EVENT_SETTLE_SPINS; spins++)
+        __asm__ volatile("pause");
+
+    TEST_ASSERT_EQ(atomic_read(&s_settle_ev.state), 0, "AP consumed the signal");
+    TEST_ASSERT_EQ(done_under_lock, 0u, "consumer waits while the setter holds the lock");
+    TEST_ASSERT_EQ(s_settle_done, 1u, "consumer returns once the setter is done");
+    KeFlushQueuedDpcs();
+}
+
+/* The idle threaded-DPC worker blocks instead of polling. */
+static void test_dpc_worker_blocks_when_idle(void)
+{
+    extern struct task *dpc_worker_task_for_test(void);
+    struct task *worker;
+    uint64_t start = system_get_ticks();
+    uint32_t state = (uint32_t)THREAD_READY;
+
+    dpc_start_threads();
+    while (!(worker = dpc_worker_task_for_test()) &&
+           system_get_ticks() - start < DPC_WORKER_BLOCK_WAIT_TICKS)
+        yield();
+    TEST_ASSERT(worker != (struct task *)0, "worker has started");
+
+    start = system_get_ticks();
+    while (system_get_ticks() - start < DPC_WORKER_BLOCK_WAIT_TICKS) {
+        state = __atomic_load_n(&worker->threads[0].state, __ATOMIC_ACQUIRE);
+        if (state == (uint32_t)THREAD_BLOCKED)
+            break;
+        yield();
+    }
+    TEST_ASSERT_EQ(state, (uint32_t)THREAD_BLOCKED, "idle worker is blocked");
 }
 
 /* ---- DPC object + per-CPU queue tests ---- */
@@ -2341,6 +2554,16 @@ void test_register_sched(void)
                             test_irql_to_tpr_mapping, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql TPR-skip invariant",
                             test_irql_tpr_skip_invariant, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: event recheck under the lock stops a lost wakeup",
+                            test_event_prepare_block_recheck, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: event full queue never blocks",
+                            test_event_prepare_block_full_queue, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: auto-reset event skips stale waiters",
+                            test_event_auto_set_skips_stale, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: event consumer waits for the setter's unlock",
+                            test_event_consume_waits_for_setter, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: idle DPC worker blocks",
+                            test_dpc_worker_blocks_when_idle, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: vector_to_irql boundaries",
                             test_vector_to_irql_boundaries, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: create thread",

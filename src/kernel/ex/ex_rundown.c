@@ -7,11 +7,10 @@
  * atomic subtract; the wait sets the active bit and cooperatively polls until
  * the refcount drains.
  *
- * Why a poll instead of the kernel event_t: event_wait() reads the event state
- * and only THEN enqueues/blocks, so an event_set() landing in that window is
- * lost and the waiter hangs. Rundown re-reads Count every iteration, so no
- * wakeup can be lost. The wait path is a rare teardown operation, not a hot
- * path, so the busy-yield cost is acceptable.
+ * Why a poll instead of the kernel event_t: rundown re-reads Count every
+ * iteration, so there is no signal to lose and release stays a plain atomic
+ * subtract with no event to set. The wait path is a rare teardown operation, not
+ * a hot path, so the busy-yield cost is acceptable.
  * ============================================================================ */
 
 #include "kernel/ex.h"

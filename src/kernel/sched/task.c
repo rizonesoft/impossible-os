@@ -580,6 +580,7 @@ boot_result_t task_init(void)
             tasks[i].threads[j].parent_task = 0;
             tasks[i].threads[j].exit_status = 0;
             tasks[i].threads[j].join_tid = -1;
+            tasks[i].threads[j].event_blocked_on = (struct event *)0;
             tasks[i].threads[j].kernel_rsp = 0;
             tasks[i].threads[j].kernel_stack_base = (uint8_t *)0;
             tasks[i].threads[j].kernel_stack_pages = 0;
@@ -609,6 +610,7 @@ boot_result_t task_init(void)
     tasks[0].threads[0].stack_size = 0;
     tasks[0].threads[0].parent_task = 0;
     tasks[0].threads[0].join_tid = -1;
+    tasks[0].threads[0].event_blocked_on = (struct event *)0;
     tasks[0].threads[0].priority      = THREAD_PRIO_NORMAL;
     tasks[0].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[0].threads[0].teb = (void *)0;
@@ -1027,6 +1029,7 @@ static int task_create_internal(task_entry_t entry, const char *name,
     tasks[pid].threads[0].stack_size = 0;
     tasks[pid].threads[0].parent_task = pid;
     tasks[pid].threads[0].join_tid = -1;
+    tasks[pid].threads[0].event_blocked_on = (struct event *)0;
     tasks[pid].threads[0].priority      = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
@@ -1358,6 +1361,7 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].threads[0].stack_size = 0;
     tasks[pid].threads[0].parent_task = pid;
     tasks[pid].threads[0].join_tid = -1;
+    tasks[pid].threads[0].event_blocked_on = (struct event *)0;
     tasks[pid].threads[0].priority      = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
@@ -2961,6 +2965,7 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].threads[0].stack_size = 0;
     tasks[child_pid].threads[0].parent_task = child_pid;
     tasks[child_pid].threads[0].join_tid = -1;
+    tasks[child_pid].threads[0].event_blocked_on = (struct event *)0;
     tasks[child_pid].threads[0].priority = THREAD_PRIO_NORMAL;
     /* base_priority MUST be set alongside priority: it is the value
      * thread_restore_priority() reverts to after any mutex priority-inheritance
@@ -5453,6 +5458,7 @@ int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].parent_task = task_idx;
     t->threads[tid].exit_status = 0;
     t->threads[tid].join_tid = -1;
+    t->threads[tid].event_blocked_on = (struct event *)0;
     t->threads[tid].priority      = THREAD_PRIO_NORMAL;
     t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
     t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
@@ -5710,6 +5716,7 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
     t->threads[tid].parent_task = task_idx;
     t->threads[tid].exit_status = 0;
     t->threads[tid].join_tid = -1;
+    t->threads[tid].event_blocked_on = (struct event *)0;
     t->threads[tid].priority      = THREAD_PRIO_NORMAL;
     t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
     t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
@@ -5920,6 +5927,7 @@ static void thread_reap_kernel_slot(struct task *t, uint32_t thread_id)
     thr->stack_size = 0;
     thr->exit_status = 0;
     thr->join_tid = -1;
+    thr->event_blocked_on = (struct event *)0;
     thr->priority = THREAD_PRIO_NORMAL;
     thr->base_priority = THREAD_PRIO_NORMAL;
     thr->parent_task = t->pid;

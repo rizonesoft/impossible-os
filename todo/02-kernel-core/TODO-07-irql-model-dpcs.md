@@ -482,20 +482,22 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 - [x] `threaded_head[]`/`threaded_pending[]` -> a cache-line-aligned per-CPU `struct dpc_threaded_slot threaded_q[]`; ALL mutation under the per-CPU `DPC_QLOCK` (producer/worker/`KeRemoveQueueDpc`) -- chose the spinlock over `atomic_exchange`.
 - [x] Double-owner closed: `drain_queue` keeps `dpc->queued=1` across the cpu_queues->threaded hand-off (under `DPC_QLOCK`); the worker clears `queued` after popping; `KeRemoveQueueDpc` also unlinks from `threaded_q`.
 - [x] FIFO order preserved: `threaded_q` appends to the tail (not head-prepend), so threaded DPCs run in insertion order.
-- [x] Worker idle + budget: `dpc_thread_fn` idles on `event_wait_timeout` (yield-poll, SMP-safe); `dpc_watchdog_tick` re-signals while pending; <= `DPC_THREADED_BATCH_LIMIT`/CPU/pass.
+- [x] Worker idle + budget: `dpc_thread_fn` blocks in `event_wait` when idle; `dpc_watchdog_tick` re-signals while pending; <= `DPC_THREADED_BATCH_LIMIT`/CPU/pass.
 - [x] Worker started at boot (CAS-idempotent `dpc_start_threads`) so a threaded DPC queued from ANY IRQL always has a worker -- a lazy first-PASSIVE-init start would strand one initialized above PASSIVE then queued.
 - [x] `pending` folded into the locked hand-off (set/cleared under `DPC_QLOCK`); slot cache-line padded (`_Static_assert sizeof==64`).
 - [/] Runtime stress (deferred, runtime-only): fire threaded DPCs from multiple ISRs on 2+ CPUs concurrently -- validate on WHPX / bare metal (no SMP-ISR concurrency in the unit harness). Operator-gated: WHPX or bare metal only.
-- [ ] SMP-safe blocking worker: worker yield-polls via `event_wait_timeout` (READY when idle, CPU cost) -- `event_t`'s waiter queue is lock-free, unsafe vs multi-CPU-ISR `event_set`. Make `event_t` SMP-safe, then switch to `event_wait`.
+- [x] SMP-safe blocking worker: `event_t` has an irqsave lock, a waiter rechecks state and blocks under it, and `dpc_thread_fn` now blocks in `event_wait` when idle (`event.c`, `dpc.c`)
+  - Also closed: a full queue no longer blocks forever; consumers wait out the setter before a free (ALPC); `thread.event_blocked_on` ties a queue entry to a live wait.
+  - Proven under QEMU only, with one two-CPU interleaving test. Concurrent multi-ISR stress stays the parked item above.
 - [x] Commit: `"kernel: fix threaded DPC list race -- atomic handoff between ISR and worker"`
 
-**Test checkpoint:** Unit (`TEST_CAT_SCHED`): a threaded DPC handed off by `dpc_drain_current_cpu` stays `queued=1` (owned) and `KeRemoveQueueDpc` cancels it off the threaded list (`queued`->0). Runtime (WHPX / bare metal, not unit-testable -- needs concurrent SMP ISRs): fire threaded DPCs from both LAPIC and PIT ISRs on 2+ CPUs simultaneously; no lost callbacks, no list corruption, FIFO order preserved; the worker idles on a bounded yield-poll and runs on hand-off / within one tick.
+**Test checkpoint:** Unit (`TEST_CAT_SCHED`): a threaded DPC handed off by `dpc_drain_current_cpu` stays `queued=1` (owned) and `KeRemoveQueueDpc` cancels it off the threaded list (`queued`->0). Runtime (WHPX / bare metal, not unit-testable -- needs concurrent SMP ISRs): fire threaded DPCs from both LAPIC and PIT ISRs on 2+ CPUs simultaneously; no lost callbacks, no list corruption, FIFO order preserved; the worker blocks when idle and runs on hand-off / within one tick.
 
 > **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 2 §15 suites, 0 failures
 > **Notes:**
-> - Shipped (`dpc.c`): per-CPU FIFO `struct dpc_threaded_slot threaded_q[]` (cache-line padded); all mutation under `DPC_QLOCK`; `KeRemoveQueueDpc` unlinks from it; worker idle = `event_wait_timeout` (yield-poll, SMP-safe; true-block deferred).
+> - Shipped (`dpc.c`): per-CPU FIFO `struct dpc_threaded_slot threaded_q[]` (cache-line padded); all mutation under `DPC_QLOCK`; `KeRemoveQueueDpc` unlinks from it; worker idle = `event_wait`, on the SMP-safe `event_t`.
 > - How it runs: `drain_queue` (ISR) appends + `event_set`s under the lock keeping `queued=1`; the worker pops one node/iteration under the lock, runs at PASSIVE within a batch budget; `dpc_watchdog_tick` re-signals while pending (self-heal).
-> - Worker lifecycle: `dpc_start_threads` is started at boot (`boot_desktop.c`) and is CAS-idempotent; boot-time (not lazy) so a threaded DPC queued from any IRQL always has a worker. The idle yield-poll CPU cost is deferred to the SMP-safe-`event_t` item.
+> - Worker lifecycle: `dpc_start_threads` is started at boot (`boot_desktop.c`) and is CAS-idempotent; boot-time (not lazy) so a threaded DPC queued from any IRQL always has a worker.
 > - Downstream: closes the §8 threaded-DPC race + double-owner; §16 owns the `KeFlushQueuedDpcs` threaded-completion barrier. Codex design + adversarial + perf + re-adversarial adoptions in the commit.
 > - Canonical doc: this section + `include/kernel/sched/dpc.h` / `dpc_config.h`.
 > - Scope boundary: §15 owns the threaded-list sync + worker idle/budget. `KeFlushQueuedDpcs` threaded wait -> §16; per-CPU threaded-worker affinity -> §17.
@@ -503,7 +505,6 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 **Regression risk:** Changing the handoff pattern affects every threaded DPC consumer. Rollback: revert to single-CPU threaded DPC model (BSP-only).
 
 > **Verified:** 2026-06-26 | commit `23d6b38a` | 6/8 items | build OK | 175 sched + 16 user tests, smoke PASSED
-> **Notes:** Reopened 2026-11-07, was Deferred: [HIGH] idle threaded-DPC worker yield-polls (`event_wait_timeout` keeps it READY when idle) -- `event_t`'s waiter queue is lock-free, unsafe vs multi-CPU-ISR `event_set`. The stamp named this section's own item with no outside blocker; "latent" and "needs X" describe the work.
 > **Deferred:** [INFO] concurrent SMP-ISR threaded-DPC stress is runtime-only (no SMP-ISR concurrency in the unit harness) -> XREF: 02-kernel-core/TODO-07 §15 (item: "Runtime stress (deferred, runtime-only)")
 > **Quality reviewed:** 2026-06-26 | Codex 14x (adversarial x4, consistency x4, perf x4, re-adversarial x2) | 4H+1M+3L fixed, 2H+1info open | scope: kernel-code-quality
 

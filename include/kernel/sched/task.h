@@ -336,6 +336,8 @@ struct thread {
     uint32_t    parent_task;    /* index into tasks[] (owning task) */
     int32_t     exit_status;    /* exit status (set on THREAD_DEAD) */
     int32_t     join_tid;       /* thread we're waiting on (-1 = none) */
+    struct event *event_blocked_on; /* event whose queue holds this thread (event.c);
+                                     * what makes a queue entry belong to a live wait */
     uint8_t     pledge_pending; /* a fine handler-side pledge check on THIS thread
                                  * flagged a violation; the dispatch tail terminates
                                  * on this (not the NTSTATUS value, which an audit

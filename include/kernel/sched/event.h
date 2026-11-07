@@ -36,6 +36,7 @@
 
 #include "kernel/types.h"
 #include "kernel/atomic.h"    /* atomic_t, atomic_read, atomic_set */
+#include "kernel/sched/spinlock.h"
 
 /* ---------------------------------------------------------------------------
  * Event type
@@ -57,6 +58,11 @@ typedef struct event {
     atomic_t      state;       /* 1 = signalled, 0 = not signalled */
     event_type_t  type;        /* MANUAL_RESET or AUTO_RESET */
 
+    /* Serialises the wait queue against event_set() on any CPU. A waiter rechecks
+     * state and marks itself blocked under it, so a signal cannot land between
+     * the check and the block. */
+    spinlock_t lock;
+
     /* Wait queue -- tasks/threads sleeping in event_wait() */
     uint32_t  waiter_tasks[EVENT_MAX_WAITERS];
     uint32_t  waiter_threads[EVENT_MAX_WAITERS];
@@ -67,7 +73,7 @@ typedef struct event {
 
 /* Static initializers */
 #define EVENT_INIT(n, t, s)  \
-    { .state = ATOMIC_INIT(s), .type = (t), .num_waiters = 0, .name = (n) }
+    { .state = ATOMIC_INIT(s), .type = (t), .lock = SPINLOCK_INIT, .num_waiters = 0, .name = (n) }
 
 #define DEFINE_EVENT(name_id, type, initial_state) \
     event_t name_id = EVENT_INIT(#name_id, type, initial_state)
@@ -85,6 +91,15 @@ void event_init(event_t *ev, const char *name,
  * For MANUAL_RESET: the event stays set; all waiters are woken together.
  * MUST be called from thread context only (uses yield()). */
 void event_wait(event_t *ev);
+
+/* The check-and-block step of event_wait(), exposed for its tests. Returns
+ * EVENT_BLOCK_QUEUED when the caller is queued and marked blocked,
+ * EVENT_BLOCK_SIGNALLED when the event is already set (nothing changed), or
+ * EVENT_BLOCK_NO_SLOT when no queue slot exists (not blocked; the caller polls). */
+#define EVENT_BLOCK_QUEUED     1
+#define EVENT_BLOCK_SIGNALLED  0
+#define EVENT_BLOCK_NO_SLOT   (-1)
+int event_prepare_block(event_t *ev);
 
 /* Signal the event.
  *   MANUAL_RESET: wakes ALL waiters, event stays set.

@@ -92,12 +92,9 @@ struct task;
 extern struct task *task_current(void);
 static struct task *s_worker_task;
 
-/* Worker idle event: the ISR producer event_set()s it (ISR-safe) on hand-off;
- * the worker idles on event_wait_timeout (yield-poll -- it never enqueues onto
- * the event waiter queue, so it is safe against event_set() from multiple-CPU
- * ISR drain paths, unlike permanent event_wait whose waiter-array mutation is
- * not yet SMP-synchronized). dpc_watchdog_tick re-signals every tick while any
- * list is pending so a missed signal self-heals. AUTO_RESET. */
+/* Worker idle event: the ISR producer event_set()s it (ISR-safe) on hand-off and
+ * the worker blocks on it when no list holds work. dpc_watchdog_tick re-signals
+ * every tick while any list is pending, as a backstop. AUTO_RESET. */
 static event_t s_dpc_worker_event;
 
 /* ---- DPC fairness budget + watchdog (section 14) ------------------------- *
@@ -476,13 +473,9 @@ void dpc_watchdog_tick(void)
         }
     }
 
-    /* Threaded-DPC worker prompt-wake self-heal: if ANY CPU still has pending
-     * threaded DPCs, re-signal the worker every tick. The worker idles on
-     * event_wait_timeout (bounded yield-poll -- it never enqueues onto the
-     * event waiter queue, so it stays SMP-safe against multi-CPU-ISR
-     * event_set); this per-tick re-signal just shortens the wake latency below
-     * the poll interval. A lock-free pending read is fine -- a missed 1 still
-     * drains on the next poll/tick. */
+    /* Threaded-DPC worker backstop: if ANY CPU still has pending threaded DPCs,
+     * re-signal the worker every tick. A lock-free pending read is fine -- a
+     * missed 1 is seen on the next tick. */
     {
         /* Scan ALL slots, not [0, smp_cpu_count()): cpu_id slots can be sparse
          * (abandoned AP), and a dense scan would miss a live high slot's pending
@@ -1069,18 +1062,10 @@ static void dpc_thread_fn(void)
             }
         }
 
-        /* Idle wait on the producer-signaled event via event_wait_timeout, NOT
-         * the permanent event_wait. event_wait_timeout yield-polls and never
-         * enqueues onto the event waiter queue, so it does NOT touch the
-         * (currently unsynchronized) num_waiters/waiter arrays -- safe against
-         * event_set() fired concurrently from multiple-CPU ISR drain paths.
-         * The producer event_set() + dpc_watchdog_tick's per-tick re-signal
-         * make the poll break promptly. TRADEOFF: yield-polling burns a
-         * scheduler slot when idle; a truly blocking worker awaits an SMP-safe
-         * event_t (deferred item below) before switching to permanent
-         * event_wait. */
+        /* Block until a producer or the per-tick backstop signals. A signal sent
+         * since the scan above stays set, so this returns at once for it. */
         if (!any_work)
-            event_wait_timeout(&s_dpc_worker_event, DPC_THREADED_WORKER_IDLE_MS);
+            event_wait(&s_dpc_worker_event);
     }
 }
 
@@ -1099,9 +1084,7 @@ void dpc_start_threads(void)
      * Started unconditionally at boot (after the scheduler is up) so a
      * threaded DPC queued from ANY IRQL always has a worker to consume it --
      * a lazy "start on first PASSIVE init" would strand a threaded DPC that
-     * was initialized above PASSIVE and then queued. The worker idles on
-     * event_wait_timeout (yield-poll); the deferred SMP-safe-event_t item
-     * replaces that with a true blocking wait to drop the idle CPU cost.
+     * was initialized above PASSIVE and then queued. The worker blocks when idle.
      * CAS-idempotent so a duplicate call (e.g. the unit test) is a no-op. */
     extern int task_create(void (*entry)(void), const char *name);
     int expected = 0;
@@ -1133,6 +1116,13 @@ int dpc_worker_started(void)
 
 /* Test/diagnostic: count of threaded DPC callbacks currently in flight (popped
  * off the list but still running). 0 when the worker is idle. */
+#ifdef KERNEL_TESTS
+struct task *dpc_worker_task_for_test(void)
+{
+    return __atomic_load_n(&s_worker_task, __ATOMIC_ACQUIRE);
+}
+#endif
+
 uint32_t dpc_in_flight_threaded(void)
 {
     return __atomic_load_n(&s_in_flight_threaded, __ATOMIC_ACQUIRE);
