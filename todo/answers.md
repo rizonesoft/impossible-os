@@ -23,7 +23,7 @@ The Native WNF syscall surface (`NtCreateWnfStateName` / `NtQueryWnfStateData` /
 
 This is ABI-defining and cannot change once a handler ships. Blocking TODO-16 §8.
 
-A: (pending)
+A: (operator, 2026-11-07) (a) byte-compatible Windows encoded names. This cannot change once a handler ships, so it keeps compatibility open.
 
 ## Q2 (TODO-21 §15/§18): PROCESS_OBJECT terminal-state ownership under slot reuse
 
@@ -49,9 +49,7 @@ does terminal state (exit_status + signaled bit) live so it survives reuse?
 
 Blocks TODO-21 §15 (and §18). Depends on TODO-06 §357 slot-reuse landing first.
 
-A: (proposed default) (a) task tombstone -- least invasive, keeps §15's reaping
-design intact and bounds the extra slots by open handle count; revisit if the
-per-handle slot cost proves too high under the TASK_MAX ceiling.
+A: (operator, 2026-11-07) (a) task tombstone: pin the slot with its terminal state until every process handle closes.
 
 ## Q3 (TODO-33 §3): Higher-half kernel jump vs user-frame relocation -- sequencing
 
@@ -89,11 +87,7 @@ Blocks TODO-33 §3-§8 (and, transitively via the un-retired ceiling, the whole
 kernel-code queue: TODO-22 §23-§25, TODO-23 §2-§16, and every later kernel TODO
 that adds `.text`). Non-kernel/userland work is unaffected and continues.
 
-A: (proposed default) (b) re-base `MM_KERNEL_PHYS_BASE` above `USER_PT_WINDOW` --
-smallest, design-review-endorsed, keeps §3 an atomic flip and defers the larger
-user-frame-model change to §6 where it is already owned; revisit the base in §7.
-Deferred to the operator because it edits the pinned address-space SSOT and picks
-the relocation ordering for the whole kernel roadmap.
+A: (operator, 2026-11-07) (b) re-base `MM_KERNEL_PHYS_BASE` at or above `USER_PT_WINDOW_END` (0xA00000), keeping s3 one atomic flip. s7 may move it back once the ceiling is retired.
 
 ## Q4 (TODO-11 §16/§17/§19/§21/§23): may the run change the TEB layout, PEB layout and ring-3 entry frame?
 
@@ -105,6 +99,8 @@ the relocation ordering for the whole kernel roadmap.
 - **§21:** add a Win64 startup frame for PE32+ and define one for EIF.
 
 Recommended: let the run do all five through the normal section pipeline, because the current layouts are defects, nothing outside this repo depends on them, and every section still gets a design review. Blocks these five sections only.
+
+A: (operator, 2026-11-07) yes, all five sections (s16, s17, s19, s21, s23) through the normal section pipeline, each with its design review.
 
 ## Q5 (TODO-18 §2-§10): how does the kimage registry replace `exec_register_module`?
 
@@ -120,6 +116,8 @@ Five answers are needed. The recommendations are from reading the code, not from
 
 Blocks TODO-18 s2-s10 only.
 
+A: (operator, 2026-11-07) strategy A: kimage is the backing store and `exec_register_module` delegates to it. Extract the LDR-list API from `exec.c` first. Per-process registry in a `struct task` field. `kimage_init()` does not absorb the Phase-1 self-registration at first; move it once A has landed. Add `SUBSYS_KIMAGE`.
+
 ## Q6 (TODO-20 §7, TODO-17 §13): what does an EIF import call actually compile to?
 
 `specs/eif-format.md` rule 5 requires a callable stub for a skipped optional import, but `eif_dispatch_entry_t` is data-only (`{syscall_id, available}`), and nothing in user code reads the table at 0x8F0000. `TODO-20` §7 and `TODO-17` §13 each waited on the other for this, so nobody owned it, and `elf2eif` cannot produce a runnable image until it is settled.
@@ -129,11 +127,15 @@ Blocks TODO-18 s2-s10 only.
 
 Recommended: A, because the on-disk format stays as it is, the kernel gains no user-executable page, and §9 can make the table read-only without touching the layout. This comes from reading the code, not a design review, and that review still runs when §7 starts. Blocks TODO-20 §7 and the import half of TODO-17 §13.
 
+A: (operator, 2026-11-07) A: keep the table data-only; `elf2eif` emits thunks, and spec rule 5 is rewritten.
+
 ## Q7 (TODO-20 §11, TODO-19 §4, TODO-17 §17): may the run change the EIF signature block?
 
 The spec'd block (`algo`, `sig_size`, `signature`) has no signer key, and CI anchors store only a key hash, so a verifier has nothing to run Ed25519 against. The proposal adds `pubkey[32]` and a key-id and bumps `EIF_VERSION`, with old images gated by version. No signed EIF exists yet, so nothing needs migrating, but this is a security-sensitive on-disk format, and until `eifsign`, the verifier and a compiled anchor exist it cannot be tested end to end.
 
 Recommended: approve the amendment, landing it with the `TODO-17` §17 verifier rather than ahead of it, so the format and its first end-to-end test ship together. Blocks TODO-20 §11, TODO-19 §4 and §5 and the sections parked behind them.
+
+A: (operator, 2026-11-07) approved: add `pubkey[32]` and a key id and bump `EIF_VERSION`, landing with the `TODO-17` s17 verifier rather than ahead of it.
 
 ## Q8 (TODO-21 §6/§7, TODO-06 §4): what is the authority for process capabilities?
 
@@ -144,6 +146,8 @@ Recommended: approve the amendment, landing it with the `TODO-17` §17 verifier 
 
 Recommended: B, because §7's drop-only rule and `child subset of parent` invariant are what the section exists to provide, and a ceiling cannot grant anything the token denies. This comes from reading the 2026-07-11 design review and the code, not a fresh review. Whichever is chosen, the mask needs atomic updates, an explicit child ceiling before ring-3 publication, and `CAP_SET_TIME` must also cover `KeSetSystemTimeEx`. Blocks `TODO-21` §6 and §7.
 
+A: (operator, 2026-11-07) B: a denial-only ceiling ANDed with the token check, with the conditions the question lists: atomic mask updates, an explicit child ceiling before ring-3 publication, and `CAP_SET_TIME` also covering `KeSetSystemTimeEx`.
+
 ## Q9 (TODO-24 §6/§8/§9): how do syscalls with more than 6 arguments reach the kernel?
 
 The ALPC ABI needs 8-11 arguments, but `SSDT_HANDLER` and `zw_dispatch` carry 6 words (`ssdt.h:30-31`). The aliases, full-width connect and accept, `ConnectPortEx`, `NtAlpcQueryInformationMessage` and the attribute-carrying send all wait on this, and it changes a kernel ABI.
@@ -152,6 +156,8 @@ The ALPC ABI needs 8-11 arguments, but `SSDT_HANDLER` and `zw_dispatch` carry 6 
 - **B: a validated argument pack by pointer.** The 6-word handler stays, and only the wide syscalls take a pointer to a probed struct. Nothing else changes, but these syscalls no longer match the Windows calling shape.
 
 Recommended: A, because Win32 is the native surface and `TODO-12` §3 already has to read stack arguments. This comes from reading the code, not a design review.
+
+A: (operator, 2026-11-07) A: widen the transport; handlers read the extra words from the user stack as Windows x64 callers pass them.
 
 ## Q10 (TODO-04 §10): where does the log-integrity verifier key live?
 
@@ -162,7 +168,7 @@ The design review found that keeping the key under `HKLM` proves nothing: an att
 
 Recommended: A, with a logged warning and integrity disabled where no TPM exists, matching the item's WARN+disable wording. This comes from reading the TODO and the review note, not a new design review. Blocks TODO-04 §10.
 
-A: (pending)
+A: (operator, 2026-11-07) A: TPM-sealed, with a logged warning and integrity disabled where no TPM exists.
 
 ## Q11 (TODO-04 §11): may the run define the ETW event-metadata wire ABI?
 
@@ -170,7 +176,7 @@ Today's scalar per-session masks cannot hold two providers with different polici
 
 Recommended: approve it, keeping the existing channel call as the legacy path the item already describes. Blocks TODO-04 §11 and the section behind it (line 428's stamp).
 
-A: (pending)
+A: (operator, 2026-11-07) approved, keeping the existing channel call as the legacy path.
 
 ## Q12 (TODO-13 §15/§10): what may set the sticky recovery trigger and reset a trusted baseline?
 
@@ -182,7 +188,7 @@ Nothing in the tree sets `recovery_trigger`: `boot_sticky.c` reads and clears it
 
 Recommended: A first, because it needs no provisioning and matches the local-confirmation wording in §10; B can follow. This comes from reading the code and TODO text, not a design review. Blocks the producer, the one-shot consume and the baseline reset; the rest of §15 and §10 is open.
 
-A: (pending)
+A: (operator, 2026-11-07) A first: physical presence at a boot console. Signed authorization may follow as separate work.
 
 ## Q13 (TODO-13 §9): how does user mode read attestation evidence, and who may?
 
@@ -193,7 +199,7 @@ The report exports to `X:\Diag\attestation.json` today, with no query API. This 
 
 Recommended: A, since it adds no SSDT entry. I did not check how the existing classes gate access. Blocks one item in §9.
 
-A: (pending)
+A: (operator, 2026-11-07) A: an `NtQuerySystemInformation` class restricted to administrators. The section must confirm how existing classes gate access.
 
 ## Q14 (TODO-13 §9/§13): which remote-attestation protocol does the platform target?
 
@@ -201,7 +207,7 @@ A verifier-side challenge does not exist in the tree, so `TPM2_MakeCredential` /
 
 Recommended: leave both parked until a platform service needs remote attestation, since no consumer exists. Blocks the placeholder in §9 and credential activation in §13.
 
-A: (pending)
+A: (operator, 2026-11-07) leave both parked until a platform service needs remote attestation.
 
 ## Q15 (TODO-24 §5): must MarkGood be gated on the durable health-record write?
 
@@ -212,7 +218,7 @@ A: (pending)
 
 Recommended: B, because a diagnostics volume should not decide which OS slot runs. `git stash@{2}` holds earlier WIP labelled as this decision; I did not read its diff. Blocks one item in §5.
 
-A: (pending)
+A: (operator, 2026-11-07) B: decouple it. MarkGood follows the health verdict, and a record-write failure is logged as a failure.
 
 ## Q16 (00-infrastructure/TODO-04 §56): does a degraded test reap stop the boot?
 
@@ -223,7 +229,7 @@ After a degraded reap, `s_reap_degraded` stops the test plan, but `boot_phase3` 
 
 Recommended: A, since B reaches every task creation. I did not check whether the plan runs on non-test boots, which decides how much A costs. Blocks one item in §56.
 
-A: (pending)
+A: (operator, 2026-11-07) A: fatal from `test_usermode_run()`. The launcher is built only under `KERNEL_TESTS`, so a release boot is unaffected.
 
 ## Q17 (00-infrastructure/TODO-04 §62): may a record whose lease census never completes be destroyed?
 
@@ -234,7 +240,7 @@ Such a record is held forever and announced on every pass. Converging it means d
 
 Recommended: A until a real run shows the hold costing disk; `UTEST_CENSUS_BUDGET` already removed the common cause. Blocks one item in §62.
 
-A: (pending)
+A: (operator, 2026-11-07) A: keep holding and reporting. Revisit only if a real run shows the hold costing disk.
 
 ## Q18 (02-kernel-core/TODO-13 §8): does the platform ship language packs, and who owns them?
 
@@ -245,7 +251,7 @@ A: (pending)
 
 Recommended: B, since the wire contract can be correct without a pack system. I did not read the Flags semantics for this answer. Blocks one item in §8.
 
-A: (pending)
+A: (operator, 2026-11-07) B: one-language contract. Implement the real Flags-driven multi-string with a single installed language, and file packs when a second language is planned.
 
 ## Q19 (01-boot-platform/TODO-15 §9/§13): does Tier 2 boot progress survive the splash spec?
 
@@ -256,7 +262,7 @@ A: (pending)
 
 Recommended: A, since Tier 1 already serves diagnostics and the end-user splash stays as specified. The park's other condition, proven bare-metal reliability, is an operator judgment either way.
 
-A: (pending)
+A: (operator, 2026-11-07) A: drop Tier 2's text. s9's text items and s13's post-splash display are retired, and stage detail stays on the Tier 1 diagnostic screen.
 
 ## Q20 (01-boot-platform/TODO-01 §23, TODO-20 §4, TODO-27 §3, TODO-29 §8): may the run add named `boot_info` fields and bump `BOOT_INFO_VERSION`?
 
@@ -267,7 +273,7 @@ These four sections each record an operator-gated ABI change, but none had a que
 
 Recommended: A. `scripts/build.sh` rebuilds both binaries and three drift layers already catch a mirror mismatch. The cost is that a version bump strands any separately deployed loader, which only matters once one exists outside this repo.
 
-A: (pending)
+A: (operator, 2026-11-07) A: standing approval for additive named fields, on the listed conditions. Removing or reordering a field still comes to the operator.
 
 ## Q21 (01-boot-platform/TODO-20 §3/§4/§5): what shape does the xHCI DMA handoff take?
 
@@ -278,7 +284,7 @@ A: (pending)
 
 Recommended: A, since one range is simpler to reserve and validate. INFERRED from the item text and not measured; the arena's size with per-device rings is the thing to check first.
 
-A: (pending)
+A: (operator, 2026-11-07) A: contiguous arena. Measure the arena's size with per-device rings first.
 
 ## Q22 (01-boot-platform/TODO-01 §22): what happens when the handoff pointer disagrees with the compiled base?
 
@@ -289,7 +295,7 @@ A: (pending)
 
 Recommended: A, because the fixed address is already the documented contract and this repo ships the only loader. B touches every consumer to support a loader that does not exist.
 
-A: (pending)
+A: (operator, 2026-11-07) A: refuse, failing closed on the earliest boot path.
 
 ## Q23 (01-boot-platform/TODO-01 §23): what does integrity mean for the `boot_info` body?
 
@@ -301,7 +307,7 @@ Validation covers the 8-byte header only, so a corrupted body reaches every cons
 
 Recommended: A. It detects corruption, not forgery: the kernel holds no key at that stage, so a MAC would add nothing here. It needs Q20. `_reserved` is already refused as a home for the digest because an unnamed field is undetected drift.
 
-A: (pending)
+A: (operator, 2026-11-07) A: a loader-produced checksum over `header.size` bytes in a named field, under the Q20 approval.
 
 ## Q24 (01-boot-platform/TODO-27 §7): may the platform write dbx updates to NVRAM?
 
@@ -312,7 +318,7 @@ An authenticated dbx apply cannot be undone, and a wrong one can stop the machin
 
 Recommended: A for now. Reversing it later costs only the write path, whereas a bad write can cost the machine. B stays open once there is bare-metal evidence to back the preflight.
 
-A: (pending)
+A: (operator, 2026-11-07) A: never apply; report only. Ship the freshness check and leave updates to firmware tools.
 
 ## Q25 (02-kernel-core/TODO-02 §3): does registry policy get its own Phase-2 effective-policy object?
 
@@ -323,7 +329,7 @@ The §3 merge items say "operator-reserved architecture decision with no TODO ow
 
 Recommended: A, since it leaves the shipped immutability guarantee alone. INFERRED from the stamps; I did not read the original design discussion, so veto it if that settled otherwise.
 
-A: (pending)
+A: (operator, 2026-11-07) A: a separate Phase-2 effective-policy object.
 
 ## Q26 (01-boot-platform/TODO-02 §12): how should `HKLM\SYSTEM\SecureBoot\ShimCA` report a MOK-dev chain?
 
@@ -334,7 +340,7 @@ A: (pending)
 
 Recommended: A, one value with no new key for consumers to join. This registry value is the ABI the item parks on.
 
-A: (pending)
+A: (operator, 2026-11-07) A: a distinct MOK-dev value, keeping the sentinel for real parse failures.
 
 ## Q27 (01-boot-platform/TODO-02 §20): what anchors verification of the MS-signed shim?
 
@@ -345,7 +351,7 @@ A: (pending)
 
 Recommended: B for now. It is the cheaper in-repo half the item names, and it needs no certificate choice while the MS-signed shim is about two years out. Moving to A later costs one script change in each place. Re-pinning a 2023-signed shim stays yours either way.
 
-A: (pending)
+A: (operator, 2026-11-07) B: approved-hash allowlist extending `shim/SHA256SUMS`.
 
 ## Q28 (01-boot-platform/TODO-25 §5): how is a network-boot manifest signed and verified?
 
@@ -357,7 +363,7 @@ The section's stamp calls this user-reserved, and it gates every other §5 item,
 
 Recommended: C, because the loader gains no certificate parser and revocation follows the existing dbx path. The cost is that it verifies only with Secure Boot on, so a machine without it needs a stated policy. INFERRED from the item text, with no firmware survey behind it; if I recall correctly the PKCS7 protocol is optional in UEFI, which would count against A, and that is unverified.
 
-A: (pending)
+A: (operator, 2026-11-07) C: Secure-Boot-signed PE wrap. With Secure Boot off, network boot refuses by default; an explicit `boot.conf` setting may allow it for lab use, and that boot is logged as unverified.
 
 ## Q29 (02-kernel-core/TODO-10 §30): what signs the release-flavor CI attestation?
 
@@ -368,7 +374,7 @@ An in-tree `kernel.link-trace.sha` can be rewritten by anything that can write t
 
 Recommended: A. The repository is public, so the logged identity reveals nothing new, and there is no key to lose. Local builds would still recompute, since they cannot sign.
 
-A: (pending)
+A: (operator, 2026-11-07) A: cosign keyless (OIDC).
 
 ## Q30 (01-boot-platform/TODO-29 §13): how does the `boot_history` NVRAM blob grow from 8 to 32 entries?
 
@@ -379,4 +385,4 @@ An old blob already lives in firmware variables on any machine that has booted t
 
 Recommended: A, because the A/B rollback path can land on an older loader. It is low priority ([L]), and real firmware's variable-size limits are unmeasured here, so bare metal should confirm 32 entries fit.
 
-A: (pending)
+A: (operator, 2026-11-07) A: tail-append, keeping existing offsets. Bare metal must confirm 32 entries fit.

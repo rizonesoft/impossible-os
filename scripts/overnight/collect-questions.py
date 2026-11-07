@@ -45,6 +45,8 @@ _ANSWERS_HEADING_RE = re.compile(r"^##\s+(TODO-\S+)\s*$")
 # question takes. An unanswered one reads `A: (pending)`.
 _Q_HEADING_RE = re.compile(r"^##\s+(Q\d+\b.*)$")
 _PENDING_RE = re.compile(r"^\s*A:\s*\(pending\)", re.IGNORECASE)
+_OPERATOR_ANSWER_RE = re.compile(r"^\s*A:\s*\(operator\b", re.IGNORECASE)
+_Q_CITE_RE = re.compile(r"\bQ(\d+)\b")
 _PROPOSED_DEFAULT_RE = re.compile(r"^\s*A:\s*\(proposed default\)", re.IGNORECASE)
 _ANSWER_Q_RE = re.compile(r"^\s*-\s*Q:\s*(.*)$")
 _TODO_NN_RE = re.compile(r"^TODO-\d+-.*\.md$")
@@ -106,19 +108,43 @@ def collect_proposed_defaults(answers_text: str) -> list:
     return out
 
 
-def collect_pending_questions(answers_text: str) -> list:
-    """Headings of every `## Qn` block in answers.md still reading `A: (pending)`."""
-    out, heading = [], None
+def _q_blocks(answers_text: str):
+    """(number, heading, body lines) for each `## Qn` block in answers.md."""
+    out, cur = [], None
     for line in (answers_text or "").splitlines():
         h = _Q_HEADING_RE.match(line)
         if h:
-            heading = h.group(1).strip()
+            cur = (int(re.match(r"Q(\d+)", h.group(1)).group(1)), h.group(1).strip(), [])
+            out.append(cur)
         elif _fence.is_h2(line):
-            heading = None
-        elif heading and _PENDING_RE.match(line):
-            out.append(heading)
-            heading = None
+            cur = None
+        elif cur:
+            cur[2].append(line)
     return out
+
+
+def collect_pending_questions(answers_text: str) -> list:
+    """Headings of every `## Qn` block with no operator answer.
+
+    A block with NO `A:` line is unanswered too: Q4-Q9 were written that way, so a
+    `(pending)`-only match reported 22 open while 28 waited (2026-11-07)."""
+    return [heading for _, heading, body in _q_blocks(answers_text)
+            if not any(re.match(r"\s*A:", ln) and not _PROPOSED_DEFAULT_RE.match(ln)
+                       and not _PENDING_RE.match(ln) for ln in body)
+            and not any(_PROPOSED_DEFAULT_RE.match(ln) for ln in body)]
+
+
+def answered_question_numbers(answers_text: str) -> set:
+    return {n for n, _, body in _q_blocks(answers_text)
+            if any(_OPERATOR_ANSWER_RE.match(ln) for ln in body)}
+
+
+def _waits_only_on_answered(line: str, answered: set) -> bool:
+    """A stamp naming Qn waits on that question. Once every one it names is answered
+    it is the RUN's to apply, not the operator's to answer, so listing it again would
+    send the operator back to a decision already made."""
+    cited = {int(n) for n in _Q_CITE_RE.findall(line)}
+    return bool(cited) and cited <= answered
 
 
 def answers_heading_drift(answers_text: str, todo_stems: set) -> list:
@@ -145,8 +171,12 @@ def _find_todo_files(project_dir: Path) -> list:
 def render(project_dir: Path, stamp: str) -> tuple[str, int]:
     files = _find_todo_files(project_dir)
     blocks, total = [], 0
+    answers_file = project_dir / "todo" / "answers.md"
+    answers_text = answers_file.read_text(encoding="utf-8") if answers_file.exists() else ""
+    answered = answered_question_numbers(answers_text)
     for f in files:
         got = collect_file(f.read_text(encoding="utf-8"))
+        got["awaiting"] = [a for a in got["awaiting"] if not _waits_only_on_answered(a, answered)]
         lines = got["awaiting"] + got["questions"]
         if not lines:
             continue
@@ -157,9 +187,6 @@ def render(project_dir: Path, stamp: str) -> tuple[str, int]:
         for q in got["questions"]:
             blocks.append(f"- {q}")
         blocks.append("")
-    answers_file = project_dir / "todo" / "answers.md"
-    # answers.md may not exist yet -- tolerate absence.
-    answers_text = answers_file.read_text(encoding="utf-8") if answers_file.exists() else ""
     proposed = collect_proposed_defaults(answers_text)
     stale_headings = answers_heading_drift(answers_text, {f.stem for f in files})
     pending = collect_pending_questions(answers_text)
@@ -259,6 +286,14 @@ def _selftest() -> int:
                "## Not a question\n\nA: (pending)\n")
     pending = collect_pending_questions(answers)
     check("pending-q-listed", pending == ["Q1 (TODO-16 s8): WNF encoding"])
+    check("no-A-line-is-open", collect_pending_questions("## Q9 (x): y\n\nbody\n")
+          == ["Q9 (x): y"])
+    answered = answered_question_numbers(answers)
+    check("operator-answer-counts", answered == {2})
+    check("cited-answered-drops", _waits_only_on_answered("awaiting-answer Q2: x", {2}))
+    # REFUSAL: a stamp still waiting on ANY open question, or naming none, stays listed.
+    check("partly-answered-stays", not _waits_only_on_answered("Q2 and Q3: x", {2}))
+    check("uncited-stays", not _waits_only_on_answered("awaiting-answer: x", {2}))
 
     # bare (checkbox-less) Question bullets
     bare = collect_file("## Questions Or Contradictions\n- Question: dark-mode logo variant?\n- some prose bullet\n")
