@@ -54,7 +54,7 @@ title: "TODO-21 -- Process Model Extensions"
 | ⭐  | Order | Deliverable                                               | Depends On         | Status |
 | --- | :---: | --------------------------------------------------------- | ------------------ | :----: |
 | 💎  |   1   | Working directory (`cwd` field + Nt/VFS wiring)           | VFS                |  [x]   |
-| 💎  |   2   | Standard handle pre-wiring at process creation            | T05 §3             |  [/]   |
+| 💎  |   2   | Standard handle pre-wiring at process creation            | T05 §3             |  [ ]   |
 | 💎  |   3   | User-mode program break (brk/sbrk Linux compat)           | VMM, T17 §5        |  [/]   |
 | 💎  |   4   | Process priority class (Win32 `SetPriorityClass`)         | sched (exists)     |  [/]   |
 | 💎  |   5   | Per-task scheduling policy (`SCHED_FIFO`/`IDLE`)          | §4                 |  [/]   |
@@ -124,13 +124,15 @@ When a process is created, `STD_INPUT_HANDLE` (0), `STD_OUTPUT_HANDLE` (1), and 
 - [ ] `GetStdHandle(nStdHandle)` → look up the pre-wired slot; `SetStdHandle(nStdHandle, handle)` → replace it
 - [ ] `DuplicateHandle`: duplicate a handle slot into the child process at `NtCreateProcess` time for I/O redirection (`cmd > file` pipes the child stdout to a file handle before execution)
 - [ ] Inherit standard handles into child at `task_fork()` if `HANDLE_FLAG_INHERIT` is set (TODO-12 §10)
-- [ ] When `NtCreateProcess` gains a caller-supplied UTF-16 environment block, set `CREATE_UNICODE_ENVIRONMENT` in creation flags per Microsoft Learn ("Changing Environment Variables"); coordinate with D02 T22 §10 and D02 T12 §7 (distinct from firmware `NtQuerySystemEnvironmentValue*` at SSDT indices 0x00D2 through 0x00D6).
+- [/] When `NtCreateProcess` gains a caller-supplied UTF-16 environment block, set `CREATE_UNICODE_ENVIRONMENT` in creation flags per Microsoft Learn ("Changing Environment Variables")
+  - coordinate with D02 T22 §10 and D02 T12 §7 (distinct from firmware `NtQuerySystemEnvironmentValue*` at SSDT indices 0x00D2 through 0x00D6).
+  - BLOCKED: NtCreateProcess takes no caller-supplied environment block yet (`TODO-12` §7, `TODO-22` §10).
 - [ ] Persist a kernel-owned canonical image path on `struct task` at creation/exec (resolved absolute, user-immutable) -- trusted source for image identity + `SearchPathW` leg-1; PEB `ImagePathName` is caller-writable -> XREF: `TODO-22 §14`.
 - [ ] Commit: `"kernel: task -- STD handle pre-wiring at process creation"`
 
 **Test checkpoint:** After `task_create()`, `STD_INPUT_HANDLE`, `STD_OUTPUT_HANDLE`, `STD_ERROR_HANDLE` are valid handles in the process handle table. `WriteFile(STD_OUTPUT_HANDLE, ...)` produces console output. `DuplicateHandle` into child works for I/O redirection. Test on: QEMU WHPX + TCG.
 
-> **Deferred:** [M] STD-handle pre-wiring is blocked on the console I/O endpoint model: the project uses PIPE-based console I/O (`pipe_create`/`pipe_read`/`pipe_write`), not the "keyboard VFS node / framebuffer console VFS node" this section assumes -- those device nodes do not exist. The terminal wires shell stdin/stdout pipes at spawn; a default console endpoint for arbitrary `task_create` processes is not defined yet. Pre-wire STD slots to those endpoints once the process-creation console model is settled -> XREF: `09-desktop-shell/TODO-08-terminal.md §1` (item: "pipe shell stdout → terminal_put_char; WM keyboard → shell stdin")
+> **Reopened 2026-11-07:** this section was parked on a console endpoint model, but no item needs one first. A process with no inherited console can hold NULL standard handles, as a Win32 GUI process does, and `09-desktop-shell/TODO-08` §1 passes its pipes as a consumer of this section. This comes from reading the code; the design review still runs when the section starts. The named `pipe shell stdout` item no longer exists under that text.
 
 ## 3. User-Mode Program Break (brk/sbrk -- Linux Compat)
 
@@ -139,19 +141,29 @@ Win32 programs use `NtAllocateVirtualMemory` (TODO-12 §9) for heap. Linux-compa
 > [!NOTE]
 > **Design (codex design review, 6 findings adopted).** The 1 MiB user ELF window (0x800000-0x900000) is FULLY occupied (image + stack at 0x8FC000 + EIF dispatch table at 0x8F0000 + guard at 0x900000) -- a brk heap has NO room there. It gets a DEDICATED region instead, and `program_break` starts at that fixed base (not the ELF BSS end -- which would require threading `elf_load` `load_end` through the shared `exec_loader_fn` signature across ELF/EIF/PE). `elf_load` already computes `load_end` (elf.c) but the format-agnostic wrapper discards it.
 
-- [ ] Add a dedicated brk region `USER_BRK_BASE`/`USER_BRK_LIMIT` (outside the ELF window AND the `SECTION_VIEW` region) in `include/kernel/mm/user_range.h`; the heap grows here
-- [ ] `struct task`: add `uintptr_t program_break` (0=uninit) + `uintptr_t program_break_start` (floor) + a per-task VM lock; init break = start = `USER_BRK_BASE` at `task_exec` (fixed base, no loader-signature / BSS-end dependency)
-- [ ] `sys_brk(addr)` grow: map PRIVATE frames via `vmm_map_user_page` tagged `VMM_FLAG_PAGE_OWNED` so `vmm_destroy_user_pml4` frees them at exit (design H1); reject `addr` below `program_break_start` or above `USER_BRK_LIMIT`
-- [ ] Failure-atomic growth (design M1): on any `pmm_alloc_frame`/map failure mid-grow, unmap every page THIS call added + free the pending frame, keep the old break, return Linux failure semantics
-- [ ] Shrink-with-unmap (design M2): `addr < program_break` unmaps + frees page-rounded pages down to the new break (credible malloc top-chunk trim); never below `program_break_start`
-- [ ] Serialize validate/map/rollback/publish as ONE transaction under a SLEEPABLE per-task VM mutex (Executive guarded mutex), NOT a spinlock -- a max-range grow maps too many pages to hold a spinlock (design H4)
-- [ ] `task_exec` CR3-reuse path: unmap + free the prior image's brk range before resetting the break fields, so a replaced image never inherits stale heap (design H2)
-- [ ] `task_fork`: eager-copy every committed brk page into the child PML4 + copy `program_break`/`program_break_start` (COW is not available; reset-in-child would violate fork semantics -- design H3)
-- [ ] `sys_sbrk(increment)`: return old break, then `sys_brk(break+increment)`; `increment==0` returns the current break
-- [ ] `SYS_BRK=48` in `include/kernel/sched/syscall.h` + `case SYS_BRK` in `syscall_handler` (`syscall.c`); regen the ABI, then hand-add `sys_brk`/`sys_sbrk` wrappers in `user/include/syscall.h`
+- [/] Add a dedicated brk region `USER_BRK_BASE`/`USER_BRK_LIMIT` (outside the ELF window AND the `SECTION_VIEW` region) in `include/kernel/mm/user_range.h`; the heap grows here
+  - BLOCKED: `03-memory-concurrency/TODO-01` §3 per-process physical isolation.
+- [/] `struct task`: add `uintptr_t program_break` (0=uninit) + `uintptr_t program_break_start` (floor) + a per-task VM lock; init break = start = `USER_BRK_BASE` at `task_exec` (fixed base, no loader-signature / BSS-end dependency)
+  - BLOCKED: `03-memory-concurrency/TODO-01` §3 per-process physical isolation, `03-memory-concurrency/TODO-08` §11 mutex wait-queue.
+- [/] `sys_brk(addr)` grow: map PRIVATE frames via `vmm_map_user_page` tagged `VMM_FLAG_PAGE_OWNED` so `vmm_destroy_user_pml4` frees them at exit (design H1); reject `addr` below `program_break_start` or above `USER_BRK_LIMIT`
+  - BLOCKED: `03-memory-concurrency/TODO-01` §3 per-process physical isolation.
+- [/] Failure-atomic growth (design M1): on any `pmm_alloc_frame`/map failure mid-grow, unmap every page THIS call added + free the pending frame, keep the old break, return Linux failure semantics
+  - BLOCKED: `03-memory-concurrency/TODO-01` §3 per-process physical isolation, `03-memory-concurrency/TODO-07` §2 TLB shootdown.
+- [/] Shrink-with-unmap (design M2): `addr < program_break` unmaps + frees page-rounded pages down to the new break (credible malloc top-chunk trim); never below `program_break_start`
+  - BLOCKED: `03-memory-concurrency/TODO-01` §3 per-process physical isolation, `03-memory-concurrency/TODO-07` §2 TLB shootdown.
+- [/] Serialize validate/map/rollback/publish as ONE transaction under a SLEEPABLE per-task VM mutex (Executive guarded mutex), NOT a spinlock -- a max-range grow maps too many pages to hold a spinlock (design H4)
+  - BLOCKED: `03-memory-concurrency/TODO-08` §11 mutex wait-queue.
+- [/] `task_exec` CR3-reuse path: unmap + free the prior image's brk range before resetting the break fields, so a replaced image never inherits stale heap (design H2)
+  - BLOCKED: `03-memory-concurrency/TODO-01` §3 per-process physical isolation, `03-memory-concurrency/TODO-07` §2 TLB shootdown.
+- [/] `task_fork`: eager-copy every committed brk page into the child PML4 + copy `program_break`/`program_break_start` (COW is not available; reset-in-child would violate fork semantics -- design H3)
+  - BLOCKED: `03-memory-concurrency/TODO-01` §3 per-process physical isolation.
+- [/] `sys_sbrk(increment)`: return old break, then `sys_brk(break+increment)`; `increment==0` returns the current break BLOCKED: the `sys_brk` items above (`03-memory-concurrency/TODO-01` §3 per-process physical isolation).
+- [/] `SYS_BRK=48` in `include/kernel/sched/syscall.h` + `case SYS_BRK` in `syscall_handler` (`syscall.c`); regen the ABI, then hand-add `sys_brk`/`sys_sbrk` wrappers in `user/include/syscall.h`
+  - BLOCKED: no handler can ship yet (`03-memory-concurrency/TODO-01` §3 per-process physical isolation).
       Regeneration target is `abi/generated/abi_contract.h` via `gen-user-abi.py`: `user/include/abi_numbers.h` is a byte-pinned facade over it since `00-infrastructure/TODO-04-usermode-test-framework.md` §28, so editing or regenerating that path is not the ABI step.
-- [ ] Rewire `user/lib/stdlib.c` `malloc`/`free` from the static 64 KiB BSS bump arena to an `sys_sbrk`-backed growable arena (the current arena has no sbrk consumer)
-- [ ] Commit: `"kernel: task -- program break (brk/sbrk) for Linux compat heap"`
+- [/] Rewire `user/lib/stdlib.c` `malloc`/`free` from the static 64 KiB BSS bump arena to an `sys_sbrk`-backed growable arena (the current arena has no sbrk consumer)
+  - BLOCKED: no `sys_sbrk` yet (`03-memory-concurrency/TODO-01` §3 per-process physical isolation).
+- [/] Commit: `"kernel: task -- program break (brk/sbrk) for Linux compat heap"` BLOCKED: `03-memory-concurrency/TODO-01` §3 per-process physical isolation.
 
 **Test checkpoint:** `sys_brk(0)` returns the current break (== `USER_BRK_BASE` after exec). `sys_sbrk(4096)` returns the old break; the new page is writable. A grow then shrink returns the break and the freed pages fault on access. `sys_brk` below `program_break_start` or above `USER_BRK_LIMIT` is rejected. Frame-leak test: exec a process that grows the heap, exit it, assert the PMM free-count returns to baseline (design H1). Fork test: child sees the parent's heap contents (design H3). Test on: QEMU WHPX + TCG; bare metal.
 
@@ -161,19 +173,20 @@ Win32 programs use `NtAllocateVirtualMemory` (TODO-12 §9) for heap. Linux-compa
 
 Thread priority already exists. This section adds the Win32 `PROCESS_PRIORITY_CLASS` concept: a process-level class that sets a base priority range, and `NtSetInformationProcess` / `NtQueryInformationProcess` as the kernel entry points.
 
-- [ ] Add `uint8_t priority_class` to `struct task` with constants:
+- [/] Add `uint8_t priority_class` to `struct task` with constants: BLOCKED: `03-memory-concurrency/TODO-06` §2 priority aging.
   - `PROCESS_PRIORITY_IDLE = 0` → thread base `THREAD_PRIO_IDLE`
   - `PROCESS_PRIORITY_BELOW_NORMAL = 1` → thread base `THREAD_PRIO_LOW`
   - `PROCESS_PRIORITY_NORMAL = 2` → thread base `THREAD_PRIO_NORMAL`
   - `PROCESS_PRIORITY_ABOVE_NORMAL = 3` → thread base `THREAD_PRIO_HIGH - 4`
   - `PROCESS_PRIORITY_HIGH = 4` → thread base `THREAD_PRIO_HIGH`
   - `PROCESS_PRIORITY_REALTIME = 5` → thread base `THREAD_PRIO_REALTIME`; requires `CAP_REALTIME`
-- [ ] `NtSetInformationProcess(ProcessHandle, ProcessPriorityClass, &class, size)`: update `priority_class`; apply base priority to all existing threads in the process
-- [ ] `NtQueryInformationProcess(ProcessHandle, ProcessPriorityClass, ...)`: return current class
-- [ ] Changing `priority_class` adjusts all thread `base_priority` values but does not override active PI boosts
-- [ ] Compositor and audio: spawned at `PROCESS_PRIORITY_HIGH`; background tasks at `PROCESS_PRIORITY_IDLE`
-- [ ] Register `NtSetInformationProcess` and `NtQueryInformationProcess` in SSDT (→ XREF `TODO-12 §5`)
-- [ ] Commit: `"kernel: task -- process priority class and NtSetInformationProcess"`
+- [/] `NtSetInformationProcess(ProcessHandle, ProcessPriorityClass, &class, size)`: update `priority_class`; apply base priority to all existing threads in the process
+  - BLOCKED: `TODO-12` §29 raw user-pointer deref, `TODO-12` §7 raw-PID process handles, `03-memory-concurrency/TODO-06` §2 priority aging.
+- [/] `NtQueryInformationProcess(ProcessHandle, ProcessPriorityClass, ...)`: return current class BLOCKED: `TODO-12` §29 raw user-pointer deref, `TODO-12` §7 raw-PID process handles.
+- [/] Changing `priority_class` adjusts all thread `base_priority` values but does not override active PI boosts BLOCKED: `03-memory-concurrency/TODO-06` §1 priority sync.
+- [/] Compositor and audio: spawned at `PROCESS_PRIORITY_HIGH`; background tasks at `PROCESS_PRIORITY_IDLE` BLOCKED: `03-memory-concurrency/TODO-06` §2 priority aging.
+- [x] Register `NtSetInformationProcess` and `NtQueryInformationProcess` in SSDT (→ XREF `TODO-12 §5`) Done: `nt_process.c:1151-1152`.
+- [/] Commit: `"kernel: task -- process priority class and NtSetInformationProcess"` BLOCKED: `TODO-12` §29 raw user-pointer deref, `TODO-12` §7 raw-PID process handles, `03-memory-concurrency/TODO-06` §2 priority aging.
 
 **Test checkpoint:** `NtSetInformationProcess(ProcessPriorityClass, PROCESS_PRIORITY_HIGH)` updates all thread base priorities to `THREAD_PRIO_HIGH`. `PROCESS_PRIORITY_REALTIME` without `CAP_REALTIME` returns `STATUS_PRIVILEGE_NOT_HELD`. `NtQueryInformationProcess(ProcessPriorityClass)` returns current class. Serial log shows `"task: priority class set to <class>"`. `POST16(0xD040)` on entry, `POST16(0xD041)` after threads updated. Range `0xD04x` confirmed free. Test on: QEMU WHPX + TCG.
 
@@ -186,15 +199,15 @@ Thread priority already exists. This section adds the Win32 `PROCESS_PRIORITY_CL
 
 Add a per-task `sched_policy` field for tasks that need non-time-sliced execution.
 
-- [ ] Add `uint8_t sched_policy` to `struct task` with values:
+- [/] Add `uint8_t sched_policy` to `struct task` with values: BLOCKED: `03-memory-concurrency/TODO-06` §4 RT classes.
   - `SCHED_POLICY_NORMAL = 0` -- default round-robin with `SCHED_QUANTUM` time slice
   - `SCHED_POLICY_FIFO   = 1` -- run until block or yield; no preemptive time-slice; requires `CAP_SCHED_FIFO`
   - `SCHED_POLICY_IDLE   = 2` -- only scheduled when no `SCHED_POLICY_NORMAL` or `SCHED_POLICY_FIFO` task is runnable
-- [ ] Update `schedule()` in `task.c`: skip `SCHED_POLICY_FIFO` tasks for quantum-based preemption; skip `SCHED_POLICY_IDLE` tasks when higher-policy tasks are runnable
-- [ ] `NtSetInformationProcess(ProcessHandle, ProcessSchedulingPolicy, ...)`: validate `CAP_SCHED_FIFO` for FIFO; update field
-- [ ] Kernel-internal convenience: `task_set_sched_policy(pid, SCHED_POLICY_FIFO)` callable from boot paths
-- [ ] `NtSetInformationProcess(ProcessSchedulingPolicy)` registered in SSDT shares the entry with §4 (→ XREF `TODO-12 §5`)
-- [ ] Commit: `"kernel: sched -- per-task scheduling policy (FIFO, IDLE)"`
+- [/] Update `schedule()` in `task.c`: skip `SCHED_POLICY_FIFO` tasks for quantum-based preemption; skip `SCHED_POLICY_IDLE` tasks when higher-policy tasks are runnable BLOCKED: `03-memory-concurrency/TODO-06` §4 RT classes.
+- [/] `NtSetInformationProcess(ProcessHandle, ProcessSchedulingPolicy, ...)`: validate `CAP_SCHED_FIFO` for FIFO; update field BLOCKED: `03-memory-concurrency/TODO-06` §4 RT classes, `TODO-12` §29 raw user-pointer deref.
+- [/] Kernel-internal convenience: `task_set_sched_policy(pid, SCHED_POLICY_FIFO)` callable from boot paths BLOCKED: `03-memory-concurrency/TODO-06` §4 RT classes.
+- [/] `NtSetInformationProcess(ProcessSchedulingPolicy)` registered in SSDT shares the entry with §4 (→ XREF `TODO-12 §5`) BLOCKED: `03-memory-concurrency/TODO-06` §4 RT classes, `TODO-12` §29 raw user-pointer deref.
+- [/] Commit: `"kernel: sched -- per-task scheduling policy (FIFO, IDLE)"` BLOCKED: `03-memory-concurrency/TODO-06` §4 RT classes.
 
 **Test checkpoint:** `SCHED_POLICY_FIFO` task runs without quantum preemption until yield. `SCHED_POLICY_IDLE` task only runs when no NORMAL/FIFO tasks are runnable. `SCHED_POLICY_FIFO` without `CAP_SCHED_FIFO` returns `STATUS_PRIVILEGE_NOT_HELD`. Serial log shows `"sched: policy set to FIFO for pid <N>"`. `POST16(0xD050)` on entry, `POST16(0xD051)` after field set, `POST16(0xD052)` after `schedule()` modification verified. Range `0xD05x` confirmed free. If crash, check last POST -- 0xD050 = never entered, 0xD052 = schedule() modification broke quantum preemption. Test on: QEMU WHPX + TCG. Verify on bare metal -- scheduler changes may expose timing differences.
 
@@ -204,7 +217,7 @@ Add a per-task `sched_policy` field for tasks that need non-time-sliced executio
 
 Every process carries a `capabilities` bitmask. Privileged syscalls check it before executing. Capabilities flow from parent to child and can only be dropped.
 
-- [ ] Define capability constants in `include/kernel/security/capabilities.h`:
+- [/] Define capability constants in `include/kernel/security/capabilities.h`: BLOCKED: `todo/answers.md` Q8.
   - `CAP_SYS_ADMIN       (1ULL << 0)` -- general admin (mount, kmod, etc.)
   - `CAP_RAW_IO          (1ULL << 1)` -- direct disk / port I/O
   - `CAP_NET_ADMIN       (1ULL << 2)` -- raw socket / network config
@@ -214,30 +227,32 @@ Every process carries a `capabilities` bitmask. Privileged syscalls check it bef
   - `CAP_REALTIME        (1ULL << 6)` -- set `PROCESS_PRIORITY_REALTIME`
   - `CAP_SCHED_FIFO      (1ULL << 7)` -- use `SCHED_POLICY_FIFO`
   - `CAP_DEBUG           (1ULL << 8)` -- attach debugger to another process
-- [ ] Add `uint64_t capabilities` to `struct task`; system processes get `CAP_ALL = ~0ULL` at kernel init
-- [ ] `CAP_DEFAULT_USER`: mask granting no privileged capabilities to user processes
-- [ ] `capability_check(uint64_t cap)` -- returns `STATUS_SUCCESS` if `task_current()->capabilities & cap`, else `STATUS_PRIVILEGE_NOT_HELD`
-- [ ] Gate privileged paths: `CAP_SET_TIME` in `KeSetSystemTime`, `CAP_RAW_IO` in raw disk syscalls, `CAP_LOAD_DRIVER` in driver load path, `CAP_REALTIME` in priority-class enforcement
-- [ ] Commit: `"kernel: security -- process capabilities bitmask"`
+- [/] Add `uint64_t capabilities` to `struct task`; system processes get `CAP_ALL = ~0ULL` at kernel init BLOCKED: `todo/answers.md` Q8.
+- [/] `CAP_DEFAULT_USER`: mask granting no privileged capabilities to user processes BLOCKED: `todo/answers.md` Q8.
+- [/] `capability_check(uint64_t cap)` -- returns `STATUS_SUCCESS` if `task_current()->capabilities & cap`, else `STATUS_PRIVILEGE_NOT_HELD` BLOCKED: `todo/answers.md` Q8.
+- [/] Gate privileged paths: `CAP_SET_TIME` in `KeSetSystemTime`, `CAP_RAW_IO` in raw disk syscalls, `CAP_LOAD_DRIVER` in driver load path, `CAP_REALTIME` in priority-class enforcement BLOCKED: `todo/answers.md` Q8.
+- [/] Commit: `"kernel: security -- process capabilities bitmask"` BLOCKED: `todo/answers.md` Q8.
 
 **Test checkpoint:** System process has `CAP_ALL`; `capability_check(CAP_RAW_IO)` returns `STATUS_SUCCESS`. User process has `CAP_DEFAULT_USER`; `capability_check(CAP_RAW_IO)` returns `STATUS_PRIVILEGE_NOT_HELD`. `CAP_SET_TIME` gates `KeSetSystemTime`. Serial log shows `"security: capability check -- cap=<N> result=<status>"`. Test on: QEMU WHPX + TCG.
 
-> **Deferred:** 2026-07-11 | Operator-reserved architecture decision. Design review (needs-attention, `.claude/overnight/reviews/20260711-123231-design.out`) blocks §6 as specified: a process `capabilities` bitmask is a SECOND privilege authority parallel to the shipped NT token-privilege model (`SeSinglePrivilegeCheck` / `sep_effective_token`, `src/kernel/security/privileges.c:149-185`, impersonation-aware). Before §6 can gate anything the operator must define ONE authoritative CAP-to-LUID composition + enforcement-owner table (capabilities as a denial-only ceiling ANDed with the effective-token check, OR CAP names mapped onto token LUIDs) -- a security-model decision expensive to reverse. Verified enforcement blockers to resolve in that redesign: (1) CAP_ALL seeding contaminates ring-3 -- boot shell (`src/kernel/main/boot_desktop.c:722` `task_create`) and NtCreateProcess staging (`src/kernel/nt/nt_process.c:95` `task_create`) build user-destined tasks via `task_create`, not `task_create_user`, so an explicit child ceiling must be threaded before ring-3 publication; (2) non-atomic drop races on SMP -- plain `uint64_t` load/AND/store needs an atomic acquire-load + `fetch_and` acq-rel + a single fork snapshot (SMP-from-day-one); (3) CAP_SET_TIME gate is incomplete + non-reporting -- `NtSetSystemTime`'s non-NULL `PreviousTime` branch calls `KeSetSystemTimeEx` directly (`src/kernel/time/wall_clock.c:912-922`), bypassing `KeSetSystemTime`, and both setters are `void` so a denial cannot return `STATUS_PRIVILEGE_NOT_HELD` (the correct fix is a `void`->`NTSTATUS` change across all setters/callers -- an ABI change, CLAUDE.md stop-and-ask); (4) CAP_REALTIME has a live bypass -- `NtSetInformationProcess(ProcessPriorityClass)` accepts `THREAD_PRIO_REALTIME` with no authorization (`src/kernel/nt/nt_process.c:620-628`) and the scheduler picks the strict-highest runnable priority (`src/kernel/sched/task.c:163-197`), a ring-3 starvation DoS. -> XREF `03-memory-concurrency/TODO-06-scheduler-enhancement.md §4` (items: "RT run queue: a separate fixed-priority queue checked before all `SCHED_NORMAL` queues" at line 130, "Kernel watchdog thread: spawn at `SCHED_FIFO`, `rt_priority = 99`" at line 134, and "`thread_set_sched(tid, class, rt_prio)` -- requires `CAP_SCHED_RT`" at line 133 which also reconciles §6's `CAP_SCHED_FIFO` name to the scheduler domain's `CAP_SCHED_RT`) -- the CAP_REALTIME / priority enforcement + watchdog protection land there. Re-enters when the operator rules on the capability-authority model; the enforcement gates then attach to that single authority.
+> **Deferred:** 2026-07-11 | [M] awaiting-answer Q8: capability authority model (`todo/answers.md` Q8). Design review (needs-attention, `.claude/overnight/reviews/20260711-123231-design.out`) blocks §6 as specified: a process `capabilities` bitmask is a SECOND privilege authority parallel to the shipped NT token-privilege model (`SeSinglePrivilegeCheck` / `sep_effective_token`, `src/kernel/security/privileges.c:149-185`, impersonation-aware). Before §6 can gate anything the operator must define ONE authoritative CAP-to-LUID composition + enforcement-owner table (capabilities as a denial-only ceiling ANDed with the effective-token check, OR CAP names mapped onto token LUIDs) -- a security-model decision expensive to reverse. Verified enforcement blockers to resolve in that redesign: (1) CAP_ALL seeding contaminates ring-3 -- boot shell (`src/kernel/main/boot_desktop.c:722` `task_create`) and NtCreateProcess staging (`src/kernel/nt/nt_process.c:95` `task_create`) build user-destined tasks via `task_create`, not `task_create_user`, so an explicit child ceiling must be threaded before ring-3 publication; (2) non-atomic drop races on SMP -- plain `uint64_t` load/AND/store needs an atomic acquire-load + `fetch_and` acq-rel + a single fork snapshot (SMP-from-day-one); (3) CAP_SET_TIME gate is incomplete + non-reporting -- `NtSetSystemTime`'s non-NULL `PreviousTime` branch calls `KeSetSystemTimeEx` directly (`src/kernel/time/wall_clock.c:912-922`), bypassing `KeSetSystemTime`, and both setters are `void` so a denial cannot return `STATUS_PRIVILEGE_NOT_HELD` (the correct fix is a `void`->`NTSTATUS` change across all setters/callers -- an ABI change, CLAUDE.md stop-and-ask); (4) CAP_REALTIME has a live bypass -- `NtSetInformationProcess(ProcessPriorityClass)` accepts `THREAD_PRIO_REALTIME` with no authorization (`src/kernel/nt/nt_process.c:620-628`) and the scheduler picks the strict-highest runnable priority (`src/kernel/sched/task.c:163-197`), a ring-3 starvation DoS. -> XREF `03-memory-concurrency/TODO-06-scheduler-enhancement.md §4` (items: "RT run queue: a separate fixed-priority queue checked before all `SCHED_NORMAL` queues" at line 130, "Kernel watchdog thread: spawn at `SCHED_FIFO`, `rt_priority = 99`" at line 134, and "`thread_set_sched(tid, class, rt_prio)` -- requires `CAP_SCHED_RT`" at line 133 which also reconciles §6's `CAP_SCHED_FIFO` name to the scheduler domain's `CAP_SCHED_RT`) -- the CAP_REALTIME / priority enforcement + watchdog protection land there. Re-enters when the operator rules on the capability-authority model; the enforcement gates then attach to that single authority.
 
 ## 7. Capability Inheritance and Drop-Only Policy
 
 Capabilities can be inherited across `fork` / `exec` but can only be dropped, never gained. This makes privilege de-escalation auditable and prevents accidental escalation.
 
-- [ ] At `task_fork()`: child inherits parent `capabilities` exactly
-- [ ] At `task_exec()` via `exec_load()`: on EIF binaries, apply capability mask from EIF header flags; strip any bits not in the parent's set; never add new capabilities on exec (→ XREF `TODO-17 §1` -- EIF capabilities field is not yet defined in the spec; extend `eif_header_t` there before implementing here)
-- [ ] `NtDropCapability(cap_mask)`: clear one or more capability bits from the calling process; irreversible for the lifetime of the process; register in SSDT (→ XREF `TODO-12 §5`)
-- [ ] No syscall or path grants new capabilities -- escalation requires a restart or a privileged parent spawning with a specific mask
-- [ ] Document the invariant: `child->capabilities ⊆ parent->capabilities` is enforced at fork and exec
-- [ ] Commit: `"kernel: security -- capability inheritance and drop-only policy"`
+- [/] At `task_fork()`: child inherits parent `capabilities` exactly BLOCKED: §6, `todo/answers.md` Q8.
+- [/] At `task_exec()` via `exec_load()`: on EIF binaries, apply capability mask from EIF header flags; strip any bits not in the parent's set; never add new capabilities on exec (→ XREF `TODO-17 §1`
+  - EIF capabilities field is not yet defined in the spec; extend `eif_header_t` there before implementing here)
+  - BLOCKED: §6, `todo/answers.md` Q8.
+- [/] `NtDropCapability(cap_mask)`: clear one or more capability bits from the calling process; irreversible for the lifetime of the process; register in SSDT (→ XREF `TODO-12 §5`) BLOCKED: §6, `todo/answers.md` Q8.
+- [/] No syscall or path grants new capabilities -- escalation requires a restart or a privileged parent spawning with a specific mask BLOCKED: §6, `todo/answers.md` Q8.
+- [/] Document the invariant: `child->capabilities ⊆ parent->capabilities` is enforced at fork and exec BLOCKED: §6, `todo/answers.md` Q8.
+- [/] Commit: `"kernel: security -- capability inheritance and drop-only policy"` BLOCKED: §6, `todo/answers.md` Q8.
 
 **Test checkpoint:** `task_fork()` child inherits exact parent capabilities. `NtDropCapability(CAP_RAW_IO)` clears the bit; subsequent `capability_check(CAP_RAW_IO)` fails. Child drop does not affect parent. `NtDropCapability` is irreversible -- re-granting returns error. Serial log shows `"security: capability dropped -- cap=<N> remaining=0x<mask>"`. Test on: QEMU WHPX + TCG.
 
-> **Deferred:** 2026-07-11 | Depends entirely on §6's capability model (inherit-at-fork, mask-at-exec, `NtDropCapability`, the `child->capabilities` subset-of `parent->capabilities` invariant). §6 is deferred pending the operator's capability-authority decision, so §7 cannot define inheritance/drop semantics on a model that does not exist yet. The drop path also carries §6 finding 2 (atomic `fetch_and` on the shared process-wide mask -- a plain load/AND/store loses concurrent restrictions on SMP), and the exec mask depends on the EIF capabilities header field that is still unspecified (already noted in-item as XREF `TODO-17 §1`). -> XREF `02-kernel-core/TODO-21-process-model-extensions.md §6` (item: "Add `uint64_t capabilities` to `struct task`; system processes get `CAP_ALL = ~0ULL` at kernel init"). Re-enters with §6.
+> **Deferred:** 2026-07-11 | [M] awaiting-answer Q8. Depends entirely on §6's capability model (inherit-at-fork, mask-at-exec, `NtDropCapability`, the `child->capabilities` subset-of `parent->capabilities` invariant). §6 is deferred pending the operator's capability-authority decision, so §7 cannot define inheritance/drop semantics on a model that does not exist yet. The drop path also carries §6 finding 2 (atomic `fetch_and` on the shared process-wide mask -- a plain load/AND/store loses concurrent restrictions on SMP), and the exec mask depends on the EIF capabilities header field that is still unspecified (already noted in-item as XREF `TODO-17 §1`). -> XREF `02-kernel-core/TODO-21-process-model-extensions.md §6` (item: "Add `uint64_t capabilities` to `struct task`; system processes get `CAP_ALL = ~0ULL` at kernel init"). Re-enters with §6.
 
 ## 8. Process Accounting Fields (Times, I/O Counters)
 
@@ -258,7 +273,7 @@ Both Win11 (`NtQueryInformationProcess` with `ProcessTimes`, `ProcessIoCounters`
 - [x] I/O counters bumped in `ob_file_read`/`ob_file_write` + the native `NtReadFile`/`NtWriteFile` paths on `task_current()` (actual transferred bytes); raw `vfs_read`/`vfs_write` NOT instrumented (kernel loaders call those)
 - [/] `NtQueryInformationProcess(ProcessTimes/IoCounters)` ring-3 output DEFERRED: writing a ring-3 buffer is a kernel-write primitive until PTE-aware fault-recoverable usercopy exists (systemic NtQuery gap); fields ship, wiring in TODO-12 §10
 - [/] `getrusage(RUSAGE_SELF)` helper -- DEFERRED: no `linux_syscall_table` / `struct rusage` exist yet (Linux-compat layer unbuilt); owner registers it in `10-platform-services/TODO-10-linux-compat.md §4`
-- [ ] Commit: `"kernel: task -- process accounting fields for times and I/O counters"`
+- [x] Commit: `"kernel: task -- process accounting fields for times and I/O counters"` Done: `5f0d64cf1`.
 
 > [!NOTE]
 > **Deferred within this section (XREF, not implemented here):** (1) Cross-process `ProcessTimes`/`ProcessIoCounters` via another process's handle -- `task_from_handle()` (`src/kernel/nt/nt_process.c`) currently casts `HANDLE`→PID and cannot safely resolve or ref-hold a *remote* `PROCESS_OBJECT`; blocked on typed process-handle lifetime (→ XREF `02-kernel-core/TODO-12-native-api-ssdt.md §7`, item: "process/thread lifecycle handlers"). (2) `getrusage(RUSAGE_CHILDREN)` -- accumulate from reaped children, fed by §15 reap path (→ XREF `02-kernel-core/TODO-21-process-model-extensions.md §15`, item: "Process Parenting, Reaping, and Wait Semantics"). Both land when their prerequisites ship; self-process accounting is the credible unit for this section.
@@ -323,12 +338,15 @@ This section ships the native rlimit STORAGE + a locked, privilege-aware accesso
 > [!WARNING]
 > Thread-level `affinity_mask` field on `struct thread` does not exist yet (→ 03-memory-concurrency/TODO-06-scheduler-enhancement.md §6, `[ ]`). If 03-memory-concurrency/TODO-06-scheduler-enhancement.md §6 has not landed, add `uint64_t affinity_mask` to `struct thread` here with a default of `~0ULL` (all CPUs). The scheduler does not need to consume the mask until 03-memory-concurrency/TODO-06-scheduler-enhancement.md §6 adds the per-CPU run queue logic.
 
-- [ ] Add `uint64_t affinity_mask` to `struct thread` if not already present from 03-memory-concurrency/TODO-06-scheduler-enhancement.md §6 (default `~0ULL`)
-- [ ] `NtSetInformationProcess(ProcessHandle, ProcessAffinityMask, &mask, sizeof(mask))`: iterate all threads in the process; set each thread's `affinity_mask` to the intersection of the new process mask and the thread's current mask; store process-level mask in `struct task`
-- [ ] `NtQueryInformationProcess(ProcessHandle, ProcessAffinityMask, ...)`: return the process-level mask
-- [ ] Win32 wrappers: `SetProcessAffinityMask(hProcess, dwMask)` → `NtSetInformationProcess`; `GetProcessAffinityMask(hProcess, &procMask, &sysMask)` → returns process mask and system mask (all CPUs)
-- [ ] New threads inherit the process affinity mask at creation
-- [ ] Commit: `"kernel: task -- per-process CPU affinity (SetProcessAffinityMask)"`
+- [/] Add `uint64_t affinity_mask` to `struct thread` if not already present from 03-memory-concurrency/TODO-06-scheduler-enhancement.md §6 (default `~0ULL`) BLOCKED: `03-memory-concurrency/TODO-06` §6 mask-aware dispatch.
+- [/] `NtSetInformationProcess(ProcessHandle, ProcessAffinityMask, &mask, sizeof(mask))`: iterate all threads in the process; set each thread's `affinity_mask` to the intersection of the new process mask and the thread's current mask
+  - store process-level mask in `struct task`
+  - BLOCKED: `03-memory-concurrency/TODO-06` §6 mask-aware dispatch, `TODO-12` §29 raw user-pointer deref, `TODO-12` §7 raw-PID process handles.
+- [/] `NtQueryInformationProcess(ProcessHandle, ProcessAffinityMask, ...)`: return the process-level mask BLOCKED: `03-memory-concurrency/TODO-06` §6 mask-aware dispatch, `TODO-12` §29 raw user-pointer deref.
+- [/] Win32 wrappers: `SetProcessAffinityMask(hProcess, dwMask)` → `NtSetInformationProcess`; `GetProcessAffinityMask(hProcess, &procMask, &sysMask)` → returns process mask and system mask (all CPUs)
+  - BLOCKED: the handlers above (`03-memory-concurrency/TODO-06` §6 mask-aware dispatch).
+- [/] New threads inherit the process affinity mask at creation BLOCKED: `03-memory-concurrency/TODO-06` §6 mask-aware dispatch.
+- [/] Commit: `"kernel: task -- per-process CPU affinity (SetProcessAffinityMask)"` BLOCKED: `03-memory-concurrency/TODO-06` §6 mask-aware dispatch.
 
 **Test checkpoint:** `SetProcessAffinityMask(current, 0x3)` restricts process to CPUs 0-1. `GetProcessAffinityMask` returns `0x3`. New thread created after affinity change has `affinity_mask = 0x3`. Serial log shows `"task: process affinity set to 0x<mask>"`. Test on: QEMU WHPX + TCG (2+ vCPUs). Verify on bare metal -- SMP affinity behavior differs.
 
@@ -344,7 +362,8 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 > Design rule adopted (each flag ships WITH its enforcement, never as dormant state): a mitigation bit reported as active but not actually enforced is false security. Only `MIT_NO_CHILD_PROCESS` has a live in-tree enforcement owner (child creation), so it is the only bit that ships; every other Win11 policy is added to `mitigation_policy.h` in the same change that wires its enforcement.
 
 - [x] `uint64_t mitigation_flags` on `struct task` + `task_mitigation_apply`/`_get` accessors (`__atomic` ACQ_REL/ACQUIRE, monotonic); only `MIT_NO_CHILD_PROCESS (1<<3)` defined (`nt/mitigation_policy.h`)
-- [/] `NtSetInformationProcess(ProcessMitigationPolicy)` deferred: reading a range-only-probed ring-3 buffer via non-fault-recoverable copy_from_user is an unprivileged kernel-crash DoS; NOT_SUPPORTED -> XREF: `TODO-23 §13` try_copy_from_user
+- [/] `NtSetInformationProcess(ProcessMitigationPolicy)` deferred, NOT_SUPPORTED. BLOCKED: `TODO-12` §29 and `03-memory-concurrency/TODO-01` §3.
+  - `TODO-23` §13 shipped `try_copy_from_user`, so the crash half is gone. Its probe is still range-only, so a kernel address in the identity-mapped window reads back as policy bits, which `NtCreateProcess` then reveals as a one-bit oracle. Inferred from `ssdt.c:174-196`, not tested.
 - [/] `NtQueryInformationProcess(ProcessMitigationPolicy)` deferred: copy_to_user to a range-only-probed buffer is a kernel-write primitive (kernel heap identity-mapped low); NOT_SUPPORTED -> XREF: `TODO-12 §29` + `TODO-02(mm) §4`
 - [x] Enforce `MIT_NO_CHILD_PROCESS` in `NtCreateProcess` (`STATUS_CHILD_PROCESS_BLOCKED` -> `ERROR_CHILD_PROCESS_BLOCKED` 367) + `task_fork` (fail -1); checked against creator before allocation
 - [x] Inherit `mitigation_flags` from parent at `task_fork` via a single acquire snapshot committed before `num_tasks++`; zero-init on `task_create`/`task_create_user`
@@ -364,7 +383,7 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 > - **Canonical doc** -- `include/kernel/nt/mitigation_policy.h` (ABI + `MIT_*` bits + the flag-ships-with-enforcement rule).
 > - **Scope boundary** -- §11 owns the field + child-process policy; DEP/ASLR/CFG/image enforcement -> TODO-10 §1 / TODO-17 §15,§12 / TODO-19 §9; `MIT_NO_NEW_PRIVS` -> §6; Win32 A/W wrapper -> TODO-08 §4.
 > **Verified:** 2026-07-12 | impl `a22dabc1` + this review commit (both ring-3 handlers deferred) | 3/8 items | build OK | 6 ProcExt tests PASS | smoke PASS (TCG 6.0s)
-> **Accepted:** [H] both ring-3 handlers return `STATUS_NOT_SUPPORTED` -- reading/writing a range-only-probed ring-3 buffer via the non-fault-recoverable `copy_from_user`/`copy_to_user` is an unprivileged kernel-crash (unmapped) / kernel-corruption (identity-mapped) path, systemic across every SSDT user-buffer handler; the field + enforcement + fork inheritance ship -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §13` (item: "`include/kernel/probe.h` -- `ProbeForRead`, `ProbeForWrite`, `try_copy_from_user`, `try_copy_to_user`" at line 52)
+> **Accepted:** [H] both ring-3 handlers return `STATUS_NOT_SUPPORTED` -- reading/writing a range-only-probed ring-3 buffer via the non-fault-recoverable `copy_from_user`/`copy_to_user` is an unprivileged kernel-crash (unmapped) / kernel-corruption (identity-mapped) path, systemic across every SSDT user-buffer handler; the field + enforcement + fork inheritance ship -> XREF: `02-kernel-core/TODO-12-native-api-ssdt.md §29` (item: "[Critical] NtQuery/SetInformationProcess + NtQuery/SetInformationThread + NtDelayExecution interval")
 > **Quality reviewed:** 2026-07-12 | Codex 11x (design, adversarial, re-adversarial, consistency, perf) + kernel-quality-auditor | 2H+3M fixed, 1C+1H accepted-XREF | scope: kernel-code-quality
 
 ## 12. Pledge/Unveil-Style Process Restriction
@@ -418,11 +437,14 @@ Register Job Object management syscalls in the SSDT for process-group resource c
 - [x] `NtCreateJobSet` → SSDT 0x0167 -- registered + arg-validated; empty set succeeds; real job-set scheduling deferred (item below)
 - [x] All functions return `NTSTATUS`
 - [x] Commit: `"kernel: wire Job Object syscalls to SSDT (0x0160-0x0167)"`
-- [ ] `JobObjectCpuRateControlInformation` (JOBOBJECT_CPU_RATE_CONTROL_INFORMATION): the Win10/11 CPU-throttling surface real tools use; distinct from `QUOTA_LIMITS_EX.CpuRateLimit`. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §8`
-- [ ] Enforce memory limits (`PROCESS_MEMORY`/`JOB_MEMORY`): add to `JOB_SUPPORTED_LIMIT_FLAGS` + enforce on commit once VMM per-process accounting exists (today rejected at set)
-- [ ] Enforce CPU-rate limit (`JOBOBJECT_CPU_RATE_CONTROL_INFORMATION`): per-job scheduler quota (→ XREF: 03-memory-concurrency/TODO-06-scheduler-enhancement.md §2, "starvation prevention" line 93)
-- [ ] Real job-set scheduling (`NtCreateJobSet` NumJob>0, today `STATUS_NOT_IMPLEMENTED`): needs scheduler group support (→ XREF: 03-memory-concurrency/TODO-06-scheduler-enhancement.md §2)
-- [ ] Nested-job topology: parent/child refs, subset-valid parentage + cycle check, chain-wide inheritance/breakaway, teardown, chain snapshot for aggregate charge. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §3`.
+- [/] `JobObjectCpuRateControlInformation` (JOBOBJECT_CPU_RATE_CONTROL_INFORMATION): the Win10/11 CPU-throttling surface real tools use; distinct from `QUOTA_LIMITS_EX.CpuRateLimit`. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §8`
+  - BLOCKED: `03-memory-concurrency/TODO-06` §14 CPU bandwidth; a limit nothing enforces is refused.
+- [/] Enforce memory limits (`PROCESS_MEMORY`/`JOB_MEMORY`): add to `JOB_SUPPORTED_LIMIT_FLAGS` + enforce on commit once VMM per-process accounting exists (today rejected at set)
+  - BLOCKED: `03-memory-concurrency/TODO-01` §15 and §16: no per-process commit counter exists.
+- [/] Enforce CPU-rate limit (`JOBOBJECT_CPU_RATE_CONTROL_INFORMATION`): per-job scheduler quota (→ XREF: 03-memory-concurrency/TODO-06-scheduler-enhancement.md §2, "starvation prevention" line 93)
+  - BLOCKED: `03-memory-concurrency/TODO-06` §14 CPU bandwidth.
+- [/] Real job-set scheduling (`NtCreateJobSet` NumJob>0, today `STATUS_NOT_IMPLEMENTED`): needs scheduler group support (→ XREF: 03-memory-concurrency/TODO-06-scheduler-enhancement.md §2)
+  - BLOCKED: no scheduler group exists; nearest owner is `03-memory-concurrency/TODO-06` §14.
 
 **Test checkpoint:** `NtCreateJobObject` creates a job (serial: `"job: created job handle 0x<h>"`). `NtAssignProcessToJobObject` assigns a process (serial: `"job: assigned pid <N> to job"`). `NtQueryInformationJobObject` returns accounting (process counts + summed CPU time). `NtTerminateJobObject` kills all members. `NtSetInformationJobObject` rejects an unenforceable limit flag. Test on: QEMU WHPX + TCG.
 
@@ -436,7 +458,7 @@ Register Job Object management syscalls in the SSDT for process-group resource c
 > - **Scope boundary** -- §13 owns lifecycle + accounting + active-process-limit + kill-on-close; CPU/memory/IO enforcement + job sets are the open items above; process-handle access-checks owned elsewhere (see Deferred).
 > - **OB type-table headroom (2026-07-12 landing fix)** -- registering the permanent `Job` object type tipped the append-only global type table to 32/32 (on top of the ob test suite's accumulated throwaway types in one boot) and failed "OB: namespace locking stress". Raised `OB_MAX_TYPES` 32 -> 64 (`include/kernel/ob/ob.h`) for NT-scale headroom + a Layer-1 `_Static_assert` pinning `sizeof(OBJECT_TYPES_INFORMATION) <= 4096`. Safe: `NtQueryObject(ObjectTypesInformation)` is size-negotiated (writes `number_of_types` entries, returns the exact needed length) with no external user-mode consumer, so a larger array cannot truncate or break a caller. Scoped Codex adversarial review of this delta: approve, no material findings. Landing evidence: build OK; full suite 20456 kernel + 16 user PASS (incl. 7 ProcExt job suites + OB namespace-stress now green); smoke PASS (TCG 2.9s). [/] partial: memory/CPU-rate limits + real job-set scheduling stay deferred to the items above w/ scheduler XREF.
 
-> **Deferred:** 2026-07-12 | Codex design review (needs-attention: 4 High + 1 Medium, each verified at file:line via `superpowers:receiving-code-review`). Adopted: typed `task->job` + per-membership Ob ref (KILL_ON_JOB_CLOSE in on_close, not on_delete); centralized `task_terminate_remote` so remote kills detach job membership; fork-inherit before publication (fail-closed); reject-don't-echo unenforceable limits. Accepted out-of-scope: [High] process handles are raw PIDs with no granted-access check -- `proc_from_handle()` (`nt_job.c`) mirrors the codebase-wide PID model, so assign/is-in-job cannot enforce `PROCESS_SET_QUOTA`/`PROCESS_TERMINATE` rights; owned by the process-object handle model -> XREF: `02-kernel-core/TODO-12-native-api-ssdt.md §7` (item: "NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct, not OB PROCESS/THREAD objects" at line 422) + `02-kernel-core/TODO-05-object-manager.md §2` (item: "Reference Counting and Object Lifetime" at line 112). Adversarial rounds surfaced several SMP membership races, all FIXED via a per-task `job_lock` serializing every `t->job` read/write (lock order `job_lock` -> the JOB_OBJECT spinlock): assign-vs-exit (dying task left a permanent member), the bulk-kill and assign-rollback raw-pointer UAFs (a task's membership reference keeps the job alive until its own detach drops it, so no assignment frees the job under a concurrent detacher), fork-inherit pinning the parent job under `parent->job_lock` + a temp ref, and every death path (task_exit, task_terminate_remote, task_wrapper normal return, NtCreateProcess OOM) routing through the centralized teardown that detaches membership. DEFERRED (needs a task-publication lock, entangled with the pre-existing unlocked `num_tasks++`): the terminate-vs-unpublished-child race (an inherited child not yet published is skipped by termination) -> XREF: this file §14 (item: "Job membership vs publication SMP").
+> **Deferred:** 2026-07-12 | Codex design review (needs-attention: 4 High + 1 Medium, each verified at file:line via `superpowers:receiving-code-review`). Adopted: typed `task->job` + per-membership Ob ref (KILL_ON_JOB_CLOSE in on_close, not on_delete); centralized `task_terminate_remote` so remote kills detach job membership; fork-inherit before publication (fail-closed); reject-don't-echo unenforceable limits. Accepted out-of-scope: [High] process handles are raw PIDs with no granted-access check -- `proc_from_handle()` (`nt_job.c`) mirrors the codebase-wide PID model, so assign/is-in-job cannot enforce `PROCESS_SET_QUOTA`/`PROCESS_TERMINATE` rights; owned by the process-object handle model -> XREF: `02-kernel-core/TODO-12-native-api-ssdt.md §7` (item: "NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct, not OB PROCESS/THREAD objects" at line 422) + `02-kernel-core/TODO-05-object-manager.md §2` (item: "Reference Counting and Object Lifetime" at line 112). Adversarial rounds surfaced several SMP membership races, all FIXED via a per-task `job_lock` serializing every `t->job` read/write (lock order `job_lock` -> the JOB_OBJECT spinlock): assign-vs-exit (dying task left a permanent member), the bulk-kill and assign-rollback raw-pointer UAFs (a task's membership reference keeps the job alive until its own detach drops it, so no assignment frees the job under a concurrent detacher), fork-inherit pinning the parent job under `parent->job_lock` + a temp ref, and every death path (task_exit, task_terminate_remote, task_wrapper normal return, NtCreateProcess OOM) routing through the centralized teardown that detaches membership. DEFERRED (needs a task-publication lock, entangled with the pre-existing unlocked `num_tasks++`): the terminate-vs-unpublished-child race (an inherited child not yet published is skipped by termination) -> XREF: this file §14 (item: "Job membership vs publication lock").
 
 > **Verified:** 2026-07-12 | commit `01a14422` | 9/12 items ([/] partial: memory/CPU-rate limit enforcement + real job-set scheduling deferred w/ scheduler XREF) | build OK | full suite 20456 kernel + 16 user PASS (incl. 7 ProcExt job suites + OB namespace-stress green) | smoke PASS (TCG 2.9s)
 >
@@ -453,20 +475,19 @@ Central cleanup point for all per-process resources when a process terminates. W
   - [x] Free per-process address space -- user stack, TLS expansion, secondary-thread stacks/TEBs, and the whole per-process PML4 via `vmm_destroy_user_pml4` at the reap barrier
   - [x] Release security tokens (primary + per-thread impersonation) and detach from Job Object -- `ob_job_detach_task` now fires on ALL death paths via `task_death_teardown` (-> XREF: `§13`)
   - [x] Per-process rlimits + accounting are plain `struct task` fields reclaimed with the slot -- no separate release call (-> XREF: `§8`, `§9`)
-  - [ ] Release all byte-range locks held by this process -- BLOCKED: `vfs_lock_file` is per-node with no per-process index; needs a per-task lock-ownership list populated at lock time and swept here (-> XREF: `05-storage-filesystems/TODO-04 §10` `vfs_lock_file`)
-  - [ ] Release oplocks held by this process -- deferred: `vfs_close` leaves oplock state untouched; a dead process's oplock breaks lazily on the next opener's `vfs_open`. Eager release needs the same per-task node index (-> XREF: `05-storage-filesystems/TODO-04 §14`)
-  - [ ] Invoke ELF `DT_FINI_ARRAY` / PE `DLL_PROCESS_DETACH` destructors and deregister modules -- BLOCKED: no `exec_unregister_module` exists and the fini-array runtime is unimplemented (-> XREF: `02-kernel-core/TODO-17 §6` module registry, `§20` fini-array)
-  - [ ] Free the PEB/TEB physical frames -- BLOCKED: mapped at fixed shared VAs in the kernel PML4; freeing needs per-task phys tracking + the per-process-private-frame refactor (-> XREF: `02-kernel-core/TODO-11 §24` PEB/TEB lifecycle)
+  - [/] Invoke ELF `DT_FINI_ARRAY` / PE `DLL_PROCESS_DETACH` destructors and deregister modules -- BLOCKED: no `exec_unregister_module` exists and the fini-array runtime is unimplemented (-> XREF
+    - `02-kernel-core/TODO-17 §6` module registry, `§20` fini-array)
+    - BLOCKED: `02-kernel-core/TODO-17` §20 (`exec_unregister_module`, fini arrays).
+  - [/] Free the PEB/TEB physical frames -- BLOCKED: mapped at fixed shared VAs in the kernel PML4; freeing needs per-task phys tracking + the per-process-private-frame refactor (-> XREF: `02-kernel-core/TODO-11 §24` PEB/TEB lifecycle)
+    - BLOCKED: `03-memory-concurrency/TODO-01` §3 per-process physical isolation, `TODO-11` §24.
 - [x] Log cleanup counts -- `task_cleanup` logs `"PID %u reap cleanup: %u handles closed"` at PASSIVE_LEVEL (`task_death_teardown` stays log-free for its raised-IRQL callers)
-- [ ] Unpublished-child pledge/unveil generation revalidate at publish -- DEFERRED, only racy under mid-`task_fork` preemption the single-cursor scheduler cannot expose (-> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`)
-- [ ] Coordinated SMP termination (sibling-stop reap barrier before CR3/stack free) -- DEFERRED, no cross-CPU rendezvous primitive (-> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §2` TLB-shootdown IPI, `§3`)
-- [ ] Job membership vs publication lock (`num_tasks++` committed atomically) -- DEFERRED, needs a tasks-publication lock; races only under true concurrency (-> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`)
-- [ ] `JOBOBJECT_BASIC_ACCOUNTING_INFORMATION.TotalPageFaultCount` is never assigned and no per-task fault counter exists, so every job reports 0 -- indistinguishable from no faults. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §7`
-- [ ] `ThisPeriodTotalUserTime`/`KernelTime` are hard-set to the lifetime totals (`ob_job.c:918`); Windows resets them on a limit set unless `JOB_OBJECT_LIMIT_PRESERVE_JOB_TIME`, which we accept but never honor. -> XREF: `TODO-25 §19`
+- [/] Unpublished-child pledge/unveil generation revalidate at publish -- DEFERRED, only racy under mid-`task_fork` preemption the single-cursor scheduler cannot expose (-> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`)
+  - BLOCKED: `03-memory-concurrency/TODO-07` §3 tasks-publication lock.
+- [/] Coordinated SMP termination (sibling-stop reap barrier before CR3/stack free) -- DEFERRED, no cross-CPU rendezvous primitive (-> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §2` TLB-shootdown IPI, `§3`)
+  - BLOCKED: `03-memory-concurrency/TODO-07` §2 TLB shootdown, `03-memory-concurrency/TODO-07` §3 reap barrier.
+- [/] Job membership vs publication lock (`num_tasks++` committed atomically) -- DEFERRED, needs a tasks-publication lock; races only under true concurrency (-> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`)
+  - BLOCKED: `03-memory-concurrency/TODO-07` §3 tasks-publication lock.
 - [x] Self-directed `SYS_KILL` routes through the non-returning `task_exit` (never resumes in ring-3), so a self-killed task cannot issue further syscalls; `task_terminate_remote` stays remote-only
-- [ ] `ob_job_create` inserts a named job into `\BaseNamedObjects` BEFORE `ObpAllocateHandle`, so a handle-alloc failure leaks the directory entry, the `JOB_OBJECT` and its quota block. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §3`
-- [ ] Wire `signal_check()` into the scheduler / kernel-entry boundary: it is defined but never called, so `signal_default_action` (and its `task_death_teardown` leg) is dormant -- fatal signals set a pending bit nothing dispatches
-- [ ] Remote/signal death (`task_terminate_remote`, `signal_default_action`) skips the thread-0 APC rundown + THREAD_DEAD publish the self-death paths do inline; run it once the target is stopped so queued thread-0 APCs are not leaked
 - [x] Commit: `"kernel: task -- process exit cleanup (timer-res reap, shared death teardown, cleanup log)"`
 
 **Test checkpoint:** A process that requests a fast timer resolution and exits (via any death path) has its request reaped and the tick re-arbitrated; handles/share-modes/delete-on-close/tokens/job-membership/address-space are released at exit; the serial log shows the reap handle count. Unit tests: 2 `time:` suites (TEST_CAT_SCHED) cover the timer-res reap no-op + round-trip. Byte-range-lock / oplock / PEB-TEB-frame / SMP-barrier release are tracked as concrete follow-ups above. Test on QEMU WHPX, TCG.
@@ -481,7 +502,7 @@ Central cleanup point for all per-process resources when a process terminates. W
 > - Scope boundary: §14 owns the death-path release walk; byte-lock/oplock -> TODO-04, PEB/TEB frames -> TODO-11 §24, fini/module-deregister -> TODO-17, SMP barrier + tasks-lock -> TODO-07.
 > **Verified:** 2026-07-12 | commit `55678cd7` | 8/18 items | build OK | tests 20465/20465 PASS
 > **Accepted:** [H] remote/self death has no off-CPU SMP reap barrier -- task_cleanup can free CR3/handle-table under a still-running victim (incl. concurrent NtClose vs ob_handle_table_destroy) on real SMP (reason: not-functional-today on the single-cursor scheduler) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "task_cleanup reap barrier: prove a TASK_DEAD task is off-CPU on ALL CPUs" at line 122)
-> **Deferred:** [M] fatal-signal death path dormant -- `signal_check()` is never called, so `signal_default_action` + its `task_death_teardown` leg never run -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §14 (item: "Wire `signal_check()` into the scheduler / kernel-entry boundary" at line 468)
+> **Deferred:** [M] fatal-signal death path dormant -- `signal_check()` is never called, so `signal_default_action` + its `task_death_teardown` leg never run -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §21 (item: "Wire `signal_check()` into the scheduler / kernel-entry boundary")
 > **Quality reviewed:** 2026-07-12 | Codex 9x (design + adversarial + re-adversarial + consistency + perf) | 5H+2M fixed, 1H+3M+1L accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -492,15 +513,21 @@ Exit cleanup (§14) frees resources but does not define WHEN exit status is obse
 
 - [/] Process create and exit notifications: nothing under `src/` produces them
   - BLOCKED: the only named consumer is image notifications, which wait on `todo/answers.md` Q5. -> XREF: `02-kernel-core/TODO-18` §7 (item: "Define the Impossible OS ordered sequence")
-- [ ] Add a `TASK_ZOMBIE` state (distinct from the transient `TASK_DEAD` mark): on exit, transition RUNNING -> ZOMBIE retaining `exit_status` + accumulated child rusage; `task_cleanup` (REAPED) frees the struct only via a reaper.
-- [ ] `sys_wait4(pid, status, options, rusage)`: any-child (-1) and exact-pid selectors, `WNOHANG`; atomic single-reaper CAS on the zombie (one waiter reaps, a lost race returns `ECHILD`). Process-group selector + `WUNTRACED`/`WCONTINUED` -> §18.
-- [ ] `RUSAGE_CHILDREN` accumulator on `struct task`; on reap, fold the child's user/kernel time + IO counters into the parent (mirror `ob_job_detach_task`) (-> XREF: §8).
-- [ ] Orphan reparenting: on parent ZOMBIE, reparent live/zombie children to the nearest `PR_SET_CHILD_SUBREAPER` ancestor, else PID 0 (reaper-of-last-resort); an orphan zombie under a non-waiting init is auto-reaped (no slot leak at `TASK_MAX`).
-- [ ] `task_set_child_subreaper` + a `child_subreaper` field consumed by the reparent selector above. Linux `prctl(PR_SET_CHILD_SUBREAPER)` adapter -> XREF: `TODO-10-kernel-security-hardening.md`.
-- [ ] NT non-reap decouple (ZOMBIE safety): `nt_sync.c` process-wait observes ZOMBIE + `exit_status` without `task_cleanup`, so a waiter's `struct task*` stays valid until a POSIX reaper (-> XREF: `TODO-12-native-api-ssdt.md`).
-- [ ] Overflow-safe status/rusage retention, reclaimed exactly once (no double-free, no lost status); the single-reaper CAS is the exactly-once barrier.
-- [ ] `task_waitpid`/`sys_wait4` must LOOP until the child is DEAD/ZOMBIE: one `yield()` + unconditional `exit_status` read false-completes on any spurious wake (e.g. §17 group SIGINT); interrupted wait returns EINTR when delivery lands.
-- [ ] Commit: `"kernel: task -- parenting, reaping, and wait4 semantics"`
+- [/] Add a `TASK_ZOMBIE` state (distinct from the transient `TASK_DEAD` mark): on exit, transition RUNNING -> ZOMBIE retaining `exit_status` + accumulated child rusage; `task_cleanup` (REAPED) frees the struct only via a reaper.
+  - BLOCKED: `03-memory-concurrency/TODO-06` §13 stable PID, `todo/answers.md` Q2.
+- [/] `sys_wait4(pid, status, options, rusage)`: any-child (-1) and exact-pid selectors, `WNOHANG`; atomic single-reaper CAS on the zombie (one waiter reaps, a lost race returns `ECHILD`). Process-group selector + `WUNTRACED`/`WCONTINUED` -> §18.
+  - BLOCKED: `03-memory-concurrency/TODO-06` §13 stable PID, `todo/answers.md` Q2.
+- [/] `RUSAGE_CHILDREN` accumulator on `struct task`; on reap, fold the child's user/kernel time + IO counters into the parent (mirror `ob_job_detach_task`) (-> XREF: §8).
+  - BLOCKED: the ZOMBIE reap above (`03-memory-concurrency/TODO-06` §13 stable PID).
+- [/] Orphan reparenting: on parent ZOMBIE, reparent live/zombie children to the nearest `PR_SET_CHILD_SUBREAPER` ancestor, else PID 0 (reaper-of-last-resort); an orphan zombie under a non-waiting init is auto-reaped (no slot leak at `TASK_MAX`).
+  - BLOCKED: `03-memory-concurrency/TODO-06` §13 stable PID, `03-memory-concurrency/TODO-07` §3 reap barrier.
+- [/] `task_set_child_subreaper` + a `child_subreaper` field consumed by the reparent selector above. Linux `prctl(PR_SET_CHILD_SUBREAPER)` adapter -> XREF: `TODO-10-kernel-security-hardening.md`.
+  - BLOCKED: the reparent selector above (`03-memory-concurrency/TODO-06` §13 stable PID).
+- [/] NT non-reap decouple (ZOMBIE safety): `nt_sync.c` process-wait observes ZOMBIE + `exit_status` without `task_cleanup`, so a waiter's `struct task*` stays valid until a POSIX reaper (-> XREF: `TODO-12-native-api-ssdt.md`).
+  - BLOCKED: `03-memory-concurrency/TODO-06` §13 stable PID, `todo/answers.md` Q2.
+- [/] Overflow-safe status/rusage retention, reclaimed exactly once (no double-free, no lost status); the single-reaper CAS is the exactly-once barrier.
+  - BLOCKED: `03-memory-concurrency/TODO-06` §13 stable PID, `03-memory-concurrency/TODO-07` §3 reap barrier.
+- [/] Commit: `"kernel: task -- parenting, reaping, and wait4 semantics"` BLOCKED: `03-memory-concurrency/TODO-06` §13 stable PID.
 
 > **Scope note (SPLIT 2026-07-12):** the richer wait variants (`sys_waitid`, `WUNTRACED`/`WCONTINUED` job-control waits), `PR_SET_PDEATHSIG`, full NT multi-waiter wake, and the `PR_SET_DUMPABLE` core-dump gate moved to **§18** -- they layer on the §15 foundation and cross into job-control signals / crash-dump policy. The minimal NT non-reap decouple stays in §15 because ZOMBIE retention is unsafe otherwise (a process-handle waiter reads `t->state` off a `struct task*` that `task_cleanup` would free).
 
@@ -516,12 +543,14 @@ Exit cleanup (§14) frees resources but does not define WHEN exit status is obse
 
 Windows exposes per-process protection levels (`PROCESS_PROTECTION_LEVEL_INFORMATION`, `PsIsProtectedProcessLight`) so a lower-protection process cannot terminate, VM-write, duplicate-handle, or debug a higher one -- the anti-tamper backbone for LSASS/AV/DRM. TODO-15 records the field + signer enforcement as ownerless and requests TODO-21 ownership; TODO-05 §13 supplies only the `ObRegisterCallbacks` handle-filter mechanism.
 
-- [ ] Add a `ps_protection` field to `struct task`: level (None, ProtectedLight-Authenticode, Antimalware, Lsa, WinTcbLight, WinTcb) + signer class.
-- [ ] Assignment + inheritance: a process's protection is set at create from its image signer class (sourced from code-integrity verification -> XREF: `TODO-19-code-integrity-trust-policy.md`); a child cannot exceed its creator's protection.
-- [ ] Protection-dominance access matrix: an EXPLICIT tested (accessor, target) -> allowed-mask table, NOT numeric-enum-ordering; lower protection is stripped of TERMINATE/VM_WRITE/DUP_HANDLE/SET_INFORMATION/debug against higher.
-- [ ] Consume the matrix in the `ObRegisterCallbacks` open-handle filter (-> XREF: `TODO-05-object-manager.md §13` -- shipped handle-filter mechanism).
-- [ ] `NtQueryInformationProcess(ProcessProtectionInformation)` returns the level (-> XREF: `TODO-12-native-api-ssdt.md §10`).
-- [ ] Commit: `"kernel: task -- protected process light (PS_PROTECTION) + dominance matrix"`
+- [/] Add a `ps_protection` field to `struct task`: level (None, ProtectedLight-Authenticode, Antimalware, Lsa, WinTcbLight, WinTcb) + signer class. BLOCKED: `TODO-12` §7 raw-PID process handles.
+- [/] Assignment + inheritance: a process's protection is set at create from its image signer class (sourced from code-integrity verification -> XREF: `TODO-19-code-integrity-trust-policy.md`); a child cannot exceed its creator's protection.
+  - BLOCKED: `TODO-12` §7 raw-PID process handles, `TODO-19` §4 sig-block ABI.
+- [/] Protection-dominance access matrix: an EXPLICIT tested (accessor, target) -> allowed-mask table, NOT numeric-enum-ordering; lower protection is stripped of TERMINATE/VM_WRITE/DUP_HANDLE/SET_INFORMATION/debug against higher.
+  - BLOCKED: `TODO-12` §7 raw-PID process handles.
+- [/] Consume the matrix in the `ObRegisterCallbacks` open-handle filter (-> XREF: `TODO-05-object-manager.md §13` -- shipped handle-filter mechanism). BLOCKED: `TODO-12` §7 raw-PID process handles.
+- [/] `NtQueryInformationProcess(ProcessProtectionInformation)` returns the level (-> XREF: `TODO-12-native-api-ssdt.md §10`). BLOCKED: `TODO-12` §7 raw-PID process handles, `TODO-12` §29 raw user-pointer deref.
+- [/] Commit: `"kernel: task -- protected process light (PS_PROTECTION) + dominance matrix"` BLOCKED: `TODO-12` §7 raw-PID process handles.
 
 **Test checkpoint:** a None-protection process opening a WinTcb process for TERMINATE/VM_WRITE/DUP_HANDLE is denied (STATUS_ACCESS_DENIED); a higher-level process opening a lower one succeeds; the dominance matrix test exercises every (level, level) pair. `klog(LOG_WARN, "ob", "PPL: denied 0x%x from level %u to level %u")`. Test on: QEMU WHPX, QEMU TCG; bare metal.
 
@@ -539,7 +568,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 - [x] `pgroup_getpgid`/`getsid`/`getpgrp` (+ `SYS_GETPGID`/`SYS_GETSID`/`SYS_GETPGRP`); `pid==0` means the caller.
 - [x] Singleton `console_jobctl` (controlling sid + fg pgid + validity) + `pgroup_tcsetpgrp`/`tcgetpgrp` (`SYS_TCSETPGRP`/`SYS_TCGETPGRP`); enforces same-session + non-empty group (ENOTTY/EPERM/EINVAL).
 - [x] `signal_send_group(pgid,sig)` reaches every live member (PID 0 excluded); `signal_ctrl_c` fans SIGINT to the console fg group -- NO-OP until a shell claims it; pending mask now atomic; `pgroup_is_orphaned` detector ships.
-- [ ] Orphaned-pgroup SIGHUP+SIGCONT delivery: detector ships, delivery blocked on job-control stop/cont signals (SIGTSTP/SIGSTOP/SIGCONT) -> XREF: `§18` + `TODO-10-kernel-security-hardening.md`.
+- [/] Orphaned-pgroup SIGHUP+SIGCONT delivery: detector ships, delivery blocked on job-control stop/cont signals (SIGTSTP/SIGSTOP/SIGCONT) -> XREF: `§18` + `TODO-10-kernel-security-hardening.md`. BLOCKED: stop and continue signals, this file's §21.
 - [x] `GenerateConsoleCtrlEvent(event, pgid)` (`SYS_GENCONSOLECTRL`): CTRL_C/CTRL_BREAK -> SIGINT to the group. Consumer (terminal/user-lib shim) + Linux adapters owned elsewhere -> XREF: `TODO-10-kernel-security-hardening.md`.
 - [x] Commit: `"kernel: task -- process groups and sessions (setpgid/setsid + group signals)"`
 
@@ -557,7 +586,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 > **Accepted:** [H] `signal_send` `t->state` wake can resurrect a DEAD task on SMP (pre-existing plain RMW; §17 amplifies via group fan-out) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Audit signal_send t->state wake" at line 79)
 > **Accepted:** [H] Ctrl+C fan-out queues SIGINT but no `signal_check` call site drains it (pre-existing; the delivery boundary is unbuilt) -> XREF: 10-platform-services/TODO-10-linux-compat.md §8 (item: "SIGINT delivery (signal 2)" at line 265)
 > **Accepted:** [H] job-control lock holds IRQs off across a bounded O(TASK_MAX) scan + the Ctrl+C ISR fan-out scans the group (both bounded; the latency-critical ISR foreground read is lock-free atomic) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Shrink IRQ-off time in ... job-control paths" at line 80)
-> **Deferred:** [M] Ctrl+C wake can make `waitpid` false-complete a live child (pre-existing single-yield `task_waitpid`; §17 wakes more waiters) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §15 (item: "task_waitpid/sys_wait4 must LOOP until the child is DEAD/ZOMBIE" at line 558)
+> **Deferred:** [M] Ctrl+C wake can make `waitpid` false-complete a live child (pre-existing single-yield `task_waitpid`; §17 wakes more waiters) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §21 (item: "`task_waitpid`/`sys_wait4` must LOOP until the child is DEAD/ZOMBIE")
 > **Quality reviewed:** 2026-07-13 | Codex 25x (design + adversarial + consistency + perf + re-adversarial) | 2C+11H+9M fixed, 4H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -566,13 +595,17 @@ No section owns session ID, process-group ID, session leadership, the foreground
 
 Split from §15 (2026-07-12). Layers on §15's ZOMBIE + single-reaper foundation: the richer POSIX wait variants (`waitid`, job-control stop/continue waits), the NT semantic that every process-handle waiter wakes (not one reaper), the parent-death signal, and the per-process core-dump policy gate. Each crosses into a subsystem §15 does not own (job-control signals, the OB wait queue, crash-dump generation).
 
-- [ ] `sys_waitid(idtype, id, siginfo, options)`: `WEXITED`/`WSTOPPED`/`WCONTINUED`/`WNOWAIT`; peek-without-reap on `WNOWAIT` (leaves the zombie for a later reaper).
-- [ ] `WUNTRACED`/`WCONTINUED` in `sys_wait4`/`sys_waitid`: report stopped/continued children, gated on job-control stop/cont signals (-> XREF: §17 group signals; `TODO-10-kernel-security-hardening.md`).
-- [ ] `task_set_pdeathsig` + a `pdeathsig` field; delivered to a child on the exiting parent's reparent sweep. Linux `prctl(PR_SET_PDEATHSIG)` adapter -> XREF: `TODO-10-kernel-security-hardening.md`.
-- [ ] Full NT multi-waiter wake: every `NtWaitForSingleObject`/`NtWaitForMultipleObjects` waiter on an exited process handle wakes off the ZOMBIE signal (no single-reaper starvation) (-> XREF: `TODO-12-native-api-ssdt.md`).
-- [ ] `PR_SET_DUMPABLE`/`dumpable` per-process flag gating core-dump generation on crash; default dumpable, cleared on privilege transition (Linux `SUID_DUMP`) -> XREF: `TODO-27-crash-dump-generation.md`.
-- [ ] `RLIMIT_CORE == 0` also suppresses the dump (composes with the `dumpable` flag) -> XREF: §9.
-- [ ] Commit: `"kernel: task -- rich wait variants, NT multi-waiter wake, dumpable policy"`
+- [/] `sys_waitid(idtype, id, siginfo, options)`: `WEXITED`/`WSTOPPED`/`WCONTINUED`/`WNOWAIT`; peek-without-reap on `WNOWAIT` (leaves the zombie for a later reaper). BLOCKED: this file's §15 ZOMBIE lifecycle.
+- [/] `WUNTRACED`/`WCONTINUED` in `sys_wait4`/`sys_waitid`: report stopped/continued children, gated on job-control stop/cont signals (-> XREF: §17 group signals; `TODO-10-kernel-security-hardening.md`).
+  - BLOCKED: this file's §15 ZOMBIE lifecycle, stop and continue signals in §21.
+- [/] `task_set_pdeathsig` + a `pdeathsig` field; delivered to a child on the exiting parent's reparent sweep. Linux `prctl(PR_SET_PDEATHSIG)` adapter -> XREF: `TODO-10-kernel-security-hardening.md`.
+  - BLOCKED: this file's §15 ZOMBIE lifecycle reparent sweep.
+- [/] Full NT multi-waiter wake: every `NtWaitForSingleObject`/`NtWaitForMultipleObjects` waiter on an exited process handle wakes off the ZOMBIE signal (no single-reaper starvation) (-> XREF: `TODO-12-native-api-ssdt.md`).
+  - BLOCKED: this file's §15 ZOMBIE lifecycle.
+- [/] `PR_SET_DUMPABLE`/`dumpable` per-process flag gating core-dump generation on crash; default dumpable, cleared on privilege transition (Linux `SUID_DUMP`) -> XREF: `TODO-27-crash-dump-generation.md`.
+  - BLOCKED: no user-process dump generator yet (`02-kernel-core/TODO-27` §10).
+- [/] `RLIMIT_CORE == 0` also suppresses the dump (composes with the `dumpable` flag) -> XREF: §9. BLOCKED: the same generator (`02-kernel-core/TODO-27` §10).
+- [/] Commit: `"kernel: task -- rich wait variants, NT multi-waiter wake, dumpable policy"` BLOCKED: this file's §15 ZOMBIE lifecycle.
 
 **Test checkpoint:** two `NtWaitForSingleObject` waiters on the same exited process handle BOTH wake; a POSIX `sys_wait4` reaps that process exactly once; `sys_waitid(WNOWAIT)` leaves the zombie reapable; a `dumpable=0` process produces no core dump on crash; `RLIMIT_CORE=0` suppresses the dump even when dumpable. `klog(LOG_DEBUG, "task", "proc %u signaled, %u NT waiters woken")`. Test on: QEMU WHPX, QEMU TCG; bare metal.
 
@@ -723,6 +756,26 @@ Filed 2026-08-16 from the 01-boot-platform/TODO-01 §25 review:
   - Fixed 2026-09-03 in this file's §17 `Accepted:` stamp (line ~554): rewritten to name BOTH invariants separately -- slot CLAIM (creator-vs-creator, `pid = num_tasks` lock-free) now points at `03-memory-concurrency/TODO-06-scheduler-enhancement.md` §13 (item: "Atomic task-slot CLAIM" at line 301, which itself already XREFs this file §9); PUBLICATION (writer-vs-reader, `num_tasks++`/slot-publish ordering) keeps its existing `03-memory-concurrency/TODO-07-smp-phase2.md` §3 XREF. Confirmed at source: [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) selects the slot at 830-835 and publishes at 1119-1125 under `pgroup_jobctl_lock()`, which covers process-group membership only, not slot admission -- two separate phases, two separate invariants, now two separate XREFs instead of one stamp implying the other invariant is already owned.
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
+
+From the stamped section 13 (2026-11-07 drain; no external blocker, verified against the code):
+- [ ] Nested-job topology: parent/child refs, subset-valid parentage + cycle check, chain-wide inheritance/breakaway, teardown, chain snapshot for aggregate charge. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §3`.
+
+From the stamped section 14 (2026-11-07 drain; no external blocker, verified against the code):
+- [ ] Release all byte-range locks held by this process: `vfs_lock_file` is per-node with no per-process index.
+  - This needs a per-task lock-ownership list populated at lock time and swept here (-> XREF: `05-storage-filesystems/TODO-04 §10` `vfs_lock_file`)
+- [ ] Release oplocks held by this process: `vfs_close` leaves oplock state untouched.
+  - A dead process's oplock breaks lazily on the next opener's `vfs_open`. Eager release needs the same per-task node index (-> XREF: `05-storage-filesystems/TODO-04 §14`)
+- [ ] `JOBOBJECT_BASIC_ACCOUNTING_INFORMATION.TotalPageFaultCount` is never assigned and no per-task fault counter exists, so every job reports 0 -- indistinguishable from no faults. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §7`
+- [ ] `ThisPeriodTotalUserTime`/`KernelTime` are hard-set to the lifetime totals (`ob_job.c:918`); Windows resets them on a limit set unless `JOB_OBJECT_LIMIT_PRESERVE_JOB_TIME`, which we accept but never honor. -> XREF: `TODO-25 §19`
+- [ ] `ob_job_create` inserts a named job into `\BaseNamedObjects` BEFORE `ObpAllocateHandle`, so a handle-alloc failure leaks the directory entry, the `JOB_OBJECT` and its quota block. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §3`
+- [ ] Wire `signal_check()` into the scheduler / kernel-entry boundary: it is defined but never called, so `signal_default_action` (and its `task_death_teardown` leg) is dormant -- fatal signals set a pending bit nothing dispatches
+- [ ] Remote/signal death (`task_terminate_remote`, `signal_default_action`) skips the thread-0 APC rundown + THREAD_DEAD publish the self-death paths do inline; run it once the target is stopped so queued thread-0 APCs are not leaked
+
+From the stamped section 15 (2026-11-07 drain; no external blocker, verified against the code):
+- [ ] `task_waitpid`/`sys_wait4` must LOOP until the child is DEAD/ZOMBIE: one `yield()` + unconditional `exit_status` read false-completes on any spurious wake (e.g. §17 group SIGINT); interrupted wait returns EINTR when delivery lands.
+
+Filed 2026-11-07 (no TODO owned this: `SIGSTOP`/`SIGTSTP` appear only in this file, and the `TODO-10-kernel-security-hardening.md` XREF in §17 and §18 names nothing there):
+- [ ] Job-control stop and continue signals: `SIGSTOP`, `SIGTSTP`, `SIGCONT` and a stopped task state. Needs the `signal_check()` delivery item above. §17 orphaned-pgroup delivery and §18 `WUNTRACED`/`WCONTINUED` wait on this.
 
 
 ---

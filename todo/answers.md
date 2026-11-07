@@ -134,3 +134,12 @@ Recommended: A, because the on-disk format stays as it is, the kernel gains no u
 The spec'd block (`algo`, `sig_size`, `signature`) has no signer key, and CI anchors store only a key hash, so a verifier has nothing to run Ed25519 against. The proposal adds `pubkey[32]` and a key-id and bumps `EIF_VERSION`, with old images gated by version. No signed EIF exists yet, so nothing needs migrating, but this is a security-sensitive on-disk format, and until `eifsign`, the verifier and a compiled anchor exist it cannot be tested end to end.
 
 Recommended: approve the amendment, landing it with the `TODO-17` §17 verifier rather than ahead of it, so the format and its first end-to-end test ship together. Blocks TODO-20 §11, TODO-19 §4 and the sections parked behind it.
+
+## Q8 (TODO-21 §6/§7, TODO-06 §4): what is the authority for process capabilities?
+
+`TODO-21` §6 specifies a per-process `capabilities` bitmask, but the shipped privilege check is the NT token (`SeSinglePrivilegeCheck`, `src/kernel/security/privileges.c`). A bitmask beside it is a second privilege authority, and a security model is expensive to reverse. `TODO-06` §4 also needs a `CAP_SCHED_RT` from this same model.
+
+- **A: token only, with capability names as aliases for token LUIDs.** There is one authority, and impersonation keeps working. Drop-only needs a token that can lose privileges for good.
+- **B: a denial-only ceiling ANDed with the token check.** The bitmask can only remove rights, which gives the drop-only `NtDropCapability` of §7 directly. There are two things to keep consistent, and the composition has to be defined per gate.
+
+Recommended: B, because §7's drop-only rule and `child subset of parent` invariant are what the section exists to provide, and a ceiling cannot grant anything the token denies. This comes from reading the 2026-07-11 design review and the code, not a fresh review. Whichever is chosen, the mask needs atomic updates, an explicit child ceiling before ring-3 publication, and `CAP_SET_TIME` must also cover `KeSetSystemTimeEx`. Blocks `TODO-21` §6 and §7.

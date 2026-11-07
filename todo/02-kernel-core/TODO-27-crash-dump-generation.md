@@ -350,6 +350,7 @@ Windows 11 exposes multiple crash-dump settings (small, kernel, complete, automa
 - [ ] When object ACL or SDDL APIs exist: `dump_set_default_sd()` contract for `X:\Crash\` (SYSTEM + Administrators read); until then §8 recovery path emits one `klog(LOG_WARN, "CrashDumps: ACL not enforced")` on first archive write
 - [ ] Mirror JSON field names into `TODO-04-system-logging.md §8` when TODO-27 §7 first sets `DUMP_PARTITION_HEADER` (`dump_encryption_state`, `dump_present_on_raw`; see T04 for the unchecked follow-up)
 - [ ] Doc cites deferred live kernel dump (`0x161`) with Microsoft Learn task-manager live dump article; no kernel code until post-§9
+- [ ] User-process core dump generator: nothing writes a dump for a crashed ring-3 process today, since this TODO covers kernel crashes. `02-kernel-core/TODO-21` §18 (`PR_SET_DUMPABLE`, `RLIMIT_CORE`) waits on this. It may need its own section.
 - [ ] Commit: `"docs/kernel: crashdump policy, WinDbg-Linux interop, confidentiality stubs"`
 
 **Test checkpoint:** After the doc commit, `test -f docs/kernel/crashdump-policy-interop.md` passes in CI or manual check; first `klog(LOG_WARN, "CrashDumps: ACL not enforced")` appears once §8 recovery runs on a build without ACL APIs. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
