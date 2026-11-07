@@ -84,9 +84,9 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎  |  15   | POSIX signal delivery from exceptions (Linux compat)               | §3, §5, D10T10 §8          |  [/]   |
 | ⭐  |  16   | Exception dispatch telemetry                                       | §4, TODO-04 §6             |  [/]   |
 | 💎  |  17   | Guard-page stack auto-grow (split from §2; land right after §2)    | §5, TODO-07 §3, TODO-01 §3 |  [/]   |
-| ⭐  |  18   | Unwind fixtures independent of where the linker put real code      | §7                         |  [/]   |
+| ⭐  |  18   | Unwind fixtures independent of where the linker put real code      | §7                         |  [ ]   |
 | ⭐  |  19   | Compile the EXCEPT_TELEMETRY=off flavor in a gate, not by hand     | §16                        |  [/]   |
-| 💎  |  20   | Owner-stable SEH stack bounds + fault-address provenance           | §14                        |  [/]   |
+| 💎  |  20   | Owner-stable SEH stack bounds + fault-address provenance           | §14                        |  [ ]   |
 
 > 💎 = parity -- Windows implements this feature; Impossible OS must match.
 > ⭐ = exclusive -- not present in either Windows or Linux at the kernel level.
@@ -222,7 +222,7 @@ Each handler builds an `EXCEPTION_RECORD` (§1) and, for the recoverable paths, 
 > - **ABI decision** -- #CP uses `STATUS_STACK_BUFFER_OVERRUN` + subcode 0x39, not `STATUS_CONTROL_STACK_VIOLATION` (a different path); matches real Windows. `STATUS_STACK_BUFFER_OVERRUN` now canonical in `ntstatus.h` (deduped from `stack_canary.c`).
 > - **Scope boundary** -- general fault vectors only; #PF stays with the VMM triage (section 2), #NM with lazy-FPU, NMI/#DF/#MC keep dedicated handlers. Ring-3 delivery is §5; kernel SEH §8/§14; three refinements stay open above (#CP SHSTK/IBT decode, cause-aware #GP, #MF/#XM).
 > **Verified:** 2026-07-18 | commit `bfdfe36e` + review fixes | 5/8 items | build OK | smoke PASS (TCG 2.54s)
-> **Accepted:** [M] user-mode unhandled fault -> `panic_screen()` is interim (no per-process termination yet) -> XREF: 02-kernel-core/TODO-23 §5 (item: "Delivery failure ... terminate the process, never `panic_screen()`" at line 223)
+> **Accepted:** [M] user-mode unhandled fault -> `panic_screen()` is interim (no per-process termination yet) -> XREF: 02-kernel-core/TODO-23 §5 (item: "Delivery failure ... terminate the process, never `panic_screen()`" at line 315)
 > **Deferred:** [M] #CP delivers the SHSTK subcode for IBT violations too (dormant until CET enables) -> XREF: 02-kernel-core/TODO-23 §3 (item: "`#CP` error-code decode" at line 205)
 > **Deferred:** [M] cause-aware #GP decode (privileged-instruction / invalid-LOCK sub-cases) -> XREF: 02-kernel-core/TODO-23 §3 (item: "Cause-aware `#GP`" at line 209)
 > **Deferred:** [M] #MF/#XM FP-exception delivery is ownerless -> XREF: 02-kernel-core/TODO-23 §3 (item: "FP-exception delivery" at line 210)
@@ -306,20 +306,27 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 > 4. a full-frame path for `NtContinue`/`NtRaiseException` (the SYSCALL fast path is SYSRET-only and cannot restore an arbitrary CONTEXT; INT 0x2E carries the live frame).
 > At implementation time SPLIT into (a) `ki_deliver_user_exception` delivery + termination infrastructure and (b) an INT 0x2E-only `NtRaiseException`/`NtContinue` section, per the design review.
 
-- [ ] `ki_deliver_user_exception(frame,rec)`: capture `CONTEXT` (§1) + build a pinned `KI_USER_EXCEPTION_FRAME` (Win64 ABI: 32B home + terminal return slot + `EXCEPTION_POINTERS`/record/context) via CHECKED `rsp` subtraction, reject underflow
-- [ ] Write the block ONLY via `ProbeForWrite` + `try_copy_to_user` (§13), never a raw `memcpy` through `frame->rsp`; point `EXCEPTION_POINTERS` at the user-stack copies; patch `frame->rip`=dispatcher, `frame->rsp`, `frame->rcx`=`EXCEPTION_POINTERS*`
-- [ ] Dispatcher address is PER-PROCESS readiness (a `task`-level VA set only after ntdll maps + its export resolves), NOT a global; `0` = hard delivery failure, never IRET to a placeholder -> XREF: `TODO-11 §7`, `10-platform-services/TODO-07 §7`
-- [ ] Delivery failure (unset dispatcher, bad RSP, copy fault) returns a new `KI_EXCEPTION_TERMINATE` disposition: clear the per-CPU scratch slot THEN hand to a guaranteed idle-frame terminate primitive -- never `panic_screen()`, never a 2nd fault
-- [ ] Termination primitive requires the per-CPU idle task/frame + per-CPU current-thread cursor (absent today: `schedule_now` returns the same frame for the sole runnable task) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` (lines 118-119)
-- [ ] `NtRaiseException` SSDT entry (0x0130), INT 0x2E only: calls `ki_dispatch_exception()` (§4) `first_chance=TRUE` for a raise, `FALSE` for the ntdll second-chance re-entry; fail STATUS on the frameless SYSCALL fast path
-- [ ] `NtContinue` SSDT entry (0x0131): validate untrusted IRET frame -- EXACT user CS/SS, user-range RIP/RSP, known `ContextFlags`, RFLAGS whitelist (force bit1+IF, clear IOPL/NT/VM/reserved), reject noncontinuable; atomic validated-copy restore
-- [ ] Per-thread `cur_trap_frame` + `trap_frame_replaced` plumbing in `syscall_handler_2e` -- BLOCKED on the per-CPU current-thread cursor (else cross-CPU frame corruption) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` (line 119)
+- [/] `ki_deliver_user_exception(frame,rec)`: capture `CONTEXT` (§1) + build a pinned `KI_USER_EXCEPTION_FRAME` (Win64 ABI: 32B home + terminal return slot + `EXCEPTION_POINTERS`/record/context) via CHECKED `rsp` subtraction, reject underflow
+      - Waits on: nothing can receive the frame until ntdll exports `KiUserExceptionDispatcher` -> XREF: `12-user-platform-sdk/TODO-04 §5`; frame ownership also needs `03-memory-concurrency/TODO-07 §3` (item: "Per-CPU current-thread cursor").
+- [/] Write the block ONLY via `ProbeForWrite` + `try_copy_to_user` (§13), never a raw `memcpy` through `frame->rsp`; point `EXCEPTION_POINTERS` at the user-stack copies; patch `frame->rip`=dispatcher, `frame->rsp`, `frame->rcx`=`EXCEPTION_POINTERS*`
+      - Waits on: the frame builder above, same blockers.
+- [/] Dispatcher address is PER-PROCESS readiness (a `task`-level VA set only after ntdll maps + its export resolves), NOT a global; `0` = hard delivery failure, never IRET to a placeholder -> XREF: `TODO-11 §7`, `10-platform-services/TODO-07 §7`
+      - Waits on: no ntdll image exists to resolve the export from -> XREF: `12-user-platform-sdk/TODO-04 §5`.
+- [/] Delivery failure (unset dispatcher, bad RSP, copy fault) returns a new `KI_EXCEPTION_TERMINATE` disposition: clear the per-CPU scratch slot THEN hand to a guaranteed idle-frame terminate primitive -- never `panic_screen()`, never a 2nd fault
+      - Waits on: the terminate primitive below.
+- [/] Termination primitive requires the per-CPU idle task/frame + per-CPU current-thread cursor (absent today: `schedule_now` returns the same frame for the sole runnable task) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` §3
+      - Waits on: `03-memory-concurrency/TODO-07 §3` (item: "Per-CPU idle task") and `03-memory-concurrency/TODO-07 §3` (item: "Per-CPU current-thread cursor"); both still open, `task.c` has no idle task.
+- [/] `NtRaiseException` SSDT entry (0x0130), INT 0x2E only: calls `ki_dispatch_exception()` (§4) `first_chance=TRUE` for a raise, `FALSE` for the ntdll second-chance re-entry; fail STATUS on the frameless SYSCALL fast path
+      - Waits on: the ring-3 handover (`except.c:288`) and `03-memory-concurrency/TODO-07 §3` (item: "Per-CPU current-thread cursor"). The service number is reserved; no handler exists.
+- [/] `NtContinue` SSDT entry (0x0131): validate untrusted IRET frame -- EXACT user CS/SS, user-range RIP/RSP, known `ContextFlags`, RFLAGS whitelist (force bit1+IF, clear IOPL/NT/VM/reserved), reject noncontinuable; atomic validated-copy restore
+      - Waits on: the `cur_trap_frame` plumbing below. The service number is reserved; no handler exists.
+- [/] Per-thread `cur_trap_frame` + `trap_frame_replaced` plumbing in `syscall_handler_2e` -- BLOCKED on the per-CPU cursor (else cross-CPU frame corruption) -> XREF: `03-memory-concurrency/TODO-07 §3` (item: "Per-CPU current-thread cursor")
 
 **Test checkpoint:** User-mode fault delivery: after `ki_deliver_user_exception()`, `frame->rip` points to `KiUserExceptionDispatcher` address (or stub entry), `frame->rsp` is 16-byte aligned and below the original RSP. `EXCEPTION_RECORD` and `CONTEXT` are readable on the user stack. Invalid user RSP (e.g., 0xDEAD) → process terminated, not kernel panic. `POST16(0xDE50)` before user stack manipulation, `POST16(0xDE51)` after IRET redirect. Test on: QEMU WHPX + TCG.
 
-> **Deferred:** [H] ring-3 exception delivery + `NtContinue`/`NtRaiseException` blocked on the per-CPU current-thread cursor + per-CPU idle task/frame (trap-frame ownership across CPUs; fault-context termination without a re-fault) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "Per-CPU current-thread cursor" at line 119; item: "Per-CPU idle task" at line 118)
+> **Deferred:** [H] ring-3 exception delivery + `NtContinue`/`NtRaiseException` blocked on the per-CPU current-thread cursor + per-CPU idle task/frame (trap-frame ownership across CPUs; fault-context termination without a re-fault) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "Per-CPU current-thread cursor" at line 121; item: "Per-CPU idle task" at line 120)
 
-- [ ] Commit: `"kernel: implement KiUserExceptionDispatcher and NtRaiseException/NtContinue"`
+- [/] Commit: `"kernel: implement KiUserExceptionDispatcher and NtRaiseException/NtContinue"` Waits on: the items above.
 
 
 ---
@@ -338,11 +345,14 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 - [x] SMP lifetime: spinlock sorted list, overlap/order validation at add; delete unlinks-under-lock then frees. Callback lookups snapshot cb+ctx under the lock, so self-unregister never stalls. -> XREF: TODO-18 §5 (item: "Validate unwind ranges").
 - [x] `RtlPcToFileHeader(pc, base)` -- public "which module owns this PC" wrapping `exec_find_module_by_pc()`; crash reporting (§12) and the debugger consume it
 - [x] Unit test: synthetic table via `RtlAddFunctionTable`; 3-frame recovered-RIP chain + prolog/epilog/frame-register/callback/malformed-fail-safe (`test_unwind.c`, 10 suites)
-- [ ] Kernel-mode unwind metadata provider (ELF kernel has no `.pdata`, kernel PCs return NULL); needed before §7 table-walks kernel stacks -> XREF: TODO-18 §5 (item: "Register PE `.pdata` ... Translate `.eh_frame`").
-- [ ] SMP-epoch dynamic-table lookup: close the cross-call window where a concurrent `RtlDeleteFunctionTable` can free a table an unwinder still holds an entry into (needs SMP RCU/epoch) -> XREF: `rcu.h` SMP-future quiescent-state tracking.
+- [/] Kernel-mode unwind metadata provider (ELF kernel has no `.pdata`, kernel PCs return NULL); needed before §7 table-walks kernel stacks -> XREF: TODO-18 §5 (item: "Register PE `.pdata` ... Translate `.eh_frame`").
+      - Waits on: `02-kernel-core/TODO-18 §5` (item: "Register PE `.pdata`"), still open.
+- [/] SMP-epoch dynamic-table lookup: close the cross-call window where a concurrent `RtlDeleteFunctionTable` can free a table an unwinder still holds an entry into (needs SMP RCU/epoch) -> XREF: `rcu.h` SMP-future quiescent-state tracking.
+      - Waits on: `03-memory-concurrency/TODO-07 §6` (per-CPU RCU upgrade), still open.
 - [ ] UWOP_EPILOG (unwind-info v2) epilog metadata: closes the residual where a PC exactly at an indirect tail-call jmp (frame torn down) is not detected by forward scanning -> XREF: this section (`unwind_try_epilog` indirect note).
 - [ ] Indirect / noncontiguous-fragment RUNTIME_FUNCTION support (UnwindInfoAddress bit 0): pair the fragment range with the shared parent unwind info; currently returns NULL (fail-safe) -> XREF: this section (`RtlLookupFunctionEntry` indirect note).
-- [ ] Exact winnt.h ABI types on the public unwind prototypes (PUNWIND_HISTORY_TABLE, PEXCEPTION_ROUTINE, BOOLEAN, PCWSTR OutOfProcessCallbackDll) when user-mode ntdll exports land -> XREF: this section (kernel-internal today).
+- [/] Exact winnt.h ABI types on the public unwind prototypes (PUNWIND_HISTORY_TABLE, PEXCEPTION_ROUTINE, BOOLEAN, PCWSTR OutOfProcessCallbackDll) when user-mode ntdll exports land -> XREF: this section (kernel-internal today).
+      - Waits on: ntdll exports; no user-mode ntdll exists -> XREF: `12-user-platform-sdk/TODO-04 §5`.
 - [ ] Combined lookup+unwind path: a stack walk does two `exec_find_module_by_pc` 368B snapshots per loaded-module frame (RtlLookupFunctionEntry + unwind_module_extent); pass the extent from lookup into unwind -> XREF: §7 (stack walker).
 
 **Test checkpoint:** The kernel is ELF (no `.pdata`), so kernel PCs have no `RUNTIME_FUNCTION` and `RtlLookupFunctionEntry` correctly returns NULL for them; the engine is proven against a SYNTHETIC table registered via `RtlAddFunctionTable`. Lookup returns the registered entry for an in-range PC and NULL out-of-range. `RtlVirtualUnwind` on a 3-frame chain recovers the correct RIP per parent frame; prolog, epilog, and frame-register (`SET_FPREG`) forms all recover RIP/RSP; malformed metadata fails safe (leaf pop, no crash). Serial log: `"rtl: unwind engine ready (dynamic tables: 0, kernel .pdata: ELF none)"`. Test on: QEMU WHPX + TCG.
@@ -356,9 +366,9 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 > - Canonical doc: `include/kernel/rtl/unwind.h` header block (ownership split + SMP/lifetime + bounds-safety contract).
 > - Scope boundary: engine-internal (consumed by §7 stack walk, §12 crash reporting, the debugger); NOT yet exported to user-mode ntdll (`pe.c` export tables unchanged).
 > **Verified:** 2026-07-18 | ship `a63dd05b` + review fixes | 7/13 items | build OK | tests 21887+16 PASS; smoke PASS (TCG 2.57s)
-> **Accepted:** [H] engine trusts the establisher frame; fault-safe stack reads + stack-range validation for UNTRUSTED frames belong to consumers -> XREF: 02-kernel-core/TODO-23 §7 (item: "Fault-safe frame reads" at line 377)
+> **Accepted:** [H] engine trusts the establisher frame; fault-safe stack reads + stack-range validation for UNTRUSTED frames belong to consumers -> XREF: 02-kernel-core/TODO-23 §7 (item: "Fault-safe frame reads" at line 387)
 > **Accepted:** [H] loader-side `.pdata`/`.xdata` mapped-section validation + production kernel-mode unwind metadata (ELF `.eh_frame`) -> XREF: 02-kernel-core/TODO-18 §5 (item: "Register PE `.pdata` ... Translate `.eh_frame`" at line 132)
-> **Deferred:** [M] SMP-epoch lookup, UWOP_EPILOG v2 metadata, indirect-fragment support, exact winnt.h ABI types, combined lookup+unwind path -> XREF: 02-kernel-core/TODO-23 §6 (item: "SMP-epoch dynamic-table lookup" at line 342)
+> **Deferred:** [M] SMP-epoch lookup, UWOP_EPILOG v2 metadata, indirect-fragment support, exact winnt.h ABI types, combined lookup+unwind path -> XREF: 02-kernel-core/TODO-23 §6 (item: "SMP-epoch dynamic-table lookup" at line 350)
 > **Quality reviewed:** 2026-07-18 | Codex 42x (design, adversarial, re-adversarial, consistency, perf) + kernel-quality-auditor + concurrency-mapper | 40H+11M+3L fixed, 0 open, 8 accepted/deferred-XREF, 2 rejected | scope: kernel-code-quality
 
 - [x] Commit: `"rtl: implement RtlLookupFunctionEntry and RtlVirtualUnwind for x64 unwind"`
@@ -416,16 +426,17 @@ Expose `RtlDispatchException(EXCEPTION_RECORD *, CONTEXT *)` -- returns TRUE if 
 > [!NOTE]
 > **RE-OWNED to ring-3 ntdll (2026-07-18) -- NOT implemented in kernel `seh.c`.** The 2026-07-15 ring-0/ring-3 boundary correction (the file-top "Address-space boundary" IMPORTANT note, binding for §4-§12) and this TODO's Outcome (line: "`src/kernel/rtl/seh.c` -- kernel-mode SEH SCOPE_TABLE walker (§14) ... The ring-3 `RtlDispatchException` / `__C_specific_handler` ... are ntdll-side") both place `RtlDispatchException`, `__C_specific_handler`, and the SCOPE_TABLE **search-pass** walker in ntdll ring-3 code (`src/user/ntdll/ntdll_except.c`), because the kernel never runs user handlers. This section's original body predates that correction and is stale. What stays in TODO-23: the **kernel-mode** SEH SCOPE_TABLE walker for drivers is §14; the shared table-based search/unwind engine (`RtlLookupFunctionEntry` / `RtlVirtualUnwind`, §6) is already shipped `[x]`; `RtlUnwindEx` (§9) is the kernel-side unwind primitive both walkers call. The shared dispatch ABI is already published kernel-side: the `EXCEPTION_DISPOSITION` enum, `DISPATCHER_CONTEXT`, and the funclet (ms_abi) calling convention live in `include/kernel/rtl/unwind.h` (§6/§9), and the `EXCEPTION_EXECUTE_HANDLER`/`_CONTINUE_SEARCH`/`_CONTINUE_EXECUTION` filter constants are shipped in `include/kernel/except.h` (§10). What travels with the walker to its owner is the dispatch LOGIC -- the search-pass scope-table walk + filter/`__finally` invocation -- not those ABI definitions (ntdll §5 for the user path; §14 for the kernel-driver path). -> XREF: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §5` (item: "`KiUserExceptionDispatcher`" at line 277 -- walks SEH via table-based x64 dispatch invoking each frame's `__C_specific_handler`).
 
-- [ ] `src/kernel/rtl/seh.c` -- `RtlDispatchException`, scope-table walker
-- [ ] `src/kernel/rtl/seh.c` -- `__C_specific_handler` -- the language-specific exception handler for C `__try`/`__except`; referenced by `UNWIND_INFO.ExceptionHandler` in compiled PE binaries
-- [ ] Filter expression invocation with correct calling convention
-- [ ] Nested exception handling (`EXCEPTION_NESTED_CALL` flag)
+- [/] `src/kernel/rtl/seh.c` -- `RtlDispatchException`, scope-table walker Re-owned: ring-3 ntdll work, not kernel `seh.c`, which does not exist and should not -> XREF: `12-user-platform-sdk/TODO-04 §5`.
+- [/] `src/kernel/rtl/seh.c` -- `__C_specific_handler` -- the language-specific exception handler for C `__try`/`__except`; referenced by `UNWIND_INFO.ExceptionHandler` in compiled PE binaries
+      - Re-owned, same owner -> XREF: `12-user-platform-sdk/TODO-04 §5`.
+- [/] Filter expression invocation with correct calling convention Re-owned, same owner -> XREF: `12-user-platform-sdk/TODO-04 §5` (item: "SEH scope-table walk").
+- [/] Nested exception handling (`EXCEPTION_NESTED_CALL` flag) Re-owned, same owner -> XREF: `12-user-platform-sdk/TODO-04 §5` (item: "SEH scope-table walk").
 
 **Test checkpoint:** `RtlDispatchException` with a `SCOPE_TABLE` containing one matching `__try` scope calls the filter expression and returns TRUE. Filter returning `EXCEPTION_CONTINUE_SEARCH` → walks to parent frame. No matching scope in any frame → returns FALSE. `__C_specific_handler` is invoked for functions whose `UNWIND_INFO` references it. Serial log: `"seh: scope match at RVA 0x<rva>, filter=EXECUTE_HANDLER"`. Test on: QEMU WHPX + TCG. (Now owned ring-3; the acceptance criteria above are validated in ntdll -- see the RE-OWNED note.)
 
 > **Deferred:** [H] re-owned out of TODO-23: ring-3 SEH search-pass dispatch (`RtlDispatchException`, `__C_specific_handler`, SCOPE_TABLE walker, filter/`__finally` funclet invocation, `EXCEPTION_NESTED_CALL` guard) is ntdll-side, not kernel `seh.c` -- the kernel never calls user handlers (ring-0/ring-3 boundary, file-top note + Outcome). Shared dispatch ABI (`EXCEPTION_DISPOSITION`, filter-result constants, `DISPATCHER_CONTEXT`, funclet calling convention) travels with the walker to its owner -> XREF: 12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §5 (item: "`KiUserExceptionDispatcher`" at line 277)
 
-- [ ] Commit: `"rtl: implement RtlDispatchException, __C_specific_handler, and SEH scope-table walker"`
+- [/] Commit: `"rtl: implement RtlDispatchException, __C_specific_handler, and SEH scope-table walker"` Re-owned with the items above.
 
 
 ---
@@ -443,8 +454,10 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 - [x] Set/clear the unwind flags (`EXCEPTION_UNWINDING`, `TARGET_UNWIND`) on the record, cleared once the target is reached; a whole-stack EXIT unwind (NULL target_frame) and a NULL target_ip are rejected (`STATUS_INVALID_PARAMETER`)
 - [x] `RtlRestoreContext(ctx, rec)` -- SAME-CPL kernel terminal resume (NASM `unwind_asm.asm`): restores CONTROL+INTEGER via a `cli`-guarded same-CPL `iretq` so RIP+RFLAGS+RSP take effect atomically; NOT the ring-3 delivery path
 - [/] `EXCEPTION_COLLIDED_UNWIND`: in-place single-level adopt (canonical RIP + forward-span RSP validated); a distinct-`ContextRecord` nested collision fails safe (`STATUS_BAD_STACK`), full adoption -> XREF: `TODO-23 §14`
-- [ ] Leaf-convention step for a metadata-free frame + whole-stack EXIT unwind -- today a NULL lookup fails safe and EXIT unwind is rejected; both land with the kernel-unwind metadata provider -> XREF: `02-kernel-core/TODO-18 §5`
-- [ ] CET: advance the shadow-stack pointer by N unwound frames (INCSSP) -- BLOCKED: kernel CET shadow stacks are detected-but-disabled (enable trampoline owned elsewhere), no live shadow stack to advance -> XREF: `TODO-10 §9`
+- [/] Leaf-convention step for a metadata-free frame + whole-stack EXIT unwind -- today a NULL lookup fails safe and EXIT unwind is rejected; both land with the kernel-unwind metadata provider -> XREF: `02-kernel-core/TODO-18 §5`
+      - Waits on: `02-kernel-core/TODO-18 §5` (item: "Register PE `.pdata`"), still open.
+- [/] CET: advance the shadow-stack pointer by N unwound frames (INCSSP) -- BLOCKED: kernel CET shadow stacks are detected-but-disabled (enable trampoline owned elsewhere), no live shadow stack to advance -> XREF: `TODO-10 §9`
+      - Waits on: `02-kernel-core/TODO-10 §9` (the bare `TODO-10` above means that file); CET stays disabled.
 - [ ] Stack-safety hardening (full): guard-page-aware bounds + an asm entry check before the C prologue (or emergency unwind stack) + a near-guard test -- best-effort check + compact snapshot shipped -> XREF: this section
 
 **Test checkpoint:** `rtl_unwind_to_target` over a synthetic 3-frame `RtlAddFunctionTable` chain runs the ms_abi handler for both EXITED frames (`EXCEPTION_UNWINDING`) plus the target frame (`EXCEPTION_TARGET_UNWIND`, once); resume Rip=`target_ip`, Rax=`return_value`, Rsp=the target frame; the flag is cleared after. An unreachable target fails preflight with `STATUS_BAD_STACK` and runs NO `__finally`; an invalid handler disposition returns `STATUS_INVALID_DISPOSITION`; a collided disposition sets `EXCEPTION_COLLIDED_UNWIND` and still resolves; a collision IN the target frame and a wild-RSP collided redirect fail safe; a NULL target_frame/target_ip returns `STATUS_INVALID_PARAMETER` with flags cleared. A failure AFTER a `__finally` already ran reports `finally_count > 0` so the public `RtlUnwindEx` goes terminal (`KeBugCheckEx`) instead of returning to a half-cleaned caller. `RtlRestoreContext` restores rbx/r12/rsp and transfers to Rip (asm round-trip harness); `DISPATCHER_CONTEXT` ABI offsets pinned. Test on: QEMU WHPX + TCG.
@@ -458,11 +471,11 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 > - **Canonical doc** -- the RtlUnwindEx / dispatch-ABI block in `include/kernel/rtl/unwind.h`.
 > - **Scope boundary** -- §9 owns the kernel unwind-to-target + terminal resume ENGINE; ring-3 `RtlDispatchException` is ntdll (TODO-04); the kernel-driver walker + full collided recovery are §14; NtContinue IRET restore is §5.
 > **Verified:** 2026-07-19 | ship `377c693f` + review fixes | 4/8 items | build OK | tests 377+16 PASS; smoke PASS (2.71s)
-> **Accepted:** [H] full stack-safety hardening (guard-page-aware bounds + asm entry-trampoline check before the C prologue + emergency stack + near-guard test); best-effort entry headroom check + compact snapshot + noinline preflight shipped, no ring-0 caller yet -> XREF: 02-kernel-core/TODO-23 §9 (item: "Stack-safety hardening (full)" at line 448)
-> **Accepted:** [H] leaf convention for metadata-free frames + whole-stack EXIT unwind (both fail safe today) -> XREF: 02-kernel-core/TODO-23 §9 (item: "Leaf-convention step for a metadata-free frame" at line 446)
-> **Accepted:** [M] RtlUnwindEx exact ms_abi/winnt.h ABI types (kernel-internal SysV today, like the §6 Rtl* engine) -> XREF: 02-kernel-core/TODO-23 §6 (item: "Exact winnt.h ABI types on the public unwind prototypes" at line 345)
+> **Accepted:** [H] full stack-safety hardening (guard-page-aware bounds + asm entry-trampoline check before the C prologue + emergency stack + near-guard test); best-effort entry headroom check + compact snapshot + noinline preflight shipped, no ring-0 caller yet -> XREF: 02-kernel-core/TODO-23 §9 (item: "Stack-safety hardening (full)" at line 461)
+> **Accepted:** [H] leaf convention for metadata-free frames + whole-stack EXIT unwind (both fail safe today) -> XREF: 02-kernel-core/TODO-23 §9 (item: "Leaf-convention step for a metadata-free frame" at line 457)
+> **Accepted:** [M] RtlUnwindEx exact ms_abi/winnt.h ABI types (kernel-internal SysV today, like the §6 Rtl* engine) -> XREF: 02-kernel-core/TODO-23 §6 (item: "Exact winnt.h ABI types on the public unwind prototypes" at line 354)
 > **Deferred:** [H] full nested/multi-scope collided-unwind recovery + fault-safe untrusted-context reads + precise finally-funclet tracking -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` protocol" at line 460)
-> **Deferred:** [M] CET shadow-stack INCSSP during unwind (kernel CET disabled) -> XREF: 02-kernel-core/TODO-23 §9 (item: "CET: advance the shadow-stack pointer" at line 447)
+> **Deferred:** [M] CET shadow-stack INCSSP during unwind (kernel CET disabled) -> XREF: 02-kernel-core/TODO-23 §9 (item: "CET: advance the shadow-stack pointer" at line 459)
 > **Quality reviewed:** 2026-07-19 | Codex 18x (design, adversarial, consistency, perf, re-adversarial) | 18H+7M+3L fixed, 0 open, 5 accepted/deferred-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"rtl: implement RtlUnwindEx with termination handler invocation"`
@@ -630,7 +643,8 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 - [x] `.pdata`/`UNWIND_INFO` -- N/A: the registration scheme resumes by trap-frame rewrite, independent of table unwind, so no linker `.pdata` emission is needed (design-review-accepted v1 scope).
 - [x] Re-entrancy guard: per-CPU `ki_seh_dispatch[]` flag -- a fault re-entering the walk/filter (incl. cross-vector) escalates to `KeBugCheckExFrame(0x1E KMODE_EXCEPTION_NOT_HANDLED)`.
 - [ ] Full `EXCEPTION_COLLIDED_UNWIND` for driver `__try`/`__finally`: nested-unwind detection, `ScopeIndex`, two-pass termination-handler unwind -- larger than the `__try`/`__except` v1 here (design review accepted deferring). -> XREF: `TODO-23 §9`
-- [ ] Boot/main-thread `KI_TRY`: declines on task 0 (boot stack not tracked in `stack_base`, which doubles as the `kfree` target). kthread drivers work; decouple the SEH stack-bounds source from the `kfree` target for main-thread probing.
+- [/] Boot/main-thread `KI_TRY`: declines on task 0 (boot stack not tracked in `stack_base`, which doubles as the `kfree` target). kthread drivers work; decouple the SEH stack-bounds source from the `kfree` target for main-thread probing.
+      - Same work as §20 (item: "Give `ki_seh_register()` a way to protect the running thread"), which owns it now.
 - [x] Live fault-recovery test wraps a dangerous op (guarded write to an unmapped VA) proving "caught, not panic" -- `test_ki_try_recovers_live_kernel_fault` (the AHCI-MMIO-read analog).
 
 **Test checkpoint:** `KI_TRY { *(volatile uint32_t*)unmapped = 0; } KI_EXCEPT(reg) { } KI_END_TRY;` -- handler fires, kernel continues (validated live: a real #PF caught and resumed). A fault re-entering the walk/filter → `KeBugCheckEx(0x1E)`. The walk is fault-safe (klog-free), so no serial line on the hot path; not boot-path, so no `POST16`. Tested on QEMU TCG (WSL). Verify on bare metal + WHPX.
@@ -646,8 +660,8 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 
 > **Verified:** 2026-07-19 | commit `95a4e592` | 5/7 items | build OK | tests 434/434 PASS
 > **Accepted:** [H] pre-existing SMP quiescence gap: a joined/reaped thread's kernel stack can be freed while a KI_TRY victim still runs on it (stack UAF predates SEH; the chain-clears + walk bounds checks contain the SEH surface) (reason: scope) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "thread_join / thread_free_stacks off-CPU barrier" at line 129)
-> **Deferred:** [M] `__try`/`__finally` EXCEPTION_COLLIDED_UNWIND two-pass unwind -- larger than the `__try`/`__except` v1 shipped (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` for driver `__try`/`__finally`" at line 632)
-> **Deferred:** [M] boot/main-thread `KI_TRY` declines -- boot stack is not tracked in `stack_base` (the `kfree` target) (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Boot/main-thread `KI_TRY`" at line 633)
+> **Deferred:** [M] `__try`/`__finally` EXCEPTION_COLLIDED_UNWIND two-pass unwind -- larger than the `__try`/`__except` v1 shipped (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` for driver `__try`/`__finally`" at line 645)
+> **Deferred:** [M] boot/main-thread `KI_TRY` declines -- boot stack is not tracked in `stack_base` (the `kfree` target) (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Boot/main-thread `KI_TRY`" at line 646)
 > **Quality reviewed:** 2026-07-19 | Codex 8x (design, adversarial, consistency, perf, re-adversarial) | 4H+3M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"kernel: implement kernel-mode __try/__except via KI_EXCEPTION_REGISTRATION"`
@@ -672,17 +686,18 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 > → XREF: `10-platform-services/TODO-10-linux-compat.md §8` -- `rt_sigaction` handler registration. This section handles the kernel-side fault-to-signal mapping and signal frame setup; the compat layer TODO handles the `rt_sigaction`/`rt_sigprocmask` API surface.
 > Delivery path hooks into §12 (unhandled exception filter) as a pre-termination step.
 
-- [ ] `include/kernel/compat.h` -- `CONFIG_LINUX_COMPAT` guard, fault-to-signal table
-- [ ] `src/kernel/compat/signal_compat.c` -- `ki_deliver_compat_signal()` -- fault-to-signal translation
-- [ ] `siginfo_t` population: `si_signo`, `si_code` (e.g., `SEGV_MAPERR`, `SEGV_ACCERR`), `si_addr` (fault address)
-- [ ] `sigaltstack` support: if `task->sigaltstack` is set and signal is `SIGSEGV`, deliver on the alternate stack
-- [ ] Return path: `rt_sigreturn` is ALREADY owned by `D10 T10 §8` (item: "User-mode signal frame: ... on `sigreturn(15)` → restore saved frame"); guarantee the frame pushed here is the shape that item restores, do not add a second sigreturn
-- [ ] Hook into §12 (unhandled exception filter) before process termination
-- [ ] `compat_mode` flag in `struct task` (or reuse `capabilities` field bit 63 as compat bit)
+- [/] `include/kernel/compat.h` -- `CONFIG_LINUX_COMPAT` guard, fault-to-signal table Waits on: `10-platform-services/TODO-10 §8`, entirely open; no compat code exists in `src/`.
+- [/] `src/kernel/compat/signal_compat.c` -- `ki_deliver_compat_signal()` -- fault-to-signal translation Waits on: `10-platform-services/TODO-10 §8`.
+- [/] `siginfo_t` population: `si_signo`, `si_code` (e.g., `SEGV_MAPERR`, `SEGV_ACCERR`), `si_addr` (fault address) Waits on: `10-platform-services/TODO-10 §8`.
+- [/] `sigaltstack` support: if `task->sigaltstack` is set and signal is `SIGSEGV`, deliver on the alternate stack Waits on: `10-platform-services/TODO-10 §8`.
+- [/] Return path: `rt_sigreturn` is ALREADY owned by `D10 T10 §8` (item: "User-mode signal frame: ... on `sigreturn(15)` → restore saved frame"); guarantee the frame pushed here is the shape that item restores, do not add a second sigreturn
+      - Waits on: `10-platform-services/TODO-10 §8`, which owns `sigreturn`.
+- [/] Hook into §12 (unhandled exception filter) before process termination Waits on: `10-platform-services/TODO-10 §8`.
+- [/] `compat_mode` flag in `struct task` (or reuse `capabilities` field bit 63 as compat bit) Waits on: `10-platform-services/TODO-10 §8`, which introduces `is_linux_elf`; neither field exists yet.
 
 **Test checkpoint:** Linux-compat process with `SIGSEGV` handler: NULL dereference delivers `SIGSEGV` with `si_code=SEGV_MAPERR`, `si_addr=0x0` -- handler fires, process continues. Linux-compat process without handler: NULL dereference terminates with `STATUS_ACCESS_VIOLATION`. `sigaltstack` set: stack overflow delivers `SIGSEGV` on alternate stack, not the overflowed stack. Compile guard: `#ifndef CONFIG_LINUX_COMPAT` → all compat code is excluded. Test on: QEMU WHPX + TCG.
 
-- [ ] Commit: `"kernel: map hardware faults to POSIX signals for Linux compat processes"`
+- [/] Commit: `"kernel: map hardware faults to POSIX signals for Linux compat processes"` Waits on: the items above.
 
 > **Deferred:** [H] the ceiling cleared, but it was never this section's only blocker: the Implementation Order declares `D10T10 §8` (Linux-compat signal delivery) as a hard prerequisite and that work is entirely open, so the Test checkpoint here -- working `rt_sigaction` / `sigaltstack` / `sigreturn` behavior -- cannot pass. `CONFIG_LINUX_COMPAT` stubbing would compile but not satisfy it (reason: external prerequisite) -> XREF: `10-platform-services/TODO-10 §8`
 
@@ -740,18 +755,19 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 > 4. **PMM + page-table SMP locking** -- the COMMIT path (`pmm_alloc_frame` + `vmm_map_page`) is unlocked and cannot run inside a short spinlock critical section; per-process PML4 + kernel PT-creation locks are unbuilt.
 > When these land: implement the mechanism (per-`cr3` growable-stack registry; GROWING-state commit performed OUTSIDE the registry lock with rollback; guard move + one-shot re-arm; a distinct TERMINAL result routed through the existing #PF per-CPU scratch path) and convert user-thread stacks to the reserved/lazy-commit layout. Kernel-task stacks are NOT growable on the current non-IST #PF path (the handler runs on the exhausted stack -> #DF); that requires separate safe-entry-stack/IST work.
 
-- [ ] Guard-page / stack-growth detection with a configurable stack reserve (default 1 MiB); track per-stack committed and reserved bounds separately
-- [ ] Successful grow: commit one page, MOVE the guard one page down and re-arm it (one-shot); reject a fault that jumped OVER the guard instead of growing into it
-- [ ] Reserve exhausted = terminal: deliver `STATUS_STACK_OVERFLOW` WITHOUT touching the exhausted stack; never grow past the reserve into adjacent mappings
-- [ ] SMP-safe: serialize concurrent grows on the same stack; the guard-table update and PTE map must not race a second CPU faulting the same guard
+- [/] Guard-page / stack-growth detection with a configurable stack reserve (default 1 MiB); track per-stack committed and reserved bounds separately
+      - Waits on: `03-memory-concurrency/TODO-07 §3` (item: "Per-CPU current-thread cursor") and `03-memory-concurrency/TODO-01 §3` (item: "`MEM_COMMIT` path"), per the stamps below.
+- [/] Successful grow: commit one page, MOVE the guard one page down and re-arm it (one-shot); reject a fault that jumped OVER the guard instead of growing into it Waits on: the same two owners.
+- [/] Reserve exhausted = terminal: deliver `STATUS_STACK_OVERFLOW` WITHOUT touching the exhausted stack; never grow past the reserve into adjacent mappings Waits on: §5 delivery, parked above.
+- [/] SMP-safe: serialize concurrent grows on the same stack; the guard-table update and PTE map must not race a second CPU faulting the same guard Waits on: `03-memory-concurrency/TODO-01 §3` (item: "Per-process PML4 spinlock").
 
 **Test checkpoint:** A recursive user thread that walks its stack down past the committed low-water mark auto-grows one page per guard hit and continues; serial shows the commit_low moving down. A runaway recursion that exhausts the 1 MiB reserve delivers `STATUS_STACK_OVERFLOW` (labeled panic until §5) without a double-fault. A fault that jumps over the guard (large `alloca`) is rejected as terminal, not grown. Test on: QEMU WHPX + TCG. Verify on bare metal.
 
-- [ ] Commit: `"mm: guard-page stack auto-grow with commit/reserve tracking"`
+- [/] Commit: `"mm: guard-page stack auto-grow with commit/reserve tracking"` Waits on: the items above.
 
 > **Deferred:** [H] auto-grow needs the FAULTING task's `cr3` at #PF time (a global VA-keyed registry is wrong: per-process PML4s reuse secondary-stack VAs at `task.c:3795-3810`) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` (item: "Per-CPU current-thread cursor" at line 121)
 > **Deferred:** [H] growable stacks need a reserved-VA window backed on demand + a per-process frame-map primitive (stacks are contiguous identity-mapped today, no headroom) -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "`MEM_COMMIT` path: mark region committed; zero-fill backing frames on first access" at line 124)
-> **Deferred:** [M] reserve-exhausted terminal must deliver `STATUS_STACK_OVERFLOW` without touching the exhausted stack; ring-3 delivery/termination is itself deferred -> XREF: `02-kernel-core/TODO-23 §5` (item: "clear the per-CPU scratch slot THEN hand to a guaranteed idle-frame terminate primitive" at line 312)
+> **Deferred:** [M] reserve-exhausted terminal must deliver `STATUS_STACK_OVERFLOW` without touching the exhausted stack; ring-3 delivery/termination is itself deferred -> XREF: `02-kernel-core/TODO-23 §5` (item: "clear the per-CPU scratch slot THEN hand to a guaranteed idle-frame terminate primitive" at line 315)
 > **Deferred:** [M] COMMIT (`pmm_alloc_frame` + `vmm_map_page`) is unlocked and cannot run under a short spinlock; needs PMM + per-process PML4 locking -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "Per-process PML4 spinlock" at line 129)
 
 
@@ -764,16 +780,15 @@ The RtlUnwindEx fixtures in `src/kernel/test/test_unwind.c` register a synthetic
 > [!NOTE]
 > Filed 2026-08-01 from TODO-04 §49, which hit it live: growing `src/kernel/test/test_usermode_launcher.c` (test code in a DIFFERENT category, which does not execute in the `except` suite) moved `test_register_kworker` to exactly `base+0x10` for `tu_continue_execution_handler`, and `test_rtlunwind_continue_execution_invalid` began returning `STATUS_SUCCESS` instead of `STATUS_INVALID_DISPOSITION` -- a red suite caused by an unrelated section's code size. §49 fixed the CODE RANGE half at source by anchoring it inside the `img` buffer (static storage no `.pdata` can cover) rather than at a fixed RVA from `base`; see `tu_register_handler_fn`. The SENTINEL half is untouched and is the same hazard. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §49 (item: "Reap or fence the whole CAPTURED DESCENDANT TREE at the run boundary, not just the top-level pid")
 
-- [/] Anchor the fixtures' stop-sentinel to the metadata image, not to `base + 0x1000` -- BLOCKED, Codex outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
+- [ ] Anchor the fixtures' stop-sentinel to the metadata image, not to `base + 0x1000`
       - Ten call sites in `src/kernel/test/test_unwind.c` declare `const uint64_t SENTINEL = base + 0x1000;` with the comment "outside the table -> lookup NULL". That address is real kernel `.text` whenever the handler sits below the image buffer, so a real function there makes the lookup SUCCEED and the walk continue past the frame the fixture meant to stop at.
       - The fix shape that needs no per-caller arithmetic: have `tu_register_handler_fn` return the sentinel alongside `base` and `body_pc`, pointing inside `img` but outside the synthetic code range.
-- [/] Prove the independence rather than asserting it -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
+- [ ] Prove the independence rather than asserting it
       - A fixture that only passes today is what this section is about. Add a check that the addresses the fixtures rely on carry no static unwind entry -- a `RtlLookupFunctionEntry` on the sentinel returning NULL is exactly the property the comment already claims.
-- [/] Commit: `"test: anchor unwind fixtures to their own image, not to linker layout"` -- BLOCKED, same outage
+- [ ] Commit: `"test: anchor unwind fixtures to their own image, not to linker layout"`
 
 **Test checkpoint:** every RtlUnwindEx fixture produces the same verdict after an unrelated translation unit grows by several KB; a lookup on the stop-sentinel returns NULL by construction rather than by luck. Test on: QEMU TCG, QEMU KVM.
 
-> **Deferred:** [L] not started this pass -- Codex design-review gate unavailable (external backend outage, confirmed not local -> gotcha `.claude/state/live-gotchas.md` 2026-09-03). No source changed.
 
 ---
 
@@ -811,22 +826,21 @@ TWO findings from the `00-infrastructure/TODO-03` section 11 review that belong 
 > [!NOTE]
 > Filed 2026-08-14. Section 11 shipped a poisoned-boundary fixture that runs a suspect helper under `KI_TRY` so an out-of-bounds READ fails one assertion instead of halting the boot. Building it required the fixture to reproduce a pattern this TODO's own suite established, and reviewing it surfaced two gaps in exception-dispatch territory rather than in the test harness: the two checklist items below. A third finding from the same review, kernel-VA RESERVATION, is deliberately NOT owned here -- it belongs to the existing central-VA-allocator item in `03-memory-concurrency/TODO-01-vmm-memory-protection.md` and is routed there by the note under the checklist -> XREF: `00-infrastructure/TODO-03-kernel-test-harness.md` section 11 (item: "A poisoned-boundary fixture places a string so its NUL is the last readable byte before a never-mapped page")
 
-- [/] Give `ki_seh_register()` a way to protect the running thread without rewriting `stack_base`/`stack_size` -- BLOCKED, Codex outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
+- [ ] Give `ki_seh_register()` a way to protect the running thread without rewriting `stack_base`/`stack_size`
       - `ki_seh_register()` refuses to publish a node outside the current thread's tracked stack window (`src/kernel/except.c:667`), and the boot thread tracks none, so every existing caller brackets the window by ASSIGNING to `thread_current()->stack_base` and `->stack_size` and restoring afterwards (`src/kernel/test/poison_tail.c:test_seh_open_window`, used by `test_except.c`).
       - That is unsound on SMP: `thread_current()` (`src/kernel/sched/task.c:5996`) reads the GLOBAL `current_task`/`current_thread` indices, not per-CPU state, so scheduling on another CPU can change which thread the cursor names between the save, the set and the restore -- leaving a foreign thread carrying a temporary window, or the registration unlinked so the fault it was meant to catch stays terminal.
       - The window is also a fixed 32 KiB centred on the caller's SP while a kernel thread stack is 8 KiB, so on any thread with tracked bounds it covers ~24 KiB that is not the stack, including past its guard page -- and `ki_seh_addr_on_kstack()` and the unwinder trust those bounds while it is open.
       - Shape: either support the boot stack explicitly, or make registration validate against per-CPU/owner-stable bounds, so no caller needs to touch scheduler metadata at all. The two test-side helpers then collapse to nothing.
-- [/] Distinguish an UNKNOWN fault address from a real fault at address 0 -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
+- [ ] Distinguish an UNKNOWN fault address from a real fault at address 0
       - `except_common_handler` builds `STATUS_ACCESS_VIOLATION` records for #GP/#NP with `NumberParameters = 2` and `ExceptionInformation[1] = 0` (`src/kernel/except.c:1022-1026`) precisely because those vectors carry no CR2 and the address is not known; the record must still be well-formed.
       - Downstream cannot tell that fabricated 0 from a genuine NULL dereference. `ki_exception_data_address()` reports it as a present data address, so an SEH filter keyed on address 0 can claim an unrelated protection fault, and diagnostics cannot separate "unknown" from "NULL".
       - Shape: address-known PROVENANCE in the record -- a flag, a distinct status, or a discriminator both selectors consume. This is an exception-ABI decision, which is why section 11 documented the limitation at both the producer and the selector rather than inventing a bit.
-- [/] Commit: `"kernel: owner-stable SEH stack bounds and fault-address provenance"` -- BLOCKED, same outage
+- [ ] Commit: `"kernel: owner-stable SEH stack bounds and fault-address provenance"`
 
 **Not owned here:** kernel-VA RESERVATION. Section 11 also added an unregistered VA carve and could only defend it by verifying its own mapping on every use, but that work already has an owner and creating a second one here would split it -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md` §MMIO mapping (item: "Implement `vmm_map_mmio(phys_base, size)` -- 4 KiB PTEs, `PCD=1`+`PWT=1` (UC), return VA via a central kernel VA allocator with reserved non-overlapping ranges" at line 240). `src/kernel/mm/vmm.c:1490` already points at that TODO, and its sibling item covers the unlocked `get_or_create_table()` this fixture's first arm also exercises.
 
 **Test checkpoint:** a `KI_TRY` region protects a fault on a thread whose scheduling changed during the region, with no scheduler metadata written by the caller; and an SEH filter keyed on address 0 does NOT match a #GP with no known address. Test on: QEMU TCG, QEMU KVM (2 CPUs).
 
-> **Deferred:** [M] not started this pass -- SMP scheduler-metadata + exception-ABI decision, Codex design-review gate unavailable (external backend outage, confirmed not local -> gotcha `.claude/state/live-gotchas.md` 2026-09-03). No source changed.
 
 ---
 

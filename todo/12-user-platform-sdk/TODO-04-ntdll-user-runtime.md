@@ -288,6 +288,9 @@ are available via `CreateFiber`/`SwitchToFiber`.
   - If SEH also exhausted and no handler continued: call `UnhandledExceptionFilter(EXCEPTION_POINTERS *)` (VCH is NOT walked on this terminal path)
     - Default: `MessageBox`-style crash dialog with exception code + module name + offset + stack trace (10 frames via `RtlCaptureStackBackTrace`)
     - Call `ExitProcess(1)` after dialog dismissed
+- [ ] **SEH scope-table walk**: `RtlDispatchException` and `__C_specific_handler` walk `SCOPE_TABLE`, invoke filters and `__finally` funclets, and honour `EXCEPTION_NESTED_CALL` -> XREF: `02-kernel-core/TODO-23 §8`
+  - Filed 2026-11-07: TODO-23 §8 re-owned this work here, but this section only named `__C_specific_handler`. `EXCEPTION_DISPOSITION`, the filter-result constants and `DISPATCHER_CONTEXT` travel with it.
+- [ ] **Export the unwind prototypes with exact winnt.h types**: `PUNWIND_HISTORY_TABLE`, `PEXCEPTION_ROUTINE`, `BOOLEAN`, `PCWSTR` -> XREF: `02-kernel-core/TODO-23 §6`
 - [ ] **`VOID RaiseException(code, flags, nargs, args)`**: build `EXCEPTION_RECORD`; call `NtRaiseException(record, context, TRUE)` → kernel delivers back via `KiUserExceptionDispatcher`
 - [ ] **`RtlCaptureStackBackTrace(skip, count, buffer, hash)`**: walk `RBP` chain; store return addresses; return actual count captured
 - [ ] **Re-entrant dispatch + removal safety** (DESIGN OPEN): a handler may call `RemoveVectoredExceptionHandler` or fault into nested dispatch, so one lock across the walk is insufficient; define+test a re-entrancy protocol (see NOTE)
