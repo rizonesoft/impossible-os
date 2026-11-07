@@ -130,16 +130,34 @@ def test_a_failed_undo_alerts_keeps_its_commit_and_never_raises():
         assert h["machinery_commits_pending"] == 1, h
 
 
+def _with_upstream(root, d):
+    origin = pathlib.Path(d) / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    branch = subprocess.run(["git", "-C", str(root), "branch", "--show-current"],
+                            capture_output=True, text=True).stdout.strip()
+    _git(root, "remote", "add", "origin", str(origin))
+    _git(root, "push", "-q", "-u", "origin", branch)
+    return origin, branch
+
+
+def _remote_head(origin, branch):
+    return subprocess.run(["git", "-C", str(origin), "rev-parse", branch],
+                          capture_output=True, text=True).stdout.strip()
+
+
 def test_a_push_timeout_keeps_the_record_of_what_was_undone():
     # Review, 2026-11-07: losing it would make a later undo revert the recovery itself.
     with tempfile.TemporaryDirectory() as d:
-        root, alerts = _fixture(d)
+        repo = pathlib.Path(d) / "r"
+        repo.mkdir()
+        root, alerts = _fixture(str(repo))
+        _with_upstream(root, d)
         _commit(root, ".claude/hooks/x.py", "bad\n")
         sup.check(root, True, T0 + 60)
         real = sup.git
 
         def slow_push(r, *a, **k):
-            if a and a[0] == "push":
+            if "push" in a:
                 raise subprocess.TimeoutExpired("git", 1)
             return real(r, *a, **k)
 
@@ -152,6 +170,39 @@ def test_a_push_timeout_keeps_the_record_of_what_was_undone():
         assert any("push failed" in a for a in alerts), alerts
         h = sup.check(root, True, T0 + 8 * HOUR)
         assert h["machinery_commits_pending"] == 0 and len(h["machinery_reverts"]) == 1, h
+
+
+def test_refusal_the_hook_free_push_never_carries_a_product_commit():
+    # Review, 2026-11-07: a product commit a gate refused could have gone out with it.
+    with tempfile.TemporaryDirectory() as d:
+        repo = pathlib.Path(d) / "r"
+        repo.mkdir()
+        root, alerts = _fixture(str(repo))
+        origin, branch = _with_upstream(root, d)
+        tip = _remote_head(origin, branch)
+        _commit(root, "src/refused.c", "x\n")
+        sup.check(root, False, T0 + 30)
+        _commit(root, ".claude/hooks/x.py", "bad\n")
+        sup.check(root, True, T0 + 60)
+        h = sup.check(root, True, T0 + 3 * HOUR + 120)
+        assert len(h["machinery_reverts"]) == 1, h
+        assert _remote_head(origin, branch) == tip, "a refused product commit was published"
+        assert any("left for the normal push" in a for a in alerts), alerts
+
+
+def test_an_all_machinery_undo_is_pushed():
+    with tempfile.TemporaryDirectory() as d:
+        repo = pathlib.Path(d) / "r"
+        repo.mkdir()
+        root, alerts = _fixture(str(repo))
+        origin, branch = _with_upstream(root, d)
+        _commit(root, ".claude/hooks/x.py", "bad\n")
+        sup.check(root, True, T0 + 60)
+        sup.check(root, True, T0 + 3 * HOUR + 120)
+        local = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                               capture_output=True, text=True).stdout.strip()
+        assert _remote_head(origin, branch) == local
+        assert any("and pushed" in a for a in alerts), alerts
 
 
 def test_undo_is_one_commit_and_all_or_nothing():

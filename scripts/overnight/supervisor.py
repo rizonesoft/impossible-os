@@ -86,6 +86,22 @@ def write_json(path: Path, data) -> None:
     tmp.replace(path)
 
 
+def publish_undo(root: Path) -> str:
+    """Push the undo without hooks, but only a range that is all machinery. A product
+    commit a gate refused may be sitting underneath, and it must go through the gates
+    on the normal push. Either way the undo stands locally."""
+    try:
+        r = git(root, "log", "--format=", "--name-only", "@{u}..HEAD")
+        files = [f for f in r.stdout.splitlines() if f]
+        if r.returncode != 0 or not all(is_machinery(f) for f in files):
+            return "left for the normal push"
+        ok = git(root, "-c", "core.hooksPath=/dev/null", "push", "origin", "HEAD",
+                 timeout=PUSH_TIMEOUT).returncode == 0
+    except subprocess.SubprocessError:
+        ok = False
+    return "and pushed" if ok else "but the push failed"
+
+
 def undo(root: Path, state: dict, pending: list, now: int, idle: bool) -> tuple:
     """Revert the whole pending batch as ONE commit, once its oldest commit is due.
 
@@ -128,15 +144,9 @@ def undo(root: Path, state: dict, pending: list, now: int, idle: bool) -> tuple:
             pass  # fail-direction: a stuck git is reported below and retried next check
         throttled(f"Machinery undo did not finish: {exc}")
         return [], pending
-    try:
-        # The undo stands either way, and the run pushes it with its next push.
-        pushed_ok = git(root, "-c", "core.hooksPath=/dev/null", "push", "origin", "HEAD",
-                        timeout=PUSH_TIMEOUT).returncode == 0
-    except subprocess.SubprocessError:
-        pushed_ok = False
-    pushed = "and pushed" if pushed_ok else "but the push failed"
+    pushed = publish_undo(root)
     alert(root, f"Nothing was produced after machinery commits "
-                f"{', '.join(s[:12] for s in shas)}: reverted {pushed}.")
+                f"{', '.join(s[:12] for s in shas)}: reverted, {pushed}.")
     return shas, []
 
 
