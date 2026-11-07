@@ -13,6 +13,47 @@
 #include "kernel/fs/vfs.h"
 #include "kernel/fs/fat32.h"
 #include "kernel/klog.h"
+#include "kernel/boot_init.h"
+
+/* ---- Cleanup path builder ---- */
+
+static void test_bb_cleanup_path(void)
+{
+    char name[VFS_MAX_NAME];
+    char path[VFS_MAX_PATH];
+    char small[12];
+    const char *dir = "X:\\Logs\\";   /* 8 characters */
+    uint32_t i;
+
+    /* The longest name a directory entry can carry. The builder this replaced
+     * stopped at 60 characters, so this name reached vfs_unlink as a different
+     * file. */
+    for (i = 0; i < VFS_MAX_NAME - 1; i++) name[i] = 'a';
+    name[VFS_MAX_NAME - 1] = '\0';
+    TEST_ASSERT_EQ(boot_blackbox_cleanup_path(path, sizeof(path), dir, name), 1,
+                   "a maximum-length name fits VFS_MAX_PATH");
+    for (i = 0; path[i]; i++) { }
+    TEST_ASSERT_EQ(i, 8u + VFS_MAX_NAME - 1,
+                   "every character of the name reached the path");
+    TEST_ASSERT_EQ(path[7], '\\', "the directory prefix is intact");
+    TEST_ASSERT_EQ(path[8 + VFS_MAX_NAME - 2], 'a', "the name's last character survived");
+
+    /* Exact fit, counting the terminator: 8 + 3 + NUL in 12 bytes. */
+    TEST_ASSERT_EQ(boot_blackbox_cleanup_path(small, sizeof(small), dir, "abc"), 1,
+                   "a path filling the buffer exactly is accepted");
+    TEST_ASSERT_EQ(small[10], 'c', "the exact fit keeps its last character");
+    TEST_ASSERT_EQ(small[11], '\0', "the exact fit is terminated");
+
+    /* One over refuses and leaves no partial path to act on. */
+    TEST_ASSERT_EQ(boot_blackbox_cleanup_path(small, sizeof(small), dir, "abcd"), 0,
+                   "one character over is refused, not cut");
+    TEST_ASSERT_EQ(small[0], '\0', "a refused name leaves dst empty");
+    TEST_ASSERT_EQ(boot_blackbox_cleanup_path(small, 4, dir, "a"), 0,
+                   "a directory that does not fit is refused too");
+    TEST_ASSERT_EQ(small[0], '\0', "a refused directory leaves dst empty");
+    TEST_ASSERT_EQ(boot_blackbox_cleanup_path(small, 0, dir, "a"), 0,
+                   "a zero-capacity buffer is refused without a write");
+}
 
 /* ---- X:\ mount check ---- */
 
@@ -168,6 +209,8 @@ void test_register_blackbox(void)
                             test_bb_perf_dir, TEST_CAT_FS);
     test_suite_register_cat("BB: X:\\Diag\\ exists",
                             test_bb_diag_dir, TEST_CAT_FS);
+    test_suite_register_cat("BB: cleanup path refuses to truncate",
+                            test_bb_cleanup_path, TEST_CAT_BOOT);
     test_suite_register_cat("BB: X:\\Tools\\ exists",
                             test_bb_tools_dir, TEST_CAT_FS);
     test_suite_register_cat("BB: klog_dir resolved",

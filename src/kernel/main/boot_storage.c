@@ -167,6 +167,27 @@ static int bb_name_contains(const char *s, const char *sub)
     return 0;
 }
 
+/* PURE: build `dir` + `name` for the BlackBox cleanup. A path that would not
+ * fit is refused rather than cut, because a cut name is a DIFFERENT file and
+ * the caller hands the result straight to vfs_unlink. */
+int boot_blackbox_cleanup_path(char *dst, uint32_t cap, const char *dir,
+                               const char *name)
+{
+    uint32_t p = 0, j;
+
+    if (cap == 0) return 0;
+    for (j = 0; dir[j]; j++) {
+        if (p + 1 >= cap) { dst[0] = '\0'; return 0; }
+        dst[p++] = dir[j];
+    }
+    for (j = 0; name[j]; j++) {
+        if (p + 1 >= cap) { dst[0] = '\0'; return 0; }
+        dst[p++] = name[j];
+    }
+    dst[p] = '\0';
+    return 1;
+}
+
 void boot_phase2(void)
 {
     uint32_t i;
@@ -679,14 +700,13 @@ void boot_phase2(void)
                         while ((de = vfs_readdir(boot_dir, idx)) != 0
                                && file_count > max_sessions) {
                             if (de->type == VFS_FILE) {
-                                char path[64];
-                                int p = 0, j;
-                                const char *pfx = "X:\\Boot\\";
-                                for (j = 0; pfx[j]; j++) path[p++] = pfx[j];
-                                for (j = 0; de->name[j] && p < 60; j++)
-                                    path[p++] = de->name[j];
-                                path[p] = '\0';
-                                if (vfs_unlink(path) == 0) {
+                                char path[VFS_MAX_PATH];
+                                if (!boot_blackbox_cleanup_path(path, sizeof(path),
+                                                                "X:\\Boot\\",
+                                                                de->name)) {
+                                    klog(LOG_WARN, "boot",
+                                         "BlackBox: cleanup skipped an over-long Boot\\ name");
+                                } else if (vfs_unlink(path) == 0) {
                                     deleted++;
                                     file_count--;
                                     continue;  /* re-read same index */
@@ -718,14 +738,13 @@ void boot_phase2(void)
                                 && de2->name[len-1] <= '9'
                                 && (bb_name_contains(de2->name, ".log")
                                     || bb_name_contains(de2->name, ".jsonl"))) {
-                                char path[64];
-                                int p = 0, j;
-                                const char *pfx = "X:\\Logs\\";
-                                for (j = 0; pfx[j]; j++) path[p++] = pfx[j];
-                                for (j = 0; de2->name[j] && p < 60; j++)
-                                    path[p++] = de2->name[j];
-                                path[p] = '\0';
-                                if (vfs_unlink(path) == 0) {
+                                char path[VFS_MAX_PATH];
+                                if (!boot_blackbox_cleanup_path(path, sizeof(path),
+                                                                "X:\\Logs\\",
+                                                                de2->name)) {
+                                    klog(LOG_WARN, "boot",
+                                         "BlackBox: cleanup skipped an over-long Logs\\ name");
+                                } else if (vfs_unlink(path) == 0) {
                                     deleted++;
                                     continue;
                                 }

@@ -322,10 +322,10 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 - [/] Durable low-space C:\ fallback: sticky `klog_blackbox_forced_off` honored by `klog_resolve_dir` -> XREF: 02-kernel-core/TODO-04 §15 (item: "Durable low-space C: fallback for the critical-low redirect")
   - Fixes the `[/]` item above: the critical-low redirect must survive the later `klog_resolve_dir` call that re-sets the flag. (`klog_disk.c`)
 - [ ] Boot\ retention precision: delete oldest by the `YYMMDDNN` filename, not `vfs_readdir` slot order (FAT32 slot reuse breaks monotonic age) -- collect into a bounded array, sort, prune the surplus. (`boot_storage.c` ~371)
-- [ ] Harden cleanup path builders: `path[64]` silently truncates long names (wrong `vfs_unlink` target) -- use `VFS_MAX_PATH` + fail-closed skip on overflow for both the Boot\ and Logs\ builders.
+- [x] Harden cleanup path builders: `boot_blackbox_cleanup_path()` (`boot_storage.c`) joins into `VFS_MAX_PATH` and refuses overflow, so a long name is skipped and warned about, never cut; `test_bb_cleanup_path`.
 - [ ] Budget + batch the unbounded Logs\ delete loop (`boot_storage.c` ~414): bounded victim list, cap per-boot deletes/bytes/time, pet `boot_progress()` between batches -- a full volume can stall boot past the WDAT watchdog.
 - [ ] Wire `MaxBootSessions`/`MinFreeMiB` from registry `HKLM\SYSTEM\BlackBox` (hardcoded 10/16 at `boot_storage.c:357,438`); closes the item-310 deferral.
-  - Reopened 2026-11-07: these four have no outside prerequisite. `path[64]` and both hardcoded limits are still in `boot_storage.c` (now `:682`, `:721`, `:662`, `:759`), so the line numbers above have drifted. The critical-low redirect above stays with `02-kernel-core/TODO-04` §15.
+  - Reopened 2026-11-07: these have no outside prerequisite. Both hardcoded limits are still in `boot_storage.c`, and the line numbers above have drifted. The critical-low redirect above stays with `02-kernel-core/TODO-04` §15.
 - [x] Commit: `"kernel: BlackBox disk space management -- log aging and quota enforcement"`
 
 **Test checkpoint:** Fill BlackBox with dummy files until < 10% free. Boot -> serial shows cleanup message with freed space. Boot sessions beyond 10 are pruned. Verify on QEMU WHPX, TCG, VirtualBox.

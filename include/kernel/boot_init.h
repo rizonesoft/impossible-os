@@ -649,6 +649,12 @@ int boot_async_fallback_decision(boot_async_step_state_t st, boot_result_t resul
  * definition rather than a copy per caller. */
 int boot_async_claim_released(uint32_t claim_word, uint32_t dispatch_gen);
 
+/* PURE: join `dir` and `name` for the BlackBox cleanup into dst[cap]. Returns 1,
+ * or 0 with dst empty when the result would not fit: a truncated name would
+ * make vfs_unlink act on a different file. */
+int boot_blackbox_cleanup_path(char *dst, uint32_t cap, const char *dir,
+                               const char *name);
+
 /* PURE: 1 when a RELEASED slot was released by the worker itself -- i.e. its
  * `async_retired` witness is exactly SMP_ASYNC_CLAIM(IDLE, dispatch_gen) and
  * the claim word is still at that generation -- so `async_result` is that
