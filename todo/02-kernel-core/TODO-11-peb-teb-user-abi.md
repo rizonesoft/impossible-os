@@ -61,23 +61,23 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |   8   | PEB Ldr (module list) basic population          | §5                 |  [/]   |
 | 💎  |   9   | TLS slot allocation (64 static slots)           | §6                 |  [/]   |
 | ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6             |  [/]   |
-| 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5                 |  [/]   |
+| 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5                 |  [ ]   |
 | 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9                 |  [/]   |
 | 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7                 |  [/]   |
 | 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T12§11 |  [/]   |
 | 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14       |  [/]   |
 | 💎  |  16   | TEB multi-page mapping + user-VA non-overlap    | §1, §6, §15, §19   |  [/]   |
 | 💎  |  17   | PEB x64 version-field offsets (0x118/0x120)     | §2, §5             |  [/]   |
-| 💎  |  18   | Paranoid swapgs entry for NMI/#DF/#MCE          | §3, T01            |  [/]   |
+| 💎  |  18   | Paranoid swapgs entry for NMI/#DF/#MCE          | §3, T01            |  [ ]   |
 | 💎  |  19   | exec/fork/switch GS-base staging + cost         | §4, §5, §6         |  [/]   |
-| 💎  |  20   | PEB alloc robustness + Win32 ABI handoff        | §5, §7             |  [/]   |
+| 💎  |  20   | PEB alloc robustness + Win32 ABI handoff        | §5, §7             |  [ ]   |
 | 💎  |  21   | Format-specific user startup frame + env unify  | §7, §5             |  [/]   |
-| 💎  |  22   | PEB Ldr module identity (DllBase/size/name)     | §8, §5             |  [/]   |
+| 💎  |  22   | PEB Ldr module identity (DllBase/size/name)     | §8, §5             |  [ ]   |
 | 💎  |  23   | Per-thread TLS value storage (static+expansion) | §9, §12, §16       |  [/]   |
-| ⭐  |  24   | Safe PEB/TEB Ob-namespace wrappers + lifecycle  | §10                |  [/]   |
-| 💎  |  25   | TLS expansion mapping safety + alloc race       | §12, §16           |  [/]   |
-| 💎  |  26   | auxv hardening: classified AT_RANDOM + AT_PHDR  | §13                |  [/]   |
-| 💎  |  27   | uthread_create robustness (guard/tid/stack)     | §14, §16           |  [/]   |
+| ⭐  |  24   | Safe PEB/TEB Ob-namespace wrappers + lifecycle  | §10                |  [ ]   |
+| 💎  |  25   | TLS expansion mapping safety + alloc race       | §12                |  [ ]   |
+| 💎  |  26   | auxv hardening: classified AT_RANDOM + AT_PHDR  | §13                |  [ ]   |
+| 💎  |  27   | uthread_create robustness (guard/tid/stack)     | §14                |  [ ]   |
 | 💎  |  28   | Intermittent TEB-without-kernel_gs_base halt    | §1, §4             |  [/]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
@@ -169,11 +169,11 @@ Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) h
 `IA32_KERNEL_GS_BASE` (MSR 0xC0000102) must hold the TEB address before the first ring-3 instruction runs. `swapgs` (§3) exchanges GS_BASE ↔ KERNEL_GS_BASE, so after `swapgs` in the ISR entry the kernel sees per-CPU GS and user-mode sees TEB via GS.
 
 - [x] `MSR_IA32_KERNEL_GS_BASE` (0xC0000102) already defined in `include/kernel/msr.h` line 50
-- [x] Added `kernel_gs_base` field to `struct task` in task.h
-- [x] `task_exec`: sets `tasks[pid].kernel_gs_base = 0` (§6 will set TEB address)
-- [x] `task_fork`: copies parent's `kernel_gs_base` to child (§6 will allocate child TEB)
+- [x] Added `kernel_gs_base` to `struct thread` plus a thread-0 mirror on `struct task` in task.h
+- [x] `task_exec`: stages the new TEB address into `kernel_gs_base` on the thread and the task mirror before it publishes `exec_pending`
+- [x] `task_fork`: copies the parent's `teb` and `kernel_gs_base` to thread 0 of the child; the child gets its own TEB at exec, and the pre-exec window is §19
 - [x] `task_init`: explicitly zeroes `kernel_gs_base` for all task slots
-- [x] Context switch (`schedule_now` + `schedule`): save/restore via `msr_read`/`msr_write` on task switch
+- [x] Context switch (`schedule_now` + `schedule`): per-thread save/restore via `msr_read`/`msr_write`, gated by `exec_pending`
 - [x] Commit: `"kernel: abi -- write KERNEL_GS_BASE at task_exec and fork"`
 
 **Test checkpoint:** `task_exec`/`task_fork` initialize/copy `kernel_gs_base` correctly; context switches preserve per-task `IA32_KERNEL_GS_BASE`; post-syscall return still resolves TEB via GS. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
@@ -182,8 +182,8 @@ Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) h
 > **Notes:**
 > - Shipped: per-thread `kernel_gs_base` (struct thread + task mirror) set at task_exec/fork; switch save/restore with exec_pending save-gate, NULL guard, MSR readback-verify, fail-closed boot-halt for ring-3-with-TEB-but-zero-GS.
 > - Review (Codex 3x) confirmed the switch save/restore is sound but found exec/fork staging defects -- fixes owned by §19.
-> - Scope boundary: exec_pending TOCTOU + fork parent-TEB + mirror staleness + per-switch readback cost -> §19; §4 checklist still describes the pre-§15 per-task model.
-> **Deferred:** [Critical] task_exec/task_fork GS-base staging races (exec_pending published before TEB prime; fork publishes a runnable child with the parent TEB) + switch mirror/readback issues. -> XREF: §19 (item: "[CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS..." at line 555)
+> - Scope boundary: fork parent-TEB + mirror staleness + per-switch readback cost -> §19; the exec_pending TOCTOU closed in `D02 T21 §19`.
+> **Deferred:** [H] task_fork publishes a runnable child with the parent TEB, and the switch mirror and readback issues stand; the exec_pending half of this stamp closed in `D02 T21 §19`. -> XREF: §19 (item: "[HIGH] task_fork (1241-1248) publishes a runnable child with the parent TEB+GS")
 > **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 1C+1H+2M deferred-to-§19, 0 fixed | scope: kernel-code-quality
 
 ---
@@ -195,7 +195,8 @@ Allocate the PEB in the user address space and fill it before the first instruct
 - [x] All three pages: PMM alloc → VMM map (VMM_USER_RW) → zero-fill
 - [x] PEB fields: ImageBaseAddress, ProcessParameters, OSMajorVersion=10, OSBuildNumber=22621, NumberOfProcessors via `acpi_get_cpu_count()`
 - [x] RTL_USER_PROCESS_PARAMETERS: ImagePathName + CommandLine as UNICODE_STRING (ASCII→UTF-16), CurrentDirectory = `C:\`
-- [ ] `CommandLine` fidelity: the 4 KiB RTLPP page truncates a full-argv `CommandLine` (TODO-22 §4) and `peb_build_ustr` widens bytes 1:1 so UTF-8 mojibakes -- map enough ProcessParameters pages + UTF-8->UTF-16, or reject oversize
+- [/] `CommandLine` fidelity: the 4 KiB RTLPP page truncates a full-argv `CommandLine` (TODO-22 §4) and `peb_build_ustr` widens bytes 1:1 so UTF-8 mojibakes -- map enough ProcessParameters pages + UTF-8->UTF-16, or reject oversize
+  - BLOCKED: §20 owns the bounded `peb_build_ustr` this needs; `task.c` `peb_build_ustr` still has no capacity and widens bytes 1:1, and the RTLPP is one page. -> XREF: §20 (item: "[HIGH] peb_build_ustr (1332) has no page bound")
 - [x] Std handles: UHANDLE_INVALID (console wiring in future)
 - [x] Environment block: `PATH=C:\Impossible\System32\` + `SystemRoot=C:\Impossible` (UTF-16, double-NUL terminated)
 - [x] `tasks[pid].peb` and `tasks[pid].teb` fields added to `struct task`
@@ -266,7 +267,9 @@ The user stack must have a valid calling frame waiting for the first instruction
 - [x] Main executable inserted in all 3 lists (InLoadOrder, InMemoryOrder, InInitializationOrder) as circular linked list
 - [x] `LDR_DATA_TABLE_ENTRY`: DllBase, EntryPoint, SizeOfImage, FullDllName + BaseDllName as UNICODE_STRING
 - [x] `PEB->Ldr` wired to the allocated `PEB_LDR_DATA`
-- [ ] Full dynamic module list (LoadLibrary/FreeLibrary add/remove Ldr entries at runtime) -- → XREF: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §3` (LdrLoadDll PE DLL loader)
+- [/] Full dynamic module list (LoadLibrary/FreeLibrary add/remove Ldr entries at runtime) -- → XREF: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §3` (LdrLoadDll PE DLL loader)
+  - BLOCKED: `LdrLoadDll` does not exist. -> XREF: `12-user-platform-sdk/TODO-04` §3 (item: "`NTSTATUS LdrLoadDll(path, flags, basename, HMODULE *out)`")
+  - The kernel half that exists is dead code: `exec_register_module` in `src/kernel/exec.c` can tail-insert an Ldr entry, but `task_exec` passes a NULL process (`task.c:3935`), and the entry is `kmalloc`ed, so its links would be kernel pointers in a user PEB. The loader must not reuse it as is.
 - [x] Commit: `"kernel: peb -- minimal PEB Ldr with main module entry"`
 
 **Test checkpoint:** `PEB->Ldr` is non-NULL at process start and the main image appears in all three loader lists with stable links; ntdll loader walk does not fault on initial module enumeration. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
@@ -352,7 +355,6 @@ Windows maps a single physical page at fixed virtual address `0x7FFE0000` (user 
 
 **Test checkpoint:** Serial log shows `KUSD: mapped at user=0x7FFE0000 kernel=0x<rand>`. User-mode test reads `*(uint32_t *)0x7FFE026C` (NtMajorVersion) and gets `10`. `TickCountQuad` at `0x7FFE0320` increments over time. `POST16(0xDF00)` on entry, `POST16(0xDF01)` static init, `POST16(0xDF02)` time update wired, `POST16(0xDF03)` test read verified. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [M] KUSD time/version core is shipped + boot-wired; of the 3 items then remaining, (1) policy bits (SafeBootMode/KdDebuggerEnabled/MitigationPolicies) -- since SHIPPED, published by `kusd_init()` from the TODO-02 snapshot (2026-09-28); (2) Win11 24H2 `FullNumberOfPhysicalPages` (kusd.h ABI surgery at 0x310 + populate from the 64-bit PMM count + `_Static_assert`/test) and (3) a shared NT build constant unifying PEB.OSBuildNumber/KUSD.NtBuildNumber -- both specified + ready for a focused fresh-context pass (precise KUSD ABI work, not rushed at session tail). -> XREF: 02-kernel-core/TODO-02 §5 (item: "Safe Mode and Recovery Policy Object" -- the policy snapshot the KUSD mirror must read) + §10 (boot-status policy).
 
 ---
 
@@ -409,7 +411,9 @@ The current ELF initial stack (§7) pushes `AT_ENTRY`, `AT_PAGESZ`, and `AT_NULL
 - [x] Retain existing `AT_ENTRY`, `AT_PAGESZ`, `AT_NULL`
 - [x] Extend `elf_load_result` struct with `phdr_vaddr`, `phnum`, `phent` fields (additive)
 - [x] Extract shared `rdrand_bytes()` helper and migrate `gpt.c` + `kusd_time.c` (third occurrence rule)
-- [ ] Follow-up (XREF: TODO-03 §3): replace TSC-mixed AT_RANDOM fallback with kernel entropy pool when CSPRNG lands. Codex flagged the TSC fallback as weak entropy for stack-canary seeding; rejected for §13 because (1) Makefile USER_CFLAGS uses `-fno-stack-protector` so no current binary consumes `__stack_chk_guard`; (2) there is no runtime path for externally built ELFs to enter the system in the current state of the project; (3) RDRAND-capable platforms (bare metal, WHPX) take the fast path; (4) TCG fallback ships a `LOG_ERROR` line so degraded mode is visible. When TODO-03 §3 lands or any user binary opts into stack canaries, this fallback MUST be replaced.
+- [x] Follow-up (XREF: TODO-03 §3): replace TSC-mixed AT_RANDOM fallback with kernel entropy pool when CSPRNG lands.
+  - Superseded 2026-11-07: `task.c:4142` calls `csprng_fill` and no TSC fallback remains. The residual, that the call is unclassified, is §26's first item.
+  - Codex flagged the TSC fallback as weak entropy for stack-canary seeding; rejected for §13 because (1) Makefile USER_CFLAGS uses `-fno-stack-protector` so no current binary consumes `__stack_chk_guard`; (2) there is no runtime path for externally built ELFs to enter the system in the current state of the project; (3) RDRAND-capable platforms (bare metal, WHPX) take the fast path; (4) TCG fallback ships a `LOG_ERROR` line so degraded mode is visible. When TODO-03 §3 lands or any user binary opts into stack canaries, this fallback MUST be replaced.
 - [x] Commit: `"kernel: abi -- extended auxiliary vector with AT_RANDOM, AT_PHDR, AT_HWCAP"`
 
 **Test checkpoint:** Serial log shows `ELF auxv: AT_RANDOM=0x<stack_addr> AT_PHDR=0x<phdr> AT_PHNUM=<n> AT_HWCAP=0x<edx> (16 pairs, ELF)` from `task_exec` (single observable klog line; no POST16 codes -- this is post-boot code where klog is fully working). Unit test `PEB/TEB: user auxv populated (PID 2)` walks `tasks[2].user_auxv`, asserts AT_NULL terminator present, AT_RANDOM/PAGESZ/ENTRY/HWCAP present, AT_PAGESZ == 4096, AT_HWCAP non-zero and equal to raw CPUID 1 EDX, and reads 16 bytes at AT_RANDOM with at least one non-zero. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
@@ -503,35 +507,51 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 ## 16. TEB Multi-Page Mapping and User-VA Non-Overlap
 `sizeof(TEB)` is 0x2000 -- `TlsSlots` at 0x1480 and `TlsExpansionSlots` at 0x1780 push the struct into a second page -- but `teb_alloc_for_task()` allocates one frame, maps one 4 KiB page, zeroes 4096 bytes, and strides per-thread TEBs by 0x1000. Triple-confirmed by the §1 review (Codex adversarial + consistency + perf): `gs:[0x1480]`/`gs:[0x1780]` and `tls_get_value`/`tls_set_value` touch the unmapped second page, which for TID 0 aliases the env block (0x7FFDC000) and for TID N aliases TID N-1's TEB. Latent today (single-thread binaries; short env lands in the zeroed page-tail) but a real isolation/corruption defect. -> XREF: §1 (TEB struct/size), §6 (teb_alloc_for_task), §15 (per-thread TEB stride).
 
-- [ ] Define `TEB_PAGES = 2` / `TEB_STRIDE = 0x2000` in `task.c`; `_Static_assert(sizeof(TEB) <= TEB_PAGES * 0x1000)`
-- [ ] `teb_alloc_for_task()`: `pmm_alloc_contiguous(TEB_PAGES)`, map both pages, zero the full `TEB_PAGES * 0x1000` (today: one frame/page/4096 bytes)
-- [ ] Stride per-thread TEB VAs by `TEB_STRIDE` (`TEB_USER_BASE - tid * TEB_STRIDE`), not 0x1000
-- [ ] Relocate the TEB region to a design-pinned dedicated band: `TEB_USER_BASE=0x7FF88000`, band [0x7FF6A000,0x7FF8A000) below USER_THREAD_STACK_LOWEST; PEB/RTLPP/ENV/TLS-expansion/user-stacks unchanged
-- [ ] Sequence (dep §19): create cr3 first, map both TEB pages via vmm_map_user_page(cr3), init via identity-mapped frames, set threads[0].teb/kernel_gs_base, THEN publish exec_pending
-- [ ] `task_cleanup()`: unmap `TEB_PAGES` per secondary-thread TEB
-- [ ] Non-overlap unit test: `sizeof(TEB)` vs stride; TID 0 + highest-TID TEB ranges vs env/RTLPP/PEB/TLS-expansion/user-stack ranges
-- [ ] [HIGH] teb_alloc_for_task maps via vmm_map_page (kernel PML4, GLOBAL) so all processes share the per-tid TEB VA (cross-process aliasing); cleanup uses vmm_unmap_user_page(cr3). Fix: map via vmm_map_user_page(cr3) + check return/free
-- [ ] Commit: `"kernel: peb -- map full 2-page TEB + non-overlapping per-thread VA stride"`
+- [/] Define `TEB_PAGES = 2` / `TEB_STRIDE = 0x2000` in `task.c`; `_Static_assert(sizeof(TEB) <= TEB_PAGES * 0x1000)`
+  - BLOCKED: `todo/answers.md` Q4. `teb.h` pads TEB to 0x2000 and neither constant exists.
+- [/] `teb_alloc_for_task()`: `pmm_alloc_contiguous(TEB_PAGES)`, map both pages, zero the full `TEB_PAGES * 0x1000` (today: one frame/page/4096 bytes)
+  - BLOCKED: `todo/answers.md` Q4. `task.c:3359-3371` still allocates, maps and zeroes one page.
+- [/] Stride per-thread TEB VAs by `TEB_STRIDE` (`TEB_USER_BASE - tid * TEB_STRIDE`), not 0x1000
+  - BLOCKED: `todo/answers.md` Q4. The stride is still 0x1000 (`task.c:3358`).
+- [/] Relocate the TEB region to a design-pinned dedicated band: `TEB_USER_BASE=0x7FF88000`, band [0x7FF6A000,0x7FF8A000) below USER_THREAD_STACK_LOWEST; PEB/RTLPP/ENV/TLS-expansion/user-stacks unchanged
+  - BLOCKED: `todo/answers.md` Q4: TEB VA-layout move, parked with the campaign. `TEB_USER_BASE` is still 0x7FFDB000 (`task.c:3349`).
+- [/] Sequence (dep §19): create cr3 first, map both TEB pages via vmm_map_user_page(cr3), init via identity-mapped frames, set threads[0].teb/kernel_gs_base, THEN publish exec_pending
+  - BLOCKED: `todo/answers.md` Q4. Only the mapping half is left: the publish order already holds (`task.c:4480`).
+- [/] `task_cleanup()`: unmap `TEB_PAGES` per secondary-thread TEB
+  - BLOCKED: `todo/answers.md` Q4. `task.c:4969-4971` unmaps one page per secondary thread.
+- [/] Non-overlap unit test: `sizeof(TEB)` vs stride; TID 0 + highest-TID TEB ranges vs env/RTLPP/PEB/TLS-expansion/user-stack ranges
+  - BLOCKED: `todo/answers.md` Q4. Tests the layout the items above introduce.
+- [/] [HIGH] teb_alloc_for_task maps via vmm_map_page (kernel PML4, GLOBAL) so all processes share the per-tid TEB VA (cross-process aliasing); cleanup uses vmm_unmap_user_page(cr3). Fix: map via vmm_map_user_page(cr3) + check return/free
+  - BLOCKED: `todo/answers.md` Q4. Still `vmm_map_page` at `task.c:3364`.
+  - The stated fix is not sufficient. `vmm_map_user_page(cr3)` reuses a present PDPT entry (`vmm.c:1238-1240`) and `vmm.c:1099-1101` copies the kernel PDPT[1..] into every user PML4, so a VA in 1-2 GiB lands in the shared kernel PD and is still not per-process. Read from the code, not run. The design must clone PDPT[1] privately or move the band.
+- [/] Commit: `"kernel: peb -- map full 2-page TEB + non-overlapping per-thread VA stride"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** `tls_set_value(pid, 0, 0xCAFE)` writes inside the mapped TEB (not the env page) and a read of `gs:[0x1480]` returns it; two threads' TEB ranges and the env/RTLPP/PEB pages are provably disjoint (unit test); boot still reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [Critical] §16 is design-reviewed (Codex design `bnqdm310m`: VA band pinned -- `TEB_USER_BASE=0x7FF88000`, dedicated band [0x7FF6A000,0x7FF8A000), 2-page per-process `vmm_map_user_page(cr3)` mapping with a stage-then-publish sequence) but BLOCKED on §19's exec_pending ordering for correctness (the design verdict: do not complete §16 while exec_pending can be visible before TEB/GS is staged). §16 + §19 are a coordinated CRITICAL VA-layout + exec/fork change for a fresh-context implementation. -> XREF: §19 (item: "[CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS..." at line 555)
+> **Deferred:** [Critical] the §19 blocker this stamp named has ended: `task_exec` now stages the TEB and GS and stores `exec_pending` last. §16 still moves the TEB band and rewrites per-process mapping, so it stays parked on an operator answer, awaiting-answer (`todo/answers.md` Q4). -> XREF: `todo/answers.md` (item: "Q4 (TODO-11 §16/§17/§19/§21/§23)")
 
 ---
 
 ## 17. PEB x64 Version-Field Offsets
 The §2 PEB places OSMajorVersion at 0xA4, OSMinorVersion at 0xA8, OSBuildNumber at 0xAC, CriticalSectionTimeout at 0xC8, TlsBitmap at 0x230 -- these are the **x86-32** PEB offsets. The real x64 `_PEB` (Geoff Chappell pebteb / ntdoc / bytepointer tebpeb64) puts OSMajorVersion at 0x118, OSMinorVersion at 0x11C, OSBuildNumber at 0x120, CriticalSectionTimeout at 0xC0. The early pointer block (ImageBaseAddress 0x10, Ldr 0x18, ProcessParameters 0x20) is x64-correct; only the post-0x28 region is wrong. A real Win64 ntdll reading `PEB+0x118` gets the reserved-zero pad, not 10.0.22621. Latent today (in-tree tests assert the same wrong offsets; no real ntdll yet) but breaks Win64 compat when the PE loader lands. -> XREF: §2 (PEB struct), §5 (population), `D02 T17` (PE loader / ntdll).
 
-- [ ] Rebuild the post-0x28 PEB region in `peb.h` to the authoritative x64 `_PEB`: OSMajorVersion 0x118, OSMinorVersion 0x11C, OSBuildNumber 0x120, OSCSDVersion 0x122, OSPlatformId 0x124, ImageSubsystem 0x128
-- [ ] Move CriticalSectionTimeout to 0xC0, and NtGlobalFlag / heap thresholds / NumberOfProcessors / TlsBitmap to their real x64 offsets; resize the reserved-pad spans
-- [ ] Update the `_Static_assert` offset checks to the corrected x64 offsets
-- [ ] Update `test_peb_offsets` in `test_peb_teb.c` to assert the x64 offsets (it currently asserts the 32-bit ones)
-- [ ] Confirm `peb_alloc_for_task` resolves by field name (no literal offsets) and cmd.exe still boots
-- [ ] Commit: `"kernel: peb -- correct PEB version-field offsets to x64 ABI (0x118/0x120)"`
+- [/] Rebuild the post-0x28 PEB region in `peb.h` to the authoritative x64 `_PEB`: OSMajorVersion 0x118, OSMinorVersion 0x11C, OSBuildNumber 0x120, OSCSDVersion 0x122, OSPlatformId 0x124, ImageSubsystem 0x128
+  - BLOCKED: `todo/answers.md` Q4. `peb.h:121-134` still has OSMajorVersion at 0xA4 and OSBuildNumber at 0xAC.
+- [/] Move CriticalSectionTimeout to 0xC0, and NtGlobalFlag / heap thresholds / NumberOfProcessors / TlsBitmap to their real x64 offsets; resize the reserved-pad spans
+  - BLOCKED: `todo/answers.md` Q4. Moves with the layout rebuild above.
+- [/] Update the `_Static_assert` offset checks to the corrected x64 offsets
+  - BLOCKED: `todo/answers.md` Q4. Pins the layout rebuild above.
+- [/] Update `test_peb_offsets` in `test_peb_teb.c` to assert the x64 offsets (it currently asserts the 32-bit ones)
+  - BLOCKED: `todo/answers.md` Q4. `test_peb_teb.c:55-58` still asserts 0xA4 and 0xAC.
+- [/] Confirm `peb_alloc_for_task` resolves by field name (no literal offsets) and cmd.exe still boots
+  - BLOCKED: `todo/answers.md` Q4. Check of the layout rebuild above.
+- [/] Commit: `"kernel: peb -- correct PEB version-field offsets to x64 ABI (0x118/0x120)"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** `__builtin_offsetof(PEB, OSMajorVersion) == 0x118` and `OSBuildNumber == 0x120`; `test_peb_offsets` asserts the x64 offsets; the PEB populated by `peb_alloc_for_task` reads 10.0.22621 at the corrected offsets; boot reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] PEB x64 Version-Field Offsets -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §17 (item: "Rebuild the post-0x28 PEB region in `peb.h` to the authoritative x64 `_PEB`: OSM" at line 521).
+> **Deferred:** [H] PEB layout rewrite: a user-visible ABI change, so operator-reserved, awaiting-answer (`todo/answers.md` Q4). -> XREF: `todo/answers.md` (item: "Q4 (TODO-11 §16/§17/§19/§21/§23)")
 
 ---
 
@@ -548,14 +568,14 @@ The §2 PEB places OSMajorVersion at 0xA4, OSMinorVersion at 0xA8, OSBuildNumber
 
 **Test checkpoint:** NMI/#DF/#MCE entered from ring 3, from ring-0 kernel, and from the post-swapgs user-GS window all reach `isr_handler` with KERNEL GS (validated via a gs:-relative per-CPU read); no GS corruption; boot reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] Paranoid swapgs Entry for NMI / #DF / #MCE -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §18 (item: "Add a paranoid entry for the IST vectors (NMI 2, #DF 8, #MCE 18): read `IA32_GS_" at line 535).
 
 ---
 
 ## 19. exec/fork/switch GS-base Staging Correctness and Cost
 The §4 context-switch save/restore (per-thread GS, NULL guard, fail-closed) is structurally sound, but the Codex 3x review of §4 surfaced staging + cost defects across `task_exec`, `task_fork`, and the switch save path. -> XREF: §4 (switch save/restore), §5 (task_exec), §6 (TEB alloc).
 
-- [ ] [CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS (2014); a preemption there can clobber the primed GS via the save-gate. Fix: stage fully before publishing exec_pending, or disable preemption across it
+- [x] [CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS (2014); a preemption there can clobber the primed GS via the save-gate. Fix: stage fully before publishing exec_pending, or disable preemption across it
+  - FIXED, checked 2026-11-07: `task_exec` allocates into a local, sets `kernel_gs_base` then `teb` inside `local_irq_save`, and release-stores `exec_pending` last (`task.c:4480`). The sub-bullets below are the history of that defect.
       **REPRODUCED 2026-07-29, no longer theoretical.** The `smoke-matrix` `kvm:2cpu` leg halted booting `cmd.exe`: `[CRIT] sched: ring-3 task 4 thread 0 has TEB but kernel_gs_base=0 (task.teb=0x7ffdb000 thread.teb=0x7ffdb000)` -- section 6's own fail-closed guard firing on exactly this window, one instruction-stream away from a ring-3 task running with a stale GS. Intermittent: 1 failure in 3 consecutive 4-leg matrix runs on an unrelated tree, kvm:2cpu, with the other legs green. Evidence: `.claude/overnight/artifacts/20260729-*-s24-smoke3.log`.
       - **NOT SMP-only -- correction 2026-07-29 (TODO-04 §28).** The identical `[CRIT]` fired on the **kvm:1cpu** leg (`.claude/overnight/artifacts/20260729-120323-s28-smoke5.log`, leg log `build/smoke-matrix/kvm-1cpu.log`, halt at `[  3.610]` booting `cmd.exe`), so the earlier "SMP-only, kvm:2cpu ONLY" reading was an artifact of the sample, not a property of the bug: a single CPU still preempts on the timer tick inside the exec_pending-to-TEB-prime window. Do NOT scope the fix to multi-CPU.
       - **Combined observed rate: 5 failures in 20 consecutive 4-leg matrix runs** (kvm:2cpu, kvm:1cpu, kvm:2cpu, kvm:2cpu, kvm:1cpu), always this signature, always on a tree with no kernel or ring-3 change -- TODO-04 §28 touched only host-side tooling and two facade headers, and the same matrix passed 4/4 fifteen times around the five failures, including immediately after each one.
@@ -566,15 +586,18 @@ The §4 context-switch save/restore (per-thread GS, NULL guard, fail-closed) is 
       - **This is the finding that generalises it beyond KVM.** Every prior sighting was KVM (5 in 20 matrix runs) plus one plain `test.sh`; the working hypothesis was "KVM's real-CPU timing lands the tick inside the window". WHPX is a DIFFERENT hypervisor with a different timer path, and it reproduces at a HIGHER rate (1-in-2 vs ~1-in-4). So the window is a property of the exec_pending-to-TEB-prime sequence itself, not of any one accelerator -- do not scope the fix, the repro, or the regression to KVM. TCG remains the only engine that has never shown it, which is consistent with the tick landing outside the window rather than with TCG being safe.
       - **The WHPX run also carried an unstable TSC** (`[WARN] time: clocksource: demoting TSC -> HPET (17397 ppm)`) and 11 DPC overruns (worst 310 us) before the halt. Whether a demoted clocksource widens the window is UNTESTED and is a hypothesis, not a finding -- but it is the first sighting where the tick source visibly changed mid-boot, so record the clocksource state when reproducing.
       - **Also fires outside the smoke matrix (2026-07-30, TODO-04 §30 review).** A plain `bash scripts/test.sh XML=1 JSON=1` on kvm:2cpu halted with the identical `[CRIT]` at `[  7.990]`, again booting a ring-3 task on a tree whose only changes were host-side shell in `scripts/`, and the immediately following identical invocation passed with 27037 kernel + 17 user-mode green. Evidence: `.claude/overnight/artifacts/20260730-020020-e2e-r4.log`. So the window is not a property of the smoke path either: any KVM boot that reaches the exec_pending-to-TEB-prime window can land the tick inside it, which widens the reproduction surface for whoever takes the fix
-- [ ] [HIGH] task_fork (1241-1248) publishes a runnable child with the parent TEB+GS, no child TEB alloc (fork: syscall.c:401); a child run before exec gets the parent PID/TID/TLS. Fix: alloc a child TEB before publishing
+- [/] [HIGH] task_fork (1241-1248) publishes a runnable child with the parent TEB+GS, no child TEB alloc (fork: syscall.c:401); a child run before exec gets the parent PID/TID/TLS. Fix: alloc a child TEB before publishing
+  - BLOCKED: `todo/answers.md` Q4. A child TEB needs §16's per-process mapping. Still copied from the parent at `task.c:3019-3025`, and that comment's promise of a new TEB is not kept until exec.
 - [ ] [MEDIUM] Switch save (852/1071) updates only `threads[prev].kernel_gs_base`; for prev_thread==0 the task-level mirror goes stale and fork copies it stale. Fix: update the mirror + fork copies one canonical value
 - [ ] [MEDIUM] Switch readback (859/1073) does 3 MSR ops per user-thread switch (rdmsr+wrmsr+rdmsr). Fix: cache the programmed GS per CPU + skip when unchanged, or gate the readback to one-time/post-exec
-- [ ] Update §4's checklist text to the post-§15 per-thread reality (per-thread field + task-level thread-0 mirror)
-- [ ] Commit: `"kernel: sched -- exec/fork/switch GS-base staging correctness + cost"`
+- [x] Update §4's checklist text to the post-§15 per-thread reality (per-thread field + task-level thread-0 mirror)
+  - Done 2026-11-07 in §4's items and scope note, per-thread field and task-level thread-0 mirror.
+- [/] Commit: `"kernel: sched -- exec/fork/switch GS-base staging correctness + cost"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** a forced preemption between exec_pending publish and TEB prime does not clobber the primed GS; a fork child reads its OWN PID/TID/TLS before exec; the task/thread-0 mirror stays equal across switches + fork; steady-state switches skip the redundant readback (instrumentation counter). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [Critical] exec/fork/switch GS-base Staging Correctness and Cost -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §19 (item: "[CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS (2014);" at line 555).
+> **Deferred:** [H] the CRITICAL exec_pending item closed in `D02 T21 §19`. The fork TEB needs the per-process mapping §16 pins, so this stays parked with §16, awaiting-answer (`todo/answers.md` Q4). The mirror and readback items have no blocker of their own and are left open. -> XREF: `todo/answers.md` (item: "Q4 (TODO-11 §16/§17/§19/§21/§23)")
 
 ---
 
@@ -582,6 +605,7 @@ The §4 context-switch save/restore (per-thread GS, NULL guard, fail-closed) is 
 The §5 review (Codex 3x) found the PEB/RTLPP/env setup proceeds through unchecked mappings, an unbounded string builder, and several Win32-ABI-handoff metadata defects. Latent today (short names, single exec, no real ntdll/console) but each breaks a real consumer once PE/ntdll/console arrive. -> XREF: §5 (peb_alloc_for_task), §7 (initial frame RCX=PEB), §11 (PEB/KUSD build constant).
 
 - [ ] [HIGH] peb_alloc_for_task (1369) ignores the 3 vmm_map_page returns then writes the fixed VAs; a failed map corrupts what is mapped there + still returns non-NULL. Fix: checked per-process mapping, roll back frames, return NULL before writing
+  - The checked-map half stands alone. Per-process mapping does not: PEB, RTLPP and env sit in the same shared 1-2 GiB PD as the TEB, see §16's mapping item, so that half moves with §16.
 - [ ] [HIGH] teb_alloc_for_task ignores its vmm_map_page return the same way peb_alloc_for_task ignores its three; it then writes the TEB VA and returns non-NULL, so a caller's NULL check cannot see a failed mapping. Fix with the same checked-map + rollback shape. Raised by `D02 T21 §19` round-2 review, which added NULL checks that this gap defeats
 - [ ] [HIGH] peb_build_ustr (1332) has no page bound + casts byte-length to uint16_t; an unbounded task name (written 4x) can overrun the RTLPP/PEB pages + wrap Length. Fix: pass a capacity, bounded-copy/truncate, validate before the uint16_t assign
 - [x] [HIGH] The initial iret frame set RCX from tasks[pid].peb BEFORE peb_alloc_for_task ran -- NULL on first exec, stale on re-exec. FIXED in `D02 T21 §19`: the frame builder leaves the slot 0 and task_exec patches RCX from the new PEB inside its publication block. -> XREF: `D02 T21 §19` (item: "Publication race closed by making publication the LAST act")
@@ -591,20 +615,21 @@ The §5 review (Codex 3x) found the PEB/RTLPP/env setup proceeds through uncheck
 
 **Test checkpoint:** fault-injected vmm_map_page failure returns NULL + frees frames (no fixed-VA write); an overlong task name truncates/rejects without overrunning the RTLPP page; the iret RCX equals the new PEB; every RTLPP UNICODE_STRING.Buffer lies within MaximumLength; std handles are not the failure sentinel. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] PEB Allocation Robustness and Win32 ABI Handoff -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §20 (item: "[HIGH] peb_alloc_for_task (1369) ignores the 3 vmm_map_page returns then writes" at line 563).
 
 ---
 
 ## 21. Format-Specific User Startup Frame (ELF / PE / EIF) + Env Unification
 `task_exec` emits one SysV ELF process-init stack (argc/argv/envp/auxv) for EVERY loaded format, only zeroing PHDR metadata for non-ELF, then also sets the Win64 RCX=PEB. The ELF stack is correct for ELF (the §7 adversarial pass found no overflow/alignment/overlap bug), but a real PE32+ CRT/ntdll needs a format-specific Win64 startup frame and EIF its own; the current single frame works only for the bare-asm PE smoke test that ignores CRT startup. -> XREF: §7 (ELF stack), `D02 T17` (PE loader / ntdll startup), §5 (PEB env).
 
-- [ ] [HIGH] Branch the initial user-frame builder by loaded format: keep argc/argv/envp/auxv for ELF; add an explicit PE32+ Win64 startup frame (shadow/home space, no argc-at-rsp) for ntdll/CRT; give EIF a documented native startup contract
+- [/] [HIGH] Branch the initial user-frame builder by loaded format: keep argc/argv/envp/auxv for ELF; add an explicit PE32+ Win64 startup frame (shadow/home space, no argc-at-rsp) for ntdll/CRT; give EIF a documented native startup contract
+  - BLOCKED: `todo/answers.md` Q4. `task.c:4076-4244` builds one frame for every format, and `is_elf` only gates the PHDR values.
 - [ ] [MEDIUM] PEB `Environment` is hard-coded and ELF `envp[]` empty, but `task->environ` is authoritative (SYS_EXEC envp adoption lands there, TODO-22 §4); build the PEB env block + ELF envp from it (`env_build_block_utf16`)
-- [ ] Commit: `"kernel: exec -- format-specific user startup frame (ELF/PE/EIF) + unified env"`
+- [/] Commit: `"kernel: exec -- format-specific user startup frame (ELF/PE/EIF) + unified env"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** an ELF binary still starts with the SysV stack; a PE32+ fixture enters its Win64 startup contract (RCX=PEB + home space, no argc-at-rsp dependency); `getenv("PATH")` and the Win32 environment block agree. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] Format-Specific User Startup Frame (ELF / PE / EIF) + Env Unification -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §21 (item: "[HIGH] Branch the initial user-frame builder by loaded format: keep argc/argv/en" at line 577).
+> **Deferred:** [H] the startup frame is the ring-3 entry contract for PE32+ and EIF: an ABI decision, awaiting-answer (`todo/answers.md` Q4). The env half has no such question and is left open. -> XREF: `todo/answers.md` (item: "Q4 (TODO-11 §16/§17/§19/§21/§23)")
 
 ---
 
@@ -612,25 +637,28 @@ The §5 review (Codex 3x) found the PEB/RTLPP/env setup proceeds through uncheck
 The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_for_task` is called with `entry` (the entry point) as `image_base`, so DllBase=EntryPoint=entry (not the load base; e.g. 0x800100 vs 0x800000), SizeOfImage is a hardcoded 0x20000, and FullDllName/BaseDllName come from the stale `tasks[pid].name`. ntdll/loader walks of PEB->Ldr get an address inside the image, a fake range, and the pre-exec name (a cmd.exe child that execs hello.exe shows cmd.exe). -> XREF: §8 (Ldr population), §5 (PEB alloc signature), `D02 T17` (PE module metadata), §20 (peb_build_ustr bound).
 
 - [ ] [HIGH] Resolve the loaded_module_t (exec_load_fmt) and pass base + entry + size into the PEB builder; set DllBase=base (not the entry point), SizeOfImage=actual (not the hardcoded 0x20000)
+  - Wider than the Ldr entry: `task.c:4286-4287` passes the entry point as `image_base`, so `PEB.ImageBaseAddress` is wrong too.
 - [ ] [MEDIUM] Populate FullDllName from the full resolved exec path + BaseDllName from the final component (not the stale tasks[pid].name); update SYS_EXEC to set the name from the requested filename
 - [ ] Commit: `"kernel: peb -- correct PEB Ldr module identity (real base/size + resolved path/basename)"`
 
 **Test checkpoint:** PEB->Ldr main-module DllBase == the loaded image base (not the entry point), SizeOfImage == the actual loaded size, FullDllName == the full path, BaseDllName == the basename; a cmd.exe child that execs hello.exe shows hello.exe. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] PEB Ldr Module Identity (DllBase / SizeOfImage / Name) -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §22 (item: "[HIGH] Resolve the loaded_module_t (exec_load_fmt) and pass base + entry + size" at line 588).
 
 ---
 
 ## 23. Per-thread TLS Value Storage (Static + Expansion)
 §9's TLS allocation bitmaps are per-process (correct), but the value-access helpers index `tasks[pid].teb` (the thread-0 mirror) after §15 made `TEB.TlsSlots` per-thread. A secondary thread's `tls_get/set/free` hit thread-0's slots, and the expansion-array pointer is installed only in thread-0's TEB (secondary threads see `TlsExpansionSlots == NULL`). Breaks the Windows current-thread `TlsGetValue/TlsSetValue` contract; sharpens the vague §12 deferred "per-thread TLS expansion" item. -> XREF: §9 (TLS helpers), §12 (deferred per-thread expansion), §16 (TEB under-mapping + VA non-overlap).
 
-- [ ] [HIGH] Route static-slot `tls_get_value`/`tls_set_value`/`tls_free` through the current thread's TEB (`tasks[pid].threads[current_thread].teb` when pid==current_task) or add a TID param; add a 2-user-thread test
-- [ ] [HIGH] Publish the shared task expansion-array pointer into EVERY live user-thread TEB (`tls_expansion_demand_alloc` + `uthread_create` from `tasks[pid].tls_expansion_virt`); clear all live thread TEB pointers on cleanup
-- [ ] Commit: `"kernel: peb -- per-thread TLS value storage (static + expansion pointer)"`
+- [/] [HIGH] Route static-slot `tls_get_value`/`tls_set_value`/`tls_free` through the current thread's TEB (`tasks[pid].threads[current_thread].teb` when pid==current_task) or add a TID param; add a 2-user-thread test
+  - BLOCKED: `todo/answers.md` Q4. Per-thread slots need §16's two-page TEB. The TLS calls still index `tasks[pid].teb` (`task.c:5196`, `:5222`, `:5303`, `:5340`, `:5370`).
+- [/] [HIGH] Publish the shared task expansion-array pointer into EVERY live user-thread TEB (`tls_expansion_demand_alloc` + `uthread_create` from `tasks[pid].tls_expansion_virt`); clear all live thread TEB pointers on cleanup
+  - BLOCKED: `todo/answers.md` Q4. The pointer lives in the same second TEB page; `task.c:5224` publishes it to the main-thread TEB only.
+- [/] Commit: `"kernel: peb -- per-thread TLS value storage (static + expansion pointer)"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** two threads in one process alloc one slot index, set distinct values, and each reads back its own (no cross-thread bleed); a secondary thread created after expansion alloc sees a non-NULL `TlsExpansionSlots`; cleanup clears every thread's pointer. Gated on the §16 TEB-mapping fix for the static-slot storage to be page-correct. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] Per-thread TLS Value Storage (Static + Expansion) -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §23 (item: "[HIGH] Route static-slot `tls_get_value`/`tls_set_value`/`tls_free` through the" at line 599).
+> **Deferred:** [H] needs §16's second TEB page: `TlsSlots` at 0x1480 lies outside today's one mapped page, awaiting-answer (`todo/answers.md` Q4). -> XREF: `todo/answers.md` (item: "Q4 (TODO-11 §16/§17/§19/§21/§23)")
 
 ---
 
@@ -646,7 +674,6 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 
 **Test checkpoint:** inserting a PEB/TEB does not write a header into the adjacent RTLPP/pre-TEB page (no user-ABI corruption); `\KernelObjects\Process<PID>\Peb` resolves via NtOpenDirectoryObject; after the process exits the directory + entries are gone (no stale-VA lookup); a re-used PID does not collide. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [Critical] PEB/TEB Ob-Namespace Exposure: Safe Wrapper Objects + Lifecycle -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §24 (item: "[CRITICAL] Stop inserting raw PEB/TEB user VAs as Ob bodies (2055-2058); use rea" at line 610).
 
 ---
 
@@ -654,12 +681,12 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 §12's `tls_expansion_demand_alloc` commits a broken TLS pointer when mapping fails and can free another allocator's frames. -> XREF: §12 (demand-alloc), §16 (VA collision + huge-page split), §20 (unchecked vmm_map_page pattern), `D03 T03 §1` (PMM bitmap SMP lock).
 
 - [ ] [CRITICAL] tls_expansion_demand_alloc (2443) does not check vmm_map_page; 0x7FFD0000 may be 1-GiB-mapped so the map fails, then it zero-fills the huge mapping + publishes a broken pointer + leaks. Fix: check maps, roll back/free/return -1
-- [ ] [HIGH] PMM alloc is outside tls_lock + pmm_alloc_contiguous is unsynchronized; two CPUs can grab the same frames, then the lock-loser frees the WINNER's. Fix: serialize alloc-in-progress under tls_lock; gated on the PMM bitmap lock (D03 T03 §1)
+- [/] [HIGH] PMM alloc is outside tls_lock + pmm_alloc_contiguous is unsynchronized; two CPUs can grab the same frames, then the lock-loser frees the WINNER's. Fix: serialize alloc-in-progress under tls_lock; gated on the PMM bitmap lock (D03 T03 §1)
+  - BLOCKED: `pmm.c` has no lock at all, so serializing here cannot protect the frames. -> XREF: `03-memory-concurrency/TODO-03` §1 (item: "**PMM bitmap SMP locking**")
 - [ ] Commit: `"kernel: peb -- TLS expansion mapping check + alloc-race serialization"`
 
 **Test checkpoint:** a fault-injected vmm_map_page failure leaves `tls_expansion_allocated` clear, frees both frames, returns -1 (no broken pointer published); a concurrent 2-CPU TLS expansion stress proves a race loser cannot free the winner's frames. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [Critical] TLS Expansion Mapping Safety and Alloc Race -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §25 (item: "[CRITICAL] tls_expansion_demand_alloc (2443) does not check vmm_map_page; 0x7FFD" at line 623).
 
 ---
 
@@ -667,27 +694,29 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 §13's auxv is structurally clean (§7 verified the stack layout), but the AT_RANDOM entropy grade is unenforced and AT_PHDR is unvalidated. -> XREF: §13 (auxv emission + the open TSC-fallback item), `D02 T03 §5` (csprng classified API), `D02 T17` (ELF load-result phdr).
 
 - [ ] [HIGH] AT_RANDOM uses the unclassified csprng_fill (1851); it can emergency-seed pre-init or return DEGRADED-class bytes -> weak canary on low-entropy boot. Fix: csprng_fill_classified()/csprng_crypto_ok() gate (subsumes the stale §13 TSC item)
+  - Still plain `csprng_fill` at `task.c:4142`, no `csprng_crypto_ok` gate. `-fno-stack-protector` is still set (`Makefile:1058`), so no current binary consumes the canary.
 - [ ] [MEDIUM] AT_PHDR is emitted from elf_extract_phdr_info without proving phdr_vaddr is the loaded user VA (trusts PT_PHDR.p_vaddr); validate phdr_vaddr..+phnum*phent lies in the loaded PT_LOAD range or carry phdr from the load result
 - [ ] Commit: `"kernel: exec -- classified AT_RANDOM entropy gate + validated AT_PHDR"`
 
 **Test checkpoint:** AT_RANDOM bytes come from a crypto-grade CSPRNG (or exec is delayed/failed below the minimum entropy class); AT_PHDR points within the loaded image's program-header range (a malformed PT_PHDR.p_vaddr is rejected/corrected). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] auxv Hardening: Classified AT_RANDOM + Validated AT_PHDR -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §26 (item: "[HIGH] AT_RANDOM uses the unclassified csprng_fill (1851); it can emergency-seed" at line 634).
 
 ---
 
 ## 27. uthread_create Robustness: Guard-page Cleanup + tid Reservation + Stack-size Validation
 §14's uthread_create has failure-mode + concurrency holes. -> XREF: §14 (uthread_create), §16 (teb_alloc mapping rollback), §15 (per-thread TEB).
 
-- [ ] [HIGH] uthread_create frees a GUARDED kernel stack via pmm_free_pages (2777) without vmm_uninstall_guard_page; the freed frame keeps a stale guard PTE/slot + faults the next allocator. Fix: uninstall the guard before any free
+- [x] [HIGH] uthread_create frees a GUARDED kernel stack via pmm_free_pages (2777) without vmm_uninstall_guard_page; the freed frame keeps a stale guard PTE/slot + faults the next allocator. Fix: uninstall the guard before any free
+  - FIXED, checked 2026-11-07: every failure path goes through `uthread_free_kernel_stack`, which uninstalls the guard first and leaks rather than freeing if that fails (`task.c:5523-5534`).
 - [ ] [HIGH] tid = t->num_threads (2789) + slot publish has NO task lock; two CPUs in one task get the same tid -> VA/slot corruption + double-increment. Fix: reserve tid + mark slot INITIALIZING under a per-task lock
 - [ ] [HIGH] caller user_stack_size is unvalidated; USER_THREAD_STACK_BASE - tid*user_stack_size can wrap/collide with ELF/TEB/TLS/kernel regions. Fix: cap the size + validate [ustack_va,+size) for overflow + non-overlap
+  - Half done as of 2026-11-07: `task.c:5565-5568` clamps up to `USER_STACK_SIZE` and page-rounds. There is still no upper bound and no check on `tid * size` (`task.c:5605`).
 - [ ] [MEDIUM] teb_alloc_for_task ignores vmm_map_page's return (1526) so it can publish a non-NULL but unmapped TEB; uthread_create only rolls back on NULL. Fix: check the map, free + return NULL (pairs with §16 multi-page TEB)
+  - Same defect as §20's `teb_alloc_for_task` item; one fix closes both.
 - [ ] Commit: `"kernel: sched -- uthread_create robustness (guard cleanup, tid lock, stack validation)"`
 
 **Test checkpoint:** a rollback path uninstalls the kernel-stack guard before freeing (the frame is reusable); two concurrent uthread_create on one task get distinct tids/VAs (no slot corruption); an oversize/overlapping user_stack_size is rejected; a TEB map failure rolls back fully (no READY thread with a broken TEB). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] uthread_create Robustness: Guard-page Cleanup + tid Reservation + Stack-size Validation -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §27 (item: "[HIGH] uthread_create frees a GUARDED kernel stack via pmm_free_pages (2777) wit" at line 645).
 
 ---
 

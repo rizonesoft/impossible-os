@@ -211,6 +211,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
   4. Each dir in `PATH` env var
 - [ ] Bound the recursive import walk: mark a module as loading before resolving its imports (mutual imports must not recurse), cap dependency depth, and unwind partial loads on failure
 - [ ] **`NTSTATUS LdrLoadDll(path, flags, basename, HMODULE *out)`**:
+  - -> XREF: `02-kernel-core/TODO-11` §8 (item: "Full dynamic module list"): runtime Ldr add and remove land here; do not reuse `exec_register_module` as is, its entries are kernel-heap pointers.
   1. Scan `PEB.Ldr->InLoadOrderModuleList` by `BaseDllName` (case-insensitive); if found: increment `LDR_DATA_TABLE_ENTRY.LoadCount`; `*out = DllBase`; return `STATUS_SUCCESS`
   2. Resolve full path via search order above; `NtOpenFile` + `NtReadFile` into `VirtualAlloc` buffer
   3. Call `pe_load(data, size, &image_base)` (existing); `pe_apply_relocations()`; `pe_resolve_imports()` -- `pe_resolve_imports` calls back into `LdrLoadDll` recursively for each import DLL

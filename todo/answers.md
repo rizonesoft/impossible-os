@@ -94,3 +94,14 @@ smallest, design-review-endorsed, keeps §3 an atomic flip and defers the larger
 user-frame-model change to §6 where it is already owned; revisit the base in §7.
 Deferred to the operator because it edits the pinned address-space SSOT and picks
 the relocation ordering for the whole kernel roadmap.
+
+## Q4 (TODO-11 §16/§17/§19/§21/§23): may the run change the TEB layout, PEB layout and ring-3 entry frame?
+
+`02-kernel-core/TODO-11` §16-§27 were deferred together on 2026-06-28 (`19672b49a`) as "operator-reserved", but the run applied that label itself, and each stamp's XREF pointed at its own section, so nothing could ever clear them and the oracle read the file as DONE. On 2026-11-07 the eight sections with no ABI question were reopened: §11, §18, §20, §22, §24, §25, §26 and §27. These five stay parked because they change what ring-3 sees:
+
+- **§16 and §23:** move the TEB to a new VA band with two pages per thread. Today `TlsSlots` at 0x1480 falls outside the mapped page. The band itself needs a design change: a VA in 1-2 GiB lands in the kernel PD shared by every process.
+- **§19:** fork's child TEB depends on §16.
+- **§17:** move PEB version fields and others to true x64 offsets (0x118, 0x120). Native code using the current struct must rebuild; a real Win64 ntdll cannot read them today.
+- **§21:** add a Win64 startup frame for PE32+ and define one for EIF.
+
+Recommended: let the run do all five through the normal section pipeline, because the current layouts are defects, nothing outside this repo depends on them, and every section still gets a design review. Blocks these five sections only.
