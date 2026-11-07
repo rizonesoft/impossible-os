@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Best-effort operator notification (overnight sequencer observability).
 #
-# Used by scripts/overnight/overnight-launch.sh to surface the two events the
+# Used by scripts/overnight/heartbeat.sh and supervisor.py to surface the two events the
 # operator must see overnight: a TRUE fixpoint (run finished + disarmed) and a
 # CRITICAL fault (run stopped, needs a human). Headless bash can't call the
 # Claude PushNotification tool, so this is intentionally simple and

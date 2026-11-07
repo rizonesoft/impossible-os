@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Deterministic pre-launch health check + transient-context pruning.
 
-Runs BEFORE Claude spawns (wired into overnight-launch.sh): a run that would
+Host health check, run by hand or by a session: a run that would
 die on a dead Codex login, a stale graph cache, or a broken hook should fail
 in this script for free, not after Opus has loaded 200K of context.
 
