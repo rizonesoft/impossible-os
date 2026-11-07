@@ -235,3 +235,14 @@ Such a record is held forever and announced on every pass. Converging it means d
 Recommended: A until a real run shows the hold costing disk; `UTEST_CENSUS_BUDGET` already removed the common cause. Blocks one item in §62.
 
 A: (pending)
+
+## Q18 (02-kernel-core/TODO-13 §8): does the platform ship language packs, and who owns them?
+
+`NtGetMUIRegistryInfo` returns a fixed blob and `NtIsUILanguageComitted` has no installed-vs-active distinction, because no language-pack or MUI-install subsystem exists and no TODO under `todo/` owns one. The review rated the contract gap [H].
+
+- **A: file an owner now.** A new section in a platform-services TODO, with both syscalls waiting on it.
+- **B: one-language contract.** Implement the real Flags-driven multi-string with a single installed language, and file packs only when a second language is planned.
+
+Recommended: B, since the wire contract can be correct without a pack system. I did not read the Flags semantics for this answer. Blocks one item in §8.
+
+A: (pending)

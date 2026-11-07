@@ -44,11 +44,11 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | 💎  |   3   | Global and local atom tables       | T12           |  [x]   |
 | 💎  |   4   | NLS table file format and loader   | VFS, T03      |  [x]   |
 | 💎  |   5   | Code page conversion providers     | §4            |  [x]   |
-| 💎  |   6   | Locale and LCID metadata           | §4            |  [/]   |
+| 💎  |   6   | Locale and LCID metadata           | §4            |  [ ]   |
 | 💎  |   7   | Sort keys and normalization policy | §2, §6        |  [x]   |
-| 💎  |   8   | Native atom/NLS/locale syscalls    | T12           |  [/]   |
-| ⭐  |   9   | Retrofit kernel consumers          | T05, T14, T22 |  [/]   |
-| 💎  |  10   | Tests and compatibility corpus     | §1..§9        |  [/]   |
+| 💎  |   8   | Native atom/NLS/locale syscalls    | T12           |  [ ]   |
+| ⭐  |   9   | Retrofit kernel consumers          | T05, T14, T22 |  [ ]   |
+| 💎  |  10   | Tests and compatibility corpus     | §1..§9        |  [ ]   |
 
 ---
 
@@ -183,13 +183,13 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 - [x] Locale records in `nls_locale.c` (LCID, BCP-47, language/region, ANSI/OEM code page, separators, date/time formats, currency, first-day); invariant + en-US/en-GB/de-DE/fr-FR/es-ES; `by_lcid`/`by_bcp47` round-trip.
 - [x] Kernel stores invariant + installed-locale metadata (compiled `s_locales[]`); user-mode libraries format UI strings over it.
-- [/] Registry policy: `HKLM\SYSTEM\Nls` SystemLocale/UserLocale/UILanguage seeded + boot-cached; `NtQueryDefaultLocale`/`NtQueryDefaultUILanguage` bound to it. Privileged `NtSetDefault*` stays fail-closed pending SRM.
+- [ ] Registry policy: `HKLM\SYSTEM\Nls` SystemLocale/UserLocale/UILanguage seeded + boot-cached; `NtQueryDefaultLocale`/`NtQueryDefaultUILanguage` bound to it. `SePrivilegeCheck` shipped, so un-gate privileged `NtSetDefault*`.
 - [/] Locale change notification: WM_SETTINGCHANGE (lParam "intl") via 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserBroadcastSystemMessage"). BLOCKED: TODO-15 §25 unshipped.
 - [x] 3-way split (system / user / UI language) stored + independently queryable via registry policy (per-user HKCU routing deferred until per-user hives). (gap-audit)
 - [x] Ordered MUI UI-language fallback chain `nls_locale_ui_fallback` (specific -> neutral primary -> en-US backstop, de-duped); mirrors `SetThreadPreferredUILanguages`. (gap-audit)
 - [/] Locale-formatted timezone DISPLAY NAMES over the tz table owned by `08-graphics-ui/TODO-12-clock-time.md` (§6 owns only the display-string layer). BLOCKED: clock-time §5 tz table unshipped. (gap-audit)
-- [/] Per-thread `CP_THREAD_ACP`: wire `SetThreadLocale`->locale->code-page so `nls_cp_resolve(CP_THREAD_ACP)` uses the thread locale's ANSI page (schema ready: `nls_locale_t.ansi_code_page`); BLOCKED: needs per-thread locale storage. (from §5)
-- [/] When `registry_load_hives()` is wired (persisted policy), refresh the NLS ACP/OEMCP + locale boot caches after hive load; §5/§6 cache at populate-defaults time. BLOCKED: `registry_load_hives()` unwired. (Codex §5)
+- [ ] Per-thread `CP_THREAD_ACP`: wire `SetThreadLocale`->locale->code-page so `nls_cp_resolve(CP_THREAD_ACP)` uses the thread locale's ANSI page (schema ready: `nls_locale_t.ansi_code_page`); no outside owner. (from §5)
+- [/] When `registry_load_hives()` is wired (persisted policy), refresh the NLS ACP/OEMCP + locale boot caches after hive load; §5/§6 cache at populate-defaults time. Parked: wiring is `02-kernel-core/TODO-14` §8. (Codex §5)
 - [x] Commit: `"kernel: nls -- locale/LCID metadata records + registry policy binding"`
 
 **Test checkpoint:** `NtQueryDefaultLocale` returns the registry-selected LCID; the invariant locale (0x007F) is always queryable. A BCP-47 name round-trips to its LCID. `NtSetDefaultLocale` from an unprivileged caller fails closed until the §6 policy binding lands.
@@ -205,9 +205,9 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > **Verified:** 2026-07-04 | commit `cea10cbc` | 4/9 items | build OK | nls 75/75 PASS
 > **Accepted:** [M] WM_SETTINGCHANGE(intl) locale-change broadcast -> XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserBroadcastSystemMessage" at line 452)
 > **Accepted:** [M] locale-formatted timezone display names -> XREF: 08-graphics-ui/TODO-12-clock-time.md §5 (item: "Timezone database" at line 49)
-> **Deferred:** [M] privileged NtSetDefaultLocale/UILanguage binding stays fail-closed pending the SRM privilege check -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "Registry policy" at line 186)
-> **Deferred:** [M] per-thread CP_THREAD_ACP wiring needs per-thread locale storage -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "Per-thread `CP_THREAD_ACP`" at line 191)
-> **Deferred:** [L] NLS cache refresh after registry_load_hives -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "registry_load_hives" at line 192)
+> **Note:** 2026-11-07, Deferred stamp retired: [M] the SRM privilege check shipped, so the `NtSetDefault*` binding is open again.
+> **Note:** 2026-11-07, Deferred stamp retired: [M] per-thread `CP_THREAD_ACP` reopened.
+> **Note:** 2026-11-07, Deferred stamp retired: [L] the cache refresh waits on `02-kernel-core/TODO-14` §8, named in its item.
 > **Quality reviewed:** 2026-07-04 | Codex 7x (design, adversarial, re-adversarial, consistency, perf) | 1H+2M fixed | scope: kernel-code-quality
 
 ---
@@ -248,8 +248,8 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 - [x] Add `SystemNlsInformation` (class 0x1001) to `NtQuerySystemInformation`: `nt_query_nls_information` snapshots ACP/OEMCP/LCIDs/langids/NLS version, two-pass length contract. (`nls_syscall_info.h`)
 - [x] Wire the orphaned MUI SSDT trio: `NtIsUILanguageComitted` (0x0264 query), `NtFlushInstallUILanguage` (0x0265 fail-closed until SRM), `NtGetMUIRegistryInfo` (0x0263 in/out-size marshaller, simplified locale-snapshot blob). (gap-audit)
 - [/] Full `NtGetMUIRegistryInfo` (Flags-driven null-delimited preferred-UI-language multi-string) + `NtIsUILanguageComitted` installed-vs-active semantics. (parity §8)
-  - Blocked on a language-pack / MUI-install subsystem, which does not exist and has NO owning TODO anywhere under `todo/` (searched 2026-08-28). Creating that owner is the prerequisite; until one exists there is no installed-vs-active distinction for either syscall to report, and the shipped fixed blob is the honest stand-in.
-- [/] Unify the UI-language store: settable `nt_locale` default vs `nls_locale` registry policy sync only at boot, so a runtime setter diverges the query surfaces. (review §8)
+  - Parked, awaiting-answer Q18: this needs a language-pack or MUI-install subsystem, which has no owning TODO anywhere under `todo/` (searched again 2026-11-07). The shipped fixed blob is the stand-in.
+- [ ] Unify the UI-language store: settable `nt_locale` default vs `nls_locale` registry policy sync only at boot, so a runtime setter diverges the query surfaces. (review §8)
   - **Blocker cleared 2026-08-28, not yet actioned.** The park was "fold to one backing when the SRM SET path un-gates"; `SePrivilegeCheck()` now exists at [`include/kernel/security/privileges.h:160`](../../include/kernel/security/privileges.h) -> XREF: `02-kernel-core/TODO-15 §8` (item: "SePrivilegeCheck & per-privilege enforcement", IO row `[x]`).
   - `NtFlushInstallUILanguage_handler` still hard-returns `STATUS_PRIVILEGE_NOT_HELD` at `src/kernel/nt/nt_misc.c:644` without consulting it, so the SET path is gated by a stub rather than by policy. Re-opened here rather than implemented: unifying two locale backings is section-scale work, not close-out bookkeeping.
 - [/] `GetNLSVersionEx` version via `SystemNlsInformation.NlsVersion` (`nls_get_version()`). DEFERRED: full `NLSVERSIONINFOEX` (DefinedVersion/EffectiveId/GuidCustomVersion) needs the NLS ABI to carry them. (gap-audit)
@@ -274,8 +274,8 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 > **Verified:** 2026-07-04 | commit `196cc251` | 2/8 items ([/] partial) | build OK | tests 335/335 PASS
 > **Accepted:** [H] `ProbeFor*IfUser` skips validation on KernelMode but `ssdt_previous_mode()` resolves via a global (not per-CPU) cursor -- systemic SSDT trust-boundary gap on every user-copying handler -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 121)
-> **Deferred:** [H] `NtGetMUIRegistryInfo` real contract is a Flags-driven null-delimited preferred-UI-language multi-string, not the shipped fixed blob -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §8 (item: "Full `NtGetMUIRegistryInfo`" at line 250)
-> **Deferred:** [M] `nt_locale`/`nls_locale` UI-language stores diverge after a runtime SET -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §8 (item: "Unify the UI-language store" at line 252)
+> **Note:** 2026-11-07, Deferred stamp retired: [H] the real `NtGetMUIRegistryInfo` contract is now `todo/answers.md` Q18.
+> **Note:** 2026-11-07, Deferred stamp retired: [M] UI-language store unification reopened: its blocker cleared 2026-08-28.
 > **Quality reviewed:** 2026-07-04 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 4M+1L fixed, 1H accepted-XREF, 1H+1M deferred | scope: kernel-code-quality
 
 ---
@@ -289,10 +289,10 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 - [x] Environment-variable matching (`reg_lookup_env_var` over HKLM\System\Environment) is case-insensitive via the same registry `reg_stricmp` canonical fold.
 - [/] PE import lookup keeps its ASCII fast path (PE/COFF names are 8-bit ASCII, correct as-is). UTF-16 module-path input DEFERRED: no `LoadLibraryW`/wide-`CreateProcess` caller exists yet. (parity §9)
 - [/] File-name APIs fail closed on non-ASCII/NUL/malformed via the shared `nt_wname_to_ascii` (`NtDeleteFile`/`NtQueryAttributesFile`/`FileRenameInformation`; snapshot-once, no TOCTOU). `NtCreateFile` decode + full UTF-16 ABI DEFERRED. (Codex §9)
-- [/] `NtCreateFile`/`NtOpenFile` name decode: `oa_extract_path` casts UTF-16 `Buffer` to `char*` with NO decode (reads 1 char of a real UTF-16 name); route through `nt_wname_to_ascii`. (parity §9)
-  - Owned by this section's own `Deferred: [H]` stamp below, which XREFs this item; the wider fix is the systemic UTF-16 `OBJECT_ATTRIBUTES` ABI that §9's scope boundary defers to a future owner. No cross-TODO owner exists yet, so this stays parked here.
-- [/] Thread `OBJ_CASE_INSENSITIVE` through `dir_find`/`dir_name_eq` so a caller can request case-SENSITIVE OB lookup (NT default for named objects). (parity §9)
-  - OB is unconditionally case-insensitive today. Owned by this section's own `Deferred: [H]` stamp below, which XREFs this item; it needs an OB lookup-flag plumbing pass that no other TODO claims.
+- [ ] `NtCreateFile`/`NtOpenFile` name decode: `oa_extract_path` casts UTF-16 `Buffer` to `char*` with NO decode (reads 1 char of a real UTF-16 name); route through `nt_wname_to_ascii`. (parity §9)
+  - Reopened 2026-11-07: the decode needs nothing outside: `oa_extract_path` is `nt_syscall.c:75` and `nt_wname_to_ascii` is `nt_file.c:81` (static today). The stamp named this item, and the wider UTF-16 `OBJECT_ATTRIBUTES` ABI is a separate question.
+- [ ] Thread `OBJ_CASE_INSENSITIVE` through `dir_find`/`dir_name_eq` so a caller can request case-SENSITIVE OB lookup (NT default for named objects). (parity §9)
+  - Reopened 2026-11-07: OB is unconditionally case-insensitive (`ob_ns.c:29`). The flag plumbing has no outside blocker and no other TODO claims it.
 - [/] OB/registry full-BMP (U+0100+) case-insensitivity needs a COMPILE-TIME BMP fold table; ASCII+Latin-1 only today. (parity §9)
   - Blocked in-file on [§10](#10-tests-and-compatibility-corpus) (item: "Compatibility corpus (full-BMP)"), which generates the table. The disk-backed `nls_upcase_char` is barred from security compares by the §4 trust decision, so the corpus must produce a COMPILED table, not a loadable one.
 - [x] Commit: landed as `ab27e7c2d` "kernel: nls -- retrofit OB/registry/env consumers onto canonical fold (S9 partial)"; the PE/file half is the parked remainder above.
@@ -312,9 +312,9 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 > **Verified:** 2026-07-04 | commit `ab27e7c2` | 5/10 items ([/] partial) | build OK | nls 345 + ob 429 PASS
 > **Accepted:** [H] file-name handlers cast a1 to OBJECT_ATTRIBUTES* without ProbeForRead (systemic ssdt previous_mode probe-gating gap) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 121)
-> **Deferred:** [H] `NtCreateFile`/`NtOpenFile` `oa_extract_path` casts UTF-16 to char* with no decode -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "`NtCreateFile`/`NtOpenFile` name decode" at line 292)
-> **Deferred:** [H] OB lookup unconditionally case-insensitive; OBJ_CASE_INSENSITIVE unread -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "Thread `OBJ_CASE_INSENSITIVE`" at line 294)
-> **Deferred:** [M] OB/registry full-BMP case-insensitivity foreclosed on the compiled fold -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "OB/registry full-BMP" at line 296)
+> **Note:** 2026-11-07, Deferred stamp retired: [H] `oa_extract_path` decode reopened.
+> **Note:** 2026-11-07, Deferred stamp retired: [H] `OBJ_CASE_INSENSITIVE` plumbing reopened.
+> **Note:** 2026-11-07, Deferred stamp retired: [M] full-BMP folding waits on the §10 corpus, named in its item.
 > **Quality reviewed:** 2026-07-04 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M+1L fixed, 2H+1M deferred, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -325,14 +325,14 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 - [x] Win32 atom APIs via SSDT dispatch (`test_nls_atom_syscall_roundtrip`: NtAddAtom/NtFindAtom/NtDeleteAtom) + pure nt_atom_* helpers + `CompareStringOrdinal` (test_nls.c).
 - [x] `test_nls_fuzz_counted_strings`: deterministic 512-iter LCG fuzz over the validator/decode/RtlEqual/sort-key/normalize/fold helpers, per-target contracts + dst canary (never crash/overread/overrun).
 - [x] Missing-NLS invariant fallback: `test_nls_missing_dir_fallback` (no active table -> compiled fallback); boot degraded-state marker via the smoke path.
-- [/] Compatibility corpus (full-BMP): host tool emits a real invariant.nls (UPCASE + CTYPE1/2/3, §4 format). (design §10)
+- [ ] Compatibility corpus (full-BMP): host tool emits a real invariant.nls (UPCASE + CTYPE1/2/3, §4 format). (design §10)
   - Unblocks three parked items that all name it: §7 full-`FoldStringW`, §8 public `FoldStringW`, and §9 OB/registry full-BMP. Nothing outside this file owns it.
-  - Blocked on host tooling PLUS build wiring, and the build wiring half is operator-gated: emitting the table into the sysroot needs a `Makefile` rule, and the root `Makefile` is receipt surface an unattended run may not edit (CLAUDE.md, "The run captures; the attended session repairs"). The host tool itself is ordinary work.
+  - Reopened 2026-11-07: the host tool is ordinary work, and a compiled table for §9 needs no `Makefile` edit because `C_SRCS` globs `src/kernel` (`Makefile:351`). Only staging `invariant.nls` into the sysroot is operator-gated, and that is the next item.
   - **Generate from the Unicode Character Database, do not hand-build.** `UnicodeData.txt` + `CaseFolding.txt` + `DerivedCoreProperties.txt` are the authoritative corpus for UPCASE and CTYPE1/2/3, published under the permissive Unicode licence and corrected every release. A hand-assembled full-BMP table is wrong for exactly the scripts nobody here tests, and silently so
   - The host tool should record the UCD version it consumed in the emitted `invariant.nls` header, so a stale table is detectable rather than assumed current
   - This is the DATA half of CLAUDE.md "Vendor-First Evaluation": the code shipped in sections 2 and 4 to 9 and stays ours; only the corpus comes from upstream
 - [/] Minimal real-table boot fixture: a valid invariant.nls in sysroot + a boot/test assertion that `nls_init` loaded it (version != fallback), proving the disk-load path and not just the fallback. (design §10)
-  - Strictly downstream of the corpus item above -- there is no real table to place in the sysroot until that host tool exists. Owned by this section's `Deferred: [H]` stamp below, which XREFs this item.
+  - Parked, operator-gated: placing the file in the sysroot needs a `Makefile` rule, which is receipt surface. It also comes after the corpus item above.
 - [x] Tests for `GetStringTypeW` C1/C2/C3 (`nls_char_type`), `FoldStringW`, `LCMapStringEx` sort keys, `GetNLSVersionEx`, `GetCPInfoEx`/`IsDBCSLeadByte` (SBCS), `CompareStringOrdinal`. (gap-audit)
 - [x] `TEST_CAT_NLS` wired: enum (test.h), labels (test_runner.c), `make test-nls` (Makefile), bootx64.c parser (test_suite=nls), run-nls-tests.bat.
 - [x] Commit: landed as `e877efe5f` "kernel: nls -- unit tests + fuzz + TEST_CAT_NLS make target (S10 partial)"; the compatibility corpus is the parked remainder above.
@@ -349,7 +349,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Scope boundary:** the full-BMP `invariant.nls` corpus (host tool + build wiring) and the minimal real-table boot fixture are deferred `[ ]` items; they also own the deferred §7 full-FoldStringW + §9 full-BMP.
 
 > **Verified:** 2026-07-04 | commit `e877efe5` | 6/8 items ([/] partial) | build OK | 96 nls suites PASS
-> **Deferred:** [H] boot still only exercises the fallback NLS table; the real disk-load path is unproven -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §10 (item: "Minimal real-table boot fixture" at line 334)
+> **Note:** 2026-11-07, Deferred stamp retired: [H] the disk-load proof stays parked as operator-gated in its item; the corpus above it is open.
 > **Quality reviewed:** 2026-07-04 | Codex 6x (adversarial, consistency, perf, re-adversarial x3) | 4M+1L fixed | scope: kernel-code-quality (test-only)
 
 ---
