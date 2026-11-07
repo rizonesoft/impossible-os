@@ -6,7 +6,6 @@
 # test suite (scripts/overnight/tests/run-all.sh).
 #
 # Canary tiering (P0.0, 2026-07-12): the ATTENDED-canary requirement now applies
-# only to the FLOW-CRITICAL subset. control-plane-deterministic.txt is a strict
 # ALLOWLIST of files whose failure mode is fully caught by the deterministic
 # suite (metrics / receipts / reporting, all test-backed); a change limited to
 # those is proven by the suite, NOT a watched canary. Everything NOT on that
@@ -17,11 +16,9 @@
 # Consumed by (keep them all reading THIS file, never a private copy):
 #   - .githooks/pre-commit           (commit gate: run the suite -- FULL manifest)
 #   - .githooks/pre-push             (push gate: suite + runner-doctor -- FULL)
-#   - .claude/skills/overnight-sequencer/arm-sequencer.sh  (canary gate -- reads
 #       the FLOW-CRITICAL subset via control-plane-match.sh --flow-critical)
 #   - scripts/lint.sh Check (architectural lint: no bespoke lifecycle code)
 #   - scripts/overnight/control-plane-match.sh  (the shared matcher; --flow-critical
-#       subtracts control-plane-deterministic.txt)
 #
 # Format: one path or path-prefix per line; blank lines and #-comments ignored.
 # A candidate file MATCHES if it equals a line or begins with a line that ends
@@ -43,7 +40,6 @@ scripts/overnight/
 # natural shape for "turn this gate off", would have passed silently. The same
 # shape can raise a timeout, swap a matcher, or reorder a gate chain.
 #
-# Deliberately NOT added to control-plane-deterministic.txt. scripts/audit-hooks.sh
 # already catches an undocumented hook, but "a gate was silently unwired" is
 # precisely the failure an attended canary exists to notice, so this stays
 # flow-critical by the default-conservative rule above.
@@ -91,9 +87,6 @@ scripts/overnight/
 .claude/hooks/build_offload_reminder.py
 .claude/hooks/codex_wait_discipline.py
 .claude/hooks/websearch_offload_gate.py
-scripts/overnight/run-liveness.sh
-scripts/overnight/segment-sync.sh
-scripts/overnight/deadline-check.sh
 scripts/overnight/stale_parks.py
 scripts/overnight/skill_denies.py
 scripts/overnight/supervisor.py

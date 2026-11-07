@@ -332,9 +332,7 @@ def test_a_capture_file_exclusion_is_accepted_and_a_ghost_still_refused():
     contributes zero to both sides, so accepting it subtracts nothing; a path
     that does not exist is still the misspelled case and must keep refusing
     (the refusal-direction control)."""
-    r = _run({"STUB_LINT_EXCLUDED":
-              "todo/overnight-runner-improvements/"
-              "overnight-runner-improvements-v14.md"})
+    r = _run({"STUB_LINT_EXCLUDED": "todo/RUN-ISSUES.md"})
     assert r.returncode == 0, (r.returncode, r.stderr[-400:])
     r = _run({"STUB_LINT_EXCLUDED": "todo/00-infrastructure/TODO-99-ghost.md"})
     assert r.returncode == 7, (r.returncode, r.stderr[-400:])

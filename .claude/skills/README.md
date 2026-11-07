@@ -24,8 +24,7 @@ Every live skill below has a matching row in [`../../CLAUDE.md`](../../CLAUDE.md
 | [`implement-ssdt-range`](implement-ssdt-range/) | Implement + wire a range of SSDT entries, mark Done `[x]`             |
 | [`implement-unit-tests`](implement-unit-tests/) | Ship a TODO's Unit Tests section end-to-end                           |
 | [`complete-todo-file`](complete-todo-file/) | Finalize a TODO OR sweep an active one for loose ends: stale XREFs / drifted counts / unfilled placeholders / `[/]` platform-list narrowing / reversible `[ ]` manual demos. Full mode also dispatches `implement-unit-tests`, runs Verification items, flags manual-only, commits |
-| [`overnight-sequencer`](overnight-sequencer/) | Unattended whole-repo completion driver (headless, armed via `arm-sequencer.sh`): fixpoint loop over every `todo/` file (triage -> validate -> gap-audit -> per-section implement/review -> close -> advance), hard-enforced by `run_phase_guard.py`. Source of truth: `todo/TODO-Claude-Overnight-Runner.md`. |
-| [`close-canary-run`](close-canary-run/) | Post-run close-out: triage and implement what a finished canary filed in the newest `token-saver` + `overnight-runner-improvements` versions, record a verdict for EVERY item (resolved / not-reproduced / carried), then close those versions and open the next. Enforced at arm time -- `arm-sequencer.sh` refuses while the newest capture file is CLOSED. |
+| [`overnight-sequencer`](overnight-sequencer/) | Drives the whole roadmap to completion in one session, started by `scripts/run.sh`. Fixpoint loop over every `todo/` file. |
 | [`overnight-todo-runner`](overnight-todo-runner/) | (Superseded by `overnight-sequencer`; interactive fallback pending retirement after first live sequencer run.) Drive one TODO file to completion interactively; Stop-hook blocks final-answer between section ships |
 
 ### Review + verification
@@ -91,7 +90,7 @@ Subagents in [`../agents/`](../agents/) that the skills above delegate work to. 
 | [spec-research-analyst](../agents/spec-research-analyst.md) | sonnet | `implement-todo-section` step 3 + `debug-session` spec lookups |
 | [web-research-analyst](../agents/web-research-analyst.md) | sonnet | `implement-todo-section` step 3 + `debug-session` toolchain/emulator/CI research |
 | [xref-dependency-mapper](../agents/xref-dependency-mapper.md) | sonnet | `implement-todo-section` step 2 (3+ XREFs) |
-| [overnight-log-explorer](../agents/overnight-log-explorer.md) | sonnet | ad-hoc + overnight-runner-improvements backlog (run-transcript cost/behavior digest) |
+| [overnight-log-explorer](../agents/overnight-log-explorer.md) | sonnet | ad-hoc + `todo/RUN-ISSUES.md` (run-transcript cost/behavior digest) |
 | [todo-validation-mapper](../agents/todo-validation-mapper.md) | sonnet | `validate-todo-file` / `todo-pipeline` legwork + ad-hoc TODO structure checks |
 | [checks-runner](../agents/checks-runner.md) | sonnet (runner) | `implement-todo-section` step 16 + `review-todo-section` build + `complete-todo-file` verification |
 | [git-historian](../agents/git-historian.md) | sonnet (runner) | `debug-session` + `diagnose-serial-log` regression pass |

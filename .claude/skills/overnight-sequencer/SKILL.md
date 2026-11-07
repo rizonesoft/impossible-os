@@ -1,6 +1,6 @@
 ---
 name: overnight-sequencer
-description: The unattended OS-completion driver. Runs the fixpoint loop over every TODO file in `todo/` using the exact per-file pipeline (triage -> validate -> gap-audit -> per-section implement/review -> close -> advance), enforced by run_phase_guard.py so it cannot deviate, ask, or stop before fixpoint. Invoked by the headless overnight run (armed via arm-sequencer.sh); follows todo/TODO-Claude-Overnight-Runner.md as the source of truth.
+description: The unattended OS-completion driver. Runs the fixpoint loop over every TODO file in `todo/` using the exact per-file pipeline (triage -> validate -> gap-audit -> per-section implement/review -> close -> advance), enforced by run_phase_guard.py so it cannot deviate, ask, or stop before fixpoint. Started by `scripts/run.sh`; follows todo/TODO-Claude-Overnight-Runner.md as the source of truth.
 ---
 
 # Overnight Sequencer
@@ -39,13 +39,12 @@ python3 .claude/hooks/run_phase_guard.py <cmd>
                           Pass it explicitly only to override that.
   progress                mark that this pass shipped/cleared something
   next-pass               start the next full sweep (resets progress)
-  fixpoint                run complete -> stops the watchdog
+  fixpoint                run complete -> the session may end, the heartbeat exits
   status                  print the cursor state
   relifecycle <reason>    one-shot Stage 1-2 override for a mature file that
                           grew a genuinely NEW section
-  rollover                verified worker-context rotation after a fully
-                          shipped section (machine-gated; the watchdog then
-                          relaunches a fresh session -- see below)
+  rollover                verified checkpoint after a fully shipped section
+                          (machine-gated; then go straight on -- see below)
 ```
 
 ## Situational awareness (read before acting)
@@ -123,9 +122,8 @@ bash scripts/overnight/wait-for-codex-verdict.sh --max 540 <logFile>   # + tool 
 #    calls; R3 gates only the headless run.)
 ```
 
-- **The session NEVER exits to wait on a review.** The only session exits are a
-  verified `rollover` (watchdog relaunches), external death, or an
-  oracle-verified `fixpoint`. There is no `wait`/`wake` verb and no watcher -- that apparatus deadlocked the runner and was removed.
+- **The session NEVER exits to wait on a review.** The only session exits are
+  external death, which the heartbeat recovers, or an oracle-verified `fixpoint`. There is no `wait`/`wake` verb and no watcher -- that apparatus deadlocked the runner and was removed.
 - **Never pipe a review dispatch through `head` or `tail`, and poll the broker's `logFile` VERBATIM.** the direct dispatch wrapper (`scripts/codex-dispatch`, the non-broker route) streams the review REPORT to stdout (it also tees a copy under `.claude/overnight/reviews/` and prints that path on stderr since 2026-08-29); three post-ship legs piped through `tail -2` on 2026-08-26 kept only their closing bullets and had to be re-run (~11 minutes). And a log path RECONSTRUCTED from a `jobId` (`...-35747.out`) instead of the returned `logFile` (`...-adversarial.out`) does not exist; the waiter now reports such a path as `MISSING` (exit 5), never as hung, so a wrong path is a wrong path and not a re-dispatch.
 - **Do NOT narrate between polls.** One blocking Bash call absorbs the whole
   wait. A second poll call past the 10-min wall is fine; "holding for the
@@ -203,7 +201,7 @@ separate re-poll turns.
 ### 0. Start / resume
 
 - `run_phase_guard.py status`. If `active` is false, `run_phase_guard.py start <today>`.
-  If active, you are resuming after a watchdog relaunch -- continue from the
+  If active, you are resuming after a restart or a compaction -- continue from the
   recorded `phase` + `file`.
 - **Orient DETERMINISTICALLY before spending a model turn on mechanics.** Run
   `python3 scripts/overnight/advance-work.py` once: it returns ONE bounded packet
@@ -258,12 +256,10 @@ needed, records the green stamp, and queries CI directly via `gh run list`
     Attempt `run_phase_guard.py fixpoint`. It is **ORACLE-VERIFIED**: it rebuilds
     the todo-graph and REFUSES (exit 1, run stays active) unless `--next` truly
     returns DONE -- so you cannot finish early. **On success only:** write the
-    final Run Log line, disarm
-    (`bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm`), and
-    final-answer with the summary + human punch-list. **If fixpoint is REFUSED**
+    final Run Log line and final-answer with the summary + human punch-list. **If fixpoint is REFUSED**
     (or this pass made progress): `run_phase_guard.py next-pass` and TRIAGE again
     -- temporal blockers may now be unblocked. You may ONLY finish via a verified
-    fixpoint; never disarm or final-answer otherwise (the Stop hook blocks it).
+    fixpoint; never final-answer otherwise (the Stop hook blocks it).
   - `{"status":"NEEDS_WORK","file":F}` -> `cursor <domain> F`, then **route by
     the `stages_1_2_done` field IN THE SAME JSON -- never re-run mature
     lifecycle stages** (the guard hard-blocks Stage 1-2 skills on a file that
@@ -653,18 +649,11 @@ record. If a TODO genuinely needs 30 more sections, it gets 30: section count is
 not the metric, and a deep chain that CAN name its user impact simply writes the
 waiver and continues.
 
-## Self-improvement filing (standing rule -- record, then continue)
+## Run problems (fix them, or record them and continue)
 
-The run is expected to be self-observing: every runner defect, cost pattern, or improvement it cannot apply unattended is FILED in the same turn it is observed, then the run continues. A finding carried in-context to "report later" dies with the segment. Two capture surfaces, both OUTSIDE the traversal (nothing filed there is implemented by the run):
+A failure stops one item, never the run. When the machinery itself gets in the way (a gate misfires, something wedges, a flow wastes hours), fix it now, with a test, in the layer that owns it: you may edit `.claude/hooks/**`, `.claude/skills/**`, `scripts/overnight/**`, `.githooks/**`, the build files, and `.claude/gate-modes.json`, and setting a process gate that is wedging you to `log` is a legitimate first move. The runner suite still gates those commits, and the heartbeat's supervisor reverts machinery commits if nothing else gets produced after them. Frozen, because they recover from everything else: `scripts/run.sh`, `run-common.sh`, `heartbeat.sh`, `supervisor.py`, `gate.py`, `run_phase_guard.py`, `.claude/settings.json`.
 
-- **Runner/flow findings** (gate misfires, wedges, evasions you were tempted into, flow inefficiency, machinery correctness) -> the NEWEST `todo/overnight-runner-improvements/overnight-runner-improvements-vNN.md` **This surface also takes REASONING findings, and always did -- they were just never asked for.** "I should have thought about this differently" is a first-class item: a conclusion you later found unsupported, an approach committed to too early, an ambiguity you resolved silently that deserved a question, a shortcut you ALMOST took and what made it tempting. So is a workaround you used to route around a gate (the route is the finding), and anything you deliberately did NOT do (silence reads as "not encountered", which is how a known gap goes invisible). Two disciplines make any of these actionable: state what you OBSERVED separately from what you INFERRED and mark which you actually tested; and verify the PROBE before trusting a result -- include a control that must fire, and say that it did. The capture file's "Reasoning and autonomy findings" heading lists the full set with the incident behind each one.
-- **Cost/token findings** (measured waste, context growth, offload misses; the >= 2% bar applies -- below it, record as excluded, not as work) -> the NEWEST `todo/token-saver/token-saver-vNN.md`.
-
-What may NOT be edited unattended -- file it instead: `.claude/hooks/**`, `.claude/skills/**`, `scripts/overnight/**`, `.githooks/**`, `.claude/settings.json` (the control plane), and the RECEIPT SURFACE -- `Makefile*`, `scripts/build.sh`, the ABI generator -- which `receipt_surface_guard.py` enforces with a BLOCK that names this rule. Ordinary work (src/, user/, tests, docs, TODO files) is fixed in place as normal; self-correction on ordinary code is the job, not a finding.
-
-House style for a filed item: what was observed live (timestamps, file:line), the mechanism confirmed at source, measured cost or risk; a projection is not a finding; if the fix is obvious, describe it -- do not apply it. Lead <= 250 chars, sub-bullet bodies <= 1,000.
-
-**Never file a bare `- [ ]` into a section that already carries its Verified + Quality-reviewed stamps** -- the triage oracle never reads a stamped section's body, so the item is invisible to every later pass and `scripts/lint.sh` Check 23 will ERROR your commit. A follow-up on a stamped section is filed as `- [/]` with its owner/blocker named in the text, into a still-open NEEDS_WORK section, or as a NEW section (next free number, body LAST) with a reciprocal XREF.
+If you cannot fix it now, add it to `todo/RUN-ISSUES.md` with what you observed, and continue with other work. Delete an entry when it is fixed.
 
 ## Working-discipline lessons (promoted from the capture files, 2026-08-29)
 
@@ -684,11 +673,11 @@ Each of these was paid for at least once by a run. They are stated as rules beca
 
 ## Hard rules (the guard enforces these; do not fight them)
 
-- **Never call `AskUserQuestion`.** Unattended = decide with the conservative
-  choice + log the assumption, or defer. The guard blocks it.
+- **Never call `AskUserQuestion`.** Decide, and record the choice and its reversal
+  cost in `todo/answers.md`. The operator can talk to this session directly.
 - **Never stop before FIXPOINT.** The work unit is the entire queue. The guard
-  blocks Stop until you reach fixpoint. The watchdog only relaunches after real
-  death (crash / usage limit); a voluntary mid-queue exit defeats the runner.
+  blocks Stop until you reach fixpoint. The heartbeat restarts the session only
+  after real death.
 - **Keep the phase in sync.** If the guard blocks a skill as out-of-sequence,
   you are in the wrong phase -- set the correct phase, do not try to bypass.
 - **No ChromeMCP, ever.** Browser gates are satisfied by `scripts/test-smoke.sh`

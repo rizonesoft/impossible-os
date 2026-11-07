@@ -28,8 +28,7 @@ mkdir -p "$(dirname "$MARKER")"
   echo "- level: $LEVEL"
   echo "- message: $MESSAGE"
   echo
-  echo "See .claude/overnight/run-status.md for the queue state and"
-  echo "todo/TODO-Claude-Overnight-Runner.md Run Log for the punch-list."
+  echo "See .claude/overnight/run-health.json and \`bash scripts/run.sh status\`."
 } > "$MARKER"
 echo "notify[$LEVEL]: $MESSAGE (marker: $MARKER)"
 

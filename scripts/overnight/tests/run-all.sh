@@ -9,7 +9,7 @@
 #
 #     bash scripts/overnight/tests/run-all.sh
 #
-# It runs every test_*.py in this dir plus the sibling test-launch.sh DRYRUN
+# It runs every test_*.py in this dir 
 # smoke, prints one line per test, and exits nonzero if any test fails. Stdlib
 # + bash only; no pytest dependency (matches the plain-assert house style).
 set -uo pipefail
@@ -109,9 +109,6 @@ while IFS= read -r t; do
 done < <(ls -1 "$HERE"/test_*.py 2>/dev/null)
 
 # The launcher DRYRUN + flock smoke (bash, not python).
-if [ -f "$HERE/../test-launch.sh" ]; then
-  run_one "test-launch.sh" bash "$HERE/../test-launch.sh"
-fi
 
 echo "== $PASS passed, $FAIL failed =="
 [ "$FAIL" -eq 0 ]

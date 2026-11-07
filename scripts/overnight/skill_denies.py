@@ -7,9 +7,8 @@ built-in /review. The matcher reads `name *` as a PREFIX, so it also refused
 segment reported a clean checkpoint. Measured by a fresh-session probe: with the
 rule, `Skill execution blocked by permission rules`; without it, the skill loads.
 
-A deny is the operator's to change, so nothing here edits one. The check runs at
-arm time (refuse) and at segment end (trip the breaker), because no amount of
-relaunching gets past a permission rule.
+A deny is the operator's to change, so nothing here edits one. `run.sh start` refuses
+on it, because no amount of retrying gets past a permission rule.
 
 Usage: skill_denies.py [PROJECT_DIR]   exit 0 clear, 1 a pipeline skill is denied.
 """

@@ -278,8 +278,7 @@ def main() -> int:
         "promptly, and leave no dirt behind -- uncommitted dirt blocks the "
         "run's next ship rollover.\n"
         "  A change you cannot make safely goes into the newest "
-        "todo/overnight-runner-improvements/ (flow, gates) or "
-        "todo/token-saver/ (cost) file instead.\n"
+        "todo/RUN-ISSUES.md instead.\n"
         "  Override for this call: ATTENDED_REPAIR_OVERRIDE=1 <command>\n"
     )
     return 2

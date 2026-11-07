@@ -78,13 +78,3 @@ All prior items in this section were completed on 2026-07-16 (runner disarmed):
   `core_total_lines` by `.githooks/post-commit` into a `COUNT-BADGE` marker
   block, amended alongside COUNT.md in one commit. Committed `fa6e7d0a`.
 
-### Re-record the attended canary before the next unattended arm
-
-The `_is_self_teardown` fix touched `.claude/hooks/run_phase_guard.py`, a
-FLOW-CRITICAL control-plane file. Per guardrail Layer 4, the next unattended arm
-will REFUSE until the canary is re-recorded against the new HEAD (or overridden
-with `--force`).
-
-- [ ] Run an attended session; watch >=1 section ship + a rollover -> relaunch.
-- [ ] `bash .claude/skills/overnight-sequencer/arm-sequencer.sh --record-canary "<note>"`
-- [ ] Then arm normally. (Or, accepting the risk, arm now with `--force`.)

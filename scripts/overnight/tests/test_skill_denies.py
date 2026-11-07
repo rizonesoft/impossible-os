@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A deny that refuses a pipeline skill stops the arm and trips the breaker."""
+"""A deny that refuses a pipeline skill stops `run.sh start`."""
 import json
 import os
 import pathlib
@@ -11,7 +11,6 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 import skill_denies as sd  # noqa: E402
 
-OUTCOME = HERE.parent / "run-outcome.py"
 GUARD = HERE.parent.parent.parent / ".claude/hooks/run_phase_guard.py"
 
 
@@ -61,53 +60,11 @@ def test_cli_refuses_the_old_rule_and_passes_the_narrowed_set():
         assert r.returncode == 0, r
 
 
-def _outcome(project, home, rolling):
-    state = project / ".claude/state"
-    state.mkdir(parents=True, exist_ok=True)
-    (state / "sequencer-run.json").write_text(
-        json.dumps({"rollover": {"pending": rolling}}))
-    r = subprocess.run(
-        [sys.executable, str(OUTCOME), str(project), "--exit", "0",
-         "--start-head", "aaa", "--end-head", "bbb", "--run-secs", "2000",
-         "--now", "1000"],
-        env={**os.environ, "HOME": str(home)}, capture_output=True, text=True)
-    return json.loads(r.stdout)
-
-
-def test_breaker_trips_on_a_denied_pipeline_skill_even_at_a_rollover():
-    with tempfile.TemporaryDirectory() as d:
-        home, project = _fixture(d, ["Skill(review *)"])
-        for rolling in (True, False):
-            got = _outcome(project, home, rolling)
-            assert got["breaker"] is True and got["skill_denied"], got
-            assert got["outcome"] == "skill-denied", got
-            assert (project / ".claude/overnight/watchdog-backoff-until").exists()
-
-
-def test_breaker_stays_quiet_without_the_deny():
-    with tempfile.TemporaryDirectory() as d:
-        home, project = _fixture(d, ["Skill(review)"])
-        assert _outcome(project, home, True)["outcome"] == "checkpoint"
-        assert _outcome(project, home, False)["outcome"] == "productive"
-
-
-def test_arm_refuses_before_it_touches_anything_and_force_is_no_way_past():
-    text = (HERE.parent.parent.parent
-            / ".claude/skills/overnight-sequencer/arm-sequencer.sh").read_text()
-    check = text.index('skill_denies.py" "$REPO_ROOT"')
-    assert "exit 1" in text[check:check + 500]
-    assert "ARM_FORCE" not in text[check:check + 500]
-    assert check < text.index("reset-breaker.sh")
-
-
-def test_status_page_is_refreshed_at_each_stop_path():
-    launch = (HERE.parent / "overnight-launch.sh").read_text()
-    after = launch[launch.index('echo "run outcome:'):]
-    assert "run-status.py" in after[:600]
-    arm = (HERE.parent.parent.parent
-           / ".claude/skills/overnight-sequencer/arm-sequencer.sh").read_text()
-    disarm = arm[arm.index('if [ "${1:-}" = "--disarm" ]'):]
-    assert "run-status.py" in disarm[:1200]
+def test_run_refuses_before_starting():
+    text = (HERE.parents[1] / "run.sh").read_text()
+    check = text.index("skill_denies.py")
+    assert "exit 1" in text[check:check + 300]
+    assert check < text.index("run_launch resume")
 
 
 if __name__ == "__main__":

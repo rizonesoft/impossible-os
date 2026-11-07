@@ -2,7 +2,7 @@
 """Block the unguarded plugin overnight skills in impossible-os.
 
 This repo's overnight runs MUST be armed via
-`.claude/skills/overnight-sequencer/arm-sequencer.sh`, which engages
+`scripts/run.sh`, which engages
 `run_phase_guard.py` plus the sequencer pipeline (triage -> validate ->
 gap-audit -> per-section implement/review -> close -> advance) and defaults
 to ChromeMCP-off + watchdog `*:0/10`.
@@ -43,9 +43,7 @@ def main() -> int:
             f"[overnight-plugin-block] '{skill}' is the UNGUARDED plugin path; "
             "do not arm impossible-os overnight runs with it.\n"
             "Use the repo-canonical, run_phase_guard-protected launcher:\n"
-            "  bash .claude/skills/overnight-sequencer/arm-sequencer.sh             # kernel run (ChromeMCP off)\n"
-            "  bash .claude/skills/overnight-sequencer/arm-sequencer.sh --with-browser   # gh-pages run\n"
-            "  bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm\n"
+            "  bash scripts/run.sh start\n"
             "The plugin path arms no guard, so the headless run dies at the first "
             "background-review wait and thrashes on every watchdog relaunch.\n"
             "Deliberate override: OVERNIGHT_PLUGIN_SKILL_OVERRIDE=1\n"

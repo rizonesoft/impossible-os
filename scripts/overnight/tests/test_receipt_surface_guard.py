@@ -75,7 +75,7 @@ def test_gate_is_unattended_only_and_fails_open():
     # a refusal of the work.
     rc, err = _run({"OVERNIGHT_SEQUENCER_RUN": "1"}, payload)
     assert rc == 2, err
-    assert "file it" in err.lower() and "overnight-runner-improvements-vNN" in err
+    assert "file it" in err.lower() and "RUN-ISSUES" in err
     # Documented opt-out.
     rc, _ = _run({"OVERNIGHT_SEQUENCER_RUN": "1",
                   "RECEIPT_SURFACE_OVERRIDE": "1"}, payload)

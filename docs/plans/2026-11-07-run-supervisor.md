@@ -43,18 +43,16 @@ Design: [docs/specs/2026-11-07-run-supervisor-design.md](../specs/2026-11-07-run
 
 ## Stage 6: Remove what is left
 
-- Delete the systemd machinery: `arm-sequencer.sh`, `overnight-arm.sh`, `overnight-launch.sh`, `stream-report.py`, `run-outcome.py`, `deadline-check.sh`, `noship-update.sh`, `reset-breaker.sh`, `token-probe.sh`, `run-liveness.sh`, `attended_repair_guard` and their tests.
-- Delete the rotation code: the `rollover-wip` verb and `section-checkpoint.py`, if nothing else needs them.
-- Rewrite the CLAUDE.md sections on hooks, attended repair and the shared tree. With one session there is no shared tree.
-- Replace the capture directories with `todo/RUN-ISSUES.md`, moving the open v23 items, and repoint the 59 referencing files and 23 TODO files.
-- Delete the `close-canary-run` skill, `capture-open-findings.py`, the control-plane allowlists and the canary doctrine.
-- Check the 121 unchecked lines in old capture versions for live work before deleting them.
-- Done when: `grep -ril canary` finds only git history and this plan's own record, and lint, the runner suite and the tooling pack are green.
+- Deleted the systemd machinery: `arm-sequencer.sh`, `overnight-arm.sh`, `overnight-launch.sh`, `run-outcome.py`, `deadline-check.sh`, `noship-update.sh`, `reset-breaker.sh`, `token-probe.sh`, `run-liveness.sh`, `pre-arm-check.sh`, `run-status.py`, `overnight-monitor.sh`, `segment-sync.sh`, `lifecycle-unblocked.sh`, `browser-lane-enabled.sh`, `parse-usage-limit.py` and their tests.
+- Replaced the capture directories with `todo/RUN-ISSUES.md`. The 46 versions stay in git history. Of their unchecked lines, 46 had no verdict and no later re-filing. They were mostly complaints about gates this work removes, or reasoning notes. The two still live, ABI arg counts and the release flavor, moved across.
+- Deleted the `close-canary-run` skill, `capture-open-findings.py` and the canary allowlist, and rewrote the CLAUDE.md section as The Run.
+- `attended_repair_guard` stays, unlike the first draft of this plan: it is a safety check, and a second session can still open beside a run.
+- Dated `canary` mentions in comments stay as history. Only operative references went. The `rollover-wip` verb, `stream-report.py` and the metrics scripts stay until stage 7 shows whether anything still needs them.
 
 ## Stage 7: Start a run and watch it
 
 - `bash scripts/run.sh start`, then `attach`. Watch sections shipped and gate warnings, and talk to it directly.
-- After a watched run with no sign a `log` gate was needed, delete those gates' code. That is the point at which the 70,000 lines actually shrink.
+- After a watched run with no sign a `log` gate was needed, delete those gates' code. Also delete the rotation and report leftovers named in stage 6. That is the point at which most of the 70,000 lines actually go.
 
 ## Decisions
 

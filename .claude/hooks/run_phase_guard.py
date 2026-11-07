@@ -632,13 +632,9 @@ def evaluate(tool_name, tool_input, state, armed=False, headless=False,
         _cp = _control_plane_path(_target)
         if _cp:
             return False, (
-                f"[SEQ-CONTROL-PLANE] blocked: `{_cp}` is control plane, which "
-                f"the unattended run may not edit -- a bad gate change with "
-                f"nobody watching is unrecoverable. FILE the finding in the "
-                f"newest todo/overnight-runner-improvements/ version (or "
-                f"todo/token-saver/ for cost) and CONTINUE; an attended session "
-                f"turns it into a fix. Ordinary work -- src/, user/, tests, "
-                f"docs, todo/ -- is unaffected. "
+                f"[SEQ-CONTROL-PLANE] blocked: `{_cp}` is frozen, because it "
+                f"recovers from every other mistake. Add the problem to "
+                f"todo/RUN-ISSUES.md and continue. "
                 f"Details: docs/infrastructure/hook-codes.md#seq-control-plane")
 
     # The unattended run must never tear itself down. Disarm/clear/stop is a
@@ -646,7 +642,7 @@ def evaluate(tool_name, tool_input, state, armed=False, headless=False,
     # OVERNIGHT_SEQUENCER_RUN discriminator is absent and this guard is inert).
     if tool_name == "Bash" and _is_self_teardown(tool_input.get("command", "")):
         return False, (
-            "[SEQ-TEARDOWN] blocked: disarm/clear/stop is human-only. Keep "
+            "[SEQ-TEARDOWN] blocked: stopping the run is the operator's. Keep "
             "going -- continue the pipeline. "
             "Details: docs/infrastructure/hook-codes.md#seq-teardown")
 

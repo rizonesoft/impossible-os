@@ -10,7 +10,7 @@ Codes are stable -- docs and transcripts reference them.
 ## SEQ-* (run_phase_guard.py)
 
 ### SEQ-CONTROL-PLANE
-The unattended run may not EDIT its own control plane: `.claude/hooks/**`, `.claude/skills/**`, `scripts/overnight/**`, `.githooks/**`, `.claude/settings.json`. A bad gate change with nobody watching is unrecoverable -- the gate that would have caught it is the thing being changed. File the finding in the newest `todo/overnight-runner-improvements/` version (or `todo/token-saver/` for cost) and CONTINUE; an attended session turns filings into fixes.
+The run may edit its own machinery, with a test, since 2026-11-07. Only the frozen files listed in `.claude/hooks/gate.py` stay refused, because they recover from every other mistake. Add the problem to `todo/RUN-ISSUES.md` and continue. In `log` mode through `.claude/gate-modes.json`, this code records the attempt instead.
 
 Added 2026-08-07 because the rule had been **documentation only**. It is stated in the sequencer skill, in the doctrine file and in every capture file's header, and nothing enforced it -- an `Edit` on `scripts/overnight/decision-registry.py` returned rc 0 from every guard. The run edited that file for ~90 lines, noticed on its own, reverted, and filed the gap. Prose is not a gate.
 
@@ -22,9 +22,9 @@ Paths are compared repo-relative after resolution, so an absolute path, a `./` p
 The headless unattended run may not stop voluntarily. The work unit is the
 entire TODO queue; a blocker, hard failure, or operator-reserved decision is
 DEFERRED (`[/]` + Deferred stamp + XREF) and you ADVANCE. The only endings:
-oracle-verified `run_phase_guard.py fixpoint`, the operator's `--disarm`, or a
+oracle-verified `run_phase_guard.py fixpoint`, the operator's `run.sh stop`, or a
 verified `rollover`. Reviews are polled IN-SESSION (a blocking Bash `sleep`
-loop, ~0 tokens) -- the runner never exits to wait. The watchdog relaunches
+loop, ~0 tokens) -- the runner never exits to wait. The heartbeat restarts
 any death, so a voluntary exit accomplishes nothing. Remediation: re-invoke
 `Skill(overnight-sequencer)`, run `run_phase_guard.py status`, and continue
 from the recorded phase. Doctrine: todo/TODO-Claude-Overnight-Runner.md
@@ -41,7 +41,7 @@ default -> defer. Doctrine: "Session-exit policy" tier list.
 ### SEQ-TEARDOWN
 Self-teardown blocked: the unattended run cannot disarm, clear guard state,
 fabricate the fixpoint sentinel, or stop its own services. Disarm is
-human-only: `bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm`
+human-only: `bash scripts/run.sh stop`
 from an interactive session. Keep going.
 
 ### SEQ-PHASE
