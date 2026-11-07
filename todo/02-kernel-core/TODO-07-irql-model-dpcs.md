@@ -54,19 +54,19 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | --- | :---: | ------------------------------------------------------ | ----------- | :----: |
 | 💎  |   1   | `KIRQL` type, constants, and core contract             | --          |  [x]   |
 | 💎  |   2   | Per-CPU IRQL tracking and transition primitives        | §1          |  [x]   |
-| 💎  |   3   | Interrupt entry/exit IRQL integration                  | §2          |  [/]   |
+| 💎  |   3   | Interrupt entry/exit IRQL integration                  | §2          |  [ ]   |
 | 💎  |   4   | DPC object type and per-CPU queue                      | §2          |  [x]   |
 | 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                     | §3, §4      |  [x]   |
-| 💎  |   6   | Timer/APIC scheduling path for DPC dispatch            | §5          |  [/]   |
+| 💎  |   6   | Timer/APIC scheduling path for DPC dispatch            | §5          |  [ ]   |
 | 💎  |   7   | DPC targeting, importance, and flush                   | §4, §5      |  [x]   |
 | 💎  |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant)            | §5          |  [x]   |
-| 💎  |   9   | Timer-DPC association                                  | §4, §6      |  [/]   |
-| 💎  |  10   | Driver migration and workqueue contract split          | §5          |  [/]   |
-| 💎  |  11   | APC object type and per-thread queues                  | §1, §2      |  [/]   |
-| 💎  |  12   | APC delivery mechanism (KiDeliverApc)                  | §11         |  [/]   |
-| ⭐  |  13   | IRQL violation traps and structured telemetry          | §2, §3, §5  |  [/]   |
-| ⭐  |  14   | Budgeted DPC/APC fairness and starvation watchdog      | §5, §6, §12 |  [/]   |
-| 💎  |  15   | Threaded DPC list synchronization                      | §8          |  [/]   |
+| 💎  |   9   | Timer-DPC association                                  | §4, §6      |  [ ]   |
+| 💎  |  10   | Driver migration and workqueue contract split          | §5          |  [ ]   |
+| 💎  |  11   | APC object type and per-thread queues                  | §1, §2      |  [ ]   |
+| 💎  |  12   | APC delivery mechanism (KiDeliverApc)                  | §11         |  [ ]   |
+| ⭐  |  13   | IRQL violation traps and structured telemetry          | §2, §3, §5  |  [ ]   |
+| ⭐  |  14   | Budgeted DPC/APC fairness and starvation watchdog      | §5, §6, §12 |  [ ]   |
+| 💎  |  15   | Threaded DPC list synchronization                      | §8          |  [ ]   |
 | 💎  |  16   | KeFlushQueuedDpcs completion barrier (normal+threaded) | §7, §8, §15 |  [x]   |
 | 💎  |  17   | Per-CPU threaded DPC worker affinity                   | §8, §15     |  [/]   |
 | ⭐  |  18   | System worker thread pool (long-period periodic)       | §8          |  [/]   |
@@ -133,7 +133,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 - [x] Ensure nested interrupts preserve highest-active IRQL correctly and unwind in strict LIFO order.
 - [x] Keep end-of-interrupt signaling (LAPIC/PIC) ordered correctly relative to IRQL lowering.
 - [x] Add debug-only assertions that ISR code paths do not attempt blocking operations at DIRQL.
-- [/] Report system vectors at named IRQLs: LAPIC timer at `CLOCK_LEVEL`, IPI at `IPI_LEVEL` (today `vector_to_irql` reads timer DISPATCH, IPI HIGH). NT model: enter at CLOCK then lower to DISPATCH before §6 DPC drain (Codex §1 M)
+- [ ] Report system vectors at named IRQLs: LAPIC timer at `CLOCK_LEVEL`, IPI at `IPI_LEVEL` (today `vector_to_irql` reads timer DISPATCH, IPI HIGH). NT model: enter at CLOCK then lower to DISPATCH before §6 DPC drain (Codex §1 M)
   - Validation is operator-gated: bare metal.
 - [/] Expose the current thread's active ring-3 `interrupt_frame` (user RSP/RBP/RIP) from kernel mode so `RtlWalkFrameChain(flags&1)` can walk the user stack -> XREF: `TODO-23 §7` (item: "`RtlWalkFrameChain` `flags & 1` user walk returns 0")
 - [x] Commit: `"kernel: irq -- wire IRQL raises/lowers into interrupt path"`
@@ -147,7 +147,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > - Software-only IRQL tracking in the ISR path (no LAPIC TPR write, per the §3 Note); the LAPIC ISR/PPR masks lower-priority vectors during delivery.
 > - One open refinement is deferred (see Deferred): reporting the LAPIC timer at `CLOCK_LEVEL` and IPIs at `IPI_LEVEL` instead of the `vector_to_irql`-derived DISPATCH/HIGH.
 > - Canonical: `src/kernel/idt.c` (`isr_handler` IRQL entry/exit).
-> **Deferred:** [M] `isr_handler` reports the LAPIC timer at DISPATCH and IPIs at HIGH, not the named `CLOCK_LEVEL`/`IPI_LEVEL` (reason: needs the timer handler to enter CLOCK then lower to DISPATCH before the §6 DPC drain to keep DPCs at DISPATCH; cross-file timer-path change needing bare-metal validation; non-functional-today) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §3 (item: "Report system vectors at named IRQLs" at line 136)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] `isr_handler` reports the LAPIC timer at DISPATCH and IPIs at HIGH, not the named `CLOCK_LEVEL`/`IPI_LEVEL` (reason: needs the timer handler to enter CLOCK then lower to DISPATCH before the §6 DPC drain to keep DPCs at DISPATCH; cross-file timer-path change needing bare-metal validation; non-functional-today). The stamp named this section's own item with no outside blocker; "latent" and "needs X" describe the work.
 
 ---
 
@@ -210,7 +210,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 - [x] Coalescing: `dpc_drain_current_cpu()` returns immediately if queue head is NULL (fast skip)
 - [x] No recursion: DPC callbacks can re-queue but the drain loop is bounded by `DPC_BATCH_LIMIT=32`
 - [x] Commit: `"kernel: timer -- schedule and coalesce DPC dispatch"`
-- [/] DPC runtime budget in the timer ISR drain: `DPC_BATCH_LIMIT=32` caps the COUNT but not per-callback runtime, so one long DPC stalls the tick
+- [ ] DPC runtime budget in the timer ISR drain: `DPC_BATCH_LIMIT=32` caps the COUNT but not per-callback runtime, so one long DPC stalls the tick
   - Fix is either a time budget (a `mono_ns` cap per drain) or moving arbitrary-callback execution out of hard IRQ context to a DISPATCH-level dispatch point.
   - Filed from `01-boot-platform/TODO-11` §7 perf review; the code is `dpc.c` `drain_queue` and `lapic.c` `lapic_timer_handler`.
 
@@ -224,7 +224,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > - The drain machinery (`drain_queue`, fast-skip-on-empty, per-CPU locking) was verified in the §5 review; this section is the wiring into the timer ISR return path.
 > - One open item is deferred (see Deferred): a per-callback runtime budget for the timer-ISR drain (count is capped, runtime is not).
 > - Canonical: `src/kernel/drivers/lapic.c` (`lapic_timer_handler`), `src/kernel/drivers/pit.c` (`pit_irq_handler`).
-> **Deferred:** [M] timer-ISR DPC drain caps the COUNT (`DPC_BATCH_LIMIT`=32) but not per-callback runtime -- a single long DPC stalls the tick; needs a mono_ns time budget per drain or moving arbitrary-callback execution out of hard-IRQ (detection relates to the §14 watchdog) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §6 (item: "DPC runtime budget in the timer ISR drain" at line 213)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] timer-ISR DPC drain caps the COUNT (`DPC_BATCH_LIMIT`=32) but not per-callback runtime -- a single long DPC stalls the tick; needs a mono_ns time budget per drain or moving arbitrary-callback execution out of hard-IRQ (detection relates to the §14 watchdog). The stamp named this section's own item with no outside blocker; "latent" and "needs X" describe the work.
 
 ---
 
@@ -300,7 +300,7 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 - [x] `KeSetTimer(timer, DueTicks, Dpc)` single-shot wrapper (`PeriodTicks = 0`).
 - [x] Periodic timers re-arm in-list to the next boundary past `now` in O(1) (overflow-guarded, fires once per pass) and re-queue their DPC each period until cancelled.
 - [x] `KeCancelTimer` -- fully locked on the service list, unlinks if armed, returns prior armed state; does NOT await an already-queued DPC (expiry queues the DPC + clears `active` atomically under the lock).
-- [/] Perf-scalability (deferred): replace the O(active-timers) per-tick ISR scan with an ordered expiry structure (timer wheel/min-heap); the empty-list lock-free fast path already covers the no-timer case. Part of the full KTIMER upgrade.
+- [ ] Perf-scalability: replace the O(active-timers) per-tick ISR scan with an ordered expiry structure (timer wheel/min-heap); the empty-list lock-free fast path already covers the no-timer case. Part of the full KTIMER upgrade.
 - [x] Commit: `"kernel: timer -- add timer-DPC association for auto-queued deferred work"`
 
 **Test checkpoint:** `KeSetTimerEx` with 50ms period + DPC → DPC fires 3 times in 150ms window (check counter in callback). `KeCancelTimer` stops further DPC queueing. Timer without DPC still fires normally (NULL dpc field). Verify periodic re-queue doesn't leak DPC nodes.
@@ -315,7 +315,7 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 > - Canonical doc: `include/kernel/sched/ktimer.h` (ownership + lifetime + service-CPU contract).
 > - Scope: §9 owns the minimal prereq; full KTIMER (FILETIME/QPC/coalescing) -> TODO-08; the DPC in-flight completion barrier shipped in §16 (timer free-after-cancel is now safe after `KeFlushQueuedDpcs`); ordered O(1) expiry structure -> the §9 perf-scalability item above.
 > **Verified:** 2026-06-26 | commit `b026cf74` | 6/7 items | build OK | sched 94 PASS | smoke PASS (2.56s)
-> **Deferred:** [H] timer ISR does an O(active-timers) full-list scan per tick under the ktimer lock; needs an ordered expiry structure (timer wheel/min-heap) (reason: empty-list fast path covers the common case; ordered structure is full-KTIMER work) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §9 (item: "Perf-scalability (deferred): replace the O(active-timers) per-tick ISR scan" at line 303)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] timer ISR does an O(active-timers) full-list scan per tick under the ktimer lock; needs an ordered expiry structure (timer wheel/min-heap) (reason: empty-list fast path covers the common case; ordered structure is full-KTIMER work). The stamp named this section's own item with no outside blocker; "latent" and "needs X" describe the work.
 > **Quality reviewed:** 2026-06-26 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 2H+3L fixed, 1H accepted-XREF, 1H deferred | scope: kernel-code-quality
 
 ---
@@ -329,7 +329,7 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 - [x] `KINTERRUPT` + `KeSynchronizeExecution` in `sched/kinterrupt.{c,h}`, irq.c-integrated: the dispatcher runs the bound ISR under `ki->lock`+`active_cpu`; KeSync raises to SynchronizeIrql + takes the lock; self-ISR rejected (lock-free counter).
   - This item owns the sync-object + SynchronizeIrql contract; GSI/vector routing + affinity already shipped in `01-boot-platform/TODO-11 §5`. → XREF: 01-boot-platform/TODO-11 §5 (irq_request_gsi)
 - [x] Recorded the RTL8139 RX DPC-first follow-up in `04-drivers-hardware/TODO-14 §7` (after §12 drain-on-lower).
-- [/] KINTERRUPT lifetime hardening (deferred, latent): full mask+drain teardown barrier for live-interrupt hot-unplug + unified `irq_chain_lock` serialization of exclusive register/unregister vs bind. No driver binds a KINTERRUPT yet.
+- [ ] KINTERRUPT lifetime hardening: full mask+drain teardown barrier for live-interrupt hot-unplug + unified `irq_chain_lock` serialization of exclusive register/unregister vs bind. No driver binds a KINTERRUPT yet.
 - [x] Commit: `"drivers: irq -- migrate ISR deferred path to DPC model"`
 
 **Test checkpoint:** Migrated driver ISR path: interrupt fires → DPC queued → callback processes data at `DISPATCH_LEVEL`. Workqueue callback runs at `PASSIVE_LEVEL` for heavy work. `workqueue.h` comments updated. Driver smoke test under continuous interrupt load (network RX flood or disk I/O burst) remains stable. Serial: no DPC starvation warnings after 60s load test.
@@ -344,7 +344,7 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 > - Scope: §10 owns the per-interrupt SynchronizeIrql + lock contract; GSI/vector routing -> `01-boot-platform/TODO-11 §5`; full RX DPC-first -> `04-drivers-hardware/TODO-14 §7`; KINTERRUPT full teardown barrier -> the deferred item above.
 > **Verified:** 2026-06-26 | commit `4a7bbd72` | 7/8 items | build OK | sched 110 PASS | smoke PASS (2.8s)
 > **Accepted:** [M] RTL8139 RX still kmallocs a work item per packet in the ISR (full preallocated-ring RX DPC-first) (reason: scope -- RX migration deferred) -> XREF: 04-drivers-hardware/TODO-14-network-drivers.md §7 (item: "RTL8139 RX DPC-first" at line 175)
-> **Deferred:** [H] KINTERRUPT lifetime hardening -- full teardown barrier for live-interrupt hot-unplug + unified register/unregister/bind serialization (reason: infra; latent, no driver binds) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §10 (item: "KINTERRUPT lifetime hardening" at line 332)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] KINTERRUPT lifetime hardening -- full teardown barrier for live-interrupt hot-unplug + unified register/unregister/bind serialization (reason: infra; latent, no driver binds). The stamp named this section's own item with no outside blocker; "latent" and "needs X" describe the work.
 > **Quality reviewed:** 2026-06-26 | Codex 6x (adversarial, consistency, perf, re-adversarial x3) | 3H+2M+2L fixed, 1M accepted-XREF, 1H deferred | scope: kernel-code-quality
 
 ---
@@ -364,8 +364,8 @@ Asynchronous Procedure Calls (APCs) are the per-thread deferred work mechanism a
   - → XREF consumers: `02-kernel-core/TODO-06 §8` (EX_PUSH_LOCK acquire contract) + §9 (guarded mutex) -- now UNBLOCKED.
 - [x] APC-disabled query: `KeAreApcsDisabled()` (critical OR guarded) + `KeAreAllApcsDisabled()` (guarded only).
 - [/] KeStackAttachProcess/KeUnstackDetachProcess + nested SavedApcState round-trip test (deferred): needs process CR3-attach infra; §11 ships the `saved_apc_state` field only.
-- [/] KAPC cross-thread lifetime hardening (deferred, latent): thread-generation identity, O(1) per-mode tail pointers, queue-depth cap, cross-thread leave-time delivery resignal (unlocked `kernel_apc_pending` leave-gate can miss a racing insert).
-- [/] Thread-slot lifecycle lock (deferred, pre-existing, latent): `thread_exit`/`join`/`reap`/`kthread_create` must mutually exclude on true SMP (a joiner can free a running thread's stack); BSP-only scheduler unraced today.
+- [ ] KAPC cross-thread lifetime hardening: thread-generation identity, O(1) per-mode tail pointers, queue-depth cap, cross-thread leave-time delivery resignal (unlocked `kernel_apc_pending` leave-gate can miss a racing insert).
+- [ ] Thread-slot lifecycle lock: `thread_exit`/`join`/`reap`/`kthread_create` must mutually exclude on true SMP (a joiner can free a running thread's stack); BSP-only scheduler unraced today.
 - [x] Commit: `"kernel: sched -- add KAPC object type and per-thread APC queues"`
 
 **Test checkpoint:** `KeInitializeApc` + `KeInsertQueueApc` to a thread succeeds; `KernelApcPending` flag is set. `KeRemoveQueueApc` returns `TRUE` and clears the flag. `KeInsertQueueApc` to an exiting (THREAD_DEAD) thread returns `FALSE`. `KeEnterCriticalRegion` -> `KeAreApcsDisabled` reads `TRUE` (not `KeAreAllApcsDisabled`); `KeEnterGuardedRegion` -> `KeAreAllApcsDisabled` reads `TRUE`. Serial: `"apc: initialized per-thread APC queues"` on first thread init.
@@ -379,8 +379,8 @@ Asynchronous Procedure Calls (APCs) are the per-thread deferred work mechanism a
 > - Canonical doc: `include/kernel/sched/apc.h`.
 > - Scope: §11 owns the KAPC object + queue ops + region counters; delivery/rundown -> §12; KeStackAttachProcess + cross-thread generation/tail hardening -> the deferred items above.
 > **Verified:** 2026-06-26 | commit `830ebf88` | 9/12 items | build OK | sched 128 PASS | smoke PASS (2.6s)
-> **Deferred:** [Critical] thread-slot lifecycle lock -- thread_exit/join/reap/create are not mutually exclusive on a true SMP scheduler (a joiner can free a still-running thread's stack) (reason: pre-existing; BSP-only scheduler unraced today) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §11 (item: "Thread-slot lifecycle lock" at line 368)
-> **Deferred:** [H] KAPC cross-thread lifetime hardening -- thread-generation identity + O(1) per-mode tail pointers + depth cap (reason: latent; no cross-thread APC consumer until §12) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §11 (item: "KAPC cross-thread lifetime hardening" at line 367)
+> **Notes:** Reopened 2026-11-07, was Deferred: [Critical] thread-slot lifecycle lock -- thread_exit/join/reap/create are not mutually exclusive on a true SMP scheduler (a joiner can free a still-running thread's stack) (reason: pre-existing; BSP-only scheduler unraced today). The stamp named this section's own item with no outside blocker; "latent" and "needs X" describe the work.
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] KAPC cross-thread lifetime hardening -- thread-generation identity + O(1) per-mode tail pointers + depth cap (reason: latent; no cross-thread APC consumer until §12). The stamp named this section's own item with no outside blocker; "latent" and "needs X" describe the work.
 > **Quality reviewed:** 2026-06-26 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1Crit deferred | scope: kernel-code-quality
 
 ---
@@ -400,7 +400,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 - [/] **Alertable-wait integration** (deferred, blocked): `KiDeliverApc` into `KeWaitForSingleObject`/`Multiple` + `STATUS_USER_APC` + `KeTestAlertThread`. Blocked: no kernel wait primitive / no `alertable` thread state.
 - [/] **ISR-return delivery** (deferred, design-rejected): kernel-APC delivery from the C `isr_handler` restore site -- rejected (PASSIVE work before `iretq`); needs an audited return-trampoline. `KeLowerIrql` covers kernel APCs.
 - [/] **`NtQueueApcThreadEx`/`Ex2` special-user routing** (deferred, blocked): set `SpecialUserApcPending` + SSDT 0x0380/0x0381; `NtQueueApcThread` stays `STATUS_NOT_IMPLEMENTED` -> XREF: `TODO-12-native-api-ssdt.md §7`.
-- [/] **DPC software-interrupt-on-enqueue** (deferred): request a DISPATCH software interrupt at `KeInsertQueueDpc` time (NT HVL model) to close the `KeLowerIrql` drain-on-lower tail race; today drains on the next lower or timer tick.
+- [ ] **DPC software-interrupt-on-enqueue**: request a DISPATCH software interrupt at `KeInsertQueueDpc` time (NT HVL model) to close the `KeLowerIrql` drain-on-lower tail race; today drains on the next lower or timer tick.
 - [x] Commit: `"kernel: sched -- add KiDeliverApc and APC delivery integration"`
 
 > [!NOTE]
@@ -417,7 +417,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 > - Scope boundary: §12 owns kernel-mode delivery + DPC drain-on-lower + rundown. User-mode delivery, alertable waits, `KeTestAlertThread`, `Ex`/`Ex2`, ISR-return delivery deferred (TODO-23 §5 + TODO-10 + a wait primitive).
 > **Verified:** 2026-06-26 | commit `e19187b6` | 4/9 items | build OK | sched 153 PASS | smoke PASS
 > **Accepted:** [M] cross-thread `KeInsertQueueApc` racing a target's `KeLeaveCriticalRegion` can miss the unlocked `kernel_apc_pending` leave-gate (reason: no cross-thread kernel-APC producer yet; same-thread unaffected) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §11 (item: "KAPC cross-thread lifetime hardening" at line 367)
-> **Deferred:** [M] `KeLowerIrql` drain-on-lower is best-effort -- a DPC queued in the probe->lower window survives the crossing (reason: needs a DPC software-interrupt-on-enqueue; pre-existing, race-neutral vs the unconditional bracket) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §12 (item: "DPC software-interrupt-on-enqueue" at line 403)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] `KeLowerIrql` drain-on-lower is best-effort -- a DPC queued in the probe->lower window survives the crossing (reason: needs a DPC software-interrupt-on-enqueue; pre-existing, race-neutral vs the unconditional bracket). The stamp named this section's own item with no outside blocker; "latent" and "needs X" describe the work.
 > **Quality reviewed:** 2026-06-26 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+1M+1L fixed, 1M accepted, 1M deferred, 1L open | scope: kernel-code-quality
 
 ---
@@ -427,8 +427,8 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 - [x] `IRQL_REQUIRE_AT_MOST(level)` / `IRQL_REQUIRE_AT_LEAST(level)` macros in `irql.h` routing to `_irql_check_max` / new `_irql_check_min` (log the `__func__` callsite + count the violation).
 - [x] Log IRQL contract violations (callsite, CPU, current + required level) + per-CPU `irql_violations` counter in `per_cpu_data`; monotonic `KeRaiseIrql`/`KeLowerIrql` mismatches also counted.
 - [x] Explicit fault path: `irql_set_strict()` strict mode bugchecks before any klog (default off = telemetry); `KeLowerIrqlForced(level,reason)` classifies + counts forced lowers (`task_exit`/`task_wrapper` routed).
-- [/] **Per-CPU IRQL transition stack** (deferred, blocked): `{old,new,callsite}` LIFO validator -- blocked because spinlock `irqsave` + `irql_lower_deliver` + forced lowers write `current_irql` outside `KeRaise`/`KeLower`, so the stack diverges.
-- [/] **Centralize the IRQL write surface** (prerequisite for the validator): route every `current_irql` writer (spinlock irqsave/restore, `irql_lower_deliver`, forced lowers) through stack-aware primitives + a lint forbidding raw writes.
+- [ ] **Per-CPU IRQL transition stack**: `{old,new,callsite}` LIFO validator -- blocked because spinlock `irqsave` + `irql_lower_deliver` + forced lowers write `current_irql` outside `KeRaise`/`KeLower`, so the stack diverges.
+- [ ] **Centralize the IRQL write surface** (prerequisite for the validator): route every `current_irql` writer (spinlock irqsave/restore, `irql_lower_deliver`, forced lowers) through stack-aware primitives + a lint forbidding raw writes.
 - [x] Feed counters into kernel logging: `irql_telemetry_dump()` sums per-CPU `irql_violations` + `irql_forced_lowers` to klog for boot/runtime health checks.
 - [x] Commit: `"kernel: sched -- add IRQL contract diagnostics and telemetry"`
 
@@ -442,7 +442,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 > - Canonical doc: this section + `include/kernel/sched/irql.h`.
 > - Scope boundary: §13 owns the macros + counters + strict trap + forced-lower classification. The LIFO transition-stack validator + the IRQL-write-surface centralization it needs are deferred here; §14 owns DPC/APC budget + watchdog.
 > **Verified:** 2026-06-26 | commit `281e8db8` | 4/6 items | build OK | sched 166 PASS | smoke PASS
-> **Deferred:** [M] per-CPU LIFO IRQL transition-stack validator unbuilt (reason: needs a centralized IRQL write surface -- spinlock `irqsave` / `irql_lower_deliver` / forced lowers all bypass `KeRaise`/`KeLower`) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §13 (item: "Per-CPU IRQL transition stack" at line 430)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] per-CPU LIFO IRQL transition-stack validator unbuilt (reason: needs a centralized IRQL write surface -- spinlock `irqsave` / `irql_lower_deliver` / forced lowers all bypass `KeRaise`/`KeLower`). The stamp named this section's own item with no outside blocker; "latent" and "needs X" describe the work.
 > **Quality reviewed:** 2026-06-26 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 3M+1L fixed | scope: kernel-code-quality
 
 ---
@@ -451,13 +451,13 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 
 - [x] Per-tick DPC count budget + carry-over: per-CPU token bucket in `dpc.c` (refill `DPC_BUDGET_PER_TICK`/tick, cap `DPC_BUDGET_CARRYOVER_MAX`); `drain_queue` spends a token/DPC, warns once/tick on exhaustion (hard bound stays `DPC_BATCH_LIMIT`).
 - [x] DPC watchdog 0x133 **param 0x0** (single DPC > 100us): `drain_queue` times each DPC via `rdtscp_read` vs a precomputed threshold (armed only when all online CPUs have RDTSCP); WARN default, `dpc_watchdog_set_strict()` -> `KeBugCheckEx`.
-- [/] DPC watchdog 0x133 **param 0x1** (cumulative >= `DISPATCH_LEVEL` time/period) -- deferred, blocked: needs per-CPU time-at-DISPATCH accounting at every `current_irql` write site (the §13 IRQL-write-surface centralization, line 425).
+- [ ] DPC watchdog 0x133 **param 0x1** (cumulative >= `DISPATCH_LEVEL` time/period): needs per-CPU time-at-DISPATCH accounting at every `current_irql` write site (the §13 IRQL-write-surface centralization, line 425).
 - [x] Sustained queue-depth warning: `dpc_watchdog_tick()` warns when depth > `DPC_QUEUE_WARN_DEPTH` for `DPC_DEPTH_WARN_TICKS` consecutive ticks.
 - [x] DPC importance-based drain ordering: provided by §7 head-insert (`HighImportance` -> head; `drain_queue` dequeues head-first), so high runs first. No drain-time reorder.
 - [x] APC starvation watchdog: `kernel_apc_depth` in `KAPC_STATE` maintained under `apc_lock`; `KeInsertQueueApc` warns once on the kernel-APC crossing of `APC_STARVATION_WARN_DEPTH`.
 - [x] Tuning constants in new `include/kernel/sched/dpc_config.h`.
-- [/] AP DPC watchdog coverage (deferred, NOT blocked): `dpc_watchdog_tick` is BSP-only, so an AP's `s_wd[ap]` budget never refills and its `warn_pending` crossing never emits. Fix: BSP cross-CPU sweep of budget + `warn_pending`, atomic budget.
-- [/] Remote-target DPC IPI (deferred, NOT blocked): a `KeSetTargetProcessorDpc`-to-idle-AP DPC can strand (no DPC IPI yet); add a DPC IPI vector draining the AP on remote insert. -> XREF: 16-architecture-ports/TODO-03-smp-scaling-processor-groups.md
+- [ ] AP DPC watchdog coverage: `dpc_watchdog_tick` is BSP-only, so an AP's `s_wd[ap]` budget never refills and its `warn_pending` crossing never emits. Fix: BSP cross-CPU sweep of budget + `warn_pending`, atomic budget.
+- [ ] Remote-target DPC IPI: a `KeSetTargetProcessorDpc`-to-idle-AP DPC can strand (no DPC IPI yet); add a DPC IPI vector draining the AP on remote insert. -> XREF: 16-architecture-ports/TODO-03-smp-scaling-processor-groups.md
 - [x] Commit: `"kernel: sched -- add DPC/APC budget fairness and watchdog"`
 
 **Test checkpoint:** Unit (`TEST_CAT_SCHED`): `kernel_apc_depth` tracks insert/remove/rundown (2 -> 1 -> 0); `dpc_watchdog_set_strict()` toggles. Runtime (WHPX / bare metal via serial -- not unit-testable without a live timer/TSC): a single DPC running > 100us logs `dpc: watchdog: DPC ... ran N us` and, in strict mode, bugchecks `0x133` param 0x0; queue depth > `DPC_QUEUE_WARN_DEPTH` for `DPC_DEPTH_WARN_TICKS` ticks logs the sustained-depth warning; per-tick budget exhaustion logs once; `HighImportance` DPC runs before `LowImportance` (§7 head-insert); APC starvation logs on the `APC_STARVATION_WARN_DEPTH` crossing. Tuning constants in `include/kernel/sched/dpc_config.h`. (param 0x1 cumulative-DISPATCH-time is deferred.)
@@ -470,7 +470,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 > - Canonical doc: this section + `include/kernel/sched/dpc_config.h`.
 > - Scope boundary: §14 owns the budget + watchdog + APC starvation. Deferred: 0x133 param 0x1 (needs the §13 IRQL-write-surface centralization) + AP-CPU watchdog coverage (owner §17). Threaded-DPC fairness -> §15-§17.
 > **Verified:** 2026-06-26 | commit `ee2f09ab` | 6/8 items | build OK | sched 171 PASS | smoke PASS
-> **Deferred:** [H] DPC watchdog 0x133 param 0x1 (cumulative >= `DISPATCH_LEVEL` time/period) unbuilt -- needs per-CPU time-at-DISPATCH accounting (reason: the §13 IRQL-write-surface centralization) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §14 (item: "DPC watchdog 0x133 **param 0x1**" at line 454)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] DPC watchdog 0x133 param 0x1 (cumulative >= `DISPATCH_LEVEL` time/period) unbuilt -- needs per-CPU time-at-DISPATCH accounting (reason: the §13 IRQL-write-surface centralization). The stamp named this section's own item with no outside blocker; "latent" and "needs X" describe the work.
 > **Deferred:** [M] AP-CPU DPC watchdog coverage -- `dpc_watchdog_tick` services only the ticking BSP (reason: mirrors the existing BSP-only AP-drain limit) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §17 (item: "AP DPC watchdog coverage" at line 511)
 > **Quality reviewed:** 2026-06-26 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 4M+1L fixed | scope: kernel-code-quality
 
@@ -488,7 +488,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 - [x] Worker started at boot (CAS-idempotent `dpc_start_threads`) so a threaded DPC queued from ANY IRQL always has a worker -- a lazy first-PASSIVE-init start would strand one initialized above PASSIVE then queued.
 - [x] `pending` folded into the locked hand-off (set/cleared under `DPC_QLOCK`); slot cache-line padded (`_Static_assert sizeof==64`).
 - [/] Runtime stress (deferred, runtime-only): fire threaded DPCs from multiple ISRs on 2+ CPUs concurrently -- validate on WHPX / bare metal (no SMP-ISR concurrency in the unit harness). Operator-gated: WHPX or bare metal only.
-- [/] SMP-safe blocking worker (deferred): worker yield-polls via `event_wait_timeout` (READY when idle, CPU cost) -- `event_t`'s waiter queue is lock-free, unsafe vs multi-CPU-ISR `event_set`. Make `event_t` SMP-safe, then switch to `event_wait`.
+- [ ] SMP-safe blocking worker: worker yield-polls via `event_wait_timeout` (READY when idle, CPU cost) -- `event_t`'s waiter queue is lock-free, unsafe vs multi-CPU-ISR `event_set`. Make `event_t` SMP-safe, then switch to `event_wait`.
 - [x] Commit: `"kernel: fix threaded DPC list race -- atomic handoff between ISR and worker"`
 
 **Test checkpoint:** Unit (`TEST_CAT_SCHED`): a threaded DPC handed off by `dpc_drain_current_cpu` stays `queued=1` (owned) and `KeRemoveQueueDpc` cancels it off the threaded list (`queued`->0). Runtime (WHPX / bare metal, not unit-testable -- needs concurrent SMP ISRs): fire threaded DPCs from both LAPIC and PIT ISRs on 2+ CPUs simultaneously; no lost callbacks, no list corruption, FIFO order preserved; the worker idles on a bounded yield-poll and runs on hand-off / within one tick.
@@ -505,7 +505,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 **Regression risk:** Changing the handoff pattern affects every threaded DPC consumer. Rollback: revert to single-CPU threaded DPC model (BSP-only).
 
 > **Verified:** 2026-06-26 | commit `23d6b38a` | 6/8 items | build OK | 175 sched + 16 user tests, smoke PASSED
-> **Deferred:** [HIGH] idle threaded-DPC worker yield-polls (`event_wait_timeout` keeps it READY when idle) -- `event_t`'s waiter queue is lock-free, unsafe vs multi-CPU-ISR `event_set` -> XREF: 02-kernel-core/TODO-07 §15 (item: "SMP-safe blocking worker (deferred)" -- make `event_t` SMP-safe then switch to `event_wait`)
+> **Notes:** Reopened 2026-11-07, was Deferred: [HIGH] idle threaded-DPC worker yield-polls (`event_wait_timeout` keeps it READY when idle) -- `event_t`'s waiter queue is lock-free, unsafe vs multi-CPU-ISR `event_set`. The stamp named this section's own item with no outside blocker; "latent" and "needs X" describe the work.
 > **Deferred:** [INFO] concurrent SMP-ISR threaded-DPC stress is runtime-only (no SMP-ISR concurrency in the unit harness) -> XREF: 02-kernel-core/TODO-07 §15 (item: "Runtime stress (deferred, runtime-only)")
 > **Quality reviewed:** 2026-06-26 | Codex 14x (adversarial x4, consistency x4, perf x4, re-adversarial x2) | 4H+1M+3L fixed, 2H+1info open | scope: kernel-code-quality
 
