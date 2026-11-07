@@ -212,6 +212,7 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
 - [ ] `user/include/windows.h`: `HANDLE`, `DWORD`, `BOOL`, `LPCSTR`, `LPVOID`, `INVALID_HANDLE_VALUE`, `GENERIC_READ/WRITE`, `OPEN_EXISTING/CREATE_ALWAYS`
 - [ ] `user/lib/crt0_pe.asm`: `_start`; `RCX=PEB` entry; `crt_parse_cmdline()` stub; call `main(argc, argv)`; call `ExitProcess(ret)`
 - [ ] `user/lib/kernel32_stub.c`: `CreateFile/ReadFile/WriteFile/CloseHandle/ExitProcess/GetStdHandle` using `SYSCALL` + Windows ABI
+  - Also closes the callable-import gap. <- XREF: `02-kernel-core/TODO-17` §9 (item: "Make resolved imports CALLABLE")
 - [ ] `crt_parse_cmdline()` in `crt0_pe.asm` or `kernel32_stub.c`: parse `argv[0]` from PEB CommandLine string
 - [ ] Add `crt0_pe.o` + `kernel32_stub.o` to `user/lib/Makefile` → `libcrt.a`
 - [ ] Update `user/hello.c` to use `#include <windows.h>` + `WriteFile(GetStdHandle(-11), "Hello\n", 6, NULL, NULL)`; compile as PE

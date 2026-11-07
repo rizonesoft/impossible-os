@@ -73,9 +73,9 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 | ⭐  |   4   | EIF format specification                       | --              |  [x]   |
 | ⭐  |   5   | EIF kernel loader                              | §1, §4          |  [x]   |
 | 💎  |   6   | Module list registration (LDR_DATA_TABLE)      | §1, TODO-11 §4  |  [/]   |
-| 💎  |   7   | PE32+ header parser                            | §1              |  [x]   |
-| 💎  |   8   | PE32+ section loader + `.pdata` registration   | §7              |  [/]   |
-| 💎  |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-12 §6  |  [/]   |
+| 💎  |   7   | PE32+ header parser                            | §1              |  [ ]   |
+| 💎  |   8   | PE32+ section loader + `.pdata` registration   | §7              |  [ ]   |
+| 💎  |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-12 §6  |  [ ]   |
 | 💎  |  10   | PE32+ base relocation                          | §8              |  [/]   |
 | 💎  |  11   | PE32+ TLS directory processing                 | §8, TODO-11 §3  |  [/]   |
 | 💎  |  12   | PE32+ Load Config and CFG bitmap               | §8              |  [/]   |
@@ -214,10 +214,10 @@ Design the Executable Impossible Format -- minimal parsing, native OS metadata, 
 - [x] Performance measurement: uptime_ns() delta logged in microseconds
 - [x] Registered as "EIF" format in `exec_init()` with magic `{'E','I','F','!'}`
 - [x] Enforce §4 rules 2/6-8: count caps, O(n) non-overlap walk, canonical section+segment-data ordering, metadata bounds, entry-in-exec-segment, registered-import availability, validate-then-mutate; 11 reject tests
-- [/] Enforce §4 rule 4 (`api_version` gating): reject an EIF whose `api_version` exceeds the running OS API version, once an OS-wide API-version authority/constant is defined (none exists yet)
-  - Parked: there is no OS-wide API-version authority or constant to gate against yet, so the rule has nothing to compare an `api_version` to. Not operator-gated -- it needs that constant defined somewhere, and no TODO owns it today.
-- [/] Reject non-zero reserved header/segment fields and reserved flag bits (spec "must be zero") for strict forward-compat detection
-  - Parked with §5 rather than technically blocked: the fail-open is deliberate while v1.1 may still repurpose those fields under a version bump, so tightening it is a decision about the spec's own forward-compat story rather than missing code.
+- [x] Enforce §4 rule 4 (`api_version` gating): reject an EIF whose `api_version` exceeds the running OS API version, once an OS-wide API-version authority/constant is defined (none exists yet)
+  - Done by `02-kernel-core/TODO-20` §4: `eif.c:93` gates on `EIF_CURRENT_API_VERSION` (`eif.h:30`), with `test_exec.c:859`. Read at source 2026-11-07.
+- [x] Reject non-zero reserved header/segment fields and reserved flag bits (spec "must be zero") for strict forward-compat detection
+  - Done by later `TODO-20` work: `eif.c:106` rejects unknown flag bits and `eif.c:467` a non-zero segment `reserved` (`eif.h:118`). `eif.h` declares no header reserved field. Read at source 2026-11-07.
 - [x] Commit: `"kernel: eif -- EIF loader"`
 
 **Test checkpoint:** Serial log shows `"eif: Loaded <S> segments, <A>/<I> imports available in <N> us, entry=0x..."` where `<N>` < 10. Invalid magic rejected with error. `SIGNED` flag without signature returns error. (The loader runs after Phase 3, so it carries no POST16 codes.) Test on: QEMU WHPX + TCG; bare metal.
@@ -230,8 +230,8 @@ Design the Executable Impossible Format -- minimal parsing, native OS metadata, 
 > - Scope boundary: signature verification is §17; per-process physical isolation of the user range shares the future VMM prerequisite tracked in §2.
 
 > **Verified:** 2026-07-10 | commit `bbdf6baf` | 11/13 items | build OK | exec 637 kernel + 16 user PASS | 11 EIF reject tests
-> **Deferred:** [L] §4 rule-4 `api_version` gating not enforced (no OS-wide API-version authority/constant exists yet) -> XREF: 02-kernel-core/TODO-17 §5 (item: "Enforce §4 rule 4" at line 217)
-> **Deferred:** [L] non-zero reserved header/segment fields + reserved flag bits not rejected (spec "must be zero"; v1.1 may repurpose under a version bump) -> XREF: 02-kernel-core/TODO-17 §5 (item: "Reject non-zero reserved header/segment fields" at line 219)
+> **Note:** 2026-11-07, Deferred stamp retired: the `api_version` gate shipped under `TODO-20` §4.
+> **Note:** 2026-11-07, Deferred stamp retired: reserved fields and flag bits are rejected now.
 > **Quality reviewed:** 2026-07-10 | Codex 7x (adversarial, consistency, perf, re-adversarial) | 1H+6M+2L fixed, 2L deferred | scope: kernel-code-quality
 
 ## 6. Module List Registration (LDR_DATA_TABLE_ENTRY)
@@ -260,10 +260,10 @@ Every loaded executable and shared library must be registered in the per-process
   - Reject 32-bit PE (Magic == `0x10B`) with `ENOEXEC`; reject i386 Machine with `ENOEXEC`
 - [x] `pe_load()` registered in exec dispatcher -- validates and returns 0 until section loader (§8) is implemented
 - [x] 7 unit tests in `test_exec.c`: struct sizes, constants, valid PE32+, 32-bit rejection, truncated, bad magic, NULL
-- [/] Support reduced-directory PE32+ (SizeOfOptionalHeader < 240): floor at the 112-byte fixed portion, validate NumberOfRvaAndSizes, bound each DataDirectory access (current >= 240 rejects spec-valid < 16-dir images)
-  - Parked with §7 rather than technically blocked. The current `SizeOfOptionalHeader >= 240` floor is FAIL-CLOSED and no real Windows image is affected, so this is spec completeness rather than a live defect.
-- [/] Add odd-e_lfanew / odd-alignment PE test fixtures: parameterize build_minimal_pe32plus by e_lfanew to exercise the unaligned zero-copy read_u64 ImageBase path
-  - Parked with §7 rather than technically blocked: it needs `build_minimal_pe32plus` parameterized by `e_lfanew`, and the `read_u64` fix it would cover is byte-safe by construction today.
+- [ ] Support reduced-directory PE32+ (SizeOfOptionalHeader < 240): floor at the 112-byte fixed portion, validate NumberOfRvaAndSizes, bound each DataDirectory access (current >= 240 rejects spec-valid < 16-dir images)
+  - Reopened 2026-11-07, no blocker. The current `SizeOfOptionalHeader >= 240` floor is FAIL-CLOSED and no real Windows image is affected, so this is spec completeness rather than a live defect.
+- [ ] Add odd-e_lfanew / odd-alignment PE test fixtures: parameterize build_minimal_pe32plus by e_lfanew to exercise the unaligned zero-copy read_u64 ImageBase path
+  - Reopened 2026-11-07: it needs `build_minimal_pe32plus` parameterized by `e_lfanew`, and the `read_u64` fix it would cover is byte-safe by construction today.
 - [x] Commit: `"kernel: pe -- PE32+ header parser"`
 
 **Test checkpoint:** `pe_validate()` returns success for a valid PE32+ header (Machine `0x8664`, Magic `0x20B`). Returns error for 32-bit PE (`0x10B`). Returns error for truncated file. `POST16(0xD80B)` on entry. Test on: QEMU WHPX + TCG; bare metal.
@@ -276,8 +276,8 @@ Every loaded executable and shared library must be registered in the per-process
 > - Scope boundary: pe_load section loading is §8; import resolution §9; base relocation §10.
 
 > **Verified:** 2026-07-10 | commit `617a12bf` | 5/7 items | build OK | exec 647 kernel + 16 user PASS | 10 PE parser tests
-> **Deferred:** [M] `SizeOfOptionalHeader >= 240` rejects spec-valid reduced-directory PE32+ (fail-closed; no real Windows image affected) -> XREF: 02-kernel-core/TODO-17 §7 (item: "Support reduced-directory PE32+" at line 263)
-> **Deferred:** [L] odd-alignment / odd-e_lfanew test fixture pending a parameterized builder (the read_u64 fix is byte-safe by construction) -> XREF: 02-kernel-core/TODO-17 §7 (item: "Add odd-e_lfanew" at line 265)
+> **Note:** 2026-11-07, Deferred stamp retired: [M] reduced-directory PE32+ reopened.
+> **Note:** 2026-11-07, Deferred stamp retired: [L] odd-alignment fixtures reopened.
 > **Accepted:** [M] the 3 pe_load section-loader tests transitively call live boot/PMM/VMM infra via pe_load (Gate 8) -> XREF: 02-kernel-core/TODO-17 §8 (item: "Make the 3 pe_load section-loader tests side-effect-free" at line 292)
 > **Quality reviewed:** 2026-07-10 | Codex 3x (adversarial, consistency, perf) | 2M+2L fixed, 1M+1L deferred, 1M accepted-XREF | scope: kernel-code-quality
 
@@ -289,19 +289,19 @@ Every loaded executable and shared library must be registered in the per-process
 - [x] Register loaded module via `exec_register_module()` (§6) with base, size, entry, and `.pdata` info -- PE loader calls this directly (task_exec detects via module list, no duplicate registration)
 - [x] task_exec made format-agnostic: uses `exec_find_module_by_pc(entry)` to determine user page range instead of hardcoding ELF range. Works for PE, ELF, and EIF.
 - [x] 3 unit tests: pe_load returns correct entry VA, module registered with correct base/format, rejects low ImageBase
-- [/] Make the 3 pe_load section-loader tests side-effect-free: they transitively call POST16 + pmm_alloc_frame/vmm_map_page/exec_register_module via pe_load (Gate 8 live-boot violation the textual scanner misses)
-  - Parked: the three tests transitively reach POST16, `pmm_alloc_frame`, `vmm_map_page` and `exec_register_module` through `pe_load`, which the Gate 8 live-boot ban forbids. Making them side-effect-free needs a PURE parser helper split out of `pe_load` first -- the same surface item 313 waits on.
-- [/] Ownership-journal rollback in pe_load: track every mapped VA and unmap exactly those in reverse (replace the dense-prefix-from-ImageBase assumption); reject map-over-present-PTE
-  - Parked with §8: the rollback must journal every mapped VA and unmap exactly those in reverse, replacing the dense-prefix-from-`ImageBase` assumption. §10's deferral names this as one of the two HIGHs its own failure path would exercise.
-- [/] Mapped-aware loader reads: parsers (imports §9, relocs §10) must never dereference an unmapped section-gap RVA -- add per-span mapped-check helpers or map the full image reservation
-  - Parked with §8, and it is the KEYSTONE of this file: §9's import RVA validation, §10's relocation reads, §11's TLS block, §12's Load Config parse and §19's directory parses all XREF this item as their blocker. Nothing downstream of it can close first.
+- [ ] Make the 3 pe_load section-loader tests side-effect-free: they transitively call POST16 + pmm_alloc_frame/vmm_map_page/exec_register_module via pe_load (Gate 8 live-boot violation the textual scanner misses)
+  - Reopened 2026-11-07: the three tests transitively reach POST16, `pmm_alloc_frame`, `vmm_map_page` and `exec_register_module` through `pe_load`, which the Gate 8 live-boot ban forbids. Making them side-effect-free needs a PURE parser helper split out of `pe_load` first -- the same surface item 313 waits on.
+- [ ] Ownership-journal rollback in pe_load: track every mapped VA and unmap exactly those in reverse (replace the dense-prefix-from-ImageBase assumption); reject map-over-present-PTE
+  - Reopened 2026-11-07: the rollback must journal every mapped VA and unmap exactly those in reverse, replacing the dense-prefix-from-`ImageBase` assumption. §10's deferral names this as one of the two HIGHs its own failure path would exercise.
+- [ ] Mapped-aware loader reads: parsers (imports §9, relocs §10) must never dereference an unmapped section-gap RVA -- add per-span mapped-check helpers or map the full image reservation
+  - Reopened 2026-11-07: nothing outside blocks it, and it is the KEYSTONE of this file: §9's import RVA validation, §10's relocation reads, §11's TLS block, §12's Load Config parse and §19's directory parses all XREF this item as their blocker. Nothing downstream of it can close first.
 - [x] Commit: `"kernel: pe -- PE32+ section loader with .pdata registration"`
 - [/] `NtQuerySection(SectionImageInformation)`: persist PE optional-header fields (ImageBase, entry, stack sizes) on the `SECTION_OBJECT` so class 1 returns real values -> XREF: `TODO-12-native-api-ssdt.md` §18 Accepted
 - [/] Map PE images into a per-process PML4 instead of the shared `kernel_pml4` -- blocked on per-process cr3 build-out; `get_or_create_table()` leaves User-bit upper-table promotions on rollback (TODO-04 §15)
 
 **Test checkpoint:** Serial log shows `"pe: mapped <N> sections, .pdata at 0x<addr> (<M> entries)"`. Section permissions match `Characteristics`. BSS-only sections are zero-filled. `POST16(0xD80C)` on entry, `POST16(0xD80D)` after `.pdata` registered. Test on: QEMU WHPX + TCG; bare metal.
 
-> **Deferred:** Core SHIPPED (section map with `Characteristics`-derived R/W/NX perms, header map, DataDirectory[3] `.pdata` register, module-list registration, format-agnostic `task_exec`; 3 unit tests). Two items deferred: `NtQuerySection(SectionImageInformation)` (blocked -- PE loader must expose optional-header fields to the section layer) and per-process PML4 mapping (blocked on the same per-process cr3/`vmm_map_pages` architectural prerequisite as §2, so PE sections stop mutating shared `kernel_pml4`). -> XREF: `TODO-12-native-api-ssdt.md` §18 Accepted (SectionImageInformation); per-process PML4 (item: "Map PE images into a per-process PML4 instead of the shared `kernel_pml4`" at line 249).
+> **Note:** 2026-11-07, Deferred stamp retired, three items reopened. Core SHIPPED (section map with `Characteristics`-derived R/W/NX perms, header map, DataDirectory[3] `.pdata` register, module-list registration, format-agnostic `task_exec`; 3 unit tests). Two items deferred: `NtQuerySection(SectionImageInformation)` (blocked -- PE loader must expose optional-header fields to the section layer) and per-process PML4 mapping (blocked on the same per-process cr3/`vmm_map_pages` architectural prerequisite as §2, so PE sections stop mutating shared `kernel_pml4`). -> XREF: `TODO-12-native-api-ssdt.md` §18 Accepted (SectionImageInformation); per-process PML4 (item: "Map PE images into a per-process PML4 instead of the shared `kernel_pml4`" at line 249).
 
 ## 9. PE32+ Import Table Resolver (Win32 Dispatch)
 
@@ -316,11 +316,11 @@ This bridges PE executables to the Impossible OS Win32 API -- every `CreateFile`
 - [x] Export table lookup: sorted `pe_export_entry_t` array + binary search (`pe_lookup_export`). Case-insensitive DLL name matching (`pe_stricmp`).
 - [x] Import structures in pe.h: `pe_import_descriptor_t` (20 bytes), `pe_import_by_name_t`, `PE_ORDINAL_FLAG64`, `pe_export_entry_t`, `pe_dll_exports_t`
 - [/] Make resolved imports CALLABLE: the IAT holds the raw SSDT number so a PE call [IAT] faults; write user-mode kernel32/ntdll SYSCALL trampolines + a callable STATUS_NOT_IMPLEMENTED stub; add an end-to-end PE-calls-import test
-  - Parked: the IAT holds the raw SSDT service number, so making it callable needs user-mode kernel32/ntdll SYSCALL trampolines plus a callable `STATUS_NOT_IMPLEMENTED` stub, none of which exist. §11, §12 and §19 all wait behind this.
-- [/] Validate import RVAs against actually-mapped regions, not just SizeOfImage: a crafted RVA in a section gap passes the numeric check then faults in kernel mode; per-span mapped check, or map the full image reservation in §8
-  - Parked on §8's per-span mapped-check helper, which the stamp XREFs: the numeric `SizeOfImage` check passes a crafted section-gap RVA that then faults in kernel mode.
-- [/] Add resolver-walk unit tests (name resolution, ordinal stubbing, bounds/NUL-term rejection, near-UINT32_MAX RVA, cross-page/unaligned FirstThunk) once a pure-helper surface exists or §8 pe_load Gate-8 issue is resolved
-  - Parked on the same pure-helper surface as item 288 -- the resolver walk is file-static and reachable only through the Gate-8-blocked `pe_load`, so there is nothing a test may legally call today.
+  - Parked: the IAT holds the raw SSDT service number, and the user-mode trampolines plus a callable `STATUS_NOT_IMPLEMENTED` stub belong to the PE runtime, an open row. §11, §12 and §19 wait behind this. -> XREF: `10-platform-services/TODO-07` §9 (item: "`user/lib/kernel32_stub.c`")
+- [ ] Validate import RVAs against actually-mapped regions, not just SizeOfImage: a crafted RVA in a section gap passes the numeric check then faults in kernel mode; per-span mapped check, or map the full image reservation in §8
+  - Reopened 2026-11-07: §8's mapped-check item above is open, so this follows it. The numeric `SizeOfImage` check still passes a crafted section-gap RVA.
+- [ ] Add resolver-walk unit tests (name resolution, ordinal stubbing, bounds/NUL-term rejection, near-UINT32_MAX RVA, cross-page/unaligned FirstThunk) once a pure-helper surface exists or §8 pe_load Gate-8 issue is resolved
+  - Reopened 2026-11-07: waits only on the pure-helper split in §8's first reopened item. The resolver walk is file-static today.
 - [x] Commit: `"kernel: pe -- PE32+ import table resolver"`
 
 **Test checkpoint:** Serial log shows `"pe: resolved <N> imports from <DLL>"` for each DLL. `kernel32.dll!ExitProcess` resolves to a valid SSDT thunk. Unknown DLL produces warning log, not crash. Test on: QEMU WHPX + TCG; bare metal.
@@ -333,9 +333,9 @@ This bridges PE executables to the Impossible OS Win32 API -- every `CreateFile`
 > - Scope boundary: making the IAT actually CALLABLE (user-mode syscall trampolines) and validating RVAs against mapped pages are the open items below; SizeOfImage full-mapping is §8.
 
 > **Verified:** 2026-07-10 | commit `a1b6f8d5` | 5/8 items | build OK | exec 647 kernel + 16 user PASS | resolver bounds hardened
-> **Deferred:** [Critical] IAT holds raw SSDT service numbers, not callable addresses -- PE imports fault on call until user-mode syscall trampolines exist -> XREF: 02-kernel-core/TODO-17 §9 (item: "Make resolved imports CALLABLE" at line 318)
-> **Deferred:** [H] import RVAs validated against SizeOfImage, not actual mapped pages -- a section-gap RVA faults the kernel -> XREF: 02-kernel-core/TODO-17 §9 (item: "Validate import RVAs against actually-mapped regions" at line 320)
-> **Deferred:** [M] resolver-walk logic untested (static fns + §8 pe_load Gate-8 block) -> XREF: 02-kernel-core/TODO-17 §9 (item: "Add resolver-walk unit tests" at line 322)
+> **Note:** 2026-11-07, Deferred stamp retired: [Critical] callable imports park on `10-platform-services/TODO-07` §9, named in the item.
+> **Note:** 2026-11-07, Deferred stamp retired: [H] import RVA validation reopened.
+> **Note:** 2026-11-07, Deferred stamp retired: [M] resolver-walk tests reopened.
 > **Quality reviewed:** 2026-07-10 | Codex 5x (adversarial, consistency, perf, re-adversarial) | 3H+1M+2L fixed, 1Crit+1H+1M deferred | scope: kernel-code-quality
 
 ## 10. PE32+ Base Relocation
