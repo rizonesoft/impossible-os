@@ -32,6 +32,11 @@ def test_a_section_that_keeps_failing_stops_holding_the_queue():
         refused = {"file": "todo/TODO-22.md", "section_idx": 5, "epoch": 1, "attempts": 2}
         mod.save_state({"active": True, "file": "todo/TODO-22.md", "section_idx": 5,
                         "rollover_refused": refused})
+        # REFUSAL, review round 2: not while the failed section is still on the tree.
+        mod._failed_section_leftovers = lambda r: "2 unpushed commit(s)"
+        assert mod.cli(["cursor", "02-kernel-core", "todo/TODO-22.md", "6"]) == 1
+        assert mod.load_state()["rollover_refused"]["attempts"] == 2
+        mod._failed_section_leftovers = lambda r: ""
         assert mod.cli(["cursor", "02-kernel-core", "todo/TODO-22.md", "6"]) == 0
         assert "rollover_refused" not in mod.load_state()
         # REFUSAL: one refusal still earns a repair attempt first.

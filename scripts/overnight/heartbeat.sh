@@ -17,12 +17,13 @@ STATE=".claude/overnight/heartbeat-state"
 TICK_SECS="${HEARTBEAT_TICK_SECS:-300}"
 IDLE_SECS="${HEARTBEAT_IDLE_SECS:-2700}"       # longer than any bounded tool call
 MAX_BACKOFF_SECS=3600
-TRANSCRIPTS="${HEARTBEAT_TRANSCRIPTS:-$HOME/.claude/projects/$(printf '%s' "$ROOT" | sed 's#[^A-Za-z0-9]#-#g')}"
 mkdir -p "$(dirname "$STATE")"
 
 idle_seconds() {
-  # This session's own transcript. An attended session writing beside it says nothing.
-  local transcript="$TRANSCRIPTS/$(cat "$RUN_SESSION_ID_FILE" 2>/dev/null).jsonl"
+  # This session's own transcript, or the launch time if it has not written one yet.
+  # An attended session writing beside it says nothing about this run.
+  local transcript; transcript="$(run_transcript)"
+  [ -f "$transcript" ] || transcript="$RUN_SESSION_ID_FILE"
   [ -f "$transcript" ] || { echo 0; return; }
   echo $(( $(date +%s) - $(stat -c %Y "$transcript") ))
 }
@@ -70,7 +71,8 @@ check() {
   fi
   idle="$(idle_seconds)"
   local args=()
-  [ "$idle" -ge "$IDLE_SECS" ] && args+=(--idle)
+  # Someone attached may be using the tree, so the supervisor must not undo under them.
+  if [ "$idle" -ge "$IDLE_SECS" ] && ! someone_attached; then args+=(--idle); fi
   local health
   health="$(timeout 2400 python3 scripts/overnight/supervisor.py "$ROOT" ${args[@]+"${args[@]}"} 2>/dev/null || true)"
   if [ "$idle" -ge "$IDLE_SECS" ]; then

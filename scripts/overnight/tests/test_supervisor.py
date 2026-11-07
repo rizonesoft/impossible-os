@@ -105,6 +105,30 @@ def test_a_failed_undo_alerts_keeps_its_commit_and_never_raises():
         assert h["machinery_commits_pending"] == 1, h
 
 
+def test_a_push_timeout_keeps_the_record_of_what_was_undone():
+    # Review, 2026-11-07: losing it would make a later undo revert the recovery itself.
+    with tempfile.TemporaryDirectory() as d:
+        root, alerts = _fixture(d)
+        _commit(root, ".claude/hooks/x.py", "bad\n")
+        sup.check(root, True, T0 + 60)
+        real = sup.git
+
+        def slow_push(r, *a, **k):
+            if a and a[0] == "push":
+                raise subprocess.TimeoutExpired("git", 1)
+            return real(r, *a, **k)
+
+        sup.git = slow_push
+        try:
+            h = sup.check(root, True, T0 + 3 * HOUR + 120)
+        finally:
+            sup.git = real
+        assert len(h["machinery_reverts"]) == 1 and h["machinery_commits_pending"] == 0, h
+        assert any("push failed" in a for a in alerts), alerts
+        h = sup.check(root, True, T0 + 8 * HOUR)
+        assert h["machinery_commits_pending"] == 0 and len(h["machinery_reverts"]) == 1, h
+
+
 def test_a_dirty_tree_keeps_the_undo_for_later():
     with tempfile.TemporaryDirectory() as d:
         root, alerts = _fixture(d)

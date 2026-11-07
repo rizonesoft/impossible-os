@@ -118,8 +118,13 @@ def undo(root: Path, state: dict, pending: list, now: int, idle: bool) -> tuple:
         reverted.append(entry["sha"])
         keep = ordered[i + 1:]
     if reverted:
-        p = git(root, "push", "origin", "HEAD", timeout=PUSH_TIMEOUT)
-        pushed = "and pushed" if p.returncode == 0 else "but the push failed"
+        # The reverts stand whether or not this works, and the run pushes them with its
+        # next push. A timeout here must not lose the record of what was undone.
+        try:
+            pushed_ok = git(root, "push", "origin", "HEAD", timeout=PUSH_TIMEOUT).returncode == 0
+        except subprocess.SubprocessError:
+            pushed_ok = False
+        pushed = "and pushed" if pushed_ok else "but the push failed"
         alert(root, f"Nothing was produced after machinery commits "
                     f"{', '.join(s[:12] for s in reverted)}: reverted {pushed}.")
     return reverted, keep

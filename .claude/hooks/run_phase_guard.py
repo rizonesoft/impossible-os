@@ -202,6 +202,24 @@ def _refusal_holds_the_queue(refused):
     return int((refused or {}).get("attempts") or 1) < ROLLOVER_ATTEMPTS
 
 
+def _failed_section_leftovers(root):
+    """What stops the next section starting on a failed one's tree, or ''. Reverting
+    and pushing is always within the run's power, so this cannot wedge the queue."""
+    try:
+        dirty = subprocess.run(["git", "status", "--porcelain", "-uall"], cwd=str(root),
+                               capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return "git status unavailable"
+    if dirty.returncode != 0:
+        return "git status unavailable"
+    if dirty.stdout.strip():
+        return "uncommitted changes"
+    unpushed = _unpushed_count(root)
+    if unpushed is None or unpushed > 0:
+        return f"{unpushed} unpushed commit(s)" if unpushed else "no upstream"
+    return ""
+
+
 def _is_self_teardown(cmd):
     c = " ".join(_strip_git_message_bodies(cmd or "").split())
     # Disarm via either wrapper.
@@ -1750,11 +1768,17 @@ def cli(argv):
                               f"after {ROLLOVER_ATTEMPTS} refusals this section "
                               "parks and the queue moves on.", file=sys.stderr)
                         return 1
+                    leftovers = _failed_section_leftovers(repo_root())
+                    if leftovers:
+                        print("[sequencer] cursor BLOCKED: leave "
+                              f"{rr.get('file')} section {rr.get('section_idx')} "
+                              f"behind cleanly first ({leftovers}). Revert its "
+                              "unpushed commits, park it with the reason, and push "
+                              "the park. Then move on.", file=sys.stderr)
+                        return 1
                     print("[sequencer] moving on from "
                           f"{rr.get('file')} section {rr.get('section_idx')} after "
-                          f"{rr.get('attempts')} refused rollovers. It must not "
-                          "stay in the tree half-done: revert its unpushed commits "
-                          "and park it with the reason.", file=sys.stderr)
+                          f"{rr.get('attempts')} refused rollovers.", file=sys.stderr)
                     state.pop("rollover_refused", None)
                     state["last_rollover_epoch"] = int(time.time())
             # R1 (2026-07-19): rollover-required-after-ship. P3.2 above only

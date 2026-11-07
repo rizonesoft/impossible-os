@@ -35,6 +35,7 @@ def _fixture(d, alive=True, idle=0):
     tdir = pathlib.Path(d) / "transcripts"
     tdir.mkdir()
     (root / ".claude/state/run-session-id").write_text("abc\n")
+    os.utime(root / ".claude/state/run-session-id", (time.time() - idle, time.time() - idle))
     # A newer transcript from an attended session must not read as this run working.
     t = tdir / "abc.jsonl"
     (tdir / "attended.jsonl").write_text("{}\n")
@@ -69,6 +70,26 @@ def test_a_dead_session_restarts_with_continue_and_alerts():
         assert "new-session" in calls and "--resume abc" in calls and "notified" in calls, calls
         assert "--continue" not in calls, "--continue could resume an attended session"
         assert "OVERNIGHT_SEQUENCER_RUN=1" in calls and "CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000" in calls
+
+
+def test_an_id_that_never_became_a_conversation_starts_fresh():
+    with tempfile.TemporaryDirectory() as d:
+        root, log, env = _fixture(d, alive=False)
+        (pathlib.Path(d) / "transcripts/abc.jsonl").unlink()
+        _once(root, env)
+        calls = log.read_text()
+        assert "--session-id" in calls and "--resume" not in calls, calls
+
+
+def test_refusal_undo_is_not_offered_while_someone_is_attached():
+    with tempfile.TemporaryDirectory() as d:
+        root, log, env = _fixture(d, idle=4000)
+        (root / "scripts/overnight/supervisor.py").write_text(
+            'import sys,os\nopen(os.environ["LOG"],"a").write("supervisor %s\\n" % sys.argv[1:])\nprint("{}")\n')
+        _once(root, {**env, "CLIENTS": "/dev/pts/3: x"})
+        assert "--idle" not in log.read_text(), log.read_text()
+        _once(root, env)
+        assert "--idle" in log.read_text(), log.read_text()
 
 
 def test_refusal_a_session_that_keeps_dying_backs_off():

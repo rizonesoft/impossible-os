@@ -25,9 +25,13 @@ RUN_RESUME_PROMPT="The session restarted. Read the state on disk (git status, gi
 # --continue would resume whichever conversation in this folder was newest, and that
 # can be an attended session rather than the run.
 RUN_SESSION_ID_FILE=".claude/state/run-session-id"
+RUN_TRANSCRIPTS="${HEARTBEAT_TRANSCRIPTS:-$HOME/.claude/projects/$(printf '%s' "$PWD" | sed 's#[^A-Za-z0-9]#-#g')}"
+run_transcript() { printf '%s/%s.jsonl' "$RUN_TRANSCRIPTS" "$(cat "$RUN_SESSION_ID_FILE" 2>/dev/null)"; }
 run_launch() {
   local session_flag prompt id
-  if [ "$1" = resume ] && [ -s "$RUN_SESSION_ID_FILE" ]; then
+  # An id with no transcript never became a conversation, and --resume would fail on
+  # it every time, so it starts fresh instead.
+  if [ "$1" = resume ] && [ -s "$RUN_SESSION_ID_FILE" ] && [ -f "$(run_transcript)" ]; then
     id="$(cat "$RUN_SESSION_ID_FILE")"
     session_flag="--resume $id"
     prompt="$RUN_RESUME_PROMPT"
