@@ -98,3 +98,6 @@ scripts/overnight/stale_parks.py
 scripts/overnight/skill_denies.py
 scripts/overnight/supervisor.py
 .claude/hooks/gate.py
+scripts/overnight/heartbeat.sh
+scripts/overnight/run-common.sh
+scripts/run.sh

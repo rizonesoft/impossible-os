@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Auto-undo, health and repair: the frozen part that recovers from everything else."""
+"""Auto-undo and health: the frozen part that recovers from everything else."""
 import json
 import pathlib
 import subprocess
@@ -10,17 +10,13 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 import supervisor as sup  # noqa: E402
 
-DAY = 1_800_000_000
+T0 = 1_800_000_000
+HOUR = 3600
 
 
 def _git(root, *a):
     subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", *a],
                    check=True, capture_output=True)
-
-
-def _head(root):
-    return subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True,
-                          text=True).stdout.strip()
 
 
 def _commit(root, path, text):
@@ -39,110 +35,90 @@ def _fixture(d):
     alerts = []
     sup.alert = lambda r, m: alerts.append(m)
     sup.PUSH_TIMEOUT = 30
+    sup.check(root, False, T0)  # records the starting head
     return root, alerts
 
 
-def test_a_machinery_commit_followed_by_two_empty_segments_is_reverted():
+def test_a_machinery_commit_nothing_worked_with_is_reverted_when_idle():
     with tempfile.TemporaryDirectory() as d:
         root, alerts = _fixture(d)
-        start = _head(root)
         _commit(root, ".claude/hooks/x.py", "bad\n")
-        h = sup.segment_end(root, start, "", DAY)
-        assert h["machinery_commits_pending"] == 1 and not h["machinery_reverts"]
-        h = sup.segment_end(root, _head(root), "", DAY + 60)
-        assert not h["machinery_reverts"]
-        h = sup.segment_end(root, _head(root), "", DAY + 120)
+        h = sup.check(root, True, T0 + 60)
+        assert h["machinery_commits_pending"] == 1 and not h["machinery_reverts"], h
+        h = sup.check(root, True, T0 + 3 * HOUR + 60)
         assert len(h["machinery_reverts"]) == 1, h
         assert not (root / ".claude/hooks/x.py").exists()
         assert any("reverted" in a for a in alerts), alerts
 
 
+def test_refusal_a_working_session_never_has_the_tree_changed_underneath_it():
+    with tempfile.TemporaryDirectory() as d:
+        root, _ = _fixture(d)
+        _commit(root, ".claude/hooks/x.py", "bad\n")
+        sup.check(root, False, T0 + 60)
+        h = sup.check(root, False, T0 + 50 * HOUR)
+        assert not h["machinery_reverts"] and h["machinery_commits_pending"] == 1, h
+        assert (root / ".claude/hooks/x.py").exists()
+
+
 def test_refusal_a_change_the_run_worked_with_is_not_reverted():
     with tempfile.TemporaryDirectory() as d:
         root, _ = _fixture(d)
-        start = _head(root)
         _commit(root, ".claude/hooks/x.py", "good\n")
-        sup.segment_end(root, start, "", DAY)
-        for i in range(1, 4):
-            mark = _head(root)
-            _commit(root, "src/a.c", f"{i}\n")
-            h = sup.segment_end(root, mark, "", DAY + i * 60)
-        assert h["machinery_commits_pending"] == 0 and not h["machinery_reverts"]
+        sup.check(root, True, T0 + 60)
+        _commit(root, "src/a.c", "1\n")
+        h = sup.check(root, True, T0 + 5 * HOUR)
+        assert h["machinery_commits_pending"] == 0 and not h["machinery_reverts"], h
         assert (root / ".claude/hooks/x.py").exists()
 
 
 def test_a_failed_undo_alerts_and_never_raises():
     with tempfile.TemporaryDirectory() as d:
         root, alerts = _fixture(d)
-        start = _head(root)
         _commit(root, ".claude/hooks/x.py", "one\n")
-        sup.segment_end(root, start, "", DAY)
-        sup.segment_end(root, _head(root), "", DAY + 60)
-        # A later edit to the same lines makes the revert conflict, without producing.
-        mark = _head(root)
+        sup.check(root, True, T0 + 60)
+        # A later edit to the same lines makes the older revert conflict.
         _commit(root, ".claude/hooks/x.py", "two\n")
-        h = sup.segment_end(root, mark, "", DAY + 120)
+        sup.check(root, True, T0 + 2 * HOUR)
+        sup.check(root, True, T0 + 3 * HOUR + 120)
         assert any("Could not undo" in a for a in alerts), alerts
-        assert not (pathlib.Path(root) / ".git/REVERT_HEAD").exists()
-        assert h["machinery_commits_pending"] >= 1
+        assert not (root / ".git/REVERT_HEAD").exists()
 
 
 def test_a_dirty_tree_keeps_the_undo_for_later():
     with tempfile.TemporaryDirectory() as d:
         root, alerts = _fixture(d)
-        start = _head(root)
         _commit(root, ".claude/hooks/x.py", "bad\n")
-        sup.segment_end(root, start, "", DAY)
-        sup.segment_end(root, _head(root), "", DAY + 60)
+        sup.check(root, True, T0 + 60)
         (root / "dirty").write_text("x")
-        h = sup.segment_end(root, _head(root), "", DAY + 120)
-        assert h["machinery_commits_pending"] == 1 and not h["machinery_reverts"]
+        h = sup.check(root, True, T0 + 4 * HOUR)
+        assert h["machinery_commits_pending"] == 1 and not h["machinery_reverts"], h
         assert any("dirty" in a for a in alerts), alerts
         (root / "dirty").unlink()
-        h = sup.segment_end(root, _head(root), "", DAY + 180)
+        h = sup.check(root, True, T0 + 5 * HOUR)
         assert len(h["machinery_reverts"]) == 1, h
 
 
-def test_health_counts_ships_and_cost_and_flags_a_stall():
+def test_health_counts_ships_and_flags_a_stall_and_clears_it():
     with tempfile.TemporaryDirectory() as d:
         root, alerts = _fixture(d)
-        report = root / "report.log"
-        report.write_text("  TOTAL      $12.50\n")
-        start = _head(root)
         _commit(root, "todo/T.md", "> **Verified:** 2026-11-07\n")
-        h = sup.segment_end(root, start, str(report), DAY)
-        assert h["sections_shipped_today"] == 1 and h["cost_per_section"] == 12.5, h
-        assert not (root / ".claude/overnight/repair-needed").exists()
-        h = sup.segment_end(root, _head(root), str(report), DAY + 7 * 3600)
-        assert h["repair_needed"] is True and h["hours_since_ship"] == 7.0, h
+        h = sup.check(root, False, T0 + 60)
+        assert h["sections_shipped_today"] == 1, h
+        assert not h["repair_needed"]
+        h = sup.check(root, False, T0 + 7 * HOUR)
+        assert h["repair_needed"] is True and h["hours_since_ship"] > 6, h
         assert any("Nothing has shipped" in a for a in alerts), alerts
         assert json.loads((root / ".claude/overnight/run-health.json").read_text())["repair_needed"]
-        mark = _head(root)
         _commit(root, "todo/T.md", "> **Verified:** 2026-11-07\n> **Quality reviewed:** x\n")
-        h = sup.segment_end(root, mark, "", DAY + 8 * 3600)
+        h = sup.check(root, False, T0 + 8 * HOUR)
         assert h["repair_needed"] is False, h
 
 
-def test_a_section_far_above_average_cost_alerts():
+def test_health_reports_no_dollars():
     with tempfile.TemporaryDirectory() as d:
-        root, alerts = _fixture(d)
-        report = root / "report.log"
-        for i, cost in enumerate(("10.00", "100.00")):
-            report.write_text(f"  TOTAL   ${cost}\n")
-            mark = _head(root)
-            _commit(root, "todo/T.md", "".join(f"> **Verified:** {n}\n" for n in range(i + 1)))
-            sup.segment_end(root, mark, str(report), DAY + i * 60)
-        assert any("Cost per section" in a for a in alerts), alerts
-
-
-def test_launcher_and_gate_are_wired():
-    root = HERE.parents[2]
-    launch = (root / "scripts/overnight/overnight-launch.sh").read_text()
-    end = launch[launch.index('echo "run outcome:'):]
-    assert "supervisor.py" in end and "|| true" in end[end.index("supervisor.py"):][:200]
-    assert "repair-needed" in launch
-    gate = (root / ".claude/hooks/gate.py").read_text()
-    assert "scripts/overnight/supervisor.py" in gate and '.claude/overnight/gate-log.jsonl' in gate
+        root, _ = _fixture(d)
+        assert not [k for k in sup.check(root, False, T0 + 60) if "cost" in k]
 
 
 if __name__ == "__main__":

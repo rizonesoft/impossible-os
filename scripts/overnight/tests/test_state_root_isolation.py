@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hook state must be redirectable, or no test of a hook can be trusted.
 
-2026-07-31: an attended attempt to test `rotate_hint.py` against a tempfile
+2026-07-31: an attended attempt to test a state-writing hook against a tempfile
 fixture -- passed via BOTH `CLAUDE_PROJECT_DIR` and `cwd` -- drove the LIVE
 counter to `{"count": 95, "hint": true}` and never touched the fixture, because
 the hook resolves its root from `__file__`. The same class made four
@@ -22,29 +22,18 @@ import sys
 import tempfile
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
-ROTATE = REPO / ".claude/hooks/rotate_hint.py"
-LIVE = REPO / ".claude/state/rotate-hint.json"
 
 
-def test_override_redirects_and_live_state_is_untouched():
-    before = LIVE.read_text() if LIVE.exists() else None
+def test_override_redirects_to_the_given_directory():
+    sys.path.insert(0, str(REPO / ".claude/hooks"))
+    import _state_root
     with tempfile.TemporaryDirectory() as td:
-        st = pathlib.Path(td) / ".claude/state"
-        st.mkdir(parents=True)
-        (st / "sequencer-run.json").write_text(
-            json.dumps({"active": True, "phase": "SECTIONS"}))
-        env = dict(os.environ, OVERNIGHT_SEQUENCER_RUN="1",
-                   CLAUDE_HOOK_STATE_ROOT=td)
-        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}})
-        for _ in range(3):
-            subprocess.run([sys.executable, str(ROTATE)], input=payload,
-                           capture_output=True, text=True, env=env, timeout=60)
-        fixture = st / "rotate-hint.json"
-        assert fixture.exists(), "override ignored -- the fixture was never written"
-        assert json.loads(fixture.read_text())["count"] == 3, fixture.read_text()
-    after = LIVE.read_text() if LIVE.exists() else None
-    assert before == after, (
-        f"LIVE runner state was mutated by a test: {before!r} -> {after!r}")
+        os.environ["CLAUDE_HOOK_STATE_ROOT"] = td
+        try:
+            assert str(_state_root.override()) == td
+            assert str(_state_root.resolve(lambda: "/fallback")) == td
+        finally:
+            del os.environ["CLAUDE_HOOK_STATE_ROOT"]
 
 
 def test_absent_override_keeps_the_original_resolution():
@@ -62,6 +51,6 @@ def test_absent_override_keeps_the_original_resolution():
 
 
 if __name__ == "__main__":
-    test_override_redirects_and_live_state_is_untouched()
+    test_override_redirects_to_the_given_directory()
     test_absent_override_keeps_the_original_resolution()
     print("PASS: hook state-root isolation")

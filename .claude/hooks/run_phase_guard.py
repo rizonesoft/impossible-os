@@ -1624,20 +1624,6 @@ def handle_stop():
     # the marker is already gone, the run has been disarmed -- allow the stop.
     if not ARMED_MARKER.exists():
         return 0
-    state_early = load_state()
-    # VERIFIED ROLLOVER: the `rollover` verb machine-verified the checkpoint
-    # (clean tree, pushed, graph OK, content-bound receipts, no outstanding
-    # jobs). Permit exactly this one stop; the *:0/10 watchdog relaunches a
-    # fresh session on its next tick. The flag is one-shot (cleared on the next
-    # launch's `start`) and honored only while fresh. The RUN stays active.
-    ro = state_early.get("rollover") or {}
-    if (isinstance(ro, dict) and ro.get("pending")
-            and time.time() - (ro.get("epoch") or 0) < ROLLOVER_PENDING_FRESH_S):
-        sys.stderr.write(
-            "[sequencer] stop allowed: verified rollover checkpoint -- the "
-            "watchdog relaunches a fresh worker context on its next tick; the "
-            "run stays ARMED and the cursor carries the state.\n")
-        return 0
     # Oracle-consulting fallback (runner-kit law 2, adopted 2026-07-03): a
     # session at a TRUE lifecycle end (oracle DONE, or BLOCKED once the 3-state
     # split reports only recoverable deferrals) may end WITHOUT the sentinel --
@@ -1653,15 +1639,15 @@ def handle_stop():
             f"[sequencer] stop allowed: live triage oracle reports {verdict} "
             "(no implementable work right now). The run stays ARMED -- "
             "finalize with `python3 .claude/hooks/run_phase_guard.py fixpoint` "
-            "(DONE) or let the watchdog retry (BLOCKED).\n")
+            "(DONE); the heartbeat nudges a BLOCKED queue to look again.\n")
         return 0
     state = load_state()
     sys.stderr.write(
         f"[SEQ-STOP] do not stop (pass={state.get('pass_no')} "
         f"file={state.get('file')} phase={state.get('phase')}). Defer-and-"
         "advance, poll any in-flight review IN-SESSION (blocking sleep loop), "
-        "or END on a verified `rollover`. Re-invoke Skill(overnight-sequencer) "
-        "and continue. Details: docs/infrastructure/hook-codes.md#seq-stop")
+        "and go on to the next section. Re-invoke Skill(overnight-sequencer) "
+        "if you no longer have it in context. Details: docs/infrastructure/hook-codes.md#seq-stop")
     return 2
 
 
@@ -2126,10 +2112,8 @@ def cli(argv):
         except Exception:
             pass
         print("[sequencer] rollover VERIFIED: clean tree, pushed, graph OK, "
-              "receipts content-valid, no outstanding jobs. Final-answer now "
-              "with a one-line checkpoint summary and END the turn -- the "
-              "watchdog relaunches a fresh worker context on its next tick; "
-              "the run stays armed and the cursor carries the state.",
+              "receipts content-valid, no outstanding jobs. Go straight on to "
+              "the next section in this session; compaction manages the context.",
               file=sys.stderr)
         return 0
     if cmd == "review-resolved":

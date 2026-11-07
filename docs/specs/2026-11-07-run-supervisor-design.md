@@ -29,7 +29,8 @@ Three designs make any fault fatal:
 5. **Process checks become logged warnings, then go.** A warning that keeps firing is data. A refusal that wedges a run is not.
 6. **The run decides.** Already in place: it records the choice and its reversal cost in `todo/answers.md`, and only unrecoverable data loss, credentials, money, shared infrastructure or a wrong-looking calculation parks.
 7. **The run repairs its own machinery, and a small frozen supervisor can undo that.** A person can also fix things live from a separate checkout.
-8. **One number says whether it is healthy: sections shipped per day.** Spend has no cap; an alert fires on spend per section.
+8. **One number says whether it is healthy: sections shipped per day.** The run is on a subscription with no spend cap, so health reports no dollars.
+9. **One session.** Everything runs in one session you can watch and talk to. Subagents and Codex stay separate. The saving always came from resetting context, not from being a separate process: compacting at 400K uses about 0.92x today's cache reads, on the last run's numbers.
 
 ## Classifying what exists
 
@@ -50,17 +51,23 @@ A reviewer's skill can still say to run a review or apply reception. What change
 
 **Work-item failure.** The cursor records attempts per section. After 2 failed attempts (a refused ship, a failing suite, a review loop at its cap), the section is parked with its reason and the cursor moves on. Parked-on-failure work stays visible and retries once per pass, because a later fix often clears it. `rollover_refused` stops holding the queue.
 
-**The supervisor.** `scripts/overnight/supervisor.py`, called once at each segment end, plus the launcher and the arm script. These, `gate.py`, `run_phase_guard.py` and `settings.json` are the only files a run may not edit, because they are what recovers from every other mistake. A run can still set a process gate to `log`, because that data file is not frozen and cannot reach a product or safety check.
+**The session.** `scripts/run.sh start` runs Claude in tmux with `CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000`, and `attach` opens it. Compaction replaces relaunching, so the disk is the memory: the cursor, git and the TODO files. Systemd, the launcher and token drop-ins all go.
 
-**The run ends only when** the oracle says fixpoint, an operator stops it, or an explicit `--hours` deadline passes. A no-ship streak and a breaker trip no longer end it. They back off, alert, and start a **repair segment**: a fresh session told to find out why nothing is shipping and fix it.
+**The stop guard.** The existing Stop hook refuses a stop until fixpoint, an operator stop, or a fully blocked queue. A verified rollover no longer ends the session; it goes straight to the next section.
 
-**Self-repair and auto-undo.** The run may edit the machinery, and the runner test suite still gates those commits. The supervisor records each machinery commit. If the next 2 segments produce no commit outside the machinery, it reverts those commits, pushes and alerts. Producing anything clears them, because a section can span several segments and shipping alone would be too slow a signal. A failed revert alerts and stays out of the way, and a dirty tree retries at the next segment end.
+**The heartbeat.** `scripts/overnight/heartbeat.sh` checks from outside every 5 minutes. A dead session restarts with `--resume` on its own session id, backing off if it keeps dying. A session with no transcript activity for 45 minutes is nudged, which also covers the end of a usage-limit wait, since automatic waiting stops after three continuations. A stalled one is told to diagnose. It acts only on faults. The old watchdog relaunched as its normal way of working.
 
-**Live repair.** A person, or an attended session, works in a separate worktree and pushes to `main`. The run picks it up at the next segment. This replaces the safe-window rules for sharing one tree.
+**The supervisor.** `scripts/overnight/supervisor.py`, called by the heartbeat, writes health and raises alerts. Frozen files, which a run may not edit: `run.sh`, `run-common.sh`, `heartbeat.sh`, `supervisor.py`, `gate.py`, `run_phase_guard.py` and `settings.json`. A run can still set a process gate to `log`, because that data file is not frozen and cannot reach a product or safety check.
+
+**The run ends only when** the oracle says fixpoint or an operator stops it. Nothing else ends it.
+
+**Self-repair and auto-undo.** The run may edit the machinery, and the runner test suite still gates those commits. If 3 hours pass with no commit outside the machinery and the session is idle, the supervisor reverts those commits, pushes and alerts. Only when idle, because the session shares the working tree. Producing anything clears them.
+
+**Review depth.** One cap of 42 rounds for all code, the highest count that clearly paid, and a clean round exits. Across 831 sections the p99 is 32 dispatches, so the cap binds only on outliers. The rule to change structure by round 3 stays, because that is what stops a spiral.
 
 **Findings.** One running file, `todo/RUN-ISSUES.md`, replaces the 46 versioned capture files. A problem is fixed and its entry removed, with no close-out ritual. The old versions stay in git history.
 
-**Health.** `.claude/overnight/run-health.json`, written at each segment end: sections shipped today, cost per section, hours since the last ship, gate warnings fired per class, and machinery commits and reverts. It alerts when nothing ships for 6 hours, or when cost per section exceeds three times its trailing average.
+**Health.** `.claude/overnight/run-health.json`, written by the heartbeat: sections shipped today, hours since the last ship, gate warnings per class, and machinery commits and reverts. It alerts when nothing ships for 6 hours.
 
 ## Hardware
 
@@ -71,4 +78,5 @@ Testing stays on emulators for now, and development always aims at real hardware
 - A green run is evidence, not proof. Emulators miss real-hardware bugs, and the first bare-metal boot will find some.
 - Finishing the roadmap is not the same as rivalling Linux and Windows, which is also a matter of drivers and applications built over decades.
 - Removing process gates removes some nets. The bet, based on the failures measured above, is that product checks catch what matters. Health and warning counts are how we find out if that bet is wrong.
-- Roughly 1,570 sections remain, so the spend is large: at least about $20,000 at the $13 per section implied by v20, and the 2026-11-07 run's $670 suggests it could be higher.
+- Roughly 1,570 sections remain, so this takes a long time. Earlier dollar estimates are withdrawn: `cost-summary.py` reports relative sizing at old list rates, not a bill.
+- A single session running for days is untested here. WSL restarting takes the heartbeat with it, so `run.sh start` has to be run again, which resumes the work.

@@ -11,7 +11,7 @@ So the backstop fires on **stalled progress**, not round count:
   - STOP when K consecutive rounds find NOTHING NEW (default K=3) -- a genuine
     loop (same finding repeating / no forward motion), not a deep escalating
     review.
-  - Plus a very high COUNT CEILING (default 30) as a final infinite-loop guard.
+  - Plus a very high COUNT CEILING (default 42, the one cap for all code) as a final infinite-loop guard.
 A round that finds a NEW finding resets the stall streak to 0 -- the review
 may run as long as it stays productive.
 
@@ -36,7 +36,7 @@ CLI:
   --status [SLICE]
   --reset
 Env: OVERNIGHT_REVIEW_NOPROGRESS_CAP (default 3), OVERNIGHT_REVIEW_ROUND_CEILING
-(default 30). Optional --state PATH (testability). Stdlib only.
+(default 42). Optional --state PATH (testability). Stdlib only.
 """
 from __future__ import annotations
 
@@ -57,9 +57,9 @@ def _noprogress_cap() -> int:
 
 def _ceiling() -> int:
     try:
-        return max(1, int(os.environ.get("OVERNIGHT_REVIEW_ROUND_CEILING", "30")))
+        return max(1, int(os.environ.get("OVERNIGHT_REVIEW_ROUND_CEILING", "42")))
     except ValueError:
-        return 30
+        return 42
 
 
 def _read(state: Path) -> tuple[str, int, int]:

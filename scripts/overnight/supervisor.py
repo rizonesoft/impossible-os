@@ -3,18 +3,19 @@
 
 A run may edit its own machinery (docs/specs/2026-11-07-run-supervisor-design.md).
 This file may not be edited by a run, because it is what recovers from that going
-wrong. It is called once at each segment end and must never stop the run: every
-failure here is reported and the launcher carries on.
+wrong. The heartbeat calls it every few minutes, and it must never stop the run: every
+failure here is reported and the heartbeat carries on.
 
-Per segment it records:
-  machinery commits, each with a count of later segments that produced nothing.
-    At UNDO_AFTER such segments the commit is reverted and an alert sent.
-  run-health.json: sections shipped today, hours since the last ship, cost per
-    section, gate warnings fired, machinery commits and reverts.
-  repair-needed: present when nothing has shipped for REPAIR_AFTER_HOURS. The
-    launcher reads it to start a repair segment.
+Each check records:
+  machinery commits. When UNDO_AFTER_HOURS pass with no commit outside the machinery
+    AND the session is idle, they are reverted and an alert sent. Only when idle,
+    because the session shares this working tree and must not have it change underneath.
+  run-health.json: sections shipped today, hours since the last ship, gate warnings
+    fired, machinery commits and reverts. No dollars: the run is on a subscription,
+    and the rates in cost-summary.py are relative sizing, not a bill.
+  repair-needed: nothing has shipped for REPAIR_AFTER_HOURS.
 
-Usage: supervisor.py PROJECT_DIR --start-head SHA [--report FILE] [--now EPOCH]
+Usage: supervisor.py PROJECT_DIR [--idle] [--now EPOCH]
 """
 from __future__ import annotations
 
@@ -25,13 +26,11 @@ import subprocess
 import time
 from pathlib import Path
 
-UNDO_AFTER = 2                # segments producing nothing after a machinery commit
+UNDO_AFTER_HOURS = 3          # no commit outside the machinery, session idle
 REPAIR_AFTER_HOURS = 6
-COST_ALERT_FACTOR = 3         # times the trailing average cost per section
 MACHINERY_PREFIXES = (".claude/hooks/", ".claude/skills/", ".claude/gate-modes.json",
                       "scripts/overnight/", ".githooks/")
 SHIP_RE = re.compile(r"^\+> \*\*(?:Verified|Quality reviewed):\*\*", re.M)
-TOTAL_RE = re.compile(r"TOTAL\s+\$([0-9.]+)")
 # deadline: each git call is bounded here, and a push by its own gate-heavy limit.
 GIT_TIMEOUT = 60
 PUSH_TIMEOUT = 1800
@@ -87,15 +86,16 @@ def write_json(path: Path, data) -> None:
     tmp.replace(path)
 
 
-def undo(root: Path, pending: list) -> tuple:
+def undo(root: Path, pending: list, now: int, idle: bool) -> tuple:
     """Revert due commits, newest first. Returns (reverted, still pending)."""
-    due = [p for p in pending if p["empty_segments"] >= UNDO_AFTER]
-    keep = [p for p in pending if p["empty_segments"] < UNDO_AFTER]
+    limit = UNDO_AFTER_HOURS * 3600
+    due = [p for p in pending if now - p["seen"] >= limit] if idle else []
+    keep = [p for p in pending if p not in due]
     reverted = []
     for entry in sorted(due, key=lambda p: p["order"], reverse=True):
         sha = entry["sha"]
         if git(root, "status", "--porcelain").stdout.strip():
-            keep.append(entry)  # retry at the next clean segment end
+            keep.append(entry)  # retry at a later check
             alert(root, f"Machinery commit {sha[:12]} is due for undo, but the tree is dirty.")
             continue
         r = git(root, "revert", "--no-edit", sha, timeout=PUSH_TIMEOUT)
@@ -107,19 +107,21 @@ def undo(root: Path, pending: list) -> tuple:
     if reverted:
         p = git(root, "push", "origin", "HEAD", timeout=PUSH_TIMEOUT)
         pushed = "and pushed" if p.returncode == 0 else "but the push failed"
-        alert(root, "Nothing was produced after machinery commits "
+        alert(root, f"Nothing was produced after machinery commits "
                     f"{', '.join(s[:12] for s in reverted)}: reverted {pushed}.")
     return reverted, keep
 
 
-def segment_end(root: Path, start: str, report: str, now: int) -> dict:
+def check(root: Path, idle: bool, now: int) -> dict:
     state_dir = root / ".claude/overnight"
     state_path = state_dir / "supervisor-state.json"
     state = read_json(state_path, {})
     pending = state.get("pending", [])
     order = int(state.get("order", 0))
+    state.setdefault("first_seen", now)
 
-    new = commits_since(root, start)
+    head = git(root, "rev-parse", "HEAD").stdout.strip()
+    new = commits_since(root, state.get("head") or head)
     shipped = 0
     produced = False
     for sha in reversed(new):
@@ -129,52 +131,29 @@ def segment_end(root: Path, start: str, report: str, now: int) -> dict:
             produced = True
         if any(is_machinery(f) for f in files):
             order += 1
-            pending.append({"sha": sha, "empty_segments": 0, "order": order})
-
+            pending.append({"sha": sha, "seen": now, "order": order})
     if produced:
-        pending = []  # the run works with these changes in place
-    else:
-        for entry in pending:
-            if entry["sha"] not in new:
-                entry["empty_segments"] += 1
+        pending = []  # the run worked with these changes in place
 
-    reverted, pending = undo(root, pending)
-
-    cost = 0.0
-    try:
-        hits = TOTAL_RE.findall(Path(report).read_text(encoding="utf-8", errors="replace"))
-        cost = float(hits[-1]) if hits else 0.0
-    except (OSError, ValueError):
-        pass  # fail-direction: unknown cost counts as zero and raises no cost alert
+    reverted, pending = undo(root, pending, now, idle)
+    state["head"] = git(root, "rev-parse", "HEAD").stdout.strip()
 
     day = time.strftime("%Y-%m-%d", time.gmtime(now))
     if state.get("day") != day:
-        state.update(day=day, shipped_today=0, cost_today=0.0)
+        state.update(day=day, shipped_today=0)
     state["shipped_today"] = int(state.get("shipped_today", 0)) + shipped
-    state["cost_today"] = round(float(state.get("cost_today", 0.0)) + cost, 2)
     state["total_shipped"] = int(state.get("total_shipped", 0)) + shipped
-    state["total_cost"] = round(float(state.get("total_cost", 0.0)) + cost, 2)
-    state["since_ship_cost"] = round(float(state.get("since_ship_cost", 0.0)) + cost, 2)
-    state.setdefault("first_seen", now)
     if shipped:
         state["last_ship"] = now
     last_ship = int(state.get("last_ship") or state["first_seen"])
     hours = (now - last_ship) / 3600
 
-    prior = state["total_shipped"] - shipped
-    prior_cost = state["total_cost"] - state["since_ship_cost"]
-    average = prior_cost / prior if prior > 0 else None
-    if shipped:
-        per_section = state["since_ship_cost"] / shipped
-        if average and per_section > COST_ALERT_FACTOR * average:
-            alert(root, f"Cost per section ${per_section:.2f} against an average of ${average:.2f}.")
-        state["since_ship_cost"] = 0.0
-
     repair = state_dir / "repair-needed"
     if hours >= REPAIR_AFTER_HOURS:
-        if not repair.exists() or now - int(state.get("last_stall_alert", 0)) >= REPAIR_AFTER_HOURS * 3600:
+        if now - int(state.get("last_stall_alert", 0)) >= REPAIR_AFTER_HOURS * 3600:
             alert(root, f"Nothing has shipped for {hours:.1f} hours.")
             state["last_stall_alert"] = now
+        repair.parent.mkdir(parents=True, exist_ok=True)
         repair.write_text(f"{hours:.1f}\n", encoding="utf-8")
     elif repair.exists():
         repair.unlink()
@@ -193,11 +172,8 @@ def segment_end(root: Path, start: str, report: str, now: int) -> dict:
     health = {
         "updated": now, "sections_shipped_today": state["shipped_today"],
         "sections_shipped_total": state["total_shipped"],
-        "hours_since_ship": round(hours, 1), "cost_today": state["cost_today"],
-        "cost_total": state["total_cost"],
-        "cost_per_section": (round(state["total_cost"] / state["total_shipped"], 2)
-                             if state["total_shipped"] else None),
-        "gate_warnings": gates, "machinery_commits_pending": len(pending),
+        "hours_since_ship": round(hours, 1), "gate_warnings": gates,
+        "machinery_commits_pending": len(pending),
         "machinery_reverts": state["reverted"], "repair_needed": repair.exists(),
     }
     write_json(state_dir / "run-health.json", health)
@@ -207,12 +183,11 @@ def segment_end(root: Path, start: str, report: str, now: int) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("project_dir")
-    ap.add_argument("--start-head", default="")
-    ap.add_argument("--report", default="")
+    ap.add_argument("--idle", action="store_true")
     ap.add_argument("--now", type=int, default=None)
     args = ap.parse_args()
     now = args.now if args.now is not None else int(time.time())
-    print(json.dumps(segment_end(Path(args.project_dir).resolve(), args.start_head, args.report, now)))
+    print(json.dumps(check(Path(args.project_dir).resolve(), args.idle, now)))
     return 0
 
 

@@ -340,7 +340,7 @@ For each actionable finding, in ranked order:
       ```
     - **Mandatory angles for the prompt:** (1) does the fix actually close the finding's root cause or only the visible symptom? (2) are there error paths, SMP cases, or boundary values the fix misses? (3) does the fix introduce a regression in adjacent code? (4) for POLICY fixes: does the fix match the POLICIES.md Remediation shape?
     - Apply `superpowers:receiving-code-review` to every Codex finding. Codex can be wrong; verify each finding against code before acting.
-    - Unresolved Critical/High Codex findings block commit. Iterate: fix -> rebuild -> re-dispatch, up to 3 rounds. After round 3 with still-unresolved Critical/High, stop, downgrade the finding's fix status to "attempted", and escalate to the user.
+    - Unresolved Critical/High Codex findings block commit. Iterate: fix -> rebuild -> re-dispatch, until a clean round, up to the 42-round cap. After round 3 with still-unresolved Critical/High, stop, downgrade the finding's fix status to "attempted", and escalate to the user.
     - Skip only when `--skip-fix` was passed (no fixes means no review).
 
 24. **Verify against the original symptom**

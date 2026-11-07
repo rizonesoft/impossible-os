@@ -36,8 +36,8 @@ LOGGABLE = frozenset({
 # The part a run may never edit, because it is what recovers from every other mistake.
 FROZEN = frozenset({
     ".claude/hooks/gate.py", ".claude/hooks/run_phase_guard.py", ".claude/settings.json",
-    "scripts/overnight/overnight-arm.sh", "scripts/overnight/overnight-launch.sh",
-    "scripts/overnight/supervisor.py", ".claude/skills/overnight-sequencer/arm-sequencer.sh",
+    "scripts/run.sh", "scripts/overnight/run-common.sh", "scripts/overnight/heartbeat.sh",
+    "scripts/overnight/supervisor.py",
 })
 
 

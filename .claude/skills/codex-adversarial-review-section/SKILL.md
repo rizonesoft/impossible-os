@@ -1,6 +1,6 @@
 ---
 name: codex-adversarial-review-section
-description: Run adversarial code review for one implemented TODO section, fix findings, and re-review up to 3 rounds until no unresolved High/Critical issues remain.
+description: Run adversarial code review for one implemented TODO section, fix findings, and re-review until no unresolved High/Critical issues remain, up to the 42-round cap.
 ---
 
 # Codex Adversarial Review -- Section Loop
@@ -70,7 +70,7 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
 6. **Pre-dispatch self-diff gate, then** re-review the same section with focus on previous findings and changed files.
    - BEFORE re-dispatching: read the fix diff against this round's + all prior rounds' findings and self-check the fix-then-regress shapes (canonical rule: review-todo-section step 6) -- scope creep, an operation reordered before its precondition, `==` where a bit-flag test is needed, sentinel/boundary handling, re-opening a prior finding. A localized fix that passes the gate needs no fresh Codex round.
    - If re-dispatch is warranted, dispatch to Codex rescue subagent again with the fix context.
-7. Iterate fix -> self-diff gate -> build/test -> re-review with a maximum of 3 rounds.
+7. Iterate fix -> self-diff gate -> build/test -> re-review until a round is clean, up to the 42-round cap.
 8. End-state rules.
    - If unresolved `Critical`/`High` remain after round 3, do not mark section complete; keep `[/]` or `[ ]` and add explicit follow-up checklist items with ownership and `→ XREF` where needed.
    - Record a compact findings summary for the section with resolved vs accepted items.

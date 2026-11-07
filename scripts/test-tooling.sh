@@ -8836,7 +8836,7 @@ else
 fi
 
 _rr_bad=""
-for _h in build_offload_reminder rotate_hint agent_dispatch_required \
+for _h in build_offload_reminder agent_dispatch_required \
           session_brief_inject verify_cadence_reminder; do
     _rr=$(cd "$REPO_ROOT" && python3 -c "
 import importlib.util, sys

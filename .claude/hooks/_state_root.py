@@ -7,7 +7,7 @@ either by walking up from `__file__` or by running `git rev-parse
 the ENVIRONMENT rather than of the caller, so a test cannot isolate the hook it
 is testing:
 
-  - `rotate_hint.py` walks from `__file__`, which lives in the real repo. An
+  - a hook that walks from `__file__`, which lives in the real repo. An
     attended attempt to test it against a `tempfile` fixture -- passed via BOTH
     `CLAUDE_PROJECT_DIR` and `cwd` -- drove the LIVE counter to `{"count": 95,
     "hint": true}` instead. The fixture was never touched. Impact was nil only

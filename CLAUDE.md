@@ -284,7 +284,7 @@ The attended session works in the SAME working tree the run is executing, so the
 
 What may NOT be repaired attended-but-hastily: anything needing a design decision, an ABI/SMP judgment call, or that is not safely reversible mid-run. File it, same as the run would.
 
-**There are no canary runs (retired 2026-11-07).** One command starts a run, and `arm-sequencer.sh` refuses only what makes running impossible: a missing tool, a rejected token, or a permission deny on a pipeline skill. Campaign: [docs/plans/2026-11-07-run-supervisor.md](docs/plans/2026-11-07-run-supervisor.md).
+**One session runs everything (2026-11-07).** `bash scripts/run.sh start`, then `attach` to watch it and talk to it. `run.sh` refuses only a missing tool or a permission deny on a pipeline skill. A stop guard holds the session until fixpoint, and a heartbeat restarts it if it dies. There are no canary runs. The sections above and below on arming, the shared tree and relaunching describe the old design until they are removed: [the campaign](docs/plans/2026-11-07-run-supervisor.md).
 
 ## Toolchain
 
@@ -367,7 +367,7 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/codex-gap-audit` | Codex red-team of a TODO gap-audit inventory (mandatory in `gap-audit-todo` Phase 3.5) |
 | `/codex-design-review` | Codex pre-implementation design review |
 | `/codex-review-todo` | Codex adversarial review of all implemented sections in a TODO |
-| `/codex-adversarial-review-section` | Codex adversarial review for a single section (up to 3 rounds) |
+| `/codex-adversarial-review-section` | Codex adversarial review for a single section (until a clean round, cap 42) |
 | `/codex-fix-review` | Fix Codex findings, re-review until resolved |
 | `/codex-test-coverage` | Codex test coverage gap analysis |
 | `/codex-impact-analysis` | Codex dependency impact analysis |
