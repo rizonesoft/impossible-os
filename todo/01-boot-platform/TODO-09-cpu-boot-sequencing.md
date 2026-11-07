@@ -74,7 +74,7 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 | 💎  |   7   | CR4 safety-bit pinning                           | §2, §5                   |  [x]   |
 | 💎  |   8   | MTRR/PAT AP synchronization                      | §4                       |  [x]   |
 | ⭐  |   9   | CPU register state audit trail                   | §2, §5                   |  [x]   |
-| 💎  |  10   | AP bringup hardening & robustness                | §4, §6                   |  [x]   |
+| 💎  |  10   | AP bringup hardening & robustness                | §4, §6                   |  [ ]   |
 | 💎  |  11   | Post-ship follow-up backfill (2026-07-31 cohort) | --                       |  [x]   |
 
 > 💎 = parity -- Windows and Linux both enforce EFER/CR4 ordering, AP parity, feature consistency, CR4 pinning, and PAT synchronization; Impossible OS must match that contract.
@@ -346,7 +346,7 @@ Both Windows and Linux synchronize the PAT (Page Attribute Table) MSR on each AP
 > - Scope boundary: §8 owns PAT sync + MTRR parity AUDIT; divergent-AP MTRR reprogram + runtime PAT re-broadcast need an IPI rendezvous (`smp_call_function`, deferred). MMIO cache correctness owned by PAT (TODO-01 §11).
 
 > **Verified:** 2026-05-24 | commit `27124dca` | 6/7 items | build OK | smoke PASS (KVM 2.640s); PAT WC active, MTRR audit wired
-> **Deferred:** [M] runtime PAT re-broadcast + divergent-AP MTRR reprogram -- needs an all-CPU IPI rendezvous (`smp_call_function` absent); warn-only audit ships correctness-complete -> XREF: 01-boot-platform/TODO-09 §8 (item: "DEFERRED (needs SMP IPI rendezvous): runtime PAT re-broadcast + divergent-AP MTRR reprogram" at line 346)
+> **Deferred:** [M] runtime PAT re-broadcast + divergent-AP MTRR reprogram needs a cross-CPU call; `smp_rendezvous_begin()` shipped but only parks targets, it runs nothing on them, and `smp_call_function` is still absent; warn-only audit ships correctness-complete -> XREF: 03-memory-concurrency/TODO-07 §2 (item: "`smp_call_function(cpu, fn, arg)` cross-CPU synchronous call")
 > **Quality reviewed:** 2026-05-24 | Codex 10x (design, adversarial, consistency, perf, re-adversarial, test-coverage) | 2H+4M+1L fixed, 1M deferred | scope: kernel-code-quality
 
 ---
@@ -401,13 +401,13 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 - [x] **Periodic CR-pin verify-IPI** -- `IPI_VECTOR_CR_VERIFY` (0xFB) + handler (`cr0/cr4_verify_pinned` + EOI); `cpu_cr_pin_tick()` broadcasts to online APs once armed post-bringup. Closes the §7 AP-verify gap (AP LAPIC timers masked).
 - [x] **Degraded-bringup abandon (CAS)** -- per-CPU `ap_bringup_state`: AP CASes STARTING->ONLINE then publishes `is_online`; BSP CASes STARTING->ABANDONED on timeout; AP validates live LAPIC ID vs prestored slot id before ONLINE.
 - [x] **Sparse-slot accounting** -- `boot_async_group()` distributes work over an explicit `is_online` slot list (walk 1..MAX_CPUS), not dense `smp_cpu_count()`; clears async state for ALL online APs so a smaller later group leaves no stale work.
-- [/] **AP_DATA consume-ack handshake (PARKED)** -- a slow AP can run `ap_cpu_harden` on the next AP's stack before the S10 identity guard parks it; add a trampoline-entry ack the BSP waits on before reusing `AP_DATA`+stack.
-  - Blocker: needs a trampoline-protocol change (`ap_trampoline.asm` + the `smp.c` bringup loop) that this section is not scoped to redesign. Owned HERE -- this item is the named XREF target of §4's, §6's and §11's Accepted/Deferred stamps, so its consumers re-open it rather than the reverse. Not operator-gated: ordinary kernel work awaiting a scoped owner.
+- [ ] **AP_DATA consume-ack handshake** -- a slow AP can run `ap_cpu_harden` on the next AP's stack before the S10 identity guard parks it; add a trampoline-entry ack the BSP waits on before reusing `AP_DATA`+stack.
+  - Owned HERE: a trampoline-protocol change (`ap_trampoline.asm` + the `smp.c` bringup loop). This item is the named XREF target of §4's, §6's and §11's Accepted/Deferred stamps, so its consumers re-open it rather than the reverse.
   - Scope note (§11 review, 2026-08-13): the impostor writes `pc->features` AND `pc->cr4_at_boot` into the reassigned slot at `src/kernel/smp/smp.c:159`, before the LAPIC-identity park at `smp.c:174`. So it can corrupt BOTH §6's feature intersection and §11's `CR4.PKE` intersection, leaving `pku_enabled` over-broad for the slot's real AP. Ordering the identity guard ahead of `ap_cpu_harden()` is one candidate fix; a single-writer handoff tied to the ONLINE CAS is another.
-- [/] **Per-CPU TSS + IST (PARKED)** -- APs never `ltr` a TSS (`ap_trampoline.asm` loads BSP GDT only), so all CPUs share one `kernel_tss`/IST1-3 + a global rsp0. Add per-CPU TSS + GDT descriptor + IST + AP `ltr`.
-  - Blocker: needs a per-CPU GDT (each AP needs its own TSS descriptor slot), which the shared-BSP-GDT trampoline does not provide. Owned HERE; two live consumers wait on it and are the re-open trigger -> XREF: `01-boot-platform/TODO-10 §16` (item: "AP per-CPU TSS/IST: BSP-only today") and `02-kernel-core/TODO-10 §10` (item: "Per-CPU TSS + IST").
-- [/] **Phase-split INIT settle + 200us SIPI wait (PARKED)** -- `smp.c` serials 10ms INIT + 1ms SIPI per AP; INIT all targets, one shared settle, then per-AP SIPI at 200us.
-  - Blocker: the consume-ack handshake above, which must land first (a shared settle reuses `AP_DATA` faster, widening exactly the window that item closes). Requested by -> XREF: `01-boot-platform/TODO-11 §10` (item: "Phase-split INIT settle + 200us SIPI wait"), whose Accepted stamp points back here.
+- [ ] **Per-CPU TSS + IST** -- APs never `ltr` a TSS (`ap_trampoline.asm` loads BSP GDT only), so all CPUs share one `kernel_tss`/IST1-3 + a global rsp0. Add per-CPU TSS + GDT descriptor + IST + AP `ltr`.
+  - Needs a per-CPU GDT (each AP needs its own TSS descriptor slot), which the shared-BSP-GDT trampoline does not provide: that is the work, not a blocker. `gdt.c:44` is still one static `kernel_tss`. Two live consumers wait on it -> XREF: `01-boot-platform/TODO-10 §16` (item: "AP per-CPU TSS/IST: BSP-only today") and `02-kernel-core/TODO-10 §10` (item: "Per-CPU TSS + IST").
+- [ ] **Phase-split INIT settle + 200us SIPI wait** -- `smp.c` serials 10ms INIT + 1ms SIPI per AP; INIT all targets, one shared settle, then per-AP SIPI at 200us.
+  - Order: the consume-ack handshake above must land first (a shared settle reuses `AP_DATA` faster, widening exactly the window that item closes). Requested by -> XREF: `01-boot-platform/TODO-11 §10` (item: "Phase-split INIT settle + 200us SIPI wait"), whose Accepted stamp points back here.
 - [x] Commit: `"smp: AP bringup hardening -- AP-local gates, CR4 force-after-validation, degraded-bringup robustness"`
 
 **Test checkpoint:** Boot on SMP system. A feature-skewed AP (or VM forcing a CPUID difference) degrades without #GP; serial shows the forced-CR4 / mismatch path. Partial-bringup (one AP timed out) leaves `smp_cpu_count()` and `boot_async_group()` consistent -- the live high-slot AP still gets work, and the timed-out AP logs `AP %u abandoned` and parks. Verify on QEMU WHPX (SMP), TCG, VirtualBox, bare metal. Single-CPU (KVM smoke): no APs, no verify-IPI armed, boots clean.
@@ -422,7 +422,7 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 > - Scope boundary: §10 owns AP-local gating, CR4 force, verify-IPI, abandon, sparse async. PAT re-broadcast + divergent-AP MTRR reprogram (§8 deferred) still need an all-CPU rendezvous, NOT the fire-and-forget verify-IPI.
 
 > **Verified:** 2026-05-27 | commit `995b5103` | 5/6 items | build OK | tests x86 152 + boot 1723 PASS, smoke PASS
-> **Deferred:** [H] residual shared-trampoline window: a slow AP can run `ap_cpu_harden` on the next AP's stack before the LAPIC-ID guard parks it -> XREF: 01-boot-platform/TODO-09 §10 (item: "AP_DATA consume-ack handshake")
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] residual shared-trampoline window: a slow AP can run `ap_cpu_harden` on the next AP's stack before the LAPIC-ID guard parks it. The stamp named this section's own item, and that item named no outside blocker, so neither could clear. `smp.c:234` still records the gap.
 > **Accepted:** [M] x2APIC >255 APIC IDs unsupported by the guard (reason: SIPI target + `lapic_id()` + `cpu_info.apic_id` are all 8-bit xAPIC, so unreachable today) -> XREF: 04-drivers-hardware/TODO-02 §1 (item: "Widen APIC IDs to 32 bits for systems with >255 cores" at line 55)
 > **Quality reviewed:** 2026-05-27 | Codex 5x (adversarial + consistency + perf + 2 re-adversarial) | 2H fixed, 1H deferred + 1M accepted-XREF | scope: kernel-code-quality
 
