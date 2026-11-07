@@ -484,15 +484,15 @@ title: "TODO-14 -- Registry System Completion"
 - [/] Make `hive_load` transactional -- PARTIAL: validate pass (apply=0) catches malformed input before any live mutation, but apply still mutates incrementally with no rollback; full staging -> §14 reload-transactionality. XREF: TODO-12 §15.
 - [x] `hive_validate_file` checks only the header CRC, then `hive_best_source` promotes a header-valid `.hive.log` over a good main hive before any data parse (`registry.c:2265-2305`). Validate the full candidate before promotion. XREF: TODO-12 §15.
 - [/] DEFERRED: hive_parse_key recursion capped at HIVE_MAX_PARSE_DEPTH (12) for 8 KiB stack safety; full-depth support needs an iterative parser. -> XREF: 02-kernel-core/TODO-14 §16 (item: "Iterative/heap-backed hive parser" at the §10 checklist)
-- [/] DEFERRED (boot-mount coupled, GPF history): wire `registry_load_hives()` into boot after defaults (needs C:); loads on-disk `ExternalEntropy`, so secure-delete MUST land together. -> XREF: `01-boot-platform/TODO-12 §9`
-- [/] DEFERRED (with load trio): secure one-shot deletion across main + journal + `.bak` before cross-reboot absorb; then drop the `registry_persistence_active()` gate. -> XREF: `01-boot-platform/TODO-12 §9`
-- [/] DEFERRED (with load trio): per-hive flush status (`registry_flush_hive_checked()`) so an unrelated dirty hive failing can't discard a persisted SYSTEM one-shot. -> XREF: `01-boot-platform/TODO-12 §9`
-- [/] DEFERRED (needs secure-delete above): recovery tests -- post-consume corruption must NOT reintroduce `ExternalEntropy`; unrelated-hive flush failure must NOT discard a one-shot. -> XREF: `01-boot-platform/TODO-12 §9`
-- [/] DEFERRED (with boot-wiring): registry_load_hives double-reads -- hive_best_source validates the full candidate, then hive_load re-reads/re-parses; reuse the validated buffer. -> XREF: `01-boot-platform/TODO-12 §9`
-- [/] DEFERRED (recovery path needs the boot-mount wiring above): two alternating journal files `SYSTEM.hive.log1`/`log2`; active log tracked in hive header `active_log` byte (0=log1, 1=log2). -> XREF: `01-boot-platform/TODO-12 §9`
-- [/] DEFERRED (dual-log): write cycle -- dirty pages + header to active log, fsync, commit marker, fsync, copy into main hive, clear journal, switch active log. -> XREF: `01-boot-platform/TODO-12 §9`
-- [/] DEFERRED (dual-log): recovery -- on mount check both logs for a valid commit marker; higher sequence number wins; neither marker = hive clean. -> XREF: `01-boot-platform/TODO-12 §9`
-- [/] DEFERRED (dual-log): crash while clearing journal leaves the other log with prior good state; matches Windows NT `.LOG1`/`.LOG2` exactly. -> XREF: `01-boot-platform/TODO-12 §9`
+- [/] DEFERRED (boot-mount coupled, GPF history): wire `registry_load_hives()` into boot after defaults (needs C:); loads on-disk `ExternalEntropy`, so secure-delete MUST land together. -> XREF: `02-kernel-core/TODO-35 §1`
+- [/] DEFERRED (with load trio): secure one-shot deletion across main + journal + `.bak` before cross-reboot absorb; then drop the `registry_persistence_active()` gate. -> XREF: `02-kernel-core/TODO-35 §1`
+- [/] DEFERRED (with load trio): per-hive flush status (`registry_flush_hive_checked()`) so an unrelated dirty hive failing can't discard a persisted SYSTEM one-shot. -> XREF: `02-kernel-core/TODO-35 §1`
+- [/] DEFERRED (needs secure-delete above): recovery tests -- post-consume corruption must NOT reintroduce `ExternalEntropy`; unrelated-hive flush failure must NOT discard a one-shot. -> XREF: `02-kernel-core/TODO-35 §1`
+- [/] DEFERRED (with boot-wiring): registry_load_hives double-reads -- hive_best_source validates the full candidate, then hive_load re-reads/re-parses; reuse the validated buffer. -> XREF: `02-kernel-core/TODO-35 §1`
+- [/] DEFERRED (recovery path needs the boot-mount wiring above): two alternating journal files `SYSTEM.hive.log1`/`log2`; active log tracked in hive header `active_log` byte (0=log1, 1=log2). -> XREF: `02-kernel-core/TODO-35 §1`
+- [/] DEFERRED (dual-log): write cycle -- dirty pages + header to active log, fsync, commit marker, fsync, copy into main hive, clear journal, switch active log. -> XREF: `02-kernel-core/TODO-35 §1`
+- [/] DEFERRED (dual-log): recovery -- on mount check both logs for a valid commit marker; higher sequence number wins; neither marker = hive clean. -> XREF: `02-kernel-core/TODO-35 §1`
+- [/] DEFERRED (dual-log): crash while clearing journal leaves the other log with prior good state; matches Windows NT `.LOG1`/`.LOG2` exactly. -> XREF: `02-kernel-core/TODO-35 §1`
 
 - [/] DEFERRED (dirty_bitmap is cross-CPU shared state; needs §14 registry SMP lock first): `uint8_t dirty_bitmap[HIVE_MAX_PAGES / 8]` on the hive struct, bit per 4 KiB page, set on every mutation. -> XREF: 02-kernel-core/TODO-14 §14
 - [/] DEFERRED (needs §14 lock + dirty_bitmap): `hive_flush_incremental()` writes only dirty pages (seek+write each dirty 4 KiB page), clears bitmap; vs current full-rewrite `hive_flush()`. -> XREF: 02-kernel-core/TODO-14 §14
@@ -529,7 +529,7 @@ title: "TODO-14 -- Registry System Completion"
 > **Verified:** 2026-07-04 | commit `dd29fad8` | 3/21 items | build OK | abi 1149/0 PASS + smoke PASS 3.1s
 > **Deferred:** [H] hive_load apply pass mutates the live tree with no rollback + load-capacity preflight counts total records not missing allocations -> XREF: 02-kernel-core/TODO-14 §14 (item: "reload transactionality" at the §14 checklist)
 > **Deferred:** [H] hive_parse_key recursion capped at HIVE_MAX_PARSE_DEPTH (12) for 8 KiB stack safety; full depth needs an iterative parser -> XREF: 02-kernel-core/TODO-14 §16 (item: "Iterative/heap-backed hive parser")
-> **Deferred:** [M] registry_load_hives double-reads (best_source validates then hive_load re-parses) -> XREF: 02-kernel-core/TODO-14 §8 (item: "double-reads" at the §8 checklist)
+> **Deferred:** [M] registry_load_hives double-reads (best_source validates then hive_load re-parses) -> XREF: 02-kernel-core/TODO-35 §1 (item: "Fix `registry_load_hives` double-reads")
 > **Quality reviewed:** 2026-07-04 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 3H+2M fixed, 2H+1M deferred | scope: kernel-code-quality
 
 ---

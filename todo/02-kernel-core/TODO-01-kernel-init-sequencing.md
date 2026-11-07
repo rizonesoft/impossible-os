@@ -58,7 +58,7 @@ title: "TODO-01 -- Kernel Init Sequencing"
 | 💎  |   1   | Boot init infrastructure                  | --         |  [x]   |
 | 💎  |   2   | Phase 0 -- critical init                  | §1         |  [x]   |
 | 💎  |   3   | Phase 1 -- platform services              | §2         |  [/]   |
-| 💎  |   4   | Phase 2 -- system services                | §3         |  [/]   |
+| 💎  |   4   | Phase 2 -- system services                | §3         |  [ ]   |
 | 💎  |   5   | Phase 3 -- user platform                  | §4         |  [x]   |
 | 💎  |   6   | Dependency gates                          | §1--§5     |  [ ]   |
 | 💎  |   7   | Failure policy                            | §6         |  [ ]   |
@@ -233,10 +233,11 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 - [x] Remove `HV_BAR` macro from `boot_storage.c` if present -- already removed in prior commit
 - [x] Add `boot_progress(2, "step-name", postcode)` at each step
 - [/] Enforce typed fatal/degraded decisions from Phase 2 init return values (current gap: several Phase 2 init APIs are still `void` and have no boot_result_t propagation):
-      - BLOCKED twice over: the typed propagation it enforces is §8's, which is distributed to other TODOs and unshipped; and the enforcement is kernel `.text` against a 47-byte ceiling -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
+      - PARTIAL: `registry_init()` is typed and `boot_storage.c:1075` already acts on `BOOT_FATAL`. Still void: `vfs_init()`, owned by the first XREF below, and hive-mount semantics, owned by `02-kernel-core/TODO-35 §1`.
   - `vfs_init()` return-path ownership → [05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §2](../05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md)
-  - `registry_init()` return-path: `void`→`boot_result_t` SHIPPED (TODO-14 §8, root-key alloc fatal); remaining hive-mount-failure semantics defer with `registry_load_hives()` boot wiring → [TODO-14-registry-completion.md §8](./TODO-14-registry-completion.md)
-  - `partition_mount_filesystems()` root-mount success/failure must be validated explicitly before continuing to registry
+  - `registry_init()` return-path: `void`→`boot_result_t` SHIPPED (TODO-14 §8, root-key alloc fatal); remaining hive-mount-failure semantics defer with `registry_load_hives()` boot wiring → [TODO-35 §1](./TODO-35-unblocked-deferral-backfill.md)
+- [ ] Validate the root mount: `partition_mount_filesystems()` returns `void` (`partition.c:781`), so `boot_storage.c:610` cannot tell a rootless boot from a good one, and it reaches the desktop
+  - No outside owner. Decide fatal or degraded here, route fatal through the recovery screen as §9 already does for the prerequisite guards, and test it with injected mount failure.
 
 **Test checkpoint:** Boot reaches Phase 2 -- serial shows `[PHASE2]` progress lines `PCI_NET`/`STORAGE_DRV`/`VFS`/`PARTITION`/`BLACKBOX`/`KLOG_DISK`/`OB`/`REGISTRY`/`SYS_SVC`, `C:`/`X:` mount, `[PHASE2] complete`; desktop follows. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
@@ -255,7 +256,7 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 > **Accepted:** [M] BlackBox cleanup `path[64]` truncation can unlink wrong file -> XREF: 01-boot-platform/TODO-24 §10 (item: "Harden cleanup path builders" at line 325)
 > **Accepted:** [H] BlackBox low-space cleanup unbounded -> WDAT watchdog starvation -> XREF: 01-boot-platform/TODO-24 §10 (item: "Budget + batch the unbounded Logs\ delete loop" at line 326)
 > **Accepted:** [H] FAT32 `vol->lock` (`cli`) held across disk I/O in unlink/rename/write -> XREF: 05-storage-filesystems/TODO-04 §17 (item: "Restructure FAT32 unlink/rename/write/fsck" at line 438)
-> **Deferred:** [H] Phase 2 marks SUBSYS_VFS/REGISTRY ready after unchecked `void` inits; rootless boot reaches desktop (A/B rollback mitigates) -> XREF: 05-storage-filesystems/TODO-06 §2 (`vfs_init()` return-path ownership)
+> **Notes:** Reopened 2026-11-07 for the root-mount check, was Deferred: [H] Phase 2 marks SUBSYS_VFS/REGISTRY ready after unchecked `void` inits. `vfs_init()` stays with 05-storage-filesystems/TODO-06 §2.
 > **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 2M fixed, 2H+2M accepted-XREF, 1H deferred | scope: kernel-code-quality
 
 ---
@@ -405,8 +406,8 @@ In-kernel graphical recovery UI shown when a Phase 2 subsystem fails non-fatally
 - [ ] Implement the interactive **[C]** degraded-boot serial console (read-eval over serial); today `RECOVERY_CONSOLE` halts with a banner
       - Was parked on the kernel image ceiling, ended 2026-11-07 (re-measure): a read-eval serial console is substantial new kernel `.text` -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Commit: `\"mm: retire 0x800000 user-base ceiling -- user owns the lower half\"`")
 - [x] Hook into Phase 2 missing-prerequisite path: VFS and Registry prereq guards call `boot_recovery_show()` before `boot_halt()` (`boot_storage.c:305`, `:731`)
-- [/] Observe actual Phase 2 init FAILURE, not just missing prereq: today `SUBSYS_VFS`/`SUBSYS_REGISTRY` are set ready unconditionally (void/ignored inits) so recovery never fires on a real mount/registry failure. Blocked on §4 typed propagation
-      - BLOCKED on this file's §4, which is where the typed Phase 2 failure this item wants to observe would come from.
+- [/] Observe actual Phase 2 init FAILURE, not just missing prereq: `SUBSYS_VFS` is still set ready unconditionally (`boot_storage.c:599`) and a failed root mount is invisible. Registry init failure already reaches recovery (`boot_storage.c:1075`)
+      - Blocked on §4 (item: "Validate the root mount") and 05-storage-filesystems/TODO-06 §2 (`vfs_init()` return type), which produce the failures this item observes.
 - [x] Hook into Phase 3 failure path: Scheduler guard calls `boot_recovery_show()` before `boot_halt()`
 - [x] Ensure `boot_recovery_show()` is a no-op (falls through to `boot_halt()`) if `SUBSYS_FB` is not ready
 - [x] Add `boot_progress(9, "recovery-screen", 0xE0)` call on entry
@@ -425,7 +426,7 @@ In-kernel graphical recovery UI shown when a Phase 2 subsystem fails non-fatally
 >
 > **Verified:** 2026-06-20 | commit `bc60dac7` | 8/10 items | build OK | smoke PASS (KVM 2.72s)
 > **Notes:** Reopened 2026-11-07, was Deferred: [M] interactive `[C]` degraded-boot serial console not implemented (halts with a banner today). The stamp named this section's own item; its only park was the image ceiling, which ended 2026-11-07.
-> **Deferred:** [H] recovery never fires on a real Phase 2 mount/registry failure (void inits set SUBSYS_VFS/REGISTRY ready unconditionally) -> XREF: 02-kernel-core/TODO-01 §9 (item: "Observe actual Phase 2 init FAILURE" at line 407)
+> **Notes:** Stamp removed 2026-11-07, was Deferred on this section's own item: [H] recovery does not fire on a real VFS or root-mount failure. The section is already reopened for the `[C]` console; the item above names its real owners.
 > **Quality reviewed:** 2026-06-20 | Codex 9x (adversarial x2, consistency x2, perf x2, re-adversarial x3) | 4H+4M fixed | scope: kernel-code-quality
 
 ---

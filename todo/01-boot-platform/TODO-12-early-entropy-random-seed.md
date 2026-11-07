@@ -272,7 +272,8 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [x] Mask/class logging without seed bytes: `entropy_report()` summary + the `registry: HKLM\SYSTEM\Boot\Entropy\Diagnostics mask=.. class=..` checkpoint line (`entropy_registry.c`).
 - [x] Degraded indication, TWO call sites: `early_entropy_init()` posts the `boot_splash_diag()` WARNING at Phase 1 AND `boot_desktop.c` re-posts the identical string before `boot_splash_finish()` (Phase-2 storage diagnostics reuse + clear the line); registry + JSON carry the durable record.
 - [x] `HKLM\SYSTEM\Boot\Entropy\Diagnostics` mirror sub-key (separate from the `ExternalEntropy` input): SourceMask, QualityPacked, Class, CreditedClass, CryptoGateOk, SeedFileHwProvenance, ExternalEntropySeen/Bytes (`entropy_populate_registry()`).
-- [/] Admin external-entropy one-shot (Win11 ExternalEntropy parity): `entropy_external_consume()` absorbs (Q_LOW) only when `registry_persistence_active()` is false; on-disk/cross-reboot offerings DEFERRED -> XREF: `02-kernel-core/TODO-14 §8`.
+- [/] Admin external-entropy one-shot (Win11 ExternalEntropy parity): `entropy_external_consume()` absorbs (Q_LOW) only when `registry_persistence_active()` is false; on-disk offerings DEFERRED
+  - Cross-reboot absorption waits on secure deletion -> XREF: `02-kernel-core/TODO-35 §1` (item: "Secure one-shot deletion").
 - [x] BlackBox report: `X:\Diag\entropy.json` (mask/quality/class/gate/provenance/external counters -- never bytes) via `entropy_publish_json()`.
 - [x] Commit: `"boot: entropy diagnostics and policy"`
 

@@ -80,7 +80,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 | 💎  |  11   | OSVW errata + RDTSCP processor ID setup                | §4, T08 §3 |  [x]   |
 | 💎  |  12   | AMD IBS profiling (stretch)                            | §4         |  [/]   |
 | 💎  |  13   | Virtualization detection (AMD-V + Intel VT-x)          | §4         |  [x]   |
-| ⭐  |  14   | Boot self-benchmark + auto-tune                        | §1, §2, §9 |  [/]   |
+| ⭐  |  14   | Boot self-benchmark + auto-tune                        | §1, §2, §9 |  [ ]   |
 | 💎  |  15   | Future silicon stubs: UINTR/LA57/LAM/LASS + TDX/SEV    | (none)     |  [/]   |
 | 💎  |  16   | Boot page tables: 1 GiB pages from the UEFI bootloader | §6         |  [/]   |
 | 💎  |  17   | AMX tile state + XFD dynamic XSAVE                     | §1, §4     |  [/]   |
@@ -432,7 +432,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 - [/] DEFERRED -- AVX-512 throttle auto-tune: no AVX-512 alpha-blend primitive, so `simd_avx512_gpix_s` stays 0 and AVX-512 is left as probed (-> XREF: §3 AVX-512 opt-in)
 - [/] DEFERRED -- scheduler-quantum auto-tune: `SCHED_QUANTUM` is compile-time and `timer_set_tick_hz()` is LAPIC-only; needs a runtime quantum var. `ctx_switch_ns` is measured/persisted now (-> XREF: `03-memory-concurrency/TODO-07` SMP scheduler)
 - [/] DEFERRED -- compositor triple-buffer auto-tune: no runtime triple-buffer toggle exists yet (-> XREF: `06-desktop-foundation` compositor)
-- [/] DEFERRED -- memops small-copy threshold auto-tune: dispatch has no byte-size cutoff knob (`src/kernel/mm/memops_sse.c`); needs a runtime threshold global first
+- [ ] memops small-copy threshold auto-tune: dispatch has no byte-size cutoff knob (`src/kernel/mm/memops_sse.c`); needs a runtime threshold global first
 - [x] Commit: `"kernel/bench: boot self-benchmark, hw_profile Registry, SIMD auto-tune"`
 
 > [!NOTE]
@@ -448,7 +448,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 > - Downstream effects: clears `simd_avx2_ok`/`simd_avx512_ok` (atomic-release) to retune memops dispatch when a wider SIMD tier shows no gain; persists ctx/bw/cache inputs for the deferred tuners.
 > - Scope boundary: §14 owns the benchmark + SIMD auto-tune; quantum / triple-buffer / memops-threshold auto-tunes are deferred to their owners; AVX-512 throttle waits on an AVX-512 blend primitive (§3).
 > **Verified:** 2026-06-28 | commit `1251da1e` (+ review fixes) | 5/9 items, 4 deferred | build OK | smoke PASS (KVM 2.72s, `[hwprofile]` bw~6000 MB/s)
-> **Deferred:** [M] four auto-tune actions need runtime knobs that do not exist yet -> XREF: §14 DEFERRED bullets (AVX-512 throttle -> §3; scheduler-quantum -> `03-memory-concurrency/TODO-07`; triple-buffer -> `06-desktop-foundation`; memops-threshold -> in-section memops global)
+> **Notes:** Reopened 2026-11-07 for the memops threshold, whose global lives in this section. The other three stay parked on their own items: AVX-512 throttle -> §3, scheduler quantum -> `03-memory-concurrency/TODO-07`, triple buffer -> `06-desktop-foundation`.
 > **Quality reviewed:** 2026-06-28 | Codex 7x (design, adversarial x2, consistency, perf, re-adversarial x2) + kernel-quality-auditor | 5H+5M fixed | scope: kernel-code-quality
 
 ---
