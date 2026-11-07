@@ -139,6 +139,8 @@ When watchdog fires, produce useful diagnostics before rebooting.
 - [/] Boot failure screen (→ XREF: TODO-03 §2) shows hang location if available -- BLOCKED on this file's §1 (a watchdog ISR to produce diagnostics in)
 - [/] Commit: `"boot: watchdog reboot with diagnostics -- POST code, RIP, NVRAM flag"` -- BLOCKED on this file's §1 (a watchdog ISR to produce diagnostics in)
 
+-> XREF: `01-boot-platform/TODO-28` §5 (item: "Test watchdog reboot") certifies this once it ships.
+
 **Test checkpoint:** Intentional hang → watchdog fires → reboot → serial shows previous hang location; the slot's pre-EBS try (TODO-21) is already consumed, so 3 hung boots roll back without any watchdog-side A/B write.
 
 > **Verified:** 2026-06-16 | 0/7 items (deferred) | build N/A | NMI-handler diagnostics blocked on §1

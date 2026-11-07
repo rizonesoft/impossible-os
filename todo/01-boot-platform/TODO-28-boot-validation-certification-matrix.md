@@ -42,15 +42,15 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 | --- | :---: | -------------------------------------------------- | ---------------------- | :----: |
 | 💎  |   1   | Boot certification matrix schema                   | GAP-ANALYSIS           |  [x]   |
 | 💎  |   2   | VM automation suite                                | §1                     |  [x]   |
-| 💎  |   3   | Storage/media boot suite                           | §1, T16, T17, T06      |  [/]   |
-| 💎  |   4   | Security boot suite                                | §1, T02, T13, T12      |  [/]   |
-| 💎  |   5   | Recovery and rollback suite                        | §1, T21, T22, T23, T26 |  [/]   |
+| 💎  |   3   | Storage/media boot suite                           | §1, T16, T17, T06      |  [ ]   |
+| 💎  |   4   | Security boot suite                                | §1, T02, T13, T12      |  [ ]   |
+| 💎  |   5   | Recovery and rollback suite                        | §1, T21, T22, T23, T26 |  [ ]   |
 | 💎  |   6   | Network boot suite                                 | §1, T25                |  [/]   |
 | 💎  |   7   | Bare-metal lab inventory                           | §1                     |  [x]   |
-| ⭐  |   8   | Boot support bundle collector                      | §2-§7, TODO-24         |  [/]   |
-| ⭐  |   9   | Release gate and dashboard                         | §1-§8                  |  [/]   |
-| 💎  |  10   | Certification docs                                 | §1-§9                  |  [/]   |
-| 💎  |  11   | Firmware sanity certification gate                 | §1, T04 §2, §8         |  [/]   |
+| ⭐  |   8   | Boot support bundle collector                      | §2-§7, TODO-24         |  [ ]   |
+| ⭐  |   9   | Release gate and dashboard                         | §1-§8                  |  [ ]   |
+| 💎  |  10   | Certification docs                                 | §1-§9                  |  [ ]   |
+| 💎  |  11   | Firmware sanity certification gate                 | §1, T04 §2, §8         |  [ ]   |
 | ⭐  |  12   | Error-screen pixel oracle (screendump + QR decode) | §2, T03 §23            |  [ ]   |
 
 ## 1. Boot Certification Matrix Schema
@@ -109,7 +109,7 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 ## 3. Storage/Media Boot Suite
 
 > [!NOTE]
-> Plan sharpened by Codex design review (2026-06-19). §3 is NOT host-tooling-only: it needs a kernel boot-path readback marker, typed QEMU storage topologies, per-format serial standardization, and a coverage schema. Deferred this pass (multi-commit + boot-path scope); the items below are the vetted implementation plan.
+> Plan sharpened by Codex design review (2026-06-19). §3 is NOT host-tooling-only: it needs a kernel boot-path readback marker, typed QEMU storage topologies, per-format serial standardization, and a coverage schema. The items below are the vetted implementation plan. Checked 2026-11-07: `boot-test-qemu.sh` has no `--storage`, the ISO, VHDX and VBox launchers have no `--serial-out`, and `boot_hw.c` has no readback.
 
 - [ ] `boot-test-qemu.sh` typed `--storage` enum (sata-ahci, nvme, usb-msc, usb2-slow, raw-disk) with fixed QEMU device-arg sets (current launcher is AHCI-only, so untyped runs would all exercise one path).
 - [ ] Standardize `--serial-out` on `boot-test-{iso,vhdx,vbox}.sh` so the suite owns serial capture (today ISO writes serial to a private mktemp and deletes it).
@@ -121,49 +121,46 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 **Test checkpoint:** each storage class (SATA/AHCI, NVMe, USB MSC, USB2-slow, ISO, raw disk, VHD/VHDX, VDI) boots via its typed launcher and archives a boot-device readback-marker PASS + BlackBox log + artifact manifest + partition map; the coverage manifest fails if any required class is missing; `storage_suite.py --self-check` + `test_storage_suite.py` pass under `scripts/test-tooling.sh`.
 
-> **Deferred:** [H] Storage suite needs a kernel boot-device readback serial marker (boot-path work + smoke-test/kernel-quality gates), typed `--storage` QEMU topologies, per-format `--serial-out` standardization, and a coverage schema -- a multi-commit effort beyond this pass; Codex-vetted plan captured in the checklist above. -> XREF: 01-boot-platform/TODO-06-boot-media-image-installer-handoff.md §9 (item: "QEMU VHDX boot (KVM/TCG): delegates to scripts/release/boot-test-vhdx.sh") for the per-format launcher/serial standardization.
-
 ---
 
 ## 4. Security Boot Suite
 
-- [ ] Test Secure Boot off/on, signed/unsigned bootloader, dbx mismatch, SBAT generation.
-- [ ] Test TPM present/absent, PCR replay, entropy sources, and manifest validation.
+- [ ] Test Secure Boot off/on, signed/unsigned bootloader, dbx mismatch, SBAT generation. Starts from `scripts/test-secureboot-smoke.sh` (offline) and `src/boot/uefi/sbat.csv`; no live Secure Boot or dbx case exists yet.
+- [ ] Test TPM present/absent, PCR replay, entropy sources, and manifest validation. Starts from `scripts/test-swtpm.sh`.
 - [ ] Capture attestation and entropy reports.
 - [ ] Fail release gate on insecure unexpected success.
 - [ ] Commit: `"test: boot security suite"`
 
 **Test checkpoint:** Secure Boot off/on, signed/unsigned bootloader, dbx mismatch, SBAT generation, and TPM present/absent each produce the expected pass/fail with attestation + entropy reports captured; an insecure unexpected-success fails the release gate.
 
-> **Deferred:** [H] Security suite needs the §3 storage-suite driver foundation (deferred) PLUS Secure Boot signing infra (signed/unsigned/dbx/SBAT artifacts) and TPM test infra -- crypto/signing infrastructure not yet available this pass. -> XREF: 01-boot-platform/TODO-28-boot-validation-certification-matrix.md §3 (item: "tools/boot-cert/storage_suite.py" -- shared suite-driver foundation); 01-boot-platform/TODO-02-uefi-hardening-secureboot.md (Secure Boot / dbx / SBAT signing); 01-boot-platform/TODO-13-tpm-measured-boot.md (TPM present/absent + PCR replay).
-
 ---
 
 ## 5. Recovery and Rollback Suite
 
-- [ ] Test A/B success, failed slot rollback, recovery partition fallback, watchdog reboot, hibernation failure fallback.
+- [ ] Test A/B success and failed-slot rollback: selection and `tries` counting ship in `bootx64.c` (`01-boot-platform/TODO-21` §4).
+- [/] Test recovery partition fallback. BLOCKED: no kernel route. -> XREF: 01-boot-platform/TODO-22 §2 (item: "Kernel recovery-mode entry point").
+- [/] Test watchdog reboot. BLOCKED: NMI watchdog reboot unbuilt. -> XREF: 01-boot-platform/TODO-23 §4 (item: "Set NVRAM flag").
+- [/] Test hibernation failure fallback. BLOCKED: resume unbuilt. -> XREF: 01-boot-platform/TODO-26 §6 (item: "If resume fails, mark image invalid").
 - [ ] Assert reason codes and counters.
 - [ ] Verify no infinite loops.
 - [ ] Capture VPD/recovery screenshots.
 - [ ] Commit: `"test: boot recovery rollback suite"`
 
-**Test checkpoint:** A/B success, failed-slot rollback, recovery-partition fallback, watchdog reboot, and hibernation-failure fallback each hit the expected reason code + counter with no infinite loop; VPD/recovery screenshots captured.
-
-> **Deferred:** [H] Recovery suite needs the §3 storage-suite driver foundation (deferred) PLUS the A/B-slot, recovery-partition, watchdog, and hibernation runtime owned by the recovery/dual-slot/watchdog domains. -> XREF: 01-boot-platform/TODO-28-boot-validation-certification-matrix.md §3 (item: "tools/boot-cert/storage_suite.py" -- shared suite-driver foundation); 01-boot-platform/TODO-21-ab-slot-dual-boot.md, TODO-22, TODO-23 (A/B + recovery + watchdog runtime).
+**Test checkpoint:** A/B success, failed-slot rollback, recovery-partition fallback, watchdog reboot, and hibernation-failure fallback each hit the expected reason code + counter with no infinite loop; VPD/recovery screenshots captured. The A/B half can pass while the other three stay parked.
 
 ---
 
 ## 6. Network Boot Suite
 
-- [ ] Start local DHCP/TFTP/HTTP fixtures.
-- [ ] Test PXE, HTTP Boot, signed manifest, missing file, bad hash, timeout, and local fallback.
-- [ ] Capture `network-boot.json`.
-- [ ] Mark bare-metal PXE as manual unless lab supports automation.
-- [ ] Commit: `"test: network boot certification suite"`
+- [/] Start local DHCP/TFTP/HTTP fixtures. BLOCKED: the harness belongs to the owner. -> XREF: 01-boot-platform/TODO-25 §10 (item: "Add QEMU PXE/TFTP test harness").
+- [/] Test PXE, HTTP Boot, signed manifest, missing file, bad hash, timeout, and local fallback. BLOCKED: `01-boot-platform/TODO-25` §10 harness; signed manifest and bad hash also on its operator-gated §5, fallback on §7.
+- [/] Capture `network-boot.json`. BLOCKED: -> XREF: 01-boot-platform/TODO-25 §9 (item: "Write `X:\Diag\network-boot.json`").
+- [/] Mark bare-metal PXE as manual unless lab supports automation. BLOCKED: waits on the suite above; the physical run stays operator-gated.
+- [/] Commit: `"test: network boot certification suite"` -- BLOCKED: waits on the items above.
 
 **Test checkpoint:** with local DHCP/TFTP/HTTP fixtures, PXE + HTTP Boot + signed-manifest + missing-file + bad-hash + timeout + local-fallback each produce the expected result and capture `network-boot.json`; bare-metal PXE flagged manual when the lab lacks automation.
 
-> **Deferred:** [H] Network-boot suite needs the §3 storage-suite driver foundation (deferred) PLUS the UEFI PXE/HTTP-Boot client runtime + local DHCP/TFTP/HTTP fixtures owned by the network-boot domain. -> XREF: 01-boot-platform/TODO-28-boot-validation-certification-matrix.md §3 (item: "tools/boot-cert/storage_suite.py" -- shared suite-driver foundation); 01-boot-platform/TODO-25-uefi-network-boot.md (PXE/HTTP Boot client + manifest verification).
+> **Deferred:** [H] Network-boot suite waits on the network-boot owner: its QEMU harness, trust model and report are not shipped, though TFTP and HTTP load paths are. -> XREF: 01-boot-platform/TODO-25 §10 (item: "Add QEMU PXE/TFTP test harness"); 01-boot-platform/TODO-25 §5 (operator-gated trust model); 01-boot-platform/TODO-25 §9 (item: "Write `X:\Diag\network-boot.json`").
 
 ---
 
@@ -193,7 +190,7 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 ## 8. Boot Support Bundle Collector
 
 > [!NOTE]
-> Plan sharpened by Codex design review (2026-06-19). §8 is a SECURITY-bearing collector (a shared bundle must leak nothing), so the design below is the vetted plan. Deferred this pass (depends on §2-§7 outputs + multi-commit redaction effort).
+> Plan sharpened by Codex design review (2026-06-19). §8 is a SECURITY-bearing collector (a shared bundle must leak nothing), so the design below is the vetted plan. §2 and §7 outputs exist today and the self-test uses a mock `--in` dir; suite outputs that arrive later are optional artifacts recorded in the manifest.
 
 - [ ] `tools/boot-cert/support_bundle.py`: discover serial logs + screenshots + reliability.json/results.json (§2) + BlackBox `X:\` export + firmware report + boot timeline from a `--in` dir.
 - [ ] Share-safe by DEFAULT: redact serials/secrets (SMBIOS/disk serial, NVMe EUI-64, UEFI key bytes, token-like blobs) in TEXT/JSON; QUARANTINE/omit opaque binaries (BlackBox blobs, screenshots) by default; `--private` opt-in for raw; manifest marks each omitted/private artifact + why.
@@ -204,8 +201,6 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 **Test checkpoint:** `support_bundle.py --in <dir> --build-id B --machine-id M` produces a share-safe `boot-support-B-M.zip` (redacted text/JSON, opaque binaries omitted unless `--private`) + `bundle-manifest.json` with per-file sha256 + an out-of-band digest; invalid/identity-mismatched result JSON fails closed; `test_support_bundle.py` asserts redaction + fail-closed + reproducible bytes.
 
-> **Deferred:** [H] Support-bundle collector is a security-bearing share-safe/redaction effort (binary quarantine + private opt-in + fail-closed schema/identity validation + out-of-band tamper digest + reproducible zip) and consumes §2-§7 outputs (§3-§6 deferred) -- a multi-commit effort beyond this pass; Codex-vetted plan above. -> XREF: 01-boot-platform/TODO-28-boot-validation-certification-matrix.md §3 (item: "tools/boot-cert/storage_suite.py" -- produces packaged inputs); 01-boot-platform/TODO-24-blackbox-service-partition.md (`X:\` BlackBox exports the bundle packages).
-
 ---
 
 ## 9. Release Gate and Dashboard
@@ -213,30 +208,26 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 **Design:** n/a -- no desktop UI surface (developer tooling, data export, CLI or device plumbing)
 
 - [ ] Generate `build/reports/boot-cert.html`.
-- [ ] Define required gates for nightly, release candidate, and stable.
+- [ ] Define required gates for nightly, release candidate, and stable. A required row with no result fails its gate, so parked suites show as missing evidence, never as passes.
 - [ ] Fail release packaging when required gates fail.
 - [ ] Keep history so regressions are visible.
-- [/] Refuse results whose `row_id` is not a matrix row: `boot_reliability.py --row-id` defaults to `boot-reliability`, which `boot-cert.yml` does not declare, so default runs fail `lint.py --results`
-  - Parked with this section (the gate is where membership is enforced); fix direction is to require `--row-id` or declare a reliability row. Found by the 00-infrastructure/TODO-10 §7 docs review.
+- [ ] Refuse results whose `row_id` is not a matrix row: `boot_reliability.py --row-id` defaults to `boot-reliability`, which `boot-cert.yml` does not declare, so default runs fail `lint.py --results`
+  - The gate is where membership is enforced; fix direction is to require `--row-id` or declare a reliability row. Found by the 00-infrastructure/TODO-10 §7 docs review.
 - [ ] Commit: `"ci: boot certification release gate"`
 
 **Test checkpoint:** `build/reports/boot-cert.html` is generated from result JSON; a required-gate failure (per nightly / RC / stable tier) fails release packaging; prior-run history is retained so regressions are visible.
-
-> **Deferred:** [H] Release gate + dashboard consumes §1-§8 (the per-suite result JSON + support bundle); §3-§6 + §8 are deferred, so the gate has no complete result set to aggregate yet. Implement after the suites produce results. -> XREF: 01-boot-platform/TODO-28-boot-validation-certification-matrix.md §8 (item: "tools/boot-cert/support_bundle.py" -- bundle + manifest the dashboard links); §1 boot-cert.yml `required_for` drives the per-tier gate.
 
 ---
 
 ## 10. Certification Docs
 
-- [ ] Add `docs/testing/boot-certification.md`.
+- [ ] Add `docs/testing/boot-certification.md`, covering the suites that have shipped and naming each parked one with its owner.
 - [ ] Explain how to run VM and bare-metal certification.
 - [ ] Link common failure signatures to TODO owners.
 - [ ] Include support-bundle upload instructions.
 - [ ] Commit: `"docs: boot certification guide"`
 
 **Test checkpoint:** `docs/testing/boot-certification.md` documents running VM + bare-metal certification, maps common failure signatures to owner TODOs, and gives support-bundle upload instructions.
-
-> **Deferred:** [M] Certification guide caps §1-§9 (it documents running every suite + the release gate + support-bundle upload); writing the final guide while §3-§9 are deferred would document unshipped surface. Write once the suites + gate land. -> XREF: 01-boot-platform/TODO-28-boot-validation-certification-matrix.md §9 (item: "Generate build/reports/boot-cert.html" -- the gate the guide explains); §8 support-bundle upload instructions.
 
 ---
 
@@ -246,14 +237,12 @@ Gate releases on firmware-table sanity, not just Secure Boot/TPM: malformed or d
 
 - [ ] Consume TODO-04 `firmware-tables.json` + `HKLM\HARDWARE\Firmware\Tables\*` (range/checksum validation from TODO-04 §2; report from §8) as a certification input
 - [ ] Pass/degraded/fail per platform class: a degraded ACPI/SMBIOS/MAT/RT validation result fails the required gate for stable; degraded is recorded (not failed) on nightly
-- [ ] Encode the TODO-04 owner row + `firmware-tables.json` `source_artifact` in `boot-cert.yml`
+- [x] Encode the TODO-04 owner row + `firmware-tables.json` `source_artifact` in `boot-cert.yml`: the `firmware-tables` row carries both.
 - [ ] Capture the firmware report + degraded-flag accounting in the support bundle (§8)
-- [ ] -> XREF: `TODO-04-firmware-table-platform-inventory.md §2`/`§8` -- TODO-04 owns table validation + report; §11 owns the cert gate consuming it
+- -> XREF: `TODO-04-firmware-table-platform-inventory.md §2`/`§8` -- TODO-04 owns table validation + report (shipped, `src/kernel/firmware_tables_json.c`); §11 owns the cert gate consuming it
 - [ ] Commit: `"test: firmware sanity certification gate"`
 
 **Test checkpoint:** a release whose `firmware-tables.json` marks an ACPI/SMBIOS table degraded fails the stable required gate and is recorded (not failed) on nightly; a clean firmware report passes.
-
-> **Deferred:** [M] Firmware-sanity gate consumes TODO-04 `firmware-tables.json` (producer = TODO-04 §2/§8) + the §9 release-gate pattern + the §8 support bundle for report capture; the producer artifact + §8/§9 are not yet shipped this pass. TODO-04 §9 Firmware Quirk Database is `[x]`, but the `firmware-tables.json` decoder/report it needs is TODO-04 §2/§8 (still open). -> XREF: 01-boot-platform/TODO-04-firmware-table-platform-inventory.md §2/§8 (firmware-tables.json producer); 01-boot-platform/TODO-28-boot-validation-certification-matrix.md §9 (release-gate consumer).
 
 ---
 

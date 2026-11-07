@@ -104,6 +104,8 @@ Add a read-only recovery partition to the GPT disk layout.
 - [ ] Quiesce before invoking `ixfs_fsck`: run fsck pre-mount OR hold a per-volume repair lock excluding VFS mutators (active-volume fsck is quiesced-only by contract; §3 review HIGH). -> XREF: §3
 - [ ] Commit: `"boot: recovery-mode kernel entry + load-path contract (entry-store model)"`
 
+-> XREF: `01-boot-platform/TODO-28` §5 (item: "Test recovery partition fallback") certifies this route once it boots.
+
 **Test checkpoint (deferred):** a registered `kind=recovery` entry (TODO-07 §9) boots through the existing bootloader; the kernel logs `boot_path=RECOVERY` and enters the recovery flow; the normal boot entry is unaffected. Cannot run until TODO-07 §9 registration + §3-§7 recovery flow land.
 
 > **Test runner:** N/A (deferred -- design-locked, blocked on TODO-07 §9 registration + §3-§7 flow) | validation: §2 Test checkpoint once the load path is registered and the flow lands

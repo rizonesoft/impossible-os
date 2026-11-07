@@ -174,6 +174,8 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [/] Commit: `"boot: hibernation resume failure fallback"`
   - Waits on the §6 items above.
 
+-> XREF: `01-boot-platform/TODO-28` §5 (item: "Test hibernation failure fallback") certifies this once it ships.
+
 **Test checkpoint:** A forced resume failure marks the image invalid, cold-boots exactly once, increments the NVRAM failure counter, and after repeated failures feeds the A/B rollback policy; failure details are preserved in NVRAM + BlackBox; no infinite resume loop occurs. Verify on QEMU WHPX.
 
 > **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land

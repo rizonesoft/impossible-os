@@ -44,7 +44,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 | 💎  |   7   | Fallback ordering with local media           | TODO-05 §5, §6  |  [/]   |
 | ⭐  |   8   | Recovery and installer over network          | §3-§7, TODO-22  |  [/]   |
 | 💎  |   9   | Network boot diagnostics and BlackBox report | §1-§8           |  [/]   |
-| 💎  |  10   | PXE/HTTP boot tests                          | §1-§9           |  [/]   |
+| 💎  |  10   | PXE/HTTP boot tests                          | §1-§9           |  [ ]   |
 
 ## 1. UEFI SNP/PXE Protocol Discovery
 
@@ -280,6 +280,8 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [/] operator-gated (needs physical firmware): test bare-metal firmware PXE where available.
 - [/] Commit: `"test: PXE and HTTP boot coverage"`: waits on the test items above.
 
+-> XREF: `01-boot-platform/TODO-28` §6 (item: "Start local DHCP/TFTP/HTTP fixtures") reuses this harness.
+
 **Test checkpoint:** The QEMU PXE/TFTP harness + HTTP-Boot mock-server test pass; the missing-file, bad-manifest, timeout, retry, and fallback cases each assert the expected refusal/fallback behavior; bare-metal firmware PXE is exercised where available. Verify on QEMU WHPX/TCG, bare metal.
 
 > **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until §5-§8 ship
@@ -289,7 +291,6 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 > - Unblock path: extract `net_dhcp_find_option` / TFTP-retry / redirect-resolver into pure helpers callable from a TEST_CAT_BOOT suite, then add the §5-§8 behavioral cases as those sections ship.
 > - Owners: behavioral surface = TODO-25 §5-§8; transport parser extraction = TODO-25 §1-§4 follow-up.
 
-> **Deferred:** [H] PXE/HTTP integration harness + bad-manifest/fallback assertions depend on §5-§8 and on extracting the UEFI-only transport parsers into kernel-testable helpers -> XREF: 01-boot-platform/TODO-25 §5 (trust), §6 (provenance), §8 (recovery)
 
 ---
 
