@@ -307,6 +307,7 @@ Sections represent mappable memory objects; the foundation for `MapViewOfFile` a
 - [x] Commit: `"kernel: ob -- section object type and view mapping"`
 - [ ] **Move section PTE install/teardown outside `so->lk`**: the map loop holds the per-section spinlock across up to 64K `vmm_share_user_page` calls (alloc/split/flush) -- snapshot under lock, do PTE work after unlock, reacquire to commit
 - [ ] **`ObUnmapViewOfSection` (handle path) must clear user PTEs** like `ObUnmapViewOfSectionByBase`: today it drops the section pin without `vmm_unshare_user_page`, so frames can be freed while still mapped (shared teardown helper)
+  - Measured 2026-11-07: nothing calls the handle path yet, in `src/kernel` or `user/`, so the leak waits for its first caller. Proving the teardown needs a test task with its own address space, because a kernel task has `cr3 == 0` and skips the PTE walk.
 - [ ] **Resolve section views without a live handle**: a view outlives its handle (per-view pin), so map -> close-handle -> unmap-by-base leaks the view + frames; track views task-side by base (XREF: §4 view-base index)
 
 > **Notes:**
