@@ -917,7 +917,10 @@ Found by the parity pass on §22. Two independent halves of one outcome: the use
   - Cleared only when a filesystem was searched and the store is fine or gone (`boot_store_record_intent`). `load_bootentries_json` now reports `BOOT_STORE_LOAD_UNINSPECTED` when the boot device has no filesystem, so a PXE or HTTP boot cannot erase a record about a store it never saw.
   - Proven under QEMU on one variable store across boots (`test-smoke-matrix.sh`): `written`, then `unchanged`, then `cleared` on repair. Removing the file also read `cleared` in a one-off run. The no-filesystem path has unit coverage only; no fixture boots without one.
   - Limit: the record names no device, so booting another disk with a good store or none clears it. Schema: [docs/boot/boot-error-history.md](../../docs/boot/boot-error-history.md).
-- [ ] Surface it after boot so the OS can tell the user, not just the next bootloader run. §21's renderer is the existing consumer; confirm whether it should carry this or whether a `sysconfig_info` field is the better route.
+- [x] The kernel logs the record every boot until it is repaired: `boot_store_reject_render()`, wired after `boot_history_render()`, reading `BootStoreReject` directly
+  - The renderer route, not a `sysconfig_info` field: that is an ABI addition with no consumer today, and the variable already survives to the kernel without touching `boot_info`.
+  - Words shared through `include/boot/boot_store_reject_text.h`, because the kernel links the parser only inside its test suite and the release flavor prunes that. Verified with a `KERNEL_TESTS=off` link.
+  - Limit: this reaches the kernel log, not a desktop notification. A notification needs a user-facing consumer that does not exist yet.
 - [x] `boot_entries_parse()` records `reject_line`/`reject_column`, and `boot_entries_reject_locator()` puts them on the notice's token line: `JSON_PARSE at line 2, col 1`
   - The token line, because the cause line has no room at the 800x600 floor (`test_store_reject_locator_fits_banner` measures both with the real SUB font).
   - `lex_next` owns the failure state, and `find_crc_field` walks the caller's lexer, so a syntax error reports its own position before or after the checksum header. A reject found after the walk moved on is pinned to the value that caused it (empty array, repeated or incomplete entry).

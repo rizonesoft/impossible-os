@@ -986,6 +986,21 @@ elif [ "$BOOT_PASSED" = true ]; then
             grep -E "store-record:|BootStoreReject" "$STRIPPED_LOG" 2>/dev/null | head -4
             exit 1
         fi
+        # A missing variable is the normal case and must not read as malformed.
+        if grep -q "BootStoreReject record ignored" "$STRIPPED_LOG" 2>/dev/null; then
+            echo -e "${RED}SMOKE TEST FAILED: the kernel misread the BootStoreReject record${NC}"
+            exit 1
+        fi
+        # The record exists to reach the running OS, including on a later boot.
+        if [ "$STORE_RECORD" = "cleared" ]; then
+            if grep -q "Boot entry store unusable:" "$STRIPPED_LOG" 2>/dev/null; then
+                echo -e "${RED}SMOKE TEST FAILED: the kernel still reports a repaired store${NC}"
+                exit 1
+            fi
+        elif ! grep -qE "Boot entry store unusable: [A-Z_0-9]+ at line [0-9]+, col [0-9]+: " "$STRIPPED_LOG" 2>/dev/null; then
+            echo -e "${RED}SMOKE TEST FAILED: the kernel did not report the rejected store${NC}"
+            exit 1
+        fi
     fi
 
     # ---- Corrupt-store assertions -----------------------------------------

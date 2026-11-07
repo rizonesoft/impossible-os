@@ -1226,6 +1226,8 @@ static void nvram_write_boot_error(UINT32 code)
  * new error as untrusted. */
 _Static_assert(BOOT_ERR_REGISTRY_MAX == BOOT_ERR_STORE_REJECTED,
     "BOOT_ERR_REGISTRY_MAX must track the highest BOOT_ERR_* in efi.h");
+_Static_assert(BOOT_STORE_REJECT_ERR_CODE == BOOT_ERR_STORE_REJECTED,
+    "the kernel validates BootStoreReject against this copy of the code");
 
 static UINT32 nvram_read_boot_error(void)
 {

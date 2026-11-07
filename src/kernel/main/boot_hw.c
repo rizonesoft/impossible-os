@@ -480,6 +480,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
      * EBS-success, kernel Phase-3) and emits a klog block listing the
      * recent attempts oldest-first.  Silent no-op on first-ever boot. */
     boot_history_render();
+    boot_store_reject_render();
 
     /* --- Secure Boot state detection --- */
     POST16(POST16_SECUREBOOT);

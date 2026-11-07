@@ -16,6 +16,7 @@
  */
 
 #include "../../../include/boot/boot_entries_parser.h"
+#include "../../../include/boot/boot_store_reject_text.h"
 
 typedef unsigned char  u8;
 typedef unsigned int   u32;
@@ -1663,122 +1664,24 @@ void boot_entries_bls_sort(const boot_entries_parse_result_t *parse,
 /* ---- Reject vocabulary ------------------------------------------------
  * Two views of the same boot_entries_reject_code_t: a stable token for
  * serial/log correlation, and a one-line human cause for the on-screen
- * rejected-store notice in the bootloader error-recovery roadmap. Kept
- * beside the enum they
- * describe so a new reject code cannot be added without the compiler's
- * -Wswitch pointing here; the default arms exist for a code arriving from
- * an out-of-contract caller, not to excuse an unhandled enumerator.
+ * rejected-store notice in the bootloader error-recovery roadmap. The switches
+ * live in boot_store_reject_text.h so the kernel can render the same words; a
+ * new reject code still gets -Wswitch pointing at them.
  */
 const char *boot_entries_reject_name(int code)
 {
-    switch ((boot_entries_reject_code_t)code) {
-        case BOOT_ENTRIES_OK:                        return "OK";
-        case BOOT_ENTRIES_REJECT_FILE_TOO_LARGE:     return "FILE_TOO_LARGE";
-        case BOOT_ENTRIES_REJECT_JSON_PARSE:         return "JSON_PARSE";
-        case BOOT_ENTRIES_REJECT_DEPTH_LIMIT:        return "DEPTH_LIMIT";
-        case BOOT_ENTRIES_REJECT_NOT_OBJECT:         return "NOT_OBJECT";
-        case BOOT_ENTRIES_REJECT_MISSING_FIELD:      return "MISSING_FIELD";
-        case BOOT_ENTRIES_REJECT_BAD_SCHEMA_VERSION: return "BAD_SCHEMA_VERSION";
-        case BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD:    return "BAD_CRC32_FIELD";
-        case BOOT_ENTRIES_REJECT_CRC_MISMATCH:       return "CRC_MISMATCH";
-        case BOOT_ENTRIES_REJECT_NOT_ARRAY:          return "NOT_ARRAY";
-        case BOOT_ENTRIES_REJECT_NO_ENTRIES:         return "NO_ENTRIES";
-        case BOOT_ENTRIES_REJECT_TOO_MANY_ENTRIES:   return "TOO_MANY_ENTRIES";
-        case BOOT_ENTRIES_REJECT_DUPLICATE_ID:       return "DUPLICATE_ID";
-        case BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD: return "BAD_ENVELOPE_FIELD";
-        case BOOT_ENTRIES_REJECT_BAD_ID:             return "BAD_ID";
-        case BOOT_ENTRIES_REJECT_BAD_TITLE:          return "BAD_TITLE";
-        case BOOT_ENTRIES_REJECT_BAD_FLAGS:          return "BAD_FLAGS";
-        case BOOT_ENTRIES_REJECT_UNKNOWN_KIND_RANGE: return "UNKNOWN_KIND_RANGE";
-        case BOOT_ENTRIES_REJECT_PATH_ESCAPE:        return "PATH_ESCAPE";
-        case BOOT_ENTRIES_REJECT_INTERNAL:           return "INTERNAL";
-        case BOOT_ENTRIES_REJECT_DUPLICATE_KEY:      return "DUPLICATE_KEY";
-        case BOOT_ENTRIES_REJECT_ESCAPED_KEY:        return "ESCAPED_KEY";
-    }
-    return "UNKNOWN";
+    return bsr_reject_name(code);
 }
 
 const char *boot_entries_reject_cause(int code)
 {
-    switch ((boot_entries_reject_code_t)code) {
-        case BOOT_ENTRIES_OK:
-            return "the store was accepted";
-        case BOOT_ENTRIES_REJECT_FILE_TOO_LARGE:
-            return "the store file is larger than the 16 KiB limit";
-        case BOOT_ENTRIES_REJECT_JSON_PARSE:
-            return "the store is not valid JSON";
-        case BOOT_ENTRIES_REJECT_DEPTH_LIMIT:
-            return "the store nests objects too deeply";
-        case BOOT_ENTRIES_REJECT_NOT_OBJECT:
-            return "the store's top level is not a JSON object";
-        case BOOT_ENTRIES_REJECT_MISSING_FIELD:
-            return "a required field is missing from the store";
-        case BOOT_ENTRIES_REJECT_BAD_SCHEMA_VERSION:
-            return "the store's schema version is not supported";
-        case BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD:
-            return "the store's checksum field is malformed";
-        case BOOT_ENTRIES_REJECT_CRC_MISMATCH:
-            return "the store's checksum does not match its contents";
-        case BOOT_ENTRIES_REJECT_NOT_ARRAY:
-            return "the store's entry list is not a JSON array";
-        case BOOT_ENTRIES_REJECT_NO_ENTRIES:
-            return "the store contains no boot entries";
-        case BOOT_ENTRIES_REJECT_TOO_MANY_ENTRIES:
-            return "the store contains more entries than the limit allows";
-        case BOOT_ENTRIES_REJECT_DUPLICATE_ID:
-            return "two boot entries share the same id";
-        case BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD:
-            return "a boot entry field has the wrong type";
-        case BOOT_ENTRIES_REJECT_BAD_ID:
-            return "a boot entry id is empty or malformed";
-        case BOOT_ENTRIES_REJECT_BAD_TITLE:
-            return "a boot entry title is empty or malformed";
-        case BOOT_ENTRIES_REJECT_BAD_FLAGS:
-            return "a boot entry flags value is out of range";
-        case BOOT_ENTRIES_REJECT_UNKNOWN_KIND_RANGE:
-            return "a boot entry uses an unrecognised entry kind";
-        case BOOT_ENTRIES_REJECT_PATH_ESCAPE:
-            return "a boot entry path points outside the boot partition";
-        case BOOT_ENTRIES_REJECT_INTERNAL:
-            return "the store parser hit an internal limit";
-        case BOOT_ENTRIES_REJECT_DUPLICATE_KEY:
-            return "a JSON object in the store repeats a key";
-        case BOOT_ENTRIES_REJECT_ESCAPED_KEY:
-            return "a JSON key in the store is spelled with an escape";
-    }
-    return "the store was rejected for an unrecognised reason";
-}
-
-static u32 put_text(char *buf, u32 cap, u32 at, const char *text)
-{
-    while (*text && at + 1u < cap) buf[at++] = *text++;
-    return at;
-}
-
-static u32 put_number(char *buf, u32 cap, u32 at, u32 value)
-{
-    char digits[10];
-    u32 n = 0;
-    do {
-        digits[n++] = (char)('0' + value % 10u);
-        value /= 10u;
-    } while (value);
-    while (n && at + 1u < cap) buf[at++] = digits[--n];
-    return at;
+    return bsr_reject_cause(code);
 }
 
 void boot_entries_reject_locator(const boot_entries_parse_result_t *r, char *buf, unsigned int cap)
 {
-    u32 at;
     if (!buf || cap == 0u) return;
-    at = put_text(buf, cap, 0u, boot_entries_reject_name((int)r->reject_code));
-    if (r->reject_line != 0u) {
-        at = put_text(buf, cap, at, " at line ");
-        at = put_number(buf, cap, at, r->reject_line);
-        at = put_text(buf, cap, at, ", col ");
-        at = put_number(buf, cap, at, r->reject_column);
-    }
-    buf[at] = '\0';
+    bsr_put_locator(buf, cap, (int)r->reject_code, r->reject_line, r->reject_column);
 }
 
 boot_store_record_intent_t boot_store_record_intent(int load_status, int reject_code)

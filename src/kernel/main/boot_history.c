@@ -27,6 +27,7 @@
 #include "kernel/uefi_vars.h"
 #include "kernel/uefi_runtime.h"
 #include "kernel/nt/ntstatus.h"
+#include "../../../include/boot/boot_store_reject_text.h"
 
 static int      s_phase3_marked;        /* 1 = mark_phase3 ran */
 static uint32_t s_phase3_committed_seq; /* boot_seq successfully committed
@@ -422,6 +423,34 @@ static int by_seq_asc(const struct boot_error_history_entry *a,
     if (a->boot_seq < b->boot_seq) return -1;
     if (a->boot_seq > b->boot_seq) return 1;
     return 0;
+}
+
+/* The bootloader keeps this record for as long as the store stays broken, so
+ * this line repeats every boot until the user fixes the file. The record is read
+ * only: the bootloader is its sole writer and clears it on repair. */
+void boot_store_reject_render(void)
+{
+    static const uint16_t var[] = {
+        'B','o','o','t','S','t','o','r','e','R','e','j','e','c','t', 0
+    };
+    efi_guid_t guid = IMPOSSIBLE_OS_VENDOR_GUID_INIT;
+    boot_store_reject_record_t rec;
+    size_t size = sizeof(rec);
+    uint32_t attrs = 0;
+    NTSTATUS st = uefi_var_get(var, &guid, &rec, &size, &attrs);
+    if (st == STATUS_NOT_FOUND)
+        return;  /* The normal case: nothing was rejected. */
+
+    char token[BOOT_ENTRIES_REJECT_LOCATOR_LEN + 16u];
+    const char *cause = (const char *)0;
+    if (!NT_SUCCESS(st) || size != sizeof(rec) || attrs != UEFI_VAR_NV_BOOT_RUNTIME ||
+        !boot_store_reject_describe(&rec, token, (unsigned int)sizeof(token), &cause)) {
+        klog(LOG_WARN, "BOOT", "BootStoreReject record ignored: unreadable or malformed");
+        return;
+    }
+    klog(LOG_WARN, "BOOT",
+         "Boot entry store unusable: %s: %s. Fix or delete EFI\\ImpossibleOS\\bootentries.json",
+         token, cause);
 }
 
 void boot_history_render(void)

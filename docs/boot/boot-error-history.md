@@ -146,6 +146,8 @@ The loader decides what to do on every boot (`boot_store_record_intent`, `boot_s
 
 The write happens before the on-screen notice, because that eight-second dwell is when a user is most likely to power off. There is no timestamp, since a field that changes per boot would force the write the comparison avoids.
 
+The kernel reads the variable after `boot_history_render()` and logs it as a warning on every boot until it is repaired (`boot_store_reject_render`): `Boot entry store unusable: JSON_PARSE at line 2, col 1: the store is not valid JSON.` It checks the size, attributes, `err_code`, `load_status` and `reject_code` first, since the variable lives under a public GUID, and only bounds `line` and `column` to the buffer. It never writes: the bootloader is the only writer. The words come from `include/boot/boot_store_reject_text.h`, so the log line matches the notice.
+
 Known limit: the record does not name a device. Booting from a different disk whose ESP has a good store, or none, clears a record about the first disk.
 
 ## Consumer renderer

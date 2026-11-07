@@ -2499,3 +2499,6 @@ size_t boot_history_decode_source_section(uint16_t src, char *out, size_t cap);
  * zero entry, oldest-first by boot_seq.  Silent no-op when count==0.
  * Wire AFTER uefi_vars_init in boot_phase0/boot_hw.c. */
 void boot_history_render(void);
+
+/* Log the bootloader's BootStoreReject record, if any (docs/boot/boot-error-history.md). */
+void boot_store_reject_render(void);

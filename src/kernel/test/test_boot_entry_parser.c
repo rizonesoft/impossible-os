@@ -1589,6 +1589,49 @@ static void test_reject_locator_fits(void)
     }
 }
 
+/* A stored record is untrusted: the variable lives under a public GUID. */
+static void test_store_reject_describe(void)
+{
+    char t[BOOT_ENTRIES_REJECT_LOCATOR_LEN + 16u];
+    const char *cause = (const char *)0;
+    boot_store_reject_record_t r = { BOOT_STORE_REJECT_ERR_CODE, (unsigned short)BOOT_STORE_LOAD_OK,
+                                     (unsigned short)BOOT_ENTRIES_REJECT_JSON_PARSE, 2, 1 };
+
+    TEST_ASSERT_EQ(boot_store_reject_describe(&r, t, sizeof(t), &cause), 1, "a parser rejection renders");
+    TEST_ASSERT(rn_streq(t, "JSON_PARSE at line 2, col 1"), "same token text as the notice");
+    TEST_ASSERT(cause == boot_entries_reject_cause((int)BOOT_ENTRIES_REJECT_JSON_PARSE),
+                "same cause sentence as the notice");
+
+    r.load_status = (unsigned short)BOOT_STORE_LOAD_UNREADABLE;
+    TEST_ASSERT_EQ(boot_store_reject_describe(&r, t, sizeof(t), &cause), 1, "unreadable renders");
+    TEST_ASSERT(rn_streq(t, "STORE_UNREADABLE"), "unreadable token");
+    r.load_status = BOOT_STORE_REJECT_LOAD_ALLOC_FAILED;
+    TEST_ASSERT_EQ(boot_store_reject_describe(&r, t, sizeof(t), &cause), 1, "allocation failure renders");
+    TEST_ASSERT(rn_streq(t, "POLICY_ALLOC_EXHAUSTED"), "allocation failure token");
+
+    r.load_status = (unsigned short)BOOT_STORE_LOAD_OK;
+    r.err_code = 0;
+    TEST_ASSERT_EQ(boot_store_reject_describe(&r, t, sizeof(t), &cause), 0, "wrong code refused");
+    r.err_code = BOOT_STORE_REJECT_ERR_CODE;
+    r.load_status = (unsigned short)BOOT_STORE_LOAD_ABSENT;
+    TEST_ASSERT_EQ(boot_store_reject_describe(&r, t, sizeof(t), &cause), 0, "absent is never recorded");
+    r.load_status = (unsigned short)BOOT_STORE_LOAD_OK;
+    r.reject_code = (unsigned short)BOOT_ENTRIES_OK;
+    TEST_ASSERT_EQ(boot_store_reject_describe(&r, t, sizeof(t), &cause), 0, "an accepted store is never recorded");
+    r.reject_code = 0xFFFFu;
+    TEST_ASSERT_EQ(boot_store_reject_describe(&r, t, sizeof(t), &cause), 0, "unknown reject code refused");
+
+    /* Hostile numbers stay inside the buffer. */
+    char small[12];
+    small[11] = 'x';
+    r.reject_code = (unsigned short)BOOT_ENTRIES_REJECT_JSON_PARSE;
+    r.line = 0xFFFFFFFFu;
+    r.column = 0xFFFFFFFFu;
+    TEST_ASSERT_EQ(boot_store_reject_describe(&r, small, 11u, &cause), 1, "huge position renders");
+    TEST_ASSERT_EQ(small[11], 'x', "render stays inside the caller's capacity");
+    TEST_ASSERT_EQ(small[10], 0, "render stays terminated when cut");
+}
+
 /* The recurrence policy of s24: a rejection repeats on every boot until the
  * user fixes the file, so a repeat must not reach NVRAM. */
 static void test_store_record_decide(void)
@@ -1828,6 +1871,8 @@ void test_register_boot_entry_parser(void)
                             test_reject_locator_fits, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: store notice gate",
                             test_store_notice_gate, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: stored rejection rendering",
+                            test_store_reject_describe, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: store record recurrence policy",
                             test_store_record_decide, TEST_CAT_BOOT);
 }

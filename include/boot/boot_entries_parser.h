@@ -251,6 +251,7 @@ int boot_entries_store_notice_warranted(int load_status, int reject_code);
  * holds no timestamp because a field that changes per boot would force the
  * write the comparison exists to avoid. */
 #define BOOT_STORE_REJECT_LOAD_ALLOC_FAILED 0xFFFFu /* policy never reached the store */
+#define BOOT_STORE_REJECT_ERR_CODE 0x001Au /* efi.h BOOT_ERR_STORE_REJECTED; no kernel view of efi.h */
 
 typedef struct {
     unsigned int   err_code;    /* BOOT_ERR_STORE_REJECTED */
