@@ -68,7 +68,7 @@ else
 fi
 
 if [ "$FAIL" -ne 0 ]; then
-  echo "== pre-arm check FAILED -- arming refused =="
+  echo "== pre-arm check found problems =="
   exit 1
 fi
 echo "== pre-arm check passed =="

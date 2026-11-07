@@ -24,11 +24,6 @@ DOCTRINE="todo/TODO-Claude-Overnight-Runner.md"
 UNIT="overnight-$(basename "$REPO_ROOT")"        # overnight-impossible-os
 DROPIN_BASE="$HOME/.config/systemd/user"
 MARKER=".claude/state/sequencer-armed"
-# Canary stamp: the git HEAD that last passed a GREEN ATTENDED canary run
-# (operator watched >=1 section ship + >=1 rollover). An unattended arm is
-# refused when the control plane changed since this stamp -- see the canary
-# gate below and `--record-canary`.
-CANARY_STAMP=".claude/state/sequencer-canary-ok"
 
 # ARM FROM THE PRIMARY WORKTREE ONLY (2026-07-31). REPO_ROOT is resolved from
 # BASH_SOURCE, so invoking this script from the repair worktree would arm a run
@@ -39,49 +34,10 @@ CANARY_STAMP=".claude/state/sequencer-canary-ok"
 # control plane without sharing the run's tree, index and build dir.
 _PRIMARY_ROOT="$(dirname "$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")"
 if [ -n "$_PRIMARY_ROOT" ] && [ "$_PRIMARY_ROOT" != "/" ] && [ "$(cd "$REPO_ROOT" && pwd -P)" != "$(cd "$_PRIMARY_ROOT" && pwd -P)" ]; then
-  {
-    echo "REFUSED to arm: this is not the PRIMARY worktree."
-    echo "  invoked from : $REPO_ROOT"
-    echo "  primary is   : $_PRIMARY_ROOT"
-    echo "  The run must be armed from the primary checkout on main. Re-run:"
-    echo "    bash $_PRIMARY_ROOT/.claude/skills/overnight-sequencer/arm-sequencer.sh $*"
-  } >&2
-  exit 1
+  # Not a refusal: there is exactly one right place to arm from, so go there.
+  echo "arm-sequencer: running from the primary checkout $_PRIMARY_ROOT" >&2
+  exec bash "$_PRIMARY_ROOT/.claude/skills/overnight-sequencer/arm-sequencer.sh" "$@"
 fi
-
-# CAPTURE SURFACE MUST BE OPEN (2026-08-04). The sequencer files findings to
-# the NEWEST `vNN` in each capture directory. If that newest file carries a
-# CLOSED banner, every finding the run records lands in a file nobody reads
-# again -- the run's whole self-observation for the night, lost silently.
-#
-# This is a real sequence, not a hypothetical: close-out marks vNN closed and
-# opens vNN+1, and the gap between those two steps is exactly when someone
-# re-arms. Checked here because arm time is the last moment it is cheap to fix.
-# Run `Skill(close-canary-run)` to close a finished run and open the next
-# versions properly.
-for _cap_dir in "$REPO_ROOT/todo/token-saver" "$REPO_ROOT/todo/overnight-runner-improvements"; do
-  [ -d "$_cap_dir" ] || continue
-  _newest="$(ls -1 "$_cap_dir" 2>/dev/null | grep -E 'v[0-9]+\.md$' | sort -V | tail -1)"
-  [ -n "$_newest" ] || continue
-  if head -5 "$_cap_dir/$_newest" 2>/dev/null | grep -q '\*\*CLOSED'; then
-    {
-      echo "REFUSED to arm: the newest capture file is CLOSED."
-      echo "  $_cap_dir/$_newest"
-      echo "  Findings the run records would land in a file nobody reads again."
-      echo "  Open the next version first: Skill(close-canary-run), or create"
-      echo "  the vNN+1 file by hand and repoint the live-gotchas ARMED card."
-    } >&2
-    exit 1
-  fi
-  _unverdicted="$(python3 "$REPO_ROOT/scripts/overnight/capture-open-findings.py" "$_cap_dir/$_newest" 2>/dev/null || echo 0)"
-  if [ "${_unverdicted:-0}" -gt 0 ]; then
-    {
-      echo "WARNING: $_newest already holds $_unverdicted finding(s) with no verdict."
-      echo "  Unless this re-arms the same cycle, a close-out was skipped and this"
-      echo "  run's findings will mix with them. Run Skill(close-canary-run) first."
-    } >&2
-  fi
-done
 
 LOCAL_ARM="$REPO_ROOT/scripts/overnight/overnight-arm.sh"
 [ -x "$LOCAL_ARM" ] || { echo "FATAL: vendored scheduler missing/not executable: $LOCAL_ARM" >&2; exit 127; }
@@ -326,19 +282,10 @@ if [ "${1:-}" = "--disarm" ]; then
   exit 0
 fi
 
-# --record-canary: stamp the current HEAD as canary-passed. Run this from an
-# INTERACTIVE session AFTER watching a clean attended run (>=1 section ship +
-# >=1 rollover -> relaunch). It records HEAD so subsequent unattended arms with
-# no further control-plane change proceed without re-prompting; any later
-# control-plane edit re-arms the gate. Optional note as the next argument.
+# --record-canary is retired with the canary gate (2026-11-07). Accepted and ignored
+# so an old note or habit that still types it does nothing surprising.
 if [ "${1:-}" = "--record-canary" ]; then
-  mkdir -p .claude/state
-  head_sha="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-  ts="$(date -Is 2>/dev/null || echo unknown)"
-  note="${2:-operator-attended canary}"
-  printf '%s %s %s\n' "$head_sha" "$ts" "$note" > "$CANARY_STAMP"
-  echo "recorded canary stamp: ${head_sha:0:12} @ $ts ($note)"
-  echo "  unattended arms now proceed until the control plane changes again."
+  echo "arm-sequencer: canary runs are retired; nothing to record."
   exit 0
 fi
 
@@ -358,7 +305,6 @@ ARM_EFFORT="medium"        # the writer runs at medium by operator decision (202
                            # pinned rather than left to the saved CLI default.
                            # --effort <level> overrides, --effort inherit restores
                            # the saved default; metrics records carry the value.
-ARM_FORCE=0                # --force: arm despite an unproven control-plane change
 ARM_SKIP_PREFLIGHT=0       # --skip-preflight: skip the pre-arm health gate
 # --hours N: bound the run. Written to .claude/state/run-deadline and enforced
 # by deadline-check.sh at SPAWN time, so the run stops after its last segment's
@@ -373,8 +319,7 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     --force)
-      ARM_FORCE=1
-      shift
+      shift  # retired with the canary gate; accepted so old invocations still work
       ;;
     --skip-preflight)
       ARM_SKIP_PREFLIGHT=1
@@ -415,6 +360,16 @@ if [ -n "$ARM_PRIMARY" ] && [ "$ARM_PRIMARY" = "$ARM_FALLBACK" ]; then
   echo "      fallback identically). Consider --fallback-model sonnet." >&2
 fi
 
+# ---- What makes running impossible ------------------------------------------
+# These and the token and deny checks below are the only refusals left, because no
+# amount of relaunching gets past them. Everything else starts.
+for _tool in claude git python3 clang-19 nasm ld.lld-19; do
+  if ! command -v "$_tool" >/dev/null 2>&1 && ! { [ "$_tool" = claude ] && [ -x "$HOME/.local/bin/claude" ]; }; then
+    echo "REFUSED to arm: $_tool is not installed. Run: bash scripts/setup.sh" >&2
+    exit 1
+  fi
+done
+
 # ---- A permission deny on a pipeline skill (v22, 2026-11-07) -----------------
 # `Skill(review *)` refused review-todo-section for a whole run: no section could
 # ship and every segment looked healthy. The rule is the operator's, so this names
@@ -446,63 +401,12 @@ if [ "$ARM_SKIP_PREFLIGHT" != "1" ]; then
   fi
 fi
 
-# ---- Pre-arm health gate (guardrail Layer 3) --------------------------------
-# Refuse to arm into a broken control plane: runner-doctor + a launcher DRYRUN
-# + the runner test suite must all pass. A red host or a broken launcher used
-# to surface only AFTER the watchdog fired an unattended session at night --
-# catch it here, attended.
+# ---- Pre-arm health report ---------------------------------------------------
+# Warns and starts. A red suite or selftest is something the run can repair, and the
+# launcher's own runner-doctor still holds back a launch on a host that cannot work.
 if [ "$ARM_SKIP_PREFLIGHT" != "1" ]; then
   if ! bash "$REPO_ROOT/scripts/overnight/pre-arm-check.sh" "$REPO_ROOT" "$DOCTRINE"; then
-    echo "REFUSED to arm: pre-arm health check failed (fix the above, or re-run with --skip-preflight to override)." >&2
-    exit 1
-  fi
-else
-  echo "WARN: --skip-preflight -- pre-arm health gate bypassed." >&2
-fi
-
-# ---- Canary gate (guardrail Layer 4) ----------------------------------------
-# An UNATTENDED arm on an UNPROVEN control-plane change is what broke the runner
-# repeatedly. Require a green ATTENDED canary (recorded via --record-canary)
-# whenever a FLOW-CRITICAL control-plane path changed since the last stamp.
-#
-# Canary tiering (P0.0, 2026-07-12): only FLOW-CRITICAL changes re-arm this gate
-# (--flow-critical subtracts the deterministic allowlist,
-# control-plane-deterministic.txt). A change limited to deterministically-
-# covered files (metrics/receipts/reporting -- all test-backed) is proven by the
-# pre-arm-check suite run, not a watched canary, so it does NOT trip this gate.
-# The FULL-manifest suite-run gate (pre-commit/pre-push/lint) is unchanged.
-canary_unproven=""
-# The unattended run executes the live WORKING TREE, so uncommitted flow-critical
-# control-plane changes can never have been proven by any stamp -- flag them first.
-cp_dirty="$( { git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; } | sort -u | bash "$REPO_ROOT/scripts/overnight/control-plane-match.sh" --flow-critical || true)"
-if [ -n "$cp_dirty" ]; then
-  canary_unproven="uncommitted control-plane changes in the working tree (commit + canary them first):
-$(printf '%s\n' "$cp_dirty" | sed 's/^/    /')"
-elif [ ! -f "$CANARY_STAMP" ]; then
-  canary_unproven="no canary has ever been recorded"
-else
-  stamp_sha="$(awk 'NR==1{print $1}' "$CANARY_STAMP" 2>/dev/null)"
-  if [ -z "$stamp_sha" ] || ! git rev-parse --quiet --verify "$stamp_sha^{commit}" >/dev/null 2>&1; then
-    canary_unproven="canary stamp references an unknown commit (${stamp_sha:-empty})"
-  else
-    cp_changed="$(git diff --name-only "$stamp_sha" HEAD 2>/dev/null | bash "$REPO_ROOT/scripts/overnight/control-plane-match.sh" --flow-critical || true)"
-    [ -n "$cp_changed" ] && canary_unproven="flow-critical control plane changed since the last canary (${stamp_sha:0:12}):
-$(printf '%s\n' "$cp_changed" | sed 's/^/    /')"
-  fi
-fi
-if [ -n "$canary_unproven" ]; then
-  if [ "$ARM_FORCE" = "1" ]; then
-    echo "WARN: arming an UNPROVEN control plane (--force accepted the risk): $canary_unproven" >&2
-  else
-    {
-      echo "REFUSED to arm unattended: $canary_unproven"
-      echo "  The control plane drives the whole unattended run. Prove it first:"
-      echo "    1. Run an ATTENDED session; watch >=1 section ship + a rollover->relaunch."
-      echo "    2. bash .claude/skills/overnight-sequencer/arm-sequencer.sh --record-canary"
-      echo "    3. Re-arm."
-      echo "  Or override now, accepting the risk: re-run with --force."
-    } >&2
-    exit 1
+    echo "WARN: pre-arm health check found problems (above). Starting anyway; the run can repair these." >&2
   fi
 fi
 

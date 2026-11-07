@@ -49,16 +49,6 @@ def test_unreadable_file_is_exit_2():
     assert r.returncode == 2
 
 
-def test_arm_warns_and_does_not_exit_on_open_findings():
-    """The warning stays advisory until a real cycle shows its precision: a re-arm
-    inside one cycle is legitimate. The CLOSED refusal beside it must survive."""
-    text = ARM.read_text()
-    block = re.search(r"capture-open-findings\.py.*?\n\s*fi\n", text, re.S)
-    assert block, "arm-sequencer must call capture-open-findings.py"
-    assert "WARNING" in block.group(0) and "exit" not in block.group(0)
-    assert "REFUSED to arm: the newest capture file is CLOSED." in text
-
-
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

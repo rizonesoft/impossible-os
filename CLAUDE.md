@@ -284,7 +284,7 @@ The attended session works in the SAME working tree the run is executing, so the
 
 What may NOT be repaired attended-but-hastily: anything needing a design decision, an ABI/SMP judgment call, or that is not safely reversible mid-run. File it, same as the run would.
 
-**The canary stamp is recorded by whoever attends the run.** `.claude/state/sequencer-canary-ok` is written only by `arm-sequencer.sh --record-canary`, and only after OBSERVING >= 1 section ship and >= 1 rollover -> relaunch in the live log -- never inferred, never stamped speculatively, which is the rubber-stamp failure the gate exists to prevent. The gate is consulted at ARM time only; watchdog relaunches mid-run never read it, so a stale stamp cannot break a running run -- it only forces `--force` on the next manual arm.
+**There are no canary runs (retired 2026-11-07).** One command starts a run, and `arm-sequencer.sh` refuses only what makes running impossible: a missing tool, a rejected token, or a permission deny on a pipeline skill. Campaign: [docs/plans/2026-11-07-run-supervisor.md](docs/plans/2026-11-07-run-supervisor.md).
 
 ## Toolchain
 
