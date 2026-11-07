@@ -390,8 +390,9 @@ independently of the link and asserts `build/kernel.map` carries none of it; (B)
 sha-bound to the shipped `kernel.exe`) to prove no `src/kernel/test/` object linked; and (C)
 verifies the non-alloc `.ipos.provenance` marker (`src/kernel/provenance_release.c`, linked
 only at `KERNEL_TESTS=off`). Both packaging paths -- `.github/workflows/release.yml` and
-`scripts/release/build-image.sh` -- run it (release.yml also rebinds the kernel extracted from
-`system-disk.img` to the gated hash) and refuse an unstamped kernel. Design + the flavor-diff's
+`scripts/release/build-image.sh` -- run it (release.yml also runs `scripts/check-release-image-binding.sh`, which
+rebinds both kernel copies in `system-disk.img` to the gated hash at offsets read from the GPT and
+cross-checked against the image's `.info` sidecar) and refuse an unstamped kernel. Design + the flavor-diff's
 known limitation are in
 [Release-Flavor Proof: Seam-Inventory Gate and CI Attestation](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#27-release-flavor-proof-seam-inventory-gate-and-ci-attestation).
 A former residual class -- test-only helper functions defined unconditionally in production TUs,

@@ -713,7 +713,9 @@ From the stamped section 12 -- "Make shim absence fail-loud after the 2026-07-01
 - [/] `.github/workflows/release.yml` uploads `system-disk.img` without ever running the secureboot smoke, so nothing checks the coverage of what it publishes -- BLOCKED on the re-pin below
   - A `REQUIRE_SHIM=1` release gate would fail every release while `shim/` is deliberately empty, so it can only land together with a pinned shim.
   - Found by this section's Codex design review 2026-08-13 (high). The release notes make no Secure Boot claim, so nothing published is currently false; the gap is that the workflow cannot tell the difference.
-- [ ] Stop `release.yml` scraping the `EFI_OFFSET` Makefile constant with a silent 1048576 fallback; read the image's own sidecar, as the smoke does. Needs no pinned shim (reopened 2026-11-07, post-ship Codex consistency, medium)
+- [x] `release.yml` no longer scrapes `EFI_OFFSET` from the Makefile: `scripts/check-release-image-binding.sh` binds both kernel copies at offsets read from the GPT and cross-checked against the image sidecar
+  - A disagreement, a missing or repeated key, or an image without exactly one partition of the type refuses the release. The recovery offset gets the same check; its old `::error::` line was unreachable under `set -e`.
+  - `scripts/tests/test_release_image_binding.py` (10 cases, wired into `scripts/test-tooling.sh`) uses real GPT + FAT images with a decoy FAT holding the gated kernel at the old default offset. `release.yml` itself runs only on a release, so its first live run is unobserved.
 - [/] Re-pin a Microsoft-UEFI-CA-2023-signed `shimx64.efi` + `mmx64.efi` per the §12 vendor watch and refresh `shim/SHA256SUMS` -- **operator-gated**
   - Needs a distro shim binary re-signed by Microsoft through the shim-review process; no TODO in this repo can own that, and only a human can decide to trust the resulting binary.
   - `scripts/secure-boot/build-shim.sh` already covers the MOK-dev chain for our own hardware; only stock-Secure-Boot PCs need the MS-signed one, which `aab6b6f64` records as the ~2yr-out production path.

@@ -821,6 +821,21 @@ else
     t_fail "scripts/tests/test_format_md_tables.py not found"
 fi
 
+# Release image binding gate (scripts/tests/test_release_image_binding.py): real
+# GPT + FAT fixtures with a decoy at the old guessed ESP offset.
+IMG_BIND_TEST="$REPO_ROOT/scripts/tests/test_release_image_binding.py"
+if [ -f "$IMG_BIND_TEST" ]; then
+    IMG_BIND_OUT=$(python3 "$IMG_BIND_TEST" 2>&1)
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/tests/test_release_image_binding.py PASS ($(printf '%s\n' "$IMG_BIND_OUT" | tail -1))"
+    else
+        t_fail "scripts/tests/test_release_image_binding.py FAIL ($(printf '%s\n' "$IMG_BIND_OUT" | tail -2 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_release_image_binding" "$IMG_BIND_OUT"
+    fi
+else
+    t_fail "scripts/tests/test_release_image_binding.py not found"
+fi
+
 # Fence-awareness of the four TODO GATE parsers (scripts/tests/test_todo_fence.py).
 # These four decide whether a commit or a fixpoint is REFUSED, and each used to
 # read raw Markdown with no fence state, so a literal example in a ``` block

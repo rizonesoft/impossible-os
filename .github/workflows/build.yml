@@ -114,6 +114,7 @@ jobs:
             nasm \
             mtools \
             dosfstools \
+            fdisk \
             ovmf \
             qemu-system-x86 \
             qemu-utils \
