@@ -250,10 +250,18 @@ if ($PatchArgs.Count -gt 0) {
     }) -join ''
     Write-Host "  Mode:   $($ModeLabel.Trim())" -ForegroundColor Cyan
     & wsl.exe bash -c "cd '$WSL_PROJECT' && bash scripts/patch-boot-conf.sh $PatchStr"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  [ERROR] could not patch boot.conf (exit $LASTEXITCODE); not starting QEMU" -ForegroundColor Red
+        exit 1
+    }
 } else {
     # No test flags -- reset boot.conf to defaults in case a previous
     # test run was interrupted before its finally{} block could restore it.
-    & wsl.exe bash -c "cd '$WSL_PROJECT' && bash scripts/patch-boot-conf.sh reset" 2>$null
+    & wsl.exe bash -c "cd '$WSL_PROJECT' && bash scripts/patch-boot-conf.sh reset"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  [ERROR] could not reset boot.conf (exit $LASTEXITCODE); not starting QEMU" -ForegroundColor Red
+        exit 1
+    }
 }
 
 # Append extra arguments if provided (e.g., "-machine pc,i8042=on", or

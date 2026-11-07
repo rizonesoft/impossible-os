@@ -49,10 +49,6 @@ FIXTURES_DIR="$BUILD_DIR/fixtures/rollback"
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"
 OVMF_VARS_SRC="/usr/share/OVMF/OVMF_VARS_4M.fd"
 
-# ESP offset -- must match Makefile EFI_OFFSET, same derivation as
-# scripts/patch-boot-conf.sh so the two cannot drift apart.
-EFI_OFFSET="$(grep -oP 'EFI_OFFSET\s*:=\s*\K\d+' "$REPO_ROOT/Makefile" 2>/dev/null || echo "1048576")"
-
 # Per-boot deadline. Each fixture stops early on its own marker, so these
 # only bound a boot that never reaches its marker at all.
 TIMEOUT_KVM="${ROLLBACK_TIMEOUT_KVM:-60}"
@@ -166,6 +162,16 @@ make_fixture_disk() {
     local readback="$FIXTURES_DIR/$label-boot.conf.readback"
 
     rm -f "$out" "$conf" "$tmp_disk" "$tmp_conf" "$readback"
+
+    # ESP offset as make-system-disk recorded it for this image, read here
+    # because preflight may have rebuilt the image after this script started.
+    # Same derivation as scripts/patch-boot-conf.sh.
+    local EFI_OFFSET
+    EFI_OFFSET="$(grep -E '^EFI_OFFSET=[0-9]+$' "$BUILD_DIR/system-disk.img.info" 2>/dev/null | cut -d= -f2)" || true
+    if [ -z "$EFI_OFFSET" ]; then
+        say_fail "$label: no EFI_OFFSET in system-disk.img.info" >&2
+        return 1
+    fi
 
     if ! cp --reflink=auto --sparse=always \
             "$BUILD_DIR/system-disk.img" "$tmp_disk"; then

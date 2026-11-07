@@ -20,11 +20,15 @@ DISK="$PROJECT/build/system-disk.img"
 BOOT_CONF="$PROJECT/resources/boot/boot.conf"
 TEMP_CONF="$PROJECT/build/boot.conf.tmp"
 
-# EFI partition offset -- must match Makefile EFI_OFFSET
-EFI_OFFSET=$(grep -oP 'EFI_OFFSET\s*:=\s*\K\d+' "$PROJECT/Makefile" 2>/dev/null || echo "1048576")
-
 if [ ! -f "$DISK" ]; then
     echo "ERROR: $DISK not found. Run 'bash scripts/build.sh' first."
+    exit 1
+fi
+
+# EFI partition offset, as make-system-disk recorded it for this image.
+EFI_OFFSET="$(grep -E '^EFI_OFFSET=[0-9]+$' "$DISK.info" 2>/dev/null | cut -d= -f2)" || true
+if [ -z "$EFI_OFFSET" ]; then
+    echo "ERROR: no EFI_OFFSET in $DISK.info. Run 'bash scripts/build.sh' first."
     exit 1
 fi
 
