@@ -71,10 +71,10 @@ title: "TODO-24 -- ALPC / Message Ports"
 | 💎  |   3   | Connection state machine (create/connect/accept)         | §2, T12 §4    |  [x]   |
 | 💎  |   4   | Synchronous send+wait+receive engine                     | §3, T07 §3    |  [x]   |
 | 💎  |   5   | Asynchronous delivery & completion list                  | §4            |  [x]   |
-| 💎  |   6   | Large data: port sections & view mapping                 | §2, T05 §3,§7 |  [/]   |
+| 💎  |   6   | Large data: port sections & view mapping                 | §2, T05 §3,§7 |  [ ]   |
 | 💎  |   7   | Security: client token capture & impersonation           | §4, T15 §4-§7 |  [/]   |
 | 💎  |   8   | NtAlpc* SSDT registration & stub retrofit                | §1-§7, T12 §4 |  [/]   |
-| 💎  |   9   | NtAlpc QueryInformation / SetInformation / CancelMessage | §8, T12 §4    |  [/]   |
+| 💎  |   9   | NtAlpc QueryInformation / SetInformation / CancelMessage | §8, T12 §4    |  [ ]   |
 | 💎  |  10   | CSRSS ApiPort bootstrap                                  | §3-§9         |  [/]   |
 | 💎  |  11   | Message zones (pre-allocated message buffers)            | §4, §8-§9     |  [/]   |
 | ⭐  |  12   | Live port monitor & IPC latency profiler                 | §8-§9         |  [/]   |
@@ -264,7 +264,7 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   - `Link_next` (self ptr); `AlpcSectionHandle` (u64 opaque ID, per-port monotonic counter, reserve 0, fail at `UINT64_MAX`)
   - `Section` (`SECTION_OBJECT*`, ref-held until delete); `Size`; `DeleteOnClose`
 - [ ] Prerequisite: object-direct `ObMapViewOfSectionObject` / `ObUnmapViewOfSectionObject` primitives in `ob_section.c` (D3) -- refactor `ObMapViewOfSectionFull` to split handle-resolution from object-map so ALPC can map a stored `SECTION_OBJECT*`.
-- [/] (blocked: >6-arg transport choice in §8) Prerequisite: probed packed attribute-carrying syscall ABI for `NtAlpcSendWaitReceivePort` (D5) -- the 6-arg slot is full; carry `SendMsgAttr`/`RecvMsgAttr` + lengths, copy-once snapshot validation.
+- [/] (blocked: `todo/answers.md` Q9) Prerequisite: probed packed attribute-carrying syscall ABI for `NtAlpcSendWaitReceivePort` (D5) -- the 6-arg slot is full; carry `SendMsgAttr`/`RecvMsgAttr` + lengths, copy-once snapshot validation.
 - [/] (blocked: §6 prerequisites D3, D5) `NtAlpcCreatePortSection(PortHandle, Flags, SectionHandle, SectionSize, AlpcSectionHandle, ActualSectionSize)`:
   - Resolve an existing `SectionHandle` via `ObpLookupHandle` + `ObpSectionType` check + `ObReferenceObject` (D1), OR if `SectionHandle == NULL` call `ObCreateSectionEx` for an anonymous section of `SectionSize`
   - Allocate `ALPC_PORT_SECTION`, append to `port->SectionList` under `port->Lock`, assign a unique per-port `AlpcSectionHandle`
@@ -292,7 +292,7 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 
 **Test checkpoint:** `NtAlpcCreatePortSection(NULL, 64*1024)` creates anonymous 64 KiB section. `NtAlpcCreateSectionView` maps it into caller's VA; writing a pattern to `ViewBase` succeeds. Send message with `ALPC_DATA_VIEW_ATTR`; receiver calls `NtAlpcCreateSectionView` with received `SectionHandle`; reads back matching pattern; zero copies. `NtAlpcDeleteSectionView` unmaps without crash. `NtAlpcDeletePortSection` dereferences section. `AlpcpValidateMessageAttributes` rejects invalid `buffer_len`. Serial log: `"[ALPC] section view mapped: base=%p size=%llu"`. Test on: QEMU WHPX + TCG.
 
-> **Deferred:** [Critical] naive §6 plan is NO-SHIP per Codex design review 2026-07-17 (5 findings verified) -- needs an object-direct section-map primitive (D3), an attribute-carrying syscall ABI (D5), connection-scoped capability transfer with message-held refs (D2), spoof-safe identity handling (D4), and safe handle-ref -> XREF: `02-kernel-core/TODO-05 §3` (item: "Add `ObpReferenceObjectByHandle` primitive" at line 148). Full design contract captured in the §6 `[!IMPORTANT]` callout; implement in a focused session (design done, code deferred).
+> **Design contract, parked at item level:** [Critical] naive §6 plan is NO-SHIP per Codex design review 2026-07-17 (5 findings verified) -- needs an object-direct section-map primitive (D3), an attribute-carrying syscall ABI (D5), connection-scoped capability transfer with message-held refs (D2), spoof-safe identity handling (D4), and safe handle-ref -> XREF: `02-kernel-core/TODO-05 §3` (item: "Add `ObpReferenceObjectByHandle` primitive" at line 148). Full design contract captured in the §6 `[!IMPORTANT]` callout; implement in a focused session (design done, code deferred).
 
 ---
 
@@ -376,8 +376,9 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 - [/] **Gap (Win11 parity):** SSDT slots + helpers for **`NtAlpcOpenSenderProcess`** / **`NtAlpcOpenSenderThread`** -- audited handles to a message sender; validate against `PORT_MESSAGE.ClientId`. New slots + handler `.text`: BSS-ceiling-blocked
 - [/] **Gap (Win11 parity):** **`NtAlpcRevokeSecurityContext`** -- implement if distinct from `NtAlpcDeleteSecurityContext` on a pinned `ntdll.dll` symbol list, else a thin alias. Both peers are §7-deferred, so there is nothing to alias yet
 - [/] `ZwAlpc*` kernel-mode aliases -- BLOCKED, not merely unwritten: `zw_dispatch` carries 6 words (`zw.h:101`), too few for the 8-11-arg ALPC surface. Header home (`zw.h` vs new `alpc_syscalls.h`) stays OPEN pending the transport
-- [/] **Choose the >6-arg SSDT transport for ALPC (ABI decision -- operator-gated).** Widen `SSDT_HANDLER`/`zw_dispatch` past 6 words, or pass a validated argument-pack by pointer. Blocks the aliases, full-width negotiation, `ConnectPortEx`
-- [ ] **Deliver `a5`/`a6` from ring 3.** Separate layer from the width item above: `syscall_entry.asm` zeroes `r9` and `syscall_dispatch_fast` passes `a6=0`, so ring 3 reaches only 4 of the existing 6 args -- hits every 5-6-arg syscall, not just ALPC
+- [/] **Choose the >6-arg SSDT transport for ALPC (`todo/answers.md` Q9).** Widen `SSDT_HANDLER`/`zw_dispatch` past 6 words, or pass a validated argument-pack by pointer. Blocks the aliases, full-width negotiation, `ConnectPortEx`
+- [/] **Deliver `a5`/`a6` from ring 3.** BLOCKED: `02-kernel-core/TODO-12` §3 owns this for every 5-6-arg syscall (item: "Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+").
+  - Separate layer from the width item above: `syscall_entry.asm` zeroes `r9` and `syscall_dispatch_fast` passes `a6=0`, so ring 3 reaches only 4 of the existing 6 args
   - Load the 5th/6th args from the user stack in `syscall_entry.asm` (probe the user stack frame; a bad pointer must fault to the handler, never trap in ring 0), widen `syscall_dispatch_fast` to take `a6`, and forward both to `ssdt_dispatch`
   - Closes the §7 `RequiredServerSid` gap (its kernel-side compare is shipped + tested but KernelMode-only) and the `NtAlpcConnectPort` `a5` timeout, which silently arrives 0 = block-indefinitely -> XREF: `02-kernel-core/TODO-24 §7`
 - [/] **Retrofit the ALPC SSDT stubs in `nt_alpc.c` (0x010F-0x011E) to engine-backed handlers.** 6 of 16 shipped; the other 10 are `ALPC_STUB_BODY` sentinels owned by OTHER sections -- a roll-up that closes only when they do:
@@ -406,16 +407,16 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 > - **Canonical doc** -- [`docs/infrastructure/kernel-address-space.md`](../../docs/infrastructure/kernel-address-space.md) for the BSS/`USER_BASE` ceiling that gates every `.text`-adding item here.
 > - **Scope boundary** -- §8 owns SSDT registration + the retrofit roll-up + the transport decision; the per-slot handler bodies belong to §6/§7/§9/§11, and the headroom that would let them build belongs to `TODO-33 §10`.
 
-> **Deferred:** [High] 2026-07-17 -- no code ships from §8. The `ZwAlpc*` alias item, the full-width connect/accept negotiation, and `ConnectPortEx` all sit behind a 6-word `SSDT_HANDLER` transport (`ssdt.h:30-31`) that cannot carry the 8-11-arg ALPC ABI; publishing wrappers on it would freeze a kernel ABI this section must later break (Codex design review, [high], verified at `zw.h:101`). Widening it is an ABI change = operator-reserved -> XREF: this file §8 (item: "**Choose the >6-arg SSDT transport for ALPC (ABI decision -- operator-reserved).**" at line 364). The ceiling half is CLEARED (2026-07-17): `02-kernel-core/TODO-33 §10` moved the BSS end to `0x6c2000`, ~1272 KiB of headroom, so the `OpenSenderProcess`/`OpenSenderThread` + `RevokeSecurityContext` gap items are no longer blocked on `.text` budget -- only on the transport decision above. The 10 stub retrofits are owned by §6/§9/§11 and close with them.
+> **Deferred:** [High] awaiting-answer Q9 (`todo/answers.md`). 2026-07-17 -- no code ships from §8. The `ZwAlpc*` alias item, the full-width connect/accept negotiation, and `ConnectPortEx` all sit behind a 6-word `SSDT_HANDLER` transport (`ssdt.h:30-31`) that cannot carry the 8-11-arg ALPC ABI; publishing wrappers on it would freeze a kernel ABI this section must later break (Codex design review, [high], verified at `zw.h:101`). Widening it is an ABI change = operator-reserved -> XREF: this file §8 (item: "**Choose the >6-arg SSDT transport for ALPC (ABI decision -- operator-reserved).**" at line 364). The ceiling half is CLEARED (2026-07-17): `02-kernel-core/TODO-33 §10` moved the BSS end to `0x6c2000`, ~1272 KiB of headroom, so the `OpenSenderProcess`/`OpenSenderThread` + `RevokeSecurityContext` gap items are no longer blocked on `.text` budget -- only on the transport decision above. The 10 stub retrofits are owned by §6/§9/§11 and close with them.
 
 ---
 
 ## 9. NtAlpc QueryInformation, SetInformation & CancelMessage
 
 > [!IMPORTANT]
-> **BLOCKED on the 6-word SSDT transport (2026-07-17) -- no code ships from this section today. The ceiling half is CLEARED.** The `USER_BASE`/BSS ceiling that co-blocked this section is GONE: §10 of `02-kernel-core/TODO-33` moved the BSS end from `0x7fe000` to `0x6c2000` (~1272 KiB headroom), so handler `.text` is no longer the constraint. What remains, and is sufficient alone: `SSDT_HANDLER` carries six `uint64_t` args (`ssdt.h:30-31`) and `zw_dispatch` inherits the cap (`zw.h:101`), which the 8-11-arg ALPC ABI does not fit. Widening it is an ABI change = operator-reserved.
+> **Partly blocked on the 6-word SSDT transport (2026-07-17); the 3-arg and 4-arg items can ship. The ceiling half is CLEARED.** The `USER_BASE`/BSS ceiling that co-blocked this section is GONE: §10 of `02-kernel-core/TODO-33` moved the BSS end from `0x7fe000` to `0x6c2000` (~1272 KiB headroom), so handler `.text` is no longer the constraint. What remains, and is sufficient alone: `SSDT_HANDLER` carries six `uint64_t` args (`ssdt.h:30-31`) and `zw_dispatch` inherits the cap (`zw.h:101`), which the 8-11-arg ALPC ABI does not fit. Widening it is an ABI change = operator-reserved.
 
-- [/] NtAlpcQueryInformation: `ALPC_PORT_INFORMATION_CLASS` values (full enumeration):
+- [ ] NtAlpcQueryInformation: `ALPC_PORT_INFORMATION_CLASS` values (full enumeration):
   - `AlpcBasicInformation` (0) → `{Flags, SequenceNo, PortContext}`
   - `AlpcPortInformation` (1) → full `ALPC_PORT_ATTRIBUTES` readback
   - `AlpcAssociateCompletionPortInformation` (2) → read back associated completion port (writeable via `NtAlpcSetInformation` in this section)
@@ -423,20 +424,20 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   - `AlpcServerInformation` (4) → `{ThreadBlocked, ConnectedProcessId, ConnectionNtPath}`
   - `AlpcMessageZoneInformation` (5) → message zone status (→ §11)
   - `AlpcRegisterCompletionListInformation` (6) / `AlpcUnregisterCompletionListInformation` (7) / `AlpcAdjustCompletionListConcurrencyCountInformation` (8) / `AlpcRegisterCallbackInformation` (9) / `AlpcCompletionListRundownInformation` (10) -- these are completion-LIST lifecycle operations issued via `NtAlpcSetInformation` (NOT queries). The user-VA mapped completion-list ring was NOT built (§5 chose the IOCP-notify channel instead). Return `STATUS_NOT_IMPLEMENTED` with rationale -- do NOT alias to IOCP: IOCP posts metadata while the payload stays on `MessageQueue` and has no shared-list registration / concurrency / rundown semantics, so aliasing would silently break async consumers. If a real mapped completion-list ring is ever needed, it lands as a new section, not an alias.
-- [/] Return `STATUS_INVALID_INFO_CLASS` for unknown classes -- retires the `ALPC_STUB_BODY` sentinel at `nt_alpc.c:457` (SSDT `0x011C`); ceiling-blocked
-- [/] `NtAlpcQueryInformationMessage` (7 args) -- exceeds the 6-word `SSDT_HANDLER` cap; blocked by the transport decision, not just the ceiling -> XREF: this file §8 (item: "**Choose the >6-arg SSDT transport for ALPC" at line 364):
+- [ ] Return `STATUS_INVALID_INFO_CLASS` for unknown classes -- retires the `ALPC_STUB_BODY` sentinel at `nt_alpc.c:457` (SSDT `0x011C`)
+- [/] `NtAlpcQueryInformationMessage` (7 args) -- exceeds the 6-word `SSDT_HANDLER` cap; blocked by the transport decision (`todo/answers.md` Q9) -> XREF: this file §8 (item: "**Choose the >6-arg SSDT transport for ALPC" at line 364):
   - `AlpcMessageSidInformation` (0) → returns the SID of the sender of the specified message (derived from captured client token at send time)
   - `AlpcMessageTokenModifiedIdInformation` (1) → returns the `ModifiedId` LUID of the sender's token at send time; allows detecting if the token changed between send and receive
 
 - [x] NtAlpcSetInformation: `AlpcPortAssociateCompletionPortInformation` (2) -- ALREADY SHIPPED by §8 (`nt_alpc.c:473` → `AlpcAssociateCompletionPort`, SSDT `0x011D`); the classes below are this section's open work
-- [/] `AlpcBasicInformation` (0); update `MaxMessageLength`, `MemoryBandwidth` (only if no messages are pending) -- ceiling-blocked
-- [/] `AlpcDirectMessageAttribute` (3); default message type for datagrams -- needs the `ALPC_MESSAGE_ATTRIBUTES` ABI owned by the NO-SHIP-deferred §6; also ceiling-blocked -> XREF: this file §6 (item: "Message attributes dispatcher" at line 278)
-- [/] `NtAlpcCancelMessage(PortHandle, Flags, MessageContext)` -- fits the transport (3 args); retires the `nt_alpc.c:394` sentinel (SSDT `0x0115`); ceiling-blocked only:
+- [ ] `AlpcBasicInformation` (0); update `MaxMessageLength`, `MemoryBandwidth` (only if no messages are pending)
+- [/] `AlpcDirectMessageAttribute` (3); default message type for datagrams -- needs the `ALPC_MESSAGE_ATTRIBUTES` ABI owned by the NO-SHIP-deferred §6 -> XREF: this file §6 (item: "Message attributes dispatcher" at line 278)
+- [ ] `NtAlpcCancelMessage(PortHandle, Flags, MessageContext)` -- fits the transport (3 args); retires the `nt_alpc.c:394` sentinel (SSDT `0x0115`):
   - Find entry on `port->PendingQueue` or `port->MessageQueue` matching `MessageContext->MessageId`
   - Remove from queue; wake any blocked sender with `STATUS_CANCELLED`
   - Used by timeout path in `NtAlpcConnectPort` and `NtAlpcSendWaitReceivePort`
 
-- [/] (blocked: §9 stamp) Commit: `"kernel/ipc/alpc: NtAlpc* SSDT wiring, QueryInformation, SetInformation, CancelMessage"`
+- [ ] Commit: `"kernel/ipc/alpc: NtAlpc* SSDT wiring, QueryInformation, SetInformation, CancelMessage"`
 
 **Test checkpoint:** Every `NtAlpc*` entry point listed in the §8 syscall list plus any §8 gap items (OpenSender*, RevokeSecurityContext) is registered in the SSDT and callable from user mode (or kernel-mode `Zw*` alias). `NtAlpcQueryInformation(AlpcBasicInformation)` returns valid `{Flags, SequenceNo, PortContext}`. `NtAlpcQueryInformation` with unknown class → `STATUS_INVALID_INFO_CLASS`. `NtAlpcQueryInformationMessage(AlpcMessageSidInformation)` returns sender SID. `NtAlpcCancelMessage` cancels a pending request → blocked sender wakes with `STATUS_CANCELLED`. Serial log: `"[ALPC] SSDT wired: %u NtAlpc* entries"`. No new test surface lands with this section (no code shipped); the deferred contract is already held by `"OB: NT ALPC pending features"` (`test_nt_alpc_pending_features`), which `TEST_PENDING`s every slot still returning `STATUS_NOT_IMPLEMENTED` -- including `0x0115` / `0x011C` / `0x011E`. Test on: QEMU WHPX + TCG.
 
@@ -449,11 +450,12 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 > - **Canonical doc** -- [`docs/infrastructure/kernel-address-space.md`](../../docs/infrastructure/kernel-address-space.md) for the BSS/`USER_BASE` ceiling that gates every `.text`-adding item here.
 > - **Scope boundary** -- §9 owns the Query/Set/Cancel info-class bodies; the SSDT slots + transport belong to §8, the message-attribute ABI to §6, the captured token to §7, and the headroom to `TODO-33 §10`.
 
-- [ ] **Split the section-level park: `NtAlpcCancelMessage` (3 args) and `AlpcBasicInformation` SetInformation (4 args) fit the existing transport and now have headroom** -- the blanket §9 Deferred stamp strands them at `STATUS_NOT_IMPLEMENTED`
+- [x] **Split the section-level park so `NtAlpcCancelMessage` and `AlpcBasicInformation` can ship.** Done 2026-11-07: §9 is reopened at item level.
+  - Both fit the existing transport (3 and 4 args) and have headroom; the blanket §9 Deferred stamp stranded them at `STATUS_NOT_IMPLEMENTED`
   - The surviving blockers are item-scoped, not section-scoped: only `NtAlpcQueryInformationMessage` hits the 6-word `SSDT_HANDLER` cap, and only `AlpcDirectMessageAttribute` needs the §6 ABI. A section-level stamp makes the triage oracle read ALL of §9 as DONE
   - Give the transport- and §6-blocked items their own deferred scope, then implement the rest. `NtAlpcCancelMessage` is the user-visible cost: timeout paths cannot cancel queued messages while it stubs -> XREF: `02-kernel-core/TODO-33 §11`
 
-> **Deferred:** [High] 2026-07-17 -- no code ships from §9. The ceiling half is CLEARED (2026-07-17): `02-kernel-core/TODO-33 §10` moved the BSS end to `0x6c2000` (~1272 KiB headroom) and §7 has since SHIPPED, so `AlpcConnectedSIDInformation` / `AlpcServerInformation` can now read a real `server_comm->ClientToken` -> XREF: `02-kernel-core/TODO-33 §11` (item: "`TODO-24 §9-§12`"). What still blocks: `NtAlpcQueryInformationMessage` is blocked a second time by the 6-word `SSDT_HANDLER` cap (`ssdt.h:30-31`) -> XREF: this file §8 (item: "**Choose the >6-arg SSDT transport for ALPC (ABI decision -- operator-reserved).**" at line 364). `AlpcDirectMessageAttribute` needs the §6 attribute ABI -> XREF: this file §6 (item: "Message attributes dispatcher: `ALPC_MESSAGE_ATTRIBUTES`" at line 278).
+> **Parked at item level:** 2026-11-07. `bss-headroom.py` measures 152,516 bytes of headroom, so nothing here waits on the ceiling. The ceiling half is CLEARED (2026-07-17): `02-kernel-core/TODO-33 §10` moved the BSS end to `0x6c2000` (~1272 KiB headroom) and §7 has since SHIPPED, so `AlpcConnectedSIDInformation` / `AlpcServerInformation` can now read a real `server_comm->ClientToken` -> XREF: `02-kernel-core/TODO-33 §11` (item: "`TODO-24 §9-§12`"). What still blocks: `NtAlpcQueryInformationMessage` is blocked a second time by the 6-word `SSDT_HANDLER` cap (`ssdt.h:30-31`) -> XREF: this file §8 (item: "**Choose the >6-arg SSDT transport for ALPC (ABI decision -- operator-reserved).**" at line 364). `AlpcDirectMessageAttribute` needs the §6 attribute ABI -> XREF: this file §6 (item: "Message attributes dispatcher: `ALPC_MESSAGE_ATTRIBUTES`" at line 278).
 
 ---
 

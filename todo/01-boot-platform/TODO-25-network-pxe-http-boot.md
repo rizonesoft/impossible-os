@@ -36,14 +36,14 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 | ⭐  | Order | Deliverable                                  | Depends On      | Status |
 | --- | :---: | -------------------------------------------- | --------------- | :----: |
 | 💎  |   1   | UEFI SNP/PXE protocol discovery              | TODO-05 §5      |  [x]   |
-| 💎  |   2   | DHCP/PXE provenance capture                  | §1              |  [/]   |
+| 💎  |   2   | DHCP/PXE provenance capture                  | §1              |  [ ]   |
 | 💎  |   3   | TFTP kernel and boot.conf load               | §1, §2          |  [x]   |
 | 💎  |   4   | UEFI HTTP Boot load path                     | §1, §2          |  [x]   |
 | 💎  |   5   | Network boot asset integrity                 | §3, §4, TODO-13 |  [/]   |
-| 💎  |   6   | boot_info network provenance                 | TODO-01 §4, §12 |  [/]   |
+| 💎  |   6   | boot_info network provenance                 | TODO-01 §4, §12 |  [ ]   |
 | 💎  |   7   | Fallback ordering with local media           | TODO-05 §5, §6  |  [/]   |
 | ⭐  |   8   | Recovery and installer over network          | §3-§7, TODO-22  |  [/]   |
-| 💎  |   9   | Network boot diagnostics and BlackBox report | §1-§8           |  [/]   |
+| 💎  |   9   | Network boot diagnostics and BlackBox report | §1-§8           |  [ ]   |
 | 💎  |  10   | PXE/HTTP boot tests                          | §1-§9           |  [ ]   |
 
 ## 1. UEFI SNP/PXE Protocol Discovery
@@ -89,7 +89,6 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 > - Scope: §2 captures + stages in the bootloader; boot_info handoff §6, Registry §6, BlackBox JSON §9.
 
 > **Verified:** 2026-06-17 | commit `7d32370a` | 4/5 items | build OK | smoke PASS (KVM 2.8s)
-> **Deferred:** [M] child boot DeviceHandle without PXE + firmware lacking DevicePathUtilities skips the sole-handle fallback (best-effort capture) -> XREF: 01-boot-platform/TODO-25 §2 (item: "Best-effort residual" at line 78)
 > **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf) | 1M fixed | scope: boot-code-quality
 
 ---
@@ -194,8 +193,8 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 > - Honest current state: the firmware may launch BOOTX64.EFI over the network, but the OS still loads from local trusted media (§3/§4 probes fetch-and-free); there is no authoritative network boot source to hand off yet.
 > - Owners: trust gate = TODO-25 §5; media-role enum + version bump = TODO-01 §7 (boot_info ABI); media-role precedence consumer = TODO-06 §11.
 
-> **Deferred:** [H] authoritative network boot-source promotion (boot_device_type=network, boot_path=NETWORK, selected HKLM\SYSTEM\Boot\Network, decision record) must stay fail-closed until §5 verification or the documented insecure-override + physical-console-confirm path exists (boot_decision.c:269 already treats BOOT_REASON_NETWORK_INSECURE as a valid selected BOOT_PATH_NETWORK) -> XREF: 01-boot-platform/TODO-25 §5 (BLOCKER: manifest signature trust model)
-> **Deferred:** [H] `boot_media_role=network` is a closed inline-enum extension (BOOT_MEDIA_ROLE_MAX=6, pinned offset 23968) needing a BOOT_INFO_VERSION bump + bootloader mirror + boot_media_role_name() + validator + skew tests -> XREF: 01-boot-platform/TODO-01 §7 (Version Negotiation and Stale-Loader Error Path) + consumer 01-boot-platform/TODO-06 §11
+> **Parked at item level:** authoritative network boot-source promotion (boot_device_type=network, boot_path=NETWORK, selected HKLM\SYSTEM\Boot\Network, decision record) must stay fail-closed until §5 verification or the documented insecure-override + physical-console-confirm path exists (boot_decision.c:269 already treats BOOT_REASON_NETWORK_INSECURE as a valid selected BOOT_PATH_NETWORK) -> XREF: 01-boot-platform/TODO-25 §5 (BLOCKER: manifest signature trust model)
+> **Parked at item level:** `boot_media_role=network` is a closed inline-enum extension (BOOT_MEDIA_ROLE_MAX=6, pinned offset 23968) needing a BOOT_INFO_VERSION bump + bootloader mirror + boot_media_role_name() + validator + skew tests -> XREF: 01-boot-platform/TODO-01 §7 (Version Negotiation and Stale-Loader Error Path) + consumer 01-boot-platform/TODO-06 §11
 
 ---
 
@@ -266,7 +265,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 > - Unblock path: a non-authoritative diagnostic provenance descriptor (the §6 sliver) feeds this report without the §5 trust decision; tracked under §6.
 > - Owners: provenance handoff = TODO-25 §6; file hashes = TODO-25 §5; BlackBox X:\Diag writer infra = TODO-24.
 
-> **Deferred:** [H] `X:\Diag\network-boot.json` needs the §6 kernel-visible network-provenance handoff as its data source, and per-file hashes need §5 verification -> XREF: 01-boot-platform/TODO-25 §6 (boot_info network provenance handoff), §5 (manifest/file hashes)
+> **Parked at item level:** `X:\Diag\network-boot.json` needs the §6 kernel-visible network-provenance handoff as its data source, and per-file hashes need §5 verification -> XREF: 01-boot-platform/TODO-25 §6 (boot_info network provenance handoff), §5 (manifest/file hashes)
 
 ---
 

@@ -143,3 +143,12 @@ Recommended: approve the amendment, landing it with the `TODO-17` §17 verifier 
 - **B: a denial-only ceiling ANDed with the token check.** The bitmask can only remove rights, which gives the drop-only `NtDropCapability` of §7 directly. There are two things to keep consistent, and the composition has to be defined per gate.
 
 Recommended: B, because §7's drop-only rule and `child subset of parent` invariant are what the section exists to provide, and a ceiling cannot grant anything the token denies. This comes from reading the 2026-07-11 design review and the code, not a fresh review. Whichever is chosen, the mask needs atomic updates, an explicit child ceiling before ring-3 publication, and `CAP_SET_TIME` must also cover `KeSetSystemTimeEx`. Blocks `TODO-21` §6 and §7.
+
+## Q9 (TODO-24 §6/§8/§9): how do syscalls with more than 6 arguments reach the kernel?
+
+The ALPC ABI needs 8-11 arguments, but `SSDT_HANDLER` and `zw_dispatch` carry 6 words (`ssdt.h:30-31`). The aliases, full-width connect and accept, `ConnectPortEx`, `NtAlpcQueryInformationMessage` and the attribute-carrying send all wait on this, and it changes a kernel ABI.
+
+- **A: widen the transport.** Handlers take more words, read from the user stack as Windows x64 callers already pass them. This needs `TODO-12` §3's stack-argument read and touches the handler signature.
+- **B: a validated argument pack by pointer.** The 6-word handler stays, and only the wide syscalls take a pointer to a probed struct. Nothing else changes, but these syscalls no longer match the Windows calling shape.
+
+Recommended: A, because Win32 is the native surface and `TODO-12` §3 already has to read stack arguments. This comes from reading the code, not a design review.

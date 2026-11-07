@@ -66,7 +66,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎  |   1   | Per-process environ storage & kernel API           | --                         |  [x]   |
 | 💎  |   2   | System default variables from Registry             | §1, T14 §4                 |  [x]   |
 | 💎  |   3   | `%VAR%` expansion (`env_expand`)                   | §1                         |  [x]   |
-| 💎  |   4   | argv array: kernel storage & shell parsing         | §1                         |  [x]   |
+| 💎  |   4   | argv array: kernel storage & shell parsing         | §1                         |  [ ]   |
 | 💎  |   5   | Nt/Zw environment variable syscalls                | §1, T11 §2, T11 §5, T12 §4 |  [x]   |
 | 💎  |   6   | Win32 API wrappers                                 | §5                         |  [/]   |
 | 💎  |   7   | Shell integration (PATH lookup, SET, ECHO)         | §3, §4                     |  [/]   |
@@ -76,7 +76,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎  |  11   | PATHEXT variable & extension search order          | §7                         |  [/]   |
 | 💎  |  12   | Hidden drive-letter variables (`=C:`, `=D:`)       | §1, §10                    |  [/]   |
 | 💎  |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock   | §2, §10, §12, T15 §4       |  [/]   |
-| 💎  |  14   | SearchPathW / SearchPathA Win32 API                | §7, §6                     |  [/]   |
+| 💎  |  14   | SearchPathW / SearchPathA Win32 API                | §7, §6                     |  [ ]   |
 | 💎  |  15   | CommandLineToArgvW Win32 API                       | §4, §6                     |  [/]   |
 | 💎  |  16   | Environment variable security & sanitization       | §1, T15 §4                 |  [/]   |
 | ⭐  |  17   | App Paths registry-based executable lookup         | §7, T14 §4                 |  [/]   |
@@ -254,7 +254,6 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > **Accepted:** [H] fork does not copy the parent environ, so exec(envp==NULL) inherits empty; race-safe env_copy needs atomic slot publication -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "Wire `env_copy()` into every child path")
 > **Accepted:** [M] PEB CommandLine truncates a >~2 KiB full-argv command line + UTF-8 argv mojibakes (single-page RTLPP, byte-widening) -> XREF: 02-kernel-core/TODO-11 §5 (item: "`CommandLine` fidelity" at line 198)
 > **Accepted:** [M] `copy_from_user` is not fault-recoverable (in-range unmapped page faults in kernel) -> XREF: 03-memory-concurrency/TODO-02 §4 (item: "Audit all syscall handlers" at line 132)
-> **Deferred:** [M] full exec-commit transactionality (roll back / terminate on a task_exec failure after the argv/env commit) -> XREF: 02-kernel-core/TODO-22 §4 (item: "Follow-up: make SYS_EXEC argv/env commit transactional" at line 238)
 > **Quality reviewed:** 2026-07-13 | Codex 5x (adversarial, consistency, perf, re-adversarial) | 1H+1L fixed, 2H+2M accepted-XREF, 1M deferred | scope: kernel-code-quality
 
 ---
@@ -586,8 +585,6 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Scope boundary** -- §14 owns SearchPath ordering; leg-1 (app-load dir) needs a kernel-owned image path owned by `TODO-21 §2`; PATH+PATHEXT shell iteration stays `shell_find_command` (§7).
 > **Verified:** 2026-07-15 | commit `2953e5ce` | 4/7 items | build OK | tests 1804/1804 PASS
 > **Accepted:** [H] SearchPathW non-ASCII CWD leg limited by the ASCII-only NT-path/cwd narrowing (`nt_process.c`) -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md §1` (item: "Non-ASCII CWD: NtSetCurrentDirectory narrows..." at line 97)
-> **Deferred:** [H] `sp_probe` fails open on a trusted-leg VFS I/O/OOM error (needs `vfs_stat` tri-state) -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "`sp_probe` fails open on a trusted-leg VFS..." at line 555)
-> **Deferred:** [M] install-path consumers (`registry.c` windir, bootstrap PATH) not composed from the constants -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "Compose all install-path consumers..." at line 556)
 > **Quality reviewed:** 2026-07-15 | Codex 14x (adversarial, consistency, perf, re-adversarial) | 2H+7M fixed, 2H+1M deferred/accepted, 1M rejected | scope: kernel-code-quality
 
 ---
