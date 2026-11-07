@@ -80,6 +80,8 @@ title: "TODO-07 -- CNG Crypto & Certificate Store"
 - [ ] `void cng_sha1(const uint8_t *data, size_t len, uint8_t hash_out[20])` -- wraps the shipped `sha1()`
   - Needed by WIM file format (-> XREF: 15-installer-release/TODO-02 §5), Windows-compatible service SID derivation (-> XREF: 02-kernel-core/TODO-15 §16), and WPA2 PBKDF2 (-> XREF: 04-drivers-hardware/TODO-15 §5)
 - [ ] Bootloader verify subset callable from `bootx64.c` pre-EBS: SHA-256 already exists header-only in `include/boot/sha256_boot.h`; add `boot_ed25519_verify()`; bootloader cannot link kernel `cng_*`. Consumer: 01-boot-platform/TODO-06 §7 items 1-3.
+- [ ] Bootloader AEAD subset: AES-256-GCM decrypt-verify callable pre-EBS, plus TPM2 unseal of the image key over TCG2 SubmitCommand; `src/boot` has neither.
+  - Consumer: 01-boot-platform/TODO-26 §4 (hibernation images are refused unless encrypted). Key handling and the sealing policy follow 02-kernel-core/TODO-26 §28.
 - [ ] Boot log: `klog(LOG_OK, "cng", "primitives ready: AES-256-GCM SHA-256 SHA-1 HMAC RSA-2048 X25519 BLAKE2b")`
 - [ ] Commit: `"cng: crypto primitives -- AES-256-GCM, SHA-256, SHA-1, HMAC, RSA-2048, X25519, BLAKE2b"`
 

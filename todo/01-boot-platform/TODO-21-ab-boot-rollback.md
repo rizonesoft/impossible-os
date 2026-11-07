@@ -180,6 +180,7 @@ Automatic rollback after 3 consecutive boot failures.
 - [x] Both slots `tries >= MAX` -> stopgap implemented: `decide` returns BOTH_EXHAUSTED + `ab_boot_meta_least_bad_slot` (prefer once-successful, then priority, then fewer tries) with a loud serial + on-screen diagnostic; the full recovery UI is still owned by -> XREF: [`TODO-22`](TODO-22-recovery-partition.md)
 - [x] Codebase-wide bootloader `ReadBlocks` IoAlign hardening -- shipped in TODO-02 §19 (`bl_read_blocks_aligned` helper + GPT/FAT/A-B reader retrofits; `IoAlign <= 1` fast path smoke-validated, `IoAlign > 8` bounce path bare-metal-pending)
 - [x] Commit: `"boot: automatic rollback after 3 failed boot attempts"`
+- [/] Accept repeated resume failures as a rollback input. Waits on resume existing at all. -> XREF: `01-boot-platform/TODO-26` §6 (item: "Increment failure counter and feed A/B rollback")
 
 **Test checkpoint:** A fresh boot logs `"A/B: tries incremented"` then `"A/B: boot marked successful (gen 2)"` (smoke-validated round-trip). A slot that never reaches mark-good `AB_BOOT_MAX_TRIES` times rolls back (`choose_slot`). Test on: QEMU smoke + bare metal.
 
