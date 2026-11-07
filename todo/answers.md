@@ -246,3 +246,14 @@ A: (pending)
 Recommended: B, since the wire contract can be correct without a pack system. I did not read the Flags semantics for this answer. Blocks one item in §8.
 
 A: (pending)
+
+## Q19 (01-boot-platform/TODO-15 §9/§13): does Tier 2 boot progress survive the splash spec?
+
+`docs/design/shell.md` says the boot splash is logo plus spinner, with "No text unless boot fails". §9 renders `STAGE_NAME +NNNms` at `postbars=1` with a history scroll, and §10 and §13 follow from it. Neither carries a `**Design deviation:**` line, and the spec wins by rule.
+
+- **A: drop Tier 2's text.** Keep the spec's splash, and leave stage detail to the Tier 1 diagnostic screen. §9's text items and §13's post-splash display are retired.
+- **B: opt-in deviation.** `postbars=1` is a diagnostic mode, so record a deviation and extend the spec to allow it.
+
+Recommended: A, since Tier 1 already serves diagnostics and the end-user splash stays as specified. The park's other condition, proven bare-metal reliability, is an operator judgment either way.
+
+A: (pending)

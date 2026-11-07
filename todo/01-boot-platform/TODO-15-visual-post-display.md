@@ -338,7 +338,7 @@ When `postbars=1`, the boot splash status text area shows VPD-style named stages
 > - Why now-deferred: building end-user boot UX before Tier 1 is hardware-proven would churn the design; the [!NOTE] records the revisit condition. `postbars=2` already drops the splash (§5) so Tier 1 stays authoritative.
 > - Scope boundary: §9 owns the Tier 2 splash integration; the Tier 1 renderer is §4; the raw-to-splash handoff is §10 (also deferred).
 > **Verified:** 2026-06-15 | deferred -- no code shipped | 0/5 items | build OK (no code change) | manual (design-gated, revisit post-bare-metal)
-> **Deferred:** [M] Tier 2 splash-integrated VPD progress unimplemented (reason: end-user UX gated on finalized splash design + proven bare-metal boot reliability; Tier 1 is the shipped diagnostic path) -> XREF: 01-boot-platform/TODO-15 §9 (item: "boot_splash_status() in postbars=1 mode renders STAGE_NAME +NNNms" at line 324)
+> **Deferred:** [M] awaiting-answer Q19: Tier 2 splash-integrated VPD progress unimplemented (reason: end-user UX gated on finalized splash design + proven bare-metal boot reliability; Tier 1 is the shipped diagnostic path) -> XREF: 01-boot-platform/TODO-15 §9 (item: "boot_splash_status() in postbars=1 mode renders STAGE_NAME +NNNms" at line 324)
 
 ## 10. Seamless Tier Transition *(deferred)*
 > [!NOTE] Deferred -- depends on §9 (Tier 2 splash integration). No transition needed until Tier 2 exists. Currently `vpd_stop_tier1()` is called before splash init and the splash background simply overwrites the VPD area.
@@ -422,7 +422,7 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 > - Review: Codex 3x fixed the 0xFFFE info-header misclassification (now "FAILED (panic)" not "Phase 3") + a stale `boot_halt` NVRAM comment; exact-stage preservation deferred (shared with §8).
 > - Scope boundary: §13 owns the at-panic stage-red marking; the next-boot banner is §8; Tier 2 post-splash panic display is deferred to §9.
 > **Verified:** 2026-06-14 | this review commit (fixes in-commit) | 4/5 items | build OK | manual (forced-panic pending)
-> **Deferred:** [M] Tier 2 post-splash panic display unimplemented (depends on the Tier 2 splash) -> XREF: 01-boot-platform/TODO-15 §13 (item: "Tier 2 post-splash panic display" at line 414)
+> **Deferred:** [M] awaiting-answer Q19: Tier 2 post-splash panic display unimplemented (depends on the Tier 2 splash) -> XREF: 01-boot-platform/TODO-15 §13 (item: "Tier 2 post-splash panic display" at line 414)
 > **Deferred:** [M] exact failing stage lost on clean panic (generic POST16_BOOT_FAILED), shared with §8 -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 304)
 > **Quality reviewed:** 2026-06-14 | Codex 3x (adversarial, consistency, perf) | 0H+2M fixed, 1M deferred | scope: kernel-code-quality
 
