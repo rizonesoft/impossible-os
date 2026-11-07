@@ -8710,7 +8710,7 @@ static void u_run_one(const char *name, utest_type_t type,
              * stall latch, keeps this one, and aborts a healthy binary as `reap
              * degraded` with no collision to point at. */
             if (reap.drain_pending || reap.drain_stranded)
-                s_reap_degraded = 1;
+                __atomic_store_n(&s_reap_degraded, 1, __ATOMIC_RELEASE);
             utest_record_log(LOG_WARN,
                              "[UTEST-CAPTURE-REAP-DEGRADED] owner=%u pending=%u "
                              "stranded=%u",
@@ -9553,7 +9553,7 @@ static void u_run_plan(void)
                     infra_fatal = 1;
                     break;
                 }
-                if (s_reap_degraded) {
+                if (test_usermode_boot_verdict() != UTEST_BOOT_OK) {
                     /* Infrastructure-fatal, and it fast-fails for a STRONGER
                      * reason than the smoke gate below. A smoke failure means
                      * a prerequisite is broken; this means the launcher does
@@ -9673,7 +9673,8 @@ static void u_run_plan(void)
          * words: keep any new label in that shape, or it reads as `cause not
          * named` there. */
         const char *abort_cause = s_run_latches.wait_stalled  ? "clock stalled"
-                                : s_reap_degraded ? "reap degraded"
+                                : test_usermode_boot_verdict() != UTEST_BOOT_OK
+                                    ? "reap degraded"
                                                   : "smoke failed";
 
         utest_record_log(LOG_ERROR,

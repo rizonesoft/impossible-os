@@ -2269,7 +2269,7 @@ A directory standing where a file belongs is inert to every sweep and fatal to t
 > **Verified:** 2026-08-02 | commit `eef02e97` + review fixes | 8/8 items | build OK | tooling 1190/1190, 28151 kernel + 17 user PASS, lint 0 errors
 > **Deferred:** [H] classification and the aged-record `rm -rf` are two operations, so a blocker created between them is still destroyed recursively (reason: closing it means detaching every age candidate before classifying it, which changes the destructive path for all records and needs its own mid-prune orphan reaper) -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §62 (item: "Detach an age candidate before classifying it, so the record a hold protects cannot change between the verdict and the" at line 2660)
 > **Accepted:** [M] `scripts/lsp-mcp/tests/test_bridge.sh` sub-test 9a intermittently fails on a clangd the bridge itself leaked, 2 in 15 runs (reason: unrelated subsystem, detected and reproduced during this section but owned by the bridge's shutdown path) -> XREF: 00-infrastructure/TODO-07-lsp-mcp-bridge.md §20 (item: "Find why shutdown races the reap, given the same run reaps it successfully most of the time")
-> **Quality reviewed:** 2026-08-02 | Codex 8x (design x3, adversarial x2, test-coverage, consistency, perf, re-adversarial x2) | 3H+4M+2L fixed, 1 deferred | scope: N/A (host bash tooling -- no kernel/boot/desktop/shell/userland surface)
+> **Quality reviewed:** 2026-11-08 | Codex 8x (2026-08-02) + 5x boot-poison (adversarial, re-adversarial x2, consistency, perf) | 9H+3M+7L fixed, 0 open | scope: kernel-code-quality (kernel-quality-auditor + concurrency-evidence-mapper)
 
 ---
 
@@ -2369,6 +2369,7 @@ The run-boundary reap enumerates capture-owning descendants by walking `task_get
 - [x] Poison the rest of the BOOT after a degraded reap, not just the test-plan loop (operator answer Q16 = A)
       - `test_usermode_run()` returns `UTEST_BOOT_OK`/`UTEST_BOOT_POISONED` (`include/kernel/test/test_usermode.h`) and refuses to start a run on a poisoned boot; `boot_tests_run()` (`src/kernel/main/boot_tests.c`) calls `boot_halt` on POISONED, before `boot_phase3` creates `cmd.exe`.
       - Release images are unaffected: the `!KERNEL_TESTS` stub returns OK. Regression: `test_degraded_reap_poisons_the_boot_verdict` drives the latch through `test_usermode_reap_degraded_set`.
+- [x] Give `s_reap_degraded` one access discipline: the reap's store is a release atomic and the plan-loop and abort-cause reads go through `test_usermode_boot_verdict()` (post-ship kernel audit, [L])
 - [x] Carry the abort CAUSE into the machine artifacts: the JUnit `<error>`, a new `abort_cause` property and the JSON `suite-abort` record read the launcher's framed `suite ABORT (<cause>)` line
       - `scripts/utest-json-harvest.py` `_extract_abort_cause` and `XML_ABORT_CAUSE` in `scripts/test.sh` take only a framed label of lowercase words; anything else reads `cause not named`, never a guess. Host-side by design: the launcher already names the cause, so no record shape changed.
 - [x] Commit: `"sched: interlock fork publication with the usermode capture-tree reap"`
@@ -2387,7 +2388,7 @@ The run-boundary reap enumerates capture-owning descendants by walking `task_get
 > - A degraded reap now halts the BOOT, not only the plan loop: `test_usermode_run()` reports `UTEST_BOOT_POISONED` and `boot_tests_run()` halts before `cmd.exe` (Q16, operator decision 2026-11-07). Test images only.
 > - Review asked for the kill rounds to be gated on the drain too. Not done: the kills are the only lever that restores progress, and hoisting the second drain ahead of them was measured to HANG the boot. The free stays gated, and the boot halt closes the residual.
 
-> **Verified:** 2026-11-07 | commit `05db7997` + the boot-poison commit | 6/6 items | build OK | 35978 kernel + 17 user-mode tests pass | smoke matrix 8/8 | Codex 1x adversarial (approve, 0 findings)
+> **Verified:** 2026-11-08 | commit `05db7997` + `2b90da0a8` + this review commit | 7/7 items | build OK | 35978 kernel + 17 user-mode tests pass | smoke matrix 8/8
 > **Note:** 2026-11-07, Deferred stamp retired: [H] the boot-poison question became `todo/answers.md` Q16, answered A and shipped.
 > **Note:** 2026-11-07, Deferred stamp retired: [M] abort cause in the artifacts reopened.
 > **Accepted:** [M] The interlock is fork-only: `task_create_internal` (reachable via NtCreateProcess) publishes with no admission gate, so a captured binary can leave a non-capture-owning task the reap never selects -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §21 (item: "Capture admission at `task_create_internal`, not only at `task_fork`")
@@ -2783,6 +2784,7 @@ Retention classifies every record and then destroys the losers in a second loop,
 | ⭐  | Per-write output reconciliation                             | ❌ stdout is one opaque blob                         | ❌ stdout is one opaque blob                         | ✅ §48 `wr=` group, each write terminable                               |
 | ⭐  | Producer publishes its own bounds                           | ❌ host mirrors or guesses                           | ❌ host mirrors or guesses                           | ✅ §48 `chunk_max=` + `spawned=` enforced                               |
 | ⭐  | Output channel closes with its binary                       | ❌ orphan writes land in the next test's log         | ❌ orphan writes land in the next test's log         | ✅ §49 seal + drain + descendant reap                                   |
+| ⭐  | Test-tree reap is exact or stops the boot                   | ⚠️ job kill-on-close, no exactness proof             | ⚠️ pgroup kill, no exactness proof                   | ✅ §56 fork interlock + exact census + boot halt                        |
 | ⭐  | Capture loss fails the DEFAULT run                          | ❌ only when a TRX artifact is requested             | ❌ only when a TAP consumer reads the stream         | ✅ §59 reconciled on every framed run                                   |
 | ⭐  | Stalled test clock is host-refusable                        | ❌ host trusts the harness's own timing              | ❌ host trusts the harness's own timing              | ✅ §59 `[UTEST-WAIT-STALLED]` refused by site                           |
 | ⭐  | Undelivered output is named, not silent                     | ❌ a lost write is indistinguishable from none       | ❌ a lost write is indistinguishable from none       | ✅ §49 `pending=` charged to its own run                                |
