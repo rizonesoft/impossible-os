@@ -1,10 +1,6 @@
 # Operator Answers
 
-> Operator-reserved decisions surfaced by the overnight runner. Each Q carries a
-> stable id. Answer inline with `A: (operator, YYYY-MM-DD) <decision>` and the
-> runner's heal probe will pick it up on the next pass and unblock the deferred
-> section. Low-risk conservative defaults may appear as `A: (proposed default)`
-> for the operator to confirm or veto.
+> Decisions made for the overnight runner. Each Q carries a stable id. Since 2026-11-07 the run decides for itself and records `A: (run decision, YYYY-MM-DD) <choice>. Reversal: <cost>.`, and it keeps going; only the halt class waits (unrecoverable data loss, credentials, money, shared infrastructure, a calculation that looks wrong). To veto a run decision or answer a waiting question, write `A: (operator, YYYY-MM-DD) <decision>`: an operator answer always wins, and the heal probe picks it up on the next pass.
 
 ## Q1 (TODO-16 §8): WNF_STATE_NAME compat level -- ABI-defining, cannot change post-ship
 

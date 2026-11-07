@@ -303,7 +303,9 @@ done
 # ============================================================================
 for file in "${FILES[@]}"; do
     relpath="${file#"$REPO_ROOT"/}"
-    awk -v file="$relpath" '
+    # gawk by name: mawk, the default awk on a clean Ubuntu, counts bytes, so a line of
+    # 77 characters with box-drawing in it read as 169 (found by CI_CONTAINER=1).
+    gawk -v file="$relpath" '
         length($0) > 120 {
             # Skip comments and long string literals
             if ($0 ~ /^\s*\*/ || $0 ~ /^\s*\/\*/ || $0 ~ /^\s*\/\//) next

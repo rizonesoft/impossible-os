@@ -516,9 +516,16 @@ git fetch -q origin main && [ -z "$(git log --oneline @{u}..HEAD)" ] && echo "PU
       the word **`operator-gated`**, so the park is searchable and honestly
       states that only a human will ever clear it. Park the CHECK, not the item:
       code a run can write stays open, and only its final hardware run is
-      operator-gated. A decision goes in `todo/answers.md` with an
-      `awaiting-answer` token, because that is the only place it reaches the
-      operator (measured 2026-11-07: the label hid eleven unasked decisions).
+      operator-gated.
+    - **A design or ABI decision is not a blocker. Make it (operator decision
+      2026-11-07).** Take the industry-standard or more reversible option, record
+      `A: (run decision, DATE) <choice>. Reversal: <cost>.` under a `## Qn` heading
+      in `todo/answers.md`, and continue through the normal review pipeline. Park
+      with `awaiting-answer` only for the halt class in
+      `todo/TODO-Claude-Overnight-Runner.md`: unrecoverable data loss, credentials,
+      money, shared infrastructure, or a calculation that looks wrong. The operator
+      took the run's recommendation on 30 of 30 questions, so a park here costs more
+      than a decision that gets vetoed.
 
     **This is a QUALITY BAR, not a checkable rule -- do not expect a gate, and do
     not invent one.** A detector for "parked without an owner" was built on

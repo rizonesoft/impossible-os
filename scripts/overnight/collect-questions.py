@@ -45,7 +45,9 @@ _ANSWERS_HEADING_RE = re.compile(r"^##\s+(TODO-\S+)\s*$")
 # question takes. An unanswered one reads `A: (pending)`.
 _Q_HEADING_RE = re.compile(r"^##\s+(Q\d+\b.*)$")
 _PENDING_RE = re.compile(r"^\s*A:\s*\(pending\)", re.IGNORECASE)
-_OPERATOR_ANSWER_RE = re.compile(r"^\s*A:\s*\(operator\b", re.IGNORECASE)
+# A run decision needs no answer, so it leaves the waiting list. It is listed for veto.
+_OPERATOR_ANSWER_RE = re.compile(r"^\s*A:\s*\((?:operator|run decision)\b", re.IGNORECASE)
+_RUN_DECISION_RE = re.compile(r"^\s*A:\s*\(run decision\b", re.IGNORECASE)
 _Q_CITE_RE = re.compile(r"\bQ(\d+)\b")
 _PROPOSED_DEFAULT_RE = re.compile(r"^\s*A:\s*\(proposed default\)", re.IGNORECASE)
 _ANSWER_Q_RE = re.compile(r"^\s*-\s*Q:\s*(.*)$")
@@ -134,6 +136,17 @@ def collect_pending_questions(answers_text: str) -> list:
             and not any(_PROPOSED_DEFAULT_RE.match(ln) for ln in body)]
 
 
+def collect_run_decisions(answers_text: str) -> list:
+    """(heading, decision) for every question whose LAST word is the run's: an operator
+    answer below or above it means the operator has already seen it."""
+    out = []
+    for _, heading, body in _q_blocks(answers_text):
+        answers = [ln for ln in body if _OPERATOR_ANSWER_RE.match(ln)]
+        if answers and all(_RUN_DECISION_RE.match(ln) for ln in answers):
+            out.append((heading, answers[-1].split(")", 1)[1].strip()))
+    return out
+
+
 def answered_question_numbers(answers_text: str) -> set:
     return {n for n, _, body in _q_blocks(answers_text)
             if any(_OPERATOR_ANSWER_RE.match(ln) for ln in body)}
@@ -217,6 +230,13 @@ def render(project_dir: Path, stamp: str) -> tuple[str, int]:
         for slug, q in proposed:
             blocks.append(f"- `{slug}` -- {q}")
         blocks.append("")
+    decisions = collect_run_decisions(answers_text)
+    if decisions:
+        blocks.append("## Decisions the run made -- veto any you disagree with")
+        blocks.append("No answer is needed. To overrule one, add `A: (operator, DATE) ...` under it.")
+        blocks.append("")
+        blocks.extend(f"- {h}: {d}" for h, d in decisions)
+        blocks.append("")
     if stale_headings:
         blocks.append("## Sync warnings")
         for s in stale_headings:
@@ -286,6 +306,13 @@ def _selftest() -> int:
                "## Not a question\n\nA: (pending)\n")
     pending = collect_pending_questions(answers)
     check("pending-q-listed", pending == ["Q1 (TODO-16 s8): WNF encoding"])
+    run_doc = ("## Q5 (x): open\n\nA: (run decision, 2026-11-07) pick a. Reversal: one script.\n\n"
+               "## Q6 (x): vetoed\n\nA: (run decision, 2026-11-07) pick a. Reversal: none.\n"
+               "A: (operator, 2026-11-07) pick b.\n")
+    check("run-decision-not-waiting", collect_pending_questions(run_doc) == [])
+    check("run-decision-listed", collect_run_decisions(run_doc)
+          == [("Q5 (x): open", "pick a. Reversal: one script.")])
+    check("run-decision-clears-stamp", answered_question_numbers(run_doc) == {5, 6})
     check("no-A-line-is-open", collect_pending_questions("## Q9 (x): y\n\nbody\n")
           == ["Q9 (x): y"])
     answered = answered_question_numbers(answers)
