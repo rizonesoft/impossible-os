@@ -369,3 +369,14 @@ An in-tree `kernel.link-trace.sha` can be rewritten by anything that can write t
 Recommended: A. The repository is public, so the logged identity reveals nothing new, and there is no key to lose. Local builds would still recompute, since they cannot sign.
 
 A: (pending)
+
+## Q30 (01-boot-platform/TODO-29 §13): how does the `boot_history` NVRAM blob grow from 8 to 32 entries?
+
+An old blob already lives in firmware variables on any machine that has booted this OS.
+
+- **A: tail-append.** Grow the variable in place and keep existing offsets, so an older loader can still read the first 8.
+- **B: version bump and migrate.** Cleaner layout, but a rollback to an older loader cannot read the migrated blob.
+
+Recommended: A, because the A/B rollback path can land on an older loader. It is low priority ([L]), and real firmware's variable-size limits are unmeasured here, so bare metal should confirm 32 entries fit.
+
+A: (pending)

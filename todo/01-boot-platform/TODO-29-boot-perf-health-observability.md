@@ -358,10 +358,8 @@ Boot writes 5 small JSON files to `X:\Diag` serially during late Phase 3: `firmw
 
 - [ ] Profile the 5-write Phase-3 sequence with `boot_progress` substeps; capture per-write ms.
 - [ ] Design `fat32_batch_begin()` / `fat32_batch_write_file()` / `fat32_batch_commit()` API: open parent dir once, all files in one cluster-bitmap pass, single dir + FAT flush.
-  - PARKED: needs the FAT32 batch primitive -> XREF: `05-storage-filesystems/TODO-04` (FAT32 owner).
 - [ ] Retrofit the 5 writers; keep per-file API for one-off writers (boot-error history, klog Serial_*.log).
 - [ ] `firmware-tables.json` C:\ fallback: `src/kernel/firmware_tables_json.c:506` hardcodes `X:\Diag\` -- use `klog_using_blackbox ? "X:\\Diag\\" : klog_dir` like the other writers. (TODO-24 §8)
-  - PARKED: needs the FAT32 batch primitive -> XREF: `05-storage-filesystems/TODO-04` (FAT32 owner).
 - [ ] Commit: `"fs: fat32 batched Phase-3 X:\Diag JSON writer (5 files in one transaction)"`
 
 **Test checkpoint:** Boot serial shows ~5x reduction in cumulative `boot_progress` delta for the X:\Diag write block. All 5 files persist with byte-identical content vs the per-file path. Smoke confirms no FAT32 cache regressions.
@@ -397,12 +395,12 @@ Today `boot_error_history` rings 8 entries. After 8 boots the oldest rolls off; 
   - PARKED, operator-gated: the NVRAM-blob migration decision plus live RegSetBinary validation. Ring owner: `01-boot-platform/TODO-03` §20.
 - [/] Verify ring-wrap behavior remains correct at the larger size (existing wrap tests just need re-tuning to 32-entry shape).
   - PARKED, operator-gated: the NVRAM-blob migration decision plus live RegSetBinary validation. Ring owner: `01-boot-platform/TODO-03` §20.
-- [/] Decide: grow NVRAM variable in-place with tail-append schema, or version-bump and migrate. PARKED, operator-gated: the NVRAM-blob migration decision plus live RegSetBinary validation. Ring owner: `01-boot-platform/TODO-03` §20.
+- [/] Decide, awaiting-answer Q30: grow the NVRAM variable in place with a tail-append schema, or version-bump and migrate.
 - [/] Commit: `"boot: boot_history ring depth 8 -> 32 entries (operator UX)"`
 
 **Test checkpoint:** Existing unit tests pass at the 32-entry size. Smoke shows no regression in `boot_history: Recent boot history (N attempts)` output. NVRAM bin file is 512 bytes (32 × 16); RegSetBinary handles the larger blob.
 
-> **Deferred:** [L] boot_history ring 8->32: NVRAM size bump + size-pin asserts + schema migration -- needs the NVRAM-blob migration decision + live RegSetBinary validation, so the park is operator-gated. CORRECTED 2026-09-03: this stamp named `01-boot-platform/TODO-01` §11 as the boot history owner, which is Capability Negotiation and Degraded-Feature Flags. `BOOT_HIST_RING_LEN` and `BOOT_HIST_BIN_SIZE` are defined and owned by `01-boot-platform/TODO-03-bootloader-error-recovery.md` §20 (ring producer, `[x]`), with §21 the consumer. -> XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §20 (item: "`BOOT_HIST_RING_LEN` (8) + `BOOT_HIST_BIN_SIZE` (128) + sentinels").
+> **Deferred:** awaiting-answer Q30 (`todo/answers.md`). [L] boot_history ring 8->32: NVRAM size bump + size-pin asserts + schema migration -- needs the NVRAM-blob migration decision + live RegSetBinary validation, so the park is operator-gated. CORRECTED 2026-09-03: this stamp named `01-boot-platform/TODO-01` §11 as the boot history owner, which is Capability Negotiation and Degraded-Feature Flags. `BOOT_HIST_RING_LEN` and `BOOT_HIST_BIN_SIZE` are defined and owned by `01-boot-platform/TODO-03-bootloader-error-recovery.md` §20 (ring producer, `[x]`), with §21 the consumer. -> XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §20 (item: "`BOOT_HIST_RING_LEN` (8) + `BOOT_HIST_BIN_SIZE` (128) + sentinels").
 ---
 
 ## 14. FAT32 Dirty-Mount fsck Cost in VFS Step
@@ -431,11 +429,8 @@ Smoke (KVM, 2026-05-03) shows a consistent ~1s gap between `sched: Task N ("cmd.
 **Files:** `src/kernel/sched/syscall.c` (SYS_EXEC), `src/kernel/exec.c`, `src/kernel/sched/task.c`, `src/kernel/main/boot_desktop.c` (cmd.exe shell_loader_func)
 
 - [ ] Add `boot_progress` substeps inside the SYS_EXEC path: read_file, format_dispatch, segment_load, page_table_install, auxv_setup, scheduler_resume. Capture per-step ms.
-  - PARKED: needs sched/exec multi-commit work -> XREF: `02-kernel-core/TODO-22` (sched/exec owner).
 - [ ] Profile the ELF loader's per-segment work; a 67 KiB cmd.exe loading 3 segments in ~1s suggests page-by-page allocation rather than batched. Investigate whether `pmm_alloc_contiguous` for the segment span shaves the cost.
-  - PARKED: needs sched/exec multi-commit work -> XREF: `02-kernel-core/TODO-22` (sched/exec owner).
 - [ ] If the gap is scheduler-side (task created but not picked for ~1s), audit the round-robin policy for boot-time starvation -- a freshly-created kernel task should run before idle.
-  - PARKED: needs sched/exec multi-commit work -> XREF: `02-kernel-core/TODO-22` (sched/exec owner).
 - [ ] Commit: `"kernel: SYS_EXEC substep timing + spawn-latency profile"`
 
 **Test checkpoint:** Boot serial shows 6 substep lines per user-mode spawn. cmd.exe spawn drops below 200ms or the cost is justified in `boot_perf_budgets[]`. test=1 mode shows the same pattern for the 16 user-mode test binaries (16 × 200ms = 3.2s vs 16 × 1s = 16s today is the upper bound on the win).
@@ -496,15 +491,11 @@ Smoke (KVM, 2026-05-03) records `[WARN] mm: PAT: entry 1 = 0x04 (expected WC=0x0
 §1-§3 expose per-phase durations + budgets + trend deltas, but a boot delay caused by ORDERING (step B waited on step A), a hardware WAIT (device poll), or scheduler STARVATION reads as "phase slow" with no actionable cause. Linux `systemd-analyze critical-chain` / `blame` / `dot` expose exactly this; this section adds the dependency + resource-wait attribution layer on top of the §1 timeline.
 
 - [ ] Tag each `boot_progress` step delta with a cause class (`COMPUTE`, `HW_WAIT`, `IO_WAIT`, `SCHED_WAIT`) so a slow step records WHY, not just how long.
-  - PARKED, operator-gated: multi-commit boot-instrumentation plus live-boot validation; this section owns the attribution.
 - [ ] `boot_critical_chain()` -- walk the §1 timeline, emit the ordered longest-pole chain (each step + dominant wait class) as `[BOOT-CRIT] <step> <ms> <cause>` lines (systemd-analyze critical-chain parity).
-  - PARKED, operator-gated: multi-commit boot-instrumentation plus live-boot validation; this section owns the attribution.
 - [ ] Add `critical_chain[]` (top-N longest poles + cause class) + a duration-sorted `blame[]` view to `boot-health.json` (§2) so the dashboard names the boot's longest pole + why.
-  - PARKED, operator-gated: multi-commit boot-instrumentation plus live-boot validation; this section owns the attribution.
 - [ ] Pure classifier `boot_cause_classify()` + longest-pole walk are data-only (no live boot calls) for unit test.
 - -> XREF: `TODO-14-boot-diagnostics.md §9` (Boot Timeline Visualization) -- the Gantt/SVG viewer consumes this critical-chain + cause-class data; §18 owns the attribution, §9 owns the visual.
 - [ ] Record a milestone between EXEC and DESKTOP_READY: that interval is 2272ms and its real content is TTF/glyph/icon loading plus a 1935x1080 JPEG decode, none of which EXEC names.
-  - PARKED, operator-gated: multi-commit boot-instrumentation plus live-boot validation; this section owns the attribution.
 - [x] `vfs_rename_ex` rc=-1 on the boot-trend .tmp rename: ROOT-CAUSED 2026-07-27 (the two-dot guess was wrong). Diagnostics added at each failure site; the two real FAT32 defects are owned by `05-storage-filesystems/TODO-04 §4`.
   Filed THERE rather than here on purpose: this section carries a `Deferred:` stamp, which makes `sequencer_triage.py` class the whole file DONE, so an item added here would never be seen by the overnight runner. Worth remembering as a general trap -- a deferred section is a grave for new items.
 - [ ] Commit: `"boot: critical-path + resource-wait attribution (systemd-analyze critical-chain parity)"`
@@ -522,12 +513,10 @@ Items moved here VERBATIM from their original, already-stamped sections, where t
 
 From the stamped section 1:
 - [ ] Gate the full `PERF`/timeline serial tables behind debug/test builds (default = summary + `BOOT-BUDGET` breaches) -- the dump runs pre-cmd.exe, outside the `boot_perf_total_check()` window: user-visible but unbudgeted
-  - BLOCKED on the kernel image ceiling, not on design. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §19 once the guard is gone").
   - Two full tables emit one serial line per step each -- `boot_timing_print_steps()` (`src/kernel/boot_timing.c:73`) and the sorted table in `boot_perf_dump()` (`:762`), 45 lines apiece on a 45-step boot. The earlier draft cited `build/smoke-test.stripped.log` line numbers; every smoke run regenerates that file, so the citation went stale and is replaced here by the two emitting code sites above. Gating both and replacing them with one summary line naming the three slowest INTERVALS by both endpoints is what shipped in the parked patch.
 
 Filed 2026-08-18 by the `01-boot-platform/TODO-13 §23` section-boundary WHPX leg:
 - [ ] Scale the `BOOT-BUDGET` phase targets by accelerator, or report a breach on a slow accelerator as its own value rather than `[FAIL]`.
-  - BLOCKED on the same image ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §19 once the guard is gone").
   - Observed on the WHPX boundary leg for a change touching NO VFS, EXEC or loader code: `VFS -> PARTITION took 5725ms (target 500ms)` and `EXEC -> DESKTOP_READY took 2319ms (target 100ms)`, both `[FAIL]`, while all four KVM and TCG legs of the same image reported zero `BOOT-BUDGET` lines.
   - The targets are wall-clock and WHPX boots roughly an order of magnitude slower than KVM (~141s against ~2s), so every WHPX run reports a red `[FAIL]` that names a phase nothing regressed. That trains a reader to skim the one signal the leg exists to produce.
   - Not a regression and not muted: the finding is that the reporter states a platform-relative fact in absolute terms. The provenance is the header line above; this section owns the budget reporter, and the TPM work that happened to observe it has no dependency on the fix.

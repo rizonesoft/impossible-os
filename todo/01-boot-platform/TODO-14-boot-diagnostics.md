@@ -574,7 +574,7 @@ Found by the section 14 design review, verified at both file:line refs above.
   - Pick one and record why in the section's Notes; shipping both would leave two mechanisms owning the same invariant. The choice is deliberately NOT made here: it is a design call best made against the image budget that actually exists when the ceiling lifts.
   - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
 - [ ] Add a `TEST_CAT_BOOT` assertion in [`src/kernel/test/test_boot_diag.c`](../../src/kernel/test/test_boot_diag.c) that a publish into a fixture page carrying a prior-boot record does not destroy it before a restore has run
-  - Parked on the same ceiling, and it is the item that makes the whole section unreachable rather than merely expensive: a fixture case seeding a prior-boot record costs hundreds of bytes of `.text` against 79 available.
+  - This is the item that makes the whole section reachable: a fixture case seeding a prior-boot record costs hundreds of bytes of `.text`. The image ceiling that parked it ended 2026-11-07.
   - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
 - [ ] Commit: `"panic: capture cross-boot evidence before Phase 0 can overwrite it"` -- lands once the ceiling is gone
   - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
