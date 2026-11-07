@@ -59,7 +59,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |   3   | Boot policy merge order (firmware vs OS layer split)                | §2, T01 §1, T05 §6                      |  [x]   |
 | 💎  |   4   | ESP store read + Boot#### OptionalData + policy wiring              | §3                                      |  [x]   |
 | 💎  |   5   | Crash-tolerant counter protocol + v19 ABI validator                 | §3, §4                                  |  [x]   |
-| 💎  |   6   | Boot menu renderer + countdown + input infrastructure               | §4, T15 §3, T15 §4                      |  [x]   |
+| 💎  |   6   | Boot menu renderer + countdown + input infrastructure               | §4, T15 §3, T15 §4                      |  [ ]   |
 | 💎  |   7   | Boot menu indicators + hotkeys + hide_when_alone                    | §6                                      |  [x]   |
 | 💎  |   8   | Safe mode, test mode, and diagnostics entries                       | §3, T10 §7                              |  [/]   |
 | 💎  |   9   | A/B and recovery entry integration (DEFERRED)                       | §3, §4, T21 §1+§3+§4, T22 §1+§2         |  [/]   |
@@ -70,8 +70,8 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  14   | Per-entry health-gated mark-good                                    | §3, §5, §9, T21 §5, D02 T02 §10         |  [/]   |
 | 💎  |  15   | OS-visible loader UEFI variables                                    | §3, §4, §9, §13                         |  [x]   |
 | 💎  |  16   | Bootstrap and first-install entry seeding                           | §1, §9, §13, T22 §1, T06 §1             |  [/]   |
-| 💎  |  17   | Boot entry tests                                                    | §1-§16                                  |  [/]   |
-| 💎  |  18   | systemd BLI parity (BLS display order, one-shot, loader timestamps) | §6, §15                                 |  [/]   |
+| 💎  |  17   | Boot entry tests                                                    | §1-§16                                  |  [ ]   |
+| 💎  |  18   | systemd BLI parity (BLS display order, one-shot, loader timestamps) | §6, §15                                 |  [ ]   |
 | 💎  |  19   | Repeated top-level keys defeat the entries-array bound              | §2                                      |  [x]   |
 | 💎  |  20   | `crc32` header located by string match, not structurally            | §1, §19                                 |  [x]   |
 | 💎  |  21   | Published loader variables need an explicit set-or-clear outcome    | §15, §19                                |  [ ]   |
@@ -238,8 +238,8 @@ Pre-EBS user-visible selector. GOP for graphical, UEFI text protocol + serial mi
 - [x] `boot_policy_menu_should_show()` skips UI on forced-selection reasons; only soft reasons (STORE_DEFAULT, BOOTNEXT_HINT, UNKNOWN_BOOTCURRENT) render the menu.
 - [x] `timeout_override == 0` honored as immediate auto-boot (kiosk path; UI suppressed). Schema range stays 0..600.
 - [x] Watchdog refresh throttled to 10s intervals inside `boot_menu_run()` (firmware WD is 60s; per-tick refresh was wasteful).
-- [/] Dirty-rectangle repaint for `boot_menu_render()`: draw title once, repaint only changed rows on selection moves + footer once per second.
-  - PARKED with no external blocker: a §6-owned bootloader optimization in `src/boot/uefi`, which sits outside the kernel image ceiling, so it is unscheduled rather than gated. The trigger is recorded in this section's Deferred stamp (full-band redraw on a 4K GOP causes key-repeat jank).
+- [ ] Dirty-rectangle repaint for `boot_menu_render()`: draw title once, repaint only changed rows on selection moves + footer once per second.
+  - A §6-owned bootloader optimization in `src/boot/uefi`, outside the kernel image budget. The trigger is recorded in this section's Deferred stamp (full-band redraw on a 4K GOP causes key-repeat jank).
 - [x] Commit: `"boot: menu renderer + countdown + input infrastructure"`
 
 **Test checkpoint:** Menu renders 4+ entries on QEMU WHPX (GOP); countdown decrements 5..0 then auto-selects; arrow keys move + cancel countdown; Enter boots the highlighted entry. Serial mirror shows the same lines on TCG (no GOP). `bootloader_secureboot_active()` returns 1 with SecureBoot=1 + SetupMode=0; 0 otherwise. Smoke test verified menu-skip path: serial shows `[BOOT] menu: skipped (no viable candidates)` on FALLBACK_STORE_INVALID with no bootentries.json, smoke PASS in 2.55s on KVM. Test on: QEMU WHPX (GOP), TCG (serial fallback), VirtualBox, bare metal.
@@ -254,7 +254,7 @@ Pre-EBS user-visible selector. GOP for graphical, UEFI text protocol + serial mi
 > - Scope boundary: §6 owns renderer + countdown + input + filter; indicators + hotkeys + `hide_when_alone` are §7; demote-not-drop visual is §9.
 
 > **Verified:** 2026-05-09 | commit `b4a076c4` (review fixup over `34ae373c`) | 5/6 items + 1 deferred | build OK | smoke PASS (KVM 2.49s)
-> **Deferred:** [M] Dirty-rectangle repaint for `boot_menu_render` (full-band redraw on 4K GOP causes key-repeat jank) -> XREF: 01-boot-platform/TODO-07 §6 (item: "Dirty-rectangle repaint for `boot_menu_render()`" at line 241)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] Dirty-rectangle repaint for `boot_menu_render` (full-band redraw on 4K GOP causes key-repeat jank). The stamp named this section's own item, and that item recorded no external blocker.
 > **Quality reviewed:** 2026-05-09 | Codex 8x (design + adversarial + test-coverage + 3 re-adversarial + consistency + perf) | 4H+5M fixed, 1M deferred | scope: boot-code-quality
 
 ---
@@ -438,7 +438,7 @@ Per-decision audit. Disk-first (BlackBox JSONL) -- NVRAM is exceptional-only bec
 > - Scope boundary: §12 owns codes + sticky + JSONL + mutation log. §14 flips `last_outcome` (deferred). [`TODO-23`](TODO-23-boot-watchdog.md) produces `watchdog_rollback_request`.
 
 > **Verified:** 2026-05-10 | commit `38517fcc` | 7/7 items | build OK | smoke PASS (KVM 2.41s, seq=1) | tests 32/32 bootcfg + 22 boot_audit
-> **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 596)
+> **Notes:** Reopened 2026-11-07, was Deferred: [L] Audit dual-write-failure dedup harness. The stamp named this section's own item, and that item recorded no external blocker.
 > **Deferred:** [L] Audit JSONL rotation on FAT32 LFN -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit JSONL rotation on FAT32 LFN" at line 598)
 > **Quality reviewed:** 2026-05-10 | Codex 12x (design + adversarial 2x + test-coverage + re-adversarial 5x + adversarial-impl 4x + consistency + perf) | 7H+5M+0L fixed, 0 open, 2L deferred-XREF | scope: kernel-code-quality + boot-code-quality
 
@@ -593,8 +593,8 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
 - [/] Loader UEFI variable scenario: helper-level coverage shipped via §15 (`test_smbios_parse.c`); live post-boot readback needs the live-boot harness.
 - [x] Bootstrap idempotency scenario: covered by §16 `emit-seed: idempotent` + 3-entry default (`test_bootcfg.py`).
 - [x] BlackBox-vs-NVRAM audit scenario: covered by §12 (`test_boot_audit.c` + bootcfg mutation-log).
-- [/] Audit dual-write-failure dedup harness. No current owner -- scope-gap-protocol Branch C: needs a static-helper testability seam in `boot_audit.c` ([L]). Property already correct by construction.
-  - PARKED with no external blocker: what is missing is a static-helper testability seam in `boot_audit.c` (scope-gap-protocol Branch C, [L]), which is §17-owned work nobody has scheduled. The property itself is already correct by construction, so this is test reach and not a defect.
+- [ ] Audit dual-write-failure dedup harness. Scope-gap-protocol Branch C: needs a static-helper testability seam in `boot_audit.c` ([L]). Property already correct by construction.
+  - What is missing is a static-helper testability seam in `boot_audit.c` (scope-gap-protocol Branch C, [L]), which is §17-owned work nobody has scheduled. The property itself is already correct by construction, so this is test reach and not a defect.
 - [/] Audit JSONL rotation on FAT32 LFN. Blocked on cross-cluster LFN removal in [`../05-storage-filesystems/TODO-04 §16`](../05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md) (currently refuses non-first-cluster destinations).
   - Blocker owner: -> XREF: 05-storage-filesystems/TODO-04 §16 (item: "Refuses non-first-cluster destinations" at line 408). That item shipped the REFUSAL of non-first-cluster destinations, not the cross-cluster LFN removal this needs, so the block still holds as of 2026-09-03.
 - [/] `bootcfg.exe` round-trip scenario: offline subset shipped via §11+§16 (`test_bootcfg.py`); live-boot `bootcfg.exe` deferred per [`§11`](#11-boot-entry-editor-tooling).
@@ -612,7 +612,7 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
 > - Scope boundary: §17 owns aggregation + status. New tests for covered behavior belong in their owner sections; dual-write testability + FAT32 LFN belong elsewhere.
 
 > **Verified:** 2026-05-19 | commit `27c6d2c8` (impl) + `a6e2124e` (commit-row flip) | 4/14 items + 5 partial + 5 blocked | build OK (no source changes; verified during §16 commit `17ee74f9`) | lint clean
-> **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 596)
+> **Notes:** Reopened 2026-11-07, was Deferred: [L] Audit dual-write-failure dedup harness. The stamp named this section's own item, and that item recorded no external blocker.
 > **Deferred:** [L] Audit JSONL rotation on FAT32 LFN -> XREF: 05-storage-filesystems/TODO-04 §16 (item: "Refuses non-first-cluster destinations until cross-cluster LFN removal lands" at line 393)
 > **Quality reviewed:** 2026-05-19 | Codex 8x (adversarial 6x + consistency + perf) | 0C+1H+9M fixed, 0 open | scope: N/A (docs-only aggregation section)
 
@@ -624,12 +624,12 @@ The shipped §15 (loader UEFI vars) + §6 (menu render) publish systemd Boot Loa
 
 - [x] BLS display ordering by `sort_key` then `machine_id` (`id` tiebreak), shared by the menu + `LoaderEntries`. Helpers `boot_entry_bls_less`/`boot_entries_bls_sort` in `boot_entries_parser.c`; unit-tested in `test_boot_entry_parser.c`.
 - [x] `LoaderConfigTimeoutOneShot`: 0 = menu no timeout, 1..60 honored, 61..3600 clamped to 60 + `[WARN]` (watchdog-window divergence, not a silent drop); a present one-shot forces the menu. Kiosk stays on per-entry `timeout_override`.
-- [/] Distinct `LoaderTimeInitUSec`/`ExecUSec`: deferred -- `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point so both publish 0; folded into the publish-relocation follow-up below. `LoaderTimeMenuUSec` not added (not in upstream BLI).
-  - PARKED as a §18-owned follow-up, no external blocker: `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point, so both values publish 0. It folds into the publish-relocation item below and clears with it.
-- [/] BLS full order + `LoaderFeatures` bit 8: add bad-counted-last (join the §5 counter state) + a `version` sub-key (absent from `boot_entry_envelope_t`); advertise bit 8 only once both land. (§18 follow-up)
-  - PARKED as a §18-owned follow-up, no external blocker: needs bad-counted-last joined to the §5 counter state plus a `version` sub-key that `boot_entry_envelope_t` does not carry. Advertise `LoaderFeatures` bit 8 only once both land.
-- [/] Relocate the LoaderTime publish to after TSC calibration (post-`load_kernel`, pre-EBS) so distinct non-zero `LoaderTimeInitUSec`/`ExecUSec` publish (today `tsc_freq` is 0 at the publish point, so both read 0). (§18 follow-up)
-  - PARKED as a §18-owned follow-up, no external blocker: move the LoaderTime publish to after TSC calibration (post-`load_kernel`, pre-EBS). This is the item the two above wait on.
+- [ ] Distinct `LoaderTimeInitUSec`/`ExecUSec`: `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point so both publish 0; folded into the publish-relocation follow-up below. `LoaderTimeMenuUSec` not added (not in upstream BLI).
+  - Order: `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point, so both values publish 0. It folds into the publish-relocation item below and clears with it.
+- [ ] BLS full order + `LoaderFeatures` bit 8: add bad-counted-last (join the §5 counter state) + a `version` sub-key (absent from `boot_entry_envelope_t`); advertise bit 8 only once both land. (§18 follow-up)
+  - Needs bad-counted-last joined to the §5 counter state plus a `version` sub-key that `boot_entry_envelope_t` does not carry. Advertise `LoaderFeatures` bit 8 only once both land.
+- [ ] Relocate the LoaderTime publish to after TSC calibration (post-`load_kernel`, pre-EBS) so distinct non-zero `LoaderTimeInitUSec`/`ExecUSec` publish (today `tsc_freq` is 0 at the publish point, so both read 0). (§18 follow-up)
+  - Move the LoaderTime publish to after TSC calibration (post-`load_kernel`, pre-EBS). This is the item the two above wait on.
 - [x] Commit: `"boot: TODO-07 §18 -- systemd BLI parity (BLS display order, one-shot timeout, distinct loader timestamps)"`
 
 **Test checkpoint:** against a multi-entry store, `LoaderEntries` matches the on-screen menu order (bad-counted last, then `sort_key`); `LoaderConfigTimeoutOneShot=0` shows the menu with no countdown (or warns+clamps per the chosen policy); `systemd-analyze` reports non-zero loader time. Extend `test_boot_entries` with out-of-array `sort_key` + bad-counter ordering assertions. Test on: QEMU TCG (deterministic); bare metal.
@@ -644,8 +644,8 @@ The shipped §15 (loader UEFI vars) + §6 (menu render) publish systemd Boot Loa
 > - **Scope boundary:** two `[ ]` follow-ups -- full BLS order (bad-counted-last + `version` field + `LoaderFeatures` bit 8) and relocating the LoaderTime publish after `load_kernel`.
 
 > **Verified:** 2026-06-13 | commit `6d382664` | 2/5 items | build OK | kernel tests 2546 PASS (incl 6 new BLS-order assertions)
-> **Deferred:** [H] distinct `LoaderTimeInitUSec`/`ExecUSec` blocked -- `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point -> XREF: 01-boot-platform/TODO-07 §18 (item: "Relocate the LoaderTime publish to after TSC calibration")
-> **Deferred:** [M] full BLS order (bad-counted-last + `version` sub-key) + `LoaderFeatures` bit 8 not advertised -> XREF: 01-boot-platform/TODO-07 §18 (item: "BLS full order + `LoaderFeatures` bit 8")
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] distinct `LoaderTimeInitUSec`/`ExecUSec` blocked -- `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point. The stamp named this section's own item, and that item recorded no external blocker.
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] full BLS order (bad-counted-last + `version` sub-key) + `LoaderFeatures` bit 8 not advertised. The stamp named this section's own item, and that item recorded no external blocker.
 > **Quality reviewed:** 2026-06-13 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1H+1M deferred | scope: boot-code-quality
 
 ---
