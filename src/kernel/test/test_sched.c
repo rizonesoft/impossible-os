@@ -13,6 +13,7 @@
 #include "kernel/time/wall_clock.h" /* wall_clock_time_sourced (CreateTime stamp test) */
 #include "kernel/sched/irql.h"
 #include "kernel/sched/dpc.h"
+#include "kernel/sched/dpc_config.h" /* DPC_BUDGET_* (watchdog sweep test) */
 #include "kernel/sched/ktimer.h"
 #include "kernel/sched/kinterrupt.h"
 #include "kernel/sched/apc.h"
@@ -1756,6 +1757,74 @@ static void test_dpc_watchdog_strict_toggle(void)
     dpc_watchdog_set_strict(saved);   /* restore */
 }
 
+/* Test: the live BSP tick services a slot other than its own. Uses an offline
+ * slot so nothing spends or arms it during the test, then waits for real ticks.
+ * Before the sweep existed only slot 0 was serviced, so the seeded values stayed. */
+static void dpc_wd_test_wait_ticks(uint64_t ticks)
+{
+    uint64_t start = system_get_ticks();
+    uint32_t spins = 0;
+
+    /* Bounded: a stopped tick must fail the assertions, not hang the suite. */
+    while (system_get_ticks() - start < ticks && spins++ < 100000u)
+        yield();
+}
+
+static void test_dpc_watchdog_services_other_slots(void)
+{
+    uint32_t slot, budget = 0, tick_dpcs = 0;
+    int warned = 0, pending = 0;
+
+    for (slot = MAX_CPUS - 1; slot > 0; slot--) {
+        if (!smp_cpu_is_online(slot))
+            break;
+    }
+    if (slot == 0) {
+        TEST_SKIP("every CPU slot is online, no inert slot to seed");
+        return;
+    }
+
+    /* Empty bucket: the tick refills it, resets the per-tick state and consumes
+     * the pending crossing. */
+    dpc_watchdog_test_seed(slot, 0, 5, 1, 1);
+    dpc_wd_test_wait_ticks(4);
+    dpc_watchdog_test_read(slot, &budget, &tick_dpcs, &warned, &pending);
+    TEST_ASSERT(budget >= DPC_BUDGET_PER_TICK, "other slot's budget refilled by the tick");
+    TEST_ASSERT_EQ((uint64_t)tick_dpcs, 0u, "other slot's per-tick count reset");
+    TEST_ASSERT_EQ((uint64_t)warned, 0u, "other slot's over-budget latch reset");
+    TEST_ASSERT_EQ((uint64_t)pending, 0u, "other slot's depth crossing consumed");
+
+    /* The bucket saturates at the cap rather than growing without bound. */
+    dpc_watchdog_test_seed(slot, DPC_BUDGET_CARRYOVER_MAX - 1u, 0, 0, 0);
+    dpc_wd_test_wait_ticks(4);
+    dpc_watchdog_test_read(slot, &budget, &tick_dpcs, &warned, &pending);
+    TEST_ASSERT_EQ((uint64_t)budget, (uint64_t)DPC_BUDGET_CARRYOVER_MAX,
+                   "other slot's budget saturates at the carry-over cap");
+}
+
+/* Test: tokens and the warning latch move together. Exhaustion warns once per
+ * refill, and a refill both restores tokens and re-arms the warning. They live
+ * in one word because as two fields a stale "bucket empty" read could claim the
+ * new tick's latch across a refill. */
+static void test_dpc_watchdog_budget_word(void)
+{
+    uint32_t word = 0, i;
+
+    TEST_ASSERT_EQ((uint64_t)dpc_watchdog_test_spend(&word), 1u, "first empty spend warns");
+    TEST_ASSERT_EQ((uint64_t)dpc_watchdog_test_spend(&word), 0u, "second empty spend is latched");
+
+    dpc_watchdog_test_refill(&word);
+    TEST_ASSERT_EQ((uint64_t)word, (uint64_t)DPC_BUDGET_PER_TICK,
+                   "refill restores tokens and clears the latch");
+    for (i = 0; i < DPC_BUDGET_PER_TICK; i++)
+        TEST_ASSERT_EQ((uint64_t)dpc_watchdog_test_spend(&word), 0u, "spend with tokens is silent");
+    TEST_ASSERT_EQ((uint64_t)dpc_watchdog_test_spend(&word), 1u, "refilled bucket warns again when empty");
+
+    for (i = 0; i < 4; i++)
+        dpc_watchdog_test_refill(&word);
+    TEST_ASSERT_EQ((uint64_t)word, (uint64_t)DPC_BUDGET_CARRYOVER_MAX, "refill saturates at the cap");
+}
+
 /* ---- Section 15: threaded DPC list synchronization ---------------------- */
 
 
@@ -2038,6 +2107,10 @@ void test_register_sched(void)
                             test_apc_kernel_depth, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: DPC watchdog strict-mode toggle",
                             test_dpc_watchdog_strict_toggle, TEST_CAT_SCHED);
+    test_suite_register_cat("dpc watchdog: budget word transitions",
+                            test_dpc_watchdog_budget_word, TEST_CAT_SCHED);
+    test_suite_register_cat("dpc watchdog: BSP tick services other CPU slots",
+                            test_dpc_watchdog_services_other_slots, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: KeRemoveQueueDpc cancels a threaded DPC",
                             test_dpc_threaded_remove, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: KeFlushQueuedDpcs waits for threaded DPC",

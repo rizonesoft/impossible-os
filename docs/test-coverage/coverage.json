@@ -1,6 +1,6 @@
 {
-  "total_suites": 3579,
-  "total_assertions": 15950,
+  "total_suites": 3581,
+  "total_assertions": 15961,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_ec.c", "suites": 42, "assertions": 168},
@@ -90,7 +90,7 @@
     {"file": "test_quota_stall.c", "suites": 34, "assertions": 168},
     {"file": "test_quota_syscall.c", "suites": 16, "assertions": 106},
     {"file": "test_registry.c", "suites": 41, "assertions": 133},
-    {"file": "test_sched.c", "suites": 68, "assertions": 272},
+    {"file": "test_sched.c", "suites": 70, "assertions": 283},
     {"file": "test_security.c", "suites": 29, "assertions": 201},
     {"file": "test_serial_emergency.c", "suites": 69, "assertions": 369},
     {"file": "test_sha1.c", "suites": 3, "assertions": 7},

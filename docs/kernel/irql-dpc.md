@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/02-kernel-core/TODO-07-irql-model-dpcs.md sources=include/kernel/sched/irql.h,src/kernel/sched/irql.c,include/kernel/sched/dpc.h,src/kernel/sched/dpc.c,include/kernel/sched/dpc_config.h,include/kernel/sched/apc.h,src/kernel/sched/apc.c,include/kernel/sched/ktimer.h,src/kernel/sched/ktimer.c,include/kernel/sched/kinterrupt.h,src/kernel/sched/kinterrupt.c,include/kernel/sched/kworker.h,src/kernel/sched/kworker.c,src/kernel/idt.c,src/kernel/drivers/lapic.c,src/kernel/test/test_sched.c,src/kernel/test/test_kworker.c reviewed=2026-09-28 order=7 -->
+<!-- docs: covers=todo/02-kernel-core/TODO-07-irql-model-dpcs.md sources=include/kernel/sched/irql.h,src/kernel/sched/irql.c,include/kernel/sched/dpc.h,src/kernel/sched/dpc.c,include/kernel/sched/dpc_config.h,include/kernel/sched/apc.h,src/kernel/sched/apc.c,include/kernel/sched/ktimer.h,src/kernel/sched/ktimer.c,include/kernel/sched/kinterrupt.h,src/kernel/sched/kinterrupt.c,include/kernel/sched/kworker.h,src/kernel/sched/kworker.c,src/kernel/idt.c,src/kernel/drivers/lapic.c,src/kernel/test/test_sched.c,src/kernel/test/test_kworker.c reviewed=2026-11-07 order=7 -->
 # IRQL, DPCs and APCs
 
 ## What is it?
@@ -19,7 +19,7 @@ APCs follow the same design one level up. A `KAPC` ([`apc.h`](../../include/kern
 
 Two helpers sit on top. `KeSetTimerEx()` ([`ktimer.h`](../../include/kernel/sched/ktimer.h)) queues a DPC automatically when a timer expires. `kworker` ([`kworker.h`](../../include/kernel/sched/kworker.h)) is a single thread for periodic callbacks of a second or more that may call slow paths such as UEFI runtime services.
 
-A fairness layer watches both queues: a per-CPU budget of 256 DPCs per tick (`DPC_BUDGET_PER_TICK`, carry-over capped at 512) flags monopolization, and, on CPUs with an invariant TSC and RDTSCP, a watchdog measures each DPC after it returns and fires when one ran longer than 100 microseconds (`DPC_WATCHDOG_SINGLE_DPC_US` in [`dpc_config.h`](../../include/kernel/sched/dpc_config.h)), warning by default or bugchecking in strict mode.
+A fairness layer watches both queues: a per-CPU budget of 256 DPCs per tick (`DPC_BUDGET_PER_TICK`, carry-over capped at 512) flags monopolization (the timer-ticking boot CPU refills every CPU's budget, because application-processor timers are masked), and, on CPUs with an invariant TSC and RDTSCP, a watchdog measures each DPC after it returns and fires when one ran longer than 100 microseconds (`DPC_WATCHDOG_SINGLE_DPC_US` in [`dpc_config.h`](../../include/kernel/sched/dpc_config.h)), warning by default or bugchecking in strict mode.
 
 ```mermaid
 sequenceDiagram

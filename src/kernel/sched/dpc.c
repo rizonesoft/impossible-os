@@ -102,8 +102,10 @@ static event_t s_dpc_worker_event;
 
 /* ---- DPC fairness budget + watchdog (section 14) ------------------------- *
  *
- * Per-CPU, written only by the owning CPU's drain/tick paths (no lock). The
- * single-DPC runtime watchdog (Bug Check 0x133 param 0x0) measures each DPC's
+ * One record per CPU slot. The owning CPU's drain spends budget; the single
+ * ticking CPU refills every slot (AP LAPIC timers are masked, so an AP has no
+ * tick of its own), which makes budget_state and tick_dpcs cross-CPU fields:
+ * every access to them is __atomic. The single-DPC runtime watchdog (Bug Check 0x133 param 0x0) measures each DPC's
  * TSC-cycle duration against a precomputed threshold; warn by default, bugcheck
  * when dpc_watchdog_set_strict(1). The per-tick count budget is a token bucket
  * (refilled DPC_BUDGET_PER_TICK/tick, capped) that flags monopolization. The
@@ -121,7 +123,7 @@ static event_t s_dpc_worker_event;
  * defect and is owned separately; suppressing the SPAM must not suppress the
  * SIGNAL, so the first crossings still warn and the totals are still reported.
  *
- * SMP: this lives inside s_wd[cpu_id], which is only ever touched by the CPU it
+ * SMP: this lives in s_wd_off[cpu_id], which is only ever touched by the CPU it
  * indexes -- drain_queue() is reached exclusively via smp_this_cpu()->cpu_id
  * from both of its callers (verified 2026-07-28), so no lock is needed and none
  * is taken. That matters here because the reporting path calls klog(), and
@@ -137,9 +139,16 @@ struct dpc_wd_offender {
 };
 
 struct dpc_watchdog {
-    uint32_t budget;             /* remaining per-tick DPC tokens (carry-over)  */
-    uint32_t tick_dpcs;          /* DPCs dispatched in the current tick         */
-    uint32_t consec_over_depth;  /* consecutive ticks depth > WARN_DEPTH        */
+    /* Remaining per-tick DPC tokens (carry-over) in the low bits, plus
+     * DPC_WD_BUDGET_WARNED, the "monopolization already warned this tick" latch.
+     * One word so that an exhaustion decision and the refill that ends the tick
+     * cannot interleave: a spend that saw an empty bucket can only claim the
+     * latch if no refill landed since. Spent by the owner, refilled by the
+     * ticker. */
+    uint32_t budget_state;
+    uint32_t tick_dpcs;          /* DPCs dispatched in the current tick; same   */
+    uint32_t consec_over_depth;  /* consecutive ticks depth > WARN_DEPTH; only
+                                  * the ticking CPU touches it, so no atomic    */
     /* COUNT of NON-threaded DPC routine()s currently executing on this CPU
      * (popped off the queue, lock dropped, callback running). A counter, not a
      * flag: normal DPCs run at DISPATCH_LEVEL, which does not mask the CLOCK-
@@ -161,16 +170,57 @@ struct dpc_watchdog {
      * ISR/DIRQL insert path (klog busy-waits the UART and must never run at an
      * arbitrary device interrupt's IRQL). */
     uint32_t warn_pending;
-    uint8_t  over_budget_warned; /* monopolization already warned this tick     */
     /* Pad + align to one cache line: drain_queue writes budget/tick_dpcs/
      * in_flight per dispatched DPC (and warn_pending is written under the queue
      * lock), so adjacent CPUs' records must not false-share (matches the
      * cpu_queues / queue_lock_slots discipline). */
-    uint8_t  _pad[DPC_CACHELINE - 21];
+    uint8_t  _pad[DPC_CACHELINE - 20];
 } __attribute__((aligned(DPC_CACHELINE)));
 _Static_assert(sizeof(struct dpc_watchdog) == DPC_CACHELINE,
                "dpc_watchdog must occupy exactly one cache line (no false-share)");
 static struct dpc_watchdog s_wd[MAX_CPUS];
+
+#define DPC_WD_BUDGET_WARNED 0x80000000u
+#define DPC_WD_BUDGET_TOKENS 0x7FFFFFFFu
+_Static_assert(DPC_BUDGET_CARRYOVER_MAX <= DPC_WD_BUDGET_TOKENS,
+               "the carry-over cap must fit in the token bits of budget_state");
+
+/* Add one tick's tokens up to the cap and start a new warning epoch. The write
+ * is skipped when it would change nothing: this runs for every slot on every
+ * tick, and an idle AP's cache line must not bounce for it. */
+static void dpc_wd_budget_refill(uint32_t *state)
+{
+    uint32_t old = __atomic_load_n(state, __ATOMIC_RELAXED);
+    uint32_t next;
+
+    do {
+        next = (old & DPC_WD_BUDGET_TOKENS) + DPC_BUDGET_PER_TICK;
+        if (next > DPC_BUDGET_CARRYOVER_MAX)
+            next = DPC_BUDGET_CARRYOVER_MAX;
+        if (next == old)
+            return;
+    } while (!__atomic_compare_exchange_n(state, &old, next, 0,
+                                          __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+}
+
+/* Spend one token. Returns 1 only for the first spend to find the bucket empty
+ * since the last refill, which is the caller's cue to warn. */
+static int dpc_wd_budget_spend(uint32_t *state)
+{
+    uint32_t old = __atomic_load_n(state, __ATOMIC_RELAXED);
+    uint32_t next;
+
+    do {
+        if (old & DPC_WD_BUDGET_TOKENS)
+            next = old - 1u;
+        else if (old & DPC_WD_BUDGET_WARNED)
+            return 0;
+        else
+            next = old | DPC_WD_BUDGET_WARNED;
+    } while (!__atomic_compare_exchange_n(state, &old, next, 0,
+                                          __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+    return (next & DPC_WD_BUDGET_WARNED) && !(old & DPC_WD_BUDGET_WARNED);
+}
 
 /* Offender table lives OUTSIDE struct dpc_watchdog on purpose. That struct is
  * pinned to exactly one cache line by a _Static_assert because it is written on
@@ -219,10 +269,9 @@ void dpc_watchdog_init(void)
             ? (hz / 1000000ULL) * (uint64_t)DPC_WATCHDOG_SINGLE_DPC_US
             : 0;
     for (i = 0; i < MAX_CPUS; i++) {
-        s_wd[i].budget = DPC_BUDGET_PER_TICK;
-        s_wd[i].tick_dpcs = 0;
+        __atomic_store_n(&s_wd[i].budget_state, DPC_BUDGET_PER_TICK, __ATOMIC_RELAXED);
+        __atomic_store_n(&s_wd[i].tick_dpcs, 0u, __ATOMIC_RELAXED);
         s_wd[i].consec_over_depth = 0;
-        s_wd[i].over_budget_warned = 0;
         /* warn_pending is NOT reset here: static storage zero-inits it before
          * any producer runs, and once queues are live the flag is touched only
          * under DPC_QLOCK -- an unlocked clear here could drop a live crossing
@@ -293,13 +342,9 @@ static void dpc_watchdog_single_overrun(uint32_t cpu_id, uint64_t cycles,
  * DPC_QUEUE_WARN_DEPTH for DPC_DEPTH_WARN_TICKS consecutive ticks. Called from
  * the timer ISR (LAPIC + PIT) every tick, BEFORE the drain.
  *
- * SCOPE: services only the TICKING CPU (smp_this_cpu), which is the BSP today
- * (AP LAPIC timers are masked, BSP-only heartbeat). The BSP tick drains and
- * bookkeeps ONLY the BSP queue. An AP queue is NOT swept by the BSP tick: it
- * drains only when that AP lowers IRQL on its own, and its budget/warn_pending
- * therefore get no BSP coverage. Extending depth/budget/warn bookkeeping to AP
- * queues (a BSP cross-CPU sweep, needing the per-CPU budget made atomic vs the
- * AP's own drain spend) is deferred -- a tracked AP-watchdog-coverage item. */
+ * SCOPE: AP LAPIC timers are masked, so the BSP is the only CPU that ticks, and
+ * it bookkeeps every CPU slot. It still DRAINS only its own queue: an AP queue
+ * drains when that AP lowers IRQL. */
 /* End-of-boot roll-up of DPC overruns, one line per offending routine.
  *
  * The per-routine burst limit above stops a chronic offender from owning the
@@ -336,14 +381,12 @@ void dpc_watchdog_report(void)
         klog(LOG_INFO, "dpc", "DPC overruns: none");
 }
 
-void dpc_watchdog_tick(void)
+/* Per-tick service of ONE CPU slot, on the ticking CPU. The slot need not be
+ * this CPU's, and need not be online: a queue left on a parked CPU is exactly
+ * what the depth warnings should still report. */
+static void dpc_wd_service_slot(uint32_t id)
 {
-    struct per_cpu_data *cpu = smp_this_cpu();
-    uint32_t id, depth, refilled;
-
-    if (!cpu || cpu->cpu_id >= MAX_CPUS)
-        return;
-    id = cpu->cpu_id;
+    uint32_t depth;
 
     /* Instant depth-crossing warning. An insert that pushed the queue to exactly
      * DPC_QUEUE_WARN_DEPTH armed warn_pending under DPC_QLOCK -- it may run up to
@@ -385,14 +428,33 @@ void dpc_watchdog_tick(void)
         s_wd[id].consec_over_depth = 0;
     }
 
-    /* Token-bucket refill: add PER_TICK tokens, cap at CARRYOVER_MAX so an idle
-     * CPU cannot bank an unbounded burst allowance. */
-    refilled = s_wd[id].budget + DPC_BUDGET_PER_TICK;
-    if (refilled > DPC_BUDGET_CARRYOVER_MAX)
-        refilled = DPC_BUDGET_CARRYOVER_MAX;
-    s_wd[id].budget = refilled;
-    s_wd[id].tick_dpcs = 0;
-    s_wd[id].over_budget_warned = 0;
+    /* Token-bucket refill, capped at CARRYOVER_MAX so an idle CPU cannot bank an
+     * unbounded burst allowance. tick_dpcs only feeds the warning text, so a
+     * reset racing the owner's increment costs a slightly wrong count at worst. */
+    dpc_wd_budget_refill(&s_wd[id].budget_state);
+    if (__atomic_load_n(&s_wd[id].tick_dpcs, __ATOMIC_RELAXED))
+        __atomic_store_n(&s_wd[id].tick_dpcs, 0u, __ATOMIC_RELAXED);
+}
+
+void dpc_watchdog_tick(void)
+{
+    struct per_cpu_data *cpu = smp_this_cpu();
+    uint32_t id, slot;
+
+    if (!cpu || cpu->cpu_id >= MAX_CPUS)
+        return;
+    id = cpu->cpu_id;
+
+    dpc_wd_service_slot(id);
+
+    /* AP LAPIC timers are masked (lapic_init_ap), so the BSP is the only CPU
+     * that ticks and it services every other slot too. Without this an AP's
+     * budget never refills and its warn_pending crossing is never emitted. All
+     * slots, not a count of CPUs: slots are sparse. */
+    if (id == 0) {
+        for (slot = 1; slot < MAX_CPUS; slot++)
+            dpc_wd_service_slot(slot);
+    }
 
     /* APC starvation reporting: the ISR-safe KeInsertQueueApc only bumps an
      * atomic event counter; emit the warning here (log-safe timer-ISR context)
@@ -427,6 +489,43 @@ void dpc_watchdog_tick(void)
         }
     }
 }
+
+#ifdef KERNEL_TESTS
+/* Test seam: seed and read one slot's budget record. Only safe on a slot no CPU
+ * is using, which the caller guarantees by picking an offline slot. */
+void dpc_watchdog_test_seed(uint32_t cpu, uint32_t budget, uint32_t tick_dpcs,
+                            int over_budget_warned, int warn_pending)
+{
+    uint64_t irq_flags;
+
+    if (cpu >= MAX_CPUS)
+        return;
+    __atomic_store_n(&s_wd[cpu].budget_state,
+                     budget | (over_budget_warned ? DPC_WD_BUDGET_WARNED : 0u),
+                     __ATOMIC_RELAXED);
+    __atomic_store_n(&s_wd[cpu].tick_dpcs, tick_dpcs, __ATOMIC_RELAXED);
+    spin_lock_irqsave(DPC_QLOCK(cpu), &irq_flags);
+    __atomic_store_n(&s_wd[cpu].warn_pending, warn_pending ? 1u : 0u, __ATOMIC_RELEASE);
+    spin_unlock_irqrestore(DPC_QLOCK(cpu), irq_flags);
+}
+
+void dpc_watchdog_test_read(uint32_t cpu, uint32_t *budget, uint32_t *tick_dpcs,
+                            int *over_budget_warned, int *warn_pending)
+{
+    uint32_t state;
+
+    if (cpu >= MAX_CPUS)
+        return;
+    state = __atomic_load_n(&s_wd[cpu].budget_state, __ATOMIC_RELAXED);
+    *budget = state & DPC_WD_BUDGET_TOKENS;
+    *over_budget_warned = (state & DPC_WD_BUDGET_WARNED) ? 1 : 0;
+    *tick_dpcs = __atomic_load_n(&s_wd[cpu].tick_dpcs, __ATOMIC_RELAXED);
+    *warn_pending = (int)__atomic_load_n(&s_wd[cpu].warn_pending, __ATOMIC_ACQUIRE);
+}
+
+void dpc_watchdog_test_refill(uint32_t *state) { dpc_wd_budget_refill(state); }
+int  dpc_watchdog_test_spend(uint32_t *state)  { return dpc_wd_budget_spend(state); }
+#endif /* KERNEL_TESTS */
 
 /* ---- Initialization ------------------------------------------------------ */
 
@@ -1108,14 +1207,13 @@ static uint32_t drain_queue(uint32_t cpu_id)
         /* Per-tick token budget: spend one token; flag monopolization once per
          * tick when the budget is exhausted (the hard per-drain bound stays
          * DPC_BATCH_LIMIT -- this is a fairness diagnostic, not an enforced cap). */
-        s_wd[cpu_id].tick_dpcs++;
-        if (s_wd[cpu_id].budget) {
-            s_wd[cpu_id].budget--;
-        } else if (!s_wd[cpu_id].over_budget_warned) {
-            s_wd[cpu_id].over_budget_warned = 1;
-            klog(LOG_WARN, "dpc",
-                 "watchdog: CPU %u exceeded per-tick DPC budget (%u this tick)",
-                 (uint64_t)cpu_id, (uint64_t)s_wd[cpu_id].tick_dpcs);
+        {
+            uint32_t this_tick = __atomic_add_fetch(&s_wd[cpu_id].tick_dpcs, 1u,
+                                                    __ATOMIC_RELAXED);
+            if (dpc_wd_budget_spend(&s_wd[cpu_id].budget_state))
+                klog(LOG_WARN, "dpc",
+                     "watchdog: CPU %u exceeded per-tick DPC budget (%u this tick)",
+                     (uint64_t)cpu_id, (uint64_t)this_tick);
         }
 
         dispatched++;

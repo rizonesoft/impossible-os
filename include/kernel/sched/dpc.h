@@ -115,11 +115,9 @@ void KeInitializeDpc(KDPC *dpc, KDEFERRED_ROUTINE routine, void *context);
 int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2);
 
 /* Same insert as KeInsertQueueDpc. A depth crossing arms a per-CPU pending flag
- * emitted serial-safe by dpc_watchdog_tick, never at the caller's IRQL. NOTE:
- * dpc_watchdog_tick is BSP-only today, so the warning is emitted only for a
- * crossing on the BSP/ticking queue; a crossing armed on an AP's queue stays
- * pending until AP-queue warn_pending coverage lands (the BSP cross-CPU sweep
- * deferred to the AP-watchdog item). *warn_cpu_out, if non-NULL, is set to the
+ * emitted serial-safe by dpc_watchdog_tick, never at the caller's IRQL. The
+ * ticking BSP services every CPU slot, so a crossing on an AP's queue is emitted
+ * too. *warn_cpu_out, if non-NULL, is set to the
  * warn-depth CPU id (else -1) -- purely informational; callers must NOT klog
  * from it (this path is DIRQL-callable). Pass NULL when not needed. Same return
  * value as KeInsertQueueDpc. */
@@ -142,9 +140,7 @@ int KeInsertQueueDpcOnCpu(KDPC *dpc, uint32_t cpu_id, void *arg1, void *arg2,
  *   driver ISR:  read+ack device status; KeRequestDpcFromIsr(&dpc, a1, a2); return claimed
  *   DPC (DISPATCH_LEVEL):  process the snapshotted work
  * A queue-depth warning never triggers serial I/O at DIRQL: the insert arms a
- * per-CPU pending flag that dpc_watchdog_tick emits once per tick (on the
- * BSP/ticking queue; an AP-armed crossing stays pending until AP-queue coverage
- * lands -- see KeInsertQueueDpcEx), keeping this ISR-context call allocation-
+ * per-CPU pending flag that dpc_watchdog_tick emits once per tick, keeping this ISR-context call allocation-
  * free, bounded, and serial-I/O-free even when a KINTERRUPT-bound ISR holds the
  * interrupt spinlock across it.
  * Returns 1 if newly queued, 0 if the DPC was already queued (args refreshed). */
@@ -325,8 +321,22 @@ void dpc_watchdog_init(void);
 void dpc_watchdog_report(void);
 
 /* Per-timer-tick watchdog bookkeeping: refill the per-CPU token budget and fire
- * the sustained-queue-depth warning. Call from the timer ISR every tick. */
+ * the sustained-queue-depth warning. Call from the timer ISR every tick. AP
+ * LAPIC timers are masked, so the BSP's tick services every CPU slot; arming
+ * per-CPU AP ticks must remove that sweep or each AP would refill twice. */
 void dpc_watchdog_tick(void);
+
+#ifdef KERNEL_TESTS
+/* Test seam for one CPU slot's budget record. Seed only an offline slot. */
+void dpc_watchdog_test_seed(uint32_t cpu, uint32_t budget, uint32_t tick_dpcs,
+                            int over_budget_warned, int warn_pending);
+void dpc_watchdog_test_read(uint32_t cpu, uint32_t *budget, uint32_t *tick_dpcs,
+                            int *over_budget_warned, int *warn_pending);
+/* The budget word's transitions, on a caller-owned word. spend returns 1 only
+ * for the first spend to find the bucket empty since the last refill. */
+void dpc_watchdog_test_refill(uint32_t *state);
+int  dpc_watchdog_test_spend(uint32_t *state);
+#endif /* KERNEL_TESTS */
 
 /* Enforcement mode for the single-DPC runtime watchdog: 0 (default) = warn,
  * 1 = escalate a >100us DPC to KeBugCheckEx(DPC_WATCHDOG_VIOLATION). */

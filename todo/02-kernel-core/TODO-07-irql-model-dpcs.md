@@ -456,7 +456,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 - [x] DPC importance-based drain ordering: provided by §7 head-insert (`HighImportance` -> head; `drain_queue` dequeues head-first), so high runs first. No drain-time reorder.
 - [x] APC starvation watchdog: `kernel_apc_depth` in `KAPC_STATE` maintained under `apc_lock`; `KeInsertQueueApc` warns once on the kernel-APC crossing of `APC_STARVATION_WARN_DEPTH`.
 - [x] Tuning constants in new `include/kernel/sched/dpc_config.h`.
-- [ ] AP DPC watchdog coverage: `dpc_watchdog_tick` is BSP-only, so an AP's `s_wd[ap]` budget never refills and its `warn_pending` crossing never emits. Fix: BSP cross-CPU sweep of budget + `warn_pending`, atomic budget.
+- [x] AP DPC watchdog coverage: the ticking BSP services every CPU slot (`dpc_wd_service_slot`); tokens + warn latch share one atomic word (`budget_state`), so a refill and an exhaustion claim cannot interleave.
 - [ ] Remote-target DPC IPI: a `KeSetTargetProcessorDpc`-to-idle-AP DPC can strand (no DPC IPI yet); add a DPC IPI vector draining the AP on remote insert. -> XREF: 16-architecture-ports/TODO-03-smp-scaling-processor-groups.md
 - [x] Commit: `"kernel: sched -- add DPC/APC budget fairness and watchdog"`
 
@@ -468,10 +468,9 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 > - How it runs: `dpc_watchdog_tick()` (timer ISR, pre-drain) refills budget + checks depth; `drain_queue` times each DPC (RDTSCP, armed only if all online CPUs have it) + spends a token; WARN default, `dpc_watchdog_set_strict(1)` bugchecks overruns.
 > - Downstream: importance ordering reuses §7 head-insert. Codex design + adversarial + 3 re-adversarial adoptions in the commit.
 > - Canonical doc: this section + `include/kernel/sched/dpc_config.h`.
-> - Scope boundary: §14 owns the budget + watchdog + APC starvation. Deferred: 0x133 param 0x1 (needs the §13 IRQL-write-surface centralization) + AP-CPU watchdog coverage (owner §17). Threaded-DPC fairness -> §15-§17.
+> - Scope boundary: §14 owns the budget + watchdog + APC starvation. Deferred: 0x133 param 0x1 (needs the §13 IRQL-write-surface centralization). Threaded-DPC fairness -> §15-§17.
 > **Verified:** 2026-06-26 | commit `ee2f09ab` | 6/8 items | build OK | sched 171 PASS | smoke PASS
 > **Notes:** Reopened 2026-11-07, was Deferred: [H] DPC watchdog 0x133 param 0x1 (cumulative >= `DISPATCH_LEVEL` time/period) unbuilt -- needs per-CPU time-at-DISPATCH accounting (reason: the §13 IRQL-write-surface centralization). The stamp named this section's own item with no outside blocker; "latent" and "needs X" describe the work.
-> **Deferred:** [M] AP-CPU DPC watchdog coverage -- `dpc_watchdog_tick` services only the ticking BSP (reason: mirrors the existing BSP-only AP-drain limit) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §17 (item: "AP DPC watchdog coverage" at line 511)
 > **Quality reviewed:** 2026-06-26 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 4M+1L fixed | scope: kernel-code-quality
 
 ---
@@ -548,7 +547,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 - [/] Option A (deferred, blocked): one worker per online CPU with affinity (NT parity) -- needs `task_set_affinity()` (does not exist) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §10 (item: "CPU affinity per process" at line 60).
 - [x] Option C rejected: a global N-worker pool gives no per-CPU affinity, and IPI-dispatch is unsafe (a PASSIVE threaded callback may block/page). Real affinity needs Option A.
 - [x] Evaluate: NT runs threaded DPCs on the target CPU's thread -- Option A is the parity choice (deferred above).
-- [/] AP DPC watchdog coverage (deferred, NOT blocked): AP DPCs drain via `KeLowerIrql` but the masked AP timer never refills `s_wd[ap]` budget; needs a BSP cross-CPU sweep + atomic budget -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §14.
+- [x] AP DPC watchdog coverage: shipped with the §14 item (`dpc_watchdog_tick` sweep + atomic `budget_state`).
 - [x] Commit: `"kernel: document threaded DPC no-affinity contract (Option B); per-CPU affinity deferred"`
 
 **Test checkpoint:** No kernel test surface for Option B (documentation contract; the shipped change is `dpc.h` header comments only). The `smp_this_cpu()->cpu_id == target` affinity test belongs to the deferred Option A and is not runnable until per-CPU affinity workers exist. Contract check: grep `dpc.h` for the AFFINITY note on the four threaded-DPC entry points.
@@ -559,10 +558,9 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 > - Why Option B now: real per-CPU affinity (Option A, NT parity) needs `task_set_affinity()` which does not exist; IPI-dispatch is unsafe for a PASSIVE callback. The honest interim documents the contract so drivers do not assume per-CPU state.
 > - Downstream: closes the threaded-DPC affinity footgun at the API surface. Codex design review (2 mediums) adoptions in the commit.
 > - Canonical doc: `include/kernel/sched/dpc.h` (`KDEFERRED_ROUTINE` AFFINITY note).
-> - Scope boundary: §17 owns only the documented contract; Option A (per-CPU affinity workers) is deferred (blocked on `task_set_affinity`); the AP-watchdog gap is owned by §14.
+> - Scope boundary: §17 owns only the documented contract; Option A (per-CPU affinity workers) is deferred (blocked on `task_set_affinity`); AP-watchdog coverage shipped under §14.
 > **Verified:** 2026-06-26 | commit `103403de` | 3/5 items | build OK | docs-only (dpc.h header comments)
 > **Deferred:** [M] threaded DPCs have no CPU affinity -- per-CPU affinity workers (NT parity) not built -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §10 (item: "CPU affinity per process" at line 65)
-> **Deferred:** [M] AP DPC watchdog coverage -- `dpc_watchdog_tick` services only the BSP while AP-targeted DPCs drain via `KeLowerIrql` (stale `s_wd[ap]` budget) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §14 (item: "AP DPC watchdog coverage" at line 450)
 > **Quality reviewed:** 2026-06-26 | Codex 2x (design, adversarial) | 3M fixed (contract scope, AP-watchdog rationale, §8 stale text), 2M deferred | scope: kernel-code-quality (docs-only)
 
 ---
