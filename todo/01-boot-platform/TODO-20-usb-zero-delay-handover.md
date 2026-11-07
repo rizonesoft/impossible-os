@@ -59,17 +59,19 @@ Allocate DCBAA, device output contexts, and transfer rings using `gBS->AllocateP
 
 - [x] Allocate DCBAA: 1 page `EfiLoaderData`, zeroed (fits max_slots+1 entries)
 - [x] Allocate scratchpad buffers (array + individual pages, if `HCSPARAMS2.MaxScratchpadBufs > 0`)
-- [ ] **USB scratchpad clamp:** `src/boot/uefi/bootx64.c` writes the raw `HCSPARAMS2.MaxScratchpadBufs` value into `boot_usb_controller.max_scratchpads` and allocates exactly that many pages without clamping against `BOOT_USB_MAX_SCRATCHPADS` (16). Controllers reporting more than 16 scratchpads would allocate beyond our documented ABI surface, and the canonical `docs/boot/boot-info-fields.md` row for `max_scratchpads` currently documents "not clamped" as the real producer behavior. Work: clamp in `src/boot/uefi/bootx64.c` near the HCSParams2 read (around line 4160), log a serial warning if the clamp trips, and update the `max_scratchpads` row in the canonical matrix + this item to `[x]`. Not a functional defect today because all target hardware reports <= 16, but an unbounded ABI field is the kind of thing an uncommon controller can trip into an allocator overrun. Filed during the TODO-01 §1 post-impl review (2026-04-17); see [canonical matrix -- boot_usb_controller table](../../docs/boot/boot-info-fields.md#nested-struct-boot_usb_controller).
-- [ ] Allocate device output context per enumerated device -- deferred to §3 (enumeration)
-- [ ] Allocate EP0 transfer ring per device -- deferred to §3 (enumeration)
-- [ ] Allocate bulk-IN/OUT transfer rings for MSC devices -- deferred to §3 (enumeration)
+- [ ] **USB scratchpad clamp:** `bootx64.c:13274` stores the raw `HCSPARAMS2.MaxScratchpadBufs` and allocates that many pages with no check against `BOOT_USB_MAX_SCRATCHPADS` (16).
+  - Work: settle the policy at the read site, log on serial when it trips, then update the `max_scratchpads` row in the [canonical matrix](../../docs/boot/boot-info-fields.md#nested-struct-boot_usb_controller) and flip this item. Filed during the TODO-01 §1 post-impl review (2026-04-17); recorded then as harmless because target hardware reports <= 16.
+  - Check before clamping (noted 2026-11-07, not tested): a controller expects every scratchpad buffer it reports, so truncating the array could be worse than the unbounded field. Refusing the handover (TODO-17 path) or retiring the constant are the alternatives; confirm against the xHCI spec.
+- [/] Allocate device output context per enumerated device: waits on §3 enumeration, which waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
+- [/] Allocate EP0 transfer ring per device: waits on §3 enumeration, which waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
+- [/] Allocate bulk-IN/OUT transfer rings for MSC devices: waits on §3 enumeration, which waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
 - [x] Record all physical addresses in `boot_info.usb_controller` struct
 - [x] Mark allocated pages in `dma_pages[]` array; kernel PMM calls `pmm_mark_region_used()` for each
 - [x] PCI config space access added to bootloader (`bl_pci_read8/16/32` via 0xCF8/0xCFC)
 - [x] xHCI capability registers read (HCSPARAMS1/2, HCCPARAMS1, DBOFF, RTSOFF)
 - [x] **HIGH (DMA cap):** `bootx64.c:10163-10333` uses `AllocateAnyPages` -- DMA can land above the 4 GiB kernel identity map (or violate `AC64=0`), faulting the kernel. Use `AllocateMaxAddress` capped at `0xFFFFFFFF`; fall back on failure
 - [x] **HIGH (BAR decode):** `bootx64.c:10255-10262` treats BAR1 as BAR0's 64-bit high half unconditionally -- a 32-bit memory BAR fabricates a bogus MMIO base. Decode BAR0 type `(bar0&0x6)==0x4` before using BAR1; skip handover if invalid
-- [ ] **HIGH (payload overlap):** `boot_payload_region_overlap()` (`boot_payload.c:203-214`) treats each `dma_pages[]` entry as one page, missing multi-page scratchpad spans. Use `boot_reserved_populate_from_info()` extents + add a 2nd-page test
+- [ ] **HIGH (payload overlap):** `payload_overlap_check()` (`boot_payload.c:346-351`) treats each `dma_pages[]` entry as one 4 KiB page, missing multi-page scratchpad spans. Use `boot_reserved_populate_from_info()` extents + add a 2nd-page test
 - [x] Commit: `"boot: allocate persistent xHCI DMA structures in EfiLoaderData"`
 
 **Test checkpoint:** Serial shows allocated DMA addresses. POST code 0xB082. Verify `EfiLoaderData` pages survive ExitBootServices by reading back from kernel. Test on: QEMU `run-usb`, bare metal.
@@ -104,8 +106,8 @@ While firmware USB stack is still active, take xHCI ownership via USBLEGSUP and 
 - [x] Write DCBAAP, CRCR (with Link TRB + cycle=1), ERST, ERDP, ERSTBA, CONFIG
 - [x] Start controller (USBCMD.RS=1 + INTE=1, IMAN.IE=1)
 - [x] `usb_handover_complete` set to 1 on success
-- [ ] **HIGH (USBLEGSUP timeout):** `bl_usblegsup_handoff()` (`bootx64.c:10456-10462`) force-clears BIOS-Owned + returns success on the 1s timeout, so takeover sets `usb_handover_complete=1` anyway. Return failure + abort on timeout
-- [ ] **MEDIUM (ext-cap MMIO bound):** the USBLEGSUP cap walk (`bootx64.c:10417-10428`) is iteration-bounded but not MMIO-bounded -- a malformed chain reads unrelated MMIO. Require `xecp_off+4 <= mmio_size` per read
+- [ ] **HIGH (USBLEGSUP timeout):** `bl_usblegsup_handoff()` (`bootx64.c:13446-13452`) force-clears BIOS-Owned on the 1s timeout and returns void, so takeover still sets `usb_handover_complete=1`. Return failure + abort on timeout
+- [ ] **MEDIUM (ext-cap MMIO bound):** the USBLEGSUP cap walk (`bootx64.c:13417-13456`) is iteration-bounded but not MMIO-bounded: a malformed chain reads unrelated MMIO. Require `xecp_off+4 <= mmio_size` per read
 - [x] **HIGH (BAR-decode consumer):** §2 derives op_base/rt_base from the §1 BAR decode and does destructive pre-EBS MMIO writes -- resolved by the §1 BAR-decode fix (32-bit BARs no longer fabricate a base)
 - [x] Commit: `"boot: USBLEGSUP handoff + controller takeover in bootloader"`
 
@@ -139,12 +141,12 @@ Enumerate connected devices in the bootloader so slot contexts and endpoint ring
 
 **Files:** `src/boot/uefi/bootx64.c`
 
-- [ ] For each port with CCS=1: port reset, Enable Slot, Address Device
-- [ ] GET_DESCRIPTOR (device + configuration) -- store in persistent buffers
-- [ ] SET_CONFIGURATION -- device is now configured
-- [ ] For MSC: Configure Endpoint (bulk-IN/OUT) using persistent transfer rings
-- [ ] Record slot_id, port, speed, VID:PID, endpoint addresses in boot_info
-- [ ] Commit: `"boot: enumerate USB devices with persistent DMA state"`
+- [/] For each port with CCS=1: port reset, Enable Slot, Address Device: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
+- [/] GET_DESCRIPTOR (device + configuration): store in persistent buffers: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
+- [/] SET_CONFIGURATION: device is now configured: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
+- [/] For MSC: Configure Endpoint (bulk-IN/OUT) using persistent transfer rings: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
+- [/] Record slot_id, port, speed, VID:PID, endpoint addresses in boot_info: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
+- [/] Commit: `"boot: enumerate USB devices with persistent DMA state"`: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
 
 **Test checkpoint:** Serial shows enumerated devices with slot IDs. POST code 0xB086. Device descriptors match Phase A discovery. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
 
@@ -170,11 +172,11 @@ Extend boot_info to carry the full controller state: DCBAA physical address, scr
 **Files:** `include/kernel/boot_info.h`, `src/boot/uefi/bootx64.c`
 
 - [x] Add `struct boot_usb_controller` to boot_info: BAR0, DCBAA phys, scratchpad phys, ring addresses -- shipped in §1
-- [ ] Add per-device: slot_id, output context phys, EP0 ring phys, bulk ring phys addresses
+- [/] Add per-device: slot_id, output context phys, EP0 ring phys, bulk ring phys addresses: absent from `boot_usb_device`; waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
 - [x] Add `usb_handover_complete` flag -- 1 if bootloader successfully configured the controller -- shipped in §1
-- [ ] DMA-shape design (blocks typed-payload item): §1 allocates DCBAA/cmd/evt/ERST/scratchpad as disjoint pages, so one contiguous `BOOT_PAYLOAD_USB_HANDOVER` descriptor can't cover them -- pick a contiguous arena or scatter/gather descriptors
-- [ ] Publish one typed payload descriptor of type `BOOT_PAYLOAD_USB_HANDOVER` (enum in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h)) covering the contiguous xHCI DMA blob so TODO-01 §4's packed-prefix + overlap validator sees it alongside every other handoff region. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
-- [ ] Commit: `"boot: extend boot_info with xHCI controller DMA state"`
+- [/] DMA-shape design (blocks typed-payload item): operator-gated `boot_info` ABI change. §1 allocates DCBAA/cmd/evt/ERST/scratchpad as disjoint pages, so one contiguous descriptor can't cover them: contiguous arena or scatter/gather
+- [/] Publish a typed `BOOT_PAYLOAD_USB_HANDOVER` descriptor for the xHCI DMA state: waits on the DMA-shape decision -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
+- [/] Commit: `"boot: extend boot_info with xHCI controller DMA state"`: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
 
 **Test checkpoint:** Kernel reads boot_info, logs controller state with matching physical addresses. POST code 0xD754. Test on: QEMU `run-usb`, bare metal i5-4210U (EHCI+xHCI), bare metal i5-11600K (xHCI only).
 
@@ -199,14 +201,15 @@ When `boot_info.usb_handover_complete` is set, the kernel skips the entire xhci_
 
 **Files:** `src/kernel/drivers/xhci.c`
 
-- [x] On `usb_handover_complete` + `boot_caps_require(BOOT_CAP_USB_HANDOVER)`: inherit the bootloader DCBAA / scratchpad / ERST / cmd+evt-ring PHYSICAL pages with no DMA re-allocation (`xhci.c:374-396`) -- saves the allocation cost
+- [/] On `usb_handover_complete` + `boot_caps_require(BOOT_CAP_USB_HANDOVER)`: inherits the DCBAA + scratchpad pages only. Corrected 2026-11-07: cmd/evt/ERST are re-allocated, so this was not `[x]` (see ring-leak item below)
 - [x] Verify controller + fall back: on handover halt / restart / ring-init failure `goto full_init` (TODO-17 path) -- `xhci.c:411,427,440`
-- [ ] Issue a No-Op command to verify command ring -- deferred (enumeration validates it implicitly)
+- [/] Issue a No-Op command to verify command ring: owned by §7's "No-Op command completes within 100ms" check; enumeration validates the ring implicitly until then
 - [/] Reality is a PARTIAL inherit, not full zero-delay: the path still halts-to-sync, re-inits ring state via `xhci_rings_init()`, routes Intel USB2, and re-enumerates (`xhci.c:398-462`)
-- [ ] True zero-delay: skip halt + ring re-init + Intel routing + kernel enumeration -- requires §3 bootloader enumeration so the kernel inherits configured slots
+- [/] True zero-delay: skip halt + ring re-init + Intel routing + kernel enumeration: needs §3 bootloader enumeration so the kernel inherits configured slots, which waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
 - [ ] **HIGH (controller identity):** inherit gate (`xhci.c:375-377`) matches only global caps, not `bc->pci_bus/dev/func`/`mmio_phys` -- a 2nd xHCI reuses the same DCBAA/rings. Require a pci/mmio match before inherit
 - [ ] **HIGH (validate before trust):** gate programs DCBAAP from `bc->dcbaa_phys` with no nonzero/aligned/<4GiB/reserved check (`xhci.c:375-427`); a stale boot_info starts xHCI on a bad DMA target. Validate first (overlaps §7)
-- [ ] **HIGH (Intel 500ms not saved):** handover still calls `xhci_route_intel_usb2_ports()` (`xhci.c:459`) = 500ms delay, so EHCI+xHCI (i5-4210U) is not zero-delay. Carry routing state in boot_info + skip XUSB2PR on inherit
+- [/] **HIGH (Intel 500ms not saved):** handover still calls `xhci_route_intel_usb2_ports()` (`xhci.c:460`) = 500ms on EHCI+xHCI (i5-4210U). Skipping XUSB2PR needs routing state in boot_info: operator-gated ABI addition, decide with §4
+- [ ] **MEDIUM (ring leak):** `cmd_ring_init()`/`event_ring_init()` (`xhci_ring.c:75,119,137`) allocate unconditionally, overwriting the `xhci.c:422-425` assignments and leaving the bootloader cmd/evt/ERST pages pinned (was stamp-only)
 - [x] Commit: `"drivers: xHCI zero-delay handover -- inherit bootloader DMA state"`
 
 **Test checkpoint:** Serial shows "zero-delay handover: controller inherited". No halt/reset/500ms in log. USB device available within 1ms of kernel start. POST code 0xD755. If crash at 0xD755: controller state corrupt -- fall back to TODO-17 path. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
@@ -244,13 +247,13 @@ Skip INQUIRY + READ CAPACITY for MSC devices -- use sector count/size from Phase
 
 > **Notes:**
 > - **What shipped:** nothing -- §6 is deferred. MSC devices still register via the full TODO-17 path (INQUIRY + READ CAPACITY), which works; §6 is purely the latency optimization.
-> - **Why deferred:** skipping INQUIRY/READ CAPACITY needs the sector count/size captured at Phase A (EFI_BLOCK_IO) and carried in §4's per-device `boot_info` payload -- which is the ABI-gated open part of §4.
-> - **Blocker:** §4 per-device DMA payload schema + a Phase A geometry capture step.
+> - **Why deferred:** filed as needing a Phase A capture and §4's per-device payload. Corrected 2026-11-07: Phase A already stores `block_size`/`block_count` in `boot_usb_device` (`bootx64.c:13065`), so the items carry no ABI blocker while the kernel still enumerates.
+> - **Blocker:** none named today; §4's payload matters only if registration must also skip kernel enumeration. Not built or tested, so this is read from the code.
 > - **Canonical doc:** `src/kernel/drivers/usb_msc.c` + `src/kernel/main/blkdev_adapters.c`.
 > - **Scope boundary:** §6 consumes §4's geometry; §3 produces the per-device data.
 
 > **Verified:** 2026-06-15 | commit `832af15c` | 0/3 items | deferred (blocked on §4 ABI) | gap-audit scoped
-> **Deferred:** [feature] MSC instant registration from boot_info geometry -- blocked on the §4 per-device payload + a Phase A EFI_BLOCK_IO geometry capture -> XREF: 01-boot-platform/TODO-20 §4 (item: "Add per-device: slot_id, output context phys, EP0 ring phys, bulk ring phys addresses")
+> **Deferred:** [feature] MSC instant registration from boot_info geometry -- Phase A geometry already ships in `boot_usb_device`; the §4 per-device payload is needed only to also skip kernel enumeration -> XREF: 01-boot-platform/TODO-20 §4 (item: "Add per-device: slot_id, output context phys, EP0 ring phys, bulk ring phys addresses")
 
 ---
 
@@ -263,7 +266,7 @@ If any handover validation fails, transparently fall back to the proven halt/res
 - [ ] Check: No-Op command completes within 100ms
 - [ ] Check: DCBAAP matches boot_info value
 - [ ] If any check fails: log warning, halt/reset, full re-enumerate (TODO-17 §5-§1)
-- [ ] IOMMU default-deny: §5 inherits a DMA-capable controller, so before default-deny remapping the inherited DMA pages must be IOMMU-mapped for the xHCI function or the handover forces the TODO-17 fallback -> XREF: `04-drivers-hardware/TODO-04 §4`
+- [/] IOMMU default-deny: §5 inherits a DMA-capable controller, so before default-deny remapping the inherited DMA pages must be IOMMU-mapped for the xHCI function or the handover forces the TODO-17 fallback -> XREF: `04-drivers-hardware/TODO-04 §4`
 - [ ] Commit: `"drivers: xHCI handover fallback -- detect corrupt state and recover"`
 
 **Test checkpoint:** Force-fail handover (corrupt boot_info), verify clean fallback to TODO-17 path with no crash. POST code 0xD757. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.

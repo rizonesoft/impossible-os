@@ -123,6 +123,7 @@ Parse the ACPI DMAR table (Intel VT-d) and IVRS table (AMD-Vi). Build per-device
 - [ ] AMD-Vi: ACPI IVRS parse; `MMIO_BASE` from `IVHD`; `DEVICE_TABLE_BASE_REG`, `COMMAND_BUF_BASE_REG`, `EVENT_LOG_BASE_REG`; AMD-Vi page table format (same 4-level structure with different flag bits); `CONTROL_REG.IOMMU_EN=1`
 - [ ] Quiesce: `iommu_shutdown()` disables `GCMD.TE` for graceful S3/S4 suspend
 - [ ] Boot log: `[IOMMU] Intel VT-d: %u DRHD units` / `[IOMMU] AMD-Vi: %u IVHD units` / `[IOMMU] Default-deny DMA enabled`
+- [ ] Map the inherited xHCI handover DMA pages before default-deny, or the handover forces the TODO-17 fallback -> XREF: `01-boot-platform/TODO-20 §7` (item: "IOMMU default-deny")
 - [ ] Commit: `"kernel: IOMMU -- VT-d DMAR parse, 4-level page tables, default-deny, AMD-Vi IVRS"`
 
 ## 5. Secure Boot UEFI Variable Read `[Sonnet]`
