@@ -1,6 +1,6 @@
 {
-  "total_suites": 3521,
-  "total_assertions": 15585,
+  "total_suites": 3522,
+  "total_assertions": 15590,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_ec.c", "suites": 42, "assertions": 168},
@@ -59,7 +59,7 @@
     {"file": "test_json_builder.c", "suites": 10, "assertions": 23},
     {"file": "test_kernel_config.c", "suites": 49, "assertions": 309},
     {"file": "test_kimage.c", "suites": 6, "assertions": 62},
-    {"file": "test_klibs.c", "suites": 24, "assertions": 311},
+    {"file": "test_klibs.c", "suites": 25, "assertions": 316},
     {"file": "test_klog.c", "suites": 44, "assertions": 182},
     {"file": "test_knf.c", "suites": 30, "assertions": 234},
     {"file": "test_kworker.c", "suites": 5, "assertions": 20},

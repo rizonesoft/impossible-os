@@ -997,6 +997,56 @@ static void test_math_lib(void)
     TEST_ASSERT(kmath_round(-big) == -big, "round(-(2^52+3)) unchanged");
 }
 
+/* The exponent in a JSON number comes off disk and the freestanding strtod scales
+ * once per exponent unit, so this suite finishing at all is half the assertion:
+ * unbounded, the second token below stalls the CPU for billions of iterations.
+ * This file has no SSE, so the values are read back through their printed form,
+ * where cJSON writes a non-finite number as null. */
+static void test_json_number_exponent_bound(void)
+{
+    /* `printed` is the whole document with whitespace removed; NULL where the
+     * digits are the formatter's business and only finiteness is claimed. */
+    static const struct {
+        const char *doc;
+        const char *printed;
+        int want_int;
+        const char *desc;
+    } cases[] = {
+        { "{\"n\":1e400}",        "{\"n\":null}", 2147483647, "1e400 reaches infinity" },
+        { "{\"n\":1e2147483647}", "{\"n\":null}", 2147483647, "1e2147483647 reaches infinity, promptly" },
+        { "{\"n\":1e-400}",       "{\"n\":0}",    0,          "1e-400 reaches exactly zero" },
+        { "{\"n\":1e308}",        (const char *)0, 2147483647, "1e308 stays finite" },
+    };
+    uint32_t i;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        struct cJSON *o = json_parse(cases[i].doc);
+        char *printed;
+
+        TEST_ASSERT(o != (struct cJSON *)0, cases[i].desc);
+        if (!o) continue;
+        TEST_ASSERT_EQ(json_int(json_get(o, "n")), cases[i].want_int, cases[i].desc);
+        printed = json_print(o);
+        TEST_ASSERT(printed != (char *)0, cases[i].desc);
+        if (printed) {
+            if (cases[i].printed) {
+                char *in = printed, *out = printed;
+
+                for (; *in; in++) {
+                    if (*in != ' ' && *in != '\t' && *in != '\n' && *in != '\r')
+                        *out++ = *in;
+                }
+                *out = '\0';
+                TEST_ASSERT_EQ(strcmp(printed, cases[i].printed), 0, cases[i].desc);
+            } else {
+                TEST_ASSERT(strstr(printed, "null") == (char *)0, cases[i].desc);
+            }
+            kfree(printed);
+        }
+        json_free(o);
+    }
+}
+
 /* cJSON wrapper: parse/extract + malformed-input hardening (depth cap,
  * length-bounded parse, trailing-garbage rejection). */
 static void test_json_lib(void)
@@ -1540,6 +1590,8 @@ void test_register_klibs(void)
                             test_csprng_global, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: NtGetRandom",
                             test_nt_get_random, TEST_CAT_EXEC);
+    test_suite_register_cat("klibs: JSON number exponent bound",
+                            test_json_number_exponent_bound, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: NtGetRandom chunks",
                             test_nt_get_random_chunks, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: NtGetRandom dispatch",

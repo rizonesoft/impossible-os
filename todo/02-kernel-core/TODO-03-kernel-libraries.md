@@ -293,10 +293,10 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [ ] Make kernel cJSON parse reentrant: `global_error` is written per parse (SMP race). Add per-CPU error state or strip global-error publication.
       - Recorded reason, not a blocker: benign today because no wrapper consumer reads `cJSON_GetErrorPtr`, and locking across a `kmalloc`-heavy parse is worse than the race it would close. Re-open here when a consumer starts reading the error pointer. Consumer surface: `json_parse_len`.
 - [ ] Bound parse heap for untrusted JSON: a near-cap flat doc of many small nodes can transiently pressure the 2 MiB heap. Add a per-parse PMM allocation budget.
-- [ ] Regression fixtures for the freestanding `strtod` exponent bound shipped 2026-09-03 (`src/libs/cjson/cJSON.c`, `CJSON_MAX_EXPONENT`)
-  - The FIX is in the tree: the accumulate is capped so `exp = exp * 10 + digit` cannot overflow and the scaling loop cannot run once per exponent unit. Before it, a 13-byte token such as `1e2147483647` stalled the boot CPU for billions of iterations before userland started, and every JSON this kernel parses comes off disk.
-  - What is missing is the fixtures: `1e400` and `1e2147483647` both reach infinity, `1e-400` reaches zero, `1e308` is unchanged, and a control that removes the cap and shows the iteration count explode. A kernel-side `TEST_CAT_EXEC` case does not fit -- measured 2026-09-03, 15 bytes of `.text` headroom -- so the home is a host suite beside `tools/boot-entries-parser-tests/`, which costs the image nothing but is still new tooling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §20 once the guard is gone").
-      - Blocked on: no untrusted producer exists yet -- the only file consumer is the self-written boot-time cache -- and each allocation is already bounded by `kmalloc`'s 4 KiB ceiling with graceful failure. Re-open here when JSON from off-box is parsed.
+  - Blocked on: no untrusted producer exists yet -- the only file consumer is the self-written boot-time cache -- and each allocation is already bounded by `kmalloc`'s 4 KiB ceiling with graceful failure. Re-open here when JSON from off-box is parsed.
+- [x] Regression fixtures for the freestanding `strtod` exponent bound: `test_json_number_exponent_bound` in `src/kernel/test/test_klibs.c`, since the image ceiling that kept them out ended 2026-11-07.
+  - `1e400` and `1e2147483647` print as null, `1e-400` prints as exactly 0, `1e308` stays finite. Read through the printed form, because that file builds without SSE.
+  - Control: `CJSON_MAX_EXPONENT` at 30 fails those first three cases. Removing the cap outright was NOT run: it stalls the CPU by design, which would read as a hung suite.
 
 - [x] Commit: `"libs: cJSON DOM parser, json_parse/get/print wrapper"`
 
