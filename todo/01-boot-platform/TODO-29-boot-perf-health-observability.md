@@ -82,9 +82,9 @@ implements_after: TODO-04
 | ⭐  |  16   | TSC frequency variability under hypervisor                  | --                                              |  [/]   |
 | ⭐  |  17   | PAT WC -> WT hypervisor trap quirk                          | §2 (consumer)                                   |  [/]   |
 | 💎  |  18   | Boot critical-path / dependency / resource-wait attribution | §1, §2                                          |  [/]   |
-| 💎  |  19   | Post-ship follow-up backfill (2026-07-31 cohort)            | D02 T33 §7 (ceiling)                            |  [/]   |
+| 💎  |  19   | Post-ship follow-up backfill (2026-07-31 cohort)            | D02 T33 §7 (ceiling)                            |  [ ]   |
 | 💎  |  20   | Boot trend JSON writer hardening (defer/linearize/fallback) | §3                                              |  [/]   |
-| 💎  |  21   | Per-driver degraded-state registry for storage              | §2, T10 §27                                     |  [/]   |
+| 💎  |  21   | Per-driver degraded-state registry for storage              | §2, T10 §27                                     |  [ ]   |
 
 ---
 
@@ -508,25 +508,25 @@ Smoke (KVM, 2026-05-03) records `[WARN] mm: PAT: entry 1 = 0x04 (expected WC=0x0
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3. Split 2026-09-03 on a `SPLIT-RECOMMENDED` manifest verdict (6 work items): the boot-trend writer group became §20 and the per-driver degraded-state item became §21; what remains here is the boot perf REPORTING surface (what the serial log prints and how a budget breach is stated).
 
 From the stamped section 1:
-- [/] Gate the full `PERF`/timeline serial tables behind debug/test builds (default = summary + `BOOT-BUDGET` breaches) -- the dump runs pre-cmd.exe, outside the `boot_perf_total_check()` window: user-visible but unbudgeted
+- [ ] Gate the full `PERF`/timeline serial tables behind debug/test builds (default = summary + `BOOT-BUDGET` breaches) -- the dump runs pre-cmd.exe, outside the `boot_perf_total_check()` window: user-visible but unbudgeted
   - BLOCKED on the kernel image ceiling, not on design. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §19 once the guard is gone").
   - Two full tables emit one serial line per step each -- `boot_timing_print_steps()` (`src/kernel/boot_timing.c:73`) and the sorted table in `boot_perf_dump()` (`:762`), 45 lines apiece on a 45-step boot. The earlier draft cited `build/smoke-test.stripped.log` line numbers; every smoke run regenerates that file, so the citation went stale and is replaced here by the two emitting code sites above. Gating both and replacing them with one summary line naming the three slowest INTERVALS by both endpoints is what shipped in the parked patch.
 
 Filed 2026-08-18 by the `01-boot-platform/TODO-13 §23` section-boundary WHPX leg:
-- [/] Scale the `BOOT-BUDGET` phase targets by accelerator, or report a breach on a slow accelerator as its own value rather than `[FAIL]`.
+- [ ] Scale the `BOOT-BUDGET` phase targets by accelerator, or report a breach on a slow accelerator as its own value rather than `[FAIL]`.
   - BLOCKED on the same image ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §19 once the guard is gone").
   - Observed on the WHPX boundary leg for a change touching NO VFS, EXEC or loader code: `VFS -> PARTITION took 5725ms (target 500ms)` and `EXEC -> DESKTOP_READY took 2319ms (target 100ms)`, both `[FAIL]`, while all four KVM and TCG legs of the same image reported zero `BOOT-BUDGET` lines.
   - The targets are wall-clock and WHPX boots roughly an order of magnitude slower than KVM (~141s against ~2s), so every WHPX run reports a red `[FAIL]` that names a phase nothing regressed. That trains a reader to skim the one signal the leg exists to produce.
   - Not a regression and not muted: the finding is that the reporter states a platform-relative fact in absolute terms. The provenance is the header line above; this section owns the budget reporter, and the TPM work that happened to observe it has no dependency on the fix.
 
-- [/] The total-budget line names the wrong window: `boot_perf_total_check()` prints "first-step to DESKTOP_READY wall clock" but the measured span ends at `DEFERRED`.
+- [ ] The total-budget line names the wrong window: `boot_perf_total_check()` prints "first-step to DESKTOP_READY wall clock" but the measured span ends at `DEFERRED`.
   - `src/kernel/boot_perf_budget.c:174` hardcodes the `DESKTOP_READY` text while `boot_perf_total_check()` measures through the LAST recorded step (`steps[n-1].tsc`, `src/kernel/boot_perf_budget.c:156`); `boot_run_deferred()` records `DEFERRED` after it (`src/kernel/main/boot_init.c:213`). The string does not appear in `include/kernel/boot_perf_budget.h` at all, which the earlier draft cited.
   - Observed 2026-05-03: `DESKTOP_READY` at `+2992ms` then `DEFERRED` at `+3120ms`. The line numbers that anchored this are gone (the smoke log is regenerated per run); the durable anchor is the ordering itself, at `src/kernel/main/boot_init.c:213`. The reported total silently includes the deferred-init work the name excludes.
   - Found 2026-09-03 while verifying a §20 claim that rested on the same wrong premise. NOT itself blocked by the image ceiling -- the repair is string text in `.rodata`, which has budget -- but it shares this section's park because it is the same reporter. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §19 once the guard is gone").
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
-> **Deferred:** [M] 2026-09-03 -- code COMPLETE and design-reviewed, reverted on the kernel image ceiling; the tree was left green. MEASURED at `a0a78bde1`: `scripts/overnight/bss-headroom.py` reports `__kernel_end` `0x7fead5` with **47 bytes** of `.text` slack, and this section costs **+2,448 bytes** of `.text`, which landed `__kernel_end` exactly on `0x800000` and tripped the `scripts/build.sh` BSS guard. Trimming cannot rescue it: 47 bytes does not admit a format string. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §19 once the guard is gone").
+> **Notes:** Unparked 2026-11-07 on `02-kernel-core/TODO-33` s11's sweep: `scripts/overnight/bss-headroom.py` measures a `.text` budget of 153647 bytes at `9b55ec6f0`, `__kernel_end` 0x7da000. Re-measure at implementation; the guard still applies. Earlier measurement, kept for its costs: [M] 2026-09-03 -- code COMPLETE and design-reviewed, reverted on the kernel image ceiling; the tree was left green. MEASURED at `a0a78bde1`: `scripts/overnight/bss-headroom.py` reports `__kernel_end` `0x7fead5` with **47 bytes** of `.text` slack, and this section costs **+2,448 bytes** of `.text`, which landed `__kernel_end` exactly on `0x800000` and tripped the `scripts/build.sh` BSS guard. Trimming cannot rescue it: 47 bytes does not admit a format string.
 >
 > Design settled, so the redo is apply-then-re-verify rather than a re-design. The diff is preserved at `.claude/state/deferred-TODO-29-boot-perf-health-observability-s19.patch` (gitignored: survives a rollover, NOT a fresh clone), and every decision below is recorded here in case it is lost:
 >
@@ -591,7 +591,7 @@ From the stamped section 3:
 > **Spawned-by:** §19 (split)
 
 From the stamped section 2 (filed 2026-08-14 by the `01-boot-platform/TODO-10 §27` review):
-- [/] Per-DRIVER degraded state for storage, not just a per-subsystem bit. PARKED on the kernel image ceiling; owner named in this section's Deferred stamp. XREF: `01-boot-platform/TODO-10 §27`.
+- [ ] Per-DRIVER degraded state for storage, not just a per-subsystem bit. PARKED on the kernel image ceiling; owner named in this section's Deferred stamp. XREF: `01-boot-platform/TODO-10 §27`.
   - `boot_health.c` has no `SUBSYS_AHCI`/`SUBSYS_NVME` to set, so a boot that excluded one storage driver reports only the aggregate class.
   - TODO-10 §27 made a storage driver whose async init did not complete excludable from `ahci_setup_interrupts()` and `blkdev_register_all()`, but the mask (`storage_unsafe`) is a local in `boot_phase2` and is never published anywhere durable.
   - Parity: Windows marks the devnode `CM_PROB_FAILED_START` ("Code 10"), a persistent per-device property queryable via `CM_Get_DevNode_Status` long after boot; Linux leaves the device unbound and visible in `/sys`. Impossible OS has only the boot-time klog ERROR text, so nothing can answer "is AHCI excluded right now".
@@ -599,7 +599,7 @@ From the stamped section 2 (filed 2026-08-14 by the `01-boot-platform/TODO-10 §
 
 **Test checkpoint:** per moved item; each carries its original acceptance text from §2.
 
-> **Deferred:** [M] 2026-09-03 -- design-reviewed and PARKED BEFORE implementation on the kernel image ceiling; no code was written and the tree was left green. MEASURED at `3032a376e`: `scripts/overnight/bss-headroom.py` reports `__kernel_end` `0x7fead5` with **15 bytes** of `.text` slack (`precision: section-exact`, `tightest: .text`). -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §21 once the guard is gone").
+> **Notes:** Unparked 2026-11-07 on `02-kernel-core/TODO-33` s11's sweep: `scripts/overnight/bss-headroom.py` measures a `.text` budget of 153647 bytes at `9b55ec6f0`, `__kernel_end` 0x7da000. Re-measure at implementation; the guard still applies. Earlier measurement, kept for its costs: [M] 2026-09-03 -- design-reviewed and PARKED BEFORE implementation on the kernel image ceiling; no code was written and the tree was left green. MEASURED at `3032a376e`: `scripts/overnight/bss-headroom.py` reports `__kernel_end` `0x7fead5` with **15 bytes** of `.text` slack (`precision: section-exact`, `tightest: .text`).
 > - Why no probe patch was preserved, unlike §19: the budget is already section-exact and the smallest comparable helper SHIPPED in the consumer file, `boot_health_secureboot_name`, is **30 bytes** of `.text` on its own (`llvm-nm --print-size`) -- twice the whole budget before a single emit loop, name table or publish store. Building it to reconfirm a measured 15 bytes buys no information; the design of record below is what makes the redo implement-then-verify.
 > - REJECTED, the first alternative the item names: new `SUBSYS_AHCI`/`SUBSYS_NVME` enum entries. `SUBSYS_COUNT` is 30 against a `_Static_assert` cap of 32 (`include/kernel/boot_init.h:76`), so four storage drivers force `boot_info.degraded_mask` from `uint32` to `uint64` -- a `BOOT_INFO_VERSION` bump plus the bootloader mirror, which is an ABI change this section does not warrant.
 > - ACCEPTED, the second alternative: a file-scope `uint32` in `boot_storage.c` published once from `storage_unsafe` and read by `boot_health_publish_json()` through an accessor, emitted as a JSON array of driver names. No SMP primitive is needed -- the BSP writes it in Phase 2 and the BSP reads it in Phase 3; document the accessor as immutable after the storage phase rather than adding release/acquire.

@@ -63,7 +63,7 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 | ⭐  |   9   | Policy lock phases and tamper audit              | §2, §3                           |  [/]   |
 | 💎  |  10   | Boot status policy and boot success ledger       | §4, §5, D01 T21 §5, T30 §7       |  [/]   |
 | 💎  |  11   | Config dump, tests, and docs                     | §1-10, T11 §11, T31 §2           |  [/]   |
-| 💎  |  12   | Post-ship follow-up backfill (2026-07-31 cohort) | --                               |  [/]   |
+| 💎  |  12   | Post-ship follow-up backfill (2026-07-31 cohort) | --                               |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already ship.
 > ⭐ = exclusive work: Impossible OS adds provenance, rollout, and tamper semantics neither platform exposes as one kernel-owned plane.
@@ -374,7 +374,7 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 6:
-- [/] Privileged production write path for tunables: no non-test `kernel_tunable_set` caller exists, so every `quota.user.<type>` default stays at its unlimited built-in and no quota cap can be enforced. -> XREF: `02-kernel-core/TODO-25 §6`
+- [ ] Privileged production write path for tunables: no non-test `kernel_tunable_set` caller exists, so every `quota.user.<type>` default stays at its unlimited built-in and no quota cap can be enforced. -> XREF: `02-kernel-core/TODO-25 §6`
   - BLOCKED on the kernel image ceiling, not on design. MEASURED 2026-09-03 at `abf4dc974`: `scripts/overnight/bss-headroom.py` reports `__kernel_end` `0x7fead5` with **15 bytes** of `.text` slack (section-exact), against a set class that costs hundreds. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-02` §12 once the guard is gone")
   - Design of record: add `SystemKernelConfigInformation` (0x1000) as the first set class on the `NtSetSystemInformation` stub at `src/kernel/nt/nt_syscall.c:1556`, taking a `{ name[48]; int64_t value; }` request marshalled with the same probe-then-copy discipline the read path uses at `nt_syscall.c:934`, and dispatching to `kernel_tunable_set(name, value, TUNABLE_SET_PRIVILEGED)`. The quota tunables already register `TUNABLE_PRIVILEGED` (`src/kernel/quota/quota_config.c:151`), so that set flag is the whole authorization contract on the tunable side and nothing in `tunables.c` changes.
   - Gate it on `SeSinglePrivilegeCheck(&SeSystemProfilePrivilege, ssdt_previous_mode())` returning `STATUS_PRIVILEGE_NOT_HELD`, which is the shape already shipped for the performance-counter query class at `src/kernel/nt/nt_syscall.c:1265`.
@@ -383,7 +383,7 @@ From the stamped section 6:
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
-> **Deferred:** [M] 2026-09-03 -- parked before any code was written, so the redo starts from the design above and not from a patch. The sole open item is unreachable on the kernel image ceiling: 15 bytes of `.text` slack measured section-exact at `abf4dc974`, against a new `NtSetSystemInformation` set class plus its privilege gate and name marshalling. Trimming cannot rescue it; the whole class is out of budget. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-02` §12 once the guard is gone")
+> **Notes:** Unparked 2026-11-07 on `02-kernel-core/TODO-33` s11's sweep: `scripts/overnight/bss-headroom.py` measures a `.text` budget of 153647 bytes at `9b55ec6f0`, `__kernel_end` 0x7da000. Re-measure at implementation; the guard still applies. Earlier measurement, kept for its costs: [M] 2026-09-03 -- parked before any code was written, so the redo starts from the design above and not from a patch. The sole open item is unreachable on the kernel image ceiling: 15 bytes of `.text` slack measured section-exact at `abf4dc974`, against a new `NtSetSystemInformation` set class plus its privilege gate and name marshalling. Trimming cannot rescue it; the whole class is out of budget.
 
 ---
 

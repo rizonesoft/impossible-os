@@ -125,6 +125,7 @@ Build the HHDM direct map and install it in an unused PML4 slot while the kernel
 - [x] Bind `PT_PML4` to `MM_PML4_PHYS_LIMIT` via mirrored literal + local `_Static_assert(PT_PML4 < 4 GiB)` in `bootx64.c`. Closes §1 Deferred (AP 32-bit CR3 truncation)
 - [x] `POST16` 0xB061-0xB065 around the HHDM steps (PLAN/ARENA_OK pre-EBS, NXE/INSTALL/OK post-EBS), classified in `tools/post16-manifest`; smoke-verified in order
 - [ ] Reclaim the unused worst-case arena tail: retag only the `s_hhdm_arena_next` used frames RESERVED (retag after `bl_hhdm_install_leaves`), leaving the ~4-5 MiB over-allocation for pmm to free (review defer; efficiency, not correctness)
+  - Left open 2026-11-07: no blocker. The stamp's XREF names this item itself, so nothing would ever clear it.
 - [x] Commit: `"boot: HHDM direct map construction (kernel still walks identity)"`
 
 **Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke.sh` boots to `C:\>`; full `scripts/test.sh` green. The kernel still runs LOW from the identity map AND still walks page tables physically -- this section only INSTALLS the HHDM in unused PML4 slots, so behavior is unchanged and the section is independently bootable. The readback proof runs in the BOOTLOADER (`jump_to_kernel`, after CR3 loads the HHDM): a frame read through its HHDM alias must equal the identity read (aliasing) and the walk of an NX leaf proves EFER.NXE landed -- an in-kernel test is BSS-blocked until §7 (same ceiling as `test_highhalf.c`). The walker conversion and its identity-map-disabled test are §9. Test on: QEMU KVM + TCG.
@@ -157,20 +158,34 @@ Relink the kernel at the high virtual base, map the image there, and make the ex
 > [!IMPORTANT]
 > **Site (a) is pinned by §1: the bootloader.** There is no `entry.asm` in the tree -- `bootx64.c` builds the only early page tables and calls `kernel_main` via ELF-symbol lookup, so `setup_page_tables()` installs the high mapping and the EXISTING call at `bootx64.c:10675` becomes the transition. No far jump, no `lretq`, no CS reload. Consequently §5's `boot_info`/framebuffer translation is CO-DESIGNED with this section rather than following it: `kernel_main` executes high from its first instruction, so there is no "boots low, reinterprets `boot_info` later" phase to defer into.
 
-- [ ] Set the linker VMA to `MM_KERNEL_VIRT_BASE` and keep the LMA at the load address via `AT(...)`, so symbols resolve high but the image still loads low. `linker.ld:25` is `. = 1M` with no `AT()` today
-- [ ] Move the LMA to `MM_KERNEL_PHYS_BASE` (`0x200000`) -- NOT the historical `0x100000`: a `PS=1` PDE needs a 2 MiB-aligned frame, and 1 MiB sets reserved PDE bit 20, faulting before `kernel_main` can report it
-- [ ] No codegen flag change: `-mcmodel=kernel` is already in `Makefile:25` and its `R_X86_64_32S` relocs resolve in the top 2 GiB
-- [ ] Export LMA-derived `__kernel_phys_start`/`__kernel_phys_end` from `linker.ld`, then repoint `pmm.c` kernel_end_phys, bitmap placement, the 1 MiB reservation, and the disjointness checks at PHYSICAL bounds
-- [ ] Teach the `scripts/build.sh` BSS check to read high VMA + low LMA. `load_kernel()` needs NO change -- it already copies by `p_paddr`
-- [ ] Claim loaded kernel-image pages (`AllocatePages(AllocateAddress)`) right after `load_kernel()`, before any post-load alloc, so none lands on the unclaimed image (pre-existing; §2 guards only its arena). ← XREF: §2
-- [ ] Map the kernel image to `MM_KERNEL_IMAGE_BASE` with 4 KiB pages (per-section W^X; a 2 MiB page forces `.text` and `.rodata` to share permissions), plus a TRANSIENT identity map of the bootloader RIP + stack
-- [ ] No far jump / `lretq` / CS reload: the existing call at `bootx64.c:10675` IS the transition once CR3 carries both maps and `kernel_main` high `st_value` is mapped (CS is already a long-mode selector)
-- [ ] Replace the `kernel_base = 0x100000` NX bound (`vmm.c:1452`) with image-window bounds; assert `.text` executable and `.rodata`/`.data`/`.bss` NX at their real high VAs
-- [ ] After the jump switch the stack to a high VA. Do NOT shrink the identity map here: early code still derefs handoff pointers physically (`boot_progress.c:137`), and that translation is §5. Teardown moves to §5
-- [ ] Keep the AP envelope: `ap_trampoline.asm` is `[ORG 0x8000]` with `AP_DATA 0x8E00`, and `smp.c:317` hands each AP the BSP live CR3, so trampoline + data + temp stack stay identity-mapped in EVERY bring-up CR3 until all APs ack (§4)
-- [ ] Confirm `readelf -l build/kernel.exe` shows VirtAddr `MM_KERNEL_VIRT_BASE` with PhysAddr preserved at the LMA
-- [ ] Add `POST16` entry/exit codes around CR3-enable and the high-half jump (teardown codes land with the teardown in §5)
-- [ ] Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`
+- [/] Set the linker VMA to `MM_KERNEL_VIRT_BASE` and keep the LMA at the load address via `AT(...)`, so symbols resolve high but the image still loads low. `linker.ld:25` is `. = 1M` with no `AT()` today
+  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [/] Move the LMA to `MM_KERNEL_PHYS_BASE` (`0x200000`) -- NOT the historical `0x100000`: a `PS=1` PDE needs a 2 MiB-aligned frame, and 1 MiB sets reserved PDE bit 20, faulting before `kernel_main` can report it
+  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [/] No codegen flag change: `-mcmodel=kernel` is already in `Makefile:25` and its `R_X86_64_32S` relocs resolve in the top 2 GiB
+  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [/] Export LMA-derived `__kernel_phys_start`/`__kernel_phys_end` from `linker.ld`, then repoint `pmm.c` kernel_end_phys, bitmap placement, the 1 MiB reservation, and the disjointness checks at PHYSICAL bounds
+  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [/] Teach the `scripts/build.sh` BSS check to read high VMA + low LMA. `load_kernel()` needs NO change -- it already copies by `p_paddr`
+  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [/] Claim loaded kernel-image pages (`AllocatePages(AllocateAddress)`) right after `load_kernel()`, before any post-load alloc, so none lands on the unclaimed image (pre-existing; §2 guards only its arena). ← XREF: §2
+  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [/] Map the kernel image to `MM_KERNEL_IMAGE_BASE` with 4 KiB pages (per-section W^X; a 2 MiB page forces `.text` and `.rodata` to share permissions), plus a TRANSIENT identity map of the bootloader RIP + stack
+  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [/] No far jump / `lretq` / CS reload: the existing call at `bootx64.c:10675` IS the transition once CR3 carries both maps and `kernel_main` high `st_value` is mapped (CS is already a long-mode selector)
+  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [/] Replace the `kernel_base = 0x100000` NX bound (`vmm.c:1452`) with image-window bounds; assert `.text` executable and `.rodata`/`.data`/`.bss` NX at their real high VAs
+  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [/] After the jump switch the stack to a high VA. Do NOT shrink the identity map here: early code still derefs handoff pointers physically (`boot_progress.c:137`), and that translation is §5. Teardown moves to §5
+  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [/] Keep the AP envelope: `ap_trampoline.asm` is `[ORG 0x8000]` with `AP_DATA 0x8E00`, and `smp.c:317` hands each AP the BSP live CR3, so trampoline + data + temp stack stay identity-mapped in EVERY bring-up CR3 until all APs ack (§4)
+  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [/] Confirm `readelf -l build/kernel.exe` shows VirtAddr `MM_KERNEL_VIRT_BASE` with PhysAddr preserved at the LMA
+  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [/] Add `POST16` entry/exit codes around CR3-enable and the high-half jump (teardown codes land with the teardown in §5)
+  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [/] Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** Serial shows the high-half POST16 sequence in order; the kernel reaches its existing Phase-1 banner from a high virtual RIP (`llvm-addr2line` on a logged RIP resolves to a `MM_KERNEL_VIRT_BASE` address). `=== BUILD OK ===` and the smoke test boots to `C:\>`. Test on: QEMU KVM + TCG; **bare metal (deferred human sign-off per the policy above -- NOT an implementation prerequisite)**.
 
@@ -185,13 +200,20 @@ Relink the kernel at the high virtual base, map the image there, and make the ex
 
 Move the GDT, IDT, TSS, and per-CPU/`GS_BASE` state to high virtual addresses, and route SMP AP startup through the high-half transition.
 
-- [ ] Relocate GDT/IDT/TSS pointers (`lgdt`/`lidt`/`ltr`) to high-virtual addresses after the §3 switch; verify the GDT user-segment order (SYSRET) constraint still holds (`gdt.h` static asserts).
-- [ ] Set `GS_BASE`/`KERNEL_GS_BASE` and per-CPU data to high-virtual addresses before any interrupt fires (bare-metal-gotcha: GS_BASE before first interrupt).
-- [ ] AP trampoline: APs start in the low real/protected-mode trampoline, then load the shared kernel page tables and far-jump into the high half (mirror §3 for each AP).
-- [ ] Own the AP low envelope: reserve + identity-map the trampoline (0x8000), shared data (0x8E00), temp stack, and every table an AP reads, in each bring-up CR3; retire it only after all APs ack, with a timeout policy + TLB invalidation
-- [ ] Re-point the IST stacks (DF/NMI/MCE) and their guard pages to high-virtual addresses.
-- [ ] Add `POST16` codes around AP high-half entry.
-- [ ] Commit: `"boot: descriptor tables + per-CPU + AP startup in the higher half"`
+- [/] Relocate GDT/IDT/TSS pointers (`lgdt`/`lidt`/`ltr`) to high-virtual addresses after the §3 switch; verify the GDT user-segment order (SYSRET) constraint still holds (`gdt.h` static asserts).
+  - BLOCKED: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
+- [/] Set `GS_BASE`/`KERNEL_GS_BASE` and per-CPU data to high-virtual addresses before any interrupt fires (bare-metal-gotcha: GS_BASE before first interrupt).
+  - BLOCKED: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
+- [/] AP trampoline: APs start in the low real/protected-mode trampoline, then load the shared kernel page tables and far-jump into the high half (mirror §3 for each AP).
+  - BLOCKED: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
+- [/] Own the AP low envelope: reserve + identity-map the trampoline (0x8000), shared data (0x8E00), temp stack, and every table an AP reads, in each bring-up CR3; retire it only after all APs ack, with a timeout policy + TLB invalidation
+  - BLOCKED: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
+- [/] Re-point the IST stacks (DF/NMI/MCE) and their guard pages to high-virtual addresses.
+  - BLOCKED: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
+- [/] Add `POST16` codes around AP high-half entry.
+  - BLOCKED: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
+- [/] Commit: `"boot: descriptor tables + per-CPU + AP startup in the higher half"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** All CPUs reach the scheduler from high-virtual RIPs; an intentional #DF still shows the guard-page label. Serial shows per-AP high-half POST16. Test on: QEMU WHPX (2 CPUs) + TCG; **bare metal**.
 
@@ -209,16 +231,24 @@ The bootloader runs identity-mapped and hands the kernel physical/low pointers; 
 > [!IMPORTANT]
 > **This section OWNS the identity-map teardown** (moved out of §3 by the 2026-07-16 design review). §3 makes the jump but deliberately leaves the identity map live, because early code still derefs handoff pointers physically -- `boot_progress.c:137` reads `g_boot_info.fb.addr` directly. Shrinking the map before those pointers are translated faults early boot with no output. The map staying live through §3/§4 is the status quo (it is already live and User-mapped today), so this is a not-yet-fixed hazard, never a new regression.
 
-- [ ] Audit every `boot_info` pointer (memory map, ACPI tables, framebuffer base, command line, initrd/UKI sections) for physical vs virtual; access them via the direct map after §3.
-- [ ] Decide framebuffer mapping: map the GOP framebuffer into the kernel's high MMIO window (WC) rather than touching its physical address directly.
-- [ ] Once every handoff pointer above is translated, SHRINK the identity map to the AP envelope and CLEAR the User bit on what remains -- a retained 4 GiB map is a writable+User+exec low alias of kernel text (§1 Decision 6)
-- [ ] Teardown lands HERE, not in §3: `boot_progress.c:137` derefs `g_boot_info.fb.addr` physically, so shrinking the map before this section faults early boot. Add the `POST16` teardown codes with it
-- [ ] Convert the remaining raw phys-as-pointer consumers before the map is retired, starting with `src/kernel/env.c:309`.
+- [/] Audit every `boot_info` pointer (memory map, ACPI tables, framebuffer base, command line, initrd/UKI sections) for physical vs virtual; access them via the direct map after §3.
+  - BLOCKED: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [/] Decide framebuffer mapping: map the GOP framebuffer into the kernel's high MMIO window (WC) rather than touching its physical address directly.
+  - BLOCKED: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [/] Once every handoff pointer above is translated, SHRINK the identity map to the AP envelope and CLEAR the User bit on what remains -- a retained 4 GiB map is a writable+User+exec low alias of kernel text (§1 Decision 6)
+  - BLOCKED: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [/] Teardown lands HERE, not in §3: `boot_progress.c:137` derefs `g_boot_info.fb.addr` physically, so shrinking the map before this section faults early boot. Add the `POST16` teardown codes with it
+  - BLOCKED: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [/] Convert the remaining raw phys-as-pointer consumers before the map is retired, starting with `src/kernel/env.c:309`.
+  - BLOCKED: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
   - That site casts a `pmm_alloc_contiguous` result straight to `struct env_buf_hdr *`, and `include/kernel/env.h:103` documents the identity-mapped assumption as a contract rather than an accident.
   - Raised by §16's kernel-quality audit as the production twin of the test allocator §16 converted: `test_scratch_alloc` now routes through `pmm_alloc_pages_hhdm()`, and `env.c` is the same shape in the very subsystem whose test file was converted alongside it. There are roughly 20 such sites (`nvme.c`, xHCI, gfx, ixfs); each one is a fault the instant this section shrinks the identity map, so the inventory belongs to the teardown, not to the consumers. -> XREF: this file §16 (item: "Decided: it DID block the charter, and is routed through the HHDM")
-- [ ] Bump `BOOT_INFO_VERSION` if the handoff contract changes (mirror header + kernel header together per the boot_info ABI rules); update the drift manifest.
-- [ ] Record the high-half handoff in the boot protocol schema changelog (`D01 T01 §8`).
-- [ ] Commit: `"boot: boot_info + framebuffer handoff translated for higher-half kernel"`
+- [/] Bump `BOOT_INFO_VERSION` if the handoff contract changes (mirror header + kernel header together per the boot_info ABI rules); update the drift manifest.
+  - BLOCKED: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [/] Record the high-half handoff in the boot protocol schema changelog (`D01 T01 §8`).
+  - BLOCKED: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [/] Commit: `"boot: boot_info + framebuffer handoff translated for higher-half kernel"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** Desktop renders (framebuffer reachable via the high MMIO window); ACPI tables parse; `boot_info` validation passes; the identity map is gone except the AP envelope, and what remains carries no User bit. `boot-info-manifest` compare gate passes. Test on: QEMU KVM + TCG; **bare metal** (real GOP framebuffer, deferred human sign-off).
 
@@ -230,13 +260,20 @@ The bootloader runs identity-mapped and hands the kernel physical/low pointers; 
 
 Layer the high-half kernel onto the existing per-process page tables: every process PML4 shares the kernel's upper-half entries and owns a private lower half.
 
-- [ ] On PML4 creation (`TODO-10 §8` path), copy/alias the kernel's upper-half PML4 entries into every new process PML4 (shared, supervisor-only).
-- [ ] Prepopulate + permanently own the kernel upper-half hierarchy so a later kernel mapping never needs a NEW top-level entry propagated into live PML4s; otherwise implement synchronized propagation to every process PML4
-- [ ] Pin shared-frame ownership: process PML4 teardown must never free kernel upper-half tables; require a cross-CPU TLB-shootdown test for a kernel mapping added after processes exist
-- [ ] User mappings go in the lower half only; remove the assumption that user pages live just above the kernel.
-- [ ] Ensure kernel upper-half entries are marked supervisor (no User bit) -- this is the clean split that unblocks SMEP/SMAP and KPTI.
-- [ ] Verify TLB/CR3 switch semantics: switching to a user process keeps the kernel mapped (high half) while swapping the lower half.
-- [ ] Commit: `"mm: per-process PML4 -- kernel high-half shared, user low-half private"`
+- [/] On PML4 creation (`TODO-10 §8` path), copy/alias the kernel's upper-half PML4 entries into every new process PML4 (shared, supervisor-only).
+  - BLOCKED: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [/] Prepopulate + permanently own the kernel upper-half hierarchy so a later kernel mapping never needs a NEW top-level entry propagated into live PML4s; otherwise implement synchronized propagation to every process PML4
+  - BLOCKED: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [/] Pin shared-frame ownership: process PML4 teardown must never free kernel upper-half tables; require a cross-CPU TLB-shootdown test for a kernel mapping added after processes exist
+  - BLOCKED: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [/] User mappings go in the lower half only; remove the assumption that user pages live just above the kernel.
+  - BLOCKED: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [/] Ensure kernel upper-half entries are marked supervisor (no User bit) -- this is the clean split that unblocks SMEP/SMAP and KPTI.
+  - BLOCKED: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [/] Verify TLB/CR3 switch semantics: switching to a user process keeps the kernel mapped (high half) while swapping the lower half.
+  - BLOCKED: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [/] Commit: `"mm: per-process PML4 -- kernel high-half shared, user low-half private"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** `cmd.exe` and a second user process run in separate PML4s, each with a private lower half and the shared kernel high half; a user pointer in process A is not valid in process B. Test on: QEMU WHPX + TCG; **bare metal**.
 
@@ -253,95 +290,129 @@ Layer the high-half kernel onto the existing per-process page tables: every proc
 
 With user space owning the lower half, drop the hardcoded ceiling and all the bookkeeping that defended it.
 
-- [ ] Re-add `src/kernel/test/test_highhalf.c` + `test_register_highhalf()` (`TEST_CAT_MM`): authored in §1 but reverted because it tripped the BSS guard with zero headroom. Do this FIRST in §7 -- it is the regression net for the whole relocation
-- [ ] `test_highhalf.c` also covers the §9 identity-map-disabled walker exercise + absent-PML4/PDPT/PD `vmm_set_user_page`/`_remap` no-crash cases → XREF: §9
+- [/] Re-add `src/kernel/test/test_highhalf.c` + `test_register_highhalf()` (`TEST_CAT_MM`): authored in §1 but reverted because it tripped the BSS guard with zero headroom. Do this FIRST in §7 -- it is the regression net for the whole relocation
+  - BLOCKED: 3 of its 5 assertions describe a high-half kernel; §11 measured them failing today. Waits on §3, `todo/answers.md` Q3.
+- [/] `test_highhalf.c` also covers the §9 identity-map-disabled walker exercise + absent-PML4/PDPT/PD `vmm_set_user_page`/`_remap` no-crash cases → XREF: §9
+  - BLOCKED: part of the test above.
 - [ ] `scripts/lint.sh` check rejecting raw page-table phys-as-pointer casts outside the bootloader + `pt_walk` (§9 design-review F1 hardening) → XREF: §9
-- [ ] Choose the new conventional user load base (e.g. `0x400000`, or PIE/ASLR-randomized once `D03 T02 §2` lands) and update `user/user.ld` + `scripts/build-eif.py`.
-- [ ] Reduce `include/kernel/mm/user_range.h` to the new base (or remove it if ASLR makes it dynamic); update the three includers (`vmm.c`, `pmm.c`, `task.c`) and their static asserts.
-- [ ] Remove the `scripts/build.sh` BSS-collision guard (no longer meaningful) and the `0x900000` user-range guard page; replace with the relevant lower-half guard if still needed.
-- [ ] Confirm the §10 static-pool conversions are no longer load-bearing for HEADROOM. KEEP them (freestanding rule: no large static); only the headroom justification retires -> XREF: this file §10 (item: "Convert `reg_value_pool`").
-- [ ] Unblocks the kernel sections the ceiling stalled: re-run each deferred section once the guard is gone -> XREF `02-kernel-core/TODO-22` §23 (item: "Commit: `\"ntdll: live-environment adoption over an atomic env exchange\"`")
-- [ ] Re-run `02-kernel-core/TODO-22` §24 once the guard is gone (item: "Commit: `\"ntdll: measured expansion budget + lookup cache for Rtl env\"`"); it also carries a latent non-atomic `env_buf_free` SMP fix
-- [ ] Re-run `02-kernel-core/TODO-22` §25 once the guard is gone (item: "Commit: `\"ntdll: counted (non-_U) Rtl env read forms over a SIZE_T-safe core\"`")
-- [ ] Re-run `02-kernel-core/TODO-23` §1 once the guard is gone (item: "Commit: `\"kernel: add EXCEPTION_RECORD, CONTEXT, and EXCEPTION_POINTERS types\"`"); code COMPLETE, parked in `git stash` `todo23-s1-wip` -- apply, do not rewrite
-- [ ] Re-run `01-boot-platform/TODO-14` §15 once the guard is gone (item: "Commit: `\"boot: durable record for the anti-rollback terminal give-up\"`")
+  - Left open 2026-11-07: a lint check adds no kernel `.text` and needs no §3; `scripts/lint.sh` has no such check yet.
+- [/] Choose the new conventional user load base (e.g. `0x400000`, or PIE/ASLR-randomized once `D03 T02 §2` lands) and update `user/user.ld` + `scripts/build-eif.py`.
+  - BLOCKED: §7 removes the ceiling only after §3 and §6, which wait on `todo/answers.md` Q3.
+- [/] Reduce `include/kernel/mm/user_range.h` to the new base (or remove it if ASLR makes it dynamic); update the three includers (`vmm.c`, `pmm.c`, `task.c`) and their static asserts.
+  - BLOCKED: §7 removes the ceiling only after §3 and §6, which wait on `todo/answers.md` Q3.
+- [/] Remove the `scripts/build.sh` BSS-collision guard (no longer meaningful) and the `0x900000` user-range guard page; replace with the relevant lower-half guard if still needed.
+  - BLOCKED: §7 removes the ceiling only after §3 and §6, which wait on `todo/answers.md` Q3. The guard is live at `scripts/build.sh:405`.
+- [/] Confirm the §10 static-pool conversions are no longer load-bearing for HEADROOM. KEEP them (freestanding rule: no large static); only the headroom justification retires -> XREF: this file §10 (item: "Convert `reg_value_pool`").
+  - BLOCKED: §7 removes the ceiling only after §3 and §6, which wait on `todo/answers.md` Q3.
+- [x] Unblocks the kernel sections the ceiling stalled: re-run each deferred section once the guard is gone -> XREF `02-kernel-core/TODO-22` §23 (item: "Commit: `\"ntdll: live-environment adoption over an atomic env exchange\"`")
+  - Answered 2026-11-07 by §11's sweep with the guard still in place; `02-kernel-core/TODO-22` s23 itself is row `[x]`, shipped.
+- [x] Re-run `02-kernel-core/TODO-22` §24 once the guard is gone (item: "Commit: `\"ntdll: measured expansion budget + lookup cache for Rtl env\"`"); it also carries a latent non-atomic `env_buf_free` SMP fix
+  - Reopened 2026-11-07 for its usercopy blocker, row `[ ]`; the ceiling no longer applies.
+- [x] Re-run `02-kernel-core/TODO-22` §25 once the guard is gone (item: "Commit: `\"ntdll: counted (non-_U) Rtl env read forms over a SIZE_T-safe core\"`")
+  - Row `[x]`, shipped; checked 2026-11-07.
+- [x] Re-run `02-kernel-core/TODO-23` §1 once the guard is gone (item: "Commit: `\"kernel: add EXCEPTION_RECORD, CONTEXT, and EXCEPTION_POINTERS types\"`"); code COMPLETE, parked in `git stash` `todo23-s1-wip` -- apply, do not rewrite
+  - Row `[x]`, shipped; checked 2026-11-07.
+- [x] Re-run `01-boot-platform/TODO-14` §15 once the guard is gone (item: "Commit: `\"boot: durable record for the anti-rollback terminal give-up\"`")
+  - Target unparked 2026-11-07 with the guard still in place: the `.text` budget is 153647 bytes, so it no longer waits on the guard's removal.
   - Code COMPLETE and design-reviewed, preserved at `.claude/state/deferred-todo14-s15.diff` -- apply, do not rewrite. Measured 2026-08-30: needs 4,208 bytes against 1,323 available.
-- [ ] Re-run `01-boot-platform/TODO-14` §12 once the guard is gone (item: "Granular per-driver `boot_load_record`"); parked purely on size, its three sibling items share the same blocker
-- [ ] Re-run `01-boot-platform/TODO-14` §13 once the guard is gone (item: "Move `%d`/`%u`/`%x` to standard C width semantics in `vformat_buf`"); the `-Wformat` attribute and the hand-written width warning retire in the same commit
-- [ ] Re-run `01-boot-platform/TODO-14` §17 once the guard is gone (item: "Capture and validate the evidence page at the very start of `kernel_main`, before `boot_phase0()` can panic, using a helper that neither logs nor allocates")
+- [x] Re-run `01-boot-platform/TODO-14` §12 once the guard is gone (item: "Granular per-driver `boot_load_record`"); parked purely on size, its three sibling items share the same blocker
+  - Target unparked 2026-11-07 with the guard still in place: the `.text` budget is 153647 bytes, so it no longer waits on the guard's removal.
+- [x] Re-run `01-boot-platform/TODO-14` §13 once the guard is gone (item: "Move `%d`/`%u`/`%x` to standard C width semantics in `vformat_buf`"); the `-Wformat` attribute and the hand-written width warning retire in the same commit
+  - Target unparked 2026-11-07 with the guard still in place: the `.text` budget is 153647 bytes, so it no longer waits on the guard's removal.
+- [x] Re-run `01-boot-platform/TODO-14` §17 once the guard is gone (item: "Capture and validate the evidence page at the very start of `kernel_main`, before `boot_phase0()` can panic, using a helper that neither logs nor allocates")
+  - Target unparked 2026-11-07 with the guard still in place: the `.text` budget is 153647 bytes, so it no longer waits on the guard's removal.
   - Parked 2026-09-03 before any code was written, so the redo starts from the design and not from a patch. The section offers two mechanisms (move the restore ahead of Phase 0, or refuse an overwrite of a prior-boot record until the restore has run) and deliberately leaves the choice to whoever has the image budget.
   - The user impact is the one this whole page is about: a Phase-0 crash on the boot after a Phase-0 crash reports only the second one, so a boot loop is diagnosed from its symptom.
-- [ ] Re-run `01-boot-platform/TODO-14` §19 once the guard is gone (item: "Gate the kernel's access to the evidence page on the decoded state, so a boot whose pin failed does not write a page firmware may own")
+- [x] Re-run `01-boot-platform/TODO-14` §19 once the guard is gone (item: "Gate the kernel's access to the evidence page on the decoded state, so a boot whose pin failed does not write a page firmware may own")
+  - Target unparked 2026-11-07 with the guard still in place: the `.text` budget is 153647 bytes, so it no longer waits on the guard's removal.
   - Parked 2026-09-03, unstarted. Its bootloader half costs the kernel image nothing and would land today; it is held back because a `boot_info` field with no consumer is a `BOOT_INFO_VERSION` bump spent on nothing.
   - Carries a `BOOT_INFO_VERSION` 24 -> 25 bump in BOTH headers plus the `dump-fields.inc` and ownership-matrix rows, so schedule it where a protocol bump is acceptable rather than squeezing it in beside another section.
-- [ ] Re-run `02-kernel-core/TODO-04` §14's runtime renderer test once the guard is gone (item: "Add the RUNTIME regression test driving the renderer at 7/8/9/10-digit `sec` values")
+- [x] Re-run `02-kernel-core/TODO-04` §14's runtime renderer test once the guard is gone (item: "Add the RUNTIME regression test driving the renderer at 7/8/9/10-digit `sec` values")
+  - Target unparked 2026-11-07 with the guard still in place: the `.text` budget is 153647 bytes, so it no longer waits on the guard's removal.
   - The section's BOUND already shipped and is compile-time verified, so only the runtime test is outstanding here.
   - Code COMPLETE and adversarial-reviewed, preserved at `.claude/state/deferred-TODO-04-s14-renderer-test.patch` -- apply, do not rewrite. It extracts `klog_render_dec_u32()` from `klog_emit()` and adds a guard-byte test around it.
   - MEASURED 2026-09-03: the extraction ALONE moves the raw allocated end `0x7fead5` -> `0x7ffad5`, page-aligning `__kernel_end` from `0x7ff000` to `0x800000` = `USER_BASE`, and the guard refuses the link; with the test it overshoots further. Against a 15-byte `.text` budget, so this one cannot be trimmed to fit.
-- [ ] Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone -- the whole exception/SEH file is ceiling-parked (each section adds kernel `.text`); un-defer and implement in Implementation-Order once §1's types link
-- [ ] Re-run `01-boot-platform/TODO-13` §28 once the guard is gone (item: "Commit: `\"tpm: crash-consistent record pairing and verified-read boot budget\"`"); design review is DONE and the diff is preserved, so the re-attempt is apply-then-re-verify
+- [x] Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone -- the whole exception/SEH file is ceiling-parked (each section adds kernel `.text`); un-defer and implement in Implementation-Order once §1's types link
+  - Stale, checked 2026-11-07: s6, s10, s11 and s13 shipped, and no remaining stamp in that range names the ceiling as a live blocker.
+- [x] Re-run `01-boot-platform/TODO-13` §28 once the guard is gone (item: "Commit: `\"tpm: crash-consistent record pairing and verified-read boot budget\"`"); design review is DONE and the diff is preserved, so the re-attempt is apply-then-re-verify
+  - Row `[x]`, shipped; checked 2026-11-07.
   - Reverted 2026-08-18 with the tree left green. The code built clean on its own; the section's mandatory unit tests pushed `.rodata` over a 4 KiB page, which cascaded `.data` and `.bss` each up one page and landed `__kernel_end` exactly on `0x800000`.
   - The diff is at `.claude/state/deferred-todo13-s28.patch` (gitignored, survives a session rollover but NOT a fresh clone). If it is lost, the §28 Deferred stamp records every design outcome so the redo is mechanical rather than a re-design.
   - DONE as far as THIS section is concerned, 2026-08-18: §12 cleared the guard tactically without waiting for §7's permanent retirement, and `01-boot-platform/TODO-13` §28 is unparked and back in its own file's queue -> XREF: this file §12 (item: "Convert exactly ONE assessed pool to frame-backed storage").
-- [ ] Re-run `01-boot-platform/TODO-13` §33-§35 once the guard is gone (item: "Commit: `\"tpm: report PCR-layer contention as retryable\"`" and the two after it); §33's code is written and preserved, §34-§35 are parked unstarted
+- [x] Re-run `01-boot-platform/TODO-13` §33-§35 once the guard is gone (item: "Commit: `\"tpm: report PCR-layer contention as retryable\"`" and the two after it); §33's code is written and preserved, §34-§35 are parked unstarted
+  - Target unparked 2026-11-07 with the guard still in place: the `.text` budget is 153647 bytes, so it no longer waits on the guard's removal.
   - §33's diff is at `.claude/state/deferred-todo13-s33.patch` and builds clean; the design outcome is recorded in its own Deferred stamp, so the redo is apply-then-re-verify.
   - MEASURED 2026-08-30 and it changes the picture for this whole TODO: §33's production change alone is +96 bytes of `.text` and that was enough to move `__kernel_end` from 0x7ff000 to exactly 0x800000. The image sections are page-aligned and chain, so the tree admits essentially NO new kernel code, not one page of it. `01-boot-platform/TODO-13` is now fully parked on this section.
-- [ ] Re-run `01-boot-platform/TODO-13` §32 once the guard is gone (item: "Commit: `\"tpm: authorized-record coverage residue on existing fixtures\"`"); the tests are authored, so the redo is apply-then-re-verify
-- [ ] Re-run `01-boot-platform/TODO-14` §12 once the guard is gone (item: "Granular per-driver `boot_load_record`"); the code is written and design-reviewed, so the redo is apply-then-re-verify
-- [ ] Re-run `01-boot-platform/TODO-14` §13 once the guard is gone (item: "Move `%d`/`%u`/`%x` to standard C width semantics"); nothing is written, the section is blocked at its FIRST line of work
+- [x] Re-run `01-boot-platform/TODO-13` §32 once the guard is gone (item: "Commit: `\"tpm: authorized-record coverage residue on existing fixtures\"`"); the tests are authored, so the redo is apply-then-re-verify
+  - Target unparked 2026-11-07 with the guard still in place: the `.text` budget is 153647 bytes, so it no longer waits on the guard's removal.
+- [x] Re-run `01-boot-platform/TODO-14` §12 once the guard is gone (item: "Granular per-driver `boot_load_record`"); the code is written and design-reviewed, so the redo is apply-then-re-verify
+  - Target unparked 2026-11-07 with the guard still in place: the `.text` budget is 153647 bytes, so it no longer waits on the guard's removal.
+- [x] Re-run `01-boot-platform/TODO-14` §13 once the guard is gone (item: "Move `%d`/`%u`/`%x` to standard C width semantics"); nothing is written, the section is blocked at its FIRST line of work
+  - Target unparked 2026-11-07 with the guard still in place: the `.text` budget is 153647 bytes, so it no longer waits on the guard's removal.
   - MEASURED 2026-08-30: the `vformat_buf` engine change alone is **+112 bytes of `.text`** against 79 available, so the whole section is unreachable, not merely expensive. The probe was reverted and the tree left green.
   - It is also the largest of the parked sections by far -- 2,731 `%u`, 709 `%x`, 291 `%d`, 249 `%X` conversions and 7,119 `(uint64_t)` casts across `src/kernel`, all of which must land in ONE commit with the engine change. Schedule it accordingly once the ceiling lifts.
   - Preserved at `.claude/state/deferred-todo14-s12.patch` (gitignored, survives a rollover but NOT a fresh clone). The §12 Deferred stamp records all four design-review outcomes, so the redo stays mechanical if the patch is lost.
   - MEASURED 2026-08-30, and it is the sharpest reading of this ceiling so far: the section costs **+1,904 bytes of `.text`** against **79 bytes** of headroom. `.text` ends at `0x427FB1` with its page boundary at `0x428000`, so the binding constraint is not the BSS slack at all -- it is 79 bytes of `.text`, after which `.rodata`, `.data` and `.bss` each move up a full 4 KiB page and `__kernel_end` lands on `0x800000`.
-- [ ] Re-run `01-boot-platform/TODO-29` §20 once the guard is gone (item: "C:\ fallback for `boot-trend.json`"); only the C: path construction is parked, the rest of that section shipped
+- [/] Re-run `01-boot-platform/TODO-29` §20 once the guard is gone (item: "C:\ fallback for `boot-trend.json`"); only the C: path construction is parked, the rest of that section shipped
+  - BLOCKED: `01-boot-platform/TODO-29` s20 carries both review stamps, so it cannot be reopened in place; see §11's stamped-residue item. The ceiling itself has cleared.
   - `boot-trend.json` is the one Perf artifact with NO C: fallback: `boot-profile` and `boot-timeline` both build their path from `klog_using_blackbox ? "X:\\Perf\\" : klog_dir` (`src/kernel/main/boot_progress.c:387`). Matching them means three runtime-built paths across five call sites in `boot_trend.c`.
   - Not blocked on design: the pattern to copy is shipped and named above. §20 already landed the honest interim -- an explicit BlackBox-absent refusal before the two 16 KiB allocations -- so the parked half is the parity fix alone.
   - Its post-ship review parked two more on the same ceiling, both measured. `boot_trend_compute_growth_pct()` narrows a `uint64_t` quotient, so `prior_median=1` with `newest_median=1073741825` is exactly 25 * 2^32 percent and lands on 0, suppressing the regression alarm for the largest growth representable; two spellings of the clamp were tried and BOTH tripped the BSS guard against 15 bytes of `.text`. And the rebuilt ring is reparsed for six regression samples while the old tree is still live, ~1,461 extra kmalloc calls per boot.
-- [ ] Re-run `01-boot-platform/TODO-29` §19 once the guard is gone (item: "Gate the full `PERF`/timeline serial tables behind debug/test builds"); the code is written and design-reviewed, so the redo is apply-then-re-verify
+- [x] Re-run `01-boot-platform/TODO-29` §19 once the guard is gone (item: "Gate the full `PERF`/timeline serial tables behind debug/test builds"); the code is written and design-reviewed, so the redo is apply-then-re-verify
+  - Target unparked 2026-11-07 with the guard still in place: the `.text` budget is 153647 bytes, so it no longer waits on the guard's removal.
   - Preserved at `.claude/state/deferred-TODO-29-boot-perf-health-observability-s19.patch` (gitignored, survives a rollover but NOT a fresh clone). The §19 Deferred stamp records every design-review outcome, so the redo stays mechanical if the patch is lost.
   - MEASURED 2026-09-03 at `a0a78bde1`: **+2,448 bytes** of `.text` against the **47 bytes** of slack this page already records, landing `__kernel_end` on `0x800000`.
   - It is the second parked section that would REDUCE default serial output rather than add to it: two full per-step tables, 45 lines each, print on every production boot today. The ceiling is holding back a change that makes the boot log smaller.
-- [ ] Re-run `01-boot-platform/TODO-29` §21 once the guard is gone (item: "Per-DRIVER degraded state for storage"); nothing is written -- the section was design-reviewed and parked before its first line of code
+- [x] Re-run `01-boot-platform/TODO-29` §21 once the guard is gone (item: "Per-DRIVER degraded state for storage"); nothing is written -- the section was design-reviewed and parked before its first line of code
+  - Target unparked 2026-11-07 with the guard still in place: the `.text` budget is 153647 bytes, so it no longer waits on the guard's removal.
   - MEASURED 2026-09-03 at `3032a376e`: 15 bytes of `.text` slack, against a smallest-comparable shipped helper in the same consumer file (`boot_health_secureboot_name`) of 30 bytes. No probe patch exists because building one would only reconfirm a section-exact budget.
   - The §21 Deferred stamp carries the full design of record -- the rejected `SUBSYS_*` widening and why it is an ABI change, the accepted registry shape, the confirmed unsafe-versus-degraded contract defect at `src/kernel/main/boot_storage.c:531`, and the `docs/boot/boot-health-schema.md` row the redo owes -- so the redo is implement-then-verify rather than re-design.
-- [ ] Re-run `01-boot-platform/TODO-23` §7 once the guard is gone (item: "DEFERRED follow-up: direct Intel iTCO PCI fallback"); the code is written and design-reviewed, so the redo is apply-then-re-verify
+- [x] Re-run `01-boot-platform/TODO-23` §7 once the guard is gone (item: "DEFERRED follow-up: direct Intel iTCO PCI fallback"); the code is written and design-reviewed, so the redo is apply-then-re-verify
+  - Target unparked 2026-11-07 with the guard still in place: the `.text` budget is 153647 bytes, so it no longer waits on the guard's removal.
   - Preserved at `.claude/state/deferred-todo23-s7.patch` (gitignored, survives a rollover but NOT a fresh clone). The §7 Deferred stamp records the register-layout sources and every design-review outcome, so the redo stays mechanical if the patch is lost.
   - MEASURED 2026-09-03 at `c6b8af000`: `__kernel_end` is `0x7fead5` with **47 bytes** of `.text` slack, and the section costs ~11 KiB across the driver, the header and 10 new fixtures. The measured build landed `__kernel_end` on `0x803000`, three pages over.
   - Trimming does not rescue it and the production half cannot ship alone: the whole value of the change is refusing to arm a watchdog that cannot reset the board, and the refusal paths are exactly what the fixtures cover.
   - It also carries a fix to a LIVE defect in the shipped WDAT path (`gas_usable` ignores GAS `access_size` and `bit_offset` while `gas_read`/`gas_write` size the transaction from `bit_width`), so this parking keeps a real correctness fix out of the tree, not only a new capability.
 
 - [ ] Decide whether the guard's `>=` is off by one before removing it, and record the answer: `__kernel_end` is an EXCLUSIVE end marker, so `__kernel_end == USER_BASE` means the kernel ends where user space begins, adjacent and not overlapping
+  - Left open 2026-11-07: no blocker, and cheap to settle. Not decided in a bookkeeping pass.
   - `scripts/build.sh:402` takes the maximum `b`/`B` symbol in `build/kernel.map`, which is `__kernel_end` itself, and refuses on `>=`. For a real BSS OBJECT at `0x800000` that test is right; for the exclusive end marker it costs a full page that is not actually in conflict.
   - That page is worth naming because it is the difference between "79 bytes of headroom" and "4,175 bytes", which is the whole margin several parked sections are waiting on. This is the RECEIPT SURFACE (`scripts/build.sh`), so the unattended run files it rather than changing it.
   - The safe shape if the answer is yes: exclude `__kernel_end` from the max, keep `>=` for real objects, and compare `__kernel_end` with `>`. Do not simply relax the comparison for every symbol.
   - Preserved at `.claude/state/deferred-todo13-s32.patch` (gitignored, survives a rollover but NOT a fresh clone). If it is lost, the §32 Deferred stamp records the three settled design decisions so the redo is still mechanical.
   - Measured 2026-08-30: three of that section's five items cost +5,216 bytes of `.text` against ONE page of headroom, so it is blocked by size alone and not by any missing capability.
 - [ ] Re-add the two ceiling-parked warm-update selection tests once the guard is gone
+  - The ceiling has cleared and the tests fit (153647 bytes). `01-boot-platform/TODO-01` s29 is stamped, so these need a home; see §11's stamped-residue item.
   - They belong in `src/kernel/test/test_boot_reserved.c` -> XREF `01-boot-platform/TODO-01` §29 (item: "Integration tests in `src/kernel/test/test_boot_reserved.c` assert descriptor IDENTITY, not a count")
   - A rejected-to-differently-rejected mutation (empty -> over-contract on the sole candidate), which is the only shape that moves `boot_warm_update_sel.error` alone; the fix it guards IS shipped, the assertion is not.
   - A dedicated whole-range wrap case. The rule shipped and is asserted, but only by taking over the slot the unaligned-base case had, so selection-level alignment coverage was traded away to fit.
   - MEASURED 2026-08-30 at `8fc5b53d3` + review fixes: `.text` had **79 bytes** of slack before `.rodata`, so the two blocks (~350 bytes of `.rodata` and a few hundred of `.text`) cascaded every following page-aligned section up one page. The code fixes themselves fit; only their evidence did not.
-- [ ] Re-run `01-boot-platform/TODO-01` §30's three code items once the guard is gone (item: "Apply the same addressability precondition to every payload type the reservation pass admits, not only `BOOT_PAYLOAD_WARM_UPDATE_STATE`")
+- [x] Re-run `01-boot-platform/TODO-01` §30's three code items once the guard is gone (item: "Apply the same addressability precondition to every payload type the reservation pass admits, not only `BOOT_PAYLOAD_WARM_UPDATE_STATE`")
+  - Target unparked 2026-11-07 with the guard still in place: the `.text` budget is 153647 bytes, so it no longer waits on the guard's removal.
   - MEASURED 2026-08-30 at `1bb19e115`: HEAD links with `__kernel_end` at `0x7ff000`, **4096 bytes** below the guard. The section's implementation was written, built and measured before being reverted: `+8746` bytes of `.text`/`.rodata` in `src/kernel/test/test_boot_reserved.c` and `+2017` in `src/kernel/mm/boot_reserved.c`, **~10.8 KiB against 4 KiB of slack**, landing `__kernel_end` on `0x802000`.
   - Trimming does not rescue it. The production half alone is ~2.1 KiB and would fit, but shipping the predicate without its refusal tests is false completeness, and the five tests cost 8.7 KiB because each scenario stages a synthetic memory map. A consolidation pass would have to reclaim 20% of an existing 26 KiB test object.
   - The DESIGN is settled and recorded, so the redo is apply-then-verify rather than re-design: replace the `last_frame < pmm_get_total_frames()` ceiling test with full memory-map interval coverage (refuse `UEFI_MMAP_UNUSABLE`/`_MMIO`/`_MMIO_PORT` and type 15 unless the sealed warm extent), fall back to the ceiling test only when `mmap_count == 0` or `mmap_truncated`, and freeze a heap copy of the reservation table in `boot_tests_run()` so `boot_reserved_blackbox_dump()` cannot publish a fixture. The design-review verdict is at `.claude/overnight/reviews/20260830-063215-design.out`.
   - The two policy items the section owned (warm extents do not raise the tracking ceiling; a refused warm extent is held, not reclaimed) SHIPPED at zero image cost as recorded decisions in `src/kernel/mm/pmm.c` and `src/kernel/mm/boot_reserved.c`; only the code items are parked here.
   - -> XREF: `01-boot-platform/TODO-01 §30` (item: "Apply the same addressability precondition to every payload type the reservation pass admits, not only `BOOT_PAYLOAD_WARM_UPDATE_STATE`")
-- [ ] The §10 headroom is FULLY CONSUMED again, so the "tactical" reclamation is a recurring need rather than a one-off, and this section should say which it is before §3 lands.
+- [x] The §10 headroom is FULLY CONSUMED again, so the "tactical" reclamation is a recurring need rather than a one-off, and this section should say which it is before §3 lands.
+  - Answered 2026-11-07: recurring. §10, §12, §13, §14 and §15 are five reclaim passes, each refilled, and only §7's ceiling removal ends that. Not currently consumed: `.text` budget 153647 bytes.
   - MEASURED 2026-08-18 at `d43b73d2b`: `.bss` runs `0x56d000..0x7feea5`, `__kernel_end` page-aligns to `0x7ff000`, leaving **347 bytes** before the guard fires. §11's Notes record `0x6c2000` and ~1272 KiB spare on 2026-07-17; roughly 1.27 MiB was reabsorbed in a month.
   - The failure is cascading rather than proportional, which makes it arrive without warning: shrinking `.rodata` by 859 bytes (or `.text` by 1183) moves every following page-aligned section down one page and clears the guard, so a section either fits with room to spare or fails by a whole page.
   - A second §10-shaped pass would need NEW targets: the three pools this file's conversion table nominated are already converted (`reg_value_pool`, `reg_key_pool` and `s_atoms` are now pointers, 24 bytes apart in `.bss`), so the table is spent and describes finished work.
   - The largest remaining `.bss` consumers, measured from `build/kernel.map`, are `klog_ring` 288000, `devices` 277504, `tasks` 203776, `ctrl_windows` 180736 and `s_recovered` 164000. The table already rules out the first two (pre-PMM, and hot-plug-ISR reachable); the last three are unassessed and are where a second pass would have to look.
   - ANSWERED 2026-08-18: it is recurring, and the tactical route now has its own unblocked owner rather than sitting as a note inside this deferred section -> XREF: this file §12 (item: "Assess the three unassessed candidates against the §10 bar").
-- [ ] Re-run `02-kernel-core/TODO-02` §12 once the guard is gone (item: "Privileged production write path for tunables"); nothing is written, the section was parked before its first line of code
+- [x] Re-run `02-kernel-core/TODO-02` §12 once the guard is gone (item: "Privileged production write path for tunables"); nothing is written, the section was parked before its first line of code
+  - Target unparked 2026-11-07 with the guard still in place: the `.text` budget is 153647 bytes, so it no longer waits on the guard's removal.
   - MEASURED 2026-09-03 at `abf4dc974`: 15 bytes of `.text` slack, against a new `NtSetSystemInformation` set class plus its privilege gate and name marshalling, which is hundreds of bytes. No probe patch exists because building one would only reconfirm a section-exact budget.
   - The user impact is the one that section exists to fix: every `quota.user.<type>` cap stays at its unlimited built-in because no production caller of `kernel_tunable_set` exists, so the quota plane accounts usage without ever refusing on a configured cap.
   - Its Deferred stamp carries the full design of record (set class shape, the `SeSystemProfilePrivilege` gate, and why neither the registry nor a boot-argument route is available), so the redo starts from a design rather than a blank page.
 - [ ] Cover the post-allocation extent-rejection cleanup in the HHDM page allocator -> XREF: this file §16 (item: "Decided: it DID block the charter")
+  - Left open 2026-11-07: the ceiling that parked it has cleared.
   - The path: frames are taken, the whole-extent direct-map check then fails, and every frame of the run must be released (`src/kernel/mm/pmm.c:639`). Filed by §16's test-coverage review.
   - BLOCKED on a test seam, which is why §16 accepted it rather than shipping it: the branch fires only when a physical run crosses the 64 TiB HHDM top, so no real allocation reaches it, and the existing `pmm_alloc_fail_*` injection rejects BEFORE frames are taken. Forcing it needs a seam inside `mm_phys_extent_in_hhdm` in `memmap.h`, which is the address-space single source of truth and not a test-side section's to modify.
   - Belongs here because this section already owns the address-space test infrastructure (`test_highhalf.c` and the raw phys-as-pointer lint check); a one-frame-only rollback would leak frames silently and no aggregate count would show it.
-- [ ] Commit: `"mm: retire 0x800000 user-base ceiling -- user owns the lower half"`
+- [/] Commit: `"mm: retire 0x800000 user-base ceiling -- user owns the lower half"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** User programs load + run at the new base; `bash scripts/build.sh clean` -> `=== BUILD OK ===` with the BSS guard removed; no `user_range.h` static-assert failures. Test on: QEMU WHPX + TCG; **bare metal**.
 
@@ -364,12 +435,18 @@ Optional competitive edge: support 57-bit virtual addresses on capable hardware.
 >
 > **UNBLOCKED by §1:** enablement lives in the bootloader, which is the same site §1 already pinned for the high-half switch -- so LA57 rides the existing `setup_page_tables()` + `jump_to_kernel()` window rather than needing a new mechanism. `MM_KERNEL_VIRT_BASE` is canonical under BOTH 4- and 5-level paging (asserted in `memmap.h`), so the kernel image base does NOT move; only `MM_HHDM_BASE` must be re-based (Linux's 5-level base `0xff11000000000000` is not 4-level canonical, which is why consumers never hardcode a literal).
 
-- [ ] Detect LA57 via `CPUID` leaf 7 subleaf 0 ECX bit 16 and (optionally) honor a `boot.conf` opt-in; default to 4-level if absent
-- [ ] Place enablement in the bootloader's pre-paging window (pinned by §1 -- the same site as the high-half switch): the paging-mode choice must be made where `CR0.PG` can legally be cleared, not from `kernel_main`
-- [ ] Negative tests: unsupported CPU falls back to 4-level cleanly; an already-LA57 firmware handoff is detected rather than re-enabled
-- [ ] Re-base `MM_HHDM_BASE` for 5-level (sign extension at bit 56 vs 47) and parameterize the page-table walk depth. `MM_KERNEL_VIRT_BASE` is mode-INVARIANT (asserted canonical under both) and must NOT move
-- [ ] Boot identically on 4-level and 5-level hosts; log the active paging mode.
-- [ ] Commit: `"mm: optional 5-level paging (LA57) -- 57-bit address space on capable CPUs"`
+- [/] Detect LA57 via `CPUID` leaf 7 subleaf 0 ECX bit 16 and (optionally) honor a `boot.conf` opt-in; default to 4-level if absent
+  - BLOCKED: re-bases the layout §3 establishes, which waits on `todo/answers.md` Q3.
+- [/] Place enablement in the bootloader's pre-paging window (pinned by §1 -- the same site as the high-half switch): the paging-mode choice must be made where `CR0.PG` can legally be cleared, not from `kernel_main`
+  - BLOCKED: re-bases the layout §3 establishes, which waits on `todo/answers.md` Q3.
+- [/] Negative tests: unsupported CPU falls back to 4-level cleanly; an already-LA57 firmware handoff is detected rather than re-enabled
+  - BLOCKED: re-bases the layout §3 establishes, which waits on `todo/answers.md` Q3.
+- [/] Re-base `MM_HHDM_BASE` for 5-level (sign extension at bit 56 vs 47) and parameterize the page-table walk depth. `MM_KERNEL_VIRT_BASE` is mode-INVARIANT (asserted canonical under both) and must NOT move
+  - BLOCKED: re-bases the layout §3 establishes, which waits on `todo/answers.md` Q3.
+- [/] Boot identically on 4-level and 5-level hosts; log the active paging mode.
+  - BLOCKED: re-bases the layout §3 establishes, which waits on `todo/answers.md` Q3.
+- [/] Commit: `"mm: optional 5-level paging (LA57) -- 57-bit address space on capable CPUs"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** On a 4-level host the kernel boots in 4-level mode; on an LA57-capable host (or QEMU `-cpu ...,la57=on`) it boots in 5-level mode. Serial logs the active mode. Test on: QEMU TCG (la57 toggled); **bare metal (Arrow Lake / Zen 5)**.
 
@@ -396,7 +473,8 @@ Move every page-table walker off the identity map and onto the §2 HHDM, while t
 - [x] Reclaimed a page for the ceiling: `swap_temp_buf` 4 KiB static -> `pmm_alloc_contiguous(1)` via HHDM (`swap.c`, freestanding no-large-static rule); §7 retires the ceiling that forces this
 - [x] Added `POST16_HHDM_WALK`/`_OK` (0xDD10/0xDD11) around the `vmm_init` cutover
 - [x] Hardened the converted swap.c walkers (adversarial review): reject huge leaves, encode the swap marker before freeing, and verify the leaf still maps the captured frame; swap is dormant, SMP serialization deferred to the pager TODO
-- [ ] Lint check rejecting raw phys-as-pointer page-table casts outside the bootloader/`pt_walk` (design review F1 hardening) → XREF: §7 (item: "`scripts/lint.sh` check rejecting raw page-table phys-as-pointer casts")
+- [/] Lint check rejecting raw phys-as-pointer page-table casts outside the bootloader/`pt_walk` (design review F1 hardening) → XREF: §7 (item: "`scripts/lint.sh` check rejecting raw page-table phys-as-pointer casts")
+  - BLOCKED: same work as §7's item, which owns it. -> XREF: §7 (item: "`scripts/lint.sh` check rejecting raw page-table phys-as-pointer casts")
 - [x] Commit: `"boot: VMM walker conversion -- page-table derefs through the HHDM helper"`
 
 **Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke.sh` boots to `C:\>`; full `scripts/test.sh` green. The kernel still runs LOW; this section flips the WALK pointer to the HHDM while the identity map stays live as a fallback, so behavior is unchanged and the section is independently bootable. Exercise the converted walkers (remap/unmap/destroy/split/NX-traverse/swap) with the broad identity map disabled (design review requirement) -- either host-side or, if the BSS ceiling blocks the in-kernel suite, deferred to §7's `test_highhalf.c` with a reciprocal XREF. Test on: QEMU KVM + TCG.
@@ -488,7 +566,10 @@ Measured BSS consumers (`build/kernel.map`, 2026-07-17; BSS end `0x7fe000` vs `U
   - Blocked assertions: a kernel symbol `>= KERNEL_VIRT_BASE` (the kernel still runs LOW -- §3's low->high jump is operator-deferred); the retired `user_range.h` ceiling (§7, cascade-blocked on §3); and a fresh PML4 sharing the kernel UPPER half with an empty lower half (§6 built per-process PML4s, but they clone the LOW identity map, so the assertion as written cannot hold pre-§3). All three would FAIL today
   - The other 2 are already covered: `phys_to_virt`/`virt_to_phys` round-trip + canonical-`KERNEL_VIRT_BASE` are the host `tools/memmap-check` gate (54 checks, wired into `scripts/test-tooling.sh`). `test_vmm.c:278-332` covers per-process PML4 create/destroy + the cloned kernel PD's supervisor-only invariant + a leak net -- it does NOT assert upper-half sharing, so it does not substitute for that assertion
   - This is exactly the second-blocker class this section warns about: §10 bought `.text` headroom, not an address-space move. Re-add it as §7's first work item, where it is already filed
-- [ ] Run the status sweep for the THIRD pass (§13) -- not yet run; §13 only named the sections that now fit -> XREF: this file §13 (item: "Unparked what the new headroom actually admits")
+- [x] Run the status sweep for the THIRD pass (§13) -- not yet run; §13 only named the sections that now fit -> XREF: this file §13 (item: "Unparked what the new headroom actually admits")
+  - Done 2026-11-07. 22 sections reopened in `01-boot-platform/TODO-01`, `-13`, `-14`, `-23`, `-29` and `02-kernel-core/TODO-02`, `-04`, `-09`, `-10`, `-11`, `-12`. `TODO-26` s2 and s11 were not: their stamps name other blockers.
+- [ ] Give the stamped ceiling residue a home: `01-boot-platform/TODO-01` s29, `TODO-29` s20 and `02-kernel-core/TODO-10` s32 cannot reopen in place
+  - Each carries both review stamps, so a bare item there is invisible (Check 23). The work: the warm-update selection tests, the `boot-trend.json` C: fallback, the `HEAP_ZERO_ON_FREE` flip and six `TEST_CAT_FS` cases. All now fit.
   - Candidates: `TODO-04 §14`, `TODO-09 §20`, `TODO-10 §32`, `TODO-11 §28`, `TODO-12 §32`, `TODO-26 §2` (the last also needs its own split decision, independent of headroom)
 - [/] Run the status sweep for the FOURTH pass -- blocked until §14 lands its reclaim and names what the new headroom admits -> XREF: this file §14 (item: "Name what the new headroom admits and what it does NOT")
   - The §13 sweep above is still unrun, so these will collect together. §14's own candidate list is the starting set: `02-kernel-core/TODO-26` had all 21 of its remaining sections ceiling-blocked when §14 was filed on 2026-09-05.

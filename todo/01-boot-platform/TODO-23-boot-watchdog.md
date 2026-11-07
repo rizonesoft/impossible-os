@@ -50,7 +50,7 @@ title: "TODO-23 -- Boot Watchdog & Hang Detection"
 | 💎  |   4   | Watchdog-triggered reboot with diagnostics              | §3, T21 §4                                |  [/]   |
 | 💎  |   5   | ACPI WDAT hardware watchdog (WDAT-first; iTCO deferred) | --                                        |  [x]   |
 | ⭐  |   6   | Watchdog status in VPD display                          | §1-§5                                     |  [/]   |
-| ⭐  |   7   | Post-ship follow-up backfill (2026-07-31 cohort)        | --                                        |  [/]   |
+| ⭐  |   7   | Post-ship follow-up backfill (2026-07-31 cohort)        | --                                        |  [ ]   |
 
 > 💎 = parity -- Windows boot watchdog and Linux systemd watchdog both detect hung boots.
 > ⭐ = exclusive -- watchdog countdown visible in VPD during boot.
@@ -198,12 +198,12 @@ Show watchdog countdown in the VPD display during boot.
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 5:
-- [/] DEFERRED follow-up: direct Intel iTCO PCI fallback (chipset allowlist, LPC TCO base, GCS NO_REBOOT, SMI_EN, two-stage timeout, readback verify, verified-disarm) -- WRITTEN and design-reviewed, parked on the kernel image ceiling
+- [ ] DEFERRED follow-up: direct Intel iTCO PCI fallback (chipset allowlist, LPC TCO base, GCS NO_REBOOT, SMI_EN, two-stage timeout, readback verify, verified-disarm) -- WRITTEN and design-reviewed, parked on the kernel image ceiling
       - Implemented against the primary Intel datasheets ([ICH9] 316972-004, [ICH10] 319973) rather than a driver, because Linux `iTCO_wdt` is GPL-2.0-only and unusable here: TCOBASE is PMBASE+0x60, GCS NO_REBOOT is RCBA+0x3410 bit 5, TCO_LOCK is TCO1_CNT bit 12, and the reset lands on the SECOND expiry.
       - Allowlist is deliberately ICH9 + ICH10 only, the two generations whose layout a datasheet in hand pins; later PCHs moved TCOBASE to an SMBus-function register and NO_REBOOT out of GCS, so an unverified entry would program the wrong hardware. An unrecognised bridge yields `HW_WD_NONE`, which is today's behaviour.
       - Blocker is size, not correctness: `scripts/overnight/bss-headroom.py` at `c6b8af000` reports `__kernel_end` `0x7fead5` with **47 bytes** of `.text` growth before `USER_BASE` `0x800000`; the driver plus its fixtures is ~11 KiB, so this is unreachable by orders of magnitude rather than trimmable. The measured build failed on the BSS-collision guard at `0x803000`.
       - Preserved at `.claude/state/deferred-todo23-s7.patch` (gitignored: survives a rollover, NOT a fresh clone). Apply, do not rewrite -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-23` §7 once the guard is gone")
-- [/] DEFERRED follow-up: MEM-space GAS support -- positive MMIO authorisation against the memory map + one cached UC mapping per register page at init -- WRITTEN, parked on the same ceiling
+- [ ] DEFERRED follow-up: MEM-space GAS support -- positive MMIO authorisation against the memory map + one cached UC mapping per register page at init -- WRITTEN, parked on the same ceiling
       - Shipped shape in the patch is stricter than the item asked for, on the design review's [high] finding: a NEGATIVE "not usable RAM" test still admits ACPI reclaim, ACPI NVS, firmware runtime and persistent memory, because `src/kernel/mm/pmm.c:172` counts only conventional/loader/boot-services as usable. The register must instead be wholly inside ONE `EfiMemoryMappedIO`/`EfiMemoryMappedIOPortSpace` descriptor.
       - The same review found a live defect in the SHIPPED I/O path that the patch also fixes: `gas_usable` reads neither `access_size` nor `bit_offset` (`include/kernel/acpi.h:59`), while `gas_read`/`gas_write` pick the transaction width from `bit_width` alone, so a table asking for a dword transaction over a byte field is accessed at the wrong width. That fix is parked with the rest of the patch.
       - Mappings are bounded at 4 distinct pages and taken only after every range validates, because `vmm_unmap_mmio` (`src/kernel/mm/vmm.c:1598`) clears PTEs without reclaiming virtual address space.
@@ -231,7 +231,7 @@ From TODO-04 section 58's re-adversarial review (2026-08-02), filed here because
 > - Scope boundary: the third item is not ceiling-blocked at all -- it needs this file's §1 LAPIC NMI watchdog, which is independently parked.
 
 > **Verified:** 2026-09-03 | 0/3 items (deferred) | build FAILED on the BSS-collision guard (`__kernel_end` 0x803000 >= `USER_BASE` 0x800000), tree reverted green | design review 20260903-071737 received, 7 findings, all fixed in the parked patch
-> **Deferred:** [H] the kernel image admits 47 bytes of `.text` growth and this section costs ~11 KiB, so items 1-2 are blocked by size alone rather than by any missing capability or unresolved design question; item 3 is blocked instead on this file's own §1 -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-23` §7 once the guard is gone")
+> **Notes:** Unparked 2026-11-07 on `02-kernel-core/TODO-33` s11's sweep: `scripts/overnight/bss-headroom.py` measures a `.text` budget of 153647 bytes at `9b55ec6f0`, `__kernel_end` 0x7da000. Re-measure at implementation; the guard still applies. Earlier measurement, kept for its costs: [H] the kernel image admits 47 bytes of `.text` growth and this section costs ~11 KiB, so items 1-2 are blocked by size alone rather than by any missing capability or unresolved design question; item 3 is blocked instead on this file's own §1
 
 ---
 
