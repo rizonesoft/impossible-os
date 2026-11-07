@@ -49,7 +49,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | ⭐  |   7   | CPU, I/O, and wakeup accounting                 | T08 §6, T21 §9          |  [x]   |
 | 💎  |   8   | Native query/set quota syscalls                 | T12 §10                 |  [x]   |
 | ⭐  |   9   | Resource pressure events and recovery hooks     | T16 §2, T30 §6          |  [/]   |
-| 💎  |  10   | Tests, leak sweeps, and dashboards              | §1..§9                  |  [/]   |
+| 💎  |  10   | Tests, leak sweeps, and dashboards              | §1..§9                  |  [ ]   |
 | 💎  |  11   | Charge ledger and transactional adjustment      | §4                      |  [x]   |
 | ⭐  |  12   | Resource pressure stall telemetry               | D03T07 §3, D03T03 §2    |  [/]   |
 | 💎  |  13   | Object Manager charge points                    | §11, T05 §3, T05 §14    |  [/]   |
@@ -357,7 +357,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [/] Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag (same-token returners, a paused BUSY window, publication visibility): needs per-CPU run queues. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
 - [/] Bounded worker join + CPU-pinned `kmalloc_fail_next`: `thread_join` has no timeout, and the injection countdown lives in the armed CPU's per-CPU data so a migrating task never trips it. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
 - [/] Invocation-scoped lock accounting: attributes to the ARMING THREAD at `PASSIVE_LEVEL`, so migration no longer drops a section. NOT SMP-sound: `thread_current()` reads global cursors. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
-- [/] Bound `quota_dump()` whole-invocation OUTPUT, not just its block count: 32 blocks x 16 types can exceed 64 KiB of serial and evict most of the klog ring. Needs pagination or an async drain. -> XREF: `TODO-27-crash-dump-generation.md §7`
+- [ ] Bound `quota_dump()` whole-invocation OUTPUT, not just its block count: 32 blocks x 16 types can exceed 64 KiB of serial and evict most of the klog ring. Needs pagination or an async drain.
 - [/] Two-CPU proof for the §19 collector: a real detach or a fork-inherit publication landing inside the unlocked walk, asserting one invalidated attempt, no torn total, no fallback. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
 - [x] Commit: quota: unit tests, boot leak sweep, quota_dump dashboard.
 
@@ -376,8 +376,8 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > **Verified:** 2026-07-25 | commit `b18c881d` + review fixes | 3/9 items | build OK | tests 23766/23766 PASS, 0 quota-leaked | smoke PASS (KVM 3.120s)
 > **Accepted:** [M] the contention test holds the registry lock across a klog that busy-waits the UART, so proving the try-lock fallback costs a bounded IRQ-off window (reason: needs a non-blocking emitter) -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §7 (item: "`dump_emit_raw(str)` -- panic-safe emitter replacing `klog` in panic-path dumpers" at line 258)
 > **Accepted:** [H] `quota_dump_crash` still emits through `klog`, which takes the blocking `s_klog_lock` and can also flush to disk; pre-existing and repo-wide on this panic path (reason: scope) -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §7 (item: "`dump_emit_raw(str)` -- panic-safe emitter replacing `klog` in panic-path dumpers" at line 258)
-> **Deferred:** [M] the dashboard suite asserts exact equalities over global registry state, which becomes flaky the moment threads run on more than one CPU (reason: infra) -> XREF: 02-kernel-core/TODO-25 §10 (item: "Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag" at line 357)
-> **Deferred:** [M] `quota_dump()` bounds blocks but not total OUTPUT, so a large registry can exceed 64 KiB of serial and evict most of the klog ring (reason: in-scope, needs pagination) -> XREF: 02-kernel-core/TODO-25 §10 (item: "Bound `quota_dump()` whole-invocation OUTPUT" at line 360)
+> **Deferred:** [M] the dashboard suite asserts exact equalities over global registry state, which becomes flaky the moment threads run on more than one CPU (reason: infra) -> XREF: 03-memory-concurrency/TODO-07 §3 (per-CPU run queues)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] `quota_dump()` bounds blocks but not total OUTPUT, so a large registry can exceed 64 KiB of serial and evict most of the klog ring (reason: in-scope, needs pagination). The stamp named this section's own item, and pagination needs nothing from the crash-dump sink the item cited.
 > **Accepted:** [M] the per-CPU writer/epoch RMWs are unconditional under `KERNEL_TESTS`, so the default image's charge timing includes instrumentation and has no off-baseline (reason: needs a build flavor) -> XREF: 02-kernel-core/TODO-25 §5 (item: "Separate leak-sweep instrumentation from `KERNEL_TESTS`" at line 185)
 > **Quality reviewed:** 2026-07-25 | Codex 7x (adversarial x3, consistency x2, perf x2, re-adversarial) + kernel-quality-auditor + concurrency-evidence-mapper + parity-research-analyst | 3H+13M+3L fixed, 5 accepted-XREF | scope: kernel-code-quality
 
