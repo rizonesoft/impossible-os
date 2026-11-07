@@ -48,18 +48,34 @@ def test_no_evidence_is_dead():
         check("empty-exit-1", rc == 1)
 
 
-def test_fresh_log_alone_is_ARMED_not_RUNNING():
-    """The property the whole item turns on: a report log that grew recently
-    proves the watchdog SCHEDULE is alive, not that a run is executing. The
+def test_fresh_log_on_armed_schedule_is_ARMED_not_RUNNING():
+    """The property the whole item turns on: on an armed schedule, a report log
+    that grew recently is the watchdog ticking, not a run executing. The
     watchdog fires every 10 min, writes a launch log and exits -- reporting
     that as RUNNING would be the same class of lie, in the other direction."""
     with tempfile.TemporaryDirectory() as d:
         (pathlib.Path(d) / "run-20260727-000000.log").write_text("launching\n")
+        marker = pathlib.Path(d) / ".claude/state/sequencer-armed"
+        marker.parent.mkdir(parents=True)
+        marker.touch()
         rc, out = run(d)
         check("fresh-log-is-armed", "overnight run: ARMED" in out)
         check("fresh-log-not-running", "RUNNING" not in out)
         check("armed-exit-0", rc == 0)
         check("armed-explains-itself", "schedule is ticking" in out)
+
+
+def test_fresh_log_after_disarm_is_DEAD():
+    """A segment's log is still fresh right after a disarm, and nothing is
+    scheduled. Observed 2026-11-07: a clean stop read ARMED, 'the watchdog
+    schedule is ticking', with zero timers loaded. A log proves a launch
+    happened; only the marker or a loaded timer proves another one will."""
+    with tempfile.TemporaryDirectory() as d:
+        (pathlib.Path(d) / "run-20260727-000000.log").write_text("stopped\n")
+        rc, out = run(d)
+        check("disarmed-fresh-log-is-dead", "overnight run: DEAD" in out)
+        check("disarmed-exit-1", rc == 1)
+        check("disarmed-no-schedule-claim", "schedule is ticking" not in out)
 
 
 def test_stale_log_is_dead():
@@ -104,7 +120,8 @@ def test_selftest_passes():
 
 if __name__ == "__main__":
     test_no_evidence_is_dead()
-    test_fresh_log_alone_is_ARMED_not_RUNNING()
+    test_fresh_log_on_armed_schedule_is_ARMED_not_RUNNING()
+    test_fresh_log_after_disarm_is_DEAD()
     test_stale_log_is_dead()
     test_watchdog_note_does_not_fire_without_the_watchdog()
     test_quiet_mode_is_status_only()

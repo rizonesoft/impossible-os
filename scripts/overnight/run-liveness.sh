@@ -20,7 +20,8 @@
 #   2. the WATCHDOG unit is active          <- the case the naive check misses
 #   3. the launcher's flock is HELD (unforgeable: the kernel drops it when the
 #      holder dies, and nothing that merely mentions the launcher can hold it)
-#   4. the latest report log grew within FRESH_MINUTES
+#   4. the latest report log grew within FRESH_MINUTES, on a loaded schedule
+#      (the armed marker or a timer; a log alone outlives a disarm)
 #
 # Sources 3 and 4 also cover the case where systemd is unavailable entirely
 # (a plain launcher invocation, or a WSL session without user systemd), which
@@ -77,6 +78,17 @@ launcher_running() {
     return 1
   fi
   return 0
+}
+
+schedule_loaded() {
+  # Is another launch actually coming? A fresh log cannot answer that: the last
+  # segment's log stays fresh after a disarm, so log freshness alone reported
+  # "the schedule is ticking" with zero timers loaded (observed 2026-11-07).
+  # Every stop path removes the marker, and the timers cover a direct
+  # overnight-arm.sh arm, which never writes it.
+  [ -e "$REPO_ROOT/.claude/state/sequencer-armed" ] \
+    || unit_active "$UNIT.timer" \
+    || unit_active "$UNIT-watchdog.timer"
 }
 
 report_fresh() {
@@ -145,11 +157,11 @@ report_fresh                         && LOG=1
 # exits, so a recent log proves the schedule is ticking -- not that a run is
 # executing right now.
 #   RUNNING : a launcher process is up, or either unit is active
-#   ARMED   : no process, but the schedule is demonstrably alive (fresh log)
-#   DEAD    : no evidence at all
+#   ARMED   : no process, but a schedule is loaded and just ticked (fresh log)
+#   DEAD    : nothing running, or a fresh log with nothing scheduled after it
 STATE="DEAD"
 [ $((MAIN + WATCH + PROC)) -gt 0 ] && STATE="RUNNING"
-[ "$STATE" = "DEAD" ] && [ "$LOG" = 1 ] && STATE="ARMED"
+[ "$STATE" = "DEAD" ] && [ "$LOG" = 1 ] && schedule_loaded && STATE="ARMED"
 LIVE=0
 [ "$STATE" != "DEAD" ] && LIVE=1
 
