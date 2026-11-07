@@ -72,8 +72,8 @@ title: "TODO-21 -- Process Model Extensions"
 | 💎  |  17   | Process groups and sessions (setpgid/setsid)              | --                 |  [/]   |
 | 💎  |  18   | Rich wait variants + NT multi-waiter wake + dumpable      | §15, §17           |  [/]   |
 | 💎  |  19   | `task_exec` commit point + kernel-stack reclamation       | §14, §15           |  [x]   |
-| 💎  |  20   | Page-table lifetime across reap + fork/exec               | §15, §19           |  [/]   |
-| 💎  |  21   | Post-ship follow-up backfill (2026-07-31 cohort)          | --                 |  [/]   |
+| 💎  |  20   | Page-table lifetime across reap + fork/exec               | §15, §19           |  [ ]   |
+| 💎  |  21   | Post-ship follow-up backfill (2026-07-31 cohort)          | --                 |  [ ]   |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
 > ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.
@@ -703,7 +703,6 @@ A live task was observed executing against a REAPED task's PML4 whose frames had
 
 **Test checkpoint:** a unit test drives reap-then-reuse of a user PML4 and asserts no runnable thread's CR3 names a freed frame; the debug-build assertion fires on a deliberately-inverted ordering. Re-run the 8.2.2 CI-parity quota suite and record the result either way -- a green run is evidence about the trigger, not about the invariant. Test on: QEMU TCG (8.2.2 and current), QEMU KVM; bare metal.
 
-> **Deferred:** [H] not started this pass -- this is a security/correctness-critical SMP page-table-lifetime invariant (11 items spanning a fallible `vmm_set_user_page`, `task_create_user` cr3=0 handling, an unwind-ladder extraction, the reap-vs-exec invariant itself, a re-exec frame leak, and a debug-build assertion) and the mandatory Codex design-review gate is unavailable (external backend outage, confirmed not local -> gotcha `.claude/state/live-gotchas.md` 2026-09-03). Shipping unreviewed changes to page-table lifetime code is worse than parking it untouched. No source changed.
 
 ---
 
@@ -712,10 +711,10 @@ A live task was observed executing against a REAPED task's PML4 whose frames had
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 1:
-- [/] Concurrent `NtSetCurrentDirectory` non-linearizable -- BLOCKED, Codex review unavailable -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
-- [/] Non-ASCII CWD (UTF-8 storage) -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03 (also -> XREF: `TODO-22` §14)
+- [ ] Concurrent `NtSetCurrentDirectory` non-linearizable
+- [ ] Non-ASCII CWD (UTF-8 storage) (also -> XREF: `TODO-22` §14)
 From the stamped section 9:
-- [/] Enforce working-set Min/Max -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03 (also -> XREF: `TODO-25-kernel-resource-accounting-quotas.md` §9)
+- [ ] Enforce working-set Min/Max (also -> XREF: `TODO-25-kernel-resource-accounting-quotas.md` §9)
 
 Filed 2026-08-16 from the 01-boot-platform/TODO-01 §25 review:
 - [x] Make the two `task_create` concurrency XREFs name their distinct invariants: today one stamp reads as though the other already owns its defect.
@@ -723,7 +722,6 @@ Filed 2026-08-16 from the 01-boot-platform/TODO-01 §25 review:
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
-> **Deferred:** [M] 4/5 items not started this pass -- the mandatory Codex design-review gate is unavailable (external backend outage, confirmed not local -> gotcha `.claude/state/live-gotchas.md` 2026-09-03); the 5th (the XREF-clarity item) needed no code and shipped. No source changed.
 
 ---
 

@@ -50,7 +50,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 | 💎  |   8   | Driver/module enforcement                        | T18, D04 T04 |  [/]   |
 | 💎  |   9   | User-mode image enforcement                      | T17, T20     |  [/]   |
 | ⭐  |  10   | CI audit, telemetry, and syscalls                | T12, T16     |  [/]   |
-| ⭐  |  11   | Post-ship follow-up backfill (2026-07-31 cohort) | --           |  [/]   |
+| ⭐  |  11   | Post-ship follow-up backfill (2026-07-31 cohort) | --           |  [ ]   |
 
 ## 1. Code Integrity Policy Object
 
@@ -239,16 +239,15 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 1:
-- [/] Wire `ci_init` at `POLICY_PHASE_POST_REGISTRY` + add `SUBSYS_CI` -- BLOCKED, Codex review unavailable -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
-- [/] Authenticate the policy artifact's own Ed25519 signature -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
-- [/] Persistent CI-policy version floor (anti-rollback counter) -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
-- [/] Ratchet-domain merge (shared tri-state SB resolver) -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03
+- [ ] Wire `ci_init` at `POLICY_PHASE_POST_REGISTRY` + add `SUBSYS_CI`
+- [ ] Authenticate the policy artifact's own Ed25519 signature
+- [ ] Persistent CI-policy version floor (anti-rollback counter)
+- [ ] Ratchet-domain merge (shared tri-state SB resolver)
 From the stamped section 2:
-- [/] Gate dynamic-code sites in `nt_memory.c` via `ci_validate_dynamic_code` -- BLOCKED, same outage -> gotcha `.claude/state/live-gotchas.md` 2026-09-03 (also -> XREF: T19 §4)
+- [ ] Gate dynamic-code sites in `nt_memory.c` via `ci_validate_dynamic_code` (also -> XREF: T19 §4)
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
-> **Deferred:** [M] not started this pass -- `section-pack.py` returns `SPLIT-RECOMMENDED` (5 substantial, security-sensitive items: CI init wiring, Ed25519 policy-artifact signature auth, anti-rollback counter, ratchet-domain merge, dynamic-code-site gating) and the mandatory Codex design-review gate is unavailable (external backend outage, confirmed not local -> gotcha `.claude/state/live-gotchas.md` 2026-09-03). Shipping security-policy code unreviewed is worse than parking it untouched. No source changed.
 
 ---
 
