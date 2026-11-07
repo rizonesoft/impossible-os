@@ -89,6 +89,7 @@ Register the Win32k shadow SSDT as Table 1 in the SSDT dispatcher. Service numbe
   - `win32k_init()` -- register all NtGdiXxx and NtUserXxx handlers in shadow SSDT
   - Called during Phase 3 init (after compositor is ready)
 - [x] Unimplemented shadow slots return `STATUS_NOT_IMPLEMENTED`: `ssdt_init()` fills all 1,024 with `ssdt_stub_not_implemented`, and an index past `max` returns it too (shipped, `src/kernel/nt/ssdt.c`)
+- [ ] GUI-thread conversion: on a thread's first Table-1 call, after the audit and filter checks, run the KiConvertGuiThread equivalent (larger kernel stack, GUI state) -> XREF: `02-kernel-core/TODO-12` s4 (item: "GUI-thread conversion")
 - [ ] Commit: `"kernel: win32k -- shadow SSDT Table 1 dispatch infrastructure"`
 
 **Test checkpoint:** `syscall_dispatch(0x1000)` routes to shadow SSDT, not main SSDT. Unimplemented shadow slot returns `STATUS_NOT_IMPLEMENTED`. Serial: `"win32k: shadow SSDT registered, 1300 services"` once the full table from `TODO-A` is registered.

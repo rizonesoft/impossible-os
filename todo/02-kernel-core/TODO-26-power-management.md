@@ -1102,6 +1102,7 @@ On heterogeneous CPU topologies (Intel Alder Lake+ P/E-cores, future ARM big.LIT
 Register all power management NtXxx entry points in the SSDT so user-mode code can invoke them via `syscall`. See TODO-12-native-api-ssdt.md §4 (SSDT layout) and §22 (power syscalls).
 
 - [ ] `NtShutdownSystem(Action)` -> SSDT 0x00D7: call `pm_shutdown()` / `pm_reboot()` based on action; requires `SeShutdownPrivilege`
+  - Reboot and PowerOff ship (`nt_syscall.c:1572`). `ShutdownNoReboot (0)` is missing -> XREF: `TODO-12` s22 (item: "`NtShutdownSystem(Action)`").
 - [ ] `NtSetSystemPowerState(SystemAction, LightestSystemState, Flags)` -> SSDT 0x0140: route through ACPI S-state transition (§2)
 - [ ] `NtInitiatePowerAction(SystemAction, LightestSystemState, Flags, Asynchronous)` -> SSDT 0x0141: async power action initiation
 - [ ] `NtPowerInformation(InformationLevel, InputBuffer, InputLen, OutputBuffer, OutputLen)` -> SSDT 0x0142: return battery state, processor info, S-state capabilities, thermal zone data from §6, §14, §15

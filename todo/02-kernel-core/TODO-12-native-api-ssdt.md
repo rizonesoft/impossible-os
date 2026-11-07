@@ -65,33 +65,33 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | --- | :---: | -------------------------------------------------------------- | ------------------ | :----: |
 | 💎  |   1   | NTSTATUS type and canonical status codes                       | --                 |  [x]   |
 | 💎  |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-11 §5–§8      |  [x]   |
-| 💎  |   3   | INT 0x2E compatibility path                                    | §2                 |  [/]   |
+| 💎  |   3   | INT 0x2E compatibility path                                    | §2                 |  [ ]   |
 | 💎  |   4   | System Service Descriptor Table (SSDT) -- 477 entries          | §1                 |  [/]   |
 | 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4             |  [x]   |
-| 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-05 §2     |  [/]   |
-| 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-05 §2     |  [/]   |
+| 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-05 §2     |  [ ]   |
+| 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-05 §2     |  [ ]   |
 | 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-05 §6     |  [x]   |
 | 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                 |  [/]   |
-| 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                 |  [/]   |
+| 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                 |  [ ]   |
 | ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-11 §1     |  [x]   |
 | ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5             |  [x]   |
 | 💎  |  13   | File metadata and device control                               | §6                 |  [x]   |
-| 💎  |  14   | Registry syscalls (core CRUD)                                  | §5, TODO-14 §5     |  [/]   |
-| 💎  |  15   | Registry syscalls (advanced: flush/notify/save/hive)           | §14, TODO-14 §5    |  [/]   |
-| 💎  |  16   | Token open/query/adjust syscalls                               | §5, TODO-15 §7     |  [/]   |
-| 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-05 §3     |  [/]   |
-| 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-05 §7     |  [/]   |
-| 💎  |  19   | Timer control syscalls                                         | §5, TODO-08 §8,§9  |  [/]   |
+| 💎  |  14   | Registry syscalls (core CRUD)                                  | §5, TODO-14 §5     |  [ ]   |
+| 💎  |  15   | Registry syscalls (advanced: flush/notify/save/hive)           | §14, TODO-14 §5    |  [ ]   |
+| 💎  |  16   | Token open/query/adjust syscalls                               | §5, TODO-15 §7     |  [ ]   |
+| 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-05 §3     |  [ ]   |
+| 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-05 §7     |  [ ]   |
+| 💎  |  19   | Timer control syscalls                                         | §5, TODO-08 §8,§9  |  [ ]   |
 | 💎  |  20   | Legacy LPC port syscalls (stubs; engine TODO-09 §7)            | §5, TODO-09 §7     |  [/]   |
 | 💎  |  21   | Exception and debug syscalls                                   | §5, TODO-23 §5     |  [/]   |
 | 💎  |  22   | Power and system control                                       | §5, TODO-26 §20    |  [/]   |
 | 💎  |  23   | Atom, locale, and miscellaneous                                | §5                 |  [x]   |
-| ⭐  |  24   | Syscall audit and tracing hook                                 | §4                 |  [/]   |
+| ⭐  |  24   | Syscall audit and tracing hook                                 | §4                 |  [ ]   |
 | 💎  |  25   | Per-process syscall filtering (seccomp / SystemCallDisable)    | §4, §7             |  [x]   |
 | 💎  |  26   | Kernel-to-user mode callback dispatch (KeUserModeCallback)     | §2, TODO-11 §9     |  [/]   |
 | ⭐  |  27   | SSDT integrity protection (hardware write-protect)             | §4                 |  [/]   |
 | 💎  |  28   | Extended directory enumeration classes                         | §6, §13            |  [x]   |
-| 💎  |  29   | Token lifecycle + SRM access check syscalls                    | §16, TODO-15 §7,§8 |  [/]   |
+| 💎  |  29   | Token lifecycle + SRM access check syscalls                    | §16, TODO-15 §7,§8 |  [ ]   |
 | 💎  |  30   | Generic object management (make-temp/perm, set-info, compare)  | §17, TODO-05 §1,§9 |  [/]   |
 | 💎  |  31   | Modern ALPC port syscalls                                      | §20, TODO-24 §8-§9 |  [x]   |
 | 💎  |  32   | Post-ship follow-up backfill (2026-07-31 cohort)               | --                 |  [ ]   |
@@ -245,6 +245,7 @@ Windows NT's original software-interrupt syscall vector. Required for early ntdl
 - [x] INT 0x80 kept active alongside INT 0x2E (both paths coexist)
 - [x] Commit: `"kernel: nt -- INT 0x2E syscall compatibility path"`
 - [ ] **Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+**: Windows x64 ABI passes the first 4 args in `R10`/`RDX`/`R8`/`R9` and args 5+ on the user stack at `[RSP+0x28]`, `[RSP+0x30]`, ... Today `syscall_handler_2e()` in `src/kernel/sched/syscall.c` and `syscall_entry` in `src/kernel/sched/syscall_entry.asm` only populate the first 4 register slots plus whatever the dispatcher already has in `a5`/`a6`, so any `NtXxx` with more than 4 parameters has to kludge the rest through an extended-args struct at `a5` (e.g. `NT_MAPVIEW_ARGS` in `include/kernel/nt/nt_section.h`). Retrofit both entry paths to probe `[RSP+0x28..]` for the user stack frame with `ProbeForReadIfUser` and populate `a5`/`a6` directly (and any future `a7..a10` via an on-stack `SSDT_ARGS` struct passed to `ssdt_dispatch()`). Then delete `NT_MAPVIEW_ARGS` and the `NtCreateSection` packed-flags kludge at `nt_section.c:93-94`. This auto-closes TODO-12 §18 Accepted #1 (10-parameter `NtMapViewOfSection` stack ABI).
+  - Checked 2026-11-07: `syscall_entry.asm` still does `xor r9, r9` for arg5 and `syscall.c:1319` passes `0, 0`. No external blocker. s14 and `nt_timer.c:13-15` wait on this.
 
 - [ ] [M] syscall IRQL wrap pays a redundant LAPIC TPR write per INT 0x2E/0x80: `syscall_lower_entry_irql`->`KeLowerIrql` reprograms TPR the IDT raise never set. Use a software-IRQL helper setting `pcpu->current_irql` without TPR. (§3)
 
@@ -261,8 +262,8 @@ Windows NT's original software-interrupt syscall vector. Required for early ntdl
 
 > **Verified:** 2026-06-28 | 4/6 items | build OK | tests 346+16 PASS (tree unchanged; §3 findings out-of-scope/deferred)
 > **Accepted:** [Critical] file-I/O handlers deref raw user iosb/buf pointers with no ProbeFor*IfUser = ring-3 arbitrary kernel R/W; §3 entry path exposes it but §6 owns the handlers (design-reviewed into 4 items) -> XREF: 02-kernel-core/TODO-12 §6 (item: "Add `nt_write_iosb(iosb,status,info)` helper" at line 362)
-> **Deferred:** [M] syscall IRQL entry wrap pays a redundant LAPIC TPR write per INT 0x2E/0x80 -> XREF: 02-kernel-core/TODO-12 §3 (item: "syscall IRQL wrap pays a redundant LAPIC TPR write" at line 249)
-> **Deferred:** [L] INT 0x2E + SYSCALL entry read only 4 register args; >4-arg syscalls kludge via extended-args struct -> XREF: 02-kernel-core/TODO-12 §3 (item: "Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+" at line 247)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] syscall IRQL entry wrap pays a redundant LAPIC TPR write per INT 0x2E/0x80
+> **Notes:** Reopened 2026-11-07, was Deferred: [L] INT 0x2E + SYSCALL entry read only 4 register args; >4-arg syscalls kludge via extended-args struct
 > **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 1Crit accepted-XREF + 1M+1L deferred | scope: kernel-code-quality
 
 ---
@@ -279,7 +280,8 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 - [x] Unimplemented slots return `STATUS_NOT_IMPLEMENTED` via `ssdt_stub_not_implemented()`
 - [x] `ssdt_init()` called in Phase 3 before `syscall_init()`
 - [x] 4 unit tests: unimplemented stub, invalid table, `table->count >= SSDT_MAIN_COUNT` (lower bound, grows as handlers register), register+dispatch
-- [ ] GUI-thread conversion: when ssdt_dispatch selects Table 1 (shadow SSDT, RAX bits[13:12]=01) and the thread lacks GUI state, run a KiConvertGuiThread-equivalent init (expand kernel stack + wire GUI state) before the handler, after the audit/filter checks -> XREF: `D08 T15`, `D08 T16`
+- [/] GUI-thread conversion: on a Table-1 call from a thread without GUI state, run a KiConvertGuiThread-equivalent init (larger kernel stack, GUI state) after the audit and filter checks, before the handler
+  - Blocked: no shadow handler or `win32k_init` exists to convert for. Owner: `08-graphics-ui/TODO-15` s1 (item: "GUI-thread conversion").
 - [x] Bound `ssdt_dispatch`/`ssdt_register` per-table via new `SSDT_TABLE.max` (capacity) field instead of hardcoded `SSDT_MAIN_MAX`; drops the dead `count` term. Closes the §2-review OOB-if-shadow-shrinks finding. (§4 review)
 - [x] Commit: `"kernel: nt -- SSDT and service number table"`
 
@@ -295,7 +297,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 > - re-adversarial skipped: the only behavioral change (the `table->max` bound) was adversarial+perf-approved in round 1; the consistency fixes are compile-time asserts + a doc comment.
 
 > **Verified:** 2026-06-28 | 9/10 items | build OK | smoke PASS (TCG 2.50s), tests 346+16 PASS
-> **Deferred:** [M] GUI-thread conversion (KiConvertGuiThread-equivalent) on the first Table-1 shadow-SSDT call -- blocked on Win32k shadow-SSDT fill + per-thread GUI state -> XREF: 02-kernel-core/TODO-12 §4 (item: "GUI-thread conversion: when ssdt_dispatch selects Table 1" at line 280; depends on D08 T15/T16)
+> **Deferred:** [M] GUI-thread conversion (KiConvertGuiThread-equivalent) on the first Table-1 shadow-SSDT call -- blocked on Win32k shadow-SSDT fill + per-thread GUI state -> XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §1 (item: "GUI-thread conversion")
 > **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 2M fixed | scope: kernel-code-quality
 
 ---
@@ -376,7 +378,7 @@ Core file I/O entry points routed through the Object Manager (→ XREF TODO-05).
 > - Trust boundary on these handlers NOT yet hardened: the 4 design-reviewed [Critical]/[H] items (nt_write_iosb, bounce buffers, OBJECT_ATTRIBUTES snapshot, ByteOffset capture) deferred to the NT trust-boundary campaign with §29.
 > - Not live-exploitable in the current dev stage (no per-process isolation, SMAP off, identity-mapped shared frames) -- see the `project_nt_syscall_trust_boundary` analysis.
 
-> **Deferred:** [Critical] §6 file-I/O user-pointer hardening (nt_write_iosb + kernel bounce buffers + OBJECT_ATTRIBUTES copy_from_user snapshot + ByteOffset capture) is a design-reviewed ~300-line security refactor; core file I/O ships, trust-boundary enforcement deferred -> XREF: 02-kernel-core/TODO-12 §6 (item: "Add `nt_write_iosb(iosb,status,info)` helper" at line 360, + 3 sibling items at lines 361-363)
+> **Notes:** Reopened 2026-11-07, was Deferred: [Critical] §6 file-I/O user-pointer hardening (nt_write_iosb + kernel bounce buffers + OBJECT_ATTRIBUTES copy_from_user snapshot + ByteOffset capture) is a design-reviewed ~300-line security refactor; core file I/O ships, trust-boundary enforcement deferred
 
 ---
 
@@ -384,14 +386,19 @@ Core file I/O entry points routed through the Object Manager (→ XREF TODO-05).
 Process and thread creation, suspension, termination, and thread context access through the Ob-managed process model (→ XREF TODO-05 §2).
 
 - [x] `NtCreateProcess(0x0030)`: wraps task_create + ob_handle_table_inherit; returns HANDLE
-- [ ] Wire `env_copy()` fail-closed into every constructor (`task_fork`, `task_create`=NtCreateProcess+boot/desktop, `task_create_user`) before `num_tasks++` publish (→ XREF `03-memory-concurrency/TODO-07-smp-phase2.md` §3)
-- [ ] That env_copy pre-publish wiring also needs the atomic unpublished-slot reservation (concurrent creators must not claim the same `num_tasks` pid) -> XREF `03-memory-concurrency/TODO-06-scheduler-enhancement.md` §13
+- [/] Wire `env_copy()` fail-closed into every constructor (`task_fork`, `task_create`=NtCreateProcess+boot/desktop, `task_create_user`) before `num_tasks++` publish (→ XREF `03-memory-concurrency/TODO-07-smp-phase2.md` §3)
+  - Waits on the two publication items below (`task.c:2899-2908` records why a naive copy races job termination).
+- [/] That env_copy pre-publish wiring also needs the atomic unpublished-slot reservation (concurrent creators must not claim the same `num_tasks` pid) -> XREF `03-memory-concurrency/TODO-06-scheduler-enhancement.md` §13
+  - Owner: `03-memory-concurrency/TODO-06` s13 (item: "Atomic task-slot CLAIM"), section open.
 - [ ] Make job membership and `num_tasks++` publication atomic w.r.t. job TERMINATION, or revalidate the inherited job's
       terminated state under the job lock immediately before publication and unwind on failure. A concurrent terminate snapshots the member pid, fails to resolve it (`pid >= num_tasks`), skips it, and `task_fork` then publishes a live child into a terminated job. Pre-existing; `TODO-04` §21 widened the window by moving the child PML4 allocation into it. UNREACHABLE TODAY FOR ONE INCIDENTAL, UNDOCUMENTED REASON: `SYS_FORK` arrives through INT 0x80, installed as a 64-bit INTERRUPT gate (`0xEE`, `src/kernel/idt.c`), so IF is clear for the whole call and nothing in the window yields. It is NOT the parked APs that save it. Routing fork through the SYSCALL fast path (which does `sti`) or adding any sleeping call to this window makes it immediately reachable, so fix it before either. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §21 (item: "`FAULT_SITE_FORK_CHILD_PML4` (id 4, pmm-owned)")
-- [ ] The env_copy child snapshot must take cwd + environ TOGETHER under the parent `chdir_lock` (§12 made cwd + `=X:` one txn; a split snapshot or `task_create` cwd=root reset yields a child whose cwd + `=X:` never coexisted)
-- [ ] When wired `env_copy()` gives an elevated child (IL > parent) the parent env, call `env_sanitize_for_elevation(child)` before publish so blocklisted vars aren't inherited -> XREF: 02-kernel-core/TODO-22 §16 ("env_sanitize_for_elevation")
+- [/] The env_copy child snapshot must take cwd + environ TOGETHER under the parent `chdir_lock` (§12 made cwd + `=X:` one txn; a split snapshot or `task_create` cwd=root reset yields a child whose cwd + `=X:` never coexisted)
+  - Waits on the `env_copy()` wiring item above.
+- [/] When wired `env_copy()` gives an elevated child (IL > parent) the parent env, call `env_sanitize_for_elevation(child)` before publish so blocklisted vars aren't inherited -> XREF: 02-kernel-core/TODO-22 §16 ("env_sanitize_for_elevation")
+  - Waits on the `env_copy()` wiring item above. `env_sanitize_for_elevation` itself ships at `env.c:799`.
 - [x] `NtCreateProcessEx(0x0031)`: aliases NtCreateProcess (extended flags deferred to TODO-21)
-- [ ] `NtCreateUserProcess(0x0045)`: stub returning STATUS_NOT_IMPLEMENTED (needs PE loader TODO-21)
+- [/] `NtCreateUserProcess(0x0045)`: stub returning STATUS_NOT_IMPLEMENTED (see below)
+  - Blocker was stale: `src/kernel/pe.c` ships. It now waits on the real OB PROCESS/THREAD objects item in this section.
 - [x] `NtCreateThread(0x0036)`: wraps thread_create; supports CreateSuspended via suspend_count
 - [x] `NtCreateThreadEx(0x0037)`: aliases NtCreateThread (extended flags deferred)
 - [x] `NtOpenProcess(0x0032)`: lookup by CLIENT_ID.UniqueProcess; returns HANDLE
@@ -400,8 +407,8 @@ Process and thread creation, suspension, termination, and thread context access 
 - [x] `NtTerminateThread(0x0039)`: set TASK_DEAD, ob_thread_mark_dead
 - [x] `NtResumeThread(0x003A)`: decrement suspend_count; TASK_READY if 0
 - [x] `NtSuspendThread(0x003B)`: increment suspend_count; TASK_BLOCKED; STATUS_SUSPEND_COUNT_EXCEEDED at 127
-- [ ] `NtGetContextThread(0x003C)`: stub returning STATUS_NOT_IMPLEMENTED (needs CONTEXT from TODO-23)
-- [ ] `NtSetContextThread(0x003D)`: stub returning STATUS_NOT_IMPLEMENTED (needs CONTEXT from TODO-23)
+- [ ] `NtGetContextThread(0x003C)`: stub returning STATUS_NOT_IMPLEMENTED (`CONTEXT` ships in `kernel/except.h`)
+- [ ] `NtSetContextThread(0x003D)`: stub returning STATUS_NOT_IMPLEMENTED (`CONTEXT` ships in `kernel/except.h`; validate like `NtContinue`)
 - [x] `NtQueryInformationThread(0x003E)`: ThreadBasicInformation (TEB, client ID, priority), ThreadPriority, ThreadBasePriority
 - [x] `NtSetInformationThread(0x003F)`: ThreadPriority, ThreadBasePriority (via thread_set_priority), ThreadAffinityMask, ThreadIdealProcessor (accepted, enforcement deferred)
 - [x] `NtQueryInformationProcess(0x0034)`: ProcessBasicInformation (PEB, affinity, parent PID), ProcessPriorityClass
@@ -410,15 +417,18 @@ Process and thread creation, suspension, termination, and thread context access 
 - [x] `NtAlertThread(0x0040)`: returns SUCCESS (APC delivery deferred to T07 §12 KiDeliverApc)
 - [x] `NtAlertResumeThread(0x0041)`: alert + NtResumeThread
 - [x] `NtTestAlert(0x0046)`: returns SUCCESS (APC check deferred to T07 §12 KeTestAlertThread)
-- [ ] `NtQueueApcThread(0x0043)`/`NtQueueApcThreadEx`/`NtQueueApcThreadEx2`: stub returning STATUS_NOT_IMPLEMENTED; Ex/Ex2 carry the special-user-APC flag -> XREF: T07 §11/§12 (KeInsertQueueApc + SpecialUserApcPending)
-- [ ] `NtImpersonateThread(0x0042)`: stub returning STATUS_NOT_IMPLEMENTED (needs SRM from TODO-15)
+- [/] `NtQueueApcThread(0x0043)`/`NtQueueApcThreadEx`/`NtQueueApcThreadEx2`: stub returning STATUS_NOT_IMPLEMENTED; Ex/Ex2 carry the special-user-APC flag -> XREF: T07 §11/§12 (KeInsertQueueApc + SpecialUserApcPending)
+  - `KeInsertQueueApc` ships (`apc.c:79`), but ring-3 delivery does not (`apc.c:267`). Owner: `02-kernel-core/TODO-07-irql-model-dpcs` s12 (item: "User-mode APC delivery").
+- [ ] `NtImpersonateThread(0x0042)`: stub returning STATUS_NOT_IMPLEMENTED (impersonation ships in `ps_token.c`; cross-thread is this item)
 - [x] `NtDelayExecution(0x0047)`: yield-loop sleep with uptime tick counter; negative 100-ns interval
 - [x] Added `suspend_count` field to `struct thread` in task.h
 - [x] New file: `include/kernel/nt/nt_process.h` with THREAD_BASIC_INFORMATION, PROCESS_BASIC_INFORMATION, info class constants
 - [x] New file: `src/kernel/nt/nt_process.c` with 23 SSDT handlers
 - [x] 2 unit tests: SSDT registration (7 handler checks), info class constants (7 value checks)
-- [ ] NtGetNextProcess (0x0202) + NtGetNextThread (0x0203): modern enumeration -- restart from a previous handle with rights checks, no leaked references (slots reserved in `TODO-A-SSDT-Master-Table` / `service_numbers.h`; XREF `T21 §4`)
+- [/] NtGetNextProcess (0x0202) + NtGetNextThread (0x0203): modern enumeration -- restart from a previous handle with rights checks, no leaked references (slots reserved in `TODO-A-SSDT-Master-Table` / `service_numbers.h`; XREF `T21 §4`)
+  - Waits on the real OB PROCESS/THREAD objects item in this section: it hands out handles to them.
 - [ ] NtSet/QueryInformationProcess mitigation carriers (ChildProcessPolicy + Signature + ImageLoad); SystemCallDisablePolicy -> §25. T21 §11 dispatch wired but both handlers DEFER (NOT_SUPPORTED) pending usercopy (TODO-23 §13)
+  - `TODO-23` s13 shipped `try_copy_*`, so the set path can read its buffer. Judge the query path separately: `nt_process.c:752` records that the kernel heap sits inside the probe window.
 - [ ] [Critical] NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct, not OB PROCESS/THREAD objects (`nt_process.c`) -- corrupts OB metadata, no type/access check. Use real OB objects + rights -> XREF `D02 T05 §2`. (§7)
 - [ ] [Critical] NtCreateProcess leaves a runnable NULL-entry task (`nt_process.c:70` task_create entry=0) + no teardown on post-create alloc fail; create non-runnable until exec + add teardown. (§7)
 - [ ] [H] Process-handle waits reap and require parentage: `wait_on_body` (nt_sync.c) uses parent-only reaping `task_waitpid`; NT waits are neither -- add a non-reaping process exit event for any handle holder. (§7)
@@ -433,7 +443,7 @@ Process and thread creation, suspension, termination, and thread context access 
 > - Adversarial review: handle model is a PID/TID-as-handle shortcut (not OB objects), NtCreateProcess leaves a runnable NULL-entry task, info syscalls unprobed -- 3 [Critical] filed (2 §7 -> D02 T05 §2, 1 -> §29).
 > - Most other open items are blocked on external prerequisites (env-copy child-inheritance wiring gated on the D03 T07 §3 publication lock + D03 T06 §13 slot-reservation (the two §7 prereq items), NtCreateUserProcess D02 T21, Context D02 T23, ApcThread D02 T07, Impersonate D02 T15) and defer with their existing XREFs.
 
-> **Deferred:** [Critical] §7 process/thread handle model (real OB PROCESS/THREAD objects + handle-rights + user-pointer probes + non-runnable NtCreateProcess + teardown) is gated on the OB object model + the NT trust-boundary campaign with §29 -> XREF: 02-kernel-core/TODO-12 §7 (item: "NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct" at line 413, + sibling at 414) and D02 T05 §2
+> **Notes:** Reopened 2026-11-07. The stamp named this section's own item, so it could never clear. The publication race, the process model and the stubs with stale blockers are free work here; items with a real owner are parked one by one.
 
 ---
 
@@ -540,13 +550,14 @@ Provides OS version, process list, performance counters, and detailed process in
   - [/] `SystemProcessorPerformanceInformation (8)`: deferred -- needs per-CPU time accounting (see Deferred Class Completion Checklist below)
   - [/] `SystemModuleInformation (11)`: deferred -- needs module loader (see Deferred Class Completion Checklist below)
   - [/] `SystemHandleInformation (16)`: deferred -- needs system-wide handle snapshot (see Deferred Class Completion Checklist below)
-  - [/] `SystemObjectInformation (17)`: deferred -- OB type-stats marshalling (see Deferred Class Completion Checklist below)
-  - [/] `SystemInterruptInformation (23)`: deferred -- needs per-CPU interrupt counters (see Deferred Class Completion Checklist below)
-  - [/] `SystemExceptionInformation (33)`: deferred -- needs exception counters (see Deferred Class Completion Checklist below)
+  - [ ] `SystemObjectInformation (17)`: OB type-stats marshalling (see Deferred Class Completion Checklist below)
+  - [ ] `SystemInterruptInformation (23)`: needs per-CPU interrupt counters (see Deferred Class Completion Checklist below)
+  - [ ] `SystemExceptionInformation (33)`: needs exception counters (see Deferred Class Completion Checklist below)
   - [/] `SystemRegistryQuotaInformation (37)`: deferred -- needs registry quota model (see Deferred Class Completion Checklist below)
   - [/] `SystemBootPerformanceInformation (custom)`: deferred (→ XREF: `TODO-01-kernel-init-sequencing.md §12`)
   - [x] Unimplemented classes return `STATUS_NOT_IMPLEMENTED` via default case
-- [/] `NtSetSystemInformation(0x00D1)`: stub returning STATUS_NOT_IMPLEMENTED -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md (SeSystemtimePrivilege / SeSystemEnvironmentPrivilege enforcement)
+- [ ] `NtSetSystemInformation(0x00D1)`: stub returning STATUS_NOT_IMPLEMENTED -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md (SeSystemtimePrivilege / SeSystemEnvironmentPrivilege enforcement)
+  - Checked 2026-11-07: `TODO-15` s8 shipped `SeSinglePrivilegeCheck`, and `wall_clock.c:888` already gates on it. `nt_syscall.c:1560` is still the stub.
 - [ ] [H] Fixed-size query handlers probe the raw user `Length`, not the derived output size -- §13's full-range `ProbeForWrite` touch makes that an O(pages) DoS. Probe the selected struct size (e.g. NtQueryTimer) -> XREF: `TODO-23 §13`
 - [x] `NtQueryInformationProcess` extended with 7 new info classes:
   - `ProcessBasicInformation (0)`: PEB, PID, parent PID, affinity (done in §7)
@@ -567,9 +578,9 @@ Provides OS version, process list, performance counters, and detailed process in
 - [/] `SystemProcessorPerformanceInformation (8)`: add real CPU time accounting first (scheduler tick attribution), then expose per-CPU idle/kernel/user times via `NtQuerySystemInformation`. The accounting groundwork is still pending in `todo/02-kernel-core/TODO-21-process-model-extensions.md` (line 188).
 - [/] `SystemModuleInformation (11)`: implement module registry/loader list (`exec_register_module`, lookup/enumeration), then serialize that list in `NtQuerySystemInformation`. Module list work is still planned in `todo/02-kernel-core/TODO-17-binary-system.md` (line 165).
 - [/] `SystemHandleInformation (16)`: add a safe system-wide handle table snapshot across all processes (PID + handle + access + object/type), then expose it through class 16. Current implementation has per-process tables only.
-- [/] `SystemObjectInformation (17)`: wire `NtQuerySystemInformation` to OB type stats aggregation. Most raw stats already exist in `src/kernel/ob/ob.c` (line 363), but class 17 marshalling is not implemented.
-- [/] `SystemInterruptInformation (23)`: add per-CPU interrupt counters and return them. You currently have per-vector global IRQ counts in `src/kernel/irq.c` (line 23), but no per-CPU increment path is wired.
-- [/] `SystemExceptionInformation (33)`: add exception counters in the IDT exception path, then expose those totals. Exception handling exists, but exception stats tracking does not.
+- [ ] `SystemObjectInformation (17)`: wire `NtQuerySystemInformation` to OB type stats aggregation. Most raw stats already exist in `src/kernel/ob/ob.c` (line 363), but class 17 marshalling is not implemented.
+- [ ] `SystemInterruptInformation (23)`: add per-CPU interrupt counters and return them. You currently have per-vector global IRQ counts in `src/kernel/irq.c` (line 23), but no per-CPU increment path is wired.
+- [ ] `SystemExceptionInformation (33)`: add exception counters in the IDT exception path, then expose those totals. Exception handling exists, but exception stats tracking does not.
 - [/] `SystemRegistryQuotaInformation (37)`: implement registry quota accounting/enforcement (limit, used, peak) in registry write paths, then query output. Current registry code has no quota model.
 - [/] `SystemBootPerformanceInformation (custom)`: boot perf NVRAM read/write is already present in `src/kernel/boot_timing.c` (line 333), but you still need a kernel accessor/API and a class serializer in `NtQuerySystemInformation` for user-mode consumption.
 - [/] For all deferred classes: add ABI structs + buffer-size handling + unit tests in `src/kernel/test/test_nt_types.c`, then update TODO-12 §10 checklist states.
@@ -581,8 +592,8 @@ Provides OS version, process list, performance counters, and detailed process in
 > - **How it runs:** each info class marshals kernel state (PMM counts, CPU count, PID/name list, PEB/handle-count) into the caller buffer with length/ReturnLength handling.
 > - **Downstream effects:** backs user-mode GetSystemInfo / NtQuerySystemInformation for the implemented classes; the 8 deferred SystemInfo classes are each owner-tracked in the Deferred Class Completion Checklist above.
 > - **Scope boundary:** deferred classes need CPU-time accounting (TODO-21), module loader (TODO-17), per-CPU/exception counters, registry quota, boot-perf serialization; NtSetSystemInformation needs SRM privilege enforcement (TODO-15).
-> **Deferred:** [M] 8 SystemInformation classes (8/11/16/17/23/33/37/custom) return STATUS_NOT_IMPLEMENTED pending their data-source infrastructure (reason: infra) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md (CPU-time accounting at line 188) + 02-kernel-core/TODO-17-binary-system.md (module list at line 165)
-> **Deferred:** [M] `NtSetSystemInformation(0x00D1)` stub pending privilege enforcement (reason: infra) -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md (SeSystemtimePrivilege / SeSystemEnvironmentPrivilege access check)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] 8 SystemInformation classes (8/11/16/17/23/33/37/custom) return STATUS_NOT_IMPLEMENTED pending their data-source infrastructure (reason: infra) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md (CPU-time accounting at line 188) + 02-kernel-core/TODO-17-binary-system.md (module list at line 165)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] `NtSetSystemInformation(0x00D1)` stub pending privilege enforcement (reason: infra) -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md (SeSystemtimePrivilege / SeSystemEnvironmentPrivilege access check)
 
 ---
 
@@ -694,7 +705,8 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 - [x] `NtEnumerateKey(KeyHandle, Index, KeyInformationClass, KeyInformation, Length, ResultLength)` → SSDT 0x0099
 - [x] `NtEnumerateValueKey(KeyHandle, Index, KeyValueInformationClass, KeyValueInformation, Length, ResultLength)` → SSDT 0x009A
 - [x] `NtQueryKey(KeyHandle, KeyInformationClass, KeyInformation, Length, ResultLength)` → SSDT 0x009B
-- [ ] Registry syscalls with 5+ args (NtSetValueKey, NtQueryValueKey, NtEnumerate*, NtQueryKey, NtCreateKey Disposition) drop a5/a6 on real ring-3 calls until the entry paths load user-stack args. XREF: TODO-12 §3 line 245.
+- [/] Registry syscalls with 5+ args (NtSetValueKey, NtQueryValueKey, NtEnumerate*, NtQueryKey, NtCreateKey Disposition) drop a5/a6 on real ring-3 calls until the entry paths load user-stack args.
+  - Waits on s3 (item: "Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+").
 - [ ] `NtEnumerateKey(KeyFullInformation)` opens a transient child HKEY per entry (128-slot pool, fails under handle pressure). Add a `RegQueryInfoKeyDirect(reg_key_t*)` metadata helper to fill KEY_FULL_INFORMATION without a handle.
 - [x] Commit: `"kernel: nt -- core registry syscalls wired to SSDT (create/open/query/set/delete/enumerate)"` (6d6535d5)
 
@@ -708,8 +720,8 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > - Scope boundary: 5+arg syscalls need §3 stack-arg support for real ring-3; HKEY-not-OB (TODO-14 §5), registry SMP locking (TODO-31 §14), UTF-16 decode (TODO-14 §5) stay deferred.
 > - Test gap: STATUS_KEY_HAS_CHILDREN + ring-3 5+arg paths untested (direct-dispatch tests cover handler logic).
 > **Verified:** 2026-07-02 | commit `1d898565` | 10/13 items | build OK | abi 426/426 PASS
-> **Deferred:** [H] registry syscalls needing args 5/6 (Data/DataSize, Length/ResultLength) drop them on real ring-3 calls until the entry paths load user-stack args -> XREF: 02-kernel-core/TODO-12 §14 (item: "Registry syscalls with 5+ args" at line 697)
-> **Deferred:** [M] NtEnumerateKey(KeyFullInformation) opens a transient child HKEY per entry (128-slot pool, fails under handle pressure) -> XREF: 02-kernel-core/TODO-12 §14 (item: "`NtEnumerateKey`(KeyFullInformation) opens a transient child HKEY" at line 711)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] registry syscalls needing args 5/6 (Data/DataSize, Length/ResultLength) drop them on real ring-3 calls until the entry paths load user-stack args
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] NtEnumerateKey(KeyFullInformation) opens a transient child HKEY per entry (128-slot pool, fails under handle pressure)
 > **Accepted:** [M] exact-root match + resolver treat UNICODE_STRING as NUL-terminated ASCII (counted contract) -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 272)
 > **Quality reviewed:** 2026-07-02 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M fixed, 1H+2M deferred/accepted-XREF | scope: kernel-code-quality
 
@@ -741,8 +753,8 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > - Scope boundary: hive_load bounds/transactionality + journal validation -> TODO-14 §8; change notifications -> TODO-14 §3; registry SMP locking -> TODO-31 §14; UTF-16 decode -> TODO-14 §5.
 > - Test gap: NtSaveKey/RestoreKey/LoadKey functional paths + NtUnloadKey provenance rejection are untested (registration-only).
 > **Verified:** 2026-07-02 | commit `422113c1` | 6/8 items | build OK | abi 426/426 PASS
-> **Deferred:** [Critical] NtUnloadKey unloads any resolved subkey with no loaded-hive provenance check (can destroy \Registry\Machine\SYSTEM) -> XREF: 02-kernel-core/TODO-12 §15 (item: "NtUnloadKey provenance guard" at line 731)
-> **Deferred:** [M] NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED (§3 shipped the watcher engine; the syscall wiring is §4) -> XREF: 02-kernel-core/TODO-14 §4 (item: "NtNotifyChangeKey" at line 297)
+> **Notes:** Reopened 2026-11-07, was Deferred: [Critical] NtUnloadKey unloads any resolved subkey with no loaded-hive provenance check (can destroy \Registry\Machine\SYSTEM)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED (§3 shipped the watcher engine; the syscall wiring is §4) -> XREF: 02-kernel-core/TODO-14 §4 (item: "NtNotifyChangeKey" at line 297)
 > **Accepted:** [H] hive_load apply pass mutates the live tree with no rollback (validate-before-apply added by §8, but partial mutations still possible on apply-fail/race) -> XREF: 02-kernel-core/TODO-14 §14 (item: "reload transactionality" at the §14 checklist)
 > **Quality reviewed:** 2026-07-02 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 1Crit+1M deferred, 2H+1M accepted-XREF | scope: kernel-code-quality
 
@@ -775,7 +787,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > - Scope boundary: query marshalling -> TODO-15 §4; deep-copy setters/per-token lock -> TODO-15; PID/TID handles -> TODO-05 §9; granted_access -> TODO-15 §8; HandleAttributes -> TODO-05 §2; probes -> §6/§29.
 > - Test gap: token-adjust success paths + PreviousState size edge cases (0/header-only/one-entry) + valid-class query positive paths are untested.
 > **Verified:** 2026-07-02 | commit `7183b1bd` | 9/10 items | build OK | security 1010/1010 PASS
-> **Deferred:** [H] NtAdjustPrivileges/GroupsToken mutate the token before proving PreviousState can hold the old-state entries, so an undersized buffer loses rollback state -> XREF: 02-kernel-core/TODO-12 §16 (item: "NtAdjustPrivileges/GroupsToken mutate the token before proving PreviousState" at line 766)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] NtAdjustPrivileges/GroupsToken mutate the token before proving PreviousState can hold the old-state entries, so an undersized buffer loses rollback state
 > **Accepted:** [H] token queries return kernel-owned SID pointers + TokenGroups uses the wrong header offset (unusable ABI / kernel-layout leak) -> XREF: 02-kernel-core/TODO-15 §4 (item: "TokenXxx query marshalling" at line 335)
 > **Quality reviewed:** 2026-07-02 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1Crit+2H fixed, 1H accepted-XREF, 1H deferred | scope: kernel-code-quality
 
@@ -808,8 +820,8 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > **Accepted:** [Critical] handlers deref raw user pointers with no ProbeFor*IfUser (systemic NT trust boundary) -> XREF: 02-kernel-core/TODO-12 §29 (item: "Namespace + token syscalls deref raw user pointers" at line 1235)
 > **Accepted:** [Critical] NtQuerySymbolicLinkObject reads an unpinned ObpLookupHandle object (concurrent NtClose UAF) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 153)
 > **Accepted:** [H] UNICODE_STRING.Buffer cast to const char* (ASCII assumption) -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 272)
-> **Deferred:** [H] NtQueryDirectoryObject returns the legacy 96-byte ASCII row, not the native UNICODE_STRING ABI -> XREF: 02-kernel-core/TODO-12 §17 (item: "`NtQueryDirectoryObject` returns the legacy 96-byte ASCII" at line 794)
-> **Deferred:** [H] oa_name ignores OBJECT_ATTRIBUTES.RootDirectory (relative names resolve as absolute) -> XREF: 02-kernel-core/TODO-12 §17 (item: "`oa_name` (nt_namespace.c) ignores OBJECT_ATTRIBUTES.RootDirectory" at line 795)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] NtQueryDirectoryObject returns the legacy 96-byte ASCII row, not the native UNICODE_STRING ABI
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] oa_name ignores OBJECT_ATTRIBUTES.RootDirectory (relative names resolve as absolute)
 > **Quality reviewed:** 2026-07-02 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 2Crit+1H accepted-XREF, 2H deferred | scope: kernel-code-quality
 
 
@@ -847,9 +859,9 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 
 > **Codex (2026-04-14):** Fixed page-count overflow (64-bit math + `section_page_count_from_size`), per-section `spinlock_t` for views/size/phys, `oa_probe_ascii_name` for user `OBJECT_ATTRIBUTES`, NULL buffer guard in `ObQuerySectionObject`, file-backed create uses single validated `FILE_OBJECT` for `vfs_read` (no second lookup), `ObExtendSection` double-checked backing swap under lock.
 > **Verified:** 2026-07-02 | commit `b82c51de` | 7/10 items | build OK | ob 426/426 PASS
-> **Deferred:** [H] Win32Protect parsed but never applied; map_user_page_impl hardcodes RW+User so PAGE_READONLY sections map writable (no W^X) -> XREF: 02-kernel-core/TODO-12 §18 (item: "`NtMapViewOfSection` parses `Win32Protect`" at line 835)
-> **Deferred:** [H] closing the section handle makes its view un-unmappable (ObUnmapViewOfSectionByBase scans only live handles), leaking view/pages/VA -> XREF: 02-kernel-core/TODO-12 §18 (item: "`ObUnmapViewOfSectionByBase` scans only live section handles" at line 834)
-> **Deferred:** [H] ObMapViewOfSectionFull holds the irqsave section lock across the per-page VMM loop (interrupts off) -> XREF: 02-kernel-core/TODO-12 §18 (item: "`ObMapViewOfSectionFull` holds the irqsave section lock" at line 836)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] Win32Protect parsed but never applied; map_user_page_impl hardcodes RW+User so PAGE_READONLY sections map writable (no W^X)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] closing the section handle makes its view un-unmappable (ObUnmapViewOfSectionByBase scans only live handles), leaking view/pages/VA
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] ObMapViewOfSectionFull holds the irqsave section lock across the per-page VMM loop (interrupts off)
 > **Quality reviewed:** 2026-07-02 | Codex 3x (adversarial, consistency, perf) | 0 fixed (OS Comparison row reconciled), 3H deferred, 7+1 accepted-XREF | scope: kernel-code-quality
 > **Accepted:** (1) `NtMapViewOfSection` full 10-parameter Windows stack ABI not wired on INT 0x2E / fast syscall (only 4-5 GPR slots today); extended fields use optional `NT_MAPVIEW_ARGS*` at `a5` when non-NULL -> XREF: 02-kernel-core/TODO-12 §4 (item: "Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+", names `syscall_handler_2e`/`syscall_entry.asm` to retrofit, deletes `NT_MAPVIEW_ARGS` + `NtCreateSection` packed-flags kludge at `nt_section.c:93-94`). (2) Cross-process map / other-process `NtUnmapViewOfSection` -> XREF: 03-memory-concurrency/TODO-04 §5 (item: "Retrofit `src/kernel/nt/nt_section.c` once per-process page tables exist", names both guards at `nt_section.c:182`/`235` to remove). (3) `SEC_RESERVE`-only sparse pagefile sections without physical pages -> XREF: 03-memory-concurrency/TODO-04 §5 (item: "Implement `SEC_RESERVE` sparse pagefile-backed sections", names `ObCreateSectionEx` pre-alloc behavior to convert to zero-page PTEs + demand fault). (4) `SectionImageInformation` full Windows layout + PE parse (entry point, stack) -> XREF: 02-kernel-core/TODO-08 §8 (item: `NtQuerySection(..., SectionImageInformation)` PE persist at line 210 -- names backing `SECTION_OBJECT`/`ob_section.c`/`nt_section.c` retrofit list). (5) Initial `ObpLookupHandle` UAF race in `nt_section.c` (body could be freed by concurrent `NtClose` on another thread of the same task between lookup and use) -> XREF: 02-kernel-core/TODO-05 §2 (item: "Add `ObpReferenceObjectByHandle(...)` primitive", explicitly names retrofit list including all of `nt_section.c` and `ObUnmapViewOfSectionByBase` at `ob_section.c:414`). (6) Section handle `granted_access` not enforced per Windows rights model (`SECTION_MAP_READ/WRITE/EXECUTE`, `SECTION_EXTEND_SIZE`, `SECTION_QUERY`) -> XREF: 02-kernel-core/TODO-15 §8 (item: "Enforce per-handle `granted_access` on section syscalls", names required masks per handler and the `test_ob.c` negative test to add). (7) `ObUnmapViewOfSectionByBase` and `ObAreMappedFilesTheSame` O(handle_capacity × SECTION_MAX_VIEWS) scans on every call -> XREF: 02-kernel-core/TODO-05 §2 (item: "Add per-task view-base index", names both functions and `(task_pid, base_addr)` key to add to `struct task`).
 
@@ -877,6 +889,7 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 - [x] `NtSetTimerResolution(DesiredTime, SetResolution, ActualTime)` → SSDT 0x00F4 (→ XREF TODO-08 §8)
 - [ ] `nt_timer_tick` drops `s_armed_lock` before `event_set`, so a concurrent `NtSetTimer` re-arm in the gap lets the stale one-shot signal fire the new arm early. Add a per-arm generation captured before the signal-chain move.
 - [ ] `compute_due_ns` treats positive absolute-FILETIME `DueTime` as fire-now; convert against `wall_clock_time_sourced`/KeQuerySystemTime with overflow-safe interval math so future deadlines delay.
+  - The "time-subsystem XREF" in `nt_timer.c:224` is over: `wall_clock_time_sourced` ships (`wall_clock.c:340`).
 - [ ] `NtSetTimerEx(TimerSetCoalescableTimer)` returns SUCCESS without reading DueTime/Period or calling `nt_timer_arm`, so the timer never fires. Parse the info struct + arm (ignore only the coalescing tolerance).
 - [ ] Timer PreviousState/CurrentState/TimerState derive from `active` (armed) not the event signal state, so a fired one-shot / consumed sync timer reports wrong state. Base state on the event signal state.
 - [ ] `NtQueryTimer` ReturnLength is `uint64_t*` (probes 8 bytes) but the Win ABI is `PULONG` (uint32_t); a 4-byte-ULONG caller can fault or overwrite the adjacent stack slot. Change to `uint32_t*` + 4-byte probe/write.
@@ -895,10 +908,10 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 
 > **Codex adversarial (2026-04-14):** Fixed `compute_due_ns` integer overflow with saturating 100-ns->ns conversion + saturated `now + rel_ns` add (cap `0x7FFFFFFFFFFFFFFF`); fixed `nt_timer_arm` missed-fire race by moving `event_reset()` BEFORE the armed-list insert (inside `s_armed_lock`) so any post-arm `event_set()` survives until consumed.
 > **Verified:** 2026-07-02 | commit `91ce552c` | 11/18 items | build OK | ob 426/426 PASS
-> **Deferred:** [H] nt_timer_tick drops s_armed_lock before event_set, so a concurrent NtSetTimer re-arm lets the stale one-shot signal fire the new arm early -> XREF: 02-kernel-core/TODO-12 §19 (item: "`nt_timer_tick` drops `s_armed_lock` before `event_set`" at line 878)
-> **Deferred:** [H] compute_due_ns treats positive absolute-FILETIME DueTime as fire-now (immediate signal for future deadlines) -> XREF: 02-kernel-core/TODO-12 §19 (item: "`compute_due_ns` treats positive absolute-FILETIME" at line 879)
-> **Deferred:** [H] NtSetTimerEx(TimerSetCoalescableTimer) returns SUCCESS without arming the timer, so it never fires -> XREF: 02-kernel-core/TODO-12 §19 (item: "`NtSetTimerEx(TimerSetCoalescableTimer)` returns SUCCESS" at line 880)
-> **Deferred:** [H] nt_timer_tick Phase B calls ObDereferenceObject from the tick ISR; the final one-shot deref can run kfree from ISR context (IRQL violation) -> XREF: 02-kernel-core/TODO-12 §19 (item: "`nt_timer_tick` Phase B calls `ObDereferenceObject`" at line 884)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] nt_timer_tick drops s_armed_lock before event_set, so a concurrent NtSetTimer re-arm lets the stale one-shot signal fire the new arm early
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] compute_due_ns treats positive absolute-FILETIME DueTime as fire-now (immediate signal for future deadlines)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] NtSetTimerEx(TimerSetCoalescableTimer) returns SUCCESS without arming the timer, so it never fires
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] nt_timer_tick Phase B calls ObDereferenceObject from the tick ISR; the final one-shot deref can run kfree from ISR context (IRQL violation)
 > **Quality reviewed:** 2026-07-02 | Codex 3x (adversarial, consistency, perf) | 0 fixed (OS Comparison row reconciled), 6H+1M deferred, 3 accepted-XREF | scope: kernel-code-quality
 > **Accepted:** (1) `UNICODE_STRING.Buffer` in `oa_probe_ascii_name` is returned as a raw pointer and consumed via `snprintf("%s", name)` in `ObCreateTimerEx`/`ObOpenTimer`, risking an overread if the buffer has no NUL within probed bytes (same codebase-wide pattern as `nt_section.c`/`nt_namespace.c`) -> XREF: 02-kernel-core/TODO-31 §14 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 246 -- retrofit list explicitly names `nt_timer.c::oa_probe_ascii_name` and the ASCII path construction in `ObCreateTimerEx`/`ObOpenTimer`). (2) Initial `ObpLookupHandle` UAF race in `nt_timer.c::resolve_timer_handle` (body could be freed by concurrent `NtClose` on another thread of the same task between lookup and use) -> XREF: 02-kernel-core/TODO-05 §2 (item: "Add `ObpReferenceObjectByHandle(...)` primitive" at line 112 -- retrofit list now explicitly names `nt_timer.c` and enumerates the four consumer handlers). (3) Flat armed-list linear scan per tick (tens of timers OK today, O(N * ticks) at scale) -> XREF: 02-kernel-core/TODO-05 §6 (item: "Replace the flat NT timer armed list with an ordered structure (min-heap or timing wheel)" -- names `nt_timer.c::s_armed_head`, suggests min-heap or timing wheel, requires 1024-timer stress test).
 
@@ -946,21 +959,29 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > [!NOTE]
 > Exception dispatch implemented in TODO-23-exception-dispatch-seh.md §5. Debug infrastructure in TODO-29-kernel-debugger-kd-protocol.md §13. This section reserves SSDT indices and defines the NT-compatible signatures.
 
-- [ ] `NtRaiseException(ExceptionRecord, ContextRecord, FirstChance)` → SSDT 0x0130 (→ XREF TODO-23 §5):
+- [/] `NtRaiseException(ExceptionRecord, ContextRecord, FirstChance)` → SSDT 0x0130 (→ XREF TODO-23 §5):
+  - Owner: `02-kernel-core/TODO-23` s5, parked there on the per-CPU current-thread cursor (`03-memory-concurrency/TODO-07` s3).
   - Delivers exception to the structured exception handler chain
-- [ ] `NtContinue(ContextRecord, RaiseAlert)` → SSDT 0x0131 (→ XREF TODO-23 §5):
+- [/] `NtContinue(ContextRecord, RaiseAlert)` → SSDT 0x0131 (→ XREF TODO-23 §5):
+  - Owner: `02-kernel-core/TODO-23` s5, parked there on the per-CPU current-thread cursor (`03-memory-concurrency/TODO-07` s3).
   - Resume execution from exception with modified context
-- [ ] `NtCreateDebugObject(DebugObjectHandle, DesiredAccess, ObjectAttributes, Flags)` → SSDT 0x0135
-- [ ] `NtDebugActiveProcess(ProcessHandle, DebugObjectHandle)` → SSDT 0x0132:
+- [/] `NtCreateDebugObject(DebugObjectHandle, DesiredAccess, ObjectAttributes, Flags)` → SSDT 0x0135
+  - Owner: `02-kernel-core/TODO-29` s14, section open.
+- [/] `NtDebugActiveProcess(ProcessHandle, DebugObjectHandle)` → SSDT 0x0132:
+  - Owner: `02-kernel-core/TODO-29` s14, section open.
   - Attach debug object to process; all exceptions route to debugger first
-- [ ] `NtRemoveProcessDebug(ProcessHandle, DebugObjectHandle)` → SSDT 0x0134:
+- [/] `NtRemoveProcessDebug(ProcessHandle, DebugObjectHandle)` → SSDT 0x0134:
+  - Owner: `02-kernel-core/TODO-29` s14, section open.
   - Detach debugger from process
-- [ ] `NtWaitForDebugEvent(DebugObjectHandle, Alertable, Timeout, WaitStateChange)` → SSDT 0x0136:
+- [/] `NtWaitForDebugEvent(DebugObjectHandle, Alertable, Timeout, WaitStateChange)` → SSDT 0x0136:
+  - Owner: `02-kernel-core/TODO-29` s14, section open.
   - Wait for next debug event (breakpoint, exception, thread create/exit, process exit, module load)
-- [ ] `NtDebugContinue(DebugObjectHandle, ClientId, ContinueStatus)` → SSDT 0x0133:
+- [/] `NtDebugContinue(DebugObjectHandle, ClientId, ContinueStatus)` → SSDT 0x0133:
+  - Owner: `02-kernel-core/TODO-29` s14, section open.
   - Continue after debug event with `DBG_CONTINUE` or `DBG_EXCEPTION_NOT_HANDLED`
-- [ ] `NtSetInformationDebugObject(DebugObjectHandle, DebugObjectInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x0137
-- [ ] Commit: `"kernel: nt -- exception and debug syscalls"`
+- [/] `NtSetInformationDebugObject(DebugObjectHandle, DebugObjectInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x0137
+  - Owner: `02-kernel-core/TODO-29` s14, section open.
+- [/] Commit: `"kernel: nt -- exception and debug syscalls"` Waits on: the items above.
 
 **Test checkpoint:** `NtRaiseException` with `STATUS_BREAKPOINT` reaches SEH handler. `NtCreateDebugObject` + `NtDebugActiveProcess` on a child process captures breakpoint events via `NtWaitForDebugEvent`. `NtDebugContinue(DBG_CONTINUE)` resumes the debuggee.
 
@@ -972,7 +993,7 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > - Exception delivery (`NtRaiseException`/`NtContinue`) is owned by TODO-23 §5; the six debug-object syscalls are owned by TODO-29 §13.
 > - Scope boundary: functional handlers, registration, and unit tests belong to the two owner sections, not here.
 > **Deferred:** [M] `NtRaiseException`/`NtContinue` handlers unimplemented; §21 reserves the SSDT slots + signatures only -> XREF: 02-kernel-core/TODO-23-exception-dispatch-seh.md §5 (items: "`NtRaiseException` SSDT entry -- calls `ki_dispatch_exception()`" at line 213, "`NtContinue` SSDT entry -- restore CONTEXT, resume user-mode" at line 214)
-> **Deferred:** [M] Six debug-object syscalls unimplemented (NtCreateDebugObject/NtDebugActiveProcess/NtRemoveProcessDebug/NtWaitForDebugEvent/NtDebugContinue/NtSetInformationDebugObject) -> XREF: 02-kernel-core/TODO-29-kernel-debugger-kd-protocol.md §13 (items: "`NtCreateDebugObject` ... register as ObpDebugType" at line 473 through "`NtSetInformationDebugObject`" at line 478)
+> **Deferred:** [M] Six debug-object syscalls unimplemented (NtCreateDebugObject/NtDebugActiveProcess/NtRemoveProcessDebug/NtWaitForDebugEvent/NtDebugContinue/NtSetInformationDebugObject) -> XREF: 02-kernel-core/TODO-29-kernel-debugger-kd-protocol.md §14 (items: "`NtCreateDebugObject`" through "`NtSetInformationDebugObject`")
 
 ---
 
@@ -981,22 +1002,28 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > [!NOTE]
 > Power management implementation in TODO-26-power-management.md. This section provides the SSDT wiring for power and system control syscalls.
 
-- [ ] `NtShutdownSystem(Action)` → SSDT 0x00D7:
+- [/] `NtShutdownSystem(Action)` → SSDT 0x00D7:
+  - Reboot and PowerOff ship with the privilege gate (`nt_syscall.c:1572`). `ShutdownNoReboot (0)` still returns `STATUS_INVALID_PARAMETER`. Owner: `02-kernel-core/TODO-26` s20.
   - `ShutdownNoReboot (0)`, `ShutdownReboot (1)`, `ShutdownPowerOff (2)`
   - Requires `SeShutdownPrivilege`
-- [ ] `NtSetSystemPowerState(SystemAction, LightestSystemState, Flags)` → SSDT 0x0140:
+- [/] `NtSetSystemPowerState(SystemAction, LightestSystemState, Flags)` → SSDT 0x0140:
+  - Owner: `02-kernel-core/TODO-26` s20, section open.
   - `SystemAction`: `PowerActionSleep`, `PowerActionHibernate`, `PowerActionShutdown`
   - Routes through ACPI power management (→ XREF TODO-26)
-- [ ] `NtInitiatePowerAction(SystemAction, LightestSystemState, Flags, Asynchronous)` → SSDT 0x0141
-- [ ] `NtPowerInformation(InformationLevel, InputBuffer, InputBufferLength, OutputBuffer, OutputBufferLength)` → SSDT 0x0142:
+- [/] `NtInitiatePowerAction(SystemAction, LightestSystemState, Flags, Asynchronous)` → SSDT 0x0141
+  - Owner: `02-kernel-core/TODO-26` s20, section open.
+- [/] `NtPowerInformation(InformationLevel, InputBuffer, InputBufferLength, OutputBuffer, OutputBufferLength)` → SSDT 0x0142:
+  - Owner: `02-kernel-core/TODO-26` s20, section open.
   - `SystemBatteryState (5)`: battery level, AC power
   - `ProcessorInformation (11)`: frequency, max frequency
   - `SystemPowerCapabilities (4)`: S-state support, lid switch
-- [ ] `NtGetDevicePowerState(Device, State)` → SSDT 0x0143
-- [ ] `NtSetThreadExecutionState(NewFlags, PreviousFlags)` → SSDT 0x0144:
+- [/] `NtGetDevicePowerState(Device, State)` → SSDT 0x0143
+  - Owner: `02-kernel-core/TODO-26` s20, section open.
+- [/] `NtSetThreadExecutionState(NewFlags, PreviousFlags)` → SSDT 0x0144:
+  - Owner: `02-kernel-core/TODO-26` s20, section open.
   - `ES_SYSTEM_REQUIRED`, `ES_DISPLAY_REQUIRED`, `ES_CONTINUOUS`
   - Prevents sleep/screen-off while active
-- [ ] Commit: `"kernel: nt -- power and system control syscalls"`
+- [/] Commit: `"kernel: nt -- power and system control syscalls"` Waits on: the items above.
 
 **Test checkpoint:** `NtShutdownSystem(ShutdownReboot)` triggers ACPI reset. `NtPowerInformation(SystemPowerCapabilities)` returns valid S-state support mask. `NtSetThreadExecutionState` prevents idle sleep during long operation.
 
@@ -1007,7 +1034,7 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > - Self-contained piece already shipped: `NtShutdownSystem` (SSDT 0x00D7) is implemented + registered in `src/kernel/nt/nt_syscall.c:1188` (reboot/power-off via SYS_REBOOT/SYS_SHUTDOWN).
 > - Remaining 6 syscalls (NtSetSystemPowerState/NtInitiatePowerAction/NtPowerInformation/NtGetDevicePowerState/NtSetThreadExecutionState/NtRequestWakeupLatency) all route through `pm_*` helpers + ACPI S-state code that does not exist yet.
 > - Scope boundary: the power handlers, their `pm_*` backends, and unit tests belong to TODO-26 §20, not here.
-> **Deferred:** [M] Six power-management syscalls unimplemented; the ACPI S-state/battery/device-power backend they call is owned elsewhere (only `NtShutdownSystem` is self-contained and already wired) -> XREF: 02-kernel-core/TODO-26-power-management.md §20 (item: "`NtSetSystemPowerState` ... route through ACPI S-state transition" at line 773 through "`NtRequestWakeupLatency`" at line 778)
+> **Deferred:** [M] Six power-management syscalls unimplemented; the ACPI S-state/battery/device-power backend they call is owned elsewhere (`NtShutdownSystem` ships Reboot and PowerOff; `ShutdownNoReboot` is the same owner) -> XREF: 02-kernel-core/TODO-26-power-management.md §20 (items: "`NtSetSystemPowerState`" through "`NtRequestWakeupLatency`")
 
 ---
 
@@ -1076,7 +1103,7 @@ Catch-all for global atom table, locale management, environment variables, and d
 > - Scope boundary: covers the SSDT surface (SYSCALL + INT 0x2E), NOT legacy INT 0x80; ring-3-safe registration via a validated descriptor + `SeAuditPrivilege` is owned by §29.
 > **Verified:** 2026-07-03 | commit `8537a1b8` | 4/8 items | build OK | tests 1008 kernel + 16 user PASS
 > **Accepted:** [M] the `NtQuerySyscallAuditState` copy-out is not fault-recoverable (in-range unmapped user page faults in kernel) -> XREF: 03-memory-concurrency/TODO-02-memory-security.md §4 (item: "Audit all syscall handlers: replace raw user-pointer dereference with `copy_from_user()` / `copy_to_user()`" at line 132)
-> **Deferred:** [M] perf: syscall-entry off-path still does push/pop pairs, and an always-on hook serializes syscalls on the global `s_audit_lock` -> XREF: 02-kernel-core/TODO-12 §24 (items: "Perf: hoist the `g_transition_ring_active`..." + "Perf: make the active audit dispatch read-mostly...")
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] perf: syscall-entry off-path still does push/pop pairs, and an always-on hook serializes syscalls on the global `s_audit_lock`
 > **Quality reviewed:** 2026-07-03 | Codex 24x (design, adversarial, re-adversarial, consistency, perf, test-coverage) | 1Crit+5H+9M fixed, 1M accepted-XREF, 2M deferred | scope: kernel-code-quality
 
 ---
@@ -1125,21 +1152,27 @@ Per-process syscall restrictions allow a process to lock down which system servi
 ## 26. Kernel-to-User Mode Callback Dispatch
 Windows NT allows the kernel to call user-mode functions (window procedures, clipboard callbacks, hooks) via `KeUserModeCallback`. The kernel pushes a callback frame, returns to user mode at `KiUserCallbackDispatcher` in ntdll, which indexes the `PEB.KernelCallbackTable` array and calls the registered function. The user-mode function then calls `NtCallbackReturn` (SSDT 0x0300) to return the result to the kernel. This mechanism is critical for Win32k -- every `DispatchMessage` / `SendMessage` uses it.
 
-- [ ] Add `PEB.KernelCallbackTable` field at offset 0x058 (Windows x64 layout) -- pointer to an array of callback function pointers, populated by ntdll/user32 init
-- [ ] Implement `KeUserModeCallback(ApiNumber, InputBuffer, InputLength, OutputBuffer, OutputLength)` in `src/kernel/nt/callback.c`:
+- [/] Add `PEB.KernelCallbackTable` field at offset 0x058 (Windows x64 layout) -- pointer to an array of callback function pointers, populated by ntdll/user32 init
+  - Blocked: no ntdll runtime, no `KiCallUserMode` primitive and no Win32k caller. Owners: `12-user-platform-sdk/TODO-04` s1 (item: "Kernel-callback user side") and `08-graphics-ui/TODO-15` s7.
+- [/] Implement `KeUserModeCallback(ApiNumber, InputBuffer, InputLength, OutputBuffer, OutputLength)` in `src/kernel/nt/callback.c`:
+  - Blocked: no ntdll runtime, no `KiCallUserMode` primitive and no Win32k caller. Owners: `12-user-platform-sdk/TODO-04` s1 (item: "Kernel-callback user side") and `08-graphics-ui/TODO-15` s7.
   - Save current kernel stack frame (RSP, RBP, return address) in a per-thread callback stack
   - Build a user-mode trap frame pointing to `KiUserCallbackDispatcher` in ntdll
   - Pass `ApiNumber`, `InputBuffer`, `InputLength` on the user stack
   - Return to user mode via `sysret` or `iretq`
   - Block until user mode calls `NtCallbackReturn`
-- [ ] Wire `NtCallbackReturn` (SSDT 0x0300, currently in §23 catch-all):
+- [/] Wire `NtCallbackReturn` (SSDT 0x0300, currently in §23 catch-all):
+  - Blocked: no ntdll runtime, no `KiCallUserMode` primitive and no Win32k caller. Owners: `12-user-platform-sdk/TODO-04` s1 (item: "Kernel-callback user side") and `08-graphics-ui/TODO-15` s7.
   - Copy `OutputBuffer` / `OutputLength` / `Status` back to the kernel-side `KeUserModeCallback` caller
   - Restore kernel stack frame from the callback stack
   - Resume kernel execution at the point after `KeUserModeCallback` returned
-- [ ] Per-thread callback depth counter: limit to `CALLBACK_MAX_DEPTH = 64` to prevent stack exhaustion
-- [ ] Re-entrant syscalls: user-mode callback code can itself call syscalls; the SSDT dispatcher must handle nested kernel entry correctly
-- [ ] Add `KiUserCallbackDispatcher` export address to ntdll (→ XREF: 12-user-platform-sdk/TODO-04-ntdll-user-runtime.md)
-- [ ] Commit: `"kernel: nt -- KeUserModeCallback and kernel-to-user callback dispatch"`
+- [/] Per-thread callback depth counter: limit to `CALLBACK_MAX_DEPTH = 64` to prevent stack exhaustion
+  - Blocked: no ntdll runtime, no `KiCallUserMode` primitive and no Win32k caller. Owners: `12-user-platform-sdk/TODO-04` s1 (item: "Kernel-callback user side") and `08-graphics-ui/TODO-15` s7.
+- [/] Re-entrant syscalls: user-mode callback code can itself call syscalls; the SSDT dispatcher must handle nested kernel entry correctly
+  - Blocked: no ntdll runtime, no `KiCallUserMode` primitive and no Win32k caller. Owners: `12-user-platform-sdk/TODO-04` s1 (item: "Kernel-callback user side") and `08-graphics-ui/TODO-15` s7.
+- [/] Add `KiUserCallbackDispatcher` export address to ntdll (→ XREF: 12-user-platform-sdk/TODO-04-ntdll-user-runtime.md)
+  - Blocked: no ntdll runtime, no `KiCallUserMode` primitive and no Win32k caller. Owners: `12-user-platform-sdk/TODO-04` s1 (item: "Kernel-callback user side") and `08-graphics-ui/TODO-15` s7.
+- [/] Commit: `"kernel: nt -- KeUserModeCallback and kernel-to-user callback dispatch"` Waits on: the items above.
 
 > [!NOTE]
 > This mechanism is consumed by Win32k (→ XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §7) for `NtUserDispatchMessage` and `NtUserSendMessage`. Until this section is implemented, Win32k cannot call user-mode window procedures.
@@ -1155,17 +1188,22 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 > [!TIP]
 > **Impossible OS competitive edge.** Windows uses PatchGuard/KPP -- a complex, opaque system that periodically checksums kernel structures and BSODs on tampering. It's a cat-and-mouse arms race with rootkits. Linux has no SSDT integrity protection at all (`sys_call_table` is `const` but not hardware-enforced). Impossible OS uses hardware write-protection: mark the SSDT pages as read-only via PTE after initialization. Any write attempt triggers a #PF that the kernel catches and escalates to `KeBugCheck(CRITICAL_STRUCTURE_CORRUPTION)`. Zero runtime overhead, no periodic polling, no timing-based detection -- just hardware-enforced immutability.
 
-- [ ] After `ssdt_init()` completes and all allocated handlers are registered, mark SSDT pages as read-only via PTE manipulation (clear R/W bit, flush TLB for affected pages)
+- [/] After `ssdt_init()` completes and all allocated handlers are registered, mark SSDT pages as read-only via PTE manipulation (clear R/W bit, flush TLB for affected pages)
+  - Blocked: no cross-CPU shootdown exists, and the SSDT registers after AP launch. Owner: `03-memory-concurrency/TODO-07` s2 (item: "`tlb_shootdown(cpu_mask, vaddr, len)`").
 
 > [!NOTE]
 > `vmm_protect()` is planned in `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` but does not yet exist. Until it lands, use direct PTE writes: `pte &= ~PTE_WRITE; invlpg(addr)`. This is self-contained -- no external dependency blocks §27.
-- [ ] Same for shadow SSDT pages after `win32k_init()` (→ XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §1)
-- [ ] In the #PF handler: if faulting address is within SSDT page range AND fault was a write, call `KeBugCheck(0x00000109)` -- `CRITICAL_STRUCTURE_CORRUPTION`
-- [ ] Provide `ssdt_register_late(index, handler)` for drivers that need to register handlers after init:
+- [/] Same for shadow SSDT pages after `win32k_init()` (→ XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §1)
+  - Also needs `win32k_init`, which does not exist. Owners: `03-memory-concurrency/TODO-07` s2 and `08-graphics-ui/TODO-15` s1.
+- [/] In the #PF handler: if faulting address is within SSDT page range AND fault was a write, call `KeBugCheck(0x00000109)` -- `CRITICAL_STRUCTURE_CORRUPTION`
+  - Blocked: no cross-CPU shootdown exists, and the SSDT registers after AP launch. Owner: `03-memory-concurrency/TODO-07` s2 (item: "`tlb_shootdown(cpu_mask, vaddr, len)`").
+- [/] Provide `ssdt_register_late(index, handler)` for drivers that need to register handlers after init:
+  - Blocked: no cross-CPU shootdown exists, and the SSDT registers after AP launch. Owner: `03-memory-concurrency/TODO-07` s2 (item: "`tlb_shootdown(cpu_mask, vaddr, len)`").
   - Temporarily mark SSDT page writable, write the handler, re-mark read-only
   - Requires `SeLoadDriverPrivilege`; logs to klog
-- [ ] Compile-time: declare SSDT arrays as `const` where possible; the runtime write-protect is the enforcement layer
-- [ ] Commit: `"kernel: nt -- SSDT hardware write-protection (integrity enforcement)"`
+- [/] Compile-time: declare SSDT arrays as `const` where possible; the runtime write-protect is the enforcement layer
+  - Blocked: no cross-CPU shootdown exists, and the SSDT registers after AP launch. Owner: `03-memory-concurrency/TODO-07` s2 (item: "`tlb_shootdown(cpu_mask, vaddr, len)`").
+- [/] Commit: `"kernel: nt -- SSDT hardware write-protection (integrity enforcement)"` Waits on: the items above.
 
 **Test checkpoint:** After init, writing to SSDT address triggers #PF → BugCheck. `ssdt_register_late` succeeds with correct privilege. `ssdt_register_late` without privilege returns `STATUS_PRIVILEGE_NOT_HELD`. SSDT dispatch still works normally after write-protect (read-only doesn't block reads).
 
@@ -1217,14 +1255,20 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 > Split from §16 to keep each section under the 10-item limit. §16 covers "operate on existing token" (open/query/set/adjust). This section covers token creation/derivation and the Security Reference Monitor decision points (NtAccessCheck, NtPrivilegeCheck, security-descriptor I/O). Token infrastructure in `src/kernel/security/token.c`; SRM engine in `src/kernel/security/srm.c` (→ XREF TODO-15 §7, §8).
 
 - [ ] Ring-3-safe audit-hook registration (SSDT 0x0150/0x0151, stubs today): expose §24 `nt_audit.c` register/unregister via a validated descriptor (id, not raw pointer) gated by `SeSinglePrivilegeCheck(SeAuditPrivilege)`.
-- [ ] `NtDuplicateToken(ExistingTokenHandle, DesiredAccess, ObjectAttributes, EffectiveOnly, TokenType, NewTokenHandle)` → SSDT 0x00B8
-- [ ] `NtFilterToken(ExistingTokenHandle, Flags, SidsToDisable, PrivilegesToDelete, RestrictedSids, NewTokenHandle)` → SSDT 0x00B9
-- [ ] `NtCreateToken(TokenHandle, DesiredAccess, ObjectAttributes, TokenType, AuthenticationId, ExpirationTime, User, Groups, Privileges, Owner, PrimaryGroup, DefaultDacl, Source)` → SSDT 0x00BA
-- [ ] `NtAccessCheck(SecurityDescriptor, ClientToken, DesiredAccess, GenericMapping, PrivilegeSet, PrivilegeSetLength, GrantedAccess, AccessStatus)` → SSDT 0x00BC:
+- [/] `NtDuplicateToken(ExistingTokenHandle, DesiredAccess, ObjectAttributes, EffectiveOnly, TokenType, NewTokenHandle)` → SSDT 0x00B8
+  - Waits on the token foundations in this section: per-token lock (`TODO-15` s4), pinned resolution (`TODO-05` s3).
+- [/] `NtFilterToken(ExistingTokenHandle, Flags, SidsToDisable, PrivilegesToDelete, RestrictedSids, NewTokenHandle)` → SSDT 0x00B9
+  - Waits on the token foundations in this section: per-token lock (`TODO-15` s4), pinned resolution (`TODO-05` s3). Also the owned restricted-SID item below.
+- [/] `NtCreateToken(TokenHandle, DesiredAccess, ObjectAttributes, TokenType, AuthenticationId, ExpirationTime, User, Groups, Privileges, Owner, PrimaryGroup, DefaultDacl, Source)` → SSDT 0x00BA
+  - Waits on the token foundations in this section: per-token lock (`TODO-15` s4), pinned resolution (`TODO-05` s3).
+- [/] `NtAccessCheck(SecurityDescriptor, ClientToken, DesiredAccess, GenericMapping, PrivilegeSet, PrivilegeSetLength, GrantedAccess, AccessStatus)` → SSDT 0x00BC:
+  - Owner: `02-kernel-core/TODO-15` s5 (`SeAccessCheck` engine), section open.
   - Core SRM decision point; routes to `SeAccessCheck()` in the Security Reference Monitor
 - [x] `NtPrivilegeCheck(ClientToken, RequiredPrivileges, Result)` → SSDT 0x00BF -- shipped in TODO-15 §12 (nt_token.c NtPrivilegeCheck_handler + token-explicit SePrivilegeCheckToken)
-- [ ] `NtSetSecurityObject(Handle, SecurityInformation, SecurityDescriptor)` → SSDT 0x00C1
-- [ ] `NtQuerySecurityObject(Handle, SecurityInformation, SecurityDescriptor, Length, LengthNeeded)` → SSDT 0x00C2
+- [/] `NtSetSecurityObject(Handle, SecurityInformation, SecurityDescriptor)` → SSDT 0x00C1
+  - Owner: `02-kernel-core/TODO-15` s5 (`SeAccessCheck` engine), section open.
+- [/] `NtQuerySecurityObject(Handle, SecurityInformation, SecurityDescriptor, Length, LengthNeeded)` → SSDT 0x00C2
+  - Owner: `02-kernel-core/TODO-15` s5 (`SeAccessCheck` engine), section open.
 - [x] [Critical] NtShutdownSystem + legacy SYS_SHUTDOWN: require SeShutdownPrivilege before acpi_reboot/shutdown -- any ring-3 caller can power off the machine today (`nt_syscall.c:1195`). (§5 review)
   - Shipped: `nt_syscall.c:1581` and `sched/syscall.c:1025` and `:1032` gate on `SeShutdownPrivilege`. The default-token item below is still open, and until it lands a standard token passes this gate (`token.c:246`).
 - [/] [Critical] NtTerminateProcess: resolve through the handle table + require PROCESS_TERMINATE, not a raw PID -- `nt_process.c:227` lets any ring-3 caller kill any process by PID. (§5 review)
@@ -1240,12 +1284,14 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
   - The access-mask half is `02-kernel-core/TODO-15` §5 (item: "**Enforce per-handle `granted_access` on token mutation syscalls**"); the pin is `02-kernel-core/TODO-05` §3.
 - [ ] **Foundation: default-token privilege policy** (`SeCreateUserToken`): do NOT enable `SeShutdownPrivilege` for standard users, else the shutdown gate is meaningless; require elevation + negative test. (§29 design)
 - [ ] **Foundation: shared privilege-gated shutdown helper** (`nt_syscall.c`, `sched/syscall.c`): route `NtShutdownSystem` AND legacy `SYS_REBOOT`/`SYS_SHUTDOWN` through one `SeShutdownPrivilege` check. (§29 design)
-- [ ] `NtAccessCheck`/`SeAccessCheck` DACL engine + `GENERIC_MAPPING` type are external prerequisites -> XREF: `TODO-15-security-reference-monitor.md §5,§8`.
-- [ ] Commit: `"kernel: nt -- token lifecycle and SRM access check syscalls"`
+  - Both paths now gate on `SeShutdownPrivilege` (`nt_syscall.c:1581`, `sched/syscall.c:1025`). What remains is the one shared helper, so they cannot drift.
+- [/] `NtAccessCheck`/`SeAccessCheck` DACL engine + `GENERIC_MAPPING` type are external prerequisites -> XREF: `TODO-15-security-reference-monitor.md §5,§8`.
+  - Owner: `02-kernel-core/TODO-15` s5 (`SeAccessCheck` engine), section open.
+- [/] Commit: `"kernel: nt -- token lifecycle and SRM access check syscalls"` Waits on: the items above.
 
 **Test checkpoint:** `NtDuplicateToken` returns a distinct token with copied privileges/groups. `NtAccessCheck` against an object with DACL returns correct granted access. `NtPrivilegeCheck` with a held privilege returns TRUE; with a missing privilege returns FALSE. `NtQuerySecurityObject` round-trips through `NtSetSecurityObject`.
 
-> **Deferred:** 2026-07-03 | reason: correct token-lifecycle + SRM syscalls require foundational token-security infrastructure not present today -- a per-token SMP lock (privilege reads race in-place `NtAdjustPrivilegesToken` mutation), owned restricted-SID storage for `NtFilterToken`, access-mask-aware `resolve_token_handle`, and a default-token privilege-policy fix (standard tokens hold `SeShutdownPrivilege` enabled, which nullifies the shutdown gate). §29 Codex design review returned needs-attention (2 Critical + 2 High + 1 Medium) proving a thin wiring ships bypassable/racy/ineffective enforcement. The SRM decision engine (`SeAccessCheck` + `GENERIC_MAPPING`) is also absent. Security-sensitive; deferred rather than guessed in an unattended pass. Foundations tracked as `[ ]` items above -> XREF: `TODO-15-security-reference-monitor.md §5,§8` (SeAccessCheck DACL engine + SeSinglePrivilegeCheck/SePrivilegeCheck SRM API).
+> **Notes:** Reopened 2026-11-07. The stamp hid free work: raw user pointers, restricted-SID storage, default privileges, the shared shutdown helper and audit-hook registration. Items that need `TODO-15` s4 or s5, or `TODO-05` s3, are parked one by one.
 
 ---
 
@@ -1254,20 +1300,29 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 > [!NOTE]
 > Split from §17 to keep both sections under the 10-item limit. §17 covers namespace objects (directory + symlink); this section covers object lifetime and identity operations that apply to **any** OB type (events, mutexes, files, sections, etc.). Object Manager infrastructure in `src/kernel/ob/ob.c` (→ XREF TODO-05 §1, §4, §9).
 
-- [ ] Register `NtDuplicateObject` → SSDT 0x0001 (process-handle NT ABI); wrap `ob.c` `NtDuplicateObject` after resolving process handles to handle tables. Unblocks the `ZwDuplicateObject` alias in `zw.h`. XREF: TODO-05 §9.
-- [ ] `NtMakeTemporaryObject(Handle)` → SSDT 0x0003: clears `OB_FLAG_PERMANENT`, allowing the object to be deleted when its reference count drops to zero
-- [ ] `NtMakePermanentObject(Handle)` → SSDT 0x0004: sets `OB_FLAG_PERMANENT` (kernel-mode caller only; requires `SeCreatePermanentPrivilege`)
-- [ ] `NtSetInformationObject(Handle, ObjectInformationClass, Buffer, Length)` → SSDT 0x0005: writable counterpart to `NtQueryObject`; supports `ObjectHandleFlagInformation` (set `OBJ_INHERIT` / `OBJ_PROTECT_CLOSE` on the HANDLE_TABLE_ENTRY)
-- [ ] `NtCompareObjects(FirstObjectHandle, SecondObjectHandle)` → SSDT 0x0009: returns `STATUS_SUCCESS` if both handles refer to the same underlying object body, else `STATUS_NOT_SAME_OBJECT`
-- [ ] **Expose `NtQueryObject` at SSDT 0x0002 with the Win11 `OBJECT_TYPE_INFORMATION` NT ABI** (`UNICODE_STRING TypeName`), replacing the internal `char[32]`+counters struct in `ob.c`; unblocks the `ZwQueryObject` alias. XREF: TODO-05 §12.
-- [ ] **Foundation: pinned handle resolution** -- handlers must resolve+ref via `ObpReferenceObjectByHandle` + `ObDereferenceObject`, not raw `ObpLookupHandle` (unref'd, UAF vs close) -> XREF: `TODO-05-win32-file-io-api.md §3`. (§30 design)
-- [ ] **Foundation: SMP-safe make-permanent gate** -- `NtMakePermanentObject`'s `ssdt_previous_mode()` gate is unreliable until previous-mode is per-CPU (cursor misclassifies on SMP) -> XREF: `TODO-07-smp-phase2.md §3`. (§30 design)
-- [ ] **Foundation: DELETE-access gate on make-temporary** -- `NtMakeTemporaryObject` must require DELETE via per-handle `granted_access`, else any handle alters object lifetime. (§30 design)
-- [ ] Commit: `"kernel: nt -- generic object management syscalls (make-temp/perm, set-info, compare)"`
+- [/] Register `NtDuplicateObject` → SSDT 0x0001 (process-handle NT ABI); wrap `ob.c` `NtDuplicateObject` after resolving process handles to handle tables. Unblocks the `ZwDuplicateObject` alias in `zw.h`. XREF: TODO-05 §9.
+  - Owner: `02-kernel-core/TODO-05` s3 (item: "Add `ObpReferenceObjectByHandle`"), section open. Also needs real process handles (s7).
+- [/] `NtMakeTemporaryObject(Handle)` → SSDT 0x0003: clears `OB_FLAG_PERMANENT`, allowing the object to be deleted when its reference count drops to zero
+  - Owner: `02-kernel-core/TODO-05` s3 (item: "Add `ObpReferenceObjectByHandle`"), section open.
+- [/] `NtMakePermanentObject(Handle)` → SSDT 0x0004: sets `OB_FLAG_PERMANENT` (kernel-mode caller only; requires `SeCreatePermanentPrivilege`)
+  - Owner: `02-kernel-core/TODO-05` s3 (item: "Add `ObpReferenceObjectByHandle`"), section open.
+- [/] `NtSetInformationObject(Handle, ObjectInformationClass, Buffer, Length)` → SSDT 0x0005: writable counterpart to `NtQueryObject`; supports `ObjectHandleFlagInformation` (set `OBJ_INHERIT` / `OBJ_PROTECT_CLOSE` on the HANDLE_TABLE_ENTRY)
+  - Owner: `02-kernel-core/TODO-05` s3 (item: "Add `ObpReferenceObjectByHandle`"), section open.
+- [/] `NtCompareObjects(FirstObjectHandle, SecondObjectHandle)` → SSDT 0x0009: returns `STATUS_SUCCESS` if both handles refer to the same underlying object body, else `STATUS_NOT_SAME_OBJECT`
+  - Owner: `02-kernel-core/TODO-05` s3 (item: "Add `ObpReferenceObjectByHandle`"), section open.
+- [/] **Expose `NtQueryObject` at SSDT 0x0002 with the Win11 `OBJECT_TYPE_INFORMATION` NT ABI** (`UNICODE_STRING TypeName`), replacing the internal `char[32]`+counters struct in `ob.c`; unblocks the `ZwQueryObject` alias. XREF: TODO-05 §12.
+  - Owner: `02-kernel-core/TODO-05` s3 (item: "Add `ObpReferenceObjectByHandle`"), section open.
+- [/] **Foundation: pinned handle resolution** -- handlers must resolve+ref via `ObpReferenceObjectByHandle` + `ObDereferenceObject`, not raw `ObpLookupHandle` (unref'd, UAF vs close). (§30 design)
+  - Owner: `02-kernel-core/TODO-05` s3 (item: "Add `ObpReferenceObjectByHandle`"), section open.
+- [/] **Foundation: SMP-safe make-permanent gate** -- `NtMakePermanentObject`'s `ssdt_previous_mode()` gate is unreliable until previous-mode is per-CPU (cursor misclassifies on SMP) (§30 design)
+  - Owner: `03-memory-concurrency/TODO-07-smp-phase2.md` s3 (item: "Per-CPU current-thread cursor"), section open.
+- [/] **Foundation: DELETE-access gate on make-temporary** -- `NtMakeTemporaryObject` must require DELETE via per-handle `granted_access`, else any handle alters object lifetime. (§30 design)
+  - Owner: `02-kernel-core/TODO-05` s3 (item: "Add `ObpReferenceObjectByHandle`"), section open.
+- [/] Commit: `"kernel: nt -- generic object management syscalls (make-temp/perm, set-info, compare)"` Waits on: the items above.
 
 **Test checkpoint:** `NtMakePermanentObject` on an event handle prevents deletion when last reference released. `NtMakeTemporaryObject` re-enables deletion. `NtSetInformationObject(ObjectHandleFlagInformation)` toggles `OBJ_INHERIT` on a handle. `NtCompareObjects` with two duplicate handles returns `STATUS_SUCCESS`; with handles to different objects returns `STATUS_NOT_SAME_OBJECT`.
 
-> **Deferred:** 2026-07-03 | reason: the object-lifetime + identity syscalls require the pinned handle-lookup primitive that does not exist yet. `ObpLookupHandle` returns a raw unreferenced `HANDLE_TABLE_ENTRY*` (`handle_table.c:343-367`), so `NtMakeTemporary`/`NtMakePermanent`/`NtSetInformationObject`/`NtCompareObjects` built on it are use-after-free surfaces against a concurrent `NtClose` -- §30 Codex design review returned needs-attention (1 Critical + 2 High). The pinned `ObpReferenceObjectByHandle` primitive is owned by TODO-05 §3; the SMP-safe kernel-mode gate needs per-CPU previous-mode (TODO-07 §3); the make-temporary DELETE-access gate needs per-handle granted-access enforcement. Security/lifetime-sensitive; deferred rather than ship a UAF regression in an unattended pass. Foundations tracked as `[ ]` items above -> XREF: `TODO-05-win32-file-io-api.md §3` (`ObReferenceObjectByHandle` at line 115) + `TODO-07-smp-phase2.md §3`.
+> **Deferred:** 2026-07-03 | reason: the object-lifetime + identity syscalls require the pinned handle-lookup primitive that does not exist yet. `ObpLookupHandle` returns a raw unreferenced `HANDLE_TABLE_ENTRY*` (`handle_table.c:343-367`), so `NtMakeTemporary`/`NtMakePermanent`/`NtSetInformationObject`/`NtCompareObjects` built on it are use-after-free surfaces against a concurrent `NtClose` -- §30 Codex design review returned needs-attention (1 Critical + 2 High). The pinned `ObpReferenceObjectByHandle` primitive is owned by TODO-05 §3; the SMP-safe kernel-mode gate needs per-CPU previous-mode (TODO-07 §3); the make-temporary DELETE-access gate needs per-handle granted-access enforcement. Security/lifetime-sensitive; deferred rather than ship a UAF regression in an unattended pass. Foundations tracked as parked items above -> XREF: `02-kernel-core/TODO-05-object-manager.md` §3 (item: "Add `ObpReferenceObjectByHandle`") + `03-memory-concurrency/TODO-07-smp-phase2.md` §3.
 
 ---
 
