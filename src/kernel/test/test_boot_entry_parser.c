@@ -34,7 +34,8 @@ static unsigned int patch_fixture_crc(unsigned char *buf, unsigned int len)
     unsigned int zero_off, expected;
     /* Tri-state since section 20: CRC_LOC_MALFORMED is -1, so a plain `!`
      * test would read a broken fixture as a successful locate. */
-    if (find_crc_field(buf, len, &zero_off, &expected) != CRC_LOC_FOUND) return 0;
+    lexer_t L;
+    if (find_crc_field(&L, buf, len, &zero_off, &expected) != CRC_LOC_FOUND) return 0;
     unsigned int crc = crc32_zeroed(buf, len, zero_off);
     /* Write the CRC as 8 uppercase hex digits at offset zero_off. */
     static const char HEX[] = "0123456789ABCDEF";
@@ -1126,7 +1127,8 @@ static void assert_locates_root(const char *json, const char *what)
 {
     unsigned int n = load_fixture(json);
     unsigned int zero_off = 0, expected = 0;
-    crc_loc_t loc = find_crc_field(s_fixture_buf, n, &zero_off, &expected);
+    lexer_t L;
+    crc_loc_t loc = find_crc_field(&L, s_fixture_buf, n, &zero_off, &expected);
     TEST_ASSERT_EQ(loc, CRC_LOC_FOUND, what);
     TEST_ASSERT_EQ(zero_off, oracle_crc_span(s_fixture_buf, n), what);
 }
@@ -1208,7 +1210,8 @@ static void test_parser_crc_locate_control(void)
         s_fixture_buf[span + 1u] = (unsigned char)'G';
         TEST_ASSERT_EQ(old_string_match_locate(s_fixture_buf, nb, &off), CRC_LOC_ABSENT,
                        "CONTROL: the old scan rejected a non-hex crc32 value");
-        TEST_ASSERT_EQ(find_crc_field(s_fixture_buf, nb, &off, &span), CRC_LOC_ABSENT,
+        lexer_t L;
+        TEST_ASSERT_EQ(find_crc_field(&L, s_fixture_buf, nb, &off, &span), CRC_LOC_ABSENT,
                        "the structural locate rejects a non-hex value too");
     }
     /* Position among the root keys, and whitespace in the gaps, must not matter:
@@ -1221,7 +1224,8 @@ static void test_parser_crc_locate_control(void)
         "\"entries\":[" TEST_ENTRY_A "]}";
     unsigned int n = load_fixture(SPACED);
     unsigned int zero_off = 0, expected = 0;
-    TEST_ASSERT_EQ(find_crc_field(s_fixture_buf, n, &zero_off, &expected), CRC_LOC_FOUND,
+    lexer_t L;
+    TEST_ASSERT_EQ(find_crc_field(&L, s_fixture_buf, n, &zero_off, &expected), CRC_LOC_FOUND,
                    "whitespace around the key, colon and value tolerated");
 }
 
@@ -1484,6 +1488,107 @@ static void test_reject_cause_table_complete(void)
     }
 }
 
+/* One rejected store, and where the parser says the problem is. */
+static void check_position(const char *json, int code, unsigned int line, unsigned int column,
+                           const char *locator)
+{
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    char text[BOOT_ENTRIES_REJECT_LOCATOR_LEN];
+    unsigned int n = load_fixture(json);
+    TEST_ASSERT_EQ(boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r), code, "reject code");
+    TEST_ASSERT_EQ(r->reject_line, line, "reject line");
+    TEST_ASSERT_EQ(r->reject_column, column, "reject column");
+    boot_entries_reject_locator(r, text, sizeof(text));
+    TEST_ASSERT_EQ(rn_streq(text, locator), 1, "locator text");
+}
+
+/* A rejected store tells the user where to look. */
+static void test_reject_position(void)
+{
+    /* A bad value on its own line. */
+    check_position("{\n\"crc32\":\"0x00000000\",\n  \"schema_version\":99,\n\"entries\":[]}",
+                   BOOT_ENTRIES_REJECT_BAD_SCHEMA_VERSION, 3u, 20u,
+                   "BAD_SCHEMA_VERSION at line 3, col 20");
+    /* Tokens the lexer cannot read: none of them may report the previous token. */
+    check_position("{\n\"crc32\":\"0x00000000\",\n@}",
+                   BOOT_ENTRIES_REJECT_JSON_PARSE, 3u, 1u, "JSON_PARSE at line 3, col 1");
+    check_position("{\"crc32\":\"0x00000000\",\n\"schema_version\":\ntruX}",
+                   BOOT_ENTRIES_REJECT_JSON_PARSE, 3u, 1u, "JSON_PARSE at line 3, col 1");
+    check_position("{\"crc32\":\"0x00000000\",\n\"x\":\n  \"abc",
+                   BOOT_ENTRIES_REJECT_JSON_PARSE, 3u, 3u, "JSON_PARSE at line 3, col 3");
+    /* The same mistakes BEFORE the checksum header, found by the header scan. */
+    check_position("{\n\"a\":\n@,\n\"crc32\":\"0x00000000\"}",
+                   BOOT_ENTRIES_REJECT_JSON_PARSE, 3u, 1u, "JSON_PARSE at line 3, col 1");
+    check_position("{\n\"a\":\ntruX,\n\"crc32\":\"0x00000000\"}",
+                   BOOT_ENTRIES_REJECT_JSON_PARSE, 3u, 1u, "JSON_PARSE at line 3, col 1");
+    /* A malformed header points at its own value. */
+    check_position("{\n\"crc32\":\n  \"zz\"}",
+                   BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD, 3u, 3u, "BAD_CRC32_FIELD at line 3, col 3");
+}
+
+#define POS_ENTRY(id) \
+    "{\"id\":\"" id "\",\"title\":\"T\",\"kind\":\"split\",\"flags\":[],\"sort_key\":\"00\"," \
+    "\"machine_id\":\"\",\"policy_tags\":[],\"payload\":{\"kernel\":\"k\"}}"
+
+/* Rejects raised after the walk moved on point at the value that caused them. */
+static void test_reject_position_after_walk(void)
+{
+    /* The empty array, not the fields and blank lines after it. */
+    check_position("{\"crc32\":\"0x00000000\",\n\"entries\":[],\n\"schema_version\":1,\n\"x\":1\n\n}\n\n",
+                   BOOT_ENTRIES_REJECT_NO_ENTRIES, 2u, 11u, "NO_ENTRIES at line 2, col 11");
+    /* The second entry's start, not the end of its payload. */
+    check_position("{\"crc32\":\"0x00000000\",\"schema_version\":1,\"entries\":[\n" POS_ENTRY("a") ",\n  "
+                   POS_ENTRY("a") "\n]}",
+                   BOOT_ENTRIES_REJECT_DUPLICATE_ID, 3u, 3u, "DUPLICATE_ID at line 3, col 3");
+    /* The entry that lacks the field. */
+    check_position("{\"crc32\":\"0x00000000\",\"schema_version\":1,\"entries\":[\n  {\"id\":\"a\",\n\"x\":1\n}\n]}",
+                   BOOT_ENTRIES_REJECT_MISSING_FIELD, 2u, 3u, "MISSING_FIELD at line 2, col 3");
+    /* A field absent from the whole store has no position to report. */
+    check_position("{\"crc32\":\"0x00000000\",\n\"entries\":[]\n}",
+                   BOOT_ENTRIES_REJECT_MISSING_FIELD, 0u, 0u, "MISSING_FIELD");
+}
+
+/* A checksum failure or an empty input blames the whole file, so neither claims
+ * a position, and a short buffer stays terminated. */
+static void test_reject_without_position(void)
+{
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    char text[BOOT_ENTRIES_REJECT_LOCATOR_LEN];
+    unsigned int n = load_fixture("{\n\"crc32\":\"0x00000000\",\n\"schema_version\":1,\"entries\":[]}");
+    s_fixture_buf[n - 2u] = (unsigned char)' ';
+    TEST_ASSERT_EQ(boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, r),
+                   BOOT_ENTRIES_REJECT_CRC_MISMATCH, "checksum rejected");
+    TEST_ASSERT_EQ(r->reject_line, 0u, "checksum: no position");
+    boot_entries_reject_locator(r, text, sizeof(text));
+    TEST_ASSERT_EQ(rn_streq(text, "CRC_MISMATCH"), 1, "checksum: name only");
+
+    TEST_ASSERT_EQ(boot_entries_parse(s_fixture_buf, 0u, 0, NULL_PTR, r),
+                   BOOT_ENTRIES_REJECT_JSON_PARSE, "empty rejected");
+    TEST_ASSERT_EQ(r->reject_line, 0u, "empty: no position");
+    boot_entries_reject_locator(r, text, 5u);
+    TEST_ASSERT_EQ(rn_streq(text, "JSON"), 1, "short buffer truncates and terminates");
+}
+
+/* The longest name with the largest position the 16 KiB cap allows must fit, or
+ * the notice loses the position it exists to show. */
+static void test_reject_locator_fits(void)
+{
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    char text[BOOT_ENTRIES_REJECT_LOCATOR_LEN];
+    r->reject_line = BOOT_ENTRIES_MAX_TOTAL_BYTES;
+    r->reject_column = BOOT_ENTRIES_MAX_TOTAL_BYTES;
+    for (int c = 0; c <= (int)BOOT_ENTRIES_REJECT_ESCAPED_KEY; c++) {
+        r->reject_code = (boot_entries_reject_code_t)c;
+        boot_entries_reject_locator(r, text, sizeof(text));
+        unsigned int len = 0;
+        while (text[len]) len++;
+        TEST_ASSERT(len >= 5u && rn_streq(text + len - 5u, "16384"), "full column survives on every name");
+    }
+}
+
 /* The gate that decides whether a user sees a notice at all.
  *
  * The ABSENT arm is the load-bearing one: the Makefile ESP staging copies
@@ -1658,6 +1763,14 @@ void test_register_boot_entry_parser(void)
                             test_reject_name_table_complete, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: reject cause table complete",
                             test_reject_cause_table_complete, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: reject position",
+                            test_reject_position, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: reject position after walk",
+                            test_reject_position_after_walk, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: reject without position",
+                            test_reject_without_position, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: reject locator fits",
+                            test_reject_locator_fits, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: store notice gate",
                             test_store_notice_gate, TEST_CAT_BOOT);
 }

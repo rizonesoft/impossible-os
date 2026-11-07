@@ -113,6 +113,10 @@ typedef struct {
     /* Outcome. */
     boot_entries_reject_code_t reject_code;
     char reject_msg[BOOT_ENTRIES_REJECT_MSG_LEN];
+    /* Where the parse stopped (1-based, in bytes), near the offending token.
+     * reject_line is 0 when the whole file is at fault (size, checksum). */
+    unsigned int reject_line;
+    unsigned int reject_column;
 
     /* Parsed envelopes. Valid only when reject_code == BOOT_ENTRIES_OK.
      * entry_count may be less than the number of objects in the input array
@@ -202,6 +206,14 @@ const char *boot_entries_reject_name(int code);
  * not match its contents"). Never NULL. Kept short so the bootloader can
  * render it on one line of the ConOut fallback. */
 const char *boot_entries_reject_cause(int code);
+
+/* The reject name plus its position, when there is one: "JSON_PARSE at line 12,
+ * col 3". Always NUL-terminated; cap includes the NUL and a short buf truncates.
+ * It goes on the notice's short token line, because the 800x600 banner's cause
+ * line has no room for it. BOOT_ENTRIES_REJECT_LOCATOR_LEN holds every name and
+ * position, and fits that line. */
+#define BOOT_ENTRIES_REJECT_LOCATOR_LEN 48u
+void boot_entries_reject_locator(const boot_entries_parse_result_t *r, char *buf, unsigned int cap);
 
 /* Why the store could not be handed to the parser. Kept beside the reject
  * codes so "why is the store unusable" has one answer set spanning both the

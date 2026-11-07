@@ -26,6 +26,8 @@
 #include "kernel/test/test.h"
 #include "../../../include/boot/bsod_aa_wrap.h"
 #include "../../../include/boot/bsod_render_tier.h"
+#include "../../../include/boot/boot_entries_parser.h"
+#include "kernel/test/scratch.h"
 
 /* The generated atlas declares `static const struct bsod_aa_glyph
  * bsod_aa_BODY[95]` plus its alpha data; the struct comes from the header
@@ -699,6 +701,29 @@ static void test_non_printable_bytes_measure_as_question_mark(void)
                    "a high byte measures as the '?' it renders as");
 }
 
+
+/* The store-rejection banner draws its token line at x=64 in the SUB font, with
+ * the position appended. Every reject name at the largest position the 16 KiB
+ * cap allows must fit a screen at the full tier's 800-pixel floor. */
+static void test_store_reject_locator_fits_banner(void)
+{
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    char text[BOOT_ENTRIES_REJECT_LOCATOR_LEN];
+    r->reject_line = BOOT_ENTRIES_MAX_TOTAL_BYTES;
+    r->reject_column = BOOT_ENTRIES_MAX_TOTAL_BYTES;
+    for (int c = 0; c <= (int)BOOT_ENTRIES_REJECT_ESCAPED_KEY; c++) {
+        r->reject_code = (boot_entries_reject_code_t)c;
+        boot_entries_reject_locator(r, text, sizeof(text));
+        TEST_ASSERT_EQ(bsod_aa_would_clip(64u, 800u, bsod_aa_SUB, text), 0,
+                       "locator fits the token line");
+    }
+    /* Why it is not on the cause line: the bound is real. */
+    TEST_ASSERT_EQ(bsod_aa_would_clip(64u, 800u, bsod_aa_SUB,
+                   "the store contains more entries than the limit allows (line 16384, col 16384)"), 1,
+                   "cause plus position overruns the same line");
+}
+
 void test_register_error_screen_wrap(void)
 {
     test_suite_register_cat("error-screen wrap: no line exceeds max_px",
@@ -755,6 +780,8 @@ void test_register_error_screen_wrap(void)
         test_compact_text_right_when_no_qr_fits, TEST_CAT_BOOT);
     test_suite_register_cat("error-screen wrap: empty and NULL inputs",
         test_empty_and_null_inputs, TEST_CAT_BOOT);
+    test_suite_register_cat("error-screen wrap: store reject locator fits",
+                            test_store_reject_locator_fits_banner, TEST_CAT_BOOT);
     test_suite_register_cat("error-screen wrap: start offset honoured",
         test_start_offset_is_honoured, TEST_CAT_BOOT);
     test_suite_register_cat("error-screen wrap: non-printables measure as '?'",

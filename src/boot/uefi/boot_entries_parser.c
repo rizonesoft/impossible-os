@@ -304,6 +304,10 @@ static int lex_next(lexer_t *L)
         L->start = L->end = L->pos;
         return 1;
     }
+    /* The failure state, for every path below that returns 0: a helper only
+     * writes the token when it succeeds. */
+    L->kind = TOK_ERROR;
+    L->start = L->end = L->pos;
     u8 c = L->raw[L->pos];
     switch (c) {
         case '{': L->start = L->pos; L->pos++; L->end = L->pos; L->kind = TOK_LBRACE; return 1;
@@ -321,7 +325,6 @@ static int lex_next(lexer_t *L)
         case '5': case '6': case '7': case '8': case '9':
             return lex_number(L);
         default:
-            L->kind = TOK_ERROR;
             return 0;
     }
 }
@@ -505,11 +508,10 @@ typedef enum {
  * root object itself is walked here with lex_next and is never pushed onto the
  * skipper's stack, so it costs no budget.
  */
-static crc_loc_t find_crc_field(const u8 *raw, u32 len, u32 *zero_off, u32 *expected)
+static crc_loc_t find_crc_field(lexer_t *L, const u8 *raw, u32 len, u32 *zero_off, u32 *expected)
 {
-    lexer_t L;
-    lex_init(&L, raw, len);
-    if (!lex_next(&L) || L.kind != TOK_LBRACE) return CRC_LOC_MALFORMED;
+    lex_init(L, raw, len);
+    if (!lex_next(L) || L->kind != TOK_LBRACE) return CRC_LOC_MALFORMED;
 
     /* A `}` closes the object legally at the FIRST key position and illegally
      * straight after a comma: `{"schema_version":1,}` is a trailing comma, which
@@ -522,19 +524,19 @@ static crc_loc_t find_crc_field(const u8 *raw, u32 len, u32 *zero_off, u32 *expe
         u32 key_cs, key_ce;
         int is_crc;
 
-        if (!lex_next(&L)) return CRC_LOC_MALFORMED;
-        if (L.kind == TOK_RBRACE)
+        if (!lex_next(L)) return CRC_LOC_MALFORMED;
+        if (L->kind == TOK_RBRACE)
             return after_comma ? CRC_LOC_MALFORMED : CRC_LOC_ABSENT;
-        if (L.kind != TOK_STRING) return CRC_LOC_MALFORMED;
-        key_cs = L.content_start;
-        key_ce = L.content_end;
+        if (L->kind != TOK_STRING) return CRC_LOC_MALFORMED;
+        key_cs = L->content_start;
+        key_ce = L->content_end;
 
-        if (!lex_next(&L) || L.kind != TOK_COLON) return CRC_LOC_MALFORMED;
+        if (!lex_next(L) || L->kind != TOK_COLON) return CRC_LOC_MALFORMED;
         /* lex_next reports end-of-input as a SUCCESSFUL TOK_EOF read, so a store
          * truncated right after the colon would otherwise fall through to the
          * value-shape checks and be classified ABSENT. Truncation is a broken
          * root object, not a missing member. */
-        if (!lex_next(&L) || L.kind == TOK_EOF) return CRC_LOC_MALFORMED;
+        if (!lex_next(L) || L->kind == TOK_EOF) return CRC_LOC_MALFORMED;
 
         /* Raw-byte compare, so an escaped spelling of the key is not this key.
          * That matches key_is_literal() below and the schema's literal-key
@@ -545,9 +547,9 @@ static crc_loc_t find_crc_field(const u8 *raw, u32 len, u32 *zero_off, u32 *expe
             u32 vs, ve;
             /* First occurrence wins. A repeated root key is rejected by the
              * duplicate-key check during the authoritative parse. */
-            if (L.kind != TOK_STRING) return CRC_LOC_ABSENT;
-            vs = L.content_start;
-            ve = L.content_end;
+            if (L->kind != TOK_STRING) return CRC_LOC_ABSENT;
+            vs = L->content_start;
+            ve = L->content_end;
             /* EXACTLY `0x` + 8 hex digits, lowercase `x`. The host validator
              * requires the same (tools/boot-entry-validate/validate.py: the
              * whole-store check rejects any crc32 text that is not 10 chars
@@ -560,11 +562,11 @@ static crc_loc_t find_crc_field(const u8 *raw, u32 len, u32 *zero_off, u32 *expe
             return CRC_LOC_FOUND;
         }
 
-        if (!skip_value_depth(&L, BOOT_ENTRIES_MAX_SCAN_DEPTH)) return CRC_LOC_MALFORMED;
+        if (!skip_value_depth(L, BOOT_ENTRIES_MAX_SCAN_DEPTH)) return CRC_LOC_MALFORMED;
 
-        if (!lex_next(&L)) return CRC_LOC_MALFORMED;
-        if (L.kind == TOK_RBRACE) return CRC_LOC_ABSENT;
-        if (L.kind != TOK_COMMA) return CRC_LOC_MALFORMED;
+        if (!lex_next(L)) return CRC_LOC_MALFORMED;
+        if (L->kind == TOK_RBRACE) return CRC_LOC_ABSENT;
+        if (L->kind != TOK_COMMA) return CRC_LOC_MALFORMED;
         after_comma = 1;
     }
 }
@@ -784,6 +786,13 @@ static void log_reject(boot_entries_log_fn log, const char *msg)
 
 /* L is sitting at the LBRACE that opens this entry. On success, advances past the
  * matching RBRACE; populates `out`. On failure, sets reject in `result`. */
+/* For a reject found after the offending value was consumed: report where that
+ * value started, not wherever the walk had reached. */
+static void pin_reject(lexer_t *L, u32 offset)
+{
+    L->start = offset;
+}
+
 static int parse_entry_object(lexer_t *L, u32 idx,
                               boot_entry_envelope_t *out,
                               boot_entries_parse_result_t *result,
@@ -794,6 +803,8 @@ static int parse_entry_object(lexer_t *L, u32 idx,
         set_reject(result, BOOT_ENTRIES_REJECT_NOT_OBJECT, "entry is not a JSON object");
         return 0;
     }
+
+    u32 entry_start = L->start;
 
     /* Track which fields we've seen so we can require the mandatory set. The schema
      * makes payload mandatory on every entry; per-entry-kind validation owns the
@@ -1210,6 +1221,7 @@ static int parse_entry_object(lexer_t *L, u32 idx,
      * data to operate on, which is a malformed entry, not an "optional field". */
     if (!(saw_id && saw_title && saw_kind && saw_flags && saw_sort_key && saw_machine_id
           && saw_policy_tags && saw_payload)) {
+        pin_reject(L, entry_start);
         set_reject(result, BOOT_ENTRIES_REJECT_MISSING_FIELD, "entry missing required envelope fields");
         return 0;
     }
@@ -1230,10 +1242,11 @@ static int parse_entry_object(lexer_t *L, u32 idx,
 
 /* ---- Top-level parse -------------------------------------------------- */
 
-int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
+static int parse_store(const unsigned char *raw, unsigned int raw_len,
                        int secure_boot_active,
                        boot_entries_log_fn log,
-                       boot_entries_parse_result_t *out)
+                       boot_entries_parse_result_t *out,
+                       lexer_t *L)
 {
     /* FIRST statement: the CRC readiness flag lives in unzeroed .bss (see the
      * cookie comment above) and each early return below would otherwise leave
@@ -1262,7 +1275,7 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
      * broken root object apart from a store that simply carries no usable
      * header, and the two get different reject codes. */
     u32 zero_off, expected_crc;
-    crc_loc_t loc = find_crc_field(raw, raw_len, &zero_off, &expected_crc);
+    crc_loc_t loc = find_crc_field(L, raw, raw_len, &zero_off, &expected_crc);
     if (loc == CRC_LOC_MALFORMED) {
         set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE,
                    "malformed JSON before the crc32 header");
@@ -1285,29 +1298,29 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
     }
 
     /* Now parse the structure. */
-    lexer_t L;
-    lex_init(&L, raw, raw_len);
+    lex_init(L, raw, raw_len);
 
     /* Top-level: { schema_version, crc32, entries } -- walk fields */
-    if (!lex_next(&L) || L.kind != TOK_LBRACE) {
+    if (!lex_next(L) || L->kind != TOK_LBRACE) {
         set_reject(out, BOOT_ENTRIES_REJECT_NOT_OBJECT, "top-level not an object");
         log_reject(log, out->reject_msg);
         return out->reject_code;
     }
 
     int saw_sv = 0, saw_crc = 0, saw_entries = 0;
+    u32 entries_at = 0;
     /* Reject trailing comma at root (`{..., "entries":[...], }`) for parity
      * with the host validator's strict json.loads grammar (RFC 8259 §5). */
     int top_after_comma = 0;
     /* Body of the root object -- the `{` is already consumed. */
-    u32 root_body_pos = L.pos;
+    u32 root_body_pos = L->pos;
     while (1) {
-        if (!lex_next(&L)) {
+        if (!lex_next(L)) {
             set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected top-level field or '}'");
             log_reject(log, out->reject_msg);
             return out->reject_code;
         }
-        if (L.kind == TOK_RBRACE) {
+        if (L->kind == TOK_RBRACE) {
             if (top_after_comma) {
                 set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE,
                            "trailing comma at top-level object");
@@ -1316,14 +1329,14 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
             }
             break;
         }
-        if (L.kind != TOK_STRING) {
+        if (L->kind != TOK_STRING) {
             set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected top-level field name");
             log_reject(log, out->reject_msg);
             return out->reject_code;
         }
-        u32 key_cs = L.content_start, key_ce = L.content_end;
-        u32 key_tok_start = L.start;
-        if (!key_is_literal(L.raw, key_cs, key_ce)) {
+        u32 key_cs = L->content_start, key_ce = L->content_end;
+        u32 key_tok_start = L->start;
+        if (!key_is_literal(L->raw, key_cs, key_ce)) {
             set_reject(out, BOOT_ENTRIES_REJECT_ESCAPED_KEY,
                        "top-level key name must not use JSON escapes");
             log_reject(log, out->reject_msg);
@@ -1333,8 +1346,8 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
          * memory (see key_seen_before), but the rule is applied to every key
          * because the block-scoped reset also re-armed the duplicate-id gate and
          * schema_version / crc32 were equally re-assignable. */
-        int root_scan = key_seen_before(&L, root_body_pos, key_tok_start,
-                                        L.raw + key_cs, key_ce - key_cs);
+        int root_scan = key_seen_before(L, root_body_pos, key_tok_start,
+                                        L->raw + key_cs, key_ce - key_cs);
         if (root_scan == KEY_SCAN_DUPLICATE) {
             set_reject(out, BOOT_ENTRIES_REJECT_DUPLICATE_KEY,
                        "repeated top-level key");
@@ -1347,21 +1360,21 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
             log_reject(log, out->reject_msg);
             return out->reject_code;
         }
-        if (!lex_next(&L) || L.kind != TOK_COLON) {
+        if (!lex_next(L) || L->kind != TOK_COLON) {
             set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected ':' after top-level field");
             log_reject(log, out->reject_msg);
             return out->reject_code;
         }
-        if (!lex_next(&L)) {
+        if (!lex_next(L)) {
             set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected top-level field value");
             log_reject(log, out->reject_msg);
             return out->reject_code;
         }
         u32 key_len = key_ce - key_cs;
-        const u8 *key_ptr = L.raw + key_cs;
+        const u8 *key_ptr = L->raw + key_cs;
 
         if (key_len == 14u && bytes_eq(key_ptr, (const u8 *)"schema_version", 14u)) {
-            if (L.kind != TOK_NUMBER || !L.number_valid || L.number_value != BOOT_ENTRIES_SCHEMA_VERSION) {
+            if (L->kind != TOK_NUMBER || !L->number_valid || L->number_value != BOOT_ENTRIES_SCHEMA_VERSION) {
                 set_reject(out, BOOT_ENTRIES_REJECT_BAD_SCHEMA_VERSION,
                            "schema_version must equal 1");
                 log_reject(log, out->reject_msg);
@@ -1370,7 +1383,7 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
             saw_sv = 1;
         }
         else if (key_len == 5u && bytes_eq(key_ptr, (const u8 *)"crc32", 5u)) {
-            if (L.kind != TOK_STRING) {
+            if (L->kind != TOK_STRING) {
                 set_reject(out, BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD, "crc32 must be a string");
                 log_reject(log, out->reject_msg);
                 return out->reject_code;
@@ -1378,7 +1391,7 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
             saw_crc = 1;
         }
         else if (key_len == 7u && bytes_eq(key_ptr, (const u8 *)"entries", 7u)) {
-            if (L.kind != TOK_LBRACKET) {
+            if (L->kind != TOK_LBRACKET) {
                 set_reject(out, BOOT_ENTRIES_REJECT_NOT_ARRAY, "entries must be an array");
                 log_reject(log, out->reject_msg);
                 return out->reject_code;
@@ -1387,6 +1400,7 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
              * after `[`, expect object or `]` (empty array OK); after object,
              * expect `,` or `]`; after `,`, expect object. Catches `[,]`,
              * `[a,,b]`, missing commas, trailing commas. */
+            entries_at = L->start;
             int entries_expect_value = 1;
             int entries_saw_any = 0;
             u32 idx = 0;
@@ -1399,12 +1413,12 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
             u8 all_id_lens[BOOT_ENTRIES_MAX_ENTRIES];
             u32 all_ids_count = 0;
             while (1) {
-                if (!lex_next(&L)) {
+                if (!lex_next(L)) {
                     set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "entries array malformed");
                     log_reject(log, out->reject_msg);
                     return out->reject_code;
                 }
-                if (L.kind == TOK_RBRACKET) {
+                if (L->kind == TOK_RBRACKET) {
                     if (entries_saw_any && entries_expect_value) {
                         set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE,
                                    "trailing comma in entries");
@@ -1414,7 +1428,7 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
                     break;
                 }
                 if (entries_expect_value) {
-                    if (L.kind != TOK_LBRACE) {
+                    if (L->kind != TOK_LBRACE) {
                         set_reject(out, BOOT_ENTRIES_REJECT_NOT_OBJECT,
                                    "entries element not an object");
                         log_reject(log, out->reject_msg);
@@ -1427,7 +1441,8 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
                         return out->reject_code;
                     }
                     boot_entry_envelope_t tmp;
-                    if (!parse_entry_object(&L, idx, &tmp, out, secure_boot_active, log)) {
+                    u32 entry_start = L->start;
+                    if (!parse_entry_object(L, idx, &tmp, out, secure_boot_active, log)) {
                         log_reject(log, out->reject_msg);
                         return out->reject_code;
                     }
@@ -1436,6 +1451,7 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
                     for (j = 0; j < all_ids_count; j++) {
                         if ((u32)all_id_lens[j] == tlen &&
                             bytes_eq((const u8 *)all_ids[j], (const u8 *)tmp.id, tlen)) {
+                            pin_reject(L, entry_start);
                             set_reject(out, BOOT_ENTRIES_REJECT_DUPLICATE_ID,
                                        "duplicate entry id");
                             log_reject(log, out->reject_msg);
@@ -1461,7 +1477,7 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
                     entries_expect_value = 0;
                     entries_saw_any = 1;
                 } else {
-                    if (L.kind != TOK_COMMA) {
+                    if (L->kind != TOK_COMMA) {
                         set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE,
                                    "expected ',' or ']' in entries");
                         log_reject(log, out->reject_msg);
@@ -1474,7 +1490,7 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
         }
         else {
             /* Unknown top-level key -- skip the value */
-            if (!skip_value_post_token(&L)) {
+            if (!skip_value_post_token(L)) {
                 set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "unknown top-level value malformed");
                 log_reject(log, out->reject_msg);
                 return out->reject_code;
@@ -1482,13 +1498,13 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
         }
 
         /* After value, expect ',' or '}' */
-        if (!lex_next(&L)) {
+        if (!lex_next(L)) {
             set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected ',' or '}' at top level");
             log_reject(log, out->reject_msg);
             return out->reject_code;
         }
-        if (L.kind == TOK_RBRACE) break;
-        if (L.kind != TOK_COMMA) {
+        if (L->kind == TOK_RBRACE) break;
+        if (L->kind != TOK_COMMA) {
             set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected ',' between top-level fields");
             log_reject(log, out->reject_msg);
             return out->reject_code;
@@ -1497,6 +1513,8 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
     }
 
     if (!(saw_sv && saw_crc && saw_entries)) {
+        /* The field is absent from the whole store, so no position is true. */
+        L->raw = (const u8 *)0;
         set_reject(out, BOOT_ENTRIES_REJECT_MISSING_FIELD,
                    "missing schema_version / crc32 / entries");
         log_reject(log, out->reject_msg);
@@ -1505,7 +1523,7 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
 
     /* After the root `}` we must see only whitespace then EOF. CRC-correct files
      * with trailing garbage (e.g. a second top-level object) are malformed. */
-    if (!lex_next(&L) || L.kind != TOK_EOF) {
+    if (!lex_next(L) || L->kind != TOK_EOF) {
         set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE,
                    "trailing content after root object");
         log_reject(log, out->reject_msg);
@@ -1513,6 +1531,7 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
     }
 
     if (out->entry_count == 0u && out->skipped_count == 0u) {
+        pin_reject(L, entries_at);
         set_reject(out, BOOT_ENTRIES_REJECT_NO_ENTRIES, "entries array is empty");
         log_reject(log, out->reject_msg);
         return out->reject_code;
@@ -1541,6 +1560,41 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
     }
 
     return BOOT_ENTRIES_OK;
+}
+
+/* Line and column (1-based, in bytes) of what the lexer was looking at when the
+ * parse stopped: the token it could not read, or the last one it did. */
+static void locate_reject(const lexer_t *L, boot_entries_parse_result_t *out)
+{
+    u32 offset = L->start;
+    u32 line = 1u, column = 1u, i;
+    if (offset > L->raw_len) offset = L->raw_len;
+    for (i = 0; i < offset; i++) {
+        if (L->raw[i] == '\n') {
+            line++;
+            column = 1u;
+        } else {
+            column++;
+        }
+    }
+    out->reject_line = line;
+    out->reject_column = column;
+}
+
+int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
+                       int secure_boot_active,
+                       boot_entries_log_fn log,
+                       boot_entries_parse_result_t *out)
+{
+    lexer_t L;
+    L.raw = (const u8 *)0;
+    int rc = parse_store(raw, raw_len, secure_boot_active, log, out, &L);
+    /* A checksum failure blames the whole file: the scan that found the header
+     * says nothing about where the bytes diverged. Size and empty rejects never
+     * started a lexer. */
+    if (rc != BOOT_ENTRIES_OK && rc != BOOT_ENTRIES_REJECT_CRC_MISMATCH && L.raw)
+        locate_reject(&L, out);
+    return rc;
 }
 
 /* ---- Fallback synth --------------------------------------------------- */
@@ -1693,6 +1747,38 @@ const char *boot_entries_reject_cause(int code)
             return "a JSON key in the store is spelled with an escape";
     }
     return "the store was rejected for an unrecognised reason";
+}
+
+static u32 put_text(char *buf, u32 cap, u32 at, const char *text)
+{
+    while (*text && at + 1u < cap) buf[at++] = *text++;
+    return at;
+}
+
+static u32 put_number(char *buf, u32 cap, u32 at, u32 value)
+{
+    char digits[10];
+    u32 n = 0;
+    do {
+        digits[n++] = (char)('0' + value % 10u);
+        value /= 10u;
+    } while (value);
+    while (n && at + 1u < cap) buf[at++] = digits[--n];
+    return at;
+}
+
+void boot_entries_reject_locator(const boot_entries_parse_result_t *r, char *buf, unsigned int cap)
+{
+    u32 at;
+    if (!buf || cap == 0u) return;
+    at = put_text(buf, cap, 0u, boot_entries_reject_name((int)r->reject_code));
+    if (r->reject_line != 0u) {
+        at = put_text(buf, cap, at, " at line ");
+        at = put_number(buf, cap, at, r->reject_line);
+        at = put_text(buf, cap, at, ", col ");
+        at = put_number(buf, cap, at, r->reject_column);
+    }
+    buf[at] = '\0';
 }
 
 int boot_entries_store_notice_warranted(int load_status, int reject_code)

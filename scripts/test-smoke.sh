@@ -395,6 +395,9 @@ cp "$OVMF_VARS_SRC" "$OVMF_VARS_CP"
 # needs no change to the Makefile or scripts/build.sh, which the unattended
 # run may not edit.
 CORRUPT_STORE="${SMOKE_CORRUPT_STORE:-0}"
+# Stage a VALID store. The parser's runtime tables and struct copies only run on
+# this path, so an image with no store cannot exercise them.
+VALID_STORE="${SMOKE_VALID_STORE:-0}"
 # S23 fixtures. SMOKE_LOWRES forces a GOP mode below the full error-screen
 # layout floor so the compact renderer is the one under test; SMOKE_ERROR_SCREEN
 # additionally makes the bootloader raise a real boot_fatal, which is the only
@@ -420,7 +423,7 @@ if [ "$LOWRES" = "1" ]; then FORCE_MODE="$LOWRES_MODE"; EXPECT_TIER="compact"; f
 # fingerprints the CANONICAL build image: recording one here would certify the
 # untouched image using evidence from a boot of different bytes.
 IMAGE_MODIFIED=0
-if [ "$CORRUPT_STORE" = "1" ] || [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ]; then
+if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ]; then
     if ! command -v mcopy >/dev/null 2>&1; then
         echo -e "${RED}SMOKE TEST FAILED: image fixtures need mtools (mcopy)${NC}"
         exit 1
@@ -436,6 +439,22 @@ if [ "$CORRUPT_STORE" = "1" ] || [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1"
     DISK="$FIXTURE_DISK"
     IMAGE_MODIFIED=1
     mmd -i "$FIXTURE_DISK@@$EFI_OFFSET" ::EFI/ImpossibleOS 2>/dev/null || true
+fi
+if [ "$VALID_STORE" = "1" ]; then
+    VALID_JSON="$BUILD/bootentries.valid.json"
+    python3 - "$VALID_JSON" <<'PYEOF'
+import json, sys, zlib
+store = {"schema_version": 1, "crc32": "0x00000000", "entries": [{
+    "id": "smoke-entry", "title": "Smoke", "kind": "split", "flags": ["active"],
+    "sort_key": "00", "machine_id": "", "policy_tags": [],
+    "payload": {"kernel": "\\boot\\kernel.exe"}}]}
+body = json.dumps(store).encode()
+crc = zlib.crc32(body) & 0xFFFFFFFF
+open(sys.argv[1], "wb").write(body.replace(b"0x00000000", b"0x%08X" % crc, 1))
+PYEOF
+    mcopy -i "$DISK@@$EFI_OFFSET" -o "$VALID_JSON" \
+          ::EFI/ImpossibleOS/bootentries.json
+    echo -e "  ${DIM}valid-store fixture staged into $(basename "$DISK")${NC}"
 fi
 if [ "$CORRUPT_STORE" = "1" ]; then
     CORRUPT_JSON="$BUILD/bootentries.corrupt.json"
@@ -928,6 +947,15 @@ elif [ "$BOOT_PASSED" = true ]; then
     # Extract boot time
     BOOT_TIME=$(grep -o "Boot complete in [0-9.]*s" "$SERIAL_LOG" 2>/dev/null | head -1 || echo "")
 
+    # ---- Valid-store assertions -------------------------------------------
+    if [ "$VALID_STORE" = "1" ]; then
+        if ! grep -q "policy: bootentries.json parsed reject_code=0 entries=1" "$STRIPPED_LOG" 2>/dev/null; then
+            echo -e "${RED}SMOKE TEST FAILED: a valid boot entry store was not accepted${NC}"
+            grep -E "policy:|store-reject:" "$STRIPPED_LOG" 2>/dev/null | head -6
+            exit 1
+        fi
+    fi
+
     # ---- Corrupt-store assertions -----------------------------------------
     # Reaching here means the machine still booted, which is the SAFE half of
     # the contract. The other half is that it did not do so silently.
@@ -935,6 +963,13 @@ elif [ "$BOOT_PASSED" = true ]; then
         if ! grep -q "\[BOOT\] store-reject:" "$STRIPPED_LOG" 2>/dev/null; then
             echo -e "${RED}SMOKE TEST FAILED: corrupt store produced no rejection notice${NC}"
             grep -c "policy:" "$STRIPPED_LOG" 2>/dev/null | sed 's/^/  policy lines seen: /'
+            exit 1
+        fi
+        # The position travels on the token line, the one line of the banner
+        # with room for it. Parser unit tests cannot see that routing.
+        if ! grep -qE "\[BOOT\] store-reject: [A-Z_0-9]+ at line [0-9]+, col [0-9]+ -- " "$STRIPPED_LOG" 2>/dev/null; then
+            echo -e "${RED}SMOKE TEST FAILED: rejection notice names no position in the store${NC}"
+            grep "store-reject:" "$STRIPPED_LOG" 2>/dev/null | head -2
             exit 1
         fi
         # The channel is the part that proves a SCREEN render happened. QEMU

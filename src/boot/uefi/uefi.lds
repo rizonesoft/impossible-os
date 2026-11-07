@@ -12,6 +12,7 @@ ENTRY(efi_main)
 SECTIONS
 {
     . = 0;
+    __image_base = .;
 
     .hash : { *(.hash) }
     .gnu.hash : { *(.gnu.hash) }

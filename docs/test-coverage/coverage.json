@@ -1,6 +1,6 @@
 {
-  "total_suites": 3569,
-  "total_assertions": 15885,
+  "total_suites": 3574,
+  "total_assertions": 15898,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_ec.c", "suites": 42, "assertions": 168},
@@ -15,7 +15,7 @@
     {"file": "test_boot_device.c", "suites": 18, "assertions": 45},
     {"file": "test_boot_diag.c", "suites": 15, "assertions": 207},
     {"file": "test_boot_entry_kind.c", "suites": 32, "assertions": 46},
-    {"file": "test_boot_entry_parser.c", "suites": 65, "assertions": 127},
+    {"file": "test_boot_entry_parser.c", "suites": 69, "assertions": 138},
     {"file": "test_boot_health.c", "suites": 5, "assertions": 15},
     {"file": "test_boot_health_check.c", "suites": 35, "assertions": 46},
     {"file": "test_boot_history.c", "suites": 13, "assertions": 28},
@@ -40,7 +40,7 @@
     {"file": "test_entropy.c", "suites": 15, "assertions": 197},
     {"file": "test_env.c", "suites": 171, "assertions": 737},
     {"file": "test_error_screen_tier.c", "suites": 22, "assertions": 53},
-    {"file": "test_error_screen_wrap.c", "suites": 29, "assertions": 94},
+    {"file": "test_error_screen_wrap.c", "suites": 30, "assertions": 96},
     {"file": "test_ex.c", "suites": 42, "assertions": 246},
     {"file": "test_except.c", "suites": 63, "assertions": 269},
     {"file": "test_exec.c", "suites": 60, "assertions": 111},

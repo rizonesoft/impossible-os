@@ -5724,6 +5724,18 @@ static boot_store_notice_channel_t boot_store_notice_render(const char *token,
             }
             wide[wi] = 0;
             w = con->OutputString(con, wide);
+            if (!EFI_ERROR(w))
+                w = con->OutputString(con, u"\r\n  ");
+            if (!EFI_ERROR(w)) {
+                /* The token line carries the position in the store. */
+                wi = 0;
+                while (token[wi] && wi < 126) {
+                    wide[wi] = (CHAR16)(UINT8)token[wi];
+                    wi++;
+                }
+                wide[wi] = 0;
+                w = con->OutputString(con, wide);
+            }
         }
         if (!EFI_ERROR(w))
             w = con->OutputString(con, u"\r\n  Starting the fallback entry instead.\r\n");
@@ -7340,13 +7352,15 @@ static void boot_policy_invoke(void)
                                             (int)parse->reject_code)) {
         const char *token;
         const char *cause;
+        char locator[BOOT_ENTRIES_REJECT_LOCATOR_LEN];
         if (load_status == BOOT_STORE_LOAD_UNREADABLE) {
             /* The parser never ran; the loader knows why. */
             token = "STORE_UNREADABLE";
             cause = load_detail;
         } else {
             /* The bytes were read and the parser rejected them. */
-            token = boot_entries_reject_name((int)parse->reject_code);
+            boot_entries_reject_locator(parse, locator, sizeof(locator));
+            token = locator;
             cause = boot_entries_reject_cause((int)parse->reject_code);
         }
         boot_store_reject_notice(token, cause);
@@ -17241,9 +17255,70 @@ static void correlate_pcr4_measurement(void)
     post_code16(POST16_BL_PCR4_LOG_MATCH);
 }
 
+/* The compiler emits calls to this for struct copies even with -ffreestanding,
+ * and nothing else provides it. rep movsb so it cannot lower into a call to
+ * itself. The SysV ABI guarantees DF is clear. */
+void *memcpy(void *dst, const void *src, UINTN n)
+{
+    void *d = dst;
+    __asm__ volatile("rep movsb" : "+D"(d), "+S"(src), "+c"(n) : : "memory");
+    return dst;
+}
+
+typedef struct { INT64 tag; UINT64 val; } loader_elf_dyn_t;
+typedef struct { UINT64 offset; UINT64 info; INT64 addend; } loader_elf_rela_t;
+
+#define LOADER_DT_NULL           0
+#define LOADER_DT_RELA           7
+#define LOADER_DT_RELASZ         8
+#define LOADER_DT_RELAENT        9
+#define LOADER_R_X86_64_RELATIVE 8u
+
+extern const char __image_base[] __attribute__((visibility("hidden")));
+extern const loader_elf_dyn_t _DYNAMIC[] __attribute__((visibility("hidden")));
+
+/* Apply the image's ELF relocations. The ELF-to-PE conversion keeps .rela but
+ * the PE .reloc is empty (reloc.asm), so until this runs every pointer stored in
+ * data reads 0: string tables, name lookups, compiler-built switch tables. Code
+ * that folds to a RIP-relative address still works, so a boot looks healthy while
+ * those lookups quietly fail. Runs first, and calls nothing, because anything it
+ * called could read one of those pointers. Any relocation it does not understand
+ * means an unresolved symbol, which would jump through 0 later: refuse instead. */
+static EFI_STATUS loader_self_relocate(void)
+{
+    UINT64 base = (UINT64)(UINTN)__image_base;
+    UINT64 rela_off = 0, rela_size = 0, rela_ent = 0;
+    const loader_elf_dyn_t *dyn;
+
+    for (dyn = _DYNAMIC; dyn->tag != LOADER_DT_NULL; dyn++) {
+        if (dyn->tag == LOADER_DT_RELA) rela_off = dyn->val;
+        else if (dyn->tag == LOADER_DT_RELASZ) rela_size = dyn->val;
+        else if (dyn->tag == LOADER_DT_RELAENT) rela_ent = dyn->val;
+    }
+    if (rela_size == 0) return EFI_SUCCESS;
+    if (rela_off == 0 || rela_ent != sizeof(loader_elf_rela_t)) return EFI_LOAD_ERROR;
+
+    const loader_elf_rela_t *r = (const loader_elf_rela_t *)(UINTN)(base + rela_off);
+    for (UINT64 i = 0; i < rela_size / sizeof(loader_elf_rela_t); i++) {
+        if ((UINT32)r[i].info != LOADER_R_X86_64_RELATIVE) return EFI_LOAD_ERROR;
+        *(volatile UINT64 *)(UINTN)(base + r[i].offset) = base + (UINT64)r[i].addend;
+    }
+    return EFI_SUCCESS;
+}
+
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
     EFI_STATUS status;
+
+    /* FIRST: everything below may read a pointer stored in data. */
+    status = loader_self_relocate();
+    if (EFI_ERROR(status)) {
+        if (SystemTable && SystemTable->ConOut && SystemTable->ConOut->OutputString)
+            SystemTable->ConOut->OutputString(SystemTable->ConOut,
+                                              u"BOOTX64: image has an unresolved relocation\r\n");
+        return status;
+    }
+
     UINT64 kernel_entry;
     UINTN map_key;
     EFI_MEMORY_DESCRIPTOR *mmap;
