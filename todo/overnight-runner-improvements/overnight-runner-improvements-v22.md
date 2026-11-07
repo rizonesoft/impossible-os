@@ -125,3 +125,7 @@ Carry the baselines forward. A measurement without one is an anecdote.
   - The fix is probably a sweep over Deferred stamps citing the ceiling that runs whenever `bss-headroom.py` crosses a threshold, in `sequencer_triage.py` or `preflight.py`. `scripts/overnight/**` is control plane, so not applied here.
   - WIDER PATTERN, three instances today: Codex outage parks, usercopy parks, ceiling parks. All are temporal blockers read by no one. `stranded_deferrals.py` sweeps `[/]` items with a cross-TODO owner only, and only when that owner ships.
   - NOT SHIPPED: all 22 are reopened, none implemented; the review-skill refusal still stops every section. 8 items in them stay parked on other blockers.
+- [ ] Deferred stamps can form a cycle across files and every check passes: `TODO-15` s4 -> `TODO-12` s29 -> `TODO-15` s5, which needs s4's lock
+  - OBSERVED 2026-11-07, read in the stamps: s4's XREF names `TODO-12` s29, s29's names `TODO-15` s5 and s8, and s5's two stamps name s5 itself. The oracle read a file with no `SeAccessCheck` under `src/kernel/` as DONE for four months.
+  - The self-XREF item already filed above catches only the one-node case. INFERRED, not tested: a graph walk over Deferred XREF edges would have found this one; its precision against the corpus is unmeasured.
+  - DONE here: s4, s5 and s16 reopened; s29 now points back. NOT shipped: the review-skill refusal still stops every section.

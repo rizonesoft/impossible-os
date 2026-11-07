@@ -14,7 +14,7 @@ title: "TODO-15 -- Security Reference Monitor"
 > **Goal:** Implement the Windows Security Reference Monitor (SRM) -- the kernel subsystem that enforces every resource access decision in the OS. The SRM owns three things: the `ACCESS_TOKEN` object (who you are, what groups you belong to, what privileges you hold), the `SECURITY_DESCRIPTOR` + ACL machinery (who is allowed to do what to a named resource), and the `SeAccessCheck` engine that compares the two to produce an allow/deny decision. Without SRM, the OS has no file permissions, no process isolation, no privilege separation, and no UAC -- it is a flat single-user system where every process can touch every resource.
 
 > [!IMPORTANT]
-> **Current state** (2026-07-05): SID/LUID primitives (§1), privilege constants (§2), MIC (§6), token assignment + impersonation (§7), and privilege enforcement (§8) are implemented + reviewed + stamped. `[/]` partials (shipped subset + tracked remainder): §3 SD/ACL/ACE types (untrusted-input bounded validators landed; no live caller yet), §4 ACCESS_TOKEN (3 open marshalling/lock items -> TODO-12 §16), §12 SSDT wiring (`NtPrivilegeCheck` 0x00BF shipped; SeAccessCheck/lifecycle rows blocked on §5/§9), §13 SD inheritance (`SeAssignSecurity` shipped; ob.c/VFS wiring deferred), §16 hardening (64-bit LUID shipped; SHA-1 SID + const-time compare blocked on TODO-07 §1 CNG). Deferred `[/]` (blocked, no code today): §5 SeAccessCheck engine, §9 UAC/NtFilterToken, §10 Win32 wrappers (advapi32 trampoline + per-thread kernel last-error), §11 whoami (cascade on §10), §14 AppContainer (cascade on §5/§9), §15 denial explainer (cascade on §5/§14). The Object Manager (TODO-05 §8) integrates security descriptors.
+> **Current state** (2026-07-05): SID/LUID primitives (§1), privilege constants (§2), MIC (§6), token assignment + impersonation (§7), and privilege enforcement (§8) are implemented + reviewed + stamped. `[/]` partials (shipped subset + tracked remainder): §3 SD/ACL/ACE types (untrusted-input bounded validators landed; no live caller yet), §4 ACCESS_TOKEN (3 open marshalling/lock items -> TODO-12 §16), §12 SSDT wiring (`NtPrivilegeCheck` 0x00BF shipped; SeAccessCheck/lifecycle rows blocked on §5/§9), §13 SD inheritance (`SeAssignSecurity` shipped; ob.c/VFS wiring deferred), §16 hardening (64-bit LUID shipped; the rest reopened 2026-11-07). Open: §4 token hardening and §5 SeAccessCheck engine, reopened 2026-11-07 because their stamps waited on each other. Deferred `[/]` (blocked, no code today): §9 UAC/NtFilterToken, §10 Win32 wrappers (advapi32 trampoline), §11 whoami (cascade on §10), §14 AppContainer (cascade on §5/§9), §15 denial explainer (cascade on §5/§14). The Object Manager (TODO-05 §8) integrates security descriptors.
 
 ---
 
@@ -60,8 +60,8 @@ title: "TODO-15 -- Security Reference Monitor"
 | 💎  |   1   | SID & LUID primitives                                             | --                 |  [x]   |
 | 💎  |   2   | Privilege constants & PRIVILEGE_SET                               | §1                 |  [x]   |
 | 💎  |   3   | SECURITY_DESCRIPTOR, ACL, ACE types                               | §1                 |  [/]   |
-| 💎  |   4   | ACCESS_TOKEN object (primary)                                     | §1, §2, §3, T05 §1 |  [/]   |
-| 💎  |   5   | SeAccessCheck engine                                              | §3, §4             |  [/]   |
+| 💎  |   4   | ACCESS_TOKEN object (primary)                                     | §1, §2, §3, T05 §1 |  [ ]   |
+| 💎  |   5   | SeAccessCheck engine                                              | §3, §4             |  [ ]   |
 | 💎  |   6   | Mandatory Integrity Control (MIC)                                 | §4, §5             |  [/]   |
 | 💎  |   7   | Process/thread token assignment & impersonation                   | §4                 |  [x]   |
 | 💎  |   8   | SePrivilegeCheck & per-privilege enforcement                      | §2, §4, §5         |  [x]   |
@@ -72,7 +72,7 @@ title: "TODO-15 -- Security Reference Monitor"
 | 💎  |  13   | SD inheritance / SeAssignSecurity                                 | §3, §4, §5, T05 §1 |  [/]   |
 | 💎  |  14   | AppContainer / LowBox tokens                                      | §4, §5, §6, §9     |  [/]   |
 | ⭐  |  15   | Access denial explainer                                           | §5, §6, §8, §14    |  [/]   |
-| 💎  |  16   | Security primitive hardening (SHA-1 SID, 64-bit LUID, const-time) | §1, T03 §5         |  [/]   |
+| 💎  |  16   | Security primitive hardening (SHA-1 SID, 64-bit LUID, const-time) | §1, T03 §5         |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -259,11 +259,14 @@ title: "TODO-15 -- Security Reference Monitor"
 - [x] SECURITY [Critical]: `RtlSelfRelativeToAbsoluteSD` gained a `rel_len` arg (acl.c); each `Offset*` bounds-checked (clears 20B header, `< rel_len`) before deref, SID/ACL via bounded helpers, dest subtraction-form.
 - [x] SECURITY [H]: bounded ACL/ACE walk `RtlValidAcl(acl,avail)` + `RtlGetAceEx(acl,index,ace,avail)` (acl.c) -- AclSize/AceSize bounds + per-ACE inline-SID fits `AceSize-8`. Trusted `RtlGetAce`/`acl_append_ace` unchanged.
 - [x] SECURITY [H]: `RtlLengthSidBounded(sid,avail)` (sid.c) -- `avail>=8`, Revision, `count<=15`, `len<=avail` (subtraction-form). Trusted `RtlLengthSid` kept; untrusted import uses the bounded variant only.
-- [ ] Select per-type default SD: ob.c always uses `SE_SD_TYPE_DEFAULT`; map `ObpProcessType`->PROCESS, `ObpTokenType`->TOKEN so process/token get the §3 DACLs once §5 honors `hdr->security`. -> XREF: 02-kernel-core/TODO-15 §5
+- [/] Select per-type default SD: ob.c always uses `SE_SD_TYPE_DEFAULT`; map `ObpProcessType`->PROCESS, `ObpTokenType`->TOKEN so process/token get the §3 DACLs once §5 honors `hdr->security`. -> XREF: 02-kernel-core/TODO-15 §5
+  - Waits on §5 Ob wiring: selecting a DACL changes nothing until an access path reads `hdr->security` (`ob.c:196` still uses `SE_SD_TYPE_DEFAULT`).
 - [x] Moved `SECURITY_DESCRIPTOR_RELATIVE` typedef into `acl.h` with size (20) + offset `_Static_assert`s; removed the private acl.c copy so untrusted parsers can inspect offsets.
 - [x] SECURITY [H]: callback ACEs (0x09/0x0A/0x0D/0x0E) treated SID-bearing so `ace_body_valid` bounds-validates their inline SID; `RtlValidAcl` rejects bad `AclRevision`; import rejects wrong Revision / non-self-relative headers.
-- [ ] Object ACE types (0x05-0x08/0x0B-0x0C): variable Flags+GUID prefix before the SID; `RtlValidAcl` now REJECTS them (unparseable). Add constants + Flags-aware SID offset to SUPPORT them when AD-style extended-rights ACEs are needed.
-- [ ] `RtlSelfRelativeToAbsoluteSD` packs SID/ACL bodies contiguously into `abs_buf`; an ACL body can land unaligned -> strict-alignment arch (ARM64) fault. Align each component copy to 4 bytes when the import path is wired.
+- [/] Object ACE types (0x05-0x08/0x0B-0x0C): variable Flags+GUID prefix before the SID; `RtlValidAcl` now REJECTS them (unparseable). Add constants + Flags-aware SID offset to SUPPORT them when AD-style extended-rights ACEs are needed.
+  - No consumer yet, and `RtlValidAcl` rejects them safely. Owner: §5 (item: "`SeAccessCheckByType(sd, ObjectType, ...)`").
+- [/] `RtlSelfRelativeToAbsoluteSD` packs SID/ACL bodies contiguously into `abs_buf`; an ACL body can land unaligned -> strict-alignment arch (ARM64) fault. Align each component copy to 4 bytes when the import path is wired.
+  - Only `test_security.c` calls it today (`acl.c:193`). Waits on the first real import: §12 (item: "`NtSetSecurityObject(Handle, SecurityInformation, SD)`").
 - [x] Commit: `"kernel/security: SECURITY_DESCRIPTOR, ACL, ACE types and helpers"`
 
 **Test checkpoint:** `RtlCreateSecurityDescriptor` + `RtlSetDaclSecurityDescriptor` + `RtlAbsoluteToSelfRelativeSD` round-trips (self-relative buffer parses back to identical ACEs via `RtlSelfRelativeToAbsoluteSD`). `SeCreateDefaultSD(SE_SD_TYPE_REGISTRY_KEY)` yields the `(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;BU)` DACL. `RtlAclToCStr` dumps `D:(A;;FA;;;SY)`. `RtlGetAce` walks each ACE by index. Test on: QEMU WHPX + TCG.
@@ -277,8 +280,8 @@ title: "TODO-15 -- Security Reference Monitor"
 > - Scope boundary: §5 owns SeAccessCheck honoring `hdr->security`; per-type default-SD selection in ob.c (item 4) stays open, blocked on that §5 wiring.
 > **Verified:** 2026-07-05 | commit `9c12e1d8` (+ review fixes) | 25/28 items | build OK | tests 1041/1041 PASS
 > **Deferred:** [M] per-type default-SD selection in ob.c (`ObpProcessType`/`ObpTokenType` -> PROCESS/TOKEN DACLs) blocked until §5 honors `hdr->security` -> XREF: 02-kernel-core/TODO-15 §5 (item: "In `ObpReferenceObjectByHandle` ... call `SeAccessCheck(object->SecurityDescriptor ...)`")
-> **Deferred:** [L] object ACE type SUPPORT (0x05-0x08/0x0B-0x0C) not implemented -- `RtlValidAcl` now REJECTS them (no OOB), support deferred -> XREF: 02-kernel-core/TODO-15 §3 (item: "Object ACE types (0x05-0x08/0x0B-0x0C)")
-> **Deferred:** [L] `abs_buf` component copies can land unaligned -> strict-align arch (ARM64) fault when the import path is wired -> XREF: 02-kernel-core/TODO-15 §3 (item: "`RtlSelfRelativeToAbsoluteSD` packs SID/ACL bodies")
+> **Deferred:** [L] object ACE type SUPPORT (0x05-0x08/0x0B-0x0C) not implemented -- `RtlValidAcl` now REJECTS them (no OOB), support deferred -> XREF: 02-kernel-core/TODO-15 §5 (item: "`SeAccessCheckByType(sd, ObjectType, ...)`")
+> **Deferred:** [L] `abs_buf` component copies can land unaligned -> strict-align arch (ARM64) fault when the import path is wired -> XREF: 02-kernel-core/TODO-15 §12 (item: "`NtSetSecurityObject(Handle, SecurityInformation, SD)`")
 > **Deferred:** [L] `SE_DACL_PRESENT`/`OffsetDacl` presence-vs-flag cross-check on import -> XREF: 02-kernel-core/TODO-15 §5 (item: "Normalize: cross-check `SE_DACL_PRESENT`")
 > **Quality reviewed:** 2026-07-05 | Codex 13x (design, adversarial, re-adversarial, consistency, perf) | 3H+3M+3L fixed, 1M+3L deferred | scope: kernel-code-quality
 
@@ -327,7 +330,8 @@ title: "TODO-15 -- Security Reference Monitor"
 - [x] `NtDuplicateToken(Existing, Access, ObjAttr, EffectiveOnly, Type, New)` -- deep-copies token struct, allocates new `TokenId` LUID; `EffectiveOnly` strips disabled privileges and groups
 - [x] `NtAdjustPrivilegesToken(hToken, DisableAll, NewState, BufferLen, PreviousState, ReturnLen)` -- for each LUID_AND_ATTRIBUTES in `NewState`: find matching privilege in token, apply SE_PRIVILEGE_ENABLED / SE_PRIVILEGE_REMOVED; requires `TOKEN_ADJUST_PRIVILEGES`; write previous state to `PreviousState`; return `STATUS_NOT_ALL_ASSIGNED` if any LUID not found
 - [x] `NtAdjustGroupsToken(hToken, ResetToDefault, NewState, BufferLen, PreviousState, ReturnLen)` -- enable/disable group SIDs; cannot re-enable a `SE_GROUP_USE_FOR_DENY_ONLY` group (immutable once disabled)
-- [ ] Deep-copy setters for `NtSetInformationToken` (IntegrityLevel/PrimaryGroup/DefaultDacl/Owner): validate + alloc-copy the SID/ACL BEFORE the lock; swap under lock; free the OLD field after unlock. Remove the reject at nt_token.c:299.
+- [/] Deep-copy setters for `NtSetInformationToken` (IntegrityLevel/PrimaryGroup/DefaultDacl/Owner): validate + alloc-copy the SID/ACL BEFORE the lock; swap under lock; free the OLD field after unlock. Remove the reject at nt_token.c:299.
+  - Waits on §5's first commit (`resolve_token_handle_access`), which gates these on `TOKEN_ADJUST_DEFAULT`. `nt_token.c:289` still rejects every class, so nothing is exposed today.
 - [ ] TokenXxx query marshalling: `token.c` NtQueryInformationToken returns kernel SID pointers; TokenGroups uses the wrong header offset. Marshal each class into a self-contained caller buffer. XREF: TODO-12 §16.
 - [ ] **Per-token lock for SMP safety** -- add `spinlock_t lock` to `ACCESS_TOKEN` covering Groups[], Privileges[], IntegrityLevelSid, DefaultDacl, and other mutable fields. All NtAdjust*Token / NtSet*Token / NtQuery*Token paths must acquire (write for mutate, read for query). Required to make TODO-12 §16 token syscalls SMP-safe when scheduler exposes them to multiple threads of the same process.
 - [ ] Teardown-safe primary-token READ pin: readers derefing a foreign `task->token` (`env_is_secure_context`, nt_token.c, ob.c) must `PsReferencePrimaryToken`-pin before deref, else reap can UAF -- safe today only single-cursor (task.c:3256)
@@ -342,8 +346,7 @@ title: "TODO-15 -- Security Reference Monitor"
 > - Downgraded [x]->[/]: design review specced the token-hardening (per-token lock, deep-copy setters, query-marshalling leak fix, `OwnerSid` field, `NtDuplicateToken` deep-copy) -- filed as precise [ ] items above.
 > - BLOCKED: setters need §5's handle-rights gate before enabling; the query kernel-pointer-leak is now REACHABLE (§7 shipped live process tokens 2026-07-05), tracked at TODO-12 §29. Lock/alloc ordering per spinlock rules.
 > - Scope boundary: §5 owns handle-rights enforcement + SeAccessCheck; §7 owns wiring tokens into processes.
-> **Deferred:** [Critical] `NtSetInformationToken` setters must gate on `TOKEN_ADJUST_DEFAULT` before enabling -> XREF: 02-kernel-core/TODO-15 §5 (item: "Enforce per-handle `granted_access` on token mutation syscalls")
-> **Deferred:** [H] token-hardening (per-token lock + deep-copy setters + query kernel-pointer-leak fix + OwnerSid + NtDuplicateToken deep-copy) design-specced (2026-07-05: §7 shipped live process tokens, so these are now REACHABLE not latent; hardening owned by the systemic NT trust-boundary work) -> XREF: 02-kernel-core/TODO-12 §29 (item: "Foundation: per-token SMP lock")
+> - Reopened 2026-11-07: this section waited on `02-kernel-core/TODO-12` §29, §29 waited on §5, and §5 needs this section's lock, so none could start. The lock, the query marshalling, the read pin and the UserSid length have no outside blocker and are done here; §29 now points back. Only the setters wait, on §5's first commit.
 
 ---
 
@@ -383,11 +386,25 @@ title: "TODO-15 -- Security Reference Monitor"
   - Subject: user=SY → expect GRANT
   - Subject: user=BU, desired=ReadControl → expect GRANT
   ```
-- [ ] In `ObpReferenceObjectByHandle` (→ XREF `TODO-05 §2`): after locating the handle entry, call `SeAccessCheck(object->SecurityDescriptor, ctx, FALSE, desired, 0, NULL, object->Type->GenericMapping, UserMode, &granted, &status)`; return `STATUS_ACCESS_DENIED` if check fails
+- [/] In `ObpReferenceObjectByHandle`: call `SeAccessCheck(object->SecurityDescriptor ...)` and return `STATUS_ACCESS_DENIED` when the check fails.
+  - after locating the handle entry, call `SeAccessCheck(object->SecurityDescriptor, ctx, FALSE, desired, 0, NULL, object->Type->GenericMapping, UserMode, &granted, &status)`; return `STATUS_ACCESS_DENIED` if check fails
+  - The primitive is not shipped (only comments mention it). Owner moved to `02-kernel-core/TODO-05` §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive").
 - [ ] `NtAccessCheck(sd, token, desired, mapping, privs, priv_len, granted, status)` syscall -- user-mode accessible wrapper for testing DACLs without opening an object
 - [ ] **Enforce per-handle `granted_access` on token mutation syscalls**: TODO-12 §16 handlers (`NtAdjustPrivilegesToken`, `NtAdjustGroupsToken`, `NtSetInformationToken`, `NtQueryInformationToken`) in `src/kernel/nt/nt_token.c` currently resolve a token handle via `resolve_token_handle()` and operate without checking what rights the handle was opened with. Add a `resolve_token_handle_access(HANDLE h, ACCESS_MASK required)` helper that reads `HANDLE_TABLE_ENTRY.granted_access` and returns `STATUS_ACCESS_DENIED` if `(entry->granted_access & required) != required`. Required masks per Win32 SDK: `TOKEN_ADJUST_PRIVILEGES = 0x20` for `NtAdjustPrivilegesToken`; `TOKEN_ADJUST_GROUPS = 0x40` for `NtAdjustGroupsToken`; `TOKEN_QUERY = 0x08` for `NtQueryInformationToken`; `TOKEN_ADJUST_DEFAULT = 0x80` for `NtSetInformationToken`. This auto-closes TODO-12 §16 Accepted #2 (token handle granted_access not enforced).
-- [ ] **Enforce per-handle `granted_access` on section syscalls**: TODO-12 §18 handlers (`NtMapViewOfSection`, `NtExtendSection`, `NtQuerySection`) in `src/kernel/nt/nt_section.c` currently call `ObpLookupHandle` + type check, then operate on `SECTION_OBJECT*` without inspecting `HANDLE_TABLE_ENTRY.granted_access`. Required masks per Windows SDK winnt.h: `SECTION_MAP_READ = 0x0004` for read-mapping, `SECTION_MAP_WRITE = 0x0002` for read-write map, `SECTION_MAP_EXECUTE = 0x0008` for image/exec, `SECTION_EXTEND_SIZE = 0x0010` for `NtExtendSection`, `SECTION_QUERY = 0x0001` for `NtQuerySection`. After the `ObpReferenceObjectByHandle` primitive lands (-> XREF `TODO-05 §2`), add an inline check `if ((granted & required) != required) return STATUS_ACCESS_DENIED;` at the top of each section handler. Add a unit test in `test_ob.c` opening a section with `SECTION_QUERY` only and asserting `NtMapViewOfSection` returns `STATUS_ACCESS_DENIED`. This auto-closes TODO-12 §18 Accepted (section handle granted_access not enforced).
-- [ ] **Authorize process-termination syscalls**: the `SYS_KILL` (INT 0x80) handler in `src/kernel/sched/syscall.c` and `NtTerminateProcess` in `src/kernel/nt/nt_process.c` today let ANY ring-3 task mark ANY other task `TASK_DEAD` via PID lookup -- no parentage check, no ACL check, no privilege check. Required mask per Windows SDK winnt.h: `PROCESS_TERMINATE = 0x0001`. After `ObpReferenceObjectByHandle` + process OB type land, retrofit both handlers to: (a) accept only handle-based addressing (reject the current PID-only SYS_KILL shape), (b) require `PROCESS_TERMINATE` in the handle's granted_access, (c) honour the process OB type's security descriptor. Add a negative user-mode test (extend `00-infrastructure/TODO-04 §12 test_process.exe`) that asserts killing an unrelated task (non-child, e.g. the launcher task PID) fails with `STATUS_ACCESS_DENIED` or `-1`. Until this lands, SYS_KILL stamps a "cross-task kill authorization not gated" Accepted XREF via 00-infrastructure/TODO-04 §12.
+- [/] **Enforce per-handle `granted_access` on section syscalls** (`src/kernel/nt/nt_section.c`).
+  - TODO-12 §18 handlers (`NtMapViewOfSection`, `NtExtendSection`, `NtQuerySection`) in `src/kernel/nt/nt_section.c` currently call `ObpLookupHandle` + type check, then operate on `SECTION_OBJECT*` without inspecting `HANDLE_TABLE_ENTRY.granted_access`.
+  - Required masks per Windows SDK winnt.h: `SECTION_MAP_READ = 0x0004` for read-mapping, `SECTION_MAP_WRITE = 0x0002` for read-write map, `SECTION_MAP_EXECUTE = 0x0008` for image/exec, `SECTION_EXTEND_SIZE = 0x0010` for `NtExtendSection`, `SECTION_QUERY = 0x0001` for `NtQuerySection`.
+  - After the `ObpReferenceObjectByHandle` primitive lands (-> XREF `TODO-05 §2`), add an inline check `if ((granted & required) != required) return STATUS_ACCESS_DENIED;` at the top of each section handler.
+  - Add a unit test in `test_ob.c` opening a section with `SECTION_QUERY` only and asserting `NtMapViewOfSection` returns `STATUS_ACCESS_DENIED`.
+  - This auto-closes TODO-12 §18 Accepted (section handle granted_access not enforced).
+  - Waits on `02-kernel-core/TODO-05` §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive"), as the item says. Confirmed: `nt_section.c` reads no `granted_access`.
+- [/] **Authorize process-termination syscalls** (`SYS_KILL` and `NtTerminateProcess`).
+  - the `SYS_KILL` (INT 0x80) handler in `src/kernel/sched/syscall.c` and `NtTerminateProcess` in `src/kernel/nt/nt_process.c` today let ANY ring-3 task mark ANY other task `TASK_DEAD` via PID lookup -- no parentage check, no ACL check, no privilege check.
+  - Required mask per Windows SDK winnt.h: `PROCESS_TERMINATE = 0x0001`.
+  - After `ObpReferenceObjectByHandle` + process OB type land, retrofit both handlers to: (a) accept only handle-based addressing (reject the current PID-only SYS_KILL shape), (b) require `PROCESS_TERMINATE` in the handle's granted_access, (c) honour the process OB type's security descriptor.
+  - Add a negative user-mode test (extend `00-infrastructure/TODO-04 §12 test_process.exe`) that asserts killing an unrelated task (non-child, e.g. the launcher task PID) fails with `STATUS_ACCESS_DENIED` or `-1`.
+  - Until this lands, SYS_KILL stamps a "cross-task kill authorization not gated" Accepted XREF via 00-infrastructure/TODO-04 §12.
+  - Waits on `02-kernel-core/TODO-05` §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive"). Corrected 2026-11-07: `NtTerminateProcess` is handle-based now (`nt_process.c:324`) but checks no `PROCESS_TERMINATE`; `SYS_KILL` is still PID-only with only the pledge gate (`sched/syscall.c:989`).
 - [ ] `TOKEN_WRITE_RESTRICTED` (§9): run the restricted-SID second DACL pass ONLY for write-class desired access (write mask via the object `GENERIC_MAPPING`); non-write access skips it. -> XREF: 02-kernel-core/TODO-15 §9
 - [ ] Conditional/callback ACEs (`*_CALLBACK_ACE` 0x9/0xA): until expr-eval exists, DENY not skip -- an unknown conditional ACE whose Mask intersects desired with a matchable SID returns `STATUS_ACCESS_DENIED`. -> XREF: 02-kernel-core/TODO-15 §3
 - [ ] SeAccessCheck DACL-walk + SD-normalize: §3's bounded validators (`RtlValidAcl`/`RtlGetAceEx`/`RtlLengthSidBounded`/`rel_len`) landed -- normalize untrusted SDs through them to a canonical ABSOLUTE form. -> XREF: 02-kernel-core/TODO-15 §3
@@ -404,8 +421,7 @@ title: "TODO-15 -- Security Reference Monitor"
 > - Unblocked: §3's bounded validators (rel_len, RtlValidAcl/RtlGetAceEx, RtlLengthSidBounded) have LANDED; the DACL-walk/SD-normalize core now normalizes untrusted SDs through them to a canonical validated absolute form.
 > - Ships-first subset: `resolve_token_handle_access` granted_access enforcement is independent of the ACL walk and unblocks §4's setters.
 > - Scope boundary: §3 owns the bounded SD/ACL validators; §6 owns the MIC pre-check; §7 owns token-to-process wiring.
-> **Deferred:** [Critical] SeAccessCheck DACL-walk/SD-normalize engine design-captured but not yet implemented; §3's bounded validators now available to build it safely -> XREF: 02-kernel-core/TODO-15 §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`")
-> **Deferred:** [H] granted_access enforcement (`resolve_token_handle_access`) ships first + the ACE-ordering/owner-bypass/WRITE_RESTRICTED/conditional-ACE engine, design-captured -> XREF: 02-kernel-core/TODO-15 §5 (item: "Enforce per-handle `granted_access` on token mutation syscalls")
+> - Reopened 2026-11-07: both Deferred stamps named this section as their own XREF, so nothing could clear them and the oracle read the file DONE while the engine does not exist. Every Ob access decision today is the type check plus the handle mask. The Ob wiring items wait on `TODO-05` §3; the engine and the token gate do not.
 
 ---
 
@@ -423,11 +439,16 @@ title: "TODO-15 -- Security Reference Monitor"
     - `SYSTEM_MANDATORY_LABEL_NO_EXECUTE_UP (0x4)` -- if `subject_il < object_il` AND `desired` contains execute bits → deny
   - Returns `STATUS_ACCESS_DENIED` or `STATUS_SUCCESS`
 - [x] `SeCheckMandatoryAccess` folds the object `GENERIC_MAPPING` (`generic_mapping.h`) into its access classes so object-specific rights cannot bypass No-*-Up; §5 owns per-type instances.
-- [ ] Default object IL assignment: kernel objects created by System process get `SeILSystem`; objects created by user process inherit creator's IL
-- [ ] UIPI note: MIC also gates cross-IL window-message sends (UIPI), but that path is compositor/Win32k-owned, not an SRM object DACL check. -> XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserChangeWindowMessageFilterEx")
-- [ ] `NtCreateProcess` child token IL = `min(parent_IL, image_IL)` via `TOKEN_MANDATORY_POLICY_NEW_PROCESS_MIN`; image IL from PE/ELF `RT_MANIFEST` exec level. -> XREF: 02-kernel-core/TODO-15 §7
-- [ ] Mandatory-label WRITE (`SeRelabelPrivilege`): raising an object IL above the caller's own token IL needs the privilege; add to §2 + enforce in `NtSetSecurityObject` SACL path. -> XREF: 02-kernel-core/TODO-15 §12
-- [ ] Low IL sandbox mode: token with `SeILLow` is denied write to `%USERPROFILE%\*` (only `%LOCALAPPDATA%\Low\*` writable); enforced by MIC at `SeCheckMandatoryAccess` time
+- [/] Default object IL assignment: kernel objects created by System process get `SeILSystem`; objects created by user process inherit creator's IL
+  - Waits on §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`"): no access path reads an object's label until the engine runs MIC.
+- [x] UIPI note: MIC also gates cross-IL window-message sends (UIPI), but that path is compositor/Win32k-owned, not an SRM object DACL check. -> XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserChangeWindowMessageFilterEx")
+  - Ownership note, recorded: `08-graphics-ui/TODO-15` §25 carries `NtUserChangeWindowMessageFilterEx`.
+- [/] `NtCreateProcess` child token IL = `min(parent_IL, image_IL)` via `TOKEN_MANDATORY_POLICY_NEW_PROCESS_MIN`; image IL from PE/ELF `RT_MANIFEST` exec level. -> XREF: 02-kernel-core/TODO-15 §7
+  - The image half has no source: neither loader reads a manifest. EIF is `02-kernel-core/TODO-20` (item: "Resource types: `EIF_RT_SVG_ICON`"); PE `RT_MANIFEST` has no owner yet. The parent half already holds, since §7 children take the parent token.
+- [/] Mandatory-label WRITE (`SeRelabelPrivilege`): raising an object IL above the caller's own token IL needs the privilege; add to §2 + enforce in `NtSetSecurityObject` SACL path. -> XREF: 02-kernel-core/TODO-15 §12
+  - Waits on §12 (item: "`NtSetSecurityObject(Handle, SecurityInformation, SD)`"), the only path that writes a label. `SeRelabelPrivilege` itself is absent from the tree too.
+- [/] Low IL sandbox mode: token with `SeILLow` is denied write to `%USERPROFILE%\*` (only `%LOCALAPPDATA%\Low\*` writable); enforced by MIC at `SeCheckMandatoryAccess` time
+  - Waits on §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`"): `SeCheckMandatoryAccess` has no caller on a file path (`vfs.c` takes the default SD).
 - [x] Commit: `"kernel/security: Mandatory Integrity Control, No-Write-Up policy"`
 
 **Test checkpoint:** `SeCheckMandatoryAccess` with Low IL token + GENERIC_WRITE on Medium IL object → `STATUS_ACCESS_DENIED` (No-Write-Up). System IL writing Medium IL → allowed. No-Read-Up policy set, Low IL reading Medium IL → denied. Default policy (No-Write-Up only), Low IL reading Medium IL → allowed. Child process spawned from Medium IL parent → child IL == Medium. Serial log: `"[SRM] MIC: subject_il=%u object_il=%u policy=0x%x result=%s"`. Test on: QEMU WHPX + TCG.
@@ -440,8 +461,8 @@ title: "TODO-15 -- Security Reference Monitor"
 > - Design (Codex): `SeCheckMandatoryAccess(token, ...)` not `ctx` (SUBJECT_CONTEXT deferred); defensive SACL validation; Medium default on valid-but-unlabeled, fail-closed on malformed.
 > - Scope boundary: SeAccessCheck owns MIC-before-DACL wiring + `GENERIC_MAPPING` precision + the `[SRM] MIC:` log; token assignment owns child-IL=min; object-IL-at-creation + Low-IL FS sandbox stay open.
 > **Verified:** 2026-07-05 | commit `d6d9fc44` (+ review fixes) | 5/10 items | build OK | tests 1061/1061 PASS
-> **Deferred:** [M] child token IL = min(parent, image) via `TOKEN_MANDATORY_POLICY_NEW_PROCESS_MIN` (process-creation-time, not a read-only helper) -> XREF: 02-kernel-core/TODO-15 §6 (item: "`NtCreateProcess` child token IL")
-> **Deferred:** [M] mandatory-label WRITE enforcement (`SeRelabelPrivilege`) on the `NtSetSecurityObject` SACL path -> XREF: 02-kernel-core/TODO-15 §6 (item: "Mandatory-label WRITE (`SeRelabelPrivilege`)")
+> **Deferred:** [M] child token IL = min(parent, image) via `TOKEN_MANDATORY_POLICY_NEW_PROCESS_MIN` (process-creation-time, not a read-only helper) -> XREF: 02-kernel-core/TODO-20 (item: "Resource types: `EIF_RT_SVG_ICON`"); PE `RT_MANIFEST` has no owner yet
+> **Deferred:** [M] mandatory-label WRITE enforcement (`SeRelabelPrivilege`) on the `NtSetSecurityObject` SACL path -> XREF: 02-kernel-core/TODO-15 §12 (item: "`NtSetSecurityObject(Handle, SecurityInformation, SD)`")
 > **Accepted:** [L] `token->IntegrityLevelSid` read without a token reference -- the live SeAccessCheck path must hold one (torn-read guard) -> XREF: 02-kernel-core/TODO-15 §5 (item: "MIC pre-check")
 > **Quality reviewed:** 2026-07-05 | Codex 8x (design, adversarial, re-adversarial, consistency, perf) | 3H+3M+3L fixed, 1M rejected | scope: kernel-code-quality
 
@@ -507,30 +528,38 @@ title: "TODO-15 -- Security Reference Monitor"
 
 ## 9. UAC Token Split & NtFilterToken
 
-- [ ] `NtFilterToken(ExistingToken, Flags, SidsToDisable, PrivilegesToDelete, RestrictedSids, NewToken)`:
+- [/] `NtFilterToken(ExistingToken, Flags, SidsToDisable, PrivilegesToDelete, RestrictedSids, NewToken)`:
+  - Waits on §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`"): a restricted token reports false sandboxing until the engine enforces it. Also `02-kernel-core/TODO-12` §29 (item: "Foundation: owned restricted-SID storage").
   - `DISABLE_MAX_PRIVILEGE` (flag): mark all privileges except `SeChangeNotifyPrivilege` as `SE_PRIVILEGE_REMOVED`
   - `SidsToDisable`: mark matched group SIDs with `SE_GROUP_USE_FOR_DENY_ONLY` (present in deny checks but not allow checks)
   - `PrivilegesToDelete`: remove matching privilege entries entirely
   - `RestrictedSids`: append to token as restricted SID list (second DACL pass required -- access must be allowed by BOTH the normal DACL walk AND a walk of the restricted SID list)
   - Sets `TOKEN_IS_RESTRICTED` flag on new token
   - Used internally by UAC to produce the "filtered" Medium token for admin users
-- [ ] `SeCreateLinkedTokenPair(FullAdminToken, FilteredToken)`:
+- [/] `SeCreateLinkedTokenPair(FullAdminToken, FilteredToken)`:
+  - Waits on `NtFilterToken` above, which produces the filtered half.
   - `FullAdminToken->LinkedTokenId` = `FilteredToken->TokenId`
   - `FilteredToken->LinkedTokenId` = `FullAdminToken->TokenId`
   - `FilteredToken->ElevationType = TokenElevationTypeLimited`
   - `FullAdminToken->ElevationType = TokenElevationTypeFull`
   - Both tokens reference each other; when user requests elevation, kernel resolves the linked token from the filtered one
-- [ ] `NtQueryInformationToken(TokenLinkedToken)` -- returns handle to the linked token; requires `TOKEN_QUERY` and that the caller holds `SeTcbPrivilege` (prevents unprivileged elevation discovery)
-- [ ] `NtRequestTokenElevation(ProcessHandle, hToken, ElevationType)` -- kernel side of the elevation flow:
+- [/] `NtQueryInformationToken(TokenLinkedToken)` -- returns handle to the linked token; requires `TOKEN_QUERY` and that the caller holds `SeTcbPrivilege` (prevents unprivileged elevation discovery)
+  - Waits on `SeCreateLinkedTokenPair` above.
+- [/] `NtRequestTokenElevation(ProcessHandle, hToken, ElevationType)` -- kernel side of the elevation flow:
+  - Waits on the linked pair above and `09-desktop-shell/TODO-06` §11 consent UI. No `ProcessAccessToken` info class exists.
   1. Check calling process has `TokenElevationTypeLimited` token
   2. Signal the consent UI process (→ XREF `09-desktop-shell/TODO-06-security-accounts.md §11`) via a dedicated kernel event object
   3. Wait for consent UI to signal approval or denial event
   4. On approval: `NtSetInformationProcess(ProcessHandle, ProcessAccessToken, &linked_token)` -- replaces the process token with the full-admin linked token
   5. On denial: return `STATUS_PRIVILEGE_NOT_HELD`
-- [ ] Note: full consent UI implementation is in `09-desktop-shell` -- this TODO provides only the kernel side of the handshake
-- [ ] `WRITE_RESTRICTED` flag: `TOKEN_WRITE_RESTRICTED` token flag; when set, §5's restricted-SID second pass applies ONLY to write-class access, so read/execute is not falsely denied. -> XREF: 02-kernel-core/TODO-15 §5
-- [ ] After the `NtRequestTokenElevation` `ProcessAccessToken` swap to a higher-IL token, call `env_sanitize_for_elevation(process)` to strip blocklisted env vars -> XREF: 02-kernel-core/TODO-22 §16 (item: "env_sanitize_for_elevation(task)")
-- [ ] Commit: `"kernel/security: NtFilterToken, linked token pair, UAC elevation protocol"`
+- [x] Note: full consent UI implementation is in `09-desktop-shell` -- this TODO provides only the kernel side of the handshake
+  - Ownership note, recorded: `09-desktop-shell/TODO-06` line 34 XREFs this section back.
+- [/] `WRITE_RESTRICTED` flag: `TOKEN_WRITE_RESTRICTED` token flag; when set, §5's restricted-SID second pass applies ONLY to write-class access, so read/execute is not falsely denied. -> XREF: 02-kernel-core/TODO-15 §5
+  - Waits on `NtFilterToken` above; the §5 engine item for this flag is open and ships first.
+- [/] After the `NtRequestTokenElevation` `ProcessAccessToken` swap to a higher-IL token, call `env_sanitize_for_elevation(process)` to strip blocklisted env vars -> XREF: 02-kernel-core/TODO-22 §16 (item: "env_sanitize_for_elevation(task)")
+  - `env_sanitize_for_elevation` is shipped (`env.c`). Waits on `NtRequestTokenElevation` above, the only caller.
+- [/] Commit: `"kernel/security: NtFilterToken, linked token pair, UAC elevation protocol"`
+  - Waits on the §9 items above.
 
 **Test checkpoint:** `NtFilterToken` with `DISABLE_MAX_PRIVILEGE` → new token has only SeChangeNotifyPrivilege enabled. `NtFilterToken` with SidsToDisable=[BA] → BA group has `SE_GROUP_USE_FOR_DENY_ONLY`. Linked token pair: `NtQueryInformationToken(TokenLinkedToken)` on filtered → returns handle to full admin token. `ElevationType` of filtered == `TokenElevationTypeLimited`. Serial log: `"[SRM] NtFilterToken: %u privileges removed, %u groups disabled"`. Test on: QEMU WHPX + TCG.
 
@@ -544,28 +573,50 @@ title: "TODO-15 -- Security Reference Monitor"
 
 ## 10. Win32 Security API Wrappers
 
-- [ ] `OpenProcessToken(hProcess, DesiredAccess, phToken)` → `NtOpenProcessToken`
-- [ ] `OpenThreadToken(hThread, DesiredAccess, OpenAsSelf, phToken)` → `NtOpenThreadToken`
-- [ ] `GetTokenInformation(hToken, class, buf, len, retlen)` → `NtQueryInformationToken`
-- [ ] `SetTokenInformation(hToken, class, buf, len)` → `NtSetInformationToken`
-- [ ] `AdjustTokenPrivileges(hToken, DisableAll, NewState, BufferLen, PreviousState, ReturnLen)` → `NtAdjustPrivilegesToken`; note: Win32 returns TRUE even for `STATUS_NOT_ALL_ASSIGNED` (set last-error instead)
-- [ ] `CheckTokenMembership(hToken, SidToCheck, IsMember)` -- scan token groups for matching SID with `SE_GROUP_ENABLED` attribute; NULL token = current thread effective token
-- [ ] `IsUserAnAdmin()` -- `CheckTokenMembership(NULL, SeBuiltinAdministratorsSid, &member)`; returns TRUE only if token is elevated admin (High IL)
-- [ ] `IsTokenRestricted(hToken)` → check `TOKEN_IS_RESTRICTED` flag in token
-- [ ] `CreateRestrictedToken(hToken, Flags, SidsToDisable[], PrivilegesToDelete[], SidsToRestrict[], NewToken)` → `NtFilterToken`; flags: `DISABLE_MAX_PRIVILEGE`, `SANDBOX_INERT`, `WRITE_RESTRICTED`, `LUA_TOKEN`
-- [ ] `ConvertSidToStringSidW(Sid, StringSid)` -- formats `S-1-X-Y-...` into heap-allocated `WCHAR*` (caller frees with `LocalFree`)
-- [ ] `ConvertStringSidToSidW(StringSid, Sid)` -- parse `S-1-...` string back to SID blob
-- [ ] `AllocateAndInitializeSid(IdentifierAuthority, SubAuthorityCount, ...)` -- up to 8 sub-authority args; allocates SID blob (caller frees with `FreeSid`)
-- [ ] `FreeSid(Sid)` -- wraps `kfree`
-- [ ] `EqualSid`, `CopySid`, `LengthSid`, `IsValidSid` Win32 wrappers
-- [ ] `GetSecurityInfo(handle, ObjectType, SecurityInfo, Owner, Group, Dacl, Sacl, SD)` → `NtQuerySecurityObject`
-- [ ] `SetSecurityInfo(handle, ObjectType, SecurityInfo, Owner, Group, Dacl, Sacl)` → `NtSetSecurityObject`
-- [ ] `GetNamedSecurityInfoW(name, ObjectType, SecurityInfo, ...)` -- resolves path to file handle, then calls `NtQuerySecurityObject`
-- [ ] `SetNamedSecurityInfoW(name, ObjectType, SecurityInfo, ...)` -- resolve + `NtSetSecurityObject`; requires `WRITE_DAC` or `SE_SECURITY_PRIVILEGE` for SACL
-- [ ] `ConvertStringSecurityDescriptorToSecurityDescriptorW(SDDL, Revision, SD, SDSize)` -- minimal SDDL parser: parse `O:XX G:XX D:...(A;;XX;;;XX)...` syntax; supports `SY`=System, `BA`=Admins, `BU`=Users, `WD`=Everyone aliases
-- [ ] `ConvertSecurityDescriptorToStringSecurityDescriptorW(SD, Revision, SecurityInfo, StringSD, StringSDLen)` -- reverse; produces SDDL string
-- [ ] `LookupAccountSidW` / `LookupAccountNameW` -- resolve a SID to its account name (and reverse) via the well-known-SID table + local account DB; consumed by TODO-22 env `USERNAME` synthesis (→ XREF `TODO-22-environment-variables.md §2`)
-- [ ] Commit: `"kernel/security: Win32 token, SID, and security descriptor API wrappers"`
+- [/] `OpenProcessToken(hProcess, DesiredAccess, phToken)` → `NtOpenProcessToken`
+  - No outside blocker in the code itself; no ring-3 caller exists until `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions), and a kernel wrapper with no caller is dead code.
+- [/] `OpenThreadToken(hThread, DesiredAccess, OpenAsSelf, phToken)` → `NtOpenThreadToken`
+  - No outside blocker in the code itself; no ring-3 caller exists until `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions), and a kernel wrapper with no caller is dead code.
+- [/] `GetTokenInformation(hToken, class, buf, len, retlen)` → `NtQueryInformationToken`
+  - No outside blocker in the code itself; no ring-3 caller exists until `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions), and a kernel wrapper with no caller is dead code.
+- [/] `SetTokenInformation(hToken, class, buf, len)` → `NtSetInformationToken`
+  - Waits on the §4 setters (`nt_token.c:289` rejects every class).
+- [/] `AdjustTokenPrivileges(hToken, DisableAll, NewState, BufferLen, PreviousState, ReturnLen)` → `NtAdjustPrivilegesToken`; note: Win32 returns TRUE even for `STATUS_NOT_ALL_ASSIGNED` (set last-error instead)
+  - No outside blocker in the code itself; no ring-3 caller exists until `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions), and a kernel wrapper with no caller is dead code.
+- [/] `CheckTokenMembership(hToken, SidToCheck, IsMember)` -- scan token groups for matching SID with `SE_GROUP_ENABLED` attribute; NULL token = current thread effective token
+  - No outside blocker in the code itself; no ring-3 caller exists until `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions), and a kernel wrapper with no caller is dead code.
+- [/] `IsUserAnAdmin()` -- `CheckTokenMembership(NULL, SeBuiltinAdministratorsSid, &member)`; returns TRUE only if token is elevated admin (High IL)
+  - No outside blocker in the code itself; no ring-3 caller exists until `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions), and a kernel wrapper with no caller is dead code.
+- [/] `IsTokenRestricted(hToken)` → check `TOKEN_IS_RESTRICTED` flag in token
+  - No outside blocker in the code itself; no ring-3 caller exists until `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions), and a kernel wrapper with no caller is dead code.
+- [/] `CreateRestrictedToken(hToken, Flags, SidsToDisable[], PrivilegesToDelete[], SidsToRestrict[], NewToken)` → `NtFilterToken`; flags: `DISABLE_MAX_PRIVILEGE`, `SANDBOX_INERT`, `WRITE_RESTRICTED`, `LUA_TOKEN`
+  - Waits on §9 `NtFilterToken`.
+- [/] `ConvertSidToStringSidW(Sid, StringSid)` -- formats `S-1-X-Y-...` into heap-allocated `WCHAR*` (caller frees with `LocalFree`)
+  - No outside blocker in the code itself; no ring-3 caller exists until `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions), and a kernel wrapper with no caller is dead code.
+- [/] `ConvertStringSidToSidW(StringSid, Sid)` -- parse `S-1-...` string back to SID blob
+  - No outside blocker in the code itself; no ring-3 caller exists until `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions), and a kernel wrapper with no caller is dead code.
+- [/] `AllocateAndInitializeSid(IdentifierAuthority, SubAuthorityCount, ...)` -- up to 8 sub-authority args; allocates SID blob (caller frees with `FreeSid`)
+  - No outside blocker in the code itself; no ring-3 caller exists until `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions), and a kernel wrapper with no caller is dead code.
+- [/] `FreeSid(Sid)` -- wraps `kfree`
+  - No outside blocker in the code itself; no ring-3 caller exists until `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions), and a kernel wrapper with no caller is dead code.
+- [/] `EqualSid`, `CopySid`, `LengthSid`, `IsValidSid` Win32 wrappers
+  - No outside blocker in the code itself; no ring-3 caller exists until `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions), and a kernel wrapper with no caller is dead code.
+- [/] `GetSecurityInfo(handle, ObjectType, SecurityInfo, Owner, Group, Dacl, Sacl, SD)` → `NtQuerySecurityObject`
+  - Waits on §12 `NtQuerySecurityObject`/`NtSetSecurityObject`: a direct `ObSetSecurityDescriptor` would bypass the SRM.
+- [/] `SetSecurityInfo(handle, ObjectType, SecurityInfo, Owner, Group, Dacl, Sacl)` → `NtSetSecurityObject`
+  - Waits on §12 `NtQuerySecurityObject`/`NtSetSecurityObject`: a direct `ObSetSecurityDescriptor` would bypass the SRM.
+- [/] `GetNamedSecurityInfoW(name, ObjectType, SecurityInfo, ...)` -- resolves path to file handle, then calls `NtQuerySecurityObject`
+  - Waits on §12 `NtQuerySecurityObject`/`NtSetSecurityObject`: a direct `ObSetSecurityDescriptor` would bypass the SRM.
+- [/] `SetNamedSecurityInfoW(name, ObjectType, SecurityInfo, ...)` -- resolve + `NtSetSecurityObject`; requires `WRITE_DAC` or `SE_SECURITY_PRIVILEGE` for SACL
+  - Waits on §12 `NtQuerySecurityObject`/`NtSetSecurityObject`: a direct `ObSetSecurityDescriptor` would bypass the SRM.
+- [/] `ConvertStringSecurityDescriptorToSecurityDescriptorW(SDDL, Revision, SD, SDSize)` -- minimal SDDL parser: parse `O:XX G:XX D:...(A;;XX;;;XX)...` syntax; supports `SY`=System, `BA`=Admins, `BU`=Users, `WD`=Everyone aliases
+  - Waits on the §12 security-object syscalls for a consumer, then `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions).
+- [/] `ConvertSecurityDescriptorToStringSecurityDescriptorW(SD, Revision, SecurityInfo, StringSD, StringSDLen)` -- reverse; produces SDDL string
+  - Waits on the §12 security-object syscalls for a consumer, then `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions).
+- [/] `LookupAccountSidW` / `LookupAccountNameW` -- resolve a SID to its account name (and reverse) via the well-known-SID table + local account DB; consumed by TODO-22 env `USERNAME` synthesis (→ XREF `TODO-22-environment-variables.md §2`)
+  - The well-known half has no blocker but no caller either; the local account DB is `09-desktop-shell/TODO-06`. Waits on `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions).
+- [/] Commit: `"kernel/security: Win32 token, SID, and security descriptor API wrappers"`
+  - Waits on the §10 items above.
 
 **Test checkpoint:** `OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)` → valid handle. `GetTokenInformation(TokenUser)` → returns correct UserSid. `ConvertSidToStringSidW(SeLocalSystemSid)` → `"S-1-5-18"`. `ConvertStringSecurityDescriptorToSecurityDescriptorW("D:(A;;GA;;;SY)")` → valid SD with one ACE. `AdjustTokenPrivileges` enable/disable round-trip succeeds. Serial log: `"[SRM] Win32 security API test passed"`. Test on: QEMU WHPX + TCG.
 
@@ -573,14 +624,15 @@ title: "TODO-15 -- Security Reference Monitor"
 > - Deferred at design review (2026-07-05, Codex 1C+3H needs-attention) before any code: bundles ready + blocked APIs across three groups (token / SID / security-descriptor); no pinned layer or error contract.
 > - Layer (design-pinned): kernel-mode `src/kernel/win32/token_api.c` + `sid_api.c` + `include/kernel/win32/`, per the TODO-05 file-I/O precedent; `user/lib/win32.c` shim out of scope until the advapi32 trampoline exists.
 > - Blocked: SD group + SDDL (direct `ObSetSecurityDescriptor` bypasses the SRM) -> §12; CreateRestrictedToken + elevation -> §9; SetTokenInformation wrapper -> §4 setter; string->SID + SDDL parsers are new items.
-> - Ready token/SID subset needs a new per-thread kernel Win32 last-error facility (kernel in-process wrappers cannot `SetLastError`) and has no live ring-3 caller yet, so it defers with the rest.
-> **Deferred:** [Critical] §10 Win32 wrappers need a spec revision + a per-thread kernel Win32 last-error facility, and the SD group must not bypass the SRM -> XREF: 02-kernel-core/TODO-15 §12 (`NtQuerySecurityObject`/`NtSetSecurityObject`), 02-kernel-core/TODO-15 §9 (CreateRestrictedToken/elevation), 02-kernel-core/TODO-15 §4 (`NtSetInformationToken` setters)
+> - Ready token/SID subset has no live ring-3 caller yet, so it defers with the rest. Corrected 2026-11-07: the last-error half of this note is stale. `env_searchpath.c:62` already sets the TEB's `LastErrorValue`, file-local, so promote that helper rather than build a new facility.
+> **Deferred:** [Critical] §10 Win32 wrappers need a spec revision and a ring-3 caller, and the SD group must not bypass the SRM -> XREF: 12-user-platform-sdk/TODO-07 Tier 8, 02-kernel-core/TODO-15 §12 (`NtQuerySecurityObject`/`NtSetSecurityObject`), 02-kernel-core/TODO-15 §9 (CreateRestrictedToken/elevation), 02-kernel-core/TODO-15 §4 (`NtSetInformationToken` setters)
 
 ---
 
 ## 11. Live Token Inspector
 
-- [ ] `src/apps/whoami/whoami.c` -- command-line tool; calls `OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)` then `GetTokenInformation` for each class; formats output as aligned table. CLI usage:
+- [/] `src/apps/whoami/whoami.c` -- command-line tool; calls `OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)` then `GetTokenInformation` for each class; formats output as aligned table. CLI usage:
+  - Waits on §10 (item: "`OpenProcessToken(hProcess, DesiredAccess, phToken)`"), the only way it reads a token. `src/apps/` does not exist today; user programs live under `user/`.
   ```
   whoami [/user] [/groups] [/priv] [/all]
     /user    -- print current user SID and account name
@@ -588,11 +640,14 @@ title: "TODO-15 -- Security Reference Monitor"
     /priv    -- print all privileges with Enabled/Disabled/Removed status
     /all     -- equivalent to /user /groups /priv
   ```
-- [ ] Token Info tray icon: registered with `tray_register()` (overflow chevron flyout, `08-graphics-ui/TODO-11 §4`)
+- [/] Token Info tray icon: registered with `tray_register()` (overflow chevron flyout, `08-graphics-ui/TODO-11 §4`)
+  - Waits on §10 and `08-graphics-ui/TODO-11` §4: `tray_register` is unshipped.
   - Click → a flyout (flyout material, `docs/design/shell.md#quick-settings` geometry) showing current user, integrity level as text, admin status, elevation type, top 5 privileges
   - Integrity level is shown as text plus a status glyph per `docs/design/controls.md#status-colours` (never colour alone)
-- [ ] Useful for developers to verify elevation state without opening a terminal
-- [ ] Commit: `"kernel/security: whoami.exe and token tray popout"`
+- [/] Useful for developers to verify elevation state without opening a terminal
+  - Rationale for the tray icon above; waits on it.
+- [/] Commit: `"kernel/security: whoami.exe and token tray popout"`
+  - Waits on the §11 items above.
 
 **Test checkpoint:** `whoami /all` in QEMU serial console shows: user SID (`S-1-5-18` for system), group list with attributes (Enabled/Disabled/DenyOnly), and privilege table with status column. Output columns are tab-aligned. `whoami /priv` shows at least 20 privilege entries. Tray popout (stretch): Token Info icon in the overflow flyout → flyout renders. Serial log: `"[SRM] whoami: user=%s groups=%u privs=%u"`. Test on: QEMU WHPX + TCG.
 
@@ -614,18 +669,28 @@ Register all token and access control NtXxx entry points in the SSDT. Most imple
 - [/] `NtSetInformationToken(TokenHandle, TokenInformationClass, Buffer, Length)` → SSDT 0x00B5 -- wired in TODO-12 §16 (nt_token.c); all settable classes currently return STATUS_INVALID_INFO_CLASS pending deep-copy setters (→ §5 above)
 - [x] `NtAdjustPrivilegesToken(TokenHandle, DisableAll, NewState, BufLen, PrevState, RetLen)` → SSDT 0x00B6 -- wired in TODO-12 §16 (nt_token.c)
 - [x] `NtAdjustGroupsToken(...)` → SSDT 0x00B7 -- wired in TODO-12 §16 (nt_token.c)
-- [ ] `NtDuplicateToken(ExistingHandle, DesiredAccess, ObjAttrs, EffectiveOnly, TokenType, NewHandle)` → SSDT 0x00B8 -- deferred to TODO-12 §29 (lifecycle)
-- [ ] `NtFilterToken(ExistingHandle, Flags, SidsToDisable, PrivsToDelete, RestrictedSids, NewHandle)` → SSDT 0x00B9
-- [ ] `NtCreateToken(...)` → SSDT 0x00BA: privileged operation for LSA
-- [ ] `NtCompareTokens(FirstTokenHandle, SecondTokenHandle, Equal)` → SSDT 0x00BB -- deferred (token lifecycle); NtCreateLowBoxToken is SSDT 0x02A0, owned by §14 (AppContainer)
-- [ ] `NtAccessCheck(SD, ClientToken, DesiredAccess, GenericMapping, PrivSet, PrivSetLen, GrantedAccess, AccessStatus)` → SSDT 0x00BC: route to `SeAccessCheck()` (§5)
+- [/] `NtDuplicateToken(ExistingHandle, DesiredAccess, ObjAttrs, EffectiveOnly, TokenType, NewHandle)` → SSDT 0x00B8 -- deferred to TODO-12 §29 (lifecycle)
+  - Checked 2026-11-07: no `ssdt_register` for it. The kernel-side `NtDuplicateToken` exists (`token.c`). Waits on `02-kernel-core/TODO-12` §29 (item: "Foundation: lifetime-pinned + access-mask token resolution").
+- [/] `NtFilterToken(ExistingHandle, Flags, SidsToDisable, PrivsToDelete, RestrictedSids, NewHandle)` → SSDT 0x00B9
+  - Checked 2026-11-07: no `ssdt_register` for it. Waits on §9.
+- [/] `NtCreateToken(...)` → SSDT 0x00BA: privileged operation for LSA
+  - Checked 2026-11-07: no `ssdt_register` for it. Waits on `02-kernel-core/TODO-12` §29 (item: "`NtCreateToken(TokenHandle, DesiredAccess,").
+- [/] `NtCompareTokens(FirstTokenHandle, SecondTokenHandle, Equal)` → SSDT 0x00BB -- deferred (token lifecycle); NtCreateLowBoxToken is SSDT 0x02A0, owned by §14 (AppContainer)
+  - Checked 2026-11-07: no `ssdt_register` for it. Waits on `02-kernel-core/TODO-12` §29 (item: "Foundation: lifetime-pinned + access-mask token resolution").
+- [/] `NtAccessCheck(SD, ClientToken, DesiredAccess, GenericMapping, PrivSet, PrivSetLen, GrantedAccess, AccessStatus)` → SSDT 0x00BC: route to `SeAccessCheck()` (§5)
+  - Checked 2026-11-07: no `ssdt_register` for it. Waits on §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`").
 - [x] `NtPrivilegeCheck(ClientToken, RequiredPrivileges, Result)` → SSDT 0x00BF -- nt_token.c: decodes ClientToken + `PRIVILEGE_SET`, kernel-scratch bounded copy, calls new token-explicit `SePrivilegeCheckToken()` (satisfies TODO-12 §12)
-- [ ] `NtSetSecurityObject(Handle, SecurityInformation, SD)` → SSDT 0x00C1 -- deferred: needs self-relative SD import + real access check (→ XREF §5 `SeAccessCheck`, §3 SD unmarshal)
-- [ ] `NtQuerySecurityObject(Handle, SecurityInformation, SD, Length, LengthNeeded)` → SSDT 0x00C2 -- deferred: must serialize SD self-relative to user (raw `ObGetSecurityDescriptor` ptr = kernel leak) (→ XREF §5, §3)
+- [/] `NtSetSecurityObject(Handle, SecurityInformation, SD)` → SSDT 0x00C1 -- deferred: needs self-relative SD import + real access check (→ XREF §5 `SeAccessCheck`, §3 SD unmarshal)
+  - Checked 2026-11-07: no `ssdt_register` for it. Waits on §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`").
+- [/] `NtQuerySecurityObject(Handle, SecurityInformation, SD, Length, LengthNeeded)` → SSDT 0x00C2 -- deferred: must serialize SD self-relative to user (raw `ObGetSecurityDescriptor` ptr = kernel leak) (→ XREF §5, §3)
+  - Checked 2026-11-07: no `ssdt_register` for it. Waits on §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`").
 - [x] `NtAllocateLocallyUniqueId(Luid)` → SSDT 0x00C3 -- wired in TODO-12 §16 (nt_token.c, SSDT wrapper around luid.c)
-- [ ] `NtAccessCheckAndAuditAlarm(...)` → SSDT 0x00C4: access check + gate on `SeAuditPrivilege`; audit-record SINK deferred (see Deferred features) -- return the check result, do NOT claim an audit was written.
-- [ ] `NtQueryAccessDenialReason(Handle, DesiredAccess, DenialReason)` → SSDT 0x00C5: route to §15 denial explainer
-- [ ] All functions return `NTSTATUS`; use codes from `include/kernel/nt/ntstatus.h` (TODO-12 §1)
+- [/] `NtAccessCheckAndAuditAlarm(...)` → SSDT 0x00C4: access check + gate on `SeAuditPrivilege`; audit-record SINK deferred (see Deferred features) -- return the check result, do NOT claim an audit was written.
+  - Checked 2026-11-07: no `ssdt_register` for it. Waits on §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`").
+- [/] `NtQueryAccessDenialReason(Handle, DesiredAccess, DenialReason)` → SSDT 0x00C5: route to §15 denial explainer
+  - Checked 2026-11-07: no `ssdt_register` for it. Waits on §15.
+- [/] All functions return `NTSTATUS`; use codes from `include/kernel/nt/ntstatus.h` (TODO-12 §1)
+  - A rule for the rows above, and it holds for the shipped handlers. Closes with those rows.
 - [x] Commit: `"kernel/security: wire token and access control syscalls to SSDT (0x00B0–0x00C5)"`
 
 **Test checkpoint:** `NtOpenProcessToken` on current process returns valid handle. `NtQueryInformationToken(TokenUser)` returns correct SID. `NtAccessCheck` against DACL returns correct granted access. `NtAdjustPrivilegesToken` enables `SeShutdownPrivilege`. NtPrivilegeCheck: `SePrivilegeCheckToken(SYSTEM, {SeShutdown})` == 1; supplied-token path allows while the effective-token path denies with no current token; SSDT 0x00BF is registered (not the not-implemented stub).
@@ -696,7 +761,8 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 > [!TIP]
 > Neither Win11's AppContainer (requires UWP/MSIX packaging) nor Linux's namespaces+seccomp (complex multi-syscall setup) are developer-friendly. Impossible OS can provide a single `CreateAppContainerToken()` call with a human-readable capability list -- sandbox any process in one line.
 
-- [ ] Define `SECURITY_CAPABILITIES` structure:
+- [/] Define `SECURITY_CAPABILITIES` structure:
+  - Waits on §9 `NtFilterToken` and §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`").
   ```c
   typedef struct {
       SID               *AppContainerSid;
@@ -705,38 +771,49 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
       uint32_t           Reserved;
   } SECURITY_CAPABILITIES;
   ```
-- [ ] Well-known capability SID constants (`S-1-15-3-<N>`):
+- [/] Well-known capability SID constants (`S-1-15-3-<N>`):
+  - Waits on §9 `NtFilterToken` and §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`").
   - `internetClient` (1), `internetClientServer` (2), `privateNetworkClientServer` (3)
   - `picturesLibrary` (4), `videosLibrary` (5), `musicLibrary` (6), `documentsLibrary` (7)
   - `enterpriseAuthentication` (8), `sharedUserCertificates` (9), `removableStorage` (10)
-- [ ] `NtCreateLowBoxToken(NewToken, ExistingToken, DesiredAccess, ObjectAttributes, AppContainerSid, CapabilityCount, Capabilities, HandleCount, Handles)`:
+- [/] `NtCreateLowBoxToken(NewToken, ExistingToken, DesiredAccess, ObjectAttributes, AppContainerSid, CapabilityCount, Capabilities, HandleCount, Handles)`:
+  - Waits on §9 `NtFilterToken` and §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`").
   - Duplicate `ExistingToken` → strip all privileges except `SeChangeNotifyPrivilege`
   - Set IL to `SeILLow`
   - Attach `AppContainerSid` and capability SID list to the new token
   - Set `TOKEN_IS_APPCONTAINER` flag
   - Optionally inherit `HandleCount` handles from the parent process (e.g., pipes for IPC)
-- [ ] AppContainer access check in `SeAccessCheck` (§5): when token has `TOKEN_IS_APPCONTAINER`:
+- [/] AppContainer access check in `SeAccessCheck` (§5): when token has `TOKEN_IS_APPCONTAINER`:
+  - Waits on §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`").
   - Default-deny all named objects that don't have an ACE explicitly granting access to the AppContainer SID or one of its capability SIDs
   - `ALL_APPLICATION_PACKAGES` SID (`S-1-15-2-1`) grants access to all AppContainers
-- [ ] Win32 API wrappers:
+- [/] Win32 API wrappers:
+  - Waits on §9 `NtFilterToken` and §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`").
   - `CreateAppContainerProfile(AppContainerName, DisplayName, Description, Capabilities, CapCount, AppContainerSid)` -- generates AppContainer SID from SHA-256 of `AppContainerName`
   - `DeleteAppContainerProfile(AppContainerName)` -- removes profile
   - `GetAppContainerFolderPath(AppContainerSid, Path)` -- returns per-AppContainer data directory
   - `CreateAppContainerToken(Token, SecurityCapabilities, NewToken)` -- documented wrapper around `NtCreateLowBoxToken`
-- [ ] `NtQueryInformationToken(TokenIsAppContainer)` -- return `TRUE` for AppContainer tokens
-- [ ] `NtQueryInformationToken(TokenAppContainerSid)` -- return the AppContainer SID
-- [ ] `NtQueryInformationToken(TokenCapabilities)` -- return capability SID list
-- [ ] Wire `NtCreateLowBoxToken` to SSDT (index 0x02A0 per `service_numbers.h`; 0x00BB is NtCompareTokens)
-- [ ] Derived capability SIDs (`RtlDeriveCapabilitySidsFromName`): uppercase + SHA-256 (§16/Monocypher) a cap name into `S-1-15-3-1024-<4 subauth>`; needed for mic/webcam/location/custom caps beyond the 10 fixed RIDs. Add test vectors.
-- [ ] Add remaining fixed well-known capability SIDs (Appointments, Contacts, etc. per `WELL_KNOWN_SID_TYPE`) + the `ALL_RESTRICTED_APPLICATION_PACKAGES` SID (`S-1-15-2-2`) alongside `ALL_APPLICATION_PACKAGES`.
-- [ ] Commit: `"kernel/security: AppContainer -- NtCreateLowBoxToken, capability SIDs, sandbox access check"`
+- [/] `NtQueryInformationToken(TokenIsAppContainer)` -- return `TRUE` for AppContainer tokens
+  - Waits on §9 `NtFilterToken` and §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`").
+- [/] `NtQueryInformationToken(TokenAppContainerSid)` -- return the AppContainer SID
+  - Waits on §9 `NtFilterToken` and §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`").
+- [/] `NtQueryInformationToken(TokenCapabilities)` -- return capability SID list
+  - Waits on §9 `NtFilterToken` and §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`").
+- [/] Wire `NtCreateLowBoxToken` to SSDT (index 0x02A0 per `service_numbers.h`; 0x00BB is NtCompareTokens)
+  - Waits on §9 `NtFilterToken` and §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`").
+- [/] Derived capability SIDs (`RtlDeriveCapabilitySidsFromName`): uppercase + SHA-256 (§16/Monocypher) a cap name into `S-1-15-3-1024-<4 subauth>`; needed for mic/webcam/location/custom caps beyond the 10 fixed RIDs. Add test vectors.
+  - The crypto half is free: `include/kernel/crypto/sha256.h` is shipped. Stays parked because no token can carry the result until `NtCreateLowBoxToken` above exists.
+- [/] Add remaining fixed well-known capability SIDs (Appointments, Contacts, etc. per `WELL_KNOWN_SID_TYPE`) + the `ALL_RESTRICTED_APPLICATION_PACKAGES` SID (`S-1-15-2-2`) alongside `ALL_APPLICATION_PACKAGES`.
+  - Waits on §9 `NtFilterToken` and §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`").
+- [/] Commit: `"kernel/security: AppContainer -- NtCreateLowBoxToken, capability SIDs, sandbox access check"`
+  - Waits on the §14 items above.
 
 **Test checkpoint:** Create an AppContainer token from the system token. Verify `TokenIsAppContainer` returns TRUE. Verify `TokenIntegrityLevel` returns Low. Create a file with no AppContainer ACE -- verify AppContainer token gets `STATUS_ACCESS_DENIED`. Add `ALL_APPLICATION_PACKAGES` ACE to the file -- verify access granted. `CreateAppContainerProfile("TestApp")` returns a deterministic SID. Serial log: `"[SRM] AppContainer token created: S-1-15-2-<hash>"`. Test on: QEMU WHPX + TCG.
 
 > **Notes:**
 > - Deferred (cascade): `NtCreateLowBoxToken` strips a duplicated token (the §9 `NtFilterToken` machinery, deferred), and the AppContainer default-deny check lives inside `SeAccessCheck` (§5, deferred).
-> - Capability-SID derivation (`RtlDeriveCapabilitySidsFromName`) needs SHA-256 owned by §16 / TODO-03 §5 Monocypher, not yet built; fixed cap-SID constants alone ship no sandbox, so the section defers together.
-> **Deferred:** [High] AppContainer/LowBox tokens are blocked on token filtering + the access-check engine + capability-SID crypto -> XREF: 02-kernel-core/TODO-15 §9 (`NtFilterToken` token restriction), 02-kernel-core/TODO-15 §5 (`SeAccessCheck` AppContainer default-deny), 02-kernel-core/TODO-15 §16 (SHA-256 capability-SID derivation)
+> - Capability-SID derivation (`RtlDeriveCapabilitySidsFromName`): SHA-256 is shipped (`include/kernel/crypto/sha256.h`; corrected 2026-11-07). Fixed cap-SID constants alone ship no sandbox, so the section defers together.
+> **Deferred:** [High] AppContainer/LowBox tokens are blocked on token filtering + the access-check engine -> XREF: 02-kernel-core/TODO-15 §9 (`NtFilterToken` token restriction), 02-kernel-core/TODO-15 §5 (`SeAccessCheck` AppContainer default-deny)
 
 ---
 
@@ -745,7 +822,8 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 > [!TIP]
 > Neither Windows (buries denials in Event Viewer) nor Linux (returns `EACCES` with no context) tells the developer **why** access was denied. Impossible OS provides a kernel-side explainer that returns a structured denial reason -- which ACE denied, which SID failed, which MIC level blocked, which privilege was missing. This alone would save developers hours of debugging.
 
-- [ ] Define `ACCESS_DENIAL_REASON` structure:
+- [/] Define `ACCESS_DENIAL_REASON` structure:
+  - Waits on §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`"): there is no decision to explain until the engine exists.
   ```c
   typedef struct {
       uint32_t ReasonCode;      /* DENIAL_REASON_DACL_ACE, DENIAL_REASON_MIC,
@@ -758,15 +836,19 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
       LUID     MissingPrivilege; /* LUID of the missing privilege */
   } ACCESS_DENIAL_REASON;
   ```
-- [ ] Extend `SeAccessCheck` with optional `ACCESS_DENIAL_REASON *DenialReason` parameter:
+- [/] Extend `SeAccessCheck` with optional `ACCESS_DENIAL_REASON *DenialReason` parameter:
+  - Waits on §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`"): there is no decision to explain until the engine exists.
   - On DACL deny: fill `DeniedBySid` with the ACE's SID, `DeniedMask` with the conflicting bits
   - On MIC deny: fill `SubjectIL` and `ObjectIL`
   - On privilege deny: fill `MissingPrivilege`
   - On AppContainer deny: set `ReasonCode = DENIAL_REASON_APPCONTAINER`
   - On restricted SID deny: set `ReasonCode = DENIAL_REASON_RESTRICTED_SID`
-- [ ] `NtQueryAccessDenialReason(Handle, DesiredAccess, DenialReason)` -- syscall that performs a speculative access check and returns the denial reason without actually opening the object; useful for diagnostic tools
-- [ ] Win32 wrapper: `QueryAccessDenialReason(lpFileName, DesiredAccess, pReason)` -- resolves path, queries SD, runs speculative check, returns structured reason
-- [ ] `accesswhy.exe` CLI tool:
+- [/] `NtQueryAccessDenialReason(Handle, DesiredAccess, DenialReason)` -- syscall that performs a speculative access check and returns the denial reason without actually opening the object; useful for diagnostic tools
+  - Waits on §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`"): there is no decision to explain until the engine exists.
+- [/] Win32 wrapper: `QueryAccessDenialReason(lpFileName, DesiredAccess, pReason)` -- resolves path, queries SD, runs speculative check, returns structured reason
+  - Waits on the syscall above and `12-user-platform-sdk/TODO-07` Tier 8 (`advapi32.dll` security functions).
+- [/] `accesswhy.exe` CLI tool:
+  - Waits on the Win32 wrapper above.
   ```
   accesswhy C:\Impossible\System32\config\SAM
     DENIED by DACL: ACE #2 (ACCESS_DENIED for S-1-5-32-545 [Builtin\Users])
@@ -774,8 +856,10 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
     Subject IL: Medium (8192), Object IL: System (16384)
     MIC policy: SYSTEM_MANDATORY_LABEL_NO_READ_UP
   ```
-- [ ] Wire `NtQueryAccessDenialReason` to SSDT (index 0x00C5)
-- [ ] Commit: `"kernel/security: access denial explainer -- NtQueryAccessDenialReason, accesswhy.exe"`
+- [/] Wire `NtQueryAccessDenialReason` to SSDT (index 0x00C5)
+  - Waits on the syscall above.
+- [/] Commit: `"kernel/security: access denial explainer -- NtQueryAccessDenialReason, accesswhy.exe"`
+  - Waits on the §15 items above.
 
 **Test checkpoint:** Create file with DACL denying Everyone read. Call `NtQueryAccessDenialReason` with `FILE_READ_DATA` -- verify `ReasonCode == DENIAL_REASON_DACL_ACE` and `DeniedBySid == SeWorldSid`. Create Medium IL file, query with Low IL token and write access -- verify `ReasonCode == DENIAL_REASON_MIC`. Run `accesswhy.exe C:\test.txt` -- verify human-readable output on serial. Test on: QEMU WHPX + TCG.
 
@@ -791,9 +875,14 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 > [!NOTE]
 > Addresses three accepted findings from the TODO-15 §1 review. These are correctness and hardening upgrades to the SID/LUID primitives that depend on a SHA library (`TODO-03-kernel-libraries.md §5` Monocypher for the kernel path; `09-desktop-shell/TODO-07 §1` CNG for the user path). Not blocking for current security functionality but required for Windows parity and long-term robustness.
 
-- [ ] **SHA-1 service SID derivation:** replace `fnv1a_hash_name()` in `RtlCreateServiceSid` with Windows-compatible derivation: uppercase-normalize service name, compute SHA-1 hash (via `cng_sha1()`), map 160 bits into 5 SubAuthority DWORDs. Verify against known Windows service SID vectors (e.g., `S-1-5-80-...` for "TrustedInstaller"). Remove `fnv1a_hash_name()` dead code after replacement. (-> XREF: 09-desktop-shell/TODO-07 §1 for `cng_sha1()`)
+- [ ] **SHA-1 service SID derivation:** replace `fnv1a_hash_name()` in `RtlCreateServiceSid` with the Windows derivation, using the shipped kernel `sha1_*`.
+  - Hash the UPPERCASED name as UTF-16LE and read the digest as 5 little-endian DWORDs. The old text missed the encoding.
+  - Measured 2026-11-07 with Python `hashlib`: `TRUSTEDINSTALLER` in UTF-16LE gives exactly 956008885-3418522649-1831038044-1853292631-2271478464, the Windows vector below; ASCII does not.
+  - `sha1.h` says SHA-1 is used ONLY for the TPM bank; widen that comment here, since this derives an identifier and not a security decision. Remove `fnv1a_hash_name()`.
 - [x] **64-bit LUID allocator:** `NtAllocateLocallyUniqueId` (luid.c) uses `atomic64_t` + `atomic64_fetch_add(+1)`; new pure `RtlLuidFromValue()` splits into LowPart/(signed)HighPart, carrying past the 32-bit wrap (unit-tested).
-- [ ] **Constant-time SID comparison:** replace `memcmp` in `RtlEqualSid` with `cng_consttime_compare()` to eliminate timing side-channel on SID equality checks. Gate on `cng_ready()` flag (fall back to `memcmp` during early boot before CNG is initialized). Add unit test: verify `RtlEqualSid` returns correct result and call duration does not correlate with prefix match length. (-> XREF: 09-desktop-shell/TODO-07 §1 for `cng_consttime_compare()`)
+- [ ] **Constant-time SID comparison:** replace `memcmp` in `RtlEqualSid` with a local no-early-return XOR fold and assert equal/unequal results.
+  - `cng_consttime_compare` is itself just an XOR fold (`09-desktop-shell/TODO-07` §1), so this needs no `cng_ready` gate and no early-boot fallback.
+  - Decide at implementation whether the 5% timing assertion in the checkpoint below is measurable under TCG; a SID is not a secret, so correctness is the load-bearing test.
 - [x] Commit: `"kernel/security: SID/LUID hardening -- SHA-1 service SIDs, 64-bit LUID, constant-time compare"`
 
 **Test checkpoint:** `RtlCreateServiceSid("TrustedInstaller")` produces the same SID as Windows (`S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464`). LUID allocator returns increasing values with non-zero `HighPart` after simulated 32-bit boundary. `RtlEqualSid` timing variance < 5% between full-match and first-byte-mismatch cases (kernel cycle counter measurement). LUID shipped: `test_luid_allocator` asserts `RtlLuidFromValue(0xFFFFFFFF).HighPart==0`, `RtlLuidFromValue(0x100000000)` == {Low 0, High 1}, `RtlLuidFromValue(0x1FFFFFFFF)` == {Low 0xFFFFFFFF, High 1}, and consecutive allocations stay monotonic. Test on: QEMU WHPX + TCG.
@@ -803,9 +892,9 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 > **Notes:**
 > - Partial ship: 64-bit LUID allocator (luid.c) -- `atomic64_t` counter + `RtlLuidFromValue()` split; the identifier no longer recycles after ~4B allocations. Closes 1 of the 3 accepted §1-review findings.
 > - SMP-safe by construction: `atomic64_fetch_add(+1)` gives every caller a unique post-increment value with no lock; preserves the prior monotonic semantics (first alloc 1001).
-> - Deferred (crypto): SHA-1 service-SID derivation needs `cng_sha1()`, constant-time SID compare needs `cng_consttime_compare()` -- both open `[ ]` in 09-desktop-shell/TODO-07 §1 (`crypto/sha1.c` is not a substitute).
+> - Deferred (crypto), SUPERSEDED: SHA-1 service-SID derivation was parked on `cng_sha1()`, constant-time SID compare on `cng_consttime_compare()`.
+> - Reopened 2026-11-07: `09-desktop-shell/TODO-07` §1 now specifies `cng_sha1` as a wrapper over the shipped kernel `sha1()`, so the kernel path needs no CNG, and the compare needs only a local XOR fold. `RtlCreateServiceSid` has no caller outside `test_security.c`.
 > **Verified:** 2026-07-05 | commit `e2ea01d6` | 1/3 items | build OK | tests compile (security suite; runtime on WHPX)
-> **Deferred:** [M] SHA-1 service-SID derivation + constant-time SID compare are blocked on the CNG crypto primitives -> XREF: 09-desktop-shell/TODO-07 §1 (item: "`cng_sha1`" at line 79, item: "`cng_consttime_compare`" at line 78)
 > **Quality reviewed:** 2026-07-05 | Codex 4x (design, adversarial, consistency, perf) + Opus kernel-quality-auditor | 1L fixed | scope: kernel-code-quality
 
 ---

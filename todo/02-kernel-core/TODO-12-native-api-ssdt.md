@@ -1225,15 +1225,19 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 - [x] `NtPrivilegeCheck(ClientToken, RequiredPrivileges, Result)` → SSDT 0x00BF -- shipped in TODO-15 §12 (nt_token.c NtPrivilegeCheck_handler + token-explicit SePrivilegeCheckToken)
 - [ ] `NtSetSecurityObject(Handle, SecurityInformation, SecurityDescriptor)` → SSDT 0x00C1
 - [ ] `NtQuerySecurityObject(Handle, SecurityInformation, SecurityDescriptor, Length, LengthNeeded)` → SSDT 0x00C2
-- [ ] [Critical] NtShutdownSystem + legacy SYS_SHUTDOWN: require SeShutdownPrivilege before acpi_reboot/shutdown -- any ring-3 caller can power off the machine today (`nt_syscall.c:1195`). (§5 review)
-- [ ] [Critical] NtTerminateProcess: resolve through the handle table + require PROCESS_TERMINATE, not a raw PID -- `nt_process.c:227` lets any ring-3 caller kill any process by PID. (§5 review)
+- [x] [Critical] NtShutdownSystem + legacy SYS_SHUTDOWN: require SeShutdownPrivilege before acpi_reboot/shutdown -- any ring-3 caller can power off the machine today (`nt_syscall.c:1195`). (§5 review)
+  - Shipped: `nt_syscall.c:1581` and `sched/syscall.c:1025` and `:1032` gate on `SeShutdownPrivilege`. The default-token item below is still open, and until it lands a standard token passes this gate (`token.c:246`).
+- [/] [Critical] NtTerminateProcess: resolve through the handle table + require PROCESS_TERMINATE, not a raw PID -- `nt_process.c:227` lets any ring-3 caller kill any process by PID. (§5 review)
+  - Half done: handle-based at `nt_process.c:324`, no `PROCESS_TERMINATE` check. Owner: `02-kernel-core/TODO-15` §5 (item: "**Authorize process-termination syscalls**").
 - [ ] [Critical] SystemProcessInformation: ProbeForWriteIfUser + copy_to_user + length-mismatch status -- unprobed user-pointer write at `nt_syscall.c:923`. (§5 review)
 - [ ] [Critical] NtQuery/SetInformationProcess + NtQuery/SetInformationThread + NtDelayExecution interval: input/output user pointers deref'd raw (`nt_process.c:460+`) -- probe + copy_from_user/copy_to_user via kernel bounce buffers. (§7 review)
 - [ ] [Critical] Sync syscalls deref raw user pointers (`nt_sync.c`): NtWaitForMultipleObjects handle array + timeout, Create* name/OA/out-HANDLE, prev-state/count outputs -- probe + copy-in/out via kernel buffers. (§8)
 - [ ] [Critical] Namespace + token syscalls deref raw user pointers (`nt_namespace.c`, `nt_token.c`): out-HANDLE, Context/ReturnLength, OBJECT_ATTRIBUTES, symlink target, token buffers -- probe + copy-in/out via kernel buffers. (§16/§17)
-- [ ] **Foundation: per-token SMP lock** (`token.h`/`token.c`): add a spinlock to `ACCESS_TOKEN` taken by every read/mutate path so a privilege decision cannot observe a torn `Privileges[]` mid-adjust. (§29 design)
+- [/] **Foundation: per-token SMP lock** (`token.h`/`token.c`): add a spinlock to `ACCESS_TOKEN` taken by every read/mutate path so a privilege decision cannot observe a torn `Privileges[]` mid-adjust. (§29 design)
+  - Implemented in `02-kernel-core/TODO-15` §4 (item: "**Per-token lock for SMP safety**"), reopened 2026-11-07 to break the §4 -> §29 -> §5 cycle.
 - [ ] **Foundation: owned restricted-SID storage** (`token.c`): replace the single `RestrictedSids`+count with owned per-entry storage (bounded usercopy, deep-dup, `token_on_delete` free) before `NtFilterToken`. (§29 design)
-- [ ] **Foundation: lifetime-pinned + access-mask token resolution** (`nt_token.c`): `resolve_token_handle` must `ObReferenceObjectByHandle`-pin the token (`NtClose` UAF today) AND enforce per-op `TOKEN_*` bits; retrofit all handlers. (§29)
+- [/] **Foundation: lifetime-pinned + access-mask token resolution** (`nt_token.c`): `resolve_token_handle` must `ObReferenceObjectByHandle`-pin the token (`NtClose` UAF today) AND enforce per-op `TOKEN_*` bits; retrofit all handlers. (§29)
+  - The access-mask half is `02-kernel-core/TODO-15` §5 (item: "**Enforce per-handle `granted_access` on token mutation syscalls**"); the pin is `02-kernel-core/TODO-05` §3.
 - [ ] **Foundation: default-token privilege policy** (`SeCreateUserToken`): do NOT enable `SeShutdownPrivilege` for standard users, else the shutdown gate is meaningless; require elevation + negative test. (§29 design)
 - [ ] **Foundation: shared privilege-gated shutdown helper** (`nt_syscall.c`, `sched/syscall.c`): route `NtShutdownSystem` AND legacy `SYS_REBOOT`/`SYS_SHUTDOWN` through one `SeShutdownPrivilege` check. (§29 design)
 - [ ] `NtAccessCheck`/`SeAccessCheck` DACL engine + `GENERIC_MAPPING` type are external prerequisites -> XREF: `TODO-15-security-reference-monitor.md §5,§8`.
