@@ -479,7 +479,10 @@ struct per_cpu_data {
      * kernel_apc_in_progress instead. Set/cleared by the owning CPU only -- no
      * lock. Appended after transition_ring so no pinned KPTI offset shifts. */
     uint8_t           dpc_draining;     /* 1 while KeLowerIrql drains DPCs */
-    uint8_t           _drain_pad[3];    /* alignment */
+    /* IRQL a timer interrupt interrupted. isr_handler stores it on the way into
+     * CLOCK_LEVEL and irql_tick_lower_to_dispatch reads it. Owning CPU only. */
+    uint8_t           clock_interrupted_irql;
+    uint8_t           _drain_pad[2];    /* alignment */
 
     /* IRQL contract telemetry (per-CPU, owning-CPU writes, summed for health).
      * irql_violations: IRQL_REQUIRE_AT_MOST/AT_LEAST + monotonic raise/lower

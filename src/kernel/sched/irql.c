@@ -254,6 +254,21 @@ void irql_lower_deliver(KIRQL old_irql)
     }
 }
 
+/* ---- Timer interrupt: CLOCK_LEVEL to DISPATCH_LEVEL ----------------------- */
+
+int irql_tick_lower_to_dispatch(void)
+{
+    struct per_cpu_data *pcpu = smp_this_cpu();
+    KIRQL target = pcpu->clock_interrupted_irql;
+
+    if (target < DISPATCH_LEVEL)
+        target = DISPATCH_LEVEL;
+    if (target < pcpu->current_irql)
+        pcpu->current_irql = target;
+
+    return pcpu->current_irql == DISPATCH_LEVEL;
+}
+
 /* ---- Debug assertion: IRQL contract check -------------------------------- */
 
 void _irql_check_max(KIRQL max_irql, const char *caller)

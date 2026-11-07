@@ -41,6 +41,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/vectors.h"
 
 /* ---- KIRQL type ---------------------------------------------------------- */
 
@@ -104,12 +105,22 @@ _Static_assert(PASSIVE_LEVEL < APC_LEVEL && APC_LEVEL < DISPATCH_LEVEL &&
  *
  * Special cases:
  *   - CPU exceptions (0x00-0x1F):  not device interrupts, returns PASSIVE_LEVEL
+ *   - Timer vectors (PIT, LAPIC): CLOCK_LEVEL. Their handlers do the tick work
+ *     there, then call irql_tick_lower_to_dispatch() before draining DPCs.
+ *   - IPI vectors:                IPI_LEVEL
  *   - ISA vectors (0x20-0x2F):    legacy low-priority, returns DISPATCH_LEVEL
- *   - System vectors (0xF0-0xFF): returns HIGH_LEVEL; callers for LAPIC timer
- *     and IPI should use CLOCK_LEVEL / IPI_LEVEL directly instead */
+ *   - Other system vectors (0xF0-0xFF, LAPIC error and spurious): HIGH_LEVEL */
 static inline KIRQL vector_to_irql(uint8_t vector)
 {
     uint8_t group = vector >> 4;
+
+    if (vector == VECTOR_PIT_TIMER || vector == VECTOR_LAPIC_TIMER)
+        return CLOCK_LEVEL;
+
+    if (vector == VECTOR_IPI_WAKE || vector == VECTOR_IPI_RENDEZVOUS ||
+        vector == VECTOR_IPI_CR_VERIFY || vector == VECTOR_IPI_ASYNC_INIT ||
+        vector == VECTOR_IPI_RESCHEDULE || vector == VECTOR_IPI_TLB_SHOOTDOWN)
+        return IPI_LEVEL;
 
     /* CPU exceptions -- not hardware device interrupts */
     if (group < 2)
@@ -123,7 +134,7 @@ static inline KIRQL vector_to_irql(uint8_t vector)
     if (group <= DIRQL_MAX)
         return (KIRQL)group;
 
-    /* System vectors (LAPIC timer, IPI, spurious) */
+    /* Remaining system vectors (LAPIC error, spurious) */
     return HIGH_LEVEL;
 }
 
@@ -167,6 +178,13 @@ void _irql_check_min(KIRQL min_irql, const char *caller);
  * (e.g. DPC-context-only code requires >= DISPATCH_LEVEL). */
 #define IRQL_REQUIRE_AT_MOST(level)   _irql_check_max((level), __func__)
 #define IRQL_REQUIRE_AT_LEAST(level)  _irql_check_min((level), __func__)
+
+/* End the CLOCK_LEVEL part of a timer interrupt: lower to DISPATCH_LEVEL, or to
+ * the interrupted IRQL when that is higher, and never raise. Software IRQL only
+ * (no LAPIC TPR write in the ISR path). Returns 1 when the CPU is now at exactly
+ * DISPATCH_LEVEL and may drain DPCs, 0 when the tick interrupted something above
+ * it, in which case the DPCs wait for a later tick or a lower. */
+int irql_tick_lower_to_dispatch(void);
 
 /* Forced IRQL lower to a known level when no matching saved raise exists (e.g.
  * task_exit / task_wrapper abandon their IDT context, so the normal restore is

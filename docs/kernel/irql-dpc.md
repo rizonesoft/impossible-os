@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/02-kernel-core/TODO-07-irql-model-dpcs.md sources=include/kernel/sched/irql.h,src/kernel/sched/irql.c,include/kernel/sched/dpc.h,src/kernel/sched/dpc.c,include/kernel/sched/dpc_config.h,include/kernel/sched/apc.h,src/kernel/sched/apc.c,include/kernel/sched/ktimer.h,src/kernel/sched/ktimer.c,include/kernel/sched/kinterrupt.h,src/kernel/sched/kinterrupt.c,include/kernel/sched/kworker.h,src/kernel/sched/kworker.c,src/kernel/idt.c,src/kernel/drivers/lapic.c,src/kernel/test/test_sched.c,src/kernel/test/test_kworker.c reviewed=2026-11-07T14:30 order=7 -->
+<!-- docs: covers=todo/02-kernel-core/TODO-07-irql-model-dpcs.md sources=include/kernel/sched/irql.h,src/kernel/sched/irql.c,include/kernel/sched/dpc.h,src/kernel/sched/dpc.c,include/kernel/sched/dpc_config.h,include/kernel/sched/apc.h,src/kernel/sched/apc.c,include/kernel/sched/ktimer.h,src/kernel/sched/ktimer.c,include/kernel/sched/kinterrupt.h,src/kernel/sched/kinterrupt.c,include/kernel/sched/kworker.h,src/kernel/sched/kworker.c,src/kernel/idt.c,src/kernel/drivers/lapic.c,src/kernel/test/test_sched.c,src/kernel/test/test_kworker.c reviewed=2026-11-07T15:30 order=7 -->
 # IRQL, DPCs and APCs
 
 ## What is it?
@@ -59,11 +59,12 @@ The IRQL, DPC and APC machinery is always on; there is no setting.
 bash scripts/test.sh SUITE=sched    # IRQL, DPC, APC, timer and kworker tests
 ```
 
+Timer vectors enter at `CLOCK_LEVEL` and IPI vectors at `IPI_LEVEL`. A timer handler does its tick work there, then `irql_tick_lower_to_dispatch()` lowers to `DISPATCH_LEVEL` before it drains DPCs and schedules. A tick that interrupted something above `DISPATCH_LEVEL` keeps that level and leaves its DPCs for a later tick or lower.
+
 A driver's interrupt handler should acknowledge the device and call `KeInsertQueueDpc()`; work that must block uses a threaded DPC instead. Code that must run within an IRQL range should state it with `IRQL_REQUIRE_AT_MOST` or `IRQL_REQUIRE_AT_LEAST`, so a violation is logged instead of deadlocking silently. The tests live in [`test_sched.c`](../../src/kernel/test/test_sched.c) and [`test_kworker.c`](../../src/kernel/test/test_kworker.c).
 
 ## What is not implemented yet?
 
-- The timer and IPI vectors enter at `DISPATCH_LEVEL` and `HIGH_LEVEL` rather than the named `CLOCK_LEVEL` and `IPI_LEVEL` ([Interrupt Entry/Exit IRQL Integration](../../todo/02-kernel-core/TODO-07-irql-model-dpcs.md#3-interrupt-entryexit-irql-integration)).
 - The timer-interrupt drain caps the number of DPCs per pass but not their total runtime ([Timer/APIC Scheduling Path for DPC Dispatch](../../todo/02-kernel-core/TODO-07-irql-model-dpcs.md#6-timerapic-scheduling-path-for-dpc-dispatch)).
 - User-mode APC delivery and alertable waits wait on the exception dispatch work ([APC Delivery Mechanism](../../todo/02-kernel-core/TODO-07-irql-model-dpcs.md#12-apc-delivery-mechanism-kideliverapc)).
 - Only monotonic raise and lower are enforced; a full per-CPU transition-stack validator is not built ([IRQL Violation Traps and Structured Telemetry](../../todo/02-kernel-core/TODO-07-irql-model-dpcs.md#13-irql-violation-traps-and-structured-telemetry)).

@@ -6,6 +6,7 @@
  * timekeeping, sleep_ms(), and uptime().
  * ============================================================================ */
 
+#include "kernel/sched/irql.h"
 #include "kernel/drivers/pit.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/ioapic.h"
@@ -94,7 +95,8 @@ static uint64_t pit_irq_handler(struct interrupt_frame *frame)
     /* Same post-tick order as lapic_timer_handler(): tick + callback,
      * EOI, PMTMR epoch advance (no-op unless PMTMR is the active source),
      * KUSD time for user readers, NT timer scan (sees fresh KUSD),
-     * kernel_timer_t expiry (queues due DPCs), DPC drain, then schedule.
+     * kernel_timer_t expiry (queues due DPCs), lower from CLOCK_LEVEL to
+     * DISPATCH_LEVEL, DPC drain, then schedule.
      * Keep the two paths in lockstep. */
     pit_tick_increment();
     irq_eoi(IRQ_TIMER);
@@ -106,7 +108,8 @@ static uint64_t pit_irq_handler(struct interrupt_frame *frame)
         extern void dpc_watchdog_tick(void);
         dpc_watchdog_tick();   /* per-tick DPC budget refill + sustained-depth check */
     }
-    dpc_drain_current_cpu();
+    if (irql_tick_lower_to_dispatch())
+        dpc_drain_current_cpu();
     return schedule(frame);
 }
 

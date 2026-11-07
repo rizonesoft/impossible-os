@@ -133,8 +133,9 @@ title: "TODO-07 -- IRQL Model & DPCs"
 - [x] Ensure nested interrupts preserve highest-active IRQL correctly and unwind in strict LIFO order.
 - [x] Keep end-of-interrupt signaling (LAPIC/PIC) ordered correctly relative to IRQL lowering.
 - [x] Add debug-only assertions that ISR code paths do not attempt blocking operations at DIRQL.
-- [ ] Report system vectors at named IRQLs: LAPIC timer at `CLOCK_LEVEL`, IPI at `IPI_LEVEL` (today `vector_to_irql` reads timer DISPATCH, IPI HIGH). NT model: enter at CLOCK then lower to DISPATCH before §6 DPC drain (Codex §1 M)
-  - Validation is operator-gated: bare metal.
+- [x] Report system vectors at named IRQLs: `vector_to_irql` gives PIT and LAPIC timer `CLOCK_LEVEL`, IPIs `IPI_LEVEL`; `irql_tick_lower_to_dispatch` lowers before the §6 DPC drain, never below the interrupted IRQL
+  - A tick that interrupted IRQL above DISPATCH no longer drains DPCs; they wait for a later tick or lower. Software IRQL only, so no TPR write in the ISR path.
+  - Proven under QEMU only (TCG and KVM, 1 and 2 CPUs). Bare-metal validation is operator-gated.
 - [/] Expose the current thread's active ring-3 `interrupt_frame` (user RSP/RBP/RIP) from kernel mode so `RtlWalkFrameChain(flags&1)` can walk the user stack -> XREF: `TODO-23 §7` (item: "`RtlWalkFrameChain` `flags & 1` user walk returns 0")
 - [x] Commit: `"kernel: irq -- wire IRQL raises/lowers into interrupt path"`
 
@@ -145,9 +146,8 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > **Notes:**
 > - Interrupt entry/exit IRQL integration ships in `src/kernel/idt.c` `isr_handler`: hardware vectors (>= 32) raise software `current_irql` on entry and restore the saved prior level on exit; nested interrupts keep the highest-active level.
 > - Software-only IRQL tracking in the ISR path (no LAPIC TPR write, per the §3 Note); the LAPIC ISR/PPR masks lower-priority vectors during delivery.
-> - One open refinement is deferred (see Deferred): reporting the LAPIC timer at `CLOCK_LEVEL` and IPIs at `IPI_LEVEL` instead of the `vector_to_irql`-derived DISPATCH/HIGH.
+> - Timer vectors enter at `CLOCK_LEVEL` and IPIs at `IPI_LEVEL` through `vector_to_irql`; timer handlers call `irql_tick_lower_to_dispatch` before the DPC drain.
 > - Canonical: `src/kernel/idt.c` (`isr_handler` IRQL entry/exit).
-> **Notes:** Reopened 2026-11-07, was Deferred: [M] `isr_handler` reports the LAPIC timer at DISPATCH and IPIs at HIGH, not the named `CLOCK_LEVEL`/`IPI_LEVEL` (reason: needs the timer handler to enter CLOCK then lower to DISPATCH before the §6 DPC drain to keep DPCs at DISPATCH; cross-file timer-path change needing bare-metal validation; non-functional-today). The stamp named this section's own item with no outside blocker; "latent" and "needs X" describe the work.
 
 ---
 

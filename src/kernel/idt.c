@@ -537,6 +537,8 @@ uint64_t isr_handler(struct interrupt_frame *frame)
      * gated. Keep it at the interrupted thread's IRQL like the vec<32 faults. */
     if (vec >= 32 && vec != VECTOR_FASTFAIL) {
         KIRQL isr_irql = vector_to_irql(vec);
+        if (isr_irql == CLOCK_LEVEL)
+            pcpu->clock_interrupted_irql = prev_irql;
         if (isr_irql > prev_irql)
             pcpu->current_irql = isr_irql;
     }

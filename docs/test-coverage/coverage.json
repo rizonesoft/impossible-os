@@ -1,6 +1,6 @@
 {
-  "total_suites": 3583,
-  "total_assertions": 15979,
+  "total_suites": 3585,
+  "total_assertions": 15993,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_ec.c", "suites": 42, "assertions": 168},
@@ -90,7 +90,7 @@
     {"file": "test_quota_stall.c", "suites": 34, "assertions": 168},
     {"file": "test_quota_syscall.c", "suites": 16, "assertions": 106},
     {"file": "test_registry.c", "suites": 41, "assertions": 133},
-    {"file": "test_sched.c", "suites": 72, "assertions": 301},
+    {"file": "test_sched.c", "suites": 72, "assertions": 310},
     {"file": "test_security.c", "suites": 29, "assertions": 201},
     {"file": "test_serial_emergency.c", "suites": 69, "assertions": 369},
     {"file": "test_sha1.c", "suites": 3, "assertions": 7},
@@ -104,7 +104,7 @@
     {"file": "test_swap.c", "suites": 1, "assertions": 4},
     {"file": "test_syscall_filter.c", "suites": 8, "assertions": 42},
     {"file": "test_time.c", "suites": 21, "assertions": 101},
-    {"file": "test_timer_tick_cb.c", "suites": 2, "assertions": 3},
+    {"file": "test_timer_tick_cb.c", "suites": 4, "assertions": 8},
     {"file": "test_tpm_attest.c", "suites": 16, "assertions": 140},
     {"file": "test_tpm_attest_report.c", "suites": 3, "assertions": 63},
     {"file": "test_tpm_authz.c", "suites": 50, "assertions": 479},

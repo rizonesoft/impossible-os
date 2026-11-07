@@ -589,11 +589,20 @@ static void test_irql_tpr_skip_invariant(void)
 static void test_vector_to_irql_boundaries(void)
 {
     TEST_ASSERT_EQ(vector_to_irql(0x1F), PASSIVE_LEVEL, "exception 0x1F -> PASSIVE");
-    TEST_ASSERT_EQ(vector_to_irql(0x20), DISPATCH_LEVEL, "ISA 0x20 -> DISPATCH");
+    TEST_ASSERT_EQ(vector_to_irql(VECTOR_PIT_TIMER), CLOCK_LEVEL, "PIT -> CLOCK");
+    TEST_ASSERT_EQ(vector_to_irql(0x21), DISPATCH_LEVEL, "ISA 0x21 -> DISPATCH");
+    TEST_ASSERT_EQ(vector_to_irql(VECTOR_LAPIC_TIMER), CLOCK_LEVEL, "LAPIC timer -> CLOCK");
     TEST_ASSERT_EQ(vector_to_irql(0x2F), DISPATCH_LEVEL, "ISA 0x2F -> DISPATCH");
     TEST_ASSERT_EQ(vector_to_irql(0x30), DIRQL_MIN, "device 0x30 -> DIRQL 3");
     TEST_ASSERT_EQ(vector_to_irql(0xEF), DIRQL_MAX, "device 0xEF -> DIRQL 14");
     TEST_ASSERT_EQ(vector_to_irql(0xF0), HIGH_LEVEL, "system 0xF0 -> HIGH");
+    TEST_ASSERT_EQ(vector_to_irql(VECTOR_IPI_WAKE), IPI_LEVEL, "wake IPI -> IPI");
+    TEST_ASSERT_EQ(vector_to_irql(VECTOR_IPI_RENDEZVOUS), IPI_LEVEL, "rendezvous IPI -> IPI");
+    TEST_ASSERT_EQ(vector_to_irql(VECTOR_LAPIC_ERROR), HIGH_LEVEL, "LAPIC error -> HIGH");
+    TEST_ASSERT_EQ(vector_to_irql(VECTOR_IPI_CR_VERIFY), IPI_LEVEL, "CR verify IPI -> IPI");
+    TEST_ASSERT_EQ(vector_to_irql(VECTOR_IPI_ASYNC_INIT), IPI_LEVEL, "async init IPI -> IPI");
+    TEST_ASSERT_EQ(vector_to_irql(VECTOR_IPI_RESCHEDULE), IPI_LEVEL, "reschedule IPI -> IPI");
+    TEST_ASSERT_EQ(vector_to_irql(VECTOR_IPI_TLB_SHOOTDOWN), IPI_LEVEL, "TLB IPI -> IPI");
     TEST_ASSERT_EQ(vector_to_irql(0xFF), HIGH_LEVEL, "spurious 0xFF -> HIGH");
 }
 
