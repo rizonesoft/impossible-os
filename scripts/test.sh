@@ -5730,6 +5730,12 @@ if [ "$HAS_XML" -eq 1 ]; then
         if [ "${XML_ABORTED:-0}" -ne 0 ]; then
             XML_ERRORS=$(( XML_ERRORS + 1 ))
             XML_TESTS=$(( XML_TESTS + 1 ))
+            # The cause on the launcher's own framed line, from this run's
+            # slice. The class is a label's shape (lowercase words, as in
+            # scripts/utest-json-harvest.py), which also keeps a quote or `<`
+            # out of the XML attributes it lands in.
+            XML_ABORT_CAUSE=$({ grep -oE "${UF}suite ABORT \([a-z][a-z ]{0,47}\)" "$XML_SRC" 2>/dev/null || true; } | head -1 | sed -E 's/.*\((.*)\)/\1/')
+            [ -n "$XML_ABORT_CAUSE" ] || XML_ABORT_CAUSE="cause not named"
         fi
     fi
 fi
@@ -5751,6 +5757,7 @@ if [ "$HAS_XML" -eq 1 ] && [ "$XML_SUMMARY_OK" -eq 1 ] && [ "${CAPTURE_OK:-1}" -
         echo '  <properties>'
         if [ "${XML_ABORTED:-0}" -ne 0 ]; then
             echo '    <property name="aborted" value="true"/>'
+            echo "    <property name=\"abort_cause\" value=\"${XML_ABORT_CAUSE}\"/>"
         else
             echo '    <property name="aborted" value="false"/>'
         fi
@@ -5759,7 +5766,7 @@ if [ "$HAS_XML" -eq 1 ] && [ "$XML_SUMMARY_OK" -eq 1 ] && [ "${CAPTURE_OK:-1}" -
         echo '  </properties>'
         if [ "${XML_ABORTED:-0}" -ne 0 ]; then
             echo '  <testcase name="suite-abort" classname="infrastructure">'
-            echo "    <error message=\"smoke gate aborted the suite; ${XML_NOT_RUN:-0} binaries never ran\"/>"
+            echo "    <error message=\"suite aborted (${XML_ABORT_CAUSE}); ${XML_NOT_RUN:-0} binaries never ran\"/>"
             echo '  </testcase>'
         fi
         # Strip the klog prefix + `[UTEST-XML] ` marker. Keep only the

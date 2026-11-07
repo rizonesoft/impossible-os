@@ -11862,6 +11862,55 @@ else
         "the harvester refused an internally consistent aborted stream"
 fi
 
+# The abort CAUSE reaches the machine record, read from the launcher's own
+# framed `suite ABORT (<cause>)` line. Two conditions abort a run and they want
+# opposite responses, so "smoke gate" on every record misdirects whoever reads
+# CI's structured output after a degraded reap. Only a FRAMED line is believed:
+# ring-3 stdout shares the stream, and the control below proves a payload that
+# merely prints the words cannot choose the cause.
+abort_cause_fixture() {
+    # $1 = the framed cause text, $2 = out path. Adds the line and keeps the
+    # terminator's declared count honest, so the run still reconciles.
+    awk -v cause="$1" '
+        /UTEST-FRAME-END/ {
+            print "[  1.045] [cpu:0] [ERR] suite ABORT (forged by payload) -- skipping 3 remaining binaries"
+            print "[  1.046] [cpu:0] [ERR] UTEST-1a2b3c4d: suite ABORT (" cause ") -- skipping 3 remaining binaries"
+            sub(/records=6/, "records=7")
+        }
+        { print }' "$FRAME_TMP/aborted.log" > "$2"
+}
+abort_cause_read() {
+    python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+r = [c for c in d["testcases"] if c.get("synthetic")][0]
+print("%s|%s" % (r.get("abort_cause"), r.get("reason")))' "$1" 2>&1
+}
+abort_cause_fixture "reap degraded" "$FRAME_TMP/abort-reap.log"
+python3 "$HARVEST" "$FRAME_TMP/abort-reap.log" "$FRAME_TMP/abort-reap.json" >/dev/null 2>&1 || true
+ABORT_CAUSE_OUT="$(abort_cause_read "$FRAME_TMP/abort-reap.json")"
+if [ "$ABORT_CAUSE_OUT" = "reap degraded|suite aborted (reap degraded); 3 binaries never ran" ]; then
+    t_pass "json abort: the synthetic record names the launcher's framed cause, not an unframed copy"
+else
+    t_fail "json abort: the synthetic record names the launcher's framed cause, not an unframed copy" \
+        "$ABORT_CAUSE_OUT"
+fi
+abort_cause_fixture 'x"<y' "$FRAME_TMP/abort-shape.log"
+python3 "$HARVEST" "$FRAME_TMP/abort-shape.log" "$FRAME_TMP/abort-shape.json" >/dev/null 2>&1 || true
+ABORT_CAUSE_OUT="$(abort_cause_read "$FRAME_TMP/abort-shape.json")"
+if [ "$ABORT_CAUSE_OUT" = "cause not named|suite aborted (cause not named); 3 binaries never ran" ]; then
+    t_pass "json abort: a framed cause outside the label shape reads as not named"
+else
+    t_fail "json abort: a framed cause outside the label shape reads as not named" "$ABORT_CAUSE_OUT"
+fi
+# A stream with no abort line at all must not guess a cause either.
+ABORT_CAUSE_OUT="$(abort_cause_read "$FRAME_TMP/aborted.json")"
+if [ "$ABORT_CAUSE_OUT" = "cause not named|suite aborted (cause not named); 3 binaries never ran" ]; then
+    t_pass "json abort: an abort with no framed cause says so rather than asserting one"
+else
+    t_fail "json abort: an abort with no framed cause says so rather than asserting one" "$ABORT_CAUSE_OUT"
+fi
+
 # The dimension is written on EVERY published run, not only aborted ones --
 # absent must mean "this artifact predates the dimension", never "zero", the
 # same stance the XML <properties> block takes.
@@ -12297,7 +12346,7 @@ utest_publish_xml_refusal() { REFUSED="$2"; }
 # edited to run would no longer be the code under test.
 if [ "$HAS_XML" -eq 1 ]; then
 '"$XERR_REGION"'
-echo "verdict $UTEST_FAIL $XML_SUMMARY_OK ${XML_FAIL:-unset} ${XML_ERRORS:-unset}"
+echo "verdict $UTEST_FAIL $XML_SUMMARY_OK ${XML_FAIL:-unset} ${XML_ERRORS:-unset} cause=${XML_ABORT_CAUSE:-unset}"
 ' 2>&1
     }
 
@@ -12449,6 +12498,45 @@ UTEST-deadbeef: [UTEST-XML] <testcase name="test_ok.exe::skipped-block-1" classn
         t_pass "utest errors: the synthetic abort error adds to the producer's count"
     else
         t_fail "utest errors: the synthetic abort error adds to the producer's count" "$XERR_OUT"
+    fi
+
+    # The JUnit side of the abort cause, through the same production span. The
+    # document is XML and the message is an attribute value, so the label SHAPE
+    # is what keeps a stray quote out of it; the unframed line is the control
+    # that a payload printing the words cannot choose the cause.
+    XERR_OUT="$(xerr_run 'aborted=1 not_run=5 errors=0' \
+        'suite ABORT (forged by payload) -- skipping 5 remaining binaries
+UTEST-deadbeef: suite ABORT (reap degraded) -- skipping 5 remaining binaries
+')"
+    if printf '%s' "$XERR_OUT" | grep -q 'cause=reap degraded$'; then
+        t_pass "utest abort: the JUnit cause is the launcher's framed one, not an unframed copy"
+    else
+        t_fail "utest abort: the JUnit cause is the launcher's framed one, not an unframed copy" "$XERR_OUT"
+    fi
+    XERR_OUT="$(xerr_run 'aborted=1 not_run=5 errors=0' \
+        'UTEST-deadbeef: suite ABORT (x"<y) -- skipping 5 remaining binaries
+')"
+    if printf '%s' "$XERR_OUT" | grep -q 'cause=cause not named$'; then
+        t_pass "utest abort: a JUnit cause outside the label shape reads as not named"
+    else
+        t_fail "utest abort: a JUnit cause outside the label shape reads as not named" "$XERR_OUT"
+    fi
+    XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=0' '')"
+    if printf '%s' "$XERR_OUT" | grep -q 'cause=unset$'; then
+        t_pass "utest abort: a completed run carries no JUnit cause"
+    else
+        t_fail "utest abort: a completed run carries no JUnit cause" "$XERR_OUT"
+    fi
+    # The assembly is outside the span above, so bind it to the cause directly:
+    # a message that went back to a fixed phrase would pass everything else.
+    if grep -qF '<error message=\"suite aborted (${XML_ABORT_CAUSE}); ${XML_NOT_RUN:-0} binaries never ran\"/>' \
+            "$REPO_ROOT/scripts/test.sh" &&
+       grep -qF '<property name=\"abort_cause\" value=\"${XML_ABORT_CAUSE}\"/>' "$REPO_ROOT/scripts/test.sh" &&
+       ! grep -qF 'smoke gate aborted the suite' "$REPO_ROOT/scripts/test.sh"; then
+        t_pass "utest abort: the assembled JUnit error and property carry the cause"
+    else
+        t_fail "utest abort: the assembled JUnit error and property carry the cause" \
+            "scripts/test.sh assembly no longer uses XML_ABORT_CAUSE"
     fi
 fi
 

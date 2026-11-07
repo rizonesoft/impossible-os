@@ -9630,9 +9630,11 @@ void test_usermode_run(void)
          * fork constructor, i.e. possible task-slot corruption -- arrive at
          * CI as a smoke-gate failure that never happened. The two want
          * opposite responses (fix the prerequisite vs. investigate the
-         * scheduler), so the artifacts must not blur them. The host matches
-         * on `suite ABORT` / `Bail out!` and never on the cause text, so
-         * naming it costs nothing downstream. */
+         * scheduler), so the artifacts must not blur them. The host detects
+         * the abort from `suite ABORT` / `Bail out!` alone, and copies the
+         * cause into the JUnit and JSON artifacts only when it is lowercase
+         * words: keep any new label in that shape, or it reads as `cause not
+         * named` there. */
         const char *abort_cause = s_run_latches.wait_stalled  ? "clock stalled"
                                 : s_reap_degraded ? "reap degraded"
                                                   : "smoke failed";

@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md sources=src/kernel/test/test_usermode.c,include/kernel/test/test_usermode.h,scripts/test.sh,scripts/utest-json-harvest.py,scripts/utest-frame.py,scripts/utest-refusal-id.py reviewed=2026-09-28 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md sources=src/kernel/test/test_usermode.c,include/kernel/test/test_usermode.h,scripts/test.sh,scripts/utest-json-harvest.py,scripts/utest-frame.py,scripts/utest-refusal-id.py reviewed=2026-11-07 -->
 # User-Mode Test Output Formats
 
 The user-mode test launcher emits **four** output streams on serial.
@@ -235,7 +235,8 @@ harvests both streams and regenerates a valid file at
 ```
 
 `aborted=` and `not_run=` are the run-completeness dimension: `aborted=1`
-means the smoke gate cut the suite short and `not_run=` counts the planned
+means the launcher cut the suite short (the cause is on its framed
+`suite ABORT (<cause>)` line) and `not_run=` counts the planned
 binaries that never executed. They are appended after `time=` because every
 host parser is a greedy `.*<key>=(...)` expression plus an end-unanchored
 validating grep, so trailing fields extend the line without disturbing any
@@ -293,6 +294,9 @@ completeness fields.
        dimension; it never means the run completed. -->
   <properties>
     <property name="aborted" value="true|false"/>
+    <!-- Only when aborted. The launcher's framed label: smoke failed, reap
+         degraded or clock stalled; "cause not named" if no such line exists. -->
+    <property name="abort_cause" value="CAUSE"/>
     <property name="not_run" value="N"/>
     <!-- Run identity. Present on every document this pipeline writes,
          including the synthetic error documents and the refusal envelopes:
@@ -317,7 +321,7 @@ completeness fields.
        where most binaries never executed as green. This record, and the
        errors="1" that matches it, are what make the document itself red. -->
   <testcase name="suite-abort" classname="infrastructure">
-    <error message="smoke gate aborted the suite; N binaries never ran"/>
+    <error message="suite aborted (CAUSE); N binaries never ran"/>
   </testcase>
   <testcase
       name="test_<stem>.exe"
@@ -525,7 +529,8 @@ Host `suite-abort` record (present only when `summary.aborted` is true):
 | `name`        | string   | Always `"suite-abort"`, matching the XML `<testcase name>`  |
 | `classname`   | string   | Always `"infrastructure"`                                   |
 | `status`      | string   | Always `"ERROR"`, so a `testcases[]`-only walk reds the run |
-| `reason`      | string   | `smoke gate aborted the suite; N binaries never ran`        |
+| `abort_cause` | string   | The launcher's framed `suite ABORT (<cause>)` label: `smoke failed`, `reap degraded` or `clock stalled`. `cause not named` when no framed line of that shape exists; it is never guessed |
+| `reason`      | string   | `suite aborted (<cause>); N binaries never ran`             |
 | `time_ms`     | integer  | Always 0 -- it describes an omission, not an execution      |
 
 Summary record (wire) -- binary counts only:
@@ -559,7 +564,7 @@ in the assembled artifact:
 | Field         | Type     | Notes                                                       |
 |---------------|----------|-------------------------------------------------------------|
 | `record_kind` | string   | Always `"run_meta"`                                         |
-| `aborted`     | boolean  | the smoke gate cut the suite short. A JSON boolean, not 0/1, so a consumer walking the object generically cannot sum it with a count |
+| `aborted`     | boolean  | the launcher cut the suite short; the `suite-abort` record names why. A JSON boolean, not 0/1, so a consumer walking the object generically cannot sum it with a count |
 | `not_run`     | integer  | planned binaries that never executed. Always 0 when `aborted` is false; the assembler rejects any other combination |
 
 Emitted on EVERY run, not only aborted ones: absence must mean "this

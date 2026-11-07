@@ -98,6 +98,15 @@ def _load_frame_parser():
 
 SCHEMA = "utest-json-v2"
 MARKER = "[UTEST-JSON] "
+# The launcher names why it aborted on its own framed `suite ABORT (<cause>)`
+# line, and the two causes that matter want opposite responses (fix a broken
+# prerequisite vs. investigate possible task-slot corruption). A label is
+# lowercase words: anything else is not something the launcher wrote, so it
+# reads as ABORT_CAUSE_UNNAMED instead of reaching the artifact. The same shape
+# is enforced for the JUnit document in scripts/test.sh.
+ABORT_MARKER = "suite ABORT ("
+ABORT_CAUSE_RE = re.compile(r"[a-z][a-z ]{0,47}")
+ABORT_CAUSE_UNNAMED = "cause not named"
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 # A record is only believed when it is FRAMED. Ring-3 stdout shares the
@@ -283,8 +292,26 @@ REPORT_TRIPLE = ("asserts_passed", "asserts_failed", "skip_blocks")
 _FRAME = _load_frame_parser()
 
 
+def _extract_abort_cause(lines, prefix):
+    """Return the cause on this run's framed abort line, or the unnamed label.
+
+    Anchored to the frame prefix: ring-3 stdout shares the serial stream, so a
+    binary that merely prints the words must not be able to choose the cause.
+    """
+    framed_marker = prefix + ABORT_MARKER
+    for line in lines:
+        idx = line.find(framed_marker)
+        if idx < 0:
+            continue
+        cause = line[idx + len(framed_marker):].split(")", 1)[0]
+        if ABORT_CAUSE_RE.fullmatch(cause):
+            return cause
+        return ABORT_CAUSE_UNNAMED
+    return ABORT_CAUSE_UNNAMED
+
+
 def _extract_records(log_path):
-    """Return the payload strings following each FRAMED [UTEST-JSON] marker.
+    """Return the framed [UTEST-JSON] payloads and the run's abort cause.
 
     Only records belonging to the last complete, reconciled run are returned;
     an unframed record, a wrong-nonce record, a record from a run whose
@@ -295,7 +322,7 @@ def _extract_records(log_path):
     """
     result = _FRAME.parse_file(log_path)
     if not result["ok"]:
-        return []
+        return [], ABORT_CAUSE_UNNAMED
 
     framed_marker = result["prefix"] + MARKER
     records = []
@@ -304,12 +331,12 @@ def _extract_records(log_path):
         if idx < 0:
             continue
         records.append(line[idx + len(framed_marker):].strip())
-    return records
+    return records, _extract_abort_cause(result["lines"], result["prefix"])
 
 
 def harvest(log_path, out_path):
     try:
-        raw_records = _extract_records(log_path)
+        raw_records, abort_cause = _extract_records(log_path)
     except OSError as exc:
         sys.stderr.write("utest-json-harvest: cannot read %s: %s\n" % (log_path, exc))
         return 2
@@ -694,8 +721,9 @@ def harvest(log_path, out_path):
             "status": "ERROR",
             "synthetic": True,
             "time_ms": 0,
-            "reason": "smoke gate aborted the suite; %d binaries never ran"
-                      % not_run,
+            "abort_cause": abort_cause,
+            "reason": "suite aborted (%s); %d binaries never ran"
+                      % (abort_cause, not_run),
         })
         synthetic_errors = 1
     summary["synthetic_errors"] = synthetic_errors
