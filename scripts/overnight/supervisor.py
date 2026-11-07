@@ -31,9 +31,9 @@ REPAIR_AFTER_HOURS = 6
 MACHINERY_PREFIXES = (".claude/hooks/", ".claude/skills/", ".claude/gate-modes.json",
                       "scripts/overnight/", ".githooks/")
 SHIP_RE = re.compile(r"^\+> \*\*(?:Verified|Quality reviewed):\*\*", re.M)
-# deadline: each git call is bounded here, and a push by its own gate-heavy limit.
+# deadline: each git call is bounded here. Hooks are off for an undo, so these are quick.
 GIT_TIMEOUT = 60
-PUSH_TIMEOUT = 1800
+PUSH_TIMEOUT = 300
 
 
 def git(root: Path, *args, timeout=GIT_TIMEOUT):
@@ -87,12 +87,13 @@ def write_json(path: Path, data) -> None:
 
 
 def undo(root: Path, state: dict, pending: list, now: int, idle: bool) -> tuple:
-    """Revert the whole pending batch, newest first, once its oldest commit is due.
+    """Revert the whole pending batch as ONE commit, once its oldest commit is due.
 
     As one batch, because a later commit may fix an earlier one: undoing only the older
-    conflicts, and undoing only the newer restores the bug it fixed. It stops at the
-    first failure and keeps that commit and everything older, so nothing is left half
-    undone and forgotten. Returns (reverted, still pending)."""
+    conflicts, and undoing only the newer restores the bug it fixed. As one commit, so
+    there is no half-done state to recover: it all lands or none of it does. With git
+    hooks off, because the hooks may be the very machinery being undone; CI still judges
+    the result. Returns (reverted, still pending)."""
     limit = UNDO_AFTER_HOURS * 3600
     if not idle or not pending or now - min(p["seen"] for p in pending) < limit:
         return [], pending
@@ -103,31 +104,40 @@ def undo(root: Path, state: dict, pending: list, now: int, idle: bool) -> tuple:
             alert(root, message)
             state["last_undo_alert"] = now
 
-    reverted = []
-    keep = ordered
-    if git(root, "status", "--porcelain").stdout.strip():
-        throttled(f"{len(ordered)} machinery commit(s) are due for undo, but the tree is dirty.")
-        return [], pending
-    for i, entry in enumerate(ordered):
-        r = git(root, "revert", "--no-edit", entry["sha"], timeout=PUSH_TIMEOUT)
+    try:
+        if git(root, "status", "--porcelain").stdout.strip():
+            throttled(f"{len(ordered)} machinery commit(s) are due for undo, but the tree is dirty.")
+            return [], pending
+        for entry in ordered:
+            r = git(root, "revert", "--no-commit", entry["sha"])
+            if r.returncode != 0:
+                git(root, "reset", "--merge")
+                throttled(f"Could not undo machinery commit {entry['sha'][:12]}: {r.stderr.strip()[:200]}")
+                return [], pending
+        shas = [p["sha"] for p in ordered]
+        message = "supervisor: undo machinery nothing worked with\n\n" + "\n".join(shas)
+        r = git(root, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", message)
         if r.returncode != 0:
-            git(root, "revert", "--abort")
-            throttled(f"Could not undo machinery commit {entry['sha'][:12]}: {r.stderr.strip()[:200]}")
-            keep = ordered[i:]
-            break
-        reverted.append(entry["sha"])
-        keep = ordered[i + 1:]
-    if reverted:
-        # The reverts stand whether or not this works, and the run pushes them with its
-        # next push. A timeout here must not lose the record of what was undone.
+            git(root, "reset", "--merge")
+            throttled(f"Could not commit the machinery undo: {r.stderr.strip()[:200]}")
+            return [], pending
+    except subprocess.SubprocessError as exc:
         try:
-            pushed_ok = git(root, "push", "origin", "HEAD", timeout=PUSH_TIMEOUT).returncode == 0
+            git(root, "reset", "--merge")
         except subprocess.SubprocessError:
-            pushed_ok = False
-        pushed = "and pushed" if pushed_ok else "but the push failed"
-        alert(root, f"Nothing was produced after machinery commits "
-                    f"{', '.join(s[:12] for s in reverted)}: reverted {pushed}.")
-    return reverted, keep
+            pass  # fail-direction: a stuck git is reported below and retried next check
+        throttled(f"Machinery undo did not finish: {exc}")
+        return [], pending
+    try:
+        # The undo stands either way, and the run pushes it with its next push.
+        pushed_ok = git(root, "-c", "core.hooksPath=/dev/null", "push", "origin", "HEAD",
+                        timeout=PUSH_TIMEOUT).returncode == 0
+    except subprocess.SubprocessError:
+        pushed_ok = False
+    pushed = "and pushed" if pushed_ok else "but the push failed"
+    alert(root, f"Nothing was produced after machinery commits "
+                f"{', '.join(s[:12] for s in shas)}: reverted {pushed}.")
+    return shas, []
 
 
 def check(root: Path, idle: bool, now: int) -> dict:

@@ -154,6 +154,59 @@ def test_a_push_timeout_keeps_the_record_of_what_was_undone():
         assert h["machinery_commits_pending"] == 0 and len(h["machinery_reverts"]) == 1, h
 
 
+def test_undo_is_one_commit_and_all_or_nothing():
+    # Review, 2026-11-07: a batch stopped halfway left recovery incomplete and unrecorded.
+    with tempfile.TemporaryDirectory() as d:
+        root, _ = _fixture(d)
+        _commit(root, ".claude/hooks/a.py", "a\n")
+        _commit(root, ".claude/hooks/b.py", "b\n")
+        sup.check(root, True, T0 + 60)
+        before = subprocess.run(["git", "-C", str(root), "rev-list", "--count", "HEAD"],
+                                capture_output=True, text=True).stdout.strip()
+        real = sup.git
+
+        def fail_second(r, *a, **k):
+            if a[:2] == ("revert", "--no-commit") and "HEAD" not in a and fail_second.calls == 1:
+                raise subprocess.TimeoutExpired("git", 1)
+            if a[:2] == ("revert", "--no-commit"):
+                fail_second.calls += 1
+            return real(r, *a, **k)
+
+        fail_second.calls = 0
+        sup.git = fail_second
+        try:
+            h = sup.check(root, True, T0 + 3 * HOUR + 120)
+        finally:
+            sup.git = real
+        assert h["machinery_commits_pending"] == 2 and not h["machinery_reverts"], h
+        assert not subprocess.run(["git", "-C", str(root), "status", "--porcelain"],
+                                  capture_output=True, text=True).stdout.strip()
+        h = sup.check(root, True, T0 + 3 * HOUR + 600)
+        assert len(h["machinery_reverts"]) == 2, h
+        after = subprocess.run(["git", "-C", str(root), "rev-list", "--count", "HEAD"],
+                               capture_output=True, text=True).stdout.strip()
+        assert int(after) == int(before) + 1, (before, after)
+
+
+def test_undo_works_when_the_hooks_themselves_are_broken():
+    with tempfile.TemporaryDirectory() as d:
+        root, _ = _fixture(d)
+        hooks = root / ".git/hooks/pre-commit"
+        hooks.write_text("#!/bin/sh\nexit 1\n")
+        hooks.chmod(0o755)
+        (root / "m.txt").write_text("x\n")
+        _commit_no_hooks = ["-c", "core.hooksPath=/dev/null"]
+        p = root / ".claude/hooks/x.py"
+        p.parent.mkdir(parents=True)
+        p.write_text("bad\n")
+        (root / "m.txt").unlink()
+        _git(root, "add", "-A")
+        _git(root, *_commit_no_hooks, "commit", "-qm", "bad hook")
+        sup.check(root, True, T0 + 60)
+        h = sup.check(root, True, T0 + 3 * HOUR + 120)
+        assert len(h["machinery_reverts"]) == 1, h
+
+
 def test_a_dirty_tree_keeps_the_undo_for_later():
     with tempfile.TemporaryDirectory() as d:
         root, alerts = _fixture(d)
