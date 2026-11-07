@@ -83,7 +83,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 | 💎  |   4   | ACPI FADT boot architecture flags                   | --         |  [x]   |
 | 💎  |   5   | PS/2 controller detection and safe init             | §4         |  [x]   |
 | 💎  |   6   | AHCI interrupt hardening                            | §1, §3     |  [x]   |
-| 💎  |   7   | Resilient boot with graceful degradation            | --         |  [/]   |
+| 💎  |   7   | Resilient boot with graceful degradation            | --         |  [ ]   |
 | 💎  |   8   | Per-process page tables (minimal base)              | §1         |  [/]   |
 | 💎  |   9   | CPU security activation and verification            | §4, §8     |  [x]   |
 | 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)        | §3         |  [x]   |
@@ -344,12 +344,12 @@ Wrap every Phase 1--3 subsystem init in a protective pattern: emit POST code, ca
 - [x] Classification: critical subsystems `boot_halt()` (PMM, VMM, GDT, IDT, VFS); the wired non-critical paths (UEFI vars/time, SecureBoot, TPM, XSAVE, PCID) use `apply_result` -> degraded_mask
 - [x] Phase 3 desktop: logs degraded subsystem list (bounded by `SUBSYS_COUNT`, names from single source)
 - [x] Bare-metal skip workarounds already removed in §3 (clac fix) and §5 (ACPI gate)
-- [/] Add `SUBSYS_*` slots + `s_subsys_names[]` for the non-critical subsystems the enum lacks (keyboard, mouse, AHCI, NIC, SMBIOS, splash, DHCP) so degraded_mask can represent them -- parked with this section
-  - Blocker: this is step 1 of the wrapping chain the section's `Deferred:` stamp names, and lands as one unit with it. Adding slots alone widens `degraded_mask` with bits nothing can ever set, which reads as coverage that does not exist.
-- [/] Wire Phase 1-3 non-critical inits through `apply_result`: `rtc/keyboard/mouse/fb_init` are void and `ahci_init` return is ignored, so failures never set degraded_mask -- blocked, this section's named blocker
-  - Blocker: this is the exact item the section's `Deferred:` stamp cites. It changes the signature of several Phase 1-3 init functions, so it is an all-callers change across the boot path rather than a local edit. Depends on the `SUBSYS_*` slots above.
-- [/] Forced-failure regression: force one non-critical init to fail -> boot reaches Phase 3 -> degraded summary lists it -- blocked by the `apply_result` wiring above
-  - Blocker: there is nothing to force until a non-critical init can report failure at all. The section's Test checkpoint stays non-functional until then, which is why this cannot be demonstrated in isolation.
+- [ ] Add `SUBSYS_*` slots + `s_subsys_names[]` for the non-critical subsystems the enum lacks (keyboard, mouse, AHCI, NIC, SMBIOS, splash, DHCP) so degraded_mask can represent them
+  - Order: this is step 1 of the wrapping chain the section's `Deferred:` stamp names, and lands as one unit with it. Adding slots alone widens `degraded_mask` with bits nothing can ever set, which reads as coverage that does not exist.
+- [ ] Wire Phase 1-3 non-critical inits through `apply_result`: `rtc/keyboard/mouse/fb_init` are void and `ahci_init` return is ignored, so failures never set degraded_mask
+  - Order: this is the exact item the section's `Deferred:` stamp cites. It changes the signature of several Phase 1-3 init functions, so it is an all-callers change across the boot path rather than a local edit. Depends on the `SUBSYS_*` slots above.
+- [ ] Forced-failure regression: force one non-critical init to fail -> boot reaches Phase 3 -> degraded summary lists it
+  - Order: there is nothing to force until a non-critical init can report failure at all. The section's Test checkpoint stays non-functional until then, which is why this cannot be demonstrated in isolation.
 - [/] Harden boot_phase0 handoff (Codex §2 review, defense-in-depth): pin pointer to canonical `BOOT_INFO_PHYS_ADDR`; validate `g_boot_info.fb` geometry before pre-`fb_init` VRAM writes; bulk-copy `boot_info` -> XREF: 02-kernel-core/TODO-01 §2
   - Blocker: owned by `02-kernel-core/TODO-01` §2, which holds the boot_phase0 handoff surface. Parked here rather than implemented, so the owner-side sweep can re-open it when that section ships.
 - [x] Commit: `"boot: resilient init with BOOT_TRY -- non-critical failures degrade, never crash"`
@@ -365,7 +365,7 @@ Wrap every Phase 1--3 subsystem init in a protective pattern: emit POST code, ca
 > - Downgraded to `[/]`: most non-critical inits (`rtc/keyboard/mouse/fb` void, `ahci_init` return ignored) mark ready unconditionally and several lack a `SUBSYS_` slot, so their failures never reach degraded_mask. 3 concrete `[ ]` items filed.
 > - Scope boundary: this section owns the degradation INFRASTRUCTURE; per-driver result-returning signatures + the forced-failure test are the filed follow-ups.
 > **Verified:** 2026-06-07 | commit `2340c34e` | 5/8 items | build OK | boot 1723 PASS, smoke PASS (KVM 3.0s)
-> **Deferred:** [H] resilient wrapping not wired for most non-critical subsystems (void/ignored-return inits + missing enum slots) -- Test checkpoint non-functional until then -> XREF: 01-boot-platform/TODO-10 §7 (item: "Wire Phase 1-3 non-critical inits through `apply_result`")
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] resilient wrapping not wired for most non-critical subsystems (void/ignored-return inits + missing enum slots). The stamp and its items named each other, so none could clear; an all-callers change is work, not a blocker. `boot_interrupts.c:388-400,973` and `boot_storage.c:565` still ignore these results.
 > **Quality reviewed:** 2026-06-07 | Codex 3x (adversarial, consistency, perf) | 2M fixed, 1H deferred (re-adversarial skipped: header-only fix, no faultable region) | scope: kernel-code-quality
 
 ---
