@@ -63,14 +63,14 @@ jobs:
         with:
           path: _site
 
-  # Every docs page in Chromium at a desktop and a phone width, light and dark:
-  # axe-core (WCAG 2.2 A/AA plus best practice) and the skip-link, focus and
-  # aria-current checks axe lacks, plus the search states. The control run first
+  # Every page, docs and landing, in Chromium in seven variants (desktop and phone,
+  # light and dark, forced colours, reduced motion): axe-core (WCAG 2.2 A/AA plus best
+  # practice) and the skip-link, pixel focus, aria-current and motion checks axe lacks, plus the search states. The control run first
   # proves the audit reports planted defects. Runs beside the build; the deploy
   # waits for both. Versions are pinned by scripts/site/a11y/package-lock.json.
   a11y:
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:

@@ -83,7 +83,7 @@ file_patterns:
 | 💎  |  30   | §30 SDK release docs and API reference                                   | §29, D12 T06 §2, D12 T06 §8 |  [/]   |
 | 💎  |  31   | §31 Docs search quality and automated accessibility audit                | §25                         |  [x]   |
 | ⭐  |  32   | §32 Review-class nets: fail direction and bounded waits in site tooling  | §28, §29                    |  [x]   |
-| 💎  |  33   | §33 Docs search typo tolerance and wider accessibility audit             | §31                         |  [ ]   |
+| 💎  |  33   | §33 Docs search typo tolerance and wider accessibility audit             | §31                         |  [x]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -1430,9 +1430,9 @@ The §25 index finds every word, but ranking is plain substring matching with th
 > - The first audit found 38,653 violations, all fixed at source: muted text at 4.41:1, links nested in nav `<summary>`, colour-only links, unscrollable code and tables, unlabelled task boxes, light alert titles.
 > - Stemming measured on 308 pages: 270 of 300 inflected queries missed base-form pages; a plain stem is 86.2% precise, so only a stem ending a word (plus an inflection) counts, ranked below exact words.
 > - Canonical doc: `docs/infrastructure/docs-search-and-accessibility.md`; pages.yml's deploy needs the `a11y` job (control first, about five minutes).
-> - Out of scope: the NVDA/Orca screen-reader pass stays operator-gated in §25; typo tolerance and auditing the landing pages and forced colours are owned by §33.
+> - Out of scope: the NVDA/Orca screen-reader pass stays operator-gated in §25; typo tolerance and auditing the landing pages and forced colours shipped in §33.
 > **Verified:** 2026-09-30 | commit `b540d55a8` | 7/7 items | build OK | site tests 148/148 PASS, a11y control 18/18 planted defects reported, full audit 309 pages x 4 variants plus states no findings, kernel 34646 + 17 user PASS
-> **Deferred:** [M] the computed-style focus check rejects a valid ring layered over a permanent inset shadow (reason: fourth heuristic round; no site CSS uses it) -> XREF: 00-infrastructure/TODO-10 §33 (item: "Judge focus indicators from rendered pixels" at line 1485)
+> **Accepted:** [M] the computed-style focus check rejected a valid ring over a permanent inset shadow; resolved by §33, which judges focus from rendered pixels (`measureFocus()` in `scripts/site/a11y/audit.mjs`, `#planted-layered` must pass)
 > **Quality reviewed:** 2026-09-30 | Codex 59x (design, test-coverage, adversarial x20, re-adversarial, consistency x18, perf x18) | 2H+59M+6L fixed, 1 open | scope: N/A (host site tooling and docs; no kernel, boot or desktop code)
 
 ---
@@ -1479,17 +1479,27 @@ Promotion of two review classes into automation under the reviewer-to-automation
 
 §31's post-ship parity review (2026-09-30) compared the shipped search and audit with MkDocs Material, Sphinx and Algolia DocSearch. Two gaps a reader would hit were left: search has no tolerance for a misspelled term, and the browser audit covers the docs pages only, in the default colour mode.
 
-- [ ] Typo tolerance: a term that matches nothing is retried at edit distance 1 (terms of 5 or more letters) as the lowest ranking tier, and the results page offers "Did you mean" for it
-- [ ] Audit the landing pages under `gh-pages/` (home, 404, design mockup, error pages) with the same axe, skip-link and focus checks as the docs pages
-- [ ] Audit the docs pages under `forced-colors: active` and `prefers-reduced-motion: reduce` emulation, each with a planted control that must fail
-- [ ] Judge focus indicators from rendered pixels: per focus-style signature, compare an unfocused and a focused screenshot and require a 3:1 change over the perimeter, replacing the computed-style colour model
-  - That model accepts no layered indicator: a ring drawn over a permanent inset shadow is rejected against the control's own background (§31 post-ship review). Keep the 18-plant control and add this layered case as a must-pass.
-- [ ] Tests: a harness case for a misspelled term and its suggestion; the control reports a planted forced-colors defect
-- [ ] Commit: `"site: search typo tolerance and wider accessibility audit"`
-
-> **Resume:** the implementation is finished and waits on its post-ship review. The review was refused by a permission rule on 2026-11-07, and that rule was narrowed the same day. Run `git revert 6bf0f5e15` to restore `ca822968f`, then run the post-ship review. The patch is also at `.claude/state/deferred-todo10-s33.patch`.
+- [x] Typo tolerance: `correct()` retries a term matching nothing (5+ letters, not quoted, complete index only) at Damerau distance 1 as score slot 5; `showPage()` offers "Did you mean"
+- [x] Landing pages: `landingPages()` audits every HTML page outside `docs/` with axe, skip-link and focus checks; 1,839 first-run findings fixed at source
+  - Skip links and `<main>` everywhere, muted text 3.42:1 to 5.61:1, a real 404 heading, `inert` closed mockup panels, a phone taskbar that fits, light `accent_pressed` token 4.3:1 to 4.67:1.
+- [x] Forced colours and reduced motion: `VARIANTS` adds forced desktop dark, forced phone light and reduced desktop light; `motionFindings()` is the reduced-motion check; each has plants
+  - Every page has a reduced-motion rule. axe's contrast rule is off under forced colours (WORKAROUND, measured: it compares authored text with the forced background).
+- [x] Focus from rendered pixels: `measureFocus()` compares unfocused and focused screenshots per signature; `focusChange()` counts 3:1 pixels, replacing the computed-style colour model
+  - Passes at a 2px line along the short side, reaching that far (one-edge indicators pass, specks fail); the signature carries ring clipping; a third shot rejects a late repaint.
+  - The 18-plant control is kept, with the layered ring as a must-pass, a speck, and a clipped ring beside its unclipped twin. It caught the home page's FAQ rings, clipped by `overflow: hidden`.
+- [x] Tests: `test_a_misspelled_term_is_retried_and_the_results_page_suggests_the_correction`; the control (30 plants) reports a planted forced-colors defect and repeats 8/8 stable
+- [x] Commit: `"site: search typo tolerance and wider accessibility audit"`
 
 **Test checkpoint:** searching `interupt` on the local build lists the interrupt pages and suggests `interrupt`; the audit reports a planted forced-colors defect and passes the landing pages. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
+
+> **Test runner:** `python3 scripts/site/tests/test_build.py SearchAndAccessibility` (typo cases) and `node scripts/site/a11y/audit.mjs <site dir> [control]` (30 plants; full audit 328 pages x 7 variants); no kernel test surface (host tooling).
+
+> **Notes:**
+> - Shipped: edit-distance-1 retry with "Did you mean", pixel focus judging, forced-colours and reduced-motion variants, and landing pages in the browser audit.
+> - Integration: the Pages `a11y` job runs all of it (timeout raised to 45 minutes; a full local run is 10 to 15).
+> - Downstream: the light `accent_pressed` token changed, regenerating `include/desktop/theme_tokens.h`.
+> - Canonical doc: `docs/infrastructure/docs-search-and-accessibility.md`.
+> - Scope boundary: an element covering only a ring is not seen by a shared signature (documented); the NVDA/Orca pass stays operator-gated in §25.
 
 ---
 
@@ -1503,14 +1513,14 @@ Promotion of two review classes into automation under the reviewer-to-automation
 | ⭐  | Facts derived from one source    | ❌ Manual                | ❌ Manual                  | ✅ §1 `project.json`      |
 | ⭐  | Stale narrative page detection   | ❌ Review dates          | ❌ Not tracked             | ✅ §22 `sources=` warns   |
 | 💎  | Versioned docs per release       | ✅ Per version           | ✅ Per kernel version      | ✅ §24 renders, §29 keeps |
-| 💎  | Site search                      | ✅ Full search           | ✅ Sphinx search           | ✅ §25 text, §31 ranking  |
+| 💎  | Site search                      | ✅ Full search           | ✅ Sphinx search           | ✅ §31 ranking, §33 typos |
 | 💎  | External link rot check          | ✅ Learn link validation | ✅ Sphinx `linkcheck`      | ✅ §23 weekly workflow    |
 | 💎  | Published API reference          | ✅ Learn API reference   | ✅ kernel-doc              | ⬜ §30 from D12 T06 §2    |
-| 💎  | Accessible docs UI               | ✅ WCAG conformance      | ⚠️ Theme-dependent         | ✅ §31 axe in CI, SR open |
+| 💎  | Accessible docs UI               | ✅ WCAG conformance      | ⚠️ Theme-dependent         | ✅ §33 all pages, SR open |
 
 > **After §1-§3:** the pipeline, the gate and the page contract exist; coverage is measured and cannot regress.
 > **After §4-§21, §26 and §27:** every roadmap file is documented and the baseline is empty (9 files remain after §26, all §27's).
-> **After §22-§25 and §31:** stale pages are flagged and the site matches mainstream docs portals on navigation, versions, search and accessibility.
+> **After §22-§25, §31 and §33:** stale pages are flagged and the site matches mainstream docs portals on navigation, versions, search and accessibility.
 
 ---
 
