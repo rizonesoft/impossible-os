@@ -86,7 +86,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎  |  21   | ntdll Rtl environment exports                      | §5, §6, §19, §20           |  [/]   |
 | 💎  |  22   | env allocator safety + UTF-8 expansion budget      | §1, §3, §21                |  [x]   |
 | 💎  |  23   | Live-environment adoption (SetCurrent/Strings/Ex)  | §20, §21, T33 §10          |  [x]   |
-| 💎  |  24   | Rtl expansion completeness (probe+copy, budget)    | §3, §20, §21, T23 §13      |  [/]   |
+| 💎  |  24   | Rtl expansion completeness (probe+copy, budget)    | §3, §20, §21, T23 §13      |  [ ]   |
 | 💎  |  25   | Counted (non-`_U`) Rtl env read forms              | §20, §21, T33 §10          |  [x]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
@@ -232,7 +232,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   - Bounded ingestion (reject BEFORE allocating): cap `argc` (`ARG_ARGC_MAX`), each string (`ARG_STRING_MAX` 4 KiB), aggregate (`ARG_MAX`); AND the EXACT serialized argv frame (`argv_frame_bytes`, qword-rounded strings + parity pads + ptr array, matching the builder) + `ARGV_FRAME_RESERVE` MUST fit `USER_STACK_SIZE` (16 KiB) or reject
   - Reject exec when `num_threads > 1` (fail-closed; fork-then-exec child is single-threaded) -> XREF `03-memory-concurrency/TODO-02-memory-security.md §4`
   - `task_set_argv` + (if `envp != NULL`) `env_adopt_block`, both return-checked, BEFORE `task_exec` (a later `task_exec` failure returns -1 and the child exits, so no surviving process sees half-updated state); else inherit environ
-  - Residual: `copy_from_user` is range-checked but NOT fault-recoverable -- kernel-wide usercopy gap -> XREF `03-memory-concurrency/TODO-02-memory-security.md §4`
+  - Residual closed by `02-kernel-core/TODO-23` §13: `copy_from_user` now recovers a fault on the user operand and returns -1 (`src/kernel/cpu_security.c:652`)
   - `task_exec` frame builder reads `task->argv`, pushes argv (16-byte `&argc` alignment), FAILS the exec on unfit/OOM (never silently diverges from the PEB); `crt0` loads `argc`/`argv` into RDI/RSI for `main`
 - [x] `argv_to_cmdline(argc, argv, out, max)` **encode** (Windows quoting rules, `src/kernel/env.c`) wired into the PEB `CommandLine` builder (bounded to the RTLPP page) so `GetCommandLineW()` (§6) reflects full argv; decode + round-trip owned by §15
 - [ ] Follow-up: make SYS_EXEC argv/env commit transactional -- stage `task_set_argv`/`env_adopt_block` inside `task_exec` at its no-return point (after `exec_load_fmt`) so a loader failure leaves old argv/env intact; terminate on post-commit OOM
@@ -304,7 +304,8 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   - Return bytes written (including null); if `nSize` too small, return required size (caller must retry)
 - [/] `ExpandEnvironmentStringsW(lpSrc, lpDst, nSize)` -- calls `RtlExpandEnvironmentStrings_U` directly
 - [/] User-supplied UTF-16 `Environment` probe+copy into a kernel snapshot (then `rtl_env_expand_block` with its extent) is owned by §24 (item: "**Boundary probe+copy for a non-NULL `Environment`**"); §6 consumes it. NULL needs no probe
-- [ ] Route the env wrappers through §21's Rtl exports (`RtlQueryEnvironmentVariable_U`/`RtlSetEnvironmentVariable`), NOT `Nt*` directly: that is Win11's own kernel32->ntdll layering, and it is what resolves ntdll imports → XREF §21
+- [/] Route the env wrappers through §21's Rtl exports (`RtlQueryEnvironmentVariable_U`/`RtlSetEnvironmentVariable`), NOT `Nt*` directly: that is Win11's own kernel32->ntdll layering, and it is what resolves ntdll imports → XREF §21
+  - BLOCKED: no kernel32 env wrapper exists to route (section stamp), and §21's gate keeps these exports unreachable until `03-memory-concurrency/TODO-03` §1 locks the PMM bitmap; `pmm.c` still takes no lock.
 - [x] Bound RtlExpandEnvironmentStrings_U scan cost before user exposure: closed by §20's per-pass `RTL_ENV_EXPAND_WORK_MAX` work budget (`STATUS_INSUFFICIENT_RESOURCES`), which bounds the O(refs x block) product for every caller → XREF §20
 
 - [/] `GetEnvironmentStringsW()`:
@@ -326,25 +327,36 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 7. Shell Integration: PATH Lookup & SET/ECHO
 
-- [ ] `shell_find_command(name, out_path, max)` -- one shared extension rule (matches SDK `TODO-02 §5`): a `name` WITH an explicit extension is probed verbatim only; an extensionless `name` iterates `PATHEXT` in order (§11):
+- [/] `shell_find_command(name, out_path, max)` -- one shared extension rule (matches SDK `TODO-02 §5`): a `name` WITH an explicit extension is probed verbatim only; an extensionless `name` iterates `PATHEXT` in order (§11):
+  - BLOCKED: `user/cmd.c` cannot read `PATH` or `PATHEXT`: nothing under `user/` calls SSDT 0x03DD and §6 has no wrapper. Also feeds `12-user-platform-sdk/TODO-02` §5 and the §17 App Paths fallback.
   1. If `name` contains `\` or `/`: explicit path; probe verbatim if it has an extension, else iterate `PATHEXT` against it; return first match
   2. Otherwise: retrieve `PATH` value via `env_get(current_task, "PATH")`
   3. Split `PATH` on `;` into directory list; get `PATHEXT` via `env_get(current_task, "PATHEXT")` (split `;`; empty/unset -> `.EXE`)
   4. For each directory: if `name` has an extension probe `dir\name` verbatim, else `dir\name{ext}` for each `PATHEXT` ext in order; `vfs_stat` each; return first hit
   5. If no PATH match: consult `app_paths_lookup(caller, name, ...)` (§17 App Paths fallback, matches `ShellExecute`); return its result before `SHELL_COMMAND_NOT_FOUND` → XREF §17
-- [ ] Shell uses `shell_find_command` before any `exec` call; replaces current ad-hoc path construction
+- [/] Shell uses `shell_find_command` before any `exec` call; replaces current ad-hoc path construction
+  - BLOCKED: nothing to call until `shell_find_command` above exists.
 
-- [ ] Before executing any command, the shell calls `env_expand(current_task, raw_cmdline, expanded, sizeof expanded)` on the full command line
-- [ ] This makes `echo %SYSTEMROOT%`, `cd %TEMP%`, and path arguments with env vars work transparently before the command is parsed into argv
+- [/] Before executing any command, the shell calls `env_expand(current_task, raw_cmdline, expanded, sizeof expanded)` on the full command line
+  - BLOCKED: `env_expand` is a kernel function; the user-mode shell needs `ExpandEnvironmentStrings` from §6, which does not exist.
+- [/] This makes `echo %SYSTEMROOT%`, `cd %TEMP%`, and path arguments with env vars work transparently before the command is parsed into argv
+  - BLOCKED: follows from the expansion call above; `user/cmd.c` has no `%VAR%` handling.
 
-- [ ] `SET` with no args: print all environment variables, one per line in `KEY=VALUE` format, sorted alphabetically
-- [ ] `SET VAR=VALUE`: call `env_set(current_task, "VAR", "VALUE")`; print nothing on success
-- [ ] `SET VAR=` (empty value): call `env_set(current_task, "VAR", "")`; effectively creates an empty variable (distinct from unset)
-- [ ] `SET /A VAR=EXPR`: arithmetic expansion (integer expressions using `+`, `-`, `*`, `/`, `%`, `<<`, `>>`, `&`, `|`, `^`); evaluate with a simple recursive descent parser; store result as decimal string
-- [ ] `ECHO %VAR%`: `env_expand` already handles this before argument tokenization; ensure `ECHO` prints the expanded value
-- [ ] `SET /?`: print usage summary
+- [/] `SET` with no args: print all environment variables, one per line in `KEY=VALUE` format, sorted alphabetically
+  - BLOCKED: listing needs `GetEnvironmentStrings` from §6; SSDT 0x03DD reads one named variable. `user/cmd.c` has no `SET` built-in.
+- [/] `SET VAR=VALUE`: call `env_set(current_task, "VAR", "VALUE")`; print nothing on success
+  - BLOCKED: needs `SetEnvironmentVariable` from §6; SSDT 0x03DE has no user-mode caller.
+- [/] `SET VAR=` (empty value): call `env_set(current_task, "VAR", "")`; effectively creates an empty variable (distinct from unset)
+  - BLOCKED: same `SetEnvironmentVariable` dependency. Settle the spec when this lands: `12-user-platform-sdk/TODO-02` §7 and §8 unset here and so does cmd.exe, while this line creates an empty variable.
+- [/] `SET /A VAR=EXPR`: arithmetic expansion (integer expressions using `+`, `-`, `*`, `/`, `%`, `<<`, `>>`, `&`, `|`, `^`); evaluate with a simple recursive descent parser; store result as decimal string
+  - BLOCKED: storing the result needs §6. The expression parser has no dependency of its own but has no built-in to live in until `SET` exists.
+- [/] `ECHO %VAR%`: `env_expand` already handles this before argument tokenization; ensure `ECHO` prints the expanded value
+  - BLOCKED: needs the pre-tokenize expansion above. `cmd_echo` exists (`user/cmd.c:165`) and prints its arguments unexpanded.
+- [/] `SET /?`: print usage summary
+  - BLOCKED: ships with the `SET` built-in, which does not exist.
 
-- [ ] Commit: `"shell: PATH lookup, SET command, %VAR% expansion in all commands"`
+- [/] Commit: `"shell: PATH lookup, SET command, %VAR% expansion in all commands"`
+  - BLOCKED: commit line for the items above.
 
 > **Deferred:** [blocked] §7 shell PATH lookup + SET/ECHO -- the shell is user-mode (`user/cmd.c` cmd.exe), so these builtins need §6 user-mode env wrappers (deferred) or env-syscall stubs; the spec's kernel-side `env_get(current_task)`/`env_expand(current_task)` assume a kernel shell that does not exist (`src/shell/` is empty). -> XREF: §6 (Win32 env wrappers, deferred) + `12-user-platform-sdk/TODO-02-env-vars-process-abi.md` §8 (item: "`set`/`echo`/`env`/`where` commands").
 
@@ -354,15 +366,19 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 8. `.profile` Startup Script
 
-- [ ] On shell startup (after default env is initialized):
+- [/] On shell startup (after default env is initialized):
+  - BLOCKED: the profile's `SET` lines need §7, and `user/cmd.c` has no startup hook to run them from.
   1. Compute profile path: `env_expand(..., "%USERPROFILE%\\.profile", ...)`
   2. `vfs_stat(profile_path)` -- if not found, skip silently; no error
   3. If found: `vfs_open` + read line-by-line (max 4 KiB buffer per line)
   4. Execute each non-blank, non-comment line as a shell command (same code path as user-typed input); errors are logged to serial but do not abort the rest of the script
-- [ ] Comment lines: any line beginning with `#` (after optional leading whitespace) is skipped
-- [ ] Maximum lines: 1 000; lines beyond limit are skipped with a warning
+- [/] Comment lines: any line beginning with `#` (after optional leading whitespace) is skipped
+  - BLOCKED: part of the profile reader, which waits on the startup hook above.
+- [/] Maximum lines: 1 000; lines beyond limit are skipped with a warning
+  - BLOCKED: part of the profile reader, which waits on the startup hook above.
 
-- [ ] `resources/defaults/.profile` file included in the ISO/image, copied to `C:\Users\Default\.profile` during OS install / first boot:
+- [/] `resources/defaults/.profile` file included in the ISO/image, copied to `C:\Users\Default\.profile` during OS install / first boot:
+  - BLOCKED: `resources/defaults/` does not exist, and a default file has no reader until the startup hook lands; its lines need §7's `SET`.
   ```
   # Impossible OS default user profile
   # Edit this file to customise your shell environment.
@@ -371,12 +387,16 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   SET EDITOR=notepad.exe
   SET PAGER=more.exe
   ```
-- [ ] The build system (Makefile / build.sh) copies this file into the IXFS root partition during `make install-userfiles`
+- [/] The build system (Makefile / build.sh) copies this file into the IXFS root partition during `make install-userfiles`
+  - BLOCKED: waits on the default file above. `make install-userfiles` does not exist: the sysroot rule near `Makefile:1006` creates `Users/Default`, so the copy belongs there.
 
-- [ ] `source <file>` (or `.  <file>` POSIX synonym) -- execute a script file in the current shell's context (not a child process); env changes in the script affect the current shell session
-- [ ] Used to manually reload `.profile` after editing: `source C:\Users\Default\.profile`
+- [/] `source <file>` (or `.  <file>` POSIX synonym) -- execute a script file in the current shell's context (not a child process); env changes in the script affect the current shell session
+  - BLOCKED: runs lines in the shell's own context, so it needs the same line runner as startup plus §7's `SET`.
+- [/] Used to manually reload `.profile` after editing: `source C:\Users\Default\.profile`
+  - BLOCKED: follows from `source` above.
 
-- [ ] Commit: `"shell: .profile startup script, source command, default profile in image"`
+- [/] Commit: `"shell: .profile startup script, source command, default profile in image"`
+  - BLOCKED: commit line for the items above.
 
 > **Deferred:** [blocked] §8 `.profile` startup depends on §7 shell integration (deferred) plus the user-mode shell startup hook and a `make install-userfiles` copy of `resources/defaults/.profile` into the IXFS root. -> XREF: §7 (shell integration, deferred) + `12-user-platform-sdk/TODO-02-env-vars-process-abi.md` §8 (item: "`set`/`echo`/`env`/`where` commands" -- same user-mode shell surface).
 
@@ -388,17 +408,28 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 **Design:** [`controls.md#dialog`](../../docs/design/controls.md#dialog), [`controls.md#list-tree-and-grid-views`](../../docs/design/controls.md#list-tree-and-grid-views)
 
-- [ ] **`SetEnvironmentVariable` is process-local:** modifies ONLY the caller's own block (§5/§6); never writes Registry, never broadcasts -- persistence + notification are exclusive to `setx` / `sysdm.cpl` (MS Learn).
-- [ ] After a Registry write via `setx` / `sysdm.cpl` (not `SetEnvironmentVariable`), post `WM_SETTINGCHANGE` (`0x001A`, `lParam=L"Environment"`) to `HWND_BROADCAST`; apps refresh via `SendMessageTimeout` with `SMTO_ABORTIFHUNG`.
-- [ ] WM delivery requires the window manager to be running; if WM is not yet started (early boot), skip silently
-- [ ] Add "Environment Variables" button to `sysdm.cpl` (System Properties): dialog with System (admin) and User list-views; Edit/New/Delete writes Registry + `WM_SETTINGCHANGE`
-- [ ] Dialog layout matches Windows 11's Environment Variables dialog for user familiarity
-- [ ] `setx VAR VALUE` -- set an environment variable **persistently** (writes to `HKCU\Environment` via Registry API + triggers `WM_SETTINGCHANGE`); current session not affected (matches Windows `setx.exe` behaviour)
-- [ ] `setx VAR VALUE /M` -- write to system-wide `HKLM\...\Session Manager\Environment`; requires admin token (→ XREF `TODO-15-security-reference-monitor.md §9`)
-- [ ] `setx /?` -- print usage
-- [ ] **`setx` value length (Win11 parity):** Microsoft documents a **1024-character** cap on the value assigned by `setx`; excess is truncated and can corrupt an existing variable; implement the same cap (or emit a hard error instead of silent truncate) and mention it in `setx /?` (see Microsoft Learn `setx` Remarks).
+- [/] **`SetEnvironmentVariable` is process-local:** modifies ONLY the caller's own block (§5/§6); never writes Registry, never broadcasts -- persistence + notification are exclusive to `setx` / `sysdm.cpl` (MS Learn).
+  - BLOCKED: the wrapper waits on §6. The kernel half already holds: `src/kernel/nt/nt_env.c` makes no registry or broadcast call.
+- [/] After a Registry write via `setx` / `sysdm.cpl` (not `SetEnvironmentVariable`), post `WM_SETTINGCHANGE` (`0x001A`, `lParam=L"Environment"`) to `HWND_BROADCAST`; apps refresh via `SendMessageTimeout` with `SMTO_ABORTIFHUNG`.
+  - BLOCKED: `NtUserBroadcastSystemMessage` is unimplemented -> XREF: `08-graphics-ui/TODO-15` §25 (item: "`NtUserBroadcastSystemMessage`"); no `HWND_BROADCAST` exists under `src/` or `include/`.
+- [/] WM delivery requires the window manager to be running; if WM is not yet started (early boot), skip silently
+  - BLOCKED: meaningful only once the broadcast above exists -> XREF: `08-graphics-ui/TODO-15` §25.
+- [/] Add "Environment Variables" button to `sysdm.cpl` (System Properties): dialog with System (admin) and User list-views; Edit/New/Delete writes Registry + `WM_SETTINGCHANGE`
+  - BLOCKED: `sysdm.cpl` does not exist -> XREF: `09-desktop-shell/TODO-11` §3 (item: "Environment Variables dialog in `sysdm.c`").
+- [/] Dialog layout matches Windows 11's Environment Variables dialog for user familiarity
+  - BLOCKED: ships with the dialog above -> XREF: `09-desktop-shell/TODO-11` §3.
+- [/] `setx VAR VALUE` -- set an environment variable **persistently** (writes to `HKCU\Environment` via Registry API + triggers `WM_SETTINGCHANGE`); current session not affected (matches Windows `setx.exe` behaviour)
+  - BLOCKED: no `setx` tool exists, `user/include/win32.h` scopes out registry APIs, and the broadcast is unimplemented (`08-graphics-ui/TODO-15` §25).
+- [/] `setx VAR VALUE /M` -- write to system-wide `HKLM\...\Session Manager\Environment`; requires admin token (→ XREF `TODO-15-security-reference-monitor.md §9`)
+  - BLOCKED: needs `setx` above; the admin-token check is the XREF on this item.
+- [/] `setx /?` -- print usage
+  - BLOCKED: ships with `setx` above.
+- [/] **`setx` value length (Win11 parity)**
+  - BLOCKED: ships with `setx` above.
+  - Microsoft documents a **1024-character** cap on the value assigned by `setx`; excess is truncated and can corrupt an existing variable; implement the same cap (or emit a hard error instead of silent truncate) and mention it in `setx /?` (see Microsoft Learn `setx` Remarks).
 
-- [ ] Commit: `"kernel/env: WM_SETTINGCHANGE broadcast, sysdm.cpl env tab, setx command"`
+- [/] Commit: `"kernel/env: WM_SETTINGCHANGE broadcast, sysdm.cpl env tab, setx command"`
+  - BLOCKED: commit line for the items above.
 
 > **Deferred:** [blocked] §9 env-change notifications + `sysdm.cpl` tab need §6 (deferred), Registry env persistence (`setx`), the window manager for the `WM_SETTINGCHANGE` `HWND_BROADCAST`, and a System Properties control-panel applet (desktop-shell domain). -> XREF: §6 (Win32 env wrappers, deferred) + §8 (`.profile`, deferred) + `09-desktop-shell` (System Properties / control panel applet).
 
@@ -538,7 +569,8 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [x] `SearchPathA` -- ANSI wrapper over the same UTF-8 core; lengths + `lpFilePart` in ACP bytes via `nls_cp_*_utf16` / `NLS_CP_ACP`; result identical to widening + `SearchPathW`.
 - [x] `NeedCurrentDirectoryForExePathW(caller, ExeName)` -- returns `TRUE` if `ExeName` contains a backslash; else `FALSE` when the `NoDefaultCurrentDirectoryInExePath` env var is present (even empty), else `TRUE` (security hardening).
 - [x] `SetSearchPathMode(caller, mode)`: validate `BASE_SEARCH_PATH_*` bits; `PERMANENT` needs `ENABLE`, locks later changes; per-task `search_path_mode` via `__atomic` CAS; governs CWD ORDER only (`ERROR_INVALID_PARAMETER`/`ERROR_ACCESS_DENIED`).
-- [ ] Leg-1 (application-load directory) deferred: needs a kernel-owned canonical image path (PEB / `task->name` are caller-writable, unsafe); also unblocks §15 `CommandLineToArgvW("")` argv[0] -> XREF: `TODO-21-process-model-extensions.md §2`.
+- [/] Leg-1 (application-load directory) deferred: needs a kernel-owned canonical image path (PEB / `task->name` are caller-writable, unsafe); also unblocks §15 `CommandLineToArgvW("")` argv[0] -> XREF: `TODO-21-process-model-extensions.md §2`.
+  - BLOCKED: `struct task` has no canonical image path yet; `TODO-21` §2 owns it (item: "Persist a kernel-owned canonical image path") and already carries the reciprocal.
 - [ ] `sp_probe` fails open on a trusted-leg VFS I/O/OOM error (treated as a miss -> falls through to PATH/CWD); once `vfs_stat` returns a tri-state found/absent/error result, make `sp_probe` abort the search on a hard error.
 - [ ] Compose all install-path consumers from `ENV_SYSTEMROOT_DIR`/`ENV_SYSTEM32_DIR` (`ENV_DEF_PATH_BASE` done; still literal: bootstrap PATH `env.c` seed row + `registry.c` windir) and move the constants to a neutral install-path header.
 
@@ -651,12 +683,18 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 cmd exposes computed-at-expansion pseudo-variables (never stored in `environ[]`) plus an opt-in delayed `!VAR!` mode; both are cmd-parser concerns distinct from §3's generic single-pass `%VAR%`.
 
-- [ ] Dynamic pseudo-vars resolved at expansion time by the shell (§7), never stored, real stored vars take precedence: `%CD%`, `%DATE%`, `%TIME%`, `%RANDOM%` (0-32767), `%ERRORLEVEL%`, `%CMDCMDLINE%`, `%CMDEXTVERSION%`
-- [ ] `%ERRORLEVEL%` tracks the last command's exit code; the shell updates it after each command
-- [ ] Delayed expansion: `setlocal enabledelayedexpansion` / `cmd /V:ON` enables `!VAR!` re-read at execution time (needed inside `FOR`/`IF` blocks where `%VAR%` is fixed at parse time per §3)
-- [ ] `SET` enforces cmd's tighter documented per-var / total caps (fidelity beyond §10's Win32 API-level limits)
-- [ ] Batch `%~` modifiers (`%~dp0`, `%~nx1`) extend D12 T02 §8's `%1..%9`; `FOR`/`IF`/`setlocal` batch semantics are owned there (item: "**cmd.exe batch interpreter**") → XREF `12-user-platform-sdk/TODO-02-env-vars-process-abi.md` §8
-- [ ] Commit: `"shell: cmd.exe dynamic pseudo-variables + delayed !VAR! expansion"`
+- [/] Dynamic pseudo-vars resolved at expansion time by the shell (§7), never stored, real stored vars take precedence: `%CD%`, `%DATE%`, `%TIME%`, `%RANDOM%` (0-32767), `%ERRORLEVEL%`, `%CMDCMDLINE%`, `%CMDEXTVERSION%`
+  - BLOCKED: §7's shell expansion, which these resolve inside, does not exist.
+- [/] `%ERRORLEVEL%` tracks the last command's exit code; the shell updates it after each command
+  - BLOCKED: `user/cmd.c` tracks no exit code as a variable, and reading one needs §7's expansion.
+- [/] Delayed expansion: `setlocal enabledelayedexpansion` / `cmd /V:ON` enables `!VAR!` re-read at execution time (needed inside `FOR`/`IF` blocks where `%VAR%` is fixed at parse time per §3)
+  - BLOCKED: needs §7's expansion plus `FOR`/`IF` blocks -> XREF: `12-user-platform-sdk/TODO-02` §8 (item: "**cmd.exe batch interpreter**").
+- [/] `SET` enforces cmd's tighter documented per-var / total caps (fidelity beyond §10's Win32 API-level limits)
+  - BLOCKED: ships with §7's `SET` built-in, which does not exist.
+- [/] Batch `%~` modifiers (`%~dp0`, `%~nx1`) extend D12 T02 §8's `%1..%9`; `FOR`/`IF`/`setlocal` batch semantics are owned there (item: "**cmd.exe batch interpreter**") → XREF `12-user-platform-sdk/TODO-02-env-vars-process-abi.md` §8
+  - BLOCKED: no batch interpreter exists; the XREF on this item owns it.
+- [/] Commit: `"shell: cmd.exe dynamic pseudo-variables + delayed !VAR! expansion"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** `echo %RANDOM%` varies across calls; `%ERRORLEVEL%` reflects the last exit code; `!VAR!` re-reads a var set earlier in the same `enabledelayedexpansion` block. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
 
@@ -734,7 +772,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 - [x] `RtlDestroyEnvironment` returns `NTSTATUS` (always `STATUS_SUCCESS`), not VOID: sources conflict (ReactOS NDK vs WRK) and NTSTATUS is the strict x86-64 binary-compat superset
 - [x] Refuse a non-NULL `Environment` in `RtlQueryEnvironmentVariable_U` with `STATUS_NOT_SUPPORTED`: reading a foreign block derefs untrusted memory with no trusted extent, as §20 found for expansion. §24's probe+copy restores it
 - [x] Extracted `env_buf_alloc`/`env_buf_free` (env.h/env.c). Inventory was larger than drafted: `sp_alloc` (`env_searchpath.c`) was an uncounted THIRD copy, and all three disagreed on `n == 0` -- Gate 10
-- [ ] kernel32 `GetEnvironmentVariable`/`SetEnvironmentVariable` (§6) route through these exports. BLOCKED twice: §6 is deferred (no kernel32 env wrapper exists), and the gate below forbids a kernel32 caller while §20's PMM item is open
+- [/] kernel32 `GetEnvironmentVariable`/`SetEnvironmentVariable` (§6) route through these exports. BLOCKED twice: §6 is deferred (no kernel32 env wrapper exists), and the gate below forbids a kernel32 caller while §20's PMM item is open
 - [x] Gate: no export is user-reachable -- no SSDT row, no ntdll export row, pinned by `test_rtlenv_exports_not_user_reachable` (`pe_ntdll_export_ssdt` == -1 x4), so wiring one must first close §20's BLOCKING item
 - [x] Commit: `"ntdll: Rtl environment exports over the Nt env syscalls"`
 
@@ -823,12 +861,13 @@ The `env.c` half of the completeness work §20's review deferred, split from the
 
 ## 24. Rtl Expansion Completeness: Boundary Copy, Measured Budget, Lookup Cache
 
-The `nt_rtlenv.c` half of §20's deferred completeness work (§22 shipped the `env.c` half). The boundary-copy items are BLOCKED: snapshotting a caller `Environment` means scanning an extent-less untrusted block for its double NUL, and this kernel has no fault-recoverable usercopy -- `copy_from_user` (`cpu_security.c:270`) is a raw STAC/CLAC byte loop whose only failure return is a `KERNEL_TESTS` injector, and `ProbeForRead` (`ssdt.c:60`) checks range and alignment, never mapping. A page-presence precheck cannot substitute: no address-space lock exists (`munmap`, `NtFreeVirtualMemory` MEM_RELEASE, and `swap_out` all clear PTEs unsynchronized), and `vmm_query_flags` walks `kernel_pml4` while user unmaps take an explicit `cr3`. Nothing here is user-reachable until §20's BLOCKING PMM item closes (§21 carries that gate).
+The `nt_rtlenv.c` half of §20's deferred completeness work (§22 shipped the `env.c` half). Reopened 2026-11-07: the boundary-copy items were parked on missing fault-recoverable usercopy, and `02-kernel-core/TODO-23` §13 has since shipped it (`try_copy_from_user`, `src/kernel/nt/ssdt.c:174`; `copy_from_user`, `src/kernel/cpu_security.c:652`). A fault while scanning an extent-less caller block now returns an error instead of bugchecking. Two limits still apply: recoverable usercopy is not an isolation boundary (see the item below), and nothing here may become user-reachable until §20's BLOCKING PMM item closes (§21 carries that gate).
 
-- [/] **Boundary probe+copy for a non-NULL `Environment`**: copy the caller block into a terminated kernel snapshot, then expand it with a known extent, restoring the ntdll form §20 refuses → XREF `02-kernel-core/TODO-23` §13
-- [/] Apply the same probe+copy to `RtlQueryEnvironmentVariable_U`'s non-NULL `Environment` (§21 refuses it): one trusted-snapshot helper serves both the query and expansion paths, so the two cannot drift → XREF `02-kernel-core/TODO-23` §13
-- [/] Extend the boundary to `RtlSetEnvironmentVariable`'s non-NULL `Environment` (§21 refuses it). A read-only snapshot is NOT enough: the ABI takes `void **` because ntdll may REALLOC the block and write it back -- needs its own ownership contract
-- [ ] Even WITH fault-recoverable usercopy, an unterminated block scanned to a coincidental double NUL reads adjacent memory; user pages share identity-mapped frames today, so refusing it needs per-process isolation
+- [ ] **Boundary probe+copy for a non-NULL `Environment`**: copy the caller block into a terminated kernel snapshot, then expand it with a known extent, restoring the ntdll form §20 refuses → XREF `02-kernel-core/TODO-23` §13
+- [ ] Apply the same probe+copy to `RtlQueryEnvironmentVariable_U`'s non-NULL `Environment` (§21 refuses it): one trusted-snapshot helper serves both the query and expansion paths, so the two cannot drift → XREF `02-kernel-core/TODO-23` §13
+- [ ] Extend the boundary to `RtlSetEnvironmentVariable`'s non-NULL `Environment` (§21 refuses it). A read-only snapshot is NOT enough: the ABI takes `void **` because ntdll may REALLOC the block and write it back -- needs its own ownership contract
+- [/] Even WITH fault-recoverable usercopy, an unterminated block scanned to a coincidental double NUL reads adjacent memory; user pages share identity-mapped frames today, so refusing it needs per-process isolation
+  - BLOCKED: needs isolation: an in-range pointer aliasing mapped kernel data still resolves without faulting (`src/kernel/cpu_security.c:293-296`) -> XREF: `03-memory-concurrency/TODO-01` (per-process page tables). `struct task` now has a `cr3`, so re-check this claim when picking it up.
 - [ ] Snapshot `Source` into a private kernel buffer before the two-pass expansion once these forms are user-reachable: the two-pass check misses an equal-length, equal-cost concurrent Source mutation. Same probe+copy boundary owns it → XREF §25
 - [ ] **Measure `RTL_ENV_EXPAND_WORK_MAX`**: the 8388608 ceiling is reasoned (~8 ms at ~1e9 compares/s), not measured. Derive it from worst-case bare-metal timing and record the method next to the constant
 - [ ] Lookup cache for repeated `%NAME%` misses: a bounded (<= 4 KiB `kmalloc`, no PMM) per-call name cache shared by both passes would cut the O(refs x block) constant. The §20 budget is the hard bound; this is the optimization under it
@@ -842,11 +881,10 @@ The `nt_rtlenv.c` half of §20's deferred completeness work (§22 shipped the `e
 
 **Test checkpoint:** the measured budget constant carries its derivation next to it; a repeated-miss expansion is measurably cheaper than the §20 baseline while still refusing at the budget; a small query no longer allocates a 4 KiB heap block, and the Rtl and Nt query paths agree. When the boundary items unblock: a caller-supplied `Environment` expands and queries through the snapshot helper, and an unterminated/unmapped one is refused rather than scanned past. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
 
-- [ ] **Split the section-level park.** Only the three boundary probe+copy items need fault-recoverable usercopy; the measured-budget, lookup-cache, CAS double-free and sentinel items are independent and shippable, but the terminal stamp parks them
+- [x] **Split the section-level park.** Only the three boundary probe+copy items need fault-recoverable usercopy; the measured-budget, lookup-cache, CAS double-free and sentinel items are independent and shippable, but the terminal stamp parks them
+  - Closed 2026-11-07 by reopening the whole section: the usercopy blocker that forced the split has ended, so no item needs a separate park on it
   - The oracle reads a stamped `[/]` section as DONE, so the documented non-atomic `env_buf_free` SMP double-free hardening stays stranded behind an unrelated usercopy project
   - Move the three usercopy-bound items into their own deferred scope (or leave only those `[/]`), then implement the independent remainder -> XREF: `02-kernel-core/TODO-33 §11` (item: "`TODO-22 §24`: KEPT `[/]`")
-
-> **Deferred:** [blocked] blocker (2) of 2 is CLEARED; blocker (1) remains and is sufficient on its own. The three boundary probe+copy items need bounded, fault-recoverable usercopy: `copy_from_user` has no fixup table or SEH, `ProbeForRead` never checks mapping, and a page-presence precheck cannot close it (no address-space lock exists; `vmm_query_flags` walks `kernel_pml4` while user unmaps take a `cr3`) -- so scanning an extent-less untrusted block for its terminator is a kernel-panic primitive reachable from user input -> XREF: `02-kernel-core/TODO-23 §13` (item: "Extend `include/kernel/nt/zw.h` + `src/kernel/nt/ssdt.c` in place: add `try_copy_from_user` / `try_copy_to_user`"). The ceiling half retired 2026-07-17: `02-kernel-core/TODO-33 §10` moved the BSS end to `0x6c2000` (~1272 KiB headroom), so the REMAINING items (measured budget, lookup cache, stack probe, right-sized retry, CAS-serialized free, sentinel contract) are now free to land -- they no longer wait on headroom, only on this section being reachable. Carries a real latent SMP defect (the non-atomic `env_buf_free` magic check, item above) that ships with them; it is NOT user-reachable today (§20's BLOCKING PMM item gates the export row) -> XREF: `02-kernel-core/TODO-33 §11` (item: "`TODO-22 §24`: KEPT `[/]`")
 
 ---
 

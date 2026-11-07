@@ -450,6 +450,7 @@ Shell hook windows, broadcast system messages, message timeouts, power/suspend n
 
 - [ ] `NtUserRegisterShellHookWindow` (0x12A0): receive shell events (window create/destroy/activate)
 - [ ] `NtUserBroadcastSystemMessage` (0x12A9): send to all top-level windows (WM_SETTINGCHANGE, WM_THEMECHANGED)
+  - Consumer waiting on this: `setx` and the `sysdm.cpl` environment dialog -> XREF: `02-kernel-core/TODO-22` §9
 - [ ] `NtUserSendMessageTimeout` (0x12AB): send with timeout to prevent hung-app hangs
 - [ ] `NtUserSetCoalescableTimer` (0x12AF): power-efficient timer with coalescing tolerance
 - [ ] `NtUserRegisterPowerSettingNotification` (0x12B0): receive power state change notifications

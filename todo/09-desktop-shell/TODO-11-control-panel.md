@@ -124,6 +124,7 @@ Nine applets: `sysdm.cpl` (System), `desk.cpl` (Display), `ncpa.cpl` (Network), 
 > **`taskbar.cpl` -- Taskbar**: the taskbar is fixed at `THEME_SIZE_TASKBAR_HEIGHT` (48) and docked to the bottom (`docs/design/shell.md#taskbar`), so there is no height or position setting; the page has an auto-hide toggle switch (`controls.md#toggle-switch`) writing `HKCU\...\Taskbar\AutoHide` + broadcast `WM_TASKBAR_CHANGED`. The page also offers the Windows 11 options in `docs/design/shell.md#taskbar` "Taskbar settings": Alignment (Centre default, Left), Search (Hide, icon only, icon and label, box default) and Task view (on by default).
 
 - [ ] `src/apps/control/applets/sysdm.c` -- OS/CPU/RAM/uptime/hostname; Computer Name field + Apply
+- [ ] Environment Variables dialog in `sysdm.c`: System (admin) and User lists; Edit/New/Delete writes Registry and broadcasts `WM_SETTINGCHANGE` -> XREF: `02-kernel-core/TODO-22` §9
 - [ ] `src/apps/control/applets/desk.c` -- GOP mode list; DPI dropdown; wallpaper picker; accent color swatches; Dark/Light toggle
 - [ ] `gop_get_mode_list(modes_out, max)` helper (read existing GOP mode table from bootloader hand-off)
 - [ ] `src/apps/control/applets/ncpa.c` -- DHCP/Static; IP/Mask/Gateway/DNS fields; hostname; `net_get_status()`
