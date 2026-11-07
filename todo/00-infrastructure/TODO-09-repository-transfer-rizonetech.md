@@ -76,7 +76,7 @@ file_patterns:
 | ⭐  |   5   |    5    | Post-transfer settings, workflows, secrets, environments audit  | §4                             |  [/]   |
 | ⭐  |   6   |    6    | URL, badge, docs, and generated-link sweep                      | §4, §5                         |  [x]   |
 | ⭐  |   7   |    7    | Validation suite: Pages, Actions, releases, clone, hooks, graph | §5, §6                         |  [/]   |
-| ⭐  |   8   |    8    | Move-back and public-visibility runbook                         | §1, §2, §3, §4, §5, §6, §7     |  [ ]   |
+| ⭐  |   8   |    8    | Move-back and public-visibility runbook                         | §1, §2, §3, §4, §5, §6, §7     |  [x]   |
 | ⭐  |   9   |    9    | Documentation sync and closure                                  | §1, §2, §3, §4, §5, §6, §7, §8 |  [x]   |
 
 > **Order vs section number:** The file is ordered by execution flow. Section 8 is intentionally specified before the first transfer happens so the team can confirm the move is reversible rather than discovering account or Pages constraints after the repository is already in the organization.
@@ -124,13 +124,18 @@ Prepare the receiving organization before transfer so the repository lands into 
 
 - [x] Confirm the `rizonetech` organization exists, has the intended owners, and the human operator has permission to receive transferred repositories. **Verified:** `gh api orgs/rizonetech` returns `login: "Rizonetech"` (canonical), id `279138845`; `gh api user/memberships/orgs/rizonetech` returns `state: active`, `role: admin`, `direct_membership: true` for `rizonesoft`. Cross-referenced from §1 baseline.
 - [x] Confirm the org plan supports the repository's current visibility plus GitHub Pages requirements. If the repo remains private, verify that Pages for private repositories is available under the active plan before transfer. **Verified:** `gh api orgs/rizonetech --jq '.plan'` returns `name: "enterprise"`, `private_repos: 999999`, `seats: 50`, `space: 976562499`. Enterprise plan covers private-repo Pages.
-- [/] Verify `impossibleos.co` for **GitHub Pages** under the receiving organization (Pages-specific custom-domain ownership check; this is a SEPARATE flow from org-identity domain verification). **Operator-only (O1):** UI-only, no public REST endpoint. Walk <https://github.com/organizations/rizonetech/settings/pages> "Verified custom domains" panel, add the displayed TXT record to the `impossibleos.co` DNS zone, then click Verify -- per <https://docs.github.com/pages/configuring-a-custom-domain-for-your-github-pages-site/verifying-your-custom-domain-for-github-pages>. Optional separate org-identity verification at <https://github.com/organizations/rizonetech/settings/security> ("Verified and approved domains") is for SAML / billing / branded email; not required for Pages, harmless to also walk. Captured in [`docs/infrastructure/repository-transfer-preflight.md` §2 O1](../../docs/infrastructure/repository-transfer-preflight.md#operator-only-items-require-adminorg-token-scope-or-ui-walkthrough).
-- [/] Configure organization Actions policy so existing workflows can run: GitHub-hosted runners allowed, required marketplace actions allowed (`actions/checkout`, `actions/configure-pages`, `actions/upload-pages-artifact`, `actions/deploy-pages`, and any release/build workflow actions), and workflow permissions compatible with Pages deploy. **Operator-only (O2):** source-repo baseline already captured in §1 (allowed_actions=all, default_workflow_permissions=read); operator must match-or-relax at org level via <https://github.com/organizations/rizonetech/settings/actions> or post-`admin:org` `gh api orgs/rizonetech/actions/permissions`. Concrete commands documented in preflight §2.
-- [/] Confirm org-level Pages policy allows repository Pages and custom domains. **Operator-only (O3):** UI-only check at <https://github.com/organizations/rizonetech/settings/pages> (no stable public REST endpoint). Confirm "Public" or "Private and Public" is selected and custom domains are allowed.
+- [/] Verify `impossibleos.co` for **GitHub Pages** under the owning account. **operator-gated:** the org flow is superseded by the move-back;
+  - the domain must now be verified under the personal account `rizonesoft` at <https://github.com/settings/pages>, a UI-only step with no REST endpoint. Pages already serves it with `https_enforced: true` (checked 2026-11-08); verification additionally blocks a third-party takeover of the domain.
+- [x] Configure organization Actions policy. Superseded by the 2026-09-27 move-back to the personal account `rizonesoft`, which has no org-level Actions envelope. Workflows run under it:
+  - `build.yml` green on `200486a0b`, `pages.yml` on `56ac66b8e`, `todo-graph.yml` on `99b6f1920` (2026-11-08).
+- [x] Confirm org-level Pages policy. Superseded by the 2026-09-27 move-back to the personal account `rizonesoft`. `gh api repos/rizonesoft/impossible-os/pages` reports `build_type: workflow`, `cname:
+  - impossibleos.co`, `https_enforced: true`, `status: built` (2026-11-08).
 - [x] Confirm org-level **security defaults** are compatible with repository settings: Dependabot, secret scanning, code scanning, private vulnerability reporting. **Verified:** `gh api orgs/rizonetech` security defaults for new repos are all `false` (`advanced_security`, `dependabot_alerts`, `dependabot_security_updates`, `dependency_graph`, `secret_scanning`, `secret_scanning_push_protection`); `two_factor_requirement_enabled: false`; no SAML; `web_commit_signoff_required: false`. Source-repo baseline (§1) is also "all off", so transfer is parity-compatible. (Note: org rulesets / merge-method defaults / 2FA-required-policy still need operator probe -- tracked as a separate item below under O4.)
-- [/] Confirm org-level **rulesets, merge-method defaults, and 2FA enforcement** are compatible with the source-repo settings: ruleset import path for "Default Branch Security" (id `14058331`, captured in §1), merge methods (merge / squash / rebase all allowed at source), 2FA enforcement (currently OFF). **Operator-only (O4):** `gh api orgs/rizonetech/rulesets` requires `admin:org` scope. Walk <https://github.com/organizations/rizonetech/settings/repository-defaults> and <https://github.com/organizations/rizonetech/settings/rules>; the org may be empty (no preset ruleset), in which case the source-repo ruleset migrates with the repo per §5. The source-repo ruleset itself migrates with the repo on transfer; this O4 check verifies the org's *envelope* is at least as permissive as the source.
-- [/] Preserve the AI-system boundary at org level: disable Copilot cloud coding-agent / autonomous-agent PR enablement for this repository, or document the exact UI setting that keeps it disabled after transfer. **Operator-only (O5):** Copilot Access policy has no public-API surface today. Walk <https://github.com/organizations/rizonetech/settings/copilot/access>, set "No access" or "Selected members" excluding `rizonesoft` from cloud-agent permission. Re-verify in §5 / §7. Cross-referenced from [Autonomous-Agent Boundary Policy](../../docs/infrastructure/ai-system.md#autonomous-agent-boundary-policy).
-- [/] Create or identify teams that replace personal/collaborator permissions: maintainers, reviewers, release operators, security contacts, and Pages/DNS administrators. **Operator-only (O6):** `gh api orgs/rizonetech/teams` returns empty (verified). Solo-dev minimum: one `maintainers` team containing `rizonesoft`. CODEOWNERS currently routes everything to `@derickpayne` (the user) -- that handle still resolves under org ownership, but consider adding a `@rizonetech/maintainers` route once the team exists. <https://github.com/organizations/rizonetech/teams>.
+- [x] Confirm org-level rulesets, merge defaults and 2FA. Superseded by the 2026-09-27 move-back to the personal account `rizonesoft`, which has no org envelope.
+  - The repo ruleset `14058331` "Default Branch Security" is `active` with all 4 rules and the `RepositoryRole 5` bypass restored (2026-11-08).
+- [/] Preserve the AI-system boundary: Copilot cloud coding agent stays disabled for this repository.
+  - **operator-gated:** after the move-back this is a personal-account setting (<https://github.com/settings/copilot>, coding agent repository access), UI-only with no public API. The repo side is verified 2026-11-08: none of the forbidden agent paths exist. Per [Autonomous-Agent Boundary Policy](../../docs/infrastructure/ai-system.md#autonomous-agent-boundary-policy).
+- [x] Create or identify teams. Superseded by the 2026-09-27 move-back to the personal account `rizonesoft`: a personal account has no teams, and `.github/CODEOWNERS` routes every path to `@rizonesoft`, the owner.
 - [x] Confirm no existing `rizonetech/impossible-os` repository blocks the transfer. If one exists, stop and decide whether to rename/archive/delete it before proceeding. **Verified:** `gh repo view rizonetech/impossible-os` returns `GraphQL: Could not resolve to a Repository`; `gh api orgs/rizonetech/repos` returns `[]`; clean transfer destination.
 - [x] Commit: `"docs/github: capture rizonetech organization readiness"`
 
@@ -146,7 +151,7 @@ Prepare the receiving organization before transfer so the repository lands into 
 >
 > **Verified:** 2026-04-27 | commit `b7e3392d` | 4/10 items | build N/A (docs-only) | lint clean, todo-graph 8/8
 > **Quality reviewed:** 2026-04-27 | Codex 3x (adversarial, consistency, perf) | 2H+1M+1L fixed, 0 open | scope: N/A (docs-only -- no domain code-quality skill applies; re-adversarial skipped: docs+stamp-only fixes, no SMP/state-machine touch)
-> **Deferred:** [awaiting-operator] org-console checks (Actions policy, Pages policy, rulesets/2FA, teams, Copilot agent enablement) are GitHub UI walks -- no unattended pass can perform this; operator action required (cohort 2026-07-31)
+> **Deferred:** [awaiting-operator] after the 2026-09-27 move-back the org checks are superseded; two personal-account UI steps remain, Pages domain verification and the Copilot coding-agent setting, with no API an unattended pass can drive (re-judged 2026-11-08)
 
 ---
 
@@ -158,7 +163,7 @@ Make the custom domain the stable user-facing surface. The default owner-based P
 - [x] Add a tracked [`gh-pages/CNAME`](../../gh-pages/CNAME) file containing exactly `impossibleos.co`. **Verified:** the `gh-pages` BRANCH (current legacy Pages source) already carries a CNAME blob `1441672e` with content `impossibleos.co`; adding the same file to `main`'s `gh-pages/` folder gives the workflow-deployed artifact (when the artifact-quota issue resolves) the same custom-domain hint, so switching the Pages source mode from "branch" to "Actions" later doesn't drop the domain. The `actions/upload-pages-artifact@v3` step in [`pages.yml`](../../.github/workflows/pages.yml) bundles everything under `gh-pages/` into the artifact, so the CNAME ships with the deploy.
 - [x] Update [`gh-pages/index.html`](../../gh-pages/index.html) canonical, Open Graph URL, JSON-LD URL, and visitor-counter URL away from `rizonetech.github.io/impossible-os/` to `https://impossibleos.co/`. **Done:** four edits at lines 13 (canonical), 19 (og:url), 36 (JSON-LD `url`), 1089 (hits.sh visitor counter switched to `hits.sh/impossibleos.co.svg` -- owner-independent across this transfer AND any future move-back). `author.url: https://rizonesoft.com` at line 40 retained intentionally (brand homepage, not active GitHub repo URL).
 - [x] Audit [`gh-pages/err/`](../../gh-pages/err/) for consistent canonical URLs and relative links. **Verified:** all 14 error-page `index.html` files (`err/index.html` + `err/000[0-d]/index.html`) already use `https://impossibleos.co/err/<code>/` as their canonical URL; relative `../../` links resolve correctly. The single `https://github.com/rizonesoft/impossible-os` "GitHub" nav link in each err page is owner-specific repo URL, owned by the [URL/badge/docs/generated-link sweep](#6-url-badge-docs-and-generated-link-sweep) (§6), NOT §3.
-- [/] Reduce DNS TTL for `www.impossibleos.co` before transfer if the DNS provider allows it, so the CNAME switch to `rizonetech.github.io` propagates quickly. **Operator-only:** target 60-300s TTL at least 24h pre-transfer. Some DNS providers treat apex/CNAME as ALIAS/ANAME with provider-side caching that ignores the published TTL -- verify provider docs before assuming. Captured in preflight §3 DNS plan.
+- [x] Reduce DNS TTL for `www.impossibleos.co` before a CNAME switch. Superseded: the switch it prepared for was replaced by the 2026-09-27 flip to `rizonesoft.github.io`, which is complete and resolving.
 - [x] Keep apex A records pointed at the four GitHub Pages IPv4 addresses unless GitHub changes the documented Pages IP set. **Verified:** apex resolves to `185.199.108.153 / 109.153 / 110.153 / 111.153` (the published GitHub Pages anycast set per <https://docs.github.com/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site>). Owner-independent; no change required.
 - [x] Decide whether to add GitHub Pages AAAA records for IPv6 parity. **Decided: keep unset for now.** Re-evaluate after §4 transfer is verified green; adding IPv6 AAAA records expands rollback surface and the docs site has no measurable IPv6-only client demand today. Documented in preflight §3 DNS plan.
 - [x] Prepare the `www` DNS change but do not apply it until `rizonetech/impossible-os` Pages settings accept `impossibleos.co` and the new default Pages host is live. **Prepared:** the §3 DNS plan documents the exact pre-condition (`curl -I https://rizonetech.github.io/impossible-os/` returns a successful response under the new owner) and the change (CNAME `rizonetech.github.io` -> `rizonetech.github.io`). The actual flip is a §4 operator action.
@@ -178,7 +183,7 @@ Make the custom domain the stable user-facing surface. The default owner-based P
 >
 > **Verified:** 2026-04-27 | commit `ec2b7c00` | 9/10 items | build N/A (Pages content + docs) | lint clean, todo-graph 8/8
 > **Quality reviewed:** 2026-04-27 | Codex 3x (adversarial, consistency, perf) | 2H+1M+1L fixed, 0 open | scope: N/A (docs+pages-content -- no domain code-quality skill applies; re-adversarial skipped: docs+stamp-only fixes, no SMP/state-machine touch)
-> **Deferred:** [awaiting-operator] DNS TTL reduction is a registrar/DNS-provider console action -- no unattended pass can perform this; operator action required (cohort 2026-07-31)
+> **Resolved:** 2026-11-08 the TTL reduction was superseded by the completed 2026-09-27 CNAME flip to `rizonesoft.github.io`; no operator action remains in this section
 
 ---
 
@@ -196,10 +201,12 @@ Perform the actual transfer as a short, observable operation with a clear stop/r
 - [x] **Step 4 -- verify new owner:** `gh repo view rizonetech/impossible-os` returns the new owner; `gh repo view rizonesoft/impossible-os` returns the same `nameWithOwner: rizonetech/impossible-os` value via GitHub repo redirect.
 - [x] **Step 5 -- local remote updated:** `git remote -v` shows `origin = https://github.com/rizonetech/impossible-os.git`; `bootloader` remote unchanged. The pre-update push attempt was rejected with `remote: This repository moved. Please use the new location: https://github.com/rizonetech/impossible-os.git` -- confirming GitHub serves the redirect.
 - [x] **Step 6 -- Pages settings preserved:** `gh api repos/rizonetech/impossible-os/pages` returns `cname: "impossibleos.co"`, `https_certificate.state: approved` (expires `2026-06-16`), `https_enforced: false`. The custom-domain continuity control survived the transfer cleanly.
-- [/] **Step 7 -- Pages re-deploy under new owner:** the §4 implementation commit `4c1d2265` did not touch `gh-pages/**`, so the `paths:` filter prevented auto-fire post-transfer. Apex still serves the pre-transfer artifact (`last-modified: 2026-04-27 20:41:41 GMT` from the §3 deploy on the old owner), which is fine, but this leaves the workflow's clean-run-under-new-owner unverified. **Operator action remaining:** run `gh workflow run pages.yml -R rizonetech/impossible-os` (one-line), wait ~30s, confirm `gh run list -w pages.yml -R rizonetech/impossible-os -L 1` shows `conclusion: success`. Alternatively defer to the next legitimate `gh-pages/**` change, which auto-fires the workflow.
+- [x] **Step 7 -- Pages re-deploy under the owning account:** Pages now deploys from `pages.yml` on every push to `main` (`build_type: workflow`) and `verify_live.py` checks the live copy byte for byte;
+  - last green deploy `56ac66b8e` under `rizonesoft` (2026-11-08).
 - [x] **Step 8 -- www CNAME flipped:** `getent hosts www.impossibleos.co` resolves through `rizonetech.github.io` to the GitHub Pages anycast IPv6 set (`2606:50c0:800[0-3]::153`). The flip is live.
 - [x] **Step 9 -- post-transfer validation green:** all critical Step 9 table rows verified live -- apex `200`, `www` `301 -> https://impossibleos.co/`, new default Pages URL `301 -> http://impossibleos.co/`, **old default Pages URL ALSO `301 -> http://impossibleos.co/`** (better than the runbook predicted -- GitHub's redirect machinery handles owner-based Pages URLs when a custom domain is configured), apex A records unchanged, `www` CNAME chain ends at `rizonetech.github.io`, Pages `.cname` preserved, cert `approved`.
-- [/] **Step 10 -- TTL restoration:** intentionally deferred per runbook; restore `www.impossibleos.co` CNAME TTL to provider normal value (typically 3600-86400s) after §7 validation has been green for 24h continuously. **Operator action remaining:** DNS provider UI plus `dig +nocmd +noall +answer +ttl www.impossibleos.co CNAME` to verify.
+- [x] **Step 10 -- TTL restoration:** the `www` CNAME carries the provider's default TTL, not the reduced 60-300s transfer value.
+  - The authoritative server `dns1.registrar-servers.com` answers `www.impossibleos.co. 1799 IN CNAME rizonesoft.github.io.` (2026-11-08).
 - [x] **Rollback procedure documented:** preflight §4 "Rollback (if any post-transfer step fails)" lists 4 reversal steps (reverse-transfer GitHub UI, restore `www` CNAME, restore local remote, re-run pre-transfer validation). Window stays open until §7 validation passes. **Operator action:** keep this window open (do not push new commits, do not roll TTL back to normal) until §7 is green.
 - [x] Commit: `"docs/github: add repository transfer runbook"`
 
@@ -215,7 +222,7 @@ Perform the actual transfer as a short, observable operation with a clear stop/r
 >
 > **Verified:** 2026-04-27 | commit `4c1d2265` | 14/16 items | build N/A (runbook docs) | lint clean, todo-graph 8/8 | live-transfer post-Step-9 evidence captured in chat
 > **Quality reviewed:** 2026-04-27 | Codex 3x (adversarial, consistency, perf) | 3H+5M+0L fixed, 0 open | scope: N/A (docs-only -- no domain code-quality skill applies; re-adversarial skipped: docs-only fixes, no SMP/state-machine touch)
-> **Deferred:** [awaiting-operator] Pages re-deploy confirmation + TTL restoration are console/DNS actions -- no unattended pass can perform this; operator action required (cohort 2026-07-31)
+> **Resolved:** 2026-11-08 Pages deploys from `pages.yml` on every push and the authoritative `www` TTL is the provider default (1799s); no operator action remains in this section
 
 ---
 
@@ -224,16 +231,19 @@ Perform the actual transfer as a short, observable operation with a clear stop/r
 GitHub transfers repository data, but the project should not trust complex settings until they are checked directly.
 
 - [x] **Visibility unchanged:** `gh api repos/rizonetech/impossible-os --jq .visibility` returns `private` (matches §1 baseline `PRIVATE`). Captured in [preflight §5 "Preserved verbatim"](../../docs/infrastructure/repository-transfer-preflight.md#5-post-transfer-settings-workflows-secrets-and-environments-audit).
-- [/] **Branch protection / ruleset structure preserved BUT bypass actors empty** -- ruleset id `14058331` "Default Branch Security" survived with all 4 rules (`required_status_checks`/`Build Impossible OS`, `non_fast_forward`, `required_linear_history`, `deletion`). However `bypass_actors: []` post-transfer (was `RepositoryRole 5 / Maintain` pre-transfer); `current_user_can_bypass: "never"`. This is **F1 in preflight §5 Findings** -- direct push to `main` is now blocked even for org admin until a bypass entry is restored. **Operator action remaining:** walk <https://github.com/rizonetech/impossible-os/rules/14058331> -> "Bypass list" -> add `Repository admin` role.
+- [x] **Branch protection / ruleset bypass restored:** ruleset `14058331` "Default Branch Security" is `active` with all 4 rules and `bypass_actors: [RepositoryRole 5, always]` (restored at the 2026-09-27 move-back;
+  - re-read 2026-11-08). Finding F1 in preflight section 5 is closed.
 - [x] **Team / collaborator permissions match §1 access model:** `gh api repos/rizonetech/impossible-os/collaborators` returns only `rizonesoft admin`; `gh api repos/rizonetech/impossible-os/teams` returns `[]` (matches §1 baseline of solo-collaborator + zero teams; org-team creation is §2 O6).
 - [x] **`.github/CODEOWNERS` updated:** F3 fix shipped -- replaced 7 instances of `@derickpayne` (handle did not resolve, predates transfer) with `@rizonesoft` (id `8640728`, the actual maintainer login). Verified via `gh api users/rizonesoft` returning the real user record. F3 detail in preflight §5 Findings.
 - [x] **Repo-level Actions policy and workflow permissions preserved:** `gh api repos/rizonetech/impossible-os/actions/permissions` returns `enabled: true`, `allowed_actions: all`, `sha_pinning_required: false`; default workflow permissions `read`; Pages workflow retains its `permissions: contents: read, pages: write, id-token: write` block (source file unchanged). Org-level Actions policy (O2) is still operator-only via `admin:org` probe.
-- [/] **Repository secret value unverified:** `gh secret list` shows `BOOTLOADER_REPO_TOKEN` with baseline metadata, but secret VALUES aren't API-returnable and the token has no in-tree consumer; validation deferred to a consuming run or rotation.
+- [/] **Unused repository secret:** `BOOTLOADER_REPO_TOKEN` (created 2026-03-14) is still listed and nothing in the tree reads it (`.yml`/`.sh`/`.py` scan, 2026-11-08).
+  - **operator-gated:** deleting or keeping a credential is the owner's call; values are not API-readable.
 - [x] **Pages environment + deployment-source preserved:** `gh api repos/rizonetech/impossible-os/environments` returns id `13147855799` (same node id `EN_kwDORgIuVs8AAAADD6xbtw` as §1 baseline); Pages settings `cname: "impossibleos.co"` preserved; latest deployment id `4503518780` ref `main` sha `ec2b7c00` attached to `rizonetech/impossible-os` per `gh api repos/rizonetech/impossible-os/deployments`.
-- [/] **Release workflow tag-read capability:** the `Release` workflow file (`.github/workflows/release.yml`) uses `actions/checkout` + `gh release create`/`upload` patterns; nothing bakes the old owner. Latest release `v26.3.18-alpha.821` (pre-release, 2026-03-18) is preserved with same tag/timestamp under the new owner. **Final tag-read + artifact-upload validation comes from a release dry-run** post-F1-fix; until then this row is ⏳ best-effort verified.
+- [/] **Release workflow under the owning account:** `release.yml` bakes in no owner, and the last release `v26.3.18-alpha.821` (2026-03-18) is preserved.
+  - **operator-gated:** tag-read and asset upload are proven only by a real release under `rizonesoft`, and cutting a release is an outward-facing owner action.
 - [x] **Issue templates / labels / security policy preserved:** 4 issue-template YAML files in `.github/ISSUE_TEMPLATE/` (`bug-report.yml`, `config.yml`, `feature-request.yml`, `hardware-report.yml`) -- source-tree files migrated trivially. `gh api repos/rizonetech/impossible-os/labels --jq 'length'` returns `22` (count preserved). `SECURITY.md` source-tree file unchanged. Discussions remain off (matches baseline). Milestones / project links unused, no migration concern.
 - [x] **Webhooks / deploy keys / GitHub Apps / branch badges / packages preserved:** all empty / minimal per §1 baseline -- `gh api .../hooks` returns `[]`, `gh api .../keys` returns `[]`, `gh api orgs/rizonetech/installations` returns `total_count: 0`, no packages enumerated. README badges that bake the OLD owner URL are §6 territory (URL/badge sweep), not §5.
-- [/] **Org-level Copilot / autonomous-agent policy** -- still operator-only (no public REST endpoint). Walk <https://github.com/organizations/rizonetech/settings/copilot/access>; confirm "No access" or `rizonesoft` excluded from cloud-agent permission per [Autonomous-Agent Boundary Policy](../../docs/infrastructure/ai-system.md#autonomous-agent-boundary-policy). This is the O5 item from §2 / §3.
+- [/] **Copilot / autonomous-agent policy:** **operator-gated**, the same personal-account setting as the section 2 item "Preserve the AI-system boundary"; no public API can read it.
 - [x] Commit: `"docs/github: record post-transfer settings audit"`
 
 **Test checkpoint:** The settings audit closes only after direct inspection or a successful workflow run proves each setting survived or was intentionally recreated. **Status:** 7 of 11 items verified `[x]` from live `gh api` probes; 3 items `[/]` (F1 ruleset bypass actor restoration -- blocking pushes; release-workflow dry-run -- best-effort verified, final validation post-F1-fix; secret value unverifiable via API -- metadata only); 1 item `[ ]` (operator-only Copilot Access UI walk). 3 findings (F1/F2/F3) captured in [preflight §5](../../docs/infrastructure/repository-transfer-preflight.md#5-post-transfer-settings-workflows-secrets-and-environments-audit); F3 fix already shipped in this commit.
@@ -248,7 +258,7 @@ GitHub transfers repository data, but the project should not trust complex setti
 >
 > **Verified:** 2026-04-27 | commit `26b9d290` | 7/11 items | build N/A (audit + docs) | lint clean, todo-graph 8/8 | F3 CODEOWNERS fix included; secret-value item corrected [x]->[/] in 2026-06-16 review (API cannot prove secret values)
 > **Quality reviewed:** 2026-06-16 | Codex 3x (adversarial, consistency, perf) | 2M fixed, 0 open | scope: N/A (docs/GitHub-audit; re-adversarial skipped -- docs-status fixes, no code)
-> **Deferred:** [awaiting-operator] org Copilot/autonomous-agent policy walk is UI-only (no public REST endpoint) -- no unattended pass can perform this; operator action required (cohort 2026-07-31)
+> **Deferred:** [awaiting-operator] three owner actions remain after the move-back, none API-drivable or safe for an unattended pass: the Copilot coding-agent setting, keeping or deleting the unused `BOOTLOADER_REPO_TOKEN`, and a first release under `rizonesoft` (re-judged 2026-11-08)
 
 ---
 
@@ -293,10 +303,12 @@ Treat the transfer as complete only after the same surfaces a contributor uses a
 
 - [x] **Git validation -- all green:** fresh clone from `https://github.com/rizonetech/impossible-os.git` succeeds (HEAD = `dd6c163920f22a575bf8a30a589d1c198ac28355` "stamp: TODO-09 §6 implementation commit hash 5097fbd3"); existing clone fetches cleanly with updated origin; push capability proven by recent commits `5097fbd3` (§6) + `dd6c1639` (§6 stamp) + earlier §4/§5 commits; old `github.com/rizonesoft/impossible-os` URL redirects via `gh repo view` (returns `nameWithOwner: rizonetech/impossible-os` for authenticated callers; unauthenticated curl returns 404 -- expected for private repos).
 - [x] **Pages validation -- all green:** apex returns `200 OK`; `www.impossibleos.co` returns `301 -> https://impossibleos.co/`; `rizonetech.github.io/impossible-os/` returns `301 -> http://impossibleos.co/`; HTTPS cert state `approved`, expires `2026-06-16` covering both apex + www; latest Pages workflow run on sha `5097fbd3` at `2026-04-27T22:19:15Z` completed `success` under the new owner.
-- [/] **DNS validation -- 2/3 green:** apex A records match GitHub Pages anycast (`185.199.108-111.153`); `www.impossibleos.co` CNAME chain ends at `rizonetech.github.io`; **TTL restoration to normal value still pending §4 Step 10** (operator action 24h after Step 9 stays green; runbook in preflight §4).
-- [/] **Workflow validation -- 3/4 green + 1 deferred:** Build ran successfully on `dd6c163920f22a575bf8a30a589d1c198ac28355` at `2026-04-27T22:19:31Z`; Pages ran successfully on `5097fbd3` at `2026-04-27T22:19:15Z` (auto-fired on `gh-pages/**` change in the §6 sweep); TODO graph workflow ran successfully at `22:19:31Z`; Release workflow dry-run **deferred** to next legitimate release tag push (the pre-existing tag `v26.3.18-alpha.821` is preserved per §5 audit); Labeler / Stale workflows still listed as `active` (workflow IDs `247848080` / `247847233` stable per §5).
+- [x] **DNS validation -- 3/3 green (2026-11-08):** apex A records are the GitHub Pages anycast set (`185.199.108-111.153`); `www.impossibleos.co` CNAME is `rizonesoft.github.io`; authoritative TTL 1799s, the provider default.
+- [x] **Workflow validation (2026-11-08):** under `rizonesoft`, Build is green on `200486a0b`, Pages on `56ac66b8e` and TODO graph on `99b6f1920`.
+  - The release leg is the section 5 item "Release workflow under the owning account", which only a real release can prove.
 - [x] **Local tooling validation -- all green** (refreshed 2026-06-16): `lint.sh` CLEAN 637 files; `test-tooling.sh` 393/393 PASS; `todo-graph/build.py --quiet` exit 0; `validate.py` 8/8 PASS, 0 warnings. (was 498 files / 254/254 at 2026-04-28.)
-- [/] **Project policy validation:** `AGENTS.md` sha256 `75e38c4af748412bb7aa9daf051835ff1d05cdfa9b40dd4f10c1c8b8c50fdeb5` (2026-06-16); forbidden autonomous-agent dirs absent; 0-byte `.codex` residue removed at close; Org Copilot operator-only.
+- [x] **Project policy validation (2026-11-08):** `AGENTS.md` sha256 `0def3a54d93d61642149f42450f8db61db90c3c5175267821f82f92d10446dc1`;
+  - `.github/workflows/copilot-setup-steps.yml`, `.github/agents/`, `.github/chatmodes/` and `.github/instructions/` all absent. The account-side Copilot check is the section 2 operator-gated item.
 - [x] **Public link validation -- all green:** README build badge SVG returns `200 OK`; Releases page `404` to unauthenticated curl (expected for private repo; `gh release list` returns the release for authenticated callers; will become `200 OK` post-§8 visibility flip); Site GitHub + Releases buttons in `gh-pages/index.html` + 14 err pages flipped in §6 (live on apex); Generated TODO graph links: 229 `click ... github.com/rizonetech/...` URLs in `docs/infrastructure/todo-graph.md`; `make todo-graph-render-mermaid` now idempotent (zero diff on second run).
 - [x] Commit: `"docs/github: record repository transfer validation"`
 
@@ -320,7 +332,7 @@ Treat the transfer as complete only after the same surfaces a contributor uses a
 Define the return path before it is needed. Moving back later should be a planned ownership change, not a scramble during the public launch.
 
 > [!NOTE]
-> Deliverable is the runbook DOC [`docs/infrastructure/repository-move-back-runbook.md`](../../docs/infrastructure/repository-move-back-runbook.md); the actual move-back transfer + visibility flip are a future operator action gated on the move-back trigger (runbook §1). Items below are `[x]` = "documented in the runbook"; execution stays operator-deferred ([/] IO row).
+> Deliverable is the runbook DOC [`docs/infrastructure/repository-move-back-runbook.md`](../../docs/infrastructure/repository-move-back-runbook.md); the actual move-back transfer + visibility flip are a future operator action gated on the move-back trigger (runbook §1). Items below are `[x]` = "documented in the runbook"; the move-back itself was executed 2026-09-27 and the items after the runbook record it.
 
 - [x] Defined the move-back trigger (public-ready + release-approved + security/history-reviewed + public-docs-ready) in runbook §1.
 - [x] Documented receiving-account readiness incl. the paid-plan-vs-Free caveat for keeping Pages + branch protection on a private repo (runbook §2).
@@ -341,9 +353,9 @@ Define the return path before it is needed. Moving back later should be a planne
   - Secret scanning + push protection enabled; `rizonetech/impossible-os` returns 301 to the new path; live owner refs swept in 36 files.
 - [x] Flipped the `www.impossibleos.co` CNAME to `rizonesoft.github.io` (operator, 2026-09-27).
   - Verified: `www.impossibleos.co` resolves via `rizonesoft.github.io` and `https://www.impossibleos.co/` returns 301 to `https://impossibleos.co/`.
-- [ ] Reconcile the §2-§7 `[/]` tail and the Unit Tests items with the move-back; they assert `rizonetech`-owned state that no longer exists
+- [x] Reconcile the §2-§7 `[/]` tail and the Unit Tests items with the move-back (2026-11-08)
   - Found 2026-09-28 while writing the TODO-10 infrastructure docs pages: the Unit Tests section's items check `rizonetech/impossible-os`, a `www` CNAME to `rizonetech.github.io` and org-level Copilot policy, none of which can pass after the 2026-09-27 move-back to `rizonesoft`.
-  - Conservative default, reversible by editing the TODO: rewrite an item against the `rizonesoft` owner where the check still means something, and close it as superseded where it does not (the Copilot access check becomes a personal-account setting). This is bookkeeping and needs no operator verdict. §9's Notes still name `rizonetech` as the final owner.
+  - Each item was re-checked live (`gh api`, authoritative `dig`, `curl -I`, a fresh clone through the old `rizonetech` URL) and either rewritten against `rizonesoft`, closed as superseded, or left `[/]` with the word operator-gated where only the owner can act: Pages domain verification, the Copilot agent setting, the unused secret, and a first release.
 
 **Test checkpoint:** The runbook documents every move-back + public-visibility step in operator-runnable form; `docs/infrastructure/repository-move-back-runbook.md` exists and a reader can follow trigger -> readiness -> transfer -> re-point -> domain -> visibility-flip -> redirect-verify without gaps. The final public move is considered ready only after the custom domain, repository visibility, first-party URLs, and security posture are validated in that order (the actual execution is the future operator action).
 
@@ -355,7 +367,7 @@ Define the return path before it is needed. Moving back later should be a planne
 > - **Canonical doc:** [`docs/infrastructure/repository-move-back-runbook.md`](../../docs/infrastructure/repository-move-back-runbook.md).
 > - **Scope boundary:** documents the procedure only; the actual transfer + visibility flip are future operator actions gated on the trigger. §9 owns syncing `github-setup.md` to the final owner state.
 
-> **Verified:** 2026-06-13 | commit `5f725132` | 12/12 items | build N/A (operator runbook -- no kernel/test surface) | runbook 227 lines, lint clean, todo-graph 8/8
+> **Verified:** 2026-11-08 | commit `5f725132` + move-back 2026-09-27 + this reconciliation commit | 16/16 items | build N/A (operator runbook -- no kernel/test surface) | live `gh api`, authoritative `dig`, `curl -I` and fresh-clone evidence; todo-graph 10/10
 > **Quality reviewed:** 2026-06-13 | Codex 8x (adversarial + consistency + perf + re-adversarial) | 10H+6M fixed | scope: N/A (docs runbook); execution operator-deferred (gated on the move-back trigger)
 
 ---
@@ -381,10 +393,10 @@ Close the roadmap by making the final owner state discoverable and removing tran
 > - **What shipped:** `github-setup.md` ownership note synced to the final owner state -- transfer date (2026-04-27), custom-domain/DNS, branch protection, and the org-level autonomous-agent-boundary policy.
 > - **Structure / consumers:** the contributor-facing canonical owner-state record; companion to `repository-transfer-preflight.md` (baseline) + `repository-move-back-runbook.md` (§8 future move-back).
 > - **Canonical doc:** [`docs/infrastructure/github-setup.md`](../../docs/infrastructure/github-setup.md).
-> - **Scope boundary:** documentation sync only; the operator-validation tail (DNS TTL restore, release dry-run, org Copilot UI check) stays owned by §2-§7 `[/]`, and the move-back execution by §8.
+> - **Scope boundary:** documentation sync only. The final owner recorded here (`rizonetech`) was superseded by the 2026-09-27 move-back to `rizonesoft`, which `github-setup.md` already records; the operator-gated tail is in §2 and §5 `[/]`.
 
 > **Verified:** 2026-06-13 | commit `c0ff7a2b` | 8/8 items | build N/A (documentation closure -- no kernel/test surface) | github-setup.md owner-state synced, owner-ref inventory clean, todo-graph 8/8
-> **Deferred:** [M] §5/§7 push-state wording still reads contradictory ("blocked" vs "proven") until the operator restores the ruleset admin bypass; pushes land via the "expected" check today -> XREF: 00-infrastructure/TODO-09 §5 (item: "Branch protection / ruleset structure preserved BUT bypass actors empty" at line 227)
+> **Resolved:** 2026-11-08 the ruleset admin bypass was restored at the 2026-09-27 move-back, so the §5/§7 push-state wording now agrees (item: "Branch protection / ruleset bypass restored" in §5)
 > **Quality reviewed:** 2026-06-13 | Codex 6x (adversarial + consistency + perf + re-adversarial) | 2H+4M fixed, 1M deferred | scope: N/A (documentation closure)
 
 ---
@@ -404,7 +416,7 @@ Close the roadmap by making the final owner state discoverable and removing tran
 
 > **After §1-§4:** Inventory, org readiness, Pages continuity plan, and a time-boxed transfer runbook with rollback exist before any GitHub setting is touched.
 > **After §5-§7:** Settings audit, first-party URL sweep, and end-to-end validation suite confirm the move did not silently break Pages, Actions, releases, badges, or graph tooling.
-> **After §8-§9:** A move-back and public-visibility runbook is documented before it is needed (`repository-move-back-runbook.md`), and `docs/infrastructure/github-setup.md` carries the final owner state (owner, transfer date, DNS, branch protection, org policy) for future contributors. The remaining operator-validation tail (DNS TTL restore, release dry-run, org Copilot UI) stays tracked in §2-§7 `[/]`.
+> **After §8-§9:** A move-back and public-visibility runbook is documented before it is needed (`repository-move-back-runbook.md`), and `docs/infrastructure/github-setup.md` carries the final owner state (owner, transfer date, DNS, branch protection, org policy) for future contributors. After the 2026-09-27 move-back to `rizonesoft`, the operator-gated tail is Pages domain verification and the Copilot agent setting (§2), plus the unused secret and a first release (§5).
 
 ---
 
@@ -422,17 +434,17 @@ Close the roadmap by making the final owner state discoverable and removing tran
 
 > **Test runner:** N/A (operator runbook -- no kernel/usermode/desktop test surface) | validation: §7 validation suite (`curl -I https://impossibleos.co/`, `curl -I https://www.impossibleos.co/`, `curl -I https://rizonetech.github.io/impossible-os/`, fresh clone from new origin, latest Pages deployment under `rizonetech`, `bash scripts/lint.sh`, `bash scripts/test-tooling.sh`, `python3 scripts/todo-graph/build.py --quiet`, `python3 scripts/todo-graph/validate.py --warnings-only`).
 
-- [/] Repository lives at `rizonetech/impossible-os`; old URL redirects. (existing-clone origin=rizonetech, fetch/push green this session; fresh-clone + redirect: manual)
-- [/] `git fetch` succeeds from new origin in fresh + updated existing clone. (updated existing clone verified this session; fresh clone: manual)
-- [ ] `https://impossibleos.co/` returns `200 OK` with a valid HTTPS certificate. (manual -- `curl -I` against prod)
-- [ ] `https://www.impossibleos.co/` redirects to `https://impossibleos.co/`. (manual -- `curl -I` against prod)
-- [ ] `https://rizonetech.github.io/impossible-os/` redirects to the custom domain or serves the Pages site. (manual -- `curl -I` against prod)
-- [ ] Apex DNS A records match GitHub Pages IPs; `www` CNAME resolves to `rizonetech.github.io`. (manual -- authoritative DNS)
-- [ ] Latest Pages, build, and (if dispatched) release workflow runs are green under the new owner. (manual -- GitHub Actions UI)
+- [x] Repository lives at `rizonesoft/impossible-os`, public; `https://github.com/rizonetech/impossible-os` returns 301 to it (2026-11-08).
+- [x] `git fetch` succeeds: a fresh `git clone` through the old `rizonetech` URL fetched `99b6f1920` (2026-11-08), and the working clone's origin is `rizonesoft`.
+- [x] `https://impossibleos.co/` returns `HTTP/2 200` with a Let's Encrypt certificate valid to 2026-12-14 (2026-11-08).
+- [x] `https://www.impossibleos.co/` returns 301 to `https://impossibleos.co/` (2026-11-08).
+- [x] `https://rizonesoft.github.io/impossible-os/` returns 301 to `https://impossibleos.co/` (2026-11-08).
+- [x] Apex DNS A records match the GitHub Pages IPs; `www` CNAME resolves to `rizonesoft.github.io` (2026-11-08).
+- [x] Latest Pages, Build and TODO graph runs are green under `rizonesoft` (`56ac66b8e`, `200486a0b`, `99b6f1920`, 2026-11-08); no release has been dispatched since the move.
 - [x] `bash scripts/lint.sh` passes after the URL/badge/doc sweep. (2026-06-13: exit 0)
 - [x] `bash scripts/test-tooling.sh` passes (no regression from URL changes). (2026-06-13: 375/375 PASS)
 - [x] `python3 scripts/todo-graph/build.py` + `validate.py` both pass. (2026-06-13: validate 8/8, 0 warnings)
 - [x] Owner-ref scan returns only intentional historical/brand references. (2026-06-13: only this TODO + preflight runbook carry old URL as documented before-state)
-- [ ] Org-level policy still blocks autonomous coding-agent PR flow (Settings -> Copilot -> Access policies; §5/§7 evidence). (manual -- org Settings UI)
-- [/] Verify on GitHub.com (prod), authoritative DNS resolvers, and the WSL2 dev host. (WSL2 tooling verified 2026-06-13; prod + DNS: manual)
+- [/] Copilot cloud agent stays disabled for this repository. **operator-gated:** a personal-account UI setting with no API; see the section 2 item "Preserve the AI-system boundary".
+- [x] Verified against GitHub.com, the authoritative DNS server and the WSL2 dev host (2026-11-08).
 - [x] Commit: `"00-infrastructure/TODO-09: repository transfer to rizonetech complete"`
