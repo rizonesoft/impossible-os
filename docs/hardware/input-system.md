@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/04-drivers-hardware/TODO-11-input-system.md sources=include/kernel/drivers/keyboard.h,src/kernel/drivers/keyboard.c,include/kernel/drivers/mouse.h,src/kernel/drivers/mouse.c,src/kernel/main/boot_storage.c,src/kernel/main/boot_interrupts.c reviewed=2026-09-28 order=11 -->
+<!-- docs: covers=todo/04-drivers-hardware/TODO-11-input-system.md sources=include/kernel/drivers/keyboard.h,src/kernel/drivers/keyboard.c,include/kernel/drivers/mouse.h,src/kernel/drivers/mouse.c,src/kernel/main/boot_storage.c,src/kernel/main/boot_interrupts.c reviewed=2026-11-07 order=11 -->
 # Input System
 
 ## What is it?
@@ -13,7 +13,7 @@ The input system turns key presses and mouse movement from any source into chara
 
 **Mouse.** `mouse_init()` in [`mouse.c`](../../src/kernel/drivers/mouse.c) runs in deferred init from [`boot_storage.c`](../../src/kernel/main/boot_storage.c), because the PS/2 self-test can take up to two seconds. It resets the mouse, reads its device ID, sets 100 samples per second and 4 counts per millimetre, and logs `PS/2 mouse initialized (IRQ N, 100 samples/sec, 4 counts/mm)`. The device ID is read but not acted on, so the mouse is always treated as a basic three-byte, three-button device, and the wheel is ignored. The packet parser accepts a first byte only when its always-one bit is set, which recovers from most lost bytes, but it does not count or report desynchronisation.
 
-**Merging sources.** The mouse state takes relative movement from PS/2 and USB, and absolute positions from the VirtIO tablet and the VirtualBox pointer. It keeps one button slot per source class (PS/2, USB and absolute) and merges them under a lock, so a PS/2 mouse releasing a button does not release it for a USB mouse. Two USB mice share one slot, so a report from either overwrites the other's buttons.
+**Merging sources.** The mouse state takes relative movement from PS/2 and USB, and absolute positions from the VirtIO tablet and the VirtualBox pointer. It keeps one button slot for PS/2, one for absolute sources and one per USB mouse, and merges them under a lock, so a PS/2 mouse releasing a button does not release it for a USB mouse. Two USB mice share one slot, so a report from either overwrites the other's buttons.
 
 ```mermaid
 flowchart LR

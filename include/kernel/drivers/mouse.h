@@ -56,12 +56,32 @@ void mouse_merge_absolute_position(int32_t x, int32_t y);
  * the PS/2 IRQ packet commit does, without driving live port I/O or mouse_init.
  * Lets unit tests cover the PS/2+USB cross-device button OR-merge. */
 void mouse_test_set_ps2_buttons(uint8_t buttons);
+/* Test-only seam: one USB mouse's slot, unaffected by what other mice hold. */
+uint8_t mouse_test_usb_source_buttons(int usb_source);
 #endif
 
+/* USB mice tracked independently for button state. Must cover every value of
+ * xhci_device_index(); xhci_dev.c pins that with a _Static_assert. */
+#define MOUSE_USB_SOURCE_COUNT 64
+
+/* Store one mouse's buttons in slots[MOUSE_USB_SOURCE_COUNT] and return the new
+ * OR of all slots, given merged, the current OR. Pure, so the merge can be tested
+ * on private slots while real mice report; source must already be in range. */
+uint8_t mouse_usb_slot_store(uint8_t *slots, int source, uint8_t buttons, uint8_t merged);
+
 /* Apply a relative cursor delta + button state (USB HID boot-protocol mouse).
+ * usb_source identifies the mouse (its xhci_device_index()): buttons replace
+ * that mouse's slot only, and the published state is the OR of all slots, so
+ * one mouse's idle report cannot release a button held on another. Returns 0,
+ * or -1 with nothing applied when usb_source is out of range.
  * Shares the PS/2 cursor state so the compositor stays source-blind in the
  * relative-source path. dx/dy are screen-oriented (+X right, +Y down -- USB
  * HID reports Y downward already, no PS/2-style inversion). Clamps to the
  * framebuffer. Cursor state is guarded by an irqsave lock (callable from the
  * USB tick-ISR poller alongside the PS/2 IRQ and the compositor thread). */
-void mouse_update_relative(int32_t dx, int32_t dy, uint8_t buttons);
+int mouse_update_relative(int usb_source, int32_t dx, int32_t dy, uint8_t buttons);
+
+/* Release every button held by one USB mouse. Call when it stops reporting: no
+ * later report can clear its slot, so a button held at that moment would stay
+ * pressed. Returns 0, or -1 when usb_source is out of range. ISR-safe. */
+int mouse_usb_source_release(int usb_source);

@@ -1402,12 +1402,25 @@ void xhci_hid_decode_mouse(const uint8_t *report, int32_t *dx, int32_t *dy,
  * relative-source path -- when an absolute source (VirtIO tablet / VBox) is
  * present the compositor overrides this; merging those is input-coexistence
  * work in a later section. */
+_Static_assert(XHCI_MAX_DEVICES <= MOUSE_USB_SOURCE_COUNT,
+               "every xhci_device_index() needs a mouse button slot");
+
 static void xhci_hid_parse_mouse(struct xhci_device *dev)
 {
     int32_t dx, dy;
     uint8_t buttons;
     xhci_hid_decode_mouse(dev->int_in_report, &dx, &dy, &buttons);
-    mouse_update_relative(dx, dy, buttons);
+    /* Cannot fail: dev comes from devices[], and the assert above bounds it. */
+    (void)mouse_update_relative(xhci_device_index(dev), dx, dy, buttons);
+}
+
+/* Stop polling a device whose endpoint failed. A mouse also gives up its held
+ * buttons: its slot is cleared by no one else, and no further report will come. */
+void xhci_hid_stop_polling(struct xhci_device *dev)
+{
+    dev->int_in_polling = 0;
+    if (dev->hid_proto == USB_PROTO_HID_MOUSE)
+        (void)mouse_usb_source_release(xhci_device_index(dev));
 }
 
 /* Tick-mux callback (~10 ms): drain the dedicated HID event ring, deliver each
@@ -1449,7 +1462,7 @@ void xhci_hid_poll(void)
             cc = (uint8_t)((evt.status >> XHCI_TRB_CC_SHIFT) & 0xFF);
             if (cc != XHCI_TRB_CC_SUCCESS && cc != XHCI_TRB_CC_SHORT_PKT) {
                 hc->hid_ep_errors++;   /* diag: endpoint error completion */
-                dev->int_in_polling = 0;
+                xhci_hid_stop_polling(dev);
                 continue;
             }
             hc->hid_reports++;         /* diag: a report was delivered */
@@ -1483,7 +1496,7 @@ void xhci_hid_poll(void)
             /* Re-queue for the next report; on enqueue failure stop. */
             if (xhci_hid_queue_report(hc, dev) != 0) {
                 hc->hid_requeue_fails++;   /* diag: re-queue failed */
-                dev->int_in_polling = 0;
+                xhci_hid_stop_polling(dev);
             }
         }
     }
@@ -1850,6 +1863,15 @@ int xhci_device_index(const struct xhci_device *dev)
         return -1;
     return (int)(off / sizeof(devices[0]));
 }
+
+#ifdef KERNEL_TESTS
+struct xhci_device *xhci_test_device_slot(int index)
+{
+    if (index < 0 || index >= XHCI_MAX_DEVICES)
+        return NULL;
+    return &devices[index];
+}
+#endif
 
 int xhci_msc_device_count(void)
 {

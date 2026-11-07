@@ -151,6 +151,10 @@ static void test_usb_hid_mouse_decode(void)
                    "4-byte report buttons 0x05 -> left|middle");
 }
 
+/* High slots: a real device enumerates from the bottom of devices[]. */
+#define TEST_USB_MOUSE_A (MOUSE_USB_SOURCE_COUNT - 1)
+#define TEST_USB_MOUSE_B (MOUSE_USB_SOURCE_COUNT - 2)
+
 /* Input source coexistence: a relative source (USB/PS2) and an absolute source
  * (VirtIO/VBox) share one cursor. mouse_merge_absolute is edge-triggered so an
  * unchanged absolute report does not clobber relative deltas, and buttons are
@@ -166,6 +170,14 @@ static void test_usb_hid_mouse_coexist(void)
         return;
     }
 
+    /* These cases assert the published OR, so a button someone is holding on a
+     * real device right now would fail them with correct code. */
+    s = mouse_get_state();
+    if (s.buttons != 0) {
+        TEST_SKIP("a real pointer device is holding a button");
+        return;
+    }
+
     /* Absolute source positions the cursor. */
     mouse_merge_absolute(200, 150, 0);
     s = mouse_get_state();
@@ -173,7 +185,7 @@ static void test_usb_hid_mouse_coexist(void)
     TEST_ASSERT_EQ(s.y, 150, "absolute merge sets y");
 
     /* A relative USB delta applies on top of the absolute position. */
-    mouse_update_relative(5, -5, 0);
+    mouse_update_relative(TEST_USB_MOUSE_A, 5, -5, 0);
     s = mouse_get_state();
     TEST_ASSERT_EQ(s.x, 205, "USB relative dx applies after absolute");
     TEST_ASSERT_EQ(s.y, 145, "USB relative dy applies after absolute");
@@ -186,7 +198,7 @@ static void test_usb_hid_mouse_coexist(void)
 
     /* Button OR-merge: USB holds left; an idle absolute (buttons=0) report must
      * not release it. */
-    mouse_update_relative(0, 0, MOUSE_BTN_LEFT);
+    mouse_update_relative(TEST_USB_MOUSE_A, 0, 0, MOUSE_BTN_LEFT);
     mouse_merge_absolute(200, 150, 0);
     s = mouse_get_state();
     TEST_ASSERT_EQ(s.buttons, MOUSE_BTN_LEFT,
@@ -200,7 +212,7 @@ static void test_usb_hid_mouse_coexist(void)
                    "USB-held button survives an absolute move");
 
     /* USB release clears the merged button. */
-    mouse_update_relative(0, 0, 0);
+    mouse_update_relative(TEST_USB_MOUSE_A, 0, 0, 0);
     s = mouse_get_state();
     TEST_ASSERT_EQ(s.buttons, 0, "USB release clears the merged button state");
 
@@ -216,11 +228,11 @@ static void test_usb_hid_mouse_coexist(void)
 
     /* VBox feedback guard: VBox is position-only (its buttons echo the PS/2
      * mouse), so a USB-held button must NOT latch into the absolute slot. */
-    mouse_update_relative(0, 0, MOUSE_BTN_LEFT);
+    mouse_update_relative(TEST_USB_MOUSE_A, 0, 0, MOUSE_BTN_LEFT);
     mouse_merge_absolute_position(250, 175);
     s = mouse_get_state();
     TEST_ASSERT_EQ(s.buttons, MOUSE_BTN_LEFT, "VBox position-only keeps USB button");
-    mouse_update_relative(0, 0, 0);
+    mouse_update_relative(TEST_USB_MOUSE_A, 0, 0, 0);
     mouse_merge_absolute_position(250, 175);
     s = mouse_get_state();
     TEST_ASSERT_EQ(s.buttons, 0, "VBox position-only does not latch a released button");
@@ -228,16 +240,112 @@ static void test_usb_hid_mouse_coexist(void)
     /* PS/2 + USB cross-device button OR: independent holds; releasing one
      * preserves the other (the explicit PS/2+USB coexistence requirement). */
     mouse_test_set_ps2_buttons(MOUSE_BTN_LEFT);
-    mouse_update_relative(0, 0, MOUSE_BTN_RIGHT);
+    mouse_update_relative(TEST_USB_MOUSE_A, 0, 0, MOUSE_BTN_RIGHT);
     s = mouse_get_state();
     TEST_ASSERT_EQ(s.buttons, MOUSE_BTN_LEFT | MOUSE_BTN_RIGHT,
                    "PS/2 left + USB right OR-merge");
-    mouse_update_relative(0, 0, 0);
+    mouse_update_relative(TEST_USB_MOUSE_A, 0, 0, 0);
     s = mouse_get_state();
     TEST_ASSERT_EQ(s.buttons, MOUSE_BTN_LEFT, "USB release preserves PS/2 hold");
     mouse_test_set_ps2_buttons(0);
     s = mouse_get_state();
     TEST_ASSERT_EQ(s.buttons, 0, "PS/2 release clears merged buttons");
+}
+
+/* Two USB mice: each holds its own buttons, and a report from one releases only
+ * what that one held. Runs on private slots because polling is already live at
+ * test time, so the published state also carries whatever a real mouse holds. */
+static void test_usb_hid_mouse_per_device(void)
+{
+    uint8_t slots[MOUSE_USB_SOURCE_COUNT];
+    uint8_t merged = 0;
+    int i;
+
+    for (i = 0; i < MOUSE_USB_SOURCE_COUNT; i++)
+        slots[i] = 0;
+
+    merged = mouse_usb_slot_store(slots, TEST_USB_MOUSE_A, MOUSE_BTN_LEFT, merged);
+    merged = mouse_usb_slot_store(slots, TEST_USB_MOUSE_B, 0, merged);
+    TEST_ASSERT_EQ(merged, MOUSE_BTN_LEFT, "idle mouse B keeps mouse A's held left");
+
+    merged = mouse_usb_slot_store(slots, TEST_USB_MOUSE_B, MOUSE_BTN_RIGHT, merged);
+    TEST_ASSERT_EQ(merged, MOUSE_BTN_LEFT | MOUSE_BTN_RIGHT, "two mice OR-merge");
+
+    merged = mouse_usb_slot_store(slots, TEST_USB_MOUSE_A, 0, merged);
+    TEST_ASSERT_EQ(merged, MOUSE_BTN_RIGHT, "mouse A release leaves mouse B's right");
+
+    merged = mouse_usb_slot_store(slots, TEST_USB_MOUSE_B, MOUSE_BTN_MIDDLE, merged);
+    TEST_ASSERT_EQ(merged, MOUSE_BTN_MIDDLE, "a report replaces that mouse's own slot");
+
+    merged = mouse_usb_slot_store(slots, 0, MOUSE_BTN_LEFT, merged);
+    TEST_ASSERT_EQ(merged, MOUSE_BTN_LEFT | MOUSE_BTN_MIDDLE, "the lowest slot is merged too");
+    merged = mouse_usb_slot_store(slots, TEST_USB_MOUSE_B, 0, merged);
+    merged = mouse_usb_slot_store(slots, TEST_USB_MOUSE_B, 0, merged);
+    TEST_ASSERT_EQ(merged, MOUSE_BTN_LEFT, "a repeated release changes nothing");
+    merged = mouse_usb_slot_store(slots, 0, 0, merged);
+    TEST_ASSERT_EQ(merged, 0, "all mice released");
+}
+
+/* The live entry points reach the named slot and refuse a source with no slot. */
+static void test_usb_hid_mouse_source_bounds(void)
+{
+    TEST_ASSERT_EQ(mouse_update_relative(TEST_USB_MOUSE_A, 0, 0, MOUSE_BTN_LEFT), 0,
+                   "report accepted");
+    TEST_ASSERT_EQ(mouse_test_usb_source_buttons(TEST_USB_MOUSE_A), MOUSE_BTN_LEFT,
+                   "report fills the named slot");
+    TEST_ASSERT_EQ(mouse_test_usb_source_buttons(TEST_USB_MOUSE_B), 0,
+                   "report leaves another mouse's slot alone");
+
+    TEST_ASSERT_EQ(mouse_update_relative(-1, 0, 0, MOUSE_BTN_RIGHT), -1, "source -1 refused");
+    TEST_ASSERT_EQ(mouse_update_relative(MOUSE_USB_SOURCE_COUNT, 0, 0, MOUSE_BTN_RIGHT), -1,
+                   "source past the last slot refused");
+    TEST_ASSERT_EQ(mouse_usb_source_release(-1), -1, "release of source -1 refused");
+    TEST_ASSERT_EQ(mouse_usb_source_release(MOUSE_USB_SOURCE_COUNT), -1,
+                   "release past the last slot refused");
+    TEST_ASSERT_EQ(mouse_test_usb_source_buttons(TEST_USB_MOUSE_A), MOUSE_BTN_LEFT,
+                   "refused calls leave the slot alone");
+
+    TEST_ASSERT_EQ(mouse_usb_source_release(TEST_USB_MOUSE_A), 0, "release accepted");
+    TEST_ASSERT_EQ(mouse_test_usb_source_buttons(TEST_USB_MOUSE_A), 0, "release empties the slot");
+    TEST_ASSERT_EQ(mouse_usb_source_release(TEST_USB_MOUSE_A), 0, "second release accepted");
+}
+
+/* A mouse whose endpoint fails sends no release report, so stopping its polling
+ * must drop what it held. A stopped keyboard must not touch the mouse slot that
+ * shares its device index. Uses the last devices[] entry while it is inactive:
+ * the poller resolves events through active devices only. */
+static void test_usb_hid_stop_polling_releases(void)
+{
+    struct xhci_device *dev = xhci_test_device_slot(XHCI_MAX_DEVICES - 1);
+    uint8_t saved_polling, saved_proto;
+    int source;
+
+    if (!dev || dev->active) {
+        TEST_SKIP("last xHCI device slot is in use");
+        return;
+    }
+    source = xhci_device_index(dev);
+    saved_polling = dev->int_in_polling;
+    saved_proto = dev->hid_proto;
+
+    (void)mouse_update_relative(source, 0, 0, MOUSE_BTN_LEFT);
+    dev->hid_proto = USB_PROTO_HID_KEYBOARD;
+    dev->int_in_polling = 1;
+    xhci_hid_stop_polling(dev);
+    TEST_ASSERT_EQ(dev->int_in_polling, 0, "stopped keyboard no longer polls");
+    TEST_ASSERT_EQ(mouse_test_usb_source_buttons(source), MOUSE_BTN_LEFT,
+                   "stopped keyboard releases no mouse button");
+
+    dev->hid_proto = USB_PROTO_HID_MOUSE;
+    dev->int_in_polling = 1;
+    xhci_hid_stop_polling(dev);
+    TEST_ASSERT_EQ(dev->int_in_polling, 0, "stopped mouse no longer polls");
+    TEST_ASSERT_EQ(mouse_test_usb_source_buttons(source), 0,
+                   "stopped mouse releases its held button");
+
+    (void)mouse_usb_source_release(source);
+    dev->int_in_polling = saved_polling;
+    dev->hid_proto = saved_proto;
 }
 
 /* Input-source diagnostic summary formatter (usb_input_diag_format): pure
@@ -306,6 +414,12 @@ void test_register_usb_hid(void)
                             test_usb_hid_mouse_decode, TEST_CAT_STORAGE);
     test_suite_register_cat("usb-hid: input source coexistence merge",
                             test_usb_hid_mouse_coexist, TEST_CAT_STORAGE);
+    test_suite_register_cat("usb-hid: per-device mouse buttons",
+                            test_usb_hid_mouse_per_device, TEST_CAT_STORAGE);
+    test_suite_register_cat("usb-hid: mouse source bounds",
+                            test_usb_hid_mouse_source_bounds, TEST_CAT_STORAGE);
+    test_suite_register_cat("usb-hid: stopped mouse releases buttons",
+                            test_usb_hid_stop_polling_releases, TEST_CAT_STORAGE);
     test_suite_register_cat("usb-hid: input diag source summary",
                             test_usb_input_diag_format, TEST_CAT_STORAGE);
 }

@@ -186,7 +186,6 @@ Both PS/2 and USB input should work simultaneously without conflicts.
 > - Review: Codex 7x (design, test-coverage, adversarial x2, consistency, perf, re-adversarial); H+M fixed across impl+review (per-source buttons, VBox button-latch x2, PS/2 overflow-release, test gaps), 1M accepted (per-USB-device slots -> §6).
 > - Scope boundary: §5 merges PS/2/USB/VirtIO/VBox into one cursor + buffer; hot-plug of new devices is §6; input diagnostics is §7.
 > **Verified:** 2026-06-15 | review commit | 6/6 items | build OK | storage 55 kernel + 16 user-mode PASS; smoke PASS 2.52s
-> **Accepted:** [M] single USB-class button slot lets two simultaneous USB mice cross-release a held button (reason: needs per-device infra) -> XREF: 01-boot-platform/TODO-18 §6 (item: "Per-USB-device button slots in `mouse.c` ... so two USB mice don't cross-release a held button")
 > **Quality reviewed:** 2026-06-15 | Codex 7x (design, test-coverage, adversarial x2, consistency, perf, re-adversarial) | 4H+2M fixed, 1M accepted | scope: kernel-code-quality + desktop-code-quality
 
 ---
@@ -196,24 +195,25 @@ Both PS/2 and USB input should work simultaneously without conflicts.
 Detect USB keyboard/mouse plugged in after boot.
 
 > [!WARNING]
-> **Blocked on `04-drivers-hardware/TODO-10 §8` (Hot-Plug Interrupt Handling).** The "port-change event -> enumerate new device" core requires the serialized-worker enumeration that TODO-10 §8 owns (item: "Event-ring ownership: ISR only acks + records the port-change, defers enumeration to a serialized worker"). TODO-18 §1/§2 accepted exactly this ISR-context-enumeration hazard to TODO-10 §8; doing hot-plug enumeration here before §8 ships would re-introduce the in-ISR-enumerate bare-metal danger. Implement after TODO-10 §8. The per-USB-device button-slots item below is independent and can ship earlier.
+> **Blocked on `04-drivers-hardware/TODO-10 §8` (Hot-Plug Interrupt Handling).** The "port-change event -> enumerate new device" core requires the serialized-worker enumeration that TODO-10 §8 owns (item: "Event-ring ownership: ISR only acks + records the port-change, defers enumeration to a serialized worker"). TODO-18 §1/§2 accepted exactly this ISR-context-enumeration hazard to TODO-10 §8; doing hot-plug enumeration here before §8 ships would re-introduce the in-ISR-enumerate bare-metal danger. Implement after TODO-10 §8.
 
 - [/] xHCI Port Status Change Events (already in Event Ring) trigger port scan -- blocked on 04-drivers-hardware/TODO-10 §8 (serialized-worker event-ring ownership), re-checked 2026-08-14 and still fully open
 - [/] New device on port: enumerate → if HID, configure interrupt endpoint → start polling -- blocked on 04-drivers-hardware/TODO-10 §8 (serialized-worker enumeration; enumerating in-ISR here is the accepted bare-metal hazard)
 - [/] Device removed: stop polling, clean up endpoint ring -- blocked on 04-drivers-hardware/TODO-10 §8, which owns `usb_device_detach(slot)` and the Stop Endpoint / Disable Slot teardown
-- [/] Per-USB-device button slots in `mouse.c` so two USB mice don't cross-release a held button -- parked with this section, NOT blocked by TODO-10 §8
-  - The work is to aggregate USB buttons per device via a source id threaded through `mouse_update_relative`. Confirmed unshipped 2026-08-14: `src/kernel/drivers/mouse.c:165` still declares a single shared `s_usb_buttons`, and `mouse_update_relative` writes it at line 587 with no source id.
-  - It has an owner and is reachable from the other side: §5's `Accepted:` stamp routes this finding here (-> XREF: §5), so the §5 sweep finds it even while §6 is deferred as a whole. Only the section's deferral parks it; the hot-plug blocker does not apply.
+  - Stop through `xhci_hid_stop_polling()`, which also releases a held mouse button.
+- [x] Per-USB-device button slots: `mouse.c` keeps one slot per `xhci_device_index()` (`mouse_usb_slot_store`), so one USB mouse's idle report cannot release a button held on another
+  - `xhci_hid_stop_polling()` clears a mouse's slot on both poller stop paths, because no later report could. A shared slot hid this: another mouse's next report cleared it.
+  - Limit: a physically unplugged mouse is released only if its endpoint reports an error. Port-change handling is the blocked work above.
 - [/] Log: `"[USB] Hot-plug: %s on port %u"` / `"[USB] Removed: port %u"` -- blocked on 04-drivers-hardware/TODO-10 §8; the events these lines report do not exist until hot-plug enumeration ships
 - [/] Commit: `"drivers: USB HID hot-plug detection -- keyboard/mouse plug-and-play"` -- blocked on 04-drivers-hardware/TODO-10 §8, with the rest of the section
 
 **Test checkpoint:** Boot without USB keyboard. Plug in USB keyboard after desktop appears -- typing works within 1 second.
 > **Test runner:** N/A (deferred -- blocked on the usb-stack hot-plug-interrupt section) | validation: deferred with the implementation.
 > **Notes:**
-> - Deferred (no code shipped): the port-change-to-enumerate core needs the serialized-worker enumeration owned by the usb-stack hot-plug-interrupt section (still open); in-ISR enumeration here would re-introduce the accepted bare-metal hazard.
-> - Independent sub-item: per-USB-device button slots (`mouse.c`, the §5 accept target) does not depend on the hot-plug worker and can ship earlier.
+> - Deferred: the port-change-to-enumerate core needs the serialized-worker enumeration owned by the usb-stack hot-plug-interrupt section (still open); in-ISR enumeration here would re-introduce the accepted bare-metal hazard.
+> - Shipped ahead of the hot-plug core: per-USB-device button slots (`mouse.c`, the §5 accept target), which do not depend on the hot-plug worker.
 > - Scope boundary: §6 owns HID-specific hot-plug attach/detach; the event-ring ownership + serialized-worker enumeration is the usb-stack hot-plug-interrupt section.
-> **Verified:** 2026-06-15 | deferred | 0/6 items | build OK | no code shipped -- blocked, tracked (denominator corrected 2026-08-14: the section has 6 bullets, not 5)
+> **Verified:** 2026-11-07 | deferred | 1/6 items | build OK | button slots shipped through `implement-todo-item`, hot-plug still blocked (denominator corrected 2026-08-14: the section has 6 bullets, not 5)
 > **Deferred:** [M] hot-plug enumerate/teardown blocked on serialized-worker event-ring ownership (reason: infra in another domain) -> XREF: 04-drivers-hardware/TODO-10 §8 (item: "Event-ring ownership: ISR only acks + records the port-change, defers enumeration to a serialized worker" at line 200)
 
 ---

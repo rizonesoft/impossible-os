@@ -162,8 +162,14 @@ static volatile uint8_t mouse_buttons;   /* published = OR of all sources */
  * held on another (e.g. dragging with a USB mouse while a VirtIO tablet polls).
  * All written + OR-published under mouse_lock. */
 static volatile uint8_t s_ps2_buttons;
-static volatile uint8_t s_usb_buttons;
+static volatile uint8_t s_usb_buttons;   /* OR of s_usb_source_buttons[] */
 static volatile uint8_t s_abs_buttons;   /* VirtIO/VBox/Hyper-V absolute source */
+
+/* One slot per USB mouse, so an idle report from one mouse cannot release a
+ * button held on another. s_usb_buttons caches their OR, which keeps every
+ * publish O(1); the walk runs only when a slot actually changes. Guarded by
+ * mouse_lock. */
+static uint8_t s_usb_source_buttons[MOUSE_USB_SOURCE_COUNT];
 
 /* Last absolute report seen by mouse_merge_absolute -- edge detection so an
  * unchanged absolute source does not overwrite relative (USB/PS2) deltas every
@@ -210,6 +216,19 @@ static void mouse_clamp_locked(void)
 static void mouse_publish_buttons_locked(void)
 {
     mouse_buttons = (uint8_t)(s_ps2_buttons | s_usb_buttons | s_abs_buttons);
+}
+
+uint8_t mouse_usb_slot_store(uint8_t *slots, int source, uint8_t buttons, uint8_t merged)
+{
+    int i;
+
+    if (slots[source] == buttons)
+        return merged;
+    slots[source] = buttons;
+    merged = 0;
+    for (i = 0; i < MOUSE_USB_SOURCE_COUNT; i++)
+        merged = (uint8_t)(merged | slots[i]);
+    return merged;
 }
 
 static volatile uint8_t  mouse_cycle;
@@ -565,11 +584,14 @@ void mouse_merge_absolute_position(int32_t x, int32_t y)
     spin_unlock_irqrestore(&mouse_lock, flags);
 }
 
-void mouse_update_relative(int32_t dx, int32_t dy, uint8_t buttons)
+int mouse_update_relative(int usb_source, int32_t dx, int32_t dy, uint8_t buttons)
 {
     int32_t cx = (int32_t)(fb_get_width() / 2);
     int32_t cy = (int32_t)(fb_get_height() / 2);
     uint64_t flags;
+
+    if (usb_source < 0 || usb_source >= MOUSE_USB_SOURCE_COUNT)
+        return -1;
     spin_lock_irqsave(&mouse_lock, &flags);
     /* If a USB report arrives before deferred PS/2 init seeds the cursor, base
      * this relative delta on screen center -- not the (0,0) origin -- and mark
@@ -584,12 +606,38 @@ void mouse_update_relative(int32_t dx, int32_t dy, uint8_t buttons)
     mouse_x += dx;
     mouse_y += dy;
     mouse_clamp_locked();
-    s_usb_buttons = buttons;
+    s_usb_buttons = mouse_usb_slot_store(s_usb_source_buttons, usb_source, buttons,
+                                         s_usb_buttons);
     mouse_publish_buttons_locked();
     spin_unlock_irqrestore(&mouse_lock, flags);
+    return 0;
+}
+
+int mouse_usb_source_release(int usb_source)
+{
+    uint64_t flags;
+
+    if (usb_source < 0 || usb_source >= MOUSE_USB_SOURCE_COUNT)
+        return -1;
+    spin_lock_irqsave(&mouse_lock, &flags);
+    s_usb_buttons = mouse_usb_slot_store(s_usb_source_buttons, usb_source, 0,
+                                         s_usb_buttons);
+    mouse_publish_buttons_locked();
+    spin_unlock_irqrestore(&mouse_lock, flags);
+    return 0;
 }
 
 #ifdef KERNEL_TESTS
+uint8_t mouse_test_usb_source_buttons(int usb_source)
+{
+    uint64_t flags;
+    uint8_t buttons;
+    spin_lock_irqsave(&mouse_lock, &flags);
+    buttons = s_usb_source_buttons[usb_source];
+    spin_unlock_irqrestore(&mouse_lock, flags);
+    return buttons;
+}
+
 void mouse_test_set_ps2_buttons(uint8_t buttons)
 {
     uint64_t flags;

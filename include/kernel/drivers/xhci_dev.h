@@ -374,6 +374,14 @@ struct xhci_device *xhci_get_device(int index);
  * -1 if dev is not a devices[] entry. Per-device class state must key off this. */
 int xhci_device_index(const struct xhci_device *dev);
 
+/* Stop HID report polling on a device and, for a mouse, release its held buttons. */
+void xhci_hid_stop_polling(struct xhci_device *dev);
+
+#ifdef KERNEL_TESTS
+/* Test-only seam: a devices[] entry whether or not it is active. */
+struct xhci_device *xhci_test_device_slot(int index);
+#endif
+
 /* Count of active MSC devices across all controllers. */
 int xhci_msc_device_count(void);
 

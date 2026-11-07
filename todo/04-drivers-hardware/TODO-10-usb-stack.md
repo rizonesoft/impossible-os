@@ -204,6 +204,8 @@ Process xHCI Port Status Change Events (TRB type `0x22`) from the event ring. On
   - If MSC: call `blkdev_unregister(blkdev)`, trigger VFS unmount, send desktop toast: `"USB drive %c:\\ safely removed"`
   - If HID: call `usb_hid_disconnect(dev)`; PS/2 re-activates via §6
 - [ ] `usb_device_detach(slot)`: cancel all pending TRBs on all endpoints (Stop Endpoint command); Disable Slot command; free slot context
+  - For a HID device, stop through `xhci_hid_stop_polling()` first: a removed mouse sends no release, so its held button stays pressed otherwise.
+    -> XREF: 01-boot-platform/TODO-18-usb-hid-keyboard-mouse.md §6 (item: "Device removed")
 - [ ] Boot log: `[xHCI] Port %u: device connected` / `Port %u: device disconnected`
 - [ ] Publish connect/disconnect via `knf_publish` on the `Device/*` catalog states (in addition to the desktop toast), so system subscribers observe USB hot-plug through the kernel notification facility (-> XREF: D02 T16 §5).
 - [ ] Once this section lands, tell `01-boot-platform/TODO-19 §16` its concurrency window now exists so its parked xHCI command-ring + BOT serialization becomes reachable

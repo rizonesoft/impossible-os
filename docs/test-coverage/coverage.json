@@ -1,6 +1,6 @@
 {
-  "total_suites": 3576,
-  "total_assertions": 15928,
+  "total_suites": 3579,
+  "total_assertions": 15950,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_ec.c", "suites": 42, "assertions": 168},
@@ -122,7 +122,7 @@
     {"file": "test_uefi_boot.c", "suites": 54, "assertions": 123},
     {"file": "test_unwind.c", "suites": 46, "assertions": 191},
     {"file": "test_usb_boot.c", "suites": 10, "assertions": 98},
-    {"file": "test_usb_hid.c", "suites": 5, "assertions": 68},
+    {"file": "test_usb_hid.c", "suites": 8, "assertions": 90},
     {"file": "test_usermode.c", "suites": 0, "assertions": 0},
     {"file": "test_usermode_launcher.c", "suites": 209, "assertions": 889},
     {"file": "test_vfs.c", "suites": 12, "assertions": 40},
