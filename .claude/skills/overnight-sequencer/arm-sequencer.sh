@@ -319,6 +319,9 @@ if [ "${1:-}" = "--disarm" ]; then
   remove_claude_token_dropin
   reap_overnight_state
   systemctl --user daemon-reload 2>/dev/null || true
+  # The status page still read `Armed: True  Live: LIVE` five weeks after a stop:
+  # nothing refreshed it after the last writer exited.
+  python3 scripts/overnight/run-status.py . --stamp "$(date -Is)" >/dev/null 2>&1 || true
   echo "disarmed overnight sequencer (timers + watchdog + chromemcp drop-in + run state)"
   exit 0
 fi
@@ -411,6 +414,23 @@ if [ -n "$ARM_PRIMARY" ] && [ "$ARM_PRIMARY" = "$ARM_FALLBACK" ]; then
   echo "      provides no availability diversity (a primary overload hits the" >&2
   echo "      fallback identically). Consider --fallback-model sonnet." >&2
 fi
+
+# ---- A permission deny on a pipeline skill (v22, 2026-11-07) -----------------
+# `Skill(review *)` refused review-todo-section for a whole run: no section could
+# ship and every segment looked healthy. The rule is the operator's, so this names
+# it and refuses; --force does not help, because no run can get past a deny.
+if ! _denied="$(python3 "$REPO_ROOT/scripts/overnight/skill_denies.py" "$REPO_ROOT")"; then
+  {
+    echo "REFUSED to arm: a permission deny rule refuses a skill the pipeline needs."
+    printf '  %s\n' "$_denied"
+    echo "  Narrow the rule in settings.json, then confirm with one real call in a"
+    echo "  FRESH session: a running session keeps the rules it started with."
+  } >&2
+  exit 1
+fi
+
+# Advisory: a park whose checkable blocker no longer holds.
+python3 "$REPO_ROOT/scripts/overnight/stale_parks.py" --check 2>/dev/null || true
 
 # ---- Fresh breaker + a token that authenticates (2026-09-28 canary) ---------
 # An explicit arm starts clean: a finished run's backoff and no-ship streak made

@@ -601,6 +601,8 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
   - Blocker owner: -> XREF: 05-storage-filesystems/TODO-04 §16 (item: "Refuses non-first-cluster destinations" at line 408). That item shipped the REFUSAL of non-first-cluster destinations, not the cross-cluster LFN removal this needs, so the block still holds as of 2026-09-03.
 - [/] `bootcfg.exe` round-trip scenario: offline subset shipped via §11+§16 (`test_bootcfg.py`); live-boot `bootcfg.exe` deferred per [`§11`](#11-boot-entry-editor-tooling).
 - [x] Commit: `"test: boot entry test suite aggregation + status"` (commit `27c6d2c8`)
+- [ ] Boot `boot_policy.c`, `boot_history.c`, `boot_sticky.c` and `boot_entry_kind.c` through the real loader in a smoke fixture, as `SMOKE_VALID_STORE=1` does for the store parser
+  - These files share the parser's test shape: the kernel suite compiles them into a different image, so a loader-only failure stays invisible. The parser passed 6,000+ boot tests while the shipped loader read `parsed 0 entries (1 skipped)`, because nothing applied its relocations (`loader_self_relocate()`). No booted fixture exists for these four. Filed from the v22 close-out.
 
 **Test checkpoint:** Per-section unit suites already register under `TEST_CAT_BOOT` and run with `make test-boot` (or `bash scripts/test.sh SUITE=boot`); the §17 commit is pure status reconciliation -- no new test code lands here. Live-boot scenarios depend on harness infrastructure that is not in this TODO's scope; XREF'd to their owner sections above. Bare-metal pass requires the user's laptop -- not gateable from WSL. Test on: host (`python3 tools/bootcfg/test_bootcfg.py` + `python3 tools/boot-entry-validate/test_validate.py`) + QEMU TCG (`make test-boot`).
 

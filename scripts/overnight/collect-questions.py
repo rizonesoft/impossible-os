@@ -24,7 +24,15 @@ import re
 import sys
 from pathlib import Path
 
-_AWAITING_ANSWER_RE = re.compile(r"- \[/\].*Deferred:.*awaiting-answer", re.IGNORECASE)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import todo_fence as _fence  # noqa: E402  (the shared heading classifier)
+
+# Two shapes carry the token: a checklist line, and the section stamp the doctrine
+# and every live park actually write (`> **Deferred:** ... awaiting-answer`). Only
+# the first was matched, so the file read "0 open" while 38 stamps waited (v22).
+_AWAITING_ANSWER_RE = re.compile(
+    r"(?:- \[/\].*Deferred:|^\s*>\s*\*\*Deferred:\*\*).*awaiting-answer", re.IGNORECASE)
+_STAMP_PREFIX_RE = re.compile(r"^\s*>\s*\*\*Deferred:\*\*\s*", re.IGNORECASE)
 # Also match bare `- Q:` / `- Question:` bullets (no checkbox) -- the
 # todo-creator's "Questions Or Contradictions" sections use that form, and a
 # checkbox-only regex would leave the punch-list blind to them.
@@ -33,6 +41,10 @@ _QUESTION_LINE_RE = re.compile(
 _ANSWERED_CHECKBOX_RE = re.compile(r"^\s*-\s*\[[xX]\]")
 _ITEM_RE = re.compile(r"^\s*-\s*\[[ x/X]\]\s*(.*)$")
 _ANSWERS_HEADING_RE = re.compile(r"^##\s+(TODO-\S+)\s*$")
+# answers.md also uses `## Q7 (<owning TODO>): title`, the form every current
+# question takes. An unanswered one reads `A: (pending)`.
+_Q_HEADING_RE = re.compile(r"^##\s+(Q\d+\b.*)$")
+_PENDING_RE = re.compile(r"^\s*A:\s*\(pending\)", re.IGNORECASE)
 _PROPOSED_DEFAULT_RE = re.compile(r"^\s*A:\s*\(proposed default\)", re.IGNORECASE)
 _ANSWER_Q_RE = re.compile(r"^\s*-\s*Q:\s*(.*)$")
 _TODO_NN_RE = re.compile(r"^TODO-\d+-.*\.md$")
@@ -48,6 +60,8 @@ def _clean(line: str) -> str:
     Handles both stamp placements: prefix (`Deferred: <reason>. <keep>`) and
     suffix (`<keep> -- Deferred: <reason>`).
     """
+    if _STAMP_PREFIX_RE.match(line):
+        return re.sub(r"\s+", " ", _STAMP_PREFIX_RE.sub("", line)).strip()
     m = _ITEM_RE.match(line)
     text = (m.group(1) if m else re.sub(r"^\s*-\s*", "", line)).strip()
     if re.match(r"Deferred:", text, flags=re.IGNORECASE):
@@ -79,7 +93,7 @@ def collect_proposed_defaults(answers_text: str) -> list:
     """
     out, block, last_q = [], "", ""
     for line in (answers_text or "").splitlines():
-        h = _ANSWERS_HEADING_RE.match(line)
+        h = _ANSWERS_HEADING_RE.match(line) or _Q_HEADING_RE.match(line)
         if h:
             block = h.group(1)
             continue
@@ -89,6 +103,21 @@ def collect_proposed_defaults(answers_text: str) -> list:
             continue
         if _PROPOSED_DEFAULT_RE.match(line) and block:
             out.append((block, last_q or "(question text not found)"))
+    return out
+
+
+def collect_pending_questions(answers_text: str) -> list:
+    """Headings of every `## Qn` block in answers.md still reading `A: (pending)`."""
+    out, heading = [], None
+    for line in (answers_text or "").splitlines():
+        h = _Q_HEADING_RE.match(line)
+        if h:
+            heading = h.group(1).strip()
+        elif _fence.is_h2(line):
+            heading = None
+        elif heading and _PENDING_RE.match(line):
+            out.append(heading)
+            heading = None
     return out
 
 
@@ -133,6 +162,12 @@ def render(project_dir: Path, stamp: str) -> tuple[str, int]:
     answers_text = answers_file.read_text(encoding="utf-8") if answers_file.exists() else ""
     proposed = collect_proposed_defaults(answers_text)
     stale_headings = answers_heading_drift(answers_text, {f.stem for f in files})
+    pending = collect_pending_questions(answers_text)
+    total += len(pending)
+    if pending:
+        blocks.append("## todo/answers.md -- unanswered")
+        blocks.extend(f"- {q}" for q in pending)
+        blocks.append("")
 
     header = [
         f"# Questions for the operator -- {stamp}",
@@ -208,6 +243,22 @@ def _selftest() -> int:
     check("hardware-not-a-question", not any("bare-metal thing" in x for x in got["awaiting"] + got["questions"]))
     check("impl-item-skipped", not any("normal open implementation" in x for x in got["awaiting"] + got["questions"]))
     check("stamp-stripped", all("Deferred:" not in a for a in got["awaiting"]))
+
+    # v22: the section stamp is the shape every live park writes, and it did not
+    # match, so the file read "0 open" while 38 stamps waited on an answer.
+    stamp_doc = ("> **Deferred:** 2026-11-07 | awaiting-answer (Q4) ABI choice\n"
+                 "> **Deferred:** 2026-11-07 | awaiting-hardware bare metal only\n"
+                 "Prose saying awaiting-answer outside a stamp\n")
+    got = collect_file(stamp_doc)
+    check("real-stamp-captured", any("ABI choice" in a for a in got["awaiting"]))
+    check("real-stamp-only-one", len(got["awaiting"]) == 1)
+    check("real-stamp-clean", all("**Deferred" not in a for a in got["awaiting"]))
+    answers = ("## Q1 (TODO-16 s8): WNF encoding\n\nbody\n\nA: (pending)\n\n"
+               "## Q2 (TODO-21): settled\n\nA: (operator, 2026-11-07) use b\n\n"
+               "## Q3 (TODO-1): proposed\n\nA: (proposed default) keep\n\n"
+               "## Not a question\n\nA: (pending)\n")
+    pending = collect_pending_questions(answers)
+    check("pending-q-listed", pending == ["Q1 (TODO-16 s8): WNF encoding"])
 
     # bare (checkbox-less) Question bullets
     bare = collect_file("## Questions Or Contradictions\n- Question: dark-mode logo variant?\n- some prose bullet\n")

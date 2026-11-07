@@ -97,6 +97,19 @@ pushed_files() {
 # touches what the suite actually covers. An unconditional pre-push run would
 # tax every docs commit and would simply be disabled.
 TOOLING_PATHS_RE='^(scripts/lint/|scripts/todo-graph/|scripts/test-tooling\.sh|\.claude/hooks/)'
+# HOST GATES. The gates under tools/ compile kernel and loader sources, so a source
+# change can break them while the tooling trigger above stays silent; that cost
+# three red `Build` runs on 2026-11-07. About 5 s, so it needs no receipt.
+HOST_GATE_PATHS_RE='^(src/|include/|tools/)'
+if [ "${SKIP_HOST_GATES:-0}" != "1" ] && pushed_files | sort -u | grep -qE "$HOST_GATE_PATHS_RE"; then
+  echo ""
+  echo "Pre-push: kernel, loader or tools change in this push -- running the host gates."
+  if ! bash "$REPO_ROOT/scripts/host-gates.sh" "$REPO_ROOT"; then
+    echo "Pre-push: a host gate failed. CI would go red on this push (SKIP_HOST_GATES=1 to override)." >&2
+    exit 1
+  fi
+fi
+
 # A Check 7 baseline bump alone is not a tooling change. A docs section that
 # ticks a satisfied item moves the stub-lint `total`, and the sanctioned repair
 # edits only this data file -- which then pulled the whole pack in behind the

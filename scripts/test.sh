@@ -4136,6 +4136,12 @@ trap 'UTEST_SIGNALLED=1; utest_artifact_guard 143; exit 143' TERM
 # belonging to this run rather than the previous run's success.
 utest_prune_records
 
+# CI_CONTAINER=1 -- the same suites from a clean clone of HEAD in the pinned CI image.
+# Checked first and handed off whole: nothing below applies to this host's tree.
+if [ "${CI_CONTAINER:-0}" = "1" ]; then
+    exec bash "$PROJECT/scripts/ci-container.sh"
+fi
+
 # CI_PARITY=1 -- reproduce what CI runs, exactly, before code leaves the machine.
 #
 # This is a TIER, not a replacement for the KVM inner loop. KVM stays the default
@@ -4336,6 +4342,11 @@ if ! { { utest_json_identity; printf '\n'; } > "$RECORD_DIR/.identity.tmp" &&
     echo -e "${YELLOW}       Every artifact this run would publish binds to it; without it the record cannot name its own leg.${RESET}"
     exit 1
 fi
+
+# A failed build must not leave the previous run's serial log looking like this
+# run's result: a mutation control whose mutant failed -Werror read as "the tests
+# missed it" three times running (v22, 2026-11-07).
+rm -f "$TEST_LOG"
 
 # --- Step 1: Build ---
 echo -e "${CYAN}${BOLD}[TEST]${RESET} Building kernel..."

@@ -3,13 +3,14 @@
  * flags.
  *
  * The ring-3 NtSet/NtQueryInformationProcess(ProcessMitigationPolicy) handlers
- * are currently DEFERRED (both return STATUS_NOT_SUPPORTED, copying nothing):
- * reading/writing a range-only-probed ring-3 buffer via the non-fault-
- * recoverable copy_from_user/copy_to_user is an unprivileged kernel-crash /
- * corruption path (the systemic usercopy gap). These ABI definitions serve the
- * LIVE kernel-internal path -- the MIT_NO_CHILD_PROCESS enforcement set via
- * task_mitigation_apply -- and the future ring-3 API once fault-recoverable
- * usercopy exists. Design rule for when the ring-3 API re-enters: only a bit
+ * are currently DEFERRED (both return STATUS_NOT_SUPPORTED, copying nothing).
+ * copy_from_user/copy_to_user now recover a fault, but the probe is still
+ * range-only and the kernel heap sits in the low identity map, so a ring-3
+ * pointer can still name kernel memory: the query is a kernel-write primitive
+ * and the set is a one-bit kernel-read oracle. These ABI definitions serve the
+ * LIVE kernel-internal path, the MIT_NO_CHILD_PROCESS enforcement set via
+ * task_mitigation_apply, and the future ring-3 API once the probe rejects
+ * kernel addresses. Design rule for when the ring-3 API re-enters: only a bit
  * with live enforcement is accepted; reporting a dormant, unenforced
  * mitigation as active would be false security.
  */

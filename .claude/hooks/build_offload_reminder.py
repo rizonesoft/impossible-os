@@ -312,16 +312,55 @@ def _segment_invocation(seg: str):
     return _tokens_invocation(toks)
 
 
+def _skip_prefix_words(toks):
+    """Index of the word this command actually executes.
+
+    `env` is an ordinary program as far as a positional head check goes, so
+    `env $leg bash scripts/test-smoke.sh` read as "runs env" and three smoke runs
+    went past the gate that refused the same script without it (v22, live
+    2026-11-07). The runners below take their own options and then exec the rest,
+    so they are walked rather than listed as transparent words: `timeout 60` has a
+    duration operand, and `env` has assignments and an unquoted `$leg` that expands
+    to one."""
+    i = 0
+    while i < len(toks):
+        tok = toks[i]
+        if _ENV_ASSIGN_RE.match(tok) or tok in _TRANSPARENT:
+            i += 1
+            continue
+        base = tok.rsplit("/", 1)[-1]
+        if base == "env":
+            i += 1
+            while i < len(toks):
+                t = toks[i]
+                if t in ("-u", "--unset", "-C", "--chdir"):
+                    i += 2
+                elif t.startswith("-") or _ENV_ASSIGN_RE.match(t) or t.startswith("$"):
+                    i += 1
+                else:
+                    break
+            continue
+        if base == "timeout" or base == "nice" or base == "ionice" or base == "setsid":
+            i += 1
+            while i < len(toks) and toks[i].startswith("-"):
+                if toks[i] in ("-k", "--kill-after", "-s", "--signal", "-n",
+                               "--adjustment", "-c", "--class"):
+                    i += 1
+                i += 1
+            if base == "timeout":
+                i += 1           # the DURATION operand
+            continue
+        break
+    return i
+
+
 def _tokens_invocation(toks):
     """Same check over an already-tokenised command, so the WRAPPED route can
     recurse: `run-artifact.sh <label> -- bash scripts/test.sh` must still report
     the inner suite, because the caller logs that as a compliance `follow`
     event. Without the recursion the sanctioned route would look like no suite
     ran at all and offload-report's reroute-compliance count would read zero."""
-    i = 0
-    while i < len(toks) and (_ENV_ASSIGN_RE.match(toks[i])
-                             or toks[i] in _TRANSPARENT):
-        i += 1
+    i = _skip_prefix_words(toks)
     if i >= len(toks):
         return None
     head = toks[i]
@@ -603,6 +642,28 @@ def _recent_checks_runner_dispatch(root: Path) -> bool:
     return isinstance(ts, int) and (time.time_ns() - ts) <= FRESH_NS
 
 
+def _wrapper_behind_runner_prefix(text: str) -> bool:
+    """`env A=1 bash .../run-artifact.sh l -- cmd`: the wrapper is still the command
+    being run, so the `env` walk must not cost it the exemption. `bash -c` is left
+    out: its body runs first, whatever the trailing words claim."""
+    try:
+        toks = shlex.split(_normalise_continuations(text))
+    except ValueError:
+        return False
+    i = _skip_prefix_words(toks)
+    if i == 0 or i >= len(toks):
+        return False           # the plain shapes are _RUN_ARTIFACT_RE's job
+    if toks[i].rsplit("/", 1)[-1] in ("bash", "sh"):
+        i += 1
+        while i < len(toks) and toks[i].startswith("-"):
+            if "c" in toks[i]:
+                return False
+            i += 1
+    return (i < len(toks)
+            and toks[i].endswith("scripts/overnight/run-artifact.sh")
+            and "--" in toks[i + 1:])
+
+
 def _exempt_segment(text: str) -> bool:
     """True when this ONE segment may name a suite script without invoking one.
 
@@ -621,6 +682,8 @@ def _exempt_segment(text: str) -> bool:
       ONE argument and `codex-dispatch.sh` enforces argc == 1.
     """
     if _RUN_ARTIFACT_RE.search(_normalise_continuations(text)):
+        return True
+    if _wrapper_behind_runner_prefix(text):
         return True
     try:
         from _codex_dispatch import is_codex_dispatch
@@ -645,6 +708,14 @@ def _blocking_match(cmd: str):
     Judging each segment on its own keeps the exemption exactly as wide as the
     thing it excuses.
     """
+    # A leading comment is not grammar the splitter has to model. Without this, `# note`
+    # above a correctly wrapped suite call made the command unsplittable, and the
+    # fail-closed path below then refused the sanctioned route (v22, live 2026-11-07).
+    try:
+        from _codex_dispatch import drop_leading_comments
+        cmd = drop_leading_comments(cmd)
+    except Exception:
+        pass  # fail-direction: the raw text stays, and the fail-closed path judges it
     segs = _codex_segments(cmd)
     if not segs:
         # UNSPLITTABLE -> FAIL CLOSED. The screen above already proved this

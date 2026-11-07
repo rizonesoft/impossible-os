@@ -66,3 +66,5 @@ scripts/overnight/preflight-stamp.py
 # The deterministic test suite itself
 scripts/overnight/tests/
 scripts/overnight/run-liveness.sh
+scripts/overnight/stale_parks.py
+scripts/overnight/skill_denies.py

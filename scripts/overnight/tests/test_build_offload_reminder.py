@@ -445,6 +445,8 @@ def _main():
     test_v10_a_heredoc_fed_to_a_SHELL_is_executable()
     test_v10_data_heredocs_are_still_not_invocations()
     test_the_sequencer_skill_j1_block_passes_the_hook_unchanged()
+    test_v22_runner_prefixes_do_not_hide_a_suite()
+    test_v22_a_comment_line_does_not_unwrap_the_sanctioned_route()
     print("PASS: build_offload_reminder exemption + P3.4 BLOCK + dedup + lint-exempt"
           " + R2 bypass shapes + follow log + v08 argv-attribution")
 
@@ -574,6 +576,59 @@ def test_the_sequencer_skill_j1_block_passes_the_hook_unchanged():
         bare = "bash scripts/build.sh && bash scripts/test.sh QUIET=1 && bash scripts/test-smoke.sh"
         rc, out, err = _run_main(mod, bare, root)
         assert _acted(mod, rc, out, err), ("the old bare J1 chain must still be caught", rc, out, err)
+
+def test_v22_runner_prefixes_do_not_hide_a_suite():
+    mod = _load()
+    for cmd in ("env SMOKE=1 bash scripts/test-smoke.sh",
+                "env $leg bash scripts/test-smoke.sh",
+                "for leg in A=1 B=1; do env $leg bash scripts/test-smoke.sh; done",
+                "/usr/bin/env -i A=1 bash scripts/test.sh",
+                "env -u FOO bash scripts/build.sh",
+                "timeout 60 bash scripts/test.sh",
+                "timeout -k 5 60 bash scripts/test.sh",
+                "nice -n 5 bash scripts/test.sh",
+                "env A=1 timeout 60 bash scripts/test.sh",
+                "env A=1 make test-mm"):
+        assert mod._blocking_match(cmd), cmd
+    # Refusal's mirror: a runner in front of something that is not a suite, and
+    # the sanctioned wrapper behind one, must stay clean.
+    for cmd in ("env A=1 grep -n x scripts/test.sh",
+                "timeout 60 ls scripts/test.sh",
+                "env A=1 bash scripts/overnight/run-artifact.sh l -- bash scripts/test.sh",
+                "timeout 60 bash scripts/overnight/run-artifact.sh l -- bash scripts/test.sh"):
+        assert not mod._blocking_match(cmd), cmd
+
+
+def test_v22_a_comment_line_does_not_unwrap_the_sanctioned_route():
+    mod = _load()
+    wrapped = "bash scripts/overnight/run-artifact.sh ctl -- bash scripts/test.sh SUITE=fs"
+    for cmd in (f"# note\n{wrapped}",
+                f"# don't\n{wrapped}\n{wrapped}",
+                f"  # indented\n{wrapped}"):
+        assert not mod._blocking_match(cmd), cmd
+    # REFUSAL: a comment must not excuse a real bare run, nor can a comment that
+    # names the wrapper lend its exemption to the line below.
+    for cmd in ("# note\nbash scripts/test.sh",
+                "# run-artifact.sh x -- true\nbash scripts/test.sh",
+                f"# note\n{wrapped}\nbash scripts/test.sh",
+                "bash scripts/test.sh # trailing comment",
+                # Review, 2026-11-07: this `#` line starts inside a quote, so the
+                # suite call on it is live and must not go with the "comment".
+                "bash -c '\n#'; bash scripts/test.sh\n",
+                "echo '\n# x'; bash scripts/test.sh",
+                # A heredoc body's apostrophe must not flip the quote state.
+                "cat <<'E'\nit's\nE\n'\n#'; bash scripts/test.sh",
+                # Round 2: an escaped space keeps the `#` literal, a continuation makes
+                # it part of a word, and `((` means `<<` may be a shift.
+                "echo foo\\ # hi ; bash scripts/test.sh",
+                "echo a\\\n#b; bash scripts/test.sh",
+                "echo $((1<<x))\n'\nx\n#'; bash scripts/test.sh",
+                # Round 4: an inner quote is not the outer quote's end.
+                'echo "$(printf "\n#")"; bash scripts/test.sh',
+                # Round 5: an apostrophe in an inline comment opens no quote.
+                "echo ok # '\nprintf 'x\n#'; bash scripts/test.sh\n"):
+        assert mod._blocking_match(cmd), cmd
+
 
 if __name__ == "__main__":
     _main()

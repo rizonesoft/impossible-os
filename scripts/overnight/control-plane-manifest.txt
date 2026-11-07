@@ -94,3 +94,5 @@ scripts/overnight/
 scripts/overnight/run-liveness.sh
 scripts/overnight/segment-sync.sh
 scripts/overnight/deadline-check.sh
+scripts/overnight/stale_parks.py
+scripts/overnight/skill_denies.py

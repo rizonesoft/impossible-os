@@ -113,8 +113,10 @@ sbat.o: sbat.asm sbat.csv
 	$(AS) -f elf64 $< -o $@
 
 # Link as shared object with relocations preserved
+# -z defs: an undefined symbol fails the link. Without it, `memcpy` linked through a
+# GLOB_DAT slot holding 0, so any struct copy that ran would have jumped through 0.
 bootx64.so: $(OBJS) uefi.lds
-	$(LD) -shared -Bsymbolic \
+	$(LD) -shared -Bsymbolic -z defs \
 	    -T uefi.lds \
 	    -o $@ $(OBJS)
 

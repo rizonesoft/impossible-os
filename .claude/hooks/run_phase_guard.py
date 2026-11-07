@@ -198,6 +198,9 @@ def _is_self_teardown(cmd):
     if ("arm-sequencer.sh" in c or "overnight-arm.sh" in c) and "--disarm" in c:
         return True
     # Guard CLI used to fake completion or wipe the cursor (fixpoint excluded).
+    # Deliberately a whole-command substring, prose included. Narrowing it was tried
+    # and rejected at the v22 close-out: three review rounds each found a shape that
+    # reached the CLI past the narrower test, against 2 false refusals in 1,560 calls.
     if "run_phase_guard.py" in c and (" clear" in c or "phase FIXPOINT" in c):
         return True
     # Direct tampering with any guard state file.
@@ -2462,6 +2465,23 @@ def selftest():
          "executable python heredoc laundered a real teardown"),
         ('git commit -m "notes" -- a.md && systemctl --user stop overnight-x',
          True, "a real teardown beside a git message escaped"),
+        # v22 close-out: refusal shapes that broke narrower versions of this test.
+        ("python3 .claude/hooks/run_phase_guard.py clear", True,
+         "real guard clear not blocked"),
+        ("cd x && FOO=1 python3 .claude/hooks/run_phase_guard.py phase FIXPOINT",
+         True, "real phase FIXPOINT not blocked"),
+        ("python3 .claude/hooks/run_phase_guard.py \\\n clear", True,
+         "backslash-continued guard clear not blocked"),
+        ("python3 .claude/hooks/run_phase_guard.py 2>/dev/null clear", True,
+         "redirection before the verb not blocked"),
+        ("bash <<'E'\npython3 .claude/hooks/run_phase_guard.py clear\nE", True,
+         "executable heredoc guard clear not blocked"),
+        ("printf clear > v\npython3 .claude/hooks/run_phase_guard.py $(cat v)", True,
+         "verb read from a file not blocked"),
+        ("python3 .claude/hooks/run_phase_guard.py $(printf clearance | head -c 5)",
+         True, "verb cut from a longer word not blocked"),
+        ("G=.claude/hooks/run_phase_guard.py; python3 \"$G\" clear", True,
+         "guard path in a variable not blocked"),
     ):
         check(_is_self_teardown(cmd) is want, why)
 

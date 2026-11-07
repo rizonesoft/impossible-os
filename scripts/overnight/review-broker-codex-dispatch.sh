@@ -32,6 +32,12 @@ _broker_section_of() {
     local line="$1" rest m
     rest="${line#*.md}"
     m="$(printf '%s\n' "$rest" | grep -oiE "^[[:space:]]*(section[[:space:]_:-]*|§[[:space:]]*)[0-9]+" | head -1 || true)"
+    # `s3` straight after the path, the form item prompts use: the section glyph is
+    # discouraged in source, which led writers to it and dropped the leg from the
+    # envelope. Anchored, so `x86 s3 sleep` later in the prompt is not a section.
+    if [[ -z "$m" ]]; then
+        m="$(printf '%s\n' "$rest" | grep -oE "^[[:space:]]*s[0-9]+([^[:alnum:]]|$)" | head -1 | grep -oE "[0-9]+" | head -1 || true)"
+    fi
     if [[ -z "$m" ]]; then
         m="$(printf '%s\n' "$rest" | grep -oiE "(section[[:space:]_:-]*|§[[:space:]]*)[0-9]+" | head -1 || true)"
     fi

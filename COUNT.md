@@ -15,8 +15,8 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     505 |     393106 |
-| **Headers** (`.h`)    |     354 |      82502 |
+| **C sources** (`.c`)  |     505 |     393105 |
+| **Headers** (`.h`)    |     354 |      82503 |
 | **Assembly** (`.asm`) |      11 |       1281 |
 | **Subtotal**          | **870** | **476889** |
 
@@ -32,37 +32,37 @@
 
 |                                   |   Files |      Lines |
 | --------------------------------- | ------: | ---------: |
-| **Shell scripts** (`.sh`)         |     110 |     100567 |
+| **Shell scripts** (`.sh`)         |     112 |     100714 |
 | **Batch scripts** (`.bat`)        |      74 |       1054 |
 | **PowerShell** (`.ps1`)           |      18 |       3610 |
-| **Python** (`.py`)                |     325 |     126975 |
+| **Python** (`.py`)                |     334 |     128160 |
 | **JavaScript** (`.js`)            |       2 |        849 |
 | **Include fragments** (`.inc`)    |       7 |       3247 |
-| **Makefile**                      |       3 |       2203 |
+| **Makefile**                      |       3 |       2205 |
 | **Linker scripts** (`.ld`/`.lds`) |       3 |        200 |
-| **Subtotal**                      | **542** | **238705** |
+| **Subtotal**                      | **553** | **240039** |
 
 ## Documentation & Project Metadata
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     729 |     160949 |
+| **Markdown** (`.md`)        |     731 |     161122 |
 | **JSON** (`.json`)          |      23 |       3195 |
-| **YAML** (`.yml`/`.yaml`)   |      17 |       2239 |
+| **YAML** (`.yml`/`.yaml`)   |      17 |       2331 |
 | **HTML** (`.html`)          |      22 |       3271 |
 | **CSS** (`.css`)            |       1 |        458 |
 | **Config** (`.cfg`/`.conf`) |       1 |        105 |
-| **Subtotal**                | **793** | **170217** |
+| **Subtotal**                | **795** | **170482** |
 
 ## Grand Total
 
 |                                                      |    Files |       Lines |
 | ---------------------------------------------------- | -------: | ----------: |
-| **Core code + tooling**                              | **1419** |  **717313** |
-| **Supporting text + metadata**                       |  **793** |  **170217** |
-| **Written here**                                     | **2212** |  **887530** |
+| **Core code + tooling**                              | **1430** |  **718647** |
+| **Supporting text + metadata**                       |  **795** |  **170482** |
+| **Written here**                                     | **2225** |  **889129** |
 | **Vendored ([third-party](src/libs/PROVENANCE.md))** |      590 |      476283 |
-| **All lines in tree**                                | **2802** | **1363813** |
+| **All lines in tree**                                | **2815** | **1365412** |
 
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,15 +77,15 @@
 
 |                       |         Linux |     Windows |        Impossible OS |
 | --------------------- | ------------: | ----------: | -------------------: |
-| **All lines in tree** |   ~28,000,000 | ~50,000,000 |            1,363,813 |
+| **All lines in tree** |   ~28,000,000 | ~50,000,000 |            1,365,412 |
 | **Developers**        | ~1,000 active | ~5,000 peak |                    1 |
-| **Time span**         |      33 years |    40 years | 8 month(s), 5 day(s) |
+| **Time span**         |      33 years |    40 years | 8 month(s), 6 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 717,313 lines
-> written here imply **106 developers** working for **8 month(s), 5 day(s)**.
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 718,647 lines
+> written here imply **106 developers** working for **8 month(s), 6 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-11-07 16:37 · commit `c828eef67`*
+*Last updated: 2026-11-07 18:58 · commit `8ce46cd94`*

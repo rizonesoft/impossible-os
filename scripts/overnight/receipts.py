@@ -259,6 +259,38 @@ def check_smoke(project: Path, markers: str = SMOKE_MARKERS_DEFAULT
     return True, f"smoke green over current inputs+image ({key[:12]})"
 
 
+J1_LABELS = ("j1-build", "j1-test", "j1-smoke")
+
+
+def j1_verdict_problem(project: Path) -> str | None:
+    """Why the J1 chain does not prove this tree green, or None if it does:
+    every leg finished with exit 0 over the current build inputs, smoke last."""
+    key = build_input_key(project)
+    last_epoch = 0
+    for label in J1_LABELS:
+        try:
+            v = json.loads(
+                (project / f".claude/state/artifact-verdicts/{label}.json").read_text())
+        except (OSError, ValueError):
+            v = None  # fail-direction: no record refuses just below
+        if not isinstance(v, dict):
+            return f"no {label} verdict; run the J1 chain through run-artifact.sh"
+        if v.get("state") != "complete":
+            return f"{label} has not finished"
+        if v.get("exit") != 0:
+            return f"{label} exited {v.get('exit')}; stop at the first non-zero verdict"
+        if key is None or v.get("build_input_key") != key:
+            return f"{label} ran over different build inputs; re-run the J1 chain"
+        if int(v.get("epoch") or 0) < last_epoch:
+            return f"{label} finished before the leg it follows; run smoke last"
+        # The inputs alone do not name what booted: a later rebuild or a clobbered
+        # image has the same inputs, and recording here would call it smoke-tested.
+        if label == "j1-smoke" and v.get("image_key") != image_key(project):
+            return "the built image changed after j1-smoke; re-run the J1 chain"
+        last_epoch = int(v.get("epoch") or 0)
+    return None
+
+
 def record_rollover(project: Path) -> int:
     """J1: record the FULL rollover receipt set (build + suite 'all' + smoke) over
     the CURRENT tree/image in ONE shot, so all three bind to the same final state.
@@ -268,7 +300,15 @@ def record_rollover(project: Path) -> int:
     re-stales the smoke receipt. Discovering that reactively cost the 2026-07-14
     canary ~3 refuse-fix-refuse rollover attempts. Contract: run build -> test
     (suite all) -> smoke with SMOKE LAST (no rebuild after it), THEN call this
-    once. Returns nonzero if any leg's receipt could not be recorded."""
+    once. Returns nonzero if any leg's receipt could not be recorded.
+
+    READS THE VERDICTS FIRST (v22, 2026-11-07). The receipts bind to inputs and
+    take no result, so `FAIL: 1 of 35938` was followed by `rollover receipt set
+    recorded` and `rollover VERIFIED`, with main carrying the failure."""
+    why = j1_verdict_problem(project)
+    if why:
+        print(f"rollover receipt set NOT recorded: {why}", file=sys.stderr)
+        return 1
     rc = 0
     if record_build(project) != 0:
         rc = 1

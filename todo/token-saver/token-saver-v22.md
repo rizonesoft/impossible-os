@@ -1,5 +1,7 @@
 # Token Saver v22 -- Cost Findings (opened 2026-11-06)
 
+> **CLOSED 2026-11-07. Successor: [v23](token-saver-v23.md).** 4 filed: 0 resolved, 1 rejected, 0 not reproduced, 3 carried. The combined split is in [improvements v22](../overnight-runner-improvements/overnight-runner-improvements-v22.md).
+
 Cost and token findings from the run armed after the 2026-11-06 close-out of [v21](token-saver-v21.md). CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. The close-out that follows the next stop triages every item, verifies it against the tree as it is then, and records a verdict for every one.
 
 **Why findings land here instead of being fixed.** Cost machinery is control plane (`.claude/hooks/**`, `scripts/overnight/**`) or receipt surface, both off-limits unattended. Record the finding in the same turn it is observed, then advance.
@@ -13,13 +15,17 @@ Cost and token findings from the run armed after the 2026-11-06 close-out of [v2
 ## Carried forward from v21
 
 - [ ] CONTEXT GROWTH is the dominant run cost: settle the two levers with an armed A/B, not arithmetic ([v20](token-saver-v20.md), [v21](token-saver-v21.md))
+  - **VERDICT** CARRIED: still needs an armed cycle with a rotation threshold near 250K. New data point, not a peak: end-of-segment context over 20 segments read p50 231K, p90 378K, max 532K. v20's figures are per-turn peaks, so the two are not comparable. Settled by that A/B on cost per shipped section, which this cycle could not give because it shipped no sections.
   - BASELINE (v20, 23 sections of 20+ turns): context floor median 71K tokens, p50 312K, p90 395K, max 418K, resident share 24%; estimated main-loop spend ~$302 at list prices, 63% cache reads, 22% writes, 15% output.
   - Levers: (a) trim `CLAUDE.md` (~23K of the 71K floor; subagents already skip it where safe); (b) rotate earlier, trading p90 context against the re-orientation cost of a relaunch. Settled by one cycle with a rotation threshold near 250K, compared on cost per shipped section.
 - [ ] `general-purpose` and `Explore` still inherit the session model; each needs its own replay task set before a Sonnet pin ([v20](token-saver-v20.md) model migration, [v21](token-saver-v21.md))
+  - **VERDICT** CARRIED: each still needs a replay task builder before a pin. The run dispatched neither (3 agent dispatches in 21 logs), so the saving remains interactive only. Settled by building the two builders.
   - `agent-replay.py` has builders only for `kernel-quality-auditor` and `git-historian`. `Explore` needs locate-a-symbol tasks with a grep oracle; `general-purpose` needs tasks built from real interactive dispatch shapes. The run dispatched neither in v20 or v21, so the saving is interactive only.
-- [ ] Haiku 5.5 candidate: `todo-validation-mapper` only, on its own replay PASS and only if its job proves near mechanical ([v21](token-saver-v21.md))
+- [-] Haiku 5.5 candidate: `todo-validation-mapper` only, on its own replay PASS and only if its job proves near mechanical ([v21](token-saver-v21.md))
+  - **VERDICT** REJECTED: below the depth it warrants. 0 dispatches of `todo-validation-mapper` this cycle, and scripts already own its mechanical checks, so a replay builder would cost more than the move could save.
   - It needs a task builder with a deterministic oracle first, and scripts already do the purely mechanical checks, so it may not qualify. `gh-query-runner` moved at the v21 close-out (20/20 on both; $0.23 against $4.10). `git-historian` stays on Sonnet by operator decision: its replay passed (20/20; $0.23 against $4.30) but covers only commit lookup, not regression judgment. `xref-dependency-mapper` and `ssdt-auditor` were dropped: a miss there is not caught by verifying what they report. Haiku is for near-mechanical jobs only; a replay pass alone does not move an agent.
 - [ ] Does medium effort hold quality? Writer and all 21 agents moved to medium by operator decision on 2026-11-06
+  - **VERDICT** CARRIED: every segment ran at medium, but the comparison needs findings per shipped section, and 0 sections shipped. `kernel-quality-auditor` had 0 dispatches, so the watch item got no data. Settled by the first cycle that ships sections.
   - Compare findings per section and post-ship regressions against the v21 baseline. Metrics records carry the effective effort. The `kernel-quality-auditor` on Opus at medium is the one to watch first, since it is the sole SMP net among the agents.
 
 ## Standing measurement obligations

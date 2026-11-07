@@ -752,13 +752,13 @@ static NTSTATUS NtQueryInformationProcess_handler(uint64_t a1, uint64_t a2,
     case ProcessMitigationPolicy:
         /* Ring-3 query DEFERRED (the set path above defers for the mirror
          * reason): writing the result to a caller-supplied buffer (or
-         * ReturnLength) needs PTE-aware, fault-recoverable usercopy.
+         * ReturnLength) needs a probe that rejects kernel addresses.
          * ProbeForWrite is range-only (address < MM_USER_PROBE_ADDRESS) and the
          * kernel heap is identity-mapped inside that window, so copy_to_user to
-         * an aligned kernel address would corrupt kernel state -- the systemic
-         * usercopy gap. The MIT_NO_CHILD_PROCESS policy is enforced
-         * kernel-internally (task_mitigation_apply); both ring-3 handlers land
-         * with the fault-recoverable usercopy. */
+         * an aligned kernel address would corrupt kernel state. Recovering a
+         * fault does not help, since that write does not fault. The
+         * MIT_NO_CHILD_PROCESS policy is enforced kernel-internally
+         * (task_mitigation_apply); both ring-3 handlers land with that probe. */
         return STATUS_NOT_SUPPORTED;
     default:
         return STATUS_INVALID_INFO_CLASS;
@@ -871,15 +871,14 @@ static NTSTATUS NtSetInformationProcess_handler(uint64_t a1, uint64_t a2,
         return quota_policy_set(t, &limits, is_ex, privileged);
     }
     case ProcessMitigationPolicy:
-        /* Ring-3 SET DEFERRED (same reason as the query above): reading the
-         * caller's policy buffer needs PTE-aware, fault-recoverable usercopy.
-         * ProbeForRead is range-only and copy_from_user is not fault-safe, so
-         * an aligned, in-range but UNMAPPED buffer would take a kernel-mode
-         * page fault (an unprivileged ring-3 crash/DoS) instead of returning an
-         * error -- the systemic usercopy gap. The mitigation_flags field +
+        /* Ring-3 SET DEFERRED (same reason as the query above): copy_from_user
+         * now recovers a fault, but ProbeForRead is still range-only, so an
+         * in-range pointer into the low identity map reads kernel memory back
+         * as policy bits, which NtCreateProcess then reveals as a one-bit
+         * oracle. The read needs a probe that rejects kernel addresses. The
+         * mitigation_flags field +
          * MIT_NO_CHILD_PROCESS enforcement + fork inheritance ship and are set
-         * via the kernel-internal task_mitigation_apply; the ring-3 setter
-         * lands with the fault-recoverable usercopy. */
+         * via the kernel-internal task_mitigation_apply. */
         return STATUS_NOT_SUPPORTED;
     default:
         return STATUS_INVALID_INFO_CLASS;

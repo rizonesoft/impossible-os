@@ -29,6 +29,12 @@ CASES = [
     (HEAD + "section 59: section 55 is the parent", "59"),
     # No marker after the path: fall back to the first mention on the line.
     (HEAD + "round 3 (section 12)", "12"),
+    # v22: `s3` straight after the path, the form item prompts use.
+    (HEAD + "s3 round 2", "3"),
+    (HEAD + "s12: item fix", "12"),
+    # REFUSAL: only straight after the path, and only as its own word.
+    (HEAD + "reviews x86 s3 sleep", ""),
+    (HEAD + "sum3 of it", ""),
     # Nothing -> empty (the manifest entry then carries no section key).
     (HEAD + "no marker at all", ""),
 ]

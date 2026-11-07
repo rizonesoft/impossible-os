@@ -440,7 +440,11 @@ git fetch -q origin main && [ -z "$(git log --oneline @{u}..HEAD)" ] && echo "PU
   ```
   Each step goes through `run-artifact.sh` (the build-offload hook refuses the
   bare scripts in SECTIONS), in this order, SMOKE LAST, with no rebuild after it.
-  Stop at the first non-zero verdict.
+  Stop at the first non-zero verdict, and issue the steps one call at a time:
+  parallel issue is how a red `j1-test` reached a recorded receipt on 2026-11-07.
+  `record-rollover` now reads each leg's verdict from
+  `.claude/state/artifact-verdicts/` and refuses unless all three exited 0
+  over the current build inputs, smoke last, and the image is the one smoke booted.
   Then run `python3 .claude/hooks/run_phase_guard.py rollover`:
   - **VERIFIED** (clean tree incl. untracked, nothing unpushed, todo-graph
     rebuild OK, content-bound build + test + smoke receipts valid, no
@@ -510,7 +514,11 @@ git fetch -q origin main && [ -z "$(git log --oneline @{u}..HEAD)" ] && echo "PU
     - **no owning TODO can exist** (bare metal, VirtualBox/WHPX, external
       hardware, an operator decision) -> say so explicitly in the item text with
       the word **`operator-gated`**, so the park is searchable and honestly
-      states that only a human will ever clear it.
+      states that only a human will ever clear it. Park the CHECK, not the item:
+      code a run can write stays open, and only its final hardware run is
+      operator-gated. A decision goes in `todo/answers.md` with an
+      `awaiting-answer` token, because that is the only place it reaches the
+      operator (measured 2026-11-07: the label hid eleven unasked decisions).
 
     **This is a QUALITY BAR, not a checkable rule -- do not expect a gate, and do
     not invent one.** A detector for "parked without an owner" was built on
@@ -549,6 +557,15 @@ git fetch -q origin main && [ -z "$(git log --oneline @{u}..HEAD)" ] && echo "PU
   (items across sections), so progress is visible without a gate.
 
 ### 7. ADVANCE (`phase ADVANCE`)
+
+- **Read CI and the stale parks first:** `python3 scripts/overnight/ci-check.py .`
+  and `python3 scripts/overnight/stale_parks.py --check`. A drain pushes from here
+  without passing through SECTIONS, where the CI read used to live: on 2026-11-07
+  five drain commits went out while `Build` was red on the first. The second names
+  parks whose outage has ended or whose byte count now fits; re-judge those first.
+- **A bookkeeping flip to `[x]` is a ship claim.** Leave the row `[/]` until the
+  review has run, even when every item is done. Select a bulk TODO edit by section,
+  never by line range, and print the count against what you read.
 
 - Append a one-line Run Log entry to `docs/overnight/run-log.md` (date, cursor,
   sections shipped, deferrals) -- NOT to the doctrine file (the log is archived

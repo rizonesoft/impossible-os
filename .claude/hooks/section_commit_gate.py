@@ -619,7 +619,73 @@ def _segment_is_git_commit(seg_tokens: list[str]) -> tuple[bool, bool]:
             if tok.startswith("--no-verify="):
                 has_no_verify = True
                 break
+            # A clustered short flag: `-qn`, `-an`, `-nm subject`. Letters after
+            # one that takes a value belong to that value (`-mn` is a message).
+            if tok.startswith("-") and not tok.startswith("--") and len(tok) > 2:
+                for ch in tok[1:]:
+                    if ch == "n":
+                        has_no_verify = True
+                        break
+                    if ch in "mFcCtSu":
+                        break
+                if has_no_verify:
+                    break
     return (True, has_no_verify)
+
+
+def _script_tokens(cmd: str) -> list[str]:
+    """Tokens of a whole script, with its commands separated. NOTHING IS REMOVED.
+
+    shlex treats an unquoted newline as whitespace and leaves `;` glued to its word,
+    so `git commit -F f` and a later `grep -n` read as ONE commit carrying `-n` (v22,
+    live 2026-11-07). This only adds separators. An earlier version also dropped
+    heredoc bodies and comments, and review found commands it hid each way (a quoted
+    `<<EOF`, `$((1<<x))` with a matching line, `foo\\ # hi ; git commit -n`). Refusing
+    a heredoc that mentions `git commit -n` costs one retry; hiding a commit does not.
+
+    A line that will not tokenize alone, such as an apostrophe in a heredoc body, used
+    to make the whole script read as no commit at all. Now only that line is skipped.
+    """
+    _ensure_crc()  # puts this directory on sys.path
+    from _codex_dispatch import has_unmodelled_quoting
+    src = cmd
+    # ALLOWLIST, after four review rounds: a script with substitutions, `(` or
+    # `$'...'` keeps HEAD's reading, one token run. In `git commit -m "x$(printf "a;b")"
+    # -n` the inner quote is not the outer quote's end, and that `-n` is real.
+    if not has_unmodelled_quoting(cmd):
+        out, quote, j, n = [], None, 0, len(cmd)
+        while j < n:
+            ch = cmd[j]
+            if quote:
+                out.append(ch)
+                if ch == "\\" and quote == '"' and j + 1 < n:
+                    out.append(cmd[j + 1])
+                    j += 1
+                elif ch == quote:
+                    quote = None
+            elif ch in "'\"":
+                quote = ch
+                out.append(ch)
+            elif ch == "\\" and j + 1 < n:
+                out.append(" " if cmd[j + 1] == "\n" else ch + cmd[j + 1])
+                j += 1
+            elif ch in "\n;":
+                out.append(" ; ")
+            else:
+                out.append(ch)
+            j += 1
+        src = "".join(out)
+    try:
+        return shlex.split(src, posix=True, comments=False)
+    except ValueError:
+        pass
+    toks: list[str] = []
+    for line in cmd.replace("\\\n", " ").split("\n"):
+        try:
+            toks += shlex.split(line, posix=True, comments=False) + [";"]
+        except ValueError:
+            continue
+    return toks
 
 
 def _bash_is_git_commit(cmd: str) -> tuple[bool, bool]:
@@ -630,10 +696,7 @@ def _bash_is_git_commit(cmd: str) -> tuple[bool, bool]:
     """
     if not isinstance(cmd, str) or not cmd.strip():
         return (False, False)
-    try:
-        toks = shlex.split(cmd, posix=True, comments=False)
-    except ValueError:
-        return (False, False)
+    toks = _script_tokens(cmd)
     if not toks:
         return (False, False)
     saw_commit = False

@@ -152,7 +152,7 @@ fi
 TODO_STAGED="$REPO_ROOT/scripts/todo-staged-check.py"
 if [ -f "$TODO_STAGED" ]; then
     if ! python3 "$TODO_STAGED"; then
-        echo -e "\033[31mPre-commit: over-cap TODO checklist item(s) in this commit\033[0m"
+        echo -e "\033[31mPre-commit: TODO staged-change check refused this commit (reason above)\033[0m"
         echo "  Opt-out (last resort): SKIP_TODO_STAGED_CHECK=1 git commit ..."
         exit 1
     fi

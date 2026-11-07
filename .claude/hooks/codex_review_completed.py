@@ -637,6 +637,7 @@ _TODO_PATH_RE = re.compile(r"(?<![\w/-])todo/[\w./-]+TODO-\d[\w./-]*\.md")
 # 3 refused commits and 3 redundant Codex dispatches, ~15 min. Separators are now
 # whitespace, hyphen, underscore, or colon.
 _SECTION_RE = re.compile(r"(?:§\s*|section[\s\-_:]+)(\d+)", re.IGNORECASE)
+_SECTION_AFTER_PATH_RE = re.compile(r"\.md\s+s(\d+)\b")
 
 # Self-summary preambles that bias the reviewer toward agreement
 # (CONSENSAGENT ACL-2025). Detected on the first ~10 non-empty lines
@@ -770,7 +771,8 @@ def _detect_todo_path(prompt: str, root: Path) -> tuple[str, str]:
             f"will not match a non-existent path.\n"
         )
     section = ""
-    sm = _SECTION_RE.search(prompt)
+    # `s3` straight after the path counts too, matching the broker's _broker_section_of.
+    sm = _SECTION_RE.search(prompt) or _SECTION_AFTER_PATH_RE.search(prompt)
     if sm:
         section = f"§{sm.group(1)}"
     return (chosen, section)

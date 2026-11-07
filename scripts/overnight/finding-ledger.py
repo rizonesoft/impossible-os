@@ -8,7 +8,7 @@ session looks the finding up instead of re-classifying it. A lookup MISS
 means the finding (or the content it targets) is genuinely new.
 
   finding-ledger.py id     <kind> <severity> <file:line> <title...>
-  finding-ledger.py record <kind> <severity> <file:line> --decision fix|reject|accept
+  finding-ledger.py record <kind> <severity> <file:line> --decision fix|reject|accept [--section N] [--round N]
                      --todo PATH --evidence "<text>" [--class <defect-class>] <title...>
                      (--todo + --evidence are REQUIRED: a disposition without the
                      section it belongs to and its reason cannot be reused -- I4)
@@ -41,6 +41,9 @@ import time
 from pathlib import Path
 
 LEDGER_REL = ".claude/state/finding-triage.jsonl"
+# The live ledger keeps 500 entries for lookups, about three days at site-review
+# rates, so yield per round was unmeasurable. What it trims lands here untouched.
+ARCHIVE_REL = ".claude/state/finding-triage-archive.jsonl"
 MAX_ENTRIES = 500
 
 
@@ -76,6 +79,10 @@ def load(root: Path) -> list:
 def save(root: Path, entries: list) -> None:
     p = root / LEDGER_REL
     p.parent.mkdir(parents=True, exist_ok=True)
+    overflow = entries[:-MAX_ENTRIES]
+    if overflow:
+        with (root / ARCHIVE_REL).open("a", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(e) + "\n" for e in overflow))
     p.write_text("\n".join(json.dumps(e) for e in entries[-MAX_ENTRIES:]) + "\n",
                  encoding="utf-8")
 
@@ -137,6 +144,15 @@ def main(argv) -> int:
         i = rest.index("--todo")
         todo = rest[i + 1]
         rest = rest[:i] + rest[i + 2:]
+    section = review_round = None
+    if "--section" in rest:
+        i = rest.index("--section")
+        section = rest[i + 1]
+        rest = rest[:i] + rest[i + 2:]
+    if "--round" in rest:
+        i = rest.index("--round")
+        review_round = rest[i + 1]
+        rest = rest[:i] + rest[i + 2:]
     title = " ".join(rest)
     fid = finding_id(root, kind, severity, loc, title)
 
@@ -167,7 +183,7 @@ def main(argv) -> int:
         entries.append({"id": fid, "kind": kind, "severity": severity,
                         "loc": loc, "title": title[:300],
                         "decision": decision, "class": dclass,
-                        "todo": todo,
+                        "todo": todo, "section": section, "round": review_round,
                         "evidence": (evidence or "")[:1000],
                         "epoch": int(time.time())})
         save(root, entries)

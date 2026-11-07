@@ -944,6 +944,10 @@ No external dependencies (stdlib only, Pillow optional for JPEG). Negative test 
 
 ## Local CI Hooks
 
+**Clean-container tier.** `CI_CONTAINER=1 bash scripts/test.sh` runs lint, a clean build and the CI-parity suite from a clean copy of HEAD inside the image `build.yml` pins; `bash scripts/ci-container.sh --tooling` adds the tooling pack. It reads its install steps out of the workflow, so it cannot drift from what CI installs, and it refuses if a step is missing. It tests HEAD, not the working tree, so commit first. Output lands in `build/ci-container.log`.
+
+**Host gates on push.** When a push touches `src/`, `include/` or `tools/`, `.githooks/pre-push` runs `scripts/host-gates.sh` (about 5 s), the gates under `tools/` that compile kernel and loader sources. `SKIP_HOST_GATES=1` overrides it.
+
 ### Install path
 
 One command configures every git hook this repo ships:

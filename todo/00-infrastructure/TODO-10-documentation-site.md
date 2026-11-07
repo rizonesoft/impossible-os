@@ -83,7 +83,7 @@ file_patterns:
 | 💎  |  30   | §30 SDK release docs and API reference                                   | §29, D12 T06 §2, D12 T06 §8 |  [/]   |
 | 💎  |  31   | §31 Docs search quality and automated accessibility audit                | §25                         |  [x]   |
 | ⭐  |  32   | §32 Review-class nets: fail direction and bounded waits in site tooling  | §28, §29                    |  [x]   |
-| 💎  |  33   | §33 Docs search typo tolerance and wider accessibility audit             | §31                         |  [/]   |
+| 💎  |  33   | §33 Docs search typo tolerance and wider accessibility audit             | §31                         |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -1479,17 +1479,15 @@ Promotion of two review classes into automation under the reviewer-to-automation
 
 §31's post-ship parity review (2026-09-30) compared the shipped search and audit with MkDocs Material, Sphinx and Algolia DocSearch. Two gaps a reader would hit were left: search has no tolerance for a misspelled term, and the browser audit covers the docs pages only, in the default colour mode.
 
-- [/] Typo tolerance: a term that matches nothing is retried at edit distance 1 (terms of 5 or more letters) as the lowest ranking tier, and the results page offers "Did you mean" for it
-- [/] Audit the landing pages under `gh-pages/` (home, 404, design mockup, error pages) with the same axe, skip-link and focus checks as the docs pages
-- [/] Audit the docs pages under `forced-colors: active` and `prefers-reduced-motion: reduce` emulation, each with a planted control that must fail
-- [/] Judge focus indicators from rendered pixels: per focus-style signature, compare an unfocused and a focused screenshot and require a 3:1 change over the perimeter, replacing the computed-style colour model
+- [ ] Typo tolerance: a term that matches nothing is retried at edit distance 1 (terms of 5 or more letters) as the lowest ranking tier, and the results page offers "Did you mean" for it
+- [ ] Audit the landing pages under `gh-pages/` (home, 404, design mockup, error pages) with the same axe, skip-link and focus checks as the docs pages
+- [ ] Audit the docs pages under `forced-colors: active` and `prefers-reduced-motion: reduce` emulation, each with a planted control that must fail
+- [ ] Judge focus indicators from rendered pixels: per focus-style signature, compare an unfocused and a focused screenshot and require a 3:1 change over the perimeter, replacing the computed-style colour model
   - That model accepts no layered indicator: a ring drawn over a permanent inset shadow is rejected against the control's own background (§31 post-ship review). Keep the 18-plant control and add this layered case as a must-pass.
-- [/] Tests: a harness case for a misspelled term and its suggestion; the control reports a planted forced-colors defect
-- [/] Commit: `"site: search typo tolerance and wider accessibility audit"`
+- [ ] Tests: a harness case for a misspelled term and its suggestion; the control reports a planted forced-colors defect
+- [ ] Commit: `"site: search typo tolerance and wider accessibility audit"`
 
-> **Deferred:** [M] post-ship review cannot run: a permission rule refuses `Skill(review-todo-section)`, so all six items are parked behind it, and the implementation sits in `ca822968f`, reverted by `6bf0f5e15` to keep unreviewed code off `main`'s tree -> XREF: todo/overnight-runner-improvements/overnight-runner-improvements-v22.md (item: "A permission rule refuses review-todo-section and wedges every section ship")
-
-To resume once the skill runs: `git revert 6bf0f5e15`, flip these items back, then run the post-ship review.
+> **Resume:** the implementation is finished and waits on its post-ship review. The review was refused by a permission rule on 2026-11-07, and that rule was narrowed the same day. Run `git revert 6bf0f5e15` to restore `ca822968f`, then run the post-ship review. The patch is also at `.claude/state/deferred-todo10-s33.patch`.
 
 **Test checkpoint:** searching `interupt` on the local build lists the interrupt pages and suggests `interrupt`; the audit reports a planted forced-colors defect and passes the landing pages. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
 

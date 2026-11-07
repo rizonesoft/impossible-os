@@ -582,6 +582,27 @@ def is_codex_dispatch(cmd):
     return False
 
 
+# Constructs with their own quoting, nesting or comment rules. After review kept finding
+# new shapes, a scanner acts only on scripts free of all of them (v22 close-out).
+_UNMODELLED_QUOTING = ("$(", "`", "${", "(", "$'", '$"', "#")
+_LEADING_COMMENTS_RE = re.compile(r"\A(?:[ \t]*(?:#[^\n]*)?\n)+")
+
+
+def has_unmodelled_quoting(cmd):
+    return any(tok in cmd for tok in _UNMODELLED_QUOTING)
+
+
+def drop_leading_comments(cmd):
+    """`cmd` without the comment and blank lines before its first command.
+
+    Only those. Nothing can be open before the first command, so they are certain to
+    be comments and need no parsing. Five review rounds broke every wider version: a
+    later line that starts with `#` can be inside a quote opened by anything above it,
+    even by an apostrophe in an inline comment (v22 close-out).
+    """
+    return _LEADING_COMMENTS_RE.sub("", cmd, count=1)
+
+
 def command_segments(cmd):
     """Split `cmd` into shell segments of RAW SOURCE TEXT, each classified as a
     Codex dispatch. Returns `[(raw_text, is_codex), ...]`, or `[]` when the

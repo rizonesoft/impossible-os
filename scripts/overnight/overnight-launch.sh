@@ -475,6 +475,10 @@ OUTCOME_JSON="$(python3 "$SCRIPT_DIR/run-outcome.py" "$PROJECT_DIR" \
   --run-secs "$(( $(date +%s) - RUN_START_EPOCH ))" \
   ${SNOOZED_ARG[@]+"${SNOOZED_ARG[@]}"} 2>>"$REPORT" || true)"
 echo "run outcome: ${OUTCOME_JSON:-unavailable}" >> "$REPORT"
+# Refresh the status page at EVERY segment end. It used to be written only on the
+# deadline and fixpoint stop paths, so an ordinary run left it weeks stale (last
+# written 2026-09-30 while the 2026-11-07 run rotated 20 times).
+python3 "$SCRIPT_DIR/run-status.py" "$PROJECT_DIR" --stamp "$(date -Is)" >/dev/null 2>&1 || true
 # NO-SHIP STREAK (2026-07-31; outcome-aware + extracted 2026-08-11). Feeds
 # deadline-check.sh's abort. The rules and the incident that reshaped them (a
 # verified-rollover rotation counted as a dead segment, and the breaker stopped

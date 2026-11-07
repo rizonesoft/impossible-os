@@ -46,7 +46,33 @@ try:
         }))
 except Exception:
     pass
+# Per-label verdicts, because last-artifact.json holds only the newest step and
+# `receipts.py record-rollover` must read all three J1 legs. One file per label, so a
+# wrapper can never read and rewrite another label's result. Marked running first, so
+# an unfinished or killed step can never read as its previous green; if that mark
+# cannot be written, the old verdict goes rather than stands.
+path = os.path.join(".claude/state/artifact-verdicts",
+                    "".join(c if c.isalnum() or c in "-_" else "_" for c in sys.argv[1]) + ".json")
+try:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w") as fh:
+        json.dump({"state": "running", "exit": None, "epoch": int(time.time())}, fh)
+    os.replace(tmp, path)
+except Exception:
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass  # fail-direction: nothing to remove, and no record refuses at rollover
+    except OSError:
+        # A J1 leg must not run while its old green stands: a failure here could not
+        # be recorded either, and that green would then pass `record-rollover`.
+        sys.exit(3 if sys.argv[1].startswith("j1-") else 0)
 PY
+if [ $? -eq 3 ]; then
+  echo "run-artifact: cannot clear the previous $LABEL verdict; refusing to run it" >&2
+  exit 3
+fi
 
 "$@" > "$ART" 2>&1
 RC=$?
@@ -55,7 +81,7 @@ ls -1t "$ART_DIR"/*.log 2>/dev/null | tail -n +41 | while IFS= read -r old; do
   rm -f "$old"
 done
 
-python3 - "$LABEL" "$RC" "$ART" <<'PY'
+RUN_ARTIFACT_DIR="$SCRIPT_DIR" python3 - "$LABEL" "$RC" "$ART" <<'PY'
 import hashlib, json, os, re, sys
 label, rc, art = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 data = open(art, "rb").read()
@@ -85,6 +111,21 @@ try:
         fh.write(json.dumps(env))
 except Exception:
     pass
+path = os.path.join(".claude/state/artifact-verdicts",
+                    "".join(c if c.isalnum() or c in "-_" else "_" for c in label) + ".json")
+try:
+    sys.path.insert(0, os.environ["RUN_ARTIFACT_DIR"])
+    from pathlib import Path
+    import receipts, time
+    record = {"state": "complete", "exit": rc, "epoch": int(time.time()),
+              "build_input_key": receipts.build_input_key(Path(".").resolve()),
+              "image_key": receipts.image_key(Path(".").resolve())}
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w") as fh:
+        json.dump(record, fh)
+    os.replace(tmp, path)
+except Exception:
+    pass  # fail-direction: the record still reads `running`, which refuses at rollover
 PY
 
 # I1: seed the failure ledger on a nonzero result so recurring build/test/smoke

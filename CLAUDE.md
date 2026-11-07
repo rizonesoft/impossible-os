@@ -84,6 +84,7 @@ Why four legs. Until 2026-07-28 the smoke gate passed **no `-smp` flag at all**,
 | **KVM** (default when available) | ~2s boot | real-CPU MSR traps, SMP timing, cache semantics | emulated-device bugs (NVMe, USB); **timing-sensitive races its own speed hides** |
 | **TCG** (fallback) | ~10s boot | device emulation bugs, portable x86 behavior; **timing-sensitive lifetime/ordering races** | per-CPU state, real MSR behavior |
 | **CI-parity** (`CI_PARITY=1`, distro QEMU + forced TCG) | ~24s full suite | **exactly what CI will report, before you push** | anything needing a real CPU or real hardware |
+| **CI-container** (`CI_CONTAINER=1`, clean clone of HEAD in the pinned CI image) | ~10 min, `--tooling` adds ~20 | **clean-build and package failures: what a fresh runner hits** | anything the working tree holds that HEAD does not |
 | **WHPX / VBox / bare metal** (user runs) | varies | the rest | (authoritative) |
 
 Neither WSL runner replaces native Windows or bare metal for shipping. They filter regressions before the user has to boot the image.

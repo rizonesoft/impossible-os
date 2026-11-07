@@ -41,7 +41,7 @@ env:
 
 jobs:
   build:
-    name: Build Impossible OS
+    name: Build and test the OS
     runs-on: ubuntu-26.04
     # A runaway backstop, NOT a performance budget -- and it has now been eaten
     # by suite growth twice. 15 became a live gate on 2026-08-04 (last green
@@ -135,20 +135,6 @@ jobs:
       # drift is now a CI failure instead of a silent warning.
       - name: Run style lint
         run: bash scripts/lint.sh
-
-      # ── Host-side tooling regression pack (cheap, no build required) ───────
-      # Exercises the wrapper contract, hook lifecycle, and workflow YAML
-      # without actually compiling the OS. Catches drift between local docs
-      # and CI before the build stage runs.
-      #
-      # TEST_TOOLING_SKIP_LSP_MCP=1: the standalone "Run LSP-MCP bridge tests"
-      # step below runs test_bridge.sh + test_boundary.sh once for log
-      # placement. Skip the duplicate run here so CI does not pay the
-      # clangd cold-spawn + stress pass twice per build.
-      - name: Run tooling regression pack
-        env:
-          TEST_TOOLING_SKIP_LSP_MCP: "1"
-        run: bash scripts/test-tooling.sh --quiet
 
       # AI workflow regression pack (AI Development System roadmap). Checks doctrine presence,
       # Authority Hierarchy integrity, AGENTS.md file contract, zero-trailer
@@ -336,6 +322,112 @@ jobs:
           path: build/test-artifacts/
           retention-days: 1
           if-no-files-found: ignore
+
+  # The pack took 19m25s of the job's 30 minutes (measured 2026-11-07), so a tooling
+  # failure and the OS verdict both waited on it. Its own job reports each sooner.
+  # Nothing in the build job reads what the pack produces.
+  tooling-pack:
+    name: Tooling regression pack
+    runs-on: ubuntu-26.04
+    timeout-minutes: 40
+
+    steps:
+      # ── Checkout ────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for build_info.h commit hash
+
+      # ── Install LLVM (clang-19, clangd-19, lld-19, llvm-19) ─────────────────
+      # llvm-${VERSION} owns llvm-ar-${VERSION} / llvm-nm-${VERSION} /
+      # llvm-objcopy-${VERSION}; install it explicitly so setup.sh --verify
+      # does not rely on apt Recommends auto-pulling it. clangd-${VERSION}
+      # is required by the LSP-MCP bridge stress sub-test 8a.
+      # NOTE: do NOT cache the /usr/lib + /usr/bin LLVM paths with
+      # actions/cache -- restore extracts with unprivileged tar, which cannot
+      # write root-owned paths and fails the job with tar exit 2 (hit
+      # 2026-06-11; the apt install only costs ~30s, cache removed).
+      # Ubuntu 26.04 defaults to uutils, whose `timeout -s KILL` leaves a stalled child
+      # running, so the identity gate's time bounds stop holding. Same tools as dev hosts.
+      - name: Use GNU coreutils
+        timeout-minutes: 5
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
+          sudo -E apt-get install -y --allow-remove-essential -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            coreutils-from-gnu coreutils-from-uutils-
+          timeout --version | grep -q 'GNU coreutils'
+
+      - name: Install LLVM ${{ env.LLVM_VERSION }}
+        # A hung apt once used this job's whole 40 minutes with nothing in the log, and
+        # GitHub reports that as `cancelled`. Fail fast and show what apt was doing.
+        timeout-minutes: 10
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
+          sudo -E apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            clang-${{ env.LLVM_VERSION }} \
+            clangd-${{ env.LLVM_VERSION }} \
+            lld-${{ env.LLVM_VERSION }} \
+            llvm-${{ env.LLVM_VERSION }}
+
+      # ── Install build dependencies ──────────────────────────────────────────
+      # LLVM is installed above with caching; this step brings in the rest of
+      # the sentinel set that scripts/setup.sh declares.
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            nasm \
+            mtools \
+            dosfstools \
+            fdisk \
+            ovmf \
+            qemu-system-x86 \
+            qemu-utils \
+            gcc \
+            python3-yaml
+
+      # ── Verify toolchain matches scripts/setup.sh sentinel contract ─────────
+      # If this fails, the inline apt install above and scripts/setup.sh have
+      # drifted. Fix whichever side is out of sync -- do NOT mask with `|| true`.
+      - name: Verify toolchain sentinels and version floors
+        run: bash scripts/setup.sh --verify
+
+      # ── Host-side tooling regression pack (cheap, no build required) ───────
+      # Exercises the wrapper contract, hook lifecycle, and workflow YAML
+      # without actually compiling the OS. Catches drift between local docs
+      # and CI before the build stage runs.
+      #
+      # TEST_TOOLING_SKIP_LSP_MCP=1: the standalone "Run LSP-MCP bridge tests"
+      # step below runs test_bridge.sh + test_boundary.sh once for log
+      # placement. Skip the duplicate run here so CI does not pay the
+      # clangd cold-spawn + stress pass twice per build.
+      - name: Run tooling regression pack
+        env:
+          TEST_TOOLING_SKIP_LSP_MCP: "1"
+        run: bash scripts/test-tooling.sh --quiet
+
+  # The ruleset requires this check by name, so it stays here and answers for both jobs:
+  # with the pack split out, a failing pack must still block a merge. `always()` because
+  # a skipped or failed dependency would otherwise skip this job, and a skipped required
+  # check reads as passed.
+  required-check:
+    name: Build Impossible OS
+    needs: [build, tooling-pack]
+    if: always()
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the OS build and the tooling pack
+        env:
+          OS_RESULT: ${{ needs.build.result }}
+          PACK_RESULT: ${{ needs.tooling-pack.result }}
+        run: |
+          echo "OS build: $OS_RESULT; tooling pack: $PACK_RESULT"
+          [ "$OS_RESULT" = success ] && [ "$PACK_RESULT" = success ]
 
   # ── Release-flavor compile+link gate (test-surface exclusion) ───────────────
   # scripts/test-tooling.sh proves the KERNEL_TESTS flavor CONTRACT via

@@ -103,6 +103,30 @@ def main() -> int:
         print(json.dumps(decision))
         return 0
 
+    # A DENIED PIPELINE SKILL IS NOT A SLOW NIGHT (v22, 2026-11-07). The review
+    # skill was refused by a permission rule for a whole run, and every segment
+    # still reported `checkpoint` or `productive`, because it rotated or committed
+    # bookkeeping. Relaunching cannot get past a deny, so back off at the cap and
+    # let the launcher's breaker notification name it. Checked BEFORE the rollover
+    # exit below, which is exactly where the run was hiding it.
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import skill_denies
+        hits = skill_denies.denied(project)
+    except Exception:
+        hits = []  # fail-direction: a broken check must not stop a healthy run
+    if hits:
+        until = now + BACKOFF_CAP_SECS
+        decision.update(outcome="skill-denied", breaker=True, backoff_until=until,
+                        skill_denied=[f"{s} ({r})" for s, r in hits])
+        try:
+            backoff_file.parent.mkdir(parents=True, exist_ok=True)
+            backoff_file.write_text(f"{until} 1\n")
+        except OSError:
+            pass
+        print(json.dumps(decision))
+        return 0
+
     # A planned VERIFIED-ROLLOVER exit is not unproductive: the guard state
     # says the session ended ON PURPOSE (context rotation) and the watchdog
     # relaunches. Streak untouched (see outcome model).
