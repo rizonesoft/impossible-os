@@ -74,14 +74,14 @@ implements_after: TODO-04
 | ⭐  |   8   | Boot heartbeat telemetry during long phases                 | §1, T23 (watchdog); T14 §4 permanently deferred |  [/]   |
 | 💎  |   9   | EXEC step latency profile (13834ms FAIL; 11x regression)    | §1                                              |  [ ]   |
 | ⭐  |  10   | UEFI RT SetVariable latency (>50ms threshold)               | §1, T04 §11                                     |  [ ]   |
-| ⭐  |  11   | Phase-3 X:\Diag JSON writer batching                        | T04 §8, T27 §2 (advisor)                        |  [/]   |
+| ⭐  |  11   | Phase-3 X:\Diag JSON writer batching                        | T04 §8, T27 §2 (advisor)                        |  [ ]   |
 | ⭐  |  12   | AVX-512 throttle policy when APERF/MPERF absent             | T19 §3                                          |  [ ]   |
 | ⭐  |  13   | Boot history ring depth + format (8 → 32+ entries)          | T03 §20                                         |  [/]   |
 | ⭐  |  14   | FAT32 dirty-mount fsck cost in VFS step                     | D05 T04                                         |  [/]   |
-| ⭐  |  15   | User-mode binary spawn latency (~1s task_create→ELF)        | T22 (sched / exec)                              |  [/]   |
+| ⭐  |  15   | User-mode binary spawn latency (~1s task_create→ELF)        | T22 (sched / exec)                              |  [ ]   |
 | ⭐  |  16   | TSC frequency variability under hypervisor                  | --                                              |  [ ]   |
 | ⭐  |  17   | PAT WC -> WT hypervisor trap quirk                          | §2 (consumer)                                   |  [ ]   |
-| 💎  |  18   | Boot critical-path / dependency / resource-wait attribution | §1, §2                                          |  [/]   |
+| 💎  |  18   | Boot critical-path / dependency / resource-wait attribution | §1, §2                                          |  [ ]   |
 | 💎  |  19   | Post-ship follow-up backfill (2026-07-31 cohort)            | D02 T33 §7 (ceiling)                            |  [ ]   |
 | 💎  |  20   | Boot trend JSON writer hardening (defer/linearize/fallback) | §3                                              |  [ ]   |
 | 💎  |  21   | Per-driver degraded-state registry for storage              | §2, T10 §27                                     |  [ ]   |
@@ -356,17 +356,17 @@ Boot writes 5 small JSON files to `X:\Diag` serially during late Phase 3: `firmw
 
 **Files:** new `src/kernel/fs/fat32/fat32_batch.c`, plus the 5 Phase-3 writer call sites
 
-- [/] Profile the 5-write Phase-3 sequence with `boot_progress` substeps; capture per-write ms. PARKED: needs the FAT32 batch primitive -> XREF: `05-storage-filesystems/TODO-04` (FAT32 owner).
-- [/] Design `fat32_batch_begin()` / `fat32_batch_write_file()` / `fat32_batch_commit()` API: open parent dir once, all files in one cluster-bitmap pass, single dir + FAT flush.
+- [ ] Profile the 5-write Phase-3 sequence with `boot_progress` substeps; capture per-write ms.
+- [ ] Design `fat32_batch_begin()` / `fat32_batch_write_file()` / `fat32_batch_commit()` API: open parent dir once, all files in one cluster-bitmap pass, single dir + FAT flush.
   - PARKED: needs the FAT32 batch primitive -> XREF: `05-storage-filesystems/TODO-04` (FAT32 owner).
-- [/] Retrofit the 5 writers; keep per-file API for one-off writers (boot-error history, klog Serial_*.log). PARKED: needs the FAT32 batch primitive -> XREF: `05-storage-filesystems/TODO-04` (FAT32 owner).
-- [/] `firmware-tables.json` C:\ fallback: `src/kernel/firmware_tables_json.c:506` hardcodes `X:\Diag\` -- use `klog_using_blackbox ? "X:\\Diag\\" : klog_dir` like the other writers. (TODO-24 §8)
+- [ ] Retrofit the 5 writers; keep per-file API for one-off writers (boot-error history, klog Serial_*.log).
+- [ ] `firmware-tables.json` C:\ fallback: `src/kernel/firmware_tables_json.c:506` hardcodes `X:\Diag\` -- use `klog_using_blackbox ? "X:\\Diag\\" : klog_dir` like the other writers. (TODO-24 §8)
   - PARKED: needs the FAT32 batch primitive -> XREF: `05-storage-filesystems/TODO-04` (FAT32 owner).
-- [/] Commit: `"fs: fat32 batched Phase-3 X:\Diag JSON writer (5 files in one transaction)"`
+- [ ] Commit: `"fs: fat32 batched Phase-3 X:\Diag JSON writer (5 files in one transaction)"`
 
 **Test checkpoint:** Boot serial shows ~5x reduction in cumulative `boot_progress` delta for the X:\Diag write block. All 5 files persist with byte-identical content vs the per-file path. Smoke confirms no FAT32 cache regressions.
 
-> **Deferred:** [L] Phase-3 X:\Diag JSON batching: a `fat32_batch_*` transaction API (open-dir-once + one cluster-bitmap pass + single flush) retrofitted to 5 writers -- multi-commit fs work. -> XREF: 05-storage-filesystems/TODO-04 (FAT32 owner) for the batch primitive.
+> **Notes:** Reopened 2026-11-07, was Deferred as multi-commit fs work owned by `05-storage-filesystems/TODO-04`. That file carries no batch item: the primitive is designed in this section, so the park pointed at nobody. `firmware_tables_json.c:506` still hardcodes `X:\\Diag\\`.
 ---
 
 ## 12. AVX-512 Throttle Policy When APERF/MPERF Unavailable
@@ -430,17 +430,17 @@ Smoke (KVM, 2026-05-03) shows a consistent ~1s gap between `sched: Task N ("cmd.
 
 **Files:** `src/kernel/sched/syscall.c` (SYS_EXEC), `src/kernel/exec.c`, `src/kernel/sched/task.c`, `src/kernel/main/boot_desktop.c` (cmd.exe shell_loader_func)
 
-- [/] Add `boot_progress` substeps inside the SYS_EXEC path: read_file, format_dispatch, segment_load, page_table_install, auxv_setup, scheduler_resume. Capture per-step ms.
+- [ ] Add `boot_progress` substeps inside the SYS_EXEC path: read_file, format_dispatch, segment_load, page_table_install, auxv_setup, scheduler_resume. Capture per-step ms.
   - PARKED: needs sched/exec multi-commit work -> XREF: `02-kernel-core/TODO-22` (sched/exec owner).
-- [/] Profile the ELF loader's per-segment work; a 67 KiB cmd.exe loading 3 segments in ~1s suggests page-by-page allocation rather than batched. Investigate whether `pmm_alloc_contiguous` for the segment span shaves the cost.
+- [ ] Profile the ELF loader's per-segment work; a 67 KiB cmd.exe loading 3 segments in ~1s suggests page-by-page allocation rather than batched. Investigate whether `pmm_alloc_contiguous` for the segment span shaves the cost.
   - PARKED: needs sched/exec multi-commit work -> XREF: `02-kernel-core/TODO-22` (sched/exec owner).
-- [/] If the gap is scheduler-side (task created but not picked for ~1s), audit the round-robin policy for boot-time starvation -- a freshly-created kernel task should run before idle.
+- [ ] If the gap is scheduler-side (task created but not picked for ~1s), audit the round-robin policy for boot-time starvation -- a freshly-created kernel task should run before idle.
   - PARKED: needs sched/exec multi-commit work -> XREF: `02-kernel-core/TODO-22` (sched/exec owner).
-- [/] Commit: `"kernel: SYS_EXEC substep timing + spawn-latency profile"`
+- [ ] Commit: `"kernel: SYS_EXEC substep timing + spawn-latency profile"`
 
 **Test checkpoint:** Boot serial shows 6 substep lines per user-mode spawn. cmd.exe spawn drops below 200ms or the cost is justified in `boot_perf_budgets[]`. test=1 mode shows the same pattern for the 16 user-mode test binaries (16 × 200ms = 3.2s vs 16 × 1s = 16s today is the upper bound on the win).
 
-> **Deferred:** [L] User-mode spawn latency ~1s: SYS_EXEC substep timing + ELF segment-load batching + scheduler boot-starvation audit -- live-boot profiling + exec/sched multi-commit work. -> XREF: 02-kernel-core/TODO-22 (sched/exec owner).
+> **Notes:** Reopened 2026-11-07, was Deferred as multi-commit work owned by `02-kernel-core/TODO-22`, which is the environment-variables file and owns none of it. Profiling needs a boot, which the smoke harness provides.
 ---
 
 ## 16. TSC Frequency Variability Under Hypervisor
@@ -495,23 +495,23 @@ Smoke (KVM, 2026-05-03) records `[WARN] mm: PAT: entry 1 = 0x04 (expected WC=0x0
 
 §1-§3 expose per-phase durations + budgets + trend deltas, but a boot delay caused by ORDERING (step B waited on step A), a hardware WAIT (device poll), or scheduler STARVATION reads as "phase slow" with no actionable cause. Linux `systemd-analyze critical-chain` / `blame` / `dot` expose exactly this; this section adds the dependency + resource-wait attribution layer on top of the §1 timeline.
 
-- [/] Tag each `boot_progress` step delta with a cause class (`COMPUTE`, `HW_WAIT`, `IO_WAIT`, `SCHED_WAIT`) so a slow step records WHY, not just how long.
+- [ ] Tag each `boot_progress` step delta with a cause class (`COMPUTE`, `HW_WAIT`, `IO_WAIT`, `SCHED_WAIT`) so a slow step records WHY, not just how long.
   - PARKED, operator-gated: multi-commit boot-instrumentation plus live-boot validation; this section owns the attribution.
-- [/] `boot_critical_chain()` -- walk the §1 timeline, emit the ordered longest-pole chain (each step + dominant wait class) as `[BOOT-CRIT] <step> <ms> <cause>` lines (systemd-analyze critical-chain parity).
+- [ ] `boot_critical_chain()` -- walk the §1 timeline, emit the ordered longest-pole chain (each step + dominant wait class) as `[BOOT-CRIT] <step> <ms> <cause>` lines (systemd-analyze critical-chain parity).
   - PARKED, operator-gated: multi-commit boot-instrumentation plus live-boot validation; this section owns the attribution.
-- [/] Add `critical_chain[]` (top-N longest poles + cause class) + a duration-sorted `blame[]` view to `boot-health.json` (§2) so the dashboard names the boot's longest pole + why.
+- [ ] Add `critical_chain[]` (top-N longest poles + cause class) + a duration-sorted `blame[]` view to `boot-health.json` (§2) so the dashboard names the boot's longest pole + why.
   - PARKED, operator-gated: multi-commit boot-instrumentation plus live-boot validation; this section owns the attribution.
-- [/] Pure classifier `boot_cause_classify()` + longest-pole walk are data-only (no live boot calls) for unit test. PARKED, operator-gated: multi-commit boot-instrumentation plus live-boot validation; this section owns the attribution.
+- [ ] Pure classifier `boot_cause_classify()` + longest-pole walk are data-only (no live boot calls) for unit test.
 - -> XREF: `TODO-14-boot-diagnostics.md §9` (Boot Timeline Visualization) -- the Gantt/SVG viewer consumes this critical-chain + cause-class data; §18 owns the attribution, §9 owns the visual.
-- [/] Record a milestone between EXEC and DESKTOP_READY: that interval is 2272ms and its real content is TTF/glyph/icon loading plus a 1935x1080 JPEG decode, none of which EXEC names.
+- [ ] Record a milestone between EXEC and DESKTOP_READY: that interval is 2272ms and its real content is TTF/glyph/icon loading plus a 1935x1080 JPEG decode, none of which EXEC names.
   - PARKED, operator-gated: multi-commit boot-instrumentation plus live-boot validation; this section owns the attribution.
 - [x] `vfs_rename_ex` rc=-1 on the boot-trend .tmp rename: ROOT-CAUSED 2026-07-27 (the two-dot guess was wrong). Diagnostics added at each failure site; the two real FAT32 defects are owned by `05-storage-filesystems/TODO-04 §4`.
   Filed THERE rather than here on purpose: this section carries a `Deferred:` stamp, which makes `sequencer_triage.py` class the whole file DONE, so an item added here would never be seen by the overnight runner. Worth remembering as a general trap -- a deferred section is a grave for new items.
-- [/] Commit: `"boot: critical-path + resource-wait attribution (systemd-analyze critical-chain parity)"`
+- [ ] Commit: `"boot: critical-path + resource-wait attribution (systemd-analyze critical-chain parity)"`
 
 **Test checkpoint:** Boot serial emits `[BOOT-CRIT]` lines naming the ordered longest-pole chain with per-step cause class; `boot-health.json` carries `critical_chain[]` (top-N) + a blame-sorted view. Pure-helper test covers the longest-pole walk + cause classifier. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [M] Boot critical-path attribution (new, gap-audit): per-step cause-class tagging in boot_progress + `boot_critical_chain()` + boot-health `critical_chain[]`/`blame[]` -- multi-commit boot-instrumentation + live-boot validation. -> XREF: 01-boot-platform/TODO-14-boot-diagnostics.md §9 (visual consumer); §18 owns attribution.
+> **Notes:** Reopened 2026-11-07, was Deferred as multi-commit instrumentation plus live-boot validation. Neither is a blocker: the classifier is data-only and the smoke harness boots. Final bare-metal timing remains an operator check.
 ---
 
 ## 19. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)

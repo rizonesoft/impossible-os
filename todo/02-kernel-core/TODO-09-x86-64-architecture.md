@@ -84,7 +84,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 | 💎  |  15   | Future silicon stubs: UINTR/LA57/LAM/LASS + TDX/SEV    | (none)     |  [/]   |
 | 💎  |  16   | Boot page tables: 1 GiB pages from the UEFI bootloader | §6         |  [/]   |
 | 💎  |  17   | AMX tile state + XFD dynamic XSAVE                     | §1, §4     |  [/]   |
-| 💎  |  18   | Split-lock (#AC) + bus-lock (#DB) detection            | §4         |  [/]   |
+| 💎  |  18   | Split-lock (#AC) + bus-lock (#DB) detection            | §4         |  [ ]   |
 | 💎  |  19   | WAITPKG + SERIALIZE + RDPID adoption                   | §4, §11    |  [/]   |
 | 💎  |  20   | Post-ship follow-up backfill (2026-07-31 cohort)       | --         |  [ ]   |
 
@@ -545,24 +545,21 @@ A misaligned LOCK-prefixed access that splits a cache line (split lock), or a bu
 > [!WARNING]
 > Capability-gate every MSR write (a blind `IA32_TEST_CTL` 0x33 / `IA32_DEBUGCTL` write #GPs without the feature). Two ordering/correctness traps the adversarial pass caught, baked into the plan below: (1) **register handlers + arm AFTER `idt_init`** -- `cpu_harden()` runs in Phase 0 BEFORE the kernel IDT, and `idt_init()` then zeroes `handlers[]`, so arming there leaves the MSRs hot with the default-panic handler. (2) the #AC loop-breaker must NOT permanently disable detection (one ring-3 split lock would blind the CPU forever) -- re-arm on the next context switch (warn mode) or terminate the thread (fatal mode). `DR6.BLD` (bit 11) is ACTIVE-LOW for a bus-lock #DB.
 
-- [/] CPUID detection: `CPU_FEATURE_CORE_CAPS` (7.0:EDX[30]) + `CPU_FEATURE_BUS_LOCK_DETECT` (7.0:ECX[24]) in `cpuid.h` + `CPU_FEATURES_AP_PROBE_MASK` + `cpuid_probe_ap_features()` (AP-local gating)
-  - Parked: operator-gated -- needs bare-metal Rocket/Alder Lake validation.
-- [/] MSR constants in `msr.h`: `MSR_IA32_CORE_CAPABILITIES = 0x000000CF`, `MSR_IA32_TEST_CTL = 0x00000033`, `MSR_IA32_DEBUGCTL = 0x000001D9` -- parked: operator-gated, bare-metal Rocket/Alder Lake
-- [/] Per-CPU LOCAL-CPUID-gated RMW arming: split-lock `IA32_TEST_CTL[29]` only when `IA32_CORE_CAPABILITIES[5]`; bus-lock `IA32_DEBUGCTL.BLD` when 7.0:ECX[24] -- parked: operator-gated, bare-metal Rocket/Alder Lake
-- [/] ORDERING (critical): register handlers + arm AFTER `idt_init` -- NOT in `cpu_harden()` (Phase 0, pre-IDT; `idt_init` zeroes `handlers[]`). BSP via a post-`idt_init` hook; APs after the AP `lidt` in `ap_cpu_harden`
-  - Parked: operator-gated -- needs bare-metal Rocket/Alder Lake validation.
-- [/] Register BOTH `#AC`(17)/`#DB`(1) handlers unconditionally (an AP feature-skewed from the BSP must not arm an MSR whose handler was never registered) -- parked: operator-gated, bare-metal Rocket/Alder Lake
-- [/] `#AC` handler (vector 17): ring-0 -> panic; ring-3 -> warn (rate-limited) + break the re-fault loop WITHOUT permanently disabling detect -- re-arm `IA32_TEST_CTL[29]` on the next context switch, or terminate the thread (fatal mode)
-  - Parked: operator-gated -- needs bare-metal Rocket/Alder Lake validation.
-- [/] `#DB` handler (vector 1): `DR6.BLD` (bit 11) is ACTIVE-LOW -> `(dr6 & BLD) == 0` classifies a bus-lock trap, warn + restore BLD to 1 + continue; non-bus-lock #DB -> panic (until the KD debugger lands, `TODO-29`)
-  - Parked: operator-gated -- needs bare-metal Rocket/Alder Lake validation.
-- [/] Commit: `"kernel/cpu: split-lock (#AC) + bus-lock (#DB) detection, capability-gated"` -- parked: operator-gated, bare-metal Rocket/Alder Lake
+- [ ] CPUID detection: `CPU_FEATURE_CORE_CAPS` (7.0:EDX[30]) + `CPU_FEATURE_BUS_LOCK_DETECT` (7.0:ECX[24]) in `cpuid.h` + `CPU_FEATURES_AP_PROBE_MASK` + `cpuid_probe_ap_features()` (AP-local gating)
+- [ ] MSR constants in `msr.h`: `MSR_IA32_CORE_CAPABILITIES = 0x000000CF`, `MSR_IA32_TEST_CTL = 0x00000033`, `MSR_IA32_DEBUGCTL = 0x000001D9`
+- [ ] Per-CPU LOCAL-CPUID-gated RMW arming: split-lock `IA32_TEST_CTL[29]` only when `IA32_CORE_CAPABILITIES[5]`; bus-lock `IA32_DEBUGCTL.BLD` when 7.0:ECX[24]
+- [ ] ORDERING (critical): register handlers + arm AFTER `idt_init` -- NOT in `cpu_harden()` (Phase 0, pre-IDT; `idt_init` zeroes `handlers[]`). BSP via a post-`idt_init` hook; APs after the AP `lidt` in `ap_cpu_harden`
+- [ ] Register BOTH `#AC`(17)/`#DB`(1) handlers unconditionally (an AP feature-skewed from the BSP must not arm an MSR whose handler was never registered)
+- [ ] `#AC` handler (vector 17): ring-0 -> panic; ring-3 -> warn (rate-limited) + break the re-fault loop WITHOUT permanently disabling detect -- re-arm `IA32_TEST_CTL[29]` on the next context switch, or terminate the thread (fatal mode)
+- [ ] `#DB` handler (vector 1): `DR6.BLD` (bit 11) is ACTIVE-LOW -> `(dr6 & BLD) == 0` classifies a bus-lock trap, warn + restore BLD to 1 + continue; non-bus-lock #DB -> panic (until the KD debugger lands, `TODO-29`)
+- [ ] Commit: `"kernel/cpu: split-lock (#AC) + bus-lock (#DB) detection, capability-gated"`
+  - Final check on Rocket or Alder Lake bare metal is operator-gated. Arming is CPUID-gated, but the handlers register unconditionally, so a stray `#AC` or `#DB` takes the new path on every CPU: test the non-bus-lock `#DB` and ring-3 `#AC` branches in the suite before the flip.
 
 **Test checkpoint:** On a split-lock CPU (`IA32_CORE_CAPABILITIES[5]`) `IA32_TEST_CTL[29]` reads back armed after boot; a ring-3 split lock warns + (warn mode) the offending thread keeps progressing while detection stays armed for others; `DR6.BLD` active-low classifies a bus-lock #DB. On non-supporting CPUs (the `-cpu Haswell` harness) nothing is armed (no #GP). Test on: QEMU WHPX (Rocket Lake+), TCG `-cpu max`, bare metal (Alder Lake+ for bus-lock).
 
 > **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
 
-> **Deferred:** 2026-06-28 -- a first implementation (detection + per-CPU arming + #AC/#DB handlers) was written and rolled back: the Codex adversarial pass found it CRITICALLY broken (handlers registered in `cpu_harden` at Phase 0 are wiped by the later `idt_init`) and the #AC loop-breaker permanently blinded the CPU. The correct version needs post-`idt_init` registration + a re-arm-on-context-switch hook in the universal `schedule()`/`schedule_now()` path + a per-CPU flag in the offset-asserted `per_cpu_data` struct -- delicate changes to the kernel's most critical paths that warrant a focused pass + `-cpu max`/bare-metal (Rocket/Alder Lake) validation, not a tail-of-session rush. Detection is a parity enhancement, not a correctness gap. The full design+adversarial-vetted plan is captured in the items + `[!WARNING]` above. -> XREF: this section's `[!WARNING]` + §1 (scheduler FPU/ctx-switch path for the re-arm hook).
+> **Notes:** Reopened 2026-11-07, was Deferred after a first implementation was rolled back on 2026-06-28. The stamp's reason was a focused pass, not a blocker, and it says the plan is captured in these items. Rollback cause to carry forward: handlers registered in `cpu_harden` are wiped by the later `idt_init`, and the old `#AC` loop-breaker blinded the CPU.
 
 ---
 
