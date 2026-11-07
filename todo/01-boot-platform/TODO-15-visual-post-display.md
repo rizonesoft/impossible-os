@@ -57,14 +57,14 @@ title: "TODO-15 -- Visual POST Display (VPD)"
 
 | ⭐  | Order | Deliverable                                            | Depends On | Status |
 | --- | :---: | ------------------------------------------------------ | ---------- | :----: |
-| 💎  |   1   | 4-digit POST code system (0x0000-0xFFFF)               | --         |  [/]   |
-| ⭐  |   2   | POST codes in UEFI bootloader + every kernel function  | §1         |  [/]   |
-| ⭐  |   3   | Embedded 5x7 bitmap micro-font                         | --         |  [/]   |
-| 💎  |   4   | Tier 1: Pre-splash VPD renderer                        | §1, §3     |  [/]   |
+| 💎  |   1   | 4-digit POST code system (0x0000-0xFFFF)               | --         |  [ ]   |
+| ⭐  |   2   | POST codes in UEFI bootloader + every kernel function  | §1         |  [ ]   |
+| ⭐  |   3   | Embedded 5x7 bitmap micro-font                         | --         |  [ ]   |
+| 💎  |   4   | Tier 1: Pre-splash VPD renderer                        | §1, §3     |  [ ]   |
 | 💎  |   5   | `boot.conf` `postbars` configuration                   | §4         |  [x]   |
 | 💎  |   6   | Named stages with TSC timing                           | §4         |  [x]   |
 | 💎  |   7   | Status indicators and progress bar                     | §6         |  [x]   |
-| ⭐  |   8   | NVRAM crash persistence and "last boot failed" display | §6         |  [/]   |
+| ⭐  |   8   | NVRAM crash persistence and "last boot failed" display | §6         |  [ ]   |
 | 💎  |   9   | Tier 2: Splash-integrated progress                     | §6, §7     |  [/]   |
 | 💎  |  10   | Seamless tier transition                               | §4, §9     |  [/]   |
 | ⭐  |  11   | Phase grouping and diagnostic layout                   | §7         |  [x]   |
@@ -102,7 +102,7 @@ Replace the current 2-digit POST codes (28 values in 0x10-0x63) with a 4-digit s
 - [x] `boot_post_read16()` -- reads 2 bytes if available, 1 byte otherwise
 - [x] On-screen POST display: four hex digits at **native 8x8** px per glyph (38x10 px footprint, top-right; see `boot_progress.c` `POST16_GLYPH_W` / `POST16_TOTAL_W` / `post_display16`)
 - [x] Bootloader: replaced `post_code(uint8_t)` with `post_code16(uint16_t)` using 0xB000 range + serial output
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Panic-path NVRAM write robustness -- `boot_post_nvram_write16()` uses the sleepable UEFI RT mutex;
+- [ ] Panic-path NVRAM write robustness -- `boot_post_nvram_write16()` uses the sleepable UEFI RT mutex;
   - the panic path writes `POST16_BOOT_FAILED` through it and can block if RT services held. Use a no-sleep/trylock path or the RAM shadow
 - [x] Commit: `"boot: 4-digit POST code system with UEFI bootloader coverage"`
 
@@ -114,7 +114,7 @@ Replace the current 2-digit POST codes (28 values in 0x10-0x63) with a 4-digit s
 > - Review: Codex 3x fixed a HIGH (`post_display16` x0 underflow on undersized GOP -> OOB, guarded in both paths) + 3M (0xD000 range doc, VPD classifier extended, volatile-vs-NVRAM doc fixes); panic-NVRAM-hang deferred.
 > - Scope boundary: §1 owns the POST16 scheme + corner display; the VPD full-screen renderer is §4; panic-path NVRAM robustness is the deferred item above.
 > **Verified:** 2026-06-15 | this review commit (HIGH + 3M fixes) | 6/7 items | build OK | tests (POST16 uniqueness)
-> **Deferred:** [H] panic-path `boot_post_nvram_write16` can block on the sleepable UEFI RT mutex -> XREF: 01-boot-platform/TODO-15 §1 (item: "Panic-path NVRAM write robustness" at line 105)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] panic-path `boot_post_nvram_write16` can block on the sleepable UEFI RT mutex. The stamp named this section's own items; their only park was the image ceiling, and `scripts/overnight/bss-headroom.py` measured a `.text` budget of 153,647 bytes on 2026-11-07, so the ceiling park has ended.
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1H+3M fixed, 1H deferred | scope: kernel-code-quality
 
 ## 2. POST Codes in Every Boot Function
@@ -131,11 +131,11 @@ Instrument the main boot path -- from UEFI `efi_main` through kernel `compositor
 - [x] Phase 1: `gdt` (0x1000/01), `idt` (0x1010/11), `acpi` (0x1020/21), `lapic` (0x1030), `timer` (0x1040/41), `rtc` (0x1050/51), `kbd` (0x1060/61), `mouse` (0x1070/71), `fb` (0x1080/81), `splash` (0x1090/91)
 - [x] Phase 2: `pci` (0x2000/01), `xhci` (0x2010/11), `nic` (0x2020/21), `net` (0x2030/31), `ata` (0x2040/41), `ahci` (0x2050/51), `vfs` (0x2060/61), `registry` (0x2080/81), `smp` (0x2090/91)
 - [x] Phase 3: `sched` (0x3000/01), `desktop` (0x3030/31), `compositor` (0x3040 -- marker added before `compositor_run()` in `boot_desktop.c`)
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Phase 0 entry POST16 -- `boot_phase0()` runs `smp_early_bsp_init()` (`boot_hw.c`) before the first kernel POST16,
+- [ ] Phase 0 entry POST16 -- `boot_phase0()` runs `smp_early_bsp_init()` (`boot_hw.c`) before the first kernel POST16,
   - so a fault there shows the bootloader handoff code. Emit a kernel-entry marker (port-only if full POST16 is too early) before it
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): boot_info-validation POST16 -- the UEFI handoff validation (`boot_hw.c`) only marks success;
+- [ ] boot_info-validation POST16 -- the UEFI handoff validation (`boot_hw.c`) only marks success;
   - a malformed handoff shows the prior stage. Add an entry marker before `boot_info_validate_addr` + an OK marker after the validated copy
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Async storage per-driver POST16 -- the async path (`boot_storage.c`) calls ata/ahci/nvme/virtio_blk_init without the per-driver POST16 the sequential path uses;
+- [ ] Async storage per-driver POST16 -- the async path (`boot_storage.c`) calls ata/ahci/nvme/virtio_blk_init without the per-driver POST16 the sequential path uses;
   - wrap each so an async crash attributes to the failing driver
 - [x] Commit: `"boot: POST16 in every function from UEFI efi_main through compositor"`
 
@@ -147,7 +147,7 @@ Instrument the main boot path -- from UEFI `efi_main` through kernel `compositor
 > - Review: Codex 3x fixed 1H+3M -- compositor handoff marker added, redundant per-milestone `post_display16` redraw removed, bootloader 0xB0xx range (§1) + mouse/0x1070 checkpoint corrected; 3 HIGH early-boot/async coverage gaps deferred.
 > - Scope boundary: §2 owns POST16 coverage placement; the POST16 mechanism + corner display is §1; the deferred early-boot markers are tracked above.
 > **Verified:** 2026-06-15 | this review commit (compositor marker + perf + doc fixes) | 5/8 items | build OK | tests (POST16 uniqueness)
-> **Deferred:** [H] 3 boot-path POST16 coverage gaps (Phase 0 entry, boot_info validation, async storage) -- crashes there mis-attribute -> XREF: 01-boot-platform/TODO-15 §2 (items: "Phase 0 entry POST16" at line 134, "boot_info-validation POST16" at 136, "Async storage per-driver POST16" at 138)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] 3 boot-path POST16 coverage gaps (Phase 0 entry, boot_info validation, async storage) -- crashes there mis-attribute. The stamp named this section's own items; their only park was the image ceiling, and `scripts/overnight/bss-headroom.py` measured a `.text` budget of 153,647 bytes on 2026-11-07, so the ceiling park has ended.
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1H+3M fixed, 3H deferred | scope: kernel-code-quality
 
 ## 3. Embedded 5x7 Bitmap Micro-Font
@@ -166,7 +166,7 @@ A zero-dependency pixel font baked into a single header -- renders ASCII text di
 - [x] `vpd_puthex16(fb, pitch_px, x, y, val, color)` -- 4-digit hex
 - [x] `vpd_puthex8(fb, pitch_px, x, y, val, color)` -- 2-digit hex
 - [x] All functions static inline in header -- no .c file, no linker dependency
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Bound or retire the raw header render helpers -- `vpd_putchar`/`vpd_puts`/etc. write to `fb` with no extent/NULL check (latent OOB; uncalled). Add width/height + NULL + clip,
+- [ ] Bound or retire the raw header render helpers -- `vpd_putchar`/`vpd_puts`/etc. write to `fb` with no extent/NULL check (latent OOB; uncalled). Add width/height + NULL + clip,
   - or retire them (`vpd.c` `_scaled` is the bounded in-tree path)
 - [x] Commit: `"boot: embedded 5x7 bitmap micro-font for pre-splash VPD"`
 
@@ -178,7 +178,7 @@ A zero-dependency pixel font baked into a single header -- renders ASCII text di
 > - Review: Codex 3x -- consistency + perf clean (95 rows, both paths consistent); the raw header helpers have a latent unbounded-fb-write HIGH (uncalled, superseded by `_scaled`) -- deferred + a contract WARNING comment added.
 > - Scope boundary: §3 owns the font data + helpers; the bounded in-tree renderer is `vpd.c` (§4); bounding/retiring the raw helpers is the deferred item above.
 > **Verified:** 2026-06-15 | this review commit (contract warning) | 8/9 items | build OK | manual (smoke boot pending)
-> **Deferred:** [H] raw header render helpers write fb with no extent/NULL check (latent OOB, uncalled) -> XREF: 01-boot-platform/TODO-15 §3 (item: "Bound or retire the raw header render helpers" at line 169)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] raw header render helpers write fb with no extent/NULL check (latent OOB, uncalled). The stamp named this section's own items; their only park was the image ceiling, and `scripts/overnight/bss-headroom.py` measured a `.text` budget of 153,647 bytes on 2026-11-07, so the ceiling park has ended.
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 0H+0M fixed, 1H deferred | scope: kernel-code-quality
 
 ## 4. Tier 1: Pre-Splash VPD Renderer
@@ -204,7 +204,7 @@ Replace `HV_BAR` with a structured pre-splash renderer that draws named stage ba
 - [x] `vpd_is_active()` / `vpd_stop_tier1()` -- tier lifecycle management
 - [x] Hooked into `boot_progress()` -- every stage automatically rendered
 - [x] HV_BAR already removed (prior commit) -- VPD is the replacement
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Format-aware color packing -- VPD writes raw BGRX 32-bit constants directly to the FB,
+- [ ] Format-aware color packing -- VPD writes raw BGRX 32-bit constants directly to the FB,
   - but `fb.pixel_format` can be RGBX (red FAIL renders blue). Add `vpd_pack_rgb(r,g,b)` keyed on the format; needs RGBX bare-metal validation
 - [x] Commit: `"boot: Tier 1 VPD renderer -- pre-splash named stages with text"`
 
@@ -216,7 +216,7 @@ Replace `HV_BAR` with a structured pre-splash renderer that draws named stage ba
 > - Review: Codex 3x fixed a HIGH (row-overflow left a stale active stage so a later `vpd_stage_fail` marked the wrong row -- now clears `s_has_current`) + a layout doc-drift (8px/7px not 4px/5x5); BGRX color packing deferred.
 > - Scope boundary: §4 owns the Tier 1 renderer; page-flip-after-splash handling is §10; format-aware color packing is the deferred item above.
 > **Verified:** 2026-06-15 | this review commit (HIGH + layout fixes) | 10/11 items | build OK | manual (on-screen pending)
-> **Deferred:** [M] VPD writes BGRX-assumed colors; RGBX framebuffers render swapped channels (red FAIL -> blue) -> XREF: 01-boot-platform/TODO-15 §4 (item: "Format-aware color packing" at line 207)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] VPD writes BGRX-assumed colors; RGBX framebuffers render swapped channels (red FAIL -> blue). The stamp named this section's own items; their only park was the image ceiling, and `scripts/overnight/bss-headroom.py` measured a `.text` budget of 153,647 bytes on 2026-11-07, so the ceiling park has ended.
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1H+1M fixed, 1M deferred | scope: kernel-code-quality
 
 ## 5. `boot.conf` `postbars` Configuration
@@ -301,7 +301,7 @@ On crash-restart, display exactly where the previous boot failed -- always activ
 - [x] Wired into `boot_phase0()` -- displays on both incomplete and failed prior boots
 - [x] Serial log already shows `[BOOT] Last boot succeeded` or `[BOOT] Last boot failed` (`boot_hw.c`)
 - [x] Banner auto-clears when splash composites over it
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Preserve the failing stage -- a clean panic overwrites the NVRAM stage marker with `POST16_BOOT_FAILED` (`panic.c:1210`), so the banner shows a generic failure not the real stage;
+- [ ] Preserve the failing stage -- a clean panic overwrites the NVRAM stage marker with `POST16_BOOT_FAILED` (`panic.c:1210`), so the banner shows a generic failure not the real stage;
   - keep the stage code or add a separate status variable
 - [x] Commit: `"boot: NVRAM crash persistence -- 'Last boot failed at' display"`
 
@@ -313,7 +313,7 @@ On crash-restart, display exactly where the previous boot failed -- always activ
 > - Review: Codex 3x fixed a stale "NVRAM written only twice" comment (`boot_init.c`); the panic-stage-loss finding is Deferred -- the "exact stage" promise is partial.
 > - Scope boundary: §8 owns the crash banner + NVRAM read; the panic-path NVRAM write lives in `panic.c` and is the subject of the Deferred follow-up below.
 > **Verified:** 2026-06-14 | ship `7b5711f9` (+ this review commit) | 7/8 items | build OK | manual (forced-panic reboot pending)
-> **Deferred:** [M] clean panic overwrites the NVRAM stage marker with generic POST16_BOOT_FAILED, so the banner shows a generic failure not the exact stage -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 304)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] clean panic overwrites the NVRAM stage marker with generic POST16_BOOT_FAILED, so the banner shows a generic failure not the exact stage. The stamp named this section's own items; their only park was the image ceiling, and `scripts/overnight/bss-headroom.py` measured a `.text` budget of 153,647 bytes on 2026-11-07, so the ceiling park has ended.
 > **Quality reviewed:** 2026-06-14 | Codex 3x (adversarial, consistency, perf) | 0H+1M+0L fixed, 1M deferred | scope: kernel-code-quality
 
 ## 9. Tier 2: Splash-Integrated Progress *(deferred)*
