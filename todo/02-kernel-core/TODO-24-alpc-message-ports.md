@@ -260,23 +260,23 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 > - **Identity safety (D4):** REJECT `ALPC_TOKEN_ATTR` / `ALPC_WORK_ON_BEHALF_ATTR` bits in §6 (define layout only); their provenance + reference lifetime is owned by §7. Marshalling spoofable identity before §7 lands is a trust-boundary hole.
 > - **Lock order:** take `port->Lock` ONLY for `SectionList` insert/remove; call `ObCreateSectionEx` / `ObMapViewOfSectionObject` / unmap OUTSIDE any port lock (no `ALPC_PORT.Lock` -> `SECTION_OBJECT.lk` nesting).
 
-- [ ] `ALPC_PORT_SECTION` node on `port->SectionList` (`{Head,Tail,Count}` + `Link_next` idiom, NOT `list_head_t`):
+- [/] (blocked: §6 prerequisites D3, D5) `ALPC_PORT_SECTION` node on `port->SectionList` (`{Head,Tail,Count}` + `Link_next` idiom, NOT `list_head_t`):
   - `Link_next` (self ptr); `AlpcSectionHandle` (u64 opaque ID, per-port monotonic counter, reserve 0, fail at `UINT64_MAX`)
   - `Section` (`SECTION_OBJECT*`, ref-held until delete); `Size`; `DeleteOnClose`
 - [ ] Prerequisite: object-direct `ObMapViewOfSectionObject` / `ObUnmapViewOfSectionObject` primitives in `ob_section.c` (D3) -- refactor `ObMapViewOfSectionFull` to split handle-resolution from object-map so ALPC can map a stored `SECTION_OBJECT*`.
-- [ ] Prerequisite: probed packed attribute-carrying syscall ABI for `NtAlpcSendWaitReceivePort` (D5) -- the 6-arg slot is full; carry `SendMsgAttr`/`RecvMsgAttr` + lengths, copy-once snapshot validation.
-- [ ] `NtAlpcCreatePortSection(PortHandle, Flags, SectionHandle, SectionSize, AlpcSectionHandle, ActualSectionSize)`:
+- [/] (blocked: >6-arg transport choice in §8) Prerequisite: probed packed attribute-carrying syscall ABI for `NtAlpcSendWaitReceivePort` (D5) -- the 6-arg slot is full; carry `SendMsgAttr`/`RecvMsgAttr` + lengths, copy-once snapshot validation.
+- [/] (blocked: §6 prerequisites D3, D5) `NtAlpcCreatePortSection(PortHandle, Flags, SectionHandle, SectionSize, AlpcSectionHandle, ActualSectionSize)`:
   - Resolve an existing `SectionHandle` via `ObpLookupHandle` + `ObpSectionType` check + `ObReferenceObject` (D1), OR if `SectionHandle == NULL` call `ObCreateSectionEx` for an anonymous section of `SectionSize`
   - Allocate `ALPC_PORT_SECTION`, append to `port->SectionList` under `port->Lock`, assign a unique per-port `AlpcSectionHandle`
-- [ ] `NtAlpcDeletePortSection(PortHandle, Flags, SectionHandle)` -- remove from list, dereference section object
-- [ ] View mapping: `ALPC_DATA_VIEW_ATTR` message attribute -- `Flags`, `SectionHandle` (`ALPC_SECTION_HANDLE` opaque ID), `ViewBase` (out, caller VA), `ViewSize`.
-- [ ] `NtAlpcCreateSectionView(PortHandle, Flags, DataView)` -- object-direct map (D3) into caller VA, outside the port lock; fills `ViewBase` / `ViewSize`.
-- [ ] `NtAlpcDeleteSectionView(PortHandle, Flags, ViewBase)` -- unmap via per-task view-base index; the view holds its own section ref (survives port-section delete).
-- [ ] Send path with view (connection-scoped capability, D2):
+- [/] (blocked: §6 prerequisites D3, D5) `NtAlpcDeletePortSection(PortHandle, Flags, SectionHandle)` -- remove from list, dereference section object
+- [/] (blocked: §6 prerequisites D3, D5) View mapping: `ALPC_DATA_VIEW_ATTR` message attribute -- `Flags`, `SectionHandle` (`ALPC_SECTION_HANDLE` opaque ID), `ViewBase` (out, caller VA), `ViewSize`.
+- [/] (blocked: §6 prerequisites D3, D5) `NtAlpcCreateSectionView(PortHandle, Flags, DataView)` -- object-direct map (D3) into caller VA, outside the port lock; fills `ViewBase` / `ViewSize`.
+- [/] (blocked: §6 prerequisites D3, D5) `NtAlpcDeleteSectionView(PortHandle, Flags, ViewBase)` -- unmap via per-task view-base index; the view holds its own section ref (survives port-section delete).
+- [/] (blocked: §6 prerequisites D3, D5) Send path with view (connection-scoped capability, D2):
   - Pin the sender's `SECTION_OBJECT` into the queued message entry (own a ref)
   - On receive, translate to a receiver-scoped `AlpcSectionHandle` under address-ordered endpoint locks
   - Release the message-held ref on every consume / drop / disconnect / teardown path (a port-local ID is NOT valid on the peer)
-- [ ] Message attributes dispatcher: `ALPC_MESSAGE_ATTRIBUTES` struct passed to send/receive:
+- [/] (blocked: §6 prerequisites D3, D5) Message attributes dispatcher: `ALPC_MESSAGE_ATTRIBUTES` struct passed to send/receive:
   - Bitfield `ValidAttributes` selects which attribute structs are present
   - `ALPC_DATA_VIEW_ATTR` (bit 0x1) -- view for large data
   - `ALPC_CONTEXT_ATTR` (bit 0x2) -- port/message context values
@@ -284,11 +284,11 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   - `ALPC_SECURITY_ATTR` (bit 0x8) -- security context handle / QoS (for §7)
   - `ALPC_TOKEN_ATTR` (TOKEN) -- per-message sender token identity; define layout + marshalling here, token reference lifetime / impersonation / teardown owned by §7 (a ValidAttributes bit alone is NOT sufficient -- trust boundary)
   - `ALPC_WORK_ON_BEHALF_ATTR` (WORK_ON_BEHALF_OF) -- RPC caller work-ticket identity propagated across chained ALPC hops (priority-boost / deadlock-avoidance); layout here, provenance validation owned by §7
-- [ ] `AlpcpValidateMessageAttributes(attrs, buffer_len)` (D4/D5):
+- [/] (blocked: §6 prerequisites D3, D5) `AlpcpValidateMessageAttributes(attrs, buffer_len)` (D4/D5):
   - COPY attrs once into kernel memory; validate the SNAPSHOT (subtraction-based bounds), never a live user buffer
   - Reject unknown bits; reject `ALPC_TOKEN_ATTR` / `ALPC_WORK_ON_BEHALF` until §7 provenance lands
-- [ ] Charge port sections and completion-list entries to the creating task via `quota_charge_current`, storing the receipt beside each allocation. -> XREF: `02-kernel-core/TODO-25 §6`
-- [ ] Commit: `"kernel/ipc/alpc: port sections, view mapping, message attributes dispatch"`
+- [/] (blocked: §6 prerequisites D3, D5) Charge port sections and completion-list entries to the creating task via `quota_charge_current`, storing the receipt beside each allocation. -> XREF: `02-kernel-core/TODO-25 §6`
+- [/] (blocked: §6 stamp) Commit: `"kernel/ipc/alpc: port sections, view mapping, message attributes dispatch"`
 
 **Test checkpoint:** `NtAlpcCreatePortSection(NULL, 64*1024)` creates anonymous 64 KiB section. `NtAlpcCreateSectionView` maps it into caller's VA; writing a pattern to `ViewBase` succeeds. Send message with `ALPC_DATA_VIEW_ATTR`; receiver calls `NtAlpcCreateSectionView` with received `SectionHandle`; reads back matching pattern; zero copies. `NtAlpcDeleteSectionView` unmaps without crash. `NtAlpcDeletePortSection` dereferences section. `AlpcpValidateMessageAttributes` rejects invalid `buffer_len`. Serial log: `"[ALPC] section view mapped: base=%p size=%llu"`. Test on: QEMU WHPX + TCG.
 
@@ -308,7 +308,7 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   4. Stamp `captured->ImpersonationLevel = req->NegotiatedLevel` (the dup otherwise inherits the SOURCE token's level, which is neither party's request)
   5. Store in `server_comm->ClientToken` BEFORE `ObpAllocateHandle` publishes the port -- initialize-then-publish, so no reader sees a reachable port with a NULL or half-stamped token; on dup failure the whole handshake unwinds
 - [/] Honor the client `SecurityQos` for RING-3 clients: needs fault-recoverable usercopy first -- copying user `port_attrs` today would trade an unreachable escalation for a kernel-fault DoS -> XREF: `02-kernel-core/TODO-23 §13`
-- [ ] Recv-buffer TOCTOU DoS: `alpc_receive_only` + `alpc_sync_request` write `recv_msg` via RAW `memcpy` after a yielding wait -- a sibling unmap bugchecks the kernel. Migrate both to `copy_to_user` + concurrent-unmap test -> XREF: `TODO-23 §13`
+- [/] Recv-buffer TOCTOU DoS: `alpc_receive_only` + `alpc_sync_request` write `recv_msg` via RAW `memcpy` after a yielding wait -- a sibling unmap bugchecks the kernel. Migrate both to `copy_to_user` + concurrent-unmap test -> XREF: `TODO-23 §13`
 - [x] Server impersonation: internal helper `AlpcImpersonateClientOfPort(ALPC_PORT *port, uint32_t access_mode)` shipped in `alpc_port.c` (SSDT slot + `NtAlpcImpersonateClientOfPort` syscall wrapper -> §8):
   1. Non-`AlpcServerCommunicationPort` -> `STATUS_INVALID_PORT_HANDLE`; no captured token -> `STATUS_NO_TOKEN`
   2. Identification-only captured token (`< SecurityImpersonation`) -> `STATUS_BAD_IMPERSONATION_LEVEL`
@@ -372,11 +372,11 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   0x011D NtAlpcSetInformation
   0x011E NtAlpcQueryInformationMessage
   ```
-- [ ] Fresh SSDT slots + wrappers for the three §7 security syscalls (`NtAlpcCreateSecurityContext`, `NtAlpcDeleteSecurityContext`, `NtAlpcImpersonateClientOfPort`) -- none has a number, handler, or registration -> XREF: `02-kernel-core/TODO-24 §7`
+- [/] (blocked: §8 stamp) Fresh SSDT slots + wrappers for the three §7 security syscalls (`NtAlpcCreateSecurityContext`, `NtAlpcDeleteSecurityContext`, `NtAlpcImpersonateClientOfPort`) -> XREF: `02-kernel-core/TODO-24 §7`
 - [/] **Gap (Win11 parity):** SSDT slots + helpers for **`NtAlpcOpenSenderProcess`** / **`NtAlpcOpenSenderThread`** -- audited handles to a message sender; validate against `PORT_MESSAGE.ClientId`. New slots + handler `.text`: BSS-ceiling-blocked
 - [/] **Gap (Win11 parity):** **`NtAlpcRevokeSecurityContext`** -- implement if distinct from `NtAlpcDeleteSecurityContext` on a pinned `ntdll.dll` symbol list, else a thin alias. Both peers are §7-deferred, so there is nothing to alias yet
 - [/] `ZwAlpc*` kernel-mode aliases -- BLOCKED, not merely unwritten: `zw_dispatch` carries 6 words (`zw.h:101`), too few for the 8-11-arg ALPC surface. Header home (`zw.h` vs new `alpc_syscalls.h`) stays OPEN pending the transport
-- [ ] **Choose the >6-arg SSDT transport for ALPC (ABI decision -- operator-reserved).** Widen `SSDT_HANDLER`/`zw_dispatch` past 6 words, or pass a validated argument-pack by pointer. Blocks the aliases, full-width negotiation, `ConnectPortEx`
+- [/] **Choose the >6-arg SSDT transport for ALPC (ABI decision -- operator-gated).** Widen `SSDT_HANDLER`/`zw_dispatch` past 6 words, or pass a validated argument-pack by pointer. Blocks the aliases, full-width negotiation, `ConnectPortEx`
 - [ ] **Deliver `a5`/`a6` from ring 3.** Separate layer from the width item above: `syscall_entry.asm` zeroes `r9` and `syscall_dispatch_fast` passes `a6=0`, so ring 3 reaches only 4 of the existing 6 args -- hits every 5-6-arg syscall, not just ALPC
   - Load the 5th/6th args from the user stack in `syscall_entry.asm` (probe the user stack frame; a bad pointer must fault to the handler, never trap in ring 0), widen `syscall_dispatch_fast` to take `a6`, and forward both to `ssdt_dispatch`
   - Closes the §7 `RequiredServerSid` gap (its kernel-side compare is shipped + tested but KernelMode-only) and the `NtAlpcConnectPort` `a5` timeout, which silently arrives 0 = block-indefinitely -> XREF: `02-kernel-core/TODO-24 §7`
@@ -393,7 +393,7 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   - The compact 6-arg SSDT handlers for `NtAlpcConnectPort` / `NtAlpcAcceptConnectPort` discard `PortContext`, `ConnectionMessage`, and `ConnMsgAttr` (`nt_alpc.c` `(void)a5; (void)a6;`; §3 deferred these here to nowhere). A TRANSPORT limit, not an oversight -- see the transport item above
   - Wire the full-width ABI: bounded copy of the connection-request `PORT_MESSAGE` + `ALPC_MESSAGE_ATTRIBUTES` through connect → accept/reject → timeout → cancel; propagate `PortContext`; return the accept-side reply message
   - Required for CSRSS/RPC connect-time negotiation. Test: connect-time payload round-trip + context propagation
-- [ ] Commit: `"kernel/ipc/alpc: NtAlpc* SSDT registration, stub retrofit, OpenSender/RevokeSecurityContext gap items"`
+- [/] (blocked: §8 stamp) Commit: `"kernel/ipc/alpc: NtAlpc* SSDT registration, stub retrofit, OpenSender/RevokeSecurityContext gap items"`
 
 **Test checkpoint:** Registration is already proven by `"OB: NT ALPC slots registered"` (`test_ob.c` `test_nt_alpc_slots_registered`), which asserts all 16 slots resolve to something other than `ssdt_stub_not_implemented`; `alpc_register_one()` additionally fails loudly on a collision or out-of-range slot, and the boot log carries `"NT modern ALPC: 16 stub handlers registered (SSDT 0x010F-0x011E)"`. The deferred contract is held by `"OB: NT ALPC pending features"` (`test_nt_alpc_pending_features`), which `TEST_PENDING`s every slot still returning `STATUS_NOT_IMPLEMENTED` and explicitly skips the 6 retired ones (`CreatePort`, `ConnectPort`, `AcceptConnectPort`, `DisconnectPort`, `SendWaitReceivePort`, `SetInformation`) -- that skip list IS the 6/16 inventory above, so a retrofit that lands without moving the skip list fails the sweep. No new test surface lands with this section (no code shipped). Test on: QEMU WHPX + TCG.
 
@@ -436,7 +436,7 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   - Remove from queue; wake any blocked sender with `STATUS_CANCELLED`
   - Used by timeout path in `NtAlpcConnectPort` and `NtAlpcSendWaitReceivePort`
 
-- [ ] Commit: `"kernel/ipc/alpc: NtAlpc* SSDT wiring, QueryInformation, SetInformation, CancelMessage"`
+- [/] (blocked: §9 stamp) Commit: `"kernel/ipc/alpc: NtAlpc* SSDT wiring, QueryInformation, SetInformation, CancelMessage"`
 
 **Test checkpoint:** Every `NtAlpc*` entry point listed in the §8 syscall list plus any §8 gap items (OpenSender*, RevokeSecurityContext) is registered in the SSDT and callable from user mode (or kernel-mode `Zw*` alias). `NtAlpcQueryInformation(AlpcBasicInformation)` returns valid `{Flags, SequenceNo, PortContext}`. `NtAlpcQueryInformation` with unknown class → `STATUS_INVALID_INFO_CLASS`. `NtAlpcQueryInformationMessage(AlpcMessageSidInformation)` returns sender SID. `NtAlpcCancelMessage` cancels a pending request → blocked sender wakes with `STATUS_CANCELLED`. Serial log: `"[ALPC] SSDT wired: %u NtAlpc* entries"`. No new test surface lands with this section (no code shipped); the deferred contract is already held by `"OB: NT ALPC pending features"` (`test_nt_alpc_pending_features`), which `TEST_PENDING`s every slot still returning `STATUS_NOT_IMPLEMENTED` -- including `0x0115` / `0x011C` / `0x011E`. Test on: QEMU WHPX + TCG.
 
@@ -489,7 +489,7 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   } CSRSS_API_MSG;
   ```
 
-- [ ] Commit: `"kernel/ipc/alpc: CSRSS ApiPort bootstrap, Win32 process registration protocol"`
+- [/] (blocked: §10 stamp) Commit: `"kernel/ipc/alpc: CSRSS ApiPort bootstrap, Win32 process registration protocol"`
 
 **Test checkpoint:** After Phase 3 init, `\Windows\ApiPort` is resolvable in the Ob namespace. Test `hello.exe` calls `NtAlpcConnectPort("\\Windows\\ApiPort")` → connection accepted by CSRSS. CSRSS replies with session ID. `hello.exe` receives the reply with valid `CSRSS_API_MSG.ReturnValue == STATUS_SUCCESS`. Multiple test processes connect → each gets independent session. Serial log: `"[CSRSS] ApiPort created"`, `"[CSRSS] client connected: PID=%u SessionId=%u"`. No test surface lands with this section (no code shipped). Test on: QEMU WHPX + TCG.
 
@@ -537,7 +537,7 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
   - A send referencing a valid `ResourceId` reuses the pinned reserve (no allocation, survives a `kmalloc` failure) instead of the zone / kmalloc path
   - On disconnect / port teardown, tear down all reserves; a refcount prevents freeing an in-flight reserve
   - Test: create a reserve, send repeatedly under a forced `kmalloc` failure -- delivery still succeeds; delete frees it
-- [ ] Commit: `"kernel/ipc/alpc: message zones + resource reserves (pre-allocated per-port buffers)"`
+- [/] (blocked: §11 stamp) Commit: `"kernel/ipc/alpc: message zones + resource reserves (pre-allocated per-port buffers)"`
 
 **Test checkpoint:** Create port with 16 KiB message zone. Send 100 messages of 128 bytes each. Verify all allocate from zone (no `kmalloc` calls). Send messages until zone is full. Verify fallback to `kmalloc` succeeds. After all messages are freed, verify zone resets (`UsedBytes == 0`). `NtAlpcQueryInformation(AlpcMessageZoneInformation)` returns correct `ZoneSize` and `UsedBytes`. Resource reserve: `NtAlpcCreateResourceReserve` pins a buffer; repeated sends succeed under a forced `kmalloc` failure; `NtAlpcDeleteResourceReserve` frees it. No test surface lands with this section (no code shipped); `0x011A` / `0x011B` stay covered by the `"OB: NT ALPC pending features"` sweep. Test on: QEMU WHPX + TCG.
 
@@ -589,7 +589,7 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
   - Right-click → "Disconnect port" (requires `SeDebugPrivilege`)
   - Right-click → "Reset stats" (zero counters for this port)
 
-- [ ] Commit: `"kernel/ipc/alpc: alpcmon.exe live port monitor with per-port latency profiler"`
+- [/] (blocked: §12 stamp) Commit: `"kernel/ipc/alpc: alpcmon.exe live port monitor with per-port latency profiler"`
 
 **Test checkpoint:** Create port, send 50 synchronous request+reply messages. Query `SystemAlpcPortInformation`. Verify `TotalSent == 50`, `TotalReceived == 50`, at least one `LatencyBuckets` entry > 0. Run `alpcmon.exe`. Verify `\Windows\ApiPort` shows in the table with non-zero Msg/s after CSRSS boot test. Serial log: `"[ALPC] Port stats: %s sent=%llu recv=%llu P50=%lluus"`. No test surface lands with this section (no code shipped). Test on: QEMU WHPX + TCG.
 
