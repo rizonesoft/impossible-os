@@ -84,6 +84,8 @@ Eight independent verification passes -- one per subsystem. Fix known header doc
   - The fix is `blkdev_sync` on the underlying device plus error propagation, so a caller that needs stable storage can distinguish "cached" from "on the platter". Compare `src/kernel/fs/partition.c:103`, which already does the device-level call.
   - Second parked caller, same predicate: -> XREF: `01-boot-platform/TODO-14-boot-diagnostics.md §12` (item: "last-panic.txt durability is parked on the IXFS owner: flush never reaches the device"). Its `last-panic.txt` write retires the `0x80000` evidence page on `vfs_flush() == 0`, so a reset after a cache-only flush loses both the file and the record.
 - [ ] **Reject over-length names**: `ixfs_ops.c` rename/create silently truncate names > IXFS_MAX_NAME (252), so a 252-259 char op resolves to a different entry. Fail with a name-too-long error instead of truncating. XREF: TODO-12 §13.
+- [ ] **`ixfs_rename` honours `VFS_RENAME_REPLACE_EXISTING`**: it refuses the flag outright (`ixfs_ops.c`), so nothing on `C:` can publish atomically through a temporary file.
+  - `test_vfs_rename_replace_ixfs_rejects` pins today's refusal and must change with this. Do not fall back to unlink-then-rename, which loses the old file on a crash between the two. Waiting on it: `01-boot-platform/TODO-29` §20 (item: "C:\ fallback for `boot-trend.json`").
 
 ## 2. Extended Inode v3 `[Opus]`
 

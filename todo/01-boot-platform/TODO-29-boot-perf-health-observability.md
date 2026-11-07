@@ -558,9 +558,10 @@ From the stamped section 3:
   - The scan bound and its whole decision table moved to `boot_trend_scan_action()` in `include/kernel/boot_trend.h`, so the shipped policy is testable off-image.
   - A full ring COUNTS rather than terminating, or an oversized array with a valid prefix would be truncated silently.
   - Over-long arrays are CANONICALIZED with a WARN rather than quarantined: the file parsed and its schema checked out, so the atomic rewrite repairs it and the history survives.
-- [ ] C:\ fallback for `boot-trend.json` (`boot_trend.c:17-21`): build paths from `klog_using_blackbox ? "X:\\Perf\\" : klog_dir` like boot-profile/timeline. (TODO-24 §6)
+- [/] C:\ fallback for `boot-trend.json`: BLOCKED on `ixfs_rename` refusing `VFS_RENAME_REPLACE_EXISTING`, which every publish needs.
+  - -> XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md` §1 (item: "`ixfs_rename` honours `VFS_RENAME_REPLACE_EXISTING`")
   - SHIPPED half: `boot_trend_publish_json()` now refuses up front when BlackBox is absent (`src/kernel/main/boot_trend.c:255-262`) instead of allocating two 16 KiB buffers, parsing and rebuilding the document, and only then failing at `vfs_open` with a warning that read like an I/O error. No artifact was produced on that path before or after, so this states the limitation rather than adding one.
-  - Open half, the actual parity fix; its ceiling park ended 2026-11-07. `boot-profile` and `boot-timeline` DO fall back to `klog_dir` on C: (`src/kernel/main/boot_progress.c:387`); matching them means building three paths at runtime across five call sites, which does not fit. MEASURED 2026-09-03: 47 bytes of `.text` slack. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §20 once the guard is gone").
+  - Open half, the parity fix: written, built, tested and reverted 2026-11-07; patch at `.claude/state/deferred-TODO-29-s20.patch`. It passed the suite and smoke while unable to publish on `C:`, because `C:` is IXFS and every path test compared strings only. Re-test on a real IXFS volume when applying it.
 
 - [x] Bound the freestanding cJSON exponent (`src/libs/cjson/cJSON.c`, `CJSON_MAX_EXPONENT` 400). Review-round finding on a path this section's writer feeds untrusted disk bytes into.
   - `1e2147483647` stalled the boot CPU for billions of iterations before userland, and `exp = exp * 10 + digit` was signed-overflow UB. One compare, measured at zero net `.text`.
