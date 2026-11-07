@@ -261,6 +261,27 @@ static NTSTATUS NtQueryInformationFile_handler(
 
 /* ---- NtSetInformationFile ----------------------------------------------- */
 
+/* Apply FileBasicInformation. A zero time or attribute field means "leave this
+ * alone" in the NT contract; each zero time reaches the filesystem as NULL, which is
+ * how set_times spells that. */
+void nt_file_apply_basic_info(struct vfs_node *node, const FILE_BASIC_INFORMATION *bi)
+{
+    if (node->ops && node->ops->set_times &&
+        (bi->CreationTime || bi->LastWriteTime || bi->LastAccessTime)) {
+        filetime_t ct, mt, at;
+
+        ct.seconds = (uint32_t)filetime_to_unix_seconds(bi->CreationTime);
+        mt.seconds = (uint32_t)filetime_to_unix_seconds(bi->LastWriteTime);
+        at.seconds = (uint32_t)filetime_to_unix_seconds(bi->LastAccessTime);
+        node->ops->set_times(node,
+                             bi->CreationTime ? &ct : (filetime_t *)0,
+                             bi->LastWriteTime ? &mt : (filetime_t *)0,
+                             bi->LastAccessTime ? &at : (filetime_t *)0);
+    }
+    if (bi->FileAttributes && node->ops && node->ops->set_attr)
+        node->ops->set_attr(node, bi->FileAttributes);
+}
+
 static NTSTATUS NtSetInformationFile_handler(
     uint64_t a1, uint64_t a2, uint64_t a3,
     uint64_t a4, uint64_t a5, uint64_t a6)
@@ -348,15 +369,7 @@ static NTSTATUS NtSetInformationFile_handler(
         if (length < sizeof(FILE_BASIC_INFORMATION))
             return STATUS_BUFFER_TOO_SMALL;
         bi = (FILE_BASIC_INFORMATION *)info;
-        if (node->ops && node->ops->set_times) {
-            filetime_t ct, mt, at;
-            ct.seconds = (uint32_t)filetime_to_unix_seconds(bi->CreationTime);
-            mt.seconds = (uint32_t)filetime_to_unix_seconds(bi->LastWriteTime);
-            at.seconds = (uint32_t)filetime_to_unix_seconds(bi->LastAccessTime);
-            node->ops->set_times(node, &ct, &mt, &at);
-        }
-        if (bi->FileAttributes && node->ops && node->ops->set_attr)
-            node->ops->set_attr(node, bi->FileAttributes);
+        nt_file_apply_basic_info(node, bi);
         if (iosb) {
             iosb->Status = STATUS_SUCCESS;
             iosb->Information = 0;

@@ -56,6 +56,14 @@ static uint32_t dir_cluster_from_node(struct vfs_node *node)
     return vol ? vol->bpb.root_cluster : 2;
 }
 
+/* Helper: the directory holding `node`'s entry */
+static uint32_t parent_cluster_of_node(struct vfs_node *node)
+{
+    struct fat32_file *f = (struct fat32_file *)node->fs_data;
+
+    return (f->dir_cluster >= 2) ? f->dir_cluster : f->volume->bpb.root_cluster;
+}
+
 /* ---- VFS ops tables ---- */
 
 struct vfs_ops fat32_file_ops = {
@@ -72,8 +80,8 @@ struct vfs_ops fat32_file_ops = {
     .truncate = fat32_vfs_truncate,
     .mkdir   = (void *)0,
     .rmdir   = (void *)0,
-    .set_attr = (void *)0,
-    .set_times = (void *)0,
+    .set_attr = fat32_vfs_set_attr,
+    .set_times = fat32_vfs_set_times,
     .flush   = fat32_vfs_flush,
 };
 
@@ -236,9 +244,8 @@ static int fat32_file_write_vfs(struct vfs_node *node, uint32_t offset,
             uint8_t *dbuf = (uint8_t *)kmalloc(bpc);
             if (dbuf) {
                 uint32_t dc = f->dir_cluster;
-                /* Match dirent by cached on-disk SFN; fat32_make_short_name
-                 * misses the ~N collision suffix fat32_generate_sfn writes
-                 * for LFN-required (lowercase 8.3) names. */
+                /* Match dirent by cached on-disk SFN: a numeric tail cannot be
+                 * derived from the name. */
                 const uint8_t *short_name = f->sfn;
 
                 while (dc >= 2 && dc < FAT32_EOC) {
@@ -579,7 +586,7 @@ static int fat32_vfs_set_attr(struct vfs_node *node, uint32_t attributes)
 
     if (!vol || !node->name[0]) return -1;
     spin_lock(&vol->lock);
-    rc = fat32_set_attr(vol, vol->bpb.root_cluster, node->name,
+    rc = fat32_set_attr(vol, parent_cluster_of_node(node), node->name,
                         (uint8_t)attributes);
     spin_unlock(&vol->lock);
     return rc;
@@ -595,7 +602,7 @@ static int fat32_vfs_set_times(struct vfs_node *node,
 
     if (!vol || !node->name[0]) return -1;
     spin_lock(&vol->lock);
-    rc = fat32_set_times(vol, vol->bpb.root_cluster, node->name,
+    rc = fat32_set_times(vol, parent_cluster_of_node(node), node->name,
                          ctime_p, mtime_p, atime_p);
     spin_unlock(&vol->lock);
     return rc;

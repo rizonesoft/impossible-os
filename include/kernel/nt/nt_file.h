@@ -79,6 +79,9 @@ typedef struct {
     uint32_t _pad;
 } FILE_BASIC_INFORMATION;
 
+struct vfs_node;
+void nt_file_apply_basic_info(struct vfs_node *node, const FILE_BASIC_INFORMATION *bi);
+
 typedef struct {
     uint64_t AllocationSize;
     uint64_t EndOfFile;

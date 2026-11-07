@@ -155,14 +155,12 @@ Write LFN directory entry chains before the 8.3 SFN entry. Encode names as UTF-1
 - [x] `fat32_create_file_vol()` and `fat32_create_dir_vol()`: call `fat32_needs_lfn()` -- if yes: `fat32_lfn_write_slots()`; if pure 8.3: existing SFN-only path preserved
 - [x] LFN delete: `fat32_delete_file_vol()` scans backwards from SFN entry, matches `attr==0x0F` + checksum, marks each preceding LFN slot with `0xE5`
 - [ ] **LFN run validation in lookups** -- finddir/stat/read_dir assemble LFN names without checksum/sequence binding to the SFN; mirror the delete-scan validation (TODO-12 §6) so crafted directories cannot alias names.
-- [ ] **`fat32_make_short_name` hardcodes the `~1` numeric tail with no collision check**, so any file whose create-time SFN got `~2`+ is unreachable by every lookup built on it (rename, truncate, unlink).
-  Root-caused 2026-07-27 from a live image. The CREATE path (`fat32_generate_sfn`) de-duplicates `~1`, `~2`, ... against the directory; `fat32_make_short_name` does not, and it is what `fat32_rename_vol`, `fat32_truncate` and friends use to locate an existing file. Proof on disk: `X:\Perf` holds `boot-timeline.json` and `boot-trend.json`, which BOTH reduce to `BOOT-T~1JSO`, so create assigned one of them `BOOT-T~2JSO` -- and nothing built on `make_short_name` can address it again. A file can be created successfully and then never be found by name.
-  Fix direction: lookups must resolve by LONG name (walking validated LFN runs) rather than by a regenerated SFN guess, or `make_short_name` must take the directory and repeat the create-side de-duplication. The first is correct; the second only narrows the window.
-- [ ] **`fat32_rename_vol` rewrites the 11-byte SFN in place and leaves the LFN chain intact**, so the long name still spells the OLD name with a checksum that no longer matches the SFN.
-  Same 2026-07-27 investigation. Step 3 of the rename writes `new_short` over the dirent's name field and returns; the preceding LFN slots are untouched, so their stored checksum (computed over the OLD SFN) no longer validates and the entry is internally inconsistent -- one name by LFN, another by SFN. On-disk evidence: after a rename the entry shows NO long name in a directory listing while its untouched sibling still carries one.
-  Fix direction: rename must remove the old LFN run and write a fresh one bound to the new SFN (the delete-scan + `fat32_lfn_write_slots` pieces above already exist), not rewrite 11 bytes in isolation. Note the ordering hazard the existing replace-existing path already documents: never leave a live dirent pointing at freed clusters.
-  Consequence, traced 2026-11-07 and not yet run on a persistent disk: `X:\Perf\boot-trend.json` publishes through exactly this rename, so its history may stop at one boot and the regression window (6 boots) never fill. Fix together with the `fat32_make_short_name` item above, since the rename reaches the source through it. Over the single-item cap: nine call sites plus crash ordering.
-  **Repro:** boot the SAME `build/system-disk.img` twice WITHOUT rebuilding (`scripts/build.sh` regenerates the image, so the destination never pre-exists and the bug is invisible to every local test run). Second boot logs `fat32: rename: source 'boot-trend.json.tmp' not found (sfn lookup rc=0)`.
+- [x] **By-name operations resolve through `fat32_dir_lookup`, never a re-derived short name.** Delete, rmdir, set_attr, set_times, truncate and rename all use it.
+  - Order: a long name validated against its short entry, an entry's own 8.3 name, then as a last resort a long-named file's on-disk alias. Dot names are refused, and a corrupt chain answers "could not prove" rather than "absent".
+  - `fat32_make_short_name` is now private to the generator. Before this, `boot-trend.json` also matched `boot-timeline.json` by its guessed `~1`, so delete could remove the wrong file. Create now refuses an existing name, which stops `hwdump.txt` and `attestation.json` gaining an entry each boot.
+- [x] **`fat32_rename_vol` writes a fresh short entry and run, bound by checksum, and removes the old ones.** Replace retargets the destination's short entry in one sector instead.
+  - Verified on one image booted three times: `X:\Perf\boot-trend.json` holds three boots, and `fsck.fat -n` no longer reports the wrong checksum or the orphaned runs. The regression window can now fill.
+  - A rename to a free name is under both names across a crash, because two sectors cannot change together; dirty-mount `fat32_fsck` repairs that by dropping the later name in the same directory.
 - [x] Commit: `"fs/fat32: LFN write -- slot chain, UTF-16LE encode, SFN checksum, LFN delete"`
 
 ---
@@ -455,19 +453,13 @@ From the stamped section 15:
 - [ ] **FAT32 vol->lock concurrency overhaul** -- cli-spinlock held across blkdev I/O on writes, while reads/finddir touch the cache unlocked (locking them deadlocks). Convert to a sleepable mutex + one cache-access discipline.
 - [ ] **vfs_unmount filesystem hook** -- `vfs_unmount()` only clears the mount table; add a per-FS unmount op so FAT32 can flush + `fat32_mark_clean` + `blkdev_sync` on clean unmount (today only the ACPI shutdown path clean-marks X:).
 From the stamped section 16:
-- [ ] **Cross-cluster LFN removal** -- walk back into prior cluster to mark trailing LFN slots `0xE5`; currently refused, so replace-existing AND `fat32_delete_file_vol` (LFN-aware since 01-boot-platform/TODO-12 §6) return -1 on those layouts.
-- [ ] FIELD DEFECT 2026-07-30: `vfs_rename_ex` fails on a long two-dot filename, so the atomic publish this section shipped silently degrades to litter
-  - **Observed on a native-Windows WHPX boot** (operator run, real hardware): `[WARN] fat32: rename: source 'boot-trend.json.tmp' not found (sfn lookup rc=0)` then `[WARN] boot_trend: atomic rename failed (rc=-1); .tmp left in place`.
-  - **The write SUCCEEDED.** `boot_trend.c:370` only warns on a short write and there was no such warning, so the `.tmp` existed; the rename then could not find it. This is a lookup failure, not a write failure.
-  - **Confirmed at source**: `fat32_rename` resolves the source by GENERATED SHORT NAME only -- `fat32_make_short_name(old_name, old_short)` then `fat32_find_dirent_by_sfn` (`fat32_write.c:646-652`). There is no LFN lookup path in the file (`grep find_dirent_by_lfn` returns nothing), so a name that does not round-trip through the 8.3 mangler is unreachable by rename.
-  - **NOT yet root-caused, and one theory is already disproved.** Reproducing `fat32_make_short_name` (`fat32_dir.c:14-52`) on the failing name gives `boot-trend.json.tmp` -> `BOOT-T~1TMP` deterministically, and the create path uses the SAME function, so create and rename should agree. Do not ship the obvious "two dots break the mangler" fix without first proving what SFN is actually on disk -- dump the directory entries before the rename.
-  - **Adjacent hazard found while checking**: the `~1` tail is applied unconditionally with NO collision search, so any two long names sharing the first 6 characters and an extension collide (`boot-trend.json` and any other `boot-tr*.json*` both mangle to `BOOT-T~1JSO`). That is a silent wrong-file hazard for rename AND unlink, wider than this incident.
-  - **Impact**: every caller of the durable-write idiom this section exists to provide -- boot-trend, registry hive saves, ETW rotation, BlackBox dumps -- is exposed whenever its filename is long, and fails by leaving stale `.tmp` files rather than by erroring loudly.
+- [x] **Cross-cluster LFN removal** -- `fat32_dir_remove_entries` follows the run along the chain from where lookup recorded its start; the refusals in delete and replace-existing are gone.
+- [x] FIELD DEFECT 2026-07-30: `vfs_rename_ex` failed on `boot-trend.json.tmp`. Root cause: the source's on-disk short name carried the tail create gave it, which a re-derived guess could not find.
+  - Closed by `fat32_dir_lookup`; see the rename item in section 4.
 
-- [ ] Make FAT32 replace-existing crash-safe: today a failure after the destination is removed and freed loses the old file, so `boot-trend.json` history can vanish
-  - Found 2026-09-28 by the TODO-10 §7 docs review: `fat32_rename_vol` removes the destination dirent and frees its chain (`fat32_write.c:735-752`) before the source rename can still fail at allocation or I/O (`fat32_write.c:759-784`).
-  - The section's own Notes accept "leaves dst missing", but its title and callers (TODO-29 §3 `boot_trend_publish_json()`) describe the publish as atomic; the docs page now says it is not.
-  - Fix direction: rename the source into place first (or keep the old dirent until the new one is durable), so every failure leaves either the old or the new file.
+- [x] FAT32 replace-existing: at every write of a sweep, the destination is the old file or the new one, its chain stays allocated, and no two names own one chain.
+  - Order: source data flushed, source entry removed, destination entry switched in one sector, old chain freed. A crash before the switch costs only the unpublished new data, and the caller never saw success.
+  - The sweep models lost writes in submission order. A device's volatile cache can still reorder them, tracked in the `scache_flush` item below against the `vol->lock` overhaul above.
 
 From the TODO-10 §26 docs pass (2026-09-30), measured on the image the smoke test had just booted:
 - [x] BlackBox volume failed `fsck.fat -n` after ONE boot: an LFN run crossing a directory cluster was written by adding to a sector number, so its tail landed in the next cluster on disk
@@ -475,8 +467,13 @@ From the TODO-10 §26 docs pass (2026-09-30), measured on the image the smoke te
   - Also shipped: `dir_chain_valid` refuses a corrupt chain before any scrub, `fat32_last_cluster` is the one upper bound, `fat32_validate_bpb` refuses a short FAT, and the numeric tail follows a short base. Tests: `src/kernel/test/test_fat32.c`, each failing on the old driver; `fsck.fat` no longer reports the two defects on a booted image.
 - [ ] Triage what `fsck.fat -n` still reports after one boot: a 0-byte `Logs\Serial\Serial_*.log` holding a cluster chain, and FSInfo free count off by 38 (dirty bit set, so possibly the hard stop)
   - `fat32_create_file_vol` allocates a first cluster at create, which is the likely source of the first. The orphaned `random-seed.new` run and the wrong `boot-trend.json.tmp` checksum belong to the delete and rename items in sections 4 and 16.
+- [ ] Decide trailing-dot and trailing-space handling: Win32 strips them, so `FOO.` should mean `FOO`, but FAT32 only refuses the collision today and `FOO.` creates a file named `FOO`
+  - Owner is the Win32 path layer rather than this driver. Found by the 2026-11-07 rename review.
+- [ ] A replace keeps the destination's stored spelling, so `report.json` replaced through the name `REPORT.JSON` stays `report.json`
+  - Windows takes the new spelling. Fixing it means writing fresh entries, which brings back the two-owner window the single-sector switch avoids, so it needs its own design.
 - [ ] `scache_flush` writes dirty sectors in cache-slot order, so metadata dependencies are not ordered on the way to disk
-  - A cached dirent or FAT link can reach the disk before what it references. The directory-extension path now zeroes through the write-through path for this reason; `fat32_create_dir_vol`'s dot entries and other publish paths do not. The device's volatile cache is also unordered, because a sync can sleep under `vol->lock`.
+  - A cached dirent or FAT link can reach the disk before what it references. Directory extension and rename now order their phases with flushes; `fat32_create_dir_vol`'s dot entries and other publish paths do not.
+  - The device's volatile cache is also unordered: `blkdev_sync` can sleep, so it cannot run under `vol->lock`. Replace and rename therefore order writes only as far as the device. Closing this needs the `vol->lock` overhaul in this section.
   - Also confirmed on disk: the `~1` collision in the rename item above. LFN `boot-trend.json.tmp` sits over SFN `BOOT-T~1.JSO` with a wrong checksum, and `X:\Perf\boot-timeline.json` is absent.
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.

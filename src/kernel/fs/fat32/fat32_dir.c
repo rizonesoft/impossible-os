@@ -10,7 +10,7 @@
 
 /* ---- 8.3 short name generation (stateless) ---- */
 
-void fat32_make_short_name(const char *name, uint8_t *short_name)
+static void fat32_make_short_name(const char *name, uint8_t *short_name)
 {
     int i, j;
     int name_len = 0;
@@ -179,9 +179,10 @@ int fat32_generate_sfn(struct fat32_volume *vol, uint32_t dir_cluster,
     /* Start with the basic 8.3 conversion */
     fat32_make_short_name(name, sfn);
 
-    /* If the name doesn't need LFN, the SFN is the direct conversion */
+    /* If the name doesn't need LFN, the SFN is the direct conversion, with no tail to
+     * vary: taken means refused. Two spellings can reduce to it ("FOO" and "FOO."). */
     if (!fat32_needs_lfn(name))
-        return 0;
+        return sfn_exists_in_dir(vol, dir_cluster, sfn) ? -1 : 0;
 
     while (base_len < 8 && sfn[base_len] != ' ')
         base_len++;
@@ -217,6 +218,18 @@ static int dir_scrub_cluster(struct fat32_volume *vol, uint32_t cluster,
                                      vol->bpb.sectors_per_cluster, cluster_buf);
 }
 
+static int dir_mark_deleted(struct fat32_volume *vol, uint32_t cluster,
+                            uint32_t byte_offset)
+{
+    uint32_t sector = cluster_to_sector(vol, cluster) + byte_offset / 512u;
+    uint8_t buf[512];
+
+    if (fat32_read_sector(vol, sector, buf) != 0)
+        return -1;
+    buf[byte_offset % 512u] = 0xE5;
+    return fat32_write_sector(vol, sector, buf);
+}
+
 /* Read-only walk of a directory chain: 0 when it reaches a clean end through
  * valid data clusters, -1 on a cycle, an out-of-range, reserved, BAD or free link,
  * or a FAT read failure. A chain longer than the volume has clusters must repeat
@@ -247,7 +260,12 @@ static int dir_chain_valid(struct fat32_volume *vol, uint32_t cluster)
  * the terminator is consumed. So a scan past the terminator walks to the end of
  * the chain even when the run is already long enough, and the chain is validated
  * first: scrubbing a cluster reached a second time through a corrupt link would
- * erase the live entries in front of its terminator. */
+ * erase the live entries in front of its terminator.
+ *
+ * A live LFN slot directly before the chosen run is an orphan, because a real run is
+ * always followed by its short entry. It is invalidated on the device before the run
+ * is returned: a failed cleanup, failed publish or crash can leave one, and a new
+ * short entry landing behind it with a matching checksum would inherit its name. */
 int fat32_find_free_dir_slots(struct fat32_volume *vol,
                                uint32_t dir_cluster, uint32_t count,
                                uint32_t *out_sector, uint32_t *out_offset,
@@ -259,6 +277,8 @@ int fat32_find_free_dir_slots(struct fat32_volume *vol,
     uint32_t run_start_sector = 0, run_start_offset = 0, run_start_cluster = 0;
     uint32_t run_len = 0;
     uint32_t prev_cluster = 0;
+    uint32_t lfn_cluster = 0, lfn_offset = 0;       /* LFN slot just passed, if any */
+    uint32_t orphan_cluster = 0, orphan_offset = 0; /* the one before the current run */
     int past_end = 0;
 
     if (dir_chain_valid(vol, dir_cluster) != 0) {
@@ -298,12 +318,18 @@ int fat32_find_free_dir_slots(struct fat32_volume *vol,
                     run_start_sector = sector + (i / 512);
                     run_start_offset = i % 512;
                     run_start_cluster = cur_cluster;
+                    orphan_cluster = lfn_cluster;
+                    orphan_offset = lfn_offset;
                 }
                 run_len++;
+                lfn_cluster = 0;
                 if (run_len >= count && !past_end)
                     goto found;
             } else {
                 run_len = 0;
+                lfn_cluster = (((const struct fat32_dir_entry *)&cluster_buf[i])->attr ==
+                               FAT32_ATTR_LFN) ? cur_cluster : 0;
+                lfn_offset = i;
             }
         }
 
@@ -356,12 +382,20 @@ int fat32_find_free_dir_slots(struct fat32_volume *vol,
             run_start_sector = cluster_to_sector(vol, new_cluster);
             run_start_offset = 0;
             run_start_cluster = new_cluster;
+            orphan_cluster = lfn_cluster;
+            orphan_offset = lfn_offset;
         }
         run_len += bytes_per_cluster / 32;
         prev_cluster = new_cluster;
     }
 
 found:
+    if (orphan_cluster != 0 &&
+        (dir_mark_deleted(vol, orphan_cluster, orphan_offset) != 0 ||
+         scache_flush(vol) != 0)) {
+        kfree(cluster_buf);
+        return -1;
+    }
     *out_sector = run_start_sector;
     *out_offset = run_start_offset;
     *out_cluster = run_start_cluster;
@@ -402,7 +436,8 @@ int fat32_lfn_write_slots(struct fat32_volume *vol,
                            uint32_t dir_cluster,
                            const uint8_t sfn[11],
                            const char *utf8_name,
-                           const struct fat32_dir_entry *sfn_entry)
+                           const struct fat32_dir_entry *sfn_entry,
+                           struct fat32_dirent_loc *out_loc)
 {
     int slots = fat32_lfn_slot_count(utf8_name);
     int total_entries = slots + 1;  /* LFN slots + 1 SFN entry */
@@ -413,6 +448,10 @@ int fat32_lfn_write_slots(struct fat32_volume *vol,
 
     while (utf8_name[name_len]) name_len++;
 
+    /* A longer name would be written and then not read back by any reader. */
+    if (name_len > FAT32_MAX_NAME - 1)
+        return -1;
+
     /* Find contiguous free entries */
     if (fat32_find_free_dir_slots(vol, dir_cluster, (uint32_t)total_entries,
                                    &start_sector, &start_offset,
@@ -420,6 +459,9 @@ int fat32_lfn_write_slots(struct fat32_volume *vol,
         return -1;
     cur_byte = (start_sector - cluster_to_sector(vol, cur_cluster)) * 512u +
                start_offset;
+    out_loc->run_cluster = cur_cluster;
+    out_loc->run_offset = cur_byte;
+    out_loc->run_entries = (uint32_t)total_entries;
 
     /* Write LFN slots (reverse order: last slot first) */
     for (s = slots; s >= 1; s--) {
@@ -475,8 +517,210 @@ int fat32_lfn_write_slots(struct fat32_volume *vol,
             return -1;
     }
 
-    /* The SFN entry follows the last slot and publishes the whole run. */
+    /* The SFN entry follows the last slot and publishes the whole run, so the slots
+     * reach the device first. In one flush it could land ahead of them (flushes go in
+     * cache-slot order) and a crash would leave the file under a bare 8.3 alias. */
+    if (scache_flush(vol) != 0)
+        return -1;
+    out_loc->cluster = cur_cluster;
+    out_loc->byte_offset = cur_byte;
+    out_loc->de = *sfn_entry;
     return dir_cursor_write(vol, cur_cluster, cur_byte, sfn_entry);
+}
+
+/* ---- Lookup and removal by name ---- */
+
+int fat32_dir_lookup(struct fat32_volume *vol, uint32_t dir_cluster,
+                     const char *name, struct fat32_dirent_loc *loc)
+{
+    uint32_t bytes_per_cluster = vol->bpb.sectors_per_cluster * 512;
+    uint8_t *cluster_buf;
+    char lfn_name[FAT32_MAX_NAME];
+    char short_str[FAT32_MAX_NAME];
+    struct fat32_dirent_loc run;
+    uint32_t cur_cluster = dir_cluster;
+    uint8_t lfn_chk = 0;
+    int lfn_active = 0;
+    int lfn_expect_seq = 0;
+    int alias_hit = 0;
+    int result = -1;
+    int k;
+
+    /* Dot entries are the directory's structure, never a file to act on by name.
+     * Every by-name operation comes through here, so each of them refuses these. */
+    if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0')))
+        return -1;
+
+    if (dir_chain_valid(vol, dir_cluster) != 0)
+        return -1;
+
+    cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
+    if (!cluster_buf)
+        return -1;
+
+    while (cur_cluster >= 2 && cur_cluster < FAT32_EOC) {
+        uint32_t i;
+
+        if (fat32_read_sectors_multi(vol, cluster_to_sector(vol, cur_cluster),
+                                     vol->bpb.sectors_per_cluster,
+                                     cluster_buf) != 0)
+            goto out;
+
+        for (i = 0; i < bytes_per_cluster; i += 32) {
+            const struct fat32_dir_entry *de =
+                (const struct fat32_dir_entry *)&cluster_buf[i];
+            int bound;
+
+            if (de->name[0] == 0x00) {
+                result = alias_hit;
+                goto out;
+            }
+            if (de->name[0] == 0xE5) {
+                lfn_active = 0;
+                continue;
+            }
+            if (de->attr == FAT32_ATTR_LFN) {
+                const struct fat32_lfn_entry *lfn =
+                    (const struct fat32_lfn_entry *)&cluster_buf[i];
+                int seq = lfn->seq & LFN_SEQ_MASK;
+
+                if (lfn->seq & LFN_LAST_ENTRY) {
+                    for (k = 0; k < FAT32_MAX_NAME; k++)
+                        lfn_name[k] = '\0';
+                    lfn_active = 1;
+                    lfn_chk = lfn->checksum;
+                    lfn_expect_seq = seq;
+                    run.run_cluster = cur_cluster;
+                    run.run_offset = i;
+                    run.run_entries = (uint32_t)seq + 1u;
+                }
+                if (lfn_active &&
+                    (seq != lfn_expect_seq || lfn->checksum != lfn_chk ||
+                     seq < 1 || seq > FAT32_LFN_MAX_ENTRIES)) {
+                    lfn_active = 0;
+                } else if (lfn_active) {
+                    lfn_extract_chars(lfn, lfn_name, seq - 1);
+                    lfn_expect_seq = seq - 1;
+                }
+                continue;
+            }
+            if (de->attr & FAT32_ATTR_VOLUME_ID) {
+                lfn_active = 0;
+                continue;
+            }
+
+            /* A run names this entry only if it ran down to slot 1 and its
+             * checksum is the one this short name produces. */
+            bound = lfn_active && lfn_expect_seq == 0 && lfn_name[0] != '\0' &&
+                    fat32_lfn_checksum(de->name) == lfn_chk;
+            lfn_active = 0;
+            if (!bound) {
+                run.run_cluster = cur_cluster;
+                run.run_offset = i;
+                run.run_entries = 1u;
+            }
+            run.cluster = cur_cluster;
+            run.byte_offset = i;
+            run.de = *de;
+
+            if (bound && fat32_strcasecmp(lfn_name, name)) {
+                *loc = run;
+                result = 1;
+                goto out;
+            }
+
+            fat32_short_name_to_str(de->name, short_str);
+            if (fat32_strcasecmp(short_str, name)) {
+                if (!bound) {
+                    *loc = run;
+                    result = 1;
+                    goto out;
+                }
+                /* The on-disk alias of a long-named file. Keep looking: another
+                 * file's real long name takes precedence over an alias. */
+                if (!alias_hit) {
+                    *loc = run;
+                    alias_hit = 1;
+                }
+            }
+        }
+
+        if (fat32_next_cluster_checked(vol, cur_cluster, &cur_cluster) != 0)
+            goto out;
+    }
+    result = alias_hit;
+
+out:
+    kfree(cluster_buf);
+    return result;
+}
+
+int fat32_dir_rewrite_entry(struct fat32_volume *vol,
+                            const struct fat32_dirent_loc *loc)
+{
+    return dir_cursor_write(vol, loc->cluster, loc->byte_offset, &loc->de);
+}
+
+/* Mark a run's LFN slots deleted; 0 when all of them were. With the short entry gone
+ * a failure is only worth logging, because the slots bind to nothing. */
+static int dir_mark_run_deleted(struct fat32_volume *vol,
+                                const struct fat32_dirent_loc *loc)
+{
+    uint32_t cluster = loc->run_cluster;
+    uint32_t byte_offset = loc->run_offset;
+    uint32_t n;
+
+    for (n = 1; n < loc->run_entries; n++) {
+        if (dir_mark_deleted(vol, cluster, byte_offset) != 0 ||
+            dir_cursor_next(vol, &cluster, &byte_offset) != 0) {
+            klog(LOG_WARN, "fat32", "long-name slots left at cluster %u",
+                 (uint64_t)cluster);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/* The short entry goes first and reaches the device on its own: it is what publishes
+ * the file, so an interrupted removal leaves only an orphaned run. Marked together,
+ * one flush could land the slots first (it writes in cache-slot order) and strand the
+ * file under its bare 8.3 alias. If that flush fails the mark is undone in the cache,
+ * so the -1 means what a caller takes it to mean: the entry is still there. The run
+ * is followed along the chain, so it may begin in an earlier cluster. */
+int fat32_dir_remove_entries(struct fat32_volume *vol,
+                             const struct fat32_dirent_loc *loc)
+{
+    if (dir_mark_deleted(vol, loc->cluster, loc->byte_offset) != 0)
+        return -1;
+    if (scache_flush(vol) != 0) {
+        (void)fat32_dir_rewrite_entry(vol, loc);
+        return -1;
+    }
+    (void)dir_mark_run_deleted(vol, loc);
+    vol->dir_file_count = 0;
+    return 0;
+}
+
+int fat32_dir_drop_long_name(struct fat32_volume *vol,
+                             const struct fat32_dirent_loc *loc)
+{
+    int rc = dir_mark_run_deleted(vol, loc);
+
+    vol->dir_file_count = 0;
+    return rc;
+}
+
+/* Undo a publish that never reached the device: the entries go from the cache with
+ * no flush to fail on, so every later lookup sees them gone while a failing device
+ * retries the writes. */
+int fat32_dir_discard_entries(struct fat32_volume *vol,
+                              const struct fat32_dirent_loc *loc)
+{
+    if (dir_mark_deleted(vol, loc->cluster, loc->byte_offset) != 0)
+        return -1;
+    (void)dir_mark_run_deleted(vol, loc);
+    vol->dir_file_count = 0;
+    return 0;
 }
 
 /* ---- Directory entry manipulation ---- */
@@ -639,7 +883,7 @@ void fat32_read_dir(struct fat32_volume *vol, uint32_t cluster)
             f->volume = vol;
             /* Cache the on-disk SFN for downstream truncate/unlink
              * matching (collision suffix is part of the on-disk name
-             * but absent from fat32_make_short_name). */
+             * but not produced by the short-name generator). */
             {
                 int sk;
                 for (sk = 0; sk < 11; sk++)
@@ -747,41 +991,3 @@ void fat32_stamp_modify(struct fat32_dir_entry *de)
 
 /* ---- FAT datetime conversion (stateless) ---- */
 
-void seconds_to_fat_datetime(uint32_t secs, uint16_t *out_time,
-                              uint16_t *out_date)
-{
-    uint32_t hours, mins, s;
-    uint32_t days, year, month, day;
-    static const uint8_t dpm[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
-    uint32_t m;
-
-    s     = secs % 60;
-    mins  = (secs / 60) % 60;
-    hours = (secs / 3600) % 24;
-    days  = secs / 86400;
-
-    year = 2025;
-    while (days >= 365) {
-        int leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
-        uint32_t yd = leap ? 366 : 365;
-        if (days < yd) break;
-        days -= yd;
-        year++;
-    }
-
-    month = 0;
-    for (m = 0; m < 12; m++) {
-        uint32_t d = dpm[m];
-        if (m == 1 && (year % 4 == 0 &&
-            (year % 100 != 0 || year % 400 == 0)))
-            d = 29;
-        if (days < d) break;
-        days -= d;
-        month++;
-    }
-    day = days + 1;
-    month += 1;
-
-    *out_time = (uint16_t)((hours << 11) | (mins << 5) | (s / 2));
-    *out_date = (uint16_t)(((year - 1980) << 9) | (month << 5) | day);
-}

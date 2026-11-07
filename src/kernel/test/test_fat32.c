@@ -13,6 +13,8 @@
 #include "kernel/types.h"
 #include "kernel/mm/pmm.h"
 #include "libc/string.h"
+#include "kernel/nt/nt_types.h"
+#include "kernel/nt/nt_file.h"
 #include "../fs/fat32/fat32_internal.h"
 
 #define FX_SECTORS      4096u
@@ -22,6 +24,7 @@
 #define FX_ENTRY_SIZE   32u
 #define FX_DIR_ENTRIES  (512u / FX_ENTRY_SIZE)
 #define FX_NO_FAULT     (~(uint64_t)0)
+#define FX_NO_CRASH     (~(uint32_t)0)
 /* 128 FAT entries per sector, so this cluster's entry is not in the root's. */
 #define FX_FAR_CLUSTER  300u
 
@@ -32,15 +35,23 @@ struct fx_volume {
     uint64_t             vol_pages;
     uint64_t             disk_pages;
     uint64_t             fail_read_lba;     /* FX_NO_FAULT when disarmed */
+    uint32_t             fail_read_skip;    /* reads of that LBA to let through first */
+    uint64_t             fail_write_lba;    /* FX_NO_FAULT when disarmed */
+    uint32_t             writes;            /* device writes that landed */
+    uint32_t             crash_after;       /* FX_NO_CRASH when disarmed */
 };
 
 static int fx_read(uint64_t lba, uint32_t count, void *buf, void *data)
 {
     struct fx_volume *fx = (struct fx_volume *)data;
 
-    if (lba + count > FX_SECTORS ||
-        (fx->fail_read_lba >= lba && fx->fail_read_lba < lba + count))
+    if (lba + count > FX_SECTORS)
         return -1;
+    if (fx->fail_read_lba >= lba && fx->fail_read_lba < lba + count) {
+        if (fx->fail_read_skip == 0)
+            return -1;
+        fx->fail_read_skip--;
+    }
     memcpy(buf, fx->disk + lba * 512u, (size_t)count * 512u);
     return 0;
 }
@@ -51,6 +62,12 @@ static int fx_write(uint64_t lba, uint32_t count, const void *buf, void *data)
 
     if (lba + count > FX_SECTORS)
         return -1;
+    if (fx->fail_write_lba >= lba && fx->fail_write_lba < lba + count)
+        return -1;
+    /* A crash loses this write and every later one, with no error to react to. */
+    if (fx->crash_after != FX_NO_CRASH && fx->writes >= fx->crash_after)
+        return 0;
+    fx->writes++;
     memcpy(fx->disk + lba * 512u, buf, (size_t)count * 512u);
     return 0;
 }
@@ -70,6 +87,8 @@ static int fx_open(struct fx_volume *fx)
     memset(fx->disk, 0, FX_SECTORS * 512u);
 
     fx->fail_read_lba = FX_NO_FAULT;
+    fx->fail_write_lba = FX_NO_FAULT;
+    fx->crash_after = FX_NO_CRASH;
     fx->dev.sector_size = 512u;
     fx->dev.sector_count = FX_SECTORS;
     fx->dev.read = fx_read;
@@ -93,6 +112,8 @@ static int fx_open(struct fx_volume *fx)
     fat[0] = 0x0FFFFFF8u;
     fat[1] = 0x0FFFFFFFu;
     fat[FX_ROOT_CLUSTER] = 0x0FFFFFFFu;
+    memcpy(fat + FX_FAT_SECTORS * FAT32_ENTRIES_PER_SECTOR, fat, 3u * sizeof(uint32_t));
+    fx->disk[0] = 0xEB;     /* the one boot-sector byte fsck's BPB check reads */
     return 0;
 }
 
@@ -476,6 +497,1169 @@ static void test_fat32_bpb_refuses_short_fat(void)
     fx_close(&fx);
 }
 
+static uint32_t fx_first_cluster(const struct fat32_dirent_loc *loc)
+{
+    return ((uint32_t)loc->de.first_cluster_hi << 16) | loc->de.first_cluster_lo;
+}
+
+static uint32_t fx_cluster_of(struct fat32_volume *vol, uint32_t dir, const char *name)
+{
+    struct fat32_dirent_loc loc;
+
+    return (fat32_dir_lookup(vol, dir, name, &loc) == 1) ? fx_first_cluster(&loc) : 0u;
+}
+
+/* The field proof: both names reduce to BOOT-T~1JSO, so create gave the second
+ * ~2. Every operation must reach the file it was named for. */
+static void test_fat32_colliding_names_reach_their_own_file(void)
+{
+    struct fx_volume fx;
+    uint32_t timeline, trend;
+    filetime_t when;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "boot-timeline.json"), 0,
+                   "first colliding file created");
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json"), 0,
+                   "second colliding file created");
+    timeline = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "boot-timeline.json");
+    trend = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json");
+    TEST_ASSERT(timeline >= 2u && trend >= 2u && timeline != trend,
+                "each name resolves, and to its own file");
+
+    TEST_ASSERT_EQ(fat32_set_attr(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json",
+                                  FAT32_ATTR_HIDDEN), 0, "set_attr by long name");
+    {
+        struct fat32_dirent_loc loc;
+        TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "boot-timeline.json", &loc), 1,
+                       "first file still found");
+        TEST_ASSERT_EQ(loc.de.attr, FAT32_ATTR_ARCHIVE, "set_attr left the other file alone");
+    }
+    memset(&when, 0, sizeof(when));
+    when.seconds = 1000000u;
+    TEST_ASSERT_EQ(fat32_set_times(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json",
+                                   (filetime_t *)0, &when, (filetime_t *)0), 0,
+                   "set_times by long name");
+
+    TEST_ASSERT_EQ(fat32_delete_file_vol(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json"), 0,
+                   "delete by long name");
+    TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, "boot-timeline.json"), 1u,
+                   "delete left the colliding file in place");
+    TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, "boot-trend.json"), 0u,
+                   "delete removed the named file");
+    TEST_ASSERT_EQ(fat32_get_fat_entry(fx.vol, trend), FAT32_FREE, "its cluster is free");
+    TEST_ASSERT(fat32_get_fat_entry(fx.vol, timeline) != FAT32_FREE,
+                "the other file's cluster is not");
+    fx_close(&fx);
+}
+
+/* A guessed alias must never match. Only the alias actually on disk does, and a
+ * real long name outranks an alias. */
+static void test_fat32_lookup_alias_rules(void)
+{
+    struct fx_volume fx;
+    struct fat32_dirent_loc loc;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "boot-timeline.json"), 0,
+                   "file created");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json", &loc), 0,
+                   "a name that merely mangles to the same alias is absent");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "BOOT-T~1.JSO", &loc), 1,
+                   "the on-disk alias resolves");
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "a-very-long-name.txt"), 0,
+                   "second file created");
+    {
+        uint32_t expect = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "a-very-long-name.txt");
+        TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "A-VERY-LONG-NAME.TXT", &loc), 1,
+                       "long names match without regard to case");
+        TEST_ASSERT_EQ(fx_first_cluster(&loc), expect, "and find the same file");
+    }
+    fx_close(&fx);
+}
+
+/* A run whose checksum does not bind to the following short entry names nothing,
+ * so a crafted directory cannot alias a long name onto an unrelated file. */
+static void test_fat32_lookup_ignores_unbound_run(void)
+{
+    struct fx_volume fx;
+    struct fat32_dirent_loc loc;
+    struct fat32_lfn_entry *lfn;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "report.json"), 0,
+                   "file created");
+    scache_flush(fx.vol);
+    lfn = (struct fat32_lfn_entry *)
+        (fx.disk + (uint64_t)cluster_to_sector(fx.vol, FX_ROOT_CLUSTER) * 512u);
+    TEST_ASSERT_EQ(lfn->attr, FAT32_ATTR_LFN, "the first entry is the run");
+    lfn->checksum ^= 0x5Au;
+    scache_invalidate(fx.vol);
+
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "report.json", &loc), 0,
+                   "an unbound run does not name the file");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "REPORT~1.JSO", &loc), 1,
+                   "the file stays reachable by its short name");
+    fx_close(&fx);
+}
+
+/* Delete and rmdir must clear a run that starts in an earlier directory cluster,
+ * with no slot left behind to bind to a future short name. */
+static void test_fat32_remove_run_across_clusters(void)
+{
+    struct fx_volume fx;
+    uint32_t i;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    fx_pad_short(&fx, FX_ROOT_CLUSTER, FX_DIR_ENTRIES - 2u);
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "boot-reserved.json"), 0,
+                   "file whose run crosses the boundary created");
+    TEST_ASSERT_EQ(fat32_delete_file_vol(fx.vol, FX_ROOT_CLUSTER, "boot-reserved.json"), 0,
+                   "the crossing run is deleted");
+    for (i = FX_DIR_ENTRIES - 2u; i < FX_DIR_ENTRIES; i++)
+        TEST_ASSERT_EQ(fx_entry(&fx, FX_ROOT_CLUSTER, i)->name[0], (uint8_t)0xE5,
+                       "the slots in the first cluster are gone");
+    {
+        uint32_t next = fat32_get_fat_entry(fx.vol, FX_ROOT_CLUSTER);
+        TEST_ASSERT_EQ(fx_entry(&fx, next, 0u)->name[0], (uint8_t)0xE5,
+                       "and so is the short entry in the second");
+    }
+
+    TEST_ASSERT_EQ(fat32_create_dir_vol(fx.vol, FX_ROOT_CLUSTER, "long-directory-name"), 0,
+                   "long-named directory created");
+    {
+        struct fat32_dirent_loc loc;
+        TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "long-directory-name", &loc), 1,
+                       "directory found");
+        TEST_ASSERT(fat32_delete_file_vol(fx.vol, FX_ROOT_CLUSTER, "long-directory-name") != 0,
+                    "delete refuses a directory");
+        TEST_ASSERT_EQ(fat32_rmdir(fx.vol, FX_ROOT_CLUSTER, "long-directory-name"), 0,
+                       "rmdir removes it by long name");
+        TEST_ASSERT_EQ(fx_entry(&fx, loc.run_cluster, loc.run_offset / FX_ENTRY_SIZE)->name[0],
+                       (uint8_t)0xE5, "and clears its run, not only its short entry");
+    }
+    fx_close(&fx);
+}
+
+/* A read failure while checking a directory is not proof it is empty. */
+static void test_fat32_rmdir_read_failure_keeps_directory(void)
+{
+    struct fx_volume fx;
+    uint32_t dir;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_dir_vol(fx.vol, FX_ROOT_CLUSTER, "HOLDER"), 0,
+                   "directory created");
+    dir = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "HOLDER");
+    scache_flush(fx.vol);
+    scache_invalidate(fx.vol);
+    fx.fail_read_lba = cluster_to_sector(fx.vol, dir);
+    TEST_ASSERT(fat32_rmdir(fx.vol, FX_ROOT_CLUSTER, "HOLDER") != 0,
+                "rmdir refuses what it cannot read");
+    fx.fail_read_lba = FX_NO_FAULT;
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "HOLDER"), dir, "the directory stays");
+    TEST_ASSERT(fat32_get_fat_entry(fx.vol, dir) != FAT32_FREE, "with its clusters");
+    fx_close(&fx);
+}
+
+/* Attribute and time changes go to the directory holding the file. The ops layer
+ * used to search the root whatever the file's parent was. */
+static void test_fat32_set_attr_uses_parent_directory(void)
+{
+    struct fx_volume fx;
+    struct fat32_file file;
+    struct fat32_dirent_loc loc;
+    uint32_t sub;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_dir_vol(fx.vol, FX_ROOT_CLUSTER, "SUB"), 0, "subdirectory created");
+    sub = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "SUB");
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, sub, "SHARED.DAT"), 0, "file in subdirectory");
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "SHARED.DAT"), 0,
+                   "same name in the root");
+
+    memset(&file, 0, sizeof(file));
+    file.volume = fx.vol;
+    file.dir_cluster = sub;
+    file.node.fs_data = &file;
+    fat32_strcpy(file.node.name, "SHARED.DAT", sizeof(file.node.name));
+
+    TEST_ASSERT_EQ(fat32_file_ops.set_attr(&file.node, FAT32_ATTR_HIDDEN), 0,
+                   "set_attr through the ops table");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, sub, "SHARED.DAT", &loc), 1, "subdirectory file found");
+    TEST_ASSERT_EQ(loc.de.attr, FAT32_ATTR_HIDDEN, "the subdirectory's file changed");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "SHARED.DAT", &loc), 1, "root file found");
+    TEST_ASSERT_EQ(loc.de.attr, FAT32_ATTR_ARCHIVE, "the root's file did not");
+    fx_close(&fx);
+}
+
+/* Renaming writes a fresh run bound to a fresh short name. */
+static void test_fat32_rename_rebinds_long_name(void)
+{
+    struct fx_volume fx;
+    uint32_t data;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "boot-timeline.json"), 0,
+                   "colliding neighbour created");
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json.tmp"), 0,
+                   "source created");
+    data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json.tmp");
+
+    TEST_ASSERT_EQ(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json.tmp",
+                                    "boot-trend.json", 0u), 0, "rename to a free long name");
+    TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, "boot-trend.json"), 1u,
+                   "the new long name is bound to its short entry");
+    TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, "boot-trend.json.tmp"), 0u,
+                   "the old long name is gone");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json"), data,
+                   "the renamed file keeps its data");
+    TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, "boot-timeline.json"), 1u,
+                   "the neighbour is untouched");
+
+    TEST_ASSERT(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json",
+                                 "boot-timeline.json", 0u) != 0,
+                "rename onto an existing name needs the replace flag");
+    TEST_ASSERT_EQ(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json",
+                                    "boot-trend.json", 0u), 0, "rename to itself is a no-op");
+    TEST_ASSERT_EQ(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json",
+                                    "BOOT-TREND.json", 0u), 0, "a respelling succeeds");
+    TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, "BOOT-TREND.json"), 1u,
+                   "and takes the new spelling");
+    TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, "boot-trend.json"), 0u,
+                   "leaving no entry with the old one");
+    fx_close(&fx);
+}
+
+/* The publish idiom a second boot exercises: write a temp, replace the real file,
+ * again and again, with the old chain freed each time. */
+static void test_fat32_replace_repeatedly(void)
+{
+    struct fx_volume fx;
+    uint32_t round;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "boot-timeline.json"), 0,
+                   "colliding neighbour created");
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json"), 0,
+                   "destination created");
+    for (round = 0; round < 8u; round++) {
+        uint32_t old_data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json");
+        uint32_t new_data;
+
+        TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json.tmp"), 0,
+                       "temp created");
+        new_data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json.tmp");
+        TEST_ASSERT_EQ(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json.tmp",
+                                        "boot-trend.json", VFS_RENAME_REPLACE_EXISTING), 0,
+                       "replace succeeds");
+        TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json"), new_data,
+                       "the destination holds the new data");
+        TEST_ASSERT_EQ(fat32_get_fat_entry(fx.vol, old_data), FAT32_FREE,
+                       "the old chain was freed");
+        TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, "boot-trend.json"), 1u,
+                       "one bound destination");
+        TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, "boot-trend.json.tmp"), 0u,
+                       "no leftover temp");
+    }
+    TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, "boot-timeline.json"), 1u,
+                   "the neighbour survived every round");
+    fx_close(&fx);
+}
+
+/* Crash at every device write of a rename, then look at what a fresh mount of
+ * that disk would see. `replace` picks the replace path. */
+static void fx_rename_crash_sweep(int replace)
+{
+    uint32_t crash_at = 0;
+    uint32_t total = FX_NO_CRASH;
+
+    while (total == FX_NO_CRASH || crash_at <= total) {
+        struct fx_volume fx, after;
+        uint32_t old_data = 0, new_data;
+        uint32_t seen_new, seen_tmp;
+
+        TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+        TEST_ASSERT_EQ(fx_open(&after), 0, "second view allocated");
+        if (!fx.vol || !fx.disk || !after.vol || !after.disk) {
+            fx_close(&fx);
+            fx_close(&after);
+            return;
+        }
+
+        /* Pad so runs cross a cluster boundary, as they do on the BlackBox. */
+        fx_pad_short(&fx, FX_ROOT_CLUSTER, FX_DIR_ENTRIES - 2u);
+        if (replace) {
+            fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json");
+            old_data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json");
+        }
+        fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json.tmp");
+        new_data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json.tmp");
+        scache_flush(fx.vol);
+
+        fx.writes = 0;
+        if (total != FX_NO_CRASH)
+            fx.crash_after = crash_at;
+        (void)fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json.tmp",
+                               "boot-trend.json",
+                               replace ? VFS_RENAME_REPLACE_EXISTING : 0u);
+        if (total == FX_NO_CRASH) {
+            total = fx.writes;
+            TEST_ASSERT(total > 0u, "the rename reached the device");
+        }
+
+        memcpy(after.disk, fx.disk, FX_SECTORS * 512u);
+        seen_new = fx_cluster_of(after.vol, FX_ROOT_CLUSTER, "boot-trend.json");
+        seen_tmp = fx_cluster_of(after.vol, FX_ROOT_CLUSTER, "boot-trend.json.tmp");
+
+        if (replace) {
+            TEST_ASSERT(seen_new == old_data || seen_new == new_data,
+                        "the destination is the old file or the new one at every crash point");
+            TEST_ASSERT(seen_new != 0u &&
+                        fat32_get_fat_entry(after.vol, seen_new) != FAT32_FREE,
+                        "and its data was not returned to the free pool");
+            TEST_ASSERT(seen_new != seen_tmp, "two names never own one chain");
+        } else {
+            TEST_ASSERT(seen_new == new_data || seen_tmp == new_data,
+                        "the file has a name at every crash point");
+            /* The dirty mount after a crash must leave one owner. */
+            TEST_ASSERT_EQ(fat32_fsck(after.vol, 1), 0, "fsck repairs the volume");
+            seen_new = fx_cluster_of(after.vol, FX_ROOT_CLUSTER, "boot-trend.json");
+            seen_tmp = fx_cluster_of(after.vol, FX_ROOT_CLUSTER, "boot-trend.json.tmp");
+            TEST_ASSERT((seen_new == new_data) != (seen_tmp == new_data),
+                        "after fsck exactly one name owns the file");
+            TEST_ASSERT(fat32_get_fat_entry(after.vol, new_data) != FAT32_FREE,
+                        "and its data is still allocated");
+        }
+
+        fx_close(&fx);
+        fx_close(&after);
+        crash_at++;
+    }
+}
+
+/* Creating a name that exists must not add a second entry: unconditional callers
+ * grew X:\\Diag by one hwdump.txt on every boot. */
+static void test_fat32_create_refuses_existing_name(void)
+{
+    struct fx_volume fx;
+    uint32_t data;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "hwdump.txt"), 0,
+                   "file created");
+    data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "hwdump.txt");
+    TEST_ASSERT(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "hwdump.txt") != 0,
+                "creating it again is refused");
+    TEST_ASSERT(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "HWDUMP.TXT") != 0,
+                "whatever the case");
+    TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, "hwdump.txt"), 1u,
+                   "one entry remains");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "hwdump.txt"), data,
+                   "still holding its data");
+    fx_close(&fx);
+}
+
+/* A rename that fails before the new entries are on the device must not leave two
+ * live names: truncating the source would free the chain the other still holds. */
+static void test_fat32_failed_rename_rolls_back(void)
+{
+    struct fx_volume fx;
+    uint32_t data;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp"), 0,
+                   "source created");
+    data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp");
+    scache_flush(fx.vol);
+    fx.fail_write_lba = cluster_to_sector(fx.vol, FX_ROOT_CLUSTER);
+
+    TEST_ASSERT(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp",
+                                 "report.json", 0u) != 0, "rename reports the failed write");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "report.json"), 0u,
+                   "the new name is gone");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp"), data,
+                   "the source still owns the file");
+
+    fx.fail_write_lba = FX_NO_FAULT;
+    TEST_ASSERT_EQ(fat32_delete_file_vol(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp"), 0,
+                   "the source can be deleted once the device recovers");
+    TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, "report.json"), 0u,
+                   "and no name was left holding the freed chain");
+    fx_close(&fx);
+}
+
+/* Rollback must remove the entry it wrote, whatever else its names resolve to. In
+ * the first case the published alias is another file's long name; in the second the
+ * new name is a respelling that also resolves to the source. */
+static void fx_rollback_case(const char *neighbour, const char *source,
+                             const char *target)
+{
+    struct fx_volume fx;
+    uint32_t data, i;
+    uint32_t live = 0;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    if (neighbour)
+        TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, neighbour), 0,
+                       "neighbour created");
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, source), 0, "source created");
+    data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, source);
+    scache_flush(fx.vol);
+    fx.fail_write_lba = cluster_to_sector(fx.vol, FX_ROOT_CLUSTER);
+
+    TEST_ASSERT(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, source, target, 0u) != 0,
+                "rename reports the failed write");
+
+    /* Count live short entries holding the chain, in the view every lookup uses. */
+    {
+        uint8_t sector_buf[512];
+
+        TEST_ASSERT_EQ(fat32_read_sector(fx.vol, cluster_to_sector(fx.vol, FX_ROOT_CLUSTER),
+                                         sector_buf), 0, "directory read");
+        for (i = 0; i < FX_DIR_ENTRIES; i++) {
+            const struct fat32_dir_entry *de =
+                (const struct fat32_dir_entry *)&sector_buf[i * FX_ENTRY_SIZE];
+
+            if (de->name[0] != 0x00 && de->name[0] != 0xE5 &&
+                de->attr != FAT32_ATTR_LFN &&
+                (((uint32_t)de->first_cluster_hi << 16) | de->first_cluster_lo) == data)
+                live++;
+        }
+    }
+    TEST_ASSERT_EQ(live, 1u, "exactly one entry owns the chain after the failed rename");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, source), data,
+                   "and it is the source");
+    fx.fail_write_lba = FX_NO_FAULT;
+    fx_close(&fx);
+}
+
+static void test_fat32_rollback_alias_is_a_long_name(void)
+{
+    fx_rollback_case("report~2.jso", "report.json.tmp", "report.json");
+}
+
+static void test_fat32_rollback_respelling(void)
+{
+    fx_rollback_case((const char *)0, "report.txt", "REPORT.TXT");
+}
+
+/* Dot entries belong to the directory's structure and are nothing to act on by
+ * name: removing one frees a cluster the parent still points at. */
+static void test_fat32_dot_names_are_refused(void)
+{
+    struct fx_volume fx;
+    uint32_t sub;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_dir_vol(fx.vol, FX_ROOT_CLUSTER, "SUB"), 0, "subdirectory created");
+    sub = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "SUB");
+
+    TEST_ASSERT(fat32_rmdir(fx.vol, sub, ".") != 0, "rmdir refuses the dot entry");
+    TEST_ASSERT(fat32_rmdir(fx.vol, sub, "..") != 0, "rmdir refuses the dotdot entry");
+    TEST_ASSERT(fat32_rename_vol(fx.vol, sub, ".", "HERE", 0u) != 0, "rename refuses dot as source");
+    TEST_ASSERT(fat32_rename_vol(fx.vol, sub, "..", "UP", 0u) != 0, "rename refuses dotdot as source");
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, sub, "FILE.DAT"), 0, "file created");
+    TEST_ASSERT(fat32_rename_vol(fx.vol, sub, "FILE.DAT", ".",
+                                 VFS_RENAME_REPLACE_EXISTING) != 0, "rename refuses dot as target");
+    TEST_ASSERT(fat32_create_file_vol(fx.vol, sub, "..") != 0, "create refuses dotdot");
+
+    TEST_ASSERT_EQ(fx_entry(&fx, sub, 0u)->name[0], (uint8_t)'.', "the dot entry is intact");
+    TEST_ASSERT_EQ(fx_entry(&fx, sub, 1u)->name[1], (uint8_t)'.', "the dotdot entry is intact");
+    TEST_ASSERT(fat32_get_fat_entry(fx.vol, sub) != FAT32_FREE, "the directory keeps its cluster");
+    fx_close(&fx);
+}
+
+/* If fsck cannot tell whether a shared chain is a duplicate, it must not report the
+ * volume clean: it would then mount writable with two owners of one chain. */
+static void test_fat32_fsck_owner_scan_failure_is_not_clean(void)
+{
+    struct fx_volume fx;
+    struct fat32_dirent_loc first, second;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "first-long-name.dat"), 0,
+                   "first name created");
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "second-long-name.dat"), 0,
+                   "second name created");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "first-long-name.dat", &first), 1,
+                   "first found");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "second-long-name.dat", &second), 1,
+                   "second found");
+    fat32_free_chain(fx.vol, fx_first_cluster(&second));
+    second.de.first_cluster_hi = first.de.first_cluster_hi;
+    second.de.first_cluster_lo = first.de.first_cluster_lo;
+    TEST_ASSERT_EQ(fat32_dir_rewrite_entry(fx.vol, &second), 0, "second name shares the chain");
+    scache_flush(fx.vol);
+    scache_invalidate(fx.vol);
+
+    /* The walk's own read of the directory succeeds; the owner scan's does not. */
+    fx.fail_read_lba = cluster_to_sector(fx.vol, FX_ROOT_CLUSTER);
+    fx.fail_read_skip = 1u;
+    TEST_ASSERT(fat32_fsck(fx.vol, 1) != 0, "fsck does not report the volume clean");
+    fx.fail_read_lba = FX_NO_FAULT;
+    fx_close(&fx);
+}
+
+/* A failed FAT read during the owner scan must not read as a clean end of chain. */
+static void test_fat32_owner_scan_fat_failure(void)
+{
+    struct fx_volume fx;
+    uint32_t next;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    fx_pad_short(&fx, FX_ROOT_CLUSTER, FX_DIR_ENTRIES + 1u);
+    next = fat32_get_fat_entry(fx.vol, FX_ROOT_CLUSTER);
+    TEST_ASSERT(next >= 2u && next < FAT32_EOC, "the directory spans two clusters");
+    scache_flush(fx.vol);
+    scache_invalidate(fx.vol);
+    fx.fail_read_lba = FX_RESERVED;
+
+    TEST_ASSERT_EQ(fat32_fsck_earlier_owner(fx.vol, FX_ROOT_CLUSTER, next, 0u, 0x7FFFu, 0u,
+                                            FX_SECTORS), -1,
+                   "the scan reports it could not tell");
+    fx.fail_read_lba = FX_NO_FAULT;
+    TEST_ASSERT_EQ(fat32_fsck_earlier_owner(fx.vol, FX_ROOT_CLUSTER, next, 0u, 0x7FFFu, 0u,
+                                            FX_SECTORS), 0,
+                   "and answers no once the read works");
+    fx_close(&fx);
+}
+
+/* A file and a directory on one chain is corruption, not a rename. Dropping the
+ * directory would hand its children to the lost-cluster pass. */
+static void test_fat32_fsck_file_directory_conflict(void)
+{
+    struct fx_volume fx;
+    struct fat32_dirent_loc file, dir;
+    uint32_t child, dir_cluster;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "FIRST.DAT"), 0, "file created");
+    TEST_ASSERT_EQ(fat32_create_dir_vol(fx.vol, FX_ROOT_CLUSTER, "SECOND"), 0, "directory created");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "FIRST.DAT", &file), 1, "file found");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "SECOND", &dir), 1, "directory found");
+    dir_cluster = fx_first_cluster(&dir);
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, dir_cluster, "CHILD.DAT"), 0, "child created");
+    child = fx_cluster_of(fx.vol, dir_cluster, "CHILD.DAT");
+    fat32_free_chain(fx.vol, fx_first_cluster(&file));
+    file.de.first_cluster_hi = dir.de.first_cluster_hi;
+    file.de.first_cluster_lo = dir.de.first_cluster_lo;
+    TEST_ASSERT_EQ(fat32_dir_rewrite_entry(fx.vol, &file), 0, "file shares the directory's chain");
+
+    TEST_ASSERT(fat32_fsck(fx.vol, 1) != 0, "fsck does not call this clean");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "SECOND"), dir_cluster,
+                   "the directory keeps its name");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, dir_cluster, "CHILD.DAT"), child, "the child keeps its entry");
+    TEST_ASSERT(fat32_get_fat_entry(fx.vol, child) != FAT32_FREE, "and its clusters");
+    fx_close(&fx);
+}
+
+/* A cold destination sector that cannot be read must stop the replace before the
+ * source goes, or the file loses its only name. */
+static void test_fat32_replace_cold_destination_read_failure(void)
+{
+    struct fx_volume fx;
+    uint32_t src_data, dst_data, next;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp"), 0,
+                   "source created in the first cluster");
+    fx_pad_short(&fx, FX_ROOT_CLUSTER, FX_DIR_ENTRIES - 3u);
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "report.json"), 0,
+                   "destination created in the second cluster");
+    src_data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp");
+    dst_data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "report.json");
+    next = fat32_get_fat_entry(fx.vol, FX_ROOT_CLUSTER);
+    TEST_ASSERT(next >= 2u && next < FAT32_EOC, "the directory spans two clusters");
+    scache_flush(fx.vol);
+    scache_invalidate(fx.vol);
+
+    /* The destination lookup's read succeeds; the next read of that sector fails. */
+    fx.fail_read_lba = cluster_to_sector(fx.vol, next);
+    fx.fail_read_skip = 1u;
+    TEST_ASSERT(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp", "report.json",
+                                 VFS_RENAME_REPLACE_EXISTING) != 0,
+                "the replace reports the failed read");
+    fx.fail_read_lba = FX_NO_FAULT;
+    fx.fail_read_skip = 0u;
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp"), src_data,
+                   "the source keeps its long name and its data");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "report.json"), dst_data,
+                   "the destination is unchanged");
+    TEST_ASSERT_EQ(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp", "report.json",
+                                    VFS_RENAME_REPLACE_EXISTING), 0,
+                   "and a retry succeeds");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "report.json"), src_data,
+                   "publishing the new data");
+    fx_close(&fx);
+}
+
+/* Build: PADs, then a source run whose slots end one cluster and whose short entry
+ * opens the next, then a destination after it. */
+static void fx_source_across_clusters(struct fx_volume *fx, uint32_t *src_data,
+                                      uint32_t *dst_data, uint32_t *second)
+{
+    fx_pad_short(fx, FX_ROOT_CLUSTER, FX_DIR_ENTRIES - 2u);
+    fat32_create_file_vol(fx->vol, FX_ROOT_CLUSTER, "report.json.tmp");
+    fat32_create_file_vol(fx->vol, FX_ROOT_CLUSTER, "report.json");
+    *src_data = fx_cluster_of(fx->vol, FX_ROOT_CLUSTER, "report.json.tmp");
+    *dst_data = fx_cluster_of(fx->vol, FX_ROOT_CLUSTER, "report.json");
+    *second = fat32_get_fat_entry(fx->vol, FX_ROOT_CLUSTER);
+    scache_flush(fx->vol);
+    scache_invalidate(fx->vol);
+}
+
+/* Once the source's short entry is gone it has no name, so a failed slot cleanup
+ * must not stop the switch that gives its data one. */
+static void test_fat32_replace_survives_slot_cleanup_failure(void)
+{
+    struct fx_volume fx;
+    uint32_t src_data, dst_data, second;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    fx_source_across_clusters(&fx, &src_data, &dst_data, &second);
+    TEST_ASSERT(second >= 2u && second < FAT32_EOC, "the directory spans two clusters");
+
+    /* Two lookups read the slot sector; the cleanup's read of it fails. */
+    fx.fail_read_lba = cluster_to_sector(fx.vol, FX_ROOT_CLUSTER);
+    fx.fail_read_skip = 2u;
+    TEST_ASSERT_EQ(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp", "report.json",
+                                    VFS_RENAME_REPLACE_EXISTING), 0,
+                   "the replace completes");
+    fx.fail_read_lba = FX_NO_FAULT;
+    fx.fail_read_skip = 0u;
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "report.json"), src_data,
+                   "the destination holds the new data");
+    fx_close(&fx);
+}
+
+/* If the source's removal cannot reach the device, a returned error must leave the
+ * source named, or a retry has nothing to find. */
+static void test_fat32_replace_failed_removal_keeps_source(void)
+{
+    struct fx_volume fx;
+    uint32_t src_data, dst_data, second;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    fx_source_across_clusters(&fx, &src_data, &dst_data, &second);
+    TEST_ASSERT(second >= 2u && second < FAT32_EOC, "the directory spans two clusters");
+
+    fx.fail_write_lba = cluster_to_sector(fx.vol, second);
+    TEST_ASSERT(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp", "report.json",
+                                 VFS_RENAME_REPLACE_EXISTING) != 0,
+                "the replace reports the failed write");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp"), src_data,
+                   "the source keeps its name and data");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "report.json"), dst_data,
+                   "the destination is unchanged");
+    fx.fail_write_lba = FX_NO_FAULT;
+    TEST_ASSERT_EQ(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp", "report.json",
+                                    VFS_RENAME_REPLACE_EXISTING), 0, "a retry succeeds");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "report.json"), src_data,
+                   "publishing the new data");
+    fx_close(&fx);
+}
+
+/* A crash must never publish a short entry ahead of its long-name slots: with the
+ * new run in a hole before the source, fsck would keep that bare alias and drop the
+ * source, leaving the file under neither requested name. */
+static void test_fat32_rename_into_hole_crash_sweep(void)
+{
+    uint32_t crash_at = 0;
+    uint32_t total = FX_NO_CRASH;
+
+    while (total == FX_NO_CRASH || crash_at <= total) {
+        struct fx_volume fx, after;
+        uint32_t data, seen_new, seen_tmp;
+
+        TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+        TEST_ASSERT_EQ(fx_open(&after), 0, "second view allocated");
+        if (!fx.vol || !fx.disk || !after.vol || !after.disk) {
+            fx_close(&fx);
+            fx_close(&after);
+            return;
+        }
+
+        /* A deleted run spanning the cluster boundary, then the source after it. */
+        fx_pad_short(&fx, FX_ROOT_CLUSTER, FX_DIR_ENTRIES - 2u);
+        fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "hole-maker.json");
+        fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json.tmp");
+        fat32_delete_file_vol(fx.vol, FX_ROOT_CLUSTER, "hole-maker.json");
+        data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json.tmp");
+        scache_flush(fx.vol);
+        scache_invalidate(fx.vol);
+        /* Cache the short entry's sector first, so a slot-order flush writes it
+         * first. Lookups read around the cache, so this has to be a direct read. */
+        {
+            uint8_t sector_buf[512];
+            uint32_t second = fat32_get_fat_entry(fx.vol, FX_ROOT_CLUSTER);
+
+            scache_invalidate(fx.vol);
+            TEST_ASSERT_EQ(fat32_read_sector(fx.vol, cluster_to_sector(fx.vol, second),
+                                             sector_buf), 0, "short entry's sector cached");
+        }
+
+        fx.writes = 0;
+        if (total != FX_NO_CRASH)
+            fx.crash_after = crash_at;
+        (void)fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "boot-trend.json.tmp",
+                               "boot-trend.json", 0u);
+        if (total == FX_NO_CRASH)
+            total = fx.writes;
+
+        memcpy(after.disk, fx.disk, FX_SECTORS * 512u);
+        TEST_ASSERT_EQ(fat32_fsck(after.vol, 1), 0, "fsck repairs the volume");
+        seen_new = fx_cluster_of(after.vol, FX_ROOT_CLUSTER, "boot-trend.json");
+        seen_tmp = fx_cluster_of(after.vol, FX_ROOT_CLUSTER, "boot-trend.json.tmp");
+        TEST_ASSERT((seen_new == data) != (seen_tmp == data),
+                    "exactly one requested name owns the file at every crash point");
+
+        fx_close(&fx);
+        fx_close(&after);
+        crash_at++;
+    }
+}
+
+/* A slot cleanup that failed leaves a whole run in front of the freed short entry. A
+ * new short entry there with a colliding checksum must not inherit the long name. */
+static void test_fat32_orphan_run_after_cleanup_failure_stays_dead(void)
+{
+    struct fx_volume fx;
+    uint32_t src_data, dst_data, second;
+    struct fat32_dirent_loc loc;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    fx_source_across_clusters(&fx, &src_data, &dst_data, &second);
+    fx.fail_read_lba = cluster_to_sector(fx.vol, FX_ROOT_CLUSTER);
+    fx.fail_read_skip = 2u;
+    TEST_ASSERT_EQ(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp", "report.json",
+                                    VFS_RENAME_REPLACE_EXISTING), 0, "the replace completes");
+    fx.fail_read_lba = FX_NO_FAULT;
+    fx.fail_read_skip = 0u;
+
+    /* NEWB16.TXT and REPORT~1.TMP share LFN checksum 33. */
+    {
+        uint8_t a[11], b[11];
+
+        memcpy(a, "NEWB16  TXT", 11);
+        memcpy(b, "REPORT~1TMP", 11);
+        TEST_ASSERT_EQ(fat32_lfn_checksum(a), fat32_lfn_checksum(b), "the checksums collide");
+    }
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "NEWB16.TXT"), 0, "file created");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "report.json.tmp", &loc), 0,
+                   "the removed name stays gone");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "NEWB16.TXT", &loc), 1,
+                   "and the new file answers to its own name");
+    fx_close(&fx);
+}
+
+/* A create whose flush failed leaves its slots behind. They must not name the next
+ * file that lands after them. */
+static void test_fat32_orphan_run_after_failed_publish_stays_dead(void)
+{
+    struct fx_volume fx;
+    struct fat32_dirent_loc loc;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    scache_flush(fx.vol);
+    fx.fail_write_lba = cluster_to_sector(fx.vol, FX_ROOT_CLUSTER);
+    TEST_ASSERT(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "example.txt") != 0,
+                "the create reports the failed write");
+    fx.fail_write_lba = FX_NO_FAULT;
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "EXAMPL~1.TXT"), 0,
+                   "a file with the matching short name is created");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "example.txt", &loc), 0,
+                   "the abandoned long name stays absent");
+    fx_close(&fx);
+}
+
+/* A name that spells differently but reduces to a short name in use must be refused:
+ * two entries with one short name make every lookup of it a coin toss. */
+static void test_fat32_short_name_collision_refused(void)
+{
+    struct fx_volume fx;
+    uint32_t foo, bar;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "FOO"), 0, "FOO created");
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "BAR"), 0, "BAR created");
+    foo = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "FOO");
+    bar = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "BAR");
+
+    TEST_ASSERT(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "BAR", "FOO.",
+                                 VFS_RENAME_REPLACE_EXISTING) != 0,
+                "rename onto the same short name is refused");
+    TEST_ASSERT(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "FOO.") != 0,
+                "and so is create");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "FOO"), foo, "FOO keeps its data");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "BAR"), bar, "BAR keeps its data");
+    fx_close(&fx);
+}
+
+/* Slot numbers come from the disk. No sequence value may write outside the buffer. */
+static void test_fat32_lfn_extract_stays_in_bounds(void)
+{
+    struct {
+        char before[16];
+        char name[FAT32_MAX_NAME];
+        char after[16];
+    } guard;
+    struct fat32_lfn_entry lfn;
+    uint32_t i;
+    int bad = 0;
+
+    memset(&guard, 0x5A, sizeof(guard));
+    memset(&lfn, 0, sizeof(lfn));
+    for (i = 0; i < 5u; i++) lfn.name1[i] = 'x';
+    for (i = 0; i < 6u; i++) lfn.name2[i] = 'x';
+    for (i = 0; i < 2u; i++) lfn.name3[i] = 'x';
+
+    lfn_extract_chars(&lfn, guard.name, 19);    /* highest slot lookups accept */
+    lfn_extract_chars(&lfn, guard.name, 30);    /* highest the 5-bit field encodes */
+    lfn_extract_chars(&lfn, guard.name, -1);    /* a zero sequence number */
+    for (i = 0; i < 16u; i++) {
+        if (guard.before[i] != 0x5A || guard.after[i] != 0x5A)
+            bad++;
+    }
+    TEST_ASSERT_EQ(bad, 0, "nothing is written outside the name buffer");
+    TEST_ASSERT_EQ(guard.name[FAT32_MAX_NAME - 1], 0x5A, "and the terminator slot is left alone");
+}
+
+/* FAT caps a long name at 255 characters. */
+static void test_fat32_long_name_limit(void)
+{
+    struct fx_volume fx;
+    char name[257];
+    uint32_t i;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    for (i = 0; i < 256u; i++)
+        name[i] = (char)('a' + (i % 26u));
+    name[256] = '\0';
+    TEST_ASSERT(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, name) != 0,
+                "a 256-character name is refused");
+    name[255] = '\0';
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, name), 0,
+                   "a 255-character name is accepted");
+    TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, name), 1u,
+                   "and reads back whole");
+    TEST_ASSERT(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, name) >= 2u, "and resolves");
+    fx_close(&fx);
+}
+
+/* A file's own short alias is a name it can be renamed to: that drops the long name. */
+static void test_fat32_rename_to_own_alias(void)
+{
+    struct fx_volume fx;
+    uint32_t data;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "example.txt"), 0, "file created");
+    data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "example.txt");
+    TEST_ASSERT_EQ(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "example.txt", "EXAMPL~1.TXT", 0u), 0,
+                   "rename to the file's own alias succeeds");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "EXAMPL~1.TXT"), data, "keeping its data");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "example.txt"), 0u,
+                   "and the long name is gone");
+    TEST_ASSERT_EQ(fx_entry(&fx, FX_ROOT_CLUSTER, 0u)->name[0], (uint8_t)0xE5,
+                   "with its slot deleted");
+    fx_close(&fx);
+}
+
+/* Removing the slots IS that rename, so its failure is the rename's failure. */
+static void test_fat32_rename_to_own_alias_reports_failure(void)
+{
+    struct fx_volume fx;
+    uint32_t data;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "example.txt"), 0, "file created");
+    data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "example.txt");
+    scache_flush(fx.vol);
+    scache_invalidate(fx.vol);
+
+    /* Both lookups read the directory; the slot removal's read of it fails. */
+    fx.fail_read_lba = cluster_to_sector(fx.vol, FX_ROOT_CLUSTER);
+    fx.fail_read_skip = 2u;
+    TEST_ASSERT(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "example.txt", "EXAMPL~1.TXT", 0u) != 0,
+                "the rename reports the failed read");
+    fx.fail_read_lba = FX_NO_FAULT;
+    fx.fail_read_skip = 0u;
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "example.txt"), data,
+                   "the file keeps its long name");
+
+    /* A failed flush of that removal is reported too. */
+    scache_flush(fx.vol);
+    fx.fail_write_lba = cluster_to_sector(fx.vol, FX_ROOT_CLUSTER);
+    TEST_ASSERT(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "example.txt", "EXAMPL~1.TXT", 0u) != 0,
+                "the rename reports the failed write");
+    fx.fail_write_lba = FX_NO_FAULT;
+    fx_close(&fx);
+}
+
+/* An interrupted rename of a populated directory leaves it under two names. The
+ * repair keeps one name and must not treat the children as duplicates. */
+static void test_fat32_fsck_duplicate_directory_keeps_children(void)
+{
+    struct fx_volume fx;
+    struct fat32_dirent_loc first, second;
+    uint32_t dir;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_dir_vol(fx.vol, FX_ROOT_CLUSTER, "first-directory"), 0,
+                   "first name created");
+    TEST_ASSERT_EQ(fat32_create_dir_vol(fx.vol, FX_ROOT_CLUSTER, "second-directory"), 0,
+                   "second name created");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "first-directory", &first), 1,
+                   "first found");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "second-directory", &second), 1,
+                   "second found");
+    dir = fx_first_cluster(&first);
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, dir, "child-file.dat"), 0, "child created");
+    fat32_free_chain(fx.vol, fx_first_cluster(&second));
+    second.de.first_cluster_hi = first.de.first_cluster_hi;
+    second.de.first_cluster_lo = first.de.first_cluster_lo;
+    TEST_ASSERT_EQ(fat32_dir_rewrite_entry(fx.vol, &second), 0, "second name shares the chain");
+
+    TEST_ASSERT_EQ(fat32_fsck(fx.vol, 1), 0, "fsck repairs it");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "second-directory"), 0u,
+                   "the second name is gone");
+    TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, dir, "child-file.dat"), 1u,
+                   "the child keeps its entry");
+    TEST_ASSERT(fx_cluster_of(fx.vol, dir, "child-file.dat") >= 2u, "and its data");
+    TEST_ASSERT_EQ(fat32_fsck(fx.vol, 0), 0, "a second pass finds nothing");
+    fx_close(&fx);
+}
+
+/* The same chain from two different directories is real corruption, not a rename:
+ * nothing says which name is right, so the old report-only behaviour stands. */
+static void test_fat32_fsck_keeps_names_across_directories(void)
+{
+    struct fx_volume fx;
+    struct fat32_dirent_loc in_a, in_b;
+    uint32_t a, b;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_dir_vol(fx.vol, FX_ROOT_CLUSTER, "AAA"), 0, "first directory");
+    TEST_ASSERT_EQ(fat32_create_dir_vol(fx.vol, FX_ROOT_CLUSTER, "BBB"), 0, "second directory");
+    a = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "AAA");
+    b = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "BBB");
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, a, "ONE.DAT"), 0, "file in first");
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, b, "TWO.DAT"), 0, "file in second");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, a, "ONE.DAT", &in_a), 1, "first found");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, b, "TWO.DAT", &in_b), 1, "second found");
+    fat32_free_chain(fx.vol, fx_first_cluster(&in_b));
+    in_b.de.first_cluster_hi = in_a.de.first_cluster_hi;
+    in_b.de.first_cluster_lo = in_a.de.first_cluster_lo;
+    TEST_ASSERT_EQ(fat32_dir_rewrite_entry(fx.vol, &in_b), 0, "chain shared across directories");
+
+    (void)fat32_fsck(fx.vol, 1);
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, a, "ONE.DAT", &in_a), 1, "the first name stays");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, b, "TWO.DAT", &in_b), 1, "and so does the second");
+    fx_close(&fx);
+}
+
+/* A known instant stored through set_times decodes back to that instant. */
+static void test_fat32_set_times_stores_the_date_given(void)
+{
+    struct fx_volume fx;
+    struct fat32_dirent_loc loc;
+    filetime_t when;
+    uint16_t before_date;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "DATED.DAT"), 0,
+                   "file created");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "DATED.DAT", &loc), 1, "file found");
+    before_date = loc.de.create_date;
+
+    when.seconds = 961070400u;      /* 2000-06-15 12:00:00 UTC */
+    TEST_ASSERT_EQ(fat32_set_times(fx.vol, FX_ROOT_CLUSTER, "DATED.DAT",
+                                   (filetime_t *)0, &when, (filetime_t *)0), 0, "set_times");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "DATED.DAT", &loc), 1, "file found");
+    TEST_ASSERT_EQ((loc.de.modify_date >> 9) + 1980u, 2000u, "the year is the one given");
+    TEST_ASSERT_EQ((loc.de.modify_date >> 5) & 0xFu, 6u, "and the month");
+    TEST_ASSERT_EQ(loc.de.modify_date & 0x1Fu, 15u, "and the day");
+    TEST_ASSERT_EQ(loc.de.create_date, before_date, "a NULL time is left alone");
+    fx_close(&fx);
+}
+
+static const filetime_t *s_seen_times[3];
+static uint32_t s_times_calls;
+static uint32_t s_attr_calls;
+
+static int fx_stub_set_times(struct vfs_node *node, const filetime_t *c,
+                             const filetime_t *m, const filetime_t *a)
+{
+    (void)node;
+    s_seen_times[0] = c;
+    s_seen_times[1] = m;
+    s_seen_times[2] = a;
+    s_times_calls++;
+    return 0;
+}
+
+static int fx_stub_set_attr(struct vfs_node *node, uint32_t attr)
+{
+    (void)node;
+    (void)attr;
+    s_attr_calls++;
+    return 0;
+}
+
+/* Zero fields in FileBasicInformation mean "unchanged", and must not reach the
+ * filesystem as a date. */
+static void test_nt_basic_info_zero_means_unchanged(void)
+{
+    static struct vfs_ops ops;
+    struct vfs_node node;
+    FILE_BASIC_INFORMATION bi;
+
+    memset(&ops, 0, sizeof(ops));
+    memset(&node, 0, sizeof(node));
+    memset(&bi, 0, sizeof(bi));
+    ops.set_times = fx_stub_set_times;
+    ops.set_attr = fx_stub_set_attr;
+    node.ops = &ops;
+    s_times_calls = 0;
+    s_attr_calls = 0;
+
+    bi.FileAttributes = FAT32_ATTR_HIDDEN;
+    nt_file_apply_basic_info(&node, &bi);
+    TEST_ASSERT_EQ(s_times_calls, 0u, "an attributes-only request touches no time");
+    TEST_ASSERT_EQ(s_attr_calls, 1u, "and sets the attributes");
+
+    bi.FileAttributes = 0;
+    bi.LastWriteTime = filetime_from_unix_seconds(961070400u);
+    nt_file_apply_basic_info(&node, &bi);
+    TEST_ASSERT_EQ(s_times_calls, 1u, "a time reaches the filesystem");
+    TEST_ASSERT(s_seen_times[0] == (filetime_t *)0, "with zero creation time as NULL");
+    TEST_ASSERT(s_seen_times[1] != (filetime_t *)0, "the given write time present");
+    TEST_ASSERT(s_seen_times[2] == (filetime_t *)0, "and zero access time as NULL");
+    TEST_ASSERT_EQ(s_attr_calls, 1u, "zero attributes are not applied");
+}
+
+/* A removal that never reached the disk leaves a live entry there, so the chain
+ * it points at must not go back to the free pool. */
+static void test_fat32_failed_removal_keeps_chain(void)
+{
+    struct fx_volume fx;
+    uint32_t data;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "DOOMED.DAT"), 0,
+                   "file created");
+    data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "DOOMED.DAT");
+    scache_flush(fx.vol);
+    fx.fail_write_lba = cluster_to_sector(fx.vol, FX_ROOT_CLUSTER);
+    TEST_ASSERT(fat32_delete_file_vol(fx.vol, FX_ROOT_CLUSTER, "DOOMED.DAT") != 0,
+                "delete reports the failed directory write");
+    TEST_ASSERT(fat32_get_fat_entry(fx.vol, data) != FAT32_FREE,
+                "the chain stays allocated");
+    fx.fail_write_lba = FX_NO_FAULT;
+    fx_close(&fx);
+}
+
+/* fsck's duplicate-name repair removes the whole run, and only from the later name. */
+static void test_fat32_fsck_drops_duplicate_name(void)
+{
+    struct fx_volume fx;
+    struct fat32_dirent_loc first, second;
+    uint32_t data;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "first-long-name.dat"), 0,
+                   "first name created");
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "second-long-name.dat"), 0,
+                   "second name created");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "first-long-name.dat", &first), 1,
+                   "first found");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "second-long-name.dat", &second), 1,
+                   "second found");
+    data = fx_first_cluster(&first);
+    fat32_free_chain(fx.vol, fx_first_cluster(&second));
+    second.de.first_cluster_hi = first.de.first_cluster_hi;
+    second.de.first_cluster_lo = first.de.first_cluster_lo;
+    TEST_ASSERT_EQ(fat32_dir_rewrite_entry(fx.vol, &second), 0, "second name shares the chain");
+
+    TEST_ASSERT(fat32_fsck(fx.vol, 0) != 0, "read-only fsck reports the shared chain");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "second-long-name.dat"), data,
+                   "and does not change it");
+    TEST_ASSERT_EQ(fat32_fsck(fx.vol, 1), 0, "fsck repairs it");
+    TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, "first-long-name.dat"), 1u,
+                   "the first name stays");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "second-long-name.dat"), 0u,
+                   "the second is gone");
+    TEST_ASSERT_EQ(fx_entry(&fx, second.run_cluster, second.run_offset / FX_ENTRY_SIZE)->name[0],
+                   (uint8_t)0xE5, "along with its long-name run");
+    TEST_ASSERT(fat32_get_fat_entry(fx.vol, data) != FAT32_FREE, "and the data is kept");
+    TEST_ASSERT_EQ(fat32_fsck(fx.vol, 0), 0, "a second pass finds nothing");
+    fx_close(&fx);
+}
+
+static void test_fat32_replace_crash_sweep(void)   { fx_rename_crash_sweep(1); }
+static void test_fat32_rename_crash_sweep(void)    { fx_rename_crash_sweep(0); }
+
 void test_register_fat32(void)
 {
     test_suite_register_cat("FAT32: LFN run crossing a directory cluster",
@@ -503,6 +1687,76 @@ void test_register_fat32(void)
                             test_fat32_bad_link_and_last_cluster, TEST_CAT_FS);
     test_suite_register_cat("FAT32: BPB with a short FAT is refused",
                             test_fat32_bpb_refuses_short_fat, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: colliding names reach their own file",
+                            test_fat32_colliding_names_reach_their_own_file, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: lookup alias rules",
+                            test_fat32_lookup_alias_rules, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: lookup ignores an unbound run",
+                            test_fat32_lookup_ignores_unbound_run, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: removal clears a run across clusters",
+                            test_fat32_remove_run_across_clusters, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: rmdir keeps a directory it cannot read",
+                            test_fat32_rmdir_read_failure_keeps_directory, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: set_attr uses the file's parent directory",
+                            test_fat32_set_attr_uses_parent_directory, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: rename rebinds the long name",
+                            test_fat32_rename_rebinds_long_name, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: replace repeatedly",
+                            test_fat32_replace_repeatedly, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: create refuses an existing name",
+                            test_fat32_create_refuses_existing_name, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: failed rename rolls back",
+                            test_fat32_failed_rename_rolls_back, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: rollback when the alias is a long name",
+                            test_fat32_rollback_alias_is_a_long_name, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: rollback of a respelling",
+                            test_fat32_rollback_respelling, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: dot names are refused",
+                            test_fat32_dot_names_are_refused, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: fsck owner scan failure is not clean",
+                            test_fat32_fsck_owner_scan_failure_is_not_clean, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: owner scan reports a FAT read failure",
+                            test_fat32_owner_scan_fat_failure, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: fsck keeps both in a file and directory conflict",
+                            test_fat32_fsck_file_directory_conflict, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: replace stops on a cold destination read failure",
+                            test_fat32_replace_cold_destination_read_failure, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: replace survives a slot cleanup failure",
+                            test_fat32_replace_survives_slot_cleanup_failure, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: replace keeps the source if its removal fails",
+                            test_fat32_replace_failed_removal_keeps_source, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: rename into a hole survives a crash at every write",
+                            test_fat32_rename_into_hole_crash_sweep, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: orphan run after a cleanup failure stays dead",
+                            test_fat32_orphan_run_after_cleanup_failure_stays_dead, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: orphan run after a failed publish stays dead",
+                            test_fat32_orphan_run_after_failed_publish_stays_dead, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: short name collision is refused",
+                            test_fat32_short_name_collision_refused, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: LFN extraction stays in bounds",
+                            test_fat32_lfn_extract_stays_in_bounds, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: long name limit",
+                            test_fat32_long_name_limit, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: rename to the file's own alias",
+                            test_fat32_rename_to_own_alias, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: rename to own alias reports failure",
+                            test_fat32_rename_to_own_alias_reports_failure, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: fsck keeps children of a duplicate directory",
+                            test_fat32_fsck_duplicate_directory_keeps_children, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: fsck keeps names across directories",
+                            test_fat32_fsck_keeps_names_across_directories, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: set_times stores the date given",
+                            test_fat32_set_times_stores_the_date_given, TEST_CAT_FS);
+    test_suite_register_cat("NT: FileBasicInformation zero means unchanged",
+                            test_nt_basic_info_zero_means_unchanged, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: failed removal keeps the chain",
+                            test_fat32_failed_removal_keeps_chain, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: fsck drops a duplicate name",
+                            test_fat32_fsck_drops_duplicate_name, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: replace survives a crash at every write",
+                            test_fat32_replace_crash_sweep, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: rename survives a crash at every write",
+                            test_fat32_rename_crash_sweep, TEST_CAT_FS);
 }
 
 #endif /* KERNEL_TESTS */

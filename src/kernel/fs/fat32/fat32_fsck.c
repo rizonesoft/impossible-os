@@ -73,6 +73,63 @@ static uint32_t walk_chain(struct fat32_volume *vol, uint8_t *visited,
     return cross_links;
 }
 
+/* The entries of one file as a directory scan meets them: where its long-name run
+ * started, and whether that run is still unbroken. */
+struct fsck_run {
+    uint32_t cluster;
+    uint32_t offset;
+    uint32_t entries;
+    uint8_t  checksum;
+    int      next_seq;
+};
+
+/* Does an entry before (stop_cluster, stop_offset) in this directory start at chain
+ * `first`, with the same directory bit as `attr`? Only that is the mark of one file
+ * under two names: entries in different directories, or a directory visited again
+ * through a shared chain, hit `visited` too and are not duplicates. 1 = yes, 0 = no.
+ * -1 = could not tell, or a file and a directory claim the same chain: real
+ * corruption, where dropping either could orphan live data. */
+int fat32_fsck_earlier_owner(struct fat32_volume *vol, uint32_t dir_cluster,
+                             uint32_t stop_cluster, uint32_t stop_offset,
+                             uint32_t first, uint8_t attr, uint32_t max_cluster)
+{
+    uint8_t sector_buf[512];
+    uint32_t cluster = dir_cluster;
+    uint32_t steps = 0;
+
+    while (cluster >= 2 && cluster < max_cluster && steps++ < max_cluster) {
+        uint32_t sector = cluster_to_sector(vol, cluster);
+        uint32_t next;
+        uint32_t si;
+
+        for (si = 0; si < vol->bpb.sectors_per_cluster; si++) {
+            uint32_t i;
+
+            if (fat32_read_sector(vol, sector + si, sector_buf) != 0)
+                return -1;
+            for (i = 0; i < 512u; i += 32) {
+                const struct fat32_dir_entry *de =
+                    (const struct fat32_dir_entry *)&sector_buf[i];
+
+                if (cluster == stop_cluster && si * 512u + i >= stop_offset)
+                    return 0;
+                if (de->name[0] == 0x00)
+                    return -1;      /* the stop location lies past the end */
+                if (de->name[0] == 0xE5 || de->attr == FAT32_ATTR_LFN ||
+                    (de->attr & FAT32_ATTR_VOLUME_ID))
+                    continue;
+                if ((((uint32_t)de->first_cluster_hi << 16) |
+                     de->first_cluster_lo) == first)
+                    return ((de->attr ^ attr) & FAT32_ATTR_DIRECTORY) ? -1 : 1;
+            }
+        }
+        if (fat32_next_cluster_checked(vol, cluster, &next) != 0)
+            return -1;
+        cluster = next;
+    }
+    return -1;              /* the chain ended before the stop location */
+}
+
 /* Recursively walk directory entries and mark all reachable clusters. */
 /* walk_directory: traverse a directory cluster chain, marking every
  * reached cluster in `visited`. Returns the count of cross-linked
@@ -98,6 +155,7 @@ static uint32_t walk_directory(struct fat32_volume *vol, uint8_t *visited,
     uint32_t pmm_pages = 0;
     uint32_t cur_cluster = dir_cluster;
     uint32_t cross_links = 0;
+    struct fsck_run run = { 0, 0, 0, 0, -1 };
 
     if (bytes_per_cluster <= 4096u) {
         cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
@@ -133,11 +191,27 @@ static uint32_t walk_directory(struct fat32_volume *vol, uint8_t *visited,
             struct fat32_dir_entry *de =
                 (struct fat32_dir_entry *)&cluster_buf[i];
             uint32_t fc;
+            int owner;
 
             if (de->name[0] == 0x00) goto dir_done;
-            if (de->name[0] == 0xE5) continue;
-            if (de->attr == FAT32_ATTR_LFN) continue;
-            if (de->attr & FAT32_ATTR_VOLUME_ID) continue;
+            if (de->name[0] == 0xE5) { run.next_seq = -1; continue; }
+            if (de->attr == FAT32_ATTR_LFN) {
+                const struct fat32_lfn_entry *lfn =
+                    (const struct fat32_lfn_entry *)de;
+                int seq = lfn->seq & LFN_SEQ_MASK;
+
+                if (lfn->seq & LFN_LAST_ENTRY) {
+                    run.cluster = cur_cluster;
+                    run.offset = i;
+                    run.entries = (uint32_t)seq + 1u;
+                    run.checksum = lfn->checksum;
+                    run.next_seq = seq;
+                }
+                run.next_seq = (seq == run.next_seq && lfn->checksum == run.checksum)
+                             ? seq - 1 : -1;
+                continue;
+            }
+            if (de->attr & FAT32_ATTR_VOLUME_ID) { run.next_seq = -1; continue; }
 
             /* Skip . and .. */
             if (de->name[0] == '.' &&
@@ -148,8 +222,53 @@ static uint32_t walk_directory(struct fat32_volume *vol, uint8_t *visited,
             fc = ((uint32_t)de->first_cluster_hi << 16)
                | (uint32_t)de->first_cluster_lo;
 
-            if (fc < 2 || fc >= max_cluster)
+            if (fc < 2 || fc >= max_cluster) {
+                run.next_seq = -1;
                 continue;
+            }
+
+            /* A second entry in one directory claiming a chain from its very first
+             * cluster is what an interrupted rename leaves: one file or directory
+             * under two names. walk_chain has no earlier cluster to cut at, and
+             * left in place a delete or truncate through either name would free
+             * the other's data. Dropping this name keeps the data and is a valid
+             * outcome of the rename. A directory is not walked a second time, or
+             * its children would all look like duplicates. */
+            /* Without a same-directory owner this stays the old cross-link report:
+             * a chain shared across directories is not a rename, and a directory
+             * reached again must not count as its children's second owner. */
+            owner = 0;
+            if (bitset_test(visited, fc)) {
+                owner = fat32_fsck_earlier_owner(vol, dir_cluster,
+                                                 cur_cluster, i, fc,
+                                                 de->attr, max_cluster);
+            }
+            if (owner < 0)
+                *traversal_failed = 1;
+            if (owner > 0) {
+                cross_links++;
+                klog(LOG_WARN, "fsck", "two names share the chain at cluster %u",
+                     (uint64_t)fc);
+                if (fix) {
+                    struct fat32_dirent_loc loc;
+                    int bound = (run.next_seq == 0 &&
+                                 fat32_lfn_checksum(de->name) == run.checksum);
+
+                    loc.de = *de;
+                    loc.cluster = cur_cluster;
+                    loc.byte_offset = i;
+                    loc.run_cluster = bound ? run.cluster : cur_cluster;
+                    loc.run_offset = bound ? run.offset : i;
+                    loc.run_entries = bound ? run.entries : 1u;
+                    if (fat32_dir_remove_entries(vol, &loc) != 0) {
+                        klog(LOG_ERROR, "fsck", "could not drop the duplicate name");
+                        *repair_failed = 1;
+                    }
+                }
+                run.next_seq = -1;
+                continue;
+            }
+            run.next_seq = -1;
 
             if (de->attr & FAT32_ATTR_DIRECTORY) {
                 /* Recurse into subdirectory; failure propagates via

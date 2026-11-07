@@ -104,14 +104,11 @@ struct fat32_file {
     uint32_t dir_cluster;          /* parent directory cluster */
     uint8_t  sfn[11];              /* cached short-name (8.3 packed) as
                                     * stored on disk; populated by
-                                    * fat32_read_dir. Truncate / unlink
-                                    * match on this directly because
-                                    * fat32_make_short_name does NOT
-                                    * reproduce the ~N collision suffix
-                                    * fat32_generate_sfn adds for LFN
-                                    * names, including lowercase 8.3
-                                    * inputs like "postcode.log" that
-                                    * become "POSTCO~1LOG" on disk. */
+                                    * fat32_read_dir. Truncate matches on
+                                    * this directly because a numeric
+                                    * tail cannot be derived from the
+                                    * name: lowercase "postcode.log" is
+                                    * POSTCO~1LOG on disk, or ~2 if taken. */
     uint8_t  _pad[1];
     struct fat32_volume *volume;   /* back-pointer to owning volume */
 };
@@ -214,7 +211,37 @@ int      fat32_zero_cluster(struct fat32_volume *vol, uint32_t cluster);
 
 /* ---- fat32_dir.c: Directory operations ---- */
 
-void     fat32_make_short_name(const char *name, uint8_t *short_name);
+/* Where a directory entry lives, as found by fat32_dir_lookup. */
+struct fat32_dirent_loc {
+    uint32_t cluster;      /* directory cluster holding the short entry */
+    uint32_t byte_offset;  /* its byte offset within that cluster */
+    uint32_t run_cluster;  /* where the entry's run starts: its first LFN slot, */
+    uint32_t run_offset;   /* or the short entry itself when it has no long name */
+    uint32_t run_entries;  /* LFN slots + 1 */
+    struct fat32_dir_entry de;
+};
+
+/* Resolve a name in one directory: the long name of a run validated against its
+ * short entry, an entry's own 8.3 name, or as a last resort a long-named file's
+ * on-disk alias. Never a short name re-derived from `name`, because the numeric
+ * tail depends on what the directory held at create time and a guess resolves to
+ * some OTHER file. 1 = found, 0 = absent, -1 = absence could not be proven (the
+ * chain is corrupt, or an allocation or read failed). */
+int      fat32_dir_lookup(struct fat32_volume *vol, uint32_t dir_cluster,
+                          const char *name, struct fat32_dirent_loc *loc);
+/* Write loc->de back over the short entry it was read from. */
+int      fat32_dir_rewrite_entry(struct fat32_volume *vol,
+                                 const struct fat32_dirent_loc *loc);
+/* Delete the short entry on the device, then its LFN run. -1 = the entry is still
+ * there. loc->de must hold the entry, so a failed removal can restore it. */
+int      fat32_dir_remove_entries(struct fat32_volume *vol,
+                                  const struct fat32_dirent_loc *loc);
+/* Delete only the LFN run, leaving the file under its 8.3 name. */
+int      fat32_dir_drop_long_name(struct fat32_volume *vol,
+                                  const struct fat32_dirent_loc *loc);
+/* Take back a just-published entry from the cache, without touching the device. */
+int      fat32_dir_discard_entries(struct fat32_volume *vol,
+                                   const struct fat32_dirent_loc *loc);
 
 /* LFN helpers */
 uint8_t  fat32_lfn_checksum(const uint8_t sfn[11]);
@@ -230,7 +257,8 @@ int      fat32_lfn_write_slots(struct fat32_volume *vol,
                                 uint32_t dir_cluster,
                                 const uint8_t sfn[11],
                                 const char *utf8_name,
-                                const struct fat32_dir_entry *sfn_entry);
+                                const struct fat32_dir_entry *sfn_entry,
+                                struct fat32_dirent_loc *out_loc);
 int      fat32_find_free_dir_slot(struct fat32_volume *vol,
                                    uint32_t dir_cluster,
                                    uint32_t *out_sector,
@@ -242,8 +270,6 @@ int      fat32_write_dir_entry(struct fat32_volume *vol, uint32_t sector,
 void     fat32_read_dir(struct fat32_volume *vol, uint32_t cluster);
 int      fat32_update_dir_size(struct fat32_volume *vol, uint32_t search_dir,
                                 uint32_t target_fc, uint32_t new_size);
-void     seconds_to_fat_datetime(uint32_t secs, uint16_t *out_time,
-                                  uint16_t *out_date);
 void     fat32_stamp_create(struct fat32_dir_entry *de);
 void     fat32_stamp_modify(struct fat32_dir_entry *de);
 
@@ -280,6 +306,9 @@ int      fat32_rename_vol(struct fat32_volume *vol, uint32_t dir_cluster,
 /* ---- fat32_fsck.c: Filesystem consistency checker ---- */
 
 int      fat32_fsck(struct fat32_volume *vol, int fix);
+int      fat32_fsck_earlier_owner(struct fat32_volume *vol, uint32_t dir_cluster,
+                                  uint32_t stop_cluster, uint32_t stop_offset,
+                                  uint32_t first, uint8_t attr, uint32_t max_cluster);
 
 /* ---- fat32_ops.c: VFS ops tables ---- */
 

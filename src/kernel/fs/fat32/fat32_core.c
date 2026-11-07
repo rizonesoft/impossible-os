@@ -56,26 +56,26 @@ void fat32_short_name_to_str(const uint8_t *raw, char *out)
     out[j] = '\0';
 }
 
+/* Copy one LFN slot's characters into a FAT32_MAX_NAME buffer at the position its
+ * sequence number gives. That number comes from the disk, so a slot reaching past the
+ * last character position stops there: the final byte stays free for the terminator. */
 void lfn_extract_chars(const struct fat32_lfn_entry *lfn,
                        char *name_buf, int seq_index)
 {
-    int base = seq_index * FAT32_LFN_CHARS;
+    int pos = seq_index * FAT32_LFN_CHARS;
     int i;
 
-    for (i = 0; i < 5; i++) {
-        uint16_t ch = lfn->name1[i];
-        if (ch == 0 || ch == 0xFFFF) return;
-        name_buf[base + i] = (ch < 128) ? (char)ch : '_';
-    }
-    for (i = 0; i < 6; i++) {
-        uint16_t ch = lfn->name2[i];
-        if (ch == 0 || ch == 0xFFFF) return;
-        name_buf[base + 5 + i] = (ch < 128) ? (char)ch : '_';
-    }
-    for (i = 0; i < 2; i++) {
-        uint16_t ch = lfn->name3[i];
-        if (ch == 0 || ch == 0xFFFF) return;
-        name_buf[base + 11 + i] = (ch < 128) ? (char)ch : '_';
+    if (seq_index < 0)
+        return;
+
+    for (i = 0; i < FAT32_LFN_CHARS; i++, pos++) {
+        uint16_t ch = (i < 5) ? lfn->name1[i]
+                    : (i < 11) ? lfn->name2[i - 5]
+                    : lfn->name3[i - 11];
+
+        if (ch == 0 || ch == 0xFFFF || pos >= FAT32_MAX_NAME - 1)
+            return;
+        name_buf[pos] = (ch < 128) ? (char)ch : '_';
     }
 }
 

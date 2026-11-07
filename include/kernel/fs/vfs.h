@@ -85,7 +85,7 @@ struct vfs_stat {
 
 /* Timestamp for set_times callback (NULL = don't change) */
 typedef struct {
-    uint32_t seconds;    /* seconds since boot */
+    uint32_t seconds;    /* Unix seconds, as NtSetInformationFile supplies them */
 } filetime_t;
 
 /* Filesystem driver operations -- implemented by each FS (IXFS, FAT32, etc.) */
