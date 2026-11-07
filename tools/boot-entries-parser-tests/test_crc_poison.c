@@ -105,10 +105,11 @@ int main(void)
         static const char HEX[] = "0123456789ABCDEF";
         u32 len = (u32)strlen(json), zero_off = 0, hdr = 0, crc, i;
         boot_entries_parse_result_t r;
+        lexer_t lexer;
         int rc;
 
         crc32_reset();
-        if (find_crc_field((const u8 *)json, len, &zero_off, &hdr) != CRC_LOC_FOUND) {
+        if (find_crc_field(&lexer, (const u8 *)json, len, &zero_off, &hdr) != CRC_LOC_FOUND) {
             check(0, "fixture carries a locatable crc32 field");
             return g_failures ? 1 : 0;
         }

@@ -20,6 +20,9 @@
 # ============================================================================
 
 set -uo pipefail
+# With pipefail, `echo "$OUT" | grep -q X` fails when grep exits on an early match
+# and echo then takes SIGPIPE: measured 8 false failures in 3000 on 19 KB of output,
+# 0 with a here-string. Search captured text with `grep -q X <<<"$OUT"`.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -1554,7 +1557,7 @@ echo "clean doc" > "$SEC_REPO/docs/ok.md"
 printf 'int sec_ok(void) { return 0; }\n' > "$SEC_REPO/src/ok.c"
 ( cd "$SEC_REPO" && git add -A && git -c commit.gpgsign=false commit -q -m seed )
 SEC_OUT="$(cd "$SEC_REPO" && bash scripts/lint.sh src/ 2>&1)"
-if echo "$SEC_OUT" | grep -q "tracked-secret"; then
+if grep -q "tracked-secret" <<<"$SEC_OUT"; then
     t_fail "lint Check 16 false-positive on clean synthetic repo" "$(echo "$SEC_OUT" | grep tracked-secret | head -2)"
 else
     t_pass "lint Check 16 clean on clean synthetic repo"
@@ -1563,7 +1566,7 @@ fi
 echo '{}' > "$SEC_REPO/secrets.json"
 ( cd "$SEC_REPO" && git add secrets.json && git -c commit.gpgsign=false commit -q -m s1 )
 SEC_OUT="$(cd "$SEC_REPO" && bash scripts/lint.sh src/ 2>&1)"; SEC_RC=$?
-if [ "$SEC_RC" != "0" ] && echo "$SEC_OUT" | grep -q "tracked-secret: basename"; then
+if [ "$SEC_RC" != "0" ] && grep -q "tracked-secret: basename" <<<"$SEC_OUT"; then
     t_pass "lint Check 16 refuses tracked secrets.json basename (rc=$SEC_RC)"
 else
     t_fail "lint Check 16 missed tracked secrets.json" "rc=$SEC_RC"
@@ -1573,7 +1576,7 @@ fi
 python3 -c "print('key = ' + 'sk-or-v1-' + '0123456789abcdef' * 4)" > "$SEC_REPO/docs/leak.md"
 ( cd "$SEC_REPO" && git add docs/leak.md && git -c commit.gpgsign=false commit -q -m s3 )
 SEC_OUT="$(cd "$SEC_REPO" && bash scripts/lint.sh src/ 2>&1)"; SEC_RC=$?
-if [ "$SEC_RC" != "0" ] && echo "$SEC_OUT" | grep -q "live API-key pattern"; then
+if [ "$SEC_RC" != "0" ] && grep -q "live API-key pattern" <<<"$SEC_OUT"; then
     t_pass "lint Check 16 refuses live-looking key in tracked content (rc=$SEC_RC)"
 else
     t_fail "lint Check 16 missed tracked live key" "rc=$SEC_RC"
@@ -1587,7 +1590,7 @@ python3 -c "print('key = ' + 'sk-or-v1-' + 'fedcba9876543210' * 4)" > "$SEC_REPO
 ( cd "$SEC_REPO" && git add docs/staged-leak.md )
 echo "placeholder only" > "$SEC_REPO/docs/staged-leak.md"
 SEC_OUT="$(cd "$SEC_REPO" && bash scripts/lint.sh src/ 2>&1)"; SEC_RC=$?
-if [ "$SEC_RC" != "0" ] && echo "$SEC_OUT" | grep -q "docs/staged-leak.md: tracked-secret"; then
+if [ "$SEC_RC" != "0" ] && grep -q "docs/staged-leak.md: tracked-secret" <<<"$SEC_OUT"; then
     t_pass "lint Check 16 catches a staged key with a cleaned worktree copy (rc=$SEC_RC)"
 else
     t_fail "lint Check 16 missed the staged-only key" "rc=$SEC_RC"
@@ -1599,7 +1602,7 @@ fi
 
 # skip env produces a visible WARN and passes
 SEC_OUT="$(cd "$SEC_REPO" && SKIP_LINT_SECRETS=1 bash scripts/lint.sh src/ 2>&1)"
-if echo "$SEC_OUT" | grep -q "Check 16 (tracked-secret guard) skipped"; then
+if grep -q "Check 16 (tracked-secret guard) skipped" <<<"$SEC_OUT"; then
     t_pass "lint Check 16 skip env emits visible WARN"
 else
     t_fail "lint Check 16 skip env silent"
@@ -1676,11 +1679,11 @@ _arc_case() {  # <desc> <want_flag:yes|no> <agent-body-file-content> [filename]
     printf '%s' "$body" > "$ARC_REPO/.claude/agents/$fname"
     out=$(cd "$ARC_REPO" && bash scripts/lint.sh 2>&1) || true
     if [ "$want_flag" = "yes" ]; then
-        if echo "$out" | grep -q "$fname.*\(allowlist\|RUNNER_ROSTER\|hard rules\|alias\|OPUS_ROSTER\|model:\|effort:\)"; then
+        if grep -q "$fname.*\(allowlist\|RUNNER_ROSTER\|hard rules\|alias\|OPUS_ROSTER\|model:\|effort:\)" <<<"$out"; then
             t_pass "lint_agent_runner_class: $desc (flagged)"; else
             t_fail "lint_agent_runner_class: $desc" "expected flag, got: $(echo "$out" | grep "$fname" | head -1)"; fi
     else
-        if echo "$out" | grep -q "$fname"; then
+        if grep -q "$fname" <<<"$out"; then
             t_fail "lint_agent_runner_class: $desc" "unexpected flag: $(echo "$out" | grep "$fname" | head -1)"; else
             t_pass "lint_agent_runner_class: $desc (clean)"; fi
     fi
@@ -1835,7 +1838,7 @@ _ad_pos() {  # <desc> <want_rc> <want_grep>
     local desc="$1" want_rc="$2" want_grep="$3" err rc
     err=$(printf '%s' "$PAYLOAD" | env -u SKIP_AGENT_DISPATCH_HOOK OVERNIGHT_SEQUENCER_RUN=1         python3 "$AD_TMP/.claude/hooks/agent_dispatch_required.py" 2>&1 1>/dev/null)
     rc=$?
-    if [ "$rc" = "$want_rc" ] && echo "$err" | grep -q "$want_grep"; then
+    if [ "$rc" = "$want_rc" ] && grep -q "$want_grep" <<<"$err"; then
         t_pass "agent_dispatch_gate: $desc (rc=$rc)"
     else
         t_fail "agent_dispatch_gate: $desc (want rc=$want_rc + '$want_grep', got rc=$rc err='$err')"
@@ -2137,7 +2140,7 @@ open(p, "w").write(json.dumps(s))
         | python3 "$POST_HOOK" >/dev/null 2>&1
     WARN_OUT=$(printf "%s" '''{"tool_name":"Bash","tool_input":{"command":"node /abs/codex-companion.mjs adversarial-review second"}}''' \
         | python3 "$POST_HOOK" 2>&1 >/dev/null || true)
-    if echo "$WARN_OUT" | grep -q "overwriting previous unreceived trigger"; then
+    if grep -q "overwriting previous unreceived trigger" <<<"$WARN_OUT"; then
         t_pass "receiving_review_gate: rapid-fire trigger emits WARN (H1 mitigation)"
     else
         t_fail "receiving_review_gate: no WARN on rapid-fire trigger (H1 mitigation, got: $WARN_OUT)"
@@ -3251,7 +3254,7 @@ PY
     BLOCK_RC=$(cd "$FD_REPO" && \
         printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
         python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
-    if [ "$BLOCK_RC" = "2" ] && echo "$BLOCK_OUT" | grep -q "missing: perf"; then
+    if [ "$BLOCK_RC" = "2" ] && grep -q "missing: perf" <<<"$BLOCK_OUT"; then
         t_pass "four_dispatch_gate: 2-of-3 dispatches blocks naming missing perf"
     else
         t_fail "four_dispatch_gate: 2-of-3 dispatches block (rc=$BLOCK_RC, missing-perf in stderr=$(echo "$BLOCK_OUT" | grep -c 'missing: perf'))"
@@ -3266,7 +3269,7 @@ PY
     BLOCK_RC=$(cd "$FD_REPO" && \
         printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
         python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
-    if [ "$BLOCK_RC" = "2" ] && echo "$BLOCK_OUT" | grep -q "stale.*perf"; then
+    if [ "$BLOCK_RC" = "2" ] && grep -q "stale.*perf" <<<"$BLOCK_OUT"; then
         t_pass "four_dispatch_gate: stale perf (>30 min) blocks"
     else
         t_fail "four_dispatch_gate: stale perf block (rc=$BLOCK_RC)"
@@ -3332,7 +3335,7 @@ PY
     PAYLOAD='{"tool_name":"Skill","tool_input":{"skill":"codex-adversarial-review-section","prompt":"I built a new commit gate hook in section_commit_gate.py.\nReview todo/00-infrastructure/TODO-99-fdgate-fixture.md S1 for SMP races."}}'
     WARN_OUT=$(cd "$FD_REPO" && printf '%s' "$PAYLOAD" | \
         python3 ".claude/hooks/codex_review_completed.py" 2>&1 >/dev/null)
-    if echo "$WARN_OUT" | grep -q "first-person"; then
+    if grep -q "first-person" <<<"$WARN_OUT"; then
         t_pass "four_dispatch_gate: self-summary preamble emits stderr WARN"
     else
         t_fail "four_dispatch_gate: self-summary WARN missing" \
@@ -3429,7 +3432,7 @@ CMOD
     BLOCK_RC=$(cd "$FD_REPO" && \
         printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
         python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
-    if [ "$BLOCK_RC" = "2" ] && echo "$BLOCK_OUT" | grep -q "stamp-only commit"; then
+    if [ "$BLOCK_RC" = "2" ] && grep -q "stamp-only commit" <<<"$BLOCK_OUT"; then
         t_pass "four_dispatch_gate: M1 stamp-only commit blocks when state missing"
     else
         t_fail "four_dispatch_gate: M1 stamp-only block (rc=$BLOCK_RC stderr=$BLOCK_OUT)"
@@ -3511,7 +3514,7 @@ JSON
     BLOCK_RC=$(cd "$FD_REPO" && \
         printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
         python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
-    if [ "$BLOCK_RC" = "2" ] && echo "$BLOCK_OUT" | grep -q "cross-branch"; then
+    if [ "$BLOCK_RC" = "2" ] && grep -q "cross-branch" <<<"$BLOCK_OUT"; then
         t_pass "four_dispatch_gate: M2 non-ancestor dispatch HEAD blocks (cross-branch)"
     else
         t_fail "four_dispatch_gate: M2 cross-branch block (rc=$BLOCK_RC)" \
@@ -3552,7 +3555,7 @@ JSON
     LEG_RC=$(cd "$FD_REPO" && \
         printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
         python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
-    if [ "$LEG_RC" = "0" ] && echo "$LEG_OUT" | grep -q "predates the head-binding"; then
+    if [ "$LEG_RC" = "0" ] && grep -q "predates the head-binding" <<<"$LEG_OUT"; then
         t_pass "four_dispatch_gate: M2 legacy entry (no head field) passes with WARN"
     else
         t_fail "four_dispatch_gate: M2 legacy entry (rc=$LEG_RC, stderr=$LEG_OUT)"
@@ -3601,7 +3604,7 @@ sys.exit(0 if ok else 1)
     BLOCK_RC=$(cd "$FD_REPO" && \
         printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
         python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
-    if [ "$BLOCK_RC" = "2" ] && echo "$BLOCK_OUT" | grep -q "stamp-only commit"; then
+    if [ "$BLOCK_RC" = "2" ] && grep -q "stamp-only commit" <<<"$BLOCK_OUT"; then
         t_pass "four_dispatch_gate: M5 source+stamp+no-flip blocks (mixed-bypass)"
     else
         t_fail "four_dispatch_gate: M5 mixed-bypass block (rc=$BLOCK_RC stderr=$BLOCK_OUT)"
@@ -3695,7 +3698,7 @@ sys.exit(0 if r.get('background_dispatch') is True and r.get('review_kind') == '
     BLOCK_RC=$(cd "$FD_REPO" && \
         printf '%s' '{"tool_name":"Bash","tool_input":{"command":"SKIP_REVIEW_HOOK=1 git commit -m foo"}}' | \
         python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
-    if [ "$BLOCK_RC" = "2" ] && echo "$BLOCK_OUT" | grep -q "REASON is empty\|REASON too short"; then
+    if [ "$BLOCK_RC" = "2" ] && grep -q "REASON is empty\|REASON too short" <<<"$BLOCK_OUT"; then
         t_pass "four_dispatch_gate: R3.c inline SKIP without REASON returns usage-envelope BLOCK"
     else
         t_fail "four_dispatch_gate: R3.c inline-SKIP-no-reason missing usage envelope (rc=$BLOCK_RC)"
@@ -3730,7 +3733,7 @@ sys.exit(0 if ok else 1)
     PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"node /abs/codex-companion.mjs adversarial-review \"[review-kind: adversarial] [review-kind: perf] Target: todo/00-infrastructure/TODO-99-fdgate-fixture.md S1\\nReview angles.\""}}'
     WARN_OUT=$(cd "$FD_REPO" && printf '%s' "$PAYLOAD" | \
         python3 ".claude/hooks/codex_review_completed.py" 2>&1 >/dev/null)
-    if [ ! -f "$FD_STAMPS" ] && echo "$WARN_OUT" | grep -q "multiple"; then
+    if [ ! -f "$FD_STAMPS" ] && grep -q "multiple" <<<"$WARN_OUT"; then
         t_pass "four_dispatch_gate: A conflicting leading markers refuse attribution + WARN"
     else
         t_fail "four_dispatch_gate: A conflicting markers not blocked (stamps exist=$( [ -f "$FD_STAMPS" ] && echo yes || echo no), warn=$WARN_OUT)"
@@ -3879,7 +3882,7 @@ PY
         if [ "$ELAPSED_MS" -lt 0 ]; then
             echo "TEST_FAIL timing unreadable (start='$START' end='$END') warn=$WARN_OUT" \
                 > /tmp/fdgate_d_result.$$
-        elif echo "$WARN_OUT" | grep -q "could not acquire" && [ "$ELAPSED_MS" -lt 3500 ]; then
+        elif grep -q "could not acquire" <<<"$WARN_OUT" && [ "$ELAPSED_MS" -lt 3500 ]; then
             echo "TEST_OK ${ELAPSED_MS}ms $WARN_OUT" > /tmp/fdgate_d_result.$$
         else
             echo "TEST_FAIL elapsed=${ELAPSED_MS}ms warn=$WARN_OUT" > /tmp/fdgate_d_result.$$
@@ -4293,8 +4296,8 @@ fi
 # (b) user_prompt_doctrine injects systemMessage on a synthetic skip-review prompt.
 UPD_OUT="$(printf '%s' '{"prompt":"please skip review and just commit"}' | \
     python3 "$REPO_ROOT/.claude/hooks/user_prompt_doctrine.py" 2>/dev/null)"
-if echo "$UPD_OUT" | grep -q "doctrine reminder" && \
-   echo "$UPD_OUT" | grep -q "skip" ; then
+if grep -q "doctrine reminder" <<<"$UPD_OUT" && \
+   grep -q "skip" <<<"$UPD_OUT" ; then
     t_pass "user_prompt_doctrine_skip  systemMessage emitted on bypass-shape phrase"
 else
     t_fail "user_prompt_doctrine_skip  expected systemMessage, got: $UPD_OUT"
@@ -4313,15 +4316,15 @@ fi
 IOR_HOOK="$REPO_ROOT/.claude/hooks/interactive_offload_router.py"
 IOR_OUT="$(printf '%s' '{"prompt":"validate TODO-13 for structural gaps"}' | \
     python3 "$IOR_HOOK" 2>/dev/null)"
-if echo "$IOR_OUT" | grep -q "offload hint" && \
-   echo "$IOR_OUT" | grep -q "todo-validation-mapper"; then
+if grep -q "offload hint" <<<"$IOR_OUT" && \
+   grep -q "todo-validation-mapper" <<<"$IOR_OUT"; then
     t_pass "offload_router_todo  validate-TODO prompt routes to todo-validation-mapper"
 else
     t_fail "offload_router_todo  expected todo-validation-mapper hint, got: $IOR_OUT"
 fi
 IOR_OUT2="$(printf '%s' '{"prompt":"run the full test suite"}' | \
     python3 "$IOR_HOOK" 2>/dev/null)"
-if echo "$IOR_OUT2" | grep -q "checks-runner"; then
+if grep -q "checks-runner" <<<"$IOR_OUT2"; then
     t_pass "offload_router_checks  run-tests prompt routes to checks-runner"
 else
     t_fail "offload_router_checks  expected checks-runner hint, got: $IOR_OUT2"
@@ -4344,7 +4347,7 @@ ICM_WARN=""
 for _i in $(seq 1 25); do
     ICM_WARN="$(printf '%s' '{"tool_name":"Bash"}' | python3 "$ICM_HOOK" 2>/dev/null)"
 done
-if echo "$ICM_WARN" | grep -q "inline-churn" && echo "$ICM_WARN" | grep -q "25 inline"; then
+if grep -q "inline-churn" <<<"$ICM_WARN" && grep -q "25 inline" <<<"$ICM_WARN"; then
     t_pass "inline_churn_warn  systemMessage emitted at op 25"
 else
     t_fail "inline_churn_warn  expected churn warning at op 25, got: $ICM_WARN"
@@ -4407,7 +4410,7 @@ BOR_OUT2="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scrip
 # 2026-09-28: a plain bare call is REWRITTEN into the wrapper (updatedInput,
 # exit 0) instead of refused; the exact command is pinned. Shapes the rewrite
 # cannot transform still BLOCK (scripts/overnight/tests/test_build_offload_reminder.py).
-if [ "$BOR_RC2" = "0" ] && echo "$BOR_OUT2" | grep -qF '"command": "bash scripts/overnight/run-artifact.sh auto-test -- bash scripts/test.sh QUIET=1"'; then
+if [ "$BOR_RC2" = "0" ] && grep -qF '"command": "bash scripts/overnight/run-artifact.sh auto-test -- bash scripts/test.sh QUIET=1"' <<<"$BOR_OUT2"; then
     t_pass "build_offload_sections  rewrites bare test.sh into run-artifact.sh in SECTIONS phase"
 else
     t_fail "build_offload_sections  expected the run-artifact.sh rewrite, got rc=$BOR_RC2: $BOR_OUT2"
@@ -4421,7 +4424,7 @@ printf '{"timestamp_ns": %s, "subagent_type": "kernel-explorer", "by_type": {"ke
     "$NOW_NS" "$NOW_NS" > "$BOR_DISP"
 BOR_OUT3="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/build.sh"}}' | \
     python3 "$BOR_HOOK" 2>&1)"; BOR_RC3=$?
-if echo "$BOR_OUT3" | grep -qF 'run-artifact.sh auto-build -- bash scripts/build.sh' && [ "$BOR_RC3" = "0" ]; then
+if grep -qF 'run-artifact.sh auto-build -- bash scripts/build.sh' <<<"$BOR_OUT3" && [ "$BOR_RC3" = "0" ]; then
     t_pass "build_offload_type_specific  unrelated-agent dispatch does NOT suppress the reminder"
 else
     t_fail "build_offload_type_specific  expected the rewrite despite unrelated dispatch, got rc=$BOR_RC3: $BOR_OUT3"
@@ -5245,7 +5248,7 @@ cp "$REPO_ROOT/scripts/lint/check_tautological_test.py" \
 # diagnostic, not just the diagnostic text).
 ASL_OUT="$(cd "$ASL_REPO" && bash scripts/lint.sh "$ASL_REPO/src/kernel/test/" 2>&1)"
 ASL_RC=$?
-if [ "$ASL_RC" != "0" ] && echo "$ASL_OUT" | grep -q "tautological-test:TEST_ASSERT(true|1, ...)"; then
+if [ "$ASL_RC" != "0" ] && grep -q "tautological-test:TEST_ASSERT(true|1, ...)" <<<"$ASL_OUT"; then
     t_pass "lint_check6_tautology  TEST_ASSERT(true,...) flagged in non-legacy path (rc=$ASL_RC)"
 else
     t_fail "lint_check6_tautology  expected rc!=0 + diagnostic; rc=$ASL_RC, last 3 lines: $(echo "$ASL_OUT" | tail -3)"
@@ -5279,7 +5282,7 @@ cp "$REPO_ROOT/scripts/lint/check_tautological_test.py" "$ASL_REPO/scripts/lint/
     || ( mkdir -p "$ASL_REPO/scripts/lint" && cp "$REPO_ROOT/scripts/lint/check_tautological_test.py" "$ASL_REPO/scripts/lint/" )
 ASL_OUT_SYM="$(cd "$ASL_REPO" && bash scripts/lint.sh "$ASL_REPO/src/kernel/test/" 2>&1)"
 ASL_RC_SYM=$?
-if [ "$ASL_RC_SYM" != "0" ] && echo "$ASL_OUT_SYM" | grep -q "compares define to its own value"; then
+if [ "$ASL_RC_SYM" != "0" ] && grep -q "compares define to its own value" <<<"$ASL_OUT_SYM"; then
     t_pass "lint_check6_sym_literal  TEST_ASSERT_EQ(SYM, value-of-SYM) flagged (rc=$ASL_RC_SYM)"
 else
     t_fail "lint_check6_sym_literal  expected rc!=0 + 'compares define to its own value'; rc=$ASL_RC_SYM, got: $(echo "$ASL_OUT_SYM" | grep tautological | head -3)"
@@ -5296,7 +5299,7 @@ void test_func(void)
 EOF
 ASL_OUT2="$(cd "$ASL_REPO" && bash scripts/lint.sh "$ASL_REPO/src/kernel/test/" 2>&1)"
 ASL_RC2=$?
-if [ "$ASL_RC2" = "0" ] && ! echo "$ASL_OUT2" | grep -q "tautological-test:"; then
+if [ "$ASL_RC2" = "0" ] && ! grep -q "tautological-test:" <<<"$ASL_OUT2"; then
     t_pass "lint_check6_marker  /* TEST-TAUTOLOGY-OK: */ marker suppresses lint (rc=0)"
 else
     t_fail "lint_check6_marker  expected rc=0 + no tautological diagnostic; rc=$ASL_RC2, got: $(echo "$ASL_OUT2" | grep tautological)"
@@ -5304,7 +5307,7 @@ fi
 
 # Check 7 stub-behind-stamp: deferred WARN.
 ASL_OUT3="$(cd "$ASL_REPO" && bash scripts/lint.sh "$ASL_REPO/src/kernel/test/" 2>&1 || true)"
-if echo "$ASL_OUT3" | grep -q "Check 7 (stub-behind-stamp)"; then
+if grep -q "Check 7 (stub-behind-stamp)" <<<"$ASL_OUT3"; then
     t_pass "lint_check7_deferred  Check 7 deferred WARN line present"
 else
     t_fail "lint_check7_deferred  expected deferred WARN, got: $(echo "$ASL_OUT3" | tail -3)"
@@ -5312,7 +5315,7 @@ fi
 
 # Skip env vars produce visible WARN.
 ASL_OUT4="$(cd "$ASL_REPO" && SKIP_LINT_TAUTOLOGY=1 bash scripts/lint.sh "$ASL_REPO/src/kernel/test/" 2>&1 || true)"
-if echo "$ASL_OUT4" | grep -q "Check 6 (tautological-test) skipped via SKIP_LINT_TAUTOLOGY=1"; then
+if grep -q "Check 6 (tautological-test) skipped via SKIP_LINT_TAUTOLOGY=1" <<<"$ASL_OUT4"; then
     t_pass "lint_check6_skip  SKIP_LINT_TAUTOLOGY=1 emits visible WARN"
 else
     t_fail "lint_check6_skip  expected skip WARN, got: $(echo "$ASL_OUT4" | tail -3)"
@@ -5453,7 +5456,7 @@ print(json.dumps({
 ")
     PCE_OUT="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
     PCE_RC=$?
-    if [ "$PCE_RC" = "2" ] && echo "$PCE_OUT" | grep -q "BLOCK"; then
+    if [ "$PCE_RC" = "2" ] && grep -q "BLOCK" <<<"$PCE_OUT"; then
         t_pass "phase1_evidence_block: 0 src/include Reads -> BLOCK"
     else
         t_fail "phase1_evidence_block: empty-transcript BLOCK" \
@@ -5578,7 +5581,7 @@ print(json.dumps({'tool_name': 'Bash', 'tool_input': {'command': 'git commit -m 
     rm -f "$PCE_STAMPS"
     PCE_OUT5="$(cd "$PCE_REPO" && echo "$PCE_GIT_PAYLOAD" | python3 .claude/hooks/section_commit_gate.py 2>&1)"
     PCE_RC5=$?
-    if [ "$PCE_RC5" = "2" ] && echo "$PCE_OUT5" | grep -qE "re-adversarial|step-13.5 trigger"; then
+    if [ "$PCE_RC5" = "2" ] && grep -qE "re-adversarial|step-13.5 trigger" <<<"$PCE_OUT5"; then
         t_pass "re_adv_trigger_block: faultable C/H + no re-adv stamp -> BLOCK"
     else
         t_fail "re_adv_trigger_block: BLOCK on faultable trigger" \
@@ -5620,7 +5623,7 @@ JSON
 JSON
     PCE_OUT7="$(cd "$PCE_REPO" && echo "$PCE_GIT_PAYLOAD" | python3 .claude/hooks/section_commit_gate.py 2>&1)"
     PCE_RC7=$?
-    if [ "$PCE_RC7" = "2" ] && echo "$PCE_OUT7" | grep -q "stale"; then
+    if [ "$PCE_RC7" = "2" ] && grep -q "stale" <<<"$PCE_OUT7"; then
         t_pass "re_adv_trigger_block: stale re-adversarial stamp -> BLOCK"
     else
         t_fail "re_adv_trigger_block: stale BLOCK path" \
@@ -5636,7 +5639,7 @@ CLOCK
     rm -f "$PCE_STAMPS"
     PCE_OUT8="$(cd "$PCE_REPO" && echo "$PCE_GIT_PAYLOAD" | python3 .claude/hooks/section_commit_gate.py 2>&1)"
     PCE_RC8=$?
-    if [ "$PCE_RC8" = "2" ] && echo "$PCE_OUT8" | grep -q "locking"; then
+    if [ "$PCE_RC8" = "2" ] && grep -q "locking" <<<"$PCE_OUT8"; then
         t_pass "re_adv_trigger_block: mutex_t locking trigger detected (Codex M3 fix)"
     else
         t_fail "re_adv_trigger_block: mutex_t locking detection" \
@@ -5668,7 +5671,7 @@ CLIFE
     rm -f "$PCE_STAMPS"
     PCE_OUT_LIFE="$(cd "$PCE_REPO" && python3 .claude/hooks/section_commit_gate.py < "$PCE_GIT_PAYLOAD_FILE" 2>&1)"
     PCE_RC_LIFE=$?
-    if [ "$PCE_RC_LIFE" = "2" ] && echo "$PCE_OUT_LIFE" | grep -q "lifecycle"; then
+    if [ "$PCE_RC_LIFE" = "2" ] && grep -q "lifecycle" <<<"$PCE_OUT_LIFE"; then
         t_pass "re_adv_trigger_block: lifecycle (_alloc/_free/_refcount) trigger detected"
     else
         t_fail "re_adv_trigger_block: lifecycle trigger" \
@@ -5688,7 +5691,7 @@ CLIFE
     rm -f "$PCE_STAMPS"
     PCE_OUT_LOC="$(cd "$PCE_REPO" && python3 .claude/hooks/section_commit_gate.py < "$PCE_GIT_PAYLOAD_FILE" 2>&1)"
     PCE_RC_LOC=$?
-    if [ "$PCE_RC_LOC" = "2" ] && echo "$PCE_OUT_LOC" | grep -q "LOC"; then
+    if [ "$PCE_RC_LOC" = "2" ] && grep -q "LOC" <<<"$PCE_OUT_LOC"; then
         t_pass "re_adv_trigger_block: >50 LOC C/H trigger detected"
     else
         t_fail "re_adv_trigger_block: >50 LOC trigger" \
@@ -5705,7 +5708,7 @@ CFAULT2
     printf '%s' '{ this is not valid json' > "$PCE_STAMPS"
     PCE_OUT_BAD="$(cd "$PCE_REPO" && python3 .claude/hooks/section_commit_gate.py < "$PCE_GIT_PAYLOAD_FILE" 2>&1)"
     PCE_RC_BAD=$?
-    if [ "$PCE_RC_BAD" = "2" ] && echo "$PCE_OUT_BAD" | grep -qE "re-adversarial|step-13.5"; then
+    if [ "$PCE_RC_BAD" = "2" ] && grep -qE "re-adversarial|step-13.5" <<<"$PCE_OUT_BAD"; then
         t_pass "re_adv_trigger_block: malformed last-review-stamps.json -> BLOCK (no parse-time fault)"
     else
         t_fail "re_adv_trigger_block: malformed-stamps BLOCK" \
@@ -5723,7 +5726,7 @@ CFAULT3
     (cd "$PCE_REPO" && git add src/kernel/boot_halt3.c >/dev/null 2>&1)
     PCE_OUT_NOATTR="$(cd "$PCE_REPO" && python3 .claude/hooks/section_commit_gate.py < "$PCE_GIT_PAYLOAD_FILE" 2>&1)"
     PCE_RC_NOATTR=$?
-    if [ "$PCE_RC_NOATTR" = "0" ] && echo "$PCE_OUT_NOATTR" | grep -q "WARN"; then
+    if [ "$PCE_RC_NOATTR" = "0" ] && grep -q "WARN" <<<"$PCE_OUT_NOATTR"; then
         t_pass "re_adv_trigger_block: no attribution -> PASS with WARN (manual judgment fallback)"
     else
         t_fail "re_adv_trigger_block: no-attribution path" \
@@ -5754,7 +5757,7 @@ CFAULT4
     (cd "$PCE_REPO" && git add src/kernel/boot_halt4.c >/dev/null 2>&1)
     PCE_OUT_ORPH="$(cd "$PCE_REPO" && python3 .claude/hooks/section_commit_gate.py < "$PCE_GIT_PAYLOAD_FILE" 2>&1)"
     PCE_RC_ORPH=$?
-    if [ "$PCE_RC_ORPH" = "0" ] && echo "$PCE_OUT_ORPH" | grep -q "WARN"; then
+    if [ "$PCE_RC_ORPH" = "0" ] && grep -q "WARN" <<<"$PCE_OUT_ORPH"; then
         t_pass "re_adv_trigger_block: compaction_orphaned skill state -> attribution skipped (PASS+WARN)"
     else
         t_fail "re_adv_trigger_block: compaction_orphaned path" \
@@ -5788,7 +5791,7 @@ JSON
     rm -f "$PCE_STAMPS"
     PCE_OUT_ASM="$(cd "$PCE_REPO" && python3 .claude/hooks/section_commit_gate.py < "$PCE_GIT_PAYLOAD_FILE" 2>&1)"
     PCE_RC_ASM=$?
-    if [ "$PCE_RC_ASM" = "2" ] && echo "$PCE_OUT_ASM" | grep -q "LOC"; then
+    if [ "$PCE_RC_ASM" = "2" ] && grep -q "LOC" <<<"$PCE_OUT_ASM"; then
         t_pass "re_adv_trigger_block: asm-only >50 LOC trigger detected (Codex M1 fix)"
     else
         t_fail "re_adv_trigger_block: asm LOC trigger" \
@@ -5805,7 +5808,7 @@ JSON
 TSCRIPT
     PCE_OUT_NOTS="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
     PCE_RC_NOTS=$?
-    if [ "$PCE_RC_NOTS" = "2" ] && echo "$PCE_OUT_NOTS" | grep -q "BLOCK"; then
+    if [ "$PCE_RC_NOTS" = "2" ] && grep -q "BLOCK" <<<"$PCE_OUT_NOTS"; then
         t_pass "phase1_evidence_block: timestamp-less events do NOT count as evidence (Codex M2 fix)"
     else
         t_fail "phase1_evidence_block: missing-ts fail-closed" \
@@ -5958,8 +5961,8 @@ STUB
 
     # Test 1: 2011 CA, pre-warn-window date -> silent accept (no WARN line).
     SCD_OUT_PRE="$(_scd_run "Microsoft Corporation UEFI CA 2011" "2026-01-15")"
-    if echo "$SCD_OUT_PRE" | grep -q "signed-by: Microsoft Corporation UEFI CA 2011" \
-       && ! echo "$SCD_OUT_PRE" | grep -q "WARN -- shim is signed only by deprecated"; then
+    if grep -q "signed-by: Microsoft Corporation UEFI CA 2011" <<<"$SCD_OUT_PRE" \
+       && ! grep -q "WARN -- shim is signed only by deprecated" <<<"$SCD_OUT_PRE"; then
         t_pass "shim_ca_detection: 2011 CA + pre-warn-window -> silent accept"
     else
         t_fail "shim_ca_detection: 2011 pre-warn" "out: $(echo "$SCD_OUT_PRE" | tail -8)"
@@ -5967,8 +5970,8 @@ STUB
 
     # Test 2: 2011 CA, warn-window date -> WARN logged, exit 0.
     SCD_OUT_WARN="$(_scd_run "Microsoft Corporation UEFI CA 2011" "2026-05-15")"
-    if echo "$SCD_OUT_WARN" | grep -q "WARN -- shim is signed only by deprecated MS UEFI CA 2011" \
-       && echo "$SCD_OUT_WARN" | grep -q "__rc=0"; then
+    if grep -q "WARN -- shim is signed only by deprecated MS UEFI CA 2011" <<<"$SCD_OUT_WARN" \
+       && grep -q "__rc=0" <<<"$SCD_OUT_WARN"; then
         t_pass "shim_ca_detection: 2011 CA + warn-window -> WARN + exit 0"
     else
         t_fail "shim_ca_detection: 2011 warn-window" "out: $(echo "$SCD_OUT_WARN" | tail -8)"
@@ -5976,8 +5979,8 @@ STUB
 
     # Test 3: 2011 CA, post-expiry date -> FAIL, exit 1.
     SCD_OUT_FAIL="$(_scd_run "Microsoft Corporation UEFI CA 2011" "2026-07-15")"
-    if echo "$SCD_OUT_FAIL" | grep -q "FAIL -- shim is signed by 2011 CA which expired" \
-       && echo "$SCD_OUT_FAIL" | grep -q "__rc=1"; then
+    if grep -q "FAIL -- shim is signed by 2011 CA which expired" <<<"$SCD_OUT_FAIL" \
+       && grep -q "__rc=1" <<<"$SCD_OUT_FAIL"; then
         t_pass "shim_ca_detection: 2011 CA + post-expiry -> FAIL + exit 1"
     else
         t_fail "shim_ca_detection: 2011 post-expiry" "out: $(echo "$SCD_OUT_FAIL" | tail -8)"
@@ -5985,8 +5988,8 @@ STUB
 
     # Test 4: 2023 CA, any date -> silent accept.
     SCD_OUT_2023="$(_scd_run "Microsoft Corporation UEFI CA 2023" "2026-07-15")"
-    if echo "$SCD_OUT_2023" | grep -q "signed-by: Microsoft Corporation UEFI CA 2023" \
-       && ! echo "$SCD_OUT_2023" | grep -qE "WARN|FAIL"; then
+    if grep -q "signed-by: Microsoft Corporation UEFI CA 2023" <<<"$SCD_OUT_2023" \
+       && ! grep -qE "WARN|FAIL" <<<"$SCD_OUT_2023"; then
         t_pass "shim_ca_detection: 2023 CA + any date -> silent accept"
     else
         t_fail "shim_ca_detection: 2023 CA" "out: $(echo "$SCD_OUT_2023" | tail -8)"
@@ -6005,8 +6008,8 @@ STUB
     SCD_OUT_SBVFAIL="$(cd "$SCD_REPO" && \
         PATH="$SCD_REPO/bin:$PATH" \
         bash -c 'cp bin/sbverify_failing bin/sbverify; exec bash scripts/sign-efi.sh' 2>&1; printf '__rc=%s\n' $?)"
-    if echo "$SCD_OUT_SBVFAIL" | grep -q "FAIL -- sbverify --list" \
-       && echo "$SCD_OUT_SBVFAIL" | grep -q "__rc=1"; then
+    if grep -q "FAIL -- sbverify --list" <<<"$SCD_OUT_SBVFAIL" \
+       && grep -q "__rc=1" <<<"$SCD_OUT_SBVFAIL"; then
         t_pass "shim_ca_detection: sbverify nonzero exit -> FAIL exit 1 (no fail-open)"
     else
         t_fail "shim_ca_detection: sbverify-fail" "out: $(echo "$SCD_OUT_SBVFAIL" | tail -8)"
@@ -6033,8 +6036,8 @@ STUB
         MOK_KEY="/tmp/scd-definitely-missing-key-$$" \
         PATH="$SCD_REPO/bin:$PATH" \
         bash scripts/sign-efi.sh 2>&1; printf '__rc=%s\n' $?)"
-    if echo "$SCD_OUT_NOMOK" | grep -q "FAIL -- shim is signed by 2011 CA which expired" \
-       && echo "$SCD_OUT_NOMOK" | grep -q "__rc=1"; then
+    if grep -q "FAIL -- shim is signed by 2011 CA which expired" <<<"$SCD_OUT_NOMOK" \
+       && grep -q "__rc=1" <<<"$SCD_OUT_NOMOK"; then
         t_pass "shim_ca_detection: 2011 post-expiry + no MOK -> FAIL + exit 1 (gate runs before MOK skip)"
     else
         t_fail "shim_ca_detection: 2011 post-expiry no-MOK" "out: $(echo "$SCD_OUT_NOMOK" | tail -8)"
@@ -6199,9 +6202,9 @@ STUB
     # Case 1: no shim pinned -> loud UNPIN block, NOT COVERED, still exit 0.
     _sbs_shim_pin none; _sbs_keys keyless
     SBS_OUT="$(_sbs_run)"
-    if echo "$SBS_OUT" | grep -q "UNPIN shim/shimx64.efi absent" \
-       && echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
-       && echo "$SBS_OUT" | grep -q "__rc=0"; then
+    if grep -q "UNPIN shim/shimx64.efi absent" <<<"$SBS_OUT" \
+       && grep -q "shim chain NOT COVERED" <<<"$SBS_OUT" \
+       && grep -q "__rc=0" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: absent shim -> loud UNPIN + NOT COVERED summary, exit 0"
     else
         t_fail "secureboot_smoke: absent shim" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6209,8 +6212,8 @@ STUB
 
     # Case 2: absent shim + REQUIRE_SHIM=1 -> hard failure.
     SBS_OUT="$(_sbs_run REQUIRE_SHIM=1)"
-    if echo "$SBS_OUT" | grep -q "REQUIRE_SHIM=1 but the Secure Boot chain is not covered" \
-       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "REQUIRE_SHIM=1 but the Secure Boot chain is not covered" <<<"$SBS_OUT" \
+       && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: absent shim + REQUIRE_SHIM=1 -> FAIL exit 1"
     else
         t_fail "secureboot_smoke: REQUIRE_SHIM absent-shim" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6219,8 +6222,8 @@ STUB
     # Case 3: partial shim dir -> always fatal, matching the disk recipe.
     _sbs_shim_pin partial
     SBS_OUT="$(_sbs_run)"
-    if echo "$SBS_OUT" | grep -q "partial shim/ directory" \
-       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "partial shim/ directory" <<<"$SBS_OUT" \
+       && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: partial shim/ dir -> FAIL exit 1 (no REQUIRE_SHIM needed)"
     else
         t_fail "secureboot_smoke: partial shim dir" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6230,9 +6233,9 @@ STUB
     # chain is NOT covered even though both shim files are present.
     _sbs_shim_pin 2023; _sbs_keys keyless
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023")"
-    if echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
-       && echo "$SBS_OUT" | grep -q "keys/MOK.key absent" \
-       && echo "$SBS_OUT" | grep -q "__rc=0"; then
+    if grep -q "shim chain NOT COVERED" <<<"$SBS_OUT" \
+       && grep -q "keys/MOK.key absent" <<<"$SBS_OUT" \
+       && grep -q "__rc=0" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: keyless shim present -> NOT COVERED (presence != coverage)"
     else
         t_fail "secureboot_smoke: keyless-present" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6241,8 +6244,8 @@ STUB
     # Case 5: 2011 CA past its 2026-06-30 expiry -> fatal, matching sign-efi.sh.
     _sbs_keys keyed
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2011" SHIM_CA_TEST_TODAY="2026-07-15")"
-    if echo "$SBS_OUT" | grep -q "expired 2026-06-30" \
-       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "expired 2026-06-30" <<<"$SBS_OUT" \
+       && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: 2011 CA past expiry -> FAIL exit 1"
     else
         t_fail "secureboot_smoke: expired-2011" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6250,9 +6253,9 @@ STUB
 
     # Case 6: same 2011 shim BEFORE the expiry -> accepted, no CA failure.
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2011" SHIM_CA_TEST_TODAY="2026-01-15")"
-    if echo "$SBS_OUT" | grep -q "shim/shimx64.efi is signed by Microsoft Corporation UEFI CA 2011" \
-       && ! echo "$SBS_OUT" | grep -q "expired 2026-06-30" \
-       && echo "$SBS_OUT" | grep -q "__rc=0"; then
+    if grep -q "shim/shimx64.efi is signed by Microsoft Corporation UEFI CA 2011" <<<"$SBS_OUT" \
+       && ! grep -q "expired 2026-06-30" <<<"$SBS_OUT" \
+       && grep -q "__rc=0" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: 2011 CA pre-expiry -> accepted (date-gated, not blanket)"
     else
         t_fail "secureboot_smoke: 2011-pre-expiry" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6260,8 +6263,8 @@ STUB
 
     # Case 7: 2023 CA + MOK key + signed loader, no disk image -> COVERED.
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023")"
-    if echo "$SBS_OUT" | grep -q "shim chain COVERED" \
-       && echo "$SBS_OUT" | grep -q "__rc=0"; then
+    if grep -q "shim chain COVERED" <<<"$SBS_OUT" \
+       && grep -q "__rc=0" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: 2023 CA + key + signed loader -> COVERED"
     else
         t_fail "secureboot_smoke: covered-2023" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6272,8 +6275,8 @@ STUB
     echo "stub-disk" > "$SBS_REPO/build/system-disk.img"
     printf 'EFI_OFFSET=1048576\nEFI_SIZE=67108864\n' > "$SBS_REPO/build/system-disk.img.info"
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" ESP_FIXTURE="BOOTX64.EFI grubx64.efi")"
-    if echo "$SBS_OUT" | grep -q "staged ESP is missing chain component(s): mmx64.efi" \
-       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "staged ESP is missing chain component(s): mmx64.efi" <<<"$SBS_OUT" \
+       && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: staged ESP missing a chain component -> FAIL exit 1"
     else
         t_fail "secureboot_smoke: esp-mismatch" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6281,9 +6284,9 @@ STUB
 
     # Case 9: the same staged ESP, complete -> COVERED with the ESP verified.
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023")"
-    if echo "$SBS_OUT" | grep -q "staged ESP carries the verified chain byte-for-byte" \
-       && echo "$SBS_OUT" | grep -q "staged ESP verified" \
-       && echo "$SBS_OUT" | grep -q "__rc=0"; then
+    if grep -q "staged ESP carries the verified chain byte-for-byte" <<<"$SBS_OUT" \
+       && grep -q "staged ESP verified" <<<"$SBS_OUT" \
+       && grep -q "__rc=0" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: complete staged ESP -> COVERED + bytes verified"
     else
         t_fail "secureboot_smoke: esp-complete" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6294,7 +6297,7 @@ STUB
     # proves nothing about what would ship.
     rm -f "$SBS_REPO/build/system-disk.img" "$SBS_REPO/build/system-disk.img.info"
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" REQUIRE_SHIM=1)"
-    if echo "$SBS_OUT" | grep -q "no packaged ESP was verified" && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "no packaged ESP was verified" <<<"$SBS_OUT" && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: REQUIRE_SHIM=1 with no disk image -> FAIL (inputs are not an image)"
     else
         t_fail "secureboot_smoke: require-shim-no-image" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6307,8 +6310,8 @@ STUB
     # (`BOOTX64  EFI` vs BOOTX64.BAD) that an inexact match would accept.
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" \
                         ESP_FIXTURE="BOOTX64.BAD grubx64.old mmx64.txt")"
-    if echo "$SBS_OUT" | grep -q "staged ESP is missing chain component(s): BOOTX64.EFI grubx64.efi mmx64.efi" \
-       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "staged ESP is missing chain component(s): BOOTX64.EFI grubx64.efi mmx64.efi" <<<"$SBS_OUT" \
+       && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: wrong-extension ESP entries -> FAIL (exact path match)"
     else
         t_fail "secureboot_smoke: esp-basename-collision" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6320,18 +6323,18 @@ STUB
     # would let an implementation that skips exactly one of them pass.
     for _c in BOOTX64.EFI grubx64.efi mmx64.efi; do
         SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" ESP_BAD_BYTES="$_c")"
-        if echo "$SBS_OUT" | grep -q "staged ESP component(s) are not the verified artifacts: $_c" \
-           && echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
-           && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        if grep -q "staged ESP component(s) are not the verified artifacts: $_c" <<<"$SBS_OUT" \
+           && grep -q "shim chain NOT COVERED" <<<"$SBS_OUT" \
+           && grep -q "__rc=1" <<<"$SBS_OUT"; then
             t_pass "secureboot_smoke: tampered $_c bytes -> FAIL (content, not just names)"
         else
             t_fail "secureboot_smoke: esp-bad-bytes-$_c" "out: $(echo "$SBS_OUT" | tail -8)"
         fi
 
         SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" ESP_UNREADABLE="$_c")"
-        if echo "$SBS_OUT" | grep -q "$_c(unreadable)" \
-           && echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
-           && echo "$SBS_OUT" | grep -q "__rc=1"; then
+        if grep -q "$_c(unreadable)" <<<"$SBS_OUT" \
+           && grep -q "shim chain NOT COVERED" <<<"$SBS_OUT" \
+           && grep -q "__rc=1" <<<"$SBS_OUT"; then
             t_pass "secureboot_smoke: unextractable $_c -> FAIL closed"
         else
             t_fail "secureboot_smoke: esp-unreadable-$_c" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6343,8 +6346,8 @@ STUB
     # source, passing every cmp while verifying nothing.
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" \
                         TMPDIR="$SBS_TMP/definitely-not-a-directory")"
-    if echo "$SBS_OUT" | grep -q "no writable temporary directory" \
-       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "no writable temporary directory" <<<"$SBS_OUT" \
+       && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: mktemp failure -> FAIL closed (no root-path extraction)"
     else
         t_fail "secureboot_smoke: esp-no-tmpdir" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6353,7 +6356,7 @@ STUB
     # Case 11: mdir cannot read the image -> FAIL CLOSED. An unverifiable image
     # is not a covered chain; swallowing mdir's status is the fail-open.
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" MDIR_RC=1)"
-    if echo "$SBS_OUT" | grep -q "mdir exited 1" && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "mdir exited 1" <<<"$SBS_OUT" && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: mdir failure -> FAIL closed (status not swallowed)"
     else
         t_fail "secureboot_smoke: mdir-rc" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6362,8 +6365,8 @@ STUB
     # Case 12: the image's GPT designates no EFI System Partition -> FAIL CLOSED.
     # The sidecar is not a trust source, so its offset cannot rescue this.
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" GPT_NO_ESP=1)"
-    if echo "$SBS_OUT" | grep -q "cannot locate an EFI System Partition" \
-       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "cannot locate an EFI System Partition" <<<"$SBS_OUT" \
+       && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: no GPT-designated ESP -> FAIL closed"
     else
         t_fail "secureboot_smoke: esp-no-gpt" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6372,8 +6375,8 @@ STUB
     # Case 12b: the sidecar disagrees with the GPT -> FAIL. A stale or crafted
     # .info pointing at a decoy FAT is exactly what the GPT lookup exists for.
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" GPT_ESP_START=4096)"
-    if echo "$SBS_OUT" | grep -q "EFI_OFFSET disagrees with the image's GPT" \
-       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "EFI_OFFSET disagrees with the image's GPT" <<<"$SBS_OUT" \
+       && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: sidecar offset disagreeing with the GPT -> FAIL"
     else
         t_fail "secureboot_smoke: esp-offset-mismatch" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6384,7 +6387,7 @@ STUB
     # hide the coreutils the script needs from that same PATH.
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" \
                         MDIR_BIN="mdir-definitely-not-installed")"
-    if echo "$SBS_OUT" | grep -q "mtools not on PATH" && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "mtools not on PATH" <<<"$SBS_OUT" && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: mdir unavailable -> FAIL closed (not silently skipped)"
     else
         t_fail "secureboot_smoke: esp-no-mdir" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6394,7 +6397,7 @@ STUB
     # Case 14: sbverify --list fails on the shim -> FAIL. Tool failure must not
     # be conflated with "no recognized CA" (the sign-efi.sh fail-open lesson).
     SBS_OUT="$(_sbs_run SBVERIFY_LIST_RC=2)"
-    if echo "$SBS_OUT" | grep -q "sbverify --list failed (rc=2)" && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "sbverify --list failed (rc=2)" <<<"$SBS_OUT" && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: sbverify --list nonzero -> FAIL (no fail-open)"
     else
         t_fail "secureboot_smoke: sbverify-list-rc" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6404,8 +6407,8 @@ STUB
     # cryptographically verified, so this is NOT coverage.
     rm -f "$SBS_REPO/keys/MOK.cer"
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023")"
-    if echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
-       && echo "$SBS_OUT" | grep -q "no loader signature was verified"; then
+    if grep -q "shim chain NOT COVERED" <<<"$SBS_OUT" \
+       && grep -q "no loader signature was verified" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: no MOK.cer -> NOT COVERED (existence != verification)"
     else
         t_fail "secureboot_smoke: no-mok-cer" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6416,7 +6419,7 @@ STUB
     echo "stub-crt" > "$SBS_REPO/keys/MOK.cer"
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" \
                         SBVERIFY_CERT_OK="BOOTX64.UKI.signed.efi")"
-    if echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "shim chain NOT COVERED" <<<"$SBS_OUT" && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: loader signature failure -> NOT COVERED"
     else
         t_fail "secureboot_smoke: loader-unverified" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6427,9 +6430,9 @@ STUB
     # along on the shim's verdict.
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023" \
                         SHIM_CA_FIXTURE_MM="CN=somebody else")"
-    if echo "$SBS_OUT" | grep -q "shim/mmx64.efi present but no recognized MS UEFI CA generation" \
-       && echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
-       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "shim/mmx64.efi present but no recognized MS UEFI CA generation" <<<"$SBS_OUT" \
+       && grep -q "shim chain NOT COVERED" <<<"$SBS_OUT" \
+       && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: untrusted mmx64.efi -> NOT COVERED (MokManager verified independently)"
     else
         t_fail "secureboot_smoke: mm-untrusted" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6441,9 +6444,9 @@ STUB
     _sbs_shim_pin 2023; _sbs_keys keyed
     rm -f "$SBS_REPO/shim/SHA256SUMS"
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023")"
-    if echo "$SBS_OUT" | grep -q "shim/SHA256SUMS is absent" \
-       && echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
-       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "shim/SHA256SUMS is absent" <<<"$SBS_OUT" \
+       && grep -q "shim chain NOT COVERED" <<<"$SBS_OUT" \
+       && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: pinned shim without SHA256SUMS -> FAIL (not hash-pinned)"
     else
         t_fail "secureboot_smoke: no-sha256sums" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6456,8 +6459,8 @@ STUB
     printf '%s  mmx64.efi\n' "$(cd "$SBS_REPO/shim" && sha256sum mmx64.efi | cut -d' ' -f1)" \
         >> "$SBS_REPO/shim/SHA256SUMS"
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2023")"
-    if echo "$SBS_OUT" | grep -q "does not match its shim/SHA256SUMS entry" \
-       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "does not match its shim/SHA256SUMS entry" <<<"$SBS_OUT" \
+       && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: shim not matching its approved hash -> FAIL"
     else
         t_fail "secureboot_smoke: sha256sums-mismatch" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6468,8 +6471,8 @@ STUB
     # With TODAY empty the lexicographic expiry comparison is false, so a 2011-CA
     # shim would have been ACCEPTED past its 2026-06-30 expiry.
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2011" SHIM_CA_TEST_TODAY="not-a-date")"
-    if echo "$SBS_OUT" | grep -q "cannot establish the current date" \
-       && echo "$SBS_OUT" | grep -q "__rc=2"; then
+    if grep -q "cannot establish the current date" <<<"$SBS_OUT" \
+       && grep -q "__rc=2" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: unusable date -> exit 2 (never a silent expiry pass)"
     else
         t_fail "secureboot_smoke: bad-date" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6478,8 +6481,8 @@ STUB
     # Case 16f: inside the warn window the 2011 CA is accepted WITH a warning,
     # matching scripts/sign-efi.sh's graduated policy rather than diverging.
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="Microsoft Corporation UEFI CA 2011" SHIM_CA_TEST_TODAY="2026-05-15")"
-    if echo "$SBS_OUT" | grep -q "WARN  shim/shimx64.efi is signed only by the deprecated MS UEFI CA 2011" \
-       && echo "$SBS_OUT" | grep -q "__rc=0"; then
+    if grep -q "WARN  shim/shimx64.efi is signed only by the deprecated MS UEFI CA 2011" <<<"$SBS_OUT" \
+       && grep -q "__rc=0" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: 2011 CA in the warn window -> WARN + accept (sign-efi parity)"
     else
         t_fail "secureboot_smoke: warn-window" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6489,20 +6492,20 @@ STUB
     # must reject it, and SHIM_TRUST_MODE=mok-dev must verify it against MOK.cer
     # -- otherwise the one restoration path available today cannot pass.
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="CN=Impossible OS Secure Boot Key")"
-    if echo "$SBS_OUT" | grep -q "shim/shimx64.efi present but no recognized MS UEFI CA generation" \
-       && echo "$SBS_OUT" | grep -q "SHIM_TRUST_MODE=mok-dev" \
-       && echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
-       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "shim/shimx64.efi present but no recognized MS UEFI CA generation" <<<"$SBS_OUT" \
+       && grep -q "SHIM_TRUST_MODE=mok-dev" <<<"$SBS_OUT" \
+       && grep -q "shim chain NOT COVERED" <<<"$SBS_OUT" \
+       && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: self-built shim in ms-ca mode -> FAIL + NOT COVERED + rc=1"
     else
         t_fail "secureboot_smoke: mokdev-in-msca-mode" "out: $(echo "$SBS_OUT" | tail -8)"
     fi
 
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="CN=Impossible OS Secure Boot Key" SHIM_TRUST_MODE=mok-dev)"
-    if echo "$SBS_OUT" | grep -q "MOK-dev shim/shimx64.efi verifies against keys/MOK.cer" \
-       && echo "$SBS_OUT" | grep -q "MOK-dev shim/mmx64.efi verifies against keys/MOK.cer" \
-       && echo "$SBS_OUT" | grep -q "shim chain COVERED" \
-       && echo "$SBS_OUT" | grep -q "__rc=0"; then
+    if grep -q "MOK-dev shim/shimx64.efi verifies against keys/MOK.cer" <<<"$SBS_OUT" \
+       && grep -q "MOK-dev shim/mmx64.efi verifies against keys/MOK.cer" <<<"$SBS_OUT" \
+       && grep -q "shim chain COVERED" <<<"$SBS_OUT" \
+       && grep -q "__rc=0" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: SHIM_TRUST_MODE=mok-dev verifies against MOK.cer -> COVERED"
     else
         t_fail "secureboot_smoke: mokdev-mode" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6511,10 +6514,10 @@ STUB
     # Case 18: mok-dev mode where the shim does NOT verify against MOK.cer.
     SBS_OUT="$(_sbs_run SHIM_CA_FIXTURE="CN=Impossible OS Secure Boot Key" SHIM_TRUST_MODE=mok-dev \
                         SBVERIFY_CERT_OK="BOOTX64.signed.efi BOOTX64.UKI.signed.efi")"
-    if echo "$SBS_OUT" | grep -q "MOK-dev shim/shimx64.efi carries no signature" \
-       && echo "$SBS_OUT" | grep -q "build-shim.sh does not sign its output" \
-       && echo "$SBS_OUT" | grep -q "shim chain NOT COVERED" \
-       && echo "$SBS_OUT" | grep -q "__rc=1"; then
+    if grep -q "MOK-dev shim/shimx64.efi carries no signature" <<<"$SBS_OUT" \
+       && grep -q "build-shim.sh does not sign its output" <<<"$SBS_OUT" \
+       && grep -q "shim chain NOT COVERED" <<<"$SBS_OUT" \
+       && grep -q "__rc=1" <<<"$SBS_OUT"; then
         t_pass "secureboot_smoke: unsigned self-built shim -> FAIL naming build-shim.sh's real output"
     else
         t_fail "secureboot_smoke: mokdev-badsig" "out: $(echo "$SBS_OUT" | tail -8)"
@@ -6590,7 +6593,7 @@ os_table_shipped = os_table_shipped.replace("done", chr(0x2705))
 fix.write_text(header + io_table + sec_no_notes + os_table_shipped)
 PYEOF
     SC_OUT_MISS_NOTES="$(cd "$SC_REPO" && bash scripts/lint.sh 2>&1)"
-    if echo "$SC_OUT_MISS_NOTES" | grep -qE "missing.*Notes.*Check 10"; then
+    if grep -qE "missing.*Notes.*Check 10" <<<"$SC_OUT_MISS_NOTES"; then
         t_pass "lint_stamp_region: missing Notes -> Check 10 ERROR"
     else
         t_fail "lint_stamp_region: missing-Notes ERROR" \
@@ -6637,7 +6640,7 @@ os_table = (
 fix.write_text(header + io_table + sec_full + os_table)
 PYEOF
     SC_OUT_FULL="$(cd "$SC_REPO" && bash scripts/lint.sh 2>&1)"
-    if echo "$SC_OUT_FULL" | grep -qE "0 errors"; then
+    if grep -qE "0 errors" <<<"$SC_OUT_FULL"; then
         t_pass "lint_stamp_region: full stamp region -> PASS"
     else
         t_fail "lint_stamp_region: full stamp region PASS" \
@@ -6682,7 +6685,7 @@ os_table = (
 fix.write_text(header + io_table + sec + os_table)
 PYEOF
     SC_OUT_OLD="$(cd "$SC_REPO" && bash scripts/lint.sh 2>&1)"
-    if echo "$SC_OUT_OLD" | grep -qE "0 errors"; then
+    if grep -qE "0 errors" <<<"$SC_OUT_OLD"; then
         t_pass "lint_stamp_region: pre-sentinel-date -> grandfathered PASS"
     else
         t_fail "lint_stamp_region: grandfather PASS" \
@@ -6728,7 +6731,7 @@ os_table = (
 fix.write_text(header + io_table + sec_full + os_table)
 PYEOF
     SC_OUT_OS_BAD="$(cd "$SC_REPO" && bash scripts/lint.sh 2>&1)"
-    if echo "$SC_OUT_OS_BAD" | grep -qE "not shipped.*Check 11"; then
+    if grep -qE "not shipped.*Check 11" <<<"$SC_OUT_OS_BAD"; then
         t_pass "lint_os_comparison_sync: not-shipped OS row -> Check 11 ERROR"
     else
         t_fail "lint_os_comparison_sync: not-shipped OS row ERROR" \
@@ -6770,7 +6773,7 @@ repo = pathlib.Path(sys.argv[1]); S = chr(0xA7)
 PYEOF
     BSG_OUT="$(cd "$BSG_REPO" && bash scripts/lint.sh 2>&1)"
     for fx in "tools/desc.inc" "src/boot/linker.ld" "Makefile" "src/spaced.c"; do
-        if echo "$BSG_OUT" | grep -q "$fx"; then
+        if grep -q "$fx" <<<"$BSG_OUT"; then
             t_pass "bare_section_gate: lint Check 5 flags $fx"
         else
             t_fail "bare_section_gate: lint Check 5 missed $fx" "out: $(echo "$BSG_OUT" | tail -10)"
@@ -6840,7 +6843,7 @@ else
     chmod +x "$VFG_SHIM/clang-19"
     VFG_OUT="$(PATH="$VFG_SHIM:$PATH" bash "$REPO_ROOT/scripts/setup.sh" --check-versions 2>&1)"
     VFG_RC=$?
-    if [ "$VFG_RC" -ne 0 ] && echo "$VFG_OUT" | grep -q "clang-19"; then
+    if [ "$VFG_RC" -ne 0 ] && grep -q "clang-19" <<<"$VFG_OUT"; then
         t_pass "version_floor_gate: below-floor clang-19 -> non-zero naming the tool"
     else
         t_fail "version_floor_gate: below-floor clang-19" "rc=$VFG_RC out: $(echo "$VFG_OUT" | grep -i clang | head -2)"
@@ -6954,8 +6957,8 @@ CFAKE
     # ---- clean_tree_embeds ----
     CPS_PROMPT="[review-kind: adversarial] todo/00-infrastructure/TODO-08-automation-hardening.md sample re-review src/kernel/foo.c file"
     CPS_OUT_CLEAN="$(cd "$CPS_REPO" && bash scripts/codex-dispatch-with-files.sh "$CPS_PROMPT" 2>&1)"
-    if echo "$CPS_OUT_CLEAN" | grep -q "COMMITTED FILE CONTENT" \
-       && echo "$CPS_OUT_CLEAN" | grep -q "sample_function"; then
+    if grep -q "COMMITTED FILE CONTENT" <<<"$CPS_OUT_CLEAN" \
+       && grep -q "sample_function" <<<"$CPS_OUT_CLEAN"; then
         t_pass "codex_prompt_scope: clean tree embeds HEAD content"
     else
         t_fail "codex_prompt_scope: clean tree embed" \
@@ -6965,7 +6968,7 @@ CFAKE
     # ---- dirty_tree_passthrough ----
     echo "/* dirty edit */" >> "$CPS_REPO/src/kernel/foo.c"
     CPS_OUT_DIRTY="$(cd "$CPS_REPO" && bash scripts/codex-dispatch-with-files.sh "$CPS_PROMPT" 2>&1)"
-    if ! echo "$CPS_OUT_DIRTY" | grep -q "COMMITTED FILE CONTENT"; then
+    if ! grep -q "COMMITTED FILE CONTENT" <<<"$CPS_OUT_DIRTY"; then
         t_pass "codex_prompt_scope: dirty tree passes through unchanged"
     else
         t_fail "codex_prompt_scope: dirty tree passthrough" \
@@ -7509,7 +7512,7 @@ assert all(r["false_positive_user_flagged"] is False for r in recs)
 print("OK 2 records schema-clean")
 PYEOF
 2>&1)"
-    if echo "$HW_PY_OUT" | grep -q "OK 2 records schema-clean"; then
+    if grep -q "OK 2 records schema-clean" <<<"$HW_PY_OUT"; then
         t_pass "heuristic_warn_misses: hw_misslog_writer schema OK"
     else
         t_fail "heuristic_warn_misses: hw_misslog_writer" "out: $HW_PY_OUT"
@@ -7523,8 +7526,8 @@ import _heuristic_misses as hm
 hm.emit_warn(None, 1, "test-signal", "test-detail")
 PYEOF
 )"
-    if echo "$HW_STDERR" | grep -q "\[heuristic-step-1\] WARN -- test-detail" \
-       && echo "$HW_STDERR" | grep -q "signal: test-signal"; then
+    if grep -q "\[heuristic-step-1\] WARN -- test-detail" <<<"$HW_STDERR" \
+       && grep -q "signal: test-signal" <<<"$HW_STDERR"; then
         t_pass "heuristic_warn_misses: hw_step1_warn stderr format"
     else
         t_fail "heuristic_warn_misses: hw_step1_warn" "stderr: $HW_STDERR"
@@ -7550,8 +7553,8 @@ import _heuristic_misses as hm
 hm.emit_warn(None, $HW_S, "$HW_SIGNAL", "step-$HW_S detail")
 PYEOF
 )"
-        if echo "$HW_OUT" | grep -q "\[heuristic-step-$HW_S\] WARN" \
-           && echo "$HW_OUT" | grep -q "signal: $HW_SIGNAL"; then
+        if grep -q "\[heuristic-step-$HW_S\] WARN" <<<"$HW_OUT" \
+           && grep -q "signal: $HW_SIGNAL" <<<"$HW_OUT"; then
             t_pass "heuristic_warn_misses: $HW_NAME stderr format"
         else
             t_fail "heuristic_warn_misses: $HW_NAME" "out: $HW_OUT"
@@ -7600,7 +7603,7 @@ del os.environ["SKIP_TESTKEY"]
 PYEOF
 )"
     for tag in se_inline_form se_environ_form se_inline_wins; do
-        if echo "$SE_OUT" | grep -q "$tag:OK"; then
+        if grep -q "$tag:OK" <<<"$SE_OUT"; then
             t_pass "skip_env_unified: $tag"
         else
             t_fail "skip_env_unified: $tag" "$(echo "$SE_OUT" | grep "$tag")"
@@ -7623,7 +7626,7 @@ del os.environ["SKIP_REVIEW_HOOK"]
 del os.environ["SKIP_REVIEW_HOOK_REASON"]
 PYEOF
 )"
-    if echo "$SE_GATE_OUT" | grep -q "se_gate_inline_wins:OK"; then
+    if grep -q "se_gate_inline_wins:OK" <<<"$SE_GATE_OUT"; then
         t_pass "skip_env_unified: se_gate_inline_wins (collision regression)"
     else
         t_fail "skip_env_unified: se_gate_inline_wins" "$(echo "$SE_GATE_OUT" | tail -3)"
@@ -7649,7 +7652,7 @@ ok, err = scg._step16_smoke_check(
 print("se_smoke_inline:" + ("OK" if ok is True else "FAIL ok=" + repr(ok) + " err=" + repr(err)))
 PYEOF2
 )"
-    if echo "$SE_SMOKE_OUT" | grep -q "se_smoke_inline:OK"; then
+    if grep -q "se_smoke_inline:OK" <<<"$SE_SMOKE_OUT"; then
         t_pass "skip_env_unified: se_smoke_inline (SKIP_SMOKE_GATE inline form)"
     else
         t_fail "skip_env_unified: se_smoke_inline" "$(echo "$SE_SMOKE_OUT" | tail -3)"
@@ -8502,7 +8505,7 @@ rm -rf "$RPP_DRIFT_TMP"
 # Sub-test 1: argc enforcement.
 CDE_OUT=$(bash scripts/codex-dispatch.sh 'arg one' 'arg two' 2>&1)
 CDE_RC=$?
-if [ "$CDE_RC" = "1" ] && echo "$CDE_OUT" | grep -q "BLOCK -- expected exactly 1 argv"; then
+if [ "$CDE_RC" = "1" ] && grep -q "BLOCK -- expected exactly 1 argv" <<<"$CDE_OUT"; then
     t_pass "codex_dispatch_escaping: cde_argc_enforcement (multi-argv -> exit 1)"
 else
     t_fail "codex_dispatch_escaping: cde_argc_enforcement" \
@@ -8715,7 +8718,7 @@ _kt_case "KERNEL_TESTS=off reaches the SIMD-derived explicit rules" \
 # status and invert the result.
 _kt_bogus_out="$(make KERNEL_TESTS=bogus kernel 2>&1)" && _kt_bogus_rc=0 || _kt_bogus_rc=$?
 if [ "$_kt_bogus_rc" != "0" ] \
-   && echo "$_kt_bogus_out" | grep -q "KERNEL_TESTS must be one of: on, off"; then
+   && grep -q "KERNEL_TESTS must be one of: on, off" <<<"$_kt_bogus_out"; then
     t_pass "KERNEL_TESTS=bogus fails fast with a named error"
 else
     t_fail "KERNEL_TESTS=bogus fails fast with a named error" \
@@ -11685,7 +11688,7 @@ sed -E 's/run=1/run=2/; s/test_real\.exe/test_trailing.exe/' \
     "$FRAME_TMP/trail.log" | grep -v 'UTEST-FRAME-END' > "$FRAME_TMP/trail2.log"
 cat "$FRAME_TMP/trail2.log" >> "$FRAME_TMP/trail.log"
 TRAIL=$(python3 "$FRAME_PARSER" "$FRAME_TMP/trail.log" 2>/dev/null || true)
-if echo "$TRAIL" | grep -q '"ok": true' &&
+if grep -q '"ok": true' <<<"$TRAIL" &&
    echo "$TRAIL" | python3 -c '
 import json,sys
 d=json.load(sys.stdin)
@@ -22424,7 +22427,7 @@ cs_write "$CS_TMP/good2.log" "$CS_GOOD_BODY" "$CS_GOOD_END"
 
 CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
          "$CS_TMP/good.log" "$CS_TMP/good2.log" 2>&1)
-if [ $? -eq 0 ] && echo "$CS_OUT" | grep -q "STABLE"; then
+if [ $? -eq 0 ] && grep -q "STABLE" <<<"$CS_OUT"; then
     t_pass "count-stability: two identical complete traces compare STABLE"
 else
     t_fail "count-stability: two identical complete traces compare STABLE" "$CS_OUT"
@@ -22435,7 +22438,7 @@ cs_write "$CS_TMP/zero.log" '[  1.000] [cpu:0] [ OK ] TEST: [COUNT] #0 mm PMM: a
 [  1.010] [cpu:0] [ OK ] TEST: [COUNT] #1 boot Boot: init p=2 f=1 s=0 P=2' "$CS_GOOD_END"
 CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
          "$CS_TMP/zero.log" 2>&1)
-if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "out-of-contract ordinal"; then
+if [ $? -ne 0 ] && grep -q "out-of-contract ordinal" <<<"$CS_OUT"; then
     t_pass "count-stability: ordinal #0 is rejected, not counted as a record"
 else
     t_fail "count-stability: ordinal #0 is rejected, not counted as a record" "$CS_OUT"
@@ -22446,7 +22449,7 @@ cs_write "$CS_TMP/skew.log" "$CS_GOOD_BODY" \
     '[  1.020] [cpu:0] [ OK ] TEST: [COUNT-END] records=2 p=5 f=1 s=99 P=2'
 CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
          "$CS_TMP/skew.log" 2>&1)
-if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "per-suite skipped sums to"; then
+if [ $? -ne 0 ] && grep -q "per-suite skipped sums to" <<<"$CS_OUT"; then
     t_pass "count-stability: a trailer whose SKIPPED total disagrees is rejected"
 else
     t_fail "count-stability: a trailer whose SKIPPED total disagrees is rejected" "$CS_OUT"
@@ -22456,7 +22459,7 @@ cs_write "$CS_TMP/fskew.log" "$CS_GOOD_BODY" \
     '[  1.020] [cpu:0] [ OK ] TEST: [COUNT-END] records=2 p=5 f=7 s=1 P=2'
 CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
          "$CS_TMP/fskew.log" 2>&1)
-if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "per-suite failed sums to"; then
+if [ $? -ne 0 ] && grep -q "per-suite failed sums to" <<<"$CS_OUT"; then
     t_pass "count-stability: a trailer whose FAILED total disagrees is rejected"
 else
     t_fail "count-stability: a trailer whose FAILED total disagrees is rejected" "$CS_OUT"
@@ -22467,7 +22470,7 @@ cs_write "$CS_TMP/dupe.log" '[  1.000] [cpu:0] [ OK ] TEST: [COUNT] #1 mm PMM: a
 [  1.010] [cpu:0] [ OK ] TEST: [COUNT] #2 mm PMM: alloc p=2 f=1 s=0 P=2' "$CS_GOOD_END"
 CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
          "$CS_TMP/dupe.log" 2>&1)
-if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "duplicate (category, suite) key"; then
+if [ $? -ne 0 ] && grep -q "duplicate (category, suite) key" <<<"$CS_OUT"; then
     t_pass "count-stability: a duplicate suite key is rejected as uncomparable"
 else
     t_fail "count-stability: a duplicate suite key is rejected as uncomparable" "$CS_OUT"
@@ -22478,7 +22481,7 @@ cs_write "$CS_TMP/short.log" '[  1.000] [cpu:0] [ OK ] TEST: [COUNT] #1 mm PMM: 
     "$CS_GOOD_END"
 CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
          "$CS_TMP/short.log" 2>&1)
-if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "TRUNCATED"; then
+if [ $? -ne 0 ] && grep -q "TRUNCATED" <<<"$CS_OUT"; then
     t_pass "count-stability: a missing record is reported as truncation"
 else
     t_fail "count-stability: a missing record is reported as truncation" "$CS_OUT"
@@ -22488,7 +22491,7 @@ fi
 printf '%s\n' "$CS_GOOD_BODY" > "$CS_TMP/notrailer.log"
 CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
          "$CS_TMP/notrailer.log" 2>&1)
-if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "no \[COUNT-END\] trailer"; then
+if [ $? -ne 0 ] && grep -q "no \[COUNT-END\] trailer" <<<"$CS_OUT"; then
     t_pass "count-stability: a trace with no trailer is refused"
 else
     t_fail "count-stability: a trace with no trailer is refused" "$CS_OUT"
@@ -22499,7 +22502,7 @@ cs_write "$CS_TMP/trunc.log" '[  1.000] [cpu:0] [ OK ] TEST: [COUNT] #1 mm PMM: 
 [  1.010] [cpu:0] [ OK ] TEST: [COUNT] #2 boot Boot: init p=2 f=1 s=0 P=2' "$CS_GOOD_END"
 CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
          "$CS_TMP/trunc.log" 2>&1)
-if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "trunc=1"; then
+if [ $? -ne 0 ] && grep -q "trunc=1" <<<"$CS_OUT"; then
     t_pass "count-stability: a trunc=1 record is refused as a comparison key"
 else
     t_fail "count-stability: a trunc=1 record is refused as a comparison key" "$CS_OUT"
@@ -22513,7 +22516,7 @@ cs_write "$CS_TMP/named.log" '[  1.000] [cpu:0] [ OK ] TEST: Harness: count-trac
 [  1.010] [cpu:0] [ OK ] TEST: [COUNT] #2 boot Boot: init p=2 f=1 s=0 P=2' "$CS_GOOD_END"
 CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
          "$CS_TMP/named.log" 2>&1)
-if [ $? -eq 0 ] && echo "$CS_OUT" | grep -q "2 suites"; then
+if [ $? -eq 0 ] && grep -q "2 suites" <<<"$CS_OUT"; then
     t_pass "count-stability: a PASS line mentioning the marker is not a record"
 else
     t_fail "count-stability: a PASS line mentioning the marker is not a record" "$CS_OUT"
@@ -22525,7 +22528,7 @@ cs_write "$CS_TMP/moved.log" '[  1.000] [cpu:0] [ OK ] TEST: [COUNT] #1 mm PMM: 
     '[  1.020] [cpu:0] [ OK ] TEST: [COUNT-END] records=2 p=11 f=1 s=1 P=2'
 CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
          "$CS_TMP/good.log" "$CS_TMP/moved.log" 2>&1)
-if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "boot / Boot: init"; then
+if [ $? -ne 0 ] && grep -q "boot / Boot: init" <<<"$CS_OUT"; then
     t_pass "count-stability: a moved count is reported UNSTABLE and names the suite"
 else
     t_fail "count-stability: a moved count is reported UNSTABLE and names the suite" "$CS_OUT"
