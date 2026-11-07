@@ -382,3 +382,12 @@ An old blob already lives in firmware variables on any machine that has booted t
 Recommended: A, because the A/B rollback path can land on an older loader. It is low priority ([L]), and real firmware's variable-size limits are unmeasured here, so bare metal should confirm 32 entries fit.
 
 A: (operator, 2026-11-07) A: tail-append, keeping existing offsets. Bare metal must confirm 32 entries fit.
+
+## Q31 (00-infrastructure/TODO-06 §11): should Check 7 delegate symbol resolution to clangd through lsp-bridge?
+
+§10 measured `textDocument/documentSymbol` matching the local parse wherever both resolve, at about 0.1s cold start, with no compile database. Delegating would make `clangd` a hard dependency of the pre-commit lint on every contributor host and of `todo-graph.yml` in CI, which installs no clangd today.
+
+- **A: keep the local resolver as the gate.** `resolve_symbol.py` stays the only resolver Check 7 and the identity gate read; lsp-bridge stays an interactive oracle for symbol questions.
+- **B: delegate.** Gains the refs the local parse cannot see, but adds a toolchain dependency to every commit, and the identity gate's pinned `(path, start, end)` tuples would then shift with the installed clangd version.
+
+A: (run decision, 2026-11-08) A: keep the local resolver. The coverage gap this was meant to close has since been closed locally (521 of 1,750 resolved on 2026-11-08, up from 57; the 520 floor was proved at 0 lost / 0 moved), and a version-dependent resolver would make the byte-exact identity gate non-reproducible across hosts. Reversal: low; `resolve_symbol()` is the single seam, so an opt-in clangd backend behind an env flag is one function plus a CI install step.
