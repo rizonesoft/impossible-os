@@ -133,7 +133,7 @@ Recommended: A, because the on-disk format stays as it is, the kernel gains no u
 
 The spec'd block (`algo`, `sig_size`, `signature`) has no signer key, and CI anchors store only a key hash, so a verifier has nothing to run Ed25519 against. The proposal adds `pubkey[32]` and a key-id and bumps `EIF_VERSION`, with old images gated by version. No signed EIF exists yet, so nothing needs migrating, but this is a security-sensitive on-disk format, and until `eifsign`, the verifier and a compiled anchor exist it cannot be tested end to end.
 
-Recommended: approve the amendment, landing it with the `TODO-17` §17 verifier rather than ahead of it, so the format and its first end-to-end test ship together. Blocks TODO-20 §11, TODO-19 §4 and the sections parked behind it.
+Recommended: approve the amendment, landing it with the `TODO-17` §17 verifier rather than ahead of it, so the format and its first end-to-end test ship together. Blocks TODO-20 §11, TODO-19 §4 and §5 and the sections parked behind them.
 
 ## Q8 (TODO-21 §6/§7, TODO-06 §4): what is the authority for process capabilities?
 

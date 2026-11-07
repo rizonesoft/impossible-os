@@ -143,7 +143,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 **Test checkpoint:** a signed EIF trailer validates before segment mapping; a malformed/overlapping signed range is rejected with an error (not silently accepted); PE Authenticode digest excludes the checksum + certificate-table fields per spec. Test on: QEMU WHPX + TCG; bare metal.
 >
-> **Deferred:** [H] Embedded-signature validation is architecturally blocked: all three formats need a signer-key delivery decision, plus a compiled trust anchor + anchor-lookup and §2 loader wiring. No code shippable without those. -> XREF: 02-kernel-core/TODO-19 §4 (item: "EIF sig-block ABI decision (prereq)" at line 135); 02-kernel-core/TODO-19 §4 (item: "Anchor-lookup helper (prereq)" at line 138); 02-kernel-core/TODO-19 §1 (item: "Authenticate the policy artifact's own signature against a compiled-in Ed25519 policy-root key" at line 243)
+> **Deferred:** [H] awaiting-answer Q7: embedded-signature validation needs the signer-key delivery decision, plus a compiled trust anchor + anchor-lookup and §2 loader wiring; the stamp named only its own prereq items, so the decision was never surfaced. No code shippable without it. -> XREF: `todo/answers.md` (item: "Q7 (TODO-20 §11, TODO-19 §4, TODO-17 §17)")
 
 ---
 
@@ -158,7 +158,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 **Test checkpoint:** a catalog file maps a known image hash to its signer; a hash lookup hits the ERESOURCE-protected cache; Safe Mode with missing catalogs takes the recovery path without hanging. Test on: QEMU WHPX + TCG; bare metal.
 >
-> **Deferred:** [H] Catalog database is blocked on a catalog file-format decision (ASN.1 `.cat` is out of scope for the raw-Ed25519 `ci_crypto` bridge) and on §4 signer identity. The hash-indexed ERESOURCE cache is implementable once the format lands. -> XREF: 02-kernel-core/TODO-19 §5 (item: "Catalog file-format decision (prereq)" at line 153); 02-kernel-core/TODO-19 §4 (item: "EIF sig-block ABI decision (prereq)" at line 135)
+> **Deferred:** [H] awaiting-answer Q7: the catalog format (ASN.1 `.cat` is out of scope for the raw-Ed25519 `ci_crypto` bridge) needs §4's signer identity, which waits on that answer. The hash-indexed ERESOURCE cache is implementable once the format lands. -> XREF: `todo/answers.md` (item: "Q7 (TODO-20 §11, TODO-19 §4, TODO-17 §17)")
 
 ---
 
