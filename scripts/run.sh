@@ -14,7 +14,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT"
 # shellcheck source=scripts/overnight/run-common.sh
 . "$ROOT/scripts/overnight/run-common.sh"
-HEART="$RUN_SESSION-heartbeat"
+RUN_T="$(run_target "$RUN_SESSION")"
+HEART_T="$(run_target "$RUN_HEARTBEAT_SESSION")"
 
 case "${1:-status}" in
   start)
@@ -28,28 +29,33 @@ case "${1:-status}" in
     mkdir -p .claude/state
     rm -f .claude/state/sequencer-fixpoint
     date -Is > "$RUN_MARKER"
-    if tmux has-session -t "$RUN_SESSION" 2>/dev/null; then
+    if tmux has-session -t "$RUN_T" 2>/dev/null; then
       echo "already running. Watch it: bash scripts/run.sh attach"
     else
       # Resumes this run's own conversation if it has one.
       run_launch resume
       echo "started. Watch it: bash scripts/run.sh attach"
     fi
-    tmux has-session -t "$HEART" 2>/dev/null \
-      || tmux new-session -d -s "$HEART" "bash '$ROOT/scripts/overnight/heartbeat.sh'"
+    tmux has-session -t "$HEART_T" 2>/dev/null \
+      || tmux new-session -d -s "$RUN_HEARTBEAT_SESSION" "bash '$ROOT/scripts/overnight/heartbeat.sh'"
     ;;
   attach)
-    exec tmux attach -t "$RUN_SESSION"
+    exec tmux attach -t "$RUN_T"
     ;;
   status)
-    tmux has-session -t "$RUN_SESSION" 2>/dev/null && echo "session: alive" || echo "session: not running"
-    tmux has-session -t "$HEART" 2>/dev/null && echo "heartbeat: alive" || echo "heartbeat: not running"
+    tmux has-session -t "$RUN_T" 2>/dev/null && echo "session: alive" || echo "session: not running"
+    tmux has-session -t "$HEART_T" 2>/dev/null && echo "heartbeat: alive" || echo "heartbeat: not running"
     [ -f .claude/overnight/run-health.json ] && cat .claude/overnight/run-health.json
     ;;
   stop)
+    # Stopping is the operator's. The run's own session must not be able to end itself.
+    if [ "${OVERNIGHT_SEQUENCER_RUN:-}" = "1" ]; then
+      echo "REFUSED: the run cannot stop itself. Stop it from your own shell." >&2
+      exit 1
+    fi
     rm -f "$RUN_MARKER"
-    tmux kill-session -t "$HEART" 2>/dev/null || true
-    tmux kill-session -t "$RUN_SESSION" 2>/dev/null || true
+    tmux kill-session -t "$HEART_T" 2>/dev/null || true
+    tmux kill-session -t "$RUN_T" 2>/dev/null || true
     python3 .claude/hooks/run_phase_guard.py clear "stopped via run.sh" >/dev/null 2>&1 || true
     echo "stopped. \`start\` resumes this run's conversation; delete .claude/state/run-session-id for a new one."
     ;;

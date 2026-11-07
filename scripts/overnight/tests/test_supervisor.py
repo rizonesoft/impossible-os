@@ -72,17 +72,37 @@ def test_refusal_a_change_the_run_worked_with_is_not_reverted():
         assert (root / ".claude/hooks/x.py").exists()
 
 
-def test_a_failed_undo_alerts_and_never_raises():
+def test_a_fix_on_top_of_a_bad_commit_undoes_as_one_batch():
+    # Review, 2026-11-07: undoing only the fix would have restored the bug.
+    with tempfile.TemporaryDirectory() as d:
+        root, _ = _fixture(d)
+        _commit(root, ".claude/hooks/x.py", "bad\n")
+        sup.check(root, True, T0 + 60)
+        _commit(root, ".claude/hooks/x.py", "fixed\n")
+        sup.check(root, True, T0 + 2 * HOUR)
+        h = sup.check(root, True, T0 + 3 * HOUR + 120)
+        assert len(h["machinery_reverts"]) == 2 and h["machinery_commits_pending"] == 0, h
+        assert not (root / ".claude/hooks/x.py").exists()
+
+
+def test_a_failed_undo_alerts_keeps_its_commit_and_never_raises():
     with tempfile.TemporaryDirectory() as d:
         root, alerts = _fixture(d)
         _commit(root, ".claude/hooks/x.py", "one\n")
         sup.check(root, True, T0 + 60)
-        # A later edit to the same lines makes the older revert conflict.
-        _commit(root, ".claude/hooks/x.py", "two\n")
-        sup.check(root, True, T0 + 2 * HOUR)
-        sup.check(root, True, T0 + 3 * HOUR + 120)
+        # A human edit landing outside the record makes the revert conflict.
+        (root / ".claude/hooks/x.py").write_text("two\n")
+        _git(root, "add", "-A")
+        _git(root, "commit", "-qm", "edit")
+        state = root / ".claude/overnight/supervisor-state.json"
+        data = json.loads(state.read_text())
+        data["head"] = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                                      capture_output=True, text=True).stdout.strip()
+        state.write_text(json.dumps(data))
+        h = sup.check(root, True, T0 + 3 * HOUR + 120)
         assert any("Could not undo" in a for a in alerts), alerts
         assert not (root / ".git/REVERT_HEAD").exists()
+        assert h["machinery_commits_pending"] == 1, h
 
 
 def test_a_dirty_tree_keeps_the_undo_for_later():

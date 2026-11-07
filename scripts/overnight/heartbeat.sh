@@ -3,7 +3,8 @@
 #
 # Relaunching is not how this design works, so all of this is only for faults:
 #   dead session    restart it with --resume, backing off if it keeps dying
-#   idle session    nudge it, which also clears a finished usage-limit wait
+#   idle session    nudge it, unless someone is attached; this also clears a finished
+#                   usage-limit wait
 #   no ship in 6 h  supervisor.py alerts, and the session is told to find out why
 #
 # bash heartbeat.sh --once runs one check (tests use this). Without it, every 5 minutes.
@@ -32,14 +33,22 @@ state_set() {
   mv "$STATE.tmp" "$STATE"
 }
 
-nudge() { tmux send-keys -t "$RUN_SESSION" -l "$1" 2>/dev/null; tmux send-keys -t "$RUN_SESSION" Enter 2>/dev/null; }
+RUN_T="$(run_target "$RUN_SESSION")"
+# A person attached may be mid-sentence, and Enter would send their half-typed prompt.
+someone_attached() { [ -n "$(tmux list-clients -t "$RUN_T" 2>/dev/null)" ]; }
+nudge() {
+  someone_attached && return 0
+  [ "$(idle_seconds)" -ge "$IDLE_SECS" ] || return 0  # the supervisor call took time
+  tmux send-keys -t "$RUN_T:" -l "$1" 2>/dev/null
+  tmux send-keys -t "$RUN_T:" Enter 2>/dev/null
+}
 
 check() {
   # Stopped by an operator, or finished: the heartbeat's job is over.
   [ -f "$RUN_MARKER" ] || return 10
   [ -f .claude/state/sequencer-fixpoint ] && return 10
   local now idle; now="$(date +%s)"
-  if ! tmux has-session -t "$RUN_SESSION" 2>/dev/null; then
+  if ! tmux has-session -t "$RUN_T" 2>/dev/null; then
     local deaths wait_until
     deaths="$(state_get deaths)"; deaths="${deaths:-0}"
     wait_until="$(state_get wait_until)"; wait_until="${wait_until:-0}"

@@ -216,6 +216,11 @@ def _is_self_teardown(cmd):
     # Direct tampering with any guard state file.
     if any(f in c for f in _STATE_FILES) and any(op in c for op in _MUTATE_OPS):
         return True
+    # The one-session run's controller and its tmux sessions.
+    if re.search(r"\brun\.sh\b", c) and re.search(r"\bstop\b", c):
+        return True
+    if "tmux" in c and "kill" in c and "impossible-os" in c:
+        return True
     # Stopping/disabling the systemd units or killing the headless claude.
     if "systemctl" in c and any(op in c for op in ("stop", "disable", "kill")) and "overnight" in c:
         return True
@@ -537,7 +542,7 @@ def _skill_name(tool_input):
 _CONTROL_PLANE_ROOTS = (
     ".claude/hooks/", ".claude/skills/", "scripts/overnight/", ".githooks/",
 )
-_CONTROL_PLANE_FILES = (".claude/settings.json",)
+_CONTROL_PLANE_FILES = (".claude/settings.json", "scripts/run.sh")
 
 
 def _control_plane_path(target: str):
@@ -2516,6 +2521,9 @@ def selftest():
          True, "verb cut from a longer word not blocked"),
         ("G=.claude/hooks/run_phase_guard.py; python3 \"$G\" clear", True,
          "guard path in a variable not blocked"),
+        ("bash scripts/run.sh stop", True, "run.sh stop not blocked"),
+        ("tmux kill-session -t =impossible-os-run", True, "tmux kill not blocked"),
+        ("bash scripts/run.sh status", False, "run.sh status read as a teardown"),
     ):
         check(_is_self_teardown(cmd) is want, why)
 

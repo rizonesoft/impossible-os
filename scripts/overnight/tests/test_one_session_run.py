@@ -29,7 +29,8 @@ def _fixture(d, alive=True, idle=0):
     log = pathlib.Path(d) / "calls.log"
     tmux = bindir / "tmux"
     tmux.write_text('#!/bin/bash\necho "tmux $*" >> "$LOG"\n'
-                    '[ "$1" = has-session ] && exit "${SESSION_RC:-0}"\nexit 0\n')
+                    '[ "$1" = has-session ] && exit "${SESSION_RC:-0}"\n'
+                    '[ "$1" = list-clients ] && echo "${CLIENTS:-}"\nexit 0\n')
     tmux.chmod(tmux.stat().st_mode | stat.S_IEXEC)
     tdir = pathlib.Path(d) / "transcripts"
     tdir.mkdir()
@@ -83,6 +84,60 @@ def test_an_idle_session_is_nudged():
         root, log, env = _fixture(d, idle=4000)
         _once(root, env)
         assert "Continue the run." in log.read_text()
+
+
+def test_refusal_a_person_attached_is_never_typed_over():
+    with tempfile.TemporaryDirectory() as d:
+        root, log, env = _fixture(d, idle=4000)
+        _once(root, {**env, "CLIENTS": "/dev/pts/3: impossible-os-run"})
+        assert "send-keys" not in log.read_text(), log.read_text()
+
+
+def _real_tmux(*args, sock):
+    return subprocess.run(["tmux", "-L", sock, *args], capture_output=True, text=True, timeout=20)
+
+
+def test_real_tmux_a_live_heartbeat_does_not_make_a_dead_run_look_alive():
+    """The shim cannot model prefix matching, which is exactly what broke this."""
+    if not shutil.which("tmux"):
+        return
+    sock = f"impossible-test-{os.getpid()}"
+    try:
+        assert _real_tmux("new-session", "-d", "-s", "impossible-os-run-x", "sleep 60", sock=sock).returncode == 0
+        assert _real_tmux("has-session", "-t", "impossible-os-run", sock=sock).returncode == 0, \
+            "the control: a bare name matches by prefix"
+        assert _real_tmux("has-session", "-t", "=impossible-os-run", sock=sock).returncode != 0
+        assert _real_tmux("has-session", "-t", "=impossible-os-run-x", sock=sock).returncode == 0
+        text = (REPO / "scripts/overnight/run-common.sh").read_text()
+        assert "RUN_HEARTBEAT_SESSION:-impossible-os-heartbeat" in text
+        for rel in ("scripts/run.sh", "scripts/overnight/heartbeat.sh"):
+            assert '-t "$RUN_SESSION"' not in (REPO / rel).read_text(), rel
+    finally:
+        _real_tmux("kill-server", sock=sock)
+
+
+def test_refusal_the_run_cannot_stop_itself():
+    r = subprocess.run(["bash", str(REPO / "scripts/run.sh"), "stop"], capture_output=True, text=True,
+                       env={**os.environ, "OVERNIGHT_SEQUENCER_RUN": "1"}, timeout=30)
+    assert r.returncode == 1 and "cannot stop itself" in r.stderr, r
+    import run_phase_guard as g
+    assert g._is_self_teardown("bash scripts/run.sh stop")
+
+
+def test_refusal_every_frozen_file_is_refused_through_the_whole_path():
+    import gate
+    import run_phase_guard as g
+    state = {"active": True, "phase": "SECTIONS"}
+    os.environ["OVERNIGHT_SEQUENCER_RUN"] = "1"
+    try:
+        for rel in sorted(gate.FROZEN):
+            target = str(REPO / rel)
+            allow, msg = g.evaluate("Edit", {"file_path": target}, state, armed=True,
+                                    headless=True, stages_done=False, ship_pending="")
+            assert not allow, rel
+            assert not g._refusal_is_only_logged(msg, {"file_path": target}), rel
+    finally:
+        del os.environ["OVERNIGHT_SEQUENCER_RUN"]
 
 
 def test_a_stalled_idle_session_is_told_to_diagnose():

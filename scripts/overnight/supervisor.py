@@ -86,24 +86,37 @@ def write_json(path: Path, data) -> None:
     tmp.replace(path)
 
 
-def undo(root: Path, pending: list, now: int, idle: bool) -> tuple:
-    """Revert due commits, newest first. Returns (reverted, still pending)."""
+def undo(root: Path, state: dict, pending: list, now: int, idle: bool) -> tuple:
+    """Revert the whole pending batch, newest first, once its oldest commit is due.
+
+    As one batch, because a later commit may fix an earlier one: undoing only the older
+    conflicts, and undoing only the newer restores the bug it fixed. It stops at the
+    first failure and keeps that commit and everything older, so nothing is left half
+    undone and forgotten. Returns (reverted, still pending)."""
     limit = UNDO_AFTER_HOURS * 3600
-    due = [p for p in pending if now - p["seen"] >= limit] if idle else []
-    keep = [p for p in pending if p not in due]
+    if not idle or not pending or now - min(p["seen"] for p in pending) < limit:
+        return [], pending
+    ordered = sorted(pending, key=lambda p: p["order"], reverse=True)
+
+    def throttled(message):
+        if now - int(state.get("last_undo_alert", 0)) >= 3600:
+            alert(root, message)
+            state["last_undo_alert"] = now
+
     reverted = []
-    for entry in sorted(due, key=lambda p: p["order"], reverse=True):
-        sha = entry["sha"]
-        if git(root, "status", "--porcelain").stdout.strip():
-            keep.append(entry)  # retry at a later check
-            alert(root, f"Machinery commit {sha[:12]} is due for undo, but the tree is dirty.")
-            continue
-        r = git(root, "revert", "--no-edit", sha, timeout=PUSH_TIMEOUT)
+    keep = ordered
+    if git(root, "status", "--porcelain").stdout.strip():
+        throttled(f"{len(ordered)} machinery commit(s) are due for undo, but the tree is dirty.")
+        return [], pending
+    for i, entry in enumerate(ordered):
+        r = git(root, "revert", "--no-edit", entry["sha"], timeout=PUSH_TIMEOUT)
         if r.returncode != 0:
             git(root, "revert", "--abort")
-            alert(root, f"Could not undo machinery commit {sha[:12]}: {r.stderr.strip()[:200]}")
-            continue
-        reverted.append(sha)
+            throttled(f"Could not undo machinery commit {entry['sha'][:12]}: {r.stderr.strip()[:200]}")
+            keep = ordered[i:]
+            break
+        reverted.append(entry["sha"])
+        keep = ordered[i + 1:]
     if reverted:
         p = git(root, "push", "origin", "HEAD", timeout=PUSH_TIMEOUT)
         pushed = "and pushed" if p.returncode == 0 else "but the push failed"
@@ -135,7 +148,7 @@ def check(root: Path, idle: bool, now: int) -> dict:
     if produced:
         pending = []  # the run worked with these changes in place
 
-    reverted, pending = undo(root, pending, now, idle)
+    reverted, pending = undo(root, state, pending, now, idle)
     state["head"] = git(root, "rev-parse", "HEAD").stdout.strip()
 
     day = time.strftime("%Y-%m-%d", time.gmtime(now))

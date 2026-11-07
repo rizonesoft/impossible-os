@@ -2,6 +2,10 @@
 # run-common.sh -- how the run's one session starts. Shared by run.sh and heartbeat.sh,
 # and frozen with them. Sourced with the working directory at the repo root.
 RUN_SESSION="${RUN_SESSION:-impossible-os-run}"
+RUN_HEARTBEAT_SESSION="${RUN_HEARTBEAT_SESSION:-impossible-os-heartbeat}"
+# tmux matches a bare -t name by prefix, so always target sessions exactly. A heartbeat
+# named after the run made a dead run look alive (found on review, 2026-11-07).
+run_target() { printf '=%s' "$1"; }
 RUN_MARKER=".claude/state/sequencer-armed"
 RUN_COMPACT_AT="${RUN_COMPACT_AT:-400000}"
 RUN_MODEL="${RUN_MODEL:-opus}"
