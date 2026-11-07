@@ -1,6 +1,6 @@
 {
-  "total_suites": 3518,
-  "total_assertions": 15547,
+  "total_suites": 3520,
+  "total_assertions": 15565,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_ec.c", "suites": 42, "assertions": 168},
@@ -68,7 +68,7 @@
     {"file": "test_nls.c", "suites": 96, "assertions": 331},
     {"file": "test_nt_audit.c", "suites": 8, "assertions": 27},
     {"file": "test_nt_misc.c", "suites": 10, "assertions": 40},
-    {"file": "test_nt_sync.c", "suites": 12, "assertions": 71},
+    {"file": "test_nt_sync.c", "suites": 14, "assertions": 89},
     {"file": "test_nt_types.c", "suites": 51, "assertions": 198},
     {"file": "test_nvme.c", "suites": 1, "assertions": 2},
     {"file": "test_ob.c", "suites": 53, "assertions": 291},

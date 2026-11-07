@@ -683,6 +683,139 @@ static void test_nt_mutant_recursion_ceiling(void)
     nt_test_cleanup_named("T12S8RecCap", ObpMutexType);
 }
 
+/* Create takes a leaf name, and open used to take only the full NT path, so a
+ * caller could not reopen by the name it created with. */
+static void nt_sync_leaf_case(uint32_t create_no, uint32_t open_no,
+                              const OBJECT_TYPE *type,
+                              const char *leaf, const char *full,
+                              uint64_t a4, uint64_t a5, const char *desc)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING us;
+    HANDLE created = INVALID_HANDLE_VALUE;
+    HANDLE by_leaf = INVALID_HANDLE_VALUE;
+    HANDLE by_path = INVALID_HANDLE_VALUE;
+    NTSTATUS s;
+
+    nt_test_build_oa(&oa, &us, leaf);
+    s = (NTSTATUS)ssdt_dispatch(create_no, (uint64_t)(uintptr_t)&created, 0,
+                                (uint64_t)(uintptr_t)&oa, a4, a5, 0);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS, desc);
+
+    s = (NTSTATUS)ssdt_dispatch(open_no, (uint64_t)(uintptr_t)&by_leaf, 0,
+                                (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS, desc);
+    TEST_ASSERT(by_leaf != INVALID_HANDLE_VALUE, desc);
+
+    nt_test_build_oa(&oa, &us, full);
+    s = (NTSTATUS)ssdt_dispatch(open_no, (uint64_t)(uintptr_t)&by_path, 0,
+                                (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS, desc);
+
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)(uint32_t)by_path, 0, 0, 0, 0, 0);
+
+    /* The resolver treats the leading backslash as optional: `full + 1` is the
+     * same path without it, and it must still mean the same object. */
+    nt_test_build_oa(&oa, &us, full + 1);
+    s = (NTSTATUS)ssdt_dispatch(open_no, (uint64_t)(uintptr_t)&by_path, 0,
+                                (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS, desc);
+
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)(uint32_t)by_path, 0, 0, 0, 0, 0);
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)(uint32_t)by_leaf, 0, 0, 0, 0, 0);
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)(uint32_t)created, 0, 0, 0, 0, 0);
+    nt_test_cleanup_named(leaf, type);
+}
+
+extern const char *nt_sync_open_name(const char *name, char *buf, size_t cap);
+
+/* Only a bare leaf is rewritten. The resolver sets no whole-path limit and walks
+ * a path with or without its leading backslash, so any name with a separator has
+ * to reach it unchanged, however long. */
+static void test_nt_sync_open_name_shapes(void)
+{
+    char name[OB_PATH_MAX + 64];
+    char buf[OB_PATH_MAX];
+    const char *r;
+    uint32_t i;
+
+    /* Longer than any buffer here, and still returned as the same pointer. */
+    for (i = 0; i < sizeof(name) - 1; i++) name[i] = (i % 32 == 0) ? '\\' : 'a';
+    name[sizeof(name) - 1] = '\0';
+    r = nt_sync_open_name(name, buf, sizeof(buf));
+    TEST_ASSERT(r == name, "a long full path reaches the resolver unchanged");
+
+    r = nt_sync_open_name("BaseNamedObjects\\E", buf, sizeof(buf));
+    TEST_ASSERT(r != buf && r != (const char *)0,
+                "a path with no leading backslash is not treated as a leaf");
+
+    r = nt_sync_open_name("X", buf, sizeof(buf));
+    TEST_ASSERT(r == buf, "a bare leaf is expanded into the buffer");
+    TEST_ASSERT_EQ(buf[0], '\\', "with the directory prefix");
+    TEST_ASSERT_EQ(buf[17], '\\', "ending in a separator");
+    TEST_ASSERT_EQ(buf[18], 'X', "then the leaf");
+    TEST_ASSERT_EQ(buf[19], '\0', "and nothing after it");
+
+    /* 18 prefix characters + leaf + NUL in 21 bytes. */
+    TEST_ASSERT(nt_sync_open_name("ab", buf, 21) == buf,
+                "a leaf filling the buffer exactly fits");
+    TEST_ASSERT(nt_sync_open_name("abc", buf, 21) == (const char *)0,
+                "one character more is refused, not cut");
+}
+
+static void test_nt_sync_open_by_leaf_name(void)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING us;
+    HANDLE h = INVALID_HANDLE_VALUE;
+    HANDLE evt = INVALID_HANDLE_VALUE;
+    char huge[300];
+    uint32_t i;
+    NTSTATUS s;
+
+    nt_sync_leaf_case(SSDT_NtCreateEvent, SSDT_NtOpenEvent, ObpEventType,
+                      "T05S6LeafEvt",
+                      "\\BaseNamedObjects\\T05S6LeafEvt", SynchronizationEvent, 0,
+                      "event reopens by leaf and by full path");
+    nt_sync_leaf_case(SSDT_NtCreateMutant, SSDT_NtOpenMutant, ObpMutexType,
+                      "T05S6LeafMut",
+                      "\\BaseNamedObjects\\T05S6LeafMut", 0, 0,
+                      "mutant reopens by leaf and by full path");
+    nt_sync_leaf_case(SSDT_NtCreateSemaphore, SSDT_NtOpenSemaphore, ObpSemaphoreType,
+                      "T05S6LeafSem",
+                      "\\BaseNamedObjects\\T05S6LeafSem", 1, 2,
+                      "semaphore reopens by leaf and by full path");
+
+    /* A leaf naming nothing stays not-found, rather than matching anything. */
+    nt_test_build_oa(&oa, &us, "T05S6NoSuchLeaf");
+    s = (NTSTATUS)ssdt_dispatch(SSDT_NtOpenEvent, (uint64_t)(uintptr_t)&h, 0,
+                                (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_OBJECT_NAME_NOT_FOUND,
+                   "an absent leaf name is not found");
+
+    /* The type still gates a leaf lookup: an event's name opens no mutant. */
+    nt_test_build_oa(&oa, &us, "T05S6TypeEvt");
+    s = (NTSTATUS)ssdt_dispatch(SSDT_NtCreateEvent, (uint64_t)(uintptr_t)&evt, 0,
+                                (uint64_t)(uintptr_t)&oa,
+                                SynchronizationEvent, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS, "create the typed event");
+    s = (NTSTATUS)ssdt_dispatch(SSDT_NtOpenMutant, (uint64_t)(uintptr_t)&h, 0,
+                                (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_OBJECT_NAME_NOT_FOUND,
+                   "a leaf naming another type's object is not found");
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)(uint32_t)evt, 0, 0, 0, 0, 0);
+    nt_test_cleanup_named("T05S6TypeEvt", ObpEventType);
+
+    /* A name longer than the path buffer is refused whole, never cut to fit. */
+    for (i = 0; i < sizeof(huge) - 1; i++) huge[i] = 'a';
+    huge[sizeof(huge) - 1] = '\0';
+    nt_test_build_oa(&oa, &us, huge);
+    s = (NTSTATUS)ssdt_dispatch(SSDT_NtOpenEvent, (uint64_t)(uintptr_t)&h, 0,
+                                (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_OBJECT_NAME_NOT_FOUND,
+                   "an over-long leaf name is not found");
+}
+
 void test_register_nt_sync(void)
 {
     test_suite_register_cat("NT: sync SSDT registered", test_nt_sync_ssdt_registered, TEST_CAT_ABI);
@@ -696,6 +829,10 @@ void test_register_nt_sync(void)
     test_suite_register_cat("NT: SignalAndWait mutant release", test_nt_signal_and_wait_mutant, TEST_CAT_ABI);
     test_suite_register_cat("NT: SignalAndWait semaphore limit", test_nt_signal_and_wait_sem_limit, TEST_CAT_ABI);
     test_suite_register_cat("NT: expired absolute wait deadline", test_nt_wait_absolute_deadline_expired, TEST_CAT_ABI);
+    test_suite_register_cat("NT: sync open rewrites only a bare leaf",
+                            test_nt_sync_open_name_shapes, TEST_CAT_ABI);
+    test_suite_register_cat("NT: named sync objects reopen by leaf name",
+                            test_nt_sync_open_by_leaf_name, TEST_CAT_ABI);
     test_suite_register_cat("NT: mutant recursion ceiling", test_nt_mutant_recursion_ceiling, TEST_CAT_ABI);
 }
 

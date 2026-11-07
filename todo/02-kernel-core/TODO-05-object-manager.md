@@ -208,6 +208,9 @@ A hierarchical in-memory namespace rooted at `\`. Directories hold named object 
 - [ ] **Give `Directory` an `on_delete` draining its entry list.** Registered bare at `ob.c:809`, so freeing a non-empty directory leaks every entry node and child ref. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §13`
 - [ ] **Status-bearing insertion primitive.** `ObInsertObject` returns 0/-1 (`ob_ns.h:65`), conflating collision, capacity, OOM and quota refusal. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §13`
   - PARTLY SHIPPED: `ObInsertObjectEx` returns collision, resource and invalid-parameter statuses (`ob_ns.c:156`), landed by `02-kernel-core/TODO-25` §13. Remaining: only `knf.c:314` calls it, about 20 callers still use the 0/-1 wrapper, and no status reports a quota refusal, which is what the TODO-25 stamp waits on.
+- [ ] **Temporary named objects die with their last handle.** Named events, mutants and semaphores keep a namespace reference after every handle closes; Windows removes them at last close.
+  - Each distinct name costs about 490 bytes until reboot.
+  - Observed 2026-11-07: a test creating and closing four named sync objects leaked 1968 bytes until it called the suite's own cleanup, `nt_test_cleanup_named`. `ObInsertObject` takes the reference (`ob_ns.c`), `on_close` is NULL for all three types, and no production path removes them. A long-running service minting unique names grows without bound, and `OB_DIR_MAX_ENTRIES` (128) then refuses new names.
 - [ ] **Cache parent-directory + entry linkage in `OBJECT_HEADER` so teardown avoids path relookup.**
       - Today `ob_thread_mark_dead()` ([`src/kernel/ob/ob_thread.c:90-113`](../../src/kernel/ob/ob_thread.c)) and `ob_process_mark_dead()` ([`src/kernel/ob/ob_process.c:89-108`](../../src/kernel/ob/ob_process.c)) do `ObLookupObjectByName()` (path walk over `\KernelObjects\Thread<pid>.<tid>`) plus `ObpLookupDirectory()` plus `ObpRemoveFromDirectory()` linear walk -- two O(n) namespace scans under IRQ-off spinlock on every thread exit.
       - `thread_exit()` calls this on the scheduler hot path; cost scales with namespace size and pushes IRQ-off latency up under kthread churn.
@@ -277,7 +280,8 @@ Re-register the existing event, mutex, semaphore, and timer primitives as Ob-man
       - Add a stress test in `test_ob.c` that arms 1024 one-shot timers with staggered `DueTime` and asserts wake fan-out under 1ms of slack.
       - This auto-closes TODO-12 §19 Accepted (linear armed-list scan at scale).
       - Also move periodic `event_set` and the Phase-B final deref OUT of `nt_timer_tick` onto a deferred chain so no `event_set`/`kfree` runs under `s_armed_lock` or in the tick path.
-- [ ] **Normalize `NtOpen{Event,Mutex,Semaphore}` names** through `\BaseNamedObjects\%s` (like create + `ObOpenTimer`) in `nt_sync.c`, so a named sync object is reopenable by leaf name (today only timer does this)
+- [x] **`NtOpen{Event,Mutant,Semaphore}` reopen by leaf name**: `nt_sync_open_name()` in `nt_sync.c` expands a bare name under `\BaseNamedObjects`; a name with any backslash reaches the resolver unchanged.
+  - A bare name means the `\BaseNamedObjects` object even if a privileged symlink of that name sits at the namespace root: open has to find what create made, and every sync create inserts there. No sync object is ever inserted at the root itself.
 - [ ] **Lock the event/mutex/semaphore waiter queues**: `sched/event.c`/`mutex.c`/`semaphore.c` mutate `num_waiters` + waiter arrays unlocked, raced between timer-ISR `event_set` and thread-context wait (torn array / lost wakeup on SMP)
 
 > **Notes:**

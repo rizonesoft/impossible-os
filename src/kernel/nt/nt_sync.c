@@ -19,6 +19,7 @@
 #include "kernel/sched/mutex.h"
 #include "kernel/sched/semaphore.h"
 #include "kernel/ob/ob.h"
+#include "kernel/ob/ob_ns.h"
 #include "kernel/ob/ob_event.h"
 #include "kernel/ob/ob_timer.h"
 #include "kernel/ob/ob_mutex.h"
@@ -30,12 +31,34 @@
 #include "kernel/nt/filetime.h"
 #include "kernel/time/wall_clock.h"
 
+extern int snprintf(char *buf, size_t size, const char *fmt, ...);
+
 /* ---- Helper: extract path from OBJECT_ATTRIBUTES ----------------------- */
 static const char *sync_oa_name(OBJECT_ATTRIBUTES *oa)
 {
     if (!oa || !oa->ObjectName || !oa->ObjectName->Buffer)
         return (const char *)0;
     return (const char *)oa->ObjectName->Buffer;
+}
+
+/* ---- Helper: resolve an open name for the object-manager lookup ----------
+ * Create takes a bare leaf and files it under \BaseNamedObjects, so open has to
+ * accept that same leaf. A name holding any separator is already a path, with
+ * or without its leading backslash, and goes to the resolver unchanged: only
+ * the resolver knows what it means. PURE. Returns the name to look up, or NULL
+ * when a leaf does not fit `buf`: a cut name could find another object.
+ * ----------------------------------------------------------------------- */
+const char *nt_sync_open_name(const char *name, char *buf, size_t cap)
+{
+    const char *p;
+    int n;
+
+    for (p = name; *p; p++) {
+        if (*p == '\\')
+            return name;
+    }
+    n = snprintf(buf, cap, "\\BaseNamedObjects\\%s", name);
+    return (n >= 0 && (size_t)n < cap) ? buf : (const char *)0;
 }
 
 /* ---- Helper: look up sync object by handle and verify type -------------- */
@@ -125,6 +148,7 @@ static NTSTATUS NtOpenEvent_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     HANDLE *out = (HANDLE *)a1;
     OBJECT_ATTRIBUTES *oa = (OBJECT_ATTRIBUTES *)a3;
     const char *name;
+    char leaf_path[OB_PATH_MAX];
     void *body;
 
     (void)a2; (void)a4; (void)a5; (void)a6;
@@ -136,7 +160,8 @@ static NTSTATUS NtOpenEvent_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!name)
         return STATUS_OBJECT_NAME_NOT_FOUND;
 
-    if (ObLookupObjectByName(name, ObpEventType, 0, &body) != 0)
+    name = nt_sync_open_name(name, leaf_path, sizeof(leaf_path));
+    if (!name || ObLookupObjectByName(name, ObpEventType, 0, &body) != 0)
         return STATUS_OBJECT_NAME_NOT_FOUND;
 
     *out = ObpAllocateHandle(&task_current()->handle_table, body, 0, 0);
@@ -275,6 +300,7 @@ static NTSTATUS NtOpenMutant_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     HANDLE *out = (HANDLE *)a1;
     OBJECT_ATTRIBUTES *oa = (OBJECT_ATTRIBUTES *)a3;
     const char *name;
+    char leaf_path[OB_PATH_MAX];
     void *body;
 
     (void)a2; (void)a4; (void)a5; (void)a6;
@@ -286,7 +312,8 @@ static NTSTATUS NtOpenMutant_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!name)
         return STATUS_OBJECT_NAME_NOT_FOUND;
 
-    if (ObLookupObjectByName(name, ObpMutexType, 0, &body) != 0)
+    name = nt_sync_open_name(name, leaf_path, sizeof(leaf_path));
+    if (!name || ObLookupObjectByName(name, ObpMutexType, 0, &body) != 0)
         return STATUS_OBJECT_NAME_NOT_FOUND;
 
     *out = ObpAllocateHandle(&task_current()->handle_table, body, 0, 0);
@@ -397,6 +424,7 @@ static NTSTATUS NtOpenSemaphore_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     HANDLE *out = (HANDLE *)a1;
     OBJECT_ATTRIBUTES *oa = (OBJECT_ATTRIBUTES *)a3;
     const char *name;
+    char leaf_path[OB_PATH_MAX];
     void *body;
 
     (void)a2; (void)a4; (void)a5; (void)a6;
@@ -408,7 +436,8 @@ static NTSTATUS NtOpenSemaphore_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!name)
         return STATUS_OBJECT_NAME_NOT_FOUND;
 
-    if (ObLookupObjectByName(name, ObpSemaphoreType, 0, &body) != 0)
+    name = nt_sync_open_name(name, leaf_path, sizeof(leaf_path));
+    if (!name || ObLookupObjectByName(name, ObpSemaphoreType, 0, &body) != 0)
         return STATUS_OBJECT_NAME_NOT_FOUND;
 
     *out = ObpAllocateHandle(&task_current()->handle_table, body, 0, 0);
