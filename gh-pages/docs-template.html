@@ -79,7 +79,6 @@ mark { background: #fde68a; color: #0f172a; border-radius: 3px; padding: 0 .1em;
 .skip-link:focus { top: 12px; }
 a:focus-visible, button:focus-visible, summary:focus-visible, select:focus-visible, [tabindex="0"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 main:focus:not(:focus-visible) { outline: none; }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .top-links { display: flex; gap: 16px; align-items: center; font-size: 14px; }
 .top-links a { color: var(--text-2); }
@@ -392,7 +391,7 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
       if (!w || seen[w]) continue;
       seen[w] = 1;
       var st = w.indexOf(' ') < 0 && /^(.{4,}?)(ing|es|ed|s)$/.exec(w);
-      out.push({ w: w, stem: st ? st[1] : '', q: m[1] !== undefined });
+      out.push({ w: w, stem: st ? st[1] : '' });
     }
     return out;
   }
@@ -425,8 +424,7 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
   }
   // The best occurrence of a term in one text: class 3 a whole word (a plural
   // or tense ending may follow), 2 the stem of an inflected term as a word,
-  // 1 inside a longer word, 0 a correction of a misspelled term (`w` says which),
-  // or null. [a, b) is where it sits.
+  // 1 inside a longer word, or null. [a, b) is where it sits.
   function find(t, o, l) {
     if (o.length !== l.length) o = l;
     var i, e, sub = l.indexOf(t.w);
@@ -438,24 +436,17 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
         if (startsWord(o, i) && (e = wordEnd(o, l, i + t.stem.length, STEM_TAIL)) >= 0) return { c: 2, a: i, b: e };
       }
     }
-    if (sub >= 0) return { c: 1, a: sub, b: sub + t.w.length };
-    for (var k = 0; t.fz && k < t.fz.length; k++) {
-      var w = t.fz[k];
-      for (i = l.indexOf(w); i >= 0; i = l.indexOf(w, i + 1)) {
-        if (startsWord(o, i) && (e = wordEnd(o, l, i + w.length, TAIL)) >= 0) return { c: 0, a: i, b: e, w: w };
-      }
-    }
-    return null;
+    return sub >= 0 ? { c: 1, a: sub, b: sub + t.w.length } : null;
   }
   // A record's score: [terms found as whole words, weight of word matches,
-  // weight of stem matches, weight of substring matches, weight of corrections],
-  // compared in that order with field weights title 10, heading 4, body 1. Covering every term
+  // weight of stem matches, weight of substring matches], compared in that
+  // order with field weights title 10, heading 4, body 1. Covering every term
   // as a word comes first, so one title word never outranks a page that says
   // every term; within that, `map` in a body beats `bitmap` in a title.
   function score(r, terms) {
-    var s = [0, 0, 0, 0, 0], fields = [[r.t, r.tl, 10], [r.h, r.hl, 4], [r.x, r.xl, 1]];
+    var s = [0, 0, 0, 0], fields = [[r.t, r.tl, 10], [r.h, r.hl, 4], [r.x, r.xl, 1]];
     for (var i = 0; i < terms.length; i++) {
-      var best = -1;
+      var best = 0;
       for (var f = 0; f < 3; f++) {
         // A term of one or two letters is judged as a word in titles and headings
         // only: in body text it occurs hundreds of thousands of times, and testing
@@ -466,13 +457,13 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
         s[4 - m.c] += fields[f][2];
         if (m.c > best) best = m.c;
       }
-      if (best < 0) return null;
+      if (!best) return null;
       if (best === 3) s[0]++;
     }
     return s;
   }
   function cmp(a, b) {
-    for (var i = 0; i < 5; i++) if (a[i] !== b[i]) return b[i] - a[i];
+    for (var i = 0; i < 4; i++) if (a[i] !== b[i]) return b[i] - a[i];
     return 0;
   }
   function esc(s) { return s.replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
@@ -489,7 +480,7 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
     while (from > 0 && from < lead.a && alnum(o[from - 1])) from++;       // start on a word
     while (lead && to < o.length && to < lead.b + 150 && alnum(o[to])) to++;  // and end on one
     terms.forEach(function (t) {
-      [t.w, t.stem].concat(t.fz || []).forEach(function (w, k) {
+      [t.w, t.stem].forEach(function (w, k) {
         for (var i = w ? l.indexOf(w, from) : -1; i >= 0 && i < to; i = l.indexOf(w, i + 1)) {
           var e = k ? wordEnd(o, l, i + w.length, STEM_TAIL) : i + w.length;
           if (k && (e < 0 || !startsWord(o, i))) continue;
@@ -507,82 +498,9 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
     });
     return out + esc(o.slice(at, to)) + (to < o.length ? '…' : '');
   }
-  // Typo tolerance. A search with no results whose full text has all arrived may
-  // hold a term that matches nothing at all; such a term of five or more letters is
-  // retried against the words the index holds, at edit distance 1 (a swap of two
-  // neighbours counts as one edit, and a digit never changes: `ipv4` is not `ipv6`).
-  // Quoted terms are exact by request. The vocabulary is built once per index, on the
-  // first misspelling, since most readers never pay for it.
-  var IDENT = /[\p{L}\p{N}_]+/gu, PARTS = /_+|(?<=[\p{Ll}\p{N}])(?=\p{Lu})/u, DIGIT = /\p{N}/u, LETTER = /\p{L}/gu;
-  var FUZZY_MIN = 5, FUZZY_MAX = 5, vocab = null;
-  function vocabulary(records) {
-    if (vocab && vocab.of === records) return vocab;
-    var n = Object.create(null), byLen = [];   // no inherited keys: `constructor` is a word
-    function add(w) { n[w] = (n[w] || 0) + 1; }
-    records.forEach(function (r) {
-      [r.t, r.h, r.x].forEach(function (text) {
-        (text.match(IDENT) || []).forEach(function (id) {
-          add(id.toLowerCase());
-          var parts = id.split(PARTS);
-          if (parts.length > 1) parts.forEach(function (p) { if (p) add(p.toLowerCase()); });
-        });
-      });
-    });
-    Object.keys(n).forEach(function (w) { (byLen[w.length] = byLen[w.length] || []).push(w); });
-    vocab = { of: records, n: n, byLen: byLen };
-    return vocab;
-  }
-  // Whether a and b, already known to differ by at most one in length, are one edit apart.
-  function oneEdit(a, b) {
-    var i = 0, m = Math.min(a.length, b.length);
-    while (i < m && a[i] === b[i]) i++;
-    if (a.length > b.length) return !DIGIT.test(a[i]) && a.slice(i + 1) === b.slice(i);
-    if (a.length < b.length) return !DIGIT.test(b[i]) && a.slice(i) === b.slice(i + 1);
-    if (i >= m) return false;                                        // the same word
-    if (DIGIT.test(a[i]) || DIGIT.test(b[i])) return false;
-    if (a.slice(i + 1) === b.slice(i + 1)) return true;
-    return a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2);
-  }
-  function letters(w) { return (w.match(LETTER) || []).length; }
-  // The words one edit from w, most frequent first.
-  function corrections(v, w) {
-    var out = [];
-    for (var len = w.length - 1; len <= w.length + 1; len++) {
-      (v.byLen[len] || []).forEach(function (c) { if (oneEdit(w, c)) out.push(c); });
-    }
-    return out.sort(function (a, b) { return v.n[b] - v.n[a] || (a < b ? -1 : 1); }).slice(0, FUZZY_MAX);
-  }
-  // Gives every term that matches nothing its corrections, or changes nothing and
-  // returns false if one of them has none: the search could not match anyway.
-  function correct(records, terms) {
-    var absent = terms.filter(function (t) {
-      return !records.some(function (r) { return score(r, [t]); });
-    });
-    if (!absent.length || absent.some(function (t) { return t.q || t.w.indexOf(' ') >= 0 || letters(t.w) < FUZZY_MIN; })) return false;
-    var v = vocabulary(records), found = absent.map(function (t) {
-      var c = corrections(v, t.w);
-      return c.length || !t.stem || letters(t.stem) < FUZZY_MIN ? c : corrections(v, t.stem);
-    });
-    if (found.some(function (c) { return !c.length; })) return false;
-    absent.forEach(function (t, i) { t.fz = found[i]; });
-    return true;
-  }
-  // The query as this record matched it: each corrected term becomes the correction
-  // the record holds (its section text first, since that is what the opened page marks).
-  function asMatched(r, terms, query) {
-    if (!terms.some(function (t) { return t.fz; })) return query;
-    return terms.map(function (t) {
-      var w = t.w;
-      if (t.fz) {
-        var m = find(t, r.x, r.xl) || find(t, r.h, r.hl) || find(t, r.t, r.tl);
-        w = m ? m.w : t.fz[0];
-      }
-      return t.q || w.indexOf(' ') >= 0 ? '"' + w + '"' : w;
-    }).join(' ');
-  }
   // Links carry the query that found them, never what the box holds by then.
-  function link(r, query, terms) {
-    return root + r.u + '?highlight=' + encodeURIComponent(asMatched(r, terms, query)) + (r.a ? '#' + r.a : '');
+  function link(r, query) {
+    return root + r.u + '?highlight=' + encodeURIComponent(query) + (r.a ? '#' + r.a : '');
   }
   // Every page with a record matching every term, best first, each holding its
   // matching sections best first.
@@ -642,10 +560,10 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
   var BATCH = 100, paged = null;
   function pageItem(h, p) {
     var r0 = h.secs[0][1];
-    return '<li><h2><a href="' + esc(link(r0, p.q, p.terms)) + '">' +
+    return '<li><h2><a href="' + esc(link(r0, p.q)) + '">' +
       esc(r0.t) + '</a></h2><ul>' + h.secs.map(function (sr) {
         var r = sr[1];
-        return '<li><a href="' + esc(link(r, p.q, p.terms)) + '">' + esc(r.h || 'Introduction') + '</a><p>' +
+        return '<li><a href="' + esc(link(r, p.q)) + '">' + esc(r.h || 'Introduction') + '</a><p>' +
           snippet(r, p.terms) + '</p></li>';
       }).join('') + '</ul></li>';
   }
@@ -690,24 +608,12 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
     hits.forEach(function (h) { n += h.secs.length; });
     var sum = hits.length ? hits.length + (hits.length === 1 ? ' page, ' : ' pages, ') + n +
               (n === 1 ? ' section' : ' sections') : 'No results';
-    var head = esc(sum + (st === 'failed' ? '. Part of the search index did not load; type again to retry.' : '')), said = sum;
-    var fix = hits.length ? suggestion(hits, terms, query) : null;
-    if (fix) {
-      head = 'No results for ' + esc(fix.missing) + '. Did you mean <a id="search-fix" href="' +
-        esc(allPage ? allResults(fix.query) : '?q=' + encodeURIComponent(fix.query)) + '">' + esc(fix.query) + '</a>? Showing ' + esc(sum);
-      said = 'No results for ' + fix.missing + '. Did you mean ' + fix.query + '? Showing ' + sum;
-    }
-    paged = { hits: hits, terms: terms, q: query, limit: BATCH, drawn: 0, secs: 0, html: '', head: '<p>' + head + '</p>' };
+    paged = { hits: hits, terms: terms, q: query, limit: BATCH, drawn: 0, secs: 0, html: '',
+              head: '<p>' + esc(sum + (st === 'failed' ? '. Part of the search index did not load; type again to retry.' : '')) +
+                    '</p>' };
     drawPage(false);
     settledFor = [query, idx];
-    say(said + note(st));
-  }
-  // What a corrected search tells the reader: the terms that matched nothing, and
-  // the query the best result answers, so following it is sure to find something.
-  function suggestion(hits, terms, query) {
-    var fixed = terms.filter(function (t) { return t.fz; });
-    if (!fixed.length) return null;
-    return { missing: fixed.map(function (t) { return t.w; }).join(', '), query: asMatched(hits[0].secs[0][1], terms, query) };
+    say(sum + note(st));
   }
   function run(again) {
     // A refresh keeps the selection on the same PAGE: a shard can move its best section and so its href.
@@ -750,31 +656,26 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
       pending = false;
       records.forEach(function (r, i) { r.i = i; });
       var hits = search(records, terms), st = progress();
-      // Only a complete index can say a term matches nothing.
-      if (!hits.length && st === 'done' && correct(records, terms)) hits = search(records, terms);
       if (hitsEl) { showPage(hits, terms, st, again, query); return; }
       var total = hits.length;
       hits = hits.slice(0, SHOWN);
       var html = hits.map(function (h, n) {
         var r = h.secs[0][1];
         return '<a role="option" id="search-opt-' + n + '" tabindex="-1" aria-selected="false" href="' +
-          esc(link(r, query, terms)) + '">' + esc(r.t) +
+          esc(link(r, query)) + '">' + esc(r.t) +
           (r.h ? '<span class="sec">' + esc(r.h) + '</span>' : '') + '<small>' + snippet(r, terms) + '</small></a>';
       }).join('');
       if (allPage && total > hits.length) {
         html += '<a role="option" id="search-opt-all" class="all" tabindex="-1" aria-selected="false" href="' +
           esc(allResults(query)) + '">Show all ' + total + ' results</a>';
       }
-      var fix = total ? suggestion(hits, terms, query) : null;
       show(html, hits.length, st === 'loading' ? 'Searching the full text…' :
-           st === 'failed' ? 'Part of the search index did not load. Type again to retry.' :
-           fix ? 'No results for ' + fix.missing + '. Showing results for ' + fix.query + '.' : hits.length ? '' : 'No results');
+           st === 'failed' ? 'Part of the search index did not load. Type again to retry.' : hits.length ? '' : 'No results');
       optPages = hits.map(function (h) { return h.pg; });
       if (keep >= 0 && optPages.indexOf(keep) >= 0) select(optPages.indexOf(keep));
       // Announced once per search, not again for every shard that arrives.
       if (again !== true || st !== 'loading') {
-        say((fix ? 'No results for ' + fix.missing + '. Showing results for ' + fix.query + '. ' : '') +
-            (total ? (total > hits.length ? 'Showing ' + hits.length + ' of ' + total + ' results' :
+        say((total ? (total > hits.length ? 'Showing ' + hits.length + ' of ' + total + ' results' :
                       total + (total === 1 ? ' result' : ' results')) + ', use the arrow keys to choose one' +
                      (allPage ? ' or press Enter for all results' : '') : 'No results') + note(st));
       }

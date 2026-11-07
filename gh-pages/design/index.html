@@ -179,7 +179,7 @@ svg.g { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-widt
 .nav .it.sel::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 2px; background: var(--accent); }
 .nav hr { border: 0; border-top: 1px solid var(--stroke-divider); margin: 6px 4px; }
 .content { padding: 12px 20px; overflow: hidden; }
-.content h2 { margin: 8px 0 10px; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.content h4 { margin: 8px 0 10px; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .drives { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 4px 12px; margin-bottom: 18px; }
 .drive { display: flex; gap: 12px; align-items: center; padding: 8px; border-radius: var(--radius-control); }
 .drive:hover { background: var(--subtle-fill-hover); }
@@ -201,14 +201,7 @@ svg.g { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-widt
 .hud button:hover, .hud a:hover { background: var(--subtle-fill-hover); }
 body.shot .hud { display: none; }
 body.shot *, body.shot *::before, body.shot *::after { transition: none !important; }
-:focus-visible { outline: 2px solid var(--focus-outer); outline-offset: 2px; }
-.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.skip-link { position: fixed; left: 8px; top: -100px; z-index: 200; padding: 8px 16px; border-radius: var(--radius-control); background: var(--control-fill-input-active); color: var(--text-primary); }
-.skip-link:focus { top: 8px; }
-main:focus { outline: none; }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
-@media (max-width: 760px) { .win { display: none; } .start { width: 94vw; margin-left: -47vw; } .pinned { --cols: 4; } .tb-search { display: none; }
-  .tb-center { position: static; transform: none; flex: none; } .tb-center .tb-btn:nth-of-type(n+4), .chev { display: none; } }
+@media (max-width: 760px) { .win { display: none; } .start { width: 94vw; margin-left: -47vw; } .pinned { --cols: 4; } .tb-search { display: none; } }
 
 /* ---- extra surfaces (shown by URL hash) ---------------------------------- */
 .scene { display: none; }
@@ -279,9 +272,6 @@ main:focus { outline: none; }
 </style>
 </head>
 <body>
-<a class="skip-link" href="#content">Skip to the design</a>
-<main id="content" tabindex="-1">
-<h1 class="sr-only">{{name}} desktop design</h1>
 
 <div class="desk" id="desk">
   <div class="dicon"><img src="../icons/computer.svg" alt=""><span>This PC</span></div>
@@ -340,12 +330,12 @@ main:focus { outline: none; }
       <div class="it"><img src="../icons/network.svg" alt="">Network</div>
     </nav>
     <div class="content">
-      <h2><svg class="g" viewBox="0 0 16 16" style="width:12px"><path d="M4 6l4 4 4-4"/></svg>Devices and drives</h2>
+      <h4><svg class="g" viewBox="0 0 16 16" style="width:12px"><path d="M4 6l4 4 4-4"/></svg>Devices and drives</h4>
       <div class="drives">
         <div class="drive"><img src="../icons/drive_system.svg" alt=""><div>Local Disk (C:)<div class="bar"><i style="width:44%"></i></div><small>264 GB free of 476 GB</small></div></div>
         <div class="drive"><img src="../icons/drive_removable.svg" alt=""><div>USB Drive (E:)<div class="bar"><i style="width:18%"></i></div><small>52.4 GB free of 64 GB</small></div></div>
       </div>
-      <h2><svg class="g" viewBox="0 0 16 16" style="width:12px"><path d="M4 6l4 4 4-4"/></svg>Folders</h2>
+      <h4><svg class="g" viewBox="0 0 16 16" style="width:12px"><path d="M4 6l4 4 4-4"/></svg>Folders</h4>
       <div class="folders">
         <div class="folder"><img src="../icons/folder_desktop.svg" alt="">Desktop</div>
         <div class="folder"><img src="../icons/folder_documents.svg" alt="">Documents</div>
@@ -360,7 +350,7 @@ main:focus { outline: none; }
 </section>
 
 <!-- Start -->
-<section class="panel start acrylic mat-start" id="start" inert aria-label="Start">
+<section class="panel start acrylic mat-start" id="start" aria-label="Start">
   <div class="body">
     <div class="sm-search"><svg class="g" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>Search for apps, settings, and documents</div>
     <div class="sm-head"><h3>Pinned</h3><button class="pill">All<svg class="g" viewBox="0 0 16 16" style="width:10px"><path d="M6 4l4 4-4 4"/></svg></button></div>
@@ -401,7 +391,7 @@ main:focus { outline: none; }
 </section>
 
 <!-- Quick settings -->
-<section class="panel quick acrylic mat-flyout" id="quick" inert aria-label="Quick settings">
+<section class="panel quick acrylic mat-flyout" id="quick" aria-label="Quick settings">
   <div class="qs-grid">
     <div class="qs on"><div class="t"><svg class="g" viewBox="0 0 16 16"><path d="M1.5 6a9.5 9.5 0 0 1 13 0M3.5 8.3a6.5 6.5 0 0 1 9 0M5.6 10.6a3.4 3.4 0 0 1 4.8 0"/><circle cx="8" cy="12.8" r=".6"/></svg></div>Impossible-5G</div>
     <div class="qs on"><div class="t"><svg class="g" viewBox="0 0 16 16"><path d="M4.5 5l7 6-3.5 3V2l3.5 3-7 6"/></svg></div>Bluetooth</div>
@@ -416,7 +406,7 @@ main:focus { outline: none; }
 </section>
 
 <!-- Notifications and calendar -->
-<section class="panel cal acrylic mat-flyout" id="cal" inert aria-label="Notifications and calendar">
+<section class="panel cal acrylic mat-flyout" id="cal" aria-label="Notifications and calendar">
   <div class="note">Notifications<span style="color:var(--text-secondary);font-weight:400">Clear all</span></div>
   <div class="empty">No new notifications</div>
   <div class="month"><span id="mname">September 2026</span><span style="display:flex;gap:18px"><svg class="g" viewBox="0 0 16 16"><path d="M4 10l4-4 4 4"/></svg><svg class="g" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></svg></span></div>
@@ -424,7 +414,7 @@ main:focus { outline: none; }
 </section>
 
 <!-- Desktop context menu -->
-<section class="panel ctx acrylic mat-menu" id="ctx" inert aria-label="Desktop menu" style="left:0;top:0;transform:none">
+<section class="panel ctx acrylic mat-menu" id="ctx" aria-label="Desktop menu" style="left:0;top:0;transform:none">
   <div class="it"><svg class="g" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>View<em>›</em></div>
   <div class="it"><svg class="g" viewBox="0 0 16 16"><path d="M5 3v10M3 11l2 2 2-2M11 13V3M9 5l2-2 2 2"/></svg>Sort by<em>›</em></div>
   <div class="it"><svg class="g" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 3v3h-3"/></svg>Refresh</div>
@@ -477,7 +467,6 @@ main:focus { outline: none; }
 <div class="scene" id="s-osd"><div class="osd acrylic mat-flyout"><svg class="g" viewBox="0 0 16 16"><path d="M2 6h2.5L8 3v10l-3.5-3H2zM10.5 5.5a3.5 3.5 0 0 1 0 5"/></svg><div class="tr"><i></i></div>62</div></div>
 
 <!-- Taskbar -->
-</main>
 <footer class="taskbar acrylic mat-taskbar" aria-label="Taskbar">
   <div class="tb-center">
     <button class="tb-btn" id="startbtn" aria-label="Start"><img src="../icons/start.svg" alt=""></button>
@@ -501,7 +490,7 @@ main:focus { outline: none; }
   </div>
 </footer>
 
-<nav class="hud acrylic mat-menu" aria-label="Design pages"><span>{{name}} desktop design</span><button id="theme">Light theme</button><a href="controls.html">Controls</a><a href="../docs/design/">Spec</a><a href="{{repo_url}}/tree/main/docs/design">Source</a></nav>
+<div class="hud acrylic mat-menu"><span>{{name}} desktop design</span><button id="theme">Light theme</button><a href="controls.html">Controls</a><a href="../docs/design/">Spec</a><a href="{{repo_url}}/tree/main/docs/design">Source</a></div>
 
 <script>
 (function () {
@@ -510,24 +499,18 @@ main:focus { outline: none; }
   if (q.get('theme')) html.dataset.theme = q.get('theme');
   if (q.has('shot')) body.classList.add('shot');
   var panels = { start: 'startbtn', quick: 'traybtn', cal: 'clockbtn' };
-  // A closed panel is invisible, so it must not take focus either.
-  function setPanel(id, on) {
-    var el = document.getElementById(id);
-    el.classList.toggle('show', on);
-    el.inert = !on;
-  }
   function closeAll(except) {
     Object.keys(panels).forEach(function (id) {
       if (id === except) return;
-      setPanel(id, false);
+      document.getElementById(id).classList.remove('show');
       document.getElementById(panels[id]).classList.remove('open');
     });
-    setPanel('ctx', false);
+    document.getElementById('ctx').classList.remove('show');
   }
   function toggle(id) {
     var el = document.getElementById(id), on = !el.classList.contains('show');
     closeAll(id);
-    setPanel(id, on);
+    el.classList.toggle('show', on);
     document.getElementById(panels[id]).classList.toggle('open', on);
   }
   Object.keys(panels).forEach(function (id) {
@@ -545,7 +528,7 @@ main:focus { outline: none; }
     var m = document.getElementById('ctx');
     m.style.left = Math.min(e.clientX, innerWidth - m.offsetWidth - 8) + 'px';
     m.style.top = Math.min(e.clientY, innerHeight - m.offsetHeight - 56) + 'px';
-    setPanel('ctx', true);
+    m.classList.add('show');
   });
   document.querySelectorAll('.dicon').forEach(function (d) {
     d.addEventListener('click', function (e) {
@@ -591,7 +574,7 @@ main:focus { outline: none; }
     w.querySelector('.status').style.display = 'none';
   }
   if (open === 'ctx') {
-    var m = document.getElementById('ctx'); m.style.left = (innerWidth - 300) + 'px'; m.style.top = '140px'; setPanel('ctx', true);
+    var m = document.getElementById('ctx'); m.style.left = (innerWidth - 300) + 'px'; m.style.top = '140px'; m.classList.add('show');
   } else if (panels[open]) { toggle(open); }
 })();
 </script>

@@ -81,7 +81,7 @@
             --bg-card-hover: #222845;
             --text-primary: #f0f4ff;
             --text-secondary: #94a3b8;
-            --text-muted: #8a99ae;
+            --text-muted: #64748b;
             --accent-blue: #155cde;
             --accent-cyan: #2eb5f0;
             --accent-teal: #40daf2;
@@ -608,7 +608,7 @@
             height: 28px;
         }
 
-        .feature-card h3 {
+        .feature-card h4 {
             font-size: 1rem;
             font-weight: 600;
             margin-bottom: 8px;
@@ -783,28 +783,6 @@
             margin-bottom: 16px;
         }
 
-        footer p a { text-decoration: underline; }
-
-        .skip-link {
-            position: fixed;
-            left: 8px;
-            top: -100px;
-            z-index: 2000;
-            padding: 8px 16px;
-            border-radius: 8px;
-            background: var(--bg-card);
-            color: var(--text-primary);
-        }
-        .skip-link:focus { top: 8px; }
-        main:focus { outline: none; }
-        a:focus-visible, button:focus-visible, summary:focus-visible {
-            outline: 2px solid var(--accent-teal);
-            outline-offset: 2px;
-        }
-        /* .faq-item clips its overflow, so a ring outside the summary would not show. */
-        .faq-item summary:focus-visible { outline-offset: -2px; }
-        @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
-
         /* ── Animations ───────────────────────────────────────────────── */
         @keyframes fadeInUp {
             from { opacity: 0; transform: translateY(30px); }
@@ -860,8 +838,6 @@
 <div class="bg-glow bg-glow-2"></div>
 <div class="bg-glow bg-glow-3"></div>
 
-<a class="skip-link" href="#content">Skip to content</a>
-
 <!-- Navigation -->
 <nav>
     <div class="container">
@@ -880,8 +856,6 @@
         <button class="nav-toggle" aria-label="Menu">☰</button>
     </div>
 </nav>
-
-<main id="content" tabindex="-1">
 
 <!-- Hero -->
 <section class="hero" id="hero">
@@ -1070,8 +1044,6 @@
         </div>
     </div>
 </section>
-
-</main>
 
 <!-- Footer -->
 <footer>

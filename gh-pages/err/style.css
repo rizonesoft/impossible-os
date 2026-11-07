@@ -5,7 +5,7 @@
     --bg-card-hover: #222845;
     --text-primary: #f0f4ff;
     --text-secondary: #94a3b8;
-    --text-muted: #8a99ae;
+    --text-muted: #64748b;
     --accent-blue: #155cde;
     --accent-cyan: #2eb5f0;
     --accent-teal: #40daf2;
@@ -48,35 +48,6 @@ a:hover {
 code {
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.95em;
-}
-
-.skip-link {
-    position: fixed;
-    left: 8px;
-    top: -100px;
-    z-index: 100;
-    padding: 8px 16px;
-    border-radius: 8px;
-    background: var(--bg-card);
-    color: var(--text-primary);
-}
-
-.skip-link:focus {
-    top: 8px;
-}
-
-a:focus-visible {
-    outline: 2px solid var(--accent-teal);
-    outline-offset: 2px;
-}
-
-main:focus {
-    outline: none;
-}
-
-footer a,
-.overview-copy a {
-    text-decoration: underline;
 }
 
 .bg-grid {
@@ -419,7 +390,7 @@ main {
     font-size: 0.85rem;
 }
 
-.registry-link h2 {
+.registry-link h3 {
     font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
     font-size: 1.1rem;
     margin-bottom: 8px;
@@ -484,8 +455,4 @@ footer a {
     .container {
         width: min(1120px, calc(100% - 32px));
     }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

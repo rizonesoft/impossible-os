@@ -560,74 +560,6 @@ class SearchAndAccessibility(unittest.TestCase):
         self.assertEqual(errors, ["docs/search.md: search.html is the generated search results page; rename this page"])
 
     @unittest.skipUnless(__import__("shutil").which("node"), "node not installed")
-    def test_a_misspelled_term_is_retried_and_the_results_page_suggests_the_correction(self):
-        pages, errors = self.pages({
-            "body.md": "# Body\n\nAn interrupt fires.\n\n## Masking\n\nThe interrupt mask.\n",
-            "title.md": "# Interrupt Guide\n\nNothing else here.\n",
-            "pair.md": "# Pair\n\nThe interrupt handler runs.\n",
-            "handler.md": "# Lone\n\nA handler alone.\n",
-            "mode.md": "# Modes\n\nThe mode and the mode and the mode.\n",
-            "model.md": "# Models\n\nThe model.\n",
-            "kernel.md": "# Kernel Six\n\nkernel6 only.\n",
-            "ident.md": "# Ident\n\nCall `vmm_map_page` and `mapRegion` here.\n",
-            "numeric.md": "# Numeric\n\nValue 123456 here.\n"})
-        files = B.search_files(pages, "v2", errors)
-        self.assertEqual(errors, [])
-        cases = {"deleted": "interupt", "swapped": "intrerupt", "added": "interruptt", "changed": "interrupl",
-                 "stem": "interupts", "pair": "interupt handler", "both": "modle", "quoted": '"interupt"',
-                 "short": "modl", "digit": "kernel7", "number": "123457", "other": "interupt zzzzzzzz",
-                 "part": "regoin", "exact": "interrupt", "phrase": '"the interupt"', "two": "interupt handlr",
-                 "kept": '"the" interupt', "digitadd": "kernel67"}
-        steps = []
-        for name, text in cases.items():
-            steps += [["input", text], ["flush", None], ["snap", name]]
-        s = self.harness(files, steps)
-        hrefs = lambda k: [bare(o["href"]) for o in s[k]["options"]]
-        highlights = lambda k: [o["href"].split("highlight=")[1].split("#")[0] for o in s[k]["options"]]
-        # The title match outranks the body matches: a correction keeps the field weights.
-        for k in ("deleted", "swapped", "added", "changed", "stem"):
-            self.assertEqual(hrefs(k)[0], "title.html", k)
-            self.assertEqual(set(hrefs(k)), {"title.html", "body.html", "pair.html"}, k)
-            self.assertEqual(set(highlights(k)), {"interrupt"}, k)      # the opened page can mark what the link names
-        self.assertIn("<mark>interrupt</mark>", s["deleted"]["options"][1]["html"])
-        self.assertEqual(s["deleted"]["msg"], "No results for interupt. Showing results for interrupt.")
-        self.assertIn("No results for interupt. Showing results for interrupt.", s["deleted"]["status"])
-        self.assertEqual(hrefs("pair"), ["pair.html"])                  # a correction joins the other terms, not replaces them
-        self.assertEqual(highlights("pair"), ["interrupt%20handler"])
-        # Each record's link names the correction that record holds, not the commonest one.
-        self.assertEqual(dict(zip(hrefs("both"), highlights("both"))), {"mode.html": "mode", "model.html": "model"})
-        self.assertEqual(hrefs("part"), ["ident.html"])                 # identifier parts are in the vocabulary
-        self.assertEqual(highlights("part"), ["region"])
-        self.assertEqual(hrefs("two"), ["pair.html"])                   # two corrections at once
-        self.assertEqual(highlights("two"), ["interrupt%20handler"])
-        self.assertIn("No results for interupt, handlr.", s["two"]["msg"])
-        self.assertEqual(highlights("kept")[0], "%22the%22%20interrupt")  # a quoted term stays quoted in the link
-        self.assertEqual(hrefs("digitadd"), [])                         # dropping a digit is not a typo: kernel6
-        for k in ("quoted", "short", "digit", "number", "other", "phrase"):
-            self.assertEqual(hrefs(k), [], k)                           # exact by request, too short, a number, no correction
-            self.assertEqual(s[k]["msg"], "No results", k)
-        self.assertEqual(s["exact"]["msg"], "")                         # a word the index holds is never corrected
-        self.assertEqual(set(highlights("exact")), {"interrupt"})
-        # An index still arriving or missing a shard cannot say a term matches nothing.
-        shard = next(k for k in files if k.startswith("search-"))
-        s = self.harness(files, [["input", "interupt"], ["wait", 40], ["snap", "early"], ["wait", 300], ["snap", "landed"]],
-                         delay={shard: 200})
-        self.assertEqual((s["early"]["options"], s["early"]["msg"]), ([], "Searching the full text\u2026"))
-        self.assertEqual(bare(s["landed"]["options"][0]["href"]), "title.html")
-        s = self.harness(files, [["input", "interupt"], ["flush", None], ["snap", "failed"]], fail_once=[shard])
-        self.assertEqual(s["failed"]["options"], [])
-        self.assertIn("did not load", s["failed"]["msg"])
-        # The results page lists the pages and offers the correction as a link.
-        attrs = {"q": {"data-search-page": "search.html"}}
-        s = self.harness(files, [["flush", None], ["snap", "opened"]], attrs=attrs, page={"search": "?q=interupt%20handler"})
-        page = s["opened"]["page"]
-        self.assertIn('No results for interupt. Did you mean <a id="search-fix" href="search.html?q=interrupt%20handler">'
-                      "interrupt handler</a>? Showing 1 page, 1 section", page)
-        self.assertIn("pair.html?highlight=interrupt%20handler", page)
-        self.assertIn("<mark>interrupt</mark>", page)
-        self.assertIn("Did you mean interrupt handler?", s["opened"]["status"])
-
-    @unittest.skipUnless(__import__("shutil").which("node"), "node not installed")
     def test_query_parsing_stems_ties_and_snippet_edges(self):
         filler = " ".join(f"w{n}" for n in range(30))
         pages, errors = self.pages({
@@ -1540,11 +1472,7 @@ class ReleaseDocs(unittest.TestCase):
                          "node scripts/site/a11y/node_modules/playwright-core/cli.js install chromium)")
     def test_in_a_browser_the_match_is_marked_and_the_audit_catches_planted_defects(self):
         self.fixture()
-        self.write("gh-pages/index.html", '<!DOCTYPE html><html lang="en"><head><title>{{name}}</title></head><body>'
-                                          '<a class="skip-link" href="#content">Skip</a><main id="content"><p>{{name}}</p></main>'
-                                          '</body></html>')
-        for page in ("404.html", "design/index.html", "design/controls.html", "err/index.html"):
-            self.write(f"gh-pages/{page}", "<p>landing</p>")   # the audit's control checks its walk finds them
+        self.write("gh-pages/index.html", "<p>{{name}}</p>")
         self.write("docs/design/tokens.json", (B.REPO_REAL / "docs/design/tokens.json").read_text(encoding="utf-8"))
         self.write("docs/design/scope.json", '{"shell_files": [], "ui_title_pattern": "^$"}')
         self.write("gh-pages/docs-template.html",       # the shipped template, script and all

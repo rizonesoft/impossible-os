@@ -39,11 +39,6 @@ svg.g { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-widt
 .btn.subtle { background: transparent; border-color: transparent; box-shadow: none; min-width: 0; }
 .btn.subtle.hover { background: var(--subtle-fill-hover); }
 .btn.subtle.pressed { background: var(--subtle-fill-pressed); }
-.skip-link { position: fixed; left: 8px; top: -100px; z-index: 100; padding: 8px 16px; background: #202020; color: #ffffff; }
-.skip-link:focus { top: 8px; }
-main:focus { outline: none; }
-header a { text-decoration: underline; }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 .focus { outline: 2px solid var(--focus-outer); outline-offset: 3px; box-shadow: 0 0 0 1px var(--focus-inner); }
 
 /* Toggle */
@@ -141,19 +136,18 @@ header a { text-decoration: underline; }
 </style>
 </head>
 <body>
-<a class="skip-link" href="#content">Skip to the controls</a>
 <header><h1>{{name}} controls</h1><span class="cap" style="color:#9a9a9a">Every value comes from <code>docs/design/tokens.json</code>. Spec: <a href="../docs/design/controls.html">controls</a> · <a href="./">desktop mockup</a></span></header>
-<main id="content" tabindex="-1"><div class="cols" id="cols"></div></main>
+<div class="cols" id="cols"></div>
 
 <template id="tpl">
   <h2></h2>
   <section><h3>Button <a href="../docs/design/controls.html#button">spec</a></h3>
-    <div class="row"><span class="btn">Standard</span><span class="btn hover">Hover</span><span class="btn pressed">Pressed</span><span class="btn disabled" role="button" aria-disabled="true">Disabled</span></div>
+    <div class="row"><span class="btn">Standard</span><span class="btn hover">Hover</span><span class="btn pressed">Pressed</span><span class="btn disabled">Disabled</span></div>
     <div class="row" style="margin-top:12px"><span class="btn accent">Accent</span><span class="btn accent hover">Hover</span><span class="btn accent pressed">Pressed</span><span class="btn subtle hover"><svg class="g" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>Subtle</span><span class="btn focus">Keyboard focus</span></div></section>
   <section><h3>Toggle switch <a href="../docs/design/controls.html#toggle-switch">spec</a></h3>
     <div class="row"><span class="tg"><i></i>Off</span><span class="tg hover"><i></i>Hover</span><span class="tg on"><i></i>On</span></div></section>
   <section><h3>Check box and radio button <a href="../docs/design/controls.html#check-box-and-radio-button">spec</a></h3>
-    <div class="row"><span class="cb"><i></i>Unchecked</span><span class="cb on"><i><svg class="g" viewBox="0 0 16 16" style="width:12px"><path d="M3 8.5l3 3 7-7"/></svg></i>Checked</span><span class="cb mixed"><i><svg class="g" viewBox="0 0 16 16" style="width:10px"><path d="M3 8h10"/></svg></i>Mixed</span><span class="cb dis" role="checkbox" aria-checked="false" aria-disabled="true"><i></i>Disabled</span></div>
+    <div class="row"><span class="cb"><i></i>Unchecked</span><span class="cb on"><i><svg class="g" viewBox="0 0 16 16" style="width:12px"><path d="M3 8.5l3 3 7-7"/></svg></i>Checked</span><span class="cb mixed"><i><svg class="g" viewBox="0 0 16 16" style="width:10px"><path d="M3 8h10"/></svg></i>Mixed</span><span class="cb dis"><i></i>Disabled</span></div>
     <div class="row" style="margin-top:12px"><span class="rb"><i></i>Option</span><span class="rb on"><i></i>Selected</span><span class="rb on hover"><i></i>Hover</span></div></section>
   <section><h3>Slider <a href="../docs/design/controls.html#slider">spec</a></h3>
     <div class="row"><div class="sl"><div class="t"></div><div class="f" style="width:60%"></div><div class="th" style="left:60%"></div></div></div></section>

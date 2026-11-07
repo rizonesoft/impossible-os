@@ -400,7 +400,7 @@ function buildOverview() {
             ${entries.map(([code, entry]) => `
                 <a class="registry-link" href="./${code}/">
                     <span class="registry-code">0x${formatCode(code)}</span>
-                    <h2>${escapeHtml(entry.title)}</h2>
+                    <h3>${escapeHtml(entry.title)}</h3>
                     <p>${escapeHtml(entry.summary)}</p>
                     <div class="registry-symbol">${escapeHtml(entry.symbol)}</div>
                 </a>

@@ -1713,7 +1713,7 @@ def feature_cards(facts: dict, errors: list[str]) -> str:
         out.append(
             '<div class="feature-card">\n'
             f'    <div class="feature-card-icon">{card.get("icon", "")}</div>\n'
-            f'    <h3>{html.escape(card.get("title", ""))}</h3>\n'
+            f'    <h4>{html.escape(card.get("title", ""))}</h4>\n'
             f'    <p>{html.escape(card.get("text", ""))}</p>\n'
             f'    <a class="feature-status" href="{html.escape(link)}" target="_blank" '
             f'rel="noopener">{status}</a>\n'

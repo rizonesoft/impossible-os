@@ -85,7 +85,7 @@
 /* ---- colour: light ---- */
 #define THEME_LIGHT_ACCENT                           0xFF005FB8u
 #define THEME_LIGHT_ACCENT_HOVER                     0xFF196EBFu
-#define THEME_LIGHT_ACCENT_PRESSED                   0xFF2C77BFu
+#define THEME_LIGHT_ACCENT_PRESSED                   0xFF317DC6u
 #define THEME_LIGHT_BADGE_FILL                       0xFF005FB8u
 #define THEME_LIGHT_CAPTION_CLOSE_HOVER              0xFFC42B1Cu
 #define THEME_LIGHT_CAPTION_CLOSE_PRESSED            0xFFC83C31u
