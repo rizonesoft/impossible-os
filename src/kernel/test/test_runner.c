@@ -923,6 +923,7 @@ extern void test_register_vmm(void);
 extern void test_register_swap(void);
 extern void test_register_mmap(void);
 extern void test_register_vfs(void);
+extern void test_register_fat32(void);
 extern void test_register_sched(void);
 extern void test_register_proc_ext(void);
 extern void test_register_kworker(void);
@@ -1055,6 +1056,7 @@ void test_runner_init(void)
 
     /* FS */
     test_register_vfs();
+    test_register_fat32();
     test_register_ixfs();
     test_register_ixfs_fsck();
     test_register_watchdog();

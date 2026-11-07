@@ -201,7 +201,28 @@ int fat32_validate_bpb(struct fat32_volume *vol)
         return -1;
     }
 
+    /* Every data cluster needs a FAT entry. With a short FAT, a cluster's
+     * "entry" falls past the table into whatever follows it, and the walks and
+     * the allocator would read unrelated bytes as chain links. */
+    if ((uint64_t)fsz * FAT32_ENTRIES_PER_SECTOR <
+        (uint64_t)(data_sectors / spc) + 2u) {
+        FAT32_BPB_FAIL(
+             "BPB validation failed: FAT of %u sectors cannot map %u clusters",
+             (uint64_t)fsz, (uint64_t)(data_sectors / spc));
+        return -1;
+    }
+
     return 0;
+}
+
+uint32_t fat32_last_cluster(const struct fat32_volume *vol)
+{
+    uint64_t by_data = (uint64_t)((vol->bpb.total_sectors - vol->bpb.first_data_sector) /
+                                  vol->bpb.sectors_per_cluster) + 1u;
+    uint64_t by_fat = (uint64_t)vol->bpb.fat_size_sectors * FAT32_ENTRIES_PER_SECTOR - 1u;
+    uint64_t last = (by_data < by_fat) ? by_data : by_fat;
+
+    return (last > FAT32_MAX_DATA_CLUSTER) ? FAT32_MAX_DATA_CLUSTER : (uint32_t)last;
 }
 
 /* ---- Dirty volume marker (FAT[1] bit 27) ---- */
@@ -547,6 +568,25 @@ int fat32_set_fat_entry(struct fat32_volume *vol, uint32_t cluster,
             return -1;
     }
 
+    return 0;
+}
+
+/* Read the FAT entry for `cluster`, distinguishing a real value from an
+ * I/O failure: returns 0 and writes *out on success, -1 on FAT read
+ * error. fat32_get_fat_entry returns FAT32_EOC on read failure, which a
+ * tri-state chain walk MUST NOT confuse with a genuine end-of-chain --
+ * doing so would report "absent" on a degraded FAT read and let a
+ * duplicate dirent through. */
+int fat32_next_cluster_checked(struct fat32_volume *vol, uint32_t cluster,
+                               uint32_t *out)
+{
+    uint32_t fat_offset = cluster * 4;
+    uint32_t fat_sector = vol->bpb.first_fat_sector + (fat_offset / 512);
+    uint32_t entry_offset = fat_offset % 512;
+
+    if (fat32_read_sector(vol, fat_sector, vol->sector_buf) != 0)
+        return -1;
+    *out = (*(uint32_t *)&vol->sector_buf[entry_offset]) & 0x0FFFFFFF;
     return 0;
 }
 

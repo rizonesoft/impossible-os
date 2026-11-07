@@ -24,6 +24,8 @@
 #define FAT32_EOC       0x0FFFFFF8   /* end of chain (>= this value) */
 #define FAT32_FREE      0x00000000
 #define FAT32_BAD       0x0FFFFFF7
+#define FAT32_MAX_DATA_CLUSTER 0x0FFFFFEFu /* values above are reserved or BAD */
+#define FAT32_ENTRIES_PER_SECTOR 128u      /* 512-byte sector / 4-byte entry */
 
 /* FAT32 directory entry attributes */
 #define FAT32_ATTR_READ_ONLY  0x01
@@ -43,6 +45,7 @@
 #define FAT32_MAX_NAME        256   /* Support long filenames */
 #define FAT32_LFN_CHARS       13    /* Characters per LFN entry */
 #define FAT32_LFN_MAX_ENTRIES 20    /* Max LFN entries (260 chars / 13) */
+#define FAT32_SFN_MAX_TAIL    99    /* Highest numeric tail, written ~99 */
 
 /* Sector cache configuration */
 #define SCACHE_SLOTS   64
@@ -182,10 +185,14 @@ uint32_t fat32_get_fat_entry(struct fat32_volume *vol, uint32_t cluster);
 int      fat32_set_fat_entry(struct fat32_volume *vol, uint32_t cluster,
                               uint32_t value);
 uint32_t fat32_next_cluster(struct fat32_volume *vol, uint32_t cluster);
+int      fat32_next_cluster_checked(struct fat32_volume *vol, uint32_t cluster,
+                                     uint32_t *out);
 uint32_t cluster_to_sector(struct fat32_volume *vol, uint32_t cluster);
 
 /* BPB validation */
 int      fat32_validate_bpb(struct fat32_volume *vol);
+/* Highest cluster number that has data, a FAT entry, and a non-reserved value. */
+uint32_t fat32_last_cluster(const struct fat32_volume *vol);
 void     fat32_validate_set_quiet(int q);  /* test code wraps to silence klog */
 
 /* Dual-FAT compare and repair */

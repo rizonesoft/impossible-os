@@ -470,10 +470,13 @@ From the stamped section 16:
   - Fix direction: rename the source into place first (or keep the old dirent until the new one is durable), so every failure leaves either the old or the new file.
 
 From the TODO-10 §26 docs pass (2026-09-30), measured on the image the smoke test had just booted:
-- [ ] BlackBox volume fails `fsck.fat -n` after ONE boot: `X:\Tools` `.` slot overwritten by a 0-byte `BOOT-R~1.JSO`, and `X:\Diag\boot-reserved.json` missing with its LFN orphaned
-  - Repro: `bash scripts/test-smoke.sh`; `dd` the partition out at `BB_OFFSET` from `build/system-disk.img.info`; `fsck.fat -n <copy>`. Writer: `boot_reserved.c:822` (`vfs_open` CREATE+TRUNC on `X:\Diag\boot-reserved.json`).
-  - Diag holds 12 LFN files on 1-sector clusters, so that create needs a directory extension; an SFN landing in ANOTHER directory's first slot points at the extension path. Not root-caused.
-  - Same run, still to triage: orphaned LFN `random-seed.new` (the seed rename), a 0-byte `Logs\Serial\Serial_26092901.log` holding a cluster chain, and FSInfo free count off by 38 (dirty bit set, so possibly the hard stop).
+- [x] BlackBox volume failed `fsck.fat -n` after ONE boot: an LFN run crossing a directory cluster was written by adding to a sector number, so its tail landed in the next cluster on disk
+  - `X:\Tools` `.` slot held `BOOT-R~1.JSO` because `fat32_lfn_write_slots` assumed contiguous clusters. It now walks the chain; `fat32_find_free_dir_slots` extends until the run fits, zeroes through the write-through path before linking, and scrubs bytes past the first `0x00`.
+  - Also shipped: `dir_chain_valid` refuses a corrupt chain before any scrub, `fat32_last_cluster` is the one upper bound, `fat32_validate_bpb` refuses a short FAT, and the numeric tail follows a short base. Tests: `src/kernel/test/test_fat32.c`, each failing on the old driver; `fsck.fat` no longer reports the two defects on a booted image.
+- [ ] Triage what `fsck.fat -n` still reports after one boot: a 0-byte `Logs\Serial\Serial_*.log` holding a cluster chain, and FSInfo free count off by 38 (dirty bit set, so possibly the hard stop)
+  - `fat32_create_file_vol` allocates a first cluster at create, which is the likely source of the first. The orphaned `random-seed.new` run and the wrong `boot-trend.json.tmp` checksum belong to the delete and rename items in sections 4 and 16.
+- [ ] `scache_flush` writes dirty sectors in cache-slot order, so metadata dependencies are not ordered on the way to disk
+  - A cached dirent or FAT link can reach the disk before what it references. The directory-extension path now zeroes through the write-through path for this reason; `fat32_create_dir_vol`'s dot entries and other publish paths do not. The device's volatile cache is also unordered, because a sync can sleep under `vol->lock`.
   - Also confirmed on disk: the `~1` collision in the rename item above. LFN `boot-trend.json.tmp` sits over SFN `BOOT-T~1.JSO` with a wrong checksum, and `X:\Perf\boot-timeline.json` is absent.
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.

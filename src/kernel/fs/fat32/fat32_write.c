@@ -56,7 +56,10 @@ int fat32_create_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
     for (i = 0; i < 32; i++)
         ((uint8_t *)&de)[i] = 0;
 
-    fat32_generate_sfn(vol, dir_cluster, name, de.name);
+    if (fat32_generate_sfn(vol, dir_cluster, name, de.name) != 0) {
+        fat32_free_chain(vol, first_cluster);
+        return -1;
+    }
     de.attr = FAT32_ATTR_ARCHIVE;
     de.first_cluster_hi = (uint16_t)(first_cluster >> 16);
     de.first_cluster_lo = (uint16_t)(first_cluster & 0xFFFF);
@@ -82,25 +85,6 @@ int fat32_create_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
     }
 
     vol->dir_file_count = 0;
-    return 0;
-}
-
-/* Read the FAT entry for `cluster`, distinguishing a real value from an
- * I/O failure: returns 0 and writes *out on success, -1 on FAT read
- * error. fat32_get_fat_entry returns FAT32_EOC on read failure, which a
- * tri-state chain walk MUST NOT confuse with a genuine end-of-chain --
- * doing so would report "absent" on a degraded FAT read and let a
- * duplicate dirent through. */
-static int fat32_next_cluster_checked(struct fat32_volume *vol,
-                                      uint32_t cluster, uint32_t *out)
-{
-    uint32_t fat_offset = cluster * 4;
-    uint32_t fat_sector = vol->bpb.first_fat_sector + (fat_offset / 512);
-    uint32_t entry_offset = fat_offset % 512;
-
-    if (fat32_read_sector(vol, fat_sector, vol->sector_buf) != 0)
-        return -1;
-    *out = (*(uint32_t *)&vol->sector_buf[entry_offset]) & 0x0FFFFFFF;
     return 0;
 }
 
@@ -307,7 +291,10 @@ int fat32_create_dir_vol(struct fat32_volume *vol, uint32_t parent_cluster,
     for (i = 0; i < 32; i++)
         ((uint8_t *)&de)[i] = 0;
 
-    fat32_generate_sfn(vol, parent_cluster, name, de.name);
+    if (fat32_generate_sfn(vol, parent_cluster, name, de.name) != 0) {
+        fat32_free_chain(vol, new_cluster);
+        return -1;
+    }
     de.attr = FAT32_ATTR_DIRECTORY;
     de.first_cluster_hi = (uint16_t)(new_cluster >> 16);
     de.first_cluster_lo = (uint16_t)(new_cluster & 0xFFFF);
