@@ -967,7 +967,7 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 - [/] F8: signed CI attestation over {`kernel.exe` sha, `kernel.link-trace.txt` sha, `compile_commands.json` flag-fingerprint}, replacing the forgeable in-tree `kernel.link-trace.sha` so PART B resists a build-tree writer -> XREF: §27 F8
 - [/] F9: include the per-flag `compile_commands.json` fingerprint in the attestation so a covered TU compiled with drifted flags (not just a missing TU) trips the gate -> XREF: §27 F9 + §29
 - [/] Perf: `build-image.sh` validates the signed attestation (kernel sha + fingerprint match) to skip the full ~678-compile recompute when valid, else full recompute (validate-not-recompute) -> XREF: §27 accepted [M] perf residual
-- [/] Operator decision: choose the signing mechanism (cosign keyless OIDC vs keyed identity) and accept the new tool dependency
+- [/] Operator decision, awaiting-answer Q29 (`todo/answers.md`): choose the signing mechanism (cosign keyless OIDC vs keyed identity)
 - [/] Commit: `"kernel/security: signed CI attestation for the release-flavor gate"` -- parked, operator-gated: signing infrastructure is an operator decision
 
 **Test checkpoint:** the release gate rejects a tampered `kernel.link-trace.txt` even when its in-tree sha record is rewritten to match; a `build-image.sh` re-run over an unchanged, attested kernel validates without recompiling; a covered TU rebuilt with a changed flag fails the fingerprint check. Test on: a CI dry-run + local `build-image.sh`.

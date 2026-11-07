@@ -346,3 +346,26 @@ A: (pending)
 Recommended: B for now. It is the cheaper in-repo half the item names, and it needs no certificate choice while the MS-signed shim is about two years out. Moving to A later costs one script change in each place. Re-pinning a 2023-signed shim stays yours either way.
 
 A: (pending)
+
+## Q28 (01-boot-platform/TODO-25 §5): how is a network-boot manifest signed and verified?
+
+The section's stamp calls this user-reserved, and it gates every other §5 item, but it had no question here. `TODO-28`'s network-boot suite waits on it too.
+
+- **A: firmware PKCS7.** The loader asks firmware to verify.
+- **B: in-bootloader X.509.** The loader carries its own parser and trust store.
+- **C: Secure-Boot-signed PE wrap.** The manifest travels inside a signed PE, and firmware's image verification does the work.
+
+Recommended: C, because the loader gains no certificate parser and revocation follows the existing dbx path. The cost is that it verifies only with Secure Boot on, so a machine without it needs a stated policy. INFERRED from the item text, with no firmware survey behind it; if I recall correctly the PKCS7 protocol is optional in UEFI, which would count against A, and that is unverified.
+
+A: (pending)
+
+## Q29 (02-kernel-core/TODO-10 §30): what signs the release-flavor CI attestation?
+
+An in-tree `kernel.link-trace.sha` can be rewritten by anything that can write the build tree, and `build-image.sh` repeats about 678 compiles because nothing tamper-resistant lets it skip them.
+
+- **A: cosign keyless (OIDC).** CI identity signs, and there is no long-lived key to store, but it adds a tool dependency and writes that identity to a public log.
+- **B: keyed identity.** A key in the vault signs, with no external log, and you hold the key.
+
+Recommended: A. The repository is public, so the logged identity reveals nothing new, and there is no key to lose. Local builds would still recompute, since they cannot sign.
+
+A: (pending)

@@ -95,7 +95,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 | 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort)    | --         |  [x]   |
 | 💎  |  17   | Emergency-writer robustness residuals (§16 review)  | §16        |  [x]   |
 | 💎  |  18   | Panic-path cross-CPU ownership residuals            | §16, §17   |  [/]   |
-| 💎  |  19   | Panic-path caller-string snapshot (§17 review)      | §17        |  [x]   |
+| 💎  |  19   | Panic-path caller-string snapshot (§17 review)      | §17        |  [ ]   |
 | 💎  |  20   | Panic-path serial ownership atomicity (§18 review)  | §18        |  [x]   |
 | 💎  |  21   | Live CPU online lifecycle (split from §20)          | §18        |  [x]   |
 | 💎  |  22   | Dedicated NMI entry stub (split from §20)           | §18        |  [x]   |
@@ -765,10 +765,12 @@ The three §16 review residuals that are about WHICH CPUs are running and who ow
 - [/] PARKED: prove a frame slot is RAM-backed kernel stack before reading it -- a corrupt RSP puts the whole search span inside mapped MMIO, where a read can have side effects `__kstack_read_u64` does not recover.
   - Co-owned, because the exposure is identical in the repo reference walker: `rtl_capture_stack_from_context` (`src/kernel/rtl/unwind.c:1208-1239`) applies the same span-and-canonical rules -> XREF: `02-kernel-core/TODO-23 §7` (item: "`src/kernel/rtl/unwind.c` -- `RtlCaptureStackBackTrace` + `rtl_capture_stack_from_context`: bounds-checked RBP walk").
   - NOT repaired by restoring the deleted `0x100000`/`0x200000` window: that window rejects every real AP, IST and kernel-task stack, which is why the old walk usually produced nothing. The fix needs a lock-free, GS-independent stack-residency test that does not exist in the tree yet.
-- [/] PARKED: end-to-end renderer verification under an injected corrupt-description panic -- operator-gated, since it needs a deliberate panic on a live boot rather than a unit test.
+- [ ] End-to-end renderer verification under an injected corrupt-description panic
+  - Reopened 2026-11-07: `crash_test=` in `boot.conf` already triggers a deliberate BSOD on a live boot (`boot_desktop.c:419`), and `scripts/debug/rollback-fixtures/run-fixtures.sh:566` drives it from a fixture disk. Add a value that passes a corrupt description. Bare-metal confirmation remains an operator check.
   - The unit suite proves the guarded helpers recover a real `#PF` (`Crash: snapshot recovers a real fault`, `Crash: frame walk recovers a real fault`), but nothing invokes `panic_screen_impl`, the framebuffer render, or `write_crash_dump`, so "the BSOD paints and the dump completes" is reasoned from the rewiring rather than observed.
   - Belongs with the bare-metal checkpoints below; the same boot can confirm the evidence reserve/publish state machine, which is likewise unreachable from a unit test.
-- [/] PARKED: live double-panic checkpoint for the evidence reserve/publish state machine -- operator-gated, for the same reason.
+- [ ] Live double-panic checkpoint for the evidence reserve/publish state machine
+  - Reopened 2026-11-07, as for the item above. NOT TESTED: whether a second panic can be forced on the 2-CPU smoke leg from a new `crash_test` value; find out first.
   - `panic_evidence_take()` (the entry-time reserve helper it replaced in §23) mutates boot-global ownership, so calling it from a test would lock a later real panic out of the record, and the pair-gate alone reduces to a tautological constant test. The reachable cases (first-owner CAS, a losing CPU writing nothing, nested re-entry completing an unfinished record) all need two real panics.
   - The same boot also verifies the lifecycle rework this section's review scoped out, which SHIPPED in §23 -> XREF: `01-boot-platform/TODO-10 §23` (item: "Rework the cross-boot evidence lifecycle so ownership is decided at TERMINAL arbitration").
   - It is now also the only way to exercise §23's remaining residual -> XREF: `01-boot-platform/TODO-10 §23` (item: "PARKED, operator-gated: a terminal takeover that cannot prove writer quiescence").
