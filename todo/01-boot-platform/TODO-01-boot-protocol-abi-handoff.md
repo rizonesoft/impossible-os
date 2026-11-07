@@ -818,7 +818,7 @@ From the stamped section 1:
 
 **Test checkpoint:** `make test-boot-info-abi` reports 8/8 mutation scenarios PASS, and a fixture pairing a loader built at `0x10000` with a kernel built at `0x20000` halts pre-jump with the base named in the mismatch screen rather than booting.
 
-> **Deferred:** 2026-08-13 | operator-gated in full -- every item lands on a surface an unattended run may not touch, so the section is parked rather than half-built.
+> **Deferred:** awaiting-answer Q22 (`todo/answers.md`). 2026-08-13 | operator-gated in full -- every item lands on a surface an unattended run may not touch, so the section is parked rather than half-built.
 > - Receipt surface: six items edit the ABI generator (`tools/boot-info-manifest/dump-common.h`, `dump-kernel.c`, `dump-mirror.c`, `test-drift-detection.sh`) or the root and loader `Makefile`s. CLAUDE.md reserves `Makefile*`, `scripts/build.sh` and the ABI generator to the operator, because an unattended edit there invalidates the receipts every later gate reads.
 > - Operator decisions: whether `boot_phase0` should FAIL CLOSED on a handoff pointer that disagrees with the compiled base (a new refusal in the earliest boot path, which would reject any third-party or experimental loader), and whether moving the base warrants a `BOOT_INFO_VERSION` bump.
 > - Reachable when unparked: the items are concrete and independently checkable; the blocker is authority, not analysis. Filed and re-raised by §21's review -- the [H] gap is live today, so this park is a scheduling decision, not a judgement that the gap is minor.
@@ -847,7 +847,7 @@ That is a coverage gap rather than a live exploit, and it was surfaced by a cons
 
 **Test checkpoint:** A fixture handoff whose header is valid and whose body has one flipped byte is REFUSED before any consumer reads a field, and the refusal names the body rather than the header; an unmodified handoff is accepted unchanged. The existing `test_boot_info.c` payload-descriptor tests still pass, and a bootloader built from the same tree boots on all four smoke-matrix legs.
 
-> **Deferred:** 2026-08-15 | operator-gated in full -- the design was taken to the point where the remaining work is two operator calls, and every shape of it lands on a reserved surface, so the section is parked rather than half-built.
+> **Deferred:** awaiting-answer Q20 and Q23 (`todo/answers.md`). 2026-08-15 | operator-gated in full -- the design was taken to the point where the remaining work is two operator calls, and every shape of it lands on a reserved surface, so the section is parked rather than half-built.
 > - ABI decision: any body check that a stale loader cannot silently bypass needs a `BOOT_INFO_VERSION` bump (23 -> 24) plus the matching producer in `src/boot/uefi/bootx64.c`. CLAUDE.md Safety Gates reserve ABI changes to the operator, and `§22` is already parked on the same call.
 > - Receipt surface: a named digest field needs an `F()` row in `tools/boot-info-manifest/dump-fields.inc` or `check-doc-coverage.py` manifest completeness fails. The guard blocked that path when probed 2026-08-15 and has allowed it since 2026-09-03; the operator gate here is the ABI change itself.
 > - Not half-built on purpose: a kernel-side `boot_info_validate_body()` with no producer would be dead code that no gate can exercise, and burying the digest in a `_reserved` array to dodge the manifest row is a workaround, not a design.

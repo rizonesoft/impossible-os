@@ -257,3 +257,59 @@ A: (pending)
 Recommended: A, since Tier 1 already serves diagnostics and the end-user splash stays as specified. The park's other condition, proven bare-metal reliability, is an operator judgment either way.
 
 A: (pending)
+
+## Q20 (01-boot-platform/TODO-01 §23, TODO-20 §4, TODO-27 §3, TODO-29 §8): may the run add named `boot_info` fields and bump `BOOT_INFO_VERSION`?
+
+These four sections each record an operator-gated ABI change, but none had a question here, so nobody had been asked. All four want an additive named field. CLAUDE.md reserves ABI changes to the operator, and a mismatched BOOTX64.EFI and kernel.exe halt with "boot_info: bad header".
+
+- **A: standing approval for additive fields.** One version bump per change, both headers and the producer in one commit, an `F()` row in `dump-fields.inc`, and the 4-leg smoke matrix green before it ships. Removing or reordering a field still comes to you.
+- **B: per-change approval.** Each section stays parked until you approve that field.
+
+Recommended: A. `scripts/build.sh` rebuilds both binaries and three drift layers already catch a mirror mismatch. The cost is that a version bump strands any separately deployed loader, which only matters once one exists outside this repo.
+
+A: (pending)
+
+## Q21 (01-boot-platform/TODO-20 §3/§4/§5): what shape does the xHCI DMA handoff take?
+
+§1 allocates DCBAA, command ring, event ring, ERST and scratchpad as disjoint pages, so one contiguous descriptor cannot cover them. Bootloader enumeration and true zero-delay handover wait on this, and the 500 ms Intel routing cost stays until it lands.
+
+- **A: contiguous arena.** Allocate all the DMA state from one run, and publish one descriptor.
+- **B: scatter/gather.** Keep the disjoint pages, and publish a variable-length list.
+
+Recommended: A, since one range is simpler to reserve and validate. INFERRED from the item text and not measured; the arena's size with per-device rings is the thing to check first.
+
+A: (pending)
+
+## Q22 (01-boot-platform/TODO-01 §22): what happens when the handoff pointer disagrees with the compiled base?
+
+`boot_phase0` accepts a pointer that passes the envelope checks even if it is not the compiled `0x10000`, then reserves and validates a region nothing wrote.
+
+- **A: refuse.** Fail closed on the earliest boot path. A third-party or experimental loader that places the struct elsewhere is rejected.
+- **B: thread the address.** Carry the validated actual address through every consumer.
+
+Recommended: A, because the fixed address is already the documented contract and this repo ships the only loader. B touches every consumer to support a loader that does not exist.
+
+A: (pending)
+
+## Q23 (01-boot-platform/TODO-01 §23): what does integrity mean for the `boot_info` body?
+
+Validation covers the 8-byte header only, so a corrupted body reaches every consumer. `serial_select_port` narrowed itself to four legacy COM bases to compensate.
+
+- **A: loader-produced checksum over `header.size` bytes**, in a named field, checked before any field is read.
+- **B: extend the payload-descriptor `checksum`** to cover the scalar body.
+- **C: per-field validity discipline** in each consumer.
+
+Recommended: A. It detects corruption, not forgery: the kernel holds no key at that stage, so a MAC would add nothing here. It needs Q20. `_reserved` is already refused as a home for the digest because an unnamed field is undetected drift.
+
+A: (pending)
+
+## Q24 (01-boot-platform/TODO-27 §7): may the platform write dbx updates to NVRAM?
+
+An authenticated dbx apply cannot be undone, and a wrong one can stop the machine booting. The section also waits on the release-signing primitive in `15-installer-release/TODO-01 §5`, which your answer does not change.
+
+- **A: never apply; report only.** Ship the freshness check, and leave updates to firmware tools.
+- **B: apply with a brick-safety preflight**, once the signed baseline exists.
+
+Recommended: A for now. Reversing it later costs only the write path, whereas a bad write can cost the machine. B stays open once there is bare-metal evidence to back the preflight.
+
+A: (pending)

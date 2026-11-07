@@ -160,7 +160,7 @@ Enumerate connected devices in the bootloader so slot contexts and endpoint ring
 > - **Scope boundary:** §3 enumerates in the bootloader; §5 inherits; §4 carries the schema.
 
 > **Verified:** 2026-06-15 | commit `832af15c` | 0/5 items | deferred (design parked on §4 ABI) | gap-audit scoped
-> **Deferred:** [feature] bootloader device enumeration (per-device slot context + EP0/bulk rings) -- needs the ~350-line xhci_dev.c port + the §4 boot_info per-device payload schema -> XREF: 01-boot-platform/TODO-20 §4 (item: "DMA-shape design (blocks typed-payload item)")
+> **Deferred:** awaiting-answer Q21 (`todo/answers.md`). [feature] bootloader device enumeration (per-device slot context + EP0/bulk rings) -- needs the ~350-line xhci_dev.c port + the §4 boot_info per-device payload schema -> XREF: 01-boot-platform/TODO-20 §4 (item: "DMA-shape design (blocks typed-payload item)")
 
 ---
 
@@ -190,7 +190,7 @@ Extend boot_info to carry the full controller state: DCBAA physical address, scr
 > - **Scope boundary:** §4 owns the schema; §3 produces per-device data into it; §5/§6 consume it.
 
 > **Verified:** 2026-06-15 | commit `832af15c` | 2/5 items | build OK | controller-level fields shipped (§1)
-> **Deferred:** [feature] per-device DMA payload + typed `BOOT_PAYLOAD_USB_HANDOVER` descriptor + the contiguous-vs-scatter DMA-shape decision -- a stop-and-ask `boot_info` ABI change needing user sign-off -> XREF: 01-boot-platform/TODO-01 §4 (item: "Optional payload descriptor array") + TODO-20 §4 (item: "DMA-shape design")
+> **Deferred:** awaiting-answer Q21 (`todo/answers.md`). [feature] per-device DMA payload + typed `BOOT_PAYLOAD_USB_HANDOVER` descriptor + the contiguous-vs-scatter DMA-shape decision -- a stop-and-ask `boot_info` ABI change needing user sign-off -> XREF: 01-boot-platform/TODO-01 §4 (item: "Optional payload descriptor array") + TODO-20 §4 (item: "DMA-shape design")
 
 ---
 

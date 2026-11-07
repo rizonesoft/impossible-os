@@ -62,7 +62,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | 💎  |   3   | POST-style hex code display                                   | §2                                 |  [x]   |
 | 💎  |   4   | Alive blink / visual heartbeat                                | permanently deferred; hang=TODO-23 |  [/]   |
 | 💎  |   5   | Panic forensic evidence                                       | §2                                 |  [/]   |
-| ⭐  |   6   | Panic QR code                                                 | §5; T03 §14 (QR seed)              |  [/]   |
+| ⭐  |   6   | Panic QR code                                                 | §5; T03 §14 (QR seed)              |  [ ]   |
 | 💎  |   7   | System-wide multi-instance spinner                            | D08 T08 §8 (compositor)            |  [ ]   |
 | ⭐  |   8   | Runtime vital signs strip                                     | D02 T25 §7 (CPU accounting)        |  [ ]   |
 | 💎  |   9   | Boot timeline visualization/import                            | §2                                 |  [/]   |
@@ -227,15 +227,16 @@ Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD cor
 > [!IMPORTANT]
 > **Validation blocker (recorded, not skipped).** boot-code-quality Gate 11 makes segno module-for-module comparison plus a real phone scan **non-negotiable** for any QR encoder change. Neither `segno` (the Python reference) nor a scanning phone is available in this autonomous environment, so a new encoder cannot be proven correct here. A **V3/ECL-L** segno-verified encoder already exists at `src/boot/uefi/bootx64.c` (`qr_encode_data` / `qr_reed_solomon` / `qr_place_*`, shipped under the error-screen QR feature). That encoder is the reuse seed, but it is **not drop-in**: V3/ECL-L holds ~53 byte-mode bytes (it encodes the short `...co/err/XXXX`), whereas the panic URL below runs ~120 chars and needs **Version 5/6 plus ECL-M**, which adds multi-block Reed-Solomon interleaving and per-version alignment-pattern tables. Ship §6 only on a host with `segno` plus a scanning phone (or bare metal for the on-screen scan).
 
-- [/] operator-gated (segno + phone scan, Gate 11): Extend the segno-verified bootloader V3/ECL-L encoder into freestanding `src/kernel/qr_encode.c`
+- [ ] Extend the segno-verified bootloader V3/ECL-L encoder into freestanding `src/kernel/qr_encode.c`
   - `qr_encode(text, matrix, &size)` for QR **version 3-6 at ECL-M** (deltas from the V3 seed in the callout above)
-- [/] operator-gated (segno + phone scan, Gate 11): `panic_qr_url(buf, bufsize, message, post_code, os_version)`
+- [ ] `panic_qr_url(buf, bufsize, message, post_code, os_version)`
   - format `https://docs.impossible-os.dev/panic?msg=<short>&post=0x{post}&v={ver}` (message truncated to 40 chars; not shipped ahead of the encoder)
-- [/] operator-gated (segno + phone scan, Gate 11): In `kernel_panic()` BSOD renderer: after the main panic screen, call `qr_encode(url, matrix, &qr_size)`; render at bottom-right (12 px from corner), module = 4 px, white-on-black,
+- [ ] In `kernel_panic()` BSOD renderer: after the main panic screen, call `qr_encode(url, matrix, &qr_size)`; render at bottom-right (12 px from corner), module = 4 px, white-on-black,
   - quiet zone = 4 modules
-- [/] operator-gated (segno + phone scan, Gate 11): Ensure `qr_encode.c` is freestanding: no libc, no floating point; uses only `kernel/types.h` and `kernel/libc/string.h`
-- [/] operator-gated (segno + phone scan, Gate 11): Validate before ship (Gate 11): diff each test URL against `segno.make(url, error='M', boost_error=False)` module-for-module (0 diffs), then phone-scan the rendered BSOD on bare metal
-- [/] operator-gated (segno + phone scan, Gate 11): Commit: `"kernel: minimal QR encoder + panic BSOD QR code for phone-scannable troubleshooting"`
+- [ ] Ensure `qr_encode.c` is freestanding: no libc, no floating point; uses only `kernel/types.h` and `kernel/libc/string.h`
+- [ ] Validate before ship (Gate 11): diff each test URL against `segno.make(url, error='M', boost_error=False)` module-for-module (0 diffs), then phone-scan the rendered BSOD on bare metal
+- [ ] Commit: `"kernel: minimal QR encoder + panic BSOD QR code for phone-scannable troubleshooting"`
+- [/] operator-gated: scan a real panic-screen QR with a phone before this section ships, as Gate 11 requires. Only this step needs a human.
 
 **Test checkpoint:** With §5+§6 shipped: forced panic shows scannable QR bottom-right; URL resolves to docs panic page; encoder matrix matches segno for every test URL. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 > **Test runner:** N/A (deferred -- no code shipped; QR encoder needs segno reference + phone-scan validation) | validation: segno module-diff + phone-scan on bare metal, pending
@@ -244,7 +245,7 @@ Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD cor
 > - Reuse seed: a segno-verified V3/ECL-L encoder exists in `src/boot/uefi/bootx64.c` (error-screen QR), LANDED 2026-05-02 by TODO-03 §14 commit `134702ae`; extend it to V5/6 + ECL-M when validation is available (see the section's IMPORTANT callout). The seed was never the blocker, so every §6 item is marked operator-gated.
 > - Scope boundary: §6 owns the kernel panic QR; the bootloader error-screen QR encoder is owned by → XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §14.
 > **Verified:** 2026-06-14 | deferred -- no code shipped | 0/6 items | build OK (no code change) | manual (feasibility analysis)
-> **Deferred:** [M] panic BSOD QR encoder + render unimplemented (reason: needs V5/6 ECL-M encoder + segno reference + phone-scan validation per boot-code-quality Gate 11, unavailable autonomously) -> XREF: 01-boot-platform/TODO-03-bootloader-error-recovery.md §14 (item: "Standalone encoder ... not yet implemented" at line 513) (SEED LANDED 2026-05-02 by TODO-03 §14 commit `134702ae`: the segno-verified V3/ECL-L encoder exists in `bootx64.c`. It was never the blocker -- the remaining gate is validation capability alone, so every §6 item is now marked operator-gated.)
+> **Notes:** Reopened 2026-11-07, was Deferred because segno and a scanning phone were unavailable. segno is on PyPI (1.6.6 seen 2026-11-07, licence not yet read, so read its LICENSE before adding it), which leaves only the phone scan operator-gated. The IMPORTANT callout above predates this.
 
 ---
 

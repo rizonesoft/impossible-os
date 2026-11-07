@@ -306,7 +306,7 @@ A 1.3s SMBIOS init looks identical on serial to a hung boot until either (a) the
 
 **Test checkpoint:** A 1342ms SMBIOS init with target 100ms emits 4-5 `[BOOT-HB] phase=SMBIOS elapsed=Xms target=100` lines. A <250ms phase emits zero heartbeats. Heartbeat ISR is harmless when LAPIC timer is the active scheduler tick (no double-fire, no priority inversion).
 
-> **Deferred:** [M] Heartbeat needs a `boot_info.heartbeat_seq` field (BOOT_INFO_VERSION bump via the ABI owner path) + TODO-23's LAPIC/NMI timer + ISR-safe serial drain (gap-audit constraint); multi-commit boot-path. -> XREF: 01-boot-platform/TODO-23-boot-watchdog.md (timer owner); §8 owns the soft serial-counter signal.
+> **Deferred:** awaiting-answer Q20 (`todo/answers.md`). [M] Heartbeat needs a `boot_info.heartbeat_seq` field (BOOT_INFO_VERSION bump via the ABI owner path) + TODO-23's LAPIC/NMI timer + ISR-safe serial drain (gap-audit constraint); multi-commit boot-path. -> XREF: 01-boot-platform/TODO-23-boot-watchdog.md (timer owner); §8 owns the soft serial-counter signal.
 ---
 
 ## 9. EXEC Step Latency Profile
