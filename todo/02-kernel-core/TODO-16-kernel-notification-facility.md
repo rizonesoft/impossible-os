@@ -48,10 +48,10 @@ title: "TODO-16 -- Kernel Notification Facility"
 | 💎  |   4   | Security and namespace policy         | T15        |  [/]   |
 | ⭐  |   5   | Built-in state-name catalog           | §1..§4     |  [/]   |
 | 💎  |   6   | ETW/klog bridge                       | T04, T32   |  [x]   |
-| ⭐  |   7   | Coalescing and payload retention      | §2         |  [/]   |
+| ⭐  |   7   | Coalescing and payload retention      | §2         |  [ ]   |
 | 💎  |   8   | Native WNF-compatible syscall surface | T12        |  [/]   |
 | ⭐  |   9   | Diagnostics browser and counters      | §1..§8     |  [x]   |
-| 💎  |  10   | Unit/boot tests                       | §1..§9     |  [/]   |
+| 💎  |  10   | Unit/boot tests                       | §1..§9     |  [ ]   |
 
 ## 1. Notification State Object Type
 
@@ -192,9 +192,10 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [x] Retain last payload for query-after-miss: kernel-private `knf_query_last_kernel` returns retained payload + stamp (WNF too-small shape). Kernel-only; user exposure + redaction owned by the WNF query surface.
 - [x] Bounded per-subscriber missed-update counter: `knf_subscriber.missed` (saturating at `UINT64_MAX`, bumped under the lock when a publish coalesces over an unread pending) + read-and-reset `knf_subscription_missed_count`.
 - [/] Secret-payload redaction before user-mode query: `KNF_MODE_SECRET` + `knf_set_mode` land now as the policy source of truth; redaction ENFORCEMENT deferred to the user-mode WNF query surface (raw user read would leak a secret state).
-- [/] Edge-triggered delivery (deliver every update, not just the latest): needs a bounded per-subscriber delivery ring; deferred (Deferred stamp).
-- [/] Persistent-lifetime registry backing: write a `KNF_LIFETIME_PERSISTENT` state metadata to the registry on create + restore at `knf_init` (reboot survival). Deferred (registry write/restore integration).
-- [/] Shrink publish lock-hold via active/spare double-buffer: the naive "copy before the lock" is unsafe (design review); needs a real active/inactive buffer model. The current under-lock copy is correct; this is a perf optimization. Deferred.
+- [ ] Edge-triggered delivery (deliver every update, not just the latest): needs a bounded per-subscriber delivery ring.
+- [ ] Persistent-lifetime registry backing: write a `KNF_LIFETIME_PERSISTENT` state metadata to the registry on create + restore at `knf_init` (reboot survival).
+- [ ] Shrink publish lock-hold via active/spare double-buffer: the naive "copy before the lock" is unsafe (design review); needs a real active/inactive buffer model. The current under-lock copy is correct; this is a perf optimization
+  - Deferred.
 - [x] Commit: `"kernel/knf: coalescing + last-payload retention + per-subscriber missed counter + secret-mode flag"`
 
 **Test checkpoint:** `test_knf` publishes 5 rapid updates to a coalescing (level-triggered) state and asserts a slow subscriber's missed-update counter == 4 with poll delivering only the latest sequence; a query-after-miss (`knf_query_last_kernel`) returns the retained last payload + stamp and reports the full length on a too-small buffer; `knf_set_mode` stores `KNF_MODE_SECRET` and rejects unknown bits + a NULL state. (Edge-triggered delivery, secret redaction, persistence, and double-buffering are deferred -- see Deferred stamps.) Test on: QEMU WHPX + TCG.
@@ -206,10 +207,10 @@ title: "TODO-16 -- Kernel Notification Facility"
 > - Deferred (see stamps): edge-triggered delivery, secret redaction enforcement, persistent registry backing, active/spare double-buffering. Design review adoptions in the commit message.
 > - Canonical doc: this TODO; §8 owns the user-mode WNF query surface where `KNF_MODE_SECRET` redaction enforces, §9 owns diagnostics counters.
 > **Verified:** 2026-07-06 | commit `31236a97` | 3/7 items | build OK | tests 172/172 PASS
-> **Deferred:** [M] edge-triggered "deliver every update" mode not implemented (needs a bounded per-subscriber delivery ring) -> XREF: 02-kernel-core/TODO-16 §7 (item: "Edge-triggered delivery" at line 195)
-> **Deferred:** [M] secret-payload redaction enforcement lands with the user-mode query surface (the flag ships now) -> XREF: 02-kernel-core/TODO-16 §7 (item: "Secret-payload redaction before user-mode query" at line 194)
-> **Deferred:** [M] persistent-lifetime registry backing (write-on-create + restore-at-init) not implemented -> XREF: 02-kernel-core/TODO-16 §7 (item: "Persistent-lifetime registry backing" at line 196)
-> **Deferred:** [L] publish lock-hold not yet shrunk; needs active/spare double-buffer -> XREF: 02-kernel-core/TODO-16 §7 (item: "Shrink publish lock-hold via active/spare double-buffer" at line 197)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] edge-triggered "deliver every update" mode not implemented (needs a bounded per-subscriber delivery ring). The stamp named this section's own item with no outside blocker.
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] secret-payload redaction enforcement lands with the user-mode query surface (the flag ships now). Redaction enforcement stays parked on its item until the user-mode query surface exists; that surface waits on `todo/answers.md` Q1.
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] persistent-lifetime registry backing (write-on-create + restore-at-init) not implemented. The stamp named this section's own item with no outside blocker.
+> **Notes:** Reopened 2026-11-07, was Deferred: [L] publish lock-hold not yet shrunk; needs active/spare double-buffer. The stamp named this section's own item with no outside blocker.
 > **Quality reviewed:** 2026-07-06 | Codex 3x (adversarial, consistency, perf) | 2L fixed | scope: kernel-code-quality
 
 ---
@@ -255,7 +256,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [/] Kernel tests: create/publish/query, coalescing, missed-sequence, retention, mode/trace flags, and diagnostics all ship in the 25-suite `test_knf` (TEST_CAT_KNF). ACL-denied publish + wait-wakeup deferred (Deferred stamps).
 - [/] Boot test: publish `System/ShellReady`, a service-manager subscriber wakes once. Deferred: needs waitable user subscriptions + the service manager (Deferred stamp).
 - [x] Stress: `test_knf_stress_no_leak` creates 400 states across the 4 category dirs (100 each, under the 128-entry OB dir cap) + 100 subscribers, tears down asserting exact counts + diag counters return to baseline (no leak).
-- [/] Concurrent create/delete SMP stress: kthreads racing create+delete of one name, assert no leak/double-free + the `ObpRemoveFromDirectory` idempotent -1 path. Deferred: needs a kthread stress harness.
+- [ ] Concurrent create/delete SMP stress: kthreads racing create+delete of one name, assert no leak/double-free + the `ObpRemoveFromDirectory` idempotent -1 path. Needs a kthread stress harness.
 - [/] Subscription lifetime tests: teardown on `NtClose`, teardown on process/thread exit (no retained node), a close-vs-publish race, and a publish-after-owner-exit. Deferred: needs waitable Ob-handle subscriptions (Deferred stamp).
 - [x] Commit: `"kernel/knf: test_knf stress leak-check (400 states / 100 subscribers, no leak)"` (ACL/wait/ShellReady deferred -- see Deferred stamps)
 
@@ -270,7 +271,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 > **Verified:** 2026-07-06 | commit `e50224aa` | 1/5 items | build OK | tests 195/195 PASS
 > **Deferred:** [M] ACL-denied-publish test not implemented (needs the access-decision engine) -> XREF: 02-kernel-core/TODO-16 §4 (item: "Apply SRM access masks: query, subscribe, publish, create, delete" at line 135)
 > **Deferred:** [M] wait-wakeup + boot `System/ShellReady` + subscription-lifetime tests need waitable Ob-handle subscriptions -> XREF: 02-kernel-core/TODO-16 §3 (item: "Subscription handles become waitable objects" at line 115)
-> **Deferred:** [L] concurrent create/delete kthread SMP stress not implemented (needs a kthread stress harness) -> XREF: 02-kernel-core/TODO-16 §10 (item: "Concurrent create/delete SMP stress" at line 258)
+> **Notes:** Reopened 2026-11-07, was Deferred: [L] concurrent create/delete kthread SMP stress not implemented (needs a kthread stress harness). The stamp named this section's own item with no outside blocker.
 > **Quality reviewed:** 2026-07-06 | Codex 4x (design, adversarial, consistency, perf) | 2M+1L fixed | scope: kernel-code-quality
 
 ---
