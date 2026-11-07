@@ -72,7 +72,7 @@ title: "TODO-24 -- ALPC / Message Ports"
 | 💎  |   4   | Synchronous send+wait+receive engine                     | §3, T07 §3    |  [x]   |
 | 💎  |   5   | Asynchronous delivery & completion list                  | §4            |  [x]   |
 | 💎  |   6   | Large data: port sections & view mapping                 | §2, T05 §3,§7 |  [ ]   |
-| 💎  |   7   | Security: client token capture & impersonation           | §4, T15 §4-§7 |  [/]   |
+| 💎  |   7   | Security: client token capture & impersonation           | §4, T15 §4-§7 |  [ ]   |
 | 💎  |   8   | NtAlpc* SSDT registration & stub retrofit                | §1-§7, T12 §4 |  [/]   |
 | 💎  |   9   | NtAlpc QueryInformation / SetInformation / CancelMessage | §8, T12 §4    |  [ ]   |
 | 💎  |  10   | CSRSS ApiPort bootstrap                                  | §3-§9         |  [/]   |
@@ -307,8 +307,9 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   3. At accept, `NtDuplicateToken(req->CapturedToken, 0, req->NegotiatedEffectiveOnly, TokenImpersonation)` -- Ob-refcounted dup (`desired_access` ignored by the impl, matches `ImpersonateSelf`)
   4. Stamp `captured->ImpersonationLevel = req->NegotiatedLevel` (the dup otherwise inherits the SOURCE token's level, which is neither party's request)
   5. Store in `server_comm->ClientToken` BEFORE `ObpAllocateHandle` publishes the port -- initialize-then-publish, so no reader sees a reachable port with a NULL or half-stamped token; on dup failure the whole handshake unwinds
-- [/] Honor the client `SecurityQos` for RING-3 clients: needs fault-recoverable usercopy first -- copying user `port_attrs` today would trade an unreachable escalation for a kernel-fault DoS -> XREF: `02-kernel-core/TODO-23 §13`
-- [/] Recv-buffer TOCTOU DoS: `alpc_receive_only` + `alpc_sync_request` write `recv_msg` via RAW `memcpy` after a yielding wait -- a sibling unmap bugchecks the kernel. Migrate both to `copy_to_user` + concurrent-unmap test -> XREF: `TODO-23 §13`
+- [ ] Honor the client `SecurityQos` for RING-3 clients: `copy_from_user` recovers read faults now (`02-kernel-core/TODO-23` §13), so copying `port_attrs` no longer risks the DoS. Also retire the stale comment at `nt_alpc.c:250` (reopened 2026-11-07)
+  - Check `nt_alpc.c:192` in the same pass: it copies `*port_attrs` directly after a probe that checks range and alignment only. Read at source, not run.
+- [ ] Recv-buffer TOCTOU DoS: `alpc_receive_only` + `alpc_sync_request` write `recv_msg` via RAW `memcpy` after a yielding wait -- a sibling unmap bugchecks the kernel. Migrate both to `copy_to_user` + concurrent-unmap test -> XREF: `TODO-23 §13`
 - [x] Server impersonation: internal helper `AlpcImpersonateClientOfPort(ALPC_PORT *port, uint32_t access_mode)` shipped in `alpc_port.c` (SSDT slot + `NtAlpcImpersonateClientOfPort` syscall wrapper -> §8):
   1. Non-`AlpcServerCommunicationPort` -> `STATUS_INVALID_PORT_HANDLE`; no captured token -> `STATUS_NO_TOKEN`
   2. Identification-only captured token (`< SecurityImpersonation`) -> `STATUS_BAD_IMPERSONATION_LEVEL`
