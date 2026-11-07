@@ -48,20 +48,20 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 | ⭐  | Order | Deliverable                                                 | Depends On             | Status |
 | --- | :---: | ----------------------------------------------------------- | ---------------------- | :----: |
 | 🔥  |  10   | Tactical BSS headroom: large static pools -> dynamic        | --                     |  [x]   |
-| 🔥  |  11   | Unpark the ceiling-stalled kernel queue (status sweep)      | §10                    |  [/]   |
+| 🔥  |  11   | Unpark the ceiling-stalled kernel queue (status sweep)      | §10                    |  [ ]   |
 | 🔥  |  12   | Second tactical BSS pass: reclaim a large static again      | --                     |  [x]   |
 | 🔥  |  13   | Third tactical reclamation pass: buy a page of headroom     | --                     |  [x]   |
 | 🔥  |  14   | Fourth tactical reclamation pass: reclaim test-only statics | --                     |  [x]   |
 | 🔥  |  15   | Fifth tactical reclamation pass: convert the `pipes` pool   | --                     |  [x]   |
 | 🔥  |  16   | Test-side residue of the fourth pass: scratch fixtures      | §14                    |  [x]   |
 | 💎  |   1   | Memory-map design + canonical layout decision               | --                     |  [x]   |
-| 💎  |   2   | Direct map construction (install HHDM; kernel still low)    | §1                     |  [x]   |
+| 💎  |   2   | Direct map construction (install HHDM; kernel still low)    | §1                     |  [ ]   |
 | 💎  |   9   | VMM walker conversion -- derefs onto the HHDM helper        | §2                     |  [/]   |
 | 💎  |   3   | Linker VMA/LMA split + higher-half jump (one unit)          | §1, §2, §9             |  [/]   |
 | 💎  |   4   | Descriptor tables + per-CPU at high addresses + AP path     | §3                     |  [/]   |
 | 💎  |   5   | `boot_info` / framebuffer handoff + identity teardown       | §1, §3, §9, D01 T01 §8 |  [/]   |
 | 💎  |   6   | Per-process PML4: kernel high shared, user low private      | §3, D01 T10 §8         |  [/]   |
-| 💎  |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard             | §6                     |  [/]   |
+| 💎  |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard             | §6                     |  [ ]   |
 | ⭐  |   8   | 5-level paging (LA57) support -- exceeds Win11              | §1, §3                 |  [/]   |
 
 > 💎 = parity work -- matches the Windows 11 and Linux memory model.
@@ -145,7 +145,6 @@ Build the HHDM direct map and install it in an unused PML4 slot while the kernel
 > - Scope boundary: §2 owns HHDM CONSTRUCTION only; §9 owns walker conversion + root phys-vs-walk split + identity-map-disabled test; §7 retires the BSS ceiling blocking the in-kernel suite.
 
 > **Verified:** 2026-07-17 | commit `e9c73f8f` | 9/10 items | build OK | smoke PASS (KVM 3.4s) | tests 21408+16 PASS | host gate 52/52
-> **Deferred:** [M] worst-case arena tail (~4-5 MiB) reserved-but-unused (reason: efficiency, not correctness) -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §2 (item: "Reclaim the unused worst-case arena tail" at line 127)
 > **Quality reviewed:** 2026-07-17 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 3H+1M fixed, 1M deferred, 1M rejected | scope: boot-code-quality
 > **Design reviewed:** 2026-07-16 | TWO Codex `[review-kind: design]` rounds. Round 1 NO-SHIP -> SPLIT into §2 (HHDM construction) + §9 (walker conversion). Round 2 (post-split, install-site (a) plan) NO-SHIP -> 3 HIGH adopted into the items above and VERIFIED at file:line: F1 the PMM reclaims an EfiLoaderData arena (pmm.c:203-219 frees Loader/BootServices, reserves only 1 MiB+image) -> retag the arena interval `UEFI_MMAP_RESERVED` in the normalized mmap; F2 sizing must consume the FINAL post-carve plan (W^X carve makes a whole bucket partial) + use the loaded ELF `p_paddr` envelope, not kernel symbols; F3 HHDM spans PML4 slots 273-400 (64 TiB), not one slot -> multi-slot install loop. Q3 NXE safe if CPUID-gated RMW + read-back + FATAL; Q4 no TLB hazard (inactive root, slot 0 untouched). **Design DONE + adopted; §2 items are the implementation-ready spec -- a fresh context implements DIRECTLY (skip re-review, cite this stamp).** Install-site RESOLVED to (a) bootloader.
 
@@ -419,7 +418,7 @@ With user space owning the lower half, drop the hardcoded ceiling and all the bo
 > [!NOTE]
 > **Interim bridge NOT BUILT -- note corrected 2026-07-17.** This note previously asserted that the headroom risk "was mitigated tactically by converting large kernel static pools ... from static BSS to `pmm_alloc_contiguous`", and that "those conversions remain correct". **Both claims were false against tree**: the pools are still static arrays (`registry.c:61`/`:64`, `klog.c:78`, `blkdev.c:13`, `nt_misc.c:47`) and `git log -S` shows no conversion commit ever landed -- the prose was written aspirationally at this TODO's authoring commit (`26297a49`) and never implemented. The false claim was load-bearing: it made the tactical option look spent, so every ceiling-stalled kernel section was parked behind §3's operator-reserved decision instead. The conversion is now filed as a real, unblocked section -> §10. This section (§7) still owns the PERMANENT retirement; §10 only buys headroom.
 
-> **Deferred:** [Critical] 2026-07-17 -- cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
+> **Parked at item level:** cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
 
 ---
 
@@ -589,7 +588,6 @@ Measured BSS consumers (`build/kernel.map`, 2026-07-17; BSS end `0x7fe000` vs `U
 > - **Scope boundary** -- §11 only changes parked STATUS and re-applies one reviewed stash; implementing each unparked section stays with its owning TODO. It does not touch the address-space layout (§3/§7) and does not re-litigate a second blocker (SSDT transport width, usercopy) the headroom never addressed.
 
 > **Verified:** 2026-07-17 | commit `c374071b` | 7/8 items | build OK | 21504 kernel + 16 user tests | smoke PASS (KVM 2.92s) | BSS end `0x6c2000` (was `0x7fe000`)
-> **Deferred:** [M] `test_highhalf.c` not re-added -- the ceiling cleared but 3 of its 5 assertions (kernel symbol `>= KERNEL_VIRT_BASE`, retired `user_range.h`, upper-half PML4 sharing) describe a higher-half kernel §3 has not delivered, so they would FAIL rather than pass (reason: §10 bought `.text` headroom, not an address-space move) -> XREF: this file §11 (item: "Re-add `test_highhalf.c`" at line 403)
 > **Accepted:** [H] `TODO-24 §9` is parked section-wide although `NtAlpcCancelMessage` (3 args) and `AlpcBasicInformation` SetInformation (4 args) fit the existing transport and now have headroom; the oracle reads the whole section as DONE (reason: item-level restructure, owner is §9) -> XREF: `02-kernel-core/TODO-24 §9` (item: "**Split the section-level park" at line 452)
 > **Accepted:** [M] `TODO-22 §24` likewise parks independent, now-runnable work (measured budget, lookup cache, the documented CAS double-free hardening) behind the usercopy blocker that only three of its items need (reason: item-level restructure, owner is §24) -> XREF: `02-kernel-core/TODO-22 §24` (item: "**Split the section-level park.**" at line 884)
 > **Quality reviewed:** 2026-07-17 | Codex 3x (adversarial, consistency, perf) | 5M fixed, 1H+1M accepted-XREF | scope: N/A (TODO-only status sweep, no code)

@@ -69,18 +69,18 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | --- | :---: | ------------------------------------------------------------------ | -------------------------- | :----: |
 | 💎  |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS                      | TODO-12 §1, TODO-33 §10    |  [x]   |
 | 💎  |   2   | #PF triage -- user/kernel decode, EXCEPTION_RECORD build, routing  | §1, TODO-07 §3             |  [/]   |
-| 💎  |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP)   | §1, TODO-10 §9, TODO-29 §5 |  [/]   |
+| 💎  |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP)   | §1, TODO-10 §9, TODO-29 §5 |  [ ]   |
 | 💎  |   4   | Debugger first-chance / second-chance notification                 | §1-§3, TODO-29 §5          |  [/]   |
 | 💎  |   5   | KiUserExceptionDispatcher -- ring-3 delivery                       | §4, §13, TODO-11 §7        |  [/]   |
-| 💎  |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)                  | §1                         |  [x]   |
+| 💎  |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)                  | §1                         |  [ ]   |
 | 💎  |   7   | Stack walking (RtlCaptureStackBackTrace)                           | §6, TODO-07 §3             |  [/]   |
 | 💎  |   8   | SEH chain walk + `__C_specific_handler` (re-owned ring-3 → T04 §5) | §5, §6, TODO-11 §6         |  [/]   |
-| 💎  |   9   | RtlUnwindEx -- unwind to target frame                              | §6, §8                     |  [/]   |
+| 💎  |   9   | RtlUnwindEx -- unwind to target frame                              | §6, §8                     |  [ ]   |
 | 💎  |  10   | Vectored Exception Handlers (VEH)                                  | §4, TODO-05 §3             |  [x]   |
 | 💎  |  11   | Vectored Continue Handlers (VCH)                                   | §4, §10                    |  [x]   |
 | 💎  |  12   | Unhandled exception filter + WER hook                              | §7, §8, §10                |  [/]   |
 | ⭐  |  13   | Kernel safe probing (ProbeForRead/Write)                           | §2                         |  [x]   |
-| 💎  |  14   | Kernel-mode `__try`/`__except` for drivers                         | §6, §9, §13                |  [/]   |
+| 💎  |  14   | Kernel-mode `__try`/`__except` for drivers                         | §6, §9, §13                |  [ ]   |
 | 💎  |  15   | POSIX signal delivery from exceptions (Linux compat)               | §3, §5, D10T10 §8          |  [/]   |
 | ⭐  |  16   | Exception dispatch telemetry                                       | §4, TODO-04 §6             |  [/]   |
 | 💎  |  17   | Guard-page stack auto-grow (split from §2; land right after §2)    | §5, TODO-07 §3, TODO-01 §3 |  [/]   |
@@ -223,9 +223,6 @@ Each handler builds an `EXCEPTION_RECORD` (§1) and, for the recoverable paths, 
 > - **Scope boundary** -- general fault vectors only; #PF stays with the VMM triage (section 2), #NM with lazy-FPU, NMI/#DF/#MC keep dedicated handlers. Ring-3 delivery is §5; kernel SEH §8/§14; three refinements stay open above (#CP SHSTK/IBT decode, cause-aware #GP, #MF/#XM).
 > **Verified:** 2026-07-18 | commit `bfdfe36e` + review fixes | 5/8 items | build OK | smoke PASS (TCG 2.54s)
 > **Accepted:** [M] user-mode unhandled fault -> `panic_screen()` is interim (no per-process termination yet) -> XREF: 02-kernel-core/TODO-23 §5 (item: "Delivery failure ... terminate the process, never `panic_screen()`" at line 315)
-> **Deferred:** [M] #CP delivers the SHSTK subcode for IBT violations too (dormant until CET enables) -> XREF: 02-kernel-core/TODO-23 §3 (item: "`#CP` error-code decode" at line 205)
-> **Deferred:** [M] cause-aware #GP decode (privileged-instruction / invalid-LOCK sub-cases) -> XREF: 02-kernel-core/TODO-23 §3 (item: "Cause-aware `#GP`" at line 209)
-> **Deferred:** [M] #MF/#XM FP-exception delivery is ownerless -> XREF: 02-kernel-core/TODO-23 §3 (item: "FP-exception delivery" at line 210)
 > **Quality reviewed:** 2026-07-18 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 15M+2L fixed, 3M deferred-XREF, 1M accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"kernel: map CPU exceptions to EXCEPTION_RECORD dispatch (#DE/#DB/#BP/#GP/#UD/#SS/#CP)"`
@@ -368,7 +365,6 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 > **Verified:** 2026-07-18 | ship `a63dd05b` + review fixes | 7/13 items | build OK | tests 21887+16 PASS; smoke PASS (TCG 2.57s)
 > **Accepted:** [H] engine trusts the establisher frame; fault-safe stack reads + stack-range validation for UNTRUSTED frames belong to consumers -> XREF: 02-kernel-core/TODO-23 §7 (item: "Fault-safe frame reads" at line 387)
 > **Accepted:** [H] loader-side `.pdata`/`.xdata` mapped-section validation + production kernel-mode unwind metadata (ELF `.eh_frame`) -> XREF: 02-kernel-core/TODO-18 §5 (item: "Register PE `.pdata` ... Translate `.eh_frame`" at line 132)
-> **Deferred:** [M] SMP-epoch lookup, UWOP_EPILOG v2 metadata, indirect-fragment support, exact winnt.h ABI types, combined lookup+unwind path -> XREF: 02-kernel-core/TODO-23 §6 (item: "SMP-epoch dynamic-table lookup" at line 350)
 > **Quality reviewed:** 2026-07-18 | Codex 42x (design, adversarial, re-adversarial, consistency, perf) + kernel-quality-auditor + concurrency-mapper | 40H+11M+3L fixed, 0 open, 8 accepted/deferred-XREF, 2 rejected | scope: kernel-code-quality
 
 - [x] Commit: `"rtl: implement RtlLookupFunctionEntry and RtlVirtualUnwind for x64 unwind"`
@@ -474,8 +470,7 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 > **Accepted:** [H] full stack-safety hardening (guard-page-aware bounds + asm entry-trampoline check before the C prologue + emergency stack + near-guard test); best-effort entry headroom check + compact snapshot + noinline preflight shipped, no ring-0 caller yet -> XREF: 02-kernel-core/TODO-23 §9 (item: "Stack-safety hardening (full)" at line 461)
 > **Accepted:** [H] leaf convention for metadata-free frames + whole-stack EXIT unwind (both fail safe today) -> XREF: 02-kernel-core/TODO-23 §9 (item: "Leaf-convention step for a metadata-free frame" at line 457)
 > **Accepted:** [M] RtlUnwindEx exact ms_abi/winnt.h ABI types (kernel-internal SysV today, like the §6 Rtl* engine) -> XREF: 02-kernel-core/TODO-23 §6 (item: "Exact winnt.h ABI types on the public unwind prototypes" at line 354)
-> **Deferred:** [H] full nested/multi-scope collided-unwind recovery + fault-safe untrusted-context reads + precise finally-funclet tracking -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` protocol" at line 460)
-> **Deferred:** [M] CET shadow-stack INCSSP during unwind (kernel CET disabled) -> XREF: 02-kernel-core/TODO-23 §9 (item: "CET: advance the shadow-stack pointer" at line 459)
+> **Parked at item level:** full nested/multi-scope collided-unwind recovery + fault-safe untrusted-context reads + precise finally-funclet tracking -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` protocol" at line 460)
 > **Quality reviewed:** 2026-07-19 | Codex 18x (design, adversarial, consistency, perf, re-adversarial) | 18H+7M+3L fixed, 0 open, 5 accepted/deferred-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"rtl: implement RtlUnwindEx with termination handler invocation"`
@@ -660,8 +655,6 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 
 > **Verified:** 2026-07-19 | commit `95a4e592` | 5/7 items | build OK | tests 434/434 PASS
 > **Accepted:** [H] pre-existing SMP quiescence gap: a joined/reaped thread's kernel stack can be freed while a KI_TRY victim still runs on it (stack UAF predates SEH; the chain-clears + walk bounds checks contain the SEH surface) (reason: scope) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "thread_join / thread_free_stacks off-CPU barrier" at line 129)
-> **Deferred:** [M] `__try`/`__finally` EXCEPTION_COLLIDED_UNWIND two-pass unwind -- larger than the `__try`/`__except` v1 shipped (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` for driver `__try`/`__finally`" at line 645)
-> **Deferred:** [M] boot/main-thread `KI_TRY` declines -- boot stack is not tracked in `stack_base` (the `kfree` target) (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Boot/main-thread `KI_TRY`" at line 646)
 > **Quality reviewed:** 2026-07-19 | Codex 8x (design, adversarial, consistency, perf, re-adversarial) | 4H+3M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"kernel: implement kernel-mode __try/__except via KI_EXCEPTION_REGISTRATION"`

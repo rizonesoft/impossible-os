@@ -40,13 +40,13 @@ title: "TODO-20 -- Zero-Delay USB Boot (Pre-ExitBootServices Driver Loading)"
 
 | ⭐  | Order | Deliverable                                                        | Depends On | Status |
 | --- | :---: | ------------------------------------------------------------------ | ---------- | :----: |
-| ⭐  |   1   | Bootloader allocates xHCI DMA structures                           | --         |  [/]   |
-| ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover                | §1         |  [/]   |
+| ⭐  |   1   | Bootloader allocates xHCI DMA structures                           | --         |  [ ]   |
+| ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover                | §1         |  [ ]   |
 | ⭐  |   3   | Bootloader enumerates devices with persistent state                | §2         |  [/]   |
 | ⭐  |   4   | boot_info passes controller + device DMA state                     | §3, T01 §4 |  [/]   |
-| ⭐  |   5   | Kernel inherits controller DMA (partial; full zero-delay needs §3) | §1, §2     |  [/]   |
-| ⭐  |   6   | Kernel registers MSC devices from boot_info geometry               | §5         |  [/]   |
-| 💎  |   7   | Fallback: detect corrupt state, revert to §1-§4 path               | §5         |  [/]   |
+| ⭐  |   5   | Kernel inherits controller DMA (partial; full zero-delay needs §3) | §1, §2     |  [ ]   |
+| ⭐  |   6   | Kernel registers MSC devices from boot_info geometry               | §5         |  [ ]   |
+| 💎  |   7   | Fallback: detect corrupt state, revert to §1-§4 path               | §5         |  [ ]   |
 
 > All ⭐ rows -- this is a competitive advantage over Linux (which always re-enumerates after kexec/boot). Windows does this via winload.efi but it's invisible to users. Making it visible in boot timing would be a first.
 
@@ -88,7 +88,6 @@ Allocate DCBAA, device output contexts, and transfer rings using `gBS->AllocateP
 > - **Scope boundary:** §1 owns DMA allocation; device-context/ring alloc is §3; the typed-payload schema is §4.
 
 > **Verified:** 2026-06-15 | commit `832af15c` | 8/13 items | build OK + smoke PASS (KVM 1.96s) | DONE-UNSTAMPED review + 2H fix
-> **Deferred:** [H] payload-overlap validator misses multi-page scratchpad spans (DMA-above-4G + BAR1 mis-decode RESOLVED 2026-06-15 by AllocateMaxAddress cap + BAR-width decode; re-adversarial converged 2 rounds) -> XREF: 01-boot-platform/TODO-20 §1 (item: "HIGH (payload overlap)")
 > **Quality reviewed:** 2026-06-15 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 2H+1M fixed, 1H open | scope: boot-code-quality
 
 ---
@@ -128,7 +127,6 @@ While firmware USB stack is still active, take xHCI ownership via USBLEGSUP and 
 > - **Scope boundary:** §2 owns the USBLEGSUP/takeover; DMA allocation + BAR decode are §1; kernel inherit is §5.
 
 > **Verified:** 2026-06-15 | commit `cf7bd197` | 9/11 items | build OK | DONE-UNSTAMPED review
-> **Deferred:** [H] USBLEGSUP 1s timeout treated as success + unbounded ext-cap MMIO walk (M) (BAR-decode consumer RESOLVED 2026-06-15 by the §1 BAR-width decode fix) -> XREF: 01-boot-platform/TODO-20 §2 (item: "HIGH (USBLEGSUP timeout)" + "MEDIUM (ext-cap MMIO bound)")
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1H fixed, 1H+1M open | scope: boot-code-quality
 
 ---
@@ -226,7 +224,7 @@ When `boot_info.usb_handover_complete` is set, the kernel skips the entire xhci_
 > - **Scope boundary:** §5 owns the DMA inherit; true zero-delay (skip routing + enumeration) needs §3 + the §4 ABI schema.
 
 > **Verified:** 2026-06-15 | commit `a6de918f` | 2/8 items | build OK | DONE-UNSTAMPED review
-> **Deferred:** [H] inherit gate does not match the bootloader controller identity + trusts inherited DMA addrs unvalidated + still pays Intel 500ms; (M) re-allocated rings leak the inherited pages; true zero-delay blocked on §3/§4 -> XREF: 01-boot-platform/TODO-20 §5 (item: "HIGH (controller identity)" + "HIGH (validate before trust)" + "HIGH (Intel 500ms not saved)") + §3 + §4
+> **Parked at item level:** inherit gate does not match the bootloader controller identity + trusts inherited DMA addrs unvalidated + still pays Intel 500ms; (M) re-allocated rings leak the inherited pages; true zero-delay blocked on §3/§4 -> XREF: 01-boot-platform/TODO-20 §5 (item: "HIGH (controller identity)" + "HIGH (validate before trust)" + "HIGH (Intel 500ms not saved)") + §3 + §4
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 3H+1M open | scope: kernel-code-quality
 
 ---
@@ -253,7 +251,7 @@ Skip INQUIRY + READ CAPACITY for MSC devices -- use sector count/size from Phase
 > - **Scope boundary:** §6 consumes §4's geometry; §3 produces the per-device data.
 
 > **Verified:** 2026-06-15 | commit `832af15c` | 0/3 items | deferred (blocked on §4 ABI) | gap-audit scoped
-> **Deferred:** [feature] MSC instant registration from boot_info geometry -- Phase A geometry already ships in `boot_usb_device`; the §4 per-device payload is needed only to also skip kernel enumeration -> XREF: 01-boot-platform/TODO-20 §4 (item: "Add per-device: slot_id, output context phys, EP0 ring phys, bulk ring phys addresses")
+> **Parked at item level:** MSC instant registration from boot_info geometry -- Phase A geometry already ships in `boot_usb_device`; the §4 per-device payload is needed only to also skip kernel enumeration -> XREF: 01-boot-platform/TODO-20 §4 (item: "Add per-device: slot_id, output context phys, EP0 ring phys, bulk ring phys addresses")
 
 ---
 
@@ -283,7 +281,7 @@ If any handover validation fails, transparently fall back to the proven halt/res
 > - **Scope boundary:** §7 validates + recovers; the validation overlaps the §5 validate-before-trust item.
 
 > **Verified:** 2026-06-15 | commit `832af15c` | 0/5 items | deferred (consolidate with §5 validate-before-trust) | gap-audit scoped
-> **Deferred:** [feature] explicit handover validation (USBSTS.HCH, No-Op completes, DCBAAP matches) + IOMMU-map inherited DMA before default-deny -- validation overlaps the §5 HIGH; IOMMU cross-blocked -> XREF: 01-boot-platform/TODO-20 §5 (item: "HIGH (validate before trust)") + 04-drivers-hardware/TODO-04 §4
+> **Parked at item level:** explicit handover validation (USBSTS.HCH, No-Op completes, DCBAAP matches) + IOMMU-map inherited DMA before default-deny -- validation overlaps the §5 HIGH; IOMMU cross-blocked -> XREF: 01-boot-platform/TODO-20 §5 (item: "HIGH (validate before trust)") + 04-drivers-hardware/TODO-04 §4
 
 ---
 
