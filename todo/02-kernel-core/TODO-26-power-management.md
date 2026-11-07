@@ -454,20 +454,22 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 
 Evaluate the ACPI battery and AC-adapter objects and publish each one into the §29 composite model as a provider. This section owns ONLY the namespace-facing half. The provider-agnostic state model, warning policy and registry publication were split out to §29 (implementable without the namespace); charge limiting and smart charging were split out to §30 (blocked on the EC write gate instead).
 
-- [ ] Enumerate every `_HID "PNP0C0A"` battery device in the namespace, not a fixed `\_SB.BAT0` path -- dual-battery and docked systems carry a separate ACPI object per battery
+- [/] Enumerate every `_HID "PNP0C0A"` battery device in the namespace, not a fixed `\_SB.BAT0` path -- dual-battery and docked systems carry a separate ACPI object per battery
+  - BLOCKED: `04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run.
   - Codex gap-audit finding (2026-09-03): a single fixed-path read reports the wrong percentage and can trigger a critical-power action from the wrong source on multi-battery hardware. -> XREF: ACPI 6.6 §10 Power Source and Power Meter Devices.
-- [ ] Evaluate `_BIX` (Battery Information Extended, ACPI 4.0+) per device on init; fall back to `_BIF` (deprecated) when `_BIX` is absent:
+- [/] Evaluate `_BIX` (Battery Information Extended, ACPI 4.0+) per device on init; fall back to `_BIF` (deprecated) when `_BIX` is absent: BLOCKED: `04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run.
   - `_BIX` returns: revision, power unit, design capacity, last full charge capacity, technology, design voltage, design capacity of warning, design capacity of low, cycle count, measurement accuracy, max sampling time, min sampling time, max/min average interval, battery capacity granularity, model number, serial number, battery type, OEM info
   - `_BIF` returns: design capacity, full charge capacity, technology, design voltage, warn capacity, low capacity, granularity, model, serial, chemistry
   - Map the parsed result onto `bat_info_t` (§29) and hand it back from the provider's `get_info` hook; ACPI's `0xFFFFFFFF` unknown sentinel becomes `BAT_UNKNOWN`
-- [ ] Evaluate `_BST` (Battery Status) per device every 30 s or on an EC event, and drive `bat_update()` (§29) from it:
+- [/] Evaluate `_BST` (Battery Status) per device every 30 s or on an EC event, and drive `bat_update()` (§29) from it: BLOCKED: `04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run.
   - Returns: power state (discharging=1, charging=2, critical=4), present rate (mW), remaining capacity (mWh), present voltage (mV)
   - Normalise the `_BIX.power_unit` mA/mW distinction before publishing: a mA-reporting battery is converted with `present_voltage` so the composite model only ever sees mW/mWh
-- [ ] Evaluate `\_SB.ACAD._PSR` (AC Adapter Power Source, `_HID "ACPI0003"`): 0=offline, 1=online; publish through `bat_ac_set_online()` (§29)
-- [ ] Register each enumerated battery with `bat_register()` and drop it with `bat_unregister()` on removal, so the §29 composite view is the only aggregation point
-- [ ] Track insertion/removal per battery device (ACPI `Notify` device-check 0x81 / bus-check 0x00); a hot-removed battery leaves the composite view rather than reporting stale data
-- [ ] `_BTP` (Battery Trip Point) where the device exposes it, so a capacity crossing raises a notify instead of being found by the 30 s poll
-- [ ] Commit: `"kernel/acpi: battery _BIX/_BIF/_BST evaluation, AC adapter _PSR, per-device enumeration"`
+- [/] Evaluate `\_SB.ACAD._PSR` (AC Adapter Power Source, `_HID "ACPI0003"`): 0=offline, 1=online; publish through `bat_ac_set_online()` (§29) BLOCKED: `04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run.
+- [/] Register each enumerated battery with `bat_register()` and drop it with `bat_unregister()` on removal, so the §29 composite view is the only aggregation point BLOCKED: `04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run.
+- [/] Track insertion/removal per battery device (ACPI `Notify` device-check 0x81 / bus-check 0x00); a hot-removed battery leaves the composite view rather than reporting stale data
+  - BLOCKED: `04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run.
+- [/] `_BTP` (Battery Trip Point) where the device exposes it, so a capacity crossing raises a notify instead of being found by the 30 s poll BLOCKED: `04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run.
+- [/] Commit: `"kernel/acpi: battery _BIX/_BIF/_BST evaluation, AC adapter _PSR, per-device enumeration"` BLOCKED: `04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run.
 
 **Test checkpoint:** every `PNP0C0A` device in the namespace is enumerated and registered as a §29 provider. `_BIX` is parsed, with `_BIF` fallback on a device that lacks it. `_PSR` drives the AC-online flag. A device-check notify adds/removes a provider and the composite state follows. Test on: QEMU TCG (skip when the namespace exposes no battery), then bare metal on a laptop.
 
@@ -1420,21 +1422,21 @@ The provider-agnostic half of §6. Windows models a machine with N batteries as 
 
 Charge limiting is a WRITE to the embedded controller at a vendor-specific register, so it is gated on different prerequisites from the rest of §6: the EC write path, and a platform match that says which register this machine actually uses.
 
-- [ ] `bat_set_charge_limit(uint8_t pct)` -- refuses with `STATUS_NOT_SUPPORTED` unless the platform is capability-matched; default 100 (no limit)
+- [/] `bat_set_charge_limit(uint8_t pct)` -- refuses with `STATUS_NOT_SUPPORTED` unless the platform is capability-matched; default 100 (no limit) BLOCKED: §24 EC gate (GPE acknowledgement).
   - Codex adversarial finding (2026-09-03): a raw `ec_write(EC_REG_CHARGE_END, pct)` at a vendor-guessed offset (0xB1 ThinkPad, 0xE4 Dell, 0xBD ASUS) is unsafe on an unmatched EC map -- the same offset can control unrelated firmware state on another vendor's controller.
   - Identify the platform (DMI/SMBIOS vendor+model, or an ACPI `_DSM`/OEM method the DSDT exposes) and match a per-model quirks table before any write; an unmatched platform stays refused, never a best-effort guess.
   - Range-check `pct` and read the register back after the write to confirm the EC latched it, before reporting success.
-- [ ] Registry `HKLM\SYSTEM\Battery\ChargeLimitPercent` (REG_DWORD, default 100); 80 is the longevity setting
-- [ ] Smart-charging auto mode: after > 4 h continuously on AC with charge > 80%, hold at 80%; release the limit when unplugged; `SmartChargingEnabled` (REG_DWORD, default 1)
-- [ ] Tray tooltip addition `"Charging limited to 80%"` while a limit is active -> XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` §4
-- [ ] `powercfg /batteryreport` reports charge-limit status and smart-charging history -> XREF: `02-kernel-core/TODO-26` §18
-- [ ] Commit: `"kernel/pm: platform-matched battery charge limiting and smart charging"`
+- [/] Registry `HKLM\SYSTEM\Battery\ChargeLimitPercent` (REG_DWORD, default 100); 80 is the longevity setting BLOCKED: §24 EC gate (GPE acknowledgement).
+- [/] Smart-charging auto mode: after > 4 h continuously on AC with charge > 80%, hold at 80%; release the limit when unplugged; `SmartChargingEnabled` (REG_DWORD, default 1) BLOCKED: §24 EC gate (GPE acknowledgement).
+- [/] Tray tooltip addition `"Charging limited to 80%"` while a limit is active -> XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` §4 BLOCKED: §24 EC gate (GPE acknowledgement), then `08-graphics-ui/TODO-11` §4.
+- [/] `powercfg /batteryreport` reports charge-limit status and smart-charging history -> XREF: `02-kernel-core/TODO-26` §18 BLOCKED: §24 EC gate (GPE acknowledgement), §18.
+- [/] Commit: `"kernel/pm: platform-matched battery charge limiting and smart charging"` BLOCKED: §24 EC gate (GPE acknowledgement).
 
 **Test checkpoint:** `bat_set_charge_limit()` refuses on an unmatched platform and never writes the EC. On a matched platform the write is range-checked and read back. The smart-charging hold engages after the AC dwell threshold and releases on unplug. Test on: QEMU TCG for the refusal path, bare metal on a matched laptop for the write path.
 
 > **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the EC write gate below clears
 
-> **Deferred:** [H] EC hardware access is gated off at the driver: §5 shipped the transactions but its own Deferred stamp records that readiness needs GPE acknowledgement and Global Lock arbitration, neither of which exists, so no `ec_write()` may run. [M] the platform quirks table also needs a DMI/SMBIOS vendor+model accessor that this tree does not expose to the PM layer (`src/kernel/firmware_tables.c` parses SMBIOS but publishes no vendor/model query). Both are prerequisites, not implementation choices: guessing the register is exactly the unsafe write the adversarial finding above rejects. -> XREF: `02-kernel-core/TODO-26` §24 (item: "Open the EC gate once GPE acknowledgement works" at line 1201), `02-kernel-core/TODO-26` §5
+> **Deferred:** [H] EC hardware access is gated off at the driver: §5 shipped the transactions but its own Deferred stamp records that readiness needs GPE acknowledgement and Global Lock arbitration, neither of which exists, so no `ec_write()` may run. The DMI half is cleared: `smbios_get_info()` (`include/kernel/smbios.h:136`) and `firmware_quirks.h` now expose vendor and model, checked 2026-11-07. The EC gate is a prerequisite, not an implementation choice: guessing the register is exactly the unsafe write the adversarial finding above rejects. -> XREF: `02-kernel-core/TODO-26` §24 (item: "Open the EC gate once GPE acknowledgement works" at line 1201), `02-kernel-core/TODO-26` §5
 
 ---
 
@@ -1442,12 +1444,14 @@ Charge limiting is a WRITE to the embedded controller at a vendor-specific regis
 
 > **Spawned-by:** §7 (split)
 
-- [ ] An EC event (§5) or an ACPI GPE fires on a lid transition; read `\_SB.LID0._LID` (0=closed, 1=open)
-- [ ] Lid-close action from registry `PowerLidCloseAction` (default `1` = sleep), sharing the §7 action table rather than a second copy of it
-- [ ] Lid open while in S3/S4 resumes: the EC event resumes the hardware and software observes `WAKE_STS` in PM1a_STS -> §3 or §28 resume path
-- [ ] Display-off before the sleep entry sequence: `gfx_blank_display()` cuts video output immediately so the panel does not flicker through the transition
-- [ ] Docked/clamshell suppression: a lid close with an external display attached must not sleep the machine, which is the behaviour every laptop OS ships
-- [ ] Commit: `"kernel/acpi: lid state, lid-close policy, display blank on sleep entry"`
+- [/] An EC event (§5) or an ACPI GPE fires on a lid transition; read `\_SB.LID0._LID` (0=closed, 1=open) BLOCKED: `04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run, §24 EC gate (GPE acknowledgement).
+- [/] Lid-close action from registry `PowerLidCloseAction` (default `1` = sleep), sharing the §7 action table rather than a second copy of it BLOCKED: no lid event yet (`04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run).
+- [/] Lid open while in S3/S4 resumes: the EC event resumes the hardware and software observes `WAKE_STS` in PM1a_STS -> §3 or §28 resume path BLOCKED: §24 EC gate (GPE acknowledgement), §3 and §28 resume.
+- [/] Display-off before the sleep entry sequence: `gfx_blank_display()` cuts video output immediately so the panel does not flicker through the transition
+  - BLOCKED: no lid event yet (`04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run).
+- [/] Docked/clamshell suppression: a lid close with an external display attached must not sleep the machine, which is the behaviour every laptop OS ships
+  - BLOCKED: no lid event yet (`04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run).
+- [/] Commit: `"kernel/acpi: lid state, lid-close policy, display blank on sleep entry"` BLOCKED: `04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run.
 
 **Test checkpoint:** a lid-close notify reads `_LID` and resolves `PowerLidCloseAction`. Closing with an external display attached suppresses the sleep. Lid open from S3 reaches the resume path. Test on: QEMU TCG for the policy table, bare metal on a laptop for the transition.
 
@@ -1463,14 +1467,17 @@ Charge limiting is a WRITE to the embedded controller at a vendor-specific regis
 
 Wake-on-approach and lock-on-leave. This is presence-sensing HARDWARE, and deliberately not the same signal as §22's user-interaction-aware QoS throttling, which is software-only and needs no sensor -> XREF: `02-kernel-core/TODO-26` §22.
 
-- [ ] Detect a compatible IR/ToF camera or Wi-Fi sensing device via ACPI `_HID "INTC1070"` (Intel HPD) or HID usage `HID_DEVICE_SYSTEM_HUMAN_PRESENCE` (0x000D0011)
-- [ ] `hpd_register_sensor(dev, ops)` -- register an HPD sensor driver with presence and absence callbacks
-- [ ] Wake on Approach: with the display off from an idle timeout, `PRESENCE_DETECTED` powers the display on and optionally unlocks (biometric); registry `HPDWakeOnApproach` (default 1)
-- [ ] Lock on Leave: `ABSENCE_DETECTED` sustained beyond `HPDAbsenceTimeout` (default 30 s) blanks the display and locks; registry `HPDLockOnLeave` (default 1)
-- [ ] Attention-aware dimming: `GAZE_AWAY` dims the backlight after 10 s and `GAZE_DETECTED` restores it, on sensors that report gaze at all
-- [ ] Privacy: presence state is a sensor reading about a person, so it is never persisted and never leaves the kernel except as the display/lock action it causes
-- [ ] Boot log: `[HPD] Sensor: %s, wake-on-approach=%s, lock-on-leave=%s`
-- [ ] Commit: `"kernel/pm: human presence detection, wake on approach, lock on leave"`
+- [/] Detect a compatible IR/ToF camera or Wi-Fi sensing device via ACPI `_HID "INTC1070"` (Intel HPD) or HID usage `HID_DEVICE_SYSTEM_HUMAN_PRESENCE` (0x000D0011)
+  - BLOCKED: `04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run; no HID class driver publishes usage pages.
+- [/] `hpd_register_sensor(dev, ops)` -- register an HPD sensor driver with presence and absence callbacks BLOCKED: no sensor discovery yet (`04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run).
+- [/] Wake on Approach: with the display off from an idle timeout, `PRESENCE_DETECTED` powers the display on and optionally unlocks (biometric); registry `HPDWakeOnApproach` (default 1)
+  - BLOCKED: `09-desktop-shell/TODO-13` §1 lock screen and display actions.
+- [/] Lock on Leave: `ABSENCE_DETECTED` sustained beyond `HPDAbsenceTimeout` (default 30 s) blanks the display and locks; registry `HPDLockOnLeave` (default 1) BLOCKED: `09-desktop-shell/TODO-13` §1 lock screen and display actions.
+- [/] Attention-aware dimming: `GAZE_AWAY` dims the backlight after 10 s and `GAZE_DETECTED` restores it, on sensors that report gaze at all BLOCKED: `09-desktop-shell/TODO-13` §1 lock screen and display actions.
+- [/] Privacy: presence state is a sensor reading about a person, so it is never persisted and never leaves the kernel except as the display/lock action it causes
+  - BLOCKED: no sensor discovery yet (`04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run).
+- [/] Boot log: `[HPD] Sensor: %s, wake-on-approach=%s, lock-on-leave=%s` BLOCKED: no sensor discovery yet (`04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run).
+- [/] Commit: `"kernel/pm: human presence detection, wake on approach, lock on leave"` BLOCKED: `04-drivers-hardware/TODO-03` §1: no `acpi_evaluate()`, AML does not run.
 
 **Test checkpoint:** a synthetic sensor registers and its presence/absence callbacks drive the display and lock actions. Absence shorter than `HPDAbsenceTimeout` does not lock. No HPD device present skips cleanly rather than failing init. Test on: QEMU TCG with a synthetic sensor (no emulated HPD hardware exists).
 
