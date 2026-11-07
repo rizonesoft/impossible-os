@@ -57,9 +57,9 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |   2   | TEST UNIT READY poll loop after BOT init            | §1         |  [x]   |
 | 💎  |   3   | MSC BOT retry on transient errors                   | §1, §2, §4 |  [x]   |
 | 💎  |   4   | USB transport error recovery (stall/halt)           | §1         |  [x]   |
-| 💎  |   5   | Bulk transfer timeouts                              | §4         |  [/]   |
+| 💎  |   5   | Bulk transfer timeouts                              | §4         |  [ ]   |
 | 💎  |   6   | Remove sleep_ms(2000) hack                          | §2-§5, §7  |  [/]   |
-| 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI)        | §4         |  [/]   |
+| 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI)        | §4         |  [ ]   |
 | 💎  |   8   | klog_disk_flush bounded loop                        | --         |  [/]   |
 | 💎  |   9   | klog deferred flush mode (batch to RAM)             | §8         |  [x]   |
 | 💎  |  10   | Boot media speed detection                          | §8         |  [/]   |
@@ -67,7 +67,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | ⭐  |  12   | USB boot diagnostic report                          | §1-§11     |  [x]   |
 | 💎  |  13   | Single-pass per-subsystem log routing               | §8         |  [x]   |
 | 💎  |  14   | IXFS boot tests: slow-media-aware                   | §10        |  [x]   |
-| ⭐  |  15   | Flush progress on splash diagnostic line            | §9         |  [/]   |
+| ⭐  |  15   | Flush progress on splash diagnostic line            | §9         |  [ ]   |
 | 💎  |  16   | xHCI command ring + BOT transport SMP serialization | §4         |  [/]   |
 
 > 💎 = parity -- Windows usbstor.sys and Linux usb-storage both handle SCSI retry, stall recovery, transfer timeouts, and EHCI fallback.
@@ -201,7 +201,7 @@ Add bounded timeouts to all bulk transfers. The current code polls the xHCI even
 - [x] `usb_msc_read_sectors`/`usb_msc_write_sectors` see the timeout as a `-1` transient I/O failure via the §3 retry wrapper
 - [x] `xhci_bulk_transfer_cc` stops on the FIRST host SHORT_PKT + reports host-transferred via `xfer_out`; `msc_scsi_command` fails exact-length on `msc_host_short` (host count authoritative over CSW residue) and reports `actual_out` from it
 - [x] `USB_BULK_TIMEOUT_MS`(5000) constant in `xhci_dev.h`
-- [/] EP0 / control-transfer timeout recovery -- blocked on the EP0-abort design, which is TODO-19 §5-owned with no external prerequisite
+- [ ] EP0 / control-transfer timeout recovery: needs its own EP0-abort design, owned here
   - §4 recovery rejects EP0, so this needs its own abort path: Stop Endpoint DCI 1, Set TR Dequeue on `ep0_ring`, slot-reset fallback.
   - No other TODO owns it, so nothing external will unblock it; the blocker is the design decision itself.
   - Control transfers keep their 500ms bound meanwhile, which is bounded and safe, just not recoverable.
@@ -216,7 +216,7 @@ Add bounded timeouts to all bulk transfers. The current code polls the xHCI even
 > - Scope boundary: §5 owns bulk timeouts + host-residual; EP0/control-transfer timeout recovery is deferred (own item); shared event-ring per-event correlation + command-ring locking is §16.
 > **Verified:** 2026-06-15 | review commit | 9/10 items | build OK | storage 400 kernel + 16 user-mode PASS (host-short matrix)
 > **Accepted:** [H] a failed timeout abort (Stop Endpoint / Set TR Dequeue rejected) leaves the stale TRB owned, so a later retry could enqueue behind it -> XREF: 01-boot-platform/TODO-19 §16 (item: "Timeout-tainted endpoint recovery: when `xhci_abort_endpoint` fails the stale TRB stays owned" at line 510)
-> **Deferred:** [M] EP0 / control-transfer timeout recovery -- distinct EP0-abort design needed (§4 recovery rejects EP0) -> XREF: 01-boot-platform/TODO-19 §5 (item: "DEFERRED: EP0 / control-transfer timeout recovery" at line 204)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] EP0 / control-transfer timeout recovery -- distinct EP0-abort design needed (§4 recovery rejects EP0). The stamp named this section's own item, and that item recorded no external prerequisite.
 > **Quality reviewed:** 2026-06-15 | Codex 8x (design, adversarial x2, re-adversarial x3, consistency, perf) | 4H+2M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 **Regression risk:** MEDIUM -- adds a per-poll timeout check on the bulk path. Rollback: raise `USB_BULK_TIMEOUT_MS` to effectively disable the bulk timeout while keeping the infrastructure.
@@ -255,7 +255,7 @@ On Intel 7/8/9-series chipsets, USB 2.0 ports are routed from EHCI to xHCI via t
 - [x] Shared `xhci_route_intel_usb2_ports` helper (`xhci.c`) dedups the two previously-divergent routing paths (handover + full-init); both now do EHCI-detect + routing-write + bounded settle + connected-count log
 - [x] EHCI-presence gate on BOTH paths: XUSB2PR(0xD0)/USB3_PSSEN(0xD8) written only when an EHCI controller (prog-if 0x20) shares the bus; modern Intel (100-series+, no EHCI) skips routing AND the settle wait (the old handover path always paid it)
 - [x] On routing-eligible hardware wait the bounded `XHCI_XUSB2PR_ROUTE_MAX_US` (500ms); log `"XUSB2PR port routing settled (%u ms, %u port(s) connected)"` with the before/after connected-port delta
-- [/] Spec-backed event-driven early-exit to shorten the 500ms -- blocked on USB2 port-identity tracking, TODO-19 §7-owned with no external prerequisite
+- [ ] Spec-backed event-driven early-exit to shorten the 500ms: needs USB2 port-identity tracking, owned here
   - The identity comes from the xHCI Supported Protocol extended capability. No TODO owns that capability walk today, so nothing external will unblock this.
   - A timed early-exit is not an acceptable substitute: the spec places no bound on XUSB2PR-to-CCS latency, and boot enumeration is synchronous, so a wrong guess loses the device.
 - [x] Commit: `"drivers: XUSB2PR routing -- unify both paths, EHCI-gate, bounded settle (early-exit deferred)"`
@@ -269,7 +269,7 @@ On Intel 7/8/9-series chipsets, USB 2.0 ports are routed from EHCI to xHCI via t
 > - Deferred: spec-backed event-driven early-exit (route-capable port-identity tracking) kept as a `[ ]` item in this section; Codex design + 3x re-adversarial adoptions in the ship commit.
 > - Scope boundary: §7 owns the routing + bounded settle; §6 owns the (already-absent) global post-`xhci_init` sleep; per-port reset/enumeration stays in `xhci_enumerate_ports`.
 > **Verified:** 2026-06-15 | commit `c4f0e128` | 3/4 items | build OK | live-PCI/MMIO (validated bare metal i5-4210U + i5-11600K skip-path)
-> **Deferred:** [M] event-driven early-exit to shorten the 500ms on routing HW -- unsafe without spec-backed routed-port identity tracking -> XREF: 01-boot-platform/TODO-19 §7 (item: "DEFERRED: spec-backed event-driven early-exit" at line 255)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] event-driven early-exit to shorten the 500ms on routing HW -- unsafe without spec-backed routed-port identity tracking. The stamp named this section's own item, and that item recorded no external prerequisite.
 > **Quality reviewed:** 2026-06-15 | Codex 8x (design, adversarial x2, re-adversarial x3, consistency, perf) | 1H+1M fixed, 0 open | scope: kernel-code-quality
 
 ---
@@ -300,8 +300,8 @@ Fix the unbounded flush loop that hangs 10+ minutes on USB 2.0.
 > - Hardening (review): the `flushing` guard is now an atomic test-and-set (SMP-safe, one CPU enters); the cursor advances only on verified full `vfs_write` returns (stop-on-first-failure); the done-path reports `flush FAILED` honestly when persistence did not complete.
 > - Scope boundary: this section owns the bounded loop + progress + slow-media DETECTION; the deferred-flush mode (RAM batching that acts on the flag) is the next section.
 > **Verified:** 2026-06-15 | commit `8ed6ca69` | 4/6 items | build OK | live serial+VFS (validated bare metal USB 2.0 i5-4210U)
-> **Deferred:** [H] all-or-nothing kernel.log retry (truncate-to-pre-flush-size rollback for clean retry) -> XREF: 01-boot-platform/TODO-19 §8 (item: "DEFERRED: all-or-nothing kernel.log retry" at line 280)
-> **Deferred:** [M] durable per-subsystem-file cursor (subsystem routing currently best-effort) -> XREF: 01-boot-platform/TODO-19 §8 (item: "DEFERRED: durable per-subsystem-file cursor" at line 281)
+> **Deferred:** [H] all-or-nothing kernel.log retry (truncate-to-pre-flush-size rollback for clean retry) -> XREF: 02-kernel-core/TODO-04 §15 (item: "klog all-or-nothing kernel.log retry: truncate-to-pre-flush-size rollback")
+> **Deferred:** [M] durable per-subsystem-file cursor (subsystem routing currently best-effort) -> XREF: 02-kernel-core/TODO-04 §15 (item: "klog durable per-subsystem-file cursor")
 > **Quality reviewed:** 2026-06-15 | Codex 8x (design, adversarial x2, re-adversarial x3, consistency, perf) | 3H+3M fixed, 2 deferred | scope: kernel-code-quality
 
 ---
@@ -488,10 +488,10 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 - [x] Callback API in `klog.h`: `klog_flush_progress_fn` typedef + `klog_disk_set_flush_progress_cb()` (registered static, atomic store/load; not a `klog_disk_flush()` signature change)
 - [x] `klog_disk.c`: pure gate `klog_flush_progress_due(total)` + persisted-progress reporting in `klog_disk_flush_locked` -- cb fires after each successful chunk write, never overstating what reached disk
 - [/] `boot_desktop.c` registers `boot_flush_splash_progress` -> `boot_splash_diag` around the boot-end `klog_disk_flush_all()`; plumbed but on screen DEFERRED (flush_all is post-splash-fade, compositor-locked, so `boot_splash_diag` no-ops)
-- [/] Render the deferred-mode drain on screen -- blocked on a boot_phase3 ordering choice, TODO-19 §15-owned with no external prerequisite
+- [ ] Render the deferred-mode drain on screen: needs a boot_phase3 ordering choice, owned here
   - Two candidate shapes: reorder the `boot_splash_finish()` fade-out to after `klog_disk_flush_all()`, or add a post-splash boot-drain framebuffer surface keyed to the compositor-lock hand-off window.
   - Either changes when the splash releases the framebuffer, which is why it is a decision rather than plumbing. `flush_all` runs after the fade today, so the registered callback has nothing to draw on.
-- [/] Fire the whole-drain 100% tick at the true `klog_disk_flush_locked` end, not after `kernel.log` -- TODO-19 §15-owned, parked with the render item above
+- [ ] Fire the whole-drain 100% tick at the true `klog_disk_flush_locked` end, not after `kernel.log`: lands with the render item above
   - "True end" means after subsystem routing, `events.jsonl` and the serial writes, not after the `kernel.log` chunk loop.
   - Parked rather than blocked: a 100% tick that nothing draws is not observable, so it is worth doing only alongside the render item.
   - Not a correctness gap meanwhile. The shipped accounting reports only `kernel.log` per-chunk liveness, so it under-reports and never claims a premature 100%.
@@ -511,7 +511,7 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 **Regression risk:** LOW -- the callback is optional (NULL = no behavior change); the persisted-progress accounting only adds cb calls after writes that already happen.
 
 > **Verified:** 2026-06-15 | commit `d14e2cd4` | 3/6 items | build OK | smoke PASS (KVM 1.970s)
-> **Deferred:** [M] on-screen render of the boot-end drain + whole-drain 100% completion (flush_all runs after `boot_splash_finish()` in the compositor-locked hand-off) -> XREF: 01-boot-platform/TODO-19 §15 (item: "Render the deferred-mode drain on screen" + "Fire the whole-drain 100% tick at the true klog_disk_flush_locked end")
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] on-screen render of the boot-end drain + whole-drain 100% completion (flush_all runs after `boot_splash_finish()` in the compositor-locked hand-off). The stamp named this section's own item, and that item recorded no external prerequisite.
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1M fixed | scope: kernel-code-quality
 
 ---
@@ -557,7 +557,7 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 **Regression risk:** Shipped (atomic `cbw_tag`): LOW -- a lock-free relaxed atomic RMW, no lock-order or hot-path locking introduced. Deferred (command-ring + BOT serialization): MEDIUM -- adds locking to the command/transfer hot path where a lock-order or hold-time mistake can deadlock against the recovery path; hold no lock across the 500 ms transfer waits (snapshot under lock, release, then I/O).
 
 > **Verified:** 2026-06-15 | commit `9ab80d4b` | 1/5 items | build OK | tests pass (SUITE=boot 2706+16)
-> **Deferred:** [M] the xHCI/BOT command-ring serialization (items 1/2/3/5) is forward-looking and not reachable today (`xhci.c` enables MSI only after boot enumeration, so boot media I/O is never exposed; the window is post-boot hot-plug concurrent with SMP USB block I/O, which does not exist yet). It is a large, deadlock-prone 5-file refactor across 4 `xhci_event_poll` call sites (CLAUDE.md "stop and ask before large refactors"); recommended scope is coarse per-controller `io_mutex` serializing command/transfer/event-drain + per-device BOT mutex + endpoint-recovery hardening, with fine-grained per-TRB correlation + async hot-plug-out-of-drain as the concurrency follow-on (atomic `cbw_tag` already shipped) -> XREF: 01-boot-platform/TODO-19 §16 (item: "Serialize command ring + correlate events" + "Per-MSC-device BOT serialization")
+> **Deferred:** [M] the xHCI/BOT command-ring serialization (items 1/2/3/5) is forward-looking and not reachable today (`xhci.c` enables MSI only after boot enumeration, so boot media I/O is never exposed; the window is post-boot hot-plug concurrent with SMP USB block I/O, which does not exist yet). It is a large, deadlock-prone 5-file refactor across 4 `xhci_event_poll` call sites (CLAUDE.md "stop and ask before large refactors"); recommended scope is coarse per-controller `io_mutex` serializing command/transfer/event-drain + per-device BOT mutex + endpoint-recovery hardening, with fine-grained per-TRB correlation + async hot-plug-out-of-drain as the concurrency follow-on (atomic `cbw_tag` already shipped) -> XREF: 04-drivers-hardware/TODO-10 §8 (item: "Event-ring ownership: ISR only acks + records the port-change, defers enumeration to a serialized worker")
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1M fixed | scope: kernel-code-quality
 
 ---
