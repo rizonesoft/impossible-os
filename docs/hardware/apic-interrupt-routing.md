@@ -22,7 +22,7 @@ flowchart LR
     IO --> L[Local APIC per CPU]
     L --> V[IDT vector 0x30-0xEF]
     V --> H[irq handler chain]
-    L -->|IPI 0xF9-0xFD| O[Other CPUs]
+    L -->|IPI 0xF8-0xFD| O[Other CPUs]
 ```
 
 **CPUs above ID 255.** Because the APIC runs in xAPIC mode, the MADT parser in [`acpi.c`](../../src/kernel/acpi.c) skips processors whose x2APIC ID does not fit in 8 bits, and if the boot CPU is one of them it logs `x2APIC mode required; forcing BSP-only, no AP bringup`.

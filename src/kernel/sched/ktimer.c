@@ -244,10 +244,9 @@ uint32_t ktimer_expire_current_cpu(void)
             /* Pin the DPC to the service CPU (overriding any caller
              * KeSetTargetProcessorDpc WITHOUT mutating the caller's cpu_target).
              * The timer fires here and the service CPU drains its own DPC queue
-             * immediately after this scan (dpc_drain_current_cpu, same ISR). An
-             * idle AP has no guaranteed DPC drain trigger (its LAPIC timer is
-             * masked and, absent a DPC IPI, nothing forces it to lower IRQL), so
-             * an AP-targeted timer DPC would STRAND. Per the timer-DPC ownership
+             * immediately after this scan (dpc_drain_current_cpu, same ISR), so a
+             * fired timer's DPC runs in this tick; an AP would add a wake IPI's
+             * latency for no gain. Per the timer-DPC ownership
              * precondition
              * (ktimer.h) the caller must not independently queue the DPC, so it
              * is never already-queued on an AP here. */

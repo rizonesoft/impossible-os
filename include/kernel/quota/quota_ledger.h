@@ -407,7 +407,7 @@ int quota_ledger_return(quota_obligation_t *ob);
  * is worth stating because the obvious rationale is wrong here: dpc.h records
  * that a threaded DPC has no CPU-affinity guarantee -- one all-CPU worker drains
  * every threaded list and runs the callback wherever the scheduler puts it -- so
- * the idle-AP stranding hazard that justifies pinning a NORMAL DPC does not
+ * the wait for an AP's idle loop that justifies pinning a NORMAL DPC does not
  * apply. A fixed list is chosen so every producer contends on one queue in a
  * predictable order, and the drain routine must therefore never read per-CPU
  * state. The single-drainer property comes from the drain claim, not affinity.

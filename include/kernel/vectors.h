@@ -77,6 +77,11 @@
  * never reaches 0xF9, so the gap 0xF0-0xF9 is the only static space left. */
 #define VECTOR_IPI_RENDEZVOUS      0xF9  /* stop-the-world barrier (TODO-26 S26) */
 
+/* ---- Idle-CPU wake IPI (0xF8) ----
+ * Same static gap as the rendezvous. The handler only acknowledges: taking the
+ * interrupt is what ends the target's HLT, and its idle loop does the work. */
+#define VECTOR_IPI_WAKE            0xF8  /* end a parked AP's HLT (smp_wake_cpu) */
+
 /* ---- LAPIC error LVT (0xFA) ---- */
 #define VECTOR_LAPIC_ERROR         0xFA  /* LAPIC LVT error vector (lapic.c BSP+AP) */
 
@@ -167,6 +172,15 @@ _Static_assert(VECTOR_IPI_RENDEZVOUS != VECTOR_LAPIC_ERROR &&
                VECTOR_IPI_RENDEZVOUS != VECTOR_IPI_TLB_SHOOTDOWN &&
                VECTOR_IPI_RENDEZVOUS != VECTOR_LAPIC_SPURIOUS,
     "rendezvous IPI vector collides with another statically assigned vector");
+_Static_assert(VECTOR_IPI_WAKE != VECTOR_IPI_RENDEZVOUS &&
+               VECTOR_IPI_WAKE != VECTOR_LAPIC_ERROR &&
+               VECTOR_IPI_WAKE != VECTOR_IPI_CR_VERIFY &&
+               VECTOR_IPI_WAKE != VECTOR_IPI_ASYNC_INIT &&
+               VECTOR_IPI_WAKE != VECTOR_IPI_RESCHEDULE &&
+               VECTOR_IPI_WAKE != VECTOR_IPI_TLB_SHOOTDOWN &&
+               VECTOR_IPI_WAKE != VECTOR_LAPIC_SPURIOUS &&
+               VECTOR_IPI_WAKE > 0xEF && VECTOR_IPI_WAKE <= 0xFF,
+               "VECTOR_IPI_WAKE must be a free static vector above the IRQ allocator");
 _Static_assert(VECTOR_IPI_RENDEZVOUS > 0xEF,
     "rendezvous IPI vector must sit above the dynamic IRQ range (0x30-0xEF)");
 _Static_assert(VECTOR_LAPIC_ERROR != VECTOR_LAPIC_SPURIOUS &&

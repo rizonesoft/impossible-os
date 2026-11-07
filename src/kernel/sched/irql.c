@@ -242,8 +242,12 @@ void irql_lower_deliver(KIRQL old_irql)
      * No per-CPU reentrancy guard: a NormalRoutine may yield/block/exit, so a
      * CPU-scoped guard could leak across a context switch and wedge delivery;
      * the per-thread kernel_apc_in_progress flag bounds normal-APC reentrancy
-     * and special APCs are self-limiting (each is dequeued once). */
-    if (cur >= APC_LEVEL && old_irql < APC_LEVEL) {
+     * and special APCs are self-limiting (each is dequeued once).
+     *
+     * BSP only: threads run only there, and thread_current() reads a global
+     * cursor, so on a parked AP finishing a DPC it names the BSP's thread. Taking
+     * that thread's APC here would run it concurrently with its owner. */
+    if (cur >= APC_LEVEL && old_irql < APC_LEVEL && pcpu->cpu_id == 0) {
         struct thread *th = thread_current();
         if (th && th->apc_state.kernel_apc_pending && !KeAreAllApcsDisabled())
             KiDeliverApc((uint8_t)ApcKernelMode, (void *)0, (void *)0);

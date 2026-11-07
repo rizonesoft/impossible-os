@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/03-memory-concurrency/TODO-07-smp-phase2.md sources=include/kernel/barrier.h,include/kernel/smp.h,include/kernel/vectors.h,include/kernel/rcu.h,src/kernel/smp/smp.c,src/kernel/rcu.c,src/kernel/cpu_security.c,src/kernel/test/test_smp_rendezvous.c,src/kernel/test/test_smp_lifecycle.c,src/kernel/sched/task.c reviewed=2026-09-28 order=7 -->
+<!-- docs: covers=todo/03-memory-concurrency/TODO-07-smp-phase2.md sources=include/kernel/barrier.h,include/kernel/smp.h,include/kernel/vectors.h,include/kernel/rcu.h,src/kernel/smp/smp.c,src/kernel/rcu.c,src/kernel/cpu_security.c,src/kernel/test/test_smp_rendezvous.c,src/kernel/test/test_smp_lifecycle.c,src/kernel/sched/task.c reviewed=2026-11-07 order=7 -->
 # SMP Phase 2
 
 ## What is it?
@@ -15,7 +15,7 @@ The second stage of multi-processor support: cross-CPU TLB shootdown, per-CPU ru
 
 **RCU.** [`rcu.h`](../../include/kernel/rcu.h) implements a simple RCU: `rcu_read_lock()` disables the scheduler, and `synchronize_rcu()` is a full barrier, one `yield()` and another barrier. It tracks no readers, so it is correct only under the single-CPU assumption its header states; it gives no guarantee against a reader running on another CPU, including an interrupt handler on an AP. There is no per-CPU counter and no `call_rcu()`.
 
-**IPI vectors.** [`vectors.h`](../../include/kernel/vectors.h) reserves `0xFB` (control register re-verify), `0xFC` (async init work), `0xFD` (reschedule) and `0xFE` (TLB shootdown). Nothing handles `0xFE` yet, so page permission changes rely on running before other CPUs use the mapping.
+**IPI vectors.** [`vectors.h`](../../include/kernel/vectors.h) reserves `0xF8` (idle CPU wake, sent by `smp_wake_cpu()`), `0xFB` (control register re-verify), `0xFC` (async init work), `0xFD` (reschedule) and `0xFE` (TLB shootdown). Nothing handles `0xFE` yet, so page permission changes rely on running before other CPUs use the mapping.
 
 ```mermaid
 sequenceDiagram

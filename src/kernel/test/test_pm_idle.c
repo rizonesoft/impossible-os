@@ -132,10 +132,9 @@ static void test_pm_deep_idle_allowed_pending_dpc(void)
 
 /* ---- entry contract: the predicate must never become a spin ---- */
 
-/* The regression this test exists to prevent: an idle AP has no DPC drain
- * trigger (`src/kernel/sched/ktimer.c:248-251` -- masked LAPIC timer, no DPC
- * IPI), so if a false predicate could refuse the halt, a stranded DPC or a
- * disabled policy would turn the AP park loop into a 100% busy-spin forever. */
+/* The regression this test exists to prevent: if a false predicate could refuse
+ * the halt, a disabled policy would turn the AP park loop into a 100% busy-spin
+ * forever. */
 static void test_pm_idle_c1_halts_even_when_not_ready(void)
 {
     int prev, halted_ready;

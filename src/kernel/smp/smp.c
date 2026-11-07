@@ -27,6 +27,7 @@
  * these inside the KERNEL_TESTS block the default (tests-on) build succeeded
  * and the shipping flavor did not. */
 #include "kernel/sched/spinlock.h"  /* local_irq_save/restore -- S26 */
+#include "kernel/sched/dpc.h"       /* dpc_idle_dispatch -- AP park loop */
 #include "kernel/idt.h"        /* idt_register_handler, interrupt_frame -- S26 barrier IPI */
 #include "kernel/vectors.h"    /* VECTOR_IPI_RENDEZVOUS -- S26 */
 #include "kernel/time/mono_clock.h"  /* mono_tsc_raw/mono_tsc_hz -- S26 IF=0-safe deadline */
@@ -331,14 +332,21 @@ void ap_entry(uint32_t cpu_index)
      * is_online flag and the online-mask bit are all already visible -- there is
      * no window in which this CPU is live but uncounted.
      *
-     * AP is parked -- enable interrupts and halt. The LAPIC timer or IPI will
-     * wake it when the scheduler is ready. */
+     * AP is parked -- enable interrupts and halt. An IPI ends the HLT. DPCs run
+     * here rather than in an IPI handler because this is the one place on an AP
+     * that is known to be below DISPATCH_LEVEL with interrupts on, so a callback
+     * can neither nest on an interrupted one nor run with IF clear. */
     __asm__ volatile("sti");
-    for (;;)
-        pm_idle_c1();   /* same STI;HLT, plus per-CPU idle accounting. It
-                         * always halts -- a refusal here would spin forever,
-                         * since an idle AP has no DPC drain trigger. */
+    for (;;) {
+        if (!dpc_idle_dispatch())
+            pm_idle_c1();   /* same STI;HLT, plus per-CPU idle accounting. A wake
+                             * landing between the check above and the halt is
+                             * retried by the BSP tick while the queue is
+                             * non-empty, so it costs one tick and never strands. */
+    }
 }
+
+static void smp_wake_ipi_init(void);
 
 /* ---- SMP initialization (BSP side) ---- */
 
@@ -712,6 +720,9 @@ void smp_init(void)
      * rather than at IDT setup because begin() refuses until it is, and a
      * round whose targets have no handler could only ever time out. */
     smp_rendezvous_ipi_init();
+
+    /* Same window, same reason: every AP can now take the wake vector. */
+    smp_wake_ipi_init();
 
     /* Layer 2 (runtime verification at init) for the two-word membership
      * design. The subset invariant -- every mask bit implies is_online -- is
@@ -1103,6 +1114,51 @@ static uint64_t rendezvous_ipi_handler(struct interrupt_frame *frame)
     if (parked && slot < SMP_RENDEZVOUS_MASK_BITS)
         __atomic_fetch_add(&s_rendezvous_resumed[slot], 1u, __ATOMIC_RELEASE);
     return (uint64_t)frame;
+}
+
+/* ---- Idle-CPU wake IPI ---------------------------------------------------- */
+
+static volatile int s_wake_ipi_ready;
+
+#ifdef KERNEL_TESTS
+static uint32_t s_wake_ipi_taken[MAX_CPUS];
+
+uint32_t smp_wake_ipi_taken_test(uint32_t cpu)
+{
+    return cpu < MAX_CPUS ? __atomic_load_n(&s_wake_ipi_taken[cpu], __ATOMIC_ACQUIRE) : 0u;
+}
+#endif
+
+static uint64_t wake_ipi_handler(struct interrupt_frame *frame)
+{
+#ifdef KERNEL_TESTS
+    struct per_cpu_data *me = smp_this_cpu();
+    if (me && me->cpu_id < MAX_CPUS)
+        __atomic_fetch_add(&s_wake_ipi_taken[me->cpu_id], 1u, __ATOMIC_RELEASE);
+#endif
+    lapic_eoi();
+    return (uint64_t)frame;
+}
+
+static void smp_wake_ipi_init(void)
+{
+    idt_register_handler(VECTOR_IPI_WAKE, wake_ipi_handler);
+    __atomic_store_n(&s_wake_ipi_ready, 1, __ATOMIC_RELEASE);
+}
+
+int smp_wake_cpu(uint32_t cpu)
+{
+    struct per_cpu_data *me = smp_this_cpu();
+    struct per_cpu_data *target;
+
+    if (!__atomic_load_n(&s_wake_ipi_ready, __ATOMIC_ACQUIRE))
+        return 0;
+    if (cpu >= MAX_CPUS || (me && me->cpu_id == cpu) || !smp_cpu_is_online(cpu))
+        return 0;
+    target = smp_get_cpu(cpu);
+    if (!target)
+        return 0;
+    return lapic_send_ipi_nowait((uint8_t)target->lapic_id, VECTOR_IPI_WAKE);
 }
 
 void smp_rendezvous_ipi_init(void)

@@ -505,12 +505,9 @@ static int drain_arm(void)
     if (__atomic_exchange_n(&g_drain_armed, 1u, __ATOMIC_ACQ_REL) == 0u)
         /* PINNED to the service CPU, never DPC_TARGET_CURRENT. A threaded DPC
          * still lands on the queueing CPU's normal queue until that CPU drains
-         * it, and an idle AP parks in sti/hlt without self-draining (there is no
-         * DPC IPI yet). Arming from an AP -- which the charge path can do, since
-         * it is documented callable from interrupt context -- would strand the
-         * callback there, and because only the callback clears g_drain_armed the
-         * exchange would stay wedged at 1 and publication would be dead for the
-         * rest of the boot. ktimer pins its DPCs for exactly this reason. */
+         * it, and only the callback clears g_drain_armed, so the BSP's every-tick
+         * drain is the bound on how long publication waits. An AP drains only
+         * from its idle loop, which charge-path work on that AP would delay. */
         KeInsertQueueDpcOnCpu(&g_drain_dpc, QUOTA_PRESSURE_SERVICE_CPU,
                               (void *)0, (void *)0, (int *)0);
     /* Already-armed counts as armed: the callback has not run yet, so it will

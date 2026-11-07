@@ -452,8 +452,15 @@ void dpc_watchdog_tick(void)
      * budget never refills and its warn_pending crossing is never emitted. All
      * slots, not a count of CPUs: slots are sparse. */
     if (id == 0) {
-        for (slot = 1; slot < MAX_CPUS; slot++)
+        for (slot = 1; slot < MAX_CPUS; slot++) {
             dpc_wd_service_slot(slot);
+            /* Retry: a queued AP that is still halted has lost its wake, or a
+             * DPC queued from its own ISR never had one. Not while a callback is
+             * running there: that AP rechecks its queue before it next halts. */
+            if (__atomic_load_n(&cpu_queues[slot].depth, __ATOMIC_RELAXED) &&
+                !__atomic_load_n(&s_wd[slot].in_flight, __ATOMIC_RELAXED))
+                smp_wake_cpu(slot);
+        }
     }
 
     /* APC starvation reporting: the ISR-safe KeInsertQueueApc only bumps an
@@ -530,6 +537,8 @@ int  dpc_watchdog_test_spend(uint32_t *state)  { return dpc_wd_budget_spend(stat
 /* ---- Initialization ------------------------------------------------------ */
 
 static int s_queues_ready;
+/* dpc_init has run, so a drain's threaded-DPC handoff has a usable worker path. */
+static int s_dpc_ready;
 
 /* Phase 1: initialize per-CPU queues BEFORE sti. No heap, no scheduler needed.
  * After this, ISRs can safely call KeInsertQueueDpc (queued but not drained
@@ -560,6 +569,7 @@ void dpc_init(void)
     if (!s_queues_ready)
         dpc_init_queues();
     dpc_watchdog_init();   /* TSC is calibrated by now -- seed threshold + budgets */
+    __atomic_store_n(&s_dpc_ready, 1, __ATOMIC_RELEASE);
     klog(LOG_INFO, "dpc", "DPC subsystem ready (scheduler available)");
 }
 
@@ -711,6 +721,8 @@ static int dpc_insert_core(KDPC *dpc, void *arg1, void *arg2,
     uint64_t irq_flags;
     int warn_depth = 0;
     uint32_t spins = 0;
+    struct per_cpu_data *me = smp_this_cpu();
+    uint32_t my_cpu = me ? me->cpu_id : MAX_CPUS;
 
     if (warn_cpu_out)
         *warn_cpu_out = -1;
@@ -827,6 +839,16 @@ static int dpc_insert_core(KDPC *dpc, void *arg1, void *arg2,
         }
 
         spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
+
+        /* First entry on another CPU's queue: end its HLT now. The BSP is skipped
+         * because its own tick drains it. A later entry needs no IPI: the earlier
+         * one is still on its way or being drained. Nor does a target running a
+         * callback, which rechecks its queue before it next halts. A send that
+         * was dropped, or a skip that raced the callback's return, is retried by
+         * the BSP tick (dpc_watchdog_tick). */
+        if (new_depth == 1u && cpu_id != my_cpu && cpu_id != 0u &&
+            !__atomic_load_n(&s_wd[cpu_id].in_flight, __ATOMIC_RELAXED))
+            smp_wake_cpu(cpu_id);
 
         /* warn_cpu_out is reported (informational) for callers that want the CPU
          * id; they must NOT log from it at their IRQL -- dpc_watchdog_tick emits
@@ -1261,6 +1283,16 @@ uint32_t dpc_drain_current_cpu(void)
     if (!cpu_queues[cpu->cpu_id].head) return 0;
 
     return drain_queue(cpu->cpu_id);
+}
+
+int dpc_idle_dispatch(void)
+{
+    if (!__atomic_load_n(&s_dpc_ready, __ATOMIC_ACQUIRE))
+        return 0;
+    if (!dpc_current_cpu_has_pending())
+        return 0;
+    KiDispatchDpc();
+    return 1;
 }
 
 /* Cheap "is any DPC queued on this CPU?" probe -- a single queue-head read, no

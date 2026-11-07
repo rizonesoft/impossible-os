@@ -49,13 +49,9 @@ struct _KDPC;
  * enabled; a THREADED DPC (KeInitializeThreadedDpc) uses the SAME signature but
  * runs at PASSIVE_LEVEL in the DPC worker thread (so it may block/page/take
  * mutexes). Do not assume DISPATCH_LEVEL in a threaded DPC routine.
- * AFFINITY: a NORMAL DPC runs on its target CPU, BUT only the BSP DPC queue has
- * a guaranteed drain trigger today (the LAPIC timer ISR). An idle AP does not
- * self-drain its DPC queue and there is no DPC IPI yet, so a NORMAL DPC targeted
- * (KeSetTargetProcessorDpc) at an otherwise-idle AP can sit until that AP next
- * lowers IRQL on its own. Until a remote drain trigger exists, pin time-critical
- * DPCs to the BSP service CPU (KeInsertQueueDpcOnCpu), as ktimer does. A THREADED
- * DPC has NO
+ * AFFINITY: a NORMAL DPC runs on its target CPU. The BSP drains from its timer
+ * ISR; an AP drains from its idle loop, woken by an IPI on insert (dpc_idle_dispatch).
+ * A THREADED DPC has NO
  * CPU-affinity guarantee -- KeSetTargetProcessorDpc on a threaded DPC controls
  * only which CPU's threaded list it joins (queue ownership/order), NOT the CPU
  * the callback runs on: a single all-CPU worker thread drains every CPU's
@@ -289,10 +285,8 @@ int dpc_sample_queue(uint32_t cpu_id, const KDPC *dpc,
  * Callable explicitly by any code that wants to flush the queue. NOTE:
  * automatic draining happens at a timer ISR (the LAPIC timer and the PIT
  * fallback both call the lightweight dpc_drain_current_cpu below after each
- * tick) AND when KeLowerIrql crosses below DISPATCH_LEVEL (drain-on-lower). The
- * residual gap is an IDLE AP that neither ticks (AP timer masked) nor lowers
- * IRQL: with no DPC IPI it has no trigger, so a DPC targeted there can strand
- * until that AP next lowers IRQL -- the deferred Remote-target DPC IPI work. */
+ * tick), when KeLowerIrql crosses below DISPATCH_LEVEL (drain-on-lower), and on
+ * an idle AP from its park loop (dpc_idle_dispatch), which an IPI wakes. */
 void KiDispatchDpc(void);
 
 /* Maximum DPCs to drain per KiDispatchDpc() call.
@@ -319,6 +313,11 @@ void dpc_watchdog_init(void);
  * warning is burst-limited, so this is what makes a chronic offender
  * visible without letting it own the log. */
 void dpc_watchdog_report(void);
+
+/* One batch of this CPU's queue from an idle loop, which must be below
+ * DISPATCH_LEVEL with interrupts enabled. Returns 1 if it ran a batch (so check
+ * again before halting), 0 if there was nothing to do. */
+int dpc_idle_dispatch(void);
 
 /* Per-timer-tick watchdog bookkeeping: refill the per-CPU token budget and fire
  * the sustained-queue-depth warning. Call from the timer ISR every tick. AP

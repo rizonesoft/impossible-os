@@ -564,6 +564,17 @@ uint32_t smp_cpu_present_count(void);
  * silently checking half the word. */
 #define SMP_ONLINE_MASK_BITS   32u
 
+/* Wake logical CPU `cpu` from its idle HLT with VECTOR_IPI_WAKE. Callable at any
+ * IRQL: it never waits for the ICR. Returns 1 if the IPI was sent, 0 if not (CPU
+ * offline, this CPU, not armed yet, or ICR busy); a caller that needs delivery
+ * must have a retry, as the DPC watchdog tick does. */
+int smp_wake_cpu(uint32_t cpu);
+#ifdef KERNEL_TESTS
+/* Wake IPIs logical CPU `cpu` has taken. Other IPIs also end a HLT, so a test of
+ * the wake itself cannot infer it from the target having woken. */
+uint32_t smp_wake_ipi_taken_test(uint32_t cpu);
+#endif
+
 /* One coherent snapshot of the live online set, bit N = logical CPU N */
 uint32_t smp_online_mask(void);
 

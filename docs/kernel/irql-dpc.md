@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/02-kernel-core/TODO-07-irql-model-dpcs.md sources=include/kernel/sched/irql.h,src/kernel/sched/irql.c,include/kernel/sched/dpc.h,src/kernel/sched/dpc.c,include/kernel/sched/dpc_config.h,include/kernel/sched/apc.h,src/kernel/sched/apc.c,include/kernel/sched/ktimer.h,src/kernel/sched/ktimer.c,include/kernel/sched/kinterrupt.h,src/kernel/sched/kinterrupt.c,include/kernel/sched/kworker.h,src/kernel/sched/kworker.c,src/kernel/idt.c,src/kernel/drivers/lapic.c,src/kernel/test/test_sched.c,src/kernel/test/test_kworker.c reviewed=2026-11-07 order=7 -->
+<!-- docs: covers=todo/02-kernel-core/TODO-07-irql-model-dpcs.md sources=include/kernel/sched/irql.h,src/kernel/sched/irql.c,include/kernel/sched/dpc.h,src/kernel/sched/dpc.c,include/kernel/sched/dpc_config.h,include/kernel/sched/apc.h,src/kernel/sched/apc.c,include/kernel/sched/ktimer.h,src/kernel/sched/ktimer.c,include/kernel/sched/kinterrupt.h,src/kernel/sched/kinterrupt.c,include/kernel/sched/kworker.h,src/kernel/sched/kworker.c,src/kernel/idt.c,src/kernel/drivers/lapic.c,src/kernel/test/test_sched.c,src/kernel/test/test_kworker.c reviewed=2026-11-07T14:30 order=7 -->
 # IRQL, DPCs and APCs
 
 ## What is it?
@@ -18,6 +18,8 @@ Threaded DPCs (`KeInitializeThreadedDpc`) are for work that must block or page. 
 APCs follow the same design one level up. A `KAPC` ([`apc.h`](../../include/kernel/sched/apc.h)) is queued on the target thread under its lock: special kernel APCs to the head, normal ones to the tail, and nothing onto a thread that is exiting. When IRQL drops below `APC_LEVEL`, special APCs run; normal APCs additionally run at `PASSIVE_LEVEL`. `KeEnterCriticalRegion` holds off normal APCs and `KeEnterGuardedRegion` holds off special ones too. A dying thread's queued APCs get their rundown routine.
 
 Two helpers sit on top. `KeSetTimerEx()` ([`ktimer.h`](../../include/kernel/sched/ktimer.h)) queues a DPC automatically when a timer expires. `kworker` ([`kworker.h`](../../include/kernel/sched/kworker.h)) is a single thread for periodic callbacks of a second or more that may call slow paths such as UEFI runtime services.
+
+A DPC targeted at another processor wakes it with an inter-processor interrupt (`VECTOR_IPI_WAKE`), and that processor's idle loop runs the DPC, so the callback keeps its `DISPATCH_LEVEL`, interrupts-on contract. The boot CPU's tick resends the wake for any queue that is still non-empty.
 
 A fairness layer watches both queues: a per-CPU budget of 256 DPCs per tick (`DPC_BUDGET_PER_TICK`, carry-over capped at 512) flags monopolization (the timer-ticking boot CPU refills every CPU's budget, because application-processor timers are masked), and, on CPUs with an invariant TSC and RDTSCP, a watchdog measures each DPC after it returns and fires when one ran longer than 100 microseconds (`DPC_WATCHDOG_SINGLE_DPC_US` in [`dpc_config.h`](../../include/kernel/sched/dpc_config.h)), warning by default or bugchecking in strict mode.
 
@@ -63,7 +65,6 @@ A driver's interrupt handler should acknowledge the device and call `KeInsertQue
 
 - The timer and IPI vectors enter at `DISPATCH_LEVEL` and `HIGH_LEVEL` rather than the named `CLOCK_LEVEL` and `IPI_LEVEL` ([Interrupt Entry/Exit IRQL Integration](../../todo/02-kernel-core/TODO-07-irql-model-dpcs.md#3-interrupt-entryexit-irql-integration)).
 - The timer-interrupt drain caps the number of DPCs per pass but not their total runtime ([Timer/APIC Scheduling Path for DPC Dispatch](../../todo/02-kernel-core/TODO-07-irql-model-dpcs.md#6-timerapic-scheduling-path-for-dpc-dispatch)).
-- A DPC targeted at an idle CPU has no inter-processor interrupt to wake it ([DPC Targeting, Importance, and Flush](../../todo/02-kernel-core/TODO-07-irql-model-dpcs.md#7-dpc-targeting-importance-and-flush)).
 - User-mode APC delivery and alertable waits wait on the exception dispatch work ([APC Delivery Mechanism](../../todo/02-kernel-core/TODO-07-irql-model-dpcs.md#12-apc-delivery-mechanism-kideliverapc)).
 - Only monotonic raise and lower are enforced; a full per-CPU transition-stack validator is not built ([IRQL Violation Traps and Structured Telemetry](../../todo/02-kernel-core/TODO-07-irql-model-dpcs.md#13-irql-violation-traps-and-structured-telemetry)).
 - The cumulative time-at-`DISPATCH_LEVEL` watchdog is not built ([Budgeted DPC/APC Fairness and Starvation Watchdog](../../todo/02-kernel-core/TODO-07-irql-model-dpcs.md#14-budgeted-dpcapc-fairness-and-starvation-watchdog)).

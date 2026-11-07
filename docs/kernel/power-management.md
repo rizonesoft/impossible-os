@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/02-kernel-core/TODO-26-power-management.md sources=src/kernel/acpi.c,include/kernel/acpi.h,src/kernel/pm_idle.c,include/kernel/pm.h,src/kernel/pm/power_callback.c,include/kernel/pm/power_callback.h,src/kernel/drivers/pci_pm.c,include/kernel/drivers/pci_pm.h,src/kernel/smp/smp.c,include/kernel/smp.h,src/kernel/test/test_acpi_power.c,src/kernel/test/test_pm_idle.c,src/kernel/test/test_smp_rendezvous.c reviewed=2026-09-28 order=26 -->
+<!-- docs: covers=todo/02-kernel-core/TODO-26-power-management.md sources=src/kernel/acpi.c,include/kernel/acpi.h,src/kernel/pm_idle.c,include/kernel/pm.h,src/kernel/pm/power_callback.c,include/kernel/pm/power_callback.h,src/kernel/drivers/pci_pm.c,include/kernel/drivers/pci_pm.h,src/kernel/smp/smp.c,include/kernel/smp.h,src/kernel/test/test_acpi_power.c,src/kernel/test/test_pm_idle.c,src/kernel/test/test_smp_rendezvous.c reviewed=2026-11-07 order=26 -->
 # Power Management
 
 ## What is it?

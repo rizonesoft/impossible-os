@@ -1140,9 +1140,8 @@ static int quota_ledger_try_ref(quota_ledger_t *ledger)
  * obvious rationale is wrong for this DPC class: dpc.h:57-65 states that a
  * threaded DPC has no CPU-affinity guarantee -- a single all-CPU worker drains
  * every CPU's threaded list and runs the callback on whatever CPU the scheduler
- * gives it. So the "a callback queued at an idle AP strands until that AP lowers
- * IRQL" hazard, which is real for a NORMAL DPC and is why quota_pressure.c pins
- * its publisher, does not apply here. A fixed list is still chosen over
+ * gives it. So the wait for an AP's idle loop to drain, which is why
+ * quota_pressure.c pins its publisher, does not bind the callback here. A fixed list is still chosen over
  * DPC_TARGET_CURRENT so that every producer contends on ONE queue in a
  * predictable order rather than scattering entries across per-CPU lists.
  *

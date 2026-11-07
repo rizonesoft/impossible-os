@@ -14,6 +14,7 @@
 #include "kernel/sched/irql.h"
 #include "kernel/sched/dpc.h"
 #include "kernel/sched/dpc_config.h" /* DPC_BUDGET_* (watchdog sweep test) */
+#include "kernel/sched/spinlock.h"   /* local_irq_save -- remote DPC IF check */
 #include "kernel/sched/ktimer.h"
 #include "kernel/sched/kinterrupt.h"
 #include "kernel/sched/apc.h"
@@ -1258,9 +1259,8 @@ static void test_ktimer_overdue_periodic_bounded(void)
 }
 
 /* Test: a timer-associated DPC targeted (via KeSetTargetProcessorDpc) to a
- * non-service CPU is normalized to the service CPU at expiry, so it lands on a
- * queue that actually drains -- AP DPC queues have no guaranteed drain trigger
- * yet, so honoring an AP target would strand the DPC (lost-wakeup). */
+ * non-service CPU is normalized to the service CPU at expiry, so it drains in the
+ * tick that fired it rather than after a wake IPI to the target. */
 static void test_ktimer_dpc_target_normalized(void)
 {
     kernel_timer_t t;
@@ -1825,6 +1825,213 @@ static void test_dpc_watchdog_budget_word(void)
     TEST_ASSERT_EQ((uint64_t)word, (uint64_t)DPC_BUDGET_CARRYOVER_MAX, "refill saturates at the cap");
 }
 
+/* ---- Remote-target DPC on an idle AP ------------------------------------- */
+
+static volatile uint32_t s_rdpc_runs, s_rdpc_cpu, s_rdpc_irql, s_rdpc_if;
+static volatile uint32_t s_rdpc_active, s_rdpc_max_active, s_rdpc_hold, s_rdpc_hold_expired;
+
+static void rdpc_routine(struct _KDPC *dpc, void *ctx, void *a1, void *a2)
+{
+    uint64_t flags = local_irq_save();
+    uint32_t active = __atomic_add_fetch(&s_rdpc_active, 1u, __ATOMIC_ACQ_REL);
+    uint32_t spins = 0;
+
+    local_irq_restore(flags);
+    (void)dpc; (void)ctx; (void)a1; (void)a2;
+    s_rdpc_if = (flags & 0x200u) ? 1u : 0u;
+    s_rdpc_cpu = smp_this_cpu()->cpu_id;
+    s_rdpc_irql = KeGetCurrentIrql();
+    if (active > s_rdpc_max_active)
+        s_rdpc_max_active = active;
+    while (__atomic_load_n(&s_rdpc_hold, __ATOMIC_ACQUIRE)) {
+        if (spins++ >= 200000000u) {
+            s_rdpc_hold_expired = 1;
+            break;
+        }
+        __asm__ volatile("pause");
+    }
+    __atomic_sub_fetch(&s_rdpc_active, 1u, __ATOMIC_ACQ_REL);
+    __atomic_add_fetch(&s_rdpc_runs, 1u, __ATOMIC_ACQ_REL);
+}
+
+static int rdpc_wait_runs(uint32_t want)
+{
+    uint64_t start = system_get_ticks();
+    uint32_t spins = 0;
+
+    /* Half a second is many ticks: the wake is immediate and the retry per-tick. */
+    while (__atomic_load_n(&s_rdpc_runs, __ATOMIC_ACQUIRE) < want &&
+           system_get_ticks() - start < 500u && spins++ < 1000000u)
+        yield();
+    return __atomic_load_n(&s_rdpc_runs, __ATOMIC_ACQUIRE) >= want;
+}
+
+/* Kernel routine for the APC-ownership test: records which CPU delivered it. */
+static volatile uint32_t s_rapc_runs, s_rapc_cpu;
+static void rapc_kernel_routine(struct _KAPC *apc, void **normal, void **ctx,
+                                void **a1, void **a2)
+{
+    (void)apc; (void)normal; (void)ctx; (void)a1; (void)a2;
+    s_rapc_cpu = smp_this_cpu()->cpu_id;
+    __atomic_add_fetch(&s_rapc_runs, 1u, __ATOMIC_ACQ_REL);
+}
+
+/* Test: an AP finishing a DPC does not take the BSP thread's pending APC. The
+ * AP's lower to PASSIVE_LEVEL resolves thread_current() to the BSP's thread, so
+ * without the BSP-only gate in irql_lower_deliver the APC ran on the AP. */
+static void test_dpc_on_ap_leaves_bsp_apc_alone(void)
+{
+    static KDPC dpc;
+    static KAPC apc;
+    uint32_t me = smp_this_cpu()->cpu_id, slot;
+    uint32_t spins = 0;
+    uint32_t apc_runs_during_dpc;
+    struct per_cpu_data *target;
+    int fence_valid = 0;
+    KIRQL old;
+
+    for (slot = 1; slot < MAX_CPUS; slot++) {
+        if (slot != me && smp_cpu_is_online(slot))
+            break;
+    }
+    if (slot == MAX_CPUS) {
+        TEST_SKIP("no second online CPU to target");
+        return;
+    }
+
+    s_rdpc_runs = 0;
+    s_rdpc_hold = 0;
+    s_rapc_runs = 0;
+    s_rapc_cpu = MAX_CPUS;
+    KeInitializeDpc(&dpc, rdpc_routine, (void *)0);
+    KeSetTargetProcessorDpc(&dpc, (uint8_t)slot);
+    KeInitializeApc(&apc, thread_current(), OriginalApcEnvironment, rapc_kernel_routine,
+                    0, 0, (uint8_t)ApcKernelMode, 0);
+
+    /* APC_LEVEL keeps the APC pending on this thread; a real owner would take it
+     * on the lower below. No yield in here: this level must not block. */
+    KeRaiseIrql(APC_LEVEL, &old);
+    KeInsertQueueApc(&apc, (void *)0, (void *)0, 0);
+    KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
+    while (!__atomic_load_n(&s_rdpc_runs, __ATOMIC_ACQUIRE) && spins++ < 50000000u)
+        __asm__ volatile("pause");
+    /* Fence: once the AP is back at PASSIVE its first batch has started lowering,
+     * so a DPC queued now runs in a LATER batch, which starts only after that
+     * lower (and any APC it would deliver) has returned. */
+    target = smp_get_cpu(slot);
+    for (spins = 0; spins < 50000000u; spins++) {
+        if (target && __atomic_load_n(&target->current_irql, __ATOMIC_ACQUIRE) == PASSIVE_LEVEL) {
+            fence_valid = 1;
+            break;
+        }
+        __asm__ volatile("pause");
+    }
+    if (fence_valid)
+        KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
+    for (spins = 0; __atomic_load_n(&s_rdpc_runs, __ATOMIC_ACQUIRE) < 2u && spins < 50000000u; spins++)
+        __asm__ volatile("pause");
+    apc_runs_during_dpc = __atomic_load_n(&s_rapc_runs, __ATOMIC_ACQUIRE);
+    KeLowerIrql(old);
+
+    TEST_ASSERT(fence_valid, "the AP returned to PASSIVE_LEVEL after the DPC");
+    TEST_ASSERT_EQ((uint64_t)s_rdpc_runs, 2u, "the DPC and its fence both ran on the AP");
+    TEST_ASSERT_EQ((uint64_t)apc_runs_during_dpc, 0u, "the AP did not take this thread's APC");
+    TEST_ASSERT_EQ((uint64_t)s_rapc_runs, 1u, "the owner took its APC on the lower");
+    TEST_ASSERT_EQ((uint64_t)s_rapc_cpu, (uint64_t)me, "the APC ran on the owner's CPU");
+    /* A no-op unless delivery failed: never leave this on the live test thread. */
+    KeRemoveQueueApc(&apc);
+    KeRemoveQueueDpc(&dpc);
+}
+
+/* Test: a DPC targeted at an idle AP runs there, under the DPC contract
+ * (DISPATCH_LEVEL, interrupts on), and a second insert while the first callback
+ * is running does not nest on it. Before the wake IPI an AP had no drain trigger
+ * and the callback never ran. */
+static void test_dpc_remote_target_runs_on_idle_ap(void)
+{
+    static KDPC dpc;
+    uint32_t me = smp_this_cpu()->cpu_id, slot;
+    uint32_t spins = 0;
+
+    for (slot = 1; slot < MAX_CPUS; slot++) {
+        if (slot != me && smp_cpu_is_online(slot))
+            break;
+    }
+    if (slot == MAX_CPUS) {
+        TEST_SKIP("no second online CPU to target");
+        return;
+    }
+
+    s_rdpc_runs = 0;
+    s_rdpc_max_active = 0;
+    s_rdpc_hold = 0;
+    KeInitializeDpc(&dpc, rdpc_routine, (void *)0);
+    KeSetTargetProcessorDpc(&dpc, (uint8_t)slot);
+
+    /* Insert with this CPU's interrupts masked: the BSP tick that retries a lost
+     * wake cannot run, so a wake taken inside this window came from the insert. */
+    {
+        uint64_t flags = local_irq_save();
+        uint32_t taken = smp_wake_ipi_taken_test(slot);
+        int inserted = KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
+        int woke;
+
+        while (smp_wake_ipi_taken_test(slot) == taken && spins++ < 50000000u)
+            __asm__ volatile("pause");
+        /* Read while still masked: restoring lets a pending tick send its retry. */
+        woke = smp_wake_ipi_taken_test(slot) != taken;
+        local_irq_restore(flags);
+        spins = 0;
+        TEST_ASSERT_EQ((uint64_t)inserted, 1u, "remote insert queues");
+        TEST_ASSERT(woke, "remote insert sends the target a wake IPI");
+    }
+    if (!rdpc_wait_runs(1)) {
+        KeRemoveQueueDpc(&dpc);
+        TEST_ASSERT(0, "DPC targeted at an idle AP never ran");
+        return;
+    }
+    TEST_ASSERT_EQ((uint64_t)s_rdpc_cpu, (uint64_t)slot, "callback ran on its target CPU");
+    TEST_ASSERT_EQ((uint64_t)s_rdpc_irql, (uint64_t)DISPATCH_LEVEL, "callback ran at DISPATCH_LEVEL");
+    TEST_ASSERT_EQ((uint64_t)s_rdpc_if, 1u, "callback ran with interrupts enabled");
+
+    /* Hold a callback open and requeue. A running target needs no wake for that,
+     * so none is sent. Then deliver a wake anyway and see it taken with the DPC
+     * still queued: a handler that drained would nest the DPC on the held one. */
+    s_rdpc_hold_expired = 0;
+    __atomic_store_n(&s_rdpc_hold, 1u, __ATOMIC_RELEASE);
+    KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
+    while (!__atomic_load_n(&s_rdpc_active, __ATOMIC_ACQUIRE) && spins++ < 1000000u)
+        yield();
+    TEST_ASSERT(__atomic_load_n(&s_rdpc_active, __ATOMIC_ACQUIRE) != 0u, "the callback is being held");
+    {
+        uint32_t taken = smp_wake_ipi_taken_test(slot);
+        uint32_t taken_after;
+        int woke = 0;
+
+        KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
+        /* Long enough for a wrongly sent IPI to land before it is looked for. */
+        for (spins = 0; spins < 2000000u; spins++)
+            __asm__ volatile("pause");
+        taken_after = smp_wake_ipi_taken_test(slot);
+        TEST_ASSERT_EQ((uint64_t)taken_after, (uint64_t)taken, "no wake is sent to a CPU running a callback");
+        for (spins = 0; spins < 1000000u && !woke; spins++) {
+            if (smp_wake_ipi_taken_test(slot) != taken)
+                woke = 1;
+            else if (spins % 1000u == 0u)
+                smp_wake_cpu(slot);
+            __asm__ volatile("pause");
+        }
+        TEST_ASSERT(woke, "the held AP takes a wake IPI");
+    }
+    TEST_ASSERT_EQ((uint64_t)__atomic_load_n(&s_rdpc_runs, __ATOMIC_ACQUIRE), 1u,
+                   "the requeued DPC waits for the held one");
+    __atomic_store_n(&s_rdpc_hold, 0u, __ATOMIC_RELEASE);
+    TEST_ASSERT(rdpc_wait_runs(3), "requeued DPC runs after the first returns");
+    TEST_ASSERT_EQ((uint64_t)s_rdpc_hold_expired, 0u, "the hold lasted until it was released");
+    TEST_ASSERT_EQ((uint64_t)s_rdpc_max_active, 1u, "callbacks never overlap on the AP");
+    KeRemoveQueueDpc(&dpc);
+}
+
 /* ---- Section 15: threaded DPC list synchronization ---------------------- */
 
 
@@ -2107,6 +2314,10 @@ void test_register_sched(void)
                             test_apc_kernel_depth, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: DPC watchdog strict-mode toggle",
                             test_dpc_watchdog_strict_toggle, TEST_CAT_SCHED);
+    test_suite_register_cat("dpc remote target: AP leaves the BSP thread's APC",
+                            test_dpc_on_ap_leaves_bsp_apc_alone, TEST_CAT_SCHED);
+    test_suite_register_cat("dpc remote target: runs on an idle AP",
+                            test_dpc_remote_target_runs_on_idle_ap, TEST_CAT_SCHED);
     test_suite_register_cat("dpc watchdog: budget word transitions",
                             test_dpc_watchdog_budget_word, TEST_CAT_SCHED);
     test_suite_register_cat("dpc watchdog: BSP tick services other CPU slots",

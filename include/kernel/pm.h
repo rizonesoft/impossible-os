@@ -48,11 +48,9 @@ int pm_deep_idle_allowed(void);
  * IT ALWAYS HALTS when the caller has interrupts enabled, and the predicate
  * NEVER turns the halt into a spin. That is not a softening of the readiness
  * check, it is the only correct behaviour for the two sites that exist today:
- * neither the compositor loop nor the AP park can SERVICE a pending DPC, and
- * an idle AP has no drain trigger at all -- its LAPIC timer is masked and
- * there is no DPC IPI (`src/kernel/sched/ktimer.c:248-251`), so a stranded DPC
- * would hold the predicate false forever and a refusing loop would burn a
- * whole logical CPU. Returning to a scheduler that can run the work is what a
+ * the compositor loop cannot SERVICE a pending DPC and the AP park services one
+ * only between halts, so a refusing loop would burn a whole logical CPU on a
+ * disabled policy or a DPC that is waiting for its next wake. Returning to a scheduler that can run the work is what a
  * refusal is FOR, and no such caller exists until per-CPU run queues do.
  *
  * Returns the sampled predicate: 1 if the CPU was idle by policy and had no

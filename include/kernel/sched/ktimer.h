@@ -31,11 +31,10 @@
  *
  * DPC OWNERSHIP (NT caller precondition): the timer owns the queueing of its
  * associated KDPC. On expiry the DPC is queued PINNED to the service CPU (so it
- * lands on the only queue that is guaranteed to drain), overriding any caller
+ * drains in the same tick that fired it), overriding any caller
  * KeSetTargetProcessorDpc without mutating the caller's cpu_target field. The
- * caller must NOT independently KeInsertQueueDpc a timer's DPC -- doing so (e.g.
- * onto an AP, whose DPC queue has no guaranteed drain trigger yet) is misuse,
- * the same class as queueing one KDPC twice.
+ * caller must NOT independently KeInsertQueueDpc a timer's DPC -- doing so is
+ * misuse, the same class as queueing one KDPC twice.
  *
  * LIFETIME (NT caller precondition, mirrors KDPC): a caller-owned timer (and
  * its associated KDPC) must remain allocated until it is cancelled AND any
