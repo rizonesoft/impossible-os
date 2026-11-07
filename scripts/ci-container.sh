@@ -48,6 +48,8 @@ su ci -c '
   CI_PARITY=1 QUIET=1 bash scripts/test.sh QUIET=1
 '
 EOF
+# mktemp -d is 0700, and the suites run as an unprivileged user, as CI's do.
+chmod -R a+rX "$TMP"
 mkdir -p build
 echo "ci-container: $IMAGE, HEAD $(git rev-parse --short HEAD), log build/ci-container.log"
 rc=0
