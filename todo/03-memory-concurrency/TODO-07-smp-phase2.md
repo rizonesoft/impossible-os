@@ -96,6 +96,7 @@ After `vmm_unmap()` or `mprotect()` modifies a PTE in a shared address space, al
 - [ ] Hook `tlb_shootdown()` into `vmm_unmap()`, `vmm_mprotect()`, and the RO path `vmm_set_ro()`/`vmm_protect_range()` (W^X + SSDT write-protect TODO-12 §27) after the PTE store, so RO transitions are coherent across all CPUs, not BSP-local.
 - [ ] Also hook `tlb_shootdown()` into `vmm_unmap_user_page()` so live per-process shrink/free is cross-CPU coherent (consumer: `02-kernel-core/TODO-21 §3` brk/sbrk shrink defers here)
 - [ ] Also hook `tlb_shootdown()` into `vmm_install_guard_page()`/`vmm_uninstall_guard_page()` -- guards install at RUNTIME, so a stale remote translation can overrun a guard silently (consumer: `02-kernel-core/TODO-21 §19`)
+- [ ] Also cover the per-process protect path once `02-kernel-core/TODO-20` §2 adds it (item: "Prereq: SMP TLB shootdown for the RMW protect path"): it changes PTEs in a process CR3 that may be live on another CPU.
 - [ ] Single-CPU fast path: if `cpu_mask` has only the local CPU bit set, just `invlpg(vaddr)` without IPI overhead
 - [ ] Boot log: `[SMP] TLB shootdown IPI registered (vector 0xFE)` (`VECTOR_IPI_TLB_SHOOTDOWN` is reserved at `0xFE` in `include/kernel/vectors.h`)
 - [ ] `smp_call_function(cpu, fn, arg)` cross-CPU synchronous call (same IPI+ack pattern): first consumer is BSP delegation of timer-resolution transitions (`timer_set_tick_hz` refuses AP callers today; `KeSetTimerResolution` rolls back AP-side requests -- `src/kernel/time/timer_resolution.c`, filed from `01-boot-platform/TODO-11` §6 review)

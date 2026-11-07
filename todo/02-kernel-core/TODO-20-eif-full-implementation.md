@@ -15,10 +15,10 @@ title: "TODO-20 -- EIF Full Implementation"
 > [!IMPORTANT]
 > **Decision pinned (2026-04-24):** EIF is the **native binary format** for Impossible OS user-mode and module code. EIF is **NOT** a replacement for the **kernel image format** -- the kernel itself stays **ELF indefinitely** (see `CLAUDE.md` → Toolchain → Kernel Binary Format). The kernel binary format is strictly internal to the UEFI bootloader handoff; nothing on the Win32 ABI surface or the EIF loader surface depends on it. Do not propose re-targeting the kernel to EIF or PE32+ under "unified format" reasoning -- the two layers are independently optimal. Distribution converters (`eif2pe`, `eif2elf`) exist for cross-OS user-app portability and are tracked in TODO-17 §13 as follow-ups.
 
-> **Goal:** Complete the Executable Impossible Format (EIF) from its current basic loader to a production-quality native binary format. The basic loader (TODO-17 §5) validates headers, copies segments, and builds import dispatch tables. This TODO fills the gaps. Shipped + reviewed: range overlap validation, API version gating, metadata parsing, LZ4 decompression, CET flag reservation. Deferred with concrete owners: segment permission enforcement, ASLR, loader-owned module registration, optional import stubs, per-process isolation, signature-block ABI. When done, EIF is the fastest, most secure native binary format on any OS.
+> **Goal:** Complete the Executable Impossible Format (EIF) from its current basic loader to a production-quality native binary format. The basic loader (TODO-17 §5) validates headers, copies segments, and builds import dispatch tables. This TODO fills the gaps. Shipped + reviewed: range overlap validation, API version gating, metadata parsing, LZ4 decompression, CET flag reservation. Open: segment permission enforcement (§2), loader-owned module registration (§3), per-process dispatch isolation (§9), resource section (§12). Parked: optional import stubs (§7) and the signature-block ABI (§11) on operator decisions, ASLR (§8) on a PIC producer. When done, EIF is the fastest, most secure native binary format on any OS.
 
 > [!IMPORTANT]
-> **Current state:** `eif_load()` in `src/kernel/eif.c` validates the canonical section order + range overlap (§1), gates `api_version` (§4), parses the metadata section (§5), transparently LZ4-decompresses compressed segments (§6), and reserves the CET flag bits with fail-closed unknown-flag rejection (§10). The dispatch table at 0x8F0000 is still identity-mapped and SHARED across processes. Still missing (deferred, owner-tracked): segment R/W/X enforcement (§2), loader-owned module registration (§3), optional user-callable import stubs (§7), ASLR (§8), per-process dispatch isolation (§9), signature-block ABI (§11).
+> **Current state:** `eif_load()` in `src/kernel/eif.c` validates the canonical section order + range overlap (§1), gates `api_version` (§4), parses the metadata section (§5), transparently LZ4-decompresses compressed segments (§6), and reserves the CET flag bits with fail-closed unknown-flag rejection (§10). The dispatch table at 0x8F0000 sits inside the image range: a fork+exec child gets private frames for it (`task_exec` private-frame remap), a launcher-spawned task loads over the shared identity map, and it is writable from ring 3 either way. Still missing: segment R/W/X enforcement (§2), loader-owned module registration (§3), per-process dispatch isolation (§9), and the parked §7, §8, §11.
 > EIF spec lives at `specs/eif-format.md`. Code signing is tracked separately in TODO-17 §17. The `elf2eif` converter is tracked in TODO-17 §13.
 
 > [!NOTE]
@@ -40,10 +40,10 @@ title: "TODO-20 -- EIF Full Implementation"
 - -> XREF: `TODO-17-binary-system.md §15` -- ASLR for all formats (COMPLEMENT, not started)
 - -> XREF: `TODO-17-binary-system.md §6` -- module list registration (FOUNDATION, partial)
 - -> XREF: `TODO-03-kernel-libraries.md §3` -- LZ4 block decompressor (FOUNDATION for §6 compressed segments; consumed via `lz4_decompress`, §6 now [x])
-- -> XREF: `TODO-03-kernel-libraries.md §5` -- kernel CSPRNG for `load_base=0` ASLR in §8 (FOUNDATION, not started)
+- -> XREF: `TODO-03-kernel-libraries.md §5` -- kernel CSPRNG for `load_base=0` ASLR in §8 (FOUNDATION, shipped: `include/kernel/csprng.h`)
 - -> XREF: `TODO-12-native-api-ssdt.md §4` -- SSDT service table (FOUNDATION, partial)
 - -> XREF: `01-boot-platform/TODO-10-bare-metal-hardening.md §8` -- per-process PML4 base already implemented; §9 consumes it as a foundation
-- -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` -- unique per-process user frames are still required before §9 can be complete
+- -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` -- unique frames for every process image; §9 needs them only for the dispatch table, which it allocates itself, and §8 needs them for real entropy
 
 ## Outcome
 
@@ -60,20 +60,20 @@ title: "TODO-20 -- EIF Full Implementation"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                   | Depends On                 | Status |
-| --- | :---: | ------------------------------------------------------------- | -------------------------- | :----: |
-| ⭐  |   1   | Range overlap validation (normative rule 2)                   | --                         |  [x]   |
-| 💎  |   2   | Segment permission enforcement (R/W/X PTE)                    | §1                         |  [/]   |
-| ⭐  |   3   | Module registration for EIF                                   | T17 §6                     |  [/]   |
-| ⭐  |   4   | API version gating                                            | §1                         |  [x]   |
-| ⭐  |   5   | Metadata section parser                                       | §1                         |  [x]   |
-| ⭐  |   6   | LZ4 compressed segments                                       | T03 §3                     |  [x]   |
-| ⭐  |   7   | Optional import stubs                                         | §3, T17 §4, T17 §13        |  [/]   |
-| ⭐  |   8   | EIF ASLR (load_base=0 randomization)                          | §2, T17 §15, T03 §5        |  [/]   |
-| ⭐  |   9   | Per-process dispatch table isolation                          | §3, D01 T10 §8, D03 T01 §3 |  [/]   |
-| 💎  |  10   | CET compatibility flag (format reservation)                   | --                         |  [/]   |
-| 💎  |  11   | EIF signature-block ABI (signer key)                          | D02 T19 §4                 |  [/]   |
-| 💎  |  12   | §12 Resource section with SVG app icons (format version bump) | §5                         |  [ ]   |
+| ⭐  | Order | Deliverable                                                   | Depends On          | Status |
+| --- | :---: | ------------------------------------------------------------- | ------------------- | :----: |
+| ⭐  |   1   | Range overlap validation (normative rule 2)                   | --                  |  [x]   |
+| 💎  |   2   | Segment permission enforcement (R/W/X PTE)                    | §1                  |  [ ]   |
+| ⭐  |   3   | Module registration for EIF                                   | T17 §6              |  [ ]   |
+| ⭐  |   4   | API version gating                                            | §1                  |  [x]   |
+| ⭐  |   5   | Metadata section parser                                       | §1                  |  [x]   |
+| ⭐  |   6   | LZ4 compressed segments                                       | T03 §3              |  [x]   |
+| ⭐  |   7   | Optional import stubs                                         | §3, T17 §4, T17 §13 |  [/]   |
+| ⭐  |   8   | EIF ASLR (load_base=0 randomization)                          | §2, T17 §15, T03 §5 |  [/]   |
+| ⭐  |   9   | Per-process dispatch table isolation                          | §2, §3, D01 T10 §8  |  [ ]   |
+| 💎  |  10   | CET compatibility flag (format reservation)                   | --                  |  [/]   |
+| 💎  |  11   | EIF signature-block ABI (signer key)                          | D02 T19 §4          |  [/]   |
+| 💎  |  12   | §12 Resource section with SVG app icons (format version bump) | §5                  |  [ ]   |
 
 > 💎 = parity -- matches a capability Windows PE and Linux ELF both have.
 > ⭐ = exclusive -- Impossible OS native format superiority.
@@ -101,29 +101,28 @@ The spec mandates `segment_offset < import_offset < metadata_offset < signature_
 > - Scope: §1 owns file-range ordering/overlap; the finer segment-data-vs-metadata overlap tie-in rides with signing (§11 + TODO-17 §17); VA-range/dispatch-table guards are in `eif_load` (§9 owns per-process isolation).
 >
 > **Verified:** 2026-07-10 | commit `e360c6c3` | 4/4 items | build OK | tests 712/712 (exec; 4 EIF range suites)
-> **Accepted:** [L] concurrent-exec race on the shared dispatch table + identity-mapped user range (documented in `eif.c`) -> owned by per-process isolation. -> XREF: 02-kernel-core/TODO-20 §9 (item: "Map at EIF_DISPATCH_TABLE_ADDR in the per-process PML4" at line 270)
+> **Accepted:** [L] concurrent-exec race on the shared dispatch table + identity-mapped user range (documented in `eif.c`) -> owned by per-process isolation. -> XREF: 02-kernel-core/TODO-20 §9 (item: "Map at EIF_DISPATCH_TABLE_ADDR in the per-process PML4")
 > **Quality reviewed:** 2026-07-10 | Codex 3x (adversarial, consistency, perf) + kernel-quality-auditor | 1M+1L fixed, 2L accepted-XREF | scope: kernel-code-quality
 
 ---
 
 ## 2. Segment Permission Enforcement (R/W/X via PTE)
 
-The loader copies segment data but does not set page permissions. Segments should have NX on data and RO on rodata/text. The PTE-enforcement core is architecturally BLOCKED (see the callout + Deferred stamp); the W+X-reject + page-align VALIDATION half is self-contained and implementable now.
+The loader copies segment data but does not set page permissions. Segments should have NX on data and RO on rodata/text. The W+X-reject + page-align validation, the per-process protect API and the metadata threading have no external blocker. Only a live-RMW path waits on the TLB shootdown.
 
 > [!WARNING]
-> **Architectural blocker (found in the §2 exploration, corrects the old note):** `vmm_protect_range` does NOT split 2 MiB huge pages (returns -1); use `vmm_set_ro`/`vmm_set_nx` (RMW + auto-split). BUT those + `vmm_split_huge_page` are all hardcoded to `kernel_pml4` (T17 §5 "per-process PML4 support deferred"), and `vmm_create_user_pml4` rebuilds the user PT as Present|Writable (no NX). So perms set from `eif_load` are INVISIBLE to the per-process PML4 in CR3. The ELF loader has the identical dead-enforcement gap (`elf.c` `nx_stack`/`relro` are unused). Needs a new per-process-PML4 protect API first.
+> **Prerequisite (found in the §2 exploration, corrects the old note):** `vmm_protect_range` does NOT split 2 MiB huge pages (returns -1); use `vmm_set_ro`/`vmm_set_nx` (RMW + auto-split). BUT those + `vmm_split_huge_page` are all hardcoded to `kernel_pml4` (T17 §5 "per-process PML4 support deferred"), and `vmm_create_user_pml4` rebuilds the user PT as Present|Writable (no NX). So perms set from `eif_load` are INVISIBLE to the per-process PML4 in CR3. The ELF loader has the identical dead-enforcement gap (`elf.c` `nx_stack`/`relro` are unused). Needs a new per-process-PML4 protect API first, and that API is this section's own work (no such function exists in `vmm.h` as of 2026-11-07).
 
-- [/] Per-segment PTE permission enforcement (NX/RO/exec-not-writable). BLOCKED: `vmm_set_ro`/`vmm_set_nx` are kernel_pml4-only (T17 §5), so perms set here are invisible to the per-process PML4 the task runs under.
+- [/] Per-segment PTE permission enforcement (NX/RO/exec-not-writable). Waits on the two prereq items below and, for a CR3 live on another CPU, on `tlb_shootdown` (03-memory-concurrency/TODO-07 §2).
 - [ ] Prereq: add a per-process-PML4 protect API to vmm.c (`vmm_set_ro_pml4(pml4_phys,virt,size)` / `vmm_set_nx_pml4` + pml4-aware huge-page split); shared with the ELF loader. -> XREF: T17 §5.
 - [ ] Prereq: thread per-segment R/W/X metadata from `eif_load` to `task_exec` (an `eif_exec_wrapper`; `eif_load` returns only the entry) + apply perms on the per-process cr3 after User bits. -> XREF: §9.
-- [ ] Prereq: SMP TLB shootdown for the RMW protect path (`vmm_pte_rmw` is single-CPU-only; `task_exec` runs post-SMP). -> XREF: D03 T07 §2.
+- [/] Prereq: SMP TLB shootdown for the RMW protect path. BLOCKED: `tlb_shootdown` does not exist and `vmm_pte_rmw` is single-CPU-only (`vmm.c`). -> XREF: 03-memory-concurrency/TODO-07 §2 (item: "Hook `tlb_shootdown()` into `vmm_unmap()`").
 - [ ] Reject W+X segments (`EIF_SEG_WRITE | EIF_SEG_EXEC`) in `eif_validate` -- self-contained policy check, no PTE writes.
 - [ ] Require page-aligned `seg->vaddr` in `eif_validate` so no two differently-flagged segments share a 4K page (the W^X page-granularity precondition; gap-audit). Self-contained.
+- [ ] Split `scripts/build-eif.py` output before enforcing: it emits ONE `EIF_SEG_READ | EIF_SEG_EXEC` segment over the whole flat blob, so enforcing R-X would fault any write to data inside that blob. Found 2026-11-07.
 - [ ] Commit: `"kernel: eif -- segment permission enforcement via PTE flags"`
 
-**Test checkpoint:** (self-contained half, implementable now) a W+X segment (`EIF_SEG_WRITE|EIF_SEG_EXEC`) is rejected; a non-page-aligned `seg->vaddr` is rejected. (PTE-enforcement half, deferred) `.text` executable-not-writable + `.data` writable-not-executable once the per-process-PML4 protect API lands. EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
->
-> **Deferred:** [H] Segment PTE permission enforcement is architecturally blocked: `vmm_set_ro`/`vmm_set_nx` are kernel_pml4-only (T17 §5 "per-process PML4 support deferred"), so perms set from the loader are invisible to the per-process PML4 in CR3. Needs a new per-process-PML4 protect API + segment-metadata threading + SMP shootdown -- shared with the ELF loader, coupled to §9. The W+X-reject + page-align validation half is self-contained + still open. -> XREF: 02-kernel-core/TODO-17 §5 (item: "Implement `vmm_protect(virt, new_flags)` + `vmm_protect_range(addr, size, flags)`" -- extend with a per-process-PML4 variant); 02-kernel-core/TODO-20 §9 (item: "Map at EIF_DISPATCH_TABLE_ADDR in the per-process PML4" at line 222)
+**Test checkpoint:** (self-contained half, implementable now) a W+X segment (`EIF_SEG_WRITE|EIF_SEG_EXEC`) is rejected; a non-page-aligned `seg->vaddr` is rejected. (PTE-enforcement half) `.text` executable-not-writable + `.data` writable-not-executable once the per-process-PML4 protect API lands. EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
@@ -138,8 +137,6 @@ Every loaded binary must be registered in the crash registry and module list. EI
 - [ ] Commit: `"kernel: eif -- module registration via exec_register_module"`
 
 **Test checkpoint:** After loading an EIF, `exec_find_module_by_pc(entry_va)` returns the EIF module with `EXEC_FMT_EIF` (already true via the generic path); once the loader-owned refactor lands, `base_address` is the actual load base + `size_of_image` the segment span. EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
->
-> **Deferred:** [M] Loader-owned EIF module registration (accurate load range + replace-on-re-exec) is a refactor owned by this §3. The crash-registry need is ALREADY met: the generic `task_exec` registration sets format=EXEC_FMT_EIF and (via §5) the metadata `"name"` on first load. Open work: register from `eif_load` with the true load range instead of the whole USER_ELF span, and same-base replace so a re-exec updates the stale name/range (all formats). -> XREF: 02-kernel-core/TODO-20 §3 (items: "Register from `eif_load()` with the ACTUAL load range" + "Replace-on-re-exec").
 
 ---
 
@@ -227,16 +224,16 @@ The spec reserves `EIF_FLAG_COMPRESSED` for LZ4-compressed segment data. This en
 
 Spec normative rule 5: skipped optional imports MUST have their dispatch table entry set to a deterministic stub returning `STATUS_NOT_IMPLEMENTED`.
 
-- [ ] ABI prerequisite: reconcile `specs/eif-format.md` rule 5, `include/kernel/eif.h` `eif_dispatch_entry_t`, and `TODO-17-binary-system.md` §13 before implementation; the current contract is data-only (`{syscall_id, available}`), not callable stub slots
-- [ ] If the ABI stays data-only: have `elf2eif` emit deterministic user thunks for optional imports that translate `available=0` into `STATUS_NOT_IMPLEMENTED` (-> XREF: `TODO-17-binary-system.md §13`)
-- [ ] If the ABI changes to callable stub slots: update the EIF spec and `eif_dispatch_entry_t` layout first (-> XREF: `TODO-17-binary-system.md §4` -- EIF format spec, the ABI source of truth)
-- [ ] In the dispatch table write pass: for optional imports where `available=0`, set the dispatch entry to point to a kernel-provided stub function that returns `STATUS_NOT_IMPLEMENTED` (0xC0000002)
-- [ ] The stub address should be a well-known kernel page mapped read-only into user space
-- [ ] User code calling an unavailable optional import gets a clean `STATUS_NOT_IMPLEMENTED` return instead of a crash
-- [ ] Commit: `"kernel: eif -- optional import stub generation"`
+- [/] ABI prerequisite: reconcile `specs/eif-format.md` rule 5, `eif_dispatch_entry_t` and `TODO-17-binary-system.md` §13; the contract is data-only (`{syscall_id, available}`), not callable slots. BLOCKED: `todo/answers.md` Q6.
+- [/] If the ABI stays data-only: have `elf2eif` emit deterministic user thunks that translate `available=0` into `STATUS_NOT_IMPLEMENTED`. BLOCKED: Q6, then `elf2eif` (`TODO-17-binary-system.md §13`).
+- [/] If the ABI changes to callable stub slots: update the EIF spec and `eif_dispatch_entry_t` layout first. BLOCKED: Q6. -> XREF: `TODO-17-binary-system.md §4` (EIF format spec, the ABI source of truth).
+- [/] In the dispatch table write pass: for optional imports where `available=0`, point the entry at a kernel-provided stub returning `STATUS_NOT_IMPLEMENTED` (0xC0000002). BLOCKED: only exists if Q6 picks callable slots.
+- [/] The stub address should be a well-known kernel page mapped read-only into user space. BLOCKED: only exists if Q6 picks callable slots.
+- [/] User code calling an unavailable optional import gets a clean `STATUS_NOT_IMPLEMENTED` return instead of a crash. BLOCKED: Q6; no user code reads the table at 0x8F0000 today.
+- [/] Commit: `"kernel: eif -- optional import stub generation"` -- BLOCKED: Q6.
 
 **Test checkpoint:** An EIF importing an unregistered optional SSDT entry gets `STATUS_NOT_IMPLEMENTED` (0xC0000002) return value, not a crash. Serial log shows `"eif: optional import 0x%x stubbed"`. EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-> **Deferred:** [M] Optional-import STUB slots (spec rule 5) blocked: the EIF dispatch table is data-only (`{syscall_id, available}`; user code checks availability before SYSCALL), and a callable stub needs the unsettled EIF import-CALL ABI plus a per-process read-only user stub page -> XREF: 02-kernel-core/TODO-17 §13 (item: "Generate import table -> the required-import CALL ABI" at line 402); per-process user mapping -> this TODO §9.
+> **Deferred:** [M] awaiting-answer Q6: optional-import stub slots (spec rule 5) contradict the data-only dispatch table (`{syscall_id, available}`), and this section and `TODO-17` §13 each waited on the other for the import-CALL ABI, so the decision had no owner. -> XREF: `todo/answers.md` Q6; 02-kernel-core/TODO-17 §13 (item: "Generate import table -> the required-import CALL ABI").
 
 ---
 
@@ -244,36 +241,36 @@ Spec normative rule 5: skipped optional imports MUST have their dispatch table e
 
 When `load_base=0`, the EIF binary is position-independent and should be loaded at a randomized address for security. This integrates with the broader ASLR work in TODO-17 §15.
 
-- [ ] Depends on: kernel CSPRNG in `TODO-03-kernel-libraries.md` §5 (until [x] there, this section stays blocked)
-- [ ] If `load_base == 0`: generate a random base address using the kernel CSPRNG (-> XREF: `TODO-03-kernel-libraries.md` §5 Monocypher/RDRAND)
-- [ ] Random base must be page-aligned, within the user address range, and not overlapping existing mappings
-- [ ] Update all segment vaddr calculations to use the randomized base
-- [ ] Keep the dispatch table VA fixed at `EIF_DISPATCH_TABLE_ADDR`; only the image base moves here, while §9 changes the physical backing and protection model later
-- [ ] Real entropy requires process-PRIVATE image frames: randomizing over the shared identity map gives ~0 entropy. Block meaningful ASLR on §9 per-process frames. -> XREF: §9, D03 T01 §3.
-- [ ] Require a measured entropy floor (base varies over >= N address bits across many loads), not just "different each time".
-- [ ] Soundness assumes `elf2eif` emits true -fpic with no absolute data/fn pointers; absolute-pointer binaries need the v1.1 relocation table -- test PIC binaries with internal vtables across many bases.
-- [ ] Log the randomized base: `"eif: ASLR base=0x%x"`
-- [ ] Commit: `"kernel: eif -- ASLR for position-independent binaries"`
+- [x] Depends on: kernel CSPRNG in `TODO-03-kernel-libraries.md` §5. Shipped: `include/kernel/csprng.h`, `src/kernel/csprng.c`.
+- [/] If `load_base == 0`: generate a random base with the kernel CSPRNG. BLOCKED: no producer emits PIC images (`scripts/build-eif.py` hardcodes `USER_ELF_BASE`). -> XREF: `TODO-17-binary-system.md §13` (item: "Extract `PT_LOAD`").
+- [/] Random base must be page-aligned, within the user address range, and not overlapping existing mappings. BLOCKED: same PIC producer gap, `TODO-17-binary-system.md §13`.
+- [/] Update all segment vaddr calculations to use the randomized base. BLOCKED: same PIC producer gap, `TODO-17-binary-system.md §13`.
+- [/] Keep the dispatch table VA fixed at `EIF_DISPATCH_TABLE_ADDR`; only the image base moves here, while §9 changes the backing and protection. BLOCKED: same PIC producer gap, `TODO-17-binary-system.md §13`.
+- [/] Real entropy requires process-PRIVATE image frames. Fork+exec has them (`task_exec` remap); launcher-spawned tasks do not. BLOCKED: -> XREF: 03-memory-concurrency/TODO-01 §3 (item: "Per-process physical isolation").
+- [/] Require a measured entropy floor (base varies over >= N address bits across many loads). BLOCKED: `USER_ELF_SIZE` is 1 MiB, at most 8 page bits before segments, table and stack; needs PIC images first (`TODO-17-binary-system.md §13`).
+- [/] Soundness assumes `elf2eif` emits true -fpic with no absolute data/fn pointers; absolute-pointer binaries need the v1.1 relocation table. BLOCKED: `elf2eif` does not exist (`TODO-17-binary-system.md §13`).
+- [/] Log the randomized base: `"eif: ASLR base=0x%x"`. BLOCKED: same PIC producer gap, `TODO-17-binary-system.md §13`.
+- [/] Commit: `"kernel: eif -- ASLR for position-independent binaries"` -- BLOCKED: same PIC producer gap.
 
 **Test checkpoint:** Over many loads of the same PIC EIF binary (`load_base=0`), the base varies over a measured entropy floor (not just "different twice"); a PIC binary carrying internal vtables/function-pointers executes correctly across many randomized bases. Non-PIC EIF (`load_base!=0`) loads at its preferred address. Serial: `"eif: ASLR base=0x%x"`. EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-> **Deferred:** [M] EIF ASLR blocked: randomizing `load_base` over the shared identity-mapped user range gives ~0 real entropy -- meaningful ASLR needs process-PRIVATE image frames (§9) plus the kernel CSPRNG. Base-randomization mechanics also require `elf2eif` true-PIC emission -> XREF: this TODO §9 (per-process frames); `03-memory-concurrency/TODO-01 §3` (per-process physical isolation); `TODO-03-kernel-libraries.md §5` (CSPRNG).
+> **Deferred:** [M] EIF ASLR blocked: no producer emits `load_base=0` images, and randomizing over the shared identity map gives ~0 real entropy for launcher-spawned tasks. The CSPRNG blocker this stamp used to name has shipped. -> XREF: 02-kernel-core/TODO-17 §13 (item: "Extract `PT_LOAD`"); 03-memory-concurrency/TODO-01 §3 (item: "Per-process physical isolation").
 
 ---
 
 ## 9. Per-Process Dispatch Table Isolation
 
-Currently the EIF dispatch table at 0x8F0000 is identity-mapped and shared. When per-process page tables exist, each process should have its own dispatch table backed by unique physical pages.
+The EIF dispatch table at 0x8F0000 is written through the identity map. Per-process page tables exist, and a fork+exec child already lands on private frames, but a launcher-spawned task (cr3=0 at load) still shares them. Each process should have its own read-only table on its own frames.
 
-- [ ] Foundation check: consume `01-boot-platform/TODO-10-bare-metal-hardening.md §8` per-process PML4 base instead of the shared kernel PML4
-- [ ] Blocker: wait for `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` per-process physical isolation so the dispatch table pages are backed by unique frames per process
+- [x] Foundation check: `01-boot-platform/TODO-10-bare-metal-hardening.md §8` per-process PML4 base shipped (`vmm_create_user_pml4`, `vmm_map_user_page`, `vmm_remap_user_page`).
+- [x] Dropped the wait on `03-memory-concurrency/TODO-01` §3: this section allocates its own table frames, so whole-image isolation is not a prerequisite for the table.
 - [ ] Allocate physical frames for the dispatch table pages via `pmm_alloc_frame()`
 - [ ] Map at EIF_DISPATCH_TABLE_ADDR in the per-process PML4 (not kernel PML4)
 - [ ] Write dispatch entries into the per-process pages
-- [ ] Set pages as User + Read-Only (dispatch table should not be writable by user code)
+- [ ] Set pages as User + Read-Only (dispatch table should not be writable by user code). `vmm_remap_user_page` takes no flags, so this uses the §2 per-process protect API. Map RO before first ring-3 entry so no stale translation exists.
+- [ ] Correct the `eif_load` comment that says only one process image can exist at a time (`src/kernel/eif.c`, dispatch table write): fork+exec children already hold private images.
 - [ ] Commit: `"kernel: eif -- per-process dispatch table isolation"`
 
 **Test checkpoint:** With per-process page tables enabled, two EIF processes with different import tables each observe isolated physical backing for the dispatch slot at `0x8F0000` (no cross-process bleed through the shared kernel map). A user-mode write attempt to the dispatch table pages faults. Serial log shows a clear per-process map message (exact substring documented in the implementation PR). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-> **Deferred:** [M] Per-process dispatch-table isolation blocked on per-process page tables: the table at `0x8F0000` is identity-mapped in the shared kernel PML4 today, so unique per-process physical backing + User+RO protection need a per-process PML4 -> XREF: `01-boot-platform/TODO-10 §8` (per-process PML4 base); `03-memory-concurrency/TODO-01 §3` (per-process physical isolation).
 
 ---
 
@@ -307,13 +304,13 @@ Both Win11 (`IMAGE_DLLCHARACTERISTICS_EX_CET_COMPAT`) and Linux (`.note.gnu.prop
 
 The spec'd signature block (`algo`, `sig_size`, `signature` over `[0, signature_offset)`) carries no signer pubkey or key-id, and CI trust anchors store only a pubkey hash -- so a verifier has no pubkey to run Ed25519 against. TODO-19 §4 deferred this ABI decision here (TODO-20 owns the EIF format); the verify implementation is TODO-17 §17. This section owns the FORMAT amendment that unblocks both -- resolving the current signing-ownership cycle.
 
-- [ ] Amend `specs/eif-format.md` signature block to carry signer `pubkey[32]` (+ key-id) alongside `algo`/`sig_size`/`signature`; map `algo` to `ci_sig_alg_t` (Ed25519; reject RSA = unsupported).
-- [ ] Bump `EIF_VERSION` for the signature-block layout change; gate old vs new by version.
-- [ ] Verifier contract: `ci_crypto_verify(ED25519, [0,sig_off), sig, pubkey)` AND the pubkey hash must match a trusted CI anchor tier. -> XREF: D02 T19 §3, D02 T19 §4.
-- [ ] Commit: `"kernel: eif -- signature-block ABI (signer key delivery)"`
+- [/] Amend `specs/eif-format.md` signature block to carry signer `pubkey[32]` (+ key-id) alongside `algo`/`sig_size`/`signature`; map `algo` to `ci_sig_alg_t` (Ed25519; reject RSA = unsupported). BLOCKED: `todo/answers.md` Q7.
+- [/] Bump `EIF_VERSION` for the signature-block layout change; gate old vs new by version. BLOCKED: Q7.
+- [/] Verifier contract: `ci_crypto_verify(ED25519, [0,sig_off), sig, pubkey)` AND the pubkey hash must match a trusted CI anchor tier. BLOCKED: Q7. -> XREF: D02 T19 §3, D02 T19 §4.
+- [/] Commit: `"kernel: eif -- signature-block ABI (signer key delivery)"` -- BLOCKED: Q7.
 
 **Test checkpoint:** the amended signature block round-trips through `elf2eif` + the loader; a signed EIF with a pubkey whose hash matches a trusted anchor verifies, and one with an untrusted pubkey is rejected. (Verify impl lands in TODO-17 §17.) Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-> **Deferred:** [M] Operator-reserved: this is a security-sensitive EIF signature-block ABI + `EIF_VERSION` bump with NO end-to-end validation path today -- the producer (`eifsign`/`elf2eif` signing) and the verify impl are both deferred, and CI trust anchors do not exist yet, so ratifying the on-disk signature format unilaterally in an unattended run is inappropriate. Needs operator sign-off -> XREF: `TODO-17-binary-system.md §17` (verify impl + `eifsign` producer); `TODO-19-code-integrity-trust-policy.md §4` (trusted CI anchor tiers, item: "Embedded signature validation").
+> **Deferred:** [M] awaiting-answer Q7: security-sensitive EIF signature-block ABI + `EIF_VERSION` bump. The producer (`eifsign`) and verifier are unbuilt and no compiled CI anchor exists, so no end-to-end test can validate the format yet, and `TODO-19` §4 waits on this. -> XREF: `todo/answers.md` Q7; `TODO-17-binary-system.md §17` (verify impl + `eifsign` producer); `TODO-19-code-integrity-trust-policy.md §4` (item: "EIF sig-block ABI decision").
 
 ---
 

@@ -119,3 +119,18 @@ Five answers are needed. The recommendations are from reading the code, not from
 - **Add `SUBSYS_KIMAGE`?** Recommended: yes.
 
 Blocks TODO-18 s2-s10 only.
+
+## Q6 (TODO-20 §7, TODO-17 §13): what does an EIF import call actually compile to?
+
+`specs/eif-format.md` rule 5 requires a callable stub for a skipped optional import, but `eif_dispatch_entry_t` is data-only (`{syscall_id, available}`), and nothing in user code reads the table at 0x8F0000. `TODO-20` §7 and `TODO-17` §13 each waited on the other for this, so nobody owned it, and `elf2eif` cannot produce a runnable image until it is settled.
+
+- **A: keep the table data-only.** `elf2eif` emits thunks that check `available`, then return `STATUS_NOT_IMPLEMENTED` or issue `SYSCALL`. Rule 5 is rewritten; no layout change.
+- **B: callable slots.** The entry layout changes and the kernel maps a read-only stub page into every process.
+
+Recommended: A, because the on-disk format stays as it is, the kernel gains no user-executable page, and §9 can make the table read-only without touching the layout. This comes from reading the code, not a design review, and that review still runs when §7 starts. Blocks TODO-20 §7 and the import half of TODO-17 §13.
+
+## Q7 (TODO-20 §11, TODO-19 §4, TODO-17 §17): may the run change the EIF signature block?
+
+The spec'd block (`algo`, `sig_size`, `signature`) has no signer key, and CI anchors store only a key hash, so a verifier has nothing to run Ed25519 against. The proposal adds `pubkey[32]` and a key-id and bumps `EIF_VERSION`, with old images gated by version. No signed EIF exists yet, so nothing needs migrating, but this is a security-sensitive on-disk format, and until `eifsign`, the verifier and a compiled anchor exist it cannot be tested end to end.
+
+Recommended: approve the amendment, landing it with the `TODO-17` §17 verifier rather than ahead of it, so the format and its first end-to-end test ship together. Blocks TODO-20 §11, TODO-19 §4 and the sections parked behind it.
