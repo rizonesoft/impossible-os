@@ -34,7 +34,8 @@ section whose parked item names an owner the owner-side sweep can act on.
 Usage:
   todo-reachability.py [--json] [paths...]    exit 1 if unreachable work exists
   todo-reachability.py --selftest
-Stdlib only; reads the todo-graph cache when present for the oracle's verdict.
+Reads the todo-graph cache when present for the oracle's verdict. With no cache it
+reads each file's own table through build.py's walk, which needs PyYAML.
 """
 from __future__ import annotations
 
@@ -91,6 +92,8 @@ _CACHE_FALLBACK_REASONS = frozenset((_cs.REASON_MISSING,))
 REASON_COVERAGE = "COVERAGE"
 # ...and one for a node whose identity is not a canonical repo-relative path.
 REASON_IDENTITY = "IDENTITY"
+# ...and one for a cacheless read whose producer walk could not be loaded.
+REASON_PRODUCER = "PRODUCER"
 
 
 class CacheUnusable(RuntimeError):
@@ -440,14 +443,12 @@ def _load_cache(root):
         if exc.reason in _CACHE_FALLBACK_REASONS:
             _CACHE_LOADED.update(missing=True, resolved=True,
                                  root=canonical)
-            # LABEL the degraded read (v19 capture, 2026-09-03): without the
-            # cache the per-file fallback reported 192 open items where the
-            # truth was 1417, exit 1 and empty stderr, so every consumer read
-            # an 8x undercount as an honest verdict. The JSON is unchanged;
-            # the notice is on stderr, where lint and humans see it.
+            # LABEL the cacheless read (v19 capture, 2026-09-03). The undercount
+            # that notice was added for is gone since `_producer_statuses`, but
+            # this read still has no freshness binding, so it stays labelled.
             sys.stderr.write(
-                "todo-reachability: build/todo-cache.json is missing -- per-file "
-                "fallback, counts are PARTIAL; rebuild with "
+                "todo-reachability: build/todo-cache.json is missing -- reading "
+                "each file's own Implementation Order table; rebuild with "
                 "bash scripts/todo-graph/build-and-validate.sh --keep-cache\n")
             return _CACHE
         # NOT a silent degrade. See EXIT_INFRA above: the cache exists and
@@ -627,6 +628,41 @@ def _is_done(status, verified, quality, deferred, awaiting):
     return verified and quality
 
 
+def _producer_statuses(scan):
+    """{section: status} with no cache, from the walk that fills the cache.
+
+    The cacheless path used to answer "is this section DONE?" with `stamped and
+    quality`, a rule that never looked at the row. A reopened section keeps the
+    stamps of its earlier partial ship and flips its row to `[ ]`, so the oracle
+    called it NEEDS_WORK while this audit raised `open-in-done`. CI lints with no
+    cache, so that took `main` red on a correct corpus (2026-11-07, TODO-15
+    section 16). The same rule missed every Deferred section with no Verified
+    stamp: 74 items against the cached 489.
+
+    THE PRODUCER'S OWN WALK, NOT A COPY. A first version re-read the status
+    column here and disagreed with `build.py` on a `Remarks` column before
+    `Status`, which lost a real finding (Codex adversarial). Imported only on this
+    path. The strip matches `_load_cache`, so both paths hand `_is_done` the same
+    value.
+
+    A LOAD FAILURE IS EXIT_INFRA. `build.py` calls `sys.exit(1)` when PyYAML is
+    absent, and 1 is this tool's FINDINGS code: `run_phase_guard.py` would refuse
+    fixpoint with item-repair instructions over a missing package (Codex
+    adversarial round 2, [medium]).
+    """
+    try:
+        import build as _build
+    except (ImportError, SystemExit) as exc:
+        raise CacheUnusable(
+            REASON_PRODUCER,
+            f"no cache, and the Implementation Order walk in build.py could not "
+            f"load ({exc!r}); run bash scripts/setup-deps.sh") from exc
+    return {row["n"]: (row["status"] or "").strip()
+            for row in _build._walk_implementation_order(
+                scan.views, scan.leaf_views, scan.mask, scan.in_blockquote)
+            if row["n"] is not None}
+
+
 def audit(path, root="."):
     """[(kind, section, detail)] for unreachable work in one file."""
     try:
@@ -649,6 +685,8 @@ def audit(path, root="."):
         return [(_fence.terminal_category(scan.terminal), 0, reason)]
     rows = _io_rows(scan)
     status_map = _io_status(path, root, rows)
+    if status_map is None:
+        status_map = _producer_statuses(scan)
     out = []
     # TWO PROJECTIONS, DELIBERATELY, because the body's matchers disagree about
     # what a container prefix means and section 47 measured the disagreement
@@ -740,8 +778,7 @@ def audit(path, root="."):
             continue
 
         status = (status_map or {}).get(num, "")
-        is_done = (_is_done(status, stamped, quality, deferred, awaiting)
-                   if status_map is not None else (stamped and quality))
+        is_done = _is_done(status, stamped, quality, deferred, awaiting)
 
         # 2. open items in a DONE section that is not a recorded deferral
         if is_done and opens and not deferred:
@@ -865,7 +902,11 @@ def _selftest() -> int:
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "TODO-99-x.md"
         p.write_text(
-            "# X\n\n## Implementation Order\n\n| 💎 | 1 | a | -- | [x] |\n\n"
+            # A real header: the producer reads the first row as one, so a
+            # header-less table has no status, and a cache would refuse it.
+            "# X\n\n## Implementation Order\n\n"
+            "| S | Order | Deliverable | Depends | Status |\n"
+            "| - | - | - | - | - |\n| 💎 | 1 | a | -- | [x] |\n\n"
             "## 1. Stamped and done\n\n- [x] done\n- [ ] sneaked in\n"
             "> **Verified:** 2026-01-01 | commit `x`\n"
             # BOTH stamps are required for DONE -- a shipped-but-unreviewed

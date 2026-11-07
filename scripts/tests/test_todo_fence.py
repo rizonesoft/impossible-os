@@ -411,6 +411,75 @@ def test_reachability():
         check("reachability: an unclosed comment is refused separately",
               len(got) == 1 and got[0][0] == "unclosed-comment")
 
+    # THE CACHELESS PATH APPLIES THE ORACLE'S DONE RULE. CI lints with no cache.
+    # A reopened section keeps its old stamps and flips its row to `[ ]`; judging
+    # by the stamps alone made that an `open-in-done` and took `main` red on a
+    # correct corpus (2026-11-07, a reopened security-primitive section).
+    def _stamped(row, stamps,
+                 head="| S | Order | Section | Deliverable | Dep | Status |"):
+        cols = [c.strip() for c in head.strip("|").split("|")]
+        cells = {"S": "x", "Order": "1", "Section": S + "1", "Dep": "--"}
+        vals = [cells.get(c, row if c.startswith("Status") else "Landmark work")
+                for c in cols]
+        return "\n".join([
+            "# T", "",
+            "## Implementation Order", "",
+            head,
+            "|" + " - |" * len(cols),
+            "| " + " | ".join(vals) + " |",
+            "",
+            "## 1. The Section",
+            "- [ ] still open", ""] + stamps + [""])
+    _vq = ["> **Verified:** 2026-01-01 | commit `abc` | partial",
+           "> **Quality reviewed:** 2026-01-01 | Codex"]
+    _def = ["> **Deferred:** 2026-01-01 | blocked -> XREF: 02-kernel-core/TODO-01 " + S + "1"]
+    with tempfile.TemporaryDirectory() as d:
+        def _kinds(row, stamps, **kw):
+            p = _write(d)
+            p.write_text(_stamped(row, stamps, **kw), encoding="utf-8")
+            return [k for k, _, _ in reach.audit(str(p), root=d)]
+        check("reachability no cache: a reopened `[ ]` row with old stamps is not DONE",
+              _kinds("[ ]", _vq) == [])
+        check("reachability no cache CONTROL: the same body under `[x]` is open-in-done",
+              _kinds("[x]", _vq) == ["open-in-done"])
+        check("reachability no cache: a `[/]` row with both stamps is DONE too",
+              _kinds("[/]", _vq) == ["open-in-done"])
+        check("reachability no cache: a Deferred section with no Verified stamp is seen",
+              _kinds("[/]", _def) == ["open-in-deferred"])
+        check("reachability no cache: an open row in a Deferred section is reachable",
+              _kinds("[ ]", _def) == [])
+        # Header shapes where a status-column guess disagrees with the producer.
+        # Each must still find the real `[x]`, or a real finding is lost.
+        for _name, _head in (
+                ("Remarks before Status",
+                 "| S | Order | Section | Deliverable | Remarks | Status |"),
+                ("a Deliverable header holding 'mark'",
+                 "| S | Order | Section | Deliverable / benchmark | Dep | Status |"),
+                ("a checkbox legend in the Status header",
+                 "| S | Order | Section | Deliverable | Dep | Status [x]/[/]/[ ] |")):
+            check("reachability no cache: status column found with " + _name,
+                  _kinds("[x]", _vq, head=_head) == ["open-in-done"])
+
+        # A MISSING PYYAML IS THE INFRASTRUCTURE CODE. `build.py` exits 1 when it
+        # cannot import yaml, and 1 means "findings" to the fixpoint gate.
+        _t = pathlib.Path(d) / "todo" / "01-test"
+        _t.mkdir(parents=True)
+        (_t / "TODO-01-rr.md").write_text(_stamped("[x]", _vq), encoding="utf-8")
+        _run = ("import runpy,sys\n"
+                + "{}"
+                + "sys.argv=['todo-reachability.py']\n"
+                + "runpy.run_path(%r, run_name='__main__')\n"
+                % str(REPO / "scripts" / "todo-reachability.py"))
+        def _rc(prefix):
+            return subprocess.run(
+                [sys.executable, "-c", _run.format(prefix)], cwd=d,
+                capture_output=True, text=True, timeout=60)
+        _no_yaml = _rc("sys.modules['yaml']=None\n")
+        check("reachability no cache: a missing PyYAML exits 2, not the findings code",
+              _no_yaml.returncode == 2 and "[PRODUCER]" in _no_yaml.stderr)
+        check("reachability no cache CONTROL: with PyYAML the same tree reports findings",
+              _rc("").returncode == 1)
+
 
 # --------------------------------------------------------------------------
 # 4. Gate 2: todo-orphan-check.py (backs lint Check 23, ERRORs at commit).
