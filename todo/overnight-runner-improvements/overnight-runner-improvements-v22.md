@@ -82,4 +82,10 @@ Carry the baselines forward. A measurement without one is an anecdote.
 
 ## Found live this cycle
 
-<!-- The run files here. Nothing yet: v22 opened at close-out, before the next arm. -->
+- [ ] A permission rule refuses review-todo-section and wedges every section ship
+  - OBSERVED: `Skill(review-todo-section)` returned "Skill execution blocked by permission rules" in run-20261107-003500 at 02:17:47 and again in run-20261107-022000. No post-ship review has landed since 2026-09-30.
+  - INFERRED, NOT TESTED: `~/.claude/settings.json` denies `Skill(review *)`, last changed 2026-11-06 19:14, and the matcher treats that as a prefix of `review-todo-section`. The rule looks aimed at the built-in `/review`. I did not test it by varying the call, because that would be probing a deny. The operator owns the rule, so the run did not edit it.
+  - WEDGE: the post-ship gate (`.claude/hooks/section_review_required.py:253`) then refuses Edit, Write and every section-starting skill, so the first segment could not defer, file or save anything, and its finding survived only in its final message. Nothing tells the watchdog, which relaunches into the same refusal.
+  - ROUTE USED, flagged because a route around a gate is itself a finding: `git revert` of the ship commit. The gate exempts `revert` subjects (`section_review_required.py:211`) and CLAUDE.md names reverts as a legitimate opt-out. Not used: `SKIP_REVIEW_HOOK`, hand-running the skill's steps and stamping the result, or editing the deny list. No unreviewed code stays in the tree, but `ca822968f` is in `main`'s history once pushed.
+  - COST: TODO-10 §33 deferred with finished work parked (`git revert 6bf0f5e15` restores it; patch at `.claude/state/deferred-todo10-s33.patch`). Until the rule changes, every section the run implements ends the same way, so the run starts no new section; implementing and reverting is pure spend.
+  - FIX (operator): narrow the deny to the built-in commands, for example by dropping the wildcard forms if the matcher allows it, and confirm with one real invocation. If the deny is intended, the pipeline needs a different post-ship step. Separately, the review gate should let a denied review reach the deferral path, and a permission refusal should trip the breaker rather than look like a productive segment (run-20261107-003500 reported `outcome: productive`).
