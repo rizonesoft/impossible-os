@@ -220,6 +220,8 @@ User-visible recovery interface with clear status.
 - [ ] Actions: `[1] Repair filesystem`, `[2] Restore backup kernel`, `[3] Reset boot metadata`, `[4] Rebuild NVRAM`, `[5] Reboot`
 - [ ] Progress display for each action
 - [ ] Requires USB keyboard (→ XREF: TODO-18) or serial input
+- [ ] Name which measured-boot layer changed when recovery follows a mismatch -> XREF: `01-boot-platform/TODO-13` §10 (item: "In recovery, explain whether firmware, bootloader, kernel, Secure Boot db, or baseline changed")
+  - Layers: firmware, bootloader, kernel, Secure Boot db, baseline. The field attribution comes from TODO-13 §25.
 - [ ] Commit: `"recovery: text-mode recovery UI with repair actions"`
 
 **Test checkpoint:** Enter recovery → menu displayed → select "Repair filesystem" → fsck runs with progress → reboot option.

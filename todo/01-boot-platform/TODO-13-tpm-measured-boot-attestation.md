@@ -38,21 +38,21 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 | ⭐  | Order | Deliverable                                                   | Depends On                                                | Status |
 | --- | :---: | ------------------------------------------------------------- | --------------------------------------------------------- | :----: |
-| 💎  |   1   | Harden TCG event-log parser                                   | --                                                        |  [/]   |
+| 💎  |   1   | Harden TCG event-log parser                                   | --                                                        |  [ ]   |
 | 💎  |   2   | TPM2 command transport                                        | §1 (ordering-only; transport does not consume the parser) |  [x]   |
 | 💎  |   3   | PCR read API                                                  | §2                                                        |  [x]   |
 | 💎  |   4   | PCR replay engine                                             | §1, ../02-kernel-core/TODO-03 §3                          |  [x]   |
 | 💎  |   5   | Secure Boot variable measurement reconciliation (structural)  | §1, TODO-02 §3                                            |  [x]   |
 | 💎  |   6   | Baseline enrollment and storage                               | §3, §4, §7                                                |  [/]   |
 | 💎  |   7   | TPM NV index support                                          | §2 (transport); §12 (baseline mask)                       |  [/]   |
-| ⭐  |   8   | Sealed-secret boot policy hooks                               | §7, §12                                                   |  [x]   |
-| 💎  |   9   | Attestation report export                                     | §3-§6, §12, §13                                           |  [/]   |
-| ⭐  |  10   | Recovery and mismatch UX                                      | §6, TODO-22                                               |  [/]   |
+| ⭐  |   8   | Sealed-secret boot policy hooks                               | §7, §12                                                   |  [ ]   |
+| 💎  |   9   | Attestation report export                                     | §3-§6, §12, §13                                           |  [ ]   |
+| ⭐  |  10   | Recovery and mismatch UX                                      | §6, TODO-22                                               |  [ ]   |
 | 💎  |  11   | TPM tests and event-log fixtures                              | §1-§10, §12, §13                                          |  [x]   |
 | 💎  |  12   | PCR allocation table and policy masks                         | (foundational; consumed by §6/§8/§13)                     |  [x]   |
-| 💎  |  13   | Attestation key provisioning and TPM2 quote                   | §3, §7, §12                                               |  [x]   |
+| 💎  |  13   | Attestation key provisioning and TPM2 quote                   | §3, §7, §12                                               |  [ ]   |
 | 💎  |  14   | Post-ship follow-up backfill (2026-07-31 cohort)              | --                                                        |  [x]   |
-| 💎  |  15   | Trusted enrollment provenance                                 | §6, §14                                                   |  [/]   |
+| 💎  |  15   | Trusted enrollment provenance                                 | §6, §14                                                   |  [ ]   |
 | 💎  |  16   | Baseline ABI-manifest identity (populate reserved digest)     | §6, §14                                                   |  [x]   |
 | 💎  |  17   | Write-locked and monotonic NV index primitives                | §6, §7, §14                                               |  [x]   |
 | 💎  |  18   | Atomic boot-integrity report publication                      | §6, §12, §14                                              |  [x]   |
@@ -82,8 +82,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [x] Export `X:\Diag\tpm-events.json` as a TCG CEL-JSON subset via a streaming writer (`tpm_evlog_export_cel`, one bounded `vfs_write` per event), hooked post-mount in `boot_desktop.c` (parse runs Phase 0, before the filesystem).
 - [x] Bootloader copies the EXACT log (`tpm_compute_log_size`, not the `+256` estimate) or degrades `BOOT_CAP_TPM_EVENT_LOG`; retention via the legacy `tpm_event_log` boot_reserved path (no descriptor: would double-reserve + fatal).
 - [x] Bound the bootloader TPM read by the UEFI memory-map descriptor ceiling (`tpm_log_mmap_extent()`); copy only the record-derived `tpm_compute_log_size()` length, else degrade via `tpm_publish_log_degraded()`.
-- [/] Validate the record chain reaches `log_last_entry` exactly before the bootloader copy (a forward bogus in-descriptor LastEntry can retain gap bytes); kernel `tpm_evlog_parse()` validates today.
-  - Parked: the gap is in the BOOTLOADER's copy path, and `tpm_evlog_parse()` is the authoritative validation today, so this is hardening rather than an open hole. Also blocked, like every code change in this file, by the kernel-image ceiling parked on `02-kernel-core/TODO-33` §7.
+- [ ] Validate the record chain reaches `log_last_entry` exactly before the bootloader copy (a forward bogus in-descriptor LastEntry can retain gap bytes); kernel `tpm_evlog_parse()` validates today.
+  - Reopened 2026-11-07: the stamp named only this item and the image ceiling ended (`bss-headroom.py`: `.text` budget 153,647 bytes). `tpm_evlog_parse()` stays the authoritative check, so this is hardening.
 - [x] Commit: `"tpm: harden measured boot event log parser"`
 
 **Test checkpoint:** Kernel unit fixtures parse a TPM 1.2 SHA-1 log and a TPM 2.0 crypto-agile (multi-bank) log with zero unaligned reads; a truncated log is rejected with an explicit byte offset + status code (not a silent stop); `X:\Diag\tpm-events.json` lists per-event PCR index / type / digest count; the page-aligned bootloader copy is retained by the legacy `tpm_event_log` boot_reserved reservation (no double-reserve fatal at boot). Platforms: kernel unit tests (fixtures) + QEMU swtpm KVM smoke; bare metal (test laptop fTPM).
@@ -98,7 +98,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - **Scope boundary:** the UEFI mem-map-extent read bound shipped (descriptor ceiling + record-derived copy); the open `[ ]` item is proving the record chain reaches `log_last_entry` (kernel `tpm_evlog_parse()` validates today). Retention is legacy-fields-only.
 
 > **Verified:** 2026-06-14 | commit `53e24f76` (impl) + read-bound (mmap-descriptor ceiling + record-derived copy + degrade contract) | 6/7 items | build OK | 394 kernel tests PASS + smoke PASS (KVM 2.580s)
-> **Deferred:** [M] bootloader does not prove the event-log record chain reaches `log_last_entry` before the copy (a forward in-descriptor bogus LastEntry can retain gap bytes; kernel `tpm_evlog_parse()` is the authoritative validation) -> XREF: 01-boot-platform/TODO-13 §1 (item: "Validate the record chain reaches `log_last_entry` exactly before the bootloader copy")
+> **Note:** 2026-11-07, Deferred stamp retired: it named this section's own item ([M] loader copy does not prove the record chain reaches `log_last_entry`), which is open again.
 > **Quality reviewed:** 2026-06-14 | Codex 11x (design, adversarial, re-adversarial, consistency, perf) | prior 1C+1H+3M + read-bound 2H+2M fixed, 1M deferred | scope: kernel-code-quality + boot-code-quality
 
 ---
@@ -245,10 +245,10 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [x] FDE key-unlock hook (`tpm_seal_fde_key`/`tpm_unseal_fde_key`, domain-tagged forward-API; stub consumer until storage-encryption lands).
 - [x] Code-integrity policy seal hook (`tpm_seal_ci_policy`/`tpm_unseal_ci_policy`, forward-API; stub consumer until CI-policy lands).
 - [x] Structured unseal-failure reporting (`struct tpm_unseal_result`: status + raw rc + domain) + callable recovery handoff (`tpm_seal_set_recovery_handler`, fired on every failure).
-- [/] Follow-up: live-console recovery prompt on unseal failure (needs the Phase-1 console-input path). -> shared owner with the §6 console-input infra follow-up.
-  - Parked: needs the Phase-1 console-input path, which does not exist; shares an owner with the §6 console-input infrastructure follow-up.
-- [/] Follow-up: salted/bound HMAC sessions + parameter encryption (response-HMAC authenticity + sealed-key bus confidentiality). `tpm_session_auth_response_ok` is structural-only; transport-wide (§7/§8/§13). Parity: BitLocker bus protection.
-  - Parked: needs salted and bound HMAC sessions plus parameter encryption across the whole transport; `tpm_session_auth_response_ok` is structural-only today.
+- [ ] Follow-up: live-console recovery prompt on unseal failure (the input path now exists). -> shared owner with the §6 console-input infra follow-up.
+  - Reopened 2026-11-07: `boot_confirm_wait_keys()` (`src/kernel/main/boot_confirm.c`) is that path, already used by the enrollment prompt and `boot_recovery.c:270`. Wiring it to an unseal failure is this item.
+- [ ] Follow-up: salted/bound HMAC sessions + parameter encryption (response-HMAC authenticity + sealed-key bus confidentiality). `tpm_session_auth_response_ok` is structural-only; transport-wide (§7/§8/§13). Parity: BitLocker bus protection.
+  - Reopened 2026-11-07: no outside owner exists and transport-wide work is not a blocker. mbedtls is vendored (`src/libs/mbedtls`); whether this kernel's config carries the primitive the salt needs is unchecked. Proving it against a real bus interposer stays an operator hardware step.
 - [x] Commit: `"tpm: sealed boot policy hooks"`
 
 **Test checkpoint:** Seal a small secret to the SEAL PCR policy (`tpm_pcr_seal_mask()`, PCR 7), then unseal succeeds while PCR 7 matches and is DENIED (`TPM_RC_POLICY_FAIL`, with structured failure reporting + a callable recovery handoff) after PCR 7 changes; a PCR 11 / kernel-manifest-only change does NOT break unseal (seal excludes PCR 11); the FDE key-unlock + code-integrity seal hooks are present + callable (stub consumers OK). The Create/Load/Unseal marshal/parse + policy selection are fixture-tested; the live seal->PCR-change->deny cycle is QEMU-swtpm/bare-metal validation. Platforms: QEMU swtpm KVM; bare metal.
@@ -260,42 +260,42 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - Session-response validation is STRUCTURAL (shared `tpm_session_auth_response_ok`, keyed off the command tag): a malformed / truncated / wrong-tag success can never return secret bytes or a bogus handle as OK. Cryptographic authenticity vs a bus interposer (response HMAC) is the filed HMAC-session follow-up.
 > - Scope boundary: this section owns the seal/unseal mechanism + forward hooks; the storage-encryption / CI-policy consumers and the live recovery prompt are tracked elsewhere.
 > **Verified:** 2026-06-14 | commit `f0712b77` | 5/7 items | build OK | tests 777/777
-> **Deferred:** [H] cryptographic response authenticity + parameter encryption vs a physical bus interposer (forged well-formed success / key sniffing); structural validation only today -> XREF: 01-boot-platform/TODO-13 §8 (item: "salted/bound HMAC sessions + parameter encryption" at line 250)
+> **Note:** 2026-11-07, Deferred stamp retired: it named this section's own item ([H] response authenticity and parameter encryption), which is open again.
 > **Quality reviewed:** 2026-06-14 | Codex 11x (design + adversarial + adversarial-impl + re-adversarial + consistency + perf) | 5H+5M fixed, 1H deferred | scope: kernel-code-quality
 
 ## 9. Attestation Report Export
 
 > **Design (2026-06-14, Codex 3H+1M adopted pre-code):** build the report from §13's query APIs (`tpm2_quote`/`tpm_ak_public_get`/`tpm_ek_cert_read`) + §6's `boot_integrity_report`, reusing §1's streaming one-`vfs_write`-per-record JSON pattern; put the struct + builder in a NEW `tpm_attest_report.c` (`tpm.c`/`tpm_attest.c` are already 33-35 KB). Adopted constraints for the implementor: (1) snapshot the handoff triple as an IMMUTABLE Phase-0 copy taken right after `boot_info` validation, BEFORE any kernel caps refinement (`boot_caps_mark_present`, runtime-services degradation) -- the builder consumes that snapshot, NOT live `g_boot_info`, so the report reflects loader evidence not later kernel policy. (2) `BOOT_CAP_MANIFEST_PCR_BOUND` (1u<<10) is an IGNORED unknown bit today -- make it a validated capability FIRST (add to `BOOT_CAP_LIST` + bootloader mirror + `BOOT_CAP_MASK_KNOWN`, classify present/degraded in `bootx64.c`, regression that it validates exactly once) before the report's "PCR bound" claim can gate. -> XREF: TODO-01 §11. (3) `tpm2_quote` signs ONLY the SHA-256 bank -- the report schema MUST mark SHA-256 PCRs as quoted (TPM-signed) and all other banks diagnostic-only; never a mixed-trust report. (4) the bootloader PCR-11 manifest extend MUST run BEFORE `retrieve_tpm_event_log()` so the copied log includes it (else §4 replay reports false tamper), with a canonical binary event payload (magic/version + PCR index + manifest sha256 + label) and a typed `HashLogExtendEvent` prototype.
 
-- [/] Prerequisite: make `BOOT_CAP_MANIFEST_PCR_BOUND` (1u<<10) a validated capability (`BOOT_CAP_LIST` + mirror + `BOOT_CAP_MASK_KNOWN` + classify in `bootx64.c` + regression). -> XREF: TODO-01 §11.
-  - Parked: the capability bit is TODO-01's ABI to define and validate, so this cannot be closed from here.
+- [ ] Prerequisite: make `BOOT_CAP_MANIFEST_PCR_BOUND` (1u<<10) a validated capability (`BOOT_CAP_LIST` + mirror + `BOOT_CAP_MASK_KNOWN` + classify in `bootx64.c` + regression). -> XREF: TODO-01 §11.
+  - Reopened 2026-11-07: this named TODO-01 as owner while the stamp at `TODO-01:431` names this section: a two-file cycle. TODO-01 §11 is `[x]` and the bit is undefined under `include/`, so it is defined here.
 - [x] Immutable Phase-0 handoff snapshot: `struct boot_attest_handoff` + latched write-once `tpm_attest_handoff_snapshot_init`/`_get` in new `tpm_attest_report.c`, captured in `boot_hw.c` pre-caps-refinement (design constraint 1).
 - [x] `boot_attestation_report_t` + `tpm_attest_report_build()`: Phase-0 snapshot + `.bootproto` manifest sha256 + integrity verdict + SHA-256-quoted PCR bank + Quote/AK/EK; pcrDigest coherence recompute; AK-EK binding UNVERIFIED; nonce MIN..MAX.
 - [x] Export to `X:\Diag\attestation.json` via `tpm_attest_report_export()` -> streaming `tpm_attest_report_to_json()` (bounded sink, O_TRUNC, length-validated, no escaping); CSPRNG nonce; wired at the boot diagnostics dump.
 - [x] Sibling stale-tail fixed: `tpm_evlog_export_cel` (tpm.c) now opens `tpm-events.json` with `VFS_O_WRITE|VFS_O_CREATE|VFS_O_TRUNC` and closes the parent dir handle, so a shorter event log cannot leave previous-boot tail bytes.
 - [/] Add native query API for user-mode system settings.
-  - Parked, operator-gated: a new syscall or SSDT ABI exposing attestation evidence, and the access-control decision that goes with it, is a stop-and-ask design call rather than implementation.
+  - Parked, awaiting-answer Q13: a new syscall or SSDT ABI exposing attestation evidence, and its access-control decision.
 - [/] Add remote-attestation placeholder for platform services.
-  - Parked, operator-gated: a remote-attestation protocol has to be chosen before any placeholder is meaningful.
-- [/] Export the SCOPED integrity verdict, not just numeric `overallStatus`, and bump the attestation schema version with it. -> XREF: 01-boot-platform/TODO-13 §25 (item: "Scope what the `\"verified\"` status string claims")
-  - Parked: waits on §25's scoped verdict, which the XREF names.
+  - Parked, awaiting-answer Q14: a remote-attestation protocol has to be chosen before any placeholder means anything.
+- [ ] Export the SCOPED integrity verdict, not just numeric `overallStatus`, and bump the attestation schema version with it. -> XREF: 01-boot-platform/TODO-13 §25 (item: "Scope what the `\"verified\"` status string claims")
+  - Reopened 2026-11-07: §25 is `[x]`, so the wait this item named is over.
   - Accepted from §25's post-commit adversarial review. §25 narrowed the LOCAL surface: the label is `"baseline-verified"`, `tpm_integrity_status_scope()` states what it covers, and a mismatch names the first differing field plus every differing PCR. `tpm_attest_report_to_json` (`src/kernel/tpm_attest_report.c:382`) still serializes a bare numeric `overallStatus` at an unchanged `schemaVersion`, so a remote verifier reading `overallStatus=1` gets exactly the unscoped claim §25 removed everywhere else -- at the highest-value consumer boundary.
   - Carry the label, the scope, and the mismatch provenance (which of the four failure classes, and the `tpm_baseline_cause_t` where one exists), plus an explicit kernel-image-measured flag so a relying party cannot upgrade baseline equality into executed-image verification. Serializer tests for verified, field mismatch, baseline corruption, kernel self-corruption and replay tamper.
   - Out of scope for §25 by its own scope line (compare-path return detail and status strings only); the report schema and its export are this section's.
-- [/] Extend a TPM PCR (target PCR 11, vendor-policy-extensible) with the kernel `.bootproto` manifest sha256 from the bootloader pre-jump path, BEFORE control transfers to the kernel.
+- [ ] Extend a TPM PCR (target PCR 11, vendor-policy-extensible) with the kernel `.bootproto` manifest sha256 from the bootloader pre-jump path, BEFORE control transfers to the kernel.
   - The capability bit is TODO-01's ABI to define -> XREF: [`01-boot-platform/TODO-01 §11`](TODO-01-boot-protocol-abi-handoff.md#11-capability-negotiation-and-degraded-feature-flags) (item: "Forward-reserve `BOOT_CAP_MANIFEST_PCR_BOUND` (1u<<10) bit").
   - Concretely: in `src/boot/uefi/bootx64.c`, after `bootproto_verify_or_reset()` succeeds, reach the `EFI_TCG2_PROTOCOL` via `LocateProtocol(EFI_TCG2_PROTOCOL_GUID, ...)` and call `Tcg2Protocol->HashLogExtendEvent` with the 32-byte sha256 from the descriptor and a stable event-log entry name such as `IMPOSSIBLE_OS_KERNEL_ABI_MANIFEST`.
   - On success the bootloader sets `boot_info.caps_present |= BOOT_CAP_MANIFEST_PCR_BOUND` (bit reserved by TODO-01 §11). Any failure to extend -- no TPM, locality denied, command failure -- MUST leave the bit clear and continue the boot: this is a measurement, not a gate.
   - Replay path: §4's PCR replay must include the manifest extend event, so a baseline mismatch flags a different kernel-image-versus-manifest PAIRING rather than only a different kernel image.
-  - Parked: needs firmware TCG2 `HashLogExtendEvent` and real-hardware validation, and the capability bit is TODO-01 §11's ABI. The hardware half is operator-gated -- no dev host here carries the firmware path.
-- [/] Include the bootloader-to-kernel handoff triple in `boot_attestation_report_t`, snapshotted at attestation-build time rather than re-read from the live struct.
+  - Reopened 2026-11-07: the code half needs nothing outside this file: the `HashLogExtendEvent` slot is in `efi.h:888` (untyped today) and the bit is defined by the prerequisite above. Only the final check against real firmware is the operator's.
+- [ ] Include the bootloader-to-kernel handoff triple in `boot_attestation_report_t`, snapshotted at attestation-build time rather than re-read from the live struct.
   - The triple is the ABI manifest sha256 (from `boot_proto_descriptor.sha256`), the capability words (`caps_required` / `caps_present` / `caps_degraded`), the boot-path provenance (`boot_path` / `boot_reason` / `boot_source_flags` / `boot_fallback_depth`), and the bootloader build identity once TODO-01 §20 ships.
   - Today downstream attestation consumers re-read `g_boot_info` directly, which couples them to the live struct layout; the report API decouples them by snapshotting.
   - Field owners -> XREF: [`01-boot-platform/TODO-01 §11`](TODO-01-boot-protocol-abi-handoff.md#11-capability-negotiation-and-degraded-feature-flags) caps fields, [`§12`](TODO-01-boot-protocol-abi-handoff.md#12-common-boot-path-provenance-and-decision-record) decision record, [`§17`](TODO-01-boot-protocol-abi-handoff.md#17-bootloader-pre-jump-abi-mismatch-screen) `.bootproto` sha, [`§20`](TODO-01-boot-protocol-abi-handoff.md#20-bootloader-build-identity) bootloader build identity.
-  - Parked: the bootloader build-identity field pends TODO-01 §20.
+  - Reopened 2026-11-07: TODO-01 §20 shipped (`bda769ff`). `struct boot_loader_identity` is in the handoff, and `tpm_attest_report.*` does not carry it yet.
 - [x] DRTM forward-compat slots reserved + round-tripped: `drtm_entry_pcr`/`drtm_acm_status`/`drtm_measurement_type` in `boot_attestation_report_t` (zeroed today, serialized in attestation.json) for a future Secure Launch adapter.
-- [/] Commit: `"tpm: export boot attestation report"`
-  - Parked: gated on this section's own deferred items above; there is nothing to commit until one of them clears.
+- [ ] Commit: `"tpm: export boot attestation report"`
+  - Reopened 2026-11-07 with the items above; Q13 and Q14 park only their own two items.
 
 **Test checkpoint:** A signed `boot_attestation_report_t` carries PCRs + event digest + Secure Boot state + nonce and exports to `X:\Diag\attestation.json`; the native query API returns the same snapshot to user-mode; the bootloader manifest PCR-extend (PCR 11) ran pre-jump and set `BOOT_CAP_MANIFEST_PCR_BOUND` (clear + boot-continue when no TPM); the report snapshots the handoff triple (manifest sha256, caps words, boot-path provenance) and round-trips the zeroed DRTM forward-compat slots. Platforms: QEMU swtpm KVM; bare metal.
 
@@ -307,23 +307,23 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - Canonical doc: the trust/coherence/DRTM schema lives in the `boot_attestation_report` struct header comment.
 > - Scope boundary: native query API + remote placeholder + bootloader PCR-11 extend + cap-bit are Deferred (stop-and-ask ABI / firmware HW-validation); they keep §9 at `[/]`.
 > **Verified:** 2026-06-14 | commit `2355ba5f` (report+export) + review fixes | 5/10 items | build OK | security 982 PASS, smoke PASS (KVM 2.490s)
-> **Deferred:** [M] native attestation query API for user-mode (new syscall/SSDT ABI exposing attestation evidence + an access-control decision; stop-and-ask) -> XREF: 01-boot-platform/TODO-13 §9 (item: "Add native query API for user-mode system settings" at line 276)
-> **Deferred:** [M] bootloader PCR-11 manifest extend + `BOOT_CAP_MANIFEST_PCR_BOUND` cap-bit (firmware TCG2 HashLogExtendEvent; real-HW validation; cap-bit ABI owned by TODO-01 §11) -> XREF: 01-boot-platform/TODO-13 §9 (item: "Extend a TPM PCR (target PCR 11..." at line 269)
-> **Deferred:** [L] remote-attestation placeholder needs a remote-attest protocol design decision -> XREF: 01-boot-platform/TODO-13 §9 (item: "Add remote-attestation placeholder for platform services" at line 278)
-> **Deferred:** [L] handoff-triple bootloader build-identity field pends TODO-01 §20 -> XREF: 01-boot-platform/TODO-13 §9 (item: "Include the bootloader-to-kernel handoff triple..." at line 271)
+> **Note:** 2026-11-07, Deferred stamp retired: [M] native query API, now `todo/answers.md` Q13.
+> **Note:** 2026-11-07, Deferred stamp retired: [M] PCR-11 extend and cap bit, code half reopened.
+> **Note:** 2026-11-07, Deferred stamp retired: [L] remote-attestation placeholder, now `todo/answers.md` Q14.
+> **Note:** 2026-11-07, Deferred stamp retired: [L] handoff-triple build identity, reopened: TODO-01 §20 shipped.
 > **Quality reviewed:** 2026-06-14 | Codex 5x (adversarial + consistency + perf + re-adversarial) | 1H+5M fixed | scope: kernel-code-quality
 
 ## 10. Recovery and Mismatch UX
 
 - [x] Add VPD/boot diagnostics status for verified, no TPM, no baseline, mismatch, and event-log tamper -- `tpm_integrity_status_label()` maps the report to one status word (tamper before baseline; UNKNOWN->`unknown`), wired to a Phase-1 `klog` line.
 - [/] In recovery, explain whether firmware, bootloader, kernel, Secure Boot db, or baseline changed.
-  - Parked: needs a recovery-mode UI and environment, and none exists yet.
+  - Parked: `boot_recovery.c` is a boot-failure menu (retry, halt, power off), not a recovery environment. That is `01-boot-platform/TODO-22` §7, an open row carrying the reciprocal item. -> XREF: `01-boot-platform/TODO-22` §7 (item: "Name which measured-boot layer changed when recovery follows a mismatch")
 - [/] Allow trusted baseline reset only from recovery mode with local confirmation.
-  - Parked, operator-gated: a trusted baseline reset is security-sensitive and the local-confirmation UX is a decision, not an implementation detail.
-- [/] Integrate with A/B rollback if kernel measurement changed unexpectedly.
-  - Parked: blocked on TODO-22's A/B rollback infrastructure.
-- [/] Commit: `"recovery: measured boot mismatch UX"`
-  - Parked: gated on this section's own deferred items above.
+  - Parked, awaiting-answer Q12: a trusted baseline reset shares its authority question with the §15 trigger producer.
+- [ ] Integrate with A/B rollback if kernel measurement changed unexpectedly.
+  - Reopened 2026-11-07: this named TODO-22, but A/B is `01-boot-platform/TODO-21`, and `ab_boot_mark_slot_successful()` exists. Withholding mark-good on an unexpected kernel measurement can start there; TODO-21 §4 and §5 rows are `[/]`, so read their state first.
+- [ ] Commit: `"recovery: measured boot mismatch UX"`
+  - Reopened 2026-11-07 with the A/B item; the other two stay parked on their own owners.
 
 **Test checkpoint:** VPD / boot diagnostics show distinct status for verified / no-TPM / no-baseline / mismatch / event-log-tamper; recovery mode names which layer changed (firmware vs bootloader vs kernel vs Secure Boot db vs baseline); a trusted baseline reset is accepted ONLY from recovery mode with local confirmation; an unexpected kernel-measurement change triggers A/B rollback integration (TODO-22). Platforms: manual recovery-mode walkthrough (QEMU swtpm + injected mismatch); bare metal.
 
@@ -333,9 +333,9 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - Scope boundary: the 3 remaining items (recovery layer-change explanation, baseline reset, A/B rollback) need a recovery-mode environment that does not exist yet (A/B owned by TODO-22); Deferred, §10 stays `[/]`.
 > - No new code shipped this pass: §10 is a blocked-section defer-stamp; the lone done item's helper was reviewed in the integrity sections.
 > **Verified:** 2026-06-14 | commit `c9ce7bcd` (status-label helper, prior) | 1/4 items | build OK | manual (Phase-1 klog status line)
-> **Deferred:** [M] recovery names which layer changed (firmware/bootloader/kernel/SB-db/baseline) -- needs a recovery-mode UI/environment, none exists yet -> XREF: 01-boot-platform/TODO-13 §10 (item: "In recovery, explain whether firmware, bootloader, kernel, Secure Boot db, or baseline changed")
-> **Deferred:** [M] trusted baseline reset only from recovery mode + local confirmation (security-sensitive; recovery-mode + confirmation UX) -> XREF: 01-boot-platform/TODO-13 §10 (item: "Allow trusted baseline reset only from recovery mode with local confirmation")
-> **Deferred:** [M] A/B rollback on an unexpected kernel-measurement change (blocked on TODO-22 A/B rollback infra) -> XREF: 01-boot-platform/TODO-13 §10 (item: "Integrate with A/B rollback if kernel measurement changed unexpectedly")
+> **Note:** 2026-11-07, Deferred stamp retired: [M] layer explanation parks on `01-boot-platform/TODO-22` §7, named in its item.
+> **Note:** 2026-11-07, Deferred stamp retired: [M] baseline reset is now `todo/answers.md` Q12.
+> **Note:** 2026-11-07, Deferred stamp retired: [M] A/B integration reopened; its owner is TODO-21, not TODO-22.
 > **Quality reviewed:** 2026-06-14 | Codex 0x (blocked section; no new code surface to review) | 0 fixed, 3 deferred | scope: N/A (recovery-mode infra + TODO-22 not yet available)
 
 ## 11. TPM Tests and Event-Log Fixtures
@@ -357,7 +357,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - Degraded coverage: added a transport-level no-TPM test (`ERR_NODEV`); truncated-log + inactive-bank cases already covered by the event-log / replay suites.
 > - Scope boundary: this section is test coverage for already-shipped TPM features (transport, event-log, replay); the swtpm script is the host/CI live-validation entry point, not a WSL unit test.
 > **Verified:** 2026-06-14 | commit `c40c4eee` | 5/6 items | build OK | tests 789/789
-> **Deferred:** [M] `tpm_t_test_install` teardown leaves a real-fTPM transport mis-routed after a TPM suite (cross-cutting test-infra) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Follow-up (test-infra): harden `tpm_t_test_install`" at line 314) (RESOLVED 2026-06-14 by §11 commit 45054685: `tpm_t_test_install` returns a full `tpm_t_test_state` snapshot + new `tpm_t_test_restore()`; all `test_tpm_*` suites capture+restore)
+> **Note:** resolved, formerly Deferred: [M] `tpm_t_test_install` teardown leaves a real-fTPM transport mis-routed after a TPM suite (cross-cutting test-infra) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Follow-up (test-infra): harden `tpm_t_test_install`" at line 314) (RESOLVED 2026-06-14 by §11 commit 45054685: `tpm_t_test_install` returns a full `tpm_t_test_state` snapshot + new `tpm_t_test_restore()`; all `test_tpm_*` suites capture+restore)
 > **Quality reviewed:** 2026-06-14 | Codex 5x (adversarial-impl + re-adversarial + consistency + perf) | 4H+2M fixed, 1M deferred | scope: kernel-code-quality
 
 ---
@@ -393,14 +393,14 @@ The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cann
 - [x] Retrieve the EK cert from NV (RSA `0x01c00002`, ECC `0x01c0000a`) -- `tpm_ek_cert_read()`: NV_ReadPublic for size then chunked `tpm_nv_read`; `NO_EK_CERT` when absent (vTPM/fTPM degrade).
 - [x] Provision the AK (`tpm_attest.c`): deterministic ECC-P256 EK `CreatePrimary` (endorsement) + `Create`/`Load` a restricted ECDSA-P256 signing AK under it; `EvictControl` builder present; AK recreated + cached each boot.
 - [/] Support `TPM2_MakeCredential` / `TPM2_ActivateCredential` for the credential-activation challenge (verifier confirms the AK is bound to a trusted EK). -> follow-up (not yet implemented).
-  - Parked: credential activation needs EK-public capture and a verifier-side challenge protocol that does not exist in the tree.
+  - Parked, awaiting-answer Q14: EK-public capture exists now (`at_capture_ek_public_seq`, `tpm_attest.c:971`); the missing part is the verifier-side challenge protocol.
 - [x] `tpm2_quote()` via `TPM2_CC_Quote`: signs the selected-PCR digest + nonce with the AK (ECDSA); parses + returns `struct tpm_quote_attest` + raw signature. Fixture + fake-TIS lifecycle tested.
 - [x] Anti-replay: rejects a too-short/absent nonce, returns `NONCE_STALE` unless the attest extraData echoes it; surfaces `clockInfo` (clock/resetCount/restartCount/safe) in `struct tpm_quote_attest`.
 - [x] Bind the quote response to the request: reject unless the parsed PCR selection (single SHA-256 bank, 32-byte digest) matches the mask, the scheme is ECDSA+SHA-256, and ECDSA r/s <= 32 bytes; out-of-range `pcr_mask` -> `BADARG`.
-- [/] Bind `TPMS_ATTEST.qualifiedSigner` to the AK Qualified Name before returning `OK` (needs EK-pub capture + TPM Name-algebra); today the remote verifier binds the signer via the exported AK public. -> follow-up (Codex re-adversarial [H]).
-  - Parked: needs EK-public capture plus TPM Name-algebra; today the remote verifier binds the signer through the exported AK public instead.
-- [/] Wire the quote + AK public + EK-cert chain into §9's report (§13 exposes the query APIs; §9 owns integration). -> XREF: [`§9`](#9-attestation-report-export) (item: "Build the TPM-rooted `boot_attestation_report_t`"). Blocked on §9.
-  - Parked: §9 owns the integration and is itself deferred, so this cannot close ahead of it.
+- [ ] Bind `TPMS_ATTEST.qualifiedSigner` to the AK Qualified Name before returning `OK` (needs EK-pub capture + TPM Name-algebra); today the remote verifier binds the signer via the exported AK public. -> follow-up (Codex re-adversarial [H]).
+  - Reopened 2026-11-07: EK-public capture exists, and `tpm_ak_public_get` gives the AK public a Name is hashed from; `tpm2_nv_name_compute` (`tpm_nv.c:211`) shows the algebra. `tpm_attest.c:244` still skips the field. The verifier-side binding stays as it is.
+- [x] Wire the quote + AK public + EK-cert chain into §9's report (§13 exposes the query APIs; §9 owns integration). -> XREF: [`§9`](#9-attestation-report-export) (item: "Build the TPM-rooted `boot_attestation_report_t`").
+  - Done: `tpm_attest_report_build` calls `tpm2_quote`, `tpm_ak_public_get` and `tpm_ek_cert_read` (`tpm_attest_report.c:234`, `:245`, `:253`) and the JSON carries them (`:455`, `:463`). Read at source 2026-11-07, not run against a real TPM.
 - [x] Degraded: no TPM / no EK cert / AK fail -> classified `tpm_attest_status_t`; every entry point returns a status, NEVER gates boot. Fixture-tested.
 - [x] Commit: `"tpm: attestation key provisioning and TPM2 quote"`
 
@@ -413,7 +413,7 @@ The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cann
 > - Query APIs (`tpm2_quote`/`tpm_ak_public_get`/`tpm_ek_cert_read`) are what §9 consumes; report integration + the `MakeCredential`/`ActivateCredential` challenge are tracked follow-ups.
 > - Scope boundary: §13 owns the TPM-rooted signing mechanism; §9 owns the report export; live quote+verify + credential activation are swtpm/bare-metal validation.
 > **Verified:** 2026-06-14 | commit `c9ce7bcd` (ship) + review (request/response binding) | 6/9 items | build OK | tests 903/903 PASS (security)
-> **Deferred:** [H] `TPMS_ATTEST.qualifiedSigner` not bound to the AK Qualified Name -> XREF: 01-boot-platform/TODO-13 §13 (item: "Bind `TPMS_ATTEST.qualifiedSigner` to the AK Qualified Name" at line 400) (reason: needs EK-pub capture + Name-algebra; verifier binds the signer via the exported AK pub)
+> **Note:** 2026-11-07, Deferred stamp retired: [H] `qualifiedSigner` binding is open again.
 > **Quality reviewed:** 2026-06-14 | Codex 8x (adversarial, consistency, perf, re-adversarial) | 4H+4M fixed, 1H deferred | scope: kernel-code-quality
 
 ---
@@ -498,33 +498,33 @@ Half the substrate exists, which the cohort item's own text ("owner: recovery-ki
 - [/] PARKED, owner §10 (recovery UX): quiesce and resynchronize the PS/2 mouse across a console take-over, REQUIRED before any non-terminal caller uses `BOOT_CONFIRM_IRQ_TAKE_OVER` after `mouse_init()`.
   - Found by adversarial review round 2. Masking IRQ12 stops the mouse DRIVER but not the DEVICE, and the poll discards the auxiliary bytes it sees, so the driver's 3-byte packet cursor is not guaranteed to be where it was when IRQ12 is restored. Nothing observes this today because the only take-over caller is the recovery screen, which is terminal on every path, and `boot_confirm.h` now states that limit rather than promising post-`mouse_init` reuse is safe.
   - The fix is device-level (disable reporting, drain, reset the driver's `mouse_cycle`, re-enable) and belongs with whoever builds the first returning recovery console; doing it blind now would add an untested 8042 sequence to a path no caller exercises. -> XREF: §10 (item: "In recovery, explain whether firmware, bootloader, kernel, Secure Boot db, or baseline changed").
-- [/] Provision the authorized anti-rollback anchors: define them under the §27 authPolicy and make the FIRST authorized write. -> XREF: 01-boot-platform/TODO-13 §27 (item: "The A/B floor is an authenticated DATA record").
-  - Parked: waits on §27's authPolicy provisioning, which the XREF names.
+- [ ] Provision the authorized anti-rollback anchors: define them under the §27 authPolicy and make the FIRST authorized write. -> XREF: 01-boot-platform/TODO-13 §27 (item: "The A/B floor is an authenticated DATA record").
+  - Reopened 2026-11-07: §27 is `[x]`, so the wait is over. `tpm_record_transition_ok` accepts a first record (`tpm_record.c:220`), and grep finds nothing that makes that first write. The ordering question below is this section's own.
   - §27 ships TRANSITIONS between existing records and deliberately refuses to invent a first one: an advance that wrote a fresh floor over a missing record could not tell an unprovisioned anchor from a destroyed one, which is the laundering the whole section exists to stop.
   - The ordering has to INVERT for the first write, and that is why it is a design question rather than a missing call. A fresh `TPM_NT_COUNTER` initializes to the TPM's largest-ever NV counter value on its first increment, so the generation the first record must carry is unknowable until AFTER that increment; write-then-increment cannot be used to establish the sequence it depends on.
   - That also means the offline authority cannot pre-sign the first record, since its cpHash covers bytes containing a generation nobody knows yet. Enrollment authority is this section's subject, so the first-provisioning authorization belongs here rather than with the transition layer.
   - Until it lands, a machine with an authority key compiled in has the boundary but no way through it, and `tpm_baseline_verify` reports `TPM_BASELINE_UNBOUND`. Found by §27's re-adversarial round.
 - [/] BLOCKING: build a trusted producer that can SET the sticky recovery trigger, without which this gate can never admit and no baseline can ever be enrolled.
-  - Parked, operator-gated: setting the sticky trigger needs an authenticated operator path, which is a design decision rather than a one-line fix. Nothing else in this section can admit until it exists.
+  - Parked, awaiting-answer Q12: setting the sticky trigger needs an authenticated operator path. Nothing else in this section can admit until it exists.
   - Found by the post-commit adversarial pass and verified across every reference: `src/boot/uefi/boot_sticky.c:143` READS `recovery_trigger` out of the NVRAM record, `:46` and `:83` zero it, and `src/kernel/main/boot_audit.c:470-471` can only PRESERVE an existing 1 or clear it. Nothing in the tree ever sets it, the bootloader is read-only by contract, and user-mode writes to `ImpossibleOS-BootSticky` are denied -- so `sticky_recovery_trigger` is always 0 and the predicate always refuses at `sticky-trigger-clear`.
   - This is the SAME class of mistake as the earlier `selection_reason` defect and it is why the section is `[/]` rather than `[x]`: the authority DECISION shipped, is correct and is tested, but the capability it gates cannot be exercised end to end. The producer needs an authenticated operator path (recovery UI or an authorized runtime write), which is a real design decision and not a one-line addition.
-- [/] Feed the gate a validated `secure_boot_enforcing` input rather than the raw SecureBoot bit, which reads 1 in SetupMode and AuditMode where signatures are not enforced.
-  - Parked: needs SetupMode and AuditMode plumbed into `boot_info` first, so the gate has a validated input to read.
+- [ ] Feed the gate a validated `secure_boot_enforcing` input rather than the raw SecureBoot bit, which reads 1 in SetupMode and AuditMode where signatures are not enforced.
+  - Reopened 2026-11-07: `boot_info` plumbing is not the only route: `uefi_secureboot_setup_mode()` (`uefi_runtime.c:1630`) already exposes SetupMode and `s_sb_audit_mode` sits beside it, while the gate input at `boot_interrupts.c:583` still reads the raw bit. Check that those reads run before the gate.
   - `uefi_runtime.c:1251-1322` publishes `secure_boot_enabled` from the `SecureBoot` variable alone, with no `SetupMode` / `AuditMode` qualification and no enrolled-PK check, so the gate's chain check is weaker than it reads. Needs those firmware states plumbed into `boot_info` first, plus a fixture per degraded state.
 - [/] Consume the recovery trigger durably after a successful enrollment, one-shot, so a seeded trigger cannot authorize a second enrollment on a later boot.
-  - Parked: gated on the trigger producer above -- there is nothing to consume durably until something can set it.
+  - Parked, awaiting-answer Q12: gated on the trigger producer above.
   - `boot_audit_classify_ack` clears the trigger only when `selection_reason == RECOVERY_REQUEST` (`boot_audit.c:407-455`), which is exactly the path this gate deliberately does NOT require, and a successful `tpm_baseline_enroll()` does not consume it either. Once a producer exists (item above), the trigger would otherwise stay live indefinitely.
-- [/] Hard-skip the legacy 8042 probe on hardware-reduced ACPI platforms, matching the rule `keyboard.c:309-312` already sets for the same controller.
-  - Parked with §15 rather than technically blocked: `acpi_hw_reduced()` already exists, so this is runnable the moment the section reopens. Also blocked, like every code change in this file, by the kernel-image ceiling parked on `02-kernel-core/TODO-33` §7.
+- [ ] Hard-skip the legacy 8042 probe on hardware-reduced ACPI platforms, matching the rule `keyboard.c:309-312` already sets for the same controller.
+  - Reopened 2026-11-07: no blocker of its own, and the image ceiling ended (`bss-headroom.py`: `.text` budget 153,647 bytes).
   - `confirm_console_present()` reads port 0x64 with no `acpi_hw_reduced()` gate, making this the only code in the tree that touches the legacy 8042 ports on a hardware-reduced platform, on the Phase 1 boot path. Expected to be a benign 0xFF read, but it violates a rule the tree states explicitly.
-- [/] Give the Phase 1 confirmation prompt its own POST16 entry/exit so a wedge inside it does not present as a TPM transport hang on a POST card.
-  - Parked with §15 rather than technically blocked; runnable the moment the section reopens. Also blocked, like every code change in this file, by the kernel-image ceiling parked on `02-kernel-core/TODO-33` §7.
+- [ ] Give the Phase 1 confirmation prompt its own POST16 entry/exit so a wedge inside it does not present as a TPM transport hang on a POST card.
+  - Reopened 2026-11-07: no blocker of its own, and the image ceiling ended (`bss-headroom.py`: `.text` budget 153,647 bytes).
   - The prompt can block Phase 1 for up to 15s between `POST16_TPM_TRANSPORT` and `POST16_TPM_TRANSPORT_OK`, so on a POST card any stall inside it is indistinguishable from a TPM transport hang. Gate 4 requires POST16 on boot-path work and the `0xDD00-0xDFFF` range has free codes.
-- [/] Expose the `boot_confirm.c` pure helpers for unit test: the scancode decode that turns 0x15 into the `y` authorizing a baseline write is currently untestable.
-  - Parked with §15 rather than technically blocked; runnable the moment the section reopens. Also blocked, like every code change in this file, by the kernel-image ceiling parked on `02-kernel-core/TODO-33` §7.
+- [ ] Expose the `boot_confirm.c` pure helpers for unit test: the scancode decode that turns 0x15 into the `y` authorizing a baseline write is currently untestable.
+  - Reopened 2026-11-07: no blocker of its own, and the image ceiling ended (`bss-headroom.py`: `.text` budget 153,647 bytes).
   - `confirm_scancode_to_ascii`, `confirm_key_accepted` and `confirm_budget`'s overflow-checked multiply are all file-static, so the decode gating a security decision has zero coverage. The test policy rightly forbids driving the live prompt from a test, which is the argument for exposing the pure parts rather than accepting the gap.
-- [/] Consolidate the duplicated i8042 port, status-bit and scancode definitions now spread across `boot_confirm.c`, `keyboard.c` and `mouse.c` into one shared header.
-  - Parked with §15 rather than technically blocked; runnable the moment the section reopens. Also blocked, like every code change in this file, by the kernel-image ceiling parked on `02-kernel-core/TODO-33` §7.
+- [ ] Consolidate the duplicated i8042 port, status-bit and scancode definitions now spread across `boot_confirm.c`, `keyboard.c` and `mouse.c` into one shared header.
+  - Reopened 2026-11-07: no blocker of its own, and the image ceiling ended (`bss-headroom.py`: `.text` budget 153,647 bytes).
   - `boot_confirm.c` defines its own `PS2_DATA_PORT` 0x60, `PS2_STATUS_PORT` 0x64, `PS2_STATUS_OBF` 0x01, `PS2_STATUS_AUX` 0x20 and `PS2_BREAK_CODE` 0x80 alongside the drivers' copies, and its `confirm_scancode_to_ascii` is a second, smaller scancode map. The values agree today; the risk is drift, and the AUX bit in particular is now load-bearing for a security decision.
 - [x] Commit: `"tpm: loader-validated + console-confirmed baseline enrollment"`
 
@@ -539,13 +539,13 @@ Half the substrate exists, which the cohort item's own text ("owner: recovery-ki
 > - **Not yet reachable:** the decision shipped and is tested, but nothing in the tree SETS the sticky recovery trigger it anchors on, so no enrollment can complete end to end; §15 stays `[/]` until the producer lands.
 
 > **Verified:** 2026-08-17 | commit `625d3a48b` | 7/17 items (3 parked, 7 open) | build OK (`=== BUILD OK ===`) | lint rc 0 | SUITE=security 1315 kernel + 17 user-mode PASS | smoke matrix 4/4 legs (kvm/tcg x 1/2 cpu) | evidence: single admitting path at `tpm_enroll_gate.c:219` (1 of 18 result-setting calls covering all 19 returns); every early return in `boot_confirm_wait_keys` lies outside the `confirm_irq_begin`/`confirm_irq_end` window (380/390/393/399 before, 421/424 after); test wiring proven by a deliberate assertion break (`FAIL: 1 of 1291`) then revert
-> **Deferred:** [Critical] no in-tree producer SETS `sticky_recovery_trigger`, so the gate always refuses at `sticky-trigger-clear` and enrollment is unreachable end to end (reason: needs an authenticated operator path, a design decision not a one-line fix) -> XREF: 01-boot-platform/TODO-13 §15 (item: "BLOCKING: build a trusted producer that can SET the sticky recovery trigger")
-> **Deferred:** [H] `secure_boot_enabled` is the raw SecureBoot bit, which reads 1 under SetupMode/AuditMode where signatures are not enforced (reason: needs those firmware states plumbed into boot_info first) -> XREF: 01-boot-platform/TODO-13 §15 (item: "Feed the gate a validated `secure_boot_enforcing` input")
-> **Deferred:** [H] a seeded recovery trigger is never consumed after a successful enroll, so it would remain replayable on later boots -> XREF: 01-boot-platform/TODO-13 §15 (item: "Consume the recovery trigger durably after a successful enrollment")
-> **Deferred:** [M] the 8042 probe is not gated on `acpi_hw_reduced()`, against the rule `keyboard.c:309-312` sets for the same controller -> XREF: 01-boot-platform/TODO-13 §15 (item: "Hard-skip the legacy 8042 probe on hardware-reduced ACPI platforms")
-> **Deferred:** [M] the Phase 1 prompt has no POST16 of its own, so a stall inside it reads as a TPM transport hang -> XREF: 01-boot-platform/TODO-13 §15 (item: "Give the Phase 1 confirmation prompt its own POST16 entry/exit")
-> **Deferred:** [M] `boot_confirm.c`'s pure helpers are file-static and therefore untested, including the scancode decode that gates the write -> XREF: 01-boot-platform/TODO-13 §15 (item: "Expose the `boot_confirm.c` pure helpers for unit test")
-> **Deferred:** [M] i8042 port/status/scancode constants are duplicated between `boot_confirm.c` and the keyboard/mouse drivers, so a bit definition can drift between them -> XREF: 01-boot-platform/TODO-13 §15 (item: "Consolidate the duplicated i8042 port, status-bit and scancode definitions")
+> **Note:** 2026-11-07, Deferred stamp retired: [Critical] trigger producer, now `todo/answers.md` Q12.
+> **Note:** 2026-11-07, Deferred stamp retired: [H] `secure_boot_enforcing` input, reopened.
+> **Note:** 2026-11-07, Deferred stamp retired: [H] one-shot consume, parked on Q12 with the producer.
+> **Note:** 2026-11-07, Deferred stamp retired: [M] 8042 probe gate, reopened.
+> **Note:** 2026-11-07, Deferred stamp retired: [M] prompt POST16, reopened.
+> **Note:** 2026-11-07, Deferred stamp retired: [M] pure helpers, reopened.
+> **Note:** 2026-11-07, Deferred stamp retired: [M] i8042 constants, reopened.
 > **Quality reviewed:** 2026-08-17 | Codex 10x (design, adversarial x7, consistency, perf, test-coverage) | 1C+8H+6M fixed, 1C+2H+4M deferred | scope: kernel-code-quality + kernel-quality-auditor + concurrency-evidence-mapper
 
 ---

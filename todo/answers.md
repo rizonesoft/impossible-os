@@ -171,3 +171,34 @@ Today's scalar per-session masks cannot hold two providers with different polici
 Recommended: approve it, keeping the existing channel call as the legacy path the item already describes. Blocks TODO-04 §11 and the section behind it (line 428's stamp).
 
 A: (pending)
+
+## Q12 (TODO-13 §15/§10): what may set the sticky recovery trigger and reset a trusted baseline?
+
+Nothing in the tree sets `recovery_trigger`: `boot_sticky.c` reads and clears it, `boot_audit.c` preserves or clears it, and user-mode writes are denied. The enrollment gate refuses at `sticky-trigger-clear` (`tpm_enroll_gate.c:158`), so no baseline can be enrolled end to end. A trusted baseline reset needs the same authority.
+
+- **A: physical presence.** A key choice at a boot console, built on `boot_confirm_wait_keys()`. No new key material, but a machine with no console has no path.
+- **B: signed authorization.** The TODO-13 §23 headless authority also admits the trigger. Works headless, but only after an integrator provisions a key.
+- **A plus B.** Both paths, with both gates to review.
+
+Recommended: A first, because it needs no provisioning and matches the local-confirmation wording in §10; B can follow. This comes from reading the code and TODO text, not a design review. Blocks the producer, the one-shot consume and the baseline reset; the rest of §15 and §10 is open.
+
+A: (pending)
+
+## Q13 (TODO-13 §9): how does user mode read attestation evidence, and who may?
+
+The report exports to `X:\Diag\attestation.json` today, with no query API. This is new ABI plus an access-control choice.
+
+- **A: an `NtQuerySystemInformation` class** restricted to administrators.
+- **B: a new dedicated syscall.**
+
+Recommended: A, since it adds no SSDT entry. I did not check how the existing classes gate access. Blocks one item in §9.
+
+A: (pending)
+
+## Q14 (TODO-13 §9/§13): which remote-attestation protocol does the platform target?
+
+A verifier-side challenge does not exist in the tree, so `TPM2_MakeCredential` / `TPM2_ActivateCredential` has no peer and the "remote-attestation placeholder" has nothing to be a placeholder for. No candidate protocol was researched for this question.
+
+Recommended: leave both parked until a platform service needs remote attestation, since no consumer exists. Blocks the placeholder in §9 and credential activation in §13.
+
+A: (pending)
