@@ -288,6 +288,14 @@ def test_health_counts_one_section_once_and_flags_a_stall_and_clears_it():
         assert h["repair_needed"] is False, h
 
 
+def test_git_colour_settings_do_not_hide_a_ship():
+    with tempfile.TemporaryDirectory() as d:
+        root, _ = _fixture(d)
+        _git(root, "config", "color.ui", "always")
+        _commit(root, "todo/T.md", "> **Quality reviewed:** x\n")
+        assert sup.check(root, False, T0 + 60)["sections_shipped_total"] == 1
+
+
 def test_correcting_a_stamp_is_not_a_ship():
     with tempfile.TemporaryDirectory() as d:
         root, _ = _fixture(d)

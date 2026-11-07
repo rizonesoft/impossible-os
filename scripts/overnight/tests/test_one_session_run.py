@@ -246,6 +246,18 @@ def test_a_bounded_run_stops_only_once_the_section_is_stamped_and_pushed():
         assert g.ship_limit_reached(root)
 
 
+def test_git_colour_settings_do_not_hide_a_ship():
+    import run_phase_guard as g
+    with tempfile.TemporaryDirectory() as d:
+        root, git = _bounded(d)
+        git("config", "color.ui", "always")
+        (root / "todo/T.md").write_text("x\n> **Quality reviewed:** b\n")
+        git("add", "-A")
+        git("commit", "-qm", "review")
+        git("push", "-q")
+        assert g.ship_limit_reached(root)
+
+
 def test_refusal_correcting_a_stamp_ships_nothing():
     import run_phase_guard as g
     with tempfile.TemporaryDirectory() as d:

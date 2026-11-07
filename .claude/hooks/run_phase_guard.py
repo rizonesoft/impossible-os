@@ -1630,7 +1630,7 @@ def ship_limit_reached(root):
     doubt reads as not reached, so the guard keeps the session working."""
     try:
         limit, start = (root / ".claude/state/run-ship-limit").read_text().split()[:2]
-        r = subprocess.run(["git", "-C", str(root), "diff", "--unified=0",
+        r = subprocess.run(["git", "-C", str(root), "diff", "--no-color", "--unified=0",
                             f"{start}..@{{u}}", "--", "todo"],
                            capture_output=True, text=True, timeout=30)
     except (OSError, ValueError, subprocess.SubprocessError):

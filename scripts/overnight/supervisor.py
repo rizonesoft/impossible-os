@@ -61,7 +61,7 @@ def is_machinery(path: str) -> bool:
 
 def ships_in(root: Path, sha: str) -> int:
     """Section-ship stamps a commit adds under todo/."""
-    r = git(root, "show", "--format=", "--unified=0", sha, "--", "todo")
+    r = git(root, "show", "--no-color", "--format=", "--unified=0", sha, "--", "todo")
     if r.returncode != 0:
         return 0
     # Net, because correcting a stamp replaces it and ships nothing.
