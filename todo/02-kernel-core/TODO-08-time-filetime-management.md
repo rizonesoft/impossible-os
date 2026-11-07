@@ -77,7 +77,7 @@ title: "TODO-08 -- Time & FILETIME Management"
 | 💎  |  15   | Leap second policy                                                    | §1                  |  [x]   |
 | ⭐  |  16   | Coarse time fast path (lock-free cached time)                         | §6                  |  [x]   |
 | ⭐  |  17   | NTP clock adjustment hooks                                            | §6                  |  [/]   |
-| 💎  |  18   | Clocksource quality watchdog (drift demotion)                         | §2, §3              |  [/]   |
+| 💎  |  18   | Clocksource quality watchdog (drift demotion)                         | §2, §3              |  [ ]   |
 | 💎  |  19   | NTP continuous wall-time discipline                                   | §17, §18            |  [x]   |
 
 > 💎 = parity -- Windows NT and Linux both provide these capabilities.
@@ -157,7 +157,7 @@ On systems with invariant TSC (`CPUID 0x80000007 EDX[8]`), the TSC ticks at a co
 > - Canonical: `src/kernel/time/mono_clock.c`.
 > - Scope boundary: §3 ships the ordered read; AP sync + demotion machinery is the deferred items (shared with §18); resume re-verify is power-management.
 > **Verified:** 2026-06-27 | commit `13f02ffe` | 7/10 items | build OK | 208 kernel + 16 user PASS | smoke PASS (TCG)
-> **Deferred:** [H] AP TSC sync rendezvous -- BSP/AP bounded ping-pong (Linux `tsc_sync.c` parity); the atomic-descriptor + mono-wide-floor portion shipped in §18 -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §3 (item: "AP TSC sync + warp detection" at line 144)
+> **Deferred:** [H] AP TSC sync rendezvous -- BSP/AP bounded ping-pong (Linux `tsc_sync.c` parity); the atomic-descriptor + mono-wide-floor portion shipped in §18 -> XREF: 01-boot-platform/TODO-09 §10 (item: "AP_DATA consume-ack handshake")
 > **Deferred:** [M] resume TSC re-verify blocked on power-management S3 -> XREF: 02-kernel-core/TODO-26-power-management.md §3
 > **Quality reviewed:** 2026-06-27 | Codex 2x (design, adversarial) | 1H fixed (RDTSCP AP-skew gate), 2H+1M deferred | scope: kernel-code-quality
 
@@ -398,7 +398,7 @@ The timer ISR must update the `KUSER_SHARED_DATA` time fields (SystemTime, Inter
 > **Verified:** 2026-06-27 | ship `da9c78f3` + review fixes | 7/9 items | build OK | 243 kernel + 16 user PASS | smoke PASS (TCG 2.49s)
 > **Accepted:** [H] the KUSD huge-page split leaves the 511 identity siblings user-accessible (the KUSD leaf itself is user-RO) -- the global SMEP-disabled boot map (User on all identity pages), not §12-specific -> XREF: 03-memory-concurrency/TODO-02-memory-security.md §3 (item: "set CR4 bit 20 (`CR4.SMEP`)" at line 109)
 > **Deferred:** [H] move the Impossible-OS ABI header out of `KUSER_SHARED_DATA` to a private page (Win11-QPC-tail collision) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §12 (item: "Reconcile ABI-header / Win11-QPC-tail collision" at line 386)
-> **Deferred:** [M] Win11 24H2 QPC-bypass fields (QpcBypassEnabled stays 0 until a user-mode reader exists) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §12 (item: "Win11 24H2 KUSD QPC fast-path fields" at line 385)
+> **Deferred:** [M] Win11 24H2 QPC-bypass fields (QpcBypassEnabled stays 0 until a user-mode reader exists) -> XREF: 10-platform-services/TODO-09 §1 (the user-mode `QueryPerformanceCounter` reader)
 > **Quality reviewed:** 2026-06-27 | Codex 6x (design, adversarial, consistency, perf, re-adversarial x2) + kernel-quality-auditor | 1H+4M+1L fixed, 1H accepted-XREF, 1H+1M deferred | scope: kernel-code-quality
 
 ---
@@ -544,7 +544,7 @@ Continuously cross-check the active monotonic clock source against a reference a
   - Blocker: no such clock exists in the tree today, and none is on any roadmap -- this is genuinely waiting on a fourth clocksource, not on a scheduled item. Re-open when one lands; until then the HPET-reference path is the shipped behaviour, not a stopgap.
 - [/] Optimization (PARKED, perf review [M]): a per-CPU / batched `mono_floor` fast path for steady-state TSC reads -- the global `cmpxchg` on `s_mono_floor` bounces a cacheline under cross-CPU polling.
   - Blocker: needs a measured cross-CPU polling workload to justify and validate the change, which no bench in the tree produces yet. Monotonicity MUST stay global, so a per-CPU floor is only correct with a reconciliation step -- the design risk is why this is parked rather than attempted opportunistically.
-- [/] PMTMR is selected on the presence of a FADT port alone, with no probe that the counter actually advances (`src/kernel/time/mono_clock.c:234`)
+- [ ] PMTMR is selected on the presence of a FADT port alone, with no probe that the counter actually advances (`src/kernel/time/mono_clock.c:234`)
   - `mono_clock_init()` publishes `MONO_SRC_PMTMR` when `acpi_get_pmtimer_port() != 0`; unlike the TSC path it never range-checks a measured rate, so a wedged or absent-but-decoded PM timer is selected and `mono_ns()` then returns a constant. Found while building the PCI D-state recovery delay, which has to trust that a qualified source advances.
   - Blocker/owner: this section owns clocksource qualification, and the fix is a boot-time progress probe (sample the counter twice across a known interval and refuse a source that did not move) rather than a change in any consumer. Consumers currently defend themselves individually -> XREF: `02-kernel-core/TODO-26-power-management.md` §8 (item: "A transition that cannot observe its recovery interval POISONS the module rather than reporting success")
 - [x] Continuous NTP freq/slew APPLICATION + per-tick lock-hold audit: shipped in §19 (the §17-deferred wall-time discipline, behind the generation-aware wall floor).
@@ -560,8 +560,8 @@ Continuously cross-check the active monotonic clock source against a reference a
 > - Canonical: `src/kernel/time/mono_clock.c`.
 > - Scope boundary: §18 owns clocksource qualification + drift demotion; NTP wall-time discipline is §19; AP TSC sync stays §3-deferred; S3 resume is power-management.
 > **Verified:** 2026-06-27 | commit `10613f9a` | 6/9 items | build OK | tests 291/291 PASS | smoke PASS (TCG 2.53s)
-> **Deferred:** [H] PMTMR-reference watchdog monitoring (auto-monitoring is HPET-reference-only; PMTMR wrap unboundable by an independent continuous clock) -> XREF: 02-kernel-core/TODO-08 §18 (item: "PMTMR-reference watchdog monitoring" at line 543)
-> **Deferred:** [M] per-CPU/batched `mono_floor` fast path for the always-on TSC read -> XREF: 02-kernel-core/TODO-08 §18 (item: "Optimization (perf review [M])" at line 542)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] PMTMR-reference watchdog monitoring (auto-monitoring is HPET-reference-only; PMTMR wrap unboundable by an independent continuous clock). The stamp named this section's own item. A fourth clocksource and a polling bench are still absent, so both items stay parked on those with their reasons; the stamp was hiding the open PMTMR progress-probe item beside them.
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] per-CPU/batched `mono_floor` fast path for the always-on TSC read. The stamp named this section's own item. A fourth clocksource and a polling bench are still absent, so both items stay parked on those with their reasons; the stamp was hiding the open PMTMR progress-probe item beside them.
 > **Quality reviewed:** 2026-06-27 | Codex 12x (design, adversarial, consistency, perf, re-adversarial) | 8H+3M+1L fixed, 3 deferred | scope: kernel-code-quality
 
 ---
