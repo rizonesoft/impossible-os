@@ -24,7 +24,9 @@ PY
 SETUP="$(python3 scripts/ci_container_setup.py)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-git archive --format=tar HEAD > "$TMP/head.tar"
+# A full-history bundle, as CI's `fetch-depth: 0` has: lint and the site build judge
+# changes against history, and a one-commit snapshot reads every old line as new.
+git bundle create -q "$TMP/head.bundle" HEAD main
 printf '%s' "$SETUP" > "$TMP/setup.sh"
 cat > "$TMP/run.sh" <<EOF
 set -euo pipefail
@@ -33,14 +35,12 @@ apt-get update -qq
 apt-get install -y -qq sudo git ca-certificates >/dev/null
 bash /ci/setup.sh
 useradd -m ci
-mkdir /home/ci/w
-tar -xf /ci/head.tar -C /home/ci/w
-chown -R ci /home/ci/w
 su ci -c '
   set -euo pipefail
+  git clone -q --branch main /ci/head.bundle /home/ci/w
   cd /home/ci/w
-  git init -q && git -c user.name=ci -c user.email=ci@ci.invalid add -A
-  git -c user.name=ci -c user.email=ci@ci.invalid commit -qm "ci-container snapshot"
+  git config user.name ci
+  git config user.email ci@ci.invalid
   bash scripts/setup.sh --verify
   bash scripts/lint.sh
   $([ "$TOOLING" = 1 ] && echo 'bash scripts/test-tooling.sh --quiet')

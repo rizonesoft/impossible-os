@@ -66,6 +66,12 @@ def test_split_keeps_required_check_and_the_pack_still_runs():
     assert run["env"]["TEST_TOOLING_SKIP_LSP_MCP"] == "1"
 
 
+def test_container_gets_full_history():
+    text = (REPO / "scripts/ci-container.sh").read_text()
+    assert "git bundle create" in text and "git clone" in text
+    assert "git archive" not in text, "a snapshot has no history for lint to judge against"
+
+
 def test_shell_syntax():
     subprocess.run(["bash", "-n", str(REPO / "scripts/ci-container.sh")], check=True)
 
