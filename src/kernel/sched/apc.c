@@ -22,6 +22,7 @@
 #include "kernel/sched/irql.h"
 #include "kernel/sched/dpc_config.h"
 #include "kernel/smp.h"
+#include "kernel/sched/irql_store.h"
 #include "kernel/klog.h"
 
 /* APC starvation watchdog event counter: bumped (atomically, no klog) by the
@@ -342,7 +343,7 @@ void KiDeliverApc(uint8_t previous_mode, void *exception_frame, void *trap_frame
          * resume on another CPU, so the IRQL bookkeeping must land on whatever
          * CPU is current now. entry_irql is PASSIVE on the real lower-path entry,
          * so restoring it on a migrated-to CPU is still correct. */
-        smp_this_cpu()->current_irql = APC_LEVEL;
+        irql_store(smp_this_cpu(), APC_LEVEL);
         /* KernelRoutine: the cleanup hook. It may free the KAPC and may rewrite
          * the NormalRoutine / context / args. After it runs, `apc` may be
          * dangling -- do not touch it again. */
@@ -350,12 +351,12 @@ void KiDeliverApc(uint8_t previous_mode, void *exception_frame, void *trap_frame
             krout(apc, (void **)&nrout, &nctx, &sa1, &sa2);
 
         /* NormalRoutine is the deferred work (kernel APC at PASSIVE_LEVEL). */
-        smp_this_cpu()->current_irql = PASSIVE_LEVEL;
+        irql_store(smp_this_cpu(), PASSIVE_LEVEL);
         if (!is_special && nrout)
             nrout(nctx, sa1, sa2);
 
         /* Restore the IRQL we were entered at before the next iteration. */
-        smp_this_cpu()->current_irql = entry_irql;
+        irql_store(smp_this_cpu(), entry_irql);
 
         if (!is_special) {
             spin_lock_irqsave(&t->apc_lock, &flags);

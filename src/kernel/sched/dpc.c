@@ -107,8 +107,7 @@ static event_t s_dpc_worker_event;
  * when dpc_watchdog_set_strict(1). The per-tick count budget is a token bucket
  * (refilled DPC_BUDGET_PER_TICK/tick, capped) that flags monopolization. The
  * cumulative ">=DISPATCH-time" case (param 0x1) is deferred -- it needs per-CPU
- * time-at-DISPATCH accounting at every current_irql write site (the IRQL-write-
- * surface centralization tracked in section 13). */
+ * time-at-DISPATCH accounting, whose one hook point is irql_store(). */
 /* Per-routine overrun accounting, so a chronically slow DPC is reported once
  * with a count instead of once per occurrence.
  *

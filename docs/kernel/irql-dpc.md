@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/02-kernel-core/TODO-07-irql-model-dpcs.md sources=include/kernel/sched/irql.h,src/kernel/sched/irql.c,include/kernel/sched/dpc.h,src/kernel/sched/dpc.c,include/kernel/sched/dpc_config.h,include/kernel/sched/apc.h,src/kernel/sched/apc.c,include/kernel/sched/ktimer.h,src/kernel/sched/ktimer.c,include/kernel/sched/kinterrupt.h,src/kernel/sched/kinterrupt.c,include/kernel/sched/kworker.h,src/kernel/sched/kworker.c,src/kernel/idt.c,src/kernel/drivers/lapic.c,src/kernel/test/test_sched.c,src/kernel/test/test_kworker.c reviewed=2026-11-07T15:45 order=7 -->
+<!-- docs: covers=todo/02-kernel-core/TODO-07-irql-model-dpcs.md sources=include/kernel/sched/irql.h,include/kernel/sched/irql_store.h,src/kernel/sched/irql.c,include/kernel/sched/dpc.h,src/kernel/sched/dpc.c,include/kernel/sched/dpc_config.h,include/kernel/sched/apc.h,src/kernel/sched/apc.c,include/kernel/sched/ktimer.h,src/kernel/sched/ktimer.c,include/kernel/sched/kinterrupt.h,src/kernel/sched/kinterrupt.c,include/kernel/sched/kworker.h,src/kernel/sched/kworker.c,src/kernel/idt.c,src/kernel/drivers/lapic.c,src/kernel/test/test_sched.c,src/kernel/test/test_kworker.c reviewed=2026-11-07T16:30 order=7 -->
 # IRQL, DPCs and APCs
 
 ## What is it?
@@ -8,6 +8,8 @@ Impossible OS uses the Windows Interrupt Request Level (IRQL) to answer one ques
 ## How does it work?
 
 Each CPU keeps its own `current_irql`, starting at `PASSIVE_LEVEL`. `KeRaiseIrql()` rejects a raise to a lower level and writes the LAPIC Task Priority Register only when the mapped priority actually changes, so moving between `PASSIVE_LEVEL` and `APC_LEVEL` (both priority 0) costs no hardware write. `KeLowerIrql()` restores a saved level and, as it drops, drains pending DPCs and APCs ([`irql.c`](../../src/kernel/sched/irql.c)).
+
+`irql_store()` ([`irql_store.h`](../../include/kernel/sched/irql_store.h)) is the only code that writes `current_irql`, including on the paths that bypass `KeRaiseIrql()`: spinlocks, interrupt entry and exit, serial locking and APC level moves. It changes software state only. Lint Check 34 refuses a write anywhere else, so anything that must see every level change hooks in there.
 
 Interrupt entry in `isr_handler()` ([`idt.c`](../../src/kernel/idt.c)) raises `current_irql` to the vector's level and restores it on exit, in software only; the LAPIC's own in-service priority already masks lower vectors during delivery.
 

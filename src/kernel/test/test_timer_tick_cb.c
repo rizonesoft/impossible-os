@@ -27,6 +27,7 @@
 #include "kernel/sched/irql.h"
 #include "kernel/sched/dpc.h"
 #include "kernel/smp.h"
+#include "kernel/sched/irql_store.h"
 
 extern void spinner_stop(void);
 extern void spinner_start(void);
@@ -186,13 +187,13 @@ static void test_tick_irql_lower_targets(void)
     saved_irql = pcpu->current_irql;
     saved_interrupted = pcpu->clock_interrupted_irql;
     for (int i = 0; i < CASE_COUNT; i++) {
-        pcpu->current_irql = cases[i].current;
+        irql_store(pcpu, cases[i].current);
         pcpu->clock_interrupted_irql = cases[i].interrupted;
         drain[i] = irql_tick_lower_to_dispatch();
         got[i] = pcpu->current_irql;
     }
     pcpu->clock_interrupted_irql = saved_interrupted;
-    pcpu->current_irql = saved_irql;
+    irql_store(pcpu, saved_irql);
     spin_unlock_irqrestore(&s_tick_test_lock, irq_flags);
 
     for (int i = 0; i < CASE_COUNT; i++) {

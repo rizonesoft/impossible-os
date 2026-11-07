@@ -12,6 +12,7 @@
  * ============================================================================ */
 
 #include "kernel/smp.h"
+#include "kernel/sched/irql_store.h"
 #include "kernel/msr.h"
 #include "kernel/cpu_security.h"
 #include "kernel/drivers/lapic.h"
@@ -128,7 +129,7 @@ void smp_early_bsp_init(void)
      * place, so smp_cpu_count() reports the BSP from Phase 0 onward rather
      * than depending on smp_init() having run. */
     (void)smp_publish_cpu_online(&cpu_data[0]);
-    cpu_data[0].current_irql  = PASSIVE_LEVEL;
+    irql_store(&cpu_data[0], PASSIVE_LEVEL);
     cpu_data[0].current_task  = (void *)0;
     cpu_data[0].irq_count     = 0;
     cpu_data[0].preempt_count = 0;
@@ -267,7 +268,7 @@ void ap_entry(uint32_t cpu_index)
      * identity-authentication work, where both are already written down. */
     pcpu->irq_count  = 0;
     pcpu->preempt_count = 0;
-    pcpu->current_irql  = PASSIVE_LEVEL;
+    irql_store(pcpu, PASSIVE_LEVEL);
     pcpu->current_task  = (void *)0;
 
     /* fast-path transition ring: initialize AP ring now that
@@ -391,7 +392,7 @@ void smp_init(void)
         (void)smp_publish_cpu_online(&cpu_data[0]);
         cpu_data[0].irq_count    = 0;
         cpu_data[0].preempt_count = 0;
-        cpu_data[0].current_irql  = PASSIVE_LEVEL;
+        irql_store(&cpu_data[0], PASSIVE_LEVEL);
         cpu_data[0].current_task  = (void *)0;
         msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)&cpu_data[0]);
         __atomic_store_n(&present_cpus, 1u, __ATOMIC_RELEASE);
@@ -423,7 +424,7 @@ void smp_init(void)
     (void)smp_publish_cpu_online(&cpu_data[0]);
     cpu_data[0].irq_count    = 0;
     cpu_data[0].preempt_count = 0;
-    cpu_data[0].current_irql  = PASSIVE_LEVEL;
+    irql_store(&cpu_data[0], PASSIVE_LEVEL);
     cpu_data[0].current_task  = (void *)0;
     msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)&cpu_data[0]);
 

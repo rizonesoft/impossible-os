@@ -25,6 +25,7 @@
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/irql.h"
 #include "kernel/smp.h"
+#include "kernel/sched/irql_store.h"
 
 /* ---------------------------------------------------------------------------
  * irq_disable / irq_restore -- thin wrappers around CLI and STI / POPFQ
@@ -144,7 +145,7 @@ void spin_lock_irqsave(spinlock_t *s, uint64_t *flags)
     /* Raise to at least DISPATCH_LEVEL; if already higher (e.g., DIRQL),
      * keep the higher level */
     if (pcpu->current_irql < DISPATCH_LEVEL)
-        pcpu->current_irql = DISPATCH_LEVEL;
+        irql_store(pcpu, DISPATCH_LEVEL);
 
     while (!cas_acquire(&s->flag, 0, 1))
         barrier();
@@ -167,7 +168,7 @@ void spin_unlock_irqrestore(spinlock_t *s, uint64_t flags)
     flags &= 0x00FFFFFFFFFFFFFFULL;  /* clear IRQL bits before RFLAGS restore */
 
     pcpu = smp_this_cpu();
-    pcpu->current_irql = saved_irql;
+    irql_store(pcpu, saved_irql);
 
     irq_restore(flags);    /* re-enables IRQs only if they were on before */
 }

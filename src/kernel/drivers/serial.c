@@ -10,6 +10,7 @@
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/irql.h"          /* KIRQL / DISPATCH_LEVEL -- serial_lock IRQL */
 #include "kernel/smp.h"                 /* smp_this_cpu -- IRQL only, never identity */
+#include "kernel/sched/irql_store.h"
 #include "kernel/cpu_security.h"        /* __kread_u8 -- guarded caller-string walk */
 
 /* --- 16550 register offsets from the port base ---------------------------- */
@@ -559,7 +560,7 @@ static inline void serial_lock_acquire(uint64_t *flags)
     prev_irql = pcpu->current_irql;
     *flags |= ((uint64_t)prev_irql) << SERIAL_LOCK_IRQL_SHIFT;
     if (pcpu->current_irql < DISPATCH_LEVEL)
-        pcpu->current_irql = DISPATCH_LEVEL;
+        irql_store(pcpu, DISPATCH_LEVEL);
 
     /* TEST-and-test-and-set, not a bare CAS retry. A failed strong CAS still
      * takes the line for exclusive ownership, so retrying it back-to-back is a
@@ -596,7 +597,7 @@ static inline void serial_lock_release(uint64_t flags)
     flags &= SERIAL_LOCK_RFLAGS_MASK;   /* clear IRQL bits before RFLAGS restore */
 
     pcpu = smp_this_cpu();
-    pcpu->current_irql = saved_irql;
+    irql_store(pcpu, saved_irql);
 
     local_irq_restore(flags);           /* re-enables IRQs only if they were on */
 }

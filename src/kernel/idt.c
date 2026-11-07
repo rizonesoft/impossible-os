@@ -35,6 +35,7 @@ static inline uintptr_t read_cr2(void)
 #include "kernel/sched/irql.h"
 #include "kernel/sched/transition_ring.h" /* fast-path transition ring */
 #include "kernel/smp.h"
+#include "kernel/sched/irql_store.h"
 #include "kernel/irq.h"
 #include "kernel/cpu_security.h"  /* cpu_panic_safe_apic_id -- shared NMI-depth key */
 #include "kernel/drivers/pic.h"
@@ -540,7 +541,7 @@ uint64_t isr_handler(struct interrupt_frame *frame)
         if (isr_irql == CLOCK_LEVEL)
             pcpu->clock_interrupted_irql = prev_irql;
         if (isr_irql > prev_irql)
-            pcpu->current_irql = isr_irql;
+            irql_store(pcpu, isr_irql);
     }
 
     /* ---- Dispatch to registered handler ---- */
@@ -682,7 +683,7 @@ uint64_t isr_handler(struct interrupt_frame *frame)
 irql_restore:
     /* ---- IRQL restore on interrupt exit ---- */
     if (vec >= 32 && pcpu->current_irql != prev_irql)
-        pcpu->current_irql = prev_irql;
+        irql_store(pcpu, prev_irql);
 
     /* ---- -18 iretq invariants ----
      * Before the asm stub's swapgs + iretq returns to ring 3, verify

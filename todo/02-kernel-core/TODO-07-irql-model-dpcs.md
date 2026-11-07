@@ -426,8 +426,12 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 - [x] `IRQL_REQUIRE_AT_MOST(level)` / `IRQL_REQUIRE_AT_LEAST(level)` macros in `irql.h` routing to `_irql_check_max` / new `_irql_check_min` (log the `__func__` callsite + count the violation).
 - [x] Log IRQL contract violations (callsite, CPU, current + required level) + per-CPU `irql_violations` counter in `per_cpu_data`; monotonic `KeRaiseIrql`/`KeLowerIrql` mismatches also counted.
 - [x] Explicit fault path: `irql_set_strict()` strict mode bugchecks before any klog (default off = telemetry); `KeLowerIrqlForced(level,reason)` classifies + counts forced lowers (`task_exit`/`task_wrapper` routed).
-- [ ] **Per-CPU IRQL transition stack**: `{old,new,callsite}` LIFO validator -- blocked because spinlock `irqsave` + `irql_lower_deliver` + forced lowers write `current_irql` outside `KeRaise`/`KeLower`, so the stack diverges.
-- [ ] **Centralize the IRQL write surface** (prerequisite for the validator): route every `current_irql` writer (spinlock irqsave/restore, `irql_lower_deliver`, forced lowers) through stack-aware primitives + a lint forbidding raw writes.
+- [ ] **Per-CPU IRQL transition stack**: `{old,new,callsite}` LIFO validator, hooked in `irql_store()`. Spinlock restore, IDT exit and forced lowers still restore out of LIFO order, so the validator must define what those mean.
+- [x] **Centralize the IRQL write surface**: `irql_store()` in `include/kernel/sched/irql_store.h` is the one writer of `current_irql`; all 20 raw writes routed, `scripts/lint.sh` Check 34 refuses a new one, with a control fixture.
+- [ ] **The LAPIC TPR does not always mirror `current_irql`**: spinlock and IDT moves are software-only, so a `KeRaiseIrql` above the class then `KeLowerIrql` under a spinlock or ISR leaves the TPR masking after the restore.
+  - Observed by reading `KeRaiseIrql` (`src/kernel/sched/irql.c`) and `spin_unlock_irqrestore`. Not reproduced: the path is `KeSynchronizeExecution` called under a spinlock or from a lower-level ISR, and no driver binds a KINTERRUPT yet.
+  - Effect when reached: `spin_lock_irqsave`, raise to a DIRQL, lower to DISPATCH (writes TPR 0x20), unlock to PASSIVE (no write), so vectors 0x20-0x2F stay masked until the next class-changing transition.
+  - `docs/infrastructure/bare-metal-gotchas.md` states the mirror as fact, so correct it with the fix. A likely shape is a per-CPU shadow of the programmed TPR that the skip compares against, written on restore only when it differs.
 - [x] Feed counters into kernel logging: `irql_telemetry_dump()` sums per-CPU `irql_violations` + `irql_forced_lowers` to klog for boot/runtime health checks.
 - [x] Commit: `"kernel: sched -- add IRQL contract diagnostics and telemetry"`
 
@@ -450,7 +454,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 
 - [x] Per-tick DPC count budget + carry-over: per-CPU token bucket in `dpc.c` (refill `DPC_BUDGET_PER_TICK`/tick, cap `DPC_BUDGET_CARRYOVER_MAX`); `drain_queue` spends a token/DPC, warns once/tick on exhaustion (hard bound stays `DPC_BATCH_LIMIT`).
 - [x] DPC watchdog 0x133 **param 0x0** (single DPC > 100us): `drain_queue` times each DPC via `rdtscp_read` vs a precomputed threshold (armed only when all online CPUs have RDTSCP); WARN default, `dpc_watchdog_set_strict()` -> `KeBugCheckEx`.
-- [ ] DPC watchdog 0x133 **param 0x1** (cumulative >= `DISPATCH_LEVEL` time/period): needs per-CPU time-at-DISPATCH accounting at every `current_irql` write site (the §13 IRQL-write-surface centralization, line 425).
+- [ ] DPC watchdog 0x133 **param 0x1** (cumulative >= `DISPATCH_LEVEL` time/period): needs per-CPU time-at-DISPATCH accounting, which now has one hook point, `irql_store()` (see section 13).
 - [x] Sustained queue-depth warning: `dpc_watchdog_tick()` warns when depth > `DPC_QUEUE_WARN_DEPTH` for `DPC_DEPTH_WARN_TICKS` consecutive ticks.
 - [x] DPC importance-based drain ordering: provided by §7 head-insert (`HighImportance` -> head; `drain_queue` dequeues head-first), so high runs first. No drain-time reorder.
 - [x] APC starvation watchdog: `kernel_apc_depth` in `KAPC_STATE` maintained under `apc_lock`; `KeInsertQueueApc` warns once on the kernel-APC crossing of `APC_STARVATION_WARN_DEPTH`.

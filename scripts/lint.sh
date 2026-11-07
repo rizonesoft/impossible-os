@@ -2931,6 +2931,35 @@ else
 fi
 
 # ============================================================================
+# Check 34: current_irql has exactly one writer, irql_store()
+# ============================================================================
+# scripts/lint/check_irql_write_surface.py. A bare store is invisible to anything
+# that must see every IRQL change, so time-at-DISPATCH accounting and a transition
+# validator would silently undercount. The control fixture must be judged exactly
+# as marked, so a detector that goes quiet is an ERROR. Skip via SKIP_LINT_IRQL_WRITE=1.
+if [ "${SKIP_LINT_IRQL_WRITE:-0}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 34 (IRQL write surface) skipped via SKIP_LINT_IRQL_WRITE=1"
+    WARNINGS=$((WARNINGS + 1))
+elif [ ! -f "$REPO_ROOT/scripts/lint/check_irql_write_surface.py" ]; then
+    :   # throwaway fixture repos (scripts/test-tooling.sh) carry no kernel tree
+else
+    IRQLW_RC=0
+    IRQLW_OUT=$(python3 "$REPO_ROOT/scripts/lint/check_irql_write_surface.py" --root "$REPO_ROOT" 2>&1) || IRQLW_RC=$?
+    if [ "$IRQLW_RC" -ne 0 ]; then
+        printf '%s\n' "$IRQLW_OUT" | sed 's/^/  /'
+        echo -e "${RED}error${NC}: Check 34 (IRQL write surface) -- route the write through irql_store() in include/kernel/sched/irql_store.h"
+        ERRORS=$((ERRORS + 1))
+    fi
+    IRQLW_RC=0
+    IRQLW_OUT=$(python3 "$REPO_ROOT/scripts/lint/check_irql_write_surface.py" --control 2>&1) || IRQLW_RC=$?
+    if [ "$IRQLW_RC" -ne 0 ]; then
+        printf '%s\n' "$IRQLW_OUT" | sed 's/^/  /'
+        echo -e "${RED}error${NC}: Check 34 (IRQL write surface) -- the control fixture was misjudged; the detector cannot be trusted"
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

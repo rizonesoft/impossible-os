@@ -12,6 +12,7 @@
 #include "kernel/nt/filetime.h"   /* NS_PER_FILETIME_TICK, FILETIME_* (accounting math) */
 #include "kernel/time/wall_clock.h" /* wall_clock_time_sourced (CreateTime stamp test) */
 #include "kernel/sched/irql.h"
+#include "kernel/sched/irql_store.h"
 #include "kernel/sched/dpc.h"
 #include "kernel/sched/dpc_config.h" /* DPC_BUDGET_* (watchdog sweep test) */
 #include "kernel/sched/spinlock.h"   /* local_irq_save -- remote DPC IF check */
@@ -1914,6 +1915,21 @@ static void test_irql_forced_lower(void)
     TEST_ASSERT_EQ((uint64_t)(c->irql_violations - v0), 0u, "forced lower is not a violation");
 }
 
+/* Test: irql_store is what KeGetCurrentIrql reads, and a software-only level move
+ * through it counts neither as a violation nor as a forced lower. */
+static void test_irql_store_is_the_visible_level(void)
+{
+    struct per_cpu_data *c = smp_this_cpu();
+    uint32_t f0 = c->irql_forced_lowers, v0 = c->irql_violations;
+    KIRQL entry = KeGetCurrentIrql();
+    irql_store(c, APC_LEVEL);
+    TEST_ASSERT_EQ((uint64_t)KeGetCurrentIrql(), (uint64_t)APC_LEVEL, "store is visible");
+    irql_store(c, entry);
+    TEST_ASSERT_EQ((uint64_t)KeGetCurrentIrql(), (uint64_t)entry, "store restores entry level");
+    TEST_ASSERT_EQ((uint64_t)(c->irql_forced_lowers - f0), 0u, "store is not a forced lower");
+    TEST_ASSERT_EQ((uint64_t)(c->irql_violations - v0), 0u, "store is not a violation");
+}
+
 /* Test: a forced "lower" to a HIGHER level is rejected (counted as a violation,
  * not performed, not counted as a forced lower). */
 static void test_irql_forced_lower_rejects_raise(void)
@@ -2530,6 +2546,8 @@ void test_register_sched(void)
                             test_irql_require_at_least, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: KeLowerIrqlForced forced-lower counter",
                             test_irql_forced_lower, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: irql_store is the visible level",
+                            test_irql_store_is_the_visible_level, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: KeLowerIrqlForced rejects a raise",
                             test_irql_forced_lower_rejects_raise, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: KeRaise/KeLowerIrql monotonic mismatch counted",

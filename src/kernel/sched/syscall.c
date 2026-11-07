@@ -23,6 +23,7 @@
 #include "kernel/env.h"                 /* task_set_argv / env_adopt_block / argv_frame_bytes */
 #include "kernel/sched/irql.h"
 #include "kernel/smp.h"
+#include "kernel/sched/irql_store.h"
 #include "kernel/klog.h"
 #include "kernel/drivers/keyboard.h"
 #include "kernel/drivers/serial.h"
@@ -644,7 +645,7 @@ static void syscall_restore_entry_irql(KIRQL entry_irql, uint64_t syscall_nr)
              (uint64_t)task_current()->pid);
         KeLowerIrql(PASSIVE_LEVEL);
     }
-    pc->current_irql = entry_irql;
+    irql_store(pc, entry_irql);
 }
 
 /* ---- SYS_EXEC argv/envp ingestion ---------------------------------------- */

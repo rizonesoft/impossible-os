@@ -16,6 +16,7 @@
 
 #include "kernel/sched/irql.h"
 #include "kernel/smp.h"
+#include "kernel/sched/irql_store.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/klog.h"
 #include "kernel/sched/dpc.h"
@@ -126,7 +127,7 @@ void KeRaiseIrql(KIRQL new_irql, KIRQL *old_irql)
     uint32_t prev_tpr = irql_to_tpr(prev);
 
     /* Update per-CPU state */
-    pcpu->current_irql = new_irql;
+    irql_store(pcpu, new_irql);
 
     /* For HIGH_LEVEL, also disable interrupts via CLI as the ultimate barrier
      * (TPR alone cannot mask NMI/SMI). The CLI is independent of the TPR-skip
@@ -183,7 +184,7 @@ void KeLowerIrql(KIRQL old_irql)
         dpc_current_cpu_has_pending()) {
         uint32_t disp_tpr = irql_to_tpr(DISPATCH_LEVEL);
         pcpu->dpc_draining = 1;
-        pcpu->current_irql = DISPATCH_LEVEL;
+        irql_store(pcpu, DISPATCH_LEVEL);
         if (irql_to_tpr(cur) != disp_tpr)
             irql_write_tpr_value(disp_tpr);
         if (cur >= HIGH_LEVEL)
@@ -221,7 +222,7 @@ void irql_lower_deliver(KIRQL old_irql)
 
     old_tpr = irql_to_tpr(old_irql);
     cur_tpr = irql_to_tpr(cur);
-    pcpu->current_irql = old_irql;
+    irql_store(pcpu, old_irql);
 
     /* Reprogram the LAPIC TPR only when the priority class actually changes
      * (e.g. APC->PASSIVE both TPR 0x00). See KeRaiseIrql for the invariant
@@ -264,7 +265,7 @@ int irql_tick_lower_to_dispatch(void)
     if (target < DISPATCH_LEVEL)
         target = DISPATCH_LEVEL;
     if (target < pcpu->current_irql)
-        pcpu->current_irql = target;
+        irql_store(pcpu, target);
 
     return pcpu->current_irql == DISPATCH_LEVEL;
 }
