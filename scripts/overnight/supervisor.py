@@ -30,7 +30,8 @@ UNDO_AFTER_HOURS = 3          # no commit outside the machinery, session idle
 REPAIR_AFTER_HOURS = 6
 MACHINERY_PREFIXES = (".claude/hooks/", ".claude/skills/", ".claude/gate-modes.json",
                       "scripts/overnight/", ".githooks/")
-SHIP_RE = re.compile(r"^\+> \*\*(?:Verified|Quality reviewed):\*\*", re.M)
+# The last stamp a section gets. Counting Verified too read one section as two ships.
+SHIP_RE = re.compile(r"^\+> \*\*Quality reviewed:\*\*", re.M)
 # deadline: each git call is bounded here. Hooks are off for an undo, so these are quick.
 GIT_TIMEOUT = 60
 PUSH_TIMEOUT = 300

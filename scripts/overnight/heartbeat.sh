@@ -48,6 +48,11 @@ check() {
   # Stopped by an operator, or finished: the heartbeat's job is over.
   [ -f "$RUN_MARKER" ] || return 10
   [ -f .claude/state/sequencer-fixpoint ] && return 10
+  # A bounded run that shipped its sections is finished. The session stays open to talk to.
+  if python3 .claude/hooks/run_phase_guard.py ship-limit-reached 2>/dev/null; then
+    bash scripts/overnight/notify.sh "$ROOT" info "The run shipped its sections and stopped." >/dev/null 2>&1 || true
+    return 10
+  fi
   local now idle; now="$(date +%s)"
   if ! tmux has-session -t "$RUN_T" 2>/dev/null; then
     local deaths wait_until

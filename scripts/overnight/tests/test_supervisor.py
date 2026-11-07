@@ -272,10 +272,10 @@ def test_a_dirty_tree_keeps_the_undo_for_later():
         assert len(h["machinery_reverts"]) == 1, h
 
 
-def test_health_counts_ships_and_flags_a_stall_and_clears_it():
+def test_health_counts_one_section_once_and_flags_a_stall_and_clears_it():
     with tempfile.TemporaryDirectory() as d:
         root, alerts = _fixture(d)
-        _commit(root, "todo/T.md", "> **Verified:** 2026-11-07\n")
+        _commit(root, "todo/T.md", "> **Verified:** 2026-11-07\n> **Quality reviewed:** x\n")
         h = sup.check(root, False, T0 + 60)
         assert h["sections_shipped_today"] == 1, h
         assert not h["repair_needed"]
@@ -283,7 +283,7 @@ def test_health_counts_ships_and_flags_a_stall_and_clears_it():
         assert h["repair_needed"] is True and h["hours_since_ship"] > 6, h
         assert any("Nothing has shipped" in a for a in alerts), alerts
         assert json.loads((root / ".claude/overnight/run-health.json").read_text())["repair_needed"]
-        _commit(root, "todo/T.md", "> **Verified:** 2026-11-07\n> **Quality reviewed:** x\n")
+        _commit(root, "todo/T.md", "> **Verified:** 2026-11-07\n> **Quality reviewed:** x\n> **Quality reviewed:** y\n")
         h = sup.check(root, False, T0 + 8 * HOUR)
         assert h["repair_needed"] is False, h
 

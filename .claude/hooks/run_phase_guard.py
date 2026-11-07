@@ -1625,6 +1625,21 @@ def _derive_section_idx(todo_path):
         return None
 
 
+def ship_limit_reached(root):
+    """True once a bounded run's sections have their final stamp and are pushed. Any
+    doubt reads as not reached, so the guard keeps the session working."""
+    try:
+        limit, start = (root / ".claude/state/run-ship-limit").read_text().split()[:2]
+        r = subprocess.run(["git", "-C", str(root), "log", "-p", "--format=", "--unified=0",
+                            f"{start}..@{{u}}", "--", "todo"],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False  # fail-direction: an unbounded or unreadable run keeps going
+    if r.returncode != 0:
+        return False
+    return len(re.findall(r"(?m)^\+> \*\*Quality reviewed:\*\*", r.stdout)) >= int(limit)
+
+
 def handle_stop():
     # The guard governs ONLY the headless unattended run -- an interactive
     # operator session is never trapped (it can stop and disarm freely).
@@ -1642,6 +1657,10 @@ def handle_stop():
     # The human's --disarm removes the master switch (and kills the service); if
     # the marker is already gone, the run has been disarmed -- allow the stop.
     if not ARMED_MARKER.exists():
+        return 0
+    # A bounded run (`run.sh start --ships N`) that has shipped its sections is done.
+    if ship_limit_reached(repo_root()):
+        sys.stderr.write("[sequencer] stop allowed: this bounded run shipped its sections.\n")
         return 0
     # Oracle-consulting fallback (runner-kit law 2, adopted 2026-07-03): a
     # session at a TRUE lifecycle end (oracle DONE, or BLOCKED once the 3-state
@@ -2042,6 +2061,8 @@ def cli(argv):
         save_state(state)
         print(f"[sequencer] lifecycle override recorded: {reason}", file=sys.stderr)
         return 0
+    if cmd == "ship-limit-reached":
+        return 0 if ship_limit_reached(repo_root()) else 1
     if cmd == "rollover":
         # Verified worker-context rotation. Machine gates decide; on success
         # the Stop hook permits exactly one stop and the *:0/10 watchdog

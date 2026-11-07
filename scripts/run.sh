@@ -2,6 +2,7 @@
 # run.sh -- the run, under one roof: one Claude session in tmux, plus its heartbeat.
 #
 #   bash scripts/run.sh start     start the run, or resume it if it was running
+#   bash scripts/run.sh start --ships N   the same, stopping after N sections ship
 #   bash scripts/run.sh attach    watch it and talk to it (detach: Ctrl-b d)
 #   bash scripts/run.sh status    alive or not, and the health numbers
 #   bash scripts/run.sh stop      stop it; `start` picks the work up again
@@ -27,7 +28,14 @@ case "${1:-status}" in
       exit 1
     fi
     mkdir -p .claude/state
-    rm -f .claude/state/sequencer-fixpoint
+    rm -f .claude/state/sequencer-fixpoint "$RUN_SHIP_LIMIT"
+    if [ "${2:-}" = "--ships" ]; then
+      case "${3:-}" in
+        ''|*[!0-9]*|0) echo "usage: run.sh start [--ships N]" >&2; exit 2 ;;
+      esac
+      # Counted from here, so the sections it ships are the only ones that count.
+      printf '%s %s\n' "$3" "$(git rev-parse HEAD)" > "$RUN_SHIP_LIMIT"
+    fi
     date -Is > "$RUN_MARKER"
     if tmux has-session -t "$RUN_T" 2>/dev/null; then
       echo "already running. Watch it: bash scripts/run.sh attach"

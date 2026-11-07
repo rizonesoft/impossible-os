@@ -194,12 +194,78 @@ def _stop(armed=True, fixpoint=False, oracle="NEEDS_WORK", rollover=False):
         if fixpoint:
             g.FIXPOINT_SENTINEL.write_text("x")
         g._live_oracle_status = lambda: oracle
+        g.repo_root = lambda: root
         g.save_state({"active": True, "rollover": {"pending": rollover, "epoch": time.time()}})
         os.environ["OVERNIGHT_SEQUENCER_RUN"] = "1"
         try:
             return g.handle_stop()
         finally:
             del os.environ["OVERNIGHT_SEQUENCER_RUN"]
+
+
+def _bounded(d):
+    root = pathlib.Path(d)
+    def git(*a):
+        subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                       check=True, capture_output=True)
+    git("init", "-q")
+    origin = root / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    (root / ".gitignore").write_text("origin.git\n.claude/\n")
+    (root / "todo").mkdir()
+    (root / "todo/T.md").write_text("x\n")
+    git("add", "-A")
+    git("commit", "-qm", "start")
+    branch = subprocess.run(["git", "-C", str(root), "branch", "--show-current"],
+                            capture_output=True, text=True).stdout.strip()
+    git("remote", "add", "origin", str(origin))
+    git("push", "-q", "-u", "origin", branch)
+    start = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                           capture_output=True, text=True).stdout.strip()
+    (root / ".claude/state").mkdir(parents=True)
+    (root / ".claude/state/run-ship-limit").write_text(f"1 {start}\n")
+    return root, git
+
+
+def test_a_bounded_run_stops_only_once_the_section_is_stamped_and_pushed():
+    import run_phase_guard as g
+    with tempfile.TemporaryDirectory() as d:
+        root, git = _bounded(d)
+        assert not g.ship_limit_reached(root), "nothing shipped yet"
+        # The first stamp alone is not the end of a section.
+        (root / "todo/T.md").write_text("x\n> **Verified:** a\n")
+        git("add", "-A")
+        git("commit", "-qm", "ship")
+        git("push", "-q")
+        assert not g.ship_limit_reached(root), "Verified alone must not count"
+        (root / "todo/T.md").write_text("x\n> **Verified:** a\n> **Quality reviewed:** b\n")
+        git("add", "-A")
+        git("commit", "-qm", "review")
+        assert not g.ship_limit_reached(root), "not pushed yet"
+        git("push", "-q")
+        assert g.ship_limit_reached(root)
+
+
+def test_refusal_an_unbounded_run_or_a_bad_limit_never_reads_as_reached():
+    import run_phase_guard as g
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        assert not g.ship_limit_reached(root)
+        (root / ".claude/state").mkdir(parents=True)
+        (root / ".claude/state/run-ship-limit").write_text("garbage\n")
+        assert not g.ship_limit_reached(root)
+
+
+def test_the_bound_reaches_the_prompt_and_only_when_set():
+    common = (REPO / "scripts/overnight/run-common.sh").read_text()
+    assert 'prompt="$prompt$(run_limit_note)"' in common
+    run = (REPO / "scripts/run.sh").read_text()
+    assert 'rm -f .claude/state/sequencer-fixpoint "$RUN_SHIP_LIMIT"' in run, \
+        "an old limit must not bound the next run"
+    r = subprocess.run(["bash", str(REPO / "scripts/run.sh"), "start", "--ships", "0"],
+                       capture_output=True, text=True, timeout=60,
+                       env={**os.environ, "RUN_SESSION": "no-such-test-session"})
+    assert r.returncode == 2 and "usage" in r.stderr, r
 
 
 def test_stop_guard_holds_the_session_until_the_work_is_done():

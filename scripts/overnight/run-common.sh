@@ -20,6 +20,14 @@ fi
 RUN_PROMPT="You are running the Impossible OS roadmap to completion. Invoke the overnight-sequencer skill and follow todo/TODO-Claude-Overnight-Runner.md. This one session does all the work: after a section ships, go straight on to the next one. Make decisions yourself and record them. A failure stops one item, never the run. Stop only at a verified fixpoint."
 RUN_RESUME_PROMPT="The session restarted. Read the state on disk (git status, git log, the run_phase_guard.py cursor) and continue the run. Invoke the overnight-sequencer skill if you no longer have it in context."
 
+# A bounded run: `run.sh start --ships N` stops after N sections are through their
+# post-ship review and pushed. The stop guard and the heartbeat both read this file.
+RUN_SHIP_LIMIT=".claude/state/run-ship-limit"
+run_limit_note() {
+  [ -s "$RUN_SHIP_LIMIT" ] || return 0
+  printf ' This run is bounded: ship %s section(s) all the way, through post-ship review and pushed, and then stop and say so. Do not start another.' "$(awk 'NR==1{print $1}' "$RUN_SHIP_LIMIT")"
+}
+
 # run_launch fresh|resume: start the session in tmux. It ends when claude exits, which
 # is how the heartbeat knows it died. The run has its own session id, because
 # --continue would resume whichever conversation in this folder was newest, and that
@@ -41,6 +49,7 @@ run_launch() {
     session_flag="--session-id $id"
     prompt="$RUN_PROMPT"
   fi
+  prompt="$prompt$(run_limit_note)"
   tmux new-session -d -s "$RUN_SESSION" -x 200 -y 50 -c "$PWD" \
     -e OVERNIGHT_SEQUENCER_RUN=1 -e CLAUDE_PROJECT_DIR="$PWD" \
     -e CLAUDE_CODE_AUTO_COMPACT_WINDOW="$RUN_COMPACT_AT" \
