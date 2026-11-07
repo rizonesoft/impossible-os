@@ -76,17 +76,17 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  10   | CET indirect branch tracking (IBT / ENDBR64)                    | §9, T23 §3                 |  [/]   |
 | 💎  |  11   | Kernel heap hardening (cookies, redzone)                        | T27 §1                     |  [x]   |
 | 💎  |  12   | Stack canaries (`-fstack-protector-strong`)                     | T27 §1                     |  [x]   |
-| 💎  |  13   | Kernel stack guard pages                                        | §1                         |  [/]   |
+| 💎  |  13   | Kernel stack guard pages                                        | §1                         |  [ ]   |
 | ⭐  |  14   | KASLR (RDRAND kernel load address)                              | §1, §6, T33                |  [/]   |
 | 💎  |  15   | Enclave and signing syscalls wired to SSDT                      | §14, T12 §4, T19           |  [/]   |
-| 💎  |  16   | Secure Boot lockdown enforcement                                | D01 T02 §5,§15             |  [/]   |
-| 💎  |  17   | Kernel-image W^X (.text RO, .rodata RO-after-init)              | §1                         |  [x]   |
+| 💎  |  16   | Secure Boot lockdown enforcement                                | D01 T02 §5,§15             |  [ ]   |
+| 💎  |  17   | Kernel-image W^X (.text RO, .rodata RO-after-init)              | §1                         |  [ ]   |
 | 💎  |  18   | CPU feature-flag 128-bit expansion (cpu_feature_mask_t)         | §8                         |  [x]   |
 | 💎  |  19   | Microarchitectural data-sampling clears (VERW/MDS)              | §8                         |  [x]   |
-| 💎  |  20   | kCFI software control-flow integrity                            | §10                        |  [/]   |
-| 💎  |  21   | FORTIFY_SOURCE bounds-checked str/mem builtins                  | (none)                     |  [/]   |
-| 💎  |  22   | stackleak: erase kernel stack on return to user                 | §13                        |  [/]   |
-| 💎  |  23   | KFENCE sampling UAF/OOB detector                                | §11, §13                   |  [/]   |
+| 💎  |  20   | kCFI software control-flow integrity                            | §10                        |  [ ]   |
+| 💎  |  21   | FORTIFY_SOURCE bounds-checked str/mem builtins                  | (none)                     |  [ ]   |
+| 💎  |  22   | stackleak: erase kernel stack on return to user                 | §13                        |  [ ]   |
+| 💎  |  23   | KFENCE sampling UAF/OOB detector                                | §11, §13                   |  [ ]   |
 | ⭐  |  24   | Mitigation visibility: queryable security posture               | §17, §19, §25              |  [/]   |
 | 💎  |  25   | Spectre predictor mitigations (SSBD/STIBP/RSB/BHI/ITS/Retbleed) | §18, §8                    |  [/]   |
 | 💎  |  26   | Release-build test-surface exclusion (KERNEL_TESTS is uncond.)  | (none)                     |  [x]   |
@@ -479,11 +479,9 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 - [/] On `#PF` in a guard VA, `page_fault_handler` (`vmm.c`) checks `guard_page_lookup(cr2)` FIRST and renders a descriptive labeled BSOD via `panic_screen` (distinguishes stack overflow from a generic fault)
   - The SPECIFIC NT stop code `BUGCHECK_KERNEL_STACK_INPAGE_ERROR` (0x77) is NOT yet recorded -- `panic_screen` stores `bugcheck_code=0` for framed faults and keys the stop code off `frame->int_no`; needs the frame-aware bugcheck path below
 - [x] Each IST stack (`#DF`/`NMI`/`MCE`) has a guard page below it via the same helper (`gdt.c:97`); prevents a nested-exception stack overflow from silently corrupting memory
-- [/] **(design review)** Frame-aware guard bugcheck: a guard `#PF` records the explicit NT stop code, not the PF err-code -> XREF: `02-kernel-core/TODO-27-crash-dump-generation.md §5`
-  - Parked:on this section's own NT-bugcheck and guard-table-capacity blockers
+- [ ] **(design review)** Frame-aware guard bugcheck: a guard `#PF` records the explicit NT stop code, not the PF err-code -> XREF: `02-kernel-core/TODO-27-crash-dump-generation.md §5`
   - Add `vmm_install_guard_page_ex(virt, label, BUGCHECK_CODE)` + a `bugcheck` field on the guard entry; route the fault to a frame-aware bugcheck entry that stores `g_last_bugcheck` + renders it (stacks/IST/AP -> `KERNEL_STACK_INPAGE_ERROR` 0x77, heap -> `IOS_HEAP_CORRUPTION`), keeping CR2 + PF err-code as evidence. No label-substring classification
-- [/] PID 0 runs permanently on the loader-owned boot stack; give it its own sized, guarded runtime stack -> XREF: `01-boot-platform/TODO-10-bare-metal-hardening.md` §32 (item: "DECIDED: the switch happens in the BOOTLOADER, not at the kernel entry")
-  - Parked:on this section's own NT-bugcheck and guard-table-capacity blockers
+- [ ] PID 0 runs permanently on the loader-owned boot stack; give it its own sized, guarded runtime stack -> XREF: `01-boot-platform/TODO-10-bare-metal-hardening.md` §32 (item: "DECIDED: the switch happens in the BOOTLOADER, not at the kernel entry")
   - `task_init` sets `tasks[0].stack_base = 0` ("boot stack, don't free") at `src/kernel/sched/task.c:596` and `:608`, so PID 0 never migrates off the run the bootloader handed the kernel. It then enters `compositor_run()` (`src/kernel/main/boot_desktop.c:903`), which never returns.
   - Consequence: a run sized and named for early boot is really a permanent thread stack. Measured on that run 2026-08-28: 9,528 bytes at end of Phase 1, 38,368 in compositor steady state, 99,472 cumulative on a `test=1` boot. TODO-10 §32 sized the allocation for that lifetime (256 KiB, one-page guard) and instruments it, which makes the situation safe and visible but does not change who owns the stack.
   - The work here is the migration itself: allocate PID 0 a dedicated N+1-page guarded kernel stack like every other thread gets (`task.c:447`), switch to it before steady state, and let the loader-owned run become genuinely boot-only. That is a scheduler-side change to the running thread's stack and does not belong to the boot-protocol section that found it.
@@ -493,19 +491,20 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 - [x] **(design review, latent bug)** SMP-safe guard table -- shipped: one lock spans install/uninstall, the fault path uses trylock
   - Found shipped 2026-09-28: `guard_page_lock` in `vmm.c` covers the slot and the page-table split+clear; `vmm_guard_page_label()` takes it with `spin_trylock` in the #PF path, so a lookup never sees a torn entry.
   - The table is mutated at RUNTIME (task create/exec/uthread install + cleanup uninstall, `task.c`/`smp.c`) and read lock-free by the `#PF` handler on any CPU; compact-on-delete can race the lookup. Use a preallocated/append-only table + atomic active flags + release/acquire so a fault lookup never sees a partially-moved entry
-- [/] **(class audit)** `task_create_user` and `task_fork` leave the ring-0 entry stack unguarded, so the first `[x]` item above overclaims -- parked on this section's own NT-bugcheck and guard-table-capacity blockers
+- [ ] **(class audit)** `task_create_user` and `task_fork` leave the ring-0 entry stack unguarded, so the first `[x]` item above overclaims
   - Filed by the section-31 stack-class audit -> XREF: `01-boot-platform/TODO-10 §31` (item: "Do the same audit for any other stack that is a bare array rather than a guarded allocation, so this is closed as a class rather than one instance.")
   - VERIFIED 2026-08-28 by the section-31 stack-class audit. Guarded: `task_create` (`task.c:906,915`), `thread_create` (`task.c:3732,3738`), uthread (`task.c:5584`), APs (`smp.c:493,509`), IST (`gdt.c:106`), heap end, and the BSP ring-0 entry stack as of section 31. UNGUARDED: `task.c:1222` and `task.c:2776`.
   - These are the HIGHEST-exposure stacks in the set, not the lowest: they are the ring-0 stacks a user process lands on at every syscall and interrupt, which is exactly the traffic the guarded kernel-task stacks never see. `task.c:3429` already records the shape in a comment ("task_create_user: kmalloc(TASK_STACK_SIZE) -- in heap"), so the gap was known and simply had no owner.
   - Also an allocator-contract break independent of the guard: CLAUDE.md caps `kmalloc()` at 4 KiB and `TASK_STACK_SIZE` is 8 KiB, so the fix is the same move section 31 made -- `pmm_alloc_contiguous(pages + 1)` plus `vmm_install_guard_page`, with the failure split (VA_UNSAFE fatal, UNAVAILABLE degraded) the VMM contract requires.
 
-- [/] **(class audit, stack-clash)** the kernel is not built with `-fstack-clash-protection`, so a frame larger than the 4 KiB guard steps over it -- parked on this section's own NT-bugcheck and guard-table-capacity blockers
+- [/] **(class audit, stack-clash)** the kernel is not built with `-fstack-clash-protection`, so a frame larger than the 4 KiB guard steps over it
+  - operator-gated: the flag is a kernel `CFLAGS` edit and `Makefile` is the receipt surface, which the unattended run may not edit. An attended session can land it; the other items here do not wait on it.
   - Filed by the section-31 review -> XREF: `01-boot-platform/TODO-10 §31` (item: "Page-align the BSP boot stack and install a guard page below it, so an overflow faults with a label instead of corrupting BSS.")
   - VERIFIED 2026-08-28 during the section-31 review: the kernel `CFLAGS` in `Makefile` carry `-fstack-protector-strong` (canaries, a different mechanism) and no clash protection. A single `sub rsp, N` with N > 4096 therefore moves RSP past the whole guard page before any access, and the access lands on whatever is mapped below -- possibly without faulting at all, which is silent corruption rather than a labelled halt.
   - This bounds EVERY guard page in the kernel, not one stack: the guarded task, thread, AP, IST and BSP-entry stacks all catch recursion and ordinary frame growth and all miss this shape. `include/kernel/mm/vmm.h` states the limitation on `vmm_guard_page_label`, and `01-boot-platform/TODO-10 §31`'s checkpoint was narrowed to match rather than claiming coverage it does not have.
   - The fix is a build-input change (`Makefile` kernel `CFLAGS`) plus a destructive acceptance test proving an oversized frame now faults on the guard, so it belongs here with the guard mechanism rather than in any one stack's section.
 
-- [/] Commit: `"kernel/security: guard pages below kernel stacks and IST stacks"` -- parked on this section's own NT-bugcheck and guard-table-capacity blockers
+- [ ] Commit: `"kernel/security: guard pages below kernel stacks and IST stacks"`
 
 **Test checkpoint:** kernel/AP/IST stack guards installed (guard VA `#PF` -> labeled BSOD via `guard_page_lookup`, validated on bare metal -- it halts). The NT 0x77 stop-code + the capacity/SMP-safe table land with the `[ ]` items above. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
@@ -516,7 +515,7 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 > - Deferred 2026-06-28: the NT 0x77 stop-code routing needs a frame-aware bugcheck path; the design review also found two pre-existing latent guard-table bugs (32-entry capacity + runtime-mutation SMP race).
 > - Scope boundary: crash-dump emission of the stop code is owned by `TODO-27 §5`; the bugcheck taxonomy lives in `bugcheck.h`.
 
-> **Deferred:** [H] NT guard stop-code + frame-aware bugcheck path -> XREF: this section (item: "Frame-aware guard bugcheck" above). [H] guard-table capacity + fail-fast register (latent) -> XREF: this section (item: "Guard-table capacity + fail-fast registration" above). [M] SMP-safe guard-table publication (latent) -> XREF: this section (item: "SMP-safe guard table" above).
+> **Notes:** Reopened 2026-11-07, was Deferred on this section's own items. Guard-table capacity and SMP-safe publication both shipped (found 2026-09-28, items above); the NT stop-code path, PID 0 stack and user ring-0 guards have no outside blocker.
 
 ---
 
@@ -584,24 +583,21 @@ Kernel-side enforcement policy gated on the canonical Secure Boot state. Owns th
 **Files:** `src/kernel/uefi_runtime.c`, `src/kernel/uefi_vars.c`, `include/kernel/uefi_runtime.h`, `include/kernel/boot_info.h` (boot_config), `src/boot/uefi/bootx64.c` (boot.conf parse)
 
 > [!WARNING]
-> **Deferred 2026-06-28.** Half of this section's enforcement targets do not exist yet, and the implementable half needs careful security-critical changes to the existing lockdown-policy + firmware-variable paths (3 design-review requirements below). Split out for a focused effort rather than a rushed bolt-on.
+> **Reopened 2026-11-07 (deferred 2026-06-28).** The items below are the implementable half and wait on nothing outside this file. Half of this section's enforcement targets do not exist yet, and the implementable half needs careful security-critical changes to the existing lockdown-policy + firmware-variable paths (3 design-review requirements below). Split out for a focused effort rather than a rushed bolt-on.
 > - **Blocked (no infrastructure to gate):** "disable unsigned `.kmod` load + raw user MSR/IO-port writes" has no module loader (-> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`) and no user MSR/IO write syscall to gate; "wire audit-log to PE-loader verification call sites" has no PE signature-verification call site (`pe.c` does only structural validation -> XREF: `10-platform-services/TODO-07-win32-pe-loader.md`).
 > - **Design-review requirements for the implementable half:** (1) lockdown source-of-truth -- the `policy.lockdown` ratchet ALREADY seeds INTEGRITY on `secure_boot_enabled` (`policy_lock.c:440`); the `secure_boot_enforce` knob must gate THAT seed (or future gates read the level while the knob is off), and future gates consume `kernel_lockdown_level_get()`, NOT a parallel `g_system_state` bit. (2) drift fail-open -- the drift case is SB 1->0, so `kernel_lockdown_engage` from the drift edge must gate on the BOOT-SNAPSHOT SB + `secure_boot_enforce`, NOT live `uefi_secureboot_enabled()` (which is now 0). (3) var-guard scope -- refuse only DESTRUCTIVE PK/KEK/db/dbx clears (empty/delete) in `deployed_mode==1`, not all writes, so authenticated db/dbx revocations + key rotation still flow to firmware.
 
-- [/] `secure_boot_enforce` `boot.conf` key (snake_case) gating the lockdown seed (single source of truth) -- parked: the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
+- [ ] `secure_boot_enforce` `boot.conf` key (snake_case) gating the lockdown seed (single source of truth)
   - Add to `struct boot_config` + mirror (`_reserved` byte, no `BOOT_INFO_VERSION` bump) + `bootx64.c` parse (clone the `firmware_rng` block); gate the `policy.lockdown=INTEGRITY` seed in `policy_lock.c:440` on it
-- [/] `kernel_lockdown_engage(reason)` DRIVES the existing `policy.lockdown` ratchet (not a parallel scalar) -- parked: the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
+- [ ] `kernel_lockdown_engage(reason)` DRIVES the existing `policy.lockdown` ratchet (not a parallel scalar)
   - `kernel_policy_set(KERNEL_LOCKDOWN_INTEGRITY, POLICY_CALLER_KERNEL)` (RATCHET, sticky-upward, idempotent); gated on (boot-snapshot SB authoritative) + `config.secure_boot_enforce`
-- [/] `uefi_secureboot_deployed_mode()` / `uefi_secureboot_audit_mode()` one-line accessors over `s_sb_deployed_mode` / `s_sb_audit_mode` (`uefi_runtime.c:1076`)
-  - Parked:the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
-- [/] DeployedMode write-protection in `uefi_var_set()` (`uefi_vars.c:33`), scoped to destructive clears -- parked: the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
+- [ ] `uefi_secureboot_deployed_mode()` / `uefi_secureboot_audit_mode()` one-line accessors over `s_sb_deployed_mode` / `s_sb_audit_mode` (`uefi_runtime.c:1076`)
+- [ ] DeployedMode write-protection in `uefi_var_set()` (`uefi_vars.c:33`), scoped to destructive clears
   - Refuse a DESTRUCTIVE clear (size==0 / delete) of PK/KEK/db/dbx when `deployed_mode==1` -> `STATUS_ACCESS_DENIED`, matching `s_sb_vars[]` name/GUID (`tpm_sb_reconcile.c:121`; `efi_guid_t` == `struct boot_uefi_guid`). Authenticated updates still pass to firmware
-- [/] Drift-triggered lockdown: from the revalidation worker drift 0->1 edge (`uefi_runtime.c:1882`), call `kernel_lockdown_engage("drift")` -- gated on the BOOT-SNAPSHOT SB, not live SB
-  - Parked:the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
-- [/] AuditLog infra: a `uefi_secureboot_audit_log(event)` API + `HKLM\SYSTEM\SecureBoot\AuditLog` registry writer (clone the `Vars` writer `uefi_runtime.c:1983`); ready for the PE-verification call sites when they exist
-  - Parked:the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
-- [/] Serial log: `[SecureBoot] policy: enforce=%u audit=%u deployed=%u` -- parked: the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
-- [/] Commit: `"kernel/security: Secure Boot lockdown enforcement consuming canonical state"` -- parked: the module loader owns the enforcement gate -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`
+- [ ] Drift-triggered lockdown: from the revalidation worker drift 0->1 edge (`uefi_runtime.c:1882`), call `kernel_lockdown_engage("drift")` -- gated on the BOOT-SNAPSHOT SB, not live SB
+- [ ] AuditLog infra: a `uefi_secureboot_audit_log(event)` API + `HKLM\SYSTEM\SecureBoot\AuditLog` registry writer (clone the `Vars` writer `uefi_runtime.c:1983`); ready for the PE-verification call sites when they exist
+- [ ] Serial log: `[SecureBoot] policy: enforce=%u audit=%u deployed=%u`
+- [ ] Commit: `"kernel/security: Secure Boot lockdown enforcement consuming canonical state"`
 
 **Test checkpoint:** Setup Mode (`deployed_mode==0`): no write-protection. Enrolled PK + DeployedMode: `uefi_var_set(PK, empty)` -> `STATUS_ACCESS_DENIED`; an authenticated db update still passes. `secure_boot_enforce=1` + SB active: `kernel_lockdown_engage` raises `kernel_lockdown_level_get()` to INTEGRITY; serial shows the policy line. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
@@ -610,7 +606,7 @@ Kernel-side enforcement policy gated on the canonical Secure Boot state. Owns th
 > - Design review found 3 requirements baked into the items: single lockdown source-of-truth (gate the seed on the knob), drift fail-open fix (boot-snapshot gating), and a var-guard scoped to destructive clears only.
 > - Scope boundary: the existing lockdown ratchet lives in `policy_lock.c`; SB state in `uefi_runtime.c`; the blocked gates are owned by `D04 T05` (modules) + `D10 T07` (PE loader).
 
-> **Deferred:** [H] SB lockdown enforcement gates (.kmod/MSR-IO disable) -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md` (module loader is the gate owner). [H] audit-log wiring to PE signature verification -> XREF: `10-platform-services/TODO-07-win32-pe-loader.md` (no PE verify call site exists). [M] implementable subset (knob/engage/var-guard/drift/AuditLog) with the 3 design requirements -> XREF: this section (the `[ ]` items above).
+> **Notes:** Reopened 2026-11-07 for the implementable subset, whose park named the module loader though none of those items need it. Still owned elsewhere: .kmod and MSR/IO gates (`04-drivers-hardware/TODO-05`), audit wiring to PE verification (`10-platform-services/TODO-07`).
 
 ---
 
@@ -624,9 +620,8 @@ Complete W^X on the static kernel image (Linux `STRICT_KERNEL_RWX` / `mark_rodat
 - [x] Called in `boot_phase1` (`boot_interrupts.c:194`) after `cpu_pin_control_regs` (CR0.WP pinned), single-CPU before Phase 2 `smp_init` (`vmm_set_ro` is local-invlpg-only); fail CLOSED via `boot_halt` if either returns nonzero
 - [x] `.text` patch-site audit: none exist (`idt.c:261` is a comment; KPTI/AP trampolines are in separately-allocated pages outside `__text_start..__text_end`); the CR0.WP-toggle bracket for a future live-patch path is documented in `wx.c`
 - [x] Serial log: `[wx] kernel image: .text RO (%lu KiB)` + `.rodata RO (%lu KiB)`
-- [/] `.rodata` RO-after-init `__ro_after_init` class: plain const `.rodata` is RO now; the init-mutable-then-RO class is deferred (next item)
-- [/] **(deferred)** `__ro_after_init` section convention: a `.init.data` output section + `__attribute__((section))` macro + `__init_end` so init-mutable globals go RO after boot. No such convention exists today -> XREF: this section
-  - Parked:needs a `.init.data` section + `__ro_after_init` attribute macro that the tree lacks
+- [ ] `.rodata` RO-after-init `__ro_after_init` class: plain const `.rodata` is RO now; the init-mutable-then-RO class is deferred (next item)
+- [ ] **(deferred)** `__ro_after_init` section convention: a `.init.data` output section + `__attribute__((section))` macro + `__init_end` so init-mutable globals go RO after boot. No such convention exists today
 - [x] Commit: `"kernel/mm: STRICT_KERNEL_RWX -- .text RO, .rodata RO-after-init, W^X on the kernel image"`
 
 **Test checkpoint:** `vmm_query_flags(__text_start)` shows WRITABLE clear + NX clear (executable); `vmm_query_flags(__rodata_start)`, a string-literal address, and `&firmware_capsule_refusal_sentinel` all show WRITABLE clear (orphan + immutable alloc sections covered); `[wx]` serial lines show non-zero RO counts; `.text`/`.rodata` write faults are bare-metal-validated (they #PF). Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
@@ -640,7 +635,7 @@ Complete W^X on the static kernel image (Linux `STRICT_KERNEL_RWX` / `mark_rodat
 > - Scope boundary: dynamic `mprotect` W^X policy is `03-memory-concurrency/TODO-01 §2`; the `__ro_after_init` init-mutable class is the deferred item above (needs a section convention).
 
 > **Verified:** 2026-06-28 | commit `4e5d48a1` (+ review fixes) | 6/8 items | build OK | smoke PASS (KVM 2.75s), security 1010/16 + mm W^X 4 suites pass
-> **Deferred:** [M] `__ro_after_init` init-mutable-then-RO class -> XREF: this section (item: "`__ro_after_init` section convention" above -- needs a `.init.data` section + attribute macro that does not exist in the tree).
+> **Notes:** Reopened 2026-11-07, was Deferred on its own item: `.init.data` and the macro do not exist yet, which is the work. `src/boot/linker.ld` is not on the receipt surface.
 > **Quality reviewed:** 2026-06-28 | Codex 6x (design, adversarial, consistency, perf, re-adversarial) | 3H+1M+1L fixed, 1 deferred | scope: kernel-code-quality + boot-code-quality
 
 ---
@@ -707,21 +702,19 @@ Clang kCFI (`-fsanitize=kcfi`, Linux `CONFIG_CFI_CLANG`) enforces that every ind
 > [!NOTE]
 > Design validated + prototyped (2026-06-28), then reverted to keep `main` buildable -- the flag flip false-faults at the kernel->firmware ABI boundary and the exemption sweep is multi-iteration (see Deferred). The proven approach is baked into the items below.
 
-- [/] `__nocfi` macro: `#define __nocfi __attribute__((no_sanitize("kcfi")))` in a new `include/kernel/compiler.h` (function-scoped; keeps the type-id prologue, exempts only that function's indirect calls)
-  - Parked:needs the firmware-ABI-boundary exemption sweep first (this section)
-- [/] kCFI trap detection via the `.kcfi_traps` section: linker.ld bounds + `kcfi_is_trap(rip)` in `idt.c`; the #UD path routes a trap-RIP to a `KERNEL_SECURITY_CHECK_FAILURE` bugcheck -> XREF `TODO-27-crash-dump-generation.md §1`
-  - Parked:needs the firmware-ABI-boundary exemption sweep first (this section)
-- [/] `__nocfi` on `ssdt_dispatch` (the one genuine type-erased call: ~187 `NtXxx` cast to a uniform `SSDT_HANDLER`); IRQ/DPC/blkdev/test dispatch are already correctly typed
-  - Parked:needs the firmware-ABI-boundary exemption sweep first (this section)
+- [ ] `__nocfi` macro: `#define __nocfi __attribute__((no_sanitize("kcfi")))` in a new `include/kernel/compiler.h` (function-scoped; keeps the type-id prologue, exempts only that function's indirect calls)
+- [ ] kCFI trap detection via the `.kcfi_traps` section: linker.ld bounds + `kcfi_is_trap(rip)` in `idt.c`; the #UD path routes a trap-RIP to a `KERNEL_SECURITY_CHECK_FAILURE` bugcheck -> XREF `TODO-27-crash-dump-generation.md §1`
+- [ ] `__nocfi` on `ssdt_dispatch` (the one genuine type-erased call: ~187 `NtXxx` cast to a uniform `SSDT_HANDLER`); IRQ/DPC/blkdev/test dispatch are already correctly typed
 - [/] FIRMWARE-ABI BOUNDARY SWEEP (blocker): exempt each TU calling a non-kCFI firmware pointer (`uefi_runtime.c`, `uefi_vars.c`, +ACPI/GOP/TPM) via a per-TU `filter-out -fsanitize=kcfi` Makefile rule; enumerate via smoke + addr2line
-  - Parked:needs the firmware-ABI-boundary exemption sweep first (this section)
+  - operator-gated: this needs `Makefile` edits, and `Makefile` is the receipt surface the unattended run may not edit. The macro, trap detection and annotation above land without it.
 - [/] Add `-fsanitize=kcfi` to kernel `CFLAGS` (Clang 19; NOT the UEFI bootloader sub-make); coexists with retpoline (§8) + stack-protector; `objdump` shows the prologues + a non-empty `.kcfi_traps`
-  - Parked:needs the firmware-ABI-boundary exemption sweep first (this section)
-- [/] Commit: `"kernel/security: kCFI -- Clang type-id indirect-call enforcement + bugcheck on mismatch"` -- parked: needs the firmware-ABI-boundary exemption sweep first (this section)
+  - operator-gated: this needs `Makefile` edits, and `Makefile` is the receipt surface the unattended run may not edit. The macro, trap detection and annotation above land without it.
+- [/] Commit: `"kernel/security: kCFI -- Clang type-id indirect-call enforcement + bugcheck on mismatch"`
+  - operator-gated: this needs `Makefile` edits, and `Makefile` is the receipt surface the unattended run may not edit. The macro, trap detection and annotation above land without it.
 
 **Test checkpoint:** `kcfi_is_trap()` identifies a real `.kcfi_traps` entry RIP and rejects a non-trap address (unit-testable without a bugcheck); boot reaches `C:\>` (smoke) with kCFI live, proving the firmware-boundary sweep is complete; `objdump` shows kCFI prologues. Test on: QEMU WHPX, TCG, bare metal.
 
-> **Deferred:** [M] kCFI kernel-wide flip blocked on the firmware-ABI-boundary exemption sweep -- enabling `-fsanitize=kcfi` false-faults at EVERY kernel->firmware indirect call (UEFI runtime + UEFI vars confirmed; ACPI/GOP/TPM likely), each needing a per-TU kCFI exemption discovered iteratively via smoke. Detection design + `__nocfi` macro + `ssdt_dispatch` annotation are validated; remaining work is the bounded multi-iteration sweep. -> XREF: this section (the "FIRMWARE-ABI BOUNDARY SWEEP" item above).
+> **Notes:** Reopened 2026-11-07 for the macro, trap detection and annotation, was Deferred: [M] kCFI kernel-wide flip blocked on the firmware-ABI-boundary exemption sweep -- enabling `-fsanitize=kcfi` false-faults at EVERY kernel->firmware indirect call (UEFI runtime + UEFI vars confirmed; ACPI/GOP/TPM likely), each needing a per-TU kCFI exemption discovered iteratively via smoke. Detection design + `__nocfi` macro + `ssdt_dispatch` annotation are validated; remaining work is the bounded multi-iteration sweep. -> XREF: this section (the "FIRMWARE-ABI BOUNDARY SWEEP" item above). Until the flag lands `.kcfi_traps` is empty, so the positive half of this section's `kcfi_is_trap()` checkpoint waits on it; the reject half does not.
 
 ---
 
@@ -732,18 +725,15 @@ Compile + runtime bounds checking on the `memcpy`/`strcpy`/`strcat`/`snprintf` f
 > [!NOTE]
 > Scope corrected by a compile probe (2026-06-28): `clang-19 --target=x86_64-elf -ffreestanding -nostdinc -D_FORTIFY_SOURCE=2 -O2` does NOT auto-emit `_chk` calls -- it emits plain `memcpy`/`strcpy`. FORTIFY_SOURCE is a libc-HEADER feature (glibc/Bionic/musl implement it as `pass_object_size` inline wrappers in `string.h`), NOT a pure compiler flag. So this needs header machinery, not a flag flip (see Deferred).
 
-- [/] Fortify header machinery in `include/libc/string.h`: `__pass_object_size__` + `__overloadable__` inline wrappers for the mem/str/snprintf family that `__builtin_object_size`-dispatch to the real fn or `__chk_fail`
-  - Parked:needs the freestanding fortify-header machinery (this section)
-- [/] `_chk` slow paths in `src/libc/string.c` (glibc-ABI arg order): `__memcpy_chk`/`__memset_chk`/`__strcpy_chk`/`__strcat_chk`/`__snprintf_chk`/`__vsnprintf_chk` etc. -- compare op length to `dstlen`, tail-call real fn or `__chk_fail`
-  - Parked:needs the freestanding fortify-header machinery (this section)
-- [/] `__chk_fail()` (noreturn) -> `KeBugCheckEx(BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE, STATUS_*_BUFFER_OVERRUN, ...)` mirroring `stack_canary.c:154` -- parked: needs the freestanding fortify-header machinery (this section)
-- [/] Latent-overflow handling (the risk): FS-mount name code (`fs/fat32`/`fs/ixfs`/`fs/ntfs` raw strcpy/strcat of disk names into fixed buffers) is the firing surface; stage `__chk_fail`->klog+continue to surface sites, audit/fix, then hard bugcheck
-  - Parked:needs the freestanding fortify-header machinery (this section)
-- [/] Commit: `"kernel/libc: FORTIFY_SOURCE -- _chk string/memory builtins, bugcheck on overflow"` -- parked: needs the freestanding fortify-header machinery (this section)
+- [ ] Fortify header machinery in `include/libc/string.h`: `__pass_object_size__` + `__overloadable__` inline wrappers for the mem/str/snprintf family that `__builtin_object_size`-dispatch to the real fn or `__chk_fail`
+- [ ] `_chk` slow paths in `src/libc/string.c` (glibc-ABI arg order): `__memcpy_chk`/`__memset_chk`/`__strcpy_chk`/`__strcat_chk`/`__snprintf_chk`/`__vsnprintf_chk` etc. -- compare op length to `dstlen`, tail-call real fn or `__chk_fail`
+- [ ] `__chk_fail()` (noreturn) -> `KeBugCheckEx(BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE, STATUS_*_BUFFER_OVERRUN, ...)` mirroring `stack_canary.c:154`
+- [ ] Latent-overflow handling (the risk): FS-mount name code (`fs/fat32`/`fs/ixfs`/`fs/ntfs` raw strcpy/strcat of disk names into fixed buffers) is the firing surface; stage `__chk_fail`->klog+continue to surface sites, audit/fix, then hard bugcheck
+- [ ] Commit: `"kernel/libc: FORTIFY_SOURCE -- _chk string/memory builtins, bugcheck on overflow"`
 
 **Test checkpoint:** the `_chk` slow paths pass correctly-sized ops through unchanged (positive path, unit-testable in `TEST_CAT_SECURITY`); a `memcpy` into an undersized fixed buffer triggers `__memcpy_chk` -> bugcheck (manual/bare-metal -- it halts, not unit-testable); boot reaches `C:\>` with FORTIFY live (no latent FS-mount overflow firing). Test on: QEMU WHPX, TCG, bare metal.
 
-> **Deferred:** [M] FORTIFY_SOURCE needs the freestanding fortify-HEADER machinery (proven by compile probe: clang `-nostdinc -D_FORTIFY_SOURCE=2` emits plain `memcpy`, not `_chk` -- the rewrite lives in `string.h` `pass_object_size` wrappers, not the flag), plus handling the latent FS-mount-overflow exposure (disk names into fixed `fs/*` buffers) which can hard-fault boot until audited. Bounded but multi-part; the `_chk` set + signatures + the `__chk_fail` precedent are pinned. -> XREF: this section (the "Fortify header machinery" + "Latent-overflow handling" items above).
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] FORTIFY_SOURCE needs the freestanding fortify-HEADER machinery (proven by compile probe: clang `-nostdinc -D_FORTIFY_SOURCE=2` emits plain `memcpy`, not `_chk` -- the rewrite lives in `string.h` `pass_object_size` wrappers, not the flag), plus handling the latent FS-mount-overflow exposure (disk names into fixed `fs/*` buffers) which can hard-fault boot until audited. Bounded but multi-part; the `_chk` set + signatures + the `__chk_fail` precedent are pinned. -> XREF: this section (the "Fortify header machinery" + "Latent-overflow handling" items above).
 
 ---
 
@@ -754,18 +744,15 @@ Zero the used portion of the kernel stack on every syscall/interrupt return to u
 > [!NOTE]
 > Toolchain check (2026-06-28): clang-19 has NO stackleak instrumentation (only `-fstack-protector*` / `-fstack-clash-protection`; Linux stackleak is a GCC plugin). So the "Clang stackleak instrumentation if available" alternative is OFF the table -- use the manual poison-scan-watermark path below. Still implementable; not blocked.
 
-- [/] Coherent erase model (design): on return-to-user POISON-fill (sentinel, NOT zero) the used span -- clears secrets AND keeps the scan invariant for the next return; deepest-use = scan up to the first non-poison byte (Linux KSTACK_ERASE)
-  - Parked:needs the re-planned poison-fill hot-path design (this section)
-- [/] Hook placement (design): the erase runs while RSP still points at the KERNEL frame (BEFORE the exit restores user RSP) -- NOT the §19 VERW spot, which is post-pop-rsp; an asm wrapper passes explicit kernel stack top/bounds
-  - Parked:needs the re-planned poison-fill hot-path design (this section)
-- [/] Stack inventory (design): poison + carry `stack_low`/`stack_high` for EVERY ring-3-return-capable kernel stack incl. the kmalloc'd `task_create_user()` stack (`task.c:563`); stackleak refuses unknown/unpoisoned stacks
-  - Parked:needs the re-planned poison-fill hot-path design (this section)
-- [/] Cap + resume: bound scan+poison work per return (Linux STACKLEAK_SEARCH_DEPTH) with a defined partial-erase resume policy; build knob to disable for perf -- parked: needs the re-planned poison-fill hot-path design (this section)
-- [/] Commit: `"kernel/security: stackleak -- erase used kernel stack span on return to user"` -- parked: needs the re-planned poison-fill hot-path design (this section)
+- [ ] Coherent erase model (design): on return-to-user POISON-fill (sentinel, NOT zero) the used span -- clears secrets AND keeps the scan invariant for the next return; deepest-use = scan up to the first non-poison byte (Linux KSTACK_ERASE)
+- [ ] Hook placement (design): the erase runs while RSP still points at the KERNEL frame (BEFORE the exit restores user RSP) -- NOT the §19 VERW spot, which is post-pop-rsp; an asm wrapper passes explicit kernel stack top/bounds
+- [ ] Stack inventory (design): poison + carry `stack_low`/`stack_high` for EVERY ring-3-return-capable kernel stack incl. the kmalloc'd `task_create_user()` stack (`task.c:563`); stackleak refuses unknown/unpoisoned stacks
+- [ ] Cap + resume: bound scan+poison work per return (Linux STACKLEAK_SEARCH_DEPTH) with a defined partial-erase resume policy; build knob to disable for perf
+- [ ] Commit: `"kernel/security: stackleak -- erase used kernel stack span on return to user"`
 
 **Test checkpoint:** After a syscall that writes a sentinel deep on the kernel stack, a following syscall reads POISON (not the sentinel) at that offset (span re-poisoned); the erase is bounded by the watermark/cap (no over-write into the guard page); boot reaches `C:\>` with stackleak live. Test on: QEMU WHPX, TCG, bare metal.
 
-> **Deferred:** [M] stackleak needs a re-planned + careful hot-path implementation per design review: poison-fill (not zero) for a coherent scan invariant; the erase hook must run BEFORE the exit restores user RSP (the §19 VERW spot is post-pop-rsp, unsafe for a C erase on the user stack with kernel GS); and the stack inventory must cover the kmalloc'd `task_create_user()` kernel stack (`task.c:563`), not just PMM+guard stacks. Bounded but multi-part (poison engine + asm wrapper + stack normalization + cap). -> XREF: this section (the corrected items above).
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] stackleak needs a re-planned + careful hot-path implementation per design review: poison-fill (not zero) for a coherent scan invariant; the erase hook must run BEFORE the exit restores user RSP (the §19 VERW spot is post-pop-rsp, unsafe for a C erase on the user stack with kernel GS); and the stack inventory must cover the kmalloc'd `task_create_user()` kernel stack (`task.c:563`), not just PMM+guard stacks. Bounded but multi-part (poison engine + asm wrapper + stack normalization + cap). -> XREF: this section (the corrected items above).
 
 ---
 
@@ -776,18 +763,16 @@ A low-overhead page-granularity sampling allocator (Linux `CONFIG_KFENCE`) placi
 > [!NOTE]
 > Explored + design-reviewed (2026-06-28): self-contained `src/kernel/mm/kfence.c` + `kfence.h`; 3 hook sites (`kmalloc`/`kfree` heap.c, `page_fault_handler` vmm.c:565 BEFORE the 32-slot guard table); pool from `pmm_alloc_contiguous` + `vmm_unmap_page(virt,0)` guards (split the 2 MiB huge page first); init after `heap_init()` (boot_hw.c:529) gated on `kfence_ready`; own freelist spinlock, boot-init read-only range check (lock-free in #PF); tunables via `kernel_tunable_register`; terminal = report + `KeBugCheckEx` (new STOP code -- no SEH/RIP-advance exists, fatal is the only safe terminal). Two design findings folded into items 1-2 below.
 
-- [/] Sample 1/sample_rate via a SHARED helper covering `kmalloc`/`kmalloc_zeroed`/`kmalloc_tagged` (design: all 3 variants, not just kmalloc); `kfree` AND `kfree_tagged` dispatch `kfence_owns(ptr)` -> `kfence_free`
-  - Parked:prototyped but not landed; see this section's stamp
-- [/] Each object at a per-slot-randomized page side (design: left OR right, so under- AND over-flow cross a guard page) by an unmapped guard page; `kfence_handle_fault` classifies OOB-side vs UAF from `cr2` + slot state + side
-  - Parked:prototyped but not landed; see this section's stamp
-- [/] On free, unmap (or quarantine) the slot so a UAF access faults; recycle after a quarantine delay -- parked: prototyped but not landed; see this section's stamp
-- [/] `kfence_report()` on a guarded fault: classify OOB vs UAF, log the object's alloc/free context; wire to the page-fault handler's guard-table path -- parked: prototyped but not landed; see this section's stamp
-- [/] Sample rate + pool size are `boot.conf` tunables; disabled adds near-zero overhead -- parked: prototyped but not landed; see this section's stamp
-- [/] Commit: `"kernel/mm: KFENCE -- sampling guard-page UAF/OOB detector"` -- parked: prototyped but not landed; see this section's stamp
+- [ ] Sample 1/sample_rate via a SHARED helper covering `kmalloc`/`kmalloc_zeroed`/`kmalloc_tagged` (design: all 3 variants, not just kmalloc); `kfree` AND `kfree_tagged` dispatch `kfence_owns(ptr)` -> `kfence_free`
+- [ ] Each object at a per-slot-randomized page side (design: left OR right, so under- AND over-flow cross a guard page) by an unmapped guard page; `kfence_handle_fault` classifies OOB-side vs UAF from `cr2` + slot state + side
+- [ ] On free, unmap (or quarantine) the slot so a UAF access faults; recycle after a quarantine delay
+- [ ] `kfence_report()` on a guarded fault: classify OOB vs UAF, log the object's alloc/free context; wire to the page-fault handler's guard-table path
+- [ ] Sample rate + pool size are `boot.conf` tunables; disabled adds near-zero overhead
+- [ ] Commit: `"kernel/mm: KFENCE -- sampling guard-page UAF/OOB detector"`
 
 **Test checkpoint:** A test allocation forced onto the pool: an OOB write faults and `kfence_report` logs OOB; a UAF read after free faults and logs UAF; sampling off = normal kmalloc, no pool faults. Test on: QEMU WHPX, TCG, bare metal.
 
-> **Deferred:** [M] KFENCE prototyped end to end (self-contained `kfence.c` ~280 lines: FIFO-ring quarantine, left/right placement, OOB/UAF classify; 5 heap-variant hooks + the `page_fault_handler` hook + boot init + tunables; builds), then reverted to keep `main` booting. Enabling (1/100) broke boot: `pmm_alloc_contiguous` placed the pool at 0x6ff000 (low memory next to the 0x70000 page tables), and `vmm_unmap_page` on the identity-map guard pages there corrupted kernel state -- a later #PF hit `handlers[14]==NULL` (idt.c default panic, never reaching the handler). FIX before re-enabling: place the pool in a dedicated VA away from the identity-map's critical low pages (or verify the PMM region is safe + that unmapping those frames cannot disturb the page tables), then re-verify the `kfence_handle_fault` wiring. -> XREF: this section (the items above).
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] KFENCE prototyped end to end (self-contained `kfence.c` ~280 lines: FIFO-ring quarantine, left/right placement, OOB/UAF classify; 5 heap-variant hooks + the `page_fault_handler` hook + boot init + tunables; builds), then reverted to keep `main` booting. Enabling (1/100) broke boot: `pmm_alloc_contiguous` placed the pool at 0x6ff000 (low memory next to the 0x70000 page tables), and `vmm_unmap_page` on the identity-map guard pages there corrupted kernel state -- a later #PF hit `handlers[14]==NULL` (idt.c default panic, never reaching the handler). FIX before re-enabling: place the pool in a dedicated VA away from the identity-map's critical low pages (or verify the PMM region is safe + that unmapping those frames cannot disturb the page tables), then re-verify the `kfence_handle_fault` wiring. -> XREF: this section (the items above).
 
 ---
 
