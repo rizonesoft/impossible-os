@@ -313,3 +313,36 @@ An authenticated dbx apply cannot be undone, and a wrong one can stop the machin
 Recommended: A for now. Reversing it later costs only the write path, whereas a bad write can cost the machine. B stays open once there is bare-metal evidence to back the preflight.
 
 A: (pending)
+
+## Q25 (02-kernel-core/TODO-02 §3): does registry policy get its own Phase-2 effective-policy object?
+
+The §3 merge items say "operator-reserved architecture decision with no TODO owner", so shipping §4 would not release them. §2's `kernel_config_t` is an immutable Phase 0 snapshot, and registry policy arrives later.
+
+- **A: separate Phase-2 effective-policy object.** The Phase 0 snapshot stays immutable, and §3 can land before §4 reads control sets.
+- **B: wait for §4.** Merge only after control-set selection exists, keeping §3 after §4.
+
+Recommended: A, since it leaves the shipped immutability guarantee alone. INFERRED from the stamps; I did not read the original design discussion, so veto it if that settled otherwise.
+
+A: (pending)
+
+## Q26 (01-boot-platform/TODO-02 §12): how should `HKLM\SYSTEM\SecureBoot\ShimCA` report a MOK-dev chain?
+
+`scripts/extract-shim-ca.sh` recognises only Microsoft CA subjects, so a valid self-built shim publishes `0xFFFFFFFF`, the parse-failure sentinel, and audit consumers read an error for a valid trust mode.
+
+- **A: add a distinct MOK-dev value** alongside the Microsoft ones, and keep the sentinel for real parse failures.
+- **B: add a separate trust-mode value** and leave `ShimCA` Microsoft-only.
+
+Recommended: A, one value with no new key for consumers to join. This registry value is the ABI the item parks on.
+
+A: (pending)
+
+## Q27 (01-boot-platform/TODO-02 §20): what anchors verification of the MS-signed shim?
+
+`sbverify --list` reads a signature table without validating it, so a tampered image with plausible metadata passes both the smoke test and `scripts/sign-efi.sh` `shim_ca_gate`. This was a high finding on 2026-08-13.
+
+- **A: pin the Microsoft UEFI CA certificate** in the repo and verify cryptographically in both places.
+- **B: approved-hash allowlist** extending `shim/SHA256SUMS`.
+
+Recommended: B for now. It is the cheaper in-repo half the item names, and it needs no certificate choice while the MS-signed shim is about two years out. Moving to A later costs one script change in each place. Re-pinning a 2023-signed shim stays yours either way.
+
+A: (pending)

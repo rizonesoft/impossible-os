@@ -433,7 +433,7 @@ Microsoft began rotating UEFI signing certificates in 2024-2025: the original `M
 > - Canonical doc: [`docs/guides/secure-boot-keys.md`](../../docs/guides/secure-boot-keys.md) "MS UEFI CA Lifecycle".
 > - Scope boundary: §6 owns the actual signing pipeline; §12 is doctrine + tracking + audit surface layered on top. Pinning the 2023-CA-signed shim binary is `[/]` -- waiting on MS publication.
 
-- [/] Give a MOK-dev chain its own `HKLM\SYSTEM\SecureBoot\ShimCA` representation instead of the `0xFFFFFFFF` parse-failure sentinel -- BLOCKED on an ABI decision for the registry surface (operator-gated)
+- [/] Give a MOK-dev chain its own `HKLM\SYSTEM\SecureBoot\ShimCA` representation instead of the `0xFFFFFFFF` parse-failure sentinel -- awaiting-answer Q26 (`todo/answers.md`)
   - `scripts/extract-shim-ca.sh` recognizes only Microsoft CA subjects, so a self-built shim that `scripts/test-secureboot-smoke.sh` `SHIM_TRUST_MODE=mok-dev` verifies and calls COVERED is published as a build-time parse failure, and runtime audit consumers read an error for a valid trust mode.
   - Found by the §20 post-ship Codex consistency review 2026-08-13 (medium). -> XREF: 01-boot-platform/TODO-02 §20 (the mok-dev trust mode that surfaced it).
 
@@ -701,7 +701,7 @@ From the stamped section 12 -- "Make shim absence fail-loud after the 2026-07-01
 - [/] `make disk` ESP staging must refuse a Secure-Boot-requested build instead of printing `[DISK] No shim -- using direct boot` and proceeding -- BLOCKED, attended-session-only
   - `Makefile` is on the RECEIPT SURFACE (`receipt_surface_guard.py`), which the unattended runner may not edit; an attended session owns this leg.
   - The smoke leg closes the reporting half; this is the packaging half. Shape it as the same opt-in (`REQUIRE_SHIM=1` or a Secure-Boot build flavor), never an unconditional failure -- the direct-boot fallback is deliberate for dev builds.
-- [/] Verify a pinned MS-signed shim CRYPTOGRAPHICALLY rather than by `sbverify --list` metadata -- BLOCKED, operator-gated: it needs a pinned Microsoft UEFI CA certificate (or an approved-hash allowlist) that nobody has chosen yet
+- [/] Verify a pinned MS-signed shim CRYPTOGRAPHICALLY rather than by `sbverify --list` metadata -- BLOCKED: it needs a pinned Microsoft UEFI CA certificate or an approved-hash allowlist, awaiting-answer Q27 (`todo/answers.md`)
   - `sbverify --list` enumerates a signature table without validating it, so a tampered image that keeps plausible certificate metadata satisfies the regex. Raised by this section's round-2 Codex adversarial review 2026-08-13 (high).
   - Fixing it in the smoke alone would ALSO diverge from `scripts/sign-efi.sh` `shim_ca_gate`, which uses the identical `--list` + regex mechanism -- both must move together, and `shim/SHA256SUMS` pinning is the cheaper in-repo half.
   - Moot until a shim is pinned at all (see the vendor-watch item below), which is why it parks here rather than blocking the reporting work.
