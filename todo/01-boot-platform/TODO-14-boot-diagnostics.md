@@ -58,13 +58,13 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | ⭐  | Order | Deliverable                                                   | Depends On                         | Status |
 | --- | :---: | ------------------------------------------------------------- | ---------------------------------- | :----: |
 | 💎  |   1   | UEFI pre-kernel POST codes                                    | --                                 |  [/]   |
-| 💎  |   2   | Boot progress named-stage API                                 | §1                                 |  [/]   |
+| 💎  |   2   | Boot progress named-stage API                                 | §1                                 |  [ ]   |
 | 💎  |   3   | POST-style hex code display                                   | §2                                 |  [x]   |
 | 💎  |   4   | Alive blink / visual heartbeat                                | permanently deferred; hang=TODO-23 |  [/]   |
 | 💎  |   5   | Panic forensic evidence                                       | §2                                 |  [/]   |
 | ⭐  |   6   | Panic QR code                                                 | §5; T03 §14 (QR seed)              |  [/]   |
-| 💎  |   7   | System-wide multi-instance spinner                            | D08 T08 §8 (compositor)            |  [/]   |
-| ⭐  |   8   | Runtime vital signs strip                                     | D02 T25 §7 (CPU accounting)        |  [/]   |
+| 💎  |   7   | System-wide multi-instance spinner                            | D08 T08 §8 (compositor)            |  [ ]   |
+| ⭐  |   8   | Runtime vital signs strip                                     | D02 T25 §7 (CPU accounting)        |  [ ]   |
 | 💎  |   9   | Boot timeline visualization/import                            | §2                                 |  [/]   |
 | ⭐  |  10   | Bootloader build identity dump in BlackBox                    | TODO-01 §20                        |  [x]   |
 | 💎  |  11   | Boot load status log (ntbtlog parity)                         | §2                                 |  [/]   |
@@ -120,7 +120,7 @@ High-level named-stage wrapper over the existing `boot_progress()` that adds a 3
 - [x] `boot_progress_poll()`: re-sends last stage to `boot_splash_status()` for timer-driven visual refresh (no in-tree caller yet -- wire with splash/timer when UI needs refresh without new history rows)
 - [x] `boot_timeline_dump_json()`: writes unified FPDT + TSC step timeline as JSON to `boot-timeline.json` (BlackBox `X:\Perf\` or klog dir fallback); uses `boot_timing_get_fpdt_entries()` + `boot_timing_get_steps()` + `boot_prog_tsc_delta_ms()` (`src/kernel/main/boot_progress.c`); path moved from `X:\Boot\` by TODO-04 FPDT and Boot Timing Normalization
 - [x] `boot_timeline_dump_json()` invoked after successful desktop-ready init (`src/kernel/main/boot_desktop.c` ~229, after NVRAM POST success + timing reports)
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): **Wire + harden the named-stage API (deferred):** `boot_stage_report`/`boot_progress_poll` have zero callers. Wire boot-path callers, map `s_meta`->`POST16_*`, saturate the tsc-delta,
+- [ ] **Wire + harden the named-stage API (deferred):** `boot_stage_report`/`boot_progress_poll` have zero callers. Wire boot-path callers, map `s_meta`->`POST16_*`, saturate the tsc-delta,
   - guard `s_meta` completeness, forward percent/splash.
 - [x] Commit: `"kernel: boot progress named-stage API + stage history + elapsed-ms tracking"` (exact subject varies across bring-up commits)
 
@@ -130,7 +130,7 @@ High-level named-stage wrapper over the existing `boot_progress()` that adds a 3
 > - Integration: serial `[+NNNms] STAGE: msg`; `boot_timeline_dump_json()` runs at desktop-ready (`boot_desktop.c`); `boot_stage_history_get()` feeds §5 panic forensics.
 > - Scope boundary: `boot_progress_poll()` has no in-tree caller yet (wire with splash/timer when the UI needs a refresh without new history rows).
 > **Verified:** 2026-04-12 -- Named-stage API + `boot_timeline_dump_json` wiring; Codex: safe TSC-to-ms when `freq < 1000`, close timeline parent dir after `create`. Accepted: none.
-> **Deferred:** [H] named-stage API (`boot_stage_report`/`boot_progress_poll`/`boot_get_elapsed_ms`) is unwired (zero callers) + latent issues (stale `s_meta` postcodes, unsaturated tsc-delta, no completeness guard, percent/splash not forwarded) -> XREF: 01-boot-platform/TODO-14 §2 (item: "Wire + harden the named-stage API (deferred)" at line 123)
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] named-stage API (`boot_stage_report`/`boot_progress_poll`/`boot_get_elapsed_ms`) is unwired (zero callers) + latent issues (stale `s_meta` postcodes, unsaturated tsc-delta, no completeness guard, percent/splash not forwarded). The stamp named this section's own item, whose only park was the image ceiling, and `scripts/overnight/bss-headroom.py` measured a `.text` budget of 153,647 bytes on 2026-11-07, so the ceiling park has ended.
 > **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf) | 2H+3M deferred (unwired API + latent fixes) | scope: kernel-code-quality (re-adversarial skipped -- findings deferred not coded; boot_timeline_dump_json live path unaffected in practice)
 
 ---
@@ -258,17 +258,17 @@ Extend the existing single-instance `spinner.h` to support up to 8 simultaneous 
 > [!NOTE]
 > The existing `spinner_init/start/advance/stop` API covers the boot splash single spinner (shipped with §1--§3 above). This section adds a multi-instance layer without breaking boot splash.
 
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Define `spinner_t` struct: `int32_t cx, cy, radius, stroke; uint32_t color; int32_t angle, sweep; uint8_t active; uint8_t size_class`
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `spinner_create(uint8_t size_class, uint32_t color)`: allocate from a static pool of 8 `spinner_t` slots; size classes: `SPINNER_SMALL=16`, `SPINNER_MEDIUM=32`, `SPINNER_LARGE=48`,
+- [ ] Define `spinner_t` struct: `int32_t cx, cy, radius, stroke; uint32_t color; int32_t angle, sweep; uint8_t active; uint8_t size_class`
+- [ ] `spinner_create(uint8_t size_class, uint32_t color)`: allocate from a static pool of 8 `spinner_t` slots; size classes: `SPINNER_SMALL=16`, `SPINNER_MEDIUM=32`, `SPINNER_LARGE=48`,
   - `SPINNER_XLARGE=64` (px radius); returns `spinner_t*` or NULL if pool full
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `spinner_destroy(spinner_t *s)`: mark slot as inactive; stop animation
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `spinner_set_position(spinner_t *s, int32_t cx, int32_t cy)`: update position without restarting
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `spinner_tick(spinner_t *s)`: advance angle + breathing (port animation logic from existing `spinner_advance()` -- single instance → multi); call `spinner_render(s, cx, cy)`
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `spinner_render(spinner_t *s, struct fb_surface *surface, int32_t x, int32_t y)`: draw arc ring onto `surface` (compositor surface or direct framebuffer)
+- [ ] `spinner_destroy(spinner_t *s)`: mark slot as inactive; stop animation
+- [ ] `spinner_set_position(spinner_t *s, int32_t cx, int32_t cy)`: update position without restarting
+- [ ] `spinner_tick(spinner_t *s)`: advance angle + breathing (port animation logic from existing `spinner_advance()` -- single instance → multi); call `spinner_render(s, cx, cy)`
+- [ ] `spinner_render(spinner_t *s, struct fb_surface *surface, int32_t x, int32_t y)`: draw arc ring onto `surface` (compositor surface or direct framebuffer)
 - [/] blocked on 08-graphics-ui/TODO-08 §8 (compositor tick): Compositor integration: WM maintains a `spinner_t *g_active_spinners[8]` list; compositor loop calls `spinner_tick()` on each non-NULL entry per frame; used by loading dialogs,
   - Start Menu search, download progress, Service Manager
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Backward compatibility: existing `spinner_init/start/advance/stop` calls remain valid; they operate on `g_active_spinners[0]` (the boot splash slot)
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Commit: `"kernel: multi-instance spinner_t pool for compositor-integrated loading indicators"`
+- [ ] Backward compatibility: existing `spinner_init/start/advance/stop` calls remain valid; they operate on `g_active_spinners[0]` (the boot splash slot)
+- [ ] Commit: `"kernel: multi-instance spinner_t pool for compositor-integrated loading indicators"`
 
 **Test checkpoint:** With §7 shipped: pool of 8; compositor ticks each active `spinner_t` per frame per → XREF: `08-graphics-ui/TODO-08-window-manager.md` §8; boot splash still uses slot 0. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 > **Test runner:** N/A (deferred -- no code shipped; desktop-polish blocked on WM compositor integration) | validation: on-screen multi-spinner under the WM compositor loop, pending
@@ -278,7 +278,7 @@ Extend the existing single-instance `spinner.h` to support up to 8 simultaneous 
 > - Blocker (kernel half, binds first): the `spinner_t` pool and renderer are kernel `.text`, and the image has 47 bytes of slack below `USER_BASE` measured 2026-09-03 -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7.
 > - Scope boundary: §7 owns the kernel `spinner_t` pool/render; the per-frame compositor tick wiring is owned by the WM TODO.
 > **Verified:** 2026-06-14 | deferred -- no code shipped | 0/9 items | build OK (no code change) | manual (dependency analysis)
-> **Deferred:** [M] multi-instance spinner_t pool + compositor integration unimplemented (reason: desktop-polish; single boot spinner works; full delivery needs WM per-frame spinner_tick wiring) -> XREF: 08-graphics-ui/TODO-08-window-manager.md §8 (item: "Per-frame `spinner_tick()` over the active-spinner list" at line 245) (STILL OPEN 2026-09-03: TODO-08 §8 is `[ ]`. A second gate now binds first -- the kernel-image ceiling leaves 47 bytes of `.text`, so the pool/render items are parked on -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Remove the `scripts/build.sh` BSS-collision guard" at line 303), and only the compositor-tick item is WM-owned.)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] multi-instance spinner_t pool + compositor integration unimplemented (reason: desktop-polish; single boot spinner works; full delivery needs WM per-frame spinner_tick wiring). The pool and render items need nothing from the window manager, and `scripts/overnight/bss-headroom.py` measured a `.text` budget of 153,647 bytes on 2026-11-07, so the ceiling park has ended. Only the compositor-tick item stays parked on 08-graphics-ui/TODO-08 s8.
 
 ---
 
@@ -287,23 +287,23 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 
 **Files:** `src/desktop/vital_signs.c`, `include/desktop/vital_signs.h`
 
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Activate when `boot.conf` key `VitalSigns=1` or `HKLM\SYSTEM\Boot\VitalSigns` = 1 (→ XREF `02-kernel-core/TODO-14-registry-completion.md`)
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `vital_signs_init()`: called from desktop init; allocates a 20 px compositor overlay surface pinned to the bottom of the screen
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `vital_signs_tick()`: called every 500 ms from a PIT-driven callback; reads: CPU usage % from scheduler stats, RAM used/total from PMM, IRQ count/s from IRQ counter differential,
+- [ ] Activate when `boot.conf` key `VitalSigns=1` or `HKLM\SYSTEM\Boot\VitalSigns` = 1 (→ XREF `02-kernel-core/TODO-14-registry-completion.md`)
+- [ ] `vital_signs_init()`: called from desktop init; allocates a 20 px compositor overlay surface pinned to the bottom of the screen
+- [ ] `vital_signs_tick()`: called every 500 ms from a PIT-driven callback; reads: CPU usage % from scheduler stats, RAM used/total from PMM, IRQ count/s from IRQ counter differential,
   - uptime in seconds from PIT ticks, framerate from compositor frame counter
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Render format (FONT_MONO at 10 px, white on 50% transparent black): `[CPU: 23%] [RAM: 1.2/4.0 GB] [IRQ: 1234/s] [Uptime: 00:03:42] [FPS: 60]`
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): `VitalSignsExtended=1` adds second line: `[Free: 2847 pages] [TCP: 3] [VFS R: 1.2 MB/s W: 0.4 MB/s] [Temp: 62°C]` (CPU temp from ACPI thermal zone if available, 0 if not)
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): The overlay is always rendered above the desktop wallpaper and windows; zorder = top - 1 (below cursor, above everything else)
-- [/] blocked on 02-kernel-core/TODO-33 §7 (image ceiling): Commit: `"desktop: runtime vital signs strip -- CPU/RAM/IRQ/FPS overlay for developers"`
+- [ ] Render format (FONT_MONO at 10 px, white on 50% transparent black): `[CPU: 23%] [RAM: 1.2/4.0 GB] [IRQ: 1234/s] [Uptime: 00:03:42] [FPS: 60]`
+- [ ] `VitalSignsExtended=1` adds second line: `[Free: 2847 pages] [TCP: 3] [VFS R: 1.2 MB/s W: 0.4 MB/s] [Temp: 62°C]` (CPU temp from ACPI thermal zone if available, 0 if not)
+- [ ] The overlay is always rendered above the desktop wallpaper and windows; zorder = top - 1 (below cursor, above everything else)
+- [ ] Commit: `"desktop: runtime vital signs strip -- CPU/RAM/IRQ/FPS overlay for developers"`
 
 **Test checkpoint:** With §8 shipped: `VitalSigns=1` shows bottom strip updating ~500 ms; CPU, RAM, IRQ, uptime, FPS plausible. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 > **Test runner:** N/A (deferred -- no code shipped; blocked on scheduler CPU% accounting) | validation: on-screen overlay with live metrics, pending
 > **Notes:**
-> - Deferred (no code shipped): the vital-signs overlay strip (CPU/RAM/IRQ/uptime/FPS). The CPU% source SHIPPED 2026-07-20 (`task_acct_sample()`, TODO-25 §7 commit `4b541c54`), so the original blocker is gone; the section is now parked on the kernel-image ceiling, measured 2026-09-03 at 47 bytes of `.text`.
-> - Blocker (current): kernel-image size -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7. A whole new desktop overlay translation unit cannot link into 47 bytes of `.text` slack. The former blocker (per-process CPU-time accounting, TODO-25 §7) is CLOSED.
+> - Deferred (no code shipped): the vital-signs overlay strip (CPU/RAM/IRQ/uptime/FPS). The CPU% source SHIPPED 2026-07-20 (`task_acct_sample()`, TODO-25 §7 commit `4b541c54`), so the original blocker is gone; the section was then parked on the kernel-image ceiling, measured 2026-09-03 at 47 bytes of `.text`.
+> - No blocker now: the image ceiling that stopped a new overlay translation unit at 47 bytes of `.text` slack ended 2026-11-07. The former blocker (per-process CPU-time accounting, TODO-25 §7) is CLOSED.
 > - Scope boundary: §8 owns the desktop overlay (`src/desktop/vital_signs.c`); the scheduler CPU-time accounting source is owned by TODO-25 §7.
 > **Verified:** 2026-06-14 | deferred -- no code shipped | 0/7 items | build OK (no code change) | manual (dependency analysis)
-> **Deferred:** [M] runtime vital-signs strip unimplemented (reason: needs scheduler per-CPU CPU% accounting) -> XREF: 02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7 (item: "Track per-process and per-job CPU time with user/kernel split") (BLOCKER RESOLVED 2026-07-20 by 02-kernel-core/TODO-25 §7 commit `4b541c54`: `task_acct_sample()` publishes per-process user/kernel CPU time under one timestamp, which is the CPU% source this section named. §8 is NOT re-opened: it is re-owned to the kernel-image ceiling, MEASURED 2026-09-03 at 47 bytes of `.text` against a new desktop overlay -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Remove the `scripts/build.sh` BSS-collision guard" at line 303).)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] runtime vital-signs strip unimplemented (reason: needs scheduler per-CPU CPU% accounting). `task_acct_sample()` shipped the CPU% source on 2026-07-20 and `scripts/overnight/bss-headroom.py` measured a `.text` budget of 153,647 bytes on 2026-11-07, so the ceiling park has ended, so neither named blocker remains.
 
 ---
 
