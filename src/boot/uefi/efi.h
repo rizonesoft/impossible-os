@@ -108,6 +108,10 @@ typedef UINTN               EFI_TPL;
  * arena/interval capacity exceeded, or RAM beyond the 64 TiB HHDM window.
  * Keep BOOT_ERR_REGISTRY_MAX in bootx64.c in sync with this highest value. */
 #define BOOT_ERR_HHDM_FAIL          0x0019
+/* The boot entry store exists and could not be used. Advisory, never raised
+ * through boot_fatal(): it is persisted only in the BootStoreReject record, not
+ * in BootError or the history ring. Keep BOOT_ERR_REGISTRY_MAX in sync. */
+#define BOOT_ERR_STORE_REJECTED     0x001A
 
 /* --- GUID --- */
 typedef struct {

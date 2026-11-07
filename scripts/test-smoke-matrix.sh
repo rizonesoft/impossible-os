@@ -126,20 +126,28 @@ done
 # Boot entry store fixtures, one boot each on the default engine. The plain legs
 # boot an image with no store, so they never run the loader's parser. That is how
 # a valid store being discarded on every boot stayed invisible until 2026-11-07.
-for fixture in VALID CORRUPT; do
-    log="$LOG_DIR/store-${fixture,,}.log"
-    cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-store-${fixture,,}.XXXXXX")"
+# The last three are ONE machine across three boots, sharing a variable store: the
+# rejection is recorded, a repeat writes nothing, and repairing the store clears it.
+for leg in VALID:valid:SMOKE_VALID_STORE=1 \
+           CORRUPT:corrupt:SMOKE_CORRUPT_STORE=1 \
+           CORRUPT:repeat:SMOKE_CORRUPT_STORE=1:SMOKE_STORE_RECORD=unchanged \
+           VALID:repaired:SMOKE_VALID_STORE=1:SMOKE_STORE_RECORD=cleared; do
+    name="${leg#*:}"; name="${name%%:*}"
+    settings="${leg#*:*:}"
+    log="$LOG_DIR/store-$name.log"
+    cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-store-$name.XXXXXX")"
     t0=$(date +%s)
-    env "SMOKE_${fixture}_STORE=1" bash scripts/test-smoke.sh > "$cap" 2>&1
+    # shellcheck disable=SC2086  # word-split on purpose: one assignment per colon
+    env ${settings//:/ } bash scripts/test-smoke.sh > "$cap" 2>&1
     rc=$?
     CAPTURES="$CAPTURES $cap:$log"
     dur=$(( $(date +%s) - t0 ))
     if [ "$rc" = "0" ]; then
         PASS=$((PASS + 1))
-        printf "  ${GREEN}PASS${NC}  store    %-7s %2ds   ${DIM}%s${NC}\n" "${fixture,,}" "$dur" "$log"
+        printf "  ${GREEN}PASS${NC}  store    %-8s %2ds   ${DIM}%s${NC}\n" "$name" "$dur" "$log"
     else
-        FAIL=$((FAIL + 1)); FAILED_LEGS="$FAILED_LEGS store:${fixture,,}"
-        printf "  ${RED}FAIL${NC}  store    %-7s %2ds   ${DIM}%s${NC}\n" "${fixture,,}" "$dur" "$log"
+        FAIL=$((FAIL + 1)); FAILED_LEGS="$FAILED_LEGS store:$name"
+        printf "  ${RED}FAIL${NC}  store    %-8s %2ds   ${DIM}%s${NC}\n" "$name" "$dur" "$log"
         reason=$(grep -a 'SMOKE TEST FAILED' "$cap" 2>/dev/null | head -1)
         [ -n "$reason" ] && printf "        ${DIM}%s${NC}\n" "$reason"
     fi

@@ -193,7 +193,7 @@ static CHAR16 g_boot_error_var[] = u"BootError";
  * static rather than threading a parameter through every call site.
  *
  * Section codes use the 0x01NN range so they cannot collide with
- * BOOT_ERR_* (0x000N..0x0013), the kernel-Phase-3 sentinel (0xFFFF),
+ * BOOT_ERR_* (0x000N..0x001A), the kernel-Phase-3 sentinel (0xFFFF),
  * the EBS-success sentinel (0xFFFE), or the UNKNOWN sentinel (0xFFFD).
  * The consumer-side renderer decodes the sentinels by name and shows
  * remaining values as raw 0xNNNN; a future renderer extension can
@@ -1219,12 +1219,12 @@ static void nvram_write_boot_error(UINT32 code)
 /* BootError values must be a known BOOT_ERR_* code from efi.h.  Reject
  * anything else as untrusted input (a pre-OS UEFI app can write under
  * the public Impossible OS GUID).  Keep this in sync with the registry
- * in efi.h: highest currently-defined code is BOOT_ERR_HHDM_FAIL (0x0019). */
-#define BOOT_ERR_REGISTRY_MAX 0x0019  /* highest BOOT_ERR_* in efi.h (BOOT_ERR_HHDM_FAIL) */
+ * in efi.h: highest currently-defined code is BOOT_ERR_STORE_REJECTED (0x001A). */
+#define BOOT_ERR_REGISTRY_MAX 0x001A  /* highest BOOT_ERR_* in efi.h (BOOT_ERR_STORE_REJECTED) */
 /* Pin the duplicate to the actual highest efi.h code so a new BOOT_ERR_* that
  * forgets to bump this fails the build instead of silently rejecting a valid
  * new error as untrusted. */
-_Static_assert(BOOT_ERR_REGISTRY_MAX == BOOT_ERR_HHDM_FAIL,
+_Static_assert(BOOT_ERR_REGISTRY_MAX == BOOT_ERR_STORE_REJECTED,
     "BOOT_ERR_REGISTRY_MAX must track the highest BOOT_ERR_* in efi.h");
 
 static UINT32 nvram_read_boot_error(void)
@@ -1630,7 +1630,7 @@ static void qr_render_to_fb(const UINT8 matrix[QR_SIZE][QR_SIZE],
  * encode the same string -- otherwise users scan one URL and read
  * another. The 4-hex width matches the gh-pages/err/<code>/ static
  * page layout AND the BOOT_ERR_REGISTRY_MAX domain (currently
- * 0x0013, well under 16 bits); the upper 16 bits of err_code carry
+ * 0x001A, well under 16 bits); the upper 16 bits of err_code carry
  * no information today. Buffer must be at least 33 bytes (28-byte
  * prefix + 4 hex + NUL). Returns the URL length excluding NUL. */
 #define RECOVERY_URL_MIN_BUF 33
@@ -5115,7 +5115,7 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len,
 {
     *out_buf = (unsigned char *)0;
     *out_len = 0;
-    *out_status = BOOT_STORE_LOAD_ABSENT;
+    *out_status = BOOT_STORE_LOAD_UNINSPECTED;
     *out_detail = "no boot entry store on this device";
 
     if (!g_boot_device_handle) return EFI_NOT_FOUND;
@@ -5149,6 +5149,8 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len,
         if (status != EFI_NOT_FOUND) {
             *out_status = BOOT_STORE_LOAD_UNREADABLE;
             *out_detail = "the boot entry store could not be opened";
+        } else {
+            *out_status = BOOT_STORE_LOAD_ABSENT;
         }
         return EFI_NOT_FOUND;
     }
@@ -5797,6 +5799,65 @@ static void boot_store_reject_notice(const char *token, const char *cause)
     boot_store_notice_dwell(channel != BOOT_STORE_NOTICE_SERIAL_ONLY);
 }
 
+/* Bring the BootStoreReject variable in line with this boot: `wanted` is the
+ * rejection to record, NULL when the store is fine. Policy and rationale:
+ * boot_store_reject_record_t. Best-effort like every NVRAM record here, and it
+ * allocates nothing, so the allocation-failure path can use it too. The
+ * store-record lines are what the two-boot smoke fixture asserts on; a machine
+ * with nothing to record and nothing stored stays silent. */
+static void boot_store_record_sync(const boot_store_reject_record_t *wanted)
+{
+    static CHAR16 var[] = u"BootStoreReject";
+    const UINT32 canonical = EFI_VARIABLE_NON_VOLATILE |
+                             EFI_VARIABLE_BOOTSERVICE_ACCESS |
+                             EFI_VARIABLE_RUNTIME_ACCESS;
+    if (!gST || !gST->RuntimeServices)
+        return;
+    EFI_RUNTIME_SERVICES *rt = gST->RuntimeServices;
+    if (!rt->GetVariable || !rt->SetVariable)
+        return;
+
+    boot_store_reject_record_t stored;
+    UINTN size = sizeof(stored);
+    UINT32 attrs = 0;
+    boot_store_record_state_t state;
+    EFI_STATUS s = rt->GetVariable(var, &g_impossible_os_guid, &attrs, &size, &stored);
+    if (s == EFI_NOT_FOUND)
+        state = BOOT_STORE_RECORD_ABSENT;
+    else if (s == EFI_BUFFER_TOO_SMALL)
+        state = BOOT_STORE_RECORD_MALFORMED;
+    else if (EFI_ERROR(s))
+        state = BOOT_STORE_RECORD_UNKNOWN;
+    else if (size != sizeof(stored) || attrs != canonical)
+        state = BOOT_STORE_RECORD_MALFORMED;
+    else
+        state = BOOT_STORE_RECORD_VALID;
+
+    boot_store_record_action_t action = boot_store_record_decide(wanted, state, &stored);
+    if (action == BOOT_STORE_RECORD_KEEP) {
+        if (state == BOOT_STORE_RECORD_UNKNOWN)
+            serial_early_print("[WARN] NVRAM: BootStoreReject unreadable; left as is\n");
+        else if (wanted)
+            serial_early_print("[BOOT] store-record: unchanged\n");
+        return;
+    }
+    if (action == BOOT_STORE_RECORD_DELETE || action == BOOT_STORE_RECORD_REPLACE) {
+        s = rt->SetVariable(var, &g_impossible_os_guid, attrs, 0, (void *)0);
+        if (EFI_ERROR(s)) {
+            serial_early_print("[WARN] NVRAM: BootStoreReject delete failed\n");
+            return;
+        }
+        if (action == BOOT_STORE_RECORD_DELETE) {
+            serial_early_print("[BOOT] store-record: cleared\n");
+            return;
+        }
+    }
+    s = rt->SetVariable(var, &g_impossible_os_guid, canonical,
+                        sizeof(*wanted), (void *)wanted);
+    serial_early_print(EFI_ERROR(s) ? "[WARN] NVRAM: BootStoreReject write failed\n"
+                                    : "[BOOT] store-record: written\n");
+}
+
 /* Write a minimal STORE_INVALID decision directly to boot_info v19
  * without going through the parser/decision heap path. Used when the
  * pre-EBS AllocatePool budget is exhausted -- as the live producer for
@@ -5832,6 +5893,11 @@ static void boot_policy_publish_alloc_failure_fallback(const char *what)
      * gated on the loader's result could never cover this path, which is why
      * it is raised directly. The notice allocates nothing, which is the
      * precondition that makes it usable from an allocation failure at all. */
+    {
+        boot_store_reject_record_t rec = { BOOT_ERR_STORE_REJECTED,
+                                           BOOT_STORE_REJECT_LOAD_ALLOC_FAILED, 0, 0, 0 };
+        boot_store_record_sync(&rec);
+    }
     boot_store_reject_notice("POLICY_ALLOC_EXHAUSTED",
                              "the firmware ran out of memory reading boot settings");
 }
@@ -7307,7 +7373,7 @@ static void boot_policy_invoke(void)
     int sb_active = bootloader_secureboot_active();
 
     /* ---- Parse the ESP store (or synthesize a STORE_INVALID result). */
-    boot_store_load_status_t load_status = BOOT_STORE_LOAD_ABSENT;
+    boot_store_load_status_t load_status = BOOT_STORE_LOAD_UNINSPECTED;
     const char *load_detail = "no boot entry store on this device";
     s = load_bootentries_json(&json_buf, &json_len, &load_status, &load_detail);
     if (s == EFI_SUCCESS && json_buf && json_len > 0) {
@@ -7348,8 +7414,30 @@ static void boot_policy_invoke(void)
      * (the ESP staging ships boot.conf only, so every dev and smoke image
      * has none) and must stay silent, while a store that exists and could
      * not be used is exactly the silent failure this section removes. */
-    if (boot_entries_store_notice_warranted((int)load_status,
-                                            (int)parse->reject_code)) {
+    int store_unusable = boot_entries_store_notice_warranted((int)load_status,
+                                                             (int)parse->reject_code);
+
+    /* Persist before the notice: its dwell is exactly when a user powers off.
+     * A boot with no filesystem to look at (PXE, UKI over HTTP) says nothing
+     * about the store on disk, so it neither records nor clears. */
+    {
+        boot_store_record_intent_t intent =
+            boot_store_record_intent((int)load_status, (int)parse->reject_code);
+        if (intent == BOOT_STORE_RECORD_RECORD) {
+            boot_store_reject_record_t rec = { BOOT_ERR_STORE_REJECTED,
+                                               (unsigned short)load_status, 0, 0, 0 };
+            if (load_status != BOOT_STORE_LOAD_UNREADABLE) {
+                rec.reject_code = (unsigned short)parse->reject_code;
+                rec.line = parse->reject_line;
+                rec.column = parse->reject_column;
+            }
+            boot_store_record_sync(&rec);
+        } else if (intent == BOOT_STORE_RECORD_CLEAR) {
+            boot_store_record_sync((const boot_store_reject_record_t *)0);
+        }
+    }
+
+    if (store_unusable) {
         const char *token;
         const char *cause;
         char locator[BOOT_ENTRIES_REJECT_LOCATOR_LEN];

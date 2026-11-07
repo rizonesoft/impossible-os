@@ -335,6 +335,25 @@ fi
 # ---- Step 1: Build ----
 echo -e "${CYAN}[1/3]${NC} Building OS..."
 cd "$REPO_ROOT"
+# What the BootStoreReject record must do on this boot: written, unchanged or
+# cleared. Anything but "written" is a LATER boot of the same machine, so it keeps
+# the variable store the previous boot left, which the clean below would delete.
+# A corrupt store on fresh variables can only write, so that fixture asserts it
+# by default.
+STORE_RECORD="${SMOKE_STORE_RECORD:-}"
+if [ -z "$STORE_RECORD" ] && [ "${SMOKE_CORRUPT_STORE:-0}" = "1" ]; then
+    STORE_RECORD=written
+fi
+PREVIOUS_VARS=""
+if [ -n "$STORE_RECORD" ] && [ "$STORE_RECORD" != "written" ]; then
+    if [ ! -f "$OVMF_VARS_CP" ]; then
+        echo -e "${RED}SMOKE TEST FAILED: SMOKE_STORE_RECORD=$STORE_RECORD needs a previous boot's variable store${NC}"
+        exit 1
+    fi
+    PREVIOUS_VARS="$(mktemp "${TMPDIR:-/tmp}/smoke-previous-vars.XXXXXX")"
+    cp "$OVMF_VARS_CP" "$PREVIOUS_VARS"
+fi
+
 bash scripts/build.sh clean >/dev/null 2>&1
 
 BUILD_RESULT=$(tail -1 build/build.log 2>/dev/null || echo "UNKNOWN")
@@ -382,7 +401,11 @@ if [ ! -f "$OVMF_CODE" ]; then
     exit 1
 fi
 
-cp "$OVMF_VARS_SRC" "$OVMF_VARS_CP"
+if [ -n "$PREVIOUS_VARS" ]; then
+    mv -f "$PREVIOUS_VARS" "$OVMF_VARS_CP"
+else
+    cp "$OVMF_VARS_SRC" "$OVMF_VARS_CP"
+fi
 
 # ---- Optional corrupt-boot-entry-store fixture ----------------------------
 # Proves the rejected-store notice actually renders instead of the machine
@@ -952,6 +975,15 @@ elif [ "$BOOT_PASSED" = true ]; then
         if ! grep -q "policy: bootentries.json parsed reject_code=0 entries=1" "$STRIPPED_LOG" 2>/dev/null; then
             echo -e "${RED}SMOKE TEST FAILED: a valid boot entry store was not accepted${NC}"
             grep -E "policy:|store-reject:" "$STRIPPED_LOG" 2>/dev/null | head -6
+            exit 1
+        fi
+    fi
+
+    # ---- BootStoreReject record assertion ---------------------------------
+    if [ -n "$STORE_RECORD" ]; then
+        if ! grep -q "\[BOOT\] store-record: $STORE_RECORD" "$STRIPPED_LOG" 2>/dev/null; then
+            echo -e "${RED}SMOKE TEST FAILED: BootStoreReject record was not $STORE_RECORD${NC}"
+            grep -E "store-record:|BootStoreReject" "$STRIPPED_LOG" 2>/dev/null | head -4
             exit 1
         fi
     fi

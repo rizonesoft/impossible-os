@@ -910,13 +910,13 @@ Found by the parity pass on §22. Two independent halves of one outcome: the use
 
 **The persistence half is the one this file already sells as a differentiator.** `boot_fatal()` persists its code through `nvram_write_boot_error()` (`src/boot/uefi/bootx64.c:2264`) and appends to the §20 history ring (`:729`), which §21's kernel-side renderer surfaces at the welcome banner and in `X:\Diag\boot-error-history.bin`. §22's notice was deliberately routed AROUND `boot_fatal()` because it is advisory, and in doing so it bypassed that chain entirely. So this file states that "neither Windows nor Linux persists structured bootloader error codes in NVRAM" while its newest failure class persists nothing. `selection_reason` does reach `boot_info` for the same boot session, but nothing survives the reboot.
 
-- [ ] Give the rejected-store condition its own `BOOT_ERR_*` code and persist it without going through `boot_fatal()`.
-  - The registry is a flat `#define` list in `src/boot/uefi/efi.h` with `BOOT_ERR_REGISTRY_MAX` at `bootx64.c:1221`; adding a code is mechanical.
-  - The write path is NOT mechanical, and that is why this is its own section rather than a §22 follow-up: every existing caller is TERMINAL, so writing once per fatal is bounded. A rejected store RECURS on every boot until the user fixes the file.
-- [ ] Decide and record the recurrence policy before wiring the write. It is the whole design question here.
-  - Unconditional `SetVariable` on every boot is NVRAM wear on a condition that can persist for months.
-  - An unconditional history-ring append is worse: the ring holds 8 entries, so a corrupt store evicts every genuinely different error within 8 boots, destroying the diagnostic value §20 exists for.
-  - Candidate shapes: write only when the code or the reject reason CHANGES from the stored one; or a dedicated single-slot "last store rejection" variable outside the ring. Pick one, state why.
+- [x] `BOOT_ERR_STORE_REJECTED` (0x001A) is persisted by `boot_store_record_sync()` in `bootx64.c`, never through `boot_fatal()`, and before the notice's dwell
+  - Also records the allocation-failure path, whose notice was equally lost, with `load_status` 0xFFFF.
+- [x] Recurrence policy: a dedicated 16-byte `BootStoreReject` variable outside the ring, written only when it differs from the stored one (`boot_store_record_decide`)
+  - Why not write-on-change into the ring: a ring entry cannot hold the reason or position, so a change could not be detected from it, and a user's repeated edits would still evict other errors. Why not `BootError`: the kernel clears that slot every boot, and it means "the last fatal".
+  - Cleared only when a filesystem was searched and the store is fine or gone (`boot_store_record_intent`). `load_bootentries_json` now reports `BOOT_STORE_LOAD_UNINSPECTED` when the boot device has no filesystem, so a PXE or HTTP boot cannot erase a record about a store it never saw.
+  - Proven under QEMU on one variable store across boots (`test-smoke-matrix.sh`): `written`, then `unchanged`, then `cleared` on repair. Removing the file also read `cleared` in a one-off run. The no-filesystem path has unit coverage only; no fixture boots without one.
+  - Limit: the record names no device, so booting another disk with a good store or none clears it. Schema: [docs/boot/boot-error-history.md](../../docs/boot/boot-error-history.md).
 - [ ] Surface it after boot so the OS can tell the user, not just the next bootloader run. §21's renderer is the existing consumer; confirm whether it should carry this or whether a `sysconfig_info` field is the better route.
 - [x] `boot_entries_parse()` records `reject_line`/`reject_column`, and `boot_entries_reject_locator()` puts them on the notice's token line: `JSON_PARSE at line 2, col 1`
   - The token line, because the cause line has no room at the 800x600 floor (`test_store_reject_locator_fits_banner` measures both with the real SUB font).

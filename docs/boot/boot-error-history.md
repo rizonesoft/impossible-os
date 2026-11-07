@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-03-bootloader-error-recovery.md sources=include/kernel/boot_info.h,src/boot/uefi/boot_info_mirror.h reviewed=2026-09-28 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-03-bootloader-error-recovery.md sources=include/kernel/boot_info.h,src/boot/uefi/boot_info_mirror.h reviewed=2026-11-07 -->
 # Boot Error History Ring -- Schema and Operator Guide
 
 > Wire format and operator-visible decode tables for the multi-attempt
@@ -99,7 +99,7 @@ adds 1 fatal entry instead of the EBS-success / Phase-3 pair.
 | 0xFFFF    | `BOOT_SECTION_KERNEL_PHASE3`    | Kernel reached steady state      |
 
 The 0x01NN range cannot collide with the `BOOT_ERR_*` registry
-(currently capped at 0x0013) or the three high sentinels.  The
+(currently capped at 0x001A) or the three high sentinels.  The
 `BOOT_ERR_*` registry lives in the `err_code` field, not in
 `source_section`; the producer never writes a `BOOT_ERR_*` value into
 `source_section`, so the consumer renderer's "fall back to
@@ -118,6 +118,35 @@ and deletes the variable so the next write can land canonical attrs:
 
 Other `EFI_ERROR` codes (`EFI_NOT_FOUND`, unsupported, access denied)
 are treated as absent: no delete, ring stays zero-initialised.
+
+## Rejected-store record: `BootStoreReject`
+
+A boot entry store that exists and cannot be used is not a fatal: the machine boots its fallback entry, and it does so again on every boot until the user fixes the file. So this condition stays out of the ring. Appending on each boot would evict every different error within 8 boots, and a `SetVariable` on each boot would wear NVRAM for as long as the file stays broken.
+
+It gets a single 16-byte variable of its own under the same GUID, with `NV+BS+RT` attributes (`boot_store_reject_record_t`):
+
+| Offset | Size | Field         | Meaning |
+| ------ | ---- | ------------- | ------- |
+| 0      | 4    | `err_code`    | `BOOT_ERR_STORE_REJECTED` (0x001A) |
+| 4      | 2    | `load_status` | `boot_store_load_status_t`, or 0xFFFF when policy allocation failed before the store was reached |
+| 6      | 2    | `reject_code` | `boot_entries_reject_code_t`, 0 when the parser never ran |
+| 8      | 4    | `line`        | 1-based position of the rejection, 0 when the whole file is at fault |
+| 12     | 4    | `column`      | Column of the rejection |
+
+The loader decides what to do on every boot (`boot_store_record_intent`, `boot_store_record_decide`):
+
+| This boot found | Stored record | Action |
+| --------------- | ------------- | ------ |
+| Store rejected or unreadable | Same | Nothing: a repeat costs no write |
+| Store rejected or unreadable | Different or none | Write |
+| Store rejected or unreadable | Wrong size or attributes | Delete, then write |
+| Store accepted, or no file on a searched filesystem | Any | Delete |
+| No filesystem on the boot device (PXE, UKI over HTTP) | Any | Nothing: this boot says nothing about the store on disk |
+| Stored variable could not be read | Any | Nothing: it cannot be compared, and writing anyway would wear NVRAM |
+
+The write happens before the on-screen notice, because that eight-second dwell is when a user is most likely to power off. There is no timestamp, since a field that changes per boot would force the write the comparison avoids.
+
+Known limit: the record does not name a device. Booting from a different disk whose ESP has a good store, or none, clears a record about the first disk.
 
 ## Consumer renderer
 
@@ -158,7 +187,8 @@ channels:
 | `BootError`                    | 4 B     |
 | `BootHistorySeq`               | 4 B     |
 | `BootErrorHistory`             | 128 B   |
+| `BootStoreReject`              | 16 B    |
 | `ImpossibleBootProtoFault`     | 112 B   |
-| **Total**                      | **248 B** |
+| **Total**                      | **264 B** |
 
 Well below any per-machine quota.

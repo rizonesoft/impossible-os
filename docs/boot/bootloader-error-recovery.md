@@ -36,8 +36,9 @@ Before that terminal path, several independent hardening layers run earlier in `
 | `boot_history_read()` / `boot_history_render()` | Kernel-side ring reader and the "Recent boot history" klog block ([`src/kernel/main/boot_history.c`](../../src/kernel/main/boot_history.c)) |
 | `bsod_tier_for()`, `bsod_render_graphical()`, `bsod_render_compact()` | GOP-mode-aware error screen tier selection and renderers ([`bootx64.c`](../../src/boot/uefi/bootx64.c)) |
 | `boot_store_reject_notice()`, `boot_entries_reject_cause()` | Advisory, non-fatal rejected boot-entry store banner ([`bootx64.c`](../../src/boot/uefi/bootx64.c), [`boot_entries_parser.c`](../../src/boot/uefi/boot_entries_parser.c)) |
+| `boot_store_record_sync()`, `boot_store_record_intent()`, `boot_store_record_decide()` | Durable `BootStoreReject` record of a rejected store, written only on change and cleared once a searched filesystem shows the store is fine ([schema and policy](boot-error-history.md#rejected-store-record-bootstorereject)) |
 | `pt_load_destination_allowed()` | Rejects PT_LOAD writes into firmware/loader-owned memory before copy ([`bootx64.c`](../../src/boot/uefi/bootx64.c)) |
-| `BOOT_ERR_*` registry, `BOOT_ERR_REGISTRY_MAX` | Structured error code namespace in `efi.h`, currently up to `BOOT_ERR_HHDM_FAIL` |
+| `BOOT_ERR_*` registry, `BOOT_ERR_REGISTRY_MAX` | Structured error code namespace in `efi.h`, currently up to `BOOT_ERR_STORE_REJECTED` |
 | `boot_info.h` header (`magic`/`version`/`size`) | Handoff struct this file's hardening protects; canonical owner is now the [boot protocol ABI roadmap](../../todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md) |
 | `error_screen_test=1`, `firmware_quirk_disable=` in `boot.conf` | Trigger a fatal screen for visual testing without a real failure |
 

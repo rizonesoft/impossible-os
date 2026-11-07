@@ -1589,6 +1589,56 @@ static void test_reject_locator_fits(void)
     }
 }
 
+/* The recurrence policy of s24: a rejection repeats on every boot until the
+ * user fixes the file, so a repeat must not reach NVRAM. */
+static void test_store_record_decide(void)
+{
+    boot_store_reject_record_t a = { 0x1Au, 0, 3, 2, 1 };
+    boot_store_reject_record_t same = a;
+    boot_store_reject_record_t moved = a;
+    boot_store_reject_record_t other = a;
+    moved.line = 7;
+    other.reject_code = 4;
+
+    /* Only a searched filesystem may clear: a PXE or HTTP boot says nothing
+     * about the store that was rejected on disk. */
+    TEST_ASSERT_EQ(boot_store_record_intent((int)BOOT_STORE_LOAD_UNINSPECTED,
+                                            (int)BOOT_ENTRIES_REJECT_JSON_PARSE),
+                   BOOT_STORE_RECORD_LEAVE, "no filesystem neither records nor clears");
+    TEST_ASSERT_EQ(boot_store_record_intent((int)BOOT_STORE_LOAD_ABSENT,
+                                            (int)BOOT_ENTRIES_REJECT_JSON_PARSE),
+                   BOOT_STORE_RECORD_CLEAR, "a removed store clears the record");
+    TEST_ASSERT_EQ(boot_store_record_intent((int)BOOT_STORE_LOAD_OK, (int)BOOT_ENTRIES_OK),
+                   BOOT_STORE_RECORD_CLEAR, "an accepted store clears the record");
+    TEST_ASSERT_EQ(boot_store_record_intent((int)BOOT_STORE_LOAD_OK,
+                                            (int)BOOT_ENTRIES_REJECT_CRC_MISMATCH),
+                   BOOT_STORE_RECORD_RECORD, "a rejected store is recorded");
+    TEST_ASSERT_EQ(boot_store_record_intent((int)BOOT_STORE_LOAD_UNREADABLE, (int)BOOT_ENTRIES_OK),
+                   BOOT_STORE_RECORD_RECORD, "an unreadable store is recorded");
+
+    TEST_ASSERT_EQ(boot_store_record_decide(&a, BOOT_STORE_RECORD_ABSENT, &same),
+                   BOOT_STORE_RECORD_WRITE, "first rejection is written");
+    TEST_ASSERT_EQ(boot_store_record_decide(&a, BOOT_STORE_RECORD_VALID, &same),
+                   BOOT_STORE_RECORD_KEEP, "a repeated rejection writes nothing");
+    TEST_ASSERT_EQ(boot_store_record_decide(&a, BOOT_STORE_RECORD_VALID, &moved),
+                   BOOT_STORE_RECORD_WRITE, "a new position is a new record");
+    TEST_ASSERT_EQ(boot_store_record_decide(&a, BOOT_STORE_RECORD_VALID, &other),
+                   BOOT_STORE_RECORD_WRITE, "a new reason is a new record");
+    TEST_ASSERT_EQ(boot_store_record_decide(&a, BOOT_STORE_RECORD_MALFORMED, &same),
+                   BOOT_STORE_RECORD_REPLACE, "bad attributes need delete then create");
+    TEST_ASSERT_EQ(boot_store_record_decide(&a, BOOT_STORE_RECORD_UNKNOWN, &same),
+                   BOOT_STORE_RECORD_KEEP, "an unreadable variable cannot be compared");
+
+    TEST_ASSERT_EQ(boot_store_record_decide((void *)0, BOOT_STORE_RECORD_VALID, &same),
+                   BOOT_STORE_RECORD_DELETE, "a repaired store clears the record");
+    TEST_ASSERT_EQ(boot_store_record_decide((void *)0, BOOT_STORE_RECORD_MALFORMED, &same),
+                   BOOT_STORE_RECORD_DELETE, "a repaired store clears a malformed record");
+    TEST_ASSERT_EQ(boot_store_record_decide((void *)0, BOOT_STORE_RECORD_ABSENT, &same),
+                   BOOT_STORE_RECORD_KEEP, "a healthy boot writes nothing");
+    TEST_ASSERT_EQ(boot_store_record_decide((void *)0, BOOT_STORE_RECORD_UNKNOWN, &same),
+                   BOOT_STORE_RECORD_KEEP, "an unreadable variable is left alone");
+}
+
 /* The gate that decides whether a user sees a notice at all.
  *
  * The ABSENT arm is the load-bearing one: the Makefile ESP staging copies
@@ -1607,6 +1657,11 @@ static void test_store_notice_gate(void)
     TEST_ASSERT_EQ(boot_entries_store_notice_warranted(
                        (int)BOOT_STORE_LOAD_ABSENT, (int)BOOT_ENTRIES_OK), 0,
                    "absent store is silent");
+
+    TEST_ASSERT_EQ(boot_entries_store_notice_warranted(
+                       (int)BOOT_STORE_LOAD_UNINSPECTED,
+                       (int)BOOT_ENTRIES_REJECT_JSON_PARSE), 0,
+                   "a boot device with no filesystem is silent");
 
     /* Present but unreadable always notifies -- the parser never ran, so the
      * reject code carries no information and must not gate the notice. */
@@ -1773,6 +1828,8 @@ void test_register_boot_entry_parser(void)
                             test_reject_locator_fits, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: store notice gate",
                             test_store_notice_gate, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: store record recurrence policy",
+                            test_store_record_decide, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

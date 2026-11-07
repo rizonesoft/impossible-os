@@ -219,9 +219,10 @@ void boot_entries_reject_locator(const boot_entries_parse_result_t *r, char *buf
  * codes so "why is the store unusable" has one answer set spanning both the
  * load step (UEFI file I/O, bootloader-side) and the parse step.
  *
- * ABSENT is deliberately narrow: the file is not there, or the boot device
- * carries no filesystem that could hold it (PXE / ramdisk). Everything else
- * is UNREADABLE, because a store that exists and cannot be read is a failure
+ * ABSENT is deliberately narrow: a filesystem was searched and the file is not
+ * there. UNINSPECTED is the boot device with no filesystem at all (PXE / ramdisk),
+ * equally silent, but it proves nothing about a store elsewhere and so must not
+ * clear the BootStoreReject record. Everything else is UNREADABLE, because a store that exists and cannot be read is a failure
  * the user must see, while a missing store is normal -- the ESP staging in
  * the Makefile copies only boot.conf, so every dev and smoke image ships
  * without one. */
@@ -229,6 +230,7 @@ typedef enum {
     BOOT_STORE_LOAD_OK = 0,
     BOOT_STORE_LOAD_ABSENT,      /* no store here, and that is normal */
     BOOT_STORE_LOAD_UNREADABLE,  /* a store exists (or the volume broke) */
+    BOOT_STORE_LOAD_UNINSPECTED, /* no filesystem on the boot device to search */
 } boot_store_load_status_t;
 
 /* Does this (load_status, reject_code) pair warrant a user-visible notice?
@@ -239,5 +241,56 @@ typedef enum {
  * there and could not be used. A missing store returns 0 no matter what
  * reject code the caller synthesized for the policy ladder. */
 int boot_entries_store_notice_warranted(int load_status, int reject_code);
+
+/* The `BootStoreReject` UEFI variable: the one durable record of a store the
+ * loader could not use. A rejection recurs on every boot until the user fixes
+ * the file, so unlike a fatal it may not write on each occurrence: the record
+ * is written only when it differs from the stored one and deleted once the
+ * store is good again. It lives outside the BootErrorHistory ring so a corrupt
+ * store cannot evict the unrelated errors that ring exists to keep, and it
+ * holds no timestamp because a field that changes per boot would force the
+ * write the comparison exists to avoid. */
+#define BOOT_STORE_REJECT_LOAD_ALLOC_FAILED 0xFFFFu /* policy never reached the store */
+
+typedef struct {
+    unsigned int   err_code;    /* BOOT_ERR_STORE_REJECTED */
+    unsigned short load_status; /* boot_store_load_status_t, or ..._ALLOC_FAILED */
+    unsigned short reject_code; /* boot_entries_reject_code_t; 0 if the parser never ran */
+    unsigned int   line;        /* 1-based, 0 = no position */
+    unsigned int   column;
+} boot_store_reject_record_t;
+
+_Static_assert(sizeof(boot_store_reject_record_t) == 16,
+               "BootStoreReject is a persisted NVRAM layout");
+
+typedef enum {
+    BOOT_STORE_RECORD_ABSENT = 0, /* firmware reports no such variable */
+    BOOT_STORE_RECORD_VALID,      /* right size, canonical attributes */
+    BOOT_STORE_RECORD_MALFORMED,  /* present with another size or attributes */
+    BOOT_STORE_RECORD_UNKNOWN,    /* the read itself failed */
+} boot_store_record_state_t;
+
+typedef enum {
+    BOOT_STORE_RECORD_KEEP = 0,
+    BOOT_STORE_RECORD_WRITE,
+    BOOT_STORE_RECORD_REPLACE, /* delete first: attributes cannot be changed in place */
+    BOOT_STORE_RECORD_DELETE,
+} boot_store_record_action_t;
+
+typedef enum {
+    BOOT_STORE_RECORD_LEAVE = 0, /* this boot learned nothing about the store */
+    BOOT_STORE_RECORD_CLEAR,     /* a filesystem was searched and nothing is wrong */
+    BOOT_STORE_RECORD_RECORD,    /* a store was there and could not be used */
+} boot_store_record_intent_t;
+
+boot_store_record_intent_t boot_store_record_intent(int load_status, int reject_code);
+
+/* What to do with the variable, given what this boot found (`wanted` NULL = the
+ * store is fine) and what is stored. An unreadable variable is left alone: it
+ * cannot be compared, and writing anyway would wear NVRAM on every boot. */
+boot_store_record_action_t boot_store_record_decide(
+    const boot_store_reject_record_t *wanted,
+    boot_store_record_state_t state,
+    const boot_store_reject_record_t *stored);
 
 #endif /* BOOT_ENTRIES_PARSER_H */

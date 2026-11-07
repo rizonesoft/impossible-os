@@ -338,6 +338,125 @@ const BOOT_ERROR_PAGES = {
             'If the trust policy itself was changed by mistake, restore an authoritative copy.',
             'Re-seal the platform to the new measurements only after auditing the change.'
         ]
+    },
+    '0014': {
+        symbol: 'BOOT_ERR_FW_SETUP_RESET_RET',
+        title: 'Firmware did not restart into setup',
+        summary: 'You asked for firmware setup with F10, the bootloader asked the firmware to restart, and the restart call returned instead of restarting. UEFI does not allow that call to return.',
+        stage: 'Firmware setup transition',
+        screen: 'The screen says the F10 firmware setup transition failed.',
+        checks: [
+            'Power the machine off and on: the setup request was already written, so the next start may enter setup.',
+            'Check whether a firmware update is available for this machine.',
+            'Note the firmware vendor and version if it happens every time.'
+        ],
+        recovery: [
+            'Do a full power cycle.',
+            'Enter firmware setup with the vendor key shown at power on, instead of F10 in the boot menu.',
+            'Report the platform and firmware version if the failure repeats.'
+        ]
+    },
+    '0015': {
+        symbol: 'BOOT_ERR_TFTP_NOT_FOUND',
+        title: 'The network boot server does not have the file',
+        summary: 'Network boot reached the server, and the server reported that it has no such file.',
+        stage: 'Network boot',
+        screen: 'The serial log shows the network boot failure and the file that was requested.',
+        checks: [
+            'Confirm the file exists on the TFTP server under the path the client asks for.',
+            'Check the TFTP server root directory and file permissions.',
+            'Check the boot file name your DHCP server hands out.'
+        ],
+        recovery: [
+            'Copy the missing file to the server and retry.',
+            'Correct the DHCP boot file name if it is wrong.',
+            'Boot from local media in the meantime if it is available.'
+        ]
+    },
+    '0016': {
+        symbol: 'BOOT_ERR_TFTP_TIMEOUT',
+        title: 'The network boot server did not respond',
+        summary: 'Network boot got no response from the server after its retries.',
+        stage: 'Network boot',
+        screen: 'The serial log shows the network boot failure.',
+        checks: [
+            'Confirm the TFTP server is running and reachable from this network segment.',
+            'Check the cable, switch port and any firewall between the machine and the server.',
+            'Check that DHCP gives the machine the right server address.'
+        ],
+        recovery: [
+            'Start or restart the TFTP service and retry.',
+            'Fix the network path, then reboot.',
+            'Boot from local media in the meantime if it is available.'
+        ]
+    },
+    '0017': {
+        symbol: 'BOOT_ERR_TFTP_OVER_CAP',
+        title: 'A network boot file is larger than allowed',
+        summary: 'The server is offering a file larger than the per-file cap the network boot client accepts, so the client refused it.',
+        stage: 'Network boot',
+        screen: 'The serial log shows the network boot failure.',
+        checks: [
+            'Compare the file on the server with the one your build produced.',
+            'Make sure the server path points at the intended file, not a whole disk image.',
+            'Check whether the file was corrupted or appended to on the server.'
+        ],
+        recovery: [
+            'Replace the file on the server with the correct build output.',
+            'Correct the path if it pointed at the wrong file.',
+            'Boot from local media in the meantime if it is available.'
+        ]
+    },
+    '0018': {
+        symbol: 'BOOT_ERR_TFTP_DEVICE',
+        title: 'The network boot transfer failed',
+        summary: 'The network device or the firmware network protocol reported a failure during the transfer, for a reason other than a missing file, a timeout or an oversized file.',
+        stage: 'Network boot',
+        screen: 'The serial log shows the network boot failure.',
+        checks: [
+            'Retry once to rule out a transient network fault.',
+            'Check that network boot is enabled in firmware setup.',
+            'Check whether a firmware update is available for the network device.'
+        ],
+        recovery: [
+            'Power cycle the machine and retry.',
+            'Try another network port or adapter if one is available.',
+            'Boot from local media in the meantime if it is available.'
+        ]
+    },
+    '0019': {
+        symbol: 'BOOT_ERR_HHDM_FAIL',
+        title: 'The bootloader could not build the kernel memory map',
+        summary: 'The bootloader could not build the higher-half direct map the kernel needs. Causes include a CPU without NX support, NX failing to enable, an arena that overlaps reserved memory or runs out of room, and physical RAM beyond the 64 TiB window.',
+        stage: 'Page table setup',
+        screen: 'The screen and serial log name the cause, such as "CPU lacks NX support" or "HHDM arena exhausted".',
+        checks: [
+            'Read the exact message on the screen or serial log.',
+            'If it names NX, check that NX or XD is enabled in firmware setup.',
+            'Note the amount of installed memory and the firmware version.'
+        ],
+        recovery: [
+            'Enable NX or XD in firmware setup if it is disabled, then reboot.',
+            'Update the firmware if the memory layout looks wrong.',
+            'Report the exact message and platform if the failure repeats.'
+        ]
+    },
+    '001a': {
+        symbol: 'BOOT_ERR_STORE_REJECTED',
+        title: 'The boot entry store could not be used',
+        summary: 'The file EFI/ImpossibleOS/bootentries.json exists but could not be read or failed validation, so the machine started its fallback entry. This is not a fatal error: the machine still boots, and your saved selection is ignored until the file is fixed.',
+        stage: 'Boot entry selection',
+        screen: 'An advisory notice appears for eight seconds with the reason and, when known, the line and column in the file. Serial shows the same.',
+        checks: [
+            'Read the reason and position in the notice or the serial log.',
+            'If you edited the file by hand, check that edit first, then its checksum: a stale crc32 is reported as a checksum mismatch with no position.',
+            'Validate the file with tools/boot-entry-validate.'
+        ],
+        recovery: [
+            'Boot normally, since the fallback entry works, and repair the file from the running system.',
+            'Delete the file if you do not need custom boot entries: a missing store is normal.',
+            'Restore the file from a backup if you have one.'
+        ]
     }
 };
 

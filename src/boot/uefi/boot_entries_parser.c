@@ -1781,9 +1781,47 @@ void boot_entries_reject_locator(const boot_entries_parse_result_t *r, char *buf
     buf[at] = '\0';
 }
 
+boot_store_record_intent_t boot_store_record_intent(int load_status, int reject_code)
+{
+    if (boot_entries_store_notice_warranted(load_status, reject_code))
+        return BOOT_STORE_RECORD_RECORD;
+    switch ((boot_store_load_status_t)load_status) {
+        case BOOT_STORE_LOAD_OK:
+        case BOOT_STORE_LOAD_ABSENT:
+            return BOOT_STORE_RECORD_CLEAR;
+        default:
+            return BOOT_STORE_RECORD_LEAVE;
+    }
+}
+
+boot_store_record_action_t boot_store_record_decide(
+    const boot_store_reject_record_t *wanted,
+    boot_store_record_state_t state,
+    const boot_store_reject_record_t *stored)
+{
+    if (state == BOOT_STORE_RECORD_UNKNOWN)
+        return BOOT_STORE_RECORD_KEEP;
+    if (!wanted)
+        return (state == BOOT_STORE_RECORD_ABSENT) ? BOOT_STORE_RECORD_KEEP
+                                                   : BOOT_STORE_RECORD_DELETE;
+    if (state == BOOT_STORE_RECORD_MALFORMED)
+        return BOOT_STORE_RECORD_REPLACE;
+    if (state == BOOT_STORE_RECORD_VALID && stored &&
+        stored->err_code == wanted->err_code &&
+        stored->load_status == wanted->load_status &&
+        stored->reject_code == wanted->reject_code &&
+        stored->line == wanted->line &&
+        stored->column == wanted->column)
+        return BOOT_STORE_RECORD_KEEP;
+    return BOOT_STORE_RECORD_WRITE;
+}
+
 int boot_entries_store_notice_warranted(int load_status, int reject_code)
 {
     switch ((boot_store_load_status_t)load_status) {
+        case BOOT_STORE_LOAD_UNINSPECTED:
+            /* Nowhere for a store to live on this device, so nothing to report. */
+            return 0;
         case BOOT_STORE_LOAD_ABSENT:
             /* No store on this machine. Normal on a fresh install and on
              * every dev/smoke image, so it is never a notice -- this arm
