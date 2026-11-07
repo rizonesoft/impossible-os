@@ -69,8 +69,8 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 | ⭐  | Order | Deliverable                                          | Depends On | Status |
 | --- | :---: | ---------------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Freestanding string library (`snprintf`/`vsnprintf`) | --         |  [x]   |
-| 💎  |   2   | Complete floating-point math library                 | --         |  [x]   |
+| 💎  |   1   | Freestanding string library (`snprintf`/`vsnprintf`) | --         |  [ ]   |
+| 💎  |   2   | Complete floating-point math library                 | --         |  [ ]   |
 | 💎  |   3   | LZ4 block compressor                                 | --         |  [/]   |
 | 💎  |   4   | miniz deflate/inflate + ZIP                          | §1         |  [/]   |
 | 💎  |   5   | Monocypher crypto primitives + kernel CSPRNG         | §1         |  [x]   |
@@ -115,10 +115,10 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 - [x] `int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)` -- full implementation with: `%d`/`%i`, `%u`, `%x`/`%X`, `%o`, `%s`, `%c`, `%p`, `%%`, length modifiers (`l`/`ll`/`h`/`hh`/`z`), width, precision (`.*`), zero-padding, left-align (`-`), sign flags (`+`/` `). Returns total chars that *would* have been written.
 - [x] `int snprintf(char *buf, size_t size, const char *fmt, ...)` -- thin varargs wrapper
-- [/] Update `panic.c` to use `snprintf`
-      - Blocked on: this section's own Deferred stamp. The hand-rolled formatter works and the dedup is cosmetic, so migrating it while the boot path is still moving buys a boot-regression risk for no functional gain. No other TODO owns it; re-open here once the boot path stops changing.
-- [/] Update `klog` / `printk` to use `vsnprintf` internally
-      - Blocked on: same as the `panic.c` item above. `vformat_buf` is battle-tested and the swap is cosmetic dedup, not a fix.
+- [ ] Update `panic.c` to use `snprintf`
+      - Reopened 2026-11-07: its only blocker was "once the boot path stops changing", which never clears. It is dedup with no functional gain, so keep the panic path allocation-free and take the hand-rolled formatter out only with a test proving the same output.
+- [ ] Update `klog` / `printk` to use `vsnprintf` internally
+      - Reopened 2026-11-07: same as the `panic.c` item above.
 
 - [x] Commit: `"libc: freestanding string library -- memcpy/memset/str*, snprintf/vsnprintf"`
 
@@ -131,7 +131,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > - `memcpy`/`memmove`/`memset` word-at-a-time (`may_alias`) scalar fast path; `strstr` first-char skip; `config_dump` tunable pagination uses a stable raw-slot cursor; `boot_timing` clamps `snprintf` return before `vfs_write`.
 > - 2 items deferred: `panic.c` + `klog`/`printk` migration onto `snprintf` (boot-path regression risk). Reclaimed 36 KB test BSS (shared bls fixture) to fit the test build under the 0x800000 ceiling.
 > **Verified:** 2026-06-20 | commit `02087f12` | 10/12 items | build OK | tests 6458 kernel + 16 user PASS (TCG)
-> **Deferred:** [L] panic.c + klog/printk still use hand-rolled formatters, not snprintf/vsnprintf (reason: cosmetic dedup, no functional gap; migration during active dev risks boot regression) -> XREF: TODO-03 §1 (items "Update panic.c to use snprintf" + "Update klog / printk to use vsnprintf internally" at lines 110-111)
+> **Note:** 2026-11-07, Deferred stamp retired: [L] `panic.c` and klog formatter dedup reopened.
 > **Quality reviewed:** 2026-06-20 | Codex 11x (adversarial, consistency, perf, re-adversarial, design, test-coverage) | 4H+11M fixed, 0 open, 1 perf rejected (SIMD memcpy: -mno-sse2) | scope: kernel-code-quality
 
 ---
@@ -160,8 +160,8 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [x] `kmath_trunc` -- toward zero; `>= 2^52` and `+/-0` pass through
 - [x] `kmath_cbrt` -- `exp(log/3)` seed + 2 Newton steps; preserves sign, zero, +/-inf
 
-- [/] Unify float/double special values: hardened float `cosf`/`acosf`/`sqrtf`/`powf` diverge from font-grade `kmath.h` double `cos`/`acos`/`pow`/`sqrt`.
-      - Blocked on: `kmath.h` ODR ownership. Promoting the doubles (or adding hardened non-overlapping names) changes what the font rasterizer computes, so it needs an stb golden-raster baseline first. Owned by this section; `11-apps/TODO-09-calculator.md` §4 (item: "Blocked on `02-kernel-core/TODO-03-kernel-libraries.md` §2") waits on it.
+- [ ] Unify float/double special values: hardened float `cosf`/`acosf`/`sqrtf`/`powf` diverge from font-grade `kmath.h` double `cos`/`acos`/`pow`/`sqrt`.
+      - Reopened 2026-11-07: the stb golden-raster baseline it asks for is this section's own first step, not an outside blocker. `11-apps/TODO-09-calculator.md` §4 still waits on this item.
 
 - [x] Commit: `"libc: floating-point math -- sin/tan/asin/atan/atan2/exp/log/cbrt + float variants"`
 
@@ -175,7 +175,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > - Canonical doc: `include/libc/math.h` banner.
 > - Scope boundary: double `cos/acos/pow/sqrt` stay font-grade in `kmath.h` (unification deferred, this section); LZ4/miniz/crypto/checksum in §3-§8.
 > **Verified:** 2026-06-20 | commit `77eec81d` | 13/14 items | build OK | tests 377 kernel + 16 user PASS (TCG)
-> **Deferred:** [M] hardened float cosf/acosf/sqrtf/powf diverge from font-grade kmath.h double cos/acos/pow/sqrt on special values (reason: kmath.h ODR ownership; promoting the doubles needs a stb golden-raster baseline) -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §2 (item: "Unify float/double special values" at line 163)
+> **Note:** 2026-11-07, Deferred stamp retired: [M] float and double special-value unification reopened.
 > **Quality reviewed:** 2026-06-20 | Codex 20x (design, adversarial-impl, adversarial, consistency, perf, re-adversarial, test-coverage) | 9H+11M fixed, 1M deferred | scope: kernel-code-quality
 
 ---
@@ -193,7 +193,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [x] Buffer allocation responsibility (callers own buffers; `pmm_alloc_contiguous()` for output > 4 KiB) documented in the `include/libs/lz4.h` banner
 - [/] Wire into TODO-27 crash dump writer -- BLOCKED: crash-dump compression is itself deferred; codec ready. -> XREF `TODO-27-crash-dump-generation.md §6`
 - [/] Wire into TODO-26 hibernation image writer -- BLOCKED: kernel hibernation writer unimplemented; codec ready. -> XREF `TODO-26-power-management.md §4`
-- [/] Wire into TODO-20 EIF compressed segments -- BLOCKED: EIF compressed-segment support unimplemented; codec ready. -> XREF `TODO-20-eif-full-implementation.md` §6
+- [x] Wire into TODO-20 EIF compressed segments -- Shipped: `eif.c:374` calls `lz4_decompress` for compressed segments (TODO-20 §6 is `[x]`; read at source 2026-11-07). -> XREF `TODO-20-eif-full-implementation.md` §6
 
 - [x] For streaming use cases (large IXFS extents), vendor `lz4frame.c` from the same repository; provides the standard `.lz4` framing layer with content checksum (XXH32) and block independence flag -- vendored (lz4frame.c/.h + xxhash.c/.h)
 - [/] `lz4f_compress_begin / update / end` / `lz4f_decompress` API -- DEFERRED: heap-backed frame layer (LZ4F context > 4 KiB kmalloc ceiling) with no in-tree consumer. -> XREF `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3`
@@ -211,7 +211,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > - Scope boundary: §3 owns the block codec; the `.lz4` frame/streaming layer and the TODO-26/27/20 + IXFS consumer wiring are deferred (no in-tree consumer yet), Zstd ratio codec is §9.
 > **Verified:** 2026-06-21 | commit `de381ef1` | 5/9 items | build OK | tests 6623 kernel + 16 user PASS (TCG)
 > **Deferred:** [M] `.lz4` frame/streaming layer (`lz4f_*`) -- heap-backed (LZ4F context > 4 KiB kmalloc ceiling), no in-tree consumer (reason: block API is the must-ship core; frame layer pulls forward when IXFS streaming needs it) -> XREF: 05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3 (item: "ixfs_compress_block(algo, in_buf, in_len, out_buf, out_size)")
-> **Deferred:** [L] Consumer wiring (crash dump / hibernation / EIF) -- codec ready, consumers unimplemented (reason: TODO-27 §6, TODO-26 §4, TODO-20 §6 all unimplemented/deferred) -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §3 (items "Wire into TODO-27/26/20")
+> **Deferred:** [L] Consumer wiring (crash dump / hibernation / EIF) -- codec ready, consumers unimplemented (reason: TODO-27 §6, TODO-26 §4, TODO-20 §6 all unimplemented/deferred) -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §6 (item: "Kernel Dump & Full Dump Variants"), with the hibernation writer named in its own item; EIF wiring shipped
 > **Quality reviewed:** 2026-06-21 | Codex 9x (design, adversarial, re-adversarial, consistency, perf, test-coverage) | 3H+1M+2L fixed, 0 open | scope: kernel-code-quality
 
 ---
@@ -351,7 +351,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 **Test checkpoint:** `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` return 0; kernel links with `src/libs/mbedtls/` objects only via this port; serial shows entropy hook OK. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] Source now vendored 2026-06-20 (Mbed TLS 3.6.2 LTS in `src/libs/mbedtls/`), so the prior fetch-blocker is cleared -- but the freestanding TLS port is large (config trim to the required subset, entropy hook to `csprng_fill`, CSPRNG/AES/SHA wiring, record-layer interop tests) and has no in-tree consumer until networking. Deferred on scope/effort, not on a blocker; pull forward when `07-networking/TODO-03 §3` (HTTPS) needs it. The tree is excluded from the C-source auto-glob until ported. -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §7 (item: "Clone Mbed TLS source into `src/libs/mbedtls/`" at line 324)
+> **Deferred:** [H] Source now vendored 2026-06-20 (Mbed TLS 3.6.2 LTS in `src/libs/mbedtls/`), so the prior fetch-blocker is cleared -- but the freestanding TLS port is large (config trim to the required subset, entropy hook to `csprng_fill`, CSPRNG/AES/SHA wiring, record-layer interop tests) and has no in-tree consumer until networking. Deferred on scope/effort, not on a blocker; pull forward when `07-networking/TODO-03 §3` (HTTPS) needs it. The tree is excluded from the C-source auto-glob until ported. -> XREF: 07-networking/TODO-03-http-tls.md §5 (item: "entropy source backed by the kernel CSPRNG")
 
 ---
 
