@@ -315,6 +315,41 @@ def test_a_reopened_section_shipping_again_reaches_the_bound():
         assert g.ship_limit_reached(root)
 
 
+def test_rows_in_both_real_layouts_are_read():
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import ship_count
+    badge = ("+++ b/todo/a/TODO-04.md\n"
+             "-| \u2b50  |  56   | Fork publication | \u00a749 |  [/]   |\n"
+             "+| \u2b50  |  56   | Fork publication | \u00a749 |  [x]   |\n")
+    numeric_first = ("+++ b/todo/b/TODO-14.md\n"
+                     "-| 6 | Late-phase harness | \u00a75 | [ ] |\n"
+                     "+| 6 | Late-phase harness | \u00a75 | [x] |\n")
+    assert ship_count.ships_in_diff(badge) == 1
+    assert ship_count.ships_in_diff(numeric_first) == 1
+    # REFUSAL: a table row with no section number or no status is not a section.
+    assert ship_count.ships_in_diff("+++ b/todo/c.md\n-| a | b | [ ] |\n+| a | b | [x] |\n") == 0
+
+
+def test_a_section_reopened_and_shipped_inside_the_run_counts():
+    # Review, 2026-11-08: endpoints show [x] at both ends and read no ship.
+    import run_phase_guard as g
+    with tempfile.TemporaryDirectory() as d:
+        root, git = _bounded(d)
+        (root / "todo/T.md").write_text(ROW(1, "x"))
+        git("add", "-A")
+        git("commit", "-qm", "shipped before the run")
+        git("push", "-q")
+        start = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                               capture_output=True, text=True).stdout.strip()
+        (root / ".claude/state/run-ship-limit").write_text(f"1 {start}\n")
+        for status, msg in (("/", "reopen"), ("x", "ship again")):
+            (root / "todo/T.md").write_text(ROW(1, status))
+            git("add", "-A")
+            git("commit", "-qm", msg)
+        git("push", "-q")
+        assert g.ship_limit_reached(root)
+
+
 def test_the_real_first_run_counts_as_one_ship():
     """Known answer: the 2026-11-08 bounded run shipped TODO-04 s56 between these."""
     sys.path.insert(0, str(REPO / "scripts/overnight"))
