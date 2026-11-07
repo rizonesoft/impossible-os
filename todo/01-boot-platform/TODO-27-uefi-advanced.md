@@ -48,7 +48,7 @@ title: "TODO-27 -- UEFI Advanced Features"
 | --- | :---: | --------------------------------------------- | -------------- | :----: |
 | ⭐  |   1   | UEFI multi-OS detection and chainload entries | T07 §1-§4      |  [x]   |
 | 💎  |   2   | Firmware update advisor (read-only LVFS)      | T04 §6         |  [x]   |
-| 💎  |   3   | UEFI memory attributes (W^X)                  | T02 §1, T24 §1 |  [/]   |
+| 💎  |   3   | UEFI memory attributes (W^X)                  | T02 §1, T24 §1 |  [ ]   |
 | 💎  |   4   | Multi-GPU GOP enumeration                     | T02 §3         |  [x]   |
 | 💎  |   5   | Secure Boot extended state + enforcement      | T02 §5         |  [/]   |
 | 💎  |   6   | SMBIOS extended type parsing                  | T02 §4         |  [x]   |
@@ -133,8 +133,9 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 - [x] `uefi_runtime_enforce_wx()` (`uefi_runtime.c`) walks `mat_get_entry()`: DATA/RODATA -> `vmm_set_nx`, CODE -> `vmm_set_ro` (identity-mapped). Fail-closed: success log fires only when nothing failed and no W^X violation remains.
 - [x] `vmm_set_nx()`/`vmm_set_ro()` + `vmm_query_flags()` (`vmm.c`): split-aware read-modify-write of one PTE bit (NX set / WRITABLE clear), preserving other flags; local TLB flush.
 - [x] Graceful degradation: MAT absent -> warn + skip; `MAT_CLASS_WX_VIOLATION` left intact + counted unsafe; a boot-order guard refuses enforcement once SMP is up. Pinned in Phase 1 after `mat_init`.
-- [/] **EFI_MEMORY_ATTRIBUTE_PROTOCOL runtime sync** (gap-audit 2026-05-01 H2, surfaced from the TODO-02 review pipeline): keep firmware-side page permissions in step with the OS view. Owner: this section.
+- [ ] **EFI_MEMORY_ATTRIBUTE_PROTOCOL runtime sync** (gap-audit 2026-05-01 H2, surfaced from the TODO-02 review pipeline): keep firmware-side page permissions in step with the OS view. Owner: this section.
   - WHY: the static `EFI_MEMORY_ATTRIBUTES_TABLE` (UEFI 2.6) freezes attributes at boot. UEFI 2.10 adds the runtime-callable `EFI_MEMORY_ATTRIBUTE_PROTOCOL` with `GetMemoryAttributes` / `SetMemoryAttributes` / `ClearMemoryAttributes`, so firmware-backed permission flips can track OS page-table flips. Linux 6.7+ uses this for the EFI stub.
+  - CHECK FIRST (recalled, not verified against the spec on 2026-11-07): this protocol may be a boot-services protocol, which Linux's stub calls before ExitBootServices only. If so, the "survives EBS" claim in (a) and all of (b) are wrong, and the item becomes pre-EBS loader-image protection or is dropped with the spec citation.
   - (a) Protocol discovery via `LocateProtocol(EFI_MEMORY_ATTRIBUTE_PROTOCOL_GUID, ...)` BEFORE ExitBootServices; cache the function pointers via the `boot_info.uefi_runtime` mirror (the UEFI 2.10 protocol survives EBS like the rest of RT).
   - (b) When `vmm_set_nx` / `vmm_set_ro` modify a UEFI runtime page, ALSO call the protocol's `SetMemoryAttributes(EFI_MEMORY_XP)` / `EFI_MEMORY_RO`, so firmware-internal page-table state matches the OS view. This is what avoids drift on systems where firmware re-asserts permissions after `SetVirtualAddressMap`.
   - (c) Graceful degradation: when the protocol is absent (UEFI < 2.10 or stripped firmware), log `[UEFI] memory-attribute protocol absent; falling back to static MAT enforcement only` and continue.
@@ -154,7 +155,7 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 > - Scope boundary: the runtime `EFI_MEMORY_ATTRIBUTE_PROTOCOL` sync (item below, DEFERRED -- needs a boot_info ABI add, UEFI 2.10-only) stays this section; static MAT enforcement is the shipped core.
 
 > **Verified:** 2026-06-17 | commit `031c5a9b` | 4/5 items | build OK | tests 112/112 PASS (mm) + smoke PASS (no-MAT graceful-skip)
-> **Deferred:** [M] `EFI_MEMORY_ATTRIBUTE_PROTOCOL` runtime sync (firmware-page-table mirror of OS NX/RO flips) needs a boot_info ABI add + bootloader LocateProtocol pre-EBS; UEFI 2.10-only, absent on older firmware (Codex design review recommended defer) -> XREF: 01-boot-platform/TODO-27 §3 (item: "EFI_MEMORY_ATTRIBUTE_PROTOCOL runtime sync" at line 136)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] `EFI_MEMORY_ATTRIBUTE_PROTOCOL` runtime sync needs a boot_info ABI add + bootloader LocateProtocol pre-EBS; UEFI 2.10-only, absent on older firmware. The stamp named this section's own item, and neither that work nor a design-review preference to defer is an outside blocker. Absent firmware is the item's (c) degraded path.
 > **Quality reviewed:** 2026-06-17 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 3H+1M fixed | scope: kernel-code-quality
 
 ---
@@ -291,7 +292,7 @@ Detect when the installed UEFI dbx is missing revocations shipped with OS update
 > [!NOTE]
 > **Deferred 2026-06-19 (Codex design review).** dbx freshness is a SECURITY signal (`DbxStale`), so it cannot ship as infrastructure-only: an absent or unverified on-disk baseline makes the check either a permanent no-op or tamperable (an attacker deletes the baseline to suppress detection, or injects hashes to force a false alarm). Shipping it that way is paper completion for a security feature. Authoritative operation requires (1) the official UEFI revocation-list baseline (external release data, not autonomously vendorable) integrity-bound to a compiled-in digest or signed release manifest; (2) full-`EFI_SIGNATURE_LIST`-type comparison (SHA-256 + X.509 + other), not SHA-256-only; (3) Phase-3 wiring after VFS + registry. None of the trust primitives (verified baseline + release-signing) exist yet. The authenticated `secureboot_dbx_apply` write additionally needs `EFI_VARIABLE_AUTHENTICATION_2` + a brick-safety preflight. The dbx read/parse/count surface already ships via [TODO-02 §9](TODO-02-uefi-hardening-secureboot.md#9-sbat-ops-secure-boot-db-registry-mirror-and-exitbootservices-retry).
 
-> **Deferred:** [H] dbx freshness check blocked on an integrity-bound official revocation-list baseline (external release data + compiled-in digest / release-signing) + full-ESL comparison; authenticated apply blocked on `EFI_VARIABLE_AUTHENTICATION_2` write + brick-safety preflight -> XREF: 01-boot-platform/TODO-27 §7 (item: "Ship `resources/secureboot/dbx-latest.bin` ... integrity-bound to a compiled-in SHA-256 digest" -- this section owns the verified-baseline + full-ESL freshness once the release-signing primitive lands)
+> **Deferred:** [H] dbx freshness check blocked on an integrity-bound official revocation-list baseline (the list itself is operator-gated release data) + full-ESL comparison; authenticated apply blocked on `EFI_VARIABLE_AUTHENTICATION_2` write + brick-safety preflight, also operator-gated -> XREF: 15-installer-release/TODO-01 §5 (Code Signing: the release-signing primitive the compiled-in digest needs)
 
 ---
 
