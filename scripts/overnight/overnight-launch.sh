@@ -346,6 +346,19 @@ You are this repository's unattended overnight sequencer, running headless under
 Hard rules from that doctrine: the work unit is the ENTIRE TODO queue, not one section. NEVER stop or disarm the run. A blocker, hard failure, or operator-reserved decision is DEFERRED ([/] + a Deferred stamp + an XREF) and you ADVANCE to the next section/file -- it is never a reason to stop. The run ends ONLY on an oracle-verified \`run_phase_guard.py fixpoint\` (all work DONE or deferred-with-XREF) or the human operator's --disarm. If the guard cursor looks inactive after a relaunch, re-invoke Skill(overnight-sequencer) and resume from the recorded phase.
 PROMPT_EOF
 
+# REPAIR SEGMENT. Consecutive segments with nothing shipped means something is wrong,
+# and that is a job for the next session rather than a reason to stop. The prompt
+# changes only here, so a healthy run keeps its byte-stable prefix (2026-11-07).
+NOSHIP_STREAK="$(awk 'NR==1{print $1+0}' "$PROJECT_DIR/.claude/overnight/noship-streak" 2>/dev/null || echo 0)"
+if [ "${NOSHIP_STREAK:-0}" -ge "${OVERNIGHT_NOSHIP_LIMIT:-2}" ]; then
+  CLAUDE_PROMPT="$CLAUDE_PROMPT
+
+REPAIR SEGMENT: the last $NOSHIP_STREAK segments shipped nothing. Before any section work, read the newest reports in .claude/overnight/reports/ and find out why. Fix the cause, whatever layer owns it, with a test. If you cannot fix it this segment, record what you found and move to a different section, so the fault stops one item and not the run."
+  echo "repair segment: no-ship streak $NOSHIP_STREAK" >> "$REPORT"
+  bash "$SCRIPT_DIR/notify.sh" "$PROJECT_DIR" critical \
+    "Nothing has shipped for $NOSHIP_STREAK segments: starting a repair segment." 2>/dev/null || true
+fi
+
 # Byte-stable worker prompts (2026-07-11): every fresh worker session should
 # present an IDENTICAL prompt prefix so the provider prompt cache re-hits
 # across section workers and watchdog relaunches.
@@ -488,17 +501,11 @@ bash "$SCRIPT_DIR/noship-update.sh" "$PROJECT_DIR" "${START_HEAD:-}" \
 
 if printf '%s' "$OUTCOME_JSON" | grep -q '"breaker": true'; then
   python3 "$SCRIPT_DIR/collect-questions.py" "$PROJECT_DIR" --stamp "$(date -Is)" >/dev/null 2>&1 || true
-  # ABORT, not just back off (2026-07-31). The breaker previously slowed the
-  # watchdog and stayed armed, which is right for a transient host problem and
-  # wrong for a bounded canary: it burns the remaining hours re-confirming the
-  # same failure at a slower cadence. A tripped breaker means consecutive
-  # unproductive segments -- an operator needs to look, and the run should stop
-  # at the clean boundary it is already sitting on.
+  # Back off and alert, and stay armed. Disarming here made one fault fatal, and a
+  # person then had to re-arm a run that was only waiting on them. run-outcome.py has
+  # already written the backoff, so the next launch retries after it (2026-11-07).
   bash "$SCRIPT_DIR/notify.sh" "$PROJECT_DIR" critical \
-    "Circuit breaker tripped: consecutive unproductive runs -- STOPPING and disarming. Check $REPORT" 2>/dev/null || true
-  rm -f "$PROJECT_DIR/.claude/state/sequencer-armed" 2>/dev/null || true
-  unit="overnight-$(basename "$PROJECT_DIR")"
-  systemctl --user stop "${unit}.timer" "${unit}-watchdog.timer" 2>/dev/null || true
+    "Circuit breaker tripped: the run is backing off and stays armed. Check $REPORT" 2>/dev/null || true
 fi
 
 echo "overnight-sequencer unattended run finished $(date -Is)" >> "$REPORT"

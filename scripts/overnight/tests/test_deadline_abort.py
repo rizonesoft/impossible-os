@@ -21,6 +21,7 @@ import time
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
 CHECK = pathlib.Path(__file__).resolve().parents[1] / "deadline-check.sh"
+LAUNCH = pathlib.Path(__file__).resolve().parents[1] / "overnight-launch.sh"
 
 CONTINUE, STOP = 0, 10
 
@@ -79,25 +80,27 @@ def test_unreadable_deadline_does_not_silently_mean_forever():
         assert "unreadable" in out, out
 
 
-def test_noship_streak_aborts_at_the_limit():
+def test_noship_streak_no_longer_ends_the_run():
+    """One fault must never be fatal: a streak selects a repair segment instead."""
     with tempfile.TemporaryDirectory() as td:
-        rc, out = _check(_project(td, noship=2))
-        assert rc == STOP, (rc, out)
-        assert "shipped no section" in out, out
+        root = _project(td, noship=9)
+        rc, out = _check(root)
+        assert rc == 0, (rc, out)
 
 
-def test_noship_below_the_limit_continues():
-    with tempfile.TemporaryDirectory() as td:
-        rc, out = _check(_project(td, noship=1))
-        assert rc == CONTINUE, (rc, out)
+def test_launcher_turns_a_streak_into_a_repair_segment():
+    text = LAUNCH.read_text()
+    block = text[text.index("# REPAIR SEGMENT."):text.index("# Byte-stable worker prompts")]
+    assert "noship-streak" in block and "REPAIR SEGMENT:" in block and "notify.sh" in block
+    assert "disarm" not in block and "exit" not in block
 
 
-def test_noship_limit_is_configurable():
-    with tempfile.TemporaryDirectory() as td:
-        rc, _ = _check(_project(td, noship=3), env={"OVERNIGHT_NOSHIP_LIMIT": "9"})
-        assert rc == CONTINUE, rc
-        rc, _ = _check(_project(td, noship=3), env={"OVERNIGHT_NOSHIP_LIMIT": "3"})
-        assert rc == STOP, rc
+def test_breaker_stays_armed_and_alerts():
+    text = LAUNCH.read_text()
+    block = text[text.index('grep -q \'"breaker": true\''):text.index('echo "overnight-sequencer unattended run finished')]
+    assert "notify.sh" in block
+    for gone in ("rm -f", "systemctl", "sequencer-armed"):
+        assert gone not in block, gone
 
 
 def test_deadline_takes_precedence_over_a_healthy_streak():
@@ -152,9 +155,9 @@ if __name__ == "__main__":
     test_future_deadline_continues_and_reports_remaining()
     test_past_deadline_stops()
     test_unreadable_deadline_does_not_silently_mean_forever()
-    test_noship_streak_aborts_at_the_limit()
-    test_noship_below_the_limit_continues()
-    test_noship_limit_is_configurable()
+    test_noship_streak_no_longer_ends_the_run()
+    test_launcher_turns_a_streak_into_a_repair_segment()
+    test_breaker_stays_armed_and_alerts()
     test_deadline_takes_precedence_over_a_healthy_streak()
     test_launcher_handles_a_stop_verdict_instead_of_dying_on_it()
     test_every_launcher_stop_clears_the_run_state()

@@ -14,23 +14,16 @@
 #
 # Verdicts (stdout is one line; the exit code is the machine-readable part):
 #   0  -> CONTINUE   spawn the segment
-#   10 -> STOP       deadline reached, or an abort condition tripped; the
-#                    caller should disarm and notify
+#   10 -> STOP       the deadline was reached; the caller should disarm and notify
 #
-# Abort conditions are deliberately few and mechanical. "An unexplained gate
-# refusal" is an operator judgement and is NOT automated here -- a criterion
-# that cannot be evaluated without a human is not an abort condition, it is a
-# checkpoint question.
+# The deadline is the only stop here. A fault never ends a run.
 #
 # Usage: deadline-check.sh <project_dir>
 set -uo pipefail
 
 PROJECT_DIR="${1:?usage: deadline-check.sh <project_dir>}"
 STATE_DIR="$PROJECT_DIR/.claude/state"
-RUNTIME_DIR="$PROJECT_DIR/.claude/overnight"
 DEADLINE_FILE="$STATE_DIR/run-deadline"
-NOSHIP_FILE="$RUNTIME_DIR/noship-streak"
-NOSHIP_LIMIT="${OVERNIGHT_NOSHIP_LIMIT:-2}"
 
 NOW="$(date +%s)"
 
@@ -57,17 +50,7 @@ else
   echo "deadline-check: CONTINUE (no deadline set -- runs to fixpoint)"
 fi
 
-# --- abort: consecutive segments that shipped nothing --------------------
-# run-outcome.py already classifies each segment; this counter is maintained by
-# the launcher from that verdict. A run that produces nothing twice running is
-# either wedged or looping, and either way an operator should look before more
-# hours are spent.
-if [ -f "$NOSHIP_FILE" ]; then
-  STREAK="$(awk 'NR==1{print $1+0}' "$NOSHIP_FILE" 2>/dev/null || echo 0)"
-  if [ "${STREAK:-0}" -ge "$NOSHIP_LIMIT" ]; then
-    echo "deadline-check: STOP -- ${STREAK} consecutive segments shipped no section (limit ${NOSHIP_LIMIT})"
-    exit 10
-  fi
-fi
+# A no-ship streak used to end the run here at 2 segments, which made any one fault
+# fatal. It now selects a repair segment in the launcher instead (2026-11-07).
 
 exit 0
