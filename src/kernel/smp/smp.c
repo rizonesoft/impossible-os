@@ -1122,6 +1122,12 @@ static volatile int s_wake_ipi_ready;
 
 #ifdef KERNEL_TESTS
 static uint32_t s_wake_ipi_taken[MAX_CPUS];
+static uint32_t s_wake_ipi_sends[MAX_CPUS];
+
+uint32_t smp_wake_ipi_sends_test(uint32_t cpu)
+{
+    return cpu < MAX_CPUS ? __atomic_load_n(&s_wake_ipi_sends[cpu], __ATOMIC_ACQUIRE) : 0u;
+}
 
 uint32_t smp_wake_ipi_taken_test(uint32_t cpu)
 {
@@ -1158,6 +1164,9 @@ int smp_wake_cpu(uint32_t cpu)
     target = smp_get_cpu(cpu);
     if (!target)
         return 0;
+#ifdef KERNEL_TESTS
+    __atomic_fetch_add(&s_wake_ipi_sends[cpu], 1u, __ATOMIC_RELEASE);
+#endif
     return lapic_send_ipi_nowait((uint8_t)target->lapic_id, VECTOR_IPI_WAKE);
 }
 

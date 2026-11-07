@@ -573,6 +573,9 @@ int smp_wake_cpu(uint32_t cpu);
 /* Wake IPIs logical CPU `cpu` has taken. Other IPIs also end a HLT, so a test of
  * the wake itself cannot infer it from the target having woken. */
 uint32_t smp_wake_ipi_taken_test(uint32_t cpu);
+/* Send attempts aimed at `cpu`, counted synchronously on the sending CPU, for a
+ * test that a path sends nothing: delivery is too late to rule that out. */
+uint32_t smp_wake_ipi_sends_test(uint32_t cpu);
 #endif
 
 /* One coherent snapshot of the live online set, bit N = logical CPU N */

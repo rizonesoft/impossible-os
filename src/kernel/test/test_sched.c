@@ -2004,16 +2004,18 @@ static void test_dpc_remote_target_runs_on_idle_ap(void)
         yield();
     TEST_ASSERT(__atomic_load_n(&s_rdpc_active, __ATOMIC_ACQUIRE) != 0u, "the callback is being held");
     {
-        uint32_t taken = smp_wake_ipi_taken_test(slot);
-        uint32_t taken_after;
+        /* Masked so the BSP tick's retry cannot send inside the sample. */
+        uint64_t flags = local_irq_save();
+        uint32_t sends = smp_wake_ipi_sends_test(slot);
+        uint32_t sends_after;
+        uint32_t taken;
         int woke = 0;
 
         KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
-        /* Long enough for a wrongly sent IPI to land before it is looked for. */
-        for (spins = 0; spins < 2000000u; spins++)
-            __asm__ volatile("pause");
-        taken_after = smp_wake_ipi_taken_test(slot);
-        TEST_ASSERT_EQ((uint64_t)taken_after, (uint64_t)taken, "no wake is sent to a CPU running a callback");
+        sends_after = smp_wake_ipi_sends_test(slot);
+        local_irq_restore(flags);
+        TEST_ASSERT_EQ((uint64_t)sends_after, (uint64_t)sends, "no wake is sent to a CPU running a callback");
+        taken = smp_wake_ipi_taken_test(slot);
         for (spins = 0; spins < 1000000u && !woke; spins++) {
             if (smp_wake_ipi_taken_test(slot) != taken)
                 woke = 1;
