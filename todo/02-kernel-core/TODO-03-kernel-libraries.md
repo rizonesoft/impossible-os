@@ -74,7 +74,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 | 💎  |   3   | LZ4 block compressor                                 | --         |  [/]   |
 | 💎  |   4   | miniz deflate/inflate + ZIP                          | §1         |  [/]   |
 | 💎  |   5   | Monocypher crypto primitives + kernel CSPRNG         | §1         |  [x]   |
-| 💎  |   6   | cJSON DOM parser                                     | §1         |  [x]   |
+| 💎  |   6   | cJSON DOM parser                                     | §1         |  [ ]   |
 | 💎  |   7   | Mbed TLS freestanding port (record layer)            | §1, §2, §5 |  [/]   |
 | 💎  |   8   | Checksum + base64/hex codec dispatch (CRC32/CRC32C)  | §1         |  [x]   |
 | 💎  |   9   | Zstandard (zstd) freestanding port                   | §1         |  [/]   |
@@ -290,10 +290,10 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [x] Kernel wrapper `src/kernel/json.c` + `include/kernel/json.h`: `json_parse`/`json_parse_len`/`get`/`str`/`int`/`u32`/`u64`/`double`/`bool`/`is_array`/`array_size`/`array_get`/`array_first`/`array_next`/`print`/`free`.
 - [x] In use by `src/kernel/firmware_advisor.c` + `src/kernel/main/boot_trend.c`; theme.json/settings/manifests/NTP are future consumers owned by their domains.
 - [x] Test: `test_json_lib` parses the sample doc + extracts fields, and checks the hardening (depth>32 rejected, length-bounded parse, trailing-garbage rejected, print round-trip).
-- [/] Make kernel cJSON parse reentrant: `global_error` is written per parse (SMP race). Add per-CPU error state or strip global-error publication.
-      - Blocked on: benign today because no wrapper consumer reads `cJSON_GetErrorPtr`, and locking across a `kmalloc`-heavy parse is worse than the race it would close. Re-open here when a consumer starts reading the error pointer. Consumer surface: `json_parse_len`.
-- [/] Bound parse heap for untrusted JSON: a near-cap flat doc of many small nodes can transiently pressure the 2 MiB heap. Add a per-parse PMM allocation budget.
-- [/] Regression fixtures for the freestanding `strtod` exponent bound shipped 2026-09-03 (`src/libs/cjson/cJSON.c`, `CJSON_MAX_EXPONENT`). BLOCKED on the kernel image ceiling.
+- [ ] Make kernel cJSON parse reentrant: `global_error` is written per parse (SMP race). Add per-CPU error state or strip global-error publication.
+      - Recorded reason, not a blocker: benign today because no wrapper consumer reads `cJSON_GetErrorPtr`, and locking across a `kmalloc`-heavy parse is worse than the race it would close. Re-open here when a consumer starts reading the error pointer. Consumer surface: `json_parse_len`.
+- [ ] Bound parse heap for untrusted JSON: a near-cap flat doc of many small nodes can transiently pressure the 2 MiB heap. Add a per-parse PMM allocation budget.
+- [ ] Regression fixtures for the freestanding `strtod` exponent bound shipped 2026-09-03 (`src/libs/cjson/cJSON.c`, `CJSON_MAX_EXPONENT`)
   - The FIX is in the tree: the accumulate is capped so `exp = exp * 10 + digit` cannot overflow and the scaling loop cannot run once per exponent unit. Before it, a 13-byte token such as `1e2147483647` stalled the boot CPU for billions of iterations before userland started, and every JSON this kernel parses comes off disk.
   - What is missing is the fixtures: `1e400` and `1e2147483647` both reach infinity, `1e-400` reaches zero, `1e308` is unchanged, and a control that removes the cap and shows the iteration count explode. A kernel-side `TEST_CAT_EXEC` case does not fit -- measured 2026-09-03, 15 bytes of `.text` headroom -- so the home is a host suite beside `tools/boot-entries-parser-tests/`, which costs the image nothing but is still new tooling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §20 once the guard is gone").
       - Blocked on: no untrusted producer exists yet -- the only file consumer is the self-written boot-time cache -- and each allocation is already bounded by `kmalloc`'s 4 KiB ceiling with graceful failure. Re-open here when JSON from off-box is parsed.
@@ -310,8 +310,8 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > - Canonical doc: `include/kernel/json.h`.
 > - Scope boundary: cJSON internals stay vendored (`src/libs/cjson/`); crypto/TLS in §5/§7, compression in §3/§4.
 > **Verified:** 2026-06-20 | commit `bae54b79` | 7/9 items | build OK | tests 394 kernel + 16 user PASS (TCG)
-> **Deferred:** [M] cJSON writes shared `global_error` per parse (SMP race, not reentrant) (reason: benign today -- no wrapper consumer reads the cJSON error pointer; locking across a kmalloc-heavy parse is worse) -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §6 (item: "Make kernel cJSON parse reentrant" at line 293)
-> **Deferred:** [M] near-cap JSON of many small nodes can transiently pressure the 2 MiB heap (reason: per-alloc bounded by kmalloc 4 KiB ceiling + graceful failure; only file consumer is self-written boot-time cache) -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §6 (item: "Bound parse heap for untrusted JSON" at line 295)
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] cJSON writes shared `global_error` per parse (SMP race, not reentrant) (reason: benign today -- no wrapper consumer reads the cJSON error pointer; locking across a kmalloc-heavy parse is worse). The stamp named this section's own item with no outside blocker, and "benign today" is not one: the fix is cheap and every JSON this kernel parses comes off disk.
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] near-cap JSON of many small nodes can transiently pressure the 2 MiB heap (reason: per-alloc bounded by kmalloc 4 KiB ceiling + graceful failure; only file consumer is self-written boot-time cache). The stamp named this section's own item with no outside blocker, and "benign today" is not one: the fix is cheap and every JSON this kernel parses comes off disk.
 > **Quality reviewed:** 2026-06-20 | Codex 8x (design, adversarial-impl, adversarial, consistency, perf, re-adversarial) | 2H+3M fixed, 2M deferred | scope: kernel-code-quality
 
 ---
