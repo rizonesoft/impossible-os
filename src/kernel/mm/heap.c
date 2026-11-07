@@ -50,7 +50,8 @@ struct block_header {
     uint64_t req_size;         /* caller-requested size; locates back redzone + wipe len */
     uint32_t tag;              /* pool tag (kmalloc_tagged); 0 = untagged */
     uint8_t  is_free;          /* 1 = free, 0 = allocated */
-    uint8_t  _pad[3];          /* explicit pad to keep redzone_front 8-aligned */
+    uint8_t  scrubbing;        /* 1 = one free owns this block and is scrubbing it */
+    uint8_t  _pad[2];          /* explicit pad to keep redzone_front 8-aligned */
     uint64_t redzone_front;    /* HEAP_REDZONE_FRONT; last field -> precedes user data */
 };
 
@@ -90,13 +91,11 @@ _Static_assert(__builtin_offsetof(struct block_header, next) == 8,
 /* Scrub freed user data before returning a block to the pool, so freed
  * secrets do not linger.
  *
- * STILL DEFAULT OFF, but for a DIFFERENT reason than before, and the change
- * of reason is the point: the filesystem use-after-free that used to block
- * this knob was FIXED on 2026-09-03. Turning the scrub on is now blocked only
- * by the kernel image ceiling -- `heap_secure_zero` is `__attribute__((unused))`
- * and elided today, so flipping this to 1 makes it reachable and pushes
- * `__kernel_end` onto `USER_BASE` (measured: headroom 79 bytes -> BSS COLLISION).
- * Flip it when there is image headroom; nothing in the FS blocks it.
+ * On by default since 2026-11-07. Two things held it off: a filesystem
+ * use-after-free, fixed 2026-09-03, and the kernel image ceiling, which ended
+ * 2026-11-07. The scrub runs with s_heap_lock dropped, because a request can be
+ * as large as KMALLOC_MAX and a framebuffer-sized surface is a real one: see
+ * heap_free_scrubbed().
  *
  * The bug it used to surface, kept because the scrub is what made it
  * DETERMINISTIC rather than a rare misread: both branches of `ixfs_finddir`
@@ -114,7 +113,7 @@ _Static_assert(__builtin_offsetof(struct block_header, next) == 8,
  * the misdescription is a large part of why the bug survived -- it sent
  * readers to the vnode cache lifetime instead of a local scratch buffer. */
 #ifndef HEAP_ZERO_ON_FREE
-#define HEAP_ZERO_ON_FREE 0
+#define HEAP_ZERO_ON_FREE 1
 #endif
 
 /* Minimum usable block size (avoid tiny fragments) */
@@ -195,9 +194,8 @@ struct heap_fault {
 
 /* Non-elidable zeroizer for the FREE-scrub path: the compiler must NOT
  * drop these stores even though the freed memory is never read again
- * (secret hygiene). Byte-at-a-time volatile is the portable barrier form;
- * the free-scrub is knob-gated (HEAP_ZERO_ON_FREE) and off by default, so
- * this is unused in the default build. */
+ * (secret hygiene). Byte-at-a-time volatile is the portable barrier form.
+ * Marked unused only so a build with HEAP_ZERO_ON_FREE=0 stays warning-free. */
 static void __attribute__((unused)) heap_secure_zero(void *p, uint64_t n)
 {
     volatile uint8_t *b = (volatile uint8_t *)p;
@@ -329,6 +327,12 @@ static int heap_classify(void *ptr, struct block_header **out,
         return -1;
     }
 
+    /* Checked last, so a corrupt header still reports as corrupt. Another free
+     * owns this block, which makes this call a double free, exactly as if that
+     * free had already finished. */
+    if (block->scrubbing)
+        return 1;
+
     *out = block;
     return 0;
 }
@@ -341,6 +345,7 @@ static void block_split(struct block_header *block, size_t size)
         new_block = (struct block_header *)((uint8_t *)block + HEADER_SIZE + size);
         new_block->size = block->size - size - HEADER_SIZE;
         new_block->is_free = 1;
+        new_block->scrubbing = 0;
         new_block->cookie = 0;   /* free blocks carry cookie == 0 (free marker) */
         new_block->next = block->next;
         heap_bm_set(new_block);   /* a new block header starts here */
@@ -448,6 +453,7 @@ boot_result_t heap_init(void)
     heap_start_block = (struct block_header *)heap_base;
     heap_start_block->size = total_heap_size - HEADER_SIZE;
     heap_start_block->is_free = 1;
+    heap_start_block->scrubbing = 0;
     heap_start_block->next = (struct block_header *)0;
     heap_bm_set(heap_start_block);
 
@@ -595,6 +601,7 @@ static void *kmalloc_locked(size_t req, uint32_t tag)
 
             block_split(curr, need);
             curr->is_free       = 0;
+            curr->scrubbing     = 0;
             curr->req_size      = req;
             curr->tag           = tag;
             curr->cookie        = heap_cookie_for(curr);
@@ -764,24 +771,25 @@ void *kmalloc_tagged(size_t size, uint32_t tag)
     return result;
 }
 
-/* Validate + free a block (lock held). Sets fault->cls on corruption (the
- * caller raises the BugCheck after releasing the lock); a double-free is a
- * silent no-op (unchanged behavior). `check_tag` verifies the pool tag. */
-static void kfree_locked(void *ptr, uint32_t want_tag, int check_tag,
-                         struct heap_fault *fault)
+/* Decide whether a block may be freed (lock held). Returns 1 with *out set. Sets
+ * fault->cls on corruption (the caller raises the BugCheck after releasing the
+ * lock); a double-free returns 0 silently. `check_tag` verifies the pool tag. */
+static int heap_free_validate(void *ptr, uint32_t want_tag, int check_tag,
+                              struct block_header **out,
+                              struct heap_fault *fault)
 {
     struct block_header *block = (void *)0;
     int r;
 
     if (s_heap_poisoned)
-        return;   /* heap already known-corrupt; refuse to mutate */
+        return 0;   /* heap already known-corrupt; refuse to mutate */
 
     r = heap_classify(ptr, &block, fault);
     if (r == 1)
-        return;   /* double-free protection (silent, as before) */
+        return 0;   /* double-free protection (silent, as before) */
     if (r < 0) {
         s_heap_poisoned = 1;   /* published under the lock */
-        return;
+        return 0;
     }
 
     if (check_tag && block->tag != want_tag) {
@@ -790,21 +798,71 @@ static void kfree_locked(void *ptr, uint32_t want_tag, int check_tag,
         fault->got = block->tag;
         fault->want = want_tag;
         s_heap_poisoned = 1;
-        return;
+        return 0;
     }
 
-#if HEAP_ZERO_ON_FREE
-    /* Scrub the user payload so freed secrets do not linger in the pool.
-     * Gated OFF by default: the FS use-after-free is fixed, so only image
-     * headroom holds the knob down now (see the HEAP_ZERO_ON_FREE comment). */
-    heap_secure_zero((uint8_t *)block + HEADER_SIZE, block->req_size);
-#endif
+    *out = block;
+    return 1;
+}
+
+/* Return a validated block to the pool. Caller holds s_heap_lock. */
+static void heap_free_publish(struct block_header *block,
+                              struct heap_fault *fault)
+{
     block->cookie  = 0;
     block->is_free = 1;
     used_bytes -= block->size;
     /* Coalescing may detect a corrupt (is_free-smashed) neighbor and fill
      * `fault`; the caller raises the BugCheck after releasing the lock. */
     coalesce_free_blocks(fault);
+}
+
+#ifdef KERNEL_TESTS
+void (*heap_test_scrub_observer)(const void *payload, size_t bytes);
+#endif
+
+/* Free a block, scrubbing it with s_heap_lock NOT held so a large free never
+ * spends its scrub with interrupts off or other CPUs spinning on the lock.
+ *
+ * The claim is what makes dropping the lock safe. Under the lock this free takes
+ * `scrubbing`, and the block stays allocated, so nothing can be handed these
+ * bytes. A free that cannot claim is finished inside that first critical section:
+ * a duplicate sees the claim in heap_classify, as it would a free block, and
+ * leaves, and a fault is recorded there. It must not come back for a second lock,
+ * because by then the address may belong to a new allocation. Only the claimant
+ * returns, to release the claim and re-validate before publishing. */
+static void heap_free_scrubbed(void *ptr, uint32_t want_tag, int check_tag,
+                               struct heap_fault *fault)
+{
+    struct block_header *block = (void *)0;
+    uint64_t irq_flags;
+    uint64_t bytes;
+
+    spin_lock_irqsave(&s_heap_lock, &irq_flags);
+    if (!heap_free_validate(ptr, want_tag, check_tag, &block, fault)) {
+        spin_unlock_irqrestore(&s_heap_lock, irq_flags);
+        return;
+    }
+    block->scrubbing = 1;
+    bytes = block->req_size;
+    spin_unlock_irqrestore(&s_heap_lock, irq_flags);
+
+#if HEAP_ZERO_ON_FREE
+    heap_secure_zero(ptr, bytes);
+#endif
+#ifdef KERNEL_TESTS
+    /* After the scrub and before the block can be reused: the only point at
+     * which a test can read these bytes without racing another CPU. */
+    if (heap_test_scrub_observer)
+        heap_test_scrub_observer(ptr, bytes);
+#endif
+    (void)bytes;   /* consumed only by the two optional blocks above */
+
+    spin_lock_irqsave(&s_heap_lock, &irq_flags);
+    block->scrubbing = 0;
+    if (heap_free_validate(ptr, 0, 0, &block, fault))
+        heap_free_publish(block, fault);
+    spin_unlock_irqrestore(&s_heap_lock, irq_flags);
 }
 
 /* Raise the heap-corruption BugCheck for a detected fault. Called only
@@ -819,14 +877,11 @@ static void heap_corruption_panic(const struct heap_fault *f)
 void kfree(void *ptr)
 {
     struct heap_fault fault = { HEAP_FAULT_NONE, 0, 0, 0 };
-    uint64_t irq_flags;
 
     if (!ptr)
         return;
 
-    spin_lock_irqsave(&s_heap_lock, &irq_flags);
-    kfree_locked(ptr, 0, 0, &fault);
-    spin_unlock_irqrestore(&s_heap_lock, irq_flags);
+    heap_free_scrubbed(ptr, 0, 0, &fault);
 
     if (fault.cls != HEAP_FAULT_NONE)
         heap_corruption_panic(&fault);
@@ -837,14 +892,11 @@ void kfree(void *ptr)
 void kfree_tagged(void *ptr, uint32_t tag)
 {
     struct heap_fault fault = { HEAP_FAULT_NONE, 0, 0, 0 };
-    uint64_t irq_flags;
 
     if (!ptr)
         return;
 
-    spin_lock_irqsave(&s_heap_lock, &irq_flags);
-    kfree_locked(ptr, tag, 1, &fault);
-    spin_unlock_irqrestore(&s_heap_lock, irq_flags);
+    heap_free_scrubbed(ptr, tag, 1, &fault);
 
     if (fault.cls != HEAP_FAULT_NONE)
         heap_corruption_panic(&fault);
@@ -903,6 +955,14 @@ void *krealloc(void *ptr, size_t new_size)
         block->req_size = new_size;
         *heap_redzone_back(block) = HEAP_REDZONE_BACK;
         spin_unlock_irqrestore(&s_heap_lock, irq_flags);
+#if HEAP_ZERO_ON_FREE
+        /* A shrink keeps the capacity but lowers req_size, so the later free
+         * would never reach these bytes. Scrub them while the caller owns the
+         * block, after the new back redzone. */
+        if (old_req > new_size + HEAP_REDZONE_BACK_SIZE)
+            heap_secure_zero((uint8_t *)ptr + new_size + HEAP_REDZONE_BACK_SIZE,
+                             old_req - new_size - HEAP_REDZONE_BACK_SIZE);
+#endif
 #if HEAP_INIT_ON_ALLOC
         /* Zero the newly-exposed slack (init-on-alloc only covered the old
          * request) so a grow does not leak stale block contents. */
@@ -974,11 +1034,9 @@ void *krealloc(void *ptr, size_t new_size)
     }
 
     /* Re-acquire the lock to free the old (still-valid, caller-owned)
-     * block. If another CPU poisoned the heap meanwhile, kfree_locked
+     * block. If another CPU poisoned the heap meanwhile, the free
      * no-ops and the old block leaks -- harmless, the system is panicking. */
-    spin_lock_irqsave(&s_heap_lock, &irq_flags);
-    kfree_locked(ptr, 0, 0, &fault);
-    spin_unlock_irqrestore(&s_heap_lock, irq_flags);
+    heap_free_scrubbed(ptr, 0, 0, &fault);
     if (fault.cls != HEAP_FAULT_NONE)
         heap_corruption_panic(&fault);
 

@@ -51,6 +51,10 @@ uint64_t heap_get_free(void);
 int heap_owns(const void *ptr);
 
 #ifdef KERNEL_TESTS
+/* Called for every free after its scrub and before the block can be reused, on
+ * whichever CPU frees, so an observer must filter by payload. NULL when unset. */
+extern void (*heap_test_scrub_observer)(const void *payload, size_t bytes);
+
 /* ---- Test-only kmalloc fault injection (00-infrastructure kernel test
  * harness) -----------------------------------------------------------
  *

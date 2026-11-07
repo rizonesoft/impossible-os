@@ -277,6 +277,137 @@ static void test_heap_zeroed_alloc(void)
 
 /* Test: tagged alloc + matched-tag free completes without a corruption
  * BugCheck (the mismatch path halts and so cannot be exercised here). */
+/* Freed data must not linger in the pool. Reading the block after kfree would
+ * race whichever CPU allocates next, so this reads from the allocator's own
+ * observation point, where the block is scrubbed and not yet reusable. */
+static const void *volatile s_scrub_watch;
+static volatile uint32_t s_scrub_seen;
+static volatile uint32_t s_scrub_nonzero;
+static volatile uint64_t s_scrub_bytes;
+static volatile int s_scrub_refree;
+
+static void heap_test_note_scrub(const void *payload, size_t bytes)
+{
+    const volatile uint8_t *b = (const volatile uint8_t *)payload;
+    uint32_t nonzero = 0;
+    size_t i;
+
+    if (payload != s_scrub_watch)
+        return;
+    for (i = 0; i < bytes; i++) {
+        if (b[i] != 0) nonzero++;
+    }
+    s_scrub_nonzero = nonzero;
+    s_scrub_bytes = bytes;
+    s_scrub_seen++;
+    /* A duplicate free landing inside the scrub window, on purpose. It must
+     * neither scrub nor finish the free. Disarmed first so a regression counts
+     * a second observation instead of recursing without end. */
+    if (s_scrub_refree) {
+        s_scrub_refree = 0;
+        kfree((void *)payload);
+    }
+}
+
+static void heap_scrub_arm(void *p, uint32_t bytes)
+{
+    volatile uint8_t *b = (volatile uint8_t *)p;
+    uint32_t i;
+
+    for (i = 0; i < bytes; i++) b[i] = 0xA5;
+    s_scrub_seen = 0;
+    s_scrub_nonzero = 0xFFFFFFFFu;
+    s_scrub_bytes = 0;
+    s_scrub_refree = 0;
+    s_scrub_watch = p;
+}
+
+static void test_heap_zero_on_free(void)
+{
+    enum { SCRUB_BYTES = 3001, TAG = 0x42525453u };
+    void *p;
+    void *blocker;
+    void *moved;
+
+    heap_test_scrub_observer = heap_test_note_scrub;
+
+    p = kmalloc(SCRUB_BYTES);
+    TEST_ASSERT(p != 0, "the kfree scrub block allocates");
+    if (p) {
+        heap_scrub_arm(p, SCRUB_BYTES);
+        kfree(p);
+        TEST_ASSERT_EQ(s_scrub_seen, 1u, "kfree reaches the scrub once");
+        TEST_ASSERT_EQ(s_scrub_bytes, (uint64_t)SCRUB_BYTES, "over the requested size");
+        TEST_ASSERT_EQ(s_scrub_nonzero, 0u, "kfree scrubs every requested byte");
+    }
+
+    p = kmalloc_tagged(SCRUB_BYTES, TAG);
+    TEST_ASSERT(p != 0, "the tagged scrub block allocates");
+    if (p) {
+        heap_scrub_arm(p, SCRUB_BYTES);
+        kfree_tagged(p, TAG);
+        TEST_ASSERT_EQ(s_scrub_seen, 1u, "kfree_tagged reaches the scrub once");
+        TEST_ASSERT_EQ(s_scrub_nonzero, 0u, "kfree_tagged scrubs every requested byte");
+    }
+
+    /* A blocker of p's own size cannot land in a hole before p, since first fit
+     * gave p the first hole that large. So what follows p is either the blocker
+     * or a remainder too small for it, and growing fourfold has to move p. */
+    p = kmalloc(SCRUB_BYTES);
+    blocker = kmalloc(SCRUB_BYTES);
+    TEST_ASSERT(p != 0 && blocker != 0, "the krealloc scrub blocks allocate");
+    if (p && blocker) {
+        heap_scrub_arm(p, SCRUB_BYTES);
+        moved = krealloc(p, SCRUB_BYTES * 4u);
+        TEST_ASSERT(moved != 0, "krealloc grows the block");
+        TEST_ASSERT(moved != p, "krealloc had to move it");
+        TEST_ASSERT_EQ(s_scrub_seen, 1u, "krealloc scrubs the copy it leaves behind");
+        TEST_ASSERT_EQ(s_scrub_nonzero, 0u, "and scrubs every requested byte");
+        kfree(moved);
+    } else if (p) {
+        kfree(p);
+    }
+    kfree(blocker);
+
+    /* A shrink lowers req_size, so a later free would never reach the tail. */
+    p = kmalloc(SCRUB_BYTES);
+    TEST_ASSERT(p != 0, "the shrink scrub block allocates");
+    if (p) {
+        const volatile uint8_t *b = (const volatile uint8_t *)p;
+        uint32_t stale = 0;
+        uint32_t i;
+
+        heap_scrub_arm(p, SCRUB_BYTES);
+        TEST_ASSERT(krealloc(p, 16) == p, "a shrink stays in place");
+        /* 16 kept bytes, then the 8-byte back redzone. */
+        for (i = 24; i < SCRUB_BYTES; i++) {
+            if (b[i] != 0) stale++;
+        }
+        TEST_ASSERT_EQ(stale, 0u, "a shrink scrubs the tail it gives up");
+        TEST_ASSERT_EQ(b[15], 0xA5, "and keeps the bytes it was asked to keep");
+        kfree(p);
+    }
+
+    /* The duplicate free inside the scrub window: one scrub, one free. */
+    p = kmalloc(SCRUB_BYTES);
+    TEST_ASSERT(p != 0, "the duplicate-free block allocates");
+    if (p) {
+        void *again;
+
+        heap_scrub_arm(p, SCRUB_BYTES);
+        s_scrub_refree = 1;
+        kfree(p);
+        TEST_ASSERT_EQ(s_scrub_refree, 0, "the duplicate free ran inside the window");
+        TEST_ASSERT_EQ(s_scrub_seen, 1u, "a duplicate free does not scrub");
+        again = kmalloc(16);
+        TEST_ASSERT(again != 0, "the heap survives a duplicate free");
+        kfree(again);
+    }
+
+    heap_test_scrub_observer = 0;
+    s_scrub_watch = 0;
+}
+
 static void test_heap_tagged_roundtrip(void)
 {
     uint32_t tag = 0x54534554u; /* 'TEST' */
@@ -310,6 +441,8 @@ static void test_heap_redzone_exact_fit(void)
 void test_register_heap(void)
 {
     test_suite_register_cat("Heap: 16-byte alignment", test_heap_alignment, TEST_CAT_MM);
+    test_suite_register_cat("Heap: zero-on-free scrubs the payload",
+                            test_heap_zero_on_free, TEST_CAT_MM);
     test_suite_register_cat("Heap: init-on-alloc zeroing", test_heap_init_on_alloc, TEST_CAT_MM);
     test_suite_register_cat("Heap: kmalloc_zeroed", test_heap_zeroed_alloc, TEST_CAT_MM);
     test_suite_register_cat("Heap: tagged alloc/free round-trip", test_heap_tagged_roundtrip, TEST_CAT_MM);

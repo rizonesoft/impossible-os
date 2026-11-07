@@ -354,7 +354,7 @@ Zero freed memory to eliminate information leaks from stale data.
 **Files:** `src/kernel/mm/slab.c`, `src/kernel/mm/heap.c`
 
 - [ ] On `slab_free` (after quarantine eviction): `memset(obj, 0, cache->obj_size)` before returning to freelist
-- [ ] On `kfree` (heap path): zero the freed block data region
+- [x] On `kfree` (heap path): zero the freed block data region. Shipped by `02-kernel-core/TODO-10` §32 (`heap_free_scrubbed()` in `src/kernel/mm/heap.c`), including `kfree_tagged` and `krealloc`.
 - [ ] For large PMM allocations: zero pages at `pmm_free_frame` time (future: DMA engine offload)
 - [ ] Skip zeroing if object will be immediately reused from per-CPU freelist (optimization: lazy zero flag)
 - [ ] Commit: `"mm: zero-on-free -- eliminate info leaks from stale heap/SLAB data"`
