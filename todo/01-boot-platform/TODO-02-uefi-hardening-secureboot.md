@@ -82,11 +82,11 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎  |  13   | EFI System Partition integrity check                     | --             |  [x]   |
 | 💎  |  14   | Win32 firmware variable + table surface                  | §2             |  [x]   |
 | 💎  |  15   | Post-boot SecureBoot revalidation                        | §5             |  [/]   |
-| 💎  |  16   | Signed `.initrd` / recovery / module PE sections in UKI  | §11            |  [/]   |
+| 💎  |  16   | Signed `.initrd` / recovery / module PE sections in UKI  | §11            |  [ ]   |
 | 💎  |  17   | SBAT revocation metadata in boot artifacts               | §9, §11        |  [x]   |
 | 🛠️  |  18   | Build idempotency: UKI SBAT survives incremental rebuild | §11, §17       |  [/]   |
 | 🛠️  |  19   | Bootloader `ReadBlocks` IoAlign compliance               | §13            |  [/]   |
-| 🛠️  |  20   | Post-ship follow-up backfill (2026-07-31 cohort)         | --             |  [/]   |
+| 🛠️  |  20   | Post-ship follow-up backfill (2026-07-31 cohort)         | --             |  [ ]   |
 
 ---
 
@@ -569,7 +569,7 @@ Promoted from §11 deferred [H] (gap-audit 2026-05-01). The Unified Kernel Image
   - Smoke runner extension in [`scripts/debug/kernel/run-secureboot.bat`](../../scripts/debug/kernel/run-secureboot.bat) is doc-block scaffolding only; the `uki_initrd_signed` + `uki_initrd_disk_override_rejected` cases are parked below.
 - [x] **Back-compat:** build without `build/uki-payloads/initrd.img` -> UKI ships unchanged, `.initrd` section absent, bootloader globals stay NULL, kernel boots as today. New infrastructure is opt-in by payload presence; existing CI / dev builds need no changes.
 - [x] **Split-path payload provenance hardening** (`bootx64.c`): `locate_boot_fs()` is HandleProtocol-only; `load_kernel()` non-boot fallback fails closed when payloads are staged. Validation via the smoke harness below.
-- [/] **Smoke harness for UKI signed-payload cases** (Codex round-1 H1 follow-up) -- blocked on a UKI-DIRECT headless boot leg that no harness provides today; owned here, tracked by this section's `Deferred:` stamp.
+- [ ] **Smoke harness for UKI signed-payload cases** (Codex round-1 H1 follow-up) -- needs a UKI-DIRECT headless boot leg; no harness provides one yet, and a new script is ordinary work (reopened 2026-11-07).
   - `uki_initrd_signed` case: stage synthetic `build/uki-payloads/initrd.img`, rebuild, boot the UKI artifact directly, capture serial-stdio output, assert the `[BOOT] UKI: .initrd embedded size=4096 bytes` line.
   - `uki_initrd_disk_override_rejected` case: UKI carrying `module=disk.eif` / `initrd=disk.img` / `recovery_image=disk.img` in `.cmdline`; assert `[FATAL] UKI mode rejects out-of-UKI <key>= override` and a `boot_fatal` abort before kernel handoff.
   - Blocker detail: `scripts/test-smoke.sh` boots `BOOTX64.EFI` off the ESP and `scripts/test-secureboot-smoke.sh` is artifact-level only (no QEMU boot), so neither can host these cases; `scripts/debug/kernel/run-secureboot.bat` is GUI-launcher-only. Doc-block scaffolding for both cases is in place.
@@ -587,7 +587,7 @@ Promoted from §11 deferred [H] (gap-audit 2026-05-01). The Unified Kernel Image
 > - **Scope boundary:** the headless serial-to-file smoke harness for the two UKI cases is deferred test-infra (open `[ ]` below); UKI addons/profiles are advanced (TODO-27 if ever).
 
 > **Verified:** 2026-06-13 | commit `46eb95bc` | 9/11 items (recounted 2026-08-13; was 8/10 before the split-path provenance item landed) | build OK | smoke PASS (KVM 2.590s)
-> **Deferred:** [M] headless serial-to-file smoke harness for `uki_initrd_signed` + `uki_initrd_disk_override_rejected` (and the provenance fail-closed case) -- needs a new QEMU serial-capture pattern -> XREF: 01-boot-platform/TODO-02 §16 (item: "Smoke harness for UKI signed-payload cases" below)
+> **Note:** 2026-11-07, Deferred stamp retired: [M] the UKI smoke harness needs a new QEMU serial-capture script, which nothing blocks.
 > **Quality reviewed:** 2026-06-13 | Codex 6x (design + adversarial + re-adversarial + consistency + perf) | 0 findings | scope: boot-code-quality
 
 ---
@@ -648,8 +648,8 @@ The UKI pack step (`scripts/build.sh`) runs `objcopy --add-section ... "$UKI_STU
 > - **Scope boundary:** bare-metal SB-chain sign-off is human-gated (WSL cannot run it); signing uses the MOK dev cert (production cert is a ~2yr future rotation).
 
 > **Verified:** 2026-06-21 | commit `aa3c20db` | 3/5 items | build OK | SB smoke 8/8
-> **Deferred:** [M] bare-metal / Secure-Boot-enrolled-VM SB-chain acceptance (firmware accepts the signed grubx64.efi behind shim) -- cannot be validated in WSL TCG/KVM -> XREF: 01-boot-platform/TODO-02 §18 (item: "Verify the signed UKI boots + the SB chain validates on bare metal / a Secure-Boot-enrolled VM")
-> **Deferred:** [M] signed-artifact selection predicate not unified (build-image.sh/verify-esp.sh file-existence vs build-manifest stamp-staleness; stale-artifact drift) + missing signing-state regression tests -> XREF: 01-boot-platform/TODO-02 §18 (item: "Unify the signed-artifact selection predicate")
+> **Deferred:** [M] **operator-gated** (real firmware): bare-metal / Secure-Boot-enrolled-VM SB-chain acceptance (firmware accepts the signed grubx64.efi behind shim) -- cannot be validated in WSL TCG/KVM -> XREF: 01-boot-platform/TODO-02 §18 (item: "Verify the signed UKI boots + the SB chain validates on bare metal / a Secure-Boot-enrolled VM")
+> **Deferred:** [M] **operator-gated** (receipt surface, per the item): signed-artifact selection predicate not unified (build-image.sh/verify-esp.sh file-existence vs build-manifest stamp-staleness; stale-artifact drift) + missing signing-state regression tests -> XREF: 01-boot-platform/TODO-02 §18 (item: "Unify the signed-artifact selection predicate")
 > **Quality reviewed:** 2026-06-21 | Codex 3x (adversarial, consistency, perf) | 2M deferred (XREF) | scope: N/A (build-infra; not src/boot or src/kernel)
 
 ---
@@ -712,8 +712,8 @@ From the stamped section 12 -- "Make shim absence fail-loud after the 2026-07-01
   - `mdir`, three `mcopy` spawns and their `cmp`s all read live paths. Post-ship Codex adversarial 2026-08-13 (medium); a developer-workflow race today rather than an attack, since the smoke is a build-time check.
 - [/] `.github/workflows/release.yml` uploads `system-disk.img` without ever running the secureboot smoke, so nothing checks the coverage of what it publishes -- BLOCKED on the re-pin below
   - A `REQUIRE_SHIM=1` release gate would fail every release while `shim/` is deliberately empty, so it can only land together with a pinned shim.
-  - Same visit should stop that workflow scraping the `EFI_OFFSET` Makefile constant with a silent 1048576 fallback and read the image's own sidecar, as the smoke does (post-ship Codex consistency 2026-08-13, medium).
   - Found by this section's Codex design review 2026-08-13 (high). The release notes make no Secure Boot claim, so nothing published is currently false; the gap is that the workflow cannot tell the difference.
+- [ ] Stop `release.yml` scraping the `EFI_OFFSET` Makefile constant with a silent 1048576 fallback; read the image's own sidecar, as the smoke does. Needs no pinned shim (reopened 2026-11-07, post-ship Codex consistency, medium)
 - [/] Re-pin a Microsoft-UEFI-CA-2023-signed `shimx64.efi` + `mmx64.efi` per the §12 vendor watch and refresh `shim/SHA256SUMS` -- **operator-gated**
   - Needs a distro shim binary re-signed by Microsoft through the shim-review process; no TODO in this repo can own that, and only a human can decide to trust the resulting binary.
   - `scripts/secure-boot/build-shim.sh` already covers the MOK-dev chain for our own hardware; only stock-Secure-Boot PCs need the MS-signed one, which `aab6b6f64` records as the ~2yr-out production path.
@@ -730,11 +730,11 @@ From the stamped section 12 -- "Make shim absence fail-loud after the 2026-07-01
 > - Scope boundary: §20 owns the reporting half; the `make disk` refusal and the release-workflow gate stay parked above (receipt surface / vendor-gated), and §12 keeps the vendor watch itself.
 
 > **Verified:** 2026-08-13 | commit `4ade640f5` + post-review fixes | 4/9 items (5 parked with named owners) | build OK | tooling 1356/1356 | smoke 7/7 (chain NOT COVERED, correctly reported)
-> **Deferred:** [H] `make disk` ESP staging still direct-boots silently on a Secure-Boot-requested build (reason: `Makefile` is receipt surface, attended-only) -> XREF: 01-boot-platform/TODO-02 §20 (item: "`make disk` ESP staging must refuse a Secure-Boot-requested build" -- this section)
-> **Deferred:** [H] ms-ca trust rests on `sbverify --list` metadata plus an approved SHA256SUMS, not a pinned CA certificate (reason: needs a Microsoft CA cert nobody has chosen; would diverge from `sign-efi.sh`) -> XREF: 01-boot-platform/TODO-02 §20 (item: "Verify a pinned MS-signed shim CRYPTOGRAPHICALLY" -- this section)
+> **Note:** 2026-11-07, Deferred stamp retired: [H] `make disk` refusal is operator-gated: `Makefile` is receipt surface, named in its item.
+> **Note:** 2026-11-07, Deferred stamp retired: [H] CA pinning is operator-gated: no certificate has been chosen, named in its item.
 > **Accepted:** [M] a MOK-dev chain is published to `HKLM\SYSTEM\SecureBoot\ShimCA` as the `0xFFFFFFFF` parse-failure sentinel (reason: registry-surface ABI decision, owned by §12) -> XREF: 01-boot-platform/TODO-02 §12 (item: "Give a MOK-dev chain its own `HKLM\SYSTEM\SecureBoot\ShimCA` representation")
-> **Deferred:** [M] `release.yml` publishes `system-disk.img` with no coverage check and scrapes `EFI_OFFSET` from a Makefile constant (reason: blocked on the re-pin) -> XREF: 01-boot-platform/TODO-02 §20 (item: "`.github/workflows/release.yml` uploads `system-disk.img`" -- this section)
-> **Deferred:** [H] no 2023-CA shim is pinned, so no build ships a Secure Boot chain (reason: operator-gated on distro shim-review) -> XREF: 01-boot-platform/TODO-02 §20 (item: "Re-pin a Microsoft-UEFI-CA-2023-signed `shimx64.efi`" -- this section)
+> **Note:** 2026-11-07, Deferred stamp retired: [M] the release coverage gate waits on the re-pin; the `EFI_OFFSET` scrape is split out and open.
+> **Note:** 2026-11-07, Deferred stamp retired: [H] the 2023-CA shim re-pin is operator-gated, named in its item.
 > **Quality reviewed:** 2026-08-13 | Codex 7x (design, adversarial x3, consistency, perf, re-adversarial) | 10H+7M fixed, 0 open | scope: N/A (host-side verification tooling + docs; no kernel/boot source touched)
 
 ---
