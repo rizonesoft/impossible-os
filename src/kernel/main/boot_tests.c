@@ -11,6 +11,7 @@
 #include "kernel/fs/vfs.h"
 #include "kernel/fs/ixfs.h"
 #include "kernel/boot_splash.h"
+#include "kernel/boot_halt.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_media.h"
 #include "kernel/test/test.h"
@@ -144,7 +145,21 @@ void boot_tests_run(void)
             if (g_boot_info.config.stress_iters)
                 test_usermode_set_stress_iters(
                     g_boot_info.config.stress_iters);
-            test_usermode_run();
+            /* A POISONED verdict halts here, before boot_phase3 creates
+             * cmd.exe: an unfinished fork constructor may own the slot that
+             * task_create_internal would hand the shell (todo/answers.md Q16,
+             * operator decision 2026-11-07). The run's framed artifacts,
+             * including [UTEST-CAPTURE-REAP-DEGRADED] and the suite ABORT
+             * line, are already on serial, so the host still refuses with
+             * the real cause. Only a KERNEL_TESTS image can take this path;
+             * the release stub always returns UTEST_BOOT_OK. */
+            if (test_usermode_run() != UTEST_BOOT_OK) {
+                klog(LOG_ERROR, "UTEST",
+                     "degraded capture-tree reap: a fork constructor may own "
+                     "a task slot, refusing to create more tasks");
+                boot_halt("user-mode test reap degraded: task table unsafe, "
+                          "halting before cmd.exe");
+            }
         }
     }
 

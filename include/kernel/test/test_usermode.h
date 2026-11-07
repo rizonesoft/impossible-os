@@ -163,14 +163,37 @@ enum utest_capture_verdict {
     UTEST_CAP_SEALED = 4
 };
 
+/* What test_usermode_run() tells the BOOT, as opposed to what it tells the
+ * host. Test pass/fail never reaches here: a failing binary is a verdict for
+ * the artifacts, and the machine goes on to the desktop exactly as before.
+ *
+ * POISONED means a degraded capture-tree reap could not account for a fork
+ * constructor, which may still own the task slot (`child_pid = num_tasks`,
+ * not yet published) that the NEXT task_create_internal would claim, the
+ * cmd.exe spawn in boot_phase3 included. The caller must not create another
+ * task: boot_tests_run() halts the machine (todo/answers.md Q16, operator
+ * decision 2026-11-07). The value is sticky for the boot, and lives outside
+ * the KERNEL_TESTS block because the release stub returns OK. */
+#define UTEST_BOOT_OK        0
+#define UTEST_BOOT_POISONED  1
+
 #ifdef KERNEL_TESTS
 
 /* Run every test_*.exe found at C:\ root sequentially and collect
  * results. Logs per-binary `[UTEST]` lines + a final summary.
  * No-op (cleanly returns) if C:\ is not mounted or no matching
  * binaries exist. Safe to call repeatedly; the function is
- * stateless other than the per-call summary counters. */
-void test_usermode_run(void);
+ * stateless other than the per-call summary counters and the
+ * boot-sticky reap poison.
+ *
+ * Returns the boot verdict above. A call made while the boot is
+ * already poisoned runs NOTHING (it would spawn into the contested
+ * slot) and returns POISONED at once. */
+int test_usermode_run(void);
+
+/* The boot verdict alone, without running anything. Pure read of the
+ * boot-sticky reap poison; test_usermode_run() returns this value. */
+int test_usermode_boot_verdict(void);
 
 /* Set a filename filter to restrict which binaries the next
  * test_usermode_run() invocation will execute. NULL (or "") means
@@ -509,7 +532,8 @@ void test_usermode_capture_reap_tree_ops(uint32_t owner_pid,
  * has no definition. The unguarded callers in boot_tests.c and klog.c compile
  * against these no-ops instead, and the calls fold away. */
 
-static inline void test_usermode_run(void) {}
+static inline int test_usermode_run(void) { return UTEST_BOOT_OK; }
+static inline int test_usermode_boot_verdict(void) { return UTEST_BOOT_OK; }
 static inline void test_usermode_set_filter(const char *filter __attribute__((unused))) {}
 static inline void test_usermode_set_timeout_ms(uint32_t ms __attribute__((unused))) {}
 static inline void test_usermode_set_tap(int enable __attribute__((unused))) {}

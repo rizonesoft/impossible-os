@@ -204,6 +204,7 @@ uint32_t test_usermode_capture_owner_wire_allowance(void);
 uint32_t test_usermode_capture_run_wire_allowance(void);
 uint32_t test_usermode_capture_owner_raw_max(void);
 uint32_t test_usermode_capture_run_raw_max(void);
+void test_usermode_reap_degraded_set(int degraded);
 int test_usermode_format_report_summary(char *dst, uint32_t cap,
                                         uint32_t a_pass, uint32_t a_fail,
                                         uint32_t blocks, uint32_t records,
@@ -7651,8 +7652,42 @@ static void test_unfreezable_entry_becomes_a_counted_refusal(void)
                    "an unfreezable smoke prerequisite must abort the suite");
 }
 
+/* ---- Boot verdict: a degraded reap stops the BOOT, not only the run -- */
+
+/* todo/answers.md Q16: after a degraded reap the launcher must report POISONED
+ * so boot_tests_run() halts before boot_phase3 creates cmd.exe into the slot an
+ * unfinished fork constructor may own. The live halt and the live run are
+ * banned here, so this drives the verdict through the latch seam, which is
+ * exactly the value test_usermode_run() both gates its entry on and returns. */
+static void test_degraded_reap_poisons_the_boot_verdict(void)
+{
+    int saved = test_usermode_boot_verdict();
+
+    TEST_ASSERT_EQ(UTEST_BOOT_OK, 0,
+                   "OK must be 0: the release stub and every caller test != OK");
+    TEST_ASSERT(UTEST_BOOT_POISONED != UTEST_BOOT_OK,
+                "POISONED must be distinguishable from OK");
+
+    test_usermode_reap_degraded_set(0);
+    TEST_ASSERT_EQ(test_usermode_boot_verdict(), UTEST_BOOT_OK,
+                   "a clean task table lets the boot continue to the shell");
+
+    test_usermode_reap_degraded_set(1);
+    TEST_ASSERT_EQ(test_usermode_boot_verdict(), UTEST_BOOT_POISONED,
+                   "a degraded reap must poison the boot verdict");
+    TEST_ASSERT_EQ(test_usermode_boot_verdict(), UTEST_BOOT_POISONED,
+                   "the poison is sticky: reading it does not clear it");
+
+    test_usermode_reap_degraded_set(saved == UTEST_BOOT_POISONED);
+    TEST_ASSERT_EQ(test_usermode_boot_verdict(), saved,
+                   "the seam must restore the boot's real verdict");
+}
+
 void test_register_usermode_launcher(void)
 {
+    test_suite_register_cat("UTEST: degraded reap poisons the boot verdict",
+                            test_degraded_reap_poisons_the_boot_verdict,
+                            TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: glob NULL matches everything",
                             test_glob_null_pattern_matches_everything, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: glob literal match",

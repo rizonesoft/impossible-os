@@ -8962,7 +8962,44 @@ static const char *u_glob_next(struct glob_state *gs,
 
 /* ---- Public entry: scan + run + report ----------------------------- */
 
-void test_usermode_run(void)
+/* The boot-facing verdict. An atomic load because the latch is a plain int
+ * written by the launcher's own thread: the reader here is normally that same
+ * thread, but the accessor is public and the boot path must never act on a
+ * torn or compiler-cached value of a corruption guard. */
+int test_usermode_boot_verdict(void)
+{
+    return __atomic_load_n(&s_reap_degraded, __ATOMIC_ACQUIRE)
+               ? UTEST_BOOT_POISONED
+               : UTEST_BOOT_OK;
+}
+
+/* Test seam: drive the boot-sticky latch without a live reap. Only the
+ * launcher unit tests call it, and they restore the value they read. */
+void test_usermode_reap_degraded_set(int degraded)
+{
+    __atomic_store_n(&s_reap_degraded, degraded ? 1 : 0, __ATOMIC_RELEASE);
+}
+
+static void u_run_plan(void);
+
+int test_usermode_run(void)
+{
+    /* REFUSE TO START on a poisoned boot. The plan loop already stops at the
+     * first degraded reap, but a second call would begin a fresh run and its
+     * first task_create would take the slot the unfinished constructor
+     * claimed: the same corruption the loop break exists to prevent, one
+     * call later. Nothing is framed here on purpose, because no run starts. */
+    if (test_usermode_boot_verdict() != UTEST_BOOT_OK) {
+        klog(LOG_ERROR, "UTEST",
+             "launcher refused: an earlier reap left an unaccounted fork "
+             "constructor holding a task slot");
+        return UTEST_BOOT_POISONED;
+    }
+    u_run_plan();
+    return test_usermode_boot_verdict();
+}
+
+static void u_run_plan(void)
 {
     struct manifest_state manifest;
     struct vfs_node      *root;

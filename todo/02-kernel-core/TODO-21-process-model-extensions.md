@@ -777,6 +777,10 @@ From the stamped section 15 (2026-11-07 drain; no external blocker, verified aga
 Filed 2026-11-07 (no TODO owned this: `SIGSTOP`/`SIGTSTP` appear only in this file, and the `TODO-10-kernel-security-hardening.md` XREF in §17 and §18 names nothing there):
 - [ ] Job-control stop and continue signals: `SIGSTOP`, `SIGTSTP`, `SIGCONT` and a stopped task state. Needs the `signal_check()` delivery item above. §17 orphaned-pgroup delivery and §18 `WUNTRACED`/`WCONTINUED` wait on this.
 
+Filed 2026-11-07 from 00-infrastructure/TODO-04 §56 (its `Accepted:` stamp named a closing item as owner; TODO-04 is past the section cap, and the gap is a process-creation publication site):
+- [ ] Capture admission at `task_create_internal`, not only at `task_fork`: a captured binary's NtCreateProcess child is published with no capture owner, so the run-boundary reap never selects it
+  - `task_utest_fork_admit` (`src/kernel/sched/task.c:2412`) gates only the fork site. Apply the same admit-inherit-register shape when the creating task carries `utest_capture_active`, under `KERNEL_TESTS` only. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §56 (item: "Give the reap a state that fork publication honours")
+
 
 ---
 
