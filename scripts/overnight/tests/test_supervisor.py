@@ -288,6 +288,16 @@ def test_health_counts_one_section_once_and_flags_a_stall_and_clears_it():
         assert h["repair_needed"] is False, h
 
 
+def test_correcting_a_stamp_is_not_a_ship():
+    with tempfile.TemporaryDirectory() as d:
+        root, _ = _fixture(d)
+        _commit(root, "todo/T.md", "> **Quality reviewed:** old\n")
+        sup.check(root, False, T0 + 60)
+        _commit(root, "todo/T.md", "> **Quality reviewed:** corrected\n")
+        h = sup.check(root, False, T0 + 120)
+        assert h["sections_shipped_total"] == 1, h
+
+
 def test_health_reports_no_dollars():
     with tempfile.TemporaryDirectory() as d:
         root, _ = _fixture(d)

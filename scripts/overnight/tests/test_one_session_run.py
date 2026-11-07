@@ -246,6 +246,24 @@ def test_a_bounded_run_stops_only_once_the_section_is_stamped_and_pushed():
         assert g.ship_limit_reached(root)
 
 
+def test_refusal_correcting_a_stamp_ships_nothing():
+    import run_phase_guard as g
+    with tempfile.TemporaryDirectory() as d:
+        root, git = _bounded(d)
+        (root / "todo/T.md").write_text("x\n> **Quality reviewed:** old\n")
+        git("add", "-A")
+        git("commit", "-qm", "before the run")
+        git("push", "-q")
+        start = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                               capture_output=True, text=True).stdout.strip()
+        (root / ".claude/state/run-ship-limit").write_text(f"1 {start}\n")
+        (root / "todo/T.md").write_text("x\n> **Quality reviewed:** corrected\n")
+        git("add", "-A")
+        git("commit", "-qm", "correct a stamp")
+        git("push", "-q")
+        assert not g.ship_limit_reached(root)
+
+
 def test_refusal_an_unbounded_run_or_a_bad_limit_never_reads_as_reached():
     import run_phase_guard as g
     with tempfile.TemporaryDirectory() as d:
@@ -260,8 +278,12 @@ def test_the_bound_reaches_the_prompt_and_only_when_set():
     common = (REPO / "scripts/overnight/run-common.sh").read_text()
     assert 'prompt="$prompt$(run_limit_note)"' in common
     run = (REPO / "scripts/run.sh").read_text()
-    assert 'rm -f .claude/state/sequencer-fixpoint "$RUN_SHIP_LIMIT"' in run, \
-        "an old limit must not bound the next run"
+    start = run[run.index("  start)"):run.index("  attach)")]
+    assert 'rm -f .claude/state/sequencer-fixpoint "$RUN_SHIP_LIMIT"' not in start, \
+        "a restart must keep the run's bound"
+    assert "keeping this run's bound" in start
+    stop = run[run.index("  stop)"):]
+    assert 'rm -f "$RUN_MARKER" "$RUN_SHIP_LIMIT"' in stop, "an old limit must not bound the next run"
     r = subprocess.run(["bash", str(REPO / "scripts/run.sh"), "start", "--ships", "0"],
                        capture_output=True, text=True, timeout=60,
                        env={**os.environ, "RUN_SESSION": "no-such-test-session"})

@@ -28,13 +28,19 @@ case "${1:-status}" in
       exit 1
     fi
     mkdir -p .claude/state
-    rm -f .claude/state/sequencer-fixpoint "$RUN_SHIP_LIMIT"
+    rm -f .claude/state/sequencer-fixpoint
+    # A bound belongs to the run, so a restart keeps it and its starting point, and only
+    # `stop` clears it. Recovering from a crash must not turn a bounded run unbounded.
     if [ "${2:-}" = "--ships" ]; then
       case "${3:-}" in
         ''|*[!0-9]*|0) echo "usage: run.sh start [--ships N]" >&2; exit 2 ;;
       esac
-      # Counted from here, so the sections it ships are the only ones that count.
-      printf '%s %s\n' "$3" "$(git rev-parse HEAD)" > "$RUN_SHIP_LIMIT"
+      if [ -s "$RUN_SHIP_LIMIT" ]; then
+        echo "keeping this run's bound: $(awk 'NR==1{print $1}' "$RUN_SHIP_LIMIT") section(s). To change it: run.sh stop first."
+      else
+        # Counted from here, so the sections it ships are the only ones that count.
+        printf '%s %s\n' "$3" "$(git rev-parse HEAD)" > "$RUN_SHIP_LIMIT"
+      fi
     fi
     date -Is > "$RUN_MARKER"
     if tmux has-session -t "$RUN_T" 2>/dev/null; then
@@ -61,7 +67,7 @@ case "${1:-status}" in
       echo "REFUSED: the run cannot stop itself. Stop it from your own shell." >&2
       exit 1
     fi
-    rm -f "$RUN_MARKER"
+    rm -f "$RUN_MARKER" "$RUN_SHIP_LIMIT"
     tmux kill-session -t "$HEART_T" 2>/dev/null || true
     tmux kill-session -t "$RUN_T" 2>/dev/null || true
     python3 .claude/hooks/run_phase_guard.py clear "stopped via run.sh" >/dev/null 2>&1 || true

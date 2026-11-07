@@ -32,6 +32,7 @@ MACHINERY_PREFIXES = (".claude/hooks/", ".claude/skills/", ".claude/gate-modes.j
                       "scripts/overnight/", ".githooks/")
 # The last stamp a section gets. Counting Verified too read one section as two ships.
 SHIP_RE = re.compile(r"^\+> \*\*Quality reviewed:\*\*", re.M)
+UNSHIP_RE = re.compile(r"^-> \*\*Quality reviewed:\*\*", re.M)
 # deadline: each git call is bounded here. Hooks are off for an undo, so these are quick.
 GIT_TIMEOUT = 60
 PUSH_TIMEOUT = 300
@@ -61,7 +62,10 @@ def is_machinery(path: str) -> bool:
 def ships_in(root: Path, sha: str) -> int:
     """Section-ship stamps a commit adds under todo/."""
     r = git(root, "show", "--format=", "--unified=0", sha, "--", "todo")
-    return len(SHIP_RE.findall(r.stdout)) if r.returncode == 0 else 0
+    if r.returncode != 0:
+        return 0
+    # Net, because correcting a stamp replaces it and ships nothing.
+    return max(0, len(SHIP_RE.findall(r.stdout)) - len(UNSHIP_RE.findall(r.stdout)))
 
 
 def alert(root: Path, message: str) -> None:

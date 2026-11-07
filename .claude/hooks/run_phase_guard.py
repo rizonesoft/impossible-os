@@ -1630,14 +1630,17 @@ def ship_limit_reached(root):
     doubt reads as not reached, so the guard keeps the session working."""
     try:
         limit, start = (root / ".claude/state/run-ship-limit").read_text().split()[:2]
-        r = subprocess.run(["git", "-C", str(root), "log", "-p", "--format=", "--unified=0",
+        r = subprocess.run(["git", "-C", str(root), "diff", "--unified=0",
                             f"{start}..@{{u}}", "--", "todo"],
                            capture_output=True, text=True, timeout=30)
     except (OSError, ValueError, subprocess.SubprocessError):
         return False  # fail-direction: an unbounded or unreadable run keeps going
     if r.returncode != 0:
         return False
-    return len(re.findall(r"(?m)^\+> \*\*Quality reviewed:\*\*", r.stdout)) >= int(limit)
+    # Net, because correcting a stamp replaces it and ships nothing.
+    added = len(re.findall(r"(?m)^\+> \*\*Quality reviewed:\*\*", r.stdout))
+    removed = len(re.findall(r"(?m)^-> \*\*Quality reviewed:\*\*", r.stdout))
+    return added - removed >= int(limit)
 
 
 def handle_stop():
