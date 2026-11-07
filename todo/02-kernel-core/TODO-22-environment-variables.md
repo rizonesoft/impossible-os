@@ -281,7 +281,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > **Verified:** 2026-07-13 | commit `ec1df5dd` | 3/3 items | build OK | tests 1343/1343 PASS, smoke PASS (boot 3.18s)
 > **Accepted:** [C] range-only `ProbeForWrite`/`ProbeForRead` + non-fault-recoverable `copy_to_user`/`copy_from_user` is a kernel-crash / kernel-write exposure for the ring-3 path (systemic to every Probe + `copy_*_user` syscall, incl. the reviewed `NtQueryCurrentDirectory`; not new in this class). -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §13` (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 392) -- re-enters when fault-recoverable `try_copy_*_user` lands.
 > **Accepted:** [M] name/value size limits are enforced in UTF-8 BYTES (`ENV_NAME_MAX`/`ENV_VALUE_MAX`, matching the UTF-8 storage layer), so a UTF-16 input within the Windows CHARACTER limit but over the byte cap is cleanly rejected (`STATUS_NAME_TOO_LONG`), not corrupted. -> XREF: §10 (item: "reconcile UTF-16 character-count limits with UTF-8 storage byte caps").
-> **Accepted:** [H] aggregate 1 MiB per-process env quota not enforced; §5 makes it user-reachable via `NtSetEnvironmentVariable` (env is already bounded to ~16 MiB/process by `ENV_MAX_ENTRIES`, so not unbounded) (RESOLVED 2026-07-14 by §10 commit `90a3b1fa`: `env_set`/`env_adopt_block`/`env_parse_block` reject a total block over `ENV_BLOCK_MAX` (1 MiB) with `ENV_ERR_NOSPACE`, klog warns once past 256 KiB) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §10 (item: "Per-process block-size DoS cap" at line 421)
+> **Accepted:** [H] aggregate 1 MiB per-process env quota not enforced; §5 makes it user-reachable via `NtSetEnvironmentVariable` (env is already bounded to ~16 MiB/process by `ENV_MAX_ENTRIES`, so not unbounded) (RESOLVED 2026-07-14 by §10 commit `90a3b1fa`: `env_set`/`env_adopt_block`/`env_parse_block` reject a total block over `ENV_BLOCK_MAX` (1 MiB) with `ENV_ERR_NOSPACE`, klog warns once past 256 KiB) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §10 (item: "Per-process block-size DoS cap" at line 452)
 > **Accepted:** [M] user-reachable env syscalls add a per-call caller to the unlocked `pmm_alloc_contiguous` for values > 4 KiB (mitigated: query/set now size to the value, so only genuinely-large values hit PMM) -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md` §1 (item: "PMM bitmap SMP locking" at line 103)
 > **Accepted:** [L] user-mode `ProbeForWrite`/`copy_*_user` branches are unit-tested only via KernelMode `ssdt_dispatch` (user pages are awkward in-kernel) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §6 (item: "`GetEnvironmentVariableW` ... calls `NtQueryEnvironmentVariable` directly")
 > **Quality reviewed:** 2026-07-13 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2M fixed, 1H+1M+1L accepted-XREF | scope: kernel-code-quality
@@ -648,7 +648,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Canonical doc** -- `include/kernel/env.h` "s16: elevation security" contract block.
 > - **Scope boundary** -- §16 owns the blocklist + read gate + strip primitive; the transition INVOCATION is owned by TODO-15 (UAC) and TODO-12 §7 (child env copy); Linux `LD_*` semantics owned by the compat layer (TODO-23).
 > **Verified:** 2026-07-15 | commit `e6c0c067` + review fixes | 5/6 items | build OK | tests 1899 abi + 1197 security PASS
-> **Accepted:** [L] `env_is_secure_context` reads `task->token` with an ACQUIRE load but no teardown-safe pin (foreign-task reap could UAF; also a plain-writer/atomic-reader mismatch) -- pre-existing kernel-wide pattern, single-cursor-scheduler-safe today, does not fire (all callers pass a live task) -> XREF: 02-kernel-core/TODO-15 §4 (item: "Teardown-safe primary-token READ pin" at line 333)
+> **Accepted:** [L] `env_is_secure_context` reads `task->token` with an ACQUIRE load but no teardown-safe pin (foreign-task reap could UAF; also a plain-writer/atomic-reader mismatch) -- pre-existing kernel-wide pattern, single-cursor-scheduler-safe today, does not fire (all callers pass a live task) -> XREF: 02-kernel-core/TODO-15 §4 (item: "Teardown-safe primary-token READ pin" at line 337)
 > **Quality reviewed:** 2026-07-15 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 4H+1M fixed, 1L accepted-XREF | scope: kernel-code-quality + kernel-quality-auditor (no C/H)
 
 ---
@@ -674,7 +674,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Scope boundary** -- §17 owns the lookup/register primitives; §7 owns the shell `shell_find_command` wiring; TODO-03 owns installer callers; TODO-15 §5 owns real registry-DACL authorization (elevation gate stands in until it lands).
 > **Verified:** 2026-07-15 | commit `2ca1683f` | 4/5 items | build OK | tests 5 App Paths suites PASS
 > **Accepted:** [H] non-atomic default+`Path` pair (concurrent register/lookup can interleave -- lock-free-registry class) -> XREF: 02-kernel-core/TODO-14 §14 (item: "Batched atomic multi-value write under one `reg_lock` hold" at line 663)
-> **Deferred:** [M] `shell_find_command` App Paths fallback wiring (no kernel shell exists yet) -> XREF: 02-kernel-core/TODO-22 §7 (item: "`shell_find_command(name, out_path, max)`" at line 329)
+> **Deferred:** [M] `shell_find_command` App Paths fallback wiring (no kernel shell exists yet) -> XREF: 02-kernel-core/TODO-22 §7 (item: "`shell_find_command(name, out_path, max)`" at line 330)
 > **Quality reviewed:** 2026-07-15 | Codex 9x (design + adversarial + consistency + perf + re-adversarial) | 5H+6M+1L fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -722,7 +722,7 @@ Two latent defects in the SHIPPED §3 UTF-16 expansion path (`nt_rtlenv.c`), fix
 > - **Canonical doc:** [`include/kernel/nt/nt_rtlenv.h`](../../include/kernel/nt/nt_rtlenv.h) (cap rationale + return set).
 > - **Scope boundary:** §20 owns the three BLOCKING gates review filed there (lookup-work bound, foreign-block extent, the expand-path 2 MiB PMM alloc the raise made live) plus the at-cap allocation test; §21 owns the four Rtl exports and stays non-user-reachable until §20 clears -- nothing here is user-reachable until §21 wires an export; §3 owns the expansion primitives.
 > **Verified:** 2026-07-15 | commit `b0c184e0` + review fixes | 4/5 items | build OK | tests 21290 kernel + 16 user-mode PASS
-> **Deferred:** [H] the raise took the NULL-env path's worst case from 128 KiB to 2 MiB (`pmm_alloc_contiguous(512)`) under the PER-TASK `environ_lock`, which serializes nothing across tasks, so two CPUs can double-allocate the same frames -> XREF: 02-kernel-core/TODO-22 §20 (item: "**BLOCKING before a user-reachable export:** expand path takes 2 MiB" at line 700)
+> **Deferred:** [H] the raise took the NULL-env path's worst case from 128 KiB to 2 MiB (`pmm_alloc_contiguous(512)`) under the PER-TASK `environ_lock`, which serializes nothing across tasks, so two CPUs can double-allocate the same frames -> XREF: 02-kernel-core/TODO-22 §20 (item: "**BLOCKING before a user-reachable export:** expand path takes 2 MiB" at line 738)
 > **Accepted:** [M] the unsynchronized PMM frame bitmap that lets the above double-allocate is a pre-existing kernel-wide gap this section AMPLIFIES (32 -> 512 frames), not originates -> XREF: 03-memory-concurrency/TODO-03 §1 (item: "**PMM bitmap SMP locking**" at line 103)
 > **Quality reviewed:** 2026-07-15 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 2M+3L fixed, 3H+1M deferred-XREF, 1M accepted-XREF | scope: kernel-code-quality + kernel-quality-auditor
 
@@ -854,7 +854,7 @@ The `env.c` half of the completeness work §20's review deferred, split from the
 > - Canonical doc: `include/kernel/nt/nt_rtlenv.h` (per-entry contracts) + `include/kernel/env.h` (substrate contracts).
 > - Scope boundary: §23 owns block-LIFECYCLE adoption over `env.c`; §24 owns the counted-block boundary probe+copy + expansion completeness; §25 owns the counted (non-`_U`) Rtl read forms.
 > **Verified:** 2026-07-18 | commit `9f43238d` | 12/12 items | build OK | tests 2124/2124 + 16 user PASS, 0 leaked (KVM)
-> **Accepted:** [L] restore-token cap 65536 WCHARs < 1 MiB store cap; a 64K-1M-WCHAR env fails `RtlSetCurrentEnvironment` on the old-store serialize (reason: pre-existing env_create_block format cap, gated) -> XREF: 02-kernel-core/TODO-22 §24 (item: "Restore-token cap parity" at line 840)
+> **Accepted:** [L] restore-token cap 65536 WCHARs < 1 MiB store cap; a 64K-1M-WCHAR env fails `RtlSetCurrentEnvironment` on the old-store serialize (reason: pre-existing env_create_block format cap, gated) -> XREF: 02-kernel-core/TODO-22 §24 (item: "Restore-token cap parity" at line 879)
 > **Quality reviewed:** 2026-07-18 | Codex 7x (design, adversarial x2, re-adversarial x2, consistency, perf) | 1H+6M+1L fixed, 1L accepted-XREF, 1L rejected | scope: kernel-code-quality + kernel-quality-auditor + concurrency-evidence-mapper
 
 ---
@@ -913,7 +913,7 @@ The counted `RtlQueryEnvironmentVariable` / `RtlExpandEnvironmentStrings` (raw p
 > - **Canonical doc:** [`include/kernel/nt/nt_rtlenv.h`](../../include/kernel/nt/nt_rtlenv.h) (counted entry contracts, ReturnLength conventions, source-policy ceiling).
 > - **Scope boundary:** §25 owns the counted (non-`_U`) READ forms over `nt_rtlenv.c`; §23 owns block-lifecycle adoption; §24 owns the foreign-block probe+copy boundary + expansion completeness.
 > **Verified:** 2026-07-18 | commit `c846428f` | 8/8 items | build OK | tests 2162/2162 kernel + 16 user PASS, 0 leaked (KVM)
-> **Accepted:** [M] two-pass agreement misses an equal-length equal-cost concurrent `Source` mutation (reason: pre-existing documented limitation shared by all forms, not user-reachable) -> XREF: 02-kernel-core/TODO-22 §24 (item: "Snapshot `Source` into a private kernel buffer" at line 832)
+> **Accepted:** [M] two-pass agreement misses an equal-length equal-cost concurrent `Source` mutation (reason: pre-existing documented limitation shared by all forms, not user-reachable) -> XREF: 02-kernel-core/TODO-22 §24 (item: "Snapshot `Source` into a private kernel buffer" at line 871)
 > **Quality reviewed:** 2026-07-18 | Codex 7x (design, adversarial x2, re-adversarial x2, consistency, perf) | 1H+4M+1L fixed, 1M accepted-XREF | scope: kernel-code-quality + kernel-quality-auditor
 
 ---

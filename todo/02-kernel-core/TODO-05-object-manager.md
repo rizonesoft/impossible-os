@@ -14,7 +14,7 @@ title: "TODO-05 -- Object Manager"
 > **Goal:** Implement the kernel Object Manager (ObXxx layer) -- the unified substrate that gives every kernel resource (files, processes, threads, events, mutexes, semaphores, registry keys, sections) a typed header, reference-counted lifetime, named namespace entry, security descriptor, and per-process handle-table slot. Without this, Win32 `HANDLE` semantics are impossible and resource leaks are unavoidable. This is the single most foundational Win32 prerequisite in the kernel.
 
 > [!IMPORTANT]
-> **Current state:** Object Manager is feature-complete (§1-§15 all implemented). OBJECT_HEADER, OBJECT_TYPE, reference counting, handle tables, namespace, all major object types, security descriptors, NtClose/NtDuplicateObject/NtQueryObject, handle inheritance, namespace browser API, per-type statistics (`ob.c`), object callbacks (`ob_callback.c`), per-process handle quota (`handle_table.c`), and handle tracing/leak detection (`ob_trace.c`) are implemented and verified on QEMU WHPX + TCG. The numbered sections are shipped old-system work pending the dual-stamp (Verified + Quality reviewed) review pass.
+> **Current state:** Object Manager core is in place, but §1, §3-§7, §9-§11, §14 and §15 were reopened 2026-11-07: each held shipped subsets plus open items, parked on stamps naming their own section or on a kernel-image ceiling that no longer applies. The [Critical] handle lookup race in §3 is still open. OBJECT_HEADER, OBJECT_TYPE, reference counting, handle tables, namespace, all major object types, security descriptors, NtClose/NtDuplicateObject/NtQueryObject, handle inheritance, namespace browser API, per-type statistics (`ob.c`), object callbacks (`ob_callback.c`), per-process handle quota (`handle_table.c`), and handle tracing/leak detection (`ob_trace.c`) are implemented and verified on QEMU WHPX + TCG. The numbered sections are shipped old-system work pending the dual-stamp (Verified + Quality reviewed) review pass.
 
 ## Inputs
 
@@ -51,21 +51,21 @@ title: "TODO-05 -- Object Manager"
 
 | ⭐  | Order | Deliverable                                                   | Depends On    | Status |
 | --- | :---: | ------------------------------------------------------------- | ------------- | :----: |
-| 💎  |   1   | OBJECT_HEADER and OBJECT_TYPE infrastructure                  | --            |  [x]   |
+| 💎  |   1   | OBJECT_HEADER and OBJECT_TYPE infrastructure                  | --            |  [ ]   |
 | 💎  |   2   | Reference counting and object lifetime                        | §1            |  [x]   |
-| 💎  |   3   | Per-process handle table                                      | §2            |  [/]   |
-| 💎  |   4   | Object namespace (directory + symbolic link)                  | §2            |  [/]   |
-| 💎  |   5   | File, Process, Thread object types                            | §3, §4        |  [/]   |
-| 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4        |  [/]   |
-| 💎  |   7   | Section (shared memory) object type                           | §3, §4        |  [/]   |
+| 💎  |   3   | Per-process handle table                                      | §2            |  [ ]   |
+| 💎  |   4   | Object namespace (directory + symbolic link)                  | §2            |  [ ]   |
+| 💎  |   5   | File, Process, Thread object types                            | §3, §4        |  [ ]   |
+| 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4        |  [ ]   |
+| 💎  |   7   | Section (shared memory) object type                           | §3, §4        |  [ ]   |
 | 💎  |   8   | Security descriptor integration                               | §1, T15 §1,§3 |  [x]   |
-| 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3, T15 §4    |  [/]   |
-| 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5        |  [/]   |
-| ⭐  |  11   | Unified kernel-user namespace browser API                     | §4            |  [/]   |
+| 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3, T15 §4    |  [ ]   |
+| 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5        |  [ ]   |
+| ⭐  |  11   | Unified kernel-user namespace browser API                     | §4            |  [ ]   |
 | 💎  |  12   | Per-type object and handle statistics                         | §1, §2, §3    |  [x]   |
 | 💎  |  13   | Object callbacks -- handle operation filtering                | §3, §9        |  [x]   |
-| 💎  |  14   | Per-process handle quota                                      | §3            |  [x]   |
-| ⭐  |  15   | Handle tracing and leak detection                             | §2, §12       |  [x]   |
+| 💎  |  14   | Per-process handle quota                                      | §3            |  [ ]   |
+| ⭐  |  15   | Handle tracing and leak detection                             | §2, §12       |  [ ]   |
 
 > 💎 = parity -- Windows NT ObXxx and Linux kobject/fd_table both provide these capabilities.
 > ⭐ = exclusive -- built-in handle/reference leak detection integrated with klog, providing
@@ -95,9 +95,7 @@ Every kernel object body is preceded in memory by an `OBJECT_HEADER`. Types are 
 - [x] Add `OB_HEADER_FROM_BODY(ptr)` macro -- subtracts header size from a body pointer
 - [x] Register built-in type singletons at ObInit time: `ObpFileType`, `ObpProcessType`, `ObpThreadType`, `ObpDirectoryType`, `ObpSymlinkType`, `ObpEventType`, `ObpMutexType`, `ObpSemaphoreType`, `ObpSectionType`, `ObpTimerType`
 - [x] Commit: `"kernel: ob -- OBJECT_HEADER and OBJECT_TYPE infrastructure"`
-- [/] **Budget the `g_ob_types` table.** 64 slots, append-only, no release path; ~37/64 in one boot with test throwaways, and it tipped 32/32 once. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §13`
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - The cross-TODO owner is already named in the item text above and remains the primary dependency.
+- [ ] **Budget the `g_ob_types` table.** 64 slots, append-only, no release path; ~37/64 in one boot with test throwaways, and it tipped 32/32 once. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §13`
 
 > **Notes:**
 > - `OBJECT_HEADER` (`ob.h`) + `OBJECT_TYPE` (`ob_type.h`) are the typed-header substrate: `ob_create_type` registers type singletons, `ob_alloc_object` combined-allocates header+body, `OB_HEADER_FROM_BODY`/`OB_BODY_FROM_HEADER` convert.
@@ -127,7 +125,7 @@ Every kernel object body is preceded in memory by an `OBJECT_HEADER`. Types are 
 > - Permanent objects (namespace roots, info files, process/thread pseudo-objects) are torn down by `ObMakeTemporaryObject` + a final deref; the brief ref_count==0 restore window is benign (only at teardown).
 > - Full lookup-then-reference atomicity (the memory-validity half) lands with the handle-table lock; validated by `test_ob.c` (`TEST_CAT_OB`).
 > **Verified:** 2026-06-21 | ship `44db565a` + review fixes | 5/5 items | build OK | tests 323/323 PASS (SUITE=ob)
-> **Deferred:** [Critical] handle lookup-then-reference is not atomic (ObpLookupHandle returns an unreferenced entry; a concurrent ObpFreeHandle can free the object before ObReferenceObject runs -- the safe-ref primitive closes count-0 resurrection but not the freed-memory window) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 157)
+> **Deferred:** [Critical] handle lookup-then-reference is not atomic (ObpLookupHandle returns an unreferenced entry; a concurrent ObpFreeHandle can free the object before ObReferenceObject runs -- the safe-ref primitive closes count-0 resurrection but not the freed-memory window) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 153)
 > **Quality reviewed:** 2026-06-21 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 1H+2M fixed, 1Critical+2L deferred | scope: kernel-code-quality
 
 ---
@@ -147,14 +145,12 @@ The handle table maps opaque `HANDLE` integer values to (object pointer + grante
 - [x] Handle table freed at process exit: force-close every slot via `ObpFreeHandle`, clearing `OBJ_PROTECT_CLOSE` first so rundown ignores it (that bit only guards an explicit NtClose). Test: `test_ob_handle_table_destroy_forces_protected_close`
 - [x] Special kernel pseudo-handles: `INVALID_HANDLE_VALUE (-1)`, `CURRENT_PROCESS (-2)`, `CURRENT_THREAD (-3)` -- resolve in `ObpLookupHandle` without a table entry
 - [x] Commit: `"kernel: ob -- per-process handle table"`
-- [/] **Wire HandleAttributes through `ObpAllocateHandle` for `NtXxxEx` syscalls**:
+- [ ] **Wire HandleAttributes through `ObpAllocateHandle` for `NtXxxEx` syscalls**:
       - The `attrs` parameter is already plumbed through `ObpAllocateHandle` and stored in `HANDLE_TABLE_ENTRY.attributes`, but the `NtXxxEx` syscalls (`NtOpenProcessTokenEx`, `NtOpenThreadTokenEx`, `NtOpenKeyEx`, `NtCreateFileEx`, etc.) currently discard their `HandleAttributes` argument (see `src/kernel/nt/nt_token.c::NtOpenProcessTokenEx_handler` which explicitly `(void)a3`).
       - Update every `NtXxxEx` handler to pass validated `HandleAttributes` into `ObpAllocateHandle` (via library function or directly).
       - Validate against `OBJ_VALID_ATTRIBUTES = 0x000007F2`; reject with `STATUS_INVALID_PARAMETER` for unsupported bits.
       - This auto-closes TODO-12 §16 Accepted #3 (NtOpenProcessTokenEx HandleAttributes discarded).
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
-- [/] **Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive**
+- [ ] **Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive**
       - That atomically (under a per-handle-table lock or via RCU-style load with refcount barrier): (1) validates index bounds and `entry->object != NULL`; (2) checks `entry->object`'s type matches `required_type` if non-NULL; (3) calls `ObReferenceObject(entry->object)` BEFORE releasing any concurrency guarantee so the body cannot be freed by a concurrent `ObpFreeHandle`; (4) stores `entry->granted_access` for the caller to enforce required access.
       - Callers release with `ObDereferenceObject(body)` when done.
       - Retrofit every `src/kernel/nt/nt_*.c` handler that currently does `entry = ObpLookupHandle(...); so = (T *)entry->object;` -- including `nt_sync.c` (all `sync_lookup` callers plus `wait_on_handle`/`NtWaitForMultipleObjects` Phase A/`NtSignalAndWait`, whose lookup-then-safe-ref pin still has the freed-header window), the whole of `nt_section.c` (NtMapViewOfSection, NtUnmapViewOfSection, NtExtendSection, NtQuerySection, NtAreMappedFilesTheSame via `section_copy_backing_path`), `nt_timer.c` (`resolve_timer_handle` used by NtSetTimer/NtCancelTimer/NtQueryTimer/NtSetTimerEx), `nt_registry.c`, `nt_namespace.c`, `nt_token.c`, `nt_process.c`, and `nt_alpc.c` via `src/kernel/ipc/alpc_port.c`'s `AlpcAcceptConnectPort` + `AlpcDisconnectPort` (both currently use `ObpLookupHandle` + explicit `ObReferenceObject` which has a close-race window).
@@ -162,31 +158,24 @@ The handle table maps opaque `HANDLE` integer values to (object pointer + grante
       - Also retrofit `NtQueryDirectoryObject` in `src/kernel/ob/ob.c:437` which Codex flagged 2026-04-22 during TODO-03 §9 review: the current code captures `entry->object` unlocked, then calls `ObReferenceObject(dir)` -- the window between capture and ref still races `NtClose` on another CPU.
       - Also retrofit `NtDuplicateObject` + `NtQueryObject` in `src/kernel/ob/ob.c` (the §9 review 2026-06-21 fixed the deterministic same-table-grow UAF and the access-escalation in `NtDuplicateObject`; the residual concurrent-close lookup-then-deref race in both stays owned here).
       - This auto-closes TODO-12 §18 Accepted (initial-handle-lookup UAF race), TODO-12 §19 Accepted (timer handle UAF race), TODO-05 §2 Accepted (AlpcAcceptConnectPort/Disconnect handle-lookup race), D00 T03 §9 Accepted (NtQueryDirectoryObject residual handle-close race), and is a prerequisite for the `ObpReferenceObjectByHandle` SeAccessCheck integration already referenced in TODO-15 §5.
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
-- [/] **Add per-task view-base index** to eliminate full handle-table walks on unmap and mapped-file-compare.
+  - Checked in the code 2026-11-07: the name appears only in comments (`ob.c:402`, `ob.c:463`, `ob.c:513`, `ob.h:128`), and `HANDLE_TABLE` has no lock (`handle_table.h:45`). The race stamped [Critical] on section 2 is fully open.
+  - 31 bare `ObpLookupHandle` callers remain outside tests. `alpc_port.c:888`, `ob.c:439` and `ob.c:738` pin with `ObReferenceObject` after the lookup; `nt_sync.c:762`, `:874`, `:1004` use `ObReferenceObjectSafe`, which its own comment says needs the header memory kept valid. `ob_section.c:341` and `:511` take no pin at all.
+  - Nothing external blocks this: the primitive needs `spinlock_t` only. Two table walks bypass the lookup and must take the same lock: `ob_section.c:548` and `handle_table.c:391`.
+- [ ] **Add per-task view-base index** to eliminate full handle-table walks on unmap and mapped-file-compare.
       - `ObUnmapViewOfSectionByBase` (`src/kernel/ob/ob_section.c:414`) and `ObAreMappedFilesTheSame` (`ob_section.c:604,652`) both iterate every handle-table entry and then every SECTION_MAX_VIEWS slot per section -- O(handle_capacity × SECTION_MAX_VIEWS) per call.
       - Add a small hash or sorted array keyed by `(task_pid, base_addr)` -> `{SECTION_OBJECT *, view_index}` attached to `struct task` (or installed at task creation beside `handle_table`).
       - Update on `ObMapViewOfSectionFull` (insert) and `ObUnmapViewOfSection`/`ObUnmapViewOfSectionByBase` (remove).
       - Both callers become near-O(1).
       - This auto-closes TODO-12 §18 Accepted (handle-table scan scalability).
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
-- [/] **Walk section views on task_cleanup to drop leaked view pins.**
+- [ ] **Walk section views on task_cleanup to drop leaked view pins.**
       - `task_cleanup` in [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) destroys the handle table but does NOT walk per-task section views, so any task that dies without calling `ObUnmapViewOfSectionByBase` (or `sys_unmapview` on the INT 0x80 path) leaks the `ObReferenceObject(so)` pin that `ObMapViewOfSectionFull` took, keeping the section backing PMM frames pinned until reboot.
       - Additionally, `ObUnmapViewOfSectionByBase` today finds the view by scanning the HANDLE TABLE for live section handles -- once the caller closes the section handle, the view becomes unreachable even though its pin still exists.
       - Add a per-task view index (either the one from the preceding bullet, or a separate array) that `task_cleanup` walks after `ob_handle_table_destroy`, calling `ObUnmapViewOfSectionByBase` (or an inner helper that takes the SECTION_OBJECT pointer directly) for each still-mapped view.
       - XREFs: `00-infrastructure/TODO-04-usermode-test-framework.md §11` introduced `SYS_UNMAPVIEW` (46) and explicitly documents the "must unmap before close" ordering as a workaround for this gap.
       - Codex quality 2026-04-21 M2.
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
 
-- [/] **Give `HANDLE_TABLE` an owning-task back-pointer** so `ObpAllocateHandle` charges `total_handles_created` to the table owner, not `task_current()` (cross-process `NtDuplicateObject` mis-attributes; §14). Lands with the item-17 lock pass.
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
-- [/] **Push `RLIMIT_NOFILE` into `handle_table.handle_limit` under the table lock** (encodings invert; `quota_policy_effective_handle_limit()` reconciles READ-only); item-17 lock pass. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §8`
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - The cross-TODO owner is already named in the item text above and remains the primary dependency.
+- [ ] **Give `HANDLE_TABLE` an owning-task back-pointer** so `ObpAllocateHandle` charges `total_handles_created` to the table owner, not `task_current()` (cross-process `NtDuplicateObject` mis-attributes; §14). Lands with the item-17 lock pass.
+- [ ] **Push `RLIMIT_NOFILE` into `handle_table.handle_limit` under the table lock** (encodings invert; `quota_policy_effective_handle_limit()` reconciles READ-only); item-17 lock pass. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §8`
 
 > [!WARNING]
 > **Handle-table lock contract (from the 2026-06-21 Codex design review -- implement `ObpReferenceObjectByHandle` to THIS spec, a naive "lock everything" deadlocks):**
@@ -200,7 +189,6 @@ The handle table maps opaque `HANDLE` integer values to (object pointer + grante
 > - SMP-safety hardening (per-handle-table lock + `ObpReferenceObjectByHandle` atomic lookup-then-ref, item 17) is DEFERRED to a focused pass; the corrected lock contract from the 2026-06-21 Codex design review is in the WARNING callout above.
 > - Perf items (per-task view-base index, `task_cleanup` view-pin walk) and the `NtXxxEx` HandleAttributes wiring also remain open `[ ]` here.
 > - This deferral is why `ObReferenceObjectSafe` (§2) closes only count-0 resurrection, not the freed-memory window; that window closes when item 17 lands.
-> **Deferred:** [Critical] handle lookup-then-reference not atomic + SMP-hardening/perf items need a focused implementation pass (design contract in the §3 WARNING callout) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 157)
 
 ---
 
@@ -213,26 +201,19 @@ A hierarchical in-memory namespace rooted at `\`. Directories hold named object 
 - [x] Implement `ObInsertObject(object, name, directory)` -- adds a named entry; fails if name exists and object is not a permanent replacement
 - [x] Implement `ObLookupObjectByName(path, type, access, &result)` -- full parse walk calling `type->on_parse` at each node; calls `ObReferenceObject` on success
 - [x] Implement `OBJECT_SYMBOLIC_LINK` body type -- target string; `on_parse` redirects the walk
-- [/] Named-object create must be transactional: roll back the `ObInsertObject` publication when handle allocation fails, so a failed create leaves no persistent named object. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7`
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - The cross-TODO owner is already named in the item text above and remains the primary dependency.
+- [ ] Named-object create must be transactional: roll back the `ObInsertObject` publication when handle allocation fails, so a failed create leaves no persistent named object. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7`
 - [x] Create the root namespace at ObInit: `\`, `\Device`, `\KernelObjects`, `\DosDevices`, `\BaseNamedObjects`, `\Sessions\0\BaseNamedObjects` (alias for user-mode named objects)
 - [x] `C:` → `\Device\HardDisk0\Partition0` via symlink in `\DosDevices`
 - [x] Commit: `"kernel: ob -- object namespace directory and symlinks"`
-- [/] **Give `Directory` an `on_delete` draining its entry list.** Registered bare at `ob.c:809`, so freeing a non-empty directory leaks every entry node and child ref. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §13`
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - The cross-TODO owner is already named in the item text above and remains the primary dependency.
-- [/] **Status-bearing insertion primitive.** `ObInsertObject` returns 0/-1 (`ob_ns.h:65`), conflating collision, capacity, OOM and quota refusal. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §13`
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - The cross-TODO owner is already named in the item text above and remains the primary dependency.
-- [/] **Cache parent-directory + entry linkage in `OBJECT_HEADER` so teardown avoids path relookup.**
+- [ ] **Give `Directory` an `on_delete` draining its entry list.** Registered bare at `ob.c:809`, so freeing a non-empty directory leaks every entry node and child ref. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §13`
+- [ ] **Status-bearing insertion primitive.** `ObInsertObject` returns 0/-1 (`ob_ns.h:65`), conflating collision, capacity, OOM and quota refusal. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §13`
+  - PARTLY SHIPPED: `ObInsertObjectEx` returns collision, resource and invalid-parameter statuses (`ob_ns.c:156`), landed by `02-kernel-core/TODO-25` §13. Remaining: only `knf.c:314` calls it, about 20 callers still use the 0/-1 wrapper, and no status reports a quota refusal, which is what the TODO-25 stamp waits on.
+- [ ] **Cache parent-directory + entry linkage in `OBJECT_HEADER` so teardown avoids path relookup.**
       - Today `ob_thread_mark_dead()` ([`src/kernel/ob/ob_thread.c:90-113`](../../src/kernel/ob/ob_thread.c)) and `ob_process_mark_dead()` ([`src/kernel/ob/ob_process.c:89-108`](../../src/kernel/ob/ob_process.c)) do `ObLookupObjectByName()` (path walk over `\KernelObjects\Thread<pid>.<tid>`) plus `ObpLookupDirectory()` plus `ObpRemoveFromDirectory()` linear walk -- two O(n) namespace scans under IRQ-off spinlock on every thread exit.
       - `thread_exit()` calls this on the scheduler hot path; cost scales with namespace size and pushes IRQ-off latency up under kthread churn.
       - Fix: add two fields to `OBJECT_HEADER` -- `OBJECT_DIRECTORY *name_dir` and `OBJECT_DIRECTORY_ENTRY *name_entry` -- populated by `ObInsertObject()` and cleared by `ObpRemoveFromDirectory()`.
       - `mark_dead` paths then unlink directly in O(1) without any path/list walk.
       - Codex quality 2026-04-22 M finding from D00 T03 §9 review.
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
 
 > **Notes:**
 > - In-memory hierarchical namespace (`ob_ns.c`): `OBJECT_DIRECTORY` (per-dir spinlock + entry list) + `OBJECT_SYMBOLIC_LINK`; insert/lookup take the directory ref under the lock before publishing and return a referenced object.
@@ -241,7 +222,6 @@ A hierarchical in-memory namespace rooted at `\`. Directories hold named object 
 > - Validation: `test_ob.c` (`TEST_CAT_OB`) incl. new `test_ob_symlink_cycle_bounded`; `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob).
 > - Open: O(1) teardown caching (deferred perf item below) still `[ ]`; namespace functionality is complete.
 > **Verified:** 2026-06-21 | ship `44db565a` + review fixes | 8/9 items | build OK | tests 327/327 PASS (SUITE=ob)
-> **Deferred:** [M] thread/process teardown does two O(n) namespace scans under an IRQ-off lock on every exit (scheduler hot path) -> XREF: 02-kernel-core/TODO-05 §4 (item: "Cache parent-directory + entry linkage in `OBJECT_HEADER` so teardown avoids path relookup" at line 228)
 > **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 2H+1M+2L fixed | scope: kernel-code-quality
 
 Register VFS nodes, tasks, and threads as first-class Ob-managed objects.
@@ -262,12 +242,9 @@ Implemented across the owning subsystems (VFS, `task.c`, `thread.c`), each regis
 - [x] `FileObject` type: owned by VFS; close callback releases `vnode` reference.
 - [x] `ProcessObject` type: owned by `task.c`; delete callback tears down address space.
 - [x] `ThreadObject` type: owned by `thread.c`; delete callback frees kernel + user stacks.
-- [/] **Fix PEB/TEB dir name collision** (`task.c:1974`): the `Process<PID>` dir collides with `ob_process_create`'s process-object name, so PEB/TEB go unreachable + `proc_dir` leaks -- distinct dir name + check/free on insert failure
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
-- [/] **Scale process/thread namespace beyond the flat 128-entry `\KernelObjects` cap**: per-type sub-dirs (or hashed dirs) so >128 live objects stay enumerable
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
+- [ ] **Fix PEB/TEB dir name collision** (`task.c:1974`): the `Process<PID>` dir collides with `ob_process_create`'s process-object name, so PEB/TEB go unreachable + `proc_dir` leaks -- distinct dir name + check/free on insert failure
+  - The live site is now `task.c:4373`. Found while checking: `pdir_name` builds at most two digits (`task.c:4366`), so a PID of 100 or more gets a wrong name. Fix it with the rename.
+- [ ] **Scale process/thread namespace beyond the flat 128-entry `\KernelObjects` cap**: per-type sub-dirs (or hashed dirs) so >128 live objects stay enumerable
 
 > **Notes:**
 > - `ObpFileType` (`ob_file.c`): wraps a VFS node OR a pipe end (mutually exclusive); `file_on_close` releases the resource, `file_on_delete` is an idempotent safety net (both null the handle so no double-close).
@@ -276,9 +253,7 @@ Implemented across the owning subsystems (VFS, `task.c`, `thread.c`), each regis
 > - Validation: `test_ob.c` (`TEST_CAT_OB`); `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob).
 > - Open: process handles still allocate from raw `task_t*` (Critical, owned by §9 migration) and the flat-namespace/PEB-TEB-collision items above; section is functional but not fully hardened.
 > **Verified:** 2026-06-21 | ship `44db565a` + review fixes | 3/5 items | build OK | tests 327/327 PASS (SUITE=ob)
-> **Accepted:** [Critical] process handles are allocated from raw `task_t*` not PROCESS_OBJECT bodies (ObpAllocateHandle mis-reads memory before the task as an OBJECT_HEADER on close) -> XREF: 02-kernel-core/TODO-05 §9 (item: "Migrate PID/TID-encoded process/thread handles to OB-allocated handles" at line 403)
-> **Deferred:** [H] `task_exec` PEB/TEB `Process<PID>` dir collides with the process-object name (PEB/TEB unreachable + `proc_dir` leak) -> XREF: 02-kernel-core/TODO-05 §5 (item: "Fix PEB/TEB dir name collision" at line 265)
-> **Deferred:** [M] flat `\KernelObjects` 128-entry cap drops process/thread objects under churn -> XREF: 02-kernel-core/TODO-05 §5 (item: "Scale process/thread namespace beyond the flat 128-entry" at line 268)
+> **Accepted:** [Critical] process handles are allocated from raw `task_t*` not PROCESS_OBJECT bodies (ObpAllocateHandle mis-reads memory before the task as an OBJECT_HEADER on close) -> XREF: 02-kernel-core/TODO-05 §9 (item: "Migrate PID/TID-encoded process/thread handles to OB-allocated handles" at line 358)
 > **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 2H fixed, 1Critical accepted-XREF, 1H+1M deferred, 1M rejected (NT tagged-handle low bits) | scope: kernel-code-quality
 
 ---
@@ -294,7 +269,7 @@ Re-register the existing event, mutex, semaphore, and timer primitives as Ob-man
 - [x] `NtCreateEvent`, `NtOpenEvent`, `NtCreateMutex`, `NtOpenMutex`, `NtCreateSemaphore`, `NtCreateTimer` stubs -- resolve name via Ob namespace, allocate or open, return HANDLE (→ XREF: TODO-12 §7)
 - [x] Update `SYS_PIPE` to wrap the pipe read/write ends as two File objects in the handle table so pipes are closeable with `NtClose` like any other handle
 - [x] Commit: `"kernel: ob -- event, mutex, semaphore, timer object types"`
-- [/] **Replace the flat NT timer armed list with an ordered structure (min-heap or timing wheel)**:
+- [ ] **Replace the flat NT timer armed list with an ordered structure (min-heap or timing wheel)**:
       - `src/kernel/nt/nt_timer.c` currently keeps `s_armed_head` as an unsorted singly-linked list; `nt_timer_tick()` walks every entry on every ISR call and NtSetTimer/NtCancelTimer do linear search.
       - This is fine for tens of armed timers but becomes O(N * ticks/sec) work in ISR context at scale.
       - Swap the list for either (a) a min-heap keyed by `due_ns` stored in an array attached to `static struct nt_timer_queue g_tq[MAX_CPUS]` (per-CPU to eliminate the global lock), or (b) a classic timing wheel with O(1) arm/cancel/tick for common cases.
@@ -302,14 +277,8 @@ Re-register the existing event, mutex, semaphore, and timer primitives as Ob-man
       - Add a stress test in `test_ob.c` that arms 1024 one-shot timers with staggered `DueTime` and asserts wake fan-out under 1ms of slack.
       - This auto-closes TODO-12 §19 Accepted (linear armed-list scan at scale).
       - Also move periodic `event_set` and the Phase-B final deref OUT of `nt_timer_tick` onto a deferred chain so no `event_set`/`kfree` runs under `s_armed_lock` or in the tick path.
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
-- [/] **Normalize `NtOpen{Event,Mutex,Semaphore}` names** through `\BaseNamedObjects\%s` (like create + `ObOpenTimer`) in `nt_sync.c`, so a named sync object is reopenable by leaf name (today only timer does this)
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
-- [/] **Lock the event/mutex/semaphore waiter queues**: `sched/event.c`/`mutex.c`/`semaphore.c` mutate `num_waiters` + waiter arrays unlocked, raced between timer-ISR `event_set` and thread-context wait (torn array / lost wakeup on SMP)
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
+- [ ] **Normalize `NtOpen{Event,Mutex,Semaphore}` names** through `\BaseNamedObjects\%s` (like create + `ObOpenTimer`) in `nt_sync.c`, so a named sync object is reopenable by leaf name (today only timer does this)
+- [ ] **Lock the event/mutex/semaphore waiter queues**: `sched/event.c`/`mutex.c`/`semaphore.c` mutate `num_waiters` + waiter arrays unlocked, raced between timer-ISR `event_set` and thread-context wait (torn array / lost wakeup on SMP)
 
 > **Notes:**
 > - Event/Mutex/Semaphore/Timer registered as OB types wrapping the existing `event_t`/`mutex_t`/`semaphore_t`/timer primitives; named in `\BaseNamedObjects`, handle-managed, `on_delete` frees the state (mutex signals `MUTEX_ABANDONED` on owner death).
@@ -318,10 +287,7 @@ Re-register the existing event, mutex, semaphore, and timer primitives as Ob-man
 > - Validation: `test_ob.c` (`TEST_CAT_OB`); `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob).
 > - Open (deferred items above): NtOpen leaf-name normalization, sync-primitive waiter-queue locking, timer-tick latency rework; section is functional but the wait/timer paths are not fully SMP-hardened.
 > **Verified:** 2026-06-21 | ship `d91153f5` + review fixes | 7/10 items | build OK | tests 327/327 PASS (SUITE=ob)
-> **Accepted:** [H] `wait_on_handle` blocks on an embedded sync primitive without pinning the object, so a concurrent last-handle close can free it under the waiter -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 157)
-> **Deferred:** [H] `NtOpen{Event,Mutex,Semaphore}` do not normalize leaf names to `\BaseNamedObjects\%s`, so a named object is not reopenable by leaf name -> XREF: 02-kernel-core/TODO-05 §6 (item: "Normalize `NtOpen{Event,Mutex,Semaphore}` names" at line 307)
-> **Deferred:** [H] the event/mutex/semaphore waiter queues are mutated unlocked, raced between timer-ISR `event_set` and thread-context wait -> XREF: 02-kernel-core/TODO-05 §6 (item: "Lock the event/mutex/semaphore waiter queues" at line 310)
-> **Deferred:** [M] periodic `event_set` runs under `s_armed_lock` and the Phase-B final deref can free in the tick path -> XREF: 02-kernel-core/TODO-05 §6 (item: "Replace the flat NT timer armed list" at line 297)
+> **Accepted:** [H] `wait_on_handle` blocks on an embedded sync primitive without pinning the object, so a concurrent last-handle close can free it under the waiter -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 153)
 > **Quality reviewed:** 2026-06-21 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 1Critical+1H fixed, 1H accepted-XREF, 2H+1M deferred | scope: kernel-code-quality
 
 ---
@@ -335,15 +301,9 @@ Sections represent mappable memory objects; the foundation for `MapViewOfFile` a
 - [x] `ObUnmapViewOfSection(process, base_address)` -- removes VMM mappings; does not free physical pages until refcount drops to 0
 - [x] Re-implement `SYS_SHMEM_CREATE` / `SYS_SHMEM_MAP` as thin wrappers over the Ob section API
 - [x] Commit: `"kernel: ob -- section object type and view mapping"`
-- [/] **Move section PTE install/teardown outside `so->lk`**: the map loop holds the per-section spinlock across up to 64K `vmm_share_user_page` calls (alloc/split/flush) -- snapshot under lock, do PTE work after unlock, reacquire to commit
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
-- [/] **`ObUnmapViewOfSection` (handle path) must clear user PTEs** like `ObUnmapViewOfSectionByBase`: today it drops the section pin without `vmm_unshare_user_page`, so frames can be freed while still mapped (shared teardown helper)
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
-- [/] **Resolve section views without a live handle**: a view outlives its handle (per-view pin), so map -> close-handle -> unmap-by-base leaks the view + frames; track views task-side by base (XREF: §4 view-base index)
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
+- [ ] **Move section PTE install/teardown outside `so->lk`**: the map loop holds the per-section spinlock across up to 64K `vmm_share_user_page` calls (alloc/split/flush) -- snapshot under lock, do PTE work after unlock, reacquire to commit
+- [ ] **`ObUnmapViewOfSection` (handle path) must clear user PTEs** like `ObUnmapViewOfSectionByBase`: today it drops the section pin without `vmm_unshare_user_page`, so frames can be freed while still mapped (shared teardown helper)
+- [ ] **Resolve section views without a live handle**: a view outlives its handle (per-view pin), so map -> close-handle -> unmap-by-base leaks the view + frames; track views task-side by base (XREF: §4 view-base index)
 
 > **Notes:**
 > - `ObpSectionType` (`ob_section.c`): contiguous frames (`pmm_alloc_contiguous`), per-section `so->lk`, `SECTION_MAX_VIEWS` view table; map installs per-task user PTEs (`vmm_share_user_page`) at a bump VA; `section_on_delete` frees frames at last ref.
@@ -352,9 +312,6 @@ Sections represent mappable memory objects; the foundation for `MapViewOfFile` a
 > - Validation: `test_ob.c` (`TEST_CAT_OB`); `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob).
 > - Open (deferred above): map holds `so->lk` across PTE install, handle-path unmap lacks PTE teardown, base-unmap can't find a view after handle close -- focused mapping rework; create/map/unmap-by-base work.
 > **Verified:** 2026-06-21 | ship `4bca949c` + review fixes | 5/8 items | build OK | tests 327/327 PASS (SUITE=ob)
-> **Deferred:** [H] the map path holds the per-section `so->lk` across up to 64K `vmm_share_user_page` calls (long IRQ-off hold, lock-order risk) -> XREF: 02-kernel-core/TODO-05 §7 (item: "Move section PTE install/teardown outside `so->lk`" at line 338)
-> **Deferred:** [H] `ObUnmapViewOfSection` (handle path) drops the section pin without clearing user PTEs, so frames can be freed while still mapped -> XREF: 02-kernel-core/TODO-05 §7 (item: "`ObUnmapViewOfSection` (handle path) must clear user PTEs" at line 341)
-> **Deferred:** [M] a view outlives its section handle, so base-unmap (handle-table scan) can't find it -> XREF: 02-kernel-core/TODO-05 §7 (item: "Resolve section views without a live handle" at line 344)
 > **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1Critical+1M fixed, 2H+1M deferred | scope: kernel-code-quality
 
 ---
@@ -397,22 +354,16 @@ Core Win32 handle management syscalls routed through the Ob layer.
   - `ObjectBasicInformation` -- returns refcount, handle count, attributes
 - [x] Expose `NtClose` via `SYS_CLOSEHANDLE` replacing inline `ObpFreeHandle` in syscall.c
 - [x] Commit: `"kernel: ob -- NtClose, NtDuplicateObject, NtQueryObject"`
-- [/] **`ObjectNameInformation` full-path reconstruction**: `NtQueryObject` returns only `hdr->name` (leaf), so `\A\Foo`/`\B\Foo` collide. Walk `OBJECT_DIRECTORY.parent` to `\`, prepending each component into the caller buffer; test distinct paths.
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
-- [/] **Migrate PID/TID-encoded process/thread handles to OB-allocated handles**:
+- [ ] **`ObjectNameInformation` full-path reconstruction**: `NtQueryObject` returns only `hdr->name` (leaf), so `\A\Foo`/`\B\Foo` collide. Walk `OBJECT_DIRECTORY.parent` to `\`, prepending each component into the caller buffer; test distinct paths.
+- [ ] **Migrate PID/TID-encoded process/thread handles to OB-allocated handles**:
       - Current `src/kernel/nt/nt_process.c::task_from_handle` and `src/kernel/nt/nt_token.c::resolve_process_handle` cast a raw PID/TID integer to a `HANDLE` and look up the task directly.
       - This bypasses the per-process handle table entirely, so `granted_access`, `OBJ_INHERIT`, `DuplicateHandle`, and `NtClose` all fail to apply to process/thread handles.
       - Change `NtOpenProcess`/`NtOpenThread` (TODO-12 §2) to call `ObpAllocateHandle(&task_current()->handle_table, task, desired_access, attrs)` using `ObpProcessType`/`ObpThreadType` (registered in §6).
       - Then change every handler that resolves process/thread handles (`nt_process.c`, `nt_token.c`, `nt_sync.c` wait handlers that accept thread/process) to use `ObpLookupHandle` + type-check + read `granted_access`.
       - Remove the PID/TID-cast fallback except for explicit pseudo-handles (`CURRENT_PROCESS = -2`, `CURRENT_THREAD = -3`).
       - This auto-closes TODO-12 §16 Accepted #1 (PID/TID-encoded handles) and enables per-handle access enforcement.
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
 
-- [/] **Migrate IO completion ports to OB handles**: `nt_file.c` IOCP `idx+0x10000` pseudo-handles are globally guessable (cross-task Set/Remove). Register `ObpIoCompletionType`, route through the per-process handle table. XREF: TODO-12 §13.
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
+- [ ] **Migrate IO completion ports to OB handles**: `nt_file.c` IOCP `idx+0x10000` pseudo-handles are globally guessable (cross-task Set/Remove). Register `ObpIoCompletionType`, route through the per-process handle table. XREF: TODO-12 §13.
 
 **Test checkpoint:** `NtClose` frees a handle and drops one ref; `NtDuplicateObject` clones a handle into a target table (target stays valid after the source closes), caps the dup to the source's access mask, and closes the source when `DUPLICATE_CLOSE_SOURCE` is set; `NtQueryObject` returns Basic/Name/Type/Types info within the caller's buffer bound. `bash scripts/test.sh SUITE=ob` passes incl. `OB: duplicate handle` + `OB: duplicate access cap`.
 
@@ -426,11 +377,9 @@ Core Win32 handle management syscalls routed through the Ob layer.
 > - Validation: `test_ob.c` (`TEST_CAT_OB`) incl. 4 new dup tests (access-cap, close-protected, callback-proof ceiling, no-premature-on_close) + handle-alias rejection; 349 OB + 982 security tests pass.
 > - Scope: the concurrent-close lookup-then-deref race + non-atomic `handle_count` are the shared no-table-lock gap owned by §3; the two `[/]` items below are deferred.
 > **Verified:** 2026-06-21 | core ship `bc41dc9d` + review fixes | 4/6 items | build OK | tests 349 ob + 982 security PASS
-> **Accepted:** [Critical] concurrent `NtClose` vs duplicate/query uses an unpinned handle-table entry (no per-table lock) and `handle_count` is a non-atomic `uint32_t` -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 157)
+> **Accepted:** [Critical] concurrent `NtClose` vs duplicate/query uses an unpinned handle-table entry (no per-table lock) and `handle_count` is a non-atomic `uint32_t` -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 153)
 > **Accepted:** [M] `NtDuplicateObject` caps the dup to the source handle's mask (safe pre-SeAccessCheck interim), stricter than Win32 DuplicateHandle which re-authorizes `desired_access` against the SD -> XREF: 02-kernel-core/TODO-15 §5 (item: "In `ObpReferenceObjectByHandle` ... call `SeAccessCheck(...)`; return `STATUS_ACCESS_DENIED` if check fails" at line 343)
-> **Deferred:** [M] `ObjectNameInformation` returns the leaf component name, not the full namespace path -> XREF: 02-kernel-core/TODO-05 §9 (item: "`ObjectNameInformation` full-path reconstruction" at line 400)
-> **Deferred:** [H] process/thread handles are PID/TID-encoded and bypass the handle table, so granted_access/inherit/dup/close do not apply to them -> XREF: 02-kernel-core/TODO-05 §9 (item: "Migrate PID/TID-encoded process/thread handles to OB-allocated handles" at line 403)
-> **Deferred:** [H] the cross-CPU race window between the dup's source re-validation and the close/alloc (and the transient HANDLE_CREATE callback for a dest rolled back in that race) needs the transactional per-handle-table lock -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 157)
+> **Deferred:** [H] the cross-CPU race window between the dup's source re-validation and the close/alloc (and the transient HANDLE_CREATE callback for a dest rolled back in that race) needs the transactional per-handle-table lock -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 153)
 > **Quality reviewed:** 2026-06-21 | Codex 11x (adversarial, consistency, perf, re-adversarial x8) + auditor | 1Crit+8H+1M fixed, 1Crit+2H+2M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -444,9 +393,8 @@ Win32 `CreateProcess` with `bInheritHandles=TRUE` copies inheritable handles int
 - [x] Inherited handle indices in the child match the parent (Win32 contract -- same HANDLE value)
 - [x] On child `NtClose`, child's references are released independently of the parent's
 - [x] Commit: `"kernel: ob -- handle inheritance across CreateProcess"`
-- [/] **Atomic CreateProcess teardown on failure**: `NtCreateProcess_handler` leaks the child task on post-`task_create` failure (inherit/alloc); add a `task_destroy(pid)` for unstarted tasks, then make inheritance all-or-fail with teardown.
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
+- [ ] **Atomic CreateProcess teardown on failure**: `NtCreateProcess_handler` leaks the child task on post-`task_create` failure (inherit/alloc); add a `task_destroy(pid)` for unstarted tasks, then make inheritance all-or-fail with teardown.
+  - PARTLY SHIPPED: a pledge-clone failure tears the child down with `task_terminate_remote` (`nt_process.c:138`). Remaining: the `ObpAllocateHandle` failure at `nt_process.c:184` still leaks the child, and inheritance is still best-effort (`nt_process.c:155`).
 
 **Test checkpoint:** `bash scripts/test.sh SUITE=ob` -- `OB: handle inherit` asserts an `OBJ_INHERIT` handle copies to the child at the same index with `total_handles` rising 1->2 then back to 0 on close; `OB: inherit none -> 0` asserts a non-inheritable parent yields 0 inherited (not OOM).
 
@@ -460,8 +408,7 @@ Win32 `CreateProcess` with `bInheritHandles=TRUE` copies inheritable handles int
 > - Validation: `test_ob.c` (`TEST_CAT_OB`) `test_ob_handle_inherit` (stats 1->2->0) + `test_ob_inherit_none`; 355 OB tests pass.
 > - Scope: atomic all-or-fail process creation needs a child-task teardown helper (deferred above); the unlocked-handle-table race is the shared §3 gap.
 > **Verified:** 2026-06-21 | core ship -- review fixes | 5/6 items | build OK | tests 355 ob PASS
-> **Deferred:** [H] CreateProcess leaks the created child task on any post-`task_create` failure (inheritance OOM / handle alloc); needs a `task_destroy` helper for atomic teardown -> XREF: 02-kernel-core/TODO-05 §10 (item: "Atomic CreateProcess teardown on failure" at line 447)
-> **Accepted:** [M] the parent handle table is read without a lock during inheritance (concurrent mutation race) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 157)
+> **Accepted:** [M] the parent handle table is read without a lock during inheritance (concurrent mutation race) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 153)
 > **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 2M fixed, 1H+1M deferred-XREF | scope: kernel-code-quality
 
 ---
@@ -475,9 +422,7 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
   - Each entry: name string + type name string (OBJECT_DIRECTORY_INFORMATION)
 - [x] Syscalls: SYS_OPENDIROBJ (42), SYS_QUERYDIROBJ (43) -- user-mode can walk `\` and enumerate all named objects
 - [x] Commit: `"kernel: ob -- NtOpenDirectoryObject and NtQueryDirectoryObject (public API)"`
-- [/] **`NtQueryDirectoryObject` `ReturnLength` in bytes**: the SSDT handler (`nt_namespace.c`) returns `*ret_len` as entry COUNT; Win32 wants bytes (count * 96). Multiply when writing the caller's ReturnLength.
-      - Also PARKED on the kernel image ceiling, which is the blocker with a real re-open path: this adds kernel `.text` and the budget is 95 bytes -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §13 (item: "Unpark what the new headroom actually admits, and say what it does NOT").
-      - Beyond that ceiling there is NO external prerequisite: this section's Deferred stamp points back at this same item, so the work needs a focused implementation pass in this file rather than another TODO to land first. Recorded plainly so a later pass does not go looking for a dependency that does not exist.
+- [ ] **`NtQueryDirectoryObject` `ReturnLength` in bytes**: the SSDT handler (`nt_namespace.c`) returns `*ret_len` as entry COUNT; Win32 wants bytes (count * 96). Multiply when writing the caller's ReturnLength.
 
 **Test checkpoint:** `bash scripts/test.sh SUITE=ob` -- `OB: NtQueryDirectoryObject: enumerate root` opens `\` and enumerates its entries (each row = name + type name, 96-byte `OBJECT_DIRECTORY_INFORMATION`) without fault.
 
@@ -491,8 +436,7 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
 > - Validation: `test_ob.c` (`TEST_CAT_OB`) `test_ob_query_directory`; 355 OB tests pass.
 > - Scope: `ReturnLength`-in-bytes is deferred above; the lookup-then-ref race is the shared §3 handle-table-lock gap.
 > **Verified:** 2026-06-21 | core ship -- review fixes | 4/5 items | build OK | tests 355 ob PASS
-> **Deferred:** [M] SSDT `NtQueryDirectoryObject` returns `ReturnLength` as an entry count, not bytes -> XREF: 02-kernel-core/TODO-05 §11 (item: "`NtQueryDirectoryObject` `ReturnLength` in bytes" at line 478)
-> **Accepted:** [H] the directory handle is pinned AFTER an unlocked `ObpLookupHandle` (the lookup-then-ref window races a concurrent `NtClose`) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 157)
+> **Accepted:** [H] the directory handle is pinned AFTER an unlocked `ObpLookupHandle` (the lookup-then-ref window races a concurrent `NtClose`) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 153)
 > **Accepted:** [H] `ProbeForWrite` is range-check-only (no page touch) and `copy_to_user` has no fault fixup, so a probe-passing-but-unmapped user page #PFs in the copy -- a kernel-wide user-access gap, not §11-specific -> XREF: 02-kernel-core/TODO-23 §13 (item: "`include/kernel/probe.h` -- `ProbeForRead`, `ProbeForWrite`, `try_copy_from_user`, `try_copy_to_user`" at line 52)
 > **Quality reviewed:** 2026-06-21 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 1Crit+2H fixed, 2H+1M accepted-XREF | scope: kernel-code-quality
 
@@ -529,7 +473,7 @@ Track per-type creation counts, live object counts, live handle counts, and peak
 > - Validation: `test_ob.c` (`TEST_CAT_OB`) `test_ob_type_stats` + `test_ob_stat_export_clamp`; 363 OB tests pass.
 > - Scope: counters are SMP-atomic; exactly-once handle-stat accounting needs the §3 per-handle-table lock; Win11 NT-ABI struct shape owned by TODO-12 §30.
 > **Verified:** 2026-06-22 | ship `44db565a` + review fixes | 8/8 items | build OK | tests 363 ob PASS
-> **Accepted:** [H] handle-stat exactly-once accounting races the unserialized handle-table slot claim/free (counters atomic, slot mutation not) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 157)
+> **Accepted:** [H] handle-stat exactly-once accounting races the unserialized handle-table slot claim/free (counters atomic, slot mutation not) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 153)
 > **Accepted:** [H] exported `OBJECT_TYPE_INFORMATION` is an internal `char[32]`+counters struct, not the Win11 NT ABI (no NT-ABI consumer exists yet) -> XREF: 02-kernel-core/TODO-12 §30 (item: "Expose `NtQueryObject` with the Win11 `OBJECT_TYPE_INFORMATION` NT ABI" at line 1089)
 > **Quality reviewed:** 2026-06-22 | Codex 6x (adversarial, consistency, perf, re-adversarial) | 1H+4M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
@@ -596,7 +540,8 @@ Enforce a configurable per-process handle limit to prevent resource exhaustion f
 - [x] In `ObpAllocateHandle()`: if `table->count >= table->handle_limit`, return `INVALID_HANDLE_VALUE` (quota exceeded) before slot search; `handle_limit == 0` (`HANDLE_TABLE_LIMIT_UNLIMITED`) means no quota
 - [x] `handle_table_grow()` honors the quota, not a fixed cap: grows up to `HANDLE_TABLE_ABSOLUTE_MAX` (the retired `HANDLE_TABLE_MAX_CAP` 4096 made the 16384 default unreachable)
 - [x] Add `ob_handle_table_set_limit(table, new_limit)` -- clamps to `HANDLE_TABLE_ABSOLUTE_MAX` (1 << 20 = 1M handles)
-- [/] Wire into `NtSetInformationProcess(ProcessHandleQuota)` -- needs the `SeSinglePrivilegeCheck`/`SeIncreaseQuotaPrivilege` gate for raise-above-default (security) -> XREF: `02-kernel-core/TODO-12-native-api-ssdt.md §7`
+- [ ] Wire into `NtSetInformationProcess(ProcessHandleQuota)` -- needs the `SeSinglePrivilegeCheck`/`SeIncreaseQuotaPrivilege` gate for raise-above-default (security) -> XREF: `02-kernel-core/TODO-12-native-api-ssdt.md §7`
+  - The named blocker is gone: `SeSinglePrivilegeCheck` is shipped (`privileges.c:241`) and `ProcessQuotaLimits` already uses it (`nt_process.c:869`). The handler item in `02-kernel-core/TODO-12` section 7 points back at this one, so the two were parked on each other.
 - [x] Track cumulative handle allocations per process in `task_t.total_handles_created` (`uint64`) -- incremented in `ObpAllocateHandle()`
 - [x] On quota exhaustion: `klog(LOG_WARN, ...)` once per episode via the `HANDLE_TABLE.quota_warned` one-shot guard (re-armed in `ObpFreeHandle` when count drops below limit) -- no per-denial log flood
 - [x] Tests: set-limit + 3-allocs + 4th-denied + free+retry + ABSOLUTE_MAX clamp; one-shot warn set/clear; grow-past-old-4096-cap; zero-limit unlimited
@@ -613,9 +558,8 @@ Enforce a configurable per-process handle limit to prevent resource exhaustion f
 > - **Scope boundary** -- §14 owns the per-table quota mechanism; the user-mode `NtSetInformationProcess(ProcessHandleQuota)` setter is `TODO-12 §7` (needs privilege-check infra); the unlocked `count` SMP race is owned by §3's per-handle-table lock work.
 
 > **Verified:** 2026-06-22 | ship `e0361301` + review fixes | 7/8 items | build OK | tests 6892 kernel + 16 user PASS
-> **Accepted:** [H] the quota check + `count++`/`count--` are unsynchronized, so same-process concurrent allocs can overshoot the limit (bounded, self-correcting) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 157)
-> **Accepted:** [L] `total_handles_created` is charged to `task_current()`, so cross-process `NtDuplicateObject` mis-attributes the diagnostic counter -> XREF: 02-kernel-core/TODO-05 §3 (item: "Give `HANDLE_TABLE` an owning-task back-pointer" at line 184)
-> **Deferred:** [M] `NtSetInformationProcess(ProcessHandleQuota)` user-mode setter not wired (needs `SeSinglePrivilegeCheck` for the privileged raise-above-default) -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "`NtSetInformationProcess(0x0035)` ProcessHandleQuota" at line 409)
+> **Accepted:** [H] the quota check + `count++`/`count--` are unsynchronized, so same-process concurrent allocs can overshoot the limit (bounded, self-correcting) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 153)
+> **Accepted:** [L] `total_handles_created` is charged to `task_current()`, so cross-process `NtDuplicateObject` mis-attributes the diagnostic counter -> XREF: 02-kernel-core/TODO-05 §3 (item: "Give `HANDLE_TABLE` an owning-task back-pointer" at line 177)
 > **Quality reviewed:** 2026-06-22 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 2H+4M+1L fixed, 1H+1L accepted-XREF, 1M deferred | scope: kernel-code-quality
 
 ---
@@ -634,7 +578,7 @@ Provide tagged reference tracking and optional per-handle event recording for di
 - [x] `ob_dump_trace(body)` (+ `ob_dump_trace_hdr`) -- snapshots under lock, klogs outside (Gate 2): net LIFETIME verdict + ring-truncation note + ledger-overflow warning + per-tag `IMBALANCE` lines that catch a net-balanced mis-tag leak
 - [x] Auto-dump on teardown: `ob_free_object` calls `ob_dump_trace_hdr` before freeing the ring -- 0 refcount, sole owner, emitted exactly once
 - [x] Handle event tracing: CREATE/FREE/INHERIT klog from all three handle alloc/inherit/close paths when `g_ob_handle_trace` set (INHERIT closes the free-only gap); subject to klog's per-subsystem rate limit + dropped-count summary
-- [/] No-drop handle-trace path: opt-in loss-accounted ring (or rate-limit bypass) so handle-heavy leak reconstruction keeps every event under churn instead of relying on klog's per-subsystem 1s budget
+- [ ] No-drop handle-trace path: opt-in loss-accounted ring (or rate-limit bypass) so handle-heavy leak reconstruction keeps every event under churn instead of relying on klog's per-subsystem 1s budget
 - [x] `g_ob_handle_trace` flag: set from `boot.conf` `ob_handle_trace=1`; wired in Phase 2 after OB init
 - [x] Tests: `test_ob_trace` (tagged ref/deref + imbalance dump), `test_ob_trace_wrap_and_tags` (ring wrap past 64 + lifetime net survives wrap), `test_ob_trace_mistag_lifetime` (net-balanced mis-tag leak caught by per-tag ledger after wrap)
 - [x] Commit: `"kernel: ob -- tagged reference tracing and handle leak detection"`
@@ -651,8 +595,7 @@ Provide tagged reference tracking and optional per-handle event recording for di
 > - **Scope boundary** -- §15 owns object-ref + handle-event tracing; the handle-table `count` SMP race + owning-task back-pointer stay §3's; `NtSetInformationProcess(ProcessHandleQuota)` stays TODO-12 §7.
 
 > **Verified:** 2026-06-25 | commit `bc16df2d` + review fixes | 10/11 items | build OK | tests 6913 kernel + 16 user PASS, smoke PASS (TCG 2.43s)
-> **Accepted:** [M] `ob_handle_table_inherit` reads the parent slot without a table lock, so the broader close-vs-inherit race can still inherit a stale/NULL object (the INHERIT trace itself now snapshots `obj` so it cannot diverge) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 157)
-> **Deferred:** [M] handle-event tracing rides normal klog, so the per-subsystem rate limit can drop individual CREATE/FREE/INHERIT lines under churn (klog dropped-count summary accounts the loss) -> XREF: 02-kernel-core/TODO-05 §15 (item: "No-drop handle-trace path: opt-in loss-accounted ring" at line 637)
+> **Accepted:** [M] `ob_handle_table_inherit` reads the parent slot without a table lock, so the broader close-vs-inherit race can still inherit a stale/NULL object (the INHERIT trace itself now snapshots `obj` so it cannot diverge) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 153)
 > **Quality reviewed:** 2026-06-25 | Codex 8x (adversarial, consistency, perf, re-adversarial) + kernel-quality-auditor | 6M+1L fixed, 1M accepted-XREF, 1M deferred | scope: kernel-code-quality
 
 ---

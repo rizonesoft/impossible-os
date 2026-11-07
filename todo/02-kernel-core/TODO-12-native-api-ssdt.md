@@ -335,8 +335,8 @@ Rename / wrap the existing 22 `SYS_*` implementations to their `NtXxx` equivalen
 
 > **Verified:** 2026-06-28 | 18/18 items | build OK | tests 346+16 PASS (tree unchanged; findings Accepted to §29)
 > **Accepted:** [Critical] NtShutdownSystem (+ legacy SYS_SHUTDOWN) lets any ring-3 caller power off the machine with no SeShutdownPrivilege gate -> XREF: 02-kernel-core/TODO-12 §29 (item: "NtShutdownSystem + legacy SYS_SHUTDOWN: require SeShutdownPrivilege" at line 1228)
-> **Accepted:** [Critical] NtTerminateProcess kills any process by raw PID with no handle/PROCESS_TERMINATE check -> XREF: 02-kernel-core/TODO-12 §29 (item: "NtTerminateProcess: resolve through the handle table + require PROCESS_TERMINATE" at line 1229)
-> **Accepted:** [Critical] SystemProcessInformation writes through unprobed user pointers (kernel-write primitive) -> XREF: 02-kernel-core/TODO-12 §29 (item: "SystemProcessInformation: ProbeForWriteIfUser + copy_to_user" at line 1230)
+> **Accepted:** [Critical] NtTerminateProcess kills any process by raw PID with no handle/PROCESS_TERMINATE check -> XREF: 02-kernel-core/TODO-12 §29 (item: "NtTerminateProcess: resolve through the handle table + require PROCESS_TERMINATE" at line 1230)
+> **Accepted:** [Critical] SystemProcessInformation writes through unprobed user pointers (kernel-write primitive) -> XREF: 02-kernel-core/TODO-12 §29 (item: "SystemProcessInformation: ProbeForWriteIfUser + copy_to_user" at line 1232)
 > **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 1M fixed, 3Crit accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -486,7 +486,7 @@ Synchronisation objects through Ob-managed named types (→ XREF TODO-05 §6). I
 > **Accepted:** [H] auto-reset event_set publishes state before waking a queued waiter, so a timeout=0 poll on another CPU can steal the wake -> XREF: 03-memory-concurrency/TODO-08 §11 (item: "Semaphore + event atomicity" at line 281 -- names the direct-handoff-to-queued-waiter requirement)
 > **Accepted:** [M] sem_release_checked check-then-signal + WaitAll rollback are not serialized against a concurrent NtReleaseSemaphore -> XREF: 03-memory-concurrency/TODO-08 §11 (item: "Semaphore + event atomicity" at line 281 -- serialize max-guard + rollback)
 > **Accepted:** [M] multi-wait polls stay READY with no backoff (interim poll design; blocking waitable not built) -> XREF: 03-memory-concurrency/TODO-08 §8 (item: "`wait_any(waitable_t *handles[], count, timeout_ms)`" at line 220 -- the blocking waitable_t multi-wait that replaces the poll)
-> **Accepted:** [M] sync SSDT handlers deref ring-3 handle-array/timeout/out pointers without probe/copy (systemic NT trust-boundary gap) -> XREF: 02-kernel-core/TODO-12 §29 (item: "Sync syscalls deref raw user pointers (`nt_sync.c`)" at line 1232)
+> **Accepted:** [M] sync SSDT handlers deref ring-3 handle-array/timeout/out pointers without probe/copy (systemic NT trust-boundary gap) -> XREF: 02-kernel-core/TODO-12 §29 (item: "Sync syscalls deref raw user pointers (`nt_sync.c`)" at line 1234)
 > **Quality reviewed:** 2026-07-02 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 5H+2M fixed, 5 accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -673,7 +673,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > - Scope boundary: user-buffer probes, IOCP OB-isolation, IXFS long-name rejection deferred to owners; & 0x7F narrowing + size-hint omission are known Lows.
 > - Test gap: security-path negative tests need a live VFS file-handle fixture; registration checks cover all handlers.
 > **Verified:** 2026-07-02 | commit `24c110fb` | 16/16 items | build OK | abi 426/426 PASS
-> **Accepted:** [Critical] IOCP `idx+0x10000` pseudo-handles are globally guessable (cross-task inject/drain), no per-process OB isolation -> XREF: 02-kernel-core/TODO-05 §9 (item: "Migrate IO completion ports to OB handles" at line 413)
+> **Accepted:** [Critical] IOCP `idx+0x10000` pseudo-handles are globally guessable (cross-task inject/drain), no per-process OB isolation -> XREF: 02-kernel-core/TODO-05 §9 (item: "Migrate IO completion ports to OB handles" at line 366)
 > **Accepted:** [M] IXFS silently truncates names > 252 bytes on rename/create, so a 252-259 char op resolves to a different entry -> XREF: 05-storage-filesystems/TODO-06 §1 (item: "Reject over-length names" at line 86)
 > **Quality reviewed:** 2026-07-02 | Codex 8x (adversarial x2, consistency x2, perf x2, re-adversarial x2) | 4H+4M fixed, 1Crit+1M accepted-XREF | scope: kernel-code-quality
 
@@ -776,7 +776,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > - Test gap: token-adjust success paths + PreviousState size edge cases (0/header-only/one-entry) + valid-class query positive paths are untested.
 > **Verified:** 2026-07-02 | commit `7183b1bd` | 9/10 items | build OK | security 1010/1010 PASS
 > **Deferred:** [H] NtAdjustPrivileges/GroupsToken mutate the token before proving PreviousState can hold the old-state entries, so an undersized buffer loses rollback state -> XREF: 02-kernel-core/TODO-12 §16 (item: "NtAdjustPrivileges/GroupsToken mutate the token before proving PreviousState" at line 766)
-> **Accepted:** [H] token queries return kernel-owned SID pointers + TokenGroups uses the wrong header offset (unusable ABI / kernel-layout leak) -> XREF: 02-kernel-core/TODO-15 §4 (item: "TokenXxx query marshalling" at line 331)
+> **Accepted:** [H] token queries return kernel-owned SID pointers + TokenGroups uses the wrong header offset (unusable ABI / kernel-layout leak) -> XREF: 02-kernel-core/TODO-15 §4 (item: "TokenXxx query marshalling" at line 335)
 > **Quality reviewed:** 2026-07-02 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1Crit+2H fixed, 1H accepted-XREF, 1H deferred | scope: kernel-code-quality
 
 
@@ -805,8 +805,8 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > - Scope boundary: missing probes -> §29 probe list; lookup-then-ref UAF -> TODO-05 §3; native directory ABI + RootDirectory -> §17; UTF-16 decode -> TODO-14 §5.
 > - Test gap: ReturnSingleEntry/RestartScan packed-flag paths + relative-name (RootDirectory) create/open are untested.
 > **Verified:** 2026-07-02 | commit `517cb921` | 6/8 items | build OK | ob 426/426 PASS
-> **Accepted:** [Critical] handlers deref raw user pointers with no ProbeFor*IfUser (systemic NT trust boundary) -> XREF: 02-kernel-core/TODO-12 §29 (item: "Namespace + token syscalls deref raw user pointers" at line 1233)
-> **Accepted:** [Critical] NtQuerySymbolicLinkObject reads an unpinned ObpLookupHandle object (concurrent NtClose UAF) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 157)
+> **Accepted:** [Critical] handlers deref raw user pointers with no ProbeFor*IfUser (systemic NT trust boundary) -> XREF: 02-kernel-core/TODO-12 §29 (item: "Namespace + token syscalls deref raw user pointers" at line 1235)
+> **Accepted:** [Critical] NtQuerySymbolicLinkObject reads an unpinned ObpLookupHandle object (concurrent NtClose UAF) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 153)
 > **Accepted:** [H] UNICODE_STRING.Buffer cast to const char* (ASCII assumption) -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 272)
 > **Deferred:** [H] NtQueryDirectoryObject returns the legacy 96-byte ASCII row, not the native UNICODE_STRING ABI -> XREF: 02-kernel-core/TODO-12 §17 (item: "`NtQueryDirectoryObject` returns the legacy 96-byte ASCII" at line 794)
 > **Deferred:** [H] oa_name ignores OBJECT_ATTRIBUTES.RootDirectory (relative names resolve as absolute) -> XREF: 02-kernel-core/TODO-12 §17 (item: "`oa_name` (nt_namespace.c) ignores OBJECT_ATTRIBUTES.RootDirectory" at line 795)

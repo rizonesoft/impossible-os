@@ -401,7 +401,7 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 > - **Canonical doc** -- the stack-walk block in `include/kernel/rtl/unwind.h`.
 > - **Scope boundary** -- §7 owns the kernel walker + fault-safe read; `.eh_frame`/`.pdata` registry is `TODO-18 §5`; user-mode `RtlCaptureStackBackTrace` (ntdll) is `TODO-04`.
 > **Verified:** 2026-07-18 | ship `1d3e1ab5` + review fixes | 5/6 items | build OK | 21923 kernel + 16 user PASS | smoke PASS (KVM 2.75s)
-> **Deferred:** [M] loaded-module (PE driver) return frames stop the walk -- kernel-text-only PC validation stays lock-free to avoid the `s_module_lock` crash-path deadlock (the deadlock itself is fixed); no PE drivers load yet -> XREF: `02-kernel-core/TODO-18 §6` (item: "Lock-free crash-safe module-range lookup" at line 151)
+> **Deferred:** [M] loaded-module (PE driver) return frames stop the walk -- kernel-text-only PC validation stays lock-free to avoid the `s_module_lock` crash-path deadlock (the deadlock itself is fixed); no PE drivers load yet -> XREF: `02-kernel-core/TODO-18 §6` (item: "Lock-free crash-safe module-range lookup" at line 184)
 > **Quality reviewed:** 2026-07-18 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+6M+1L fixed, 1M deferred | scope: kernel-code-quality
 
 - [x] Commit: `"rtl: implement RtlCaptureStackBackTrace and RtlWalkFrameChain for kernel-mode stack walking"`
@@ -511,7 +511,7 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 > - **Canonical doc** -- `include/kernel/except.h` VEH shared ABI block.
 > - **Scope boundary** -- §10 owns the shared node/disposition ABI; TODO-04 §5 owns the list head, lock, add/remove APIs, and the walk; TODO-11 owns the TEB layout (no VEH field added).
 > **Verified:** 2026-07-19 | commit `6bf93677` | 4/4 items | build OK | tests 387/387 PASS
-> **Accepted:** [H] VEH re-entrancy/lifetime -- a handler may call `RemoveVectoredExceptionHandler` or fault into nested dispatch, so the 24-byte node is provisional; the re-entrant-dispatch protocol is ntdll's -> XREF: `12-user-platform-sdk/TODO-04 §5` (item: "Re-entrant dispatch + removal safety" at line 293)
+> **Accepted:** [H] VEH re-entrancy/lifetime -- a handler may call `RemoveVectoredExceptionHandler` or fault into nested dispatch, so the 24-byte node is provisional; the re-entrant-dispatch protocol is ntdll's -> XREF: `12-user-platform-sdk/TODO-04 §5` (item: "Re-entrant dispatch + removal safety" at line 297)
 > **Quality reviewed:** 2026-07-19 | Codex 6x (design, adversarial, re-adversarial, consistency, perf) | 4H+3M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"rtl: implement Vectored Exception Handler (VEH) list"`
