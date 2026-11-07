@@ -29,13 +29,13 @@ Design: [docs/specs/2026-11-07-run-supervisor-design.md](../specs/2026-11-07-run
 - Add `.claude/gate-modes.json` and one helper the hooks call instead of exiting 2.
 - Move the process and cost hooks in the design's table to `log`. Product, safety and style stay `enforce`.
 - `SEQ-CONTROL-PLANE` and `receipt_surface_guard` become `log`, leaving only the frozen supervisor list refused.
-- Done when: each gate in `log` mode passes the call and writes one line to `build/gate-log.jsonl`, each in `enforce` mode still refuses, and an unreadable modes file means `enforce`.
+- Done when: each gate in `log` mode passes the call and writes one line to `.claude/overnight/gate-log.jsonl`, each in `enforce` mode still refuses, and an unreadable modes file means `enforce`.
 
 ## Stage 5: Supervisor, auto-undo and health
 
-- Split the frozen supervisor out of `overnight-launch.sh`, and move the policy parts out of it.
-- Record machinery commits, and revert them when the next 2 segments ship nothing.
-- Write `build/run-health.json` and send the two alerts.
+- Add `scripts/overnight/supervisor.py`, frozen, called at each segment end. Splitting the launcher was dropped: it adds risk, and the launcher is frozen anyway. Its leftover policy goes in stage 7.
+- Record machinery commits, and revert them when the next 2 segments produce nothing else.
+- Write `.claude/overnight/run-health.json` and send the two alerts.
 - Attended repair from a worktree: rewrite the CLAUDE.md section down to the new, simpler rule.
 - Done when: a fixture machinery commit followed by 2 empty segments is reverted and alerted, and a revert that itself fails alerts and leaves the run going.
 

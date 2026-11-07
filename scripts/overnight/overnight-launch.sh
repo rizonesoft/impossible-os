@@ -350,13 +350,14 @@ PROMPT_EOF
 # and that is a job for the next session rather than a reason to stop. The prompt
 # changes only here, so a healthy run keeps its byte-stable prefix (2026-11-07).
 NOSHIP_STREAK="$(awk 'NR==1{print $1+0}' "$PROJECT_DIR/.claude/overnight/noship-streak" 2>/dev/null || echo 0)"
-if [ "${NOSHIP_STREAK:-0}" -ge "${OVERNIGHT_NOSHIP_LIMIT:-2}" ]; then
+STALL_HOURS="$(awk 'NR==1{print $1}' "$PROJECT_DIR/.claude/overnight/repair-needed" 2>/dev/null || true)"
+if [ "${NOSHIP_STREAK:-0}" -ge "${OVERNIGHT_NOSHIP_LIMIT:-2}" ] || [ -n "$STALL_HOURS" ]; then
   CLAUDE_PROMPT="$CLAUDE_PROMPT
 
-REPAIR SEGMENT: the last $NOSHIP_STREAK segments shipped nothing. Before any section work, read the newest reports in .claude/overnight/reports/ and find out why. Fix the cause, whatever layer owns it, with a test. If you cannot fix it this segment, record what you found and move to a different section, so the fault stops one item and not the run."
+REPAIR SEGMENT: the last $NOSHIP_STREAK segments produced no commit, and ${STALL_HOURS:-under 6} hours have passed since a section shipped. Before any section work, read the newest reports in .claude/overnight/reports/ and find out why. Fix the cause, whatever layer owns it, with a test. If you cannot fix it this segment, record what you found and move to a different section, so the fault stops one item and not the run."
   echo "repair segment: no-ship streak $NOSHIP_STREAK" >> "$REPORT"
   bash "$SCRIPT_DIR/notify.sh" "$PROJECT_DIR" critical \
-    "Nothing has shipped for $NOSHIP_STREAK segments: starting a repair segment." 2>/dev/null || true
+    "Starting a repair segment: no-ship streak ${NOSHIP_STREAK:-0}, hours since a ship ${STALL_HOURS:-under 6}." 2>/dev/null || true
 fi
 
 # Byte-stable worker prompts (2026-07-11): every fresh worker session should
@@ -492,6 +493,10 @@ echo "run outcome: ${OUTCOME_JSON:-unavailable}" >> "$REPORT"
 # deadline and fixpoint stop paths, so an ordinary run left it weeks stale (last
 # written 2026-09-30 while the 2026-11-07 run rotated 20 times).
 python3 "$SCRIPT_DIR/run-status.py" "$PROJECT_DIR" --stamp "$(date -Is)" >/dev/null 2>&1 || true
+# Undo a machinery change nothing worked with, and keep the health numbers. Never
+# able to stop the run; its own failures are reported through its alerts.
+timeout 2400 python3 "$SCRIPT_DIR/supervisor.py" "$PROJECT_DIR" --start-head "${START_HEAD:-}" \
+  --report "$REPORT" >> "$REPORT" 2>&1 || true
 # NO-SHIP STREAK (2026-07-31; outcome-aware + extracted 2026-08-11). Feeds
 # deadline-check.sh's abort. The rules and the incident that reshaped them (a
 # verified-rollover rotation counted as a dead segment, and the breaker stopped

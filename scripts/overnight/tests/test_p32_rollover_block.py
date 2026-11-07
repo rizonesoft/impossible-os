@@ -25,6 +25,29 @@ def _load(state_file, repo_dir):
     return mod
 
 
+def test_a_section_that_keeps_failing_stops_holding_the_queue():
+    # A failure stops one item, never the run (2026-11-07).
+    with tempfile.TemporaryDirectory() as d:
+        mod = _load(pathlib.Path(d) / "state.json", pathlib.Path(d))
+        refused = {"file": "todo/TODO-22.md", "section_idx": 5, "epoch": 1, "attempts": 2}
+        mod.save_state({"active": True, "file": "todo/TODO-22.md", "section_idx": 5,
+                        "rollover_refused": refused})
+        assert mod.cli(["cursor", "02-kernel-core", "todo/TODO-22.md", "6"]) == 0
+        assert "rollover_refused" not in mod.load_state()
+        # REFUSAL: one refusal still earns a repair attempt first.
+        mod.save_state({"active": True, "file": "todo/TODO-22.md", "section_idx": 5,
+                        "rollover_refused": dict(refused, attempts=1)})
+        assert mod.cli(["cursor", "02-kernel-core", "todo/TODO-22.md", "6"]) == 1
+
+
+def test_attempts_count_per_section_and_restart_on_a_new_one():
+    with tempfile.TemporaryDirectory() as d:
+        mod = _load(pathlib.Path(d) / "state.json", pathlib.Path(d))
+        assert not mod._refusal_holds_the_queue({"attempts": 2})
+        assert mod._refusal_holds_the_queue({"attempts": 1})
+        assert mod._refusal_holds_the_queue({}), "an old entry counts as one refusal"
+
+
 def test_cursor_advance_blocked_after_refused_rollover():
     with tempfile.TemporaryDirectory() as d:
         mod = _load(pathlib.Path(d) / "state.json", pathlib.Path(d))

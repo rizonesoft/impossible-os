@@ -96,3 +96,5 @@ scripts/overnight/segment-sync.sh
 scripts/overnight/deadline-check.sh
 scripts/overnight/stale_parks.py
 scripts/overnight/skill_denies.py
+scripts/overnight/supervisor.py
+.claude/hooks/gate.py

@@ -192,6 +192,16 @@ def _strip_git_message_bodies(cmd):
     return " ".join(keep)
 
 
+# How many refused rollovers one section gets before the queue moves on without it.
+# An entry written before this field existed counts as one refusal.
+ROLLOVER_ATTEMPTS = 2
+
+
+def _refusal_holds_the_queue(refused):
+    """True while a refused rollover still earns another attempt at its section."""
+    return int((refused or {}).get("attempts") or 1) < ROLLOVER_ATTEMPTS
+
+
 def _is_self_teardown(cmd):
     c = " ".join(_strip_git_message_bodies(cmd or "").split())
     # Disarm via either wrapper.
@@ -723,6 +733,29 @@ def _cursor_stages_done(state):
         return False
 
 
+def _refusal_is_only_logged(msg, tool_input):
+    """A process refusal whose gate is in `log` mode: record it and let the call go.
+    A frozen path stays refused whatever the data file says. Any doubt refuses."""
+    code = re.match(r"\[(SEQ-[A-Z0-9-]+)\]", msg or "")
+    if not code:
+        return False
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import gate
+    except Exception:
+        return False  # fail-direction: without the helper every gate is enforced
+    if code.group(1) == "SEQ-CONTROL-PLANE":
+        target = (tool_input.get("file_path") or tool_input.get("path")
+                  or tool_input.get("notebook_path") or "")
+        if _control_plane_path(target) in gate.FROZEN:
+            return False
+    root = repo_root()
+    if gate.mode_of(code.group(1), root) != "log":
+        return False
+    gate.log_refusal(root, code.group(1), msg)
+    return True
+
+
 def handle_pretool():
     try:
         d = json.load(sys.stdin)
@@ -752,6 +785,8 @@ def handle_pretool():
                 and _skill_name(tool_input) in LIFECYCLE_SKILLS):
             state.pop("lifecycle_override", None)
             save_state(state)
+        return 0
+    if _refusal_is_only_logged(msg, tool_input):
         return 0
     sys.stderr.write(msg)
     return 2
@@ -1714,13 +1749,23 @@ def cli(argv):
             rr = state.get("rollover_refused")
             if isinstance(rr, dict) and state.get("active"):
                 if new_file != rr.get("file") or new_idx != rr.get("section_idx"):
-                    print("[sequencer] cursor BLOCKED (P3.2): a rollover was "
-                          f"REFUSED at {rr.get('file')} section "
-                          f"{rr.get('section_idx')}. Repair that checkpoint "
-                          "(commit/clean/push + receipts) and re-run `rollover` -- "
-                          "do NOT start the next section un-rotated. Operator "
-                          "override: `run_phase_guard.py clear`.", file=sys.stderr)
-                    return 1
+                    # A failure stops one item, never the run (2026-11-07). One
+                    # refusal earns a repair attempt; after that the queue moves.
+                    if _refusal_holds_the_queue(rr):
+                        print("[sequencer] cursor BLOCKED (P3.2): a rollover was "
+                              f"REFUSED at {rr.get('file')} section "
+                              f"{rr.get('section_idx')}. Repair that checkpoint "
+                              "(commit/clean/push + receipts) and re-run `rollover`; "
+                              f"after {ROLLOVER_ATTEMPTS} refusals this section "
+                              "parks and the queue moves on.", file=sys.stderr)
+                        return 1
+                    print("[sequencer] moving on from "
+                          f"{rr.get('file')} section {rr.get('section_idx')} after "
+                          f"{rr.get('attempts')} refused rollovers. It must not "
+                          "stay in the tree half-done: revert its unpushed commits "
+                          "and park it with the reason.", file=sys.stderr)
+                    state.pop("rollover_refused", None)
+                    state["last_rollover_epoch"] = int(time.time())
             # R1 (2026-07-19): rollover-required-after-ship. P3.2 above only
             # traps a REFUSED rollover; a worker that never ATTEMPTS one could
             # advance into the next section un-rotated. If any commit newer
@@ -2031,10 +2076,15 @@ def cli(argv):
             # P3.2: record the refusal + the section it happened at, so `cursor`
             # blocks an un-rotated advance into the next section until a rollover
             # verifies. Repair the current checkpoint and retry -- do not proceed.
+            prior = state.get("rollover_refused")
+            same = (isinstance(prior, dict)
+                    and prior.get("file") == state.get("file")
+                    and prior.get("section_idx") == state.get("section_idx"))
             state["rollover_refused"] = {
                 "file": state.get("file"),
                 "section_idx": state.get("section_idx"),
                 "epoch": int(time.time()),
+                "attempts": (int(prior.get("attempts") or 1) + 1) if same else 1,
             }
             save_state(state)
             print("[sequencer] rollover REFUSED (checkpoint not verified):\n"

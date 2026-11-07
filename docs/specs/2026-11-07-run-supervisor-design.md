@@ -50,17 +50,17 @@ A reviewer's skill can still say to run a review or apply reception. What change
 
 **Work-item failure.** The cursor records attempts per section. After 2 failed attempts (a refused ship, a failing suite, a review loop at its cap), the section is parked with its reason and the cursor moves on. Parked-on-failure work stays visible and retries once per pass, because a later fix often clears it. `rollover_refused` stops holding the queue.
 
-**The supervisor.** A small frozen core: start a session, relaunch on exit, read health, undo a bad machinery commit, send an alert. About 300 lines split out of `overnight-launch.sh`, whose core is about 60 lines of its 504. It is the only part a run may not edit, because it is what recovers from every other mistake.
+**The supervisor.** `scripts/overnight/supervisor.py`, called once at each segment end, plus the launcher and the arm script. These, `gate.py`, `run_phase_guard.py` and `settings.json` are the only files a run may not edit, because they are what recovers from every other mistake. A run can still set a process gate to `log`, because that data file is not frozen and cannot reach a product or safety check.
 
 **The run ends only when** the oracle says fixpoint, an operator stops it, or an explicit `--hours` deadline passes. A no-ship streak and a breaker trip no longer end it. They back off, alert, and start a **repair segment**: a fresh session told to find out why nothing is shipping and fix it.
 
-**Self-repair and auto-undo.** The run may edit the machinery, and the runner test suite still gates those commits. The supervisor records each machinery commit. If the next 2 segments ship nothing, it reverts those commits and alerts. A revert cannot wedge a run, because a machinery change is only ever a commit on `main`.
+**Self-repair and auto-undo.** The run may edit the machinery, and the runner test suite still gates those commits. The supervisor records each machinery commit. If the next 2 segments produce no commit outside the machinery, it reverts those commits, pushes and alerts. Producing anything clears them, because a section can span several segments and shipping alone would be too slow a signal. A failed revert alerts and stays out of the way, and a dirty tree retries at the next segment end.
 
 **Live repair.** A person, or an attended session, works in a separate worktree and pushes to `main`. The run picks it up at the next segment. This replaces the safe-window rules for sharing one tree.
 
 **Findings.** One running file, `todo/RUN-ISSUES.md`, replaces the 46 versioned capture files. A problem is fixed and its entry removed, with no close-out ritual. The old versions stay in git history.
 
-**Health.** `build/run-health.json`, written at each segment end: sections shipped today, cost per section, hours since the last ship, gate warnings fired per class, and machinery commits and reverts. It alerts when nothing ships for 6 hours, or when cost per section exceeds three times its trailing average.
+**Health.** `.claude/overnight/run-health.json`, written at each segment end: sections shipped today, cost per section, hours since the last ship, gate warnings fired per class, and machinery commits and reverts. It alerts when nothing ships for 6 hours, or when cost per section exceeds three times its trailing average.
 
 ## Hardware
 
