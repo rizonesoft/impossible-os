@@ -213,3 +213,25 @@ A: (pending)
 Recommended: B, because a diagnostics volume should not decide which OS slot runs. `git stash@{2}` holds earlier WIP labelled as this decision; I did not read its diff. Blocks one item in §5.
 
 A: (pending)
+
+## Q16 (00-infrastructure/TODO-04 §56): does a degraded test reap stop the boot?
+
+After a degraded reap, `s_reap_degraded` stops the test plan, but `boot_phase3` still spawns `cmd.exe` into a slot an unfinished `task_fork` may hold. The review rated this [high]; the path needs a forker preempted across about 400 ms of yields, so it is a forward-looking SMP guard, not an observed failure.
+
+- **A: fatal from `test_usermode_run()`.** The machine halts before the shell.
+- **B: `task_create_internal` fails closed while poisoned.** A test flag then changes scheduler behaviour system-wide.
+
+Recommended: A, since B reaches every task creation. I did not check whether the plan runs on non-test boots, which decides how much A costs. Blocks one item in §56.
+
+A: (pending)
+
+## Q17 (00-infrastructure/TODO-04 §62): may a record whose lease census never completes be destroyed?
+
+Such a record is held forever and announced on every pass. Converging it means destroying a record the pass could not classify, which §46, §53 and §62 exist to avoid.
+
+- **A: keep holding and reporting.** Disk can stay held, visibly.
+- **B: destroy after N consecutive held passes.** Disk is reclaimed, and a live lease can lose its record.
+
+Recommended: A until a real run shows the hold costing disk; `UTEST_CENSUS_BUDGET` already removed the common cause. Blocks one item in §62.
+
+A: (pending)
