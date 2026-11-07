@@ -145,15 +145,15 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 > [!IMPORTANT] Deferred (2026-06-17, unattended sequencer + Codex design review): the bootloader has no asymmetric crypto, no runtime SHA-256, and `efi.h` exposes no `EFI_PKCS7_VERIFY_PROTOCOL`. The whole section pivots on the network-asset **manifest signature trust model** (firmware-PKCS7 verify vs in-bootloader X.509 vs wrapping the network payload in a Secure-Boot-signed PE like the UKI) -- a user-reserved security-architecture decision. Shipping a digest/manifest wire format before that choice would authenticate nothing and risks cementing the wrong trust boundary. Anti-rollback, revocation/allowlist, and PCR attestation each need signing-toolchain + TPM-NV infrastructure owned elsewhere. Network boot stays fail-closed-to-local until the trust model is chosen. See Deferred stamps below.
 
-- [ ] **BLOCKER (user-reserved):** choose the manifest signature trust model (firmware PKCS7 vs in-bootloader X.509 vs Secure-Boot-signed-PE wrap); gates every item below. -> XREF: `01-boot-platform/TODO-02 §11`, `02-kernel-core/TODO-19 §3`
-- [ ] Require signed manifest for all network-booted assets.
-- [ ] Verify kernel, boot.conf, initrd, and modules by digest.
-- [ ] Bind manifest to Secure Boot/TPM state when available.
-- [ ] Refuse unsigned network boot unless `network_boot_insecure=1` and physical console confirms.
-- [ ] Manifest anti-rollback: monotonic version counter (NVRAM/TPM-NV backed) refuses a signed-but-older manifest than the last booted, so a valid stale manifest cannot be replayed.
-- [ ] Key revocation + allowlist: SBAT-style revocation list + per-device key allowlist; refuse assets signed by a revoked or non-allowlisted key.
-- [ ] Attestation chain: extend a TPM PCR with the manifest identity + asset digests; tie §6 boot_info + §9 `network-boot.json` to that identity (verifiable chain, not bare hashes); fail closed to local when firmware TLS/time is unavailable.
-- [ ] Commit: `"boot: verify network boot assets"`
+- [/] **BLOCKER (user-reserved, operator-gated):** choose the manifest trust model (firmware PKCS7 vs in-bootloader X.509 vs Secure-Boot-signed-PE wrap); gates every item below. -> XREF: `01-boot-platform/TODO-02 §11`, `02-kernel-core/TODO-19 §3`
+- [/] Require signed manifest for all network-booted assets. Waits on the §5 trust-model BLOCKER.
+- [/] Verify kernel, boot.conf, initrd, and modules by digest. Waits on the §5 trust-model BLOCKER.
+- [/] Bind manifest to Secure Boot/TPM state when available. Waits on the §5 trust-model BLOCKER.
+- [/] Refuse unsigned network boot unless `network_boot_insecure=1` and physical console confirms. Waits on the §5 trust-model BLOCKER.
+- [/] Manifest anti-rollback: monotonic counter refuses a signed-but-older manifest than the last booted. Waits on the trust-model BLOCKER -> XREF: `01-boot-platform/TODO-13 §7`, `01-boot-platform/TODO-01 §13`
+- [/] Key revocation + allowlist: SBAT-style list + per-device key allowlist. Waits on the trust-model BLOCKER -> XREF: `01-boot-platform/TODO-02 §17`, `02-kernel-core/TODO-19 §6`
+- [/] Attestation chain: extend a PCR with manifest identity + asset digests, tie §6 + §9 to it, fail closed to local without firmware TLS/time. Waits on the trust-model BLOCKER -> XREF: `01-boot-platform/TODO-13 §6`, §9, §13
+- [/] Commit: `"boot: verify network boot assets"`: Waits on the §5 trust-model BLOCKER.
 
 **Test checkpoint:** A network asset with a bad/absent manifest digest is REFUSED with a serial refusal line (boot halts to local fallback) unless `network_boot_insecure=1` AND the physical console confirms; a correctly signed manifest boots and binds to Secure Boot/TPM state when available. Verify on QEMU WHPX, bare metal.
 
@@ -175,13 +175,15 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 > [!IMPORTANT] Deferred (2026-06-17, unattended sequencer + Codex design review, 2 HIGH): §6's authoritative outputs are blocked. (1) Promoting a selected network boot (`boot_device_type=network`, `boot_path=NETWORK`, selected `HKLM\SYSTEM\Boot\Network`, boot-decision record) while §5 verification + the insecure-override/console-confirm path are deferred would ship the exact insecure selected-boot state §5 forbids -- `boot_decision.c:269` already accepts `BOOT_REASON_NETWORK_INSECURE` as a valid `BOOT_PATH_NETWORK`. (2) `boot_media_role=network` is a closed inline-enum extension (`BOOT_MEDIA_ROLE_MAX=6`, pinned offset 23968) needing a `BOOT_INFO_VERSION` bump -- an ABI change to stop on. Non-authoritative provenance staging is the only unblocked sliver and is premature until §5+§7 make network a selected boot path. See Deferred stamps below.
 
-- [ ] Extend boot_info with network boot descriptor through TODO-01 §4 and the shared boot-path decision record through TODO-01 §12. Use `BOOT_PAYLOAD_NETWORK_CONFIG` from [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) for the TFTP/HTTP config blob pointer; the TODO-01 §4 validator rejects overlap with any other retained boot region before the kernel dereferences the MAC/IP/URI fields. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
-- [ ] Include MAC, IP, server URI, protocol, manifest digest, and insecure flag.
-- [ ] Expose `HKLM\SYSTEM\Boot\Network`.
-- [ ] Add `boot_device_type=network` test coverage.
-- [ ] Network media-role: publish `boot_media_role=network` and parse vendor DHCP `media_role=NAME` option; slots as source #2 in the UKI > DHCP > role.txt precedence. Consumer: 01-boot-platform/TODO-06 §11.
-- [ ] Test `test_media_role_network_dhcp_option` (mock DHCP option, pure data parser) wired under TEST_CAT_BOOT. Consumer: 01-boot-platform/TODO-06 §11.
-- [ ] Commit: `"boot: hand off network boot provenance"`
+- [/] Extend boot_info with a network descriptor (TODO-01 §4) + decision record (TODO-01 §12). Waits on the §5 BLOCKER -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
+  - Use `BOOT_PAYLOAD_NETWORK_CONFIG` from [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) for the TFTP/HTTP config blob pointer; the TODO-01 §4 validator rejects overlap with any other retained boot region before the kernel dereferences the MAC/IP/URI fields.
+- [/] Include MAC, IP, server URI, protocol, manifest digest, and insecure flag. Waits on the descriptor item above.
+- [/] Expose `HKLM\SYSTEM\Boot\Network`. Authoritative promotion stays fail-closed until §5, so this waits on the trust-model BLOCKER.
+- [/] Add `boot_device_type=network` test coverage. Authoritative promotion stays fail-closed until §5, so this waits on the trust-model BLOCKER.
+- [/] Network media-role: publish `boot_media_role=network` and parse vendor DHCP `media_role=NAME` (source #2 in UKI > DHCP > role.txt). Operator-gated ABI: closed enum, `BOOT_INFO_VERSION` bump -> XREF: `01-boot-platform/TODO-01 §7`, TODO-06 §11
+- [/] Test `test_media_role_network_dhcp_option` (mock DHCP option, pure data parser) wired under TEST_CAT_BOOT. Consumer: 01-boot-platform/TODO-06 §11. Waits on the media-role item above.
+- [ ] Non-authoritative diagnostic provenance descriptor (the "§6 sliver" §9 relies on): feeds the §9 report without the §5 trust decision. Named only in prose until now; no trust blocker, needs an ABI check first.
+- [/] Commit: `"boot: hand off network boot provenance"`: waits on the items above.
 
 **Test checkpoint:** After a network boot, `boot_info` carries the network descriptor (MAC, IP, server URI, protocol, manifest digest, insecure flag), `HKLM\SYSTEM\Boot\Network` is populated, `boot_device_type=network`, and `test_media_role_network_dhcp_option` passes. Verify on QEMU WHPX.
 
@@ -201,11 +203,11 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 > [!IMPORTANT] Deferred (2026-06-17, unattended sequencer): §7's distinctly-new content is the NETWORK leg of the fallback chain ("fall back to network", `boot.conf` "prefer network", network-download-failure loop prevention), all gated on §5/§6 -- network cannot be a selectable fallback target while it is an untrusted, non-selected boot path. The local ordering (BootNext, boot device, A/B slot, recovery) is already owned: TODO-05 §5 (priority-based device fallback chain) + §6 (UEFI BootOrder/Current/Next) are DONE, TODO-21 owns the A/B slot leg, and `boot_fallback_depth`/`BOOT_FALLBACK_DEPTH_MAX` already cap runaway loops. No non-gated, non-duplicate work remains. See Deferred stamps below.
 
-- [ ] Extend fallback chain policy: BootNext, boot device, A/B slot, recovery, network.
-- [ ] Allow boot.conf to prefer local, removable, or network.
-- [ ] Prevent network fallback loops after repeated download failure.
-- [ ] Interlock with watchdog and rollback counters.
-- [ ] Commit: `"boot: network fallback ordering"`
+- [/] Extend fallback chain policy: BootNext, boot device, A/B slot, recovery, network. Network leg waits on §5 + §6. Local legs -> XREF: `01-boot-platform/TODO-05 §5`, §6
+- [/] Allow boot.conf to prefer local, removable, or network. Network leg waits on §5 + §6.
+- [/] Prevent network fallback loops after repeated download failure. Network leg waits on §5 + §6.
+- [/] Interlock with watchdog and rollback counters. Network leg waits on §5 + §6. -> XREF: `01-boot-platform/TODO-21 §4`
+- [/] Commit: `"boot: network fallback ordering"`: Network leg waits on §5 + §6.
 
 **Test checkpoint:** With local + network sources present, the documented order (BootNext, boot device, A/B slot, recovery, network) is honored and `boot.conf` can re-prefer local/removable/network; after repeated download failures the boot falls back to local media without a network retry loop, interlocked with the watchdog + rollback counters. Verify on QEMU WHPX.
 
@@ -225,12 +227,12 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 > [!IMPORTANT] Deferred (2026-06-17, unattended sequencer): every item downloads and BOOTS executable assets (recovery image, installer kernel) over the §3/§4 network transports "verified by §5". With §5 verification deferred, executing network-fetched assets is exactly the insecure network boot §5's fail-closed contract forbids. Gated on §5. See Deferred stamp below.
 
-- [ ] Allow recovery image download when local recovery partition is missing or corrupt.
-- [ ] Add installer network boot mode: fetch assets over §3 TFTP/§4 HTTP (verified by §5), set `InstallerMode`; the same-kernel installer launches `installer.exe`. -> XREF: 10-platform-services/TODO-11-installer-iso.md §2
-- [ ] No separate WinPE/initramfs or netroot mount: Impossible OS deliberately reuses the §3/§4 transports + the installed kernel (TODO-11 decision), not a WDS boot.wim ramdisk or dracut NFS/iSCSI/NBD root.
-- [ ] Cache downloaded recovery assets to BlackBox when possible.
-- [ ] Add progress UI for large downloads.
-- [ ] Commit: `"recovery: network boot repair path"`
+- [/] Allow recovery image download when local recovery partition is missing or corrupt. Waits on the §5 trust-model BLOCKER.
+- [/] Add installer network boot mode: fetch assets over §3/§4 (verified by §5), set `InstallerMode`; the same-kernel installer launches `installer.exe`. Waits on the §5 BLOCKER -> XREF: 10-platform-services/TODO-11-installer-iso.md §2
+- [ ] standing: no separate WinPE/initramfs or netroot mount. Impossible OS reuses the §3/§4 transports + the installed kernel (TODO-11 decision), not a WDS boot.wim ramdisk or dracut NFS/iSCSI/NBD root.
+- [/] Cache downloaded recovery assets to BlackBox when possible. Waits on the §5 trust-model BLOCKER.
+- [/] Add progress UI for large downloads. Waits on the §5 trust-model BLOCKER.
+- [/] Commit: `"recovery: network boot repair path"`: Waits on the §5 trust-model BLOCKER.
 
 **Test checkpoint:** With the local recovery partition missing/corrupt, a network recovery image downloads and boots; `InstallerMode` network boot enters the installer; downloaded recovery assets are cached to BlackBox when present, with progress UI for large downloads. Verify on QEMU WHPX (network recovery).
 
@@ -249,11 +251,11 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 > [!IMPORTANT] Deferred (2026-06-17, unattended sequencer): the kernel writes `X:\Diag\network-boot.json`, but its data source -- the network provenance -- is the §6 boot_info handoff (deferred), and per-file hashes come from §5 verification (deferred). A non-authoritative diagnostic provenance handoff (the §6 sliver Codex blessed) is the future unblock path. Gated on §6 -> §5. See Deferred stamp below.
 
-- [ ] Write `X:\Diag\network-boot.json` with DHCP, protocol, timings, retries, file hashes.
-- [ ] Include network path in VPD and boot timeline.
+- [/] Write `X:\Diag\network-boot.json` with DHCP, protocol, timings, retries, file hashes. Waits on §6 provenance; file hashes on §5.
+- [/] Include network path in VPD and boot timeline. Waits on §6 provenance.
 - [ ] Add QR code payload for network failures.
-- [ ] Add host decoder support.
-- [ ] Commit: `"boot: network boot diagnostics"`
+- [/] Add host decoder support. Waits on the QR payload item above.
+- [/] Commit: `"boot: network boot diagnostics"`: waits on the items above.
 
 **Test checkpoint:** Post-boot, `X:\Diag\network-boot.json` exists with DHCP, protocol, timings, retries, and per-file hashes; the network path appears in VPD + the boot timeline; a network failure emits a host-decodable QR payload. Verify on QEMU WHPX/TCG.
 
@@ -274,9 +276,9 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 - [ ] Add QEMU PXE/TFTP test harness.
 - [ ] Add HTTP Boot mock server test.
-- [ ] Test missing file, bad manifest, timeout, retry, and fallback.
-- [ ] Test bare-metal firmware PXE where available.
-- [ ] Commit: `"test: PXE and HTTP boot coverage"`
+- [/] Test missing file, bad manifest, timeout, retry, and fallback. Bad-manifest waits on §5 and fallback on §7; the missing-file, timeout and retry cases can land with the harness.
+- [/] operator-gated (needs physical firmware): test bare-metal firmware PXE where available.
+- [/] Commit: `"test: PXE and HTTP boot coverage"`: waits on the test items above.
 
 **Test checkpoint:** The QEMU PXE/TFTP harness + HTTP-Boot mock-server test pass; the missing-file, bad-manifest, timeout, retry, and fallback cases each assert the expected refusal/fallback behavior; bare-metal firmware PXE is exercised where available. Verify on QEMU WHPX/TCG, bare metal.
 
