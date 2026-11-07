@@ -62,7 +62,7 @@ title: "TODO-24 -- BlackBox Service Partition"
 | 💎  |  12   | Partition health -- fsck on mount, dirty-bit check             | §3, T09 §6 |  [/]   |
 | ⭐  |  13   | WER staging area -- error reports in X:\Crash\WER\             | §4, §7     |  [ ]   |
 | 💎  |  14   | A/B layout compatibility -- 4+ partition coexistence           | §1         |  [x]   |
-| 💎  |  15   | Boot platform TODO updates -- XREFs and domain sync            | §1-§14     |  [x]   |
+| 💎  |  15   | Boot platform TODO updates -- XREFs and domain sync            | §1-§14     |  [/]   |
 | 💎  |  16   | Crash/WER report retention in partition cleanup                | §10, §13   |  [x]   |
 
 > 💎 = parity -- Windows has a recovery/diagnostic partition; Linux has /var/log separation.
