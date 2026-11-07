@@ -105,3 +105,17 @@ the relocation ordering for the whole kernel roadmap.
 - **§21:** add a Win64 startup frame for PE32+ and define one for EIF.
 
 Recommended: let the run do all five through the normal section pipeline, because the current layouts are defects, nothing outside this repo depends on them, and every section still gets a design review. Blocks these five sections only.
+
+## Q5 (TODO-18 §2-§10): how does the kimage registry replace `exec_register_module`?
+
+`02-kernel-core/TODO-18` s2 needs this before any registry code, and s3-s10 hang off s2. These stamps had no `awaiting-answer`, so this never reached the operator list. `s_modules[64]` in `src/kernel/exec.c` is the live registry, and the fatal Phase-1 self-registration (`boot_interrupts.c`) and the shipped crash-dump path (`TODO-27` s3) depend on it. Expensive to reverse.
+
+Five answers are needed. The recommendations are from reading the code, not from a design review, and that review still runs when s2 starts.
+
+- **Strategy: A or B?** A makes kimage the backing store and `exec_register_module` delegates to it. B makes kimage a superset and rewires every consumer. Recommended: A, because the fatal boot path and crash path keep working through the migration.
+- **Extract a T17 LDR-list API from `exec.c` first?** Recommended: yes.
+- **Per-process registry: a new `struct task` field, or PEB `Ldr` only?** Recommended: the `struct task` field, because ring 3 can write the PEB.
+- **Does `kimage_init()` absorb the Phase-1 self-registration?** Recommended: not at first; move it once A has landed.
+- **Add `SUBSYS_KIMAGE`?** Recommended: yes.
+
+Blocks TODO-18 s2-s10 only.

@@ -83,137 +83,201 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 > [!IMPORTANT]
 > **Blocked on an operator-reserved architectural decision** (kimage-supersedes-exec migration strategy). The existing `exec_register_module` / `loaded_module_t` registry (`s_modules[64]` + `s_module_lock`, `src/kernel/exec.c:35-618`) is already the de-facto registry, consumed by the shipped crash-dump path (TODO-27 §3) and the FATAL kernel Phase-1 self-registration (`boot_interrupts.c:253`). §2's atomic-publish transaction explicitly fixes `exec_register_module`, so §2 IS that migration; a second parallel kimage store would create the exact registry fork this TODO exists to eliminate. Four questions must be answered first: (A) kimage as the backing store that `exec_register_module` delegates to, vs (B) kimage superset with consumers rewired; is a T17 LDR-list API extracted from `exec.c:340` first; per-process registry as a new `struct task` field vs PEB->Ldr only; does `kimage_init()` absorb the fatal Phase-1 self-registration; add `SUBSYS_KIMAGE`?
 
-- [ ] DECIDE the migration strategy (A backing-store-delegate vs B superset-rewire) and answer the 4 open questions in the callout above, before any registry storage code. -> XREF: TODO-27 §3 (existing crash-dump consumer of `exec_register_module`).
-- [ ] Global registry owns kernel, boot, driver, and kmod images.
-- [ ] Per-process registry owns main image and DLL/shared libraries.
-- [ ] Expose lock-safe iteration API with rundown protection.
-- [ ] PEB `Ldr` three-list shape (InLoadOrder / InMemoryOrder / InInitializationOrder) is owned by T17; consume its list APIs here, do not define a fourth list. -> XREF: TODO-17 §3 (LDR module list).
-- [ ] Atomic publish transaction: stage every allocation (KIMAGE + three PEB lists + index nodes), commit membership in one step, reverse-roll-back on failure -- fixes the partial-publish divergence in `exec_register_module`.
-- [ ] Fire load notifications only after commit; unload removes in symmetric reverse order. Test injected failure at every publish stage; assert membership + list order, not just counts.
-- [ ] Common `kimage_entry_t` validator every producer calls before publish, enforcing the kimage.h record invariants (bounded `identity_len`, NUL-terminated in-capacity path/name/signer). Add the length/termination rejection tests here.
-- [ ] Commit: `"kernel: kimage -- global and per-process registries"`
+- [/] DECIDE the migration strategy (A backing-store-delegate vs B superset-rewire) and answer the 4 open questions in the callout above, before any registry storage code. -> XREF: TODO-27 §3 (existing crash-dump consumer of `exec_register_module`).
+  - BLOCKED: `todo/answers.md` Q5, awaiting the operator. Nothing calls `kimage_register`: only `include/kernel/kimage.h` and its test exist.
+- [/] Global registry owns kernel, boot, driver, and kmod images.
+  - BLOCKED: `todo/answers.md` Q5: the migration strategy decides where this lives. `s_modules[64]` in `src/kernel/exec.c` is still the only registry.
+- [/] Per-process registry owns main image and DLL/shared libraries.
+  - BLOCKED: `todo/answers.md` Q5: new `struct task` field or PEB `Ldr` only is one of its four questions.
+- [/] Expose lock-safe iteration API with rundown protection.
+  - BLOCKED: `todo/answers.md` Q5: the migration strategy decides where this lives.
+- [/] PEB `Ldr` three-list shape (InLoadOrder / InMemoryOrder / InInitializationOrder) is owned by T17; consume its list APIs here, do not define a fourth list. -> XREF: TODO-17 §6 (LDR module list).
+  - BLOCKED: `todo/answers.md` Q5: whether a T17 LDR-list API is extracted first is one of its four questions. Owner corrected 2026-11-07: `TODO-17` §3 is now ELF Security Segments; the LDR list is `TODO-17` §6.
+- [/] Atomic publish transaction: stage every allocation (KIMAGE + three PEB lists + index nodes), commit membership in one step, reverse-roll-back on failure -- fixes the partial-publish divergence in `exec_register_module`.
+  - BLOCKED: `todo/answers.md` Q5: the migration strategy decides where this lives. The partial publish is still in `exec_register_module`.
+- [/] Fire load notifications only after commit; unload removes in symmetric reverse order. Test injected failure at every publish stage; assert membership + list order, not just counts.
+  - BLOCKED: follows the atomic publish above.
+- [/] Common `kimage_entry_t` validator every producer calls before publish, enforcing the kimage.h record invariants (bounded `identity_len`, NUL-terminated in-capacity path/name/signer). Add the length/termination rejection tests here.
+  - BLOCKED: producers publish through §2's registry, which waits on `todo/answers.md` Q5.
+- [/] Commit: `"kernel: kimage -- global and per-process registries"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** Registering N images and iterating returns exactly N under a spinlock/rundown; concurrent register/unregister on two CPUs leaves the count consistent. Serial log shows `"kimage: registered '<name>' (global|pid=<N>)"`. Test on: QEMU WHPX + TCG; bare metal.
-> **Deferred:** 2026-07-10 | [architectural] §2 registries ARE the kimage-supersedes-exec migration; the strategy (backing-store-delegate vs superset-rewire) + 4 open questions touch the FATAL Phase-1 kernel self-registration and the shipped TODO-27 §3 crash-dump consumer (reason: operator-reserved, expensive-to-reverse boot/ABI refactor) -> XREF: TODO-27 §3 (crash-dump consumer of `exec_register_module`; DECIDE item at §2 line 85)
+> **Deferred:** 2026-07-10 | [architectural] §2 registries ARE the kimage-supersedes-exec migration; the strategy (backing-store-delegate vs superset-rewire) + 4 open questions touch the FATAL Phase-1 kernel self-registration and the shipped TODO-27 §3 crash-dump consumer (reason: operator-reserved, expensive-to-reverse boot/ABI refactor) awaiting-answer (`todo/answers.md` Q5) -> XREF: TODO-27 §3 (crash-dump consumer of `exec_register_module`; item: "DECIDE the migration strategy" in §2)
 
 ---
 
 ## 3. Address Range Index
 
-- [ ] Two separate indexes: one kernel-VA index, one per-address-space (per-process) index. The same user VA can belong to different images in different processes.
-- [ ] `image_lookup_by_address()` requires an address-space key `(asid/process, addr)` for user ranges; kernel ranges use the kernel index. No process-agnostic user lookup.
-- [ ] Lifetime-safe lookup: return an acquired reference or a copied snapshot, never a bare entry pointer -- concurrent unload must not invalidate a result mid symbol/unwind walk. Support RCU-style lookup from any context including panic/NMI.
-- [ ] Handle overlapping ranges as fatal loader bugs unless explicitly marked alias mapping.
-- [ ] Cache last lookup per CPU keyed by address-space generation (invalidate on context switch / space teardown) for the stack-walk hot path.
-- [ ] Commit: `"kernel: kimage -- address range index and lookup"`
+- [/] Two separate indexes: one kernel-VA index, one per-address-space (per-process) index. The same user VA can belong to different images in different processes.
+  - BLOCKED: nothing to index until §2's registry exists.
+- [/] `image_lookup_by_address()` requires an address-space key `(asid/process, addr)` for user ranges; kernel ranges use the kernel index. No process-agnostic user lookup.
+  - BLOCKED: indexes §2's per-process registry, whose shape is one of Q5's questions.
+- [/] Lifetime-safe lookup: return an acquired reference or a copied snapshot, never a bare entry pointer -- concurrent unload must not invalidate a result mid symbol/unwind walk. Support RCU-style lookup from any context including panic/NMI.
+  - BLOCKED: returns references to §2's entries; lifetime follows that design.
+- [/] Handle overlapping ranges as fatal loader bugs unless explicitly marked alias mapping.
+  - BLOCKED: checked at §2's publish, which does not exist.
+- [/] Cache last lookup per CPU keyed by address-space generation (invalidate on context switch / space teardown) for the stack-walk hot path.
+  - BLOCKED: caches the index above.
+- [/] Commit: `"kernel: kimage -- address range index and lookup"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** `image_lookup_by_address(base)` and `(end-1)` return the entry; `(end)` and `(base-1)` return NULL; an overlapping insert is rejected/faults. Per-CPU cache hit on repeated lookup. Test on: QEMU WHPX + TCG; bare metal.
-> **Deferred:** 2026-07-10 | [architectural] indexes the kimage registry (§2); blocked until the §2 migration strategy is decided (reason: downstream of §2) -> XREF: §2 (DECIDE item, line 85).
+> **Deferred:** 2026-07-10 | [architectural] indexes the kimage registry (§2); blocked until the §2 migration strategy is decided (reason: downstream of §2) awaiting-answer (`todo/answers.md` Q5) -> XREF: §2 (item: "DECIDE the migration strategy").
 
 ---
 
 ## 4. Symbol Provider Abstraction
 
-- [ ] Providers: kernel symtab file, PE export/PDB-lite info, ELF symtab/dynsym, EIF metadata, synthetic stubs.
-- [ ] API: `ksym_lookup_addr`, `ksym_lookup_name(image/namespace, name)`, `ksym_iterate_module`. Name lookup MUST take an image/namespace qualifier -- unqualified lookup can bind the wrong ring-0 function by incidental load order.
-- [ ] Global-export uniqueness: reject a duplicate exported name at provider/module registration (Linux kallsyms/namespaces lesson); define weak/local/forwarded precedence and a deterministic ambiguity error.
-- [ ] Return symbol name, displacement, source file/line when available.
-- [ ] Mark stripped images clearly for crash output.
-- [ ] Commit: `"kernel: kimage -- symbol provider abstraction"`
+- [/] Providers: kernel symtab file, PE export/PDB-lite info, ELF symtab/dynsym, EIF metadata, synthetic stubs.
+  - BLOCKED: providers hang off §2's entries. `symtab_resolve` remains the only kernel symbol path.
+- [/] API: `ksym_lookup_addr`, `ksym_lookup_name(image/namespace, name)`, `ksym_iterate_module`. Name lookup MUST take an image/namespace qualifier -- unqualified lookup can bind the wrong ring-0 function by incidental load order.
+  - BLOCKED: nothing under `src/` defines it; keyed on §2's images.
+- [/] Global-export uniqueness: reject a duplicate exported name at provider/module registration (Linux kallsyms/namespaces lesson); define weak/local/forwarded precedence and a deterministic ambiguity error.
+  - BLOCKED: enforced at registration into §2's registry.
+- [/] Return symbol name, displacement, source file/line when available.
+  - BLOCKED: part of the provider API above.
+- [/] Mark stripped images clearly for crash output.
+  - BLOCKED: reads the provider state above.
+- [/] Commit: `"kernel: kimage -- symbol provider abstraction"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** `ksym_lookup_addr(known_sym+4)` returns the symbol name with displacement 4; a stripped image reports `<no symbols>`; `ksym_lookup_name` round-trips. Test on: QEMU WHPX + TCG; bare metal.
-> **Deferred:** 2026-07-10 | [architectural] symbol providers hang off kimage registry entries (§2); blocked until the §2 migration strategy is decided (reason: downstream of §2) -> XREF: §2 (DECIDE item, line 85).
+> **Deferred:** 2026-07-10 | [architectural] symbol providers hang off kimage registry entries (§2); blocked until the §2 migration strategy is decided (reason: downstream of §2) awaiting-answer (`todo/answers.md` Q5) -> XREF: §2 (item: "DECIDE the migration strategy").
 
 ---
 
 ## 5. Unwind Metadata Registry
 
-- [ ] Ownership split: T18 owns unwind-metadata lifetime + a normalized sorted/indexed representation; T23 owns the unwind execution/lookup engine; T17 owns parsing image sections. -> XREF: TODO-23 §6 (table-based unwind).
-- [ ] Register PE `.pdata`, EIF native unwind, and ELF `.eh_frame`. Translate `.eh_frame` to the normalized table at load time -- do not walk DWARF live. Lookup is bounded/indexed (ORC-style range-narrowing), NOT claimed O(1).
-- [ ] Provide range lookup for the exception-dispatch unwind engine (T23).
-- [ ] Validate unwind ranges are inside executable image sections.
-- [ ] Include unwind table hash in image provenance.
-- [ ] [/] Dynamic/JIT unwind (`RtlAddFunctionTable`) 💎: add/delete/callback APIs shipped in TODO-23 §6; the growable-table variant + T18 normalized storage remain. -> XREF: TODO-23 §6.
-- [ ] Commit: `"kernel: kimage -- unwind metadata registry"`
+- [x] Ownership split: T18 owns unwind-metadata lifetime + a normalized sorted/indexed representation; T23 owns the unwind execution/lookup engine; T17 owns parsing image sections. -> XREF: TODO-23 §6 (table-based unwind).
+  - Recorded on the owner side at `TODO-23` §6's scope note, checked 2026-11-07.
+- [/] Register PE `.pdata`, EIF native unwind, and ELF `.eh_frame`. Translate `.eh_frame` to the normalized table at load time -- do not walk DWARF live. Lookup is bounded/indexed (ORC-style range-narrowing), NOT claimed O(1).
+  - BLOCKED: registers against §2's entries, Q5. `TODO-23` s6 and s12 items wait on this.
+- [/] Provide range lookup for the exception-dispatch unwind engine (T23).
+  - BLOCKED: reads the registration above; `src/kernel/rtl/unwind.c` uses `exec_find_module_by_pc` until then.
+- [/] Validate unwind ranges are inside executable image sections.
+  - BLOCKED: runs at the registration above.
+- [/] Include unwind table hash in image provenance.
+  - BLOCKED: provenance field of §2's entries.
+- [/] Dynamic/JIT unwind (`RtlAddFunctionTable`) 💎: add/delete/callback APIs shipped in TODO-23 §6; the growable-table variant + T18 normalized storage remain. -> XREF: TODO-23 §6.
+  - BLOCKED: the normalized storage is the `.pdata` registration above.
+- [/] Commit: `"kernel: kimage -- unwind metadata registry"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** An unwind range lookup for an address inside a registered image returns the `.pdata`/`.eh_frame` entry; a range outside executable sections is rejected at registration. Test on: QEMU WHPX + TCG; bare metal.
-> **Deferred:** 2026-07-10 | [architectural] unwind metadata is registered against kimage entries (§2); blocked until the §2 migration strategy is decided (reason: downstream of §2) -> XREF: §2 (DECIDE item, line 85).
+> **Deferred:** 2026-07-10 | [architectural] unwind metadata is registered against kimage entries (§2); blocked until the §2 migration strategy is decided (reason: downstream of §2) awaiting-answer (`todo/answers.md` Q5) -> XREF: §2 (item: "DECIDE the migration strategy").
 
 ---
 
 ## 6. Loader Integration
 
-- [ ] `exec_load`, PE loader, ELF loader, EIF loader, and kmod loader call `kimage_register`, mapping format via `kimage_format_from_exec_fmt()`.
-- [ ] Set the TRUE format when EXEC_FMT is a WinDbg presentation lie: the ELF kernel registers EXEC_FMT_PE, so its KIMAGE record must be type=KERNEL, format=ELF (not the converted PE).
-- [ ] Unload paths call `kimage_unregister` after rundown.
-- [ ] Existing crash module enumeration migrates to this registry.
-- [ ] Load failures must not leave partial image entries.
-- [ ] Lock-free crash-safe module-range lookup: `exec_find_module_by_pc` takes `s_module_lock` (not NMI-safe), so crash-path PC validation can deadlock -- add an immutable module-range snapshot -> XREF: `TODO-23 §7` (`rtlp_is_code_pc`)
-- [ ] Commit: `"kernel: kimage -- loader integration"`
+- [/] `exec_load`, PE loader, ELF loader, EIF loader, and kmod loader call `kimage_register`, mapping format via `kimage_format_from_exec_fmt()`.
+  - BLOCKED: `todo/answers.md` Q5: which loaders delegate or rewire is the decision itself.
+- [/] Set the TRUE format when EXEC_FMT is a WinDbg presentation lie: the ELF kernel registers EXEC_FMT_PE, so its KIMAGE record must be type=KERNEL, format=ELF (not the converted PE).
+  - BLOCKED: set at the `kimage_register` call above.
+- [/] Unload paths call `kimage_unregister` after rundown.
+  - BLOCKED: nothing defines it.
+- [/] Existing crash module enumeration migrates to this registry.
+  - BLOCKED: the `TODO-27` §3 consumer of `exec_register_module` moves per `todo/answers.md` Q5.
+- [/] Load failures must not leave partial image entries.
+  - BLOCKED: depends on §2's atomic publish.
+- [/] Lock-free crash-safe module-range lookup: `exec_find_module_by_pc` takes `s_module_lock` (not NMI-safe), so crash-path PC validation can deadlock -- add an immutable module-range snapshot -> XREF: `TODO-23 §7` (`rtlp_is_code_pc`)
+  - BLOCKED: `todo/answers.md` Q5: the snapshot's home depends on which registry survives. Still real: `exec_find_module_by_pc` spins on `s_module_lock` (`exec.c:553`); `rtlp_is_code_pc` avoids it by checking kernel text only.
+- [/] Commit: `"kernel: kimage -- loader integration"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** Loading an EIF/PE image registers exactly one `KIMAGE_ENTRY`; a failed load leaves zero entries (atomic); the migrated crash-module enumeration returns the same set. Serial log shows `"kimage: registered '<name>'"` on load. Test on: QEMU WHPX + TCG; bare metal.
-> **Deferred:** 2026-07-10 | [architectural] loaders call `kimage_register` (§2); the loader-migration IS the §2 decision (which loaders delegate/rewire) (reason: same operator decision as §2) -> XREF: §2 (DECIDE item, line 85).
+> **Deferred:** 2026-07-10 | [architectural] loaders call `kimage_register` (§2); the loader-migration IS the §2 decision (which loaders delegate/rewire) (reason: same operator decision as §2) awaiting-answer (`todo/answers.md` Q5) -> XREF: §2 (item: "DECIDE the migration strategy").
 
 ---
 
 ## 7. Image Notifications and Callbacks
 
-- [ ] Publish `ImageLoad` and `ImageUnload` through Executive callback object.
-- [ ] Publish notification state through the crash-dump/diagnostics path (T27) for service/user consumers.
-- [ ] Include CI decision and trust level.
-- [ ] Payload carries a copied SNAPSHOT of `KIMAGE_ENTRY.full_path` + stable identity fields, never a live-recomputed path -- avoids the Windows `FullImageName` stale-buffer class of bug.
-- [ ] Define the Impossible OS ordered sequence explicitly (process-create notify, then image-load notify, then user entrypoint) as our own contract -- Windows does not guarantee cross-callback ordering portably.
-- [ ] Ensure callbacks run after registry insertion but before user entrypoint for user images; specify callback IRQL, reentrancy, and unregister-drain rules.
-- [ ] Process-create/exit notifications are PRODUCED by the process-lifecycle owner; add the reciprocal producer item there. -> XREF: TODO-21 (process/thread create-exit notify producer).
-- [ ] Commit: `"kernel: kimage -- image load/unload notifications"`
+- [/] Publish `ImageLoad` and `ImageUnload` through Executive callback object.
+  - BLOCKED: fires after §2's commit. `\Callback\CiImageLoad` exists for CI decisions (`include/kernel/ci/ci_image.h`) and is a separate event.
+- [/] Publish notification state through the crash-dump/diagnostics path (T27) for service/user consumers.
+  - BLOCKED: needs the event above.
+- [/] Include CI decision and trust level.
+  - BLOCKED: payload of the event above.
+- [/] Payload carries a copied SNAPSHOT of `KIMAGE_ENTRY.full_path` + stable identity fields, never a live-recomputed path -- avoids the Windows `FullImageName` stale-buffer class of bug.
+  - BLOCKED: payload of the event above.
+- [/] Define the Impossible OS ordered sequence explicitly (process-create notify, then image-load notify, then user entrypoint) as our own contract -- Windows does not guarantee cross-callback ordering portably.
+  - BLOCKED: contract for the event above; nothing produces process-create notify yet.
+- [/] Ensure callbacks run after registry insertion but before user entrypoint for user images; specify callback IRQL, reentrancy, and unregister-drain rules.
+  - BLOCKED: needs §2's insertion point.
+- [x] Process-create/exit notifications are PRODUCED by the process-lifecycle owner; add the reciprocal producer item there. -> XREF: TODO-21 (process/thread create-exit notify producer).
+  - Filed 2026-11-07: `TODO-21` had no such item and nothing under `src/` produces them. -> XREF: `02-kernel-core/TODO-21` §15 (item: "Process create and exit notifications").
+- [/] Commit: `"kernel: kimage -- image load/unload notifications"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** A registered callback fires on image load with the correct base/name/CI-decision, after insertion (lookup succeeds inside the callback) and before the user entrypoint. Unload fires the ImageUnload callback. Test on: QEMU WHPX + TCG; bare metal.
-> **Deferred:** 2026-07-10 | [architectural] notifications fire after registry commit (§2); blocked until the §2 migration strategy is decided (reason: downstream of §2) -> XREF: §2 (DECIDE item, line 85).
+> **Deferred:** 2026-07-10 | [architectural] notifications fire after registry commit (§2); blocked until the §2 migration strategy is decided (reason: downstream of §2) awaiting-answer (`todo/answers.md` Q5) -> XREF: §2 (item: "DECIDE the migration strategy").
 
 ---
 
 ## 8. KD/Crash Dump Integration
 
-- [ ] KD module list reads global/per-process registry.
-- [ ] Crash dumps emit module stream from `KIMAGE_ENTRY`.
-- [ ] Panic screen "what failed" uses address-to-image lookup.
-- [ ] Bounded recently-unloaded tombstone ring (parity 💎, Win `MmUnloadedDrivers`): identity + canonical path + ranges + build-id/hash + PID + unload time; panic-safe overwrite ring; consulted on a live-registry miss.
-- [ ] Tombstone/snapshot is copy-SAFE: field-copy the durable fields and re-init a fresh gate; never raw-memcpy a live `kimage_entry_t` (its `life` is a live atomic; handles are process-local). Per the kimage.h copy-safety invariant.
-- [ ] `dmpanalyze.exe` consumes same serialized format, including the unloaded ring.
-- [ ] Serialize the tombstone ring as an unloaded-modules stream via the existing MDMP stream framework (TODO-27 §4, already shipped) -- T18 owns the ring; the dump writer emits it as extra module entries. -> XREF: TODO-27 §4.
-- [ ] Reciprocal: KD exposes an unloaded-module (`lm`-style) query. -> XREF: TODO-29 §11 (module list; add unloaded query).
-- [ ] Commit: `"kernel: kimage -- KD and crash dump integration"`
+- [/] KD module list reads global/per-process registry.
+  - BLOCKED: reads §2's registries.
+- [/] Crash dumps emit module stream from `KIMAGE_ENTRY`.
+  - BLOCKED: reads §2's entries; the stream ships today from `exec_register_module`.
+- [/] Panic screen "what failed" uses address-to-image lookup.
+  - BLOCKED: uses §3's lookup.
+- [/] Bounded recently-unloaded tombstone ring (parity 💎, Win `MmUnloadedDrivers`): identity + canonical path + ranges + build-id/hash + PID + unload time; panic-safe overwrite ring; consulted on a live-registry miss.
+  - BLOCKED: records §2's unloads; no unload path exists to feed it.
+- [/] Tombstone/snapshot is copy-SAFE: field-copy the durable fields and re-init a fresh gate; never raw-memcpy a live `kimage_entry_t` (its `life` is a live atomic; handles are process-local). Per the kimage.h copy-safety invariant.
+  - BLOCKED: implementation rule for the ring above.
+- [/] `dmpanalyze.exe` consumes same serialized format, including the unloaded ring.
+  - BLOCKED: reads the format the ring above adds.
+- [/] Serialize the tombstone ring as an unloaded-modules stream via the existing MDMP stream framework (TODO-27 §4, already shipped) -- T18 owns the ring; the dump writer emits it as extra module entries. -> XREF: TODO-27 §4.
+  - BLOCKED: serializes the ring above; the MDMP stream framework itself shipped in `TODO-27` §4.
+- [/] Reciprocal: KD exposes an unloaded-module (`lm`-style) query. -> XREF: TODO-29 §11 (module list; add unloaded query).
+  - BLOCKED: reads the ring above. -> XREF: `02-kernel-core/TODO-29` §11 (item: "Unloaded-module (`lm`-style) query")
+- [/] Commit: `"kernel: kimage -- KD and crash dump integration"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** The crash-dump module stream lists every registered image once; the panic screen resolves a faulting RIP to `<image>+<offset>` via `image_lookup_by_address`. Test on: QEMU WHPX + TCG; bare metal.
-> **Deferred:** 2026-07-10 | [architectural] KD/crash-dump reads the kimage registry (§2) + its address index (§3); blocked until the §2 migration strategy is decided (reason: downstream of §2) -> XREF: §2 (DECIDE item, line 85).
+> **Deferred:** 2026-07-10 | [architectural] KD/crash-dump reads the kimage registry (§2) + its address index (§3); blocked until the §2 migration strategy is decided (reason: downstream of §2) awaiting-answer (`todo/answers.md` Q5) -> XREF: §2 (item: "DECIDE the migration strategy").
 
 ---
 
 ## 9. Provenance, CI, and Hotpatch Metadata
 
-- [ ] Store load source: bootloader, VFS path, memory buffer, generated/stub.
-- [ ] Store CI hash, signer, policy mode, decision, and audit ID.
-- [ ] LIVE -> GOING unload state machine (refcount alone cannot prove no CPU runs image code): block new entry, pin via exported refs + callouts, drain callbacks/work/IRQs, wait an SMP grace period, remove indexes, THEN unmap.
-- [ ] Test unload while another CPU is blocked inside module code and while callouts remain queued -- both must be refused until quiescent.
-- [ ] Reserve hotpatch metadata fields only (patchable functions, original-bytes hash, active patch ID); a real hotpatch ENGINE is a separate concrete owner, not implied by these reserved fields.
-- [ ] Retroactive CI re-check/revocation of an already-loaded image is a policy decision, not a registry baseline. -> XREF: TODO-19 (CI revocation policy).
-- [ ] Commit: `"kernel: kimage -- provenance, CI, and hotpatch metadata"`
+- [/] Store load source: bootloader, VFS path, memory buffer, generated/stub.
+  - BLOCKED: field of §2's entries.
+- [/] Store CI hash, signer, policy mode, decision, and audit ID.
+  - BLOCKED: field of §2's entries, fed by the `TODO-19` plane.
+- [/] LIVE -> GOING unload state machine (refcount alone cannot prove no CPU runs image code): block new entry, pin via exported refs + callouts, drain callbacks/work/IRQs, wait an SMP grace period, remove indexes, THEN unmap.
+  - BLOCKED: lifecycle of §2's entries; `kimage.h` defines the record only.
+- [/] Test unload while another CPU is blocked inside module code and while callouts remain queued -- both must be refused until quiescent.
+  - BLOCKED: tests the state machine above.
+- [/] Reserve hotpatch metadata fields only (patchable functions, original-bytes hash, active patch ID); a real hotpatch ENGINE is a separate concrete owner, not implied by these reserved fields.
+  - BLOCKED: field of §2's entries.
+- [/] Retroactive CI re-check/revocation of an already-loaded image is a policy decision, not a registry baseline. -> XREF: TODO-19 (CI revocation policy).
+  - BLOCKED: policy decision with no answer filed; nothing to re-check until §2's entries exist. operator-gated.
+- [/] Commit: `"kernel: kimage -- provenance, CI, and hotpatch metadata"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** A registered image records its load source + CI decision + signer; unregister is refused (returns busy) while the refcount indicates active frames, and succeeds after rundown. Test on: QEMU WHPX + TCG; bare metal.
-> **Deferred:** 2026-07-10 | [architectural] provenance/unload-quiescence extend the kimage entry lifecycle (§2); blocked until the §2 migration strategy is decided (reason: downstream of §2) -> XREF: §2 (DECIDE item, line 85).
+> **Deferred:** 2026-07-10 | [architectural] provenance/unload-quiescence extend the kimage entry lifecycle (§2); blocked until the §2 migration strategy is decided (reason: downstream of §2) awaiting-answer (`todo/answers.md` Q5) -> XREF: §2 (item: "DECIDE the migration strategy").
 
 ---
 
 ## 10. Tests and Consistency Verifier
 
-- [ ] Unit tests: register/unregister, overlap reject, addr lookup, symbol lookup, unwind lookup, per-process iteration.
-- [ ] Boot verifier: kernel image, symtab, and loaded drivers all appear exactly once.
-- [ ] Fuzz malformed image metadata; no registry leaks.
-- [ ] Bulletproofing: PEB Ldr list count matches kernel per-process registry for each process.
-- [ ] Commit: `"kernel: kimage -- tests and consistency verifier"`
+- [/] Unit tests: register/unregister, overlap reject, addr lookup, symbol lookup, unwind lookup, per-process iteration.
+  - BLOCKED: tests §2-§5. `test_kimage.c` covers §1's record only.
+- [/] Boot verifier: kernel image, symtab, and loaded drivers all appear exactly once.
+  - BLOCKED: verifies §2's registry.
+- [/] Fuzz malformed image metadata; no registry leaks.
+  - BLOCKED: targets §2's validator.
+- [/] Bulletproofing: PEB Ldr list count matches kernel per-process registry for each process.
+  - BLOCKED: needs §2's per-process registry.
+- [/] Commit: `"kernel: kimage -- tests and consistency verifier"`
+  - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** All `test_kimage` assertions pass (register/unregister, overlap reject, addr/symbol/unwind lookup, per-process iteration); the boot verifier confirms kernel + symtab + drivers appear exactly once and the PEB-Ldr-vs-registry count matches per process. Test on: QEMU WHPX + TCG; bare metal.
-> **Deferred:** 2026-07-10 | [architectural] the consistency verifier tests §2-§9 which are all blocked until the §2 migration strategy is decided (reason: downstream of §2) -> XREF: §2 (DECIDE item, line 85).
+> **Deferred:** 2026-07-10 | [architectural] the consistency verifier tests §2-§9 which are all blocked until the §2 migration strategy is decided (reason: downstream of §2) awaiting-answer (`todo/answers.md` Q5) -> XREF: §2 (item: "DECIDE the migration strategy").
 
 ---
 

@@ -490,6 +490,8 @@ Central cleanup point for all per-process resources when a process terminates. W
 
 Exit cleanup (§14) frees resources but does not define WHEN exit status is observable, WHO reaps an orphan, or how competing waits serialize. `task_waitpid` today accepts one exact child PID, blocks unconditionally, and immediately reaps (`task.c`), so it cannot support `waitpid(-1)`, `WNOHANG`/`WUNTRACED`/`WCONTINUED`, `waitid`, `wait4` child usage, or subreaper adoption. This is the child-lifecycle contract §14 depends on.
 
+- [/] Process create and exit notifications: nothing under `src/` produces them
+  - BLOCKED: the only named consumer is image notifications, which wait on `todo/answers.md` Q5. -> XREF: `02-kernel-core/TODO-18` §7 (item: "Define the Impossible OS ordered sequence")
 - [ ] Add a `TASK_ZOMBIE` state (distinct from the transient `TASK_DEAD` mark): on exit, transition RUNNING -> ZOMBIE retaining `exit_status` + accumulated child rusage; `task_cleanup` (REAPED) frees the struct only via a reaper.
 - [ ] `sys_wait4(pid, status, options, rusage)`: any-child (-1) and exact-pid selectors, `WNOHANG`; atomic single-reaper CAS on the zombie (one waiter reaps, a lost race returns `ECHILD`). Process-group selector + `WUNTRACED`/`WCONTINUED` -> §18.
 - [ ] `RUSAGE_CHILDREN` accumulator on `struct task`; on reap, fold the child's user/kernel time + IO counters into the parent (mirror `ob_job_detach_task`) (-> XREF: §8).
