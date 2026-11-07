@@ -25,6 +25,13 @@ def test_refusal_what_makes_running_impossible_still_refuses():
     assert len(refusals) == 3, refusals
 
 
+def test_arm_does_not_second_guess_where_claude_lives():
+    """The launcher's resolve_claude finds layouts a PATH check cannot, such as
+    $HOME/.claude/local/claude, so a check here refused a runnable install (review)."""
+    loop = re.search(r"for _tool in ([^;]*);", TEXT).group(1).split()
+    assert "claude" not in loop and "clang-19" in loop, loop
+
+
 def test_old_invocations_still_work():
     assert re.search(r"--force\)\s*\n\s*shift", TEXT)
     r = subprocess.run(["bash", str(ARM), "--record-canary"], cwd=REPO,

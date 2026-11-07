@@ -363,8 +363,9 @@ fi
 # ---- What makes running impossible ------------------------------------------
 # These and the token and deny checks below are the only refusals left, because no
 # amount of relaunching gets past them. Everything else starts.
-for _tool in claude git python3 clang-19 nasm ld.lld-19; do
-  if ! command -v "$_tool" >/dev/null 2>&1 && ! { [ "$_tool" = claude ] && [ -x "$HOME/.local/bin/claude" ]; }; then
+# `claude` is not listed: the launcher's resolve_claude knows every install layout.
+for _tool in git python3 clang-19 nasm ld.lld-19; do
+  if ! command -v "$_tool" >/dev/null 2>&1; then
     echo "REFUSED to arm: $_tool is not installed. Run: bash scripts/setup.sh" >&2
     exit 1
   fi
