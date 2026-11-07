@@ -70,20 +70,20 @@ implements_after: TODO-04
 | 💎  |   4   | SMBIOS init profiling + optimization                        | §1                                              |  [x]   |
 | 💎  |   5   | MAT W^X violation root-cause attribution                    | T04 §5                                          |  [x]   |
 | 💎  |   6   | Mouse PS/2 init profiling + optimization                    | §1                                              |  [x]   |
-| ⭐  |   7   | Async font/icon loader (post-desktop-ready)                 | §1                                              |  [/]   |
+| ⭐  |   7   | Async font/icon loader (post-desktop-ready)                 | §1                                              |  [ ]   |
 | ⭐  |   8   | Boot heartbeat telemetry during long phases                 | §1, T23 (watchdog); T14 §4 permanently deferred |  [/]   |
-| 💎  |   9   | EXEC step latency profile (13834ms FAIL; 11x regression)    | §1                                              |  [/]   |
-| ⭐  |  10   | UEFI RT SetVariable latency (>50ms threshold)               | §1, T04 §11                                     |  [/]   |
+| 💎  |   9   | EXEC step latency profile (13834ms FAIL; 11x regression)    | §1                                              |  [ ]   |
+| ⭐  |  10   | UEFI RT SetVariable latency (>50ms threshold)               | §1, T04 §11                                     |  [ ]   |
 | ⭐  |  11   | Phase-3 X:\Diag JSON writer batching                        | T04 §8, T27 §2 (advisor)                        |  [/]   |
-| ⭐  |  12   | AVX-512 throttle policy when APERF/MPERF absent             | T19 §3                                          |  [/]   |
+| ⭐  |  12   | AVX-512 throttle policy when APERF/MPERF absent             | T19 §3                                          |  [ ]   |
 | ⭐  |  13   | Boot history ring depth + format (8 → 32+ entries)          | T03 §20                                         |  [/]   |
 | ⭐  |  14   | FAT32 dirty-mount fsck cost in VFS step                     | D05 T04                                         |  [/]   |
 | ⭐  |  15   | User-mode binary spawn latency (~1s task_create→ELF)        | T22 (sched / exec)                              |  [/]   |
-| ⭐  |  16   | TSC frequency variability under hypervisor                  | --                                              |  [/]   |
-| ⭐  |  17   | PAT WC -> WT hypervisor trap quirk                          | §2 (consumer)                                   |  [/]   |
+| ⭐  |  16   | TSC frequency variability under hypervisor                  | --                                              |  [ ]   |
+| ⭐  |  17   | PAT WC -> WT hypervisor trap quirk                          | §2 (consumer)                                   |  [ ]   |
 | 💎  |  18   | Boot critical-path / dependency / resource-wait attribution | §1, §2                                          |  [/]   |
 | 💎  |  19   | Post-ship follow-up backfill (2026-07-31 cohort)            | D02 T33 §7 (ceiling)                            |  [ ]   |
-| 💎  |  20   | Boot trend JSON writer hardening (defer/linearize/fallback) | §3                                              |  [/]   |
+| 💎  |  20   | Boot trend JSON writer hardening (defer/linearize/fallback) | §3                                              |  [ ]   |
 | 💎  |  21   | Per-driver degraded-state registry for storage              | §2, T10 §27                                     |  [ ]   |
 
 ---
@@ -267,24 +267,24 @@ Observed: ~1.3s of font + icon loading happens INSIDE the desktop boot phase bef
 > [!NOTE]
 > Plan sharpened by Codex design review (2026-06-20). §7 is a compositor + font-subsystem refactor, NOT simple deferral. Deferred this pass (multi-commit); items below are the vetted plan.
 
-- [/] Compositor-polled incremental loader: a state machine ticked once per presented frame after `DESKTOP_READY`, one TTF/icon slot per tick under a per-tick budget.
+- [ ] Compositor-polled incremental loader: a state machine ticked once per presented frame after `DESKTOP_READY`, one TTF/icon slot per tick under a per-tick budget.
   - NO `thread_create`/sys_wq/DPC: thread-deferred init starves behind the compositor (the documented `boot_run_deferred` incident).
-  - PARKED, operator-gated: multi-commit compositor + font-subsystem refactor beyond one-session scope; this section owns the Codex-vetted plan.
-- [/] Immutable face-bundle publish in `gfx_text.c`: each face is an immutable bundle (fontinfo/metrics/glyph-cache/atlases/ascent), built off-side.
+  - Part of this section's Codex-vetted plan; a multi-commit refactor is work, not a blocker.
+- [ ] Immutable face-bundle publish in `gfx_text.c`: each face is an immutable bundle (fontinfo/metrics/glyph-cache/atlases/ascent), built off-side.
   - Published via release-store and read by acquire-load in the draw path; removes the `ttf_get` per-call pixel_size/scale mutation.
-  - PARKED, operator-gated: multi-commit compositor + font-subsystem refactor beyond one-session scope; this section owns the Codex-vetted plan.
-- [/] Boot-atlas fallback adapter: expose the Phase-1 18px ASCII atlas through the normal measure/draw API (first paint keeps titles/controls/labels); placeholders for bold/mono/non-ASCII + `icon_get`/`icon_draw_scaled` until each family publishes.
-  - PARKED, operator-gated: multi-commit compositor + font-subsystem refactor beyond one-session scope; this section owns the Codex-vetted plan.
-- [/] On each face/icon-family publish, invalidate + redraw the affected compositor surfaces (atomic swap visible, no torn glyph reads).
-  - PARKED, operator-gated: multi-commit compositor + font-subsystem refactor beyond one-session scope; this section owns the Codex-vetted plan.
-- [/] Once the post-`DESKTOP_READY` tick mechanism exists, move `boot_trend_publish_json()` onto it. -> XREF: this file §20 (item: "Move `boot_trend_publish_json()`").
-  - PARKED, operator-gated: multi-commit compositor + font-subsystem refactor beyond one-session scope; this section owns the Codex-vetted plan.
+  - Part of this section's Codex-vetted plan; a multi-commit refactor is work, not a blocker.
+- [ ] Boot-atlas fallback adapter: expose the Phase-1 18px ASCII atlas through the normal measure/draw API (first paint keeps titles/controls/labels); placeholders for bold/mono/non-ASCII + `icon_get`/`icon_draw_scaled` until each family publishes.
+  - Part of this section's Codex-vetted plan; a multi-commit refactor is work, not a blocker.
+- [ ] On each face/icon-family publish, invalidate + redraw the affected compositor surfaces (atomic swap visible, no torn glyph reads).
+  - Part of this section's Codex-vetted plan; a multi-commit refactor is work, not a blocker.
+- [ ] Once the post-`DESKTOP_READY` tick mechanism exists, move `boot_trend_publish_json()` onto it. -> XREF: this file §20 (item: "Move `boot_trend_publish_json()`").
+  - Part of this section's Codex-vetted plan; a multi-commit refactor is work, not a blocker.
   - It is still inline at `src/kernel/main/boot_desktop.c:819`, before `task_create(cmd.exe)`, so its cJSON round trip and synchronous VFS I/O delay the real userland handoff.
-- [/] Commit: `"desktop: async font + icon load (1.3s -> <50ms blocking)"`
+- [ ] Commit: `"desktop: async font + icon load (1.3s -> <50ms blocking)"`
 
 **Test checkpoint:** `DESKTOP_READY` fires within 50ms of `boot_phase3()` start; first paint renders fallback text (boot atlas) + icon placeholders (no blank labels); each TTF/icon family publishes within 2s post-desktop-ready via the compositor-polled loader (no kthread) and swaps in atomically with a surface redraw; no torn-glyph glitch. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] Async font/icon loader is a multi-commit compositor + font-subsystem refactor (compositor-polled loader state machine -- threads starve per the documented incident; immutable face-bundle publish replacing `ttf_get` per-call mutation; boot-atlas fallback adapter through the text API) beyond one-session scope; Codex-vetted plan above. -> XREF: 01-boot-platform/TODO-29-boot-perf-health-observability.md §7 (item: "Compositor-polled incremental loader" -- this section owns the multi-commit refactor).
+> **Notes:** Reopened 2026-11-07, was Deferred: [H] Async font/icon loader is a multi-commit compositor + font-subsystem refactor (compositor-polled loader state machine -- threads starve per the documented incident; immutable face-bundle publish replacing `ttf_get` per-call mutation; boot-atlas fallback adapter through the text API) beyond one-session scope; Codex-vetted plan above.. The stamp named this section's own items, and neither a multi-commit refactor nor a final hardware check stops the code being written. Hardware validation stays with the operator.
 
 ---
 
@@ -315,19 +315,19 @@ Smoke (KVM, 2026-05-03 latest) records `EXEC took 13834ms (target 100ms)` -- a H
 
 **Files:** `src/kernel/exec.c`, `src/kernel/nt/ssdt.c`, `src/kernel/main/boot_desktop.c`, `include/kernel/boot_init.h`
 
-- [/] Bisect the 1210ms -> 13834ms regression first: walk recent commits to `src/kernel/exec.c` and `src/kernel/nt/ssdt.c`; identify the responsible change before adding profiling.
-  - PARKED, operator-gated: needs a live-boot bisect of the 1210ms -> 13834ms regression before any code; this section owns the bisect.
-- [/] Add finer-grained `boot_progress` substeps inside EXEC: SSDT_MAIN, SSDT_SHADOW, NT_SUBSYS_BATCH, SYSCALL_REG, EXEC_FORMAT_REG.
-  - PARKED, operator-gated: needs a live-boot bisect of the 1210ms -> 13834ms regression before any code; this section owns the bisect.
-- [/] Define per-substep budgets in `boot_perf_budgets[]`: SSDT_MAIN <50ms, SSDT_SHADOW <100ms, NT batch <30ms, format register <5ms each.
-  - PARKED, operator-gated: needs a live-boot bisect of the 1210ms -> 13834ms regression before any code; this section owns the bisect.
-- [/] Profile SSDT registration hot path; pick a fix path: bulk-register via static const array, lazy shadow-stub registration, or accept current cost with a justified budget.
-  - PARKED, operator-gated: needs a live-boot bisect of the 1210ms -> 13834ms regression before any code; this section owns the bisect.
-- [/] Commit: `"boot: EXEC step substep timing + SSDT registration profile"`
+- [ ] Bisect the 1210ms -> 13834ms regression first: walk recent commits to `src/kernel/exec.c` and `src/kernel/nt/ssdt.c`; identify the responsible change before adding profiling.
+  - Order: bisect first, this section owns it. KVM and TCG boots report this step's timing, so no operator is needed to start.
+- [ ] Add finer-grained `boot_progress` substeps inside EXEC: SSDT_MAIN, SSDT_SHADOW, NT_SUBSYS_BATCH, SYSCALL_REG, EXEC_FORMAT_REG.
+  - Order: bisect first, this section owns it. KVM and TCG boots report this step's timing, so no operator is needed to start.
+- [ ] Define per-substep budgets in `boot_perf_budgets[]`: SSDT_MAIN <50ms, SSDT_SHADOW <100ms, NT batch <30ms, format register <5ms each.
+  - Order: bisect first, this section owns it. KVM and TCG boots report this step's timing, so no operator is needed to start.
+- [ ] Profile SSDT registration hot path; pick a fix path: bulk-register via static const array, lazy shadow-stub registration, or accept current cost with a justified budget.
+  - Order: bisect first, this section owns it. KVM and TCG boots report this step's timing, so no operator is needed to start.
+- [ ] Commit: `"boot: EXEC step substep timing + SSDT registration profile"`
 
 **Test checkpoint:** Boot serial shows ~5 EXEC sub-step lines with ms deltas; the largest contributor is named in the perf summary; total EXEC drops below 500ms or the budget is justified in `boot_perf_budgets[]`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [M] EXEC 13834ms HARD breach: needs a git-bisect of the ~1.2s->13.8s regression THEN SSDT-registration optimization (470 main + ~1300 shadow slots) -- live-boot profiling + multi-commit kernel work. -> XREF: 01-boot-platform/TODO-29-boot-perf-health-observability.md §9 (this section owns the bisect + substep timing).
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] EXEC 13834ms HARD breach: needs a git-bisect of the ~1.2s->13.8s regression THEN SSDT-registration optimization (470 main + ~1300 shadow slots) -- live-boot profiling + multi-commit kernel work.. The stamp named this section's own items, and neither a multi-commit refactor nor a final hardware check stops the code being written. Hardware validation stays with the operator.
 ---
 
 ## 10. UEFI RT SetVariable Latency
@@ -336,15 +336,18 @@ Smoke (KVM, 2026-05-03) records `UEFI: RT SetVariable took 109 ms (threshold 50 
 
 **Files:** `src/kernel/uefi_runtime.c`, `src/kernel/boot_perf_budget.c`, `src/kernel/main/boot_progress.c`
 
-- [/] Capture the variable name + size in every >50ms RT-SetVariable WARN line. PARKED, operator-gated: validated only against live NVRAM-write timing on real flash and OVMF.
-- [/] Verify boot perf save (`bootperf` step) batches its writes; fix to a single-blob write if the 31-step bin currently fragments into 31 calls. PARKED, operator-gated: validated only against live NVRAM-write timing on real flash and OVMF.
-- [/] If OVMF flash-emulation latency is the root cause, exempt OVMF via `firmware_quirks_is_active(QUIRK_SLOW_NVRAM)` instead of leaving the WARN spam.
-  - PARKED, operator-gated: validated only against live NVRAM-write timing on real flash and OVMF.
-- [/] Commit: `"boot: per-call RT SetVariable latency tracking + bootperf write batching"`
+- [ ] Capture the variable name + size in every >50ms RT-SetVariable WARN line.
+  - Final validation only against live NVRAM-write timing on real flash and OVMF.
+- [ ] Verify boot perf save (`bootperf` step) batches its writes; fix to a single-blob write if the 31-step bin currently fragments into 31 calls.
+  - Final validation only against live NVRAM-write timing on real flash and OVMF.
+- [ ] If OVMF flash-emulation latency is the root cause, exempt OVMF via `firmware_quirks_is_active(QUIRK_SLOW_NVRAM)` instead of leaving the WARN spam.
+  -
+  - Final validation only against live NVRAM-write timing on real flash and OVMF.
+- [ ] Commit: `"boot: per-call RT SetVariable latency tracking + bootperf write batching"`
 
 **Test checkpoint:** Serial shows the variable name on every >50ms RT SetVariable WARN. Bare-metal RT SetVariable consistently <50ms (real flash). OVMF still warns but with the variable name + size for triage.
 
-> **Deferred:** [L] RT SetVariable >50ms: per-call name/size capture + bootperf single-blob write batching + OVMF-slow-NVRAM quirk gating -- validated only against live NVRAM-write timing on real flash + OVMF. -> XREF: 01-boot-platform/TODO-29-boot-perf-health-observability.md §10 (this section owns the batching).
+> **Notes:** Reopened 2026-11-07, was Deferred: [L] RT SetVariable >50ms: per-call name/size capture + bootperf single-blob write batching + OVMF-slow-NVRAM quirk gating -- validated only against live NVRAM-write timing on real flash + OVMF.. The stamp named this section's own items, and neither a multi-commit refactor nor a final hardware check stops the code being written. Hardware validation stays with the operator.
 ---
 
 ## 11. Phase-3 X:\Diag JSON Writer Batching
@@ -372,14 +375,16 @@ Smoke records `simd: MPERF/APERF unavailable; enabling AVX-512 without throttle 
 
 **Files:** `src/kernel/cpu_security.c`, `src/kernel/gfx/gfx_simd.c`, `src/kernel/gfx/gfx_simd_avx512.c`, `src/kernel/cpuid.c`
 
-- [/] Hypervisor-bit aware logging: hypervisor present = LOG_INFO (expected); bare metal + AVX-512 + no MPERF = LOG_WARN (real regression).
-  - PARKED, operator-gated: reproducible only on bare-metal Intel where a hypervisor hides APERF/MPERF; not reachable from WSL.
-- [/] `boot.conf simd_max_avx_level=avx2` override pins the SIMD ceiling to AVX2 on systems with observed throttling. PARKED, operator-gated: reproducible only on bare-metal Intel where a hypervisor hides APERF/MPERF; not reachable from WSL.
-- [/] Commit: `"simd: AVX-512 throttle policy when APERF/MPERF unavailable"`
+- [ ] Hypervisor-bit aware logging: hypervisor present = LOG_INFO (expected); bare metal + AVX-512 + no MPERF = LOG_WARN (real regression).
+  -
+  - Reproduces only on bare-metal Intel where a hypervisor hides APERF/MPERF; not reachable from WSL.
+- [ ] `boot.conf simd_max_avx_level=avx2` override pins the SIMD ceiling to AVX2 on systems with observed throttling.
+  - Reproduces only on bare-metal Intel where a hypervisor hides APERF/MPERF; not reachable from WSL.
+- [ ] Commit: `"simd: AVX-512 throttle policy when APERF/MPERF unavailable"`
 
 **Test checkpoint:** Hyper-V smoke shows LOG_INFO (no WARN). Synthetic bare-metal-no-MPERF fixture or real bare-metal Haswell test laptop shows LOG_WARN. `boot.conf simd_max_avx_level=avx2` clamps the runtime ceiling.
 
-> **Deferred:** [L] AVX-512 throttle: hypervisor-bit-aware logging + `boot.conf simd_max_avx_level` clamp -- validated only on bare-metal Intel where APERF/MPERF exist but a hypervisor hides them (not reproducible from WSL). -> XREF: 01-boot-platform/TODO-29-boot-perf-health-observability.md §12 (this section owns AVX-512 throttle in cpu_security.c / gfx_simd.c; no external SIMD TODO exists).
+> **Notes:** Reopened 2026-11-07, was Deferred: [L] AVX-512 throttle: hypervisor-bit-aware logging + `boot.conf simd_max_avx_level` clamp -- validated only on bare-metal Intel where APERF/MPERF exist but a hypervisor hides them (not reproducible from WSL).. The stamp named this section's own items, and neither a multi-commit refactor nor a final hardware check stops the code being written. Hardware validation stays with the operator.
 ---
 
 ## 13. Boot History Ring Depth + Format
@@ -444,19 +449,23 @@ Smoke logs across boots show TSC frequency reported as 7056 MHz, 4939 MHz, 5000 
 
 **Files:** `src/kernel/drivers/lapic.c`, `src/kernel/cpuid.c`, `src/kernel/time/mono_clock.c`, `src/kernel/time/kusd_time.c`
 
-- [/] Verify all TSC-freq consumers (KUSD QpcFreq, time_get_tsc_ns_per_tick, perf_record timestamps) read from a single latched value computed once at LAPIC init, not re-queried.
-  - PARKED, operator-gated: validated only across real hypervisor restarts and bare-metal Intel.
-- [/] Add a one-time post-init self-check: re-read MSR 0x40000023 and compare against the latched value; if it drifted by > 1%, log LOG_WARN with both values for triage.
-  - PARKED, operator-gated: validated only across real hypervisor restarts and bare-metal Intel.
-- [/] CPUID 0x15/0x16 fallback: when the hypervisor MSR is absent (bare metal Intel Tier 1), pin to CPUID 0x15 ratio + 0x16 base which Linux trusts as authoritative.
-  - PARKED, operator-gated: validated only across real hypervisor restarts and bare-metal Intel.
-- [/] Boot-health.json (§2) records the latched TSC freq + the source (Hyper-V MSR / CPUID 0x15 / PIT / HPET) so operator triage can spot when a hypervisor reset confused the calibration.
-  - PARKED, operator-gated: validated only across real hypervisor restarts and bare-metal Intel.
-- [/] Commit: `"time: TSC frequency single-latch + drift-check + CPUID fallback"`
+- [ ] Verify all TSC-freq consumers (KUSD QpcFreq, time_get_tsc_ns_per_tick, perf_record timestamps) read from a single latched value computed once at LAPIC init, not re-queried.
+  -
+  - Final validation only across real hypervisor restarts and bare-metal Intel.
+- [ ] Add a one-time post-init self-check: re-read MSR 0x40000023 and compare against the latched value; if it drifted by > 1%, log LOG_WARN with both values for triage.
+  -
+  - Final validation only across real hypervisor restarts and bare-metal Intel.
+- [ ] CPUID 0x15/0x16 fallback: when the hypervisor MSR is absent (bare metal Intel Tier 1), pin to CPUID 0x15 ratio + 0x16 base which Linux trusts as authoritative.
+  -
+  - Final validation only across real hypervisor restarts and bare-metal Intel.
+- [ ] Boot-health.json (§2) records the latched TSC freq + the source (Hyper-V MSR / CPUID 0x15 / PIT / HPET) so operator triage can spot when a hypervisor reset confused the calibration.
+  -
+  - Final validation only across real hypervisor restarts and bare-metal Intel.
+- [ ] Commit: `"time: TSC frequency single-latch + drift-check + CPUID fallback"`
 
 **Test checkpoint:** Smoke shows one `[time] TSC freq locked: <N> MHz from <source>` line; no later line reports a different freq. Synthetic-drift fixture (mock MSR returning a different value on second read) triggers the LOG_WARN. boot-health.json carries `tsc: { freq_hz: u64, source: "hyperv-msr"|"cpuid-0x15"|"pit"|"hpet" }`.
 
-> **Deferred:** [L] TSC frequency variability: single-latch all consumers + drift self-check + CPUID 0x15/0x16 fallback -- validated only across real hypervisor restarts + bare-metal Intel. -> XREF: 01-boot-platform/TODO-29-boot-perf-health-observability.md §16 (this section owns the single-latch).
+> **Notes:** Reopened 2026-11-07, was Deferred: [L] TSC frequency variability: single-latch all consumers + drift self-check + CPUID 0x15/0x16 fallback -- validated only across real hypervisor restarts + bare-metal Intel.. The stamp named this section's own items, and neither a multi-commit refactor nor a final hardware check stops the code being written. Hardware validation stays with the operator.
 ---
 
 ## 17. PAT WC -> WT Hypervisor Trap Quirk
@@ -465,17 +474,21 @@ Smoke (KVM, 2026-05-03) records `[WARN] mm: PAT: entry 1 = 0x04 (expected WC=0x0
 
 **Files:** `src/kernel/cpu_security.c` (PAT programming), `src/kernel/firmware_quirks_table.inc`, `include/kernel/firmware_quirks.h`, `src/kernel/firmware_quirks.c`, `src/kernel/main/boot_health.c` (auto-picked up via `firmware_quirks_iter_next`)
 
-- [/] Add `FW_QUIRK_PAT_WC_TRAPPED` to `firmware_quirks_table.inc` with bit assignment + canonical name `"pat_wc_trapped"`. PARKED, operator-gated: validated only on PAT-trapping hypervisors (KVM/WHPX) against PAT-honest bare metal.
-- [/] In `cpu_configure_pat()`, register the quirk via `firmware_quirks_register(FW_QUIRK_PAT_WC_TRAPPED)` when the post-write readback shows entry 1 != WC; downgrade the WARN to INFO once the quirk fires.
-  - PARKED, operator-gated: validated only on PAT-trapping hypervisors (KVM/WHPX) against PAT-honest bare metal.
-- [/] Update `vmm_map_mmio_wc()` to log a single INFO line when the quirk is active, instead of every caller silently getting WT. PARKED, operator-gated: validated only on PAT-trapping hypervisors (KVM/WHPX) against PAT-honest bare metal.
-- [/] Verify `firmware_quirks_active[]` in `boot-health.json` lists `"pat_wc_trapped"` on KVM/WHPX hosts that exhibit the trap; absent on bare metal.
-  - PARKED, operator-gated: validated only on PAT-trapping hypervisors (KVM/WHPX) against PAT-honest bare metal.
-- [/] Commit: `"firmware: register pat_wc_trapped quirk for PAT-trapping hypervisors"`
+- [ ] Add `FW_QUIRK_PAT_WC_TRAPPED` to `firmware_quirks_table.inc` with bit assignment + canonical name `"pat_wc_trapped"`.
+  - Final validation only on PAT-trapping hypervisors (KVM/WHPX) against PAT-honest bare metal.
+- [ ] In `cpu_configure_pat()`, register the quirk via `firmware_quirks_register(FW_QUIRK_PAT_WC_TRAPPED)` when the post-write readback shows entry 1 != WC; downgrade the WARN to INFO once the quirk fires.
+  -
+  - Final validation only on PAT-trapping hypervisors (KVM/WHPX) against PAT-honest bare metal.
+- [ ] Update `vmm_map_mmio_wc()` to log a single INFO line when the quirk is active, instead of every caller silently getting WT.
+  - Final validation only on PAT-trapping hypervisors (KVM/WHPX) against PAT-honest bare metal.
+- [ ] Verify `firmware_quirks_active[]` in `boot-health.json` lists `"pat_wc_trapped"` on KVM/WHPX hosts that exhibit the trap; absent on bare metal.
+  -
+  - Final validation only on PAT-trapping hypervisors (KVM/WHPX) against PAT-honest bare metal.
+- [ ] Commit: `"firmware: register pat_wc_trapped quirk for PAT-trapping hypervisors"`
 
 **Test checkpoint:** On KVM smoke, post-boot `boot-health.json` shows `"firmware_quirks_active": [..., "pat_wc_trapped", ...]`. On bare metal Intel where PAT writes succeed, the quirk is absent. The original WARN downgrades to a single INFO line. Test on: QEMU KVM, QEMU TCG, QEMU WHPX, VirtualBox, bare metal i5-4210U.
 
-> **Deferred:** [L] PAT WC-trap quirk: register on post-write readback != WC + INFO downgrade + boot-health surfacing -- validated only on PAT-trapping hypervisors (KVM/WHPX) vs PAT-honest bare metal. -> XREF: 01-boot-platform/TODO-29-boot-perf-health-observability.md §17 (this section owns the quirk).
+> **Notes:** Reopened 2026-11-07, was Deferred: [L] PAT WC-trap quirk: register on post-write readback != WC + INFO downgrade + boot-health surfacing -- validated only on PAT-trapping hypervisors (KVM/WHPX) vs PAT-honest bare metal.. The stamp named this section's own items, and neither a multi-commit refactor nor a final hardware check stops the code being written. Hardware validation stays with the operator.
 ---
 
 ## 18. Boot Critical-Path / Dependency / Resource-Wait Attribution
@@ -556,9 +569,9 @@ From the stamped section 3:
   - The scan bound and its whole decision table moved to `boot_trend_scan_action()` in `include/kernel/boot_trend.h`, so the shipped policy is testable off-image.
   - A full ring COUNTS rather than terminating, or an oversized array with a valid prefix would be truncated silently.
   - Over-long arrays are CANONICALIZED with a WARN rather than quarantined: the file parsed and its schema checked out, so the atomic rewrite repairs it and the history survives.
-- [/] C:\ fallback for `boot-trend.json` (`boot_trend.c:17-21`): build paths from `klog_using_blackbox ? "X:\\Perf\\" : klog_dir` like boot-profile/timeline. (TODO-24 §6)
+- [ ] C:\ fallback for `boot-trend.json` (`boot_trend.c:17-21`): build paths from `klog_using_blackbox ? "X:\\Perf\\" : klog_dir` like boot-profile/timeline. (TODO-24 §6)
   - SHIPPED half: `boot_trend_publish_json()` now refuses up front when BlackBox is absent (`src/kernel/main/boot_trend.c:255-262`) instead of allocating two 16 KiB buffers, parsing and rebuilding the document, and only then failing at `vfs_open` with a warning that read like an I/O error. No artifact was produced on that path before or after, so this states the limitation rather than adding one.
-  - PARKED half: the actual parity fix. `boot-profile` and `boot-timeline` DO fall back to `klog_dir` on C: (`src/kernel/main/boot_progress.c:387`); matching them means building three paths at runtime across five call sites, which does not fit. MEASURED 2026-09-03: 47 bytes of `.text` slack. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §20 once the guard is gone").
+  - Open half, the actual parity fix; its ceiling park ended 2026-11-07. `boot-profile` and `boot-timeline` DO fall back to `klog_dir` on C: (`src/kernel/main/boot_progress.c:387`); matching them means building three paths at runtime across five call sites, which does not fit. MEASURED 2026-09-03: 47 bytes of `.text` slack. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §20 once the guard is gone").
 
 - [x] Bound the freestanding cJSON exponent (`src/libs/cjson/cJSON.c`, `CJSON_MAX_EXPONENT` 400). Review-round finding on a path this section's writer feeds untrusted disk bytes into.
   - `1e2147483647` stalled the boot CPU for billions of iterations before userland, and `exp = exp * 10 + digit` was signed-overflow UB. One compare, measured at zero net `.text`.
@@ -581,7 +594,7 @@ From the stamped section 3:
 > **Accepted:** [H] `vfs_rename_ex` resolves by generated SFN only, so the advertised atomic publish degrades to `.tmp` litter on long names (reason: FAT32 driver surface, field-recorded on WHPX, not this section's code) -> XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md` §16 (item: "FIELD DEFECT 2026-07-30: `vfs_rename_ex` fails on a long two-dot filename" at line 458)
 > **Accepted:** [H] both 16 KiB allocations mutate the unlocked PMM bitmap, which a storage AP that outlived its 10s barrier can race (reason: `include/kernel/mm/pmm.h:67-73` states this is the unlocked-bitmap defect itself and not something a caller can code around) -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md` §7 (item: "PMM bitmap SMP locking" at line 103)
 > **Accepted:** [H] the 64-entry scan cap bounds the WALK but not the PARSE: cJSON builds the whole tree from a 16 KiB file first (reason: parser-layer budget, already owned) -> XREF: `02-kernel-core/TODO-03-kernel-libraries.md` §6 (item: "Bound parse heap for untrusted JSON" at line 295)
-> **Deferred:** [M] the rebuilt ring is reparsed for six regression samples while the old tree is still live, ~1461 extra kmalloc calls per boot (reason: pre-existing optimization, and the image ceiling admits no new code) -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `01-boot-platform/TODO-29` §20 once the guard is gone")
+> **Notes:** Reopened 2026-11-07, was Deferred: [M] the rebuilt ring is reparsed for six regression samples while the old tree is still live, ~1461 extra kmalloc calls per boot (reason: pre-existing optimization, and the image ceiling admits no new code). Its only reason was the image ceiling, which ended 2026-11-07.
 > **Quality reviewed:** 2026-09-03 | Codex 8x (design, adversarial, re-adversarial x3, adversarial, consistency, perf) + kernel-quality-auditor | 1C+2M fixed, 3H+1M accepted, 2M deferred | scope: kernel-code-quality
 
 ---
