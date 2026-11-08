@@ -929,6 +929,12 @@ Found by the parity pass on §22. Two independent halves of one outcome: the use
   - Before: `parsed 0 entries (1 skipped)`, `selection_reason=7 (FALLBACK_NO_VIABLE)`. After, under `SMOKE_VALID_STORE=1`: `parsed 1 entries`, `selection_reason=1 (STORE_DEFAULT)`, boots to `C:\>`.
   - 90 pointer slots read 0 until now, including the chainload probes and the firmware-quirk map, which have therefore never run on a real boot. They are live from this commit; neither has been observed against real foreign-OS media or real firmware.
   - `test-smoke-matrix.sh` now boots both store fixtures. Rationale: [docs/infrastructure/bare-metal-gotchas.md](../../docs/infrastructure/bare-metal-gotchas.md). The link flag that would refuse an undefined symbol at build time is filed in `overnight-runner-improvements-v22.md`, since the unattended run may not edit a Makefile.
+- [x] Review fixes: the kernel renderer is silent without runtime variable services and logs any other read failure, with its status, apart from a malformed record
+  - `STATUS_NOT_IMPLEMENTED` is treated as absent, as `boot_history_read` does; the status reaches `klog` as a 64-bit argument. Found by the kernel auditor and the confirming re-adversarial round (both medium). The remediation text now names `\EFI\ImpossibleOS\bootentries.json` as the loader opens it.
+- [x] Review fixes: a token rendered from a stored record is sized by `BOOT_STORE_REJECT_TOKEN_LEN`, because stored positions are untrusted u32s
+  - Defined in `include/boot/boot_store_reject_text.h` from `BOOT_STORE_REJECT_NAME_MAX` and two 10-digit positions.
+  - `test_store_reject_token_bound` walks all 256 codes against the name cap and renders the longest name at `0xFFFFFFFF` whole; lowering the cap fails it. `bsr_put_locator` refuses a NULL or zero-capacity buffer, and `describe` refuses `UNINSPECTED` and out-of-range load statuses (both now tested).
+- [x] Review fix: the loader's empty PE `.reloc` block is 12 bytes with two `IMAGE_REL_BASED_ABSOLUTE` entries (`src/boot/uefi/reloc.asm`), because PE/COFF requires 32-bit-aligned blocks; smoke matrix 11/11 on the new image
 - [x] Commit: shipped as `4ee7a2396` (relocations, reject locator), `976c91bb5` (persisted record) and `5e43a21e6` (kernel log)
 
 **Explicitly NOT in scope: an inline repair route from the bootloader.** GRUB offers a rescue shell because a broken `grub.cfg` can leave the machine unbootable, so the user has nowhere else to stand. That asymmetry does not apply here: §22's notice is advisory and the fallback entry boots, so the user repairs the store from their own running system with a normal editor. Building an editor or rescue shell into the bootloader would be a large capability answering a problem the fallback already solves. `01-boot-platform/TODO-22-recovery-partition.md` §5 was considered as an owner and is NOT one: it resets A/B slot metadata and never touches the boot-entry store.
@@ -943,6 +949,8 @@ Found by the parity pass on §22. Two independent halves of one outcome: the use
 > - Downstream: BOOTX64 now applies its own relocations (`loader_self_relocate()`), which made a valid store, the chainload probes and the firmware-quirk map live on real boots for the first time.
 > - Canonical doc: [docs/boot/boot-error-history.md](../../docs/boot/boot-error-history.md) holds the variable schema.
 > - Scope boundary: no inline repair route and no desktop notification (no user-facing consumer exists yet); the record names no device, so another disk's good store clears it.
+> **Verified:** 2026-11-08 | commit `85b0a641a` + review fixes | 9/9 items | build OK | SUITE=boot 7402+17 PASS | smoke matrix 11/11 (store corrupt/repeat/repaired on one variable store) | smoke PASS after the klog fix
+> **Quality reviewed:** 2026-11-08 | Codex 7x (adversarial x2, consistency x2, perf x2, re-adversarial) | 2M+7L fixed, 0 open | scope: boot-code-quality + kernel-code-quality (auditors)
 
 ## OS Comparison
 

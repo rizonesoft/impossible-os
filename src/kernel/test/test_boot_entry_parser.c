@@ -1620,6 +1620,12 @@ static void test_store_reject_describe(void)
     TEST_ASSERT_EQ(boot_store_reject_describe(&r, t, sizeof(t), &cause), 0, "an accepted store is never recorded");
     r.reject_code = 0xFFFFu;
     TEST_ASSERT_EQ(boot_store_reject_describe(&r, t, sizeof(t), &cause), 0, "unknown reject code refused");
+    r.reject_code = (unsigned short)BOOT_ENTRIES_REJECT_JSON_PARSE;
+    r.load_status = (unsigned short)BOOT_STORE_LOAD_UNINSPECTED;
+    TEST_ASSERT_EQ(boot_store_reject_describe(&r, t, sizeof(t), &cause), 0, "uninspected is never recorded");
+    r.load_status = 0x1234u;
+    TEST_ASSERT_EQ(boot_store_reject_describe(&r, t, sizeof(t), &cause), 0, "out-of-range load status refused");
+    r.load_status = (unsigned short)BOOT_STORE_LOAD_OK;
 
     /* Hostile numbers stay inside the buffer. */
     char small[12];
@@ -1630,6 +1636,31 @@ static void test_store_reject_describe(void)
     TEST_ASSERT_EQ(boot_store_reject_describe(&r, small, 11u, &cause), 1, "huge position renders");
     TEST_ASSERT_EQ(small[11], 'x', "render stays inside the caller's capacity");
     TEST_ASSERT_EQ(small[10], 0, "render stays terminated when cut");
+}
+
+/* The kernel renders a stored record into BOOT_STORE_REJECT_TOKEN_LEN, and its
+ * positions are untrusted u32s: every reject name must fit the name cap, and the
+ * longest name at the largest positions must render without truncation. */
+static void test_store_reject_token_bound(void)
+{
+    unsigned int longest = 0u;
+    int longest_code = 0;
+    for (int code = 0; code < 256; code++) {
+        const char *n = bsr_reject_name(code);
+        unsigned int len = 0u;
+        while (n[len]) len++;
+        TEST_ASSERT(len <= BOOT_STORE_REJECT_NAME_MAX, "every reject name fits the name cap");
+        if (len > longest) { longest = len; longest_code = code; }
+    }
+    boot_store_reject_record_t r = { BOOT_STORE_REJECT_ERR_CODE, (unsigned short)BOOT_STORE_LOAD_OK,
+                                     (unsigned short)longest_code, 0xFFFFFFFFu, 0xFFFFFFFFu };
+    char t[BOOT_STORE_REJECT_TOKEN_LEN];
+    const char *cause = (const char *)0;
+    TEST_ASSERT_EQ(boot_store_reject_describe(&r, t, sizeof(t), &cause), 1, "longest name renders");
+    unsigned int len = 0u;
+    while (t[len]) len++;
+    TEST_ASSERT_EQ(len, longest + 9u + 10u + 6u + 10u, "worst-case token renders whole");
+    TEST_ASSERT(len < sizeof(t), "worst-case token leaves room for the NUL");
 }
 
 /* The recurrence policy of s24: a rejection repeats on every boot until the
@@ -1873,6 +1904,8 @@ void test_register_boot_entry_parser(void)
                             test_store_notice_gate, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: stored rejection rendering",
                             test_store_reject_describe, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: stored rejection token bound",
+                            test_store_reject_token_bound, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: store record recurrence policy",
                             test_store_record_decide, TEST_CAT_BOOT);
 }

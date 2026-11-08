@@ -210,8 +210,10 @@ const char *boot_entries_reject_cause(int code);
 /* The reject name plus its position, when there is one: "JSON_PARSE at line 12,
  * col 3". Always NUL-terminated; cap includes the NUL and a short buf truncates.
  * It goes on the notice's short token line, because the 800x600 banner's cause
- * line has no room for it. BOOT_ENTRIES_REJECT_LOCATOR_LEN holds every name and
- * position, and fits that line. */
+ * line has no room for it. BOOT_ENTRIES_REJECT_LOCATOR_LEN holds every name with
+ * any position the parser can produce (a store is at most 16 KiB, so 5 digits
+ * each), and fits that line. A token rendered from a STORED record carries
+ * untrusted u32 positions and uses BOOT_STORE_REJECT_TOKEN_LEN instead. */
 #define BOOT_ENTRIES_REJECT_LOCATOR_LEN 48u
 void boot_entries_reject_locator(const boot_entries_parse_result_t *r, char *buf, unsigned int cap);
 

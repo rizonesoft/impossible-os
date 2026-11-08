@@ -12,6 +12,13 @@
 
 #define BSR_TEXT_FN static __attribute__((unused))
 
+/* A stored record's line and column are untrusted u32 values, so a token
+ * rendered from NVRAM needs room for the longest name, both labels and two
+ * 10-digit numbers: 18 + 9 (" at line ") + 10 + 6 (", col ") + 10 + NUL.
+ * test_store_reject_token_bound walks every reject code against the name cap. */
+#define BOOT_STORE_REJECT_NAME_MAX  18u
+#define BOOT_STORE_REJECT_TOKEN_LEN (BOOT_STORE_REJECT_NAME_MAX + 9u + 10u + 6u + 10u + 1u)
+
 BSR_TEXT_FN const char *bsr_reject_name(int code)
 {
     switch ((boot_entries_reject_code_t)code) {
@@ -113,6 +120,8 @@ BSR_TEXT_FN unsigned int bsr_put_number(char *buf, unsigned int cap, unsigned in
 BSR_TEXT_FN void bsr_put_locator(char *buf, unsigned int cap, int code,
                                  unsigned int line, unsigned int column)
 {
+    if (!buf || cap == 0u)
+        return;
     unsigned int at = bsr_put_text(buf, cap, 0u, bsr_reject_name(code));
     if (line != 0u) {
         at = bsr_put_text(buf, cap, at, " at line ");

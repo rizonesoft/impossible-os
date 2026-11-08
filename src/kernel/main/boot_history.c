@@ -440,16 +440,23 @@ void boot_store_reject_render(void)
     NTSTATUS st = uefi_var_get(var, &guid, &rec, &size, &attrs);
     if (st == STATUS_NOT_FOUND)
         return;  /* The normal case: nothing was rejected. */
+    if (st == STATUS_NOT_IMPLEMENTED)
+        return;  /* No runtime variable services: there is no record to read,
+                  * and boot_history_read stays silent on the same failure. */
+    if (!NT_SUCCESS(st)) {
+        klog(LOG_WARN, "BOOT", "BootStoreReject unreadable (status 0x%08x)", (uint64_t)(uint32_t)st);
+        return;
+    }
 
-    char token[BOOT_ENTRIES_REJECT_LOCATOR_LEN + 16u];
+    char token[BOOT_STORE_REJECT_TOKEN_LEN];
     const char *cause = (const char *)0;
-    if (!NT_SUCCESS(st) || size != sizeof(rec) || attrs != UEFI_VAR_NV_BOOT_RUNTIME ||
+    if (size != sizeof(rec) || attrs != UEFI_VAR_NV_BOOT_RUNTIME ||
         !boot_store_reject_describe(&rec, token, (unsigned int)sizeof(token), &cause)) {
-        klog(LOG_WARN, "BOOT", "BootStoreReject record ignored: unreadable or malformed");
+        klog(LOG_WARN, "BOOT", "BootStoreReject record ignored: malformed");
         return;
     }
     klog(LOG_WARN, "BOOT",
-         "Boot entry store unusable: %s: %s. Fix or delete EFI\\ImpossibleOS\\bootentries.json",
+         "Boot entry store unusable: %s: %s. Fix or delete \\EFI\\ImpossibleOS\\bootentries.json",
          token, cause);
 }
 
