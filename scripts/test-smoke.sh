@@ -54,6 +54,9 @@ SERIAL_LOG="$BUILD/smoke-test.log"
 STRIPPED_LOG="$BUILD/smoke-test.stripped.log"
 POST16_MANIFEST="$BUILD/post16-manifest.env"
 TIMEOUT_SEC="${TIMEOUT_SEC:-30}"
+# The SMOKE_MENU=keys dwell adds ~10 s to a boot, which a 1-CPU TCG leg cannot
+# fit in 30 s.
+if [ "${SMOKE_MENU:-0}" = "keys" ] && [ "$TIMEOUT_SEC" -lt 60 ]; then TIMEOUT_SEC=60; fi
 
 # Legacy smoke test: superseded by `bash scripts/test.sh`. Retained as a light
 # boot-only sanity check (no unit-test suite). Boots the canonical GPT disk
@@ -625,11 +628,41 @@ CORRUPT_STORE="${SMOKE_CORRUPT_STORE:-0}"
 VALID_STORE="${SMOKE_VALID_STORE:-0}"
 # Stage a valid store with TWO entries, so the boot menu draws, counts down and
 # auto-boots its default. No other leg reaches the menu: one entry skips it.
+# SMOKE_MENU=keys drives the same menu through the QEMU monitor instead: Down
+# moves to the second entry, the leg then waits past the countdown deadline to
+# prove the keypress stopped it, and Enter boots the second entry.
 MENU="${SMOKE_MENU:-0}"
-case "$MENU" in 0|1) ;; *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_MENU must be 0 or 1 (got: $MENU)${NC}"; exit 1 ;; esac
-if [ "$MENU" = "1" ]; then VALID_STORE=1; fi
+case "$MENU" in 0|1|keys) ;; *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_MENU must be 0, 1 or keys (got: $MENU)${NC}"; exit 1 ;; esac
+if [ "$MENU" != "0" ]; then VALID_STORE=1; fi
 STORE_ENTRIES=1
-[ "$MENU" = "1" ] && STORE_ENTRIES=2
+[ "$MENU" != "0" ] && STORE_ENTRIES=2
+# Countdown on the default entry: short for the timeout leg, and for the keys leg
+# long enough that Down lands before it expires.
+MENU_COUNTDOWN=2
+[ "$MENU" = "keys" ] && MENU_COUNTDOWN=4
+# After Down, the keys leg holds Enter back this long past the original deadline,
+# so a countdown that kept running would expire inside the window and fail.
+MENU_KEYS_DWELL=$((MENU_COUNTDOWN + 6))
+MONITOR_SOCK="$BUILD/smoke-monitor.sock"
+# Send one key to the guest through the QEMU monitor. Returns non-zero when the
+# monitor cannot be reached, so a dead socket fails the leg instead of reading
+# as "the menu ignored the key".
+monitor_sendkey() {
+    python3 - "$MONITOR_SOCK" "$1" <<'PYEOF'
+import socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(2.0)
+s.connect(sys.argv[1])
+s.sendall(("sendkey %s\n" % sys.argv[2]).encode())
+try:
+    s.recv(4096)
+except socket.timeout:
+    pass
+s.close()
+PYEOF
+}
+KEYS_STATE=wait_menu
+KEYS_MOVED_AT=0
 # S23 fixtures. SMOKE_LOWRES forces a GOP mode below the full error-screen
 # layout floor so the compact renderer is the one under test; SMOKE_ERROR_SCREEN
 # additionally makes the bootloader raise a real boot_fatal, which is the only
@@ -680,7 +713,7 @@ if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ -n "$FORCE_MODE" 
 fi
 if [ "$VALID_STORE" = "1" ]; then
     VALID_JSON="$BUILD/bootentries.valid.json"
-    python3 - "$VALID_JSON" "$STORE_ENTRIES" <<'PYEOF'
+    python3 - "$VALID_JSON" "$STORE_ENTRIES" "$MENU_COUNTDOWN" <<'PYEOF'
 import json, sys, zlib
 entries = [{
     "id": "smoke-entry", "title": "Smoke", "kind": "split", "flags": ["active"],
@@ -688,7 +721,7 @@ entries = [{
     "payload": {"kernel": "\\boot\\kernel.exe"}}]
 if sys.argv[2] == "2":
     # A short per-entry countdown on the default keeps the menu leg fast.
-    entries[0]["timeout_override"] = 2
+    entries[0]["timeout_override"] = int(sys.argv[3])
     entries.append({
         "id": "smoke-alt", "title": "Smoke alternate", "kind": "split", "flags": ["active"],
         "sort_key": "01", "machine_id": "", "policy_tags": [],
@@ -835,6 +868,10 @@ QEMU_FLAGS=(
     -no-shutdown
     -display none
 )
+if [ "$MENU" = "keys" ]; then
+    rm -f "$MONITOR_SOCK"
+    QEMU_FLAGS+=(-monitor "unix:$MONITOR_SOCK,server,nowait")
+fi
 
 # Use KVM if available
 if [ -c /dev/kvm ] && [ -w /dev/kvm ] && [ -z "${SMOKE_FORCE_TCG:-}" ]; then
@@ -893,6 +930,35 @@ for i in $(seq 1 "$TIMEOUT_SEC"); do
             break 2
         fi
     done
+
+    # Keys leg: Down once the menu is up, then Enter only after the original
+    # countdown deadline has passed with the menu still waiting.
+    if [ "$MENU" = "keys" ]; then
+        case "$KEYS_STATE" in
+        wait_menu)
+            if grep -qF '[BOOT] menu: 2 entries, selected="smoke-entry"' "$STRIPPED_LOG" 2>/dev/null; then
+                if ! monitor_sendkey down; then
+                    BOOT_FAILED=true; FAIL_REASON="QEMU monitor unreachable for sendkey down"; break
+                fi
+                KEYS_STATE=wait_move
+            fi ;;
+        wait_move)
+            if grep -qF '[BOOT] menu: 2 entries, selected="smoke-alt"' "$STRIPPED_LOG" 2>/dev/null; then
+                KEYS_MOVED_AT=$i
+                KEYS_STATE=dwell
+            fi ;;
+        dwell)
+            if grep -qF -e '[BOOT] menu: countdown expired' -e '[BOOT] jumping to kernel_main' "$STRIPPED_LOG" 2>/dev/null; then
+                BOOT_FAILED=true; FAIL_REASON="the menu booted on its own after a keypress (countdown not cancelled)"; break
+            fi
+            if [ $((i - KEYS_MOVED_AT)) -ge "$MENU_KEYS_DWELL" ]; then
+                if ! monitor_sendkey ret; then
+                    BOOT_FAILED=true; FAIL_REASON="QEMU monitor unreachable for sendkey ret"; break
+                fi
+                KEYS_STATE=done
+            fi ;;
+        esac
+    fi
 
     # PASS requires ALL patterns in PASS_PATTERNS_ALL (AND-set, not OR)
     all_found=true
@@ -1095,7 +1161,9 @@ done
 
 if [ "$PATTERN_FAIL" = true ]; then
     BOOT_FAILED=true
-    FAIL_REASON="Boot pattern check failed (see MISSING/UNEXPECTED above)"
+    # Keep a reason the poll loop already set: it names the first failure, and
+    # the missing markers are usually just its consequence.
+    FAIL_REASON="${FAIL_REASON:-Boot pattern check failed (see MISSING/UNEXPECTED above)}"
 fi
 
 # ---- UKI signed-payload verdict (SMOKE_UKI=signed) ------------------------
@@ -1317,7 +1385,7 @@ if [ -n "$UNEXPECTED_FAILS" ]; then
     printf '%s' "$UNEXPECTED_FAILS" | head -10 | sed 's/^/    /'
     echo -e "  ${DIM}If one is correct, add it to scripts/log-baseline.txt WITH a reason.${NC}"
     BOOT_FAILED=true
-    FAIL_REASON="Unexpected [FAIL] in serial log ($UNEXPECTED_COUNT line(s))"
+    FAIL_REASON="${FAIL_REASON:-Unexpected [FAIL] in serial log ($UNEXPECTED_COUNT line(s))}"
 else
     echo -e "  ${DIM}Log cleanliness: no unexpected [FAIL] lines${NC}"
 fi
@@ -1362,6 +1430,36 @@ elif [ "$BOOT_PASSED" = true ]; then
         # Rounded up, the countdown never shows 0 before it expires.
         if grep -qF 'selected="smoke-entry" timeout=0s' "$STRIPPED_LOG" 2>/dev/null; then
             echo -e "${RED}SMOKE TEST FAILED: the menu countdown showed 0 s before expiring${NC}"
+            exit 1
+        fi
+    fi
+    if [ "$MENU" = "keys" ]; then
+        if [ "$KEYS_STATE" != "done" ]; then
+            echo -e "${RED}SMOKE TEST FAILED: the keys leg stopped at step $KEYS_STATE (Enter was never sent)${NC}"
+            grep -E "\[BOOT\] menu" "$STRIPPED_LOG" 2>/dev/null | head -8
+            exit 1
+        fi
+        for want in '[BOOT] menu: countdown cancelled by keypress' \
+                    '[BOOT] menu: Enter -- boot selected' \
+                    '[BOOT] menu: user override -- chosen="smoke-alt" reason=HOTKEY'; do
+            if ! grep -qF "$want" "$STRIPPED_LOG" 2>/dev/null; then
+                echo -e "${RED}SMOKE TEST FAILED: boot menu line missing: $want${NC}"
+                grep -E "\[BOOT\] menu" "$STRIPPED_LOG" 2>/dev/null | head -8
+                exit 1
+            fi
+        done
+        if grep -qF '[BOOT] menu: countdown expired' "$STRIPPED_LOG" 2>/dev/null; then
+            echo -e "${RED}SMOKE TEST FAILED: the countdown expired although a key stopped it${NC}"
+            exit 1
+        fi
+    fi
+    # The kernel must receive the entry the menu chose, not only the loader log it.
+    if [ "$MENU" != "0" ]; then
+        want_entry=smoke-entry
+        [ "$MENU" = "keys" ] && want_entry=smoke-alt
+        if ! grep -qF "entry=\"$want_entry\"" <(grep -F "boot_decision: path=" "$STRIPPED_LOG" 2>/dev/null); then
+            echo -e "${RED}SMOKE TEST FAILED: the kernel did not receive entry $want_entry${NC}"
+            grep -F "boot_decision:" "$STRIPPED_LOG" 2>/dev/null | head -3
             exit 1
         fi
     fi

@@ -17,6 +17,8 @@ The footer reads "Auto-boot in Ns" while the countdown runs. The seconds round u
 
 `SMOKE_MENU=1 bash scripts/test-smoke.sh` stages a two-entry store with a 2-second countdown, so a real boot draws the menu, repaints it and auto-boots the default. It is the `store menu` leg of `scripts/test-smoke-matrix.sh`.
 
+`SMOKE_MENU=keys` presses keys in the same menu through the QEMU monitor (`sendkey`). Down moves the highlight to the second entry, the leg then waits past the 4-second deadline and fails if the menu boots on its own, and Enter boots the second entry with reason HOTKEY. It is the `store keys` leg. Both legs also check that the kernel received the chosen entry: the kernel's `boot_decision:` line names it as `entry="..."`.
+
 ## Indicator legend
 
 Indicator badges render to the LEFT of each entry's title. ASCII only because the Selawik AA atlas covers 0x20-0x7E and Windows serial mojibakes multi-byte UTF-8.
