@@ -115,6 +115,9 @@ void boot_tests_run(void)
             test_runner_init();
             test_runner_run();
         }
+        /* The suite's fixtures wiped the live reservation table; put this
+         * boot's back before anything after Phase 3 can ask it. */
+        boot_reserved_restore_after_tests();
 
         /* Restore normal logging so remaining boot output is visible */
         klog_set_level((const char *)0, LOG_DEBUG);

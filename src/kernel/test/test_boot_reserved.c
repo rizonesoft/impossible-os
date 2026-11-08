@@ -22,7 +22,6 @@
 #include "kernel/test/test.h"
 #include "kernel/test/klog_suppress.h"
 #include "kernel/mm/boot_reserved.h"
-#include "kernel/mm/pmm.h"   /* pmm_get_total_frames -- the commit needs a backed range */
 #include "kernel/boot_info.h"
 #include "kernel/entropy.h"   /* boot_seed_length_reservable -- must agree with the table */
 /* libc/string.h not needed; fixture is zeroed by scalar loop. */
@@ -1064,13 +1063,12 @@ static void test_boot_reserved_warm_update_identity_agrees(void)
 
     TEST_KLOG_SUPPRESS("mm");
     TEST_KLOG_SUPPRESS("boot");
-    /* ADDRESSES DERIVED FROM THE LIVE FRAME COUNT, not hardcoded. The warm
-     * descriptor only pins when its extent is inside pmm_get_total_frames(),
-     * so a fixed 1.25 GiB address made this assertion depend on host RAM --
-     * green at the 2 GiB default and failing at the 1 GiB the CI boot matrix
-     * uses, for a reason that has nothing to do with descriptor identity.
-     * (Kernel-quality audit.) Half the tracked range is inside any host. */
-    uint64_t mid = (pmm_get_total_frames() / 2ull) * (uint64_t)PMM_FRAME_SIZE;
+    /* ADDRESSES INSIDE THE FIXTURE'S OWN DECLARED RAM, never the host's. The
+     * warm descriptor pins only when the fixture's memory map backs it, so an
+     * address derived from the host frame count would leave the fixture's RAM
+     * on a large guest and fail for a reason unrelated to descriptor identity
+     * (the same host dependence a fixed 1.25 GiB address once had at 1 GiB). */
+    uint64_t mid = BR_FIXTURE_RAM_END / 2ull;
     uint64_t p0 = mid;
     uint64_t p1 = mid + 0x10000ull;
     uint64_t p2 = mid + 0x20000ull;
@@ -1697,6 +1695,26 @@ static void test_boot_reserved_range_backing_verdicts(void)
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
                        &s_br_buf, 0x30000000ull, 0x3000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_BACKED, "adjacent forbidden entries do not veto");
+
+    /* A readable entry whose base + length wraps covers nothing: neither as
+     * the sole backing nor by bridging a gap between two good entries. */
+    br_zero_fixture();
+    s_br_buf.mmap_count = 0u;
+    br_set_map(0u, 0x100000ull, ~0ull, UEFI_MMAP_CONVENTIONAL);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x200000ull, 0x1000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_GAP, "a wrapping entry is not backing");
+    br_set_map(1u, 0x30000000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
+    br_set_map(2u, 0x30002000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
+    br_set_map(3u, 0x30001000ull, ~0ull, UEFI_MMAP_CONVENTIONAL);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x30000000ull, 0x3000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_GAP, "a wrapping entry does not bridge a gap");
+    /* ...but it still vetoes when its type is forbidden. */
+    br_set_map(4u, 0x2FFFF000ull, ~0ull, UEFI_MMAP_MMIO);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x30000000ull, 0x1000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_FORBIDDEN, "a wrapping forbidden entry vetoes");
     br_zero_fixture();
 }
 
@@ -1744,6 +1762,26 @@ static void test_boot_reserved_payload_must_be_backed(void)
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        0u, 0x20000000ull, 0x1000ull), 0ul,
                    "truncated map: an omitted interval is refused");
+    /* ...while a range the retained entries DO cover is still admitted. */
+    br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x30000000ull, 0x1000ull, 0u);
+    boot_reserved_reset_for_test();
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x30000000ull, 0x1000ull), 1ul,
+                   "truncated map: a covered range is pinned");
+
+    /* A payload whose only backing is a wrapping entry is refused. */
+    br_zero_fixture();
+    s_br_buf.mmap_count = 0u;
+    br_set_map(0u, 0u, 0x10000000ull, UEFI_MMAP_CONVENTIONAL);
+    br_set_map(1u, 0x20000000ull, ~0ull, UEFI_MMAP_CONVENTIONAL);
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x20001000ull, 0x1000ull, 0u);
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x20001000ull, 0x1000ull), 0ul,
+                   "wrapping-entry backing is refused at admission");
     br_zero_fixture();
 }
 
@@ -1794,6 +1832,19 @@ static void test_boot_reserved_warm_extent_backing(void)
     TEST_ASSERT_EQ((unsigned long)sel->pinned, 0ul, "never committed");
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        0u, 0x42000000ull, 0x1000ull), 0ul, "not pinned");
+
+    /* A wrapping type-15 entry is not backing for the warm extent either. */
+    br_zero_fixture();
+    s_br_buf.mmap_count = 0u;
+    br_set_map(0u, 0u, 0x42000000ull, UEFI_MMAP_CONVENTIONAL);
+    br_set_map(1u, 0x42000000ull, ~0ull, BOOT_MMAP_WARM_UPDATE);
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x42000000ull, 0x1000ull, 0u);
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)sel->pinned, 0ul, "wrapping warm backing: never committed");
     br_zero_fixture();
 }
 
@@ -1851,6 +1902,25 @@ static void test_boot_reserved_tracked_and_copy(void)
                    "an empty table copies nothing");
     for (i = 0u; i < n; i++)
         TEST_ASSERT_EQ(copy[i].phys_start, saved[i].phys_start, "copy survives the wipe");
+
+    /* load_table puts a saved table back exactly and zeroes the tail. */
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_load_table(saved, n), (unsigned long)n,
+                   "load returns the count");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)n, "count restored");
+    for (i = 0u; i < n; i++) {
+        TEST_ASSERT_EQ(boot_reserved_get(i)->phys_start, saved[i].phys_start, "load: phys_start");
+        TEST_ASSERT_EQ(boot_reserved_get(i)->length, saved[i].length, "load: length");
+        TEST_ASSERT_EQ((unsigned long)boot_reserved_get(i)->kind, (unsigned long)saved[i].kind,
+                       "load: kind");
+        TEST_ASSERT_EQ((unsigned long)boot_reserved_get(i)->source_index,
+                       (unsigned long)saved[i].source_index, "load: source_index");
+    }
+    TEST_ASSERT(boot_reserved_get(n) == (const struct boot_reserved_region *)0,
+                "nothing past the loaded count");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_load_table(
+                       (const struct boot_reserved_region *)0, 4u), 0ul,
+                   "NULL loads an empty table");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), 0ul, "empty after NULL load");
     TEST_ASSERT_EQ((unsigned long)boot_reserved_copy_table((struct boot_reserved_region *)0, 4u),
                    0ul, "NULL destination copies nothing");
     br_zero_fixture();

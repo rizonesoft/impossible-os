@@ -117,6 +117,24 @@ uint32_t boot_reserved_range_backing(const struct boot_info *info,
  * dump publish nothing rather than a fixture. Boot CPU only, Phase 3. */
 void boot_reserved_freeze_for_dump(void);
 
+/* Put the frozen table back after the boot suite, so a reader after Phase 3
+ * (boot_reserved_payload_is_pinned(), boot_reserved_get()) answers from this
+ * boot's handoff rather than the last test fixture. No-op when nothing was
+ * frozen or the copy failed. Boot CPU only, Phase 3, after the suite. */
+void boot_reserved_restore_after_tests(void);
+
+/* Replace the live table with `n` entries of `src` (clamped to
+ * BOOT_RESERVED_MAX; NULL loads an empty table) and zero the rest. Returns the
+ * count loaded. The restore is built on it; tests drive it with a local array. */
+uint32_t boot_reserved_load_table(const struct boot_reserved_region *src,
+                                  uint32_t n);
+
+/* boot-reserved.json sizing: every entry line is shorter than
+ * BR_DUMP_LINE_MAX (a longer one fails the dump), and the header plus footer
+ * fit BR_DUMP_FRAMING_MAX. */
+#define BR_DUMP_LINE_MAX     192u
+#define BR_DUMP_FRAMING_MAX  256u
+
 /* Copy up to `cap` table entries into `dst`; returns the number copied.
  * Pure over the table; the freeze uses it, and tests can. */
 uint32_t boot_reserved_copy_table(struct boot_reserved_region *dst,

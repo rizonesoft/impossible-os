@@ -229,6 +229,8 @@ static const char *range_backing_name(uint32_t v)
  * to the furthest end of an entry containing the cursor; a cursor no entry
  * contains is a gap. Each step consumes a distinct entry end, so the walk is
  * at most mmap_count steps of mmap_count reads.
+ * An entry whose base + length wraps vetoes as if it ran to the top of memory
+ * but covers nothing.
  *
  * There is NO fallback. A truncated map is checked against the entries it
  * carries, so an omitted interval reads as a gap and is refused; an absent map
@@ -277,10 +279,14 @@ uint32_t boot_reserved_range_backing(const struct boot_info *info,
         for (i = 0u; i < n; i++) {
             const struct boot_mmap_entry *e = &info->mmap[i];
             uint64_t e_end;
-            if (e->length == 0u || e->base_addr > cur)
+            /* A wrapping entry is malformed: it may still VETO (above, where
+             * reading it as reaching the top errs toward refusal) but never
+             * supplies coverage, or one bad entry would certify everything
+             * above its base. */
+            if (e->length == 0u || e->base_addr > cur
+                || range_end_overflows(e->base_addr, e->length))
                 continue;
-            e_end = range_end_overflows(e->base_addr, e->length)
-                        ? (uint64_t)-1 : e->base_addr + e->length;
+            e_end = e->base_addr + e->length;
             if (e_end > next)
                 next = e_end;
         }
@@ -869,11 +875,6 @@ void boot_reserved_log(void)
     }
 }
 
-/* X:\Diag\boot-reserved.json writer. Called late in Phase 3 (next to
- * hw_dump_write_file) where IXFS + X:\ are mounted and vfs_write is
- * safe. Early-boot callers can invoke this function; it no-ops when
- * klog_using_blackbox is 0 (e.g. during a test that never brings up
- * storage). Idempotent: overwrites the file on every call. */
 uint32_t boot_reserved_copy_table(struct boot_reserved_region *dst,
                                   uint32_t cap)
 {
@@ -913,12 +914,40 @@ uint32_t boot_reserved_tracked_class(uint64_t phys_start, uint64_t length,
  * inside kmalloc's limit.
  *
  * NOT LOCKED, by ownership rather than oversight: written once by
- * boot_tests_run() and read once by the dump, both on the boot thread in
- * Phase 3, and nothing else touches them. (The live table is populated and
+ * boot_tests_run(), read back by its restore and by the dump, all on the boot
+ * thread in Phase 3, and nothing else touches them. (The live table is populated and
  * applied before AP bring-up.) */
 static struct boot_reserved_region *s_frozen;
 static uint32_t s_frozen_count;
 static uint32_t s_frozen_state;   /* 0 = live table, 1 = frozen copy, 2 = copy failed */
+
+uint32_t boot_reserved_load_table(const struct boot_reserved_region *src,
+                                  uint32_t n)
+{
+    uint32_t i;
+
+    if (src == (const struct boot_reserved_region *)0)
+        n = 0u;
+    if (n > BOOT_RESERVED_MAX)
+        n = BOOT_RESERVED_MAX;
+    for (i = 0u; i < n; i++)
+        s_table[i] = src[i];
+    for (; i < BOOT_RESERVED_MAX; i++) {
+        s_table[i].phys_start   = 0u;
+        s_table[i].length       = 0u;
+        s_table[i].kind         = 0u;
+        s_table[i].source_index = 0u;
+    }
+    s_count = n;
+    return n;
+}
+
+void boot_reserved_restore_after_tests(void)
+{
+    if (s_frozen_state != 1u)
+        return;                   /* nothing frozen, or the copy failed: leave as is */
+    (void)boot_reserved_load_table(s_frozen, s_frozen_count);
+}
 
 void boot_reserved_freeze_for_dump(void)
 {
@@ -943,6 +972,11 @@ void boot_reserved_freeze_for_dump(void)
     s_frozen_state = 1u;
 }
 
+/* X:\Diag\boot-reserved.json writer. Called late in Phase 3 (next to
+ * hw_dump_write_file) where IXFS + X:\ are mounted and vfs_write is
+ * safe. Early-boot callers can invoke this function; it no-ops when
+ * klog_using_blackbox is 0 (e.g. during a test that never brings up
+ * storage). Idempotent: overwrites the file on every call. */
 void boot_reserved_blackbox_dump(void)
 {
     extern int klog_using_blackbox;
@@ -967,32 +1001,46 @@ void boot_reserved_blackbox_dump(void)
     }
     uint64_t total_frames = pmm_get_total_frames();
     static const char *const tracked_name[] = { "full", "partial", "none" };
+    _Static_assert(sizeof(tracked_name) / sizeof(tracked_name[0])
+                       == BOOT_RESERVED_TRACKED_NONE + 1,
+                   "one name per boot_reserved_tracked class");
 
     const char *diag_dir = "X:\\Diag\\";
-    /* Max size: each entry costs ~110 chars of JSON; with 128 entries
-     * + 100 bytes of header/footer/framing we need ~14 KiB. Round up
-     * to 16 KiB -- this is a one-shot heap buffer released after the
-     * write. */
-    const uint32_t max_sz = 16384u;
-    char *buf = (char *)kmalloc(max_sz);
+    /* Sized from the table, not guessed: every entry line is bounded by
+     * BR_DUMP_LINE_MAX (snprintf refuses a longer one, and that refusal is a
+     * hard failure below), so header + count lines + footer always fits.
+     * Frames rather than kmalloc: the worst case is 128 x 192 bytes, above the
+     * 4 KiB kmalloc rule. */
+    const uint64_t need = (uint64_t)BR_DUMP_FRAMING_MAX
+                        + (uint64_t)count * (uint64_t)BR_DUMP_LINE_MAX;
+    const uint64_t frames = (need + PMM_FRAME_SIZE - 1u) / PMM_FRAME_SIZE;
+    const uint32_t max_sz = (uint32_t)(frames * PMM_FRAME_SIZE);
+    uintptr_t buf_phys = pmm_alloc_contiguous(frames);
+    char *buf = (char *)buf_phys;
     if (!buf) {
         klog(LOG_WARN, "mm",
-             "boot_reserved_blackbox_dump: kmalloc(%u) failed",
-             (uint64_t)max_sz);
+             "boot_reserved_blackbox_dump: no %u frame(s) for the buffer; "
+             "audit artifact NOT written this boot",
+             (uint64_t)frames);
         return;
     }
 
+    /* Any truncation is a hard failure: a partial table published as if it
+     * were whole is worse than no artifact (the boot.conf 2026-04-21 rule). */
     uint32_t pos = 0u;
     uint32_t i;
     int n;
-    char line[192];
+    int truncated = 0;
+    char line[BR_DUMP_LINE_MAX];
     const char *open_hdr = s_frozen_state == 1u
         ? "{\n  \"source\": \"pre-test snapshot\",\n  \"retained_regions\": [\n"
         : "{\n  \"source\": \"live\",\n  \"retained_regions\": [\n";
-    for (i = 0u; open_hdr[i] && pos < max_sz - 1u; i++)
+    for (i = 0u; open_hdr[i]; i++) {
+        if (pos >= max_sz - 1u) { truncated = 1; break; }
         buf[pos++] = open_hdr[i];
+    }
 
-    for (i = 0u; i < count; i++) {
+    for (i = 0u; i < count && !truncated; i++) {
         const struct boot_reserved_region *e = &tab[i];
         /* Use %llx for phys_start + length so 64-bit values above 4 GiB
          * are not truncated. Hex strings keep the JSON readable and
@@ -1008,16 +1056,30 @@ void boot_reserved_blackbox_dump(void)
                      tracked_name[boot_reserved_tracked_class(
                          e->phys_start, e->length, total_frames)],
                      (i + 1u < count) ? "," : "");
-        if (n < 0 || (uint32_t)n >= sizeof(line))
-            continue;  /* truncation: skip the malformed line */
+        if (n < 0 || (uint32_t)n >= sizeof(line)) {
+            truncated = 1;
+            break;
+        }
         int j;
-        for (j = 0; j < n && pos < max_sz - 1u; j++)
+        for (j = 0; j < n; j++) {
+            if (pos >= max_sz - 1u) { truncated = 1; break; }
             buf[pos++] = line[j];
+        }
     }
 
     const char *close_hdr = "  ]\n}\n";
-    for (i = 0u; close_hdr[i] && pos < max_sz - 1u; i++)
+    for (i = 0u; close_hdr[i] && !truncated; i++) {
+        if (pos >= max_sz - 1u) { truncated = 1; break; }
         buf[pos++] = close_hdr[i];
+    }
+    if (truncated) {
+        klog(LOG_ERROR, "mm",
+             "boot_reserved_blackbox_dump: the %u-region table did not fit "
+             "its %u-byte buffer; audit artifact NOT written this boot",
+             (uint64_t)count, (uint64_t)max_sz);
+        pmm_free_contiguous(buf_phys, frames);
+        return;
+    }
 
     char path[64];
     int pi = 0;
@@ -1054,7 +1116,7 @@ void boot_reserved_blackbox_dump(void)
                  (uint64_t)count, (uint64_t)(uintptr_t)path);
         }
     }
-    kfree(buf);
+    pmm_free_contiguous(buf_phys, frames);
     (void)klog_dir;  /* reserved for the headless-klog fallback path */
 }
 
