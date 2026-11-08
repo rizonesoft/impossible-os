@@ -391,3 +391,12 @@ A: (operator, 2026-11-07) A: tail-append, keeping existing offsets. Bare metal m
 - **B: delegate.** Gains the refs the local parse cannot see, but adds a toolchain dependency to every commit, and the identity gate's pinned `(path, start, end)` tuples would then shift with the installed clangd version.
 
 A: (run decision, 2026-11-08) A: keep the local resolver. The coverage gap this was meant to close has since been closed locally (521 of 1,750 resolved on 2026-11-08, up from 57; the 520 floor was proved at 0 lost / 0 moved), and a version-dependent resolver would make the byte-exact identity gate non-reproducible across hosts. Reversal: low; `resolve_symbol()` is the single seam, so an opt-in clangd backend behind an env flag is one function plus a CI install step.
+
+## Q32 (01-boot-platform/TODO-07 §21): should the loader keep writing `LoaderConfigTimeout` and `LoaderEntryDefault` as a report of its own effective timeout and default?
+
+The loader wrote both every boot (NON_VOLATILE), and on a rejected store deleted `LoaderEntryDefault`. In the systemd Boot Loader Interface both are persistent settings that `bootctl set-timeout` / `bootctl set-default` write for the loader to honour; this loader does not honour either (LoaderFeatures bits 0 and 2 are not advertised), and on a machine shared with systemd-boot they belong to that loader.
+
+- **A: stop writing them.** No one else's setting is overwritten or deleted. Cost: `bootctl status` no longer shows this loader's effective timeout and default (systemd-boot does not report them that way either). Values older builds wrote stay until something replaces them; this loader does not read them.
+- **B: keep writing them volatile.** A volatile write is refused while a persistent copy exists, so it would have to delete the user's setting first: configuration loss.
+
+A: (run decision, 2026-11-08) A: stop writing them. Reversal cost: restore two calls in `boot_loader_vars_publish()` plus their tests; no data is lost by A. §24's `d` key becomes the writer of `LoaderEntryDefault` when it is honoured, and then bit 2 is advertised.

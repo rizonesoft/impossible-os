@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/boot/uefi/bootx64.c,src/kernel/uefi_runtime.c reviewed=2026-09-28 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/boot/uefi/bootx64.c,src/boot/uefi/loader_vars.c,include/boot/loader_vars.h,src/kernel/uefi_runtime.c reviewed=2026-11-08 -->
 # OS-Visible Loader UEFI Variables
 
 > **Owner:** [OS-Visible Loader UEFI Variables](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#15-os-visible-loader-uefi-variables).
@@ -31,25 +31,28 @@ never lie about systemd-boot capability bits.
 
 ## Read-only variables (bootloader -> OS)
 
-All published with `EFI_VARIABLE_NON_VOLATILE | _BOOTSERVICE_ACCESS |
-_RUNTIME_ACCESS`. The bootloader writes them after the policy decision
-lands in `boot_info` and after the per-entry counter decrement, BEFORE
-the kernel handoff.
+Every variable in this table describes the boot that wrote it, so each is published **volatile** (`EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS`, no `NON_VOLATILE`): firmware drops it at reset, and no value outlives its boot. systemd-boot publishes the same names the same way (its `export-vars.c` passes no `NON_VOLATILE` flag). The publisher is `boot_loader_vars_publish()` in `src/boot/uefi/loader_vars.c`; it runs after the policy decision lands in `boot_info` and after the per-entry counter decrement, BEFORE the kernel handoff.
 
-| Variable | Format | Contents |
-|---|---|---|
-| `LoaderInfo` | UCS-2 string | `"Impossible OS bootloader 1.0"` -- loader identifier. |
-| `LoaderFirmwareInfo` | UCS-2 string | `<gST->FirmwareVendor> <gST->FirmwareRevision>` |
-| `LoaderFirmwareType` | UCS-2 string | `"UEFI <major>.<minor>"` from `gST->Hdr.Revision`. |
-| `LoaderImageIdentifier` | UCS-2 string | `\EFI\ImpossibleOS\BOOTX64.EFI` -- canonical install path. |
-| `LoaderDevicePartUUID` | UCS-2 string | ESP partition GUID (36-char lowercase RFC 4122). Absent if no GPT GUID. |
-| `LoaderEntries` | UCS-2, NUL-separated | All entry ids from the parsed store, double-NUL terminated. |
-| `LoaderEntryDefault` | UCS-2 string | Entry id with the lowest sort_key (the ladder's preferred default). |
-| `LoaderEntrySelected` | UCS-2 string | This boot's selected entry id (mirrors `boot_info.selected_entry_id`). |
-| `LoaderConfigTimeout` | UCS-2 decimal | Effective menu timeout in seconds. |
-| `LoaderTimeInitUSec` | UCS-2 decimal | Loader entry timestamp in microseconds. 0 if TSC not calibrated. |
-| `LoaderTimeExecUSec` | UCS-2 decimal | Kernel handoff timestamp in microseconds. Equal to InitUSec when not measured separately. |
-| `LoaderFeatures` | uint64 LE | Capability bitmap (see below). |
+Before a chainload to another loader (a detected Windows or Linux boot manager), every variable in the table is cleared instead: the chained loader reports its own boot, and systemd-boot only fills these when they are absent. The serial line then reads `[BOOT] loader-vars: chainload, published 0, cleared 11, failed 0`.
+
+Each variable has two outcomes per boot: **set** to this boot's value, or **cleared** because this boot cannot determine it. Absent means unknown; a value is never left over from an earlier boot. Before every write the variable is deleted (attributes 0, size 0, which deletes whatever attributes the old copy had): until 2026-11-08 the loader wrote these `NON_VOLATILE`, and UEFI refuses to rewrite an existing variable with different attributes, so the delete is also what migrates those old copies on the first boot of the new loader.
+
+| Variable | Format | Set when | Cleared when |
+|---|---|---|---|
+| `LoaderInfo` | UCS-2 string | Always: `"Impossible OS bootloader 1.0"`. | Never. |
+| `LoaderFirmwareInfo` | UCS-2 string | `<gST->FirmwareVendor> <gST->FirmwareRevision>`. | No system table, an empty vendor, or a vendor over 256 characters (never truncated). |
+| `LoaderFirmwareType` | UCS-2 string | `"UEFI <major>.<minor>"` from `gST->Hdr.Revision`. | No system table. |
+| `LoaderImageIdentifier` | UCS-2 string | Always: `\EFI\ImpossibleOS\BOOTX64.EFI`, the canonical install path. | Never. |
+| `LoaderDevicePartUUID` | UCS-2 string | The ESP is on a GPT disk: its partition GUID, 36-char lowercase RFC 4122. | MBR or unknown partition style, or an all-zero or all-FF GUID. An MBR disk signature is not a partition UUID. |
+| `LoaderEntries` | UCS-2, NUL-separated | The store was accepted: the visible entry ids in menu order, double-NUL terminated. | The store was rejected or absent, or no entry is visible. |
+| `LoaderEntrySelected` | UCS-2 string | An entry was selected: its id (mirrors `boot_info.selected_entry_id`). | Nothing was selected (for example `FALLBACK_STORE_INVALID`). |
+| `LoaderTimeInitUSec` | UCS-2 decimal | The TSC was calibrated: loader entry time in microseconds. | Not measured, or 0. Today the TSC is calibrated after this point, so it is always cleared. |
+| `LoaderTimeExecUSec` | UCS-2 decimal | As above, at kernel handoff. | Not measured, or 0 (systemd rejects a zero ExecUSec). |
+| `LoaderFeatures` | uint64 LE | Always: capability bitmap (see below). | Never. |
+
+`ImpossibleOSLoaderFeaturesExt` (below) follows the same rules.
+
+**Not written: `LoaderConfigTimeout` and `LoaderEntryDefault`.** These are persistent settings that `bootctl set-timeout` and `bootctl set-default` write for the boot loader to honour. This loader does not honour them (LoaderFeatures bits 0 and 2 are not advertised), and on a machine shared with systemd-boot they belong to that loader. Until 2026-11-08 this loader wrote them every boot as a report of its own effective timeout and default; that overwrote, and on a rejected store deleted, a setting someone else owns, so it now leaves them alone. Values an older build of this loader wrote stay until something replaces them; they do not affect how this loader boots.
 
 ## One-shot variables (OS -> bootloader)
 
@@ -104,25 +107,16 @@ future bootcfg native binary) does.
 
 ## Failure model
 
-Every `gRT->SetVariable` call is wrapped in `loader_set_var()`. On
-failure (NVRAM quota full, firmware refusal, runtime services
-unavailable), the bootloader sets `boot_info.loader_vars_degraded = 1`
-and continues. Userland still boots; the kernel surfaces the degraded
-flag in the boot audit JSONL so operators see degraded publication
-state.
+A `SetVariable` failure (variable store full, firmware refusal, runtime services unavailable) sets `boot_info.loader_vars_degraded = 1` and boot continues; the kernel surfaces the flag in the boot audit JSONL. Because the delete runs first, a write that fails leaves the variable absent rather than holding an older value. A delete that fails is also a failure, and the write is skipped. The loader prints one line per boot, `[BOOT] loader-vars: published N, cleared M, failed K`, and `scripts/test-smoke.sh` fails a boot whose line reports a failure (the valid-store leg also requires exactly 9 set and 2 cleared).
 
-Bootloader is read-only on `LoaderInfo` / `LoaderEntries` / etc. once
-the boot completes: a user-mode write to a read-only var would persist
-in NVRAM but the bootloader overwrites it next boot, so consistency
-is eventually restored.
+The kernel boot tests (`src/kernel/test/test_loader_vars.c`) run the same publisher against an in-memory variable store that drops volatile variables at a simulated reset and refuses attribute-changing rewrites as UEFI does, so the two-boot behaviour, the migration of old persistent copies and the failure paths are all exercised.
 
 ## systemd-boot compatibility statement
 
 A Linux user-mode tool that reads the systemd-boot Boot Loader
 Interface against an Impossible OS-booted system observes:
 
-- All 12 documented read-only variables present (or `LoaderDevicePartUUID`
-  absent on systems without a GPT ESP).
+- The variables in the table above, each present when this boot knows its value and absent when it does not; none carries a value from an earlier boot.
 - `LoaderEntries` parseable as a NUL-separated list.
 - `LoaderEntrySelected` matches an id in `LoaderEntries`.
 - `LoaderFeatures` advertises exactly the bits the bootloader honors.
@@ -138,8 +132,7 @@ surface without modification.
 - The reserved-name guard in `NtSetSystemEnvironmentValueEx` does
   **not** block user-mode writes to `Loader*` vars under the
   systemd-boot vendor GUID: that would break the one-shot interface
-  Linux tools depend on. The bootloader simply overwrites read-only
-  vars next boot.
+  Linux tools depend on. The read-only variables are volatile, and the bootloader deletes and rewrites each one every boot, so a value written from user mode does not survive into the next boot's report.
 - Impossible OS-owned NV vars (`ImpossibleOS-MarkGood`,
   `ImpossibleOS-CurBootCtr`, `ImpossibleOS-HealthSubset`,
   `ImpossibleOS-BootSticky`) remain guarded by the syscall-level

@@ -433,7 +433,7 @@ Surface for the per-decision boot policy audit trail (boot-entry audit feature, 
 
 ## OS-visible Loader UEFI variables (v21)
 
-Surface for the systemd-boot Boot Loader Interface compatibility feature (boot-entry loader-vars feature, owning TODO `01-boot-platform/TODO-07`). The bootloader publishes 11 read-only `Loader*` UEFI variables under vendor GUID `4a67b082-0a4c-41cf-b6c7-440b29bb8c4f` after the policy decision and consumes 2 one-shot vars (`LoaderEntryOneShot`, `LoaderConfigTimeoutOneShot`) early in policy invoke. See [`docs/boot/loader-vars.md`](loader-vars.md) for the full variable inventory + feature bitmap.
+Surface for the systemd-boot Boot Loader Interface compatibility feature (boot-entry loader-vars feature, owning TODO `01-boot-platform/TODO-07`). The bootloader publishes 10 read-only `Loader*` UEFI variables, volatile and set or cleared every boot, under vendor GUID `4a67b082-0a4c-41cf-b6c7-440b29bb8c4f` after the policy decision and consumes 2 one-shot vars (`LoaderEntryOneShot`, `LoaderConfigTimeoutOneShot`) early in policy invoke. See [`docs/boot/loader-vars.md`](loader-vars.md) for the full variable inventory + feature bitmap.
 
 | Field | Producer | Phase | Consumer | Lifetime | Owning TODO | Notes |
 | --- | --- | --- | --- | --- | --- | --- |

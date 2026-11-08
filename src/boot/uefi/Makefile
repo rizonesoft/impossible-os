@@ -34,7 +34,7 @@ CFLAGS += -MMD -MP
 
 OUTDIR ?= ../../../build/tools
 
-OBJS := bootx64.o reloc.o sbat.o elf_bootproto.o boot_history.o boot_entries_parser.o boot_policy.o boot_sticky.o boot_entry_kind.o
+OBJS := bootx64.o reloc.o sbat.o elf_bootproto.o boot_history.o boot_entries_parser.o boot_policy.o boot_sticky.o boot_entry_kind.o loader_vars.o
 
 .PHONY: all clean
 
@@ -75,6 +75,14 @@ boot_history.o: boot_history.c efi.h boot_info_mirror.h
 # consumed triggers post-publish via uefi_var_set.
 boot_sticky.o: boot_sticky.c efi.h boot_info_mirror.h \
                ../../../include/boot/boot_audit_codes.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Boot Loader Interface publication. Pure C, no UEFI types -- linkable from
+# both the bootloader and the kernel unit-test build (test_loader_vars.c).
+loader_vars.o: loader_vars.c \
+               ../../../include/boot/loader_vars.h \
+               ../../../include/boot/boot_entries_parser.h \
+               ../../../include/boot/boot_smbios_parse.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Per-kind entry validators. Pure C, no UEFI types -- linkable from both

@@ -19,7 +19,7 @@ flowchart TD
   F -->|user input / countdown| G[Chosen entry]
   G --> H[boot_info handoff to kernel]
   G --> I[BlackBox history.jsonl + sticky NVRAM ring]
-  G --> J[loader_set_var publishes LoaderXxx variables]
+  G --> J[boot_loader_vars_publish sets or clears LoaderXxx variables]
 ```
 
 - **Entry format.** [`boot_entries.h`](../../include/boot/boot_entries.h) defines the on-disk envelope: `schema_version`, a CRC-32 (IEEE 802.3) header, and an array of entries, each with a stable `kind` (0..99 reserved, 100..199 vendor/experimental skip-with-warn, >=200 reserved). The canonical spec with JSON examples lives in the schema deep dive below.
@@ -27,7 +27,7 @@ flowchart TD
 - **Policy merge.** [`boot_policy.c`](../../src/boot/uefi/boot_policy.c) and [`boot_decision.c`](../../src/kernel/main/boot_decision.c) (`boot_decision_validate()`) combine the firmware-selected `Boot####` variable with the OS-side entry list and any one-shot overrides into a single selected entry, recording the reason.
 - **Menu.** `boot_menu_run()` and `boot_menu_render()` in [`bootx64.c`](../../src/boot/uefi/bootx64.c) draw the entry list over GOP graphics, the UEFI `ConOut` text console, or serial, with a countdown, hotkeys (F8 safe mode, F10 reboot into firmware setup, and F11, probed before the menu decides whether to show, to force it open), and indicators for the default and last-failed entries.
 - **Audit.** [`boot_audit.c`](../../src/kernel/main/boot_audit.c) appends every boot decision to `X:\Boot\history.jsonl`, with a small sticky NVRAM ring as the exceptional durable fallback; this is the primary record, not NVRAM.
-- **Loader variables.** The bootloader publishes the systemd-boot-compatible `LoaderXxx` UEFI variables through `loader_set_var()` in `bootx64.c` (twelve are documented) so userspace tooling can read the live entry list and selection without parsing the boot entry file itself.
+- **Loader variables.** The bootloader publishes the systemd-boot-compatible `LoaderXxx` UEFI variables through `boot_loader_vars_publish()` in `loader_vars.c` (ten, volatile, each set or cleared every boot) so userspace tooling can read the live entry list and selection without parsing the boot entry file itself.
 - **`boot_info` ABI.** The bootloader hands the kernel the selected entry id and reason through `struct boot_info` ([`boot_info.h`](../../include/kernel/boot_info.h)); `loader_vars_degraded` (added at ABI v21) tells the kernel that at least one loader-variable write failed, so the kernel can record degraded publication in the audit log.
 
 ## What are its interfaces?
@@ -39,7 +39,7 @@ flowchart TD
 | `boot_menu_run()` / `boot_menu_render()` in [`bootx64.c`](../../src/boot/uefi/bootx64.c) | Menu renderer, countdown, hotkeys, indicators: deep dive [Boot Menu Renderer + Hotkeys + Indicators](boot-menu.md) |
 | [`boot_health_check.c`](../../src/kernel/main/boot_health_check.c) | Per-entry health gate that decides when an entry is marked good: deep dive [Boot Health Gate](boot-health.md) |
 | [`boot_audit.c`](../../src/kernel/main/boot_audit.c) | `history.jsonl` + sticky NVRAM ring decision audit: deep dive [Boot Policy Audit Schema](boot-history-schema.md) |
-| `loader_set_var()` in [`bootx64.c`](../../src/boot/uefi/bootx64.c) | `LoaderXxx` UEFI variables userspace reads: deep dive [OS-Visible Loader UEFI Variables](loader-vars.md) |
+| `boot_loader_vars_publish()` in [`loader_vars.c`](../../src/boot/uefi/loader_vars.c) | `LoaderXxx` UEFI variables userspace reads: deep dive [OS-Visible Loader UEFI Variables](loader-vars.md) |
 | [`tools/bootcfg/bootcfg.py`](../../tools/bootcfg/bootcfg.py) | Host-side offline entry editor and validator front end: deep dive [bootcfg: Boot Entry Store Editor](bootcfg.md) |
 | `scripts/release/build-image.sh`, `scripts/release/build-iso.sh` | First-install default + recovery + installer entry seeding: deep dive [Bootstrap & First-Install Entry Seeding](bootstrap.md) |
 

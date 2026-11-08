@@ -1405,6 +1405,23 @@ elif [ "$BOOT_PASSED" = true ]; then
     # Extract boot time
     BOOT_TIME=$(grep -o "Boot complete in [0-9.]*s" "$SERIAL_LOG" 2>/dev/null | head -1 || echo "")
 
+    # ---- Boot Loader Interface variables ---------------------------------
+    # Every boot sets or clears each variable it owns (include/boot/loader_vars.h);
+    # a firmware refusal is a failure, not noise. The one-line summary comes from
+    # the shipped loader image, which the kernel suite cannot reach.
+    # boot_policy_invoke() runs on every boot (UKI-direct included), so a leg
+    # that reached the prompt without the line skipped publication entirely.
+    LV_LINE=$(grep -aoE '\[BOOT\] loader-vars: published [0-9]+, cleared [0-9]+, failed [0-9]+' "$STRIPPED_LOG" 2>/dev/null | head -1)
+    if [ -z "$LV_LINE" ]; then
+        echo -e "${RED}SMOKE TEST FAILED: the loader never reported its Boot Loader Interface variables${NC}"
+        exit 1
+    fi
+    read -r LV_PUB LV_CLR LV_FAIL <<< "$(echo "$LV_LINE" | sed -E 's/.*published ([0-9]+), cleared ([0-9]+), failed ([0-9]+)/\1 \2 \3/')"
+    if [ "$LV_FAIL" != "0" ] || [ $((LV_PUB + LV_CLR)) -ne 11 ]; then
+        echo -e "${RED}SMOKE TEST FAILED: every loader variable must be set or cleared, with no firmware refusal (got: $LV_LINE)${NC}"
+        exit 1
+    fi
+
     # ---- Valid-store assertions -------------------------------------------
     if [ "$VALID_STORE" = "1" ]; then
         if ! grep -q "policy: bootentries.json parsed reject_code=0 entries=$STORE_ENTRIES" "$STRIPPED_LOG" 2>/dev/null; then
@@ -1422,6 +1439,10 @@ elif [ "$BOOT_PASSED" = true ]; then
         }
         grep -qF '[BOOT] policy: kind validate OK kind=0 kernel="\boot\kernel.exe"' "$STRIPPED_LOG" 2>/dev/null \
             || loader_fail "boot_entry_kind did not decode the split entry's kernel path"
+        # A valid store and a GPT ESP make every variable knowable except the two
+        # timings (the TSC is calibrated after this point): 9 set, 2 cleared.
+        grep -qF '[BOOT] loader-vars: published 9, cleared 2, failed 0' "$STRIPPED_LOG" 2>/dev/null \
+            || loader_fail "the loader did not publish the 9 Boot Loader Interface variables a valid store allows"
         # The keys leg overrides the policy default from the menu, and the
         # policy line prints after the menu, so it reports the operator's pick.
         sel_entry=smoke-entry; sel_reason='1 (STORE_DEFAULT)'

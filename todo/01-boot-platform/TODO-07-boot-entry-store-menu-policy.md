@@ -74,7 +74,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  18   | systemd BLI parity (BLS display order, one-shot, loader timestamps) | §6, §15                                 |  [ ]   |
 | 💎  |  19   | Repeated top-level keys defeat the entries-array bound              | §2                                      |  [x]   |
 | 💎  |  20   | `crc32` header located by string match, not structurally            | §1, §19                                 |  [x]   |
-| 💎  |  21   | Published loader variables need an explicit set-or-clear outcome    | §15, §19                                |  [ ]   |
+| 💎  |  21   | Published loader variables need an explicit set-or-clear outcome    | §15, §19                                |  [x]   |
 | 💎  |  22   | Store size cap is untested on both sides of the 16 KiB boundary     | §2, §20                                 |  [x]   |
 | 💎  |  23   | A rejected store has no repair path, only a one-entry fallback      | §1, §20                                 |  [ ]   |
 | 💎  |  24   | Boot menu help, power and saved-default keys                        | §6, §7, §15                             |  [ ]   |
@@ -537,10 +537,11 @@ Follow-ups (wanted checks depend on producers outside §14's scope):
 
 Publish the live entry list, capability bitmap, selected entry, and one-shot overrides as systemd-boot-compatible `LoaderXxx` UEFI variables under vendor UUID `4a67b082-0a4c-41cf-b6c7-440b29bb8c4f` so userspace tooling (and ported third-party tools like `bootctl`-equivalents) does not need to re-parse the on-disk store. Without this, dynamic entries (A/B-generated, recovery-generated, network-discovered, chainload) are invisible to userspace until the on-disk store is regenerated. Linux parity (`https://systemd.io/BOOT_LOADER_INTERFACE/`).
 
-- [x] Publish 12 read-only `Loader*` vars via `loader_publish_readonly_vars()` in `bootx64.c`, after policy decision + counter decrement, before kernel handoff.
+- [x] Publish the read-only `Loader*` vars after policy decision + counter decrement, before kernel handoff.
+  - Since §21: 10 of them, volatile and set or cleared every boot, via `boot_loader_vars_publish()` in `loader_vars.c`, driven by `loader_vars_report()` in `bootx64.c`.
 - [x] Consume + delete `LoaderEntryOneShot` + `LoaderConfigTimeoutOneShot` in `loader_consume_one_shot_vars()`; EntryOneShot overlays `bootcurrent_entry_id`; TimeoutOneShot overrides menu countdown with pre-multiply overflow guard (3600s cap).
 - [x] `LoaderFeatures` uses canonical systemd-boot bit positions (bit 1, 3, 4 advertised). Impossible OS extensions in separate `ImpossibleOSLoaderFeaturesExt` var under our vendor GUID.
-- [x] Every `gRT->SetVariable` is wrapped in `loader_set_var()`; failure flips `boot_info.loader_vars_degraded = 1` and continues boot.
+- [x] Every `gRT->SetVariable` goes through one adapter, `loader_vars_fw_set()` in `bootx64.c` (since §21); failure flips `boot_info.loader_vars_degraded = 1` and continues boot.
 - [x] Compatibility documented in [`docs/boot/loader-vars.md`](../../docs/boot/loader-vars.md): bit positions, one-shot protocol, Linux tool Just-Works statement, security model.
 - [x] SMBIOS Type 1 UUID extraction via pure walker in [`include/boot/boot_smbios_parse.h`](../../include/boot/boot_smbios_parse.h); anchor + length + checksum validated; ConfigurationTable NULL-guarded; feeds `inputs->local_machine_id`.
 - [x] `boot_info` v21 ABI bump (mirror + manifest + doc-coverage allowlist): adds `loader_vars_degraded` + `_loader_vars_pad[7]`.
@@ -672,7 +673,7 @@ The shipped §15 (loader UEFI vars) + §6 (menu render) publish systemd Boot Loa
 
 > **Notes:**
 > - **What shipped:** 2 systemd-BLI parity fixes in `bootx64.c` -- shared BLS display order (`sort_key`/`machine_id`) for the menu + `LoaderEntries`; `LoaderConfigTimeoutOneShot` (0 = menu no-timeout, 1..60 honored, >60 clamped to 60 + WARN, forces the menu even on quiet paths).
-> - **How it integrates:** the sort applies to `cand_idx` after `boot_policy_menu_collect` + inside `loader_set_entries`; a present one-shot forces `show_menu` + bypasses `hide_when_alone`, and value 0 sets `g_menu_no_autoboot`.
+> - **How it integrates:** the sort applies to `cand_idx` after `boot_policy_menu_collect` + inside the `LoaderEntries` publisher (`lv_entries` in `loader_vars.c` since §21); a present one-shot forces `show_menu` + bypasses `hide_when_alone`, and value 0 sets `g_menu_no_autoboot`.
 > - **Downstream:** `bootctl` consumers now see consistent menu/LoaderEntries order; `systemd-analyze` loader-time parity stays deferred (the timestamp publish-relocation follow-up). Design adoptions in the commit message.
 > - **Canonical doc:** `docs/boot/boot-entry-schema.md`; systemd Boot Loader Interface spec for var semantics.
 > - **Scope boundary:** two `[ ]` follow-ups -- full BLS order (bad-counted-last + `version` field + `LoaderFeatures` bit 8) and relocating the LoaderTime publish after `load_kernel`.
@@ -719,9 +720,9 @@ Found while reviewing `02-kernel-core/TODO-33` §16, which moved that parser's T
   - `--emit-crc` also did its whole pipeline against the DESTINATION file, so a rejected store was left holding an invalid placeholder and a non-UTF-8-encodable one (a lone surrogate, which `json.loads` accepts) was truncated to zero bytes by `write_text` before the encoder raised. It now serializes, encodes, re-parses, validates and stamps the CRC entirely in memory, then replaces the file atomically. Regression asserts a FAILED run leaves the original byte-identical; against the old ordering it measures 1321 -> 0 bytes.
 - [x] Make the rejection stick in every CONSUMER, not just the parser -- a rejected store now yields no menu candidates and publishes no loader entries.
   - Found by the review: `boot_policy_decide()` short-circuits correctly, but `boot_policy_menu_collect()` ignored `reject_code` and iterated `entry_count`, so a store rejected for a repeated `entries` key still listed the entries parsed before the repeat -- and picking one through the F11 menu made it the boot selection, bypassing the active/machine_id filtering the ladder would have applied.
-  - Because the ladder short-circuits WITHOUT filtering, `decision->rejected[]` is empty on that path, so the collector's hard-hide filters had nothing to match on and every retained entry showed. Guarded at `boot_policy.c` plus `loader_set_entries()` and the `LoaderEntryDefault` publisher in `bootx64.c`.
+  - Because the ladder short-circuits WITHOUT filtering, `decision->rejected[]` is empty on that path, so the collector's hard-hide filters had nothing to match on and every retained entry showed. Guarded at `boot_policy.c` plus the `LoaderEntries` and `LoaderEntryDefault` publishers in `bootx64.c` (since §21 the former is `lv_entries` in `loader_vars.c`, and `LoaderEntryDefault` is no longer written).
   - The loader-variable guards CLEAR rather than skip, across all three of `LoaderEntries`, `LoaderEntryDefault` and `LoaderEntrySelected`. They are `EFI_VARIABLE_NON_VOLATILE`, so not writing them leaves the PREVIOUS boot's list published while this boot rejects the store and offers nothing; stale is worse than absent, since a BLI consumer would list entries the loader refuses to boot, or read the previous boot's id as this boot's selection. Both caught by re-adversarial review of this very fix -- two consecutive rounds, each on the round before it.
-  - Regression + accept-control in `test_boot_policy.c`; mutation-checked (deleting the guard exposes 2 candidates where 0 are expected). The loader-variable clearing itself has no kernel test surface -- `loader_clear_var()` calls `gST->RuntimeServices->SetVariable` -- so it is validated by serial log on a live boot, per the bootloader-only test policy.
+  - Regression + accept-control in `test_boot_policy.c`; mutation-checked (deleting the guard exposes 2 candidates where 0 are expected). The loader-variable clearing had no kernel test surface then (the clear called `SetVariable` directly) and was validated by serial log; §21 moved it into `loader_vars.c`, where `test_loader_vars.c` covers it.
 - [x] Commit: `"boot: reject repeated top-level keys in the boot entry store"`
 
 **Test checkpoint:** full `scripts/test.sh` green with `SUITE=boot` green in its own right and the new reject cases failing before the fix and passing after. `scripts/test-smoke-matrix.sh` 4/4 legs, since this is pre-EBS boot-path code. Platforms: QEMU KVM + TCG.
@@ -791,16 +792,30 @@ Found by the §19 consistency review, which reproduced it with a 290-byte CRC-co
 
 Found by the §19 re-adversarial rounds while auditing exactly this class. §19 fixed the three ENTRY variables (`LoaderEntries`, `LoaderEntryDefault`, `LoaderEntrySelected`), which went stale specifically on a REJECTED store. This section owns the general rule for the rest. -> XREF: `01-boot-platform/TODO-07-boot-entry-store-menu-policy.md` §15 (OS-visible loader UEFI variables -- shipped and stamped; this is the follow-up its publication paths need).
 
-**The mechanism, confirmed at file:line.** `loader_set_var()` writes with `EFI_VARIABLE_NON_VOLATILE` (`src/boot/uefi/bootx64.c:6242`), so every published value survives the reboot. Several publishers return early on the "nothing to publish" path instead of clearing, which is not the same thing: absent means unknown, but stale means wrong. `LoaderDevicePartUUID` (`bootx64.c:6291`) returns without clearing when the partition identity is unavailable, and its formatter-failure path has the same omission. Store rejection does NOT reach this path, which is why §19's fix did not cover it.
+**The mechanism, confirmed at file:line.** The loader's variable writer (since §21 replaced by `boot_loader_vars_publish()`) writes with `EFI_VARIABLE_NON_VOLATILE` (`src/boot/uefi/bootx64.c:6242`), so every published value survives the reboot. Several publishers return early on the "nothing to publish" path instead of clearing, which is not the same thing: absent means unknown, but stale means wrong. `LoaderDevicePartUUID` (`bootx64.c:6291`) returns without clearing when the partition identity is unavailable, and its formatter-failure path has the same omission. Store rejection does NOT reach this path, which is why §19's fix did not cover it.
 
-- [ ] Give every variable this function publishes an explicit set-or-clear outcome, so no path can leave a previous boot's value standing.
-  - Enumerate them first; the review counted 12. For each, decide and record whether "cannot determine" means clear or means legitimately leave alone, rather than letting an early return decide by accident.
-- [ ] Clear `LoaderDevicePartUUID` when a valid GPT identity is unavailable OR when formatting it fails, and require GPT partition style before publishing it at all.
-- [ ] Validation: consecutive-boot behaviour is the thing under test, so it needs persistent variable state across two boots -- a serial-log check on a live boot pair, or a mock variable store if the loader-var path is ever made host-testable.
-  - No kernel test surface today: these call `gST->RuntimeServices->SetVariable` directly, which the test policy forbids a kernel test from reaching.
-- [ ] Commit: `"boot: give every published loader variable an explicit set-or-clear outcome"`
+- [x] Every variable the loader owns is set or cleared on every boot, and is volatile, so no path can leave a previous boot's value standing.
+  - Root cause, found by the design review: the old variable writer in `bootx64.c` wrote `EFI_VARIABLE_NON_VOLATILE`, so a value outlived its boot. systemd-boot writes these names with no `NON_VOLATILE` flag (`src/boot/export-vars.c`), and a persistent copy also leaked into a later boot by another loader, which only fills them when absent.
+  - New pure publisher `boot_loader_vars_publish()` in `src/boot/uefi/loader_vars.c` (`include/boot/loader_vars.h`), shared by the loader and the kernel tests; `bootx64.c` keeps only the `SetVariable` adapter `loader_vars_fw_set()` and the inputs.
+  - Each write deletes first (attributes 0, size 0), which also migrates a persistent copy an older loader left: UEFI refuses to rewrite a variable with different attributes.
+  - The 11 owned variables and their clear conditions are tabled in `docs/boot/loader-vars.md`: firmware info clears with no system table or an empty or over-256-character vendor (never truncated); both timings clear when unmeasured or 0 (systemd rejects a zero ExecUSec; today they are always unmeasured here); `LoaderEntries` clears when nothing is visible; `ImpossibleOSLoaderFeaturesExt` follows the same rules.
+  - `LoaderConfigTimeout` and `LoaderEntryDefault` are no longer written: they are persistent settings owned by `bootctl` or another loader, which this loader does not honour (bits 0 and 2 not advertised). Writing them each boot overwrote, and on a rejected store deleted, someone else's setting. Decision and reversal cost in `todo/answers.md`; §24's `d` key becomes their only writer.
+- [x] Every path that leaves the loader reports or clears, through `loader_vars_report()` in `bootx64.c`.
+  - The normal path, and each of the three policy allocation failures (no store facts, so the store-derived variables clear).
+  - Before a chainload, `boot_loader_vars_clear_all()` clears every owned variable, because the chained loader reports its own boot.
+- [x] `LoaderDevicePartUUID` is published only for a GPT partition with a GUID that is neither all-zero nor all-FF, via `boot_loader_part_uuid_text()`; otherwise it is cleared.
+  - GPT means `boot_partition_style == 2`. An MBR disk signature is never published as a partition UUID.
+- [x] Validation: `src/kernel/test/test_loader_vars.c` runs the shipped publisher against an in-memory UEFI variable store (10 cases).
+  - The store is keyed by name and 16-byte GUID value, drops volatile variables at a simulated reset, refuses attribute-changing rewrites, counts every call, and fails writes or deletes per name.
+  - Cases: a fully known boot sets all 11 volatile, with both feature bitmaps checked byte-exact under their own GUIDs; an unknown boot after a known one inherits nothing, even from seeded persistent copies; MBR, unknown style, zero and all-FF GUIDs, unmeasured or zero timing and a missing system table each delete an old value; persistent copies migrate under both GUIDs; the user's timeout and default survive publish and chainload; a seeded old `LoaderEntries` is deleted for a rejected, empty, absent and all-hidden store; a full 64-entry list publishes whole; write and delete failures are reported, and bad arguments make no firmware call; a chainload clears everything and a refused delete there is reported without stopping the loop; zero timing, oversize vendor, MBR.
+  - Controls (each run, each failed, restored with `cmp`): writing `NON_VOLATILE` (14 failures), no delete before the write (6), MBR accepted (1), unmeasured timing published (7); after review: extension under the systemd GUID (5), hidden store not cleared (2), `clear_all` clearing nothing (2), scratch-size guard removed (1), `clear_all` ignoring failures (1), entry ids corrupted past the second character (1).
+  - Live: the loader prints `[BOOT] loader-vars: published N, cleared M, failed K`. `scripts/test-smoke.sh` fails a leg that reaches the prompt without that line, with a failure, or with a total other than 11; the valid-store leg requires exactly `published 9, cleared 2, failed 0`. A plain boot logs `published 7, cleared 4, failed 0` (no store, no timing).
+  - The kernel test image sits at its `USER_BASE` ceiling (02-kernel-core/TODO-33); the publisher takes caller-owned scratch, the test fixture is a `TEST_SCRATCH_KBUF`, and the test file (with its copy of the publisher) is built `minsize`, so the suite adds no BSS and stays one page under the ceiling.
+- [x] Commit: `"boot: publish loader variables volatile, set or cleared every boot"`
 
-**Test checkpoint:** `scripts/test-smoke-matrix.sh` 4/4 legs, plus a serial-log check across a boot pair showing that a boot with unknown partition identity leaves no stale `LoaderDevicePartUUID` from the boot before it.
+**Test checkpoint:** `SUITE=boot` green with the ten `loader-vars:` cases (the two-boot check runs against the simulated store, since volatile variables cannot outlive a real reset); `scripts/test-smoke-matrix.sh` all legs, with the valid-store leg's `published 9, cleared 2, failed 0` line.
+
+> **Test runner:** `scripts/debug/kernel/run-boot-tests.bat` (expect the ten "loader-vars:" cases PASS in SUITE=boot).
 
 ---
 
@@ -873,7 +888,8 @@ Found by the parity pass on §6 against systemd-boot (https://man.archlinux.org/
   - The boot menu has no design spec today, so this is the answer the spec has to give first rather than visuals invented in `bootx64.c`.
 - [ ] `h`, `?` and F1 open a help screen listing every key, and the footer names the help key; any key closes it and the menu repaints in full. Opening it stops the countdown, like any other action key.
 - [ ] Shift+B reboots and Shift+O powers off through `gRT->ResetSystem` (`EfiResetCold` / `EfiResetShutdown`), with the serial mirror logging the choice first. A refused or absent `ResetSystem` keeps the menu up with a message instead of hanging.
-- [ ] `d` makes the highlighted entry the default and persists it as `LoaderEntryDefault` (the systemd loader interface §15 already publishes), read back by the §3 policy ladder on the next boot; pressing it on the current default clears it.
+- [ ] `d` makes the highlighted entry the default and persists it as `LoaderEntryDefault` (NON_VOLATILE), read back by the §3 policy ladder on the next boot; pressing it on the current default clears it.
+  - Since §21 this loader no longer writes `LoaderEntryDefault` as a report, so this key and the ladder are its only writer and reader here; once it is honoured, advertise `LoaderFeatures` bit 2 and update `docs/boot/loader-vars.md`.
   - Decide and record in `todo/answers.md` whether the stored default outranks the store's own `sort_key` default, as `default @saved` does in loader.conf.
 - [ ] Commit: `"boot: menu help, power and saved-default keys"`
 

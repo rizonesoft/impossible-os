@@ -36,6 +36,7 @@
 #include "../../../include/boot/uki_cmdline_media_role.h" /* uki_cmdline_extract_media_role() shared with kernel test */
 #include "../../../include/boot/boot_entries_parser.h"   /* boot entries parser + envelope */
 #include "../../../include/boot/boot_policy.h"           /* boot policy ladder + decision */
+#include "../../../include/boot/loader_vars.h"           /* Boot Loader Interface publication */
 #include "../../../include/boot/boot_entry_kind.h"        /* per-kind payload validators */
 #include "../../../include/boot/boot_implicit_payload.h"  /* implicit-payload reservation + claim */
 #include "../../../include/boot/bsod_aa_wrap.h"          /* glyph metrics + pure line-break decision */
@@ -1077,7 +1078,8 @@ static int g_wd_refresh_disabled; /* 1 = stop calling watchdog_reset()
  * carry poison into a decision.
  *   g_chainload_targets (g_chainload_count), g_staged_payloads
  *   (g_staged_payload_count), load_kernel.s_pt_load_mmap_buf (pt_mmap_size),
- *   loader_set_entries.buf (its local p), s_mmap_active / s_mmap_events /
+ *   loader_vars_report.s_loader_var_payload (written in full before each
+ *   write that reads it), s_mmap_active / s_mmap_events /
  *   s_mmap_work (mmap_normalize()'s locals), g_crc32_table (rebuilt whenever
  *   its cookie is unset), and boot_policy_invoke.s_loader_oneshot_entry,
  *   whose every read is gated on the STACK local loader_have_entry_oneshot --
@@ -6909,19 +6911,15 @@ static int smbios_format_uuid(const UINT8 src[16], char out[37]);
  * loader state and write to override the next boot. Impossible OS
  * publishes the same surface so those tools work unmodified.
  *
- * Read-only (bootloader -> OS, NV+BS+RT):
- *   LoaderInfo               -- "ImpossibleOS bootloader vX"
- *   LoaderFirmwareInfo       -- gST->FirmwareVendor + revision
- *   LoaderFirmwareType       -- "UEFI <major>.<minor>"
- *   LoaderImageIdentifier    -- canonical loader path on ESP
- *   LoaderDevicePartUUID     -- ESP GPT partition GUID (lowercase 36-char)
- *   LoaderEntries            -- NUL-separated UCS-2 entry ids, double-NUL term
- *   LoaderEntryDefault       -- default entry id (lowest sort_key)
- *   LoaderEntrySelected      -- this boot's selected entry id
- *   LoaderConfigTimeout      -- decimal seconds string
- *   LoaderTimeInitUSec       -- TSC-derived boot loader start in usec
- *   LoaderTimeExecUSec       -- TSC-derived handoff usec
- *   LoaderFeatures           -- 64-bit LE bitmap (canonical bit positions)
+ * Reported by the loader (volatile BS+RT, set or cleared every boot; the
+ * publisher and the per-variable rules are include/boot/loader_vars.h):
+ *   LoaderInfo, LoaderFirmwareInfo, LoaderFirmwareType, LoaderImageIdentifier,
+ *   LoaderDevicePartUUID, LoaderEntries, LoaderEntrySelected,
+ *   LoaderTimeInitUSec, LoaderTimeExecUSec, LoaderFeatures
+ *
+ * Not written: LoaderConfigTimeout and LoaderEntryDefault are persistent
+ * settings owned by the OS or another loader, which this loader does not
+ * honour (LoaderFeatures bits 0 and 2 are not advertised).
  *
  * One-shot (OS -> bootloader, NV+BS+RT, deleted after consumption):
  *   LoaderEntryOneShot       -- next boot's entry id
@@ -6935,9 +6933,8 @@ static int smbios_format_uuid(const UINT8 src[16], char out[37]);
  * `ImpossibleOSLoaderFeaturesExt` under our own vendor GUID so we
  * never lie about systemd-boot capability bits.
  *
- * Failure model: every gRT->SetVariable() call is wrapped in
- * loader_set_var() which sets boot_info.loader_vars_degraded on any
- * error and continues. Userland still boots; the kernel surfaces
+ * Failure model: a SetVariable failure sets boot_info.loader_vars_degraded
+ * and boot continues. Userland still boots; the kernel surfaces
  * degraded publication state in the audit JSONL. */
 
 /* systemd-boot vendor GUID (Linux compat -- DO NOT change). */
@@ -6960,322 +6957,18 @@ static const EFI_GUID g_loader_systemd_guid =
      | LOADER_FEATURE_ENTRY_ONESHOT \
      | LOADER_FEATURE_BOOT_COUNTING)
 
-/* Canonical loader install path on the ESP (Impossible OS UEFI
- * bootloader). systemd-boot publishes the actual loaded path via
- * device-path walk; we publish the canonical install location since
- * it is what operators expect to see and what bootctl displays. */
-#define LOADER_IMAGE_IDENTIFIER_PATH u"\\EFI\\ImpossibleOS\\BOOTX64.EFI"
-
-/* Bound on any LoaderXxx variable payload. systemd-boot caps at ~4 KiB
- * per var; our LoaderEntries is the largest payload (up to 64 ids * 48
- * chars * 2 bytes UCS-2 + terminators = ~6 KiB). Allocate 8 KiB on the
- * stack-frame inside the publisher. */
-#define LOADER_VAR_PAYLOAD_MAX  8192u
-
-/* Convert an ASCII NUL-terminated string to UCS-2 (UTF-16LE) into the
- * caller buffer; returns the byte count including the trailing
- * UCS-2 NUL (2 bytes). Caller-buffer must hold at least
- * (strlen+1)*2 bytes. */
-static UINTN loader_ascii_to_ucs2(const char *src, CHAR16 *dst, UINTN dst_cap)
+/* Firmware adapter for include/boot/loader_vars.h: the publisher is pure C so
+ * the kernel boot tests run it against an in-memory store; this is the only
+ * code that reaches the real SetVariable. */
+static unsigned long long loader_vars_fw_set(void *ctx, const unsigned short *name,
+                                             const void *guid, unsigned int attrs,
+                                             unsigned long long size, const void *data)
 {
-    UINTN i = 0;
-    if (!src || !dst || dst_cap < 2) return 0;
-    while (src[i] && i < (dst_cap / 2u) - 1u) {
-        dst[i] = (CHAR16)(unsigned char)src[i];
-        i++;
-    }
-    dst[i] = 0;
-    return (i + 1u) * 2u;
-}
-
-/* Convert UINT64 decimal to ASCII into out[buf_cap]. Returns the
- * length (excluding NUL). Always NUL-terminates. */
-static UINTN loader_u64_to_decimal(UINT64 v, char *out, UINTN cap)
-{
-    char tmp[24];
-    UINTN tlen = 0;
-    if (!out || cap == 0) return 0;
-    if (v == 0) tmp[tlen++] = '0';
-    while (v) {
-        tmp[tlen++] = (char)('0' + (v % 10u));
-        v /= 10u;
-    }
-    UINTN out_pos = 0;
-    while (tlen > 0 && out_pos < cap - 1u) {
-        out[out_pos++] = tmp[--tlen];
-    }
-    out[out_pos] = 0;
-    return out_pos;
-}
-
-/* Write a UEFI variable with NV+BS+RT attrs. On failure, log + set
- * loader_vars_degraded=1 (best-effort). Never halts. */
-static void loader_set_var(const CHAR16 *name, UINTN payload_size,
-                            const void *payload)
-{
-    if (!gST || !gST->RuntimeServices || !gST->RuntimeServices->SetVariable) {
-        g_boot_info_ptr->loader_vars_degraded = 1;
-        return;
-    }
-    UINT32 attrs = EFI_VARIABLE_NON_VOLATILE
-                 | EFI_VARIABLE_BOOTSERVICE_ACCESS
-                 | EFI_VARIABLE_RUNTIME_ACCESS;
-    EFI_STATUS s = gST->RuntimeServices->SetVariable(
-        (CHAR16 *)name, (EFI_GUID *)&g_loader_systemd_guid,
-        attrs, payload_size, (VOID *)payload);
-    if (EFI_ERROR(s)) {
-        g_boot_info_ptr->loader_vars_degraded = 1;
-        serial_early_print("[BOOT] loader-vars: SetVariable failed -- degraded mode\n");
-    }
-}
-
-/* Delete a Loader* variable so a stale NON_VOLATILE value from a prior boot does
- * not linger for systemd-BLI consumers when there is nothing to publish.
- * EFI_NOT_FOUND (already absent) is success, not a degradation. */
-static void loader_clear_var(const CHAR16 *name)
-{
+    (void)ctx;
     if (!gST || !gST->RuntimeServices || !gST->RuntimeServices->SetVariable)
-        return;
-    UINT32 attrs = EFI_VARIABLE_NON_VOLATILE
-                 | EFI_VARIABLE_BOOTSERVICE_ACCESS
-                 | EFI_VARIABLE_RUNTIME_ACCESS;
-    EFI_STATUS s = gST->RuntimeServices->SetVariable(
-        (CHAR16 *)name, (EFI_GUID *)&g_loader_systemd_guid, attrs, 0, (VOID *)0);
-    if (EFI_ERROR(s) && s != EFI_NOT_FOUND) {
-        g_boot_info_ptr->loader_vars_degraded = 1;
-        serial_early_print("[BOOT] loader-vars: clear failed -- degraded mode\n");
-    }
-}
-
-/* Write a UEFI variable from an ASCII string. */
-static void loader_set_var_ascii(const CHAR16 *name, const char *value)
-{
-    CHAR16 buf[512];
-    UINTN n = loader_ascii_to_ucs2(value, buf, sizeof(buf));
-    if (n == 0) return;
-    /* systemd-boot interface convention: string vars are UCS-2 WITHOUT
-     * the trailing NUL counted (so userspace tools treat the bytes as
-     * the exact string). We follow the same convention: size = n - 2. */
-    if (n < 2) return;
-    loader_set_var(name, n - 2u, buf);
-}
-
-/* Format the GPT partition GUID at boot_info.boot_partition_guid into
- * RFC 4122 textual form (lowercase) and write LoaderDevicePartUUID.
- * GPT GUIDs use the same little-endian-on-wire convention as SMBIOS. */
-static void loader_set_var_part_uuid(void)
-{
-    const UINT8 *raw = (const UINT8 *)g_boot_info_ptr->boot_partition_guid;
-    /* Skip if we never populated a real GPT GUID (zero or MBR fallback
-     * in [0..3] only). systemd-boot spec: var absent => unknown. */
-    int all_zero = 1;
-    for (UINTN i = 0; i < 16; i++) if (raw[i]) { all_zero = 0; break; }
-    if (all_zero) return;
-    char ascii[37];
-    if (!smbios_format_uuid(raw, ascii)) return;
-    loader_set_var_ascii(u"LoaderDevicePartUUID", ascii);
-}
-
-/* Format gST->FirmwareVendor + FirmwareRevision and write LoaderFirmware*. */
-static void loader_set_firmware_info(void)
-{
-    CHAR16 buf[256];
-    UINTN p = 0;
-    if (gST && gST->FirmwareVendor) {
-        const CHAR16 *fv = gST->FirmwareVendor;
-        while (fv[p] != 0 && p < (sizeof(buf) / sizeof(buf[0])) - 16u) {
-            buf[p] = fv[p];
-            p++;
-        }
-    }
-    if (gST) {
-        /* Append " " + revision hex */
-        const char *suffix = " ";
-        UINTN si = 0;
-        while (suffix[si] && p < (sizeof(buf) / sizeof(buf[0])) - 12u) {
-            buf[p++] = (CHAR16)(unsigned char)suffix[si++];
-        }
-        UINT32 rev = gST->FirmwareRevision;
-        char dec[16];
-        UINTN dl = loader_u64_to_decimal((UINT64)rev, dec, sizeof(dec));
-        for (UINTN i = 0; i < dl && p < (sizeof(buf) / sizeof(buf[0])) - 1u; i++) {
-            buf[p++] = (CHAR16)(unsigned char)dec[i];
-        }
-    }
-    buf[p] = 0;
-    if (p > 0)
-        loader_set_var(u"LoaderFirmwareInfo", p * 2u, buf);
-
-    /* Firmware type: "UEFI <major>.<minor>" from gST->Hdr.Revision. */
-    if (gST) {
-        char ft[32] = { 'U','E','F','I',' ', 0 };
-        UINTN tp = 5;
-        UINT32 ver = gST->Hdr.Revision;
-        UINT32 maj = (ver >> 16) & 0xFFFF;
-        UINT32 min = ver & 0xFFFF;
-        char dbuf[8];
-        UINTN dn = loader_u64_to_decimal((UINT64)maj, dbuf, sizeof(dbuf));
-        for (UINTN i = 0; i < dn; i++) ft[tp++] = dbuf[i];
-        ft[tp++] = '.';
-        dn = loader_u64_to_decimal((UINT64)min, dbuf, sizeof(dbuf));
-        for (UINTN i = 0; i < dn; i++) ft[tp++] = dbuf[i];
-        ft[tp] = 0;
-        loader_set_var_ascii(u"LoaderFirmwareType", ft);
-    }
-}
-
-/* Lexical compare of two NUL-terminated ASCII strings (unsigned byte
- * order). Returns <0, 0, >0 like strcmp. */
-/* BLS display-order comparator (boot_entry_bls_less) + stable sort
- * (boot_entries_bls_sort) live in boot_entries_parser.c -- pure C over the
- * envelope struct, shared with the kernel-side unit tests. Declared in
- * boot/boot_entries_parser.h. */
-
-/* Compose + write LoaderEntries from the parser result, in BLS display
- * order (matching the menu). UCS-2, NUL-separated, trailing double-NUL
- * terminator. systemd-boot's bootctl reads this and lists each id. */
-static void loader_set_entries(const boot_entries_parse_result_t *parse)
-{
-    /* Never publish entries from a REJECTED store: entry_count is meaningful on
-     * BOOT_ENTRIES_OK only, so anything retained before the rejection is
-     * indeterminate state, and advertising it to systemd-BLI consumers presents
-     * a store the loader itself refused to use.
-     *
-     * CLEAR rather than skip. These are EFI_VARIABLE_NON_VOLATILE, so they
-     * survive the reboot: merely not writing them leaves the PREVIOUS boot's
-     * entry list published while this boot rejected the store and offers zero
-     * candidates. Stale is worse than absent here -- a BLI consumer would list
-     * entries the loader itself refuses to boot. */
-    if (!parse || parse->reject_code != BOOT_ENTRIES_OK || parse->entry_count == 0) {
-        loader_clear_var(u"LoaderEntries");
-        return;
-    }
-    /* Build a BLS-sorted index permutation of all entries. */
-    unsigned int order[BOOT_ENTRIES_MAX_ENTRIES];
-    unsigned int n = (unsigned int)parse->entry_count;
-    if (n > BOOT_ENTRIES_MAX_ENTRIES) n = BOOT_ENTRIES_MAX_ENTRIES;
-    for (unsigned int i = 0; i < n; i++) order[i] = i;
-    boot_entries_bls_sort(parse, order, n);
-    /* Stack-allocate the payload buffer. */
-    static CHAR16 buf[LOADER_VAR_PAYLOAD_MAX / 2u];
-    UINTN p = 0;
-    UINTN cap = sizeof(buf) / sizeof(buf[0]);
-    for (unsigned int oi = 0; oi < n; oi++) {
-        const boot_entry_envelope_t *e = &parse->entries[order[oi]];
-        const char *id;
-        UINTN j = 0;
-        /* Skip menu-hidden entries (kind_skipped / HIDDEN) so LoaderEntries
-         * mirrors the visible menu: a deferred-kind or store-provided hidden
-         * entry must not leak to systemd-BLI consumers (Codex re-adversarial). */
-        if (e->kind_skipped || (e->flags & BOOT_ENTRY_FLAG_HIDDEN))
-            continue;
-        id = e->id;
-        while (id[j] && p < cap - 2u) {
-            buf[p++] = (CHAR16)(unsigned char)id[j++];
-        }
-        if (p < cap - 1u) buf[p++] = 0;  /* NUL separator */
-    }
-    /* Trailing double-NUL: one was emitted by the loop for the last
-     * entry; add the second. */
-    if (p < cap) buf[p++] = 0;
-    loader_set_var(u"LoaderEntries", p * 2u, buf);
-}
-
-/* Publish the read-only Loader* variables. Called after the policy
- * decision lands in boot_info and after the per-entry counter
- * decrement, BEFORE the kernel handoff. Failure is best-effort: each
- * SetVariable independently flips loader_vars_degraded but never
- * blocks boot. */
-static void loader_publish_readonly_vars(
-    const boot_entries_parse_result_t *parse,
-    const boot_policy_decision_t *decision,
-    UINT64 init_usec, UINT64 exec_usec, UINT32 timeout_seconds)
-{
-    /* LoaderInfo */
-    loader_set_var_ascii(u"LoaderInfo", "Impossible OS bootloader 1.0");
-
-    /* LoaderFirmwareInfo + LoaderFirmwareType */
-    loader_set_firmware_info();
-
-    /* LoaderImageIdentifier (canonical install path). UCS-2 literal. */
-    {
-        const CHAR16 *p = LOADER_IMAGE_IDENTIFIER_PATH;
-        UINTN n = 0;
-        while (p[n] != 0) n++;
-        loader_set_var(u"LoaderImageIdentifier", n * 2u, p);
-    }
-
-    /* LoaderDevicePartUUID */
-    loader_set_var_part_uuid();
-
-    /* LoaderEntries (NUL-separated ids, double-NUL terminator). */
-    loader_set_entries(parse);
-
-    /* LoaderEntryDefault -- the entry with the lowest sort_key.
-     * The policy ladder evaluates this at boot time; for the published
-     * default we use the parsed entry whose sort_key sorts first. */
-    if (!parse || parse->reject_code != BOOT_ENTRIES_OK || parse->entry_count == 0) {
-        /* Same reasoning as LoaderEntries above: a rejected store must DROP the
-         * stale non-volatile default, not silently keep the previous boot's. */
-        loader_clear_var(u"LoaderEntryDefault");
-    } else {
-        UINTN best = (UINTN)-1;
-        for (UINTN i = 0; i < parse->entry_count; i++) {
-            const boot_entry_envelope_t *e = &parse->entries[i];
-            /* Never publish a menu-hidden entry as the default (Codex
-             * re-adversarial): a kind_skipped/HIDDEN store entry must not be
-             * advertised as LoaderEntryDefault to systemd-BLI consumers. */
-            if (e->kind_skipped || (e->flags & BOOT_ENTRY_FLAG_HIDDEN))
-                continue;
-            if (best == (UINTN)-1) { best = i; continue; }
-            {
-                const char *a = parse->entries[best].sort_key;
-                const char *b = e->sort_key;
-                UINTN k = 0;
-                while (a[k] == b[k] && a[k] != 0) k++;
-                if ((unsigned char)b[k] < (unsigned char)a[k]) best = i;
-            }
-        }
-        if (best != (UINTN)-1)
-            loader_set_var_ascii(u"LoaderEntryDefault", parse->entries[best].id);
-        else
-            loader_clear_var(u"LoaderEntryDefault");  /* nothing visible -> drop stale */
-    }
-
-    /* LoaderEntrySelected -- this boot's selected id (already in boot_info v19).
-     * On FALLBACK_STORE_INVALID the selected_entry_id is empty by ABI, and the
-     * variable is CLEARED rather than skipped: it is non-volatile, so skipping
-     * would leave the PREVIOUS boot's id advertised as this boot's selection --
-     * contradicting boot_info and misreporting a fallback boot as a normal one.
-     * Same reasoning as LoaderEntries / LoaderEntryDefault above. */
-    if (decision && decision->selected_entry_id[0] != 0)
-        loader_set_var_ascii(u"LoaderEntrySelected", decision->selected_entry_id);
-    else
-        loader_clear_var(u"LoaderEntrySelected");
-
-    /* LoaderConfigTimeout -- current effective timeout in seconds. */
-    {
-        char tbuf[16];
-        loader_u64_to_decimal((UINT64)timeout_seconds, tbuf, sizeof(tbuf));
-        loader_set_var_ascii(u"LoaderConfigTimeout", tbuf);
-    }
-
-    /* LoaderTimeInitUSec / LoaderTimeExecUSec -- TSC-derived
-     * microseconds since bootloader entry / kernel handoff. */
-    {
-        char tbuf[24];
-        loader_u64_to_decimal(init_usec, tbuf, sizeof(tbuf));
-        loader_set_var_ascii(u"LoaderTimeInitUSec", tbuf);
-        loader_u64_to_decimal(exec_usec, tbuf, sizeof(tbuf));
-        loader_set_var_ascii(u"LoaderTimeExecUSec", tbuf);
-    }
-
-    /* LoaderFeatures -- canonical systemd-boot bit positions; only
-     * the bits we honor are set. */
-    {
-        UINT64 features = LOADER_FEATURES_PUBLISHED;
-        loader_set_var(u"LoaderFeatures", sizeof(features), &features);
-    }
+        return BOOT_LOADER_VAR_OUT_OF_RESOURCES;
+    return (unsigned long long)gST->RuntimeServices->SetVariable(
+        (CHAR16 *)name, (EFI_GUID *)guid, (UINT32)attrs, (UINTN)size, (VOID *)data);
 }
 
 /* Read and consume LoaderEntryOneShot + LoaderConfigTimeoutOneShot.
@@ -7407,22 +7100,68 @@ static void loader_consume_one_shot_vars(
      | IMPOSSIBLE_FEATURE_HEALTH_GATE \
      | IMPOSSIBLE_FEATURE_DEMOTE_NOT_DROP)
 
-static void loader_publish_impossible_ext(void)
+/* Report this boot through the Boot Loader Interface variables: each is
+ * volatile and either set to this boot's value or cleared
+ * (include/boot/loader_vars.h). `clear_all` clears every owned variable, for a
+ * chainload: the chained loader reports its own boot. A firmware failure marks
+ * boot_info.loader_vars_degraded and never blocks boot.
+ *
+ * Timing: boot_info.timing.tsc_freq is calibrated after load_kernel, so it is
+ * 0 here today and both LoaderTime variables are cleared rather than published
+ * as 0 (systemd rejects a zero ExecUSec). Distinct Init and Exec values need
+ * the publish moved after TSC calibration. */
+static void loader_vars_report(const boot_entries_parse_result_t *parse,
+                               const boot_policy_decision_t *decision, int clear_all)
 {
-    if (!gST || !gST->RuntimeServices || !gST->RuntimeServices->SetVariable)
-        return;
-    UINT64 features = IMPOSSIBLE_FEATURES_PUBLISHED;
-    UINT32 attrs = EFI_VARIABLE_NON_VOLATILE
-                 | EFI_VARIABLE_BOOTSERVICE_ACCESS
-                 | EFI_VARIABLE_RUNTIME_ACCESS;
-    EFI_STATUS s = gST->RuntimeServices->SetVariable(
-        u"ImpossibleOSLoaderFeaturesExt",
-        (EFI_GUID *)&g_impossible_os_guid,
-        attrs, sizeof(features), &features);
-    if (EFI_ERROR(s)) {
-        g_boot_info_ptr->loader_vars_degraded = 1;
-        serial_early_print("[BOOT] loader-vars: Impossible ext SetVariable failed\n");
+    struct boot_loader_var_ops ops = { loader_vars_fw_set, (void *)0 };
+    struct boot_loader_var_inputs in;
+    struct boot_loader_var_report rep;
+    /* Payload scratch: written in full before every write that reads it. */
+    static unsigned short s_loader_var_payload[BOOT_LOADER_VAR_PAYLOAD_MAX / 2u];
+    UINT64 tsc_freq = g_boot_info_ptr->timing.tsc_freq;
+    UINTN gi;
+    int ok;
+
+    efi_memset(&in, 0, sizeof(in));
+    in.systemd_guid = &g_loader_systemd_guid;
+    in.impossible_guid = &g_impossible_os_guid;
+    in.scratch = s_loader_var_payload;
+    in.scratch_bytes = (unsigned int)sizeof(s_loader_var_payload);
+    in.have_firmware = gST != (EFI_SYSTEM_TABLE *)0;
+    if (gST) {
+        in.firmware_vendor = (const unsigned short *)gST->FirmwareVendor;
+        in.firmware_revision = gST->FirmwareRevision;
+        in.uefi_revision = gST->Hdr.Revision;
     }
+    in.partition_style = g_boot_info_ptr->boot_partition_style;
+    for (gi = 0; gi < 16; gi++)
+        in.partition_guid[gi] = ((const UINT8 *)g_boot_info_ptr->boot_partition_guid)[gi];
+    in.parse = parse;
+    in.selected_entry_id = decision ? decision->selected_entry_id : (const char *)0;
+    if (tsc_freq >= 1000000ULL) {
+        UINT64 now = boot_rdtsc();
+        UINT64 entry = g_boot_info_ptr->timing.bl_entry;
+        if (now > entry) {
+            in.init_usec = (now - entry) / (tsc_freq / 1000000ULL);
+            in.exec_usec = in.init_usec;
+            in.timing_known = 1;
+        }
+    }
+    in.loader_features = LOADER_FEATURES_PUBLISHED;
+    in.impossible_features = IMPOSSIBLE_FEATURES_PUBLISHED;
+
+    ok = clear_all ? boot_loader_vars_clear_all(&ops, &in, &rep)
+                   : boot_loader_vars_publish(&ops, &in, &rep);
+    if (!ok)
+        g_boot_info_ptr->loader_vars_degraded = 1;
+    serial_early_print(clear_all ? "[BOOT] loader-vars: chainload, published "
+                                 : "[BOOT] loader-vars: published ");
+    serial_early_print_uint(rep.published);
+    serial_early_print(", cleared ");
+    serial_early_print_uint(rep.cleared);
+    serial_early_print(", failed ");
+    serial_early_print_uint(rep.failed);
+    serial_early_print(rep.failed ? " -- degraded\n" : "\n");
 }
 
 /* The boot-policy invoke step. Owns ESP read, OptionalData decode,
@@ -7465,12 +7204,16 @@ static void boot_policy_invoke(void)
     s = gBS->AllocatePool(EfiLoaderData, sizeof(*parse), (VOID **)&parse);
     if (EFI_ERROR(s) || !parse) {
         boot_policy_publish_alloc_failure_fallback("parse_result");
+        loader_vars_report((const boot_entries_parse_result_t *)0,
+                           (const boot_policy_decision_t *)0, 0);
         return;
     }
     s = gBS->AllocatePool(EfiLoaderData, sizeof(*inputs), (VOID **)&inputs);
     if (EFI_ERROR(s) || !inputs) {
         gBS->FreePool(parse);
         boot_policy_publish_alloc_failure_fallback("inputs");
+        loader_vars_report((const boot_entries_parse_result_t *)0,
+                           (const boot_policy_decision_t *)0, 0);
         return;
     }
     s = gBS->AllocatePool(EfiLoaderData, sizeof(*decision), (VOID **)&decision);
@@ -7478,6 +7221,8 @@ static void boot_policy_invoke(void)
         gBS->FreePool(inputs);
         gBS->FreePool(parse);
         boot_policy_publish_alloc_failure_fallback("decision");
+        loader_vars_report((const boot_entries_parse_result_t *)0,
+                           (const boot_policy_decision_t *)0, 0);
         return;
     }
 
@@ -7803,7 +7548,7 @@ static void boot_policy_invoke(void)
                                                 BOOT_MENU_MAX_VISIBLE,
                                                 &cand_default_idx);
     /* BLS display order: sort the visible candidate list so the on-
-     * screen menu matches LoaderEntries (which loader_set_entries emits
+     * screen menu matches LoaderEntries (which boot_loader_vars_publish emits
      * in the same order). The policy ladder already chose the default
      * ENTRY; sorting only reorders the menu rows, so re-find the
      * default's new position in cand_idx after the sort. */
@@ -8072,8 +7817,12 @@ static void boot_policy_invoke(void)
          * flag maps to it), so it falls through to the IPOS fallback instead of
          * hijacking a detected foreign loader. */
         if ((decision->selected.flags & BOOT_ENTRY_FLAG_SYNTHESIZED) &&
-            cidx < g_chainload_count)
+            cidx < g_chainload_count) {
+            /* The chained loader reports its own boot; leave it nothing of
+             * this loader's, nor an older build's persistent copies. */
+            loader_vars_report(parse, decision, 1);
             (void)chainload_exec(&g_chainload_targets[cidx]);
+        }
         boot_entries_synthesize_fallback((g_uki_kernel_ptr != (UINT8 *)0) ? 1 : 0,
                                          &decision->selected);
         decision->reason = BOOT_SELECTION_FALLBACK_NO_VIABLE;
@@ -8331,64 +8080,10 @@ static void boot_policy_invoke(void)
 
     post_code16(POST16_BL_BOOT_POLICY_OK);
 
-    /* Publish systemd-boot-compatible LoaderXxx UEFI variables AFTER
-     * the policy decision lands in boot_info and AFTER the per-entry
-     * counter decrement, BEFORE the kernel handoff. Every SetVariable
-     * failure flips boot_info.loader_vars_degraded but never blocks
-     * boot. Init/exec usec timestamps come from boot_info.timing if
-     * tsc_freq is calibrated; otherwise 0 is published (advisory).
-     *
-     * Timeout published: must match the EFFECTIVE timeout the menu
-     * actually used. Precedence (highest wins):
-     *   1. LoaderConfigTimeoutOneShot (already consumed above)
-     *   2. selected entry envelope.timeout_override (if in range)
-     *   3. BOOT_MENU_DEFAULT_TIMEOUT_S
-     * If we just published BOOT_MENU_DEFAULT_TIMEOUT_S when the
-     * actual menu used a per-entry override, Linux tools would see a
-     * stale value and report the wrong effective timeout. */
-    {
-        UINT32 published_timeout = (UINT32)BOOT_MENU_DEFAULT_TIMEOUT_S;
-        /* Per-entry override from the SELECTED entry. The decision's
-         * envelope is populated even on FALLBACK paths (synthesized
-         * fallback envelope has timeout_override == NONE). */
-        if (decision &&
-            decision->selected.timeout_override != BOOT_ENTRIES_TIMEOUT_OVERRIDE_NONE
-            && decision->selected.timeout_override <= BOOT_MENU_TIMEOUT_CAP_S) {
-            published_timeout = decision->selected.timeout_override;
-        }
-        /* One-shot wins over per-entry override (consumed above).
-         * Publish what the menu actually honored: 0 (menu no-timeout) or
-         * the value clamped to the 60s watchdog window, so bootctl and the
-         * on-screen countdown agree (a request above 60 was clamped to 60
-         * at the apply site). */
-        if (loader_have_timeout_oneshot) {
-            published_timeout = (loader_oneshot_timeout > BOOT_MENU_TIMEOUT_CAP_S)
-                ? BOOT_MENU_TIMEOUT_CAP_S : loader_oneshot_timeout;
-        }
-        UINT64 init_us = 0, exec_us = 0;
-        UINT64 tsc_freq = g_boot_info_ptr->timing.tsc_freq;
-        if (tsc_freq > 0) {
-            UINT64 now = boot_rdtsc();
-            UINT64 entry = g_boot_info_ptr->timing.bl_entry;
-            if (now > entry) {
-                /* Convert TSC delta to microseconds. tsc_freq is Hz;
-                 * (delta * 1e6) / tsc_freq fits in u64 for any plausible
-                 * bootloader uptime. NOTE: timing.tsc_freq is calibrated
-                 * AFTER load_kernel, so it is 0 at this pre-kernel publish
-                 * point and this branch does not run today -- both
-                 * LoaderTime vars publish 0. Producing meaningful distinct
-                 * Init (loader entry) and Exec (about to hand off) values
-                 * requires relocating this publish to a point after TSC
-                 * calibration; that is the open follow-up item in this
-                 * section. Left as equal timestamps until then. */
-                init_us = (now - entry) / (tsc_freq / 1000000ULL);
-                exec_us = init_us;
-            }
-        }
-        loader_publish_readonly_vars(parse, decision,
-                                      init_us, exec_us, published_timeout);
-        loader_publish_impossible_ext();
-    }
+    /* Publish the Boot Loader Interface variables AFTER the policy decision
+     * lands in boot_info and AFTER the per-entry counter decrement, BEFORE
+     * the kernel handoff. */
+    loader_vars_report(parse, decision, 0);
 
     /* FreePool the heap structures. The boot_info copies survive in
      * BOOT_INFO_PHYS_ADDR. The JSON buffer can also be released --
