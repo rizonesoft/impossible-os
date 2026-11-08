@@ -16,7 +16,6 @@
  * vendor that does not fit clears the variable instead of truncating it. */
 #define LOADER_FIRMWARE_INFO_MAX_CHARS 256u
 
-#define LOADER_IMAGE_IDENTIFIER "\\EFI\\ImpossibleOS\\BOOTX64.EFI"
 #define LOADER_INFO_TEXT        "Impossible OS bootloader 1.0"
 
 const char *const boot_loader_var_names[BOOT_LOADER_VAR_COUNT] = {
@@ -146,12 +145,43 @@ static unsigned int lv_decimal(unsigned long long v, char *out, unsigned int cap
     return i;
 }
 
+/* LoaderImageIdentifier: the loader's own ESP-relative path as firmware
+ * reports it (systemd-boot reads LoadedImage FilePath the same way), so a
+ * copy launched as \EFI\BOOT\BOOTX64.EFI says so. Unknown is cleared. */
+static void lv_image_path(struct lv_ctx *c, const struct boot_loader_var_inputs *in)
+{
+    const unsigned short *v = in->image_path;
+    unsigned int p = 0;
+    if (!v || !v[0]) { lv_clear(c, LV_IMAGE_ID, in); return; }
+    while (v[p]) {
+        if (p >= BOOT_LOADER_VAR_PAYLOAD_MAX / 2u) { lv_clear(c, LV_IMAGE_ID, in); return; }
+        c->buf[p] = v[p];
+        p++;
+    }
+    lv_set(c, LV_IMAGE_ID, in, c->buf, (unsigned long long)p * 2u);
+}
+
 static void lv_set_ascii(struct lv_ctx *c, unsigned int which,
                          const struct boot_loader_var_inputs *in, const char *text)
 {
     unsigned int bytes = lv_ascii_payload(c, text);
     if (bytes == 0) { lv_clear(c, which, in); return; }
     lv_set(c, which, in, c->buf, bytes);
+}
+
+/* "<major>.<minor>" of a UEFI revision word, the minor padded to two digits
+ * as systemd-boot prints it ("%u.%02u"): 0x00020046 is "2.70", 0x00010000
+ * is "1.00". Returns the length, 0 if it does not fit. */
+static unsigned int lv_revision(unsigned int rev, char *out, unsigned int cap)
+{
+    unsigned int p = lv_decimal((rev >> 16) & 0xFFFFu, out, cap);
+    unsigned int minor = rev & 0xFFFFu, m;
+    if (p == 0 || p + 4u > cap) return 0;
+    out[p++] = '.';
+    if (minor < 10u) out[p++] = '0';
+    m = lv_decimal(minor, out + p, cap - p);
+    if (m == 0) return 0;
+    return p + m;
 }
 
 static void lv_firmware_info(struct lv_ctx *c, const struct boot_loader_var_inputs *in)
@@ -166,7 +196,7 @@ static void lv_firmware_info(struct lv_ctx *c, const struct boot_loader_var_inpu
         c->buf[p] = v[p];
         p++;
     }
-    rn = lv_decimal(in->firmware_revision, rev, sizeof(rev));
+    rn = lv_revision(in->firmware_revision, rev, sizeof(rev));
     c->buf[p++] = (unsigned short)' ';
     for (i = 0; i < rn; i++) c->buf[p++] = (unsigned short)(unsigned char)rev[i];
     lv_set(c, LV_FIRMWARE_INFO, in, c->buf, (unsigned long long)p * 2u);
@@ -177,9 +207,7 @@ static void lv_firmware_type(struct lv_ctx *c, const struct boot_loader_var_inpu
     char text[32] = { 'U', 'E', 'F', 'I', ' ', 0 };
     unsigned int p = 5;
     if (!in->have_firmware) { lv_clear(c, LV_FIRMWARE_TYPE, in); return; }
-    p += lv_decimal((in->uefi_revision >> 16) & 0xFFFFu, text + p, sizeof(text) - p);
-    text[p++] = '.';
-    p += lv_decimal(in->uefi_revision & 0xFFFFu, text + p, sizeof(text) - p);
+    p += lv_revision(in->uefi_revision, text + p, sizeof(text) - p);
     text[p] = 0;
     lv_set_ascii(c, LV_FIRMWARE_TYPE, in, text);
 }
@@ -217,11 +245,17 @@ static void lv_entries(struct lv_ctx *c, const struct boot_loader_var_inputs *in
     boot_entries_bls_sort(parse, order, n);
     for (oi = 0; oi < n; oi++) {
         const boot_entry_envelope_t *e = &parse->entries[order[oi]];
-        unsigned int j = 0;
+        unsigned int j = 0, len = 0;
         if (!lv_entry_visible(e)) continue;
-        while (e->id[j]) {
+        /* Bounded by the field: the parser NUL-terminates every id, and an
+         * id that is not is refused whole rather than published cut short.
+         * An empty id would end the list early, so it is skipped. */
+        while (len < sizeof(e->id) && e->id[len]) len++;
+        if (len == sizeof(e->id)) { lv_clear(c, LV_ENTRIES, in); return; }
+        if (len == 0) continue;
+        for (j = 0; j < len; j++) {
             if (p + 2u >= cap) { lv_clear(c, LV_ENTRIES, in); return; }
-            c->buf[p++] = (unsigned short)(unsigned char)e->id[j++];
+            c->buf[p++] = (unsigned short)(unsigned char)e->id[j];
         }
         c->buf[p++] = 0;
         shown++;
@@ -273,6 +307,18 @@ int boot_loader_vars_clear_all(const struct boot_loader_var_ops *ops,
     return report->failed == 0;
 }
 
+int boot_loader_vars_publish_timing(const struct boot_loader_var_ops *ops,
+                                    const struct boot_loader_var_inputs *in,
+                                    struct boot_loader_var_report *report)
+{
+    struct lv_ctx c;
+    if (!lv_begin(&c, ops, in, report))
+        return 0;
+    lv_time(&c, LV_TIME_INIT, in, in->init_usec);
+    lv_time(&c, LV_TIME_EXEC, in, in->exec_usec);
+    return report->failed == 0;
+}
+
 int boot_loader_vars_publish(const struct boot_loader_var_ops *ops,
                              const struct boot_loader_var_inputs *in,
                              struct boot_loader_var_report *report)
@@ -286,7 +332,7 @@ int boot_loader_vars_publish(const struct boot_loader_var_ops *ops,
     lv_set_ascii(&c, LV_INFO, in, LOADER_INFO_TEXT);
     lv_firmware_info(&c, in);
     lv_firmware_type(&c, in);
-    lv_set_ascii(&c, LV_IMAGE_ID, in, LOADER_IMAGE_IDENTIFIER);
+    lv_image_path(&c, in);
 
     if (boot_loader_part_uuid_text(in->partition_style, in->partition_guid, uuid))
         lv_set_ascii(&c, LV_PART_UUID, in, uuid);
@@ -307,4 +353,112 @@ int boot_loader_vars_publish(const struct boot_loader_var_ops *ops,
     lv_set(&c, LV_IMPOSSIBLE_EXT, in, &in->impossible_features, sizeof(in->impossible_features));
 
     return report->failed == 0;
+}
+
+static void lv_ucs2_name(const char *a, unsigned short *out)
+{
+    unsigned int i = 0;
+    while (a[i]) { out[i] = (unsigned short)(unsigned char)a[i]; i++; }
+    out[i] = 0;
+}
+
+/* Read one one-shot into `buf` (`chars` CHAR16). Returns the number of
+ * CHAR16 before the first NUL, or -1 when absent, -2 when present but too
+ * large or filling the buffer, -3 when the read itself failed (both still
+ * deleted). */
+static int lv_one_shot_read(const struct boot_loader_var_ops *ops, const unsigned short *name,
+                            const void *guid, unsigned short *buf, unsigned int chars)
+{
+    unsigned int attrs = 0, n = 0;
+    unsigned long long size = (unsigned long long)chars * 2u;
+    unsigned long long s = ops->get(ops->ctx, name, guid, &attrs, &size, buf);
+    if (s == BOOT_LOADER_VAR_BUFFER_TOO_SMALL) return -2;
+    if (s == BOOT_LOADER_VAR_NOT_FOUND) return -1;
+    if (s != BOOT_LOADER_VAR_SUCCESS) return -3;
+    /* A value that fills the buffer has no room for the NUL the UCS-2
+     * strings here may omit, so it is refused rather than guessed at. */
+    if (size == 0 || size >= (unsigned long long)chars * 2u || (size & 1u)) return -2;
+    while (n < size / 2u && buf[n]) n++;
+    return (int)n;
+}
+
+static int lv_one_shot_delete(const struct boot_loader_var_ops *ops, const unsigned short *name,
+                              const void *guid)
+{
+    unsigned long long s = ops->set(ops->ctx, name, guid, 0u, 0ull, (const void *)0);
+    return s == BOOT_LOADER_VAR_SUCCESS || s == BOOT_LOADER_VAR_NOT_FOUND;
+}
+
+int boot_loader_one_shot_consume(const struct boot_loader_var_ops *ops, const void *systemd_guid,
+                                 char *entry_id, unsigned int entry_cap,
+                                 struct boot_loader_one_shot *out)
+{
+    unsigned short name[LOADER_VAR_NAME_MAX];
+    unsigned short ebuf[BOOT_LOADER_ONE_SHOT_ID_CHARS];
+    unsigned short tbuf[BOOT_LOADER_ONE_SHOT_TIMEOUT_CHARS];
+    int n, i, ok = 1;
+
+    if (!out) return 0;
+    out->have_entry = out->have_timeout = 0;
+    out->timeout_seconds = 0;
+    out->entry_malformed = out->timeout_malformed = 0;
+    out->entry_refused = out->timeout_refused = 0;
+    out->entry_unreadable = out->timeout_unreadable = 0;
+    if (!ops || !ops->get || !ops->set || !systemd_guid || !entry_id || entry_cap < 2u)
+        return 0;
+    entry_id[0] = 0;
+
+    lv_ucs2_name("LoaderEntryOneShot", name);
+    n = lv_one_shot_read(ops, name, systemd_guid, ebuf, BOOT_LOADER_ONE_SHOT_ID_CHARS);
+    if (n != -1) {
+        int good = n > 0 && (unsigned int)n < entry_cap;
+        for (i = 0; good && i < n; i++)
+            good = ebuf[i] >= 0x20u && ebuf[i] <= 0x7Eu;
+        if (n == -3) {
+            out->entry_unreadable = 1;
+            ok = 0;
+            good = 0;
+        }
+        if (!lv_one_shot_delete(ops, name, systemd_guid)) {
+            out->entry_refused = 1;
+            ok = 0;
+        } else if (good) {
+            for (i = 0; i < n; i++) entry_id[i] = (char)ebuf[i];
+            entry_id[n] = 0;
+            out->have_entry = 1;
+        } else if (n != -3) {
+            out->entry_malformed = 1;
+        }
+    }
+
+    lv_ucs2_name("LoaderConfigTimeoutOneShot", name);
+    n = lv_one_shot_read(ops, name, systemd_guid, tbuf, BOOT_LOADER_ONE_SHOT_TIMEOUT_CHARS);
+    if (n != -1) {
+        unsigned int acc = 0;
+        int good = n > 0;
+        /* Cap checked before the multiply, so no digit string can wrap. */
+        for (i = 0; good && i < n; i++) {
+            unsigned int d = (unsigned int)tbuf[i] - (unsigned int)'0';
+            if (tbuf[i] < '0' || tbuf[i] > '9'
+                || acc > (BOOT_LOADER_ONE_SHOT_TIMEOUT_MAX - d) / 10u)
+                good = 0;
+            else
+                acc = acc * 10u + d;
+        }
+        if (n == -3) {
+            out->timeout_unreadable = 1;
+            ok = 0;
+            good = 0;
+        }
+        if (!lv_one_shot_delete(ops, name, systemd_guid)) {
+            out->timeout_refused = 1;
+            ok = 0;
+        } else if (good) {
+            out->timeout_seconds = acc;
+            out->have_timeout = 1;
+        } else if (n != -3) {
+            out->timeout_malformed = 1;
+        }
+    }
+    return ok;
 }

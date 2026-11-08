@@ -539,9 +539,11 @@ Publish the live entry list, capability bitmap, selected entry, and one-shot ove
 
 - [x] Publish the read-only `Loader*` vars after policy decision + counter decrement, before kernel handoff.
   - Since §21: 10 of them, volatile and set or cleared every boot, via `boot_loader_vars_publish()` in `loader_vars.c`, driven by `loader_vars_report()` in `bootx64.c`.
-- [x] Consume + delete `LoaderEntryOneShot` + `LoaderConfigTimeoutOneShot` in `loader_consume_one_shot_vars()`; EntryOneShot overlays `bootcurrent_entry_id`; TimeoutOneShot overrides menu countdown with pre-multiply overflow guard (3600s cap).
+- [x] Consume + delete `LoaderEntryOneShot` + `LoaderConfigTimeoutOneShot`; EntryOneShot overlays `bootcurrent_entry_id`; TimeoutOneShot overrides the menu countdown with a pre-multiply overflow guard (3600s cap).
+  - Since §21 the consumer is the pure `boot_loader_one_shot_consume()` in `loader_vars.c`: a value is honoured only when well formed and its delete succeeded.
 - [x] `LoaderFeatures` uses canonical systemd-boot bit positions (bit 1, 3, 4 advertised). Impossible OS extensions in separate `ImpossibleOSLoaderFeaturesExt` var under our vendor GUID.
-- [x] Every `gRT->SetVariable` goes through one adapter, `loader_vars_fw_set()` in `bootx64.c` (since §21); failure flips `boot_info.loader_vars_degraded = 1` and continues boot.
+- [x] Every published-variable write goes through one adapter, `loader_vars_fw_set()` in `bootx64.c` (since §21); any refusal flips `boot_info.loader_vars_degraded = 1` and boot continues.
+  - One-shot deletes are checked too, in `boot_loader_one_shot_consume()`; a refused one is not honoured and also marks the boot degraded.
 - [x] Compatibility documented in [`docs/boot/loader-vars.md`](../../docs/boot/loader-vars.md): bit positions, one-shot protocol, Linux tool Just-Works statement, security model.
 - [x] SMBIOS Type 1 UUID extraction via pure walker in [`include/boot/boot_smbios_parse.h`](../../include/boot/boot_smbios_parse.h); anchor + length + checksum validated; ConfigurationTable NULL-guarded; feeds `inputs->local_machine_id`.
 - [x] `boot_info` v21 ABI bump (mirror + manifest + doc-coverage allowlist): adds `loader_vars_degraded` + `_loader_vars_pad[7]`.
@@ -659,12 +661,12 @@ The shipped §15 (loader UEFI vars) + §6 (menu render) publish systemd Boot Loa
 
 - [x] BLS display ordering by `sort_key` then `machine_id` (`id` tiebreak), shared by the menu + `LoaderEntries`. Helpers `boot_entry_bls_less`/`boot_entries_bls_sort` in `boot_entries_parser.c`; unit-tested in `test_boot_entry_parser.c`.
 - [x] `LoaderConfigTimeoutOneShot`: 0 = menu no timeout, 1..60 honored, 61..3600 clamped to 60 + `[WARN]` (watchdog-window divergence, not a silent drop); a present one-shot forces the menu. Kiosk stays on per-entry `timeout_override`.
-- [ ] Distinct `LoaderTimeInitUSec`/`ExecUSec`: `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point so both publish 0; folded into the publish-relocation follow-up below. `LoaderTimeMenuUSec` not added (not in upstream BLI).
-  - Order: `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point, so both values publish 0. It folds into the publish-relocation item below and clears with it.
+- [x] Distinct `LoaderTimeInitUSec`/`ExecUSec`, both counted from reset as the BLI defines them: Init is the TSC at loader entry, Exec the TSC just before the final memory map. `LoaderTimeMenuUSec` not added (not in upstream BLI).
+  - Shipped 2026-11-08 with the §21 review: `loader_vars_report(..., LOADER_VARS_TIMING)` in `bootx64.c`; unit test `test_loader_vars_timing_call`; the smoke check requires both set on a calibrated TSC.
 - [ ] BLS full order + `LoaderFeatures` bit 8: add bad-counted-last (join the §5 counter state) + a `version` sub-key (absent from `boot_entry_envelope_t`); advertise bit 8 only once both land. (§18 follow-up)
   - Needs bad-counted-last joined to the §5 counter state plus a `version` sub-key that `boot_entry_envelope_t` does not carry. Advertise `LoaderFeatures` bit 8 only once both land.
-- [ ] Relocate the LoaderTime publish to after TSC calibration (post-`load_kernel`, pre-EBS) so distinct non-zero `LoaderTimeInitUSec`/`ExecUSec` publish (today `tsc_freq` is 0 at the publish point, so both read 0). (§18 follow-up)
-  - Move the LoaderTime publish to after TSC calibration (post-`load_kernel`, pre-EBS). This is the item the two above wait on.
+- [x] LoaderTime publish moved after TSC calibration: `boot_loader_vars_publish_timing()` in `loader_vars.c` runs post-`load_kernel`, pre-EBS, setting or clearing only the two timing variables.
+  - The main publication still clears both (the TSC is uncalibrated there), so a boot whose late call fails reports them absent, never stale.
 - [x] Commit: `"boot: TODO-07 §18 -- systemd BLI parity (BLS display order, one-shot timeout, distinct loader timestamps)"`
 
 **Test checkpoint:** against a multi-entry store, `LoaderEntries` matches the on-screen menu order (bad-counted last, then `sort_key`); `LoaderConfigTimeoutOneShot=0` shows the menu with no countdown (or warns+clamps per the chosen policy); `systemd-analyze` reports non-zero loader time. Extend `test_boot_entries` with out-of-array `sort_key` + bad-counter ordering assertions. Test on: QEMU TCG (deterministic); bare metal.
@@ -674,9 +676,9 @@ The shipped §15 (loader UEFI vars) + §6 (menu render) publish systemd Boot Loa
 > **Notes:**
 > - **What shipped:** 2 systemd-BLI parity fixes in `bootx64.c` -- shared BLS display order (`sort_key`/`machine_id`) for the menu + `LoaderEntries`; `LoaderConfigTimeoutOneShot` (0 = menu no-timeout, 1..60 honored, >60 clamped to 60 + WARN, forces the menu even on quiet paths).
 > - **How it integrates:** the sort applies to `cand_idx` after `boot_policy_menu_collect` + inside the `LoaderEntries` publisher (`lv_entries` in `loader_vars.c` since §21); a present one-shot forces `show_menu` + bypasses `hide_when_alone`, and value 0 sets `g_menu_no_autoboot`.
-> - **Downstream:** `bootctl` consumers now see consistent menu/LoaderEntries order; `systemd-analyze` loader-time parity stays deferred (the timestamp publish-relocation follow-up). Design adoptions in the commit message.
+> - **Downstream:** `bootctl` consumers now see consistent menu/LoaderEntries order; `systemd-analyze` loader time ships through the late timing call (2026-11-08). Design adoptions in the commit message.
 > - **Canonical doc:** `docs/boot/boot-entry-schema.md`; systemd Boot Loader Interface spec for var semantics.
-> - **Scope boundary:** two `[ ]` follow-ups -- full BLS order (bad-counted-last + `version` field + `LoaderFeatures` bit 8) and relocating the LoaderTime publish after `load_kernel`.
+> - **Scope boundary:** one `[ ]` follow-up -- full BLS order (bad-counted-last + `version` field + `LoaderFeatures` bit 8). The LoaderTime relocation shipped 2026-11-08.
 
 > **Verified:** 2026-06-13 | commit `6d382664` | 2/5 items | build OK | kernel tests 2546 PASS (incl 6 new BLS-order assertions)
 > **Notes:** Reopened 2026-11-07, was Deferred: [H] distinct `LoaderTimeInitUSec`/`ExecUSec` blocked -- `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point. The stamp named this section's own item, and that item recorded no external blocker.
@@ -798,24 +800,30 @@ Found by the §19 re-adversarial rounds while auditing exactly this class. §19 
   - Root cause, found by the design review: the old variable writer in `bootx64.c` wrote `EFI_VARIABLE_NON_VOLATILE`, so a value outlived its boot. systemd-boot writes these names with no `NON_VOLATILE` flag (`src/boot/export-vars.c`), and a persistent copy also leaked into a later boot by another loader, which only fills them when absent.
   - New pure publisher `boot_loader_vars_publish()` in `src/boot/uefi/loader_vars.c` (`include/boot/loader_vars.h`), shared by the loader and the kernel tests; `bootx64.c` keeps only the `SetVariable` adapter `loader_vars_fw_set()` and the inputs.
   - Each write deletes first (attributes 0, size 0), which also migrates a persistent copy an older loader left: UEFI refuses to rewrite a variable with different attributes.
-  - The 11 owned variables and their clear conditions are tabled in `docs/boot/loader-vars.md`: firmware info clears with no system table or an empty or over-256-character vendor (never truncated); both timings clear when unmeasured or 0 (systemd rejects a zero ExecUSec; today they are always unmeasured here); `LoaderEntries` clears when nothing is visible; `ImpossibleOSLoaderFeaturesExt` follows the same rules.
+  - The 11 owned variables and their clear conditions are tabled in `docs/boot/loader-vars.md`: firmware info clears with no system table or an empty or over-256-character vendor (never truncated); both timings clear when unmeasured or 0 (systemd rejects a zero ExecUSec; the main publication clears both and the late timing call sets them once the TSC is calibrated, see section 18); `LoaderEntries` clears when nothing is visible; `ImpossibleOSLoaderFeaturesExt` follows the same rules.
   - `LoaderConfigTimeout` and `LoaderEntryDefault` are no longer written: they are persistent settings owned by `bootctl` or another loader, which this loader does not honour (bits 0 and 2 not advertised). Writing them each boot overwrote, and on a rejected store deleted, someone else's setting. Decision and reversal cost in `todo/answers.md`; §24's `d` key becomes their only writer.
 - [x] Every path that leaves the loader reports or clears, through `loader_vars_report()` in `bootx64.c`.
   - The normal path, and each of the three policy allocation failures (no store facts, so the store-derived variables clear).
   - Before a chainload, `boot_loader_vars_clear_all()` clears every owned variable, because the chained loader reports its own boot.
 - [x] `LoaderDevicePartUUID` is published only for a GPT partition with a GUID that is neither all-zero nor all-FF, via `boot_loader_part_uuid_text()`; otherwise it is cleared.
   - GPT means `boot_partition_style == 2`. An MBR disk signature is never published as a partition UUID.
-- [x] Validation: `src/kernel/test/test_loader_vars.c` runs the shipped publisher against an in-memory UEFI variable store (10 cases).
+- [x] Validation: `src/kernel/test/test_loader_vars.c` runs the shipped publisher against an in-memory UEFI variable store (12 cases).
   - The store is keyed by name and 16-byte GUID value, drops volatile variables at a simulated reset, refuses attribute-changing rewrites, counts every call, and fails writes or deletes per name.
   - Cases: a fully known boot sets all 11 volatile, with both feature bitmaps checked byte-exact under their own GUIDs; an unknown boot after a known one inherits nothing, even from seeded persistent copies; MBR, unknown style, zero and all-FF GUIDs, unmeasured or zero timing and a missing system table each delete an old value; persistent copies migrate under both GUIDs; the user's timeout and default survive publish and chainload; a seeded old `LoaderEntries` is deleted for a rejected, empty, absent and all-hidden store; a full 64-entry list publishes whole; write and delete failures are reported, and bad arguments make no firmware call; a chainload clears everything and a refused delete there is reported without stopping the loop; zero timing, oversize vendor, MBR.
   - Controls (each run, each failed, restored with `cmp`): writing `NON_VOLATILE` (14 failures), no delete before the write (6), MBR accepted (1), unmeasured timing published (7); after review: extension under the systemd GUID (5), hidden store not cleared (2), `clear_all` clearing nothing (2), scratch-size guard removed (1), `clear_all` ignoring failures (1), entry ids corrupted past the second character (1).
   - Live: the loader prints `[BOOT] loader-vars: published N, cleared M, failed K`. `scripts/test-smoke.sh` fails a leg that reaches the prompt without that line, with a failure, or with a total other than 11; the valid-store leg requires exactly `published 9, cleared 2, failed 0`. A plain boot logs `published 7, cleared 4, failed 0` (no store, no timing).
   - The kernel test image sits at its `USER_BASE` ceiling (02-kernel-core/TODO-33); the publisher takes caller-owned scratch, the test fixture is a `TEST_SCRATCH_KBUF`, and the test file (with its copy of the publisher) is built `minsize`, so the suite adds no BSS and stays one page under the ceiling.
+  - Post-ship review (2026-11-08) added: `LoaderImageIdentifier` from LoadedImage FilePath via `loader_image_path()` (shared with self-measurement); firmware revisions as `major.minor` with a two-digit minor; ids bounded by their field, empty ids skipped.
+  - Also from the review: the late timing call (section 18 items); the one-shot consumer moved into `boot_loader_one_shot_consume()`, honouring a value only when well formed, readable and deleted, never a printable prefix.
+  - Review controls (each failed, restored with `cmp`): no minor padding, empty id kept, timing call touching `LoaderEntrySelected`, honouring despite a refused delete, non-printable accepted, no timeout cap, read error taken as absence.
 - [x] Commit: `"boot: publish loader variables volatile, set or cleared every boot"`
 
-**Test checkpoint:** `SUITE=boot` green with the ten `loader-vars:` cases (the two-boot check runs against the simulated store, since volatile variables cannot outlive a real reset); `scripts/test-smoke-matrix.sh` all legs, with the valid-store leg's `published 9, cleared 2, failed 0` line.
+**Test checkpoint:** `SUITE=boot` green with the twelve `loader-vars:` cases (the two-boot check runs against the simulated store, since volatile variables cannot outlive a real reset); `scripts/test-smoke-matrix.sh` all legs, with the valid-store leg's `published 9, cleared 2, failed 0` line and a `timing, published 2` line.
 
-> **Test runner:** `scripts/debug/kernel/run-boot-tests.bat` (expect the ten "loader-vars:" cases PASS in SUITE=boot).
+> **Test runner:** `scripts/debug/kernel/run-boot-tests.bat` (expect the twelve "loader-vars:" cases PASS in SUITE=boot).
+
+> **Verified:** 2026-11-08 | commit `71b85447e` + review fixes | 5/5 items | build OK | SUITE=boot 7665 kernel + 17 user tests PASS | smoke matrix 13/13 on the final tree, plain smoke `published 7, cleared 4` and `timing, published 2` | 10 review mutation controls all failed as expected
+> **Quality reviewed:** 2026-11-08 | Codex 7x (adversarial x3, consistency, perf, test-coverage x2) + boot-quality-auditor + parity-research-analyst | 0H+4M+5L fixed, 0 open | scope: boot-code-quality (boot-quality-auditor)
 
 ---
 

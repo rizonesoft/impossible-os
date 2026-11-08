@@ -51,6 +51,7 @@ struct mv_store {
     unsigned int calls;
     const char *fail_set;      /* writes of this name fail */
     const char *fail_delete;   /* deletes of this name fail */
+    const char *fail_get;      /* reads of this name fail */
 };
 
 /* The store, payload scratch and a parse result live in a test-scoped kernel
@@ -76,6 +77,9 @@ static const unsigned char MV_GPT_GUID[16] = {
     0x78, 0x56, 0x34, 0x12, 0x34, 0x12, 0x78, 0x56,
     0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78 };
 #define MV_GPT_TEXT "12345678-1234-5678-9abc-def012345678"
+static const unsigned short MV_PATH[] = {
+    '\\', 'E', 'F', 'I', '\\', 'B', 'O', 'O', 'T', '\\',
+    'B', 'O', 'O', 'T', 'X', '6', '4', '.', 'E', 'F', 'I', 0 };
 #define MV_NV (BOOT_LOADER_VAR_ATTR_NV | BOOT_LOADER_VAR_ATTR_VOLATILE)
 
 static MV_NOINLINE int mv_name_eq(const unsigned short *a, const char *b)
@@ -148,6 +152,27 @@ static MV_NOINLINE unsigned long long mv_set(void *ctx, const unsigned short *na
     return BOOT_LOADER_VAR_SUCCESS;
 }
 
+static MV_NOINLINE unsigned long long mv_get(void *ctx, const unsigned short *name,
+                                             const void *guid, unsigned int *attrs,
+                                             unsigned long long *size, void *data)
+{
+    struct mv_store *st = (struct mv_store *)ctx;
+    st->calls++;
+    if (st->fail_get && mv_name_eq(name, st->fail_get))
+        return MV_DEVICE_ERROR;
+    for (unsigned int i = 0; i < MV_MAX_VARS; i++) {
+        struct mv_var *v = &st->v[i];
+        if (!v->used || !mv_wname_eq(v->name, name) || memcmp(v->guid, guid, 16) != 0)
+            continue;
+        if (v->size > *size) { *size = v->size; return BOOT_LOADER_VAR_BUFFER_TOO_SMALL; }
+        memcpy(data, st->pool + v->off, v->size);
+        *size = v->size;
+        *attrs = v->attrs;
+        return BOOT_LOADER_VAR_SUCCESS;
+    }
+    return BOOT_LOADER_VAR_NOT_FOUND;
+}
+
 /* A platform reset: volatile variables are gone, persistent ones stay. */
 static MV_NOINLINE void mv_reset(struct mv_store *st)
 {
@@ -212,6 +237,7 @@ static MV_NOINLINE void mv_begin(struct mv_fixture *fx)
     memcpy(fx->guid_copy[0], MV_SYSTEMD, 16);
     memcpy(fx->guid_copy[1], MV_IMPOSSIBLE, 16);
     fx->ops.set = mv_set;
+    fx->ops.get = mv_get;
     fx->ops.ctx = &fx->st;
     fx->in.systemd_guid = fx->guid_copy[0];
     fx->in.impossible_guid = fx->guid_copy[1];
@@ -254,7 +280,8 @@ static MV_NOINLINE void mv_known(struct mv_fixture *fx)
     mv_set_id(p->entries[1].sort_key, "1");
     fx->in.have_firmware = 1;
     fx->in.firmware_vendor = MV_VENDOR;
-    fx->in.firmware_revision = 65536u;
+    fx->in.firmware_revision = 65536u;       /* 1.00 */
+    fx->in.image_path = MV_PATH;
     fx->in.uefi_revision = (2u << 16) | 70u;
     fx->in.partition_style = 2u;
     memcpy(fx->in.partition_guid, MV_GPT_GUID, 16);
@@ -283,9 +310,9 @@ static void test_loader_vars_all_known_are_volatile(void)
     static const char *const texts[][2] = {
         { "LoaderDevicePartUUID", MV_GPT_TEXT }, { "LoaderEntrySelected", "slot-b" },
         { "LoaderTimeInitUSec", "1234" }, { "LoaderTimeExecUSec", "5678" },
-        { "LoaderFirmwareInfo", "EDK II 65536" }, { "LoaderFirmwareType", "UEFI 2.70" },
+        { "LoaderFirmwareInfo", "EDK II 1.00" }, { "LoaderFirmwareType", "UEFI 2.70" },
         { "LoaderInfo", "Impossible OS bootloader 1.0" },
-        { "LoaderImageIdentifier", "\\EFI\\ImpossibleOS\\BOOTX64.EFI" } };
+        { "LoaderImageIdentifier", "\\EFI\\BOOT\\BOOTX64.EFI" } };
     struct mv_var *e;
     int ok = 1;
 
@@ -325,7 +352,7 @@ static void test_loader_vars_unknown_boot_after_known_boot(void)
     MV_FIXTURE();
     static const char *const absent[] = {
         "LoaderDevicePartUUID", "LoaderEntries", "LoaderEntrySelected", "LoaderTimeInitUSec",
-        "LoaderTimeExecUSec", "LoaderFirmwareInfo", "LoaderFirmwareType" };
+        "LoaderTimeExecUSec", "LoaderFirmwareInfo", "LoaderFirmwareType", "LoaderImageIdentifier" };
     int ok = 1;
 
     mv_known(fx);
@@ -337,13 +364,13 @@ static void test_loader_vars_unknown_boot_after_known_boot(void)
         mv_seed(mv, absent[i], MV_SYSTEMD, "old");
     for (unsigned int i = 0; i < sizeof(absent) / sizeof(absent[0]); i++)
         if (!mv_find(mv, absent[i])) ok = 0;
-    TEST_ASSERT(ok, "boot 2 starts with all seven old values present");
+    TEST_ASSERT(ok, "boot 2 starts with all eight old values present");
     TEST_ASSERT_EQ(mv_publish(fx), 1, "boot 2: every call succeeded");
     for (unsigned int i = 0; i < sizeof(absent) / sizeof(absent[0]); i++)
         if (mv_find(mv, absent[i])) ok = 0;
     TEST_ASSERT(ok, "boot 2 reports none of the earlier facts");
-    TEST_ASSERT_EQ(fx->rep.published, 4u, "only the loader's own constants are set");
-    TEST_ASSERT_EQ(fx->rep.cleared, 7u, "every unknown variable is cleared");
+    TEST_ASSERT_EQ(fx->rep.published, 3u, "only the loader's own constants are set");
+    TEST_ASSERT_EQ(fx->rep.cleared, 8u, "every unknown variable is cleared");
 }
 
 /* Each way of not knowing the partition or the timing deletes an old value. */
@@ -531,7 +558,7 @@ static void test_loader_vars_firmware_failures_are_reported(void)
     mv->fail_delete = "LoaderDevicePartUUID";
     TEST_ASSERT_EQ(mv_publish(fx), 0, "a failed delete is reported");
     TEST_ASSERT_EQ(fx->rep.failed, 1u, "exactly one failure");
-    TEST_ASSERT_EQ(fx->rep.published, 4u, "the other variables still publish");
+    TEST_ASSERT_EQ(fx->rep.published, 3u, "the other variables still publish");
     TEST_ASSERT(mv_text_is(mv, "LoaderDevicePartUUID", "old"), "the refused delete left it in place");
 
     /* Unusable arguments touch no firmware and report a failure. */
@@ -577,6 +604,130 @@ static void test_loader_vars_chainload_clears_everything(void)
     TEST_ASSERT_EQ(mv_count(mv), 0u, "nothing of this loader's is left for the chained one");
 }
 
+/* Consume both one-shots once; returns the consumer's result. */
+static MV_NOINLINE int mv_one_shot(struct mv_fixture *fx, const char *entry, const char *timeout,
+                                   unsigned int cap, struct boot_loader_one_shot *r, char *id)
+{
+    mv_reset(&fx->st);
+    memset(&fx->st, 0, sizeof(fx->st));
+    if (entry) mv_seed(&fx->st, "LoaderEntryOneShot", MV_SYSTEMD, entry);
+    if (timeout) mv_seed(&fx->st, "LoaderConfigTimeoutOneShot", MV_SYSTEMD, timeout);
+    return boot_loader_one_shot_consume(&fx->ops, fx->guid_copy[0], id, cap, r);
+}
+
+/* A one-shot fires at most once: honoured only when well formed AND deleted. */
+static void test_loader_vars_one_shot(void)
+{
+    MV_FIXTURE();
+    struct boot_loader_one_shot r;
+    char id[BOOT_LOADER_ONE_SHOT_ID_CHARS];
+    static const char *const bad_ids[] = {
+        "ab\001c",                                     /* non-printable: never a prefix */
+        "0123456789012345678901234567890123456789012345678901234567890123" }; /* fills the buffer */
+    static const char *const bad_timeouts[] = { "3601", "12a", "99999999999", "-1" };
+    int ok;
+
+    (void)mv;
+
+    ok = mv_one_shot(fx, (const char *)0, (const char *)0, sizeof(id), &r, id) == 1
+      && !r.have_entry && !r.have_timeout && fx->st.calls == 2u;
+    TEST_ASSERT(ok, "absent: nothing honoured, two reads and no delete");
+
+    ok = mv_one_shot(fx, "slot-b", "3600", sizeof(id), &r, id) == 1
+      && r.have_entry && strcmp(id, "slot-b") == 0 && r.have_timeout
+      && r.timeout_seconds == 3600u && mv_count(&fx->st) == 0u;
+    TEST_ASSERT(ok, "well formed: both honoured, both deleted, 3600 is the cap");
+
+    for (unsigned int i = 0; i < 2u; i++) {
+        ok = mv_one_shot(fx, bad_ids[i], (const char *)0, sizeof(id), &r, id) == 1
+          && !r.have_entry && r.entry_malformed && id[0] == 0 && mv_count(&fx->st) == 0u;
+        TEST_ASSERT(ok, "a malformed entry id is deleted and not honoured");
+    }
+    ok = mv_one_shot(fx, "slot-long-id", (const char *)0, 8u, &r, id) == 1
+      && !r.have_entry && r.entry_malformed && mv_count(&fx->st) == 0u;
+    TEST_ASSERT(ok, "an id longer than the caller's buffer is refused, never truncated");
+    {   /* Larger than the read buffer: firmware answers BUFFER_TOO_SMALL. */
+        unsigned short w[80];
+        for (unsigned int i = 0; i < 80u; i++) w[i] = 'a';
+        mv_reset(&fx->st);
+        memset(&fx->st, 0, sizeof(fx->st));
+        (void)mv_set(&fx->st, (const unsigned short *)u"LoaderEntryOneShot", MV_SYSTEMD, MV_NV, sizeof(w), w);
+        ok = boot_loader_one_shot_consume(&fx->ops, fx->guid_copy[0], id, sizeof(id), &r) == 1
+          && !r.have_entry && r.entry_malformed && mv_count(&fx->st) == 0u;
+        TEST_ASSERT(ok, "an oversize entry is deleted and not honoured");
+    }
+    for (unsigned int i = 0; i < 4u; i++) {
+        ok = mv_one_shot(fx, (const char *)0, bad_timeouts[i], sizeof(id), &r, id) == 1
+          && !r.have_timeout && r.timeout_malformed && mv_count(&fx->st) == 0u;
+        TEST_ASSERT(ok, "a malformed or over-cap timeout is deleted and not honoured");
+    }
+
+    /* A delete the firmware refuses: the override would fire every boot. */
+    fx->st.fail_delete = "LoaderEntryOneShot";
+    mv_seed(&fx->st, "LoaderEntryOneShot", MV_SYSTEMD, "slot-b");
+    mv_seed(&fx->st, "LoaderConfigTimeoutOneShot", MV_SYSTEMD, "5");
+    ok = boot_loader_one_shot_consume(&fx->ops, fx->guid_copy[0], id, sizeof(id), &r) == 0
+      && r.entry_refused && !r.have_entry && r.have_timeout && r.timeout_seconds == 5u
+      && mv_find(&fx->st, "LoaderEntryOneShot") && !mv_find(&fx->st, "LoaderConfigTimeoutOneShot");
+    TEST_ASSERT(ok, "refused entry delete: not honoured, reported; the timeout still applies");
+    fx->st.fail_delete = "LoaderConfigTimeoutOneShot";
+    mv_seed(&fx->st, "LoaderConfigTimeoutOneShot", MV_SYSTEMD, "5");
+    ok = boot_loader_one_shot_consume(&fx->ops, fx->guid_copy[0], id, sizeof(id), &r) == 0
+      && r.timeout_refused && !r.have_timeout && r.have_entry;
+    TEST_ASSERT(ok, "refused timeout delete: not honoured, reported");
+
+    /* A read error is not absence: delete unread, never honour, report it;
+     * the other one-shot is still processed. */
+    fx->st.fail_delete = (const char *)0;
+    mv_seed(&fx->st, "LoaderEntryOneShot", MV_SYSTEMD, "slot-b");
+    mv_seed(&fx->st, "LoaderConfigTimeoutOneShot", MV_SYSTEMD, "5");
+    fx->st.fail_get = "LoaderEntryOneShot";
+    ok = boot_loader_one_shot_consume(&fx->ops, fx->guid_copy[0], id, sizeof(id), &r) == 0
+      && r.entry_unreadable && !r.entry_malformed && !r.have_entry
+      && !mv_find(&fx->st, "LoaderEntryOneShot") && r.have_timeout && r.timeout_seconds == 5u;
+    TEST_ASSERT(ok, "unreadable entry: deleted, not honoured, reported; the timeout applies");
+    mv_seed(&fx->st, "LoaderEntryOneShot", MV_SYSTEMD, "slot-b");
+    mv_seed(&fx->st, "LoaderConfigTimeoutOneShot", MV_SYSTEMD, "5");
+    fx->st.fail_get = "LoaderConfigTimeoutOneShot";
+    ok = boot_loader_one_shot_consume(&fx->ops, fx->guid_copy[0], id, sizeof(id), &r) == 0
+      && r.timeout_unreadable && !r.have_timeout && r.have_entry
+      && !mv_find(&fx->st, "LoaderConfigTimeoutOneShot");
+    TEST_ASSERT(ok, "unreadable timeout: deleted, not honoured, reported");
+    fx->st.fail_get = (const char *)0;
+
+    fx->ops.get = 0;
+    fx->st.calls = 0;
+    TEST_ASSERT(boot_loader_one_shot_consume(&fx->ops, fx->guid_copy[0], id, sizeof(id), &r) == 0
+                && fx->st.calls == 0u && !r.have_entry, "no GetVariable: refused without a call");
+}
+
+/* The late timing call touches the two timing variables and nothing else. */
+static void test_loader_vars_timing_call(void)
+{
+    MV_FIXTURE();
+    int ok;
+
+    mv_known(fx);
+    (void)mv_publish(fx);
+    mv->calls = 0;
+    fx->in.init_usec = 111u;
+    fx->in.exec_usec = 222u;
+    ok = boot_loader_vars_publish_timing(&fx->ops, &fx->in, &fx->rep) == 1
+      && fx->rep.published == 2u && fx->rep.cleared == 0u && mv->calls == 4u
+      && mv_text_is(mv, "LoaderTimeInitUSec", "111") && mv_text_is(mv, "LoaderTimeExecUSec", "222")
+      && mv_count(mv) == BOOT_LOADER_VAR_COUNT && mv_text_is(mv, "LoaderEntrySelected", "slot-b");
+    TEST_ASSERT(ok, "measured timing: both set, four calls, every other variable untouched");
+    fx->in.timing_known = 0;
+    ok = boot_loader_vars_publish_timing(&fx->ops, &fx->in, &fx->rep) == 1
+      && fx->rep.cleared == 2u && !mv_find(mv, "LoaderTimeInitUSec")
+      && !mv_find(mv, "LoaderTimeExecUSec") && mv_count(mv) == BOOT_LOADER_VAR_COUNT - 2u;
+    TEST_ASSERT(ok, "unmeasured timing: both cleared, nothing else");
+    fx->in.scratch_bytes = 0;
+    mv->calls = 0;
+    TEST_ASSERT(boot_loader_vars_publish_timing(&fx->ops, &fx->in, &fx->rep) == 0 && mv->calls == 0,
+                "bad arguments: refused without a firmware call");
+}
+
 static void test_loader_vars_edge_values(void)
 {
     MV_FIXTURE();
@@ -598,6 +749,30 @@ static void test_loader_vars_edge_values(void)
     (void)mv_publish(fx);
     TEST_ASSERT_NULL(mv_find(mv, "LoaderFirmwareInfo"), "an oversize vendor clears firmware info");
     TEST_ASSERT(mv_text_is(mv, "LoaderFirmwareType", "UEFI 2.70"), "firmware type is independent");
+
+    /* systemd's "%u.%02u": a one-digit minor is padded. */
+    fx->in.firmware_vendor = MV_VENDOR;
+    fx->in.firmware_revision = (3u << 16) | 3u;
+    fx->in.uefi_revision = 2u << 16;
+    (void)mv_publish(fx);
+    TEST_ASSERT(mv_text_is(mv, "LoaderFirmwareInfo", "EDK II 3.03")
+                && mv_text_is(mv, "LoaderFirmwareType", "UEFI 2.00"), "minor padded to two digits");
+
+    /* An empty id is skipped; an id with no NUL inside its field clears the list. */
+    mv_known(fx);
+    fx->parse.entries[1].id[0] = 0;
+    (void)mv_publish(fx);
+    {
+        struct mv_var *e = mv_find(mv, "LoaderEntries");
+        static const char want[] = { 's','l','o','t','-','a',0,0 };
+        int same = e && e->size == sizeof(want) * 2u;
+        for (unsigned int i = 0; same && i < sizeof(want); i++)
+            same = mv->pool[e->off + 2u * i] == (unsigned char)want[i];
+        TEST_ASSERT(same, "an empty id is left out, the list still ends with a double NUL");
+    }
+    memset(fx->parse.entries[1].id, 'x', sizeof(fx->parse.entries[1].id));
+    (void)mv_publish(fx);
+    TEST_ASSERT_NULL(mv_find(mv, "LoaderEntries"), "an unterminated id clears the list, never cut short");
 
     /* Only a GPT GUID is a partition UUID. */
     TEST_ASSERT_EQ(boot_loader_part_uuid_text(2u, MV_GPT_GUID, text), 1, "GPT formats");
@@ -626,6 +801,10 @@ void test_register_loader_vars(void)
         test_loader_vars_chainload_clears_everything, TEST_CAT_BOOT);
     test_suite_register_cat("loader-vars: each unknown input deletes an old value",
         test_loader_vars_unknown_inputs_delete_old_values, TEST_CAT_BOOT);
+    test_suite_register_cat("loader-vars: one-shots fire once, only when deleted",
+        test_loader_vars_one_shot, TEST_CAT_BOOT);
+    test_suite_register_cat("loader-vars: the late timing call touches only timing",
+        test_loader_vars_timing_call, TEST_CAT_BOOT);
     test_suite_register_cat("loader-vars: zero timing, oversize vendor, MBR",
         test_loader_vars_edge_values, TEST_CAT_BOOT);
 }

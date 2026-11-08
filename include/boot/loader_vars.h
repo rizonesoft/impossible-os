@@ -39,6 +39,7 @@
 #define BOOT_LOADER_VAR_ATTR_VOLATILE (BOOT_LOADER_VAR_ATTR_BS | BOOT_LOADER_VAR_ATTR_RT)
 
 #define BOOT_LOADER_VAR_SUCCESS            0x0000000000000000ull
+#define BOOT_LOADER_VAR_BUFFER_TOO_SMALL   0x8000000000000005ull
 #define BOOT_LOADER_VAR_INVALID_PARAMETER  0x8000000000000002ull
 #define BOOT_LOADER_VAR_OUT_OF_RESOURCES   0x8000000000000009ull
 #define BOOT_LOADER_VAR_NOT_FOUND          0x800000000000000Eull
@@ -48,12 +49,16 @@
 #define BOOT_LOADER_VAR_PAYLOAD_MAX  8192u
 
 /* Firmware access. `set` has SetVariable semantics: attrs 0 with size 0
- * deletes, and the return is an EFI_STATUS value. `guid` points at an
- * EFI_GUID. */
+ * deletes, and the return is an EFI_STATUS value. `get` has GetVariable
+ * semantics (in: *size is the buffer size; out: the value's size, with
+ * BUFFER_TOO_SMALL when it does not fit); only the one-shot consumer uses it.
+ * `guid` points at an EFI_GUID. */
 struct boot_loader_var_ops {
     unsigned long long (*set)(void *ctx, const unsigned short *name, const void *guid,
                               unsigned int attrs, unsigned long long size, const void *data);
     void *ctx;
+    unsigned long long (*get)(void *ctx, const unsigned short *name, const void *guid,
+                              unsigned int *attrs, unsigned long long *size, void *data);
 };
 
 /* What this boot knows. A field the loader could not determine is marked
@@ -70,9 +75,14 @@ struct boot_loader_var_inputs {
     unsigned char partition_style;         /* boot_info: 0 unknown, 1 MBR, 2 GPT */
     unsigned char partition_guid[16];      /* GPT partition GUID, on-disk byte order */
 
+    const unsigned short *image_path;      /* loader's ESP path, UCS-2, NULL if unknown */
+
     const boot_entries_parse_result_t *parse; /* NULL when the store was not read */
     const char *selected_entry_id;         /* "" or NULL when nothing was selected */
 
+    /* Microseconds since firmware start (the TSC counts from reset), as the
+     * Boot Loader Interface defines them: Init at loader entry, Exec just
+     * before the kernel runs. */
     int timing_known;                      /* init_usec and exec_usec were measured */
     unsigned long long init_usec;
     unsigned long long exec_usec;
@@ -105,6 +115,14 @@ int boot_loader_vars_publish(const struct boot_loader_var_ops *ops,
                              const struct boot_loader_var_inputs *in,
                              struct boot_loader_var_report *report);
 
+/* Set or clear only LoaderTimeInitUSec and LoaderTimeExecUSec. The loader
+ * calibrates its clock after the main publication, so it reports timing in a
+ * second, late call just before the kernel handoff. Same return and report;
+ * only the GUIDs, scratch and timing fields of `in` are read. */
+int boot_loader_vars_publish_timing(const struct boot_loader_var_ops *ops,
+                                    const struct boot_loader_var_inputs *in,
+                                    struct boot_loader_var_report *report);
+
 /* Clear every owned variable, for a boot whose facts this loader will not
  * report: a chainloaded loader reports its own boot, and must not find this
  * loader's (or an older build's persistent) values standing. Same return and
@@ -113,6 +131,37 @@ int boot_loader_vars_publish(const struct boot_loader_var_ops *ops,
 int boot_loader_vars_clear_all(const struct boot_loader_var_ops *ops,
                                const struct boot_loader_var_inputs *in,
                                struct boot_loader_var_report *report);
+
+/* One-shot overrides the OS left for this boot (LoaderEntryOneShot,
+ * LoaderConfigTimeoutOneShot, systemd GUID). Each present variable is
+ * deleted whether or not its value is usable, so it fires at most once. A
+ * value is honoured only when it is well formed AND its delete succeeded: a
+ * one-shot the firmware will not delete would otherwise apply on every boot. */
+#define BOOT_LOADER_ONE_SHOT_ID_CHARS      64u     /* LoaderEntryOneShot buffer, CHAR16 */
+#define BOOT_LOADER_ONE_SHOT_TIMEOUT_CHARS 16u
+#define BOOT_LOADER_ONE_SHOT_TIMEOUT_MAX   3600u   /* seconds */
+
+struct boot_loader_one_shot {
+    int have_entry;            /* entry_id holds a printable-ASCII id to honour */
+    int have_timeout;
+    unsigned int timeout_seconds;
+    int entry_malformed;       /* present but unusable: deleted, not honoured */
+    int timeout_malformed;
+    int entry_refused;         /* the firmware refused the delete: not honoured */
+    int timeout_refused;
+    int entry_unreadable;      /* GetVariable failed (not NOT_FOUND): deleted, not honoured */
+    int timeout_unreadable;
+};
+
+/* `entry_id` receives the id, NUL-terminated, `entry_cap` bytes (an id that
+ * does not fit is malformed, never truncated). A read error other than
+ * NOT_FOUND is not taken as absence: the variable is deleted unread so it
+ * cannot fire on a later boot, and the boot is reported degraded. Returns 1
+ * when every read and delete succeeded, 0 otherwise or when the arguments are
+ * unusable (the caller marks boot_info.loader_vars_degraded). */
+int boot_loader_one_shot_consume(const struct boot_loader_var_ops *ops, const void *systemd_guid,
+                                 char *entry_id, unsigned int entry_cap,
+                                 struct boot_loader_one_shot *out);
 
 /* LoaderDevicePartUUID's text: lowercase RFC 4122 form of a GPT partition
  * GUID. Returns 0 (clear the variable) unless the style is GPT and the GUID

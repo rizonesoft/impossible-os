@@ -31,23 +31,23 @@ never lie about systemd-boot capability bits.
 
 ## Read-only variables (bootloader -> OS)
 
-Every variable in this table describes the boot that wrote it, so each is published **volatile** (`EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS`, no `NON_VOLATILE`): firmware drops it at reset, and no value outlives its boot. systemd-boot publishes the same names the same way (its `export-vars.c` passes no `NON_VOLATILE` flag). The publisher is `boot_loader_vars_publish()` in `src/boot/uefi/loader_vars.c`; it runs after the policy decision lands in `boot_info` and after the per-entry counter decrement, BEFORE the kernel handoff.
+Every variable in this table describes the boot that wrote it, so each is published **volatile** (`EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS`, no `NON_VOLATILE`): firmware drops it at reset, and no value outlives its boot. systemd-boot publishes the same names the same way (its `export-vars.c` passes no `NON_VOLATILE` flag). The publisher is `boot_loader_vars_publish()` in `src/boot/uefi/loader_vars.c`; it runs after the policy decision lands in `boot_info` and after the per-entry counter decrement, BEFORE the kernel handoff. The two timing variables are cleared there and set again by `boot_loader_vars_publish_timing()` just before the final memory map, once the TSC is calibrated; that call logs `[BOOT] loader-vars: timing, published N, cleared M, failed K`.
 
-Before a chainload to another loader (a detected Windows or Linux boot manager), every variable in the table is cleared instead: the chained loader reports its own boot, and systemd-boot only fills these when they are absent. The serial line then reads `[BOOT] loader-vars: chainload, published 0, cleared 11, failed 0`.
+Before a chainload to another loader (a detected Windows or Linux boot manager), every variable in the table is cleared instead: the chained loader reports its own boot. This is this loader's own policy, not a systemd-boot rule: systemd-boot fills its common set (`LoaderDevicePartUUID`, `LoaderImageIdentifier`, `LoaderFirmwareInfo`, `LoaderFirmwareType`) only when absent, so a stale value would survive into its boot, and a chained Windows loader publishes nothing, so absent is accurate where a leftover would not be. The serial line then reads `[BOOT] loader-vars: chainload, published 0, cleared 11, failed 0`.
 
 Each variable has two outcomes per boot: **set** to this boot's value, or **cleared** because this boot cannot determine it. Absent means unknown; a value is never left over from an earlier boot. Before every write the variable is deleted (attributes 0, size 0, which deletes whatever attributes the old copy had): until 2026-11-08 the loader wrote these `NON_VOLATILE`, and UEFI refuses to rewrite an existing variable with different attributes, so the delete is also what migrates those old copies on the first boot of the new loader.
 
 | Variable | Format | Set when | Cleared when |
 |---|---|---|---|
 | `LoaderInfo` | UCS-2 string | Always: `"Impossible OS bootloader 1.0"`. | Never. |
-| `LoaderFirmwareInfo` | UCS-2 string | `<gST->FirmwareVendor> <gST->FirmwareRevision>`. | No system table, an empty vendor, or a vendor over 256 characters (never truncated). |
-| `LoaderFirmwareType` | UCS-2 string | `"UEFI <major>.<minor>"` from `gST->Hdr.Revision`. | No system table. |
-| `LoaderImageIdentifier` | UCS-2 string | Always: `\EFI\ImpossibleOS\BOOTX64.EFI`, the canonical install path. | Never. |
+| `LoaderFirmwareInfo` | UCS-2 string | `<gST->FirmwareVendor> <major>.<minor>` from `gST->FirmwareRevision`, the minor padded to two digits as systemd-boot prints it (`EDK II 1.00`). | No system table, an empty vendor, or a vendor over 256 characters (never truncated). |
+| `LoaderFirmwareType` | UCS-2 string | `"UEFI <major>.<minor>"` from `gST->Hdr.Revision`, minor padded the same way (`UEFI 2.70`, `UEFI 2.00`). | No system table. |
+| `LoaderImageIdentifier` | UCS-2 string | The loader's own ESP path as firmware reports it in LoadedImage FilePath (for example `\EFI\BOOT\BOOTX64.EFI`), as systemd-boot does. | The device path cannot be measured with GetDevicePathSize or is not a plain file path. |
 | `LoaderDevicePartUUID` | UCS-2 string | The ESP is on a GPT disk: its partition GUID, 36-char lowercase RFC 4122. | MBR or unknown partition style, or an all-zero or all-FF GUID. An MBR disk signature is not a partition UUID. |
 | `LoaderEntries` | UCS-2, NUL-separated | The store was accepted: the visible entry ids in menu order, double-NUL terminated. | The store was rejected or absent, or no entry is visible. |
 | `LoaderEntrySelected` | UCS-2 string | An entry was selected: its id (mirrors `boot_info.selected_entry_id`). | Nothing was selected (for example `FALLBACK_STORE_INVALID`). |
-| `LoaderTimeInitUSec` | UCS-2 decimal | The TSC was calibrated: loader entry time in microseconds. | Not measured, or 0. Today the TSC is calibrated after this point, so it is always cleared. |
-| `LoaderTimeExecUSec` | UCS-2 decimal | As above, at kernel handoff. | Not measured, or 0 (systemd rejects a zero ExecUSec). |
+| `LoaderTimeInitUSec` | UCS-2 decimal | The TSC was calibrated: microseconds from reset (the TSC counts from reset) to loader entry. | Not measured, or 0. Set by the late timing call. |
+| `LoaderTimeExecUSec` | UCS-2 decimal | As above, from reset to just before the final memory map and kernel handoff. `systemd-analyze` reports the loader's time as Exec minus Init. | Not measured, or 0 (systemd rejects a zero ExecUSec). |
 | `LoaderFeatures` | uint64 LE | Always: capability bitmap (see below). | Never. |
 
 `ImpossibleOSLoaderFeaturesExt` (below) follows the same rules.
@@ -69,6 +69,8 @@ A malformed value (non-printable-ASCII id, non-numeric timeout, value
 exceeding 3600s) is **deleted without honoring** -- the next boot
 reverts to the configured default. This prevents a stuck one-shot from
 breaking the system.
+
+An id is honoured only whole: a non-printable character anywhere, or an id longer than the 64-character buffer, makes the value malformed rather than cut short. A one-shot whose delete the firmware refuses is **not honoured** either, because it would otherwise apply on every boot. The loader logs `[BOOT] loader-vars: <name> delete refused -- not honoured` and sets `boot_info.loader_vars_degraded`. A read error other than not-found is not taken as absence: the variable is deleted unread, not honoured, logged as `unreadable` and reported the same way. The consumer is `boot_loader_one_shot_consume()` in `src/boot/uefi/loader_vars.c`, tested against the in-memory store in `test_loader_vars.c`.
 
 ## LoaderFeatures capability bitmap
 

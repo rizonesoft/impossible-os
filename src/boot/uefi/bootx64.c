@@ -1078,8 +1078,8 @@ static int g_wd_refresh_disabled; /* 1 = stop calling watchdog_reset()
  * carry poison into a decision.
  *   g_chainload_targets (g_chainload_count), g_staged_payloads
  *   (g_staged_payload_count), load_kernel.s_pt_load_mmap_buf (pt_mmap_size),
- *   loader_vars_report.s_loader_var_payload (written in full before each
- *   write that reads it), s_mmap_active / s_mmap_events /
+ *   loader_vars_report.s_loader_var_payload and .s_loader_image_path
+ *   (written in full before each read), s_mmap_active / s_mmap_events /
  *   s_mmap_work (mmap_normalize()'s locals), g_crc32_table (rebuilt whenever
  *   its cookie is unset), and boot_policy_invoke.s_loader_oneshot_entry,
  *   whose every read is gated on the STACK local loader_have_entry_oneshot --
@@ -6971,16 +6971,38 @@ static unsigned long long loader_vars_fw_set(void *ctx, const unsigned short *na
         (CHAR16 *)name, (EFI_GUID *)guid, (UINT32)attrs, (UINTN)size, (VOID *)data);
 }
 
-/* Read and consume LoaderEntryOneShot + LoaderConfigTimeoutOneShot.
- * Both are deleted after consumption so the next boot reverts to
- * the configured default. Out-params are written only when a valid
- * value was consumed. */
+static unsigned long long loader_vars_fw_get(void *ctx, const unsigned short *name,
+                                             const void *guid, unsigned int *attrs,
+                                             unsigned long long *size, void *data)
+{
+    UINT32 a = 0;
+    UINTN sz = (UINTN)*size;
+    EFI_STATUS s;
+    (void)ctx;
+    if (!gST || !gST->RuntimeServices || !gST->RuntimeServices->GetVariable)
+        return BOOT_LOADER_VAR_NOT_FOUND;
+    s = gST->RuntimeServices->GetVariable((CHAR16 *)name, (EFI_GUID *)guid, &a, &sz, data);
+    *attrs = (unsigned int)a;
+    *size = (unsigned long long)sz;
+    return (unsigned long long)s;
+}
+
+/* Read and consume LoaderEntryOneShot + LoaderConfigTimeoutOneShot through
+ * boot_loader_one_shot_consume() (include/boot/loader_vars.h): each present
+ * one is deleted so the next boot reverts to the configured default, and a
+ * value is honoured only when well formed and its delete succeeded. A
+ * refused delete is logged and marks boot_info.loader_vars_degraded, because
+ * the override would otherwise apply on every boot. Out-params are written
+ * only when a value is honoured. */
 static void loader_consume_one_shot_vars(
     char *out_entry_id, UINTN entry_id_cap,
     int *out_have_entry,
     UINT32 *out_timeout_seconds,
     int *out_have_timeout)
 {
+    struct boot_loader_var_ops ops = { loader_vars_fw_set, (void *)0, loader_vars_fw_get };
+    struct boot_loader_one_shot r;
+
     *out_have_entry = 0;
     *out_have_timeout = 0;
     if (!gST || !gST->RuntimeServices ||
@@ -6988,100 +7010,26 @@ static void loader_consume_one_shot_vars(
         !gST->RuntimeServices->SetVariable) {
         return;
     }
-    UINT32 attrs = 0;
-    UINTN sz;
-
-    /* LoaderEntryOneShot: UCS-2 string of the desired entry id. The
-     * delete path MUST fire on every observed-present case (success,
-     * EFI_BUFFER_TOO_SMALL on an oversize value, exact-buffer-size
-     * value), not just on the parse-success branch. A user-writable
-     * malformed value that escapes the delete would sit in NVRAM
-     * across boots and block clean recovery. */
-    {
-        CHAR16 buf[64];
-        int present = 0;
-        sz = sizeof(buf);
-        EFI_STATUS s = gST->RuntimeServices->GetVariable(
-            u"LoaderEntryOneShot", (EFI_GUID *)&g_loader_systemd_guid,
-            &attrs, &sz, buf);
-        if (!EFI_ERROR(s) && sz > 0 && sz < sizeof(buf)) {
-            present = 1;
-            UINTN i = 0;
-            UINTN clen = sz / 2u;
-            while (i < clen && buf[i] != 0 &&
-                   i < entry_id_cap - 1u) {
-                CHAR16 c = buf[i];
-                if (c < 0x20 || c > 0x7E) break;
-                out_entry_id[i] = (char)c;
-                i++;
-            }
-            out_entry_id[i] = 0;
-            if (i > 0) *out_have_entry = 1;
-        } else if (s == EFI_BUFFER_TOO_SMALL || (!EFI_ERROR(s) && sz == sizeof(buf))) {
-            /* Malformed (oversize) but present -- delete without
-             * honoring so a hostile or stale value cannot persist
-             * indefinitely. Buffer too small means the firmware
-             * reported the variable exists but is larger than 64
-             * CHAR16; sz == buf_size is the boundary case where the
-             * value happens to fill the buffer with no NUL room. */
-            present = 1;
-            serial_early_print("[BOOT] loader-vars: LoaderEntryOneShot malformed/oversize -- deleting\n");
-        }
-        if (present) {
-            (void)gST->RuntimeServices->SetVariable(
-                u"LoaderEntryOneShot",
-                (EFI_GUID *)&g_loader_systemd_guid,
-                attrs, 0, (VOID *)0);
-        }
-    }
-
-    /* LoaderConfigTimeoutOneShot: decimal UCS-2 seconds. Same
-     * delete-on-malformed contract as LoaderEntryOneShot above. */
-    {
-        CHAR16 buf[16];
-        int present = 0;
-        sz = sizeof(buf);
-        EFI_STATUS s = gST->RuntimeServices->GetVariable(
-            u"LoaderConfigTimeoutOneShot",
-            (EFI_GUID *)&g_loader_systemd_guid,
-            &attrs, &sz, buf);
-        if (!EFI_ERROR(s) && sz > 0 && sz < sizeof(buf)) {
-            present = 1;
-            UINTN i = 0, clen = sz / 2u;
-            UINT32 acc = 0;
-            int saw_digit = 0;
-            int rejected = 0;
-            while (i < clen && buf[i] != 0) {
-                CHAR16 c = buf[i];
-                if (c < '0' || c > '9') { rejected = 1; break; }
-                UINT32 digit = (UINT32)(c - '0');
-                /* Overflow-safe cap check: reject BEFORE the multiply.
-                 * Cap is 3600 (one hour). A pre-multiply check defeats
-                 * a hostile UCS-2 value like "999999999999999" that
-                 * would wrap UINT32 and slip past a post-arithmetic
-                 * check. */
-                if (acc > 360u || (acc == 360u && digit > 0u)) {
-                    rejected = 1;
-                    break;
-                }
-                acc = acc * 10u + digit;
-                saw_digit = 1;
-                i++;
-            }
-            if (saw_digit && !rejected) {
-                *out_timeout_seconds = acc;
-                *out_have_timeout = 1;
-            }
-        } else if (s == EFI_BUFFER_TOO_SMALL || (!EFI_ERROR(s) && sz == sizeof(buf))) {
-            present = 1;
-            serial_early_print("[BOOT] loader-vars: LoaderConfigTimeoutOneShot malformed/oversize -- deleting\n");
-        }
-        if (present) {
-            (void)gST->RuntimeServices->SetVariable(
-                u"LoaderConfigTimeoutOneShot",
-                (EFI_GUID *)&g_loader_systemd_guid,
-                attrs, 0, (VOID *)0);
-        }
+    if (!boot_loader_one_shot_consume(&ops, &g_loader_systemd_guid, out_entry_id,
+                                      (unsigned int)entry_id_cap, &r))
+        g_boot_info_ptr->loader_vars_degraded = 1;
+    if (r.entry_malformed)
+        serial_early_print("[BOOT] loader-vars: LoaderEntryOneShot malformed/oversize -- deleted, not honoured\n");
+    if (r.timeout_malformed)
+        serial_early_print("[BOOT] loader-vars: LoaderConfigTimeoutOneShot malformed/oversize"
+                           " -- deleted, not honoured\n");
+    if (r.entry_refused)
+        serial_early_print("[BOOT] loader-vars: LoaderEntryOneShot delete refused -- not honoured\n");
+    if (r.timeout_refused)
+        serial_early_print("[BOOT] loader-vars: LoaderConfigTimeoutOneShot delete refused -- not honoured\n");
+    if (r.entry_unreadable)
+        serial_early_print("[BOOT] loader-vars: LoaderEntryOneShot unreadable -- deleted, not honoured\n");
+    if (r.timeout_unreadable)
+        serial_early_print("[BOOT] loader-vars: LoaderConfigTimeoutOneShot unreadable -- deleted, not honoured\n");
+    *out_have_entry = r.have_entry;
+    if (r.have_timeout) {
+        *out_timeout_seconds = (UINT32)r.timeout_seconds;
+        *out_have_timeout = 1;
     }
 }
 
@@ -7100,25 +7048,62 @@ static void loader_consume_one_shot_vars(
      | IMPOSSIBLE_FEATURE_HEALTH_GATE \
      | IMPOSSIBLE_FEATURE_DEMOTE_NOT_DROP)
 
-/* Report this boot through the Boot Loader Interface variables: each is
- * volatile and either set to this boot's value or cleared
- * (include/boot/loader_vars.h). `clear_all` clears every owned variable, for a
- * chainload: the chained loader reports its own boot. A firmware failure marks
- * boot_info.loader_vars_degraded and never blocks boot.
- *
- * Timing: boot_info.timing.tsc_freq is calibrated after load_kernel, so it is
- * 0 here today and both LoaderTime variables are cleared rather than published
- * as 0 (systemd rejects a zero ExecUSec). Distinct Init and Exec values need
- * the publish moved after TSC calibration. */
-static void loader_vars_report(const boot_entries_parse_result_t *parse,
-                               const boot_policy_decision_t *decision, int clear_all)
+/* The running loader's ESP-relative path, e.g. \EFI\BOOT\BOOTX64.EFI.
+ * The device path is firmware-owned, so its length comes from
+ * GetDevicePathSize and never from a self-walk (net_dp_validated_size records
+ * why); a missing utilities protocol or a degenerate measure means "do not
+ * trust this path" and the answer is 0 rather than a heuristic parse. Shared
+ * by self-measurement and LoaderImageIdentifier. Pre-EBS only. */
+#define LOADER_IMAGE_DP_CAP 8192u   /* same bound net_dp_validated_size uses */
+static int loader_image_path(CHAR16 *out, UINTN out_chars)
 {
-    struct boot_loader_var_ops ops = { loader_vars_fw_set, (void *)0 };
+    EFI_GUID dpu_guid = EFI_DEVICE_PATH_UTILITIES_PROTOCOL_GUID;
+    EFI_DEVICE_PATH_UTILITIES_PROTOCOL *dpu = (EFI_DEVICE_PATH_UTILITIES_PROTOCOL *)0;
+    EFI_STATUS status;
+    UINTN dp_size;
+
+    if (out_chars) out[0] = 0;
+    if (!g_boot_image_file_path || !gBS)
+        return 0;
+    status = gBS->LocateProtocol(&dpu_guid, (VOID *)0, (VOID **)&dpu);
+    if (EFI_ERROR(status) || !dpu || !dpu->GetDevicePathSize)
+        return 0;
+    dp_size = dpu->GetDevicePathSize(g_boot_image_file_path);
+    if (dp_size < 4u || dp_size > LOADER_IMAGE_DP_CAP)
+        return 0;
+    return dpfp_extract(g_boot_image_file_path, (__SIZE_TYPE__)dp_size,
+                        out, (__SIZE_TYPE__)out_chars) == DPFP_OK;
+}
+
+/* What loader_vars_report() does with the variables this boot owns. */
+enum loader_vars_mode {
+    LOADER_VARS_PUBLISH,   /* set or clear every variable (include/boot/loader_vars.h) */
+    LOADER_VARS_CHAINLOAD, /* clear every variable: the chained loader reports its own boot */
+    LOADER_VARS_TIMING     /* set or clear only the two timing variables, at handoff */
+};
+
+/* Report this boot through the Boot Loader Interface variables: each is
+ * volatile and either set to this boot's value or cleared. A firmware failure
+ * marks boot_info.loader_vars_degraded and never blocks boot.
+ *
+ * Timing: both values count from firmware start, because the TSC counts from
+ * reset (the Boot Loader Interface defines Init as loader entry and Exec as
+ * the moment before the kernel runs). boot_info.timing.tsc_freq is calibrated
+ * after the policy step, so PUBLISH clears both and the TIMING call just
+ * before the final memory map sets them. Pre-EBS only. */
+static void loader_vars_report(const boot_entries_parse_result_t *parse,
+                               const boot_policy_decision_t *decision,
+                               enum loader_vars_mode mode)
+{
+    struct boot_loader_var_ops ops = { loader_vars_fw_set, (void *)0, loader_vars_fw_get };
     struct boot_loader_var_inputs in;
     struct boot_loader_var_report rep;
-    /* Payload scratch: written in full before every write that reads it. */
+    /* Payload scratch and the image path: each written in full (the path's
+     * first unit at least zeroed) before every read. */
     static unsigned short s_loader_var_payload[BOOT_LOADER_VAR_PAYLOAD_MAX / 2u];
-    UINT64 tsc_freq = g_boot_info_ptr->timing.tsc_freq;
+    static CHAR16 s_loader_image_path[256];
+    UINT64 mhz = g_boot_info_ptr->timing.tsc_freq / 1000000ULL;
+    UINT64 entry = g_boot_info_ptr->timing.bl_entry;
     UINTN gi;
     int ok;
 
@@ -7133,29 +7118,38 @@ static void loader_vars_report(const boot_entries_parse_result_t *parse,
         in.firmware_revision = gST->FirmwareRevision;
         in.uefi_revision = gST->Hdr.Revision;
     }
+    if (mode == LOADER_VARS_PUBLISH
+        && loader_image_path(s_loader_image_path,
+                             sizeof(s_loader_image_path) / sizeof(s_loader_image_path[0])))
+        in.image_path = (const unsigned short *)s_loader_image_path;
     in.partition_style = g_boot_info_ptr->boot_partition_style;
     for (gi = 0; gi < 16; gi++)
         in.partition_guid[gi] = ((const UINT8 *)g_boot_info_ptr->boot_partition_guid)[gi];
     in.parse = parse;
     in.selected_entry_id = decision ? decision->selected_entry_id : (const char *)0;
-    if (tsc_freq >= 1000000ULL) {
+    if (mhz != 0 && entry != 0) {
         UINT64 now = boot_rdtsc();
-        UINT64 entry = g_boot_info_ptr->timing.bl_entry;
         if (now > entry) {
-            in.init_usec = (now - entry) / (tsc_freq / 1000000ULL);
-            in.exec_usec = in.init_usec;
+            in.init_usec = entry / mhz;
+            in.exec_usec = now / mhz;
             in.timing_known = 1;
         }
     }
     in.loader_features = LOADER_FEATURES_PUBLISHED;
     in.impossible_features = IMPOSSIBLE_FEATURES_PUBLISHED;
 
-    ok = clear_all ? boot_loader_vars_clear_all(&ops, &in, &rep)
-                   : boot_loader_vars_publish(&ops, &in, &rep);
+    if (mode == LOADER_VARS_CHAINLOAD) {
+        ok = boot_loader_vars_clear_all(&ops, &in, &rep);
+        serial_early_print("[BOOT] loader-vars: chainload, published ");
+    } else if (mode == LOADER_VARS_TIMING) {
+        ok = boot_loader_vars_publish_timing(&ops, &in, &rep);
+        serial_early_print("[BOOT] loader-vars: timing, published ");
+    } else {
+        ok = boot_loader_vars_publish(&ops, &in, &rep);
+        serial_early_print("[BOOT] loader-vars: published ");
+    }
     if (!ok)
         g_boot_info_ptr->loader_vars_degraded = 1;
-    serial_early_print(clear_all ? "[BOOT] loader-vars: chainload, published "
-                                 : "[BOOT] loader-vars: published ");
     serial_early_print_uint(rep.published);
     serial_early_print(", cleared ");
     serial_early_print_uint(rep.cleared);
@@ -7205,7 +7199,7 @@ static void boot_policy_invoke(void)
     if (EFI_ERROR(s) || !parse) {
         boot_policy_publish_alloc_failure_fallback("parse_result");
         loader_vars_report((const boot_entries_parse_result_t *)0,
-                           (const boot_policy_decision_t *)0, 0);
+                           (const boot_policy_decision_t *)0, LOADER_VARS_PUBLISH);
         return;
     }
     s = gBS->AllocatePool(EfiLoaderData, sizeof(*inputs), (VOID **)&inputs);
@@ -7213,7 +7207,7 @@ static void boot_policy_invoke(void)
         gBS->FreePool(parse);
         boot_policy_publish_alloc_failure_fallback("inputs");
         loader_vars_report((const boot_entries_parse_result_t *)0,
-                           (const boot_policy_decision_t *)0, 0);
+                           (const boot_policy_decision_t *)0, LOADER_VARS_PUBLISH);
         return;
     }
     s = gBS->AllocatePool(EfiLoaderData, sizeof(*decision), (VOID **)&decision);
@@ -7222,7 +7216,7 @@ static void boot_policy_invoke(void)
         gBS->FreePool(parse);
         boot_policy_publish_alloc_failure_fallback("decision");
         loader_vars_report((const boot_entries_parse_result_t *)0,
-                           (const boot_policy_decision_t *)0, 0);
+                           (const boot_policy_decision_t *)0, LOADER_VARS_PUBLISH);
         return;
     }
 
@@ -7820,7 +7814,7 @@ static void boot_policy_invoke(void)
             cidx < g_chainload_count) {
             /* The chained loader reports its own boot; leave it nothing of
              * this loader's, nor an older build's persistent copies. */
-            loader_vars_report(parse, decision, 1);
+            loader_vars_report(parse, decision, LOADER_VARS_CHAINLOAD);
             (void)chainload_exec(&g_chainload_targets[cidx]);
         }
         boot_entries_synthesize_fallback((g_uki_kernel_ptr != (UINT8 *)0) ? 1 : 0,
@@ -8083,7 +8077,7 @@ static void boot_policy_invoke(void)
     /* Publish the Boot Loader Interface variables AFTER the policy decision
      * lands in boot_info and AFTER the per-entry counter decrement, BEFORE
      * the kernel handoff. */
-    loader_vars_report(parse, decision, 0);
+    loader_vars_report(parse, decision, LOADER_VARS_PUBLISH);
 
     /* FreePool the heap structures. The boot_info copies survive in
      * BOOT_INFO_PHYS_ADDR. The JSON buffer can also be released --
@@ -16603,7 +16597,7 @@ static void net_http_probe(EFI_HANDLE dev_handle)
  * dpfp_extract returns DPFP_OVERFLOW and the measurement reports ABSENT, per the
  * parse-buffer rule that a silently shortened path is worse than no path. */
 #define SELF_MEASURE_PATH_CHARS 256u
-#define SELF_MEASURE_DP_CAP     8192u   /* same bound net_dp_validated_size uses */
+/* The device-path size cap is LOADER_IMAGE_DP_CAP, beside loader_image_path(). */
 
 /* The pure parser spells its node constants out (it also compiles in kernel test
  * context, where efi.h must not be included). Pin them against efi.h here, which
@@ -16728,27 +16722,7 @@ static const char *self_measure_status_name(UINT8 st)
  * measurement reports ABSENT rather than parsing heuristically. */
 static enum self_measure_status self_measure_resolve_path(CHAR16 *out, UINTN out_chars)
 {
-    EFI_GUID dpu_guid = EFI_DEVICE_PATH_UTILITIES_PROTOCOL_GUID;
-    EFI_DEVICE_PATH_UTILITIES_PROTOCOL *dpu = (EFI_DEVICE_PATH_UTILITIES_PROTOCOL *)0;
-    EFI_STATUS status;
-    UINTN dp_size;
-
-    if (!g_boot_image_file_path)
-        return SELF_MEASURE_NO_PATH;
-
-    status = gBS->LocateProtocol(&dpu_guid, (VOID *)0, (VOID **)&dpu);
-    if (EFI_ERROR(status) || !dpu || !dpu->GetDevicePathSize)
-        return SELF_MEASURE_NO_PATH;
-
-    dp_size = dpu->GetDevicePathSize(g_boot_image_file_path);
-    if (dp_size < 4u || dp_size > SELF_MEASURE_DP_CAP)
-        return SELF_MEASURE_NO_PATH;
-
-    if (dpfp_extract(g_boot_image_file_path, (__SIZE_TYPE__)dp_size,
-                     out, (__SIZE_TYPE__)out_chars) != DPFP_OK)
-        return SELF_MEASURE_NO_PATH;
-
-    return SELF_MEASURE_OK;
+    return loader_image_path(out, out_chars) ? SELF_MEASURE_OK : SELF_MEASURE_NO_PATH;
 }
 
 /* Hash the loader file in one forward pass over bounded chunks. `file` is
@@ -18670,6 +18644,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     serial_early_print("[BOOT] xhci_controller_takeover...\n");
     xhci_controller_takeover();
     post_code16(POST16_BL_XHCI_TAKEOVER_OK);
+
+    /* Loader timing for the Boot Loader Interface: the TSC is calibrated by
+     * now, and nothing that follows (memory map, ExitBootServices, handoff)
+     * may call SetVariable, so this is the latest point Exec can be taken. */
+    loader_vars_report((const boot_entries_parse_result_t *)0,
+                       (const boot_policy_decision_t *)0, LOADER_VARS_TIMING);
 
     /* Step 5: Get UEFI memory map */
     post_code16(POST16_BL_MEMMAP);

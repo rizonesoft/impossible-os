@@ -1421,6 +1421,25 @@ elif [ "$BOOT_PASSED" = true ]; then
         echo -e "${RED}SMOKE TEST FAILED: every loader variable must be set or cleared, with no firmware refusal (got: $LV_LINE)${NC}"
         exit 1
     fi
+    # The two timing variables are set again just before the final memory map,
+    # once the TSC is calibrated. Init and Exec are both counted from reset, so a
+    # leg with a calibrated TSC sets both; an uncalibrated one clears both.
+    LV_TIME=$(grep -aoE '\[BOOT\] loader-vars: timing, published [0-9]+, cleared [0-9]+, failed [0-9]+' "$STRIPPED_LOG" 2>/dev/null | head -1)
+    if [ -z "$LV_TIME" ]; then
+        echo -e "${RED}SMOKE TEST FAILED: the loader never reported its timing variables${NC}"
+        exit 1
+    fi
+    read -r LT_PUB LT_CLR LT_FAIL <<< "$(echo "$LV_TIME" | sed -E 's/.*published ([0-9]+), cleared ([0-9]+), failed ([0-9]+)/\1 \2 \3/')"
+    if [ "$LT_FAIL" != "0" ] || [ $((LT_PUB + LT_CLR)) -ne 2 ]; then
+        echo -e "${RED}SMOKE TEST FAILED: both timing variables must be set or cleared, with no firmware refusal (got: $LV_TIME)${NC}"
+        exit 1
+    fi
+    LT_WANT=2
+    if grep -aq 'TSC calibration rejected' "$STRIPPED_LOG" 2>/dev/null; then LT_WANT=0; fi
+    if [ "$LT_PUB" != "$LT_WANT" ]; then
+        echo -e "${RED}SMOKE TEST FAILED: timing must be all set with a calibrated TSC and all cleared without one (want $LT_WANT published, got: $LV_TIME)${NC}"
+        exit 1
+    fi
 
     # ---- Valid-store assertions -------------------------------------------
     if [ "$VALID_STORE" = "1" ]; then
