@@ -577,6 +577,59 @@ int boot_policy_counter_dedup_insert(boot_counter_t *out,
 
 /* ---- Boot menu pure logic helpers -------------------------------------- */
 
+unsigned int boot_menu_seconds_left(unsigned int countdown_ms, unsigned int elapsed_ms)
+{
+    if (elapsed_ms >= countdown_ms)
+        return 0u;
+    unsigned int rem = countdown_ms - elapsed_ms;
+    return rem / 1000u + (rem % 1000u != 0u ? 1u : 0u);
+}
+
+unsigned int boot_menu_repaint_plan(const boot_menu_view_t *drawn,
+                                    const boot_menu_view_t *want,
+                                    unsigned int *row_old, unsigned int *row_new)
+{
+    if (!want || !row_old || !row_new)
+        return 0u;
+    *row_old = want->selected;
+    *row_new = want->selected;
+    if (!drawn || drawn->valid != 1u ||
+        drawn->count != want->count || drawn->rows != want->rows)
+        return BOOT_MENU_PAINT_FULL;
+    unsigned int plan = 0u;
+    int moved = drawn->selected != want->selected;
+    if (drawn->top != want->top) {
+        plan |= BOOT_MENU_PAINT_LIST;
+    } else if (moved) {
+        *row_old = drawn->selected;
+        plan |= BOOT_MENU_PAINT_ROWS;
+    }
+    /* The seconds are on screen only while counting, so a change of them
+     * after the countdown stopped repaints nothing. A list that scrolls names
+     * the highlighted entry's position in the footer. */
+    if (drawn->counting != want->counting ||
+        (want->counting && drawn->seconds_left != want->seconds_left) ||
+        (moved && want->count > want->rows))
+        plan |= BOOT_MENU_PAINT_FOOTER;
+    return plan;
+}
+
+unsigned int boot_menu_scroll_top(unsigned int top, unsigned int selected,
+                                  unsigned int count, unsigned int rows)
+{
+    if (rows == 0u || count <= rows)
+        return 0u;
+    if (selected >= count)
+        selected = count - 1u;
+    if (top > count - rows)
+        top = count - rows;
+    if (selected < top)
+        return selected;
+    if (selected >= top + rows)
+        return selected - rows + 1u;
+    return top;
+}
+
 int boot_policy_menu_should_show(const boot_policy_decision_t *decision,
                                  const boot_entries_parse_result_t *parse,
                                  unsigned int viable_count)

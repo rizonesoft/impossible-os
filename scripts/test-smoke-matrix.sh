@@ -129,6 +129,7 @@ done
 # The last three are ONE machine across three boots, sharing a variable store: the
 # rejection is recorded, a repeat writes nothing, and repairing the store clears it.
 for leg in VALID:valid:SMOKE_VALID_STORE=1 \
+           MENU:menu:SMOKE_MENU=1 \
            CORRUPT:corrupt:SMOKE_CORRUPT_STORE=1 \
            CORRUPT:repeat:SMOKE_CORRUPT_STORE=1:SMOKE_STORE_RECORD=unchanged \
            VALID:repaired:SMOKE_VALID_STORE=1:SMOKE_STORE_RECORD=cleared; do

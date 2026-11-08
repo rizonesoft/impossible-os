@@ -59,7 +59,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |   3   | Boot policy merge order (firmware vs OS layer split)                | §2, T01 §1, T05 §6                      |  [x]   |
 | 💎  |   4   | ESP store read + Boot#### OptionalData + policy wiring              | §3                                      |  [x]   |
 | 💎  |   5   | Crash-tolerant counter protocol + v19 ABI validator                 | §3, §4                                  |  [x]   |
-| 💎  |   6   | Boot menu renderer + countdown + input infrastructure               | §4, T15 §3, T15 §4                      |  [ ]   |
+| 💎  |   6   | Boot menu renderer + countdown + input infrastructure               | §4, T15 §3, T15 §4                      |  [x]   |
 | 💎  |   7   | Boot menu indicators + hotkeys + hide_when_alone                    | §6                                      |  [x]   |
 | 💎  |   8   | Safe mode, test mode, and diagnostics entries                       | §3, T10 §7                              |  [/]   |
 | 💎  |   9   | A/B and recovery entry integration (DEFERRED)                       | §3, §4, T21 §1+§3+§4, T22 §1+§2         |  [/]   |
@@ -238,23 +238,32 @@ Pre-EBS user-visible selector. GOP for graphical, UEFI text protocol + serial mi
 - [x] `boot_policy_menu_should_show()` skips UI on forced-selection reasons; only soft reasons (STORE_DEFAULT, BOOTNEXT_HINT, UNKNOWN_BOOTCURRENT) render the menu.
 - [x] `timeout_override == 0` honored as immediate auto-boot (kiosk path; UI suppressed). Schema range stays 0..600.
 - [x] Watchdog refresh throttled to 10s intervals inside `boot_menu_run()` (firmware WD is 60s; per-tick refresh was wasteful).
-- [ ] Dirty-rectangle repaint for `boot_menu_render()`: draw title once, repaint only changed rows on selection moves + footer once per second.
-  - A §6-owned bootloader optimization in `src/boot/uefi`, outside the kernel image budget. The trigger is recorded in this section's Deferred stamp (full-band redraw on a 4K GOP causes key-repeat jank).
+- [x] Dirty-rectangle repaint: `boot_menu_render()` draws the menu once, then repaints only the rows a highlight move touched and the footer when its text changes
+  - `boot_menu_repaint_plan()` in `src/boot/uefi/boot_policy.c` compares what is on screen with what should be; the drawn view is a stack local in `boot_menu_run()`, so no loader static needs resetting.
+  - Row and footer bands are cleared and repainted on their own (`boot_menu_paint_row`, `boot_menu_paint_footer`). The ConOut fallback reprints only on a highlight move, not once a second.
+- [x] Each line's ink sits inside its own band: the geometry lives in `include/boot/boot_menu_layout.h` and `boot_menu_text_py()` derives the text origin from the atlas ink box
+  - Before this the rows were drawn about 24 px below their highlight bars, so each bar sat above its own text and the next row's bar covered it. Found by the adversarial review of this item.
+  - Badge width is measured with `bsod_aa_string_width()` instead of an 11 px/char guess; `test_boot_menu_ink_in_bands` checks the title, all 16 rows and the footer against the shipped atlases.
+- [x] The menu fits small GOP modes and keeps text inside the highlight bar
+  - `boot_menu_fit()` sizes the list to the framebuffer (9 rows at 640x480, 12 at 800x600) with the footer right below it; `boot_menu_scroll_top()` scrolls a longer list so the selection stays visible, and the footer then reads "Entry N of M".
+  - `boot_menu_fit_text()` cuts a badge or title to the bar's right edge and ends it in "..."; a 63-character title of W's measured 1448 px against an 800 px bar before this. Both found by the round-2 adversarial review.
+  - Tests: `test_boot_menu_fit_small_modes`, `test_boot_menu_fit_text`, and scroll and plan cases in `test_menu_repaint_plan`.
+- [x] The countdown rounds up (`boot_menu_seconds_left`), skips its final 0 repaint, and once a key stops it the footer reads "Use arrows + Enter to boot." instead of "Auto-boot in 0s"
+- [x] `SMOKE_MENU=1` smoke fixture (the `store menu` matrix leg): a two-entry store with a 2 s countdown, so a real boot draws the menu, repaints it and auto-boots the default; no leg reached the menu before
 - [x] Commit: `"boot: menu renderer + countdown + input infrastructure"`
 
 **Test checkpoint:** Menu renders 4+ entries on QEMU WHPX (GOP); countdown decrements 5..0 then auto-selects; arrow keys move + cancel countdown; Enter boots the highlighted entry. Serial mirror shows the same lines on TCG (no GOP). `bootloader_secureboot_active()` returns 1 with SecureBoot=1 + SetupMode=0; 0 otherwise. Smoke test verified menu-skip path: serial shows `[BOOT] menu: skipped (no viable candidates)` on FALLBACK_STORE_INVALID with no bootentries.json, smoke PASS in 2.55s on KVM. Test on: QEMU WHPX (GOP), TCG (serial fallback), VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 11 menu-helper suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 15 menu-helper suites, 0 failures | `SMOKE_MENU=1 bash scripts/test-smoke.sh` boots through the menu
 
 > **Notes:**
-> - What shipped: `boot_menu_render` + `boot_menu_run` + pure helpers `boot_policy_menu_should_show` + `boot_policy_menu_collect`; `EFI_SCAN_*` constants; POST16 0xB0B6; 11 unit tests.
+> - What shipped: `boot_menu_render` + `boot_menu_run` + pure helpers `boot_policy_menu_should_show` + `boot_policy_menu_collect` + `boot_menu_repaint_plan` + `boot_menu_seconds_left` + `boot_menu_scroll_top`; band geometry, `boot_menu_fit` and `boot_menu_fit_text` in `boot_menu_layout.h`; `EFI_SCAN_*` constants; POST16 0xB0B6.
 > - How it integrates: `boot_policy_invoke()` calls collect -> should_show -> menu_run after ladder, before counter decrement; `timeout_override==0` skips UI; user-pick flips reason to HOTKEY.
-> - Downstream effects: live menu-render path; serial mirror gives kiosk/headless operators visibility on selection.
+> - Downstream effects: live menu-render path, repainted per band; serial mirror gives kiosk/headless operators visibility on selection; the `store menu` smoke leg boots through it.
 > - Canonical doc: [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md) (menu UX) + [`docs/boot/boot-menu.md`](../../docs/boot/boot-menu.md) (§7 indicator legend lands there).
 > - Scope boundary: §6 owns renderer + countdown + input + filter; indicators + hotkeys + `hide_when_alone` are §7; demote-not-drop visual is §9.
 
-> **Verified:** 2026-05-09 | commit `b4a076c4` (review fixup over `34ae373c`) | 5/6 items + 1 deferred | build OK | smoke PASS (KVM 2.49s)
-> **Notes:** Reopened 2026-11-07, was Deferred: [M] Dirty-rectangle repaint for `boot_menu_render` (full-band redraw on 4K GOP causes key-repeat jank). The stamp named this section's own item, and that item recorded no external blocker.
+> **Verified:** 2026-11-08 | dirty-rectangle repaint commit over `b4a076c4` | all items | build OK | SUITE=boot 7456+17 | `store menu` smoke PASS | matrix 12/12 | Codex re-adversarial 3 rounds, approve
 > **Quality reviewed:** 2026-05-09 | Codex 8x (design + adversarial + test-coverage + 3 re-adversarial + consistency + perf) | 4H+5M fixed, 1M deferred | scope: boot-code-quality
 
 ---

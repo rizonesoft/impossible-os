@@ -350,6 +350,43 @@ unsigned int boot_policy_menu_collect(
     unsigned int *out_idx, unsigned int cap,
     unsigned int *out_default_idx);
 
+/* ---- Menu repaint plan ---------------------------------------------------
+ * The menu is drawn once and afterwards only what changed is repainted: the
+ * row that lost the highlight, the row that gained it, and the footer when its
+ * text changes. A full redraw of the menu band on a 4K GOP framebuffer costs
+ * tens of megabytes of writes per keypress, which is what made key-repeat
+ * jank. `drawn` is what is on screen (valid == 0: nothing yet), `want` the
+ * state to show. Returns a BOOT_MENU_PAINT_* mask and, when ROWS is set, the
+ * rows to repaint in *row_old and *row_new (equal when only one changed).
+ */
+typedef struct {
+    unsigned int valid;        /* 1 once the menu has been drawn */
+    unsigned int selected;     /* highlighted entry */
+    unsigned int counting;     /* 1 while the auto-boot countdown runs */
+    unsigned int seconds_left; /* shown only while counting */
+    unsigned int top;          /* first entry in the visible window */
+    unsigned int count;        /* entries in the menu */
+    unsigned int rows;         /* rows the screen shows; count > rows scrolls */
+} boot_menu_view_t;
+
+#define BOOT_MENU_PAINT_FULL    0x1u  /* background, title, every row, footer */
+#define BOOT_MENU_PAINT_ROWS    0x2u  /* *row_old and *row_new */
+#define BOOT_MENU_PAINT_FOOTER  0x4u  /* countdown line */
+#define BOOT_MENU_PAINT_LIST    0x8u  /* every visible row: the window scrolled */
+
+/* First entry of a `rows`-tall window that keeps `selected` visible, moving the
+ * previous window `top` as little as possible. */
+unsigned int boot_menu_scroll_top(unsigned int top, unsigned int selected,
+                                  unsigned int count, unsigned int rows);
+
+/* Whole seconds the countdown shows: rounded UP, so a 5 s countdown reads 5
+ * for its first second and reaches 0 only when it has run out. */
+unsigned int boot_menu_seconds_left(unsigned int countdown_ms, unsigned int elapsed_ms);
+
+unsigned int boot_menu_repaint_plan(const boot_menu_view_t *drawn,
+                                    const boot_menu_view_t *want,
+                                    unsigned int *row_old, unsigned int *row_new);
+
 #define BOOT_COUNTER_FILENAME_MAX  64u   /* 47 + 1 + 1 + 1 + 2 + NUL + slack */
 #define BOOT_COUNTER_TRIES_LEFT_MAX  9u
 #define BOOT_COUNTER_TRIES_DONE_MAX  99u

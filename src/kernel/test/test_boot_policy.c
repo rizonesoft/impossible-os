@@ -1194,6 +1194,94 @@ static void test_menu_should_show_store_default_two_entries(void)
                    "no candidates -> skip");
 }
 
+/* The boot menu repaints only what changed: nothing drawn
+ * means a full paint; a moved highlight repaints the old and new rows; the
+ * footer repaints when the countdown ticks or stops, and a tick after it
+ * stopped repaints nothing. */
+static void test_menu_repaint_plan(void)
+{
+    boot_menu_view_t none = { 0u, 0u, 0u, 0u, 0u, 4u, 16u };
+    boot_menu_view_t on = { 1u, 2u, 1u, 5u, 0u, 4u, 16u };
+    boot_menu_view_t want = on;
+    unsigned int a = 99u, b = 99u;
+
+    TEST_ASSERT_EQ(boot_menu_repaint_plan(&none, &want, &a, &b), BOOT_MENU_PAINT_FULL,
+                   "nothing on screen -> full paint");
+    TEST_ASSERT_EQ(boot_menu_repaint_plan((const boot_menu_view_t *)0, &want, &a, &b),
+                   BOOT_MENU_PAINT_FULL, "no record -> full paint");
+    none.valid = 0xAFAFAFAFu;
+    TEST_ASSERT_EQ(boot_menu_repaint_plan(&none, &want, &a, &b), BOOT_MENU_PAINT_FULL,
+                   "only valid == 1 counts as drawn");
+
+    TEST_ASSERT_EQ(boot_menu_repaint_plan(&on, &want, &a, &b), 0u, "unchanged -> nothing");
+
+    want.selected = 3u;
+    TEST_ASSERT_EQ(boot_menu_repaint_plan(&on, &want, &a, &b), BOOT_MENU_PAINT_ROWS,
+                   "highlight moved -> rows only");
+    TEST_ASSERT_EQ(a, 2u, "old row repainted");
+    TEST_ASSERT_EQ(b, 3u, "new row repainted");
+
+    want = on;
+    want.seconds_left = 4u;
+    TEST_ASSERT_EQ(boot_menu_repaint_plan(&on, &want, &a, &b), BOOT_MENU_PAINT_FOOTER,
+                   "countdown tick -> footer only");
+
+    want.selected = 0u;
+    want.counting = 0u;
+    want.seconds_left = 0u;
+    TEST_ASSERT_EQ(boot_menu_repaint_plan(&on, &want, &a, &b),
+                   BOOT_MENU_PAINT_ROWS | BOOT_MENU_PAINT_FOOTER,
+                   "key that moves and stops the countdown -> rows and footer");
+
+    want = on;
+    want.rows = 3u;
+    TEST_ASSERT_EQ(boot_menu_repaint_plan(&on, &want, &a, &b), BOOT_MENU_PAINT_FULL,
+                   "a different screen capacity -> full paint");
+    want = on;
+    want.count = 5u;
+    TEST_ASSERT_EQ(boot_menu_repaint_plan(&on, &want, &a, &b), BOOT_MENU_PAINT_FULL,
+                   "a different entry count -> full paint");
+
+    /* A list longer than the screen: 10 entries, 4 rows. */
+    boot_menu_view_t tall = { 1u, 5u, 0u, 0u, 2u, 10u, 4u };
+    want = tall;
+    want.selected = 4u;
+    TEST_ASSERT_EQ(boot_menu_repaint_plan(&tall, &want, &a, &b),
+                   BOOT_MENU_PAINT_ROWS | BOOT_MENU_PAINT_FOOTER,
+                   "move inside the window -> rows, and the footer's position");
+    want.selected = 1u;
+    want.top = 1u;
+    TEST_ASSERT_EQ(boot_menu_repaint_plan(&tall, &want, &a, &b),
+                   BOOT_MENU_PAINT_LIST | BOOT_MENU_PAINT_FOOTER,
+                   "window scrolled -> whole list and footer");
+
+    TEST_ASSERT_EQ(boot_menu_scroll_top(0u, 2u, 4u, 16u), 0u, "short list never scrolls");
+    TEST_ASSERT_EQ(boot_menu_scroll_top(0u, 3u, 10u, 4u), 0u, "selection in window stays");
+    TEST_ASSERT_EQ(boot_menu_scroll_top(0u, 4u, 10u, 4u), 1u, "one below the window scrolls by one");
+    TEST_ASSERT_EQ(boot_menu_scroll_top(0u, 9u, 10u, 4u), 6u, "End shows the last rows");
+    TEST_ASSERT_EQ(boot_menu_scroll_top(6u, 0u, 10u, 4u), 0u, "Home shows the first rows");
+    TEST_ASSERT_EQ(boot_menu_scroll_top(5u, 6u, 10u, 4u), 5u, "move inside a scrolled window stays");
+    TEST_ASSERT_EQ(boot_menu_scroll_top(9u, 9u, 10u, 4u), 6u, "a top past the end is pulled back");
+    TEST_ASSERT_EQ(boot_menu_scroll_top(0u, 50u, 10u, 4u), 6u, "a selection past the end clamps");
+    TEST_ASSERT_EQ(boot_menu_scroll_top(3u, 3u, 10u, 0u), 0u, "no rows -> no window");
+
+    boot_menu_view_t idle = { 1u, 1u, 0u, 0u, 0u, 4u, 16u };
+    want = idle;
+    want.seconds_left = 7u;
+    TEST_ASSERT_EQ(boot_menu_repaint_plan(&idle, &want, &a, &b), 0u,
+                   "seconds are not shown once the countdown stopped");
+
+    TEST_ASSERT_EQ(boot_menu_repaint_plan(&on, (const boot_menu_view_t *)0, &a, &b), 0u,
+                   "no target -> nothing");
+
+    TEST_ASSERT_EQ(boot_menu_seconds_left(5000u, 0u), 5u, "full countdown shows its length");
+    TEST_ASSERT_EQ(boot_menu_seconds_left(5000u, 50u), 5u, "first tick still shows 5");
+    TEST_ASSERT_EQ(boot_menu_seconds_left(5000u, 1000u), 4u, "one second later shows 4");
+    TEST_ASSERT_EQ(boot_menu_seconds_left(5000u, 4950u), 1u, "last tick still shows 1");
+    TEST_ASSERT_EQ(boot_menu_seconds_left(5000u, 5000u), 0u, "expired shows 0");
+    TEST_ASSERT_EQ(boot_menu_seconds_left(5000u, 9000u), 0u, "past expiry never wraps");
+}
+
 static void test_menu_should_show_forced_selection_skips(void)
 {
     boot_entries_parse_result_t r;
@@ -1641,6 +1729,8 @@ void test_register_boot_policy(void)
                             test_counter_dedup_insert_cap_full, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu_should_show STORE_DEFAULT + 2 entries -> show",
                             test_menu_should_show_store_default_two_entries, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu repaint plan",
+                            test_menu_repaint_plan, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu_should_show forced-selection reasons skip",
                             test_menu_should_show_forced_selection_skips, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu_should_show soft reasons render",

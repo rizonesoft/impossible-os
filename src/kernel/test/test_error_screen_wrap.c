@@ -35,8 +35,120 @@
 typedef unsigned char UINT8;
 #include "../../boot/uefi/bsod_font_body.inc"
 #include "../../boot/uefi/bsod_font_sub.inc"
+#include "../../boot/uefi/bsod_font_title.inc"
+#include "../../../include/boot/boot_menu_layout.h"
 
 #include "kernel/types.h"
+
+/* Where a line drawn at (py, ascent) puts its ink, by the rule bsod_aa_char
+ * uses: [py + ascent + top, py + ascent + bottom). */
+static void menu_ink(const struct bsod_aa_glyph *g, unsigned int ascent, unsigned int py,
+                     int *ink_top, int *ink_bottom)
+{
+    int top, bottom;
+    bsod_aa_ink_rows(g, &top, &bottom);
+    *ink_top = (int)py + (int)ascent + top;
+    *ink_bottom = (int)py + (int)ascent + bottom;
+}
+
+/* The boot menu repaints one band at a time, so every line's ink must sit
+ * inside its own band. Checked against the shipped
+ * atlases, for the title, every row and the footer. */
+static void test_boot_menu_ink_in_bands(void)
+{
+    int t, b;
+    bsod_aa_ink_rows(bsod_aa_SUB, &t, &b);
+    TEST_ASSERT(t >= 0 && b > t, "SUB atlas has an ink box");
+
+    unsigned int ty = boot_menu_text_py(bsod_aa_TITLE, BSOD_AA_TITLE_ASCENT, BOOT_MENU_TITLE_Y,
+                                        BOOT_MENU_LIST_Y0 - BOOT_MENU_TITLE_Y);
+    TEST_ASSERT(ty != 0u, "title fits its band");
+    menu_ink(bsod_aa_TITLE, BSOD_AA_TITLE_ASCENT, ty, &t, &b);
+    TEST_ASSERT(t >= (int)BOOT_MENU_TITLE_Y && b <= (int)BOOT_MENU_LIST_Y0,
+                "title ink ends above the first row");
+
+    unsigned int rows_ok = 1u;
+    for (unsigned int i = 0; i < BOOT_MENU_MAX_VISIBLE; i++) {
+        unsigned int band = BOOT_MENU_LIST_Y0 + i * BOOT_MENU_ROW_H;
+        unsigned int py = boot_menu_text_py(bsod_aa_SUB, BSOD_AA_SUB_ASCENT, band, BOOT_MENU_ROW_H);
+        menu_ink(bsod_aa_SUB, BSOD_AA_SUB_ASCENT, py, &t, &b);
+        if (py == 0u || t < (int)band || b > (int)(band + BOOT_MENU_ROW_H))
+            rows_ok = 0u;
+    }
+    TEST_ASSERT_EQ(rows_ok, 1u, "every row's ink stays inside its own band");
+
+    unsigned int fy = boot_menu_text_py(bsod_aa_SUB, BSOD_AA_SUB_ASCENT,
+                                        BOOT_MENU_FOOTER_Y, BOOT_MENU_FOOTER_H);
+    menu_ink(bsod_aa_SUB, BSOD_AA_SUB_ASCENT, fy, &t, &b);
+    TEST_ASSERT(fy != 0u && t >= (int)BOOT_MENU_FOOTER_Y &&
+                b <= (int)(BOOT_MENU_FOOTER_Y + BOOT_MENU_FOOTER_H),
+                "footer ink stays inside the footer band");
+    TEST_ASSERT(BOOT_MENU_FOOTER_Y >= BOOT_MENU_LIST_END, "footer band starts below the last row");
+
+    TEST_ASSERT_EQ(boot_menu_text_py(bsod_aa_TITLE, BSOD_AA_TITLE_ASCENT, 200u, 20u), 0u,
+                   "a band smaller than the ink is refused");
+}
+
+/* Small GOP modes keep the footer and every visible row on screen; the rest
+ * of the list scrolls. */
+static void test_boot_menu_fit_small_modes(void)
+{
+    static const unsigned int heights[] = { 480u, 600u, 768u, 1080u, 2160u };
+    unsigned int ok = 1u;
+    for (unsigned int i = 0; i < sizeof(heights) / sizeof(heights[0]); i++) {
+        boot_menu_fit_t f = boot_menu_fit(heights[i]);
+        int t, b;
+        unsigned int fy = boot_menu_text_py(bsod_aa_SUB, BSOD_AA_SUB_ASCENT, f.footer_y,
+                                            BOOT_MENU_FOOTER_H);
+        menu_ink(bsod_aa_SUB, BSOD_AA_SUB_ASCENT, fy, &t, &b);
+        if (f.rows == 0u || f.rows > BOOT_MENU_MAX_VISIBLE || fy == 0u ||
+            f.footer_y < BOOT_MENU_LIST_Y0 + f.rows * BOOT_MENU_ROW_H ||
+            f.footer_y + BOOT_MENU_FOOTER_H > heights[i] ||
+            t < (int)f.footer_y || b > (int)(f.footer_y + BOOT_MENU_FOOTER_H))
+            ok = 0u;
+    }
+    TEST_ASSERT_EQ(ok, 1u, "rows and footer fit 480..2160 lines");
+    TEST_ASSERT_EQ(boot_menu_fit(600u).rows, 12u, "800x600 shows 12 rows");
+    TEST_ASSERT_EQ(boot_menu_fit(480u).rows, 9u, "640x480 shows 9 rows");
+    TEST_ASSERT_EQ(boot_menu_fit(1080u).rows, BOOT_MENU_MAX_VISIBLE, "1080 lines shows the cap");
+    TEST_ASSERT_EQ(boot_menu_fit(1080u).footer_y, BOOT_MENU_FOOTER_Y,
+                   "a full list puts the footer where the full layout does");
+    TEST_ASSERT_EQ(boot_menu_fit(200u).rows, 0u, "too short for one row -> text fallback");
+}
+
+/* A label longer than the bar is cut with "..." and never drawn past it. */
+static void test_boot_menu_fit_text(void)
+{
+    char out[80];
+    TEST_ASSERT_EQ(boot_menu_fit_text(bsod_aa_SUB, "Impossible OS", 800u, out, sizeof(out)), 0,
+                   "a short label is kept");
+    TEST_ASSERT(out[0] == 'I' && out[12] == 'S' && out[13] == 0, "kept whole");
+
+    char wide[64];
+    for (unsigned int i = 0; i < 63u; i++) wide[i] = 'W';
+    wide[63] = 0;
+    unsigned int budget = BOOT_MENU_HI_W - 8u - BOOT_MENU_TEXT_PAD;
+    TEST_ASSERT(bsod_aa_text_width(bsod_aa_SUB, wide) > budget, "63 W's are wider than the bar");
+    TEST_ASSERT_EQ(boot_menu_fit_text(bsod_aa_SUB, wide, budget, out, sizeof(out)), 1,
+                   "a long label is cut");
+    unsigned int n = 0;
+    while (out[n]) n++;
+    TEST_ASSERT(n >= 4u && out[n - 1] == '.' && out[n - 2] == '.' && out[n - 3] == '.',
+                "cut label ends in ...");
+    TEST_ASSERT(bsod_aa_text_width(bsod_aa_SUB, out) <= budget, "cut label fits the bar");
+    char longer[80];
+    for (unsigned int i = 0; i < n - 2u; i++) longer[i] = 'W';
+    longer[n - 2u] = '.'; longer[n - 1u] = '.'; longer[n] = '.'; longer[n + 1u] = 0;
+    TEST_ASSERT(bsod_aa_text_width(bsod_aa_SUB, longer) > budget,
+                "one more character would not fit: the cut is the longest prefix");
+
+    TEST_ASSERT_EQ(boot_menu_fit_text(bsod_aa_SUB, wide, 5u, out, sizeof(out)), 1,
+                   "no room even for ... -> cut to nothing");
+    TEST_ASSERT_EQ(out[0], 0, "nothing drawn");
+    TEST_ASSERT_EQ(boot_menu_fit_text(bsod_aa_SUB, wide, 100000u, out, 8u), 1,
+                   "a small buffer still cuts with ...");
+    TEST_ASSERT(out[4] == '.' && out[6] == '.' && out[7] == 0, "fits its buffer");
+}
 
 /* Width of the whole string at the shipped metrics, tracking included. */
 static unsigned int body_width(const char *s)
@@ -782,6 +894,12 @@ void test_register_error_screen_wrap(void)
         test_empty_and_null_inputs, TEST_CAT_BOOT);
     test_suite_register_cat("error-screen wrap: store reject locator fits",
                             test_store_reject_locator_fits_banner, TEST_CAT_BOOT);
+    test_suite_register_cat("boot menu: line ink stays inside its band",
+                            test_boot_menu_ink_in_bands, TEST_CAT_BOOT);
+    test_suite_register_cat("boot menu: layout fits small modes",
+                            test_boot_menu_fit_small_modes, TEST_CAT_BOOT);
+    test_suite_register_cat("boot menu: labels cut to the bar",
+                            test_boot_menu_fit_text, TEST_CAT_BOOT);
     test_suite_register_cat("error-screen wrap: start offset honoured",
         test_start_offset_is_honoured, TEST_CAT_BOOT);
     test_suite_register_cat("error-screen wrap: non-printables measure as '?'",

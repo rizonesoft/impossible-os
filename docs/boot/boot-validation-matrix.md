@@ -30,7 +30,7 @@ The manual half is the [Bare-Metal Boot Lab](../hardware/boot-lab.md): five hard
 | `lint.py` | Schema, evidence and coverage checks ([`lint.py`](../../tools/boot-cert/lint.py)) |
 | `boot_reliability.py` | Reboot-reliability driver, classifier and aggregator ([`boot_reliability.py`](../../tools/boot-cert/boot_reliability.py)) |
 | `boot-test-qemu.sh` | One QEMU boot with `--disk`, `--timeout`, `--accel`, `--vars`, `--serial-out` and `--screenshot` ([`boot-test-qemu.sh`](../../scripts/machines/boot-test-qemu.sh)) |
-| `test-smoke-matrix.sh` | Separate boot smoke gate (engine, store and UKI legs) ([`test-smoke-matrix.sh`](../../scripts/test-smoke-matrix.sh)) |
+| `test-smoke-matrix.sh` | Separate boot smoke gate (engine, store, menu and UKI legs) ([`test-smoke-matrix.sh`](../../scripts/test-smoke-matrix.sh)) |
 
 ## How do I use it?
 

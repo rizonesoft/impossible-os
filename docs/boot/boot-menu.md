@@ -1,9 +1,21 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/boot/uefi/bootx64.c,include/boot/boot_entries.h reviewed=2026-09-28 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/boot/uefi/bootx64.c,include/boot/boot_entries.h,src/boot/uefi/boot_policy.c reviewed=2026-11-08 -->
 # Boot Menu Renderer + Hotkeys + Indicators
 
 > Pre-EBS user-visible boot selector. Owned by [TODO-07 boot entry store + menu + policy](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md): renderer in the menu-renderer section, indicators + hotkeys + `hide_when_alone` in the indicators section.
 
 The menu is rendered by the bootloader before `ExitBootServices` so the operator can pick or override the policy ladder's auto-selection. Both GOP (graphical framebuffer + Selawik AA font) and ConOut (UEFI text console) paths are supported, with a serial mirror that always logs the selection state regardless of which display path the firmware exposes.
+
+## Drawing and the countdown
+
+The menu is drawn once, then only what changed is repainted. `boot_menu_repaint_plan()` in `src/boot/uefi/boot_policy.c` compares what is on screen with what should be: a moved highlight repaints the row that lost it and the row that gained it, and the footer repaints when its text changes. A full redraw of the menu band on a 4K framebuffer was tens of megabytes of writes per keypress, which made key repeat lag.
+
+Each line is drawn inside its own band. The geometry lives in `include/boot/boot_menu_layout.h`, and `boot_menu_text_py()` places a line from the font atlas's real ink box, so repainting one row never touches the text of the row beside it. The kernel boot tests check the title, all 16 rows and the footer against the shipped atlases.
+
+The layout adapts to the screen. `boot_menu_fit()` works out how many rows fit above the footer: 9 at 640x480, 12 at 800x600 and the full 16 at 1080 lines. A longer list scrolls (`boot_menu_scroll_top()` keeps the highlighted entry in view), and the footer then names its position, for example "Entry 14 of 16". A badge or title wider than the highlight bar is cut to fit and ends in "...". A screen too short for one row and the footer uses the text fallback.
+
+The footer reads "Auto-boot in Ns" while the countdown runs. The seconds round up, so a 5-second countdown shows 5 for its first second and the screen never shows 0 before the default boots. Once a key stops the countdown, the footer reads "Use arrows + Enter to boot." The ConOut text fallback has no footer, so it reprints the list only when the highlight moves, never once a second. The serial mirror logs one line per repaint.
+
+`SMOKE_MENU=1 bash scripts/test-smoke.sh` stages a two-entry store with a 2-second countdown, so a real boot draws the menu, repaints it and auto-boots the default. It is the `store menu` leg of `scripts/test-smoke-matrix.sh`.
 
 ## Indicator legend
 

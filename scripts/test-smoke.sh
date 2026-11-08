@@ -623,6 +623,13 @@ CORRUPT_STORE="${SMOKE_CORRUPT_STORE:-0}"
 # Stage a VALID store. The parser's runtime tables and struct copies only run on
 # this path, so an image with no store cannot exercise them.
 VALID_STORE="${SMOKE_VALID_STORE:-0}"
+# Stage a valid store with TWO entries, so the boot menu draws, counts down and
+# auto-boots its default. No other leg reaches the menu: one entry skips it.
+MENU="${SMOKE_MENU:-0}"
+case "$MENU" in 0|1) ;; *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_MENU must be 0 or 1 (got: $MENU)${NC}"; exit 1 ;; esac
+if [ "$MENU" = "1" ]; then VALID_STORE=1; fi
+STORE_ENTRIES=1
+[ "$MENU" = "1" ] && STORE_ENTRIES=2
 # S23 fixtures. SMOKE_LOWRES forces a GOP mode below the full error-screen
 # layout floor so the compact renderer is the one under test; SMOKE_ERROR_SCREEN
 # additionally makes the bootloader raise a real boot_fatal, which is the only
@@ -673,12 +680,20 @@ if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ -n "$FORCE_MODE" 
 fi
 if [ "$VALID_STORE" = "1" ]; then
     VALID_JSON="$BUILD/bootentries.valid.json"
-    python3 - "$VALID_JSON" <<'PYEOF'
+    python3 - "$VALID_JSON" "$STORE_ENTRIES" <<'PYEOF'
 import json, sys, zlib
-store = {"schema_version": 1, "crc32": "0x00000000", "entries": [{
+entries = [{
     "id": "smoke-entry", "title": "Smoke", "kind": "split", "flags": ["active"],
     "sort_key": "00", "machine_id": "", "policy_tags": [],
-    "payload": {"kernel": "\\boot\\kernel.exe"}}]}
+    "payload": {"kernel": "\\boot\\kernel.exe"}}]
+if sys.argv[2] == "2":
+    # A short per-entry countdown on the default keeps the menu leg fast.
+    entries[0]["timeout_override"] = 2
+    entries.append({
+        "id": "smoke-alt", "title": "Smoke alternate", "kind": "split", "flags": ["active"],
+        "sort_key": "01", "machine_id": "", "policy_tags": [],
+        "payload": {"kernel": "\\boot\\kernel.exe"}})
+store = {"schema_version": 1, "crc32": "0x00000000", "entries": entries}
 body = json.dumps(store).encode()
 crc = zlib.crc32(body) & 0xFFFFFFFF
 open(sys.argv[1], "wb").write(body.replace(b"0x00000000", b"0x%08X" % crc, 1))
@@ -1324,9 +1339,29 @@ elif [ "$BOOT_PASSED" = true ]; then
 
     # ---- Valid-store assertions -------------------------------------------
     if [ "$VALID_STORE" = "1" ]; then
-        if ! grep -q "policy: bootentries.json parsed reject_code=0 entries=1" "$STRIPPED_LOG" 2>/dev/null; then
+        if ! grep -q "policy: bootentries.json parsed reject_code=0 entries=$STORE_ENTRIES" "$STRIPPED_LOG" 2>/dev/null; then
             echo -e "${RED}SMOKE TEST FAILED: a valid boot entry store was not accepted${NC}"
             grep -E "policy:|store-reject:" "$STRIPPED_LOG" 2>/dev/null | head -6
+            exit 1
+        fi
+    fi
+
+    # ---- Boot menu assertions ---------------------------------------------
+    # The menu draws once at 2 s, repaints its countdown at 1 s, and the
+    # countdown expiry boots the default. Each repaint mirrors a serial line.
+    if [ "$MENU" = "1" ]; then
+        for want in '[BOOT] menu: 2 entries, selected="smoke-entry" timeout=2s' \
+                    '[BOOT] menu: 2 entries, selected="smoke-entry" timeout=1s' \
+                    '[BOOT] menu: countdown expired -- auto-selecting default'; do
+            if ! grep -qF "$want" "$STRIPPED_LOG" 2>/dev/null; then
+                echo -e "${RED}SMOKE TEST FAILED: boot menu line missing: $want${NC}"
+                grep -E "\[BOOT\] menu" "$STRIPPED_LOG" 2>/dev/null | head -6
+                exit 1
+            fi
+        done
+        # Rounded up, the countdown never shows 0 before it expires.
+        if grep -qF 'selected="smoke-entry" timeout=0s' "$STRIPPED_LOG" 2>/dev/null; then
+            echo -e "${RED}SMOKE TEST FAILED: the menu countdown showed 0 s before expiring${NC}"
             exit 1
         fi
     fi

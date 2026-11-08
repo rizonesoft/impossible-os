@@ -5912,9 +5912,9 @@ static void boot_policy_publish_alloc_failure_fallback(const char *what)
                              "the firmware ran out of memory reading boot settings");
 }
 
-/* Boot menu cap. UEFI spec section 13.5 supports far more entries, but
- * pragmatic UX caps at 16 visible rows -- matches systemd-boot. */
-#define BOOT_MENU_MAX_VISIBLE 16
+/* Boot menu geometry and the visible-row cap (BOOT_MENU_MAX_VISIBLE) are
+ * shared with the boot tests, which check every band against the atlases. */
+#include "../../../include/boot/boot_menu_layout.h"
 
 /* Default countdown when no per-entry override is set. 5 seconds per
  * the boot menu spec. */
@@ -5994,15 +5994,151 @@ static const char *boot_menu_indicators(const boot_entry_envelope_t *e,
     return out_buf;
 }
 
+/* GOP menu: the full clear covers everything above the footer band; each
+ * row and the footer are then repainted only inside their own band, and
+ * boot_menu_text_py() keeps each line's ink inside it (boot_menu_layout.h). */
+
+static int boot_menu_gop_ok(int gop_available)
+{
+    return gop_available && gFramebuffer && gFbPitch > 0u && gFbHeight > 0u;
+}
+
+/* Fill rows [y0, y0+h) between columns [x0, x1) with one colour, clipped to
+ * the framebuffer. */
+static void boot_menu_fill(UINT32 y0, UINT32 h, UINT32 x0, UINT32 x1, UINT32 colour)
+{
+    if (x1 > gFbWidth) x1 = gFbWidth;
+    for (UINT32 y = y0; y < y0 + h && y < gFbHeight; y++)
+        for (UINT32 x = x0; x < x1; x++)
+            gFramebuffer[y * gFbPitch + x] = colour;
+}
+
+/* The right end of row and footer text: inside the highlight bar, and inside
+ * the screen on a mode narrower than the bar. */
+static UINT32 boot_menu_text_right(void)
+{
+    UINT32 right = BOOT_MENU_HI_X + BOOT_MENU_HI_W;
+    if (right > gFbWidth) right = gFbWidth;
+    return right > BOOT_MENU_TEXT_PAD ? right - BOOT_MENU_TEXT_PAD : 0u;
+}
+
+/* Repaint screen row `slot` (entry `idx`) in its own band, highlighted or not.
+ * Badges and title are fitted to the bar, a cut title ending in "...". */
+static void boot_menu_paint_row(const boot_entries_parse_result_t *parse,
+                                const unsigned int *cand_idx, unsigned int slot,
+                                unsigned int idx, int highlighted,
+                                const boot_policy_decision_t *decision, int sb_active)
+{
+    UINT32 y = BOOT_MENU_LIST_Y0 + (UINT32)slot * BOOT_MENU_ROW_H;
+    if (y >= gFbHeight)
+        return;
+    const boot_entry_envelope_t *e = &parse->entries[cand_idx[idx]];
+    UINT8 fg_r = 0xC8, fg_g = 0xC8, fg_b = 0xC8;
+    UINT8 bg_r = 0x0A, bg_g = 0x0A, bg_b = 0x0A;
+    boot_menu_fill(y, BOOT_MENU_ROW_H, 0u, gFbWidth, fb_pack_rgb(0x0A, 0x0A, 0x0A));
+    if (highlighted) {
+        boot_menu_fill(y, BOOT_MENU_ROW_H, BOOT_MENU_HI_X,
+                       BOOT_MENU_HI_X + BOOT_MENU_HI_W, fb_pack_rgb(0x40, 0x80, 0xC0));
+        fg_r = 0xFF; fg_g = 0xFF; fg_b = 0xFF;
+        bg_r = 0x40; bg_g = 0x80; bg_b = 0xC0;
+    }
+    UINT32 py = boot_menu_text_py(bsod_aa_SUB, BSOD_AA_SUB_ASCENT, y, BOOT_MENU_ROW_H);
+    UINT32 right = boot_menu_text_right();
+    if (py == 0u || right <= BOOT_MENU_COL_X)
+        return;
+    /* Indicator badges first (ASCII, atlas-safe), then title. */
+    char ind[40];
+    char fitted[sizeof(e->title) + 4u];
+    (void)boot_menu_indicators(e, decision, sb_active, ind, (unsigned int)sizeof(ind));
+    const char *label = e->title[0] ? e->title : e->id;
+    UINT32 lx = BOOT_MENU_COL_X;
+    if (ind[0]) {
+        (void)boot_menu_fit_text(bsod_aa_SUB, ind, right - lx, fitted, (unsigned int)sizeof(fitted));
+        bsod_aa_string(lx, py, fitted, bsod_aa_SUB, bsod_aa_SUB_data, BSOD_AA_SUB_ASCENT,
+                       fg_r, fg_g, fg_b, bg_r, bg_g, bg_b);
+        lx += bsod_aa_string_width(fitted, bsod_aa_SUB) + BSOD_AA_TRACKING;
+    }
+    if (lx >= right)
+        return;
+    (void)boot_menu_fit_text(bsod_aa_SUB, label, right - lx, fitted, (unsigned int)sizeof(fitted));
+    bsod_aa_string(lx, py, fitted, bsod_aa_SUB, bsod_aa_SUB_data, BSOD_AA_SUB_ASCENT,
+                   fg_r, fg_g, fg_b, bg_r, bg_g, bg_b);
+}
+
+/* Append a decimal number to `buf` at `p`, bounded by `cap`; returns the new
+ * end. */
+static unsigned int boot_menu_put_uint(char *buf, unsigned int cap, unsigned int p,
+                                       unsigned int v)
+{
+    char rev[12];
+    unsigned int rn = 0;
+    do { rev[rn++] = (char)('0' + (v % 10u)); v /= 10u; } while (v > 0u && rn < 11u);
+    while (rn > 0u && p + 1u < cap) buf[p++] = rev[--rn];
+    return p;
+}
+
+static unsigned int boot_menu_put_text(char *buf, unsigned int cap, unsigned int p,
+                                       const char *t)
+{
+    while (*t && p + 1u < cap) buf[p++] = *t++;
+    return p;
+}
+
+/* Repaint the footer band at `footer_y`. While the countdown runs it names the
+ * seconds left; once a key stopped it there is no countdown to show. A list
+ * that scrolls also names the highlighted entry's position. */
+static void boot_menu_paint_footer(const boot_menu_view_t *v, UINT32 footer_y)
+{
+    if (footer_y >= gFbHeight)
+        return;
+    boot_menu_fill(footer_y, BOOT_MENU_FOOTER_H, 0u, gFbWidth, fb_pack_rgb(0x0A, 0x0A, 0x0A));
+    UINT32 py = boot_menu_text_py(bsod_aa_SUB, BSOD_AA_SUB_ASCENT, footer_y, BOOT_MENU_FOOTER_H);
+    UINT32 right = boot_menu_text_right();
+    if (py == 0u || right <= BOOT_MENU_COL_X)
+        return;
+    char foot[80];
+    unsigned int p = 0;
+    if (v->counting) {
+        p = boot_menu_put_text(foot, sizeof(foot), p, "Auto-boot in ");
+        p = boot_menu_put_uint(foot, sizeof(foot), p, v->seconds_left);
+        p = boot_menu_put_text(foot, sizeof(foot), p, "s. Use arrows + Enter.");
+    } else {
+        p = boot_menu_put_text(foot, sizeof(foot), p, "Use arrows + Enter to boot.");
+    }
+    if (v->count > v->rows) {
+        p = boot_menu_put_text(foot, sizeof(foot), p, " Entry ");
+        p = boot_menu_put_uint(foot, sizeof(foot), p, v->selected + 1u);
+        p = boot_menu_put_text(foot, sizeof(foot), p, " of ");
+        p = boot_menu_put_uint(foot, sizeof(foot), p, v->count);
+        p = boot_menu_put_text(foot, sizeof(foot), p, ".");
+    }
+    foot[p] = 0;
+    char fitted[sizeof(foot) + 4u];
+    (void)boot_menu_fit_text(bsod_aa_SUB, foot, right - BOOT_MENU_COL_X,
+                             fitted, (unsigned int)sizeof(fitted));
+    bsod_aa_string(BOOT_MENU_COL_X, py, fitted, bsod_aa_SUB, bsod_aa_SUB_data, BSOD_AA_SUB_ASCENT,
+                   0x80, 0x80, 0x80, 0x0A, 0x0A, 0x0A);
+}
+
+/* Bring the screen from *drawn to *want, painting only what changed (see
+ * boot_menu_repaint_plan), and record what is now on screen in *drawn. The
+ * GOP path is used when `want->rows` came from boot_menu_fit (gop_rows != 0);
+ * otherwise the ConOut text fallback. */
 static void boot_menu_render(const boot_entries_parse_result_t *parse,
                              const unsigned int *cand_idx,
                              unsigned int cand_count,
-                             unsigned int selected_idx,
-                             unsigned int seconds_left,
-                             int gop_available,
+                             boot_menu_view_t *drawn,
+                             const boot_menu_view_t *want,
+                             const boot_menu_fit_t *gop_fit,
                              const boot_policy_decision_t *decision,
                              int sb_active)
 {
+    unsigned int row_old = 0, row_new = 0;
+    unsigned int plan = boot_menu_repaint_plan(drawn, want, &row_old, &row_new);
+    if (plan == 0u)
+        return;
+    unsigned int selected_idx = want->selected;
+
     /* Serial mirror -- always, regardless of GOP availability. The
      * smoke test asserts this line appears so headless operators see
      * the same selection state as graphical ones. */
@@ -6018,93 +6154,40 @@ static void boot_menu_render(const boot_entries_parse_result_t *parse,
         serial_early_print("(none)");
     }
     serial_early_print(" timeout=");
-    serial_early_print_uint(seconds_left);
+    serial_early_print_uint(want->counting ? want->seconds_left : 0u);
     serial_early_print("s\n");
 
-    if (gop_available && gFramebuffer && gFbPitch > 0u && gFbHeight > 0u) {
-        /* GOP path: clear top portion, render title + entry rows.
-         * Use bsod_aa_TITLE for the heading and bsod_aa_SUB for entries. */
-        const UINT32 row_h = 32;
-        const UINT32 title_y = 60;
-        const UINT32 list_y0 = 130;
-        const UINT32 col_x = 80;
-        UINT32 bg = fb_pack_rgb(0x0A, 0x0A, 0x0A);
-        UINT32 hi_bg = fb_pack_rgb(0x40, 0x80, 0xC0);
-
-        /* Clear background. */
-        for (UINT32 y = 0; y < gFbHeight && y < (list_y0 + row_h * BOOT_MENU_MAX_VISIBLE + row_h); y++)
-            for (UINT32 x = 0; x < gFbWidth; x++)
-                gFramebuffer[y * gFbPitch + x] = bg;
-
-        /* Title. */
-        bsod_aa_string(col_x, title_y, "Impossible OS Boot Menu",
-                       bsod_aa_TITLE, bsod_aa_TITLE_data, 28u,
-                       0xE0, 0xE0, 0xE0, 0x0A, 0x0A, 0x0A);
-
-        /* Entry rows. */
-        for (unsigned int i = 0; i < cand_count && i < BOOT_MENU_MAX_VISIBLE; i++) {
-            UINT32 y = list_y0 + (UINT32)i * row_h;
-            const boot_entry_envelope_t *e = &parse->entries[cand_idx[i]];
-            UINT8 fg_r = 0xC8, fg_g = 0xC8, fg_b = 0xC8;
-            UINT8 bg_r = 0x0A, bg_g = 0x0A, bg_b = 0x0A;
-            if (i == selected_idx) {
-                /* Highlight: blue bar across the row. */
-                for (UINT32 yi = y; yi < y + row_h && yi < gFbHeight; yi++)
-                    for (UINT32 xi = col_x - 8; xi < gFbWidth && xi < col_x + 800; xi++)
-                        gFramebuffer[yi * gFbPitch + xi] = hi_bg;
-                fg_r = 0xFF; fg_g = 0xFF; fg_b = 0xFF;
-                bg_r = 0x40; bg_g = 0x80; bg_b = 0xC0;
-            }
-            /* Indicator badges first (ASCII, atlas-safe), then title. */
-            char ind[40];
-            (void)boot_menu_indicators(e, decision, sb_active,
-                                       ind, (unsigned int)sizeof(ind));
-            const char *label = e->title[0] ? e->title : e->id;
-            UINT32 lx = col_x;
-            if (ind[0]) {
-                bsod_aa_string(lx, y + 4u, ind,
-                               bsod_aa_SUB, bsod_aa_SUB_data, 18u,
-                               fg_r, fg_g, fg_b, bg_r, bg_g, bg_b);
-                /* Approximate AA width per char: SUB at 18px ~ 11px/char. */
-                unsigned int ind_len = 0;
-                while (ind[ind_len]) ind_len++;
-                lx += (UINT32)ind_len * 11u;
-            }
-            bsod_aa_string(lx, y + 4u, label,
-                           bsod_aa_SUB, bsod_aa_SUB_data, 18u,
-                           fg_r, fg_g, fg_b, bg_r, bg_g, bg_b);
+    if (gop_fit && gop_fit->rows != 0u) {
+        unsigned int top = want->top;
+        unsigned int shown = cand_count - top < gop_fit->rows ? cand_count - top : gop_fit->rows;
+        if (plan & BOOT_MENU_PAINT_FULL) {
+            boot_menu_fill(0u, gop_fit->footer_y, 0u, gFbWidth, fb_pack_rgb(0x0A, 0x0A, 0x0A));
+            UINT32 ty = boot_menu_text_py(bsod_aa_TITLE, BSOD_AA_TITLE_ASCENT, BOOT_MENU_TITLE_Y,
+                                          BOOT_MENU_LIST_Y0 - BOOT_MENU_TITLE_Y);
+            if (ty != 0u)
+                bsod_aa_string(BOOT_MENU_COL_X, ty, "Impossible OS Boot Menu",
+                               bsod_aa_TITLE, bsod_aa_TITLE_data, BSOD_AA_TITLE_ASCENT,
+                               0xE0, 0xE0, 0xE0, 0x0A, 0x0A, 0x0A);
         }
-
-        /* Footer: countdown. */
-        UINT32 footer_y = list_y0 + (UINT32)BOOT_MENU_MAX_VISIBLE * row_h + 30;
-        if (footer_y < gFbHeight) {
-            char foot[64];
-            const char prefix[] = "Auto-boot in ";
-            unsigned int p = 0;
-            while (prefix[p] && p < sizeof(foot) - 8u) { foot[p] = prefix[p]; p++; }
-            unsigned int sl = seconds_left;
-            char buf[12];
-            unsigned int n = 0;
-            if (sl == 0) buf[n++] = '0';
-            else {
-                char rev[12];
-                unsigned int rn = 0;
-                while (sl > 0 && rn < 11) { rev[rn++] = (char)('0' + (sl % 10)); sl /= 10; }
-                while (rn > 0) buf[n++] = rev[--rn];
-            }
-            for (unsigned int j = 0; j < n && p < sizeof(foot) - 4u; j++) foot[p++] = buf[j];
-            const char suffix[] = "s. Use arrows + Enter.";
-            for (unsigned int j = 0; suffix[j] && p < sizeof(foot) - 1u; j++) foot[p++] = suffix[j];
-            foot[p] = 0;
-            bsod_aa_string(col_x, footer_y, foot,
-                           bsod_aa_SUB, bsod_aa_SUB_data, 18u,
-                           0x80, 0x80, 0x80, 0x0A, 0x0A, 0x0A);
+        if (plan & (BOOT_MENU_PAINT_FULL | BOOT_MENU_PAINT_LIST)) {
+            for (unsigned int s = 0; s < shown; s++)
+                boot_menu_paint_row(parse, cand_idx, s, top + s, top + s == selected_idx,
+                                    decision, sb_active);
+        } else if (plan & BOOT_MENU_PAINT_ROWS) {
+            if (row_old >= top && row_old < top + shown)
+                boot_menu_paint_row(parse, cand_idx, row_old - top, row_old, 0, decision, sb_active);
+            if (row_new >= top && row_new < top + shown)
+                boot_menu_paint_row(parse, cand_idx, row_new - top, row_new, 1, decision, sb_active);
         }
-    } else if (gST && gST->ConOut && gST->ConOut->OutputString) {
-        /* ConOut text fallback. UEFI text console only -- no
-         * fancy formatting. */
+        if (plan & (BOOT_MENU_PAINT_FULL | BOOT_MENU_PAINT_FOOTER))
+            boot_menu_paint_footer(want, gop_fit->footer_y);
+    } else if ((plan & (BOOT_MENU_PAINT_FULL | BOOT_MENU_PAINT_ROWS | BOOT_MENU_PAINT_LIST)) &&
+               gST && gST->ConOut && gST->ConOut->OutputString) {
+        /* ConOut text fallback. The list has no countdown line, so it is
+         * reprinted only when the highlight moves, never once a second. */
+        unsigned int visible = cand_count < BOOT_MENU_MAX_VISIBLE ? cand_count : BOOT_MENU_MAX_VISIBLE;
         gST->ConOut->OutputString(gST->ConOut, u"\r\n=== Impossible OS Boot Menu ===\r\n");
-        for (unsigned int i = 0; i < cand_count && i < BOOT_MENU_MAX_VISIBLE; i++) {
+        for (unsigned int i = 0; i < visible; i++) {
             const boot_entry_envelope_t *e = &parse->entries[cand_idx[i]];
             char ind[40];
             (void)boot_menu_indicators(e, decision, sb_active,
@@ -6124,6 +6207,8 @@ static void boot_menu_render(const boot_entries_parse_result_t *parse,
             gST->ConOut->OutputString(gST->ConOut, line);
         }
     }
+    *drawn = *want;
+    drawn->valid = 1u;
 }
 
 /* Run the menu countdown + input loop. Returns the index in cand_idx[]
@@ -6200,9 +6285,18 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
     if (gST && gST->ConIn && gST->ConIn->Reset)
         gST->ConIn->Reset(gST->ConIn, 0);
 
-    /* Initial render. */
-    boot_menu_render(parse, cand_idx, cand_count, selected,
-                     timeout_s, gop_available, decision, sb_active);
+    /* Initial render. `drawn` is what is on screen; a local, so it starts
+     * empty on every menu session (no loader static to reset). */
+    boot_menu_view_t drawn = { 0u, 0u, 0u, 0u, 0u, 0u, 0u };
+    boot_menu_fit_t gop_fit = { 0u, 0u };
+    if (boot_menu_gop_ok(gop_available))
+        gop_fit = boot_menu_fit(gFbHeight);
+    unsigned int rows = gop_fit.rows != 0u ? gop_fit.rows : BOOT_MENU_MAX_VISIBLE;
+    boot_menu_view_t want = { 1u, selected, (unsigned int)counting_down, timeout_s,
+                              0u, cand_count, rows };
+    want.top = boot_menu_scroll_top(0u, selected, cand_count, rows);
+    boot_menu_render(parse, cand_idx, cand_count, &drawn, &want,
+                     &gop_fit, decision, sb_active);
     int dirty = 0;
     unsigned int last_seconds_logged = timeout_s;
     /* Throttle watchdog refresh: the firmware WD_TIMEOUT in efi_main
@@ -6307,21 +6401,23 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
         elapsed_ms += 50u;
 
         if (counting_down) {
-            unsigned int seconds_left = (countdown_ms > elapsed_ms)
-                ? (countdown_ms - elapsed_ms) / 1000u
-                : 0u;
-            if (seconds_left != last_seconds_logged) {
+            /* Once the countdown has run out the loop boots the default, so
+             * painting its final 0 would only delay that. */
+            unsigned int seconds_left = boot_menu_seconds_left(countdown_ms, elapsed_ms);
+            if (elapsed_ms < countdown_ms && seconds_left != last_seconds_logged) {
                 last_seconds_logged = seconds_left;
                 dirty = 1;
             }
         }
 
         if (dirty) {
-            unsigned int seconds_left = counting_down
-                ? ((countdown_ms > elapsed_ms) ? (countdown_ms - elapsed_ms) / 1000u : 0u)
-                : 0u;
-            boot_menu_render(parse, cand_idx, cand_count, selected,
-                             seconds_left, gop_available, decision, sb_active);
+            want.selected = selected;
+            want.top = boot_menu_scroll_top(want.top, selected, cand_count, rows);
+            want.counting = (unsigned int)counting_down;
+            want.seconds_left = counting_down
+                ? boot_menu_seconds_left(countdown_ms, elapsed_ms) : 0u;
+            boot_menu_render(parse, cand_idx, cand_count, &drawn, &want,
+                             &gop_fit, decision, sb_active);
             dirty = 0;
         }
     }
