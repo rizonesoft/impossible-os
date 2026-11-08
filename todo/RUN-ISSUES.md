@@ -14,6 +14,7 @@ Open problems with the run itself: flow, gates, cost. One running file, replacin
   - Settled by running `codex-review-todo` once on a closed file after sections ship, and counting cross-section findings.
 - [ ] Anything that depends on state from a previous boot is invisible to the suite and the smoke matrix
   - The first concrete need is the open item at `01-boot-platform/TODO-29:649`. A second-boot leg means restructuring `test-smoke.sh`, so it needs a design pass.
+  - Partial since TODO-03 section 24: the matrix store legs (corrupt, repeat, repaired) reuse one OVMF variable store across boots through `SMOKE_STORE_RECORD`, so a second-boot leg can follow that shape.
 - [ ] Syscall arg counts are not in the ABI fingerprint
   - `render()` in `scripts/gen-user-abi.py` fingerprints names and numbers. `SYS_EXEC` is slated to go from `(path, len)` to `(path, argv, envp)`, which would land with the fingerprint unchanged. Fixing it closes `00-infrastructure/TODO-04` s41.
 - [ ] The release flavor is not built at the section boundary
@@ -28,6 +29,9 @@ Open problems with the run itself: flow, gates, cost. One running file, replacin
   - Writer and all agents moved to medium on 2026-11-06. No section has shipped since, so there is no comparison yet.
 - [ ] Context growth is still the dominant token use
   - Compaction at 400K is the current lever. Compare tokens per shipped section across a change to `RUN_COMPACT_AT`. Also unsettled: trimming `CLAUDE.md`, and replay task sets before pinning `general-purpose` and `Explore` to Sonnet.
+
+- [ ] `test-tooling.sh` install-hooks lifecycle failed once in a pre-push run: `pre-push status not ENABLED` with the sentinel present
+  - 2026-11-08, push of `4cf186a49`: 1/1414 failed, while the sentinel check just before it passed. It passed in isolation and on the immediate retry; cause not found. If it recurs, capture `install-hooks.sh --status` output and the sentinel path inside the test.
 
 ## Baselines
 

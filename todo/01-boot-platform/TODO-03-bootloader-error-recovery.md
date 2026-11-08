@@ -85,7 +85,7 @@ title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
 | ⭐  |  21   | Boot error history ring -- consumer (reader, renderer, tests, smoke fixture) | §20           |  [x]   |
 | ⭐  |  22   | Rejected boot-entry store is a silent failure on screen                      | §9, §18       |  [x]   |
 | ⭐  |  23   | No on-screen words below 800x600 (QR renders, text does not)                 | §9, §18, §22  |  [x]   |
-| ⭐  |  24   | A rejected store leaves no trace the user can act on afterwards              | §13, §20, §22 |  [ ]   |
+| ⭐  |  24   | A rejected store leaves no trace the user can act on afterwards              | §13, §20, §22 |  [x]   |
 
 > 💎 = parity -- Windows bootmgfw.efi and GRUB2 both handle these error paths.
 > ⭐ = exclusive -- visible error screen with recovery instructions, QR code, and NVRAM-persisted error codes; neither Windows nor Linux provides this level of pre-kernel diagnostic detail.
@@ -929,11 +929,20 @@ Found by the parity pass on §22. Two independent halves of one outcome: the use
   - Before: `parsed 0 entries (1 skipped)`, `selection_reason=7 (FALLBACK_NO_VIABLE)`. After, under `SMOKE_VALID_STORE=1`: `parsed 1 entries`, `selection_reason=1 (STORE_DEFAULT)`, boots to `C:\>`.
   - 90 pointer slots read 0 until now, including the chainload probes and the firmware-quirk map, which have therefore never run on a real boot. They are live from this commit; neither has been observed against real foreign-OS media or real firmware.
   - `test-smoke-matrix.sh` now boots both store fixtures. Rationale: [docs/infrastructure/bare-metal-gotchas.md](../../docs/infrastructure/bare-metal-gotchas.md). The link flag that would refuse an undefined symbol at build time is filed in `overnight-runner-improvements-v22.md`, since the unattended run may not edit a Makefile.
-- [ ] Commit: `"boot: persist and locate boot-entry store rejections"`
+- [x] Commit: shipped as `4ee7a2396` (relocations, reject locator), `976c91bb5` (persisted record) and `5e43a21e6` (kernel log)
 
 **Explicitly NOT in scope: an inline repair route from the bootloader.** GRUB offers a rescue shell because a broken `grub.cfg` can leave the machine unbootable, so the user has nowhere else to stand. That asymmetry does not apply here: §22's notice is advisory and the fallback entry boots, so the user repairs the store from their own running system with a normal editor. Building an editor or rescue shell into the bootloader would be a large capability answering a problem the fallback already solves. `01-boot-platform/TODO-22-recovery-partition.md` §5 was considered as an owner and is NOT one: it resets A/B slot metadata and never touches the boot-entry store.
 
 **Test checkpoint:** `SUITE=boot` green; a corrupt-store boot followed by a second boot, asserting the rejection is still discoverable on the second one and that a repeated rejection does not evict unrelated history-ring entries.
+
+> **Test runner:** `bash scripts/test.sh SUITE=boot QUIET=1` (7141 kernel + 17 user-mode PASS) and `bash scripts/test-smoke-matrix.sh` store legs (valid, corrupt `written`, repeat `unchanged`, repaired `cleared`; 11/11 PASS 2026-11-08)
+
+> **Notes:**
+> - What shipped: a rejected boot-entry store is persisted to a dedicated 16-byte `BootStoreReject` variable, located to line and column on the notice, and logged by the kernel on every boot until repaired.
+> - Integration: `boot_store_record_sync()` writes only on change and never through `boot_fatal()`, so the eight-entry history ring and `BootError` are untouched; `boot_store_reject_render()` runs after `boot_history_render()`.
+> - Downstream: BOOTX64 now applies its own relocations (`loader_self_relocate()`), which made a valid store, the chainload probes and the firmware-quirk map live on real boots for the first time.
+> - Canonical doc: [docs/boot/boot-error-history.md](../../docs/boot/boot-error-history.md) holds the variable schema.
+> - Scope boundary: no inline repair route and no desktop notification (no user-facing consumer exists yet); the record names no device, so another disk's good store clears it.
 
 ## OS Comparison
 
@@ -958,7 +967,7 @@ Found by the parity pass on §22. Two independent halves of one outcome: the use
 | 💎  | Handoff ABI            | ✅ BCD signature + protocol                     | ✅ Multiboot2 / Linux boot               | ✅ §15 magic+ver+size + halt             |
 | 💎  | Offline repair         | ✅ Windows Recovery Environment                 | ✅ rescue/live ISO image                 | ⬜ TODO-22 recovery partition            |
 | ⭐  | Multi-attempt diag     | ✅ BootStatusData (Vista+, last 4)              | ⚠️ systemd-bootctl status (single)       | ✅ §20+§21 8-entry NVRAM ring + renderer |
-| ⭐  | Rejected boot store    | ⚠️ Halts: 0xc000000f + external media           | ⚠️ GRUB rescue shell; systemd-boot quiet | ✅ §22 named notice, then boots fallback |
+| ⭐  | Rejected boot store    | ⚠️ Halts: 0xc000000f + external media           | ⚠️ GRUB rescue shell; systemd-boot quiet | ✅ §22 notice + §24 persisted, located   |
 | ⭐  | Sub-800x600 error text | ✅ bootmgr's own BGFX renderer, not the console | ✅ GRUB gfxterm draws at any GOP mode    | ✅ §23 compact tier from 480x256 + QR    |
 
 > **Parity:** 💎 rows track Win11 + Linux bootloader hardening. **⭐** rows are pre-kernel UX beyond typical UEFI/GRUB rescue. Capsule apply stays `TODO-27 §2`; multi-GOP enumeration stays `TODO-27 §4` with §5 here as timeout wrapper only. Full recovery partition / WinRE-class repair is `TODO-22-recovery-partition.md`, not duplicated here.

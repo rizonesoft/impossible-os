@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-03-bootloader-error-recovery.md sources=src/boot/uefi/bootx64.c,src/boot/uefi/boot_history.c,src/boot/uefi/boot_entries_parser.c,src/kernel/main/boot_history.c,include/kernel/boot_info.h reviewed=2026-11-07 order=3 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-03-bootloader-error-recovery.md sources=src/boot/uefi/bootx64.c,src/boot/uefi/boot_history.c,src/boot/uefi/boot_entries_parser.c,src/kernel/main/boot_history.c,include/kernel/boot_info.h reviewed=2026-11-08 order=3 -->
 # Bootloader Error Recovery
 
 ## What is it?
