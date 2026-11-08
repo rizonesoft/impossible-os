@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=tools/bootcfg/bootcfg.py,tools/boot-entry-validate/validate.py,tools/bootcfg/test_bootcfg.py reviewed=2026-09-28 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=tools/bootcfg/bootcfg.py,tools/boot-entry-validate/validate.py,tools/bootcfg/test_bootcfg.py reviewed=2026-11-08 -->
 # bootcfg -- Boot Entry Store Editor
 
 > Host-side CLI tool that edits `\EFI\ImpossibleOS\bootentries.json`
@@ -78,6 +78,8 @@ fsync silently no-ops (Python's `os.fsync` on a directory fd raises
 ## Live-boot subcommands (deferred)
 
 These are deferred per the editor-tooling section in [the boot-entry TODO](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#11-boot-entry-editor-tooling):
+
+What blocks them today is the syscall ABI, not the binary. Both ring-3 entry paths pass a system call's fifth argument as 0, and `NtSetSystemEnvironmentValueEx` takes its UEFI attributes there, so a user-mode write arrives with attributes 0 and the firmware deletes the variable instead of setting it. The fix is owned by the [INT 0x2E compatibility path section of the native API TODO](../../todo/02-kernel-core/TODO-12-native-api-ssdt.md#3-int-0x2e-compatibility-path), which reads arguments 5 and later from the user stack.
 
 - `set-bootnext-hint <id>` -- the firmware-layer BootNext signal lives
   in the UEFI variable namespace, not in the on-disk store. The

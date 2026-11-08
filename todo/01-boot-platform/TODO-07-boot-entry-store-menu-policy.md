@@ -64,7 +64,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |   8   | Safe mode, test mode, and diagnostics entries                       | §3, T10 §7                              |  [/]   |
 | 💎  |   9   | A/B and recovery entry integration (DEFERRED)                       | §3, §4, T21 §1+§3+§4, T22 §1+§2         |  [/]   |
 | 💎  |  10   | Previous-kernel and known-good entries (DEFERRED)                   | §2, §14, T06 §1, D15 T03 §6 (updater)   |  [/]   |
-| 💎  |  11   | Boot entry editor tooling                                           | §1, §2                                  |  [ ]   |
+| 💎  |  11   | Boot entry editor tooling                                           | §1, §2                                  |  [/]   |
 | ⭐  |  12   | Policy audit (BlackBox primary, NVRAM exceptional)                  | §3, §4, §9                              |  [x]   |
 | 💎  |  13   | Entry kinds: split, UKI, chainload, network, resume                 | §1, §2, T02 §11, T26 §3, T25 §7, T27 §1 |  [/]   |
 | 💎  |  14   | Per-entry health-gated mark-good                                    | §3, §5, §9, T21 §5, D02 T02 §10         |  [/]   |
@@ -404,8 +404,9 @@ After an update, the previous kernel stays available until the new kernel is con
 Offline editor so operators are not stuck hex-editing the JSON. Host-side Python ships now (offline + CI/release path); native user-mode binary deferred until user-mode runtime supports it.
 
 - [x] `tools/bootcfg/bootcfg.py` host CLI subcommands: list / add / remove / set-default / emit-seed. Live-boot subcommands (set-bootnext-hint, set-oneshot, dump-history) deferred to a future user-mode binary.
-- [ ] Live-boot `bootcfg` native binary: set-bootnext-hint, set-oneshot, dump-history
-  - Had no open item: the parent line is `[x]` and the stamp pointed back at it. `NtSetSystemEnvironmentValueEx` is registered (`uefi_runtime.c:2974`) and the history is a BlackBox JSONL file, so nothing outside this section is missing.
+- [/] Live-boot `bootcfg` native binary: set-bootnext-hint, set-oneshot, dump-history
+  - BLOCKED on 02-kernel-core/TODO-12 §3 (item: "Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+"). Both ring-3 entry paths pass arg5 as 0 (`syscall_entry.asm:100`, `syscall.c:1320`), so `NtSetSystemEnvironmentValueEx` gets Attributes 0 and UEFI deletes the variable instead of writing it.
+  - Checked 2026-11-08: reads work (the Ex query's arg5 is the optional attributes out-pointer), but every subcommand that matters writes `LoaderEntryOneShot` or `BootNext`, so the binary waits for the write path rather than shipping read-only and being redone.
 - [x] Offline-only mode (operates on a path argument); CI + release tooling consume it directly.
 - [x] Every write goes through `tools/boot-entry-validate/validate.py`; invalid stores never touch disk. Atomic CoW: tempfile + fsync + os.replace + parent-dir fsync.
 - [x] `set-default` rewrites sort_keys (not just array order); the policy ladder picks lowest sort_key.
@@ -428,6 +429,7 @@ Offline editor so operators are not stuck hex-editing the JSON. Host-side Python
 > **Verified:** 2026-05-09 | commit `01cbc213` (impl) + post-review fixup | 7/8 items + 1 deferred | build OK | tests 25/25 + 78/78 PASS
 > **Notes:** Reopened 2026-11-07, was Deferred on its own `[x]` item, which hid the live-boot binary from every pass.
 > **Quality reviewed:** 2026-05-09 | Codex 5x (design + adversarial + 2 re-adversarial + consistency + perf) | 2H+5M fixed | scope: N/A (host-side Python tool)
+> **Deferred:** live-boot `bootcfg.exe` (ring-3 firmware-variable writes arrive with Attributes 0) -> XREF: 02-kernel-core/TODO-12 §3 (item: "Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+")
 
 ---
 
