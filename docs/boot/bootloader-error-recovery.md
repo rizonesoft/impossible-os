@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-03-bootloader-error-recovery.md sources=src/boot/uefi/bootx64.c,src/boot/uefi/boot_history.c,src/boot/uefi/boot_entries_parser.c,src/kernel/main/boot_history.c,include/kernel/boot_info.h reviewed=2026-11-08 order=3 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-03-bootloader-error-recovery.md sources=src/boot/uefi/bootx64.c,src/boot/uefi/boot_history.c,src/boot/uefi/boot_entries_parser.c,src/kernel/main/boot_history.c,include/kernel/boot_info.h reviewed=2026-11-08T19:20 order=3 -->
 # Bootloader Error Recovery
 
 ## What is it?
@@ -48,7 +48,7 @@ Before that terminal path, several independent hardening layers run earlier in `
 bash scripts/build.sh                          # rebuild bootloader + kernel together
 bash scripts/test-smoke.sh                     # normal boot; asserts required/absent serial patterns
 SMOKE_CORRUPT_STORE=1 bash scripts/test-smoke.sh   # asserts the store-reject notice renders and names a position, on a copied image
-SMOKE_VALID_STORE=1 bash scripts/test-smoke.sh     # asserts a valid store is accepted and selected, on a copied image
+SMOKE_VALID_STORE=1 bash scripts/test-smoke.sh     # asserts a valid store is accepted and selected, and that the loader's policy, entry-kind, sticky and history code ran, on a copied image
 SMOKE_LOWRES=1 SMOKE_ERROR_SCREEN=1 bash scripts/test-smoke.sh  # forces a sub-floor GOP mode, asserts compact tier
 SMOKE_ES_SELFTEST=1 bash scripts/test-smoke.sh # error-screen oracle self-test against synthetic transcripts, boots nothing
 bash scripts/test-smoke-history.sh             # cascade: 3 corrupted boots + 1 clean boot, asserts the rendered ring
