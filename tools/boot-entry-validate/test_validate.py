@@ -965,14 +965,34 @@ def _post_read_cap_checks() -> list:
 
 
 def _header_mirror_drift() -> list:
-    """Every limit validate.py mirrors, compared against the C headers it mirrors.
+    """Every limit validate.py mirrors, compared against the C sources it mirrors.
 
-    The caps were equal by comment only; reading the header makes a one-sided
-    edit fail here instead of producing stores one side accepts and the other
-    refuses.
+    The caps were equal by comment only; reading the C makes a one-sided edit
+    fail here instead of producing stores one side accepts and the other
+    refuses. Defines may span continuation lines and may name other
+    BOOT_ENTRIES_* defines (the scan depth is derived from the parse depth).
     """
-    inc = Path(__file__).resolve().parents[2] / "include" / "boot"
-    header = (inc / "boot_entries.h").read_text() + "\n" + (inc / "boot_entries_parser.h").read_text()
+    root = Path(__file__).resolve().parents[2]
+    sources = [root / "include" / "boot" / "boot_entries.h",
+               root / "include" / "boot" / "boot_entries_parser.h",
+               root / "src" / "boot" / "uefi" / "boot_entries_parser.c"]
+    text = "\n".join(p.read_text() for p in sources).replace("\\\n", " ")
+    defines = {}
+    for m in re.finditer(r"^#define\s+(BOOT_ENTRIES_\w+)\s+(.+?)\s*(?:/\*.*)?$", text, re.M):
+        defines.setdefault(m.group(1), m.group(2))
+
+    def value_of(name: str, depth: int = 0) -> int:
+        if name not in defines:
+            raise KeyError(f"{name} not defined in the boot entry sources")
+        if depth > 8:
+            raise ValueError(f"{name} does not resolve to a number")
+        expr = re.sub(r"\bBOOT_ENTRIES_\w+\b", lambda m: str(value_of(m.group(0), depth + 1)),
+                      defines[name])
+        expr = re.sub(r"(\d+)[uUlL]+", r"\1", expr)
+        if not re.fullmatch(r"[\d\s()*+]+", expr):
+            raise ValueError(f"{name} is not a plain arithmetic define: {defines[name]!r}")
+        return eval(expr, {"__builtins__": {}})  # digits, spaces, ( ) * + only
+
     # (C name, offset): the Python value equals the C value plus offset. The
     # health-subset name length is a C buffer size, so it carries the NUL.
     pairs = {
@@ -987,19 +1007,17 @@ def _header_mirror_drift() -> list:
         "MAX_POLICY_TAG_LEN": "BOOT_ENTRIES_MAX_POLICY_TAG_LEN",
         "MAX_HEALTH_SUBSET_NAMES": "BOOT_ENTRIES_HEALTH_SUBSET_MAX_NAMES",
         "MAX_HEALTH_SUBSET_NAME_LEN": ("BOOT_ENTRIES_HEALTH_SUBSET_NAME_LEN", -1),
+        "MAX_PARSE_DEPTH": "BOOT_ENTRIES_MAX_PARSE_DEPTH",
+        "MAX_SCAN_DEPTH": "BOOT_ENTRIES_MAX_SCAN_DEPTH",
     }
     drift = []
     for py_name, c_spec in pairs.items():
         c_name, offset = c_spec if isinstance(c_spec, tuple) else (c_spec, 0)
-        m = re.search(r"^#define\s+" + c_name + r"\s+(.+?)\s*(?:/\*.*)?$", header, re.M)
-        if not m:
-            drift.append(f"{c_name} not found in boot_entries.h")
+        try:
+            c_value = value_of(c_name) + offset
+        except (KeyError, ValueError) as e:
+            drift.append(str(e))
             continue
-        expr = re.sub(r"(\d+)[uUlL]+", r"\1", m.group(1))
-        if not re.fullmatch(r"[\d\s()*+]+", expr):
-            drift.append(f"{c_name} is not a plain arithmetic define: {m.group(1)!r}")
-            continue
-        c_value = eval(expr, {"__builtins__": {}}) + offset  # digits, spaces, ( ) * + only
         py_value = getattr(_validator_mod, py_name)
         if c_value != py_value:
             drift.append(f"{py_name}={py_value} but {c_name}{offset:+d}={c_value}")
@@ -1405,10 +1423,10 @@ def main() -> int:
     drift = _header_mirror_drift()
     if drift:
         for d in drift:
-            print(f"[BAD]  validate.py constant does not match include/boot headers: {d}")
+            print(f"[BAD]  validate.py constant does not match the boot entry C sources: {d}")
         failures += 1
     else:
-        print("[OK]   validate.py constants match include/boot/boot_entries.h and boot_entries_parser.h")
+        print("[OK]   validate.py constants match the boot entry C sources")
 
     total = len(cases()) + len(locator) + 1
     print(f"\n{total - failures}/{total} passed")

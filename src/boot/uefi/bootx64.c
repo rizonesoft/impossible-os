@@ -5222,9 +5222,16 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len,
          * policy file. */
         json_file->Close(json_file);
         root_dir->Close(root_dir);
-        serial_early_print("[BOOT] policy: bootentries.json oversize (");
-        serial_early_print_uint((UINT32)file_size);
-        serial_early_print(" bytes > 16 KiB cap) -- treating as invalid store\n");
+        /* The size is printed in full: a hostile store of 4 GiB or more is
+         * exactly the input this line reports, and a UINT32 cast would show
+         * it as a few bytes. */
+        _Static_assert(BOOT_ENTRIES_MAX_TOTAL_BYTES == 16u * 1024u,
+                       "the oversize detail text below names the cap as 16 KiB");
+        serial_early_print("[BOOT] policy: bootentries.json oversize (0x");
+        serial_early_print_hex64(file_size);
+        serial_early_print(" bytes > ");
+        serial_early_print_uint(BOOT_ENTRIES_MAX_TOTAL_BYTES);
+        serial_early_print(" byte cap) -- treating as invalid store\n");
         *out_status = BOOT_STORE_LOAD_UNREADABLE;
         *out_detail = "the boot entry store is larger than the 16 KiB limit";
         return EFI_NOT_FOUND;

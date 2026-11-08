@@ -821,11 +821,23 @@ Found by the §20 test-coverage review, which asked for boundary cases at the ca
   - Control: the host pre-read check flipped to `>=` fails the at-cap case.
   - `validate_store()` is also called directly at the three sizes, because the CLI's pre-read check means its own `len(raw)` guard is otherwise never reached over the cap. Control: removing that guard fails the over-cap case.
   - A disagreement here is a store the host stamps and the firmware then refuses. The existing `_oversize_file` case stays; it proves the over-cap path, not the boundary.
-- [x] The caps are the same number by construction: `_header_mirror_drift()` compares every limit `validate.py` mirrors against `include/boot/boot_entries.h` and `boot_entries_parser.h` (including the health-subset limits).
+- [x] The caps are the same number by construction: `_header_mirror_drift()` in `test_validate.py` checks every mirrored limit against the C sources.
+  - Sources read: `include/boot/boot_entries.h` and `boot_entries_parser.h` and `boot_entries_parser.c`, 13 limits including the health-subset and parse/scan depth limits; a derived define (the scan depth) is resolved from the defines it names.
   - Control: `MAX_TOTAL_BYTES` raised by one fails the check. The inclusive cap is stated in `docs/boot/boot-entry-schema.md`.
 - [x] Commit: `"boot: cover the boot entry store size cap on both sides of the boundary"`
+- [x] Review fixes (post-ship review of `4432bd926`):
+  - Consistency [M]: the drift check also covers `MAX_PARSE_DEPTH` and `MAX_SCAN_DEPTH`. Control: each depth moved on one side fails.
+  - Boot auditor [L]: the oversize serial line prints the full 64-bit size and the cap from its define; a `_Static_assert` pins the detail text's "16 KiB".
+  - Boot auditor [L]: the predicate's declaration no longer splits another function's comment.
 
 **Test checkpoint:** `SUITE=boot` green with the three new kernel cases; host `python3 tools/boot-entry-validate/test_validate.py` green with the three mirrored cases. No smoke run needed unless the fixture change touches parser code.
+
+> **Test runner:** `scripts/debug/kernel/run-boot-tests.bat` (expect the "boot-entries: store size cap boundary" case PASS in SUITE=boot) and `python3 tools/boot-entry-validate/test_validate.py` (148/148).
+> **Verified:** 2026-11-08 | commit `4432bd926` + review fixes | 5/5 items | build OK | SUITE=boot 7551 kernel + 17 user tests PASS | 148/148 host validator cases | smoke matrix 13/13 at `4432bd926`, plain smoke to `C:\>` after review fixes | lint 0 errors
+> **Quality reviewed:** 2026-11-08 | Codex 8x (adversarial, test-coverage, re-adversarial x3, adversarial, consistency x2, perf) | 0H+3M+2L fixed, 0 open | scope: boot-code-quality (boot-quality-auditor)
+> **Notes:**
+> - The loader pre-read check and the parser share `boot_entries_size_within_cap()`, so the kernel boundary tests are the loader's tests too.
+> - Every mutation control was run: parser predicate exclusive (3 fail), host pre-read and post-read guards, each mirrored limit moved on one side.
 
 ---
 
