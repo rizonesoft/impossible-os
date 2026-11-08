@@ -40,6 +40,8 @@ Recognized in `boot_menu_run()` once the menu is on screen. The pre-menu F11 pro
 | Up / Down | Move highlight by one row.                                                                          |
 | Home      | Jump to first entry.                                                                                |
 | End       | Jump to last entry.                                                                                 |
+| PageUp / PageDown | Move one screen of rows, stopping at the first or last entry.                               |
+| 1-9       | Highlight that entry (when the menu has it). It does not boot; press Enter.                         |
 | Enter     | Boot the selected entry.                                                                            |
 | Esc       | Boot the currently-highlighted entry without further interaction (alias for Enter).                 |
 | F8        | Safe-mode override. Writes `boot_config.boot_mode = 1` directly so kernel-side observers (KUSD `SafeBootMode` population, bare-metal hardening guards) see the operator intent regardless of which envelope kind was highlighted. Consumer wire-up to KUSD `SafeBootMode` is owned by the [kernel configuration policy section on Safe Mode mirroring](../../todo/02-kernel-core/TODO-02-kernel-configuration-policy.md#5-safe-mode-and-recovery-policy-object). |

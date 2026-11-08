@@ -1255,6 +1255,37 @@ static void test_menu_repaint_plan(void)
                    BOOT_MENU_PAINT_LIST | BOOT_MENU_PAINT_FOOTER,
                    "window scrolled -> whole list and footer");
 
+    TEST_ASSERT_EQ(boot_menu_nav(0u, 10u, 4u, BOOT_MENU_NAV_UP, 0u), 0u, "Up stops at the first");
+    TEST_ASSERT_EQ(boot_menu_nav(9u, 10u, 4u, BOOT_MENU_NAV_DOWN, 0u), 9u, "Down stops at the last");
+    TEST_ASSERT_EQ(boot_menu_nav(3u, 10u, 4u, BOOT_MENU_NAV_DOWN, 0u), 4u, "Down moves one");
+    TEST_ASSERT_EQ(boot_menu_nav(5u, 10u, 4u, BOOT_MENU_NAV_HOME, 0u), 0u, "Home");
+    TEST_ASSERT_EQ(boot_menu_nav(5u, 10u, 4u, BOOT_MENU_NAV_END, 0u), 9u, "End");
+    TEST_ASSERT_EQ(boot_menu_nav(1u, 10u, 4u, BOOT_MENU_NAV_PAGE_DOWN, 0u), 5u, "PageDown moves a screen");
+    TEST_ASSERT_EQ(boot_menu_nav(7u, 10u, 4u, BOOT_MENU_NAV_PAGE_DOWN, 0u), 9u, "PageDown stops at the last");
+    TEST_ASSERT_EQ(boot_menu_nav(6u, 10u, 4u, BOOT_MENU_NAV_PAGE_UP, 0u), 2u, "PageUp moves a screen");
+    TEST_ASSERT_EQ(boot_menu_nav(3u, 10u, 4u, BOOT_MENU_NAV_PAGE_UP, 0u), 0u, "PageUp stops at the first");
+    TEST_ASSERT_EQ(boot_menu_nav(0u, 10u, 0u, BOOT_MENU_NAV_PAGE_DOWN, 0u), 1u, "no rows pages by one");
+    TEST_ASSERT_EQ(boot_menu_nav(0u, 10u, 4u, BOOT_MENU_NAV_NUMBER, 3u), 2u, "3 picks the third entry");
+    TEST_ASSERT_EQ(boot_menu_nav(1u, 2u, 4u, BOOT_MENU_NAV_NUMBER, 5u), 1u,
+                   "a number with no entry keeps the selection");
+    TEST_ASSERT_EQ(boot_menu_nav(1u, 10u, 4u, BOOT_MENU_NAV_NUMBER, 0u), 1u, "0 is not an entry");
+    TEST_ASSERT_EQ(boot_menu_nav(1u, 10u, 4u, 99u, 0u), 1u, "unknown action keeps the selection");
+    TEST_ASSERT_EQ(boot_menu_nav(50u, 10u, 4u, BOOT_MENU_NAV_UP, 0u), 8u, "an out-of-range selection is clamped first");
+    TEST_ASSERT_EQ(boot_menu_nav(0u, 0u, 4u, BOOT_MENU_NAV_END, 0u), 0u, "empty menu");
+
+    /* Only a key the menu acts on cancels the countdown. */
+    TEST_ASSERT_EQ(boot_menu_nav_applies(2u, BOOT_MENU_NAV_NUMBER, 9u), 0,
+                   "9 on a two-entry menu is not an action (auto-boot continues)");
+    TEST_ASSERT_EQ(boot_menu_nav_applies(2u, BOOT_MENU_NAV_NUMBER, 1u), 1,
+                   "1 names the highlighted entry and still counts as an action");
+    TEST_ASSERT_EQ(boot_menu_nav_applies(2u, BOOT_MENU_NAV_NUMBER, 2u), 1, "2 on a two-entry menu acts");
+    TEST_ASSERT_EQ(boot_menu_nav_applies(16u, BOOT_MENU_NAV_NUMBER, 10u), 0, "no digit past 9");
+    TEST_ASSERT_EQ(boot_menu_nav_applies(16u, BOOT_MENU_NAV_NUMBER, 0u), 0, "0 is not an entry");
+    TEST_ASSERT_EQ(boot_menu_nav_applies(2u, BOOT_MENU_NAV_PAGE_DOWN, 0u), 1, "paging acts");
+    TEST_ASSERT_EQ(boot_menu_nav_applies(2u, 0u, 0u), 0, "no key is not an action");
+    TEST_ASSERT_EQ(boot_menu_nav_applies(2u, 99u, 0u), 0, "unknown action is not an action");
+    TEST_ASSERT_EQ(boot_menu_nav_applies(0u, BOOT_MENU_NAV_UP, 0u), 0, "empty menu has nothing to act on");
+
     TEST_ASSERT_EQ(boot_menu_scroll_top(0u, 2u, 4u, 16u), 0u, "short list never scrolls");
     TEST_ASSERT_EQ(boot_menu_scroll_top(0u, 3u, 10u, 4u), 0u, "selection in window stays");
     TEST_ASSERT_EQ(boot_menu_scroll_top(0u, 4u, 10u, 4u), 1u, "one below the window scrolls by one");

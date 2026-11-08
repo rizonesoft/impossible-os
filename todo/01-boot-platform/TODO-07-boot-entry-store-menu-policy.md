@@ -77,6 +77,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  21   | Published loader variables need an explicit set-or-clear outcome    | §15, §19                                |  [ ]   |
 | 💎  |  22   | Store size cap is untested on both sides of the 16 KiB boundary     | §2, §20                                 |  [ ]   |
 | 💎  |  23   | A rejected store has no repair path, only a one-entry fallback      | §1, §20                                 |  [ ]   |
+| 💎  |  24   | Boot menu help, power and saved-default keys                        | §6, §7, §15                             |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -250,11 +251,16 @@ Pre-EBS user-visible selector. GOP for graphical, UEFI text protocol + serial mi
   - Tests: `test_boot_menu_fit_small_modes`, `test_boot_menu_fit_text`, and scroll and plan cases in `test_menu_repaint_plan`.
 - [x] The countdown rounds up (`boot_menu_seconds_left`), skips its final 0 repaint, and once a key stops it the footer reads "Use arrows + Enter to boot." instead of "Auto-boot in 0s"
 - [x] `SMOKE_MENU=1` smoke fixture (the `store menu` matrix leg): a two-entry store with a 2 s countdown, so a real boot draws the menu, repaints it and auto-boots the default; no leg reached the menu before
+- [x] Review fix: a repaint clears only the highlight bar, and a full paint no longer clears every row twice (Codex perf, [medium])
+  - `boot_menu_paint_row` fills the bar rectangle once in the row's final colour and skips the fill for plain rows during a full paint; `boot_menu_paint_footer` clears the same rectangle. On a 3840-wide mode a two-row move was 983,040 bytes of clear and a 16-row first paint 7.8 MB of redundant writes.
+  - `test_boot_menu_glyph_overhang_in_bar` pins that atlas ink cannot leave the bar (measured overhang 2 px left, 1 px right, against 8 px margins). `boot_menu_gop_ok` also requires a width wider than the text column, so a zero-width mode takes the ConOut fallback (boot auditor, [low]).
+- [x] PageUp / PageDown move a screen and 1-9 highlight that entry, via the pure `boot_menu_nav()` in `boot_policy.c` (parity review: systemd-boot has both, and a scrolling list needs paging)
+  - `boot_menu_nav_applies()` decides which keys cancel the countdown, so a digit naming no entry (9 on a two-entry menu) leaves auto-boot running (re-adversarial, [medium]). Help, power and saved-default keys are owned by §24.
 - [x] Commit: `"boot: menu renderer + countdown + input infrastructure"`
 
 **Test checkpoint:** Menu renders 4+ entries on QEMU WHPX (GOP); countdown decrements 5..0 then auto-selects; arrow keys move + cancel countdown; Enter boots the highlighted entry. Serial mirror shows the same lines on TCG (no GOP). `bootloader_secureboot_active()` returns 1 with SecureBoot=1 + SetupMode=0; 0 otherwise. Smoke test verified menu-skip path: serial shows `[BOOT] menu: skipped (no viable candidates)` on FALLBACK_STORE_INVALID with no bootentries.json, smoke PASS in 2.55s on KVM. Test on: QEMU WHPX (GOP), TCG (serial fallback), VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 15 menu-helper suites, 0 failures | `SMOKE_MENU=1 bash scripts/test-smoke.sh` boots through the menu
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 16 menu-helper suites, 0 failures | `SMOKE_MENU=1 bash scripts/test-smoke.sh` boots through the menu
 
 > **Notes:**
 > - What shipped: `boot_menu_render` + `boot_menu_run` + pure helpers `boot_policy_menu_should_show` + `boot_policy_menu_collect` + `boot_menu_repaint_plan` + `boot_menu_seconds_left` + `boot_menu_scroll_top`; band geometry, `boot_menu_fit` and `boot_menu_fit_text` in `boot_menu_layout.h`; `EFI_SCAN_*` constants; POST16 0xB0B6.
@@ -263,8 +269,8 @@ Pre-EBS user-visible selector. GOP for graphical, UEFI text protocol + serial mi
 > - Canonical doc: [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md) (menu UX) + [`docs/boot/boot-menu.md`](../../docs/boot/boot-menu.md) (§7 indicator legend lands there).
 > - Scope boundary: §6 owns renderer + countdown + input + filter; indicators + hotkeys + `hide_when_alone` are §7; demote-not-drop visual is §9.
 
-> **Verified:** 2026-11-08 | dirty-rectangle repaint commit over `b4a076c4` | all items | build OK | SUITE=boot 7456+17 | `store menu` smoke PASS | matrix 12/12 | Codex re-adversarial 3 rounds, approve
-> **Quality reviewed:** 2026-05-09 | Codex 8x (design + adversarial + test-coverage + 3 re-adversarial + consistency + perf) | 4H+5M fixed, 1M deferred | scope: boot-code-quality
+> **Verified:** 2026-11-08 | commit `db82cdb25` + review fixes | all items | build OK | SUITE=boot 7483+17 | `store menu` smoke PASS | matrix 12/12
+> **Quality reviewed:** 2026-11-08 | Codex 10x (2 adversarial, consistency, 2 perf, 5 re-adversarial) + boot-quality-auditor + parity pass | 1H+4M+1L fixed, 1M rejected (ConOut past 16: candidates capped at 16, `bootx64.c:7779`), 0 open | scope: boot-code-quality
 
 ---
 
@@ -823,6 +829,24 @@ Found by the parity pass on §20. Distinct from the already-tracked authenticati
 
 ---
 
+## 24. Boot Menu Help, Power and Saved-Default Keys
+
+> **Spawned-by:** §6 (review)
+> **User impact:** at the boot menu a user cannot find out that F8, F10 or Esc exist, cannot restart or power off without the firmware's own keys, and cannot make the entry they keep choosing the default without editing the store offline.
+
+Found by the parity pass on §6 against systemd-boot (https://man.archlinux.org/man/systemd-boot.7, https://www.freedesktop.org/software/systemd/man/latest/loader.conf.html). PageUp/PageDown and 1-9 shipped in §6; these three need new UI or new persistent state, so they are a section of their own. Nothing else owns them: §7 owns F8/F10/F11 only, and §15 publishes loader variables but has no key that writes one.
+
+- [ ] Extend `docs/design/` with the boot-menu help overlay and key legend before drawing it
+  - Layout inside the existing bar geometry (`include/boot/boot_menu_layout.h`), the ConOut and serial forms, and how it fits the small modes `boot_menu_fit()` supports.
+  - The boot menu has no design spec today, so this is the answer the spec has to give first rather than visuals invented in `bootx64.c`.
+- [ ] `h`, `?` and F1 open a help screen listing every key, and the footer names the help key; any key closes it and the menu repaints in full. Opening it stops the countdown, like any other action key.
+- [ ] Shift+B reboots and Shift+O powers off through `gRT->ResetSystem` (`EfiResetCold` / `EfiResetShutdown`), with the serial mirror logging the choice first. A refused or absent `ResetSystem` keeps the menu up with a message instead of hanging.
+- [ ] `d` makes the highlighted entry the default and persists it as `LoaderEntryDefault` (the systemd loader interface §15 already publishes), read back by the §3 policy ladder on the next boot; pressing it on the current default clears it.
+  - Decide and record in `todo/answers.md` whether the stored default outranks the store's own `sort_key` default, as `default @saved` does in loader.conf.
+- [ ] Commit: `"boot: menu help, power and saved-default keys"`
+
+**Test checkpoint:** `SUITE=boot` green with pure-helper cases for key mapping and default precedence; `SMOKE_MENU=1 bash scripts/test-smoke.sh` still auto-boots; a smoke leg that sends `d` and confirms the second boot selects the saved entry.
+
 ## OS Comparison
 
 | ⭐  | Feature                                               | 🪟 Win11                         | 🐧 Linux                            | 🚀 Impossible OS                                                                 |
@@ -832,7 +856,7 @@ Found by the parity pass on §20. Distinct from the already-tracked authenticati
 | 💎  | Recovery boot entry                                   | ✅ WinRE                         | ✅ GRUB recovery                    | ⬜ Planned -- §9                                                                 |
 | 💎  | Safe mode entry                                       | ✅ msconfig safeboot flag        | ✅ rescue.target / single           | 🟦 §8 KIND_SAFE + boot_mode=1 + F8 hotkey; subset payload deferred to §13        |
 | 💎  | Previous-kernel rollback entry                        | ⚠️ BCD bootsequence (limited UX) | ✅ GRUB previous kernel             | ⬜ Planned -- §10                                                                |
-| 💎  | Boot menu UI (text + graphical)                       | ⚠️ Minimal "Choose an OS"        | ✅ GRUB / systemd-boot menus        | ✅ §6 GOP+ConOut+serial; §7 indicators + hotkeys (F8/F10/F11) + hide_when_alone  |
+| 💎  | Boot menu UI (text + graphical)                       | ⚠️ Minimal "Choose an OS"        | ✅ GRUB / systemd-boot menus        | ✅ §6 GOP+ConOut+serial, band repaint, scrolling; §7 indicators + hotkeys        |
 | 💎  | Offline entry editor tooling                          | ✅ bcdedit / bcdboot             | ✅ grub-mkconfig / bootctl          | 🟦 §11 host-side `bootcfg.py` + validator parity; live-boot binary deferred      |
 | 💎  | Loop prevention via per-entry try counter             | ⚠️ Recovery loop after 2 fails   | ✅ systemd-boot tries=/done=        | 🟦 BLS counter grammar + ladder gate in §3; crash-tolerant rename in §5          |
 | 💎  | Per-entry health-gated mark-good                      | ❌ Implicit (timer past)         | ✅ systemd-bless + boot-complete    | 🟦 §14 entry gate + registry + MarkGood handoff; net/crash checks pending owners |

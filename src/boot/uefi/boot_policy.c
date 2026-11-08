@@ -577,6 +577,36 @@ int boot_policy_counter_dedup_insert(boot_counter_t *out,
 
 /* ---- Boot menu pure logic helpers -------------------------------------- */
 
+unsigned int boot_menu_nav(unsigned int selected, unsigned int count, unsigned int rows,
+                           unsigned int action, unsigned int number)
+{
+    if (count == 0u)
+        return 0u;
+    if (selected >= count)
+        selected = count - 1u;
+    unsigned int page = rows ? rows : 1u;
+    switch (action) {
+    case BOOT_MENU_NAV_UP:        return selected > 0u ? selected - 1u : 0u;
+    case BOOT_MENU_NAV_DOWN:      return selected + 1u < count ? selected + 1u : selected;
+    case BOOT_MENU_NAV_HOME:      return 0u;
+    case BOOT_MENU_NAV_END:       return count - 1u;
+    case BOOT_MENU_NAV_PAGE_UP:   return selected > page ? selected - page : 0u;
+    case BOOT_MENU_NAV_PAGE_DOWN: return count - 1u - selected > page ? selected + page : count - 1u;
+    case BOOT_MENU_NAV_NUMBER:
+        return (number >= 1u && number <= 9u && number <= count) ? number - 1u : selected;
+    default:                      return selected;
+    }
+}
+
+int boot_menu_nav_applies(unsigned int count, unsigned int action, unsigned int number)
+{
+    if (count == 0u)
+        return 0;
+    if (action == BOOT_MENU_NAV_NUMBER)
+        return number >= 1u && number <= 9u && number <= count;
+    return action >= BOOT_MENU_NAV_UP && action <= BOOT_MENU_NAV_PAGE_DOWN;
+}
+
 unsigned int boot_menu_seconds_left(unsigned int countdown_ms, unsigned int elapsed_ms)
 {
     if (elapsed_ms >= countdown_ms)

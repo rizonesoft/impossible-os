@@ -6000,7 +6000,10 @@ static const char *boot_menu_indicators(const boot_entry_envelope_t *e,
 
 static int boot_menu_gop_ok(int gop_available)
 {
-    return gop_available && gFramebuffer && gFbPitch > 0u && gFbHeight > 0u;
+    /* A mode too narrow to hold the text column has nowhere to draw the menu;
+     * the ConOut fallback shows it instead of a blank screen. */
+    return gop_available && gFramebuffer && gFbPitch > 0u && gFbHeight > 0u &&
+           gFbWidth > BOOT_MENU_COL_X;
 }
 
 /* Fill rows [y0, y0+h) between columns [x0, x1) with one colour, clipped to
@@ -6023,10 +6026,13 @@ static UINT32 boot_menu_text_right(void)
 }
 
 /* Repaint screen row `slot` (entry `idx`) in its own band, highlighted or not.
- * Badges and title are fitted to the bar, a cut title ending in "...". */
+ * Badges and title are fitted to the bar, a cut title ending in "...", so all
+ * of a row's ink lies inside the bar rectangle and only that is cleared.
+ * `on_clear` is 1 when the caller has just painted the band in the
+ * background colour (a full paint), so a plain row needs no clear at all. */
 static void boot_menu_paint_row(const boot_entries_parse_result_t *parse,
                                 const unsigned int *cand_idx, unsigned int slot,
-                                unsigned int idx, int highlighted,
+                                unsigned int idx, int highlighted, int on_clear,
                                 const boot_policy_decision_t *decision, int sb_active)
 {
     UINT32 y = BOOT_MENU_LIST_Y0 + (UINT32)slot * BOOT_MENU_ROW_H;
@@ -6035,13 +6041,13 @@ static void boot_menu_paint_row(const boot_entries_parse_result_t *parse,
     const boot_entry_envelope_t *e = &parse->entries[cand_idx[idx]];
     UINT8 fg_r = 0xC8, fg_g = 0xC8, fg_b = 0xC8;
     UINT8 bg_r = 0x0A, bg_g = 0x0A, bg_b = 0x0A;
-    boot_menu_fill(y, BOOT_MENU_ROW_H, 0u, gFbWidth, fb_pack_rgb(0x0A, 0x0A, 0x0A));
     if (highlighted) {
-        boot_menu_fill(y, BOOT_MENU_ROW_H, BOOT_MENU_HI_X,
-                       BOOT_MENU_HI_X + BOOT_MENU_HI_W, fb_pack_rgb(0x40, 0x80, 0xC0));
         fg_r = 0xFF; fg_g = 0xFF; fg_b = 0xFF;
         bg_r = 0x40; bg_g = 0x80; bg_b = 0xC0;
     }
+    if (highlighted || !on_clear)
+        boot_menu_fill(y, BOOT_MENU_ROW_H, BOOT_MENU_HI_X, BOOT_MENU_HI_X + BOOT_MENU_HI_W,
+                       fb_pack_rgb(bg_r, bg_g, bg_b));
     UINT32 py = boot_menu_text_py(bsod_aa_SUB, BSOD_AA_SUB_ASCENT, y, BOOT_MENU_ROW_H);
     UINT32 right = boot_menu_text_right();
     if (py == 0u || right <= BOOT_MENU_COL_X)
@@ -6091,7 +6097,10 @@ static void boot_menu_paint_footer(const boot_menu_view_t *v, UINT32 footer_y)
 {
     if (footer_y >= gFbHeight)
         return;
-    boot_menu_fill(footer_y, BOOT_MENU_FOOTER_H, 0u, gFbWidth, fb_pack_rgb(0x0A, 0x0A, 0x0A));
+    /* The footer text is fitted to the same bar, so its rectangle is all the
+     * ink a repaint has to clear. */
+    boot_menu_fill(footer_y, BOOT_MENU_FOOTER_H, BOOT_MENU_HI_X, BOOT_MENU_HI_X + BOOT_MENU_HI_W,
+                   fb_pack_rgb(0x0A, 0x0A, 0x0A));
     UINT32 py = boot_menu_text_py(bsod_aa_SUB, BSOD_AA_SUB_ASCENT, footer_y, BOOT_MENU_FOOTER_H);
     UINT32 right = boot_menu_text_right();
     if (py == 0u || right <= BOOT_MENU_COL_X)
@@ -6172,12 +6181,12 @@ static void boot_menu_render(const boot_entries_parse_result_t *parse,
         if (plan & (BOOT_MENU_PAINT_FULL | BOOT_MENU_PAINT_LIST)) {
             for (unsigned int s = 0; s < shown; s++)
                 boot_menu_paint_row(parse, cand_idx, s, top + s, top + s == selected_idx,
-                                    decision, sb_active);
+                                    (plan & BOOT_MENU_PAINT_FULL) != 0u, decision, sb_active);
         } else if (plan & BOOT_MENU_PAINT_ROWS) {
             if (row_old >= top && row_old < top + shown)
-                boot_menu_paint_row(parse, cand_idx, row_old - top, row_old, 0, decision, sb_active);
+                boot_menu_paint_row(parse, cand_idx, row_old - top, row_old, 0, 0, decision, sb_active);
             if (row_new >= top && row_new < top + shown)
-                boot_menu_paint_row(parse, cand_idx, row_new - top, row_new, 1, decision, sb_active);
+                boot_menu_paint_row(parse, cand_idx, row_new - top, row_new, 1, 0, decision, sb_active);
         }
         if (plan & (BOOT_MENU_PAINT_FULL | BOOT_MENU_PAINT_FOOTER))
             boot_menu_paint_footer(want, gop_fit->footer_y);
@@ -6328,20 +6337,24 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
                  * otherwise sit forever. Codex re-adversarial
                  * caught this regression in the menu fix loop. */
                 int is_action = 0;
-                if (key.ScanCode == EFI_SCAN_UP) {
-                    if (selected > 0) selected--;
-                    dirty = 1;
-                    is_action = 1;
-                } else if (key.ScanCode == EFI_SCAN_DOWN) {
-                    if (selected + 1u < cand_count) selected++;
-                    dirty = 1;
-                    is_action = 1;
-                } else if (key.ScanCode == EFI_SCAN_HOME) {
-                    selected = 0;
-                    dirty = 1;
-                    is_action = 1;
-                } else if (key.ScanCode == EFI_SCAN_END) {
-                    selected = cand_count - 1u;
+                unsigned int nav = 0u, number = 0u;
+                switch (key.ScanCode) {
+                case EFI_SCAN_UP:        nav = BOOT_MENU_NAV_UP; break;
+                case EFI_SCAN_DOWN:      nav = BOOT_MENU_NAV_DOWN; break;
+                case EFI_SCAN_HOME:      nav = BOOT_MENU_NAV_HOME; break;
+                case EFI_SCAN_END:       nav = BOOT_MENU_NAV_END; break;
+                case EFI_SCAN_PAGE_UP:   nav = BOOT_MENU_NAV_PAGE_UP; break;
+                case EFI_SCAN_PAGE_DOWN: nav = BOOT_MENU_NAV_PAGE_DOWN; break;
+                default:
+                    if (key.ScanCode == EFI_SCAN_NULL &&
+                        key.UnicodeChar >= u'1' && key.UnicodeChar <= u'9') {
+                        nav = BOOT_MENU_NAV_NUMBER;
+                        number = (unsigned int)(key.UnicodeChar - u'0');
+                    }
+                    break;
+                }
+                if (boot_menu_nav_applies(cand_count, nav, number)) {
+                    selected = boot_menu_nav(selected, cand_count, rows, nav, number);
                     dirty = 1;
                     is_action = 1;
                 } else if (key.ScanCode == EFI_SCAN_ESC) {

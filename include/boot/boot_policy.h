@@ -379,6 +379,26 @@ typedef struct {
 unsigned int boot_menu_scroll_top(unsigned int top, unsigned int selected,
                                   unsigned int count, unsigned int rows);
 
+/* Menu navigation, independent of how the key arrived (the loader maps
+ * UEFI scan codes and digits onto these). */
+#define BOOT_MENU_NAV_UP        1u
+#define BOOT_MENU_NAV_DOWN      2u
+#define BOOT_MENU_NAV_HOME      3u
+#define BOOT_MENU_NAV_END       4u
+#define BOOT_MENU_NAV_PAGE_UP   5u   /* one screen of `rows` up, stopping at the first */
+#define BOOT_MENU_NAV_PAGE_DOWN 6u   /* one screen down, stopping at the last */
+#define BOOT_MENU_NAV_NUMBER    7u   /* `number` 1-9 picks that entry when it exists */
+
+/* The entry highlighted after `action`. An unknown action, or a number with
+ * no such entry, leaves the selection where it was; count == 0 returns 0. */
+unsigned int boot_menu_nav(unsigned int selected, unsigned int count, unsigned int rows,
+                           unsigned int action, unsigned int number);
+
+/* 1 when `action` is one the menu acts on, which is what cancels the
+ * countdown. A number naming no entry is not: a stray 9 on a two-entry menu
+ * must not strand an unattended boot. */
+int boot_menu_nav_applies(unsigned int count, unsigned int action, unsigned int number);
+
 /* Whole seconds the countdown shows: rounded UP, so a 5 s countdown reads 5
  * for its first second and reaches 0 only when it has run out. */
 unsigned int boot_menu_seconds_left(unsigned int countdown_ms, unsigned int elapsed_ms);

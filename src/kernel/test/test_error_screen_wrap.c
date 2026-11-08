@@ -116,6 +116,27 @@ static void test_boot_menu_fit_small_modes(void)
     TEST_ASSERT_EQ(boot_menu_fit(200u).rows, 0u, "too short for one row -> text fallback");
 }
 
+/* A row or footer repaint clears only the highlight bar, so a glyph's ink may
+ * not overhang the text column by more than the bar leaves on either side:
+ * COL_X - HI_X on the left and TEXT_PAD on the right of the measured width. */
+static void test_boot_menu_glyph_overhang_in_bar(void)
+{
+    int worst_left = 0, worst_right = 0;
+    for (unsigned int i = 0; i < 95u; i++) {
+        const struct bsod_aa_glyph *g = &bsod_aa_SUB[i];
+        if (g->width == 0u)
+            continue;
+        int left = -(int)g->bearing_x;
+        int right = (int)g->bearing_x + (int)g->width - (int)g->advance;
+        if (left > worst_left) worst_left = left;
+        if (right > worst_right) worst_right = right;
+    }
+    TEST_ASSERT(worst_left <= (int)(BOOT_MENU_COL_X - BOOT_MENU_HI_X),
+                "no glyph overhangs the bar's left margin");
+    TEST_ASSERT(worst_right <= (int)BOOT_MENU_TEXT_PAD,
+                "no glyph overhangs its advance by more than the right pad");
+}
+
 /* A label longer than the bar is cut with "..." and never drawn past it. */
 static void test_boot_menu_fit_text(void)
 {
@@ -898,6 +919,8 @@ void test_register_error_screen_wrap(void)
                             test_boot_menu_ink_in_bands, TEST_CAT_BOOT);
     test_suite_register_cat("boot menu: layout fits small modes",
                             test_boot_menu_fit_small_modes, TEST_CAT_BOOT);
+    test_suite_register_cat("boot menu: glyph overhang stays inside the bar",
+                            test_boot_menu_glyph_overhang_in_bar, TEST_CAT_BOOT);
     test_suite_register_cat("boot menu: labels cut to the bar",
                             test_boot_menu_fit_text, TEST_CAT_BOOT);
     test_suite_register_cat("error-screen wrap: start offset honoured",
