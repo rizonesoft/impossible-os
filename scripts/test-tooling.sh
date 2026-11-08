@@ -5096,6 +5096,41 @@ for _up_p in initrd.img recovery.img modules.cpio; do
     rm -f "$_up_dir/pay/$_up_p"
 done
 rm -rf "$_up_dir"
+
+# stage-esp-loader.sh: the system-disk ESP loader layout. REQUIRE_SHIM=1 must
+# refuse both direct-boot fallbacks; without it they stay the dev default.
+_se="$(mktemp -d)"
+_se_run() {  # <case> <require> -> rc; staging in $_se/st-<case>
+    local c="$1"
+    rm -rf "$_se/st-$c"
+    REQUIRE_SHIM="$2" bash "$REPO_ROOT/scripts/stage-esp-loader.sh" "$_se/shim-$c" \
+        "$_se/key-$c/MOK.key" "$_se/key-$c/MOK.cer" "$_se/loader.efi" "$_se/loader.signed.efi" \
+        "$_se/st-$c" >/dev/null 2>&1
+}
+printf 'unsigned' > "$_se/loader.efi"; printf 'signed' > "$_se/loader.signed.efi"
+mkdir -p "$_se/shim-none" "$_se/shim-nokey" "$_se/shim-full" "$_se/key-full"
+printf 'shim' > "$_se/shim-nokey/shimx64.efi"; printf 'mm' > "$_se/shim-nokey/mmx64.efi"
+cp "$_se/shim-nokey/"*.efi "$_se/shim-full/"; printf 'key' > "$_se/key-full/MOK.key"
+_se_case() {  # <name> <case> <require> <want-rc> <want BOOTX64 bytes or ->
+    local rc=0; _se_run "$2" "$3" || rc=$?
+    local got="-"; [ -f "$_se/st-$2/EFI/BOOT/BOOTX64.EFI" ] && got="$(cat "$_se/st-$2/EFI/BOOT/BOOTX64.EFI")"
+    if [ "$rc" = "$4" ] && [ "$got" = "$5" ]; then t_pass "stage_esp_loader_$1"
+    else t_fail "stage_esp_loader_$1 rc=$rc (want $4) BOOTX64=$got (want $5)"; fi
+}
+_se_case no_shim_dev        none  0 0 unsigned
+_se_case no_shim_required   none  1 1 -
+_se_case keyless_dev        nokey 0 0 unsigned
+_se_case keyless_required   nokey 1 1 -
+_se_case chain_required     full  1 0 shim
+_se_case spelling_true      none  true 2 -
+_se_case spelling_yes       nokey yes  2 -
+_se_case spelling_empty     none  ""   0 unsigned
+if [ "$(cat "$_se/st-full/EFI/BOOT/grubx64.efi" 2>/dev/null)" = "signed" ]; then
+    t_pass "stage_esp_loader_chain_ships_signed_loader"
+else
+    t_fail "stage_esp_loader_chain_ships_signed_loader grubx64.efi is not the signed loader"
+fi
+rm -rf "$_se"
 if grep -q 'test-smoke-matrix\.sh' "$REPO_ROOT/.claude/skills/implement-todo-section/SKILL.md" 2>/dev/null; then
     t_pass "smoke_matrix_wired  implement-todo-section calls the matrix"
 else
@@ -6276,6 +6311,15 @@ STUB
         t_pass "secureboot_smoke: absent shim + REQUIRE_SHIM=1 -> FAIL exit 1"
     else
         t_fail "secureboot_smoke: REQUIRE_SHIM absent-shim" "out: $(echo "$SBS_OUT" | tail -8)"
+    fi
+
+    # Case 2b: a REQUIRE_SHIM spelling other than 0/1 is refused, never read as off.
+    SBS_OUT="$(_sbs_run REQUIRE_SHIM=yes)"
+    if grep -q "REQUIRE_SHIM must be 0 or 1" <<<"$SBS_OUT" \
+       && grep -q "__rc=2" <<<"$SBS_OUT"; then
+        t_pass "secureboot_smoke: REQUIRE_SHIM=yes -> refused, exit 2"
+    else
+        t_fail "secureboot_smoke: REQUIRE_SHIM spelling" "out: $(echo "$SBS_OUT" | tail -8)"
     fi
 
     # Case 3: partial shim dir -> always fatal, matching the disk recipe.

@@ -139,6 +139,7 @@ Confirm what a given build actually produced before assuming otherwise:
 ```
 bash scripts/test-secureboot-smoke.sh                # reports COVERED / NOT COVERED
 REQUIRE_SHIM=1 bash scripts/test-secureboot-smoke.sh # non-zero unless the chain is covered
+REQUIRE_SHIM=1 bash scripts/build.sh                  # disk build refuses to stage direct boot
 ```
 
 Once a shim is pinned AND `keys/MOK.key` exists, the system disk carries the

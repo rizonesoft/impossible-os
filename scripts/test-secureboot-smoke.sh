@@ -172,6 +172,11 @@ SFDISK_BIN="${SFDISK_BIN:-sfdisk}"
 # or CI build legitimately has no shim; any path that PUBLISHES an image and
 # advertises Secure Boot must set it.
 REQUIRE_SHIM="${REQUIRE_SHIM:-0}"
+case "$REQUIRE_SHIM" in
+    0|1) ;;
+    *) echo "[ERROR] REQUIRE_SHIM must be 0 or 1, got '$REQUIRE_SHIM' (refusing to guess: any other value would silently disable the shim requirement)" >&2
+       exit 2 ;;
+esac
 # Which trust anchor the pinned shim is expected to carry:
 #   ms-ca   (default) a distro shim re-signed by Microsoft -- the stock Secure
 #           Boot path, where firmware trusts the shim out of the box.
