@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=include/boot/boot_entries.h,tools/boot-entry-validate/validate.py,resources/boot/bootentries-example.json,include/boot/uki_cmdline_check.h,src/boot/uefi/boot_entries_parser.c,include/boot/boot_entry_kind.h reviewed=2026-09-28 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=include/boot/boot_entries.h,tools/boot-entry-validate/validate.py,resources/boot/bootentries-example.json,include/boot/uki_cmdline_check.h,src/boot/uefi/boot_entries_parser.c,include/boot/boot_entry_kind.h reviewed=2026-11-08 -->
 # Boot Entry Store Schema
 
 > Canonical specification for `\EFI\ImpossibleOS\bootentries.json`. Authoritative for envelope
@@ -65,6 +65,8 @@ The store is a JSON object with three top-level keys:
 | `schema_version` | integer | yes      | Must equal `1` for v1 readers; otherwise hard reject.   |
 | `crc32`          | string  | yes      | `"0x"` + exactly 8 hex digits; covers `entries` payload |
 | `entries`        | array   | yes      | 1..64 entry objects; total file <=16 KiB                |
+
+**The size cap is inclusive: a store of exactly 16,384 bytes (`BOOT_ENTRIES_MAX_TOTAL_BYTES`) boots, and one byte more is refused** with `BOOT_ENTRIES_REJECT_FILE_TOO_LARGE`. The loader's pre-read check and the parser share one predicate, `boot_entries_size_within_cap()`. The firmware parser and the host validator (both its pre-read and post-read checks) are tested at 16,383, 16,384 and 16,385 bytes and must give the same verdict at each, so the host never stamps a store the firmware refuses. The validator's `MAX_TOTAL_BYTES` and the other limits it mirrors are compared against `include/boot/boot_entries.h` by `test_validate.py`, so a one-sided edit fails the host tests.
 
 **Key names are unique within an object, and spelled literally.** Both rules are hard rejects, enforced by the firmware parser (`BOOT_ENTRIES_REJECT_DUPLICATE_KEY`, `BOOT_ENTRIES_REJECT_ESCAPED_KEY`) and by the host validator's `strict_loads()`.
 

@@ -5212,7 +5212,7 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len,
         *out_detail = "the boot entry store file is empty";
         return EFI_NOT_FOUND;
     }
-    if (file_size > (UINT64)BOOT_ENTRIES_MAX_TOTAL_BYTES) {
+    if (!boot_entries_size_within_cap(file_size)) {
         /* Per the boot entry schema fallback contract, an oversize
          * store is an INVALID store, not a fatal bootloader error --
          * boot_policy_invoke() routes EFI_NOT_FOUND through to the

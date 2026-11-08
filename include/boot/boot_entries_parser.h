@@ -199,6 +199,12 @@ void boot_entries_bls_sort(const boot_entries_parse_result_t *parse,
  * Never NULL; an out-of-range code returns "UNKNOWN". Mirrors
  * boot_entry_kind_reject_name() so both reject vocabularies print the same
  * way on serial and on the rejected-store notice. */
+/* Nonzero when a store of `size` bytes is within the size cap. The cap is
+ * inclusive (BOOT_ENTRIES_MAX_TOTAL_BYTES itself is accepted). The ONE
+ * comparison both the loader's pre-read check in bootx64.c and
+ * boot_entries_parse() use, so the kernel boundary tests cover both. */
+int boot_entries_size_within_cap(unsigned long long size);
+
 const char *boot_entries_reject_name(int code);
 
 /* One-line human cause for a reject code, phrased for a user standing at the

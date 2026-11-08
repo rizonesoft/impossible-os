@@ -75,7 +75,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  19   | Repeated top-level keys defeat the entries-array bound              | §2                                      |  [x]   |
 | 💎  |  20   | `crc32` header located by string match, not structurally            | §1, §19                                 |  [x]   |
 | 💎  |  21   | Published loader variables need an explicit set-or-clear outcome    | §15, §19                                |  [ ]   |
-| 💎  |  22   | Store size cap is untested on both sides of the 16 KiB boundary     | §2, §20                                 |  [ ]   |
+| 💎  |  22   | Store size cap is untested on both sides of the 16 KiB boundary     | §2, §20                                 |  [x]   |
 | 💎  |  23   | A rejected store has no repair path, only a one-entry fallback      | §1, §20                                 |  [ ]   |
 | 💎  |  24   | Boot menu help, power and saved-default keys                        | §6, §7, §15                             |  [ ]   |
 
@@ -813,12 +813,17 @@ Found by the §20 test-coverage review, which asked for boundary cases at the ca
 
 **The mechanism, confirmed at file:line.** The firmware rejects `raw_len > BOOT_ENTRIES_MAX_TOTAL_BYTES` with `BOOT_ENTRIES_REJECT_FILE_TOO_LARGE` (`src/boot/uefi/boot_entries_parser.c` in `boot_entries_parse`), and the host rejects `len(raw) > MAX_TOTAL_BYTES` at `tools/boot-entry-validate/validate.py:1032` and again on the on-disk size at `:1081`. The host has ONE over-cap case, `_oversize_file` (a 17 KiB store, rejected pre-read); the firmware has none, and neither side has a case at the boundary. So the two caps are asserted equal by reading rather than by measurement, and the off-by-one direction (`>` against `>=`) is unverified on both sides. The §20 review's first draft of this section claimed the cap was untested outright, which the consistency leg corrected against `test_validate.py`.
 
-- [ ] Kernel cases at 16383, 16384 and 16385 bytes, with the `crc32` header near EOF so the locate is exercised at the boundary too.
+- [x] Kernel cases at 16383, 16384 and 16385 bytes, `crc32` as the root's last key after whitespace padding: `test_store_size_cap_boundary` in `test_boot_entry_parser.c`.
+  - Control: the parser's cap flipped to `>=` fails the at-cap case (2 assertions).
+  - The loader's pre-read check (`bootx64.c`) and the parser now share one predicate, `boot_entries_size_within_cap()`, so these verdicts are the loader's too; it is pinned directly, including a 64-bit size that wraps 32 bits back under the cap. Control: the predicate made exclusive fails 3 assertions.
   - `s_fixture_buf` is 2048 bytes (`src/kernel/test/test_boot_entry_parser.c`), so this needs a scratch-backed buffer rather than the existing static; `TEST_SCRATCH_KBUF` is the pattern already used for the parse result. Do NOT grow the static: it is `.bss` in a kernel with a measured ceiling.
-- [ ] Host cases at the same three sizes, asserting the SAME verdict as the firmware at each.
+- [x] Host cases at the same three sizes, same verdict as the firmware at each: `_store_of_size` in `tools/boot-entry-validate/test_validate.py`.
+  - Control: the host pre-read check flipped to `>=` fails the at-cap case.
+  - `validate_store()` is also called directly at the three sizes, because the CLI's pre-read check means its own `len(raw)` guard is otherwise never reached over the cap. Control: removing that guard fails the over-cap case.
   - A disagreement here is a store the host stamps and the firmware then refuses. The existing `_oversize_file` case stays; it proves the over-cap path, not the boundary.
-- [ ] Confirm the two caps are the same number by construction rather than by comment, or state in the schema doc why they legitimately differ.
-- [ ] Commit: `"boot: cover the boot entry store size cap on both sides of the boundary"`
+- [x] The caps are the same number by construction: `_header_mirror_drift()` compares every limit `validate.py` mirrors against `include/boot/boot_entries.h` and `boot_entries_parser.h` (including the health-subset limits).
+  - Control: `MAX_TOTAL_BYTES` raised by one fails the check. The inclusive cap is stated in `docs/boot/boot-entry-schema.md`.
+- [x] Commit: `"boot: cover the boot entry store size cap on both sides of the boundary"`
 
 **Test checkpoint:** `SUITE=boot` green with the three new kernel cases; host `python3 tools/boot-entry-validate/test_validate.py` green with the three mirrored cases. No smoke run needed unless the fixture change touches parser code.
 

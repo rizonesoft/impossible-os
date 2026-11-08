@@ -1265,7 +1265,7 @@ static int parse_store(const unsigned char *raw, unsigned int raw_len,
     }
 
     /* Size cap */
-    if (raw_len > BOOT_ENTRIES_MAX_TOTAL_BYTES) {
+    if (!boot_entries_size_within_cap(raw_len)) {
         set_reject(out, BOOT_ENTRIES_REJECT_FILE_TOO_LARGE, "file size exceeds 16 KiB cap");
         log_reject(log, out->reject_msg);
         return out->reject_code;
@@ -1580,6 +1580,11 @@ static void locate_reject(const lexer_t *L, boot_entries_parse_result_t *out)
     }
     out->reject_line = line;
     out->reject_column = column;
+}
+
+int boot_entries_size_within_cap(unsigned long long size)
+{
+    return size <= (unsigned long long)BOOT_ENTRIES_MAX_TOTAL_BYTES;
 }
 
 int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,

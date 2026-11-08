@@ -1762,6 +1762,81 @@ static void test_store_notice_gate(void)
                    "unknown load status is silent");
 }
 
+/* Fill `buf` with a CRC-correct store of exactly `target` bytes: one valid
+ * entry, then JSON whitespace, then the crc32 member as the root's LAST key, so
+ * the header locate also runs at the boundary. Returns 0 when the store body
+ * alone is larger than `target`. tools/boot-entry-validate/test_validate.py
+ * builds the same three sizes and must reach the same verdict at each. */
+static unsigned int build_store_of_size(unsigned char *buf, unsigned int target)
+{
+    static const char HEAD[] =
+        "{"
+        "\"schema_version\":1,"
+        "\"entries\":["
+        "{\"id\":\"slot-a\",\"title\":\"Slot A\",\"kind\":\"split\","
+        "\"flags\":[\"active\"],\"sort_key\":\"00\","
+        "\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],"
+        "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
+        "],";
+    static const char TAIL[] = "\"crc32\":\"0x00000000\"}";
+    const unsigned int head_len = (unsigned int)sizeof(HEAD) - 1u;
+    const unsigned int tail_len = (unsigned int)sizeof(TAIL) - 1u;
+    unsigned int i, n = 0;
+
+    if (target < head_len + tail_len)
+        return 0;
+    for (i = 0; i < head_len; i++)
+        buf[n++] = (unsigned char)HEAD[i];
+    while (n < target - tail_len)
+        buf[n++] = ' ';
+    for (i = 0; i < tail_len; i++)
+        buf[n++] = (unsigned char)TAIL[i];
+    patch_fixture_crc(buf, n);
+    return n;
+}
+
+/* The cap is inclusive: 16 KiB is the largest store the loader boots. The host
+ * validator was asserted to agree by reading only, so the off-by-one direction
+ * was unverified on both sides. */
+static void test_store_size_cap_boundary(void)
+{
+    const unsigned int cap = BOOT_ENTRIES_MAX_TOTAL_BYTES;
+    TEST_SCRATCH_KBUF(store, cap + 1u);
+    TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+    unsigned char *const buf = (unsigned char *)store;
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+    unsigned int n;
+    int rc;
+
+    n = build_store_of_size(buf, cap - 1u);
+    TEST_ASSERT_EQ(n, cap - 1u, "fixture one byte under the cap");
+    rc = boot_entries_parse(buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK, "a store one byte under the cap is accepted");
+    TEST_ASSERT_EQ(r->entry_count, 1u, "and its entry parsed");
+
+    n = build_store_of_size(buf, cap);
+    TEST_ASSERT_EQ(n, cap, "fixture exactly at the cap");
+    rc = boot_entries_parse(buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK, "a store exactly at the cap is accepted");
+    TEST_ASSERT_EQ(r->entry_count, 1u, "and its entry parsed");
+
+    n = build_store_of_size(buf, cap + 1u);
+    TEST_ASSERT_EQ(n, cap + 1u, "fixture one byte over the cap");
+    rc = boot_entries_parse(buf, n, 0, NULL_PTR, r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_FILE_TOO_LARGE, "a store one byte over the cap is refused");
+    TEST_ASSERT_EQ(r->reject_code, BOOT_ENTRIES_REJECT_FILE_TOO_LARGE, "with the size reject code");
+
+    /* The loader's pre-read check in bootx64.c is this same predicate, so the
+     * verdicts above are the loader's too. Pin it directly, including sizes a
+     * 64-bit file length can carry and a 32-bit parse length cannot. */
+    TEST_ASSERT_EQ(boot_entries_size_within_cap(cap - 1u), 1, "pre-read: one under the cap passes");
+    TEST_ASSERT_EQ(boot_entries_size_within_cap(cap), 1, "pre-read: exactly the cap passes");
+    TEST_ASSERT_EQ(boot_entries_size_within_cap(cap + 1u), 0, "pre-read: one over the cap is refused");
+    TEST_ASSERT_EQ(boot_entries_size_within_cap(0x100000000ull + cap), 0,
+                   "pre-read: a size that wraps 32 bits back under the cap is refused");
+}
+
 void test_register_boot_entry_parser(void)
 {
     test_suite_register_cat("boot-entries: valid minimal",
@@ -1908,6 +1983,8 @@ void test_register_boot_entry_parser(void)
                             test_store_reject_token_bound, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: store record recurrence policy",
                             test_store_record_decide, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: store size cap boundary",
+                            test_store_size_cap_boundary, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

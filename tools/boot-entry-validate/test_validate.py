@@ -612,6 +612,11 @@ def cases() -> list[Case]:
     out.append(("Infinity token in extra payload field rejected", _inf_payload, ("fail", "non-finite JSON token")))
     out.append(("oversize 1e500 -> Infinity rejected", _huge_exp_payload, ("fail", "non-finite")))
     out.append(("oversize file rejected pre-read", _oversize_file, ("fail", "rejected pre-read")))
+    cap = _validator_mod.MAX_TOTAL_BYTES
+    out.append(("store one byte under the size cap accepted", lambda: _store_of_size(cap - 1), ("pass",)))
+    out.append(("store exactly at the size cap accepted", lambda: _store_of_size(cap), ("pass",)))
+    out.append(("store one byte over the size cap rejected", lambda: _store_of_size(cap + 1),
+                ("fail", f"file size {cap + 1} > MAX_TOTAL_BYTES {cap}")))
 
     # ---- re-adversarial fixes ----
     out.append(("initrd item with NUL byte rejected",
@@ -910,6 +915,95 @@ def _oversize_file() -> Path:
     fd.write('{"schema_version":1,"crc32":"0x00000000","entries":[{"id":"a","title":"' + pad + '","kind":"split","flags":["active"],"sort_key":"00","machine_id":"11111111-2222-3333-4444-555555555555","policy_tags":[],"payload":{"kernel":"\\\\k.exe","cmdline":"","root":"A"}}]}')
     fd.close()
     return Path(fd.name)
+
+
+def _store_of_size(target: int) -> Path:
+    """The sample store padded to exactly `target` bytes, CRC-correct.
+
+    The crc32 member is moved to the END of the root object and the padding is
+    JSON whitespace in front of it, so the header locate runs at the boundary
+    too. The firmware parser is driven at the same three sizes
+    (test_boot_entry_parser.c, "store size cap boundary"); both sides must give
+    the same verdict at each, or the host stamps a store the firmware refuses.
+    """
+    data = load_sample()
+    data.pop("crc32", None)
+    body = json.dumps(data, separators=(",", ":"))
+    assert body.endswith("}")
+    tail = '"crc32":"0x00000000"}'
+    head = body[:-1] + ","
+    pad = target - len(head) - len(tail)
+    if pad < 0:
+        raise AssertionError(f"sample is already larger than {target} bytes")
+    text = head + " " * pad + tail
+    assert len(text.encode("ascii")) == target
+    path = write_tmp_raw(text)
+    assert path.stat().st_size == target
+    return path
+
+
+def _post_read_cap_checks() -> list:
+    """validate_store's own len(raw) guard, which the CLI never reaches over cap.
+
+    The pre-read stat() check refuses an over-cap file first, so a store that
+    grows between stat and read is caught only by this second guard. Call
+    validate_store on the bytes directly at the three boundary sizes.
+    """
+    cap = _validator_mod.MAX_TOTAL_BYTES
+    out = []
+    for size, want_ok in ((cap - 1, True), (cap, True), (cap + 1, False)):
+        raw = _store_of_size(size).read_bytes()
+        try:
+            _validator_mod.validate_store(json.loads(raw), raw, recompute_crc=False)
+            ok = True
+        except SystemExit:
+            ok = False
+        out.append((f"validate_store post-read guard at {size} bytes "
+                    f"({'accepted' if want_ok else 'rejected'})",
+                    ok == want_ok, f"validate_store {'accepted' if ok else 'rejected'} it"))
+    return out
+
+
+def _header_mirror_drift() -> list:
+    """Every limit validate.py mirrors, compared against the C headers it mirrors.
+
+    The caps were equal by comment only; reading the header makes a one-sided
+    edit fail here instead of producing stores one side accepts and the other
+    refuses.
+    """
+    inc = Path(__file__).resolve().parents[2] / "include" / "boot"
+    header = (inc / "boot_entries.h").read_text() + "\n" + (inc / "boot_entries_parser.h").read_text()
+    # (C name, offset): the Python value equals the C value plus offset. The
+    # health-subset name length is a C buffer size, so it carries the NUL.
+    pairs = {
+        "SCHEMA_VERSION": "BOOT_ENTRIES_SCHEMA_VERSION",
+        "MAX_ENTRIES": "BOOT_ENTRIES_MAX_ENTRIES",
+        "MAX_TOTAL_BYTES": "BOOT_ENTRIES_MAX_TOTAL_BYTES",
+        "MAX_TITLE_LEN": "BOOT_ENTRIES_MAX_TITLE_LEN",
+        "MAX_ID_LEN": "BOOT_ENTRIES_MAX_ID_LEN",
+        "MAX_PATH_LEN": "BOOT_ENTRIES_MAX_PATH_LEN",
+        "MAX_SORT_KEY_LEN": "BOOT_ENTRIES_MAX_SORT_KEY_LEN",
+        "MAX_POLICY_TAGS": "BOOT_ENTRIES_MAX_POLICY_TAGS",
+        "MAX_POLICY_TAG_LEN": "BOOT_ENTRIES_MAX_POLICY_TAG_LEN",
+        "MAX_HEALTH_SUBSET_NAMES": "BOOT_ENTRIES_HEALTH_SUBSET_MAX_NAMES",
+        "MAX_HEALTH_SUBSET_NAME_LEN": ("BOOT_ENTRIES_HEALTH_SUBSET_NAME_LEN", -1),
+    }
+    drift = []
+    for py_name, c_spec in pairs.items():
+        c_name, offset = c_spec if isinstance(c_spec, tuple) else (c_spec, 0)
+        m = re.search(r"^#define\s+" + c_name + r"\s+(.+?)\s*(?:/\*.*)?$", header, re.M)
+        if not m:
+            drift.append(f"{c_name} not found in boot_entries.h")
+            continue
+        expr = re.sub(r"(\d+)[uUlL]+", r"\1", m.group(1))
+        if not re.fullmatch(r"[\d\s()*+]+", expr):
+            drift.append(f"{c_name} is not a plain arithmetic define: {m.group(1)!r}")
+            continue
+        c_value = eval(expr, {"__builtins__": {}}) + offset  # digits, spaces, ( ) * + only
+        py_value = getattr(_validator_mod, py_name)
+        if c_value != py_value:
+            drift.append(f"{py_name}={py_value} but {c_name}{offset:+d}={c_value}")
+    return drift
 
 
 def _root_uuid_ok() -> Path:
@@ -1300,7 +1394,7 @@ def main() -> int:
             print(f"[BAD]  {label}: unknown expectation {kind!r}")
             failures += 1
 
-    locator = _locator_checks() + _decoy_control()
+    locator = _locator_checks() + _decoy_control() + _post_read_cap_checks()
     for label, ok, detail in locator:
         if ok:
             print(f"[OK]   {label}")
@@ -1308,7 +1402,15 @@ def main() -> int:
             print(f"[BAD]  {label}: {detail}")
             failures += 1
 
-    total = len(cases()) + len(locator)
+    drift = _header_mirror_drift()
+    if drift:
+        for d in drift:
+            print(f"[BAD]  validate.py constant does not match include/boot headers: {d}")
+        failures += 1
+    else:
+        print("[OK]   validate.py constants match include/boot/boot_entries.h and boot_entries_parser.h")
+
+    total = len(cases()) + len(locator) + 1
     print(f"\n{total - failures}/{total} passed")
     return 0 if failures == 0 else 1
 
