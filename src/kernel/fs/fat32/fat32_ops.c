@@ -206,6 +206,7 @@ static int fat32_file_write_vfs(struct vfs_node *node, uint32_t offset,
     uint32_t bytes_written = 0;
     uint32_t cluster_offset;
     uint8_t *cluster_buf;
+    int size_lost = 0;
 
     if (!f || !buffer || size == 0)
         return -1;
@@ -236,9 +237,14 @@ static int fat32_file_write_vfs(struct vfs_node *node, uint32_t offset,
             return -1;
         }
         fat32_zero_cluster(vol, cluster);
-        f->first_cluster = cluster;
-        node->inode = cluster;
 
+        /* Point the directory entry at the new chain. A failed write fails
+         * this write rather than storing data no entry reaches. The cluster is
+         * NOT freed: a multi-sector write can fail after the entry's sector
+         * landed, and freeing a cluster the disk references would hand it to
+         * a second file. Left allocated, it is at worst a lost cluster that
+         * fsck reclaims; the next write allocates and links a fresh one. */
+        int linked = 0;
         {
             uint32_t bpc = vol->bpb.sectors_per_cluster * 512;
             uint8_t *dbuf = (uint8_t *)kmalloc(bpc);
@@ -270,8 +276,8 @@ static int fat32_file_write_vfs(struct vfs_node *node, uint32_t offset,
                         if (match) {
                             de->first_cluster_hi = (uint16_t)(cluster >> 16);
                             de->first_cluster_lo = (uint16_t)(cluster & 0xFFFF);
-                            fat32_write_sectors_multi(vol, sec,
-                                vol->bpb.sectors_per_cluster, dbuf);
+                            linked = fat32_write_sectors_multi(vol, sec,
+                                vol->bpb.sectors_per_cluster, dbuf) == 0;
                             goto fc_done;
                         }
                     }
@@ -281,6 +287,15 @@ fc_done:
                 kfree(dbuf);
             }
         }
+        if (!linked) {
+            spin_unlock(&vol->lock);
+            kfree(cluster_buf);
+            klog(LOG_WARN, "fat32", "could not link the first cluster of %s (cluster %u left for fsck); write refused",
+                 (uint64_t)(uintptr_t)node->name, (uint64_t)cluster);
+            return -1;
+        }
+        f->first_cluster = cluster;
+        node->inode = cluster;
     }
 
     {
@@ -342,10 +357,17 @@ fc_done:
     {
         uint32_t end_pos = offset + bytes_written;
         if (end_pos > f->file_size) {
-            f->file_size = end_pos;
-            node->size = end_pos;
-            fat32_update_dir_size(vol, f->dir_cluster, f->first_cluster,
-                                   end_pos);
+            if (fat32_update_dir_size(vol, f->dir_cluster, f->first_cluster,
+                                      end_pos) == 0) {
+                f->file_size = end_pos;
+                node->size = end_pos;
+            } else {
+                /* The entry still records the old size, so only the bytes
+                 * below it are part of the file after a reboot. Report those
+                 * and keep the in-memory size equal to the disk's. */
+                size_lost = 1;
+                bytes_written = (f->file_size > offset) ? f->file_size - offset : 0u;
+            }
         }
     }
 
@@ -353,6 +375,9 @@ fc_done:
     spin_unlock(&vol->lock);
 
     kfree(cluster_buf);
+    if (size_lost)
+        klog(LOG_WARN, "fat32", "size update failed for %s; write cut to the recorded size",
+             (uint64_t)(uintptr_t)node->name);
     return (int)bytes_written;
 }
 

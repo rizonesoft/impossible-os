@@ -936,10 +936,13 @@ int fat32_update_dir_size(struct fat32_volume *vol, uint32_t search_dir,
             if (fc == target_fc) {
                 de->file_size = new_size;
                 fat32_stamp_modify(de);
-                fat32_write_sectors_multi(vol, sector,
-                                          vol->bpb.sectors_per_cluster, cbuf);
+                int wr = fat32_write_sectors_multi(vol, sector,
+                                                   vol->bpb.sectors_per_cluster, cbuf);
                 kfree(cbuf);
-                return 0;
+                /* The size is what makes written bytes part of the file: a
+                 * caller told "0" here would report data the disk does not
+                 * hold once the entry is read back. */
+                return (wr == 0) ? 0 : -1;
             }
         }
         cur_cluster = fat32_get_fat_entry(vol, cur_cluster);

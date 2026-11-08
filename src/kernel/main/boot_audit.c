@@ -32,6 +32,7 @@
 #include "kernel/nt/filetime.h"
 #include "boot/boot_audit_codes.h"
 #include "boot/boot_policy.h"
+#include "kernel/boot_audit.h"
 
 extern int klog_using_blackbox;
 extern struct boot_info g_boot_info;
@@ -87,129 +88,123 @@ audit_reject_reason_name(uint32_t r)
     }
 }
 
-/* Parse one ASCII-decimal sequence file. Returns the value, saturating
- * at UINT32_MAX. Returns 0 on absent / unreadable / parse-error. */
-static uint32_t
-audit_read_sequence_one(const char *path)
+/* Classify one sequence file. See boot_audit.h for the three states. */
+enum boot_audit_seq_state
+boot_audit_seq_classify(const uint8_t *buf, int n, uint32_t *value)
 {
-    struct vfs_node *f = vfs_open(path, VFS_O_READ);
-    if (!f) return 0;
-
-    uint8_t buf[BOOT_AUDIT_SEQUENCE_LEN_MAX + 1];
-    int n = vfs_read(f, 0, BOOT_AUDIT_SEQUENCE_LEN_MAX, buf);
-    vfs_close(f);
-    if (n <= 0 || (uint32_t)n > BOOT_AUDIT_SEQUENCE_LEN_MAX) return 0;
-    buf[n] = 0;
-
     uint32_t v = 0;
-    for (int i = 0; i < n; i++) {
-        uint8_t c = buf[i];
-        if (c >= '0' && c <= '9') {
-            uint32_t digit = (uint32_t)(c - '0');
-            /* Saturate at UINT32_MAX rather than wrap. Two-limb check:
-             * a file containing 4294967296 has v == 429496729
-             * (UINT32_MAX/10) at the final digit, then v*10+6 wraps
-             * to 0 in u32 arithmetic. Check digit-on-boundary as well
-             * as v-above-boundary so a corrupt over-u32 file cannot
-             * silently reset the counter. */
-            if (v > 0xFFFFFFFFu / 10u ||
-                (v == 0xFFFFFFFFu / 10u && digit > 0xFFFFFFFFu % 10u)) {
-                v = 0xFFFFFFFFu;
-                break;
-            }
-            v = v * 10u + digit;
-        } else if (c == '\n' || c == '\r' || c == ' ' || c == '\t' || c == 0) {
-            break;
-        } else {
-            /* Garbage byte -- file is corrupt. Treat as 0 so we do
-             * not skip a chunk of seq space on a stray edit. */
-            return 0;
-        }
+    if (value) *value = 0;
+    if (n == BOOT_AUDIT_SEQ_READ_ABSENT || n == 0) return BOOT_AUDIT_SEQ_STALE;
+    if (!buf || n < 0 || (uint32_t)n > BOOT_AUDIT_SEQUENCE_LEN_MAX) return BOOT_AUDIT_SEQ_UNKNOWN;
+
+    int i = 0;
+    for (; i < n && buf[i] >= '0' && buf[i] <= '9'; i++) {
+        uint32_t digit = (uint32_t)(buf[i] - '0');
+        /* Two-limb overflow check: 4294967296 has v == UINT32_MAX/10 at its
+         * final digit, so test the digit on the boundary too. */
+        if (v > 0xFFFFFFFFu / 10u ||
+            (v == 0xFFFFFFFFu / 10u && digit > 0xFFFFFFFFu % 10u))
+            return BOOT_AUDIT_SEQ_UNKNOWN;
+        v = v * 10u + digit;
     }
-    return v;
+    if (i == n) return BOOT_AUDIT_SEQ_STALE;   /* digits, no terminator: a short write */
+    if (i == 0) return BOOT_AUDIT_SEQ_UNKNOWN; /* starts with a non-digit */
+    int rest = n - i;
+    int terminated = (rest == 1 && buf[i] == '\n') ||
+                     (rest == 2 && buf[i] == '\r' && buf[i + 1] == '\n');
+    if (!terminated) return BOOT_AUDIT_SEQ_UNKNOWN;
+    if (value) *value = v;
+    return BOOT_AUDIT_SEQ_VALID;
 }
 
-/* Read the persistent boot_seq counter, taking the MAX of the canonical
- * and shadow files. Dual-file durability: as long as ONE of the two
- * writes succeeded last boot, the new value is recoverable here. A
- * partial write that leaves one file corrupt cannot regress the
- * counter (the other file still has the true value). */
-static uint32_t
-audit_read_sequence(void)
+uint32_t
+boot_audit_seq_format(uint32_t seq, char *buf, uint32_t cap)
 {
-    uint32_t canon = audit_read_sequence_one(BOOT_AUDIT_SEQUENCE_PATH);
-    uint32_t shadow = audit_read_sequence_one(BOOT_AUDIT_SEQUENCE_TEMP_PATH);
-    return (canon > shadow) ? canon : shadow;
+    char tmp[10];
+    uint32_t t = 0;
+    do { tmp[t++] = (char)('0' + (seq % 10u)); seq /= 10u; } while (seq);
+    if (!buf || cap < t + 1u) return 0;
+    uint32_t n = 0;
+    while (t > 0) buf[n++] = tmp[--t];
+    buf[n++] = '\n';
+    return n;
 }
 
-/* Write a single sequence file. Returns 1 on full-write success. */
-static int
-audit_write_sequence_one(const char *path, const char *buf, int n)
+static enum boot_audit_seq_state
+audit_seq_read_one(const struct boot_audit_seq_io *io, const char *path, uint32_t *value)
 {
-    struct vfs_node *f = vfs_open(path,
-                                  VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
-    if (!f) return 0;
-    int wr = vfs_write(f, 0, (uint32_t)n, (const uint8_t *)buf);
-    vfs_close(f);
-    return (wr == n) ? 1 : 0;
+    uint8_t buf[BOOT_AUDIT_SEQUENCE_LEN_MAX];
+    int n = io->read(io->ctx, path, buf, (uint32_t)sizeof(buf));
+    return boot_audit_seq_classify(buf, n, value);
 }
 
-/* Persist `seq` by writing BOTH the canonical and shadow files. As
- * long as at least one write succeeds, the counter is durable -- the
- * reader takes the max of both files and recovers the new value next
- * boot.
- *
- * Why two files instead of an atomic rename? The kernel-side FAT32
- * driver does not safely rewrite LFN chains during rename (only the
- * SFN field updates, leaving the LFN encoding the old name).
- * Dual-file write sidesteps that limitation entirely.
- *
- * Defense-in-depth limitation: a SIMULTANEOUS failure of both writes
- * after VFS_O_TRUNC could leave both files empty and the next boot
- * would read max(0,0)=0, restarting the counter. The realistic
- * probability is near-zero on healthy media (16-byte writes do not
- * exhaust cluster pools); the early-return guard prevents in-boot
- * duplicates, but cross-boot regression after a true dual-write
- * failure on failing media is the accepted residual risk. A
- * read-back-verify protocol was attempted but the FAT32 driver does
- * not flush the dirent size update before re-open, so the read
- * always returns 0 -- making verify a hard boot dependency would
- * skip every publish on healthy hardware.
- *
- * Returns 1 on success (at least one file durably contains seq);
- * 0 if BOTH writes failed. */
-static int
-audit_write_sequence(uint32_t seq)
+/* Why two files instead of an atomic rename: the FAT32 driver does not
+ * rewrite LFN chains on rename (only the SFN field), so a rename would leave
+ * the old long name. The ORDER of the two writes is what makes them safe: an
+ * open with VFS_O_TRUNC empties a file before the write can fail, so writing
+ * the file that holds the high-water mark first could destroy the only copy
+ * of the last published value, and two failed writes would then restart the
+ * counter at 1. The low file is written first and the high file only after
+ * that succeeded, so a durable copy of the high-water mark always survives. */
+enum boot_audit_seq_result
+boot_audit_sequence_advance(const struct boot_audit_seq_io *io, uint32_t *out_seq)
 {
+    if (!io || !io->read || !io->write || !out_seq) return BOOT_AUDIT_SEQ_FAILED;
+
+    uint32_t canon = 0, shadow = 0;
+    enum boot_audit_seq_state cs = audit_seq_read_one(io, BOOT_AUDIT_SEQUENCE_PATH, &canon);
+    enum boot_audit_seq_state ss = audit_seq_read_one(io, BOOT_AUDIT_SEQUENCE_TEMP_PATH, &shadow);
+    if (cs == BOOT_AUDIT_SEQ_UNKNOWN || ss == BOOT_AUDIT_SEQ_UNKNOWN)
+        return BOOT_AUDIT_SEQ_UNREADABLE;
+    uint32_t prev = (canon > shadow) ? canon : shadow;
+    if (prev == 0xFFFFFFFFu)
+        return BOOT_AUDIT_SEQ_EXHAUSTED;
+    uint32_t seq = prev + 1u;
+
     char buf[BOOT_AUDIT_SEQUENCE_LEN_MAX];
-    /* Build decimal string in reverse, then flip. */
-    uint32_t v = seq;
-    int n = 0;
-    if (v == 0) {
-        buf[n++] = '0';
-    } else {
-        char tmp[BOOT_AUDIT_SEQUENCE_LEN_MAX];
-        int t = 0;
-        while (v && t < (int)sizeof(tmp)) { tmp[t++] = (char)('0' + (v % 10u)); v /= 10u; }
-        while (t > 0) buf[n++] = tmp[--t];
-    }
-    if (n < (int)BOOT_AUDIT_SEQUENCE_LEN_MAX) buf[n++] = '\n';
+    uint32_t n = boot_audit_seq_format(seq, buf, (uint32_t)sizeof(buf));
+    if (n == 0) return BOOT_AUDIT_SEQ_FAILED;
 
-    int ok_shadow = audit_write_sequence_one(BOOT_AUDIT_SEQUENCE_TEMP_PATH, buf, n);
-    int ok_canon = audit_write_sequence_one(BOOT_AUDIT_SEQUENCE_PATH, buf, n);
+    /* Low file first; on a tie either copy may go first, the other survives. */
+    const char *first = (canon > shadow) ? BOOT_AUDIT_SEQUENCE_TEMP_PATH : BOOT_AUDIT_SEQUENCE_PATH;
+    const char *second = (canon > shadow) ? BOOT_AUDIT_SEQUENCE_PATH : BOOT_AUDIT_SEQUENCE_TEMP_PATH;
 
-    if (!ok_shadow && !ok_canon) {
-        klog(LOG_WARN, "BOOT",
-             "audit: sequence persist failed (canon + shadow both rejected)");
-        return 0;
-    }
-    if (!ok_shadow || !ok_canon) {
-        klog(LOG_WARN, "BOOT",
-             "audit: sequence partial persist (canon=%d shadow=%d); "
-             "next boot recovers via max-of-both",
-             (uint64_t)ok_canon, (uint64_t)ok_shadow);
-    }
-    return 1;
+    if (io->write(io->ctx, first, buf, n) != 1)
+        return BOOT_AUDIT_SEQ_FAILED;
+    *out_seq = seq;
+    if (io->write(io->ctx, second, buf, n) != 1)
+        return BOOT_AUDIT_SEQ_PARTIAL;
+    return BOOT_AUDIT_SEQ_OK;
+}
+
+static int
+audit_vfs_read(void *ctx, const char *path, uint8_t *buf, uint32_t cap)
+{
+    (void)ctx;
+    struct vfs_node *f = vfs_open(path, VFS_O_READ);
+    if (!f) return BOOT_AUDIT_SEQ_READ_ABSENT;
+    uint64_t size = f->size;
+    int n = (size <= cap) ? vfs_read(f, 0, (uint32_t)size, buf) : BOOT_AUDIT_SEQ_READ_ERROR;
+    vfs_close(f);
+    /* A read that returns fewer bytes than the file holds is a device error,
+     * not an empty file: FAT32 returns 0 when the cluster read fails. */
+    if (n < 0 || (uint64_t)n != size) return BOOT_AUDIT_SEQ_READ_ERROR;
+    return n;
+}
+
+static int
+audit_vfs_write(void *ctx, const char *path, const char *buf, uint32_t n)
+{
+    (void)ctx;
+    struct vfs_node *f = vfs_open(path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+    if (!f) return 0;
+    int wr = vfs_write(f, 0, n, (const uint8_t *)buf);
+    /* Durable means on the medium: the protocol truncates the other copy next,
+     * so the cached FAT and directory sectors and the device cache must be
+     * written out first. vfs_flush is that boundary on FAT32. */
+    int flushed = (wr == (int)n) && vfs_flush(f) == 0;
+    vfs_close(f);
+    return flushed ? 1 : 0;
 }
 
 /* Compose the JSONL line into `buf`. Returns the number of bytes
@@ -506,32 +501,40 @@ boot_audit_publish(void)
 
     const struct boot_info *bi = &g_boot_info;
 
-    /* Read the persisted boot_seq counter from BlackBox (NOT NVRAM --
-     * the sticky var is exceptional-only). Increment unconditionally
-     * so every boot gets a unique seq. Saturate at UINT32_MAX so the
-     * counter does not wrap to 0; a wrap would let consumers parse
-     * older records as "newer" by seq comparison. */
-    uint32_t prev_seq = audit_read_sequence();
-    uint32_t boot_seq = (prev_seq == 0xFFFFFFFFu) ? 0xFFFFFFFFu : prev_seq + 1u;
-
-    /* Persist the new seq BEFORE composing/writing the JSONL line.
-     * If the JSONL append later fails, the next boot will read the
-     * advanced seq and skip past the failed value -- skipped seqs
-     * are tolerable; duplicate seqs would violate the schema's
-     * monotonic contract. Sequence persistence failure is FATAL to
-     * the publish: if we wrote the JSONL line with this boot_seq
-     * but the counter file is empty/stale, the next boot reads the
-     * old value and emits a duplicate seq for a different boot --
-     * the exact monotonic violation the sequence file was added to
-     * prevent. Skip the publish entirely and skip ack; the trigger
-     * persists for next boot to retry. */
-    if (!audit_write_sequence(boot_seq)) {
+    /* Allocate and persist boot_seq BEFORE composing/writing the JSONL line
+     * (the counter lives on BlackBox, NOT NVRAM: the sticky var is
+     * exceptional-only). If the JSONL append later fails, the next boot skips
+     * past this value: skipped seqs are tolerable, duplicate seqs violate the
+     * schema's monotonic contract. When the counter is not durable or is
+     * exhausted, skip the publish and the ack; the trigger persists for the
+     * next boot to retry. */
+    static const struct boot_audit_seq_io vfs_io = {
+        audit_vfs_read, audit_vfs_write, (void *)0
+    };
+    uint32_t boot_seq = 0;
+    enum boot_audit_seq_result sr = boot_audit_sequence_advance(&vfs_io, &boot_seq);
+    if (sr == BOOT_AUDIT_SEQ_EXHAUSTED) {
         klog(LOG_WARN, "BOOT",
-             "audit: sequence persist failed; skip JSONL publish to "
-             "avoid duplicate boot_seq=%u next boot",
-             (uint64_t)boot_seq);
+             "audit: boot_seq counter exhausted at 4294967295; skip JSONL publish");
         return;
     }
+    if (sr == BOOT_AUDIT_SEQ_UNREADABLE) {
+        klog(LOG_WARN, "BOOT",
+             "audit: a boot_seq file is unreadable or damaged (%s, %s); "
+             "skip JSONL publish until it is repaired",
+             (uint64_t)(uintptr_t)BOOT_AUDIT_SEQUENCE_PATH,
+             (uint64_t)(uintptr_t)BOOT_AUDIT_SEQUENCE_TEMP_PATH);
+        return;
+    }
+    if (sr == BOOT_AUDIT_SEQ_FAILED) {
+        klog(LOG_WARN, "BOOT",
+             "audit: sequence persist failed (high-water file left untouched); "
+             "skip JSONL publish");
+        return;
+    }
+    if (sr == BOOT_AUDIT_SEQ_PARTIAL)
+        klog(LOG_WARN, "BOOT",
+             "audit: sequence partial persist; next boot recovers via max-of-both");
 
     static char line[BOOT_AUDIT_JSON_LINE_CAP];
     size_t len = boot_audit_compose_line(bi, boot_seq, line, sizeof(line));

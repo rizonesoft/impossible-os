@@ -1563,6 +1563,110 @@ static int fx_stub_set_attr(struct vfs_node *node, uint32_t attr)
     return 0;
 }
 
+/* A file object as the driver builds one, from the entry on disk. */
+static void fx_file_from_entry(struct fx_volume *fx, const char *name, struct fat32_file *f)
+{
+    struct fat32_dirent_loc loc;
+
+    memset(f, 0, sizeof(*f));
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx->vol, FX_ROOT_CLUSTER, name, &loc), 1, "entry found");
+    memcpy(f->sfn, loc.de.name, 11);
+    f->first_cluster = fx_first_cluster(&loc);
+    f->file_size = loc.de.file_size;
+    f->dir_cluster = FX_ROOT_CLUSTER;
+    f->volume = fx->vol;
+    f->node.fs_data = f;
+    f->node.size = f->file_size;
+    f->node.ops = &fat32_file_ops;
+    f->node.type = VFS_FILE;
+    for (uint32_t i = 0; name[i] && i + 1u < sizeof(f->node.name); i++)
+        f->node.name[i] = name[i];
+}
+
+/* Free clusters counted from the FAT itself, the oracle the allocator reads. */
+static uint32_t fx_free_clusters(struct fx_volume *fx)
+{
+    uint32_t max = (fx->vol->bpb.total_sectors - fx->vol->bpb.first_data_sector)
+                   / fx->vol->bpb.sectors_per_cluster + 2u;
+    uint32_t n = 0;
+
+    for (uint32_t c = 2; c < max; c++)
+        if (fat32_get_fat_entry(fx->vol, c) == FAT32_FREE)
+            n++;
+    return n;
+}
+
+static uint32_t fx_size_on_disk(struct fx_volume *fx, const char *name)
+{
+    struct fat32_dirent_loc loc;
+
+    scache_flush(fx->vol);
+    return (fat32_dir_lookup(fx->vol, FX_ROOT_CLUSTER, name, &loc) == 1) ? loc.de.file_size : 0xFFFFFFFFu;
+}
+
+/* A write is only part of the file once the entry records its size. When that
+ * directory write fails, the driver must not report the bytes past the size
+ * the disk still holds (it used to report all of them). */
+static void test_fat32_write_reports_only_recorded_bytes(void)
+{
+    struct fx_volume fx;
+    struct fat32_file f;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "seq.txt"), 0, "file created");
+    fx_file_from_entry(&fx, "seq.txt", &f);
+
+    TEST_ASSERT_EQ(fat32_file_ops.write(&f.node, 0, 3, (const uint8_t *)"42\n"), 3,
+                   "a healthy write reports every byte");
+    TEST_ASSERT_EQ(fx_size_on_disk(&fx, "seq.txt"), 3u, "and the entry records them");
+
+    fx.fail_write_lba = cluster_to_sector(fx.vol, FX_ROOT_CLUSTER);
+    TEST_ASSERT_EQ(fat32_file_ops.write(&f.node, 0, 5, (const uint8_t *)"4343\n"), 3,
+                   "a failed size update reports only the bytes below the recorded size");
+    TEST_ASSERT_EQ((uint32_t)f.node.size, 3u, "the in-memory size stays the disk's");
+    TEST_ASSERT_EQ(f.file_size, 3u, "and so does the driver's");
+    TEST_ASSERT_EQ(fat32_file_ops.write(&f.node, 3, 2, (const uint8_t *)"9\n"), 0,
+                   "an append whose size cannot be recorded reports nothing");
+    fx.fail_write_lba = FX_NO_FAULT;
+    TEST_ASSERT_EQ(fx_size_on_disk(&fx, "seq.txt"), 3u, "the entry still records 3 bytes");
+    fx_close(&fx);
+}
+
+/* The first write to a chainless file points its entry at a new cluster. If that
+ * directory write fails, the write must fail. The cluster must stay allocated:
+ * the entry may have landed, and a freed cluster the disk still references
+ * would be handed to the next file that allocates. */
+static void test_fat32_unlinked_first_cluster_fails_write(void)
+{
+    struct fx_volume fx;
+    struct fat32_file f;
+    uint32_t free_before;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "empty.txt"), 0, "file created");
+    fx_file_from_entry(&fx, "empty.txt", &f);
+    /* An open with VFS_O_TRUNC leaves the file with no chain; the next write
+     * must allocate and link one. */
+    TEST_ASSERT_EQ(fat32_file_ops.truncate(&f.node, 0), 0, "truncated to zero");
+    fx_file_from_entry(&fx, "empty.txt", &f);
+    TEST_ASSERT_EQ(f.first_cluster, 0u, "a truncated file has no chain");
+    free_before = fx_free_clusters(&fx);
+
+    fx.fail_write_lba = cluster_to_sector(fx.vol, FX_ROOT_CLUSTER);
+    TEST_ASSERT_EQ(fat32_file_ops.write(&f.node, 0, 3, (const uint8_t *)"42\n"), -1,
+                   "a write whose cluster cannot be linked fails");
+    fx.fail_write_lba = FX_NO_FAULT;
+    TEST_ASSERT_EQ(f.first_cluster, 0u, "the file object keeps no unlinked chain");
+    TEST_ASSERT_EQ(fx_free_clusters(&fx), free_before - 1u,
+                   "the cluster was not returned to the free pool");
+    TEST_ASSERT_EQ(fat32_file_ops.write(&f.node, 0, 3, (const uint8_t *)"42\n"), 3,
+                   "the write succeeds once the device recovers");
+    TEST_ASSERT_EQ(fx_size_on_disk(&fx, "empty.txt"), 3u, "and the entry records it");
+    fx_close(&fx);
+}
+
 /* Zero fields in FileBasicInformation mean "unchanged", and must not reach the
  * filesystem as a date. */
 static void test_nt_basic_info_zero_means_unchanged(void)
@@ -1707,6 +1811,10 @@ void test_register_fat32(void)
                             test_fat32_create_refuses_existing_name, TEST_CAT_FS);
     test_suite_register_cat("FAT32: failed rename rolls back",
                             test_fat32_failed_rename_rolls_back, TEST_CAT_FS);
+    test_suite_register_cat("fat32: write reports only recorded bytes",
+                            test_fat32_write_reports_only_recorded_bytes, TEST_CAT_FS);
+    test_suite_register_cat("fat32: unlinked first cluster fails the write",
+                            test_fat32_unlinked_first_cluster_fails_write, TEST_CAT_FS);
     test_suite_register_cat("FAT32: rollback when the alias is a long name",
                             test_fat32_rollback_alias_is_a_long_name, TEST_CAT_FS);
     test_suite_register_cat("FAT32: rollback of a respelling",

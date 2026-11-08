@@ -114,6 +114,9 @@ Add a per-process `HANDLE`→`FILE_OBJECT*` table to the process struct. Impleme
 - [ ] Per-process handle table: add `void *handle_table[256]; uint32_t handle_count` to `task_t`; `handle_alloc(task, obj)` → find first NULL slot, store `obj`, return index+1 as HANDLE; `handle_free(task, handle)` → zero slot
 - [ ] `ObReferenceObjectByHandle(HANDLE, access_mask, &obj_ptr)`: get current task; bounds-check handle; fetch slot; check access; `++refcount`; set `*obj_ptr`; return `STATUS_SUCCESS` or `STATUS_INVALID_HANDLE`
 - [ ] `NtCreateFile(handle_out, access, obj_attrs, io_status, disposition, options, share)`: parse `ObjectName` from `obj_attrs`; call `vfs_open(path, flags)` → `vfs_node_t`; if share/delete-on-close conflict → `STATUS_SHARING_VIOLATION`; create `FILE_OBJECT`; alloc handle; write to `*handle_out`; set `IoStatusBlock`
+- [ ] `vfs_open()` status: report not-found apart from lookup, sharing, handle-table and device errors, through `walk_path()` and each backend's `finddir`
+  - Today every failure is NULL, so `NtCreateFile` cannot return `STATUS_OBJECT_NAME_NOT_FOUND` vs `STATUS_IO_DEVICE_ERROR`, and a caller cannot tell a missing file from an unreadable directory.
+  - Waiter: <- XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness"). `audit_vfs_read()` must read a failed open as ABSENT, so a transient directory-read failure on both boot_seq files restarts the counter at 1.
 - [ ] `NtClose(handle)`: `ObReferenceObjectByHandle` to get `FILE_OBJECT`; call `file_object_release()`; `handle_free()`
 - [ ] Inherit handles: `handle_duplicate(src_task, dst_task, handle)` for `OBJ_INHERIT` during `CreateProcess`
 - [ ] Register `NtCreateFile`/`NtClose` in `syscall.c` dispatch table
