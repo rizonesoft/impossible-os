@@ -1412,6 +1412,51 @@ elif [ "$BOOT_PASSED" = true ]; then
             grep -E "policy:|store-reject:" "$STRIPPED_LOG" 2>/dev/null | head -6
             exit 1
         fi
+        # The policy, entry-kind, sticky and history code runs only in the loader
+        # image; the kernel suite tests a different build of the same files, so
+        # these lines are the only proof the shipped copies work.
+        loader_fail() {
+            echo -e "${RED}SMOKE TEST FAILED: $1${NC}"
+            grep -aE "policy:|boot_sticky|history:|boot_history:" "$STRIPPED_LOG" 2>/dev/null | head -10
+            exit 1
+        }
+        grep -qF '[BOOT] policy: kind validate OK kind=0 kernel="\boot\kernel.exe"' "$STRIPPED_LOG" 2>/dev/null \
+            || loader_fail "boot_entry_kind did not decode the split entry's kernel path"
+        # The keys leg overrides the policy default from the menu, and the
+        # policy line prints after the menu, so it reports the operator's pick.
+        sel_entry=smoke-entry; sel_reason='1 (STORE_DEFAULT)'
+        if [ "$MENU" = "keys" ]; then sel_entry=smoke-alt; sel_reason='3 (HOTKEY)'; fi
+        grep -qF "[BOOT] policy: selection_reason=$sel_reason selected=\"$sel_entry\"" "$STRIPPED_LOG" 2>/dev/null \
+            || loader_fail "boot_policy did not report selection_reason=$sel_reason for $sel_entry"
+        if grep -qaE '\[WARN\] boot_(sticky|history):' "$STRIPPED_LOG" 2>/dev/null; then
+            loader_fail "the loader warned while reading BootSticky or the boot history"
+        fi
+        hist_seq=$(grep -aoE '\[BOOT\] history: append seq=[0-9]+ src=0xFFFE err=0x0000' "$STRIPPED_LOG" 2>/dev/null \
+                   | head -1 | sed -E 's/.*seq=([0-9]+).*/\1/')
+        [ -n "$hist_seq" ] || loader_fail "the loader did not append a clean boot history record"
+        grep -qaE "boot_history: +seq=$hist_seq time=[^ ]+ src=ebs-success err=0x0000" "$STRIPPED_LOG" 2>/dev/null \
+            || loader_fail "the kernel did not read back history record seq=$hist_seq"
+        # Two writers share the ring: the loader records ebs-success, then the
+        # kernel's Phase-3 mark takes the next number.
+        grep -qaE "boot_history: Phase-3 mark: append seq=$((hist_seq + 1)) " "$STRIPPED_LOG" 2>/dev/null \
+            || loader_fail "the kernel's Phase-3 history mark is not seq=$((hist_seq + 1))"
+        hist_n=$(grep -aoE 'boot_history: Recent boot history \([0-9]+ attempts\)' "$STRIPPED_LOG" 2>/dev/null \
+                 | head -1 | grep -oE '[0-9]+')
+        if [ -z "$STORE_RECORD" ]; then
+            # Fresh variable store: first boot of a new machine.
+            [ "$hist_seq" = "1" ] || loader_fail "a fresh variable store produced history seq=$hist_seq, not 1"
+            grep -qF '[BOOT] boot_sticky: absent (first boot)' "$STRIPPED_LOG" 2>/dev/null \
+                || loader_fail "boot_sticky did not report a fresh store as absent"
+            grep -qF "[BOOT] policy: counter decrement OK -> $sel_entry+2-1 (first-boot bootstrap)" "$STRIPPED_LOG" 2>/dev/null \
+                || loader_fail "boot_policy did not bootstrap the try counter on $sel_entry"
+        else
+            # The previous boots of this machine wrote history the loader must
+            # have read back to number this one.
+            [ "$hist_seq" -ge 2 ] 2>/dev/null || loader_fail "history seq=$hist_seq on a reused variable store (the loader did not read the earlier records)"
+            [ "${hist_n:-0}" -ge 2 ] || loader_fail "the kernel saw ${hist_n:-0} history records on a reused variable store"
+            grep -qaE "boot_history: +seq=$((hist_seq - 1)) time=[^ ]+ src=kernel-Phase3 " "$STRIPPED_LOG" 2>/dev/null \
+                || loader_fail "the previous boot's kernel Phase-3 record (seq=$((hist_seq - 1))) is missing"
+        fi
     fi
 
     # ---- Boot menu assertions ---------------------------------------------
