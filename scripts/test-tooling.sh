@@ -5111,6 +5111,12 @@ printf 'unsigned' > "$_se/loader.efi"; printf 'signed' > "$_se/loader.signed.efi
 mkdir -p "$_se/shim-none" "$_se/shim-nokey" "$_se/shim-full" "$_se/key-full"
 printf 'shim' > "$_se/shim-nokey/shimx64.efi"; printf 'mm' > "$_se/shim-nokey/mmx64.efi"
 cp "$_se/shim-nokey/"*.efi "$_se/shim-full/"; printf 'key' > "$_se/key-full/MOK.key"
+(cd "$_se/shim-full" && sha256sum shimx64.efi mmx64.efi > SHA256SUMS)
+for _c in unlisted nosums; do
+    mkdir -p "$_se/shim-$_c" "$_se/key-$_c"; cp "$_se/shim-full/"*.efi "$_se/shim-$_c/"
+    printf 'key' > "$_se/key-$_c/MOK.key"
+done
+(cd "$_se/shim-unlisted" && sha256sum shimx64.efi > SHA256SUMS)
 _se_case() {  # <name> <case> <require> <want-rc> <want BOOTX64 bytes or ->
     local rc=0; _se_run "$2" "$3" || rc=$?
     local got="-"; [ -f "$_se/st-$2/EFI/BOOT/BOOTX64.EFI" ] && got="$(cat "$_se/st-$2/EFI/BOOT/BOOTX64.EFI")"
@@ -5122,6 +5128,14 @@ _se_case no_shim_required   none  1 1 -
 _se_case keyless_dev        nokey 0 0 unsigned
 _se_case keyless_required   nokey 1 1 -
 _se_case chain_required     full  1 0 shim
+_se_case chain_unlisted_mm  unlisted 0 1 -
+_se_case chain_no_sums      nosums   0 1 -
+# A record naming "shimx64.efi backup" must not approve shimx64.efi.
+mkdir -p "$_se/shim-suffix" "$_se/key-suffix"; cp "$_se/shim-full/"*.efi "$_se/shim-suffix/"
+printf 'key' > "$_se/key-suffix/MOK.key"
+(cd "$_se/shim-suffix" && printf '%s  shimx64.efi backup\n%s *mmx64.efi backup\n' \
+    "$(sha256sum shimx64.efi | cut -d' ' -f1)" "$(sha256sum mmx64.efi | cut -d' ' -f1)" > SHA256SUMS)
+_se_case chain_suffixed_name suffix 0 1 -
 _se_case spelling_true      none  true 2 -
 _se_case spelling_yes       nokey yes  2 -
 _se_case spelling_empty     none  ""   0 unsigned
@@ -6041,6 +6055,9 @@ STUB
     # missing UKI is now hard-fail (Codex consistency H1 fix 2026-04-29).
     echo "stub-uki" > "$SCD_REPO/build/tools/BOOTX64.UKI.efi"
     echo "stub-shim" > "$SCD_REPO/shim/shimx64.efi"
+    mkdir -p "$SCD_REPO/scripts/secure-boot"
+    cp "$REPO_ROOT/scripts/secure-boot/shim-hash-check.sh" "$SCD_REPO/scripts/secure-boot/"
+    (cd "$SCD_REPO/shim" && sha256sum shimx64.efi > SHA256SUMS)
 
     _scd_run() {
         local fixture="$1"; local fake_today="$2"
@@ -6136,6 +6153,24 @@ STUB
     else
         t_fail "shim_ca_detection: 2011 post-expiry no-MOK" "out: $(echo "$SCD_OUT_NOMOK" | tail -8)"
     fi
+
+    # Tests 7-8: an MS-signed shim is refused without an approved hash
+    # (todo/answers.md Q27): issuer metadata alone is not proof.
+    mv "$SCD_REPO/shim/SHA256SUMS" "$SCD_REPO/shim/SHA256SUMS.ok"
+    SCD_OUT_NOSUMS="$(_scd_run "Microsoft Corporation UEFI CA 2023" "2026-07-15")"
+    if grep -q "SHA256SUMS absent" <<<"$SCD_OUT_NOSUMS" && grep -q "__rc=1" <<<"$SCD_OUT_NOSUMS"; then
+        t_pass "shim_ca_detection: MS-signed shim + no SHA256SUMS -> FAIL exit 1"
+    else
+        t_fail "shim_ca_detection: no SHA256SUMS" "out: $(echo "$SCD_OUT_NOSUMS" | tail -8)"
+    fi
+    echo "0000000000000000000000000000000000000000000000000000000000000000  shimx64.efi" > "$SCD_REPO/shim/SHA256SUMS"
+    SCD_OUT_BADSUM="$(_scd_run "Microsoft Corporation UEFI CA 2023" "2026-07-15")"
+    if grep -q "does not match" <<<"$SCD_OUT_BADSUM" && grep -q "__rc=1" <<<"$SCD_OUT_BADSUM"; then
+        t_pass "shim_ca_detection: MS-signed shim + mismatched hash -> FAIL exit 1"
+    else
+        t_fail "shim_ca_detection: mismatched hash" "out: $(echo "$SCD_OUT_BADSUM" | tail -8)"
+    fi
+    mv "$SCD_REPO/shim/SHA256SUMS.ok" "$SCD_REPO/shim/SHA256SUMS"
 
     rm -rf "$SCD_TMP"
 fi

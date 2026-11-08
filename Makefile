@@ -1253,7 +1253,7 @@ EFI_OFFSET  := 1048576
 system-disk: $(SYSTEM_DISK)
 
 $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
-                tools/make-system-disk.c tools/mkfs-ixfs.c scripts/stage-esp-loader.sh \
+                tools/make-system-disk.c tools/mkfs-ixfs.c scripts/stage-esp-loader.sh scripts/secure-boot/shim-hash-check.sh \
                 $(SYSROOT)/hello.exe
 	@echo "[DISK] Building system disk..."
 	@mkdir -p $(BUILD_DIR)/tools

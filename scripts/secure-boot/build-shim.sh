@@ -47,8 +47,13 @@ make VENDOR_CERT_FILE="$MOK_CER" ARCH=x86_64 shimx64.efi mmx64.efi
 # Copy outputs to shim/
 mkdir -p "$SHIM_DIR"
 cp shimx64.efi mmx64.efi "$SHIM_DIR/"
+# Record the pair just built as the approved hashes: disk staging refuses a
+# shim chain whose binaries have no matching shim/SHA256SUMS entry.
+(cd "$SHIM_DIR" && sha256sum shimx64.efi mmx64.efi > SHA256SUMS)
 echo "[SHIM] shimx64.efi: $(wc -c < "$SHIM_DIR/shimx64.efi") bytes"
 echo "[SHIM] mmx64.efi:   $(wc -c < "$SHIM_DIR/mmx64.efi") bytes"
+echo "[SHIM] SHA256SUMS records these unsigned binaries; re-record it after sbsign:"
+echo "         (cd shim && sha256sum shimx64.efi mmx64.efi > SHA256SUMS)"
 
 # Cleanup
 cd /

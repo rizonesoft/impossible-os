@@ -6,7 +6,8 @@
 #                            <signed-efi> <staging-dir>
 #
 # Layouts:
-#   shim chain   shim + MokManager + MOK key: EFI/BOOT/BOOTX64.EFI = shim,
+#   shim chain   shim + MokManager + MOK key, both binaries approved in
+#                shim/SHA256SUMS: EFI/BOOT/BOOTX64.EFI = shim,
 #                grubx64.efi = the SIGNED loader, MokManager in both places,
 #                MOK.cer (DER) at the ESP root when the certificate exists.
 #   direct boot  BOOTX64.EFI = the loader (signed when a MOK key exists).
@@ -53,10 +54,10 @@ fi
 
 if [ -f "$SHIM" ] && [ -f "$MM" ] && [ -f "$MOK_KEY" ]; then
     echo "[DISK] Shim + MOK key found -- using Secure Boot chain-load layout (signed grubx64.efi)"
-    if [ -f "$SHIM_DIR/SHA256SUMS" ]; then
-        (cd "$SHIM_DIR" && sha256sum -c SHA256SUMS) \
-            || { echo "[ERROR] Shim hash verification FAILED" >&2; exit 1; }
-    fi
+    # Both binaries need an approved entry: `sha256sum -c` would pass a file
+    # the list does not name, and an absent list would skip the check entirely.
+    bash "$(dirname "$0")/secure-boot/shim-hash-check.sh" "$SHIM_DIR/SHA256SUMS" "$SHIM" "$MM" \
+        || { echo "[ERROR] Shim hash verification FAILED" >&2; exit 1; }
     cp "$SHIM" "$STAGE/EFI/BOOT/BOOTX64.EFI"
     cp "$EFI_TO_SHIP" "$STAGE/EFI/BOOT/grubx64.efi"
     cp "$MM" "$STAGE/EFI/BOOT/mmx64.efi"

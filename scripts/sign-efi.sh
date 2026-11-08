@@ -69,6 +69,15 @@ shim_ca_gate() {
         return 0
     fi
     echo "[shim] signed-by: Microsoft Corporation UEFI CA $SHIM_CA_YEAR_LOCAL"
+    # `sbverify --list` enumerates a signature table without validating it, so
+    # the issuer above is metadata. The approved-hash allowlist is the anchor
+    # (todo/answers.md Q27): an MS-signed shim without a matching shim/SHA256SUMS
+    # entry is refused, exactly as the secureboot smoke and disk staging do.
+    bash "$REPO_ROOT/scripts/secure-boot/shim-hash-check.sh" \
+        "$(dirname "$SHIM_BIN_LOCAL")/SHA256SUMS" "$SHIM_BIN_LOCAL" || {
+        echo "[shim] FAIL -- $SHIM_BIN_LOCAL is not hash-approved; abort signing pipeline." >&2
+        return 1
+    }
     if [ "$SHIM_CA_YEAR_LOCAL" = "2011" ]; then
         if [ "$TODAY_LOCAL" \> "$MS_UEFI_CA_2011_EXPIRY_LOCAL" ]; then
             echo "[shim] FAIL -- shim is signed by 2011 CA which expired $MS_UEFI_CA_2011_EXPIRY_LOCAL. Pin a 2023-CA-signed shim binary; abort signing pipeline." >&2

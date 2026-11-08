@@ -42,6 +42,14 @@ Two ways to get a shim back, and the smoke test must be told which one you used:
 > with Secure Boot enabled you must `sbsign` both binaries with a key you have
 > enrolled in db yourself. With Secure Boot OFF nothing needs signing -- and
 > nothing is being secured either.
+>
+> **`shim/SHA256SUMS` is the approved-hash list, and every consumer requires
+> it.** The disk staging refuses a shim chain unless both `shimx64.efi` and
+> `mmx64.efi` have a matching entry, and `scripts/sign-efi.sh` refuses an
+> MS-signed shim without one (`scripts/secure-boot/shim-hash-check.sh`).
+> `build-shim.sh` records the pair it built; signing changes the bytes, so
+> after `sbsign` re-record them:
+> `(cd shim && sha256sum shimx64.efi mmx64.efi > SHA256SUMS)`.
 
 A self-built shim carries no Microsoft signature, so the default `ms-ca` mode
 rejects it as "no recognized MS UEFI CA generation" -- that is the mode

@@ -56,9 +56,10 @@ ESP root by the build system for easy enrollment.
 
 ## SHA256 Hashes
 
-Historical -- the hashes of the unpinned 1.58 binaries. When a `SHA256SUMS` file
-is present alongside pinned binaries, the disk recipe verifies them and fails the
-build on a mismatch; with the directory empty there is nothing to verify.
+Historical -- the hashes of the unpinned 1.58 binaries. `SHA256SUMS` is the
+approved-hash list for whatever is pinned here: disk staging refuses a shim chain
+unless both binaries have a matching entry, and `scripts/sign-efi.sh` refuses an
+MS-signed shim without one. With the directory empty there is nothing to verify.
 
 ```
 6fe6e1bcbe6cf6baec8e056d40361ca1aa715cc04ddcc2855351de060b84350b  shimx64.efi

@@ -239,7 +239,9 @@ _shim_hash_pinned() {
         return 1
     fi
     # sha256sum lines are "<digest>  <name>" ("<digest> *<name>" in binary mode).
-    want="$(awk -v f="$(basename "$bin")" '$2 == f || $2 == "*" f { print $1; exit }' "$sums")"
+    # Same record grammar as scripts/secure-boot/shim-hash-check.sh: the whole
+    # remainder after `<64 hex> <space|*>` is the filename.
+    want="$(awk -v f="$(basename "$bin")" 'length($0) > 66 && substr($0, 1, 64) ~ /^[0-9a-fA-F]+$/ && substr($0, 65, 1) == " " && (substr($0, 66, 1) == " " || substr($0, 66, 1) == "*") && substr($0, 67) == f { print tolower(substr($0, 1, 64)); exit }' "$sums")"
     if [ -z "$want" ]; then
         t_fail "$label has no entry in shim/SHA256SUMS"
         UNCOVERED_WHY="$label has no approved hash entry"
@@ -287,11 +289,10 @@ shim_anchor_verify() {
         return 1
     fi
     # ms-ca mode: `sbverify --list` ENUMERATES a signature table, it does not
-    # validate it, so the issuer regex below is metadata rather than proof (the
-    # pinned-CA-certificate fix for that is parked in the owning TODO section).
-    # An approved SHA256SUMS entry is the hash half of that anchor and costs
-    # nothing today: a vendor shim we pin is supposed to arrive with one, and
-    # the disk recipe only checks it when the file happens to exist.
+    # validate it, so the issuer regex below is metadata rather than proof.
+    # An approved SHA256SUMS entry is that anchor (todo/answers.md Q27, option
+    # B); disk staging and scripts/sign-efi.sh require the same entry through
+    # scripts/secure-boot/shim-hash-check.sh.
     if ! _shim_hash_pinned "$bin" "$label"; then
         return 1
     fi

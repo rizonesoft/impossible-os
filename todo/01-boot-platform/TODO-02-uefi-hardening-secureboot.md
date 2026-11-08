@@ -86,7 +86,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎  |  17   | SBAT revocation metadata in boot artifacts               | §9, §11        |  [x]   |
 | 🛠️  |  18   | Build idempotency: UKI SBAT survives incremental rebuild | §11, §17       |  [/]   |
 | 🛠️  |  19   | Bootloader `ReadBlocks` IoAlign compliance               | §13            |  [/]   |
-| 🛠️  |  20   | Post-ship follow-up backfill (2026-07-31 cohort)         | --             |  [ ]   |
+| 🛠️  |  20   | Post-ship follow-up backfill (2026-07-31 cohort)         | --             |  [/]   |
 
 ---
 
@@ -722,10 +722,10 @@ From the stamped section 12 -- "Make shim absence fail-loud after the 2026-07-01
   - The loader-staging block moved from the `Makefile` system-disk recipe into [`scripts/stage-esp-loader.sh`](../../scripts/stage-esp-loader.sh) unchanged, so the policy is testable without a build; the script is a prerequisite of the disk image.
   - `REQUIRE_SHIM=1` refuses "no shim pinned" and "shim without a MOK key"; the default 0 keeps direct boot for dev and CI. Any value other than 0 or 1 exits 2 in both this script and `scripts/test-secureboot-smoke.sh`, so a spelling such as `yes` can never mean off.
   - Nine `stage_esp_loader_*` cases plus smoke-gate Case 2b in `scripts/test-tooling.sh`; a live `REQUIRE_SHIM=1 bash scripts/build.sh` fails with `REQUIRE_SHIM=1 but no shim is pinned`.
-- [/] Verify a pinned MS-signed shim CRYPTOGRAPHICALLY rather than by `sbverify --list` metadata -- BLOCKED: it needs a pinned Microsoft UEFI CA certificate or an approved-hash allowlist, awaiting-answer Q27 (`todo/answers.md`)
-  - `sbverify --list` enumerates a signature table without validating it, so a tampered image that keeps plausible certificate metadata satisfies the regex. Raised by this section's round-2 Codex adversarial review 2026-08-13 (high).
-  - Fixing it in the smoke alone would ALSO diverge from `scripts/sign-efi.sh` `shim_ca_gate`, which uses the identical `--list` + regex mechanism -- both must move together, and `shim/SHA256SUMS` pinning is the cheaper in-repo half.
-  - Moot until a shim is pinned at all (see the vendor-watch item below), which is why it parks here rather than blocking the reporting work.
+- [x] A pinned shim is anchored by an approved-hash allowlist, not `sbverify --list` metadata, in every consumer (Q27 answered B, 2026-11-07)
+  - [`scripts/secure-boot/shim-hash-check.sh`](../../scripts/secure-boot/shim-hash-check.sh) requires each binary's exact-basename entry in `shim/SHA256SUMS` and a matching digest; it is stricter than `sha256sum -c`, which passes a file the list does not name.
+  - `scripts/sign-efi.sh` `shim_ca_gate` refuses an MS-signed shim without an approved entry; disk staging (`scripts/stage-esp-loader.sh`) requires entries for both `shimx64.efi` and `mmx64.efi` before it stages the chain; the secureboot smoke already required them in `ms-ca` mode.
+  - `build-shim.sh` records the pair it builds and says to re-record after `sbsign`. Cases: `shim_ca_detection` tests 7-8 and `stage_esp_loader_chain_unlisted_mm` / `_chain_no_sums` in `scripts/test-tooling.sh`. Option A (pinning the Microsoft UEFI CA certificate) was declined; moving to it later is one change per consumer.
 - [x] The ESP offset is derived from the image's own GPT (EFI System Partition type GUID) via `sfdisk --json`, with the `.info` sidecar demoted to a cross-check that FAILS on disagreement
   - A stale or crafted `build/system-disk.img.info` could otherwise point the verifier at a decoy FAT holding byte-identical artifacts while the bootable ESP differs. Post-ship Codex adversarial 2026-08-13 (high).
   - No GPT-designated ESP is a refusal, not a fallback to the sidecar: an offset we cannot authenticate is not a verified chain.
@@ -754,8 +754,7 @@ From the stamped section 12 -- "Make shim absence fail-loud after the 2026-07-01
 > - Scope boundary: §20 owns the reporting half; the `make disk` refusal and the release-workflow gate stay parked above (receipt surface / vendor-gated), and §12 keeps the vendor watch itself.
 
 > **Verified:** 2026-08-13 | commit `4ade640f5` + post-review fixes | 4/9 items (5 parked with named owners) | build OK | tooling 1356/1356 | smoke 7/7 (chain NOT COVERED, correctly reported)
-> **Note:** 2026-11-08, the `make disk` refusal shipped in an attended session (`REQUIRE_SHIM=1`, `scripts/stage-esp-loader.sh`); 6/9 items now done, 3 parked with named owners.
-> **Note:** 2026-11-07, Deferred stamp retired: [H] CA pinning is operator-gated: no certificate has been chosen, named in its item.
+> **Note:** 2026-11-08, the `make disk` refusal shipped in an attended session (`REQUIRE_SHIM=1`, `scripts/stage-esp-loader.sh`); the Q27 hash allowlist shipped too; 7/9 items now done, 2 parked with named owners.
 > **Accepted:** [M] a MOK-dev chain is published to `HKLM\SYSTEM\SecureBoot\ShimCA` as the `0xFFFFFFFF` parse-failure sentinel (reason: registry-surface ABI decision, owned by §12) -> XREF: 01-boot-platform/TODO-02 §12 (item: "Give a MOK-dev chain its own `HKLM\SYSTEM\SecureBoot\ShimCA` representation")
 > **Note:** 2026-11-07, Deferred stamp retired: [M] the release coverage gate waits on the re-pin; the `EFI_OFFSET` scrape is split out and open.
 > **Note:** 2026-11-07, Deferred stamp retired: [H] the 2023-CA shim re-pin is operator-gated, named in its item.
