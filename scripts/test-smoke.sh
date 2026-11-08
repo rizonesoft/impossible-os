@@ -731,6 +731,9 @@ if [ -n "$UKI_MODE" ]; then
     if [ "$UKI_MODE" = "override" ]; then
         printf '%s\n' "$UKI_OVERRIDE" >> "$UKI_FIX_DIR/cmdline.txt"
     else
+        # The received-digest log is opt-in (it costs boot time on a real
+        # payload); the signed leg turns it on to prove the copy intact.
+        printf 'uki_digest=1\n' >> "$UKI_FIX_DIR/cmdline.txt"
         # Deterministic content, so a copy that moved the wrong bytes would
         # not be masked by a coincidentally equal random block.
         python3 -c 'import sys; sys.stdout.buffer.write(bytes(i & 0xFF for i in range(int(sys.argv[1]))))' \

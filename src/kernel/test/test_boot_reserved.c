@@ -1991,6 +1991,7 @@ static void test_boot_reserved_uki_payloads_pinned(void)
     TEST_ASSERT_EQ((unsigned long)boot_reserved_check_payloads_disjoint(
                        0x30000000ull, 0x1000ull, "fake_bitmap"), 0ul,
                    "disjoint PMM-internal region passes");
+    br_zero_fixture();
 }
 
 static void test_boot_reserved_uki_payloads_refused(void)

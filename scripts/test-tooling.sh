@@ -4073,7 +4073,7 @@ PYJSON
 ( cd "$C16_TMP/state1" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
 PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"feat: x\""}}'
 RC=0
-( cd "$C16_TMP/state1" && printf '%s' "$PAYLOAD" | python3 "$SSB_HOOK" >/dev/null 2>&1 ) || RC=$?
+( cd "$C16_TMP/state1" && printf '%s' "$PAYLOAD" | CLAUDE_PROJECT_DIR="$C16_TMP/state1" python3 "$SSB_HOOK" >/dev/null 2>&1 ) || RC=$?
 if [ "$RC" = "0" ]; then
     t_pass "compact16_orphan_skip orphaned entry -> selector skips, gate clears (rc=0)"
 else
@@ -4096,7 +4096,7 @@ cat >"$C16_STATE_DIR2/skill-progress.json" <<'PYJSON'
 PYJSON
 ( cd "$C16_TMP/state2" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
 RC=0
-( cd "$C16_TMP/state2" && printf '%s' "$PAYLOAD" | python3 "$SSB_HOOK" >/dev/null 2>&1 ) || RC=$?
+( cd "$C16_TMP/state2" && printf '%s' "$PAYLOAD" | CLAUDE_PROJECT_DIR="$C16_TMP/state2" python3 "$SSB_HOOK" >/dev/null 2>&1 ) || RC=$?
 if [ "$RC" = "2" ]; then
     t_pass "compact16_live_picked live (un-orphaned) entry -> selector picks it, gate blocks (rc=2)"
 else

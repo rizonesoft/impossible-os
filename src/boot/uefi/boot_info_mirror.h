@@ -116,7 +116,9 @@ struct boot_config {
                                      * 0 = seed_file=off escape hatch */
     UINT8   tpm_enroll;             /* 1 = allow measured-boot baseline enroll/rotate
                                      * this boot (honored only in recovery mode) */
-    UINT8   _reserved[5];           /* future fields -- zero-filled by defaults */
+    UINT8   uki_digest;             /* 1 = kernel logs the SHA-256 of each pinned
+                                     * UKI payload copy (diagnostic; default 0) */
+    UINT8   _reserved[4];           /* future fields -- zero-filled by defaults */
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
     /* User-mode test launcher knobs (S4 of TODO-04). Mirror of kernel
@@ -144,6 +146,8 @@ struct boot_config {
  * bootloader and kernel struct definitions at compile time. */
 _Static_assert(__builtin_offsetof(struct boot_config, cmdline) == 32,
     "cmdline must be at byte offset 32 -- kernel ABI contract");
+_Static_assert(__builtin_offsetof(struct boot_config, uki_digest) == 27,
+    "uki_digest must be at byte offset 27 -- kernel ABI contract");
 _Static_assert(__builtin_offsetof(struct boot_config, config_found) == 288,
     "config_found must be at byte offset 288 -- after cmdline[256]");
 _Static_assert(__builtin_offsetof(struct boot_config, tap) == 289,

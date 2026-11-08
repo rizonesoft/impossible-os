@@ -1380,7 +1380,8 @@ _Static_assert(sizeof(struct boot_gop_handle) == 32,
  *    24       1   firmware_rng
  *    25       1   seed_file
  *    26       1   tpm_enroll
- *    27       5   _reserved[]
+ *    27       1   uki_digest
+ *    28       4   _reserved[]
  *    32     256   cmdline          <-- STABLE ABI offset
  *   288       1   config_found
  *   289       1   tap                (S4: TODO-04 user-mode TAP mode)
@@ -1473,10 +1474,17 @@ struct boot_config {
      * become the golden baseline (no first-boot trust-on-first-use). boot.conf
      * line `tpm_enroll=1`; default 0. */
     uint8_t  tpm_enroll;
+    /* UKI payload digest diagnostic. 1 = after pinning, the kernel hashes
+     * each signed UKI payload copy (.initrd/.recovery/.modules) and logs
+     * `boot_reserved: UKI <name> received sha256=<hex>`, so a boot test can
+     * prove the bytes survived the loader copy. Off by default: hashing a
+     * full-size payload costs boot time on every boot for a log line only.
+     * boot.conf line `uki_digest=1`; default 0. */
+    uint8_t  uki_digest;
     /* Reserved -- new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[5];
+    uint8_t  _reserved[4];
     /* Command line (offset 32 -- stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */
@@ -1532,6 +1540,8 @@ struct boot_config {
  * If you add a field, shrink _reserved[] / _pad[] to keep stable offsets. */
 _Static_assert(__builtin_offsetof(struct boot_config, cmdline) == 32,
     "cmdline must be at byte offset 32 -- bootloader ABI contract");
+_Static_assert(__builtin_offsetof(struct boot_config, uki_digest) == 27,
+    "uki_digest must be at byte offset 27 -- bootloader ABI contract");
 _Static_assert(__builtin_offsetof(struct boot_config, config_found) == 288,
     "config_found must be at byte offset 288 -- after cmdline[256]");
 _Static_assert(__builtin_offsetof(struct boot_config, tap) == 289,

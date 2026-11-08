@@ -349,7 +349,11 @@ boot_result_t pmm_init(void)
         }
         boot_reserved_apply();
         boot_reserved_log();
-        boot_reserved_log_uki_digests();
+        /* Opt-in (boot.conf uki_digest=1): hashing a full-size signed
+         * payload costs boot time on every boot for a log line, so only a
+         * diagnostic or test boot pays it. */
+        if (g_boot_info.config.uki_digest != 0u)
+            boot_reserved_log_uki_digests();
     }
 
     /* ACCEPTANCE CHECK for the loader-owned kernel boot stack (TODO-10

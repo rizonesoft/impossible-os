@@ -33,7 +33,8 @@ struct boot_info;  /* forward decl -- full definition in kernel/boot_info.h */
 
 /* Fixed upper bound. Worst-case current boot: 1 (boot_info) + 16 (USB
  * DMA) + 1 (scratchpad) + 1 (TPM) + 1 (FB) + 64 (rt_mmap_max) + 32
- * (payloads) = 116. 128 leaves headroom for a future descriptor class. */
+ * (payloads) + 1 (boot stack) + 3 (UKI payload copies) = 120; a
+ * _Static_assert in boot_reserved.c holds the sum under this bound. */
 #define BOOT_RESERVED_MAX 128
 
 enum boot_reserved_kind {
@@ -187,7 +188,9 @@ int boot_reserved_uki_payload_is_pinned(uint32_t slot,
 void boot_reserved_digest_hex(const void *data, uint64_t len,
                               char out[BOOT_RESERVED_DIGEST_HEX_LEN + 1u]);
 
-/* Log the SHA-256 of every pinned UKI payload copy as it was received
+/* Diagnostic, run only when boot.conf sets uki_digest=1 (hashing a full
+ * payload costs boot time). Log the SHA-256 of every pinned UKI payload copy
+ * as it was received
  * ("boot_reserved: UKI .initrd received sha256=..."), so the bytes the kernel
  * holds can be compared with the signed section they were copied from. Reads
  * the copies through the boot identity map: pmm_init only, right after

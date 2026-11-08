@@ -34,8 +34,21 @@
 #include "kernel/crypto/sha256.h"
 
 /* UKI payload slot names, indexed by UKI_PAYLOAD_SLOT_*. */
-static const char *const uki_name[UKI_PAYLOAD_SLOT_COUNT] = {
-    ".initrd", ".recovery", ".modules" };
+static const char *const uki_name[] = { ".initrd", ".recovery", ".modules" };
+_Static_assert(sizeof(uki_name) / sizeof(uki_name[0]) == UKI_PAYLOAD_SLOT_COUNT,
+               "one UKI payload name per slot");
+_Static_assert(BOOT_RESERVED_DIGEST_HEX_LEN == 2u * SHA256_DIGEST_LEN,
+               "digest hex buffer must hold two characters per digest byte");
+/* Worst case per class, summed: the table must never refuse a legitimate
+ * handoff. boot_info, USB DMA pages, scratchpad, TPM log, framebuffer,
+ * runtime map, typed payloads, boot stack, UKI payload copies. */
+_Static_assert(1u + (sizeof(((const struct boot_info *)0)->usb_controller.dma_pages)
+                     / sizeof(uint64_t))
+               + 1u + 1u + 1u + BOOT_RT_MMAP_MAX + BOOT_PAYLOAD_MAX + 1u
+               + UKI_PAYLOAD_SLOT_COUNT <= BOOT_RESERVED_MAX,
+               "BOOT_RESERVED_MAX is below the worst-case retained-region count");
+/* sha256_update takes a 32-bit length; larger inputs are fed in chunks. */
+#define BOOT_RESERVED_DIGEST_CHUNK 0x40000000u
 
 /* The loader allocates UKI payload copies at or below UKI_PAYLOAD_MAX_ADDRESS
  * because the kernel reads them through the boot identity map, which ends at
@@ -823,12 +836,17 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
      * every other entry (add_or_fatal), and boot_reserved_check_payloads_
      * disjoint() covers these entries against PMM-internal regions. */
     {
-        const uint64_t uki_addr[UKI_PAYLOAD_SLOT_COUNT] = {
+        const uint64_t uki_addr[] = {
             info->uki_initrd_addr, info->uki_recovery_addr,
             info->uki_modules_addr };
-        const uint64_t uki_size[UKI_PAYLOAD_SLOT_COUNT] = {
+        const uint64_t uki_size[] = {
             info->uki_initrd_size, info->uki_recovery_size,
             info->uki_modules_size };
+        _Static_assert(sizeof(uki_addr) / sizeof(uki_addr[0])
+                           == UKI_PAYLOAD_SLOT_COUNT
+                       && sizeof(uki_size) / sizeof(uki_size[0])
+                           == UKI_PAYLOAD_SLOT_COUNT,
+                       "one boot_info address/size pair per UKI slot");
         const int via_uki =
             (int)((info->flags & BOOT_FLAG_INVOKED_VIA_UKI) != 0u);
         uint32_t s_idx;
@@ -840,7 +858,7 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
             if (uki_addr[s_idx] == 0u && uki_size[s_idx] == 0u)
                 continue;
             if (!via_uki) {
-                klog(LOG_WARN, "mm",
+                klog(LOG_ERROR, "mm",
                      "boot_reserved: skip UKI %s 0x%lx+%lu (UKI payload "
                      "fields on a handoff without BOOT_FLAG_INVOKED_VIA_UKI; "
                      "not pinned)",
@@ -850,7 +868,7 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
             }
             if (uki_addr[s_idx] == 0u || uki_size[s_idx] == 0u
                 || uki_size[s_idx] > UKI_PAYLOAD_MAX_BYTES) {
-                klog(LOG_WARN, "mm",
+                klog(LOG_ERROR, "mm",
                      "boot_reserved: skip UKI %s 0x%lx+%lu (malformed: "
                      "address and size must both be set, size <= %lu; "
                      "not pinned)",
@@ -862,7 +880,7 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
             v = boot_reserved_range_backing(info, uki_addr[s_idx],
                                             uki_size[s_idx], 0, &bad_type);
             if (v != BOOT_RANGE_BACKED) {
-                klog(LOG_WARN, "mm",
+                klog(LOG_ERROR, "mm",
                      "boot_reserved: skip UKI %s 0x%lx+%lu (%s, map type "
                      "%u; not pinned)",
                      (uint64_t)(uintptr_t)uki_name[s_idx],
@@ -996,7 +1014,8 @@ void boot_reserved_digest_hex(const void *data, uint64_t len,
     /* sha256_update takes a 32-bit length; feed bounded chunks so a payload
      * of any size up to the cap is hashed whole, never truncated. */
     while (len > 0u) {
-        uint32_t n = len > 0x40000000ull ? 0x40000000u : (uint32_t)len;
+        uint32_t n = len > BOOT_RESERVED_DIGEST_CHUNK ? BOOT_RESERVED_DIGEST_CHUNK
+                                                   : (uint32_t)len;
         sha256_update(&ctx, p, n);
         p += n;
         len -= n;

@@ -23,6 +23,7 @@
  * its offset-fingerprint dumper. If this include fails, run the clean-build
  * sequence before editing the mirror. */
 #include "boot_info_mirror.h"
+#include "../../../include/boot/uki_payload_limits.h" /* UKI payload bounds shared with the kernel pin */
 #include "boot_proto_mirror.h"
 #include "elf_bootproto.h"
 #include "boot_proto_sha.h"   /* generated; provides KERNEL_ABI_SHA256 */
@@ -3698,6 +3699,13 @@ static void parse_conf_kv(struct boot_config *cfg,
         if      (ascii_streq(val, "off")) cfg->tpm_enroll = 0;
         else if (ascii_streq(val, "on"))  cfg->tpm_enroll = 1;
         else                              cfg->tpm_enroll = (UINT8)ascii_atoi(val);
+    }
+    else if (ascii_streq(key, "uki_digest")) {
+        /* Diagnostic: the kernel logs the SHA-256 of each pinned UKI payload
+         * copy. Off by default because the hash costs boot time. */
+        if      (ascii_streq(val, "off")) cfg->uki_digest = 0;
+        else if (ascii_streq(val, "on"))  cfg->uki_digest = 1;
+        else                              cfg->uki_digest = (UINT8)ascii_atoi(val);
     }
     else if (ascii_streq(key, "anti_rollback_raise")) {
         /* Anti-rollback opt-in: when set, a boot that reaches the
@@ -13952,12 +13960,10 @@ static void detect_uki_sections(EFI_LOADED_IMAGE_PROTOCOL *li)
  * the "section absent" sentinel rather than reporting a bogus
  * pointer (UEFI design F3 fail-closed pattern).
  *
- * Sections must be > 0 bytes and < 256 MiB (sanity ceiling -- a
+ * Sections must be > 0 bytes and <= UKI_PAYLOAD_MAX_BYTES (a sanity ceiling: a
  * legitimate initrd is typically a few MiB; a multi-hundred-MiB
  * payload is either an attack or a build mistake; either way the
  * boot must abort visibly rather than try to allocate it). */
-#include "../../../include/boot/uki_payload_limits.h" /* bounds shared with the kernel pin */
-
 static EFI_STATUS uki_copy_payload(const char *name,
                                    const UINT8 *src, UINTN src_size,
                                    UINT64 *out_phys)
@@ -13968,7 +13974,11 @@ static EFI_STATUS uki_copy_payload(const char *name,
     if (src_size > UKI_PAYLOAD_MAX_BYTES) {
         serial_early_print("[BOOT] UKI ");
         serial_early_print(name);
-        serial_early_print(" payload exceeds 256 MiB sanity cap; refusing\r\n");
+        serial_early_print(" payload bytes=0x");
+        serial_early_print_hex64((UINT64)src_size);
+        serial_early_print(" exceeds the UKI_PAYLOAD_MAX_BYTES cap 0x");
+        serial_early_print_hex64((UINT64)UKI_PAYLOAD_MAX_BYTES);
+        serial_early_print("; refusing\r\n");
         return EFI_INVALID_PARAMETER;
     }
 
@@ -13986,10 +13996,19 @@ static EFI_STATUS uki_copy_payload(const char *name,
     if (EFI_ERROR(status)) {
         serial_early_print("[BOOT] UKI ");
         serial_early_print(name);
-        serial_early_print(": AllocatePages below 4 GiB failed\r\n");
+        serial_early_print(": AllocatePages below 4 GiB failed status=0x");
+        serial_early_print_hex64((UINT64)status);
+        serial_early_print(" pages=");
+        serial_early_print_uint((UINT32)pages); /* <= 65536 under the cap */
+        serial_early_print("\r\n");
         return status;
     }
     efi_memcpy((void *)(UINTN)phys, src, src_size);
+    /* Zero the slack in the last page so the pinned frames hold the signed
+     * section and nothing left behind by the firmware. */
+    if ((pages << 12) > src_size)
+        efi_memset((void *)(UINTN)(phys + src_size), 0,
+                   (UINTN)((pages << 12) - src_size));
     *out_phys = (UINT64)phys;
     /* The record a boot test asserts against: which signed section was
      * carried, how many bytes, and where the kernel will find it. */
@@ -14015,9 +14034,11 @@ static void uki_copy_payloads_to_loader_data(void)
 {
     EFI_STATUS s;
     static const char hint[] =
-        "AllocatePages(EfiLoaderData) failed for a UKI signed payload. "
-        "Check firmware free memory or rebuild the UKI without the "
-        "oversized payload section.";
+        "A UKI signed payload could not be copied: either the section "
+        "exceeds UKI_PAYLOAD_MAX_BYTES, or no free memory below 4 GiB "
+        "could hold it (the kernel reads the copy through the 4 GiB "
+        "identity map). The serial log names which. Rebuild the UKI with a "
+        "smaller payload, or free low memory in firmware setup.";
     s = uki_copy_payload(".initrd", g_uki_initrd_ptr,
                          g_uki_initrd_size, &g_uki_initrd_phys);
     if (EFI_ERROR(s))

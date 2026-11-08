@@ -105,6 +105,7 @@ F(config.firmware_quirk_disable);
 F(config.firmware_rng);
 F(config.seed_file);
 F(config.tpm_enroll);
+F(config.uki_digest);
 F(config._reserved);
 F(config._reserved[0]);         /* element-size sentinel */
 F(config.cmdline);

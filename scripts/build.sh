@@ -589,7 +589,7 @@ if [ "${UKI_RC:-skip}" = "0" ]; then
             print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1
         fi
         UKI_DUMP="$(mktemp)"
-        if ! "$UKI_OBJCOPY" --dump-section ".linux=$UKI_DUMP" "$uki" "$UKI_DUMP.pe" 2>>"$LOG"; then
+        if ! "$UKI_OBJCOPY" --only-section .linux --dump-section ".linux=$UKI_DUMP" "$uki" "$UKI_DUMP.pe" 2>>"$LOG"; then
             rm -f "$UKI_DUMP" "$UKI_DUMP.pe"
             echo "[uki] FATAL: cannot read the .linux section of $uki" >> "$LOG"
             print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1
