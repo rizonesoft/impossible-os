@@ -13,6 +13,7 @@
 #include "kernel/boot_splash.h"
 #include "kernel/boot_halt.h"
 #include "kernel/boot_info.h"
+#include "kernel/mm/boot_reserved.h"
 #include "kernel/boot_media.h"
 #include "kernel/test/test.h"
 #include "kernel/test/test_usermode.h"
@@ -22,6 +23,10 @@ void boot_tests_run(void)
 {
     /* test=1 or debug=1: run unit tests, then continue booting to desktop. */
     if (g_boot_info.config.test || g_boot_info.config.debug) {
+        /* Before any fixture runs: the reservation-pass tests wipe the live
+         * table, and boot_reserved_blackbox_dump() runs after this function,
+         * so it must publish what this boot retained, not the last fixture. */
+        boot_reserved_freeze_for_dump();
         /* Per-aggregate test_*_skip knobs follow-up (see TODO-04):
          * test_kernel_skip=1   skips the kernel TEST_CAT_* sweep so a
          *                      usermode-only iteration bat (e.g.

@@ -94,6 +94,44 @@ void boot_reserved_log(void);
 /* Emit the table as JSON at X:\Diag\boot-reserved.json. Idempotent. */
 void boot_reserved_blackbox_dump(void);
 
+/* Verdicts of boot_reserved_range_backing(). */
+enum boot_range_backing {
+    BOOT_RANGE_BACKED    = 0,  /* every byte is map-described readable RAM */
+    BOOT_RANGE_ABOVE_MAP = 1,  /* ends beyond the 4 GiB identity map */
+    BOOT_RANGE_NO_MAP    = 2,  /* the handoff carries no memory map */
+    BOOT_RANGE_FORBIDDEN = 3,  /* intersects an entry the kernel may not read */
+    BOOT_RANGE_GAP       = 4,  /* some byte is described by no entry (or len 0 / wrap) */
+};
+
+/* Is every byte of [start, start + len) memory the kernel may read, per the
+ * handoff's memory map? `allow_warm` admits BOOT_MMAP_WARM_UPDATE (the sealed
+ * warm extent only). On BOOT_RANGE_FORBIDDEN, *out_type (optional) names the
+ * offending map type. Pure: reads `info`, keeps no state. */
+uint32_t boot_reserved_range_backing(const struct boot_info *info,
+                                     uint64_t start, uint64_t len,
+                                     int allow_warm, uint32_t *out_type);
+
+/* Freeze a heap copy of the table for boot_reserved_blackbox_dump(). Called by
+ * boot_tests_run() BEFORE the suite, whose fixtures wipe the live table, so
+ * the dump publishes what this boot really retained. A failed copy makes the
+ * dump publish nothing rather than a fixture. Boot CPU only, Phase 3. */
+void boot_reserved_freeze_for_dump(void);
+
+/* Copy up to `cap` table entries into `dst`; returns the number copied.
+ * Pure over the table; the freeze uses it, and tests can. */
+uint32_t boot_reserved_copy_table(struct boot_reserved_region *dst,
+                                  uint32_t cap);
+
+/* How much of a region PMM's bitmap tracks, for the dump: pmm_mark_region_used()
+ * is void and clamps at the ceiling silently, so the artifact says it instead. */
+enum boot_reserved_tracked {
+    BOOT_RESERVED_TRACKED_FULL    = 0,
+    BOOT_RESERVED_TRACKED_PARTIAL = 1,
+    BOOT_RESERVED_TRACKED_NONE    = 2,
+};
+uint32_t boot_reserved_tracked_class(uint64_t phys_start, uint64_t length,
+                                     uint64_t total_frames);
+
 /* Accessors for tests / future consumers. */
 /* Did the Phase-0 pass actually PIN the payload descriptor at this index?
  *
@@ -103,7 +141,15 @@ void boot_reserved_blackbox_dump(void);
  * reasons a consumer cannot reconstruct from the handoff -- the aggregate
  * reservation budget and the singleton rule both depend on the OTHER
  * descriptors and on walk order. This answers from the reservation table
- * itself, so it cannot disagree with what was pinned. */
+ * itself, so it cannot disagree with what was pinned.
+ *
+ * THE PROMISE of a 1: every byte of the range is described by the boot memory
+ * map as memory the kernel may read (boot_reserved_range_backing() ==
+ * BOOT_RANGE_BACKED) and lies inside the 4 GiB identity map, so it is safe to
+ * dereference, and no allocator will hand it out. It does NOT promise the
+ * range is inside pmm_get_total_frames(): a frame above that ceiling is
+ * outside the bitmap, so no pmm_alloc_* path can return it either; only its
+ * table entry marks nothing. */
 int boot_reserved_payload_is_pinned(uint32_t payload_index,
                                     uint64_t phys_start, uint64_t length);
 

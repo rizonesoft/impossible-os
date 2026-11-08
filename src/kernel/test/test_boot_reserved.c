@@ -31,6 +31,21 @@
  * test stack would blow past IST sizes on some configurations.  */
 static struct boot_info s_br_buf;
 
+/* The RAM every fixture declares: one conventional entry from 0 to here. The
+ * reservation pass now asks the memory map whether a payload is readable RAM,
+ * so a fixture states its own memory and an "out of range" address is past
+ * THIS end, the same on every host (rather than past the host's frame count). */
+#define BR_FIXTURE_RAM_END  0xF0000000ull
+
+static void br_set_map(uint32_t i, uint64_t base, uint64_t len, uint32_t type)
+{
+    s_br_buf.mmap[i].base_addr        = base;
+    s_br_buf.mmap[i].length           = len;
+    s_br_buf.mmap[i].uefi_memory_type = type;
+    if (s_br_buf.mmap_count < i + 1u)
+        s_br_buf.mmap_count = i + 1u;
+}
+
 static void br_zero_fixture(void)
 {
     uint64_t *p = (uint64_t *)&s_br_buf;
@@ -45,6 +60,7 @@ static void br_zero_fixture(void)
      * drop it would be adjudicated against the PREVIOUS fixture's handoff
      * and refused as a mismatch. */
     boot_warm_update_selection_reset_for_test();
+    br_set_map(0u, 0u, BR_FIXTURE_RAM_END, UEFI_MMAP_CONVENTIONAL);
 }
 
 static void test_boot_reserved_populate_happy_path(void)
@@ -1214,7 +1230,7 @@ static void test_boot_reserved_warm_update_pinned_is_the_commit(void)
         uint64_t past_end;
 
 
-    past_end = (pmm_get_total_frames() + 16ull) * (uint64_t)PMM_FRAME_SIZE;
+    past_end = BR_FIXTURE_RAM_END;   /* past the fixture's declared RAM: a gap */
 
     br_zero_fixture();
     s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
@@ -1599,6 +1615,247 @@ static void test_boot_payload_budget_admits_bounds(void)
                    "a near-UINT64_MAX length cannot wrap into an accept");
 }
 
+/* The addressability predicate itself, one verdict per shape. */
+static void test_boot_reserved_range_backing_verdicts(void)
+{
+    uint32_t t = 99u;
+
+    br_zero_fixture();
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x10000000ull, 0x1000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_BACKED, "inside declared RAM");
+    TEST_ASSERT_EQ((unsigned long)t, 0ul, "no offending type on success");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, BR_FIXTURE_RAM_END - 0x1000ull, 0x2000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_GAP, "runs off the end of RAM");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, BOOT_INFO_EARLY_MAP_END - 0x1000ull, 0x2000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_ABOVE_MAP, "crosses the 4 GiB identity map");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x1000ull, 0u, 0, &t),
+                   (unsigned long)BOOT_RANGE_GAP, "zero length is never backed");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, ~0ull - 0xFFFull, 0x2000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_GAP, "a wrapping range is never backed");
+
+    /* A forbidden entry laid OVER readable RAM vetoes it, whatever the order. */
+    br_set_map(1u, 0x40000000ull, 0x1000ull, UEFI_MMAP_MMIO);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x40000000ull, 0x1000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_FORBIDDEN, "MMIO below the RAM end");
+    TEST_ASSERT_EQ((unsigned long)t, (unsigned long)UEFI_MMAP_MMIO, "names the type");
+    br_set_map(2u, 0x41000000ull, 0x1000ull, UEFI_MMAP_RESERVED);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x40FFF000ull, 0x2000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_FORBIDDEN, "reserved memory is not on the allowlist");
+    br_set_map(3u, 0x42000000ull, 0x1000ull, BOOT_MMAP_WARM_UPDATE);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x42000000ull, 0x1000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_FORBIDDEN, "type 15 refused for an ordinary payload");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x42000000ull, 0x1000ull, 1, &t),
+                   (unsigned long)BOOT_RANGE_BACKED, "type 15 admitted for the warm extent");
+
+    /* Unsorted, adjacent entries of two readable types cover a range together. */
+    br_zero_fixture();
+    s_br_buf.mmap_count = 0u;
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x30000000ull, 0x1000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_NO_MAP, "no map refuses everything");
+    br_set_map(0u, 0x30001000ull, 0x1000ull, UEFI_MMAP_LOADER_DATA);
+    br_set_map(1u, 0x30000000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x30000000ull, 0x2000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_BACKED, "unsorted adjacent entries cover it");
+    br_set_map(1u, 0x2FFFF000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x30000000ull, 0x2000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_GAP, "a hole at the start is a gap");
+
+    /* A one-page hole BETWEEN backed endpoints, in both entry orders: a check
+     * of the endpoints alone, or a jump across the gap, would pass this. */
+    br_zero_fixture();
+    s_br_buf.mmap_count = 0u;
+    br_set_map(0u, 0x30000000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
+    br_set_map(1u, 0x30002000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x30000000ull, 0x3000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_GAP, "interior hole, ascending entries");
+    s_br_buf.mmap_count = 0u;
+    br_set_map(0u, 0x30002000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
+    br_set_map(1u, 0x30000000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x30000000ull, 0x3000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_GAP, "interior hole, descending entries");
+    br_set_map(2u, 0x30001000ull, 0x1000ull, UEFI_MMAP_LOADER_CODE);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x30000000ull, 0x3000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_BACKED, "the hole closed: backed");
+    /* Forbidden entries that only TOUCH either exclusive bound do not overlap. */
+    br_set_map(3u, 0x2FFFF000ull, 0x1000ull, UEFI_MMAP_MMIO);
+    br_set_map(4u, 0x30003000ull, 0x1000ull, UEFI_MMAP_UNUSABLE);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
+                       &s_br_buf, 0x30000000ull, 0x3000ull, 0, &t),
+                   (unsigned long)BOOT_RANGE_BACKED, "adjacent forbidden entries do not veto");
+    br_zero_fixture();
+}
+
+/* The reservation pass applies the predicate to every admitted payload, and a
+ * refusal is a decline (the boot continues) that leaves the slot unpinned. */
+static void test_boot_reserved_payload_must_be_backed(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    uint32_t base;
+
+    TEST_KLOG_SUPPRESS("mm");
+    base = br_baseline_count();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    br_set_map(1u, 0x40000000ull, 0x1000ull, UEFI_MMAP_MMIO);
+    s_br_buf.payload_count = 4;
+    br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x40000000ull, 0x1000ull, 0u);   /* MMIO */
+    br_stage_payload(1, BOOT_PAYLOAD_MODULE, BR_FIXTURE_RAM_END, 0x1000ull, 0u); /* past RAM */
+    /* A refused first INITRD must not block a valid later one. */
+    br_stage_payload(2, BOOT_PAYLOAD_INITRD, BR_FIXTURE_RAM_END + 0x1000ull, 0x1000ull, 0u);
+    br_stage_payload(3, BOOT_PAYLOAD_INITRD, 0x20000000ull, 0x1000ull, 0u);
+
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+                   (unsigned long)BOOT_OK, "an unbacked payload is declined, not fatal");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x40000000ull, 0x1000ull), 0ul, "MMIO payload not pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       1u, BR_FIXTURE_RAM_END, 0x1000ull), 0ul, "payload past RAM not pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       3u, 0x20000000ull, 0x1000ull), 1ul,
+                   "a later backed INITRD is pinned: the refused one was not marked seen");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)(base + 1u),
+                   "only the backed payload entered the table");
+
+    /* A truncated map is checked against the entries it carries: an omitted
+     * interval below the RAM end is a gap, not a pass. */
+    br_zero_fixture();
+    s_br_buf.mmap_count = 0u;
+    br_set_map(0u, 0u, 0x10000000ull, UEFI_MMAP_CONVENTIONAL);
+    br_set_map(1u, 0x30000000ull, 0x10000000ull, UEFI_MMAP_CONVENTIONAL);
+    s_br_buf.mmap_truncated = 1u;
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x20000000ull, 0x1000ull, 0u);
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x20000000ull, 0x1000ull), 0ul,
+                   "truncated map: an omitted interval is refused");
+    br_zero_fixture();
+}
+
+/* The warm extent goes through the same predicate in the reservation pass,
+ * with its one exception: memory the producer tagged BOOT_MMAP_WARM_UPDATE. */
+static void test_boot_reserved_warm_extent_backing(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    const struct boot_warm_update_sel *sel;
+    uint32_t i, found;
+
+    TEST_KLOG_SUPPRESS("mm");
+    br_zero_fixture();
+    /* Backed ONLY by the type-15 entry: no conventional RAM under it. */
+    s_br_buf.mmap_count = 0u;
+    br_set_map(0u, 0u, 0x42000000ull, UEFI_MMAP_CONVENTIONAL);
+    br_set_map(1u, 0x42000000ull, 0x1000ull, BOOT_MMAP_WARM_UPDATE);
+    br_set_map(2u, 0x42001000ull, BR_FIXTURE_RAM_END - 0x42001000ull, UEFI_MMAP_CONVENTIONAL);
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x42000000ull, 0x1000ull, 0u);
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+                   (unsigned long)BOOT_OK, "warm extent on type-15 memory: ok");
+    TEST_ASSERT_EQ((unsigned long)sel->pinned, 1ul, "committed");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x42000000ull, 0x1000ull), 1ul, "pinned");
+    for (i = 0u, found = 0u; i < boot_reserved_count(); i++)
+        if (boot_reserved_get(i)->phys_start == 0x42000000ull
+            && boot_reserved_get(i)->length == 0x1000ull)
+            found++;
+    TEST_ASSERT_EQ((unsigned long)found, 1ul, "exactly one table entry");
+
+    /* The exception admits type 15 only: MMIO laid over it still vetoes. */
+    br_zero_fixture();
+    s_br_buf.mmap_count = 0u;
+    br_set_map(0u, 0u, 0x42000000ull, UEFI_MMAP_CONVENTIONAL);
+    br_set_map(1u, 0x42000000ull, 0x1000ull, BOOT_MMAP_WARM_UPDATE);
+    br_set_map(2u, 0x42000000ull, 0x1000ull, UEFI_MMAP_MMIO);
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x42000000ull, 0x1000ull, 0u);
+    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+                   (unsigned long)BOOT_OK, "MMIO under the warm extent: declined, not fatal");
+    TEST_ASSERT_EQ((unsigned long)sel->pinned, 0ul, "never committed");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x42000000ull, 0x1000ull), 0ul, "not pinned");
+    br_zero_fixture();
+}
+
+/* The dump's per-entry tracking verdict, and the copy the freeze is built on. */
+static void test_boot_reserved_tracked_and_copy(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    struct boot_reserved_region copy[4];
+    struct boot_reserved_region saved[4];
+    uint32_t n, total, i, k;
+    uint8_t *raw;
+
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_tracked_class(0x1000ull, 0x2000ull, 16u),
+                   (unsigned long)BOOT_RESERVED_TRACKED_FULL, "inside the ceiling");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_tracked_class(0xF000ull, 0x2000ull, 16u),
+                   (unsigned long)BOOT_RESERVED_TRACKED_PARTIAL, "straddles the ceiling");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_tracked_class(0x10000ull, 0x1000ull, 16u),
+                   (unsigned long)BOOT_RESERVED_TRACKED_NONE, "starts at the ceiling");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_tracked_class(0x1000ull, 0u, 16u),
+                   (unsigned long)BOOT_RESERVED_TRACKED_NONE, "zero length tracks nothing");
+
+    br_zero_fixture();
+    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    s_br_buf.payload_count = 1;
+    br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x20000000ull, 0x1000ull, 0u);
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    total = boot_reserved_count();
+    TEST_ASSERT(total >= 2u, "baseline plus the payload");
+    /* Capacity: nothing past `cap` is written. */
+    raw = (uint8_t *)copy;
+    for (k = 0u; k < sizeof(copy); k++)
+        raw[k] = 0xA5u;
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_copy_table(copy, 0u), 0ul, "cap 0 copies nothing");
+    for (k = 0u; k < sizeof(copy) && raw[k] == 0xA5u; k++)
+        ;
+    TEST_ASSERT_EQ((unsigned long)k, (unsigned long)sizeof(copy), "cap 0 writes nothing");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_copy_table(copy, 1u), 1ul, "copy honours cap");
+    for (k = sizeof(copy[0]); k < sizeof(copy) && raw[k] == 0xA5u; k++)
+        ;
+    TEST_ASSERT_EQ((unsigned long)k, (unsigned long)sizeof(copy), "nothing written past cap");
+    n = boot_reserved_copy_table(copy, 4u);
+    TEST_ASSERT_EQ((unsigned long)n, (unsigned long)(total < 4u ? total : 4u), "copies the table");
+    for (i = 0u; i < n; i++) {
+        const struct boot_reserved_region *e = boot_reserved_get(i);
+        TEST_ASSERT_EQ(copy[i].phys_start, e->phys_start, "copy: phys_start");
+        TEST_ASSERT_EQ(copy[i].length, e->length, "copy: length");
+        TEST_ASSERT_EQ((unsigned long)copy[i].kind, (unsigned long)e->kind, "copy: kind");
+        TEST_ASSERT_EQ((unsigned long)copy[i].source_index, (unsigned long)e->source_index,
+                       "copy: source_index");
+        saved[i] = copy[i];
+    }
+    /* The copy is independent of the live table: a wipe leaves it intact. */
+    boot_reserved_reset_for_test();
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_copy_table(saved, 4u), 0ul,
+                   "an empty table copies nothing");
+    for (i = 0u; i < n; i++)
+        TEST_ASSERT_EQ(copy[i].phys_start, saved[i].phys_start, "copy survives the wipe");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_copy_table((struct boot_reserved_region *)0, 4u),
+                   0ul, "NULL destination copies nothing");
+    br_zero_fixture();
+}
+
 void test_register_boot_reserved(void)
 {
     test_suite_register_cat("boot_reserved: warm-update budget is order-independent",
@@ -1705,5 +1962,17 @@ void test_register_boot_reserved(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: payload vs PMM-internal",
                             test_boot_reserved_payload_vs_pmm_internal,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: range backing verdicts",
+                            test_boot_reserved_range_backing_verdicts,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: payload must be backed",
+                            test_boot_reserved_payload_must_be_backed,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: warm extent backing",
+                            test_boot_reserved_warm_extent_backing,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: tracked class and table copy",
+                            test_boot_reserved_tracked_and_copy,
                             TEST_CAT_BOOT);
 }

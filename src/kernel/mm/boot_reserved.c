@@ -174,36 +174,134 @@ int boot_reserved_payload_is_pinned(uint32_t payload_index,
     return 0;
 }
 
-/* Is a sealed warm-update extent one PMM will actually act on?
+/* Map types whose memory the kernel may READ through its identity map.
  *
- * pmm_mark_region_used() clamps only the END of a range against total_frames
- * (src/kernel/mm/pmm.c), so a range that STARTS past the last tracked frame
- * marks nothing and reports nothing. The reservation table would still hold
- * the entry, and the commit flag would certify an extent no consumer can map
- * -- a positive claim about memory that does not exist. Phase 0 cannot check
- * this for itself: the memory map has not been walked when the selection is
- * sealed, which is exactly why the commit is a separate step.
- * (Round-3 adversarial finding.)
- *
- * length != 0 and the no-wrap property are BOTH established by the shared
- * predicate (boot_warm_update_consume rules 2 and 3b), so the last-frame
- * arithmetic below cannot underflow or wrap. The wrap half used to be asserted
- * here without a guarantor -- boot_payload_validate() checks it but is bypassed
- * on the synthetic-boot_info path -- so it was added to the predicate rather
- * than restated here. (Kernel-quality audit.)
- *
- * Note for a warm-update PRODUCER: pmm_init() clamps its tracked ceiling at
- * PMM_PHYS_ADDR_CAP (4 GiB), so preserved state staged above 4 GiB is refused
- * here by construction on any machine, however much RAM it has. */
-static int warm_range_is_applicable(uint64_t phys_start, uint64_t length)
+ * An ALLOWLIST, so a gap in the map, a reserved or unusable region, MMIO, PAL
+ * code, persistent memory and any type a future UEFI revision adds are all
+ * refused by construction rather than by remembering to list them. ACPI NVS
+ * and the runtime types are RAM the firmware keeps; reading them is safe.
+ * BOOT_MMAP_WARM_UPDATE is admitted only for the sealed warm extent: it is
+ * numerically EfiUnacceptedMemoryType, which a consumer must never touch. */
+static int mmap_type_readable(uint32_t t, int allow_warm)
 {
-    uint64_t total = pmm_get_total_frames();
-    uint64_t last_frame;
-
-    if (total == 0u)
+    switch (t) {
+    case UEFI_MMAP_LOADER_CODE:
+    case UEFI_MMAP_LOADER_DATA:
+    case UEFI_MMAP_BOOT_SERVICES_CODE:
+    case UEFI_MMAP_BOOT_SERVICES_DATA:
+    case UEFI_MMAP_RUNTIME_CODE:
+    case UEFI_MMAP_RUNTIME_DATA:
+    case UEFI_MMAP_CONVENTIONAL:
+    case UEFI_MMAP_ACPI_RECLAIM:
+    case UEFI_MMAP_ACPI_NVS:
+        return 1;
+    case BOOT_MMAP_WARM_UPDATE:
+        return allow_warm;
+    default:
         return 0;
-    last_frame = (phys_start + length - 1u) / (uint64_t)PMM_FRAME_SIZE;
-    return last_frame < total;
+    }
+}
+
+static const char *range_backing_name(uint32_t v)
+{
+    switch (v) {
+    case BOOT_RANGE_BACKED:     return "backed";
+    case BOOT_RANGE_ABOVE_MAP:  return "beyond the 4 GiB identity map";
+    case BOOT_RANGE_NO_MAP:     return "no memory map to check it against";
+    case BOOT_RANGE_FORBIDDEN:  return "overlaps memory the kernel may not read";
+    case BOOT_RANGE_GAP:        return "not fully described by the memory map";
+    default:                    return "?";
+    }
+}
+
+/* Is every byte of [start, start + len) memory the kernel may read?
+ *
+ * This replaced a `last_frame < pmm_get_total_frames()` test, which proved
+ * only that the range is REPRESENTABLE in the PMM bitmap: pmm_init sizes the
+ * bitmap from the highest RAM endpoint, so every MMIO window, unusable region
+ * and firmware hole below that endpoint passed it. The memory map is the only
+ * record of what is behind an address, so the map decides.
+ *
+ * Two passes, because the map may be unsorted and its entries may overlap.
+ * The VETO pass refuses the range if ANY entry it intersects is not readable,
+ * so a readable entry cannot hide a forbidden one laid over the same bytes.
+ * The COVERAGE pass then walks a cursor from start to end, each step jumping
+ * to the furthest end of an entry containing the cursor; a cursor no entry
+ * contains is a gap. Each step consumes a distinct entry end, so the walk is
+ * at most mmap_count steps of mmap_count reads.
+ *
+ * There is NO fallback. A truncated map is checked against the entries it
+ * carries, so an omitted interval reads as a gap and is refused; an absent map
+ * refuses everything. Falling back to the PMM ceiling there would certify the
+ * holes this check exists to find (design-review finding on this section).
+ *
+ * Called only from the reservation pass, on the boot CPU before AP bring-up
+ * (pmm_init), and from tests; it reads the handoff and keeps no state. */
+uint32_t boot_reserved_range_backing(const struct boot_info *info,
+                                     uint64_t start, uint64_t len,
+                                     int allow_warm, uint32_t *out_type)
+{
+    uint64_t end, cur;
+    uint32_t i, n;
+
+    if (out_type != (uint32_t *)0)
+        *out_type = 0u;
+    if (len == 0u || range_end_overflows(start, len))
+        return BOOT_RANGE_GAP;
+    end = start + len;
+    if (end > BOOT_INFO_EARLY_MAP_END)
+        return BOOT_RANGE_ABOVE_MAP;
+    n = info->mmap_count;
+    if (n > BOOT_MMAP_MAX_ENTRIES)
+        n = BOOT_MMAP_MAX_ENTRIES;
+    if (n == 0u)
+        return BOOT_RANGE_NO_MAP;
+
+    for (i = 0u; i < n; i++) {
+        const struct boot_mmap_entry *e = &info->mmap[i];
+        uint64_t e_end;
+        if (e->length == 0u)
+            continue;
+        e_end = range_end_overflows(e->base_addr, e->length)
+                    ? (uint64_t)-1 : e->base_addr + e->length;
+        if (e->base_addr < end && start < e_end
+            && !mmap_type_readable(e->uefi_memory_type, allow_warm)) {
+            if (out_type != (uint32_t *)0)
+                *out_type = e->uefi_memory_type;
+            return BOOT_RANGE_FORBIDDEN;
+        }
+    }
+
+    for (cur = start; cur < end; ) {
+        uint64_t next = cur;
+        for (i = 0u; i < n; i++) {
+            const struct boot_mmap_entry *e = &info->mmap[i];
+            uint64_t e_end;
+            if (e->length == 0u || e->base_addr > cur)
+                continue;
+            e_end = range_end_overflows(e->base_addr, e->length)
+                        ? (uint64_t)-1 : e->base_addr + e->length;
+            if (e_end > next)
+                next = e_end;
+        }
+        if (next == cur)
+            return BOOT_RANGE_GAP;
+        cur = next;
+    }
+    return BOOT_RANGE_BACKED;
+}
+
+/* The sealed warm-update extent passes the same test as every payload, with
+ * BOOT_MMAP_WARM_UPDATE admitted because that is where a producer stages it.
+ * length != 0 and no-wrap are established by the shared selection predicate
+ * (boot_warm_update_consume rules 2 and 3b). A range above the PMM ceiling may
+ * still pass: it is outside the bitmap, so no allocator can hand it out, and
+ * its pin marks nothing, which is the documented pinned-query promise. */
+static int warm_range_is_applicable(const struct boot_info *info,
+                                    uint64_t phys_start, uint64_t length)
+{
+    return boot_reserved_range_backing(info, phys_start, length, 1,
+                                       (uint32_t *)0) == BOOT_RANGE_BACKED;
 }
 
 boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
@@ -487,6 +585,28 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
                     continue;
                 }
 
+                /* Addressability. A descriptor whose range is not memory the
+                 * kernel may read (a hole, MMIO, unusable or unaccepted
+                 * memory, or beyond the identity map) is declined like any
+                 * other: one malformed descriptor costs its own payload, not
+                 * the boot, and consumers ask boot_reserved_payload_is_pinned()
+                 * before touching it. Before the type is marked seen, so a
+                 * refused first occurrence does not block a valid later one. */
+                {
+                    uint32_t bad_type;
+                    uint32_t v = boot_reserved_range_backing(
+                        info, d->phys_start, d->length, 0, &bad_type);
+                    if (v != BOOT_RANGE_BACKED) {
+                        klog(LOG_WARN, "mm",
+                             "boot_reserved: skip %s payload[%u] 0x%lx+%lu "
+                             "(%s, map type %u; not pinned)",
+                             boot_payload_type_label(d->type), (uint64_t)i,
+                             (uint64_t)d->phys_start, (uint64_t)d->length,
+                             range_backing_name(v), (uint64_t)bad_type);
+                        continue;
+                    }
+                }
+
                 /* WARM-UPDATE TAKES NO TABLE-WIDE RULE FROM THIS PASS, and
                  * the reason is ORDERING, not privilege.
                  *
@@ -594,7 +714,7 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
      * info->payload_descriptors[warm->index], so a handoff that moved after
      * Phase 0 read it cannot redirect the pin either. */
     if (warm->verdict == (uint32_t)BOOT_WARM_UPDATE_SELECT_ONE
-        && warm_range_is_applicable(warm->phys_start, warm->length)) {
+        && warm_range_is_applicable(info, warm->phys_start, warm->length)) {
         if (warm->mismatch != 0u) {
             /* Pin it anyway. The pages may already be reattached, so handing
              * them back to PMM is the one outcome that cannot be undone; a
@@ -678,7 +798,7 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
      * (the warm-kernel-update runtime's outgoing-kernel staging area,
      * todo/03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md). */
     if (warm->verdict == (uint32_t)BOOT_WARM_UPDATE_SELECT_ONE) {
-        if (warm_range_is_applicable(warm->phys_start, warm->length)) {
+        if (warm_range_is_applicable(info, warm->phys_start, warm->length)) {
             boot_warm_update_selection_mark_pinned();
         } else {
             /* Deliberately NOT fatal, and deliberately not pinned. The rest of
@@ -687,10 +807,12 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
              * may reattach it. `pinned` staying clear is the whole mechanism
              * -- the restore path is gated on it -- so cold init proceeds. */
             klog(LOG_ERROR, "mm",
-                 "boot_reserved: warm payload[%u] 0x%lx+%lu outside the "
-                 "%lu frames PMM tracks; not pinned, not committed",
+                 "boot_reserved: warm payload[%u] 0x%lx+%lu is not memory "
+                 "the kernel may read (%s); not pinned, not committed",
                  (uint64_t)warm->index, (uint64_t)warm->phys_start,
-                 (uint64_t)warm->length, (uint64_t)pmm_get_total_frames());
+                 (uint64_t)warm->length,
+                 range_backing_name(boot_reserved_range_backing(
+                     info, warm->phys_start, warm->length, 1, (uint32_t *)0)));
         }
     }
 
@@ -752,12 +874,99 @@ void boot_reserved_log(void)
  * safe. Early-boot callers can invoke this function; it no-ops when
  * klog_using_blackbox is 0 (e.g. during a test that never brings up
  * storage). Idempotent: overwrites the file on every call. */
+uint32_t boot_reserved_copy_table(struct boot_reserved_region *dst,
+                                  uint32_t cap)
+{
+    uint32_t n = s_count < cap ? s_count : cap;
+    uint32_t i;
+
+    if (dst == (struct boot_reserved_region *)0)
+        return 0u;
+    for (i = 0u; i < n; i++)
+        dst[i] = s_table[i];
+    return n;
+}
+
+uint32_t boot_reserved_tracked_class(uint64_t phys_start, uint64_t length,
+                                     uint64_t total_frames)
+{
+    uint64_t first, last;
+
+    if (length == 0u || range_end_overflows(phys_start, length))
+        return BOOT_RESERVED_TRACKED_NONE;
+    first = phys_start / (uint64_t)PMM_FRAME_SIZE;
+    last = (phys_start + length - 1u) / (uint64_t)PMM_FRAME_SIZE;
+    if (last < total_frames)
+        return BOOT_RESERVED_TRACKED_FULL;
+    if (first < total_frames)
+        return BOOT_RESERVED_TRACKED_PARTIAL;
+    return BOOT_RESERVED_TRACKED_NONE;
+}
+
+/* The pre-test snapshot boot_reserved_blackbox_dump() publishes.
+ *
+ * The boot suite runs before the dump in the same Phase-3 function and its
+ * fixtures wipe the live table, so without this the artifact an operator reads
+ * to answer "what did this boot retain" described the last synthetic fixture.
+ * Heap rather than a second BOOT_RESERVED_MAX array: 3 KiB of BSS is what the
+ * kernel image ceiling was short of when this was designed, and 3 KiB is
+ * inside kmalloc's limit.
+ *
+ * NOT LOCKED, by ownership rather than oversight: written once by
+ * boot_tests_run() and read once by the dump, both on the boot thread in
+ * Phase 3, and nothing else touches them. (The live table is populated and
+ * applied before AP bring-up.) */
+static struct boot_reserved_region *s_frozen;
+static uint32_t s_frozen_count;
+static uint32_t s_frozen_state;   /* 0 = live table, 1 = frozen copy, 2 = copy failed */
+
+void boot_reserved_freeze_for_dump(void)
+{
+    if (s_frozen_state != 0u)
+        return;                   /* once per boot: a second call must not freeze a fixture */
+    if (s_count == 0u) {
+        s_frozen_count = 0u;
+        s_frozen_state = 1u;
+        return;
+    }
+    s_frozen = (struct boot_reserved_region *)kmalloc(
+        (size_t)s_count * sizeof(struct boot_reserved_region));
+    if (s_frozen == (struct boot_reserved_region *)0) {
+        klog(LOG_WARN, "mm",
+             "boot_reserved: no memory to freeze %u region(s) before the "
+             "boot tests; boot-reserved.json will not be written",
+             (uint64_t)s_count);
+        s_frozen_state = 2u;
+        return;
+    }
+    s_frozen_count = boot_reserved_copy_table(s_frozen, s_count);
+    s_frozen_state = 1u;
+}
+
 void boot_reserved_blackbox_dump(void)
 {
     extern int klog_using_blackbox;
     extern const char *klog_dir;
     if (!klog_using_blackbox)
         return;  /* No BlackBox partition; log-only path remains. */
+
+    /* What to publish: the live table, or the snapshot taken before the boot
+     * suite wiped it. A suite that ran without a snapshot leaves nothing
+     * honest to publish, so nothing is published. */
+    const struct boot_reserved_region *tab = s_table;
+    uint32_t count = s_count;
+    if (s_frozen_state == 2u) {
+        klog(LOG_WARN, "mm",
+             "boot_reserved_blackbox_dump: the pre-test snapshot failed; "
+             "not publishing a table the boot tests overwrote");
+        return;
+    }
+    if (s_frozen_state == 1u) {
+        tab = s_frozen;
+        count = s_frozen_count;
+    }
+    uint64_t total_frames = pmm_get_total_frames();
+    static const char *const tracked_name[] = { "full", "partial", "none" };
 
     const char *diag_dir = "X:\\Diag\\";
     /* Max size: each entry costs ~110 chars of JSON; with 128 entries
@@ -777,23 +986,28 @@ void boot_reserved_blackbox_dump(void)
     uint32_t i;
     int n;
     char line[192];
-    const char *open_hdr = "{\n  \"retained_regions\": [\n";
+    const char *open_hdr = s_frozen_state == 1u
+        ? "{\n  \"source\": \"pre-test snapshot\",\n  \"retained_regions\": [\n"
+        : "{\n  \"source\": \"live\",\n  \"retained_regions\": [\n";
     for (i = 0u; open_hdr[i] && pos < max_sz - 1u; i++)
         buf[pos++] = open_hdr[i];
 
-    for (i = 0u; i < s_count; i++) {
-        const struct boot_reserved_region *e = &s_table[i];
+    for (i = 0u; i < count; i++) {
+        const struct boot_reserved_region *e = &tab[i];
         /* Use %llx for phys_start + length so 64-bit values above 4 GiB
          * are not truncated. Hex strings keep the JSON readable and
          * let parsers distinguish overlong tokens from real numbers. */
         n = snprintf(line, sizeof(line),
                      "    { \"kind\": \"%s\", \"phys\": \"0x%llx\", "
-                     "\"length\": \"0x%llx\", \"src\": %u }%s\n",
+                     "\"length\": \"0x%llx\", \"src\": %u, "
+                     "\"tracked\": \"%s\" }%s\n",
                      kind_name(e->kind),
                      (unsigned long long)e->phys_start,
                      (unsigned long long)e->length,
                      e->source_index,
-                     (i + 1u < s_count) ? "," : "");
+                     tracked_name[boot_reserved_tracked_class(
+                         e->phys_start, e->length, total_frames)],
+                     (i + 1u < count) ? "," : "");
         if (n < 0 || (uint32_t)n >= sizeof(line))
             continue;  /* truncation: skip the malformed line */
         int j;
@@ -837,7 +1051,7 @@ void boot_reserved_blackbox_dump(void)
         } else {
             klog(LOG_INFO, "mm",
                  "boot_reserved: dumped %u region(s) to %s",
-                 (uint64_t)s_count, (uint64_t)(uintptr_t)path);
+                 (uint64_t)count, (uint64_t)(uintptr_t)path);
         }
     }
     kfree(buf);

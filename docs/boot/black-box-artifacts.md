@@ -26,7 +26,7 @@ diagnostics-dump point unless noted otherwise.
 | `boot-health.json` | `boot_health_publish_json()` (`boot_health.c`) | Consolidated boot-health dashboard: degraded caps and subsystems, missing capabilities, perf-budget breaches, MAT W^X violations, active firmware quirks, recent boot times, Secure Boot state (owner TODO-29). Wire format: [`boot-health-schema.md`](boot-health-schema.md). |
 | `entropy.json` | `entropy_publish_json()` (`entropy_registry.c`) | Early-entropy / seed diagnostics (owner TODO-12). |
 | `lvfs-metadata.json` | (not kernel-written) input cache read by `firmware_advisor_init()` -> `fa_read_cache_text()` (`firmware_advisor.c`) | Offline LVFS firmware metadata cache the advisor CONSUMES; staged onto X:\Diag out-of-band, not produced by a boot writer. |
-| `boot-reserved.json` | `boot_reserved_blackbox_dump()` | Physical ranges the PMM kept reserved at boot. |
+| `boot-reserved.json` | `boot_reserved_blackbox_dump()` | Physical ranges the reservation pass retained at boot. `source` is `live`, or `pre-test snapshot` on a `test=1` boot (the suite wipes the live table, so the copy is taken first); each entry's `tracked` is `full`, `partial` or `none` against the frames PMM tracks. |
 | `hwdump.txt` | `hw_dump_write_file()` | Hardware inventory (PCI / ACPI / CPU). |
 
 > Adding a new `X:\Diag\` artifact: add its producer to the late-boot dump
