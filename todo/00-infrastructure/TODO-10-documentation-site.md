@@ -1487,19 +1487,27 @@ Promotion of two review classes into automation under the reviewer-to-automation
 - [x] Focus from rendered pixels: `measureFocus()` compares unfocused and focused screenshots per signature; `focusChange()` counts 3:1 pixels, replacing the computed-style colour model
   - Passes at a 2px line along the short side, reaching that far (one-edge indicators pass, specks fail); the signature carries ring clipping; a third shot rejects a late repaint.
   - The 18-plant control is kept, with the layered ring as a must-pass, a speck, and a clipped ring beside its unclipped twin. It caught the home page's FAQ rings, clipped by `overflow: hidden`.
-- [x] Tests: `test_a_misspelled_term_is_retried_and_the_results_page_suggests_the_correction`; the control (30 plants) reports a planted forced-colors defect and repeats 8/8 stable
+- [x] Tests: `test_a_misspelled_term_is_retried_and_the_results_page_suggests_the_correction`; the control (31 plants) reports a planted forced-colors defect and repeats 8/8 stable
+- [x] Build the typo vocabulary in 8 ms slices off the input handler; the finished vocabulary redraws the search (post-ship perf review: ~310 ms first-misspelling stall)
+  - Regression test `test_the_typo_vocabulary_is_built_off_the_input_handler` fails on the synchronous build and passes on the sliced one.
+- [x] The budget holds inside one record (a resumable field cursor), and only the query that waited is redrawn (re-adversarial and perf re-review, round 2)
+  - One 232,323-character record had run ~48 ms; a settled exact query lost its expanded results. Tests `..._yields_inside_one_large_record` and `..._redraws_only_the_query_that_waited`.
+- [x] Focus signatures carry each ancestor's clip-path, mask, opacity, filter, blend mode and paint containment (post-ship adversarial review)
+  - Twins differing only in `clip-path` shared a passing verdict; the control now plants `#planted-clippath` after its correct twin `#planted-ringok`.
 - [x] Commit: `"site: search typo tolerance and wider accessibility audit"`
 
 **Test checkpoint:** searching `interupt` on the local build lists the interrupt pages and suggests `interrupt`; the audit reports a planted forced-colors defect and passes the landing pages. Test on: WSL2 dev host; GitHub Actions `ubuntu-latest`.
 
-> **Test runner:** `python3 scripts/site/tests/test_build.py SearchAndAccessibility` (typo cases) and `node scripts/site/a11y/audit.mjs <site dir> [control]` (30 plants; full audit 328 pages x 7 variants); no kernel test surface (host tooling).
+> **Test runner:** `python3 scripts/site/tests/test_build.py SearchAndAccessibility` (typo cases) and `node scripts/site/a11y/audit.mjs <site dir> [control]` (31 plants; full audit 330 pages x 7 variants); no kernel test surface (host tooling).
 
 > **Notes:**
 > - Shipped: edit-distance-1 retry with "Did you mean", pixel focus judging, forced-colours and reduced-motion variants, and landing pages in the browser audit.
-> - Integration: the Pages `a11y` job runs all of it (timeout raised to 45 minutes; a full local run is 10 to 15).
+> - Integration: the Pages `a11y` job runs all of it (timeout raised to 45 minutes; a full local run is 10 to 17).
 > - Downstream: the light `accent_pressed` token changed, regenerating `include/desktop/theme_tokens.h`.
 > - Canonical doc: `docs/infrastructure/docs-search-and-accessibility.md`.
 > - Scope boundary: an element covering only a ring is not seen by a shared signature (documented); the NVDA/Orca pass stays operator-gated in §25.
+> **Verified:** 2026-11-08 | commit `850671b0a` + review fixes | 9/9 items | build OK | site tests 171/171 OK; a11y control 31/31 planted defects (clip-path mutation fails it); full audit 330 pages x 7 variants, no findings (997 s)
+> **Quality reviewed:** 2026-11-08 | Codex 10x (adversarial, re-adversarial x3, consistency x2, perf x4) | 0H+5M+0L fixed, 0 open | scope: N/A (host site tooling; no kernel/boot/desktop code)
 
 ---
 

@@ -86,8 +86,9 @@ const landingPages = (root) => walkPages(root, '/', ['docs']);
 // change alike, so the pixels are judged once per signature (focusFindings).
 // The signature carries everything that decides those pixels: the element's look
 // and its pseudo-elements' before and after focus, what is behind it, which edges
-// of its indicator region an overflow ancestor or the viewport clips, and its
-// shorter side, since the pass mark scales with it and a fixed-size indicator
+// of its indicator region an overflow ancestor or the viewport clips, what can hide
+// painted pixels on it or any ancestor (clip-path, mask, opacity, filter, blend mode,
+// paint containment), and its shorter side, since the pass mark scales with it and a fixed-size indicator
 // may pass on one control and fail on another a pixel larger.
 function focusWalk(scope) {
   const out = [], items = [], els = [];
@@ -130,6 +131,18 @@ function focusWalk(scope) {
     }
     return hit.map(Number).join('');
   };
+  // What decides which of its painted pixels reach the screen, on it and every ancestor:
+  // twins that differ only here (one clipped by clip-path) must not share a verdict.
+  const paint = (el) => {
+    const out = [];
+    for (let n = el, d = 0; n && n.nodeType === 1; n = n.parentElement, d++) {
+      const c = getComputedStyle(n);
+      const v = [c.clipPath, c.maskImage || c.webkitMaskImage || 'none', c.opacity, c.filter, c.mixBlendMode,
+                 /paint|strict|content/.test(c.contain) ? 'contain' : ''].join(' ');
+      if (v !== 'none none 1 none normal ') out.push(d + ':' + v);
+    }
+    return out.join(';');
+  };
   const sel = 'a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
   const describe = (el) => el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') +
     (el.getAttribute('href') ? `[href="${el.getAttribute('href')}"]` : '') +
@@ -152,7 +165,7 @@ function focusWalk(scope) {
       r.left < innerWidth && r.top < innerHeight;
     const parent = el.parentElement;
     const sig = [el.tagName, el.className, el.type || '', parent ? parent.tagName + '.' + parent.className : '',
-                 before, after, backdrop(el), clipped(el, r), Math.round(Math.min(r.width, r.height))].join('\n');
+                 before, after, backdrop(el), clipped(el, r), paint(el), Math.round(Math.min(r.width, r.height))].join('\n');
     let usable = onScreen;
     if (!onScreen) out.push(`focus-visible: focus lands off screen on ${describe(el)}`);
     else {
@@ -620,6 +633,7 @@ async function control(root) {
     '#planted-smooth { overflow: auto; height: 40px; scroll-behavior: smooth !important; } ' +
     '.planted-bar { position: relative; display: block; width: 300px; } .planted-bar:focus-visible { outline: none; } ' +
     '.planted-bar:focus-visible::after { content: ""; position: absolute; left: 0; bottom: 0; width: 34px; height: 2px; background: #0a2a5c; } ' +
+    '.planted-ring:focus-visible { outline: 2px solid #155cde; outline-offset: 2px; } #planted-clippath { clip-path: inset(0); } ' +
     '#planted-baroff:focus-visible::after { display: none; } #planted-barfar:focus-visible::after { left: -1000px; } ' +
     '.planted-bar { height: 33px; } #planted-barnear { height: 35px; } ' +
     '@media (prefers-color-scheme: dark) { #planted-dark:focus-visible { outline: none; } } ' +
@@ -646,6 +660,8 @@ async function control(root) {
     '<div id="planted-smooth" tabindex="0">Planted smooth scroller<br><br><br><br><br><br>end</div>' +
     // Twins of one look, the passing one first, so a verdict shared between them would hide the defect.
     '<p><a class="planted-bar" id="planted-baron" href="#planted-contrast">A correct bar</a></p>' +
+    '<p><a class="planted-ring" id="planted-ringok" href="#planted-contrast">A correct outside ring</a></p>' +
+    '<p><a class="planted-ring" id="planted-clippath" href="#planted-contrast">Planted ring its own clip-path hides</a></p>' +
     '<p><a class="planted-bar" id="planted-baroff" href="#planted-contrast">Planted bar that is display none</a></p>' +
     '<p><a class="planted-bar" id="planted-barfar" href="#planted-contrast">Planted bar moved off the page</a></p>' +
     '<p><a class="planted-bar" id="planted-barnear" href="#planted-contrast">Planted bar 2px too small for its box</a></p>' +
@@ -720,6 +736,7 @@ async function control(root) {
                 ['reduced-motion nested smooth scrolling', /\[desktop light reduced\] motion: smooth scrolling on div#planted-smooth/],
                 ['hidden pseudo-element indicator', /\[desktop light\] focus-visible: no focus indicator on a#planted-baroff(?![\w-])/],
                 ['pseudo-element indicator moved off the page', /\[desktop light\] focus-visible: no focus indicator on a#planted-barfar(?![\w-])/],
+                ['ring hidden by its own clip-path', /\[desktop light\] focus-visible: no focus indicator on a#planted-clippath(?![\w-])/],
                 ['fixed indicator just too small for its box', /\[desktop light\] focus-visible: no focus indicator on a#planted-barnear(?![\w-])/],
                 ['home page color-contrast', /^\/index\.html .*axe color-contrast .*#planted-home-contrast/],
                 ['home page missing skip link', /^\/index\.html .*skip-link: first Tab lands on/],
@@ -736,6 +753,7 @@ async function control(root) {
   // The bar's colour suits a light page only, so it is correct in the light theme only.
   if (findings.some((f) => /\[desktop light\] focus-visible: .*#planted-baron(?![\w-])/.test(f))) missed.push('(false failure on a correct bar indicator)');
   if (plain.some((f) => /focus-visible: .*#planted-layered(?![\w-])/.test(f))) missed.push('(false failure on a ring over a permanent inset shadow)');
+  if (plain.some((f) => /focus-visible: .*#planted-ringok(?![\w-])/.test(f))) missed.push('(false failure on the unclipped twin of the clip-path ring)');
   if (plain.some((f) => /focus-visible: .*#planted-unclipped(?![\w-])/.test(f))) missed.push('(false failure on the unclipped twin of the clipped ring)');
   // The forced-colors plant is a defect only there: seen elsewhere it would prove nothing about that mode.
   if (findings.some((f) => /\[desktop (light|dark)\] focus-visible: .*#planted-forced(?![\w-])/.test(f))) missed.push('(the forced-colors plant failed outside forced colours)');

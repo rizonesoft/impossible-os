@@ -530,7 +530,7 @@ class SearchAndAccessibility(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         out = json.loads(r.stdout)
         self.assertEqual(out["errors"], [])
-        self.fetches, self.aborted = out["fetches"], out["aborted"]
+        self.fetches, self.aborted, self.zero_timers = out["fetches"], out["aborted"], out["zero_timers"]
         return out["snaps"]
 
     def test_navigation_marks_the_current_page_and_leads_each_folder_with_its_overview(self):
@@ -628,6 +628,57 @@ class SearchAndAccessibility(unittest.TestCase):
         self.assertIn("Did you mean interrupt handler?", s["opened"]["status"])
 
     @unittest.skipUnless(__import__("shutil").which("node"), "node not installed")
+    def test_the_typo_vocabulary_is_built_off_the_input_handler(self):
+        # Regression (2026-11-08 perf review): building the vocabulary inside the input
+        # handler stalled the first misspelling ~310 ms on the full index. The keystroke
+        # now returns with the plain result, and the finished vocabulary redraws on its own.
+        pages, errors = self.pages({"body.md": "# Body\n\nAn interrupt fires.\n",
+                                    "title.md": "# Interrupt Guide\n\nNothing else here.\n"})
+        files = B.search_files(pages, "v2", errors)
+        self.assertEqual(errors, [])
+        s = self.harness(files, [["input", "interrupt"], ["flush", None], ["snap", "loaded"],
+                                 ["input", "interupt"], ["wait", 0], ["snap", "pending"],
+                                 ["flush", None], ["snap", "corrected"],
+                                 ["input", "intrerupt"], ["wait", 0], ["snap", "reused"]])
+        self.assertEqual(len(s["loaded"]["options"]), 2)
+        self.assertEqual(s["pending"]["options"], [])                    # nothing corrected inside the keystroke
+        self.assertEqual([bare(o["href"]) for o in s["corrected"]["options"]], ["title.html", "body.html"])
+        self.assertIn("Showing results for interrupt", s["corrected"]["msg"])
+        self.assertEqual(len(s["reused"]["options"]), 2)                 # a built vocabulary answers at once
+
+    def test_the_typo_vocabulary_yields_inside_one_large_record(self):
+        # Regression (2026-11-08 perf re-review): the deadline was checked only between
+        # records, so one 232,323-character record ran ~48 ms past an 8 ms budget. With a
+        # clock that advances 1 ms per read, a single record of 20,000 identifiers must
+        # take many slices, and still yield the correction.
+        big = " ".join("word%d" % n for n in range(20000))
+        pages, errors = self.pages({"big.md": "# Big\n\n" + big + " interrupt\n"})
+        files = B.search_files(pages, "v2", errors)
+        self.assertEqual(errors, [])
+        s = self.harness(files, [["input", "interrupt"], ["flush", None], ["input", "interupt"],
+                                     ["wait", 0], ["snap", "pending"], ["wait", 1500], ["snap", "corrected"]],
+                         clock_step_ms=1)
+        self.assertEqual(s["pending"]["options"], [])
+        self.assertGreater(self.zero_timers, 20)                          # one record, many slices
+        self.assertEqual([bare(o["href"]) for o in s["corrected"]["options"]], ["big.html"])
+
+    def test_a_finished_vocabulary_redraws_only_the_query_that_waited(self):
+        # Regression (2026-11-08 re-adversarial review): the finished vocabulary re-ran
+        # whatever the box held, so an exact query typed while it was building was drawn
+        # again (on the results page, collapsing "Show more" and dropping focus).
+        big = " ".join("word%d" % n for n in range(20000))
+        pages, errors = self.pages({"big.md": "# Big\n\n" + big + " interrupt\n",
+                                    "other.md": "# Other\n\nAn interrupt here.\n"})
+        files = B.search_files(pages, "v2", errors)
+        self.assertEqual(errors, [])
+        s = self.harness(files, [["input", "interrupt"], ["flush", None], ["input", "interupt"],
+                                     ["wait", 0], ["input", "interrupt"], ["wait", 0], ["snap", "exact"],
+                                     ["wait", 1500], ["snap", "after"]],
+                         clock_step_ms=1)
+        self.assertGreater(self.zero_timers, 20)                          # the build was still running
+        self.assertEqual(len(s["exact"]["options"]), 2)
+        self.assertEqual(s["after"]["renders"], s["exact"]["renders"])     # not drawn again
+
     def test_query_parsing_stems_ties_and_snippet_edges(self):
         filler = " ".join(f"w{n}" for n in range(30))
         pages, errors = self.pages({

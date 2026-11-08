@@ -512,25 +512,53 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
   // retried against the words the index holds, at edit distance 1 (a swap of two
   // neighbours counts as one edit, and a digit never changes: `ipv4` is not `ipv6`).
   // Quoted terms are exact by request. The vocabulary is built once per index, on the
-  // first misspelling, since most readers never pay for it.
+  // first misspelling, since most readers never pay for it. It is built in slices of
+  // at most SLICE_MS between timer turns, never inside the input handler: the full
+  // index is ~2.7 MB of text and one synchronous pass cost ~310 ms (2026-11-08), a
+  // stall on the keystroke that asked. Until it is ready the search shows its plain
+  // result; the finished vocabulary re-runs the search on screen, like a landed shard,
+  // but only the query that waited for it (vocabFor): a settled exact search the reader
+  // has since expanded or moved through must not be redrawn. The time budget holds
+  // inside a record too, since one record can hold 230,000 characters (2026-11-08).
   var IDENT = /[\p{L}\p{N}_]+/gu, PARTS = /_+|(?<=[\p{Ll}\p{N}])(?=\p{Lu})/u, DIGIT = /\p{N}/u, LETTER = /\p{L}/gu;
-  var FUZZY_MIN = 5, FUZZY_MAX = 5, vocab = null;
-  function vocabulary(records) {
-    if (vocab && vocab.of === records) return vocab;
-    var n = Object.create(null), byLen = [];   // no inherited keys: `constructor` is a word
-    function add(w) { n[w] = (n[w] || 0) + 1; }
-    records.forEach(function (r) {
-      [r.t, r.h, r.x].forEach(function (text) {
-        (text.match(IDENT) || []).forEach(function (id) {
-          add(id.toLowerCase());
-          var parts = id.split(PARTS);
-          if (parts.length > 1) parts.forEach(function (p) { if (p) add(p.toLowerCase()); });
-        });
-      });
-    });
-    Object.keys(n).forEach(function (w) { (byLen[w.length] = byLen[w.length] || []).push(w); });
-    vocab = { of: records, n: n, byLen: byLen };
-    return vocab;
+  var FUZZY_MIN = 5, FUZZY_MAX = 5, SLICE_MS = 8, vocab = null, vocabJob = null, vocabFor = null, vocabWaiting = false;
+  function vocabulary(records) { return vocab && vocab.of === records ? vocab : null; }
+  function buildVocabulary(records) {
+    if (vocabulary(records) || (vocabJob && vocabJob.of === records)) return;
+    var n = Object.create(null), i = 0, f = 0, at = 0, job = vocabJob = { of: records };   // no inherited keys: `constructor` is a word
+    var re = new RegExp(IDENT.source, 'gu');                    // its own cursor: a slice resumes mid-field
+    var byLen = [];                                             // filled as words appear: no unsliced pass at the end
+    function add(w) {
+      if (n[w]) { n[w]++; return; }
+      n[w] = 1;
+      (byLen[w.length] = byLen[w.length] || []).push(w);
+    }
+    function slice() {
+      if (vocabJob !== job || idx !== records) return;          // the index was replaced: its words are not wanted
+      var end = Date.now() + SLICE_MS, k = 0, m;
+      for (; i < records.length; f = 0, i++) {
+        for (; f < 3; at = 0, f++) {
+          if (Date.now() >= end) { setTimeout(slice, 0); return; }     // resumes at record i, field f, offset at
+          var r = records[i], text = f === 0 ? r.t : f === 1 ? r.h : r.x;
+          for (re.lastIndex = at; (m = re.exec(text)); ) {
+            add(m[0].toLowerCase());
+            var parts = m[0].split(PARTS);
+            if (parts.length > 1) parts.forEach(function (p) { if (p) add(p.toLowerCase()); });
+            if (!(++k & 63) && Date.now() >= end) { at = re.lastIndex; setTimeout(slice, 0); return; }
+          }
+        }
+      }
+      vocab = { of: records, n: n, byLen: byLen };
+      vocabJob = null;
+      var waited = vocabFor;
+      vocabFor = null;
+      // Only the query that waited, and never a dismissed search reopened; the redraw is a
+      // task of its own, so input queued behind the last slice runs before it.
+      setTimeout(function () {
+        if (waited !== null && waited === current.trim() && idx === records && (hitsEl || pop.style.display === 'block')) run(true);
+      }, 0);
+    }
+    setTimeout(slice, 0);
   }
   // Whether a and b, already known to differ by at most one in length, are one edit apart.
   function oneEdit(a, b) {
@@ -559,7 +587,9 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
       return !records.some(function (r) { return score(r, [t]); });
     });
     if (!absent.length || absent.some(function (t) { return t.q || t.w.indexOf(' ') >= 0 || letters(t.w) < FUZZY_MIN; })) return false;
-    var v = vocabulary(records), found = absent.map(function (t) {
+    var v = vocabulary(records);
+    if (!v) { buildVocabulary(records); vocabWaiting = true; return false; }
+    var found = absent.map(function (t) {
       var c = corrections(v, t.w);
       return c.length || !t.stem || letters(t.stem) < FUZZY_MIN ? c : corrections(v, t.stem);
     });
@@ -671,11 +701,13 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
   // The results page draws once, when the full text has loaded (or failed to):
   // a list that re-ranked itself as shards landed would move or drop the result
   // a keyboard reader was on. Until then it says it is searching.
-  var settledFor = null;   // [query, index] the results page last drew from a settled index
-  function showPage(hits, terms, st, again, query) {
+  var settledFor = null;   // [query, index, waits] the results page last drew from a settled index; waits: for a vocabulary
+  function showPage(hits, terms, st, again, query, waits) {
     // A refresh queued by a shard that landed before the typing pause ended finds
     // the list already drawn from the settled index: it must not draw it again.
-    if (again === true && settledFor && settledFor[0] === query && settledFor[1] === idx) return;
+    // A query drawn while it waited for the vocabulary is drawn again once that is ready.
+    if (again === true && settledFor && settledFor[0] === query && settledFor[1] === idx &&
+        !(settledFor[2] && vocabulary(idx))) return;
     if (st === 'loading') {
       if (again !== true && hitsEl.getAttribute('data-state') !== 'loading') {
         hitsEl.setAttribute('data-state', st);
@@ -699,7 +731,7 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
     }
     paged = { hits: hits, terms: terms, q: query, limit: BATCH, drawn: 0, secs: 0, html: '', head: '<p>' + head + '</p>' };
     drawPage(false);
-    settledFor = [query, idx];
+    settledFor = [query, idx, !!waits];
     say(said + note(st));
   }
   // What a corrected search tells the reader: the terms that matched nothing, and
@@ -751,8 +783,11 @@ nav.toc li a:hover { color: var(--text); text-decoration: none; }
       records.forEach(function (r, i) { r.i = i; });
       var hits = search(records, terms), st = progress();
       // Only a complete index can say a term matches nothing.
+      vocabWaiting = false;
       if (!hits.length && st === 'done' && correct(records, terms)) hits = search(records, terms);
-      if (hitsEl) { showPage(hits, terms, st, again, query); return; }
+      var waits = vocabWaiting;
+      if (waits) vocabFor = query;
+      if (hitsEl) { showPage(hits, terms, st, again, query, waits); return; }
       var total = hits.length;
       hits = hits.slice(0, SHOWN);
       var html = hits.map(function (h, n) {

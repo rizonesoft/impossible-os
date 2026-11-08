@@ -14,7 +14,9 @@
 //         "head_delay": {"full URL": <ms before its HEAD answers>}, "head_fail": ["full URL whose HEAD rejects", ...],
 //         "attrs": {"q": {"data-search-page": "search.html"}} sets attributes before the script runs,
 //         "page": {"search": "?q=..."} makes this the search results page, opened at that query string,
-//         "deadline_ms": <ms> stands in for the page's 15 s shard deadline}
+//         "deadline_ms": <ms> stands in for the page's 15 s shard deadline,
+//         "clock_step_ms": <ms> makes the page's Date.now() a clock that advances that much per read,
+//                          so a time-sliced loop yields after a fixed number of reads}
 // Results page step: ["more", null] presses its "Show more results" button.
 // Version picker steps: ["change", <option index>] picks a version; ["note-click", null] follows the
 // old-version notice's link.
@@ -24,7 +26,8 @@
 //                               picker: {hidden, options: [{value, text, selected}]}}},
 //          "errors": [every unhandled promise rejection, which the page would swallow silently],
 //          "fetches": {"file name": times fetched}, "revalidated": {"file name": times fetched with cache: no-cache},
-//          "aborted": {"file name": times the page aborted a request for it}}
+//          "aborted": {"file name": times the page aborted a request for it},
+//          "zero_timers": times the page queued a zero-delay timer (a time slice yielding)}
 'use strict';
 const vm = require('vm');
 
@@ -145,11 +148,17 @@ function later(f, ms) {
   if (ms >= 10000) t.unref();
   return t;
 }
-function pageTimeout(f, ms) { return later(f, ms >= 10000 && input.deadline_ms ? input.deadline_ms : ms); }
+let zeroTimers = 0;
+function pageTimeout(f, ms) {
+  if (!ms) zeroTimers++;
+  return later(f, ms >= 10000 && input.deadline_ms ? input.deadline_ms : ms);
+}
+let clock = 0;
+const pageDate = input.clock_step_ms ? { now: () => (clock += input.clock_step_ms) } : Date;
 
 const ctx = vm.createContext({
   document: doc, location: loc, history: hist, fetch: fetchStub, RegExp, localStorage: { setItem() {} },
-  matchMedia: () => ({ matches: false }), setTimeout: pageTimeout, clearTimeout, Promise, AbortController, Array, Object, JSON, Math, Error,
+  matchMedia: () => ({ matches: false }), Date: pageDate, setTimeout: pageTimeout, clearTimeout, Promise, AbortController, Array, Object, JSON, Math, Error,
 });
 vm.runInContext(input.script, ctx);
 
@@ -202,5 +211,5 @@ function snap() {
     else if (op === 'wait') await new Promise((r) => setTimeout(r, arg));
     else if (op === 'snap') snaps[arg] = snap();
   }
-  process.stdout.write(JSON.stringify({ snaps, errors, fetches, revalidated, aborted }));
+  process.stdout.write(JSON.stringify({ snaps, errors, fetches, revalidated, aborted, zero_timers: zeroTimers }));
 })();
