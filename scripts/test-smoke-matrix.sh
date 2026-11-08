@@ -153,6 +153,36 @@ for leg in VALID:valid:SMOKE_VALID_STORE=1 \
     fi
 done
 
+# UKI-direct fixtures (UKI signed-payload sections), one boot each on the default engine.
+# Every leg above boots the split-path loader, so none of them exercises the
+# signed-payload copy, its kernel pin, or the two layers that refuse a disk
+# override in a UKI cmdline. `token` is the literal form the pre-scan refuses;
+# `key` only normalises to `module=`, so only the parser-level gate catches it.
+for leg in "signed|signed|" "token|override|initrd=disk.img" "key|override|mod ule = disk.eif"; do
+    name="${leg%%|*}"; rest="${leg#*|}"
+    mode="${rest%%|*}"; token="${rest#*|}"
+    log="$LOG_DIR/uki-$name.log"
+    cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-uki-$name.XXXXXX")"
+    t0=$(date +%s)
+    if [ "$mode" = "override" ]; then
+        SMOKE_UKI=override SMOKE_UKI_OVERRIDE="$token" bash scripts/test-smoke.sh > "$cap" 2>&1
+    else
+        SMOKE_UKI=signed bash scripts/test-smoke.sh > "$cap" 2>&1
+    fi
+    rc=$?
+    CAPTURES="$CAPTURES $cap:$log"
+    dur=$(( $(date +%s) - t0 ))
+    if [ "$rc" = "0" ]; then
+        PASS=$((PASS + 1))
+        printf "  ${GREEN}PASS${NC}  uki      %-8s %2ds   ${DIM}%s${NC}\n" "$name" "$dur" "$log"
+    else
+        FAIL=$((FAIL + 1)); FAILED_LEGS="$FAILED_LEGS uki:$name"
+        printf "  ${RED}FAIL${NC}  uki      %-8s %2ds   ${DIM}%s${NC}\n" "$name" "$dur" "$log"
+        reason=$(grep -a 'SMOKE TEST FAILED' "$cap" 2>/dev/null | head -1)
+        [ -n "$reason" ] && printf "        ${DIM}%s${NC}\n" "$reason"
+    fi
+done
+
 TOTAL=$(( $(date +%s) - START_ALL ))
 
 # Publish every capture now that no further build can wipe the directory.

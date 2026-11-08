@@ -113,6 +113,12 @@ else
     done
 fi
 
+# One build time for every make invocation in this run (Makefile BUILD_TIME).
+# Without it each later make call rewrote include/build_info.h and relinked
+# kernel.exe after the UKI was packed, so the UKI and the system disk shipped
+# different kernels from one build. A caller's SOURCE_DATE_EPOCH wins.
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(date +%s)}"
+
 # Make flags for parallel compilation
 MAKE_FLAGS="-j${JOBS}"
 
@@ -235,7 +241,14 @@ run_kernel_step() {
     divider | tee -a "$LOG"
 
     local compiled=0
-    $BEAR_PREFIX make $MAKE_FLAGS _increment_build kernel 2>&1 | while IFS= read -r line; do
+    # Bump the build number in its OWN make invocation. make reads
+    # .build_number when it parses the Makefile, so `make _increment_build
+    # kernel` built this kernel with the PREVIOUS number, and every later make
+    # call in this run (signing, ABI check, system disk) saw the new one,
+    # regenerated include/build_info.h and relinked kernel.exe after the UKI
+    # had packed it.
+    make -s _increment_build >> "$LOG" 2>&1 || return 1
+    $BEAR_PREFIX make $MAKE_FLAGS kernel 2>&1 | while IFS= read -r line; do
         # Log every line
         echo "$line" >> "$LOG"
 
@@ -451,17 +464,23 @@ run_step $STEP $TOTAL "EFI Boot" "uefi-boot" || { print_errors; echo "=== BUILD 
 # (kernel + cmdline are inside the firmware-verified PE blob, so per-
 # file split-path signing is no longer required).
 #
-# Section virtual addresses are spec-defined (0x20000 .osrel,
-# 0x30000 .cmdline, 0x2000000 .linux) to avoid overlap with the stub
-# PE's existing sections. The bootloader's detect_uki_sections() walks
-# the PE section table at boot time looking for these.
+# The pack itself lives in scripts/uki-pack.sh, the one implementation that
+# the UKI-direct smoke legs (scripts/test-smoke.sh SMOKE_UKI=) also use, so a
+# test boots an image packed exactly the way this one is. Optional signed
+# payloads are staged at build/uki-payloads/{initrd.img,recovery.img,
+# modules.cpio}.
+#
+# No `set -e` here. Inside a `{ ...; } || { ...; }` list bash ignores errexit
+# for the block's own commands, so it never guarded this block; its only effect
+# was to switch errexit on for the REST of the script (braces are not a
+# subshell), where print_errors' grep returning 1 on "no compiler error lines"
+# ended the script before the === BUILD FAILED === sentinel was written.
+# Failures here are explicit instead.
 {
-    set -e
     UKI_OUT="build/tools/BOOTX64.UKI.efi"
     UKI_STUB="build/tools/BOOTX64.EFI"
     UKI_KERNEL="build/kernel.exe"
     UKI_CMDLINE="build/uki-cmdline.txt"
-    UKI_OSREL="build/uki-osrel.txt"
     if [ -f "$UKI_STUB" ] && [ -f "$UKI_KERNEL" ]; then
         # Source boot.conf into .cmdline so the bootloader's UKI path
         # parses the same shape it would have read from disk under the
@@ -470,71 +489,14 @@ run_step $STEP $TOTAL "EFI Boot" "uefi-boot" || { print_errors; echo "=== BUILD 
             cp "resources/boot/boot.conf" "$UKI_CMDLINE"
         else
             : > "$UKI_CMDLINE"
-        fi
-        # Minimal os-release info; matches the UAPI Group spec layout.
-        cat > "$UKI_OSREL" <<'OSEOF'
-NAME="Impossible OS"
-ID=impossible-os
-VERSION_ID="0.1"
-PRETTY_NAME="Impossible OS (UKI)"
-OSEOF
-        # llvm-objcopy preserves the PE/COFF format and supports
-        # --add-section for section injection. Spec virtual addresses
-        # via --change-section-vma; raw size auto-aligned by objcopy.
-        OBJCOPY=""
-        for cand in llvm-objcopy-19 llvm-objcopy objcopy; do
-            if command -v "$cand" >/dev/null 2>&1; then
-                OBJCOPY="$cand"
-                break
-            fi
-        done
-        if [ -z "$OBJCOPY" ]; then
-            echo "[uki] WARN: no objcopy found (tried llvm-objcopy-19, llvm-objcopy, objcopy); skipping UKI pack" >> "$LOG"
-        else
-            # Section virtual addresses are auto-placed by objcopy
-            # immediately past the stub's existing sections. The
-            # bootloader's detect_uki_sections() walks the table by
-            # name (VirtualAddress + VirtualSize from each entry), so
-            # specific VAs don't need to match the UAPI Group spec
-            # constants. llvm-objcopy lacks a --change-section-vma flag
-            # for PE; section placement is left to the tool's default.
-            # Section ordering is pinned by argument order
-            # (.osrel -> .cmdline -> .linux -> .initrd -> .recovery ->
-            # .modules per docs/guides/secure-boot-keys.md UKI
-            # subsection -- load-bearing for PCR measurement
-            # reproducibility in the measured-boot path). Optional
-            # payloads at build/uki-payloads/{initrd.img,recovery.img,
-            # modules.cpio} are appended only when present so existing
-            # builds without signed payloads ship unchanged (whole-chain
-            # signed-payload feature back-compat contract).
-            UKI_PAYLOAD_DIR="build/uki-payloads"
-            UKI_INITRD="$UKI_PAYLOAD_DIR/initrd.img"
-            UKI_RECOVERY="$UKI_PAYLOAD_DIR/recovery.img"
-            UKI_MODULES="$UKI_PAYLOAD_DIR/modules.cpio"
-            OBJCOPY_OPTIONAL_ARGS=""
-            if [ -f "$UKI_INITRD" ]; then
-                OBJCOPY_OPTIONAL_ARGS="$OBJCOPY_OPTIONAL_ARGS --add-section .initrd=$UKI_INITRD --set-section-flags .initrd=alloc,readonly,data"
-                echo "[uki] embedding .initrd from $UKI_INITRD ($(wc -c < "$UKI_INITRD" | tr -d ' ') bytes)" >> "$LOG"
-            fi
-            if [ -f "$UKI_RECOVERY" ]; then
-                OBJCOPY_OPTIONAL_ARGS="$OBJCOPY_OPTIONAL_ARGS --add-section .recovery=$UKI_RECOVERY --set-section-flags .recovery=alloc,readonly,data"
-                echo "[uki] embedding .recovery from $UKI_RECOVERY ($(wc -c < "$UKI_RECOVERY" | tr -d ' ') bytes)" >> "$LOG"
-            fi
-            if [ -f "$UKI_MODULES" ]; then
-                OBJCOPY_OPTIONAL_ARGS="$OBJCOPY_OPTIONAL_ARGS --add-section .modules=$UKI_MODULES --set-section-flags .modules=alloc,readonly,data"
-                echo "[uki] embedding .modules from $UKI_MODULES ($(wc -c < "$UKI_MODULES" | tr -d ' ') bytes)" >> "$LOG"
-            fi
-            "$OBJCOPY" \
-                --add-section .osrel="$UKI_OSREL" \
-                --set-section-flags .osrel=alloc,readonly,data \
-                --add-section .cmdline="$UKI_CMDLINE" \
-                --set-section-flags .cmdline=alloc,readonly,data \
-                --add-section .linux="$UKI_KERNEL" \
-                --set-section-flags .linux=alloc,readonly,data \
-                $OBJCOPY_OPTIONAL_ARGS \
-                "$UKI_STUB" "$UKI_OUT" 2>>"$LOG" \
-                && echo "[uki] generated $UKI_OUT ($(wc -c < "$UKI_OUT" | tr -d ' ') bytes)" >> "$LOG" \
-                || { echo "[uki] FATAL: $OBJCOPY --add-section failed" >> "$LOG"; print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
+        fi || { echo "[uki] FATAL: cannot write $UKI_CMDLINE" >> "$LOG"; print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
+        UKI_RC=0
+        bash scripts/uki-pack.sh "$UKI_STUB" "$UKI_KERNEL" "$UKI_CMDLINE" \
+            build/uki-payloads "$UKI_OUT" >> "$LOG" 2>&1 || UKI_RC=$?
+        # 3 = no objcopy on this host: the UKI is optional, the split-path
+        # loader still ships (the WARN is already in the log).
+        if [ "$UKI_RC" -ne 0 ] && [ "$UKI_RC" -ne 3 ]; then
+            print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1
         fi
     else
         echo "[uki] skip: missing stub or kernel ($UKI_STUB / $UKI_KERNEL)" >> "$LOG"
@@ -603,6 +565,44 @@ run_step $STEP $TOTAL "POST16 manifest" "post16-manifest" || { print_errors; ech
 # System Disk
 STEP=$((STEP + 1))
 run_step $STEP $TOTAL "System Disk" "system-disk" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
+
+# One kernel per build. The UKI is packed at step 3, the system disk staged at
+# step 7, and before 2026-11-08 every make call in between relinked kernel.exe
+# (a build number read before it was bumped, and an asset prerequisite that is
+# always out of date), so the UKI and the disk shipped DIFFERENT kernels from
+# one build and nothing noticed. Each packed UKI must embed exactly the
+# kernel.exe the disk carries.
+# Runs only when THIS run packed the UKI (UKI_RC=0); a host without objcopy
+# (UKI_RC=3) or without a stub packed nothing, and an old artifact on disk is
+# not this build's output.
+if [ "${UKI_RC:-skip}" = "0" ]; then
+    UKI_OBJCOPY=""
+    for cand in llvm-objcopy-19 llvm-objcopy objcopy; do
+        command -v "$cand" >/dev/null 2>&1 && { UKI_OBJCOPY="$cand"; break; }
+    done
+    for uki in build/tools/BOOTX64.UKI.efi build/tools/BOOTX64.UKI.signed.efi; do
+        if [ ! -f "$uki" ]; then
+            # The pack just reported success, so a missing unsigned UKI is a
+            # failure. The signed copy exists only where sign-efi.sh had a key.
+            [ "$uki" = build/tools/BOOTX64.UKI.signed.efi ] && continue
+            echo "[uki] FATAL: $uki missing although the UKI pack reported success" >> "$LOG"
+            print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1
+        fi
+        UKI_DUMP="$(mktemp)"
+        if ! "$UKI_OBJCOPY" --dump-section ".linux=$UKI_DUMP" "$uki" "$UKI_DUMP.pe" 2>>"$LOG"; then
+            rm -f "$UKI_DUMP" "$UKI_DUMP.pe"
+            echo "[uki] FATAL: cannot read the .linux section of $uki" >> "$LOG"
+            print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1
+        fi
+        if ! cmp -s "$UKI_DUMP" build/kernel.exe; then
+            rm -f "$UKI_DUMP" "$UKI_DUMP.pe"
+            echo "[uki] FATAL: $uki embeds a kernel that differs from build/kernel.exe (relinked after the UKI was packed)" >> "$LOG"
+            print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1
+        fi
+        rm -f "$UKI_DUMP" "$UKI_DUMP.pe"
+        echo "[uki] $uki embeds build/kernel.exe byte-for-byte" >> "$LOG"
+    done
+fi
 
 # Summary
 TOTAL_SECS=$(elapsed "$BUILD_START")

@@ -13956,7 +13956,7 @@ static void detect_uki_sections(EFI_LOADED_IMAGE_PROTOCOL *li)
  * legitimate initrd is typically a few MiB; a multi-hundred-MiB
  * payload is either an attack or a build mistake; either way the
  * boot must abort visibly rather than try to allocate it). */
-#define UKI_PAYLOAD_MAX_BYTES (256ULL * 1024 * 1024)
+#include "../../../include/boot/uki_payload_limits.h" /* bounds shared with the kernel pin */
 
 static EFI_STATUS uki_copy_payload(const char *name,
                                    const UINT8 *src, UINTN src_size,
@@ -13973,18 +13973,33 @@ static EFI_STATUS uki_copy_payload(const char *name,
     }
 
     UINTN pages = (src_size + 0xFFF) >> 12;
-    EFI_PHYSICAL_ADDRESS phys = 0;
-    EFI_STATUS status = gBS->AllocatePages(AllocateAnyPages,
+    /* Below 4 GiB: the kernel reads the copy through the boot identity map,
+     * which covers the first 4 GiB only, and pins only ranges inside it
+     * (boot_reserved_range_backing). AllocateAnyPages could return frames
+     * above that on high-memory firmware, and the kernel would then refuse
+     * a payload this loader had copied successfully -- losing a signed
+     * payload silently instead of failing here, visibly. */
+    EFI_PHYSICAL_ADDRESS phys = UKI_PAYLOAD_MAX_ADDRESS;
+    EFI_STATUS status = gBS->AllocatePages(AllocateMaxAddress,
                                            EfiLoaderData,
                                            pages, &phys);
     if (EFI_ERROR(status)) {
         serial_early_print("[BOOT] UKI ");
         serial_early_print(name);
-        serial_early_print(": AllocatePages failed\r\n");
+        serial_early_print(": AllocatePages below 4 GiB failed\r\n");
         return status;
     }
     efi_memcpy((void *)(UINTN)phys, src, src_size);
     *out_phys = (UINT64)phys;
+    /* The record a boot test asserts against: which signed section was
+     * carried, how many bytes, and where the kernel will find it. */
+    serial_early_print("[BOOT] UKI payload ");
+    serial_early_print(name);
+    serial_early_print(": bytes=");
+    serial_early_print_uint((UINT32)src_size); /* <= UKI_PAYLOAD_MAX_BYTES, fits */
+    serial_early_print(" phys=0x");
+    serial_early_print_hex64((UINT64)phys);
+    serial_early_print("\r\n");
     return EFI_SUCCESS;
 }
 

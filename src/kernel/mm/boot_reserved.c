@@ -23,6 +23,7 @@
  * ============================================================================ */
 
 #include "kernel/mm/boot_reserved.h"
+#include "boot/uki_payload_limits.h" /* UKI_PAYLOAD_MAX_BYTES, slot numbers, 4 GiB ceiling */
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/heap.h"
 #include "kernel/boot_info.h"
@@ -30,6 +31,20 @@
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
 #include "libc/string.h"
+#include "kernel/crypto/sha256.h"
+
+/* UKI payload slot names, indexed by UKI_PAYLOAD_SLOT_*. */
+static const char *const uki_name[UKI_PAYLOAD_SLOT_COUNT] = {
+    ".initrd", ".recovery", ".modules" };
+
+/* The loader allocates UKI payload copies at or below UKI_PAYLOAD_MAX_ADDRESS
+ * because the kernel reads them through the boot identity map, which ends at
+ * BOOT_INFO_EARLY_MAP_END. The two are one contract stated in two headers; a
+ * change to either alone would have the loader place copies the pin refuses. */
+_Static_assert(UKI_PAYLOAD_MAX_ADDRESS + 1ULL == BOOT_INFO_EARLY_MAP_END,
+               "UKI payload ceiling must end exactly at the boot identity map");
+_Static_assert(UKI_PAYLOAD_MAX_BYTES <= BOOT_INFO_EARLY_MAP_END,
+               "a UKI payload cap above the identity map could never be pinned");
 
 /* Bootloader writes struct boot_info at BOOT_INFO_PHYS_ADDR, single-sourced
  * via kernel/boot_info.h (which re-exports it from the UEFI-safe
@@ -50,6 +65,7 @@ static const char *kind_name(uint32_t kind)
     case BOOT_RESERVED_RT_MMAP:        return "rt_mmap";
     case BOOT_RESERVED_PAYLOAD:        return "payload";
     case BOOT_RESERVED_BOOT_STACK:     return "boot_stack";
+    case BOOT_RESERVED_UKI_PAYLOAD:    return "uki_payload";
     default:                           return "unknown";
     }
 }
@@ -167,6 +183,28 @@ int boot_reserved_payload_is_pinned(uint32_t payload_index,
         if (r != (const struct boot_reserved_region *)0
             && r->kind == BOOT_RESERVED_PAYLOAD
             && r->source_index == payload_index
+            && r->phys_start == phys_start
+            && r->length == length)
+            return 1;
+    }
+    return 0;
+}
+
+/* The UKI twin of boot_reserved_payload_is_pinned(): identity by slot AND
+ * exact range, answered from the table that records what was pinned. */
+int boot_reserved_uki_payload_is_pinned(uint32_t slot,
+                                        uint64_t phys_start, uint64_t length)
+{
+    uint32_t n = boot_reserved_count();
+    uint32_t k;
+
+    if (slot >= UKI_PAYLOAD_SLOT_COUNT || length == 0u)
+        return 0;
+    for (k = 0u; k < n; k++) {
+        const struct boot_reserved_region *r = boot_reserved_get(k);
+        if (r != (const struct boot_reserved_region *)0
+            && r->kind == BOOT_RESERVED_UKI_PAYLOAD
+            && r->source_index == slot
             && r->phys_start == phys_start
             && r->length == length)
             return 1;
@@ -762,6 +800,88 @@ boot_result_t boot_reserved_populate_from_info(const struct boot_info *info,
             return BOOT_FATAL;
     }
 
+    /* Signed UKI payload copies (UKI signed-payload sections, boot_info v14).
+     *
+     * The loader copies the .initrd / .recovery / .modules PE sections into
+     * EfiLoaderData before ExitBootServices and publishes each copy in
+     * uki_<name>_addr / uki_<name>_size. pmm_init frees EfiLoaderData into the
+     * allocator, so without this entry the frames of a signed payload are
+     * free memory the moment the kernel starts: the next allocation can
+     * overwrite the very bytes the Secure Boot signature vouched for.
+     *
+     * Each copy is admitted on its own, and a refusal costs that payload, not
+     * the boot: a consumer asks boot_reserved_uki_payload_is_pinned() first.
+     * The handoff field is not rewritten on refusal (boot_info is a measured
+     * record; see boot_reserved_payload_is_pinned). Refused:
+     *   - any UKI field set on a handoff WITHOUT BOOT_FLAG_INVOKED_VIA_UKI.
+     *     Only the UKI path writes them, so this is an inconsistent handoff;
+     *   - half-set fields (address without size, or size without address)
+     *     and a size past the loader's own UKI_PAYLOAD_MAX_BYTES cap;
+     *   - a range the memory map does not describe as readable memory inside
+     *     the identity map (the loader allocates below 4 GiB for this reason).
+     * Overlap with another retained region is a FATAL handoff error, as for
+     * every other entry (add_or_fatal), and boot_reserved_check_payloads_
+     * disjoint() covers these entries against PMM-internal regions. */
+    {
+        const uint64_t uki_addr[UKI_PAYLOAD_SLOT_COUNT] = {
+            info->uki_initrd_addr, info->uki_recovery_addr,
+            info->uki_modules_addr };
+        const uint64_t uki_size[UKI_PAYLOAD_SLOT_COUNT] = {
+            info->uki_initrd_size, info->uki_recovery_size,
+            info->uki_modules_size };
+        const int via_uki =
+            (int)((info->flags & BOOT_FLAG_INVOKED_VIA_UKI) != 0u);
+        uint32_t s_idx;
+
+        for (s_idx = 0u; s_idx < UKI_PAYLOAD_SLOT_COUNT; s_idx++) {
+            uint32_t bad_type = 0u;
+            uint32_t v;
+
+            if (uki_addr[s_idx] == 0u && uki_size[s_idx] == 0u)
+                continue;
+            if (!via_uki) {
+                klog(LOG_WARN, "mm",
+                     "boot_reserved: skip UKI %s 0x%lx+%lu (UKI payload "
+                     "fields on a handoff without BOOT_FLAG_INVOKED_VIA_UKI; "
+                     "not pinned)",
+                     (uint64_t)(uintptr_t)uki_name[s_idx],
+                     uki_addr[s_idx], uki_size[s_idx]);
+                continue;
+            }
+            if (uki_addr[s_idx] == 0u || uki_size[s_idx] == 0u
+                || uki_size[s_idx] > UKI_PAYLOAD_MAX_BYTES) {
+                klog(LOG_WARN, "mm",
+                     "boot_reserved: skip UKI %s 0x%lx+%lu (malformed: "
+                     "address and size must both be set, size <= %lu; "
+                     "not pinned)",
+                     (uint64_t)(uintptr_t)uki_name[s_idx],
+                     uki_addr[s_idx], uki_size[s_idx],
+                     (uint64_t)UKI_PAYLOAD_MAX_BYTES);
+                continue;
+            }
+            v = boot_reserved_range_backing(info, uki_addr[s_idx],
+                                            uki_size[s_idx], 0, &bad_type);
+            if (v != BOOT_RANGE_BACKED) {
+                klog(LOG_WARN, "mm",
+                     "boot_reserved: skip UKI %s 0x%lx+%lu (%s, map type "
+                     "%u; not pinned)",
+                     (uint64_t)(uintptr_t)uki_name[s_idx],
+                     uki_addr[s_idx], uki_size[s_idx],
+                     (uint64_t)(uintptr_t)range_backing_name(v),
+                     (uint64_t)bad_type);
+                continue;
+            }
+            if (add_or_fatal(uki_addr[s_idx], uki_size[s_idx],
+                             BOOT_RESERVED_UKI_PAYLOAD, s_idx,
+                             out_err) != BOOT_OK)
+                return BOOT_FATAL;
+            klog(LOG_INFO, "mm",
+                 "boot_reserved: pinned UKI %s bytes=%lu phys=0x%lx",
+                 (uint64_t)(uintptr_t)uki_name[s_idx], uki_size[s_idx],
+                 uki_addr[s_idx]);
+        }
+    }
+
     /* COMMIT, and only here -- after the WHOLE table was admitted.
      *
      * SELECT_ONE says the handoff is well-formed and unambiguous. It does not
@@ -843,19 +963,72 @@ uint32_t boot_reserved_check_payloads_disjoint(uint64_t start,
         return 0u;
     for (i = 0u; i < s_count; i++) {
         const struct boot_reserved_region *e = &s_table[i];
-        if (e->kind != (uint32_t)BOOT_RESERVED_PAYLOAD)
+        /* Bootloader-placed payloads of both kinds: a UKI copy is placed by
+         * the same firmware allocator as a typed payload, so it can land on
+         * the bitmap or the user PT window just the same. */
+        if (e->kind != (uint32_t)BOOT_RESERVED_PAYLOAD
+            && e->kind != (uint32_t)BOOT_RESERVED_UKI_PAYLOAD)
             continue;
         if (ranges_overlap(e->phys_start, e->length, start, len)) {
             klog(LOG_ERROR, "mm",
-                 "boot_reserved: payload[%u] phys=0x%x+%u overlaps "
+                 "boot_reserved: %s[%u] phys=0x%x+%u overlaps "
                  "PMM-internal region %s 0x%x+%u",
-                 (uint64_t)i, e->phys_start, e->length,
+                 (uint64_t)(uintptr_t)kind_name(e->kind),
+                 (uint64_t)e->source_index, e->phys_start, e->length,
                  (uint64_t)(uintptr_t)(label ? label : "?"),
                  start, len);
             return i + 1u;
         }
     }
     return 0u;
+}
+
+void boot_reserved_digest_hex(const void *data, uint64_t len,
+                              char out[BOOT_RESERVED_DIGEST_HEX_LEN + 1u])
+{
+    static const char hex[] = "0123456789abcdef";
+    const uint8_t *p = (const uint8_t *)data;
+    struct sha256_ctx ctx;
+    uint8_t d[SHA256_DIGEST_LEN];
+    uint32_t i;
+
+    sha256_init(&ctx);
+    /* sha256_update takes a 32-bit length; feed bounded chunks so a payload
+     * of any size up to the cap is hashed whole, never truncated. */
+    while (len > 0u) {
+        uint32_t n = len > 0x40000000ull ? 0x40000000u : (uint32_t)len;
+        sha256_update(&ctx, p, n);
+        p += n;
+        len -= n;
+    }
+    sha256_final(&ctx, d);
+    for (i = 0u; i < SHA256_DIGEST_LEN; i++) {
+        out[2u * i]      = hex[d[i] >> 4];
+        out[2u * i + 1u] = hex[d[i] & 0xFu];
+    }
+    out[BOOT_RESERVED_DIGEST_HEX_LEN] = '\0';
+}
+
+void boot_reserved_log_uki_digests(void)
+{
+    uint32_t i;
+    char hexd[BOOT_RESERVED_DIGEST_HEX_LEN + 1u];
+
+    for (i = 0u; i < s_count; i++) {
+        const struct boot_reserved_region *e = &s_table[i];
+
+        if (e->kind != BOOT_RESERVED_UKI_PAYLOAD ||
+            e->source_index >= UKI_PAYLOAD_SLOT_COUNT)
+            continue;
+        /* A pinned UKI entry passed the backing check: every byte is
+         * map-described RAM below BOOT_INFO_EARLY_MAP_END, read here through
+         * the boot identity map, before any allocator can reuse it. */
+        boot_reserved_digest_hex((const void *)(uintptr_t)e->phys_start,
+                                 e->length, hexd);
+        klog(LOG_INFO, "mm", "boot_reserved: UKI %s received sha256=%s",
+             (uint64_t)(uintptr_t)uki_name[e->source_index],
+             (uint64_t)(uintptr_t)hexd);
+    }
 }
 
 void boot_reserved_log(void)

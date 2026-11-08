@@ -278,6 +278,208 @@ es_check_log() {
     return 0
 }
 
+# ---- UKI-direct legs (SMOKE_UKI=signed|override) ------------------------------
+# Every other leg boots the split-path BOOTX64.EFI. These boot a Unified Kernel
+# Image directly: a fixture UKI packed by scripts/uki-pack.sh (the same packer
+# the shipped BOOTX64.UKI.efi comes from) is installed as the ESP's
+# EFI/BOOT/BOOTX64.EFI, so firmware launches the PE that carries the kernel,
+# the cmdline and any signed payload inside one image.
+#
+#   signed    a 4096-byte .initrd is embedded. The leg must boot to the prompt
+#             AND show the payload carried end to end: the loader copied it
+#             ("[BOOT] UKI payload .initrd: bytes=4096 phys=0x..."), and the
+#             kernel pinned that same range so the PMM cannot reuse it
+#             ("boot_reserved: pinned UKI .initrd bytes=4096 phys=0x...").
+#   override  the .cmdline carries a disk-payload override (SMOKE_UKI_OVERRIDE,
+#             default `initrd=disk.img`). The loader must refuse it with
+#             BOOT_ERR_UKI_DISK_OVERRIDE before any kernel handoff. A token
+#             with the literal `<key>=` shape is refused by the pre-scan
+#             ("...override token"); one that only normalises to a key, such
+#             as `mod ule = disk.eif`, must be refused by the parser-level
+#             gate ("...override key"), which is what this leg proves exists.
+#
+# The fixture UKI is NOT signed and these OVMF variables do not enforce Secure
+# Boot, so the legs prove the loader's UKI path, not signature enforcement;
+# scripts/test-secureboot-smoke.sh owns that.
+#
+# Like es_check_log, the verdicts are functions over a log path so the oracle
+# can be exercised against synthetic transcripts (SMOKE_UKI_SELFTEST=1).
+UKI_INITRD_BYTES=4096
+# SHA-256 of the staged .initrd (bytes 0..255 repeating, UKI_INITRD_BYTES long),
+# computed on the host from the same generator the fixture uses.
+UKI_INITRD_SHA256="$(python3 -c 'import hashlib,sys; n=int(sys.argv[1]); print(hashlib.sha256(bytes(i & 0xFF for i in range(n))).hexdigest())' "$UKI_INITRD_BYTES")"
+# The loader's self-measure size cap (SELF_MEASURE_SIZE_CAP, bootx64.c). An
+# image above it is refused with status=over-size-cap by contract, which is the
+# ONLY outcome the oracle accepts for such an image. Pinned against the source
+# so the copy cannot drift silently.
+SELF_MEASURE_CAP_BYTES=$((8 * 1024 * 1024))
+
+# The parser key a cmdline token normalises to: everything before the first
+# `=`, with whitespace removed (parse_boot_conf's key normalisation).
+uki_override_key() {
+    local tok="$1"
+    printf '%s' "${tok%%=*}" | tr -d ' \t'
+}
+
+# Which layer must refuse the token: `token` when the raw bytes contain the
+# literal `<key>=` the pre-scan looks for, else `key` (the parser gate).
+uki_override_layer() {
+    local tok="$1" key
+    key="$(uki_override_key "$tok")"
+    case "$tok" in
+        "$key="*) echo token ;;
+        *) echo key ;;
+    esac
+}
+
+uki_hex_norm() {  # uppercase/lowercase hex -> lowercase, no leading zeros ("0" for zero)
+    local h
+    h="$(printf '%s' "$1" | tr 'A-F' 'a-f' | sed 's/^0*//')"
+    printf '%s' "${h:-0}"
+}
+
+uki_check_signed_log() {
+    local log="$1" bl kn bl_phys kn_phys
+    UKI_FAIL_MSG=""
+    if ! grep -qF -- '[BOOT] load_kernel: using UKI embedded `.linux` section' "$log"; then
+        UKI_FAIL_MSG="loader did not take the UKI path (no embedded .linux line)"; return 1
+    fi
+    bl="$(grep -oE '\[BOOT\] UKI payload \.initrd: bytes=[0-9]+ phys=0x[0-9A-Fa-f]+' "$log" | head -1)"
+    if [ -z "$bl" ]; then
+        UKI_FAIL_MSG="loader did not report copying the .initrd payload"; return 1
+    fi
+    if [ "$(grep -cE '\[BOOT\] UKI payload \.initrd:' "$log")" != "1" ]; then
+        UKI_FAIL_MSG="loader reported the .initrd copy more than once"; return 1
+    fi
+    case "$bl" in *" bytes=$UKI_INITRD_BYTES "*) ;; *)
+        UKI_FAIL_MSG="loader copied the wrong size: $bl (staged $UKI_INITRD_BYTES)"; return 1 ;;
+    esac
+    if grep -qE '\[BOOT\] UKI payload \.(recovery|modules):' "$log"; then
+        UKI_FAIL_MSG="loader reported a payload that was never staged"; return 1
+    fi
+    kn="$(grep -oE 'boot_reserved: pinned UKI \.initrd bytes=[0-9]+ phys=0x[0-9A-Fa-f]+' "$log" | head -1)"
+    if [ -z "$kn" ]; then
+        UKI_FAIL_MSG="kernel did not pin the .initrd copy (PMM may reuse its frames)"; return 1
+    fi
+    case "$kn" in *" bytes=$UKI_INITRD_BYTES "*) ;; *)
+        UKI_FAIL_MSG="kernel pinned the wrong size: $kn"; return 1 ;;
+    esac
+    # Addresses are compared as unsigned digit strings: bash arithmetic is
+    # signed 64-bit, so a high-bit address would go negative and pass any
+    # upper-bound test. Leading zeros dropped, at most 9 hex digits (anything
+    # longer is >= 64 GiB, far past the identity map), then the arithmetic is
+    # exact.
+    bl_phys="$(uki_hex_norm "${bl##*phys=0x}")"; kn_phys="$(uki_hex_norm "${kn##*phys=0x}")"
+    if [ "$bl_phys" != "$kn_phys" ]; then
+        UKI_FAIL_MSG="kernel pinned 0x$kn_phys but the loader copied to 0x$bl_phys"; return 1
+    fi
+    if [ "$bl_phys" = "0" ]; then
+        UKI_FAIL_MSG="loader reported a copy at physical address 0"; return 1
+    fi
+    if [ "${#bl_phys}" -gt 9 ] || [ "$((16#$bl_phys + UKI_INITRD_BYTES))" -gt "$((16#100000000))" ]; then
+        UKI_FAIL_MSG="loader placed the copy beyond the 4 GiB identity map: 0x$bl_phys"; return 1
+    fi
+    # The bytes the kernel holds must be the bytes that were staged: a copy
+    # that moved the wrong source, a short copy, or a pin over the wrong range
+    # all change this digest, and none of them changes the size or address.
+    if ! grep -qF -- "boot_reserved: UKI .initrd received sha256=$UKI_INITRD_SHA256" "$log"; then
+        UKI_FAIL_MSG="kernel's received .initrd digest is not the staged payload's ($UKI_INITRD_SHA256)"; return 1
+    fi
+    UKI_LOADER_LINE="$bl"; UKI_KERNEL_LINE="$kn"
+    return 0
+}
+
+uki_check_override_log() {
+    local log="$1" tok="$2" key layer title
+    UKI_FAIL_MSG=""
+    key="$(uki_override_key "$tok")"
+    layer="$(uki_override_layer "$tok")"
+    title="UKI cmdline contains disk-payload override $layer"
+    if ! grep -qF -- '[BOOT] UKI .cmdline loaded (' "$log"; then
+        UKI_FAIL_MSG="loader did not read the UKI .cmdline section"; return 1
+    fi
+    if ! grep -qF -- "[FATAL] UKI mode rejects out-of-UKI $key= override" "$log"; then
+        UKI_FAIL_MSG="no rejection of the $key= override"; return 1
+    fi
+    if ! grep -qF -- "[CRIT] BOOT FATAL (0x00000013): $title" "$log"; then
+        UKI_FAIL_MSG="refusal did not come from the $layer layer as BOOT_ERR_UKI_DISK_OVERRIDE (expected: $title)"; return 1
+    fi
+    # No handoff. The absence of kernel output alone cannot exclude a handoff
+    # that faulted before logging, so the loader's own last line before the
+    # jump is forbidden too.
+    if grep -qF -- '[BOOT] jumping to kernel_main' "$log"; then
+        UKI_FAIL_MSG="loader handed off to the kernel after refusing the override"; return 1
+    fi
+    if grep -qE '\[cpu:[0-9]+\]' "$log"; then
+        UKI_FAIL_MSG="kernel output present: the boot continued past the refusal"; return 1
+    fi
+    UKI_FATAL_LINE="$(grep -F -- "[CRIT] BOOT FATAL (0x00000013)" "$log" | head -1)"
+    return 0
+}
+
+if [ "${SMOKE_UKI_SELFTEST:-0}" = "1" ]; then
+    uki_st_fails=0
+    uki_st_log="$BUILD/uki-selftest.log"
+    uki_expect() {  # $1 accept|reject, $2 label, $3 verdict fn, $4 token, rest = log lines
+        local want="$1" label="$2" fn="$3" tok="$4" got; shift 4
+        printf '%s\n' "$@" > "$uki_st_log"
+        if "$fn" "$uki_st_log" "$tok"; then got=accept; else got=reject; fi
+        if [ "$got" != "$want" ]; then
+            echo -e "  ${RED}✗${NC} UKI oracle self-test: $label -- wanted $want, got $got ($UKI_FAIL_MSG)"
+            uki_st_fails=$((uki_st_fails + 1))
+        else
+            echo -e "  ${GREEN}✓${NC} UKI oracle self-test: $label ($got)"
+        fi
+    }
+    L_EMB='[BOOT] load_kernel: using UKI embedded `.linux` section'
+    L_BL='[BOOT] UKI payload .initrd: bytes=4096 phys=0x000000007F000000'
+    L_KN='[ 1.0] [cpu:0] [ OK ] mm: boot_reserved: pinned UKI .initrd bytes=4096 phys=0x7f000000'
+    L_DG="[cpu:0] mm: boot_reserved: UKI .initrd received sha256=$UKI_INITRD_SHA256"
+    uki_sig() {  # loader phys (16 hex), kernel phys, rest = extra lines
+        local lp="$1" kp="$2"; shift 2
+        uki_expect "$UKI_WANT" "$UKI_LABEL" uki_check_signed_log "" "$L_EMB" \
+            "[BOOT] UKI payload .initrd: bytes=4096 phys=0x$lp" \
+            "[cpu:0] mm: boot_reserved: pinned UKI .initrd bytes=4096 phys=0x$kp" "$@"
+    }
+    UKI_WANT=reject UKI_LABEL="signed: zero address";          uki_sig 0000000000000000 0 "$L_DG"
+    UKI_WANT=reject UKI_LABEL="signed: high-bit address";      uki_sig 8000000000000000 8000000000000000 "$L_DG"
+    UKI_WANT=reject UKI_LABEL="signed: address that wraps";    uki_sig FFFFFFFFFFFFF800 fffffffffffff800 "$L_DG"
+    UKI_WANT=reject UKI_LABEL="signed: straddles 4 GiB";       uki_sig 00000000FFFFF800 fffff800 "$L_DG"
+    UKI_WANT=accept UKI_LABEL="signed: ends exactly at 4 GiB"; uki_sig 00000000FFFFF000 fffff000 "$L_DG"
+    UKI_WANT=reject UKI_LABEL="signed: received bytes differ"; uki_sig 000000007F000000 7f000000 \
+        "[cpu:0] mm: boot_reserved: UKI .initrd received sha256=0000000000000000000000000000000000000000000000000000000000000000"
+    UKI_WANT=reject UKI_LABEL="signed: no received digest";    uki_sig 000000007F000000 7f000000
+    L_KN="$L_KN
+$L_DG"
+    uki_expect accept "signed: carried and pinned"       uki_check_signed_log "" "$L_EMB" "$L_BL" "$L_KN"
+    uki_expect reject "signed: split path, not UKI"      uki_check_signed_log "" "$L_BL" "$L_KN"
+    uki_expect reject "signed: loader never copied"      uki_check_signed_log "" "$L_EMB" "$L_KN"
+    uki_expect reject "signed: kernel never pinned"      uki_check_signed_log "" "$L_EMB" "$L_BL"
+    uki_expect reject "signed: wrong size copied"        uki_check_signed_log "" "$L_EMB" '[BOOT] UKI payload .initrd: bytes=4095 phys=0x000000007F000000' "$L_KN"
+    uki_expect reject "signed: pinned a different range" uki_check_signed_log "" "$L_EMB" "$L_BL" '[cpu:0] mm: boot_reserved: pinned UKI .initrd bytes=4096 phys=0x7f001000'
+    uki_expect reject "signed: copy above 4 GiB"         uki_check_signed_log "" "$L_EMB" '[BOOT] UKI payload .initrd: bytes=4096 phys=0x0000000100000000' '[cpu:0] boot_reserved: pinned UKI .initrd bytes=4096 phys=0x100000000'
+    uki_expect reject "signed: unstaged payload copied"  uki_check_signed_log "" "$L_EMB" "$L_BL" "$L_KN" '[BOOT] UKI payload .modules: bytes=16 phys=0x000000007E000000'
+    L_CMD='[BOOT] UKI .cmdline loaded (4500 bytes)'
+    L_REJ='[FATAL] UKI mode rejects out-of-UKI initrd= override; disk payload is unsigned'
+    L_TOK='[CRIT] BOOT FATAL (0x00000013): UKI cmdline contains disk-payload override token'
+    L_KEY='[CRIT] BOOT FATAL (0x00000013): UKI cmdline contains disk-payload override key'
+    L_MREJ='[FATAL] UKI mode rejects out-of-UKI module= override; disk payload is unsigned'
+    uki_expect accept "override: literal refused"         uki_check_override_log "initrd=disk.img" "$L_CMD" "$L_REJ" "$L_TOK"
+    uki_expect reject "override: refused then handed off" uki_check_override_log "initrd=disk.img" "$L_CMD" "$L_REJ" "$L_TOK" '[BOOT] jumping to kernel_main'
+    uki_expect reject "override: refused, kernel ran"     uki_check_override_log "initrd=disk.img" "$L_CMD" "$L_REJ" "$L_TOK" '[ 0.5] [cpu:0] [ OK ] boot: phase 0'
+    uki_expect reject "override: never refused"           uki_check_override_log "initrd=disk.img" "$L_CMD" '[BOOT] jumping to kernel_main'
+    uki_expect reject "override: not the UKI path"        uki_check_override_log "initrd=disk.img" "$L_REJ" "$L_TOK"
+    uki_expect reject "override: wrong fatal code"        uki_check_override_log "initrd=disk.img" "$L_CMD" "$L_REJ" '[CRIT] BOOT FATAL (0x00000012): UKI cmdline contains disk-payload override token'
+    uki_expect accept "override: spaced key, parser gate" uki_check_override_log "mod ule = disk.eif" "$L_CMD" "$L_MREJ" "$L_KEY"
+    uki_expect reject "override: spaced key, wrong layer" uki_check_override_log "mod ule = disk.eif" "$L_CMD" "$L_MREJ" "$L_TOK"
+    if [ "$uki_st_fails" -gt 0 ]; then
+        echo -e "${RED}UKI ORACLE SELF-TEST FAILED: $uki_st_fails case(s)${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}  UKI ORACLE SELF-TEST PASSED${NC}"
+    exit 0
+fi
+
 # ---- Oracle self-test (SMOKE_ES_SELFTEST=1) --------------------------------
 # Runs es_check_log against synthetic transcripts and asserts its VERDICT.
 # Boots nothing, so it costs milliseconds and can assert the rejections a
@@ -431,6 +633,12 @@ VALID_STORE="${SMOKE_VALID_STORE:-0}"
 # COMPACT. Keeping them separate is what makes an 800x600 full-tier regression
 # leg runnable -- coupling the two meant forcing any mode also demanded a
 # compact result, so the full layout could not be exercised at its own floor.
+UKI_MODE="${SMOKE_UKI:-}"
+UKI_OVERRIDE="${SMOKE_UKI_OVERRIDE:-initrd=disk.img}"
+case "$UKI_MODE" in
+    ""|signed|override) ;;
+    *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_UKI must be signed or override (got: $UKI_MODE)${NC}"; exit 1 ;;
+esac
 LOWRES="${SMOKE_LOWRES:-0}"
 ERROR_SCREEN="${SMOKE_ERROR_SCREEN:-0}"
 LOWRES_MODE="${SMOKE_LOWRES_MODE:-640x480}"
@@ -446,7 +654,7 @@ if [ "$LOWRES" = "1" ]; then FORCE_MODE="$LOWRES_MODE"; EXPECT_TIER="compact"; f
 # fingerprints the CANONICAL build image: recording one here would certify the
 # untouched image using evidence from a boot of different bytes.
 IMAGE_MODIFIED=0
-if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ]; then
+if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$UKI_MODE" ]; then
     if ! command -v mcopy >/dev/null 2>&1; then
         echo -e "${RED}SMOKE TEST FAILED: image fixtures need mtools (mcopy)${NC}"
         exit 1
@@ -510,6 +718,35 @@ if [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ]; then
     echo -e "  ${DIM}boot.conf fixture: $(tr '\n' ' ' < "$CONF_FIXTURE" | tail -c 60)${NC}"
 fi
 
+if [ -n "$UKI_MODE" ]; then
+    UKI_FIX_DIR="$BUILD/uki-fixture"
+    rm -rf "$UKI_FIX_DIR"; mkdir -p "$UKI_FIX_DIR/payloads"
+    # The .cmdline is this image's own boot.conf, so the leg boots the same
+    # configuration as every other leg; the override leg appends its token.
+    if ! mcopy -i "$DISK@@$EFI_OFFSET" -o ::EFI/ImpossibleOS/boot.conf \
+               "$UKI_FIX_DIR/cmdline.txt" 2>/dev/null; then
+        echo -e "${RED}SMOKE TEST FAILED: no boot.conf on the ESP to pack as .cmdline${NC}"
+        exit 1
+    fi
+    if [ "$UKI_MODE" = "override" ]; then
+        printf '%s\n' "$UKI_OVERRIDE" >> "$UKI_FIX_DIR/cmdline.txt"
+    else
+        # Deterministic content, so a copy that moved the wrong bytes would
+        # not be masked by a coincidentally equal random block.
+        python3 -c 'import sys; sys.stdout.buffer.write(bytes(i & 0xFF for i in range(int(sys.argv[1]))))' \
+            "$UKI_INITRD_BYTES" > "$UKI_FIX_DIR/payloads/initrd.img"
+    fi
+    if ! bash "$REPO_ROOT/scripts/uki-pack.sh" "$BUILD/tools/BOOTX64.EFI" "$BUILD/kernel.exe" \
+            "$UKI_FIX_DIR/cmdline.txt" "$UKI_FIX_DIR/payloads" "$UKI_FIX_DIR/BOOTX64.UKI.efi" \
+            > "$UKI_FIX_DIR/pack.log" 2>&1; then
+        echo -e "${RED}SMOKE TEST FAILED: UKI fixture pack failed${NC}"
+        sed 's/^/    /' "$UKI_FIX_DIR/pack.log"
+        exit 1
+    fi
+    mcopy -i "$DISK@@$EFI_OFFSET" -o "$UKI_FIX_DIR/BOOTX64.UKI.efi" ::EFI/BOOT/BOOTX64.EFI
+    echo -e "  ${DIM}UKI fixture ($UKI_MODE) installed as EFI/BOOT/BOOTX64.EFI in $(basename "$DISK")${NC}"
+fi
+
 # The deliberate-fatal leg never reaches userland, so the normal end-to-end
 # markers can never appear and most of the generic FAIL set is EXPECTED output
 # ([CRIT] BOOT FATAL and the halt banner are what the leg exists to produce).
@@ -530,6 +767,24 @@ if [ "$ERROR_SCREEN" = "1" ]; then
         "[CRIT] ExitBootServices failed"
         "[FAIL] Kernel ELF corrupt"
         "[FAIL] init_gop"
+    )
+fi
+
+# The override leg must stop in the loader, so the end-to-end markers can never
+# appear and its [CRIT] BOOT FATAL line is the expected output. Unrelated faults
+# still fail it; the no-handoff assertions are in uki_check_override_log.
+if [ "$UKI_MODE" = "override" ]; then
+    PASS_PATTERNS_ALL=(
+        "[CRIT] BOOT FATAL (0x00000013)"
+    )
+    FAIL_PATTERNS=(
+        "KERNEL PANIC"
+        "ASSERT FAILED"
+        "triple fault"
+        "General Protection Fault"
+        "Page Fault"
+        "Double Fault"
+        "[BOOT] jumping to kernel_main"
     )
 fi
 
@@ -680,6 +935,25 @@ if [ "$ERROR_SCREEN" = "1" ]; then
     exit 0
 fi
 
+# ---- UKI override verdict (SMOKE_UKI=override) ----------------------------
+# Runs before the end-to-end layers, which assert a boot this leg must not
+# perform. The grace period above already let any late handoff reach the log.
+if [ "$UKI_MODE" = "override" ]; then
+    strip_ansi
+    [ "$BOOT_FAILED" = true ] && { echo -e "${RED}SMOKE TEST FAILED (UKI override leg): $FAIL_REASON${NC}"; exit 1; }
+    if [ "$BOOT_PASSED" != true ] || ! uki_check_override_log "$STRIPPED_LOG" "$UKI_OVERRIDE"; then
+        echo -e "${RED}SMOKE TEST FAILED (UKI override leg): ${UKI_FAIL_MSG:-no refusal within ${TIMEOUT_SEC}s}${NC}"
+        grep -E "UKI|FATAL|jumping" "$STRIPPED_LOG" 2>/dev/null | sed 's/^/    /' | head -12
+        exit 1
+    fi
+    echo -e "  ${GREEN}✓${NC} $UKI_FATAL_LINE"
+    echo -e "  ${GREEN}✓${NC} no kernel handoff"
+    echo ""
+    echo -e "${GREEN}  UKI OVERRIDE LEG PASSED${NC} (token: $UKI_OVERRIDE)"
+    echo -e "${DIM}  smoke receipt not recorded (fixture image)${NC}"
+    exit 0
+fi
+
 # ---- SURVIVE-PAST-THE-PROMPT re-check (2026-07-28) -------------------------
 # The poll loop BREAKS the instant PASS_PATTERNS_ALL match, so anything fatal
 # after that instant was never examined. That is not a hypothetical: on the
@@ -738,9 +1012,33 @@ echo -e "  ${DIM}Serial log: $SERIAL_LOG ($LOG_LINES lines; ANSI-stripped: $STRI
 # this loop just checks serial output.
 PATTERN_FAIL=false
 POST16_MISSING_COUNT=0
+# A UKI-direct boot takes a different, equally exact path: the cmdline comes
+# from the signed .cmdline section, so the split-path boot.conf filesystem step
+# (BOOT_FS / BOOT_FS_OK) never runs and the UKI probe (UKI_DETECT / _OK) must
+# run instead. SELF_MEASURE_OK is required exactly when the self-measure oracle
+# below expects a digest (an image within the loader's size cap).
+UKI_POST16_SKIP=" POST16_BL_BOOT_FS POST16_BL_BOOT_FS_OK "
+if [ -n "$UKI_MODE" ]; then
+    for uki_req in POST16_BL_UKI_DETECT:0xB0A0 POST16_BL_UKI_DETECT_OK:0xB0A1; do
+        if ! grep -qE -- "^${uki_req%%:*}=${uki_req#*:}\$" "$POST16_MANIFEST"; then
+            echo -e "  ${RED}MISSING:${NC} manifest no longer defines ${uki_req%%:*} as ${uki_req#*:} (update this leg)"
+            PATTERN_FAIL=true
+        elif ! grep -qF -- "[BOOT] POST ${uki_req#*:}" "$STRIPPED_LOG" 2>/dev/null; then
+            echo -e "  ${RED}MISSING:${NC} POST16 ${uki_req#*:} (${uki_req%%:*})"
+            PATTERN_FAIL=true
+            POST16_MISSING_COUNT=$((POST16_MISSING_COUNT + 1))
+        fi
+    done
+    if [ "$(wc -c < "$UKI_FIX_DIR/BOOTX64.UKI.efi" | tr -d ' ')" -gt "$SELF_MEASURE_CAP_BYTES" ]; then
+        UKI_POST16_SKIP="$UKI_POST16_SKIP POST16_BL_SELF_MEASURE_OK "
+    fi
+fi
 for i in "${!POST16_REQUIRED[@]}"; do
     name="${POST16_REQUIRED[$i]}"
     code="${POST16_REQUIRED_CODES[$i]}"
+    if [ -n "$UKI_MODE" ] && [[ "$UKI_POST16_SKIP" == *" $name "* ]]; then
+        continue
+    fi
     # Match the bootloader's exact serial format: "[BOOT] POST 0xNNNN"
     # with uppercase hex. Fixed-string match -- the brackets are literal.
     if ! grep -qF -- "[BOOT] POST $code" "$STRIPPED_LOG" 2>/dev/null; then
@@ -782,6 +1080,27 @@ if [ "$PATTERN_FAIL" = true ]; then
     FAIL_REASON="Boot pattern check failed (see MISSING/UNEXPECTED above)"
 fi
 
+# ---- UKI signed-payload verdict (SMOKE_UKI=signed) ------------------------
+if [ "$UKI_MODE" = "signed" ]; then
+    if uki_check_signed_log "$STRIPPED_LOG"; then
+        echo -e "  ${GREEN}✓${NC} $UKI_LOADER_LINE"
+        echo -e "  ${GREEN}✓${NC} ${UKI_KERNEL_LINE}"
+    else
+        echo -e "  ${RED}MISSING:${NC} $UKI_FAIL_MSG"
+        BOOT_FAILED=true
+        FAIL_REASON="${FAIL_REASON:-UKI signed payload: $UKI_FAIL_MSG}"
+    fi
+fi
+
+# First line of a file containing a fixed string, or nothing. A bare
+# `grep | head` inside $(...) exits 1 on no match, which under `set -euo
+# pipefail` ends this script with no message -- exactly when a boot omitted the
+# line the next branch exists to report as MISSING. awk exits 0 on no match and
+# still fails (nonzero) on an unreadable file.
+first_line_with() {
+    awk -v k="$1" 'index($0, k) { print; exit }' "$2"
+}
+
 # ---- Loader self-measurement oracle ---------------------------------------
 #
 # The loader hashes the ESP file it was launched from and prints the digest.
@@ -795,7 +1114,7 @@ fi
 # build/tools/BOOTX64.EFI otherwise, and under the shim chain-load layout that
 # same binary is staged as grubx64.efi. In every layout it is the file the
 # running loader was launched from, so one variable covers all three.
-SELF_MEASURE_LINE="$(grep -F -- '[BOOT] self-measure:' "$STRIPPED_LOG" 2>/dev/null | head -1)"
+SELF_MEASURE_LINE="$(first_line_with '[BOOT] self-measure:' "$STRIPPED_LOG")"
 if [ -z "$SELF_MEASURE_LINE" ]; then
     echo -e "  ${RED}MISSING:${NC} [BOOT] self-measure: line absent from serial"
     BOOT_FAILED=true
@@ -809,6 +1128,10 @@ else
     if [ -f "$SMOKE_MOK_KEY" ] && [ -f "$BUILD/tools/BOOTX64.signed.efi" ]; then
         LOADER_FILE="$BUILD/tools/BOOTX64.signed.efi"
     fi
+    # A UKI leg launched the fixture UKI, not the staged loader.
+    if [ -n "$UKI_MODE" ]; then
+        LOADER_FILE="$UKI_FIX_DIR/BOOTX64.UKI.efi"
+    fi
     # Validate the WHOLE line against the emitted schema before extracting
     # anything: field order, decimal byte count, 16 uppercase TSC digits and 64
     # uppercase digest digits, in that exact order. Matching fields "anywhere on
@@ -820,8 +1143,23 @@ else
     # every leg rather than quietly reverting the claim.
     SELF_MEASURE_SCHEMA='^\[BOOT\] self-measure: status=ok bytes=[0-9]{1,20} tsc=[0-9A-F]{16} esp-file-sha256=[0-9A-F]{64}$'
     SELF_MEASURE_BODY="$(printf '%s' "$SELF_MEASURE_LINE" | sed 's/\r$//')"
+    if ! grep -qF -- '#define SELF_MEASURE_SIZE_CAP   (8u * 1024u * 1024u)' "$REPO_ROOT/src/boot/uefi/bootx64.c"; then
+        echo -e "  ${RED}MISSING:${NC} SELF_MEASURE_SIZE_CAP changed in bootx64.c; update SELF_MEASURE_CAP_BYTES here"
+        BOOT_FAILED=true
+        FAIL_REASON="${FAIL_REASON:-self-measure cap copy drifted from the loader}"
+    fi
     if [ ! -f "$LOADER_FILE" ]; then
         echo -e "  ${YELLOW}self-measure:${NC} $LOADER_FILE absent -- oracle skipped (advisory)"
+    elif [ "$(wc -c < "$LOADER_FILE" | tr -d ' ')" -gt "$SELF_MEASURE_CAP_BYTES" ]; then
+        # Above the cap the contract is a refusal, never a digest (a digest of
+        # an oversize image would mean the cap was bypassed or a prefix hashed).
+        if [ "$SELF_MEASURE_BODY" = "[BOOT] self-measure: status=over-size-cap digest=ABSENT" ]; then
+            echo -e "  ${GREEN}✓${NC} self-measure refused the $(wc -c < "$LOADER_FILE" | tr -d ' ')-byte image (over the ${SELF_MEASURE_CAP_BYTES}-byte cap, as contracted)"
+        else
+            echo -e "  ${RED}MISMATCH:${NC} image is over the self-measure cap but the loader reported: $SELF_MEASURE_BODY"
+            BOOT_FAILED=true
+            FAIL_REASON="${FAIL_REASON:-Loader self-measurement ignored its size cap}"
+        fi
     elif ! printf '%s' "$SELF_MEASURE_BODY" | grep -qE -- "$SELF_MEASURE_SCHEMA"; then
         echo -e "  ${RED}MISSING:${NC} self-measure line is not a schema-valid success: $SELF_MEASURE_BODY"
         BOOT_FAILED=true
@@ -854,7 +1192,7 @@ else
     # the line exists, names an enumerated outcome, and carries its cost. A
     # bare AGREE is rejected on purpose: nothing on this path reads or replays
     # a PCR, so that word must not appear.
-    PCR4_LINE="$(grep -F -- '[BOOT] pcr4-correlate:' "$STRIPPED_LOG" 2>/dev/null | head -1)"
+    PCR4_LINE="$(first_line_with '[BOOT] pcr4-correlate:' "$STRIPPED_LOG")"
     PCR4_BODY="$(printf '%s' "$PCR4_LINE" | sed 's/\r$//')"
     PCR4_SCHEMA='^\[BOOT\] pcr4-correlate: result=(UNAUTHENTICATED-LOG-MATCH|DISAGREE|no-local-digest|no-image-device-path|no-devpath-utilities|degenerate-device-path|no-event-log|log-unusable|no-comparison)([ ][a-z0-9-]+=[0-9A-Za-z-]+)* tsc=[0-9A-F]{16}$'
     if [ -z "$PCR4_LINE" ]; then
@@ -877,11 +1215,22 @@ else
     # spec's numbered steps, so agreement here is the loader agreeing with the
     # spec as read by someone else -- not with itself. A flat hash cannot
     # satisfy this, which is the point.
-    SELF_MEASURE_PE_LINE="$(grep -F -- '[BOOT] self-measure-pe:' "$STRIPPED_LOG" 2>/dev/null | head -1)"
+    SELF_MEASURE_PE_LINE="$(first_line_with '[BOOT] self-measure-pe:' "$STRIPPED_LOG")"
     SELF_MEASURE_PE_BODY="$(printf '%s' "$SELF_MEASURE_PE_LINE" | sed 's/\r$//')"
     SELF_MEASURE_PE_SCHEMA='^\[BOOT\] self-measure-pe: status=ok pe-authenticode-sha256=[0-9A-F]{64}$'
     if [ ! -f "$LOADER_FILE" ]; then
         : # already reported advisory-skipped above
+    elif [ "$(wc -c < "$LOADER_FILE" | tr -d ' ')" -gt "$SELF_MEASURE_CAP_BYTES" ]; then
+        # The PE line follows a successful flat measurement only, so a refused
+        # image must carry none: one would mean the PE hash ran on the image
+        # the cap refused.
+        if [ -n "$SELF_MEASURE_PE_LINE" ]; then
+            echo -e "  ${RED}MISMATCH:${NC} over-cap image still reported: $SELF_MEASURE_PE_BODY"
+            BOOT_FAILED=true
+            FAIL_REASON="${FAIL_REASON:-Authenticode measurement ran on an image over the cap}"
+        else
+            echo -e "  ${GREEN}✓${NC} no Authenticode line for the refused image"
+        fi
     elif [ -z "$SELF_MEASURE_PE_LINE" ]; then
         echo -e "  ${RED}MISSING:${NC} [BOOT] self-measure-pe: line absent from serial"
         BOOT_FAILED=true

@@ -17,7 +17,7 @@ The automated suite is `boot_reliability.py`. It keeps a launcher per platform c
 
 The manual half is the [Bare-Metal Boot Lab](../hardware/boot-lab.md): five hardware classes mapped to the bare-metal platform classes, a per-machine inventory, and a run record in the `result.schema.json` shape.
 
-`scripts/test-smoke-matrix.sh` is related but separate. It is the four-leg smoke gate (KVM and TCG, one and two CPUs) run for boot-path changes; it does not produce matrix results.
+`scripts/test-smoke-matrix.sh` is related but separate. It is the boot smoke gate run for boot-path changes: four engine legs (KVM and TCG, one and two CPUs) plus fixture legs for the boot-entry store and the UKI-direct path; it does not produce matrix results.
 
 ## What are its interfaces?
 
@@ -30,7 +30,7 @@ The manual half is the [Bare-Metal Boot Lab](../hardware/boot-lab.md): five hard
 | `lint.py` | Schema, evidence and coverage checks ([`lint.py`](../../tools/boot-cert/lint.py)) |
 | `boot_reliability.py` | Reboot-reliability driver, classifier and aggregator ([`boot_reliability.py`](../../tools/boot-cert/boot_reliability.py)) |
 | `boot-test-qemu.sh` | One QEMU boot with `--disk`, `--timeout`, `--accel`, `--vars`, `--serial-out` and `--screenshot` ([`boot-test-qemu.sh`](../../scripts/machines/boot-test-qemu.sh)) |
-| `test-smoke-matrix.sh` | Separate four-leg boot smoke gate ([`test-smoke-matrix.sh`](../../scripts/test-smoke-matrix.sh)) |
+| `test-smoke-matrix.sh` | Separate boot smoke gate (engine, store and UKI legs) ([`test-smoke-matrix.sh`](../../scripts/test-smoke-matrix.sh)) |
 
 ## How do I use it?
 

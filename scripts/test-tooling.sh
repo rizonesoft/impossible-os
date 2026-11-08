@@ -5035,6 +5035,67 @@ if printf '%s' "$_sm_legs" | grep -q 'kvm:1' \
 else
     t_fail "smoke_matrix_legs  default legs incomplete" "got: $_sm_legs"
 fi
+# The smoke oracles' verdict functions against synthetic transcripts (no boot,
+# milliseconds): each self-test includes the rejections a correct build can never
+# produce, so a weakened oracle fails here rather than passing every real boot.
+for _sm_st in SMOKE_ES_SELFTEST SMOKE_UKI_SELFTEST; do
+    if env "$_sm_st=1" bash "$REPO_ROOT/scripts/test-smoke.sh" >/dev/null 2>&1; then
+        t_pass "smoke_oracle_selftest  $_sm_st verdicts all as expected"
+    else
+        t_fail "smoke_oracle_selftest  $_sm_st has a case with the wrong verdict"
+    fi
+done
+if grep -q 'UKI-direct fixtures' "$REPO_ROOT/scripts/test-smoke-matrix.sh" 2>/dev/null; then
+    t_pass "smoke_matrix_uki  the matrix boots the UKI signed + override fixtures"
+else
+    t_fail "smoke_matrix_uki  the matrix no longer boots the UKI fixtures"
+fi
+# uki-pack.sh must never write over one of its own inputs. A stub objcopy on
+# PATH records the .osrel/.cmdline it was handed and copies the stub to the
+# output, so this needs no toolchain and no build.
+_up_dir="$(mktemp -d)"
+mkdir -p "$_up_dir/bin" "$_up_dir/pay"
+cat > "$_up_dir/bin/llvm-objcopy-19" <<'UPEOF'
+#!/usr/bin/env bash
+args=("$@"); n=${#args[@]}
+for a in "$@"; do case "$a" in .cmdline=*) cp "${a#.cmdline=}" "$UP_SEEN_CMDLINE" ;; esac; done
+cp "${args[$((n-2))]}" "${args[$((n-1))]}"
+UPEOF
+chmod +x "$_up_dir/bin/llvm-objcopy-19"
+printf 'stub' > "$_up_dir/stub.efi"; printf 'kern' > "$_up_dir/kernel.exe"
+printf 'test=1\n' > "$_up_dir/rel.osrel.txt"
+if PATH="$_up_dir/bin:$PATH" UP_SEEN_CMDLINE="$_up_dir/seen" \
+     bash "$REPO_ROOT/scripts/uki-pack.sh" "$_up_dir/stub.efi" "$_up_dir/kernel.exe" \
+     "$_up_dir/rel.osrel.txt" "$_up_dir/pay" "$_up_dir/rel.efi" >/dev/null 2>&1 \
+   && [ "$(cat "$_up_dir/rel.osrel.txt")" = "test=1" ] \
+   && [ "$(cat "$_up_dir/seen")" = "test=1" ]; then
+    t_pass "uki_pack_no_input_clobber  a cmdline named <out>.osrel.txt is packed unchanged"
+else
+    t_fail "uki_pack_no_input_clobber  uki-pack.sh overwrote or mis-packed its .cmdline input"
+fi
+if PATH="$_up_dir/bin:$PATH" UP_SEEN_CMDLINE="$_up_dir/seen" \
+     bash "$REPO_ROOT/scripts/uki-pack.sh" "$_up_dir/stub.efi" "$_up_dir/kernel.exe" \
+     "$_up_dir/rel.osrel.txt" "$_up_dir/pay" "$_up_dir/./kernel.exe" >/dev/null 2>&1; then
+    t_fail "uki_pack_output_is_input  packing over the kernel input was accepted"
+elif [ "$(cat "$_up_dir/kernel.exe")" = "kern" ]; then
+    t_pass "uki_pack_output_is_input  an output that resolves to an input is refused, input intact"
+else
+    t_fail "uki_pack_output_is_input  refused but the kernel input was modified"
+fi
+for _up_p in initrd.img recovery.img modules.cpio; do
+    printf 'payload' > "$_up_dir/pay/$_up_p"
+    if PATH="$_up_dir/bin:$PATH" UP_SEEN_CMDLINE="$_up_dir/seen" \
+         bash "$REPO_ROOT/scripts/uki-pack.sh" "$_up_dir/stub.efi" "$_up_dir/kernel.exe" \
+         "$_up_dir/rel.osrel.txt" "$_up_dir/pay" "$_up_dir/pay/$_up_p" >/dev/null 2>&1; then
+        t_fail "uki_pack_output_is_payload  packing over $_up_p was accepted"
+    elif [ "$(cat "$_up_dir/pay/$_up_p")" = "payload" ]; then
+        t_pass "uki_pack_output_is_payload  an output that is $_up_p is refused, payload intact"
+    else
+        t_fail "uki_pack_output_is_payload  refused but $_up_p was modified"
+    fi
+    rm -f "$_up_dir/pay/$_up_p"
+done
+rm -rf "$_up_dir"
 if grep -q 'test-smoke-matrix\.sh' "$REPO_ROOT/.claude/skills/implement-todo-section/SKILL.md" 2>/dev/null; then
     t_pass "smoke_matrix_wired  implement-todo-section calls the matrix"
 else

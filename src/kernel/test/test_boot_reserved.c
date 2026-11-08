@@ -23,6 +23,7 @@
 #include "kernel/test/klog_suppress.h"
 #include "kernel/mm/boot_reserved.h"
 #include "kernel/boot_info.h"
+#include "boot/uki_payload_limits.h" /* UKI_PAYLOAD_SLOT_*, UKI_PAYLOAD_MAX_BYTES */
 #include "kernel/entropy.h"   /* boot_seed_length_reservable -- must agree with the table */
 /* libc/string.h not needed; fixture is zeroed by scalar loop. */
 
@@ -1926,6 +1927,177 @@ static void test_boot_reserved_tracked_and_copy(void)
     br_zero_fixture();
 }
 
+/* Stage the three boot_info v14 UKI payload fields on the fixture. */
+static void br_stage_uki(uint64_t ia, uint64_t is, uint64_t ra, uint64_t rs,
+                         uint64_t ma, uint64_t ms)
+{
+    s_br_buf.uki_initrd_addr   = ia;
+    s_br_buf.uki_initrd_size   = is;
+    s_br_buf.uki_recovery_addr = ra;
+    s_br_buf.uki_recovery_size = rs;
+    s_br_buf.uki_modules_addr  = ma;
+    s_br_buf.uki_modules_size  = ms;
+}
+
+/* UKI signed-payload sections: the signed UKI payload copies live in EfiLoaderData,
+ * which pmm_init frees, so the pass must pin them -- and only them, only on a
+ * UKI handoff, only when readable RAM inside the identity map. */
+static void test_boot_reserved_uki_payloads_pinned(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    uint32_t base;
+
+    TEST_KLOG_SUPPRESS("mm");
+    base = br_baseline_count();
+    s_br_buf.flags = BOOT_FLAG_INVOKED_VIA_UKI;
+    br_stage_uki(0x20000000ull, 4096ull, 0x20100000ull, 8192ull,
+                 0x20200000ull, 512ull);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+                   (unsigned long)BOOT_OK, "three backed UKI payloads populate");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)(base + 3u),
+                   "one table entry per UKI payload");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_uki_payload_is_pinned(
+                       UKI_PAYLOAD_SLOT_INITRD, 0x20000000ull, 4096ull), 1ul,
+                   ".initrd pinned at its exact range");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_uki_payload_is_pinned(
+                       UKI_PAYLOAD_SLOT_RECOVERY, 0x20100000ull, 8192ull), 1ul,
+                   ".recovery pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_uki_payload_is_pinned(
+                       UKI_PAYLOAD_SLOT_MODULES, 0x20200000ull, 512ull), 1ul,
+                   ".modules pinned");
+    /* Identity is slot AND range: another slot's range, a shifted range, an
+     * out-of-range slot and a zero length all answer no. */
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_uki_payload_is_pinned(
+                       UKI_PAYLOAD_SLOT_RECOVERY, 0x20000000ull, 4096ull), 0ul,
+                   "the .initrd range does not answer for .recovery");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_uki_payload_is_pinned(
+                       UKI_PAYLOAD_SLOT_INITRD, 0x20000000ull, 4095ull), 0ul,
+                   "a different length is a different range");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_uki_payload_is_pinned(
+                       UKI_PAYLOAD_SLOT_COUNT, 0x20000000ull, 4096ull), 0ul,
+                   "slot past the last is never pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_uki_payload_is_pinned(
+                       UKI_PAYLOAD_SLOT_INITRD, 0x20000000ull, 0ull), 0ul,
+                   "zero length is never pinned");
+    /* A typed-payload query does not see a UKI entry, and vice versa. */
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
+                       0u, 0x20000000ull, 4096ull), 0ul,
+                   "a UKI entry is not a typed payload");
+    /* PMM-internal disjointness covers the UKI kind: a bitmap placed over the
+     * .modules copy is found (and pmm_init halts on it). */
+    TEST_ASSERT(boot_reserved_check_payloads_disjoint(0x20200000ull, 0x1000ull,
+                                                      "fake_bitmap") != 0u,
+                "a UKI payload under a PMM-internal region is detected");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_check_payloads_disjoint(
+                       0x30000000ull, 0x1000ull, "fake_bitmap"), 0ul,
+                   "disjoint PMM-internal region passes");
+}
+
+static void test_boot_reserved_uki_payloads_refused(void)
+{
+    enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
+    uint32_t base;
+
+    TEST_KLOG_SUPPRESS("mm");
+    base = br_baseline_count();
+
+    /* Fields on a handoff that did not come through the UKI path. */
+    br_stage_uki(0x20000000ull, 4096ull, 0u, 0u, 0u, 0u);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+                   (unsigned long)BOOT_OK, "split-path UKI fields declined, not fatal");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_uki_payload_is_pinned(
+                       UKI_PAYLOAD_SLOT_INITRD, 0x20000000ull, 4096ull), 0ul,
+                   "UKI fields without BOOT_FLAG_INVOKED_VIA_UKI are not pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)base,
+                   "nothing entered the table");
+
+    /* Half-set fields and an over-cap size. */
+    br_zero_fixture();
+    s_br_buf.flags = BOOT_FLAG_INVOKED_VIA_UKI;
+    br_stage_uki(0x20000000ull, 0u, 0u, 8192ull,
+                 0x20200000ull, UKI_PAYLOAD_MAX_BYTES + 1ull);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+                   (unsigned long)BOOT_OK, "malformed UKI fields declined");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)base,
+                   "address-only, size-only and over-cap entries all refused");
+    /* The cap is inclusive: exactly UKI_PAYLOAD_MAX_BYTES is admitted. */
+    br_zero_fixture();
+    s_br_buf.flags = BOOT_FLAG_INVOKED_VIA_UKI;
+    br_stage_uki(0x20000000ull, UKI_PAYLOAD_MAX_BYTES, 0u, 0u, 0u, 0u);
+    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_uki_payload_is_pinned(
+                       UKI_PAYLOAD_SLOT_INITRD, 0x20000000ull, UKI_PAYLOAD_MAX_BYTES), 1ul,
+                   "a payload of exactly the cap is pinned");
+
+    /* Unbacked ranges: MMIO, past the fixture RAM, and above the 4 GiB
+     * identity map even where the map calls it RAM. One refusal does not
+     * cost the others: the valid .modules copy is still pinned. */
+    br_zero_fixture();
+    s_br_buf.flags = BOOT_FLAG_INVOKED_VIA_UKI;
+    br_set_map(1u, 0x40000000ull, 0x1000ull, UEFI_MMAP_MMIO);
+    br_set_map(2u, BOOT_INFO_EARLY_MAP_END, 0x10000000ull, UEFI_MMAP_CONVENTIONAL);
+    br_stage_uki(0x40000000ull, 0x1000ull, BOOT_INFO_EARLY_MAP_END, 0x1000ull,
+                 0x20200000ull, 512ull);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+                   (unsigned long)BOOT_OK, "unbacked UKI payloads declined");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_uki_payload_is_pinned(
+                       UKI_PAYLOAD_SLOT_INITRD, 0x40000000ull, 0x1000ull), 0ul,
+                   "MMIO-backed .initrd not pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_uki_payload_is_pinned(
+                       UKI_PAYLOAD_SLOT_RECOVERY, BOOT_INFO_EARLY_MAP_END, 0x1000ull), 0ul,
+                   ".recovery above the identity map not pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_uki_payload_is_pinned(
+                       UKI_PAYLOAD_SLOT_MODULES, 0x20200000ull, 512ull), 1ul,
+                   "the backed .modules copy is still pinned");
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)(base + 1u),
+                   "only the backed copy entered the table");
+
+    /* A UKI copy that overlaps another retained region is a fatal handoff
+     * error, like every other entry: the boot stack is retained first. */
+    br_zero_fixture();
+    s_br_buf.flags       = BOOT_FLAG_INVOKED_VIA_UKI;
+    s_br_buf.kstack_base = 0x20000000ull;
+    s_br_buf.kstack_size = 0x10000u;
+    br_stage_uki(0x20008000ull, 0x1000ull, 0u, 0u, 0u, 0u);
+    err = BOOT_RESERVED_ERR_OK;
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+                   (unsigned long)BOOT_FATAL, "UKI copy over the boot stack is fatal");
+    TEST_ASSERT_EQ((unsigned long)err, (unsigned long)BOOT_RESERVED_ERR_OVERLAP,
+                   "and reported as an overlap");
+    br_zero_fixture();
+}
+
+static int br_streq(const char *a, const char *b)
+{
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
+/* The digest the kernel logs for each received UKI payload: FIPS 180-2
+ * known-answer vectors, including the empty input and a two-block message. */
+static void test_boot_reserved_digest_hex_vectors(void)
+{
+    char out[BOOT_RESERVED_DIGEST_HEX_LEN + 1u];
+    static const char abc[] = "abc";
+    static const char two[] =
+        "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+
+    boot_reserved_digest_hex(abc, 3u, out);
+    TEST_ASSERT(br_streq(out,
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+        "sha256(\"abc\") as lowercase hex");
+    boot_reserved_digest_hex(abc, 0u, out);
+    TEST_ASSERT(br_streq(out,
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+        "sha256 of the empty input");
+    boot_reserved_digest_hex(two, sizeof(two) - 1u, out);
+    TEST_ASSERT(br_streq(out,
+        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"),
+        "two-block message digest");
+    TEST_ASSERT_EQ((unsigned long)out[BOOT_RESERVED_DIGEST_HEX_LEN], 0ul,
+                   "digest string is NUL-terminated at 64 characters");
+}
+
 void test_register_boot_reserved(void)
 {
     test_suite_register_cat("boot_reserved: warm-update budget is order-independent",
@@ -2044,5 +2216,14 @@ void test_register_boot_reserved(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("boot_reserved: tracked class and table copy",
                             test_boot_reserved_tracked_and_copy,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: UKI payloads pinned",
+                            test_boot_reserved_uki_payloads_pinned,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: UKI payloads refused",
+                            test_boot_reserved_uki_payloads_refused,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot_reserved: received-payload digest",
+                            test_boot_reserved_digest_hex_vectors,
                             TEST_CAT_BOOT);
 }

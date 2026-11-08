@@ -200,7 +200,17 @@ VERSION_RAW    := $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_PATCH)
 BUILD_NUMBER   := $(or $(shell cat $(BUILD_NUM_FILE) 2>/dev/null | tr -d '[:space:]'),0)
 GIT_HASH       := $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
 GIT_BRANCH     := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+# ONE build time per build. scripts/build.sh runs make several times (kernel,
+# signing, ABI check, system disk), and minting the time per invocation made
+# every later call rewrite build_info.h and relink kernel.exe -- AFTER the UKI
+# had packed it, so BOOTX64.UKI.efi and the system disk carried different
+# kernels from one build. build.sh pins SOURCE_DATE_EPOCH (the
+# reproducible-builds convention) once per run; a caller's own value wins.
+ifdef SOURCE_DATE_EPOCH
+BUILD_TIME     := $(shell date -u -d '@$(SOURCE_DATE_EPOCH)' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "unknown")
+else
 BUILD_TIME     := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "unknown")
+endif
 
 # Generated header with all version/build metadata
 BUILD_INFO_H   := include/build_info.h
@@ -675,7 +685,13 @@ boot: $(ASM_OBJS)
 kernel: $(KERNEL_BIN)
 	@echo "[KERNEL] $(KERNEL_BIN) built"
 
-$(KERNEL_BIN): os-logo bsod-icon boot-font $(OBJS) $(LINKER_SCRIPT)
+# The asset generators are ORDER-ONLY: they must run first, but they are
+# targets with no file of their own name, so as normal prerequisites they were
+# always out of date and relinked kernel.exe on every make invocation (each
+# later make call in scripts/build.sh, after the UKI had packed the kernel).
+# A changed generated header still relinks: the objects that include it
+# recompile through their dependency files, and the link depends on $(OBJS).
+$(KERNEL_BIN): $(OBJS) $(LINKER_SCRIPT) | os-logo bsod-icon boot-font
 	@mkdir -p $(dir $@)
 	@# `--trace` emits the linker's input-file list to stdout (captured to
 	@# kernel.link-trace.txt) as a byproduct of the SAME link that produces

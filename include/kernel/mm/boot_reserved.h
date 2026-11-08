@@ -46,6 +46,7 @@ enum boot_reserved_kind {
     BOOT_RESERVED_RT_MMAP          = 6,  /* UEFI runtime services region */
     BOOT_RESERVED_PAYLOAD = 7, /* typed payload with FLAG_RESERVED */
     BOOT_RESERVED_BOOT_STACK       = 8,  /* loader-owned kernel boot stack */
+    BOOT_RESERVED_UKI_PAYLOAD      = 9,  /* signed UKI .initrd/.recovery/.modules copy */
 };
 
 struct boot_reserved_region {
@@ -170,6 +171,28 @@ uint32_t boot_reserved_tracked_class(uint64_t phys_start, uint64_t length,
  * table entry marks nothing. */
 int boot_reserved_payload_is_pinned(uint32_t payload_index,
                                     uint64_t phys_start, uint64_t length);
+
+/* Did the reservation pass pin the signed UKI payload copy in `slot`
+ * (UKI_PAYLOAD_SLOT_* in include/boot/uki_payload_limits.h) at exactly this
+ * range? The boot_info v14 uki_*_addr / uki_*_size fields are the loader's
+ * CLAIM; they are not rewritten when the pass declines them (boot_info is a
+ * measured record, see boot_reserved_payload_is_pinned). A consumer of a UKI
+ * payload asks this first and refuses a range that was not pinned, because
+ * the PMM treats unpinned EfiLoaderData as free memory. */
+int boot_reserved_uki_payload_is_pinned(uint32_t slot,
+                                        uint64_t phys_start, uint64_t length);
+
+/* SHA-256 of [data, data + len) as lowercase hex, NUL-terminated. Pure. */
+#define BOOT_RESERVED_DIGEST_HEX_LEN 64u
+void boot_reserved_digest_hex(const void *data, uint64_t len,
+                              char out[BOOT_RESERVED_DIGEST_HEX_LEN + 1u]);
+
+/* Log the SHA-256 of every pinned UKI payload copy as it was received
+ * ("boot_reserved: UKI .initrd received sha256=..."), so the bytes the kernel
+ * holds can be compared with the signed section they were copied from. Reads
+ * the copies through the boot identity map: pmm_init only, right after
+ * boot_reserved_apply(), never from a test fixture. */
+void boot_reserved_log_uki_digests(void);
 
 uint32_t boot_reserved_count(void);
 const struct boot_reserved_region *boot_reserved_get(uint32_t index);

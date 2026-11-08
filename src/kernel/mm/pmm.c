@@ -349,6 +349,7 @@ boot_result_t pmm_init(void)
         }
         boot_reserved_apply();
         boot_reserved_log();
+        boot_reserved_log_uki_digests();
     }
 
     /* ACCEPTANCE CHECK for the loader-owned kernel boot stack (TODO-10
