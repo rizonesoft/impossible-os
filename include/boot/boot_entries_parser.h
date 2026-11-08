@@ -302,4 +302,117 @@ boot_store_record_action_t boot_store_record_decide(
     boot_store_record_state_t state,
     const boot_store_reject_record_t *stored);
 
+/* The last-known-good shadow of the store (docs/boot/boot-entry-schema.md,
+ * Fallback Contract).
+ *
+ * The loader keeps a copy of the last store it ACCEPTED (parsed with no
+ * reject) beside the primary, as bootentries.lkg.json, published through
+ * bootentries.lkg.tmp. Both are the store format, CRC and all, so the parser
+ * itself decides whether a copy is intact. It is "last parser-accepted", not
+ * "last successfully booted": recovered entries go through the same policy
+ * and image checks as any other store.
+ *
+ * Everything here is pure: the loader supplies file access through
+ * boot_store_shadow_ops, and the kernel suite drives the same code against
+ * an in-memory volume with injected faults. */
+#define BOOT_STORE_PRIMARY_NAME "bootentries.json"
+#define BOOT_STORE_LKG_NAME     "bootentries.lkg.json"
+#define BOOT_STORE_TMP_NAME     "bootentries.lkg.tmp"
+
+typedef enum {
+    BOOT_STORE_COPY_ABSENT = 0, /* no such file */
+    BOOT_STORE_COPY_INVALID,    /* present and definitely not a usable store */
+    BOOT_STORE_COPY_VALID,      /* parsed with no reject */
+    BOOT_STORE_COPY_UNREADABLE, /* present, but the read failed: it may still be valid */
+} boot_store_copy_state_t;
+
+typedef enum {
+    BOOT_STORE_SOURCE_PRIMARY = 0,
+    BOOT_STORE_SOURCE_LKG,
+    BOOT_STORE_SOURCE_TMP,
+    BOOT_STORE_SOURCE_FALLBACK, /* no usable copy: the synthesized entry */
+} boot_store_source_t;
+
+/* May this boot consult the shadow at all? Only when a primary store is
+ * THERE and could not be used (the notice predicate). An absent primary is
+ * the user resetting to the fallback, and no filesystem means nothing to
+ * read; neither consults the shadow. */
+int boot_store_shadow_consult(int load_status, int reject_code);
+
+/* Which copy this boot uses. The published copy is preferred over the
+ * staging one: the staging copy is only a second chance after an
+ * interrupted publication. */
+boot_store_source_t boot_store_source_choose(int load_status, int reject_code,
+                                             boot_store_copy_state_t lkg,
+                                             boot_store_copy_state_t tmp);
+
+typedef enum {
+    BOOT_STORE_SHADOW_KEEP = 0,  /* the published copy already matches */
+    BOOT_STORE_SHADOW_DROP_TMP,  /* matches, and a leftover staging copy can go */
+    BOOT_STORE_SHADOW_PROMOTE,   /* copy the staging bytes to the published name */
+    BOOT_STORE_SHADOW_REFRESH,   /* write the primary's bytes as the staging copy */
+    BOOT_STORE_SHADOW_HOLD,      /* a copy could not be read: touch nothing this boot */
+} boot_store_shadow_action_t;
+
+/* What to do with the shadow files after the primary parsed with no reject.
+ * `*_matches` is 1 when that copy's bytes equal the primary's. Two rules keep
+ * a valid copy alive through any sequence of interrupted steps: a file is
+ * only rewritten while the OTHER file holds a valid copy (or neither does),
+ * and nothing is renamed, because a FAT rename is not power-fail atomic. A
+ * copy that could not be READ might be the only valid one, so it is never
+ * rewritten unless the other copy is valid; otherwise the plan is HOLD until a
+ * later boot can read it. */
+boot_store_shadow_action_t boot_store_shadow_plan(boot_store_copy_state_t lkg, int lkg_matches,
+                                                  boot_store_copy_state_t tmp, int tmp_matches);
+
+#define BOOT_STORE_FILE_LKG 0
+#define BOOT_STORE_FILE_TMP 1
+
+/* File access for the two shadow files (`which` is BOOT_STORE_FILE_*).
+ * read:    0 absent; 1 read whole into buf and len (give it back with release);
+ *          2 present but definitely not a store (empty, over the size cap);
+ *          -1 present but the read failed (it may still be valid).
+ * write:   0 when the file now holds exactly `buf`, durably (written, flushed,
+ *          closed); any other value is a failure and the file's contents are
+ *          unknown.
+ * remove:  0 when the file is gone (also when it was never there).
+ * accept:  1 when `buf` parses with no reject. */
+struct boot_store_shadow_ops {
+    void *ctx;
+    int (*read)(void *ctx, int which, const unsigned char **buf, unsigned int *len);
+    void (*release)(void *ctx, int which, const unsigned char *buf);
+    int (*write)(void *ctx, int which, const unsigned char *buf, unsigned int len);
+    int (*remove)(void *ctx, int which);
+    int (*accept)(void *ctx, const unsigned char *buf, unsigned int len);
+};
+
+typedef enum {
+    BOOT_STORE_SYNC_CURRENT = 0, /* nothing to do */
+    BOOT_STORE_SYNC_SAVED,       /* the published copy now matches the primary */
+    BOOT_STORE_SYNC_FAILED,      /* a write or remove failed; stopped there */
+    BOOT_STORE_SYNC_UNSETTLED,   /* the step budget ran out */
+    BOOT_STORE_SYNC_HELD,        /* a copy could not be read; nothing was changed */
+} boot_store_sync_result_t;
+
+/* Longest uninterrupted path: promote an older staging copy, refresh,
+ * promote, drop the staging copy, then the final check. */
+#define BOOT_STORE_SYNC_MAX_STEPS 6u
+
+/* Bring the shadow up to date with an accepted primary. Re-plans after every
+ * step and stops at the first failure, so an interrupted or failed run leaves
+ * a state the next boot resumes from. */
+boot_store_sync_result_t boot_store_shadow_sync(const struct boot_store_shadow_ops *ops,
+                                                const unsigned char *primary,
+                                                unsigned int primary_len);
+
+/* For a present-but-unusable primary: find the copy to boot. On LKG or TMP,
+ * buf and len hold the accepted copy (the caller owns it; release it with the
+ * same ops) and `accept` was the LAST call made, so a caller whose accept
+ * parses into scratch finds that copy's parse there. */
+boot_store_source_t boot_store_shadow_pick(const struct boot_store_shadow_ops *ops,
+                                           int load_status, int reject_code,
+                                           const unsigned char **buf, unsigned int *len,
+                                           boot_store_copy_state_t *lkg_state,
+                                           boot_store_copy_state_t *tmp_state);
+
 #endif /* BOOT_ENTRIES_PARSER_H */

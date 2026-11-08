@@ -34,6 +34,11 @@ extern void *memset(void *dst, int c, size_t n);  /* freestanding: no <string.h>
 #include "kernel/env_apppaths.h" /* s17 App Paths lookup/register */
 #include "kernel/types.h"
 
+/* The kernel test image sits at its USER_BASE ceiling (the user-base layout work).
+ * This file holds test code only (no product source is included), so it is
+ * optimised for size; the code under test keeps the image's -O2. */
+#pragma clang attribute push (__attribute__((minsize)), apply_to = function)
+
 /* Local ASCII string compare (no live libc dependency in the test TU). */
 static int env_streq(const char *a, const char *b)
 {
@@ -5710,5 +5715,7 @@ void test_register_env(void)
     test_suite_register_cat("Env: s17 App Paths malformed unterminated value -> MORE_DATA",
                             test_app_paths_malformed_value, TEST_CAT_ABI);
 }
+
+#pragma clang attribute pop
 
 #endif /* KERNEL_TESTS */

@@ -25,6 +25,12 @@ extern void *memset(void *dst, int c, size_t n);  /* freestanding: no <string.h>
 
 #include "kernel/types.h"   /* uint32_t for assertions / size_t */
 
+/* The kernel test image sits at its USER_BASE ceiling (the user-base layout work),
+ * so the TEST functions below are optimised for size. The parser included
+ * above keeps the image's -O2, so the code under test is generated as the
+ * loader builds it. */
+#pragma clang attribute push (__attribute__((minsize)), apply_to = function)
+
 /* Helper: build a CRC-correct fixture by writing a placeholder, computing the
  * CRC, and patching the 8 hex digits in place. Mirrors validate.py --emit-crc. */
 static unsigned char s_fixture_buf[2048];
@@ -1713,6 +1719,298 @@ static void test_store_record_decide(void)
                    BOOT_STORE_RECORD_KEEP, "an unreadable variable is left alone");
 }
 
+/* The boot entry store shadow: which copy of the store a boot uses. */
+static void test_store_source_choose(void)
+{
+    const int ok = (int)BOOT_ENTRIES_OK;
+    const int bad = (int)BOOT_ENTRIES_REJECT_CRC_MISMATCH;
+    const boot_store_copy_state_t A = BOOT_STORE_COPY_ABSENT;
+    const boot_store_copy_state_t I = BOOT_STORE_COPY_INVALID;
+    const boot_store_copy_state_t V = BOOT_STORE_COPY_VALID;
+
+    TEST_ASSERT_EQ(boot_store_source_choose((int)BOOT_STORE_LOAD_OK, ok, V, V),
+                   BOOT_STORE_SOURCE_PRIMARY, "an accepted primary wins over any shadow");
+    TEST_ASSERT_EQ(boot_store_source_choose((int)BOOT_STORE_LOAD_OK, bad, V, V),
+                   BOOT_STORE_SOURCE_LKG, "a rejected primary boots the published copy");
+    TEST_ASSERT_EQ(boot_store_source_choose((int)BOOT_STORE_LOAD_OK, bad, I, V),
+                   BOOT_STORE_SOURCE_TMP, "a broken published copy falls to the staging copy");
+    TEST_ASSERT_EQ(boot_store_source_choose((int)BOOT_STORE_LOAD_OK, bad, A, V),
+                   BOOT_STORE_SOURCE_TMP, "an interrupted publication still recovers");
+    TEST_ASSERT_EQ(boot_store_source_choose((int)BOOT_STORE_LOAD_OK, bad, I, I),
+                   BOOT_STORE_SOURCE_FALLBACK, "both copies broken is the fallback");
+    TEST_ASSERT_EQ(boot_store_source_choose((int)BOOT_STORE_LOAD_OK, bad, A, A),
+                   BOOT_STORE_SOURCE_FALLBACK, "no shadow is the fallback");
+    TEST_ASSERT_EQ(boot_store_source_choose((int)BOOT_STORE_LOAD_UNREADABLE, ok, V, A),
+                   BOOT_STORE_SOURCE_LKG, "an unreadable primary boots the shadow");
+    /* Deleting the store is the user resetting to the fallback. */
+    TEST_ASSERT_EQ(boot_store_source_choose((int)BOOT_STORE_LOAD_ABSENT, bad, V, V),
+                   BOOT_STORE_SOURCE_FALLBACK, "an absent primary ignores the shadow");
+    TEST_ASSERT_EQ(boot_store_source_choose((int)BOOT_STORE_LOAD_UNINSPECTED, bad, V, V),
+                   BOOT_STORE_SOURCE_FALLBACK, "no filesystem ignores the shadow");
+    TEST_ASSERT_EQ(boot_store_shadow_consult((int)BOOT_STORE_LOAD_OK, bad), 1,
+                   "a rejected primary consults the shadow");
+    TEST_ASSERT_EQ(boot_store_shadow_consult((int)BOOT_STORE_LOAD_OK, ok), 0,
+                   "an accepted primary does not");
+}
+
+static void test_store_shadow_plan(void)
+{
+    const boot_store_copy_state_t A = BOOT_STORE_COPY_ABSENT;
+    const boot_store_copy_state_t I = BOOT_STORE_COPY_INVALID;
+    const boot_store_copy_state_t V = BOOT_STORE_COPY_VALID;
+    TEST_ASSERT_EQ(boot_store_shadow_plan(V, 1, A, 0), BOOT_STORE_SHADOW_KEEP, "a current copy writes nothing");
+    TEST_ASSERT_EQ(boot_store_shadow_plan(V, 1, V, 0), BOOT_STORE_SHADOW_DROP_TMP,
+                   "a stale staging copy is dropped");
+    TEST_ASSERT_EQ(boot_store_shadow_plan(A, 0, V, 1), BOOT_STORE_SHADOW_PROMOTE,
+                   "an interrupted publication finishes");
+    TEST_ASSERT_EQ(boot_store_shadow_plan(A, 0, V, 0), BOOT_STORE_SHADOW_PROMOTE,
+                   "a sole older staging copy is published, not overwritten");
+    TEST_ASSERT_EQ(boot_store_shadow_plan(V, 0, A, 0), BOOT_STORE_SHADOW_REFRESH, "a changed store refreshes");
+    TEST_ASSERT_EQ(boot_store_shadow_plan(A, 0, A, 0), BOOT_STORE_SHADOW_REFRESH, "a first boot saves a copy");
+    TEST_ASSERT_EQ(boot_store_shadow_plan(I, 0, I, 0), BOOT_STORE_SHADOW_REFRESH, "broken copies are replaced");
+    const boot_store_copy_state_t U = BOOT_STORE_COPY_UNREADABLE;
+    TEST_ASSERT_EQ(boot_store_shadow_plan(A, 0, U, 0), BOOT_STORE_SHADOW_HOLD,
+                   "an unreadable staging copy that may be the only one is held");
+    TEST_ASSERT_EQ(boot_store_shadow_plan(V, 0, U, 0), BOOT_STORE_SHADOW_REFRESH,
+                   "an unreadable staging copy beside a valid one may be rewritten");
+    TEST_ASSERT_EQ(boot_store_shadow_plan(U, 0, V, 1), BOOT_STORE_SHADOW_PROMOTE,
+                   "an unreadable published copy is replaced from a valid staging copy");
+    TEST_ASSERT_EQ(boot_store_shadow_plan(V, 1, U, 0), BOOT_STORE_SHADOW_DROP_TMP,
+                   "an unreadable staging copy beside a current one is dropped");
+}
+
+/* ---- In-memory volume for the boot entry store shadow executor. ----
+ * Contents are short tokens: "V3" is the accepted primary, "V2" an older
+ * valid store, "X" a broken one; accept() takes anything starting with 'V'.
+ * One operation can be made to fail, in each of the ways a real ESP can. */
+#define FV_CAP 8u
+enum { FV_FAIL_NONE = 0, FV_FAIL_UNCHANGED, FV_FAIL_DELETED, FV_FAIL_PARTIAL };
+
+struct fv_file { int present; unsigned int len; unsigned char data[FV_CAP]; };
+struct fv {
+    struct fv_file f[2];
+    unsigned char rbuf[2][FV_CAP];
+    int out[2];            /* read buffers not yet released */
+    int ops;               /* write/remove calls so far */
+    int fail_op, fail_how; /* fail the fail_op'th call (0-based) this way */
+    int read_fail;         /* reads of this file fail (-1: none) */
+    int writes;
+    const unsigned char *last_accept;
+};
+
+static const unsigned char FV_P[] = "V3";
+
+static void fv_set(struct fv_file *f, const char *v)
+{
+    f->present = v != (const char *)0;
+    f->len = 0;
+    if (v) while (v[f->len] && f->len < FV_CAP) { f->data[f->len] = (unsigned char)v[f->len]; f->len++; }
+}
+
+static int fv_valid(const struct fv_file *f) { return f->present && f->len && f->data[0] == 'V'; }
+static int fv_current(const struct fv_file *f)
+{
+    return f->present && f->len == 2u && f->data[0] == 'V' && f->data[1] == '3';
+}
+
+static int fv_read(void *vc, int which, const unsigned char **buf, unsigned int *len)
+{
+    struct fv *v = (struct fv *)vc;
+    if (!v->f[which].present) return 0;
+    if (v->read_fail == which) return -1;
+    if (v->f[which].len == 0u) return 2; /* an empty file is definitely no store */
+    for (unsigned int i = 0; i < v->f[which].len; i++) v->rbuf[which][i] = v->f[which].data[i];
+    *buf = v->rbuf[which];
+    *len = v->f[which].len;
+    v->out[which]++;
+    return 1;
+}
+static void fv_release(void *vc, int which, const unsigned char *buf)
+{
+    struct fv *v = (struct fv *)vc;
+    if (buf == v->rbuf[which]) v->out[which]--;
+}
+/* A failed write may leave the old file, no file, or a torn one. */
+static int fv_write(void *vc, int which, const unsigned char *buf, unsigned int len)
+{
+    struct fv *v = (struct fv *)vc;
+    struct fv_file *f = &v->f[which];
+    v->writes++;
+    if (v->ops++ == v->fail_op) {
+        if (v->fail_how == FV_FAIL_DELETED) f->present = 0;
+        if (v->fail_how == FV_FAIL_PARTIAL) fv_set(f, "X");
+        return -1;
+    }
+    f->present = 1;
+    f->len = len < FV_CAP ? len : FV_CAP;
+    for (unsigned int i = 0; i < f->len; i++) f->data[i] = buf[i];
+    return 0;
+}
+/* A refused delete leaves the file; it cannot half-delete. */
+static int fv_remove(void *vc, int which)
+{
+    struct fv *v = (struct fv *)vc;
+    if (v->ops++ == v->fail_op) return -1;
+    v->f[which].present = 0;
+    return 0;
+}
+static int fv_accept(void *vc, const unsigned char *buf, unsigned int len)
+{
+    struct fv *v = (struct fv *)vc;
+    v->last_accept = buf;
+    return len > 0u && buf[0] == 'V';
+}
+
+static void fv_init(struct fv *v, struct boot_store_shadow_ops *ops)
+{
+    memset(v, 0, sizeof(*v));
+    v->fail_op = -1;
+    v->read_fail = -1;
+    ops->ctx = v;
+    ops->read = fv_read;
+    ops->release = fv_release;
+    ops->write = fv_write;
+    ops->remove = fv_remove;
+    ops->accept = fv_accept;
+}
+
+/* Absent, empty (a write cut off before any byte), broken, older, current. */
+#define FV_NSTART 5
+static const char *const FV_START[FV_NSTART] = { (const char *)0, "", "X", "V2", "V3" };
+
+/* The design-review and adversarial findings: no sequence of failed steps may
+ * leave the volume with no valid copy once it had one. Every start state,
+ * then a fault at every operation in every failure shape, then a second
+ * fault the same way, then a clean boot that must settle. */
+static void test_store_shadow_sync_faults(void)
+{
+    struct boot_store_shadow_ops ops;
+    struct fv v;
+    unsigned int lost = 0, unsettled = 0, leaked = 0, runs = 0;
+
+    for (int start = 0; start < FV_NSTART * FV_NSTART; start++) {
+      for (int rf = -1; rf < 2; rf++) {
+        for (int f1 = -1; f1 < 5; f1++) {
+            for (int h1 = FV_FAIL_UNCHANGED; h1 <= FV_FAIL_PARTIAL; h1++) {
+                for (int f2 = -1; f2 < 5; f2++) {
+                    for (int h2 = FV_FAIL_UNCHANGED; h2 <= FV_FAIL_PARTIAL; h2++) {
+                        fv_init(&v, &ops);
+                        fv_set(&v.f[BOOT_STORE_FILE_LKG], FV_START[start / FV_NSTART]);
+                        fv_set(&v.f[BOOT_STORE_FILE_TMP], FV_START[start % FV_NSTART]);
+                        int had = fv_valid(&v.f[0]) || fv_valid(&v.f[1]);
+                        const int fail[2] = { f1, f2 }, how[2] = { h1, h2 };
+                        for (int run = 0; run < 3; run++) {
+                            v.ops = 0;
+                            v.fail_op = run < 2 ? fail[run] : -1;
+                            v.fail_how = run < 2 ? how[run] : FV_FAIL_NONE;
+                            v.read_fail = run == 0 ? rf : -1; /* an unreadable copy on the first boot */
+                            boot_store_sync_result_t r = boot_store_shadow_sync(&ops, FV_P, 2u);
+                            runs++;
+                            if (v.out[0] || v.out[1]) leaked++;
+                            if (had && !fv_valid(&v.f[0]) && !fv_valid(&v.f[1])) lost++;
+                            if (run == 2 && (r == BOOT_STORE_SYNC_FAILED || r == BOOT_STORE_SYNC_UNSETTLED ||
+                                             !fv_current(&v.f[BOOT_STORE_FILE_LKG]) ||
+                                             v.f[BOOT_STORE_FILE_TMP].present))
+                                unsettled++;
+                        }
+                    }
+                }
+            }
+        }
+      }
+    }
+    TEST_ASSERT_EQ(runs, (unsigned)(FV_NSTART * FV_NSTART) * 3u * 18u * 18u * 3u, "the whole fault matrix ran");
+    TEST_ASSERT_EQ(lost, 0u, "no fault sequence destroys the last valid copy");
+    TEST_ASSERT_EQ(unsettled, 0u, "a clean boot after any faults settles on one current copy");
+    TEST_ASSERT_EQ(leaked, 0u, "every read buffer is released");
+
+    /* A current copy costs reads only. */
+    fv_init(&v, &ops);
+    fv_set(&v.f[BOOT_STORE_FILE_LKG], "V3");
+    TEST_ASSERT_EQ(boot_store_shadow_sync(&ops, FV_P, 2u), BOOT_STORE_SYNC_CURRENT,
+                   "a current copy reports current");
+    TEST_ASSERT_EQ(v.writes, 0, "a current copy is not rewritten");
+    /* A failure stops at once: the staging copy is written, publishing fails. */
+    fv_init(&v, &ops);
+    v.fail_op = 1;
+    v.fail_how = FV_FAIL_UNCHANGED;
+    TEST_ASSERT_EQ(boot_store_shadow_sync(&ops, FV_P, 2u), BOOT_STORE_SYNC_FAILED,
+                   "a failed publication reports failed");
+    TEST_ASSERT_EQ(v.ops, 2, "nothing runs after the failed step");
+    TEST_ASSERT(fv_current(&v.f[BOOT_STORE_FILE_TMP]), "the staging copy survives the failure");
+    struct boot_store_shadow_ops none = ops;
+    none.write = 0;
+    TEST_ASSERT_EQ(boot_store_shadow_sync(&none, FV_P, 2u), BOOT_STORE_SYNC_FAILED,
+                   "missing file access is a failure, not a crash");
+    TEST_ASSERT_EQ(boot_store_shadow_sync(&ops, (const unsigned char *)0, 0u), BOOT_STORE_SYNC_FAILED,
+                   "no primary is a failure");
+    /* Adversarial round 2: an unreadable sole staging copy is not rewritten. */
+    fv_init(&v, &ops);
+    fv_set(&v.f[BOOT_STORE_FILE_TMP], "V2");
+    v.read_fail = BOOT_STORE_FILE_TMP;
+    TEST_ASSERT_EQ(boot_store_shadow_sync(&ops, FV_P, 2u), BOOT_STORE_SYNC_HELD,
+                   "an unreadable sole copy holds the plan");
+    TEST_ASSERT_EQ(v.writes + v.ops, 0, "a held plan changes nothing");
+    v.read_fail = -1;
+    TEST_ASSERT_EQ(boot_store_shadow_sync(&ops, FV_P, 2u), BOOT_STORE_SYNC_SAVED,
+                   "the next readable boot settles");
+    /* Test-coverage round 2: an empty staging copy is no store, so it is
+     * replaced, never held like a read that failed. */
+    fv_init(&v, &ops);
+    fv_set(&v.f[BOOT_STORE_FILE_TMP], "");
+    TEST_ASSERT_EQ(boot_store_shadow_sync(&ops, FV_P, 2u), BOOT_STORE_SYNC_SAVED,
+                   "an empty sole staging copy is replaced");
+    TEST_ASSERT(fv_current(&v.f[BOOT_STORE_FILE_LKG]) && !v.f[BOOT_STORE_FILE_TMP].present,
+                "an empty staging copy ends as one current copy");
+}
+
+/* Recovery reads the copies and never writes them. */
+static void test_store_shadow_pick(void)
+{
+    struct boot_store_shadow_ops ops;
+    struct fv v;
+    const unsigned char *buf;
+    unsigned int len;
+    boot_store_copy_state_t ls, ts;
+    const int lo = (int)BOOT_STORE_LOAD_OK, bad = (int)BOOT_ENTRIES_REJECT_CRC_MISMATCH;
+
+    fv_init(&v, &ops);
+    fv_set(&v.f[BOOT_STORE_FILE_LKG], "V2");
+    fv_set(&v.f[BOOT_STORE_FILE_TMP], "V3");
+    TEST_ASSERT_EQ(boot_store_shadow_pick(&ops, lo, bad, &buf, &len, &ls, &ts), BOOT_STORE_SOURCE_LKG,
+                   "a stale but valid published copy is booted");
+    TEST_ASSERT(buf == v.rbuf[BOOT_STORE_FILE_LKG] && len == 2u, "the published copy's bytes are returned");
+    TEST_ASSERT(v.last_accept == buf, "the returned copy was the last one parsed");
+    TEST_ASSERT_EQ(v.out[BOOT_STORE_FILE_LKG], 1, "the caller owns exactly the returned buffer");
+    ops.release(ops.ctx, BOOT_STORE_FILE_LKG, buf);
+
+    fv_init(&v, &ops);
+    fv_set(&v.f[BOOT_STORE_FILE_LKG], "X");
+    fv_set(&v.f[BOOT_STORE_FILE_TMP], "V2");
+    TEST_ASSERT_EQ(boot_store_shadow_pick(&ops, lo, bad, &buf, &len, &ls, &ts), BOOT_STORE_SOURCE_TMP,
+                   "a broken published copy falls to the staging copy");
+    TEST_ASSERT(buf == v.rbuf[BOOT_STORE_FILE_TMP] && v.last_accept == buf, "the staging copy is returned");
+    TEST_ASSERT_EQ(ls, BOOT_STORE_COPY_INVALID, "the broken copy is reported");
+    TEST_ASSERT_EQ(v.out[BOOT_STORE_FILE_LKG], 0, "the broken copy's buffer was released");
+    ops.release(ops.ctx, BOOT_STORE_FILE_TMP, buf);
+
+    fv_init(&v, &ops);
+    fv_set(&v.f[BOOT_STORE_FILE_LKG], "X");
+    fv_set(&v.f[BOOT_STORE_FILE_TMP], "X");
+    TEST_ASSERT_EQ(boot_store_shadow_pick(&ops, lo, bad, &buf, &len, &ls, &ts), BOOT_STORE_SOURCE_FALLBACK,
+                   "both copies broken is the fallback");
+    TEST_ASSERT(buf == (const unsigned char *)0 && v.out[0] == 0 && v.out[1] == 0,
+                "a fallback hands back nothing and holds nothing");
+    TEST_ASSERT_EQ(v.writes + v.ops, 0, "recovery never writes or removes");
+
+    fv_init(&v, &ops);
+    fv_set(&v.f[BOOT_STORE_FILE_LKG], "V3");
+    TEST_ASSERT_EQ(boot_store_shadow_pick(&ops, (int)BOOT_STORE_LOAD_ABSENT, bad, &buf, &len, &ls, &ts),
+                   BOOT_STORE_SOURCE_FALLBACK, "a deleted store does not boot the copy");
+    TEST_ASSERT(v.out[0] == 0 && v.last_accept == (const unsigned char *)0,
+                "a deleted store does not even read the copy");
+}
+
 /* The gate that decides whether a user sees a notice at all.
  *
  * The ABSENT arm is the load-bearing one: the Makefile ESP staging copies
@@ -1983,8 +2281,18 @@ void test_register_boot_entry_parser(void)
                             test_store_reject_token_bound, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: store record recurrence policy",
                             test_store_record_decide, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: store shadow source choice",
+                            test_store_source_choose, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: store shadow refresh plan",
+                            test_store_shadow_plan, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: store shadow sync under faults",
+                            test_store_shadow_sync_faults, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: store shadow recovery pick",
+                            test_store_shadow_pick, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: store size cap boundary",
                             test_store_size_cap_boundary, TEST_CAT_BOOT);
 }
+
+#pragma clang attribute pop
 
 #endif /* KERNEL_TESTS */

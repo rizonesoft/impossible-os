@@ -589,6 +589,198 @@ def t_load_rejects_overdeep_value(p: Path) -> None:
     assert "budget" in cp.stderr, cp.stderr
 
 
+# ---- restore (the store shadow) -----------------------------------------------
+
+@case("restore: a broken store is replaced by the last good copy, old kept as .bad")
+def t_restore_from_lkg(p: Path) -> None:
+    _emit_seed(p)
+    good = p.read_bytes()
+    (p.parent / "bootentries.lkg.json").write_bytes(good)
+    p.write_bytes(b'{ "schema_version": 1, "entries": [ { "id": ')
+    log = p.parent / "mut.jsonl"
+    cp = _run(["restore", str(p), "--mutation-log", str(log)])
+    assert cp.returncode == 0, cp.stderr
+    assert p.read_bytes() == good, "store must be the copy, byte for byte"
+    assert (p.parent / "bootentries.json.bad").read_bytes().startswith(b'{ "schema_version": 1, "entries"')
+    rec = json.loads(log.read_text().splitlines()[-1])
+    assert rec["kind"] == "restore" and rec["prior_crc"] == "INVALID", rec
+    assert rec["note"] == "bootentries.lkg.json", rec
+
+
+@case("restore: a broken published copy falls back to the staging copy")
+def t_restore_from_tmp(p: Path) -> None:
+    _emit_seed(p)
+    good = p.read_bytes()
+    (p.parent / "bootentries.lkg.json").write_bytes(good[:-20])
+    (p.parent / "bootentries.lkg.tmp").write_bytes(good)
+    p.write_bytes(b"garbage")
+    cp = _run(["restore", str(p)])
+    assert cp.returncode == 0, cp.stderr
+    assert p.read_bytes() == good
+    assert "bootentries.lkg.tmp" in cp.stdout, cp.stdout
+
+
+@case("restore: no valid copy leaves the store untouched")
+def t_restore_no_copy(p: Path) -> None:
+    p.write_bytes(b"garbage")
+    (p.parent / "bootentries.lkg.json").write_bytes(b"also garbage")
+    cp = _run(["restore", str(p)])
+    assert cp.returncode == 1, cp.returncode
+    assert p.read_bytes() == b"garbage"
+    assert not (p.parent / "bootentries.json.bad").exists(), "nothing restored, nothing renamed"
+
+
+@case("restore: a missing store is restored without a .bad")
+def t_restore_missing_store(p: Path) -> None:
+    _emit_seed(p)
+    good = p.read_bytes()
+    (p.parent / "bootentries.lkg.json").write_bytes(good)
+    p.unlink()
+    cp = _run(["restore", str(p)])
+    assert cp.returncode == 0, cp.stderr
+    assert p.read_bytes() == good
+    assert not (p.parent / "bootentries.json.bad").exists()
+
+
+@case("restore: a repeated restore keeps the original broken store in .bad")
+def t_restore_twice(p: Path) -> None:
+    _emit_seed(p)
+    good = p.read_bytes()
+    (p.parent / "bootentries.lkg.json").write_bytes(good)
+    p.write_bytes(b"broken-1")
+    assert _run(["restore", str(p)]).returncode == 0
+    cp = _run(["restore", str(p)])
+    assert cp.returncode == 0 and "nothing to do" in cp.stdout, cp.stdout + cp.stderr
+    assert (p.parent / "bootentries.json.bad").read_bytes() == b"broken-1"
+    p.write_bytes(b"broken-2")
+    assert _run(["restore", str(p)]).returncode == 0
+    assert (p.parent / "bootentries.json.bad").read_bytes() == b"broken-1", "first evidence kept"
+    assert (p.parent / "bootentries.json.bad.2").read_bytes() == b"broken-2"
+
+
+def _restore_in_process(p: Path, fail_on: str) -> tuple[int, str]:
+    """Run cmd_restore with _atomic_write failing for one destination."""
+    import argparse
+    import importlib.util
+    import io
+    import contextlib
+    spec = importlib.util.spec_from_file_location("bootcfg_under_test", BOOTCFG)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    real = mod._atomic_write
+
+    def flaky(path, raw):
+        if path.name.endswith(fail_on):
+            raise OSError(28, "No space left on device")
+        real(path, raw)
+    mod._atomic_write = flaky
+    real_new = mod._write_new
+
+    def flaky_new(path, raw):
+        if path.name.endswith(fail_on):
+            raise OSError(28, "No space left on device")
+        real_new(path, raw)
+    mod._write_new = flaky_new
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        rc = mod.cmd_restore(argparse.Namespace(path=str(p), mutation_log=str(p.parent / "mut.jsonl")))
+    return rc, out.getvalue()
+
+
+@case("restore: a failed .bad write leaves the store and logs nothing")
+def t_restore_bad_write_fails(p: Path) -> None:
+    _emit_seed(p)
+    good = p.read_bytes()
+    (p.parent / "bootentries.lkg.json").write_bytes(good)
+    p.write_bytes(b"broken")
+    rc, out = _restore_in_process(p, ".bad")
+    assert rc == 2, rc
+    assert p.read_bytes() == b"broken", "the store must not be replaced without its backup"
+    assert not (p.parent / "mut.jsonl").exists(), "no success record"
+    assert _run(["restore", str(p)]).returncode == 0 and p.read_bytes() == good, "a retry succeeds"
+
+
+@case("restore: a failed store write keeps the backup and logs nothing")
+def t_restore_store_write_fails(p: Path) -> None:
+    _emit_seed(p)
+    good = p.read_bytes()
+    (p.parent / "bootentries.lkg.json").write_bytes(good)
+    p.write_bytes(b"broken")
+    rc, out = _restore_in_process(p, "bootentries.json")
+    assert rc == 2, rc
+    assert p.read_bytes() == b"broken"
+    assert (p.parent / "bootentries.json.bad").read_bytes() == b"broken"
+    assert (p.parent / "bootentries.lkg.json").read_bytes() == good, "the copy is untouched"
+    assert not (p.parent / "mut.jsonl").exists(), "no success record"
+
+
+@case("restore: a valid but different store records its CRC as prior")
+def t_restore_over_valid(p: Path) -> None:
+    _emit_seed(p)
+    good = p.read_bytes()
+    (p.parent / "bootentries.lkg.json").write_bytes(good)
+    _run(["add", str(p), "--json", json.dumps(_seed_extra_entry("extra"))])
+    prior = json.loads(p.read_text())["crc32"]
+    log = p.parent / "mut.jsonl"
+    assert _run(["restore", str(p), "--mutation-log", str(log)]).returncode == 0
+    assert json.loads(log.read_text().splitlines()[-1])["prior_crc"] == prior
+
+
+@case("restore: all .bad names taken refuses and keeps everything")
+def t_restore_bad_exhausted(p: Path) -> None:
+    _emit_seed(p)
+    good = p.read_bytes()
+    (p.parent / "bootentries.lkg.json").write_bytes(good)
+    p.write_bytes(b"broken")
+    for i in range(1, 10):
+        (p.parent / ("bootentries.json.bad" if i == 1 else f"bootentries.json.bad.{i}")).write_bytes(b"old%d" % i)
+    cp = _run(["restore", str(p)])
+    assert cp.returncode == 2 and "remove old ones first" in cp.stderr, cp.stderr
+    assert p.read_bytes() == b"broken"
+    assert (p.parent / "bootentries.json.bad").read_bytes() == b"old1", "evidence untouched"
+
+
+@case("restore: an unreadable store refuses and writes nothing")
+def t_restore_unreadable_store(p: Path) -> None:
+    _emit_seed(p)
+    good = p.read_bytes()
+    (p.parent / "bootentries.lkg.json").write_bytes(good)
+    p.unlink()
+    p.mkdir()  # present, but reading it fails (IsADirectoryError)
+    cp = _run(["restore", str(p)])
+    assert cp.returncode == 2 and "read failed" in cp.stderr, cp.stderr
+    assert p.is_dir() and not (p.parent / "bootentries.json.bad").exists()
+
+
+@case("restore: a .bad file created during the restore is not overwritten")
+def t_restore_bad_race(p: Path) -> None:
+    import argparse
+    import contextlib
+    import importlib.util
+    import io
+    _emit_seed(p)
+    good = p.read_bytes()
+    (p.parent / "bootentries.lkg.json").write_bytes(good)
+    p.write_bytes(b"broken")
+    spec = importlib.util.spec_from_file_location("bootcfg_race", BOOTCFG)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    real_new = mod._write_new
+    racer = p.parent / "bootentries.json.bad"
+
+    def racing(path, raw):
+        if path == racer and not racer.exists():
+            racer.write_bytes(b"other restore")  # published after the name looked free
+        real_new(path, raw)
+    mod._write_new = racing
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        rc = mod.cmd_restore(argparse.Namespace(path=str(p), mutation_log=str(p.parent / "m.jsonl")))
+    assert rc == 0, rc
+    assert racer.read_bytes() == b"other restore", "the concurrent evidence survives"
+    assert (p.parent / "bootentries.json.bad.2").read_bytes() == b"broken"
+    assert p.read_bytes() == good
+
+
 # ---- summary ----------------------------------------------------------------
 
 print(f"\n{PASS_COUNT}/{PASS_COUNT + FAIL_COUNT} bootcfg tests passed")

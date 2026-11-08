@@ -76,7 +76,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  20   | `crc32` header located by string match, not structurally            | §1, §19                                 |  [x]   |
 | 💎  |  21   | Published loader variables need an explicit set-or-clear outcome    | §15, §19                                |  [x]   |
 | 💎  |  22   | Store size cap is untested on both sides of the 16 KiB boundary     | §2, §20                                 |  [x]   |
-| 💎  |  23   | A rejected store has no repair path, only a one-entry fallback      | §1, §20                                 |  [ ]   |
+| 💎  |  23   | A rejected store has no repair path, only a one-entry fallback      | §1, §20                                 |  [x]   |
 | 💎  |  24   | Boot menu help, power and saved-default keys                        | §6, §7, §15                             |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
@@ -873,14 +873,22 @@ Found by the parity pass on §20. Distinct from the already-tracked authenticati
 
 **The mechanism, confirmed at file:line.** The Fallback Contract (`docs/boot/boot-entry-schema.md` section 8) synthesizes exactly one hardcoded entry (`id="fallback"`) and boots it; `boot_entries_synthesize_fallback()` in `src/boot/uefi/boot_entries_parser.c` is the whole of it. There is no backup copy of the store, no A/B pair for the store itself (the doc's "No A/B reference today" line concerns kernel slots, a different mechanism), and the only stated repair route is `bootcfg.exe`, marked "(later)" in the same doc. Both incumbents pair their integrity story with redundancy that this does not have: the Windows BCD is a registry hive whose format carries a base-block checksum plus transaction-log self-healing, with `bootrec /rebuildbcd` rescanning disks to reconstruct the store from scratch; GRUB has no checksum at all, but `grub.cfg` is a GENERATED artifact, so the standard repair is regenerating it with `grub-mkconfig` rather than patching the corrupt file.
 
-- [ ] Decide the model and record it: a shadow copy of the last-known-good store, an A/B pair for the store itself, or regeneration from a source of truth.
-  - These are meaningfully different and the choice constrains every item below it, which is why it is the first item rather than an implementation detail.
-  - Regeneration is the option worth arguing for even though it is the largest: it is what makes GRUB's checksum-free config survivable, and it would give the installer and the recovery partition a single story. Whether this system HAS a source of truth to regenerate from is the open question.
-- [ ] Implement the chosen model in the bootloader's store read path, including the case where BOTH copies fail their integrity check.
-- [ ] Write the recovery route the user actually follows, and put it in the schema doc's Fallback Contract next to the existing one-entry behaviour, so the doc stops implying the fallback is the whole story.
-- [ ] Commit: `"boot: give a corrupt boot entry store a way back"`
+- [x] Decide the model and record it: a last-known-good shadow of the store, kept by the loader (`todo/answers.md` Q33).
+  - Regeneration was rejected: the only source of truth is the seed in host-side `bootcfg.py`, and it would rebuild a default store, not the user's. An A/B pair needs every writer to alternate slots for the same protection.
+  - An absent primary does not consult the shadow (deleting the store resets to the fallback), and restoring the primary stays explicit (design review: automatic restore overwrites the evidence and may persist a stale policy).
+- [x] Implement the model in the store read path, including the case where both copies fail: `store_shadow_maintain()` and `store_shadow_recover()` in `src/boot/uefi/bootx64.c`.
+  - Refresh: an accepted store that differs from `bootentries.lkg.json` is written to `bootentries.lkg.tmp`, then copied to the published name, and the staging copy is deleted once the published copy matches. No rename (adversarial review: a FAT SetInfo rename is not power-fail atomic). No write when the copy is current.
+  - The plan (`boot_store_shadow_plan()`) and its executor (`boot_store_shadow_sync()`, `boot_store_shadow_pick()`) are pure code in `boot_entries_parser.c` behind `boot_store_shadow_ops`; `bootx64.c` supplies only the UEFI file calls.
+  - `test_boot_entry_parser.c` drives the executor against an in-memory volume, injecting an unreadable copy and a failure at every write and delete (file unchanged, gone or torn), twice, from all 16 start states: no valid copy is ever lost, and the next clean boot settles.
+  - A copy whose read failed may be the only valid one, so it is rewritten only beside a valid copy; otherwise the boot holds (adversarial round 2, `BOOT_STORE_SHADOW_HOLD`). Empty and oversize copies are confirmed broken and stay replaceable. The fake volume models the empty case (read returns 2), and the `empty-tmp` smoke leg proves the loader adapter reports it the same way.
+  - Recovery: a present-but-rejected primary boots the published copy, else the staging copy, after the parser and CRC accept it; both broken is the fallback. The notice says "Starting from the last good copy instead". Recovery never writes.
+  - `bootcfg restore` copies the shadow back, keeping the broken store as the next free `.bad`/`.bad.N` and doing nothing when the store already matches; `restore` mutation-log kind; eleven cases in `tools/bootcfg/test_bootcfg.py` including injected write failures, an unreadable store, exhausted `.bad` names and a `.bad` published concurrently (claimed with `O_EXCL`, never replaced).
+- [x] Write the recovery route in the schema doc's Fallback Contract (`docs/boot/boot-entry-schema.md` section 8), and point the kernel's `Boot entry store unusable` warning at `bootcfg restore`.
+- [x] Commit: `"boot: give a corrupt boot entry store a way back"`
 
-**Test checkpoint:** `SUITE=boot` green with cases covering a corrupt primary and a good shadow, both corrupt, and a shadow that is stale rather than corrupt; `scripts/test-smoke-matrix.sh` 4/4 legs.
+**Test checkpoint:** `SUITE=boot` green with cases covering a corrupt primary and a good shadow, both corrupt, and a shadow that is stale rather than corrupt; `scripts/test-smoke-matrix.sh` green, including the new `recovered`, `recovered-tmp` and `empty-tmp` legs (corrupt store plus a valid published copy; a torn published copy plus a valid staging copy; a valid store beside an empty staging copy, which must be replaced, not held).
+
+> **Test runner:** `bash scripts/test.sh SUITE=boot` (store shadow source choice, refresh plan, sync under faults and recovery pick cases), `python3 tools/bootcfg/test_bootcfg.py` (49/49), and `SMOKE_CORRUPT_STORE=1 SMOKE_SHADOW_STORE=1` (or `=tmp`) `bash scripts/test-smoke.sh`.
 
 ---
 

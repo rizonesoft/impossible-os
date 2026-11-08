@@ -349,23 +349,32 @@ priority entry per the policy merge precedence rules.
 
 ## 8. Fallback Contract
 
-When the store is missing, oversize, CRC-mismatched, has unrecognized envelope schema_version,
-or fails parser validation entirely, the bootloader synthesizes ONE in-firmware fallback entry
-matching whatever path it currently loads:
+When the store is present but cannot be used (unreadable, oversize, CRC-mismatched, an unrecognized envelope `schema_version`, or rejected by the parser), the bootloader first tries its **last good copy**, and only when that fails too does it synthesize the one-entry fallback.
+
+### The last good copy
+
+The loader keeps `\EFI\ImpossibleOS\bootentries.lkg.json`, a byte-for-byte copy of the last store it ACCEPTED (parsed with no reject). It is "last parser-accepted", not "last successfully booted": its entries go through the same policy, Secure Boot and image checks as any other store. The loader never rewrites `bootentries.json` itself; that stays `bootcfg`'s job.
+
+- **Refresh.** After a store is accepted, the loader compares it with the copy. Only when they differ does it write the store's bytes to `bootentries.lkg.tmp` (delete, create, write, Flush, Close), then copy the staging bytes to `bootentries.lkg.json` the same way, and only once that copy matches the store does it delete the staging copy. Nothing is renamed: a SetInfo rename is not power-fail atomic on FAT. A store that has not changed costs one read per boot and no write. Serial: `[BOOT] store-shadow: last good copy is current` or `... saved`, and `... write failed (status 0x...)` on a read-only or full ESP.
+- **Interruptions.** The plan (`boot_store_shadow_plan()`) only rewrites a file while the OTHER file holds a valid copy, or while neither does, and the executor (`boot_store_shadow_sync()`) stops at the first failed step and re-plans on the next boot. A copy whose read FAILED (as opposed to one that is empty, oversize or rejected) may be the only valid one, so it is never rewritten unless the other copy is valid; otherwise that boot changes nothing (`store-shadow: a copy could not be read -- left alone this boot`). Both are pure code in `src/boot/uefi/boot_entries_parser.c`; the kernel suite runs them against an in-memory volume, injects an unreadable copy, an empty copy and a failure at every write and delete in each shape a real ESP produces (file unchanged, file gone, file torn), twice in a row from every starting state, and checks a valid copy always survives and the next clean boot settles.
+- **Recovery.** A rejected or unreadable store boots `bootentries.lkg.json`, or `bootentries.lkg.tmp` if the published copy is broken, after the parser and CRC accept it (`boot_store_source_choose()`). The rejection is still recorded in `BootStoreReject` and announced on screen, with "Starting from the last good copy instead"; serial reads `[BOOT] store-shadow: booting bootentries.lkg.json entries=N`. A boot that did not accept its primary never writes the copy.
+- **Deleting the store resets to the fallback.** A missing `bootentries.json` does not consult the copy: removing the file is how a user discards the configuration. A FAT directory entry lost to corruption looks the same as a deletion, so that case also boots the fallback; `bootcfg restore` recovers it.
+- **Repair.** `bootcfg restore <ESP>\EFI\ImpossibleOS\bootentries.json` validates the copy, keeps the broken store as `bootentries.json.bad` (the next free `.bad.N` if one exists; earlier evidence is never overwritten), and writes the copy back byte for byte. A store that already matches the copy is left alone, so a repeated restore is harmless. Restoring is explicit because the copy may be older than the store the user meant to write.
+
+### The synthesized entry
+
+When neither copy can be used, or the store is absent, the bootloader synthesizes ONE in-firmware fallback entry matching whatever path it currently loads:
 
 | Bootloader state      | Synthesized entry                                                  |
 | --------------------- | ------------------------------------------------------------------ |
 | UKI fast path active  | `kind: uki`, `uki_path` = loaded UKI image path                    |
 | Split-path active     | `kind: split`, `kernel` = `\EFI\ImpossibleOS\kernel.exe`, `cmdline` from `boot.conf` |
 
-The synthesized entry has `id = "fallback"`, `title = "Impossible OS (fallback)"`,
-`flags = ["active"]`, no per-entry `tries_left` counter (no rollback semantics in fallback mode).
+The synthesized entry has `id = "fallback"`, `title = "Impossible OS (fallback)"`, `flags = ["active"]`, no per-entry `tries_left` counter (no rollback semantics in fallback mode).
 
-`boot_info.selection_reason` is set to `ENTRY_STORE_INVALID` (or a more specific code per the
-audit trail TODO) so user-mode tooling can surface the fallback condition.
+`boot_info.selection_reason` is set to `ENTRY_STORE_INVALID` (or a more specific code per the audit trail TODO) so user-mode tooling can surface the fallback condition.
 
-No A/B reference today -- the slot-metadata TODO is not yet shipped. Once it lands, the A/B
-integration TODO will widen the fallback to honor the active slot.
+No A/B reference today -- the slot-metadata TODO is not yet shipped. Once it lands, the A/B integration TODO will widen the fallback to honor the active slot.
 
 ## 9. Sample Store
 

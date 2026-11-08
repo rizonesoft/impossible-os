@@ -599,6 +599,120 @@ def cmd_emit_seed(args: argparse.Namespace) -> int:
     return 0
 
 
+# Shadow copies the bootloader keeps beside the store (boot-entry-schema.md), in
+# the order it boots them. Names mirror include/boot/boot_entries_parser.h
+# BOOT_STORE_LKG_NAME / BOOT_STORE_TMP_NAME.
+SHADOW_NAMES = ("bootentries.lkg.json", "bootentries.lkg.tmp")
+
+
+BAD_KEEP_MAX = 9
+
+
+def _bad_names(path: Path):
+    """<store>.bad, .bad.2, ... .bad.N in order."""
+    for i in range(1, BAD_KEEP_MAX + 1):
+        yield path.with_name(path.name + (".bad" if i == 1 else f".bad.{i}"))
+
+
+def _write_new(path: Path, raw: bytes) -> None:
+    """Create `path` exclusively and write `raw` durably. Raises
+    FileExistsError if anything already holds the name: unlike os.replace,
+    this can never overwrite a file another process published meanwhile."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    try:
+        view = memoryview(raw)
+        while view:
+            view = view[os.write(fd, view):]
+        os.fsync(fd)
+    except BaseException:
+        os.close(fd)
+        path.unlink(missing_ok=True)  # ours: created by O_EXCL above
+        raise
+    os.close(fd)
+    dfd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
+def _keep_evidence(path: Path, raw: bytes) -> Path | None:
+    """Write `raw` under the first free .bad name, claiming the name and
+    writing in one exclusive step: an earlier broken store is evidence and is
+    never overwritten, even by a concurrent restore. None when all are taken."""
+    for cand in _bad_names(path):
+        try:
+            _write_new(cand, raw)
+        except FileExistsError:
+            continue
+        return cand
+    return None
+
+
+def cmd_restore(args: argparse.Namespace) -> int:
+    """Copy the bootloader's last good copy back over a broken store.
+
+    The loader boots the copy on its own when the store is rejected, but never
+    rewrites the store: restoring is the user's decision, because the copy may
+    be older than the store they meant to write. The broken store is kept as
+    <store>.bad (or the next free .bad.N; an earlier one is never overwritten),
+    and a store that already matches the copy is left alone. The copy is written
+    byte-for-byte after the same validation the firmware applies.
+    """
+    path = Path(args.path)
+    chosen: tuple[Path, dict, bytes] | None = None
+    for name in SHADOW_NAMES:
+        cand = path.parent / name
+        if not cand.is_file():
+            continue
+        try:
+            data, raw = _load(cand)
+        except SystemExit:
+            continue  # _load printed why; try the next copy
+        chosen = (cand, data, raw)
+        break
+    if chosen is None:
+        print(f"[FAIL] {path}: no valid last good copy beside it "
+              f"({', '.join(SHADOW_NAMES)})", file=sys.stderr)
+        return 1
+    cand, data, raw = chosen
+    prior_crc = None
+    if path.exists():
+        try:
+            current = path.read_bytes()
+        except OSError as e:
+            print(f"[FAIL] {path}: read failed: {e}", file=sys.stderr)
+            return 2
+        if current == raw:
+            # Already restored (a retry): touching .bad now would replace the
+            # broken store it holds with the repaired one.
+            print(f"restore: {path} already matches {cand.name}; nothing to do")
+            return 0
+        try:
+            prior_data, _ = _load(path)
+            prior_crc = prior_data.get("crc32")
+        except SystemExit:
+            prior_crc = "INVALID"
+        try:
+            bad = _keep_evidence(path, current)
+        except OSError as e:
+            print(f"[FAIL] {path}: could not keep the old store as {path.name}.bad: {e}", file=sys.stderr)
+            return 2
+        if bad is None:
+            print(f"[FAIL] {path}: {path.name}.bad through .bad.{BAD_KEEP_MAX} all exist; "
+                  f"remove old ones first", file=sys.stderr)
+            return 2
+    try:
+        _atomic_write(path, raw)
+    except OSError as e:
+        print(f"[FAIL] {path}: write failed: {e}", file=sys.stderr)
+        return 2
+    _append_mutation_log(_resolve_mutation_log(args), "restore", "default",
+                         prior_crc, data["crc32"], note=cand.name)
+    print(f"restore: {path} restored from {cand.name}; CRC {data['crc32']}")
+    return 0
+
+
 # ---- argparse glue ----------------------------------------------------------
 
 
@@ -655,6 +769,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_seed.add_argument("path")
     p_seed.add_argument("--mutation-log", help=mutation_help)
     p_seed.set_defaults(func=cmd_emit_seed)
+
+    p_restore = sub.add_parser(
+        "restore",
+        help="copy the bootloader's last good copy over a broken store "
+             "(the old store is kept as <store>.bad)",
+    )
+    p_restore.add_argument("path")
+    p_restore.add_argument("--mutation-log", help=mutation_help)
+    p_restore.set_defaults(func=cmd_restore)
 
     p_health = sub.add_parser(
         "health",

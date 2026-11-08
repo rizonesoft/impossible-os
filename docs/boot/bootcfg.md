@@ -49,6 +49,17 @@ bootcfg emit-seed <path>
     Running twice yields a byte-identical store; safe to wire into
     release / install scripts. See docs/boot/bootstrap.md for the
     full ownership boundary and lifecycle contract.
+
+bootcfg restore <path>
+    Copy the bootloader's last good copy back over a broken store. The
+    copy is bootentries.lkg.json beside <path>, or bootentries.lkg.tmp
+    when the published copy is broken; it is validated first and
+    written byte for byte. The old store is kept as <path>.bad (the
+    next free .bad.N if one exists; earlier evidence is never
+    overwritten). A store that already matches the copy is left
+    alone, so a retry is harmless. rc=1 when no valid copy exists,
+    rc=2 when a write fails (the store is untouched until its backup
+    is written). See the Fallback Contract in boot-entry-schema.md.
 ```
 
 ## Exit codes
@@ -100,10 +111,7 @@ What blocks them today is the syscall ABI, not the binary. Both ring-3 entry pat
 python3 tools/bootcfg/test_bootcfg.py
 ```
 
-16 self-contained subprocess tests covering every subcommand, the
-validator-reject keeps-store-untouched contract, atomic-write tempfile
-cleanup, and the usage-error exit codes. No pytest dependency (mirrors
-the `test_validate.py` pattern).
+Self-contained tests covering every subcommand, the validator-reject keeps-store-untouched contract, atomic-write tempfile cleanup, restore with injected write failures, and the usage-error exit codes. No pytest dependency (mirrors the `test_validate.py` pattern).
 
 ## Cross-references
 

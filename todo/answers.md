@@ -400,3 +400,13 @@ The loader wrote both every boot (NON_VOLATILE), and on a rejected store deleted
 - **B: keep writing them volatile.** A volatile write is refused while a persistent copy exists, so it would have to delete the user's setting first: configuration loss.
 
 A: (run decision, 2026-11-08) A: stop writing them. Reversal cost: restore two calls in `boot_loader_vars_publish()` plus their tests; no data is lost by A. §24's `d` key becomes the writer of `LoaderEntryDefault` when it is honoured, and then bit 2 is advertised.
+
+## Q33 (01-boot-platform/TODO-07 §23): how does a rejected boot entry store get back to its own entries?
+
+A rejected `bootentries.json` booted one synthesized fallback entry, and nothing kept a copy to recover from. Options: (A) a last-known-good shadow the loader keeps beside the store; (B) an A/B pair of stores; (C) regenerate the store from install data.
+
+- **A: last-known-good shadow.** The loader copies a store it accepted to `bootentries.lkg.json` (through `bootentries.lkg.tmp`), only when the bytes changed, and boots the copy when the primary is present but rejected. The primary is never rewritten by the loader; `bootcfg restore` copies the shadow back on request. Cost: one extra file read per boot, a write only when the store changes, and a recovered boot may run an older configuration (the notice says so).
+- **B: A/B stores.** Needs every writer (bootcfg, a future live editor) to alternate slots and a generation counter to pick between them; more format surface for the same protection.
+- **C: regeneration.** No source of truth exists in the loader: the seed lives only in host-side `bootcfg.py`, and the result would be a default store, not the user's.
+
+A: (run decision, 2026-11-08) A: last-known-good shadow, with an absent primary NOT consulting the shadow (deleting the store resets to the fallback) and restoration explicit rather than automatic (automatic restore would overwrite the evidence and persist a possibly stale policy). Reversal cost: remove `store_shadow_maintain`/`store_shadow_recover` and their two call sites in `bootx64.c`, the pure plan in `boot_entries_parser.c`, `bootcfg restore` and the smoke leg; the shadow files left on ESPs are inert without the code.

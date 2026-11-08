@@ -626,6 +626,20 @@ CORRUPT_STORE="${SMOKE_CORRUPT_STORE:-0}"
 # Stage a VALID store. The parser's runtime tables and struct copies only run on
 # this path, so an image with no store cannot exercise them.
 VALID_STORE="${SMOKE_VALID_STORE:-0}"
+# Stage a valid last-known-good copy (bootentries.lkg.json) beside the store, so
+# a corrupt primary boots the copy instead of the fallback (the store shadow).
+# SMOKE_SHADOW_STORE=tmp instead stages a BROKEN published copy and a valid
+# staging copy (bootentries.lkg.tmp): an interrupted publication.
+# SMOKE_SHADOW_STORE=empty (with SMOKE_VALID_STORE=1) stages only an EMPTY
+# staging copy: a write cut off before any byte landed. It is definitely not a
+# store, so the loader must replace it, not hold off as for a failed read.
+SHADOW_STORE="${SMOKE_SHADOW_STORE:-0}"
+case "$SHADOW_STORE" in 0|1|tmp|empty) ;; *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_SHADOW_STORE must be 0, 1, tmp or empty (got: $SHADOW_STORE)${NC}"; exit 1 ;; esac
+if [ "$SHADOW_STORE" = "empty" ] && [ "${SMOKE_VALID_STORE:-0}" != "1" ]; then
+    echo -e "${RED}SMOKE TEST FAILED: SMOKE_SHADOW_STORE=empty needs SMOKE_VALID_STORE=1${NC}"; exit 1
+fi
+SHADOW_NAME=bootentries.lkg.json
+[ "$SHADOW_STORE" = "tmp" ] || [ "$SHADOW_STORE" = "empty" ] && SHADOW_NAME=bootentries.lkg.tmp
 # Stage a valid store with TWO entries, so the boot menu draws, counts down and
 # auto-boots its default. No other leg reaches the menu: one entry skips it.
 # SMOKE_MENU=keys drives the same menu through the QEMU monitor instead: Down
@@ -694,7 +708,7 @@ if [ "$LOWRES" = "1" ]; then FORCE_MODE="$LOWRES_MODE"; EXPECT_TIER="compact"; f
 # fingerprints the CANONICAL build image: recording one here would certify the
 # untouched image using evidence from a boot of different bytes.
 IMAGE_MODIFIED=0
-if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$UKI_MODE" ]; then
+if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ "$SHADOW_STORE" != "0" ] || [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$UKI_MODE" ]; then
     if ! command -v mcopy >/dev/null 2>&1; then
         echo -e "${RED}SMOKE TEST FAILED: image fixtures need mtools (mcopy)${NC}"
         exit 1
@@ -711,7 +725,7 @@ if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ -n "$FORCE_MODE" 
     IMAGE_MODIFIED=1
     mmd -i "$FIXTURE_DISK@@$EFI_OFFSET" ::EFI/ImpossibleOS 2>/dev/null || true
 fi
-if [ "$VALID_STORE" = "1" ]; then
+if [ "$VALID_STORE" = "1" ] || [ "$SHADOW_STORE" != "0" ]; then
     VALID_JSON="$BUILD/bootentries.valid.json"
     python3 - "$VALID_JSON" "$STORE_ENTRIES" "$MENU_COUNTDOWN" <<'PYEOF'
 import json, sys, zlib
@@ -731,9 +745,27 @@ body = json.dumps(store).encode()
 crc = zlib.crc32(body) & 0xFFFFFFFF
 open(sys.argv[1], "wb").write(body.replace(b"0x00000000", b"0x%08X" % crc, 1))
 PYEOF
-    mcopy -i "$DISK@@$EFI_OFFSET" -o "$VALID_JSON" \
-          ::EFI/ImpossibleOS/bootentries.json
-    echo -e "  ${DIM}valid-store fixture staged into $(basename "$DISK")${NC}"
+    if [ "$VALID_STORE" = "1" ]; then
+        mcopy -i "$DISK@@$EFI_OFFSET" -o "$VALID_JSON" \
+              ::EFI/ImpossibleOS/bootentries.json
+        echo -e "  ${DIM}valid-store fixture staged into $(basename "$DISK")${NC}"
+    fi
+    if [ "$SHADOW_STORE" = "empty" ]; then
+        : > "$BUILD/bootentries.lkg.empty"
+        mcopy -i "$DISK@@$EFI_OFFSET" -o "$BUILD/bootentries.lkg.empty" \
+              "::EFI/ImpossibleOS/$SHADOW_NAME"
+        echo -e "  ${DIM}empty staging-copy fixture staged into $(basename "$DISK")${NC}"
+    elif [ "$SHADOW_STORE" != "0" ]; then
+        mcopy -i "$DISK@@$EFI_OFFSET" -o "$VALID_JSON" \
+              "::EFI/ImpossibleOS/$SHADOW_NAME"
+        if [ "$SHADOW_STORE" = "tmp" ]; then
+            # The published copy is torn: a valid prefix, no closing bytes.
+            head -c 40 "$VALID_JSON" > "$BUILD/bootentries.lkg.torn.json"
+            mcopy -i "$DISK@@$EFI_OFFSET" -o "$BUILD/bootentries.lkg.torn.json" \
+                  ::EFI/ImpossibleOS/bootentries.lkg.json
+        fi
+        echo -e "  ${DIM}last-good-copy fixture ($SHADOW_NAME) staged into $(basename "$DISK")${NC}"
+    fi
 fi
 if [ "$CORRUPT_STORE" = "1" ]; then
     CORRUPT_JSON="$BUILD/bootentries.corrupt.json"
@@ -1456,6 +1488,17 @@ elif [ "$BOOT_PASSED" = true ]; then
             grep -aE "policy:|boot_sticky|history:|boot_history:" "$STRIPPED_LOG" 2>/dev/null | head -10
             exit 1
         }
+        # Every fixture image starts with no last good copy, so an accepted store
+        # writes one: staging copy, then publication, then the settled state.
+        grep -qF '[BOOT] store-shadow: last good copy saved' "$STRIPPED_LOG" 2>/dev/null \
+            || loader_fail "an accepted store did not save its last good copy"
+        if [ "$SHADOW_STORE" = "empty" ]; then
+            grep -qF '[BOOT] policy: bootentries.lkg.tmp is empty' "$STRIPPED_LOG" 2>/dev/null \
+                || loader_fail "the empty staging copy was not read"
+            if grep -qF 'store-shadow: a copy could not be read' "$STRIPPED_LOG" 2>/dev/null; then
+                loader_fail "an empty staging copy was treated as unreadable and held"
+            fi
+        fi
         grep -qF '[BOOT] policy: kind validate OK kind=0 kernel="\boot\kernel.exe"' "$STRIPPED_LOG" 2>/dev/null \
             || loader_fail "boot_entry_kind did not decode the split entry's kernel path"
         # A valid store and a GPT ESP make every variable knowable except the two
@@ -1624,6 +1667,25 @@ elif [ "$BOOT_PASSED" = true ]; then
            "$STRIPPED_LOG" 2>/dev/null; then
             echo -e "${RED}SMOKE TEST FAILED: the notice truncated a field${NC}"
             exit 1
+        fi
+        # Store shadow: with a last good copy the corrupt store boots the
+        # copy, and the notice says so; without one it boots the fallback.
+        if [ "$SHADOW_STORE" != "0" ]; then
+            grep -qF "[BOOT] store-shadow: booting $SHADOW_NAME entries=1" "$STRIPPED_LOG" 2>/dev/null \
+                || { echo -e "${RED}SMOKE TEST FAILED: a corrupt store with a good copy did not boot the copy${NC}"
+                     grep -aE "store-shadow:|store-reject:" "$STRIPPED_LOG" 2>/dev/null | head -4; exit 1; }
+            grep -qE "store-reject: notice channel=[a-z-]+ -- booting the last good copy" "$STRIPPED_LOG" 2>/dev/null \
+                || { echo -e "${RED}SMOKE TEST FAILED: the notice did not say the last good copy was booted${NC}"; exit 1; }
+            grep -qF '[BOOT] policy: selection_reason=1 (STORE_DEFAULT) selected="smoke-entry"' "$STRIPPED_LOG" 2>/dev/null \
+                || { echo -e "${RED}SMOKE TEST FAILED: the recovered store's default entry was not selected${NC}"; exit 1; }
+            # A store this boot did not accept never refreshes the copy.
+            if grep -qE 'store-shadow: (last good copy (saved|is current)|writing|publishing)' "$STRIPPED_LOG" 2>/dev/null; then
+                echo -e "${RED}SMOKE TEST FAILED: a rejected store touched the last good copy${NC}"; exit 1
+            fi
+            echo -e "  ${GREEN}✓${NC} rejected store booted its last good copy"
+        else
+            grep -qF '[BOOT] store-shadow: no last good copy -- fallback' "$STRIPPED_LOG" 2>/dev/null \
+                || { echo -e "${RED}SMOKE TEST FAILED: a corrupt store with no copy did not report the fallback${NC}"; exit 1; }
         fi
         echo -e "  ${GREEN}✓${NC} rejected store announced on screen (channel=$NOTICE_CHANNEL)"
     fi

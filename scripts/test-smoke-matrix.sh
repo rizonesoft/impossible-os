@@ -131,6 +131,9 @@ done
 for leg in VALID:valid:SMOKE_VALID_STORE=1 \
            MENU:menu:SMOKE_MENU=1 \
            MENU:keys:SMOKE_MENU=keys \
+           CORRUPT:recovered:SMOKE_CORRUPT_STORE=1:SMOKE_SHADOW_STORE=1 \
+           CORRUPT:recovered-tmp:SMOKE_CORRUPT_STORE=1:SMOKE_SHADOW_STORE=tmp \
+           VALID:empty-tmp:SMOKE_VALID_STORE=1:SMOKE_SHADOW_STORE=empty \
            CORRUPT:corrupt:SMOKE_CORRUPT_STORE=1 \
            CORRUPT:repeat:SMOKE_CORRUPT_STORE=1:SMOKE_STORE_RECORD=unchanged \
            VALID:repaired:SMOKE_VALID_STORE=1:SMOKE_STORE_RECORD=cleared; do

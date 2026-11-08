@@ -5121,10 +5121,15 @@ static void read_boot_optionaldata_id(UINT16 boot_current,
  * literal and is never freed. An oversize store is UNREADABLE, not fatal:
  * a corrupt or hostile ESP must not be able to stop the machine merely by
  * inflating the policy file. */
-static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len,
-                                        boot_store_load_status_t *out_status,
-                                        const char **out_detail)
+/* `out_not_store` (may be NULL) is set to 1 when the file is there but its
+ * size alone proves it is no store (empty, over the cap), as opposed to a
+ * read that failed and might succeed on another boot. */
+static EFI_STATUS load_store_file(const CHAR16 *path, const char *label,
+                                  unsigned char **out_buf, UINTN *out_len,
+                                  boot_store_load_status_t *out_status,
+                                  const char **out_detail, int *out_not_store)
 {
+    if (out_not_store) *out_not_store = 0;
     *out_buf = (unsigned char *)0;
     *out_len = 0;
     *out_status = BOOT_STORE_LOAD_UNINSPECTED;
@@ -5152,7 +5157,7 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len,
 
     EFI_FILE_PROTOCOL *json_file = (EFI_FILE_PROTOCOL *)0;
     status = root_dir->Open(root_dir, &json_file,
-                            u"\\EFI\\ImpossibleOS\\bootentries.json",
+                            (CHAR16 *)path,
                             EFI_FILE_MODE_READ, 0);
     if (EFI_ERROR(status) || !json_file) {
         root_dir->Close(root_dir);
@@ -5209,7 +5214,9 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len,
          * corruption a user is most likely to cause by hand. */
         json_file->Close(json_file);
         root_dir->Close(root_dir);
-        serial_early_print("[BOOT] policy: bootentries.json is empty -- treating as invalid store\n");
+        serial_early_print("[BOOT] policy: "); serial_early_print(label);
+        serial_early_print(" is empty -- treating as invalid store\n");
+        if (out_not_store) *out_not_store = 1;
         *out_status = BOOT_STORE_LOAD_UNREADABLE;
         *out_detail = "the boot entry store file is empty";
         return EFI_NOT_FOUND;
@@ -5229,11 +5236,13 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len,
          * it as a few bytes. */
         _Static_assert(BOOT_ENTRIES_MAX_TOTAL_BYTES == 16u * 1024u,
                        "the oversize detail text below names the cap as 16 KiB");
-        serial_early_print("[BOOT] policy: bootentries.json oversize (0x");
+        serial_early_print("[BOOT] policy: "); serial_early_print(label);
+        serial_early_print(" oversize (0x");
         serial_early_print_hex64(file_size);
         serial_early_print(" bytes > ");
         serial_early_print_uint(BOOT_ENTRIES_MAX_TOTAL_BYTES);
         serial_early_print(" byte cap) -- treating as invalid store\n");
+        if (out_not_store) *out_not_store = 1;
         *out_status = BOOT_STORE_LOAD_UNREADABLE;
         *out_detail = "the boot entry store is larger than the 16 KiB limit";
         return EFI_NOT_FOUND;
@@ -5268,7 +5277,8 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len,
      * forbids silent truncation -- the corruption rule is "all or
      * nothing" for parsed config blobs. */
     if (read_len != (UINTN)file_size) {
-        serial_early_print("[BOOT] policy: bootentries.json short read (");
+        serial_early_print("[BOOT] policy: "); serial_early_print(label);
+        serial_early_print(" short read (");
         serial_early_print_uint((UINT32)read_len);
         serial_early_print(" of ");
         serial_early_print_uint((UINT32)file_size);
@@ -5285,6 +5295,243 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len,
     *out_detail = "the boot entry store was read";
     return EFI_SUCCESS;
 }
+
+/* The primary store. Its label stays "bootentries.json" in every serial line,
+ * which the smoke fixtures and existing logs match. */
+static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len,
+                                        boot_store_load_status_t *out_status,
+                                        const char **out_detail)
+{
+    return load_store_file(u"\\EFI\\ImpossibleOS\\bootentries.json", BOOT_STORE_PRIMARY_NAME,
+                           out_buf, out_len, out_status, out_detail, (int *)0);
+}
+
+/* ---- Last-known-good shadow of the store (boot-entry-schema.md, Fallback Contract). --
+ *
+ * The loader never rewrites the primary store; that stays bootcfg's job.
+ * It keeps a copy of the last primary it ACCEPTED, so a store that later
+ * breaks can still boot its own entries instead of the one-entry fallback.
+ * The plan and its execution are pure (boot_store_shadow_sync /
+ * boot_store_shadow_pick in boot_entries_parser.c, driven by the kernel
+ * suite against an in-memory volume with injected faults); this block is
+ * only their UEFI file access. Every copy is the store format, so the
+ * parser and CRC decide whether a copy is intact, and a copy is only ever
+ * written while the primary is good, so a failure here can never cost the
+ * boot its configuration. */
+static EFI_STATUS counters_open_volume_root(EFI_FILE_PROTOCOL **out_root);
+
+static const CHAR16 *const g_store_shadow_paths[2] = {
+    u"\\EFI\\ImpossibleOS\\bootentries.lkg.json", /* BOOT_STORE_FILE_LKG */
+    u"\\EFI\\ImpossibleOS\\bootentries.lkg.tmp",  /* BOOT_STORE_FILE_TMP */
+};
+static const char *const g_store_shadow_names[2] = { BOOT_STORE_LKG_NAME, BOOT_STORE_TMP_NAME };
+
+struct store_shadow_ctx {
+    int sb_active;
+    boot_entries_parse_result_t *scratch; /* the last accept()'s parse */
+    EFI_STATUS last_error;                /* the first failed write/remove, for the log */
+};
+
+static int store_shadow_which_ok(int which)
+{
+    return which == BOOT_STORE_FILE_LKG || which == BOOT_STORE_FILE_TMP;
+}
+
+static int store_shadow_read(void *vctx, int which, const unsigned char **buf, unsigned int *len)
+{
+    (void)vctx;
+    *buf = (const unsigned char *)0;
+    *len = 0;
+    if (!store_shadow_which_ok(which)) return -1;
+    unsigned char *b = (unsigned char *)0;
+    UINTN l = 0;
+    boot_store_load_status_t st = BOOT_STORE_LOAD_UNINSPECTED;
+    const char *detail = "";
+    int not_store = 0;
+    EFI_STATUS s = load_store_file(g_store_shadow_paths[which], g_store_shadow_names[which],
+                                   &b, &l, &st, &detail, &not_store);
+    if (st == BOOT_STORE_LOAD_ABSENT || st == BOOT_STORE_LOAD_UNINSPECTED) return 0;
+    if (EFI_ERROR(s) || !b || st != BOOT_STORE_LOAD_OK) {
+        if (b) gBS->FreePool(b);
+        return not_store ? 2 : -1;
+    }
+    *buf = b;
+    *len = (unsigned int)l;  /* load_store_file caps it at BOOT_ENTRIES_MAX_TOTAL_BYTES */
+    return 1;
+}
+
+static void store_shadow_release(void *vctx, int which, const unsigned char *buf)
+{
+    (void)vctx;
+    (void)which;
+    if (buf) gBS->FreePool((VOID *)buf);
+}
+
+static int store_shadow_accept(void *vctx, const unsigned char *buf, unsigned int len)
+{
+    struct store_shadow_ctx *c = (struct store_shadow_ctx *)vctx;
+    for (UINTN i = 0; i < sizeof(*c->scratch); i++) ((UINT8 *)c->scratch)[i] = 0;
+    (void)boot_entries_parse(buf, len, c->sb_active, (boot_entries_log_fn)0, c->scratch);
+    return c->scratch->reject_code == BOOT_ENTRIES_OK;
+}
+
+/* Delete a file if it is there. Delete() reports a refusal as the WARNING
+ * EFI_WARN_DELETE_FAILURE, which EFI_ERROR() does not catch, so anything but
+ * EFI_SUCCESS is a failure. */
+static EFI_STATUS store_file_delete(EFI_FILE_PROTOCOL *root, const CHAR16 *path)
+{
+    EFI_FILE_PROTOCOL *f = (EFI_FILE_PROTOCOL *)0;
+    EFI_STATUS s = root->Open(root, &f, (CHAR16 *)path,
+                              EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (s == EFI_NOT_FOUND) return EFI_SUCCESS;
+    if (EFI_ERROR(s) || !f) return EFI_ERROR(s) ? s : EFI_NOT_FOUND;
+    s = f->Delete(f);  /* Delete also closes the handle. */
+    return (s == EFI_SUCCESS) ? EFI_SUCCESS : EFI_ACCESS_DENIED;
+}
+
+/* Write `buf` as a new file at `path`. CREATE does not truncate an existing
+ * file, so any old copy is deleted first. A short write deletes the partial
+ * file; the file counts as written only when Write, Flush and Close all
+ * succeed (the counter protocol's durability rule). */
+static EFI_STATUS store_file_write(EFI_FILE_PROTOCOL *root, const CHAR16 *path,
+                                   const unsigned char *buf, UINTN len)
+{
+    EFI_STATUS s = store_file_delete(root, path);
+    if (EFI_ERROR(s)) return s;
+    EFI_FILE_PROTOCOL *f = (EFI_FILE_PROTOCOL *)0;
+    s = root->Open(root, &f, (CHAR16 *)path,
+                   EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
+    if (EFI_ERROR(s) || !f) return EFI_ERROR(s) ? s : EFI_NOT_FOUND;
+    UINTN n = len;
+    s = f->Write(f, &n, (VOID *)buf);
+    if (EFI_ERROR(s) || n != len) {
+        f->Delete(f);
+        return EFI_ERROR(s) ? s : EFI_DEVICE_ERROR;
+    }
+    EFI_STATUS fs = f->Flush ? f->Flush(f) : EFI_SUCCESS;
+    EFI_STATUS cs = f->Close(f);
+    if (EFI_ERROR(fs)) return fs;
+    return cs;
+}
+
+static int store_shadow_write(void *vctx, int which, const unsigned char *buf, unsigned int len)
+{
+    struct store_shadow_ctx *c = (struct store_shadow_ctx *)vctx;
+    if (!store_shadow_which_ok(which)) return -1;
+    EFI_FILE_PROTOCOL *root = (EFI_FILE_PROTOCOL *)0;
+    EFI_STATUS s = counters_open_volume_root(&root);
+    if (!EFI_ERROR(s) && root) {
+        s = store_file_write(root, g_store_shadow_paths[which], buf, (UINTN)len);
+        root->Close(root);
+    } else if (!EFI_ERROR(s)) {
+        s = EFI_NOT_FOUND;
+    }
+    if (EFI_ERROR(s) && c->last_error == EFI_SUCCESS) c->last_error = s;
+    return EFI_ERROR(s) ? -1 : 0;
+}
+
+static int store_shadow_remove(void *vctx, int which)
+{
+    struct store_shadow_ctx *c = (struct store_shadow_ctx *)vctx;
+    if (!store_shadow_which_ok(which)) return -1;
+    EFI_FILE_PROTOCOL *root = (EFI_FILE_PROTOCOL *)0;
+    EFI_STATUS s = counters_open_volume_root(&root);
+    if (!EFI_ERROR(s) && root) {
+        s = store_file_delete(root, g_store_shadow_paths[which]);
+        root->Close(root);
+    } else if (!EFI_ERROR(s)) {
+        s = EFI_NOT_FOUND;
+    }
+    if (EFI_ERROR(s) && c->last_error == EFI_SUCCESS) c->last_error = s;
+    return EFI_ERROR(s) ? -1 : 0;
+}
+
+static int store_shadow_ops_init(struct boot_store_shadow_ops *ops, struct store_shadow_ctx *c,
+                                 int sb_active)
+{
+    c->sb_active = sb_active;
+    c->last_error = EFI_SUCCESS;
+    c->scratch = (boot_entries_parse_result_t *)0;
+    if (EFI_ERROR(gBS->AllocatePool(EfiLoaderData, sizeof(*c->scratch), (VOID **)&c->scratch)) ||
+        !c->scratch)
+        return 0;
+    ops->ctx = c;
+    ops->read = store_shadow_read;
+    ops->release = store_shadow_release;
+    ops->write = store_shadow_write;
+    ops->remove = store_shadow_remove;
+    ops->accept = store_shadow_accept;
+    return 1;
+}
+
+/* Bring the shadow up to date with an accepted primary. */
+static void store_shadow_maintain(const unsigned char *primary, UINTN primary_len, int sb_active)
+{
+    struct boot_store_shadow_ops ops;
+    struct store_shadow_ctx c;
+    if (!store_shadow_ops_init(&ops, &c, sb_active)) {
+        serial_early_print("[BOOT] store-shadow: no memory to check the last good copy -- skipped\n");
+        return;
+    }
+    boot_store_sync_result_t r = boot_store_shadow_sync(&ops, primary, (unsigned int)primary_len);
+    gBS->FreePool(c.scratch);
+    if (r == BOOT_STORE_SYNC_CURRENT) {
+        serial_early_print("[BOOT] store-shadow: last good copy is current\n");
+    } else if (r == BOOT_STORE_SYNC_SAVED) {
+        serial_early_print("[BOOT] store-shadow: last good copy saved\n");
+    } else if (r == BOOT_STORE_SYNC_HELD) {
+        serial_early_print("[BOOT] store-shadow: a copy could not be read -- left alone this boot\n");
+    } else if (r == BOOT_STORE_SYNC_FAILED) {
+        serial_early_print("[BOOT] store-shadow: write failed (status 0x");
+        serial_early_print_hex64((UINT64)c.last_error);
+        serial_early_print(") -- read-only ESP? last good copy not updated\n");
+    } else {
+        serial_early_print("[BOOT] store-shadow: copies did not settle -- last good copy not updated\n");
+    }
+}
+
+/* The primary is present and unusable: boot the shadow when a copy is
+ * intact. On success `parse` holds that copy's parse and `*json_buf` its
+ * bytes (payload offsets point into them); otherwise nothing changes. The
+ * shadow is only read here, never written: refreshing it is reserved for a
+ * primary this boot accepted. */
+static boot_store_source_t store_shadow_recover(int load_status, int reject_code, int sb_active,
+                                                boot_entries_parse_result_t *parse,
+                                                unsigned char **json_buf, UINTN *json_len)
+{
+    if (!boot_store_shadow_consult(load_status, reject_code)) return BOOT_STORE_SOURCE_FALLBACK;
+    struct boot_store_shadow_ops ops;
+    struct store_shadow_ctx c;
+    if (!store_shadow_ops_init(&ops, &c, sb_active)) {
+        serial_early_print("[BOOT] store-shadow: no memory to read the last good copy\n");
+        return BOOT_STORE_SOURCE_FALLBACK;
+    }
+    const unsigned char *buf = (const unsigned char *)0;
+    unsigned int len = 0;
+    boot_store_copy_state_t lkg = BOOT_STORE_COPY_ABSENT, tmp = BOOT_STORE_COPY_ABSENT;
+    boot_store_source_t src = boot_store_shadow_pick(&ops, load_status, reject_code,
+                                                     &buf, &len, &lkg, &tmp);
+    if (src != BOOT_STORE_SOURCE_FALLBACK && buf) {
+        /* pick() made accept() its last call, so scratch is this copy's parse. */
+        for (UINTN i = 0; i < sizeof(*parse); i++) ((UINT8 *)parse)[i] = ((const UINT8 *)c.scratch)[i];
+        if (*json_buf) gBS->FreePool(*json_buf);
+        *json_buf = (unsigned char *)buf;
+        *json_len = (UINTN)len;
+        serial_early_print("[BOOT] store-shadow: booting ");
+        serial_early_print(src == BOOT_STORE_SOURCE_LKG ? BOOT_STORE_LKG_NAME : BOOT_STORE_TMP_NAME);
+        serial_early_print(" entries=");
+        serial_early_print_uint((UINT32)parse->entry_count);
+        serial_early_print("\n");
+    } else {
+        src = BOOT_STORE_SOURCE_FALLBACK;
+        serial_early_print(lkg == BOOT_STORE_COPY_ABSENT && tmp == BOOT_STORE_COPY_ABSENT
+                           ? "[BOOT] store-shadow: no last good copy -- fallback\n"
+                           : "[BOOT] store-shadow: last good copy is unusable too -- fallback\n");
+    }
+    gBS->FreePool(c.scratch);
+    return src;
+}
+
 
 /* Counter directory path. UEFI Open() takes a backslash-rooted path
  * relative to volume root; CHAR16 form. */
@@ -5657,7 +5904,7 @@ static const char *boot_store_notice_channel_name(boot_store_notice_channel_t c)
 }
 
 static boot_store_notice_channel_t boot_store_notice_render(const char *token,
-                                                            const char *cause)
+                                                            const char *cause, int recovered)
 {
     boot_store_notice_channel_t channel = BOOT_STORE_NOTICE_SERIAL_ONLY;
 
@@ -5682,7 +5929,9 @@ static boot_store_notice_channel_t boot_store_notice_render(const char *token,
         bsod_aa_string(64, 104, cause,
                        bsod_aa_SUB, bsod_aa_SUB_data, BSOD_AA_SUB_ASCENT,
                        0xF0, 0xE0, 0xC0, 0x6E, 0x4A, 0x00);
-        bsod_aa_string(64, 140, "Starting the fallback entry instead. Press any key to continue.",
+        bsod_aa_string(64, 140, recovered
+                       ? "Starting from the last good copy instead. Press any key to continue."
+                       : "Starting the fallback entry instead. Press any key to continue.",
                        bsod_aa_SUB, bsod_aa_SUB_data, BSOD_AA_SUB_ASCENT,
                        0xF0, 0xE0, 0xC0, 0x6E, 0x4A, 0x00);
         bsod_aa_string(64, 172, token,
@@ -5700,8 +5949,10 @@ static boot_store_notice_channel_t boot_store_notice_render(const char *token,
         if (bsod_render_compact(0x6E, 0x4A, 0x00, 0,
                                 "Boot configuration was not used",
                                 token, cause,
-                                "Starting the fallback entry instead. "
-                                "Press any key to continue."))
+                                recovered ? "Starting from the last good copy instead. "
+                                            "Press any key to continue."
+                                          : "Starting the fallback entry instead. "
+                                            "Press any key to continue."))
             serial_early_print("[BOOT] store-reject: notice fit=truncated\n");
         channel = BOOT_STORE_NOTICE_GOP_COMPACT;
     } else if (gST && gST->ConOut && gST->ConOut->OutputString && !g_ebs_in_progress) {
@@ -5759,7 +6010,9 @@ static boot_store_notice_channel_t boot_store_notice_render(const char *token,
             }
         }
         if (!EFI_ERROR(w))
-            w = con->OutputString(con, u"\r\n  Starting the fallback entry instead.\r\n");
+            w = con->OutputString(con, recovered
+                                  ? u"\r\n  Starting from the last good copy instead.\r\n"
+                                  : u"\r\n  Starting the fallback entry instead.\r\n");
         if (!EFI_ERROR(w))
             w = con->OutputString(con, u"  Press any key to continue.\r\n\r\n");
         if (!EFI_ERROR(w))
@@ -5798,7 +6051,7 @@ static void boot_store_notice_dwell(int rendered_to_screen)
 
 /* The whole notice: serial record, screen render, dwell. `token` is a short
  * stable string for log correlation, `cause` the one-line human sentence. */
-static void boot_store_reject_notice(const char *token, const char *cause)
+static void boot_store_reject_notice(const char *token, const char *cause, int recovered)
 {
     serial_early_print("[BOOT] store-reject: ");
     serial_early_print(token);
@@ -5806,14 +6059,14 @@ static void boot_store_reject_notice(const char *token, const char *cause)
     serial_early_print(cause);
     serial_early_print("\n");
 
-    boot_store_notice_channel_t channel = boot_store_notice_render(token, cause);
+    boot_store_notice_channel_t channel = boot_store_notice_render(token, cause, recovered);
 
     /* The channel is the honest part of this line. On a headless machine
      * the screen route does not exist, so the section cannot promise a
      * visible notice there -- it promises serial, and says so. */
     serial_early_print("[BOOT] store-reject: notice channel=");
     serial_early_print(boot_store_notice_channel_name(channel));
-    serial_early_print(" -- booting fallback entry\n");
+    serial_early_print(recovered ? " -- booting the last good copy\n" : " -- booting fallback entry\n");
 
     boot_store_notice_dwell(channel != BOOT_STORE_NOTICE_SERIAL_ONLY);
 }
@@ -5918,7 +6171,7 @@ static void boot_policy_publish_alloc_failure_fallback(const char *what)
         boot_store_record_sync(&rec);
     }
     boot_store_reject_notice("POLICY_ALLOC_EXHAUSTED",
-                             "the firmware ran out of memory reading boot settings");
+                             "the firmware ran out of memory reading boot settings", 0);
 }
 
 /* Boot menu geometry and the visible-row cap (BOOT_MENU_MAX_VISIBLE) are
@@ -7251,6 +7504,11 @@ static void boot_policy_invoke(void)
         serial_early_print(" entries=");
         serial_early_print_uint((UINT32)parse->entry_count);
         serial_early_print("\n");
+        /* An accepted store is the only thing the shadow is ever refreshed
+         * from (boot-entry-schema.md, Fallback Contract). Before chainload_synthesize, which adds
+         * entries that are not in the file. */
+        if (parse->reject_code == BOOT_ENTRIES_OK)
+            store_shadow_maintain(json_buf, json_len, sb_active);
         /* Append detected foreign-OS bootloaders as CHAINLOAD entries
          * (TODO-27 sec1) so they render alongside the IPOS store entries. */
         chainload_synthesize(parse);
@@ -7316,7 +7574,12 @@ static void boot_policy_invoke(void)
             token = locator;
             cause = boot_entries_reject_cause((int)parse->reject_code);
         }
-        boot_store_reject_notice(token, cause);
+        /* The token and cause describe the primary; recovery below may
+         * replace `parse` with the shadow's, so they are taken first. */
+        boot_store_source_t source = store_shadow_recover((int)load_status, (int)parse->reject_code,
+                                                          sb_active, parse, &json_buf, &json_len);
+        if (source != BOOT_STORE_SOURCE_FALLBACK) chainload_synthesize(parse);
+        boot_store_reject_notice(token, cause, source != BOOT_STORE_SOURCE_FALLBACK);
     }
 
     /* ---- Fill ladder inputs. ----------------------------------------- */

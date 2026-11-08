@@ -456,7 +456,8 @@ void boot_store_reject_render(void)
         return;
     }
     klog(LOG_WARN, "BOOT",
-         "Boot entry store unusable: %s: %s. Fix or delete \\EFI\\ImpossibleOS\\bootentries.json",
+         "Boot entry store unusable: %s: %s. Fix \\EFI\\ImpossibleOS\\bootentries.json "
+         "or restore its last good copy (bootcfg restore)",
          token, cause);
 }
 

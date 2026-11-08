@@ -1750,3 +1750,155 @@ int boot_entries_store_notice_warranted(int load_status, int reject_code)
      * machine. The serial line still records the raw values. */
     return 0;
 }
+
+int boot_store_shadow_consult(int load_status, int reject_code)
+{
+    return boot_entries_store_notice_warranted(load_status, reject_code);
+}
+
+boot_store_source_t boot_store_source_choose(int load_status, int reject_code,
+                                             boot_store_copy_state_t lkg,
+                                             boot_store_copy_state_t tmp)
+{
+    if (load_status == (int)BOOT_STORE_LOAD_OK && reject_code == (int)BOOT_ENTRIES_OK)
+        return BOOT_STORE_SOURCE_PRIMARY;
+    if (!boot_store_shadow_consult(load_status, reject_code))
+        return BOOT_STORE_SOURCE_FALLBACK;
+    if (lkg == BOOT_STORE_COPY_VALID)
+        return BOOT_STORE_SOURCE_LKG;
+    if (tmp == BOOT_STORE_COPY_VALID)
+        return BOOT_STORE_SOURCE_TMP;
+    return BOOT_STORE_SOURCE_FALLBACK;
+}
+
+boot_store_shadow_action_t boot_store_shadow_plan(boot_store_copy_state_t lkg, int lkg_matches,
+                                                  boot_store_copy_state_t tmp, int tmp_matches)
+{
+    int lkg_good = lkg == BOOT_STORE_COPY_VALID;
+    int tmp_good = tmp == BOOT_STORE_COPY_VALID;
+
+    if (lkg_good && lkg_matches)
+        return tmp == BOOT_STORE_COPY_ABSENT ? BOOT_STORE_SHADOW_KEEP : BOOT_STORE_SHADOW_DROP_TMP;
+    /* tmp is the only valid copy, or it is the newer one a refresh left:
+     * copy it to the published name. Rewriting lkg is safe here whatever
+     * lkg holds, because tmp is valid. tmp itself stays until the published
+     * copy matches the primary. */
+    if (tmp_good && (!lkg_good || tmp_matches))
+        return BOOT_STORE_SHADOW_PROMOTE;
+    /* A tmp that could not be read may be the only valid copy; rewriting it
+     * is safe only while lkg is valid. */
+    if (tmp == BOOT_STORE_COPY_UNREADABLE && !lkg_good)
+        return BOOT_STORE_SHADOW_HOLD;
+    /* Here tmp is not the sole valid copy: either lkg is valid, or tmp is
+     * absent or confirmed broken, so rewriting it cannot destroy the last
+     * good configuration. */
+    return BOOT_STORE_SHADOW_REFRESH;
+}
+
+static int shadow_bytes_equal(const unsigned char *a, unsigned int al,
+                              const unsigned char *b, unsigned int bl)
+{
+    if (!a || !b || al != bl) return 0;
+    for (unsigned int i = 0; i < al; i++)
+        if (a[i] != b[i]) return 0;
+    return 1;
+}
+
+/* Read and classify one copy. A copy byte-identical to `primary` needs no
+ * parse: the primary was accepted. With `keep`, a valid copy's buffer is
+ * handed to the caller instead of released. */
+static boot_store_copy_state_t shadow_inspect(const struct boot_store_shadow_ops *ops, int which,
+                                              const unsigned char *primary, unsigned int primary_len,
+                                              int *matches, const unsigned char **keep_buf,
+                                              unsigned int *keep_len)
+{
+    const unsigned char *buf = (const unsigned char *)0;
+    unsigned int len = 0;
+    *matches = 0;
+    if (keep_buf) { *keep_buf = (const unsigned char *)0; *keep_len = 0; }
+    int r = ops->read(ops->ctx, which, &buf, &len);
+    if (r == 0) return BOOT_STORE_COPY_ABSENT;
+    if (r == 2) return BOOT_STORE_COPY_INVALID;
+    if (r != 1 || !buf) return BOOT_STORE_COPY_UNREADABLE;
+
+    boot_store_copy_state_t st;
+    if (primary && shadow_bytes_equal(buf, len, primary, primary_len)) {
+        *matches = 1;
+        st = BOOT_STORE_COPY_VALID;
+    } else {
+        st = ops->accept(ops->ctx, buf, len) == 1 ? BOOT_STORE_COPY_VALID : BOOT_STORE_COPY_INVALID;
+    }
+    if (keep_buf && st == BOOT_STORE_COPY_VALID) {
+        *keep_buf = buf;
+        *keep_len = len;
+    } else {
+        ops->release(ops->ctx, which, buf);
+    }
+    return st;
+}
+
+boot_store_sync_result_t boot_store_shadow_sync(const struct boot_store_shadow_ops *ops,
+                                                const unsigned char *primary,
+                                                unsigned int primary_len)
+{
+    if (!ops || !ops->read || !ops->release || !ops->write || !ops->remove || !ops->accept ||
+        !primary)
+        return BOOT_STORE_SYNC_FAILED;
+    for (unsigned int step = 0; step < BOOT_STORE_SYNC_MAX_STEPS; step++) {
+        int lkg_m = 0, tmp_m = 0;
+        const unsigned char *tmp_buf = (const unsigned char *)0;
+        unsigned int tmp_len = 0;
+        boot_store_copy_state_t lkg = shadow_inspect(ops, BOOT_STORE_FILE_LKG, primary, primary_len,
+                                                     &lkg_m, (const unsigned char **)0,
+                                                     (unsigned int *)0);
+        boot_store_copy_state_t tmp = shadow_inspect(ops, BOOT_STORE_FILE_TMP, primary, primary_len,
+                                                     &tmp_m, &tmp_buf, &tmp_len);
+        boot_store_shadow_action_t act = boot_store_shadow_plan(lkg, lkg_m, tmp, tmp_m);
+        int rc = 0;
+        if (act == BOOT_STORE_SHADOW_HOLD) {
+            if (tmp_buf) ops->release(ops->ctx, BOOT_STORE_FILE_TMP, tmp_buf);
+            return BOOT_STORE_SYNC_HELD;
+        }
+        if (act == BOOT_STORE_SHADOW_KEEP) {
+            if (tmp_buf) ops->release(ops->ctx, BOOT_STORE_FILE_TMP, tmp_buf);
+            return step == 0u ? BOOT_STORE_SYNC_CURRENT : BOOT_STORE_SYNC_SAVED;
+        }
+        if (act == BOOT_STORE_SHADOW_DROP_TMP)
+            rc = ops->remove(ops->ctx, BOOT_STORE_FILE_TMP);
+        else if (act == BOOT_STORE_SHADOW_PROMOTE)
+            rc = tmp_buf ? ops->write(ops->ctx, BOOT_STORE_FILE_LKG, tmp_buf, tmp_len) : -1;
+        else
+            rc = ops->write(ops->ctx, BOOT_STORE_FILE_TMP, primary, primary_len);
+        if (tmp_buf) ops->release(ops->ctx, BOOT_STORE_FILE_TMP, tmp_buf);
+        if (rc != 0) return BOOT_STORE_SYNC_FAILED;
+    }
+    return BOOT_STORE_SYNC_UNSETTLED;
+}
+
+boot_store_source_t boot_store_shadow_pick(const struct boot_store_shadow_ops *ops,
+                                           int load_status, int reject_code,
+                                           const unsigned char **buf, unsigned int *len,
+                                           boot_store_copy_state_t *lkg_state,
+                                           boot_store_copy_state_t *tmp_state)
+{
+    *buf = (const unsigned char *)0;
+    *len = 0;
+    *lkg_state = BOOT_STORE_COPY_ABSENT;
+    *tmp_state = BOOT_STORE_COPY_ABSENT;
+    if (!ops || !ops->read || !ops->release || !ops->accept ||
+        !boot_store_shadow_consult(load_status, reject_code))
+        return BOOT_STORE_SOURCE_FALLBACK;
+    int m = 0;
+    *lkg_state = shadow_inspect(ops, BOOT_STORE_FILE_LKG, (const unsigned char *)0, 0, &m, buf, len);
+    if (*lkg_state != BOOT_STORE_COPY_VALID)
+        *tmp_state = shadow_inspect(ops, BOOT_STORE_FILE_TMP, (const unsigned char *)0, 0, &m,
+                                    buf, len);
+    boot_store_source_t src = boot_store_source_choose(load_status, reject_code,
+                                                       *lkg_state, *tmp_state);
+    if (src != BOOT_STORE_SOURCE_LKG && src != BOOT_STORE_SOURCE_TMP) {
+        src = BOOT_STORE_SOURCE_FALLBACK;
+        *buf = (const unsigned char *)0;
+        *len = 0;
+    }
+    return src;
+}
