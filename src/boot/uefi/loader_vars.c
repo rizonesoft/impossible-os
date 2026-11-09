@@ -247,7 +247,7 @@ static void lv_entries(struct lv_ctx *c, const struct boot_loader_var_inputs *in
     n = (unsigned int)parse->entry_count;
     if (n > BOOT_ENTRIES_MAX_ENTRIES) n = BOOT_ENTRIES_MAX_ENTRIES;
     for (oi = 0; oi < n; oi++) order[oi] = oi;
-    boot_entries_bls_sort(parse, order, n);
+    boot_entries_bls_sort(parse, in->entry_bad, order, n);
     for (oi = 0; oi < n; oi++) {
         const boot_entry_envelope_t *e = &parse->entries[order[oi]];
         unsigned int j = 0, len = 0;

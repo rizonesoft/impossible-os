@@ -362,6 +362,15 @@ unsigned int boot_policy_menu_collect(
     unsigned int *out_idx, unsigned int cap,
     unsigned int *out_default_idx);
 
+/* Fill bad[0..cap-1], indexed like parse->entries[], with 1 for each entry
+ * boot counting marked bad (a TRIES_EXHAUSTED record in decision->rejected[])
+ * and 0 for every other slot. The BLS display order sorts those entries last;
+ * boot_entries_bls_sort() takes this array. NULL parse or decision leaves
+ * every slot 0. */
+void boot_policy_bad_mask(const boot_entries_parse_result_t *parse,
+                          const boot_policy_decision_t *decision,
+                          unsigned char *bad, unsigned int cap);
+
 /* ---- Menu repaint plan ---------------------------------------------------
  * The menu is drawn once and afterwards only what changed is repainted: the
  * row that lost the highlight, the row that gained it, and the footer when its

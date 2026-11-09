@@ -88,6 +88,7 @@ typedef struct {
     char title[80];              /* up to BOOT_ENTRIES_MAX_TITLE_LEN (63) + NUL + slack */
     char sort_key[64];           /* BLS-style sort string; up to BOOT_ENTRIES_MAX_SORT_KEY_LEN + NUL */
     char machine_id[40];         /* RFC 4122 textual UUID (36 chars) + NUL + slack */
+    char version[64];            /* optional BLS version (UAPI.10 format), "" when absent */
     char policy_tags[BOOT_ENTRIES_MAX_POLICY_TAGS][BOOT_ENTRIES_MAX_POLICY_TAG_LEN + 1u];
     unsigned int policy_tag_count;    /* 0..BOOT_ENTRIES_MAX_POLICY_TAGS retained */
     unsigned int policy_tag_overflow; /* 1 if JSON had more tags than the cap */
@@ -180,19 +181,31 @@ void boot_entries_synthesize_fallback(
     boot_entry_envelope_t *out
 );
 
+/* UAPI.10 Version Format Specification comparison (what systemd calls
+ * strverscmp_improved): <0, 0 or >0 as `a` is older than, equal to or newer
+ * than `b`. Characters outside a-z A-Z 0-9 - . ~ ^ are skipped; `~` sorts
+ * before everything, even the end of the string; `-`, `^` and `.` sort before
+ * any other character; digit runs compare numerically; capitals sort before
+ * lower case. Both arguments are NUL-terminated. */
+int boot_version_compare(const char *a, const char *b);
+
 /* Boot Loader Specification display-order comparator: returns nonzero iff
- * envelope `a` sorts before `b`. Keys in priority order: sort_key, then
- * machine_id, then id (stable tiebreak). This is the subset of the BLS
- * display order the parse result can express; "bad-counted last" + "version"
- * sub-keys are tracked BLI-parity follow-ups in the boot entry store TODO. */
-int boot_entry_bls_less(const boot_entry_envelope_t *a,
-                        const boot_entry_envelope_t *b);
+ * envelope `a` sorts before `b`. `a_bad`/`b_bad` say whether boot counting
+ * marked the entry bad (tries left at zero). In order: bad entries last; an
+ * entry with a sort_key before one without; when both have one, sort_key
+ * ascending, then machine_id ascending, then version descending; finally the
+ * id in decreasing version order, which is total because ids are unique. */
+int boot_entry_bls_less(const boot_entry_envelope_t *a, int a_bad,
+                        const boot_entry_envelope_t *b, int b_bad);
 
 /* Stable in-place BLS sort of the index array idx[0..n-1] into
- * parse->entries[]. Insertion sort (n is bounded by BOOT_ENTRIES_MAX_ENTRIES
- * / BOOT_MENU_MAX_VISIBLE). Shared by the on-screen menu candidate list and
- * the LoaderEntries variable so bootctl and the menu agree on order. */
+ * parse->entries[]. `bad` is indexed like parse->entries[] (nonzero = boot
+ * counting marked that entry bad) and may be NULL when none is. Insertion
+ * sort (n is bounded by BOOT_ENTRIES_MAX_ENTRIES / BOOT_MENU_MAX_VISIBLE).
+ * Shared by the on-screen menu candidate list and the LoaderEntries variable
+ * so bootctl and the menu agree on order. */
 void boot_entries_bls_sort(const boot_entries_parse_result_t *parse,
+                           const unsigned char *bad,
                            unsigned int *idx, unsigned int n);
 
 /* Nonzero when a store of `size` bytes is within the size cap. The cap is

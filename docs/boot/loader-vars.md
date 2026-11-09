@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/boot/uefi/bootx64.c,src/boot/uefi/loader_vars.c,include/boot/loader_vars.h,src/kernel/uefi_runtime.c,src/kernel/main/loader_vars_readback.c reviewed=2026-11-09T07:40 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/boot/uefi/bootx64.c,src/boot/uefi/loader_vars.c,include/boot/loader_vars.h,src/kernel/uefi_runtime.c,src/kernel/main/loader_vars_readback.c reviewed=2026-11-09T09:30 -->
 # OS-Visible Loader UEFI Variables
 
 > **Owner:** [OS-Visible Loader UEFI Variables](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#15-os-visible-loader-uefi-variables).
@@ -95,8 +95,9 @@ boot-counting behavior.
 | 3 | `LoaderEntryOneShot` honored | **advertised** | Bootloader reads + deletes per-boot. |
 | 4 | Boot counting (BLS tries=/done=) | **advertised** | Counter protocol from boot-entry §5. |
 | 5 | XBOOTLDR partition | **not advertised** | We do not support the XBOOTLDR partition. |
+| 8 | `sort-key` field of the Boot Loader Specification | **advertised** | The menu and `LoaderEntries` use the full BLS display order (see the [entry schema](boot-entry-schema.md#display-order)). |
 
-The published bitmap is exactly `(1<<1) | (1<<3) | (1<<4) = 0x1A`.
+The published bitmap is exactly `(1<<1) | (1<<2) | (1<<3) | (1<<4) | (1<<8) = 0x11E`.
 
 ## Impossible OS extension features
 

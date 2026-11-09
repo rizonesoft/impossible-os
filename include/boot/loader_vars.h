@@ -79,6 +79,8 @@ struct boot_loader_var_inputs {
     const unsigned short *image_path;      /* loader's ESP path, UCS-2, NULL if unknown */
 
     const boot_entries_parse_result_t *parse; /* NULL when the store was not read */
+    const unsigned char *entry_bad;        /* per parse->entries[]: 1 = boot counting marked it
+                                            * bad, so LoaderEntries lists it last; NULL = none */
     const char *selected_entry_id;         /* "" or NULL when nothing was selected */
 
     /* Microseconds since firmware start (the TSC counts from reset), as the

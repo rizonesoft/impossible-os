@@ -331,7 +331,7 @@ static void test_loader_vars_all_known_are_volatile(void)
     for (unsigned int i = 0; i < MV_MAX_VARS; i++)
         if (mv->v[i].used && mv->v[i].attrs != BOOT_LOADER_VAR_ATTR_VOLATILE) ok = 0;
     TEST_ASSERT(ok, "every published variable is BS|RT, never NON_VOLATILE");
-    /* Every text variable, exact UCS-2 content with no trailing NUL. */
+    /* Every text variable, exact UCS-2 content ending in its NUL. */
     ok = 1;
     for (unsigned int i = 0; i < sizeof(texts) / sizeof(texts[0]); i++)
         if (!mv_text_is(mv, texts[i][0], texts[i][1])) ok = 0;
@@ -350,6 +350,27 @@ static void test_loader_vars_all_known_are_volatile(void)
     TEST_ASSERT(ok, "LoaderEntries is the ids in menu order, NUL separated, double-NUL ended");
     mv_reset(mv);
     TEST_ASSERT_EQ(mv_count(mv), 0u, "a reset leaves none of this boot's variables behind");
+}
+
+/* LoaderEntries follows the full BLS order: an entry boot counting marked bad
+ * is listed last although its sort_key puts it first (slot-b "1" < slot-a "2"). */
+static void test_loader_vars_bad_entry_listed_last(void)
+{
+    MV_FIXTURE();
+    static const char expect[] = { 's','l','o','t','-','a',0,'s','l','o','t','-','b',0,0 };
+    static const unsigned char bad[2] = { 0, 1 };
+    struct mv_var *e;
+    int ok;
+
+    mv_known(fx);
+    fx->in.entry_bad = bad;
+    TEST_ASSERT_EQ(mv_publish(fx), 1, "every firmware call succeeded");
+    e = mv_find(mv, "LoaderEntries");
+    ok = e && e->size == sizeof(expect) * 2u;
+    for (unsigned int i = 0; ok && i < sizeof(expect); i++)
+        ok = mv->pool[e->off + 2u * i] == (unsigned char)expect[i]
+          && mv->pool[e->off + 2u * i + 1u] == 0;
+    TEST_ASSERT(ok, "the bad entry slot-b is listed after slot-a");
 }
 
 /* The section's user-visible bug: a boot that knows its partition followed by
@@ -967,6 +988,8 @@ void test_register_loader_vars(void)
         test_loader_vars_held_d_is_one_change, TEST_CAT_BOOT);
     test_suite_register_cat("loader-vars: fully known boot sets every variable volatile",
         test_loader_vars_all_known_are_volatile, TEST_CAT_BOOT);
+    test_suite_register_cat("loader-vars: a bad entry is listed last",
+                            test_loader_vars_bad_entry_listed_last, TEST_CAT_BOOT);
     test_suite_register_cat("loader-vars: unknown boot after a known one inherits nothing",
         test_loader_vars_unknown_boot_after_known_boot, TEST_CAT_BOOT);
     test_suite_register_cat("loader-vars: persistent copies from the old loader migrate",

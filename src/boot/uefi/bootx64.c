@@ -7484,12 +7484,14 @@ static const EFI_GUID g_loader_systemd_guid =
 #define LOADER_FEATURE_ENTRY_ONESHOT           (1ULL << 3)
 #define LOADER_FEATURE_BOOT_COUNTING           (1ULL << 4)
 #define LOADER_FEATURE_XBOOTLDR                (1ULL << 5)  /* XBOOTLDR partition -- NOT advertised */
-/* We advertise: ConfigTimeoutOneShot + EntryDefault + EntryOneShot + BootCounting */
+#define LOADER_FEATURE_SORT_KEY                (1ULL << 8)  /* full BLS order: bad last, sort-key, version */
+/* We advertise: ConfigTimeoutOneShot + EntryDefault + EntryOneShot + BootCounting + SortKey */
 #define LOADER_FEATURES_PUBLISHED \
     (LOADER_FEATURE_CONFIG_TIMEOUT_ONESHOT \
      | LOADER_FEATURE_ENTRY_DEFAULT \
      | LOADER_FEATURE_ENTRY_ONESHOT \
-     | LOADER_FEATURE_BOOT_COUNTING)
+     | LOADER_FEATURE_BOOT_COUNTING \
+     | LOADER_FEATURE_SORT_KEY)
 
 /* Firmware adapter for include/boot/loader_vars.h: the publisher is pure C so
  * the kernel boot tests run it against an in-memory store; this is the only
@@ -7658,6 +7660,7 @@ static void loader_vars_report(const boot_entries_parse_result_t *parse,
      * first unit at least zeroed) before every read. */
     static unsigned short s_loader_var_payload[BOOT_LOADER_VAR_PAYLOAD_MAX / 2u];
     static CHAR16 s_loader_image_path[256];
+    static unsigned char s_loader_entry_bad[BOOT_ENTRIES_MAX_ENTRIES]; /* rewritten every call */
     UINT64 mhz = g_boot_info_ptr->timing.tsc_freq / 1000000ULL;
     UINT64 entry = g_boot_info_ptr->timing.bl_entry;
     UINTN gi;
@@ -7682,6 +7685,8 @@ static void loader_vars_report(const boot_entries_parse_result_t *parse,
     for (gi = 0; gi < 16; gi++)
         in.partition_guid[gi] = ((const UINT8 *)g_boot_info_ptr->boot_partition_guid)[gi];
     in.parse = parse;
+    boot_policy_bad_mask(parse, decision, s_loader_entry_bad, BOOT_ENTRIES_MAX_ENTRIES);
+    in.entry_bad = s_loader_entry_bad;
     in.selected_entry_id = decision ? decision->selected_entry_id : (const char *)0;
     if (mhz != 0 && entry != 0) {
         UINT64 now = boot_rdtsc();
@@ -8138,7 +8143,9 @@ static void boot_policy_invoke(void)
     if (cand_count > 1u) {
         unsigned int default_entry = (cand_default_idx < cand_count)
             ? cand_idx[cand_default_idx] : 0xFFFFFFFFu;
-        boot_entries_bls_sort(parse, cand_idx, cand_count);
+        unsigned char menu_bad[BOOT_ENTRIES_MAX_ENTRIES];
+        boot_policy_bad_mask(parse, decision, menu_bad, BOOT_ENTRIES_MAX_ENTRIES);
+        boot_entries_bls_sort(parse, menu_bad, cand_idx, cand_count);
         if (default_entry != 0xFFFFFFFFu) {
             for (unsigned int i = 0; i < cand_count; i++) {
                 if (cand_idx[i] == default_entry) {

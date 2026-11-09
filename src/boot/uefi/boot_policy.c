@@ -780,6 +780,25 @@ int boot_policy_menu_should_show(const boot_policy_decision_t *decision,
     }
 }
 
+void boot_policy_bad_mask(const boot_entries_parse_result_t *parse,
+                          const boot_policy_decision_t *decision,
+                          unsigned char *bad, unsigned int cap)
+{
+    unsigned int i, ri, n, nr;
+
+    if (!bad) return;
+    for (i = 0; i < cap; i++) bad[i] = 0;
+    if (!parse || !decision) return;
+    n = parse->entry_count < cap ? (unsigned int)parse->entry_count : cap;
+    nr = decision->rejected_count < BOOT_ENTRIES_MAX_ENTRIES
+        ? decision->rejected_count : BOOT_ENTRIES_MAX_ENTRIES;
+    for (ri = 0; ri < nr; ri++) {
+        if (decision->rejected[ri].reason != BOOT_REJECT_REASON_TRIES_EXHAUSTED) continue;
+        for (i = 0; i < n; i++)
+            if (sp_str_eq(parse->entries[i].id, decision->rejected[ri].id)) bad[i] = 1;
+    }
+}
+
 unsigned int boot_policy_menu_collect(
     const boot_entries_parse_result_t *parse,
     const boot_policy_decision_t *decision,

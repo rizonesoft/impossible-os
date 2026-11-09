@@ -885,9 +885,10 @@ static int bls_streq(const char *a, const char *b)
     return a[k] == b[k];
 }
 
-/* sort_key is the primary key; empty sort_key (the "match any"/unset value)
- * sorts before any non-empty key. id breaks ties when sort_key is equal. The
- * entries[] array is deliberately built out of display order. */
+/* sort_key is the primary key. An entry with one sorts before an entry
+ * without (BLS: "If sort-key is set on one entry, it sorts earlier"), and the
+ * id breaks remaining ties in DECREASING version order, as systemd-boot does.
+ * The entries[] array is deliberately built out of display order. */
 /* The bls sort fixture is ~36 KB. It was one shared file-scope static because
  * two function-local statics of that size pushed the image over the 0x800000
  * user-base ceiling; it is now a per-case TEST_SCRATCH_KBUF allocation, which
@@ -907,12 +908,140 @@ static void test_bls_sort_by_sort_key_then_id(void)
     r->entry_count = 4;
 
     unsigned int idx[4] = {0, 1, 2, 3};
-    boot_entries_bls_sort(r, idx, 4u);
+    boot_entries_bls_sort(r, NULL_PTR, idx, 4u);
 
-    TEST_ASSERT(bls_streq(r->entries[idx[0]].id, "gamma"), "empty sort_key sorts first");
-    TEST_ASSERT(bls_streq(r->entries[idx[1]].id, "alpha"), "sort_key 10 second");
-    TEST_ASSERT(bls_streq(r->entries[idx[2]].id, "beta"),  "sort_key 20 tiebreak id beta before zeta");
-    TEST_ASSERT(bls_streq(r->entries[idx[3]].id, "zeta"),  "sort_key 20 tiebreak id zeta last");
+    TEST_ASSERT(bls_streq(r->entries[idx[0]].id, "alpha"), "sort_key 10 first");
+    TEST_ASSERT(bls_streq(r->entries[idx[1]].id, "zeta"),  "sort_key 20 tie: id zeta before beta (decreasing)");
+    TEST_ASSERT(bls_streq(r->entries[idx[2]].id, "beta"),  "sort_key 20 tie: beta after zeta");
+    TEST_ASSERT(bls_streq(r->entries[idx[3]].id, "gamma"), "no sort_key sorts after every entry with one");
+}
+
+/* UAPI.10 comparison, one row per rule; sign only. */
+static void test_bls_version_compare(void)
+{
+    static const struct { const char *a, *b; int want; } T[] = {
+        { "1.0~rc1", "1.0",     -1 },  /* rule 2: ~ before the end of the string */
+        { "~1",      "",        -1 },
+        { "2~beta",  "2~alpha",  1 },  /* both ~ skipped */
+        { "1.0",     "1.0.1",   -1 },  /* rule 3: remaining characters compare higher */
+        { "1.0",     "1.0-1",   -1 },
+        { "1.0-1",   "1.0.1",   -1 },  /* rule 4: - before anything else */
+        { "1.0^",    "1.0.1",   -1 },  /* rule 5 */
+        { "1.0.1",   "1.0a",    -1 },  /* rule 6: . before a letter */
+        { "11",      "9",        1 },  /* rule 7: numeric, not lexical */
+        { "1.010",   "1.10",     0 },  /* leading zeros skipped */
+        { "B",       "a",       -1 },  /* rule 8: capitals first */
+        { "ab",      "a@b",      1 },  /* a skipped character still ends a letter run */
+        { "1_2",     "1.2",      1 },  /* _ is a separator: 1, 2 against 1, ., 2 */
+        { "1_2",     "1+2",      0 },
+        { "6.2~rc1", "6.1.10",   1 },
+        { "",        "",         0 },
+    };
+    unsigned int i, ok = 0;
+    for (i = 0; i < sizeof(T) / sizeof(T[0]); i++) {
+        int c = boot_version_compare(T[i].a, T[i].b);
+        int r = boot_version_compare(T[i].b, T[i].a);
+        int s = c < 0 ? -1 : (c > 0 ? 1 : 0);
+        int rs = r < 0 ? -1 : (r > 0 ? 1 : 0);
+        if (s == T[i].want && rs == -T[i].want) ok++;
+        else TEST_ASSERT(0, T[i].a);
+    }
+    TEST_ASSERT_EQ(ok, (unsigned int)(sizeof(T) / sizeof(T[0])),
+                   "every UAPI.10 row compares as specified, both ways round");
+}
+
+/* Equal sort_key and machine_id fall through to version, newest first; an
+ * entry with no version is older than any that has one. */
+static void test_bls_sort_version_descending(void)
+{
+    TEST_SCRATCH_KBUF(fixbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)fixbuf;
+    static const char *const V[4] = { "6.1.9", "", "6.2~rc1", "6.1.10" };
+    static const char *const ID[4] = { "k-a", "k-b", "k-c", "k-d" };
+    unsigned int i, k;
+
+    memset(r, 0, sizeof(boot_entries_parse_result_t));
+    for (i = 0; i < 4u; i++) {
+        bls_set(&r->entries[i], ID[i], "10", "m1");
+        for (k = 0; V[i][k]; k++) r->entries[i].version[k] = V[i][k];
+    }
+    r->entry_count = 4;
+
+    unsigned int idx[4] = {0, 1, 2, 3};
+    boot_entries_bls_sort(r, NULL_PTR, idx, 4u);
+    TEST_ASSERT(bls_streq(r->entries[idx[0]].version, "6.2~rc1"), "newest version first");
+    TEST_ASSERT(bls_streq(r->entries[idx[1]].version, "6.1.10"),  "6.1.10 before 6.1.9");
+    TEST_ASSERT(bls_streq(r->entries[idx[2]].version, "6.1.9"),   "6.1.9 third");
+    TEST_ASSERT(bls_streq(r->entries[idx[3]].id, "k-b"),          "no version last");
+}
+
+/* Boot counting's bad entries sort after everything else, whatever their
+ * keys say; with no bad array the same entry sorts first (the control). */
+static void test_bls_sort_bad_last(void)
+{
+    TEST_SCRATCH_KBUF(fixbuf, sizeof(boot_entries_parse_result_t));
+    boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)fixbuf;
+    unsigned char bad[3] = { 1, 0, 0 };
+
+    memset(r, 0, sizeof(boot_entries_parse_result_t));
+    bls_set(&r->entries[0], "first", "00", "");
+    bls_set(&r->entries[1], "second", "10", "");
+    bls_set(&r->entries[2], "nokey", "", "");
+    r->entry_count = 3;
+
+    unsigned int idx[3] = {0, 1, 2};
+    boot_entries_bls_sort(r, NULL_PTR, idx, 3u);
+    TEST_ASSERT(bls_streq(r->entries[idx[0]].id, "first"), "control: lowest sort_key first when none is bad");
+
+    unsigned int idx2[3] = {0, 1, 2};
+    boot_entries_bls_sort(r, bad, idx2, 3u);
+    TEST_ASSERT(bls_streq(r->entries[idx2[0]].id, "second"), "good entry with a key first");
+    TEST_ASSERT(bls_streq(r->entries[idx2[1]].id, "nokey"),  "good entry without a key next");
+    TEST_ASSERT(bls_streq(r->entries[idx2[2]].id, "first"),  "bad entry last despite the lowest key");
+}
+
+/* The optional `version` key: copied when valid, absent means "", and a
+ * value outside the UAPI.10 characters or over the cap rejects the store. */
+static void test_parser_version_field(void)
+{
+    static const char HEAD[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":["
+        "{\"id\":\"slot-a\",\"title\":\"Slot A\",\"kind\":\"split\","
+        "\"flags\":[\"active\"],\"sort_key\":\"00\",\"machine_id\":\"\","
+        "\"policy_tags\":[],";
+    static const char TAIL[] =
+        "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}]}";
+    static const struct { const char *field; int ok; const char *want; } T[] = {
+        { "",                                   1, "" },
+        { "\"version\":\"6.2~rc1^git.A-b\",",   1, "6.2~rc1^git.A-b" },
+        { "\"version\":\"1_2+x\",",             1, "1_2+x" },
+        { "\"version\":\"1@0\",",               0, "" },
+        { "\"version\":\"1 0\",",               0, "" },
+        { "\"version\":\"1\\u0030\",",          0, "" },
+        { "\"version\":7,",                     0, "" },
+        { "\"version\":\"123456789012345678901234567890123456789012345678901234567890123\",", 1,
+          "123456789012345678901234567890123456789012345678901234567890123" },
+        { "\"version\":\"1234567890123456789012345678901234567890123456789012345678901234\",", 0, "" },
+    };
+    char json[512];
+    unsigned int i, ok = 0;
+    for (i = 0; i < sizeof(T) / sizeof(T[0]); i++) {
+        unsigned int n = 0, k;
+        for (k = 0; HEAD[k]; k++) json[n++] = HEAD[k];
+        for (k = 0; T[i].field[k]; k++) json[n++] = T[i].field[k];
+        for (k = 0; TAIL[k]; k++) json[n++] = TAIL[k];
+        json[n] = '\0';
+        unsigned int len = load_fixture(json);
+        TEST_SCRATCH_KBUF(rbuf, sizeof(boot_entries_parse_result_t));
+        boot_entries_parse_result_t *const r = (boot_entries_parse_result_t *)rbuf;
+        int rc = boot_entries_parse(s_fixture_buf, len, 0, NULL_PTR, r);
+        int good = T[i].ok ? (rc == BOOT_ENTRIES_OK && bls_streq(r->entries[0].version, T[i].want))
+                           : (rc == BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD);
+        if (good) ok++;
+        else TEST_ASSERT(0, T[i].field);
+    }
+    TEST_ASSERT_EQ(ok, (unsigned int)(sizeof(T) / sizeof(T[0])),
+                   "version: valid values copied, absent is empty, bad characters/length/type rejected");
 }
 
 /* machine_id is the secondary key: equal sort_key falls through to machine_id
@@ -928,7 +1057,7 @@ static void test_bls_sort_machine_id_tiebreak(void)
     r->entry_count = 2;
 
     unsigned int idx[2] = {0, 1};
-    boot_entries_bls_sort(r, idx, 2u);
+    boot_entries_bls_sort(r, NULL_PTR, idx, 2u);
 
     TEST_ASSERT(bls_streq(r->entries[idx[0]].machine_id, "ma"), "machine_id tiebreak: ma first");
     TEST_ASSERT(bls_streq(r->entries[idx[1]].machine_id, "mb"), "machine_id tiebreak: mb second");
@@ -2197,6 +2326,14 @@ void test_register_boot_entry_parser(void)
                             test_bls_sort_by_sort_key_then_id, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: BLS sort machine_id tiebreak",
                             test_bls_sort_machine_id_tiebreak, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: BLS UAPI.10 version compare",
+                            test_bls_version_compare, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: BLS order by version, newest first",
+                            test_bls_sort_version_descending, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: BLS order puts bad entries last",
+                            test_bls_sort_bad_last, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: optional version field",
+                            test_parser_version_field, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: health_check_subset valid",
                             test_parser_health_subset_valid, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: health_check_subset absent accepted",

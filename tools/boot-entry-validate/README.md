@@ -31,7 +31,7 @@ Exit codes:
 3. `crc32` field formatted as `"0x"` + 8 hex digits.
 4. File size <=16 KiB.
 5. Entry count 1..64.
-6. Per-entry envelope (`id`, `title`, `kind`, `flags`, `sort_key`, `machine_id`, `policy_tags`, `payload`).
+6. Per-entry envelope (`id`, `title`, `kind`, `flags`, `sort_key`, optional `version`, `machine_id`, `policy_tags`, `payload`).
 7. `id` uniqueness within store.
 8. `kind` is a known stable name OR (numeric in vendor range 100..199 / reserved >=200) which is
    skip-with-warn per the forward-compat policy. Numeric in stable range 0..99 but not a known

@@ -40,6 +40,7 @@ MAX_TITLE_LEN = 63
 MAX_ID_LEN = 47
 MAX_PATH_LEN = 255
 MAX_SORT_KEY_LEN = 63       # BOOT_ENTRIES_MAX_SORT_KEY_LEN
+MAX_VERSION_LEN = 63        # BOOT_ENTRIES_MAX_VERSION_LEN
 MAX_POLICY_TAGS = 4         # BOOT_ENTRIES_MAX_POLICY_TAGS
 MAX_POLICY_TAG_LEN = 23     # BOOT_ENTRIES_MAX_POLICY_TAG_LEN
 MAX_HEALTH_SUBSET_NAMES = 8   # BOOT_ENTRIES_HEALTH_SUBSET_MAX_NAMES
@@ -98,6 +99,7 @@ VALID_NETWORK_SCHEMES = frozenset({"http", "https", "tftp"})
 UKI_PATH_PREFIXES = ("\\EFI\\Linux\\", "\\EFI\\ImpossibleOS\\")
 
 # RFC 4122 UUID textual form (8-4-4-4-12 hex).
+_VERSION_RE = re.compile(r"[A-Za-z0-9.~^_+-]*")
 _UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -182,6 +184,50 @@ def _key_spans(text: str):
             yield start, body
 
 
+def _envelope_version_values(text: str):
+    """Yield (offset, raw_body) for each `version` value in an entry envelope.
+
+    The loader checks a version's RAW bytes, so `"1\\u0030"` is refused there
+    while json.loads decodes it to "10". An envelope is an object directly
+    inside the array that the ROOT object's `entries` key holds; `payload`
+    objects and unknown root extensions are not envelopes, so the scan tracks
+    each container's ancestry (the key that opened it) rather than its depth.
+    Only meaningful on well-formed JSON.
+    """
+    i, n = 0, len(text)
+    stack: list[tuple[str, Any]] = []   # (opener, key that introduced it)
+    last_key = None                     # key awaiting its value, else None
+    while i < n:
+        ch = text[i]
+        if ch in "{[":
+            stack.append((ch, last_key))
+            last_key = None
+        elif ch in "}]":
+            stack.pop()
+            last_key = None
+        elif ch == ",":
+            last_key = None
+        elif ch == '"':
+            start = i
+            i += 1
+            body_start = i
+            while i < n and text[i] != '"':
+                i += 2 if text[i] == "\\" else 1
+            body = text[body_start:i]
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            if j < n and text[j] == ":":
+                last_key = body
+            else:
+                in_envelope = (len(stack) == 3 and stack[2][0] == "{"
+                               and stack[1] == ("[", "entries") and stack[0][0] == "{")
+                if in_envelope and last_key == "version":
+                    yield start, body
+                last_key = None
+        i += 1
+
+
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:
     seen: set[str] = set()
     for key, _ in pairs:
@@ -205,6 +251,10 @@ def strict_loads(text: str) -> Any:
         if "\\" in body:
             fail(f"key name at offset {offset} uses a JSON escape; "
                  "key names must be spelled literally")
+    for offset, body in _envelope_version_values(text):
+        if "\\" in body:
+            fail(f"version at offset {offset} uses a JSON escape; "
+                 "the loader reads version bytes raw")
     return data
 
 
@@ -689,6 +739,18 @@ def validate_envelope(entry: dict, idx: int) -> None:
     if len(sk) > MAX_SORT_KEY_LEN:
         fail(f"entry[{idx}]: sort_key length {len(sk)} > "
              f"MAX_SORT_KEY_LEN {MAX_SORT_KEY_LEN}")
+    if "version" in entry:
+        # Optional BLS version in the UAPI.10 format (underscore MAY and plus
+        # SHOULD NOT be used; nothing else outside the compared set). The
+        # loader refuses any other raw byte; escapes are caught on the raw
+        # text by _envelope_version_values() in strict_loads().
+        ver = entry["version"]
+        if not isinstance(ver, str):
+            fail(f"entry[{idx}]: version must be a string, got {ver!r}")
+        if not _VERSION_RE.fullmatch(ver):
+            fail(f"entry[{idx}]: version may use only a-z A-Z 0-9 - . ~ ^ _ +, got {ver!r}")
+        if len(ver) > MAX_VERSION_LEN:
+            fail(f"entry[{idx}]: version length {len(ver)} > MAX_VERSION_LEN {MAX_VERSION_LEN}")
     if not isinstance(entry["machine_id"], str):
         fail(f"entry[{idx}]: machine_id must be a string, got {entry['machine_id']!r}")
     # Empty machine_id is the explicit "match any machine" wildcard

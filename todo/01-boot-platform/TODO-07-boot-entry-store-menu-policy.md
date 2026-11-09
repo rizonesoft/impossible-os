@@ -71,7 +71,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  15   | OS-visible loader UEFI variables                                    | §3, §4, §9, §13                         |  [x]   |
 | 💎  |  16   | Bootstrap and first-install entry seeding                           | §1, §9, §13, T22 §1, T06 §1             |  [/]   |
 | 💎  |  17   | Boot entry tests                                                    | §1-§16                                  |  [/]   |
-| 💎  |  18   | systemd BLI parity (BLS display order, one-shot, loader timestamps) | §6, §15                                 |  [ ]   |
+| 💎  |  18   | systemd BLI parity (BLS display order, one-shot, loader timestamps) | §6, §15                                 |  [x]   |
 | 💎  |  19   | Repeated top-level keys defeat the entries-array bound              | §2                                      |  [x]   |
 | 💎  |  20   | `crc32` header located by string match, not structurally            | §1, §19                                 |  [x]   |
 | 💎  |  21   | Published loader variables need an explicit set-or-clear outcome    | §15, §19                                |  [x]   |
@@ -685,24 +685,27 @@ The shipped §15 (loader UEFI vars) + §6 (menu render) publish systemd Boot Loa
 - [x] `LoaderConfigTimeoutOneShot`: 0 = menu no timeout, 1..60 honored, 61..3600 clamped to 60 + `[WARN]` (watchdog-window divergence, not a silent drop); a present one-shot forces the menu. Kiosk stays on per-entry `timeout_override`.
 - [x] Distinct `LoaderTimeInitUSec`/`ExecUSec`, both counted from reset as the BLI defines them: Init is the TSC at loader entry, Exec the TSC just before the final memory map. `LoaderTimeMenuUSec` not added (not in upstream BLI).
   - Shipped 2026-11-08 with the §21 review: `loader_vars_report(..., LOADER_VARS_TIMING)` in `bootx64.c`; unit test `test_loader_vars_timing_call`; the smoke check requires both set on a calibrated TSC.
-- [ ] BLS full order + `LoaderFeatures` bit 8: add bad-counted-last (join the §5 counter state) + a `version` sub-key (absent from `boot_entry_envelope_t`); advertise bit 8 only once both land. (§18 follow-up)
-  - Needs bad-counted-last joined to the §5 counter state plus a `version` sub-key that `boot_entry_envelope_t` does not carry. Advertise `LoaderFeatures` bit 8 only once both land.
+- [x] Full BLS order + `LoaderFeatures` bit 8: `boot_entry_bls_less()` in `boot_entries_parser.c` puts bad entries last, keyed entries first, then `sort_key`, `machine_id`, `version` descending, then the id.
+  - Bad = a TRIES_EXHAUSTED record, marked by `boot_policy_bad_mask()` (`boot_policy.c`) and passed to the menu sort and to `LoaderEntries` (`entry_bad` in `loader_vars.h`).
+  - Optional `version` field, compared by UAPI.10 (`boot_version_compare()`); `_` and `+` allowed, other characters and escapes refused by the parser and by `tools/boot-entry-validate/validate.py` (raw scan of envelope values).
+  - Corrected to the spec: an entry without a `sort_key` now sorts after keyed ones, and the id tiebreak is decreasing version order, as in systemd-boot. `LOADER_FEATURE_SORT_KEY` (bit 8) is advertised; `LoaderFeatures` is now `0x11E`.
+  - Tests: UAPI.10 rule table, version order, bad-last (with a no-mask control), parser version cases, `boot_policy_bad_mask`, `LoaderEntries` bad-last, validator escape cases. Controls: dropping the bad rule or the character check fails them.
 - [x] LoaderTime publish moved after TSC calibration: `boot_loader_vars_publish_timing()` in `loader_vars.c` runs post-`load_kernel`, pre-EBS, setting or clearing only the two timing variables.
   - The main publication still clears both (the TSC is uncalibrated there), so a boot whose late call fails reports them absent, never stale.
 - [x] Commit: `"boot: TODO-07 §18 -- systemd BLI parity (BLS display order, one-shot timeout, distinct loader timestamps)"`
 
 **Test checkpoint:** against a multi-entry store, `LoaderEntries` matches the on-screen menu order (bad-counted last, then `sort_key`); `LoaderConfigTimeoutOneShot=0` shows the menu with no countdown (or warns+clamps per the chosen policy); `systemd-analyze` reports non-zero loader time. Extend `test_boot_entries` with out-of-array `sort_key` + bad-counter ordering assertions. Test on: QEMU TCG (deterministic); bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 2 BLS-order suites added (sort_key/id + machine_id tiebreak), 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 7 BLS-order suites (sort_key/id, machine_id, UAPI.10 compare, version order, bad last, version field, bad mask) + the LoaderEntries bad-last case, 0 failures; host: `python3 tools/boot-entry-validate/test_validate.py`
 
 > **Notes:**
-> - **What shipped:** 2 systemd-BLI parity fixes in `bootx64.c` -- shared BLS display order (`sort_key`/`machine_id`) for the menu + `LoaderEntries`; `LoaderConfigTimeoutOneShot` (0 = menu no-timeout, 1..60 honored, >60 clamped to 60 + WARN, forces the menu even on quiet paths).
+> - **What shipped:** systemd-BLI parity: the full BLS display order (bad last, `sort_key`, `machine_id`, `version` by UAPI.10, id) for the menu + `LoaderEntries`, with `LoaderFeatures` bit 8; `LoaderConfigTimeoutOneShot` (0 = menu no-timeout, 1..60 honored, >60 clamped to 60 + WARN, forces the menu even on quiet paths); distinct calibrated `LoaderTime` values.
 > - **How it integrates:** the sort applies to `cand_idx` after `boot_policy_menu_collect` + inside the `LoaderEntries` publisher (`lv_entries` in `loader_vars.c` since §21); a present one-shot forces `show_menu` + bypasses `hide_when_alone`, and value 0 sets `g_menu_no_autoboot`.
 > - **Downstream:** `bootctl` consumers now see consistent menu/LoaderEntries order; `systemd-analyze` loader time ships through the late timing call (2026-11-08). Design adoptions in the commit message.
 > - **Canonical doc:** `docs/boot/boot-entry-schema.md`; systemd Boot Loader Interface spec for var semantics.
-> - **Scope boundary:** one `[ ]` follow-up -- full BLS order (bad-counted-last + `version` field + `LoaderFeatures` bit 8). The LoaderTime relocation shipped 2026-11-08.
+> - **Scope boundary:** none open. The full BLS order and bit 8 shipped 2026-11-09; the LoaderTime relocation 2026-11-08. The default entry is still chosen by the policy ladder, not by display order.
 
-> **Verified:** 2026-06-13 | commit `6d382664` | 2/5 items | build OK | kernel tests 2546 PASS (incl 6 new BLS-order assertions)
+> **Verified:** 2026-11-09 | 6/6 items | build OK | boot suite PASS | validator 156/156, bootcfg 50/50 | Codex adversarial 3 rounds (1H+2M fixed), approve
 > **Notes:** Reopened 2026-11-07, was Deferred: [H] distinct `LoaderTimeInitUSec`/`ExecUSec` blocked -- `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point. The stamp named this section's own item, and that item recorded no external blocker.
 > **Notes:** Reopened 2026-11-07, was Deferred: [M] full BLS order (bad-counted-last + `version` sub-key) + `LoaderFeatures` bit 8 not advertised. The stamp named this section's own item, and that item recorded no external blocker.
 > **Quality reviewed:** 2026-06-13 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1H+1M deferred | scope: boot-code-quality

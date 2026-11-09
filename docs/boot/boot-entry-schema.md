@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=include/boot/boot_entries.h,tools/boot-entry-validate/validate.py,resources/boot/bootentries-example.json,include/boot/uki_cmdline_check.h,src/boot/uefi/boot_entries_parser.c,include/boot/boot_entry_kind.h reviewed=2026-11-08 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=include/boot/boot_entries.h,tools/boot-entry-validate/validate.py,resources/boot/bootentries-example.json,include/boot/uki_cmdline_check.h,src/boot/uefi/boot_entries_parser.c,include/boot/boot_entry_kind.h reviewed=2026-11-09T09:30 -->
 # Boot Entry Store Schema
 
 > Canonical specification for `\EFI\ImpossibleOS\bootentries.json`. Authoritative for envelope
@@ -103,7 +103,8 @@ Each entry object carries an envelope plus a per-kind payload:
 | `kind`             | string          | yes      | one of the kind names below; unknown -> skip-with-warn      |
 | `flags`            | array of string | yes      | subset of {active, hidden, trusted_chainload, hide_when_alone, allow_editor} |
 | `timeout_override` | integer         | no       | 0..600; if absent, use loader default                       |
-| `sort_key`         | string          | yes      | sort string (BLS-style); shorter sorts earlier              |
+| `sort_key`         | string          | yes      | sort string (BLS-style); empty means unset (see [Display order](#display-order)) |
+| `version`          | string          | no       | 0..63 chars of `a-z A-Z 0-9 - . ~ ^ _ +` (UAPI.10), no JSON escapes; breaks `sort_key` ties, newest first |
 | `machine_id`       | string          | yes      | RFC 4122 UUID textual form, OR empty string for the "match any machine" wildcard |
 | `policy_tags`      | array of string | yes      | reserved for future policy filtering; may be empty          |
 | `health_check_subset` | array of string | no   | optional; up to 8 names, each 1..23 printable-ASCII chars; restricts the post-boot health gate to the named checks (intersection with kernel registry). Absent / empty -> kernel runs the full default set. See [`boot-health.md`](boot-health.md). |
@@ -113,6 +114,17 @@ The `flags` array uses string names mapped to the bit values defined in
 [`include/boot/boot_entries.h`](../../include/boot/boot_entries.h). Unknown flag names produce a
 parse warning and are dropped (forward-compat -- newer flag names land without breaking older
 loaders). Reserved bits 5..31 must be zero in v1.
+
+### Display order
+
+The menu and the `LoaderEntries` variable list entries in the Boot Loader Specification's order, through one comparator (`boot_entry_bls_less()` in `src/boot/uefi/boot_entries_parser.c`):
+
+1. An entry that boot counting marked bad (tries left at zero) sorts after every other entry. It stays in the menu; it is only moved down.
+2. An entry with a `sort_key` sorts before one without.
+3. When both have one: `sort_key` ascending, then `machine_id` ascending (byte order), then `version` descending.
+4. Last, the `id` in decreasing version order. Ids are unique, so the order is total.
+
+Versions compare by the [UAPI.10 Version Format Specification](https://uapi-group.org/specifications/specs/version_format_specification/) (`boot_version_compare()`), the comparison systemd-boot uses: `~` sorts before everything, even the end of the string, so `1.0~rc1` is older than `1.0`; digit runs compare as numbers, so `6.1.10` is newer than `6.1.9`. `_` and `+` are allowed (the specification permits underscore and discourages plus) and compare as separators. The parser refuses any other character and any JSON escape, since it compares the raw bytes; the host validator refuses the same values. The default entry is chosen by the policy ladder, not by this order (see [boot policy](boot-policy.md)).
 
 ### 3.2 Kind names and numeric values
 

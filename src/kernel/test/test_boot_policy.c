@@ -1645,6 +1645,46 @@ static void test_menu_collect_accepted_store_still_collects(void)
     TEST_ASSERT_EQ(n, 2u, "an accepted store still collects both entries");
 }
 
+/* Only a TRIES_EXHAUSTED record marks an entry bad; another rejection does
+ * not, and with the mask the exhausted entry sorts last although it carries
+ * the lowest sort_key. NULL decision clears every slot. */
+static void test_bad_mask_marks_only_exhausted(void)
+{
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 3u;
+    static const char *const ID[3] = { "alpha", "beta", "gamma" };
+    static const char *const SK[3] = { "00", "10", "20" };
+    for (unsigned e = 0; e < 3u; e++) {
+        zero_envelope(&r.entries[e]);
+        set_id(r.entries[e].id, ID[e]);
+        set_id(r.entries[e].sort_key, SK[e]);
+        r.entries[e].kind = BOOT_ENTRY_KIND_SPLIT;
+        r.entries[e].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    }
+
+    boot_policy_decision_t d;
+    for (unsigned i = 0; i < sizeof(d); i++) ((unsigned char *)&d)[i] = 0;
+    set_id(d.rejected[0].id, "alpha");
+    d.rejected[0].reason = BOOT_REJECT_REASON_TRIES_EXHAUSTED;
+    set_id(d.rejected[1].id, "gamma");
+    d.rejected[1].reason = BOOT_REJECT_REASON_NOT_ACTIVE;
+    d.rejected_count = 2u;
+
+    unsigned char bad[4] = { 9, 9, 9, 9 };
+    boot_policy_bad_mask(&r, &d, bad, 4u);
+    TEST_ASSERT_EQ((unsigned)bad[0] * 1000u + bad[1] * 100u + bad[2] * 10u + bad[3], 1000u,
+                   "exhausted alpha is bad; beta, gamma (not active) and the spare slot are not");
+
+    unsigned int idx[3] = { 0, 1, 2 };
+    boot_entries_bls_sort(&r, bad, idx, 3u);
+    TEST_ASSERT_EQ(idx[0] * 100u + idx[1] * 10u + idx[2], 120u, "menu order beta, gamma, then exhausted alpha");
+
+    boot_policy_bad_mask(&r, (const boot_policy_decision_t *)0, bad, 4u);
+    TEST_ASSERT_EQ((unsigned)bad[0] + bad[1] + bad[2] + bad[3], 0u, "no decision: nothing is bad");
+}
+
 static void test_menu_collect_demote_not_drop_on_tries_exhausted(void)
 {
     /* Demote-not-drop contract: TRIES_EXHAUSTED is a demote signal,
@@ -1965,6 +2005,8 @@ void test_register_boot_policy(void)
                             test_menu_collect_accepted_store_still_collects, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu_collect demote-not-drop on TRIES_EXHAUSTED",
                             test_menu_collect_demote_not_drop_on_tries_exhausted, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: bad mask marks only exhausted entries",
+                            test_bad_mask_marks_only_exhausted, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu_collect filters hard-hide reasons (KIND_SKIPPED + KIND_UNAVAILABLE)",
                             test_menu_collect_filters_hard_hide_reasons, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu helpers NULL + zero-cap guards",

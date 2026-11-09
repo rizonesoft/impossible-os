@@ -785,6 +785,23 @@ static void log_reject(boot_entries_log_fn log, const char *msg)
 
 /* ---- Parse one entry envelope ---------------------------------------- */
 
+/* The characters the UAPI.10 comparison acts on; everything else is a
+ * separator it skips. */
+static int bv_digit(char c) { return c >= '0' && c <= '9'; }
+static int bv_alpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+static int bv_listed(char c)
+{
+    return bv_digit(c) || bv_alpha(c) || c == '-' || c == '.' || c == '~' || c == '^';
+}
+
+/* The characters a `version` value may hold. UAPI.10: underscore MAY and plus
+ * SHOULD NOT be used (both compare as separators); any other character MUST
+ * NOT. An escape is refused too, since the comparison reads raw bytes. */
+static int bv_permitted(char c)
+{
+    return bv_listed(c) || c == '_' || c == '+';
+}
+
 /* L is sitting at the LBRACE that opens this entry. On success, advances past the
  * matching RBRACE; populates `out`. On failure, sets reject in `result`. */
 /* For a reject found after the offending value was consumed: report where that
@@ -1018,6 +1035,27 @@ static int parse_entry_object(lexer_t *L, u32 idx,
             }
             copy_clamped(out->sort_key, sizeof(out->sort_key), L->raw + L->content_start, vlen);
             saw_sort_key = 1;
+        }
+        else if (key_len == 7u && bytes_eq(key_ptr, (const u8 *)"version", 7u)) {
+            /* Optional BLS version, in the UAPI.10 version format. */
+            if (L->kind != TOK_STRING) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD, "version must be a string");
+                return 0;
+            }
+            u32 vlen = L->content_end - L->content_start;
+            if (vlen > BOOT_ENTRIES_MAX_VERSION_LEN) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                           "version length out of range");
+                return 0;
+            }
+            for (u32 vi = 0; vi < vlen; vi++) {
+                if (!bv_permitted((char)L->raw[L->content_start + vi])) {
+                    set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                               "version may use only a-z A-Z 0-9 - . ~ ^ _ +");
+                    return 0;
+                }
+            }
+            copy_clamped(out->version, sizeof(out->version), L->raw + L->content_start, vlen);
         }
         else if (key_len == 10u && bytes_eq(key_ptr, (const u8 *)"machine_id", 10u)) {
             if (L->kind != TOK_STRING) {
@@ -1640,25 +1678,91 @@ static int boot_entry_str_cmp(const char *a, const char *b)
     return (int)(unsigned char)a[k] - (int)(unsigned char)b[k];
 }
 
-int boot_entry_bls_less(const boot_entry_envelope_t *a,
-                        const boot_entry_envelope_t *b)
+/* The UAPI.10 loop, rule by rule. Every pass consumes at least one character
+ * of a string that has not ended, so it terminates. */
+int boot_version_compare(const char *a, const char *b)
 {
-    int c = boot_entry_str_cmp(a->sort_key, b->sort_key);
-    if (c != 0) return c < 0;
-    c = boot_entry_str_cmp(a->machine_id, b->machine_id);
-    if (c != 0) return c < 0;
-    return boot_entry_str_cmp(a->id, b->id) < 0;
+    for (;;) {
+        while (*a && !bv_listed(*a)) a++;                     /* rule 1 */
+        while (*b && !bv_listed(*b)) b++;
+        if (*a == '~' || *b == '~') {                         /* rule 2 */
+            if (*a != '~') return 1;
+            if (*b != '~') return -1;
+            a++; b++;
+            continue;
+        }
+        if (*a == '\0' || *b == '\0')                        /* rule 3 */
+            return (*a != '\0') - (*b != '\0');
+        if (*a == '-' || *b == '-' || *a == '^' || *b == '^' || *a == '.' || *b == '.') {
+            static const char seps[3] = { '-', '^', '.' };    /* rules 4-6 */
+            unsigned int s;
+            for (s = 0; s < 3u; s++) {
+                if (*a != seps[s] && *b != seps[s]) continue;
+                if (*a != seps[s]) return 1;
+                if (*b != seps[s]) return -1;
+                a++; b++;
+                break;
+            }
+            continue;
+        }
+        if (bv_digit(*a) || bv_digit(*b)) {                   /* rule 7 */
+            const char *as, *bs;
+            unsigned int la, lb, k;
+            while (*a == '0') a++;
+            while (*b == '0') b++;
+            for (as = a; bv_digit(*a); a++) {}
+            for (bs = b; bv_digit(*b); b++) {}
+            la = (unsigned int)(a - as);
+            lb = (unsigned int)(b - bs);
+            if (la != lb) return la < lb ? -1 : 1;
+            for (k = 0; k < la; k++)
+                if (as[k] != bs[k]) return as[k] < bs[k] ? -1 : 1;
+            continue;
+        }
+        while (bv_alpha(*a) && bv_alpha(*b)) {                /* rule 8 */
+            if (*a != *b) return *a < *b ? -1 : 1;            /* ASCII: 'B' < 'a' */
+            a++; b++;
+        }
+        if (bv_alpha(*a)) return 1;
+        if (bv_alpha(*b)) return -1;
+    }
+}
+
+static int boot_entry_bls_cmp(const boot_entry_envelope_t *a, int a_bad,
+                              const boot_entry_envelope_t *b, int b_bad)
+{
+    int c;
+    int ak = a->sort_key[0] != '\0', bk = b->sort_key[0] != '\0';
+
+    if ((a_bad != 0) != (b_bad != 0)) return a_bad ? 1 : -1;
+    if (ak != bk) return ak ? -1 : 1;
+    if (ak) {
+        c = boot_entry_str_cmp(a->sort_key, b->sort_key);
+        if (c != 0) return c;
+        c = boot_entry_str_cmp(a->machine_id, b->machine_id);
+        if (c != 0) return c;
+        c = boot_version_compare(b->version, a->version);
+        if (c != 0) return c;
+    }
+    return boot_version_compare(b->id, a->id);
+}
+
+int boot_entry_bls_less(const boot_entry_envelope_t *a, int a_bad,
+                        const boot_entry_envelope_t *b, int b_bad)
+{
+    return boot_entry_bls_cmp(a, a_bad, b, b_bad) < 0;
 }
 
 void boot_entries_bls_sort(const boot_entries_parse_result_t *parse,
+                           const unsigned char *bad,
                            unsigned int *idx, unsigned int n)
 {
     for (unsigned int i = 1; i < n; i++) {
         unsigned int v = idx[i];
         int j = (int)i - 1;
         while (j >= 0 &&
-               boot_entry_bls_less(&parse->entries[v],
-                                   &parse->entries[idx[j]])) {
+               boot_entry_bls_less(&parse->entries[v], bad ? bad[v] : 0,
+                                   &parse->entries[idx[j]], bad ? bad[idx[j]] : 0)) {
             idx[j + 1] = idx[j];
             j--;
         }

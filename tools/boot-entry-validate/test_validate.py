@@ -166,6 +166,33 @@ def _escaped_entry_key() -> Path:
     return write_tmp_raw(head + sep + tail.replace('"id"', '"\\u0069d"', 1))
 
 
+def _escaped_version() -> Path:
+    """A checksummed store whose first entry's version is `"1\\u0030"`: valid
+    JSON that decodes to "10", which the loader refuses on its raw bytes."""
+    text = _sample_text()
+    marker = '"id"'
+    head, sep, tail = text.partition(marker)
+    return write_tmp_raw(head + '"version": "1\\u0030", ' + sep + tail)
+
+
+def _payload_version_escape_ok() -> Path:
+    """Control: the same escape in a key named version INSIDE payload is not an
+    envelope version and must not trip the raw check."""
+    data = load_sample()
+    data["entries"][0]["payload"]["version"] = "PLACEHOLDER"
+    text = json.dumps(data)
+    return write_tmp_raw(text.replace('"PLACEHOLDER"', '"1\\u0030"', 1))
+
+
+def _root_extension_version_escape_ok() -> Path:
+    """Control: an escaped version in an unknown ROOT extension object sits at
+    the same depth as an envelope but is not one; the loader skips it."""
+    data = load_sample()
+    data["metadata"] = {"release": {"version": "PLACEHOLDER"}}
+    text = json.dumps(data)
+    return write_tmp_raw(text.replace('"PLACEHOLDER"', '"1\\u0030"', 1))
+
+
 def _nest(depth: int) -> Any:
     """A value nesting exactly `depth` containers."""
     v: Any = 0
@@ -458,6 +485,25 @@ def cases() -> list[Case]:
                 ("fail", "flags must be an array")))
     out.append(("flag not string", lambda: write_tmp(mutate(entry0={"flags": [1]}), recompute_crc=True),
                 ("fail", "flags entry not a string")))
+    out.append(("version valid", lambda: write_tmp(
+                mutate(entry0={"version": "6.2~rc1^git.A-b"}), recompute_crc=True), ("pass",)))
+    out.append(("version underscore and plus", lambda: write_tmp(
+                mutate(entry0={"version": "1_2+x"}), recompute_crc=True), ("pass",)))
+    out.append(("version escaped", lambda: _escaped_version(),
+                ("fail", "version at offset")))
+    out.append(("escaped version in payload is not the envelope", lambda: _payload_version_escape_ok(),
+                ("pass",)))
+    out.append(("escaped version in a root extension is not the envelope",
+                lambda: _root_extension_version_escape_ok(), ("pass",)))
+    out.append(("version bad character", lambda: write_tmp(
+                mutate(entry0={"version": "1@0"}), recompute_crc=True),
+                ("fail", "version may use only")))
+    out.append(("version not string", lambda: write_tmp(
+                mutate(entry0={"version": 7}), recompute_crc=True),
+                ("fail", "version must be a string")))
+    out.append(("version too long", lambda: write_tmp(
+                mutate(entry0={"version": "1" * 64}), recompute_crc=True),
+                ("fail", "version length 64")))
     out.append(("timeout_override negative", lambda: write_tmp(
                 mutate(entry0={"timeout_override": -1}), recompute_crc=True),
                 ("fail", "timeout_override must be int")))

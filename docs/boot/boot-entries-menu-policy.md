@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=include/boot/boot_entries.h,src/boot/uefi/boot_entries_parser.c,src/boot/uefi/boot_policy.c,src/kernel/main/boot_decision.c,src/kernel/main/boot_audit.c,tools/bootcfg/bootcfg.py,include/kernel/boot_info.h reviewed=2026-11-09T03:40 order=7 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=include/boot/boot_entries.h,src/boot/uefi/boot_entries_parser.c,src/boot/uefi/boot_policy.c,src/kernel/main/boot_decision.c,src/kernel/main/boot_audit.c,tools/bootcfg/bootcfg.py,include/kernel/boot_info.h reviewed=2026-11-09T09:30 order=7 -->
 # Boot Entries, Menu and Policy
 
 ## What is it?
@@ -75,7 +75,7 @@ At boot, press F11 to force the menu open; inside the menu, F8 requests safe mod
 - Previous-kernel and known-good rollback entries are not implemented: blocked on the update-delta producer and an as-yet-ownerless panic-counter persistence path. [Previous-Kernel and Known-Good Entries](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#10-previous-kernel-and-known-good-entries).
 - `bootcfg` has no live-boot binary yet; entry edits are offline-only from the host tool. [Boot Entry Editor Tooling](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#11-boot-entry-editor-tooling).
 - `kind: test` and `kind: diagnostics` entry admission is deferred to the entry-kinds section, and the chainload, network and resume kinds still need their loaders wired. [Entry Kinds: Split, UKI, Chainload, Network, Resume](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#13-entry-kinds-split-uki-chainload-network-resume).
-- systemd Boot Loader Interface parity is partial: full BLS display order and `LoaderTime` calibration against the real TSC frequency are still open. [Boot Loader Interface (systemd BLI) Parity Fixes](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#18-boot-loader-interface-systemd-bli-parity-fixes).
+- systemd Boot Loader Interface parity: the menu and `LoaderEntries` use the full BLS display order (bad entries last, `sort_key`, `machine_id`, `version` by UAPI.10, then id), `LoaderFeatures` advertises bit 8, and `LoaderTime` is measured against the calibrated TSC. [Boot Loader Interface (systemd BLI) Parity Fixes](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#18-boot-loader-interface-systemd-bli-parity-fixes).
 
 ## How does it compare with Windows 11 and Linux?
 
