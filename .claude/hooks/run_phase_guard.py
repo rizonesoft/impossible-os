@@ -45,7 +45,7 @@ HOOK_DIR = Path(__file__).resolve().parent
 def repo_root():
     d = HOOK_DIR
     while d != d.parent:
-        if (d / ".git").is_dir():
+        if (d / ".git").exists():  # a worktree's .git is a file
             return d
         d = d.parent
     return Path.cwd()

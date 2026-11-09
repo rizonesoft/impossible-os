@@ -24,6 +24,11 @@ import tempfile
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
 HOOK = REPO / ".claude/hooks/attended_repair_guard.py"
+# The primary worktree owns the shared git dir. This suite may itself run from a
+# linked repair worktree (the documented place for attended repairs), where REPO is not it.
+PRIMARY = pathlib.Path(subprocess.run(
+    ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=str(REPO),
+    capture_output=True, text=True, timeout=30, check=True).stdout.strip()).parent.resolve()
 
 
 def _load():
@@ -41,9 +46,9 @@ def _git(*args, cwd=None, timeout=120):
 def test_resolves_primary_from_the_primary():
     mod = _load()
     old = os.environ.get("CLAUDE_PROJECT_DIR")
-    os.environ["CLAUDE_PROJECT_DIR"] = str(REPO)
+    os.environ["CLAUDE_PROJECT_DIR"] = str(PRIMARY)
     try:
-        assert pathlib.Path(mod._canonical_run_root()).resolve() == REPO, \
+        assert pathlib.Path(mod._canonical_run_root()).resolve() == PRIMARY, \
             mod._canonical_run_root()
     finally:
         if old is None:
@@ -64,7 +69,7 @@ def test_resolves_primary_from_a_linked_worktree():
         try:
             os.environ["CLAUDE_PROJECT_DIR"] = str(wt)
             got = pathlib.Path(mod._canonical_run_root()).resolve()
-            assert got == REPO, f"resolved {got}, want the primary {REPO}"
+            assert got == PRIMARY, f"resolved {got}, want the primary {PRIMARY}"
             # a linked worktree's .git is a FILE, which is exactly why a naive
             # "walk up to a .git directory" resolver fails here
             assert (wt / ".git").is_file(), "expected a linked-worktree .git file"

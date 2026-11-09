@@ -198,6 +198,9 @@ def _autostart_fixture(d):
     sysctl = bindir / "systemctl"
     sysctl.write_text('#!/bin/bash\necho "systemctl $*" >> "$LOG"\nexit 0\n')
     sysctl.chmod(sysctl.stat().st_mode | stat.S_IEXEC)
+    claude = bindir / "claude"
+    claude.write_text("#!/bin/bash\nexit 0\n")
+    claude.chmod(claude.stat().st_mode | stat.S_IEXEC)
     units = pathlib.Path(d) / "units"
     return root, log, {**env, "RUN_SYSTEMD_DIR": str(units)}, units
 
@@ -220,6 +223,27 @@ def test_autostart_resumes_a_live_run_and_installs_the_boot_service():
         assert f'ExecStart=/bin/bash "{root}/scripts/run.sh" autostart' in unit, unit
         assert f'Environment="PATH={env["PATH"]}"' in unit, unit
         assert "systemctl --user enable impossible-os-run.service" in calls, calls
+
+
+def test_refusal_start_without_claude_on_path_does_not_claim_started():
+    """A desktop shortcut runs a non-login bash with no ~/.local/bin: the pane died at once
+    while `start` printed "started" (2026-11-09)."""
+    with tempfile.TemporaryDirectory() as d:
+        root, log, env, _ = _autostart_fixture(d)
+        (pathlib.Path(d) / "bin/claude").unlink()
+        tools = pathlib.Path(d) / "tools"
+        tools.mkdir()
+        for name in ("tmux", "systemctl", "git", "python3", "clang-19", "nasm", "ld.lld-19",
+                     "bash", "awk", "date", "rm", "mkdir", "cat", "mktemp", "cmp", "mv", "sed"):
+            src = pathlib.Path(d) / "bin" / name
+            src = src if src.exists() else shutil.which(name)
+            if src:
+                (tools / name).symlink_to(src)
+        r = subprocess.run(["bash", "scripts/run.sh", "start"], cwd=root,
+                           env={**env, "PATH": str(tools)}, capture_output=True, text=True, timeout=60)
+        assert r.returncode == 1 and "REFUSED: claude is not on PATH" in r.stderr, r
+        assert "started" not in r.stdout, r
+        assert not log.exists() or "new-session" not in log.read_text()
 
 
 def test_refusal_autostart_leaves_a_stopped_or_finished_run_down():

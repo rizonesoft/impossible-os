@@ -75,6 +75,10 @@ case "${1:-status}" in
     for tool in tmux git python3 clang-19 nasm ld.lld-19; do
       command -v "$tool" >/dev/null 2>&1 || { echo "REFUSED: $tool is not installed. Run: bash scripts/setup.sh" >&2; exit 1; }
     done
+    # The session is `claude` in a tmux pane: without it on PATH the pane dies at once and
+    # `start` would still say "started". A non-login shell (a desktop shortcut) lacks ~/.local/bin.
+    command -v claude >/dev/null 2>&1 \
+      || { echo "REFUSED: claude is not on PATH ($PATH). Start from a login shell (bash -l)." >&2; exit 1; }
     if ! denied="$(python3 scripts/overnight/skill_denies.py "$ROOT")"; then
       { echo "REFUSED: a permission deny refuses a skill the run needs:"; printf '  %s\n' "$denied"; } >&2
       exit 1
