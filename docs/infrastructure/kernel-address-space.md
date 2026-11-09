@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md sources=include/kernel/mm/memmap.h,include/kernel/mm/user_range.h,src/boot/linker.ld,src/kernel/mm/vmm.c,src/kernel/security/wx.c,src/kernel/smp/ap_trampoline.asm reviewed=2026-09-28 -->
+<!-- docs: covers=todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md sources=include/kernel/mm/memmap.h,include/kernel/mm/user_range.h,src/boot/linker.ld,src/kernel/mm/vmm.c,src/kernel/security/wx.c,src/kernel/smp/ap_trampoline.asm reviewed=2026-11-09 -->
 # Kernel Address Space -- Higher-Half Layout and Direct Map
 
 > Canonical reference for the Impossible OS 64-bit virtual memory map. The machine-readable form of everything
@@ -170,9 +170,9 @@ Teardown sequence:
 
 ### The AP low envelope is a hard constraint
 
-`src/kernel/smp/ap_trampoline.asm` starts at `[ORG 0x8000]` with `AP_DATA` at `0x8E00`, and `smp.c:317` hands each
-AP the BSP's **live** CR3. The AP's protected-mode stub loads it with a **32-bit** `mov eax, [AP_DATA]; mov cr3, eax`
-(`ap_trampoline.asm:73`). Two consequences, both permanent:
+`src/kernel/smp/ap_trampoline.asm` starts at `[ORG 0x8000]` with `AP_DATA` at `0x8E00`, and `smp.c:556` (stored at `:566`) hands each
+AP the BSP's **live** CR3. The AP's protected-mode stub loads it with a **32-bit** `mov eax, [AP_DATA + 0x00]; mov cr3, eax`
+(`ap_trampoline.asm:131-132`). Two consequences, both permanent:
 
 - **The kernel PML4 physical frame must stay below 4 GiB** (`MM_PML4_PHYS_LIMIT`). A 32-bit load cannot express
   more.
