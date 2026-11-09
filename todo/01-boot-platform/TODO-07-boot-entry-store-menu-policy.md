@@ -608,8 +608,10 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
   - Timeout leg: the 2 s countdown auto-boots `smoke-entry`. Keys leg: Down moves to `smoke-alt`, the leg waits past the 4 s deadline (fails if the menu boots on its own), then Enter boots `smoke-alt` with reason HOTKEY.
   - Both legs assert the kernel received the entry: `boot_decision_validate()` now logs `entry=` and `selection=` at its success return, after every rule, so a rejected decision never reads as accepted.
   - Control: dropping `counting_down = 0` in `boot_menu_run()` fails the keys leg with "the menu booted on its own after a keypress".
-- [ ] Boot fixture whose policy default sits on a non-zero menu row, seeding `LoaderEntryOneShot` into the OVMF vars copy
-  - Rows sort by `sort_key` (`boot_entries_bls_sort`) and the ladder default is the lowest `sort_key`, so every store-only fixture highlights row 0 and cannot tell "highlight the policy default" from "highlight the first row". Needs a host NVRAM writer such as `virt-fw-vars` (not installed here).
+- [x] Boot fixture whose policy default sits on a non-zero menu row: the §24 `SMOKE_MENU=default` then `SMOKE_MENU=saved` legs (`scripts/test-smoke.sh`, both in the smoke matrix).
+  - The guest seeds the variable itself, so no host NVRAM writer (`virt-fw-vars`) is needed: the default leg presses `d` on row 1 (`smoke-alt`), which writes `LoaderEntryDefault`, and the saved leg reuses that variable store.
+  - The saved leg requires `[BOOT] menu: 2 entries, selected="smoke-alt"` on open and the kernel to receive `smoke-alt` with reason STORE_DEFAULT, so "highlight the policy default" is now distinguished from "highlight the first row".
+  - Control: pinning the menu's initial highlight to row 0 (`boot_menu_run()`) fails the saved leg with "boot_policy did not report selection_reason=1 (STORE_DEFAULT) for smoke-alt".
 - [/] Firmware-vs-OS layer separation scenario: §3 ladder + §4 reject-record path tested; §6 menu_should_show covers UNKNOWN_BOOTCURRENT rendering. Full end-to-end fall-through to in-store default needs an integration / live-boot harness.
 - [/] A/B rollback entry-selection scenario (1/2/3-fail). Blocked: [`TODO-21 §1`](TODO-21-ab-boot-rollback.md), [`TODO-21 §3`](TODO-21-ab-boot-rollback.md), [`TODO-21 §4`](TODO-21-ab-boot-rollback.md).
   - Blocker owner: -> XREF: 01-boot-platform/TODO-21 §1 (item: "Choose storage: UEFI NVRAM ... vs GPT metadata partition" at line 5). The scenario needs real 1/2/3-fail counter state from the A/B producers.
@@ -636,7 +638,10 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
   - Why: the kernel suite compiles these files into a different image, so a loader-only failure stays invisible. The parser passed 6,000+ boot tests while the shipped loader read `parsed 0 entries (1 skipped)` (no `loader_self_relocate()`).
   - Every valid-store leg: entry-kind decoded `kernel="\boot\kernel.exe"`, policy picked `STORE_DEFAULT smoke-entry`, no `[WARN] boot_sticky:`/`boot_history:`, the loader's `ebs-success` record read back by the kernel, and the kernel's Phase-3 mark numbered next.
   - Fresh variable store: history seq=1, BootSticky absent, try counter bootstrapped to `smoke-entry+2-1`. The `repaired` leg (third boot on one variable store) must show seq >= 2 and the previous boot's `kernel-Phase3` record.
-  - Control: `boot_history_read_seq()` returning 0 fails the `repaired` leg with "history seq=1 on a reused variable store". BootSticky's read-ok path needs a seeded variable, the same NVRAM-writer gap as the non-zero-row item above.
+  - Control: `boot_history_read_seq()` returning 0 fails the `repaired` leg with "history seq=1 on a reused variable store". BootSticky's read-ok path needs a degraded boot first; it is the item below.
+- [ ] Booted-image BootSticky leg: a smoke boot that reaches `boot_sticky_mark_degraded()`, then a second boot on the same variable store that reads the record (`boot_sticky_read_into_boot_info()`) and hands it to the kernel.
+  - The guest seeds the variable itself, as the §24 saved-default legs do; today only the absent path runs in the booted image.
+  - Control: skipping the read fails the second boot.
 
 **Test checkpoint:** Per-section unit suites already register under `TEST_CAT_BOOT` and run with `make test-boot` (or `bash scripts/test.sh SUITE=boot`); the §17 commit is pure status reconciliation -- no new test code lands here. Live-boot scenarios depend on harness infrastructure that is not in this TODO's scope; XREF'd to their owner sections above. Bare-metal pass requires the user's laptop -- not gateable from WSL. Test on: host (`python3 tools/bootcfg/test_bootcfg.py` + `python3 tools/boot-entry-validate/test_validate.py`) + QEMU TCG (`make test-boot`).
 
