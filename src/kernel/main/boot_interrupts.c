@@ -51,12 +51,21 @@
 #include "kernel/drivers/keyboard.h"
 #include "kernel/drivers/mouse.h"
 #include "kernel/drivers/framebuffer.h"
+#include "kernel/vpd.h"
+#include "kernel/config.h"   /* boot_arg_resolved_ival */
+
+#ifdef KERNEL_TESTS
+/* SMOKE_DEGRADE=fb: VRAM digest at the moment fb_init() refused the display;
+ * compared at the end of boot in boot_desktop.c. */
+uint64_t boot_test_fb_refusal_digest;
+#endif
 #include "kernel/acpi.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/drivers/ioapic.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_init.h"
 #include "kernel/boot_load_status.h"
+#include "kernel/boot_probe.h"
 #include "kernel/cpu_security.h"
 #include "kernel/entropy.h"
 #include "kernel/csprng.h"
@@ -185,10 +194,10 @@ void boot_phase1(void)
     /* Three result states for each activation:
      *   BOOT_OK       -> feature actually enabled  -> ready + *_ENABLED marker
      *   BOOT_DEGRADED -> unsupported/skipped (fine) -> ready, NO marker
-     *   BOOT_FATAL    -> invariant violation (PCID CR3) -> NOT ready + degraded_mask
+     *   BOOT_FATAL    -> invariant violation (PCID CR3) -> NOT ready + degraded bit
      * Emitting POSTCODE_*_ENABLED only on BOOT_OK keeps the progress/POST
      * stream from claiming activation on a CPU that lacks the feature; setting
-     * degraded_mask on BOOT_FATAL surfaces a CR3-corruption fault in the
+     * the degraded bit on BOOT_FATAL surfaces a CR3-corruption fault in the
      * end-of-boot degraded summary instead of only a single klog line. */
     {
         boot_result_t xr = cpu_xsave_enable();
@@ -199,7 +208,7 @@ void boot_phase1(void)
         boot_result_t pr = cpu_pcid_enable();
         kernel_subsystem_set_ready(SUBSYS_PCID, pr == BOOT_OK || pr == BOOT_DEGRADED);
         if (pr == BOOT_FATAL)
-            g_boot_info.degraded_mask |= (1u << SUBSYS_PCID);
+            kernel_subsystem_mark_degraded(SUBSYS_PCID);
         else if (pr == BOOT_OK)
             boot_progress(1, "PCID", POSTCODE_PCID_ENABLED);
     }
@@ -394,11 +403,21 @@ void boot_phase1(void)
      * reads garbage. acpi_has_cmos_rtc() safe-defaults to present for legacy
      * PCs (no/short FADT), so this never skips a real RTC. */
     POST16(POST16_RTC);
-    if (acpi_has_cmos_rtc()) {
-        rtc_init();
-        kernel_subsystem_set_ready(SUBSYS_RTC, true);
-    } else {
-        klog(LOG_INFO, "rtc", "skipped (ACPI: no CMOS RTC -- hardware-reduced)");
+    {
+        /* A platform without a CMOS RTC is SKIPPED (absent, not degraded);
+         * a declared RTC whose first read fails validation is FAILED. Both
+         * leave SUBSYS_RTC not ready, which is what rtc_available() callers
+         * already assume. */
+        uint8_t st;
+        if (acpi_has_cmos_rtc()) {
+            int rc = rtc_init();
+            st = boot_probe_load_state(rc);
+        } else {
+            klog(LOG_INFO, "rtc", "skipped (ACPI: no CMOS RTC -- hardware-reduced)");
+            st = BOOT_LOAD_SKIPPED;
+        }
+        boot_load_record("rtc", BOOT_LOAD_CLASS_CORE, st, 0u, POST16_RTC_OK);
+        kernel_subsystem_apply_load_state(SUBSYS_RTC, st);
     }
     POST16(POST16_RTC_OK);
     boot_progress(1, "RTC", POST16_RTC_OK);
@@ -407,16 +426,32 @@ void boot_phase1(void)
     klog(LOG_DEBUG, "boot", "--- Phase: display & splash ---");
 
     POST16(POST16_FB);
-    fb_init();
-    POST16(POST16_FB_OK);
-    /* No GOP framebuffer is SKIPPED; a framebuffer fb_init() refused
-     * (pixel format, bpp, pitch) is FAILED. */
-    boot_load_record("gfx", BOOT_LOAD_CLASS_GFX,
-                     !g_boot_info.fb_available ? BOOT_LOAD_SKIPPED
-                     : fb_is_ready()           ? BOOT_LOAD_LOADED
-                                               : BOOT_LOAD_FAILED,
-                     0u, POST16_FB_OK);
-    kernel_subsystem_set_ready(SUBSYS_FB, true);
+    {
+        /* fb_init() states its own verdict: no GOP framebuffer is SKIPPED, a
+         * refused one (pixel format, bpp, pitch) is FAILED, a usable one
+         * without a back buffer is DEGRADED. The same state drives the
+         * readiness oracle, so SUBSYS_FB is no longer reported ready on a
+         * headless or refused-framebuffer boot (the BSOD and recovery screen
+         * key their fallback off exactly that readiness bit). */
+        uint8_t st = fb_init();
+        /* Publish BEFORE the next POST16: POST16 paints through
+         * post_display16(), whose raw-VRAM fallback is gated on this very
+         * degraded bit, so a POST emitted first would still write with the
+         * format or pitch fb_init() just refused. */
+        kernel_subsystem_apply_load_state(SUBSYS_FB, st);
+        /* VPD Tier 1 cached the same layout from g_boot_info.fb before
+         * fb_init() ran; retire it before boot_progress() below draws a
+         * stage through it. */
+        if (fb_is_refused()) {
+            vpd_display_refused();
+#ifdef KERNEL_TESTS
+            if (boot_arg_resolved_ival("test_fail_fb") > 0)
+                boot_test_fb_refusal_digest = fb_test_vram_digest();
+#endif
+        }
+        boot_load_record("gfx", BOOT_LOAD_CLASS_GFX, st, 0u, POST16_FB_OK);
+        POST16(POST16_FB_OK);
+    }
     boot_progress(1, "FB", POST16_FB_OK);
     POST16(POST16_SPLASH);
     /* postbars=diag (2): keep Tier 1 VPD authoritative -- do NOT stop it; the
@@ -427,7 +462,11 @@ void boot_phase1(void)
         extern void vpd_stop_tier1(void);
         vpd_stop_tier1();
     }
-    boot_splash_init();
+    {
+        uint8_t st = boot_splash_init();
+        boot_load_record("splash", BOOT_LOAD_CLASS_GFX, st, 0u, POST16_SPLASH_OK);
+        kernel_subsystem_apply_load_state(SUBSYS_SPLASH, st);
+    }
     POST16(POST16_SPLASH_OK);
 
     /* Input devices moved after timer+sti so splash spinner is alive */
@@ -435,7 +474,13 @@ void boot_phase1(void)
     /* --- Phase 1 info gathering --- */
     uefi_config_init();
     POST16(POST16_SMBIOS);
-    smbios_init();
+    {
+        int rc = smbios_init();
+        uint8_t st = boot_probe_load_state(rc);
+        boot_load_record("smbios", BOOT_LOAD_CLASS_ACPI, st,
+                         boot_probe_err_code(rc), POST16_SMBIOS_OK);
+        kernel_subsystem_apply_load_state(SUBSYS_SMBIOS, st);
+    }
     POST16(POST16_SMBIOS_OK);
     boot_progress(1, "SMBIOS", POST16_SMBIOS_OK);
     /* Initialize firmware quirks immediately after SMBIOS so MAT and
@@ -988,6 +1033,12 @@ void boot_phase1(void)
     boot_splash_status("Detecting PS/2 keyboard...");
     POST16(POST16_KBD);
     keyboard_init();
+    /* keyboard_probe_result() is the probe's own verdict (no controller /
+     * no device = ABSENT, controller self-test or reset failure = FAILED).
+     * The per-source load record is written with the other input sources
+     * in input_record_sources(); only the oracle is fed here. */
+    kernel_subsystem_apply_load_state(SUBSYS_KEYBOARD,
+                                      boot_probe_load_state(keyboard_probe_result()));
     POST16(POST16_KBD_OK);
     boot_progress(1, "KEYBOARD", POST16_KBD_OK);
     /* PS/2 mouse init is NOT done in Phase 1 -- the PS/2 BAT self-test

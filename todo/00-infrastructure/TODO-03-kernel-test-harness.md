@@ -66,6 +66,7 @@ title: "TODO-03 -- Kernel Test Harness"
 | 💎  |   9   |   §9    | Audit + classify the 50+ [LEAK] failures §8 surfaced     | §8           |  [/]   |
 | 💎  |  10   |   §10   | Bound the failing-assertion message (long one wedges)    | --           |  [x]   |
 | 💎  |  11   |   §11   | Poisoned-boundary fixture so an overread fails a test    | §10          |  [x]   |
+| 💎  |  12   |   §12   | Assert or fix the 55 test-phase [FAIL] lines             | §5           |  [ ]   |
 
 > 💎 = parity work -- Linux kernel self-test framework has `lib/fault-inject.c` (multi-allocator fault injection), `kunit_add_action` (test-scoped cleanup registry), `kcsan`/`kasan` fences, `kunit_kzalloc()` scratch helpers, and `kmemleak` leak detection. This TODO brings the same floor to the Impossible OS kernel test runner without requiring the Driver Verifier / WDK workflow Windows leans on.
 > **Order vs section-number:** Implementation Order is execution sequence; section numbers (§N) preserve file stability. §7 (action registry) ships at Order 2 because §3, §5, and §8 all consume it.
@@ -452,6 +453,25 @@ Found closing §10, which replaced a fixed-offset subsystem probe (`subsystem[4]
 > **Accepted:** [M] the 2 MiB carve is asserted CONTAINED in the MMIO/fixmap window but nothing RESERVES it, and `vmm_map_page()` overwrites PTEs unconditionally (reason: the central kernel-VA allocator already has an owner, which `src/kernel/mm/vmm.c:1490` points at; the fixture defends itself by verifying boundary-absent and data-page-still-ours every arm) -> XREF: 03-memory-concurrency/TODO-01-vmm-memory-protection.md §MMIO mapping (item: "Implement `vmm_map_mmio(phys_base, size)` -- 4 KiB PTEs, `PCD=1`+`PWT=1` (UC), return VA via a central kernel VA allocator with reserved non-overlapping ranges" at line 240)
 > **Accepted:** [L] two registered klog/ETW magic tests have empty bodies and assert nothing, so the runner counts two passes that verify nothing (reason: klog/ETW test surface, owned by the logging TODO) (RESOLVED 2026-09-03 by that TODO's §16 commit `24396db0f`: both empty functions and their `test_suite_register_cat` calls deleted, both constants pinned by `_Static_assert` to their value AND to the ASCII they spell) -> XREF: 02-kernel-core/TODO-04 §16 (item: "Give the two registered klog/ETW magic tests an assertion, or delete them")
 > **Quality reviewed:** 2026-08-14 | Codex 25x (design, adversarial x9, consistency x7, perf x2, test-coverage x3, re-adversarial x3) | 2H+9M+6L fixed, 0 open | scope: kernel-code-quality
+
+---
+
+## 12. Assert or Fix the 55 Test-Phase [FAIL] Lines
+
+> **Spawned-by:** root
+
+§5 shipped `TEST_KLOG_SUPPRESS` and made a test-phase `[FAIL]` a real finding (diagnose-serial-log P4.3), but the tests written since did not adopt it: a clean `bash scripts/test.sh QUIET=1` on 2026-11-10 (37,210 kernel tests PASS) still prints 55 `[FAIL]` lines. A sample reads as deliberately provoked negatives (quota over-return, `test_irql_require_*` violations, a pm callback named `'stuck'`, `fsck` on an unreadable FAT, guard-uninstall refusals), which an operator cannot tell from a genuine failure.
+
+**Files:** `src/kernel/test/test_*.c` (quota, irql, pm, fsck, mm guard, ex lookaside, ipc pipe, ctrl, sched suites), `scripts/test.sh`
+
+- [ ] Add `TEST_KLOG_EXPECT(subsys, substring)`: the line stays off serial only if it is emitted, and the test FAILS when it never appears, so a provoked line is asserted, not hidden
+  - `TEST_KLOG_SUPPRESS` only demotes the level and asserts nothing: a negative path that stops logging, or logs the wrong failure, still passes. Prefer EXPECT for every provoked line; keep SUPPRESS for genuinely nondeterministic output.
+- [ ] Classify every one of the 55 lines by its emitting test: provoked negative -> `TEST_KLOG_EXPECT` with the exact message; anything not provoked is a real defect and is fixed at its source, never silenced
+- [ ] Attribute an unexpected `[FAIL]` to the running test: the harness marks THAT test failed and names the line, so it is one owned, fixable failure
+  - Never a run-wide gate: a log-scan that fails the whole suite would stall every later section on one flaky or environmental line, a loop the unattended run cannot leave. Lines emitted outside any test are reported in the summary, never gated.
+- [ ] Commit: "test: provoked negatives are asserted, not printed; a stray [FAIL] fails the test that emitted it"
+
+**Test checkpoint:** `bash scripts/test.sh QUIET=1` reports PASS with zero `[FAIL]` lines in the test-phase window; a scratch test that logs `klog(LOG_ERROR, ...)` unexpectedly fails as that one named test, and a `TEST_KLOG_EXPECT` whose line is never emitted fails its test.
 
 ---
 

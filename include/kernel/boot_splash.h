@@ -10,8 +10,12 @@
 #include "kernel/types.h"
 
 /* Initialize and draw the boot splash screen.
- * Call immediately after fb_init(). */
-void boot_splash_init(void);
+ * Call immediately after fb_init(). Returns an `enum boot_load_state`
+ * (kernel/boot_load_status.h): LOADED when the splash is up with its status
+ * text, DEGRADED when it is up but the TTF status font failed (artwork and
+ * spinner only, no status text), SKIPPED when it was suppressed by
+ * postbars=diag or there is no framebuffer to draw on. */
+uint8_t boot_splash_init(void);
 
 /* Start the timer-driven spinner animation.
  * Call after pit_init() + sti (needs PIT interrupts running). */

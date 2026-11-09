@@ -108,17 +108,17 @@ static void emit_degraded_subsystems(struct json_builder *jb)
 {
     jb_puts(jb, ",\"degraded_subsystems\":[");
     int first = 1;
-    /* Iterate the canonical degraded_mask bitmap, NOT readiness state:
+    /* Iterate the canonical degraded bitmap, NOT readiness state:
      * kernel_subsystem_apply_result(BOOT_DEGRADED) marks the subsystem
-     * READY (so it's available to dependents) AND sets degraded_mask.
+     * READY (so it's available to dependents) AND sets the degraded bit.
      * Reading kernel_subsystem_ready() would silently omit ready-but-
      * degraded subsystems (Secure Boot, TPM, UEFI runtime) -- exactly
      * the cases this audit file exists to consolidate.  Iterate slot=0;
      * slot < SUBSYS_COUNT so new entries before the sentinel are picked
      * up automatically. */
-    uint32_t mask = g_boot_info.degraded_mask;
+    uint64_t mask = kernel_subsystem_degraded_mask();
     for (uint32_t slot = 0; slot < SUBSYS_COUNT; slot++) {
-        if (!(mask & ((uint32_t)1u << slot)))
+        if (!(mask & ((uint64_t)1u << slot)))
             continue;
         const char *name = kernel_subsystem_name((kernel_subsys_t)slot);
         if (!first) jb_putc(jb, ',');

@@ -12,6 +12,7 @@
 #include "kernel/boot_halt.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
+#include "kernel/drivers/framebuffer.h"   /* fb_is_refused */
 #include "kernel/drivers/serial.h"
 
 /* ---- Inline 8×8 bitmap font (96 printable ASCII chars: 0x20–0x7F) --------
@@ -295,8 +296,11 @@ void boot_halt(const char *reason)
      * construction). */
     int fb_pitch_ok = ((fb_pitch_bytes % 4u) == 0 &&
                        (fb_pitch_bytes / 4u) >= fb_w_snap);
+    /* fb_is_refused(): fb_init() rejected this layout (format, bpp, pitch),
+     * so the halt screen must not paint through it either; serial carries
+     * the reason. */
     if (g_boot_info.fb_available && g_boot_info.fb.addr &&
-        fb_dims_ok && fb_pitch_ok) {
+        fb_dims_ok && fb_pitch_ok && !fb_is_refused()) {
 
         volatile uint32_t *fb = (volatile uint32_t *)(uintptr_t)g_boot_info.fb.addr;
         uint32_t w       = fb_w_snap;

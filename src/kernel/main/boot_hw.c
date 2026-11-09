@@ -464,7 +464,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     /* --- UEFI variable services (NVRAM enumeration) ---
      * Both readiness oracle channels are updated in lockstep via
      * kernel_subsystem_apply_result(): set_ready (gates BOOT_REQUIRE)
-     * and degraded_mask (feeds the desktop summary). */
+     * and the degraded bitmap (feeds the desktop summary). */
     POST16(POST16_UEFI_VARS);
     {
         boot_result_t r_vars = uefi_vars_init();

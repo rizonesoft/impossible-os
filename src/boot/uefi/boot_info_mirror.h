@@ -624,7 +624,7 @@ struct boot_info {
     /* Kernel-populated fields (set after boot) */
     UINT8   secure_boot_enabled;
     UINT8   _kp_pad[3];
-    UINT32  degraded_mask;
+    UINT32  _kp_reserved0;           /* retired degraded_mask; see kernel header */
     UINT32  hv_flags;
     char    hv_vendor[16];
 

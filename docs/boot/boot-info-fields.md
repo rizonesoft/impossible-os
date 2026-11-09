@@ -196,7 +196,7 @@ These fields live inside `struct boot_info` but the **bootloader never writes th
 | --- | --- | --- | --- | --- | --- | --- |
 | `secure_boot_enabled` | kernel (`uefi_secureboot_init`) | K (after UEFI runtime init) | registry populator, boot log | runtime | uefi-hardening-secureboot | `0 | 1`. |
 | `_kp_pad[3]`          | kernel (zero init) | K | none (alignment) | -- | -- | Reserved. |
-| `degraded_mask`       | kernel (`boot_degrade_*`) | K (set incrementally across phases) | health orchestrator, BSOD context | runtime | system-health-recovery-orchestrator | Bitmask; individual bits are `SUBSYS_*` from `kernel_subsystems.h`. |
+| `_kp_reserved0`       | kernel (zero init) | K | none (retired) | -- | -- | Reserved: was `degraded_mask`. The degraded bitmap is kernel state and is now a 64-bit value in `boot_init.c`, read through `kernel_subsystem_degraded_mask()`; the slot stays so `hv_flags` keeps offset 22124. |
 | `hv_flags`            | kernel (CPUID hypervisor leaf + per-vendor probe) | K (after CPUID init in Phase 0) | platform detection, MSR trap workarounds | runtime | kernel-init-sequencing | `HV_FLAG_*` bits. |
 | `hv_vendor[16]`       | kernel (CPUID 0x40000000) | K | platform detection, boot log | runtime | kernel-init-sequencing | Null-terminated ASCII; zero if none. |
 

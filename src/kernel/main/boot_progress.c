@@ -137,6 +137,13 @@ void post_display16(uint16_t code)
     if (!g_boot_info.fb_available || !g_boot_info.fb.addr)
         return;
 
+    /* fb_init() ran and REFUSED this framebuffer (format, bpp or pitch): the
+     * driver path is unusable and the raw-VRAM path below assumes exactly the
+     * 32-bpp linear layout fb_init() just rejected, so draw nothing. Before
+     * fb_init() runs the bit is clear and the raw path stays available. */
+    if (!use_fb_driver && kernel_subsystem_is_degraded(SUBSYS_FB))
+        return;
+
     scr_w = use_fb_driver ? fb_get_width() : g_boot_info.fb.width;
     /* Reject undersized modes: the 4-digit overlay needs at least its footprint
      * plus margin. A narrower mode would underflow x0 (unsigned wrap) and the

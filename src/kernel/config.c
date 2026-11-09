@@ -86,6 +86,14 @@ static const boot_arg_desc_t k_arg_table[] = {
       0, MAX_CPUS - 1, 0, (void *)0, "hold this CPU inside its async step (0 = off)" },
     { "test_park_cpu",     BOOT_ARG_INT,      BOOT_ARG_CLASS_DEBUG,    BOOT_ARG_PHASE2,
       0, MAX_CPUS - 1, 0, (void *)0, "park this CPU after bringup (0 = off)" },
+    /* Forced non-critical init failure (resilient-boot roadmap): rtc_init() takes
+     * its real "declared RTC failed validation" path, so the smoke leg
+     * SMOKE_DEGRADE=rtc proves a failed non-critical init still reaches the
+     * desktop and is named in the degraded summary. */
+    { "test_fail_rtc",     BOOT_ARG_BOOL,     BOOT_ARG_CLASS_DEBUG,    BOOT_ARG_PHASE1,
+      0, 1, 0, (void *)0,            "force rtc_init() down its failed-read path" },
+    { "test_fail_fb",      BOOT_ARG_BOOL,     BOOT_ARG_CLASS_DEBUG,    BOOT_ARG_PHASE1,
+      0, 1, 0, (void *)0,            "force fb_init() to refuse the framebuffer" },
 #endif
 };
 #define K_ARG_COUNT (sizeof(k_arg_table) / sizeof(k_arg_table[0]))

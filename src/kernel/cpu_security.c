@@ -1290,7 +1290,7 @@ boot_result_t cpu_pcid_enable(void)
     /* Intel SDM Vol. 3A Section 4.10.1: CR4.PCIDE may be set to 1 only when
      * CR3[11:0] == 0, else #GP. The boot PML4 is page-aligned so this is a
      * hard invariant; a nonzero value means CR3 corruption. Report BOOT_FATAL
-     * so the caller leaves SUBSYS_PCID NOT ready AND records degraded_mask --
+     * so the caller leaves SUBSYS_PCID NOT ready AND records the degraded bit --
      * otherwise a broken CR3 would publish a false "PCID ready" while PCIDE is
      * actually off, hiding the violation from later consumers and the
      * end-of-boot degraded summary. */

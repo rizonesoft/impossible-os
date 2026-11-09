@@ -729,6 +729,15 @@ LOWRES="${SMOKE_LOWRES:-0}"
 ERROR_SCREEN="${SMOKE_ERROR_SCREEN:-0}"
 LOWRES_MODE="${SMOKE_LOWRES_MODE:-640x480}"
 FORCE_MODE="${SMOKE_FORCE_MODE:-}"
+# SMOKE_DEGRADE=rtc|fb forces one non-critical init to fail (resilient-boot roadmap):
+# the fixture boot.conf carries cmdline=test_fail_<name>=1, and the leg passes
+# only when the boot STILL reaches the prompt AND serial names the failure
+# twice -- at the moment it happens and in the end-of-boot summary.
+DEGRADE="${SMOKE_DEGRADE:-}"
+case "$DEGRADE" in
+    ""|rtc|fb) ;;
+    *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_DEGRADE must be rtc or fb (got: $DEGRADE)${NC}"; exit 1 ;;
+esac
 # SMOKE_EXPECT_TIER states the REQUIRED outcome rather than merely requiring
 # the two reports to agree. Agreement alone accepts a downgrade: raising the
 # full floor would make a forced 800x600 report compact on BOTH lines, and the
@@ -740,7 +749,7 @@ if [ "$LOWRES" = "1" ]; then FORCE_MODE="$LOWRES_MODE"; EXPECT_TIER="compact"; f
 # fingerprints the CANONICAL build image: recording one here would certify the
 # untouched image using evidence from a boot of different bytes.
 IMAGE_MODIFIED=0
-if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ "$SHADOW_STORE" != "0" ] || [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$UKI_MODE" ]; then
+if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ "$SHADOW_STORE" != "0" ] || [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$UKI_MODE" ] || [ -n "$DEGRADE" ]; then
     if ! command -v mcopy >/dev/null 2>&1; then
         echo -e "${RED}SMOKE TEST FAILED: image fixtures need mtools (mcopy)${NC}"
         exit 1
@@ -819,7 +828,7 @@ if [ "$CORRUPT_STORE" = "1" ]; then
           ::EFI/ImpossibleOS/bootentries.json
     echo -e "  ${DIM}corrupt-store fixture staged into $(basename "$DISK")${NC}"
 fi
-if [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ]; then
+if [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$DEGRADE" ]; then
     CONF_FIXTURE="$BUILD/boot.conf.fixture"
     if ! mcopy -i "$DISK@@$EFI_OFFSET" -o ::EFI/ImpossibleOS/boot.conf \
                "$CONF_FIXTURE" 2>/dev/null; then
@@ -829,6 +838,18 @@ if [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ]; then
     # Drop any existing values for the keys we set, then append ours, so the
     # fixture does not depend on which duplicate the parser happens to keep.
     sed -i -E '/^[[:space:]]*(Resolution|error_screen_test)[[:space:]]*=/d' "$CONF_FIXTURE"
+    if [ -n "$DEGRADE" ]; then
+        # The injection key is reached through cmdline=, never as a bare
+        # boot.conf line (see the test_* rows in src/kernel/config.c).
+        sed -i -E '/^[[:space:]]*cmdline[[:space:]]*=/d' "$CONF_FIXTURE"
+        printf 'cmdline=test_fail_%s=1\n' "$DEGRADE" >> "$CONF_FIXTURE"
+        if [ "$DEGRADE" = "fb" ]; then
+            # diag keeps VPD Tier 1 drawing through the whole boot, the
+            # hardest case for "nothing paints through a refused layout".
+            sed -i -E '/^[[:space:]]*postbars[[:space:]]*=/d' "$CONF_FIXTURE"
+            printf 'postbars=diag\n' >> "$CONF_FIXTURE"
+        fi
+    fi
     if [ -n "$FORCE_MODE" ]; then
         printf 'Resolution=%s\n' "$FORCE_MODE" >> "$CONF_FIXTURE"
     fi
@@ -1192,6 +1213,32 @@ if [ "$BOOT_PASSED" = true ]; then
     fi
 fi
 
+# ---- Forced-degradation verdict (SMOKE_DEGRADE=rtc) -------------------------
+# The boot has already passed every normal marker; this leg additionally needs
+# the injected failure to have been recorded, not silently absorbed.
+if [ -n "$DEGRADE" ] && [ "$BOOT_PASSED" = true ]; then
+    strip_ansi
+    DEG_UP="$(printf '%s' "$DEGRADE" | tr '[:lower:]' '[:upper:]')"
+    if ! grep -qF "test_fail_${DEGRADE}=1" "$STRIPPED_LOG" 2>/dev/null; then
+        BOOT_PASSED=false; BOOT_FAILED=true
+        FAIL_REASON="SMOKE_DEGRADE=$DEGRADE: the injection never fired (cmdline fixture not applied?)"
+    elif ! grep -qF "${DEG_UP}: init failed -- degraded" "$STRIPPED_LOG" 2>/dev/null; then
+        BOOT_PASSED=false; BOOT_FAILED=true
+        FAIL_REASON="SMOKE_DEGRADE=$DEGRADE: no '${DEG_UP}: init failed -- degraded' line"
+    elif ! grep -aE "Degraded subsystems \([0-9]+\): .*\b${DEG_UP}\b" "$STRIPPED_LOG" >/dev/null 2>&1; then
+        BOOT_PASSED=false; BOOT_FAILED=true
+        FAIL_REASON="SMOKE_DEGRADE=$DEGRADE: end-of-boot degraded summary does not name ${DEG_UP}"
+    elif [ "$DEGRADE" = "fb" ] && ! grep -qF "vpd: display refused -- POST progress display retired" "$STRIPPED_LOG" 2>/dev/null; then
+        BOOT_PASSED=false; BOOT_FAILED=true
+        FAIL_REASON="SMOKE_DEGRADE=fb: VPD was not retired after the refusal (it still holds the rejected layout)"
+    elif [ "$DEGRADE" = "fb" ] && ! grep -qF "test_fail_fb: refused display untouched since refusal" "$STRIPPED_LOG" 2>/dev/null; then
+        BOOT_PASSED=false; BOOT_FAILED=true
+        FAIL_REASON="SMOKE_DEGRADE=fb: VRAM changed after the refusal, or the driver did not read as an empty surface"
+    else
+        echo -e "  ${GREEN}✓${NC} forced ${DEG_UP} failure recorded and boot still reached the prompt"
+    fi
+fi
+
 # Kill QEMU (trap also does this; harmless repeat)
 kill "$QEMU_PID" 2>/dev/null || true
 wait "$QEMU_PID" 2>/dev/null || true
@@ -1487,6 +1534,12 @@ if [ -f "$STRIPPED_LOG" ]; then
                 case "$entry" in ''|'#'*) continue ;; esac
                 case "$fail_line" in *"$entry"*) is_baselined=true; break ;; esac
             done < "$BASELINE_FILE"
+        fi
+        # A forced-degradation leg expects exactly the refusal it injected;
+        # that one line is the leg's evidence, not noise, and is excused for
+        # this leg only (never baselined, so a real refusal still fails).
+        if [ "$is_baselined" = false ] && [ "$DEGRADE" = "fb" ]; then
+            case "$fail_line" in *"gfx: Unsupported pixel format 255"*) is_baselined=true ;; esac
         fi
         if [ "$is_baselined" = false ]; then
             UNEXPECTED_FAILS="${UNEXPECTED_FAILS}${fail_line}"$'\n'

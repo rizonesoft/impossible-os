@@ -129,8 +129,11 @@ struct smbios_system_info {
 #define SMBIOS_ECC_CRC         0x07
 
 /* Initialize SMBIOS -- find tables via config table, parse, log summary.
- * Must be called after uefi_config_init(). */
-void smbios_init(void);
+ * Must be called after uefi_config_init(). Returns a boot_probe_result
+ * a boot_probe_result (kernel/boot_probe.h): OK when parsed, ABSENT when
+ * firmware published no entry point, FAILED when one was published but
+ * rejected. */
+int smbios_init(void);
 
 /* Returns pointer to the global system info struct (valid after smbios_init). */
 const struct smbios_system_info *smbios_get_info(void);

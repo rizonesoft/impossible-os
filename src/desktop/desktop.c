@@ -191,6 +191,15 @@ static void load_wallpaper(void)
     }
     if (hTheme) RegCloseKey(hTheme);
 
+    /* No display surface (no GOP framebuffer, or fb_init() refused it): there
+     * is nothing to scale to, so do not decode a multi-MiB image only to fail
+     * scaling it to 0x0. The boot is already reported degraded via SUBSYS_FB
+     * (resilient-boot roadmap); this is the expected consequence, not an error. */
+    if (screen_w == 0 || screen_h == 0) {
+        klog(LOG_INFO, "DESKTOP", "wallpaper: no display surface -- not loaded");
+        return;
+    }
+
     /* Decode the image file (JPEG, PNG, BMP, GIF, TGA) */
     if (image_load(&decoded, wp_path) < 0) {
         klog(LOG_ERROR, "DESKTOP", "wallpaper: failed to decode '%s'", wp_path);

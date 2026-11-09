@@ -16,6 +16,10 @@
 #include "kernel/drivers/rtc.h"
 #include "kernel/acpi.h"
 #include "kernel/klog.h"
+#include "kernel/boot_probe.h"
+#ifdef KERNEL_TESTS
+#include "kernel/config.h"   /* boot_arg_resolved_ival: test_fail_rtc */
+#endif
 
 /* ---- Availability latch ----
  * Fail-closed: stays 0 (no CMOS) until rtc_probe_availability() proves a CMOS
@@ -161,26 +165,34 @@ int rtc_try_read(struct rtc_time *t)
     return rtc_time_plausible(t);
 }
 
-void rtc_init(void)
+int rtc_init(void)
 {
     struct rtc_time t;
 
     rtc_probe_availability();
     if (!s_rtc_available) {
         klog(LOG_INFO, "rtc", "RTC: no CMOS (ACPI gate) -- skipped");
-        return;
+        return BOOT_PROBE_ABSENT;
     }
 
-    if (!rtc_try_read(&t)) {
+    int read_ok = rtc_try_read(&t);
+#ifdef KERNEL_TESTS
+    if (read_ok && boot_arg_resolved_ival("test_fail_rtc") > 0) {
+        klog(LOG_WARN, "rtc", "RTC: test_fail_rtc=1 -- failing the read on purpose");
+        read_ok = 0;
+    }
+#endif
+    if (!read_ok) {
         klog(LOG_WARN, "rtc",
              "RTC: read failed validation -- treating as unavailable");
         s_rtc_available = 0;
-        return;
+        return BOOT_PROBE_FAILED;
     }
 
     klog(LOG_INFO, "rtc", "RTC: %u-%u-%u %u:%u:%u",
            (uint64_t)t.year, (uint64_t)t.month, (uint64_t)t.day,
            (uint64_t)t.hour, (uint64_t)t.minute, (uint64_t)t.second);
+    return BOOT_PROBE_OK;
 }
 
 void rtc_read(struct rtc_time *t)

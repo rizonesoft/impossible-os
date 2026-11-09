@@ -172,6 +172,8 @@ Typing with the menu open (or clicking the search box) filters apps, settings pa
 - [ ] `void notify_tick(void)`: called from `wm_composite()` before draw; advance slide tweens; check `show_until_ms`; start hide tween; free finished slots; dequeue next if room
 - [ ] `void notify_draw(gfx_surface_t *s)`: for each active toast: `gfx_acrylic()`; rounded-rect; icon 24 px; bold title; body; action button if set; `x = slide_x.current`
 - [ ] `#define SYS_NOTIFY_SEND 54` in `syscall.h`; wire in dispatch table
+- [ ] Boot degraded toast: when `kernel_subsystem_degraded_mask()` is non-zero after `boot_run_deferred()`, post one toast listing `kernel_subsystem_format_degraded()` names
+  - XREF: 01-boot-platform/TODO-10 §7 promises "the user sees a notification listing what failed"; today the list reaches serial and the boot-health JSON only, because the splash is finished by then and no toast exists.
 - [ ] System notifications: `net_on_connect()` → `notify_send("Network", "Connected to network", ICON_NETWORK, 4000)`; `usb_on_attach()` → toast; `disk_on_low_space()` → toast
 - [ ] Commit: `"notify: toast queue -- slide-in/out stacking, ring buffer, SYS_NOTIFY_SEND=54, DND-aware"`
 

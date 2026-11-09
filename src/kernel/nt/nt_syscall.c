@@ -1004,12 +1004,12 @@ NTSTATUS nt_query_notification_information(void *buffer, uint32_t buf_size,
     info.Version = SYSTEM_NOTIFICATION_INFORMATION_VERSION;
     info.Size    = (uint16_t)sizeof(info);
     /* Three distinct health states. apply_result records BOTH DEGRADED and FATAL
-     * in degraded_mask, so the degraded_mask bit alone cannot tell them apart --
+     * in the degraded bitmap, so the degraded bit alone cannot tell them apart --
      * READY (BOOT_OK/DEGRADED both set ready) is the discriminator. Not ready =>
      * fatal init (UNAVAILABLE); ready + degraded bit => partial (DEGRADED). */
     if (kernel_subsystem_ready(SUBSYS_KNF)) {
         info.Flags |= SYSTEM_NOTIFICATION_FLAG_READY;
-        if (g_boot_info.degraded_mask & (1u << SUBSYS_KNF))
+        if (kernel_subsystem_is_degraded(SUBSYS_KNF))
             info.Flags |= SYSTEM_NOTIFICATION_FLAG_DEGRADED;
     } else {
         info.Flags |= SYSTEM_NOTIFICATION_FLAG_UNAVAILABLE;

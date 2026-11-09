@@ -442,3 +442,11 @@ A: (run decision, 2026-11-09) A with 1. Reversal cost: the timeout rank is one o
 - **2:** the BSP owns AHCI's record on the async SKIP path, so a worker that never returns still appears in the summary (design review H2).
 
 A: (run decision, 2026-11-09) A with 1 and 2. Reversal cost: the mask accessor is one function and five readers; restoring a handoff field is a rename in `boot_info.h`, the mirror and `dump-fields.inc`. Two enums for one convention would have needed a later merge across every driver.
+
+## Q37 (01-boot-platform/TODO-10 §7): what does a refused framebuffer do, and does DHCP get a degraded slot now?
+
+- **A:** a refused framebuffer (pixel format, bpp, pitch) no longer halts. `fb_init` logs `LOG_ERROR`, zeroes its geometry so the display reads exactly like a machine with no GOP framebuffer, and returns FAILED; the boot continues on serial with FB in the degraded summary.
+- **B:** keep `klog(LOG_FATAL)` on a refused framebuffer, making the display a critical subsystem.
+- **DHCP:** no slot yet. `dhcp_discover()` is fire-and-forget with no timeout or lease state, so there is no outcome to report; the slot is filed with the lease daemon in 07-networking/TODO-06 §1.
+
+A: (run decision, 2026-11-10) A, DHCP deferred. Reversal: restoring the halt is four lines in `framebuffer.c`; the DHCP slot is one enum value and one name once lease states exist.

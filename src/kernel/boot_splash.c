@@ -23,6 +23,7 @@
 #include "kernel/timer.h"
 #include "kernel/types.h"
 #include "kernel/klog.h"
+#include "kernel/boot_load_status.h"
 #include "kernel/spinner.h"
 #include "kernel/gfx/arc_ring.h"
 
@@ -119,7 +120,7 @@ static void splash_draw_text(const char *text, uint32_t color)
  * Public API
  * ============================================================================ */
 
-void boot_splash_init(void)
+uint8_t boot_splash_init(void)
 {
     /* postbars=diag (2): the Tier 1 VPD diagnostic layout is authoritative for
      * the whole boot. Suppress the splash artwork entirely (no black-wipe, no
@@ -137,13 +138,13 @@ void boot_splash_init(void)
         klog_set_screen_level(LOG_FATAL);
         fb_lock_compositor();
         klog(LOG_INFO, "SPLASH", "postbars=diag: splash suppressed, VPD Tier 1 authoritative");
-        return;
+        return BOOT_LOAD_SKIPPED;
     }
 
     scr_w = fb_get_width();
     scr_h = fb_get_height();
 
-    if (scr_w == 0 || scr_h == 0) return;
+    if (scr_w == 0 || scr_h == 0) return BOOT_LOAD_SKIPPED;
 
     /* ---- HiDPI scale factor (for boot_info / desktop use) -------------
      * Integer scale: 1× ≤1080p,  2× ≤2160p,  3× >2160p. */
@@ -219,6 +220,10 @@ void boot_splash_init(void)
         fb_swap();
         sleep_ms(100);
     }
+    /* Without the TTF font every boot_splash_status()/diag() line is
+     * dropped, including the warnings Phase 3 posts there, so the splash is
+     * up but reduced. */
+    return ttf_ready ? BOOT_LOAD_LOADED : BOOT_LOAD_DEGRADED;
 }
 
 /* Called from main.c after timer_hal_init() + sti to start animation */

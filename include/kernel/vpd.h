@@ -47,3 +47,8 @@ const char *vpd_post16_name(uint16_t code);
 
 /* Signal that splash is taking over -- stop Tier 1 rendering. */
 void vpd_stop_tier1(void);
+
+/* fb_init() refused the framebuffer layout VPD cached from g_boot_info.fb:
+ * stop Tier 1 WITHOUT drawing a final stage, and make every later VPD entry
+ * point (stage begin/done/fail, the crash banner) a no-op. */
+void vpd_display_refused(void);

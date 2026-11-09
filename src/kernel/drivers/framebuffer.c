@@ -16,6 +16,10 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/klog.h"
+#include "kernel/boot_load_status.h"
+#ifdef KERNEL_TESTS
+#include "kernel/config.h"   /* boot_arg_resolved_ival: test_fail_fb */
+#endif
 #include "kernel/printk.h"
 #include "gfx_simd.h"
 
@@ -150,6 +154,7 @@ static uint32_t bg_color;       /* background color */
 static uint8_t compositor_locked; /* when set, fb_putchar/draw_char are no-ops */
 
 static uint8_t  fb_ready;       /* 1 if framebuffer is initialized */
+static uint8_t  fb_refused;     /* 1 once fb_init() rejected the GOP layout */
 
 /* VBE page flip state -- two pages in VRAM for tear-free rendering */
 static uint8_t  page_flip_ok;   /* 1 if VBE page flipping is available */
@@ -199,11 +204,31 @@ static void mem_cpy32(uint32_t *dst, const uint32_t *src, uint32_t count)
  * Lifecycle
  * ============================================================================ */
 
-void fb_init(void)
+/* A refused framebuffer leaves the driver exactly as a machine with no GOP
+ * framebuffer does: zero geometry, no VRAM pointer, no back buffer. Every
+ * accessor (fb_get_width/height/stride/backbuffer) then reports an empty
+ * surface, so the splash, the compositor and the text console draw nothing
+ * instead of writing through a format or pitch this function just rejected.
+ * Only the geometry the guardrails had already copied needs clearing; the
+ * pointers are still NULL at every refusal site, cleared again for clarity. */
+static uint8_t fb_refuse(void)
 {
+    fb_pitch = fb_width = fb_height = fb_bpp = fb_stride = 0;
+    max_cols = max_rows = 0;
+    hw_addr  = (uint32_t *)0;
+    back_buf = (uint32_t *)0;
+    fb_ready = 0;
+    __atomic_store_n(&fb_refused, 1, __ATOMIC_RELEASE);
+    return BOOT_LOAD_FAILED;
+}
+
+uint8_t fb_init(void)
+{
+    uint8_t state = BOOT_LOAD_LOADED;
+
     if (!g_boot_info.fb_available) {
         fb_ready = 0;
-        return;
+        return BOOT_LOAD_SKIPPED;
     }
 
     fb_pitch  = g_boot_info.fb.pitch;
@@ -212,36 +237,45 @@ void fb_init(void)
     fb_bpp    = g_boot_info.fb.bpp;
     fb_stride = fb_width;   /* back buffer is tightly packed */
 
+    /* Each refusal below is LOG_ERROR, never LOG_FATAL: klog(LOG_FATAL)
+     * halts the CPU, and an unusable display must not end a boot that can
+     * still reach userspace on serial (resilient-boot roadmap). */
+
     /* --- Guardrail: pixel format must be RGBX or BGRX (32-bit) ---
      * The rendering code assumes 4 bytes/pixel throughout. BitMask and other
      * exotic formats are rejected by the bootloader, but verify here too. */
-    if (g_boot_info.fb.pixel_format != GOP_PIXEL_BGRX &&
-        g_boot_info.fb.pixel_format != GOP_PIXEL_RGBX) {
-        klog(LOG_FATAL, "gfx", "Unsupported pixel format %u (expected RGBX=0 or BGRX=1)",
-             (uint64_t)g_boot_info.fb.pixel_format);
-        fb_ready = 0;
-        return;
+    uint32_t pixel_format = g_boot_info.fb.pixel_format;
+#ifdef KERNEL_TESTS
+    /* Forced refusal (resilient-boot roadmap): smoke leg SMOKE_DEGRADE=fb takes
+     * this guardrail's real path on a framebuffer that is otherwise fine. */
+    if (boot_arg_resolved_ival("test_fail_fb") > 0) {
+        klog(LOG_WARN, "gfx", "test_fail_fb=1 -- refusing the framebuffer on purpose");
+        pixel_format = 0xFFu;
+    }
+#endif
+    if (pixel_format != GOP_PIXEL_BGRX &&
+        pixel_format != GOP_PIXEL_RGBX) {
+        klog(LOG_ERROR, "gfx", "Unsupported pixel format %u (expected RGBX=0 or BGRX=1)",
+             (uint64_t)pixel_format);
+        return fb_refuse();
     }
     if (fb_bpp != 32) {
-        klog(LOG_FATAL, "gfx", "Unsupported bpp %u (expected 32)", (uint64_t)fb_bpp);
-        fb_ready = 0;
-        return;
+        klog(LOG_ERROR, "gfx", "Unsupported bpp %u (expected 32)", (uint64_t)fb_bpp);
+        return fb_refuse();
     }
 
     /* --- Guardrail: pitch must be aligned to pixel size and >= width ---
      * PixelsPerScanLine may include padding beyond visible width. If pitch
      * is not a multiple of bpp/8, stride math produces wrong values. */
     if ((fb_pitch % (fb_bpp / 8)) != 0) {
-        klog(LOG_FATAL, "gfx", "Pitch %u not aligned to %u-byte pixels",
+        klog(LOG_ERROR, "gfx", "Pitch %u not aligned to %u-byte pixels",
              (uint64_t)fb_pitch, (uint64_t)(fb_bpp / 8));
-        fb_ready = 0;
-        return;
+        return fb_refuse();
     }
     if (fb_pitch < fb_width * (fb_bpp / 8)) {
-        klog(LOG_FATAL, "gfx", "Pitch %u too small for %u pixels @ %u bpp",
+        klog(LOG_ERROR, "gfx", "Pitch %u too small for %u pixels @ %u bpp",
              (uint64_t)fb_pitch, (uint64_t)fb_width, (uint64_t)fb_bpp);
-        fb_ready = 0;
-        return;
+        return fb_refuse();
     }
 
     /* Remap framebuffer VRAM as Write-Combining for fast sequential writes.
@@ -294,6 +328,7 @@ void fb_init(void)
                    (uint64_t)(bb_bytes / 1024));
             back_buf = hw_addr;
             fb_stride = fb_pitch / (fb_bpp / 8);
+            state = BOOT_LOAD_DEGRADED;
         }
     }
 
@@ -356,12 +391,13 @@ void fb_init(void)
     }
 
     fb_clear();
+    return state;
 }
 
 /* 1 once fb_init() completed with a usable framebuffer, 0 if it bailed on an
  * absent framebuffer, an unsupported pixel format or bpp, or a misaligned
- * pitch. fb_init() is void, so this is the only way a caller can tell a
- * working display from a boot that is running blind. */
+ * pitch. Lets a later caller tell a working display from a boot that is
+ * running blind without re-deriving fb_init()'s verdict. */
 int fb_is_ready(void)
 {
     return fb_ready ? 1 : 0;
@@ -837,6 +873,32 @@ void fb_set_color(uint32_t fg, uint32_t bg)
  * Queries
  * ============================================================================ */
 
+int fb_is_refused(void) { return __atomic_load_n(&fb_refused, __ATOMIC_ACQUIRE); }
+
+#ifdef KERNEL_TESTS
+uint64_t fb_test_vram_digest(void)
+{
+    const volatile uint32_t *base;
+    uint32_t pitch_px = g_boot_info.fb.pitch / 4u;
+    uint32_t rows     = g_boot_info.fb.height;
+    uint64_t h = 1469598103934665603ull;
+
+    if (!g_boot_info.fb_available || !g_boot_info.fb.addr || !pitch_px)
+        return 0;
+    /* The WHOLE visible surface: VPD stage rows march down the screen, so a
+     * top-rows sample misses a late stage (the first version hashed 128 rows
+     * and its control stayed green with VPD still drawing). Bounded so the
+     * 32-bit product cannot wrap on a garbage handoff. */
+    if (pitch_px > 16384u || rows > 16384u)
+        return 0;
+    base = (const volatile uint32_t *)(uintptr_t)g_boot_info.fb.addr;
+    for (uint32_t i = 0; i < rows * pitch_px; i++) {
+        h ^= base[i];
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+#endif
 uint32_t fb_get_width(void)  { return fb_width; }
 uint32_t fb_get_height(void) { return fb_height; }
 uint32_t *fb_get_backbuffer(void) { return back_buf; }

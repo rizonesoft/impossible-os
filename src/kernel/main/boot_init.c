@@ -2,7 +2,7 @@
  * boot_init.c -- Subsystem readiness oracle and boot progress tracker
  *
  * Provides:
- *   - g_subsys_ready[] table with get/set/dump helpers
+ *   - the subsystem readiness table + degraded bitmap with get/set/dump helpers
  *   - boot_progress() serial progress emitter + TSC step recorder
  *   - _boot_require_failed() helper used by BOOT_REQUIRE macro
  * ============================================================================ */
@@ -17,6 +17,7 @@
 #include "kernel/drivers/watchdog.h"
 #include "kernel/uefi_runtime.h"
 #include "kernel/boot_info.h"
+#include "kernel/boot_load_status.h"
 
 /* ---- Subsystem readiness table ------------------------------------------
  * SMP-safe: uses atomic load/store with acquire/release semantics.
@@ -24,7 +25,11 @@
  * (boot_async_group) can set readiness on one CPU while another
  * CPU checks BOOT_REQUIRE. */
 
-static uint8_t g_subsys_ready[SUBSYS_COUNT];
+/* The one live instance. Zero-initialised .bss: nothing ready, nothing
+ * degraded. Readiness bytes are release-stored / acquire-loaded; the degraded
+ * bitmap is atomically OR'd BEFORE the matching readiness store, so a CPU
+ * that acquires `ready` also observes the bit published with it. */
+static struct kernel_subsys_state g_subsys;
 
 static const char *const s_subsys_names[SUBSYS_COUNT] = {
     "SERIAL",     /* 0  */
@@ -57,30 +62,59 @@ static const char *const s_subsys_names[SUBSYS_COUNT] = {
     "EX",         /* 27 */
     "NLS",        /* 28 */
     "KNF",        /* 29 */
+    "KEYBOARD",   /* 30 */
+    "MOUSE",      /* 31 */
+    "AHCI",       /* 32 */
+    "NIC",        /* 33 */
+    "SMBIOS",     /* 34 */
+    "SPLASH",     /* 35 */
 };
 
 _Static_assert(sizeof(s_subsys_names) / sizeof(s_subsys_names[0]) == SUBSYS_COUNT,
                "s_subsys_names must have exactly SUBSYS_COUNT entries");
 
+static inline uint64_t subsys_bit(kernel_subsys_t subsys)
+{
+    return (uint64_t)1u << (uint32_t)subsys;   /* caller bounds-checked */
+}
+
 bool kernel_subsystem_ready(kernel_subsys_t subsys)
 {
     if ((uint32_t)subsys >= SUBSYS_COUNT) return false;
-    return __atomic_load_n(&g_subsys_ready[subsys], __ATOMIC_ACQUIRE) != 0;
+    return __atomic_load_n(&g_subsys.ready[subsys], __ATOMIC_ACQUIRE) != 0;
 }
 
 void kernel_subsystem_set_ready(kernel_subsys_t subsys, bool ok)
 {
     if ((uint32_t)subsys >= SUBSYS_COUNT) return;
-    __atomic_store_n(&g_subsys_ready[subsys], ok ? 1 : 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_subsys.ready[subsys], ok ? 1 : 0, __ATOMIC_RELEASE);
+}
+
+uint64_t kernel_subsystem_degraded_mask(void)
+{
+    return __atomic_load_n(&g_subsys.degraded, __ATOMIC_ACQUIRE);
+}
+
+bool kernel_subsystem_is_degraded(kernel_subsys_t subsys)
+{
+    if ((uint32_t)subsys >= SUBSYS_COUNT) return false;
+    return (kernel_subsystem_degraded_mask() & subsys_bit(subsys)) != 0;
 }
 
 void kernel_subsystem_dump(void)
 {
+    /* Four states, so an absent optional device no longer reads as a failed
+     * one: OK (ready), DEGR (ready but reduced), FAIL (not ready AND recorded
+     * degraded -- init was attempted and failed), and "----" (not ready, no
+     * failure recorded: absent, disabled, or not initialised yet). */
+    uint64_t mask = kernel_subsystem_degraded_mask();
     klog(LOG_INFO, "BOOT", "--- Subsystem readiness ---");
     for (uint32_t i = 0; i < SUBSYS_COUNT; i++) {
-        klog(LOG_INFO, "BOOT", "  [%s] %s",
-             __atomic_load_n(&g_subsys_ready[i], __ATOMIC_ACQUIRE) ? "OK  " : "FAIL",
-             s_subsys_names[i]);
+        bool ready = __atomic_load_n(&g_subsys.ready[i], __ATOMIC_ACQUIRE) != 0;
+        bool degr  = (mask & ((uint64_t)1u << i)) != 0;
+        const char *tag = ready ? (degr ? "DEGR" : "OK  ")
+                                : (degr ? "FAIL" : "----");
+        klog(LOG_INFO, "BOOT", "  [%s] %s", tag, s_subsys_names[i]);
     }
 }
 
@@ -90,17 +124,107 @@ const char *kernel_subsystem_name(kernel_subsys_t subsys)
     return s_subsys_names[subsys];
 }
 
+/* The single writer every entry point funnels through. Bit first (atomic OR,
+ * release), readiness second (release store): see g_subsys. */
+static bool subsys_publish(struct kernel_subsys_state *st, kernel_subsys_t subsys,
+                           bool ready, bool degraded)
+{
+    if (degraded)
+        __atomic_fetch_or(&st->degraded, subsys_bit(subsys), __ATOMIC_RELEASE);
+    __atomic_store_n(&st->ready[subsys], ready ? 1 : 0, __ATOMIC_RELEASE);
+    return ready;
+}
+
+bool kernel_subsystem_apply_result_into(struct kernel_subsys_state *st,
+                                        kernel_subsys_t subsys, boot_result_t r)
+{
+    if (!st || (uint32_t)subsys >= SUBSYS_COUNT) return false;
+    return subsys_publish(st, subsys, r == BOOT_OK || r == BOOT_DEGRADED,
+                          r != BOOT_OK);
+}
+
+bool kernel_subsystem_apply_load_state_into(struct kernel_subsys_state *st,
+                                            kernel_subsys_t subsys,
+                                            uint8_t load_state)
+{
+    if (!st || (uint32_t)subsys >= SUBSYS_COUNT) return false;
+    switch (load_state) {
+    case BOOT_LOAD_LOADED:   return subsys_publish(st, subsys, true,  false);
+    case BOOT_LOAD_DEGRADED: return subsys_publish(st, subsys, true,  true);
+    case BOOT_LOAD_SKIPPED:  return subsys_publish(st, subsys, false, false);
+    default:                 return subsys_publish(st, subsys, false, true);
+    }
+}
+
 bool kernel_subsystem_apply_result(kernel_subsys_t subsys, boot_result_t r)
 {
-    if ((uint32_t)subsys >= SUBSYS_COUNT) return false;
+    return kernel_subsystem_apply_result_into(&g_subsys, subsys, r);
+}
 
-    bool ready = (r == BOOT_OK) || (r == BOOT_DEGRADED);
-    kernel_subsystem_set_ready(subsys, ready);
-
-    if (r != BOOT_OK)
-        g_boot_info.degraded_mask |= (1u << (uint32_t)subsys);
-
+bool kernel_subsystem_apply_load_state(kernel_subsys_t subsys, uint8_t load_state)
+{
+    bool ready = kernel_subsystem_apply_load_state_into(&g_subsys, subsys,
+                                                        load_state);
+    if ((uint32_t)subsys >= SUBSYS_COUNT)
+        return ready;
+    /* One WARN per degraded outcome, in the shape the section's checkpoint
+     * names ("RTC: init failed -- degraded"), so serial says WHAT degraded at
+     * the moment it happens rather than only in the end-of-boot summary. */
+    if (load_state == BOOT_LOAD_DEGRADED)
+        klog(LOG_WARN, "boot", "%s: up with reduced function -- degraded",
+             s_subsys_names[subsys]);
+    else if (load_state != BOOT_LOAD_LOADED && load_state != BOOT_LOAD_SKIPPED)
+        klog(LOG_WARN, "boot", "%s: init failed -- degraded",
+             s_subsys_names[subsys]);
     return ready;
+}
+
+void kernel_subsystem_mark_degraded(kernel_subsys_t subsys)
+{
+    if ((uint32_t)subsys >= SUBSYS_COUNT) return;
+    __atomic_fetch_or(&g_subsys.degraded, subsys_bit(subsys), __ATOMIC_RELEASE);
+}
+
+uint32_t kernel_subsystem_format_degraded(uint64_t mask, char *buf, uint32_t cap)
+{
+    static const char sep[] = ", ";
+    static const char more[] = ", ...";
+    uint32_t count = 0, pos = 0;
+    bool truncated = false;
+
+    if (buf && cap) buf[0] = '\0';
+    for (uint32_t i = 0; i < SUBSYS_COUNT; i++) {
+        if (!(mask & ((uint64_t)1u << i)))
+            continue;
+        count++;
+        if (!buf || cap == 0 || truncated)
+            continue;
+        const char *name = s_subsys_names[i];
+        uint32_t nlen = 0;
+        while (name[nlen]) nlen++;
+        uint32_t need = (pos ? 2u : 0u) + nlen;
+        /* Room for this name plus the terminator, and -- when a later slot
+         * is also set -- for the ", ..." marker that slot may need. */
+        uint64_t later = (i + 1u < SUBSYS_COUNT)
+                       ? (mask >> (i + 1u)) & (((uint64_t)1u << (SUBSYS_COUNT - i - 1u)) - 1u)
+                       : 0u;
+        uint64_t reserve = later ? (uint64_t)sizeof(more) : 1u;
+        if ((uint64_t)pos + need + reserve > cap) {
+            /* Not this name: mark the cut if the marker fits, else stop. */
+            const char *m = pos ? more : more + 2;          /* "..." alone */
+            uint32_t mlen = pos ? 5u : 3u;
+            if ((uint64_t)pos + mlen + 1u <= cap) {
+                for (uint32_t k = 0; k < mlen; k++) buf[pos++] = m[k];
+                buf[pos] = '\0';
+            }
+            truncated = true;
+            continue;
+        }
+        if (pos) { buf[pos++] = sep[0]; buf[pos++] = sep[1]; }
+        for (uint32_t k = 0; k < nlen; k++) buf[pos++] = name[k];
+        buf[pos] = '\0';
+    }
+    return count;
 }
 
 /* ---- BOOT_REQUIRE helper ------------------------------------------------- */

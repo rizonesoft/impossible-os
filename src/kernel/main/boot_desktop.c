@@ -686,18 +686,42 @@ void boot_phase3(void)
      * automatically. (Drift caught by Codex 2026-04-08: this used to have
      * a 20-entry copy of the names table and an `i < 20` cap, silently
      * dropping SUBSYS_OB and any slot added after it.) */
-    if (g_boot_info.degraded_mask) {
-        uint32_t mask = g_boot_info.degraded_mask;
-        uint32_t i;
-        klog(LOG_WARN, "boot", "Degraded subsystems:");
-        for (i = 0; i < SUBSYS_COUNT && mask; i++) {
-            if (mask & (1u << i)) {
-                klog(LOG_WARN, "boot", "  - %s",
-                     kernel_subsystem_name((kernel_subsys_t)i));
-                mask &= ~(1u << i);
-            }
+    {
+        uint64_t mask = kernel_subsystem_degraded_mask();
+        if (mask) {
+            /* One line, every name: SUBSYS_COUNT (36) names of <= 10 chars
+             * plus ", " separators fit in 512 bytes, so the formatter never
+             * truncates here; it still marks a cut with ", ..." if the table
+             * outgrows the buffer. Runs after boot_run_deferred(), so the
+             * deferred NIC/mouse outcomes are included. The desktop toast for
+             * this list is owned by the notification-toast roadmap. */
+            static char names[512];
+            uint32_t n = kernel_subsystem_format_degraded(mask, names,
+                                                          (uint32_t)sizeof names);
+            klog(LOG_WARN, "boot", "Degraded subsystems (%u): %s",
+                 (uint64_t)n, names);
         }
     }
+
+#ifdef KERNEL_TESTS
+    /* SMOKE_DEGRADE=fb: the refused display must have stayed untouched from
+     * the refusal to here, and the driver must read as an empty surface.
+     * Every raw renderer that could paint (VPD, POST display, splash, text
+     * console) has run by now; the compositor has not started. */
+    if (boot_arg_resolved_ival("test_fail_fb") > 0) {
+        extern uint64_t boot_test_fb_refusal_digest;
+        uint64_t now = fb_test_vram_digest();
+        int empty = fb_is_refused() && !fb_is_ready() &&
+                    fb_get_width() == 0 && fb_get_height() == 0 &&
+                    fb_get_backbuffer() == (uint32_t *)0;
+        if (empty && now == boot_test_fb_refusal_digest)
+            klog(LOG_INFO, "boot", "test_fail_fb: refused display untouched since refusal");
+        else
+            klog(LOG_ERROR, "boot",
+                 "test_fail_fb: refused display WRITTEN or not empty (empty=%u, digest %p -> %p)",
+                 (uint64_t)empty, boot_test_fb_refusal_digest, now);
+    }
+#endif
 
     /* Boot-time heap stats */
     {

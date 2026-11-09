@@ -435,13 +435,15 @@ static void test_bm_acpi_short_table_is_not_read_past(void)
 
 static void test_bm_degraded_mask_is_well_formed(void)
 {
-    uint32_t mask = g_boot_info.degraded_mask;
-    uint32_t stray = mask & ~((uint32_t)((1ull << SUBSYS_COUNT) - 1));
+    uint64_t mask = kernel_subsystem_degraded_mask();
+    uint64_t valid = (SUBSYS_COUNT >= 64) ? ~(uint64_t)0
+                                          : (((uint64_t)1u << SUBSYS_COUNT) - 1u);
+    uint64_t stray = mask & ~valid;
     char msg[80];
     uint32_t i;
 
     snprintf(msg, sizeof(msg),
-             "degraded_mask has no bits outside SUBSYS_COUNT (stray 0x%x)",
+             "degraded bitmap has no bits outside SUBSYS_COUNT (stray 0x%x)",
              (uint64_t)stray);
     TEST_ASSERT_EQ(stray, 0, msg);
 
@@ -449,7 +451,7 @@ static void test_bm_degraded_mask_is_well_formed(void)
      * mask and prints kernel_subsystem_name() per bit, which is the exact
      * drift a new SUBSYS_* slot without a name entry would produce. */
     for (i = 0; i < SUBSYS_COUNT; i++) {
-        if (!(mask & (1u << i)))
+        if (!(mask & ((uint64_t)1u << i)))
             continue;
         snprintf(msg, sizeof(msg), "degraded subsystem %u has a name",
                  (uint64_t)i);
@@ -1264,7 +1266,7 @@ void test_register_bare_metal(void)
     test_suite_register_cat("BM: ACPI short table is not read past",
                             test_bm_acpi_short_table_is_not_read_past,
                             TEST_CAT_BOOT);
-    test_suite_register_cat("BM: degraded_mask is well formed",
+    test_suite_register_cat("BM: degraded bitmap is well formed",
                             test_bm_degraded_mask_is_well_formed, TEST_CAT_BOOT);
     test_suite_register_cat("BM: CPU hardening verified by smoke",
                             test_bm_cpu_hardening_verified_by_smoke,

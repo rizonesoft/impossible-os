@@ -11,8 +11,16 @@
 
 /* ---- Lifecycle ---- */
 
-/* Initialize the framebuffer console (call after boot_info populated + heap_init) */
-void fb_init(void);
+/* Initialize the framebuffer console (call after boot_info populated +
+ * heap_init). Returns an `enum boot_load_state` (kernel/boot_load_status.h):
+ *   SKIPPED  -- no GOP framebuffer was handed off (headless boot)
+ *   FAILED   -- a framebuffer was handed off but refused (pixel format, bpp,
+ *               pitch); the display stays dark and boot continues on serial
+ *   DEGRADED -- usable, but the back buffer could not be allocated, so it
+ *               draws straight to VRAM (no double buffering, visible tearing)
+ *   LOADED   -- usable and double-buffered
+ * Never halts: the display is a non-critical subsystem. */
+uint8_t fb_init(void);
 
 /* Clear the screen with background color */
 void fb_clear(void);
@@ -106,9 +114,23 @@ uint64_t fb_snapshot_size(void);
  * the compositor has rendered to verify the screen is not black /
  * not broken. */
 /* 1 when fb_init() produced a usable framebuffer, 0 when it bailed (absent
- * framebuffer, unsupported pixel format or bpp, misaligned pitch). fb_init()
- * is void, so this is how the boot load-status log records GFX honestly. */
+ * framebuffer, unsupported pixel format or bpp, misaligned pitch). */
 int fb_is_ready(void);
+
+/* 1 once fb_init() has REFUSED the GOP framebuffer (pixel format, bpp,
+ * pitch). Distinct from !fb_is_ready(), which is also true before fb_init()
+ * and on a machine with no framebuffer: a refused layout must not be written
+ * by ANY raw renderer (VPD, the halt screen) that cached g_boot_info.fb. */
+int fb_is_refused(void);
+
+#ifdef KERNEL_TESTS
+/* SMOKE_DEGRADE=fb evidence (resilient-boot roadmap): FNV-1a digest of the whole
+ * visible surface of the REAL GOP framebuffer, read through g_boot_info.fb whatever
+ * fb_init() decided. Taken at the refusal and again at the end of boot, an
+ * unchanged digest proves no raw renderer painted through the refused
+ * layout in between. Returns 0 when there is no GOP framebuffer. */
+uint64_t fb_test_vram_digest(void);
+#endif
 
 int fb_snapshot(void *dest_buf, uint32_t *width, uint32_t *height);
 

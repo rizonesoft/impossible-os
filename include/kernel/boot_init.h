@@ -65,16 +65,31 @@ typedef enum {
     SUBSYS_EX       = 27,   /* Executive support runtime (Ex* primitives) */
     SUBSYS_NLS      = 28,   /* NLS table loader + invariant fallback (TODO-13 S4) */
     SUBSYS_KNF      = 29,   /* Kernel Notification Facility namespace + type */
-    SUBSYS_COUNT    = 30,  /* sentinel -- keep last */
+    SUBSYS_KEYBOARD = 30,   /* PS/2 keyboard (Phase 1) */
+    SUBSYS_MOUSE    = 31,   /* PS/2 mouse (deferred input / legacy Phase 2) */
+    SUBSYS_AHCI     = 32,   /* AHCI SATA controller + ports (Phase 2 storage) */
+    SUBSYS_NIC      = 33,   /* Network adapter + stack bring-up (rtl8139) */
+    SUBSYS_SMBIOS   = 34,   /* SMBIOS entry point + structure table parse */
+    SUBSYS_SPLASH   = 35,   /* Boot splash (artwork, spinner, TTF status text) */
+    SUBSYS_COUNT    = 36,  /* sentinel -- keep last */
 } kernel_subsys_t;
 
-/* g_boot_info.degraded_mask is a uint32 and BOOT_TRY / kernel_subsystem_
- * apply_result() record failures via `1u << subsys`. If the enum ever grows
- * past 32 slots the shift becomes undefined and degraded subsystems silently
- * drop out of the boot-health summary. Widen degraded_mask to uint64 (and bump
- * the boot_info mirror/version) before adding the 33rd subsystem. */
-_Static_assert(SUBSYS_COUNT <= 32,
-    "degraded_mask is uint32: SUBSYS_COUNT must stay <= 32 or 1u<<subsys is UB");
+/* The degraded bitmap is a uint64 owned by boot_init.c (read it with
+ * kernel_subsystem_degraded_mask()), and every writer shifts a 64-bit one.
+ * Past 64 slots the shift is undefined and a degraded subsystem would
+ * silently drop out of the boot-health summary. */
+_Static_assert(SUBSYS_COUNT <= 64,
+    "degraded bitmap is uint64: SUBSYS_COUNT must stay <= 64");
+
+/* One instance of the subsystem state: the readiness table plus the sticky
+ * degraded bitmap. The kernel keeps exactly one live instance in boot_init.c;
+ * the *_into() entry points below take an explicit instance so unit tests can
+ * drive every state transition against private storage without touching the
+ * live boot state. */
+struct kernel_subsys_state {
+    uint8_t  ready[SUBSYS_COUNT];
+    uint64_t degraded;        /* bit N set = SUBSYS N failed or came up reduced */
+};
 
 /* --- POST code constants --------------------------------------------------
  *
@@ -418,16 +433,55 @@ void kernel_subsystem_dump(void);
 const char *kernel_subsystem_name(kernel_subsys_t subsys);
 
 /* Apply a boot_result_t to BOTH readiness oracle channels in lockstep:
- *   - kernel_subsystem_set_ready(subsys, result == BOOT_OK || BOOT_DEGRADED)
- *   - g_boot_info.degraded_mask |= (1u << subsys) for any non-OK result
+ *   - ready = (result == BOOT_OK || result == BOOT_DEGRADED)
+ *   - the degraded bit for subsys is set for any non-OK result (sticky:
+ *     a later BOOT_OK never clears it)
  * Returns true if the subsystem ended up READY (OK or DEGRADED).
  *
  * Use for non-fatal Phase 0/1/2 init wrappers where the function returns
  * a boot_result_t and the caller does NOT halt on failure. The two
  * channels gate downstream BOOT_REQUIRE checks (channel 1) and feed the
  * end-of-boot degraded summary in boot_desktop.c (channel 2).  They MUST
- * agree -- this helper guarantees they do. */
+ * agree -- this helper guarantees they do. SMP-safe: the bit is set with
+ * an atomic OR BEFORE readiness is release-stored, so a CPU that acquires
+ * ready also sees the bit. */
 bool kernel_subsystem_apply_result(kernel_subsys_t subsys, boot_result_t r);
+
+/* Apply a probe outcome expressed as an `enum boot_load_state`
+ * (kernel/boot_load_status.h), the vocabulary every driver probe already
+ * reports through boot_probe_load_state() / boot_probe_count_state():
+ *   LOADED   -> ready, no degraded bit
+ *   DEGRADED -> ready, degraded bit      (up, but reduced)
+ *   SKIPPED  -> NOT ready, no degraded bit (device absent / disabled: an
+ *               absent optional device is not a degraded boot)
+ *   FAILED, ATTEMPTED, anything else -> NOT ready, degraded bit
+ * Returns true if the subsystem ended up READY. */
+bool kernel_subsystem_apply_load_state(kernel_subsys_t subsys, uint8_t load_state);
+
+/* Set the degraded bit only, leaving readiness untouched. For the few
+ * callers whose readiness and degradation are decided separately (PCID:
+ * "unsupported" is ready without a bit, an invariant fault is a bit). */
+void kernel_subsystem_mark_degraded(kernel_subsys_t subsys);
+
+/* Explicit-instance variants of the three writers above. Pure apart from
+ * the atomics on `st`; exposed so tests never mutate live boot state. */
+bool kernel_subsystem_apply_result_into(struct kernel_subsys_state *st,
+                                        kernel_subsys_t subsys, boot_result_t r);
+bool kernel_subsystem_apply_load_state_into(struct kernel_subsys_state *st,
+                                            kernel_subsys_t subsys,
+                                            uint8_t load_state);
+
+/* The live degraded bitmap (acquire load) and a per-slot test. Out-of-range
+ * subsys reads as not degraded. */
+uint64_t kernel_subsystem_degraded_mask(void);
+bool     kernel_subsystem_is_degraded(kernel_subsys_t subsys);
+
+/* Format the names of every subsystem set in `mask` as "A, B, C" into buf
+ * (always NUL-terminated when cap > 0). A name that would not fit is
+ * replaced by a trailing ", ..." when room allows, never cut mid-name.
+ * Bits at or above SUBSYS_COUNT are ignored. Returns the number of slots set
+ * in mask below SUBSYS_COUNT (whether or not all fitted). Pure. */
+uint32_t kernel_subsystem_format_degraded(uint64_t mask, char *buf, uint32_t cap);
 
 /* --- Boot progress tracker ----------------------------------------------- */
 
@@ -474,16 +528,16 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode);
  * For void functions, wrap: BOOT_TRY(SUBSYS_X, (fn(), BOOT_OK), "name")
  *
  * On success: sets subsystem ready, logs normally.
- * On BOOT_DEGRADED/BOOT_FATAL: logs warning, sets degraded_mask bit,
- * continues boot -- never halts for non-critical subsystems.
+ * On BOOT_DEGRADED/BOOT_FATAL: logs warning, sets the subsystem's degraded
+ * bit, continues boot -- never halts for non-critical subsystems.
  */
 #define BOOT_TRY(subsys, fn_call, name) \
     do { \
         boot_result_t _bt_r = (fn_call); \
-        /* Delegate the ready/degraded_mask mapping to the single source of \
-         * truth -- it sets ready on BOOT_OK||BOOT_DEGRADED, records \
-         * degraded_mask on any non-OK, and bounds-checks subsys (so the \
-         * 1u<<subsys shift is never out of range). */ \
+        /* Delegate the ready/degraded mapping to the single source of \
+         * truth -- it sets ready on BOOT_OK||BOOT_DEGRADED, records the \
+         * degraded bit on any non-OK, and bounds-checks subsys (so the \
+         * 64-bit shift is never out of range). */ \
         kernel_subsystem_apply_result((subsys), _bt_r); \
         if (_bt_r != BOOT_OK) \
             klog(LOG_WARN, "boot", "%s: init result %d -- degraded", \

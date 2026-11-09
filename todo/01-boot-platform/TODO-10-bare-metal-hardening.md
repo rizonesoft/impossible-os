@@ -14,7 +14,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 > **Goal:** Make the kernel boot reliably on any x86-64 bare-metal hardware. After this TODO, the boot sequence is robust against absent hardware, misconfigured firmware, and platform-specific quirks through correct gating, fallback behavior, and bare-metal-first validation. Rich POST/VPD diagnostics stay owned by the dedicated diagnostics TODOs referenced below.
 
 > [!IMPORTANT]
-> **Current state (2026-04-11):** `clac` is removed from `isr_common_stub` (`isr_stubs.asm`). UC MMIO uses `vmm_map_mmio_uc` / `vmm_unmap_mmio` (`vmm.c`). IST stacks and TSS fields are allocated in `gdt.c` with IDT IST wiring in `idt.c`. FADT `IAPC_BOOT_ARCH` gates legacy devices (`acpi.c`). AHCI MSI setup masks the LAPIC timer around PCI MSI writes (`ahci_core.c`). `BOOT_TRY` + `g_boot_info.degraded_mask` live in `boot_init.h` with Phase 1--3 call sites. Per-process PML4 + CR3 switch live in `vmm.c` / `task.c`. Early boot reads prior POST from UEFI NVRAM and logs last-boot outcome (`boot_hw.c`, `boot_init.c`). **Still open (refreshed 2026-08-15 at file close-out):** §1 `hpet_read_ns()` (owner TODO-11 §1 UTS), §2 deliberate kernel stack-overflow BSOD test (the item is at §2, NOT §7 as this line said until 2026-08-15; §7 has no such item), §8 `pmm_mark_region_used` cleanup for fixed ELF phys + boot PML4 User-bit blocker for SMEP/SMAP on bare metal (§8, NOT §4 as this line said until 2026-08-15), BM Test 5, Verification checklist. **Closed since:** `src/kernel/test/test_bare_metal.c` + `test_register_bare_metal()` shipped 2026-08-15 (12 suites / 64 assertions, wired at `test_runner.c:985` and `:1114`); §31 (guard page under the BSP ring-0 entry stack) and §32 (kernel-owned guarded stack for Phase 0/1, `boot_info` v24) shipped 2026-08-28/29. Both leave only their bare-metal guard-page fault path outstanding, which is now an explicit BM Test 5 item. Dense per-function POST16 instrumentation beyond the `0xD1xx` bring-up set is owned by `TODO-15-visual-post-display.md`. **Gap-audit 2026-06-06 demotions:** §4 -> `[/]` (ACPI capability APIs ignore `acpi_hw_reduced()`; hw-reduced platforms wrongly report legacy devices present) -- RESOLVED 2026-06-27, §4 is back to `[x]`: `02-kernel-core/TODO-08` §5 added the `cmos_read()` hard gate and the fail-closed `s_rtc_available` latch, and §4 carries its own **Resolved:** stamp; §8 -> `[/]` (per-process PML4 ships, but "directly unblocks SMEP/SMAP" was false -- the boot PML4 still has User on kernel pages; real unblock owned by `D02 T10 §3-§6` KPTI) -- still open. **Newly named gaps:** nested-NMI safety on shared IST2 (blocking prereq for `TODO-23 §1` watchdog), and corrected/recoverable machine-check (RAS/WHEA) recovery -- currently every MCE panics; no owner exists, a dedicated RAS TODO is recommended.
+> **Current state (2026-04-11):** `clac` is removed from `isr_common_stub` (`isr_stubs.asm`). UC MMIO uses `vmm_map_mmio_uc` / `vmm_unmap_mmio` (`vmm.c`). IST stacks and TSS fields are allocated in `gdt.c` with IDT IST wiring in `idt.c`. FADT `IAPC_BOOT_ARCH` gates legacy devices (`acpi.c`). AHCI MSI setup masks the LAPIC timer around PCI MSI writes (`ahci_core.c`). `BOOT_TRY` + the kernel degraded bitmap (`kernel_subsystem_degraded_mask()`) live in `boot_init.h` / `boot_init.c` with Phase 1--3 call sites (the `boot_info` field was retired 2026-11-10). Per-process PML4 + CR3 switch live in `vmm.c` / `task.c`. Early boot reads prior POST from UEFI NVRAM and logs last-boot outcome (`boot_hw.c`, `boot_init.c`). **Still open (refreshed 2026-08-15 at file close-out):** §1 `hpet_read_ns()` (owner TODO-11 §1 UTS), §2 deliberate kernel stack-overflow BSOD test (the item is at §2, NOT §7 as this line said until 2026-08-15; §7 has no such item), §8 `pmm_mark_region_used` cleanup for fixed ELF phys + boot PML4 User-bit blocker for SMEP/SMAP on bare metal (§8, NOT §4 as this line said until 2026-08-15), BM Test 5, Verification checklist. **Closed since:** `src/kernel/test/test_bare_metal.c` + `test_register_bare_metal()` shipped 2026-08-15 (12 suites / 64 assertions, wired at `test_runner.c:985` and `:1114`); §31 (guard page under the BSP ring-0 entry stack) and §32 (kernel-owned guarded stack for Phase 0/1, `boot_info` v24) shipped 2026-08-28/29. Both leave only their bare-metal guard-page fault path outstanding, which is now an explicit BM Test 5 item. Dense per-function POST16 instrumentation beyond the `0xD1xx` bring-up set is owned by `TODO-15-visual-post-display.md`. **Gap-audit 2026-06-06 demotions:** §4 -> `[/]` (ACPI capability APIs ignore `acpi_hw_reduced()`; hw-reduced platforms wrongly report legacy devices present) -- RESOLVED 2026-06-27, §4 is back to `[x]`: `02-kernel-core/TODO-08` §5 added the `cmos_read()` hard gate and the fail-closed `s_rtc_available` latch, and §4 carries its own **Resolved:** stamp; §8 -> `[/]` (per-process PML4 ships, but "directly unblocks SMEP/SMAP" was false -- the boot PML4 still has User on kernel pages; real unblock owned by `D02 T10 §3-§6` KPTI) -- still open. **Newly named gaps:** nested-NMI safety on shared IST2 (blocking prereq for `TODO-23 §1` watchdog), and corrected/recoverable machine-check (RAS/WHEA) recovery -- currently every MCE panics; no owner exists, a dedicated RAS TODO is recommended.
 
 > [!IMPORTANT]
 > **Origin (2026-03-28) -- historical context:** A full day of bare-metal debugging on an i5-11600K laptop exposed fundamental gaps (SMEP page tables, HPET WB MMIO, GS_BASE clobbered by GDT reload, TSS RSP0 uninitialized, heartbeat ISR reentrancy, RTC hang, calibration timeouts). The **original mystery symptom** was hardware interrupts (LAPIC timer / PIT) faulting on bare metal while software `INT 0x81` through the same ISR path worked -- **root cause fixed 2026-03-29** (`clac` #UD in `isr_common_stub`, §3). Workarounds listed here (mouse/AHCI/timer disabled) were removed as the real fixes landed; keep this block so future readers know why the TODO exists.
@@ -51,7 +51,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 - [`src/kernel/acpi.c`](../../src/kernel/acpi.c) -- FADT parsing, MADT, PM Timer
 - -> XREF: `02-kernel-core/TODO-20-eif-full-implementation.md §9` -- EIF per-process dispatch-table isolation consumes the per-process PML4 base from §8
 - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §6` -- higher-half kernel relocation builds the kernel-high/user-low shared-PML4 split on the §8 per-process page-table base
-- [`include/kernel/boot_init.h`](../../include/kernel/boot_init.h) -- `BOOT_TRY`, `g_boot_info.degraded_mask`, subsystem IDs
+- [`include/kernel/boot_init.h`](../../include/kernel/boot_init.h) -- `BOOT_TRY`, `kernel_subsystem_apply_load_state()`, degraded bitmap, subsystem IDs
 - → XREF: `TODO-14-boot-diagnostics.md §6` -- panic forensic evidence struct (deferred; this TODO validates it works on bare metal when implemented)
 - → XREF: `TODO-11-interrupt-timer-arch.md` -- UTS / LAPIC calibration / `hpet_read_ns()` owner; bare-metal ISR path fixed in this file §5 (`clac` removal)
 - → XREF: `TODO-09-cpu-boot-sequencing.md §2,§5` -- CPU hardening activation order (deferred there; minimal version in §10 here)
@@ -71,7 +71,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 - Hardware interrupts work reliably on bare metal -- IST stacks, correct LAPIC delivery, verified ISR frame layout.
 - PS/2, RTC, AHCI, and all legacy subsystems are gated by ACPI capability flags -- never touch hardware that doesn't exist.
 - Any subsystem failure degrades gracefully with a log message instead of crashing.
-- Non-critical failures use `BOOT_TRY` (§7) plus `degraded_mask` -- no silent `boot.conf` skip list.
+- Non-critical failures use `BOOT_TRY` / `kernel_subsystem_apply_load_state()` (§7) plus the kernel degraded bitmap -- no silent `boot.conf` skip list.
 
 ## Implementation Order
 
@@ -83,7 +83,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 | 💎  |   4   | ACPI FADT boot architecture flags                   | --         |  [x]   |
 | 💎  |   5   | PS/2 controller detection and safe init             | §4         |  [x]   |
 | 💎  |   6   | AHCI interrupt hardening                            | §1, §3     |  [x]   |
-| 💎  |   7   | Resilient boot with graceful degradation            | --         |  [ ]   |
+| 💎  |   7   | Resilient boot with graceful degradation            | --         |  [x]   |
 | 💎  |   8   | Per-process page tables (minimal base)              | §1         |  [/]   |
 | 💎  |   9   | CPU security activation and verification            | §4, §8     |  [x]   |
 | 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)        | §3         |  [x]   |
@@ -336,35 +336,36 @@ Wrap every Phase 1--3 subsystem init in a protective pattern: emit POST code, ca
 
 > [!IMPORTANT]
 > **Critical subsystems (BOOT_FATAL if fail):** PMM, VMM, Heap, GDT, IDT, VFS.
-> **Non-critical (BOOT_DEGRADED if fail):** RTC, keyboard, mouse, NIC, AHCI, SMBIOS, splash, registry, SMP, DHCP.
-> A degraded boot reaches the desktop with reduced functionality. The user sees a notification listing what failed.
+> **Non-critical (BOOT_DEGRADED if fail):** RTC, framebuffer, keyboard, mouse, NIC, AHCI, SMBIOS, splash, registry, SMP. DHCP joins once it has a lease outcome to report (07-networking/TODO-06 §1).
+> A degraded boot reaches the desktop with reduced functionality. Serial and the boot-health record name what failed; the on-screen toast is owned by 08-graphics-ui/TODO-11 §5.
 
-- [x] `BOOT_TRY(subsys, fn_call, name)` macro: delegates ready/degraded_mask to `kernel_subsystem_apply_result()` (single source of truth, bounds-checked), logs warning on any non-OK, continues
-- [x] `g_boot_info.degraded_mask` (32-bit) tracks which subsystems failed; `_Static_assert(SUBSYS_COUNT <= 32)` guards the `1u<<subsys` width
-- [x] Classification: critical subsystems `boot_halt()` (PMM, VMM, GDT, IDT, VFS); the wired non-critical paths (UEFI vars/time, SecureBoot, TPM, XSAVE, PCID) use `apply_result` -> degraded_mask
+- [x] `BOOT_TRY(subsys, fn_call, name)` macro: delegates readiness and the degraded bit to `kernel_subsystem_apply_result()` (single source of truth, bounds-checked), logs warning on any non-OK, continues
+- [x] Degraded bitmap is kernel state: a 64-bit word in `boot_init.c` (atomic OR before the readiness release store), read via `kernel_subsystem_degraded_mask()`; `boot_info.degraded_mask` retired to `_kp_reserved0`, layout unchanged
+- [x] Classification: critical subsystems `boot_halt()` (PMM, VMM, GDT, IDT, VFS); the wired non-critical paths (UEFI vars/time, SecureBoot, TPM, XSAVE, PCID) use `apply_result`; the Phase 1-3 driver inits use `apply_load_state`
 - [x] Phase 3 desktop: logs degraded subsystem list (bounded by `SUBSYS_COUNT`, names from single source)
 - [x] Bare-metal skip workarounds already removed in §3 (clac fix) and §5 (ACPI gate)
-- [ ] Add `SUBSYS_*` slots + `s_subsys_names[]` for the non-critical subsystems the enum lacks (keyboard, mouse, AHCI, NIC, SMBIOS, splash, DHCP) so degraded_mask can represent them
-  - Order: this is step 1 of the wrapping chain the section's `Deferred:` stamp names, and lands as one unit with it. Adding slots alone widens `degraded_mask` with bits nothing can ever set, which reads as coverage that does not exist.
-- [ ] Wire Phase 1-3 non-critical inits through `apply_result`: `rtc/keyboard/mouse/fb_init` are void and `ahci_init` return is ignored, so failures never set degraded_mask
-  - Order: this is the exact item the section's `Deferred:` stamp cites. It changes the signature of several Phase 1-3 init functions, so it is an all-callers change across the boot path rather than a local edit. Depends on the `SUBSYS_*` slots above.
-- [ ] Forced-failure regression: force one non-critical init to fail -> boot reaches Phase 3 -> degraded summary lists it
-  - Order: there is nothing to force until a non-critical init can report failure at all. The section's Test checkpoint stays non-functional until then, which is why this cannot be demonstrated in isolation.
+- [x] `SUBSYS_KEYBOARD`..`SUBSYS_SPLASH` (30-35, count 36) with names; DHCP has no slot until it has a lease outcome (filed in 07-networking/TODO-06 §1)
+- [x] `kernel_subsystem_apply_load_state()` maps probe states: LOADED ready, DEGRADED ready+bit, SKIPPED (absent device) neither, FAILED bit only
+  - `rtc_init`/`smbios_init` return `boot_probe` results; `fb_init`/`boot_splash_init` return load states; keyboard, mouse, NIC wired; AHCI recorded on the BSP after the barrier, so a hung worker reads FAILED.
+- [x] A refused framebuffer no longer halts: `fb_init` guardrails were `klog(LOG_FATAL)` (which halts); now `LOG_ERROR` + `fb_refuse()` zeroes all geometry, matching a no-GOP machine
+- [x] Forced-failure regressions: `SMOKE_DEGRADE=rtc` and `SMOKE_DEGRADE=fb` (KERNEL_TESTS keys `test_fail_rtc`/`test_fail_fb`) boot to `C:\>` with the failure named in `Degraded subsystems (N): ...`
+- [x] Unit tests drive the explicit-instance `_into` variants on a private state (live bitmap untouched), covering bits above 31, every load state and the formatter's truncation
 - [/] Harden boot_phase0 handoff (Codex §2 review, defense-in-depth): pin pointer to canonical `BOOT_INFO_PHYS_ADDR`; validate `g_boot_info.fb` geometry before pre-`fb_init` VRAM writes; bulk-copy `boot_info` -> XREF: 02-kernel-core/TODO-01 §2
   - Blocker: owned by `02-kernel-core/TODO-01` §2, which holds the boot_phase0 handoff surface. Parked here rather than implemented, so the owner-side sweep can re-open it when that section ships.
 - [x] Commit: `"boot: resilient init with BOOT_TRY -- non-critical failures degrade, never crash"`
 
 **Test checkpoint:** Disable a non-critical subsystem (e.g., force `rtc_init()` to fail). Boot completes. Desktop shows degraded notification. Serial log shows `[WARN] RTC: init failed -- degraded`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 1723 kernel suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | full suite 37224 kernel + 17 user-mode PASS; smoke matrix 20/20; `SMOKE_DEGRADE=rtc|fb bash scripts/test-smoke.sh` PASS (both legs in `test-smoke-matrix.sh`)
 
 > **Notes:**
-> - Infrastructure shipped: `BOOT_TRY` macro, `kernel_subsystem_apply_result()`, `g_boot_info.degraded_mask`, and the Phase 3 degraded-subsystem summary (bounded by `SUBSYS_COUNT`).
-> - Critical subsystems (PMM/VMM/Heap/GDT/IDT/VFS) `boot_halt()`; the wired non-critical paths (UEFI vars/time, SecureBoot, TPM, XSAVE, PCID) record degraded_mask via `apply_result`.
-> - Review hardening (2026-06-07): `BOOT_TRY` now delegates to `apply_result` (was OK-only ready + unbounded shift); added `_Static_assert(SUBSYS_COUNT <= 32)` guarding the uint32 degraded_mask shift.
-> - Downgraded to `[/]`: most non-critical inits (`rtc/keyboard/mouse/fb` void, `ahci_init` return ignored) mark ready unconditionally and several lack a `SUBSYS_` slot, so their failures never reach degraded_mask. 3 concrete `[ ]` items filed.
+> - Infrastructure shipped: `BOOT_TRY` macro, `kernel_subsystem_apply_result()`, the degraded bitmap (then `g_boot_info.degraded_mask`), and the Phase 3 degraded-subsystem summary (bounded by `SUBSYS_COUNT`).
+> - Critical subsystems (PMM/VMM/Heap/GDT/IDT/VFS) `boot_halt()`; the wired non-critical paths (UEFI vars/time, SecureBoot, TPM, XSAVE, PCID) record the degraded bit via `apply_result`.
+> - Review hardening (2026-06-07): `BOOT_TRY` now delegates to `apply_result` (was OK-only ready + unbounded shift); added `_Static_assert(SUBSYS_COUNT <= 32)` guarding the uint32 shift (superseded 2026-11-10: 64-bit kernel bitmap, `SUBSYS_COUNT <= 64`).
+> - Downgraded to `[/]`: most non-critical inits (`rtc/keyboard/mouse/fb` void, `ahci_init` return ignored) mark ready unconditionally and several lack a `SUBSYS_` slot, so their failures were never recorded. The 3 `[ ]` items filed then shipped 2026-11-10.
 > - Scope boundary: this section owns the degradation INFRASTRUCTURE; per-driver result-returning signatures + the forced-failure test are the filed follow-ups.
 > **Verified:** 2026-06-07 | commit `2340c34e` | 5/8 items | build OK | boot 1723 PASS, smoke PASS (KVM 3.0s)
+> **Notes:** (2026-11-10) Wiring shipped. The degraded set moved out of the loader handoff: it is kernel-written only and needed 36 bits. SKIPPED is the state the old two-channel mapping could not express, so a NIC-less machine no longer reports a degraded boot. `post_display16` refuses raw VRAM after a refused framebuffer, and SUBSYS_FB is published before the next POST. Decisions in todo/answers.md Q36-Q37.
 > **Notes:** Reopened 2026-11-07, was Deferred: [H] resilient wrapping not wired for most non-critical subsystems (void/ignored-return inits + missing enum slots). The stamp and its items named each other, so none could clear; an all-callers change is work, not a blocker. `boot_interrupts.c:388-400,973` and `boot_storage.c:565` still ignore these results.
 > **Quality reviewed:** 2026-06-07 | Codex 3x (adversarial, consistency, perf) | 2M fixed, 1H deferred (re-adversarial skipped: header-only fix, no faultable region) | scope: kernel-code-quality
 

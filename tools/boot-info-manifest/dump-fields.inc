@@ -309,7 +309,7 @@ F(_rem_pad);
 F(secure_boot_enabled);
 F(_kp_pad);
 F(_kp_pad[0]);                  /* element-size sentinel */
-F(degraded_mask);
+F(_kp_reserved0);
 F(hv_flags);
 F(hv_vendor);
 F(hv_vendor[0]);                /* element-size sentinel */

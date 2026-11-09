@@ -8,6 +8,7 @@
 #include "kernel/smbios.h"
 #include "kernel/uefi_config.h"
 #include "kernel/klog.h"
+#include "kernel/boot_probe.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/boot_timing.h"
 #include "registry.h"
@@ -818,9 +819,10 @@ static int smbios_checksum_valid(const uint8_t *data, uint32_t len)
     return (sum == 0);
 }
 
-void smbios_init(void)
+int smbios_init(void)
 {
     uint32_t i;
+    int table_seen = 0;   /* firmware published an SMBIOS entry point at all */
     /* Zero the info struct */
     uint8_t *p = (uint8_t *)&s_info;
     for (i = 0; i < sizeof(s_info); i++)
@@ -831,6 +833,7 @@ void smbios_init(void)
     uintptr_t ep_addr = uefi_find_config_table(&guid3);
 
     if (ep_addr != 0) {
+        table_seen = 1;
         const struct smbios3_entry *ep =
             (const struct smbios3_entry *)ep_addr;
 
@@ -879,6 +882,7 @@ void smbios_init(void)
         ep_addr = uefi_find_config_table(&guid2);
 
         if (ep_addr != 0) {
+            table_seen = 1;
             const struct smbios2_entry *ep =
                 (const struct smbios2_entry *)ep_addr;
 
@@ -925,8 +929,16 @@ void smbios_init(void)
     }
 
     if (!s_info.valid) {
-        klog(LOG_WARN, "SMBIOS", "Not found in config table");
-        return;
+        /* No entry point at all is an ABSENT table (some VMs and embedded
+         * firmware publish none); an entry point that was published and then
+         * rejected (anchor, length, checksum, structure bounds) is a FAILED
+         * parse, and the rejection reason was logged where it was found. */
+        if (!table_seen) {
+            klog(LOG_INFO, "SMBIOS", "Not found in config table");
+            return BOOT_PROBE_ABSENT;
+        }
+        klog(LOG_WARN, "SMBIOS", "Entry point published but rejected -- no SMBIOS data");
+        return BOOT_PROBE_FAILED;
     }
 
     klog(LOG_INFO, "SMBIOS", "v%u.%u -- %s %s",
@@ -968,6 +980,7 @@ void smbios_init(void)
         klog(LOG_INFO, "SMBIOS", "Board: %s %s",
              s_info.board_manufacturer, s_info.board_product);
     }
+    return BOOT_PROBE_OK;
 }
 
 const struct smbios_system_info *smbios_get_info(void)

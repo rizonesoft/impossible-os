@@ -126,6 +126,14 @@ static void storage_records_finish(const int tok[STORAGE_DRV_COUNT],
                                 (unsafe & s_storage_unsafe_bit[d]) != 0,
                                 &state, &err, &dur);
         boot_load_finish_ex(tok[d], state, err, post, dur);
+        /* The readiness oracle takes AHCI's verdict HERE, on the BSP, from
+         * the same post-barrier state as the load log -- not from the worker:
+         * a worker that never returned (fallback SKIP, poisoned step) leaves
+         * no publication, and the verdict then reads FAILED, so a hung AHCI
+         * probe is still named in the degraded summary. An absent controller
+         * is SKIPPED (not ready, not degraded). */
+        if (d == (uint32_t)STORAGE_DRV_AHCI)
+            kernel_subsystem_apply_load_state(SUBSYS_AHCI, state);
     }
 }
 
@@ -154,6 +162,7 @@ static boot_result_t deferred_net_init(void)
         boot_load_record("network", BOOT_LOAD_CLASS_NET,
                          boot_probe_load_state(nic),
                          boot_probe_err_code(nic), POST16_DEFERRED_NET_OK);
+        kernel_subsystem_apply_load_state(SUBSYS_NIC, boot_probe_load_state(nic));
         return BOOT_DEGRADED;  /* no usable NIC -- not fatal */
     }
     net_init();
@@ -161,6 +170,7 @@ static boot_result_t deferred_net_init(void)
     POST16(POST16_DEFERRED_NET_OK);
     boot_load_record("network", BOOT_LOAD_CLASS_NET, BOOT_LOAD_LOADED,
                      0u, POST16_DEFERRED_NET_OK);
+    kernel_subsystem_apply_load_state(SUBSYS_NIC, BOOT_LOAD_LOADED);
     return BOOT_OK;
 }
 
@@ -208,6 +218,11 @@ static void input_probe_and_record(uint16_t post_code)
     int pm = mouse_init();         /* PS/2: the always-attempted baseline */
     int vi = virtio_input_init();  /* optional absolute pointer */
     int vb = vbox_mouse_init();    /* optional absolute pointer */
+
+    /* SUBSYS_MOUSE is the PS/2 mouse: an absent one is SKIPPED (USB / VirtIO
+     * / VBox pointers have their own per-source load records), a PS/2
+     * device that is present and fails its reset or BAT is degraded. */
+    kernel_subsystem_apply_load_state(SUBSYS_MOUSE, boot_probe_load_state(pm));
 
     input_record_sources(pm, vi, vb, post_code);
     /* Source summary + per-USB-HID identity + HID poll error stats. */
@@ -433,6 +448,7 @@ void boot_phase2(void)
             POST16(POST16_NET_OK);
             boot_load_record("network", BOOT_LOAD_CLASS_NET, BOOT_LOAD_LOADED,
                              0u, POST16_NET_OK);
+            kernel_subsystem_apply_load_state(SUBSYS_NIC, BOOT_LOAD_LOADED);
         } else {
             /* Emit the terminal network POST before recording (mirrors the
              * deferred path's POST-then-record order); net_init()/dhcp are
@@ -441,6 +457,8 @@ void boot_phase2(void)
             boot_load_record("network", BOOT_LOAD_CLASS_NET,
                              boot_probe_load_state(nic),
                              boot_probe_err_code(nic), POST16_NET_OK);
+            kernel_subsystem_apply_load_state(SUBSYS_NIC,
+                                              boot_probe_load_state(nic));
         }
         /* Legacy in-phase: the deferred path does this in deferred_input_init. */
         input_probe_and_record(POST16_PCI_OK);

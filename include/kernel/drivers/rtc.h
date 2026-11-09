@@ -24,8 +24,11 @@ struct rtc_time {
 
 /* ---- API ---- */
 
-/* Initialize the RTC (call once at boot) */
-void rtc_init(void);
+/* Initialize the RTC (call once at boot). Returns a boot_probe_result
+ * (kernel/boot_probe.h): BOOT_PROBE_OK, BOOT_PROBE_ABSENT when the platform
+ * declares no CMOS RTC, BOOT_PROBE_FAILED when a CMOS RTC is declared but its
+ * first read fails validation (the clock is then treated as unavailable). */
+int rtc_init(void);
 
 /* Read the current date/time from the CMOS RTC.
  * Handles BCD-to-binary conversion and the update-in-progress flag.

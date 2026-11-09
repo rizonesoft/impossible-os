@@ -11,6 +11,7 @@
  *   Phase separators: 1px gray line between phase groups
  * ============================================================================ */
 
+#include "kernel/klog.h"
 #include "kernel/vpd.h"
 #include "kernel/vpd_font.h"
 #include "kernel/boot_info.h"
@@ -26,6 +27,7 @@ static uint32_t  s_pitch_px;
 static uint32_t  s_width;
 static uint32_t  s_height;
 static int       s_active;
+static int       s_refused;   /* vpd_display_refused(): never draw again */
 static int       s_banner_shown;  /* 1 if crash banner was rendered */
 static int       s_last_boot_ok = -1;   /* 1 = succeeded, 0 = failed, -1 = unknown */
 static uint16_t  s_last_boot_post;      /* POST code from previous boot */
@@ -834,7 +836,7 @@ const char *vpd_post16_name(uint16_t code)
 
 void vpd_crash_banner(uint16_t last_postcode)
 {
-    if (!g_boot_info.fb_available || !g_boot_info.fb.addr)
+    if (s_refused || !g_boot_info.fb_available || !g_boot_info.fb.addr)
         return;
 
     /* Ensure VPD state is set for rendering helpers */
@@ -874,6 +876,19 @@ void vpd_crash_banner(uint16_t last_postcode)
                              VPD_COLOR_FAIL);
         vpd_puts_scaled(sx + 7 * VPD_CHAR_W, y, ")", VPD_COLOR_FAIL);
     }
+}
+
+void vpd_display_refused(void)
+{
+    /* No final vpd_stage_done(): that would draw with the rejected layout.
+     * Zero geometry turns every helper's bounds check into a no-op too. */
+    s_refused     = 1;
+    s_active      = 0;
+    s_has_current = 0;
+    s_fb          = (uint32_t *)0;
+    s_width       = 0;
+    s_height      = 0;
+    klog(LOG_INFO, "vpd", "display refused -- POST progress display retired");
 }
 
 void vpd_stop_tier1(void)
