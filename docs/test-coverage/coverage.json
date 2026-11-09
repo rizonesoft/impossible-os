@@ -1,6 +1,6 @@
 {
-  "total_suites": 3678,
-  "total_assertions": 16801,
+  "total_suites": 3679,
+  "total_assertions": 16808,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_ec.c", "suites": 42, "assertions": 168},
@@ -102,7 +102,7 @@
     {"file": "test_smbios_parse.c", "suites": 11, "assertions": 20},
     {"file": "test_smp_lifecycle.c", "suites": 35, "assertions": 138},
     {"file": "test_smp_rendezvous.c", "suites": 28, "assertions": 131},
-    {"file": "test_storage.c", "suites": 4, "assertions": 21},
+    {"file": "test_storage.c", "suites": 5, "assertions": 28},
     {"file": "test_swap.c", "suites": 1, "assertions": 4},
     {"file": "test_syscall_filter.c", "suites": 8, "assertions": 42},
     {"file": "test_time.c", "suites": 21, "assertions": 101},

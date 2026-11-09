@@ -363,7 +363,8 @@ struct ahci_port {
 /* Initialize the AHCI driver and detect SATA/ATAPI devices. */
 int ahci_init(void);
 
-/* Devices the last ahci_init() found with a PHY link (attempted) and those it
+/* Devices the last ahci_init() found with a PHY link to a storage device
+ * (attempted: an enclosure bridge is not one) and those it
  * brought up as a SATA disk or ATAPI device (usable), so one failed disk
  * beside a working one records DEGRADED. Either pointer may be NULL. */
 void ahci_probe_counts(uint32_t *attempted, uint32_t *usable);
@@ -372,6 +373,12 @@ void ahci_probe_counts(uint32_t *attempted, uint32_t *usable);
  * medium, becoming ready, media changed), 0 for an I/O, sense, transport or
  * command failure. Exposed for tests. */
 int atapi_capacity_rc_usable(int rc);
+
+/* Pure: 1 when a port's PxSSTS/PxSIG pair is a live link to a device that
+ * counts as an attempted storage probe. 0 for no link, and for an enclosure
+ * management bridge, which port_init skips by design. A port multiplier
+ * still counts: drives sit behind it that this driver cannot reach. */
+int ahci_link_is_storage_attempt(uint32_t ssts, uint32_t sig);
 
 /* Undo port initialisation for a port that is not kept: mask its interrupts,
  * stop its engines, and drop its DMA buffers. The buffers are freed only when

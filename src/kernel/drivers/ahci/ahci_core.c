@@ -628,6 +628,15 @@ done:
 static uint32_t s_ahci_attempted;
 static uint32_t s_ahci_usable;
 
+int ahci_link_is_storage_attempt(uint32_t ssts, uint32_t sig)
+{
+    if ((ssts & AHCI_SSTS_DET_MASK) != AHCI_SSTS_DET_OK)
+        return 0;
+    /* An enclosure management bridge is a backplane controller, not a
+     * drive: port_init skips it by design, so it is no failed attempt. */
+    return sig != AHCI_SIG_SEMB;
+}
+
 int atapi_capacity_rc_usable(int rc)
 {
     switch (rc) {
@@ -838,8 +847,9 @@ int ahci_init(void)
         /* Detection is the PHY link (SSTS.DET), read BEFORE port_init: a
          * port_init that fails after the link came up (allocation, an
          * unsupported signature) is a present device that did not work. */
-        if ((port_read(port_regs(port_num), AHCI_PxSSTS) & AHCI_SSTS_DET_MASK)
-                == AHCI_SSTS_DET_OK)
+        if (ahci_link_is_storage_attempt(
+                port_read(port_regs(port_num), AHCI_PxSSTS),
+                port_read(port_regs(port_num), AHCI_PxSIG)))
             detected++;
 
         if (port_init(&ports[drive_idx], port_num) == 0) {

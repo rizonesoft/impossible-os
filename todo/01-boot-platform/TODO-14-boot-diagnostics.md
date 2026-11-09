@@ -406,10 +406,13 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
   - Confirmed at source 2026-08-30: `ixfs_cache_flush` ([`src/kernel/fs/ixfs/ixfs_core.c:97`](../../src/kernel/fs/ixfs/ixfs_core.c)) writes dirty blocks with `blkdev_write` and returns without `blkdev_sync`, so the `flushed == 0` gate in `panic.c` retires the `0x80000` evidence page on an FS-cache write rather than a durable one.
   - The owner item already exists and already carries the reciprocal park; nothing in this file can fix it without changing IXFS flush semantics for every caller.
 - [x] Commit: `"diag: per-driver boot load records -- absent vs failed probes, NVMe usable count, ACPI and GFX"`
+- [x] Post-ship review fixes: `xhci_hid_probe_counts` reads usable before attempts, and `ahci_link_is_storage_attempt` keeps an enclosure bridge out of the AHCI attempted count
+  - HID: each device's attempt precedes its usable increment, so the usable-first (acquire) read can never report usable above attempted while a hot-plug enumeration races the boot record.
+  - AHCI: a SEMB backplane bridge on a live link is skipped by `port_init` by design, so it no longer turns a clean boot DEGRADED; a port multiplier still counts (drives behind it are unreachable). Tested in `Storage: AHCI link attempt`.
 
 **Test checkpoint:** a boot with one failing and one working storage controller records the failing one FAILED and the working one LOADED, not one aggregate LOADED; an absent controller records SKIPPED, never FAILED.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) for `boot: driver probe result mapping` and `boot: storage probe slot verdict` in `test_boot_diag.c`; `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) for `usb-hid: config descriptor HID classifier`, `usb-hid: identify attempt accounting` and the HID usable-count checks in `test_usb_hid.c`, plus `Storage: ATAPI capacity usability` and `Storage: AHCI port release` in `test_storage.c`; full suite 37180 kernel + 17 user-mode PASS, smoke matrix 18/18
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) for `boot: driver probe result mapping` and `boot: storage probe slot verdict` in `test_boot_diag.c`; `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) for `usb-hid: config descriptor HID classifier`, `usb-hid: identify attempt accounting` and the HID usable-count checks in `test_usb_hid.c`, plus `Storage: ATAPI capacity usability` and `Storage: AHCI port release` in `test_storage.c`; full suite 37187 kernel + 17 user-mode PASS, smoke matrix 18/18
 
 > **Notes:**
 > - Shipped: `boot_probe.h` result convention, per-driver storage/input/ACPI/GFX load records, attempted/usable counting for NVMe, AHCI (SATA + ATAPI), ATA and USB HID (live polling population under `s_hid_count_lock`). The two §11 accepted gaps (LOADED on probe failure, NVMe partial failure) close here.
@@ -417,6 +420,9 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 > - Downstream: `01-boot-platform/TODO-10` section 7 builds its degraded-subsystem wiring on `boot_probe_result` instead of a second enum.
 > - Scope boundary: a dual-controller FAILED/LOADED boot and the IRQ-claim failure paths are not reproducible under QEMU; the mapping, slot precedence and descriptor classifier are unit-tested, and the live boot records `all subsystems loaded clean`.
 > - Timing: `start=`/`dur=` read 0 until section 2 wires `boot_stage_report` (nothing records KERNEL_ENTRY), so the zero-duration test is a structural pin today.
+
+> **Verified:** 2026-11-09 | commit `b5653b111` | 5/6 items, 1 parked on IXFS | build OK | 37187 kernel + 17 user tests, smoke matrix 18/18, lint 0 errors
+> **Quality reviewed:** 2026-11-09 | Codex 72x (design, adversarial, re-adversarial, consistency, perf, test-coverage) | 7H+38M+2L fixed, 0 open | scope: kernel-code-quality via kernel-quality-auditor
 
 ---
 

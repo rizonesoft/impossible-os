@@ -1638,10 +1638,18 @@ uint8_t xhci_hid_interval_encode(uint8_t speed, uint8_t b_interval)
 
 void xhci_hid_probe_counts(uint32_t *attempted, uint32_t *usable)
 {
+    /* Usable is loaded FIRST. A device's attempt is counted before it can be
+     * marked usable, so with a hot-plug enumeration racing this read the
+     * usable-then-attempts order can only over-count attempts, never report
+     * usable > attempted (which would read a failed probe as LOADED). The
+     * acquire keeps the second load after the first on every architecture. */
+    uint32_t u = __atomic_load_n(&s_hid_usable, __ATOMIC_ACQUIRE);
+    uint32_t a = __atomic_load_n(&s_hid_attempts, __ATOMIC_RELAXED);
+
     if (attempted)
-        *attempted = __atomic_load_n(&s_hid_attempts, __ATOMIC_RELAXED);
+        *attempted = a;
     if (usable)
-        *usable = __atomic_load_n(&s_hid_usable, __ATOMIC_RELAXED);
+        *usable = u;
 }
 
 int xhci_config_has_hid_boot(const uint8_t *cfg, uint16_t len)

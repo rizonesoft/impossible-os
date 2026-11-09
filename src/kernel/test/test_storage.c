@@ -45,6 +45,27 @@ static void test_virtio_read(void)
 
 /* ATAPI capacity outcome -> usable: an empty, spinning-up or swapped drive is
  * healthy; a hardware, sense, transport or command failure is not. */
+/* Which live links count as attempted AHCI storage devices: an enclosure
+ * bridge must not turn a clean boot into DEGRADED. */
+static void test_ahci_link_storage_attempt(void)
+{
+    TEST_ASSERT_EQ(ahci_link_is_storage_attempt(AHCI_SSTS_DET_OK, AHCI_SIG_ATA),
+                   1, "SATA disk on a live link is an attempt");
+    TEST_ASSERT_EQ(ahci_link_is_storage_attempt(AHCI_SSTS_DET_OK, AHCI_SIG_ATAPI),
+                   1, "ATAPI device on a live link is an attempt");
+    TEST_ASSERT_EQ(ahci_link_is_storage_attempt(AHCI_SSTS_DET_OK, AHCI_SIG_PM),
+                   1, "port multiplier is an attempt (drives behind it)");
+    TEST_ASSERT_EQ(ahci_link_is_storage_attempt(AHCI_SSTS_DET_OK | 0x100u,
+                                                AHCI_SIG_ATA),
+                   1, "IPM bits above DET do not hide a link");
+    TEST_ASSERT_EQ(ahci_link_is_storage_attempt(AHCI_SSTS_DET_OK, AHCI_SIG_SEMB),
+                   0, "enclosure bridge is not a storage attempt");
+    TEST_ASSERT_EQ(ahci_link_is_storage_attempt(0x1u, AHCI_SIG_ATA),
+                   0, "device without PHY link is not an attempt");
+    TEST_ASSERT_EQ(ahci_link_is_storage_attempt(0u, 0xFFFFFFFFu),
+                   0, "empty port is not an attempt");
+}
+
 static void test_atapi_capacity_usable(void)
 {
     TEST_ASSERT_EQ(atapi_capacity_rc_usable(0), 1, "capacity read -> usable");
@@ -157,6 +178,8 @@ void test_register_storage(void)
                             test_ahci_port_release_frees, TEST_CAT_STORAGE);
     test_suite_register_cat("Storage: ATAPI capacity usability",
                             test_atapi_capacity_usable, TEST_CAT_STORAGE);
+    test_suite_register_cat("Storage: AHCI link attempt",
+                            test_ahci_link_storage_attempt, TEST_CAT_STORAGE);
     test_suite_register_cat("Storage: AHCI read", test_ahci_read, TEST_CAT_STORAGE);
     test_suite_register_cat("Storage: VirtIO read", test_virtio_read, TEST_CAT_STORAGE);
 }
