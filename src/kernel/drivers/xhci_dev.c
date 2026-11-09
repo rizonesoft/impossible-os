@@ -25,6 +25,7 @@
 #include "kernel/timer.h"
 #include "kernel/drivers/keyboard.h"
 #include "kernel/drivers/mouse.h"
+#include "kernel/sched/spinlock.h"
 
 /* ---- Static state -------------------------------------------------------- */
 
@@ -705,6 +706,25 @@ static uint32_t ctx_size(struct xhci_controller *hc)
  * port is 1-based (per xHCI spec -- Port 1 = PORTSC offset 0x400).
  * speed is the USB_SPEED_* constant read from PORTSC.
  * Returns 0 on success, -1 on failure. */
+/* HID probe counters; their contract is at xhci_hid_probe_counts() below. */
+static uint32_t s_hid_attempts;
+static uint32_t s_hid_usable;
+
+/* Serialises every change to a device's hid_usable_counted together with
+ * s_hid_usable and the polling check that decides it. Enumeration and the BSP
+ * tick poller (ISR context) both reach it, so it is IRQ-safe; it is a leaf
+ * lock, held only for a few loads and stores. */
+static spinlock_t s_hid_count_lock = SPINLOCK_INIT;
+
+/* Drop a device from the usable count if it is in it. Caller holds the lock. */
+static void hid_uncount_locked(struct xhci_device *dev)
+{
+    if (dev->hid_usable_counted) {
+        dev->hid_usable_counted = 0;
+        __atomic_fetch_sub(&s_hid_usable, 1u, __ATOMIC_RELAXED);
+    }
+}
+
 int xhci_enumerate_device(struct xhci_controller *hc,
                                  uint8_t port, uint8_t speed)
 {
@@ -794,6 +814,14 @@ int xhci_enumerate_device(struct xhci_controller *hc,
     if (!dev) {
         klog(LOG_ERROR, "usb", "No free device tracking slots");
         return -1;
+    }
+    /* A reused slot may still carry a previous device's usable count; zeroing
+     * the struct must not leak it into the HID usable total. */
+    {
+        uint64_t flags;
+        spin_lock_irqsave(&s_hid_count_lock, &flags);
+        hid_uncount_locked(dev);
+        spin_unlock_irqrestore(&s_hid_count_lock, flags);
     }
     dev_zero(dev, sizeof(struct xhci_device));
     dev->slot_id = slot_id;
@@ -1035,6 +1063,11 @@ int xhci_enumerate_device(struct xhci_controller *hc,
         if (xhci_control_transfer(hc, dev, setup, NULL, 0, 0) != 0) {
             klog(LOG_ERROR, "usb", "SET_CONFIGURATION failed (slot %u)",
                  (uint64_t)slot_id);
+            /* xhci_hid_identify never runs on this path, so a HID boot
+             * device that failed here must be counted from the descriptor
+             * already in hand, or it would read as no HID device at all. */
+            if (xhci_config_has_hid_boot(dev->config_data, dev->config_len))
+                __atomic_fetch_add(&s_hid_attempts, 1u, __ATOMIC_RELAXED);
             return -1;
         }
         g_usb_enum_stage = 6;  /* configured */
@@ -1091,6 +1124,14 @@ int xhci_enumerate_device(struct xhci_controller *hc,
                 dev->int_in_polling = 0;
         }
     }
+
+    /* USABLE means reports can actually arrive: the poller is registered and
+     * the first report TRB is queued. A recognized HID device without a
+     * dedicated interrupter, a report buffer, or a live poller was counted as
+     * an attempt in xhci_hid_probe and stays an attempt only; a device whose
+ * polling later stops leaves the count again (xhci_hid_stop_polling). */
+    if (dev->is_hid && dev->int_in_polling)
+        xhci_hid_mark_usable(dev);
 
     return 0;
 }
@@ -1416,9 +1457,33 @@ static void xhci_hid_parse_mouse(struct xhci_device *dev)
 
 /* Stop polling a device whose endpoint failed. A mouse also gives up its held
  * buttons: its slot is cleared by no one else, and no further report will come. */
+void xhci_hid_mark_usable(struct xhci_device *dev)
+{
+    uint64_t flags;
+
+    if (!dev)
+        return;
+    /* The polling check is repeated UNDER the lock: a stop that ran between
+     * the caller's check and here has already cleared int_in_polling, and the
+     * device must then not be counted. */
+    spin_lock_irqsave(&s_hid_count_lock, &flags);
+    if (dev->int_in_polling && !dev->hid_usable_counted) {
+        dev->hid_usable_counted = 1;
+        __atomic_fetch_add(&s_hid_usable, 1u, __ATOMIC_RELAXED);
+    }
+    spin_unlock_irqrestore(&s_hid_count_lock, flags);
+}
+
 void xhci_hid_stop_polling(struct xhci_device *dev)
 {
+    uint64_t flags;
+
+    /* Clearing polling and leaving the usable count happen as one step, so a
+     * concurrent mark either sees polling already off or is undone here. */
+    spin_lock_irqsave(&s_hid_count_lock, &flags);
     dev->int_in_polling = 0;
+    hid_uncount_locked(dev);
+    spin_unlock_irqrestore(&s_hid_count_lock, flags);
     if (dev->hid_proto == USB_PROTO_HID_MOUSE)
         (void)mouse_usb_source_release(xhci_device_index(dev));
 }
@@ -1554,7 +1619,63 @@ uint8_t xhci_hid_interval_encode(uint8_t speed, uint8_t b_interval)
     }
 }
 
-int xhci_hid_identify(struct xhci_controller *hc, struct xhci_device *dev)
+/* HID probe accounting for the boot load-status log.
+ *
+ * `dev->is_hid` is set on the LAST line of a successful probe, so scanning the
+ * device table for it can only ever count successes -- a keyboard whose
+ * endpoint ring allocation or Configure-Endpoint command failed is
+ * indistinguishable from a machine with no USB keyboard at all. These two
+ * counters are taken on either side of that gap: attempts once the descriptor
+ * walk has confirmed a HID boot interface, usable once the device is live.
+ *
+ * `attempts` is CUMULATIVE across the controller's lifetime (a hot-plug
+ * re-probe adds to it); `usable` is the CURRENT polling population, which
+ * falls again when a device stops polling or its slot is reused. The pair is
+ * meaningful as a boot snapshot, not as a cumulative success rate. The boot record is taken in the
+ * deferred input step, immediately after boot enumeration, which is the window
+ * where the pair describes exactly the boot-time probe. The counters are
+ * declared above xhci_enumerate_device, which also updates them. */
+
+void xhci_hid_probe_counts(uint32_t *attempted, uint32_t *usable)
+{
+    if (attempted)
+        *attempted = __atomic_load_n(&s_hid_attempts, __ATOMIC_RELAXED);
+    if (usable)
+        *usable = __atomic_load_n(&s_hid_usable, __ATOMIC_RELAXED);
+}
+
+int xhci_config_has_hid_boot(const uint8_t *cfg, uint16_t len)
+{
+    uint32_t offset = 0;
+
+    if (!cfg)
+        return 0;
+    while (offset + 2u <= len) {
+        uint8_t desc_len  = cfg[offset];
+        uint8_t desc_type = cfg[offset + 1];
+
+        if (desc_len < 2 || offset + desc_len > len)
+            break;
+        if (desc_type == USB_DESC_INTERFACE && desc_len >= 9) {
+            const struct usb_interface_descriptor *iface =
+                (const struct usb_interface_descriptor *)(cfg + offset);
+
+            if (iface->bInterfaceClass    == USB_CLASS_HID &&
+                iface->bInterfaceSubClass == USB_SUBCLASS_HID_BOOT &&
+                (iface->bInterfaceProtocol == USB_PROTO_HID_KEYBOARD ||
+                 iface->bInterfaceProtocol == USB_PROTO_HID_MOUSE))
+                return 1;
+        }
+        offset += desc_len;
+    }
+    return 0;
+}
+
+/* xhci_hid_identify's body, counting a recognised HID boot interface into
+ * `attempts`. Production passes the live counter; the test entry point passes
+ * a private one, so a fixture can never touch boot accounting. */
+static int hid_identify_counted(struct xhci_controller *hc,
+                                struct xhci_device *dev, uint32_t *attempts)
 {
     const uint8_t *buf = dev->config_data;
     uint16_t len = dev->config_len;
@@ -1631,9 +1752,18 @@ int xhci_hid_identify(struct xhci_controller *hc, struct xhci_device *dev)
         offset += desc_len;
     }
 
+    /* A recognized HID boot interface IS a HID boot device, even when none of
+     * its endpoints is usable, so every failure from here on is present-but-
+     * unusable rather than absent. Counting the attempt HERE (after the
+     * interface match, before the endpoint check) is what lets the boot
+     * load-status record split SKIPPED from FAILED: an is_hid scan can only
+     * see the successes, because is_hid is set at the very tail. */
+    if (found_hid)
+        __atomic_fetch_add(attempts, 1u, __ATOMIC_RELAXED);
+
     if (!found_hid || !found_int_in) {
-        klog(LOG_DEBUG, "usb",
-             "Slot %u: no HID boot interface (hid=%d, int_in=%d)",
+        klog(found_hid ? LOG_WARN : LOG_DEBUG, "usb",
+             "Slot %u: no usable HID boot interface (hid=%d, int_in=%d)",
              (uint64_t)dev->slot_id, (uint64_t)found_hid, (uint64_t)found_int_in);
         return -1;
     }
@@ -1783,6 +1913,18 @@ int xhci_hid_identify(struct xhci_controller *hc, struct xhci_device *dev)
 
     return 0;
 }
+
+int xhci_hid_identify(struct xhci_controller *hc, struct xhci_device *dev)
+{
+    return hid_identify_counted(hc, dev, &s_hid_attempts);
+}
+
+#ifdef KERNEL_TESTS
+int xhci_hid_test_identify(struct xhci_device *dev, uint32_t *attempts)
+{
+    return hid_identify_counted(NULL, dev, attempts);
+}
+#endif
 
 /* ---- Public API ---------------------------------------------------------- */
 

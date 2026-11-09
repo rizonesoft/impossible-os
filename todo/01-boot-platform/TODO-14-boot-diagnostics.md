@@ -68,7 +68,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | 💎  |   9   | Boot timeline visualization/import                            | §2                                 |  [/]   |
 | ⭐  |  10   | Bootloader build identity dump in BlackBox                    | TODO-01 §20                        |  [x]   |
 | 💎  |  11   | Boot load status log (ntbtlog parity)                         | §2                                 |  [/]   |
-| 💎  |  12   | Boot load status granularity (per-driver, probe, NVMe)        | §11; D02 T33 §7 (image ceiling)    |  [ ]   |
+| 💎  |  12   | Boot load status granularity (per-driver, probe, NVMe)        | §11                                |  [x]   |
 | 💎  |  13   | klog format-width contract (`-Wformat` on every call site)    | D02 T33 §7 (image ceiling)         |  [ ]   |
 | 💎  |  14   | Panic-evidence page reserved by the bootloader (`0x80000`)    | §5                                 |  [x]   |
 | ⭐  |  15   | Anti-rollback terminal give-up durable record                 | TODO-01 §25; D02 T33 §7 (ceiling)  |  [ ]   |
@@ -373,8 +373,6 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 > - Canonical doc: [`docs/boot/black-box-artifacts.md`](../../docs/boot/black-box-artifacts.md) (`X:\Diag\*` artifact index).
 > - Scope boundary: §11 ships infra + storage/network wiring. Granular per-driver coverage, probe-result aggregation and NVMe per-controller status are NOT open here -- all seven §11 items are `[x]`; those three were moved verbatim to §12, where they are parked on the kernel-image ceiling.
 > **Verified:** 2026-06-14 | ship `657637ec` (+ this review commit) | 7/7 items | build OK | smoke PASS + tests 2605/2605 (count corrected 2026-09-03: the stamp read 6/9 against the pre-split body; the three unshipped items became §12)
-> **Accepted:** [H] sequential storage publishes LOADED on probe failure + async marks AHCI/VirtIO absence DEGRADED (reason: needs driver absent-vs-failed split) -> XREF: 01-boot-platform/TODO-14 §11 (item: "Probe-result aggregation (storage + network)" at line 407)
-> **Accepted:** [M] NVMe partial multi-controller failure reads BOOT_OK (reason: nvme_init exposes only the success count) -> XREF: 01-boot-platform/TODO-14 §11 (item: "NVMe per-controller status" at line 411)
 > **Quality reviewed:** 2026-06-14 | Codex 8x (design + test-coverage + adversarial + re-adversarial + consistency + perf) | 3H+8M+2L fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -383,40 +381,42 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 
 > **Spawned-by:** root
 
-> **Notes:** Unparked 2026-11-07 on `02-kernel-core/TODO-33` s11's sweep: `scripts/overnight/bss-headroom.py` measures a `.text` budget of 153647 bytes at `9b55ec6f0`, `__kernel_end` 0x7da000. Re-measure at implementation; the guard still applies. Earlier measurement, kept for its costs: 2026-08-30 | kernel-image ceiling. The implementation is COMPLETE and design-reviewed; it is parked on size alone, not on any missing capability
->
-> MEASURED 2026-08-30: the change is **+1,904 bytes of `.text`** (+160 `.rodata`, +192 `.bss`) against **79 bytes** of `.text` headroom -- `.text` ends at `0x427FB1` and its page boundary is `0x428000`. Crossing it cascades `.rodata`, `.data` and `.bss` each up one 4 KiB page and lands `__kernel_end` on exactly `0x800000`, which `scripts/build.sh` refuses. HEAD builds green at `__kernel_end == 0x7ff000`, so the tree admits 79 bytes of new kernel code and this section needs 24x that.
->
-> The diff is preserved at `.claude/state/deferred-todo14-s12.patch` (gitignored: survives a rollover, NOT a fresh clone). It applies to `include/kernel/boot_probe.h` (new), `boot_load_status.{h,c}`, `boot_storage.c`, `boot_interrupts.c`, and the ata/ahci/nvme/rtl8139/virtio-blk/virtio-input/vbox-mouse/mouse/xhci_dev/framebuffer drivers.
->
-> Design settled, so the redo is apply-then-re-verify rather than re-design. Four findings were raised by the pre-implementation Codex design review, all verified at source and all fixed in the preserved diff:
->
-> - **A worker must not own a `boot_load_status` entry.** `boot_load_begin` release-publishes ATTEMPTED immediately (`src/kernel/main/boot_load_status.c:85`) and `boot_load_finish` mutates that published entry in place, so a barrier-overrunning worker finishing late would overwrite a terminal verdict the BSP had already written. The BSP claims all four storage entries before dispatch and writes every one itself; workers publish only into their own `storage_probe_slot`, storing `done` last with a release. A slot that never publishes is recorded FAILED, not SKIPPED.
-> - **`nvme_init`'s count is not a usable-controller count.** `num_controllers++` at `src/kernel/drivers/nvme.c:642` runs BEFORE `nvme_identify` (`:648`) and `nvme_create_io_queues` (`:652`, whose return was discarded), so a controller with no addressable namespace still counted. The diff adds attempted/usable counters where usable requires a valid namespace AND live I/O queues.
-> - **USB HID absent-vs-failed cannot be read from `is_hid`.** That flag is set on the last line of a successful probe (`src/kernel/drivers/xhci_dev.c:1751`), after several present-but-failed `return -1` exits (`:1621`, `:1630`). The diff counts attempts once the descriptor walk confirms a HID boot interface, and successes at the tail.
-> - **The aggregate storage entry must stay.** It is the only carrier of async dispatch/barrier/recovery health (`src/kernel/main/boot_storage.c:528-535`): a barrier timeout whose worker finishes late leaves every per-driver entry LOADED and no unsafe bit set. It is retained as `storage-group` beside the per-driver records.
->
-> One behavior change rides along and is deliberate: with ABSENT and FAILED separated, an absent AHCI or virtio-blk controller no longer returns `BOOT_DEGRADED` from its async wrapper, so an NVMe-only machine stops logging a spurious "Async storage init degraded" on every clean boot.
-
 `boot_load_record` records ONE aggregate `storage` entry and cannot tell an absent device from a failed one, so the `ntbtlog` parity shipped by section 11 is shape-only: a machine that booted with a dead AHCI controller and a live NVMe logs the same line as a machine with neither. This section makes each probe self-report. The items below were moved VERBATIM from the stamped section 11, where the triage oracle could never reach them (cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3).
 
-**Files:** `src/kernel/boot_load_status.c`, `include/kernel/boot_load_status.h`, the storage/input/ACPI/GFX probe call sites
+**Files:** `src/kernel/main/boot_load_status.c`, `include/kernel/boot_load_status.h`, `include/kernel/boot_probe.h`, `src/kernel/main/boot_storage.c`, `src/kernel/main/boot_interrupts.c`, the storage/input/NIC/GFX drivers
 
-- [ ] Granular per-driver `boot_load_record`, blocked on the kernel-image ceiling with the code written
-  - Storage (ata/ahci/nvme/virtio-blk), input (PS/2 keyboard, PS/2 mouse, USB HID, virtio-input, vbox-mouse), ACPI and GFX each self-report, instead of one aggregate `storage` entry plus one aggregate `input` entry and nothing at all for ACPI or GFX.
-  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
-- [ ] Probe-result aggregation (storage + network): absent must be distinguishable from failed, same blocker
-  - `rtl8139`, `ahci` and `virtio-blk` each return `-1` for both "no such device" and "device present but init failed", and the sequential storage path always records LOADED, so SKIPPED and FAILED are not separable today.
-  - The preserved diff answers it with a shared `enum boot_probe_result` whose ABSENT keeps the historical `-1`, so no existing `rc != 0` or `rc < 0` caller changes behavior and FAILED is a new value.
-  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
-- [ ] NVMe per-controller status: report attempted-vs-usable, not the enabled count, same blocker
-  - `nvme_init` returns the count of controllers that reached ENABLED, and that counter is incremented before Identify and I/O-queue setup run, so a partial multi-controller failure records BOOT_OK today.
-  - -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Remove the `scripts/build.sh` BSS-collision guard")
+- [x] Per-driver `boot_load_record` entries: storage, input, ACPI and GFX each self-report instead of one aggregate `storage` and one `input` entry
+  - Storage: `ata`, `ahci`, `nvme`, `virtio-blk` entries written by the BSP from per-step `boot_probe_slot`s (`boot_probe_slot_publish` stores `done` last with a release); `boot_probe_slot_verdict` makes an excluded driver FAILED even after a late success, an unpublished slot FAILED (never SKIPPED), and `storage-group` keeps the async dispatch/barrier health.
+  - Durations: each worker measures its own probe and `boot_load_finish_ex` stores it as given, zero included; `boot_load_finish` measures its own span.
+  - Input: `ps2-keyboard` (`keyboard_probe_result`), `ps2-mouse`, `usb-hid` (`xhci_hid_probe_counts` attempted/usable), `virtio-input`, `vbox-mouse` via `input_record_sources()` in `boot_storage.c`.
+  - USB HID: an attempt is counted once a boot interface is recognised (or, when SET_CONFIGURATION fails first, from `xhci_config_has_hid_boot` over the descriptor in hand); usable only while polling is live (`xhci_hid_mark_usable` once armed and queued; `xhci_hid_stop_polling` and slot reuse take it back out exactly once).
+  - ACPI: `acpi` LOADED / FAILED from `acpi_init()`'s return, SKIPPED with no RSDP; GFX: `gfx` SKIPPED with no GOP framebuffer, FAILED when `fb_init()` refused it (`fb_is_ready()`), both in `boot_interrupts.c`.
+- [x] Probe-result aggregation: absent is distinguishable from failed through `enum boot_probe_result` in `include/kernel/boot_probe.h`
+  - OK 0, ABSENT keeps the historical -1 (every `rc < 0` caller unchanged), FAILED -2; `boot_probe_load_state()` maps any unknown value, positive included, to FAILED.
+  - `rtl8139`, `ahci`, `ata`, `virtio-blk`, `virtio-input`, `vbox-mouse` and PS/2 mouse return it; AHCI counts devices by PHY link (SSTS.DET) before `port_init`, so detected devices that all fail IDENTIFY or port setup return FAILED, not ABSENT.
+  - ATA classifies each drive (`ata_probe_counts`): no answer, floating bus or an ATAPI/SATA signature is absent; a stall or an aborted IDENTIFY is FAILED, a bus stuck busy after reset (status other than 0xFF/0x7F) is FAILED, an identified slave is attempted but never usable because I/O serves the master only, and an ATA or AHCI disk whose IDENTIFY reports zero capacity is FAILED and not published; a rejected AHCI port is torn down by `ahci_port_release` (interrupts masked, engines stopped; DMA buffers freed only once the HBA confirms the stop, otherwise left with the device and detached from the slot so a later port cannot free them). An ATAPI drive counts usable unless its capacity probe failed on hardware or transport (`atapi_capacity_rc_usable`; no medium is healthy).
+  - Multi-device drivers use `boot_probe_combined_state`: an OK result is refined by attempted/usable (`ata_probe_counts`, `ahci_probe_counts`), so one good disk beside a failed one is DEGRADED; a controller-level failure keeps FAILED.
+  - Present-but-unusable is FAILED: PS/2 keyboard and mouse claim their IRQ before enabling it (an empty aux port that NACKs reset is ABSENT); RTL8139 fails on an unroutable interrupt, quiesces the NIC and frees its PMM Rx ring and Tx buffers.
+  - VirtIO-blk with no device configuration or zero capacity is FAILED; the NVMe verify buffer is freed only after its read completed, and kept on a timeout because nothing cancels the command.
+  - The PS/2 keyboard record means "i8042 present and IRQ 1 claimed": a keyboard device is not probed, because GETID can confuse translated laptop keyboards (Linux skips it via `atkbd_skip_getid`), so an empty keyboard port reads LOADED, as it does to Linux.
+  - Absent AHCI or virtio-blk no longer returns `BOOT_DEGRADED` from its async wrapper, so an NVMe-only machine stops logging a spurious "Async storage init degraded".
+- [x] NVMe per-controller status: attempted-vs-usable through `nvme_probe_counts()` and `boot_probe_count_state()`, not the enabled count
+  - Usable requires a supported sector size, a nonzero capacity (what blkdev registration requires), a successful sector-0 verification read (`nvme_create_io_queues` returns `NVME_IOQ_UNVERIFIED` on an error completion, timeout or no buffer) and a queue still active afterwards.
 - [/] last-panic.txt durability is parked on the IXFS owner: flush never reaches the device -> XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §1` (item: "**Flush must reach the DEVICE**")
   - Confirmed at source 2026-08-30: `ixfs_cache_flush` ([`src/kernel/fs/ixfs/ixfs_core.c:97`](../../src/kernel/fs/ixfs/ixfs_core.c)) writes dirty blocks with `blkdev_write` and returns without `blkdev_sync`, so the `flushed == 0` gate in `panic.c` retires the `0x80000` evidence page on an FS-cache write rather than a durable one.
   - The owner item already exists and already carries the reciprocal park; nothing in this file can fix it without changing IXFS flush semantics for every caller.
+- [x] Commit: `"diag: per-driver boot load records -- absent vs failed probes, NVMe usable count, ACPI and GFX"`
 
 **Test checkpoint:** a boot with one failing and one working storage controller records the failing one FAILED and the working one LOADED, not one aggregate LOADED; an absent controller records SKIPPED, never FAILED.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) for `boot: driver probe result mapping` and `boot: storage probe slot verdict` in `test_boot_diag.c`; `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) for `usb-hid: config descriptor HID classifier`, `usb-hid: identify attempt accounting` and the HID usable-count checks in `test_usb_hid.c`, plus `Storage: ATAPI capacity usability` and `Storage: AHCI port release` in `test_storage.c`; full suite 37180 kernel + 17 user-mode PASS, smoke matrix 18/18
+
+> **Notes:**
+> - Shipped: `boot_probe.h` result convention, per-driver storage/input/ACPI/GFX load records, attempted/usable counting for NVMe, AHCI (SATA + ATAPI), ATA and USB HID (live polling population under `s_hid_count_lock`). The two §11 accepted gaps (LOADED on probe failure, NVMe partial failure) close here.
+> - Integration: storage workers publish into per-step slots and the BSP writes every entry, so a late worker can never overwrite a terminal verdict.
+> - Downstream: `01-boot-platform/TODO-10` section 7 builds its degraded-subsystem wiring on `boot_probe_result` instead of a second enum.
+> - Scope boundary: a dual-controller FAILED/LOADED boot and the IRQ-claim failure paths are not reproducible under QEMU; the mapping, slot precedence and descriptor classifier are unit-tested, and the live boot records `all subsystems loaded clean`.
+> - Timing: `start=`/`dur=` read 0 until section 2 wires `boot_stage_report` (nothing records KERNEL_ENTRY), so the zero-duration test is a structural pin today.
 
 ---
 
@@ -746,20 +746,20 @@ Two earlier drafts of this paragraph were wrong and both errors are recorded her
 
 ## OS Comparison
 
-| ⭐  | Feature                    | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS                    |
-| --- | -------------------------- | ------------------------- | ------------------------- | ----------------------------------- |
-| 💎  | Boot POST codes            | ✅ Firmware boot mgr      | ✅ BIOS POST codes        | ✅ §1 §3 POST port 80 + FB hex      |
-| 💎  | Named boot progress        | ✅ ETW boot trace         | ✅ dmesg systemd-analyze  | ✅ §2 serial STAGE ms lines         |
-| 💎  | Boot load/status log       | ✅ ntbtlog.txt driver log | ✅ dmesg drivers loaded   | ✅ §11 boot-load-status.txt         |
-| ⭐  | Bootloader build identity  | ⚠️ bcdedit/msinfo32       | ⚠️ /proc/version uname    | ✅ §10 boot-loader-identity.txt     |
-| 💎  | Boot timeline viewers      | ⚠️ Performance Toolkit    | ✅ systemd-analyze plot   | ✅ §16 SVG + Chrome trace host tool |
-| 💎  | Panic forensics            | ✅ WER minidump EventLog  | ✅ kdump pstore ramoops   | ✅ §5 0x80000 page last-panic.txt   |
-| 💎  | Crash-page pre-OS pinning  | ⚠️ Firmware-reserved only | ✅ pstore/ramoops in DT   | ✅ §14 loader pins 0x80000          |
-| 💎  | Uninit-.bss boot hardening | ⚠️ Compiler/CRT zeroing   | ⚠️ Compiler/CRT zeroing   | ✅ §18 §20 enumerated reset sweep   |
-| 💎  | Multi UI spinner           | ✅ WinUI ProgressRing     | ✅ GTK Qt spinners        | ⬜ §7 spinner_create pool           |
-| ⭐  | Panic BSOD QR              | ❌ Text URL BSOD only     | ❌ No kernel QR           | ⬜ §6 segno+phone-gated QR          |
-| ⭐  | Alive hang pixel           | ❌ No kernel hang pixel   | ❌ Not production default | [~] §4 permanently deferred         |
-| ⭐  | Live vital overlay         | ⚠️ Task Manager separate  | ⚠️ htop conky third-party | ⬜ §8 bottom metrics strip          |
+| ⭐  | Feature                    | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS                     |
+| --- | -------------------------- | ------------------------- | ------------------------- | ------------------------------------ |
+| 💎  | Boot POST codes            | ✅ Firmware boot mgr      | ✅ BIOS POST codes        | ✅ §1 §3 POST port 80 + FB hex       |
+| 💎  | Named boot progress        | ✅ ETW boot trace         | ✅ dmesg systemd-analyze  | ✅ §2 serial STAGE ms lines          |
+| 💎  | Boot load/status log       | ✅ ntbtlog.txt driver log | ✅ dmesg drivers loaded   | ✅ §11-§12 per-driver, absent/failed |
+| ⭐  | Bootloader build identity  | ⚠️ bcdedit/msinfo32       | ⚠️ /proc/version uname    | ✅ §10 boot-loader-identity.txt      |
+| 💎  | Boot timeline viewers      | ⚠️ Performance Toolkit    | ✅ systemd-analyze plot   | ✅ §16 SVG + Chrome trace host tool  |
+| 💎  | Panic forensics            | ✅ WER minidump EventLog  | ✅ kdump pstore ramoops   | ✅ §5 0x80000 page last-panic.txt    |
+| 💎  | Crash-page pre-OS pinning  | ⚠️ Firmware-reserved only | ✅ pstore/ramoops in DT   | ✅ §14 loader pins 0x80000           |
+| 💎  | Uninit-.bss boot hardening | ⚠️ Compiler/CRT zeroing   | ⚠️ Compiler/CRT zeroing   | ✅ §18 §20 enumerated reset sweep    |
+| 💎  | Multi UI spinner           | ✅ WinUI ProgressRing     | ✅ GTK Qt spinners        | ⬜ §7 spinner_create pool            |
+| ⭐  | Panic BSOD QR              | ❌ Text URL BSOD only     | ❌ No kernel QR           | ⬜ §6 segno+phone-gated QR           |
+| ⭐  | Alive hang pixel           | ❌ No kernel hang pixel   | ❌ Not production default | [~] §4 permanently deferred          |
+| ⭐  | Live vital overlay         | ⚠️ Task Manager separate  | ⚠️ htop conky third-party | ⬜ §8 bottom metrics strip           |
 
 > **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3 plus §10 bootloader identity and §11 ntbtlog-parity load/status log; timeline **export** + **v1 schema** exist (§9 `docs/boot/boot-timeline-schema.md`) and the **viewers** shipped in §16 as the host-side `tools/boot-timeline/` converter (Gantt SVG matching `systemd-analyze plot`, plus a Chrome trace-event export neither Windows nor `systemd-analyze` offers). §4 is permanently deferred; the ⬜ rows §6/§7/§8 remain deferred with recorded blockers (§6 segno+phone QR validation, §7 WM compositor integration, §8 the kernel-image ceiling -- its former scheduler-CPU% blocker closed 2026-07-20 with TODO-25 §7); **Edges:** §6 QR and §8 always-on strip are planned differentiators once unblocked.
 

@@ -1,6 +1,7 @@
 /* blk_init.c -- Init, reset, shutdown, hot-plug/unplug */
 
 #include "kernel/drivers/virtio/blk_internal.h"
+#include "kernel/boot_probe.h"
 
 /* ---- Initialization ---- */
 
@@ -145,7 +146,7 @@ int virtio_blk_init(void)
 
     if (!found) {
         klog(LOG_DEBUG, "virtio", "No virtio-blk device found");
-        return -1;
+        return BOOT_PROBE_ABSENT;
     }
 
     klog(LOG_DEBUG, "virtio", "Found at PCI %u:%u.%u (devID=0x%x)",
@@ -167,7 +168,7 @@ int virtio_blk_init(void)
     /* Initialize modern PCI transport (walk capabilities, map BARs) */
     if (virtio_pci_init(&blk_dev, dev.bus, dev.dev, dev.func) != 0) {
         klog(LOG_DEBUG, "virtio", "Failed to init modern PCI transport");
-        return -1;
+        return BOOT_PROBE_FAILED;
     }
 
     /* Step 1: Reset device */
@@ -368,8 +369,38 @@ int virtio_blk_init(void)
         if (!(cur & VIRTIO_STATUS_FEATURES_OK)) {
             klog(LOG_DEBUG, "virtio", "FEATURES_OK not accepted by device");
             virtio_set_status(&blk_dev, VIRTIO_STATUS_FAILED);
-            return -1;
+            return BOOT_PROBE_FAILED;
         }
+    }
+
+    /* Read disk capacity from device-specific config MMIO.
+     * Use config_generation counter for atomic read -- a live-resize
+     * event between the two 32-bit MMIO reads would corrupt the
+     * 64-bit value.  Retry if generation changed. */
+    if (blk_dev.device_cfg) {
+        uint8_t gen1, gen2;
+        do {
+            gen1 = virtio_read_config_generation(&blk_dev);
+            volatile uint32_t *cap_lo = (volatile uint32_t *)
+                (blk_dev.device_cfg + VIRTIO_BLK_CFG_CAPACITY);
+            volatile uint32_t *cap_hi = (volatile uint32_t *)
+                (blk_dev.device_cfg + VIRTIO_BLK_CFG_CAPACITY + 4);
+            disk_capacity = ((uint64_t)mmio_read32(cap_hi) << 32) |
+                            (uint64_t)mmio_read32(cap_lo);
+            gen2 = virtio_read_config_generation(&blk_dev);
+        } while (gen1 != gen2);
+    }
+
+    /* A disk with no device configuration or no capacity is present but
+     * carries no addressable storage: FAILED, never a clean LOADED. Checked
+     * BEFORE any virtqueue is allocated (config space is readable once
+     * FEATURES_OK is accepted), so a rejected device strands no rings. */
+    if (!blk_dev.device_cfg || disk_capacity == 0) {
+        klog(LOG_ERROR, "virtio", "virtio-blk: %s -- device unusable",
+             (uint64_t)(uintptr_t)(!blk_dev.device_cfg ? "no device config"
+                                                       : "zero capacity"));
+        virtio_set_status(&blk_dev, VIRTIO_STATUS_FAILED);
+        return BOOT_PROBE_FAILED;
     }
 
     /* Step 6: Read num_queues and set up virtqueue(s) */
@@ -395,7 +426,7 @@ int virtio_blk_init(void)
                 klog(LOG_DEBUG, "virtio",
                        "Failed to init request queue %u", (uint64_t)qi);
                 virtio_set_status(&blk_dev, VIRTIO_STATUS_FAILED);
-                return -1;
+                return BOOT_PROBE_FAILED;
             }
             /* Set event_idx flag on each queue */
             blk_vqs[qi].event_idx = has_event_idx ? 1 : 0;
@@ -413,24 +444,6 @@ int virtio_blk_init(void)
     /* Step 7: DRIVER_OK -- device is live */
     status |= VIRTIO_STATUS_DRIVER_OK;
     virtio_set_status(&blk_dev, status);
-
-    /* Read disk capacity from device-specific config MMIO.
-     * Use config_generation counter for atomic read -- a live-resize
-     * event between the two 32-bit MMIO reads would corrupt the
-     * 64-bit value.  Retry if generation changed. */
-    if (blk_dev.device_cfg) {
-        uint8_t gen1, gen2;
-        do {
-            gen1 = virtio_read_config_generation(&blk_dev);
-            volatile uint32_t *cap_lo = (volatile uint32_t *)
-                (blk_dev.device_cfg + VIRTIO_BLK_CFG_CAPACITY);
-            volatile uint32_t *cap_hi = (volatile uint32_t *)
-                (blk_dev.device_cfg + VIRTIO_BLK_CFG_CAPACITY + 4);
-            disk_capacity = ((uint64_t)mmio_read32(cap_hi) << 32) |
-                            (uint64_t)mmio_read32(cap_lo);
-            gen2 = virtio_read_config_generation(&blk_dev);
-        } while (gen1 != gen2);
-    }
 
     /* Read writeback cache mode if F_CONFIG_WCE negotiated */
     if (has_config_wce && blk_dev.device_cfg) {
@@ -517,7 +530,7 @@ int virtio_blk_init(void)
         if (cur & VIRTIO_STATUS_DEVICE_NEEDS_RESET) {
             klog(LOG_DEBUG, "virtio", "Device needs reset after init -- aborting");
             virtio_set_status(&blk_dev, VIRTIO_STATUS_FAILED);
-            return -1;
+            return BOOT_PROBE_FAILED;
         }
     }
 

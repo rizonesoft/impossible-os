@@ -6,6 +6,8 @@
 #include "kernel/boot_version.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_load_status.h"
+#include "kernel/boot_probe.h"
+#include "kernel/boot_progress.h"   /* boot_get_elapsed_ms */
 #include "kernel/panic.h"
 #include "kernel/klog.h"
 #include "kernel/time_iso.h"
@@ -31,6 +33,7 @@ static char s_fmt[512];
 /* Off-stack fixtures for the load-status log (section 11): a full pool
  * snapshot (~3 KiB) + a format buffer big enough for 64 lines. */
 static struct boot_load_test_state s_blsave;
+static struct boot_load_test_state s_bldur;
 static char s_blbuf[8192];
 
 static int buf_has(const char *hay, uint32_t hlen, const char *needle)
@@ -107,6 +110,121 @@ static void test_kdate_iso8601_fmt(void)
     TEST_ASSERT_EQ(memcmp(buf, "2023-11-14T22:13:20Z", 21), 0, "known timestamp -> correct ISO");
 }
 
+/* A driver probe's result maps onto exactly one load state. ABSENT is the
+ * historical -1 so existing `rc < 0` callers keep meaning "not present";
+ * FAILED and any unknown value (negative or positive) are never reported as
+ * loaded, because a value nobody defined is not evidence of success. */
+static void test_boot_probe_mapping(void)
+{
+    TEST_ASSERT_EQ(boot_probe_load_state(BOOT_PROBE_OK), BOOT_LOAD_LOADED,
+                   "probe OK -> LOADED");
+    TEST_ASSERT_EQ(boot_probe_load_state(BOOT_PROBE_ABSENT), BOOT_LOAD_SKIPPED,
+                   "probe ABSENT -> SKIPPED");
+    TEST_ASSERT_EQ(boot_probe_load_state(BOOT_PROBE_FAILED), BOOT_LOAD_FAILED,
+                   "probe FAILED -> FAILED");
+    TEST_ASSERT_EQ(boot_probe_load_state(-7), BOOT_LOAD_FAILED,
+                   "unknown negative -> FAILED");
+    TEST_ASSERT_EQ(boot_probe_load_state(1), BOOT_LOAD_FAILED,
+                   "positive is not success -> FAILED");
+    TEST_ASSERT(BOOT_PROBE_ABSENT < 0 && BOOT_PROBE_FAILED < 0,
+                "both non-OK results stay negative for rc < 0 callers");
+
+    /* Multi-instance probes: attempted vs usable. */
+    TEST_ASSERT_EQ(boot_probe_count_state(0, 0), BOOT_LOAD_SKIPPED,
+                   "no instances -> SKIPPED");
+    TEST_ASSERT_EQ(boot_probe_count_state(2, 0), BOOT_LOAD_FAILED,
+                   "all instances failed -> FAILED");
+    TEST_ASSERT_EQ(boot_probe_count_state(2, 1), BOOT_LOAD_DEGRADED,
+                   "partial failure -> DEGRADED");
+    TEST_ASSERT_EQ(boot_probe_count_state(2, 2), BOOT_LOAD_LOADED,
+                   "all usable -> LOADED");
+    TEST_ASSERT_EQ(boot_probe_count_state(1, 1), BOOT_LOAD_LOADED,
+                   "single usable -> LOADED");
+    TEST_ASSERT_EQ(boot_probe_count_state(0, 1), BOOT_LOAD_SKIPPED,
+                   "usable without attempts -> SKIPPED");
+    TEST_ASSERT_EQ(boot_probe_count_state(1, 2), BOOT_LOAD_LOADED,
+                   "usable above attempted -> LOADED");
+    TEST_ASSERT_EQ(boot_probe_count_state(0xFFFFFFFFu, 0xFFFFFFFEu),
+                   BOOT_LOAD_DEGRADED, "max attempts, one short -> DEGRADED");
+    TEST_ASSERT_EQ(boot_probe_load_state(-2147483647 - 1), BOOT_LOAD_FAILED,
+                   "INT_MIN -> FAILED");
+    TEST_ASSERT_EQ(boot_probe_load_state(2147483647), BOOT_LOAD_FAILED,
+                   "INT_MAX -> FAILED");
+
+    /* combined: OK is refined by counts; a non-OK result stands on its own. */
+    TEST_ASSERT_EQ(boot_probe_combined_state(BOOT_PROBE_OK, 2, 1),
+                   BOOT_LOAD_DEGRADED, "OK with one of two usable -> DEGRADED");
+    TEST_ASSERT_EQ(boot_probe_combined_state(BOOT_PROBE_OK, 2, 2),
+                   BOOT_LOAD_LOADED, "OK with all usable -> LOADED");
+    TEST_ASSERT_EQ(boot_probe_combined_state(BOOT_PROBE_FAILED, 0, 0),
+                   BOOT_LOAD_FAILED, "controller FAILED without counts -> FAILED");
+    TEST_ASSERT_EQ(boot_probe_combined_state(BOOT_PROBE_ABSENT, 0, 0),
+                   BOOT_LOAD_SKIPPED, "ABSENT -> SKIPPED");
+    TEST_ASSERT_EQ(boot_probe_combined_state(BOOT_PROBE_FAILED, 1, 0),
+                   BOOT_LOAD_FAILED, "stuck bus (1 attempted) -> FAILED");
+    /* OK from the driver with nothing usable: an identified ATAPI drive whose
+     * capacity probe failed is a complete failure, and OK with no devices at
+     * all is an empty bus. */
+    TEST_ASSERT_EQ(boot_probe_combined_state(BOOT_PROBE_OK, 1, 0),
+                   BOOT_LOAD_FAILED, "OK with none usable -> FAILED");
+    TEST_ASSERT_EQ(boot_probe_combined_state(BOOT_PROBE_OK, 0, 0),
+                   BOOT_LOAD_SKIPPED, "OK with no devices -> SKIPPED");
+
+    /* err code: never negates, so garbage cannot wrap into a small code. */
+    TEST_ASSERT_EQ(boot_probe_err_code(BOOT_PROBE_OK), 0, "err OK -> 0");
+    TEST_ASSERT_EQ(boot_probe_err_code(BOOT_PROBE_ABSENT), 1, "err ABSENT -> 1");
+    TEST_ASSERT_EQ(boot_probe_err_code(BOOT_PROBE_FAILED), 2, "err FAILED -> 2");
+    TEST_ASSERT_EQ(boot_probe_err_code(-2147483647 - 1), 2, "err INT_MIN -> 2");
+    TEST_ASSERT_EQ(boot_probe_err_code(5), 2, "err positive -> 2");
+}
+
+/* The BSP's per-driver storage verdict, on caller-owned slots: an excluded
+ * driver is FAILED even after its worker publishes success, an unpublished
+ * slot is FAILED (never SKIPPED), and a published slot reports exactly what
+ * the probing CPU wrote. */
+static void test_boot_probe_slot_verdict(void)
+{
+    struct boot_probe_slot loaded, failed, unpub;
+    uint8_t st = 0xEE; uint16_t er = 0xEEEE; uint32_t du = 0xEEEEEEEEu;
+
+    memset(&loaded, 0, sizeof loaded);
+    memset(&failed, 0, sizeof failed);
+    memset(&unpub, 0, sizeof unpub);
+    boot_probe_slot_publish(&loaded, BOOT_LOAD_LOADED, 0u, 100u, 130u);
+    boot_probe_slot_publish(&failed, BOOT_LOAD_FAILED, 2u, 50u, 50u);
+
+    TEST_ASSERT_EQ(loaded.done, 1, "publish sets done");
+    TEST_ASSERT_EQ(loaded.duration_ms, 30, "duration is now - t0");
+    TEST_ASSERT_EQ(failed.duration_ms, 0, "equal stamps -> 0 ms");
+
+    boot_probe_slot_verdict(&loaded, 0, &st, &er, &du);
+    TEST_ASSERT_EQ(st, BOOT_LOAD_LOADED, "published LOADED -> LOADED");
+    TEST_ASSERT_EQ(er, 0, "published LOADED keeps err 0");
+    TEST_ASSERT_EQ(du, 30, "published duration carried");
+
+    boot_probe_slot_verdict(&failed, 0, &st, &er, &du);
+    TEST_ASSERT_EQ(st, BOOT_LOAD_FAILED, "published FAILED -> FAILED");
+    TEST_ASSERT_EQ(er, 2, "published FAILED keeps its err");
+
+    boot_probe_slot_verdict(&unpub, 0, &st, &er, &du);
+    TEST_ASSERT_EQ(st, BOOT_LOAD_FAILED, "unpublished -> FAILED, not SKIPPED");
+    TEST_ASSERT_EQ(er, BOOT_FATAL, "unpublished err is BOOT_FATAL");
+    TEST_ASSERT_EQ(du, 0, "unpublished duration 0");
+
+    boot_probe_slot_verdict(&loaded, 1, &st, &er, &du);
+    TEST_ASSERT_EQ(st, BOOT_LOAD_FAILED, "unsafe beats a published LOADED");
+    TEST_ASSERT_EQ(er, BOOT_FATAL, "unsafe err is BOOT_FATAL");
+
+    /* A late worker publishing success AFTER exclusion changes nothing. */
+    boot_probe_slot_publish(&unpub, BOOT_LOAD_LOADED, 0u, 10u, 20u);
+    boot_probe_slot_verdict(&unpub, 1, &st, &er, &du);
+    TEST_ASSERT_EQ(st, BOOT_LOAD_FAILED, "late success after exclusion stays FAILED");
+
+    /* A clock that ran backwards records 0, not a wrapped duration. */
+    boot_probe_slot_publish(&failed, BOOT_LOAD_FAILED, 2u, 90u, 10u);
+    TEST_ASSERT_EQ(failed.duration_ms, 0, "reversed stamps -> 0 ms");
+}
+
 static void test_boot_load_status(void)
 {
     uint32_t n, count, sl;
@@ -170,6 +288,29 @@ static void test_boot_load_status(void)
         n = boot_load_status_format(s_blbuf, sizeof s_blbuf);
         TEST_ASSERT(buf_has(s_blbuf, n, "span"), "spanned entry rendered");
         TEST_ASSERT(buf_has(s_blbuf, n, "dur="), "duration field present");
+    }
+
+    /* finish_ex stores the caller-measured duration as given, zero included: a
+     * sub-millisecond probe must not inherit the time its dispatcher spent
+     * waiting on the rest of the group. STRUCTURAL PIN while the boot clock is
+     * not running (boot_get_elapsed_ms() stays 0 until the named-stage API
+     * records KERNEL_ENTRY): a "measure it here" fallback would also yield 0,
+     * so only the explicit non-zero case discriminates today. The start is
+     * rewound through the snapshot seam so the pin turns into a guard the
+     * moment the clock moves. */
+    boot_load_status_test_restore(&empty);
+    {
+        int tz = boot_load_begin("fastprobe", BOOT_LOAD_CLASS_STORAGE);
+        int tn = boot_load_begin("slowprobe", BOOT_LOAD_CLASS_STORAGE);
+        TEST_ASSERT(tz >= 0 && tn >= 0, "probe begins return tokens");
+        boot_load_status_test_save(&s_bldur);
+        s_bldur.saved[tz].start_ms = 0u;
+        boot_load_status_test_restore(&s_bldur);
+        boot_load_finish_ex(tz, BOOT_LOAD_SKIPPED, 1u, 0u, 0u);
+        boot_load_finish_ex(tn, BOOT_LOAD_LOADED, 0u, 0u, 7u);
+        n = boot_load_status_format(s_blbuf, sizeof s_blbuf);
+        TEST_ASSERT(buf_has(s_blbuf, n, "ms dur=0ms"), "finish_ex keeps a zero duration");
+        TEST_ASSERT(buf_has(s_blbuf, n, "ms dur=7ms"), "finish_ex keeps a measured duration");
     }
 
     /* Overflow: 70 records into a 64-slot pool -> 6 dropped, TRUNCATED, no wrap. */
@@ -1012,6 +1153,10 @@ void test_register_boot_diag(void)
                             test_kdate_iso8601_fmt, TEST_CAT_BOOT);
     test_suite_register_cat("boot: load/status log (ntbtlog parity)",
                             test_boot_load_status, TEST_CAT_BOOT);
+    test_suite_register_cat("boot: driver probe result mapping",
+                            test_boot_probe_mapping, TEST_CAT_BOOT);
+    test_suite_register_cat("boot: storage probe slot verdict",
+                            test_boot_probe_slot_verdict, TEST_CAT_BOOT);
     test_suite_register_cat("boot: cache line size contract",
                             test_cache_line_size_contract, TEST_CAT_BOOT);
     test_suite_register_cat("boot: cache range writeback preserves contents",

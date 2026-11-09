@@ -433,3 +433,12 @@ Before this section the countdown came from the one-shot, else the default entry
 - A `LoaderConfigTimeout` an older build of this loader left as its per-boot report (Q32) is now honoured as a setting. Only development machines ran those builds, and `t`/`T` or `bootctl set-timeout` replace it.
 
 A: (run decision, 2026-11-09) A with 1. Reversal cost: the timeout rank is one ordered pair of calls in `boot_menu_timeout_resolve()` plus its test; dropping the entry `cmdline` is one branch in `boot_policy_apply_cmdline()` in `bootx64.c`; `cmdline_source` can stay as a reported field either way. No data is lost by either choice.
+
+## Q36 (01-boot-platform/TODO-10 §7): where do the absent-vs-failed driver results come from, and where does the degraded mask live?
+
+- **A:** reuse TODO-14 §12's design-reviewed `enum boot_probe_result` (`include/kernel/boot_probe.h`: OK 0, ABSENT -1, FAILED -2) by shipping that section first from its preserved diff, then build TODO-10 §7 on it. The degraded set moves out of the loader handoff into a kernel-owned 64-bit word in `boot_init.c`, because `boot_info.degraded_mask` is kernel-written only, has 2 free bits for the 7 new slots, and sits in a packed block where widening shifts every later offset.
+- **B:** invent a separate driver-result enum inside §7 and widen `boot_info.degraded_mask` with a `BOOT_INFO_VERSION` bump.
+- **1:** a failed init records the degraded bit and leaves the subsystem NOT ready; only a usable fallback is "degraded and ready" (design review H1).
+- **2:** the BSP owns AHCI's record on the async SKIP path, so a worker that never returns still appears in the summary (design review H2).
+
+A: (run decision, 2026-11-09) A with 1 and 2. Reversal cost: the mask accessor is one function and five readers; restoring a handoff field is a rename in `boot_info.h`, the mirror and `dump-fields.inc`. Two enums for one convention would have needed a later merge across every driver.

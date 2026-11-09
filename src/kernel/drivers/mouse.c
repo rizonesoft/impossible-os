@@ -20,6 +20,7 @@
 #include "kernel/acpi.h"
 #include "kernel/boot_init.h"
 #include "kernel/klog.h"
+#include "kernel/boot_probe.h"
 #include "kernel/boot_timing.h"
 #include "kernel/sched/spinlock.h"
 
@@ -319,10 +320,16 @@ static void mouse_irq_callback(uint8_t vector, void *ctx)
  * Initialization
  * ============================================================================ */
 
-void mouse_init(void)
+int mouse_init(void)
 {
     uint8_t status_byte;
     const char *exit_reason = "ok";
+    /* Default FAILED: every early exit below is a device that ANSWERED and
+     * then misbehaved (NACK, BAT failure, ID timeout). The three paths that
+     * mean "there is nothing here" set ABSENT explicitly, and the success tail
+     * sets OK -- so a new failure path added later is classified honestly
+     * rather than silently reported as an absent mouse. */
+    int probe_rc = BOOT_PROBE_FAILED;
     uint64_t t_start = mouse_rdtsc();
     s_timeout_hits = 0;
 
@@ -354,12 +361,14 @@ void mouse_init(void)
      * unconditionally so a no/short-FADT box with no i8042 is also skipped. */
     if (acpi_hw_reduced()) {
         exit_reason = "ACPI hardware-reduced (no i8042)";
+        probe_rc = BOOT_PROBE_ABSENT;
         goto report;
     }
     {
         uint8_t probe = inb(0x64);
         if (probe == 0xFF) {
             exit_reason = "no i8042 (port 0x64 reads 0xFF)";
+            probe_rc = BOOT_PROBE_ABSENT;
             goto report;
         }
         if (!acpi_has_8042())
@@ -381,6 +390,7 @@ void mouse_init(void)
      * (common on laptops with USB/I2C touchpads).  Bail out. */
     if (status_byte == 0xFF) {
         exit_reason = "no auxiliary port (touchpad/USB?)";
+        probe_rc = BOOT_PROBE_ABSENT;
         goto report;
     }
     /* Enable the mouse clock now, but keep IRQ12 (bit 1) DISABLED until the
@@ -407,7 +417,12 @@ void mouse_init(void)
             klog(LOG_INFO, "input",
                  "PS/2 mouse: no ACK on reset (0x%x) -- skipping",
                  (uint64_t)ack);
+            /* Nothing has established that a mouse is on this port until it
+             * ACKs the reset: an empty auxiliary port times out or returns a
+             * controller NACK. ABSENT, as Linux psmouse treats it; FAILED is
+             * reserved for a device that ACKed and then misbehaved. */
             exit_reason = "reset NACK";
+            probe_rc = BOOT_PROBE_ABSENT;
             goto report;
         }
         uint8_t bat = 0;
@@ -454,6 +469,33 @@ void mouse_init(void)
             inb(PS2_DATA_PORT);
     }
 
+    /* Claim the interrupt BEFORE the controller may raise it. The mouse has no
+     * polling fallback (mouse_get_state reads only what the ISR cached), so a
+     * device without a handler is unusable: on a failed claim IRQ 12 is never
+     * enabled, data reporting is switched back off so aux bytes cannot pile up
+     * in the output buffer the keyboard shares, and the probe is FAILED. */
+    {
+        int irq_ok;
+
+        if (ioapic_available())
+            irq_ok = irq_request_gsi(ioapic_isa_to_gsi(IRQ_MOUSE),
+                                     mouse_irq_callback, (void *)0,
+                                     "ps2_mouse") != 0;
+        else
+            irq_ok = irq_register(VECTOR_PS2_MOUSE, mouse_irq_callback,
+                                  (void *)0, "ps2_mouse") == IRQ_OK;
+        if (!irq_ok) {
+            mouse_write(0xF5);              /* disable data reporting */
+            (void)mouse_expect_ack();
+            klog(LOG_ERROR, "input",
+                 "PS/2 mouse: IRQ %u could not be claimed -- device unusable",
+                 (uint64_t)IRQ_MOUSE);
+            exit_reason = "IRQ claim failed";
+            probe_rc = BOOT_PROBE_FAILED;
+            goto report;
+        }
+    }
+
     /* Device confirmed working (reset/BAT/defaults/sample/res/F4 all ACKed) --
      * NOW enable IRQ 12, so an earlier abort never left it on. Set bit 1 on the
      * CACHED config byte (clock-on, IRQ12-off) we wrote above and write it
@@ -464,18 +506,12 @@ void mouse_init(void)
     ps2_send_cmd(0x60);
     ps2_wait_input();
     outb(PS2_DATA_PORT, status_byte);
-
-    /* Register mouse via GSI-based routing (IOAPIC handles vector allocation) */
-    if (ioapic_available()) {
-        irq_request_gsi(ioapic_isa_to_gsi(IRQ_MOUSE),
-                         mouse_irq_callback, (void *)0, "ps2_mouse");
-    } else {
-        irq_register(VECTOR_PS2_MOUSE, mouse_irq_callback, (void *)0, "ps2_mouse");
+    if (!ioapic_available())
         pic_unmask_irq(IRQ_MOUSE);
-    }
 
     POST16(0xD504);
     s_mouse_present = 1;   /* reached only on the success path (not early-exits) */
+    probe_rc = BOOT_PROBE_OK;
     klog(LOG_INFO, "input", "PS/2 mouse initialized (IRQ %u, 100 samples/sec, 4 counts/mm)",
          ioapic_available() ? (uint32_t)ioapic_isa_to_gsi(IRQ_MOUSE)
                             : (uint32_t)IRQ_MOUSE);
@@ -490,6 +526,7 @@ report:
              "PS/2 mouse: init %ums, timeouts=%u, exit=%s",
              elapsed_ms, (uint64_t)s_timeout_hits, exit_reason);
     }
+    return probe_rc;
 }
 
 /* ============================================================================

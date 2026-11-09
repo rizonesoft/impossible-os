@@ -25,9 +25,16 @@
 /* Initialize the PS/2 keyboard driver (registers IRQ 1) */
 void keyboard_init(void);
 
-/* 1 if the PS/2 keyboard init reached the success path (i8042 present), 0 on an
- * early-exit (no i8042 / ACPI hardware-reduced). For the input diag summary. */
+/* 1 if the PS/2 keyboard init reached the success path (i8042 present and IRQ
+ * 1 claimed), 0 on an early-exit (no i8042 / ACPI hardware-reduced) or a
+ * failed IRQ claim. For the input diag summary. */
 int keyboard_is_present(void);
+
+/* enum boot_probe_result of the last keyboard_init(): OK (i8042 present and
+ * IRQ 1 claimed), ABSENT (no i8042, or ACPI hardware-reduced), FAILED (i8042
+ * present but IRQ 1 could not be claimed). A keyboard device is not probed, so
+ * an i8042 with an empty keyboard port reads OK. */
+int keyboard_probe_result(void);
 
 /* Blocking read: waits until a character is available, returns ASCII */
 char keyboard_getchar(void);

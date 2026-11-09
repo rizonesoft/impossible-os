@@ -105,6 +105,11 @@ uint64_t fb_snapshot_size(void);
  * test-isolation layer wires one). Kernel test code calls this after
  * the compositor has rendered to verify the screen is not black /
  * not broken. */
+/* 1 when fb_init() produced a usable framebuffer, 0 when it bailed (absent
+ * framebuffer, unsupported pixel format or bpp, misaligned pitch). fb_init()
+ * is void, so this is how the boot load-status log records GFX honestly. */
+int fb_is_ready(void);
+
 int fb_snapshot(void *dest_buf, uint32_t *width, uint32_t *height);
 
 /* ---- Multi-output snapshot (TODO-05 multi-monitor test matrix) ---- */

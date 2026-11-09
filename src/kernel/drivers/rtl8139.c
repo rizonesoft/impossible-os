@@ -16,7 +16,9 @@
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/ioapic.h"
 #include "kernel/klog.h"
+#include "kernel/boot_probe.h"
 #include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"
 #include "kernel/net/net.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/workqueue.h"  /* sys_wq for deferred Rx processing */
@@ -265,6 +267,33 @@ static uint64_t rtl8139_irq_handler(struct interrupt_frame *frame)
 
 /* --- Public API --- */
 
+/* Rx ring pages: RX_BUF_SIZE exceeds kmalloc's 4 KiB limit and the NIC
+ * DMAs into it through the 32-bit RBSTART, so it comes from the PMM as one
+ * physically contiguous run (identity-mapped, virt == phys). */
+#define RX_BUF_PAGES   ((RX_BUF_SIZE + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE)
+
+/* Undo a partial init: stop interrupts and DMA first, then free whatever was
+ * allocated, so a failed probe leaves neither a live engine nor a leak. */
+static void rtl8139_release(void)
+{
+    int i;
+
+    if (io_base) {
+        outw_nic(io_base + REG_IMR, 0);
+        outb_nic(io_base + REG_CMD, 0);
+    }
+    for (i = 0; i < TX_DESC_COUNT; i++) {
+        if (tx_buffers[i]) {
+            kfree(tx_buffers[i]);
+            tx_buffers[i] = (uint8_t *)0;
+        }
+    }
+    if (rx_buffer) {
+        pmm_free_contiguous((uintptr_t)rx_buffer, RX_BUF_PAGES);
+        rx_buffer = (uint8_t *)0;
+    }
+}
+
 int rtl8139_init(void)
 {
     struct pci_device pci;
@@ -285,7 +314,7 @@ int rtl8139_init(void)
     pci = pci_find_device(RTL8139_VENDOR_ID, RTL8139_DEVICE_ID);
     if (!pci.found) {
         klog(LOG_DEBUG, "net", "NIC not found on PCI bus");
-        return -1;
+        return BOOT_PROBE_ABSENT;
     }
 
     klog(LOG_DEBUG, "net", "Found at PCI %u:%u.%u, IRQ %u",
@@ -313,7 +342,7 @@ int rtl8139_init(void)
     }
     if (i >= 100000) {
         klog(LOG_DEBUG, "net", "Reset timeout!");
-        return -1;
+        return BOOT_PROBE_FAILED;
     }
 
     /* 3. Read MAC address */
@@ -326,10 +355,21 @@ int rtl8139_init(void)
            (uint64_t)mac_addr[4], (uint64_t)mac_addr[5]);
 
     /* 4. Allocate Rx buffer (must be physically contiguous) */
-    rx_buffer = (uint8_t *)kmalloc(RX_BUF_SIZE);
-    if (!rx_buffer) {
-        klog(LOG_DEBUG, "net", "Cannot allocate Rx buffer");
-        return -1;
+    {
+        uintptr_t rx_phys = pmm_alloc_contiguous(RX_BUF_PAGES);
+
+        if (!rx_phys) {
+            klog(LOG_ERROR, "net", "RTL8139: cannot allocate Rx ring");
+            return BOOT_PROBE_FAILED;
+        }
+        rx_buffer = (uint8_t *)rx_phys;
+        if ((uint64_t)rx_phys + RX_BUF_SIZE > 0x100000000ull) {
+            klog(LOG_ERROR, "net",
+                 "RTL8139: Rx ring at 0x%lx is above RBSTART's 32-bit reach",
+                 (uint64_t)rx_phys);
+            rtl8139_release();
+            return BOOT_PROBE_FAILED;
+        }
     }
     /* Zero the buffer */
     for (i = 0; i < (int)RX_BUF_SIZE; i++)
@@ -340,8 +380,10 @@ int rtl8139_init(void)
     for (i = 0; i < TX_DESC_COUNT; i++) {
         tx_buffers[i] = (uint8_t *)kmalloc(TX_BUF_SIZE);
         if (!tx_buffers[i]) {
-            klog(LOG_DEBUG, "net", "Cannot allocate Tx buffer %d", (uint64_t)i);
-            return -1;
+            klog(LOG_ERROR, "net", "RTL8139: cannot allocate Tx buffer %d",
+                 (uint64_t)i);
+            rtl8139_release();
+            return BOOT_PROBE_FAILED;
         }
     }
     tx_cur = 0;
@@ -371,21 +413,30 @@ int rtl8139_init(void)
      * interrupt-line can be unset/0xFF on APIC-routed firmware;
      * isa_irq_to_vector() returns 0 (the divide-error vector) for
      * those -- never register on it. */
+    /* Received frames are drained only by the interrupt path; there is no
+     * polling fallback, so a NIC whose interrupt cannot be routed can send but
+     * never receive (DHCP included). That is a present-but-unusable NIC:
+     * quiesce it, free its buffers and report FAILED. */
     if (irq_line != 0 && irq_line != 0xFF && ioapic_available()) {
         if (!irq_request_gsi_ex((uint32_t)irq_line, rtl8139_irq_shared,
-                                (void *)0, "rtl8139", 0x0F, 1))
-            klog(LOG_WARN, "net",
-                 "RTL8139: INTx GSI %u not routable -- IRQ disabled",
+                                (void *)0, "rtl8139", 0x0F, 1)) {
+            klog(LOG_ERROR, "net",
+                 "RTL8139: INTx GSI %u not routable -- NIC unusable",
                  (uint64_t)irq_line);
+            rtl8139_release();
+            return BOOT_PROBE_FAILED;
+        }
     } else if (irq_line != 0 && irq_line < 16) {
         /* irq_line 0 is unset, not ISA IRQ0 -- registering there would
          * steal the PIT vector (0x20) */
         idt_register_handler(isa_irq_to_vector(irq_line), rtl8139_irq_handler);
         pic_unmask_irq(irq_line);
     } else {
-        klog(LOG_WARN, "net",
-             "RTL8139: PCI IRQ line %u not a valid ISA line -- IRQ disabled",
+        klog(LOG_ERROR, "net",
+             "RTL8139: PCI IRQ line %u not a valid ISA line -- NIC unusable",
              (uint64_t)irq_line);
+        rtl8139_release();
+        return BOOT_PROBE_FAILED;
     }
 
     rx_ready = 0;

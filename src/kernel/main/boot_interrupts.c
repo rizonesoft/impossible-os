@@ -56,6 +56,7 @@
 #include "kernel/drivers/ioapic.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_init.h"
+#include "kernel/boot_load_status.h"
 #include "kernel/cpu_security.h"
 #include "kernel/entropy.h"
 #include "kernel/csprng.h"
@@ -286,8 +287,14 @@ void boot_phase1(void)
                g_boot_info.acpi_rsdp_addr);
         boot_splash_status("Parsing ACPI tables...");
         POST16(POST16_ACPI);
-        acpi_init();
+        int acpi_rc = acpi_init();
         POST16(POST16_ACPI_OK);
+        /* acpi_init() returns 0 when the tables parsed and -1 when the RSDP or
+         * a mandatory table was refused; either way the boot continues. */
+        boot_load_record("acpi", BOOT_LOAD_CLASS_ACPI,
+                         acpi_rc == 0 ? BOOT_LOAD_LOADED : BOOT_LOAD_FAILED,
+                         acpi_rc == 0 ? 0u : (uint16_t)BOOT_DEGRADED,
+                         POST16_ACPI_OK);
         kernel_subsystem_set_ready(SUBSYS_ACPI, true);
         /* Arm the ACPI WDAT hardware watchdog now that ACPI is parsed; no-op
          * (HW_WD_NONE) when no usable WDAT exists, e.g. QEMU. */
@@ -295,6 +302,9 @@ void boot_phase1(void)
         klog(LOG_INFO, "smp", "CPUs discovered: %u",
              (uint64_t)acpi_get_cpu_count());
         boot_progress(1, "ACPI", POST16_ACPI_OK);
+    } else {
+        boot_load_record("acpi", BOOT_LOAD_CLASS_ACPI, BOOT_LOAD_SKIPPED,
+                         0u, 0u);
     }
 
     /* --- LAPIC + IOAPIC: APIC-first boot ---
@@ -399,6 +409,13 @@ void boot_phase1(void)
     POST16(POST16_FB);
     fb_init();
     POST16(POST16_FB_OK);
+    /* No GOP framebuffer is SKIPPED; a framebuffer fb_init() refused
+     * (pixel format, bpp, pitch) is FAILED. */
+    boot_load_record("gfx", BOOT_LOAD_CLASS_GFX,
+                     !g_boot_info.fb_available ? BOOT_LOAD_SKIPPED
+                     : fb_is_ready()           ? BOOT_LOAD_LOADED
+                                               : BOOT_LOAD_FAILED,
+                     0u, POST16_FB_OK);
     kernel_subsystem_set_ready(SUBSYS_FB, true);
     boot_progress(1, "FB", POST16_FB_OK);
     POST16(POST16_SPLASH);

@@ -16,7 +16,10 @@
 /* Maximum packet size */
 #define RTL8139_MTU  1500
 
-/* Initialize the RTL8139 NIC. Returns 0 on success, -1 if not found. */
+/* Initialize the RTL8139 NIC. Returns an enum boot_probe_result: OK (0), ABSENT
+ * when no RTL8139 is on the PCI bus, FAILED when one is present but its reset,
+ * buffer allocation or interrupt routing failed (the NIC is then quiesced and
+ * its buffers freed). */
 int rtl8139_init(void);
 
 /* Send a raw Ethernet frame. Returns 0 on success, -1 on error. */

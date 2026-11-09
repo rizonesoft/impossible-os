@@ -10,6 +10,7 @@
 
 #include "kernel/drivers/keyboard.h"
 #include "kernel/irq.h"
+#include "kernel/boot_probe.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/ioapic.h"
 #include "kernel/acpi.h"
@@ -43,11 +44,14 @@ static volatile uint32_t kb_tail = 0;  /* read position  (thread side) */
  * lock is safe regardless of which context the caller runs in. */
 static spinlock_t kb_lock = SPINLOCK_INIT;
 
-/* Set 1 once keyboard_init reaches the success path: i8042 present and the
- * device probed + IRQ registration attempted. 0 on the early-exit (no-i8042 /
- * ACPI-reduced) paths. Means "found + configured", not "IRQ verified
- * delivering" -- no driver gates on irq_request_gsi's return. For the diag. */
+/* Set 1 once keyboard_init reaches the success path: i8042 present and the IRQ
+ * 1 handler claimed. 0 on the early-exit (no-i8042 / ACPI-reduced) paths and
+ * when the claim failed, since keystrokes arrive only through that handler. */
 static volatile uint8_t s_kbd_present;
+
+/* Outcome of the last keyboard_init(), for the boot load-status record.
+ * Written once by the initialising CPU before the record is taken. */
+static int s_kbd_probe_rc = BOOT_PROBE_ABSENT;
 
 static void kb_buffer_push(char c)
 {
@@ -308,12 +312,14 @@ void keyboard_init(void)
      *   so a no/short-FADT box with no i8042 is still skipped before any I/O. */
     if (acpi_hw_reduced()) {
         klog(LOG_INFO, "input", "PS/2 keyboard: skipped (ACPI hardware-reduced -- no i8042)");
+        s_kbd_probe_rc = BOOT_PROBE_ABSENT;
         return;
     }
     {
         uint8_t probe = inb(KB_STATUS_PORT);
         if (probe == 0xFF) {
             klog(LOG_INFO, "input", "PS/2 keyboard: skipped (no i8042 -- port 0x64 reads 0xFF)");
+            s_kbd_probe_rc = BOOT_PROBE_ABSENT;
             return;
         }
         if (!acpi_has_8042())
@@ -330,16 +336,37 @@ void keyboard_init(void)
             inb(KB_DATA_PORT);
     }
 
-    /* Register keyboard via GSI-based routing (IOAPIC handles vector allocation) */
-    if (ioapic_available()) {
-        irq_request_gsi(ioapic_isa_to_gsi(IRQ_KEYBOARD),
-                         keyboard_irq_callback, (void *)0, "ps2_kbd");
-    } else {
-        irq_register(33, keyboard_irq_callback, (void *)0, "ps2_kbd");
-        pic_unmask_irq(IRQ_KEYBOARD);
+    /* Register keyboard via GSI-based routing (IOAPIC handles vector
+     * allocation). Keystrokes reach kb_buffer only through this handler, so a
+     * failed claim leaves a controller that cannot deliver input: FAILED. */
+    {
+        int irq_ok;
+
+        if (ioapic_available())
+            irq_ok = irq_request_gsi(ioapic_isa_to_gsi(IRQ_KEYBOARD),
+                                     keyboard_irq_callback, (void *)0,
+                                     "ps2_kbd") != 0;
+        else
+            irq_ok = irq_register(33, keyboard_irq_callback, (void *)0,
+                                  "ps2_kbd") == IRQ_OK;
+        if (!irq_ok) {
+            klog(LOG_ERROR, "input",
+                 "PS/2 keyboard: IRQ %u could not be claimed -- device unusable",
+                 (uint64_t)IRQ_KEYBOARD);
+            s_kbd_probe_rc = BOOT_PROBE_FAILED;
+            return;
+        }
+        if (!ioapic_available())
+            pic_unmask_irq(IRQ_KEYBOARD);
     }
 
-    s_kbd_present = 1;   /* reached only on the success path (not early-exits) */
+    /* OK means the i8042 answered and the keystroke path is bound. Whether a
+     * keyboard is plugged into it is not probed: a device command such as
+     * GETID can confuse translated laptop keyboards (Linux skips it there via
+     * atkbd_skip_getid), so an empty keyboard port is indistinguishable here,
+     * as it is to Linux. */
+    s_kbd_probe_rc = BOOT_PROBE_OK;
+    s_kbd_present = 1;
     klog(LOG_INFO, "input", "PS/2 keyboard initialized (US QWERTY, IRQ %u)",
          ioapic_available() ? (uint32_t)ioapic_isa_to_gsi(IRQ_KEYBOARD)
                             : (uint32_t)IRQ_KEYBOARD);
@@ -348,6 +375,11 @@ void keyboard_init(void)
 int keyboard_is_present(void)
 {
     return s_kbd_present ? 1 : 0;
+}
+
+int keyboard_probe_result(void)
+{
+    return s_kbd_probe_rc;
 }
 
 char keyboard_getchar(void)

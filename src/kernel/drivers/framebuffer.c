@@ -358,6 +358,15 @@ void fb_init(void)
     fb_clear();
 }
 
+/* 1 once fb_init() completed with a usable framebuffer, 0 if it bailed on an
+ * absent framebuffer, an unsupported pixel format or bpp, or a misaligned
+ * pitch. fb_init() is void, so this is the only way a caller can tell a
+ * working display from a boot that is running blind. */
+int fb_is_ready(void)
+{
+    return fb_ready ? 1 : 0;
+}
+
 /* ============================================================================
  * Double buffering -- VBE page flip + direct copy fallback
  *

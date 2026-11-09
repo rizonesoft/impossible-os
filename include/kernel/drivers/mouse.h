@@ -22,7 +22,11 @@ struct mouse_state {
 };
 
 /* Initialize the PS/2 mouse driver (registers IRQ 12) */
-void mouse_init(void);
+/* Probe and initialize the PS/2 auxiliary (mouse) port. Returns a
+ * `boot_probe_result`: OK on a working mouse, ABSENT when there is no i8042 or
+ * no auxiliary port at all, FAILED when the device answered and then failed
+ * (reset NACK, BAT failure, device-ID timeout, command NACK). */
+int mouse_init(void);
 
 /* Get the current mouse state (position + buttons) */
 struct mouse_state mouse_get_state(void);

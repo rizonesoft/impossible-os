@@ -18,6 +18,7 @@
 
 #include "kernel/drivers/ata.h"
 #include "kernel/klog.h"
+#include "kernel/boot_probe.h"
 /* Primary ATA bus ports */
 #define ATA_DATA       0x1F0
 #define ATA_ERROR      0x1F1
@@ -114,8 +115,18 @@ static void ata_delay(void)
     inb(ATA_ALT_STATUS);
 }
 
-/* --- Identify a single drive --- */
-static void ata_identify_drive(uint8_t drive_num)
+/* Drives that answered IDENTIFY (attempted) and that completed it (usable).
+ * Written only by the CPU running ata_init, read by that same CPU right after
+ * it returns, so no synchronisation is needed. */
+static uint32_t s_ata_attempted;
+static uint32_t s_ata_usable;
+
+/* --- Identify a single drive ---
+ * ABSENT: nothing answered (status 0 or a floating 0xFF bus), or the device is
+ * not an ATA disk (ATAPI / SATA signature), which this PIO driver does not
+ * own. FAILED: a device answered and then stalled busy or aborted IDENTIFY
+ * with ERR/DF, so a disk is present but unusable. */
+static int ata_identify_drive(uint8_t drive_num)
 {
     uint8_t select = (drive_num == 0) ? ATA_MASTER : ATA_SLAVE;
     uint16_t identify_data[256];
@@ -140,31 +151,44 @@ static void ata_identify_drive(uint8_t drive_num)
 
     /* Check if drive exists */
     status = inb(ATA_STATUS);
-    if (status == 0)
-        return;  /* no drive */
+    if (status == 0 || status == 0xFF)
+        return BOOT_PROBE_ABSENT;  /* no drive / floating bus */
 
     /* Wait for BSY to clear */
-    if (ata_wait_bsy() < 0)
-        return;  /* timeout -- no IDE controller */
+    if (ata_wait_bsy() < 0) {
+        klog(LOG_ERROR, "ata", "drive %u: stuck busy after IDENTIFY",
+             (uint64_t)drive_num);
+        return BOOT_PROBE_FAILED;
+    }
 
     /* Check for non-ATA drives (ATAPI, SATA, etc.) */
     if (inb(ATA_LBA_MID) != 0 || inb(ATA_LBA_HI) != 0)
-        return;  /* not ATA */
+        return BOOT_PROBE_ABSENT;  /* not an ATA disk */
 
     /* Wait for DRQ or ERR */
-    if (ata_wait_drq() != 0)
-        return;  /* error or timeout */
+    if (ata_wait_drq() != 0) {
+        klog(LOG_ERROR, "ata", "drive %u: IDENTIFY aborted (status 0x%x)",
+             (uint64_t)drive_num, (uint64_t)inb(ATA_STATUS));
+        return BOOT_PROBE_FAILED;
+    }
 
     /* Read 256 words of identify data */
     for (i = 0; i < 256; i++)
         identify_data[i] = inw(ATA_DATA);
 
-    drives[drive_num].present = 1;
-    drives[drive_num].is_ata = 1;
-
-    /* Extract LBA28 sector count (words 60-61) */
+    /* Extract LBA28 sector count (words 60-61). A drive past 128 GiB reports
+     * 0x0FFFFFFF here, so 0 means no LBA addressing at all: this LBA-only
+     * driver cannot reach it, and it is not published. */
     drives[drive_num].sectors = (uint32_t)identify_data[60]
                               | ((uint32_t)identify_data[61] << 16);
+    if (drives[drive_num].sectors == 0) {
+        klog(LOG_ERROR, "ata", "drive %u: IDENTIFY reports no LBA capacity",
+             (uint64_t)drive_num);
+        return BOOT_PROBE_FAILED;
+    }
+
+    drives[drive_num].present = 1;
+    drives[drive_num].is_ata = 1;
 
     /* Extract model string (words 27-46, byte-swapped) */
     for (i = 0; i < 20; i++) {
@@ -180,10 +204,20 @@ static void ata_identify_drive(uint8_t drive_num)
         else
             break;
     }
+    return BOOT_PROBE_OK;
 }
 
-void ata_init(void)
+void ata_probe_counts(uint32_t *attempted, uint32_t *usable)
 {
+    if (attempted) *attempted = s_ata_attempted;
+    if (usable)    *usable    = s_ata_usable;
+}
+
+int ata_init(void)
+{
+    s_ata_attempted = 0u;
+    s_ata_usable    = 0u;
+
     /* Soft reset the primary ATA bus */
     outb(ATA_DEV_CTRL, 0x04);    /* Set SRST bit */
     ata_delay();
@@ -192,13 +226,36 @@ void ata_init(void)
 
     /* Wait for reset to complete (skip if no IDE controller) */
     if (ata_wait_bsy() < 0) {
-        klog(LOG_DEBUG, "ata", "ATA master: not detected");
-        return;
+        uint8_t st = inb(ATA_STATUS);
+
+        /* A floating bus reads 0xFF (0x7F on some bridges): no IDE controller
+         * at all. ABSENT, not FAILED -- every AHCI/NVMe-only machine lands
+         * here. Any other value with BSY still set is a device that answered
+         * and never finished its reset: present but unusable. */
+        if (st == 0xFF || st == 0x7F) {
+            klog(LOG_DEBUG, "ata", "ATA master: not detected");
+            return BOOT_PROBE_ABSENT;
+        }
+        klog(LOG_ERROR, "ata", "ATA bus stuck busy after reset (status 0x%x)",
+             (uint64_t)st);
+        s_ata_attempted = 1u;
+        return BOOT_PROBE_FAILED;
     }
 
     /* Identify both drives */
-    ata_identify_drive(0);  /* master */
-    ata_identify_drive(1);  /* slave */
+    for (uint8_t d = 0; d < 2u; d++) {
+        int rc = ata_identify_drive(d);   /* 0 = master, 1 = slave */
+        if (rc != BOOT_PROBE_ABSENT)
+            s_ata_attempted++;
+        /* Usable means the system can reach the disk. ata_read_sectors and
+         * blkdev registration serve the master only, so an identified slave
+         * is a disk that is present and unreachable: attempted, never usable
+         * (slave-only is FAILED, master plus slave is DEGRADED). */
+        if (rc == BOOT_PROBE_OK && d == 0u)
+            s_ata_usable++;
+        else if (rc == BOOT_PROBE_OK)
+            klog(LOG_WARN, "ata", "ATA slave identified but not supported for I/O");
+    }
 
     if (drives[0].present) {
         uint64_t size_mb = (uint64_t)drives[0].sectors * ATA_SECTOR_SIZE / (1024 * 1024);
@@ -213,6 +270,13 @@ void ata_init(void)
         klog(LOG_DEBUG, "ata", "ATA slave: \"%s\" (%u MiB, %u sectors)",
                drives[1].model, size_mb, (uint64_t)drives[1].sectors);
     }
+
+    /* The controller answered; whether a drive is attached to it is a
+     * different question, and an empty IDE bus is not a failure. A drive
+     * that answered and could not complete IDENTIFY is. */
+    if (s_ata_usable)
+        return BOOT_PROBE_OK;
+    return s_ata_attempted ? BOOT_PROBE_FAILED : BOOT_PROBE_ABSENT;
 }
 
 int ata_read_sectors(uint32_t lba, uint8_t count, void *buffer)

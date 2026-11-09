@@ -62,9 +62,27 @@ void boot_load_record(const char *name, uint8_t cls, uint8_t state,
 int  boot_load_begin(const char *name, uint8_t cls);
 
 /* Finalize a boot_load_begin token: set final state/err/post and the measured
- * duration (now - start_ms). No-op on a negative (pool-full) token. */
+ * duration (now - start_ms). No-op on a negative (pool-full) token.
+ *
+ * SINGLE-WRITER CONTRACT. An entry is owned by exactly ONE CPU for its whole
+ * begin..finish lifetime, and `boot_load_begin` release-publishes the slot
+ * immediately, so the entry is READABLE by the formatter from that moment on.
+ * Do NOT hand a token to a worker on another CPU and finish it on the BSP: a
+ * worker allowed to outlive its barrier (see `boot_async_group_ex`) would then
+ * overwrite a terminal verdict the BSP had already published, and the log
+ * would carry two contradictory states for one probe. A probe that runs off
+ * the owning CPU publishes its OUTCOME to its dispatcher (an atomic word the
+ * dispatcher owns) and lets the dispatcher call finish. */
 void boot_load_finish(int token, uint8_t state,
                       uint16_t err_code, uint16_t post_code);
+
+/* As boot_load_finish, but with a caller-measured duration: a probe that ran
+ * on another CPU knows its own elapsed time, while the dispatcher that owns
+ * the entry only knows how long the whole group took. The supplied duration is
+ * stored as given, zero included (a sub-millisecond probe measured 0);
+ * boot_load_finish is the variant that measures begin..finish itself. */
+void boot_load_finish_ex(int token, uint8_t state, uint16_t err_code,
+                         uint16_t post_code, uint32_t duration_ms);
 
 /* Pure formatter: render header + one line per published entry into buf
  * (NUL-terminated); returns bytes written (excluding the NUL). No VFS, so unit

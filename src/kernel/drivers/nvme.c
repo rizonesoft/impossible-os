@@ -20,6 +20,23 @@
 static struct nvme_controller controllers[NVME_MAX_CONTROLLERS];
 static int num_controllers;
 
+/* Probe accounting for the boot load-status log.
+ *
+ * `num_controllers` counts controllers that reached ENABLED, and it is
+ * incremented BEFORE Identify and I/O-queue setup run -- so it answers "how
+ * many controllers came out of reset", not "how many can carry I/O". A
+ * controller whose Identify times out, whose namespace sector size is
+ * unsupported, or whose I/O queue creation fails still lands in that count
+ * while `blkdev_adapters.c` registers no usable namespace behind it.
+ *
+ * s_probe_attempted counts every PCI function that matched the NVMe class code
+ * and was handed to nvme_init_controller; s_probe_usable counts only those
+ * that finished with a valid namespace AND live I/O queues. The pair is what
+ * the load-status record classifies, so a partial multi-controller failure is
+ * DEGRADED rather than a clean BOOT_OK. */
+static uint32_t s_probe_attempted;
+static uint32_t s_probe_usable;
+
 /* ---- MMIO helpers ---- */
 
 static inline uint32_t nvme_read32(volatile uint8_t *base, uint32_t off)
@@ -233,7 +250,13 @@ static int nvme_submit_io_cmd(struct nvme_controller *nc,
                               struct nvme_sqe *cmd,
                               uint32_t timeout_ms);
 
-/* ---- I/O Queue creation ---- */
+/* ---- I/O Queue creation ----
+ * Returns 0 when the queue pair is live AND a sector-0 read through it
+ * completed successfully, NVME_IOQ_UNVERIFIED when the queue was created but
+ * that read failed (error completion, timeout, or no buffer to read into), and
+ * -1 when creation itself failed. The queue is left as the read left it: an
+ * error completion keeps it active, a timeout poisons it. */
+#define NVME_IOQ_UNVERIFIED  (-2)
 
 static int nvme_create_io_queues(struct nvme_controller *nc, uint32_t timeout_ms)
 {
@@ -299,7 +322,10 @@ static int nvme_create_io_queues(struct nvme_controller *nc, uint32_t timeout_ms
 
     /* ---- Verify: read sector 0 ---- */
     {
+        int verified = 0;
         uintptr_t test_phys = pmm_alloc_contiguous(1);
+        if (!test_phys)
+            klog(LOG_WARN, "nvme", "sector 0 read skipped (no buffer) -- unverified");
         if (test_phys) {
             struct nvme_sqe rd;
             uint8_t *test_buf = (uint8_t *)test_phys;
@@ -314,6 +340,7 @@ static int nvme_create_io_queues(struct nvme_controller *nc, uint32_t timeout_ms
             rd.cdw12 = 0;  /* 1 sector (0-based) */
 
             if (nvme_submit_io_cmd(nc, &rd, timeout_ms) == 0) {
+                verified = 1;
                 /* Check for GPT/MBR signature */
                 if (test_buf[510] == 0x55 && test_buf[511] == 0xAA)
                     klog(LOG_INFO, "nvme", "sector 0 read OK (MBR signature found)");
@@ -323,9 +350,22 @@ static int nvme_create_io_queues(struct nvme_controller *nc, uint32_t timeout_ms
                     klog(LOG_INFO, "nvme", "sector 0 read OK (sig=0x%x 0x%x)",
                          (uint64_t)test_buf[510], (uint64_t)test_buf[511]);
             } else {
-                klog(LOG_WARN, "nvme", "sector 0 read failed (I/O timeout)");
+                klog(LOG_WARN, "nvme", "sector 0 read failed (error or timeout)");
             }
-            pmm_free_frame(test_phys);
+            /* A command that COMPLETED (success or error status) is finished
+             * with the page. A timed-out one is not: nothing cancels it, the
+             * queue is only poisoned, and a late completion would still DMA
+             * into the page. The device keeps it for good (one page per
+             * poisoned controller), never the allocator. */
+            if (nc->io_queue_active)
+                pmm_free_frame(test_phys);
+            else
+                klog(LOG_WARN, "nvme",
+                     "sector 0 read timed out -- verify buffer retained for DMA safety");
+        }
+        if (!verified) {
+            POST16(POST16_NVME_IO_OK);
+            return NVME_IOQ_UNVERIFIED;
         }
     }
 
@@ -648,11 +688,25 @@ static int nvme_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     nvme_identify(nc, timeout_ms);
 
     /* ---- I/O Queue creation (only for a usable namespace) ---- */
-    if (nc->ns_sector_size == 512 || nc->ns_sector_size == 4096)
-        nvme_create_io_queues(nc, timeout_ms);
-    else
+    /* USABLE is a stronger claim than ENABLED, and the load-status record
+     * needs the stronger one: a controller that is out of reset but has no
+     * addressable namespace or no I/O queue carries no data, so counting it as
+     * initialized would report a clean boot over a disk nobody can read. */
+    if ((nc->ns_sector_size == 512 || nc->ns_sector_size == 4096) &&
+        nc->ns_lba_count != 0) {
+        /* Usable needs the sector-0 read to have SUCCEEDED (creation returns
+         * 0 only then) and the queue still live afterwards; a zero-capacity
+         * namespace is refused by blkdev registration, so it is not usable
+         * either. */
+        if (nvme_create_io_queues(nc, timeout_ms) == 0 && nc->io_queue_active)
+            s_probe_usable++;
+        else
+            klog(LOG_WARN, "nvme",
+                 "I/O queue unusable or unverified -- controller enabled, no verified I/O");
+    } else {
         klog(LOG_WARN, "nvme",
-             "no usable namespace (sector size unsupported) -- I/O queue skipped");
+             "no usable namespace (sector size unsupported or zero capacity) -- I/O queue skipped");
+    }
 
     return 0;
 }
@@ -663,7 +717,9 @@ int nvme_init(void)
 {
     uint8_t bus, dev, func, hdr;
 
-    num_controllers = 0;
+    num_controllers  = 0;
+    s_probe_attempted = 0u;
+    s_probe_usable    = 0u;
 
     for (bus = 0; bus < 8; bus++) {
         for (dev = 0; dev < 32; dev++) {
@@ -683,6 +739,7 @@ int nvme_init(void)
                         if (cls == NVME_PCI_CLASS &&
                             sub == NVME_PCI_SUBCLASS &&
                             pi  == NVME_PCI_PROG_IF) {
+                            s_probe_attempted++;
                             nvme_init_controller(bus, dev, 0);
                         }
                         break;
@@ -696,6 +753,7 @@ int nvme_init(void)
                     if (cls == NVME_PCI_CLASS &&
                         sub == NVME_PCI_SUBCLASS &&
                         pi  == NVME_PCI_PROG_IF) {
+                        s_probe_attempted++;
                         nvme_init_controller(bus, dev, func);
                     }
                 }
@@ -703,10 +761,23 @@ int nvme_init(void)
         }
     }
 
-    if (num_controllers == 0)
+    if (s_probe_attempted == 0u)
         klog(LOG_DEBUG, "nvme", "no controller found");
+    else if (s_probe_usable < s_probe_attempted)
+        klog(LOG_WARN, "nvme",
+             "%u of %u controller(s) usable (%u enabled)",
+             (uint64_t)s_probe_usable, (uint64_t)s_probe_attempted,
+             (uint64_t)num_controllers);
 
     return num_controllers;
+}
+
+void nvme_probe_counts(uint32_t *attempted, uint32_t *usable)
+{
+    if (attempted)
+        *attempted = s_probe_attempted;
+    if (usable)
+        *usable = s_probe_usable;
 }
 
 int nvme_controller_count(void)

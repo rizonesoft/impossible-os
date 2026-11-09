@@ -25,6 +25,7 @@
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/ioapic.h"
 #include "kernel/klog.h"
+#include "kernel/boot_probe.h"
 #include "kernel/mm/heap.h"
 #include "kernel/drivers/mouse.h"
 #include "kernel/drivers/framebuffer.h"
@@ -196,7 +197,7 @@ int virtio_input_init(void)
     pci = pci_find_device(VIRTIO_PCI_VENDOR, VIRTIO_PCI_DEV_INPUT);
     if (!pci.found) {
         klog(LOG_DEBUG, "virtio", "No virtio-input device found");
-        return -1;
+        return BOOT_PROBE_ABSENT;
     }
 
     irq_line = pci.irq_line;
@@ -211,7 +212,7 @@ int virtio_input_init(void)
     /* ---- Discover VirtIO MMIO regions via PCI capabilities ---- */
     if (virtio_pci_init(&pci_dev, pci.bus, pci.dev, pci.func) < 0) {
         klog(LOG_DEBUG, "virtio", "Failed to parse PCI capabilities");
-        return -1;
+        return BOOT_PROBE_FAILED;
     }
 
     /* ---- VirtIO initialization sequence (spec §3.1) ---- */
@@ -249,14 +250,14 @@ int virtio_input_init(void)
     if (!(virtio_get_status(&pci_dev) & VIRTIO_STATUS_FEATURES_OK)) {
         klog(LOG_DEBUG, "virtio", "Device did not accept features");
         virtio_set_status(&pci_dev, VIRTIO_STATUS_FAILED);
-        return -1;
+        return BOOT_PROBE_FAILED;
     }
 
     /* 6. Set up eventq (VQ 0) */
     if (virtq_init(&eventq, &pci_dev, 0) < 0) {
         klog(LOG_DEBUG, "virtio", "Failed to init eventq");
         virtio_set_status(&pci_dev, VIRTIO_STATUS_FAILED);
-        return -1;
+        return BOOT_PROBE_FAILED;
     }
 
     /* 7. Pre-fill eventq with receive buffers */

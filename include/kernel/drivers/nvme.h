@@ -171,6 +171,15 @@ struct nvme_controller {
 /* ---- Public API ---- */
 int                     nvme_init(void);
 int                     nvme_controller_count(void);
+
+/* Probe accounting for the boot load-status log. `attempted` is every PCI
+ * function that matched the NVMe class code; `usable` is the subset that
+ * finished with a valid namespace AND live I/O queues. Both differ from
+ * nvme_init()'s return value, which counts controllers that merely reached
+ * ENABLED -- a controller can be enabled and still carry no I/O. Either
+ * pointer may be NULL. */
+void                    nvme_probe_counts(uint32_t *attempted,
+                                          uint32_t *usable);
 struct nvme_controller *nvme_get_controller(int idx);
 int                     nvme_read_sectors(int ctrl_idx, uint64_t lba,
                                           uint32_t count, void *buf);

@@ -28,6 +28,9 @@
 #include "kernel/boot_halt.h"
 #include "kernel/boot_recovery.h"
 #include "kernel/boot_load_status.h"   /* ntbtlog-parity load/status log (section 11) */
+#include "kernel/boot_probe.h"        /* absent-vs-failed probe contract (section 12) */
+#include "kernel/drivers/keyboard.h"
+#include "kernel/boot_progress.h"   /* boot_get_elapsed_ms for per-driver spans */
 #include "kernel/acpi.h"
 #include "registry.h"
 #include "kernel/symtab.h"
@@ -58,6 +61,83 @@
 #include "main/main_internal.h"
 #include "kernel/pm.h"
 
+/* ---- Per-driver probe outcomes (section 12) ------------------------------
+ *
+ * The storage probes run on OTHER CPUs in the async branch, and a worker that
+ * overran its barrier is explicitly allowed to keep running. A worker must
+ * therefore NOT own a `boot_load_status` entry: `boot_load_begin` publishes its
+ * slot immediately and `boot_load_finish` mutates that published entry in
+ * place, so a late worker finishing after the BSP had already terminalized the
+ * driver would leave the durable log carrying two contradictory states for one
+ * probe, with the formatter free to read it mid-write.
+ *
+ * So the BSP claims all four entries BEFORE dispatch and writes every one of
+ * them itself, after the barrier. A worker publishes only into its own slot
+ * below, storing `done` LAST with a release, and the BSP acquires it. A slot
+ * that never publishes is recorded FAILED, which is exactly what "the barrier
+ * gave up on this driver" means -- SKIPPED would claim the device is absent,
+ * which nobody established. */
+enum {
+    STORAGE_DRV_ATA = 0,
+    STORAGE_DRV_AHCI,
+    STORAGE_DRV_NVME,
+    STORAGE_DRV_VIRTIO,
+    STORAGE_DRV_COUNT
+};
+
+static struct boot_probe_slot s_storage_probe[STORAGE_DRV_COUNT];
+
+static const char *const s_storage_drv_name[STORAGE_DRV_COUNT] = {
+    "ata", "ahci", "nvme", "virtio-blk"
+};
+
+/* Which blkdev-unsafe bit each driver index owns. File scope because the
+ * post-barrier record loop needs it as much as the fallback loop does; the
+ * async branch asserts its own step table is the same length and order. */
+static const uint32_t s_storage_unsafe_bit[STORAGE_DRV_COUNT] = {
+    BLKDEV_UNSAFE_ATA, BLKDEV_UNSAFE_AHCI,
+    BLKDEV_UNSAFE_NVME, BLKDEV_UNSAFE_VIRTIO
+};
+
+/* Claim one load-status entry per storage driver BEFORE dispatch, so the BSP
+ * owns every entry for its whole lifetime and start_ms is the real dispatch
+ * stamp. The probing CPUs never touch these tokens; they publish into
+ * s_storage_probe[] instead. */
+static void storage_records_begin(int tok[STORAGE_DRV_COUNT])
+{
+    for (uint32_t d = 0; d < (uint32_t)STORAGE_DRV_COUNT; d++)
+        tok[d] = boot_load_begin(s_storage_drv_name[d], BOOT_LOAD_CLASS_STORAGE);
+}
+
+/* Finish the per-driver entries from what the probing CPUs published. Called
+ * by the BSP after the async barrier (or the sequential branch), so every
+ * worker that was going to publish inside the group already has. A driver the
+ * recovery path excluded is FAILED whatever a late worker still publishes, and
+ * an unpublished slot is FAILED rather than SKIPPED (boot_probe_slot_verdict). */
+static void storage_records_finish(const int tok[STORAGE_DRV_COUNT],
+                                   uint32_t unsafe, uint16_t post)
+{
+    for (uint32_t d = 0; d < (uint32_t)STORAGE_DRV_COUNT; d++) {
+        uint8_t  state;
+        uint16_t err = 0u;
+        uint32_t dur = 0u;
+
+        boot_probe_slot_verdict(&s_storage_probe[d],
+                                (unsafe & s_storage_unsafe_bit[d]) != 0,
+                                &state, &err, &dur);
+        boot_load_finish_ex(tok[d], state, err, post, dur);
+    }
+}
+
+/* Called on the PROBING cpu. `t0` is that CPU's own start stamp, so the
+ * recorded duration is the driver's, not the whole group's. */
+static void storage_probe_publish(uint32_t idx, uint8_t state, uint16_t err,
+                                  uint32_t t0)
+{
+    boot_probe_slot_publish(&s_storage_probe[idx], state, err, t0,
+                            boot_get_elapsed_ms());
+}
+
 /* ---- Deferred init wrappers --------------------------------------------- */
 
 /* Network: rtl8139 + net stack + DHCP -- not needed for desktop */
@@ -67,14 +147,14 @@ static boot_result_t deferred_net_init(void)
     int nic = rtl8139_init();
     if (nic < 0) {
         POST16(POST16_DEFERRED_NET_OK);
-        /* rtl8139 is an OPTIONAL NIC; its absence (the common <0 case) is not a
-         * degraded boot -- record SKIPPED, not DEGRADED, so a NIC-less machine
-         * does not emit a spurious "[BOOT-LOAD] degraded" on every clean boot.
-         * (rtl8139_init returns -1 for absent AND found-but-failed; splitting
-         * those into SKIPPED vs FAILED is the granular-coverage follow-up.) */
-        boot_load_record("network", BOOT_LOAD_CLASS_NET, BOOT_LOAD_SKIPPED,
-                         0u, POST16_DEFERRED_NET_OK);
-        return BOOT_DEGRADED;  /* no NIC found -- not fatal */
+        /* rtl8139 is an OPTIONAL NIC. Its ABSENCE is not a degraded boot, so a
+         * NIC-less machine must not emit "[BOOT-LOAD] degraded" on every clean
+         * boot; a NIC that is PRESENT and would not come up is a real failure
+         * and now says so, which is the split section 12 exists for. */
+        boot_load_record("network", BOOT_LOAD_CLASS_NET,
+                         boot_probe_load_state(nic),
+                         boot_probe_err_code(nic), POST16_DEFERRED_NET_OK);
+        return BOOT_DEGRADED;  /* no usable NIC -- not fatal */
     }
     net_init();
     dhcp_discover();
@@ -82,6 +162,56 @@ static boot_result_t deferred_net_init(void)
     boot_load_record("network", BOOT_LOAD_CLASS_NET, BOOT_LOAD_LOADED,
                      0u, POST16_DEFERRED_NET_OK);
     return BOOT_OK;
+}
+
+/* Record one load-status entry per INPUT SOURCE (section 12).
+ *
+ * The old single "input" entry folded PS/2, USB HID, VirtIO tablet and the
+ * VBox absolute mouse into one boolean OR, so a machine whose USB keyboard
+ * failed enumeration logged the same line as a machine with no USB at all.
+ *
+ * USB HID cannot be counted by scanning `xhci_device.is_hid`: that flag is set
+ * on the LAST line of a successful probe, so a detected HID device whose
+ * endpoint ring or Configure-Endpoint step failed is invisible to such a scan.
+ * xhci_hid_probe_counts() is taken on either side of that gap instead. */
+static void input_record_sources(int ps2_mouse_rc, int virtio_rc, int vbox_rc,
+                                 uint16_t post_code)
+{
+    uint32_t hid_attempted = 0u, hid_usable = 0u;
+
+    boot_load_record("ps2-keyboard", BOOT_LOAD_CLASS_INPUT,
+                     boot_probe_load_state(keyboard_probe_result()),
+                     boot_probe_err_code(keyboard_probe_result()), post_code);
+    boot_load_record("ps2-mouse", BOOT_LOAD_CLASS_INPUT,
+                     boot_probe_load_state(ps2_mouse_rc),
+                     boot_probe_err_code(ps2_mouse_rc), post_code);
+
+    xhci_hid_probe_counts(&hid_attempted, &hid_usable);
+    boot_load_record("usb-hid", BOOT_LOAD_CLASS_INPUT,
+                     boot_probe_count_state(hid_attempted, hid_usable),
+                     (uint16_t)(hid_attempted - hid_usable), post_code);
+
+    boot_load_record("virtio-input", BOOT_LOAD_CLASS_INPUT,
+                     boot_probe_load_state(virtio_rc),
+                     boot_probe_err_code(virtio_rc), post_code);
+    boot_load_record("vbox-mouse", BOOT_LOAD_CLASS_INPUT,
+                     boot_probe_load_state(vbox_rc),
+                     boot_probe_err_code(vbox_rc), post_code);
+}
+
+/* Probe the pointer sources and record every input source. Shared by the
+ * deferred and the legacy in-phase paths, so a machine that boots either way
+ * produces the same five per-source entries. Runs after the keyboard (Phase 1)
+ * and USB HID (xhci_init), so the diagnostic summary sees every source. */
+static void input_probe_and_record(uint16_t post_code)
+{
+    int pm = mouse_init();         /* PS/2: the always-attempted baseline */
+    int vi = virtio_input_init();  /* optional absolute pointer */
+    int vb = vbox_mouse_init();    /* optional absolute pointer */
+
+    input_record_sources(pm, vi, vb, post_code);
+    /* Source summary + per-USB-HID identity + HID poll error stats. */
+    usb_input_diag_report();
 }
 
 /* Optional input: VirtIO tablet + VBox absolute mouse -- PS/2 is sufficient */
@@ -92,21 +222,7 @@ static boot_result_t deferred_input_init(void)
      * (Basic Assurance Test) takes 300ms-2s on real hardware, which
      * froze the splash spinner. Running it here means the splash
      * is already animating when the wait happens. */
-    mouse_init();                  /* PS/2 (void): the always-attempted baseline */
-    int vi = virtio_input_init();  /* 0 = up, <0 = absent-or-failed (optional) */
-    int vb = vbox_mouse_init();    /* 0 = up, <0 = absent-or-failed (optional) */
-    /* Record the input load status so it is no longer silently reported as a
-     * blanket success: the optional absolute-pointer devices are SKIPPED when
-     * both are absent/failed (PS/2 mouse is the baseline, so never fatal),
-     * LOADED when either came up. Distinguishing absent vs detected-but-failed
-     * needs per-driver granularity -- the same follow-up as the rtl8139 path. */
-    boot_load_record("input", BOOT_LOAD_CLASS_INPUT,
-                     (vi == 0 || vb == 0) ? BOOT_LOAD_LOADED : BOOT_LOAD_SKIPPED,
-                     0u, POST16_DEFERRED_INPUT_OK);
-    /* All input sources are now up (keyboard in Phase 1, USB HID enumerated in
-     * xhci_init, PS/2 mouse + VirtIO + VBox just now) -- emit the diagnostic
-     * source summary + per-USB-HID identity + HID poll error stats. */
-    usb_input_diag_report();
+    input_probe_and_record(POST16_DEFERRED_INPUT_OK);
     POST16(POST16_DEFERRED_INPUT_OK);
     return BOOT_OK;
 }
@@ -115,16 +231,42 @@ static boot_result_t deferred_input_init(void)
 
 static boot_result_t async_ata_init(void)
 {
-    /* ata_init() is void -- legacy PIO driver; absence is not failure
-     * (modern systems use AHCI/NVMe). Always BOOT_OK. */
-    ata_init();
+    /* Legacy PIO driver; absence is not failure (modern systems use AHCI or
+     * NVMe), so the GROUP result stays BOOT_OK either way. The load-status
+     * record still distinguishes the two: an empty IDE bus is SKIPPED. */
+    uint32_t attempted = 0u, usable = 0u;
+    uint32_t t0 = boot_get_elapsed_ms();
+    int rc = ata_init();
+    /* Classified from the drive counts, so one good disk beside one that
+     * failed IDENTIFY is DEGRADED rather than a clean LOADED. A controller
+     * that never answered leaves both counts 0 and is SKIPPED. */
+    ata_probe_counts(&attempted, &usable);
+    storage_probe_publish(STORAGE_DRV_ATA,
+                          boot_probe_combined_state(rc, attempted, usable),
+                          boot_probe_err_code(rc), t0);
     return BOOT_OK;
 }
 
 static boot_result_t async_ahci_init(void)
 {
+    uint32_t attempted = 0u, usable = 0u;
+    uint32_t t0 = boot_get_elapsed_ms();
     int rc = ahci_init();
-    if (rc != 0) {
+    /* A working controller is classified from its device counts, so a failed
+     * disk beside a usable one is DEGRADED; a controller-level failure (BAR,
+     * HBA reset) has no counts and keeps the probe result. */
+    ahci_probe_counts(&attempted, &usable);
+    storage_probe_publish(STORAGE_DRV_AHCI,
+                          boot_probe_combined_state(rc, attempted, usable),
+                          boot_probe_err_code(rc), t0);
+    /* An ABSENT AHCI controller is the normal state of an NVMe-only or
+     * VirtIO-only machine, so it no longer degrades the group -- only a
+     * controller that is present and would not come up does. Before the probe
+     * contract existed both answers were -1 and every such machine logged a
+     * spurious "Async storage init degraded". */
+    if (rc == BOOT_PROBE_ABSENT)
+        return BOOT_OK;
+    if (rc != BOOT_PROBE_OK) {
         klog(LOG_WARN, "boot", "AHCI init failed (rc=%d)", (uint64_t)rc);
         return BOOT_DEGRADED;
     }
@@ -133,21 +275,40 @@ static boot_result_t async_ahci_init(void)
 
 static boot_result_t async_nvme_init(void)
 {
-    /* nvme_init() returns the COUNT of initialized controllers (>= 0), not a
-     * 0/-1 status: a positive count is SUCCESS, and zero (no NVMe present) is
-     * not a failure on a SATA/AHCI system -- same "absence is not failure"
-     * contract as async_ata_init. Treating nonzero as degraded falsely marked
-     * the whole storage span DEGRADED on a healthy multi-controller NVMe boot. */
+    /* nvme_init() returns the COUNT of controllers that reached ENABLED, not a
+     * 0/-1 status, and not a count of controllers that can carry I/O: the
+     * counter is incremented before Identify and I/O-queue setup run. So the
+     * record is classified from nvme_probe_counts() instead, whose `usable`
+     * requires a valid namespace AND live I/O queues. Zero attempts is a
+     * machine with no NVMe hardware and is SKIPPED, not a failure. */
+    uint32_t attempted = 0u, usable = 0u;
+    uint32_t t0 = boot_get_elapsed_ms();
     int n = nvme_init();
+    nvme_probe_counts(&attempted, &usable);
+    storage_probe_publish(STORAGE_DRV_NVME,
+                          boot_probe_count_state(attempted, usable),
+                          (uint16_t)(attempted - usable), t0);
     if (n > 0)
         klog(LOG_INFO, "boot", "NVMe: %d controller(s) ready", (uint64_t)n);
+    /* A controller that enumerated and cannot carry I/O is a degraded boot:
+     * the block layer will register no namespace behind it, so a caller that
+     * expected that disk finds nothing and the log said BOOT_OK. */
+    if (attempted > 0u && usable < attempted)
+        return BOOT_DEGRADED;
     return BOOT_OK;
 }
 
 static boot_result_t async_virtio_blk_init(void)
 {
+    uint32_t t0 = boot_get_elapsed_ms();
     int rc = virtio_blk_init();
-    if (rc != 0) {
+    storage_probe_publish(STORAGE_DRV_VIRTIO, boot_probe_load_state(rc),
+                          boot_probe_err_code(rc), t0);
+    /* Same reasoning as AHCI: no virtio-blk device on a bare-metal box is not
+     * a degraded boot. */
+    if (rc == BOOT_PROBE_ABSENT)
+        return BOOT_OK;
+    if (rc != BOOT_PROBE_OK) {
         klog(LOG_WARN, "boot", "VirtIO-blk init failed (rc=%d)", (uint64_t)rc);
         return BOOT_DEGRADED;
     }
@@ -186,6 +347,25 @@ int boot_blackbox_cleanup_path(char *dst, uint32_t cap, const char *dir,
     }
     dst[p] = '\0';
     return 1;
+}
+
+/* Sequential storage probe: original order, through the SAME wrappers the
+ * async branch dispatches, so both branches publish identically-shaped
+ * per-driver outcomes (calling the raw initializers would leave the load log
+ * empty on every single-CPU boot). The wrappers' group verdicts are not
+ * consumed here: a sequential failure is reported by the driver itself. */
+static void storage_probe_sequential(void)
+{
+    POST16(POST16_ATA);
+    (void)async_ata_init();
+    POST16(POST16_ATA_OK);
+    (void)async_virtio_blk_init();
+    POST16(POST16_AHCI);
+    (void)async_ahci_init();
+    POST16(POST16_AHCI_OK);
+    POST16(POST16_NVME);
+    (void)async_nvme_init();
+    POST16(POST16_NVME_OK);
 }
 
 void boot_phase2(void)
@@ -258,15 +438,12 @@ void boot_phase2(void)
              * deferred path's POST-then-record order); net_init()/dhcp are
              * skipped entirely on a NIC-less boot. */
             POST16(POST16_NET_OK);
-            boot_load_record("network", BOOT_LOAD_CLASS_NET, BOOT_LOAD_SKIPPED,
-                             0u, POST16_NET_OK);
+            boot_load_record("network", BOOT_LOAD_CLASS_NET,
+                             boot_probe_load_state(nic),
+                             boot_probe_err_code(nic), POST16_NET_OK);
         }
-        mouse_init();   /* legacy in-phase: init PS/2 mouse here (the deferred
-                         * path does it in deferred_input_init) so the diagnostic
-                         * runs after every input source, like the deferred path */
-        virtio_input_init();
-        vbox_mouse_init();
-        usb_input_diag_report();   /* input-source summary (legacy in-phase path) */
+        /* Legacy in-phase: the deferred path does this in deferred_input_init. */
+        input_probe_and_record(POST16_PCI_OK);
         boot_progress(2, "PCI_NET", POST16_PCI_OK);
 
         /* DHCP fire-and-forget -- only when a NIC actually came up. Do not
@@ -357,10 +534,13 @@ void boot_phase2(void)
     klog(LOG_DEBUG, "boot", "--- Phase: disk drivers ---");
     boot_splash_status("Initializing storage...");
 
-    /* Load/status log (section 11): measured-duration span around the storage
-     * probe block. begin..finish gives a real duration even when the async
-     * group fans the four drivers across CPUs in parallel. */
-    int storage_tok = boot_load_begin("storage", BOOT_LOAD_CLASS_STORAGE);
+    /* The GROUP record spans the probe block and carries dispatch, barrier and
+     * recovery health, which no driver owns: a barrier timeout whose worker
+     * finishes late leaves every per-driver entry LOADED, and only this entry
+     * then says the SMP barrier failed and the recovery path ran. */
+    int storage_tok = boot_load_begin("storage-group", BOOT_LOAD_CLASS_STORAGE);
+    int storage_drv_tok[STORAGE_DRV_COUNT];
+    storage_records_begin(storage_drv_tok);
     uint8_t  storage_state = BOOT_LOAD_LOADED;
     uint16_t storage_err   = 0u;
     uint16_t storage_post  = POST16_NVME_OK;   /* sequential terminal (last driver) */
@@ -408,10 +588,6 @@ void boot_phase2(void)
          * onto the AHCI bit. A table cannot detect a reorder either; what it
          * does is put the mapping ON the line being reordered, so moving a step
          * without its bit is visible in the diff instead of inferred. */
-        static const uint32_t storage_unsafe_bit[] = {
-            BLKDEV_UNSAFE_ATA, BLKDEV_UNSAFE_AHCI,
-            BLKDEV_UNSAFE_NVME, BLKDEV_UNSAFE_VIRTIO
-        };
         /* One step count for the dispatch, the fallback loop and every parallel
          * table. The literal 4 was repeated at each of those, so adding a fifth
          * storage driver would have dispatched it and gated it nowhere while
@@ -422,9 +598,16 @@ void boot_phase2(void)
                        "storage POST pre/ok tables must stay the same length");
         _Static_assert(sizeof storage_post_pre / sizeof storage_post_pre[0]
                            == STORAGE_STEP_COUNT &&
-                       sizeof storage_unsafe_bit / sizeof storage_unsafe_bit[0]
+                       sizeof s_storage_unsafe_bit / sizeof s_storage_unsafe_bit[0]
                            == STORAGE_STEP_COUNT,
                        "every per-step storage table must cover every step");
+        /* storage_records_finish() indexes s_storage_probe[] and
+         * s_storage_drv_name[] with the SAME index the step table uses, so a
+         * step added here without a driver slot would silently record the
+         * wrong driver's outcome. */
+        _Static_assert(STORAGE_STEP_COUNT == (uint32_t)STORAGE_DRV_COUNT,
+                       "storage step table and per-driver record table must "
+                       "stay the same length and order");
         _Static_assert(STORAGE_STEP_COUNT <= BOOT_ASYNC_MAX_STEPS,
                        "storage group must fit the outcome record");
         boot_async_outcome_t outcome;
@@ -481,7 +664,7 @@ void boot_phase2(void)
                      * deliberately did not re-run it. Nothing downstream may
                      * build on that driver's globals, so record it rather than
                      * only reporting it. */
-                    storage_unsafe |= storage_unsafe_bit[i];
+                    storage_unsafe |= s_storage_unsafe_bit[i];
                     klog(LOG_ERROR, "boot",
                          "Storage fallback: %s NOT re-run on the BSP -- its "
                          "worker on CPU%u has not released the step; driver degraded",
@@ -577,18 +760,10 @@ void boot_phase2(void)
                  (uint32_t)hold_req, (uint32_t)g_boot_info.config.async_init,
                  smp_cpu_count());
 #endif
-        /* Sequential: original order */
-        POST16(POST16_ATA);
-        ata_init();
-        POST16(POST16_ATA_OK);
-        virtio_blk_init();
-        POST16(POST16_AHCI);
-        ahci_init();
-        POST16(POST16_AHCI_OK);
-        POST16(POST16_NVME);
-        nvme_init();
-        POST16(POST16_NVME_OK);
+        storage_probe_sequential();
     }
+
+    storage_records_finish(storage_drv_tok, storage_unsafe, storage_post);
 
     boot_load_finish(storage_tok, storage_state, storage_err, storage_post);
 

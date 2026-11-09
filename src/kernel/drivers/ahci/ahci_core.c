@@ -10,6 +10,7 @@
 #include "kernel/irq.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/boot_init.h"
+#include "kernel/boot_probe.h"
 #include "kernel/sched/event.h"
 
 /* Max PCI capabilities to walk before declaring the chain malformed. PCI
@@ -134,6 +135,54 @@ int port_find_slot(volatile uint8_t *pregs)
 }
 
 /* ---- Initialize a single port ---- */
+/* Mask and acknowledge a port's interrupts and stop its command and FIS
+ * engines. Returns 1 when the HBA confirms both stopped (PxCMD.CR and FR
+ * clear), 0 when it does not. */
+static int port_quiesce(volatile uint8_t *pregs)
+{
+    port_write(pregs, AHCI_PxIE, 0);
+    port_stop_cmd(pregs);
+    port_write(pregs, AHCI_PxIS, 0xFFFFFFFF);
+    return (port_read(pregs, AHCI_PxCMD) & (AHCI_PxCMD_CR | AHCI_PxCMD_FR)) == 0;
+}
+
+void ahci_port_drop_buffers(struct ahci_port *p, int may_free)
+{
+    int i;
+
+    for (i = 0; i < 32; i++) {
+        if (may_free && p->cmdtbl_raw[i])
+            kfree(p->cmdtbl_raw[i]);
+        p->cmdtbl_raw[i] = NULL;
+        p->cmdtbl[i] = NULL;
+    }
+    if (may_free && p->fis_raw)
+        kfree(p->fis_raw);
+    if (may_free && p->cmdlist_raw)
+        kfree(p->cmdlist_raw);
+    p->fis_raw = NULL;
+    p->fis_base = NULL;
+    p->cmdlist_raw = NULL;
+    p->cmdlist = NULL;
+}
+
+void ahci_port_release(struct ahci_port *p)
+{
+    int stopped = 1;
+
+    p->active = 0;
+    if (p->regs)
+        stopped = port_quiesce(p->regs);
+    if (!stopped)
+        klog(LOG_WARN, "ahci",
+             "Port %u: engines did not stop; DMA buffers left with the device",
+             (uint64_t)p->port_num);
+    /* The decision uses THIS port's engine state only, and the slot is cleared
+     * either way, so a later port that reuses the slot can never free buffers
+     * a still-running engine owns. */
+    ahci_port_drop_buffers(p, stopped);
+}
+
 static int port_init(struct ahci_port *p, int port_num)
 {
     volatile uint8_t *pregs = port_regs(port_num);
@@ -210,6 +259,7 @@ static int port_init(struct ahci_port *p, int port_num)
     /* Allocate command list (1 KiB, 1024-byte aligned) */
     clb_mem = (uint8_t *)kmalloc(1024 + 1024);
     if (!clb_mem) return -1;
+    p->cmdlist_raw = clb_mem;
     clb_mem = (uint8_t *)(((uintptr_t)clb_mem + 1023) & ~(uintptr_t)1023);
     ahci_memset(clb_mem, 0, 1024);
     p->cmdlist = (struct ahci_cmd_header *)clb_mem;
@@ -220,7 +270,8 @@ static int port_init(struct ahci_port *p, int port_num)
 
     /* Allocate FIS receive buffer (256 bytes, 256-byte aligned) */
     fb_mem = (uint8_t *)kmalloc(256 + 256);
-    if (!fb_mem) return -1;
+    if (!fb_mem) { ahci_port_release(p); return -1; }
+    p->fis_raw = fb_mem;
     fb_mem = (uint8_t *)(((uintptr_t)fb_mem + 255) & ~(uintptr_t)255);
     ahci_memset(fb_mem, 0, 256);
     p->fis_base = fb_mem;
@@ -233,7 +284,8 @@ static int port_init(struct ahci_port *p, int port_num)
     for (i = 0; i < 32; i++) {
         uint32_t tbl_size = (uint32_t)sizeof(struct ahci_cmd_tbl);
         uint8_t *tbl_mem = (uint8_t *)kmalloc(tbl_size + 128);
-        if (!tbl_mem) return -1;
+        if (!tbl_mem) { ahci_port_release(p); return -1; }
+        p->cmdtbl_raw[i] = tbl_mem;
         tbl_mem = (uint8_t *)(((uintptr_t)tbl_mem + 127) & ~(uintptr_t)127);
         ahci_memset(tbl_mem, 0, tbl_size);
         p->cmdtbl[i] = (struct ahci_cmd_tbl *)tbl_mem;
@@ -570,6 +622,31 @@ done:
 
 /* ---- Initialization ---- */
 
+/* Devices the last ahci_init() saw with a PHY link (attempted) and those it
+ * brought up as a SATA disk or ATAPI device (usable). Written only by the CPU
+ * running ahci_init, read by that CPU right after it returns. */
+static uint32_t s_ahci_attempted;
+static uint32_t s_ahci_usable;
+
+int atapi_capacity_rc_usable(int rc)
+{
+    switch (rc) {
+    case 0:
+    case ATAPI_ERR_NOMEDIUM:     /* empty tray: a healthy drive */
+    case ATAPI_ERR_BECOMING:     /* spinning up */
+    case ATAPI_ERR_MEDIACHANGE:  /* disc swapped since the last command */
+        return 1;
+    default:                     /* I/O, sense, transport or command failure */
+        return 0;
+    }
+}
+
+void ahci_probe_counts(uint32_t *attempted, uint32_t *usable)
+{
+    if (attempted) *attempted = s_ahci_attempted;
+    if (usable)    *usable    = s_ahci_usable;
+}
+
 int ahci_init(void)
 {
     uint8_t bus, slot, func;
@@ -577,6 +654,11 @@ int ahci_init(void)
     uint32_t bar5, pi, ghc, cap, ver;
     uint64_t abar_addr;
     int port_num, drive_idx;
+    uint32_t detected = 0;   /* implemented ports whose PHY link is up */
+    uint32_t atapi_usable = 0; /* ATAPI devices whose capacity probe was healthy */
+
+    s_ahci_attempted = 0u;
+    s_ahci_usable    = 0u;
 
     for (bus = 0; bus < 8 && !found; bus++) {
         for (slot = 0; slot < 32 && !found; slot++) {
@@ -600,10 +682,8 @@ int ahci_init(void)
 
     if (!found) {
         klog(LOG_WARN, "ahci", "AHCI: no controller found");
-        return -1;
+        return BOOT_PROBE_ABSENT;
     }
-
-    if (!found) return -1;
 
     klog(LOG_DEBUG, "ahci", "Found controller at PCI %u:%u.%u",
            (uint64_t)bus, (uint64_t)slot, (uint64_t)func);
@@ -657,8 +737,10 @@ int ahci_init(void)
     abar_addr = (uint64_t)(bar5 & 0xFFFFF000);
 
     if (abar_addr == 0) {
+        /* The controller IS on the bus; firmware simply left BAR5 unassigned.
+         * That is a broken platform, not an absent device. */
         klog(LOG_DEBUG, "ahci", "BAR5 is zero -- no ABAR");
-        return -1;
+        return BOOT_PROBE_FAILED;
     }
 
     /* Map ABAR as UC via the dedicated MMIO mapper. The boot identity map
@@ -671,7 +753,7 @@ int ahci_init(void)
     if (!abar) {
         klog(LOG_WARN, "ahci", "ABAR UC map failed (phys 0x%x) -- no AHCI",
              abar_addr);
-        return -1;
+        return BOOT_PROBE_FAILED;
     }
 
     klog(LOG_DEBUG, "ahci", "ABAR phys 0x%x UC-mapped at %p",
@@ -753,12 +835,30 @@ int ahci_init(void)
         if (drive_idx >= AHCI_MAX_PORTS)
             break;
 
+        /* Detection is the PHY link (SSTS.DET), read BEFORE port_init: a
+         * port_init that fails after the link came up (allocation, an
+         * unsupported signature) is a present device that did not work. */
+        if ((port_read(port_regs(port_num), AHCI_PxSSTS) & AHCI_SSTS_DET_MASK)
+                == AHCI_SSTS_DET_OK)
+            detected++;
+
         if (port_init(&ports[drive_idx], port_num) == 0) {
             if (ports[drive_idx].is_atapi) {
                 if (atapi_do_identify(&ports[drive_idx]) == 0) {
-                    if (atapi_read_capacity(&ports[drive_idx]) != 0) {
+                    int cap_rc = atapi_read_capacity(&ports[drive_idx]);
+
+                    if (cap_rc != 0)
                         ports[drive_idx].sectors = 0;
-                    }
+                    /* Enumerated either way (media can arrive later), but a
+                     * drive whose capacity probe failed on hardware or
+                     * transport is not usable, so it cannot hide a failure
+                     * behind LOADED or soften a sibling's FAILED. */
+                    if (atapi_capacity_rc_usable(cap_rc))
+                        atapi_usable++;
+                    else
+                        klog(LOG_ERROR, "ahci",
+                             "Port %u: ATAPI capacity probe failed (rc=%d)",
+                             (uint64_t)port_num, (uint64_t)cap_rc);
 
                     klog(LOG_INFO, "ahci", "AHCI port %u: ATAPI \"%s\" (%u sectors, %u B/sect)",
                            (uint64_t)port_num,
@@ -771,10 +871,23 @@ int ahci_init(void)
                 } else {
                     klog(LOG_DEBUG, "ahci", "Port %u: ATAPI IDENTIFY failed",
                            (uint64_t)port_num);
-                    ports[drive_idx].active = 0;
+                    ahci_port_release(&ports[drive_idx]);
                 }
             } else {
-                if (ahci_do_identify(&ports[drive_idx]) == 0) {
+                int id_rc = ahci_do_identify(&ports[drive_idx]);
+
+                if (id_rc != 0) {
+                    klog(LOG_DEBUG, "ahci", "Port %u: IDENTIFY failed",
+                           (uint64_t)port_num);
+                    ahci_port_release(&ports[drive_idx]);
+                } else if (ports[drive_idx].sectors == 0) {
+                    /* IDENTIFY completed but advertises nothing addressable:
+                     * present and unusable, so it stays attempted-only and is
+                     * not published as a block device. */
+                    klog(LOG_ERROR, "ahci", "Port %u: IDENTIFY reports zero capacity",
+                           (uint64_t)port_num);
+                    ahci_port_release(&ports[drive_idx]);
+                } else {
                     uint64_t size_mb = ports[drive_idx].sectors / 2048;
                     klog(LOG_DEBUG, "ahci", "AHCI port %u: \"%s\" (%u MiB, %u sectors)",
                            (uint64_t)port_num,
@@ -782,18 +895,28 @@ int ahci_init(void)
                            size_mb,
                            ports[drive_idx].sectors);
                     num_drives++;
-                } else {
-                    klog(LOG_DEBUG, "ahci", "Port %u: IDENTIFY failed",
-                           (uint64_t)port_num);
-                    ports[drive_idx].active = 0;
                 }
             }
         }
     }
 
+    /* attempted can never be below usable: a port that came up counts as a
+     * device that answered even if its DET read raced the link. */
+    s_ahci_usable    = (uint32_t)num_drives + atapi_usable;
+    s_ahci_attempted = detected > s_ahci_usable ? detected : s_ahci_usable;
+
     if (num_drives == 0 && num_atapi == 0) {
+        /* A port that brought up a link and then failed IDENTIFY is a device
+         * that is present and unusable: FAILED. Only a controller with no
+         * device on any port is ABSENT -- an empty SATA port is the normal
+         * state of most machines and must not read as degraded. */
+        if (detected) {
+            klog(LOG_ERROR, "ahci", "AHCI: %u device(s) detected, none usable",
+                 (uint64_t)detected);
+            return BOOT_PROBE_FAILED;
+        }
         klog(LOG_WARN, "ahci", "AHCI: no devices detected");
-        return -1;
+        return BOOT_PROBE_ABSENT;
     }
 
     num_ports_total = num_drives + num_atapi;

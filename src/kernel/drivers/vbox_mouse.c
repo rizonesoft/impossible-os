@@ -27,6 +27,7 @@
 #include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/klog.h"
+#include "kernel/boot_probe.h"
 #include "kernel/mm/pmm.h"
 
 /* ---- VMMDev constants ---- */
@@ -224,7 +225,7 @@ int vbox_mouse_init(void)
     pci = pci_find_device(VBOX_VENDOR_ID, VBOX_DEVICE_ID);
     if (!pci.found) {
         klog(LOG_DEBUG, "vbox", "VBoxGuest PCI device not found");
-        return -1;
+        return BOOT_PROBE_ABSENT;
     }
 
     /* BAR0 = I/O port base (mask low 2 bits for I/O space) */
@@ -254,7 +255,7 @@ int vbox_mouse_init(void)
     pkt_page = pmm_alloc_contiguous(1);
     if (!pkt_page) {
         klog(LOG_ERROR, "vbox", "Failed to allocate packet page");
-        return -1;
+        return BOOT_PROBE_FAILED;
     }
 
     /* Zero the page */
@@ -289,7 +290,7 @@ int vbox_mouse_init(void)
         if (info->header.rc < 0) {
             klog(LOG_ERROR, "vbox", "GuestInfo rejected (rc=%d)",
                  (uint64_t)(uint32_t)info->header.rc);
-            return -1;
+            return BOOT_PROBE_FAILED;
         }
     }
 
@@ -309,7 +310,7 @@ int vbox_mouse_init(void)
         if (mouse_pkt->header.rc < 0) {
             klog(LOG_ERROR, "vbox", "SetMouse failed (rc=%d)",
                  (uint64_t)(uint32_t)mouse_pkt->header.rc);
-            return -1;
+            return BOOT_PROBE_FAILED;
         }
     }
 

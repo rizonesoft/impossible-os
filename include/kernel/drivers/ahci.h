@@ -307,6 +307,11 @@ struct ahci_port {
     struct ahci_cmd_header *cmdlist; /* Command list (32 headers) */
     void    *fis_base;     /* FIS receive buffer (256 bytes) */
     struct ahci_cmd_tbl *cmdtbl[32]; /* Command tables */
+    /* Unaligned kmalloc results behind cmdlist / fis_base / cmdtbl[], kept so
+     * a port rejected after port_init can be released (port_release). */
+    void    *cmdlist_raw;
+    void    *fis_raw;
+    void    *cmdtbl_raw[32];
     event_t  completion;   /* Per-port I/O completion event (IRQ-driven) */
     struct ahci_error_counters errors; /* Error tracking */
 
@@ -357,6 +362,27 @@ struct ahci_port {
 
 /* Initialize the AHCI driver and detect SATA/ATAPI devices. */
 int ahci_init(void);
+
+/* Devices the last ahci_init() found with a PHY link (attempted) and those it
+ * brought up as a SATA disk or ATAPI device (usable), so one failed disk
+ * beside a working one records DEGRADED. Either pointer may be NULL. */
+void ahci_probe_counts(uint32_t *attempted, uint32_t *usable);
+
+/* Pure: 1 when an atapi_read_capacity() result leaves the drive usable (0, no
+ * medium, becoming ready, media changed), 0 for an I/O, sense, transport or
+ * command failure. Exposed for tests. */
+int atapi_capacity_rc_usable(int rc);
+
+/* Undo port initialisation for a port that is not kept: mask its interrupts,
+ * stop its engines, and drop its DMA buffers. The buffers are freed only when
+ * the HBA confirms the engines stopped (or the port has no register base);
+ * otherwise they are left allocated for the device. Either way the slot's
+ * buffer pointers end NULL and active 0, so the slot is safe to reuse. */
+void ahci_port_release(struct ahci_port *p);
+
+/* Clear a port slot's DMA buffer pointers, freeing the allocations behind them
+ * only when may_free is nonzero. Exposed for tests. */
+void ahci_port_drop_buffers(struct ahci_port *p, int may_free);
 
 /* Set up AHCI interrupts (MSI or INTx).  Must be called AFTER irq_init()
  * so that the IRQ handler table is not zeroed after registration. */

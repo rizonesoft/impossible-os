@@ -11,6 +11,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/drivers/xhci_dev.h"
+#include "kernel/drivers/xhci.h"      /* xhci_hid_probe_counts */
 #include "kernel/drivers/keyboard.h"
 #include "kernel/drivers/mouse.h"
 #include "kernel/drivers/framebuffer.h"
@@ -343,6 +344,39 @@ static void test_usb_hid_stop_polling_releases(void)
     TEST_ASSERT_EQ(mouse_test_usb_source_buttons(source), 0,
                    "stopped mouse releases its held button");
 
+    /* A counted device leaves the HID usable count exactly once when its
+     * polling stops; marking twice counts once. Net zero on the live count. */
+    {
+        uint32_t att0 = 0, use0 = 0, att1 = 0, use1 = 0;
+        uint8_t saved_counted = dev->hid_usable_counted;
+
+        dev->hid_usable_counted = 0;
+        xhci_hid_probe_counts(&att0, &use0);
+
+        /* The enumeration race: polling was seen live, then stopped before
+         * the mark. The mark must re-check and leave the device uncounted. */
+        dev->int_in_polling = 1;
+        xhci_hid_stop_polling(dev);
+        xhci_hid_mark_usable(dev);
+        xhci_hid_probe_counts(&att1, &use1);
+        TEST_ASSERT_EQ(use1, use0, "mark after a stop does not count the device");
+        TEST_ASSERT_EQ(dev->hid_usable_counted, 0, "stopped device stays uncounted");
+
+        dev->int_in_polling = 1;
+        xhci_hid_mark_usable(dev);
+        xhci_hid_mark_usable(dev);
+        xhci_hid_probe_counts(&att1, &use1);
+        TEST_ASSERT_EQ(use1, use0 + 1u, "marking twice counts the device once");
+        xhci_hid_stop_polling(dev);
+        xhci_hid_probe_counts(&att1, &use1);
+        TEST_ASSERT_EQ(use1, use0, "stopped device leaves the usable count");
+        xhci_hid_stop_polling(dev);
+        xhci_hid_probe_counts(&att1, &use1);
+        TEST_ASSERT_EQ(use1, use0, "second stop does not decrement again");
+        TEST_ASSERT_EQ(att1, att0, "attempts are cumulative, untouched");
+        dev->hid_usable_counted = saved_counted;
+    }
+
     (void)mouse_usb_source_release(source);
     dev->int_in_polling = saved_polling;
     dev->hid_proto = saved_proto;
@@ -404,8 +438,115 @@ static void test_usb_input_diag_format(void)
     TEST_ASSERT_EQ(buf[0], 'Z', "diag negative cap leaves buffer untouched");
 }
 
+/* The pre-SET_CONFIGURATION classifier: recognises a HID boot keyboard or
+ * mouse interface, ignores non-boot HID and other classes, and stops on a
+ * truncated or zero-length descriptor rather than reading past `len`. */
+static void cfg_copy(uint8_t dst[18], const uint8_t src[18])
+{
+    for (uint32_t i = 0; i < 18u; i++)
+        dst[i] = src[i];
+}
+
+/* Run the identify logic over a descriptor set and return how many HID
+ * attempts it counted. It counts into a private counter, so the live boot
+ * accounting (read later by the load-status record) is never touched, even if
+ * a real hot-plug probe runs concurrently. */
+static uint32_t hid_identify_delta(struct xhci_device *dev, const uint8_t *cfg,
+                                   uint16_t len, int *rc)
+{
+    uint32_t att0 = 0, use0 = 0, att1 = 0, use1 = 0, mine = 0;
+
+    for (uint32_t i = 0; i < (uint32_t)sizeof *dev; i++)
+        ((uint8_t *)dev)[i] = 0;
+    for (uint16_t i = 0; i < len; i++)
+        dev->config_data[i] = cfg[i];
+    dev->config_len = len;
+    xhci_hid_probe_counts(&att0, &use0);
+    *rc = xhci_hid_test_identify(dev, &mine);
+    xhci_hid_probe_counts(&att1, &use1);
+    TEST_ASSERT_EQ(use1, use0, "identify never changes the usable count");
+    TEST_ASSERT(att1 >= att0, "live attempt count never decreases");
+    return mine;
+}
+
+/* The attempt producer: a recognised HID boot interface counts as one
+ * attempt even when its endpoint is missing or too small, and is_hid stays
+ * clear; a non-HID interface is not an attempt. */
+static void test_usb_hid_identify_attempts(void)
+{
+    static struct xhci_device dev;
+    /* config(9) + boot keyboard iface(9) + interrupt-IN EP 0x81, MaxPkt 8 */
+    uint8_t cfg[25] = {
+        9, 0x02, 25, 0, 1, 1, 0, 0x80, 50,
+        9, USB_DESC_INTERFACE, 0, 0, 1,
+        USB_CLASS_HID, USB_SUBCLASS_HID_BOOT, USB_PROTO_HID_KEYBOARD, 0,
+        7, USB_DESC_ENDPOINT, 0x81, USB_EP_ATTR_INTERRUPT, 8, 0, 10,
+    };
+    int rc = 0;
+
+    TEST_ASSERT_EQ(hid_identify_delta(&dev, cfg, 18, &rc), 1u,
+                   "HID iface without endpoint is one attempt");
+    TEST_ASSERT(rc != 0, "HID iface without endpoint is rejected");
+    TEST_ASSERT_EQ(dev.is_hid, 0, "rejected device is not is_hid");
+
+    cfg[22] = 4;                       /* keyboard endpoint below 8 bytes */
+    TEST_ASSERT_EQ(hid_identify_delta(&dev, cfg, sizeof cfg, &rc), 1u,
+                   "undersized keyboard EP is one attempt");
+    TEST_ASSERT(rc != 0, "undersized keyboard EP is rejected");
+    TEST_ASSERT_EQ(dev.is_hid, 0, "undersized keyboard is not is_hid");
+
+    cfg[16] = USB_PROTO_HID_MOUSE;     /* mouse endpoint below 3 bytes */
+    cfg[22] = 2;
+    TEST_ASSERT_EQ(hid_identify_delta(&dev, cfg, sizeof cfg, &rc), 1u,
+                   "undersized mouse EP is one attempt");
+    TEST_ASSERT(rc != 0, "undersized mouse EP is rejected");
+
+    cfg[14] = 0x08;                    /* mass storage: not HID at all */
+    TEST_ASSERT_EQ(hid_identify_delta(&dev, cfg, sizeof cfg, &rc), 0u,
+                   "non-HID interface is not an attempt");
+    TEST_ASSERT(rc != 0, "non-HID interface is rejected");
+}
+
+static void test_usb_hid_config_classifier(void)
+{
+    /* config(9) + iface(9): class HID, subclass boot, protocol keyboard */
+    uint8_t kbd[18] = {
+        9, 0x02, 18, 0, 1, 1, 0, 0x80, 50,
+        9, USB_DESC_INTERFACE, 0, 0, 1,
+        USB_CLASS_HID, USB_SUBCLASS_HID_BOOT, USB_PROTO_HID_KEYBOARD, 0,
+    };
+    uint8_t probe[18];
+
+    TEST_ASSERT_EQ(xhci_config_has_hid_boot(kbd, sizeof kbd), 1,
+                   "boot keyboard interface recognised");
+    cfg_copy(probe, kbd);
+    probe[16] = USB_PROTO_HID_MOUSE;
+    TEST_ASSERT_EQ(xhci_config_has_hid_boot(probe, sizeof probe), 1,
+                   "boot mouse interface recognised");
+    cfg_copy(probe, kbd);
+    probe[15] = 0;                       /* HID, but not the boot subclass */
+    TEST_ASSERT_EQ(xhci_config_has_hid_boot(probe, sizeof probe), 0,
+                   "non-boot HID is not counted");
+    cfg_copy(probe, kbd);
+    probe[14] = 0x08;                    /* mass storage */
+    TEST_ASSERT_EQ(xhci_config_has_hid_boot(probe, sizeof probe), 0,
+                   "mass-storage interface is not HID");
+    TEST_ASSERT_EQ(xhci_config_has_hid_boot(kbd, 17), 0,
+                   "truncated interface descriptor stops the walk");
+    cfg_copy(probe, kbd);
+    probe[0] = 0;                        /* zero bLength must not loop */
+    TEST_ASSERT_EQ(xhci_config_has_hid_boot(probe, sizeof probe), 0,
+                   "zero-length descriptor stops the walk");
+    TEST_ASSERT_EQ(xhci_config_has_hid_boot((const uint8_t *)0, 18), 0,
+                   "NULL descriptor -> 0");
+}
+
 void test_register_usb_hid(void)
 {
+    test_suite_register_cat("usb-hid: config descriptor HID classifier",
+                            test_usb_hid_config_classifier, TEST_CAT_STORAGE);
+    test_suite_register_cat("usb-hid: identify attempt accounting",
+                            test_usb_hid_identify_attempts, TEST_CAT_STORAGE);
     test_suite_register_cat("usb-hid: EP interval encoding",
                             test_usb_hid_interval_encode, TEST_CAT_STORAGE);
     test_suite_register_cat("usb-hid: keyboard usage->ASCII inject",

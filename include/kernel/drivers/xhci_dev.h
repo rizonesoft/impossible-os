@@ -273,6 +273,7 @@ struct xhci_device {
     uint64_t  int_in_report_phys;    /* DMA buffer the controller writes reports to */
     uint8_t  *int_in_report;         /* virt alias of int_in_report_phys */
     uint8_t   int_in_polling;        /* 1 once a report TRB is queued + poller live */
+    uint8_t   hid_usable_counted;    /* 1 while this device is in the HID usable count */
     uint8_t   hid_prev_report[8];    /* last keyboard boot report (new-key diff) */
     struct xhci_controller *owner;   /* owning controller (slot IDs are per-controller) */
 
@@ -303,6 +304,13 @@ int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev);
  * configured, -1 otherwise. */
 int xhci_hid_identify(struct xhci_controller *hc, struct xhci_device *dev);
 
+#ifdef KERNEL_TESTS
+/* Test entry point: xhci_hid_identify with no controller, counting HID
+ * attempts into the caller's counter instead of the live boot one. Only the
+ * rejection paths, which return before any controller access, are callable. */
+int xhci_hid_test_identify(struct xhci_device *dev, uint32_t *attempts);
+#endif
+
 /* Drain the dedicated HID event ring(s) and log/re-queue reports. Registered on
  * the timer tick multiplexer by HID enumeration; not for direct external use. */
 void xhci_hid_poll(void);
@@ -311,6 +319,13 @@ void xhci_hid_poll(void);
  * field (period = 125us * 2^Interval). Speed-dependent (xHCI 6.2.3.6):
  * HS/SS -> bInterval-1; FS/LS -> floor(log2(bInterval))+3. Exposed for tests. */
 uint8_t xhci_hid_interval_encode(uint8_t speed, uint8_t b_interval);
+
+/* Pure: 1 when a configuration descriptor (`len` bytes at `cfg`) carries a HID
+ * boot keyboard or mouse interface, else 0. Uses the same bounded walk as
+ * xhci_hid_identify, so a truncated or malformed descriptor stops the scan.
+ * Lets enumeration count a HID attempt for a device that failed BEFORE
+ * xhci_hid_identify ran (SET_CONFIGURATION). Exposed for tests. */
+int xhci_config_has_hid_boot(const uint8_t *cfg, uint16_t len);
 
 /* Decode a boot-protocol mouse report [buttons, dx, dy] into screen-oriented
  * relative deltas (signed) and the three boot buttons (MOUSE_BTN_* bit layout).
@@ -375,6 +390,10 @@ struct xhci_device *xhci_get_device(int index);
 int xhci_device_index(const struct xhci_device *dev);
 
 /* Stop HID report polling on a device and, for a mouse, release its held buttons. */
+/* Mark a HID device that is now polling as usable for the boot load-status
+ * count. Idempotent per device; xhci_hid_stop_polling() takes it back out, so
+ * the count reflects devices that can still deliver input. */
+void xhci_hid_mark_usable(struct xhci_device *dev);
 void xhci_hid_stop_polling(struct xhci_device *dev);
 
 #ifdef KERNEL_TESTS

@@ -16,6 +16,7 @@
 
 #include "kernel/types.h"
 #include "kernel/boot_load_status.h"
+#include "kernel/boot_probe.h"
 #include "kernel/boot_progress.h"   /* boot_get_elapsed_ms */
 #include "kernel/boot_splash.h"     /* boot_splash_diag */
 #include "kernel/klog.h"
@@ -86,18 +87,100 @@ int boot_load_begin(const char *name, uint8_t cls)
     return idx;
 }
 
-void boot_load_finish(int token, uint8_t state, uint16_t err_code,
-                      uint16_t post_code)
+void boot_load_finish_ex(int token, uint8_t state, uint16_t err_code,
+                         uint16_t post_code, uint32_t duration_ms)
 {
     if (token < 0 || token >= (int)BOOT_LOAD_MAX)
         return;
     struct boot_load_entry *e = &s_pool[token];
-    uint32_t now = boot_get_elapsed_ms();
+    /* The supplied duration is authoritative, zero included: a probe that
+     * finished inside one millisecond measured 0, and substituting the time
+     * since begin() would charge it with every other driver in its group. */
     e->state       = state;
     e->err_code    = err_code;
     e->post_code   = post_code;
-    e->duration_ms = (now >= e->start_ms) ? (now - e->start_ms) : 0u;
+    e->duration_ms = duration_ms;
     __atomic_store_n(&e->published, 1u, __ATOMIC_RELEASE);
+}
+
+void boot_load_finish(int token, uint8_t state, uint16_t err_code,
+                      uint16_t post_code)
+{
+    uint32_t dur = 0u;
+
+    if (token >= 0 && token < (int)BOOT_LOAD_MAX) {
+        uint32_t now   = boot_get_elapsed_ms();
+        uint32_t start = s_pool[token].start_ms;
+        dur = (now >= start) ? (now - start) : 0u;
+    }
+    boot_load_finish_ex(token, state, err_code, post_code, dur);
+}
+
+/* ---- probe-result mapping (pure; see include/kernel/boot_probe.h) ------- */
+
+uint8_t boot_probe_load_state(int rc)
+{
+    if (rc == BOOT_PROBE_OK)
+        return (uint8_t)BOOT_LOAD_LOADED;
+    if (rc == BOOT_PROBE_ABSENT)
+        return (uint8_t)BOOT_LOAD_SKIPPED;
+    return (uint8_t)BOOT_LOAD_FAILED;
+}
+
+uint8_t boot_probe_count_state(uint32_t attempted, uint32_t usable)
+{
+    if (attempted == 0u)
+        return (uint8_t)BOOT_LOAD_SKIPPED;
+    if (usable == 0u)
+        return (uint8_t)BOOT_LOAD_FAILED;
+    if (usable < attempted)
+        return (uint8_t)BOOT_LOAD_DEGRADED;
+    return (uint8_t)BOOT_LOAD_LOADED;
+}
+
+uint16_t boot_probe_err_code(int rc)
+{
+    if (rc == BOOT_PROBE_OK)
+        return 0u;
+    if (rc == BOOT_PROBE_ABSENT)
+        return 1u;
+    return 2u;
+}
+
+uint8_t boot_probe_combined_state(int rc, uint32_t attempted, uint32_t usable)
+{
+    if (rc != BOOT_PROBE_OK)
+        return boot_probe_load_state(rc);
+    return boot_probe_count_state(attempted, usable);
+}
+
+void boot_probe_slot_publish(struct boot_probe_slot *slot, uint8_t state,
+                             uint16_t err, uint32_t t0, uint32_t now)
+{
+    if (!slot)
+        return;
+    slot->state       = state;
+    slot->err         = err;
+    slot->duration_ms = (now >= t0) ? (now - t0) : 0u;
+    __atomic_store_n(&slot->done, 1u, __ATOMIC_RELEASE);
+}
+
+void boot_probe_slot_verdict(const struct boot_probe_slot *slot, int unsafe,
+                             uint8_t *state, uint16_t *err, uint32_t *dur)
+{
+    uint8_t  st = (uint8_t)BOOT_LOAD_FAILED;
+    uint16_t er = (uint16_t)BOOT_FATAL;
+    uint32_t du = 0u;
+
+    if (!unsafe && slot &&
+        __atomic_load_n(&slot->done, __ATOMIC_ACQUIRE)) {
+        st = slot->state;
+        er = slot->err;
+        du = slot->duration_ms;
+    }
+    if (state) *state = st;
+    if (err)   *err   = er;
+    if (dur)   *dur   = du;
 }
 
 void boot_load_record(const char *name, uint8_t cls, uint8_t state,

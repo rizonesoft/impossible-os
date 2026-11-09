@@ -154,6 +154,16 @@ struct xhci_controller *xhci_get_controller_mut(int index);
 /* Get number of active xHCI controllers. */
 int xhci_controller_count(void);
 
+/* HID probe accounting for the boot load-status log: `attempted` counts every
+ * device whose descriptors identified a HID boot interface (cumulative across
+ * hot-plug re-probes), `usable` the devices CURRENTLY polling for reports (it
+ * falls when polling stops or a slot is reused). The pair describes the boot
+ * snapshot, not a cumulative success rate. Scanning `xhci_device.is_hid`
+ * cannot substitute -- that flag is set only on the success tail, so it cannot
+ * see a detected HID device whose endpoint setup failed. Either pointer may be
+ * NULL. */
+void xhci_hid_probe_counts(uint32_t *attempted, uint32_t *usable);
+
 /* Number of controllers on which Intel XUSB2PR USB 2.0 routing was applied
  * (0 on modern Intel without an EHCI companion / non-Intel). For diagnostics. */
 int xhci_xusb2pr_routed_count(void);

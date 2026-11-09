@@ -26,7 +26,18 @@ struct ata_drive {
 };
 
 /* Initialize the ATA driver and detect drives */
-void ata_init(void);
+/* Probe the legacy PIO IDE bus. Returns a `boot_probe_result`:
+ * BOOT_PROBE_OK when at least one drive answered IDENTIFY, BOOT_PROBE_ABSENT
+ * when the controller or the bus is empty (the normal case on any machine that
+ * boots from AHCI or NVMe). */
+int ata_init(void);
+
+/* Drives the last ata_init() found answering IDENTIFY (attempted) and those
+ * the system can reach (usable): the master after a completed IDENTIFY. The
+ * I/O and registration paths serve the master only, so an identified slave is
+ * attempted but never usable. An ATAPI/SATA signature or an empty position is
+ * neither. Either pointer may be NULL. */
+void ata_probe_counts(uint32_t *attempted, uint32_t *usable);
 
 /* Read 'count' sectors starting at LBA into 'buffer'.
  * Returns 0 on success, -1 on error. */
