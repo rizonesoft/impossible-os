@@ -82,7 +82,11 @@ if [ -f "$CP_MATCH" ]; then
         echo ""
         echo "Pre-commit: control-plane change detected -- running runner test suite:"
         printf '%s\n' "$CP_HITS" | sed 's/^/  touched: /'
-        if ! bash "$REPO_ROOT/scripts/overnight/tests/run-all.sh"; then
+        # Only the suite is isolated: lint and the gates above and below read the
+        # commit's own index through GIT_INDEX_FILE.
+        # shellcheck source=.githooks/lib/isolate-git-env.sh
+        if ! ( . "$REPO_ROOT/.githooks/lib/isolate-git-env.sh"; isolate_git_env
+               bash "$REPO_ROOT/scripts/overnight/tests/run-all.sh" ); then
             echo ""
             echo -e "\033[31mRunner test suite failed -- control-plane commit blocked\033[0m"
             echo "  A change to the overnight-runner control plane broke its tests."

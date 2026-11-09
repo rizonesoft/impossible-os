@@ -18,6 +18,11 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Everything below reaches git through -C "$REPO_ROOT" or the working directory and
+# needs no index, so the hook drops git's exported variables before any suite runs.
+# shellcheck source=.githooks/lib/isolate-git-env.sh
+. "$REPO_ROOT/.githooks/lib/isolate-git-env.sh"
+isolate_git_env
 # Worktree-safe: rev-parse --git-path resolves .git whether it's a directory
 # (main checkout) or a file (linked worktree).
 SENTINEL="$(git -C "$REPO_ROOT" rev-parse --git-path .impossible-os-prepush 2>/dev/null || echo "$REPO_ROOT/.git/.impossible-os-prepush")"
