@@ -397,8 +397,14 @@ void tss_set_kernel_stack(uint64_t stack_top)
     uint32_t cpu = smp_this_cpu()->cpu_id;
     struct tss *t = (cpu < MAX_CPUS) ? __atomic_load_n(&s_cpu_tss[cpu], __ATOMIC_ACQUIRE) : NULL;
 
-    if (!t)
+    /* Only CPU 0 may fall back to the BSP TSS (gdt_init publishes it). An AP
+     * with no TSS of its own must never write another CPU's rsp0: every AP is
+     * started only after its TSS is published, so this is a broken invariant. */
+    if (!t) {
+        if (cpu != 0)
+            boot_halt("tss_set_kernel_stack: CPU has no published TSS");
         t = &kernel_tss;
+    }
     t->rsp0 = stack_top;
 }
 
@@ -438,6 +444,31 @@ uint16_t gdt_install_ap_tss(uint32_t cpu, uint64_t rsp0)
     gdt_set_tss(GDT_TSS_FIRST_INDEX + 2u * cpu, (uint64_t)(uintptr_t)t, sizeof(struct tss) - 1);
     __atomic_store_n(&s_cpu_tss[cpu], t, __ATOMIC_RELEASE);
     return GDT_TSS_SEL_FOR(cpu);
+}
+
+void gdt_release_ap_tss(uint32_t cpu)
+{
+    struct tss *t;
+    uint32_t idx;
+    uint64_t *desc;
+
+    if (cpu == 0 || cpu >= MAX_CPUS)
+        return;
+    /* Unpublish first: from here no lookup can return this TSS. */
+    t = __atomic_exchange_n(&s_cpu_tss[cpu], (struct tss *)0, __ATOMIC_ACQ_REL);
+    if (!t)
+        return;
+
+    idx = GDT_TSS_FIRST_INDEX + 2u * cpu;
+    desc = (uint64_t *)&gdt[idx];
+    desc[0] = 0;   /* not present: an ltr of this selector now faults */
+    desc[1] = 0;
+
+    ist_release(t->ist1);
+    ist_release(t->ist2);
+    ist_release(t->ist3);
+    t->ist1 = t->ist2 = t->ist3 = 0;
+    t->rsp0 = 0;
 }
 
 uint64_t gdt_get_cpu_ist(uint32_t cpu, unsigned index)

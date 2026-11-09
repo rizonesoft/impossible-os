@@ -46,6 +46,9 @@ title: "TODO-03 -- SMP Scaling & Processor Groups"
 - [ ] Widen the online mask first: `smp_online_mask()` returns `uint32_t` and `smp.c` asserts `MAX_CPUS <= SMP_ONLINE_MASK_BITS` (32), so any raise past 32 needs a multi-word mask
 - [ ] Log dropped CPUs: `acpi.c` MADT parsing stores LAPIC/x2APIC records only while `cpu_count < MAX_CPUS` and drops the rest with no log line (x2APIC ids > 255 already get a summary WARN)
 - [ ] Always keep the BSP: if it is listed after the 16th usable MADT record the truncated set lacks it and `acpi.c` falls back to BSP-only, so a >16-CPU machine can boot single-core
+- [ ] Move the AP bringup record table out of the trampoline page: `struct ap_rec[AP_REC_COUNT]` sits at `AP_DATA_BASE + 0x40` (0x8E40) with `AP_REC_COUNT == MAX_CPUS` asserted in `include/kernel/smp.h`, and the page has room for only 28 records
+  - The trampoline (`src/kernel/smp/ap_trampoline.asm`) scans the table linearly per AP; at 256 CPUs index it by APIC ID or a small hash instead
+  - The shared GDT also grows with `MAX_CPUS` (`GDT_NUM_ENTRIES = 5 + 2*MAX_CPUS`, `include/kernel/gdt.h`): 517 descriptors at 256 CPUs, still inside the 16-bit limit (-> XREF: `01-boot-platform/TODO-09` section 10)
 - [ ] Convert static per-CPU arrays to dynamic allocation where needed (DPC queues, spinlock arrays)
 - [ ] Verify boot still works with 1, 2, and 16 CPUs after the increase
 - [ ] Commit: `"kernel: smp -- raise MAX_CPUS to 256"`

@@ -577,6 +577,12 @@ void smp_init(void)
         *(volatile uint64_t *)(data + AP_OFF_ENTRY) =
             (uint64_t)(uintptr_t)ap_entry;
 
+        /* Per-CPU block base and stride: the trampoline points GS_BASE at
+         * its own block before it loads the kernel IDT, so a fault in the
+         * AP's first instructions already finds a valid gs:0. */
+        *(volatile uint64_t *)(data + AP_OFF_PERCPU) = (uint64_t)(uintptr_t)&cpu_data[0];
+        *(volatile uint32_t *)(data + AP_OFF_PCPU_STRIDE) = (uint32_t)sizeof(struct per_cpu_data);
+
         /* Canary at offset 0x38 (unused by trampoline) */
         *(volatile uint32_t *)(data + AP_OFF_CANARY) = AP_CANARY_MAGIC;
     }
@@ -589,6 +595,16 @@ void smp_init(void)
         uint64_t rb_cr3   = *(volatile uint64_t *)(data + AP_OFF_CR3);
         uint64_t rb_entry = *(volatile uint64_t *)(data + AP_OFF_ENTRY);
         uint32_t rb_canary = *(volatile uint32_t *)(data + AP_OFF_CANARY);
+        uint64_t rb_percpu = *(volatile uint64_t *)(data + AP_OFF_PERCPU);
+        uint32_t rb_stride = *(volatile uint32_t *)(data + AP_OFF_PCPU_STRIDE);
+
+        if (rb_percpu != (uint64_t)(uintptr_t)&cpu_data[0] ||
+            rb_stride != (uint32_t)sizeof(struct per_cpu_data)) {
+            klog(LOG_FATAL, "smp",
+                 "AP trampoline data corruption: per-CPU base 0x%x stride %u read back",
+                 rb_percpu, (uint64_t)rb_stride);
+            return;
+        }
 
         if (rb_cr3 != cr3) {
             klog(LOG_FATAL, "smp",
@@ -680,6 +696,10 @@ void smp_init(void)
         ap_count = slot;
 
         cpu_data[slot].rsp0 = stack_top;
+        /* gs:0 and the CPU index are valid from the trampoline's GS_BASE
+         * write on, before ap_entry runs a line of C. */
+        cpu_data[slot].self = &cpu_data[slot];
+        cpu_data[slot].cpu_id = slot;
         /* EXPECTED apic_id: the AP's C identity guard re-checks its live ID
          * against this, a second net behind the record claim. */
         cpu_data[slot].lapic_id = ci->apic_id;
@@ -759,6 +779,12 @@ void smp_init(void)
                  (uint64_t)ap, (uint64_t)apic);
             __atomic_store_n(&cpu_data[ap].ap_bringup_state,
                              AP_BRINGUP_ABANDONED, __ATOMIC_RELEASE);
+            /* The revoke proves no consumer remains for this slot's stack and
+             * TSS: the AP can only park before its first stack access. */
+            recs[ap].stack = 0;
+            gdt_release_ap_tss(ap);
+            ap_stack_release((uintptr_t)(cpu_data[ap].rsp0 - AP_STACK_SIZE - 4096u));
+            cpu_data[ap].rsp0 = 0;
             continue;
         }
 

@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md sources=src/kernel/smp/smp.c,include/kernel/smp.h,src/kernel/smp/ap_trampoline.asm,src/kernel/cpu_security.c,include/kernel/cpu_security.h,src/kernel/main/boot_hw.c,src/kernel/main/boot_storage.c,src/kernel/gdt.c,include/kernel/gdt.h reviewed=2026-11-09 order=9 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md sources=src/kernel/smp/smp.c,include/kernel/smp.h,src/kernel/smp/ap_trampoline.asm,src/kernel/cpu_security.c,include/kernel/cpu_security.h,src/kernel/main/boot_hw.c,src/kernel/main/boot_storage.c,src/kernel/gdt.c,include/kernel/gdt.h reviewed=2026-11-09T13:30 order=9 -->
 # CPU Boot Sequencing and AP Bringup
 
 ## What is it?
@@ -9,7 +9,7 @@ This is the contract that brings every CPU core online and makes each one match 
 
 The BSP hardens itself first (`cpu_harden()`, NX/UMIP/PKU/PAT, then `cpu_harden_post_pagetable()` for the still-gated SMEP/SMAP) during `boot_phase0()`. `smp_init()` then freezes that state into a per-CPU MSR profile (`cpu_record_bsp_profile()`) before starting any AP, so every AP replicates the BSP's final post-Phase-1 state rather than recomputing it from CPUID. `smp_init()` itself runs from `boot_phase2()`, after ACPI and the IDT are available, because the per-CPU register audit needs `msr_try_read()`, which requires the IDT to be loaded.
 
-The BSP copies a real-mode trampoline to physical `0x8000` and writes a shared data block at `0x8000+0xE00` once (CR3, GDT/IDT pointers, entry point, a canary). Per-AP values live in a table of bringup records right after it, one per logical CPU, each naming an APIC ID and a private stack. The BSP prepares every AP first (kernel stack, its own TSS with guarded IST stacks for #DF/NMI/MCE, and a record), refusing duplicate APIC IDs. It then sends INIT to all of them, waits 10 ms once, and starts them one at a time: arm that AP's record, SIPI, wait 200 us, wait up to 150 ms (with a second SIPI) for readiness, then revoke the record if it was never claimed. The delays are measured on the TSC. The AP wakes in 16-bit real mode, reads its own live APIC ID without using a stack, switches to long mode, claims the record with that ID by `lock cmpxchg`, and only then loads that record's stack and `ltr`s its own TSS. An AP that wakes after its record was revoked finds nothing to claim and parks, so a slow AP can never run on another AP's stack or under another AP's slot. It then calls `ap_entry()` in C, which runs `ap_cpu_harden()`: match the BSP's XCR0, validate this AP's CPUID against the BSP's required/optional feature masks, replay the BSP's MSR profile (PAT, TSC_AUX, and friends), force the AP-supported subset of the BSP's required CR4 bits, and pin CR0.WP/CR4 safety bits on this CPU. The AP then re-checks its live LAPIC ID against the identity the BSP pre-stored for this slot, a second net behind the record claim, and parks dark on a mismatch.
+The BSP copies a real-mode trampoline to physical `0x8000` and writes a shared data block at `0x8000+0xE00` once (CR3, GDT/IDT pointers, entry point, the per-CPU array base and stride, a canary). Per-AP values live in a table of bringup records right after it, one per logical CPU, each naming an APIC ID and a private stack. The BSP prepares every AP first (kernel stack, its own TSS with guarded IST stacks for #DF/NMI/MCE, and a record), refusing duplicate APIC IDs. It then sends INIT to all of them, waits 10 ms once, and starts them one at a time: arm that AP's record, SIPI, wait 200 us, wait up to 150 ms (with a second SIPI) for readiness, then revoke the record if it was never claimed. The delays are measured on the TSC. The AP wakes in 16-bit real mode, reads its own live APIC ID without using a stack, switches to long mode, claims the record with that ID by `lock cmpxchg`, and only then loads that record's stack, `ltr`s its own TSS, points GS_BASE at its own per-CPU block (base and stride from the shared block) and loads the kernel IDT, in that order, so its first possible fault finds both a valid `gs:0` and its own IST stacks. If the BSP revokes a record, nothing can use that AP's stack or TSS any more, so the BSP releases them. An AP that wakes after its record was revoked finds nothing to claim and parks, so a slow AP can never run on another AP's stack or under another AP's slot. It then calls `ap_entry()` in C, which runs `ap_cpu_harden()`: match the BSP's XCR0, validate this AP's CPUID against the BSP's required/optional feature masks, replay the BSP's MSR profile (PAT, TSC_AUX, and friends), force the AP-supported subset of the BSP's required CR4 bits, and pin CR0.WP/CR4 safety bits on this CPU. The AP then re-checks its live LAPIC ID against the identity the BSP pre-stored for this slot, a second net behind the record claim, and parks dark on a mismatch.
 
 Bringup itself is a small state machine per AP slot (`ap_bringup_state`: STARTING -> READY -> ONLINE or ABANDONED). The AP CASes itself to READY once its local hardening is complete; only the BSP, after the bringup timeout, decides ONLINE or ABANDONED, and it publishes the online-mask bit *before* releasing the AP to run interrupts. This ordering is what prevents a "live but uncounted" CPU: an AP can never `sti` before its membership bit exists.
 
@@ -24,7 +24,7 @@ sequenceDiagram
   BSP->>AP: INIT to every AP, one 10ms settle
   BSP->>Tramp: arm this AP's record (ARMED)
   BSP->>AP: SIPI (vector -> 0x8000), 200us
-  AP->>Tramp: live APIC ID, claim record ARMED -> TAKEN, own stack, ltr own TSS
+  AP->>Tramp: live APIC ID, claim record ARMED -> TAKEN, own stack, ltr, GS_BASE, lidt
   AP->>AP: long mode -> ap_entry(cpu_index)
   AP->>AP: ap_cpu_harden(): XCR0, feature validate, MSR replay, CR4 force, CR pin
   AP->>AP: LAPIC-ID identity guard vs pre-stored slot id
@@ -42,7 +42,7 @@ After every discovered slot reaches a terminal verdict, the BSP publishes the gl
 | Interface | Purpose |
 | --------- | ------- |
 | `smp_init()` | BSP entry point: trampoline copy, per-AP preparation, INIT-all then per-AP SIPI, record revoke, bringup arbitration ([`smp.c:438`](../../src/kernel/smp/smp.c)) |
-| `smp_early_bsp_init()` | Sets BSP GS_BASE before any interrupt can fire, called at the top of `boot_phase0()` ([`smp.c:114`](../../src/kernel/smp/smp.c)) |
+| `smp_early_bsp_init()` | Sets BSP GS_BASE before any interrupt can fire, called at the top of `boot_phase0()` ([`smp.c:119`](../../src/kernel/smp/smp.c)) |
 | `ap_entry(cpu_index)` | AP's C entry point from the trampoline: GS setup, hardening, identity guard, publish ([`smp.c:275`](../../src/kernel/smp/smp.c)) |
 | `ap_cpu_harden(cpu_id)` / `cpu_record_bsp_profile()` | Per-CPU MSR-profile replay and the BSP baseline it replays from ([`cpu_security.h`](../../include/kernel/cpu_security.h)) |
 | `cpu_validate_ap_features(cpu_id)` | AP-side CPUID check against the required/optional masks; bug-checks `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) on a required-feature or vendor/Long-Mode mismatch ([`cpu_security.h`](../../include/kernel/cpu_security.h)) |
@@ -51,7 +51,7 @@ After every discovered slot reaches a terminal verdict, the BSP publishes the gl
 | `smp_cpu_count()` / `smp_cpu_present_count()` / `smp_online_mask()` / `smp_cpu_is_online()` | Live count, discovered-slot count, and membership queries; see `smp.h` for why the two counts are never interchangeable |
 | `ap_trampoline.asm` | The 16-bit-to-64-bit transition code copied to physical `0x8000` ([`ap_trampoline.asm`](../../src/kernel/smp/ap_trampoline.asm)) |
 | `struct ap_rec` / `ap_rec_prepare()` / `ap_rec_revoke()` / `ap_rec_apic_in_use()` | Per-target bringup records at `AP_DATA+0x40` (EMPTY -> PREPARED -> ARMED -> TAKEN or REVOKED, never reused) and the pure helpers the BSP uses on them ([`smp.h`](../../include/kernel/smp.h)) |
-| `gdt_install_ap_tss()` / `gdt_tss_selector()` / `gdt_get_cpu_ist()` | One TSS per CPU with guarded IST1-3, its GDT selector (`0x28 + 16*cpu`), and a read-only IST query ([`gdt.h`](../../include/kernel/gdt.h)) |
+| `gdt_install_ap_tss()` / `gdt_release_ap_tss()` / `gdt_tss_selector()` / `gdt_get_cpu_ist()` | One TSS per CPU with guarded IST1-3, its release for an AP that never claimed its record, its GDT selector (`0x28 + 16*cpu`), and a read-only IST query ([`gdt.h`](../../include/kernel/gdt.h)) |
 
 ## How do I use it?
 

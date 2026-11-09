@@ -201,6 +201,66 @@ static void test_live_per_cpu_tss(void)
     TEST_ASSERT_EQ(gdt_get_cpu_ist(MAX_CPUS, 1), 0ull, "no TSS past MAX_CPUS");
 }
 
+/* Live: the trampoline's GS_BASE source. An AP computes &cpu_data[index] from
+ * these two words before it loads the kernel IDT, so they must name the real
+ * per-CPU array, and every online CPU's block must be self-consistent. */
+static void test_live_percpu_handoff(void)
+{
+    const volatile uint8_t *data = (const volatile uint8_t *)(uintptr_t)AP_DATA_BASE;
+    uint64_t base = *(const volatile uint64_t *)(data + AP_OFF_PERCPU);
+    uint32_t stride = *(const volatile uint32_t *)(data + AP_OFF_PCPU_STRIDE);
+    uint32_t c, aps = 0;
+
+    for (c = 1; c < MAX_CPUS; c++)
+        aps += smp_cpu_is_online(c) ? 1u : 0u;
+    if (aps == 0) {
+        TEST_SKIP("no AP was started: smp_init writes no trampoline data on one CPU");
+        return;
+    }
+    TEST_ASSERT_EQ(base, (uint64_t)(uintptr_t)smp_get_cpu(0), "AP_DATA names the per-CPU array");
+    TEST_ASSERT_EQ(stride, (uint32_t)sizeof(struct per_cpu_data), "AP_DATA stride is one per-CPU block");
+    for (c = 1; c < MAX_CPUS; c++) {
+        struct per_cpu_data *pc;
+
+        if (!smp_cpu_is_online(c))
+            continue;
+        pc = smp_get_cpu(c);
+        TEST_ASSERT_EQ((uint64_t)(uintptr_t)pc, base + (uint64_t)c * stride,
+                       "trampoline arithmetic lands on this CPU's block");
+        TEST_ASSERT(pc->self == pc, "online AP block's gs:0 points at itself");
+        TEST_ASSERT_EQ(pc->cpu_id, c, "online AP block carries its own index");
+    }
+}
+
+/* Release undoes install on a slot no CPU uses: the lookup and IST stacks go,
+ * and the slot can be installed again. Runs only on a free last slot. */
+static void test_release_ap_tss(void)
+{
+    uint32_t slot = MAX_CPUS - 1u;
+    unsigned k;
+
+    if (smp_cpu_is_online(slot) || gdt_get_cpu_ist(slot, 1) != 0) {
+        TEST_SKIP("last CPU slot is in use on this machine");
+        return;
+    }
+    gdt_release_ap_tss(0);
+    TEST_ASSERT(gdt_get_cpu_ist(0, 1) != 0, "release never touches the BSP TSS");
+    gdt_release_ap_tss(slot);   /* nothing published: a no-op */
+
+    TEST_ASSERT_EQ(gdt_install_ap_tss(slot, 0x1000ull), gdt_tss_selector(slot), "install on a free slot");
+    for (k = 1; k <= 3; k++)
+        TEST_ASSERT(gdt_get_cpu_ist(slot, k) != 0, "installed slot has IST1-3");
+    TEST_ASSERT_EQ(gdt_install_ap_tss(slot, 0x1000ull), 0u, "a published slot refuses a second install");
+
+    gdt_release_ap_tss(slot);
+    for (k = 1; k <= 3; k++)
+        TEST_ASSERT_EQ(gdt_get_cpu_ist(slot, k), 0ull, "released slot reports no IST");
+    TEST_ASSERT_EQ(gdt_install_ap_tss(slot, 0x1000ull), gdt_tss_selector(slot),
+                   "a released slot can be installed again");
+    gdt_release_ap_tss(slot);
+    TEST_ASSERT_EQ(gdt_get_cpu_ist(slot, 1), 0ull, "slot left free");
+}
+
 /* Live: after bringup no record is claimable, and every online AP's record is
  * TAKEN under its own APIC ID. */
 static void test_live_records_terminal(void)
@@ -234,6 +294,8 @@ void test_register_ap_bringup(void)
     test_suite_register_cat("ap_bringup: per-CPU TSS selector", test_tss_selector, TEST_CAT_X86);
     test_suite_register_cat("ap_bringup: live per-CPU TSS + IST", test_live_per_cpu_tss, TEST_CAT_X86);
     test_suite_register_cat("ap_bringup: live records terminal", test_live_records_terminal, TEST_CAT_X86);
+    test_suite_register_cat("ap_bringup: release AP TSS", test_release_ap_tss, TEST_CAT_X86);
+    test_suite_register_cat("ap_bringup: live per-CPU handoff", test_live_percpu_handoff, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */

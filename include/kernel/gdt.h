@@ -120,6 +120,13 @@ uint16_t gdt_tss_selector(uint32_t cpu);
  * AP's SIPI; never called twice for one CPU. */
 uint16_t gdt_install_ap_tss(uint32_t cpu, uint64_t rsp0);
 
+/* Undo gdt_install_ap_tss for an AP that provably never loaded its TSS (the
+ * BSP won its bringup-record revoke): unpublish the lookup, clear the
+ * descriptor, and return the IST runs to the PMM (or quarantine them, as
+ * ist_try_alloc does). BSP only. A no-op for CPU 0, an out-of-range CPU, or a
+ * CPU with no published TSS. Never call it for a CPU that may have run ltr. */
+void gdt_release_ap_tss(uint32_t cpu);
+
 /* IST stack top `index` (1-based, as gdt_get_ist) of CPU `cpu`'s TSS, or 0 for
  * a CPU with no TSS or an out-of-range index. Read-only, lock-free. */
 uint64_t gdt_get_cpu_ist(uint32_t cpu, unsigned index);

@@ -37,10 +37,10 @@
  *   Offset  Size  Field        Used by
  *   ------  ----  -----------  -----------------------------------
  *   +0x00     8   CR3          pm_entry: mov eax, [AP_DATA+0x00]
- *   +0x08     8   (unused)     was the shared per-AP STACK, now per record
+ *   +0x08     8   PERCPU       lm_entry: &cpu_data[0], GS_BASE before lidt
  *   +0x10    10   GDT_PTR      lm_entry: lgdt [AP_DATA+0x10]
  *   +0x20     8   ENTRY        lm_entry: mov rax, [AP_DATA+0x20]
- *   +0x28     4   (unused)     was the shared CPU index, now the record index
+ *   +0x28     4   PCPU_STRIDE  lm_entry: sizeof(struct per_cpu_data)
  *   +0x30    10   IDT_PTR      lm_entry: lidt [AP_DATA+0x30]
  *   +0x3C     4   CANARY       smp_init: 0xDEADC0DE magic verify
  *   +0x40   256   AP_REC[16]   lm_entry: per-target bringup records (below)
@@ -59,8 +59,10 @@
 #define AP_DATA_BASE           0x8E00   /* shared data at trampoline+0xE00 */
 
 #define AP_OFF_CR3             0x00     /* uint64_t: BSP's CR3 */
+#define AP_OFF_PERCPU          0x08     /* uint64_t: &cpu_data[0] */
 #define AP_OFF_GDT_PTR         0x10     /* 10 bytes: GDTR */
 #define AP_OFF_ENTRY           0x20     /* uint64_t: C entry point */
+#define AP_OFF_PCPU_STRIDE     0x28     /* uint32_t: sizeof(struct per_cpu_data) */
 #define AP_OFF_IDT_PTR         0x30     /* 10 bytes: IDTR */
 #define AP_OFF_CANARY          0x3C     /* uint32_t: magic 0xDEADC0DE */
 #define AP_OFF_REC             0x40     /* struct ap_rec[AP_REC_COUNT] */
@@ -277,6 +279,11 @@ _Static_assert((SMP_ASYNC_GEN_MAX << SMP_ASYNC_GEN_SHIFT) ==
 _Static_assert(AP_OFF_CR3     == 0x00, "AP trampoline: CR3 must be at +0x00 -- asm uses [AP_DATA+0x00]");
 _Static_assert(AP_OFF_GDT_PTR == 0x10, "AP trampoline: GDT_PTR must be at +0x10 -- asm uses [AP_DATA+0x10]");
 _Static_assert(AP_OFF_ENTRY   == 0x20, "AP trampoline: ENTRY must be at +0x20 -- asm uses [AP_DATA+0x20]");
+_Static_assert(AP_OFF_PERCPU  == 0x08, "AP trampoline: PERCPU must be at +0x08 -- asm uses [AP_DATA+0x08]");
+_Static_assert(AP_OFF_PCPU_STRIDE == 0x28, "AP trampoline: stride must be at +0x28 -- asm uses [AP_DATA+0x28]");
+_Static_assert(AP_OFF_PERCPU + 8 <= AP_OFF_GDT_PTR, "PERCPU must not overlap GDT_PTR");
+_Static_assert(AP_OFF_ENTRY + 8 <= AP_OFF_PCPU_STRIDE && AP_OFF_PCPU_STRIDE + 4 <= AP_OFF_IDT_PTR,
+               "PCPU_STRIDE must sit between ENTRY and IDT_PTR");
 _Static_assert(AP_OFF_REC     == 0x40, "AP trampoline: records must be at +0x40 -- asm uses AP_REC_BASE");
 _Static_assert(AP_OFF_IDT_PTR == 0x30, "AP trampoline: IDT_PTR must be at +0x30 -- asm uses [AP_DATA+0x30]");
 _Static_assert(AP_DATA_BASE   == AP_TRAMPOLINE_ADDR + 0xE00,

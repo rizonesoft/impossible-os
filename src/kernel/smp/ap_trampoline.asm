@@ -42,6 +42,10 @@
 %define AP_REC_OFF_STACK 0x08
 %define AP_REC_ARMED     1
 %define AP_REC_TAKEN     2
+%define AP_OFF_PERCPU    0x08           ; u64 &cpu_data[0] (smp.h)
+%define AP_OFF_PCPU_STRIDE 0x28         ; u32 sizeof(struct per_cpu_data)
+%define MSR_GS_BASE      0xC0000101
+%define CR0_CD_NW        ((1 << 30) | (1 << 29))
 %define TSS_SEL_BASE     0x28
 %define TSS_SEL_SHIFT    4              ; stride 16
 
@@ -53,6 +57,9 @@
 
 [BITS 16]
 [ORG 0x8000]
+; Every [AP_DATA + n] operand is an absolute low-memory address, never
+; RIP-relative: say so rather than rely on the deprecated implicit default.
+DEFAULT ABS
 
 global_start:
     ; ---- 16-bit Real Mode ----
@@ -76,7 +83,10 @@ global_start:
     lgdt [tmp_gdtr]
 
     ; ---- Enter protected mode ----
+    ; INIT leaves CR0.CD/NW as the firmware set them, so clear both
+    ; explicitly: an AP must not run with its caches disabled.
     mov eax, cr0
+    and eax, ~CR0_CD_NW
     or eax, 1                   ; PE bit
     mov cr0, eax
 
@@ -197,14 +207,26 @@ lm_entry:
     retfq
 
 .bsp_cs_loaded:
-    ; Load IDT from shared data
-    lidt [AP_DATA + 0x30]
-
-    ; This CPU's own TSS (rsp0 + IST1-3), before any C code can take an NMI.
+    ; This CPU's own TSS (rsp0 + IST1-3) FIRST: it needs only the GDT, and
+    ; once the kernel IDT is live an NMI must find this CPU's IST2, never the
+    ; INIT-default TR (base 0).
     mov eax, edi
     shl eax, TSS_SEL_SHIFT
     add eax, TSS_SEL_BASE
     ltr ax
+
+    ; GS_BASE = &cpu_data[index] before the kernel IDT: every handler reads
+    ; gs:0, and the BSP filled this block's self and cpu_id before the SIPI.
+    mov eax, edi
+    imul eax, dword [AP_DATA + AP_OFF_PCPU_STRIDE]
+    add rax, [AP_DATA + AP_OFF_PERCPU]
+    mov rdx, rax
+    shr rdx, 32
+    mov ecx, MSR_GS_BASE
+    wrmsr
+
+    ; Load IDT from shared data
+    lidt [AP_DATA + 0x30]
 
     ; CPU index (the record index) stays in edi: first arg to ap_entry.
     ; The upper half is cleared by the 32-bit write above (xor edi, edi / inc).

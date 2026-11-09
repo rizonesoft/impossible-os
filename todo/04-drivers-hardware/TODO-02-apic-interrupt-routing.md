@@ -66,6 +66,13 @@ Detect `CPUID.01H:ECX[21]` and switch from xAPIC MMIO to x2APIC MSR register acc
 - [ ] `lapic_id()`: in x2APIC mode, `rdmsr(0x802)` returns full 32-bit ID; update `cpu_info_t.apic_id` from `uint8_t` to `uint32_t`
 - [ ] `lapic_send_ipi(dest, cmd)` in x2APIC: single `wrmsr(0x830, (uint64_t)dest << 32 | cmd)` -- no delivery-status poll needed
 - [ ] Wire MADT type-9 (x2APIC Local APIC) entries (already parsed in `acpi.c`) into per-CPU APIC ID array
+- [ ] Widen the AP startup path to 32-bit APIC IDs: `lapic_send_init()` and `lapic_send_sipi()` take `uint8_t` and write the xAPIC MMIO ICR only, and `smp_init()` (`src/kernel/smp/smp.c`, passes 2-3) casts each target to `uint8_t`
+  - In x2APIC mode send INIT and SIPI through MSR 0x830 with the full 32-bit destination; drop the casts in `smp.c`
+  - The AP side is already ready: the trampoline reads its live ID from MSR 0x802 when `IA32_APIC_BASE.EXTD` is set and `struct ap_rec.apic_id` is 32 bits (-> XREF: `01-boot-platform/TODO-09` section 10)
+  - Without this, firmware that hands off in x2APIC mode boots with no APs at all
+- [ ] Report IPI delivery failure instead of ignoring it: `ipi_wait_delivery()` (`src/kernel/drivers/lapic.c`) gives up silently after its spin budget and returns nothing
+  - Return a status from `lapic_send_init()` / `lapic_send_sipi()`, and read ESR after each SIPI as Linux `smpboot.c` does
+  - `smp_init()` then logs "SIPI not delivered" for that AP and skips its 150 ms READY wait, instead of reporting only "never claimed its bringup record"
 - [ ] Locked-mode detect: read `IA32_XAPIC_DISABLE_STATUS` (0xBD) bit 0 (LEGACY_XAPIC_DISABLED); on 2022+ Intel SGX/TDX the firmware locks x2APIC -- use the MSR path from boot, never attempt an xAPIC fallback (-> XREF: `D02 T09 §11`)
 - [ ] Boot log: `[LAPIC] x2APIC mode active` or `[LAPIC] xAPIC mode (x2APIC not supported)`
 - [ ] Commit: `"lapic: x2APIC MSR register access -- mode detection, 32-bit APIC IDs, atomic IPI"`
