@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
-# token-saver v02 (2026-07-28): every metrics record ever written carried
-# `"section": 0`. Root cause: the documented cursor shape is
-# `cursor <domain> <file>` with NO index, so `section_idx` never left the value
-# `start` initialises it to, and stream-report.py stamped that constant onto all
-# 56 rows across every run. With no section-to-turn-count correlation there is
-# no dataset for the split-predictor calibration -- and since cache-read cost is
-# quadratic in segment length, knowing WHICH sections run long is the whole
-# input. The guard now derives the index from the triage oracle when the caller
-# omits it.
+# The documented cursor shape is `cursor <domain> <file>` with NO index, so
+# `section_idx` never left the value `start` initialises it to. The guard now
+# derives the index from the triage oracle when the caller omits it;
+# advance-work.py reads it and its provenance.
 #
 # The load-bearing property is FAIL-OPEN: this is a metrics field, so no
 # derivation failure may ever fail a `cursor` move and wedge a run.
@@ -99,8 +94,7 @@ def test_stale_is_marked_so_the_calibration_can_exclude_it():
     """The dataset-integrity half. When the oracle is unavailable the cursor
     keeps its previous value -- correct, because a metrics field must never
     wedge a run -- but the number is then carried over rather than measured.
-    It MUST be distinguishable, or the split-predictor fit silently averages
-    stale sections in as if they were fresh."""
+    It MUST be distinguishable, or a reader treats a stale section as fresh."""
     with tempfile.TemporaryDirectory() as d:
         mod = _load(pathlib.Path(d) / "state.json", pathlib.Path(d))
         # No oracle on disk -> derivation fails -> value carried over, marked stale.

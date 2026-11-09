@@ -10,8 +10,8 @@ Each check records:
   machinery commits. When UNDO_AFTER_HOURS pass with no commit outside the machinery
     AND the session is idle, they are reverted and an alert sent. Only when idle,
     because the session shares this working tree and must not have it change underneath.
-  run-health.json: sections shipped today, hours since the last ship, gate warnings
-    fired, machinery commits and reverts. No dollars: the run is on a subscription,
+  run-health.json: sections shipped today, hours since the last ship, machinery
+    commits and reverts. No dollars: the run is on a subscription,
     and the rates in cost-summary.py are relative sizing, not a bill.
   repair-needed: nothing has shipped for REPAIR_AFTER_HOURS.
 
@@ -29,8 +29,7 @@ from pathlib import Path
 
 UNDO_AFTER_HOURS = 3          # no commit outside the machinery, session idle
 REPAIR_AFTER_HOURS = 6
-MACHINERY_PREFIXES = (".claude/hooks/", ".claude/skills/", ".claude/gate-modes.json",
-                      "scripts/overnight/", ".githooks/")
+MACHINERY_PREFIXES = (".claude/hooks/", ".claude/skills/", "scripts/overnight/", ".githooks/")
 # deadline: each git call is bounded here. Hooks are off for an undo, so these are quick.
 GIT_TIMEOUT = 60
 PUSH_TIMEOUT = 300
@@ -197,21 +196,13 @@ def check(root: Path, idle: bool, now: int) -> dict:
     elif repair.exists():
         repair.unlink()
 
-    gates: dict = {}
-    try:
-        for line in (state_dir / "gate-log.jsonl").read_text(encoding="utf-8").splitlines():
-            name = json.loads(line).get("gate", "?")
-            gates[name] = gates.get(name, 0) + 1
-    except (OSError, ValueError):
-        pass  # fail-direction: no log yet reads as no warnings
-
     state.update(pending=pending, order=order)
     state["reverted"] = state.get("reverted", []) + reverted
     write_json(state_path, state)
     health = {
         "updated": now, "sections_shipped_today": state["shipped_today"],
         "sections_shipped_total": state["total_shipped"],
-        "hours_since_ship": round(hours, 1), "gate_warnings": gates,
+        "hours_since_ship": round(hours, 1),
         "machinery_commits_pending": len(pending),
         "machinery_reverts": state["reverted"], "repair_needed": repair.exists(),
     }

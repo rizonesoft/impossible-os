@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md sources=.claude/hooks/MANIFEST.md,.githooks/pre-commit,.githooks/pre-push reviewed=2026-09-29T19:00 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md sources=.claude/hooks/MANIFEST.md,.githooks/pre-commit,.githooks/pre-push reviewed=2026-11-09 -->
 # Hook Message Codes
 
 Hook block/reminder messages are injected into the model's context every time
@@ -10,7 +10,7 @@ Codes are stable -- docs and transcripts reference them.
 ## SEQ-* (run_phase_guard.py)
 
 ### SEQ-CONTROL-PLANE
-The run may edit its own machinery, with a test, since 2026-11-07. Only the frozen files listed in `.claude/hooks/gate.py` stay refused, because they recover from every other mistake. Add the problem to `todo/RUN-ISSUES.md` and continue. In `log` mode through `.claude/gate-modes.json`, this code records the attempt instead.
+The run may edit its own machinery, with a test, since 2026-11-07. Only the frozen files listed in `.claude/hooks/gate.py` stay refused, because they recover from every other mistake. Add the problem to `todo/RUN-ISSUES.md` and continue.
 
 Added 2026-08-07 because the rule had been **documentation only**. It is stated in the sequencer skill, in the doctrine file and in every capture file's header, and nothing enforced it -- an `Edit` on `scripts/overnight/decision-registry.py` returned rc 0 from every guard. The run edited that file for ~90 lines, noticed on its own, reverted, and filed the gap. Prose is not a gate.
 
@@ -23,7 +23,8 @@ The headless unattended run may not stop voluntarily. The work unit is the
 entire TODO queue; a blocker, hard failure, or operator-reserved decision is
 DEFERRED (`[/]` + Deferred stamp + XREF) and you ADVANCE. The only endings:
 oracle-verified `run_phase_guard.py fixpoint`, the operator's `run.sh stop`, or a
-verified `rollover`. Reviews are polled IN-SESSION (a blocking Bash `sleep`
+bounded run (`run.sh start --ships N`) that shipped its sections. A verified
+`rollover` does not end the session: it goes straight on. Reviews are polled IN-SESSION (a blocking Bash `sleep`
 loop, ~0 tokens) -- the runner never exits to wait. The heartbeat restarts
 any death, so a voluntary exit accomplishes nothing. Remediation: re-invoke
 `Skill(overnight-sequencer)`, run `run_phase_guard.py status`, and continue
@@ -39,28 +40,9 @@ Three-tier answer order: todo/answers.md operator answer -> low-risk logged
 default -> defer. Doctrine: "Session-exit policy" tier list.
 
 ### SEQ-TEARDOWN
-Self-teardown blocked: the unattended run cannot disarm, clear guard state,
-fabricate the fixpoint sentinel, or stop its own services. Disarm is
-human-only: `bash scripts/run.sh stop`
-from an interactive session. Keep going.
-
-### SEQ-PHASE
-A sequence skill fired outside its phase. The per-file pipeline is
-PREFLIGHT -> TRIAGE -> VALIDATE -> GAP_AUDIT -> SECTIONS -> FILE_CLOSE ->
-ADVANCE; transition with `run_phase_guard.py phase <PHASE>` and re-invoke.
-Never bypass -- set the correct phase.
-
-### SEQ-LIFECYCLE
-A Stage 1-2 skill (validate-todo-file / gap-audit-todo / codex-gap-audit)
-fired on a mature cursor file (both `Validated:` + `Gap-audited:` preamble
-stamps; oracle `stages_1_2_done: true`). Doctrine Stage 0: skip Stages 1-2 --
-`run_phase_guard.py phase SECTIONS` and proceed. Exception (genuinely NEW
-`## N.` section since the stamps): `run_phase_guard.py relifecycle "<which>"`
-then re-invoke.
-
-### SEQ-REDIRECT
-Armed unattended run, not yet started: the only valid skill is
-`Skill(overnight-sequencer)`. Invoke it now.
+Self-teardown blocked: the unattended run cannot stop itself, clear guard state,
+fabricate the fixpoint sentinel, or kill its own tmux sessions. Stopping is
+human-only: `bash scripts/run.sh stop` from an interactive session. Keep going.
 
 ### SEQ-CODEX-WRITE
 A write-capable Codex dispatch (`task --write`, `--sandbox workspace-write`,
@@ -97,47 +79,6 @@ An identical analyst dispatch already ran over content-identical inputs; the
 cached report follows the code in the block message. Reuse it (verify
 load-bearing file:line claims as usual). Force a fresh run by changing the
 prompt; kill switch `AGENT_RESULT_CACHE_DISABLE=1`.
-
-## READ-* (read_cache_block.py)
-
-### READ-CACHED
-The requested line range of this file is already covered by an earlier read in
-this session, and the file is byte-identical since (sha256 match) -- so the
-content is still in context. Scroll up and reuse it; do not pay for a second
-copy, which is charged again in the cached prefix on every later turn.
-
-This does NOT fire for a re-read you actually need. Content changed, a failed
-Edit on the file, a compaction, a subagent's own read, a new session, a wider
-or non-overlapping slice, files under 2 KB, and image/PDF/notebook reads all
-pass untouched. If you need a different region, pass `offset`/`limit` for it.
-
-If the block is wrong anyway, it releases itself: the same request is blocked
-at most twice, then allowed. Operator escapes are `READ_CACHE_DISABLE=1`
-(session kill switch) and the one-shot file `.claude/state/read-cache-override`.
-
-## AGENT-* (agent_coverage_gate.py)
-
-### AGENT-COVERED
-A read-only agent already mapped this file earlier in the session and its report
-covers it, so reading the whole file again is the "dispatch ADDS a layer" pattern
-CLAUDE.md forbids. Reuse the report.
-
-WARNs twice, then BLOCKs. A **slice read is always allowed** -- `Read(offset,
-limit)` is the trust-contract verification read (confirming one finding at
-file:line before acting), which this gate deliberately protects; only unbounded
-whole-file re-reads are gated. Subagents, other sessions, non-covering agent
-types, and any path the agent never touched are all exempt.
-
-Kill switch: `AGENT_COVERAGE_DISABLE=1`.
-
-## FORK-* (fork_context_guard.py)
-
-### FORK-CONTEXT
-A `fork` dispatch was refused because the parent context is above 150K tokens. A fork inherits this session's whole conversation and model and re-reads that context on every turn, so a fork from a large Opus session costs several times a named Sonnet agent doing the same legwork (measured 2026-09-29: ~$8 against ~$1).
-
-Dispatch a named agent (section-context-mapper, kernel-explorer, a researcher) with a self-contained prompt instead. When the task genuinely needs this conversation, re-dispatch the fork with `[fork-ok: <reason>]` in its prompt. Small-context forks are never refused.
-
-Kill switch: `FORK_CONTEXT_GUARD_DISABLE=1`.
 
 ## SEARCH-* (search_offload_gate.py) -- RETIRED 2026-07-28
 

@@ -7,7 +7,7 @@ changed definitions/callers/includers/tests, the concurrency surface (locks,
 atomics, IRQ state, allocations/frees, refcounts, teardown), user-pointer
 boundaries, SSDT/syscall/ABI touchpoints, and cppcheck's static findings. This
 tool produces all of it deterministically so the mapper dispatch can be replaced
-by a content-bound receipt (see review_dispatch_gate); the Opus/Sonnet JUDGMENT
+by a content-bound receipt; the Opus/Sonnet JUDGMENT
 nets (kernel-quality-auditor, adversarial Codex) are unchanged -- this bounds the
 EVIDENCE GATHERING, never the review verdicts.
 

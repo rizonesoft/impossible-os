@@ -41,8 +41,6 @@ python3 .claude/hooks/run_phase_guard.py <cmd>
   next-pass               start the next full sweep (resets progress)
   fixpoint                run complete -> the session may end, the heartbeat exits
   status                  print the cursor state
-  relifecycle <reason>    one-shot Stage 1-2 override for a mature file that
-                          grew a genuinely NEW section
   rollover                verified checkpoint after a fully shipped section
                           (machine-gated; then go straight on -- see below)
 ```
@@ -103,8 +101,7 @@ re-polls). The fix is one blocking call, no narration:
 bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: design] <todo> <body>'
 #    -> returns {logFile: ...}; works for design/adversarial/consistency/perf.
 # 2. Wait with the CANONICAL waiter (B1) in ONE LONG call (R3, 2026-07-19).
-#    The headless shape is MANDATORY (codex_wait_discipline.py BLOCKs short
-#    polls): `--max 540` AND the Bash tool parameter `timeout: 600000` -- the
+#    Use the long shape: `--max 540` AND the Bash tool parameter `timeout: 600000` -- the
 #    tool's ~120s default kill would otherwise end the wait early (B1). The
 #    script exits the moment every verdict lands, so the long bound is FREE
 #    when the review is already done. Measured cost of the short-poll loop
@@ -157,8 +154,8 @@ bash scripts/overnight/wait-for-codex-verdict.sh --max 540 <logFile>   # + tool 
   five retries (10 calls, ~4m20s) before the run reached this conclusion by hand.
 - **Every review prompt starts with a LITERAL `[review-kind: X]`** -- never
   `"$(cat file)"`, `"$VAR"` or a loop variable, which expand only at run time so
-  the recorder attributes nothing (`review_kind_literal_required` refuses them;
-  measured 2026-09-05: a five-leg approved wave re-dispatched).
+  the recorder attributes nothing (measured 2026-09-05: a five-leg approved wave
+  re-dispatched).
 - **Receive ONCE per WAVE, not once per leg (T1-2b).** A wave is the set of legs
   dispatched together and waited on together. Wait for all of them, read the ONE
   combined envelope, then apply `superpowers:receiving-code-review` ONCE across
@@ -262,15 +259,14 @@ needed, records the green stamp, and queries CI directly via `gh run list`
     fixpoint; never final-answer otherwise (the Stop hook blocks it).
   - `{"status":"NEEDS_WORK","file":F}` -> `cursor <domain> F`, then **route by
     the `stages_1_2_done` field IN THE SAME JSON -- never re-run mature
-    lifecycle stages** (the guard hard-blocks Stage 1-2 skills on a file that
-    carries both preamble stamps):
+    lifecycle stages** on a file that carries both preamble stamps:
     - `"stages_1_2_done": true` -> `phase SECTIONS` directly. Do NOT re-run
       validate/gap-audit (each costs a Codex pass) on a mature file.
     - `false` with `lifecycle.validated: true` only -> `phase GAP_AUDIT`
       (skip the already-stamped VALIDATE).
     - `false` with neither stamp -> `phase VALIDATE` and run both stages.
-    - Exception: a genuinely NEW `## N.` section since the stamps ->
-      `run_phase_guard.py relifecycle "<which section>"` then run Stages 1-2.
+    - Exception: a genuinely NEW `## N.` section since the stamps -> run
+      Stages 1-2 for it.
   - `{"status":"DONE_UNSTAMPED","file":F}` -> `cursor <domain> F`; skip
     VALIDATE+GAP_AUDIT, go straight to SECTIONS (review-only; the file is
     implemented, just unstamped old-system work).

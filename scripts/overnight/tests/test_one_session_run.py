@@ -70,6 +70,8 @@ def test_a_dead_session_restarts_with_continue_and_alerts():
         assert "new-session" in calls and "--resume abc" in calls and "notified" in calls, calls
         assert "--continue" not in calls, "--continue could resume an attended session"
         assert "OVERNIGHT_SEQUENCER_RUN=1" in calls and "CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000" in calls
+        # ChromeMCP stays off for this repo's run (the systemd units set this until 2026-11-07).
+        assert "MCP_NO_AUTO_CHROME=1" in calls and "MCP_NO_AUTO_BRIDGE=1" in calls, calls
 
 
 def test_an_id_that_never_became_a_conversation_starts_fresh():
@@ -154,9 +156,12 @@ def test_refusal_every_frozen_file_is_refused_through_the_whole_path():
         for rel in sorted(gate.FROZEN):
             target = str(REPO / rel)
             allow, msg = g.evaluate("Edit", {"file_path": target}, state, armed=True,
-                                    headless=True, stages_done=False, ship_pending="")
-            assert not allow, rel
-            assert not g._refusal_is_only_logged(msg, {"file_path": target}), rel
+                                    headless=True)
+            assert not allow and msg.startswith("[SEQ-CONTROL-PLANE]"), rel
+        # The rest of the machinery is the run's to repair.
+        allow, _ = g.evaluate("Edit", {"file_path": str(REPO / ".claude/hooks/section_commit_gate.py")},
+                              state, armed=True, headless=True)
+        assert allow
     finally:
         del os.environ["OVERNIGHT_SEQUENCER_RUN"]
 

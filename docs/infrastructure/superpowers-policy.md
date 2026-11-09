@@ -10,7 +10,7 @@ The `superpowers@claude-plugins-official` plugin (5.0.7) ships 14 skills under `
 | Skill | Verdict | Rationale |
 |---|---|---|
 | `using-superpowers` | **MANDATORY (auto-loads at session start)** | Load-bearing primer; teaches the skill-invocation discipline the rest of the system depends on. Never disable. |
-| `receiving-code-review` | **MANDATORY (hook-enforced)** | Wired into all 9 in-repo `codex-*` skills + the `receiving_review_required.py` PreToolUse hook. Verifies every Codex finding at file:line with Fix/Reject/Accept rigor before any code edit. Already in CLAUDE.md "Mandatory Skill Triggers." |
+| `receiving-code-review` | **MANDATORY** | Wired into all 9 in-repo `codex-*` skills (the `receiving_review_required.py` hook that enforced it was deleted 2026-11-09). Verifies every Codex finding at file:line with Fix/Reject/Accept rigor before any code edit. Already in CLAUDE.md "Mandatory Skill Triggers." |
 | `verification-before-completion` | **MANDATORY (skill-wired)** | Wired into `review-todo-section` step 15.5 and `complete-todo-file` Execution Discipline. Closes the "claims without re-running build/tests/lint" failure mode (`feedback_never_skip_review`). New CLAUDE.md row added by this audit. |
 | `systematic-debugging` | **MANDATORY (when triggered)** | Bug / test-failure / unexpected-behavior signal must trigger this skill BEFORE proposing fixes. Repo's `debug-session` skill cross-references it. New CLAUDE.md row added by this audit. |
 | `dispatching-parallel-agents` | **Useful (advisory)** | Referenced from `review-todo-section` step 8 to dispatch the consistency + perf Codex reviews in parallel. Use whenever 2+ tool calls are independent and parallelizable. No hook gate; agent discipline. |

@@ -62,7 +62,7 @@ scripts/overnight/
 # SKIP_* opt-out for any command carrying a heredoc with an apostrophe, and
 # nothing in the control plane would have caught it. Importer counts at filing:
 # _skip_env 8, _review_kind 5, _codex_dispatch 5, _advisory_budget 4,
-# _heuristic_misses 3, _review_pipeline_passthrough 1.
+# _heuristic_misses 3.
 # Same hole, same shape, as `.claude/settings.json` earlier the same day: the
 # wiring is as load-bearing as the thing wired. All flow-critical by the
 # default-conservative rule -- "an opt-out stopped working" is precisely the
@@ -71,22 +71,9 @@ scripts/overnight/
 .claude/hooks/_skip_env.py
 .claude/hooks/_review_kind.py
 .claude/hooks/_codex_dispatch.py
-.claude/hooks/review_kind_literal_required.py
 .claude/hooks/_advisory_budget.py
 .claude/hooks/_heuristic_misses.py
-.claude/hooks/_review_pipeline_passthrough.py
 
-# Enforcement gates whose weakening could let unreviewed/unexplored work through
-.claude/hooks/agent_dispatch_required.py
-.claude/hooks/review_dispatch_gate.py
-
-# Cost gates (R2/R3/R4, 2026-07-19): block-capable hooks in the headless run --
-# a false-positive wedge is a run-breaking failure mode, so their edits gate on
-.claude/hooks/receipt_surface_guard.py
-# the suite (tests: test_build_offload_reminder.py, test_wait_websearch_gates.py)
-.claude/hooks/build_offload_reminder.py
-.claude/hooks/codex_wait_discipline.py
-.claude/hooks/websearch_offload_gate.py
 scripts/overnight/stale_parks.py
 scripts/overnight/skill_denies.py
 scripts/overnight/supervisor.py

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contract tests for run_phase_guard.py rollover + lifecycle routing.
+"""Contract tests for run_phase_guard.py rollover + self-teardown.
 Runs the guard from a FIXTURE repo (the hook resolves repo_root from its own
 location) so real run state is never touched. (The structural-wait verbs were
 removed 2026-07-11; reviews are polled in-session, not exit-and-waited.)
@@ -78,32 +78,6 @@ def test_rollover_refused_on_dirty_or_unpushed():
         assert r.returncode == 2
 
 
-def test_lifecycle_routing_block_and_override():
-    with tempfile.TemporaryDirectory() as d:
-        fx = _mk_fixture(pathlib.Path(d))
-        _guard(fx, "start", "2026-07-11")
-        _guard(fx, "cursor", "00-infrastructure",
-               "todo/00-infrastructure/TODO-01-fixture.md")
-        _guard(fx, "phase", "VALIDATE")
-        payload = json.dumps({"tool_name": "Skill",
-                              "tool_input": {"skill": "validate-todo-file"}})
-        # mature file (both stamps) -> Stage 1-2 skill blocked
-        r = _guard(fx, "pretool", env_extra=HEADLESS, stdin=payload)
-        assert r.returncode == 2 and "SEQ-LIFECYCLE" in r.stderr
-        # relifecycle override -> allowed once, then consumed
-        r = _guard(fx, "relifecycle", "new section 2 appeared in fixture")
-        assert r.returncode == 0
-        r = _guard(fx, "pretool", env_extra=HEADLESS, stdin=payload)
-        assert r.returncode == 0, r.stderr
-        state = json.loads((fx / ".claude/state/sequencer-run.json").read_text())
-        assert "lifecycle_override" not in state
-        r = _guard(fx, "pretool", env_extra=HEADLESS, stdin=payload)
-        assert r.returncode == 2  # consumed: blocked again
-        # interactive session never blocked
-        r = _guard(fx, "pretool", stdin=payload)
-        assert r.returncode == 0
-
-
 def test_self_teardown_word_boundary():
     # _is_self_teardown must not let the substring "kill " alias inside the
     # word "skill ": a headless Bash command mentioning a skill and a .claude/
@@ -132,6 +106,5 @@ def test_self_teardown_word_boundary():
 
 if __name__ == "__main__":
     test_rollover_refused_on_dirty_or_unpushed()
-    test_lifecycle_routing_block_and_override()
     test_self_teardown_word_boundary()
-    print("PASS: phase-guard rollover/lifecycle/self-teardown")
+    print("PASS: phase-guard rollover/self-teardown")

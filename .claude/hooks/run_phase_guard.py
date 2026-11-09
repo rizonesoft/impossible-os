@@ -1,35 +1,34 @@
 #!/usr/bin/env python3
 """
-run_phase_guard.py -- the overnight sequencer's no-deviation phase machine.
+run_phase_guard.py -- the unattended run's stop guard, safety refusals and cursor.
 
-Enforces the per-file pipeline from todo/TODO-Claude-Overnight-Runner.md so an
-unattended `bypassPermissions` run physically cannot skip a stage, reorder the
-sequence, ask a human, or stop before fixpoint.
+Keeps the run's one session (todo/TODO-Claude-Overnight-Runner.md) from asking a
+human, tearing itself down, or stopping before fixpoint, and records where it is.
 
 Roles (dispatched on argv[1]):
   pretool   PreToolUse hook: reads {tool_name, tool_input} on stdin.
             exit 0 = allow, exit 2 + stderr = BLOCK.
-  stop      Stop hook: for the headless unattended run (env discriminator
-            OVERNIGHT_SEQUENCER_RUN=1) while ARMED and not at FIXPOINT, exit 2
-            keeps it going so it physically cannot voluntarily stop -- ONLY the
-            human's `--disarm` (which removes the armed marker) ends it. The
-            watchdog handles real death. Interactive sessions (env unset) are
-            never blocked, so the operator is never trapped in the repo.
+  stop      Stop hook: for the unattended run (env discriminator
+            OVERNIGHT_SEQUENCER_RUN=1, set by scripts/run.sh) while the run
+            marker exists and the run is not at FIXPOINT, exit 2 keeps the one
+            session working. Only the operator's `run.sh stop` (which removes
+            the marker) ends it; the heartbeat restarts a dead session.
+            Interactive sessions (env unset) are never blocked.
   CLI      start / status / phase / cursor / progress / next-pass / fixpoint /
-            clear / selftest / relifecycle / rollover -- the
-            overnight-sequencer skill drives phase transitions (and verified
-            context rotations) through these.
+            clear / ship-limit-reached / rollover / selftest -- the
+            overnight-sequencer skill records its position and verifies each
+            shipped section's checkpoint through these.
 
 State (run cursor only; deferrals live in the TODO files, not here):
   .claude/state/sequencer-run.json
     {active, phase, pass_no, domain, file, section_idx, progress_this_pass,
      started_at, updated_at}
 
-The phase-guard governs the OUTER sequence (you cannot implement/review a
-section until the file passed VALIDATE + GAP_AUDIT; you cannot re-validate
-mid-section; AskUserQuestion is never allowed). The INNER per-section pipeline
-(Codex dispatches, build/test, commit gates) is governed by the existing
-within-section hooks -- this guard does not micro-manage it.
+The refusals that remain are safety checks: no AskUserQuestion, no self-teardown,
+no git worktree mutation, no Codex write, and no edit to a frozen file
+(.claude/hooks/gate.py FROZEN). The phase and cursor are a record the skill keeps,
+not an enforced order: the process gates that enforced it were deleted on
+2026-11-09, after a watched run showed nothing depended on them.
 """
 import json
 import os
@@ -53,14 +52,9 @@ def repo_root():
 
 
 STATE_PATH = repo_root() / ".claude/state/sequencer-run.json"
-# Written by arm-sequencer.sh; present means "an unattended sequencer run is
-# armed". This is the PERSISTENT MASTER SWITCH: it stays on disk for the entire
-# run (it is NOT removed when the run goes active) and is cleared ONLY by the
-# human's `--disarm` or by an oracle-verified FIXPOINT. While armed, every fresh
-# watchdog-spawned agent is redirected onto overnight-sequencer and cannot
-# voluntarily stop. This is what makes the death-thrash impossible: even if the
-# run cursor (sequencer-run.json) is reset to inactive out from under the guard,
-# the marker keeps the headless run alive and guarded until the operator disarms.
+# Written by `scripts/run.sh start` and removed by `run.sh stop` or an
+# oracle-verified FIXPOINT. Present means a run is live, so the Stop hook keeps
+# its session working even if the cursor was reset to inactive.
 ARMED_MARKER = repo_root() / ".claude/state/sequencer-armed"
 # Written ONLY by `run_phase_guard.py fixpoint` AFTER the triage oracle confirms
 # zero remaining work. The headless run's Stop is blocked unless this exists, so
@@ -72,14 +66,13 @@ FIXPOINT_SENTINEL = repo_root() / ".claude/state/sequencer-fixpoint"
 
 
 def is_headless():
-    """True only inside the unattended systemd-launched run.
+    """True only inside the unattended run's session.
 
-    arm-sequencer.sh writes Environment=OVERNIGHT_SEQUENCER_RUN=1 into the
-    systemd unit drop-in, so the headless `claude -p` process and all its hook
-    subprocesses see it; an interactive operator session in the same repo does
-    NOT. This is the load-bearing discriminator: the guard governs ONLY the
-    headless run, so it can be absolute there (no stopping, no self-disarm)
-    while never trapping the human who shares the repo's settings.json hooks.
+    scripts/overnight/run-common.sh starts that session with
+    OVERNIGHT_SEQUENCER_RUN=1, so it and its hook subprocesses see it; an
+    interactive operator session in the same repo does not. The guard governs
+    only the run, so it can be absolute there while never trapping the human
+    who shares the repo's settings.json hooks.
     """
     return os.environ.get("OVERNIGHT_SEQUENCER_RUN") == "1"
 
@@ -222,9 +215,6 @@ def _failed_section_leftovers(root):
 
 def _is_self_teardown(cmd):
     c = " ".join(_strip_git_message_bodies(cmd or "").split())
-    # Disarm via either wrapper.
-    if ("arm-sequencer.sh" in c or "overnight-arm.sh" in c) and "--disarm" in c:
-        return True
     # Guard CLI used to fake completion or wipe the cursor (fixpoint excluded).
     # Deliberately a whole-command substring, prose included. Narrowing it was tried
     # and rejected at the v22 close-out: three review rounds each found a shape that
@@ -239,9 +229,7 @@ def _is_self_teardown(cmd):
         return True
     if "tmux" in c and "kill" in c and "impossible-os" in c:
         return True
-    # Stopping/disabling the systemd units or killing the headless claude.
-    if "systemctl" in c and any(op in c for op in ("stop", "disable", "kill")) and "overnight" in c:
-        return True
+    # Killing the run's claude process.
     if re.search(r"\b(pkill|killall|kill)\b", c) and "claude" in c:
         return True
     return False
@@ -480,25 +468,14 @@ def _is_worktree_mutation(cmd):
 PHASES = ["PREFLIGHT", "TRIAGE", "VALIDATE", "GAP_AUDIT", "SECTIONS",
           "FILE_CLOSE", "ADVANCE", "FIXPOINT"]
 
-# Skills the sequencer's OUTER pipeline controls. A controlled skill may only
-# run in a phase whose allow-set lists it; any other controlled skill in the
-# wrong phase is a deviation -> BLOCK. Skills NOT in this set (the inner-pipeline
-# helpers implement/review invoke) pass freely -- the within-section gates own
-# them.
-SEQUENCE_SKILLS = {
-    "validate-todo-file", "gap-audit-todo", "codex-gap-audit",
-    "implement-todo-section", "implement-todo-item", "implement-ssdt-range",
-    "review-todo-section", "verify-todo-section", "complete-todo-file",
-    "overnight-todo-runner",  # legacy System A: never inside a sequencer run
-}
-
+# The skills each phase of the pipeline uses. Not enforced: it is the list
+# scripts/overnight/skill_denies.py reads, so `run.sh start` can refuse a
+# permission deny on a skill the run needs.
 PHASE_ALLOWED_SKILLS = {
     "PREFLIGHT": set(),
     "TRIAGE": set(),
     "VALIDATE": {"validate-todo-file"},
     "GAP_AUDIT": {"gap-audit-todo", "codex-gap-audit"},
-    # SECTIONS allows the per-section drivers; their internal pipeline skills
-    # are not in SEQUENCE_SKILLS so they pass freely.
     "SECTIONS": {"implement-todo-section", "implement-todo-item",
                  "implement-ssdt-range", "review-todo-section",
                  "verify-todo-section"},
@@ -507,26 +484,6 @@ PHASE_ALLOWED_SKILLS = {
     "ADVANCE": set(),
     "FIXPOINT": set(),
 }
-
-# Stage 1-2 skills, blocked on a cursor file that already carries BOTH
-# file-preamble stamps (`> **Validated:**` + `> **Gap-audited:**`). The oracle
-# reports this as `stages_1_2_done: true`; doctrine Stage 0 says SKIP straight
-# to SECTIONS. Re-running them (each with a Codex pass) on a mature file was
-# the single largest source of unnecessary phases. Escape hatch for the
-# genuinely-new-section case: `run_phase_guard.py relifecycle <reason>` sets a
-# one-shot override consumed by the next Stage 1-2 skill invocation.
-LIFECYCLE_SKILLS = {"validate-todo-file", "gap-audit-todo", "codex-gap-audit"}
-
-# R1 (2026-07-19): the skills that START a new section work unit. When a
-# ship-stamp commit postdates the last verified rotation, invoking any of
-# these in the SAME worker is the un-rotated section-to-section advance the
-# flow invariant forbids -- the only legal next step is `rollover`. The
-# review/close skills are deliberately NOT here: review-todo-section MUST run
-# post-ship (it writes the stamps), and complete-todo-file closes the file
-# in-session (the cursor gate still forces rotation before the next file).
-R1_SECTION_STARTERS = {"implement-todo-section", "implement-todo-item",
-                       "implement-ssdt-range"}
-
 
 def load_state():
     if not STATE_PATH.exists():
@@ -555,12 +512,24 @@ def _skill_name(tool_input):
     return tool_input.get("skill") or tool_input.get("name") or ""
 
 
-# Control-plane roots the unattended run may not edit. `.claude/state/**` is
-# excluded on purpose -- it is the run's own notebook, not its machinery.
+# Where the run's machinery lives. `.claude/state/**` is excluded on purpose: it
+# is the run's own notebook. Of these paths the run may edit all but the frozen
+# files in .claude/hooks/gate.py, which recover from every other mistake.
 _CONTROL_PLANE_ROOTS = (
     ".claude/hooks/", ".claude/skills/", "scripts/overnight/", ".githooks/",
 )
 _CONTROL_PLANE_FILES = (".claude/settings.json", "scripts/run.sh")
+
+
+def _frozen_paths():
+    """gate.FROZEN, or None when it cannot be read."""
+    try:
+        sys.path.insert(0, str(HOOK_DIR))
+        import gate
+        return gate.FROZEN
+    except Exception:
+        # fail-direction: None makes every control-plane path count as frozen
+        return None
 
 
 def _control_plane_path(target: str):
@@ -587,20 +556,12 @@ def _control_plane_path(target: str):
     return None
 
 
-def evaluate(tool_name, tool_input, state, armed=False, headless=False,
-             stages_done=False, ship_pending=""):
+def evaluate(tool_name, tool_input, state, armed=False, headless=False):
     """Return (allow: bool, message: str). Pure -- unit-testable.
 
-    The guard governs ONLY the headless unattended run. An interactive operator
-    session (headless=False) is never constrained -- it can ask, stop, and run
-    --disarm freely. This is what lets the human share the repo's hooks without
-    being trapped by the run cursor on disk.
-
-    `stages_done` is the cursor file's `stages_1_2_done` verdict (computed by
-    the caller only when the tool is a Stage 1-2 skill; False otherwise).
-    `ship_pending` is the sha of a ship-stamp commit newer than the last
-    verified rotation ("" if none; computed by the caller only when the tool
-    is an R1 section-starter skill).
+    The guard governs ONLY the unattended run. An interactive operator session
+    (headless=False) is never constrained: it can ask, stop and repair freely,
+    which is what lets the human share the repo's hooks.
     """
     if not headless:
         return True, ""
@@ -616,28 +577,21 @@ def evaluate(tool_name, tool_input, state, armed=False, headless=False,
             "defer ([/] + Deferred awaiting-answer + XREF) and advance. "
             "Details: docs/infrastructure/hook-codes.md#seq-ask")
 
-    # The unattended run may not edit its own CONTROL PLANE. Until 2026-08-07
-    # this was documentation only: the doctrine says it in three places, the
-    # capture files repeat it, and NOTHING enforced it -- an Edit on
-    # scripts/overnight/decision-registry.py returned rc 0 from every guard.
-    # The run edited that file for ~90 lines before noticing on its own and
-    # reverting, then filed the gap. Prose is not a gate.
-    #
-    # `.claude/state/**` is deliberately NOT covered: that is run STATE, which
-    # the run writes constantly (gotcha cards, receipts, cursors). The rule is
-    # about the machinery that DECIDES, not the notes it keeps.
+    # The frozen files recover from every other mistake, so the run may not edit
+    # them. The rest of its machinery it may repair, with a test (2026-11-07).
     if tool_name in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
         _target = (tool_input.get("file_path") or tool_input.get("path")
                    or tool_input.get("notebook_path") or "")
         _cp = _control_plane_path(_target)
-        if _cp:
+        _frozen = _frozen_paths()
+        if _cp and (_frozen is None or _cp in _frozen):
             return False, (
                 f"[SEQ-CONTROL-PLANE] blocked: `{_cp}` is frozen, because it "
                 f"recovers from every other mistake. Add the problem to "
                 f"todo/RUN-ISSUES.md and continue. "
                 f"Details: docs/infrastructure/hook-codes.md#seq-control-plane")
 
-    # The unattended run must never tear itself down. Disarm/clear/stop is a
+    # The unattended run must never tear itself down. Clear/stop is a
     # human-only operation, performed from an interactive session (where the
     # OVERNIGHT_SEQUENCER_RUN discriminator is absent and this guard is inert).
     if tool_name == "Bash" and _is_self_teardown(tool_input.get("command", "")):
@@ -669,110 +623,8 @@ def evaluate(tool_name, tool_input, state, armed=False, headless=False,
             "operator's interactive rescue. "
             "Details: docs/infrastructure/hook-codes.md#seq-codex-write")
 
-    # Armed but not yet started: force the redirect onto overnight-sequencer.
-    if not active and armed:
-        if tool_name == "Skill":
-            sk = _skill_name(tool_input)
-            if sk == "overnight-sequencer":
-                return True, ""
-            return False, (
-                "[SEQ-REDIRECT] armed run: invoke Skill(overnight-sequencer) "
-                "now (no other skill first). "
-                "Details: docs/infrastructure/hook-codes.md#seq-redirect")
-        return True, ""  # Bash / Read / Grep / Glob allowed for setup
-
-    # Active run: phase enforcement. (AskUserQuestion already handled above.)
-    phase = state.get("phase", "PREFLIGHT")
-
-    # Lifecycle routing (Stage 0): a mature file (both preamble stamps) never
-    # re-runs Stage 1-2 -- the oracle already said so via stages_1_2_done, and
-    # honoring it removes whole VALIDATE/GAP_AUDIT phases (each with a Codex
-    # pass). One-shot escape: `relifecycle <reason>` for a genuinely new
-    # `## N.` section (doctrine Stage 0 exception).
-    if tool_name == "Skill":
-        sk = _skill_name(tool_input)
-        if (sk in LIFECYCLE_SKILLS and stages_done
-                and not state.get("lifecycle_override")):
-            return False, (
-                f"[SEQ-LIFECYCLE] Skill({sk}) blocked: cursor file is mature "
-                "(both preamble stamps). Run `run_phase_guard.py phase "
-                "SECTIONS` and proceed; for a genuinely NEW section, "
-                "`relifecycle \"<which>\"` first. "
-                "Details: docs/infrastructure/hook-codes.md#seq-lifecycle")
-
-    # Sequence-skill ordering: a controlled skill may only fire in a phase
-    # that allows it.
-    if tool_name == "Skill":
-        sk = _skill_name(tool_input)
-        if sk in SEQUENCE_SKILLS and sk not in PHASE_ALLOWED_SKILLS.get(phase, set()):
-            allowed = sorted(PHASE_ALLOWED_SKILLS.get(phase, set())) or ["(none)"]
-            return False, (
-                f"[SEQ-PHASE] Skill({sk}) out of sequence in {phase} "
-                f"(allowed: {', '.join(allowed)}). Set the correct phase via "
-                "`run_phase_guard.py phase <PHASE>` and re-invoke. "
-                "Details: docs/infrastructure/hook-codes.md#seq-phase")
-
-    # R1 (2026-07-19): rollover-required-after-ship, at the SECTION-START
-    # chokepoint. The cursor verb only sees FILE-to-file moves (the SECTIONS
-    # loop never re-calls `cursor` between sections of one file -- review
-    # 2026-07-19 finder C), so the enforcement lives here: starting a NEW
-    # section work unit after an un-rotated ship is blocked. Deferrals leave
-    # no ship stamp; the fresh post-rotation worker's ship predates its
-    # last_rollover_epoch -- both pass.
-    if tool_name == "Skill" and ship_pending:
-        sk = _skill_name(tool_input)
-        if sk in R1_SECTION_STARTERS:
-            return False, (
-                f"[SEQ-R1] Skill({sk}) blocked: ship-stamp commit "
-                f"{ship_pending[:12]} landed after the last verified rotation. "
-                "A fully-shipped section ENDS the worker context: run "
-                "`python3 .claude/hooks/run_phase_guard.py rollover` and END "
-                "the turn -- the watchdog relaunches a fresh worker that "
-                "resumes at the next section. Operator override: "
-                "`run_phase_guard.py clear`.")
-
-    # Everything else (Bash, Edit, Write, Read, Grep, Glob, inner-pipeline
-    # skills) passes -- the within-section gates govern it.
+    # Everything else passes.
     return True, ""
-
-
-def _cursor_stages_done(state):
-    """Live stages_1_2_done verdict for the cursor file, via the triage
-    oracle's file_lifecycle. Fail-open (False) on any error -- a broken
-    oracle must not block Stage 1-2 work."""
-    rel = state.get("file")
-    if not rel:
-        return False
-    try:
-        sys.path.insert(0, str(HOOK_DIR))
-        import sequencer_triage
-        lc = sequencer_triage.file_lifecycle(str(repo_root() / rel))
-        return bool(lc.get("validated") and lc.get("gap_audited"))
-    except Exception:
-        return False
-
-
-def _refusal_is_only_logged(msg, tool_input):
-    """A process refusal whose gate is in `log` mode: record it and let the call go.
-    A frozen path stays refused whatever the data file says. Any doubt refuses."""
-    code = re.match(r"\[(SEQ-[A-Z0-9-]+)\]", msg or "")
-    if not code:
-        return False
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        import gate
-    except Exception:
-        return False  # fail-direction: without the helper every gate is enforced
-    if code.group(1) == "SEQ-CONTROL-PLANE":
-        target = (tool_input.get("file_path") or tool_input.get("path")
-                  or tool_input.get("notebook_path") or "")
-        if _control_plane_path(target) in gate.FROZEN:
-            return False
-    root = repo_root()
-    if gate.mode_of(code.group(1), root) != "log":
-        return False
-    gate.log_refusal(root, code.group(1), msg)
-    return True
 
 
 def handle_pretool():
@@ -783,50 +635,20 @@ def handle_pretool():
     tool_name = d.get("tool_name", "")
     tool_input = d.get("tool_input", {})
     state = load_state()
-    stages_done = False
-    if (is_headless() and state.get("active") and tool_name == "Skill"
-            and _skill_name(tool_input) in LIFECYCLE_SKILLS):
-        stages_done = _cursor_stages_done(state)
-    ship_pending = ""
-    if (is_headless() and state.get("active") and tool_name == "Skill"
-            and _skill_name(tool_input) in R1_SECTION_STARTERS):
-        ship_pending = _ship_stamp_since(repo_root(),
-                                         state.get("last_rollover_epoch"))
     allow, msg = evaluate(tool_name, tool_input, state,
-                          armed=ARMED_MARKER.exists(),
-                          headless=is_headless(), stages_done=stages_done,
-                          ship_pending=ship_pending)
+                          armed=ARMED_MARKER.exists(), headless=is_headless())
     if allow:
-        # Consume the one-shot relifecycle override when a Stage 1-2 skill
-        # actually fires against a mature file under it.
-        if (stages_done and state.get("lifecycle_override")
-                and tool_name == "Skill"
-                and _skill_name(tool_input) in LIFECYCLE_SKILLS):
-            state.pop("lifecycle_override", None)
-            save_state(state)
-        return 0
-    if _refusal_is_only_logged(msg, tool_input):
         return 0
     sys.stderr.write(msg)
     return 2
 
 
-# ---- verified rollover (context rotation) ----------------------------------
+# ---- verified checkpoint after a shipped section -------------------------------
 #
-# ROLLOVER: after a section is shipped+reviewed+pushed+stamped, a fresh worker
-# context is cheaper than a long-tail one. `rollover` machine-verifies the
-# checkpoint (clean tree, pushed, graph rebuild OK, content-bound receipts, no
-# outstanding jobs) and only then permits ONE clean session exit; the *:0/10
-# watchdog relaunches a fresh session on its next tick. The RUN stays active --
-# only the worker context rotates (doctrine: run-active vs context-rotates).
-# There is NO custom relaunch watcher: the watchdog is the sole, systemd-owned
-# relaunch mechanism (the structural-wait watcher apparatus was removed
-# 2026-07-11 after it deadlocked the runner -- a session polling a review
-# in-session in a single blocking Bash call costs ~0 tokens, so exit-and-wake
-# was solving a non-problem while adding a fatal process-lifecycle bug class).
-
-ROLLOVER_PENDING_FRESH_S = 1800  # stale pending flags stop permitting stops
-
+# `rollover` machine-verifies the checkpoint a shipped section leaves (clean tree,
+# pushed, graph rebuild OK, content-bound receipts, no outstanding jobs). The name
+# is historical: the session no longer ends there. It goes straight on in-session,
+# and compaction manages the context (2026-11-07).
 
 # B4/F2: deterministically-regenerated auto-gen docs. The runner's own
 # full-suite / graph runs rewrite these, dirtying the tree; blocking the rollover
@@ -1270,313 +1092,6 @@ def _unpushed_count(root: Path):
         return None
 
 
-# A4 (review 2026-07-14 round 2): the review-gate's own definition of a ship stamp
-# (kept in sync with section_commit_gate._STAMP_ADDED_RE). A section-SHIP/stamp
-# commit adds a `**Verified:**` / `**Quality reviewed:**` line to a todo/ file.
-_SHIP_STAMP_RE = re.compile(r"^\+\s{0,3}(?:>\s*)+\*\*(Verified|Quality reviewed):\*\*")
-
-
-def _head_adds_ship_stamp(root: Path):
-    """A4: True if the UNPUSHED range adds a review ship-stamp to a todo/ file --
-    i.e. the section has SHIPPED and must use the full `rollover`, not the weaker
-    WIP path. Keys on the definitive stamp the review-gate recognizes rather than
-    the loose section_idx (a display value only). Closes the stamped-but-not-yet-
-    pushed window the unpushed>0 guard cannot see (progress/section_shipped is only
-    set post-push).
-
-    A7 (recorded 2026-07-14 as an unattended-arm gate, HIGH; closed 2026-07-30).
-    Two defects, both of which let a shipped section take the WIP path:
-
-      - It examined ONLY `HEAD`. A stamp commit followed by an unpushed FIXUP
-        leaves `unpushed>0` while HEAD no longer shows the stamp, so the check
-        returned False and `rollover-wip` proceeded on a shipped section. Now the
-        CUMULATIVE `@{u}..HEAD` range is scanned, so any stamp anywhere in the
-        unpushed run is seen regardless of what landed after it.
-      - It failed OPEN (False) on a git error/timeout/nonzero exit. The pairing
-        argument ("the unpushed guard fail-CLOSES on the same error") does not
-        hold: `_unpushed_count` returning None refuses, but a git failure confined
-        to THIS call (a `--` pathspec error, a timeout under load) left the
-        unpushed count perfectly readable and this check silently permissive.
-        Now returns None for "unknown", which the caller REFUSES.
-
-    Returns True (stamped) / False (clean WIP) / None (undeterminable -> refuse).
-    Falls back to HEAD-only when there is no upstream, which is the one case where
-    a range is not defined; that fallback is itself fail-closed on error."""
-    def _scan(argv):
-        r = subprocess.run(["git", "-C", str(root), *argv, "--", "todo"],
-                           capture_output=True, text=True, timeout=20)
-        if r.returncode != 0:
-            return None
-        return any(_SHIP_STAMP_RE.match(ln) for ln in r.stdout.splitlines())
-    try:
-        upstream = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "@{u}"],
-            capture_output=True, text=True, timeout=10)
-        if upstream.returncode == 0 and upstream.stdout.strip():
-            return _scan(["log", "--format=%H", "-p", "@{u}..HEAD"])
-        # No upstream: a range is undefined, so fall back to HEAD alone. Note this
-        # MUST be `show`, not `log -1 <rev> -- <path>`: with a pathspec, `log -1`
-        # walks back to the newest commit that TOUCHES the path, so a stamp two
-        # commits back would be reported as if it were HEAD. Narrower than the
-        # range scan but still fail-closed on error, and the unpushed guard already
-        # refuses outright when it cannot resolve @{u}.
-        return _scan(["show", "--format=", "HEAD"])
-    except Exception:
-        return None
-
-
-def _ship_stamp_since(root: Path, epoch) -> str:
-    """R1 (2026-07-19): sha of a commit STRICTLY NEWER than `epoch` that adds a
-    review ship-stamp to a todo/ file, or '' if none. A ship-stamp commit after
-    the last verified rotation means the worker is about to advance un-rotated
-    (P3.2 only catches a REFUSED rollover; a never-ATTEMPTED one sailed through
-    -- measured 2026-07-19: multi-section sessions reached ~600K context and
-    cache reads were 75% of the night's cost). Bounded to the newest 30 commits
-    (a single worker session never ships more). Fail-open ('') on missing epoch
-    or any git error: a broken git / mid-migration state must not wedge the
-    cursor -- the Stop hook still holds the session either way."""
-    if not isinstance(epoch, (int, float)) or epoch <= 0:
-        return ""
-    try:
-        # One bounded walk over todo/-touching commits newer than the rotation
-        # (--since bounds the traversal itself, so this is cheap on the linear
-        # runner history; the python-side ct compare stays as the exact belt).
-        # Review 2026-07-19: the first cut walked `git log -30` + one `git
-        # show` per commit -- a fixed window unrelated commits could push the
-        # stamp out of, at up to 31 subprocess spawns per check.
-        since = time.strftime("%Y-%m-%dT%H:%M:%S +0000",
-                              time.gmtime(int(epoch)))
-        r = subprocess.run(["git", "-C", str(root), "log", "--since", since,
-                            "-n", "50", "--format=%H %ct", "--", "todo"],
-                           capture_output=True, text=True, timeout=10)
-        if r.returncode != 0:
-            return ""
-        for ln in r.stdout.splitlines():
-            parts = ln.split()
-            if len(parts) != 2:
-                continue
-            sha, ct = parts[0], int(parts[1])
-            if ct <= epoch:
-                continue  # same-second/older commit slipped the --since bound
-            show = subprocess.run(["git", "-C", str(root), "show", "--format=",
-                                   sha, "--", "todo"],
-                                  capture_output=True, text=True, timeout=10)
-            if show.returncode == 0 and any(
-                    _SHIP_STAMP_RE.match(l) for l in show.stdout.splitlines()):
-                return sha
-        return ""
-    except Exception:
-        return ""
-
-
-_REVIEW_RESOLUTION_REL = ".claude/state/last-review-resolution.json"
-
-
-def _build_suite_receipts_ok(root: Path):
-    """A5 (review 2026-07-14 round 2): (ok, why) for content-valid build + test
-    receipts over the CURRENT tree -- the 'owning green verification' a resolved
-    review boundary requires. Smoke is NOT required (a mid-section rotation is not
-    a ship; smoke stays on the full rollover). Fail-CLOSED."""
-    try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "overnight_receipts", str(root / "scripts/overnight/receipts.py"))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-    except Exception as exc:  # noqa: BLE001
-        return False, f"receipts.py unavailable ({exc})"
-    try:
-        ok, why = mod.check_build(root)
-        if not ok:
-            return False, f"build receipt not content-valid ({why})"
-        ok, why = mod.check_suite(root, "all")
-        if not ok:
-            return False, f"test receipt not content-valid ({why})"
-    except Exception as exc:  # noqa: BLE001
-        return False, ("build/test receipt missing (record with receipts.py after "
-                       f"a green build + test.sh) ({exc})")
-    return True, ""
-
-
-def _current_head(root: Path):
-    """Current HEAD sha, or None when unreadable. None must FAIL OPEN at every
-    caller (skip the check that needed it), never masquerade as a sha: two
-    unreadable reads comparing equal would refuse work on a broken repo."""
-    try:
-        out = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
-                             capture_output=True, text=True, timeout=10)
-        sha = out.stdout.strip()
-        return sha if out.returncode == 0 and sha else None
-    except Exception:
-        return None
-
-
-def _review_resolution_valid(root: Path):
-    """A5: (ok, why). A mid-section WIP rotation must stand on a RESOLVED review
-    cycle proven green at THIS HEAD, not merely a received:true bit. The
-    `review-resolved` verb writes a content-bound receipt {head, ...}; this requires
-    it to match the current HEAD. Fail-CLOSED (absent/stale/unreadable -> refuse)."""
-    try:
-        head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
-                              capture_output=True, text=True,
-                              timeout=10).stdout.strip()
-    except Exception:
-        return False, "cannot read HEAD (fail-closed)"
-    p = root / _REVIEW_RESOLUTION_REL
-    if not p.exists():
-        return False, ("no review-resolution receipt -- run `review-resolved` to "
-                       "prove the review cycle is resolved + green at this HEAD")
-    try:
-        rr = json.loads(p.read_text())
-    except (OSError, ValueError):
-        return False, "review-resolution receipt unreadable (fail-closed)"
-    if not head or rr.get("head") != head:
-        return False, (f"review-resolution receipt is for "
-                       f"{str(rr.get('head'))[:12]}, HEAD is {head[:12]} -- re-run "
-                       "`review-resolved` at HEAD after resolving the review cycle")
-    # A9 (HIGH, recorded 2026-07-14 as an unattended-arm gate; closed 2026-07-30).
-    # The receipt records `review_run_id` and NOTHING ever compared it. HEAD is not
-    # a sufficient binding on its own: a fix loop dispatches a NEW review round
-    # against the SAME commit all the time (receive -> fix -> commit --amend is not
-    # used, but a re-adversarial round on an unchanged HEAD is routine). The old
-    # receipt then still matched on `head` and certified the section as resolved
-    # while a newer review sat unreceived -- exactly the "stale receipt survives a
-    # newer review at the same HEAD" hole. Bind the receipt to the review round it
-    # attests, and fail-CLOSED when either side is missing or unreadable.
-    rec_run = str(rr.get("review_run_id") or "").strip()
-    if not rec_run:
-        return False, ("review-resolution receipt carries no review_run_id -- it "
-                       "cannot be bound to a review round; re-run `review-resolved`")
-    rs_path = root / ".claude/state/last-codex-review.json"
-    try:
-        rs_now = json.loads(rs_path.read_text()) if rs_path.exists() else {}
-    except (OSError, ValueError):
-        return False, "last-codex-review.json unreadable (fail-closed)"
-    cur_run = str((rs_now or {}).get("review_run_id") or "").strip()
-    if not cur_run:
-        return False, ("current review state carries no review_run_id -- cannot "
-                       "prove the resolution receipt is for the LATEST review")
-    if cur_run != rec_run:
-        return False, (f"review-resolution receipt is for review round "
-                       f"{rec_run[:12]}, but the latest review is {cur_run[:12]} -- "
-                       "a newer review round arrived at this same HEAD; receive and "
-                       "resolve it, then re-run `review-resolved`")
-    return True, ""
-
-
-def _write_section_checkpoint(root: Path) -> bool:
-    """Write the durable section checkpoint; return True iff it succeeded (rc==0).
-    Extracted so the F2 fail-closed behavior in rollover-wip is unit-testable."""
-    try:
-        cp = subprocess.run(
-            ["python3", str(root / "scripts/overnight/section-checkpoint.py"),
-             "write"], cwd=str(root), capture_output=True, timeout=30)
-        return cp.returncode == 0
-    except Exception:
-        return False
-
-
-def _review_not_binding_head(root: Path, rs: dict) -> str:
-    """F3 (C-RECV-class review 2026-07-14): return a failure string if the
-    received review's `trigger_blobs` do NOT match the current HEAD source, so a
-    stale received:true from a prior round cannot pass a WIP rotation as a
-    'reviewed' boundary. Every reviewed file must be present in the committed HEAD
-    with the exact blob the reviewer saw. Fail-CLOSED: empty blobs or a git error
-    is a failure."""
-    blobs = rs.get("trigger_blobs")
-    if not isinstance(blobs, dict) or not blobs:
-        return ("received review has no content binding (trigger_blobs) -- cannot "
-                "prove the committed WIP was reviewed")
-    for path, recorded in blobs.items():
-        try:
-            r = subprocess.run(["git", "-C", str(root), "rev-parse", f"HEAD:{path}"],
-                               capture_output=True, text=True, timeout=10)
-        except Exception:
-            return f"cannot verify review binding for {path} (git error, fail-closed)"
-        if r.returncode != 0:
-            return (f"reviewed file {path} is not in the committed HEAD -- the WIP "
-                    f"was not committed as reviewed")
-        head_sha = r.stdout.strip()
-        rec = str(recorded)
-        # trigger_blobs may be a bare sha or a `mode:sha` (B3); compare the sha.
-        rec_sha = (rec.split(":", 1)[1]
-                   if ":" in rec and rec.split(":", 1)[0].isdigit() else rec)
-        if head_sha != rec_sha:
-            return (f"reviewed file {path} differs from the committed HEAD -- the "
-                    f"received review is stale relative to the WIP commit")
-    return ""
-
-
-def _rollover_failures_wip(root: Path, state: dict) -> list:
-    """P4.5: gate for a MID-SECTION (context-cap) rotation. The shipped
-    _rollover_failures() above -- which governs the SECTION-BOUNDARY ship rollover
-    -- is deliberately NOT touched. This PARALLEL gate accepts a WIP tree
-    (committed but UNPUSHED, UNSTAMPED, no green receipts: the section is still in
-    progress) and keeps ONLY the checks that protect against LOSING or CORRUPTING
-    work across a rotation:
-
-      (1) the working tree is CLEAN (auto-gen tolerated, same B4/F2 classifier) --
-          the WIP MUST be committed, else the rotation strands uncommitted edits;
-      (2) NO outstanding Codex review -- a pending review must be received first,
-          else the fresh worker inherits an un-triaged review;
-      (3) NO active background job -- a running codex-review would be stranded.
-
-    It intentionally DROPS the pushed / receipt / todo-graph checks (a mid-section
-    WIP is not ship-ready and must not be forced to be). The checks are DUPLICATED
-    from the ship gate on purpose -- refactoring the ship gate is the one thing
-    P4.5 must not risk. Fail-CLOSED: unreadable review state is a failure."""
-    fails = []
-    # (1) clean tree (WIP committed), auto-gen tolerated.
-    try:
-        out = subprocess.run(["git", "status", "--porcelain", "-uall"],
-                             cwd=str(root), capture_output=True, text=True,
-                             timeout=30)
-        if out.returncode != 0:
-            fails.append("git status unavailable")
-        elif out.stdout.strip():
-            dirty = [ln for ln in out.stdout.splitlines() if ln.strip()]
-            blocking = [ln for ln in dirty if _dirty_owner(ln) != "auto-gen"]
-            if blocking:
-                named = ", ".join(f"{_dirty_path(ln)} [{_dirty_owner(ln)}]"
-                                  for ln in blocking[:6])
-                fails.append(f"WIP not committed -- tree not clean "
-                             f"({len(blocking)} change(s): {named}); commit the "
-                             f"WIP before a mid-section rotation")
-    except Exception:
-        fails.append("git status unavailable")
-    # (2) no outstanding review (fail-CLOSED on unreadable), AND (F3) a received
-    # review must actually BIND the committed HEAD content -- a stale global
-    # received:true from a prior fix-loop round does not prove the committed WIP
-    # was reviewed.
-    review_state = root / ".claude/state/last-codex-review.json"
-    if review_state.exists():
-        try:
-            rs = json.loads(review_state.read_text())
-        except (OSError, ValueError):
-            rs = None
-            fails.append("last-codex-review.json unreadable (fail-closed)")
-        if isinstance(rs, dict):
-            if rs.get("received") is not True:
-                fails.append("outstanding Codex review not yet received")
-            else:
-                bad = _review_not_binding_head(root, rs)
-                if bad:
-                    fails.append(bad)
-    # (3) no active background job (a running codex-review / watcher).
-    try:
-        out = subprocess.run(
-            ["systemctl", "--user", "list-units", "--state=active",
-             "--no-legend", "codex-rev-*", "seq-watcher-*"],
-            capture_output=True, text=True, timeout=10)
-        jobs = [ln.split()[0] for ln in out.stdout.splitlines() if ln.strip()]
-        if jobs:
-            fails.append(f"outstanding background job(s) still active: "
-                         f"{', '.join(jobs[:4])}")
-    except Exception:
-        pass  # systemctl absent -> cannot enumerate; not a hard fail
-    return fails
-
-
 def _live_oracle_status():
     """Best-effort live triage-oracle verdict for the Stop fallback.
 
@@ -1640,7 +1155,7 @@ def ship_limit_reached(root):
 
 def handle_stop():
     # The guard governs ONLY the headless unattended run -- an interactive
-    # operator session is never trapped (it can stop and disarm freely).
+    # operator session is never trapped (it can stop freely).
     if not is_headless():
         return 0
     # The ONLY graceful self-stop is an oracle-verified FIXPOINT, recorded by an
@@ -1648,12 +1163,12 @@ def handle_stop():
     # triage oracle confirms zero remaining work. We key on the sentinel (and the
     # immutable env discriminator), NOT on any value the agent can edit: it
     # cannot fake the sentinel (creating it is a blocked self-teardown), cannot
-    # disarm itself, and cannot clear the cursor. So no reserved decision, stale
+    # stop itself, and cannot clear the cursor. So no reserved decision, stale
     # blocker, or per-file block can ever talk the run into stopping.
     if FIXPOINT_SENTINEL.exists():
         return 0
-    # The human's --disarm removes the master switch (and kills the service); if
-    # the marker is already gone, the run has been disarmed -- allow the stop.
+    # The operator's `run.sh stop` removes the run marker; once it is gone the
+    # run is over, so allow the stop.
     if not ARMED_MARKER.exists():
         return 0
     # A bounded run (`run.sh start --ships N`) that has shipped its sections is done.
@@ -1665,8 +1180,8 @@ def handle_stop():
     # split reports only recoverable deferrals) may end WITHOUT the sentinel --
     # the sentinel is written by the fixpoint CLI, and a session that cannot
     # reach it (lock, confusion, truncation) would otherwise idle until
-    # external reap. Ending here does NOT disarm: the marker persists, the
-    # watchdog relaunches, and the next session (or the operator) finalizes
+    # external reap. Ending here does NOT stop the run: the marker persists, the
+    # heartbeat nudges the idle session, and it (or the operator) finalizes
     # via `run_phase_guard.py fixpoint`. Fail-closed: any oracle error keeps
     # the hard block below.
     verdict = _live_oracle_status()
@@ -1711,36 +1226,22 @@ def cli(argv):
             "active": True, "phase": "PREFLIGHT", "pass_no": 1,
             "domain": None, "file": None, "section_idx": 0,
             # How section_idx was last set: explicit | derived | stale. `unset`
-            # is the start value -- section_idx is 0 and means nothing yet, so
-            # a metrics row carrying it must be excluded from any calibration
-            # rather than read as "section 0".
+            # is the start value: section_idx is 0 and means nothing yet.
             "section_source": "unset",
             "progress_this_pass": False,
             "started_at": argv[1] if len(argv) > 1 else "unknown",
             "updated_at": argv[1] if len(argv) > 1 else "unknown",
-            # R1 baseline: ships from BEFORE this run must not block the first
-            # cursor move; only a ship inside the run demands a rotation.
-            "last_rollover_epoch": int(time.time()),
-            # Idle-rollover baseline for the FIRST segment: the launcher's
-            # mark-rotation is a no-op before `start` activates the run, so
-            # without this the first segment has no baseline and the idle
-            # check fails open.
-            "segment_start_head": _current_head(repo_root()),
         }
         save_state(state)
-        # NOTE: the armed marker is intentionally NOT removed here. It is the
-        # persistent master switch -- it must outlive every watchdog relaunch so
-        # a fresh agent is always redirected back onto overnight-sequencer and
-        # can never voluntarily stop. Only `--disarm` or an oracle-verified
-        # FIXPOINT removes it. (Removing it on start was the death-thrash bug:
-        # once gone, a reset cursor left the guard fully inert.)
+        # The run marker is NOT removed here: it belongs to `run.sh`, and only
+        # `run.sh stop` or an oracle-verified FIXPOINT removes it.
         # Clear any stale FIXPOINT sentinel from a prior run: a starting run is by
         # definition not complete, and a leftover sentinel would let Stop succeed.
         try:
             FIXPOINT_SENTINEL.unlink()
         except FileNotFoundError:
             pass
-        print("[sequencer] started: pass 1, PREFLIGHT (armed marker kept)",
+        print("[sequencer] started: pass 1, PREFLIGHT",
               file=sys.stderr)
         return 0
     if cmd == "status":
@@ -1759,13 +1260,9 @@ def cli(argv):
     if cmd == "cursor":
         # cursor <domain> <file> [section_idx]
         if len(argv) >= 3:
-            # P3.2: a REFUSED rollover may repair ONLY the current checkpoint; it
-            # must NOT advance into the next section un-rotated (the un-rotated
-            # section-to-section advance the flow invariant forbids). Block a
-            # cursor move to a DIFFERENT section while a rollover is refused --
-            # until a `rollover` VERIFIES (which clears the flag) or the operator
-            # `clear`s. Safe because B4/F2 stop benign coverage.* from refusing
-            # the rollover forever.
+            # P3.2: a REFUSED checkpoint may repair only the current section; a
+            # cursor move to a different one waits for a `rollover` that verifies,
+            # for at most ROLLOVER_ATTEMPTS refusals, after which the section parks.
             new_file = argv[2]
             new_idx = int(argv[3]) if len(argv) >= 4 else state.get("section_idx")
             rr = state.get("rollover_refused")
@@ -1793,64 +1290,20 @@ def cli(argv):
                           f"{rr.get('file')} section {rr.get('section_idx')} after "
                           f"{rr.get('attempts')} refused rollovers.", file=sys.stderr)
                     state.pop("rollover_refused", None)
-                    state["last_rollover_epoch"] = int(time.time())
-            # R1 (2026-07-19): rollover-required-after-ship. P3.2 above only
-            # traps a REFUSED rollover; a worker that never ATTEMPTS one could
-            # advance into the next section un-rotated. If any commit newer
-            # than the last verified rotation adds a ship stamp, the only
-            # legal next step is `rollover`. Deferrals add no stamp and
-            # advance freely; the fresh post-rotation worker passes because
-            # the ship predates its last_rollover_epoch (set on `start` and
-            # on every verified `rollover`).
-            if state.get("active") and (new_file != state.get("file")
-                                        or new_idx != state.get("section_idx")):
-                sha = _ship_stamp_since(repo_root(),
-                                        state.get("last_rollover_epoch"))
-                if sha:
-                    print("[sequencer] cursor BLOCKED (R1): ship-stamp commit "
-                          f"{sha[:12]} landed after the last verified rotation. "
-                          "A fully-shipped section ENDS the worker context: run "
-                          "`python3 .claude/hooks/run_phase_guard.py rollover` "
-                          "and END the turn -- the watchdog relaunches a fresh "
-                          "worker that resumes at the next section. Do NOT "
-                          "advance un-rotated. Operator override: "
-                          "`run_phase_guard.py clear`.", file=sys.stderr)
-                    return 1
             state["domain"], state["file"] = argv[1], argv[2]
             if len(argv) >= 4:
                 state["section_idx"] = int(argv[3])
                 state["section_source"] = "explicit"
             else:
-                # COST INSTRUMENTATION (token-saver v02, 2026-07-28). The
-                # documented call shape is `cursor <domain> <file>` with NO
-                # index, so `section_idx` never left its `start` value of 0 and
-                # stream-report.py stamped `"section": 0` on EVERY metrics
-                # record ever written -- all 56 of them, across every run. That
-                # left no way to correlate a section with its turn count, which
-                # is the dataset the split-predictor calibration needs (cost is
-                # quadratic in segment length, so knowing WHICH sections run
-                # long is the whole input). Derive it from the same oracle the
-                # sequencer routes on rather than adding an argument the model
-                # must remember: the current section is the first one still
-                # NEEDS_WORK. Fail-open in every direction -- on any error the
-                # previous value stands, exactly as before, because a metrics
-                # attribution must never be able to block a run.
+                # No index given: derive it from the triage oracle (the first
+                # section still NEEDS_WORK). On any error the previous value
+                # stands, so a cursor move can never fail on it.
                 derived = _derive_section_idx(argv[2])
                 if derived is not None:
                     state["section_idx"] = derived
                     state["section_source"] = "derived"
                 else:
-                    # The oracle was unavailable (its cache lives under build/
-                    # and build-and-validate.sh deletes it unless --keep-cache;
-                    # observed absent at 16:47 and rebuilt at 16:48 on the
-                    # 2026-07-28 canary). The cursor keeps its PREVIOUS value,
-                    # which is the right safety choice -- a metrics field must
-                    # never be able to fail a cursor move and wedge a run --
-                    # but the number is now carried over, not measured. Mark it
-                    # so the split-predictor calibration can EXCLUDE the row
-                    # instead of averaging a stale section in as if it were
-                    # fresh. A dataset whose gaps are invisible is worse than
-                    # one with holes it can see.
+                    # Oracle unavailable: the value is carried over, not measured.
                     state["section_source"] = "stale"
             save_state(state)
             print(f"[sequencer] cursor -> {argv[2]}", file=sys.stderr)
@@ -1869,14 +1322,14 @@ def cli(argv):
         print(f"[sequencer] -> pass {state['pass_no']}", file=sys.stderr)
         return 0
     if cmd == "fixpoint":
-        # FIXPOINT is the ONLY path to a permanent stop (it ends the run and the
-        # watchdog auto-disarms). It must NOT be fakeable: machine-verify via the
+        # FIXPOINT is the ONLY path to a permanent stop (it ends the run and
+        # removes the run marker). It must NOT be fakeable: machine-verify via the
         # triage oracle (graph-truth, freshly rebuilt) that ZERO work remains.
         # If anything remains, REFUSE -- the run stays active and keeps looping.
         # (subprocess is imported at module scope; a redundant `import subprocess`
         # here previously made the name function-local across ALL of cli(), so any
         # bare subprocess.run reached before this line -- e.g. the rollover inline
-        # checkpoint write and the review-resolved verb -- raised UnboundLocalError.)
+        # checkpoint write -- raised UnboundLocalError.)
         root = repo_root()
         try:
             # FAIL-CLOSED on the rebuild (2026-08-08). This return value used to
@@ -2003,8 +1456,8 @@ def cli(argv):
         save_state(state)
         # Genuine, oracle-verified completion is the one self-terminating exit:
         # write the exclusive sentinel (this is the ONLY place it is created) so
-        # handle_stop will permit the stop, and remove the master switch so the
-        # next watchdog tick does not relaunch into a re-entry loop.
+        # handle_stop will permit the stop, and remove the run marker so the
+        # heartbeat does not restart a finished run.
         FIXPOINT_SENTINEL.parent.mkdir(parents=True, exist_ok=True)
         FIXPOINT_SENTINEL.write_text("oracle-verified: no remaining work\n",
                                      encoding="utf-8")
@@ -2020,86 +1473,13 @@ def cli(argv):
         save_state({"active": False})
         print(f"[sequencer] cleared: {' '.join(argv[1:]) or 'no reason'}", file=sys.stderr)
         return 0
-    if cmd == "mark-rotation":
-        # R1 (2026-07-19): called by overnight-launch.sh at every spawn. A
-        # (re)launch IS a fresh worker context, so it counts as a rotation
-        # boundary -- without this, a crash / usage-limit relaunch (which
-        # never ran the `rollover` verb) would leave last_rollover_epoch
-        # pointing before the dead session's ship and force the fresh worker
-        # through a redundant rollover (plus a 10-min watchdog wait) before
-        # its first section. Also consumes a leftover rollover-pending flag
-        # (its one permitted stop already happened -- the session is gone).
-        if not state.get("active"):
-            return 0  # not-yet-started run: `start` sets its own epoch
-        state["last_rollover_epoch"] = int(time.time())
-        state.pop("rollover", None)
-        # IDLE-ROLLOVER BASELINE (2026-08-11). Record where this segment STARTS
-        # so the rollover verb can tell "I did work and am rotating" from "I
-        # arrived on an already-checkpointed tree and am about to end without
-        # doing anything". Observed live: §41 shipped at 12:04 and its session
-        # rolled over at 12:08; the next TWO segments each re-verified a
-        # rollover of the same HEAD and ended -- HEAD unmoved, no-ship streak
-        # 2, breaker stop. The verification is a pure state check (clean tree,
-        # pushed, receipts), so a fresh context on a shipped tree passes it
-        # forever. None (unreadable HEAD) fails OPEN: the rollover check skips.
-        state["segment_start_head"] = _current_head(repo_root())
-        save_state(state)
-        print("[sequencer] rotation boundary stamped (fresh worker context)",
-              file=sys.stderr)
-        return 0
-    if cmd == "relifecycle":
-        # One-shot Stage 1-2 override for a mature file that grew a genuinely
-        # NEW section. Consumed by the next Stage 1-2 skill invocation.
-        reason = " ".join(argv[1:]).strip()
-        if len(reason) < 12:
-            print("[sequencer] relifecycle needs a reason (>= 12 chars) naming "
-                  "the new section", file=sys.stderr)
-            return 1
-        state["lifecycle_override"] = reason
-        save_state(state)
-        print(f"[sequencer] lifecycle override recorded: {reason}", file=sys.stderr)
-        return 0
     if cmd == "ship-limit-reached":
         return 0 if ship_limit_reached(repo_root()) else 1
     if cmd == "rollover":
-        # Verified worker-context rotation. Machine gates decide; on success
-        # the Stop hook permits exactly one stop and the *:0/10 watchdog
-        # relaunches a fresh session on its next tick.
+        # Verified checkpoint after a shipped section. Machine gates decide; on
+        # success the session goes straight on to the next section.
         if not state.get("active"):
             print("[sequencer] rollover REFUSED: no active run", file=sys.stderr)
-            return 1
-        # IDLE-ROLLOVER REFUSAL (2026-08-11). A rollover is EARNED by work, not
-        # owed by arrival. The verification below is a pure state check (clean
-        # tree, pushed, receipts valid) -- every one of which is ALREADY true
-        # when a fresh context lands on a tree whose previous segment shipped
-        # and rolled over. Observed live: two consecutive segments each
-        # re-verified a rollover of the same HEAD (9ebeff0b7), ended their
-        # turns, shipped nothing, and tripped the no-ship breaker -- an
-        # infinite loop at ~$2.50/3min that only the breaker stopped.
-        #
-        # THE REDIRECT IS THE LOAD-BEARING HALF. A bare refusal would swap the
-        # VERIFIED loop for a REFUSED loop (same no-ship, same breaker): the
-        # guard's instructions are followed verbatim -- the VERIFIED path's
-        # "END the turn" is precisely what produced the loop -- so the refusal
-        # must name the next action with equal force.
-        #
-        # DELIBERATELY NOT `rollover_refused`: that P3.2 flag BLOCKS a cursor
-        # advance until a rollover verifies, which here would wedge the run --
-        # this refusal means "go work", not "repair the checkpoint and retry".
-        # Fail-open by construction: no baseline recorded, or HEAD unreadable,
-        # or HEAD moved -> fall through to the normal verification.
-        _seg_head = state.get("segment_start_head")
-        _now_head = _current_head(repo_root())
-        if _seg_head and _now_head and _seg_head == _now_head:
-            print("[sequencer] rollover REFUSED: nothing to roll over -- HEAD "
-                  f"({_now_head[:12]}) has not moved since this segment "
-                  "started, so this state is already checkpointed (the "
-                  "previous segment's rollover covered it). Do NOT end the "
-                  "turn and do NOT retry rollover. CONTINUE WORKING at the "
-                  "cursor: pick the next open section and start it now. If "
-                  "you are mid-section with uncommitted WIP and genuinely "
-                  "need a context rotation, use `rollover-wip` (it commits "
-                  "the WIP, which moves HEAD).", file=sys.stderr)
             return 1
         fails = _rollover_failures(repo_root(), state)
         if fails:
@@ -2129,24 +1509,10 @@ def cli(argv):
                     "-- do NOT start the next section un-rotated (P3.2).",
                   file=sys.stderr)
             return 1
-        # Atomic pending flag; the Stop hook permits ONE exit and the *:0/10
-        # watchdog relaunches a fresh session. No custom watcher.
-        now = int(time.time())
-        state["rollover"] = {"pending": True, "epoch": now}
         state.pop("rollover_refused", None)  # P3.2: a verified rollover clears it
-        # R1: the rotation boundary -- ship stamps at or before this instant no
-        # longer block a section start (the fresh worker starts clean). Same
-        # `now` as the pending flag so the two windows can never desync.
-        state["last_rollover_epoch"] = now
         save_state(state)
-        # P4.1: a verified rollover resets the context-rotation turn counter so
-        # the fresh worker counts from zero (best-effort).
-        try:
-            (repo_root() / ".claude/state/rotate-hint.json").unlink()
-        except Exception:
-            pass
-        # Durable checkpoint so the relaunched session loads settled facts
-        # (section-pack digest, receipts, review status) instead of
+        # Durable checkpoint so a restarted or compacted session loads settled
+        # facts (section-pack digest, receipts, review status) instead of
         # rediscovering them. Best-effort -- never blocks the rollover.
         try:
             subprocess.run(
@@ -2159,227 +1525,6 @@ def cli(argv):
               "receipts content-valid, no outstanding jobs. Go straight on to "
               "the next section in this session; compaction manages the context.",
               file=sys.stderr)
-        return 0
-    if cmd == "review-resolved":
-        # A5 (review 2026-07-14 round 2): record a content-bound review-RESOLUTION
-        # receipt {head, review_run_id, ts} attesting the current section's review
-        # cycle is COMPLETE and green at HEAD -- the boundary a mid-section
-        # rollover-wip must stand on (received:true alone does not prove findings
-        # were fixed + verified). Requires: active + SECTIONS; the last review
-        # received AND bound to HEAD (F3: fixes committed + re-reviewed); and
-        # content-valid build + test receipts. Fail-CLOSED; writes nothing unless
-        # all hold.
-        if not state.get("active") or state.get("phase") != "SECTIONS":
-            print("[sequencer] review-resolved REFUSED: only valid mid-section "
-                  "(active run, phase == SECTIONS).", file=sys.stderr)
-            return 1
-        root = repo_root()
-        rs_path = root / ".claude/state/last-codex-review.json"
-        rs = {}
-        if rs_path.exists():
-            try:
-                rs = json.loads(rs_path.read_text())
-            except (OSError, ValueError):
-                print("[sequencer] review-resolved REFUSED: last-codex-review.json "
-                      "unreadable (fail-closed).", file=sys.stderr)
-                return 1
-        # A8 (HIGH, recorded 2026-07-14 as an unattended-arm gate; closed
-        # 2026-07-30). Two bypasses, both from treating an EMPTY review state as
-        # acceptable:
-        #   - `if rs and rs.get("received") is not True` skipped the whole check
-        #     when `rs` was {} (file absent, or present but empty/`{}`), and the
-        #     binding check below was likewise guarded by `if rs else ""`. So a
-        #     section with NO Codex review at all could mint a resolution receipt
-        #     and satisfy the mid-section rotation gate -- certifying a review
-        #     cycle that never happened.
-        #   - `review_run_id` fell back to "" when absent, and A9 then had nothing
-        #     to bind against, so the receipt could not detect a newer round.
-        # Both now fail-CLOSED: a resolution receipt requires a real, received,
-        # HEAD-bound review carrying a non-empty run id.
-        if not rs:
-            print("[sequencer] review-resolved REFUSED: no Codex review recorded "
-                  "(.claude/state/last-codex-review.json absent or empty) -- a "
-                  "resolution receipt must attest a review cycle that actually "
-                  "ran. Dispatch + receive the section's review first.",
-                  file=sys.stderr)
-            return 1
-        if rs.get("received") is not True:
-            print("[sequencer] review-resolved REFUSED: the last Codex review is "
-                  "not yet received -- receive it (Skill "
-                  "superpowers:receiving-code-review) and fix its findings first.",
-                  file=sys.stderr)
-            return 1
-        resolved_run_id = str(rs.get("review_run_id") or "").strip()
-        if not resolved_run_id:
-            print("[sequencer] review-resolved REFUSED: the review state carries no "
-                  "review_run_id -- the receipt could not be bound to a review "
-                  "round, so a newer review at this same HEAD would go unnoticed "
-                  "(A9). Re-dispatch the review through the broker.",
-                  file=sys.stderr)
-            return 1
-        bind_fail = _review_not_binding_head(root, rs)
-        if bind_fail:
-            print(f"[sequencer] review-resolved REFUSED: {bind_fail}. The received "
-                  "review must bind the CURRENT HEAD (fixes committed + "
-                  "re-reviewed).", file=sys.stderr)
-            return 1
-        ok, why = _build_suite_receipts_ok(root)
-        if not ok:
-            print(f"[sequencer] review-resolved REFUSED: {why}. Run a green build + "
-                  "test.sh, record receipts, then retry.", file=sys.stderr)
-            return 1
-        try:
-            head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
-                                  capture_output=True, text=True,
-                                  timeout=10).stdout.strip()
-        except Exception:
-            head = ""
-        if not head:
-            print("[sequencer] review-resolved REFUSED: cannot read HEAD.",
-                  file=sys.stderr)
-            return 1
-        rec = {"head": head, "review_run_id": resolved_run_id,
-               "ts": int(time.time())}
-        try:
-            p = root / _REVIEW_RESOLUTION_REL
-            p.parent.mkdir(parents=True, exist_ok=True)
-            tmp = p.with_suffix(p.suffix + ".tmp")
-            tmp.write_text(json.dumps(rec))
-            os.replace(tmp, p)
-        except Exception as exc:  # noqa: BLE001
-            print("[sequencer] review-resolved REFUSED: could not write receipt "
-                  f"({exc}).", file=sys.stderr)
-            return 1
-        print(f"[sequencer] review-resolved VERIFIED: review cycle resolved + green "
-              f"at {head[:12]}. A mid-section `rollover-wip` may now proceed at this "
-              "HEAD.", file=sys.stderr)
-        return 0
-    if cmd == "rollover-wip":
-        # P4.6: MID-SECTION context-cap rotation (safe-boundary firing). Fires
-        # ONLY when BOTH hold: (a) the P4.1 rotate_hint is set (context actually
-        # grew past the band -- do NOT rotate mid-section on a whim), and (b) the
-        # P4.5 WIP gate passes (committed-clean tree, no pending review, no bg
-        # job). Rotation is HARD-FORBIDDEN mid-fix-loop -- an uncommitted edit or
-        # an outstanding review both FAIL the WIP gate -- and during a review wait
-        # (an active codex-rev-* unit fails the WIP gate). On success it uses the
-        # SAME rotation mechanism as `rollover`; the enriched section-checkpoint
-        # (P4.2/P4.3) carries next_action + open_findings so the fresh worker
-        # resumes the SAME section without re-deriving.
-        if not state.get("active"):
-            print("[sequencer] rollover-wip REFUSED: no active run", file=sys.stderr)
-            return 1
-        # F1 (review 2026-07-14): a WIP rotation is ONLY a mid-section move. It
-        # must NOT be an alternate ship path. Require phase == SECTIONS, and
-        # REFUSE outright if a SHIP rollover was refused (rollover_refused set) --
-        # a failed ship gate (unpushed / missing receipts / bad graph) must be
-        # fixed, never laundered into a WIP rotation. And it must NEVER clear
-        # rollover_refused (the P3.2 advance-block stays until a real ship rollover
-        # verifies).
-        if state.get("phase") != "SECTIONS":
-            print("[sequencer] rollover-wip REFUSED: only valid mid-section "
-                  f"(phase == SECTIONS), current phase is {state.get('phase')!r}.",
-                  file=sys.stderr)
-            return 1
-        if state.get("rollover_refused"):
-            print("[sequencer] rollover-wip REFUSED: a ship rollover was refused "
-                  "(rollover_refused set). Fix the ship-gate failures and re-run "
-                  "`rollover` -- a WIP rotation must not bypass a failed ship gate.",
-                  file=sys.stderr)
-            return 1
-        try:
-            hint = json.loads(
-                (repo_root() / ".claude/state/rotate-hint.json").read_text())
-        except Exception:
-            hint = {}
-        if not (isinstance(hint, dict) and hint.get("hint")):
-            print("[sequencer] rollover-wip REFUSED: no rotate_hint set -- context "
-                  "has not crossed the size band, so a mid-section rotation is not "
-                  "warranted. Continue in-session.", file=sys.stderr)
-            return 1
-        # A1 (review 2026-07-14): a WIP rotation must NOT substitute for the full
-        # ship rollover. After a section ships (commit + PUSH) + `progress`, the
-        # phase is still SECTIONS and the tree is clean, so the WIP gate alone
-        # would pass -- letting a shipped section rotate via the weaker gate,
-        # skipping the full rollover's receipt + todo-graph verification. A genuine
-        # mid-section boundary always has committed-but-unpushed local work (the
-        # WIP rotation deliberately does not push); a post-ship boundary has none.
-        # Refuse when nothing is unpushed (or it cannot be determined): use the
-        # full `rollover` there. This is the successful-ship analogue of the P4.5
-        # F1 alternate-ship-path guard.
-        ahead = _unpushed_count(repo_root())
-        if not ahead:  # 0 or None
-            reason = ("everything is pushed -- no unshipped WIP to rotate"
-                      if ahead == 0 else
-                      "cannot determine unpushed state (no upstream / git error)")
-            print("[sequencer] rollover-wip REFUSED: " + reason + ". A mid-section "
-                  "rotation is only for committed-but-unpushed in-progress work; if "
-                  "the section has SHIPPED, run the full `rollover` (it verifies "
-                  "receipts + todo-graph). Otherwise continue in-session.",
-                  file=sys.stderr)
-            return 1
-        # A4 (round 2): reliably refuse a SHIP/stamp commit even in the pre-push
-        # window the unpushed guard cannot see -- key on the definitive **Verified:**
-        # stamp, not the loose section_idx.
-        stamped = _head_adds_ship_stamp(repo_root())
-        if stamped is None:
-            # A7 fail-CLOSED: undeterminable is not "clean". See the docstring --
-            # the old fail-open let a git error confined to this call wave a
-            # shipped section through the weaker WIP gate.
-            print("[sequencer] rollover-wip REFUSED: could not determine whether "
-                  "the unpushed range adds a section-SHIP/stamp commit (git error "
-                  "or timeout). Fail-closed: resolve the git state, then use the "
-                  "full `rollover` if the section has shipped.", file=sys.stderr)
-            return 1
-        if stamped:
-            print("[sequencer] rollover-wip REFUSED: the unpushed range contains a "
-                  "section-SHIP/stamp commit (adds a **Verified:** stamp to a todo/ "
-                  "file) -- a shipped section uses the full `rollover` (receipts + "
-                  "todo-graph), never a WIP rotation. Push, then run `rollover`.",
-                  file=sys.stderr)
-            return 1
-        fails = _rollover_failures_wip(repo_root(), state)
-        if fails:
-            print("[sequencer] rollover-wip REFUSED (not at a safe WIP boundary):\n"
-                  + "\n".join(f"  - {f}" for f in fails)
-                  + "\nA mid-section rotation is allowed ONLY at a WIP-commit-clean "
-                    "tree with NO pending review and NO background job (never "
-                    "mid-fix-loop, never during a review wait). Commit the WIP / "
-                    "receive the review / wait for the job, then retry -- or just "
-                    "continue in-session.", file=sys.stderr)
-            return 1
-        # A5 (round 2): the review cycle must be RESOLVED + green at THIS HEAD, not
-        # merely received. `review-resolved` writes a content-bound receipt; require
-        # it to match HEAD. Fail-CLOSED (absent/stale -> refuse, run review-resolved).
-        rr_ok, rr_why = _review_resolution_valid(repo_root())
-        if not rr_ok:
-            print(f"[sequencer] rollover-wip REFUSED: {rr_why}.", file=sys.stderr)
-            return 1
-        # F2 (review 2026-07-14): write the DURABLE checkpoint FIRST and
-        # fail-CLOSED if it fails -- never authorize a Stop/rotation without a
-        # checkpoint the fresh worker can resume from. Only after a successful
-        # write do we set the rollover-pending authorization.
-        if not _write_section_checkpoint(repo_root()):
-            print("[sequencer] rollover-wip REFUSED: could not write a durable "
-                  "section-checkpoint -- refusing to authorize a rotation the "
-                  "fresh worker cannot resume from.", file=sys.stderr)
-            return 1
-        state["rollover"] = {"pending": True, "epoch": int(time.time()),
-                             "wip": True}
-        # NB: rollover_refused is intentionally NOT cleared here (F1) -- a WIP
-        # rotation resumes the SAME section and must not lift the advance-block.
-        save_state(state)
-        # Reset the turn counter for the fresh worker (the checkpoint is already
-        # written above). Best-effort.
-        try:
-            (repo_root() / ".claude/state/rotate-hint.json").unlink()
-        except Exception:
-            pass
-        print("[sequencer] rollover-wip VERIFIED: WIP committed, no pending review, "
-              "no background job. This is a MID-SECTION context rotation -- "
-              "final-answer with a one-line checkpoint and END the turn; the "
-              "watchdog relaunches a fresh worker that resumes the SAME section "
-              "from the cursor (section-checkpoint carries next_action + "
-              "open_findings). The run stays armed.", file=sys.stderr)
         return 0
     if cmd == "selftest":
         return selftest()
@@ -2399,11 +1544,9 @@ def selftest():
     # anti-trap invariant that lets the operator share the repo hooks.
     a, _ = evaluate("AskUserQuestion", {}, {"active": True, "phase": "SECTIONS"}, headless=False)
     check(a, "interactive AskUserQuestion blocked (must never trap the operator)")
-    a, _ = evaluate("Skill", {"skill": "implement-todo-section"}, {"active": True, "phase": "VALIDATE"}, headless=False)
-    check(a, "interactive Skill phase-blocked (must never trap the operator)")
-    a, _ = evaluate("Bash", {"command": "bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm"},
+    a, _ = evaluate("Bash", {"command": "bash scripts/run.sh stop"},
                     {"active": True, "phase": "SECTIONS"}, headless=False)
-    check(a, "interactive --disarm blocked (the human MUST be able to disarm)")
+    check(a, "interactive run.sh stop blocked (the human MUST be able to stop)")
 
     # AskUserQuestion always blocked in the headless run.
     for ph in PHASES:
@@ -2414,8 +1557,7 @@ def selftest():
     check(a, "AskUserQuestion blocked while headless run inactive+unarmed")
     # Headless self-teardown is blocked across all known shapes; the legit
     # oracle-gated `fixpoint` and ordinary phase transitions are NOT.
-    for cmd in ("bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm",
-                "bash scripts/overnight-arm.sh todo/x.md --disarm",
+    for cmd in ("bash scripts/run.sh stop",
                 "python3 .claude/hooks/run_phase_guard.py clear oops",
                 "python3 .claude/hooks/run_phase_guard.py phase FIXPOINT",
                 "rm -f .claude/state/sequencer-armed",
@@ -2425,8 +1567,6 @@ def selftest():
                 "touch .claude/state/sequencer-fixpoint",
                 "cp /tmp/fake .claude/state/sequencer-fixpoint",
                 "dd if=/dev/zero of=.claude/state/sequencer-fixpoint bs=1 count=1",
-                "systemctl --user stop overnight-impossible-os.service",
-                "systemctl --user disable overnight-impossible-os-watchdog.timer",
                 "pkill -f 'claude -p'"):
         a, _ = evaluate("Bash", {"command": cmd}, {"active": True, "phase": "SECTIONS"}, headless=H)
         check(not a, f"headless self-teardown allowed: {cmd}")
@@ -2436,46 +1576,21 @@ def selftest():
                   "git commit -m 'x' && cat .claude/state/sequencer-run.json"):
         a, _ = evaluate("Bash", {"command": okcmd}, {"active": True, "phase": "SECTIONS"}, headless=H)
         check(a, f"legit guard/bash command blocked as self-teardown: {okcmd}")
-    # implement-todo-section blocked in VALIDATE, allowed in SECTIONS.
-    a, _ = evaluate("Skill", {"skill": "implement-todo-section"}, {"active": True, "phase": "VALIDATE"}, headless=H)
-    check(not a, "implement-todo-section allowed in VALIDATE")
-    a, _ = evaluate("Skill", {"skill": "implement-todo-section"}, {"active": True, "phase": "SECTIONS"}, headless=H)
-    check(a, "implement-todo-section blocked in SECTIONS")
-    # validate-todo-file allowed in VALIDATE, blocked in SECTIONS.
-    a, _ = evaluate("Skill", {"name": "validate-todo-file"}, {"active": True, "phase": "VALIDATE"}, headless=H)
-    check(a, "validate-todo-file blocked in VALIDATE")
-    a, _ = evaluate("Skill", {"name": "validate-todo-file"}, {"active": True, "phase": "SECTIONS"}, headless=H)
-    check(not a, "validate-todo-file allowed in SECTIONS")
-    # gap-audit-todo only in GAP_AUDIT.
-    a, _ = evaluate("Skill", {"skill": "gap-audit-todo"}, {"active": True, "phase": "GAP_AUDIT"}, headless=H)
-    check(a, "gap-audit-todo blocked in GAP_AUDIT")
-    a, _ = evaluate("Skill", {"skill": "gap-audit-todo"}, {"active": True, "phase": "SECTIONS"}, headless=H)
-    check(not a, "gap-audit-todo allowed in SECTIONS (should be GAP_AUDIT only)")
-    # Non-sequence skill + Bash/Edit pass in SECTIONS.
-    a, _ = evaluate("Skill", {"skill": "kernel-code-quality"}, {"active": True, "phase": "SECTIONS"}, headless=H)
-    check(a, "inner-pipeline skill blocked in SECTIONS")
+    # Phase is a record, not an order: every skill passes in every phase.
+    for ph in PHASES:
+        for sk in ("implement-todo-section", "validate-todo-file", "gap-audit-todo",
+                   "kernel-code-quality"):
+            a, _ = evaluate("Skill", {"skill": sk}, {"active": True, "phase": ph}, headless=H)
+            check(a, f"Skill({sk}) blocked in {ph}")
     a, _ = evaluate("Bash", {"command": "git commit"}, {"active": True, "phase": "SECTIONS"}, headless=H)
     check(a, "Bash blocked in SECTIONS")
-    # legacy System A skill blocked everywhere active.
-    a, _ = evaluate("Skill", {"skill": "overnight-todo-runner"}, {"active": True, "phase": "SECTIONS"}, headless=H)
-    check(not a, "legacy overnight-todo-runner allowed inside a sequencer run")
-    # Armed-but-not-started: only overnight-sequencer skill allowed.
-    a, _ = evaluate("Skill", {"skill": "overnight-sequencer"}, {"active": False}, armed=True, headless=H)
-    check(a, "overnight-sequencer blocked while armed")
-    a, _ = evaluate("Skill", {"name": "overnight-runner:start"}, {"active": False}, armed=True, headless=H)
-    check(not a, "generic overnight-runner:start allowed while armed (should redirect)")
-    a, _ = evaluate("Bash", {"command": "python3 .claude/hooks/sequencer_triage.py --next"},
-                    {"active": False}, armed=True, headless=H)
-    check(a, "Bash blocked while armed (setup needs it)")
+    # A live run whose cursor was reset to inactive is still governed by the marker.
     a, _ = evaluate("AskUserQuestion", {}, {"active": False}, armed=True, headless=H)
-    check(not a, "AskUserQuestion allowed while armed")
-    # Armed but cursor reset to inactive (the death-thrash condition): the run is
-    # still governed -- the redirect still fires off the persistent marker.
-    a, _ = evaluate("Skill", {"name": "overnight-runner:start"}, {"active": False}, armed=True, headless=H)
-    check(not a, "armed+inactive run went ungoverned (death-thrash regression)")
-    # Not armed, not active (headless): everything passes.
+    check(not a, "AskUserQuestion allowed while the run marker exists")
+    a, _ = evaluate("Skill", {"skill": "anything"}, {"active": False}, armed=True, headless=H)
+    check(a, "skill blocked while the run marker exists")
     a, _ = evaluate("Skill", {"skill": "anything"}, {"active": False}, armed=False, headless=H)
-    check(a, "skill blocked while neither armed nor active")
+    check(a, "skill blocked while neither marked nor active")
 
     # Codex WRITE is interactive-only: blocked in the headless active run,
     # never blocked interactively; read-only reviews always pass.
@@ -2493,29 +1608,6 @@ def selftest():
         a, _ = evaluate("Bash", {"command": rcmd}, {"active": True, "phase": "SECTIONS"}, headless=H)
         check(a, f"headless read-only review blocked: {rcmd[:40]}")
 
-    # Lifecycle routing (Stage 0): Stage 1-2 skills blocked on a mature file.
-    a, _ = evaluate("Skill", {"skill": "validate-todo-file"},
-                    {"active": True, "phase": "VALIDATE"}, headless=H,
-                    stages_done=True)
-    check(not a, "validate-todo-file allowed on stages_1_2_done file")
-    a, _ = evaluate("Skill", {"skill": "gap-audit-todo"},
-                    {"active": True, "phase": "GAP_AUDIT"}, headless=H,
-                    stages_done=True)
-    check(not a, "gap-audit-todo allowed on stages_1_2_done file")
-    a, _ = evaluate("Skill", {"skill": "validate-todo-file"},
-                    {"active": True, "phase": "VALIDATE",
-                     "lifecycle_override": "new section 21 appeared"},
-                    headless=H, stages_done=True)
-    check(a, "relifecycle override did not unblock validate-todo-file")
-    a, _ = evaluate("Skill", {"skill": "validate-todo-file"},
-                    {"active": True, "phase": "VALIDATE"}, headless=H,
-                    stages_done=False)
-    check(a, "validate-todo-file blocked on an immature file")
-    a, _ = evaluate("Skill", {"skill": "validate-todo-file"},
-                    {"active": True, "phase": "VALIDATE"}, headless=False,
-                    stages_done=True)
-    check(a, "interactive validate-todo-file blocked (must never trap operator)")
-
     # v08: [SEQ-TEARDOWN] substring-tested the whole command, so a commit MESSAGE
     # describing a teardown path was refused as if it had performed one -- and
     # the message then got reworded to launder the vocabulary, replacing the
@@ -2532,16 +1624,12 @@ def selftest():
          False, "git -m message body read as a teardown"),
         ('git commit --message="pkill claude when wedged" -- a.md', False,
          "git --message= body read as a teardown"),
-        ("bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm",
-         True, "real --disarm not blocked"),
-        ("systemctl --user stop overnight-impossible-os.service", True,
-         "real systemctl stop not blocked"),
         ("pkill -f claude", True, "real pkill claude not blocked"),
-        ("bash <<'EOF'\nsystemctl --user stop overnight-impossible-os.service\nEOF",
+        ("bash <<'EOF'\nbash scripts/run.sh stop\nEOF",
          True, "EXECUTABLE heredoc laundered a real teardown"),
         ("python3 <<'EOF'\nimport os; os.system('pkill -f claude')\nEOF", True,
          "executable python heredoc laundered a real teardown"),
-        ('git commit -m "notes" -- a.md && systemctl --user stop overnight-x',
+        ('git commit -m "notes" -- a.md && bash scripts/run.sh stop',
          True, "a real teardown beside a git message escaped"),
         # v22 close-out: refusal shapes that broke narrower versions of this test.
         ("python3 .claude/hooks/run_phase_guard.py clear", True,
@@ -2566,21 +1654,19 @@ def selftest():
     ):
         check(_is_self_teardown(cmd) is want, why)
 
-    # v10: the control-plane rule was documentation-only until 2026-08-07 --
-    # the run edited scripts/overnight/decision-registry.py for ~90 lines and
-    # every guard returned rc 0. `.claude/state/**` must stay writable: it is
-    # the run's notebook (gotcha cards, receipts), not its machinery.
+    # Only the frozen files are refused; the rest of the machinery the run may
+    # repair. `.claude/state/**` is the run's notebook and always writable.
     for _p, _want, _why in (
-        ("scripts/overnight/decision-registry.py", False, "scripts/overnight not blocked"),
-        (".claude/hooks/section_commit_gate.py", False, "hooks not blocked"),
-        (".claude/skills/overnight-sequencer/SKILL.md", False, "skills not blocked"),
-        (".githooks/pre-commit", False, "githooks not blocked"),
-        (".claude/settings.json", False, "settings.json not blocked"),
-        ("./scripts/overnight/../overnight/preflight.py", False, "path escape not normalised"),
+        (".claude/hooks/run_phase_guard.py", False, "frozen guard not blocked"),
+        (".claude/hooks/gate.py", False, "frozen gate.py not blocked"),
+        (".claude/settings.json", False, "frozen settings.json not blocked"),
+        ("scripts/run.sh", False, "frozen run.sh not blocked"),
+        ("./scripts/overnight/../overnight/heartbeat.sh", False, "path escape not normalised"),
+        ("scripts/overnight/decision-registry.py", True, "repairable machinery blocked"),
+        (".claude/hooks/section_commit_gate.py", True, "repairable hook blocked"),
+        (".claude/skills/overnight-sequencer/SKILL.md", True, "skill blocked"),
         (".claude/state/live-gotchas.md", True, "run STATE wrongly blocked"),
-        ("todo/overnight-runner-improvements/x.md", True, "capture file wrongly blocked"),
         ("src/kernel/sched/task.c", True, "ordinary work wrongly blocked"),
-        ("scripts/todo-graph/resolve_symbol.py", True, "non-control-plane wrongly blocked"),
     ):
         _a, _ = evaluate("Edit", {"file_path": _p},
                          {"active": True, "phase": "SECTIONS"}, headless=H)

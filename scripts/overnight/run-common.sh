@@ -28,7 +28,8 @@ run_limit_note() {
   printf ' This run is bounded: ship %s section(s) all the way, through post-ship review and pushed, and then stop and say so. Do not start another.' "$(awk 'NR==1{print $1}' "$RUN_SHIP_LIMIT")"
 }
 
-# run_launch fresh|resume: start the session in tmux. It ends when claude exits, which
+# run_launch fresh|resume: start the session in tmux, with ChromeMCP off for this
+# repo only (the env the systemd units set until 2026-11-07). It ends when claude exits, which
 # is how the heartbeat knows it died. The run has its own session id, because
 # --continue would resume whichever conversation in this folder was newest, and that
 # can be an attended session rather than the run.
@@ -52,6 +53,7 @@ run_launch() {
   prompt="$prompt$(run_limit_note)"
   tmux new-session -d -s "$RUN_SESSION" -x 200 -y 50 -c "$PWD" \
     -e OVERNIGHT_SEQUENCER_RUN=1 -e CLAUDE_PROJECT_DIR="$PWD" \
+    -e MCP_NO_AUTO_CHROME=1 -e MCP_NO_AUTO_BRIDGE=1 \
     -e CLAUDE_CODE_AUTO_COMPACT_WINDOW="$RUN_COMPACT_AT" \
     "claude $session_flag --dangerously-skip-permissions --model '$RUN_MODEL' --effort '$RUN_EFFORT' \"$prompt\""
 }

@@ -23,8 +23,8 @@ Open problems with the run itself: flow, gates, cost. One running file, replacin
   - Untested. Watch the first runs. WSL restarting takes the heartbeat with it, so `run.sh start` has to be run again.
 - [ ] Do the 36 `awaiting-answer` stamps pick up their answers?
   - All 30 questions are answered in `todo/answers.md`. Three answers mean stay as you are (Q14, Q17, Q24 report-only), so those need a plain Deferred reason or they read BLOCKED forever. Check with `sequencer_triage.py --blockers`.
-- [ ] Do the logged gates matter?
-  - Read `.claude/overnight/gate-log.jsonl` after a run. A gate nothing depended on gets deleted. A real defect it would have stopped puts it back to `enforce`.
+- [x] Do the logged gates matter?
+  - No. After a watched run that shipped 22 sections the operator saw no sign any was needed, so all 22 and the log/enforce wrapper were deleted on 2026-11-09 (docs/plans/2026-11-07-run-supervisor.md, Stage 7).
 - [ ] Does medium effort hold quality?
   - Writer and all agents moved to medium on 2026-11-06. No section has shipped since, so there is no comparison yet.
 - [ ] Context growth is still the dominant token use

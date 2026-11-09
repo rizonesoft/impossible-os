@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md sources=.claude/hooks/MANIFEST.md,scripts/audit-hooks.sh,scripts/audit-ai-system.sh,.claude/hooks/section_commit_gate.py,.claude/hooks/receiving_review_required.py,.claude/hooks/codex_model_flag_block.py reviewed=2026-09-29 order=9 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md sources=.claude/hooks/MANIFEST.md,scripts/audit-hooks.sh,scripts/audit-ai-system.sh,.claude/hooks/section_commit_gate.py,.claude/hooks/codex_review_completed.py,.claude/hooks/codex_model_flag_block.py reviewed=2026-11-09 order=9 -->
 # Automation Hardening
 
 ## What is it?
@@ -21,7 +21,7 @@ flowchart LR
 ```
 
 - **Codex invocation policy.** [`codex_model_flag_block.py`](../../.claude/hooks/codex_model_flag_block.py) refuses any Codex dispatch that passes a model or effort flag; the user sets those centrally. See [Codex Invocation Policy](codex-invocation-policy.md).
-- **Review reception gate.** [`receiving_review_required.py`](../../.claude/hooks/receiving_review_required.py) blocks further edits after a Codex review until its findings have been received and classified.
+- **Review reception record.** [`codex_review_completed.py`](../../.claude/hooks/codex_review_completed.py) records each Codex review and when its findings were received, and `section_commit_gate.py` reads that record. The PreToolUse gate that blocked edits until reception (`receiving_review_required.py`) was deleted on 2026-11-09 with the other process gates.
 - **Section commit gate.** [`section_commit_gate.py`](../../.claude/hooks/section_commit_gate.py) refuses a section-ship commit without a fresh build and reviews bound to the staged content.
 - **Step telemetry.** Skill steps are recorded as they happen and survive context compaction, so a skill cannot claim a step it never ran.
 - **Content lints.** [`scripts/lint.sh`](../../scripts/lint.sh) flags tautological tests, stubs behind a completion stamp, and roadmap sections whose stamps or OS Comparison rows are incomplete.

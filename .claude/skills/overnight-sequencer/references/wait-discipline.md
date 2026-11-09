@@ -1,8 +1,7 @@
 # Wait discipline -- the measurements behind each rule
 
 Read on demand from the `overnight-sequencer` "Wait discipline" section. The SKILL.md text carries the operative
-command shapes; this file carries the measured costs that produced them. `codex_wait_discipline.py` BLOCKs a
-short poll in the headless run, so the enforcement does not depend on this file being read.
+command shapes; this file carries the measured costs that produced them.
 
 ## Why one blocking call, never a poll burst
 
@@ -30,9 +29,9 @@ It is `--max <secs>`; a bare trailing number is REJECTED as a stray arg.
 
 ## Why the session never exits to wait
 
-There is no `wait`/`wake` verb and no watcher -- that apparatus deadlocked the runner and was removed. The only
-session exits are a verified `rollover` (context hygiene; the watchdog relaunches), external death (crash /
-usage-limit; watchdog relaunches), or an oracle-verified `fixpoint`.
+There is no `wait`/`wake` verb and no watcher -- that apparatus deadlocked the runner and was removed. The run is
+one session: a verified `rollover` goes straight on, external death (crash / usage limit) is restarted by the
+heartbeat, and only an oracle-verified `fixpoint` or the operator's `run.sh stop` ends it.
 
 ## Why the envelope must be `--todo` AND `--section` scoped (E3)
 

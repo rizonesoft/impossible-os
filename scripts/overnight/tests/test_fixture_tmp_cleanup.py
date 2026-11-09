@@ -20,8 +20,6 @@ HERE = pathlib.Path(__file__).resolve().parent
 
 BUILDERS = {
     "test_receipt_commit_binding": "m._clone()",
-    "test_step_block_convergence": "m._root_with({})",
-    "test_step_block_docs_only": "m._repo()",
 }
 
 RUNNER = """

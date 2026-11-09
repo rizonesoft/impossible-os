@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # block-via: warning-only (STATE hook -- writes the skill-progress state
-# file, never blocks; the BLOCK partner is skill_step_block.py which reads
-# this hook's output).
+# file, never blocks; section_commit_gate.py reads this hook's output).
 """PostToolUse skill-step observer (TODO-08 §10).
 
 Walks the session transcript backward to find the most recent invocation
@@ -165,6 +164,101 @@ def _signature_for_tool(tool_name: str, ti: Dict) -> str:
     return ""
 
 
+def _project_root():
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            text=True, timeout=2, stderr=subprocess.DEVNULL,
+        ).strip() or None
+    except Exception:
+        return None
+
+
+def _commit_target_root(cmd: str):
+    """Which repository will this `git commit` land in? Returns a realpath, or
+    None when it cannot be determined.
+
+    WHY (v13 carry, resolved 2026-08-10). The step-19 rule treats every `git commit`
+    as a candidate SECTION commit, but a test fixture commits into a THROWAWAY repo
+    under /tmp -- a repo with no TODO corpus, no sections and no review state,
+    where the gate's whole question is meaningless. It fired anyway, so every
+    fixture commit carried a standing `SKIP_SKILL_STEP_BLOCK=1`, and a standing
+    opt-out is an opt-out that is set when it should not be too.
+
+    None means UNDETERMINED and the caller must fail CLOSED. A commit whose
+    destination cannot be read is far more likely to be an unusual spelling of a
+    real project commit than a fixture.
+    """
+    try:
+        import shlex
+        # First segment only: a target set by a later `&&` cannot retroactively
+        # move where an earlier `git commit` ran, and the whole chain is only
+        # reached here because it contains one.
+        for sep in ("&&", "||", ";", "|"):
+            cmd = cmd.replace(sep, "\n")
+        target = None
+        for seg in cmd.split("\n"):
+            try:
+                toks = shlex.split(seg)
+            except ValueError:
+                return None
+            if not toks:
+                continue
+            # `cd <dir>` -- the shape a fixture uses, and the shape the repo's
+            # own doctrine discourages for exactly the reason it is parsed here.
+            if toks[0] == "cd" and len(toks) >= 2:
+                target = toks[1]
+                continue
+            if toks[0] == "(" and len(toks) >= 3 and toks[1] == "cd":
+                target = toks[2]
+                continue
+            # `git -C <dir> ... commit`, and the two path-bearing globals.
+            if "git" in toks[0]:
+                for i, t in enumerate(toks):
+                    if t == "-C" and i + 1 < len(toks):
+                        target = toks[i + 1]
+                    elif t.startswith("--work-tree="):
+                        target = t.split("=", 1)[1]
+                    elif t.startswith("--git-dir="):
+                        target = os.path.dirname(t.split("=", 1)[1]) or "."
+                break
+        if target is None:
+            target = os.getcwd()
+        # An unexpanded variable or glob is not a path this can resolve.
+        if any(ch in target for ch in "$*?`"):
+            return None
+        target = os.path.realpath(os.path.expanduser(target))
+        if not os.path.isdir(target):
+            return None
+        out = subprocess.check_output(
+            ["git", "-C", target, "rev-parse", "--show-toplevel"],
+            text=True, timeout=2, stderr=subprocess.DEVNULL,
+        ).strip()
+        return os.path.realpath(out) if out else None
+    except Exception:
+        return None
+
+
+def _commit_is_in_project(cmd: str) -> bool:
+    """True when this commit lands in THIS project's repo (so step 19 counts).
+
+    Fails CLOSED in every uncertain direction: an unreadable target, an
+    unreadable project root, or any exception all return True, because a real
+    section commit that goes unrecorded is worse than a recorded fixture one.
+    Moved here from skill_step_block.py when that hook was deleted (2026-11-09).
+    """
+    target = _commit_target_root(cmd)
+    if target is None:
+        return True
+    project = os.environ.get("CLAUDE_PROJECT_DIR") or _project_root()
+    if not project:
+        return True
+    try:
+        return os.path.realpath(project) == target
+    except Exception:
+        return True
+
+
 def _step19_commit_is_ours(ti: Dict) -> bool:
     r"""Step 19 (the section commit) must be a `git commit` INTO THIS PROJECT.
 
@@ -173,21 +267,17 @@ def _step19_commit_is_ours(ti: Dict) -> bool:
     /tmp and committed into it was recorded as the section's terminal commit
     (evidence_token = the call's first line, `cd /tmp && rm -rf s59seed ...`),
     and the very next tool call was blocked for skipping steps 7/13/16 that
-    had simply not happened yet. skill_step_block already refuses to GATE on
-    such a commit (`_commit_is_in_project`); the observer must not RECORD it
-    either, or the two disagree about what the run has done. Fails CLOSED to
-    recording (True) on any import or classification error, matching the
-    block hook's own direction.
+    had simply not happened yet. The observer must not RECORD such a commit.
+    Fails CLOSED to recording (True) on any import or classification error.
     """
     cmd = (ti.get("command") or "")
     try:
         import section_commit_gate as scg  # noqa: E402
-        import skill_step_block as ssb  # noqa: E402
         scg._ensure_crc()
         is_commit, _ = scg._bash_is_git_commit(cmd)
         if not is_commit:
             return False
-        return ssb._commit_is_in_project(cmd)
+        return _commit_is_in_project(cmd)
     except Exception:
         return True
 
@@ -466,12 +556,9 @@ def main() -> int:
                     continue
                 if name not in MULTI_STEP_SKILLS:
                     continue
-                # TODO-08 §16: skip orphaned entries. Without this skip the
-                # observer would keep recording post-compaction step evidence
-                # into an orphaned entry while the skill-step-block hook (which
-                # also skips orphans) ignores it -- creating an enforcement
-                # bypass where post-compaction commits proceed without any
-                # active-skill gate. Symmetric with skill_step_block.py.
+                # TODO-08 §16: skip orphaned entries, so post-compaction step
+                # evidence is never recorded into an entry section_commit_gate
+                # treats as orphaned.
                 if entry.get("compaction_orphaned") is True:
                     continue
                 ts = entry.get("started_ts", 0)

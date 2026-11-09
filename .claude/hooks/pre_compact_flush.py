@@ -8,13 +8,10 @@ When the harness is about to compact context:
    `compaction_orphaned: true` (TODO-08 §16). The PostToolUse step
    observer cannot run during summary generation, so the entry's
    steps_observed list freezes at whatever count was reached
-   pre-compaction. Without this flag the skill-step-block hook would
-   BLOCK every post-compaction `git commit` or
-   `Skill(review-todo-section)` call indefinitely (PreToolUse gate
-   vs PostToolUse observer is a structural catch-22 once an entry
-   is orphaned). Both `skill_step_block.py` AND `skill_step_observer
-   .py` skip orphaned entries; a resumed flow gets a fresh entry
-   without inheriting stale state.
+   pre-compaction. Without this flag section_commit_gate would judge a
+   post-compaction commit against a frozen step list. skill_step_observer
+   and section_commit_gate both skip orphaned entries; a resumed flow
+   gets a fresh entry without inheriting stale state.
 
 2. Copy every .claude/state/*.json into
    .claude/state/.compaction-snapshots/<ts>/ so mid-pipeline state
@@ -38,8 +35,6 @@ from typing import Optional
 _STATE_DIR_REL = ".claude/state"
 _SNAPSHOT_DIR_REL = ".claude/state/.compaction-snapshots"
 _SKILL_PROGRESS_REL = ".claude/state/skill-progress.json"
-_TRANSCRIPT_CACHE_REL = ".claude/state/transcript-scan-cache.json"
-_READ_CACHE_REL = ".claude/state/read-cache.json"
 SNAPSHOT_RETAIN_COUNT = 3
 
 
@@ -170,32 +165,6 @@ def main() -> int:
     # this run, so future guard/oracle logic (or a human) can tell a fresh
     # cursor from one that survived a context reset.
     _orphan_mark_sequencer_run(os.path.join(root, ".claude/state/sequencer-run.json"))
-
-    # §16: invalidate the transcript-scan offset cache. Compaction
-    # changes the semantic window (the design-review gate state pre-
-    # compaction does not bind on post-compaction edits), so the
-    # cache's impl_seen/design_seen/pending_clear_ids must be reset.
-    # Removing the file is sufficient; the next scan rebuilds it
-    # from the post-compaction transcript suffix.
-    cache_path = os.path.join(root, _TRANSCRIPT_CACHE_REL)
-    try:
-        os.unlink(cache_path)
-    except (FileNotFoundError, IsADirectoryError):
-        pass
-    except Exception:
-        pass
-
-    # token-saver T1-1: drop the read cache. read_cache_block.py BLOCKs a
-    # re-read on the grounds that the content is "already in context" -- after
-    # a compaction that premise is false, so the table MUST NOT survive the
-    # event or the gate would withhold reads the model genuinely needs. This
-    # unlink is the load-bearing half of that hook's correctness.
-    try:
-        os.unlink(os.path.join(root, _READ_CACHE_REL))
-    except (FileNotFoundError, IsADirectoryError):
-        pass
-    except Exception:
-        pass
 
     state_dir = os.path.join(root, _STATE_DIR_REL)
     snap_root = os.path.join(root, _SNAPSHOT_DIR_REL)

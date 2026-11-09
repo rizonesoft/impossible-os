@@ -44,8 +44,6 @@ import sys
 # a prefix match would sweep up a secret that merely shares the prefix.
 _OPTOUT_KEYS = (
     "SKIP_REVIEW_HOOK",
-    "SKIP_SKILL_STEP_BLOCK",
-    "SKIP_PHASE1_BLOCK",
     "SKIP_REVIEW_PIPELINE",
     "SKIP_RUNNER_SUITE",
     "SKIP_HOOK_AUDIT",
@@ -54,7 +52,6 @@ _OPTOUT_KEYS = (
     "SKIP_IDENTITY_GATE",
     "SKIP_LINT_PROMPT_ESCAPING",
     "CODEX_FLAG_OVERRIDE",
-    "READ_CACHE_DISABLE",
     "ATTENDED_REPAIR_OVERRIDE",
 )
 

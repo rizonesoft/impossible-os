@@ -63,7 +63,7 @@ def main(argv) -> int:
 
     dispatch_ts = [e["ts"] for e in events if e.get("kind") == "dispatch"]
     # R2 (2026-07-19): non-Agent compliance. A hook whose sanctioned follow-up
-    # is a rerouted COMMAND (build_offload_reminder -> run-artifact.sh) logs
+    # is a rerouted COMMAND (a bare suite -> run-artifact.sh) logs
     # kind="follow"; counting only Agent dispatches misread the working P3.4
     # block as a 9% follow rate. Follows are per-hook, dispatches stay global.
     follow_ts = defaultdict(list)

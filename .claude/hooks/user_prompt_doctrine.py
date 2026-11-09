@@ -18,13 +18,13 @@ import sys
 
 
 _BYPASS_PATTERNS = [
-    (r"\bskip\s+(?:the\s+)?review\b", "section_review_required / receiving_review_required"),
-    (r"\bbypass\s+(?:the\s+)?(?:gate|hook|review)\b", "section_review_required / section_commit_gate"),
+    (r"\bskip\s+(?:the\s+)?review\b", "section_commit_gate (review evidence)"),
+    (r"\bbypass\s+(?:the\s+)?(?:gate|hook|review)\b", "section_commit_gate"),
     (r"\bignore\s+(?:the\s+)?hook\b", "all enforcement hooks"),
     (r"\bdisable\s+(?:the\s+)?hook\b", "all enforcement hooks"),
-    (r"\bjust\s+commit\b", "section_commit_gate / section_review_required"),
+    (r"\bjust\s+commit\b", "section_commit_gate"),
     (r"\bjust\s+ship\b", "section_commit_gate"),
-    (r"\bskip\s+(?:the\s+)?codex\b", "design_review_required / receiving_review_required"),
+    (r"\bskip\s+(?:the\s+)?codex\b", "section_commit_gate (Codex review stamps)"),
     (r"\bskip\s+(?:the\s+)?test", "section_commit_gate (test evidence)"),
 ]
 
@@ -35,11 +35,7 @@ _REMINDER = (
     "(use only when legitimate revert / stamp-only / known-false-positive "
     "applies):\n"
     "  - SKIP_REVIEW_HOOK=1 + SKIP_REVIEW_HOOK_REASON='<text >= 12 chars>' "
-    "(section_review_required, section_commit_gate)\n"
-    "  - SKIP_DESIGN_REVIEW_HOOK=1 (design_review_required)\n"
-    "  - SKIP_SKILL_STEP_BLOCK=1 + SKIP_SKILL_STEP_BLOCK_REASON='<text >= 12 chars>' "
-    "(skill_step_block)\n"
-    "  - RECEIVING_REVIEW_OVERRIDE=1 (receiving_review_required; same-call only)\n"
+    "(section_commit_gate)\n"
     "  - CODEX_FLAG_OVERRIDE=1 (codex_model_flag_block; same-call only)\n"
     "Doctrine: CLAUDE.md \"Mandatory Skill Triggers\" + memory "
     "feedback_skill_invocation_drift / feedback_never_skip_review / "

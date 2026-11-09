@@ -53,6 +53,7 @@ Design: [docs/specs/2026-11-07-run-supervisor-design.md](../specs/2026-11-07-run
 
 - `bash scripts/run.sh start`, then `attach`. Watch sections shipped and gate warnings, and talk to it directly.
 - After a watched run with no sign a `log` gate was needed, delete those gates' code. Also delete the rotation and report leftovers named in stage 6. That is the point at which most of the 70,000 lines actually go.
+- Done 2026-11-09, after a run that shipped 22 sections. Deleted: the 17 `log`-mode hooks, two helpers only they used (`_review_pipeline_passthrough.py`, `_state_root.py`), the five `SEQ-*` process codes in `run_phase_guard.py` (phase order, lifecycle routing, R1, the armed-run redirect, and the non-frozen half of the control-plane refusal), `gate-modes.json` and the log wrapper in `gate.py` (which now only lists the frozen files), the `mark-rotation`, `relifecycle`, `review-resolved` and `rollover-wip` verbs, the rollover pending flag, `stream-report.py`, `metrics-report.py`, `section-cost-report.py`, and their tests. Kept: every safety refusal, the stop guard, the verified checkpoint (`rollover`) and its two-refusals-then-park rule. Found on the way: the tmux launcher had dropped the units' ChromeMCP-off environment; it is restored and tested.
 
 ## Decisions
 

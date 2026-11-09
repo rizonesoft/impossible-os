@@ -20,7 +20,7 @@ check-when-I-sit-down list. Add an item when:
   e.g. reviewing/committing third-party source vendored to unblock wiring.
 
 > Check the runner is stopped before acting on anything here:
-> `systemctl --user is-active overnight-impossible-os.service` should NOT print `active`.
+> `bash scripts/run.sh status` should print `session: not running`.
 
 ---
 

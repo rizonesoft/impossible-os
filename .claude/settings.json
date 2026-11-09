@@ -7,31 +7,12 @@
       "Bash(TIMEOUT=30 bash scripts/test.sh QUIET=1:*)",
       "Edit(/.claude/skills/validate-todo-file/**)",
       "Edit(/.claude/skills/implement-todo-section/**)",
-      "Edit(/.claude/hooks/section_review_required.py)",
-      "Edit(/.claude/hooks/receiving_review_required.py)",
       "Edit(/.claude/hooks/section_commit_gate.py)",
-      "Edit(/.claude/hooks/skill_step_block.py)",
-      "Edit(/.claude/hooks/_review_pipeline_passthrough.py)",
-      "Edit(/.claude/hooks/phase1_evidence_gate.py)",
       "Edit(/.claude/hooks/skill_step_observer.py)"
     ]
   },
   "hooks": {
     "PreToolUse": [
-      {
-        "matcher": "Edit|Write|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/agent_dispatch_required.py\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/receipt_surface_guard.py\""
-          }
-        ]
-      },
       {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
@@ -89,31 +70,12 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/optout_env_prefix_block.py\"",
             "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/design_review_required.py\""
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/step5_quality_gate.py\"",
-            "timeout": 10
           }
         ]
       },
       {
         "matcher": "Bash",
         "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/build_offload_reminder.py\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/codex_wait_discipline.py\"",
-            "timeout": 5
-          },
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/artifact_pipe_guard.py\"",
@@ -137,20 +99,6 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/section_commit_gate.py\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/phase1_evidence_gate.py\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/broker_dispatch_required.py\""
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/review_kind_literal_required.py\"",
             "timeout": 10
           },
           {
@@ -186,51 +134,11 @@
         ]
       },
       {
-        "matcher": "Edit|Write|MultiEdit|Skill|Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/section_review_required.py\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Bash|Skill|Edit|Write|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skill_step_block.py\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/review_dispatch_gate.py\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/receiving_review_required.py\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/todo_wrap_reminder.py\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/receiving_review_required.py\"",
             "timeout": 5
           }
         ]
@@ -255,11 +163,6 @@
           },
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/fork_context_guard.py\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/inflight_race_guard.py\"",
             "timeout": 5
           }
@@ -272,31 +175,6 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/edit_preflight.py\"",
             "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "WebSearch|WebFetch",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/websearch_offload_gate.py\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/read_cache_block.py\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/gate.py\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/agent_coverage_gate.py\"",
-            "timeout": 5
           }
         ]
       }
@@ -458,11 +336,6 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/agent_dispatch_recorder.py\"",
             "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/agent_coverage_gate.py\" record",
-            "timeout": 10
           }
         ]
       },
@@ -586,11 +459,6 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/edit_retry_reminder.py\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/read_cache_block.py\" invalidate",
             "timeout": 5
           }
         ]

@@ -15,7 +15,7 @@ Checks (JSON verdict on stdout; exit 1 on any HARD failure):
   graph_fresh       build/todo-cache.json newer than the newest todo/ md (soft
                     -- PREFLIGHT rebuilds it anyway; reported for visibility)
   toolchain         clang-19 / nasm / ld.lld-19 / node / gh on PATH
-  watchdog          armed marker implies watchdog timer active (soft)
+  heartbeat         a live run implies its heartbeat tmux session (soft)
 
 Pruning (always; keeps the situational brief action-relevant):
   - live-gotchas entries whose `(expires YYYY-MM-DD)` has passed
@@ -124,16 +124,15 @@ def main(argv) -> int:
                if shutil.which(t) is None]
     check("toolchain", not missing, f"missing: {missing}")
 
-    # watchdog (soft): armed implies the watchdog timer exists
-    armed = (root / ".claude/state/sequencer-armed").exists()
-    if armed:
+    # heartbeat (soft): a live run (scripts/run.sh start) has its heartbeat session
+    if (root / ".claude/state/sequencer-armed").exists():
         try:
-            r = run(["systemctl", "--user", "list-timers", "--all"], root, 15)
-            ok = "overnight-" in r.stdout and "watchdog" in r.stdout
-            check("watchdog", ok, "armed but no watchdog timer visible",
+            r = run(["tmux", "has-session", "-t", "=impossible-os-heartbeat"], root, 15)
+            check("heartbeat", r.returncode == 0,
+                  "run is live but its heartbeat session is not (bash scripts/run.sh start)",
                   hard_fail=False)
         except Exception:
-            check("watchdog", False, "systemctl unavailable", hard_fail=False)
+            check("heartbeat", False, "tmux unavailable", hard_fail=False)
 
     # ---- pruning ----
     gotchas = root / ".claude/state/live-gotchas.md"

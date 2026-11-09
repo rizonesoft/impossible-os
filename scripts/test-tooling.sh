@@ -288,7 +288,7 @@ t_fail() {
 # mtime, age a state file, or hand a hook a `timestamp_ns` it will compare
 # against Python's `time.time_ns()` must stay on `date +%s`-family realtime --
 # see NOW_NS below, which is read back by
-# .claude/hooks/build_offload_reminder.py against `time.time_ns()`.
+# .claude/hooks/section_commit_gate.py against `time.time_ns()`.
 # mono_ns never returns non-zero: a caller under `set -e` must reach its
 # valid_ns check and report an unreadable clock, not die before the guard runs.
 mono_ns() {
@@ -1368,55 +1368,6 @@ else
     #     never reach into quotes or it becomes a false-positive machine.
     _flag_probe 0 "allow quoted semicolon as data (non-codex)" \
         'echo "a;b" && ls'
-fi
-
-# ============================================================================
-# broker_dispatch_required (review-kind dispatches must use the broker)
-# ============================================================================
-# A 12.95h run sent 17 of 54 Codex dispatches down the raw script -- 12 of 19
-# re-adversarial rounds, the round that decides whether a finding is resolved.
-# The direct path was measured truncating a review to a 544-byte capture and
-# persists no artifact, so that evidence cannot be re-read without a full
-# re-dispatch. Gated in the UNATTENDED run only; interactive keeps the script.
-BROKER_HOOK="$REPO_ROOT/.claude/hooks/broker_dispatch_required.py"
-if [ ! -f "$BROKER_HOOK" ]; then
-    t_fail "broker_dispatch_required hook missing: $BROKER_HOOK"
-else
-    _broker_probe() {
-        # Args: <expected_rc> <description> <env-assignments> <command-string>
-        local want="$1" desc="$2" envs="$3" cmd="$4"
-        local payload rc
-        payload=$(python3 -c "import json,sys; print(json.dumps({'tool_name':'Bash','tool_input':{'command':sys.argv[1]}}))" "$cmd" 2>/dev/null || echo '{}')
-        # Scrub the two gate variables from the AMBIENT env before applying
-        # $envs. Without this the "interactive" probe inherits the live
-        # OVERNIGHT_SEQUENCER_RUN=1 of an overnight run and blocks, so the
-        # pack could never go green inside the very run it protects.
-        printf '%s' "$payload" | env -u OVERNIGHT_SEQUENCER_RUN -u BROKER_DISPATCH_OVERRIDE \
-            $envs python3 "$BROKER_HOOK" >/dev/null 2>&1
-        rc=$?
-        if [ "$rc" = "$want" ]; then
-            t_pass "broker_dispatch: $desc (rc=$rc)"
-        else
-            t_fail "broker_dispatch: $desc (want $want, got $rc)"
-        fi
-    }
-    _BD="bash scripts/codex-dispatch.sh '[review-kind: re-adversarial] todo/x body'"
-    _BB="bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: re-adversarial] todo/x body'"
-    _broker_probe 2 "unattended: direct + review-kind BLOCKS" \
-        "OVERNIGHT_SEQUENCER_RUN=1" "$_BD"
-    _broker_probe 0 "unattended: broker + review-kind allowed" \
-        "OVERNIGHT_SEQUENCER_RUN=1" "$_BB"
-    # The broker basename ENDS IN codex-dispatch.sh; a suffix test would
-    #     misclassify it as direct and block the mandated path.
-    _broker_probe 0 "unattended: non-review-kind dispatch untouched" \
-        "OVERNIGHT_SEQUENCER_RUN=1" "bash scripts/codex-dispatch.sh 'no marker'"
-    _broker_probe 2 "unattended: direct behind 'cd X;' still BLOCKS" \
-        "OVERNIGHT_SEQUENCER_RUN=1" "cd /tmp;$_BD"
-    _broker_probe 0 "unattended: override allows" \
-        "OVERNIGHT_SEQUENCER_RUN=1 BROKER_DISPATCH_OVERRIDE=1" "$_BD"
-    # Interactive is the whole point of scoping this to the unattended run.
-    _broker_probe 0 "interactive: direct + review-kind allowed" \
-        "X=1" "$_BD"
     # 29. Allow: process substitution with --model in argv (proc-sub
     #     fail-open guard handles `<(...)` / `>(...)` constructs).
     _flag_probe 0 "allow diff <(echo a) <(echo b)" \
@@ -1801,93 +1752,19 @@ else
     t_fail "codex-bg-dispatch accepted unmarked prompt"
 fi
 
-# --- WS1b agent-dispatch gate ---------------------------------------------
-# Tests the safety property: the gate is SILENT (empty stderr, rc 0) in
-# interactive sessions and on non-source targets. The positive WARN path needs
-# a live SECTIONS guard state and is covered by manual probe (not simulated here
-# to avoid clobbering the real sequencer-run.json).
-[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[agent_dispatch_gate]${NC}"
-_AD_GATE="$REPO_ROOT/.claude/hooks/agent_dispatch_required.py"
-_ad_silent() {  # <desc> <env-assignments...> -- payload in $PAYLOAD; PASS iff empty stderr + rc 0
-    local desc="$1"; shift
-    local err rc
-    err=$(printf '%s' "$PAYLOAD" | env -u OVERNIGHT_SEQUENCER_RUN -u SKIP_AGENT_DISPATCH_HOOK "$@" python3 "$_AD_GATE" 2>&1 1>/dev/null)
-    rc=$?
-    if [ -z "$err" ] && [ "$rc" = "0" ]; then
-        t_pass "agent_dispatch_gate: $desc (silent)"
-    else
-        t_fail "agent_dispatch_gate: $desc (want silent, got rc=$rc err='$err')"
-    fi
-}
-PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"src/kernel/x.c"}}'
-_ad_silent "silent when OVERNIGHT_SEQUENCER_RUN unset" "PATH=$PATH"
-_ad_silent "silent with SKIP opt-out" "PATH=$PATH" "OVERNIGHT_SEQUENCER_RUN=1" "SKIP_AGENT_DISPATCH_HOOK=1"
-PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"docs/x.md"}}'
-_ad_silent "silent on markdown target" "PATH=$PATH" "OVERNIGHT_SEQUENCER_RUN=1"
-PAYLOAD='{"tool_name":"Read","tool_input":{"file_path":"src/kernel/x.c"}}'
-_ad_silent "silent on non-edit tool" "PATH=$PATH" "OVERNIGHT_SEQUENCER_RUN=1"
-
-# Positive paths (BLOCK/WARN) via a synthetic tree: the hook resolves its repo
-# root from its own location, so a copied hook + synthetic sequencer-run.json
-# exercises the SECTIONS-phase logic without touching the real state.
-AD_TMP="$(mktemp -d)"
-mkdir -p "$AD_TMP/.claude/hooks" "$AD_TMP/.claude/state"
-cp "$_AD_GATE" "$AD_TMP/.claude/hooks/agent_dispatch_required.py"
-printf '{"active": true, "phase": "SECTIONS"}' > "$AD_TMP/.claude/state/sequencer-run.json"
-_ad_pos() {  # <desc> <want_rc> <want_grep>
-    local desc="$1" want_rc="$2" want_grep="$3" err rc
-    err=$(printf '%s' "$PAYLOAD" | env -u SKIP_AGENT_DISPATCH_HOOK OVERNIGHT_SEQUENCER_RUN=1         python3 "$AD_TMP/.claude/hooks/agent_dispatch_required.py" 2>&1 1>/dev/null)
-    rc=$?
-    if [ "$rc" = "$want_rc" ] && grep -q "$want_grep" <<<"$err"; then
-        t_pass "agent_dispatch_gate: $desc (rc=$rc)"
-    else
-        t_fail "agent_dispatch_gate: $desc (want rc=$want_rc + '$want_grep', got rc=$rc err='$err')"
-    fi
-}
-# fail-open on malformed shapes even in SECTIONS phase (non-object JSON,
-# non-dict tool_input) and no BLOCK outside kernel-ish paths (docs .c copy)
-for BAD in '[]' '{"tool_name":"Edit","tool_input":[]}'; do
-    PAYLOAD="$BAD"
-    err=$(printf '%s' "$PAYLOAD" | env -u SKIP_AGENT_DISPATCH_HOOK OVERNIGHT_SEQUENCER_RUN=1 \
-        python3 "$AD_TMP/.claude/hooks/agent_dispatch_required.py" 2>&1 1>/dev/null); rc=$?
-    if [ -z "$err" ] && [ "$rc" = "0" ]; then
-        t_pass "agent_dispatch_gate: fail-open on malformed payload $BAD"
-    else
-        t_fail "agent_dispatch_gate: malformed payload $BAD not fail-open (rc=$rc err='$err')"
-    fi
-done
-PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"src/kernel/sched.c"}}'
-_ad_pos "BLOCKs kernel source edit with no fresh dispatch" 2 "agent-dispatch BLOCK"
-PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"scripts/tool.py"}}'
-_ad_pos "WARNs (not blocks) non-kernel source edit" 0 "agent-dispatch reminder"
-# a fresh dispatch record clears both paths
-python3 -c "import json,time,sys; json.dump({'timestamp_ns': time.time_ns(), 'subagent_type': 'kernel-explorer'}, open(sys.argv[1],'w'))" "$AD_TMP/.claude/state/last-agent-dispatch.json"
-PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"src/kernel/sched.c"}}'
-err=$(printf '%s' "$PAYLOAD" | env -u SKIP_AGENT_DISPATCH_HOOK OVERNIGHT_SEQUENCER_RUN=1     python3 "$AD_TMP/.claude/hooks/agent_dispatch_required.py" 2>&1 1>/dev/null); rc=$?
-if [ -z "$err" ] && [ "$rc" = "0" ]; then
-    t_pass "agent_dispatch_gate: fresh dispatch record clears the BLOCK"
-else
-    t_fail "agent_dispatch_gate: fresh dispatch did not clear (rc=$rc err='$err')"
-fi
-rm -rf "$AD_TMP"
-
 # ============================================================================
 # receiving-code-review hard gate (TODO-08 in 00-infrastructure section 3)
 #
-# Asserts the codex_review_completed.py PostToolUse hook + the
-# receiving_review_required.py PreToolUse hook chain works:
+# Asserts the codex_review_completed.py PostToolUse hook records review state
+# (section_commit_gate reads it):
 #   - Trigger event writes state file with received:false
 #   - Receive event flips received:true
-#   - PreToolUse blocks Edit/Write while received:false within 1h TTL
-#   - PreToolUse allows after received:true
-#   - PreToolUse allows when state file missing (no recent review)
-#   - PreToolUse allows on TTL expiry (>1h since trigger)
-#   - Opt-out via RECEIVING_REVIEW_OVERRIDE=1 allows
 #   - Bare-name Skill (per design-review M finding) is recognized
+#   - Substring-only mentions and non-review subcommands write no trigger
+# The receiving_review_required.py PreToolUse half was deleted 2026-11-09.
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[receiving_review_gate]${NC}"
 
 POST_HOOK="$REPO_ROOT/.claude/hooks/codex_review_completed.py"
-PRE_HOOK="$REPO_ROOT/.claude/hooks/receiving_review_required.py"
 # These probes used to run against the LIVE session state file, backed up and
 # restored around the block. That was wrong in both directions and it cost a
 # blocked push on a green tree (2026-08-17, a TPM attestation section ship):
@@ -1912,8 +1789,7 @@ PRE_HOOK="$REPO_ROOT/.claude/hooks/receiving_review_required.py"
 RRG_TMP="$(mktemp -d)"
 RRG_SANDBOX="$RRG_TMP/repo"
 mkdir -p "$RRG_SANDBOX/.claude/state" "$RRG_SANDBOX/.claude/hooks" "$RRG_SANDBOX/src"
-for _h in codex_review_completed.py receiving_review_required.py \
-          _codex_dispatch.py _skip_env.py; do
+for _h in codex_review_completed.py _codex_dispatch.py _skip_env.py; do
     cp "$REPO_ROOT/.claude/hooks/$_h" "$RRG_SANDBOX/.claude/hooks/$_h"
 done
 (
@@ -1926,7 +1802,6 @@ done
     git -c commit.gpgsign=false commit -q --no-verify -m "seed"
 )
 POST_HOOK="$RRG_SANDBOX/.claude/hooks/codex_review_completed.py"
-PRE_HOOK="$RRG_SANDBOX/.claude/hooks/receiving_review_required.py"
 STATE_FILE="$RRG_SANDBOX/.claude/state/last-codex-review.json"
 # Refusal-direction control, part (b): the live file must be BYTE-IDENTICAL
 # after the block. Snapshot it now; the assertion runs at cleanup. This is the
@@ -1940,29 +1815,12 @@ fi
 
 if [ ! -f "$POST_HOOK" ]; then
     t_fail "receiving_review_gate post hook missing: $POST_HOOK"
-elif [ ! -f "$PRE_HOOK" ]; then
-    t_fail "receiving_review_gate pre hook missing: $PRE_HOOK"
 else
     # cwd matters: the WRITER hook resolves its repo root from
     # `git rev-parse --show-toplevel`, so every probe that writes state must
     # run inside the sandbox. pushd rather than a subshell because t_pass /
     # t_fail increment shell variables that a subshell would discard.
     pushd "$RRG_SANDBOX" >/dev/null
-    _gate_probe() {
-        # Args: <expected_rc> <description> <hook> <payload-json> [env_var]
-        local want="$1" desc="$2" hook="$3" payload="$4" envvar="${5:-}"
-        local got
-        if [ -n "$envvar" ]; then
-            got=$(printf '%s' "$payload" | env "$envvar" python3 "$hook" >/dev/null 2>&1; echo $?)
-        else
-            got=$(printf '%s' "$payload" | python3 "$hook" >/dev/null 2>&1; echo $?)
-        fi
-        if [ "$got" = "$want" ]; then
-            t_pass "receiving_review_gate: $desc (rc=$got)"
-        else
-            t_fail "receiving_review_gate: $desc (want $want, got $got)"
-        fi
-    }
     _state_received() {
         # Print received field from state file; "missing" if absent.
         # Use single-quoted python -c body and pass STATE_FILE as argv
@@ -1998,14 +1856,6 @@ else
         t_fail "receiving_review_gate: Skill trigger writes state.received=False (got $GOT)"
     fi
 
-    # Sub-test 3: PreToolUse BLOCKS (rc=2) when received:false
-    _gate_probe 2 "PreToolUse blocks Edit when received=false" \
-        "$PRE_HOOK" '''{"tool_name":"Edit","tool_input":{"file_path":"src/foo.c"}}'''
-
-    # Sub-test 4: PreToolUse BLOCKS Write too
-    _gate_probe 2 "PreToolUse blocks Write when received=false" \
-        "$PRE_HOOK" '''{"tool_name":"Write","tool_input":{"file_path":"src/foo.c","content":"x"}}'''
-
     # Sub-test 5: Receive (namespaced) flips state to received=true
     printf "%s" '''{"tool_name":"Skill","tool_input":{"skill":"superpowers:receiving-code-review"}}''' \
         | python3 "$POST_HOOK" >/dev/null 2>&1
@@ -2015,10 +1865,6 @@ else
     else
         t_fail "receiving_review_gate: namespaced receive flips received=True (got $GOT)"
     fi
-
-    # Sub-test 6: PreToolUse ALLOWS after receive
-    _gate_probe 0 "PreToolUse allows Edit after received=true" \
-        "$PRE_HOOK" '''{"tool_name":"Edit","tool_input":{"file_path":"src/foo.c"}}'''
 
     # Sub-test 7: Bare-name receive (skill key) -- design review M
     rm -f "$STATE_FILE"
@@ -2045,38 +1891,6 @@ else
     else
         t_fail "receiving_review_gate: bare-name receive (name key) flips True (got $GOT)"
     fi
-
-    # Sub-test 9: PreToolUse ALLOWS when state file missing
-    rm -f "$STATE_FILE"
-    _gate_probe 0 "PreToolUse allows Edit when no state file" \
-        "$PRE_HOOK" '''{"tool_name":"Edit","tool_input":{"file_path":"src/foo.c"}}'''
-
-    # Sub-test 10: Opt-out via RECEIVING_REVIEW_OVERRIDE=1
-    printf "%s" '''{"tool_name":"Skill","tool_input":{"skill":"codex-adversarial-review-section"}}''' \
-        | python3 "$POST_HOOK" >/dev/null 2>&1
-    _gate_probe 0 "PreToolUse opt-out via RECEIVING_REVIEW_OVERRIDE=1" \
-        "$PRE_HOOK" '''{"tool_name":"Edit","tool_input":{"file_path":"src/foo.c"}}''' \
-        "RECEIVING_REVIEW_OVERRIDE=1"
-
-    # Sub-test 11: TTL stale-pass (>1h) -> allow
-    printf "%s" '''{"tool_name":"Skill","tool_input":{"skill":"codex-adversarial-review-section"}}''' \
-        | python3 "$POST_HOOK" >/dev/null 2>&1
-    python3 -c '
-import json, sys
-p = sys.argv[1]
-s = json.load(open(p))
-s["timestamp_ns"] = s["timestamp_ns"] - 2 * 3600 * 10**9
-open(p, "w").write(json.dumps(s))
-' "$STATE_FILE"
-    _gate_probe 0 "PreToolUse allows on TTL stale-pass (>1h old)" \
-        "$PRE_HOOK" '''{"tool_name":"Edit","tool_input":{"file_path":"src/foo.c"}}'''
-
-    # Sub-test 12: Non-Edit/Write/MultiEdit tools are not blocked
-    rm -f "$STATE_FILE"
-    printf "%s" '''{"tool_name":"Skill","tool_input":{"skill":"codex-adversarial-review-section"}}''' \
-        | python3 "$POST_HOOK" >/dev/null 2>&1
-    _gate_probe 0 "PreToolUse passes through Bash/Read/Grep tools" \
-        "$PRE_HOOK" '''{"tool_name":"Bash","tool_input":{"command":"ls"}}'''
 
     # Sub-test 13 (M1 regression): substring-only mention of
     # codex-companion.mjs in a Bash command (e.g. heredoc body, rg
@@ -3900,208 +3714,16 @@ fi
 
 
 # ============================================================================
-# design_review_required.py -- review-kind + commit-clears (TODO-08 #15)
-# ============================================================================
-# Two sub-tests verify the gate-relaxation behavior added in TODO-08 #15:
-#   review_kind  -- a Codex dispatch with `[review-kind: ...]` marker
-#                   counts as design-equivalent (gate cleared)
-#   commit_clears -- a section-ship commit (`review:` / `stamp:` /
-#                   `docs:` / `todo:` prefix) resets the gate
-
-DR_TMP="$(mktemp -d)"
-DR_HOOK="$REPO_ROOT/.claude/hooks/design_review_required.py"
-
-# Helper: build a transcript fixture with a Skill(implement-todo-section)
-# event followed by an optional Bash event, then run the hook against an
-# Edit payload targeting a code file. Echoes hook exit code.
-dr_run() {
-    local fixture="$1"
-    local target="$2"
-    local payload
-    payload="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"},"transcript_path":"%s"}' \
-        "$target" "$fixture")"
-    printf '%s' "$payload" | python3 "$DR_HOOK" >/dev/null 2>&1
-    echo $?
-}
-
-# Synthesize a JSONL transcript line with a tool_use event. Optional 4th
-# arg is a tool_use_id (used by tests that pair tool_use with tool_result).
-dr_event() {
-    local tool="$1" name="$2" input_json="$3" tu_id="${4-}"
-    if [ -n "$tu_id" ]; then
-        printf '{"message":{"content":[{"type":"tool_use","id":"%s","name":"%s","input":%s}]}}\n' \
-            "$tu_id" "$tool" "$input_json"
-    else
-        printf '{"message":{"content":[{"type":"tool_use","name":"%s","input":%s}]}}\n' \
-            "$tool" "$input_json"
-    fi
-}
-
-# Synthesize a JSONL transcript line with a tool_result event matching
-# a prior tool_use_id. 2nd arg "ok"|"err" sets the is_error flag.
-# Codex H1 fix (2026-04-28): the design-review gate-clear path requires
-# a successful tool_result; tests must pair tool_use with tool_result
-# to exercise the realistic transcript shape.
-dr_result() {
-    local tu_id="$1" status="$2"
-    local is_err="false"
-    [ "$status" = "err" ] && is_err="true"
-    printf '{"message":{"content":[{"type":"tool_result","tool_use_id":"%s","is_error":%s,"content":"out"}]}}\n' \
-        "$tu_id" "$is_err"
-}
-
-# --- Test A: bare implement-todo-section (no design dispatch) -> blocked
-FX="$DR_TMP/baseline.jsonl"
-dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
-RC="$(dr_run "$FX" "src/kernel/foo.c")"
-if [ "$RC" = "2" ]; then
-    t_pass "design_review_required baseline blocks (rc=2 with no design dispatch)"
-else
-    t_fail "design_review_required baseline expected rc=2, got rc=$RC"
-fi
-
-# --- Test B (#15 #1): [review-kind: adversarial] dispatch clears the gate
-FX="$DR_TMP/review_kind.jsonl"
-dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
-dr_event "Bash" "Bash" '{"command":"node /path/codex-companion.mjs adversarial-review \"[review-kind: adversarial] Target: ...\""}' >>"$FX"
-RC="$(dr_run "$FX" "src/kernel/foo.c")"
-if [ "$RC" = "0" ]; then
-    t_pass "design_review_review_kind [review-kind: adversarial] clears gate (rc=0)"
-else
-    t_fail "design_review_review_kind expected rc=0, got rc=$RC"
-fi
-
-# --- Test C (#15 #2): a `review:` commit with SUCCESSFUL tool_result clears
-FX="$DR_TMP/commit_clears.jsonl"
-dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
-dr_event "Bash" "Bash" '{"command":"git commit -m \"review: TODO-XX foo bar\""}' "tu_review_ok" >>"$FX"
-dr_result "tu_review_ok" "ok" >>"$FX"
-RC="$(dr_run "$FX" "src/kernel/foo.c")"
-if [ "$RC" = "0" ]; then
-    t_pass "design_review_commit_clears review: prefix + ok result clears gate (rc=0)"
-else
-    t_fail "design_review_commit_clears expected rc=0, got rc=$RC"
-fi
-
-# --- Test D (#15 #2): a `docs/x:` commit with SUCCESSFUL tool_result clears
-FX="$DR_TMP/commit_docs.jsonl"
-dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
-dr_event "Bash" "Bash" '{"command":"git commit -m \"docs/superpowers: catalog audit\""}' "tu_docs_ok" >>"$FX"
-dr_result "tu_docs_ok" "ok" >>"$FX"
-RC="$(dr_run "$FX" "src/kernel/foo.c")"
-if [ "$RC" = "0" ]; then
-    t_pass "design_review_commit_clears docs/x: prefix + ok result clears gate (rc=0)"
-else
-    t_fail "design_review_commit_clears docs/x: expected rc=0, got rc=$RC"
-fi
-
-# --- Test E: a non-section-ship commit (e.g. `feat:`) does NOT clear gate
-FX="$DR_TMP/commit_other.jsonl"
-dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
-dr_event "Bash" "Bash" '{"command":"git commit -m \"feat: unrelated change\""}' "tu_feat" >>"$FX"
-dr_result "tu_feat" "ok" >>"$FX"
-RC="$(dr_run "$FX" "src/kernel/foo.c")"
-if [ "$RC" = "2" ]; then
-    t_pass "design_review_commit_clears feat: prefix does NOT clear gate (rc=2)"
-else
-    t_fail "design_review_commit_clears feat: expected rc=2, got rc=$RC"
-fi
-
-# --- Test F (Codex H1 fix 2026-04-28): a `review:` commit with FAILED
-# tool_result must NOT clear the gate. Closes the bypass where a
-# blocked/failed commit attempt could disable design-review.
-FX="$DR_TMP/commit_failed.jsonl"
-dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
-dr_event "Bash" "Bash" '{"command":"git commit -m \"review: TODO-XX foo bar\""}' "tu_review_err" >>"$FX"
-dr_result "tu_review_err" "err" >>"$FX"
-RC="$(dr_run "$FX" "src/kernel/foo.c")"
-if [ "$RC" = "2" ]; then
-    t_pass "design_review_commit_clears failed review: commit does NOT clear gate (rc=2)"
-else
-    t_fail "design_review_commit_clears failed-result expected rc=2, got rc=$RC"
-fi
-
-# --- Test G (Codex H1 fix 2026-04-28): a `review:` commit with NO
-# tool_result yet (in-flight) must NOT clear the gate.
-FX="$DR_TMP/commit_inflight.jsonl"
-dr_event "Skill" "Skill" '{"skill":"implement-todo-section","args":"## 1. Foo"}' >"$FX"
-dr_event "Bash" "Bash" '{"command":"git commit -m \"review: TODO-XX foo bar\""}' "tu_review_pending" >>"$FX"
-RC="$(dr_run "$FX" "src/kernel/foo.c")"
-if [ "$RC" = "2" ]; then
-    t_pass "design_review_commit_clears in-flight commit (no result) does NOT clear gate (rc=2)"
-else
-    t_fail "design_review_commit_clears in-flight expected rc=2, got rc=$RC"
-fi
-
-rm -rf "$DR_TMP"
-
-
-# ============================================================================
 # TODO-08 number 16: PreCompact orphan-marking + selector skip + cache
 # ============================================================================
-# Sub-tests for compaction-resilient skill-step state. Three angles:
-# (16-1) skill-progress.json entry with compaction_orphaned: true is
-#        skipped by skill_step_block selector -> gate clears.
-# (16-2) Live (un-orphaned) entry is still picked normally (regression
-#        guard against accidentally skipping live entries).
+# Sub-tests for compaction-resilient skill-step state (section_commit_gate
+# reads the orphan mark). 16-1/16-2 tested skill_step_block, deleted 2026-11-09.
 # (16-3) pre_compact_flush.py walking a state file marks every entry
 #        compaction_orphaned: true; idempotent re-run preserves
 #        orphan_ts_ns.
 
 C16_TMP="$(mktemp -d -t test_compact16_XXXXXX)"
-SSB_HOOK="$REPO_ROOT/.claude/hooks/skill_step_block.py"
 PCF_HOOK="$REPO_ROOT/.claude/hooks/pre_compact_flush.py"
-
-# 16-1: orphaned entry -> skill_step_block selector skips, exits 0
-C16_STATE_DIR="$C16_TMP/state1/.claude/state"
-mkdir -p "$C16_STATE_DIR"
-cat >"$C16_STATE_DIR/skill-progress.json" <<'PYJSON'
-{
-  "implement-todo-section": {
-    "args": "## 1. Foo",
-    "session_id": "sess-abc",
-    "started_head_sha": "deadbeef",
-    "started_ts": 1777000000000000000,
-    "steps_observed": [],
-    "compaction_orphaned": true,
-    "orphan_reason": "PreCompact fired with 0 steps observed",
-    "orphan_ts_ns": 1777000000000000001
-  }
-}
-PYJSON
-# Init empty git repo so the hook's _repo_root resolves to C16_TMP/state1.
-( cd "$C16_TMP/state1" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
-PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"feat: x\""}}'
-RC=0
-( cd "$C16_TMP/state1" && printf '%s' "$PAYLOAD" | CLAUDE_PROJECT_DIR="$C16_TMP/state1" python3 "$SSB_HOOK" >/dev/null 2>&1 ) || RC=$?
-if [ "$RC" = "0" ]; then
-    t_pass "compact16_orphan_skip orphaned entry -> selector skips, gate clears (rc=0)"
-else
-    t_fail "compact16_orphan_skip expected rc=0, got rc=$RC"
-fi
-
-# 16-2: live (un-orphaned) entry with missing terminal steps -> blocker fires
-C16_STATE_DIR2="$C16_TMP/state2/.claude/state"
-mkdir -p "$C16_STATE_DIR2"
-cat >"$C16_STATE_DIR2/skill-progress.json" <<'PYJSON'
-{
-  "implement-todo-section": {
-    "args": "## 1. Foo",
-    "session_id": "sess-live",
-    "started_head_sha": "abc12345",
-    "started_ts": 1777999999999999999,
-    "steps_observed": []
-  }
-}
-PYJSON
-( cd "$C16_TMP/state2" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
-RC=0
-( cd "$C16_TMP/state2" && printf '%s' "$PAYLOAD" | CLAUDE_PROJECT_DIR="$C16_TMP/state2" python3 "$SSB_HOOK" >/dev/null 2>&1 ) || RC=$?
-if [ "$RC" = "2" ]; then
-    t_pass "compact16_live_picked live (un-orphaned) entry -> selector picks it, gate blocks (rc=2)"
-else
-    t_fail "compact16_live_picked expected rc=2, got rc=$RC"
-fi
 
 # 16-3: PreCompact hook marks every active entry compaction_orphaned;
 # idempotent re-run preserves orphan_ts_ns.
@@ -4138,135 +3760,6 @@ else
 fi
 
 rm -rf "$C16_TMP"
-
-
-# ============================================================================
-# skill_step_block.py -- non-contiguous-step gate (TODO-08 number 10)
-# ============================================================================
-# Synthesizes a .claude/state/skill-progress.json fixture and runs the
-# blocker against synthetic Bash(git commit) payloads. Asserts:
-#   - all required terminal steps observed -> rc 0 (pass-through)
-#   - missing terminal step              -> rc 2 (block)
-#   - non-contiguous (gap in middle)     -> rc 2 (block; subset of missing)
-#   - SKIP_SKILL_STEP_BLOCK opt-out      -> rc 0
-#   - docs-only working tree             -> rc 0 (nothing but todo/ + docs/)
-# Runs in a THROWAWAY repo holding one untracked src/ file. The hook reads the
-# working tree of whatever repo it runs in, and a todo/- or docs/-only tree is
-# a pass by design, so running against REPO_ROOT made every rc=2 case depend
-# on what else the pack had left dirty (CI run 36499209522 read rc=0 twice).
-
-SSB_TMP="$(mktemp -d)"
-SSB_REPO="$SSB_TMP/repo"
-mkdir -p "$SSB_REPO/src" "$SSB_REPO/docs"
-( cd "$SSB_REPO" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
-printf 'int x;\n' >"$SSB_REPO/src/dirty.c"
-SSB_STATE_REAL="$SSB_REPO/.claude/state/skill-progress.json"
-
-ssb_write_state() {
-    local steps_json="$1"
-    mkdir -p "$SSB_REPO/.claude/state"
-    cat >"$SSB_STATE_REAL" <<EOF
-{
-  "implement-todo-section": {
-    "started_ts": 1000,
-    "started_head_sha": "deadbeef",
-    "session_id": "test",
-    "args": "test section",
-    "steps_observed": ${steps_json}
-  }
-}
-EOF
-}
-
-ssb_run() {
-    ( cd "$SSB_REPO" && printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m test"}}' | \
-        CLAUDE_PROJECT_DIR="$SSB_REPO" python3 "$REPO_ROOT/.claude/hooks/skill_step_block.py" >/dev/null 2>&1 )
-    echo $?
-}
-
-# Test A: all required terminal steps [7, 13, 16, 19] observed -> rc 0
-ssb_write_state '[{"n":7},{"n":13},{"n":16},{"n":19}]'
-RC="$(ssb_run)"
-if [ "$RC" = "0" ]; then
-    t_pass "skill_step_block all required terminal steps -> rc=0"
-else
-    t_fail "skill_step_block all-required expected rc=0, got rc=$RC"
-fi
-
-# Test B: missing terminal step 16 (rebuild) -> rc 2.
-# NOTE: step 19 (commit) is the in-flight Bash here, so the bootstrap
-# branch in skill_step_block credits it; testing "missing step 19"
-# directly would always pass under the bootstrap. Use missing step 16
-# (which the in-flight `git commit` does NOT match) to exercise the
-# missing-terminal block.
-ssb_write_state '[{"n":7},{"n":13}]'
-RC="$(ssb_run)"
-if [ "$RC" = "2" ]; then
-    t_pass "skill_step_block missing terminal step 16 -> rc=2"
-else
-    t_fail "skill_step_block missing-terminal expected rc=2, got rc=$RC"
-fi
-
-# Test C: gap in middle (missing step 13 adversarial) -> rc 2
-ssb_write_state '[{"n":7},{"n":16},{"n":19}]'
-RC="$(ssb_run)"
-if [ "$RC" = "2" ]; then
-    t_pass "skill_step_block gap at step 13 -> rc=2"
-else
-    t_fail "skill_step_block gap-at-13 expected rc=2, got rc=$RC"
-fi
-
-# Test B-bootstrap: only step 19 missing AND in-flight is `git commit`
-# -> rc 0 (bootstrap credit). Closes the terminal-step deadlock that
-# previously forced SKIP_SKILL_STEP_BLOCK on every section commit.
-ssb_write_state '[{"n":7},{"n":13},{"n":16}]'
-RC="$(ssb_run)"
-if [ "$RC" = "0" ]; then
-    t_pass "skill_step_block bootstrap-credit for in-flight commit -> rc=0"
-else
-    t_fail "skill_step_block bootstrap-credit expected rc=0, got rc=$RC"
-fi
-
-# Test D: SKIP opt-out with proper reason on missing-terminal -> rc 0
-ssb_write_state '[{"n":7},{"n":13},{"n":16}]'
-( cd "$SSB_REPO" && CLAUDE_PROJECT_DIR="$SSB_REPO" SKIP_SKILL_STEP_BLOCK=1 SKIP_SKILL_STEP_BLOCK_REASON="legitimate-revert-flow" \
-    bash -c 'printf "%s" '"'"'{"tool_name":"Bash","tool_input":{"command":"git commit -m test"}}'"'"' | python3 "$0" >/dev/null 2>&1' \
-    "$REPO_ROOT/.claude/hooks/skill_step_block.py" )
-RC=$?
-if [ "$RC" = "0" ]; then
-    t_pass "skill_step_block SKIP opt-out with reason -> rc=0"
-else
-    t_fail "skill_step_block SKIP opt-out expected rc=0, got rc=$RC"
-fi
-
-# Test E: SKIP without reason -> rc 2 (reason >= 12 chars required)
-ssb_write_state '[{"n":7},{"n":13},{"n":16}]'
-( cd "$SSB_REPO" && CLAUDE_PROJECT_DIR="$SSB_REPO" SKIP_SKILL_STEP_BLOCK=1 SKIP_SKILL_STEP_BLOCK_REASON="too-short" \
-    bash -c 'printf "%s" '"'"'{"tool_name":"Bash","tool_input":{"command":"git commit -m test"}}'"'"' | python3 "$0" >/dev/null 2>&1' \
-    "$REPO_ROOT/.claude/hooks/skill_step_block.py" )
-RC=$?
-if [ "$RC" = "2" ]; then
-    t_pass "skill_step_block SKIP with too-short reason -> rc=2"
-else
-    t_fail "skill_step_block SKIP-bad-reason expected rc=2, got rc=$RC"
-fi
-
-# Test F: the same missing step 16 in a todo/ + docs/-only tree -> rc 0.
-# The throwaway repo's .claude/state/ fixture is itself a non-docs path, so
-# commit it first; this case then pins the docs-only pass the fixture above
-# is now insulated from.
-ssb_write_state '[{"n":7},{"n":13}]'
-rm -f "$SSB_REPO/src/dirty.c"
-( cd "$SSB_REPO" && git add .claude && git -c user.email=t@t -c user.name=t commit -q -m state )
-printf 'x\n' >"$SSB_REPO/docs/page.md"
-RC="$(ssb_run)"
-if [ "$RC" = "0" ]; then
-    t_pass "skill_step_block docs-only tree with missing step 16 -> rc=0"
-else
-    t_fail "skill_step_block docs-only expected rc=0, got rc=$RC"
-fi
-
-rm -rf "$SSB_TMP"
 
 
 # ============================================================================
@@ -4362,366 +3855,20 @@ fi
 rm -f "$ICM_STATE"
 [ -n "$ICM_BACKUP" ] && printf '%s' "$ICM_BACKUP" > "$ICM_STATE"
 
-# (b4) build_offload_reminder: BLOCKs bare build.sh in overnight SECTIONS with
-#      no fresh Agent dispatch; silent interactively.
-#      The hook was promoted from REMINDER (systemMessage on stdout) to BLOCK
-#      (exit 2 + message on stderr) when the offload routing was enforced.
-#      These captures therefore read the COMBINED stream and assert the exit
-#      code, so the assertion tracks the contract rather than the channel a
-#      given generation happened to use.
-BOR_HOOK="$REPO_ROOT/.claude/hooks/build_offload_reminder.py"
-# ENGAGED = the gate did not let a bare suite run through: it BLOCKED (exit 2),
-# or it REWROTE (2026-09-28) to a command that the SAME hook, fed the rewrite,
-# passes silently (no bare invocation left). A rewrite that still contained a
-# bare run would fail here.
-_bor_engaged() {
-    local out="$1" rc="$2" new re_out re_rc
-    if [ "$rc" = "2" ] && printf '%s' "$out" | grep -q "build-offload"; then return 0; fi
-    [ "$rc" = "0" ] || return 1
-    new="$(printf '%s' "$out" | python3 -c 'import json,sys
-try: print(json.loads(sys.stdin.read())["hookSpecificOutput"]["updatedInput"]["command"])
-except Exception: sys.exit(1)')" || return 1
-    re_out="$(NEW="$new" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["NEW"]}}))' | python3 "$BOR_HOOK" 2>&1)"; re_rc=$?
-    [ "$re_rc" = "0" ] && [ -z "$re_out" ]
-}
-BOR_SEQ="$REPO_ROOT/.claude/state/sequencer-run.json"
-BOR_DISP="$REPO_ROOT/.claude/state/last-agent-dispatch.json"
-BOR_SEQ_BAK=""; BOR_DISP_BAK=""
-[ -f "$BOR_SEQ" ] && BOR_SEQ_BAK="$(cat "$BOR_SEQ")"
-[ -f "$BOR_DISP" ] && BOR_DISP_BAK="$(cat "$BOR_DISP")"
-rm -f "$BOR_SEQ" "$BOR_DISP"
-BOR_OUT="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/build.sh"}}' | \
-    python3 "$BOR_HOOK" 2>&1)"
-if [ -z "$BOR_OUT" ]; then
-    t_pass "build_offload_interactive  silent when sequencer guard inactive"
+# (b4) The sanctioned backgrounded build shape still counts as review-todo-section
+#      step 4 for the skill-step observer (section_commit_gate reads that record).
+BOR_SHAPE='( bash scripts/overnight/run-artifact.sh s4 -- bash scripts/build.sh > /tmp/b.json 2>&1; echo "rc=$?" >> /tmp/b.json ) &'
+BOR_STEPS="$(BOR_SHAPE="$BOR_SHAPE" REPO_ROOT="$REPO_ROOT" python3 -c '
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/.claude/hooks")
+from skill_step_map import match_step
+print(",".join(str(s) for s in match_step("review-todo-section", "Bash", os.environ["BOR_SHAPE"])))')"
+if [ "$BOR_STEPS" = "4" ]; then
+    t_pass "skill_step_map  the backgrounded wrapped build is observed as step 4"
 else
-    t_fail "build_offload_interactive  expected silence, got: $BOR_OUT"
+    t_fail "skill_step_map  backgrounded wrapped build not observed as step 4" "observed steps=[$BOR_STEPS]"
 fi
-printf '%s' '{"active": true, "phase": "SECTIONS"}' > "$BOR_SEQ"
-# SESSION SCOPING (2026-07-28): the gate now requires the run's IDENTITY, not
-# just its state -- OVERNIGHT_SEQUENCER_RUN=1, the same discriminator
-# run_phase_guard.is_headless() uses -- because keying on the global cursor
-# alone meant every interactive operator session inherited the run's phase
-# gates. These cases simulate the RUN, so they must export it; the
-# operator-not-gated case is asserted separately below.
-export OVERNIGHT_SEQUENCER_RUN=1
-BOR_OUT2="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/test.sh QUIET=1"}}' | \
-    python3 "$BOR_HOOK" 2>&1)"; BOR_RC2=$?
-# 2026-09-28: a plain bare call is REWRITTEN into the wrapper (updatedInput,
-# exit 0) instead of refused; the exact command is pinned. Shapes the rewrite
-# cannot transform still BLOCK (scripts/overnight/tests/test_build_offload_reminder.py).
-if [ "$BOR_RC2" = "0" ] && grep -qF '"command": "bash scripts/overnight/run-artifact.sh auto-test -- bash scripts/test.sh QUIET=1"' <<<"$BOR_OUT2"; then
-    t_pass "build_offload_sections  rewrites bare test.sh into run-artifact.sh in SECTIONS phase"
-else
-    t_fail "build_offload_sections  expected the run-artifact.sh rewrite, got rc=$BOR_RC2: $BOR_OUT2"
-fi
-# Freshness must be checks-runner-SPECIFIC (regression fixed 2026-07-05): a
-# fresh dispatch of an UNRELATED agent type must NOT suppress the reminder --
-# the original bug treated any recent Agent dispatch as cover, letting 99
-# in-context build/test calls slip through a live overnight run silently.
-NOW_NS="$(date +%s%N)"
-printf '{"timestamp_ns": %s, "subagent_type": "kernel-explorer", "by_type": {"kernel-explorer": {"timestamp_ns": %s}}}' \
-    "$NOW_NS" "$NOW_NS" > "$BOR_DISP"
-BOR_OUT3="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/build.sh"}}' | \
-    python3 "$BOR_HOOK" 2>&1)"; BOR_RC3=$?
-if grep -qF 'run-artifact.sh auto-build -- bash scripts/build.sh' <<<"$BOR_OUT3" && [ "$BOR_RC3" = "0" ]; then
-    t_pass "build_offload_type_specific  unrelated-agent dispatch does NOT suppress the reminder"
-else
-    t_fail "build_offload_type_specific  expected the rewrite despite unrelated dispatch, got rc=$BOR_RC3: $BOR_OUT3"
-fi
-printf '{"timestamp_ns": %s, "subagent_type": "checks-runner", "by_type": {"checks-runner": {"timestamp_ns": %s}}}' \
-    "$NOW_NS" "$NOW_NS" > "$BOR_DISP"
-BOR_OUT4="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/build.sh"}}' | \
-    python3 "$BOR_HOOK" 2>&1)"
-if [ -z "$BOR_OUT4" ]; then
-    t_pass "build_offload_type_specific  fresh checks-runner dispatch DOES suppress the reminder"
-else
-    t_fail "build_offload_type_specific  expected silence after checks-runner dispatch, got: $BOR_OUT4"
-fi
-# An OPERATOR session must NOT inherit the run's gate, even with the run
-# active in SECTIONS. This is the half that was missing: the gate keyed on the
-# global cursor, so a read-only operator command was blocked by a rule whose
-# rationale is explicitly the RUN's context budget.
-unset OVERNIGHT_SEQUENCER_RUN
-BOR_OUT5="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/build.sh"}}' | \
-    python3 "$BOR_HOOK" 2>&1)"; BOR_RC5=$?
-if [ -z "$BOR_OUT5" ] && [ "$BOR_RC5" = "0" ]; then
-    t_pass "build_offload_operator_scope  operator session NOT gated by the run's phase"
-else
-    t_fail "build_offload_operator_scope  operator session was gated, rc=$BOR_RC5: $BOR_OUT5"
-fi
-# A read-only command naming two suite scripts must never read as an invocation
-# (the `\b` matched the DOT inside `build.sh`, so `grep a.sh b.sh` was BLOCKed).
-export OVERNIGHT_SEQUENCER_RUN=1
-BOR_OUT6="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"grep -n x scripts/build.sh scripts/test.sh"}}' | \
-    python3 "$BOR_HOOK" 2>&1)"; BOR_RC6=$?
-if [ -z "$BOR_OUT6" ] && [ "$BOR_RC6" = "0" ]; then
-    t_pass "build_offload_readonly  grep naming two suite scripts is not an invocation"
-else
-    t_fail "build_offload_readonly  read-only grep was blocked, rc=$BOR_RC6: $BOR_OUT6"
-fi
-# The checks-runner fixture written above suppresses the gate BEFORE it ever
-# reaches the exemption logic, so every case below it would pass on the stale
-# dispatch alone and assert nothing. Clear it first -- this is what made the
-# original pair of dispatch cases non-discriminating (they returned 0 whether
-# the exemption existed or not).
-printf '{"timestamp_ns": 1, "subagent_type": "none", "by_type": {}}' > "$BOR_DISP"
-# A Codex REVIEW DISPATCH must name the files it reviews, so an adversarial
-# review of scripts/test.sh necessarily contains that string -- and the gate
-# matched it as an invocation and BLOCKED the mandatory review (observed
-# 2026-07-30 reviewing orphaned-QEMU recovery, whose whole diff is in that
-# script). A dispatch runs no suite: it execs the companion with ONE argument.
-BOR_OUT7="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/overnight/review-broker-codex-dispatch.sh '"'"'[review-kind: adversarial] t.md review the scripts/test.sh diff'"'"'"}}' | \
-    python3 "$BOR_HOOK" 2>&1)"; BOR_RC7=$?
-if [ -z "$BOR_OUT7" ] && [ "$BOR_RC7" = "0" ]; then
-    t_pass "build_offload_dispatch  a Codex dispatch naming a suite script is not an invocation"
-else
-    t_fail "build_offload_dispatch  a review dispatch was blocked, rc=$BOR_RC7: $BOR_OUT7"
-fi
-# ...and the exemption must not become a bypass: a bare suite run still BLOCKs
-# even when the word "codex" appears somewhere in the command line.
-BOR_OUT8="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/test.sh QUIET=1 # for codex"}}' | \
-    python3 "$BOR_HOOK" 2>&1)"; BOR_RC8=$?
-if _bor_engaged "$BOR_OUT8" "$BOR_RC8"; then
-    t_pass "build_offload_dispatch  the dispatch exemption is not a bypass for a bare run"
-else
-    t_fail "build_offload_dispatch  a bare run escaped via the word codex, rc=$BOR_RC8: $BOR_OUT8"
-fi
-# CHAINED bypass, BOTH orders. The exemption used to be granted on a
-# whole-command answer, and `is_codex_dispatch` is true when ANY segment is a
-# dispatch -- so a real dispatch chained to a real bare suite run excused both.
-# Per-segment classification must block the suite segment and spare the
-# dispatch segment, whichever comes first.
-BOR_OUT9="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md body'"'"' && bash scripts/test.sh QUIET=1"}}' | \
-    python3 "$BOR_HOOK" 2>&1)"; BOR_RC9=$?
-if _bor_engaged "$BOR_OUT9" "$BOR_RC9"; then
-    t_pass "build_offload_dispatch  a suite run CHAINED after a dispatch still BLOCKs"
-else
-    t_fail "build_offload_dispatch  chained dispatch-then-suite escaped, rc=$BOR_RC9: $BOR_OUT9"
-fi
-BOR_OUT10="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/test.sh QUIET=1 && bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md body'"'"'"}}' | \
-    python3 "$BOR_HOOK" 2>&1)"; BOR_RC10=$?
-if _bor_engaged "$BOR_OUT10" "$BOR_RC10"; then
-    t_pass "build_offload_dispatch  a suite run CHAINED before a dispatch still BLOCKs"
-else
-    t_fail "build_offload_dispatch  chained suite-then-dispatch escaped, rc=$BOR_RC10: $BOR_OUT10"
-fi
-# NESTED shell shapes. Classifying segments by re-joining tokens (`shlex.join`)
-# is lossy in exactly the way these regexes care about: `(bash scripts/test.sh)`
-# rejoins as `'(bash' scripts/test.sh`, which puts a quote between the
-# interpreter and its argument AND moves the script off a command position, so
-# both detectors go blind. Verified escaping before the classifier was changed
-# to raw source slices -- a real bare suite run in the overnight context.
-for BOR_SHAPE in \
-    '(bash scripts/test.sh QUIET=1)' \
-    'OUT=$(bash scripts/test.sh QUIET=1)' \
-    '`bash scripts/test.sh QUIET=1`' \
-    'bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md body'"'"' && (bash scripts/test.sh QUIET=1)' \
-    'bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md body'"'"' && OUT=$(bash scripts/test.sh QUIET=1)'
-do
-    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
-    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-    if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
-        t_pass "build_offload_nested  BLOCKs a bare suite run in: $BOR_SHAPE"
-    else
-        t_fail "build_offload_nested  a nested bare run escaped: $BOR_SHAPE" \
-            "rc=$BOR_RCN: $BOR_OUTN"
-    fi
-done
 
-# An EXECUTABLE command substitution inside an exempt fragment still runs. A
-# dispatch is one fragment, but `codex-dispatch.sh "$(bash scripts/test.sh)"`
-# runs the suite while the fragment as a whole reads as a Codex dispatch, so
-# exempting the fragment excused it. Substitutions are therefore lifted out and
-# judged on their own -- inside double quotes too, where they still execute.
-for BOR_SHAPE in \
-    'bash scripts/codex-dispatch.sh "$(bash scripts/test.sh QUIET=1)"' \
-    'bash scripts/codex-dispatch.sh "`bash scripts/test.sh QUIET=1`"' \
-    'bash scripts/overnight/run-artifact.sh lbl -- bash scripts/build.sh "$(bash scripts/test.sh)"'
-do
-    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
-    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-    if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
-        t_pass "build_offload_subst  BLOCKs an executing substitution inside an exempt fragment"
-    else
-        t_fail "build_offload_subst  a substitution escaped inside an exempt fragment: $BOR_SHAPE" \
-            "rc=$BOR_RCN: $BOR_OUTN"
-    fi
-done
-# VALID shell that the parser must not choke on: a backtick substitution whose
-# body contains `)` inside an outer `$( )`. Scanning those parens as the outer
-# delimiters closed the substitution early, desynchronised the walk, and made
-# the split return nothing -- at which point the whole-command fallback
-# EXEMPTED a command carrying both a dispatch and a bare suite run. Verified
-# escaping. Two independent fixes are asserted here: the parser handles it, and
-# an unsplittable command fails CLOSED rather than inheriting an exemption.
-BOR_SHAPE='bash scripts/codex-dispatch.sh "$(echo `echo )`; bash scripts/test.sh QUIET=1)"'
-BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
-BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
-    t_pass "build_offload_subst  a backtick-in-substitution shape cannot restore the exemption"
-else
-    t_fail "build_offload_subst  the nested-backtick bypass is open again" \
-        "rc=$BOR_RCN: $BOR_OUTN"
-fi
-# ...and the fail-closed fallback itself: an UNSPLITTABLE command that names a
-# suite must BLOCK even when it also carries a real dispatch. A false block
-# costs a rephrase; a false allow runs the suite with nothing reporting it.
-BOR_SHAPE="bash scripts/codex-dispatch.sh 'unbalanced && bash scripts/test.sh QUIET=1"
-BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
-BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
-    t_pass "build_offload_subst  an unsplittable command naming a suite fails CLOSED"
-else
-    t_fail "build_offload_subst  an unsplittable command was exempted (fail-open)" \
-        "rc=$BOR_RCN: $BOR_OUTN"
-fi
-# PROCESS substitutions run their body concurrently and are an ARGUMENT to the
-# surrounding command, so an exempt outer segment used to carry them along --
-# `codex-dispatch.sh <(bash scripts/test.sh)` is one dispatch fragment that also
-# runs the suite. Both forms, and inside the wrapped route too.
-for BOR_SHAPE in \
-    'bash scripts/codex-dispatch.sh <(bash scripts/test.sh QUIET=1)' \
-    'bash scripts/codex-dispatch.sh >(bash scripts/test.sh QUIET=1)' \
-    'bash scripts/overnight/run-artifact.sh lbl -- bash scripts/build.sh <(bash scripts/test.sh)'
-do
-    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
-    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-    if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
-        t_pass "build_offload_subst  BLOCKs a suite inside a process substitution"
-    else
-        t_fail "build_offload_subst  a process substitution escaped: $BOR_SHAPE" \
-            "rc=$BOR_RCN: $BOR_OUTN"
-    fi
-done
-# The wrapper exemption must come from an INVOCATION, not a mention. A bare
-# substring test excused any segment containing the name, so an assignment that
-# merely quoted it laundered a bare suite run sitting right beside it.
-BOR_SHAPE='NOTE=run-artifact.sh bash scripts/test.sh QUIET=1'
-BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
-BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
-    t_pass "build_offload_subst  a run-artifact.sh MENTION does not exempt a bare run"
-else
-    t_fail "build_offload_subst  a run-artifact.sh mention laundered a bare run" \
-        "rc=$BOR_RCN: $BOR_OUTN"
-fi
-# Shell grammar the raw splitter does NOT model must FAIL CLOSED, not produce a
-# confident wrong split. A comment can carry a `<<WORD` that is not a heredoc, a
-# `$(( ))` uses `<<` as a left shift, and a `case` pattern ends in `)` with no
-# opening paren -- each was shown to desynchronise the scan and hide a bare
-# suite inside a fragment that was then exempted. Refusing to answer beats
-# answering wrongly; a real shell grammar is tracked separately.
-for BOR_SHAPE in \
-    "bash -c 'bash scripts/test.sh QUIET=1' bash scripts/overnight/run-artifact.sh lbl -- true" \
-    '# example uses <<EOF
-bash scripts/test.sh QUIET=1' \
-    'x=$((1 << 2))
-bash scripts/test.sh QUIET=1' \
-    'bash scripts/overnight/run-artifact.sh lbl -- true >(case x in x) bash scripts/test.sh QUIET=1;; esac)'
-do
-    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
-    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-    if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
-        t_pass "build_offload_grammar  unmodelled shell grammar fails CLOSED"
-    else
-        t_fail "build_offload_grammar  an unmodelled-grammar shape escaped: $BOR_SHAPE" \
-            "rc=$BOR_RCN: $BOR_OUTN"
-    fi
-done
-# ...and the documented route must survive a readability line-break, which the
-# unnormalised match rejected because the `--` landed on the next line.
-BOR_SHAPE='bash scripts/overnight/run-artifact.sh lbl \
-  -- bash scripts/build.sh'
-BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
-BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-if [ -z "$BOR_OUTN" ] && [ "$BOR_RCN" = "0" ]; then
-    t_pass "build_offload_grammar  a line-continued wrapped route is still the sanctioned route"
-else
-    t_fail "build_offload_grammar  a line-continued wrapped route was blocked" \
-        "rc=$BOR_RCN: $BOR_OUTN"
-fi
-# ...and the converse false positive: a suite script NAMED in a prompt is data.
-# Inside SINGLE quotes a `$(...)` is literal, and a heredoc BODY is data too --
-# the canonical apostrophe-safe dispatch shape puts the whole review prompt in
-# one, so a prompt line reading `bash scripts/test.sh fails because ...` must
-# not be split out and blocked as an invocation.
-BOR_HD="$(printf '%s' 'P=$(cat <<'"'"'X'"'"'
-bash scripts/test.sh QUIET=1 fails on this diff
-X
-)
-bash scripts/codex-dispatch.sh "$P"')"
-# A delimiter is a shell WORD, not an identifier: `<<'REVIEW-PROMPT'` is valid
-# and an identifier-only pattern missed it, leaving the prompt body to be
-# scanned as commands.
-BOR_HD2="$(printf '%s' 'P=$(cat <<'"'"'REVIEW-PROMPT'"'"'
-bash scripts/test.sh QUIET=1 fails on this diff
-REVIEW-PROMPT
-)
-bash scripts/codex-dispatch.sh "$P"')"
-for BOR_SHAPE in \
-    'bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md $(bash scripts/test.sh) is named here'"'"'' \
-    'bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md the prompt uses <<EOF and names bash scripts/test.sh here'"'"'' \
-    'bash scripts/codex-dispatch.sh <<< "review bash scripts/test.sh"' \
-    'bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md see #3, bash scripts/test.sh'"'"'' \
-    "$BOR_HD" \
-    "$BOR_HD2"
-do
-    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
-    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-    if [ -z "$BOR_OUTN" ] && [ "$BOR_RCN" = "0" ]; then
-        t_pass "build_offload_subst  a suite script named as DATA in a prompt still dispatches"
-    else
-        t_fail "build_offload_subst  a prompt naming a suite script was blocked" \
-            "rc=$BOR_RCN: $BOR_OUTN"
-    fi
-done
-
-# The same hole existed in the run-artifact.sh exemption: the sanctioned
-# wrapped route must stay silent, but a bare run chained onto it must not
-# inherit its exemption.
-BOR_OUT11="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/overnight/run-artifact.sh lbl -- bash scripts/build.sh"}}' | \
-    python3 "$BOR_HOOK" 2>&1)"; BOR_RC11=$?
-if [ -z "$BOR_OUT11" ] && [ "$BOR_RC11" = "0" ]; then
-    t_pass "build_offload_dispatch  the sanctioned run-artifact.sh route stays exempt"
-else
-    t_fail "build_offload_dispatch  the wrapped route was blocked, rc=$BOR_RC11: $BOR_OUT11"
-fi
-BOR_OUT12="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/overnight/run-artifact.sh lbl -- bash scripts/build.sh && bash scripts/test.sh QUIET=1"}}' | \
-    python3 "$BOR_HOOK" 2>&1)"; BOR_RC12=$?
-if _bor_engaged "$BOR_OUT12" "$BOR_RC12"; then
-    t_pass "build_offload_dispatch  a bare run CHAINED after the wrapped route still BLOCKs"
-else
-    t_fail "build_offload_dispatch  chained wrapper-then-bare escaped, rc=$BOR_RC12: $BOR_OUT12"
-fi
-# GROUPED wrapped route (v12, filed three times across three sections on
-# 2026-08-08). `command_segments` does not split on parens, so a wrapped call in
-# a subshell arrives with the `(` still attached and the exemption's `^` anchor
-# missed it -- while the inner matcher, which DOES split on parens, found the
-# wrapped suite and blocked. The shape is the rc-capture idiom the ship-sequence
-# doctrine prescribes (`( wrapper ...; echo "rc=$?" ) &`), and the suite must be
-# backgrounded at all because it exceeds the 10-minute tool wall, so the gate was
-# refusing the only route that satisfies both rules.
-# Discriminating: the two subshell shapes and the brace shape all BLOCK against
-# the pre-fix anchor (verified by restoring it in the module and re-running).
-# The trailing-`&` shape was already exempt and is pinned here as a regression
-# guard only -- it proves nothing about this fix, and says so rather than
-# padding the count.
-for BOR_SHAPE in \
-    '( bash scripts/overnight/run-artifact.sh lbl -- bash scripts/test-tooling.sh > /tmp/x 2>&1; echo "rc=$?" >> /tmp/x ) &' \
-    '( bash scripts/overnight/run-artifact.sh b -- bash scripts/build.sh > /tmp/x 2>&1; bash scripts/overnight/run-artifact.sh t -- bash scripts/test.sh QUIET=1 > /tmp/y 2>&1 ) &' \
-    '{ bash scripts/overnight/run-artifact.sh lbl -- bash scripts/build.sh; }' \
-    'bash scripts/overnight/run-artifact.sh lbl -- bash scripts/test-tooling.sh &'
-do
-    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
-    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-    if [ -z "$BOR_OUTN" ] && [ "$BOR_RCN" = "0" ]; then
-        t_pass "build_offload_group  a grouped/backgrounded wrapped route is still the sanctioned route"
-    else
-        t_fail "build_offload_group  a grouped wrapped route was blocked: $BOR_SHAPE" \
-            "rc=$BOR_RCN: $BOR_OUTN"
-    fi
-done
 # COMMIT-GATE TODO SCOPING. This is a gate NARROWING, so the wiring is pinned
 # in both directions. STRUCTURAL, and labelled as such: the behavioural proof
 # needs a violating todo file in the live tree with a stale cache, which cannot
@@ -4825,114 +3972,7 @@ else
     rm -rf "$TR_TMP"
 fi
 
-# A heredoc BODY is data, and a `#` inside one must not declare the whole
-# command unsplittable. The unmodelled-grammar screen ran against the RAW text,
-# so `cat > run.sh <<'EOF' ... EOF` writing a correctly-wrapped suite command
-# was BLOCKED for carrying a `#!/usr/bin/env bash` line -- while the identical
-# heredoc with no comment passed. Nothing runs in either case.
-for BOR_SHAPE in \
-    "cat > /tmp/run.sh <<'EOF'
-#!/usr/bin/env bash
-bash scripts/overnight/run-artifact.sh lbl -- bash scripts/test-tooling.sh
-EOF" \
-    "cat > /tmp/run.sh <<'EOF'
-bash scripts/overnight/run-artifact.sh lbl -- bash scripts/test-tooling.sh
-EOF"
-do
-    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
-    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-    if [ -z "$BOR_OUTN" ] && [ "$BOR_RCN" = "0" ]; then
-        t_pass "build_offload_heredoc  a heredoc WRITING a wrapped command is data, not an invocation"
-    else
-        t_fail "build_offload_heredoc  a heredoc writing a wrapped command was blocked" \
-            "rc=$BOR_RCN: $BOR_OUTN"
-    fi
-done
-# ...and the half that must NOT relax: a SHELL-FED body is COMMANDS, so a bare
-# suite inside one still BLOCKs -- with or without a comment beside it. This is
-# the interaction the change above could have broken, and it is the one that
-# was a live bypass in its own right on 2026-08-07.
-for BOR_SHAPE in \
-    "bash <<'EOF'
-bash scripts/test.sh QUIET=1
-EOF" \
-    "bash <<'EOF'
-# note
-bash scripts/test.sh QUIET=1
-EOF" \
-    "bash -s <<'EOF'
-# note
-bash scripts/test-tooling.sh
-EOF"
-do
-    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
-    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-    if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
-        t_pass "build_offload_heredoc  a shell-FED heredoc body is commands and still BLOCKs"
-    else
-        t_fail "build_offload_heredoc  a bare suite escaped inside a shell-fed heredoc" \
-            "rc=$BOR_RCN: $BOR_OUTN"
-    fi
-done
-# ...and the opener is STEPPED OVER, not ignored: the wrapper must still be the
-# group's first command. These are the mutation controls for the case above --
-# revert the anchor fix and they stay green, so they are what proves it did not
-# open a bypass.
-#
-# The BRACE case is not a control at all: writing it found a live BYPASS that
-# predated this fix. `_split_unquoted` cuts on `;&|()` but not on braces, so
-# `{ bash scripts/test-tooling.sh; }` tokenised with `{` as the command and
-# matched NOTHING -- a bare suite run hidden from the gate entirely, in both
-# directions. Fixed by adding `{` to the transparent-prefix set; this case
-# blocks only with that fix in place.
-for BOR_SHAPE in \
-    '( bash scripts/test.sh QUIET=1; bash scripts/overnight/run-artifact.sh l -- true ) &' \
-    '( bash scripts/overnight/run-artifact.sh l -- true; bash scripts/test.sh QUIET=1 ) &' \
-    '{ bash scripts/test-tooling.sh; }'
-do
-    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
-    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-    if _bor_engaged "$BOR_OUTN" "$BOR_RCN"; then
-        t_pass "build_offload_group  a bare run inside a group still BLOCKs"
-    else
-        t_fail "build_offload_group  a grouped bare run escaped: $BOR_SHAPE" \
-            "rc=$BOR_RCN: $BOR_OUTN"
-    fi
-done
-# TWO-GATE AGREEMENT. The filed defect was that `build_offload_reminder` and the
-# skill-step observer accepted DISJOINT shapes for `review-todo-section` step 4:
-# a bare build blocked, and the wrapper SCRIPT authored to dodge that block was
-# invisible to the observer, so the commit was refused with "step(s) [4] were
-# never observed". With the grouping fix the backgrounded wrapped form satisfies
-# both -- it is exempt here AND still carries the literal `bash scripts/build.sh`
-# the observer matches. Pinned as one assertion because the two halves are only
-# useful together.
-BOR_SHAPE='( bash scripts/overnight/run-artifact.sh s4 -- bash scripts/build.sh > /tmp/b.json 2>&1; echo "rc=$?" >> /tmp/b.json ) &'
-BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
-BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
-BOR_STEPS="$(BOR_SHAPE="$BOR_SHAPE" REPO_ROOT="$REPO_ROOT" python3 -c '
-import os, sys
-sys.path.insert(0, os.environ["REPO_ROOT"] + "/.claude/hooks")
-from skill_step_map import match_step
-print(",".join(str(s) for s in match_step("review-todo-section", "Bash", os.environ["BOR_SHAPE"])))')"
-if [ -z "$BOR_OUTN" ] && [ "$BOR_RCN" = "0" ] && [ "$BOR_STEPS" = "4" ]; then
-    t_pass "build_offload_group  one command satisfies BOTH the offload gate and step-4 observation"
-else
-    t_fail "build_offload_group  the two gates disagree on the sanctioned build shape" \
-        "offload rc=$BOR_RCN out=$BOR_OUTN; observed steps=[$BOR_STEPS]"
-fi
-unset OVERNIGHT_SEQUENCER_RUN
-rm -f "$BOR_SEQ" "$BOR_DISP"
-[ -n "$BOR_SEQ_BAK" ] && printf '%s' "$BOR_SEQ_BAK" > "$BOR_SEQ"
-[ -n "$BOR_DISP_BAK" ] && printf '%s' "$BOR_DISP_BAK" > "$BOR_DISP"
-
-# (b5) review_dispatch_gate + xref_dispatch_reminder: embedded selftests are
-#      the full fixture suites (tempdir state, block/allow/fail-open cases).
-if python3 "$REPO_ROOT/.claude/hooks/review_dispatch_gate.py" --selftest >/dev/null 2>&1; then
-    t_pass "review_dispatch_gate_selftest  9-case fixture suite green"
-else
-    t_fail "review_dispatch_gate_selftest  embedded selftest failed"
-fi
+# (b5) xref_dispatch_reminder: embedded selftest is the full fixture suite.
 if python3 "$REPO_ROOT/.claude/hooks/xref_dispatch_reminder.py" --selftest >/dev/null 2>&1; then
     t_pass "xref_dispatch_reminder_selftest  fixture suite green"
 else
@@ -4947,11 +3987,6 @@ if python3 "$REPO_ROOT/.claude/hooks/read_offload_reminder.py" --selftest >/dev/
     t_pass "read_offload_reminder_selftest  fixture suite green"
 else
     t_fail "read_offload_reminder_selftest  embedded selftest failed"
-fi
-if python3 "$REPO_ROOT/.claude/hooks/websearch_offload_gate.py" --selftest >/dev/null 2>&1; then
-    t_pass "websearch_offload_gate_selftest  20-case identity + anti-wedge-valve suite green"
-else
-    t_fail "websearch_offload_gate_selftest  embedded selftest failed"
 fi
 if python3 "$REPO_ROOT/.claude/hooks/attended_repair_guard.py" --selftest >/dev/null 2>&1; then
     t_pass "attended_repair_guard_selftest  28-case whole-tree-git fixture suite green"
@@ -5213,23 +4248,13 @@ fi
 # output is identical in context so the saving never existed. The invariant worth
 # testing is no longer "does it work" but "is it still unwired" -- a revival
 # should have to argue with the measurement, not slip back in via settings.json.
-# The leading `/` matters: websearch_offload_gate.py (live, unrelated) CONTAINS
-# "search_offload_gate.py" as a substring, so a bare match would fail forever.
+# The leading `/` keeps a hook whose name merely ENDS in "search_offload_gate.py"
+# from matching.
 if grep -q '/search_offload_gate\.py' "$REPO_ROOT/.claude/settings.json" 2>/dev/null; then
     t_fail "search_offload_gate_retired  re-wired in settings.json" \
            "retired 2026-07-28 -- see docs/infrastructure/hook-codes.md SEARCH-OFFLOAD"
 else
     t_pass "search_offload_gate_retired  still unwired from settings.json"
-fi
-if python3 "$REPO_ROOT/.claude/hooks/agent_coverage_gate.py" --selftest >/dev/null 2>&1; then
-    t_pass "agent_coverage_gate_selftest  dispatch-replaces-read gate green"
-else
-    t_fail "agent_coverage_gate_selftest  embedded selftest failed"
-fi
-if python3 "$REPO_ROOT/.claude/hooks/fork_context_guard.py" --selftest >/dev/null 2>&1; then
-    t_pass "fork_context_guard_selftest  large-context fork refused, small and marked pass"
-else
-    t_fail "fork_context_guard_selftest  embedded selftest failed"
 fi
 if python3 "$REPO_ROOT/.claude/hooks/_advisory_budget.py" --selftest >/dev/null 2>&1; then
     t_pass "advisory_budget_selftest  per-session injection budget green"
@@ -5249,19 +4274,6 @@ if [ -z "$_ab_block_users" ]; then
     t_pass "advisory_budget_no_block_users  no blocking hook is rate-limited"
 else
     t_fail "advisory_budget_no_block_users  BLOCK hook(s) import the budget:$_ab_block_users"
-fi
-if python3 "$REPO_ROOT/.claude/hooks/read_cache_block.py" --selftest >/dev/null 2>&1; then
-    t_pass "read_cache_block_selftest  fixture suite green"
-else
-    t_fail "read_cache_block_selftest  embedded selftest failed"
-fi
-# The read gate's correctness depends on pre_compact_flush deleting its table:
-# the block asserts "already in context", which a compaction falsifies. Assert
-# the wiring directly so the two files cannot drift apart silently.
-if grep -q '_READ_CACHE_REL' "$REPO_ROOT/.claude/hooks/pre_compact_flush.py"; then
-    t_pass "read_cache_precompact_clear  pre_compact_flush unlinks read-cache.json"
-else
-    t_fail "read_cache_precompact_clear  pre_compact_flush no longer clears the read cache"
 fi
 
 # (c) stop_audit detects an "I'll run review-todo-section" promise without
@@ -5474,16 +4486,13 @@ fi
 # ============================================================================
 # pre_codex_enforcement (TODO-08 review-pipeline pre-Codex enforcement)
 # ============================================================================
-#   - phase1_evidence_block: phase1_evidence_gate.py BLOCKs adversarial
-#     dispatch when active review-todo-section has <2 src/include Reads.
 #   - re_adv_trigger_block: section_commit_gate.py BLOCKs commits whose
 #     staged C/H diff matches step-13.5 triggers when no recent
 #     re-adversarial stamp exists.
 
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[pre_codex_enforcement]${NC}"
 
-if [ ! -f "$REPO_ROOT/.claude/hooks/phase1_evidence_gate.py" ] || \
-   [ ! -f "$REPO_ROOT/.claude/hooks/section_commit_gate.py" ] || \
+if [ ! -f "$REPO_ROOT/.claude/hooks/section_commit_gate.py" ] || \
    [ ! -f "$REPO_ROOT/.claude/hooks/skill_step_map.py" ]; then
     t_fail "pre_codex_enforcement: hook scripts missing"
 else
@@ -5491,8 +4500,6 @@ else
     PCE_REPO="$PCE_TMP/repo"
     mkdir -p "$PCE_REPO/.claude/state" "$PCE_REPO/.claude/hooks" \
              "$PCE_REPO/src/kernel" "$PCE_REPO/todo/00-infrastructure"
-    cp "$REPO_ROOT/.claude/hooks/phase1_evidence_gate.py" \
-       "$PCE_REPO/.claude/hooks/phase1_evidence_gate.py"
     cp "$REPO_ROOT/.claude/hooks/skill_step_map.py" \
        "$PCE_REPO/.claude/hooks/skill_step_map.py"
     cp "$REPO_ROOT/.claude/hooks/section_commit_gate.py" \
@@ -5505,10 +4512,7 @@ else
        "$PCE_REPO/.claude/hooks/_skip_env.py"
     cp "$REPO_ROOT/.claude/hooks/_codex_dispatch.py" \
        "$PCE_REPO/.claude/hooks/_codex_dispatch.py"
-    # phase1_evidence_gate.py imports _heuristic_misses at module load
-    # for the section-27 step-4 miss-log emission path. Without this
-    # copy, every existing sub-test hits ModuleNotFoundError before the
-    # gate even runs.
+    # section_commit_gate imports _heuristic_misses lazily.
     cp "$REPO_ROOT/.claude/hooks/_heuristic_misses.py" \
        "$PCE_REPO/.claude/hooks/_heuristic_misses.py"
 
@@ -5529,9 +4533,8 @@ else
     PCE_TRANSCRIPT="$PCE_REPO/.claude/state/transcript.jsonl"
     PCE_STAMPS="$PCE_REPO/.claude/state/last-review-stamps.json"
 
-    # ---- phase1_evidence_block sub-tests ----
-
-    # Active review-todo-section, started 1 second ago.
+    # Active review-todo-section, started 1 second ago: the re-adversarial gate
+    # attributes a commit to a section through this entry.
     PCE_STARTED_TS="$(python3 -c 'import time; print(time.time_ns() - 1_000_000_000)')"
     cat > "$PCE_SKILL_STATE" <<JSON
 {
@@ -5544,132 +4547,7 @@ else
   }
 }
 JSON
-
     : > "$PCE_TRANSCRIPT"
-
-    # Codex companion path. SECTION-MARKER is a placeholder for the
-    # real review-kind marker; tests assemble at runtime so this
-    # source line carries no bare-marker pattern.
-    PCE_KIND_OPEN='[review-kind: adversarial]'
-    PCE_CMD_BASE='node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review'
-    PCE_PROMPT_ADV="${PCE_KIND_OPEN} todo/00-infrastructure/TODO-99-pce-fixture.md sample"
-    PCE_CMD="$PCE_CMD_BASE \"$PCE_PROMPT_ADV\""
-    PCE_PAYLOAD=$(python3 -c "
-import json
-print(json.dumps({
-    'tool_name': 'Bash',
-    'tool_input': {'command': '''$PCE_CMD'''},
-    'transcript_path': '$PCE_TRANSCRIPT',
-}))
-")
-    PCE_OUT="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
-    PCE_RC=$?
-    if [ "$PCE_RC" = "2" ] && grep -q "BLOCK" <<<"$PCE_OUT"; then
-        t_pass "phase1_evidence_block: 0 src/include Reads -> BLOCK"
-    else
-        t_fail "phase1_evidence_block: empty-transcript BLOCK" \
-               "rc=$PCE_RC out=$PCE_OUT"
-    fi
-
-    PCE_AFTER_TS="$(python3 -c 'import time; print(time.time_ns())')"
-    cat > "$PCE_TRANSCRIPT" <<TSCRIPT
-{"ts_ns":$PCE_AFTER_TS,"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/kernel/foo.c"}}]}}
-{"ts_ns":$PCE_AFTER_TS,"message":{"content":[{"type":"tool_use","name":"Grep","input":{"path":"src/kernel","pattern":"spinlock_t"}}]}}
-TSCRIPT
-    PCE_OUT2="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
-    PCE_RC2=$?
-    if [ "$PCE_RC2" = "0" ]; then
-        t_pass "phase1_evidence_block: 2 src/ Reads -> PASS"
-    else
-        t_fail "phase1_evidence_block: 2-Read PASS path" \
-               "rc=$PCE_RC2 out=$PCE_OUT2"
-    fi
-
-    : > "$PCE_TRANSCRIPT"
-    rm -f "$PCE_REPO/.claude/state/skip-log.jsonl"
-    PCE_PAYLOAD_FILE="$PCE_TMP/payload.json"
-    printf '%s\n' "$PCE_PAYLOAD" > "$PCE_PAYLOAD_FILE"
-    PCE_OUT3="$(cd "$PCE_REPO" && SKIP_PHASE1_BLOCK=1 SKIP_PHASE1_BLOCK_REASON='legitimate verified-clean section' python3 .claude/hooks/phase1_evidence_gate.py < "$PCE_PAYLOAD_FILE" 2>&1)"
-    PCE_RC3=$?
-    if [ "$PCE_RC3" = "0" ] && [ -f "$PCE_REPO/.claude/state/skip-log.jsonl" ] && \
-       grep -q "SKIP_PHASE1_BLOCK" "$PCE_REPO/.claude/state/skip-log.jsonl"; then
-        t_pass "phase1_evidence_block: SKIP env -> PASS + skip-log entry"
-    else
-        t_fail "phase1_evidence_block: SKIP path" \
-               "rc=$PCE_RC3 skip-log=$([ -f "$PCE_REPO/.claude/state/skip-log.jsonl" ] && cat "$PCE_REPO/.claude/state/skip-log.jsonl" || echo missing)"
-    fi
-
-    PCE_KIND_CONS='[review-kind: consistency]'
-    PCE_PROMPT_CONS="${PCE_KIND_CONS} todo/00-infrastructure/TODO-99-pce-fixture.md sample"
-    PCE_CMD_CONS="$PCE_CMD_BASE \"$PCE_PROMPT_CONS\""
-    PCE_PAYLOAD_CONS=$(python3 -c "
-import json
-print(json.dumps({
-    'tool_name': 'Bash',
-    'tool_input': {'command': '''$PCE_CMD_CONS'''},
-    'transcript_path': '$PCE_TRANSCRIPT',
-}))
-")
-    PCE_OUT4="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD_CONS" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
-    PCE_RC4=$?
-    if [ "$PCE_RC4" = "0" ]; then
-        t_pass "phase1_evidence_block: consistency dispatch bypasses gate (scoped to adversarial only)"
-    else
-        t_fail "phase1_evidence_block: consistency bypass" \
-               "rc=$PCE_RC4 out=$PCE_OUT4"
-    fi
-
-    # ---- phase1_evidence_misslog sub-tests ----
-    # Owner: 00-infrastructure/TODO-08-automation-hardening (Phase 1
-    # evidence-gate threshold tuning via miss-log telemetry section).
-    # The gate emits a step-4 miss-log entry on every BLOCK so the
-    # heuristic-misses telemetry path computes FP ratio and tunes
-    # PHASE1_MIN_READS by data. Three checks:
-    #   (1) 0 reads -> BLOCK + miss-log entry with step:4
-    #   (2) 1 read  -> BLOCK + new miss-log entry (separate fire)
-    #   (3) 2 reads -> PASS, NO new miss-log entry appended
-    PCE_MISSLOG="$PCE_REPO/.claude/state/heuristic-misses.jsonl"
-    rm -f "$PCE_MISSLOG"
-    : > "$PCE_TRANSCRIPT"
-    cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py >/dev/null 2>&1; cd - >/dev/null
-    if [ -f "$PCE_MISSLOG" ] && grep -q '"step":4' "$PCE_MISSLOG" && \
-       grep -q '"signal":"phase1-evidence-missing"' "$PCE_MISSLOG"; then
-        t_pass "phase1_evidence_misslog: 0 Reads -> BLOCK + miss-log step:4 entry"
-    else
-        t_fail "phase1_evidence_misslog: 0 Reads miss-log emit" \
-               "exists=$([ -f "$PCE_MISSLOG" ] && echo yes || echo no) content=$(cat "$PCE_MISSLOG" 2>&1 | head -3)"
-    fi
-
-    # 1 Read still BELOW threshold -> BLOCK + new miss-log entry.
-    PCE_T1_TS="$(python3 -c 'import time; print(time.time_ns())')"
-    cat > "$PCE_TRANSCRIPT" <<TSCRIPT
-{"ts_ns":$PCE_T1_TS,"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/kernel/foo.c"}}]}}
-TSCRIPT
-    PCE_MISSLOG_LINES_BEFORE=$(wc -l < "$PCE_MISSLOG" 2>/dev/null || echo 0)
-    cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py >/dev/null 2>&1; cd - >/dev/null
-    PCE_MISSLOG_LINES_AFTER=$(wc -l < "$PCE_MISSLOG" 2>/dev/null || echo 0)
-    if [ "$PCE_MISSLOG_LINES_AFTER" -gt "$PCE_MISSLOG_LINES_BEFORE" ]; then
-        t_pass "phase1_evidence_misslog: 1 Read -> BLOCK + new miss-log entry"
-    else
-        t_fail "phase1_evidence_misslog: 1 Read miss-log emit" \
-               "before=$PCE_MISSLOG_LINES_BEFORE after=$PCE_MISSLOG_LINES_AFTER"
-    fi
-
-    # 2 Reads at threshold -> PASS, NO new miss-log entry.
-    PCE_T2_TS="$(python3 -c 'import time; print(time.time_ns())')"
-    cat > "$PCE_TRANSCRIPT" <<TSCRIPT
-{"ts_ns":$PCE_T2_TS,"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/kernel/foo.c"}}]}}
-{"ts_ns":$PCE_T2_TS,"message":{"content":[{"type":"tool_use","name":"Grep","input":{"path":"src/kernel","pattern":"spinlock_t"}}]}}
-TSCRIPT
-    PCE_MISSLOG_LINES_BEFORE2=$(grep -c '"signal":"phase1-evidence-missing"' "$PCE_MISSLOG" 2>/dev/null || echo 0)
-    cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py >/dev/null 2>&1; PCE_RC_PASS=$?; cd - >/dev/null
-    PCE_MISSLOG_LINES_AFTER2=$(grep -c '"signal":"phase1-evidence-missing"' "$PCE_MISSLOG" 2>/dev/null || echo 0)
-    if [ "$PCE_RC_PASS" = "0" ] && [ "$PCE_MISSLOG_LINES_AFTER2" = "$PCE_MISSLOG_LINES_BEFORE2" ]; then
-        t_pass "phase1_evidence_misslog: 2 Reads -> PASS, no new miss-log entry"
-    else
-        t_fail "phase1_evidence_misslog: 2 Reads PASS without emit" \
-               "rc=$PCE_RC_PASS before=$PCE_MISSLOG_LINES_BEFORE2 after=$PCE_MISSLOG_LINES_AFTER2"
-    fi
 
     # ---- re_adv_trigger_block sub-tests ----
 
@@ -5906,99 +4784,6 @@ JSON
                "rc=$PCE_RC_ASM out=$PCE_OUT_ASM"
     fi
     (cd "$PCE_REPO" && git reset -q HEAD -- . && rm -f src/kernel/asm_only.S)
-
-    # Codex adversarial M2 fix: timestamp-less transcript events must
-    # NOT count as Phase-1 evidence. Only events with ts_ns >= started_ts
-    # count.
-    cat > "$PCE_TRANSCRIPT" <<TSCRIPT
-{"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/kernel/foo.c"}}]}}
-{"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/kernel/bar.c"}}]}}
-TSCRIPT
-    PCE_OUT_NOTS="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
-    PCE_RC_NOTS=$?
-    if [ "$PCE_RC_NOTS" = "2" ] && grep -q "BLOCK" <<<"$PCE_OUT_NOTS"; then
-        t_pass "phase1_evidence_block: timestamp-less events do NOT count as evidence (Codex M2 fix)"
-    else
-        t_fail "phase1_evidence_block: missing-ts fail-closed" \
-               "rc=$PCE_RC_NOTS out=$PCE_OUT_NOTS"
-    fi
-
-    # Codex re-adversarial H1 fix: infrastructure TODOs own .claude/
-    # hooks, scripts/, and docs/ paths. Phase 1 evidence from those
-    # locations must count for infrastructure-style reviews.
-    cat > "$PCE_TRANSCRIPT" <<TSCRIPT
-{"ts_ns":$PCE_AFTER_TS,"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":".claude/hooks/phase1_evidence_gate.py"}}]}}
-{"ts_ns":$PCE_AFTER_TS,"message":{"content":[{"type":"tool_use","name":"Grep","input":{"path":"scripts","glob":"*.sh"}}]}}
-TSCRIPT
-    PCE_OUT_INFRA="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
-    PCE_RC_INFRA=$?
-    if [ "$PCE_RC_INFRA" = "0" ]; then
-        t_pass "phase1_evidence_block: infrastructure paths (.claude/scripts/docs) count as evidence (Codex re-adv H1 fix)"
-    else
-        t_fail "phase1_evidence_block: infrastructure path coverage" \
-               "rc=$PCE_RC_INFRA out=$PCE_OUT_INFRA"
-    fi
-
-    # M1 -- Phase-1 malformed tool_use input must NOT crash the walk.
-    # Mix one truthy non-dict input event between two valid Reads.
-    cat > "$PCE_TRANSCRIPT" <<TSCRIPT
-{"ts_ns":$PCE_AFTER_TS,"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/kernel/foo.c"}}]}}
-{"ts_ns":$PCE_AFTER_TS,"message":{"content":[{"type":"tool_use","name":"Read","input":"not-a-dict"}]}}
-{"ts_ns":$PCE_AFTER_TS,"message":{"content":[{"type":"tool_use","name":"Grep","input":{"path":"include/kernel"}}]}}
-this is not valid json at all
-TSCRIPT
-    PCE_OUT_MAL="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
-    PCE_RC_MAL=$?
-    if [ "$PCE_RC_MAL" = "0" ]; then
-        t_pass "phase1_evidence_block: malformed inputs do not abort walk; valid evidence still counted"
-    else
-        t_fail "phase1_evidence_block: malformed-input resilience" \
-               "rc=$PCE_RC_MAL out=$PCE_OUT_MAL"
-    fi
-
-    # M2 -- re-adversarial dispatch must NOT trigger the Phase-1 gate
-    # (only adversarial does; re-adversarial is step 13.5, separate).
-    : > "$PCE_TRANSCRIPT"
-    PCE_KIND_READV='[review-kind: re-adversarial]'
-    PCE_PROMPT_READV="${PCE_KIND_READV} todo/00-infrastructure/TODO-99-pce-fixture.md sample"
-    PCE_CMD_READV="$PCE_CMD_BASE \"$PCE_PROMPT_READV\""
-    PCE_PAYLOAD_READV=$(python3 -c "
-import json
-print(json.dumps({
-    'tool_name': 'Bash',
-    'tool_input': {'command': '''$PCE_CMD_READV'''},
-    'transcript_path': '$PCE_TRANSCRIPT',
-}))
-")
-    PCE_OUT_READV="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD_READV" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
-    PCE_RC_READV=$?
-    if [ "$PCE_RC_READV" = "0" ]; then
-        t_pass "phase1_evidence_block: re-adversarial dispatch bypasses gate (scoped to adversarial only)"
-    else
-        t_fail "phase1_evidence_block: re-adversarial discrimination" \
-               "rc=$PCE_RC_READV out=$PCE_OUT_READV"
-    fi
-
-    # M2 -- missing review-kind marker must bypass the gate (no marker
-    # = no scoped dispatch we can attribute as adversarial).
-    PCE_PROMPT_NOMK="todo/00-infrastructure/TODO-99-pce-fixture.md plain prompt no marker"
-    PCE_CMD_NOMK="$PCE_CMD_BASE \"$PCE_PROMPT_NOMK\""
-    PCE_PAYLOAD_NOMK=$(python3 -c "
-import json
-print(json.dumps({
-    'tool_name': 'Bash',
-    'tool_input': {'command': '''$PCE_CMD_NOMK'''},
-    'transcript_path': '$PCE_TRANSCRIPT',
-}))
-")
-    PCE_OUT_NOMK="$(cd "$PCE_REPO" && echo "$PCE_PAYLOAD_NOMK" | python3 .claude/hooks/phase1_evidence_gate.py 2>&1)"
-    PCE_RC_NOMK=$?
-    if [ "$PCE_RC_NOMK" = "0" ]; then
-        t_pass "phase1_evidence_block: missing review-kind marker bypasses gate"
-    else
-        t_fail "phase1_evidence_block: missing-marker bypass" \
-               "rc=$PCE_RC_NOMK out=$PCE_OUT_NOMK"
-    fi
 
     rm -rf "$PCE_TMP"
 fi
@@ -7120,8 +5905,6 @@ fi
 # ============================================================================
 # impl_pipeline_gates (TODO-08 implement-pipeline section-commit gates)
 # ============================================================================
-#   - quality_gate_block: step5_quality_gate BLOCKs Edit on src/kernel/foo.c
-#     when no Skill(kernel-code-quality) in transcript since skill start.
 #   - unit_test_wiring_block: section_commit_gate _step8_test_wiring_check
 #     BLOCKs commit touching src/kernel/foo.c when no test_*.c at HEAD.
 #   - impl_adversarial_block: _step13_impl_adversarial_check BLOCKs
@@ -7131,8 +5914,7 @@ fi
 
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[impl_pipeline_gates]${NC}"
 
-if [ ! -f "$REPO_ROOT/.claude/hooks/step5_quality_gate.py" ] || \
-   [ ! -f "$REPO_ROOT/.claude/hooks/section_commit_gate.py" ]; then
+if [ ! -f "$REPO_ROOT/.claude/hooks/section_commit_gate.py" ]; then
     t_fail "impl_pipeline_gates: hook scripts missing"
 else
     IPG_OUT="$(cd "$REPO_ROOT" && python3 - <<'PY'
@@ -7140,18 +5922,7 @@ import sys, os, json, time, tempfile, pathlib, subprocess
 sys.path.insert(0, '.claude/hooks')
 
 # Ensure the integration with our shared module surfaces is intact.
-import step5_quality_gate as s5
 import section_commit_gate as scg
-
-# Test 1: quality_gate_block -- _required_skill_for_path correctly maps
-# src/kernel/foo.c -> kernel-code-quality, src/boot/x.c -> boot-code-quality,
-# src/kernel/test/test_foo.c -> kernel-code-quality (Codex Q1 fix).
-assert s5._required_skill_for_path("src/kernel/foo.c") == "kernel-code-quality"
-assert s5._required_skill_for_path("src/boot/uefi/bootx64.c") == "boot-code-quality"
-assert s5._required_skill_for_path("src/kernel/test/test_foo.c") == "kernel-code-quality"
-assert s5._required_skill_for_path("user/libc/stdio.c") == "userland-code-quality"
-assert s5._required_skill_for_path("docs/foo.md") == ""
-print("OK quality_gate_path_map")
 
 # Test 3: unit_test_wiring -- existing test at HEAD counts as evidence.
 with tempfile.TemporaryDirectory() as tmp:
@@ -7473,11 +6244,12 @@ PY
 )" 2>&1
     IPG_RC=$?
     IPG_OK_COUNT=$(echo "$IPG_OUT" | grep -c "^OK ")
-    if [ "$IPG_OK_COUNT" = "4" ]; then
+    if [ "$IPG_OK_COUNT" = "3" ]; then
         echo "$IPG_OUT" | grep "^OK " | while IFS= read -r line; do
             t_pass "impl_pipeline_gates: $line"
         done
-        PASS=$((PASS + 5))
+        # t_pass above runs in the pipe's subshell, so count the results here.
+        PASS=$((PASS + IPG_OK_COUNT))
     else
         t_fail "impl_pipeline_gates: integrated test suite incomplete" \
                "ok-count=$IPG_OK_COUNT rc=$IPG_RC out=$IPG_OUT"
@@ -7592,10 +6364,6 @@ fi
 # ============================================================================
 # heuristic_warn_misses (TODO-08 partial-enforcement heuristics)
 # ============================================================================
-#   - hw_step1_warn:       skill_step_block emits step-1 WARN on first src/
-#                          Edit when no todo Read happened.
-#   - hw_step3_warn:       skill_step_block emits step-3 WARN when explore
-#                          query count is below threshold.
 #   - hw_step9_warn:       _heuristic_step9_test_coverage emits WARN when
 #                          test-coverage stamp missing.
 #   - hw_step15_warn:      _heuristic_step15_post_codex_edit emits WARN
@@ -7611,8 +6379,6 @@ fi
 
 if [ ! -f "$REPO_ROOT/.claude/hooks/_heuristic_misses.py" ]; then
     t_fail "heuristic_warn_misses: _heuristic_misses.py missing"
-elif [ ! -f "$REPO_ROOT/.claude/hooks/skill_step_block.py" ]; then
-    t_fail "heuristic_warn_misses: skill_step_block.py missing"
 else
     HW_TMP="$(mktemp -d)"
     HW_LOG="$HW_TMP/heuristic-misses.jsonl"
@@ -8310,8 +7076,8 @@ fi
 # ============================================================================
 # Owner: 00-infrastructure/TODO-08-automation-hardening (shell-aware
 # Codex dispatch segmentation section). Six regression checks of the
-# shared _codex_dispatch helper that all consumers (codex_review_completed,
-# _review_kind, phase1_evidence_gate, skill_step_block) route through.
+# shared _codex_dispatch helper that its consumers (codex_review_completed,
+# _review_kind) route through.
 
 CDH_OUT=$(python3 - <<'PYEOF'
 import sys
@@ -8528,106 +7294,6 @@ if [ "$XREF_OK" = "32" ]; then
 else
     t_fail "xref_grammar: tier/parse/writer coverage incomplete" "ok-count=$XREF_OK out=$XREF_OUT"
 fi
-
-
-# ============================================================================
-# review_pipeline_passthrough -- policy-scoped Bash prefix passthrough
-# ============================================================================
-# Owner: 00-infrastructure/TODO-08-automation-hardening (PreToolUse
-# prefix-allowlist standardization section). Three regression checks:
-#   - rpp_git_commit: `git commit ...` -> trusted (review pipeline)
-#   - rpp_bash_scripts: `bash scripts/foo.sh` -> trusted (slash anchor)
-#   - rpp_bash_random: `bash /tmp/random.sh` -> NOT trusted (no slash anchor)
-
-RPP_OUT=$(python3 - <<'PYEOF'
-import sys
-sys.path.insert(0, ".claude/hooks")
-from _review_pipeline_passthrough import is_review_pipeline_passthrough as ok
-
-cases = [
-    ("git commit -m foo",                 True,  "rpp_git_commit"),
-    ("bash scripts/build.sh",             True,  "rpp_bash_scripts_slash"),
-    ("bash /tmp/random.sh",               False, "rpp_bash_random_rejected"),
-    ("node /x/codex-companion.mjs review", True,  "rpp_node_codex"),
-    ("rm -rf /",                          False, "rpp_destructive_rejected"),
-    ("rg '[review-kind: ...]'",           True,  "rpp_rg_search"),
-    # v08: the allowlist tested the raw leading TOKEN, so an allowlisted command
-    # behind a variable binding was refused -- 3x in one section-60 review. An
-    # assignment does not change which command runs, so it is stepped over; a
-    # substitution inside the skipped value RUNS, so it must itself be allowed.
-    ('L="$(ls -t a/*.log | head -1)"; grep -n x "$L"',
-                                          True,  "rpp_v08_assignment_skipped"),
-    ("T=scripts/x.sh; grep -n foo \"$T\"", True,  "rpp_v08_plain_assignment"),
-    ("L=`ls -t x`; grep n \"$L\"",         True,  "rpp_v08_backtick_value"),
-    ("L=x; rm -rf /",                     False, "rpp_v08_assignment_no_launder"),
-    ('L="$(rm -rf /tmp/x)"; grep n "$L"',  False, "rpp_v08_substitution_runs"),
-    ("L=`rm -rf /tmp/x`; grep n \"$L\"",   False, "rpp_v08_backtick_runs"),
-    ('L="$(ls ; grep n',                  False, "rpp_v08_unparseable_refused"),
-    # v14 (2026-08-16): arithmetic `((...))` is NOT two nested groups -- it was
-    # reducing `((git = $(rm target)))` to a string starting with `git ` and
-    # passing while the substitution ran first. And a leading command/process
-    # substitution must be refused. The sanctioned `( git push ... )` ship
-    # shape and a real nested subshell `( ( cmd ) )` still pass.
-    ("((git = $(rm target; printf 1) )); grep x file",
-                                          False, "rpp_v14_arith_subst_refused"),
-    ("( $(rm target); git push )",        False, "rpp_v14_leading_subst_refused"),
-    ("`rm x`; git status",                False, "rpp_v14_leading_backtick_refused"),
-    ("( git push origin main > /tmp/ship-push.log 2>&1; echo rc ) &",
-                                          True,  "rpp_v14_ship_shape_ok"),
-    ("( ( git status ) )",                True,  "rpp_v14_nested_subshell_ok"),
-]
-for cmd, want, name in cases:
-    got = ok(cmd)
-    if got is want:
-        print(f"OK {name}")
-    else:
-        print(f"FAIL {name}: cmd={cmd!r} got={got!r} want={want!r}")
-PYEOF
-)
-RPP_OK=$(echo "$RPP_OUT" | grep -c "^OK ")
-if [ "$RPP_OK" = "18" ]; then
-    echo "$RPP_OUT" | grep "^OK " | while IFS= read -r line; do
-        t_pass "review_pipeline_passthrough: $line"
-    done
-    PASS=$((PASS + 6))
-else
-    t_fail "review_pipeline_passthrough: prefix-policy regression incomplete" \
-           "ok-count=$RPP_OK out=$RPP_OUT"
-fi
-
-# Drift-check regression: audit-hooks.sh DOTALL TUPLE_RE must catch a
-# multi-line cmd.startswith((...)) tuple (perf re-dispatch M finding).
-RPP_DRIFT_TMP=$(mktemp -d)
-mkdir -p "$RPP_DRIFT_TMP/.claude/hooks"
-cat > "$RPP_DRIFT_TMP/.claude/hooks/fixture-multiline.py" <<'EOF'
-def is_pipeline(cmd):
-    return cmd.startswith((
-        'git ', 'bash scripts/',
-        'node ', 'python3 ',
-    ))
-EOF
-RPP_DRIFT_OUT=$(cd "$RPP_DRIFT_TMP" && python3 - <<'PYEOF'
-import pathlib, re
-TUPLE_RE = re.compile(
-    r'startswith\s*\(\s*\((?:[^)]*?)'
-    r'''(?:["']git ["']|["']bash scripts/["']|["']python3 ["']|["']node ["'])''',
-    re.DOTALL,
-)
-hits = 0
-for f in pathlib.Path(".claude/hooks").glob("*.py"):
-    text = f.read_text()
-    if TUPLE_RE.search(text):
-        hits += 1
-print(hits)
-PYEOF
-)
-if [ "$RPP_DRIFT_OUT" = "1" ]; then
-    t_pass "review_pipeline_passthrough: rpp_dotall_multiline_tuple_caught (audit-hooks DOTALL fix)"
-else
-    t_fail "review_pipeline_passthrough: rpp_dotall_multiline_tuple_caught" \
-           "expected hits=1, got '$RPP_DRIFT_OUT'"
-fi
-rm -rf "$RPP_DRIFT_TMP"
 
 
 # ============================================================================
@@ -8968,14 +7634,13 @@ fi
 
 if [ -d "$REPO_ROOT/.claude/.claude" ]; then
     t_fail "no doubled .claude/.claude directory" \
-           "exists -- it breaks _repo_root() in 5 hooks (see search_offload_gate._valve)"
+           "exists -- it breaks _repo_root() in hooks that walk up for .claude (see search_offload_gate._valve)"
 else
     t_pass "no doubled .claude/.claude directory"
 fi
 
 _rr_bad=""
-for _h in build_offload_reminder agent_dispatch_required \
-          session_brief_inject verify_cadence_reminder; do
+for _h in session_brief_inject verify_cadence_reminder; do
     _rr=$(cd "$REPO_ROOT" && python3 -c "
 import importlib.util, sys
 s = importlib.util.spec_from_file_location('$_h', '.claude/hooks/$_h.py')
@@ -8984,7 +7649,7 @@ print(m._repo_root())" 2>/dev/null)
     [ "$_rr" = "$REPO_ROOT" ] || _rr_bad="$_rr_bad $_h=$_rr"
 done
 if [ -z "$_rr_bad" ]; then
-    t_pass "hook _repo_root() resolves to the repo root (5 hooks)"
+    t_pass "hook _repo_root() resolves to the repo root (2 hooks)"
 else
     t_fail "hook _repo_root() resolves to the repo root" "wrong:$_rr_bad"
 fi

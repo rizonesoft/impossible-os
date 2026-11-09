@@ -98,4 +98,4 @@ Do NOT use this skill when:
 
 ## Telemetry / hooks
 
-The skill is wired into `skill_step_map.py` with terminal steps `[7, 9, 11, 14]` (first build, adversarial dispatch, second build, commit). The `skill_step_block.py` gate refuses commit when any of these is missing, with the trivial-fix opt-out for step 9 honored via `SKIP_CODEX_REVIEW=1` plus a 12-char-minimum reason. When step 12 promotes to a section-ship, `section_commit_gate.py` adds its standard four-dispatch evidence requirement (the post-impl review pipeline catches that the agent must follow with `/review-todo-section`).
+The skill is wired into `skill_step_map.py` with terminal steps `[7, 9, 11, 14]` (first build, adversarial dispatch, second build, commit). `skill_step_observer.py` records which of them happened. When step 12 promotes to a section-ship, `section_commit_gate.py` adds its standard four-dispatch evidence requirement (the post-impl review pipeline catches that the agent must follow with `/review-todo-section`).

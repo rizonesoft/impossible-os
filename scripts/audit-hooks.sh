@@ -90,8 +90,8 @@ while IFS= read -r f; do
         # Underscore-prefixed files are shared helper modules
         # (Python private-module convention), not standalone hooks.
         # Examples: _review_kind.py -- shared classifier consumed by
-        # phase1_evidence_gate + skill_step_map (review-pipeline pre-Codex
-        # enforcement work). Skip; manifest rows describe hook-as-hook.
+        # skill_step_map and skill_step_observer. Skip; manifest rows
+        # describe hook-as-hook.
         _*) continue ;;
     esac
     if ! grep -qF "\`.claude/hooks/$base\`" "$MANIFEST"; then
@@ -252,53 +252,6 @@ PY
 else
     log "  (no plugin index at $PLUGINS_INDEX -- skipping)"
 fi
-
-# ----------------------------------------------------------------------------
-# Review-pipeline passthrough drift check (TODO-08 prefix-allowlist
-# standardization section). The shared helper at
-# .claude/hooks/_review_pipeline_passthrough.py owns the canonical
-# review-pipeline prefix list; PreToolUse gates that need that policy
-# MUST consume it via is_review_pipeline_passthrough() rather than
-# reimplementing the prefix tuple inline. Drift = a hook with its own
-# `cmd.startswith((...git...bash scripts/...))` tuple that didn't
-# migrate to the helper.
-# ----------------------------------------------------------------------------
-log ""
-log "Checking review-pipeline-passthrough consumers..."
-RPP_DRIFT=$(python3 - <<'PYEOF'
-import pathlib, re
-# Multi-prefix allowlist tuple containing review-pipeline prefixes is
-# the drift signature. The regex uses DOTALL so it matches multi-line
-# tuples (a hand-formatted shape with `cmd.startswith((` on one line
-# and prefix entries on later lines). Single-prefix startswith calls
-# (`cmd.startswith("git commit")`) are NOT this drift -- the regex
-# requires `((` (double-open) which only appears with a tuple arg.
-# Closes the section-29 perf re-dispatch M finding.
-TUPLE_RE = re.compile(
-    r'startswith\s*\(\s*\((?:[^)]*?)'
-    r'''(?:["']git ["']|["']bash scripts/["']|["']python3 ["']|["']node ["'])''',
-    re.DOTALL,
-)
-for f in pathlib.Path(".claude/hooks").glob("*.py"):
-    if f.name.startswith("_") or f.name.startswith("test_"):
-        continue
-    text = f.read_text()
-    # Skip files that consume the helper -- they are migrated.
-    if "_review_pipeline_passthrough" in text or \
-       "is_review_pipeline_passthrough" in text:
-        continue
-    m = TUPLE_RE.search(text)
-    if m:
-        # Compute the line number of the match start.
-        ln_no = text[:m.start()].count("\n") + 1
-        print(f"DRIFT::review-pipeline prefix-allowlist tuple in {f}:{ln_no} not using _review_pipeline_passthrough helper")
-PYEOF
-)
-while IFS= read -r line; do
-    case "$line" in
-        DRIFT::*) drift "${line#DRIFT::}" ;;
-    esac
-done <<<"$RPP_DRIFT"
 
 # ----------------------------------------------------------------------------
 # Summary

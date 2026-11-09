@@ -416,11 +416,9 @@ def main(argv) -> int:
     }
     (pack_dir / "manifest.json").write_text(json.dumps(manifest, indent=1))
     (pack_dir / "pack.json").write_text(json.dumps(pack, indent=1))
-    # Content-bound receipt (WS2): a fresh section-pack is the deterministic
-    # equivalent of the discovery/exploration agent, so agent_dispatch_required
-    # accepts it. It records the exact inputs + their working-tree digest, so the
-    # gate can re-verify freshness by recomputing the key -- any edit since the
-    # pack invalidates the receipt (fail-closed: stale => the agent is required).
+    # Content-bound receipt (WS2): records the exact inputs + their working-tree
+    # digest, so a reader (section-checkpoint.py) can re-verify freshness by
+    # recomputing the key -- any edit since the pack invalidates it.
     try:
         receipt = {"todo": todo_rel, "section": n, "digest": section_digest,
                    "key_inputs": key_inputs, "ts_ns": time.time_ns(),

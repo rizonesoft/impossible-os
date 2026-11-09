@@ -6,7 +6,7 @@
    first real token), so the gate blocks while its message tells the caller to
    set the variable they just set.
 
-2. `skill_step_block` -- a `git commit` into a THROWAWAY /tmp fixture repo was
+2. `skill_step_observer` -- a `git commit` into a THROWAWAY /tmp fixture repo was
    judged as a section commit, forcing a standing opt-out on every fixture
    commit.
 
@@ -44,7 +44,7 @@ def test_losing_shape_blocks():
     """The exact shape that recurred on 2026-08-10, plus its near relatives."""
     for cmd in [
         'git add path && SKIP_REVIEW_HOOK=1 git commit -m "msg"',
-        'echo hi; SKIP_SKILL_STEP_BLOCK=1 git commit -m z',
+        'echo hi; SKIP_REVIEW_PIPELINE=1 git commit -m z',
         'a && b && SKIP_CI_PARITY=1 git push',
         'foo & SKIP_HOOK_AUDIT=1 git commit -m q',
     ]:
@@ -110,16 +110,16 @@ def test_agrees_with_the_scanner_it_models():
 
 
 # ---------------------------------------------------------------------------
-# 2. skill_step_block fixture scoping
+# 2. skill_step_observer fixture scoping (step 19 counts only project commits)
 # ---------------------------------------------------------------------------
 
 def _ssb():
     os.environ["CLAUDE_PROJECT_DIR"] = str(REPO)
     sys.path.insert(0, str(REPO / ".claude/hooks"))
     spec = importlib.util.spec_from_file_location(
-        "ssb_mod", REPO / ".claude/hooks/skill_step_block.py")
+        "sso_mod", REPO / ".claude/hooks/skill_step_observer.py")
     m = importlib.util.module_from_spec(spec)
-    sys.modules["ssb_mod"] = m
+    sys.modules["sso_mod"] = m
     spec.loader.exec_module(m)
     return m
 
@@ -140,22 +140,20 @@ def test_throwaway_repo_is_not_a_section_commit(tmp_path=None):
 
 
 def test_project_commits_still_gated():
-    """REFUSAL CONTROL: this is the whole point of the gate. A section ship in
-    the project repo -- bare, chained, or explicitly `-C`'d at the project --
-    must still be judged."""
+    """REFUSAL CONTROL: a section ship in the project repo -- bare, chained, or
+    explicitly `-C`'d at the project -- must still count as step 19."""
     m = _ssb()
     for cmd in [
         'git commit -m "section ship"',
         'git add -A && git commit -m "section ship"',
         f'git -C {REPO} commit -m "section ship"',
     ]:
-        assert m._commit_is_in_project(cmd), f"stopped gating: {cmd!r}"
+        assert m._commit_is_in_project(cmd), f"stopped counting: {cmd!r}"
 
 
 def test_undeterminable_target_fails_closed():
     """REFUSAL CONTROL: a destination that cannot be READ must be treated as
-    the project. A section commit slipping the gate is the failure the gate
-    exists to prevent; a fixture commit tripping it costs one opt-out."""
+    the project, because an unrecorded real section commit is the worse error."""
     m = _ssb()
     for cmd in [
         'git -C "$SOMEVAR" commit -m x',
