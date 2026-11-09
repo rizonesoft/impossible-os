@@ -70,7 +70,7 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 | ⭐  |   3   | Hypervisor detection before timer selection      | §1, D2/T01 §12           |  [x]   |
 | 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D2/T10 §1            |  [x]   |
 | 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D2/T24 §4, D2/T01 §1 |  [x]   |
-| 💎  |   6   | AP feature consistency validation                | §1, §4                   |  [/]   |
+| 💎  |   6   | AP feature consistency validation                | §1, §4                   |  [x]   |
 | 💎  |   7   | CR4 safety-bit pinning                           | §2, §5                   |  [x]   |
 | 💎  |   8   | MTRR/PAT AP synchronization                      | §4                       |  [x]   |
 | ⭐  |   9   | CPU register state audit trail                   | §2, §5                   |  [x]   |
@@ -263,12 +263,14 @@ Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) w
 - [x] TSC sync between APs NOT owned here -- relies on `02-kernel-core/TODO-08-time-filetime-management.md §3` "Per-CPU TSC sync"
 - [x] Verify (serial log): homogeneous shows `[AP%u] Feature validation OK`; BSP logs the global intersection mask; hybrid mismatches logged BSP-side
 - [x] Commit: `"smp: AP feature intersection + hybrid-aware consistency validation"`
-- [/] **PARKED coverage gap:** no test asserts the CONTRACT that a set `feature_mismatch` is reflected in a narrowed global mask -- today only "global intersection retains required" is covered (`test_cpu_security.c:212`).
-  - Blocker: needs synthetic per-CPU slots to drive the reduction, because the shipped test host is homogeneous and never sets `feature_mismatch`. `cpu_slot_committed_online()` (§11) is the precedent -- a pure predicate extracted so a state table can drive it; the reduction in `cpu_features_finalize_global()` has no such seam yet. Owned HERE. Found while writing the §9 unit tests: a `feature_mismatch == 0` loop was written, then removed because it asserts the opposite of shipped policy.
+- [x] Mismatch-narrows-the-mask contract tested: `cpu_features_reduce_slots()` in `cpu_security.c` is the AP half of `cpu_features_finalize_global()`, extracted so a test drives the shipped reduction over synthetic slots.
+  - The test is `test_cpu_features_reduce_mismatch_narrows` in `test_cpu_security.c`.
+  - Covers a flagged committed-but-unpublished AP clearing its missing feature, an ABANDONED slot not narrowing the mask or `pke_all`, a counted slot without CR4.PKE clearing it, the `n` bound and NULL inputs.
+  - Mutation control 2026-11-09: dropping the AND fails the first assertion (521 PASS, 1 FAILED).
 
 **Test checkpoint:** Boot on SMP system. Log shows `[AP1] Feature validation OK (core_type 0x..)` for every AP + `Global CPU feature intersection 0x..`. No degradation on homogeneous hardware. Unit tests assert the mask invariants (BSP satisfies required, required subset of probe, global intersection retains required). Bare metal: P/E hybrid CPUs may show feature differences (AVX-512) that degrade gracefully, not panic.
 
-> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 75 suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 522 PASS, 0 failed on 2 CPUs (2026-11-09)
 
 > **Notes:**
 > - Shipped `cpu_validate_ap_features()` + `cpu_features_finalize_global()` + `cpu_feature_global_mask()` (cpu_security.c), `cpuid_probe_ap_features()` (cpuid.c), masks in `cpuid.h`, 3 `per_cpu_data` fields, `BUGCHECK 0x3E`, `POSTCODE_AP_VALIDATE`.
@@ -277,6 +279,7 @@ Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) w
 > - Canonical doc: this section + `src/kernel/cpu_security.c` `cpu_validate_ap_features`.
 > - Scope boundary: §6 owns DETECTION (validate + intersection + bug-check); §10 owns AP-local CR4-enable gating; `02-kernel-core/TODO-09 §9` owns topology core_type consumption; TODO-08 §3 owns TSC sync.
 > **Verified:** 2026-05-24 | commit `eeba36a1` | 9/9 items | build OK | smoke PASS (KVM 2.45s); SMP -smp 2 AP1 online + validation OK
+> **Verified:** 2026-11-09 | parked coverage item closed (reduction seam + synthetic-slot test, mutation control FAIL then PASS) | 10/10 items | build OK | SUITE=x86 522 PASS | Codex adversarial 1x approve
 > **Accepted:** [H] optional CR4/MSR skew (CR4.UMIP via cpu_enable_umip, TSC_AUX MSR) still BSP-global-gated in cpu_harden/ap_apply_msr_profile -> #GP on a genuinely feature-skewed AP (pre-existing from §4; not a homogeneous/real-HW case; §6 detects + excludes from the global mask) -> XREF: 01-boot-platform/TODO-09 §10 (item: "AP-local gate `ap_cpu_harden()` enables: `cpu_enable_umip/pku/smep/smap` + TSC_AUX" at line 350)
 > **Accepted:** [H] a slow AP can publish is_online AFTER cpu_features_finalize_global() runs, so the global mask may omit it (pre-existing degraded-bringup race; finalize is correct over the at-the-time online set) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Degraded-bringup: a timed-out AP still completes `ap_entry()` ... add a per-AP accept/abandon state" at line 279)
 > **Quality reviewed:** 2026-05-24 | Codex 7x (design, adversarial, consistency, perf, re-adversarial) | 3H+2M fixed, 2H accepted-XREF | scope: kernel-code-quality

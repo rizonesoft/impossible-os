@@ -155,6 +155,17 @@ void cpu_features_finalize_global(void);
 struct per_cpu_data;
 int cpu_slot_committed_online(const struct per_cpu_data *pc);
 
+/* The AP half of the global feature reduction: AND `base` with the published
+ * features of every committed-online slot in `slots[0..n-1]`, and clear
+ * *pke_all (when non-NULL) for any such slot whose boot CR4 lacks PKE. An AP
+ * whose validation set feature_mismatch published features missing the bits
+ * it lacks, so it narrows the result; excluded slots (ABANDONED, never
+ * started, NULL) do not. cpu_features_finalize_global() passes the live slots,
+ * a unit test passes synthetic ones, so both run the same rule. Pure. */
+cpu_feature_mask_t cpu_features_reduce_slots(cpu_feature_mask_t base,
+                                             const struct per_cpu_data *const *slots,
+                                             uint32_t n, int *pke_all);
+
 /* The published global feature intersection (0 until finalized). Acquire-load.
  * A set bit means the feature is present on EVERY online CPU AND, for
  * xstate-dependent features (AVX/AVX512F/PKU/XSAVE), the OS has enabled the

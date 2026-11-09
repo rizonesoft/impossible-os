@@ -1557,6 +1557,26 @@ int cpu_slot_committed_online(const struct per_cpu_data *pc)
     return __atomic_load_n(&pc->ap_bringup_state, __ATOMIC_ACQUIRE) == AP_BRINGUP_ONLINE;
 }
 
+cpu_feature_mask_t cpu_features_reduce_slots(cpu_feature_mask_t base,
+                                             const struct per_cpu_data *const *slots,
+                                             uint32_t n, int *pke_all)
+{
+    uint32_t i;
+
+    if (!slots)
+        return base;
+    for (i = 0; i < n; i++) {
+        const struct per_cpu_data *pc = slots[i];
+
+        if (!cpu_slot_committed_online(pc))
+            continue;
+        base = cpu_feature_and(base, pc->features);
+        if (pke_all && !(pc->cr4_at_boot & CR4_PKE))
+            *pke_all = 0;
+    }
+    return base;
+}
+
 void cpu_features_finalize_global(void)
 {
     extern struct cpu_features g_cpu;
@@ -1588,13 +1608,12 @@ void cpu_features_finalize_global(void)
      * (features, cr4_at_boot) precedes its ACQ_REL CAS, so an acquire load of
      * EITHER publication orders those writes here. ABANDONED slots are excluded
      * -- that AP parks dark and never goes live. */
-    for (i = 1; i < MAX_CPUS; i++) {
-        struct per_cpu_data *pc = smp_get_cpu(i);
-        if (!cpu_slot_committed_online(pc))
-            continue;
-        m = cpu_feature_and(m, pc->features);
-        if (!(pc->cr4_at_boot & CR4_PKE))
-            pke_all = 0;
+    {
+        const struct per_cpu_data *slots[MAX_CPUS - 1];
+
+        for (i = 1; i < MAX_CPUS; i++)
+            slots[i - 1] = smp_get_cpu(i);
+        m = cpu_features_reduce_slots(m, slots, MAX_CPUS - 1, &pke_all);
     }
 
     /* xstate-dependent features are usable only if the OS enabled the backing

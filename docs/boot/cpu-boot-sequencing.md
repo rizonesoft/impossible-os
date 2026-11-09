@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md sources=src/kernel/smp/smp.c,include/kernel/smp.h,src/kernel/smp/ap_trampoline.asm,src/kernel/cpu_security.c,include/kernel/cpu_security.h,src/kernel/main/boot_hw.c,src/kernel/main/boot_storage.c,src/kernel/gdt.c,include/kernel/gdt.h reviewed=2026-11-09T13:30 order=9 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md sources=src/kernel/smp/smp.c,include/kernel/smp.h,src/kernel/smp/ap_trampoline.asm,src/kernel/cpu_security.c,include/kernel/cpu_security.h,src/kernel/main/boot_hw.c,src/kernel/main/boot_storage.c,src/kernel/gdt.c,include/kernel/gdt.h reviewed=2026-11-09T14:10 order=9 -->
 # CPU Boot Sequencing and AP Bringup
 
 ## What is it?
@@ -35,7 +35,7 @@ sequenceDiagram
   AP->>AP: sti, park loop
 ```
 
-After every discovered slot reaches a terminal verdict, the BSP publishes the global CPU-feature intersection (`cpu_features_finalize_global()`), runs the per-CPU register consistency check, arms the periodic CR-pin verify IPI, and arms the stop-the-world rendezvous IPI, all only once the online set is fixed.
+After every discovered slot reaches a terminal verdict, the BSP publishes the global CPU-feature intersection (`cpu_features_finalize_global()`, whose AP half `cpu_features_reduce_slots()` ANDs every committed-online slot, so an AP flagged with `feature_mismatch` narrows the mask; a unit test drives it over synthetic slots), runs the per-CPU register consistency check, arms the periodic CR-pin verify IPI, and arms the stop-the-world rendezvous IPI, all only once the online set is fixed.
 
 ## What are its interfaces?
 
@@ -65,7 +65,6 @@ On a live boot, serial shows the sequence in order: `[BSP] hardening baseline ..
 
 ## What is not implemented yet?
 
-- No test proves that a set `feature_mismatch` on an AP actually narrows the global CPU-feature intersection; today only the "intersection retains the required mask" direction is covered: [AP Feature Consistency Validation](../../todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md#6-ap-feature-consistency-validation).
 - MTRR/PAT runtime re-broadcast and divergent-AP MTRR reprogramming are parked on a cross-CPU synchronous call (`smp_call_function()`) that does not exist yet; PAT/MTRR sync ships as a warn-only audit instead: [MTRR/PAT AP Synchronization](../../todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md#8-mtrrpat-ap-synchronization).
 - No coverage-gap flag distinguishes a failed MSR read from a successfully captured zero in the per-CPU register audit (`arch_caps`, `ucode_rev`): [CPU Register State Audit Trail](../../todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md#9-cpu-register-state-audit-trail).
 - `HKLM\HARDWARE\VM\*` hypervisor Registry mirror, Hyper-V SynIC/TLFS TSC reference page, and the `boot_info.cc_kind` field are still not populated: [Hypervisor Detection Before Timer Selection](../../todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md#3-hypervisor-detection-before-timer-selection).

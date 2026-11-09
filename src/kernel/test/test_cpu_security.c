@@ -774,6 +774,70 @@ static void test_pku_cr4_pke_set(void)
  * against synthetic slots, so removing its AP_BRINGUP_ONLINE term fails HERE --
  * the live-state test below cannot force that window (a real AP has normally
  * published is_online by the time the suite runs). */
+/* The contract behind feature_mismatch: an AP whose validation flagged an
+ * optional feature it lacks narrows the published global mask, through the
+ * SHIPPED reduction the finalizer runs, while an excluded slot does not.
+ * Synthetic slots, because a homogeneous test host never sets the flag. */
+static void test_cpu_features_reduce_mismatch_narrows(void)
+{
+    static struct per_cpu_data online_ok, committed_skew, abandoned_skew;
+    const struct per_cpu_data *slots[4];
+    cpu_feature_mask_t base = {{0, 0}}, full, r;
+    int pke_all;
+
+    cpu_feature_set(&base, CPU_FEATURE_SSE2);
+    cpu_feature_set(&base, CPU_FEATURE_AVX);
+    cpu_feature_set(&base, CPU_FEATURE_PKU);
+    full = base;
+
+    online_ok.is_online = 1;
+    online_ok.ap_bringup_state = AP_BRINGUP_ONLINE;
+    online_ok.features = full;
+    online_ok.feature_mismatch = 0;
+    online_ok.cr4_at_boot = CR4_PKE;
+
+    /* Committed but not yet published, and missing AVX: the window the
+     * committed-online predicate exists for, with a real skew in it. */
+    committed_skew.is_online = 0;
+    committed_skew.ap_bringup_state = AP_BRINGUP_ONLINE;
+    committed_skew.features = full;
+    cpu_feature_clear(&committed_skew.features, CPU_FEATURE_AVX);
+    committed_skew.feature_mismatch = 1;
+    committed_skew.cr4_at_boot = CR4_PKE;
+
+    /* Abandoned and missing SSE2 and PKE: parks dark, must not narrow. */
+    abandoned_skew.is_online = 0;
+    abandoned_skew.ap_bringup_state = AP_BRINGUP_ABANDONED;
+    abandoned_skew.features = full;
+    cpu_feature_clear(&abandoned_skew.features, CPU_FEATURE_SSE2);
+    abandoned_skew.feature_mismatch = 1;
+    abandoned_skew.cr4_at_boot = 0;
+
+    slots[0] = &online_ok;
+    slots[1] = (const struct per_cpu_data *)0;
+    slots[2] = &committed_skew;
+    slots[3] = &abandoned_skew;
+
+    pke_all = 1;
+    r = cpu_features_reduce_slots(base, slots, 4, &pke_all);
+    TEST_ASSERT(!cpu_feature_test(&r, CPU_FEATURE_AVX),
+                "reduce: a flagged AP's missing feature is cleared from the global mask");
+    TEST_ASSERT(cpu_feature_test(&r, CPU_FEATURE_SSE2),
+                "reduce: an ABANDONED slot's missing feature does not narrow the mask");
+    TEST_ASSERT(cpu_feature_test(&r, CPU_FEATURE_PKU), "reduce: features every counted slot has survive");
+    TEST_ASSERT_EQ((uint32_t)pke_all, 1u, "reduce: an ABANDONED slot without CR4.PKE does not clear pke_all");
+
+    committed_skew.cr4_at_boot = 0;
+    pke_all = 1;
+    (void)cpu_features_reduce_slots(base, slots, 4, &pke_all);
+    TEST_ASSERT_EQ((uint32_t)pke_all, 0u, "reduce: a counted slot without CR4.PKE clears pke_all");
+
+    r = cpu_features_reduce_slots(base, slots, 1, (int *)0);
+    TEST_ASSERT(cpu_feature_eq(r, full), "reduce: bounded by n, and a NULL pke_all is allowed");
+    r = cpu_features_reduce_slots(base, (const struct per_cpu_data *const *)0, 4, (int *)0);
+    TEST_ASSERT(cpu_feature_eq(r, base), "reduce: a NULL slot table returns the base unchanged");
+}
+
 static void test_cpu_slot_committed_online_states(void)
 {
     /* STATIC, not a stack local: struct per_cpu_data is ~3.9 KiB (the 64-entry
@@ -2171,6 +2235,8 @@ void test_register_x86(void)
         test_pku_xcr0_bit9, TEST_CAT_X86);
     test_suite_register_cat("PKU: committed-online predicate state table",
         test_cpu_slot_committed_online_states, TEST_CAT_X86);
+    test_suite_register_cat("features: AP mismatch narrows the global reduction",
+        test_cpu_features_reduce_mismatch_narrows, TEST_CAT_X86);
     test_suite_register_cat("PKU: pku_enabled matches online-CPU CR4.PKE intersection",
         test_pku_enabled_matches_online_intersection, TEST_CAT_X86);
     test_suite_register_cat("PKU: alloc/free key",
