@@ -663,7 +663,11 @@ $(SIGN_STAMP): $(UEFI_EFI) $(UKI_BIN_PATH) scripts/sign-efi.sh \
 ## os-logo: Generate shared OS logo header from PNG
 os-logo: include/kernel/os_logo.h
 
-include/kernel/os_logo.h: $(wildcard resources/logo/os_logo_*.png) tools/convert_icon.py
+# One run writes BOTH files, so they are one grouped target (GNU make 4.3+). With the
+# header alone as the target, make treated os_logo.c as plain source: under -j it
+# compiled os_logo.o from the stale .c while the generator rewrote it, and a later make
+# call in scripts/build.sh relinked kernel.exe after the UKI had packed it.
+include/kernel/os_logo.h src/kernel/os_logo.c &: $(wildcard resources/logo/os_logo_*.png) tools/convert_icon.py
 	@python3 tools/convert_icon.py
 
 ## bsod-icon: Generate BSOD icon header from PNG
