@@ -179,6 +179,7 @@ int      fat32_write_sectors_multi(struct fat32_volume *vol, uint32_t sector,
 
 /* FAT entry manipulation */
 uint32_t fat32_get_fat_entry(struct fat32_volume *vol, uint32_t cluster);
+int      fat32_read_fat_entry(struct fat32_volume *vol, uint32_t cluster, uint32_t *out);
 int      fat32_set_fat_entry(struct fat32_volume *vol, uint32_t cluster,
                               uint32_t value);
 uint32_t fat32_next_cluster(struct fat32_volume *vol, uint32_t cluster);
@@ -193,7 +194,7 @@ uint32_t fat32_last_cluster(const struct fat32_volume *vol);
 void     fat32_validate_set_quiet(int q);  /* test code wraps to silence klog */
 
 /* Dual-FAT compare and repair */
-void     fat32_compare_repair_fats(struct fat32_volume *vol);
+int      fat32_compare_repair_fats(struct fat32_volume *vol, int fix);
 
 /* Dirty volume marker -- reads/writes FAT[1] bit 27 */
 void     fat32_read_dirty_marker(struct fat32_volume *vol);

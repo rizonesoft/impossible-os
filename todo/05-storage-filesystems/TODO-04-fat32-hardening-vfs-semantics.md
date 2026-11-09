@@ -475,6 +475,10 @@ From the TODO-10 §26 docs pass (2026-09-30), measured on the image the smoke te
   - A cached dirent or FAT link can reach the disk before what it references. Directory extension and rename now order their phases with flushes; `fat32_create_dir_vol`'s dot entries and other publish paths do not.
   - The device's volatile cache is also unordered: `blkdev_sync` can sleep, so it cannot run under `vol->lock`. Replace and rename therefore order writes only as far as the device. Closing this needs the `vol->lock` overhaul in this section.
   - Also confirmed on disk: the `~1` collision in the rename item above. LFN `boot-trend.json.tmp` sits over SFN `BOOT-T~1.JSO` with a wrong checksum, and `X:\Perf\boot-timeline.json` is absent.
+- [x] fsck never frees or repairs on a FAT it could not read, and read-only fsck writes nothing (found by the TODO-07 §17 rotation test review, 2026-11-09).
+  - `fat32_read_fat_entry()` (`fat32_core.c`) reports a failed read; `fat32_get_fat_entry()` wraps it for callers that only follow chains. fsck's chain walk, directory chain step and lost-cluster scan use the checked form, so an unreadable entry marks the walk incomplete instead of ending a live chain.
+  - `fat32_compare_repair_fats(vol, fix)` rewrites FAT2 only with `fix` and returns -1 for an unreadable sector or the count still wrong. fsck returns -1 before any repair on -1, and counts a stale mirror as an error; mount passes fix=1.
+  - Tests in `test_fat32.c` (`TEST_CAT_FS`): read-only fsck reports a stale mirror and leaves it; an unreadable FAT sector repairs nothing; a FAT sector failing after the compare keeps a live tail. Each failed its control (old behaviour restored, build OK).
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 

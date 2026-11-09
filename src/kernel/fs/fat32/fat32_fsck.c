@@ -23,17 +23,24 @@ static inline int bitset_test(const uint8_t *bits, uint32_t idx)
 }
 
 /* Walk a cluster chain and mark all clusters in visited[].
- * Returns the number of cross-links detected. */
+ * Returns the number of cross-links detected. A FAT read failure sets
+ * *traversal_failed: the rest of the chain is unseen, not absent. */
 static uint32_t walk_chain(struct fat32_volume *vol, uint8_t *visited,
                             uint32_t start_cluster, uint32_t max_cluster,
-                            int fix, int *repair_failed)
+                            int fix, int *traversal_failed, int *repair_failed)
 {
     uint32_t cluster = start_cluster;
     uint32_t prev = 0;
     uint32_t cross_links = 0;
 
     while (cluster >= 2 && cluster < max_cluster) {
-        uint32_t fat_val = fat32_get_fat_entry(vol, cluster);
+        uint32_t fat_val;
+
+        if (fat32_read_fat_entry(vol, cluster, &fat_val) != 0) {
+            klog(LOG_ERROR, "fsck", "FAT entry for cluster %u unreadable", (uint64_t)cluster);
+            *traversal_failed = 1;
+            break;
+        }
 
         if (bitset_test(visited, cluster)) {
             /* Cross-link detected */
@@ -170,7 +177,7 @@ static uint32_t walk_directory(struct fat32_volume *vol, uint8_t *visited,
 
     /* Mark directory's own cluster chain */
     cross_links += walk_chain(vol, visited, dir_cluster, max_cluster, fix,
-                              repair_failed);
+                              traversal_failed, repair_failed);
 
     /* Walk directory entries */
     cur_cluster = dir_cluster;
@@ -282,12 +289,16 @@ static uint32_t walk_directory(struct fat32_volume *vol, uint8_t *visited,
                 /* Walk file's cluster chain */
                 cross_links += walk_chain(vol, visited, fc,
                                           max_cluster, fix,
-                                          repair_failed);
+                                          traversal_failed, repair_failed);
             }
         }
 
         {
-            uint32_t next = fat32_get_fat_entry(vol, cur_cluster);
+            uint32_t next;
+            if (fat32_read_fat_entry(vol, cur_cluster, &next) != 0) {
+                *traversal_failed = 1;
+                break;
+            }
             if (next < 2 || next >= 0x0FFFFFF8)
                 break;
             cur_cluster = next;
@@ -316,6 +327,7 @@ int fat32_fsck(struct fat32_volume *vol, int fix)
     uint32_t cross_links = 0;
     uint32_t lost_clusters = 0;
     uint32_t errors = 0;
+    int fat_mirror;
     uint32_t cluster;
     uint32_t i;
 
@@ -339,8 +351,16 @@ int fat32_fsck(struct fat32_volume *vol, int fix)
         return -1;
     }
 
-    /* Step 2: Compare FAT1 vs FAT2 */
-    fat32_compare_repair_fats(vol);
+    /* Step 2: Compare FAT1 vs FAT2. Read-only mode reports a stale mirror
+     * as an error and leaves it on disk; repair mode rewrites FAT2. */
+    fat_mirror = fat32_compare_repair_fats(vol, fix);
+    if (fat_mirror < 0) {
+        /* An unreadable FAT sector reads as end-of-chain in the walk below, so
+         * a live file's tail would look lost and the freeing pass would clear
+         * it. Stop before any repair touches the volume. */
+        klog(LOG_ERROR, "fsck", "FAT unreadable; refusing to walk or repair");
+        return -1;
+    }
 
     /* Step 3: Build visited bitset and walk all reachable clusters */
     total_data_clusters = (vol->bpb.total_sectors - vol->bpb.first_data_sector)
@@ -388,7 +408,12 @@ int fat32_fsck(struct fat32_volume *vol, int fix)
              "freeing pass (would free live data on a partial walk)");
     }
     for (cluster = 2; cluster < max_cluster; cluster++) {
-        uint32_t fat_val = fat32_get_fat_entry(vol, cluster);
+        uint32_t fat_val;
+        if (fat32_read_fat_entry(vol, cluster, &fat_val) != 0) {
+            /* Unknown, so never freed; the walk result is not trustworthy. */
+            traversal_failed = 1;
+            continue;
+        }
         if (fat_val != FAT32_FREE && !bitset_test(visited, cluster)) {
             lost_clusters++;
             if (fix && !traversal_failed) {
@@ -415,6 +440,11 @@ int fat32_fsck(struct fat32_volume *vol, int fix)
     }
 
     errors = cross_links + lost_clusters;
+    if (fat_mirror > 0) {
+        errors += (uint32_t)fat_mirror;
+        if (fix)
+            repair_failed = 1;
+    }
 
     /* Report */
     klog(LOG_INFO, "fsck",

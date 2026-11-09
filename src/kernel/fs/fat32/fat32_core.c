@@ -299,27 +299,36 @@ void fat32_set_clean_marker(struct fat32_volume *vol)
 
 /* ---- Dual-FAT compare and repair ---- */
 
-void fat32_compare_repair_fats(struct fat32_volume *vol)
+/* Compare FAT1 with its mirror. With `fix`, a mismatched FAT2 sector is
+ * rewritten from FAT1; without it nothing is written. Returns -1 when a sector
+ * could not be read (the comparison is incomplete), otherwise the number of
+ * mismatched sectors still wrong afterwards: every mismatch without `fix`, or
+ * each repair write that failed. */
+int fat32_compare_repair_fats(struct fat32_volume *vol, int fix)
 {
     uint32_t fat_size = vol->bpb.fat_size_sectors;
     uint32_t fat1_base = vol->bpb.first_fat_sector;
     uint32_t fat2_base = fat1_base + fat_size;
     uint32_t mismatch_count = 0;
+    uint32_t unrepaired = 0;
+    int unreadable = 0;
     uint32_t s;
     uint8_t buf1[512];
     uint8_t buf2[512];
 
     if (vol->bpb.num_fats < 2)
-        return;
+        return 0;
 
     for (s = 0; s < fat_size; s++) {
         uint32_t i;
         int differ = 0;
 
-        if (blkdev_read(vol->dev, fat1_base + s, 1, buf1) != 0)
+        if (blkdev_read(vol->dev, fat1_base + s, 1, buf1) != 0 ||
+            blkdev_read(vol->dev, fat2_base + s, 1, buf2) != 0) {
+            klog(LOG_WARN, "fat32", "FAT compare: sector %u unreadable", (uint64_t)s);
+            unreadable = 1;
             continue;
-        if (blkdev_read(vol->dev, fat2_base + s, 1, buf2) != 0)
-            continue;
+        }
 
         for (i = 0; i < 512; i++) {
             if (buf1[i] != buf2[i]) {
@@ -330,24 +339,34 @@ void fat32_compare_repair_fats(struct fat32_volume *vol)
 
         if (differ) {
             mismatch_count++;
+            if (!fix) {
+                klog(LOG_WARN, "fat32", "FAT mismatch at sector %u (not repaired)", (uint64_t)s);
+                unrepaired++;
+                continue;
+            }
             klog(LOG_WARN, "fat32",
                  "FAT mismatch at sector %u -- repairing FAT2",
                  (uint64_t)s);
-            if (blkdev_write(vol->dev, fat2_base + s, 1, buf1) != 0)
+            if (blkdev_write(vol->dev, fat2_base + s, 1, buf1) != 0) {
                 klog(LOG_WARN, "fat32",
                      "FAT2 repair write failed at sector %u",
                      (uint64_t)s);
-            else
+                unrepaired++;
+            } else {
                 __atomic_store_n(&vol->dirty_since_sync, 1,
                                  __ATOMIC_RELEASE);
+            }
         }
     }
 
     if (mismatch_count > 0) {
         klog(LOG_WARN, "fat32",
-             "FAT compare: %u mismatched sectors repaired",
-             (uint64_t)mismatch_count);
+             "FAT compare: %u mismatched sectors, %u still wrong",
+             (uint64_t)mismatch_count, (uint64_t)unrepaired);
     }
+    if (unreadable)
+        return -1;
+    return (int)unrepaired;
 }
 
 /* ---- Sector cache (LRU with dirty tracking) ---- */
@@ -529,18 +548,30 @@ int fat32_write_sectors_multi(struct fat32_volume *vol, uint32_t sector,
 
 /* ---- FAT entry manipulation ---- */
 
-uint32_t fat32_get_fat_entry(struct fat32_volume *vol, uint32_t cluster)
+/* Read one FAT1 entry. Returns 0 and stores the 28-bit value in *out, or -1
+ * when its sector could not be read. Callers that decide what is reachable
+ * (fsck) must use this: a failed read is not the end of a chain. */
+int fat32_read_fat_entry(struct fat32_volume *vol, uint32_t cluster, uint32_t *out)
 {
     uint32_t fat_offset = cluster * 4;
     uint32_t fat_sector = vol->bpb.first_fat_sector + (fat_offset / 512);
     uint32_t entry_offset = fat_offset % 512;
-    uint32_t val;
 
     if (fat32_read_sector(vol, fat_sector, vol->sector_buf) != 0)
-        return FAT32_EOC;
+        return -1;
+    *out = *(uint32_t *)&vol->sector_buf[entry_offset] & 0x0FFFFFFF;
+    return 0;
+}
 
-    val = *(uint32_t *)&vol->sector_buf[entry_offset];
-    return val & 0x0FFFFFFF;
+/* Unchecked form: a failed read reads as end of chain, which stops a reader
+ * safely but must never feed a decision to free clusters. */
+uint32_t fat32_get_fat_entry(struct fat32_volume *vol, uint32_t cluster)
+{
+    uint32_t val;
+
+    if (fat32_read_fat_entry(vol, cluster, &val) != 0)
+        return FAT32_EOC;
+    return val;
 }
 
 int fat32_set_fat_entry(struct fat32_volume *vol, uint32_t cluster,

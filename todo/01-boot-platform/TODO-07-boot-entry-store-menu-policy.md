@@ -459,7 +459,6 @@ Per-decision audit. Disk-first (BlackBox JSONL) -- NVRAM is exceptional-only bec
 
 > **Verified:** 2026-05-10 | commit `38517fcc` | 7/7 items | build OK | smoke PASS (KVM 2.41s, seq=1) | tests 32/32 bootcfg + 22 boot_audit
 > **Notes:** Reopened 2026-11-07, was Deferred: [L] Audit dual-write-failure dedup harness. The stamp named this section's own item, and that item recorded no external blocker.
-> **Deferred:** [L] Audit JSONL rotation on FAT32 LFN -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit JSONL rotation on FAT32 LFN" at line 598)
 > **Quality reviewed:** 2026-05-10 | Codex 12x (design + adversarial 2x + test-coverage + re-adversarial 5x + adversarial-impl 4x + consistency + perf) | 7H+5M+0L fixed, 0 open, 2L deferred-XREF | scope: kernel-code-quality + boot-code-quality
 
 ---
@@ -630,8 +629,12 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
   - FAT32 (owner fix, same commit): a write reported every byte even when the directory entry's size update or first-cluster link failed. It now reports only the bytes the entry records, and fails a write whose new cluster cannot be linked, leaving that cluster allocated for fsck since the entry may have landed (`test_fat32.c`, control: 7 assertions fail on the old driver).
   - Durability: `audit_vfs_write()` returns success only after a full write and `vfs_flush()`, so the high-water copy is never truncated before its replacement is on the medium.
   - Residual: `vfs_open()` reports every failure as NULL, so a failed open reads as ABSENT -> XREF: 05-storage-filesystems/TODO-05 §3 (item: "`vfs_open()` status: report not-found apart from lookup, sharing, handle-table and device errors").
-- [/] Audit JSONL rotation on FAT32 LFN. Blocked on cross-cluster LFN removal in [`../05-storage-filesystems/TODO-04 §16`](../05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md) (currently refuses non-first-cluster destinations).
-  - Blocker owner: -> XREF: 05-storage-filesystems/TODO-04 §16 (item: "Refuses non-first-cluster destinations" at line 408). That item shipped the REFUSAL of non-first-cluster destinations, not the cross-cluster LFN removal this needs, so the block still holds as of 2026-09-03.
+- [x] Audit JSONL rotation on FAT32 LFN: `test_fat32_audit_rotation_replaces_generation_across_clusters` (`src/kernel/test/test_fat32.c`, `TEST_CAT_FS`).
+  - The blocker cleared: cross-cluster LFN removal shipped in 05-storage-filesystems/TODO-04 §18 and the replace-existing refusal is gone.
+  - The test performs the rename `audit_append_file()` makes, `history.jsonl` over `history.1.jsonl`, four times, with the old generation's two-slot long name starting in the directory's first cluster and ending in its second.
+  - Each round: the rotated name holds the current data, the replaced generation's chain is free, one bound name each; then a read-only `fat32_fsck` reports no errors. Control: skipping `fat32_free_chain()` in `fat32_rename_replace()` fails both.
+  - Its review found read-only fsck rewrote the FAT mirror and reported clean, and that an unreadable FAT entry let fsck free a live tail; both fixed in FAT32 -> XREF: 05-storage-filesystems/TODO-04 §18 (item: "fsck never frees or repairs on a FAT it could not read").
+  - The VFS wrapper itself (threshold check, then append at offset 0) is covered by code reading: no kernel test mounts a fixture volume behind a drive path.
 - [/] `bootcfg.exe` round-trip scenario: offline subset shipped via §11+§16 (`test_bootcfg.py`); live-boot `bootcfg.exe` deferred per [`§11`](#11-boot-entry-editor-tooling).
 - [x] Commit: `"test: boot entry test suite aggregation + status"` (commit `27c6d2c8`)
 - [x] Boot `boot_policy.c`, `boot_history.c`, `boot_sticky.c` and `boot_entry_kind.c` through the real loader: every `SMOKE_VALID_STORE` leg asserts their serial lines (`scripts/test-smoke.sh`)
@@ -656,7 +659,6 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
 
 > **Verified:** 2026-05-19 | commit `27c6d2c8` (impl) + `a6e2124e` (commit-row flip) | 4/14 items + 5 partial + 5 blocked | build OK (no source changes; verified during §16 commit `17ee74f9`) | lint clean
 > **Notes:** Reopened 2026-11-07, was Deferred: [L] Audit dual-write-failure dedup harness. The stamp named this section's own item, and that item recorded no external blocker.
-> **Deferred:** [L] Audit JSONL rotation on FAT32 LFN -> XREF: 05-storage-filesystems/TODO-04 §16 (item: "Refuses non-first-cluster destinations until cross-cluster LFN removal lands" at line 393)
 > **Quality reviewed:** 2026-05-19 | Codex 8x (adversarial 6x + consistency + perf) | 0C+1H+9M fixed, 0 open | scope: N/A (docs-only aggregation section)
 
 ---

@@ -784,6 +784,159 @@ static void test_fat32_replace_repeatedly(void)
     fx_close(&fx);
 }
 
+/* A read-only fsck reports a stale FAT mirror and leaves it on disk; only a
+ * repair run rewrites FAT2. Before 2026-11-09 fix=0 rewrote FAT2 and still
+ * reported the volume clean. */
+static void test_fat32_fsck_readonly_reports_fat_mirror(void)
+{
+    struct fx_volume fx;
+    uint8_t *fat2;
+    uint8_t saved;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+    TEST_ASSERT(fx.vol->bpb.num_fats >= 2u, "the fixture keeps a FAT mirror");
+    scache_flush(fx.vol);
+    scache_invalidate(fx.vol);
+    TEST_ASSERT_EQ(fat32_fsck(fx.vol, 0), 0, "a fresh volume is clean");
+
+    fat2 = fx.disk + ((uint64_t)fx.vol->bpb.first_fat_sector + fx.vol->bpb.fat_size_sectors) * 512u;
+    saved = fat2[8];
+    fat2[8] = (uint8_t)(saved ^ 0x5Au);
+    TEST_ASSERT(fat32_fsck(fx.vol, 0) != 0, "a read-only fsck reports the stale mirror");
+    TEST_ASSERT_EQ(fat2[8], (uint8_t)(saved ^ 0x5Au), "and does not write it");
+    TEST_ASSERT_EQ(fat32_fsck(fx.vol, 1), 0, "a repair run fixes it");
+    TEST_ASSERT_EQ(fat2[8], saved, "FAT2 now matches FAT1");
+    TEST_ASSERT_EQ(fat32_fsck(fx.vol, 0), 0, "and the volume reads clean again");
+    fx_close(&fx);
+}
+
+/* An unreadable FAT sector truncates every chain through it, so a repair run
+ * must stop before its lost-cluster pass frees what it could not see. */
+static void test_fat32_fsck_unreadable_fat_repairs_nothing(void)
+{
+    struct fx_volume fx;
+    uint64_t fat_off, fat_len, i;
+    uint8_t *fat1, *fat2;
+    uint32_t sum_before = 0, sum_after = 0;
+    const uint32_t lost = 100u;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+    scache_flush(fx.vol);
+    scache_invalidate(fx.vol);
+    fat_off = (uint64_t)fx.vol->bpb.first_fat_sector * 512u;
+    fat_len = (uint64_t)fx.vol->bpb.fat_size_sectors * 512u * fx.vol->bpb.num_fats;
+    TEST_ASSERT(fx.vol->bpb.fat_size_sectors >= 2u, "the FAT spans more than one sector");
+    fat1 = fx.disk + fat_off;
+    fat2 = fat1 + (uint64_t)fx.vol->bpb.fat_size_sectors * 512u;
+
+    /* A lost cluster in FAT sector 0, in both copies, which a repair would free. */
+    *(uint32_t *)(fat1 + lost * 4u) = FAT32_EOC;
+    *(uint32_t *)(fat2 + lost * 4u) = FAT32_EOC;
+    for (i = 0; i < fat_len; i++) sum_before = sum_before * 31u + fat1[i];
+
+    fx.fail_read_lba = fx.vol->bpb.first_fat_sector + 1u;
+    TEST_ASSERT(fat32_fsck(fx.vol, 1) != 0, "fsck reports the unreadable FAT");
+    fx.fail_read_lba = FX_NO_FAULT;
+    scache_flush(fx.vol);
+    for (i = 0; i < fat_len; i++) sum_after = sum_after * 31u + fat1[i];
+    TEST_ASSERT_EQ(sum_after, sum_before, "and writes nothing to either FAT");
+    TEST_ASSERT_EQ(*(uint32_t *)(fat1 + lost * 4u), FAT32_EOC, "the lost cluster is untouched");
+    fx_close(&fx);
+}
+
+/* A FAT sector that passes the mirror compare and then fails during the walk
+ * must not turn a live chain's tail into lost clusters. Chain: c -> 200 -> 100,
+ * with entry 200 in FAT sector 1 and the tail's entry in readable sector 0, so
+ * the lost-cluster scan reaches the tail before it reaches the bad sector. */
+static void test_fat32_fsck_walk_read_failure_keeps_live_tail(void)
+{
+    struct fx_volume fx;
+    uint8_t *fat1, *fat2;
+    uint32_t c, f;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "live.dat"), 0, "file created");
+    c = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "live.dat");
+    TEST_ASSERT(c >= 2u && c < 100u, "its first cluster is in FAT sector 0, below the tail");
+    TEST_ASSERT(fx.vol->bpb.fat_size_sectors >= 2u, "the FAT spans two sectors");
+    scache_flush(fx.vol);
+    scache_invalidate(fx.vol);
+
+    fat1 = fx.disk + (uint64_t)fx.vol->bpb.first_fat_sector * 512u;
+    for (f = 0; f < fx.vol->bpb.num_fats; f++) {
+        fat2 = fat1 + (uint64_t)f * fx.vol->bpb.fat_size_sectors * 512u;
+        *(uint32_t *)(fat2 + c * 4u) = 200u;
+        *(uint32_t *)(fat2 + 200u * 4u) = 100u;
+        *(uint32_t *)(fat2 + 100u * 4u) = 0x0FFFFFFFu;
+    }
+    TEST_ASSERT_EQ(fat32_fsck(fx.vol, 0), 0, "the hand-built chain is consistent");
+    scache_invalidate(fx.vol);
+
+    /* The compare's read of FAT sector 1 passes; every later read fails. */
+    fx.fail_read_lba = fx.vol->bpb.first_fat_sector + 1u;
+    fx.fail_read_skip = 1u;
+    TEST_ASSERT(fat32_fsck(fx.vol, 1) != 0, "fsck reports the incomplete walk");
+    fx.fail_read_lba = FX_NO_FAULT;
+    fx.fail_read_skip = 0u;
+    scache_flush(fx.vol);
+    TEST_ASSERT_EQ(*(uint32_t *)(fat1 + 100u * 4u), 0x0FFFFFFFu, "the live tail stays allocated");
+    TEST_ASSERT_EQ(*(uint32_t *)(fat1 + 200u * 4u), 100u, "and so does its link");
+    fx_close(&fx);
+}
+
+/* The BlackBox audit rotation (`audit_append_file()` in boot_audit.c): the
+ * current history.jsonl replaces the previous generation history.1.jsonl, whose
+ * two-slot long name begins in the directory's first cluster and ends in its
+ * second. One generation must survive every rotation, with the old data freed. */
+static void test_fat32_audit_rotation_replaces_generation_across_clusters(void)
+{
+    struct fx_volume fx;
+    struct fat32_dirent_loc loc;
+    uint32_t second, round;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    fx_pad_short(&fx, FX_ROOT_CLUSTER, FX_DIR_ENTRIES - 2u);
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "history.1.jsonl"), 0,
+                   "previous generation created");
+    second = fat32_get_fat_entry(fx.vol, FX_ROOT_CLUSTER);
+    TEST_ASSERT(second >= 2u && second < FAT32_EOC, "the directory spans two clusters");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "history.1.jsonl", &loc), 1,
+                   "previous generation found");
+    TEST_ASSERT(loc.run_cluster == FX_ROOT_CLUSTER && loc.cluster == second && loc.run_entries == 3u,
+                "its long-name run starts in the first cluster and ends in the second");
+
+    for (round = 0; round < 4u; round++) {
+        uint32_t old_data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "history.1.jsonl");
+        uint32_t cur_data;
+
+        TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "history.jsonl"), 0,
+                       "current history created");
+        cur_data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "history.jsonl");
+        TEST_ASSERT(cur_data != 0u && old_data != 0u && cur_data != old_data,
+                    "both generations own distinct data");
+        scache_flush(fx.vol);
+        scache_invalidate(fx.vol);
+        TEST_ASSERT_EQ(fat32_rename_vol(fx.vol, FX_ROOT_CLUSTER, "history.jsonl", "history.1.jsonl",
+                                        VFS_RENAME_REPLACE_EXISTING), 0,
+                       "the rotation rename succeeds");
+        TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "history.1.jsonl"), cur_data,
+                       "the previous generation now holds the rotated data");
+        TEST_ASSERT_EQ(fat32_get_fat_entry(fx.vol, old_data), FAT32_FREE,
+                       "the replaced generation's data was freed");
+        TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, "history.1.jsonl"), 1u,
+                       "exactly one previous generation");
+        TEST_ASSERT_EQ(fx_count_bound_long_name(&fx, FX_ROOT_CLUSTER, "history.jsonl"), 0u,
+                       "the current file is gone until the next append creates it");
+    }
+    TEST_ASSERT_EQ(fat32_fsck(fx.vol, 0), 0, "a read-only fsck finds no errors");
+    fx_close(&fx);
+}
+
 /* Crash at every device write of a rename, then look at what a fresh mount of
  * that disk would see. `replace` picks the replace path. */
 static void fx_rename_crash_sweep(int replace)
@@ -1805,6 +1958,14 @@ void test_register_fat32(void)
                             test_fat32_set_attr_uses_parent_directory, TEST_CAT_FS);
     test_suite_register_cat("FAT32: rename rebinds the long name",
                             test_fat32_rename_rebinds_long_name, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: fsck walk read failure keeps a live tail",
+                            test_fat32_fsck_walk_read_failure_keeps_live_tail, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: fsck repairs nothing when the FAT is unreadable",
+                            test_fat32_fsck_unreadable_fat_repairs_nothing, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: read-only fsck reports a stale FAT mirror",
+                            test_fat32_fsck_readonly_reports_fat_mirror, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: audit rotation replaces a generation across clusters",
+                            test_fat32_audit_rotation_replaces_generation_across_clusters, TEST_CAT_FS);
     test_suite_register_cat("FAT32: replace repeatedly",
                             test_fat32_replace_repeatedly, TEST_CAT_FS);
     test_suite_register_cat("FAT32: create refuses an existing name",

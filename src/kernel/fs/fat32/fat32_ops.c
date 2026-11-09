@@ -939,7 +939,8 @@ struct fat32_volume *fat32_init(const struct blkdev *dev)
     /* Compare FAT1 vs FAT2; repair FAT2 if they differ. Runs on every
      * mount as defense in depth -- fsck above already includes a FAT
      * compare on dirty volumes; this catches drift on clean volumes. */
-    fat32_compare_repair_fats(vol);
+    if (fat32_compare_repair_fats(vol, 1) != 0)
+        klog(LOG_WARN, "fat32", "mount: FAT mirror could not be fully compared or repaired");
 
     /* Set up root node */
     fat32_strcpy(vol->root_file.node.name, "A:\\", VFS_MAX_NAME);
