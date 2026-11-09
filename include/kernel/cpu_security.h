@@ -266,6 +266,11 @@ void cpu_security_log_state(const char *phase_label);
  * compares all APs against the BSP after bringup; cpu_audit_populate_registry()
  * exposes the snapshots under HKLM\HARDWARE\CPU\%u\Registers (Phase 2, after
  * registry_init()). */
+/* Store one optional audit field: `val` into *dst and return `bit` when the
+ * read succeeded (read_rc == 0), else store 0 and return 0. This is how a
+ * successful read of 0 stays distinguishable from an unavailable read; the
+ * bit lands in per_cpu_data.audit_valid. Pure; NULL dst returns 0. */
+uint32_t cpu_audit_store(uint64_t *dst, int read_rc, uint64_t val, uint32_t bit);
 void cpu_audit_registers(uint32_t cpu_id);
 void cpu_audit_log(uint32_t cpu_id);
 void cpu_audit_consistency_check(uint32_t total_cpus);

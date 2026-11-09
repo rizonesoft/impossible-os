@@ -13,8 +13,9 @@
  *     heterogeneous machine boots correctly and would fail such a suite.
  *   - a "defined core_type" check proves nothing: CORE_TYPE_GENERIC is 0x00,
  *     so a never-populated slot satisfies it.
- *   - `ucode_rev != 0` reads a PAYLOAD as a capture signal, but
- *     cpu_read_microcode_rev() returns 0 for a legitimately unavailable MSR.
+ *   - `ucode_rev != 0` reads a PAYLOAD as a capture signal, but 0 is also
+ *     what an unavailable MSR stores. The capture signal is the per-field
+ *     CPU_AUDIT_VALID_* bit in audit_valid, asserted by test_audit_valid_bits.
  *
  * Ordering invariants (hypervisor detection before timer selection) are NOT
  * testable from here -- the probes below read final state, which a reordered
@@ -32,6 +33,7 @@
 #include "kernel/cpuid_platform.h"
 #include "kernel/cpu_security.h"
 #include "kernel/msr.h"
+#include "kernel/cpu_regs.h"
 #include "kernel/smp.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
@@ -200,9 +202,8 @@ static void test_audit_ucode_rev_uniform(void)
 
     TEST_ASSERT_NOT_NULL(bsp, "cpu_data[0] present");
 
-    /* cpu_slot_committed_online() is the published predicate -- it honours the
-     * STARTING->ONLINE CAS as well as the is_online release edge, so a raw
-     * is_online read would miss a committed AP mid-publication. */
+    /* cpu_slot_committed_online() is the published predicate the finalizer
+     * uses (is_online, or the BSP's ONLINE verdict). */
     for (i = 1; i < MAX_CPUS; i++) {
         struct per_cpu_data *pc = smp_get_cpu(i);
         if (!pc || !cpu_slot_committed_online(pc))
@@ -215,6 +216,72 @@ static void test_audit_ucode_rev_uniform(void)
              "%u online AP(s) match BSP ucode 0x%x (first differing slot %u)",
              (uint64_t)covered, (uint64_t)bsp->ucode_rev, (uint64_t)diff_at);
     TEST_ASSERT(diff_at == MAX_CPUS, msg);
+}
+
+/* One CPU's bitmap against that CPU's own capture conditions. An ADVERTISED
+ * MSR is allowed to have failed (cpu_security.c treats an advertised but
+ * trapping ARCH_CAPABILITIES as a supported degraded platform), and optional
+ * features may differ between CPUs, so neither "advertised implies read" nor
+ * "every CPU matches the BSP" is an invariant. What is: only defined bits, a
+ * clear bit leaves its field 0, a gated bit implies its gate, and the XCR0
+ * bit tracks this CPU's own CR4.OSXSAVE (xgetbv cannot fail once it is set). */
+static uint32_t audit_valid_violation(const struct per_cpu_data *pc)
+{
+    uint32_t v = pc->audit_valid;
+
+    if (v & ~CPU_AUDIT_VALID_ALL) return 1;
+    if (!(v & CPU_AUDIT_VALID_MISC_ENABLE) && pc->misc_enable) return 2;
+    if (!(v & CPU_AUDIT_VALID_ARCH_CAPS) && pc->arch_caps) return 3;
+    if (!(v & CPU_AUDIT_VALID_SPEC_CTRL) && pc->spec_ctrl_at_boot) return 4;
+    if (!(v & CPU_AUDIT_VALID_UCODE) && pc->ucode_rev) return 5;
+    if (!(v & CPU_AUDIT_VALID_XCR0) && pc->xcr0_at_boot) return 6;
+    if ((v & CPU_AUDIT_VALID_ARCH_CAPS) && !cpu_has(CPU_FEATURE_ARCH_CAP)) return 7;
+    if ((v & CPU_AUDIT_VALID_SPEC_CTRL) && !cpu_has(CPU_FEATURE_SPEC_CTRL)) return 8;
+    if (((v & CPU_AUDIT_VALID_XCR0) != 0) != ((pc->cr4_at_boot & CR4_OSXSAVE) != 0)) return 9;
+    return 0;
+}
+
+static void test_audit_valid_bits(void)
+{
+    struct per_cpu_data *bsp = smp_get_cpu(0);
+    uint32_t i, bad = 0, bad_at = MAX_CPUS, covered = 0;
+    char msg[96];
+
+    TEST_ASSERT_NOT_NULL(bsp, "cpu_data[0] present");
+    TEST_ASSERT_EQ(bsp->audit_captured, 1u, "BSP audit ran");
+    for (i = 0; i < MAX_CPUS; i++) {
+        struct per_cpu_data *pc = smp_get_cpu(i);
+        uint32_t why;
+        if (!pc || (i != 0 && !cpu_slot_committed_online(pc)) || !pc->audit_captured)
+            continue;
+        covered++;
+        why = audit_valid_violation(pc);
+        if (why && bad_at == MAX_CPUS) { bad = why; bad_at = i; }
+    }
+    snprintf(msg, sizeof(msg), "audit_valid consistent on %u CPU(s) (first bad slot %u, rule %u)",
+             (uint64_t)covered, (uint64_t)bad_at, (uint64_t)bad);
+    TEST_ASSERT(bad_at == MAX_CPUS, msg);
+}
+
+/* The store rule itself, driven deterministically: a successful read of 0
+ * sets the bit, a failed read clears the field even when `val` holds junk,
+ * and a successful non-zero read keeps its value. */
+static void test_audit_store_rule(void)
+{
+    uint64_t f = 0xDEADu;
+
+    TEST_ASSERT_EQ(cpu_audit_store(&f, 0, 0, CPU_AUDIT_VALID_ARCH_CAPS),
+                   CPU_AUDIT_VALID_ARCH_CAPS, "store: successful zero read sets the bit");
+    TEST_ASSERT_EQ(f, 0, "store: successful zero read stores 0");
+    f = 0xDEADu;
+    TEST_ASSERT_EQ(cpu_audit_store(&f, -1, 0x1234u, CPU_AUDIT_VALID_UCODE), 0u,
+                   "store: failed read returns no bit");
+    TEST_ASSERT_EQ(f, 0, "store: failed read stores 0, not the junk value");
+    TEST_ASSERT_EQ(cpu_audit_store(&f, 0, 0x800006Fu, CPU_AUDIT_VALID_MISC_ENABLE),
+                   CPU_AUDIT_VALID_MISC_ENABLE, "store: successful non-zero read sets the bit");
+    TEST_ASSERT_EQ(f, 0x800006Fu, "store: successful non-zero read keeps the value");
+    TEST_ASSERT_EQ(cpu_audit_store((uint64_t *)0, 0, 1, CPU_AUDIT_VALID_XCR0), 0u,
+                   "store: NULL destination returns no bit");
 }
 
 /* ---- Registration ---- */
@@ -235,6 +302,10 @@ void test_register_cpu_seq(void)
         test_audit_arch_caps_respects_cpuid_gate, TEST_CAT_X86);
     test_suite_register_cat("cpu_seq: audit microcode revision uniform",
         test_audit_ucode_rev_uniform, TEST_CAT_X86);
+    test_suite_register_cat("cpu_seq: audit per-field read-valid bits",
+        test_audit_valid_bits, TEST_CAT_X86);
+    test_suite_register_cat("cpu_seq: audit store rule separates zero from unread",
+        test_audit_store_rule, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */

@@ -371,13 +371,14 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 - [x] `cpu_audit_consistency_check()` compares each AP vs BSP (EFER.NXE, uniform CR4, PAT, XCR0, ARCH_CAPS) -> `[SMP] All %u CPUs register-consistent` or per-CPU divergence WARN.
 - [x] `POSTCODE_CPU_AUDIT = 0x2A` (boot_init.h), Phase-2 `boot_progress` milestone. `POST16(0xD300/0xD301)` SKIPPED -- Phase 2 has klog up, not a pre-`sti` path.
 - [x] Commit: `"boot: per-CPU register audit (EFER/CR/XCR0/PAT/MISC/ARCH_CAPS/SPEC_CTRL/microcode)"`
-- [/] **PARKED coverage gap:** the audit records no read-STATUS per field, so a failed MSR read and a successfully captured zero are indistinguishable -- `arch_caps` and `ucode_rev` both store 0 for "unavailable".
-  - Consequence: neither can be asserted non-zero without false-failing a legitimate boot, so no test can prove the capture actually ran for those two fields.
-  - Blocker: needs a validity bitmap (or per-field status) written by `cpu_audit_registers()` into `struct per_cpu_data`, which is a production field addition outside a close-out's scope. The audit fields sit after the asm-pinned KPTI region and are documented as never read by assembly, so the addition is low-risk when someone owns it. Owned HERE. Until then `test_cpu_seq.c` asserts the CPUID-gate direction for `arch_caps` and cross-CPU uniformity for `ucode_rev`.
+- [x] Per-field read status: `cpu_audit_registers()` records `audit_valid` (`CPU_AUDIT_VALID_*` in `smp.h`) so a successful zero read and an unavailable read differ; `cpu_audit_store()` in `cpu_security.c` is the one store rule.
+  - `cpu_read_microcode_rev()` now returns a status; the bitmap appears as `VALID=0x..` on the `[CPU%u AUDIT]` line and as `AuditValid` in the registry mirror.
+  - Tests in `test_cpu_seq.c`: per-CPU invariants over every committed-online CPU (no cross-CPU equality, since optional skew and an advertised-but-trapping MSR are both supported), plus the store rule over zero, failed and non-zero reads.
+  - Mutation controls 2026-11-09: dropping the ARCH_CAPS bit, or storing junk on a failed read, each fails one assertion.
 
 **Test checkpoint:** Boot on SMP system. Log shows `[CPU0 AUDIT] EFER=... CR4=... ` then `[CPU1 AUDIT]` per AP, then `[SMP] All N CPUs register-consistent`. Confirmed on KVM single-CPU: `[CPU0 AUDIT] EFER=0xd00 CR0=0x80010033 CR4=0x60e68 ... NX=1 ... WP=1 PCID=1 OSXSAVE=1` + `[SMP] All 1 CPUs register-consistent`. Bare metal: differences (SMEP absent on TCG, real UCODE vs KVM's 0xffffffff) are clearly visible; CI greps `[CPU. AUDIT]` and fails on unexpected register values. Unit tests assert the BSP snapshot was captured with sane values.
 
-> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 5 added suites (audit captured, CR0.WP, EFER.NXE, CR4.PAE, PAT matches baseline), 0 failures. AP audit + consistency validated via serial log on multi-CPU platforms.
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 532 PASS, 0 failed on 2 CPUs (2026-11-09). AP audit + consistency validated via serial log on multi-CPU platforms.
 
 > **Notes:**
 > - Shipped: `cpu_audit_registers`/`cpu_audit_log`/`cpu_audit_consistency_check`/`cpu_audit_populate_registry` in `cpu_security.c`; flat per-CPU audit fields; `[CPU%u AUDIT]` + `[SMP] All N register-consistent` lines; `HKLM\HARDWARE\CPU\%u\Registers`.
@@ -387,6 +388,7 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 > - Scope boundary: `[CPU%u AUDIT]` is the authoritative consolidated line; the §4/§6/§8 per-feature success lines remain for their checkpoints. Registry exposure owned here; registry-engine infra is `02-kernel-core/TODO-14`.
 
 > **Verified:** 2026-05-27 | commit `2a96de4b` | 8/8 items | build OK | smoke PASS (KVM); `[CPU0 AUDIT]` + `[SMP] All 1 CPUs register-consistent` on serial
+> **Verified:** 2026-11-09 | parked read-status item closed (`audit_valid` bitmap + `cpu_audit_store()`, two mutation controls FAIL then PASS) | 9/9 items | build OK | SUITE=x86 532 PASS | Codex 2x (adversarial, re-adversarial)
 > **Accepted:** [M] `RegCreateKeyEx` non-atomic create+handle-alloc can publish a markerless `HKLM\HARDWARE\CPU\%u\Registers` key under handle-pool exhaustion (benign here -- absent `AuditComplete` reads as incomplete; affects all RegCreateKeyEx callers) -> XREF: 02-kernel-core/TODO-14 (item: "`RegCreateKeyEx` atomic create-or-fail" at line 113)
 > **Quality reviewed:** 2026-05-27 | Codex 8x (design, adversarial, consistency, perf, re-adversarial) | 4M fixed, 1M accepted-XREF | scope: kernel-code-quality
 

@@ -170,6 +170,17 @@ uint64_t smp_delay_hz(uint64_t mono_hz, uint64_t loader_hz);
  * "committed, publication still pending" meaning that
  * cpu_slot_committed_online() was written to tolerate. READY is deliberately
  * NOT committed -- the BSP may still abandon it. */
+/* Read-success bits in per_cpu_data.audit_valid. The optional audit fields
+ * store 0 when their read is unavailable, which is also a legal captured
+ * value, so each bit records that the read actually succeeded on that CPU.
+ * Mandatory fields (EFER, CR0, CR4, PAT) have no bit: they cannot fail. */
+#define CPU_AUDIT_VALID_MISC_ENABLE  (1u << 0)
+#define CPU_AUDIT_VALID_ARCH_CAPS    (1u << 1)
+#define CPU_AUDIT_VALID_SPEC_CTRL    (1u << 2)
+#define CPU_AUDIT_VALID_UCODE        (1u << 3)
+#define CPU_AUDIT_VALID_XCR0         (1u << 4)
+#define CPU_AUDIT_VALID_ALL          0x1Fu
+
 #define AP_BRINGUP_STARTING    0u
 #define AP_BRINGUP_ONLINE      1u
 #define AP_BRINGUP_ABANDONED   2u
@@ -406,6 +417,8 @@ struct per_cpu_data {
     uint64_t          arch_caps;           /* IA32_ARCH_CAPABILITIES (0 if absent) */
     uint32_t          ucode_rev;           /* microcode revision (vendor-decoded) */
     uint32_t          audit_captured;      /* 1 once cpu_audit_registers() ran */
+    uint32_t          audit_valid;         /* CPU_AUDIT_VALID_* read-success bits */
+    uint32_t          _audit_pad;          /* keeps `features` 8-byte aligned explicitly */
 
     /* AP feature consistency (TODO-09-boot S6). Published by the AP in
      * cpu_validate_ap_features() (top of ap_cpu_harden), read by the BSP after

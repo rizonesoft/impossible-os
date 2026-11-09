@@ -2221,7 +2221,7 @@ void ap_cpu_harden_log(uint32_t cpu_id)
  * level directly in the LOW dword with no write. We probe #GP-safely first, and
  * ONLY Intel takes the write path (gating strictly on GenuineIntel keeps the
  * wrmsr off any vendor that does not define the write semantics). */
-static uint32_t cpu_read_microcode_rev(void)
+static int cpu_read_microcode_rev(uint32_t *rev)
 {
     extern struct cpu_features g_cpu;
     static const char intel_vendor[12] =
@@ -2236,8 +2236,9 @@ static uint32_t cpu_read_microcode_rev(void)
         if (g_cpu.vendor[i] != intel_vendor[i]) { is_intel = 0; break; }
     }
 
+    *rev = 0;
     if (msr_try_read(MSR_IA32_BIOS_SIGN_ID, &sig) != 0)
-        return 0;  /* MSR not present on this CPU */
+        return -1;  /* MSR not present on this CPU */
 
     if (is_intel) {
         /* Intel reports the revision in the HIGH dword only after a CPUID(1)
@@ -2245,13 +2246,27 @@ static uint32_t cpu_read_microcode_rev(void)
          * clear uses msr_try_write() so even a vendor-string spoof that is not
          * really Intel cannot #GP us during BSP/AP bringup. */
         if (msr_try_write(MSR_IA32_BIOS_SIGN_ID, 0) != 0)
-            return 0;
+            return -1;
         cpuid_raw(0x01, 0, &a, &b, &c, &d);
         if (msr_try_read(MSR_IA32_BIOS_SIGN_ID, &sig) != 0)
-            return 0;
-        return (uint32_t)(sig >> 32);
+            return -1;
+        *rev = (uint32_t)(sig >> 32);
+        return 0;
     }
-    return (uint32_t)(sig & 0xFFFFFFFFu);  /* AMD + others: low-dword patch level */
+    *rev = (uint32_t)(sig & 0xFFFFFFFFu);  /* AMD + others: low-dword patch level */
+    return 0;
+}
+
+uint32_t cpu_audit_store(uint64_t *dst, int read_rc, uint64_t val, uint32_t bit)
+{
+    if (!dst)
+        return 0;
+    if (read_rc != 0) {
+        *dst = 0;
+        return 0;
+    }
+    *dst = val;
+    return bit;
 }
 
 /* Capture the calling CPU's security-relevant register state into per_cpu_data.
@@ -2263,7 +2278,9 @@ static uint32_t cpu_read_microcode_rev(void)
 void cpu_audit_registers(uint32_t cpu_id)
 {
     struct per_cpu_data *pc = smp_get_cpu(cpu_id);
-    uint64_t cr4, val;
+    uint64_t cr4, val = 0, wide;
+    uint32_t valid = 0, rev = 0;
+    int rc;
 
     if (!pc)
         return;
@@ -2272,14 +2289,20 @@ void cpu_audit_registers(uint32_t cpu_id)
     pc->efer_at_boot = msr_read(MSR_IA32_EFER);
     pc->cr0_at_boot  = read_cr0();
     pc->cr4_at_boot  = cr4;
-    pc->xcr0_at_boot = (cr4 & CR4_OSXSAVE) ? xcr0_read_safe() : 0;
+    /* xgetbv cannot fault once CR4.OSXSAVE is set on this core. */
+    valid |= cpu_audit_store(&pc->xcr0_at_boot, (cr4 & CR4_OSXSAVE) ? 0 : -1,
+                             xcr0_read_safe(), CPU_AUDIT_VALID_XCR0);
     pc->pat_at_boot  = msr_read(MSR_IA32_PAT);
-    pc->misc_enable  = (msr_try_read(MSR_IA32_MISC_ENABLE, &val) == 0) ? val : 0;
-    pc->arch_caps    = (cpu_has(CPU_FEATURE_ARCH_CAP) &&
-                        msr_try_read(MSR_IA32_ARCH_CAPS, &val) == 0) ? val : 0;
-    pc->spec_ctrl_at_boot = (cpu_has(CPU_FEATURE_SPEC_CTRL) &&
-                        msr_try_read(MSR_IA32_SPEC_CTRL, &val) == 0) ? val : 0;
-    pc->ucode_rev    = cpu_read_microcode_rev();
+    rc = msr_try_read(MSR_IA32_MISC_ENABLE, &val);
+    valid |= cpu_audit_store(&pc->misc_enable, rc, val, CPU_AUDIT_VALID_MISC_ENABLE);
+    rc = cpu_has(CPU_FEATURE_ARCH_CAP) ? msr_try_read(MSR_IA32_ARCH_CAPS, &val) : -1;
+    valid |= cpu_audit_store(&pc->arch_caps, rc, val, CPU_AUDIT_VALID_ARCH_CAPS);
+    rc = cpu_has(CPU_FEATURE_SPEC_CTRL) ? msr_try_read(MSR_IA32_SPEC_CTRL, &val) : -1;
+    valid |= cpu_audit_store(&pc->spec_ctrl_at_boot, rc, val, CPU_AUDIT_VALID_SPEC_CTRL);
+    rc = cpu_read_microcode_rev(&rev);
+    valid |= cpu_audit_store(&wide, rc, rev, CPU_AUDIT_VALID_UCODE);
+    pc->ucode_rev    = (uint32_t)wide;
+    pc->audit_valid  = valid;
     pc->audit_captured = 1;
 }
 
@@ -2303,7 +2326,7 @@ void cpu_audit_log(uint32_t cpu_id)
     klog(LOG_INFO, "cpu",
          "[CPU%u AUDIT] EFER=0x%lx CR0=0x%lx CR4=0x%lx XCR0=0x%lx PAT=0x%lx "
          "MISC=0x%lx ARCH_CAPS=0x%lx SPEC_CTRL=0x%lx UCODE=0x%x "
-         "NX=%u SMEP=%u SMAP=%u UMIP=%u WP=%u PCID=%u OSXSAVE=%u",
+         "NX=%u SMEP=%u SMAP=%u UMIP=%u WP=%u PCID=%u OSXSAVE=%u VALID=0x%x",
          (uint64_t)cpu_id, efer, cr0, cr4, xcr0, pc->pat_at_boot,
          pc->misc_enable, pc->arch_caps, pc->spec_ctrl_at_boot,
          (uint64_t)pc->ucode_rev,
@@ -2313,7 +2336,8 @@ void cpu_audit_log(uint32_t cpu_id)
          (uint64_t)((cr4 >> 11) & 1u),    /* UMIP */
          (uint64_t)((cr0 >> 16) & 1u),    /* CR0.WP */
          (uint64_t)((cr4 >> 17) & 1u),    /* PCID (CR4.PCIDE) */
-         (uint64_t)((cr4 >> 18) & 1u));   /* OSXSAVE */
+         (uint64_t)((cr4 >> 18) & 1u),    /* OSXSAVE */
+         (uint64_t)pc->audit_valid);      /* CPU_AUDIT_VALID_* read-success bits */
 }
 
 /* Compare every online AP's audit snapshot against the BSP's and emit a single
@@ -2432,6 +2456,7 @@ void cpu_audit_populate_registry(void)
         rc |= RegSetQword(hKey, "ArchCaps",   pc->arch_caps);
         rc |= RegSetQword(hKey, "SpecCtrl",   pc->spec_ctrl_at_boot);
         rc |= RegSetDword(hKey, "MicrocodeRev", pc->ucode_rev);
+        rc |= RegSetDword(hKey, "AuditValid", pc->audit_valid);
         if (rc == 0)
             /* All fields written -- overwrite the existing marker IN PLACE
              * (no new allocation, so this cannot fail for lack of pool). */

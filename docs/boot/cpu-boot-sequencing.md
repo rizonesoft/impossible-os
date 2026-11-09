@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md sources=src/kernel/smp/smp.c,include/kernel/smp.h,src/kernel/smp/ap_trampoline.asm,src/kernel/cpu_security.c,include/kernel/cpu_security.h,src/kernel/main/boot_hw.c,src/kernel/main/boot_storage.c,src/kernel/gdt.c,include/kernel/gdt.h reviewed=2026-11-09T14:10 order=9 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md sources=src/kernel/smp/smp.c,include/kernel/smp.h,src/kernel/smp/ap_trampoline.asm,src/kernel/cpu_security.c,include/kernel/cpu_security.h,src/kernel/main/boot_hw.c,src/kernel/main/boot_storage.c,src/kernel/gdt.c,include/kernel/gdt.h reviewed=2026-11-09T14:35 order=9 -->
 # CPU Boot Sequencing and AP Bringup
 
 ## What is it?
@@ -61,12 +61,11 @@ make test-x86                         # same, as a make target
 bash scripts/test-smoke-matrix.sh     # boots TCG+KVM x 1+2 CPUs; the 2-CPU legs exercise this file
 ```
 
-On a live boot, serial shows the sequence in order: `[BSP] hardening baseline ...`, then per AP `AP %u online (LAPIC ID=...)` followed by `[AP%u] CPU hardening applied EFER=... CR4=... PAT=... XCR0=...`, then `[CPU%u AUDIT] EFER=... CR4=... ...` for each CPU, and finally `[SMP] All N CPUs register-consistent`. A single-CPU boot still emits `[BSP] hardening baseline` and the audit lines with no AP messages.
+On a live boot, serial shows the sequence in order: `[BSP] hardening baseline ...`, then per AP `AP %u online (LAPIC ID=...)` followed by `[AP%u] CPU hardening applied EFER=... CR4=... PAT=... XCR0=...`, then `[CPU%u AUDIT] EFER=... CR4=... ... VALID=0x..` for each CPU (the `VALID` bitmap marks which optional reads succeeded, so a captured 0 and an unavailable register differ), and finally `[SMP] All N CPUs register-consistent`. A single-CPU boot still emits `[BSP] hardening baseline` and the audit lines with no AP messages.
 
 ## What is not implemented yet?
 
 - MTRR/PAT runtime re-broadcast and divergent-AP MTRR reprogramming are parked on a cross-CPU synchronous call (`smp_call_function()`) that does not exist yet; PAT/MTRR sync ships as a warn-only audit instead: [MTRR/PAT AP Synchronization](../../todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md#8-mtrrpat-ap-synchronization).
-- No coverage-gap flag distinguishes a failed MSR read from a successfully captured zero in the per-CPU register audit (`arch_caps`, `ucode_rev`): [CPU Register State Audit Trail](../../todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md#9-cpu-register-state-audit-trail).
 - `HKLM\HARDWARE\VM\*` hypervisor Registry mirror, Hyper-V SynIC/TLFS TSC reference page, and the `boot_info.cc_kind` field are still not populated: [Hypervisor Detection Before Timer Selection](../../todo/01-boot-platform/TODO-09-cpu-boot-sequencing.md#3-hypervisor-detection-before-timer-selection).
 
 ## How does it compare with Windows 11 and Linux?
