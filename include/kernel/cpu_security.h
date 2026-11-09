@@ -142,9 +142,9 @@ void cpu_validate_ap_features(uint32_t cpu_id);
 void cpu_features_finalize_global(void);
 
 /* 1 when this per-CPU slot belongs to the set the global intersection must
- * cover: it published is_online, OR it won the STARTING->ONLINE bringup CAS and
- * its is_online store has not landed yet (smp_init() waits only a bounded 100 ms
- * for that store). ABANDONED-without-is_online and never-started slots return 0.
+ * cover: it published is_online, OR its bringup state is ONLINE. The BSP writes
+ * is_online before ONLINE, so ONLINE alone is unreachable today; admitting it is
+ * the conservative direction for an intersection. ABANDONED-without-is_online and never-started slots return 0.
  * is_online has PRECEDENCE: a slot reporting both is_online and ABANDONED
  * returns 1. The bringup CAS makes that combination unreachable, and it is the
  * safe precedence anyway -- a CPU that published is_online is live, so dropping

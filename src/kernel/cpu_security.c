@@ -742,7 +742,7 @@ void cpu_enable_pku(void)
      * set by whichever CPU happened to enable it is unsound (TODO-09 S11).
      *
      * An AP NEVER writes the flag, not even to narrow it. ap_entry() calls
-     * ap_cpu_harden() BEFORE the STARTING->ONLINE abandon CAS (smp.c), so an AP
+     * ap_cpu_harden() BEFORE its STARTING->READY CAS (smp.c), so an AP
      * the BSP already timed out on still reaches this function and would
      * otherwise store into a global the BSP had already finalized -- a CPU that
      * never publishes is_online is not in the online set and must not move the
@@ -1598,16 +1598,14 @@ void cpu_features_finalize_global(void)
      * would skip the higher-id online AP and publish an over-broad mask.
      * Never-started slots are zeroed BSS.
      *
-     * COMMITTED-online, not merely published-online: an AP that won the
-     * STARTING->ONLINE CAS is going live even if its is_online release store has
-     * not landed yet, and smp_init() waits only a BOUNDED 100 ms for that store
-     * (smp.c:507) before continuing. An is_online-only test therefore omits a
-     * stalled-but-committed AP, which then comes online under a mask that never
-     * intersected it -- over-broad for both the feature set and CR4.PKE. Reading
-     * ap_bringup_state closes that window: the AP's ap_cpu_harden() snapshot
-     * (features, cr4_at_boot) precedes its ACQ_REL CAS, so an acquire load of
-     * EITHER publication orders those writes here. ABANDONED slots are excluded
-     * -- that AP parks dark and never goes live. */
+     * COMMITTED-online, not merely published-online. The BSP is the sole
+     * writer of ONLINE and publishes is_online before it (smp.h), so today
+     * ONLINE implies is_online; admitting ONLINE alone as well can only narrow
+     * an intersection, never widen it. The AP's ap_cpu_harden() snapshot
+     * (features, cr4_at_boot) precedes its ACQ_REL READY CAS, which the BSP
+     * observes before either release store, so an acquire load of EITHER
+     * publication orders those writes here. ABANDONED slots are excluded --
+     * that AP parks dark and never goes live. */
     {
         const struct per_cpu_data *slots[MAX_CPUS - 1];
 

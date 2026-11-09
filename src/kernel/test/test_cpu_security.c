@@ -769,11 +769,6 @@ static void test_pku_cr4_pke_set(void)
                 "CR4.PKE (bit 22) is set when PKU + XCR0 bit 9 active");
 }
 
-/* TODO-09 S11: deterministic coverage of the committed-online predicate the
- * finalizer reduces over. This drives the SHIPPED cpu_slot_committed_online()
- * against synthetic slots, so removing its AP_BRINGUP_ONLINE term fails HERE --
- * the live-state test below cannot force that window (a real AP has normally
- * published is_online by the time the suite runs). */
 /* The contract behind feature_mismatch: an AP whose validation flagged an
  * optional feature it lacks narrows the published global mask, through the
  * SHIPPED reduction the finalizer runs, while an excluded slot does not.
@@ -796,9 +791,9 @@ static void test_cpu_features_reduce_mismatch_narrows(void)
     online_ok.feature_mismatch = 0;
     online_ok.cr4_at_boot = CR4_PKE;
 
-    /* Committed but not yet published, and missing AVX: the window the
-     * committed-online predicate exists for, with a real skew in it. */
-    committed_skew.is_online = 0;
+    /* An accepted AP missing AVX: the BSP published is_online before its
+     * ONLINE store, so this is the state a skewed AP really reaches. */
+    committed_skew.is_online = 1;
     committed_skew.ap_bringup_state = AP_BRINGUP_ONLINE;
     committed_skew.features = full;
     cpu_feature_clear(&committed_skew.features, CPU_FEATURE_AVX);
@@ -838,6 +833,11 @@ static void test_cpu_features_reduce_mismatch_narrows(void)
     TEST_ASSERT(cpu_feature_eq(r, base), "reduce: a NULL slot table returns the base unchanged");
 }
 
+/* TODO-09 S11: deterministic coverage of the committed-online predicate the
+ * finalizer reduces over. This drives the SHIPPED cpu_slot_committed_online()
+ * against synthetic slots, so removing its AP_BRINGUP_ONLINE term fails HERE --
+ * the live-state test below cannot force that window (a real AP has normally
+ * published is_online by the time the suite runs). */
 static void test_cpu_slot_committed_online_states(void)
 {
     /* STATIC, not a stack local: struct per_cpu_data is ~3.9 KiB (the 64-entry
@@ -860,8 +860,9 @@ static void test_cpu_slot_committed_online_states(void)
     TEST_ASSERT_EQ((uint32_t)cpu_slot_committed_online(&slot), 0u,
                    "committed-online: ABANDONED is excluded (parks dark, never goes live)");
 
-    /* The window the bounded 100 ms wait at smp.c:507 can expire inside: the AP
-     * won the CAS and is going live, but its is_online store has not landed. */
+    /* ONLINE without is_online: unreachable since the BSP became the sole
+     * writer of ONLINE (it publishes is_online first), but the predicate still
+     * admits it, which is the conservative direction for an intersection. */
     slot.ap_bringup_state = AP_BRINGUP_ONLINE;
     TEST_ASSERT_EQ((uint32_t)cpu_slot_committed_online(&slot), 1u,
                    "committed-online: ONLINE CAS won with is_online=0 is INCLUDED");
@@ -921,8 +922,8 @@ static void test_pku_enabled_matches_online_intersection(void)
     __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
     expect = (cr4 & (1ULL << 22)) ? 1 : 0;   /* BSP runs the suite */
 
-    /* Same committed-online predicate the finalizer uses: an AP that won the
-     * STARTING->ONLINE CAS counts even if its is_online store has not landed. */
+    /* Same committed-online predicate the finalizer uses (is_online, or the
+     * BSP's ONLINE verdict, which it stores only after publishing is_online). */
     for (i = 1; i < MAX_CPUS; i++) {
         struct per_cpu_data *pc = smp_get_cpu(i);
         if (!pc)
