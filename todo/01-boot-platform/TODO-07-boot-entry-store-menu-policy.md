@@ -70,7 +70,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  14   | Per-entry health-gated mark-good                                    | §3, §5, §9, T21 §5, D02 T02 §10         |  [/]   |
 | 💎  |  15   | OS-visible loader UEFI variables                                    | §3, §4, §9, §13                         |  [x]   |
 | 💎  |  16   | Bootstrap and first-install entry seeding                           | §1, §9, §13, T22 §1, T06 §1             |  [/]   |
-| 💎  |  17   | Boot entry tests                                                    | §1-§16                                  |  [ ]   |
+| 💎  |  17   | Boot entry tests                                                    | §1-§16                                  |  [/]   |
 | 💎  |  18   | systemd BLI parity (BLS display order, one-shot, loader timestamps) | §6, §15                                 |  [ ]   |
 | 💎  |  19   | Repeated top-level keys defeat the entries-array bound              | §2                                      |  [x]   |
 | 💎  |  20   | `crc32` header located by string match, not structurally            | §1, §19                                 |  [x]   |
@@ -671,7 +671,7 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
 > - Canonical doc: this section + per-section Test runner lines.
 > - Scope boundary: §17 owns aggregation + status. New tests for covered behavior belong in their owner sections; dual-write testability + FAT32 LFN belong elsewhere.
 
-> **Verified:** 2026-05-19 | commit `27c6d2c8` (impl) + `a6e2124e` (commit-row flip) | 4/14 items + 5 partial + 5 blocked | build OK (no source changes; verified during §16 commit `17ee74f9`) | lint clean
+> **Verified:** 2026-11-09 | commits `888f520e6`, `6cc12836b`, `6b7b3b609` | 13/18 items + 5 parked on named owners (TODO-21 §1, TODO-22 §1, TODO-27 §1 / TODO-25 §7 / TODO-26 §3, TODO-12 §3 via §11, TODO-23 §4) | build OK | full suite 36807 kernel + 17 user PASS | smoke matrix 18/18 | Codex adversarial + re-adversarial approve
 > **Notes:** Reopened 2026-11-07, was Deferred: [L] Audit dual-write-failure dedup harness. The stamp named this section's own item, and that item recorded no external blocker.
 > **Quality reviewed:** 2026-05-19 | Codex 8x (adversarial 6x + consistency + perf) | 0C+1H+9M fixed, 0 open | scope: N/A (docs-only aggregation section)
 
