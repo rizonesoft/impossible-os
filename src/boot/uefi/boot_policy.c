@@ -507,6 +507,10 @@ void boot_policy_decide(const boot_policy_inputs_t *inputs,
     if (saved_len != 0u && saved_len < sizeof(inputs->saved_default_id)) {
         for (unsigned int i = 0; i < parse->entry_count; i++) {
             if (!candidate[i]) continue;
+            /* A synthesized entry's id names a discovery slot, not an OS:
+             * chainload-0 is whichever foreign loader was found first this
+             * boot, so a saved copy could boot a different system. */
+            if (parse->entries[i].flags & BOOT_ENTRY_FLAG_SYNTHESIZED) continue;
             if (sp_str_eq(parse->entries[i].id, inputs->saved_default_id)) {
                 sp_copy_clamped(out->selected_entry_id,
                                 sizeof(out->selected_entry_id),

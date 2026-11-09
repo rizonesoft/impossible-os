@@ -391,6 +391,7 @@ typedef struct {
 #define BOOT_MENU_NOTICE_DEFAULT_SHADOWED 4u  /* saved, but a firmware option names another entry */
 #define BOOT_MENU_NOTICE_RESTART_FAILED  5u
 #define BOOT_MENU_NOTICE_POWEROFF_FAILED 6u
+#define BOOT_MENU_NOTICE_DEFAULT_UNSAVABLE 7u /* a discovered entry: its id names a slot, not an OS */
 
 #define BOOT_MENU_PAINT_FULL    0x1u  /* background, title, every row, footer */
 #define BOOT_MENU_PAINT_ROWS    0x2u  /* *row_old and *row_new */

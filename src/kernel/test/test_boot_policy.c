@@ -483,6 +483,31 @@ static void test_ladder_saved_default(void)
     TEST_ASSERT(d.reason == BOOT_SELECTION_HOTKEY && d.saved_default_used == 0,
                 "an operator hotkey outranks the saved default");
 
+    /* A discovered (synthesized) entry's id names a slot, not an OS: a saved
+     * copy must not pick whatever was found in that slot this boot. */
+    r.entries[1].flags |= BOOT_ENTRY_FLAG_SYNTHESIZED;
+    zero_inputs(&in);
+    set_id(in.saved_default_id, "b-saved");
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+    TEST_ASSERT(d.selected_entry_id[0] == 'a' && d.saved_default_used == 0,
+                "a saved id naming a synthesized entry is ignored");
+    r.entries[1].flags &= ~BOOT_ENTRY_FLAG_SYNTHESIZED;
+
+    /* A saved entry that has used up its tries is not booted: boot counting
+     * still protects the user from a default that keeps failing. */
+    {
+        boot_counter_t spent[1];
+        for (unsigned i = 0; i < sizeof(spent); i++) ((unsigned char *)spent)[i] = 0;
+        set_id(spent[0].id, "b-saved");
+        spent[0].tries_left = 0u;
+        spent[0].tries_done = 3u;
+        zero_inputs(&in);
+        set_id(in.saved_default_id, "b-saved");
+        boot_policy_decide(&in, &r, spent, 1u, &d);
+        TEST_ASSERT(d.selected_entry_id[0] == 'a' && d.saved_default_used == 0,
+                    "a saved entry with no tries left falls back to the next candidate");
+    }
+
     zero_inputs(&in);
     for (unsigned i = 0; i < sizeof(in.saved_default_id); i++) in.saved_default_id[i] = 'b';
     boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);

@@ -55,6 +55,7 @@ title: "TODO-27 -- UEFI Advanced Features"
 | 💎  |   6   | SMBIOS extended type parsing                  | T02 §4         |  [x]   |
 | 💎  |   7   | DBX revocation list sync                      | T02 §2, §5     |  [/]   |
 | 💎  |   8   | Firmware advisor live refresh + fixtures      | §2, D07T03 §7  |  [ ]   |
+| 💎  |   9   | Stable ids for discovered OS entries          | §1, T07 §24    |  [ ]   |
 
 ---
 
@@ -315,6 +316,22 @@ Detect when the installed UEFI dbx is missing revocations shipped with OS update
 **Test checkpoint:** `bash scripts/test.sh SUITE=boot` runs the new fixture cases with 0 failures; each classification state and the severity rule is asserted on a crafted row. Test on: QEMU TCG.
 
 ---
+
+## 9. Stable Ids for Discovered OS Entries
+
+> **Spawned-by:** root
+> **User impact:** a dual-boot user cannot make Windows (or any other OS the loader found on disk) the default with the menu's `d` key, because its id `chainload-N` is a discovery slot that names a different OS when the disks change.
+
+The post-ship adversarial review of [TODO-07 §24](TODO-07-boot-entry-store-menu-policy.md#24-boot-menu-help-power-and-saved-default-keys) found that a saved `chainload-N` could boot a different OS after a disk is removed or found in another order. That section now refuses to save a synthesized entry and its ladder ignores one, which is safe but leaves the capability missing. It belongs here, because §1 owns detection and naming.
+
+- [ ] `chainload_synthesize()` derives each id from what identifies the OS, not its slot: the ESP partition GUID (as `LoaderDevicePartUUID` reads it) plus the well-known loader path index, for example `chainload-<8 hex>-windows`.
+  - Fits `BOOT_ENTRIES_MAX_ID_LEN` (47) and the kebab-case id rule; two loaders on one ESP get different ids.
+  - A volume with no readable partition GUID keeps a slot id and stays unsavable.
+- [ ] Mark stable synthesized entries with a flag the ladder and `boot_menu_set_default()` accept, so `d` saves them; slot-only entries keep the §24 refusal.
+- [ ] Unit tests: the id is the same across two discovery orders, differs between two ESPs, and a saved id never matches a different volume's entry.
+- [ ] Commit: `"boot: stable ids for discovered OS entries"`
+
+**Test checkpoint:** `SUITE=boot` green with the id-derivation cases; a smoke leg with a second ESP holding a foreign loader saves it with `d` and boots it on the next boot.
 
 ## OS Comparison
 

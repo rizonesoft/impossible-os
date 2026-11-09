@@ -78,6 +78,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  22   | Store size cap is untested on both sides of the 16 KiB boundary     | §2, §20                                 |  [x]   |
 | 💎  |  23   | A rejected store has no repair path, only a one-entry fallback      | §1, §20                                 |  [x]   |
 | 💎  |  24   | Boot menu help, power and saved-default keys                        | §6, §7, §15                             |  [x]   |
+| 💎  |  25   | Menu timeout keys and one-off edit                                  | §21, §24                                |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -915,17 +916,39 @@ Found by the parity pass on §6 against systemd-boot (https://man.archlinux.org/
 - [x] Shift+B reboots and Shift+O powers off through `ResetSystem` (`boot_menu_power`), logging the choice first; a refused or absent `ResetSystem` keeps the menu up with a footer notice.
 - [x] `d` saves the highlighted entry as `LoaderEntryDefault` (NV|BS|RT), and the §3 ladder boots it next time; `d` on the saved entry clears it. `LoaderFeatures` bit 2 is advertised.
   - `boot_loader_entry_default_read/_write` in `loader_vars.c`; the writer refuses anything the reader would reject. An unusable value is logged and left in place.
+  - A discovered OS entry (`chainload-N`, `BOOT_ENTRY_FLAG_SYNTHESIZED`) is a slot, not an OS: `d` refuses it with a notice and the ladder ignores it (post-ship review); stable ids are TODO-27 §9.
   - Rank (Q34 in `todo/answers.md`): below a one-shot and a tagged firmware option, above the lowest `sort_key`. Reported as `STORE_DEFAULT` with `saved_default_used`, so an older kernel still accepts the handoff.
-  - `boot_menu_key_action()` maps every key; `boot_menu_repeat_check()` makes a held toggle key one action, so a held `d` cannot save and clear in a loop. The notice says when a tagged firmware option will still win.
+  - `boot_menu_key_action()` maps every key; `boot_menu_repeat_check()` makes a held toggle key one action, so a held `d` cannot save and clear in a loop. The notice says, warning first, when a tagged firmware option will still win.
 - [x] Commit: `"boot: menu help, power and saved-default keys"`
 
 **Test checkpoint:** `SUITE=boot` green with pure-helper cases for key mapping and default precedence; `SMOKE_MENU=1 bash scripts/test-smoke.sh` still auto-boots; a smoke leg that sends `d` and confirms the second boot selects the saved entry.
 
 > **Test runner:** `bash scripts/test.sh SUITE=boot` (key map, repeat guard, help pages, toggle, notice repaint, saved-default ladder, `LoaderEntryDefault` read/write, held `d`), then `SMOKE_MENU=default` and `SMOKE_MENU=saved` `bash scripts/test-smoke.sh` in that order (both in the smoke matrix).
+> **Verified:** 2026-11-09 | commit `00508f960` + review fixes | 5/5 items | build OK | full suite 36732 kernel + 17 user tests PASS | smoke matrix 18/18 on the final tree, plain smoke to `C:\>` | mutation controls (no ladder rung, no repeat guard, no notice repaint, no saved-default read in the loader, no reader cap, no synthesized guard) all failed as expected
+> **Quality reviewed:** 2026-11-09 | Codex 9x (design, test-coverage, adversarial x3, re-adversarial x2, consistency, perf) + boot-quality-auditor + parity-research-analyst | 2H+6M+2L fixed, 0 open | scope: boot-code-quality
 > **Notes:**
 > - The text-console menu (no usable GOP mode) shows the same notices and legend as the graphical footer, but serial cannot see ConOut, so that path is proven only by reading the code, not by a smoke leg.
 > - A real `ResetSystem` that returns is not reachable under OVMF; the restart and power-off failure notices are unproven on real firmware.
 > - Entry ids are at most 47 characters (`BOOT_ENTRIES_MAX_ID_LEN`), well inside the 62 the writer accepts, so `d` cannot be refused for length.
+> - A discovered OS entry (`chainload-N`) cannot be saved: its id is a slot. Stable ids are filed as [TODO-27 §9](TODO-27-uefi-advanced.md#9-stable-ids-for-discovered-os-entries); timeout keys and `e` as §25.
+
+## 25. Menu Timeout Keys and One-Off Edit
+
+> **Spawned-by:** §24 (review)
+> **User impact:** a user cannot change how long the menu waits without editing the store offline, `bootctl set-timeout` has no effect, and a user whose boot fails cannot add a kernel option such as safe graphics for one boot from the menu.
+
+Found by the §24 parity pass against systemd-boot (https://www.freedesktop.org/software/systemd/man/latest/systemd-boot.html), which has `t`/`T` (and `+`/`-`) to change the timeout and `e` to edit an entry's options once. The store already carries an `allow_editor` flag that nothing reads. Q32 in `todo/answers.md` stopped this loader writing `LoaderConfigTimeout` as a report; honouring it is the separate decision this section makes.
+
+**Design:** [boot menu](../../docs/design/shell.md#boot-menu)
+
+- [ ] Honour `LoaderConfigTimeout` (systemd GUID) as the menu timeout below `LoaderConfigTimeoutOneShot` and above the store's own value; advertise `LoaderFeatures` bit 0 and record the rank in `todo/answers.md`.
+- [ ] `t` / `+` lengthens and `T` / `-` shortens the timeout, persisted as `LoaderConfigTimeout` with the §24 repeat guard and a footer notice; extend the help screen and `docs/design/shell.md#boot-menu`.
+- [ ] `e` opens a one-line editor for the highlighted entry's options when its `allow_editor` flag is set; the edit applies to this boot only and is never written back.
+  - Refused under Secure Boot unless the entry allows it, as systemd-boot does; the `boot_decision:` handoff records that the options were edited.
+- [ ] Unit tests for the timeout rank and the edit buffer bounds; a smoke leg that sends `t` and confirms the next boot's timeout.
+- [ ] Commit: `"boot: menu timeout keys and one-off edit"`
+
+**Test checkpoint:** `SUITE=boot` green; `SMOKE_MENU=1` still auto-boots; the timeout leg passes.
 
 ## OS Comparison
 

@@ -6380,12 +6380,18 @@ static unsigned int boot_menu_notice_text(unsigned int notice, char *buf, unsign
     unsigned int p = 0;
     switch (notice) {
     case BOOT_MENU_NOTICE_DEFAULT_SAVED:
-    case BOOT_MENU_NOTICE_DEFAULT_SHADOWED:
         p = boot_menu_put_text(buf, cap, p, "Default saved: ");
         p = boot_menu_put_text(buf, cap, p, g_menu_saved_default);
-        p = boot_menu_put_text(buf, cap, p,
-                               notice == BOOT_MENU_NOTICE_DEFAULT_SHADOWED
-                                   ? ". A firmware boot option still picks another entry." : ".");
+        p = boot_menu_put_text(buf, cap, p, ".");
+        break;
+    case BOOT_MENU_NOTICE_DEFAULT_SHADOWED:
+        /* Warning first: a long id is what the footer fit cuts, never the
+         * news that another entry still boots. */
+        p = boot_menu_put_text(buf, cap, p, "Saved, but a firmware boot option still wins: ");
+        p = boot_menu_put_text(buf, cap, p, g_menu_saved_default);
+        break;
+    case BOOT_MENU_NOTICE_DEFAULT_UNSAVABLE:
+        p = boot_menu_put_text(buf, cap, p, "Not saved: this entry is found again on every boot.");
         break;
     case BOOT_MENU_NOTICE_DEFAULT_CLEARED:
         p = boot_menu_put_text(buf, cap, p, "Saved default cleared.");
@@ -6697,6 +6703,16 @@ static unsigned int boot_menu_set_default(const boot_entries_parse_result_t *par
         return BOOT_MENU_NOTICE_NONE;
     const char *hid = parse->entries[cand_idx[selected]].id;
     unsigned int t = boot_menu_default_toggle(hid, g_menu_saved_default);
+    /* Discovered entries are renumbered every boot (chainload-N is a slot),
+     * so saving one could later boot another OS; the ladder ignores them too.
+     * Clearing a stale copy is still allowed. */
+    if (t == BOOT_MENU_DEFAULT_SAVE &&
+        (parse->entries[cand_idx[selected]].flags & BOOT_ENTRY_FLAG_SYNTHESIZED)) {
+        serial_early_print("[BOOT] menu: d -- ");
+        serial_early_print(hid);
+        serial_early_print(" is found again each boot; not saved\n");
+        return BOOT_MENU_NOTICE_DEFAULT_UNSAVABLE;
+    }
     if (!loader_write_saved_default(t == BOOT_MENU_DEFAULT_SAVE ? hid : "")) {
         serial_early_print("[BOOT] menu: d -- the firmware refused LoaderEntryDefault\n");
         return BOOT_MENU_NOTICE_DEFAULT_FAILED;
