@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/kernel/main/boot_health_check.c,src/boot/uefi/boot_entries_parser.c,include/boot/boot_health_handoff.h,include/kernel/boot_health_check.h reviewed=2026-09-28 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/kernel/main/boot_health_check.c,src/boot/uefi/boot_entries_parser.c,include/boot/boot_health_handoff.h,include/kernel/boot_health_check.h reviewed=2026-11-09 -->
 # Boot Health Gate
 
 > **Owner:** [Per-Entry Health-Gated Mark-Good](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#14-per-entry-health-gated-mark-good). Layered ABOVE
@@ -65,6 +65,8 @@ Next bootloader
     deletes counter, clears MarkGood. State binding mismatch -> clear
     without deleting (stale / replayed).
 ```
+
+Every path that discards a MarkGood without deleting a counter logs why on serial (`[BOOT] policy: MarkGood stale ...`, `... record invalid`, `... unreadable or wrong size`), so a mark that never retires its counter is visible. A counter counts as deleted only when `Delete()` returns `EFI_SUCCESS`: a refusal is the warning `EFI_WARN_DELETE_FAILURE`, which `EFI_ERROR()` lets through, and it is logged as a counter that still counts down. The boot smoke test runs the loop end to end: on every valid-store leg the kernel must log `health: entry marked good` for the booted entry, and the `store saved` leg, the second boot of the `store default` leg's machine, carries that boot's try counters over and must log `MarkGood consumed (id=smoke-alt, deleted 1 counter file(s))`.
 
 ## Cross-boot UEFI variables
 

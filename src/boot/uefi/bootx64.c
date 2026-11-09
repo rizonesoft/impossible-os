@@ -7126,8 +7126,11 @@ static int health_read_mark_good(struct boot_health_mark_good_record *out)
     EFI_STATUS s = gST->RuntimeServices->GetVariable(
         (CHAR16 *)g_health_mark_good_var, &g_impossible_os_guid,
         &attrs, &sz, (VOID *)out);
-    if (EFI_ERROR(s)) return 0;
-    if (sz != sizeof(*out)) return 0;
+    if (s == EFI_NOT_FOUND) return 0;               /* nothing to consume */
+    if (EFI_ERROR(s) || sz != sizeof(*out)) {
+        serial_early_print("[BOOT] policy: MarkGood unreadable or wrong size -- ignoring\n");
+        return 0;
+    }
     {
         const UINT32 expected = EFI_VARIABLE_NON_VOLATILE
                               | EFI_VARIABLE_BOOTSERVICE_ACCESS
@@ -7137,7 +7140,10 @@ static int health_read_mark_good(struct boot_health_mark_good_record *out)
             return 0;
         }
     }
-    if (!boot_health_mark_good_is_valid(out)) return 0;
+    if (!boot_health_mark_good_is_valid(out)) {
+        serial_early_print("[BOOT] policy: MarkGood record invalid -- ignoring\n");
+        return 0;
+    }
     return 1;
 }
 
@@ -7189,6 +7195,7 @@ static void policy_consume_mark_good_var(void)
         idlen++;
     }
     if (idlen == 0u) {
+        serial_early_print("[BOOT] policy: MarkGood names no entry -- clearing var\n");
         health_clear_mark_good();
         return;
     }
@@ -7205,6 +7212,7 @@ static void policy_consume_mark_good_var(void)
 
     EFI_FILE_PROTOCOL *root = (EFI_FILE_PROTOCOL *)0;
     if (EFI_ERROR(counters_open_volume_root(&root)) || !root) {
+        serial_early_print("[BOOT] policy: MarkGood: boot volume unreadable -- clearing var\n");
         health_clear_mark_good();
         return;
     }
@@ -7213,6 +7221,7 @@ static void policy_consume_mark_good_var(void)
                                 EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE,
                                 EFI_FILE_DIRECTORY);
     if (EFI_ERROR(ds) || !dir) {
+        serial_early_print("[BOOT] policy: MarkGood stale (no counter directory) -- clearing var\n");
         root->Close(root);
         health_clear_mark_good();
         return;
@@ -7258,6 +7267,7 @@ static void policy_consume_mark_good_var(void)
      * SetPosition is needed. */
     UINT8 info_buf[1024];
     unsigned int deleted = 0;
+    unsigned int refused = 0;
     int sweep_complete = 0;
     for (;;) {
         UINTN sz = sizeof(info_buf);
@@ -7310,9 +7320,13 @@ static void policy_consume_mark_good_var(void)
         EFI_FILE_PROTOCOL *fh = (EFI_FILE_PROTOCOL *)0;
         EFI_STATUS os = dir->Open(dir, &fh, w,
                                    EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
-        if (EFI_ERROR(os) || !fh) continue;
+        if (EFI_ERROR(os) || !fh) { refused++; continue; }
+        /* Delete closes the handle. A refusal is the WARNING
+         * EFI_WARN_DELETE_FAILURE, which EFI_ERROR() lets through, so only
+         * EFI_SUCCESS retires the counter. */
         EFI_STATUS xs = fh->Delete(fh);
-        if (!EFI_ERROR(xs)) deleted++;
+        if (xs == EFI_SUCCESS) deleted++;
+        else refused++;
     }
 
     /* Sweep reached clean EOF: every same-id counter we observed has
@@ -7330,6 +7344,11 @@ static void policy_consume_mark_good_var(void)
     serial_early_print(", deleted ");
     serial_early_print_uint((UINT32)deleted);
     serial_early_print(" counter file(s))\n");
+    if (refused != 0u) {
+        serial_early_print("[BOOT] policy: MarkGood: ");
+        serial_early_print_uint((UINT32)refused);
+        serial_early_print(" counter file(s) could not be deleted and still count down\n");
+    }
 
     dir->Close(dir);
     root->Close(root);

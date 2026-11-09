@@ -562,6 +562,26 @@ if { [ -n "$STORE_RECORD" ] && [ "$STORE_RECORD" != "written" ]; } || [ "${SMOKE
     PREVIOUS_VARS="$(mktemp "${TMPDIR:-/tmp}/smoke-previous-vars.XXXXXX")"
     cp "$OVMF_VARS_CP" "$PREVIOUS_VARS"
 fi
+# A second boot of the same machine also keeps its disk's per-entry try
+# counters: the first boot's kernel marked its entry good, and only the counter
+# it names lets this boot's loader consume that mark. The fixture disk is rebuilt
+# from the clean image, so the counters are carried across like the variables.
+PREVIOUS_COUNTERS=""
+if [ "${SMOKE_MENU:-0}" = "saved" ]; then
+    prev_disk="$BUILD/system-disk.fixture.img"
+    if [ ! -f "$prev_disk" ] || [ ! -f "$BUILD/system-disk.img.info" ]; then
+        echo -e "${RED}SMOKE TEST FAILED: SMOKE_MENU=saved needs the previous boot's fixture disk${NC}"
+        exit 1
+    fi
+    prev_off=$(. "$BUILD/system-disk.img.info"; echo "$EFI_OFFSET")
+    PREVIOUS_COUNTERS="$(mktemp -d "${TMPDIR:-/tmp}/smoke-previous-counters.XXXXXX")"
+    if ! mcopy -s -n -i "$prev_disk@@$prev_off" ::EFI/ImpossibleOS/counters "$PREVIOUS_COUNTERS/" 2>/dev/null \
+        || [ -z "$(ls -A "$PREVIOUS_COUNTERS/counters" 2>/dev/null)" ]; then
+        echo -e "${RED}SMOKE TEST FAILED: the previous boot left no try counter to carry over${NC}"
+        rm -rf "$PREVIOUS_COUNTERS"
+        exit 1
+    fi
+fi
 
 bash scripts/build.sh clean >/dev/null 2>&1
 
@@ -734,6 +754,14 @@ if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ "$SHADOW_STORE" !
     DISK="$FIXTURE_DISK"
     IMAGE_MODIFIED=1
     mmd -i "$FIXTURE_DISK@@$EFI_OFFSET" ::EFI/ImpossibleOS 2>/dev/null || true
+    if [ -n "$PREVIOUS_COUNTERS" ]; then
+        if ! mcopy -s -o -i "$FIXTURE_DISK@@$EFI_OFFSET" "$PREVIOUS_COUNTERS/counters" ::EFI/ImpossibleOS/; then
+            echo -e "${RED}SMOKE TEST FAILED: could not carry the try counters onto the fixture disk${NC}"
+            rm -rf "$PREVIOUS_COUNTERS"
+            exit 1
+        fi
+        rm -rf "$PREVIOUS_COUNTERS"
+    fi
 fi
 if [ "$VALID_STORE" = "1" ] || [ "$SHADOW_STORE" != "0" ]; then
     VALID_JSON="$BUILD/bootentries.valid.json"
@@ -879,6 +907,12 @@ if [ "$UKI_MODE" = "override" ]; then
         "Double Fault"
         "[BOOT] jumping to kernel_main"
     )
+fi
+# A valid store boots a tracked entry, and the kernel marks it good only once
+# the boot is accepted, a moment after the prompt. Wait for that mark rather
+# than trusting the grace period: the next boot of this machine consumes it.
+if [ "$VALID_STORE" = "1" ] && [ "$ERROR_SCREEN" != "1" ] && [ -z "$UKI_MODE" ]; then
+    PASS_PATTERNS_ALL+=("BOOT: health: entry marked good (id=")
 fi
 
 # Boot the canonical GPT image via AHCI (matches Makefile run: target).
@@ -1540,13 +1574,23 @@ elif [ "$BOOT_PASSED" = true ]; then
             || loader_fail "the loader did not publish the 9 Boot Loader Interface variables a valid store allows"
         # The keys leg overrides the policy default from the menu, and the
         # policy line prints after the menu, so it reports the operator's pick.
+        # OVMF booted this image through its own Boot#### option, which carries no
+        # entry tag, so the policy must fall through it to the store's default:
+        # the firmware-vs-OS layer separation, end to end.
+        grep -qaE '\[BOOT\] BootCurrent=0x[0-9A-Fa-f]{4}' "$STRIPPED_LOG" 2>/dev/null \
+            || loader_fail "the loader did not read BootCurrent, so the fall-through is unproven"
         sel_entry=smoke-entry; sel_reason='1 (STORE_DEFAULT)'
         case "$MENU" in
         keys|default) sel_entry=smoke-alt; sel_reason='3 (HOTKEY)' ;;
         saved) sel_entry=smoke-alt ;;
         esac
-        grep -qF "[BOOT] policy: selection_reason=$sel_reason selected=\"$sel_entry\"" "$STRIPPED_LOG" 2>/dev/null \
-            || loader_fail "boot_policy did not report selection_reason=$sel_reason for $sel_entry"
+        # rejected=0: a firmware option tagged for an entry the store lacks would be
+        # recorded as a reject even when the fall-through still lands on the default.
+        grep -qF "[BOOT] policy: selection_reason=$sel_reason selected=\"$sel_entry\" kind=0 rejected=0" \
+            "$STRIPPED_LOG" 2>/dev/null \
+            || loader_fail "boot_policy did not report selection_reason=$sel_reason for $sel_entry with no reject"
+        grep -qF "BOOT: health: entry marked good (id=$sel_entry " "$STRIPPED_LOG" 2>/dev/null \
+            || loader_fail "the kernel did not mark the booted entry $sel_entry good"
         if grep -qaE '\[WARN\] boot_(sticky|history):' "$STRIPPED_LOG" 2>/dev/null; then
             loader_fail "the loader warned while reading BootSticky or the boot history"
         fi
@@ -1630,13 +1674,19 @@ elif [ "$BOOT_PASSED" = true ]; then
     fi
     # The saved leg's menu must open on the saved entry, from the variable.
     if [ "$MENU" = "saved" ]; then
-        for want in '[BOOT] loader-vars: saved default smoke-alt' \
+        # The first boot's kernel marked smoke-alt good on its try counter; this
+        # loader must spend that mark on exactly that counter before it decides.
+        # The count alone is not proof: the counter must really be gone, so the
+        # entry restarts at its first-boot bootstrap instead of decrementing on.
+        for want in '[BOOT] policy: MarkGood consumed (id=smoke-alt, deleted 1 counter file(s))' \
+                    '[BOOT] policy: counter decrement OK -> smoke-alt+2-1 (first-boot bootstrap)' \
+                    '[BOOT] loader-vars: saved default smoke-alt' \
                     'selected="smoke-alt" kind=0 rejected=0 via=saved-default' \
                     '[BOOT] menu: 2 entries, selected="smoke-alt"' \
                     '[BOOT] menu: countdown expired -- auto-selecting default'; do
             if ! grep -qF "$want" "$STRIPPED_LOG" 2>/dev/null; then
                 echo -e "${RED}SMOKE TEST FAILED: saved-default line missing: $want${NC}"
-                grep -E "\[BOOT\] (menu|policy: selection|loader-vars: saved)" "$STRIPPED_LOG" 2>/dev/null | head -6
+                grep -E "\[BOOT\] (menu|policy: selection|policy: MarkGood|loader-vars: saved)" "$STRIPPED_LOG" 2>/dev/null | head -6
                 exit 1
             fi
         done

@@ -611,12 +611,20 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
   - The guest seeds the variable itself, so no host NVRAM writer (`virt-fw-vars`) is needed: the default leg presses `d` on row 1 (`smoke-alt`), which writes `LoaderEntryDefault`, and the saved leg reuses that variable store.
   - The saved leg requires `[BOOT] menu: 2 entries, selected="smoke-alt"` on open and the kernel to receive `smoke-alt` with reason STORE_DEFAULT, so "highlight the policy default" is now distinguished from "highlight the first row".
   - Control: pinning the menu's initial highlight to row 0 (`boot_menu_run()`) fails the saved leg with "boot_policy did not report selection_reason=1 (STORE_DEFAULT) for smoke-alt".
-- [/] Firmware-vs-OS layer separation scenario: §3 ladder + §4 reject-record path tested; §6 menu_should_show covers UNKNOWN_BOOTCURRENT rendering. Full end-to-end fall-through to in-store default needs an integration / live-boot harness.
+- [x] Firmware-vs-OS layer separation scenario: every valid-store smoke leg boots through OVMF's own untagged `Boot####` option and must fall through to the store's default.
+  - `scripts/test-smoke.sh` requires `[BOOT] BootCurrent=0x....` and the policy line `selection_reason=... selected="<entry>" kind=0 rejected=0`, so a firmware hint that named an entry, or a recorded reject, fails the leg.
+  - Control: making `read_boot_optionaldata_id()` report the option as tagged for `smoke-alt` fails the `store menu` leg with `BOOTNEXT_HINT selected="smoke-alt"`.
+  - A tagged option naming an entry the store lacks (reject recorded, then fall-through) stays covered by the §4 unit tests: no fixture can tag OVMF's option without a host NVRAM writer.
 - [/] A/B rollback entry-selection scenario (1/2/3-fail). Blocked: [`TODO-21 §1`](TODO-21-ab-boot-rollback.md), [`TODO-21 §3`](TODO-21-ab-boot-rollback.md), [`TODO-21 §4`](TODO-21-ab-boot-rollback.md).
   - Blocker owner: -> XREF: 01-boot-platform/TODO-21 §1 (item: "Choose storage: UEFI NVRAM ... vs GPT metadata partition" at line 5). The scenario needs real 1/2/3-fail counter state from the A/B producers.
 - [/] Recovery auto-select + ALL_PATHS_BAD scenario. Blocked: [`TODO-22 §1`](TODO-22-recovery-partition.md), [`TODO-22 §2`](TODO-22-recovery-partition.md).
   - Blocker owner: -> XREF: 01-boot-platform/TODO-22 §1 (item: "GPT layout: EFI (64 MiB) + Slot A ..." at line 5). The scenario needs the recovery load path and the ALL_PATHS_BAD sentinel.
-- [/] Per-entry health-gate scenario: unit-level coverage shipped via §14 (`test_boot_health_check.c` + health_check_subset parser fixtures); full live-boot scenario needs the live-boot harness.
+- [x] Per-entry health-gate scenario: the mark-good loop runs across two real boots (`store default` then `store saved` in the smoke matrix).
+  - Every valid-store leg waits for the kernel's `health: entry marked good (id=<booted entry> ...)`, which lands just after the prompt, as a pass marker.
+  - The saved leg carries the first boot's `\EFI\ImpossibleOS\counters` onto its rebuilt fixture disk, as a second boot of the same machine has them, and must log `MarkGood consumed (id=smoke-alt, deleted 1 counter file(s))`.
+  - Before this the loader discarded that mark silently (no counter directory on the fresh disk). `policy_consume_mark_good_var()` and `health_read_mark_good()` now log every discard.
+  - The saved leg also requires `smoke-alt+2-1 (first-boot bootstrap)`, proving the counter is gone. Review found the sweep counted a refused `Delete()` (`EFI_WARN_DELETE_FAILURE`) as deleted; it now counts only `EFI_SUCCESS` and logs refusals.
+  - Controls: skipping the consume fails the saved leg; a refused delete fails it (counter left at `+1-2`); a gate that never passes fails the valid-store leg on its 30 s timeout.
 - [/] Entry-kind dispatch: SPLIT/UKI/SAFE covered via §13; chainload -> [`T27 §1`](TODO-27-uefi-advanced.md), network -> [`T25 §7`](TODO-25-network-pxe-http-boot.md), resume -> [`T26 §3`](TODO-26-hibernation-resume-fast-startup-handoff.md).
 - [/] Loader UEFI variable scenario: helper-level coverage shipped via §15 (`test_smbios_parse.c`); live post-boot readback needs the live-boot harness.
 - [x] Bootstrap idempotency scenario: covered by §16 `emit-seed: idempotent` + 3-entry default (`test_bootcfg.py`).
