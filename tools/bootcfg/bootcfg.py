@@ -629,11 +629,9 @@ def _write_new(path: Path, raw: bytes) -> None:
         path.unlink(missing_ok=True)  # ours: created by O_EXCL above
         raise
     os.close(fd)
-    dfd = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(dfd)
-    finally:
-        os.close(dfd)
+    # The validator's helper: Windows cannot open a directory, and some
+    # filesystems do not fsync one; both are expected there, not failures.
+    _validator._fsync_dir(path.parent)
 
 
 def _keep_evidence(path: Path, raw: bytes) -> Path | None:

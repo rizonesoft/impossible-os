@@ -781,6 +781,48 @@ def t_restore_bad_race(p: Path) -> None:
     assert p.read_bytes() == good
 
 
+@case("restore: a host that cannot open directories (Windows) still restores")
+def t_restore_windows_dir(p: Path) -> None:
+    import argparse
+    import contextlib
+    import errno
+    import importlib.util
+    import io
+    import os as real_os
+    import types
+    _emit_seed(p)
+    good = p.read_bytes()
+    (p.parent / "bootentries.lkg.json").write_bytes(good)
+    p.write_bytes(b"broken")
+    spec = importlib.util.spec_from_file_location("bootcfg_win", BOOTCFG)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    class WinOs(types.ModuleType):
+        name = "nt"
+
+        def __getattr__(self, attr):
+            return getattr(real_os, attr)
+
+        def open(self, path, flags, *a):
+            if real_os.path.isdir(path):
+                raise PermissionError(errno.EACCES, "Permission denied", str(path))
+            return real_os.open(path, flags, *a)
+    shim = WinOs("os")
+    mod.os = shim
+    saved = mod._validator.os
+    mod._validator.os = shim
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            rc = mod.cmd_restore(argparse.Namespace(path=str(p), mutation_log=None))
+    finally:
+        mod._validator.os = saved
+    assert rc == 0, rc
+    assert p.read_bytes() == good
+    assert (p.parent / "bootentries.json.bad").read_bytes() == b"broken"
+    assert not (p.parent / "bootentries.json.bad.2").exists()
+
+
 # ---- summary ----------------------------------------------------------------
 
 print(f"\n{PASS_COUNT}/{PASS_COUNT + FAIL_COUNT} bootcfg tests passed")

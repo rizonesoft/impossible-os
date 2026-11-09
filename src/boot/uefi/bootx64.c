@@ -341,6 +341,8 @@ static inline void post_code16(UINT16 code);
 #define POST16_BL_KIND_VALIDATE_OK 0xB0B8 /* Per-kind validation accepted (or demoted to fallback) */
 #define POST16_BL_AB_SELECT       0xB0B9  /* A/B dual-slot selection entry (TODO-21) */
 #define POST16_BL_AB_SELECT_OK    0xB0BA  /* A/B slot selected + active_slot published */
+#define POST16_BL_STORE_SHADOW    0xB0BB  /* Store last-good-copy refresh (ESP reads/writes) */
+#define POST16_BL_STORE_RECOVER   0xB0BC  /* Rejected store: booting from the last good copy */
 
 /* --- Helper: memory ops ---
  * x86-64 `rep stosb` / `rep movsb` -- modern microarchitectures
@@ -5405,7 +5407,10 @@ static EFI_STATUS store_file_write(EFI_FILE_PROTOCOL *root, const CHAR16 *path,
     UINTN n = len;
     s = f->Write(f, &n, (VOID *)buf);
     if (EFI_ERROR(s) || n != len) {
-        f->Delete(f);
+        /* A refused delete leaves a torn file under the name. The plan reads
+         * it as broken next boot, but the log says so now. */
+        if (f->Delete(f) != EFI_SUCCESS)
+            serial_early_print("[BOOT] store-shadow: could not remove a partly written copy\n");
         return EFI_ERROR(s) ? s : EFI_DEVICE_ERROR;
     }
     EFI_STATUS fs = f->Flush ? f->Flush(f) : EFI_SUCCESS;
@@ -5469,6 +5474,7 @@ static void store_shadow_maintain(const unsigned char *primary, UINTN primary_le
 {
     struct boot_store_shadow_ops ops;
     struct store_shadow_ctx c;
+    post_code16(POST16_BL_STORE_SHADOW);
     if (!store_shadow_ops_init(&ops, &c, sb_active)) {
         serial_early_print("[BOOT] store-shadow: no memory to check the last good copy -- skipped\n");
         return;
@@ -5502,6 +5508,7 @@ static boot_store_source_t store_shadow_recover(int load_status, int reject_code
     if (!boot_store_shadow_consult(load_status, reject_code)) return BOOT_STORE_SOURCE_FALLBACK;
     struct boot_store_shadow_ops ops;
     struct store_shadow_ctx c;
+    post_code16(POST16_BL_STORE_RECOVER);
     if (!store_shadow_ops_init(&ops, &c, sb_active)) {
         serial_early_print("[BOOT] store-shadow: no memory to read the last good copy\n");
         return BOOT_STORE_SOURCE_FALLBACK;

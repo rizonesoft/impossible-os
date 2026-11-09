@@ -43,6 +43,12 @@ static void test_vpd_post16_name_known(void)
                 "0xB0B6 -> BL_MENU");
     TEST_ASSERT(strcmp(vpd_post16_name(0xB0B8), "BL_KIND_VALIDATE_OK") == 0,
                 "0xB0B8 -> BL_KIND_VALIDATE_OK");
+    TEST_ASSERT(strcmp(vpd_post16_name(0xB0BA), "BL_AB_SELECT_OK") == 0,
+                "0xB0BA -> BL_AB_SELECT_OK");
+    TEST_ASSERT(strcmp(vpd_post16_name(0xB0BB), "BL_STORE_SHADOW") == 0,
+                "0xB0BB -> BL_STORE_SHADOW");
+    TEST_ASSERT(strcmp(vpd_post16_name(0xB0BC), "BL_STORE_RECOVER") == 0,
+                "0xB0BC -> BL_STORE_RECOVER");
 
     /* Phase-2 OB + Executive support runtime markers must resolve so a crash
      * in those windows names the stage instead of UNKNOWN (TODO-06 S1). */

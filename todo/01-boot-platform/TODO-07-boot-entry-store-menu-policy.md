@@ -882,13 +882,22 @@ Found by the parity pass on §20. Distinct from the already-tracked authenticati
   - `test_boot_entry_parser.c` drives the executor against an in-memory volume, injecting an unreadable copy and a failure at every write and delete (file unchanged, gone or torn), twice, from all 16 start states: no valid copy is ever lost, and the next clean boot settles.
   - A copy whose read failed may be the only valid one, so it is rewritten only beside a valid copy; otherwise the boot holds (adversarial round 2, `BOOT_STORE_SHADOW_HOLD`). Empty and oversize copies are confirmed broken and stay replaceable. The fake volume models the empty case (read returns 2), and the `empty-tmp` smoke leg proves the loader adapter reports it the same way.
   - Recovery: a present-but-rejected primary boots the published copy, else the staging copy, after the parser and CRC accept it; both broken is the fallback. The notice says "Starting from the last good copy instead". Recovery never writes.
-  - `bootcfg restore` copies the shadow back, keeping the broken store as the next free `.bad`/`.bad.N` and doing nothing when the store already matches; `restore` mutation-log kind; eleven cases in `tools/bootcfg/test_bootcfg.py` including injected write failures, an unreadable store, exhausted `.bad` names and a `.bad` published concurrently (claimed with `O_EXCL`, never replaced).
+  - `bootcfg restore` copies the shadow back, keeping the broken store as the next free `.bad`/`.bad.N` and doing nothing when the store already matches; `restore` mutation-log kind; twelve cases in `tools/bootcfg/test_bootcfg.py` including injected write failures, an unreadable store, exhausted `.bad` names and a `.bad` published concurrently (claimed with `O_EXCL`, never replaced), and a host that cannot open directories.
 - [x] Write the recovery route in the schema doc's Fallback Contract (`docs/boot/boot-entry-schema.md` section 8), and point the kernel's `Boot entry store unusable` warning at `bootcfg restore`.
 - [x] Commit: `"boot: give a corrupt boot entry store a way back"`
+- [x] Flush restore's evidence directory through the validator's `_fsync_dir`, so a Windows host (which cannot open a directory) still restores (post-ship adversarial + consistency [high]; `t_restore_windows_dir`).
+- [x] Check `Delete` after a short shadow write; add POST16 `0xB0BB`/`0xB0BC` around shadow refresh and recovery (boot-quality-auditor).
+  - Both codes are classified optional and decoded in `vpd.c`, with the `0xB0B9`/`0xB0BA` names the table lacked.
+- [x] Fault every op index below `BOOT_STORE_SYNC_MAX_STEPS` (a bound of 5 missed real ops) and make the fake volume refuse oversize writes instead of clipping them (kernel-quality-auditor).
 
 **Test checkpoint:** `SUITE=boot` green with cases covering a corrupt primary and a good shadow, both corrupt, and a shadow that is stale rather than corrupt; `scripts/test-smoke-matrix.sh` green, including the new `recovered`, `recovered-tmp` and `empty-tmp` legs (corrupt store plus a valid published copy; a torn published copy plus a valid staging copy; a valid store beside an empty staging copy, which must be replaced, not held).
 
-> **Test runner:** `bash scripts/test.sh SUITE=boot` (store shadow source choice, refresh plan, sync under faults and recovery pick cases), `python3 tools/bootcfg/test_bootcfg.py` (49/49), and `SMOKE_CORRUPT_STORE=1 SMOKE_SHADOW_STORE=1` (or `=tmp`) `bash scripts/test-smoke.sh`.
+> **Test runner:** `bash scripts/test.sh SUITE=boot` (store shadow source choice, refresh plan, sync under faults and recovery pick cases), `python3 tools/bootcfg/test_bootcfg.py` (50/50), and `SMOKE_CORRUPT_STORE=1 SMOKE_SHADOW_STORE=1` (or `=tmp`) `bash scripts/test-smoke.sh`.
+> **Verified:** 2026-11-09 | commit `04404fee5` + review fixes | 8/8 items | build OK | full suite 36680 kernel + 17 user tests PASS | 50/50 bootcfg | smoke matrix 16/16 on the final tree, plain smoke to `C:\>` | mutation controls (naive plan, stale keep, ignored failure, buffer leak, no HOLD, empty as unreadable, loader adapter, no `O_EXCL`, direct dir fsync) all failed as expected
+> **Quality reviewed:** 2026-11-09 | Codex 12x (design, test-coverage x3, adversarial x4, re-adversarial x3, consistency, perf) + boot-quality-auditor + kernel-quality-auditor | 3H+3M+4L fixed, 0 open | scope: boot-code-quality, kernel-code-quality
+> **Notes:**
+> - Firmware status translations (Open, Read, Flush and Close failures, allocation failure) and an oversize shadow are not reachable from the fake volume or the smoke fixtures; each is handled as a failure that degrades, unproven on real firmware.
+> - Restoring is explicit: the loader boots the copy but never rewrites the primary (Q33 in `todo/answers.md`).
 
 ---
 

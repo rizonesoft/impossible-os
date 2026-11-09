@@ -190,6 +190,8 @@ POST16_OPTIONAL_REASONS=(
     "POST16_BL_BOOT_POLICY_PARSE=scenario-dependent: emitted only when bootentries.json is present and readable on the ESP"
     "POST16_BL_COUNTER_DECR=scenario-dependent: emitted only when the policy ladder selects a real store entry (not FALLBACK_STORE_INVALID / NO_VIABLE)"
     "POST16_BL_MENU=scenario-dependent: emitted only when the policy ladder picks a soft entry AND >=2 viable candidates remain after filter"
+    "POST16_BL_STORE_SHADOW=scenario-dependent: emitted only when bootentries.json is present and accepted, before its last good copy is refreshed"
+    "POST16_BL_STORE_RECOVER=scenario-dependent: emitted only when bootentries.json is present but rejected, before the last good copy is consulted"
 )
 
 # Build the optional-name set from the reasons array for fast lookup.

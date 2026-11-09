@@ -1,6 +1,6 @@
 {
   "total_suites": 3631,
-  "total_assertions": 16414,
+  "total_assertions": 16419,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_ec.c", "suites": 42, "assertions": 168},
@@ -15,7 +15,7 @@
     {"file": "test_boot_device.c", "suites": 18, "assertions": 45},
     {"file": "test_boot_diag.c", "suites": 15, "assertions": 207},
     {"file": "test_boot_entry_kind.c", "suites": 32, "assertions": 46},
-    {"file": "test_boot_entry_parser.c", "suites": 77, "assertions": 238},
+    {"file": "test_boot_entry_parser.c", "suites": 77, "assertions": 240},
     {"file": "test_boot_health.c", "suites": 5, "assertions": 15},
     {"file": "test_boot_health_check.c", "suites": 35, "assertions": 46},
     {"file": "test_boot_history.c", "suites": 13, "assertions": 28},
@@ -128,7 +128,7 @@
     {"file": "test_usermode_launcher.c", "suites": 210, "assertions": 895},
     {"file": "test_vfs.c", "suites": 12, "assertions": 40},
     {"file": "test_vmm.c", "suites": 23, "assertions": 122},
-    {"file": "test_vpd.c", "suites": 2, "assertions": 19},
+    {"file": "test_vpd.c", "suites": 2, "assertions": 22},
     {"file": "test_watchdog.c", "suites": 16, "assertions": 17}
   ]
 }

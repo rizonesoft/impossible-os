@@ -1795,6 +1795,7 @@ struct fv {
     int fail_op, fail_how; /* fail the fail_op'th call (0-based) this way */
     int read_fail;         /* reads of this file fail (-1: none) */
     int writes;
+    int overflow;          /* writes longer than the fake can hold */
     const unsigned char *last_accept;
 };
 
@@ -1836,6 +1837,7 @@ static int fv_write(void *vc, int which, const unsigned char *buf, unsigned int 
     struct fv *v = (struct fv *)vc;
     struct fv_file *f = &v->f[which];
     v->writes++;
+    if (len > FV_CAP) { v->overflow++; return -1; } /* never clip: a wrong length must fail */
     if (v->ops++ == v->fail_op) {
         if (v->fail_how == FV_FAIL_DELETED) f->present = 0;
         if (v->fail_how == FV_FAIL_PARTIAL) fv_set(f, "X");
@@ -1876,6 +1878,10 @@ static void fv_init(struct fv *v, struct boot_store_shadow_ops *ops)
 
 /* Absent, empty (a write cut off before any byte), broken, older, current. */
 #define FV_NSTART 5
+/* A sync issues at most one write or remove per step, so faulting every index
+ * below the step budget reaches every op any plan can issue. */
+#define FV_FAULT_OPS ((int)BOOT_STORE_SYNC_MAX_STEPS)
+#define FV_FAULT_CASES ((unsigned)(FV_FAULT_OPS + 1) * 3u) /* none or op 0..N-1, x3 shapes */
 static const char *const FV_START[FV_NSTART] = { (const char *)0, "", "X", "V2", "V3" };
 
 /* The design-review and adversarial findings: no sequence of failed steps may
@@ -1886,13 +1892,14 @@ static void test_store_shadow_sync_faults(void)
 {
     struct boot_store_shadow_ops ops;
     struct fv v;
-    unsigned int lost = 0, unsettled = 0, leaked = 0, runs = 0;
+    unsigned int lost = 0, unsettled = 0, leaked = 0, runs = 0, overflows = 0;
+    int max_ops = 0;
 
     for (int start = 0; start < FV_NSTART * FV_NSTART; start++) {
       for (int rf = -1; rf < 2; rf++) {
-        for (int f1 = -1; f1 < 5; f1++) {
+        for (int f1 = -1; f1 < FV_FAULT_OPS; f1++) {
             for (int h1 = FV_FAIL_UNCHANGED; h1 <= FV_FAIL_PARTIAL; h1++) {
-                for (int f2 = -1; f2 < 5; f2++) {
+                for (int f2 = -1; f2 < FV_FAULT_OPS; f2++) {
                     for (int h2 = FV_FAIL_UNCHANGED; h2 <= FV_FAIL_PARTIAL; h2++) {
                         fv_init(&v, &ops);
                         fv_set(&v.f[BOOT_STORE_FILE_LKG], FV_START[start / FV_NSTART]);
@@ -1906,6 +1913,8 @@ static void test_store_shadow_sync_faults(void)
                             v.read_fail = run == 0 ? rf : -1; /* an unreadable copy on the first boot */
                             boot_store_sync_result_t r = boot_store_shadow_sync(&ops, FV_P, 2u);
                             runs++;
+                            if (v.ops > max_ops) max_ops = v.ops;
+                            overflows += (unsigned)v.overflow;
                             if (v.out[0] || v.out[1]) leaked++;
                             if (had && !fv_valid(&v.f[0]) && !fv_valid(&v.f[1])) lost++;
                             if (run == 2 && (r == BOOT_STORE_SYNC_FAILED || r == BOOT_STORE_SYNC_UNSETTLED ||
@@ -1919,10 +1928,15 @@ static void test_store_shadow_sync_faults(void)
         }
       }
     }
-    TEST_ASSERT_EQ(runs, (unsigned)(FV_NSTART * FV_NSTART) * 3u * 18u * 18u * 3u, "the whole fault matrix ran");
+    TEST_ASSERT_EQ(runs, (unsigned)(FV_NSTART * FV_NSTART) * 3u * FV_FAULT_CASES * FV_FAULT_CASES * 3u,
+                   "the whole fault matrix ran");
     TEST_ASSERT_EQ(lost, 0u, "no fault sequence destroys the last valid copy");
     TEST_ASSERT_EQ(unsettled, 0u, "a clean boot after any faults settles on one current copy");
     TEST_ASSERT_EQ(leaked, 0u, "every read buffer is released");
+    TEST_ASSERT_EQ(overflows, 0u, "no write exceeds the store it copies");
+    /* Faults are injected at op indices 0..FV_FAULT_OPS-1; a plan that ever
+     * issues more steps than that would leave the extra ones unfaulted. */
+    TEST_ASSERT(max_ops <= FV_FAULT_OPS, "every op a sync issues is reachable by a fault");
 
     /* A current copy costs reads only. */
     fv_init(&v, &ops);
