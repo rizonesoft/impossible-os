@@ -1632,10 +1632,10 @@ void cpu_features_finalize_global(void)
      * revoke on this edge rather than rely on those orderings.
      *
      * The published value is only as sound as single-writer ownership of the
-     * slots it reduces: the S10 impostor window (ap_cpu_harden at smp.c:160
-     * runs before the LAPIC-identity park at smp.c:176) can put a foreign CPU's
-     * cr4_at_boot in a slot. Pre-existing and shared with the feature mask
-     * above; owned by S10's AP_DATA consume-ack handshake, NOT closed here. */
+     * slots it reduces. That holds since TODO-09-boot S10: an AP reaches
+     * ap_cpu_harden only under the cpu_index of the bringup record it claimed
+     * by its own live APIC ID, so no foreign CPU can write a slot's
+     * cr4_at_boot or feature mask. */
     if (!cpu_feature_test(&m, CPU_FEATURE_PKU))
         pke_all = 0;
     if (!pke_all && __atomic_load_n(&pku_enabled, __ATOMIC_ACQUIRE))

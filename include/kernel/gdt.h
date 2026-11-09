@@ -7,6 +7,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/acpi.h"    /* MAX_CPUS: one TSS descriptor per logical CPU */
 
 /* =========================================================================
  * WARNING: GDT SEGMENT ORDER IS CRITICAL FOR SYSRET CORRECTNESS
@@ -47,8 +48,25 @@ _Static_assert(GDT_KERNEL_CODE == 0x08,
 _Static_assert(GDT_KERNEL_DATA == 0x10,
     "GDT_KERNEL_DATA must be 0x10 (second entry)");
 
-/* Number of GDT entries (TSS takes 2 slots in 64-bit mode) */
-#define GDT_NUM_ENTRIES  7
+/* Per-CPU TSS descriptors (TODO-09-boot S10). One shared GDT carries a 16-byte
+ * TSS descriptor per logical CPU, CPU c at entries 5+2c and 6+2c, so its
+ * selector is GDT_TSS_SEG + 16*c and the BSP (c = 0) keeps 0x28. The segment
+ * entries 0..4 are untouched, so the SYSRET layout above does not move. Each
+ * descriptor is written once before its CPU starts and loaded once by that
+ * CPU's `ltr`, which marks it busy; nothing rewrites a descriptor afterwards.
+ * ap_trampoline.asm hardcodes the 0x28 base and 16 stride. */
+#define GDT_TSS_FIRST_INDEX  5u
+#define GDT_TSS_SEL_STRIDE   16u
+#define GDT_TSS_SEL_FOR(c)   ((uint16_t)(GDT_TSS_SEG + GDT_TSS_SEL_STRIDE * (uint32_t)(c)))
+
+/* Number of GDT entries: 5 segments + 2 slots per CPU's TSS */
+#define GDT_NUM_ENTRIES  (GDT_TSS_FIRST_INDEX + 2u * MAX_CPUS)
+
+_Static_assert(GDT_TSS_SEG == GDT_TSS_FIRST_INDEX * 8u,
+    "the BSP TSS selector must be the first TSS slot");
+_Static_assert(GDT_TSS_SEL_FOR(0) == 0x28 && GDT_TSS_SEL_STRIDE == 16u,
+    "ap_trampoline.asm derives ltr selectors as 0x28 + 16*cpu");
+_Static_assert(GDT_NUM_ENTRIES * 8u <= 0x10000u, "GDT limit is 16 bits");
 
 /* Task State Segment for x86-64 */
 struct tss {
@@ -84,8 +102,27 @@ _Static_assert(__builtin_offsetof(struct tss, ist7)
                == (TSS_IST_COUNT - 1) * 8,
                "TSS_IST_COUNT does not match the ist1..ist7 span in struct tss");
 
-/* Set the kernel stack pointer in the TSS (called during task switches) */
+/* Set the CALLING CPU's TSS.rsp0 (called during task switches). Each CPU has
+ * its own TSS, so this never touches another CPU's ring-0 entry stack. */
 void tss_set_kernel_stack(uint64_t stack_top);
+
+/* Selector of CPU `cpu`'s TSS descriptor, or 0 for a CPU index past MAX_CPUS.
+ * Pure. */
+uint16_t gdt_tss_selector(uint32_t cpu);
+
+/* Prepare the TSS of AP `cpu` (1..MAX_CPUS-1) before that AP is started: rsp0
+ * = `rsp0` (its kernel stack top) and guarded IST stacks for #DF, NMI and MCE,
+ * then publish its descriptor as an AVAILABLE 64-bit TSS. Returns the selector
+ * the AP must `ltr`, or 0 when the IST stacks cannot be allocated or guarded,
+ * in which case nothing is published and the caller must not start the AP: an
+ * AP without its own IST would take an NMI on whatever TR its INIT left (base
+ * 0, so the stack pointer comes from the real-mode IVT). BSP only, before the
+ * AP's SIPI; never called twice for one CPU. */
+uint16_t gdt_install_ap_tss(uint32_t cpu, uint64_t rsp0);
+
+/* IST stack top `index` (1-based, as gdt_get_ist) of CPU `cpu`'s TSS, or 0 for
+ * a CPU with no TSS or an out-of-range index. Read-only, lock-free. */
+uint64_t gdt_get_cpu_ist(uint32_t cpu, unsigned index);
 
 /* --- BSP ring-0 entry stack (bare-metal hardening: BSP entry-stack guard) -------------------------
  *

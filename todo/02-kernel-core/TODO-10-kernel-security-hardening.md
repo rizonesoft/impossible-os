@@ -314,15 +314,15 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 > [!WARNING]
 > **Deferred -- blocked on the remaining AP-TSS prerequisite owned elsewhere (Codex design review 2026-06-28; #CP routing shipped 2026-07-18).** Enabling supervisor CET (`CR4.CET` + `S_CET.SH_STK_EN`) is unsafe until it lands, so CET stays detected-but-disabled (the current, safe state -- `CPU_FEATURE_CET_SS` is probed from CPUID.(07H,0):ECX[7] in `cpuid.c`):
 > 1. **#CP fault routing (RESOLVED)** -- SHIPPED in TODO-23 §3: `except_common_handler` registers a CET-gated `#CP` (vector 21) handler -- user-mode routes through `ki_dispatch_exception()` (`STATUS_STACK_BUFFER_OVERRUN`+subcode 0x39), kernel-mode calls `KeBugCheckEx(0x139, 0x39)` directly -- so a shadow-stack (or IBT) violation is caught rather than triple-faulting. Registration is gated on `cpu_has(CPU_FEATURE_CET_SS) || cpu_has(CPU_FEATURE_CET_IBT)` (both raise #CP), so it activates automatically once either capability is present. -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §3`.
-> 2. **AP IST shadow stacks** -- `MSR_IA32_INTERRUPT_SSP_TABLE` needs a per-CPU TSS so each AP's #DF/NMI/#PF IST entry gets its own shadow stack; the TSS/IST is BSP-only today (`gdt.c:123` "configures the BSP TSS only"). Enabling CET on APs without this turns any IST-backed exception into a recursive #CP. -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §10` (item: "Per-CPU TSS + IST" at line 399).
+> 2. **AP IST shadow stacks** -- `MSR_IA32_INTERRUPT_SSP_TABLE` needs a per-CPU TSS so each AP's #DF/NMI/#PF IST entry gets its own shadow stack. The per-CPU TSS now exists (RESOLVED 2026-11-09 by TODO-09 §10: `gdt_install_ap_tss()`, one TSS + guarded IST1-3 per AP, `ltr` in the trampoline); what remains is CET's own interrupt-SSP table over it. Enabling CET on APs without that still turns any IST-backed exception into a recursive #CP. -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §10` (item: "Per-CPU TSS + IST").
 >
 > Design review also corrected the draft below: the supervisor shadow-stack PTE marker is **Dirty (bit 6, `VMM_FLAG_DIRTY`) with Write=0**, NOT "bit 5" (bit 5 is `VMM_FLAG_ACCESSED`); and CET state must be saved as **per-thread `PL0_SSP` on every context switch, NOT via `IA32_XSS`/`XSAVES`** -- `xsave_area`/`fpu_used` are per-*task* and lazy, so XSS-backed CET state would corrupt SSP across same-process thread switches. XSS deferred until XSAVE ownership moves to `struct thread`.
 
 - [x] Structured `#CP` (vector 21) handling -> XREF: `TODO-23 §3` (SHIPPED; CET-gated handler: user-mode routes through `ki_dispatch_exception()`, kernel-mode `KeBugCheckEx()` directly)
-- [/] **(prereq, blocks SMP enable)** Per-CPU AP TSS so `cet_init_interrupt_ssp_table()` can give each AP IST entry its own shadow stack -> XREF: `D01 T09 §10`. Until this + the enable trampoline land, `cpu_enable_cet_ss()` must NOT write `CR4.CET`.
-  - Parked:AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
+- [x] **(prereq, blocks SMP enable)** Per-CPU AP TSS so `cet_init_interrupt_ssp_table()` can give each AP IST entry its own shadow stack -> XREF: `D01 T09 §10`. Until the enable trampoline lands, `cpu_enable_cet_ss()` must NOT write `CR4.CET`.
+  - Landed 2026-11-09 in TODO-09 §10: `ap_tss[]` + `gdt_install_ap_tss()` in `gdt.c`, read back per CPU through `gdt_get_cpu_ist()`; selector `GDT_TSS_SEL_FOR(cpu)`.
 - [x] FIXED (TODO-23 §3 review): `cpuid.c` probed `CPU_FEATURE_CET_SS` from EDX[7]; CET SHSTK is CPUID.(07H,0):ECX[7] per Intel SDM (EDX[7] reserved). Moved to the ECX block so `cpu_has(CET_SS)` is accurate on CET hardware (2 reviewers confirmed)
-- [/] **(enable safety)** CET enable must be a controlled no-return transition (CET-aware trampoline) -- parked: AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
+- [ ] **(enable safety)** CET enable must be a controlled no-return transition (CET-aware trampoline); its per-CPU TSS blocker cleared 2026-11-09 (TODO-09 §10)
   - Seed the active call chain's SSP via the architectural save/restore-token sequence before any normal `RET`, else the first return after `CR4.CET` faults #CP on an empty shadow stack during bring-up
 - [/] Add `CPU_FEATURE_CET_SS` to `CPU_FEATURES_AP_PROBE_MASK` + `cpuid_probe_ap_features()` so per-AP enable gates on each AP's own `cpu_feature_local()` (CET may be P/E-core skewed), mirroring the §8 `SPEC_CTRL` AP-probe pattern
   - Parked:AP IST shadow stacks need a per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md` §10
@@ -369,7 +369,7 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 > - Design corrected the draft: supervisor-SHSTK PTE marker is Dirty/bit-6 + Write-clear (not "bit 5" = Accessed); CET state saves per-thread `PL0_SSP` on context switch, not `IA32_XSS`/`XSAVES` (XSAVE is per-task + lazy).
 > - When unblocked: add `CET_SS` to the AP probe mask, `cpu_enable_cet_ss()` gated per-AP via `cpu_feature_local()` (mirrors §8 `SPEC_CTRL`), CET-aware no-return enable trampoline, then per-thread + IST shadow stacks.
 >
-> **Deferred:** [High] AP IST shadow stacks need per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §10` (item: "Per-CPU TSS + IST" at line 407). (The structured `#CP` routing blocker was resolved by `TODO-23 §3`.)
+> **Deferred:** [High] AP IST shadow stacks need per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §10` (item: "Per-CPU TSS + IST" at line 407). (The structured `#CP` routing blocker was resolved by `TODO-23 §3`.) (RESOLVED 2026-11-09 by TODO-09 §10: per-CPU TSS shipped; the CET enable items above remain open.)
 
 ---
 

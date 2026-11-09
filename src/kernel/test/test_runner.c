@@ -994,6 +994,7 @@ extern void test_register_boot_device(void);
 extern void test_register_bare_metal(void);
 extern void test_register_x86(void);
 extern void test_register_cpu_seq(void);
+extern void test_register_ap_bringup(void);
 extern void test_register_ob(void);
 extern void test_register_security(void);
 extern void test_register_ci(void);
@@ -1140,6 +1141,7 @@ void test_runner_init(void)
     /* x86-64 Architecture (CPUID, MSR, KPTI, CPU security) */
     test_register_x86();
     test_register_cpu_seq();
+    test_register_ap_bringup();
 
     /* Exec / Binary System */
     test_register_exec();

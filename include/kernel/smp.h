@@ -37,30 +37,103 @@
  *   Offset  Size  Field        Used by
  *   ------  ----  -----------  -----------------------------------
  *   +0x00     8   CR3          pm_entry: mov eax, [AP_DATA+0x00]
- *   +0x08     8   STACK        lm_entry: mov rsp, [AP_DATA+0x08]
+ *   +0x08     8   (unused)     was the shared per-AP STACK, now per record
  *   +0x10    10   GDT_PTR      lm_entry: lgdt [AP_DATA+0x10]
  *   +0x20     8   ENTRY        lm_entry: mov rax, [AP_DATA+0x20]
- *   +0x28     4   CPUID        lm_entry: mov edi, [AP_DATA+0x28]
+ *   +0x28     4   (unused)     was the shared CPU index, now the record index
  *   +0x30    10   IDT_PTR      lm_entry: lidt [AP_DATA+0x30]
  *   +0x3C     4   CANARY       smp_init: 0xDEADC0DE magic verify
+ *   +0x40   256   AP_REC[16]   lm_entry: per-target bringup records (below)
+ *
+ * Every field above +0x40 is written ONCE, before the first SIPI, and never
+ * rewritten, so an AP that stalls anywhere in the trampoline reads the same
+ * values as a prompt one. The per-AP values live in the record table instead
+ * (TODO-09-boot S10 consume-ack handshake): one record per logical CPU, each
+ * written once and never reused, selected by the AP's own LIVE APIC ID. A slow
+ * AP can therefore only ever find its own record, and a record it no longer
+ * owns (revoked by the BSP's timeout) refuses its claim before it touches a
+ * stack. The whole table stays inside the trampoline page because VBox EFI AP
+ * parking firmware stomps the low memory around it.
  */
 #define AP_TRAMPOLINE_ADDR     0x8000   /* where trampoline code is loaded */
 #define AP_DATA_BASE           0x8E00   /* shared data at trampoline+0xE00 */
 
 #define AP_OFF_CR3             0x00     /* uint64_t: BSP's CR3 */
-#define AP_OFF_STACK           0x08     /* uint64_t: per-AP stack top */
 #define AP_OFF_GDT_PTR         0x10     /* 10 bytes: GDTR */
 #define AP_OFF_ENTRY           0x20     /* uint64_t: C entry point */
-#define AP_OFF_CPUID           0x28     /* uint32_t: logical CPU index */
 #define AP_OFF_IDT_PTR         0x30     /* 10 bytes: IDTR */
 #define AP_OFF_CANARY          0x3C     /* uint32_t: magic 0xDEADC0DE */
+#define AP_OFF_REC             0x40     /* struct ap_rec[AP_REC_COUNT] */
+
+/* Per-target bringup record (TODO-09-boot S10). The record INDEX is the
+ * logical CPU index, so the trampoline hands its own index to ap_entry and
+ * derives its TSS selector from it (GDT_TSS_SEL_FOR, gdt.h). Offsets are
+ * hardcoded as AP_REC_* in ap_trampoline.asm. */
+struct ap_rec {
+    uint32_t apic_id;   /* +0: the LIVE APIC ID this record belongs to */
+    uint32_t state;     /* +4: AP_REC_* (CAS-transitioned, see below) */
+    uint64_t stack;     /* +8: this CPU's kernel stack top */
+};
+
+#define AP_REC_OFF_APIC        0x00
+#define AP_REC_OFF_STATE       0x04
+#define AP_REC_OFF_STACK       0x08
+#define AP_REC_SIZE            16
+#define AP_REC_COUNT           16       /* == MAX_CPUS; the asm loops this many */
+#define AP_REC_BASE            (AP_DATA_BASE + AP_OFF_REC)
+
+/* Record states. One writer per transition:
+ *   EMPTY  -> PREPARED BSP pass 1 (ap_rec_prepare): identity reserved, not
+ *                      claimable -- the trampoline matches only ARMED
+ *   PREPARED -> ARMED  BSP pass 3, just before this AP's SIPI (release)
+ *   ARMED  -> TAKEN    the AP whose live APIC ID matches, by lock cmpxchg,
+ *                      BEFORE it loads the stack or pushes anything
+ *   ARMED  -> REVOKED  BSP, by CAS, once its wait for that AP has ended
+ * TAKEN and REVOKED are terminal, which is the whole guarantee: a record is
+ * never re-armed, so whichever side wins the CAS, the AP never runs on data
+ * that was rewritten under it. */
+#define AP_REC_EMPTY           0u
+#define AP_REC_ARMED           1u
+#define AP_REC_TAKEN           2u
+#define AP_REC_REVOKED         3u
+#define AP_REC_PREPARED        4u
+
+/* BSP side of the claim race: try ARMED -> REVOKED. Returns 1 when the BSP
+ * won (the AP never claimed and now never can), 0 when the AP had already
+ * claimed it (it runs on its own record; its stack must stay reserved). Pure
+ * over the record, so the race outcome is unit-testable. */
+int ap_rec_revoke(struct ap_rec *rec);
+
+/* Fill `rec` for `apic_id` with stack top `stack` and mark it PREPARED, which
+ * reserves the identity (ap_rec_apic_in_use sees it) without letting any AP
+ * claim it. Returns 0, or -1 for a NULL record, a zero stack, or a record that
+ * is not EMPTY (records are never reused). Pure. */
+int ap_rec_prepare(struct ap_rec *rec, uint32_t apic_id, uint64_t stack);
+
+/* 1 when any record in table[0..n) other than EMPTY already names `apic_id`.
+ * A second record for the same ID would let both CPUs, or one CPU twice, race
+ * for slots, so the BSP refuses to arm a duplicate. */
+int ap_rec_apic_in_use(const struct ap_rec *table, uint32_t n, uint32_t apic_id);
+
+/* TSC ticks covering at least `us` microseconds at `tsc_hz`, rounded up and
+ * overflow-free for any 32-bit `us` and any rate below 2^44 Hz. Pure. Drives
+ * the MP-protocol INIT settle and post-SIPI waits (smp_init). */
+uint64_t smp_us_to_tsc(uint32_t us, uint64_t tsc_hz);
+
+/* TSC rate the bringup delays convert with. smp_init runs before the
+ * monotonic clock qualifies the TSC, so the trusted rate (`mono_hz`) is
+ * usually 0 there; the loader's measured calibration (`loader_hz`,
+ * boot_timing_tsc_freq) is used next when it lies inside
+ * [MONO_TSC_HZ_MIN, MONO_TSC_HZ_MAX]; otherwise the pessimistic
+ * MONO_TSC_HZ_MAX, which can only make a delay longer. Pure. */
+uint64_t smp_delay_hz(uint64_t mono_hz, uint64_t loader_hz);
 
 #define AP_CANARY_MAGIC        0xDEADC0DE
 
-/* Total bytes the AP data area occupies, derived from its last field (CANARY
- * at +0x3C, 4 bytes) rather than hardcoded -- add a field past the canary and
- * this grows with it, and the envelope-containment assert below re-checks. */
-#define AP_DATA_FOOTPRINT      (AP_OFF_CANARY + 4)
+/* Total bytes the AP data area occupies, derived from its last field (the
+ * record table at +0x40) rather than hardcoded -- add a field past it and this
+ * grows with it, and the envelope-containment assert below re-checks. */
+#define AP_DATA_FOOTPRINT      (AP_OFF_REC + AP_REC_COUNT * AP_REC_SIZE)
 
 /* AP bringup handshake states, in per_cpu_data.ap_bringup_state.
  *
@@ -202,10 +275,9 @@ _Static_assert((SMP_ASYNC_GEN_MAX << SMP_ASYNC_GEN_SHIFT) ==
 /* Compile-time enforcement: AP trampoline data area offsets.
  * If these fire, you changed a C #define without updating the assembly. */
 _Static_assert(AP_OFF_CR3     == 0x00, "AP trampoline: CR3 must be at +0x00 -- asm uses [AP_DATA+0x00]");
-_Static_assert(AP_OFF_STACK   == 0x08, "AP trampoline: STACK must be at +0x08 -- asm uses [AP_DATA+0x08]");
 _Static_assert(AP_OFF_GDT_PTR == 0x10, "AP trampoline: GDT_PTR must be at +0x10 -- asm uses [AP_DATA+0x10]");
 _Static_assert(AP_OFF_ENTRY   == 0x20, "AP trampoline: ENTRY must be at +0x20 -- asm uses [AP_DATA+0x20]");
-_Static_assert(AP_OFF_CPUID   == 0x28, "AP trampoline: CPUID must be at +0x28 -- asm uses [AP_DATA+0x28]");
+_Static_assert(AP_OFF_REC     == 0x40, "AP trampoline: records must be at +0x40 -- asm uses AP_REC_BASE");
 _Static_assert(AP_OFF_IDT_PTR == 0x30, "AP trampoline: IDT_PTR must be at +0x30 -- asm uses [AP_DATA+0x30]");
 _Static_assert(AP_DATA_BASE   == AP_TRAMPOLINE_ADDR + 0xE00,
     "AP data base must be trampoline + 0xE00 (phys 0x8E00)");
@@ -224,6 +296,21 @@ _Static_assert(AP_DATA_BASE >= MM_AP_ENVELOPE_BASE,
 _Static_assert(AP_DATA_BASE + AP_DATA_FOOTPRINT <= MM_AP_ENVELOPE_END,
     "AP data area must END inside the canonical AP envelope (memmap.h)");
 
+/* The record table must fit in the trampoline PAGE, not just the envelope:
+ * VBox AP parking firmware stomps low memory outside it. */
+_Static_assert(AP_REC_COUNT == MAX_CPUS,
+    "one bringup record per logical CPU (ap_trampoline.asm loops AP_REC_COUNT)");
+_Static_assert(AP_REC_COUNT == 16,
+    "ap_trampoline.asm hardcodes AP_REC_COUNT 16; change both together");
+_Static_assert(sizeof(struct ap_rec) == AP_REC_SIZE, "ap_rec must be 16 bytes (asm stride)");
+_Static_assert(__builtin_offsetof(struct ap_rec, apic_id) == AP_REC_OFF_APIC, "ap_rec.apic_id offset (asm)");
+_Static_assert(__builtin_offsetof(struct ap_rec, state) == AP_REC_OFF_STATE, "ap_rec.state offset (asm)");
+_Static_assert(__builtin_offsetof(struct ap_rec, stack) == AP_REC_OFF_STACK, "ap_rec.stack offset (asm)");
+_Static_assert(AP_OFF_REC >= AP_OFF_CANARY + 4, "AP record table must not overlap the canary");
+_Static_assert(AP_OFF_REC % 16 == 0, "AP record table must be 16-byte aligned (8-byte stack loads)");
+_Static_assert(AP_DATA_BASE + AP_OFF_REC + AP_REC_COUNT * AP_REC_SIZE <= AP_TRAMPOLINE_ADDR + 0x1000,
+    "AP record table must stay inside the trampoline page");
+
 /* Non-overlap verification: each field must not stomp its neighbors.
  * IDT_PTR is 10 bytes (IDTR = 2B limit + 8B base), so it spans
  * AP_OFF_IDT_PTR .. AP_OFF_IDT_PTR+9. Canary must start AFTER. */
@@ -231,10 +318,8 @@ _Static_assert(AP_OFF_CANARY >= AP_OFF_IDT_PTR + 10,
     "AP canary must not overlap IDT_PTR (10-byte IDTR span)");
 _Static_assert(AP_OFF_ENTRY >= AP_OFF_GDT_PTR + 10,
     "AP entry must not overlap GDT_PTR (10-byte GDTR span)");
-_Static_assert(AP_OFF_CPUID >= AP_OFF_ENTRY + 8,
-    "AP cpuid must not overlap entry (8-byte uint64_t)");
-_Static_assert(AP_OFF_IDT_PTR >= AP_OFF_CPUID + 4,
-    "AP IDT_PTR must not overlap cpuid (4-byte uint32_t)");
+_Static_assert(AP_OFF_IDT_PTR >= AP_OFF_ENTRY + 8,
+    "AP IDT_PTR must not overlap entry (8-byte uint64_t)");
 
 /* ---- Per-CPU data ----
  *
@@ -501,6 +586,14 @@ struct per_cpu_data {
      * and the KPTI trampoline -- a field inserted ahead of those shifts every
      * one of them. */
     uint64_t          idle_tsc_cycles;
+
+    /* Task register this CPU loaded (`str` readback in ap_entry; the BSP sets
+     * its own in gdt_init). The BSP compares it with GDT_TSS_SEL_FOR(cpu_id)
+     * once bringup ends, so a CPU running on another CPU's TSS (or none) is
+     * reported instead of discovered at its first NMI. Tail-appended for the
+     * same reason as idle_tsc_cycles. */
+    uint16_t          tr_selector;
+    uint16_t          _tr_pad[3];
 };
 
 #define TRANSITION_RING_SIZE         64

@@ -7,7 +7,8 @@
  *   [2] Kernel data  (Ring 0)
  *   [3] User code    (Ring 3, 64-bit)
  *   [4] User data    (Ring 3)
- *   [5-6] TSS        (16-byte descriptor in Long Mode)
+ *   [5-6] TSS        (16-byte descriptor in Long Mode), BSP
+ *   [7..] TSS        one more 16-byte descriptor per AP (TODO-09-boot S10)
  *
  * Then loads the GDT and TSS via assembly helpers.
  * ============================================================================ */
@@ -18,6 +19,7 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/boot_init.h"
 #include "kernel/boot_halt.h"
+#include "kernel/smp.h"
 /* A single GDT entry (8 bytes) */
 struct gdt_entry {
     uint16_t limit_low;
@@ -34,14 +36,22 @@ struct gdt_pointer {
     uint64_t base;
 } __attribute__((packed));
 
-/* The GDT (7 entries: null + 4 segments + 2 for TSS) */
+/* The GDT: null + 4 segments + 2 slots per CPU TSS (GDT_NUM_ENTRIES) */
 static struct gdt_entry gdt[GDT_NUM_ENTRIES];
 
 /* The GDTR value */
 static struct gdt_pointer gdtr;
 
-/* The TSS */
+/* The BSP's TSS */
 static struct tss kernel_tss;
+
+/* AP TSSs (index = logical CPU; index 0 unused, the BSP uses kernel_tss) and
+ * the per-CPU lookup. s_cpu_tss[c] is written once by the BSP: [0] in
+ * gdt_init, [c] in gdt_install_ap_tss before AP c's SIPI, both before any
+ * reader can run on that CPU; the release store pairs with the acquire loads
+ * in the readers, so a reader that sees the pointer sees a filled TSS. */
+static struct tss ap_tss[MAX_CPUS];
+static struct tss *s_cpu_tss[MAX_CPUS];
 
 /* External assembly: reload segment registers after loading new GDT */
 extern void gdt_flush(uint64_t gdtr_addr);
@@ -109,6 +119,40 @@ static uint64_t ist_alloc(const char *guard_label)
     if (vmm_install_guard_page(base, guard_label) != 0)
         boot_halt("IST guard page install failed");
     return (uint64_t)(base + (uint64_t)(IST_STACK_PAGES + 1) * VMM_PAGE_SIZE);
+}
+
+/* AP variant: an AP that cannot get a guarded IST stack is not started (one
+ * CPU lost, said so) rather than halting a boot the BSP can finish alone.
+ * Returns the stack top or 0. Same frame policy as the AP kernel stack in
+ * smp_init: an unusable identity VA is quarantined, never handed back. */
+static uint64_t ist_try_alloc(const char *guard_label)
+{
+    uintptr_t base = pmm_alloc_contiguous(IST_STACK_PAGES + 1);
+    int rc;
+
+    if (!base)
+        return 0;
+    rc = vmm_install_guard_page(base, guard_label);
+    if (rc != VMM_GUARD_OK) {
+        if (rc != VMM_GUARD_VA_UNSAFE)
+            pmm_free_contiguous(base, IST_STACK_PAGES + 1);
+        return 0;
+    }
+    return (uint64_t)(base + (uint64_t)(IST_STACK_PAGES + 1) * VMM_PAGE_SIZE);
+}
+
+/* Undo ist_try_alloc for a stack that will never be used. The frame goes back
+ * only when the guard uninstall confirms the identity mapping is restored
+ * (vmm.h contract); otherwise the run stays quarantined. */
+static void ist_release(uint64_t top)
+{
+    uintptr_t base;
+
+    if (!top)
+        return;
+    base = (uintptr_t)(top - (uint64_t)(IST_STACK_PAGES + 1) * VMM_PAGE_SIZE);
+    if (vmm_uninstall_guard_page(base) == 0)
+        pmm_free_contiguous(base, IST_STACK_PAGES + 1);
 }
 
 /* --- BSP ring-0 entry stack (bare-metal hardening: BSP entry-stack guard) -------------------------
@@ -254,9 +298,8 @@ void gdt_init(void)
 
     /* IST stacks for critical exceptions: #DF, NMI, MCE. Allocated from PMM
      * (identity-mapped, phys = virt). PMM is up in Phase 0, GDT in Phase 1.
-     * Failure is fatal (see ist_alloc). NOTE: this configures the BSP TSS
-     * only; per-CPU TSS/IST for APs (AP bringup hardening) is not set up here,
-     * so AP critical-exception IST delivery is not yet SMP-covered. */
+     * Failure is fatal (see ist_alloc). This is the BSP's TSS; each AP gets
+     * its own from gdt_install_ap_tss() before smp_init() starts it. */
     POST16(0xD200);
     kernel_tss.ist1 = ist_alloc("GUARD: IST #DF stack overflow");
     kernel_tss.ist2 = ist_alloc("GUARD: IST NMI stack overflow");
@@ -304,6 +347,11 @@ void gdt_init(void)
     /* [5-6] TSS descriptor (16 bytes in Long Mode) */
     gdt_set_tss(5, tss_base, tss_limit);
 
+    /* AP TSS slots stay zero (not present) until gdt_install_ap_tss() fills
+     * one; the limit below already covers them, so the GDTR the APs load from
+     * AP_DATA is this same value. */
+    __atomic_store_n(&s_cpu_tss[0], &kernel_tss, __ATOMIC_RELEASE);
+
     /* --- Load the GDT --- */
     gdtr.limit = (uint16_t)(sizeof(gdt) - 1);
     gdtr.base  = (uint64_t)(uintptr_t)&gdt;
@@ -344,7 +392,59 @@ void gdt_init(void)
 
 void tss_set_kernel_stack(uint64_t stack_top)
 {
-    kernel_tss.rsp0 = stack_top;
+    /* The calling CPU's own TSS. Only that CPU reads its rsp0 (the hardware,
+     * on its own ring-3 -> ring-0 entries), so the write needs no lock. */
+    uint32_t cpu = smp_this_cpu()->cpu_id;
+    struct tss *t = (cpu < MAX_CPUS) ? __atomic_load_n(&s_cpu_tss[cpu], __ATOMIC_ACQUIRE) : NULL;
+
+    if (!t)
+        t = &kernel_tss;
+    t->rsp0 = stack_top;
+}
+
+uint16_t gdt_tss_selector(uint32_t cpu)
+{
+    return (cpu < MAX_CPUS) ? GDT_TSS_SEL_FOR(cpu) : 0;
+}
+
+uint16_t gdt_install_ap_tss(uint32_t cpu, uint64_t rsp0)
+{
+    struct tss *t;
+    uint32_t i;
+
+    if (cpu == 0 || cpu >= MAX_CPUS || rsp0 == 0)
+        return 0;
+    if (__atomic_load_n(&s_cpu_tss[cpu], __ATOMIC_ACQUIRE))
+        return 0;   /* published once; a second install would rewrite a live TSS */
+
+    t = &ap_tss[cpu];
+    for (i = 0; i < sizeof(*t); i++)
+        ((uint8_t *)t)[i] = 0;
+
+    t->rsp0 = rsp0;
+    t->ist1 = ist_try_alloc("GUARD: AP IST #DF stack overflow");
+    t->ist2 = t->ist1 ? ist_try_alloc("GUARD: AP IST NMI stack overflow") : 0;
+    t->ist3 = t->ist2 ? ist_try_alloc("GUARD: AP IST MCE stack overflow") : 0;
+    if (!t->ist3) {
+        ist_release(t->ist1);
+        ist_release(t->ist2);
+        t->ist1 = t->ist2 = 0;
+        klog(LOG_ERROR, "cpu", "AP %u: no guarded IST stacks -- not starting it",
+             (uint64_t)cpu);
+        return 0;
+    }
+    t->iopb_offset = sizeof(struct tss);
+
+    gdt_set_tss(GDT_TSS_FIRST_INDEX + 2u * cpu, (uint64_t)(uintptr_t)t, sizeof(struct tss) - 1);
+    __atomic_store_n(&s_cpu_tss[cpu], t, __ATOMIC_RELEASE);
+    return GDT_TSS_SEL_FOR(cpu);
+}
+
+uint64_t gdt_get_cpu_ist(uint32_t cpu, unsigned index)
+{
+    const struct tss *t = (cpu < MAX_CPUS) ? __atomic_load_n(&s_cpu_tss[cpu], __ATOMIC_ACQUIRE) : NULL;
+
+    return tss_get_ist(t, index);
 }
 
 uint64_t tss_get_ist(const struct tss *tss, unsigned index)

@@ -1,8 +1,9 @@
 /* ============================================================================
  * smp.c -- SMP bringup (AP startup via INIT/SIPI IPI sequence)
  *
- * Copies the AP trampoline to physical 0x8000, then for each AP discovered
- * in the ACPI MADT, writes shared data to 0x8E00 and sends INIT → SIPI.
+ * Copies the AP trampoline to physical 0x8000, writes the shared data at
+ * 0x8E00 once, prepares one bringup record + TSS per AP discovered in the ACPI
+ * MADT, sends INIT to all of them, waits once, then SIPIs each in turn.
  *
  * Each AP transitions to long mode in the trampoline, then calls ap_entry()
  * here, which initializes the AP's LAPIC and per-CPU data.
@@ -32,6 +33,8 @@
 #include "kernel/idt.h"        /* idt_register_handler, interrupt_frame -- S26 barrier IPI */
 #include "kernel/vectors.h"    /* VECTOR_IPI_RENDEZVOUS -- S26 */
 #include "kernel/time/mono_clock.h"  /* mono_tsc_raw/mono_tsc_hz -- S26 IF=0-safe deadline */
+#include "kernel/gdt.h"        /* per-CPU TSS install + selector (S10) */
+#include "kernel/boot_timing.h" /* boot_timing_tsc_freq -- bringup delay rate (S10) */
 #ifdef KERNEL_TESTS
 #include "kernel/topology.h"   /* g_topo_cpu_count -- S27 park-injection check */
 #endif
@@ -171,19 +174,100 @@ void smp_early_bsp_init(void)
 
 /* ---- Delay helpers ---- */
 
-/* Busy-wait delay using I/O port 0x80 (POST code port, ~1 µs per access) */
-static void io_delay(void)
+uint64_t smp_us_to_tsc(uint32_t us, uint64_t tsc_hz)
 {
-    __asm__ volatile("outb %%al, $0x80" : : "a"(0));
+    /* Split so neither product can overflow for any 32-bit `us` and any rate
+     * below 2^44 Hz; rounded UP so a delay is never shorter than asked. */
+    uint64_t whole = (tsc_hz / 1000000u) * (uint64_t)us;
+    uint64_t frac  = ((tsc_hz % 1000000u) * (uint64_t)us + 999999u) / 1000000u;
+    return whole + frac;
 }
 
-/* Approximate millisecond delay (calibrated to ~1ms with port I/O) */
+uint64_t smp_delay_hz(uint64_t mono_hz, uint64_t loader_hz)
+{
+    if (mono_hz != 0)
+        return mono_hz;
+    if (loader_hz >= MONO_TSC_HZ_MIN && loader_hz <= MONO_TSC_HZ_MAX)
+        return loader_hz;
+    return MONO_TSC_HZ_MAX;
+}
+
+/* Busy-wait at least `us` microseconds on the TSC. The INIT settle and the
+ * post-SIPI wait are minimums from the MP startup protocol. A port 0x80 loop
+ * measures nothing (a hypervisor exit or a fast chipset changes its length),
+ * which is why it is no longer the clock here; the rate comes from
+ * smp_delay_hz. Interrupts may be masked: mono_tsc_raw() keeps advancing
+ * regardless. */
+static void smp_delay_us(uint32_t us)
+{
+    uint64_t hz = smp_delay_hz(mono_tsc_hz(), boot_timing_tsc_freq());
+    uint64_t start, budget;
+
+    budget = smp_us_to_tsc(us, hz);
+    start = mono_tsc_raw();
+    while (mono_tsc_raw() - start < budget)
+        __asm__ volatile("pause");
+}
+
 static void delay_ms(uint32_t ms)
 {
-    uint32_t i, j;
-    for (i = 0; i < ms; i++)
-        for (j = 0; j < 1000; j++)
-            io_delay();
+    smp_delay_us(ms * 1000u);
+}
+
+/* Record the BSP's task register (loaded by gdt_init) and report a mismatch.
+ * Runs on every smp_init path, the uniprocessor one included. */
+static void smp_record_bsp_tr(void)
+{
+    uint16_t tr;
+
+    __asm__ volatile("str %0" : "=r"(tr));
+    cpu_data[0].tr_selector = tr;
+    if (tr != gdt_tss_selector(0))
+        klog(LOG_ERROR, "smp", "BSP loaded TR 0x%x, expected 0x%x",
+             (uint64_t)tr, (uint64_t)gdt_tss_selector(0));
+}
+
+/* ---- Bringup records (TODO-09-boot S10) ---- */
+
+int ap_rec_revoke(struct ap_rec *rec)
+{
+    uint32_t expected = AP_REC_ARMED;
+
+    if (!rec)
+        return 0;
+    return __atomic_compare_exchange_n(&rec->state, &expected, AP_REC_REVOKED, 0,
+                                       __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE) ? 1 : 0;
+}
+
+int ap_rec_prepare(struct ap_rec *rec, uint32_t apic_id, uint64_t stack)
+{
+    if (!rec || stack == 0 || __atomic_load_n(&rec->state, __ATOMIC_ACQUIRE) != AP_REC_EMPTY)
+        return -1;
+    rec->apic_id = apic_id;
+    rec->stack = stack;
+    __atomic_store_n(&rec->state, AP_REC_PREPARED, __ATOMIC_RELEASE);
+    return 0;
+}
+
+int ap_rec_apic_in_use(const struct ap_rec *table, uint32_t n, uint32_t apic_id)
+{
+    uint32_t i;
+
+    if (!table)
+        return 0;
+    for (i = 0; i < n; i++)
+        if (__atomic_load_n(&table[i].state, __ATOMIC_ACQUIRE) != AP_REC_EMPTY &&
+            table[i].apic_id == apic_id)
+            return 1;
+    return 0;
+}
+
+/* Return a guarded AP stack run to the PMM, or quarantine it when the guard
+ * uninstall cannot confirm the identity mapping (vmm.h contract). */
+static void ap_stack_release(uintptr_t guard_base)
+{
+    if (vmm_uninstall_guard_page(guard_base) == 0)
+        pmm_free_contiguous(guard_base, AP_STACK_SIZE / 4096 + 1);
 }
 
 /* ---- AP entry point (called from trampoline in 64-bit mode) ---- */
@@ -212,6 +296,14 @@ void ap_entry(uint32_t cpu_index)
 
     msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)pcpu);
 
+    /* The trampoline loaded this CPU's TSS (ltr) from its record index. Read
+     * it back so the BSP can confirm every AP runs on its own TSS. */
+    {
+        uint16_t tr;
+        __asm__ volatile("str %0" : "=r"(tr));
+        pcpu->tr_selector = tr;
+    }
+
     /* CPU security hardening on this AP: match the BSP XCR0, enable the
      * gated NX/UMIP/PKU/SMEP/SMAP set, replay the BSP MSR profile (PAT,
      * TSC_AUX), and verify against the BSP baseline (warn-only on drift;
@@ -225,16 +317,13 @@ void ap_entry(uint32_t cpu_index)
     /* Initialize this AP's LAPIC */
     lapic_init_ap();
 
-    /* Identity guard (TODO-09-boot S10): the BSP pre-stored this slot's EXPECTED
-     * apic_id into pcpu->lapic_id before the SIPI. cpu_index came from the single
-     * shared AP_DATA page, which the BSP rewrites per AP; a slow AP that latches
-     * AP_DATA after the BSP reassigned the slot would arrive here under the wrong
-     * cpu_index. If our LIVE LAPIC ID does not match the slot's expected id, we
-     * are that impostor -- do NOT claim the slot: park dark so the slot's real AP
-     * (or the abandon CAS) owns it, and we are never counted/scheduled under a
-     * mismatched identity. (This closes the misidentified-online outcome; the
-     * deeper concurrent-stack isolation needs the AP_DATA consume-ack handshake
-     * tracked as a separate S10 item.) */
+    /* Identity guard (TODO-09-boot S10), now a SECOND net. cpu_index is the
+     * index of the bringup record this AP claimed in the trampoline, and it
+     * could only claim the record carrying its own live APIC ID (struct ap_rec,
+     * smp.h), so a slow AP can no longer arrive under another slot's index or
+     * on another AP's stack. The check stays because it is cheap and it also
+     * catches a trampoline-side identity read that disagrees with the LAPIC
+     * driver's: a mismatch parks dark, never counted or scheduled. */
     {
         uint32_t live = lapic_id();
         if (live != pcpu->lapic_id) {
@@ -258,14 +347,9 @@ void ap_entry(uint32_t cpu_index)
         for (;;)
             __asm__ volatile("cli; hlt");
     }
-    /* PLACED AFTER THE GUARD, not before the hardening above, and the residual
-     * window that leaves is filed rather than papered over. Claiming earlier
-     * would shrink the interval in which a faulting AP resolves to another
-     * CPU's slot -- but it would also let a slow AP that latched a reassigned
-     * cpu_index stamp its id into a slot another CPU is already live on, which
-     * is the failure the guard immediately above exists to prevent. The two
-     * constraints genuinely conflict; the resolution belongs to the per-CPU
-     * identity-authentication work, where both are already written down. */
+    /* PLACED AFTER THE GUARD, which is now cheap to honour: the record claim
+     * in the trampoline already bound this cpu_index to this CPU's live APIC
+     * ID, so the slot written here is this CPU's own (TODO-09-boot S10). */
     pcpu->irq_count  = 0;
     pcpu->preempt_count = 0;
     irql_store(pcpu, PASSIVE_LEVEL);
@@ -362,6 +446,7 @@ void smp_init(void)
     uint32_t trampoline_size;
     uint8_t gdtr[10];
     uint8_t idtr[10];
+    struct ap_rec *recs;
 
     /* Freeze the BSP's hardened register/MSR baseline now -- after all
      * Phase 0/1 xstate mutations (simd_enable_avx512 may have cleared AVX-512
@@ -369,6 +454,16 @@ void smp_init(void)
      * final state, not a recomputed-from-CPUID approximation. Recorded on
      * every platform, including single-CPU, for the register audit trail. */
     cpu_record_bsp_profile();
+
+    /* Every bringup record EMPTY before anything else, on every path (the
+     * uniprocessor one included, so readers of the table never see stale
+     * bytes): the page may hold a previous boot's or the firmware's data, and
+     * a stale ARMED record would be claimable. */
+    {
+        volatile uint8_t *r = (volatile uint8_t *)(uintptr_t)AP_REC_BASE;
+        for (i = 0; i < AP_REC_COUNT * AP_REC_SIZE; i++)
+            r[i] = 0;
+    }
 
 #ifdef KERNEL_TESTS
     /* Read the injection target once, on the BSP, before any AP starts. */
@@ -406,6 +501,7 @@ void smp_init(void)
         cpu_audit_registers(0);
         cpu_audit_log(0);
         cpu_audit_consistency_check(smp_cpu_count());
+        smp_record_bsp_tr();
         /* Arm the barrier here too (TODO-26 S26). This path RETURNS before the
          * SMP registration below, so without this a uniprocessor machine would
          * leave s_rendezvous_ipi_ready clear and smp_rendezvous_begin() would
@@ -441,8 +537,16 @@ void smp_init(void)
     trampoline_dest = (uint8_t *)(uintptr_t)AP_TRAMPOLINE_ADDR;
     trampoline_size = (uint32_t)(ap_trampoline_end - ap_trampoline_start);
 
+    /* The code must end below the shared data it reads: a longer trampoline
+     * would be overwritten by AP_DATA (and the records) below. */
+    if (trampoline_size > (uint32_t)(AP_DATA_BASE - AP_TRAMPOLINE_ADDR)) {
+        klog(LOG_FATAL, "smp", "AP trampoline is %u bytes, overlapping AP_DATA at +0x%x -- no APs started",
+             (uint64_t)trampoline_size, (uint64_t)(AP_DATA_BASE - AP_TRAMPOLINE_ADDR));
+        return;
+    }
     for (i = 0; i < trampoline_size; i++)
         trampoline_dest[i] = ap_trampoline_start[i];
+
 
     klog(LOG_INFO, "smp",
          "Trampoline: %u bytes copied to 0x%x",
@@ -506,18 +610,39 @@ void smp_init(void)
         }
     }
 
-    /* Start each AP */
+    /* ---- Pass 1: prepare every startable AP (TODO-09-boot S10) ----
+     * Each AP gets its logical slot, a guarded kernel stack, its own TSS with
+     * guarded IST stacks, and a bringup record naming its APIC ID. Nothing is
+     * armed yet, so no AP can claim anything; an AP that cannot be fully
+     * prepared is never sent INIT at all. Records are written once and never
+     * reused (struct ap_rec in smp.h). */
+    recs = (struct ap_rec *)(uintptr_t)AP_REC_BASE;
     ap_count = 0;
     for (i = 0; i < cpu_count; i++) {
         const struct cpu_info *ci = acpi_get_cpu_info(i);
         uintptr_t stack_phys;
+        uint64_t stack_top;
+        uint32_t slot;
         int guard_rc;
 
         if (!ci || !ci->enabled || i == bsp_index)
             continue;
+        if (ap_count + 1u >= MAX_CPUS) {
+            klog(LOG_WARN, "smp", "MADT lists more than %u CPUs -- the rest are not started",
+                 (uint64_t)MAX_CPUS);
+            break;
+        }
+        /* Identity is the claim key, so it must be unique: a duplicate (or the
+         * BSP's own ID) would let one CPU match two records. */
+        if ((uint32_t)ci->apic_id == cpu_data[0].lapic_id ||
+            ap_rec_apic_in_use(recs, MAX_CPUS, ci->apic_id)) {
+            klog(LOG_ERROR, "smp", "MADT entry %u repeats APIC ID %u -- not started",
+                 (uint64_t)i, (uint64_t)ci->apic_id);
+            continue;
+        }
 
-        /* Allocate a per-AP kernel stack from PMM (4 pages + 1 guard = 5 pages).
-         * Guard page at the bottom catches stack overflow. */
+        /* Per-AP kernel stack from PMM (4 pages + 1 guard = 5 pages). Guard
+         * page at the bottom catches stack overflow. */
         stack_phys = pmm_alloc_contiguous(AP_STACK_SIZE / 4096 + 1);
         if (stack_phys == 0) {
             klog(LOG_ERROR, "smp", "Failed to allocate stack for AP %u",
@@ -543,51 +668,57 @@ void smp_init(void)
                 pmm_free_contiguous(stack_phys, AP_STACK_SIZE / 4096 + 1);
             continue;
         }
-        stack_phys += 4096;  /* usable stack starts after guard */
+        stack_top = (uint64_t)(stack_phys + 4096u + AP_STACK_SIZE);
 
-        /* Write per-AP shared data */
-        {
-            volatile uint8_t *data =
-                (volatile uint8_t *)(uintptr_t)AP_DATA_BASE;
-
-            /* Stack top (grows down) */
-            *(volatile uint64_t *)(data + AP_OFF_STACK) =
-                (uint64_t)(stack_phys + AP_STACK_SIZE);
-
-            /* CPU index (logical, not MADT index) */
-            ap_count++;
-            *(volatile uint32_t *)(data + AP_OFF_CPUID) = ap_count;
-
-            /* Store stack in per-CPU data for TSS */
-            cpu_data[ap_count].rsp0 =
-                (uint64_t)(stack_phys + AP_STACK_SIZE);
-
-            /* Pre-store this slot's EXPECTED apic_id (TODO-09-boot S10): the AP
-             * validates its live LAPIC ID against this before claiming ONLINE,
-             * so a slow AP that latched a rewritten shared-AP_DATA cpu_index
-             * parks instead of coming online under a mismatched identity. */
-            cpu_data[ap_count].lapic_id = ci->apic_id;
+        /* Its own TSS: rsp0 + guarded IST1-3. Without one the AP would take an
+         * NMI on the TR its INIT left (base 0). */
+        slot = ap_count + 1u;
+        if (!gdt_install_ap_tss(slot, stack_top)) {
+            ap_stack_release(stack_phys);
+            continue;
         }
+        ap_count = slot;
 
-        /* Arm the bringup handshake (TODO-09-boot S10): STARTING is the value
-         * the AP will CAS to ONLINE; published by the smp_mb() below before the
-         * SIPI so the AP observes it. */
-        cpu_data[ap_count].ap_bringup_state = AP_BRINGUP_STARTING;
+        cpu_data[slot].rsp0 = stack_top;
+        /* EXPECTED apic_id: the AP's C identity guard re-checks its live ID
+         * against this, a second net behind the record claim. */
+        cpu_data[slot].lapic_id = ci->apic_id;
+        /* STARTING is the value the AP will CAS to READY. */
+        cpu_data[slot].ap_bringup_state = AP_BRINGUP_STARTING;
 
-        /* Memory fence to ensure all writes are visible before SIPI */
+        /* Cannot fail: slot is fresh (EMPTY since the zeroing above) and
+         * stack_top is non-zero. PREPARED reserves the identity for the
+         * duplicate check on the next MADT entry. */
+        (void)ap_rec_prepare(&recs[slot], ci->apic_id, stack_top);
+    }
+
+    /* ---- Pass 2: INIT every prepared AP, then ONE settle ----
+     * Each target gets its own INIT assert + de-assert (never the broadcast
+     * Init Level De-Assert). An INITed AP waits for SIPI indefinitely, so the
+     * one 10 ms settle measured from the LAST INIT serves all of them, instead
+     * of 10 ms per AP. */
+    smp_mb();
+    for (i = 1; i <= ap_count; i++)
+        lapic_send_init((uint8_t)cpu_data[i].lapic_id);
+    delay_ms(10);
+
+    /* ---- Pass 3: SIPI each AP in turn and resolve it ---- */
+    for (i = 1; i <= ap_count; i++) {
+        uint32_t apic = cpu_data[i].lapic_id;
+        uint32_t ap = i;
+
+        /* Arm LAST: every field the AP reads is already in place, and the
+         * release store publishes them with the state. */
+        __atomic_store_n(&recs[ap].state, AP_REC_ARMED, __ATOMIC_RELEASE);
         smp_mb();
 
-        /* ---- INIT → wait → SIPI → wait → SIPI (retry) ---- */
         klog(LOG_DEBUG, "smp", "Starting AP %u (LAPIC ID=%u)...",
-             (uint64_t)ap_count, (uint64_t)ci->apic_id);
+             (uint64_t)ap, (uint64_t)apic);
 
-        /* Send INIT IPI */
-        lapic_send_init(ci->apic_id);
-        delay_ms(10);       /* 10ms delay after INIT */
-
-        /* Send first SIPI (vector = 0x08 → phys addr 0x8000) */
-        lapic_send_sipi(ci->apic_id, AP_TRAMPOLINE_ADDR >> 12);
-        delay_ms(1);        /* 200µs minimum per Intel spec, use 1ms */
+        /* First SIPI (vector = 0x08 -> phys 0x8000), then the protocol's
+         * 200 us minimum before anything else. */
+        lapic_send_sipi((uint8_t)apic, AP_TRAMPOLINE_ADDR >> 12);
+        smp_delay_us(200);
 
         /* Wait for THIS AP to announce READY (TODO-10 S27). The waited-on signal
          * is the AP's readiness, NOT its membership, because membership is now
@@ -597,25 +728,38 @@ void smp_init(void)
          * 100 ms, then a second SIPI and 50 ms, as before. */
         {
             uint32_t timeout = 100;
-            while (!ap_bringup_is_ready(ap_count) && timeout > 0) {
+            while (!ap_bringup_is_ready(ap) && timeout > 0) {
                 delay_ms(1);
                 timeout--;
             }
         }
 
-        if (!ap_bringup_is_ready(ap_count)) {
+        if (!ap_bringup_is_ready(ap)) {
             /* Retry with second SIPI */
-            lapic_send_sipi(ci->apic_id, AP_TRAMPOLINE_ADDR >> 12);
-            delay_ms(1);
+            lapic_send_sipi((uint8_t)apic, AP_TRAMPOLINE_ADDR >> 12);
+            smp_delay_us(200);
 
             /* Wait again (50ms) */
             {
                 uint32_t timeout = 50;
-                while (!ap_bringup_is_ready(ap_count) && timeout > 0) {
+                while (!ap_bringup_is_ready(ap) && timeout > 0) {
                     delay_ms(1);
                     timeout--;
                 }
             }
+        }
+
+        /* Close the claim window. Winning the revoke means the AP never
+         * claimed its record and now never can: whenever it wakes it finds no
+         * ARMED record for its ID and parks before touching a stack. Losing it
+         * means the AP claimed and is running on its OWN record, so the
+         * verdict below (ready or abandoned) is safe either way. */
+        if (ap_rec_revoke(&recs[ap])) {
+            klog(LOG_WARN, "smp", "AP %u (LAPIC ID=%u) never claimed its bringup record -- not started",
+                 (uint64_t)ap, (uint64_t)apic);
+            __atomic_store_n(&cpu_data[ap].ap_bringup_state,
+                             AP_BRINGUP_ABANDONED, __ATOMIC_RELEASE);
+            continue;
         }
 
 #ifdef KERNEL_TESTS
@@ -625,10 +769,10 @@ void smp_init(void)
          * the waits so the AP really is sitting in READY when we reject it --
          * that is the interesting case (a healthy AP told to park dark), not an
          * AP that simply never arrived. */
-        if (s_inject_abandon_ap && s_inject_abandon_ap == ap_count) {
+        if (s_inject_abandon_ap && s_inject_abandon_ap == ap) {
             klog(LOG_WARN, "smp",
-                 "AP %u abandoned by test_abandon_ap injection", (uint64_t)ap_count);
-            __atomic_store_n(&cpu_data[ap_count].ap_bringup_state,
+                 "AP %u abandoned by test_abandon_ap injection", (uint64_t)ap);
+            __atomic_store_n(&cpu_data[ap].ap_bringup_state,
                              AP_BRINGUP_ABANDONED, __ATOMIC_RELEASE);
             continue;
         }
@@ -641,25 +785,25 @@ void smp_init(void)
          * store that releases the AP. Reversed, the AP could sti and start
          * taking IPIs before its own mask bit existed, which is the
          * live-but-uncounted state this protocol exists to eliminate. */
-        if (smp_bsp_bringup_arbitrate(&cpu_data[ap_count].ap_bringup_state)) {
+        if (smp_bsp_bringup_arbitrate(&cpu_data[ap].ap_bringup_state)) {
             /* Accept the AP only if it actually became a member. Publication
              * can refuse (a slot past MAX_CPUS, or an open stop-the-world
              * round), and accepting past a refusal would release the AP into
              * normal operation carrying no mask bit -- live but uncounted,
              * which is the state the publication order exists to prevent. */
-            if (smp_publish_cpu_online(&cpu_data[ap_count]) == 0) {
-                smp_ap_bringup_accept(&cpu_data[ap_count].ap_bringup_state);
+            if (smp_publish_cpu_online(&cpu_data[ap]) == 0) {
+                smp_ap_bringup_accept(&cpu_data[ap].ap_bringup_state);
             } else {
                 klog(LOG_ERROR, "smp",
                      "AP %u abandoned: online publication refused",
-                     (uint64_t)ap_count);
-                __atomic_store_n(&cpu_data[ap_count].ap_bringup_state,
+                     (uint64_t)ap);
+                __atomic_store_n(&cpu_data[ap].ap_bringup_state,
                                  AP_BRINGUP_ABANDONED, __ATOMIC_RELEASE);
             }
         } else {
             klog(LOG_WARN, "smp",
                  "AP %u abandoned (bringup timeout) -- parked, not counted",
-                 (uint64_t)ap_count);
+                 (uint64_t)ap);
         }
     }
 
@@ -678,6 +822,7 @@ void smp_init(void)
      * loop below from the buffered per_cpu_data. */
     cpu_audit_registers(0);
     cpu_audit_log(0);
+    smp_record_bsp_tr();
 
     /* The DISCOVERED slot count, not the online one: this is what the machine
      * has, and it must not move when a CPU parks later (TODO-10 S21). The live
@@ -690,6 +835,12 @@ void smp_init(void)
                  (uint64_t)i, (uint64_t)cpu_data[i].lapic_id);
             ap_cpu_harden_log(i);
             cpu_audit_log(i);
+            /* Each AP must run on its OWN TSS (rsp0 + IST): a shared or absent
+             * one turns the first NMI on two CPUs into a corrupted stack. */
+            if (cpu_data[i].tr_selector != gdt_tss_selector(i))
+                klog(LOG_ERROR, "smp", "AP %u loaded TR 0x%x, expected 0x%x",
+                     (uint64_t)i, (uint64_t)cpu_data[i].tr_selector,
+                     (uint64_t)gdt_tss_selector(i));
         } else {
             klog(LOG_WARN, "smp", "AP %u did not respond", (uint64_t)i);
         }

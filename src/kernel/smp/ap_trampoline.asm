@@ -15,16 +15,41 @@
 ; protected mode. We use a local GDT with proper 32-bit segments,
 ; then switch to the BSP's GDT after entering long mode.
 ;
-; Shared data area at physical 0x8E00 (trampoline + 0xE00):
+; Shared data area at physical 0x8E00 (trampoline + 0xE00), written once
+; before the first SIPI and never rewritten:
 ;   +0x00  CR3         (uint64_t) BSP's PML4 physical address
-;   +0x08  STACK       (uint64_t) per-AP kernel stack top
 ;   +0x10  GDT_PTR     (10 bytes) GDTR for BSP's GDT
 ;   +0x20  ENTRY       (uint64_t) 64-bit C entry point
-;   +0x28  CPUID       (uint32_t) logical CPU index
 ;   +0x30  IDT_PTR     (10 bytes) IDTR
+;   +0x40  AP_REC[16]  per-target records {apic_id u32, state u32, stack u64}
+;
+; Per-AP values come ONLY from the AP's own record (TODO-09-boot S10). The AP
+; reads its LIVE APIC ID without a stack, claims the record carrying that ID by
+; lock cmpxchg ARMED -> TAKEN, and only then loads that record's stack. Until
+; the claim it touches no stack and no per-AP data, so an AP that stalls at any
+; instruction and wakes after the BSP moved on cannot run on, or corrupt,
+; another AP's stack: a revoked record refuses its claim and the AP parks.
+; The record index is the logical CPU index (handed to ap_entry in edi) and
+; picks the TSS selector 0x28 + 16*index (GDT_TSS_SEL_FOR, gdt.h).
 ; =============================================================================
 
-%define AP_DATA  0x8E00
+%define AP_DATA          0x8E00
+%define AP_REC_BASE      (AP_DATA + 0x40)
+%define AP_REC_SIZE      16
+%define AP_REC_COUNT     16
+%define AP_REC_OFF_APIC  0x00
+%define AP_REC_OFF_STATE 0x04
+%define AP_REC_OFF_STACK 0x08
+%define AP_REC_ARMED     1
+%define AP_REC_TAKEN     2
+%define TSS_SEL_BASE     0x28
+%define TSS_SEL_SHIFT    4              ; stride 16
+
+%define MSR_APIC_BASE    0x1B
+%define APIC_BASE_EN     (1 << 11)
+%define APIC_BASE_EXTD   (1 << 10)
+%define MSR_X2APIC_ID    0x802
+%define XAPIC_ID_REG     0x20
 
 [BITS 16]
 [ORG 0x8000]
@@ -69,6 +94,29 @@ pm_entry:
     mov gs, ax
     mov ss, ax
 
+    ; ---- Live APIC ID into esi, stackless, before paging ----
+    ; Paging is still off, so the xAPIC ID register is read at its physical
+    ; address through the flat 4 GiB segment. In x2APIC mode the MMIO page is
+    ; not decoded and the ID comes from MSR 0x802 instead. An APIC that is
+    ; disabled, or based above 4 GiB, cannot be identified here: park.
+    mov ecx, MSR_APIC_BASE
+    rdmsr
+    test eax, APIC_BASE_EN
+    jz pm_park
+    test eax, APIC_BASE_EXTD
+    jnz .x2apic
+    test edx, edx
+    jnz pm_park
+    and eax, 0xFFFFF000
+    mov esi, [eax + XAPIC_ID_REG]
+    shr esi, 24
+    jmp .have_id
+.x2apic:
+    mov ecx, MSR_X2APIC_ID
+    rdmsr
+    mov esi, eax
+.have_id:
+
     ; ---- Load BSP's CR3 ----
     mov eax, [AP_DATA + 0x00]
     mov cr3, eax
@@ -95,6 +143,12 @@ pm_entry:
     ; (64-bit code segment: L=1, D=0 -- correct for long mode)
     jmp 0x18:lm_entry
 
+    ; Stackless park for an AP that could not identify itself.
+pm_park:
+    cli
+    hlt
+    jmp pm_park
+
 [BITS 64]
 lm_entry:
     ; Now in 64-bit long mode with temporary GDT.
@@ -109,6 +163,33 @@ lm_entry:
     mov gs, ax
     mov ss, ax
 
+    ; ---- Claim this AP's own record (still stackless) ----
+    ; edi = record index = logical CPU. A record matches only on the live ID
+    ; read above AND only while ARMED; the cmpxchg is the single point where
+    ; this AP and the BSP's revoke race, and exactly one of them wins.
+    xor edi, edi
+    mov ebx, AP_REC_BASE
+.scan:
+    cmp dword [rbx + AP_REC_OFF_APIC], esi
+    jne .next
+    mov eax, AP_REC_ARMED
+    mov edx, AP_REC_TAKEN
+    lock cmpxchg dword [rbx + AP_REC_OFF_STATE], edx
+    je .claimed
+.next:
+    add ebx, AP_REC_SIZE
+    inc edi
+    cmp edi, AP_REC_COUNT
+    jb .scan
+    jmp .halt                       ; no armed record for this ID: park
+
+.claimed:
+    ; Private stack BEFORE the first push: nothing below this line shares a
+    ; stack with any other AP.
+    mov rsp, [rbx + AP_REC_OFF_STACK]
+    test rsp, rsp
+    jz .halt
+
     ; Reload CS with BSP's code selector (0x08) via far return
     push 0x08                       ; BSP's CS selector
     lea rax, [rel .bsp_cs_loaded]
@@ -119,12 +200,14 @@ lm_entry:
     ; Load IDT from shared data
     lidt [AP_DATA + 0x30]
 
-    ; Set up per-AP stack
-    mov rsp, [AP_DATA + 0x08]
+    ; This CPU's own TSS (rsp0 + IST1-3), before any C code can take an NMI.
+    mov eax, edi
+    shl eax, TSS_SEL_SHIFT
+    add eax, TSS_SEL_BASE
+    ltr ax
 
-    ; Load CPU index into rdi (first arg to C entry)
-    xor rdi, rdi
-    mov edi, [AP_DATA + 0x28]
+    ; CPU index (the record index) stays in edi: first arg to ap_entry.
+    ; The upper half is cleared by the 32-bit write above (xor edi, edi / inc).
 
     ; Jump to C entry point
     mov rax, [AP_DATA + 0x20]
