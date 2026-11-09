@@ -965,7 +965,7 @@ Found by the §24 parity pass against systemd-boot (https://www.freedesktop.org/
 
 **Design:** [boot menu](../../docs/design/shell.md#boot-menu)
 
-- [x] `LoaderConfigTimeout` (systemd GUID) is honoured; `LoaderFeatures` advertises bit 0 (`0x11F`). Rank and reasons in `todo/answers.md` Q35.
+- [x] `LoaderConfigTimeout` (systemd GUID) is honoured; `LoaderFeatures` advertises bit 0 and bit 13, menu-disable words (`0x211F`). Rank and reasons in `todo/answers.md` Q35.
   - `boot_menu_timeout_resolve()` in `boot_policy.c` ranks the one-shot, then `LoaderConfigTimeout`, then the default entry's `timeout_override`, then 5 s.
   - `boot_loader_timeout_parse()` in `loader_vars.c` reads decimal seconds and `menu-force` / `menu-hidden` / `menu-disabled` for both variables; `boot_loader_config_timeout_read()` never deletes, and a malformed value is left for its owner.
   - `menu-disabled` skips the menu and the F11 probe; `menu-hidden` skips it and F11 still opens it. A persistent or entry `0` hides, a one-shot `0` waits for a key. A countdown above 60 s is clamped to the watchdog window and serial says so (`[BOOT] menu: timeout Ns from <source>`).
@@ -992,6 +992,10 @@ Found by the §24 parity pass against systemd-boot (https://www.freedesktop.org/
 > - Mutation controls: swapping the one-shot and `LoaderConfigTimeout` ranks fails 3 tests, an editor insert that does not move the terminator fails 5, and writing `menu-hide` fails 2.
 > - The ConOut editor line and the GOP field are proven by reading the code; serial sees the accepted text, not the drawing. The ConOut field is one row from `QueryMode`'s width, scrolled by `boot_menu_edit_cols_start()`, with the console cursor on the caret; Enter is refused, and the edit cancelled, when the last paint did not reach the console or the cursor cannot be shown, so a failed write can never boot text the user did not see. The `bootx64.c` paint functions call firmware and have no host harness, so that refusal has no unit test.
 > - The kernel halts on an unknown boot key, so a mistyped edit stops that boot with `[CONF] unknown boot key`; the next boot has the entry's own options again.
+> - Secure Boot needs no editor rule of its own: `allow_editor` is off unless an entry opts in, a UKI is refused, and an edited `nointegritychecks=1` or `testsigning=1` cannot relax code integrity while Secure Boot is on (`ci_policy.c:49` relaxes only when Secure Boot is known off).
+> - Review fixes: `LoaderFeatures` bit 13 (`MENU_DISABLE`) is advertised, without which `bootctl` writes `menu-force` as `4294967295`, and that number is now read as `menu-force` too; a keyboard that returns only device errors for 1 s restarts a 5 s countdown (`boot_menu_input_fault_step()`), so a dead keyboard after a key press cannot hold the boot forever; the kernel logs a bounded copy of the loader's command line and warns on an out-of-range `cmdline_source`.
+> **Verified:** 2026-11-09 | commit `75e4d3e57` + review fixes | 5/5 items | build OK | SUITE=boot 7902 kernel + 17 user tests PASS | `SMOKE_MENU=default` and `saved` PASS | mutation controls (rank, editor terminator, timeout word, fault reset) each fail
+> **Quality reviewed:** 2026-11-09 | Codex 6x (adversarial, consistency x2, perf, re-adversarial x2) + boot-quality-auditor + kernel-quality-auditor + parity-research-analyst | 2M+5L fixed, 0 open | scope: boot-code-quality, kernel-code-quality
 
 ## OS Comparison
 

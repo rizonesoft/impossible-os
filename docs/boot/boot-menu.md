@@ -21,7 +21,9 @@ The countdown comes from the first of these that is set: `LoaderConfigTimeoutOne
 
 ### One-off options
 
-The `e` editor starts from the entry's own `cmdline` when it has one, else boot.conf's. Printable ASCII inserts at the caret, Backspace and Delete remove, Left, Right, Home and End move, up to 255 characters. After the entry passes the kind validator, the loader writes the text into `boot_config.cmdline` and sets `boot_config.cmdline_source` to 2 (edited); an entry's own non-empty `cmdline` sets 1, and boot.conf's leaves 0. The kernel logs it as `CONF: cmdline source=edited: "..."`, at warning level so an edited boot stands out. An edit is applied only to the entry it was typed for, and only when that entry passes the kind validator; a rejected entry falls back with boot.conf's options.
+The `e` editor starts from the entry's own `cmdline` when it has one, else boot.conf's. Printable ASCII inserts at the caret, Backspace and Delete remove, Left, Right, Home and End move, up to 255 characters. After the entry passes the kind validator, the loader writes the text into `boot_config.cmdline` and sets `boot_config.cmdline_source` to 2 (edited); an entry's own non-empty `cmdline` sets 1, and boot.conf's leaves 0. The kernel logs it as `CONF: cmdline source=edited: "..."`, at warning level so an edited boot stands out. An edit is applied only to the entry it was typed for, and only when that entry passes the kind validator; a rejected entry falls back with boot.conf's options. Enter is refused, and the edit cancelled, when the console could not show the text or its caret.
+
+A keyboard that returns only device errors for a second restarts a 5 s countdown that boots the highlighted entry, so a keyboard that fails after a key press (which stops the countdown) cannot hold the machine at the menu.
 
 `SMOKE_MENU=1 bash scripts/test-smoke.sh` stages a two-entry store with a 2-second countdown, so a real boot draws the menu, repaints it and auto-boots the default. It is the `store menu` leg of `scripts/test-smoke-matrix.sh`.
 

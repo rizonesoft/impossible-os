@@ -87,17 +87,18 @@ semantic; not advertising means the capability is absent. Lying about
 capability bits would break `bootctl status` reports and one-shot /
 boot-counting behavior.
 
-| Bit | Upstream semantic | Impossible OS | Notes |
-|---:|---|:---:|---|
-| 0 | `LoaderConfigTimeout` writable from OS | **advertised** | Read every boot, ranked below the one-shot and above the entry's `timeout_override`; the menu's `t`/`T` keys write it. Decimal seconds, `menu-force`, `menu-hidden` and `menu-disabled` are all honoured; a countdown is capped at 60 s. |
-| 1 | `LoaderConfigTimeoutOneShot` honored | **advertised** | Bootloader reads + deletes per-boot. |
-| 2 | `LoaderEntryDefault` writable from OS | **advertised** | Read every boot; the menu's `d` key writes it. Ranks above the lowest `sort_key`. |
-| 3 | `LoaderEntryOneShot` honored | **advertised** | Bootloader reads + deletes per-boot. |
-| 4 | Boot counting (BLS tries=/done=) | **advertised** | Counter protocol from boot-entry §5. |
-| 5 | XBOOTLDR partition | **not advertised** | We do not support the XBOOTLDR partition. |
-| 8 | `sort-key` field of the Boot Loader Specification | **advertised** | The menu and `LoaderEntries` use the full BLS display order (see the [entry schema](boot-entry-schema.md#display-order)). |
+| Bit | Upstream semantic                                 |   Impossible OS    | Notes                                                                                                                                                                                                                                    |
+| --: | ------------------------------------------------- | :----------------: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|   0 | `LoaderConfigTimeout` writable from OS            |   **advertised**   | Read every boot, ranked below the one-shot and above the entry's `timeout_override`; the menu's `t`/`T` keys write it. Decimal seconds, `menu-force`, `menu-hidden` and `menu-disabled` are all honoured; a countdown is capped at 60 s. |
+|   1 | `LoaderConfigTimeoutOneShot` honored              |   **advertised**   | Bootloader reads + deletes per-boot.                                                                                                                                                                                                     |
+|   2 | `LoaderEntryDefault` writable from OS             |   **advertised**   | Read every boot; the menu's `d` key writes it. Ranks above the lowest `sort_key`.                                                                                                                                                        |
+|   3 | `LoaderEntryOneShot` honored                      |   **advertised**   | Bootloader reads + deletes per-boot.                                                                                                                                                                                                     |
+|   4 | Boot counting (BLS tries=/done=)                  |   **advertised**   | Counter protocol from boot-entry §5.                                                                                                                                                                                                     |
+|   5 | XBOOTLDR partition                                | **not advertised** | We do not support the XBOOTLDR partition.                                                                                                                                                                                                |
+|   8 | `sort-key` field of the Boot Loader Specification |   **advertised**   | The menu and `LoaderEntries` use the full BLS display order (see the [entry schema](boot-entry-schema.md#display-order)).                                                                                                                |
+|  13 | `menu-disabled` and the other timeout words       |   **advertised**   | `bootctl set-timeout` writes `menu-force`, `menu-hidden` and `menu-disabled` as words only when this bit is set.                                                                                                                         |
 
-The published bitmap is exactly `(1<<0) | (1<<1) | (1<<2) | (1<<3) | (1<<4) | (1<<8) = 0x11F`.
+The published bitmap is exactly `(1<<0) | (1<<1) | (1<<2) | (1<<3) | (1<<4) | (1<<8) | (1<<13) = 0x211F`. Bit 13 tells `bootctl set-timeout` it may write `menu-force`, `menu-hidden` and `menu-disabled` as words; the loader also reads `4294967295` as `menu-force`, the number an older `bootctl` writes.
 
 ## Impossible OS extension features
 

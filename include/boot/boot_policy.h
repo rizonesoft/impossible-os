@@ -577,6 +577,15 @@ int boot_menu_edit_init(boot_menu_edit_t *e, const char *initial);
 #define BOOT_MENU_EDIT_KEY_CHANGED 1u   /* text or cursor moved: repaint */
 #define BOOT_MENU_EDIT_KEY_ACCEPT  2u   /* Enter: boot with this text */
 #define BOOT_MENU_EDIT_KEY_CANCEL  3u   /* Esc: drop the edit */
+/* A keyboard that reports only device errors this long is treated as gone:
+ * the menu restarts its countdown so the boot cannot wait for a key forever
+ * while the watchdog keeps being refreshed. */
+#define BOOT_MENU_INPUT_FAULT_MS 1000u
+
+/* Account one poll of `tick_ms`: returns the new run of consecutive device
+ * errors in ms, reset to 0 by any other result and saturating at the limit. */
+unsigned int boot_menu_input_fault_step(unsigned int fault_ms, int device_error, unsigned int tick_ms);
+
 /* The text console's version of the field window: the first character to
  * show in a field `width` cells wide so the cursor cell (which may sit one
  * past the text) stays inside it, moving from the previous `start` only as

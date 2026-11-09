@@ -7025,7 +7025,16 @@ static unsigned int boot_menu_edit_run(const boot_entries_parse_result_t *parse,
         }
         if (gST && gST->ConIn && gST->ConIn->ReadKeyStroke) {
             EFI_INPUT_KEY key;
-            if (!EFI_ERROR(gST->ConIn->ReadKeyStroke(gST->ConIn, &key))) {
+            EFI_STATUS ks = gST->ConIn->ReadKeyStroke(gST->ConIn, &key);
+            if (ks == EFI_DEVICE_ERROR) {
+                /* A keyboard that has failed cannot finish the edit, and the
+                 * watchdog refresh above would keep the machine here forever. */
+                if (text_console)
+                    boot_menu_edit_conout_end();
+                serial_early_print("[BOOT] menu: e -- keyboard error; edit cancelled\n");
+                return BOOT_MENU_NOTICE_EDIT_CANCELLED;
+            }
+            if (!EFI_ERROR(ks)) {
                 unsigned int r = boot_menu_edit_key(&g_menu_edit, key.ScanCode, key.UnicodeChar);
                 if (r == BOOT_MENU_EDIT_KEY_CHANGED) {
                     shown = boot_menu_paint_edit(gop_fit, e, &start);
@@ -7037,7 +7046,7 @@ static unsigned int boot_menu_edit_run(const boot_entries_parse_result_t *parse,
                     return BOOT_MENU_NOTICE_EDIT_CANCELLED;
                 } else if (r == BOOT_MENU_EDIT_KEY_ACCEPT) {
                     UINTN k = 0;
-                    while (e->id[k] && k < sizeof(g_menu_edit_entry) - 1u) {
+                    while (k < sizeof(g_menu_edit_entry) - 1u && e->id[k]) {
                         g_menu_edit_entry[k] = e->id[k];
                         k++;
                     }
@@ -7137,6 +7146,7 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
      * keeps the boot-side watchdog window from trailing in. */
     watchdog_reset();
     unsigned int last_wd_reset_ms = 0;
+    unsigned int input_fault_ms = 0;   /* consecutive ReadKeyStroke device errors */
 
     while (counting_down ? (elapsed_ms < countdown_ms) : 1) {
         if (elapsed_ms - last_wd_reset_ms >= 10000u) {
@@ -7148,6 +7158,16 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
         if (gST && gST->ConIn && gST->ConIn->ReadKeyStroke) {
             EFI_INPUT_KEY key;
             EFI_STATUS rs = gST->ConIn->ReadKeyStroke(gST->ConIn, &key);
+            input_fault_ms = boot_menu_input_fault_step(input_fault_ms, rs == EFI_DEVICE_ERROR, 50u);
+            if (input_fault_ms >= BOOT_MENU_INPUT_FAULT_MS && !counting_down) {
+                /* No key can arrive, so wait the default time and boot the
+                 * highlighted entry rather than hold the machine here. */
+                counting_down = 1;
+                countdown_ms = elapsed_ms + BOOT_MENU_DEFAULT_TIMEOUT_S * 1000u;
+                last_seconds_logged = BOOT_MENU_DEFAULT_TIMEOUT_S;
+                dirty = 1;
+                serial_early_print("[BOOT] menu: keyboard error -- countdown restarted\n");
+            }
             if (!EFI_ERROR(rs)) {
                 /* Only ACTIONABLE keys cancel the countdown. Stray
                  * non-action keys (printable chars, modifier ghost
@@ -7826,6 +7846,8 @@ static const EFI_GUID g_loader_systemd_guid =
 #define LOADER_FEATURE_BOOT_COUNTING           (1ULL << 4)
 #define LOADER_FEATURE_XBOOTLDR                (1ULL << 5)  /* XBOOTLDR partition -- NOT advertised */
 #define LOADER_FEATURE_SORT_KEY                (1ULL << 8)  /* full BLS order: bad last, sort-key, version */
+#define LOADER_FEATURE_MENU_DISABLE            (1ULL << 13) /* menu-force/-hidden/-disabled words honoured;
+                                                              * bootctl writes them only when this is set */
 /* We advertise: ConfigTimeout + ConfigTimeoutOneShot + EntryDefault + EntryOneShot + BootCounting + SortKey */
 #define LOADER_FEATURES_PUBLISHED \
     (LOADER_FEATURE_CONFIG_TIMEOUT \
@@ -7833,7 +7855,8 @@ static const EFI_GUID g_loader_systemd_guid =
      | LOADER_FEATURE_ENTRY_DEFAULT \
      | LOADER_FEATURE_ENTRY_ONESHOT \
      | LOADER_FEATURE_BOOT_COUNTING \
-     | LOADER_FEATURE_SORT_KEY)
+     | LOADER_FEATURE_SORT_KEY \
+     | LOADER_FEATURE_MENU_DISABLE)
 
 /* Firmware adapter for include/boot/loader_vars.h: the publisher is pure C so
  * the kernel boot tests run it against an in-memory store; this is the only
@@ -7941,7 +7964,7 @@ static void loader_read_config_timeout(UINT32 *kind, UINT32 *seconds)
         *kind = (UINT32)k;
         *seconds = (UINT32)v;
     } else if (r == BOOT_LOADER_DEFAULT_UNUSABLE) {
-        serial_early_print("[BOOT] loader-vars: LoaderConfigTimeout unusable -- ignored\n");
+        serial_early_print("[BOOT] loader-vars: LoaderConfigTimeout malformed or unreadable -- ignored\n");
     }
 }
 
@@ -8127,7 +8150,7 @@ static void boot_policy_apply_cmdline(const char *entry_id)
     /* Both sources are capped at BOOT_ENTRIES_MAX_PATH_LEN (255), which
      * fits cmdline[BOOT_CONF_CMDLINE_MAX]; the bound below is the field's. */
     UINTN n = 0;
-    while (text[n] && n < BOOT_CONF_CMDLINE_MAX - 1u) {
+    while (n < BOOT_CONF_CMDLINE_MAX - 1u && text[n]) {
         g_boot_info_ptr->config.cmdline[n] = text[n];
         n++;
     }

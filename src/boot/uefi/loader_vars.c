@@ -418,6 +418,9 @@ unsigned int boot_loader_timeout_parse(const unsigned short *text, unsigned int 
     if (lv_text_is(text, n, "menu-force"))    return BOOT_LOADER_TIMEOUT_FORCE;
     if (lv_text_is(text, n, "menu-hidden"))   return BOOT_LOADER_TIMEOUT_HIDDEN;
     if (lv_text_is(text, n, "menu-disabled")) return BOOT_LOADER_TIMEOUT_DISABLED;
+    /* bootctl without LoaderFeatures bit 13, and systemd-boot itself, spell
+     * menu-force as UINT32_MAX in decimal. */
+    if (lv_text_is(text, n, "4294967295"))    return BOOT_LOADER_TIMEOUT_FORCE;
     /* Cap checked before the multiply, so no digit string can wrap. */
     for (i = 0; i < n; i++) {
         unsigned int d = (unsigned int)text[i] - (unsigned int)'0';

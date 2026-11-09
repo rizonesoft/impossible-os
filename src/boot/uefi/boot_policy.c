@@ -843,6 +843,15 @@ int boot_menu_edit_init(boot_menu_edit_t *e, const char *initial)
     return whole;
 }
 
+unsigned int boot_menu_input_fault_step(unsigned int fault_ms, int device_error, unsigned int tick_ms)
+{
+    if (!device_error)
+        return 0u;
+    if (tick_ms >= BOOT_MENU_INPUT_FAULT_MS || fault_ms >= BOOT_MENU_INPUT_FAULT_MS - tick_ms)
+        return BOOT_MENU_INPUT_FAULT_MS;
+    return fault_ms + tick_ms;
+}
+
 unsigned int boot_menu_edit_cols_start(unsigned int len, unsigned int cursor, unsigned int start,
                                        unsigned int width)
 {

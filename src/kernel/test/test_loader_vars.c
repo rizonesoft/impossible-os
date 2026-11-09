@@ -844,6 +844,9 @@ static void test_loader_vars_config_timeout(void)
       && mv_parse("menu-hidden", &secs) == BOOT_LOADER_TIMEOUT_HIDDEN
       && mv_parse("menu-disabled", &secs) == BOOT_LOADER_TIMEOUT_DISABLED;
     TEST_ASSERT(ok, "parse: the three Boot Loader Interface words");
+    ok = mv_parse("4294967295", &secs) == BOOT_LOADER_TIMEOUT_FORCE && secs == 0u
+      && mv_parse("4294967294", &secs) == 0u && mv_parse("04294967295", &secs) == 0u;
+    TEST_ASSERT(ok, "parse: UINT32_MAX is menu-force (systemd-boot's numeric form), its neighbours are not");
     ok = mv_parse("3601", &secs) == 0u && mv_parse("4294967296", &secs) == 0u
       && mv_parse("", &secs) == 0u && mv_parse("5 ", &secs) == 0u && mv_parse("menu-forced", &secs) == 0u
       && mv_parse("Menu-Force", &secs) == 0u && mv_parse("menu", &secs) == 0u && mv_parse("-1", &secs) == 0u;

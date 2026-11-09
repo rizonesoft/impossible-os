@@ -391,9 +391,21 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
            g_boot_info.config.config_found ? "" : " (defaults)");
     /* An edited command line was typed at the boot menu for this boot only:
      * say so where an operator reading the log looks for the arguments. */
-    klog(g_boot_info.config.cmdline_source == BOOT_CMDLINE_SOURCE_EDITED ? LOG_WARN : LOG_INFO, "CONF",
-         "cmdline source=%s: \"%s\"", boot_cmdline_source_name(g_boot_info.config.cmdline_source),
-         g_boot_info.config.cmdline);
+    /* The field is loader-filled: copy it with a bound so an unterminated
+     * value is cut at the field, not read past it. An out-of-range source is
+     * a malformed handoff and is logged as a warning too. */
+    {
+        char cl[BOOT_CONF_CMDLINE_MAX + 1u];
+        uint32_t n = 0;
+        uint8_t src = g_boot_info.config.cmdline_source;
+        while (n < BOOT_CONF_CMDLINE_MAX && g_boot_info.config.cmdline[n]) {
+            cl[n] = g_boot_info.config.cmdline[n];
+            n++;
+        }
+        cl[n] = 0;
+        klog((src == BOOT_CMDLINE_SOURCE_EDITED || src > BOOT_CMDLINE_SOURCE_MAX) ? LOG_WARN : LOG_INFO, "CONF",
+             "cmdline source=%s: \"%s\"", boot_cmdline_source_name(src), cl);
+    }
 
     /* --- UEFI runtime services (SetVirtualAddressMap + RT props) --- */
     POST16(POST16_UEFI_RT);

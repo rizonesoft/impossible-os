@@ -683,6 +683,21 @@ static void test_menu_edit_allowed(void)
                    "NULL refused");
 }
 
+/* A run of keyboard device errors is counted to its limit; anything else resets it. */
+static void test_menu_input_fault(void)
+{
+    unsigned int f = 0;
+    for (unsigned int i = 0; i < 19u; i++)
+        f = boot_menu_input_fault_step(f, 1, 50u);
+    TEST_ASSERT_EQ(f, 950u, "19 errored 50 ms polls: 950 ms, still under the limit");
+    TEST_ASSERT_EQ(boot_menu_input_fault_step(f, 1, 50u), BOOT_MENU_INPUT_FAULT_MS, "the 20th reaches it");
+    TEST_ASSERT_EQ(boot_menu_input_fault_step(BOOT_MENU_INPUT_FAULT_MS, 1, 50u), BOOT_MENU_INPUT_FAULT_MS,
+                   "saturates, never wraps");
+    TEST_ASSERT_EQ(boot_menu_input_fault_step(f, 0, 50u), 0u, "a key or an empty poll resets the run");
+    TEST_ASSERT_EQ(boot_menu_input_fault_step(0u, 1, 0xFFFFFFFFu), BOOT_MENU_INPUT_FAULT_MS,
+                   "a huge tick cannot overflow the sum");
+}
+
 /* The text console's field window keeps the cursor cell inside it. */
 static void test_menu_edit_cols_start(void)
 {
@@ -2208,6 +2223,8 @@ void test_register_boot_policy(void)
                             test_menu_timeout_step, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: e allowed only on split/safe entries that ask",
                             test_menu_edit_allowed, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: keyboard device errors restart the countdown",
+                            test_menu_input_fault, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: text-console editor field window",
                             test_menu_edit_cols_start, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: one-line options editor",
