@@ -673,8 +673,10 @@ SHADOW_NAME=bootentries.lkg.json
 # moves to the second entry, the leg then waits past the countdown deadline to
 # prove the keypress stopped it, and Enter boots the second entry.
 # SMOKE_MENU=default moves to the second entry, opens and closes help, presses
-# d to make it the saved default and boots it; SMOKE_MENU=saved is that
-# machine's next boot, which must pick the saved entry on its own.
+# d to make it the saved default, t to save a 5 s timeout, and e to boot it
+# once with typed options;
+# SMOKE_MENU=saved is that machine's next boot, which must pick the saved entry
+# on its own and count down from the saved timeout.
 MENU="${SMOKE_MENU:-0}"
 case "$MENU" in 0|1|keys|default|saved) ;; *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_MENU must be 0, 1, keys, default or saved (got: $MENU)${NC}"; exit 1 ;; esac
 if [ "$MENU" != "0" ]; then VALID_STORE=1; fi
@@ -774,8 +776,9 @@ entries = [{
 if sys.argv[2] == "2":
     # A short per-entry countdown on the default keeps the menu leg fast.
     entries[0]["timeout_override"] = int(sys.argv[3])
+    # smoke-alt allows the menu's options editor, so the default leg can edit it.
     entries.append({
-        "id": "smoke-alt", "title": "Smoke alternate", "kind": "split", "flags": ["active"],
+        "id": "smoke-alt", "title": "Smoke alternate", "kind": "split", "flags": ["active", "allow_editor"],
         "sort_key": "01", "machine_id": "", "policy_tags": [],
         "payload": {"kernel": "\\boot\\kernel.exe"}})
 store = {"schema_version": 1, "crc32": "0x00000000", "entries": entries}
@@ -1035,8 +1038,9 @@ for i in $(seq 1 "$TIMEOUT_SEC"); do
             fi ;;
         esac
     fi
-    # Default leg: Down, help open and closed, d, then Enter. Each key waits for
-    # the serial line of the one before, so none races the menu.
+    # Default leg: Down, help open and closed, d, t (the 4 s countdown becomes a
+    # saved 5 s), e with "test=0" typed, then Enter boots the edit. Each key
+    # waits for the serial line of the one before, so none races the menu.
     if [ "$MENU" = "default" ]; then
         step_key=""; step_next=""
         case "$KEYS_STATE" in
@@ -1049,7 +1053,19 @@ for i in $(seq 1 "$TIMEOUT_SEC"); do
         wait_close) grep -qF '[BOOT] menu: help closed' "$STRIPPED_LOG" 2>/dev/null \
                        && { step_key=d; step_next=wait_saved; } ;;
         wait_saved) grep -qF '[BOOT] menu: d -- saved default smoke-alt' "$STRIPPED_LOG" 2>/dev/null \
-                       && { step_key=ret; step_next=done; } ;;
+                       && { step_key=t; step_next=wait_timeout; } ;;
+        wait_timeout) grep -qF '[BOOT] menu: t -- LoaderConfigTimeout 5s' "$STRIPPED_LOG" 2>/dev/null \
+                       && { step_key=e; step_next=wait_edit; } ;;
+        wait_edit) if grep -qF '[BOOT] menu: e -- editing smoke-alt' "$STRIPPED_LOG" 2>/dev/null; then
+                       # Type "test=0": a known key at its smoke value, since an
+                       # unknown boot key halts the kernel. The editor polls
+                       # every 50 ms, so the keys are spaced.
+                       for k in t e s t equal 0; do
+                           monitor_sendkey "$k" || { BOOT_FAILED=true; FAIL_REASON="QEMU monitor unreachable for sendkey $k"; break 2; }
+                           sleep 0.3
+                       done
+                       step_key=ret; step_next=done
+                   fi ;;
         esac
         if [ -n "$step_key" ]; then
             if ! monitor_sendkey "$step_key"; then
@@ -1671,12 +1687,24 @@ elif [ "$BOOT_PASSED" = true ]; then
             grep -E "\[BOOT\] menu" "$STRIPPED_LOG" 2>/dev/null | head -10
             exit 1
         fi
-        if ! grep -qF '[BOOT] menu: Enter -- boot selected' "$STRIPPED_LOG" 2>/dev/null; then
-            echo -e "${RED}SMOKE TEST FAILED: the default leg did not boot through Enter${NC}"
+        for want in '[BOOT] menu: e -- options for smoke-alt accepted: "test=0"' \
+                    '[BOOT] policy: cmdline edited at the menu: "test=0"' \
+                    'CONF: cmdline source=edited: "test=0"' \
+                    'entry="smoke-alt" cmdline=edited'; do
+            if ! grep -qF -- "$want" "$STRIPPED_LOG" 2>/dev/null; then
+                echo -e "${RED}SMOKE TEST FAILED: the edited options did not reach the kernel: $want${NC}"
+                grep -E "menu: e --|cmdline" "$STRIPPED_LOG" 2>/dev/null | head -6
+                exit 1
+            fi
+        done
+        if ! grep -qF '[BOOT] menu: timeout 4s from timeout_override' "$STRIPPED_LOG" 2>/dev/null; then
+            echo -e "${RED}SMOKE TEST FAILED: the default leg's countdown did not come from the entry${NC}"
+            grep -F "[BOOT] menu: timeout" "$STRIPPED_LOG" 2>/dev/null | head -2
             exit 1
         fi
     fi
-    # The saved leg's menu must open on the saved entry, from the variable.
+    # The saved leg's menu must open on the saved entry, from the variable,
+    # with the saved timeout and without the previous boot's one-off edit.
     if [ "$MENU" = "saved" ]; then
         # The first boot's kernel marked smoke-alt good on its try counter; this
         # loader must spend that mark on exactly that counter before it decides.
@@ -1687,6 +1715,8 @@ elif [ "$BOOT_PASSED" = true ]; then
                     '[BOOT] loader-vars: saved default smoke-alt' \
                     'selected="smoke-alt" kind=0 rejected=0 via=saved-default' \
                     '[BOOT] menu: 2 entries, selected="smoke-alt"' \
+                    '[BOOT] menu: timeout 5s from LoaderConfigTimeout' \
+                    'entry="smoke-alt" cmdline=boot.conf' \
                     '[BOOT] menu: countdown expired -- auto-selecting default'; do
             if ! grep -qF "$want" "$STRIPPED_LOG" 2>/dev/null; then
                 echo -e "${RED}SMOKE TEST FAILED: saved-default line missing: $want${NC}"

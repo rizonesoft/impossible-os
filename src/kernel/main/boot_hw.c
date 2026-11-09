@@ -389,6 +389,11 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
            g_boot_info.config.splash_timeout, g_boot_info.config.heartbeat,
            g_boot_info.config.postcode, g_boot_info.config.test,
            g_boot_info.config.config_found ? "" : " (defaults)");
+    /* An edited command line was typed at the boot menu for this boot only:
+     * say so where an operator reading the log looks for the arguments. */
+    klog(g_boot_info.config.cmdline_source == BOOT_CMDLINE_SOURCE_EDITED ? LOG_WARN : LOG_INFO, "CONF",
+         "cmdline source=%s: \"%s\"", boot_cmdline_source_name(g_boot_info.config.cmdline_source),
+         g_boot_info.config.cmdline);
 
     /* --- UEFI runtime services (SetVirtualAddressMap + RT props) --- */
     POST16(POST16_UEFI_RT);

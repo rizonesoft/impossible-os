@@ -421,3 +421,15 @@ The menu's `d` key and `bootctl set-default` both write `LoaderEntryDefault`. Op
 - A value an older build of this loader left as a per-boot report is honoured like any other: it names the entry that was the default when written, and `d` on that entry clears it. Only development machines ran those builds.
 
 A: (run decision, 2026-11-09) A with report 2. Reversal cost: moving the ladder step is a few lines in `boot_policy_decide` plus its tests; adding a distinct reason later needs the kernel to advertise that it accepts it first (a capability bit), then the reason, the audit event mapping and the decoders in `boot_audit.c` and `bootx64.c`.
+
+## Q35 (01-boot-platform/TODO-07 §25): how do `LoaderConfigTimeout`, an entry's `cmdline` and the `e` editor rank against what the loader already had?
+
+Before this section the countdown came from the one-shot, else the default entry's `timeout_override`, else 5 s, and an entry's payload `cmdline` was validated but never used (the kernel always got boot.conf's `cmdline=`). Options for the timeout: (A) one-shot, then `LoaderConfigTimeout`, then `timeout_override`, then 5 s; (B) `timeout_override` above `LoaderConfigTimeout`. Options for the command line: (1) the edit, else a non-empty entry `cmdline`, else boot.conf; (2) boot.conf always wins, the entry only fills an empty boot.conf value.
+
+- **A:** matches systemd-boot, where the EFI variable outranks the loader configuration and the one-shot outranks both; `bootctl set-timeout` and the `t`/`T` keys then do what they say. `timeout_override` stays as the store's own default for machines nobody has configured. `menu-disabled` is kept distinct from `menu-hidden` (it also ignores F11), and no key ever writes it, so a key press can never lock the keyboard out of the menu.
+- **B:** a store entry would silently defeat `bootctl set-timeout`.
+- **1:** an entry's `cmdline` is the systemd Type 1 `options` line, which is the entry's whole point; boot.conf remains the default for entries that set none (the seed store's entries set `""`, so nothing changes on a default install). The kernel is told which source won through `boot_config.cmdline_source` (offset 28, the old reserved bytes, no version bump; an older loader leaves 0, which means boot.conf). The editor is per entry (`allow_editor`), for split and safe entries only; a UKI's options are part of its signed image and are refused.
+- **2:** the entry field would stay dead weight, and the editor would need its own precedence rule.
+- A `LoaderConfigTimeout` an older build of this loader left as its per-boot report (Q32) is now honoured as a setting. Only development machines ran those builds, and `t`/`T` or `bootctl set-timeout` replace it.
+
+A: (run decision, 2026-11-09) A with 1. Reversal cost: the timeout rank is one ordered pair of calls in `boot_menu_timeout_resolve()` plus its test; dropping the entry `cmdline` is one branch in `boot_policy_apply_cmdline()` in `bootx64.c`; `cmdline_source` can stay as a reported field either way. No data is lost by either choice.

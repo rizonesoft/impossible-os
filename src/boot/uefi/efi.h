@@ -249,17 +249,30 @@ typedef EFI_STATUS (EFIAPI *EFI_TEXT_CLEAR_SCREEN)(
     struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This
 );
 
+/* SIMPLE_TEXT_OUTPUT_MODE (UEFI 2.10 section 12.4): the console's current
+ * mode and cursor. Mode is the number QueryMode takes. */
+typedef struct {
+    INT32   MaxMode;
+    INT32   Mode;
+    INT32   Attribute;
+    INT32   CursorColumn;
+    INT32   CursorRow;
+    BOOLEAN CursorVisible;
+} SIMPLE_TEXT_OUTPUT_MODE;
+
 typedef struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL {
     VOID                   *Reset;
     EFI_TEXT_STRING          OutputString;
     VOID                   *TestString;
-    VOID                   *QueryMode;
+    EFI_STATUS (EFIAPI *QueryMode)(struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This, UINTN ModeNumber,
+                                   UINTN *Columns, UINTN *Rows);
     VOID                   *SetMode;
     EFI_STATUS (EFIAPI *SetAttribute)(struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This, UINTN Attribute);
     EFI_TEXT_CLEAR_SCREEN    ClearScreen;
-    VOID                   *SetCursorPosition;
-    VOID                   *EnableCursor;
-    VOID                   *Mode;
+    EFI_STATUS (EFIAPI *SetCursorPosition)(struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This, UINTN Column,
+                                           UINTN Row);
+    EFI_STATUS (EFIAPI *EnableCursor)(struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This, BOOLEAN Visible);
+    SIMPLE_TEXT_OUTPUT_MODE *Mode;
 } EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL;
 
 /* Console text colors */

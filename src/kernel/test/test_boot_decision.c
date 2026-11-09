@@ -19,6 +19,7 @@
 #include "kernel/test/klog_suppress.h"
 #include "kernel/boot_info.h"
 #include "boot/boot_policy.h"  /* v19 selection ABI constants */
+#include "libc/string.h"
 
 static struct boot_info s_dec_buf;
 
@@ -386,6 +387,12 @@ static void test_boot_decision_names(void)
     /* Must be the literal "invalid" sentinel, not NULL. */
     TEST_ASSERT((s[0] == 'i' && s[1] == 'n' && s[2] == 'v'),
                 "path_name(out-of-range) = invalid");
+
+    TEST_ASSERT(strcmp(boot_cmdline_source_name(BOOT_CMDLINE_SOURCE_CONF), "boot.conf") == 0
+                && strcmp(boot_cmdline_source_name(BOOT_CMDLINE_SOURCE_ENTRY), "entry") == 0
+                && strcmp(boot_cmdline_source_name(BOOT_CMDLINE_SOURCE_EDITED), "edited") == 0
+                && strcmp(boot_cmdline_source_name(BOOT_CMDLINE_SOURCE_MAX + 1u), "invalid") == 0,
+                "cmdline_source names: boot.conf, entry, edited, and invalid past the end");
 
     s = boot_reason_name(BOOT_REASON_NORMAL);
     TEST_ASSERT_NEQ((uint64_t)(uintptr_t)s, 0u, "reason_name(NORMAL) non-null");

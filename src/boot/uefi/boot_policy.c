@@ -11,6 +11,7 @@
 
 #ifndef BOOT_POLICY_NO_HEADER
 #include "../../../include/boot/boot_policy.h"
+#include "../../../include/boot/loader_vars.h"
 #endif
 
 /* Local typedefs match boot_entries_parser.c so behavior is consistent
@@ -658,6 +659,9 @@ unsigned int boot_menu_key_action(unsigned int scan, unsigned int unicode, unsig
     case 'B':               return BOOT_MENU_KEY_REBOOT;  /* Shift+B: uppercase over ConIn */
     case 'O':               return BOOT_MENU_KEY_POWEROFF;
     case 'd':               return BOOT_MENU_KEY_SET_DEFAULT;
+    case 't': case '+':     return BOOT_MENU_KEY_TIMEOUT_UP;
+    case 'T': case '-':     return BOOT_MENU_KEY_TIMEOUT_DOWN;
+    case 'e':               return BOOT_MENU_KEY_EDIT;
     default:                return BOOT_MENU_KEY_NONE;
     }
 }
@@ -708,6 +712,203 @@ int boot_menu_nav_applies(unsigned int count, unsigned int action, unsigned int 
     if (action == BOOT_MENU_NAV_NUMBER)
         return number >= 1u && number <= 9u && number <= count;
     return action >= BOOT_MENU_NAV_UP && action <= BOOT_MENU_NAV_PAGE_DOWN;
+}
+
+/* One variable's value as this boot's timeout. `persistent` says which rule a
+ * "0" follows: hidden for LoaderConfigTimeout, wait-for-a-key for the
+ * one-shot. Returns 0 for an unknown kind (treated as absent). */
+static int menu_timeout_from_var(unsigned int kind, unsigned int seconds, int persistent,
+                                 unsigned int source, boot_menu_timeout_t *out)
+{
+    out->source = source;
+    out->seconds = 0u;
+    out->clamped = 0u;
+    switch (kind) {
+    case BOOT_LOADER_TIMEOUT_FORCE:    out->mode = BOOT_MENU_TIMEOUT_NO_COUNTDOWN; return 1;
+    case BOOT_LOADER_TIMEOUT_HIDDEN:   out->mode = BOOT_MENU_TIMEOUT_HIDDEN;       return 1;
+    case BOOT_LOADER_TIMEOUT_DISABLED: out->mode = BOOT_MENU_TIMEOUT_DISABLED;     return 1;
+    case BOOT_LOADER_TIMEOUT_SECONDS:
+        if (seconds == 0u) {
+            out->mode = persistent ? BOOT_MENU_TIMEOUT_HIDDEN : BOOT_MENU_TIMEOUT_NO_COUNTDOWN;
+            return 1;
+        }
+        out->mode = BOOT_MENU_TIMEOUT_COUNTDOWN;
+        out->seconds = seconds;
+        if (seconds > BOOT_MENU_TIMEOUT_CAP_S) {
+            out->seconds = BOOT_MENU_TIMEOUT_CAP_S;
+            out->clamped = 1u;
+        }
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+void boot_menu_timeout_resolve(unsigned int entry_override,
+                               unsigned int config_kind, unsigned int config_seconds,
+                               unsigned int oneshot_kind, unsigned int oneshot_seconds,
+                               boot_menu_timeout_t *out)
+{
+    if (!out)
+        return;
+    if (menu_timeout_from_var(oneshot_kind, oneshot_seconds, 0, BOOT_MENU_TIMEOUT_SRC_ONESHOT, out))
+        return;
+    if (menu_timeout_from_var(config_kind, config_seconds, 1, BOOT_MENU_TIMEOUT_SRC_CONFIG, out))
+        return;
+    out->clamped = 0u;
+    if (entry_override != BOOT_ENTRIES_TIMEOUT_OVERRIDE_NONE && entry_override <= BOOT_MENU_TIMEOUT_CAP_S) {
+        out->source = BOOT_MENU_TIMEOUT_SRC_ENTRY;
+        out->mode = entry_override == 0u ? BOOT_MENU_TIMEOUT_HIDDEN : BOOT_MENU_TIMEOUT_COUNTDOWN;
+        out->seconds = entry_override;
+        return;
+    }
+    out->source = BOOT_MENU_TIMEOUT_SRC_DEFAULT;
+    out->mode = BOOT_MENU_TIMEOUT_COUNTDOWN;
+    out->seconds = BOOT_MENU_DEFAULT_TIMEOUT_S;
+}
+
+int boot_menu_timeout_step(const boot_menu_timeout_t *cur, int up,
+                           unsigned int *kind, unsigned int *seconds)
+{
+    /* Position on the scale: 0 hidden, 1..CAP seconds, CAP + 1 menu-force. */
+    unsigned int pos, next;
+    if (!cur || !kind || !seconds)
+        return 0;
+    switch (cur->mode) {
+    case BOOT_MENU_TIMEOUT_COUNTDOWN:    pos = cur->seconds;               break;
+    case BOOT_MENU_TIMEOUT_NO_COUNTDOWN: pos = BOOT_MENU_TIMEOUT_CAP_S + 1u; break;
+    default:                             pos = 0u;                         break;
+    }
+    if (pos > BOOT_MENU_TIMEOUT_CAP_S + 1u)
+        pos = BOOT_MENU_TIMEOUT_CAP_S + 1u;
+    if (up) {
+        if (pos == BOOT_MENU_TIMEOUT_CAP_S + 1u)
+            return 0;
+        next = pos + 1u;
+    } else {
+        if (pos == 0u)
+            return 0;
+        next = pos - 1u;
+    }
+    *seconds = 0u;
+    if (next == 0u) {
+        *kind = BOOT_LOADER_TIMEOUT_HIDDEN;
+    } else if (next > BOOT_MENU_TIMEOUT_CAP_S) {
+        *kind = BOOT_LOADER_TIMEOUT_FORCE;
+    } else {
+        *kind = BOOT_LOADER_TIMEOUT_SECONDS;
+        *seconds = next;
+    }
+    return 1;
+}
+
+void boot_menu_timeout_from_saved(unsigned int kind, unsigned int seconds,
+                                  boot_menu_timeout_t *out)
+{
+    if (!out)
+        return;
+    if (!menu_timeout_from_var(kind, seconds, 1, BOOT_MENU_TIMEOUT_SRC_CONFIG, out))
+        boot_menu_timeout_resolve(BOOT_ENTRIES_TIMEOUT_OVERRIDE_NONE, 0u, 0u, 0u, 0u, out);
+}
+
+unsigned int boot_menu_edit_allowed(const boot_entry_envelope_t *e)
+{
+    if (!e || !(e->flags & BOOT_ENTRY_FLAG_ALLOW_EDITOR) || (e->flags & BOOT_ENTRY_FLAG_SYNTHESIZED))
+        return BOOT_MENU_EDIT_NOT_ALLOWED;
+    if (e->kind == BOOT_ENTRY_KIND_UKI)
+        return BOOT_MENU_EDIT_SIGNED;
+    if (e->kind != BOOT_ENTRY_KIND_SPLIT && e->kind != BOOT_ENTRY_KIND_SAFE)
+        return BOOT_MENU_EDIT_NO_OPTIONS;
+    return BOOT_MENU_EDIT_OK;
+}
+
+int boot_menu_edit_init(boot_menu_edit_t *e, const char *initial)
+{
+    int whole = 1;
+    if (!e)
+        return 0;
+    e->len = 0u;
+    if (initial) {
+        for (unsigned int i = 0; initial[i]; i++) {
+            unsigned char c = (unsigned char)initial[i];
+            if (c < 0x20u || c > 0x7Eu || e->len >= BOOT_MENU_EDIT_MAX) {
+                whole = 0;
+                continue;
+            }
+            e->text[e->len++] = (char)c;
+        }
+    }
+    e->text[e->len] = 0;
+    e->cursor = e->len;
+    return whole;
+}
+
+unsigned int boot_menu_edit_cols_start(unsigned int len, unsigned int cursor, unsigned int start,
+                                       unsigned int width)
+{
+    if (cursor > len)
+        cursor = len;
+    if (width == 0u)
+        return cursor;
+    if (start > cursor)
+        start = cursor;
+    if (cursor - start >= width)
+        start = cursor - width + 1u;
+    return start;
+}
+
+unsigned int boot_menu_edit_key(boot_menu_edit_t *e, unsigned int scan, unsigned int unicode)
+{
+    if (!e || e->len > BOOT_MENU_EDIT_MAX || e->cursor > e->len)
+        return BOOT_MENU_EDIT_KEY_NONE;
+    switch (scan) {
+    case BOOT_MENU_SCAN_ESC:
+        return BOOT_MENU_EDIT_KEY_CANCEL;
+    case BOOT_MENU_SCAN_LEFT:
+        if (e->cursor == 0u) return BOOT_MENU_EDIT_KEY_NONE;
+        e->cursor--;
+        return BOOT_MENU_EDIT_KEY_CHANGED;
+    case BOOT_MENU_SCAN_RIGHT:
+        if (e->cursor == e->len) return BOOT_MENU_EDIT_KEY_NONE;
+        e->cursor++;
+        return BOOT_MENU_EDIT_KEY_CHANGED;
+    case BOOT_MENU_SCAN_HOME:
+        if (e->cursor == 0u) return BOOT_MENU_EDIT_KEY_NONE;
+        e->cursor = 0u;
+        return BOOT_MENU_EDIT_KEY_CHANGED;
+    case BOOT_MENU_SCAN_END:
+        if (e->cursor == e->len) return BOOT_MENU_EDIT_KEY_NONE;
+        e->cursor = e->len;
+        return BOOT_MENU_EDIT_KEY_CHANGED;
+    case BOOT_MENU_SCAN_DELETE:
+        if (e->cursor == e->len) return BOOT_MENU_EDIT_KEY_NONE;
+        for (unsigned int i = e->cursor; i < e->len; i++)
+            e->text[i] = e->text[i + 1u];   /* moves the NUL down too */
+        e->len--;
+        return BOOT_MENU_EDIT_KEY_CHANGED;
+    case BOOT_MENU_SCAN_NULL:
+        break;
+    default:
+        return BOOT_MENU_EDIT_KEY_NONE;
+    }
+    if (unicode == 0x0Du || unicode == 0x0Au)
+        return BOOT_MENU_EDIT_KEY_ACCEPT;
+    if (unicode == 0x08u) {            /* Backspace */
+        if (e->cursor == 0u) return BOOT_MENU_EDIT_KEY_NONE;
+        for (unsigned int i = e->cursor - 1u; i < e->len; i++)
+            e->text[i] = e->text[i + 1u];
+        e->len--;
+        e->cursor--;
+        return BOOT_MENU_EDIT_KEY_CHANGED;
+    }
+    if (unicode < 0x20u || unicode > 0x7Eu || e->len >= BOOT_MENU_EDIT_MAX)
+        return BOOT_MENU_EDIT_KEY_NONE;
+    for (unsigned int i = e->len + 1u; i > e->cursor; i--)
+        e->text[i] = e->text[i - 1u];   /* shifts the NUL up too */
+    e->text[e->cursor] = (char)unicode;
+    e->len++;
+    e->cursor++;
+    return BOOT_MENU_EDIT_KEY_CHANGED;
 }
 
 unsigned int boot_menu_seconds_left(unsigned int countdown_ms, unsigned int elapsed_ms)

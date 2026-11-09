@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=include/boot/boot_entries.h,tools/boot-entry-validate/validate.py,resources/boot/bootentries-example.json,include/boot/uki_cmdline_check.h,src/boot/uefi/boot_entries_parser.c,include/boot/boot_entry_kind.h reviewed=2026-11-09T09:30 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=include/boot/boot_entries.h,tools/boot-entry-validate/validate.py,resources/boot/bootentries-example.json,include/boot/uki_cmdline_check.h,src/boot/uefi/boot_entries_parser.c,include/boot/boot_entry_kind.h reviewed=2026-11-09T12:00 -->
 # Boot Entry Store Schema
 
 > Canonical specification for `\EFI\ImpossibleOS\bootentries.json`. Authoritative for envelope
@@ -158,7 +158,7 @@ The `payload` object's required + optional fields by kind:
 | ---------- | --------------- | -------- | ------------------------------------------------------ |
 | `kernel`   | string          | yes      | ESP-relative path, ASCII, <=255 chars; under one of the allowed prefixes; no `..` traversal |
 | `initrd`   | array of string | no       | 0..8 ESP-relative paths; same prefix + traversal rules as `kernel` |
-| `cmdline`  | string          | no       | ASCII; <=255 chars (`BOOT_ENTRIES_MAX_PATH_LEN`); empty string accepted |
+| `cmdline`  | string          | no       | ASCII; <=255 chars (`BOOT_ENTRIES_MAX_PATH_LEN`); empty string accepted. When non-empty it replaces boot.conf's `cmdline=` for this entry; empty or absent keeps boot.conf's. `boot_config.cmdline_source` tells the kernel which it got. |
 | `root`     | string          | no       | slot id (`A` / `B`) or partition GUID; ASCII; no `..` |
 
 **Allowed path prefixes** (kernel + initrd entries): `\EFI\ImpossibleOS\`, `\EFI\Linux\`, `\boot\`, or a single-segment `\<file>` (e.g. `\kernel.exe`). Anything else is rejected with `REJ_FIELD_VALUE`.

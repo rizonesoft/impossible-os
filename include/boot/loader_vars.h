@@ -18,9 +18,9 @@
  *
  * Two names are NOT published: LoaderConfigTimeout and LoaderEntryDefault
  * are persistent settings the OS (bootctl) or another loader owns, so the
- * per-boot publisher never overwrites or deletes them. LoaderEntryDefault
- * is honoured (LoaderFeatures bit 2) through its own read and write calls
- * below, which only the boot menu's d key writes.
+ * per-boot publisher never overwrites or deletes them. Both are honoured
+ * (LoaderFeatures bits 0 and 2) through their own read and write calls
+ * below, which only the boot menu's keys write (t/T and d).
  *
  * Pure C with no UEFI types, so the kernel boot tests run this exact code
  * against an in-memory variable store. All firmware access goes through
@@ -145,9 +145,26 @@ int boot_loader_vars_clear_all(const struct boot_loader_var_ops *ops,
 #define BOOT_LOADER_ONE_SHOT_TIMEOUT_CHARS 16u
 #define BOOT_LOADER_ONE_SHOT_TIMEOUT_MAX   3600u   /* seconds */
 
+/* A timeout variable's value (LoaderConfigTimeout and its one-shot): decimal
+ * seconds, or one of the Boot Loader Interface's three words. The parser
+ * reports what was written; what a value MEANS differs per variable (a
+ * one-shot "0" waits for a key, a persistent "0" hides the menu), so that
+ * is decided by boot_menu_timeout_resolve() (boot_policy.h). */
+#define BOOT_LOADER_TIMEOUT_SECONDS 1u   /* decimal, 0..BOOT_LOADER_ONE_SHOT_TIMEOUT_MAX */
+#define BOOT_LOADER_TIMEOUT_FORCE   2u   /* "menu-force": menu, no countdown */
+#define BOOT_LOADER_TIMEOUT_HIDDEN  3u   /* "menu-hidden": no menu unless a key asks */
+#define BOOT_LOADER_TIMEOUT_DISABLED 4u  /* "menu-disabled": no menu, keys ignored */
+
+/* Parse `n` CHAR16 (no NUL among them). Returns a BOOT_LOADER_TIMEOUT_* kind
+ * with *seconds set for SECONDS (0 otherwise), or 0 when the text is empty,
+ * not one of the forms above, or a number above the maximum. */
+unsigned int boot_loader_timeout_parse(const unsigned short *text, unsigned int n,
+                                       unsigned int *seconds);
+
 struct boot_loader_one_shot {
     int have_entry;            /* entry_id holds a printable-ASCII id to honour */
     int have_timeout;
+    unsigned int timeout_kind; /* BOOT_LOADER_TIMEOUT_* when have_timeout */
     unsigned int timeout_seconds;
     int entry_malformed;       /* present but unusable: deleted, not honoured */
     int timeout_malformed;
@@ -197,5 +214,21 @@ int boot_loader_entry_default_read(const struct boot_loader_var_ops *ops, const 
                                    char *id, unsigned int cap);
 int boot_loader_entry_default_write(const struct boot_loader_var_ops *ops, const void *systemd_guid,
                                     const char *id);
+
+/* The saved menu timeout: LoaderConfigTimeout (systemd GUID), which
+ * `bootctl set-timeout` and the menu's t/T keys write. Persistent like
+ * LoaderEntryDefault, and never deleted by the loader.
+ *
+ * boot_loader_config_timeout_read() returns BOOT_LOADER_DEFAULT_PRESENT with
+ * *kind / *seconds set, BOOT_LOADER_DEFAULT_ABSENT, or
+ * BOOT_LOADER_DEFAULT_UNUSABLE (malformed, too long, or unreadable; left in
+ * place). boot_loader_config_timeout_write() stores `kind` (and `seconds`
+ * for SECONDS) as the text the parser reads back, NV|BS|RT. Returns 1 on
+ * success, 0 when the firmware refused or the value is not one it can
+ * write. */
+int boot_loader_config_timeout_read(const struct boot_loader_var_ops *ops, const void *systemd_guid,
+                                    unsigned int *kind, unsigned int *seconds);
+int boot_loader_config_timeout_write(const struct boot_loader_var_ops *ops, const void *systemd_guid,
+                                     unsigned int kind, unsigned int seconds);
 
 #endif /* BOOT_LOADER_VARS_H */

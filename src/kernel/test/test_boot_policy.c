@@ -10,6 +10,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/types.h"
+#include "libc/string.h"
 
 /* Pull the parser + ladder source into the test object so we exercise the
  * same code-path the bootloader links. Both files are pure C and have no
@@ -537,6 +538,9 @@ static void test_menu_key_action(void)
         { 0, 'b', BOOT_MENU_KEY_NONE, 0u }, { 0, 'o', BOOT_MENU_KEY_NONE, 0u },
         { 0, 'd', BOOT_MENU_KEY_SET_DEFAULT, 0u }, { 0, 'D', BOOT_MENU_KEY_NONE, 0u },
         { 0, 'x', BOOT_MENU_KEY_NONE, 0u },
+        { 0, 't', BOOT_MENU_KEY_TIMEOUT_UP, 0u }, { 0, '+', BOOT_MENU_KEY_TIMEOUT_UP, 0u },
+        { 0, 'T', BOOT_MENU_KEY_TIMEOUT_DOWN, 0u }, { 0, '-', BOOT_MENU_KEY_TIMEOUT_DOWN, 0u },
+        { 0, 'e', BOOT_MENU_KEY_EDIT, 0u }, { 0, 'E', BOOT_MENU_KEY_NONE, 0u },
         { 0x15u, 0, BOOT_MENU_KEY_NONE, 0u },          /* F11: handled before the menu */
         { BOOT_MENU_SCAN_UP, 'd', BOOT_MENU_KEY_NAV, BOOT_MENU_NAV_UP }, /* scan code wins */
     };
@@ -549,6 +553,217 @@ static void test_menu_key_action(void)
     TEST_ASSERT_EQ(bad, 0u, "every key maps to its action");
     TEST_ASSERT_EQ(boot_menu_key_action(BOOT_MENU_SCAN_DOWN, 0, (unsigned int *)0), BOOT_MENU_KEY_NAV,
                    "a NULL out is allowed");
+}
+
+/* boot_menu_timeout_resolve: one-shot > LoaderConfigTimeout > the default
+ * entry's timeout_override > 5 s, and each source's own "0". */
+static void test_menu_timeout_resolve(void)
+{
+    const unsigned int NONE = BOOT_ENTRIES_TIMEOUT_OVERRIDE_NONE;
+    boot_menu_timeout_t t;
+    int ok;
+
+    boot_menu_timeout_resolve(NONE, 0u, 0u, 0u, 0u, &t);
+    ok = t.mode == BOOT_MENU_TIMEOUT_COUNTDOWN && t.seconds == BOOT_MENU_DEFAULT_TIMEOUT_S
+      && t.source == BOOT_MENU_TIMEOUT_SRC_DEFAULT && !t.clamped;
+    TEST_ASSERT(ok, "nothing set: the 5 s default");
+    boot_menu_timeout_resolve(9u, 0u, 0u, 0u, 0u, &t);
+    ok = t.mode == BOOT_MENU_TIMEOUT_COUNTDOWN && t.seconds == 9u && t.source == BOOT_MENU_TIMEOUT_SRC_ENTRY;
+    TEST_ASSERT(ok, "an entry override sets the countdown");
+    boot_menu_timeout_resolve(0u, 0u, 0u, 0u, 0u, &t);
+    TEST_ASSERT(t.mode == BOOT_MENU_TIMEOUT_HIDDEN && t.source == BOOT_MENU_TIMEOUT_SRC_ENTRY,
+                "an entry override of 0 hides the menu");
+    boot_menu_timeout_resolve(61u, 0u, 0u, 0u, 0u, &t);
+    TEST_ASSERT(t.source == BOOT_MENU_TIMEOUT_SRC_DEFAULT && t.seconds == BOOT_MENU_DEFAULT_TIMEOUT_S,
+                "an entry override above the cap is ignored, as it always was");
+
+    boot_menu_timeout_resolve(9u, BOOT_LOADER_TIMEOUT_SECONDS, 20u, 0u, 0u, &t);
+    ok = t.mode == BOOT_MENU_TIMEOUT_COUNTDOWN && t.seconds == 20u && t.source == BOOT_MENU_TIMEOUT_SRC_CONFIG;
+    TEST_ASSERT(ok, "LoaderConfigTimeout outranks the entry override");
+    boot_menu_timeout_resolve(9u, BOOT_LOADER_TIMEOUT_SECONDS, 0u, 0u, 0u, &t);
+    TEST_ASSERT(t.mode == BOOT_MENU_TIMEOUT_HIDDEN, "LoaderConfigTimeout=0 hides the menu");
+    boot_menu_timeout_resolve(NONE, BOOT_LOADER_TIMEOUT_SECONDS, 3600u, 0u, 0u, &t);
+    ok = t.mode == BOOT_MENU_TIMEOUT_COUNTDOWN && t.seconds == BOOT_MENU_TIMEOUT_CAP_S && t.clamped;
+    TEST_ASSERT(ok, "a variable above 60 s is clamped to the watchdog cap and says so");
+    boot_menu_timeout_resolve(NONE, BOOT_LOADER_TIMEOUT_SECONDS, 60u, 0u, 0u, &t);
+    TEST_ASSERT(t.seconds == 60u && !t.clamped, "60 s is not clamped");
+    boot_menu_timeout_resolve(NONE, BOOT_LOADER_TIMEOUT_FORCE, 0u, 0u, 0u, &t);
+    TEST_ASSERT(t.mode == BOOT_MENU_TIMEOUT_NO_COUNTDOWN, "menu-force waits for a key");
+    boot_menu_timeout_resolve(NONE, BOOT_LOADER_TIMEOUT_HIDDEN, 0u, 0u, 0u, &t);
+    TEST_ASSERT(t.mode == BOOT_MENU_TIMEOUT_HIDDEN, "menu-hidden hides");
+    boot_menu_timeout_resolve(NONE, BOOT_LOADER_TIMEOUT_DISABLED, 0u, 0u, 0u, &t);
+    TEST_ASSERT(t.mode == BOOT_MENU_TIMEOUT_DISABLED, "menu-disabled is its own mode, not hidden");
+    boot_menu_timeout_resolve(7u, 99u, 5u, 0u, 0u, &t);
+    TEST_ASSERT(t.source == BOOT_MENU_TIMEOUT_SRC_ENTRY && t.seconds == 7u,
+                "an unknown variable kind is treated as absent");
+
+    boot_menu_timeout_resolve(9u, BOOT_LOADER_TIMEOUT_DISABLED, 0u, BOOT_LOADER_TIMEOUT_SECONDS, 3u, &t);
+    ok = t.mode == BOOT_MENU_TIMEOUT_COUNTDOWN && t.seconds == 3u && t.source == BOOT_MENU_TIMEOUT_SRC_ONESHOT;
+    TEST_ASSERT(ok, "the one-shot outranks LoaderConfigTimeout, even menu-disabled");
+    boot_menu_timeout_resolve(9u, BOOT_LOADER_TIMEOUT_SECONDS, 20u, BOOT_LOADER_TIMEOUT_SECONDS, 0u, &t);
+    TEST_ASSERT(t.mode == BOOT_MENU_TIMEOUT_NO_COUNTDOWN && t.source == BOOT_MENU_TIMEOUT_SRC_ONESHOT,
+                "a one-shot 0 waits for a key (systemctl --boot-loader-menu=0)");
+    boot_menu_timeout_resolve(9u, BOOT_LOADER_TIMEOUT_SECONDS, 20u, BOOT_LOADER_TIMEOUT_DISABLED, 0u, &t);
+    TEST_ASSERT(t.mode == BOOT_MENU_TIMEOUT_DISABLED && t.source == BOOT_MENU_TIMEOUT_SRC_ONESHOT,
+                "a one-shot menu-disabled disables this boot's menu");
+    boot_menu_timeout_resolve(NONE, 0u, 0u, BOOT_LOADER_TIMEOUT_HIDDEN, 0u, &t);
+    TEST_ASSERT(t.mode == BOOT_MENU_TIMEOUT_HIDDEN, "a one-shot menu-hidden hides this boot's menu");
+    boot_menu_timeout_resolve(NONE, 0u, 0u, 0u, 0u, (boot_menu_timeout_t *)0);  /* must not fault */
+}
+
+/* t/T walk one scale: hidden, 1..60 s, menu-force, one step per press. */
+static void test_menu_timeout_step(void)
+{
+    boot_menu_timeout_t t = { BOOT_MENU_TIMEOUT_COUNTDOWN, 5u, BOOT_MENU_TIMEOUT_SRC_DEFAULT, 0u };
+    unsigned int kind = 0, secs = 0;
+    int ok;
+
+    ok = boot_menu_timeout_step(&t, 1, &kind, &secs) && kind == BOOT_LOADER_TIMEOUT_SECONDS && secs == 6u
+      && boot_menu_timeout_step(&t, 0, &kind, &secs) && kind == BOOT_LOADER_TIMEOUT_SECONDS && secs == 4u;
+    TEST_ASSERT(ok, "from 5 s: t saves 6, T saves 4");
+    t.seconds = 1u;
+    ok = boot_menu_timeout_step(&t, 0, &kind, &secs) && kind == BOOT_LOADER_TIMEOUT_HIDDEN && secs == 0u;
+    TEST_ASSERT(ok, "T from 1 s saves menu-hidden");
+    t.seconds = BOOT_MENU_TIMEOUT_CAP_S;
+    ok = boot_menu_timeout_step(&t, 1, &kind, &secs) && kind == BOOT_LOADER_TIMEOUT_FORCE;
+    TEST_ASSERT(ok, "t from 60 s saves menu-force");
+    t.mode = BOOT_MENU_TIMEOUT_NO_COUNTDOWN;
+    kind = 77u;
+    ok = !boot_menu_timeout_step(&t, 1, &kind, &secs) && kind == 77u
+      && boot_menu_timeout_step(&t, 0, &kind, &secs) && kind == BOOT_LOADER_TIMEOUT_SECONDS
+      && secs == BOOT_MENU_TIMEOUT_CAP_S;
+    TEST_ASSERT(ok, "menu-force: t is at the end, T saves 60 s");
+    t.mode = BOOT_MENU_TIMEOUT_HIDDEN;
+    ok = !boot_menu_timeout_step(&t, 0, &kind, &secs)
+      && boot_menu_timeout_step(&t, 1, &kind, &secs) && kind == BOOT_LOADER_TIMEOUT_SECONDS && secs == 1u;
+    TEST_ASSERT(ok, "hidden (an F11 boot): T is at the end, t saves 1 s");
+    t.mode = BOOT_MENU_TIMEOUT_DISABLED;
+    ok = boot_menu_timeout_step(&t, 1, &kind, &secs) && kind == BOOT_LOADER_TIMEOUT_SECONDS && secs == 1u;
+    TEST_ASSERT(ok, "disabled steps like hidden, and nothing ever saves menu-disabled");
+    TEST_ASSERT(!boot_menu_timeout_step((const boot_menu_timeout_t *)0, 1, &kind, &secs)
+                && !boot_menu_timeout_step(&t, 1, (unsigned int *)0, &secs), "NULL arguments refused");
+
+    /* Pressing t 70 times from hidden walks every value once and stops. */
+    boot_menu_timeout_from_saved(BOOT_LOADER_TIMEOUT_HIDDEN, 0u, &t);
+    unsigned int presses = 0, last = 0;
+    while (boot_menu_timeout_step(&t, 1, &kind, &secs) && presses < 70u) {
+        if (kind == BOOT_LOADER_TIMEOUT_SECONDS && secs != last + 1u)
+            break;
+        last = secs;
+        presses++;
+        boot_menu_timeout_from_saved(kind, secs, &t);
+    }
+    ok = presses == BOOT_MENU_TIMEOUT_CAP_S + 1u && t.mode == BOOT_MENU_TIMEOUT_NO_COUNTDOWN
+      && t.source == BOOT_MENU_TIMEOUT_SRC_CONFIG;
+    TEST_ASSERT(ok, "from hidden: 61 presses reach menu-force through each second, then stop");
+    boot_menu_timeout_from_saved(42u, 0u, &t);
+    TEST_ASSERT(t.source == BOOT_MENU_TIMEOUT_SRC_DEFAULT && t.seconds == BOOT_MENU_DEFAULT_TIMEOUT_S,
+                "an unknown saved kind reads as the default");
+}
+
+/* The e key: allowed only on a split or safe entry that asks for it. */
+static void test_menu_edit_allowed(void)
+{
+    boot_entry_envelope_t e;
+    memset(&e, 0, sizeof(e));
+    e.kind = BOOT_ENTRY_KIND_SPLIT;
+    TEST_ASSERT_EQ(boot_menu_edit_allowed(&e), BOOT_MENU_EDIT_NOT_ALLOWED, "no allow_editor: refused");
+    e.flags = BOOT_ENTRY_FLAG_ALLOW_EDITOR;
+    TEST_ASSERT_EQ(boot_menu_edit_allowed(&e), BOOT_MENU_EDIT_OK, "split with allow_editor: allowed");
+    e.kind = BOOT_ENTRY_KIND_SAFE;
+    TEST_ASSERT_EQ(boot_menu_edit_allowed(&e), BOOT_MENU_EDIT_OK, "safe with allow_editor: allowed");
+    e.kind = BOOT_ENTRY_KIND_UKI;
+    TEST_ASSERT_EQ(boot_menu_edit_allowed(&e), BOOT_MENU_EDIT_SIGNED, "a UKI: its options are signed");
+    e.kind = BOOT_ENTRY_KIND_RECOVERY;
+    TEST_ASSERT_EQ(boot_menu_edit_allowed(&e), BOOT_MENU_EDIT_NO_OPTIONS, "a kind with no command line");
+    e.kind = BOOT_ENTRY_KIND_SPLIT;
+    e.flags |= BOOT_ENTRY_FLAG_SYNTHESIZED;
+    TEST_ASSERT_EQ(boot_menu_edit_allowed(&e), BOOT_MENU_EDIT_NOT_ALLOWED, "a discovered entry: refused");
+    TEST_ASSERT_EQ(boot_menu_edit_allowed((const boot_entry_envelope_t *)0), BOOT_MENU_EDIT_NOT_ALLOWED,
+                   "NULL refused");
+}
+
+/* The text console's field window keeps the cursor cell inside it. */
+static void test_menu_edit_cols_start(void)
+{
+    TEST_ASSERT_EQ(boot_menu_edit_cols_start(10u, 4u, 0u, 77u), 0u, "fits: starts at 0");
+    TEST_ASSERT_EQ(boot_menu_edit_cols_start(200u, 200u, 0u, 77u), 124u,
+                   "cursor at the end of 200 in 77 cells: the caret cell is the last one");
+    TEST_ASSERT_EQ(boot_menu_edit_cols_start(200u, 150u, 124u, 77u), 124u, "inside the window: no jump");
+    TEST_ASSERT_EQ(boot_menu_edit_cols_start(200u, 100u, 124u, 77u), 100u, "left of it: starts at the cursor");
+    TEST_ASSERT_EQ(boot_menu_edit_cols_start(200u, 201u, 124u, 77u), 124u, "a cursor past the end is clamped");
+    TEST_ASSERT_EQ(boot_menu_edit_cols_start(5u, 5u, 0u, 0u), 5u, "zero width answers the cursor");
+    TEST_ASSERT_EQ(boot_menu_edit_cols_start(5u, 5u, 0u, 1u), 5u, "one cell: only the caret");
+}
+
+/* The one-line editor: insert, delete, move, the 255-char cap, accept and cancel. */
+static void test_menu_edit_core(void)
+{
+    boot_menu_edit_t ed;
+    char longtext[BOOT_MENU_EDIT_MAX + 11u];
+    int ok;
+
+    /* Poison past the text, so an edit that fails to move the terminator
+     * leaves garbage where the NUL should be. */
+    memset(&ed, 0x5A, sizeof(ed));
+    ok = boot_menu_edit_init(&ed, "quiet") && ed.len == 5u && ed.cursor == 5u && strcmp(ed.text, "quiet") == 0;
+    TEST_ASSERT(ok, "init: the text, cursor at the end");
+    ok = boot_menu_edit_key(&ed, 0, ' ') == BOOT_MENU_EDIT_KEY_CHANGED
+      && boot_menu_edit_key(&ed, 0, 'x') == BOOT_MENU_EDIT_KEY_CHANGED && strcmp(ed.text, "quiet x") == 0
+      && strlen(ed.text) == ed.len;
+    TEST_ASSERT(ok, "printable keys append at the end");
+    ok = boot_menu_edit_key(&ed, BOOT_MENU_SCAN_HOME, 0) == BOOT_MENU_EDIT_KEY_CHANGED && ed.cursor == 0u
+      && boot_menu_edit_key(&ed, BOOT_MENU_SCAN_HOME, 0) == BOOT_MENU_EDIT_KEY_NONE
+      && boot_menu_edit_key(&ed, BOOT_MENU_SCAN_LEFT, 0) == BOOT_MENU_EDIT_KEY_NONE
+      && boot_menu_edit_key(&ed, 0, 0x08u) == BOOT_MENU_EDIT_KEY_NONE
+      && boot_menu_edit_key(&ed, 0, '-') == BOOT_MENU_EDIT_KEY_CHANGED && strcmp(ed.text, "-quiet x") == 0
+      && ed.cursor == 1u && strlen(ed.text) == ed.len;
+    TEST_ASSERT(ok, "Home moves to 0; Left and Backspace there do nothing; insert at the cursor");
+    ok = boot_menu_edit_key(&ed, BOOT_MENU_SCAN_DELETE, 0) == BOOT_MENU_EDIT_KEY_CHANGED
+      && strcmp(ed.text, "-uiet x") == 0 && ed.len == 7u && ed.cursor == 1u;
+    TEST_ASSERT(ok, "Delete removes the character under the cursor");
+    ok = boot_menu_edit_key(&ed, BOOT_MENU_SCAN_RIGHT, 0) == BOOT_MENU_EDIT_KEY_CHANGED && ed.cursor == 2u
+      && boot_menu_edit_key(&ed, 0, 0x08u) == BOOT_MENU_EDIT_KEY_CHANGED
+      && strcmp(ed.text, "-iet x") == 0 && ed.cursor == 1u;
+    TEST_ASSERT(ok, "Right then Backspace removes the character before the cursor");
+    ok = boot_menu_edit_key(&ed, BOOT_MENU_SCAN_END, 0) == BOOT_MENU_EDIT_KEY_CHANGED && ed.cursor == ed.len
+      && boot_menu_edit_key(&ed, BOOT_MENU_SCAN_RIGHT, 0) == BOOT_MENU_EDIT_KEY_NONE
+      && boot_menu_edit_key(&ed, BOOT_MENU_SCAN_DELETE, 0) == BOOT_MENU_EDIT_KEY_NONE;
+    TEST_ASSERT(ok, "at the end Right and Delete do nothing");
+    ok = boot_menu_edit_key(&ed, 0, 0x01u) == BOOT_MENU_EDIT_KEY_NONE
+      && boot_menu_edit_key(&ed, 0, 0x7Fu) == BOOT_MENU_EDIT_KEY_NONE
+      && boot_menu_edit_key(&ed, 0, 0xE9u) == BOOT_MENU_EDIT_KEY_NONE
+      && boot_menu_edit_key(&ed, BOOT_MENU_SCAN_UP, 'a') == BOOT_MENU_EDIT_KEY_NONE
+      && strcmp(ed.text, "-iet x") == 0;
+    TEST_ASSERT(ok, "control, DEL, non-ASCII and other scan keys are ignored");
+    TEST_ASSERT_EQ(boot_menu_edit_key(&ed, 0, 0x0Du), BOOT_MENU_EDIT_KEY_ACCEPT, "Enter accepts");
+    TEST_ASSERT_EQ(boot_menu_edit_key(&ed, BOOT_MENU_SCAN_ESC, 0), BOOT_MENU_EDIT_KEY_CANCEL, "Esc cancels");
+
+    ok = boot_menu_edit_init(&ed, "") && ed.len == 0u
+      && boot_menu_edit_key(&ed, 0, 0x0Du) == BOOT_MENU_EDIT_KEY_ACCEPT && ed.text[0] == 0;
+    TEST_ASSERT(ok, "an empty text is a real edit: Enter accepts it");
+    ok = boot_menu_edit_init(&ed, (const char *)0) && ed.len == 0u;
+    TEST_ASSERT(ok, "init from NULL: empty");
+    ok = !boot_menu_edit_init(&ed, "a\tb\001c") && strcmp(ed.text, "abc") == 0;
+    TEST_ASSERT(ok, "init drops non-printable characters and reports it");
+
+    memset(&ed, 0x5A, sizeof(ed));
+    memset(longtext, 'k', sizeof(longtext) - 1u);
+    longtext[sizeof(longtext) - 1u] = 0;
+    ok = !boot_menu_edit_init(&ed, longtext) && ed.len == BOOT_MENU_EDIT_MAX && ed.text[BOOT_MENU_EDIT_MAX] == 0;
+    TEST_ASSERT(ok, "init keeps 255 characters of a longer text and reports the cut");
+    ok = boot_menu_edit_key(&ed, 0, 'z') == BOOT_MENU_EDIT_KEY_NONE && ed.len == BOOT_MENU_EDIT_MAX
+      && ed.text[BOOT_MENU_EDIT_MAX] == 0;
+    TEST_ASSERT(ok, "at 255 characters a key is refused and the NUL stays");
+    ok = boot_menu_edit_key(&ed, BOOT_MENU_SCAN_HOME, 0) == BOOT_MENU_EDIT_KEY_CHANGED
+      && boot_menu_edit_key(&ed, BOOT_MENU_SCAN_DELETE, 0) == BOOT_MENU_EDIT_KEY_CHANGED
+      && boot_menu_edit_key(&ed, 0, 'z') == BOOT_MENU_EDIT_KEY_CHANGED
+      && ed.len == BOOT_MENU_EDIT_MAX && ed.text[0] == 'z' && ed.text[BOOT_MENU_EDIT_MAX] == 0;
+    TEST_ASSERT(ok, "insert at the front of a full buffer after a delete keeps it terminated");
+
+    ed.cursor = ed.len + 1u;
+    TEST_ASSERT_EQ(boot_menu_edit_key(&ed, 0, 'a'), BOOT_MENU_EDIT_KEY_NONE, "a corrupt cursor is refused");
+    TEST_ASSERT_EQ(boot_menu_edit_key((boot_menu_edit_t *)0, 0, 'a'), BOOT_MENU_EDIT_KEY_NONE, "NULL refused");
 }
 
 static void test_menu_repeat_guard(void)
@@ -1987,6 +2202,16 @@ void test_register_boot_policy(void)
                             test_ladder_saved_default, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu key map",
                             test_menu_key_action, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu timeout ranks one-shot, LoaderConfigTimeout, entry, default",
+                            test_menu_timeout_resolve, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: t/T step hidden, 1..60 s, menu-force",
+                            test_menu_timeout_step, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: e allowed only on split/safe entries that ask",
+                            test_menu_edit_allowed, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: text-console editor field window",
+                            test_menu_edit_cols_start, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: one-line options editor",
+                            test_menu_edit_core, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu key repeat guard",
                             test_menu_repeat_guard, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu help pages, d toggle and notice repaint",

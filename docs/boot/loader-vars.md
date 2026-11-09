@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/boot/uefi/bootx64.c,src/boot/uefi/loader_vars.c,include/boot/loader_vars.h,src/kernel/uefi_runtime.c,src/kernel/main/loader_vars_readback.c reviewed=2026-11-09T09:30 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/boot/uefi/bootx64.c,src/boot/uefi/loader_vars.c,include/boot/loader_vars.h,src/kernel/uefi_runtime.c,src/kernel/main/loader_vars_readback.c reviewed=2026-11-09T12:00 -->
 # OS-Visible Loader UEFI Variables
 
 > **Owner:** [OS-Visible Loader UEFI Variables](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#15-os-visible-loader-uefi-variables).
@@ -56,7 +56,7 @@ Every string variable is NUL-terminated UCS-2, as the Boot Loader Interface spec
 
 `ImpossibleOSLoaderFeaturesExt` (below) follows the same rules.
 
-**Not published: `LoaderConfigTimeout` and `LoaderEntryDefault`.** These are persistent settings that `bootctl set-timeout` and `bootctl set-default` write for the boot loader to honour, so the per-boot publisher never sets or clears them. Until 2026-11-08 this loader wrote both every boot as a report of its own effective timeout and default; that overwrote, and on a rejected store deleted, a setting someone else owns. `LoaderConfigTimeout` is still not honoured (bit 0 is not advertised).
+**Not published: `LoaderConfigTimeout` and `LoaderEntryDefault`.** These are persistent settings that `bootctl set-timeout` and `bootctl set-default` write for the boot loader to honour, so the per-boot publisher never sets or clears them. Until 2026-11-08 this loader wrote both every boot as a report of its own effective timeout and default; that overwrote, and on a rejected store deleted, a setting someone else owns. Both are now honoured, through their own read and write calls (bits 0 and 2).
 
 **`LoaderEntryDefault` is honoured (bit 2, since 2026-11-09).** The loader reads it once per boot: a printable-ASCII id of at most 62 characters, with or without a trailing NUL, that names a candidate entry becomes the default. It ranks below a `LoaderEntryOneShot`, a tagged `BootCurrent` option and every forced selection, and above the lowest `sort_key` (see [boot policy](boot-policy.md#2-the-precedence-ladder)). An id that names no candidate is ignored, and so is one that names a discovered entry (another OS found on disk, `chainload-N`): those ids are discovery slots renumbered every boot, so `d` refuses to save them too. A malformed or unreadable value is logged and left in place, because it is the operator's. The boot menu's `d` key writes it (`NV|BS|RT`, UCS-2 with a NUL), or deletes it when the highlighted entry already is the saved default. A value an older build of this loader left as a report is honoured like any other; it names the entry that was the default when it was written, and `d` on that entry clears it.
 
@@ -89,7 +89,7 @@ boot-counting behavior.
 
 | Bit | Upstream semantic | Impossible OS | Notes |
 |---:|---|:---:|---|
-| 0 | `LoaderConfigTimeout` writable from OS | **not advertised** | We do not honor OS-side writes to base timeout. |
+| 0 | `LoaderConfigTimeout` writable from OS | **advertised** | Read every boot, ranked below the one-shot and above the entry's `timeout_override`; the menu's `t`/`T` keys write it. Decimal seconds, `menu-force`, `menu-hidden` and `menu-disabled` are all honoured; a countdown is capped at 60 s. |
 | 1 | `LoaderConfigTimeoutOneShot` honored | **advertised** | Bootloader reads + deletes per-boot. |
 | 2 | `LoaderEntryDefault` writable from OS | **advertised** | Read every boot; the menu's `d` key writes it. Ranks above the lowest `sort_key`. |
 | 3 | `LoaderEntryOneShot` honored | **advertised** | Bootloader reads + deletes per-boot. |
@@ -97,7 +97,7 @@ boot-counting behavior.
 | 5 | XBOOTLDR partition | **not advertised** | We do not support the XBOOTLDR partition. |
 | 8 | `sort-key` field of the Boot Loader Specification | **advertised** | The menu and `LoaderEntries` use the full BLS display order (see the [entry schema](boot-entry-schema.md#display-order)). |
 
-The published bitmap is exactly `(1<<1) | (1<<2) | (1<<3) | (1<<4) | (1<<8) = 0x11E`.
+The published bitmap is exactly `(1<<0) | (1<<1) | (1<<2) | (1<<3) | (1<<4) | (1<<8) = 0x11F`.
 
 ## Impossible OS extension features
 

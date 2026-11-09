@@ -57,6 +57,33 @@ static inline boot_menu_fit_t boot_menu_fit(unsigned int fb_height)
     return f;
 }
 
+/* The one-off editor's field: which character to draw first so the cursor
+ * stays inside a field `budget` pixels wide. Starts from the previous window
+ * `start` so the text does not jump on every key: it moves left only when the
+ * cursor went left of it, and right only as far as keeping the text up to the
+ * cursor (plus `caret` pixels) inside the field needs. Characters are
+ * measured with bsod_aa_advance, as the blit draws them. */
+static inline unsigned int boot_menu_edit_view_start(const struct bsod_aa_glyph *glyphs, const char *text,
+                                                     unsigned int len, unsigned int cursor,
+                                                     unsigned int start, unsigned int budget,
+                                                     unsigned int caret)
+{
+    if (!glyphs || !text)
+        return 0u;
+    if (cursor > len)
+        cursor = len;
+    if (start > cursor)
+        start = cursor;
+    for (;;) {
+        unsigned int w = caret;
+        for (unsigned int i = start; i < cursor; i++)
+            w += bsod_aa_advance(glyphs, text[i]);
+        if (w <= budget || start >= cursor)
+            return start;
+        start++;
+    }
+}
+
 /* Copy `src` into `out` (capacity `cap`, including the NUL) so its drawn width
  * is at most `budget` pixels: whole when it fits, otherwise the longest prefix
  * that still fits with "..." after it, and empty when not even that does.

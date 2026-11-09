@@ -817,6 +817,135 @@ static void test_loader_vars_edge_values(void)
     TEST_ASSERT_EQ(boot_loader_part_uuid_text(2u, zero, text), 0, "an all-zero GUID is unknown");
 }
 
+/* LoaderConfigTimeout: what bootctl set-timeout and the t/T keys write. The
+ * parser is shared with the one-shot, so its words are checked once here. */
+static MV_NOINLINE unsigned int mv_parse(const char *text, unsigned int *secs)
+{
+    unsigned short w[24];
+    unsigned int i;
+    for (i = 0; text[i] && i < 23u; i++) w[i] = (unsigned short)(unsigned char)text[i];
+    return boot_loader_timeout_parse(w, i, secs);
+}
+
+static void test_loader_vars_config_timeout(void)
+{
+    MV_FIXTURE();
+    struct boot_loader_one_shot r;
+    char id[BOOT_LOADER_ONE_SHOT_ID_CHARS];
+    unsigned int kind = 99u, secs = 99u;
+    struct mv_var *v;
+    int ok;
+
+    ok = mv_parse("0", &secs) == BOOT_LOADER_TIMEOUT_SECONDS && secs == 0u
+      && mv_parse("3600", &secs) == BOOT_LOADER_TIMEOUT_SECONDS && secs == 3600u
+      && mv_parse("007", &secs) == BOOT_LOADER_TIMEOUT_SECONDS && secs == 7u;
+    TEST_ASSERT(ok, "parse: decimal seconds, 0 and the 3600 cap included");
+    ok = mv_parse("menu-force", &secs) == BOOT_LOADER_TIMEOUT_FORCE && secs == 0u
+      && mv_parse("menu-hidden", &secs) == BOOT_LOADER_TIMEOUT_HIDDEN
+      && mv_parse("menu-disabled", &secs) == BOOT_LOADER_TIMEOUT_DISABLED;
+    TEST_ASSERT(ok, "parse: the three Boot Loader Interface words");
+    ok = mv_parse("3601", &secs) == 0u && mv_parse("4294967296", &secs) == 0u
+      && mv_parse("", &secs) == 0u && mv_parse("5 ", &secs) == 0u && mv_parse("menu-forced", &secs) == 0u
+      && mv_parse("Menu-Force", &secs) == 0u && mv_parse("menu", &secs) == 0u && mv_parse("-1", &secs) == 0u;
+    TEST_ASSERT(ok, "parse: over the cap, a wrapping value, empty, trailing space, near words refused");
+
+    ok = boot_loader_config_timeout_read(&fx->ops, fx->guid_copy[0], &kind, &secs)
+             == BOOT_LOADER_DEFAULT_ABSENT && kind == 0u && secs == 0u;
+    TEST_ASSERT(ok, "read: absent is ABSENT with kind 0");
+
+    ok = boot_loader_config_timeout_write(&fx->ops, fx->guid_copy[0], BOOT_LOADER_TIMEOUT_SECONDS, 12u) == 1;
+    v = mv_find(mv, "LoaderConfigTimeout");
+    ok = ok && v && v->attrs == BOOT_LOADER_DEFAULT_ATTRS && mv_text_is(mv, "LoaderConfigTimeout", "12");
+    TEST_ASSERT(ok, "write 12 s: NV|BS|RT, \"12\" plus a UCS-2 NUL");
+    ok = boot_loader_config_timeout_read(&fx->ops, fx->guid_copy[0], &kind, &secs)
+             == BOOT_LOADER_DEFAULT_PRESENT && kind == BOOT_LOADER_TIMEOUT_SECONDS && secs == 12u
+      && mv_find(mv, "LoaderConfigTimeout") != (struct mv_var *)0;
+    TEST_ASSERT(ok, "read: what is written reads back, and the read never deletes");
+
+    ok = boot_loader_config_timeout_write(&fx->ops, fx->guid_copy[0], BOOT_LOADER_TIMEOUT_SECONDS, 0u) == 1
+      && mv_text_is(mv, "LoaderConfigTimeout", "0")
+      && boot_loader_config_timeout_write(&fx->ops, fx->guid_copy[0], BOOT_LOADER_TIMEOUT_HIDDEN, 7u) == 1
+      && mv_text_is(mv, "LoaderConfigTimeout", "menu-hidden")
+      && boot_loader_config_timeout_write(&fx->ops, fx->guid_copy[0], BOOT_LOADER_TIMEOUT_FORCE, 0u) == 1
+      && mv_text_is(mv, "LoaderConfigTimeout", "menu-force")
+      && boot_loader_config_timeout_write(&fx->ops, fx->guid_copy[0], BOOT_LOADER_TIMEOUT_DISABLED, 0u) == 1
+      && mv_text_is(mv, "LoaderConfigTimeout", "menu-disabled")
+      && boot_loader_config_timeout_read(&fx->ops, fx->guid_copy[0], &kind, &secs)
+             == BOOT_LOADER_DEFAULT_PRESENT && kind == BOOT_LOADER_TIMEOUT_DISABLED;
+    TEST_ASSERT(ok, "write: 0 and each word in the interface's spelling; a word round-trips");
+
+    ok = boot_loader_config_timeout_write(&fx->ops, fx->guid_copy[0], BOOT_LOADER_TIMEOUT_SECONDS, 3601u) == 0
+      && boot_loader_config_timeout_write(&fx->ops, fx->guid_copy[0], 0u, 0u) == 0
+      && boot_loader_config_timeout_write(&fx->ops, fx->guid_copy[0], 5u, 0u) == 0
+      && mv_text_is(mv, "LoaderConfigTimeout", "menu-disabled");
+    TEST_ASSERT(ok, "write: over the cap or an unknown kind refused, the old value kept");
+
+    mv_seed(mv, "LoaderConfigTimeout", MV_SYSTEMD, "soon");
+    ok = boot_loader_config_timeout_read(&fx->ops, fx->guid_copy[0], &kind, &secs)
+             == BOOT_LOADER_DEFAULT_UNUSABLE && kind == 0u && mv_find(mv, "LoaderConfigTimeout");
+    TEST_ASSERT(ok, "read: a malformed value is UNUSABLE and left for its owner");
+    mv_seed_form(mv, "LoaderConfigTimeout", MV_SYSTEMD, "30", 0);
+    ok = boot_loader_config_timeout_read(&fx->ops, fx->guid_copy[0], &kind, &secs)
+             == BOOT_LOADER_DEFAULT_PRESENT && kind == BOOT_LOADER_TIMEOUT_SECONDS && secs == 30u;
+    TEST_ASSERT(ok, "read: a writer that leaves the NUL off is still read");
+
+    mv_next_boot(fx);
+    mv_seed(mv, "LoaderConfigTimeout", MV_SYSTEMD, "9");
+    ok = boot_loader_vars_publish(&fx->ops, &fx->in, &fx->rep) == 1
+      && mv_text_is(mv, "LoaderConfigTimeout", "9");
+    TEST_ASSERT(ok, "the publisher leaves the persistent timeout alone");
+
+    ok = mv_one_shot(fx, (const char *)0, "menu-force", sizeof(id), &r, id) == 1 && r.have_timeout
+      && r.timeout_kind == BOOT_LOADER_TIMEOUT_FORCE && mv_count(&fx->st) == 0u
+      && mv_one_shot(fx, (const char *)0, "0", sizeof(id), &r, id) == 1 && r.have_timeout
+      && r.timeout_kind == BOOT_LOADER_TIMEOUT_SECONDS && r.timeout_seconds == 0u
+      && mv_one_shot(fx, (const char *)0, "menu-disabled", sizeof(id), &r, id) == 1
+      && r.timeout_kind == BOOT_LOADER_TIMEOUT_DISABLED;
+    TEST_ASSERT(ok, "one-shot: the words are honoured once, with their kind");
+
+    /* Firmware failures: a refused write reports 0 and keeps the old value;
+     * a read error is not absence, and the value is left in place. */
+    mv_reset(mv);
+    memset(mv, 0, sizeof(*mv));
+    mv_seed(mv, "LoaderConfigTimeout", MV_SYSTEMD, "8");
+    mv->fail_set = "LoaderConfigTimeout";
+    ok = boot_loader_config_timeout_write(&fx->ops, fx->guid_copy[0], BOOT_LOADER_TIMEOUT_SECONDS, 9u) == 0
+      && mv_text_is(mv, "LoaderConfigTimeout", "8");
+    TEST_ASSERT(ok, "write refused by the firmware: 0, the old value kept");
+    mv->fail_set = (const char *)0;
+    mv->fail_get = "LoaderConfigTimeout";
+    kind = 77u;
+    secs = 77u;
+    ok = boot_loader_config_timeout_read(&fx->ops, fx->guid_copy[0], &kind, &secs)
+             == BOOT_LOADER_DEFAULT_UNUSABLE && kind == 0u && secs == 0u
+      && mv_find(mv, "LoaderConfigTimeout") != (struct mv_var *)0;
+    TEST_ASSERT(ok, "read error: UNUSABLE, not ABSENT; outputs cleared, the value kept");
+    mv->fail_get = (const char *)0;
+    {   /* Larger than the read buffer, and an odd byte count. */
+        unsigned short w[40];
+        for (unsigned int i = 0; i < 40u; i++) w[i] = '1';
+        (void)mv_set(mv, (const unsigned short *)u"LoaderConfigTimeout", MV_SYSTEMD, MV_NV, sizeof(w), w);
+        ok = boot_loader_config_timeout_read(&fx->ops, fx->guid_copy[0], &kind, &secs)
+                 == BOOT_LOADER_DEFAULT_UNUSABLE && kind == 0u;
+        w[0] = '7';
+        w[1] = 0;
+        (void)mv_set(mv, (const unsigned short *)u"LoaderConfigTimeout", MV_SYSTEMD, MV_NV, 3u, w);
+        ok = ok && boot_loader_config_timeout_read(&fx->ops, fx->guid_copy[0], &kind, &secs)
+                       == BOOT_LOADER_DEFAULT_UNUSABLE && kind == 0u
+          && mv_find(mv, "LoaderConfigTimeout") != (struct mv_var *)0;
+        TEST_ASSERT(ok, "an oversize or odd-length value is UNUSABLE and kept");
+    }
+
+    fx->ops.get = 0;
+    ok = boot_loader_config_timeout_read(&fx->ops, fx->guid_copy[0], &kind, &secs)
+             == BOOT_LOADER_DEFAULT_UNUSABLE
+      && boot_loader_config_timeout_read((const struct boot_loader_var_ops *)0, fx->guid_copy[0], &kind, &secs)
+             == BOOT_LOADER_DEFAULT_UNUSABLE;
+    fx->ops.set = 0;
+    ok = ok && boot_loader_config_timeout_write(&fx->ops, fx->guid_copy[0], BOOT_LOADER_TIMEOUT_SECONDS, 5u) == 0;
+    TEST_ASSERT(ok, "no GetVariable or SetVariable: refused");
+}
+
 /* The saved default: read leaves an unusable value in place, write stores
  * NV|BS|RT with the NUL and round-trips, "" deletes, and the per-boot
  * publisher never touches it. */
@@ -982,6 +1111,8 @@ static void test_loader_vars_held_d_is_one_change(void)
 
 void test_register_loader_vars(void)
 {
+    test_suite_register_cat("loader-vars: LoaderConfigTimeout parses, writes NV and is never deleted",
+                            test_loader_vars_config_timeout, TEST_CAT_BOOT);
     test_suite_register_cat("loader-vars: saved default reads, writes NV and survives the publisher",
         test_loader_vars_saved_default, TEST_CAT_BOOT);
     test_suite_register_cat("loader-vars: a held d key is one saved-default change",

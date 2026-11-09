@@ -15,6 +15,13 @@
 
 #include "kernel/types.h"
 #include "kernel/test/test.h"
+#include "kernel/test/scratch.h"  /* TEST_SCRATCH_KBUF */
+
+/* The compose tests' line buffer: the worst-case audit line is ~8.4 KiB, so
+ * 12 KiB keeps a >1.4x margin. These fixtures and their 28 KiB boot_info
+ * come from the test scratch allocator, not .bss: the kernel image is at
+ * its user-base page budget (higher-half kernel relocation TODO). */
+#define AUDIT_TEST_LINE_CAP (12u * 1024u)
 #include "kernel/boot_info.h"
 #include "boot/boot_audit_codes.h"
 #include "boot/boot_policy.h"
@@ -201,49 +208,47 @@ static void test_audit_event_name_unknown(void)
  * forever on machines with many filtered entries. */
 static void test_audit_compose_line_worst_case(void)
 {
-    static struct boot_info bi;
-    /* 12 KiB: the worst-case audit line (max selected id + 64 max-length rejected
-     * entries) composes to ~8.4 KiB (see boot_audit.c BOOT_AUDIT_JSON_LINE_CAP
-     * rationale), so 12 KiB keeps a >1.4x margin while trimming the kernel
-     * test-build BSS footprint (image is at its user-base page budget). The
-     * non-truncation assertion below is the real gate. */
-    static char line[12u * 1024u];
+    TEST_SCRATCH_KBUF(bi_buf, sizeof(struct boot_info));
+    struct boot_info *bi = (struct boot_info *)bi_buf;
+    /* AUDIT_TEST_LINE_CAP; the non-truncation assertion below is the real gate. */
+    TEST_SCRATCH_KBUF(line_buf, AUDIT_TEST_LINE_CAP);
+    char *line = (char *)line_buf;
 
-    /* Zero the synthetic boot_info so we control every field. Use
-     * static storage so a 28+ KiB struct does not blow the test stack. */
-    uint8_t *bp = (uint8_t *)&bi;
-    for (size_t i = 0; i < sizeof(bi); i++) bp[i] = 0;
+    /* Zero the synthetic boot_info so we control every field (scratch, not
+     * the stack: the struct is 28+ KiB). */
+    uint8_t *bp = (uint8_t *)bi;
+    for (size_t i = 0; i < sizeof(*bi); i++) bp[i] = 0;
 
     /* Selected entry id: maximum length (47 chars + NUL per
      * BOOT_ENTRIES_MAX_ID_LEN). All ASCII letters so jb_str escape
      * doesn't expand. */
     for (uint32_t i = 0; i < 47; i++)
-        bi.selected_entry_id[i] = 'a';
-    bi.selected_entry_id[47] = '\0';
+        bi->selected_entry_id[i] = 'a';
+    bi->selected_entry_id[47] = '\0';
 
-    bi.selection_reason = 4;  /* WATCHDOG_ROLLBACK */
-    bi.audit_degraded = 0;
-    bi.sticky_present = 1;
-    bi.sticky_recovery_trigger = 1;
-    bi.sticky_watchdog_rollback_request = 1;
-    bi.sticky_last_outcome = 1;
-    bi.sticky_audit_degraded_last_boot = 1;
-    bi.sticky_last_event_code = BOOT_AUDIT_EVENT_NORMAL;
-    bi.sticky_last_boot_seq = 0xFFFFFFFFu;        /* worst-case dec width */
-    bi.sticky_consumed_trigger_seq = 0xFFFFFFFFu;
+    bi->selection_reason = 4;  /* WATCHDOG_ROLLBACK */
+    bi->audit_degraded = 0;
+    bi->sticky_present = 1;
+    bi->sticky_recovery_trigger = 1;
+    bi->sticky_watchdog_rollback_request = 1;
+    bi->sticky_last_outcome = 1;
+    bi->sticky_audit_degraded_last_boot = 1;
+    bi->sticky_last_event_code = BOOT_AUDIT_EVENT_NORMAL;
+    bi->sticky_last_boot_seq = 0xFFFFFFFFu;        /* worst-case dec width */
+    bi->sticky_consumed_trigger_seq = 0xFFFFFFFFu;
 
     /* Fill all 64 rejected entries with max-length ids + the longest
      * reason name (MACHINE_ID_MISMATCH = 19 chars). */
-    bi.rejected_entry_count = 64;
-    bi.rejected_entry_overflow = 1;
+    bi->rejected_entry_count = 64;
+    bi->rejected_entry_overflow = 1;
     for (uint32_t r = 0; r < 64; r++) {
         for (uint32_t i = 0; i < 47; i++)
-            bi.rejected_entries[r].id[i] = 'b';
-        bi.rejected_entries[r].id[47] = '\0';
-        bi.rejected_entries[r].reason = 4;  /* MACHINE_ID_MISMATCH */
+            bi->rejected_entries[r].id[i] = 'b';
+        bi->rejected_entries[r].id[47] = '\0';
+        bi->rejected_entries[r].reason = 4;  /* MACHINE_ID_MISMATCH */
     }
 
-    size_t n = boot_audit_compose_line(&bi, 1u, line, sizeof(line));
+    size_t n = boot_audit_compose_line(bi, 1u, line, AUDIT_TEST_LINE_CAP);
 
     /* Non-zero return == compose succeeded without truncation.
      * boot_audit_publish skips the file write AND the sticky ack on
@@ -284,25 +289,23 @@ static int contains_substring(const char *haystack, size_t len, const char *need
  * degraded boot would mis-classify as NORMAL on disk. */
 static void test_audit_compose_audit_degraded_override(void)
 {
-    static struct boot_info bi;
-    /* 12 KiB: the worst-case audit line (max selected id + 64 max-length rejected
-     * entries) composes to ~8.4 KiB (see boot_audit.c BOOT_AUDIT_JSON_LINE_CAP
-     * rationale), so 12 KiB keeps a >1.4x margin while trimming the kernel
-     * test-build BSS footprint (image is at its user-base page budget). The
-     * non-truncation assertion below is the real gate. */
-    static char line[12u * 1024u];
+    TEST_SCRATCH_KBUF(bi_buf, sizeof(struct boot_info));
+    struct boot_info *bi = (struct boot_info *)bi_buf;
+    /* AUDIT_TEST_LINE_CAP; the non-truncation assertion below is the real gate. */
+    TEST_SCRATCH_KBUF(line_buf, AUDIT_TEST_LINE_CAP);
+    char *line = (char *)line_buf;
 
-    uint8_t *bp = (uint8_t *)&bi;
-    for (size_t i = 0; i < sizeof(bi); i++) bp[i] = 0;
+    uint8_t *bp = (uint8_t *)bi;
+    for (size_t i = 0; i < sizeof(*bi); i++) bp[i] = 0;
 
     /* Drive a normal selection_reason -- the override must beat it. */
-    bi.selection_reason = 1;  /* STORE_DEFAULT (would map to NORMAL=1) */
-    bi.audit_degraded = 1;
-    bi.sticky_present = 0;
-    bi.selected_entry_id[0] = '\0';
-    bi.rejected_entry_count = 0;
+    bi->selection_reason = 1;  /* STORE_DEFAULT (would map to NORMAL=1) */
+    bi->audit_degraded = 1;
+    bi->sticky_present = 0;
+    bi->selected_entry_id[0] = '\0';
+    bi->rejected_entry_count = 0;
 
-    size_t n = boot_audit_compose_line(&bi, 1u, line, sizeof(line));
+    size_t n = boot_audit_compose_line(bi, 1u, line, AUDIT_TEST_LINE_CAP);
     TEST_ASSERT_EQ((uint32_t)(n != 0), 1u,
         "audit_degraded compose must not truncate");
     TEST_ASSERT_EQ((uint32_t)contains_substring(line, n,
@@ -319,25 +322,23 @@ static void test_audit_compose_audit_degraded_override(void)
  * happy state on a fresh image. */
 static void test_audit_compose_first_boot_override(void)
 {
-    static struct boot_info bi;
-    /* 12 KiB: the worst-case audit line (max selected id + 64 max-length rejected
-     * entries) composes to ~8.4 KiB (see boot_audit.c BOOT_AUDIT_JSON_LINE_CAP
-     * rationale), so 12 KiB keeps a >1.4x margin while trimming the kernel
-     * test-build BSS footprint (image is at its user-base page budget). The
-     * non-truncation assertion below is the real gate. */
-    static char line[12u * 1024u];
+    TEST_SCRATCH_KBUF(bi_buf, sizeof(struct boot_info));
+    struct boot_info *bi = (struct boot_info *)bi_buf;
+    /* AUDIT_TEST_LINE_CAP; the non-truncation assertion below is the real gate. */
+    TEST_SCRATCH_KBUF(line_buf, AUDIT_TEST_LINE_CAP);
+    char *line = (char *)line_buf;
 
-    uint8_t *bp = (uint8_t *)&bi;
-    for (size_t i = 0; i < sizeof(bi); i++) bp[i] = 0;
+    uint8_t *bp = (uint8_t *)bi;
+    for (size_t i = 0; i < sizeof(*bi); i++) bp[i] = 0;
 
-    bi.selection_reason = 8;  /* STORE_INVALID -- override must beat */
-    bi.audit_degraded = 0;
-    bi.sticky_present = 0;
-    bi.sticky_last_event_code = BOOT_AUDIT_EVENT_FIRST_BOOT;
-    bi.selected_entry_id[0] = '\0';
-    bi.rejected_entry_count = 0;
+    bi->selection_reason = 8;  /* STORE_INVALID -- override must beat */
+    bi->audit_degraded = 0;
+    bi->sticky_present = 0;
+    bi->sticky_last_event_code = BOOT_AUDIT_EVENT_FIRST_BOOT;
+    bi->selected_entry_id[0] = '\0';
+    bi->rejected_entry_count = 0;
 
-    size_t n = boot_audit_compose_line(&bi, 1u, line, sizeof(line));
+    size_t n = boot_audit_compose_line(bi, 1u, line, AUDIT_TEST_LINE_CAP);
     TEST_ASSERT_EQ((uint32_t)(n != 0), 1u,
         "first-boot compose must not truncate");
     TEST_ASSERT_EQ((uint32_t)contains_substring(line, n,
@@ -351,25 +352,23 @@ static void test_audit_compose_first_boot_override(void)
  * boot must use selection_reason mapping, not the override. */
 static void test_audit_compose_first_boot_gated_on_present(void)
 {
-    static struct boot_info bi;
-    /* 12 KiB: the worst-case audit line (max selected id + 64 max-length rejected
-     * entries) composes to ~8.4 KiB (see boot_audit.c BOOT_AUDIT_JSON_LINE_CAP
-     * rationale), so 12 KiB keeps a >1.4x margin while trimming the kernel
-     * test-build BSS footprint (image is at its user-base page budget). The
-     * non-truncation assertion below is the real gate. */
-    static char line[12u * 1024u];
+    TEST_SCRATCH_KBUF(bi_buf, sizeof(struct boot_info));
+    struct boot_info *bi = (struct boot_info *)bi_buf;
+    /* AUDIT_TEST_LINE_CAP; the non-truncation assertion below is the real gate. */
+    TEST_SCRATCH_KBUF(line_buf, AUDIT_TEST_LINE_CAP);
+    char *line = (char *)line_buf;
 
-    uint8_t *bp = (uint8_t *)&bi;
-    for (size_t i = 0; i < sizeof(bi); i++) bp[i] = 0;
+    uint8_t *bp = (uint8_t *)bi;
+    for (size_t i = 0; i < sizeof(*bi); i++) bp[i] = 0;
 
-    bi.selection_reason = 4;  /* WATCHDOG_ROLLBACK */
-    bi.audit_degraded = 0;
-    bi.sticky_present = 1;    /* gate closed */
-    bi.sticky_last_event_code = BOOT_AUDIT_EVENT_FIRST_BOOT;
-    bi.selected_entry_id[0] = '\0';
-    bi.rejected_entry_count = 0;
+    bi->selection_reason = 4;  /* WATCHDOG_ROLLBACK */
+    bi->audit_degraded = 0;
+    bi->sticky_present = 1;    /* gate closed */
+    bi->sticky_last_event_code = BOOT_AUDIT_EVENT_FIRST_BOOT;
+    bi->selected_entry_id[0] = '\0';
+    bi->rejected_entry_count = 0;
 
-    size_t n = boot_audit_compose_line(&bi, 1u, line, sizeof(line));
+    size_t n = boot_audit_compose_line(bi, 1u, line, AUDIT_TEST_LINE_CAP);
     TEST_ASSERT_EQ((uint32_t)(n != 0), 1u,
         "compose must not truncate");
     TEST_ASSERT_EQ((uint32_t)contains_substring(line, n,

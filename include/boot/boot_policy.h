@@ -401,6 +401,14 @@ typedef struct {
 #define BOOT_MENU_NOTICE_RESTART_FAILED  5u
 #define BOOT_MENU_NOTICE_POWEROFF_FAILED 6u
 #define BOOT_MENU_NOTICE_DEFAULT_UNSAVABLE 7u /* a discovered entry: its id names a slot, not an OS */
+#define BOOT_MENU_NOTICE_TIMEOUT_SET     8u   /* t/T saved a countdown: the footer names it */
+#define BOOT_MENU_NOTICE_TIMEOUT_HIDDEN  9u   /* t/T saved "menu-hidden" */
+#define BOOT_MENU_NOTICE_TIMEOUT_FORCE   10u  /* t/T saved "menu-force" */
+#define BOOT_MENU_NOTICE_TIMEOUT_LIMIT   11u  /* already the shortest or longest: nothing saved */
+#define BOOT_MENU_NOTICE_TIMEOUT_FAILED  12u  /* the firmware refused LoaderConfigTimeout */
+#define BOOT_MENU_NOTICE_EDIT_REFUSED    13u  /* e on an entry that does not allow the editor */
+#define BOOT_MENU_NOTICE_EDIT_SIGNED     14u  /* e on a UKI: its options are part of the signed image */
+#define BOOT_MENU_NOTICE_EDIT_CANCELLED  15u  /* Esc left the editor: nothing changed */
 
 #define BOOT_MENU_PAINT_FULL    0x1u  /* background, title, every row, footer */
 #define BOOT_MENU_PAINT_ROWS    0x2u  /* *row_old and *row_new */
@@ -435,14 +443,20 @@ unsigned int boot_menu_scroll_top(unsigned int top, unsigned int selected,
 #define BOOT_MENU_KEY_POWEROFF    7u   /* Shift+O */
 #define BOOT_MENU_KEY_SET_DEFAULT 8u   /* d: save or clear the saved default */
 #define BOOT_MENU_KEY_NUMBER      9u   /* 1-9 (out = the digit) */
+#define BOOT_MENU_KEY_TIMEOUT_UP  10u  /* t or +: wait longer */
+#define BOOT_MENU_KEY_TIMEOUT_DOWN 11u /* T or -: wait less */
+#define BOOT_MENU_KEY_EDIT        12u  /* e: edit the highlighted entry's options once */
 
 /* UEFI scan codes the map reads (UEFI 2.10 Table 12-2). */
 #define BOOT_MENU_SCAN_NULL      0x00u
 #define BOOT_MENU_SCAN_UP        0x01u
 #define BOOT_MENU_SCAN_DOWN      0x02u
+#define BOOT_MENU_SCAN_RIGHT     0x03u
+#define BOOT_MENU_SCAN_LEFT      0x04u
 #define BOOT_MENU_SCAN_HOME      0x05u
 #define BOOT_MENU_SCAN_END       0x06u
 #define BOOT_MENU_SCAN_PAGE_UP   0x09u
+#define BOOT_MENU_SCAN_DELETE    0x08u
 #define BOOT_MENU_SCAN_PAGE_DOWN 0x0Au
 #define BOOT_MENU_SCAN_F1        0x0Bu
 #define BOOT_MENU_SCAN_F8        0x12u
@@ -470,7 +484,7 @@ int boot_menu_repeat_check(boot_menu_repeat_t *r, unsigned int action, unsigned 
 void boot_menu_repeat_arm(boot_menu_repeat_t *r, unsigned int action, unsigned int now_ms);
 
 /* The help screen shows BOOT_MENU_HELP_LINES lines, `rows` per page. */
-#define BOOT_MENU_HELP_LINES 9u
+#define BOOT_MENU_HELP_LINES 11u
 unsigned int boot_menu_help_pages(unsigned int rows);
 
 /* What the d key does with the highlighted entry: SAVE it, or CLEAR the saved
@@ -488,6 +502,91 @@ unsigned int boot_menu_nav(unsigned int selected, unsigned int count, unsigned i
  * countdown. A number naming no entry is not: a stray 9 on a two-entry menu
  * must not strand an unattended boot. */
 int boot_menu_nav_applies(unsigned int count, unsigned int action, unsigned int number);
+
+/* ---- Menu timeout -------------------------------------------------------
+ * Default countdown when nothing else sets one (5 s, per the boot menu
+ * spec), and the longest countdown the menu runs: the firmware watchdog runs
+ * a 60 s window, and a refresh failure would let it reset a longer dwell. */
+#define BOOT_MENU_DEFAULT_TIMEOUT_S 5u
+#define BOOT_MENU_TIMEOUT_CAP_S     60u
+
+#define BOOT_MENU_TIMEOUT_COUNTDOWN    1u   /* menu, auto-boot after `seconds` */
+#define BOOT_MENU_TIMEOUT_NO_COUNTDOWN 2u   /* menu, waits for a key */
+#define BOOT_MENU_TIMEOUT_HIDDEN       3u   /* no menu; F11 at startup still opens it */
+#define BOOT_MENU_TIMEOUT_DISABLED     4u   /* no menu, and F11 is ignored */
+
+#define BOOT_MENU_TIMEOUT_SRC_DEFAULT 0u    /* BOOT_MENU_DEFAULT_TIMEOUT_S */
+#define BOOT_MENU_TIMEOUT_SRC_ENTRY   1u    /* the default entry's timeout_override */
+#define BOOT_MENU_TIMEOUT_SRC_CONFIG  2u    /* LoaderConfigTimeout */
+#define BOOT_MENU_TIMEOUT_SRC_ONESHOT 3u    /* LoaderConfigTimeoutOneShot */
+
+typedef struct {
+    unsigned int mode;      /* BOOT_MENU_TIMEOUT_* */
+    unsigned int seconds;   /* COUNTDOWN only, 1..BOOT_MENU_TIMEOUT_CAP_S */
+    unsigned int source;    /* BOOT_MENU_TIMEOUT_SRC_* */
+    unsigned int clamped;   /* 1 when the source asked for more than the cap */
+} boot_menu_timeout_t;
+
+/* This boot's menu timeout, highest rank first: the one-shot, then
+ * LoaderConfigTimeout, then the default entry's timeout_override
+ * (BOOT_ENTRIES_TIMEOUT_OVERRIDE_NONE when unset; a value above the cap is
+ * ignored, as it always was), then the default. The two variables are given
+ * as BOOT_LOADER_TIMEOUT_* kinds (loader_vars.h; 0 = absent). A one-shot "0"
+ * waits for a key (systemctl --boot-loader-menu=0); a persistent "0", like an
+ * entry override of 0, hides the menu. */
+void boot_menu_timeout_resolve(unsigned int entry_override,
+                               unsigned int config_kind, unsigned int config_seconds,
+                               unsigned int oneshot_kind, unsigned int oneshot_seconds,
+                               boot_menu_timeout_t *out);
+
+/* What t (up = 1) or T (up = 0) saves, starting from this boot's timeout
+ * `cur`. One scale: hidden, 1..BOOT_MENU_TIMEOUT_CAP_S seconds, then
+ * menu-force (waits for a key). Writes the new value as a
+ * BOOT_LOADER_TIMEOUT_* kind and seconds, and returns 1; returns 0 when the
+ * value is already at that end of the scale (nothing to save). menu-disabled
+ * is never produced: a key must not lock the keyboard out of the menu. */
+int boot_menu_timeout_step(const boot_menu_timeout_t *cur, int up,
+                           unsigned int *kind, unsigned int *seconds);
+
+/* The timeout a just-saved value gives (CONFIG source), so a second t press
+ * steps from the first one's result. */
+void boot_menu_timeout_from_saved(unsigned int kind, unsigned int seconds,
+                                  boot_menu_timeout_t *out);
+
+/* ---- One-off options editor (the e key) ---------------------------------
+ * Edits the options a split or safe entry boots with, for this boot only. */
+#define BOOT_MENU_EDIT_OK         0u
+#define BOOT_MENU_EDIT_NOT_ALLOWED 1u   /* no allow_editor flag, or a discovered entry */
+#define BOOT_MENU_EDIT_SIGNED     2u    /* a UKI: the options are inside the signed image */
+#define BOOT_MENU_EDIT_NO_OPTIONS 3u    /* a kind that boots no command line */
+unsigned int boot_menu_edit_allowed(const boot_entry_envelope_t *e);
+
+#define BOOT_MENU_EDIT_MAX BOOT_ENTRIES_MAX_PATH_LEN   /* characters, as the store allows */
+typedef struct {
+    char text[BOOT_MENU_EDIT_MAX + 1u];
+    unsigned int len;
+    unsigned int cursor;   /* 0..len */
+} boot_menu_edit_t;
+
+/* Start editing `initial` (NULL = empty). Characters outside printable ASCII
+ * and any beyond BOOT_MENU_EDIT_MAX are dropped; returns 1 when the whole of
+ * `initial` was kept. The cursor starts at the end. */
+int boot_menu_edit_init(boot_menu_edit_t *e, const char *initial);
+
+#define BOOT_MENU_EDIT_KEY_NONE    0u   /* ignored, or no room / nothing to delete */
+#define BOOT_MENU_EDIT_KEY_CHANGED 1u   /* text or cursor moved: repaint */
+#define BOOT_MENU_EDIT_KEY_ACCEPT  2u   /* Enter: boot with this text */
+#define BOOT_MENU_EDIT_KEY_CANCEL  3u   /* Esc: drop the edit */
+/* The text console's version of the field window: the first character to
+ * show in a field `width` cells wide so the cursor cell (which may sit one
+ * past the text) stays inside it, moving from the previous `start` only as
+ * far as that needs. A zero width answers the cursor. */
+unsigned int boot_menu_edit_cols_start(unsigned int len, unsigned int cursor, unsigned int start,
+                                       unsigned int width);
+
+/* Apply one key: printable ASCII inserts at the cursor, Backspace and Delete
+ * remove, Left/Right/Home/End move. */
+unsigned int boot_menu_edit_key(boot_menu_edit_t *e, unsigned int scan, unsigned int unicode);
 
 /* Whole seconds the countdown shows: rounded UP, so a 5 s countdown reads 5
  * for its first second and reaches 0 only when it has run out. */

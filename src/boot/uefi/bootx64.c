@@ -6188,17 +6188,8 @@ static void boot_policy_publish_alloc_failure_fallback(const char *what)
  * shared with the boot tests, which check every band against the atlases. */
 #include "../../../include/boot/boot_menu_layout.h"
 
-/* Default countdown when no per-entry override is set. 5 seconds per
- * the boot menu spec. */
-#define BOOT_MENU_DEFAULT_TIMEOUT_S 5u
-
-/* Effective countdown cap. The firmware watchdog at watchdog_reset()
- * runs on a 60s schedule (WD_TIMEOUT in efi_main); the menu loop calls
- * watchdog_reset() each tick to keep the watchdog fed, but a sanity
- * cap on the per-entry timeout_override prevents pathological values
- * (parser allows up to 600) from staying in interactive mode for far
- * longer than any kiosk operator expects. */
-#define BOOT_MENU_TIMEOUT_CAP_S 60u
+/* BOOT_MENU_DEFAULT_TIMEOUT_S and BOOT_MENU_TIMEOUT_CAP_S live in
+ * include/boot/boot_policy.h beside the resolver that applies them. */
 
 /* Render one frame of the menu. GOP path uses the existing Selawik AA
  * font infrastructure (bsod_aa_string + bsod_aa_TITLE / bsod_aa_SUB
@@ -6368,6 +6359,24 @@ static unsigned int boot_menu_put_text(char *buf, unsigned int cap, unsigned int
  * poison is never consulted. */
 static char g_menu_saved_default[64];
 
+/* This boot's menu timeout, and after a t/T press the value it saved, so the
+ * next press steps from there and the footer can name it. Written by
+ * boot_policy_invoke() before the menu runs, on every boot. */
+static boot_menu_timeout_t g_menu_timeout;
+
+/* The store bytes the menu decodes an entry's options from for the e key
+ * (NULL when there is no store). Written before every menu run. */
+static const unsigned char *g_menu_store_json;
+static unsigned int g_menu_store_len;
+
+/* The e key's accepted edit: g_menu_edit_accepted is 1 only after Enter in
+ * the editor, and then g_menu_edit_entry names the entry the text is for
+ * (an empty text is a real edit: boot with no options). Reset at the top of
+ * boot_policy_invoke(), so a boot whose menu never runs reads 0. */
+static int g_menu_edit_accepted;
+static char g_menu_edit_entry[64];
+static boot_menu_edit_t g_menu_edit;
+
 /* Repaint the footer band at `footer_y`. While the countdown runs it names the
  * seconds left; once a key stopped it there is no countdown to show. A list
  * that scrolls also names the highlighted entry's position. */
@@ -6404,6 +6413,39 @@ static unsigned int boot_menu_notice_text(unsigned int notice, char *buf, unsign
         break;
     case BOOT_MENU_NOTICE_POWEROFF_FAILED:
         p = boot_menu_put_text(buf, cap, p, "Power off failed: the firmware did not power off.");
+        break;
+    case BOOT_MENU_NOTICE_TIMEOUT_SET: {
+        char num[8];
+        unsigned int v = g_menu_timeout.seconds, n = 0, d = 100u;
+        for (; d; d /= 10u)
+            if (v >= d || n || d == 1u)
+                num[n++] = (char)('0' + (v / d) % 10u);
+        num[n] = 0;
+        p = boot_menu_put_text(buf, cap, p, "Menu timeout saved: ");
+        p = boot_menu_put_text(buf, cap, p, num);
+        p = boot_menu_put_text(buf, cap, p, " s from the next boot.");
+        break;
+    }
+    case BOOT_MENU_NOTICE_TIMEOUT_HIDDEN:
+        p = boot_menu_put_text(buf, cap, p, "Menu hidden from the next boot: hold F11 at startup to show it.");
+        break;
+    case BOOT_MENU_NOTICE_TIMEOUT_FORCE:
+        p = boot_menu_put_text(buf, cap, p, "From the next boot the menu waits for a key.");
+        break;
+    case BOOT_MENU_NOTICE_TIMEOUT_LIMIT:
+        p = boot_menu_put_text(buf, cap, p, "The menu timeout is already at its limit.");
+        break;
+    case BOOT_MENU_NOTICE_TIMEOUT_FAILED:
+        p = boot_menu_put_text(buf, cap, p, "Could not save the timeout: the firmware refused.");
+        break;
+    case BOOT_MENU_NOTICE_EDIT_REFUSED:
+        p = boot_menu_put_text(buf, cap, p, "This entry's options cannot be edited.");
+        break;
+    case BOOT_MENU_NOTICE_EDIT_SIGNED:
+        p = boot_menu_put_text(buf, cap, p, "Not editable: this entry's options are part of its signed image.");
+        break;
+    case BOOT_MENU_NOTICE_EDIT_CANCELLED:
+        p = boot_menu_put_text(buf, cap, p, "Edit cancelled: nothing changed.");
         break;
     default:
         break;
@@ -6612,11 +6654,14 @@ static int loader_write_saved_default(const char *id);
  * before any read on every boot. */
 static char g_menu_fw_option_entry[64];
 
+
 static const char *const s_boot_menu_help[BOOT_MENU_HELP_LINES] = {
     "Up, Down, PgUp, PgDn, Home, End: move the highlight",
     "1-9: highlight that entry",
     "Enter or Esc: boot the highlighted entry",
     "d: make it the saved default (again clears it)",
+    "t or +: wait longer next time; T or -: wait less",
+    "e: edit this entry's options for this boot only",
     "F8: boot the highlighted entry in safe mode",
     "F10: restart into firmware setup",
     "Shift+B: restart",
@@ -6738,6 +6783,286 @@ static unsigned int boot_menu_set_default(const boot_entries_parse_result_t *par
                 return BOOT_MENU_NOTICE_DEFAULT_SHADOWED;
     }
     return BOOT_MENU_NOTICE_DEFAULT_SAVED;
+}
+
+static int loader_write_config_timeout(unsigned int kind, unsigned int seconds);
+
+/* t / T: save the next value on the timeout scale as LoaderConfigTimeout.
+ * It applies from the next boot; this boot's countdown already stopped when
+ * the key arrived. Returns the footer notice. */
+static unsigned int boot_menu_step_timeout(int up)
+{
+    unsigned int kind = 0, secs = 0;
+    if (!boot_menu_timeout_step(&g_menu_timeout, up, &kind, &secs)) {
+        serial_early_print(up ? "[BOOT] menu: t -- the timeout is already at its longest\n"
+                              : "[BOOT] menu: T -- the timeout is already at its shortest\n");
+        return BOOT_MENU_NOTICE_TIMEOUT_LIMIT;
+    }
+    if (!loader_write_config_timeout(kind, secs)) {
+        serial_early_print("[BOOT] menu: t -- the firmware refused LoaderConfigTimeout\n");
+        return BOOT_MENU_NOTICE_TIMEOUT_FAILED;
+    }
+    boot_menu_timeout_from_saved(kind, secs, &g_menu_timeout);
+    serial_early_print(up ? "[BOOT] menu: t -- LoaderConfigTimeout " : "[BOOT] menu: T -- LoaderConfigTimeout ");
+    if (kind == BOOT_LOADER_TIMEOUT_SECONDS) {
+        serial_early_print_uint((UINT32)secs);
+        serial_early_print("s\n");
+        return BOOT_MENU_NOTICE_TIMEOUT_SET;
+    }
+    serial_early_print(kind == BOOT_LOADER_TIMEOUT_FORCE ? "menu-force\n" : "menu-hidden\n");
+    return kind == BOOT_LOADER_TIMEOUT_FORCE ? BOOT_MENU_NOTICE_TIMEOUT_FORCE : BOOT_MENU_NOTICE_TIMEOUT_HIDDEN;
+}
+
+/* The text-console field: one fixed row, "> " then a window of the text
+ * that keeps the cursor in view, padded to the field width so a shorter text
+ * leaves nothing behind, with the console cursor on the caret. A console
+ * that cannot report its size is taken as 80 columns. SetCursorPosition is
+ * required: without it the caret cannot be shown, so the paint reports
+ * failure and the editor will not accept the text. */
+#define BOOT_MENU_EDIT_CON_PREFIX 2u    /* "> " */
+static struct {
+    UINTN row;            /* console row the field is on */
+    unsigned int width;   /* text cells: columns - prefix - 1, never the last column */
+    unsigned int start;   /* first character shown */
+    int positioned;       /* SetCursorPosition works */
+    int cursor_was;       /* CursorVisible before the editor, -1 unknown */
+    int caret_visible;    /* the console cursor is shown: enabled now, or already on */
+} s_edit_con;
+
+static void boot_menu_edit_conout_begin(void)
+{
+    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *co = gST ? gST->ConOut : (EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *)0;
+    UINTN cols = 80u, rows = 0;
+    s_edit_con.row = 0;
+    s_edit_con.start = 0;
+    s_edit_con.positioned = 0;
+    s_edit_con.cursor_was = -1;
+    s_edit_con.caret_visible = 0;
+    s_edit_con.width = 0;
+    if (!co || !co->OutputString)
+        return;
+    co->OutputString(co, u"\r\nEdit boot options (Enter boots once, Esc goes back):\r\n");
+    if (co->Mode && co->QueryMode && co->Mode->Mode >= 0 &&
+        EFI_ERROR(co->QueryMode(co, (UINTN)co->Mode->Mode, &cols, &rows)))
+        cols = 80u;
+    if (cols > 512u)
+        cols = 512u;    /* no console is wider; bounds the line buffer below */
+    s_edit_con.width = cols > BOOT_MENU_EDIT_CON_PREFIX + 1u
+                           ? (unsigned int)cols - BOOT_MENU_EDIT_CON_PREFIX - 1u : 1u;
+    if (co->Mode && co->SetCursorPosition && co->Mode->CursorRow >= 0) {
+        s_edit_con.row = (UINTN)co->Mode->CursorRow;
+        s_edit_con.positioned = 1;
+    }
+    s_edit_con.cursor_was = co->Mode ? (co->Mode->CursorVisible ? 1 : 0) : -1;
+    s_edit_con.caret_visible = (co->EnableCursor && !EFI_ERROR(co->EnableCursor(co, 1))) ||
+                               s_edit_con.cursor_was == 1;
+}
+
+/* Returns 1 only when the whole field and a visible caret reached the console. */
+static int boot_menu_paint_edit_conout(void)
+{
+    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *co = gST ? gST->ConOut : (EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *)0;
+    const boot_menu_edit_t *ed = &g_menu_edit;
+    CHAR16 line[BOOT_MENU_EDIT_CON_PREFIX + 512u + 1u];
+    unsigned int p = 0, w = s_edit_con.width;
+    if (!co || !co->OutputString || !s_edit_con.positioned || !s_edit_con.caret_visible || w == 0u)
+        return 0;
+    if (w > 512u - BOOT_MENU_EDIT_CON_PREFIX - 1u)
+        w = 512u - BOOT_MENU_EDIT_CON_PREFIX - 1u;
+    s_edit_con.start = boot_menu_edit_cols_start(ed->len, ed->cursor, s_edit_con.start, w);
+    if (EFI_ERROR(co->SetCursorPosition(co, 0, s_edit_con.row)))
+        return 0;
+    line[p++] = u'>';
+    line[p++] = u' ';
+    for (unsigned int i = 0; i < w; i++) {
+        unsigned int k = s_edit_con.start + i;
+        line[p++] = k < ed->len ? (CHAR16)(unsigned char)ed->text[k] : u' ';
+    }
+    line[p] = 0;
+    if (EFI_ERROR(co->OutputString(co, line)))
+        return 0;
+    /* cols_start keeps start <= cursor < start + w, so the column is in the field. */
+    return !EFI_ERROR(co->SetCursorPosition(co, BOOT_MENU_EDIT_CON_PREFIX + (ed->cursor - s_edit_con.start),
+                                            s_edit_con.row));
+}
+
+static void boot_menu_edit_conout_end(void)
+{
+    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *co = gST ? gST->ConOut : (EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *)0;
+    if (co && co->OutputString)
+        co->OutputString(co, u"\r\n");
+    if (co && co->EnableCursor && s_edit_con.cursor_was == 0)
+        (void)co->EnableCursor(co, 0);
+}
+
+/* The editor screen: title, the entry's name, the text on the highlight bar
+ * with a caret, and the key hint. `*start` is the first character shown and
+ * moves only as far as keeping the cursor visible needs. ConOut rewrites one
+ * line instead. Returns 1 when the current text is on screen (a framebuffer
+ * write cannot fail; a console write can). */
+#define BOOT_MENU_EDIT_CARET_W 2u
+static int boot_menu_paint_edit(const boot_menu_fit_t *gop_fit, const boot_entry_envelope_t *e,
+                                 unsigned int *start)
+{
+    const boot_menu_edit_t *ed = &g_menu_edit;
+    if (gop_fit && gop_fit->rows >= 2u) {
+        UINT32 right = boot_menu_text_right();
+        char fitted[96];
+        boot_menu_fill(0u, gop_fit->footer_y, 0u, gFbWidth, fb_pack_rgb(0x0A, 0x0A, 0x0A));
+        UINT32 ty = boot_menu_text_py(bsod_aa_TITLE, BSOD_AA_TITLE_ASCENT, BOOT_MENU_TITLE_Y,
+                                      BOOT_MENU_LIST_Y0 - BOOT_MENU_TITLE_Y);
+        if (ty != 0u)
+            bsod_aa_string(BOOT_MENU_COL_X, ty, "Edit Boot Options", bsod_aa_TITLE, bsod_aa_TITLE_data,
+                           BSOD_AA_TITLE_ASCENT, 0xE0, 0xE0, 0xE0, 0x0A, 0x0A, 0x0A);
+        if (right <= BOOT_MENU_COL_X)
+            return 0;
+        UINT32 py = boot_menu_text_py(bsod_aa_SUB, BSOD_AA_SUB_ASCENT, BOOT_MENU_LIST_Y0, BOOT_MENU_ROW_H);
+        if (py != 0u) {
+            (void)boot_menu_fit_text(bsod_aa_SUB, e->title[0] ? e->title : e->id, right - BOOT_MENU_COL_X,
+                                     fitted, (unsigned int)sizeof(fitted));
+            bsod_aa_string(BOOT_MENU_COL_X, py, fitted, bsod_aa_SUB, bsod_aa_SUB_data, BSOD_AA_SUB_ASCENT,
+                           0xC8, 0xC8, 0xC8, 0x0A, 0x0A, 0x0A);
+        }
+        UINT32 fy = BOOT_MENU_LIST_Y0 + BOOT_MENU_ROW_H;
+        boot_menu_fill(fy, BOOT_MENU_ROW_H, BOOT_MENU_HI_X, BOOT_MENU_HI_X + BOOT_MENU_HI_W,
+                       fb_pack_rgb(0x40, 0x80, 0xC0));
+        unsigned int budget = (unsigned int)(right - BOOT_MENU_COL_X);
+        *start = boot_menu_edit_view_start(bsod_aa_SUB, ed->text, ed->len, ed->cursor, *start, budget,
+                                           BOOT_MENU_EDIT_CARET_W);
+        /* Draw from *start while it fits; the caret goes after the characters
+         * before the cursor. */
+        unsigned int n = 0, w = 0, caret_x = 0;
+        char shown[BOOT_MENU_EDIT_MAX + 1u];
+        for (unsigned int i = *start; i < ed->len; i++) {
+            unsigned int adv = bsod_aa_advance(bsod_aa_SUB, ed->text[i]);
+            if (w + adv > budget)
+                break;
+            if (i == ed->cursor)
+                caret_x = w;
+            shown[n++] = ed->text[i];
+            w += adv;
+        }
+        shown[n] = 0;
+        if (ed->cursor >= *start + n)
+            caret_x = w;
+        py = boot_menu_text_py(bsod_aa_SUB, BSOD_AA_SUB_ASCENT, fy, BOOT_MENU_ROW_H);
+        if (py == 0u)
+            return 0;
+        {
+            bsod_aa_string(BOOT_MENU_COL_X, py, shown, bsod_aa_SUB, bsod_aa_SUB_data, BSOD_AA_SUB_ASCENT,
+                           0xFF, 0xFF, 0xFF, 0x40, 0x80, 0xC0);
+            if (caret_x + BOOT_MENU_EDIT_CARET_W <= budget)
+                boot_menu_fill(fy + 6u, BOOT_MENU_ROW_H - 12u, BOOT_MENU_COL_X + caret_x,
+                               BOOT_MENU_COL_X + caret_x + BOOT_MENU_EDIT_CARET_W, fb_pack_rgb(0xFF, 0xFF, 0xFF));
+        }
+        if (gop_fit->footer_y < gFbHeight) {
+            boot_menu_fill(gop_fit->footer_y, BOOT_MENU_FOOTER_H, BOOT_MENU_HI_X,
+                           BOOT_MENU_HI_X + BOOT_MENU_HI_W, fb_pack_rgb(0x0A, 0x0A, 0x0A));
+            py = boot_menu_text_py(bsod_aa_SUB, BSOD_AA_SUB_ASCENT, gop_fit->footer_y, BOOT_MENU_FOOTER_H);
+            if (py != 0u) {
+                (void)boot_menu_fit_text(bsod_aa_SUB, "Enter boots with these options once. Esc goes back.",
+                                         budget, fitted, (unsigned int)sizeof(fitted));
+                bsod_aa_string(BOOT_MENU_COL_X, py, fitted, bsod_aa_SUB, bsod_aa_SUB_data,
+                               BSOD_AA_SUB_ASCENT, 0x80, 0x80, 0x80, 0x0A, 0x0A, 0x0A);
+            }
+        }
+        return 1;
+    }
+    return boot_menu_paint_edit_conout();
+}
+
+/* The e key on the highlighted entry. Returns the footer notice to show when
+ * the menu stays up, or BOOT_MENU_NOTICE_NONE with *accepted = 1 when Enter
+ * accepted the text (the menu then boots that entry). */
+static unsigned int boot_menu_edit_run(const boot_entries_parse_result_t *parse, unsigned int entry,
+                                       int sb_active, const boot_menu_fit_t *gop_fit, int *accepted)
+{
+    static boot_entry_decoded_t decoded;   /* written in full by the validator below */
+    const boot_entry_envelope_t *e = &parse->entries[entry];
+    *accepted = 0;
+    unsigned int why = boot_menu_edit_allowed(e);
+    if (why != BOOT_MENU_EDIT_OK) {
+        serial_early_print("[BOOT] menu: e -- ");
+        serial_early_print(e->id);
+        serial_early_print(why == BOOT_MENU_EDIT_SIGNED ? " is a signed image; not editable\n"
+                                                        : " does not allow the editor\n");
+        return why == BOOT_MENU_EDIT_SIGNED ? BOOT_MENU_NOTICE_EDIT_SIGNED : BOOT_MENU_NOTICE_EDIT_REFUSED;
+    }
+    /* The text starts as the options the entry boots with: its own when it
+     * has some, boot.conf's otherwise. The payload is decoded the way the
+     * boot will decode it; an entry the boot would reject is not editable. */
+    const unsigned char *pb = (const unsigned char *)0;
+    unsigned int pl = 0;
+    if (g_menu_store_json && e->payload_present && e->payload_offset <= g_menu_store_len &&
+        e->payload_length <= g_menu_store_len - e->payload_offset) {
+        pb = g_menu_store_json + e->payload_offset;
+        pl = e->payload_length;
+    }
+    if (boot_entry_kind_validate(e->kind, e->flags, sb_active, pb, pl, &decoded) != BOOT_ENTRY_KIND_OK) {
+        serial_early_print("[BOOT] menu: e -- ");
+        serial_early_print(e->id);
+        serial_early_print(" would not boot; not editable\n");
+        return BOOT_MENU_NOTICE_EDIT_REFUSED;
+    }
+    const char *initial = (decoded.u.split.has_cmdline && decoded.u.split.cmdline[0])
+                              ? decoded.u.split.cmdline : g_boot_info_ptr->config.cmdline;
+    (void)boot_menu_edit_init(&g_menu_edit, initial);
+    serial_early_print("[BOOT] menu: e -- editing ");
+    serial_early_print(e->id);
+    serial_early_print("\n");
+
+    if (gST && gST->ConIn && gST->ConIn->Reset)
+        gST->ConIn->Reset(gST->ConIn, 0);
+    unsigned int start = 0, since_wd = 0;
+    int text_console = !(gop_fit && gop_fit->rows >= 2u);
+    if (text_console)
+        boot_menu_edit_conout_begin();
+    int shown = boot_menu_paint_edit(gop_fit, e, &start);
+    for (;;) {
+        if (since_wd >= 10000u) {
+            watchdog_reset();
+            since_wd = 0;
+        }
+        if (gST && gST->ConIn && gST->ConIn->ReadKeyStroke) {
+            EFI_INPUT_KEY key;
+            if (!EFI_ERROR(gST->ConIn->ReadKeyStroke(gST->ConIn, &key))) {
+                unsigned int r = boot_menu_edit_key(&g_menu_edit, key.ScanCode, key.UnicodeChar);
+                if (r == BOOT_MENU_EDIT_KEY_CHANGED) {
+                    shown = boot_menu_paint_edit(gop_fit, e, &start);
+                } else if (r == BOOT_MENU_EDIT_KEY_ACCEPT && !shown) {
+                    /* Never boot text the user could not see. */
+                    if (text_console)
+                        boot_menu_edit_conout_end();
+                    serial_early_print("[BOOT] menu: e -- the console could not show the edit; cancelled\n");
+                    return BOOT_MENU_NOTICE_EDIT_CANCELLED;
+                } else if (r == BOOT_MENU_EDIT_KEY_ACCEPT) {
+                    UINTN k = 0;
+                    while (e->id[k] && k < sizeof(g_menu_edit_entry) - 1u) {
+                        g_menu_edit_entry[k] = e->id[k];
+                        k++;
+                    }
+                    g_menu_edit_entry[k] = 0;
+                    g_menu_edit_accepted = 1;
+                    *accepted = 1;
+                    if (text_console)
+                        boot_menu_edit_conout_end();
+                    serial_early_print("[BOOT] menu: e -- options for ");
+                    serial_early_print(e->id);
+                    serial_early_print(" accepted: \"");
+                    serial_early_print(g_menu_edit.text);
+                    serial_early_print("\"\n");
+                    return BOOT_MENU_NOTICE_NONE;
+                } else if (r == BOOT_MENU_EDIT_KEY_CANCEL) {
+                    if (text_console)
+                        boot_menu_edit_conout_end();
+                    serial_early_print("[BOOT] menu: e -- edit cancelled\n");
+                    return BOOT_MENU_NOTICE_EDIT_CANCELLED;
+                }
+            }
+        }
+        if (gBS && gBS->Stall) gBS->Stall(50000);
+        since_wd += 50u;
+    }
 }
 
 static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
@@ -6922,6 +7247,22 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
                 } else if (act == BOOT_MENU_KEY_SET_DEFAULT) {
                     boot_menu_repeat_arm(&repeat, act, elapsed_ms);
                     want.notice = boot_menu_set_default(parse, cand_idx, cand_count, selected);
+                    dirty = 1;
+                    is_action = 1;
+                } else if (act == BOOT_MENU_KEY_TIMEOUT_UP || act == BOOT_MENU_KEY_TIMEOUT_DOWN) {
+                    boot_menu_repeat_arm(&repeat, act, elapsed_ms);
+                    want.notice = boot_menu_step_timeout(act == BOOT_MENU_KEY_TIMEOUT_UP);
+                    dirty = 1;
+                    is_action = 1;
+                } else if (act == BOOT_MENU_KEY_EDIT) {
+                    int accepted = 0;
+                    unsigned int note = boot_menu_edit_run(parse, cand_idx[selected], sb_active,
+                                                           &gop_fit, &accepted);
+                    if (accepted)
+                        return selected;
+                    boot_menu_repeat_arm(&repeat, act, elapsed_ms);
+                    want.notice = note;
+                    drawn.valid = 0u;   /* the editor covered the menu */
                     dirty = 1;
                     is_action = 1;
                 }
@@ -7478,16 +7819,17 @@ static const EFI_GUID g_loader_systemd_guid =
 /* LoaderFeatures bits per upstream Boot Loader Interface spec. Only
  * advertise bits the bootloader actually implements; advertising a bit
  * we do not honor is a compatibility lie. */
-#define LOADER_FEATURE_CONFIG_TIMEOUT          (1ULL << 0)  /* writable LoaderConfigTimeout -- NOT advertised */
+#define LOADER_FEATURE_CONFIG_TIMEOUT          (1ULL << 0)  /* LoaderConfigTimeout honoured (the menu's t/T keys) */
 #define LOADER_FEATURE_CONFIG_TIMEOUT_ONESHOT  (1ULL << 1)
 #define LOADER_FEATURE_ENTRY_DEFAULT           (1ULL << 2)  /* LoaderEntryDefault honoured (the menu's d key) */
 #define LOADER_FEATURE_ENTRY_ONESHOT           (1ULL << 3)
 #define LOADER_FEATURE_BOOT_COUNTING           (1ULL << 4)
 #define LOADER_FEATURE_XBOOTLDR                (1ULL << 5)  /* XBOOTLDR partition -- NOT advertised */
 #define LOADER_FEATURE_SORT_KEY                (1ULL << 8)  /* full BLS order: bad last, sort-key, version */
-/* We advertise: ConfigTimeoutOneShot + EntryDefault + EntryOneShot + BootCounting + SortKey */
+/* We advertise: ConfigTimeout + ConfigTimeoutOneShot + EntryDefault + EntryOneShot + BootCounting + SortKey */
 #define LOADER_FEATURES_PUBLISHED \
-    (LOADER_FEATURE_CONFIG_TIMEOUT_ONESHOT \
+    (LOADER_FEATURE_CONFIG_TIMEOUT \
+     | LOADER_FEATURE_CONFIG_TIMEOUT_ONESHOT \
      | LOADER_FEATURE_ENTRY_DEFAULT \
      | LOADER_FEATURE_ENTRY_ONESHOT \
      | LOADER_FEATURE_BOOT_COUNTING \
@@ -7534,6 +7876,7 @@ static void loader_consume_one_shot_vars(
     char *out_entry_id, UINTN entry_id_cap,
     int *out_have_entry,
     UINT32 *out_timeout_seconds,
+    UINT32 *out_timeout_kind,
     int *out_have_timeout)
 {
     struct boot_loader_var_ops ops = { loader_vars_fw_set, (void *)0, loader_vars_fw_get };
@@ -7565,6 +7908,7 @@ static void loader_consume_one_shot_vars(
     *out_have_entry = r.have_entry;
     if (r.have_timeout) {
         *out_timeout_seconds = (UINT32)r.timeout_seconds;
+        *out_timeout_kind = (UINT32)r.timeout_kind;
         *out_have_timeout = 1;
     }
 }
@@ -7581,6 +7925,30 @@ static void loader_read_saved_default(char *out, UINTN cap)
         /* The operator's setting: reported and left in place, never deleted. */
         serial_early_print("[BOOT] loader-vars: LoaderEntryDefault unusable -- ignored\n");
     }
+}
+
+/* LoaderConfigTimeout, the saved menu timeout `bootctl set-timeout` and the
+ * t/T keys write. *kind is 0 when it is absent or unusable (an unusable
+ * value is reported and left in place: it is the operator's). */
+static void loader_read_config_timeout(UINT32 *kind, UINT32 *seconds)
+{
+    struct boot_loader_var_ops ops = { loader_vars_fw_set, (void *)0, loader_vars_fw_get };
+    unsigned int k = 0, v = 0;
+    int r = boot_loader_config_timeout_read(&ops, &g_loader_systemd_guid, &k, &v);
+    *kind = 0;
+    *seconds = 0;
+    if (r == BOOT_LOADER_DEFAULT_PRESENT) {
+        *kind = (UINT32)k;
+        *seconds = (UINT32)v;
+    } else if (r == BOOT_LOADER_DEFAULT_UNUSABLE) {
+        serial_early_print("[BOOT] loader-vars: LoaderConfigTimeout unusable -- ignored\n");
+    }
+}
+
+static int loader_write_config_timeout(unsigned int kind, unsigned int seconds)
+{
+    struct boot_loader_var_ops ops = { loader_vars_fw_set, (void *)0, loader_vars_fw_get };
+    return boot_loader_config_timeout_write(&ops, &g_loader_systemd_guid, kind, seconds);
 }
 
 /* Persist `id` as the saved default, or delete it when `id` is "" (the d
@@ -7723,6 +8091,56 @@ static void loader_vars_report(const boot_entries_parse_result_t *parse,
  * ladder dispatch, and boot_info v19 population. Counter scan / crash-
  * tolerant rename / kernel-side Phase-0 ABI validator are owned by the
  * next section. */
+/* The command line the kernel gets, once the booted entry validated: the
+ * text accepted in the menu's editor when it was for this entry, else the
+ * entry's own non-empty payload cmdline, else boot.conf's (left in place).
+ * Only split and safe entries carry one; config.cmdline_source records the
+ * choice for the kernel. Runs before the counter decrement and the loader
+ * variables are published, so every later consumer sees the final text. */
+static void boot_policy_apply_cmdline(const char *entry_id)
+{
+    const char *text = (const char *)0;
+    UINT8 source = (UINT8)BOOT_CMDLINE_SOURCE_CONF;
+    int splitlike = g_policy_decoded.valid && (g_policy_decoded.kind == BOOT_ENTRY_KIND_SPLIT ||
+                                               g_policy_decoded.kind == BOOT_ENTRY_KIND_SAFE);
+    int same_entry = g_menu_edit_accepted && entry_id;
+    for (UINTN i = 0; same_entry && i < sizeof(g_menu_edit_entry); i++) {
+        if (g_menu_edit_entry[i] != entry_id[i]) {
+            same_entry = 0;
+            break;
+        }
+        if (!entry_id[i])
+            break;
+    }
+    if (g_menu_edit_accepted && !same_entry)
+        serial_early_print("[BOOT] menu: edited options were for another entry -- not applied\n");
+    if (splitlike && same_entry) {
+        text = g_menu_edit.text;
+        source = (UINT8)BOOT_CMDLINE_SOURCE_EDITED;
+    } else if (splitlike && g_policy_decoded.u.split.has_cmdline && g_policy_decoded.u.split.cmdline[0]) {
+        text = g_policy_decoded.u.split.cmdline;
+        source = (UINT8)BOOT_CMDLINE_SOURCE_ENTRY;
+    }
+    g_boot_info_ptr->config.cmdline_source = source;
+    if (!text)
+        return;
+    /* Both sources are capped at BOOT_ENTRIES_MAX_PATH_LEN (255), which
+     * fits cmdline[BOOT_CONF_CMDLINE_MAX]; the bound below is the field's. */
+    UINTN n = 0;
+    while (text[n] && n < BOOT_CONF_CMDLINE_MAX - 1u) {
+        g_boot_info_ptr->config.cmdline[n] = text[n];
+        n++;
+    }
+    for (UINTN k = n; k < BOOT_CONF_CMDLINE_MAX; k++)
+        g_boot_info_ptr->config.cmdline[k] = 0;
+    serial_early_print(source == BOOT_CMDLINE_SOURCE_EDITED ? "[BOOT] policy: cmdline edited at the menu: \""
+                                                            : "[BOOT] policy: cmdline from the entry: \"");
+    serial_early_print(g_boot_info_ptr->config.cmdline);
+    serial_early_print("\"\n");
+}
+_Static_assert(BOOT_ENTRIES_MAX_PATH_LEN < BOOT_CONF_CMDLINE_MAX,
+               "an entry or edited cmdline must fit boot_config.cmdline");
+
 static void boot_policy_invoke(void)
 {
     /* FIRST statement, ahead of every early return below. g_policy_decoded is
@@ -7737,6 +8155,13 @@ static void boot_policy_invoke(void)
      * Measured 2026-09-03 with llvm-readelf: 2,840 bytes, a negligible
      * one-time memset on a pre-EBS path that is about to do disk I/O. */
     efi_memset(&g_policy_decoded, 0, sizeof(g_policy_decoded));
+    /* The menu's statics, for the same reason: read after the menu whether or
+     * not it ran. */
+    g_menu_edit_accepted = 0;
+    g_menu_edit_entry[0] = 0;
+    g_menu_store_json = (const unsigned char *)0;
+    g_menu_store_len = 0;
+    efi_memset(&g_menu_timeout, 0, sizeof(g_menu_timeout));
 
     boot_set_section(BOOT_SECTION_BL_POLICY);
     post_code16(POST16_BL_BOOT_POLICY);
@@ -7941,12 +8366,16 @@ static void boot_policy_invoke(void)
     static char s_loader_oneshot_entry[64];
     int loader_have_entry_oneshot = 0;
     UINT32 loader_oneshot_timeout = 0;
+    UINT32 loader_oneshot_timeout_kind = 0;
     int loader_have_timeout_oneshot = 0;
     loader_consume_one_shot_vars(
         s_loader_oneshot_entry, sizeof(s_loader_oneshot_entry),
         &loader_have_entry_oneshot,
         &loader_oneshot_timeout,
+        &loader_oneshot_timeout_kind,
         &loader_have_timeout_oneshot);
+    UINT32 loader_config_timeout_kind = 0, loader_config_timeout = 0;
+    loader_read_config_timeout(&loader_config_timeout_kind, &loader_config_timeout);
     if (loader_have_entry_oneshot) {
         UINTN k = 0;
         while (s_loader_oneshot_entry[k] &&
@@ -8177,8 +8606,33 @@ static void boot_policy_invoke(void)
      * would otherwise auto-pick (forced-selection / single-entry
      * with hide_when_alone / etc.). The flag also clears the watchdog
      * once so the dwell does not start with a stale window. */
-    int force_show = boot_menu_probe_f11();
+    /* This boot's menu timeout (boot_menu_timeout_resolve ranks the sources)
+     * and, for t/T, the one the next boot gets without this boot's one-shot. */
+    unsigned int def_override = BOOT_ENTRIES_TIMEOUT_OVERRIDE_NONE;
+    if (cand_default_idx < cand_count)
+        def_override = parse->entries[cand_idx[cand_default_idx]].timeout_override;
+    boot_menu_timeout_t menu_to;
+    boot_menu_timeout_resolve(def_override, loader_config_timeout_kind, loader_config_timeout,
+                              loader_have_timeout_oneshot ? loader_oneshot_timeout_kind : 0u,
+                              loader_oneshot_timeout, &menu_to);
+    boot_menu_timeout_resolve(def_override, loader_config_timeout_kind, loader_config_timeout,
+                              0u, 0u, &g_menu_timeout);
+    /* menu-disabled is the one setting F11 does not override: the operator
+     * turned the menu off, keyboard included (Boot Loader Interface). */
+    int force_show = 0;
+    if (menu_to.mode == BOOT_MENU_TIMEOUT_DISABLED)
+        serial_early_print(menu_to.source == BOOT_MENU_TIMEOUT_SRC_ONESHOT
+                               ? "[BOOT] menu: disabled by LoaderConfigTimeoutOneShot -- F11 ignored\n"
+                               : "[BOOT] menu: disabled by LoaderConfigTimeout -- F11 ignored\n");
+    else
+        force_show = boot_menu_probe_f11();
     if (force_show) watchdog_reset();
+    /* A variable that asks for a visible menu shows it, as the one-shot
+     * always did: the operator asked to see it this boot. */
+    int var_shows_menu = (menu_to.source == BOOT_MENU_TIMEOUT_SRC_ONESHOT ||
+                          menu_to.source == BOOT_MENU_TIMEOUT_SRC_CONFIG) &&
+                         (menu_to.mode == BOOT_MENU_TIMEOUT_COUNTDOWN ||
+                          menu_to.mode == BOOT_MENU_TIMEOUT_NO_COUNTDOWN);
     /* HIDE_WHEN_ALONE: when the visible candidate list has exactly
      * one entry AND it carries the flag, skip the interactive menu
      * (Win11 single-OS / systemd-boot default-pattern parity).
@@ -8188,7 +8642,7 @@ static void boot_policy_invoke(void)
      * work on the quiet single-OS path too. */
     int allow_skip_when_alone = 0;
     if (cand_count == 1u && cand_default_idx < cand_count && !force_show
-        && !loader_have_timeout_oneshot) {
+        && !var_shows_menu) {
         const boot_entry_envelope_t *lone =
             &parse->entries[cand_idx[cand_default_idx]];
         if (lone->flags & BOOT_ENTRY_FLAG_HIDE_WHEN_ALONE)
@@ -8209,56 +8663,32 @@ static void boot_policy_invoke(void)
      * this, a quiet HIDE_WHEN_ALONE / auto-pick path would consume +
      * delete the one-shot and silently boot through. */
     int show_menu = default_visible &&
-        (force_show || loader_have_timeout_oneshot ||
+        (force_show || var_shows_menu ||
          boot_policy_menu_should_show(decision, parse, cand_count) ||
          single_entry_render);
     if (show_menu) {
-        /* Honor per-entry timeout_override on the default candidate.
-         * Schema range is 0..600 (inclusive). 0 = "immediate auto-
-         * boot, no menu UI" -- a kiosk preference; the lookup must
-         * preserve that explicit zero rather than rewriting it to
-         * BOOT_MENU_DEFAULT_TIMEOUT_S. NONE (sentinel) means "no
-         * override set" and falls back to the default. */
-        unsigned int timeout_s = BOOT_MENU_DEFAULT_TIMEOUT_S;
-        int explicit_zero = 0;
-        if (cand_default_idx < cand_count) {
-            const boot_entry_envelope_t *def_e =
-                &parse->entries[cand_idx[cand_default_idx]];
-            if (def_e->timeout_override != BOOT_ENTRIES_TIMEOUT_OVERRIDE_NONE
-                && def_e->timeout_override <= BOOT_MENU_TIMEOUT_CAP_S) {
-                timeout_s = def_e->timeout_override;
-                if (timeout_s == 0u) explicit_zero = 1;
-            }
-        }
-        /* LoaderConfigTimeoutOneShot (systemd Boot Loader Interface,
-         * one-shot) overrides the per-entry timeout_override for this
-         * boot only. The var was consumed + deleted earlier so it fires
-         * exactly once. systemd semantics: value 0 = show the menu with
-         * NO timeout (no auto-boot); 1..N = countdown seconds. Value 0 is
-         * routed to the no-countdown menu path (NOT the per-entry kiosk
-         * path). A non-zero value above the 60s watchdog window is clamped
-         * to 60 with a [WARN] -- a documented Impossible divergence from
-         * systemd's 3600s range, because the interactive countdown cannot
-         * safely outlive one firmware watchdog window (see boot_menu_run).
-         * The prior <=60s gate instead silently dropped 61..3600 to the
-         * default; clamp + warn replaces that silent drop. */
-        int oneshot_no_timeout = 0;
-        if (loader_have_timeout_oneshot) {
-            if (loader_oneshot_timeout == 0u) {
-                oneshot_no_timeout = 1;   /* menu, no countdown */
-                explicit_zero = 0;        /* override any kiosk default */
-                serial_early_print("[BOOT] loader-vars: LoaderConfigTimeoutOneShot=0 -- menu shown, no timeout\n");
-            } else if (loader_oneshot_timeout > BOOT_MENU_TIMEOUT_CAP_S) {
-                timeout_s = BOOT_MENU_TIMEOUT_CAP_S;
-                explicit_zero = 0;
-                serial_early_print("[WARN] loader-vars: "
-                                   "LoaderConfigTimeoutOneShot > 60s "
-                                   "clamped to 60s (watchdog window)\n");
+        /* boot_menu_timeout_resolve() above chose this boot's timeout. HIDDEN
+         * and DISABLED skip the menu UI (kiosk / quiet boot); an F11 press
+         * already turned a HIDDEN boot into a visible menu. */
+        unsigned int timeout_s = menu_to.mode == BOOT_MENU_TIMEOUT_COUNTDOWN
+                                     ? menu_to.seconds : BOOT_MENU_DEFAULT_TIMEOUT_S;
+        int explicit_zero = (menu_to.mode == BOOT_MENU_TIMEOUT_HIDDEN ||
+                             menu_to.mode == BOOT_MENU_TIMEOUT_DISABLED);
+        int oneshot_no_timeout = (menu_to.mode == BOOT_MENU_TIMEOUT_NO_COUNTDOWN);
+        {
+            static const char *const src_name[] = { "default", "timeout_override",
+                                                    "LoaderConfigTimeout", "LoaderConfigTimeoutOneShot" };
+            serial_early_print("[BOOT] menu: timeout ");
+            if (menu_to.mode == BOOT_MENU_TIMEOUT_COUNTDOWN) {
+                serial_early_print_uint((UINT32)menu_to.seconds);
+                serial_early_print("s");
             } else {
-                timeout_s = loader_oneshot_timeout;   /* 1..60 */
-                explicit_zero = 0;
-                serial_early_print("[BOOT] loader-vars: LoaderConfigTimeoutOneShot applied\n");
+                serial_early_print(menu_to.mode == BOOT_MENU_TIMEOUT_NO_COUNTDOWN ? "none (waits for a key)"
+                                   : menu_to.mode == BOOT_MENU_TIMEOUT_HIDDEN ? "hidden" : "disabled");
             }
+            serial_early_print(" from ");
+            serial_early_print(src_name[menu_to.source <= BOOT_MENU_TIMEOUT_SRC_ONESHOT ? menu_to.source : 0u]);
+            serial_early_print(menu_to.clamped ? " (clamped to 60s: watchdog window)\n" : "\n");
         }
         unsigned int chosen;
         int hotkey = BOOT_MENU_HOTKEY_NONE;
@@ -8269,8 +8699,7 @@ static void boot_policy_invoke(void)
              * polling for keys. F11 force_show overrides the kiosk
              * suppression so the operator's emergency override
              * works on any single-OS path. */
-            serial_early_print("[BOOT] menu: timeout_override=0 -- "
-                               "immediate auto-boot, no UI\n");
+            serial_early_print("[BOOT] menu: hidden -- immediate auto-boot, no UI\n");
             chosen = cand_default_idx;
         } else {
             /* If force_show overrode an explicit-zero kiosk
@@ -8289,10 +8718,13 @@ static void boot_policy_invoke(void)
             const unsigned int F10_MAX_RETRIES = 8u;
             unsigned int f10_retries = 0;
             g_menu_f10_disabled = 0;
-            /* LoaderConfigTimeoutOneShot=0 means "show the menu with no
-             * timeout" -- suppress the countdown so the menu stays up
-             * until the operator picks (systemd one-shot semantics). */
+            /* A no-countdown timeout (one-shot 0, or menu-force) keeps the
+             * menu up until the operator picks. */
             g_menu_no_autoboot = oneshot_no_timeout;
+            /* The e key decodes the highlighted entry's options from the
+             * same bytes the store was parsed from. */
+            g_menu_store_json = json_buf;
+            g_menu_store_len = (unsigned int)json_len;
             for (;;) {
                 hotkey = BOOT_MENU_HOTKEY_NONE;
                 chosen = boot_menu_run(parse, cand_idx, cand_count,
@@ -8560,6 +8992,7 @@ static void boot_policy_invoke(void)
                 serial_early_print("\"");
             }
             serial_early_print("\n");
+            boot_policy_apply_cmdline(decision->selected_entry_id);
         }
     } else {
         /* Fallback path: synthesized envelope, no per-kind validation.

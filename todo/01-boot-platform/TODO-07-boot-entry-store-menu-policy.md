@@ -78,7 +78,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  22   | Store size cap is untested on both sides of the 16 KiB boundary     | §2, §20                                 |  [x]   |
 | 💎  |  23   | A rejected store has no repair path, only a one-entry fallback      | §1, §20                                 |  [x]   |
 | 💎  |  24   | Boot menu help, power and saved-default keys                        | §6, §7, §15                             |  [x]   |
-| 💎  |  25   | Menu timeout keys and one-off edit                                  | §21, §24                                |  [ ]   |
+| 💎  |  25   | Menu timeout keys and one-off edit                                  | §21, §24                                |  [x]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -965,14 +965,33 @@ Found by the §24 parity pass against systemd-boot (https://www.freedesktop.org/
 
 **Design:** [boot menu](../../docs/design/shell.md#boot-menu)
 
-- [ ] Honour `LoaderConfigTimeout` (systemd GUID) as the menu timeout below `LoaderConfigTimeoutOneShot` and above the store's own value; advertise `LoaderFeatures` bit 0 and record the rank in `todo/answers.md`.
-- [ ] `t` / `+` lengthens and `T` / `-` shortens the timeout, persisted as `LoaderConfigTimeout` with the §24 repeat guard and a footer notice; extend the help screen and `docs/design/shell.md#boot-menu`.
-- [ ] `e` opens a one-line editor for the highlighted entry's options when its `allow_editor` flag is set; the edit applies to this boot only and is never written back.
-  - Refused under Secure Boot unless the entry allows it, as systemd-boot does; the `boot_decision:` handoff records that the options were edited.
-- [ ] Unit tests for the timeout rank and the edit buffer bounds; a smoke leg that sends `t` and confirms the next boot's timeout.
-- [ ] Commit: `"boot: menu timeout keys and one-off edit"`
+- [x] `LoaderConfigTimeout` (systemd GUID) is honoured; `LoaderFeatures` advertises bit 0 (`0x11F`). Rank and reasons in `todo/answers.md` Q35.
+  - `boot_menu_timeout_resolve()` in `boot_policy.c` ranks the one-shot, then `LoaderConfigTimeout`, then the default entry's `timeout_override`, then 5 s.
+  - `boot_loader_timeout_parse()` in `loader_vars.c` reads decimal seconds and `menu-force` / `menu-hidden` / `menu-disabled` for both variables; `boot_loader_config_timeout_read()` never deletes, and a malformed value is left for its owner.
+  - `menu-disabled` skips the menu and the F11 probe; `menu-hidden` skips it and F11 still opens it. A persistent or entry `0` hides, a one-shot `0` waits for a key. A countdown above 60 s is clamped to the watchdog window and serial says so (`[BOOT] menu: timeout Ns from <source>`).
+  - A one-shot or saved timeout that asks for a visible menu shows it, even with one entry.
+- [x] `t` / `+` and `T` / `-` step one scale (hidden, 1-60 s, `menu-force`) from this boot's timeout and save it at once; no key ever saves `menu-disabled`.
+  - `boot_menu_timeout_step()` is the pure step and `boot_loader_config_timeout_write()` writes NV|BS|RT in `bootctl`'s format. The §24 repeat guard makes a held key one step, and the footer names the result.
+  - Help and `docs/design/shell.md#boot-menu` list the keys and the scale.
+- [x] `e` opens a one-line editor on a split or safe entry whose flags include `allow_editor`; the edit applies to this boot only and is never written back.
+  - `boot_menu_edit_allowed()` refuses a discovered entry, and a UKI because its options are inside its signed image.
+  - `boot_menu_edit_init()` / `boot_menu_edit_key()` are the pure buffer (insert, Backspace, Delete, Left, Right, Home, End, 255 characters); `boot_menu_edit_view_start()` in `boot_menu_layout.h` (GOP pixels) and `boot_menu_edit_cols_start()` (console columns) scroll the field to keep the caret visible. GOP draws it on the highlight bar, ConOut on one fixed row.
+  - The text starts as the entry's own `cmdline`, else boot.conf's. `boot_policy_apply_cmdline()` in `bootx64.c` runs after the kind validator accepts the booted entry and writes the edit, else the entry's own non-empty `cmdline` (which before this section was validated and dropped), into `boot_config.cmdline`.
+  - `boot_config.cmdline_source` (offset 28, the old reserved bytes, mirrored and in the ABI manifest; 0 boot.conf, 1 entry, 2 edited) carries the source; the kernel logs it on the `boot_decision:` line (`cmdline=edited`) and as `CONF: cmdline source=...`, at warning level for an edit.
+  - Secure Boot needs no separate rule: `allow_editor` is the entry's own permission, and the signed-image case (UKI) is always refused.
+- [x] Unit tests for the timeout rank, the step scale and the edit buffer bounds; a smoke leg that sends `t` and confirms the next boot's timeout, and one that boots an edit.
+  - `test_loader_vars_config_timeout`, `test_menu_timeout_resolve`, `test_menu_timeout_step`, `test_menu_edit_allowed`, `test_menu_edit_core`, `test_boot_menu_edit_view`, the key map and `boot_cmdline_source_name()`.
+  - Smoke: the default leg presses `t` (4 s to a saved 5 s) and `e` with `test=0` typed, and the kernel must log `cmdline=edited`; the saved leg must count down 5 s from `LoaderConfigTimeout` and boot with `cmdline=boot.conf`.
+  - The suite needed kernel image room: `test_boot_audit.c`'s four 28 KiB `boot_info` fixtures and their line buffers moved from `.bss` to the test scratch allocator (the pattern of the [higher-half kernel relocation TODO](../02-kernel-core/TODO-33-higher-half-kernel-relocation.md) section 16), taking `__kernel_end` from `0x800000` back to `0x7d8000`.
+- [x] Commit: `"boot: menu timeout keys and one-off edit"`
 
 **Test checkpoint:** `SUITE=boot` green; `SMOKE_MENU=1` still auto-boots; the timeout leg passes.
+
+> **Test runner:** `bash scripts/test.sh SUITE=boot` (timeout parse/read/write, rank, step scale, key map, editor buffer and field, cmdline source names), then `SMOKE_MENU=default` and `SMOKE_MENU=saved` `bash scripts/test-smoke.sh` in that order (both in the smoke matrix).
+> **Notes:**
+> - Mutation controls: swapping the one-shot and `LoaderConfigTimeout` ranks fails 3 tests, an editor insert that does not move the terminator fails 5, and writing `menu-hide` fails 2.
+> - The ConOut editor line and the GOP field are proven by reading the code; serial sees the accepted text, not the drawing. The ConOut field is one row from `QueryMode`'s width, scrolled by `boot_menu_edit_cols_start()`, with the console cursor on the caret; Enter is refused, and the edit cancelled, when the last paint did not reach the console or the cursor cannot be shown, so a failed write can never boot text the user did not see. The `bootx64.c` paint functions call firmware and have no host harness, so that refusal has no unit test.
+> - The kernel halts on an unknown boot key, so a mistyped edit stops that boot with `[CONF] unknown boot key`; the next boot has the entry's own options again.
 
 ## OS Comparison
 
@@ -983,12 +1002,12 @@ Found by the §24 parity pass against systemd-boot (https://www.freedesktop.org/
 | 💎  | Recovery boot entry                                   | ✅ WinRE                         | ✅ GRUB recovery                    | ⬜ Planned -- §9                                                                 |
 | 💎  | Safe mode entry                                       | ✅ msconfig safeboot flag        | ✅ rescue.target / single           | 🟦 §8 KIND_SAFE + boot_mode=1 + F8 hotkey; subset payload deferred to §13        |
 | 💎  | Previous-kernel rollback entry                        | ⚠️ BCD bootsequence (limited UX) | ✅ GRUB previous kernel             | ⬜ Planned -- §10                                                                |
-| 💎  | Boot menu UI (text + graphical)                       | ⚠️ Minimal "Choose an OS"        | ✅ GRUB / systemd-boot menus        | ✅ §6 GOP+ConOut+serial, scrolling; §7 hotkeys; §24 help, power, saved default   |
+| 💎  | Boot menu UI (text + graphical)                       | ⚠️ Minimal "Choose an OS"        | ✅ GRUB / systemd-boot menus        | ✅ §6 GOP/ConOut/serial; §7 hotkeys; §24 help, default; §25 timeout, `e` edit    |
 | 💎  | Offline entry editor tooling                          | ✅ bcdedit / bcdboot             | ✅ grub-mkconfig / bootctl          | 🟦 §11 host-side `bootcfg.py` + validator parity; live-boot binary deferred      |
 | 💎  | Loop prevention via per-entry try counter             | ⚠️ Recovery loop after 2 fails   | ✅ systemd-boot tries=/done=        | 🟦 BLS counter grammar + ladder gate in §3; crash-tolerant rename in §5          |
 | 💎  | Per-entry health-gated mark-good                      | ❌ Implicit (timer past)         | ✅ systemd-bless + boot-complete    | 🟦 §14 entry gate + registry + MarkGood handoff; net/crash checks pending owners |
 | 💎  | Entry kinds (UKI, chainload, network, resume)         | ⚠️ BCD osloader / resume (split) | ✅ BLS Type 1 / Type 2 (UKI)        | 🟦 §13 SPLIT/UKI/SAFE validators + loader; CHAINLOAD/NETWORK/RESUME deferred     |
-| 💎  | OS-visible loader UEFI variables                      | ❌ None standardized             | ✅ systemd LoaderXxx interface      | ✅ §15 12 LoaderXxx vars; honors both OneShots and §24 LoaderEntryDefault        |
+| 💎  | OS-visible loader UEFI variables                      | ❌ None standardized             | ✅ systemd LoaderXxx interface      | ✅ §15 12 LoaderXxx vars; honors OneShots, EntryDefault, ConfigTimeout           |
 | 💎  | BLS display order (bad last, sort-key, version)       | ⚠️ BCD displayorder, manual      | ✅ systemd-boot BLS order           | ✅ §18 one order for menu + LoaderEntries; LoaderFeatures bit 8                  |
 | 💎  | First-install bootstrap (idempotent offline seed)     | ✅ bcdboot from install media    | ✅ bootctl install / grub-install   | 🟦 §16 `emit-seed` writes a byte-identical 3-entry default; self-seed TODO-22 §1 |
 | ⭐  | Documented deterministic policy precedence (2 layers) | ⚠️ BCD rules underdocumented     | ⚠️ Per-bootloader behavior          | ✅ §3 ladder + 6-example doc + live producer in §4 🚀                            |

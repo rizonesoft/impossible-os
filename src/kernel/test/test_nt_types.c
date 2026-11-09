@@ -207,6 +207,8 @@ static void test_boot_config_layout(void)
                    "boot_config is 512 bytes (sector-aligned)");
     TEST_ASSERT_EQ(__builtin_offsetof(struct boot_config, cmdline), 32,
                    "boot_config.cmdline at offset 32");
+    TEST_ASSERT_EQ(__builtin_offsetof(struct boot_config, cmdline_source), 28,
+                   "boot_config.cmdline_source at 28, in the old reserved bytes");
     TEST_ASSERT_EQ(__builtin_offsetof(struct boot_config, config_found), 288,
                    "boot_config.config_found at offset 288");
 

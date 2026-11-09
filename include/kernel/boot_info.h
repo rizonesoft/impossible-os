@@ -1064,6 +1064,9 @@ boot_result_t boot_decision_validate(const struct boot_info *info,
  * "invalid". */
 const char *boot_path_name(uint32_t path);
 const char *boot_reason_name(uint32_t reason);
+/* "boot.conf", "entry" or "edited" for a BOOT_CMDLINE_SOURCE_* value;
+ * "invalid" for anything else. */
+const char *boot_cmdline_source_name(uint32_t source);
 const char *boot_media_role_name(uint32_t role);
 
 /* Capability negotiation and degraded-feature flags.
@@ -1346,6 +1349,12 @@ _Static_assert(sizeof(struct boot_gop_handle) == 32,
 /* Boot configuration from \EFI\ImpossibleOS\boot.conf */
 #define BOOT_CONF_CMDLINE_MAX 256
 
+/* boot_config.cmdline_source values. */
+#define BOOT_CMDLINE_SOURCE_CONF   0u   /* boot.conf cmdline= (or none) */
+#define BOOT_CMDLINE_SOURCE_ENTRY  1u   /* the booted entry's payload cmdline */
+#define BOOT_CMDLINE_SOURCE_EDITED 2u   /* typed at the boot menu, this boot only */
+#define BOOT_CMDLINE_SOURCE_MAX    2u
+
 /* Boot configuration layout (shared between UEFI bootloader and kernel).
  *
  * WARNING: The UEFI bootloader (bootx64.c) has a MIRROR of this struct
@@ -1381,7 +1390,8 @@ _Static_assert(sizeof(struct boot_gop_handle) == 32,
  *    25       1   seed_file
  *    26       1   tpm_enroll
  *    27       1   uki_digest
- *    28       4   _reserved[]
+ *    28       1   cmdline_source     (BOOT_CMDLINE_SOURCE_*)
+ *    29       3   _reserved[]
  *    32     256   cmdline          <-- STABLE ABI offset
  *   288       1   config_found
  *   289       1   tap                (S4: TODO-04 user-mode TAP mode)
@@ -1481,10 +1491,14 @@ struct boot_config {
      * full-size payload costs boot time on every boot for a log line only.
      * boot.conf line `uki_digest=1`; default 0. */
     uint8_t  uki_digest;
+    /* Where cmdline[] came from (BOOT_CMDLINE_SOURCE_*): boot.conf, the
+     * booted entry's own options, or the boot menu's one-off editor. An
+     * older loader leaves it 0, which is what it then means. */
+    uint8_t  cmdline_source;
     /* Reserved -- new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[4];
+    uint8_t  _reserved[3];
     /* Command line (offset 32 -- stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */
@@ -1542,6 +1556,8 @@ _Static_assert(__builtin_offsetof(struct boot_config, cmdline) == 32,
     "cmdline must be at byte offset 32 -- bootloader ABI contract");
 _Static_assert(__builtin_offsetof(struct boot_config, uki_digest) == 27,
     "uki_digest must be at byte offset 27 -- bootloader ABI contract");
+_Static_assert(__builtin_offsetof(struct boot_config, cmdline_source) == 28,
+    "cmdline_source must be at byte offset 28 -- bootloader ABI contract");
 _Static_assert(__builtin_offsetof(struct boot_config, config_found) == 288,
     "config_found must be at byte offset 288 -- after cmdline[256]");
 _Static_assert(__builtin_offsetof(struct boot_config, tap) == 289,

@@ -59,6 +59,16 @@ const char *boot_path_name(uint32_t path)
     }
 }
 
+const char *boot_cmdline_source_name(uint32_t source)
+{
+    switch (source) {
+    case BOOT_CMDLINE_SOURCE_CONF:   return "boot.conf";
+    case BOOT_CMDLINE_SOURCE_ENTRY:  return "entry";
+    case BOOT_CMDLINE_SOURCE_EDITED: return "edited";
+    default:                         return "invalid";
+    }
+}
+
 const char *boot_reason_name(uint32_t reason)
 {
     switch (reason) {
@@ -575,16 +585,18 @@ boot_result_t boot_decision_validate(const struct boot_info *info,
 
     /* Every rule passed: log the decision at INFO so the boot log carries a
      * one-line trace of what path, what reason, how many fallbacks and which
-     * entry the loader handed over. It is logged here, not earlier, so a
+     * entry the loader handed over, and whether its command line was typed
+     * at the menu (cmdline=edited). It is logged here, not earlier, so a
      * decision a later rule rejects never reads as accepted. Rule 10 has
      * proved selected_entry_id NUL-terminated within its 64 bytes. */
     klog(LOG_INFO, "boot",
-         "boot_decision: path=%s reason=%s flags=0x%x fallback=%u selection=%u entry=\"%s\"",
+         "boot_decision: path=%s reason=%s flags=0x%x fallback=%u selection=%u entry=\"%s\" cmdline=%s",
          (uint64_t)(uintptr_t)boot_path_name(path),
          (uint64_t)(uintptr_t)boot_reason_name(reason),
          (uint64_t)flags, (uint64_t)depth,
          (uint64_t)info->selection_reason,
-         (uint64_t)(uintptr_t)info->selected_entry_id);
+         (uint64_t)(uintptr_t)info->selected_entry_id,
+         (uint64_t)(uintptr_t)boot_cmdline_source_name(info->config.cmdline_source));
 
     return BOOT_OK;
 }

@@ -54,6 +54,34 @@ static void menu_ink(const struct bsod_aa_glyph *g, unsigned int ascent, unsigne
 /* The boot menu repaints one band at a time, so every line's ink must sit
  * inside its own band. Checked against the shipped
  * atlases, for the title, every row and the footer. */
+/* The options editor's field keeps the cursor visible and the text still:
+ * the window moves only when the cursor leaves it. */
+static void test_boot_menu_edit_view(void)
+{
+    char text[48];
+    unsigned int adv = bsod_aa_advance(bsod_aa_SUB, 'm');
+    unsigned int budget = adv * 10u;      /* ten 'm' wide */
+    unsigned int s;
+    for (unsigned int i = 0; i < 40u; i++) text[i] = 'm';
+    text[40] = 0;
+    s = boot_menu_edit_view_start(bsod_aa_SUB, text, 40u, 5u, 0u, budget, 0u);
+    TEST_ASSERT_EQ(s, 0u, "cursor inside the field: the window stays at 0");
+    s = boot_menu_edit_view_start(bsod_aa_SUB, text, 40u, 40u, 0u, budget, 0u);
+    TEST_ASSERT_EQ(s, 30u, "cursor at the end of 40: the last ten show");
+    s = boot_menu_edit_view_start(bsod_aa_SUB, text, 40u, 40u, 0u, budget, 2u);
+    TEST_ASSERT_EQ(s, 31u, "room for the caret moves it one more");
+    s = boot_menu_edit_view_start(bsod_aa_SUB, text, 40u, 35u, 30u, budget, 0u);
+    TEST_ASSERT_EQ(s, 30u, "cursor moved left inside the window: no jump");
+    s = boot_menu_edit_view_start(bsod_aa_SUB, text, 40u, 12u, 30u, budget, 0u);
+    TEST_ASSERT_EQ(s, 12u, "cursor left of the window: the window starts at it");
+    s = boot_menu_edit_view_start(bsod_aa_SUB, text, 40u, 99u, 0u, budget, 0u);
+    TEST_ASSERT_EQ(s, 30u, "a cursor past the end is clamped to it");
+    s = boot_menu_edit_view_start(bsod_aa_SUB, text, 40u, 40u, 0u, 0u, 0u);
+    TEST_ASSERT_EQ(s, 40u, "a zero-width field ends at the cursor, never past it");
+    TEST_ASSERT_EQ(boot_menu_edit_view_start((const struct bsod_aa_glyph *)0, text, 40u, 4u, 0u, budget, 0u), 0u,
+                   "no glyphs: 0");
+}
+
 static void test_boot_menu_ink_in_bands(void)
 {
     int t, b;
@@ -859,6 +887,8 @@ static void test_store_reject_locator_fits_banner(void)
 
 void test_register_error_screen_wrap(void)
 {
+    test_suite_register_cat("boot-menu: the options editor keeps the cursor in view",
+                            test_boot_menu_edit_view, TEST_CAT_BOOT);
     test_suite_register_cat("error-screen wrap: no line exceeds max_px",
         test_break_never_exceeds_budget, TEST_CAT_BOOT);
     test_suite_register_cat("error-screen wrap: exact-fit boundary",

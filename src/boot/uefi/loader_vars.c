@@ -395,6 +395,41 @@ static int lv_one_shot_delete(const struct boot_loader_var_ops *ops, const unsig
     return s == BOOT_LOADER_VAR_SUCCESS || s == BOOT_LOADER_VAR_NOT_FOUND;
 }
 
+/* Does text[0..n) spell the ASCII word w exactly? */
+static int lv_text_is(const unsigned short *text, unsigned int n, const char *w)
+{
+    unsigned int i = 0;
+    while (w[i]) {
+        if (i >= n || text[i] != (unsigned short)(unsigned char)w[i])
+            return 0;
+        i++;
+    }
+    return i == n;
+}
+
+unsigned int boot_loader_timeout_parse(const unsigned short *text, unsigned int n,
+                                       unsigned int *seconds)
+{
+    unsigned int acc = 0, i;
+    if (seconds)
+        *seconds = 0;
+    if (!text || n == 0u)
+        return 0u;
+    if (lv_text_is(text, n, "menu-force"))    return BOOT_LOADER_TIMEOUT_FORCE;
+    if (lv_text_is(text, n, "menu-hidden"))   return BOOT_LOADER_TIMEOUT_HIDDEN;
+    if (lv_text_is(text, n, "menu-disabled")) return BOOT_LOADER_TIMEOUT_DISABLED;
+    /* Cap checked before the multiply, so no digit string can wrap. */
+    for (i = 0; i < n; i++) {
+        unsigned int d = (unsigned int)text[i] - (unsigned int)'0';
+        if (text[i] < '0' || text[i] > '9' || acc > (BOOT_LOADER_ONE_SHOT_TIMEOUT_MAX - d) / 10u)
+            return 0u;
+        acc = acc * 10u + d;
+    }
+    if (seconds)
+        *seconds = acc;
+    return BOOT_LOADER_TIMEOUT_SECONDS;
+}
+
 int boot_loader_one_shot_consume(const struct boot_loader_var_ops *ops, const void *systemd_guid,
                                  char *entry_id, unsigned int entry_cap,
                                  struct boot_loader_one_shot *out)
@@ -406,6 +441,7 @@ int boot_loader_one_shot_consume(const struct boot_loader_var_ops *ops, const vo
 
     if (!out) return 0;
     out->have_entry = out->have_timeout = 0;
+    out->timeout_kind = 0;
     out->timeout_seconds = 0;
     out->entry_malformed = out->timeout_malformed = 0;
     out->entry_refused = out->timeout_refused = 0;
@@ -441,16 +477,8 @@ int boot_loader_one_shot_consume(const struct boot_loader_var_ops *ops, const vo
     n = lv_one_shot_read(ops, name, systemd_guid, tbuf, BOOT_LOADER_ONE_SHOT_TIMEOUT_CHARS);
     if (n != -1) {
         unsigned int acc = 0;
-        int good = n > 0;
-        /* Cap checked before the multiply, so no digit string can wrap. */
-        for (i = 0; good && i < n; i++) {
-            unsigned int d = (unsigned int)tbuf[i] - (unsigned int)'0';
-            if (tbuf[i] < '0' || tbuf[i] > '9'
-                || acc > (BOOT_LOADER_ONE_SHOT_TIMEOUT_MAX - d) / 10u)
-                good = 0;
-            else
-                acc = acc * 10u + d;
-        }
+        unsigned int kind = n > 0 ? boot_loader_timeout_parse(tbuf, (unsigned int)n, &acc) : 0u;
+        int good = kind != 0u;
         if (n == -3) {
             out->timeout_unreadable = 1;
             ok = 0;
@@ -460,6 +488,7 @@ int boot_loader_one_shot_consume(const struct boot_loader_var_ops *ops, const vo
             out->timeout_refused = 1;
             ok = 0;
         } else if (good) {
+            out->timeout_kind = kind;
             out->timeout_seconds = acc;
             out->have_timeout = 1;
         } else if (n != -3) {
@@ -514,6 +543,68 @@ int boot_loader_entry_default_write(const struct boot_loader_var_ops *ops, const
         n++;
     }
     buf[n] = 0;
+    unsigned long long s = ops->set(ops->ctx, name, systemd_guid, BOOT_LOADER_DEFAULT_ATTRS,
+                                    (unsigned long long)(n + 1u) * 2u, buf);
+    return s == BOOT_LOADER_VAR_SUCCESS;
+}
+
+int boot_loader_config_timeout_read(const struct boot_loader_var_ops *ops, const void *systemd_guid,
+                                    unsigned int *kind, unsigned int *seconds)
+{
+    unsigned short name[LOADER_VAR_NAME_MAX];
+    unsigned short buf[BOOT_LOADER_ONE_SHOT_TIMEOUT_CHARS];
+    unsigned int k, v = 0;
+    if (kind) *kind = 0;
+    if (seconds) *seconds = 0;
+    if (!ops || !ops->get || !systemd_guid || !kind || !seconds)
+        return BOOT_LOADER_DEFAULT_UNUSABLE;
+    lv_ucs2_name("LoaderConfigTimeout", name);
+    int n = lv_one_shot_read(ops, name, systemd_guid, buf, BOOT_LOADER_ONE_SHOT_TIMEOUT_CHARS);
+    if (n == -1)
+        return BOOT_LOADER_DEFAULT_ABSENT;
+    if (n <= 0)
+        return BOOT_LOADER_DEFAULT_UNUSABLE;
+    k = boot_loader_timeout_parse(buf, (unsigned int)n, &v);
+    if (k == 0u)
+        return BOOT_LOADER_DEFAULT_UNUSABLE;
+    *kind = k;
+    *seconds = v;
+    return BOOT_LOADER_DEFAULT_PRESENT;
+}
+
+int boot_loader_config_timeout_write(const struct boot_loader_var_ops *ops, const void *systemd_guid,
+                                     unsigned int kind, unsigned int seconds)
+{
+    unsigned short name[LOADER_VAR_NAME_MAX];
+    unsigned short buf[BOOT_LOADER_ONE_SHOT_TIMEOUT_CHARS];
+    char text[BOOT_LOADER_ONE_SHOT_TIMEOUT_CHARS];
+    const char *w = (const char *)0;
+    unsigned int n = 0;
+    if (!ops || !ops->set || !systemd_guid)
+        return 0;
+    switch (kind) {
+    case BOOT_LOADER_TIMEOUT_FORCE:    w = "menu-force";    break;
+    case BOOT_LOADER_TIMEOUT_HIDDEN:   w = "menu-hidden";   break;
+    case BOOT_LOADER_TIMEOUT_DISABLED: w = "menu-disabled"; break;
+    case BOOT_LOADER_TIMEOUT_SECONDS:
+        if (seconds > BOOT_LOADER_ONE_SHOT_TIMEOUT_MAX)
+            return 0;
+        n = lv_decimal(seconds, text, sizeof(text));
+        if (n == 0u)
+            return 0;
+        text[n] = 0;
+        w = text;
+        break;
+    default:
+        return 0;
+    }
+    n = 0;
+    while (w[n]) {
+        buf[n] = (unsigned short)(unsigned char)w[n];
+        n++;
+    }
+    buf[n] = 0;
+    lv_ucs2_name("LoaderConfigTimeout", name);
     unsigned long long s = ops->set(ops->ctx, name, systemd_guid, BOOT_LOADER_DEFAULT_ATTRS,
                                     (unsigned long long)(n + 1u) * 2u, buf);
     return s == BOOT_LOADER_VAR_SUCCESS;
