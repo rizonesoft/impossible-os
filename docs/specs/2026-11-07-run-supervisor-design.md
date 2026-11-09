@@ -79,4 +79,4 @@ Testing stays on emulators for now, and development always aims at real hardware
 - Finishing the roadmap is not the same as rivalling Linux and Windows, which is also a matter of drivers and applications built over decades.
 - Removing process gates removes some nets. The bet, based on the failures measured above, is that product checks catch what matters. Health and warning counts are how we find out if that bet is wrong.
 - Roughly 1,570 sections remain, so this takes a long time. Earlier dollar estimates are withdrawn: `cost-summary.py` reports relative sizing at old list rates, not a bill.
-- A single session running for days is untested here. WSL restarting takes the heartbeat with it, so `run.sh start` has to be run again, which resumes the work.
+- A single session running for days is untested here. WSL restarting takes the session and heartbeat with it; since 2026-11-09 the `impossible-os-run` user service runs `run.sh autostart` at boot, which resumes a run that was live.

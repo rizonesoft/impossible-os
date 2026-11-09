@@ -20,7 +20,7 @@ Open problems with the run itself: flow, gates, cost. One running file, replacin
 - [ ] The release flavor is not built at the section boundary
   - A parameter used only under `KERNEL_TESTS` breaks `KERNEL_TESTS=off` with `-Werror`, and only CI's release job sees it. A release-flavor build in the J1 chain is about 20 s.
 - [ ] Does a single session hold up for days, and how much does compaction lose?
-  - Untested. Watch the first runs. WSL restarting takes the heartbeat with it, so `run.sh start` has to be run again.
+  - Untested. Watch the first runs. A WSL restart now resumes a live run by itself (`run.sh autostart`, from the boot service `start` installs); WSL still has to be started for that to happen.
 - [ ] Do the 36 `awaiting-answer` stamps pick up their answers?
   - All 30 questions are answered in `todo/answers.md`. Three answers mean stay as you are (Q14, Q17, Q24 report-only), so those need a plain Deferred reason or they read BLOCKED forever. Check with `sequencer_triage.py --blockers`.
 - [x] Do the logged gates matter?

@@ -187,6 +187,74 @@ def test_refusal_a_stopped_run_is_not_restarted():
         assert not log.exists() or "new-session" not in log.read_text()
 
 
+def _autostart_fixture(d):
+    """A copy of the run's scripts with tmux and systemctl as logging shims."""
+    root, log, env = _fixture(d, alive=False)
+    for rel in ("scripts/run.sh", "scripts/overnight/skill_denies.py",
+                ".claude/hooks/run_phase_guard.py", ".claude/settings.json"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO / rel, root / rel)
+    bindir = pathlib.Path(d) / "bin"
+    sysctl = bindir / "systemctl"
+    sysctl.write_text('#!/bin/bash\necho "systemctl $*" >> "$LOG"\nexit 0\n')
+    sysctl.chmod(sysctl.stat().st_mode | stat.S_IEXEC)
+    units = pathlib.Path(d) / "units"
+    return root, log, {**env, "RUN_SYSTEMD_DIR": str(units)}, units
+
+
+def _autostart(root, env):
+    r = subprocess.run(["bash", "scripts/run.sh", "autostart"], cwd=root, env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r
+    return r
+
+
+def test_autostart_resumes_a_live_run_and_installs_the_boot_service():
+    with tempfile.TemporaryDirectory() as d:
+        root, log, env, units = _autostart_fixture(d)
+        _autostart(root, env)
+        calls = log.read_text()
+        assert "new-session -d -s impossible-os-run" in calls and "--resume abc" in calls, calls
+        unit = (units / "impossible-os-run.service").read_text()
+        assert "RemainAfterExit=yes" in unit, "the tmux server must outlive ExecStart"
+        assert f'ExecStart=/bin/bash "{root}/scripts/run.sh" autostart' in unit, unit
+        assert f'Environment="PATH={env["PATH"]}"' in unit, unit
+        assert "systemctl --user enable impossible-os-run.service" in calls, calls
+
+
+def test_refusal_autostart_leaves_a_stopped_or_finished_run_down():
+    with tempfile.TemporaryDirectory() as d:
+        root, log, env, units = _autostart_fixture(d)
+        (root / ".claude/state/sequencer-armed").unlink()
+        assert "no live run" in _autostart(root, env).stdout
+        assert not log.exists() or "new-session" not in log.read_text()
+    with tempfile.TemporaryDirectory() as d:
+        root, log, env, units = _autostart_fixture(d)
+        (root / ".claude/state/sequencer-fixpoint").write_text("done\n")
+        assert "no live run" in _autostart(root, env).stdout
+        assert not log.exists() or "new-session" not in log.read_text()
+
+
+def test_refusal_autostart_leaves_a_finished_bounded_run_down():
+    """A bounded run that shipped its sections keeps its marker, so the bound must be read."""
+    with tempfile.TemporaryDirectory() as d:
+        root, log, env, units = _autostart_fixture(d)
+        (root / ".claude/hooks/run_phase_guard.py").write_text(
+            "import sys\nsys.exit(0 if sys.argv[1:] == ['ship-limit-reached'] else 1)\n")
+        assert "no live run" in _autostart(root, env).stdout
+        assert not log.exists() or "new-session" not in log.read_text()
+
+
+def test_the_boot_service_escapes_systemd_specifiers():
+    """A `%` or `$` passed through raw would be expanded by systemd at boot."""
+    with tempfile.TemporaryDirectory() as d:
+        root, log, env, units = _autostart_fixture(d)
+        weird = str(pathlib.Path(d) / "x%h$Y")
+        _autostart(root, {**env, "PATH": f"{env['PATH']}:{weird}"})
+        unit = (units / "impossible-os-run.service").read_text()
+        assert "x%%h$Y" in unit and "x%h$Y" not in unit.replace("%%", ""), unit
+
+
 def _stop(armed=True, fixpoint=False, oracle="NEEDS_WORK", rollover=False):
     import run_phase_guard as g
     with tempfile.TemporaryDirectory() as d:
@@ -403,7 +471,7 @@ def test_stop_guard_holds_the_session_until_the_work_is_done():
 
 def test_run_script_shape():
     text = (REPO / "scripts/run.sh").read_text()
-    for verb in ("start)", "attach)", "status)", "stop)"):
+    for verb in ("start)", "attach)", "status)", "stop)", "autostart)"):
         assert verb in text, verb
     subprocess.run(["bash", "-n", str(REPO / "scripts/run.sh")], check=True)
 

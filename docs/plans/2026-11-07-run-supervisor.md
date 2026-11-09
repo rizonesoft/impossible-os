@@ -68,3 +68,4 @@ Design: [docs/specs/2026-11-07-run-supervisor-design.md](../specs/2026-11-07-run
 | 2026-11-07 | A stop guard and a heartbeat stay; the watchdog goes | operator |
 | 2026-11-07 | Subscription billing, so health reports no dollars | operator |
 | 2026-11-07 | One review cap of 42 rounds for all code; a clean round exits | operator |
+| 2026-11-09 | Keep tmux; a user service resumes a live run when WSL boots | operator |
