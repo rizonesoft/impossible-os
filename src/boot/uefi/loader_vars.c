@@ -462,3 +462,53 @@ int boot_loader_one_shot_consume(const struct boot_loader_var_ops *ops, const vo
     }
     return ok;
 }
+
+int boot_loader_entry_default_read(const struct boot_loader_var_ops *ops, const void *systemd_guid,
+                                   char *id, unsigned int cap)
+{
+    unsigned short name[LOADER_VAR_NAME_MAX];
+    unsigned short buf[BOOT_LOADER_ONE_SHOT_ID_CHARS];
+    if (id && cap)
+        id[0] = 0;
+    if (!ops || !ops->get || !systemd_guid || !id || cap < 2u)
+        return BOOT_LOADER_DEFAULT_UNUSABLE;
+    lv_ucs2_name("LoaderEntryDefault", name);
+    int n = lv_one_shot_read(ops, name, systemd_guid, buf, BOOT_LOADER_ONE_SHOT_ID_CHARS);
+    if (n == -1)
+        return BOOT_LOADER_DEFAULT_ABSENT;
+    if (n <= 0 || (unsigned int)n >= cap)
+        return BOOT_LOADER_DEFAULT_UNUSABLE;
+    for (int i = 0; i < n; i++)
+        if (buf[i] < 0x20u || buf[i] > 0x7Eu)
+            return BOOT_LOADER_DEFAULT_UNUSABLE;
+    for (int i = 0; i < n; i++)
+        id[i] = (char)buf[i];
+    id[n] = 0;
+    return BOOT_LOADER_DEFAULT_PRESENT;
+}
+
+int boot_loader_entry_default_write(const struct boot_loader_var_ops *ops, const void *systemd_guid,
+                                    const char *id)
+{
+    unsigned short name[LOADER_VAR_NAME_MAX];
+    unsigned short buf[BOOT_LOADER_ONE_SHOT_ID_CHARS];
+    if (!ops || !ops->set || !systemd_guid)
+        return 0;
+    lv_ucs2_name("LoaderEntryDefault", name);
+    if (!id || !id[0])
+        return lv_one_shot_delete(ops, name, systemd_guid);
+    unsigned int n = 0;
+    /* The reader refuses a value that fills its buffer, so the writer stops
+     * one short of it: whatever is written can be read back. */
+    while (id[n]) {
+        if (n + 1u >= BOOT_LOADER_ONE_SHOT_ID_CHARS - 1u ||
+            (unsigned char)id[n] < 0x20u || (unsigned char)id[n] > 0x7Eu)
+            return 0;
+        buf[n] = (unsigned short)(unsigned char)id[n];
+        n++;
+    }
+    buf[n] = 0;
+    unsigned long long s = ops->set(ops->ctx, name, systemd_guid, BOOT_LOADER_DEFAULT_ATTRS,
+                                    (unsigned long long)(n + 1u) * 2u, buf);
+    return s == BOOT_LOADER_VAR_SUCCESS;
+}

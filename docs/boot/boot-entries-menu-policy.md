@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=include/boot/boot_entries.h,src/boot/uefi/boot_entries_parser.c,src/boot/uefi/boot_policy.c,src/kernel/main/boot_decision.c,src/kernel/main/boot_audit.c,tools/bootcfg/bootcfg.py,include/kernel/boot_info.h reviewed=2026-09-28 order=7 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=include/boot/boot_entries.h,src/boot/uefi/boot_entries_parser.c,src/boot/uefi/boot_policy.c,src/kernel/main/boot_decision.c,src/kernel/main/boot_audit.c,tools/bootcfg/bootcfg.py,include/kernel/boot_info.h reviewed=2026-11-09T03:40 order=7 -->
 # Boot Entries, Menu and Policy
 
 ## What is it?
@@ -25,7 +25,7 @@ flowchart TD
 - **Entry format.** [`boot_entries.h`](../../include/boot/boot_entries.h) defines the on-disk envelope: `schema_version`, a CRC-32 (IEEE 802.3) header, and an array of entries, each with a stable `kind` (0..99 reserved, 100..199 vendor/experimental skip-with-warn, >=200 reserved). The canonical spec with JSON examples lives in the schema deep dive below.
 - **Parse and validate.** [`boot_entries_parser.c`](../../src/boot/uefi/boot_entries_parser.c) reads `\EFI\ImpossibleOS\bootentries.json`, checks the CRC, and rejects a store that is missing, oversize, CRC-mismatched, or newer than the schema version the bootloader understands. On any rejection it calls `boot_entries_synthesize_fallback()`, which builds exactly one entry matching whatever path is currently loading (UKI fast path or split-path `kernel.exe`).
 - **Policy merge.** [`boot_policy.c`](../../src/boot/uefi/boot_policy.c) and [`boot_decision.c`](../../src/kernel/main/boot_decision.c) (`boot_decision_validate()`) combine the firmware-selected `Boot####` variable with the OS-side entry list and any one-shot overrides into a single selected entry, recording the reason.
-- **Menu.** `boot_menu_run()` and `boot_menu_render()` in [`bootx64.c`](../../src/boot/uefi/bootx64.c) draw the entry list over GOP graphics, the UEFI `ConOut` text console, or serial, with a countdown, hotkeys (F8 safe mode, F10 reboot into firmware setup, and F11, probed before the menu decides whether to show, to force it open), and indicators for the default and last-failed entries.
+- **Menu.** `boot_menu_run()` and `boot_menu_render()` in [`bootx64.c`](../../src/boot/uefi/bootx64.c) draw the entry list over GOP graphics, the UEFI `ConOut` text console, or serial, with a countdown, hotkeys (F8 safe mode, F10 reboot into firmware setup, F1 help, Shift+B restart, Shift+O power off, `d` to save the default, and F11, probed before the menu decides whether to show, to force it open), and indicators for the default and last-failed entries.
 - **Audit.** [`boot_audit.c`](../../src/kernel/main/boot_audit.c) appends every boot decision to `X:\Boot\history.jsonl`, with a small sticky NVRAM ring as the exceptional durable fallback; this is the primary record, not NVRAM.
 - **Loader variables.** The bootloader publishes the systemd-boot-compatible `LoaderXxx` UEFI variables through `boot_loader_vars_publish()` in `loader_vars.c` (ten, volatile, each set or cleared every boot) so userspace tooling can read the live entry list and selection without parsing the boot entry file itself.
 - **`boot_info` ABI.** The bootloader hands the kernel the selected entry id and reason through `struct boot_info` ([`boot_info.h`](../../include/kernel/boot_info.h)); `loader_vars_degraded` (added at ABI v21) tells the kernel that at least one loader-variable write failed, so the kernel can record degraded publication in the audit log.
@@ -66,7 +66,7 @@ bash scripts/test.sh SUITE=boot
 bash scripts/test-smoke-matrix.sh
 ```
 
-At boot, press F11 to force the menu open; inside the menu, F8 requests safe mode and F10 reboots into firmware setup; with no keypress the countdown default fires and the selection reason is written to `history.jsonl` and, on success, to the `LoaderXxx` variables.
+At boot, press F11 to force the menu open; inside the menu, F8 requests safe mode, F10 reboots into firmware setup, F1 lists every key and `d` makes the highlighted entry the default for later boots; with no keypress the countdown default fires and the selection reason is written to `history.jsonl` and, on success, to the `LoaderXxx` variables.
 
 ## What is not implemented yet?
 

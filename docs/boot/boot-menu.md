@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/boot/uefi/bootx64.c,include/boot/boot_entries.h,src/boot/uefi/boot_policy.c reviewed=2026-11-08 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/boot/uefi/bootx64.c,include/boot/boot_entries.h,src/boot/uefi/boot_policy.c reviewed=2026-11-09T03:40 -->
 # Boot Menu Renderer + Hotkeys + Indicators
 
 > Pre-EBS user-visible boot selector. Owned by [TODO-07 boot entry store + menu + policy](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md): renderer in the menu-renderer section, indicators + hotkeys + `hide_when_alone` in the indicators section.
@@ -13,11 +13,11 @@ Each line is drawn inside its own band. The geometry lives in `include/boot/boot
 
 The layout adapts to the screen. `boot_menu_fit()` works out how many rows fit above the footer: 9 at 640x480, 12 at 800x600 and the full 16 at 1080 lines. A longer list scrolls (`boot_menu_scroll_top()` keeps the highlighted entry in view), and the footer then names its position, for example "Entry 14 of 16". A badge or title wider than the highlight bar is cut to fit and ends in "...". A screen too short for one row and the footer uses the text fallback.
 
-The footer reads "Auto-boot in Ns" while the countdown runs. The seconds round up, so a 5-second countdown shows 5 for its first second and the screen never shows 0 before the default boots. Once a key stops the countdown, the footer reads "Use arrows + Enter to boot." The ConOut text fallback has no footer, so it reprints the list only when the highlight moves, never once a second. The serial mirror logs one line per repaint.
+The footer reads "Auto-boot in Ns. Use arrows + Enter. F1 help." while the countdown runs. The seconds round up, so a 5-second countdown shows 5 for its first second and the screen never shows 0 before the default boots. Once a key stops the countdown, the footer reads "Use arrows + Enter to boot. F1 help." After `d` or a refused restart the footer shows a notice instead (saved, cleared, refused, or that a firmware boot option still wins), until the highlight next moves. The ConOut text fallback prints the list, then the legend or the notice, only when the highlight moves or a notice appears, never once a second. The serial mirror logs one line per repaint. Layout and colours: [boot menu design](../design/shell.md#boot-menu).
 
 `SMOKE_MENU=1 bash scripts/test-smoke.sh` stages a two-entry store with a 2-second countdown, so a real boot draws the menu, repaints it and auto-boots the default. It is the `store menu` leg of `scripts/test-smoke-matrix.sh`.
 
-`SMOKE_MENU=keys` presses keys in the same menu through the QEMU monitor (`sendkey`). Down moves the highlight to the second entry, the leg then waits past the 4-second deadline and fails if the menu boots on its own, and Enter boots the second entry with reason HOTKEY. It is the `store keys` leg. Both legs also check that the kernel received the chosen entry: the kernel's `boot_decision:` line names it as `entry="..."`.
+`SMOKE_MENU=keys` presses keys in the same menu through the QEMU monitor (`sendkey`). Down moves the highlight to the second entry, the leg then waits past the 4-second deadline and fails if the menu boots on its own, and Enter boots the second entry with reason HOTKEY. It is the `store keys` leg. `SMOKE_MENU=default` moves to the second entry, opens and closes help, and presses `d`; `SMOKE_MENU=saved` is the same machine's next boot, which must open the menu on the saved entry and boot it with `via=saved-default`. They are the `store default` and `store saved` legs and run in that order. All four legs also check that the kernel received the chosen entry: the kernel's `boot_decision:` line names it as `entry="..."`.
 
 ## Indicator legend
 
@@ -48,6 +48,10 @@ Recognized in `boot_menu_run()` once the menu is on screen. The pre-menu F11 pro
 | Esc       | Boot the currently-highlighted entry without further interaction (alias for Enter).                 |
 | F8        | Safe-mode override. Writes `boot_config.boot_mode = 1` directly so kernel-side observers (KUSD `SafeBootMode` population, bare-metal hardening guards) see the operator intent regardless of which envelope kind was highlighted. Consumer wire-up to KUSD `SafeBootMode` is owned by the [kernel configuration policy section on Safe Mode mirroring](../../todo/02-kernel-core/TODO-02-kernel-configuration-policy.md#5-safe-mode-and-recovery-policy-object). |
 | F10       | Reboot into firmware setup via the narrow `OsIndications` `BOOT_TO_FW_UI` path. See "F10 narrow path" below. |
+| F1, `h`, `?` | Open help: every key on one page, or several pages on a small mode. Any key turns the page or closes it. |
+| `d`       | Save the highlighted entry as the default (`LoaderEntryDefault`); on the saved entry, clear it. A held key counts once. See [loader variables](loader-vars.md). |
+| Shift+B   | Restart (`ResetSystem` cold). If the firmware does not reset, the menu stays up with a notice.        |
+| Shift+O   | Power off (`ResetSystem` shutdown), with the same fallback.                                          |
 | F11       | Force-show menu. Probed BEFORE the should-show gate so the operator can override forced-selection paths (HOTKEY / WATCHDOG / AB_TRY_STATE / RECOVERY_REQUEST / FALLBACK_*). |
 
 Stray non-action keystrokes (printable characters, modifier ghost events, firmware console noise) DO NOT cancel the countdown. Without that gate, an unattended boot could otherwise sit forever once the watchdog refresh started running every tick.

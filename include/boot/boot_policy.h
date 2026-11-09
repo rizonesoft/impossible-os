@@ -210,6 +210,12 @@ typedef struct {
      * per-entry-kind handler table. Each owner section's TODO has a
      * checklist item to widen this mask. */
     unsigned int supported_kinds_mask;
+
+    /* The saved default (LoaderEntryDefault, set by the menu's d key or by
+     * `bootctl set-default`). "" when absent or malformed. It ranks below a
+     * one-shot and a tagged BootCurrent option and above the lowest
+     * sort_key; an id that names no candidate is ignored. */
+    char         saved_default_id[64];
 } boot_policy_inputs_t;
 
 #define BOOT_POLICY_NO_AB_SLOT  0xFFFFu
@@ -236,6 +242,12 @@ typedef struct {
     } rejected[BOOT_ENTRIES_MAX_ENTRIES];
     unsigned int rejected_count;
     unsigned int rejected_overflow;     /* 1 if more than MAX_ENTRIES rejects observed */
+
+    /* 1 when the saved default picked the entry. The reason stays
+     * BOOT_SELECTION_STORE_DEFAULT: the saved default IS the store default
+     * as the operator set it, and a new reason value would make an older
+     * kernel (a rolled-back one) refuse the handoff. */
+    int             saved_default_used;
 } boot_policy_decision_t;
 
 /* ---- Counters (BLS-style filename state) --------------------------------
@@ -367,7 +379,18 @@ typedef struct {
     unsigned int top;          /* first entry in the visible window */
     unsigned int count;        /* entries in the menu */
     unsigned int rows;         /* rows the screen shows; count > rows scrolls */
+    unsigned int notice;       /* BOOT_MENU_NOTICE_*: the footer reports a key's result */
 } boot_menu_view_t;
+
+/* Footer notices. A notice replaces the footer's key hint until the next
+ * navigation key. */
+#define BOOT_MENU_NOTICE_NONE            0u
+#define BOOT_MENU_NOTICE_DEFAULT_SAVED   1u
+#define BOOT_MENU_NOTICE_DEFAULT_CLEARED 2u
+#define BOOT_MENU_NOTICE_DEFAULT_FAILED  3u
+#define BOOT_MENU_NOTICE_DEFAULT_SHADOWED 4u  /* saved, but a firmware option names another entry */
+#define BOOT_MENU_NOTICE_RESTART_FAILED  5u
+#define BOOT_MENU_NOTICE_POWEROFF_FAILED 6u
 
 #define BOOT_MENU_PAINT_FULL    0x1u  /* background, title, every row, footer */
 #define BOOT_MENU_PAINT_ROWS    0x2u  /* *row_old and *row_new */
@@ -388,6 +411,63 @@ unsigned int boot_menu_scroll_top(unsigned int top, unsigned int selected,
 #define BOOT_MENU_NAV_PAGE_UP   5u   /* one screen of `rows` up, stopping at the first */
 #define BOOT_MENU_NAV_PAGE_DOWN 6u   /* one screen down, stopping at the last */
 #define BOOT_MENU_NAV_NUMBER    7u   /* `number` 1-9 picks that entry when it exists */
+
+/* What a key does in the menu. boot_menu_key_action() maps a UEFI key
+ * (scan code, UCS-2 char) onto one of these; `*out` receives the nav kind
+ * (BOOT_MENU_NAV_*) for BOOT_MENU_KEY_NAV and the digit for NUMBER. */
+#define BOOT_MENU_KEY_NONE        0u   /* ignored: does not stop the countdown */
+#define BOOT_MENU_KEY_NAV         1u   /* move the highlight (out = BOOT_MENU_NAV_*) */
+#define BOOT_MENU_KEY_BOOT        2u   /* Enter or Esc: boot the highlight */
+#define BOOT_MENU_KEY_SAFE_MODE   3u   /* F8 */
+#define BOOT_MENU_KEY_FW_SETUP    4u   /* F10 */
+#define BOOT_MENU_KEY_HELP        5u   /* h, ? or F1 */
+#define BOOT_MENU_KEY_REBOOT      6u   /* Shift+B */
+#define BOOT_MENU_KEY_POWEROFF    7u   /* Shift+O */
+#define BOOT_MENU_KEY_SET_DEFAULT 8u   /* d: save or clear the saved default */
+#define BOOT_MENU_KEY_NUMBER      9u   /* 1-9 (out = the digit) */
+
+/* UEFI scan codes the map reads (UEFI 2.10 Table 12-2). */
+#define BOOT_MENU_SCAN_NULL      0x00u
+#define BOOT_MENU_SCAN_UP        0x01u
+#define BOOT_MENU_SCAN_DOWN      0x02u
+#define BOOT_MENU_SCAN_HOME      0x05u
+#define BOOT_MENU_SCAN_END       0x06u
+#define BOOT_MENU_SCAN_PAGE_UP   0x09u
+#define BOOT_MENU_SCAN_PAGE_DOWN 0x0Au
+#define BOOT_MENU_SCAN_F1        0x0Bu
+#define BOOT_MENU_SCAN_F8        0x12u
+#define BOOT_MENU_SCAN_F10       0x14u
+#define BOOT_MENU_SCAN_ESC       0x17u
+
+unsigned int boot_menu_key_action(unsigned int scan, unsigned int unicode, unsigned int *out);
+
+/* Key repeat. ConIn reports a held key as a stream of identical events and
+ * never a release, so a toggle (help open/close, d) would flip back and forth
+ * while the key is held. An event of the same action as the last toggle, less
+ * than BOOT_MENU_REPEAT_GAP_MS after the previous such event, is a repeat:
+ * boot_menu_repeat_check() returns 1 for it and keeps the window open, so a
+ * held key stays one action. Any other action ends the run. */
+/* Longer than the slowest typematic delay a keyboard offers (1000 ms), so the
+ * first auto-repeat of a held key always lands inside the window. */
+#define BOOT_MENU_REPEAT_GAP_MS 1200u
+typedef struct {
+    unsigned int action;     /* BOOT_MENU_KEY_* of the last toggle, NONE when unarmed */
+    unsigned int last_ms;    /* when the last event of that action arrived */
+} boot_menu_repeat_t;
+
+int boot_menu_repeat_check(boot_menu_repeat_t *r, unsigned int action, unsigned int now_ms);
+/* Record that `action` just toggled something, starting a repeat window. */
+void boot_menu_repeat_arm(boot_menu_repeat_t *r, unsigned int action, unsigned int now_ms);
+
+/* The help screen shows BOOT_MENU_HELP_LINES lines, `rows` per page. */
+#define BOOT_MENU_HELP_LINES 9u
+unsigned int boot_menu_help_pages(unsigned int rows);
+
+/* What the d key does with the highlighted entry: SAVE it, or CLEAR the saved
+ * default when the highlight already is the saved default. */
+#define BOOT_MENU_DEFAULT_SAVE  1u
+#define BOOT_MENU_DEFAULT_CLEAR 2u
+unsigned int boot_menu_default_toggle(const char *highlight_id, const char *saved_id);
 
 /* The entry highlighted after `action`. An unknown action, or a number with
  * no such entry, leaves the selection where it was; count == 0 returns 0. */

@@ -28,6 +28,7 @@
 #pragma clang attribute push (__attribute__((minsize)), apply_to = function)
 
 #include "../../boot/uefi/loader_vars.c"
+#include "boot/boot_policy.h"  /* the menu repeat guard and d toggle */
 
 #define MV_NOINLINE __attribute__((noinline))
 
@@ -781,8 +782,171 @@ static void test_loader_vars_edge_values(void)
     TEST_ASSERT_EQ(boot_loader_part_uuid_text(2u, zero, text), 0, "an all-zero GUID is unknown");
 }
 
+/* The saved default: read leaves an unusable value in place, write stores
+ * NV|BS|RT with the NUL and round-trips, "" deletes, and the per-boot
+ * publisher never touches it. */
+static void test_loader_vars_saved_default(void)
+{
+    MV_FIXTURE();
+    char id[BOOT_LOADER_ONE_SHOT_ID_CHARS];
+    struct mv_var *v;
+    int ok;
+
+    ok = boot_loader_entry_default_read(&fx->ops, fx->guid_copy[0], id, sizeof(id))
+             == BOOT_LOADER_DEFAULT_ABSENT && id[0] == 0;
+    TEST_ASSERT(ok, "absent: ABSENT, id empty");
+
+    ok = boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], "slot-b") == 1;
+    v = mv_find(mv, "LoaderEntryDefault");
+    ok = ok && v && v->attrs == BOOT_LOADER_DEFAULT_ATTRS && v->size == 14u
+      && mv->pool[v->off + 12u] == 0 && mv->pool[v->off + 13u] == 0;
+    TEST_ASSERT(ok, "write: NV|BS|RT, 6 chars plus a UCS-2 NUL");
+
+    ok = boot_loader_entry_default_read(&fx->ops, fx->guid_copy[0], id, sizeof(id))
+             == BOOT_LOADER_DEFAULT_PRESENT && strcmp(id, "slot-b") == 0;
+    TEST_ASSERT(ok, "what is written reads back");
+
+    mv_next_boot(fx);
+    ok = boot_loader_vars_publish(&fx->ops, &fx->in, &fx->rep) == 1
+      && boot_loader_vars_clear_all(&fx->ops, &fx->in, &fx->rep) == 1
+      && mv_find(mv, "LoaderEntryDefault") != (struct mv_var *)0
+      && boot_loader_entry_default_read(&fx->ops, fx->guid_copy[0], id, sizeof(id))
+             == BOOT_LOADER_DEFAULT_PRESENT && strcmp(id, "slot-b") == 0;
+    TEST_ASSERT(ok, "survives a reset, the publisher and clear_all");
+
+    ok = boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], "") == 1
+      && mv_find(mv, "LoaderEntryDefault") == (struct mv_var *)0
+      && boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], (const char *)0) == 1;
+    TEST_ASSERT(ok, "empty id deletes; deleting an absent one succeeds");
+
+    /* bootctl writes the id without a NUL; still read. */
+    mv_seed(mv, "LoaderEntryDefault", MV_SYSTEMD, "arch");
+    ok = boot_loader_entry_default_read(&fx->ops, fx->guid_copy[0], id, sizeof(id))
+             == BOOT_LOADER_DEFAULT_PRESENT && strcmp(id, "arch") == 0;
+    TEST_ASSERT(ok, "a value with no NUL (bootctl's form) reads");
+
+    (void)boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], "");
+    mv_seed(mv, "LoaderEntryDefault", MV_SYSTEMD, "ab\001c");
+    ok = boot_loader_entry_default_read(&fx->ops, fx->guid_copy[0], id, sizeof(id))
+             == BOOT_LOADER_DEFAULT_UNUSABLE && id[0] == 0
+      && mv_find(mv, "LoaderEntryDefault") != (struct mv_var *)0;
+    TEST_ASSERT(ok, "non-printable: UNUSABLE and left in place");
+
+    mv->fail_get = "LoaderEntryDefault";
+    ok = boot_loader_entry_default_read(&fx->ops, fx->guid_copy[0], id, sizeof(id))
+             == BOOT_LOADER_DEFAULT_UNUSABLE
+      && mv_find(mv, "LoaderEntryDefault") != (struct mv_var *)0;
+    mv->fail_get = (const char *)0;
+    TEST_ASSERT(ok, "unreadable: UNUSABLE, never deleted");
+
+    /* Capacity: a valid 4-char id needs a 5-byte buffer. The bytes past the
+     * cap must stay untouched. */
+    {
+        char small[8];
+        (void)boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], "");
+        (void)boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], "abcd");
+        memset(small, 0x5A, sizeof(small));
+        ok = boot_loader_entry_default_read(&fx->ops, fx->guid_copy[0], small, 4u)
+                 == BOOT_LOADER_DEFAULT_UNUSABLE && small[0] == 0
+          && small[1] == 0x5A && small[4] == 0x5A && small[7] == 0x5A;
+        TEST_ASSERT(ok, "a valid id one byte too long for the buffer: refused, nothing past byte 0 written");
+        memset(small, 0x5A, sizeof(small));
+        ok = boot_loader_entry_default_read(&fx->ops, fx->guid_copy[0], small, 5u)
+                 == BOOT_LOADER_DEFAULT_PRESENT && strcmp(small, "abcd") == 0 && small[5] == 0x5A;
+        TEST_ASSERT(ok, "the same id with room for its NUL reads");
+    }
+
+    /* 62 characters is the longest the reader accepts; the writer stops there. */
+    {
+        char longest[64];
+        for (unsigned int i = 0; i < 62u; i++) longest[i] = (char)('a' + i % 26u);
+        longest[62] = 0;
+        (void)boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], "");
+        ok = boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], longest) == 1
+          && boot_loader_entry_default_read(&fx->ops, fx->guid_copy[0], id, sizeof(id))
+                 == BOOT_LOADER_DEFAULT_PRESENT && strcmp(id, longest) == 0;
+        TEST_ASSERT(ok, "a 62-character id writes and reads back");
+        longest[62] = 'x';
+        longest[63] = 0;
+        ok = boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], longest) == 0
+          && boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], "a\tb") == 0;
+        TEST_ASSERT(ok, "63 characters or a control character: refused, nothing written");
+    }
+
+    /* A refused change keeps the saved default, across a reboot too. */
+    (void)boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], "");
+    (void)boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], "slot-b");
+    mv->fail_set = "LoaderEntryDefault";
+    ok = boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], "slot-a") == 0;
+    mv->fail_set = (const char *)0;
+    mv_next_boot(fx);
+    v = mv_find(mv, "LoaderEntryDefault");
+    ok = ok && v && v->attrs == BOOT_LOADER_DEFAULT_ATTRS
+      && boot_loader_entry_default_read(&fx->ops, fx->guid_copy[0], id, sizeof(id))
+             == BOOT_LOADER_DEFAULT_PRESENT && strcmp(id, "slot-b") == 0;
+    TEST_ASSERT(ok, "a refused replacement reports failure and keeps the old default");
+
+    mv->fail_delete = "LoaderEntryDefault";
+    ok = boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], "") == 0;
+    mv->fail_delete = (const char *)0;
+    ok = ok && boot_loader_entry_default_read(&fx->ops, fx->guid_copy[0], id, sizeof(id))
+                   == BOOT_LOADER_DEFAULT_PRESENT && strcmp(id, "slot-b") == 0;
+    TEST_ASSERT(ok, "a refused clear reports failure and keeps the default");
+
+    {
+        unsigned int before = mv->calls;
+        ok = boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], "a\001b") == 0
+          && mv->calls == before
+          && boot_loader_entry_default_read(&fx->ops, fx->guid_copy[0], id, sizeof(id))
+                 == BOOT_LOADER_DEFAULT_PRESENT && strcmp(id, "slot-b") == 0;
+        TEST_ASSERT(ok, "an invalid id is refused before any firmware call");
+    }
+
+    ok = boot_loader_entry_default_read((const struct boot_loader_var_ops *)0, fx->guid_copy[0],
+                                        id, sizeof(id)) == BOOT_LOADER_DEFAULT_UNUSABLE
+      && boot_loader_entry_default_write((const struct boot_loader_var_ops *)0,
+                                         fx->guid_copy[0], "x") == 0;
+    TEST_ASSERT(ok, "no ops: refused");
+}
+
+/* A held d key: the menu feeds every event through boot_menu_repeat_check()
+ * and only an accepted one toggles the store. Holding d for two seconds of
+ * 30 ms auto-repeat is one change; a press after a pause toggles again. */
+static void test_loader_vars_held_d_is_one_change(void)
+{
+    MV_FIXTURE();
+    char saved[BOOT_LOADER_ONE_SHOT_ID_CHARS];
+    boot_menu_repeat_t rep = { BOOT_MENU_KEY_NONE, 0u };
+    unsigned int writes = 0, t;
+    int ok;
+
+    saved[0] = 0;
+    for (t = 0u; t <= 2000u; t += 30u) {
+        if (boot_menu_repeat_check(&rep, BOOT_MENU_KEY_SET_DEFAULT, t))
+            continue;
+        boot_menu_repeat_arm(&rep, BOOT_MENU_KEY_SET_DEFAULT, t);
+        unsigned int op = boot_menu_default_toggle("slot-b", saved);
+        (void)boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0],
+                                              op == BOOT_MENU_DEFAULT_SAVE ? "slot-b" : "");
+        (void)boot_loader_entry_default_read(&fx->ops, fx->guid_copy[0], saved, sizeof(saved));
+        writes++;
+    }
+    ok = writes == 1u && strcmp(saved, "slot-b") == 0
+      && mv_find(mv, "LoaderEntryDefault") != (struct mv_var *)0;
+    TEST_ASSERT(ok, "held d: one write, slot-b saved");
+
+    t += BOOT_MENU_REPEAT_GAP_MS;
+    ok = boot_menu_repeat_check(&rep, BOOT_MENU_KEY_SET_DEFAULT, t) == 0
+      && boot_menu_default_toggle("slot-b", saved) == BOOT_MENU_DEFAULT_CLEAR;
+    TEST_ASSERT(ok, "d again after a pause clears it");
+}
+
 void test_register_loader_vars(void)
 {
+    test_suite_register_cat("loader-vars: saved default reads, writes NV and survives the publisher",
+        test_loader_vars_saved_default, TEST_CAT_BOOT);
+    test_suite_register_cat("loader-vars: a held d key is one saved-default change",
+        test_loader_vars_held_d_is_one_change, TEST_CAT_BOOT);
     test_suite_register_cat("loader-vars: fully known boot sets every variable volatile",
         test_loader_vars_all_known_are_volatile, TEST_CAT_BOOT);
     test_suite_register_cat("loader-vars: unknown boot after a known one inherits nothing",

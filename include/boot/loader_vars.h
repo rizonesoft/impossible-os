@@ -16,10 +16,11 @@
  * rewrite an existing variable with different attributes, so the delete is
  * also what migrates an old persistent copy.
  *
- * Two names are NOT written: LoaderConfigTimeout and LoaderEntryDefault are
- * persistent settings the OS (bootctl) or another loader owns, and this
- * loader does not honour them (LoaderFeatures does not advertise bits 0 and
- * 2). Overwriting or deleting them would destroy someone else's setting.
+ * Two names are NOT published: LoaderConfigTimeout and LoaderEntryDefault
+ * are persistent settings the OS (bootctl) or another loader owns, so the
+ * per-boot publisher never overwrites or deletes them. LoaderEntryDefault
+ * is honoured (LoaderFeatures bit 2) through its own read and write calls
+ * below, which only the boot menu's d key writes.
  *
  * Pure C with no UEFI types, so the kernel boot tests run this exact code
  * against an in-memory variable store. All firmware access goes through
@@ -168,5 +169,30 @@ int boot_loader_one_shot_consume(const struct boot_loader_var_ops *ops, const vo
  * is neither all-zero nor all-FF. An MBR disk signature is not a partition
  * UUID and is never published. */
 int boot_loader_part_uuid_text(unsigned char style, const unsigned char guid[16], char out[37]);
+
+/* The saved default: LoaderEntryDefault (systemd GUID), the entry the OS or
+ * the menu's d key chose to boot when nothing more specific applies. It is a
+ * persistent setting, so it is written NV|BS|RT and never cleared by the
+ * per-boot publisher.
+ *
+ * boot_loader_entry_default_read() copies a printable-ASCII id of fewer than
+ * `cap` characters into `id`. Returns BOOT_LOADER_DEFAULT_PRESENT,
+ * BOOT_LOADER_DEFAULT_ABSENT, or BOOT_LOADER_DEFAULT_UNUSABLE (malformed,
+ * too long, or unreadable; `id` is ""). The value is the operator's, so an
+ * unusable one is reported and left in place, never deleted.
+ *
+ * boot_loader_entry_default_write() stores `id` (UCS-2, NUL-terminated), or
+ * deletes the variable when `id` is NULL or "". Returns 1 on success, 0 when
+ * the firmware refused or `id` is not a printable-ASCII id that fits. */
+#define BOOT_LOADER_DEFAULT_ABSENT   0
+#define BOOT_LOADER_DEFAULT_PRESENT  1
+#define BOOT_LOADER_DEFAULT_UNUSABLE 2
+#define BOOT_LOADER_DEFAULT_ATTRS \
+    (BOOT_LOADER_VAR_ATTR_NV | BOOT_LOADER_VAR_ATTR_BS | BOOT_LOADER_VAR_ATTR_RT)
+
+int boot_loader_entry_default_read(const struct boot_loader_var_ops *ops, const void *systemd_guid,
+                                   char *id, unsigned int cap);
+int boot_loader_entry_default_write(const struct boot_loader_var_ops *ops, const void *systemd_guid,
+                                    const char *id);
 
 #endif /* BOOT_LOADER_VARS_H */

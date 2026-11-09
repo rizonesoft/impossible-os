@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-28-boot-validation-certification-matrix.md sources=tools/boot-cert/boot-cert.yml,tools/boot-cert/boot-cert.schema.json,tools/boot-cert/result.schema.json,tools/boot-cert/reliability.schema.json,tools/boot-cert/lint.py,tools/boot-cert/boot_reliability.py,tools/boot-cert/test_lint.py,tools/boot-cert/test_boot_reliability.py,scripts/machines/boot-test-qemu.sh,scripts/test-smoke-matrix.sh reviewed=2026-09-28 order=28 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-28-boot-validation-certification-matrix.md sources=tools/boot-cert/boot-cert.yml,tools/boot-cert/boot-cert.schema.json,tools/boot-cert/result.schema.json,tools/boot-cert/reliability.schema.json,tools/boot-cert/lint.py,tools/boot-cert/boot_reliability.py,tools/boot-cert/test_lint.py,tools/boot-cert/test_boot_reliability.py,scripts/machines/boot-test-qemu.sh,scripts/test-smoke-matrix.sh reviewed=2026-11-09T03:40 order=28 -->
 # Boot Validation and Certification Matrix
 
 ## What is it?

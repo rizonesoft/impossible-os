@@ -77,7 +77,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  21   | Published loader variables need an explicit set-or-clear outcome    | §15, §19                                |  [x]   |
 | 💎  |  22   | Store size cap is untested on both sides of the 16 KiB boundary     | §2, §20                                 |  [x]   |
 | 💎  |  23   | A rejected store has no repair path, only a one-entry fallback      | §1, §20                                 |  [x]   |
-| 💎  |  24   | Boot menu help, power and saved-default keys                        | §6, §7, §15                             |  [ ]   |
+| 💎  |  24   | Boot menu help, power and saved-default keys                        | §6, §7, §15                             |  [x]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -908,17 +908,24 @@ Found by the parity pass on §20. Distinct from the already-tracked authenticati
 
 Found by the parity pass on §6 against systemd-boot (https://man.archlinux.org/man/systemd-boot.7, https://www.freedesktop.org/software/systemd/man/latest/loader.conf.html). PageUp/PageDown and 1-9 shipped in §6; these three need new UI or new persistent state, so they are a section of their own. Nothing else owns them: §7 owns F8/F10/F11 only, and §15 publishes loader variables but has no key that writes one.
 
-- [ ] Extend `docs/design/` with the boot-menu help overlay and key legend before drawing it
-  - Layout inside the existing bar geometry (`include/boot/boot_menu_layout.h`), the ConOut and serial forms, and how it fits the small modes `boot_menu_fit()` supports.
-  - The boot menu has no design spec today, so this is the answer the spec has to give first rather than visuals invented in `bootx64.c`.
-- [ ] `h`, `?` and F1 open a help screen listing every key, and the footer names the help key; any key closes it and the menu repaints in full. Opening it stops the countdown, like any other action key.
-- [ ] Shift+B reboots and Shift+O powers off through `gRT->ResetSystem` (`EfiResetCold` / `EfiResetShutdown`), with the serial mirror logging the choice first. A refused or absent `ResetSystem` keeps the menu up with a message instead of hanging.
-- [ ] `d` makes the highlighted entry the default and persists it as `LoaderEntryDefault` (NON_VOLATILE), read back by the §3 policy ladder on the next boot; pressing it on the current default clears it.
-  - Since §21 this loader no longer writes `LoaderEntryDefault` as a report, so this key and the ladder are its only writer and reader here; once it is honoured, advertise `LoaderFeatures` bit 2 and update `docs/boot/loader-vars.md`.
-  - Decide and record in `todo/answers.md` whether the stored default outranks the store's own `sort_key` default, as `default @saved` does in loader.conf.
-- [ ] Commit: `"boot: menu help, power and saved-default keys"`
+- [x] `docs/design/shell.md#boot-menu` specifies the menu: colours, geometry, footer text with "F1 help.", the notice line, the help screen and its paging, and the key legend.
+  - Written before the help screen was drawn; the boot menu had no design spec until then.
+- [x] `h`, `?` and F1 open help (`boot_menu_paint_help` in `bootx64.c`); any key pages or closes it, the menu repaints in full, and the footer names F1. Opening it stops the countdown.
+  - `boot_menu_help_pages()` splits the 9 help lines over the rows the mode fits, so a small GOP mode pages instead of clipping; ConOut prints them all at once.
+- [x] Shift+B reboots and Shift+O powers off through `ResetSystem` (`boot_menu_power`), logging the choice first; a refused or absent `ResetSystem` keeps the menu up with a footer notice.
+- [x] `d` saves the highlighted entry as `LoaderEntryDefault` (NV|BS|RT), and the §3 ladder boots it next time; `d` on the saved entry clears it. `LoaderFeatures` bit 2 is advertised.
+  - `boot_loader_entry_default_read/_write` in `loader_vars.c`; the writer refuses anything the reader would reject. An unusable value is logged and left in place.
+  - Rank (Q34 in `todo/answers.md`): below a one-shot and a tagged firmware option, above the lowest `sort_key`. Reported as `STORE_DEFAULT` with `saved_default_used`, so an older kernel still accepts the handoff.
+  - `boot_menu_key_action()` maps every key; `boot_menu_repeat_check()` makes a held toggle key one action, so a held `d` cannot save and clear in a loop. The notice says when a tagged firmware option will still win.
+- [x] Commit: `"boot: menu help, power and saved-default keys"`
 
 **Test checkpoint:** `SUITE=boot` green with pure-helper cases for key mapping and default precedence; `SMOKE_MENU=1 bash scripts/test-smoke.sh` still auto-boots; a smoke leg that sends `d` and confirms the second boot selects the saved entry.
+
+> **Test runner:** `bash scripts/test.sh SUITE=boot` (key map, repeat guard, help pages, toggle, notice repaint, saved-default ladder, `LoaderEntryDefault` read/write, held `d`), then `SMOKE_MENU=default` and `SMOKE_MENU=saved` `bash scripts/test-smoke.sh` in that order (both in the smoke matrix).
+> **Notes:**
+> - The text-console menu (no usable GOP mode) shows the same notices and legend as the graphical footer, but serial cannot see ConOut, so that path is proven only by reading the code, not by a smoke leg.
+> - A real `ResetSystem` that returns is not reachable under OVMF; the restart and power-off failure notices are unproven on real firmware.
+> - Entry ids are at most 47 characters (`BOOT_ENTRIES_MAX_ID_LEN`), well inside the 62 the writer accepts, so `d` cannot be refused for length.
 
 ## OS Comparison
 
@@ -929,12 +936,12 @@ Found by the parity pass on §6 against systemd-boot (https://man.archlinux.org/
 | 💎  | Recovery boot entry                                   | ✅ WinRE                         | ✅ GRUB recovery                    | ⬜ Planned -- §9                                                                 |
 | 💎  | Safe mode entry                                       | ✅ msconfig safeboot flag        | ✅ rescue.target / single           | 🟦 §8 KIND_SAFE + boot_mode=1 + F8 hotkey; subset payload deferred to §13        |
 | 💎  | Previous-kernel rollback entry                        | ⚠️ BCD bootsequence (limited UX) | ✅ GRUB previous kernel             | ⬜ Planned -- §10                                                                |
-| 💎  | Boot menu UI (text + graphical)                       | ⚠️ Minimal "Choose an OS"        | ✅ GRUB / systemd-boot menus        | ✅ §6 GOP+ConOut+serial, band repaint, scrolling; §7 indicators + hotkeys        |
+| 💎  | Boot menu UI (text + graphical)                       | ⚠️ Minimal "Choose an OS"        | ✅ GRUB / systemd-boot menus        | ✅ §6 GOP+ConOut+serial, scrolling; §7 hotkeys; §24 help, power, saved default   |
 | 💎  | Offline entry editor tooling                          | ✅ bcdedit / bcdboot             | ✅ grub-mkconfig / bootctl          | 🟦 §11 host-side `bootcfg.py` + validator parity; live-boot binary deferred      |
 | 💎  | Loop prevention via per-entry try counter             | ⚠️ Recovery loop after 2 fails   | ✅ systemd-boot tries=/done=        | 🟦 BLS counter grammar + ladder gate in §3; crash-tolerant rename in §5          |
 | 💎  | Per-entry health-gated mark-good                      | ❌ Implicit (timer past)         | ✅ systemd-bless + boot-complete    | 🟦 §14 entry gate + registry + MarkGood handoff; net/crash checks pending owners |
 | 💎  | Entry kinds (UKI, chainload, network, resume)         | ⚠️ BCD osloader / resume (split) | ✅ BLS Type 1 / Type 2 (UKI)        | 🟦 §13 SPLIT/UKI/SAFE validators + loader; CHAINLOAD/NETWORK/RESUME deferred     |
-| 💎  | OS-visible loader UEFI variables                      | ❌ None standardized             | ✅ systemd LoaderXxx interface      | ✅ §15 12 LoaderXxx vars under the systemd-boot GUID; honors both OneShot vars   |
+| 💎  | OS-visible loader UEFI variables                      | ❌ None standardized             | ✅ systemd LoaderXxx interface      | ✅ §15 12 LoaderXxx vars; honors both OneShots and §24 LoaderEntryDefault        |
 | 💎  | First-install bootstrap (idempotent offline seed)     | ✅ bcdboot from install media    | ✅ bootctl install / grub-install   | 🟦 §16 `emit-seed` writes a byte-identical 3-entry default; self-seed TODO-22 §1 |
 | ⭐  | Documented deterministic policy precedence (2 layers) | ⚠️ BCD rules underdocumented     | ⚠️ Per-bootloader behavior          | ✅ §3 ladder + 6-example doc + live producer in §4 🚀                            |
 | ⭐  | Demote-not-drop bad entries with last_failure_reason  | ❌ Hidden recovery loop          | ⚠️ Bad entries silently sorted last | 🟦 §4 records reject reasons in boot_info v19; menu UI label in §9 🚀            |

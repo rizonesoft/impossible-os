@@ -494,6 +494,32 @@ void boot_policy_decide(const boot_policy_inputs_t *inputs,
                       BOOT_REJECT_REASON_KIND_UNAVAILABLE);
     }
 
+    /* The saved default (LoaderEntryDefault): the operator's standing
+     * choice, below a one-shot and a tagged firmware option (both above),
+     * over the lowest sort_key. An id naming no candidate is a preference
+     * that no longer applies, not a request, so it is not recorded as a
+     * reject. */
+    unsigned int saved_len = 0;
+    while (saved_len < sizeof(inputs->saved_default_id) &&
+           inputs->saved_default_id[saved_len] != '\0')
+        saved_len++;
+    /* An id with no NUL inside its buffer is not a string to compare. */
+    if (saved_len != 0u && saved_len < sizeof(inputs->saved_default_id)) {
+        for (unsigned int i = 0; i < parse->entry_count; i++) {
+            if (!candidate[i]) continue;
+            if (sp_str_eq(parse->entries[i].id, inputs->saved_default_id)) {
+                sp_copy_clamped(out->selected_entry_id,
+                                sizeof(out->selected_entry_id),
+                                parse->entries[i].id,
+                                sp_strlen(parse->entries[i].id));
+                out->selected = parse->entries[i];
+                out->reason = BOOT_SELECTION_STORE_DEFAULT;
+                out->saved_default_used = 1;
+                return;
+            }
+        }
+    }
+
     /* Lowest sort_key wins; tiebreak by array order (first occurrence). */
     unsigned int chosen = 0xFFFFFFFFu;
     for (unsigned int i = 0; i < parse->entry_count; i++) {
@@ -598,6 +624,79 @@ unsigned int boot_menu_nav(unsigned int selected, unsigned int count, unsigned i
     }
 }
 
+unsigned int boot_menu_key_action(unsigned int scan, unsigned int unicode, unsigned int *out)
+{
+    unsigned int dummy;
+    if (!out)
+        out = &dummy;
+    *out = 0u;
+    switch (scan) {
+    case BOOT_MENU_SCAN_UP:        *out = BOOT_MENU_NAV_UP;        return BOOT_MENU_KEY_NAV;
+    case BOOT_MENU_SCAN_DOWN:      *out = BOOT_MENU_NAV_DOWN;      return BOOT_MENU_KEY_NAV;
+    case BOOT_MENU_SCAN_HOME:      *out = BOOT_MENU_NAV_HOME;      return BOOT_MENU_KEY_NAV;
+    case BOOT_MENU_SCAN_END:       *out = BOOT_MENU_NAV_END;       return BOOT_MENU_KEY_NAV;
+    case BOOT_MENU_SCAN_PAGE_UP:   *out = BOOT_MENU_NAV_PAGE_UP;   return BOOT_MENU_KEY_NAV;
+    case BOOT_MENU_SCAN_PAGE_DOWN: *out = BOOT_MENU_NAV_PAGE_DOWN; return BOOT_MENU_KEY_NAV;
+    case BOOT_MENU_SCAN_ESC:       return BOOT_MENU_KEY_BOOT;
+    case BOOT_MENU_SCAN_F1:        return BOOT_MENU_KEY_HELP;
+    case BOOT_MENU_SCAN_F8:        return BOOT_MENU_KEY_SAFE_MODE;
+    case BOOT_MENU_SCAN_F10:       return BOOT_MENU_KEY_FW_SETUP;
+    case BOOT_MENU_SCAN_NULL:      break;
+    default:                       return BOOT_MENU_KEY_NONE;
+    }
+    if (unicode >= '1' && unicode <= '9') {
+        *out = unicode - '0';
+        return BOOT_MENU_KEY_NUMBER;
+    }
+    switch (unicode) {
+    case 0x0Du: case 0x0Au: return BOOT_MENU_KEY_BOOT;   /* CR, LF */
+    case 'h': case '?':     return BOOT_MENU_KEY_HELP;
+    case 'B':               return BOOT_MENU_KEY_REBOOT;  /* Shift+B: uppercase over ConIn */
+    case 'O':               return BOOT_MENU_KEY_POWEROFF;
+    case 'd':               return BOOT_MENU_KEY_SET_DEFAULT;
+    default:                return BOOT_MENU_KEY_NONE;
+    }
+}
+
+int boot_menu_repeat_check(boot_menu_repeat_t *r, unsigned int action, unsigned int now_ms)
+{
+    if (!r || action == BOOT_MENU_KEY_NONE)
+        return 0;
+    if (r->action != action) {
+        r->action = BOOT_MENU_KEY_NONE;
+        return 0;
+    }
+    /* Unsigned difference: correct across a wrap of the millisecond count. */
+    if (now_ms - r->last_ms < BOOT_MENU_REPEAT_GAP_MS) {
+        r->last_ms = now_ms;
+        return 1;
+    }
+    r->action = BOOT_MENU_KEY_NONE;
+    return 0;
+}
+
+void boot_menu_repeat_arm(boot_menu_repeat_t *r, unsigned int action, unsigned int now_ms)
+{
+    if (!r)
+        return;
+    r->action = action;
+    r->last_ms = now_ms;
+}
+
+unsigned int boot_menu_help_pages(unsigned int rows)
+{
+    if (rows == 0u)
+        return 1u;
+    return (BOOT_MENU_HELP_LINES + rows - 1u) / rows;
+}
+
+unsigned int boot_menu_default_toggle(const char *highlight_id, const char *saved_id)
+{
+    if (highlight_id && saved_id && saved_id[0] && sp_str_eq(highlight_id, saved_id))
+        return BOOT_MENU_DEFAULT_CLEAR;
+    return BOOT_MENU_DEFAULT_SAVE;
+}
+
 int boot_menu_nav_applies(unsigned int count, unsigned int action, unsigned int number)
 {
     if (count == 0u)
@@ -638,6 +737,7 @@ unsigned int boot_menu_repaint_plan(const boot_menu_view_t *drawn,
      * after the countdown stopped repaints nothing. A list that scrolls names
      * the highlighted entry's position in the footer. */
     if (drawn->counting != want->counting ||
+        drawn->notice != want->notice ||
         (want->counting && drawn->seconds_left != want->seconds_left) ||
         (moved && want->count > want->rows))
         plan |= BOOT_MENU_PAINT_FOOTER;

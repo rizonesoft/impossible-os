@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/boot/uefi/bootx64.c,src/boot/uefi/loader_vars.c,include/boot/loader_vars.h,src/kernel/uefi_runtime.c reviewed=2026-11-08 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/boot/uefi/bootx64.c,src/boot/uefi/loader_vars.c,include/boot/loader_vars.h,src/kernel/uefi_runtime.c reviewed=2026-11-09 -->
 # OS-Visible Loader UEFI Variables
 
 > **Owner:** [OS-Visible Loader UEFI Variables](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#15-os-visible-loader-uefi-variables).
@@ -52,7 +52,9 @@ Each variable has two outcomes per boot: **set** to this boot's value, or **clea
 
 `ImpossibleOSLoaderFeaturesExt` (below) follows the same rules.
 
-**Not written: `LoaderConfigTimeout` and `LoaderEntryDefault`.** These are persistent settings that `bootctl set-timeout` and `bootctl set-default` write for the boot loader to honour. This loader does not honour them (LoaderFeatures bits 0 and 2 are not advertised), and on a machine shared with systemd-boot they belong to that loader. Until 2026-11-08 this loader wrote them every boot as a report of its own effective timeout and default; that overwrote, and on a rejected store deleted, a setting someone else owns, so it now leaves them alone. Values an older build of this loader wrote stay until something replaces them; they do not affect how this loader boots.
+**Not published: `LoaderConfigTimeout` and `LoaderEntryDefault`.** These are persistent settings that `bootctl set-timeout` and `bootctl set-default` write for the boot loader to honour, so the per-boot publisher never sets or clears them. Until 2026-11-08 this loader wrote both every boot as a report of its own effective timeout and default; that overwrote, and on a rejected store deleted, a setting someone else owns. `LoaderConfigTimeout` is still not honoured (bit 0 is not advertised).
+
+**`LoaderEntryDefault` is honoured (bit 2, since 2026-11-09).** The loader reads it once per boot: a printable-ASCII id of at most 62 characters, with or without a trailing NUL, that names a candidate entry becomes the default. It ranks below a `LoaderEntryOneShot`, a tagged `BootCurrent` option and every forced selection, and above the lowest `sort_key` (see [boot policy](boot-policy.md#2-the-precedence-ladder)). An id that names no candidate is ignored. A malformed or unreadable value is logged and left in place, because it is the operator's. The boot menu's `d` key writes it (`NV|BS|RT`, UCS-2 with a NUL), or deletes it when the highlighted entry already is the saved default. A value an older build of this loader left as a report is honoured like any other; it names the entry that was the default when it was written, and `d` on that entry clears it.
 
 ## One-shot variables (OS -> bootloader)
 
@@ -85,7 +87,7 @@ boot-counting behavior.
 |---:|---|:---:|---|
 | 0 | `LoaderConfigTimeout` writable from OS | **not advertised** | We do not honor OS-side writes to base timeout. |
 | 1 | `LoaderConfigTimeoutOneShot` honored | **advertised** | Bootloader reads + deletes per-boot. |
-| 2 | `LoaderEntryDefault` writable from OS | **not advertised** | Default is `sort_key` order; no OS-side override. |
+| 2 | `LoaderEntryDefault` writable from OS | **advertised** | Read every boot; the menu's `d` key writes it. Ranks above the lowest `sort_key`. |
 | 3 | `LoaderEntryOneShot` honored | **advertised** | Bootloader reads + deletes per-boot. |
 | 4 | Boot counting (BLS tries=/done=) | **advertised** | Counter protocol from boot-entry §5. |
 | 5 | XBOOTLDR partition | **not advertised** | We do not support the XBOOTLDR partition. |

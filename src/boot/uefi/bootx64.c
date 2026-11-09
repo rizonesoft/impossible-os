@@ -1072,6 +1072,9 @@ static int g_wd_refresh_disabled; /* 1 = stop calling watchdog_reset()
  *   g_chainload_count           zeroed at chainload_detect() entry
  *   g_menu_f10_disabled,        assigned before the sole boot_menu_run() call
  *     g_menu_no_autoboot
+ *   g_menu_fw_option_entry,     assigned (terminated, empty when BootCurrent is
+ *     g_menu_saved_default      unknown) in boot_policy_invoke() before the
+ *                               sole boot_menu_run() call
  *   g_kstack_base               assigned before its guard, which runs only
  *                               after the reservation succeeded or fataled
  *
@@ -6359,9 +6362,51 @@ static unsigned int boot_menu_put_text(char *buf, unsigned int cap, unsigned int
     return p;
 }
 
+/* The saved default (LoaderEntryDefault), read once per boot by
+ * loader_read_saved_default() before the ladder runs and updated by the
+ * menu's d key. Written before any read on every boot, so firmware .bss
+ * poison is never consulted. */
+static char g_menu_saved_default[64];
+
 /* Repaint the footer band at `footer_y`. While the countdown runs it names the
  * seconds left; once a key stopped it there is no countdown to show. A list
  * that scrolls also names the highlighted entry's position. */
+/* The footer sentence for a menu notice, written to buf from position 0.
+ * Returns its length, or 0 for BOOT_MENU_NOTICE_NONE (the caller then shows
+ * the key legend). Shared by the GOP footer and the ConOut fallback, so both
+ * report the same outcome. */
+static unsigned int boot_menu_notice_text(unsigned int notice, char *buf, unsigned int cap)
+{
+    unsigned int p = 0;
+    switch (notice) {
+    case BOOT_MENU_NOTICE_DEFAULT_SAVED:
+    case BOOT_MENU_NOTICE_DEFAULT_SHADOWED:
+        p = boot_menu_put_text(buf, cap, p, "Default saved: ");
+        p = boot_menu_put_text(buf, cap, p, g_menu_saved_default);
+        p = boot_menu_put_text(buf, cap, p,
+                               notice == BOOT_MENU_NOTICE_DEFAULT_SHADOWED
+                                   ? ". A firmware boot option still picks another entry." : ".");
+        break;
+    case BOOT_MENU_NOTICE_DEFAULT_CLEARED:
+        p = boot_menu_put_text(buf, cap, p, "Saved default cleared.");
+        break;
+    case BOOT_MENU_NOTICE_DEFAULT_FAILED:
+        p = boot_menu_put_text(buf, cap, p, "Could not save the default: the firmware refused.");
+        break;
+    case BOOT_MENU_NOTICE_RESTART_FAILED:
+        p = boot_menu_put_text(buf, cap, p, "Restart failed: the firmware did not reset.");
+        break;
+    case BOOT_MENU_NOTICE_POWEROFF_FAILED:
+        p = boot_menu_put_text(buf, cap, p, "Power off failed: the firmware did not power off.");
+        break;
+    default:
+        break;
+    }
+    if (cap != 0u)
+        buf[p < cap ? p : cap - 1u] = 0;
+    return p;
+}
+
 static void boot_menu_paint_footer(const boot_menu_view_t *v, UINT32 footer_y)
 {
     if (footer_y >= gFbHeight)
@@ -6374,14 +6419,16 @@ static void boot_menu_paint_footer(const boot_menu_view_t *v, UINT32 footer_y)
     UINT32 right = boot_menu_text_right();
     if (py == 0u || right <= BOOT_MENU_COL_X)
         return;
-    char foot[80];
-    unsigned int p = 0;
-    if (v->counting) {
-        p = boot_menu_put_text(foot, sizeof(foot), p, "Auto-boot in ");
-        p = boot_menu_put_uint(foot, sizeof(foot), p, v->seconds_left);
-        p = boot_menu_put_text(foot, sizeof(foot), p, "s. Use arrows + Enter.");
-    } else {
-        p = boot_menu_put_text(foot, sizeof(foot), p, "Use arrows + Enter to boot.");
+    char foot[160];
+    unsigned int p = boot_menu_notice_text(v->notice, foot, sizeof(foot));
+    if (p == 0u) {
+        if (v->counting) {
+            p = boot_menu_put_text(foot, sizeof(foot), p, "Auto-boot in ");
+            p = boot_menu_put_uint(foot, sizeof(foot), p, v->seconds_left);
+            p = boot_menu_put_text(foot, sizeof(foot), p, "s. Use arrows + Enter. F1 help.");
+        } else {
+            p = boot_menu_put_text(foot, sizeof(foot), p, "Use arrows + Enter to boot. F1 help.");
+        }
     }
     if (v->count > v->rows) {
         p = boot_menu_put_text(foot, sizeof(foot), p, " Entry ");
@@ -6396,6 +6443,54 @@ static void boot_menu_paint_footer(const boot_menu_view_t *v, UINT32 footer_y)
                              fitted, (unsigned int)sizeof(fitted));
     bsod_aa_string(BOOT_MENU_COL_X, py, fitted, bsod_aa_SUB, bsod_aa_SUB_data, BSOD_AA_SUB_ASCENT,
                    0x80, 0x80, 0x80, 0x0A, 0x0A, 0x0A);
+}
+
+/* Print an ASCII string on ConOut through a bounded UCS-2 buffer. */
+static void boot_menu_conout_ascii(const char *text)
+{
+    CHAR16 line[200];
+    unsigned int p = 0;
+    for (unsigned int j = 0; text[j] && p < sizeof(line) / sizeof(line[0]) - 3u; j++)
+        line[p++] = (CHAR16)(unsigned char)text[j];
+    line[p++] = u'\r';
+    line[p++] = u'\n';
+    line[p] = 0;
+    gST->ConOut->OutputString(gST->ConOut, line);
+}
+
+/* The ConOut fallback's entry list: header plus one line per visible entry,
+ * '>' marking the highlight. */
+static void boot_menu_conout_list(const boot_entries_parse_result_t *parse,
+                                  const unsigned int *cand_idx, unsigned int cand_count,
+                                  unsigned int selected_idx,
+                                  const boot_policy_decision_t *decision, int sb_active)
+{
+    unsigned int visible = cand_count < BOOT_MENU_MAX_VISIBLE ? cand_count : BOOT_MENU_MAX_VISIBLE;
+    gST->ConOut->OutputString(gST->ConOut, u"\r\n=== Impossible OS Boot Menu ===\r\n");
+    for (unsigned int i = 0; i < visible; i++) {
+        const boot_entry_envelope_t *e = &parse->entries[cand_idx[i]];
+        char ind[40];
+        (void)boot_menu_indicators(e, decision, sb_active, ind, (unsigned int)sizeof(ind));
+        const char *label = e->title[0] ? e->title : e->id;
+        char line[200];
+        unsigned int p = 0;
+        p = boot_menu_put_text(line, sizeof(line), p, i == selected_idx ? "> " : "  ");
+        p = boot_menu_put_text(line, sizeof(line), p, ind);
+        p = boot_menu_put_text(line, sizeof(line), p, label);
+        line[p] = 0;
+        boot_menu_conout_ascii(line);
+    }
+}
+
+/* The ConOut fallback's footer line: the notice, or the key legend when
+ * there is none. */
+static void boot_menu_conout_notice(unsigned int notice)
+{
+    char text[160];
+    if (boot_menu_notice_text(notice, text, sizeof(text)) == 0u)
+        boot_menu_conout_ascii("Use arrows + Enter to boot. F1 help.");
+    else
+        boot_menu_conout_ascii(text);
 }
 
 /* Bring the screen from *drawn to *want, painting only what changed (see
@@ -6459,31 +6554,18 @@ static void boot_menu_render(const boot_entries_parse_result_t *parse,
         }
         if (plan & (BOOT_MENU_PAINT_FULL | BOOT_MENU_PAINT_FOOTER))
             boot_menu_paint_footer(want, gop_fit->footer_y);
-    } else if ((plan & (BOOT_MENU_PAINT_FULL | BOOT_MENU_PAINT_ROWS | BOOT_MENU_PAINT_LIST)) &&
-               gST && gST->ConOut && gST->ConOut->OutputString) {
+    } else if (gST && gST->ConOut && gST->ConOut->OutputString &&
+               (plan & (BOOT_MENU_PAINT_FULL | BOOT_MENU_PAINT_ROWS | BOOT_MENU_PAINT_LIST))) {
         /* ConOut text fallback. The list has no countdown line, so it is
-         * reprinted only when the highlight moves, never once a second. */
-        unsigned int visible = cand_count < BOOT_MENU_MAX_VISIBLE ? cand_count : BOOT_MENU_MAX_VISIBLE;
-        gST->ConOut->OutputString(gST->ConOut, u"\r\n=== Impossible OS Boot Menu ===\r\n");
-        for (unsigned int i = 0; i < visible; i++) {
-            const boot_entry_envelope_t *e = &parse->entries[cand_idx[i]];
-            char ind[40];
-            (void)boot_menu_indicators(e, decision, sb_active,
-                                       ind, (unsigned int)sizeof(ind));
-            const char *label = e->title[0] ? e->title : e->id;
-            CHAR16 line[200];
-            unsigned int p = 0;
-            line[p++] = (i == selected_idx) ? u'>' : u' ';
-            line[p++] = u' ';
-            for (unsigned int j = 0; ind[j] && p < sizeof(line)/sizeof(line[0]) - 4u; j++)
-                line[p++] = (CHAR16)(unsigned char)ind[j];
-            for (unsigned int j = 0; label[j] && p < sizeof(line)/sizeof(line[0]) - 4u; j++)
-                line[p++] = (CHAR16)(unsigned char)label[j];
-            line[p++] = u'\r';
-            line[p++] = u'\n';
-            line[p] = 0;
-            gST->ConOut->OutputString(gST->ConOut, line);
-        }
+         * reprinted only when the highlight moves, never once a second; the
+         * legend or the current notice follows it. */
+        boot_menu_conout_list(parse, cand_idx, cand_count, selected_idx, decision, sb_active);
+        boot_menu_conout_notice(want->notice);
+    } else if (gST && gST->ConOut && gST->ConOut->OutputString &&
+               (plan & BOOT_MENU_PAINT_FOOTER) && want->notice != drawn->notice &&
+               want->notice != BOOT_MENU_NOTICE_NONE) {
+        /* A notice alone (d, a refused reset): one line under the list. */
+        boot_menu_conout_notice(want->notice);
     }
     *drawn = *want;
     drawn->valid = 1u;
@@ -6515,6 +6597,132 @@ static int g_menu_f10_disabled;
  * stranded boot the operator did not authorize. Reset on every
  * boot_policy_invoke() entry. */
 static int g_menu_no_autoboot;
+
+static int loader_write_saved_default(const char *id);
+
+/* The entry a tagged firmware boot option (BootCurrent's OptionalData)
+ * names, before any one-shot overlays it; "" when none. It outranks the
+ * saved default, so d says so when it would hide the new default. Written
+ * before any read on every boot. */
+static char g_menu_fw_option_entry[64];
+
+static const char *const s_boot_menu_help[BOOT_MENU_HELP_LINES] = {
+    "Up, Down, PgUp, PgDn, Home, End: move the highlight",
+    "1-9: highlight that entry",
+    "Enter or Esc: boot the highlighted entry",
+    "d: make it the saved default (again clears it)",
+    "F8: boot the highlighted entry in safe mode",
+    "F10: restart into firmware setup",
+    "Shift+B: restart",
+    "Shift+O: power off",
+    "h, ? or F1: this help",
+};
+
+/* Show help page `page` (1-based) of `pages`. GOP paints it over the menu in
+ * the same row geometry; ConOut prints every line once, on the first page. */
+static void boot_menu_paint_help(unsigned int page, unsigned int pages,
+                                 const boot_menu_fit_t *gop_fit)
+{
+    if (gop_fit && gop_fit->rows != 0u) {
+        boot_menu_fill(0u, gop_fit->footer_y, 0u, gFbWidth, fb_pack_rgb(0x0A, 0x0A, 0x0A));
+        UINT32 ty = boot_menu_text_py(bsod_aa_TITLE, BSOD_AA_TITLE_ASCENT, BOOT_MENU_TITLE_Y,
+                                      BOOT_MENU_LIST_Y0 - BOOT_MENU_TITLE_Y);
+        if (ty != 0u)
+            bsod_aa_string(BOOT_MENU_COL_X, ty, "Boot Menu Help", bsod_aa_TITLE, bsod_aa_TITLE_data,
+                           BSOD_AA_TITLE_ASCENT, 0xE0, 0xE0, 0xE0, 0x0A, 0x0A, 0x0A);
+        UINT32 right = boot_menu_text_right();
+        char fitted[64];
+        unsigned int first = (page - 1u) * gop_fit->rows;
+        for (unsigned int r = 0; r < gop_fit->rows && first + r < BOOT_MENU_HELP_LINES; r++) {
+            UINT32 y = BOOT_MENU_LIST_Y0 + (UINT32)r * BOOT_MENU_ROW_H;
+            UINT32 py = boot_menu_text_py(bsod_aa_SUB, BSOD_AA_SUB_ASCENT, y, BOOT_MENU_ROW_H);
+            if (py == 0u || right <= BOOT_MENU_COL_X)
+                break;
+            (void)boot_menu_fit_text(bsod_aa_SUB, s_boot_menu_help[first + r], right - BOOT_MENU_COL_X,
+                                     fitted, (unsigned int)sizeof(fitted));
+            bsod_aa_string(BOOT_MENU_COL_X, py, fitted, bsod_aa_SUB, bsod_aa_SUB_data, BSOD_AA_SUB_ASCENT,
+                           0xC8, 0xC8, 0xC8, 0x0A, 0x0A, 0x0A);
+        }
+        if (gop_fit->footer_y < gFbHeight) {
+            boot_menu_fill(gop_fit->footer_y, BOOT_MENU_FOOTER_H, BOOT_MENU_HI_X,
+                           BOOT_MENU_HI_X + BOOT_MENU_HI_W, fb_pack_rgb(0x0A, 0x0A, 0x0A));
+            UINT32 py = boot_menu_text_py(bsod_aa_SUB, BSOD_AA_SUB_ASCENT, gop_fit->footer_y,
+                                          BOOT_MENU_FOOTER_H);
+            if (py != 0u && right > BOOT_MENU_COL_X) {
+                (void)boot_menu_fit_text(bsod_aa_SUB,
+                                         page < pages ? "Press any key for more."
+                                                      : "Press any key to return.",
+                                         right - BOOT_MENU_COL_X, fitted, (unsigned int)sizeof(fitted));
+                bsod_aa_string(BOOT_MENU_COL_X, py, fitted, bsod_aa_SUB, bsod_aa_SUB_data,
+                               BSOD_AA_SUB_ASCENT, 0x80, 0x80, 0x80, 0x0A, 0x0A, 0x0A);
+            }
+        }
+    } else if (page == 1u && gST && gST->ConOut && gST->ConOut->OutputString) {
+        gST->ConOut->OutputString(gST->ConOut, u"\r\n=== Boot Menu Help ===\r\n");
+        for (unsigned int i = 0; i < BOOT_MENU_HELP_LINES; i++) {
+            CHAR16 line[72];
+            unsigned int p = 0;
+            for (const char *c = s_boot_menu_help[i]; *c && p < 68u; c++)
+                line[p++] = (CHAR16)(unsigned char)*c;
+            line[p++] = u'\r';
+            line[p++] = u'\n';
+            line[p] = 0;
+            gST->ConOut->OutputString(gST->ConOut, line);
+        }
+        gST->ConOut->OutputString(gST->ConOut, u"Press any key to return.\r\n");
+    }
+}
+
+/* Shift+B / Shift+O. Returns only when the firmware did not reset: there is
+ * no ResetSystem, or it came back. */
+static void boot_menu_power(int poweroff)
+{
+    serial_early_print(poweroff ? "[BOOT] menu: Shift+O -- power off\n"
+                                : "[BOOT] menu: Shift+B -- restart\n");
+    EFI_RUNTIME_SERVICES *rt = gST ? gST->RuntimeServices : (EFI_RUNTIME_SERVICES *)0;
+    if (rt && rt->ResetSystem)
+        rt->ResetSystem(poweroff ? EFI_RESET_SHUTDOWN : EFI_RESET_COLD, EFI_SUCCESS, 0, (CHAR16 *)0);
+    serial_early_print(rt && rt->ResetSystem
+                           ? "[BOOT] menu: ResetSystem returned -- staying in the menu\n"
+                           : "[BOOT] menu: no ResetSystem -- staying in the menu\n");
+}
+
+/* The d key: save the highlighted entry as the default, or clear the saved
+ * default when the highlight already is it. Returns the footer notice. */
+static unsigned int boot_menu_set_default(const boot_entries_parse_result_t *parse,
+                                          const unsigned int *cand_idx, unsigned int cand_count,
+                                          unsigned int selected)
+{
+    if (selected >= cand_count)
+        return BOOT_MENU_NOTICE_NONE;
+    const char *hid = parse->entries[cand_idx[selected]].id;
+    unsigned int t = boot_menu_default_toggle(hid, g_menu_saved_default);
+    if (!loader_write_saved_default(t == BOOT_MENU_DEFAULT_SAVE ? hid : "")) {
+        serial_early_print("[BOOT] menu: d -- the firmware refused LoaderEntryDefault\n");
+        return BOOT_MENU_NOTICE_DEFAULT_FAILED;
+    }
+    if (t == BOOT_MENU_DEFAULT_CLEAR) {
+        g_menu_saved_default[0] = 0;
+        serial_early_print("[BOOT] menu: d -- saved default cleared\n");
+        return BOOT_MENU_NOTICE_DEFAULT_CLEARED;
+    }
+    UINTN k = 0;
+    while (hid[k] && k < sizeof(g_menu_saved_default) - 1u) {
+        g_menu_saved_default[k] = hid[k];
+        k++;
+    }
+    g_menu_saved_default[k] = 0;
+    serial_early_print("[BOOT] menu: d -- saved default ");
+    serial_early_print(g_menu_saved_default);
+    serial_early_print("\n");
+    /* A tagged firmware option naming another candidate still wins. */
+    if (g_menu_fw_option_entry[0] && !ascii_streq(g_menu_fw_option_entry, hid)) {
+        for (unsigned int i = 0; i < cand_count; i++)
+            if (ascii_streq(parse->entries[cand_idx[i]].id, g_menu_fw_option_entry))
+                return BOOT_MENU_NOTICE_DEFAULT_SHADOWED;
+    }
+    return BOOT_MENU_NOTICE_DEFAULT_SAVED;
+}
 
 static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
                                   const unsigned int *cand_idx,
@@ -6565,17 +6773,20 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
 
     /* Initial render. `drawn` is what is on screen; a local, so it starts
      * empty on every menu session (no loader static to reset). */
-    boot_menu_view_t drawn = { 0u, 0u, 0u, 0u, 0u, 0u, 0u };
+    boot_menu_view_t drawn = { 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u };
     boot_menu_fit_t gop_fit = { 0u, 0u };
     if (boot_menu_gop_ok(gop_available))
         gop_fit = boot_menu_fit(gFbHeight);
     unsigned int rows = gop_fit.rows != 0u ? gop_fit.rows : BOOT_MENU_MAX_VISIBLE;
     boot_menu_view_t want = { 1u, selected, (unsigned int)counting_down, timeout_s,
-                              0u, cand_count, rows };
+                              0u, cand_count, rows, BOOT_MENU_NOTICE_NONE };
     want.top = boot_menu_scroll_top(0u, selected, cand_count, rows);
     boot_menu_render(parse, cand_idx, cand_count, &drawn, &want,
                      &gop_fit, decision, sb_active);
     int dirty = 0;
+    boot_menu_repeat_t repeat = { BOOT_MENU_KEY_NONE, 0u };
+    unsigned int help_page = 0u;     /* 0: help closed; else the page shown */
+    unsigned int help_pages = 1u;
     unsigned int last_seconds_logged = timeout_s;
     /* Throttle watchdog refresh: the firmware WD_TIMEOUT in efi_main
      * is 60s, so 50ms-tick refreshes (20Hz, 1200 SetWatchdogTimer
@@ -6606,36 +6817,44 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
                  * otherwise sit forever. Codex re-adversarial
                  * caught this regression in the menu fix loop. */
                 int is_action = 0;
-                unsigned int nav = 0u, number = 0u;
-                switch (key.ScanCode) {
-                case EFI_SCAN_UP:        nav = BOOT_MENU_NAV_UP; break;
-                case EFI_SCAN_DOWN:      nav = BOOT_MENU_NAV_DOWN; break;
-                case EFI_SCAN_HOME:      nav = BOOT_MENU_NAV_HOME; break;
-                case EFI_SCAN_END:       nav = BOOT_MENU_NAV_END; break;
-                case EFI_SCAN_PAGE_UP:   nav = BOOT_MENU_NAV_PAGE_UP; break;
-                case EFI_SCAN_PAGE_DOWN: nav = BOOT_MENU_NAV_PAGE_DOWN; break;
-                default:
-                    if (key.ScanCode == EFI_SCAN_NULL &&
-                        key.UnicodeChar >= u'1' && key.UnicodeChar <= u'9') {
-                        nav = BOOT_MENU_NAV_NUMBER;
-                        number = (unsigned int)(key.UnicodeChar - u'0');
+                unsigned int arg = 0u;
+                unsigned int act = boot_menu_key_action(key.ScanCode, key.UnicodeChar, &arg);
+                /* F11 maps to nothing here: it is handled BEFORE this loop
+                 * (pre-menu probe in boot_policy_invoke), and inside the loop
+                 * the menu is already showing. */
+                if (boot_menu_repeat_check(&repeat, act, elapsed_ms)) {
+                    /* A held toggle key: one action, however long it is held. */
+                } else if (help_page != 0u) {
+                    /* Any key leaves help, a page at a time. */
+                    is_action = 1;
+                    if (act != BOOT_MENU_KEY_NONE)
+                        boot_menu_repeat_arm(&repeat, act, elapsed_ms);
+                    if (help_page < help_pages) {
+                        help_page++;
+                        boot_menu_paint_help(help_page, help_pages, &gop_fit);
+                    } else {
+                        help_page = 0u;
+                        serial_early_print("[BOOT] menu: help closed\n");
+                        drawn.valid = 0u;   /* the help screen covered the menu */
+                        dirty = 1;
                     }
-                    break;
-                }
-                if (boot_menu_nav_applies(cand_count, nav, number)) {
-                    selected = boot_menu_nav(selected, cand_count, rows, nav, number);
+                } else if ((act == BOOT_MENU_KEY_NAV || act == BOOT_MENU_KEY_NUMBER) &&
+                           boot_menu_nav_applies(cand_count,
+                                                 act == BOOT_MENU_KEY_NUMBER ? BOOT_MENU_NAV_NUMBER : arg,
+                                                 arg)) {
+                    unsigned int nav = act == BOOT_MENU_KEY_NUMBER ? BOOT_MENU_NAV_NUMBER : arg;
+                    selected = boot_menu_nav(selected, cand_count, rows, nav, arg);
+                    want.notice = BOOT_MENU_NOTICE_NONE;
                     dirty = 1;
                     is_action = 1;
-                } else if (key.ScanCode == EFI_SCAN_ESC) {
-                    /* Esc boots the highlighted entry without further
-                     * interaction (per the menu spec). */
-                    serial_early_print("[BOOT] menu: Esc -- boot highlighted\n");
+                } else if (act == BOOT_MENU_KEY_BOOT) {
+                    /* Enter boots the selection; Esc boots the highlighted
+                     * entry without further interaction (per the menu spec). */
+                    serial_early_print(key.ScanCode == EFI_SCAN_ESC
+                                           ? "[BOOT] menu: Esc -- boot highlighted\n"
+                                           : "[BOOT] menu: Enter -- boot selected\n");
                     return selected;
-                } else if (key.UnicodeChar == EFI_CHAR_CR
-                           || key.UnicodeChar == EFI_CHAR_LF) {
-                    serial_early_print("[BOOT] menu: Enter -- boot selected\n");
-                    return selected;
-                } else if (key.ScanCode == EFI_SCAN_F8) {
+                } else if (act == BOOT_MENU_KEY_SAFE_MODE) {
                     /* F8 = safe-mode override hotkey. The caller
                      * (boot_policy_invoke) sets boot_config.boot_mode
                      * = 1 in response to BOOT_MENU_HOTKEY_SAFE_MODE
@@ -6645,7 +6864,7 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
                     serial_early_print("[BOOT] menu: F8 -- safe-mode requested (boot_config update in caller)\n");
                     if (out_hotkey) *out_hotkey = BOOT_MENU_HOTKEY_SAFE_MODE;
                     return selected;
-                } else if (key.ScanCode == EFI_SCAN_F10) {
+                } else if (act == BOOT_MENU_KEY_FW_SETUP) {
                     /* F10 = firmware setup. The actual reset-into-
                      * setup transition is owned by the caller in
                      * boot_policy_invoke() because it touches NV
@@ -6668,10 +6887,28 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
                         if (out_hotkey) *out_hotkey = BOOT_MENU_HOTKEY_FW_SETUP;
                         return selected;
                     }
+                } else if (act == BOOT_MENU_KEY_HELP) {
+                    boot_menu_repeat_arm(&repeat, act, elapsed_ms);
+                    help_pages = boot_menu_help_pages(gop_fit.rows);
+                    help_page = 1u;
+                    serial_early_print("[BOOT] menu: help shown\n");
+                    boot_menu_paint_help(help_page, help_pages, &gop_fit);
+                    is_action = 1;
+                } else if (act == BOOT_MENU_KEY_REBOOT || act == BOOT_MENU_KEY_POWEROFF) {
+                    /* Returns only when the firmware did not reset, so the
+                     * menu stays up with a notice. A reset that does happen
+                     * has already consumed this boot's one-shot variables. */
+                    boot_menu_power(act == BOOT_MENU_KEY_POWEROFF);
+                    want.notice = act == BOOT_MENU_KEY_POWEROFF ? BOOT_MENU_NOTICE_POWEROFF_FAILED
+                                                                : BOOT_MENU_NOTICE_RESTART_FAILED;
+                    dirty = 1;
+                    is_action = 1;
+                } else if (act == BOOT_MENU_KEY_SET_DEFAULT) {
+                    boot_menu_repeat_arm(&repeat, act, elapsed_ms);
+                    want.notice = boot_menu_set_default(parse, cand_idx, cand_count, selected);
+                    dirty = 1;
+                    is_action = 1;
                 }
-                /* F11 is handled BEFORE this loop is entered (pre-
-                 * menu probe in boot_policy_invoke); inside the loop
-                 * the menu is already showing, so F11 is a no-op. */
                 if (is_action && counting_down) {
                     counting_down = 0;
                     serial_early_print("[BOOT] menu: countdown cancelled by keypress\n");
@@ -7177,9 +7414,10 @@ static int smbios_format_uuid(const UINT8 src[16], char out[37]);
  *   LoaderDevicePartUUID, LoaderEntries, LoaderEntrySelected,
  *   LoaderTimeInitUSec, LoaderTimeExecUSec, LoaderFeatures
  *
- * Not written: LoaderConfigTimeout and LoaderEntryDefault are persistent
- * settings owned by the OS or another loader, which this loader does not
- * honour (LoaderFeatures bits 0 and 2 are not advertised).
+ * Not published: LoaderConfigTimeout and LoaderEntryDefault are persistent
+ * settings owned by the OS or another loader. LoaderConfigTimeout is not
+ * honoured (bit 0 is not advertised). LoaderEntryDefault is (bit 2): read
+ * once per boot, and written only by the menu's d key.
  *
  * One-shot (OS -> bootloader, NV+BS+RT, deleted after consumption):
  *   LoaderEntryOneShot       -- next boot's entry id
@@ -7207,13 +7445,14 @@ static const EFI_GUID g_loader_systemd_guid =
  * we do not honor is a compatibility lie. */
 #define LOADER_FEATURE_CONFIG_TIMEOUT          (1ULL << 0)  /* writable LoaderConfigTimeout -- NOT advertised */
 #define LOADER_FEATURE_CONFIG_TIMEOUT_ONESHOT  (1ULL << 1)
-#define LOADER_FEATURE_ENTRY_DEFAULT           (1ULL << 2)  /* writable LoaderEntryDefault -- NOT advertised */
+#define LOADER_FEATURE_ENTRY_DEFAULT           (1ULL << 2)  /* LoaderEntryDefault honoured (the menu's d key) */
 #define LOADER_FEATURE_ENTRY_ONESHOT           (1ULL << 3)
 #define LOADER_FEATURE_BOOT_COUNTING           (1ULL << 4)
 #define LOADER_FEATURE_XBOOTLDR                (1ULL << 5)  /* XBOOTLDR partition -- NOT advertised */
-/* We advertise: ConfigTimeoutOneShot + EntryOneShot + BootCounting */
+/* We advertise: ConfigTimeoutOneShot + EntryDefault + EntryOneShot + BootCounting */
 #define LOADER_FEATURES_PUBLISHED \
     (LOADER_FEATURE_CONFIG_TIMEOUT_ONESHOT \
+     | LOADER_FEATURE_ENTRY_DEFAULT \
      | LOADER_FEATURE_ENTRY_ONESHOT \
      | LOADER_FEATURE_BOOT_COUNTING)
 
@@ -7291,6 +7530,28 @@ static void loader_consume_one_shot_vars(
         *out_timeout_seconds = (UINT32)r.timeout_seconds;
         *out_have_timeout = 1;
     }
+}
+
+static void loader_read_saved_default(char *out, UINTN cap)
+{
+    struct boot_loader_var_ops ops = { loader_vars_fw_set, (void *)0, loader_vars_fw_get };
+    int r = boot_loader_entry_default_read(&ops, &g_loader_systemd_guid, out, (unsigned int)cap);
+    if (r == BOOT_LOADER_DEFAULT_PRESENT) {
+        serial_early_print("[BOOT] loader-vars: saved default ");
+        serial_early_print(out);
+        serial_early_print("\n");
+    } else if (r == BOOT_LOADER_DEFAULT_UNUSABLE) {
+        /* The operator's setting: reported and left in place, never deleted. */
+        serial_early_print("[BOOT] loader-vars: LoaderEntryDefault unusable -- ignored\n");
+    }
+}
+
+/* Persist `id` as the saved default, or delete it when `id` is "" (the d
+ * key). Returns 1 when the firmware accepted the change. */
+static int loader_write_saved_default(const char *id)
+{
+    struct boot_loader_var_ops ops = { loader_vars_fw_set, (void *)0, loader_vars_fw_get };
+    return boot_loader_entry_default_write(&ops, &g_loader_systemd_guid, id);
 }
 
 /* Impossible-OS-specific feature bitmap (under our own vendor GUID,
@@ -7619,6 +7880,17 @@ static void boot_policy_invoke(void)
     read_boot_optionaldata_id(g_boot_info_ptr->uefi_boot_current,
                               inputs->bootcurrent_entry_id,
                               &inputs->bootcurrent_known);
+    {
+        /* Kept before a one-shot overlays it: the menu's d key reports when
+         * this firmware option would hide a newly saved default. */
+        UINTN k = 0;
+        if (inputs->bootcurrent_known)
+            while (inputs->bootcurrent_entry_id[k] && k < sizeof(g_menu_fw_option_entry) - 1u) {
+                g_menu_fw_option_entry[k] = inputs->bootcurrent_entry_id[k];
+                k++;
+            }
+        g_menu_fw_option_entry[k] = 0;
+    }
 
     /* Consume systemd-boot one-shot vars. LoaderEntryOneShot overlays
      * the firmware-resolved bootcurrent hint (the policy ladder treats
@@ -7647,6 +7919,18 @@ static void boot_policy_invoke(void)
         serial_early_print("[BOOT] loader-vars: LoaderEntryOneShot consumed -> ");
         serial_early_print(s_loader_oneshot_entry);
         serial_early_print("\n");
+    }
+
+    /* The saved default ranks below the one-shot and a tagged firmware
+     * option (boot_policy_decide). The menu keeps its own copy for d. */
+    loader_read_saved_default(inputs->saved_default_id, sizeof(inputs->saved_default_id));
+    {
+        UINTN k = 0;
+        while (inputs->saved_default_id[k] && k < sizeof(g_menu_saved_default) - 1u) {
+            g_menu_saved_default[k] = inputs->saved_default_id[k];
+            k++;
+        }
+        g_menu_saved_default[k] = 0;
     }
 
     /* Caller-side capability gate. Mode-locked: today's load_kernel
@@ -8281,6 +8565,8 @@ static void boot_policy_invoke(void)
     serial_early_print(" rejected=");
     serial_early_print_uint((UINT32)decision->rejected_count);
     if (decision->rejected_overflow) serial_early_print(" (overflow)");
+    if (decision->saved_default_used && decision->reason == BOOT_SELECTION_STORE_DEFAULT)
+        serial_early_print(" via=saved-default");
     serial_early_print("\n");
 
     /* ---- Crash-tolerant counter decrement for the chosen entry. ------

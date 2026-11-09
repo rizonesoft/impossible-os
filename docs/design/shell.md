@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/08-graphics-ui/TODO-10-taskbar.md,todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md,todo/08-graphics-ui/TODO-08-window-manager.md,todo/06-desktop-foundation/TODO-05-desktop-shell.md,todo/06-desktop-foundation/TODO-06-desktop-icons.md,todo/09-desktop-shell/TODO-09-file-manager.md,todo/08-graphics-ui/TODO-09-desktop-shell-features.md,todo/08-graphics-ui/TODO-12-clock-time.md order=2 sources=include/desktop/theme_tokens.h,src/kernel/gfx,src/desktop/wm.c,src/desktop/desktop.c,resources/backgrounds/silk-dark.jpg reviewed=2026-09-28 -->
+<!-- docs: covers=todo/08-graphics-ui/TODO-10-taskbar.md,todo/08-graphics-ui/TODO-11-startmenu-tray-notifications.md,todo/08-graphics-ui/TODO-08-window-manager.md,todo/06-desktop-foundation/TODO-05-desktop-shell.md,todo/06-desktop-foundation/TODO-06-desktop-icons.md,todo/09-desktop-shell/TODO-09-file-manager.md,todo/08-graphics-ui/TODO-09-desktop-shell-features.md,todo/08-graphics-ui/TODO-12-clock-time.md order=2 sources=include/desktop/theme_tokens.h,src/kernel/gfx,src/desktop/wm.c,src/desktop/desktop.c,resources/backgrounds/silk-dark.jpg reviewed=2026-11-09 -->
 # Shell Specification
 
 This page specifies the desktop shell pixel by pixel: the desktop, taskbar, Start menu, quick settings, notifications and calendar, context menus, window chrome and File Explorer. Every number is a token in [`tokens.json`](tokens.json) and a `THEME_*` constant in the generated `include/desktop/theme_tokens.h`; the token name is given in `code`. All sizes are at 100% scale and multiply by the display scale factor once DPI scaling lands.
@@ -129,6 +129,15 @@ Every size in this specification is at 100% and multiplies by the display scale.
 ## Boot splash
 
 - Black background; the logo mark at `size.boot_logo` (128, 256 on 2160p and above) centred at 40% of the screen height; a `size.boot_spinner` (40) dot-ring spinner in white centred at 70%. No text unless boot fails, which switches to the boot error screen. Verbose boot (`boot.conf` verbose mode) adds a `size.boot_progress_width` (240) wide, `size.progress_bar` (3) tall accent progress bar 48 px below the spinner, driven by the boot progress milestones; normal boot shows no bar. The splash fades to black over 8 steps before the desktop appears.
+
+## Boot menu
+
+The boot menu is drawn by the UEFI loader, before the kernel and its theme exist, so its numbers are constants in `include/boot/boot_menu_layout.h` rather than tokens. It has three forms that show the same content: the GOP screen, a ConOut text list when no usable framebuffer exists, and a serial line for every state change.
+
+- **Screen:** background `#0A0A0A`. The title "Impossible OS Boot Menu" sits at x 80, y 60, with entry rows starting at y 130, each 32 px tall. The highlighted row is an 808 px bar in `#4080C0` with white text; other rows are `#C8C8C8`. At most 16 rows are visible; more entries scroll. The footer sits 30 px below the last visible row, in `#808080`. `boot_menu_fit()` shrinks the visible row count so the footer stays on screen at any height that fits one row.
+- **Footer:** "Auto-boot in Ns. Use arrows + Enter. F1 help." while counting down, and "Use arrows + Enter to boot. F1 help." once a key stops the countdown. A scrolling list adds "Entry X of Y." After a key that changes a setting, the footer shows the result instead (for example "Default saved: smoke-alt."). The next navigation key restores the normal text.
+- **Help:** h, ? or F1 replaces the title with "Boot Menu Help" and the rows with one key per row in the same row geometry: movement keys, 1-9, Enter or Esc, d, F8, F10, Shift+B, Shift+O and the help keys themselves. The footer reads "Press any key to return." When the mode shows fewer rows than the list has, help pages: the footer reads "Press any key for more." and the last page returns to the menu. ConOut prints the whole list at once, and serial logs that help opened and closed.
+- **Keys:** Up, Down, PgUp, PgDn, Home, End and 1-9 move the highlight. Enter or Esc boots it. d makes the highlighted entry the saved default, or clears the saved default when it already is. F8 boots in safe mode, F10 restarts into firmware setup, Shift+B restarts and Shift+O powers off. Any action key stops the countdown. Other keys are ignored and leave it running.
 
 ## First-run setup
 

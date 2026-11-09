@@ -126,11 +126,15 @@ done
 # Boot entry store fixtures, one boot each on the default engine. The plain legs
 # boot an image with no store, so they never run the loader's parser. That is how
 # a valid store being discarded on every boot stayed invisible until 2026-11-07.
+# default and saved are one machine across two boots: the menu's d key saves the
+# second entry, and the next boot picks it on its own.
 # The last three are ONE machine across three boots, sharing a variable store: the
 # rejection is recorded, a repeat writes nothing, and repairing the store clears it.
 for leg in VALID:valid:SMOKE_VALID_STORE=1 \
            MENU:menu:SMOKE_MENU=1 \
            MENU:keys:SMOKE_MENU=keys \
+           MENU:default:SMOKE_MENU=default \
+           MENU:saved:SMOKE_MENU=saved \
            CORRUPT:recovered:SMOKE_CORRUPT_STORE=1:SMOKE_SHADOW_STORE=1 \
            CORRUPT:recovered-tmp:SMOKE_CORRUPT_STORE=1:SMOKE_SHADOW_STORE=tmp \
            VALID:empty-tmp:SMOKE_VALID_STORE=1:SMOKE_SHADOW_STORE=empty \

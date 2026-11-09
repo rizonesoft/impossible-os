@@ -410,3 +410,14 @@ A rejected `bootentries.json` booted one synthesized fallback entry, and nothing
 - **C: regeneration.** No source of truth exists in the loader: the seed lives only in host-side `bootcfg.py`, and the result would be a default store, not the user's.
 
 A: (run decision, 2026-11-08) A: last-known-good shadow, with an absent primary NOT consulting the shadow (deleting the store resets to the fallback) and restoration explicit rather than automatic (automatic restore would overwrite the evidence and persist a possibly stale policy). Reversal cost: remove `store_shadow_maintain`/`store_shadow_recover` and their two call sites in `bootx64.c`, the pure plan in `boot_entries_parser.c`, `bootcfg restore` and the smoke leg; the shadow files left on ESPs are inert without the code.
+
+## Q34 (01-boot-platform/TODO-07 §24): where does a saved default (`LoaderEntryDefault`) rank, and how is it reported?
+
+The menu's `d` key and `bootctl set-default` both write `LoaderEntryDefault`. Options for its rank: (A) below a one-shot and a tagged `BootCurrent` firmware option, above the lowest `sort_key`; (B) above the tagged `BootCurrent` option too, with the one-shot split out of the `BootCurrent` channel; (C) only as a menu highlight, never an automatic choice. Options for its report: (1) a new selection reason `SAVED_DEFAULT`; (2) `STORE_DEFAULT` plus a loader-side flag.
+
+- **A, 2:** matches systemd-boot (one-shot, then `LoaderEntryDefault`, then configuration). A tagged firmware option is a per-option binding an administrator made with efibootmgr, and nothing in this tree writes one, so it keeps its rank; when it would hide a newly saved default, the `d` notice says so. Reporting `STORE_DEFAULT` keeps the handoff readable by an older kernel: `boot_decision.c` refuses a reason above `BOOT_SELECTION_REASON_MAX`, so a new reason would halt a rolled-back kernel booted by this loader. The serial policy line carries `via=saved-default`.
+- **B:** a saved default would override a binding the firmware made for that one option.
+- **C:** not the systemd semantic, and `bootctl set-default` would do nothing.
+- A value an older build of this loader left as a per-boot report is honoured like any other: it names the entry that was the default when written, and `d` on that entry clears it. Only development machines ran those builds.
+
+A: (run decision, 2026-11-09) A with report 2. Reversal cost: moving the ladder step is a few lines in `boot_policy_decide` plus its tests; adding a distinct reason later needs the kernel to advertise that it accepts it first (a capability bit), then the reason, the audit event mapping and the decoders in `boot_audit.c` and `bootx64.c`.

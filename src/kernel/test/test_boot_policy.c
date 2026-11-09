@@ -413,6 +413,164 @@ static void test_ladder_bootnext_hint_promotes(void)
                 "boot-current-target picked");
 }
 
+/* Three entries: a (sort 10), b (sort 20), and c (sort 30, not ACTIVE, so
+ * never a candidate). */
+static void saved_default_store(boot_entries_parse_result_t *r)
+{
+    for (unsigned i = 0; i < sizeof(*r); i++) ((unsigned char *)r)[i] = 0;
+    r->reject_code = BOOT_ENTRIES_OK;
+    r->entry_count = 3u;
+    static const char *const ids[3] = { "a-first", "b-saved", "c-inactive" };
+    static const char *const keys[3] = { "10", "20", "30" };
+    for (unsigned i = 0; i < 3u; i++) {
+        zero_envelope(&r->entries[i]);
+        set_id(r->entries[i].id, ids[i]);
+        set_id(r->entries[i].sort_key, keys[i]);
+        r->entries[i].kind = BOOT_ENTRY_KIND_SPLIT;
+        r->entries[i].flags = i < 2u ? BOOT_ENTRY_FLAG_ACTIVE : 0u;
+    }
+}
+
+static void test_ladder_saved_default(void)
+{
+    boot_entries_parse_result_t r;
+    boot_policy_inputs_t in;
+    boot_policy_decision_t d;
+    saved_default_store(&r);
+
+    zero_inputs(&in);
+    set_id(in.saved_default_id, "b-saved");
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+    TEST_ASSERT(d.selected_entry_id[0] == 'b' && d.reason == BOOT_SELECTION_STORE_DEFAULT
+                && d.saved_default_used == 1, "saved default outranks the lowest sort_key, reason STORE_DEFAULT");
+
+    zero_inputs(&in);
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+    TEST_ASSERT(d.selected_entry_id[0] == 'a' && d.saved_default_used == 0, "no saved default: lowest sort_key");
+    unsigned int base_rejects = d.rejected_count;   /* c-inactive */
+
+    zero_inputs(&in);
+    set_id(in.saved_default_id, "gone");
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+    TEST_ASSERT(d.selected_entry_id[0] == 'a' && d.saved_default_used == 0 && d.rejected_count == base_rejects,
+                "an id naming no entry falls through and records no extra reject");
+
+    zero_inputs(&in);
+    set_id(in.saved_default_id, "c-inactive");
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+    TEST_ASSERT(d.selected_entry_id[0] == 'a' && d.saved_default_used == 0,
+                "a saved entry that is not a candidate is not booted");
+
+    zero_inputs(&in);
+    set_id(in.saved_default_id, "b-saved");
+    in.bootcurrent_known = 1;
+    set_id(in.bootcurrent_entry_id, "a-first");
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+    TEST_ASSERT(d.selected_entry_id[0] == 'a' && d.reason == BOOT_SELECTION_BOOTNEXT_HINT,
+                "a one-shot or tagged firmware option outranks the saved default");
+
+    zero_inputs(&in);
+    set_id(in.saved_default_id, "b-saved");
+    in.bootcurrent_known = 1;   /* BootCurrent with no IPOS tag */
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+    TEST_ASSERT(d.selected_entry_id[0] == 'b' && d.reason == BOOT_SELECTION_STORE_DEFAULT,
+                "an untagged BootCurrent does not hide the saved default");
+
+    zero_inputs(&in);
+    set_id(in.saved_default_id, "b-saved");
+    in.hotkey_override_index = 1u;
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+    TEST_ASSERT(d.reason == BOOT_SELECTION_HOTKEY && d.saved_default_used == 0,
+                "an operator hotkey outranks the saved default");
+
+    zero_inputs(&in);
+    for (unsigned i = 0; i < sizeof(in.saved_default_id); i++) in.saved_default_id[i] = 'b';
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+    TEST_ASSERT(d.selected_entry_id[0] == 'a' && d.saved_default_used == 0,
+                "a saved id with no NUL in its buffer is ignored");
+}
+
+/* Every key the menu acts on, and a sample it ignores. */
+static void test_menu_key_action(void)
+{
+    static const struct { unsigned int scan, uc, act, arg; } k[] = {
+        { BOOT_MENU_SCAN_UP, 0, BOOT_MENU_KEY_NAV, BOOT_MENU_NAV_UP },
+        { BOOT_MENU_SCAN_DOWN, 0, BOOT_MENU_KEY_NAV, BOOT_MENU_NAV_DOWN },
+        { BOOT_MENU_SCAN_HOME, 0, BOOT_MENU_KEY_NAV, BOOT_MENU_NAV_HOME },
+        { BOOT_MENU_SCAN_END, 0, BOOT_MENU_KEY_NAV, BOOT_MENU_NAV_END },
+        { BOOT_MENU_SCAN_PAGE_UP, 0, BOOT_MENU_KEY_NAV, BOOT_MENU_NAV_PAGE_UP },
+        { BOOT_MENU_SCAN_PAGE_DOWN, 0, BOOT_MENU_KEY_NAV, BOOT_MENU_NAV_PAGE_DOWN },
+        { 0, '1', BOOT_MENU_KEY_NUMBER, 1u }, { 0, '9', BOOT_MENU_KEY_NUMBER, 9u },
+        { 0, '0', BOOT_MENU_KEY_NONE, 0u },
+        { 0, 0x0D, BOOT_MENU_KEY_BOOT, 0u }, { 0, 0x0A, BOOT_MENU_KEY_BOOT, 0u },
+        { BOOT_MENU_SCAN_ESC, 0, BOOT_MENU_KEY_BOOT, 0u },
+        { BOOT_MENU_SCAN_F8, 0, BOOT_MENU_KEY_SAFE_MODE, 0u },
+        { BOOT_MENU_SCAN_F10, 0, BOOT_MENU_KEY_FW_SETUP, 0u },
+        { BOOT_MENU_SCAN_F1, 0, BOOT_MENU_KEY_HELP, 0u },
+        { 0, 'h', BOOT_MENU_KEY_HELP, 0u }, { 0, '?', BOOT_MENU_KEY_HELP, 0u },
+        { 0, 'B', BOOT_MENU_KEY_REBOOT, 0u }, { 0, 'O', BOOT_MENU_KEY_POWEROFF, 0u },
+        { 0, 'b', BOOT_MENU_KEY_NONE, 0u }, { 0, 'o', BOOT_MENU_KEY_NONE, 0u },
+        { 0, 'd', BOOT_MENU_KEY_SET_DEFAULT, 0u }, { 0, 'D', BOOT_MENU_KEY_NONE, 0u },
+        { 0, 'x', BOOT_MENU_KEY_NONE, 0u },
+        { 0x15u, 0, BOOT_MENU_KEY_NONE, 0u },          /* F11: handled before the menu */
+        { BOOT_MENU_SCAN_UP, 'd', BOOT_MENU_KEY_NAV, BOOT_MENU_NAV_UP }, /* scan code wins */
+    };
+    unsigned int bad = 0;
+    for (unsigned int i = 0; i < sizeof(k) / sizeof(k[0]); i++) {
+        unsigned int arg = 0xFFu;
+        if (boot_menu_key_action(k[i].scan, k[i].uc, &arg) != k[i].act || arg != k[i].arg)
+            bad++;
+    }
+    TEST_ASSERT_EQ(bad, 0u, "every key maps to its action");
+    TEST_ASSERT_EQ(boot_menu_key_action(BOOT_MENU_SCAN_DOWN, 0, (unsigned int *)0), BOOT_MENU_KEY_NAV,
+                   "a NULL out is allowed");
+}
+
+static void test_menu_repeat_guard(void)
+{
+    boot_menu_repeat_t r = { BOOT_MENU_KEY_NONE, 0u };
+    TEST_ASSERT_EQ(boot_menu_repeat_check(&r, BOOT_MENU_KEY_HELP, 0u), 0, "unarmed: not a repeat");
+    boot_menu_repeat_arm(&r, BOOT_MENU_KEY_HELP, 100u);
+    TEST_ASSERT_EQ(boot_menu_repeat_check(&r, BOOT_MENU_KEY_HELP, 100u + BOOT_MENU_REPEAT_GAP_MS - 1u), 1,
+                   "same toggle inside the gap: repeat");
+    /* The window slides: a key held for many gaps is still one action. */
+    TEST_ASSERT_EQ(boot_menu_repeat_check(&r, BOOT_MENU_KEY_HELP, 100u + 2u * BOOT_MENU_REPEAT_GAP_MS - 2u), 1,
+                   "held across two gaps: still a repeat");
+    TEST_ASSERT_EQ(boot_menu_repeat_check(&r, BOOT_MENU_KEY_HELP, 100u + 4u * BOOT_MENU_REPEAT_GAP_MS), 0,
+                   "after a pause: a new press");
+    boot_menu_repeat_arm(&r, BOOT_MENU_KEY_SET_DEFAULT, 10u);
+    TEST_ASSERT_EQ(boot_menu_repeat_check(&r, BOOT_MENU_KEY_NAV, 20u), 0, "another action is never a repeat");
+    TEST_ASSERT_EQ(boot_menu_repeat_check(&r, BOOT_MENU_KEY_SET_DEFAULT, 30u), 0,
+                   "and it ends the run: d after Down is a new press");
+    boot_menu_repeat_arm(&r, BOOT_MENU_KEY_SET_DEFAULT, 0xFFFFFF00u);
+    TEST_ASSERT_EQ(boot_menu_repeat_check(&r, BOOT_MENU_KEY_SET_DEFAULT, 0x10u), 1,
+                   "the gap is measured across a wrap of the clock");
+    TEST_ASSERT_EQ(boot_menu_repeat_check(&r, BOOT_MENU_KEY_NONE, 0x20u), 0, "an ignored key is never a repeat");
+    TEST_ASSERT_EQ(boot_menu_repeat_check((boot_menu_repeat_t *)0, BOOT_MENU_KEY_HELP, 0u), 0, "NULL guard");
+}
+
+static void test_menu_help_and_default_toggle(void)
+{
+    TEST_ASSERT_EQ(boot_menu_help_pages(16u), 1u, "16 rows: one page");
+    TEST_ASSERT_EQ(boot_menu_help_pages(BOOT_MENU_HELP_LINES), 1u, "exactly the line count: one page");
+    TEST_ASSERT_EQ(boot_menu_help_pages(BOOT_MENU_HELP_LINES - 1u), 2u, "one row short: two pages");
+    TEST_ASSERT_EQ(boot_menu_help_pages(1u), BOOT_MENU_HELP_LINES, "one row: a page per line");
+    TEST_ASSERT_EQ(boot_menu_help_pages(0u), 1u, "text fallback: one page");
+    TEST_ASSERT_EQ(boot_menu_default_toggle("b", ""), BOOT_MENU_DEFAULT_SAVE, "nothing saved: save");
+    TEST_ASSERT_EQ(boot_menu_default_toggle("b", "a"), BOOT_MENU_DEFAULT_SAVE, "another saved: save");
+    TEST_ASSERT_EQ(boot_menu_default_toggle("b", "b"), BOOT_MENU_DEFAULT_CLEAR, "this one saved: clear");
+    TEST_ASSERT_EQ(boot_menu_default_toggle("b", (const char *)0), BOOT_MENU_DEFAULT_SAVE, "NULL saved: save");
+
+    boot_menu_view_t a = { 1u, 1u, 0u, 0u, 0u, 4u, 16u, BOOT_MENU_NOTICE_NONE };
+    boot_menu_view_t b = a;
+    unsigned int ro, rn;
+    b.notice = BOOT_MENU_NOTICE_DEFAULT_SAVED;
+    TEST_ASSERT_EQ(boot_menu_repaint_plan(&a, &b, &ro, &rn), BOOT_MENU_PAINT_FOOTER,
+                   "a new notice repaints only the footer");
+    TEST_ASSERT_EQ(boot_menu_repaint_plan(&b, &a, &ro, &rn), BOOT_MENU_PAINT_FOOTER,
+                   "clearing it repaints only the footer");
+}
+
 static void test_ladder_path_escape_under_secure_boot(void)
 {
     boot_entries_parse_result_t r;
@@ -1200,8 +1358,8 @@ static void test_menu_should_show_store_default_two_entries(void)
  * stopped repaints nothing. */
 static void test_menu_repaint_plan(void)
 {
-    boot_menu_view_t none = { 0u, 0u, 0u, 0u, 0u, 4u, 16u };
-    boot_menu_view_t on = { 1u, 2u, 1u, 5u, 0u, 4u, 16u };
+    boot_menu_view_t none = { 0u, 0u, 0u, 0u, 0u, 4u, 16u, 0u };
+    boot_menu_view_t on = { 1u, 2u, 1u, 5u, 0u, 4u, 16u, 0u };
     boot_menu_view_t want = on;
     unsigned int a = 99u, b = 99u;
 
@@ -1243,7 +1401,7 @@ static void test_menu_repaint_plan(void)
                    "a different entry count -> full paint");
 
     /* A list longer than the screen: 10 entries, 4 rows. */
-    boot_menu_view_t tall = { 1u, 5u, 0u, 0u, 2u, 10u, 4u };
+    boot_menu_view_t tall = { 1u, 5u, 0u, 0u, 2u, 10u, 4u, 0u };
     want = tall;
     want.selected = 4u;
     TEST_ASSERT_EQ(boot_menu_repaint_plan(&tall, &want, &a, &b),
@@ -1296,7 +1454,7 @@ static void test_menu_repaint_plan(void)
     TEST_ASSERT_EQ(boot_menu_scroll_top(0u, 50u, 10u, 4u), 6u, "a selection past the end clamps");
     TEST_ASSERT_EQ(boot_menu_scroll_top(3u, 3u, 10u, 0u), 0u, "no rows -> no window");
 
-    boot_menu_view_t idle = { 1u, 1u, 0u, 0u, 0u, 4u, 16u };
+    boot_menu_view_t idle = { 1u, 1u, 0u, 0u, 0u, 4u, 16u, 0u };
     want = idle;
     want.seconds_left = 7u;
     TEST_ASSERT_EQ(boot_menu_repaint_plan(&idle, &want, &a, &b), 0u,
@@ -1760,6 +1918,14 @@ void test_register_boot_policy(void)
                             test_counter_dedup_insert_cap_full, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu_should_show STORE_DEFAULT + 2 entries -> show",
                             test_menu_should_show_store_default_two_entries, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: saved default ranks below one-shot, above sort_key",
+                            test_ladder_saved_default, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu key map",
+                            test_menu_key_action, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu key repeat guard",
+                            test_menu_repeat_guard, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu help pages, d toggle and notice repaint",
+                            test_menu_help_and_default_toggle, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu repaint plan",
                             test_menu_repaint_plan, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu_should_show forced-selection reasons skip",

@@ -56,7 +56,7 @@ POST16_MANIFEST="$BUILD/post16-manifest.env"
 TIMEOUT_SEC="${TIMEOUT_SEC:-30}"
 # The SMOKE_MENU=keys dwell adds ~10 s to a boot, which a 1-CPU TCG leg cannot
 # fit in 30 s.
-if [ "${SMOKE_MENU:-0}" = "keys" ] && [ "$TIMEOUT_SEC" -lt 60 ]; then TIMEOUT_SEC=60; fi
+case "${SMOKE_MENU:-0}" in keys|default) [ "$TIMEOUT_SEC" -lt 60 ] && TIMEOUT_SEC=60 ;; esac
 
 # Legacy smoke test: superseded by `bash scripts/test.sh`. Retained as a light
 # boot-only sanity check (no unit-test suite). Boots the canonical GPT disk
@@ -550,9 +550,13 @@ if [ -z "$STORE_RECORD" ] && [ "${SMOKE_CORRUPT_STORE:-0}" = "1" ]; then
     STORE_RECORD=written
 fi
 PREVIOUS_VARS=""
-if [ -n "$STORE_RECORD" ] && [ "$STORE_RECORD" != "written" ]; then
+# SMOKE_MENU=saved is the second boot of the machine SMOKE_MENU=default set a
+# saved default on, so it keeps that boot's variable store too.
+REUSED_VARS=0
+if { [ -n "$STORE_RECORD" ] && [ "$STORE_RECORD" != "written" ]; } || [ "${SMOKE_MENU:-0}" = "saved" ]; then
+    REUSED_VARS=1
     if [ ! -f "$OVMF_VARS_CP" ]; then
-        echo -e "${RED}SMOKE TEST FAILED: SMOKE_STORE_RECORD=$STORE_RECORD needs a previous boot's variable store${NC}"
+        echo -e "${RED}SMOKE TEST FAILED: SMOKE_STORE_RECORD=$STORE_RECORD / SMOKE_MENU=${SMOKE_MENU:-0} needs a previous boot's variable store${NC}"
         exit 1
     fi
     PREVIOUS_VARS="$(mktemp "${TMPDIR:-/tmp}/smoke-previous-vars.XXXXXX")"
@@ -563,6 +567,9 @@ bash scripts/build.sh clean >/dev/null 2>&1
 
 BUILD_RESULT=$(tail -1 build/build.log 2>/dev/null || echo "UNKNOWN")
 if [ "$BUILD_RESULT" != "=== BUILD OK ===" ]; then
+    # The clean build deleted the store; put the kept one back so a retry after
+    # the fix still boots the same machine, and the copy does not leak.
+    [ -n "$PREVIOUS_VARS" ] && mv -f "$PREVIOUS_VARS" "$OVMF_VARS_CP"
     echo -e "${RED}SMOKE TEST FAILED: Build failed${NC}"
     echo -e "${DIM}  Check build/build.log for details${NC}"
     exit 1
@@ -645,15 +652,18 @@ SHADOW_NAME=bootentries.lkg.json
 # SMOKE_MENU=keys drives the same menu through the QEMU monitor instead: Down
 # moves to the second entry, the leg then waits past the countdown deadline to
 # prove the keypress stopped it, and Enter boots the second entry.
+# SMOKE_MENU=default moves to the second entry, opens and closes help, presses
+# d to make it the saved default and boots it; SMOKE_MENU=saved is that
+# machine's next boot, which must pick the saved entry on its own.
 MENU="${SMOKE_MENU:-0}"
-case "$MENU" in 0|1|keys) ;; *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_MENU must be 0, 1 or keys (got: $MENU)${NC}"; exit 1 ;; esac
+case "$MENU" in 0|1|keys|default|saved) ;; *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_MENU must be 0, 1, keys, default or saved (got: $MENU)${NC}"; exit 1 ;; esac
 if [ "$MENU" != "0" ]; then VALID_STORE=1; fi
 STORE_ENTRIES=1
 [ "$MENU" != "0" ] && STORE_ENTRIES=2
 # Countdown on the default entry: short for the timeout leg, and for the keys leg
 # long enough that Down lands before it expires.
 MENU_COUNTDOWN=2
-[ "$MENU" = "keys" ] && MENU_COUNTDOWN=4
+{ [ "$MENU" = "keys" ] || [ "$MENU" = "default" ]; } && MENU_COUNTDOWN=4
 # After Down, the keys leg holds Enter back this long past the original deadline,
 # so a countdown that kept running would expire inside the window and fail.
 MENU_KEYS_DWELL=$((MENU_COUNTDOWN + 6))
@@ -900,7 +910,7 @@ QEMU_FLAGS=(
     -no-shutdown
     -display none
 )
-if [ "$MENU" = "keys" ]; then
+if [ "$MENU" = "keys" ] || [ "$MENU" = "default" ]; then
     rm -f "$MONITOR_SOCK"
     QEMU_FLAGS+=(-monitor "unix:$MONITOR_SOCK,server,nowait")
 fi
@@ -990,6 +1000,29 @@ for i in $(seq 1 "$TIMEOUT_SEC"); do
                 KEYS_STATE=done
             fi ;;
         esac
+    fi
+    # Default leg: Down, help open and closed, d, then Enter. Each key waits for
+    # the serial line of the one before, so none races the menu.
+    if [ "$MENU" = "default" ]; then
+        step_key=""; step_next=""
+        case "$KEYS_STATE" in
+        wait_menu) grep -qF '[BOOT] menu: 2 entries, selected="smoke-entry"' "$STRIPPED_LOG" 2>/dev/null \
+                       && { step_key=down; step_next=wait_move; } ;;
+        wait_move) grep -qF '[BOOT] menu: 2 entries, selected="smoke-alt"' "$STRIPPED_LOG" 2>/dev/null \
+                       && { step_key=h; step_next=wait_help; } ;;
+        wait_help) grep -qF '[BOOT] menu: help shown' "$STRIPPED_LOG" 2>/dev/null \
+                       && { step_key=x; step_next=wait_close; } ;;
+        wait_close) grep -qF '[BOOT] menu: help closed' "$STRIPPED_LOG" 2>/dev/null \
+                       && { step_key=d; step_next=wait_saved; } ;;
+        wait_saved) grep -qF '[BOOT] menu: d -- saved default smoke-alt' "$STRIPPED_LOG" 2>/dev/null \
+                       && { step_key=ret; step_next=done; } ;;
+        esac
+        if [ -n "$step_key" ]; then
+            if ! monitor_sendkey "$step_key"; then
+                BOOT_FAILED=true; FAIL_REASON="QEMU monitor unreachable for sendkey $step_key"; break
+            fi
+            KEYS_STATE=$step_next
+        fi
     fi
 
     # PASS requires ALL patterns in PASS_PATTERNS_ALL (AND-set, not OR)
@@ -1508,7 +1541,10 @@ elif [ "$BOOT_PASSED" = true ]; then
         # The keys leg overrides the policy default from the menu, and the
         # policy line prints after the menu, so it reports the operator's pick.
         sel_entry=smoke-entry; sel_reason='1 (STORE_DEFAULT)'
-        if [ "$MENU" = "keys" ]; then sel_entry=smoke-alt; sel_reason='3 (HOTKEY)'; fi
+        case "$MENU" in
+        keys|default) sel_entry=smoke-alt; sel_reason='3 (HOTKEY)' ;;
+        saved) sel_entry=smoke-alt ;;
+        esac
         grep -qF "[BOOT] policy: selection_reason=$sel_reason selected=\"$sel_entry\"" "$STRIPPED_LOG" 2>/dev/null \
             || loader_fail "boot_policy did not report selection_reason=$sel_reason for $sel_entry"
         if grep -qaE '\[WARN\] boot_(sticky|history):' "$STRIPPED_LOG" 2>/dev/null; then
@@ -1525,7 +1561,7 @@ elif [ "$BOOT_PASSED" = true ]; then
             || loader_fail "the kernel's Phase-3 history mark is not seq=$((hist_seq + 1))"
         hist_n=$(grep -aoE 'boot_history: Recent boot history \([0-9]+ attempts\)' "$STRIPPED_LOG" 2>/dev/null \
                  | head -1 | grep -oE '[0-9]+')
-        if [ -z "$STORE_RECORD" ]; then
+        if [ "$REUSED_VARS" = "0" ]; then
             # Fresh variable store: first boot of a new machine.
             [ "$hist_seq" = "1" ] || loader_fail "a fresh variable store produced history seq=$hist_seq, not 1"
             grep -qF '[BOOT] boot_sticky: absent (first boot)' "$STRIPPED_LOG" 2>/dev/null \
@@ -1581,10 +1617,34 @@ elif [ "$BOOT_PASSED" = true ]; then
             exit 1
         fi
     fi
+    if [ "$MENU" = "default" ]; then
+        if [ "$KEYS_STATE" != "done" ]; then
+            echo -e "${RED}SMOKE TEST FAILED: the default leg stopped at step $KEYS_STATE${NC}"
+            grep -E "\[BOOT\] menu" "$STRIPPED_LOG" 2>/dev/null | head -10
+            exit 1
+        fi
+        if ! grep -qF '[BOOT] menu: Enter -- boot selected' "$STRIPPED_LOG" 2>/dev/null; then
+            echo -e "${RED}SMOKE TEST FAILED: the default leg did not boot through Enter${NC}"
+            exit 1
+        fi
+    fi
+    # The saved leg's menu must open on the saved entry, from the variable.
+    if [ "$MENU" = "saved" ]; then
+        for want in '[BOOT] loader-vars: saved default smoke-alt' \
+                    'selected="smoke-alt" kind=0 rejected=0 via=saved-default' \
+                    '[BOOT] menu: 2 entries, selected="smoke-alt"' \
+                    '[BOOT] menu: countdown expired -- auto-selecting default'; do
+            if ! grep -qF "$want" "$STRIPPED_LOG" 2>/dev/null; then
+                echo -e "${RED}SMOKE TEST FAILED: saved-default line missing: $want${NC}"
+                grep -E "\[BOOT\] (menu|policy: selection|loader-vars: saved)" "$STRIPPED_LOG" 2>/dev/null | head -6
+                exit 1
+            fi
+        done
+    fi
     # The kernel must receive the entry the menu chose, not only the loader log it.
     if [ "$MENU" != "0" ]; then
         want_entry=smoke-entry
-        [ "$MENU" = "keys" ] && want_entry=smoke-alt
+        case "$MENU" in keys|default|saved) want_entry=smoke-alt ;; esac
         if ! grep -qF "entry=\"$want_entry\"" <(grep -F "boot_decision: path=" "$STRIPPED_LOG" 2>/dev/null); then
             echo -e "${RED}SMOKE TEST FAILED: the kernel did not receive entry $want_entry${NC}"
             grep -F "boot_decision:" "$STRIPPED_LOG" 2>/dev/null | head -3
