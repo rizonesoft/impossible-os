@@ -705,10 +705,10 @@ The shipped §15 (loader UEFI vars) + §6 (menu render) publish systemd Boot Loa
 > - **Canonical doc:** `docs/boot/boot-entry-schema.md`; systemd Boot Loader Interface spec for var semantics.
 > - **Scope boundary:** none open. The full BLS order and bit 8 shipped 2026-11-09; the LoaderTime relocation 2026-11-08. The default entry is still chosen by the policy ladder, not by display order.
 
-> **Verified:** 2026-11-09 | 6/6 items | build OK | boot suite PASS | validator 156/156, bootcfg 50/50 | Codex adversarial 3 rounds (1H+2M fixed), approve
+> **Verified:** 2026-11-09 | commit `4cd7fd19e` | 6/6 items | build OK | full suite 36834 kernel + 17 user PASS | smoke matrix 18/18 | validator 156/156, bootcfg 50/50
 > **Notes:** Reopened 2026-11-07, was Deferred: [H] distinct `LoaderTimeInitUSec`/`ExecUSec` blocked -- `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point. The stamp named this section's own item, and that item recorded no external blocker.
 > **Notes:** Reopened 2026-11-07, was Deferred: [M] full BLS order (bad-counted-last + `version` sub-key) + `LoaderFeatures` bit 8 not advertised. The stamp named this section's own item, and that item recorded no external blocker.
-> **Quality reviewed:** 2026-06-13 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1H+1M deferred | scope: boot-code-quality
+> **Quality reviewed:** 2026-11-09 | Codex 8x (adversarial 4x, re-adversarial, post-ship adversarial, consistency, perf) | 1H+2M+1L fixed, 0 open | scope: boot-code-quality
 
 ---
 
@@ -989,6 +989,7 @@ Found by the §24 parity pass against systemd-boot (https://www.freedesktop.org/
 | 💎  | Per-entry health-gated mark-good                      | ❌ Implicit (timer past)         | ✅ systemd-bless + boot-complete    | 🟦 §14 entry gate + registry + MarkGood handoff; net/crash checks pending owners |
 | 💎  | Entry kinds (UKI, chainload, network, resume)         | ⚠️ BCD osloader / resume (split) | ✅ BLS Type 1 / Type 2 (UKI)        | 🟦 §13 SPLIT/UKI/SAFE validators + loader; CHAINLOAD/NETWORK/RESUME deferred     |
 | 💎  | OS-visible loader UEFI variables                      | ❌ None standardized             | ✅ systemd LoaderXxx interface      | ✅ §15 12 LoaderXxx vars; honors both OneShots and §24 LoaderEntryDefault        |
+| 💎  | BLS display order (bad last, sort-key, version)       | ⚠️ BCD displayorder, manual      | ✅ systemd-boot BLS order           | ✅ §18 one order for menu + LoaderEntries; LoaderFeatures bit 8                  |
 | 💎  | First-install bootstrap (idempotent offline seed)     | ✅ bcdboot from install media    | ✅ bootctl install / grub-install   | 🟦 §16 `emit-seed` writes a byte-identical 3-entry default; self-seed TODO-22 §1 |
 | ⭐  | Documented deterministic policy precedence (2 layers) | ⚠️ BCD rules underdocumented     | ⚠️ Per-bootloader behavior          | ✅ §3 ladder + 6-example doc + live producer in §4 🚀                            |
 | ⭐  | Demote-not-drop bad entries with last_failure_reason  | ❌ Hidden recovery loop          | ⚠️ Bad entries silently sorted last | 🟦 §4 records reject reasons in boot_info v19; menu UI label in §9 🚀            |

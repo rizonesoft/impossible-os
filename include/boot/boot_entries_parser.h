@@ -200,7 +200,8 @@ int boot_entry_bls_less(const boot_entry_envelope_t *a, int a_bad,
 
 /* Stable in-place BLS sort of the index array idx[0..n-1] into
  * parse->entries[]. `bad` is indexed like parse->entries[] (nonzero = boot
- * counting marked that entry bad) and may be NULL when none is. Insertion
+ * counting marked that entry bad), must cover every index in idx[] (callers
+ * pass BOOT_ENTRIES_MAX_ENTRIES slots), and may be NULL when none is bad. Insertion
  * sort (n is bounded by BOOT_ENTRIES_MAX_ENTRIES / BOOT_MENU_MAX_VISIBLE).
  * Shared by the on-screen menu candidate list and the LoaderEntries variable
  * so bootctl and the menu agree on order. */
