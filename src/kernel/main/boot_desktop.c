@@ -660,6 +660,13 @@ void boot_phase3(void)
     extern void boot_audit_publish(void);
     boot_audit_publish();
 
+    /* The loader published its Boot Loader Interface variables just before the
+     * handoff; check the firmware kept them and that they agree with boot_info. */
+    {
+        extern unsigned int loader_vars_readback(void);
+        (void)loader_vars_readback();
+    }
+
     /* Per-entry health-gated mark-good gate. Reads the bootloader's
      * CurBootCtr handoff, runs registered required + wanted checks,
      * writes a one-line record to X:\Boot\health.jsonl, and on a clean

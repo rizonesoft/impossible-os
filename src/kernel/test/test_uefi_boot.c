@@ -16,6 +16,7 @@
 #include "kernel/boot_info.h"
 #include "kernel/smbios.h"
 #include "kernel/nt/ntstatus.h"
+#include "kernel/loader_vars_readback.h"
 #include "registry.h"
 #include "boot/uki_cmdline_check.h"
 #include "boot/uki_cmdline_media_role.h"
@@ -1251,6 +1252,82 @@ static void test_dpfp_rejects_bad_arguments(void)
 }
 
 
+/* ---- Boot Loader Interface readback (loader_vars_readback.c) ---- */
+
+#define LRB_VOL (EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS)
+
+static void test_loader_readback_selected_classify(void)
+{
+    static const uint16_t alt[] = u"smoke-alt";
+    static const uint16_t no_nul[] = { 's', 'm', 'o' };
+    static const uint16_t inner_nul[] = { 's', 0, 'o', 0 };
+    static const uint16_t wide[] = { 's', 0x0100u, 0 };
+    unsigned int ok = 0;
+
+    ok += loader_readback_classify_selected(STATUS_NOT_FOUND, 0, 0, 0, "") == LOADER_READBACK_MATCH;
+    ok += loader_readback_classify_selected(STATUS_NOT_FOUND, 0, 0, 0, "smoke-alt")
+          == LOADER_READBACK_MISSING;
+    ok += loader_readback_classify_selected(STATUS_SUCCESS, LRB_VOL, alt, sizeof(alt), "")
+          == LOADER_READBACK_UNEXPECTED;
+    ok += loader_readback_classify_selected(STATUS_SUCCESS, LRB_VOL, alt, sizeof(alt), "smoke-alt")
+          == LOADER_READBACK_MATCH;
+    ok += loader_readback_classify_selected(STATUS_SUCCESS, LRB_VOL | EFI_VARIABLE_NON_VOLATILE,
+                                            alt, sizeof(alt), "smoke-alt") == LOADER_READBACK_BAD_ATTRS;
+    ok += loader_readback_classify_selected(STATUS_SUCCESS, LRB_VOL, alt, sizeof(alt), "smoke")
+          == LOADER_READBACK_MISMATCH;
+    ok += loader_readback_classify_selected(STATUS_SUCCESS, LRB_VOL, alt, sizeof(alt), "smoke-alt2")
+          == LOADER_READBACK_MISMATCH;
+    ok += loader_readback_classify_selected(STATUS_SUCCESS, LRB_VOL, no_nul, sizeof(no_nul), "smo")
+          == LOADER_READBACK_MISMATCH;
+    ok += loader_readback_classify_selected(STATUS_SUCCESS, LRB_VOL, inner_nul, sizeof(inner_nul), "s")
+          == LOADER_READBACK_MISMATCH;
+    ok += loader_readback_classify_selected(STATUS_SUCCESS, LRB_VOL, alt, sizeof(alt) - 1u, "smoke-alt")
+          == LOADER_READBACK_MISMATCH;
+    ok += loader_readback_classify_selected(STATUS_SUCCESS, LRB_VOL, wide, sizeof(wide), "s\x01")
+          == LOADER_READBACK_MISMATCH;
+    ok += loader_readback_classify_selected(STATUS_BUFFER_TOO_SMALL, 0, 0, 0, "smoke-alt")
+          == LOADER_READBACK_UNREADABLE;
+    TEST_ASSERT_EQ(ok, 12u,
+        "LoaderEntrySelected: equal or absent-as-expected matches; any other shape, attribute or error does not");
+}
+
+static void test_loader_readback_info_classify(void)
+{
+    static const uint16_t info[] = u"Impossible OS bootloader 1.0";
+    static const uint16_t empty[] = { 0 };
+    unsigned int ok = 0;
+
+    ok += loader_readback_classify_info(STATUS_SUCCESS, LRB_VOL, info, sizeof(info)) == LOADER_READBACK_MATCH;
+    ok += loader_readback_classify_info(STATUS_NOT_FOUND, 0, 0, 0) == LOADER_READBACK_MISSING;
+    ok += loader_readback_classify_info(STATUS_SUCCESS, LRB_VOL, empty, sizeof(empty)) == LOADER_READBACK_MISMATCH;
+    ok += loader_readback_classify_info(STATUS_SUCCESS, UEFI_VAR_NV_BOOT_RUNTIME, info, sizeof(info))
+          == LOADER_READBACK_BAD_ATTRS;
+    ok += loader_readback_classify_info(STATUS_ACCESS_DENIED, 0, 0, 0) == LOADER_READBACK_UNREADABLE;
+    TEST_ASSERT_EQ(ok, 5u, "LoaderInfo must be a non-empty volatile string");
+}
+
+/* Firmware reporting success with more data than our buffer holds must not
+ * reach a caller as success: it would read past the buffer. */
+static void test_uefi_var_get_inflated_size(void)
+{
+    unsigned int ok = 0;
+    ok += uefi_var_get_checked_status(UEFI_SUCCESS, 256u, 258u) == UEFI_BUFFER_TOO_SMALL;
+    ok += uefi_var_get_checked_status(UEFI_SUCCESS, 256u, 256u) == UEFI_SUCCESS;
+    ok += uefi_var_get_checked_status(UEFI_SUCCESS, 256u, 0u) == UEFI_SUCCESS;
+    ok += uefi_var_get_checked_status(UEFI_NOT_FOUND, 256u, 9999u) == UEFI_NOT_FOUND;
+    ok += uefi_var_get_checked_status(UEFI_BUFFER_TOO_SMALL, 256u, 300u) == UEFI_BUFFER_TOO_SMALL;
+    TEST_ASSERT_EQ(ok, 5u,
+        "success with an inflated size is BUFFER_TOO_SMALL; a size that fits and other statuses pass through");
+}
+
+/* The live check on this boot: the firmware still holds what the loader
+ * published, and it agrees with boot_info. Read-only firmware query. */
+static void test_loader_readback_live(void)
+{
+    TEST_ASSERT_EQ(loader_vars_readback(), 0u,
+        "LoaderInfo and LoaderEntrySelected read back as boot_info records them");
+}
+
 void test_register_uefi_boot(void)
 {
     test_suite_register_cat("UEFI: runtime available",
@@ -1259,6 +1336,14 @@ void test_register_uefi_boot(void)
                             test_uefi_var_get_secureboot, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: var_u32 roundtrip",
                             test_uefi_var_u32_roundtrip, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: var_get refuses an inflated success size",
+                            test_uefi_var_get_inflated_size, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: LoaderEntrySelected readback classification",
+                            test_loader_readback_selected_classify, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: LoaderInfo readback classification",
+                            test_loader_readback_info_classify, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: loader variables read back as boot_info records them",
+                            test_loader_readback_live, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: boot_info framebuffer",
                             test_boot_info_framebuffer, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: boot_info HiDPI",

@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/boot/uefi/bootx64.c,src/boot/uefi/loader_vars.c,include/boot/loader_vars.h,src/kernel/uefi_runtime.c reviewed=2026-11-09 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=src/boot/uefi/bootx64.c,src/boot/uefi/loader_vars.c,include/boot/loader_vars.h,src/kernel/uefi_runtime.c,src/kernel/main/loader_vars_readback.c reviewed=2026-11-09T07:40 -->
 # OS-Visible Loader UEFI Variables
 
 > **Owner:** [OS-Visible Loader UEFI Variables](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#15-os-visible-loader-uefi-variables).
@@ -36,6 +36,10 @@ Every variable in this table describes the boot that wrote it, so each is publis
 Before a chainload to another loader (a detected Windows or Linux boot manager), every variable in the table is cleared instead: the chained loader reports its own boot. This is this loader's own policy, not a systemd-boot rule: systemd-boot fills its common set (`LoaderDevicePartUUID`, `LoaderImageIdentifier`, `LoaderFirmwareInfo`, `LoaderFirmwareType`) only when absent, so a stale value would survive into its boot, and a chained Windows loader publishes nothing, so absent is accurate where a leftover would not be. The serial line then reads `[BOOT] loader-vars: chainload, published 0, cleared 11, failed 0`.
 
 Each variable has two outcomes per boot: **set** to this boot's value, or **cleared** because this boot cannot determine it. Absent means unknown; a value is never left over from an earlier boot. Before every write the variable is deleted (attributes 0, size 0, which deletes whatever attributes the old copy had): until 2026-11-08 the loader wrote these `NON_VOLATILE`, and UEFI refuses to rewrite an existing variable with different attributes, so the delete is also what migrates those old copies on the first boot of the new loader.
+
+Every string variable is NUL-terminated UCS-2, as the Boot Loader Interface specifies and systemd-boot writes it. Before 2026-11-09 the loader left the terminator off every string except `LoaderEntries` and `LoaderEntryDefault`; the kernel's post-boot readback found it.
+
+**Post-boot readback.** In Phase 3 `loader_vars_readback()` ([`loader_vars_readback.c`](../../src/kernel/main/loader_vars_readback.c)) reads `LoaderInfo` and `LoaderEntrySelected` back through runtime services. `LoaderInfo` must be a non-empty NUL-terminated string with attributes exactly BS+RT, and `LoaderEntrySelected` must name `boot_info.selected_entry_id`, or be absent when nothing was selected. A match logs `loader-vars: readback matches boot_info (selected=<id>|none)`; anything else is a warning naming each variable's verdict (missing, unexpected, mismatch, bad attributes, unreadable) and whether the loader reported its writes degraded. The boot smoke test requires the match on every valid-store leg, and the boot suite checks it on the test boot.
 
 | Variable | Format | Set when | Cleared when |
 |---|---|---|---|

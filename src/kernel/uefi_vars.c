@@ -19,8 +19,10 @@ NTSTATUS uefi_var_get(const uint16_t *name, const efi_guid_t *guid,
 {
     uint32_t fw_attrs = 0;
     uint64_t sz = *size;
+    const uint64_t capacity = sz;
 
     uint64_t status = uefi_get_variable(guid, name, &fw_attrs, &sz, buf);
+    status = uefi_var_get_checked_status(status, capacity, sz);
 
     /* Always update size -- firmware sets it even on BUFFER_TOO_SMALL */
     *size = (size_t)sz;

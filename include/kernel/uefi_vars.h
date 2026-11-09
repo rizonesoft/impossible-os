@@ -66,9 +66,24 @@ typedef struct boot_uefi_guid efi_guid_t;
  *        data size.  Updated even on STATUS_BUFFER_TOO_SMALL.
  * attrs: optional out -- receives EFI_VARIABLE_* attribute flags (may be NULL).
  *
- * Returns NTSTATUS via efi_status_to_ntstatus(). */
+ * Returns NTSTATUS via efi_status_to_ntstatus(). Firmware that reports
+ * success with a size larger than the caller's buffer is treated as
+ * BUFFER_TOO_SMALL (see uefi_var_get_checked_status), so on STATUS_SUCCESS
+ * *size never exceeds the capacity the caller passed in. */
 NTSTATUS uefi_var_get(const uint16_t *name, const efi_guid_t *guid,
                       void *buf, size_t *size, uint32_t *attrs);
+
+/* Pure: the EFI status uefi_var_get reports for a GetVariable that returned
+ * `status` and `returned` bytes into a buffer of `capacity` bytes. Success
+ * with more data than fits cannot be true of the buffer we passed, so it is
+ * downgraded to BUFFER_TOO_SMALL instead of letting callers read past it. */
+static inline uint64_t uefi_var_get_checked_status(uint64_t status, uint64_t capacity,
+                                                   uint64_t returned)
+{
+    if (status == UEFI_SUCCESS && returned > capacity)
+        return UEFI_BUFFER_TOO_SMALL;
+    return status;
+}
 
 /* Set (or delete) a UEFI variable.
  * size == 0 and buf == NULL deletes the variable.

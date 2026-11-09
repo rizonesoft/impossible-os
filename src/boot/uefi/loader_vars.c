@@ -116,18 +116,21 @@ static void lv_set(struct lv_ctx *c, unsigned int which, const struct boot_loade
     c->report->published++;
 }
 
-/* UCS-2 string payload without its terminator, the systemd-boot convention
- * for string variables. Returns the byte count, 0 when the text does not
- * fit (the caller clears instead of publishing a truncated value). */
+/* UCS-2 string payload WITH its terminator: the Boot Loader Interface
+ * formats every string variable as a NUL-terminated UTF-16 string, and
+ * systemd-boot writes strsize16(), which counts the NUL. Returns the byte
+ * count, 0 when the text and its NUL do not fit (the caller clears instead of
+ * publishing a truncated value). */
 static unsigned int lv_ascii_payload(struct lv_ctx *c, const char *s)
 {
     unsigned int i = 0;
     if (!s || !s[0]) return 0;
     while (s[i]) {
-        if (i >= BOOT_LOADER_VAR_PAYLOAD_MAX / 2u) return 0;
+        if (i + 1u >= BOOT_LOADER_VAR_PAYLOAD_MAX / 2u) return 0;
         c->buf[i] = (unsigned short)(unsigned char)s[i];
         i++;
     }
+    c->buf[i++] = 0;
     return i * 2u;
 }
 
@@ -154,10 +157,11 @@ static void lv_image_path(struct lv_ctx *c, const struct boot_loader_var_inputs 
     unsigned int p = 0;
     if (!v || !v[0]) { lv_clear(c, LV_IMAGE_ID, in); return; }
     while (v[p]) {
-        if (p >= BOOT_LOADER_VAR_PAYLOAD_MAX / 2u) { lv_clear(c, LV_IMAGE_ID, in); return; }
+        if (p + 1u >= BOOT_LOADER_VAR_PAYLOAD_MAX / 2u) { lv_clear(c, LV_IMAGE_ID, in); return; }
         c->buf[p] = v[p];
         p++;
     }
+    c->buf[p++] = 0;  /* NUL-terminated, like every BLI string */
     lv_set(c, LV_IMAGE_ID, in, c->buf, (unsigned long long)p * 2u);
 }
 
@@ -199,6 +203,7 @@ static void lv_firmware_info(struct lv_ctx *c, const struct boot_loader_var_inpu
     rn = lv_revision(in->firmware_revision, rev, sizeof(rev));
     c->buf[p++] = (unsigned short)' ';
     for (i = 0; i < rn; i++) c->buf[p++] = (unsigned short)(unsigned char)rev[i];
+    c->buf[p++] = 0;  /* NUL-terminated, like every BLI string */
     lv_set(c, LV_FIRMWARE_INFO, in, c->buf, (unsigned long long)p * 2u);
 }
 
@@ -375,8 +380,9 @@ static int lv_one_shot_read(const struct boot_loader_var_ops *ops, const unsigne
     if (s == BOOT_LOADER_VAR_BUFFER_TOO_SMALL) return -2;
     if (s == BOOT_LOADER_VAR_NOT_FOUND) return -1;
     if (s != BOOT_LOADER_VAR_SUCCESS) return -3;
-    /* A value that fills the buffer has no room for the NUL the UCS-2
-     * strings here may omit, so it is refused rather than guessed at. */
+    /* Writers may or may not count the NUL (systemd-boot does), so a value
+     * that fills the buffer, leaving no room for one, is refused rather than
+     * guessed at. */
     if (size == 0 || size >= (unsigned long long)chars * 2u || (size & 1u)) return -2;
     while (n < size / 2u && buf[n]) n++;
     return (int)n;

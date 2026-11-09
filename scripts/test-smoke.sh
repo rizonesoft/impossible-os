@@ -1591,6 +1591,10 @@ elif [ "$BOOT_PASSED" = true ]; then
             || loader_fail "boot_policy did not report selection_reason=$sel_reason for $sel_entry with no reject"
         grep -qF "BOOT: health: entry marked good (id=$sel_entry " "$STRIPPED_LOG" 2>/dev/null \
             || loader_fail "the kernel did not mark the booted entry $sel_entry good"
+        # After the handoff the kernel reads LoaderInfo and LoaderEntrySelected
+        # back from the firmware; both must agree with what boot_info records.
+        grep -qF "loader-vars: readback matches boot_info (selected=$sel_entry)" "$STRIPPED_LOG" 2>/dev/null \
+            || loader_fail "the loader variables did not read back as boot_info records them"
         if grep -qaE '\[WARN\] boot_(sticky|history):' "$STRIPPED_LOG" 2>/dev/null; then
             loader_fail "the loader warned while reading BootSticky or the boot history"
         fi

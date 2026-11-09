@@ -626,7 +626,13 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
   - The saved leg also requires `smoke-alt+2-1 (first-boot bootstrap)`, proving the counter is gone. Review found the sweep counted a refused `Delete()` (`EFI_WARN_DELETE_FAILURE`) as deleted; it now counts only `EFI_SUCCESS` and logs refusals.
   - Controls: skipping the consume fails the saved leg; a refused delete fails it (counter left at `+1-2`); a gate that never passes fails the valid-store leg on its 30 s timeout.
 - [/] Entry-kind dispatch: SPLIT/UKI/SAFE covered via §13; chainload -> [`T27 §1`](TODO-27-uefi-advanced.md), network -> [`T25 §7`](TODO-25-network-pxe-http-boot.md), resume -> [`T26 §3`](TODO-26-hibernation-resume-fast-startup-handoff.md).
-- [/] Loader UEFI variable scenario: helper-level coverage shipped via §15 (`test_smbios_parse.c`); live post-boot readback needs the live-boot harness.
+- [x] Loader UEFI variable scenario: the kernel reads the published variables back after boot (`loader_vars_readback()` in `src/kernel/main/loader_vars_readback.c`, Phase 3) and checks them against `boot_info`.
+  - `LoaderInfo` must be a non-empty NUL-terminated BS+RT string; `LoaderEntrySelected` must name `boot_info.selected_entry_id`, or be absent when nothing was selected. Pure classifiers tested in `test_uefi_boot.c`; the live check runs in the boot suite.
+  - Every valid-store smoke leg requires `loader-vars: readback matches boot_info (selected=<entry>)`.
+  - Its first run found the loader writing every string variable without its NUL, against the Boot Loader Interface ("formatted as a NUL-terminated UTF-16 string"). `loader_vars.c` now terminates them; `test_loader_vars.c` requires the NUL and still reads a writer's unterminated value.
+  - Control: the unterminated encoder fails eight `loader-vars` tests, the live readback test and the valid-store smoke leg.
+  - Review: firmware reporting success with an inflated size would have let the readback read past its buffer. `uefi_var_get()` (`src/kernel/uefi_vars.c`) now returns BUFFER_TOO_SMALL for it (`uefi_var_get_checked_status()`), as the syscall path already did; tested, control fails.
+  - A one-shot set by a running OS and honoured on the next boot stays covered by `boot_loader_one_shot_consume()` tests: no guest writer exists yet.
 - [x] Bootstrap idempotency scenario: covered by §16 `emit-seed: idempotent` + 3-entry default (`test_bootcfg.py`).
 - [x] BlackBox-vs-NVRAM audit scenario: covered by §12 (`test_boot_audit.c` + bootcfg mutation-log).
 - [x] Audit dual-write-failure dedup harness: `boot_audit_sequence_advance()` behind an I/O seam (`include/kernel/boot_audit.h`), driven by `test_boot_audit.c` over all 4,096 fault patterns

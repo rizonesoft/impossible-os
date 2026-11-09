@@ -191,19 +191,25 @@ static MV_NOINLINE unsigned int mv_count(struct mv_store *st)
     return n;
 }
 
-/* Seed a variable the way an older loader, bootctl or another loader left it. */
-static MV_NOINLINE void mv_seed(struct mv_store *st, const char *name,
-                                const unsigned char guid[16], const char *text)
+/* Seed a variable the way an older loader, bootctl or another loader left it:
+ * NUL-terminated, the Boot Loader Interface form, unless `with_nul` is 0 for
+ * a writer that leaves the terminator off. */
+static MV_NOINLINE void mv_seed_form(struct mv_store *st, const char *name,
+                                     const unsigned char guid[16], const char *text,
+                                     int with_nul)
 {
-    unsigned short wname[LOADER_VAR_NAME_MAX], wtext[64];
+    unsigned short wname[LOADER_VAR_NAME_MAX], wtext[65];  /* a 64-char text and its NUL */
     unsigned int i;
     for (i = 0; name[i]; i++) wname[i] = (unsigned short)(unsigned char)name[i];
     wname[i] = 0;
-    for (i = 0; text[i]; i++) wtext[i] = (unsigned short)(unsigned char)text[i];
-    (void)mv_set(st, wname, guid, MV_NV, i * 2u, wtext);
+    for (i = 0; text[i] && i < 64u; i++) wtext[i] = (unsigned short)(unsigned char)text[i];
+    wtext[i] = 0;
+    (void)mv_set(st, wname, guid, MV_NV, (i + (with_nul ? 1u : 0u)) * 2u, wtext);
 }
+#define mv_seed(st, name, guid, text) mv_seed_form((st), (name), (guid), (text), 1)
 
-/* Does the systemd-GUID variable hold exactly this UCS-2 text (no NUL)? */
+/* Does the systemd-GUID variable hold exactly this UCS-2 text and its NUL?
+ * The Boot Loader Interface formats string variables NUL-terminated. */
 static MV_NOINLINE int mv_text_is(struct mv_store *st, const char *name, const char *text)
 {
     struct mv_var *v = mv_find(st, name);
@@ -215,7 +221,7 @@ static MV_NOINLINE int mv_text_is(struct mv_store *st, const char *name, const c
         if (2u * i + 1u >= v->size) return 0;
         if (d[2u * i] != (unsigned char)text[i] || d[2u * i + 1u] != 0) return 0;
     }
-    return v->size == 2u * i;
+    return v->size == 2u * (i + 1u) && d[2u * i] == 0 && d[2u * i + 1u] == 0;
 }
 
 static MV_NOINLINE int mv_u64_is(struct mv_store *st, const char *name,
@@ -644,6 +650,14 @@ static void test_loader_vars_one_shot(void)
           && !r.have_entry && r.entry_malformed && id[0] == 0 && mv_count(&fx->st) == 0u;
         TEST_ASSERT(ok, "a malformed entry id is deleted and not honoured");
     }
+    /* The same 64-char id from a writer that leaves the NUL off fills the
+     * read buffer exactly: refused, since there is no room to know it ended. */
+    mv_reset(&fx->st);
+    memset(&fx->st, 0, sizeof(fx->st));
+    mv_seed_form(&fx->st, "LoaderEntryOneShot", MV_SYSTEMD, bad_ids[1], 0);
+    ok = boot_loader_one_shot_consume(&fx->ops, fx->guid_copy[0], id, sizeof(id), &r) == 1
+      && !r.have_entry && r.entry_malformed && mv_count(&fx->st) == 0u;
+    TEST_ASSERT(ok, "an id filling the buffer with no NUL is deleted and not honoured");
     ok = mv_one_shot(fx, "slot-long-id", (const char *)0, 8u, &r, id) == 1
       && !r.have_entry && r.entry_malformed && mv_count(&fx->st) == 0u;
     TEST_ASSERT(ok, "an id longer than the caller's buffer is refused, never truncated");
@@ -819,11 +833,15 @@ static void test_loader_vars_saved_default(void)
       && boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], (const char *)0) == 1;
     TEST_ASSERT(ok, "empty id deletes; deleting an absent one succeeds");
 
-    /* bootctl writes the id without a NUL; still read. */
+    /* A writer that leaves the NUL off is still read. */
+    mv_seed_form(mv, "LoaderEntryDefault", MV_SYSTEMD, "arch", 0);
+    ok = boot_loader_entry_default_read(&fx->ops, fx->guid_copy[0], id, sizeof(id))
+             == BOOT_LOADER_DEFAULT_PRESENT && strcmp(id, "arch") == 0;
+    TEST_ASSERT(ok, "a value with no NUL reads");
     mv_seed(mv, "LoaderEntryDefault", MV_SYSTEMD, "arch");
     ok = boot_loader_entry_default_read(&fx->ops, fx->guid_copy[0], id, sizeof(id))
              == BOOT_LOADER_DEFAULT_PRESENT && strcmp(id, "arch") == 0;
-    TEST_ASSERT(ok, "a value with no NUL (bootctl's form) reads");
+    TEST_ASSERT(ok, "a NUL-terminated value (bootctl's form) reads");
 
     (void)boot_loader_entry_default_write(&fx->ops, fx->guid_copy[0], "");
     mv_seed(mv, "LoaderEntryDefault", MV_SYSTEMD, "ab\001c");
