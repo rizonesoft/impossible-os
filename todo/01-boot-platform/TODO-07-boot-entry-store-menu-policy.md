@@ -638,10 +638,10 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
   - Why: the kernel suite compiles these files into a different image, so a loader-only failure stays invisible. The parser passed 6,000+ boot tests while the shipped loader read `parsed 0 entries (1 skipped)` (no `loader_self_relocate()`).
   - Every valid-store leg: entry-kind decoded `kernel="\boot\kernel.exe"`, policy picked `STORE_DEFAULT smoke-entry`, no `[WARN] boot_sticky:`/`boot_history:`, the loader's `ebs-success` record read back by the kernel, and the kernel's Phase-3 mark numbered next.
   - Fresh variable store: history seq=1, BootSticky absent, try counter bootstrapped to `smoke-entry+2-1`. The `repaired` leg (third boot on one variable store) must show seq >= 2 and the previous boot's `kernel-Phase3` record.
-  - Control: `boot_history_read_seq()` returning 0 fails the `repaired` leg with "history seq=1 on a reused variable store". BootSticky's read-ok path needs a degraded boot first; it is the item below.
-- [ ] Booted-image BootSticky leg: a smoke boot that reaches `boot_sticky_mark_degraded()`, then a second boot on the same variable store that reads the record (`boot_sticky_read_into_boot_info()`) and hands it to the kernel.
-  - The guest seeds the variable itself, as the §24 saved-default legs do; today only the absent path runs in the booted image.
-  - Control: skipping the read fails the second boot.
+  - Control: `boot_history_read_seq()` returning 0 fails the `repaired` leg with "history seq=1 on a reused variable store". BootSticky's read-ok path needs a record carrying a trigger, which nothing creates yet (item below).
+- [/] Booted-image BootSticky leg: a boot that sets a sticky trigger, then a second boot on the same variable store whose loader reads it (`boot_sticky_read_into_boot_info()`) and acts on it. Blocked: nothing creates the record yet.
+  - Only the absent path runs in the booted image today. The kernel's one write (`audit_ack_consumed_triggers()`, `boot_audit.c`) rewrites a record that already carries a trigger, and §12's boundary names TODO-23 as the producer.
+  - Blocker owner: -> XREF: 01-boot-platform/TODO-23 §4 (item: "Set NVRAM flag: `watchdog_triggered = 1`" at line 134), itself parked on that file's §1 watchdog ISR. Control once unblocked: skipping the read fails the second boot.
 
 **Test checkpoint:** Per-section unit suites already register under `TEST_CAT_BOOT` and run with `make test-boot` (or `bash scripts/test.sh SUITE=boot`); the §17 commit is pure status reconciliation -- no new test code lands here. Live-boot scenarios depend on harness infrastructure that is not in this TODO's scope; XREF'd to their owner sections above. Bare-metal pass requires the user's laptop -- not gateable from WSL. Test on: host (`python3 tools/bootcfg/test_bootcfg.py` + `python3 tools/boot-entry-validate/test_validate.py`) + QEMU TCG (`make test-boot`).
 

@@ -132,6 +132,7 @@ When watchdog fires, produce useful diagnostics before rebooting.
 
 - [/] NMI handler writes to serial: phase, last POST code, RIP, RSP, last 5 boot_progress entries -- BLOCKED on this file's §1 (a watchdog ISR to produce diagnostics in)
 - [/] Set NVRAM flag: `watchdog_triggered = 1`, `watchdog_post = <last POST code>` -- BLOCKED on this file's §1 (a watchdog ISR to produce diagnostics in)
+  - Waiting on it: the booted-image BootSticky leg -> XREF: 01-boot-platform/TODO-07 §17 (item: "Booted-image BootSticky leg"), which needs a record carrying a trigger to read back.
 - [/] On next boot: bootloader reads NVRAM flag → `"[WARN] Previous boot hung at POST 0xNNNN"` on serial -- BLOCKED on this file's §1 (a watchdog ISR to produce diagnostics in)
 - [/] Do NOT write A/B metadata from the NMI path: TODO-21 §4 already increments tries pre-EBS + resets on mark-good, so a hung boot consumed its try and rollback follows; a watchdog-side increment double-counts. -> XREF: TODO-21 §4
       - BLOCKED on this file's §1 (a watchdog ISR to produce diagnostics in)
