@@ -483,6 +483,18 @@ def test_the_bound_reaches_the_prompt_and_only_when_set():
     assert r.returncode == 2 and "usage" in r.stderr, r
 
 
+def test_every_start_and_restart_begins_with_the_goal():
+    """Operator decision 2026-11-09: the run always starts with this goal."""
+    out = subprocess.run(["bash", "-c", '. scripts/overnight/run-common.sh; '
+                          'printf "%s\\n%s\\n%s" "$RUN_GOAL" "$RUN_PROMPT" "$RUN_RESUME_PROMPT"'],
+                         cwd=REPO, capture_output=True, text=True, timeout=30, check=True).stdout
+    goal, fresh, resume = out.split("\n")
+    assert "rivals Windows and Linux" in goal and "verified fixpoint" in goal, goal
+    assert fresh.startswith(goal) and resume.startswith(goal), (fresh, resume)
+    # The prompt is spliced into a double-quoted tmux command line.
+    assert not any(c in goal for c in '"$`\\'), goal
+
+
 def test_stop_guard_holds_the_session_until_the_work_is_done():
     assert _stop() == 2
     # A verified rollover used to end the session for a relaunch. Nothing relaunches now.

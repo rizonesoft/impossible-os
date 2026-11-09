@@ -17,8 +17,11 @@ if [ -f "$RUN_NOTIFY_ENV" ]; then
   set -a; . "$RUN_NOTIFY_ENV"; set +a
 fi
 
-RUN_PROMPT="You are running the Impossible OS roadmap to completion. Invoke the overnight-sequencer skill and follow todo/TODO-Claude-Overnight-Runner.md. This one session does all the work: after a section ships, go straight on to the next one. Make decisions yourself and record them. A failure stops one item, never the run. Stop only at a verified fixpoint."
-RUN_RESUME_PROMPT="The session restarted. Read the state on disk (git status, git log, the run_phase_guard.py cursor) and continue the run. Invoke the overnight-sequencer skill if you no longer have it in context."
+# The run's goal, set by the operator 2026-11-09. Both prompts carry it, so every start
+# and every restart begins with it.
+RUN_GOAL="The aim: a product that rivals Windows and Linux. Finish the roadmap to a verified fixpoint at that standard: a section is done when it is complete, polished and works end to end, not when its checklist is ticked. File every adjacent gap a real user would hit next in its owning TODO, without duplicating existing work."
+RUN_PROMPT="$RUN_GOAL You are running the Impossible OS roadmap to completion. Invoke the overnight-sequencer skill and follow todo/TODO-Claude-Overnight-Runner.md. This one session does all the work: after a section ships, go straight on to the next one. Make decisions yourself and record them. A failure stops one item, never the run. Stop only at a verified fixpoint."
+RUN_RESUME_PROMPT="$RUN_GOAL The session restarted. Read the state on disk (git status, git log, the run_phase_guard.py cursor) and continue the run. Invoke the overnight-sequencer skill if you no longer have it in context."
 
 # A bounded run: `run.sh start --ships N` stops after N sections are through their
 # post-ship review and pushed. The stop guard and the heartbeat both read this file.
