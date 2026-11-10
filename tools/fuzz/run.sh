@@ -57,7 +57,12 @@ fi
 TARGETS="${*:-$ALL_TARGETS}"
 FAILED=0
 for t in $TARGETS; do
-    build_target "$t"
+    if ! build_target "$t" >"$OUT/$t.build.log" 2>&1; then
+        FAILED=1
+        echo "  FAIL  $t  (did not build)"
+        head -12 "$OUT/$t.build.log" | cut -c1-300 | sed 's/^/    | FUZZ-FAIL: /'
+        continue
+    fi
     work="$OUT/corpus-$t"; art="$OUT/crash-$t-"
     mkdir -p "$work"
     log="$OUT/$t.log"
@@ -69,7 +74,15 @@ for t in $TARGETS; do
     else
         FAILED=1
         echo "  FAIL  $t  (log: $log)"
-        grep -E 'ERROR: |SUMMARY: |runtime error|Test unit written' "$log" | head -8 | sed 's/^/    | /'
+        # Tagged FUZZ-FAIL so a wrapper that filters on "FAIL" keeps them, and
+        # the log's tail as well: a build error or a killed process prints no
+        # sanitizer line, and "FAIL" with no reason cannot be triaged from CI.
+        { grep -E 'ERROR: |SUMMARY: |runtime error|Test unit written|error: ' "$log" | head -8
+          echo "--- last lines of $log ---"; tail -12 "$log"; } | cut -c1-300 | sed 's/^/    | FUZZ-FAIL: /'
+        # The reproducer, as text, so a CI failure can be replayed locally.
+        for a in "$art"*; do
+            [ -f "$a" ] && echo "    | FUZZ-FAIL: reproducer $(basename "$a") base64: $(head -c 2048 "$a" | base64 -w0)"
+        done
     fi
 done
 exit "$FAILED"

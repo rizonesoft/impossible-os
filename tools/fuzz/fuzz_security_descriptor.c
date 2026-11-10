@@ -15,7 +15,10 @@
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
-    static uint8_t workspace[65536 + 64];
+    /* Aligned on purpose: the unmarshaller rejects an unaligned workspace, and
+     * a byte array has no alignment of its own, so without this whether the
+     * descriptor path runs at all would depend on the linker layout. */
+    static _Alignas(8) uint8_t workspace[65536 + 64];
     static char text[4096];
     SECURITY_DESCRIPTOR abs;
     uint32_t avail;

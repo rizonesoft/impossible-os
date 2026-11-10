@@ -1101,6 +1101,7 @@ if [ "$?" = "0" ]; then
     t_pass "tools/fuzz/run.sh PASS ($(printf '%s\n' "$FUZZ_OUT_TXT" | grep -c '^  PASS') targets clean)"
 else
     t_fail "tools/fuzz/run.sh FAIL ($(printf '%s\n' "$FUZZ_OUT_TXT" | grep -E '^  FAIL|^fuzz:' | head -3 | tr '\n' ' '))"
+    printf '%s\n' "$FUZZ_OUT_TXT" | grep 'FUZZ-FAIL: ' | head -40
     _tt_nested_fail_detail "fuzz" "$FUZZ_OUT_TXT"
 fi
 
