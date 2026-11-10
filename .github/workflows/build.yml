@@ -97,8 +97,9 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo -E apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
-          sudo -E apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+          # Each attempt is wall-clock bounded and a stalled mirror is retried
+          # (scripts/ci/apt-install.sh); three attempts fit the step timeout.
+          bash scripts/ci/apt-install.sh \
             clang-${{ env.LLVM_VERSION }} \
             clangd-${{ env.LLVM_VERSION }} \
             lld-${{ env.LLVM_VERSION }} \
@@ -373,8 +374,9 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo -E apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
-          sudo -E apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+          # Each attempt is wall-clock bounded and a stalled mirror is retried
+          # (scripts/ci/apt-install.sh); three attempts fit the step timeout.
+          bash scripts/ci/apt-install.sh \
             clang-${{ env.LLVM_VERSION }} \
             clangd-${{ env.LLVM_VERSION }} \
             lld-${{ env.LLVM_VERSION }} \
@@ -483,8 +485,9 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo -E apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
-          sudo -E apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+          # Each attempt is wall-clock bounded and a stalled mirror is retried
+          # (scripts/ci/apt-install.sh); three attempts fit the step timeout.
+          bash scripts/ci/apt-install.sh \
             clang-${{ env.LLVM_VERSION }} \
             lld-${{ env.LLVM_VERSION }} \
             llvm-${{ env.LLVM_VERSION }}
