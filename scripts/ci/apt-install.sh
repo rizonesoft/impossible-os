@@ -39,8 +39,13 @@ FALLBACK_MIRROR="${APT_FALLBACK_MIRROR:-archive.ubuntu.com}"
 for n in $(seq 1 "$ATTEMPTS"); do
     echo "apt-install: download attempt $n of $ATTEMPTS: $*"
     # -k: a stalled apt that ignores TERM is killed, not waited on.
-    if sudo -E timeout -k 10 "$UPDATE_CAP" apt-get update "${OPTS[@]}" \
-        && sudo -E timeout -k 10 "$DOWNLOAD_CAP" apt-get install -y --download-only "${OPTS[@]}" "$@"; then
+    # One network budget per attempt (update cap + download cap), spent in
+    # order: an index update that has to fetch every list again, as it does
+    # right after a mirror switch, may run into the download's share.
+    t_start=$(date +%s)
+    if sudo -E timeout -k 10 "$((UPDATE_CAP + DOWNLOAD_CAP - 10))" apt-get update "${OPTS[@]}" \
+        && left=$((UPDATE_CAP + DOWNLOAD_CAP - ($(date +%s) - t_start))) && [ "$left" -ge 10 ] \
+        && sudo -E timeout -k 10 "$left" apt-get install -y --download-only "${OPTS[@]}" "$@"; then
         echo "apt-install: packages downloaded; installing"
         if sudo -E timeout -k 10 "$INSTALL_CAP" apt-get install -y --no-download "${OPTS[@]}" "$@"; then
             exit 0
@@ -55,9 +60,13 @@ for n in $(seq 1 "$ATTEMPTS"); do
     # it is what is broken: on 2026-11-10 one job failed all three attempts on
     # azure.archive.ubuntu.com while two jobs beside it downloaded in seconds.
     # After the first failure, point apt at the primary archive instead.
-    if [ "$n" = "1" ] && sudo grep -rqsF "$MIRROR" /etc/apt/sources.list /etc/apt/sources.list.d; then
+    # GitHub's runners name the mirror in /etc/apt/apt-mirrors.txt (the sources
+    # point at that list), other hosts in the sources themselves.
+    if [ "$n" = "1" ] && sudo grep -rqsF "$MIRROR" /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d; then
         echo "apt-install: switching from $MIRROR to $FALLBACK_MIRROR" >&2
-        sudo sed -i "s|//$MIRROR/|//$FALLBACK_MIRROR/|g" /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+        for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*; do
+            [ -f "$f" ] && sudo sed -i "s|//$MIRROR/|//$FALLBACK_MIRROR/|g" "$f"
+        done
     fi
     [ "$n" -lt "$ATTEMPTS" ] && sleep $((n * 5))
 done
