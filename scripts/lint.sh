@@ -2999,6 +2999,37 @@ else
 fi
 
 # ============================================================================
+# Check 36: a project URL in shipped source names the project's real host
+# ============================================================================
+# The kernel halt screen told users to visit a domain the project does not own
+# (found 2026-11-10; the site is project.json's site_url). A string in a C
+# source cannot be templated from project.json, so the host is checked here.
+URLHOST_RC=0
+URLHOST_OUT=$(cd "$REPO_ROOT" && python3 - <<'PYEOF' 2>&1
+import json, re, subprocess, sys, urllib.parse
+host = urllib.parse.urlparse(json.load(open("project.json"))["site_url"]).hostname
+if not host:
+    print("could not read site_url from project.json"); sys.exit(2)
+out = subprocess.run(["git", "grep", "-nIoE", r"https?://[A-Za-z0-9.-]*impossible[A-Za-z0-9.-]*",
+                      "--", "src", "include", "user"],
+                     capture_output=True, text=True, timeout=60).stdout
+bad = []
+for line in out.splitlines():
+    where, _, url = line.rpartition(":http")
+    h = urllib.parse.urlparse("http" + url).hostname or ""
+    if h != host and not h.endswith("." + host):
+        bad.append(f"{where}: {h}")
+if bad:
+    print("\n".join(bad[:20])); print(f"expected host: {host}"); sys.exit(1)
+PYEOF
+) || URLHOST_RC=$?
+if [ "$URLHOST_RC" -ne 0 ]; then
+    printf '%s\n' "$URLHOST_OUT" | sed 's/^/  /'
+    echo -e "${RED}error${NC}: Check 36 (project URL host) -- shipped source names a project URL on a host that is not the project's"
+    ERRORS=$((ERRORS + 1))
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

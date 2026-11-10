@@ -78,6 +78,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 | ⭐  |  11   | Bare section-ref sweep (lint Check 5 zero-allowlist)  | §9             |  [x]   |
 | 💎  |  12   | Enforce required-tool version floors in `--verify`    | §1, §2         |  [x]   |
 | 💎  |  13   | Duplicate-recipe sweep in the root Makefile           | §3             |  [/]   |
+| 💎  |  14   | Defect-finding tools: fuzzers, UBSan, static analysis | §3, §7         |  [ ]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
 > ⭐ = exclusive work: Impossible OS can provide a single operator-facing developer workflow with self-diagnosis instead of scattered scripts and tribal knowledge.
@@ -448,6 +449,36 @@ Rewrite the ~187 source / test / header / script files on the `scripts/lint.sh` 
 **Test checkpoint:** `make --dry-run all` emits zero `overriding recipe` / `ignoring old recipe` warnings; `make run-test` and `make run-debug` each behave as their `##` help text describes; adding a deliberate duplicate target fails `scripts/lint.sh`. Test on: build host only.
 
 > **Deferred:** 2026-07-31 | operator-only surface: every item resolves to an edit of the root `Makefile`, which `receipt_surface_guard.py` BLOCKs in the unattended run (receipt surface). Defect confirmed live at this HEAD: `make --dry-run all` emits 4 warnings, `run-test` defined at `Makefile:1271` + `Makefile:1642`, `run-debug` at `Makefile:1265` + `Makefile:1687`. Items 2-3 are gated on item 1 (their gates fail against the un-reconciled tree). -> XREF: `overnight-runner-improvements/overnight-runner-improvements-v05.md` (item: "TODO-01 §13 is unreachable unattended: its whole scope is the root Makefile")
+
+---
+
+## 14. Defect-Finding Tools: Fuzzers, UBSan, Static Analysis, Compile Cache
+> **Spawned-by:** root
+
+Added 2026-11-10 on the operator's instruction to adopt the tools that find defects before a reviewer does. The first runs paid for themselves the same day: the security-descriptor fuzzer found an unaligned SID read in 15 seconds, ruff found a `NameError` on a refusal path in `scripts/todo-graph/validate.py` and a test that had never executed, and the static analyzer led to the kernel halt screen naming a domain the project does not own.
+
+- [x] Host fuzzers under `tools/fuzz/` (libFuzzer + ASan + UBSan over the loader's and kernel's own sources): `boot_entries` and `security_descriptor` targets, checked-in corpus, 10 s a target in `scripts/test-tooling.sh`
+- [x] ruff as lint Check 35 (`ruff.toml`, correctness rules only; a missing ruff is an error), installed by `setup-deps.sh` and pinned in CI
+- [x] Trap-mode UBSan in the test-flavor kernel (`KERNEL_UBSAN`, default follows `KERNEL_TESTS`): shift, integer-divide-by-zero, unreachable, vla-bound, builtin
+- [x] `ccache` through `scripts/build.sh` (clean build 68 s to 42 s warm)
+- [x] `scripts/static-analysis.sh` + `.clang-tidy` (Clang static analyzer core checks plus defect-class bugprone checks) over the compile database
+- [x] `scripts/test-tooling.sh` starts its nested suites together
+- [ ] Triage the static analyzer's findings in production code and make the changed-file run a pre-push gate
+  - Whole-tree run 2026-11-10: 157 findings after dropping dead stores and cloned branches, 108 of them in `src/kernel/test/`. The 49 in production code include 11 "garbage value" reports: `cpu_security.c:1486`, `ex/ex_slist.c:97,123,140`, `fs/ntfs/ntfs_attr.c:324`, `fs/ntfs/ntfs_io.c:871`, `mm/boot_stack.c:186`, `ob/ob_ns.c:266`, `registry.c:1989`, `smbios.c:1050`.
+  - Each is fixed or marked with a reasoned `NOLINT`; the gate goes in only when `bash scripts/static-analysis.sh --all` is clean, so it never blocks on inherited debt.
+  - Declaring `boot_halt` noreturn (done) removes the null-dereference reports that followed every `if (!p) boot_halt(...)`; `panic`-class helpers still missing the attribute are the next cut.
+- [ ] Fuzz targets for the remaining parsers of untrusted bytes
+  - `eif_parse_metadata` (`src/kernel/eif.c`) needs a no-op `klog` shim and `src/libs/lz4`.
+  - The registry hive parser (`hive_validate_payload`, `src/kernel/registry.c`) is trapped in a 4,000-line translation unit; extract `hive_buf_*` and `hive_parse_*` into their own file first.
+  - FAT32 BPB and directory parsing, `parse_boot_conf` in `bootx64.c`, and the PE and ELF loaders need their parsing cores split from allocation and mapping before they can be fuzzed.
+- [ ] Widen kernel UBSan to `bounds`, `bool`, `enum`, `alignment` and `null` once the image has room
+  - Measured 2026-11-10: adding `bounds,bool,enum` grows `.text` by about 122 KiB and the image ends 32 KiB past the user base (`BSS COLLISION`). Owner of the room: [higher-half kernel relocation](../02-kernel-core/TODO-33-higher-half-kernel-relocation.md).
+- [ ] Build once per boot matrix
+  - Every leg of `scripts/test-smoke-matrix.sh` runs `bash scripts/build.sh clean` (`scripts/test-smoke.sh:586`), so 20 legs are 20 clean builds: 2,720 s on 2026-11-10 against about 2 s of boot per KVM leg. Build once, keep a pristine copy of the disk image and the OVMF variable store, and restore them per leg. The store legs that carry state across boots (`SMOKE_STORE_RECORD`, `SMOKE_MENU=saved`) define what "pristine" must preserve.
+- [ ] Restore the CI compile cache
+  - `actions/cache` on the ccache directory in `build.yml`, keyed on the compiler version, so CI's clean builds hit.
+
+**Test checkpoint:** `bash tools/fuzz/run.sh` exits 0 and fails on the checked-in reproducer when the alignment check in `RtlLengthSidBounded` is removed; `bash scripts/lint.sh` fails on a Python file with an undefined name; `make -n kernel` shows `-fsanitize` and `make -n KERNEL_TESTS=off kernel` does not; `bash scripts/static-analysis.sh` exits 0 on a clean change set.
 
 ---
 

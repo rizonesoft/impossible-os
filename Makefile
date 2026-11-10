@@ -117,6 +117,25 @@ endif
 # would re-enable every seam under an apparent release build.
 override CFLAGS += $(KERNEL_TESTS_FLAG)
 
+# --- Undefined-behaviour traps ---
+# In the test flavor the kernel is built with the UBSan checks below in TRAP
+# mode: undefined behaviour executes `ud2`, the #UD handler reports the RIP,
+# and `llvm-addr2line-19 -e build/kernel.exe -f <RIP>` names the line. Trap
+# mode needs no runtime, so there are no __ubsan_handle_* symbols to provide.
+#
+# The set is what FITS. Measured 2026-11-10: these five add about 6 KiB of
+# .text. Adding `bounds,bool,enum` adds about 122 KiB and the image ends
+# 32 KiB past the user base (BSS COLLISION), so they wait for the higher-half
+# relocation. Alignment and null checks are out for the same reason.
+# Off in the release flavor. KERNEL_UBSAN=off rules it out of a problem.
+KERNEL_UBSAN ?= $(KERNEL_TESTS)
+ifeq ($(KERNEL_UBSAN),on)
+    override CFLAGS += -fsanitize=shift,integer-divide-by-zero,unreachable,vla-bound,builtin \
+                       -fsanitize-trap=all
+else ifneq ($(KERNEL_UBSAN),off)
+    $(error KERNEL_UBSAN must be one of: on, off (got '$(KERNEL_UBSAN)'))
+endif
+
 # Exception-dispatch telemetry (TODO-23 s16). EXCEPT_TELEMETRY=on emits an
 # AUTHORITATIVE -DCONFIG_EXCEPT_TELEMETRY=1 (so except.h can test it with `#if`,
 # not `#ifdef` -- a `=0` build genuinely compiles the hook and the
@@ -250,6 +269,8 @@ $(BUILD_INFO_H): .FORCE
 		rm -f $(BUILD_INFO_H).tmp; \
 	fi
 
+# The stamp also carries KERNEL_UBSAN: it changes every object's code the same
+# way, and without it a flip left traps in (or out of) every unchanged object.
 # Generate the KERNEL_TESTS flavor stamp: always run the recipe (.FORCE), but
 # only overwrite when the flavor actually changed (cmp -s), so the stamp's
 # mtime moves ONLY on a real flip. Every C object rule depends on it, so an
@@ -257,10 +278,10 @@ $(BUILD_INFO_H): .FORCE
 # rebuild stays fully incremental.
 $(KERNEL_TESTS_STAMP): .FORCE
 	@mkdir -p $(dir $@)
-	@echo '$(KERNEL_TESTS)' > $@.tmp
+	@echo '$(KERNEL_TESTS) ubsan=$(KERNEL_UBSAN)' > $@.tmp
 	@if ! cmp -s $@.tmp $@ 2>/dev/null; then \
 		mv $@.tmp $@; \
-		echo "[GEN] $@ (KERNEL_TESTS=$(KERNEL_TESTS))"; \
+		echo "[GEN] $@ (KERNEL_TESTS=$(KERNEL_TESTS) KERNEL_UBSAN=$(KERNEL_UBSAN))"; \
 	else \
 		rm -f $@.tmp; \
 	fi

@@ -14,4 +14,7 @@
  *
  * Safe to call from any kernel phase, including before fb_init().
  * XREF: 02-kernel-core/TODO-01-kernel-init-sequencing.md */
-void boot_halt(const char *reason);
+/* noreturn is part of the contract, not decoration: without it the compiler
+ * and the static analyzer both assume execution continues past a halt, and
+ * every `if (!p) boot_halt(...)` reads as a null dereference on the next line. */
+__attribute__((noreturn)) void boot_halt(const char *reason);

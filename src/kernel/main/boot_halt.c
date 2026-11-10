@@ -274,7 +274,7 @@ void boot_halt(const char *reason)
     kernel_subsystem_dump();
 
     serial_write("System halted. Check serial log for details.\n");
-    serial_write("Recovery: https://impossible-os.dev/recovery\n");
+    serial_write("Recovery: https://impossibleos.co/docs/boot/bootloader-error-recovery\n");
 
     /* Framebuffer diagnostics -- only when fb is accessible AND the
      * pitch + dimensions are structurally sane.  A malformed boot_info
@@ -327,7 +327,7 @@ void boot_halt(const char *reason)
                         "See serial output for details.", 0x00AAAAAA);
             text_y += FONT_H + 4;
             blit_string(fb, pitch, w, h, 8, text_y,
-                        "https://impossible-os.dev/recovery", 0x004080FF);
+                        "https://impossibleos.co/docs/boot/bootloader-error-recovery", 0x004080FF);
         }
     }
 

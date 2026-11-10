@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/build.sh,scripts/setup.sh,tools/fuzz/run.sh,ruff.toml,scripts/test.sh,scripts/lint.sh,scripts/debug.sh,scripts/run-qemu.sh reviewed=2026-11-10 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/build.sh,scripts/setup.sh,tools/fuzz/run.sh,ruff.toml,scripts/static-analysis.sh,scripts/test.sh,scripts/lint.sh,scripts/debug.sh,scripts/run-qemu.sh reviewed=2026-11-10 -->
 # Development Tooling & Automation
 
 > Complete build system, test framework, asset pipeline, and development utilities for Impossible OS.
@@ -490,6 +490,22 @@ bash tools/fuzz/run.sh --repro <target> <file>  # replay one input
 `scripts/test-tooling.sh` runs every target for 10 s on each pack run. The checked-in corpus under `tools/fuzz/corpus/<target>/` is replayed first, so the reproducer of a fixed defect fails immediately if the fix is lost. When a run finds a defect, fix it at the validator and add the reproducer to the corpus. First run, 2026-11-10: the security-descriptor target found, in 15 seconds, a SID read at an attacker-chosen unaligned offset.
 
 A new target is a `fuzz_<name>.c` with `LLVMFuzzerTestOneInput`, a `build_target` case in `run.sh`, and at least one seed. Good candidates are pure functions over a byte buffer; a parser that needs `klog`, `kmalloc` or VFS should be split so its parsing core is one.
+
+### Undefined-Behaviour Traps in the Kernel
+
+The test-flavor kernel (`KERNEL_TESTS=on`, the default) is compiled with `-fsanitize=shift,integer-divide-by-zero,unreachable,vla-bound,builtin -fsanitize-trap=all`. Undefined behaviour of those classes executes `ud2`; the #UD report gives the RIP and `llvm-addr2line-19 -e build/kernel.exe -f <RIP>` names the line. Trap mode needs no runtime. The release flavor is built without it, and `KERNEL_UBSAN=off` turns it off to rule it out of a problem.
+
+The set is what fits: these five checks add about 6 KiB of `.text`. `bounds`, `bool` and `enum` add about 122 KiB and push the image past the user base, so they wait for the higher-half relocation.
+
+### Static Analysis
+
+```bash
+bash scripts/static-analysis.sh          # sources changed against origin/main
+bash scripts/static-analysis.sh --all    # whole tree, about 10 minutes
+bash scripts/static-analysis.sh <file>   # named sources
+```
+
+It runs `clang-tidy-19` with the checks in `.clang-tidy` (the Clang static analyzer's core checks and the bugprone checks that name a defect class; no style checks) against `compile_commands.json`, which a clean build writes. Test sources are skipped unless `--with-tests` is given. It is not a gate yet: the whole-tree findings in production code are being triaged first, tracked in the [developer tooling roadmap](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md).
 
 > [!NOTE]
 > Generated headers (`os_logo.h`, `bsod_icon.h`, `boot_splash_font_data.h`) use order-only prerequisites (`| $(GENERATED_HDRS)`) to prevent races on first clean build.

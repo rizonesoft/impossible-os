@@ -1,0 +1,35 @@
+# clang-tidy for the kernel and loader: defects only.
+#
+# Run through scripts/static-analysis.sh, which feeds it the compile database
+# that a clean build writes. The selection is the Clang static analyzer's core
+# checks plus the bugprone checks that name a real defect class; style,
+# naming and modernize checks are out, and so are checks that assume a hosted
+# libc (the kernel has none). Dead stores and cloned branches were tried on
+# the whole tree (2026-11-10) and were 183 of 340 findings with no defect
+# among the ones read, so they are out too.
+Checks: >
+  -*,
+  clang-analyzer-core.*,
+  bugprone-sizeof-expression,
+  bugprone-suspicious-memset-usage,
+  bugprone-suspicious-semicolon,
+  bugprone-misplaced-widening-cast,
+  bugprone-integer-division,
+  bugprone-too-small-loop-variable,
+  bugprone-string-literal-with-embedded-nul,
+  bugprone-swapped-arguments,
+  bugprone-redundant-branch-condition,
+  bugprone-infinite-loop,
+  bugprone-incorrect-roundings,
+  bugprone-assert-side-effect,
+  bugprone-bool-pointer-implicit-conversion,
+  bugprone-multiple-statement-macro,
+  bugprone-signed-char-misuse,
+  bugprone-suspicious-enum-usage,
+  bugprone-undefined-memory-manipulation
+WarningsAsErrors: ''
+CheckOptions:
+  # A _Static_assert comparing sizeof(struct) to a layout constant is the
+  # point of the assert, not a suspicious comparison.
+  bugprone-sizeof-expression.WarnOnSizeOfCompareToConstant: false
+HeaderFilterRegex: '^(src|include)/'
