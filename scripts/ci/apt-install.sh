@@ -5,36 +5,51 @@
 #
 # The runner's Ubuntu mirror sometimes stops sending mid-download: no error,
 # no progress, and apt's own retry and per-request timeout never fire because
-# the connection stays open. On 2026-11-10 that used the LLVM step's whole
-# 10 minutes twice in one day, in two different jobs, and each time the only
-# cure was re-running the job by hand. So each attempt gets a wall-clock bound
-# (45 s to update, 140 s to install; three attempts fit the 10-minute step)
-# and a stalled one is abandoned and retried; a healthy install takes well
-# under a minute of download.
+# the connection stays open. On 2026-11-10 that used a whole step timeout four
+# times in one day, across three jobs (once 16 minutes inside a single
+# download), and each time the only cure was re-running the job by hand.
 #
-# Exit: 0 installed, 1 every attempt failed.
+# So the network part is separated from the rest. Each attempt runs the index
+# update and a download-only install under a wall-clock bound; a stalled one
+# is abandoned and retried, which is safe because nothing has been unpacked.
+# Only when every package is in the local archive does the real install run,
+# with no network left to stall on.
+#
+# Worst case with the defaults: three stalled attempts (40 s update + 120 s
+# download, plus 10 s kill grace each), 15 s of pauses, then a 240 s install:
+# about 13.5 minutes. Callers give the step 15 minutes, and
+# test_ci_toolchain_install.py recomputes this from the caps below.
+#
+# Needs GNU timeout (the workflows install it first: uutils `timeout` leaves a
+# stalled child running).
+#
+# Exit: 0 installed, 1 every download attempt failed or the install failed.
 set -uo pipefail
 
 [ $# -gt 0 ] || { echo "usage: apt-install.sh <package>..." >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30)
 ATTEMPTS="${APT_INSTALL_ATTEMPTS:-3}"
-UPDATE_CAP="${APT_UPDATE_SECONDS:-45}"
-INSTALL_CAP="${APT_INSTALL_SECONDS:-140}"
+UPDATE_CAP="${APT_UPDATE_SECONDS:-40}"
+DOWNLOAD_CAP="${APT_DOWNLOAD_SECONDS:-120}"
+INSTALL_CAP="${APT_INSTALL_SECONDS:-240}"
 
 for n in $(seq 1 "$ATTEMPTS"); do
-    echo "apt-install: attempt $n of $ATTEMPTS: $*"
+    echo "apt-install: download attempt $n of $ATTEMPTS: $*"
     # -k: a stalled apt that ignores TERM is killed, not waited on.
     if sudo -E timeout -k 10 "$UPDATE_CAP" apt-get update "${OPTS[@]}" \
-        && sudo -E timeout -k 10 "$INSTALL_CAP" apt-get install -y "${OPTS[@]}" "$@"; then
-        exit 0
+        && sudo -E timeout -k 10 "$DOWNLOAD_CAP" apt-get install -y --download-only "${OPTS[@]}" "$@"; then
+        echo "apt-install: packages downloaded; installing"
+        if sudo -E timeout -k 10 "$INSTALL_CAP" apt-get install -y --no-download "${OPTS[@]}" "$@"; then
+            exit 0
+        fi
+        echo "apt-install: the install failed after a complete download: $*" >&2
+        exit 1
     fi
-    echo "apt-install: attempt $n failed or stalled" >&2
-    # An interrupted install can leave dpkg half-configured and its lock held.
-    sudo killall -q apt-get dpkg 2>/dev/null || true
-    sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock
-    sudo dpkg --configure -a || true
-    sleep $((n * 5))
+    echo "apt-install: download attempt $n failed or stalled" >&2
+    sudo killall -q apt-get 2>/dev/null || true
+    sudo rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock
+    [ "$n" -lt "$ATTEMPTS" ] && sleep $((n * 5))
 done
-echo "apt-install: every attempt failed: $*" >&2
+echo "apt-install: every download attempt failed: $*" >&2
 exit 1

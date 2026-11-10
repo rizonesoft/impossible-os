@@ -20,10 +20,53 @@ def test_no_removed_tooling_and_the_toolchain_is_still_installed():
         assert "apt-key" not in text, name
         for pkg in ("clang-", "lld-"):
             assert pkg in text, (name, pkg)
-        assert "apt-get install" in text, name
-        step = re.search(r"- name: Install LLVM.*?(?=\n\s*- name:|\n\s*#\s*──|\Z)", text, re.S).group(0)
-        assert re.search(r"^\s*timeout-minutes: \d+$", step, re.M), (name, "a hang must fail fast")
-        assert "-qq" not in step.split("apt-get install")[1].split("\\")[0], (name, "keep apt output in the log")
+
+
+def _steps(text):
+    return re.findall(r"\n\s*- name: .*?(?=\n\s*- name:|\Z)", text, re.S)
+
+
+def test_every_install_is_bounded_and_retried():
+    """A stalled mirror used whole step timeouts four times on 2026-11-10. Every package install
+    goes through scripts/ci/apt-install.sh (bounded download, retried) inside a step with its own
+    timeout. The one exception installs GNU timeout itself, which the helper needs."""
+    for path in sorted((REPO / ".github/workflows").glob("*.yml")):
+        for step in _steps(path.read_text()):
+            head = step.strip().splitlines()[0]
+            if "apt-get install" in step:
+                assert "name: Use GNU coreutils" in head, (path.name, head, "use scripts/ci/apt-install.sh")
+                assert "-qq" not in step, (path.name, head, "keep apt output in the log")
+            if "apt-get install" in step or "apt-install.sh" in step:
+                assert re.search(r"^\s*timeout-minutes: \d+$", step, re.M), (path.name, head, "a hang must fail fast")
+    helper = (REPO / "scripts/ci/apt-install.sh").read_text()
+    assert "--download-only" in helper and "--no-download" in helper and "timeout -k" in helper
+
+
+def _helper_worst_case_seconds():
+    helper = (REPO / "scripts/ci/apt-install.sh").read_text()
+    cap = {k: int(v) for k, v in re.findall(r"\$\{APT_(\w+):-(\d+)\}", helper)}
+    grace = int(re.search(r"timeout -k (\d+)", helper).group(1))
+    n = cap["INSTALL_ATTEMPTS"]
+    pauses = sum(i * 5 for i in range(1, n))
+    return n * (cap["UPDATE_SECONDS"] + cap["DOWNLOAD_SECONDS"] + 2 * grace) + pauses + cap["INSTALL_SECONDS"] + grace
+
+
+def test_the_helper_worst_case_fits_every_step_and_job():
+    """A step timeout shorter than the helper's worst case cancels it mid-recovery (Codex,
+    2026-11-10): two stalls then a good download, killed during the install."""
+    worst = _helper_worst_case_seconds()
+    for path in sorted((REPO / ".github/workflows").glob("*.yml")):
+        text = path.read_text()
+        for job in re.split(r"\n(?=  [A-Za-z0-9_-]+:\n)", text.split("\njobs:\n", 1)[-1]):
+            budgets = [int(re.search(r"^\s*timeout-minutes: (\d+)$", s, re.M).group(1))
+                       for s in _steps(job) if "apt-install.sh" in s]
+            if not budgets:
+                continue
+            name = job.strip().splitlines()[0]
+            for b in budgets:
+                assert b * 60 >= worst, (path.name, name, b, worst)
+            job_budget = int(re.search(r"^    timeout-minutes: (\d+)$", job, re.M).group(1))
+            assert job_budget >= sum(budgets) + 5, (path.name, name, job_budget, budgets)
 
 
 def test_every_toolchain_job_uses_gnu_coreutils_first():
@@ -59,6 +102,8 @@ def test_no_workflow_follows_a_floating_image():
 
 if __name__ == "__main__":
     test_no_removed_tooling_and_the_toolchain_is_still_installed()
+    test_every_install_is_bounded_and_retried()
+    test_the_helper_worst_case_fits_every_step_and_job()
     test_no_workflow_follows_a_floating_image()
     test_every_toolchain_job_uses_gnu_coreutils_first()
     test_setup_verify_refuses_a_non_gnu_timeout()

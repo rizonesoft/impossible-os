@@ -52,7 +52,7 @@ jobs:
   visual-regression:
     name: Visual regression (TCG)
     runs-on: ubuntu-26.04
-    timeout-minutes: 25
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
@@ -78,12 +78,12 @@ jobs:
       - name: Install LLVM ${{ env.LLVM_VERSION }}
         # A hung apt once used this job's whole 40 minutes with nothing in the log, and
         # GitHub reports that as `cancelled`. Fail fast and show what apt was doing.
-        timeout-minutes: 10
+        timeout-minutes: 15
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo -E apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
-          sudo -E apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+          # Bounded download with retry, then install (scripts/ci/apt-install.sh).
+          bash scripts/ci/apt-install.sh \
             clang-${{ env.LLVM_VERSION }} \
             lld-${{ env.LLVM_VERSION }} \
             llvm-${{ env.LLVM_VERSION }}
@@ -91,9 +91,9 @@ jobs:
       # imagemagick + netcat are the visual-regression-specific extras;
       # everything else is needed for the build step.
       - name: Install dependencies
+        timeout-minutes: 15
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
+          bash scripts/ci/apt-install.sh \
             gawk \
             make \
             nasm \
