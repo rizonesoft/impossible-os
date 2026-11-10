@@ -52,7 +52,7 @@ int virtio_blk_read(uint64_t lba, uint32_t count, void *buffer)
         /* IOERR -- retry */
         if (retry < VIRTIO_BLK_MAX_RETRIES) {
             klog(LOG_DEBUG, "virtio", "Read: I/O error, retry %u/%u (lba=%u)",
-                   (uint64_t)(retry + 1), (uint64_t)VIRTIO_BLK_MAX_RETRIES,
+                   ((uint64_t)retry + 1), (uint64_t)VIRTIO_BLK_MAX_RETRIES,
                    (uint64_t)lba);
         }
     }
@@ -90,7 +90,7 @@ int virtio_blk_write(uint64_t lba, uint32_t count, const void *buffer)
         }
         if (retry < VIRTIO_BLK_MAX_RETRIES) {
             klog(LOG_DEBUG, "virtio", "Write: I/O error, retry %u/%u (lba=%u)",
-                   (uint64_t)(retry + 1), (uint64_t)VIRTIO_BLK_MAX_RETRIES,
+                   ((uint64_t)retry + 1), (uint64_t)VIRTIO_BLK_MAX_RETRIES,
                    (uint64_t)lba);
         }
     }

@@ -160,7 +160,7 @@ int ntfs_apply_fixup(uint8_t *buf, uint32_t record_size, uint16_t sector_size)
     if (usa_size_words != num_sectors + 1) {
         klog(LOG_DEBUG, "ntfs",
              "FIXUP: USA size mismatch (words=%u, expected %u)",
-             (uint64_t)usa_size_words, (uint64_t)(num_sectors + 1));
+             (uint64_t)usa_size_words, ((uint64_t)num_sectors + 1));
         return NTFS_ERR_FIXUP;
     }
 
@@ -234,7 +234,7 @@ int ntfs_regenerate_fixup(uint8_t *buf, uint32_t record_size,
     if (usa_size_words != num_sectors + 1) {
         klog(LOG_DEBUG, "ntfs",
              "REGEN FIXUP: USA size mismatch (words=%u, expected %u)",
-             (uint64_t)usa_size_words, (uint64_t)(num_sectors + 1));
+             (uint64_t)usa_size_words, ((uint64_t)num_sectors + 1));
         return NTFS_ERR_FIXUP;
     }
 

@@ -428,7 +428,8 @@ void ixfs_test_performance(void)
 
                 vfs_close(sfile);
             }
-            c_root->ops->unlink(c_root, "_sparse_test.bin");
+            if (c_root && c_root->ops && c_root->ops->unlink)
+                c_root->ops->unlink(c_root, "_sparse_test.bin");
         } else {
             klog(LOG_DEBUG, "TEST", "Sparse: cannot create test file");
         }

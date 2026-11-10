@@ -523,7 +523,7 @@ void seed_file_phase3(void)
                      "-- replay-rejected next boot)");
             klog(LOG_INFO, "entropy",
                  "seed file: rotated (counter=%llu)",
-                 (unsigned long long)(base + 1));
+                 ((unsigned long long)base + 1));
         } else {
             /* Unlink result intentionally ignored: absent on first
              * boot, and a torn canonical rewrite is caught by the MAC
@@ -536,7 +536,7 @@ void seed_file_phase3(void)
                          "-- same counter both names)");
                 klog(LOG_INFO, "entropy",
                      "seed file: rotated (counter=%llu)",
-                     (unsigned long long)(base + 1));
+                     ((unsigned long long)base + 1));
             } else {
                 klog(LOG_WARN, "entropy",
                      "seed file: canonical rewrite failed -- partner "

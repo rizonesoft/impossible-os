@@ -94,8 +94,42 @@ static void test_smbios_copy_cap_bound(void)
     TEST_ASSERT_EQ(pages_for_4097, 2u, "4097 bytes -> 2 pages");
 }
 
+/* Defined in smbios.c for the test build only. */
+void smbios_u32_to_str_for_test(uint32_t v, char *buf, uint32_t bufsize);
+
+/* The formatter never writes past the size it was given: nothing at all for
+ * size 0, only a terminator for size 1, and a truncated number otherwise. */
+static void test_smbios_u32_to_str_bounds(void)
+{
+    char b[8];
+    uint32_t i;
+
+    for (i = 0; i < 8u; i++) b[i] = (char)0x5A;
+    smbios_u32_to_str_for_test(0u, b, 0u);
+    smbios_u32_to_str_for_test(7u, b, 0u);
+    TEST_ASSERT(b[0] == (char)0x5A && b[1] == (char)0x5A, "size 0 writes nothing");
+
+    smbios_u32_to_str_for_test(0u, b, 1u);
+    TEST_ASSERT(b[0] == '\0' && b[1] == (char)0x5A, "zero into size 1 is only a terminator");
+
+    for (i = 0; i < 8u; i++) b[i] = (char)0x5A;
+    smbios_u32_to_str_for_test(0u, b, 2u);
+    TEST_ASSERT(b[0] == '0' && b[1] == '\0' && b[2] == (char)0x5A, "zero into size 2 is \"0\"");
+
+    for (i = 0; i < 8u; i++) b[i] = (char)0x5A;
+    smbios_u32_to_str_for_test(4294967295u, b, 4u);
+    TEST_ASSERT(b[0] == '4' && b[1] == '2' && b[2] == '9' && b[3] == '\0' && b[4] == (char)0x5A,
+                "a long number is cut to the buffer");
+
+    for (i = 0; i < 8u; i++) b[i] = (char)0x5A;
+    smbios_u32_to_str_for_test(305u, b, 8u);
+    TEST_ASSERT(b[0] == '3' && b[1] == '0' && b[2] == '5' && b[3] == '\0', "a number that fits is whole");
+}
+
 void test_register_smbios(void)
 {
+    test_suite_register_cat("SMBIOS: decimal formatter respects its buffer",
+        test_smbios_u32_to_str_bounds, TEST_CAT_BOOT);
     test_suite_register_cat("SMBIOS: rank3 typical 4-entry profile",
         test_smbios_rank3_typical, TEST_CAT_BOOT);
     test_suite_register_cat("SMBIOS: rank3 empty profile -> sentinel",

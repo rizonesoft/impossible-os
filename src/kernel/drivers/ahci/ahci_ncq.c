@@ -115,7 +115,8 @@ int ncq_sync_rw(struct ahci_port *p, uint64_t lba, uint32_t count,
         }
 
         p->tags_completed &= ~(1U << tag);
-        status = p->tag_status[tag];
+        /* tag_status holds 0 or -1 in an int8_t; the sign extension is the point. */
+        status = p->tag_status[tag]; /* NOLINT(bugprone-signed-char-misuse) signed status code, not a character */
         ncq_free_tag(p, tag);
 
         if (status == 0)

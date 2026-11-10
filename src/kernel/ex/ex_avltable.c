@@ -54,6 +54,9 @@ static inline int32_t avl_balance(node_t *n)
 static node_t *avl_rotate_left(node_t *x)
 {
     node_t *y = x->RightChild;
+    /* Called only for a right-heavy x (balance > 1), so y exists; the analyzer
+     * does not relate the cached Height to the child pointers. */
+    /* NOLINTNEXTLINE(clang-analyzer-core.NullDereference) balance > 1 implies a right child */
     node_t *t2 = y->LeftChild;
 
     y->LeftChild = x;
@@ -69,6 +72,7 @@ static node_t *avl_rotate_left(node_t *x)
 static node_t *avl_rotate_right(node_t *x)
 {
     node_t *y = x->LeftChild;
+    /* NOLINTNEXTLINE(clang-analyzer-core.NullDereference) balance < -1 implies a left child */
     node_t *t2 = y->RightChild;
 
     y->RightChild = x;

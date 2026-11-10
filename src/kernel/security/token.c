@@ -544,7 +544,7 @@ int32_t NtQueryInformationToken(const ACCESS_TOKEN *token,
     case TokenGroups: {
         needed = sizeof(uint32_t) + token->GroupCount * sizeof(SID_AND_ATTRIBUTES);
         if (ret_len) *ret_len = needed;
-        if (buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
+        if (!buf || buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
         *(uint32_t *)buf = token->GroupCount;
         memcpy((uint8_t *)buf + sizeof(uint32_t), token->Groups,
                token->GroupCount * sizeof(SID_AND_ATTRIBUTES));
@@ -554,7 +554,7 @@ int32_t NtQueryInformationToken(const ACCESS_TOKEN *token,
     case TokenPrivileges: {
         needed = sizeof(uint32_t) + token->PrivilegeCount * sizeof(LUID_AND_ATTRIBUTES);
         if (ret_len) *ret_len = needed;
-        if (buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
+        if (!buf || buf_len < needed) return STATUS_BUFFER_TOO_SMALL;
         *(uint32_t *)buf = token->PrivilegeCount;
         memcpy((uint8_t *)buf + sizeof(uint32_t), token->Privileges,
                token->PrivilegeCount * sizeof(LUID_AND_ATTRIBUTES));

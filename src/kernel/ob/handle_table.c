@@ -247,7 +247,7 @@ found:
         struct task *cur = task_current();
         klog(LOG_DEBUG, "ob", "HANDLE CREATE PID=%u H=0x%x obj=%p type=%s",
              cur ? (uint64_t)cur->pid : 0,
-             (uint64_t)(i * 4), object,
+             ((uint64_t)i * 4), object,
              hdr->type && hdr->type->name ? hdr->type->name : "?");
     }
 
@@ -454,7 +454,7 @@ int ob_handle_table_inherit(HANDLE_TABLE *parent, HANDLE_TABLE *child)
          * not the child owner. */
         if (g_ob_handle_trace) {
             klog(LOG_DEBUG, "ob", "HANDLE INHERIT H=0x%x obj=%p type=%s",
-                 (uint64_t)(i * 4), obj,
+                 ((uint64_t)i * 4), obj,
                  hdr->type && hdr->type->name ? hdr->type->name : "?");
         }
 

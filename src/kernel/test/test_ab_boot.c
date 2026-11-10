@@ -122,6 +122,14 @@ static void test_ab_boot_select_newest_both_invalid(void)
     a.magic = 0u;
     b.magic = 0u;
     TEST_ASSERT_EQ((uint64_t)ab_boot_meta_select_newest(&a, &b, &win), 0u, "both invalid -> 0");
+    /* An absent copy is an invalid copy: never dereferenced, never chosen. */
+    ab_make_valid(&b, 7u);
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_select_newest((const struct ab_boot_metadata *)0, &b, &win), 1u,
+                   "absent a, valid b -> 1");
+    TEST_ASSERT(win == &b, "absent a -> b wins");
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_select_newest((const struct ab_boot_metadata *)0,
+                                                        (const struct ab_boot_metadata *)0, &win), 0u,
+                   "both absent -> 0");
 }
 
 static void test_ab_boot_validate_rejects_oob_tries(void)

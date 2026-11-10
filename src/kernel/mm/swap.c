@@ -238,7 +238,7 @@ void swap_init(uint32_t num_slots)
     swap_inited = 1;
 
     klog(LOG_INFO, "swap", "Initialized: %u slots (%u KiB) -- pagefile.sys",
-           (uint64_t)num_slots, (uint64_t)(num_slots * 4));
+           (uint64_t)num_slots, ((uint64_t)num_slots * 4));
 }
 
 int swap_out(uintptr_t virt_addr)

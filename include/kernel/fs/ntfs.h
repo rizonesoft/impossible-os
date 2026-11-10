@@ -333,7 +333,8 @@ struct ntfs_attrlist_entry {
  * out: filled with parsed header of found attribute.
  * ext_record: if the attribute was found in an extension record, this is
  *   set to the PMM-allocated buffer. Caller MUST call pmm_free_frame()
- *   on it when done. Set to 0 if attribute found in base record.
+ *   on it when done. Set to 0 if attribute found in base record. May be
+ *   NULL: the search then covers the base record only.
  * ext_hdr: if ext_record is set, filled with the extension record header.
  *
  * Returns raw pointer to the attribute, or NULL if not found anywhere.

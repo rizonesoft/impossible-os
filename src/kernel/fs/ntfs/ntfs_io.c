@@ -335,13 +335,12 @@ static int ntfs_parse_index_entry(const uint8_t *entry,
             }
             out->fn.name[nlen] = '\0';
         } else {
-            out->fn.name[0] = '\0';
-            out->fn.name_length = 0;
+            /* Stream too short for a $FILE_NAME: no field may stay unwritten. */
+            ntfs_memset(&out->fn, 0, sizeof out->fn);
         }
     } else {
         /* Sentinel entry -- clear filename */
-        out->fn.name[0] = '\0';
-        out->fn.name_length = 0;
+        ntfs_memset(&out->fn, 0, sizeof out->fn);
     }
 
     return 0;

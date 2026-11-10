@@ -620,7 +620,7 @@ static void smbios_dump_top3(const struct smbios_type_profile *prof,
         if (top_idx[i] == 0xFFFFFFFFu) break;
         klog(LOG_INFO, "SMBIOS",
              "profile: top%d type=%u count=%u total=%u ms",
-             (uint64_t)(i + 1),
+             ((uint64_t)i + 1),
              (uint64_t)top_idx[i],
              (uint64_t)prof[top_idx[i]].count,
              (uint64_t)boot_timing_tsc_delta_ms(top_ticks[i]));
@@ -1041,8 +1041,13 @@ static void u32_to_str(uint32_t v, char *buf, uint32_t bufsize)
 {
     char tmp[12];
     uint32_t pos = 10;
+    if (bufsize == 0) return;
     tmp[11] = '\0';
-    if (v == 0) { buf[0] = '0'; buf[1] = '\0'; return; }
+    if (v == 0) {
+        if (bufsize >= 2) { buf[0] = '0'; buf[1] = '\0'; }
+        else buf[0] = '\0';
+        return;
+    }
     while (v > 0 && pos > 0) { tmp[pos--] = (char)('0' + v % 10); v /= 10; }
     uint32_t len = 11 - pos - 1;
     if (len >= bufsize) len = bufsize - 1;
@@ -1050,6 +1055,14 @@ static void u32_to_str(uint32_t v, char *buf, uint32_t bufsize)
     for (i = 0; i < len; i++) buf[i] = tmp[pos + 1 + i];
     buf[len] = '\0';
 }
+
+#ifdef KERNEL_TESTS
+/* Test seam: the decimal formatter is a pure function of its arguments. */
+void smbios_u32_to_str_for_test(uint32_t v, char *buf, uint32_t bufsize)
+{
+    u32_to_str(v, buf, bufsize);
+}
+#endif
 
 /* Human-readable name for a SMBIOS Type 16 error-correction code. */
 static const char *ecc_name(uint8_t code)

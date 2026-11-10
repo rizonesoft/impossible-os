@@ -3057,10 +3057,10 @@ void registry_populate_defaults(void)
             uint32_t eax, ebx, ecx, edx;
             reg_cpuid(0, &eax, &ebx, &ecx, &edx);
             {
-                uint32_t *v32 = (uint32_t *)vendor;
-                v32[0] = ebx;
-                v32[1] = edx;
-                v32[2] = ecx;
+                uint32_t r[3] = { ebx, edx, ecx };
+                uint32_t b;
+                for (b = 0; b < 12u; b++)
+                    vendor[b] = (char)(r[b / 4u] >> (8u * (b % 4u)));
             }
             vendor[12] = '\0';
             RegSetString(hKey, "Vendor", vendor);

@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/build.sh,scripts/setup.sh,scripts/ci/check-compile-cache.py,tools/fuzz/run.sh,ruff.toml,scripts/static-analysis.sh,scripts/test.sh,scripts/lint.sh,scripts/debug.sh,scripts/run-qemu.sh reviewed=2026-11-10 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/build.sh,scripts/setup.sh,scripts/ci/check-compile-cache.py,tools/fuzz/run.sh,ruff.toml,scripts/static-analysis.sh,scripts/gen-compile-db.py,scripts/hooks/static-analysis-gate.sh,scripts/test.sh,scripts/lint.sh,scripts/debug.sh,scripts/run-qemu.sh reviewed=2026-11-11 -->
 # Development Tooling & Automation
 
 > Complete build system, test framework, asset pipeline, and development utilities for Impossible OS.
@@ -502,12 +502,21 @@ The set is what fits below the user base. Measured 2026-11-10 with clean builds:
 ### Static Analysis
 
 ```bash
-bash scripts/static-analysis.sh          # sources changed against origin/main
-bash scripts/static-analysis.sh --all    # whole tree, about 10 minutes
-bash scripts/static-analysis.sh <file>   # named sources
+bash scripts/static-analysis.sh                          # sources changed against origin/main
+bash scripts/static-analysis.sh --all                    # whole tree, about 10 minutes
+bash scripts/static-analysis.sh <file>                   # named sources
+bash scripts/static-analysis.sh --commit <rev> <file>    # the named sources as they are in that commit
 ```
 
-It runs `clang-tidy-19` with the checks in `.clang-tidy` (the Clang static analyzer's core checks and the bugprone checks that name a defect class; no style checks) against `compile_commands.json`, which a clean build writes. Test sources are skipped unless `--with-tests` is given. It is not a gate yet: the whole-tree findings in production code are being triaged first, tracked in the [developer tooling roadmap](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md).
+It runs `clang-tidy-19` with the checks in `.clang-tidy`: the Clang static analyzer's core checks and the bugprone checks that name a defect class, no style checks. It covers the kernel, the desktop, the kernel libc and the UEFI loader. Test sources are skipped unless `--with-tests` is given, and vendored code (`src/libs/`, `src/kernel/acpica/`) is always skipped. Exit 0 means no findings, 1 findings, 2 that the analysis could not run.
+
+The whole tree is clean, and stays clean: a finding is fixed, or the line carries `NOLINT(<check>)` with the reason the code is right. Four lines carry one (two AVL rotations whose balance invariant the analyzer cannot follow, a signed status byte, and `%hhd`), plus the loader's byte-wise GUID compare.
+
+**The compile database is derived, not recorded.** `scripts/gen-compile-db.py` reads the compile commands from `make -n -B` in about a second and writes `build/static-analysis/compile_commands.json` on every run. Until 2026-11-11 the analysis read the root `compile_commands.json` that `bear` records during a clean kernel build, which never held the loader (built by a later step outside `bear`), the release-only sources, or a file added since the last clean build, so none of those was ever analysed. A source under `src/` that the build does not compile is now a setup failure naming the file. The root file is still what clangd reads.
+
+**The pre-push gate.** `.githooks/pre-push` calls `scripts/hooks/static-analysis-gate.sh` for each pushed ref. When the push adds or changes kernel or loader C sources it analyses those sources with `--commit`, and refuses the push on a finding or when the analysis cannot run. `--commit` reads the sources, the headers, `.clang-tidy` and the Makefiles from a snapshot of the pushed commit and derives the compile commands from that snapshot, so nothing uncommitted in the checkout can hide a defect in the commit. Only the headers a build generates are borrowed from the checkout, so the tree must have been built once. The comparison base is what the pushed remote already holds: the ref's old id, or for a new ref the merge base with that remote's own `main`, or nothing at all when that is unknown (every source is then analysed). A commit that tracks a symlink is refused, since the repository tracks none and one could point the analysis outside the commit. Several refs at one commit in a push are analysed once. A push that changes no such source pays nothing. `SKIP_STATIC_ANALYSIS=1 git push` overrides it for one push and prints that it did.
+
+The loader's `efi_memcpy` has a plain C body under `__clang_analyzer__` only: the analyzer does not see the store an inline `rep movsb` makes, and without the model every buffer the loader copies reads as uninitialised.
 
 > [!NOTE]
 > Generated headers (`os_logo.h`, `bsod_icon.h`, `boot_splash_font_data.h`) use order-only prerequisites (`| $(GENERATED_HDRS)`) to prevent races on first clean build.

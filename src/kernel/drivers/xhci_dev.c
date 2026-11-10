@@ -1795,6 +1795,12 @@ static int hid_identify_counted(struct xhci_controller *hc,
         return -1;
     }
 
+    /* Configuring the endpoint needs the controller. The classifier above is
+     * also run without one (xhci_hid_test_identify), and a well-formed
+     * descriptor must stop here rather than reach ctx_size(NULL). */
+    if (!hc)
+        return -1;
+
     /* ---- Allocate Transfer Ring for the Interrupt-IN endpoint ---- */
     if (ep0_ring_init(&dev->int_in_ring) != 0) {
         klog(LOG_ERROR, "usb-hid",

@@ -79,7 +79,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 | 💎  |  12   | Enforce required-tool version floors in `--verify`    | §1, §2         |  [x]   |
 | 💎  |  13   | Duplicate-recipe sweep in the root Makefile           | §3             |  [/]   |
 | 💎  |  14   | Defect-finding tools: fuzzers, UBSan, static analysis | §3, §7         |  [x]   |
-| 💎  |  15   | Static-analysis triage and changed-file gate          | §14            |  [ ]   |
+| 💎  |  15   | Static-analysis triage and changed-file gate          | §14            |  [x]   |
 | 💎  |  16   | Fuzz targets for the remaining untrusted parsers      | §14            |  [ ]   |
 | ⭐  |  17   | Shard the todo-graph build suite                      | §7, §14        |  [ ]   |
 
@@ -494,12 +494,18 @@ Split 2026-11-10: the analyzer triage, the remaining fuzz targets and the suite 
 ## 15. Static-Analysis Triage and Changed-File Gate
 > **Spawned-by:** §14 (split)
 
-- [ ] Triage every production finding of `bash scripts/static-analysis.sh --all`: fix the defect, or carry a `NOLINT` naming the check and the reason
-- [ ] `bash scripts/static-analysis.sh --all` exits 0 on the tree
-- [ ] `.githooks/pre-push` runs the changed-file analysis when the push touches kernel or loader C sources, and refuses on a finding
-- [ ] `scripts/test-tooling.sh` asserts the gate fires on a fixture finding and stays silent on a clean change
+- [x] Triage every production finding of `bash scripts/static-analysis.sh --all`: fix the defect, or carry a `NOLINT` naming the check and the reason
+  - 49 findings: 44 fixed in the code, 5 lines carry a reasoned `NOLINT`.
+- [x] `bash scripts/static-analysis.sh --all` exits 0 on the tree
+- [x] `.githooks/pre-push` runs the changed-file analysis when the push touches kernel or loader C sources, and refuses on a finding
+  - `scripts/hooks/static-analysis-gate.sh` analyses the pushed commit's own bytes (`--commit`); a missing analyzer refuses.
+- [x] `scripts/test-tooling.sh` asserts the gate fires on a fixture finding and stays silent on a clean change
+- [x] The compile database is derived from a dry run of the build (`scripts/gen-compile-db.py`), so the loader and release-only sources are analysed
+  - The `bear` database never held them; a source the build does not compile is a setup failure.
 
 **Test checkpoint:** `bash scripts/static-analysis.sh --all` prints `no findings`; a push whose diff adds a division by a zero constant to a kernel source is refused by the pre-push hook, naming the file and line.
+
+> **Test runner:** `bash scripts/test-tooling.sh` (group `[static-analysis gate]`, 20 assertions); kernel regressions in `make test-fs` (`ntfs: index entry ...`), `make test-storage` (`usb-hid`) and `make test-boot` (`ab_boot`).
 
 ---
 

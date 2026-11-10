@@ -17,8 +17,8 @@
 /* ARCH: x86-64 -- cmpxchg16b; will move to arch/x86_64/ during the ARM port.
  *
  * Atomic 16-byte double-CAS. If the 16 bytes at `dst` equal {exp_lo, exp_hi},
- * store {des_lo, des_hi} and return true. Otherwise load the current value into
- * out_lo and out_hi and return false. `dst` MUST be 16-byte aligned.
+ * store {des_lo, des_hi} and return true. Otherwise return false. out_lo and
+ * out_hi always receive the value the list head held before the operation. `dst` MUST be 16-byte aligned.
  *
  * cmpxchg16b: compares RDX:RAX with m128; on equal sets m128 = RCX:RBX (ZF=1),
  * else loads RDX:RAX = m128 (ZF=0). RBX is callee-saved; under -fno-pie (no GOT
@@ -37,7 +37,10 @@ static inline bool dcas16b(volatile void *dst,
           "=@ccz"(ok)
         : "b"(des_lo), "c"(des_hi)
         : "memory", "cc");
-    if (!ok) { *out_lo = rax; *out_hi = rdx; }
+    /* Written on both outcomes: on success RDX:RAX still holds the expected
+     * pair, so the outputs are never left indeterminate. */
+    *out_lo = rax;
+    *out_hi = rdx;
     return ok;
 }
 

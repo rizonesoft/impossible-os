@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     509 |     402520 |
-| **Headers** (`.h`)    |     360 |      84127 |
+| **C sources** (`.c`)  |     510 |     402809 |
+| **Headers** (`.h`)    |     360 |      84128 |
 | **Assembly** (`.asm`) |      11 |       1388 |
-| **Subtotal**          | **880** | **488035** |
+| **Subtotal**          | **881** | **488325** |
 
 ## SDK Tools
 
@@ -32,37 +32,37 @@
 
 |                                   |   Files |      Lines |
 | --------------------------------- | ------: | ---------: |
-| **Shell scripts** (`.sh`)         |     108 |     100074 |
+| **Shell scripts** (`.sh`)         |     109 |     100492 |
 | **Batch scripts** (`.bat`)        |      74 |       1054 |
 | **PowerShell** (`.ps1`)           |      18 |       3610 |
-| **Python** (`.py`)                |     284 |     116285 |
+| **Python** (`.py`)                |     285 |     116496 |
 | **JavaScript** (`.js`)            |       2 |        858 |
 | **Include fragments** (`.inc`)    |       7 |       3249 |
 | **Makefile**                      |       3 |       2237 |
 | **Linker scripts** (`.ld`/`.lds`) |       3 |        200 |
-| **Subtotal**                      | **499** | **227567** |
+| **Subtotal**                      | **501** | **228196** |
 
 ## Documentation & Project Metadata
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     686 |     155543 |
-| **JSON** (`.json`)          |      24 |       3114 |
+| **Markdown** (`.md`)        |     686 |     155559 |
+| **JSON** (`.json`)          |      24 |       3115 |
 | **YAML** (`.yml`/`.yaml`)   |      17 |       2454 |
 | **HTML** (`.html`)          |      22 |       3479 |
 | **CSS** (`.css`)            |       1 |        491 |
 | **Config** (`.cfg`/`.conf`) |       1 |        105 |
-| **Subtotal**                | **751** | **165186** |
+| **Subtotal**                | **751** | **165203** |
 
 ## Grand Total
 
 |                                                      |    Files |       Lines |
 | ---------------------------------------------------- | -------: | ----------: |
-| **Core code + tooling**                              | **1386** |  **717321** |
-| **Supporting text + metadata**                       |  **751** |  **165186** |
-| **Written here**                                     | **2137** |  **882507** |
+| **Core code + tooling**                              | **1389** |  **718240** |
+| **Supporting text + metadata**                       |  **751** |  **165203** |
+| **Written here**                                     | **2140** |  **883443** |
 | **Vendored ([third-party](src/libs/PROVENANCE.md))** |      590 |      476296 |
-| **All lines in tree**                                | **2727** | **1358803** |
+| **All lines in tree**                                | **2730** | **1359739** |
 
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,15 +77,15 @@
 
 |                       |         Linux |     Windows |        Impossible OS |
 | --------------------- | ------------: | ----------: | -------------------: |
-| **All lines in tree** |   ~28,000,000 | ~50,000,000 |            1,358,803 |
+| **All lines in tree** |   ~28,000,000 | ~50,000,000 |            1,359,739 |
 | **Developers**        | ~1,000 active | ~5,000 peak |                    1 |
 | **Time span**         |      33 years |    40 years | 8 month(s), 9 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 717,321 lines
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 718,240 lines
 > written here imply **105 developers** working for **8 month(s), 9 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-11-11 00:26 · commit `82a1ed276`*
+*Last updated: 2026-11-11 01:20 · commit `d4dfe1aba`*

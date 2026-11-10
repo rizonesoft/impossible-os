@@ -115,8 +115,8 @@ const uint8_t *ntfs_attr_find(const uint8_t *record,
             break;
 
         if (type == type_id) {
-            if (out)
-                ntfs_attr_parse(attr, out);
+            if (out && ntfs_attr_parse(attr, out) != NTFS_OK)
+                return NULL;
             return attr;
         }
 
@@ -164,8 +164,8 @@ const uint8_t *ntfs_attr_find_named(const uint8_t *record,
             uint16_t noff = ntfs_le16(attr + 0x0A);
 
             if (nlen > 0 && ntfs_name_match(attr + noff, nlen, name)) {
-                if (out)
-                    ntfs_attr_parse(attr, out);
+                if (out && ntfs_attr_parse(attr, out) != NTFS_OK)
+                    return NULL;
                 return attr;
             }
         }
@@ -409,6 +409,10 @@ const uint8_t *ntfs_attr_find_ext(struct ntfs_volume *vol,
                                   NTFS_ATTR_ATTRIBUTE_LIST, &al_ah);
         if (!al_attr)
             return NULL;  /* No $ATTRIBUTE_LIST -- attribute doesn't exist */
+        /* An extension-record hit hands the caller a frame to free through
+         * ext_record; without it the hit cannot be returned. */
+        if (!ext_record)
+            return NULL;
 
         {
             const uint8_t *al_data;
@@ -468,6 +472,8 @@ const uint8_t *ntfs_attr_find_named_ext(struct ntfs_volume *vol,
                                   NTFS_ATTR_ATTRIBUTE_LIST, &al_ah);
         if (!al_attr)
             return NULL;
+        if (!ext_record)
+            return NULL;   /* see ntfs_attr_find_ext */
 
         {
             const uint8_t *al_data;

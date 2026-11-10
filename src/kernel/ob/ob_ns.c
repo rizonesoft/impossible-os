@@ -277,6 +277,9 @@ static void *obp_lookup_directory_d(const char *path, const char **remaining,
          * types we transfer the ref into `cur_dir`. */
         void *entry_object = NULL;
         const OBJECT_TYPE *entry_type = NULL;
+        /* Decided once, under the directory lock, together with the copy of the
+         * target: every later symlink test reads this, never the type again. */
+        bool is_symlink = false;
         char sym_target[OB_SYMLINK_MAX];
 
         /* Find end of this path component */
@@ -302,6 +305,7 @@ static void *obp_lookup_directory_d(const char *path, const char **remaining,
                     (OBJECT_SYMBOLIC_LINK *)entry_object;
                 strncpy(sym_target, sl->target, OB_SYMLINK_MAX - 1);
                 sym_target[OB_SYMLINK_MAX - 1] = '\0';
+                is_symlink = true;
             }
         }
         spin_unlock_irqrestore(&dir->lock, irqf);
@@ -317,7 +321,7 @@ static void *obp_lookup_directory_d(const char *path, const char **remaining,
          * directory and return remaining = segment name so
          * ObLookupObjectByName can open the symlink object
          * (NtOpenSymbolicLinkObject). */
-        if (entry_type == ObpSymlinkType) {
+        if (is_symlink) {
             if (*p == '\0') {
                 ObDereferenceObject(entry_object); /* drop symlink ref */
                 if (remaining) *remaining = seg_start;

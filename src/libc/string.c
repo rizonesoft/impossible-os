@@ -460,6 +460,8 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)
             else if (length == LEN_L || length == LEN_Z) v = (int64_t)va_arg(ap, long);
             else                      v = (int64_t)va_arg(ap, int);
             if (length == LEN_H) v = (int16_t)v;
+            /* %hhd prints the argument converted to signed char (C11 7.21.6.1). */
+            /* NOLINTNEXTLINE(bugprone-signed-char-misuse) %hhd is a signed char conversion by definition */
             if (length == LEN_HH) v = (int8_t)v;
 
             char tmp[20]; int n = 0; int neg = 0;

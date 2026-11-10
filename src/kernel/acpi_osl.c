@@ -286,9 +286,8 @@ ACPI_STATUS AcpiOsGetPhysicalAddress (void *LogicalAddress,
             uint8_t *end   = start + s_maps[i].pages * 0x1000ull;
             if ((uint8_t *)LogicalAddress >= start &&
                 (uint8_t *)LogicalAddress <  end) {
-                *PhysicalAddress = (ACPI_PHYSICAL_ADDRESS)
-                    (s_maps[i].phys_base +
-                     (uint64_t)((uint8_t *)LogicalAddress - start));
+                *PhysicalAddress = (ACPI_PHYSICAL_ADDRESS)s_maps[i].phys_base +
+                     (ACPI_PHYSICAL_ADDRESS)((uint8_t *)LogicalAddress - start);
                 st = AE_OK;
                 break;
             }

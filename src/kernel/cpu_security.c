@@ -1455,8 +1455,9 @@ void cpu_validate_ap_features(uint32_t cpu_id)
     /* Vendor string (leaf 0: EBX, EDX, ECX) + core type (leaf 0x1A). */
     cpuid_raw(0x00000000, 0, &max_leaf, &ebx, &ecx, &edx);
     {
-        uint32_t *v = (uint32_t *)vendor;
-        v[0] = ebx; v[1] = edx; v[2] = ecx;
+        uint32_t r[3] = { ebx, edx, ecx };
+        for (uint32_t b = 0; b < 12u; b++)
+            vendor[b] = (char)(r[b / 4u] >> (8u * (b % 4u)));
         vendor[12] = '\0';
     }
     if (max_leaf >= 0x1A) {

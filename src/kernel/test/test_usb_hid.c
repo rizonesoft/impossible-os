@@ -489,6 +489,16 @@ static void test_usb_hid_identify_attempts(void)
     TEST_ASSERT(rc != 0, "HID iface without endpoint is rejected");
     TEST_ASSERT_EQ(dev.is_hid, 0, "rejected device is not is_hid");
 
+    /* A complete boot keyboard, classified with no controller (this seam
+     * passes none): counted as an attempt and refused before any endpoint
+     * configuration, which would dereference the controller. */
+    TEST_ASSERT_EQ(hid_identify_delta(&dev, cfg, sizeof cfg, &rc), 1u,
+                   "well-formed keyboard without a controller is one attempt");
+    TEST_ASSERT(rc != 0, "well-formed keyboard without a controller is refused");
+    TEST_ASSERT_EQ(dev.is_hid, 0, "controller-less identify never sets is_hid");
+    TEST_ASSERT_EQ(dev.int_in_ring.phys, 0u,
+                   "controller-less identify allocates no transfer ring");
+
     cfg[22] = 4;                       /* keyboard endpoint below 8 bytes */
     TEST_ASSERT_EQ(hid_identify_delta(&dev, cfg, sizeof cfg, &rc), 1u,
                    "undersized keyboard EP is one attempt");

@@ -566,7 +566,7 @@ int ntfs_index_delete(struct ntfs_volume *vol,
         rc = NTFS_ERR_NOT_FOUND;
 
         /* Iterate VCNs */
-        for (vcn = 0; vcn < (uint64_t)(bm_data_len * 8); vcn++) {
+        for (vcn = 0; vcn < (uint64_t)bm_data_len * 8; vcn++) {
             uint64_t bi = vcn / 8;
             uint8_t  mask = (uint8_t)(1u << (vcn % 8));
             if (!(bm_data[bi] & mask)) continue;

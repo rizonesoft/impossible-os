@@ -703,7 +703,8 @@ int tpm2_parse_nv_public_full(const uint8_t *rsp, uint32_t len, uint32_t nv_inde
                               struct tpm_nv_public *out)
 {
     uint32_t poff, plen, base;
-    uint16_t pubsize, policy_len, i;
+    uint16_t pubsize, policy_len;
+    uint32_t i;
 
     /* TRANSACTIONAL: everything lands in a local first and is copied out only
      * once every check has passed. Filling `out` as we go left a rejected parse

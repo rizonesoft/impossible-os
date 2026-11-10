@@ -88,6 +88,19 @@ pushed_files() {
   done <<< "$STDIN_DATA"
 }
 
+# ---- Static-analysis gate ----------------------------------------------------
+# A push that adds or changes kernel or loader C sources has those sources
+# analysed as they are in the pushed commit, and is refused on a finding
+# (scripts/hooks/static-analysis-gate.sh). Costs nothing when no source changed.
+_sa_seen="$(mktemp -t static-analysis-seen.XXXXXX)" || exit 1
+trap 'rm -f "$_sa_seen"' EXIT
+while read -r _salref _saloid _sarref _saroid; do
+  [ -n "${_saloid:-}" ] || continue
+  STATIC_ANALYSIS_GATE_SEEN="$_sa_seen" bash "$REPO_ROOT/scripts/hooks/static-analysis-gate.sh" \
+      "${1:-origin}" "$_saloid" "${_saroid:-0}" || { rm -f "$_sa_seen"; exit 1; }
+done <<< "$STDIN_DATA"
+rm -f "$_sa_seen"
+
 # ---------------------------------------------------------------------------
 # Tooling-suite gate. `scripts/test-tooling.sh` is invoked from exactly ONE
 # place in the repo -- .github/workflows/build.yml -- so a tooling script and

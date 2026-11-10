@@ -83,7 +83,7 @@ int virtio_blk_flush(void)
         }
         if (retry < VIRTIO_BLK_MAX_RETRIES) {
             klog(LOG_DEBUG, "virtio", "Flush: I/O error, retry %u/%u",
-                   (uint64_t)(retry + 1), (uint64_t)VIRTIO_BLK_MAX_RETRIES);
+                   ((uint64_t)retry + 1), (uint64_t)VIRTIO_BLK_MAX_RETRIES);
         }
     }
     klog(LOG_DEBUG, "virtio", "Flush: failed after %u retries",

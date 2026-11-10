@@ -619,6 +619,209 @@ else
 fi
 
 # ============================================================================
+# Static analysis: the compile database is derived from the build, and the
+# pre-push gate analyses the pushed commit's own bytes. The fixtures are commit
+# objects only: the checkout and the index are never touched, which is also
+# what proves the gate reads the commit (the defect exists nowhere else).
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[static-analysis gate]${NC}"
+if python3 "$REPO_ROOT/scripts/gen-compile-db.py" --selftest >/dev/null 2>&1; then
+    t_pass "compile-database generator parses dry-run output (selftest)"
+else
+    t_fail "compile-database generator parses dry-run output (selftest)"
+fi
+SA_GATE="$REPO_ROOT/scripts/hooks/static-analysis-gate.sh"
+SA_FILE="src/kernel/crypto/sha1.c"
+# sa_fixture <mode> <path> <text> [<mode> <path> <text>]...: a child commit of
+# HEAD. Mode 100644 appends the text to the path (created when absent); mode
+# 120000 makes the path a symlink to the text. Prints the commit id.
+sa_fixture() {
+    local idx blob tree rc=0
+    idx="$(mktemp -t sa-fixture-index.XXXXXX)" || return 1
+    GIT_INDEX_FILE="$idx" git -C "$REPO_ROOT" read-tree HEAD || rc=1
+    while [ "$rc" = "0" ] && [ "$#" -ge 3 ]; do
+        if [ "$1" = "120000" ]; then
+            blob="$(printf '%s' "$3" | git -C "$REPO_ROOT" hash-object -w --stdin)" || rc=1
+        else
+            blob="$( { git -C "$REPO_ROOT" show "HEAD:$2" 2>/dev/null; printf '%s\n' "$3"; } \
+                     | git -C "$REPO_ROOT" hash-object -w --stdin)" || rc=1
+        fi
+        GIT_INDEX_FILE="$idx" git -C "$REPO_ROOT" update-index --add --cacheinfo "$1,$blob,$2" || rc=1
+        shift 3
+    done
+    if [ "$rc" = "0" ]; then
+        tree="$(GIT_INDEX_FILE="$idx" git -C "$REPO_ROOT" write-tree)" \
+            && GIT_AUTHOR_NAME=sa-fixture GIT_AUTHOR_EMAIL=sa-fixture@invalid \
+               GIT_COMMITTER_NAME=sa-fixture GIT_COMMITTER_EMAIL=sa-fixture@invalid \
+               git -C "$REPO_ROOT" commit-tree "$tree" -p HEAD -m "static-analysis gate fixture" || rc=1
+    fi
+    rm -f "$idx"
+    return $rc
+}
+SA_STATE_BEFORE="$(git -C "$REPO_ROOT" status --porcelain=v1 -z | sha256sum)"
+SA_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+SA_ZERO="0000000000000000000000000000000000000000"
+SA_EMPTY="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+SA_NONE="$(bash "$SA_GATE" origin "$SA_HEAD" "$SA_HEAD" 2>&1)"; SA_NONE_RC=$?
+if [ "$SA_NONE_RC" = "0" ] && [ -z "$SA_NONE" ]; then
+    t_pass "gate is silent when the push changes no kernel or loader source"
+else
+    t_fail "gate is silent when the push changes no kernel or loader source" "exit $SA_NONE_RC: $SA_NONE"
+fi
+# A new ref on a remote whose main we do not know has nothing there: the base
+# is the empty tree and every source is in scope, never "no change".
+SA_PLAN="$(bash "$SA_GATE" --plan sa-gate-no-such-remote "$SA_HEAD" "$SA_ZERO" 2>&1)"
+SA_PLAN_N="$(sed -n 's/^base=[0-9a-f]* sources=//p' <<<"$SA_PLAN")"
+if grep -qF "base=$SA_EMPTY " <<<"$SA_PLAN" && [ "${SA_PLAN_N:-0}" -gt 100 ] 2>/dev/null; then
+    t_pass "a new ref on an unknown remote is compared against the empty tree (all sources in scope)"
+else
+    t_fail "a new ref on an unknown remote is compared against the empty tree (all sources in scope)" "$SA_PLAN"
+fi
+SA_DEL="$(bash "$SA_GATE" origin "$SA_ZERO" "$SA_HEAD" 2>&1)"; SA_DEL_RC=$?
+if [ "$SA_DEL_RC" = "0" ] && [ -z "$SA_DEL" ]; then
+    t_pass "a ref deletion passes the gate without analysis"
+else
+    t_fail "a ref deletion passes the gate without analysis" "exit $SA_DEL_RC: $SA_DEL"
+fi
+SA_DEFECT='int sa_gate_fixture(int x) { int z = 0; return x / z; }'
+SA_BAD="$(sa_fixture 100644 "$SA_FILE" "$SA_DEFECT")"
+# The control source includes kernel/abi_hash.h, which reaches a tracked header
+# outside src/ and include/: the snapshot must carry the whole tracked tree.
+SA_OK="$(sa_fixture 100644 src/kernel/time/kusd_time.c '/* static-analysis gate fixture: a comment changes nothing */')"
+# A source that exists only in the pushed commit. The kernel Makefile finds its
+# sources by glob, so the commit's own build compiles it and it is analysed.
+SA_NEW="$(sa_fixture 100644 src/kernel/sa_gate_fixture_new.c "$SA_DEFECT")"
+# The loader Makefile lists its sources by name, so this one is compiled by nothing.
+SA_UNC="$(sa_fixture 100644 src/boot/uefi/sa_gate_fixture_new.c 'int sa_gate_fixture_unc(void) { return 0; }')"
+# Names git would quote, or that no diagnostic line carries intact: refused.
+SA_UTF="$(sa_fixture 100644 "src/kernel/sa_gate_caf$(printf '\303\251').c" "$SA_DEFECT")"
+SA_SPC="$(sa_fixture 100644 "src/kernel/sa gate fixture.c" "$SA_DEFECT")"
+# A tracked symlink beside a changed source, and a source REPLACED by a symlink
+# (a type change, which a filter for added and modified files would not select).
+SA_LNK="$(sa_fixture 100644 "$SA_FILE" '/* fixture */' 120000 include/sa_gate_fixture_link.h /etc/hostname)"
+SA_TYP="$(sa_fixture 120000 "$SA_FILE" sha256.c)"
+# The same defect in a source the LOADER build compiles, from its own directory.
+SA_LDR="$(sa_fixture 100644 src/boot/uefi/loader_vars.c "$SA_DEFECT")"
+# A Makefile that writes a generated header while it is merely being read.
+SA_MKW="$(sa_fixture 100644 "$SA_FILE" '/* fixture */' 100644 Makefile \
+    'SA_GATE_PROBE := $(file >build/boot_proto_sha.h,/* sa gate fixture overwrote this */)')"
+if [ -z "$SA_BAD" ] || [ -z "$SA_OK" ] || [ -z "$SA_NEW" ] || [ -z "$SA_UNC" ] \
+        || [ -z "$SA_UTF" ] || [ -z "$SA_SPC" ] || [ -z "$SA_LNK" ] || [ -z "$SA_TYP" ] || [ -z "$SA_MKW" ] || [ -z "$SA_LDR" ]; then
+    t_fail "static-analysis gate fixtures could be created" "bad='$SA_BAD' ok='$SA_OK' new='$SA_NEW' unc='$SA_UNC'"
+else
+    for _sa_case in "non-ASCII:$SA_UTF" "spaced:$SA_SPC"; do
+        SA_RN="$(bash "$SA_GATE" origin "${_sa_case#*:}" "$SA_HEAD" 2>&1)"; SA_RN_RC=$?
+        if [ "$SA_RN_RC" = "1" ] && grep -qF "unsupported source name" <<<"$SA_RN"; then
+            t_pass "gate refuses a pushed source with a ${_sa_case%%:*} name instead of skipping it"
+        else
+            t_fail "gate refuses a pushed source with a ${_sa_case%%:*} name instead of skipping it" "exit $SA_RN_RC: $SA_RN"
+        fi
+    done
+    for _sa_case in "include/sa_gate_fixture_link.h:$SA_LNK" "$SA_FILE:$SA_TYP"; do
+        SA_RL="$(bash "$SA_GATE" origin "${_sa_case#*:}" "$SA_HEAD" 2>&1)"; SA_RL_RC=$?
+        if [ "$SA_RL_RC" = "1" ] && grep -qF "tracked symlink in" <<<"$SA_RL" \
+                && grep -qF "refusing to analyse: ${_sa_case%%:*}" <<<"$SA_RL"; then
+            t_pass "gate refuses a pushed tree with a tracked symlink (${_sa_case%%:*})"
+        else
+            t_fail "gate refuses a pushed tree with a tracked symlink (${_sa_case%%:*})" "exit $SA_RL_RC: $SA_RL"
+        fi
+    done
+    SA_SKIP="$(SKIP_STATIC_ANALYSIS=1 bash "$SA_GATE" origin "$SA_BAD" "$SA_HEAD" 2>&1)"; SA_SKIP_RC=$?
+    if [ "$SA_SKIP_RC" = "0" ] && grep -qF "SKIPPED by SKIP_STATIC_ANALYSIS=1" <<<"$SA_SKIP"; then
+        t_pass "SKIP_STATIC_ANALYSIS=1 passes the gate and says so"
+    else
+        t_fail "SKIP_STATIC_ANALYSIS=1 passes the gate and says so" "exit $SA_SKIP_RC: $SA_SKIP"
+    fi
+    SA_NOTOOL="$(CLANG_TIDY=sa-gate-no-such-analyzer bash "$SA_GATE" origin "$SA_BAD" "$SA_HEAD" 2>&1)"; SA_NOTOOL_RC=$?
+    if [ "$SA_NOTOOL_RC" = "1" ] && grep -qF "the analysis could not run" <<<"$SA_NOTOOL"; then
+        t_pass "gate refuses when the analyzer is missing (no silent pass)"
+    else
+        t_fail "gate refuses when the analyzer is missing (no silent pass)" "exit $SA_NOTOOL_RC: $SA_NOTOOL"
+    fi
+    if ! command -v "${CLANG_TIDY:-clang-tidy-19}" >/dev/null 2>&1 || [ ! -f "$REPO_ROOT/build/boot_proto_sha.h" ]; then
+        [ "$QUIET" = "0" ] && echo -e "  ${DIM}SKIP  gate fixture analysis (needs clang-tidy-19 and a built tree)${NC}"
+        _TT_SKIPPED+=("static-analysis gate fixtures (no clang-tidy-19 or no build)")
+    else
+        SA_R1="$(bash "$SA_GATE" origin "$SA_BAD" "$SA_HEAD" 2>&1)"; SA_R1_RC=$?
+        if [ "$SA_R1_RC" = "1" ] && grep -qE "^$SA_FILE:[0-9]+:[0-9]+: warning: Division by zero" <<<"$SA_R1" \
+                && grep -qF "push refused" <<<"$SA_R1"; then
+            t_pass "gate refuses a pushed division by zero, naming file and line"
+        else
+            t_fail "gate refuses a pushed division by zero, naming file and line" "exit $SA_R1_RC: $SA_R1"
+        fi
+        SA_R2="$(bash "$SA_GATE" origin "$SA_OK" "$SA_HEAD" 2>&1)"; SA_R2_RC=$?
+        if [ "$SA_R2_RC" = "0" ] && grep -qF "1 file(s), no findings" <<<"$SA_R2"; then
+            t_pass "gate passes a clean change to an ABI-header source (control)"
+        else
+            t_fail "gate passes a clean change to an ABI-header source (control)" "exit $SA_R2_RC: $SA_R2"
+        fi
+        SA_R3="$(bash "$SA_GATE" origin "$SA_NEW" "$SA_HEAD" 2>&1)"; SA_R3_RC=$?
+        if [ "$SA_R3_RC" = "1" ] \
+                && grep -qE "^src/kernel/sa_gate_fixture_new.c:[0-9]+:[0-9]+: warning: Division by zero" <<<"$SA_R3"; then
+            t_pass "a source that exists only in the pushed commit is compiled by that commit's build and analysed"
+        else
+            t_fail "a source that exists only in the pushed commit is compiled by that commit's build and analysed" "exit $SA_R3_RC: $SA_R3"
+        fi
+        SA_R6="$(bash "$SA_GATE" origin "$SA_LDR" "$SA_HEAD" 2>&1)"; SA_R6_RC=$?
+        if [ "$SA_R6_RC" = "1" ] \
+                && grep -qE "^src/boot/uefi/loader_vars.c:[0-9]+:[0-9]+: warning: Division by zero" <<<"$SA_R6"; then
+            t_pass "a loader source is analysed from its own build directory and named repo-relative"
+        else
+            t_fail "a loader source is analysed from its own build directory and named repo-relative" "exit $SA_R6_RC: $SA_R6"
+        fi
+        # An analyzer that is found but fails, with and without an error line.
+        SA_FAKE="$(mktemp -d -t sa-fake-tidy.XXXXXX)"
+        printf '#!/bin/sh\nexit 1\n' >"$SA_FAKE/dies"
+        printf '#!/bin/sh\necho "x.c:1:1: error: sa gate fixture"\nexit 0\n' >"$SA_FAKE/errs"
+        chmod +x "$SA_FAKE/dies" "$SA_FAKE/errs"
+        for _sa_fake in dies errs; do
+            SA_RF="$(CLANG_TIDY="$SA_FAKE/$_sa_fake" bash "$SA_GATE" origin "$SA_OK" "$SA_HEAD" 2>&1)"; SA_RF_RC=$?
+            if [ "$SA_RF_RC" = "1" ] && grep -qF "this is not a clean result" <<<"$SA_RF"; then
+                t_pass "an analyzer that fails ($_sa_fake) refuses the push, never reads as clean"
+            else
+                t_fail "an analyzer that fails ($_sa_fake) refuses the push, never reads as clean" "exit $SA_RF_RC: $SA_RF"
+            fi
+        done
+        rm -rf "$SA_FAKE"
+        # Two refs at one commit in one push: the second finds its source done.
+        SA_SEEN="$(mktemp -t sa-gate-seen.XXXXXX)"
+        SA_S1="$(STATIC_ANALYSIS_GATE_SEEN="$SA_SEEN" bash "$SA_GATE" origin "$SA_OK" "$SA_HEAD" 2>&1)"; SA_S1_RC=$?
+        # The second ref is an annotated tag object for that commit (never stored under refs/).
+        SA_TAG="$(printf 'object %s\ntype commit\ntag sa-gate-fixture\ntagger sa-fixture <sa-fixture@invalid> 0 +0000\n\nfixture\n' "$SA_OK" \
+                  | git -C "$REPO_ROOT" hash-object -t tag -w --stdin)"
+        SA_S2="$(STATIC_ANALYSIS_GATE_SEEN="$SA_SEEN" bash "$SA_GATE" origin "${SA_TAG:-missing}" "$SA_HEAD" 2>&1)"; SA_S2_RC=$?
+        SA_S3="$(STATIC_ANALYSIS_GATE_SEEN="$SA_SEEN" bash "$SA_GATE" origin "$SA_BAD" "$SA_HEAD" 2>&1)"; SA_S3_RC=$?
+        if [ "$SA_S1_RC" = "0" ] && grep -qF "no findings" <<<"$SA_S1" && [ "$SA_S2_RC" = "0" ] && [ -z "$SA_S2" ] \
+                && [ "$SA_S3_RC" = "1" ]; then
+            t_pass "a second ref (an annotated tag) at the same commit is not analysed again; another commit still is"
+        else
+            t_fail "a second ref (an annotated tag) at the same commit is not analysed again; another commit still is" "1: $SA_S1_RC $SA_S1 / 2: $SA_S2_RC $SA_S2 / 3: $SA_S3_RC"
+        fi
+        rm -f "$SA_SEEN"
+        SA_HDR_BEFORE="$(sha256sum < "$REPO_ROOT/build/boot_proto_sha.h")"
+        SA_R5="$(bash "$SA_GATE" origin "$SA_MKW" "$SA_HEAD" 2>&1)"; SA_R5_RC=$?
+        if [ "$SA_R5_RC" = "0" ] && grep -qF "1 file(s), no findings" <<<"$SA_R5" \
+                && [ "$(sha256sum < "$REPO_ROOT/build/boot_proto_sha.h")" = "$SA_HDR_BEFORE" ]; then
+            t_pass "a pushed Makefile that writes a generated header cannot reach the real build directory"
+        else
+            t_fail "a pushed Makefile that writes a generated header cannot reach the real build directory" "exit $SA_R5_RC: $SA_R5"
+        fi
+        SA_R4="$(bash "$SA_GATE" origin "$SA_UNC" "$SA_HEAD" 2>&1)"; SA_R4_RC=$?
+        if [ "$SA_R4_RC" = "1" ] && grep -qF "not compiled by the build" <<<"$SA_R4" \
+                && grep -qF "src/boot/uefi/sa_gate_fixture_new.c" <<<"$SA_R4"; then
+            t_pass "gate refuses a pushed source the build does not compile, by name"
+        else
+            t_fail "gate refuses a pushed source the build does not compile, by name" "exit $SA_R4_RC: $SA_R4"
+        fi
+    fi
+fi
+
+if [ "$(git -C "$REPO_ROOT" status --porcelain=v1 -z | sha256sum)" = "$SA_STATE_BEFORE" ]; then
+    t_pass "the gate fixtures leave the checkout and the index as they were"
+else
+    t_fail "the gate fixtures leave the checkout and the index as they were"
+fi
+
+# ============================================================================
 # Supported-host profile + reproducible env + unsupported-host fallback
 # ============================================================================
 # The development-tooling.md is the single source of truth for which hosts

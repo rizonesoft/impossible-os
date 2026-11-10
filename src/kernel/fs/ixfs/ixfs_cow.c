@@ -193,7 +193,7 @@ uint32_t ixfs_cow_block(struct ixfs_volume *vol,
                 inode->i_extents[i].e_start = (uint64_t)new_blk;
             } else if (inner == 0) {
                 /* First block: shrink extent, insert new single extent */
-                inode->i_extents[i].e_start = (uint64_t)(ext_start + 1);
+                inode->i_extents[i].e_start = (uint64_t)ext_start + 1;
                 inode->i_extents[i].e_count = ext_count - 1;
                 /* Add new extent if space */
                 if (inode->i_extent_count < IXFS_INLINE_EXTENTS) {

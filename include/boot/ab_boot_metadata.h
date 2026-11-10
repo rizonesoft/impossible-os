@@ -190,8 +190,8 @@ ab_boot_meta_select_newest(const struct ab_boot_metadata *a,
                            const struct ab_boot_metadata *b,
                            const struct ab_boot_metadata **winner)
 {
-    int va = ab_boot_meta_is_valid(a);
-    int vb = ab_boot_meta_is_valid(b);
+    int va = a && ab_boot_meta_is_valid(a);
+    int vb = b && ab_boot_meta_is_valid(b);
     if (!va && !vb) return 0;
     if (va && !vb) { if (winner) *winner = a; return 1; }
     if (!va && vb) { if (winner) *winner = b; return 1; }

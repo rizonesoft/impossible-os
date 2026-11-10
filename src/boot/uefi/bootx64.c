@@ -367,6 +367,15 @@ static void efi_memset(void *dst, UINT8 val, UINTN size)
 
 static void efi_memcpy(void *dst, const void *src, UINTN size)
 {
+#ifdef __clang_analyzer__
+    /* Model for the static analyzer only, which does not see the store an
+     * inline `rep movsb` makes and would report every copied buffer as
+     * uninitialised. The loader itself always uses the instruction below. */
+    UINT8 *d = (UINT8 *)dst;
+    const UINT8 *s = (const UINT8 *)src;
+    while (size--)
+        *d++ = *s++;
+#else
     __asm__ volatile (
         "cld\n\t"
         "rep movsb"
@@ -374,6 +383,7 @@ static void efi_memcpy(void *dst, const void *src, UINTN size)
         :
         : "memory", "cc"
     );
+#endif
 }
 
 /* --- Helper: GUID compare --- */
@@ -383,6 +393,7 @@ static BOOLEAN guid_equal(const EFI_GUID *a, const EFI_GUID *b)
     const UINT8 *pb = (const UINT8 *)b;
     UINTN i;
     for (i = 0; i < 16; i++)
+        /* NOLINTNEXTLINE(clang-analyzer-core.UndefinedBinaryOperatorResult) byte view of an initialised EFI_GUID; the analyzer tracks its fields, not their bytes */
         if (pa[i] != pb[i]) return 0;
     return 1;
 }
@@ -12260,8 +12271,8 @@ static const BL_ACPI_SDT_HDR *bl_find_acpi_table(const char sig[4])
         if (addr == 0)
             continue;
         const BL_ACPI_SDT_HDR *t = (const BL_ACPI_SDT_HDR *)(UINTN)addr;
-        if (t->signature[0] != sig[0] || t->signature[1] != sig[1] ||
-            t->signature[2] != sig[2] || t->signature[3] != sig[3])
+        if (t->signature[0] != (UINT8)sig[0] || t->signature[1] != (UINT8)sig[1] ||
+            t->signature[2] != (UINT8)sig[2] || t->signature[3] != (UINT8)sig[3])
             continue;
         if (t->length < 36 || t->length > (1024u * 1024u))
             continue;
@@ -13604,7 +13615,9 @@ static void bl_hhdm_install_leaves(void)
                 cur_slot = slot;
                 cur_gib  = ~0ULL;
             }
-            if ((b >> 30) != cur_gib) {
+            /* cur_pd is unset only before the first bucket, where cur_gib
+             * (all ones) already differs; the test states that directly. */
+            if (!cur_pd || (b >> 30) != cur_gib) {
                 UINT64 pd_phys = (cur_pdpt[pdpt_i] & BL_PTE_P)
                     ? (cur_pdpt[pdpt_i] & BL_PADDR_MASK) : bl_hhdm_arena_alloc();
                 if (!(cur_pdpt[pdpt_i] & BL_PTE_P))

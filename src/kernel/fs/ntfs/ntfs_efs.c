@@ -243,7 +243,7 @@ int ntfs_efs_parse(const uint8_t *record, const struct ntfs_mft_header *hdr,
         klog(LOG_DEBUG, "ntfs",
              "EFS: DDF[%u] thumb_len=%u fek_off=0x%x fek_len=%u",
              (uint64_t)i, (uint64_t)thumb_len,
-             (uint64_t)(ddf_base + fek_off), (uint64_t)fek_len);
+             ((uint64_t)ddf_base + fek_off), (uint64_t)fek_len);
 
         ddf_ptr += entry_len;
     }
