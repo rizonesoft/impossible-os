@@ -40,6 +40,7 @@ def test_every_install_is_bounded_and_retried():
                 assert re.search(r"^\s*timeout-minutes: \d+$", step, re.M), (path.name, head, "a hang must fail fast")
     helper = (REPO / "scripts/ci/apt-install.sh").read_text()
     assert "--download-only" in helper and "--no-download" in helper and "timeout -k" in helper
+    assert "FALLBACK_MIRROR" in helper, "a retry must be able to leave a mirror this runner cannot reach"
 
 
 def _helper_worst_case_seconds():

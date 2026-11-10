@@ -33,6 +33,8 @@ ATTEMPTS="${APT_INSTALL_ATTEMPTS:-3}"
 UPDATE_CAP="${APT_UPDATE_SECONDS:-40}"
 DOWNLOAD_CAP="${APT_DOWNLOAD_SECONDS:-120}"
 INSTALL_CAP="${APT_INSTALL_SECONDS:-240}"
+MIRROR="${APT_MIRROR:-azure.archive.ubuntu.com}"
+FALLBACK_MIRROR="${APT_FALLBACK_MIRROR:-archive.ubuntu.com}"
 
 for n in $(seq 1 "$ATTEMPTS"); do
     echo "apt-install: download attempt $n of $ATTEMPTS: $*"
@@ -49,6 +51,14 @@ for n in $(seq 1 "$ATTEMPTS"); do
     echo "apt-install: download attempt $n failed or stalled" >&2
     sudo killall -q apt-get 2>/dev/null || true
     sudo rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock
+    # A retry against the same mirror does not help when this runner's route to
+    # it is what is broken: on 2026-11-10 one job failed all three attempts on
+    # azure.archive.ubuntu.com while two jobs beside it downloaded in seconds.
+    # After the first failure, point apt at the primary archive instead.
+    if [ "$n" = "1" ] && sudo grep -rqsF "$MIRROR" /etc/apt/sources.list /etc/apt/sources.list.d; then
+        echo "apt-install: switching from $MIRROR to $FALLBACK_MIRROR" >&2
+        sudo sed -i "s|//$MIRROR/|//$FALLBACK_MIRROR/|g" /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+    fi
     [ "$n" -lt "$ATTEMPTS" ] && sleep $((n * 5))
 done
 echo "apt-install: every download attempt failed: $*" >&2
