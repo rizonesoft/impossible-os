@@ -60,7 +60,6 @@ CACHE_SCOPES = {
     "review-evidence-mapper": ("src", "todo"),
     "test-coverage-mapper": ("src", "todo"),
     "xref-dependency-mapper": ("src", "todo"),
-    "parity-research-analyst": ("todo",),
 }
 
 CACHE_DIR_REL = ".claude/state/agent-cache"
@@ -124,9 +123,10 @@ def _scope_key(root: Path, paths: list) -> str | None:
 # number, the specific findings being verified, timestamps) is why P2.3's
 # review-evidence-mapper cache logged 22 stores and 0 hits: rounds 4/5/6 over an
 # UNCHANGED tree each had a different prompt -> a different key -> a needless
-# re-run. Researchers (parity-research-analyst) are EXCLUDED: their prompt IS the
-# question, so the wording is load-bearing.
-_CANONICAL_SCOPE_TYPES = frozenset(CACHE_SCOPES) - {"parity-research-analyst"}
+# re-run. Every cached type is a mapper today. A researcher must NOT join this
+# set if one is ever cached: its prompt IS the question, so the wording is
+# load-bearing.
+_CANONICAL_SCOPE_TYPES = frozenset(CACHE_SCOPES)
 
 # Scope tokens extracted from a prompt: TODO paths, section refs, and source
 # file paths with any :line/:col stripped (a round that verifies task.c:100 and

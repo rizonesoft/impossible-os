@@ -34,7 +34,7 @@ validate-todo-file skill) judges; you measure.
 
 ## Out of scope (do NOT do)
 
-- Parity research (parity-research-analyst owns Win11/Linux gaps).
+- Parity research (the main session owns Win11/Linux gaps).
 - Prose/claim drift vs code (todo-hygiene-auditor owns fuzzy residue).
 - Dependency readiness for implementation (xref-dependency-mapper).
 - Verdicts ("this TODO is valid") -- return evidence, not conclusions.

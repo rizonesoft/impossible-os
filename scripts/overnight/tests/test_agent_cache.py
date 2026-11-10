@@ -175,15 +175,13 @@ def test_canonical_scope_key_distinguishes_sections():
         assert ka and kb and ka != kb, (ka, kb)
 
 
-def test_researcher_prompt_still_load_bearing():
-    # parity-research-analyst is EXCLUDED from canonicalization: its prompt is
-    # the question, so different prompts must give different keys.
+def test_an_uncached_agent_type_has_no_key():
+    # A researcher's prompt is the question, so researchers are not cached at
+    # all: an agent type outside CACHE_SCOPES gets no key and always runs.
     arc = _load_hook()
     with tempfile.TemporaryDirectory() as d:
         fx = _mk_fixture(pathlib.Path(d))
-        k1 = arc._cache_key(fx, "parity-research-analyst", "how does Win11 do X")
-        k2 = arc._cache_key(fx, "parity-research-analyst", "how does Linux do Y")
-        assert k1 and k2 and k1 != k2, (k1, k2)
+        assert not arc._cache_key(fx, "spec-research-analyst", "what does UEFI say about X")
 
 
 def test_unrelated_edit_does_not_invalidate_a_cached_report():
@@ -257,7 +255,7 @@ if __name__ == "__main__":
     test_kill_switch_and_tiny_reports()
     test_canonical_scope_key_hits_across_volatile_prompts()
     test_canonical_scope_key_distinguishes_sections()
-    test_researcher_prompt_still_load_bearing()
+    test_an_uncached_agent_type_has_no_key()
     test_unrelated_edit_does_not_invalidate_a_cached_report()
     test_freshness_is_bound_to_covered_paths_only()
     test_legacy_entry_without_fingerprint_never_hits()

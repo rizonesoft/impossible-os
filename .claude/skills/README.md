@@ -79,7 +79,6 @@ Subagents in [`../agents/`](../agents/) that the skills above delegate work to. 
 | [kernel-explorer](../agents/kernel-explorer.md) | sonnet | `implement-todo-section` step 3 + `debug-session` step 4 |
 | [kernel-quality-auditor](../agents/kernel-quality-auditor.md) | opus | `review-todo-section` step 7 |
 | [boot-quality-auditor](../agents/boot-quality-auditor.md) | sonnet | `review-todo-section` step 7 |
-| [parity-research-analyst](../agents/parity-research-analyst.md) | sonnet | `gap-audit-todo` Phase 2-3 + `review-todo-section` steps 9-12 + `create-todo` research |
 | [review-evidence-mapper](../agents/review-evidence-mapper.md) | sonnet | `review-todo-section` Phase 1 + `quality-review-section` step 1 |
 | [diagnostic-digester](../agents/diagnostic-digester.md) | sonnet | `implement-todo-section` fix loop + `review-todo-section` build-fail |
 | [todo-hygiene-auditor](../agents/todo-hygiene-auditor.md) | sonnet | `complete-todo-file` close-out |
