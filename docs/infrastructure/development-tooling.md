@@ -487,7 +487,7 @@ bash tools/fuzz/run.sh --repro <target> <file>  # replay one input
 | `boot_entries`        | `boot_entries_parse()` in `src/boot/uefi/boot_entries_parser.c`        |
 | `security_descriptor` | `RtlLengthSidBounded`, `RtlValidAcl`, `RtlGetAceEx`, `RtlSelfRelativeToAbsoluteSD` |
 
-`scripts/test-tooling.sh` runs every target for 10 s on each pack run. The checked-in corpus under `tools/fuzz/corpus/<target>/` is replayed first, so the reproducer of a fixed defect fails immediately if the fix is lost. When a run finds a defect, fix it at the validator and add the reproducer to the corpus. First run, 2026-11-10: the security-descriptor target found, in 15 seconds, a SID read at an attacker-chosen unaligned offset.
+`scripts/test-tooling.sh` runs every target for 10 s on each pack run. The checked-in corpus under `tools/fuzz/corpus/<target>/` (seeds are named `*.seed` or by format, never `*.bin`, which `.gitignore` drops) is replayed first, so the reproducer of a fixed defect fails immediately if the fix is lost. When a run finds a defect, fix it at the validator and add the reproducer to the corpus. First run, 2026-11-10: the security-descriptor target found, in 15 seconds, a SID read at an attacker-chosen unaligned offset.
 
 A new target is a `fuzz_<name>.c` with `LLVMFuzzerTestOneInput`, a `build_target` case in `run.sh`, and at least one seed. Good candidates are pure functions over a byte buffer; a parser that needs `klog`, `kmalloc` or VFS should be split so its parsing core is one.
 

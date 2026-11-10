@@ -63,6 +63,15 @@ for t in $TARGETS; do
         head -12 "$OUT/$t.build.log" | cut -c1-300 | sed 's/^/    | FUZZ-FAIL: /'
         continue
     fi
+    # The seeds are part of the test: a fixed defect's reproducer lives there.
+    # Checked against git, not the directory: a seed that an ignore rule kept
+    # out of the commit exists here and nowhere else (2026-11-10, `*.bin`).
+    if [ -z "$(git -C "$REPO_ROOT" ls-files "tools/fuzz/corpus/$t" 2>/dev/null)" ]; then
+        FAILED=1
+        echo "  FAIL  $t  (no tracked seed under tools/fuzz/corpus/$t)"
+        echo "    | FUZZ-FAIL: add at least one seed and check 'git status' shows it (not ignored)"
+        continue
+    fi
     work="$OUT/corpus-$t"; art="$OUT/crash-$t-"
     mkdir -p "$work"
     log="$OUT/$t.log"
@@ -77,11 +86,17 @@ for t in $TARGETS; do
         # Tagged FUZZ-FAIL so a wrapper that filters on "FAIL" keeps them, and
         # the log's tail as well: a build error or a killed process prints no
         # sanitizer line, and "FAIL" with no reason cannot be triaged from CI.
-        { grep -E 'ERROR: |SUMMARY: |runtime error|Test unit written|error: ' "$log" | head -8
-          echo "--- last lines of $log ---"; tail -12 "$log"; } | cut -c1-300 | sed 's/^/    | FUZZ-FAIL: /'
+        # `|| true` on the grep: under `set -e -o pipefail` a grep with no match
+        # ended this block, and the script, before the tail was printed, which
+        # is exactly the case (no sanitizer line) the tail exists for.
+        { { grep -E 'ERROR: |SUMMARY: |runtime error|Test unit written|error: |ABORTING' "$log" || true; } | head -8
+          echo "--- first and last lines of $log ---"; head -6 "$log"; tail -14 "$log"; } \
+            | cut -c1-300 | sed 's/^/    | FUZZ-FAIL: /' || true
         # The reproducer, as text, so a CI failure can be replayed locally.
         for a in "$art"*; do
-            [ -f "$a" ] && echo "    | FUZZ-FAIL: reproducer $(basename "$a") base64: $(head -c 2048 "$a" | base64 -w0)"
+            if [ -f "$a" ]; then
+                echo "    | FUZZ-FAIL: reproducer $(basename "$a") base64: $(head -c 2048 "$a" | base64 -w0)"
+            fi
         done
     fi
 done
