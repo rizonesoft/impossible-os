@@ -2058,7 +2058,7 @@ def test_one_heading_rule_section43():
     # parity property for a vaguer one.
     vsrc = (REPO / "scripts/todo-graph/validate.py").read_text(encoding="utf-8")
     check("s43: validate.py's refusal carries the shared terminal category",
-          "_refuse(f\"{_cs.terminal_category(_scan.terminal)}" in vsrc)
+          "_refuse(f\"{cache_schema.terminal_category(_scan.terminal)}" in vsrc)
     # And the token is the SAME for the same document in the gate and the
     # producer, checked against a real terminal rather than asserted in prose.
     unclosed = fence.scan_text("# T\n\n## 1. X\n\n```\nnever closed\n")

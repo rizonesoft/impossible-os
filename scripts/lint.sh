@@ -640,7 +640,8 @@ else
     # into one warning among two hundred (2026-11-10: the check skipped
     # through a full lint and failed its own integration test, twice). A build
     # is about 3 s. If it fails, the rc 2 warning below still says so.
-    if [ ! -f "$CACHE" ]; then
+    if [ ! -f "$CACHE" ] && [ -f "$REPO_ROOT/scripts/todo-graph/build.py" ] \
+            && git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         mkdir -p "$REPO_ROOT/build"
         python3 "$REPO_ROOT/scripts/todo-graph/build.py" --quiet --output "$CACHE" \
             >/dev/null 2>&1 || rm -f "$CACHE"
@@ -2985,6 +2986,10 @@ fi
 if [ "${SKIP_LINT_RUFF:-}" = "1" ]; then
     echo -e "${YELLOW}warn${NC}: Check 35 (ruff) skipped via SKIP_LINT_RUFF=1"
     WARNINGS=$((WARNINGS + 1))
+elif [ ! -f "$REPO_ROOT/ruff.toml" ] || ! git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    # Not this repository's tree (the lint fixtures copy lint.sh into a bare
+    # temporary directory): there is no rule set and no tracked file list.
+    :
 elif ! command -v ruff >/dev/null 2>&1; then
     echo -e "${RED}error${NC}: Check 35 (ruff) -- ruff is not installed; run bash scripts/setup.sh (or: uv tool install ruff / pipx install ruff)"
     ERRORS=$((ERRORS + 1))
@@ -3005,6 +3010,8 @@ fi
 # (found 2026-11-10; the site is project.json's site_url). A string in a C
 # source cannot be templated from project.json, so the host is checked here.
 URLHOST_RC=0
+# Same scope rule as Check 35: only in a tree that has project.json and git.
+if [ -f "$REPO_ROOT/project.json" ] && git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 URLHOST_OUT=$(cd "$REPO_ROOT" && python3 - <<'PYEOF' 2>&1
 import json, re, subprocess, sys, urllib.parse
 host = urllib.parse.urlparse(json.load(open("project.json"))["site_url"]).hostname
@@ -3023,6 +3030,7 @@ if bad:
     print("\n".join(bad[:20])); print(f"expected host: {host}"); sys.exit(1)
 PYEOF
 ) || URLHOST_RC=$?
+fi
 if [ "$URLHOST_RC" -ne 0 ]; then
     printf '%s\n' "$URLHOST_OUT" | sed 's/^/  /'
     echo -e "${RED}error${NC}: Check 36 (project URL host) -- shipped source names a project URL on a host that is not the project's"

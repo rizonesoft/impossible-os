@@ -783,8 +783,8 @@ _tt_nested_fail_detail() {
         | grep -vE '^\[test_build\] |\[PASS\]' | head -20 | sed 's/^/    | /'
 }
 
-# THE NESTED SUITES RUN SIDE BY SIDE (2026-11-10). They are nine child
-# processes that share nothing: each builds its own cache and fixtures under
+# THE NESTED SUITES RUN SIDE BY SIDE (2026-11-10). They are child processes
+# that, with the one exception noted below, share nothing: each builds its own cache and fixtures under
 # its own temporary directory (test_build.sh is the only one that rewrites the
 # real build/todo-cache.json, and no other nested suite reads it). Run in
 # sequence they were about 660 s of an 800 s pack, which is what pushed every
@@ -801,6 +801,7 @@ _tt_nested_fail_detail() {
 # TEST_TOOLING_SERIAL=1 restores one-at-a-time execution (a suite that is not
 # started here is simply run by its collect call), for triaging a failure that
 # might be contention.
+_TT_T_NESTED_START=$SECONDS
 _TT_NESTED_TMP="$(mktemp -d -t tt-nested.XXXXXX)" || _TT_NESTED_TMP=""
 _tt_would_run() {
     [ -n "$_TT_CHANGED" ] || return 0
@@ -867,7 +868,10 @@ _tt_nested_py "$REPO_ROOT/scripts/tests/test_release_image_binding.py" image_bin
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_fence.py" todo_fence
 _tt_nested_py "$REPO_ROOT/scripts/site/tests/test_build.py" site_build
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_alias_staleness.py" alias_staleness
-_tt_nested_x "$REPO_ROOT/scripts/todo-graph/tests/test_query_bounds.sh" query_bounds
+# test_query_bounds.sh is NOT started here: its MCP sub-test reads the real
+# build/todo-cache.json, which test_build.sh deletes and rebuilds as it runs
+# (first parallel pack run, 2026-11-10: `cache-unusable`). Its collect call
+# runs it in place, after test_build.sh has been collected.
 FUZZ_SECONDS="${TEST_TOOLING_FUZZ_SECONDS:-10}" _tt_nested_start fuzz bash "$REPO_ROOT/tools/fuzz/run.sh"
 
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[todo-graph]${NC}"
@@ -1102,6 +1106,7 @@ fi
 
 # Every nested suite has been collected; nothing started above is still alive.
 _tt_nested_kill
+_TT_T_NESTED_END=$SECONDS
 eval "${_TT_SAVED_INT:-trap - INT}"
 eval "${_TT_SAVED_TERM:-trap - TERM}"
 
@@ -21449,6 +21454,10 @@ rm -rf "$CS_TMP"
 # ============================================================================
 
 TOTAL=$((PASS + FAIL))
+# Where the time went, on every run: the old "~790 s, of which 252 s ..." figures
+# were quoted for months after they stopped being true. Three numbers are
+# enough to see which part to attack next.
+echo -e "  ${DIM}time: ${SECONDS}s total = ${_TT_T_NESTED_START:-0}s before the nested suites + $(( ${_TT_T_NESTED_END:-0} - ${_TT_T_NESTED_START:-0} ))s nested suites + $(( SECONDS - ${_TT_T_NESTED_END:-0} ))s inline tests${NC}"
 if [ "$QUIET" = "0" ]; then
     echo ""
     echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
