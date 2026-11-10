@@ -79,6 +79,9 @@ title: "TODO-01 -- Developer Tooling Stack"
 | 💎  |  12   | Enforce required-tool version floors in `--verify`    | §1, §2         |  [x]   |
 | 💎  |  13   | Duplicate-recipe sweep in the root Makefile           | §3             |  [/]   |
 | 💎  |  14   | Defect-finding tools: fuzzers, UBSan, static analysis | §3, §7         |  [ ]   |
+| 💎  |  15   | Static-analysis triage and changed-file gate          | §14            |  [ ]   |
+| 💎  |  16   | Fuzz targets for the remaining untrusted parsers      | §14            |  [ ]   |
+| ⭐  |  17   | Shard the todo-graph build suite                      | §7, §14        |  [ ]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
 > ⭐ = exclusive work: Impossible OS can provide a single operator-facing developer workflow with self-diagnosis instead of scattered scripts and tribal knowledge.
@@ -463,16 +466,57 @@ Added 2026-11-10 on the operator's instruction to adopt the tools that find defe
 - [x] `ccache` through `scripts/build.sh` (clean build 68 s to 42 s warm)
 - [x] `scripts/static-analysis.sh` + `.clang-tidy` (Clang static analyzer core checks plus defect-class bugprone checks) over the compile database
 - [x] `scripts/test-tooling.sh` starts its nested suites together and prints its time split
-- [ ] Shard `scripts/todo-graph/tests/test_build.sh` into independent suites, since it alone bounds the pack's nested block
-  - The groups that rewrite the real `build/todo-cache.json` stay in one file.
-- [ ] Triage the production findings of `bash scripts/static-analysis.sh --all` (fix or reasoned `NOLINT`), then make the changed-file run a pre-push gate
-- [ ] Fuzz targets for the remaining untrusted-input parsers: EIF metadata, registry hive, FAT32, `boot.conf`, PE and ELF loaders
 - [ ] Widen kernel UBSan to `bounds`, `bool`, `enum`, `alignment` and `null`
   - Blocked on image room: [higher-half kernel relocation](../02-kernel-core/TODO-33-higher-half-kernel-relocation.md).
 - [x] Build once per boot matrix (`SMOKE_PRISTINE_IMAGE`)
 - [ ] Restore the ccache directory in CI with `actions/cache`
 
+Split 2026-11-10: the analyzer triage, the remaining fuzz targets and the suite shard are the three sections that follow this one.
+
 **Test checkpoint:** `bash tools/fuzz/run.sh` exits 0 and fails on the checked-in reproducer when the alignment check in `RtlLengthSidBounded` is removed; `bash scripts/lint.sh` fails on a Python file with an undefined name; `make -n kernel` shows `-fsanitize` and `make -n KERNEL_TESTS=off kernel` does not; `bash scripts/static-analysis.sh` exits 0 on a clean change set.
+
+---
+
+## 15. Static-Analysis Triage and Changed-File Gate
+> **Spawned-by:** §14 (split)
+
+- [ ] Triage every production finding of `bash scripts/static-analysis.sh --all`: fix the defect, or carry a `NOLINT` naming the check and the reason
+- [ ] `bash scripts/static-analysis.sh --all` exits 0 on the tree
+- [ ] `.githooks/pre-push` runs the changed-file analysis when the push touches kernel or loader C sources, and refuses on a finding
+- [ ] `scripts/test-tooling.sh` asserts the gate fires on a fixture finding and stays silent on a clean change
+
+**Test checkpoint:** `bash scripts/static-analysis.sh --all` prints `no findings`; a push whose diff adds a division by a zero constant to a kernel source is refused by the pre-push hook, naming the file and line.
+
+---
+
+## 16. Fuzz Targets for the Remaining Untrusted-Input Parsers
+> **Spawned-by:** §14 (split)
+
+One libFuzzer target and a checked-in seed corpus per parser, built from the kernel's or loader's own source, run 10 s each by `tools/fuzz/run.sh`.
+
+- [ ] `boot.conf` parser target
+- [ ] PE loader header and section validation target
+- [ ] ELF loader header and program-header validation target
+- [ ] EIF metadata target
+- [ ] Registry hive target
+- [ ] FAT32 boot sector and directory entry target
+- [ ] Every defect a target finds is fixed in the parser, with its reproducer checked in to that target's corpus
+
+**Test checkpoint:** `bash tools/fuzz/run.sh` builds and runs eight targets and exits 0; reverting any one parser fix makes the run fail on that target's checked-in reproducer.
+
+---
+
+## 17. Shard the todo-graph Build Suite
+> **Spawned-by:** §14 (split)
+
+`scripts/todo-graph/tests/test_build.sh` runs serially and alone bounds the tooling pack's nested block.
+
+- [ ] Split `scripts/todo-graph/tests/test_build.sh` into independent suites that `scripts/test-tooling.sh` starts together
+  - The groups that rewrite the real `build/todo-cache.json` stay in one file.
+- [ ] The shards together run every sub-test the single file ran, checked by comparing the sub-test names before and after
+- [ ] The pack's printed time split shows the nested block bounded by a shard, not by the whole suite
+
+**Test checkpoint:** `bash scripts/test-tooling.sh --quiet` passes with the same sub-test total as before the split, and its nested block is shorter than the 2026-11-10 measurement of 590 s.
 
 ---
 
