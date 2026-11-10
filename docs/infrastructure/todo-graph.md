@@ -708,6 +708,7 @@ flowchart TD
   todo_TODO_Claude_Overnight_Runner_md_4949c7["claude-overnight-runner<br/>TODO-Claude-Overnight-Runner"]
   class todo_TODO_Claude_Overnight_Runner_md_4949c7 active
   click todo_TODO_Claude_Overnight_Runner_md_4949c7 "https://github.com/rizonesoft/impossible-os/blob/main/todo/TODO-Claude-Overnight-Runner.md"
+  todo_00_infrastructure_TODO_01_developer_tooling_stack_md_b86fba -.->|deferred| todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375
   todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb -.->|accepted| todo_02_kernel_core_TODO_05_object_manager_md_832dce
   todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb -.->|accepted| todo_02_kernel_core_TODO_05_object_manager_md_832dce
   todo_00_infrastructure_TODO_03_kernel_test_harness_md_ce30cb -.->|accepted| todo_01_boot_platform_TODO_14_boot_diagnostics_md_222ac3

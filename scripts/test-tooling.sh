@@ -701,11 +701,15 @@ SA_LNK="$(sa_fixture 100644 "$SA_FILE" '/* fixture */' 120000 include/sa_gate_fi
 SA_TYP="$(sa_fixture 120000 "$SA_FILE" sha256.c)"
 # The same defect in a source the LOADER build compiles, from its own directory.
 SA_LDR="$(sa_fixture 100644 src/boot/uefi/loader_vars.c "$SA_DEFECT")"
+# A commit that TRACKS a header the checkout only generates: the commit's copy
+# (which cannot compile) must be the one analysed, not the checkout's.
+SA_HDR="$(sa_fixture 100644 src/kernel/version.c '/* fixture */' 100644 include/build_info.h \
+    '#error sa gate fixture: this committed header must be the one analysed')"
 # A Makefile that writes a generated header while it is merely being read.
 SA_MKW="$(sa_fixture 100644 "$SA_FILE" '/* fixture */' 100644 Makefile \
     'SA_GATE_PROBE := $(file >build/boot_proto_sha.h,/* sa gate fixture overwrote this */)')"
 if [ -z "$SA_BAD" ] || [ -z "$SA_OK" ] || [ -z "$SA_NEW" ] || [ -z "$SA_UNC" ] \
-        || [ -z "$SA_UTF" ] || [ -z "$SA_SPC" ] || [ -z "$SA_LNK" ] || [ -z "$SA_TYP" ] || [ -z "$SA_MKW" ] || [ -z "$SA_LDR" ]; then
+        || [ -z "$SA_UTF" ] || [ -z "$SA_SPC" ] || [ -z "$SA_LNK" ] || [ -z "$SA_TYP" ] || [ -z "$SA_MKW" ] || [ -z "$SA_LDR" ] || [ -z "$SA_HDR" ]; then
     t_fail "static-analysis gate fixtures could be created" "bad='$SA_BAD' ok='$SA_OK' new='$SA_NEW' unc='$SA_UNC'"
 else
     for _sa_case in "non-ASCII:$SA_UTF" "spaced:$SA_SPC"; do
@@ -797,6 +801,12 @@ else
             t_fail "a second ref (an annotated tag) at the same commit is not analysed again; another commit still is" "1: $SA_S1_RC $SA_S1 / 2: $SA_S2_RC $SA_S2 / 3: $SA_S3_RC"
         fi
         rm -f "$SA_SEEN"
+        SA_R7="$(bash "$SA_GATE" origin "$SA_HDR" "$SA_HEAD" 2>&1)"; SA_R7_RC=$?
+        if [ "$SA_R7_RC" = "1" ] && grep -qF "sa gate fixture: this committed header" <<<"$SA_R7"; then
+            t_pass "a header the pushed commit tracks is analysed as committed, never replaced by the checkout's"
+        else
+            t_fail "a header the pushed commit tracks is analysed as committed, never replaced by the checkout's" "exit $SA_R7_RC: $SA_R7"
+        fi
         SA_HDR_BEFORE="$(sha256sum < "$REPO_ROOT/build/boot_proto_sha.h")"
         SA_R5="$(bash "$SA_GATE" origin "$SA_MKW" "$SA_HEAD" 2>&1)"; SA_R5_RC=$?
         if [ "$SA_R5_RC" = "0" ] && grep -qF "1 file(s), no findings" <<<"$SA_R5" \

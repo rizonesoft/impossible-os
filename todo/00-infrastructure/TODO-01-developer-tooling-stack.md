@@ -505,7 +505,16 @@ Split 2026-11-10: the analyzer triage, the remaining fuzz targets and the suite 
 
 **Test checkpoint:** `bash scripts/static-analysis.sh --all` prints `no findings`; a push whose diff adds a division by a zero constant to a kernel source is refused by the pre-push hook, naming the file and line.
 
-> **Test runner:** `bash scripts/test-tooling.sh` (group `[static-analysis gate]`, 20 assertions); kernel regressions in `make test-fs` (`ntfs: index entry ...`), `make test-storage` (`usb-hid`) and `make test-boot` (`ab_boot`).
+> **Test runner:** `bash scripts/test-tooling.sh` (group `[static-analysis gate]`, 21 assertions); kernel regressions in `make test-fs` (`ntfs: ...`), `make test-storage` (`usb-hid`) and `make test-boot` (`ab_boot`, `SMBIOS: decimal formatter`).
+
+> **Notes:**
+> - The gate analyses the state being pushed, per ref, against what that remote already holds. A defect added and reverted inside one push is not analysed: it is in no pushed tree.
+> - The snapshot holds the commit's tracked tree (less `todo/` and `docs/`), its own Makefiles and copies of the build-generated headers. A commit that tracks a symlink is refused.
+> - Evaluating the pushed Makefile is not sandboxed: it is the same build definition `scripts/build.sh` runs.
+> - `build.sh` and clangd still use the `bear` database; only the analysis uses the derived one.
+
+> **Verified:** 2026-11-11 | commit `859a75be0` | 5/5 items | build OK | kernel 37274 + 17 PASS, smoke matrix 20/20, lint 0, test-tooling 1333/1333, `static-analysis.sh --all` 372 files no findings
+> **Quality reviewed:** 2026-11-11 | Codex 21x (design, adversarial, test-coverage, consistency, perf, re-adversarial) | 6H+12M+1L fixed, 0 open | scope: kernel-quality-auditor 2x + boot-quality-auditor + concurrency-evidence-mapper
 
 ---
 

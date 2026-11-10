@@ -77,12 +77,15 @@ if [ -n "$COMMIT" ]; then
     # generates into the source directories and under build/. They are COPIED
     # into a build/ of the snapshot's own: nothing in the snapshot points at the
     # checkout, so nothing run here (a Makefile is evaluated) can write into it.
+    # A path the commit itself tracks is never replaced by the checkout's file.
     while IFS= read -r -d '' g; do
-        case "$g" in *.h|*.inc) mkdir -p "$SNAP/$(dirname "$g")" && cp --remove-destination "$g" "$SNAP/$g" || exit 2 ;; esac
+        [ -e "$SNAP/$g" ] && continue          # the commit tracks it: the commit's copy stands
+        case "$g" in *.h|*.inc) mkdir -p "$SNAP/$(dirname "$g")" && cp "$g" "$SNAP/$g" || exit 2 ;; esac
     done < <(git ls-files -z -o -i --exclude-standard -- include src)
     mkdir -p "$SNAP/build" || exit 2
     if [ -d "$REPO_ROOT/build" ]; then
         while IFS= read -r -d '' g; do
+            [ -e "$SNAP/$g" ] && continue
             mkdir -p "$SNAP/$(dirname "$g")" && cp "$g" "$SNAP/$g" || exit 2
         done < <(find build \( -name '*.h' -o -name '*.inc' \) -type f -print0)
     fi
