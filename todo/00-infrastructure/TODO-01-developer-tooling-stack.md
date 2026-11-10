@@ -485,6 +485,9 @@ Split 2026-11-10: the analyzer triage, the remaining fuzz targets and the suite 
 > - Downstream: analyzer triage, the remaining fuzz targets and the suite shard are sections 15 to 17.
 > - Canonical doc: [development-tooling.md](../../docs/infrastructure/development-tooling.md#compile-cache).
 > - Scope boundary: `bounds`, `alignment` and `null` are parked on the higher-half relocation for image room.
+> **Verified:** 2026-11-10 | commit `76af1a6a6` | 10/11 items | build OK | kernel 37243 + 17 PASS, smoke PASS, lint 0, test-tooling 1314/1314, check-compile-cache selftest 27/27
+> **Deferred:** [M] kernel UBSan lacks `bounds`, `alignment` and `null` (reason: image room below the user base) -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7 (item: "Widen `KERNEL_UBSAN_CHECKS` with `bounds`, `alignment` and `null` once the guard is gone" at line 292)
+> **Quality reviewed:** 2026-11-10 | Codex 14x (design, adversarial, test-coverage, consistency, perf, re-adversarial) | 1H+13M fixed, 0 open | scope: N/A (host tooling, CI workflows, Makefile flags; no kernel source)
 
 ---
 

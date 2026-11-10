@@ -497,9 +497,7 @@ A new target is a `fuzz_<name>.c` with `LLVMFuzzerTestOneInput`, a `build_target
 
 The test-flavor kernel (`KERNEL_TESTS=on`, the default) is compiled with `-fsanitize=shift,integer-divide-by-zero,unreachable,vla-bound,builtin,bool,enum -fsanitize-trap=all` (the list is `KERNEL_UBSAN_CHECKS` in the root `Makefile`). Undefined behaviour of those classes executes `ud2`; the #UD report gives the RIP and `llvm-addr2line-19 -e build/kernel.exe -f <RIP>` names the line. Trap mode needs no runtime. The release flavor is built without it, and `KERNEL_UBSAN=off` turns it off to rule it out of a problem.
 
-The set is what fits below the user base. Measured 2026-11-10 with clean builds: `bool` and `enum` add no code today (the kernel loads no `_Bool` from memory, and C enums have no checked range), `null` adds 36 KiB of the 80 KiB the image has left, and `bounds` adds about 122 KiB and ends the image past the user base. `null`, `bounds` and `alignment` wait for the [higher-half kernel relocation](../../todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md). The flavor stamp `build/.kernel-tests.stamp` records the check list, so changing it rebuilds every object.
-
-The set is what fits: these five checks add about 6 KiB of `.text`. `bounds`, `bool` and `enum` add about 122 KiB and push the image past the user base, so they wait for the higher-half relocation.
+The set is what fits below the user base. Measured 2026-11-10 with clean builds: the first five checks add about 6 KiB of `.text`, `bool` and `enum` add no code today (the kernel loads no `_Bool` from memory, and C enums have no checked range), `null` adds 36 KiB of the 80 KiB the image has left, and `bounds` adds about 122 KiB and ends the image past the user base. `null`, `bounds` and `alignment` wait for the [higher-half kernel relocation](../../todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md). The flavor stamp `build/.kernel-tests.stamp` records the check list, so changing it rebuilds every object.
 
 ### Static Analysis
 
