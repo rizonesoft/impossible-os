@@ -135,6 +135,11 @@ jobs:
       # numeric-TODO shorthand (TODO-NN sectionN, DNN TNN) outside todo/**.
       # The legacy-XREF sweep drained the pre-existing allowlist, so any new
       # drift is now a CI failure instead of a silent warning.
+      # ruff is lint Check 35 and has no Ubuntu package. Pinned, so a new
+      # release cannot turn the gate red on an unrelated push.
+      - name: Install ruff
+        run: pipx install ruff==0.17.4
+
       - name: Run style lint
         run: bash scripts/lint.sh
 
@@ -399,6 +404,10 @@ jobs:
       # drifted. Fix whichever side is out of sync -- do NOT mask with `|| true`.
       - name: Verify toolchain sentinels and version floors
         run: bash scripts/setup.sh --verify
+
+      # The pack runs scripts/lint.sh, whose Check 35 needs ruff.
+      - name: Install ruff
+        run: pipx install ruff==0.17.4
 
       # ── Host-side tooling regression pack (cheap, no build required) ───────
       # Exercises the wrapper contract, hook lifecycle, and workflow YAML

@@ -22,6 +22,7 @@ import sys
 import tempfile
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
+HERE = pathlib.Path(__file__).resolve().parent
 TOOL = REPO / "scripts/overnight/section-manifest.py"
 
 
@@ -192,6 +193,7 @@ def test_cli_exits_nonzero_only_past_the_limit():
 
 if __name__ == "__main__":
     test_review_chain_accumulates_depth()
+    test_depth_reaches_the_manifest_where_the_decision_is_made()
     test_a_split_is_not_recursion()
     test_unmarked_sections_are_silent()
     test_cycles_do_not_hang()

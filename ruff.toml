@@ -1,0 +1,20 @@
+# Ruff runs as lint Check 35 over every tracked Python file.
+#
+# The selection is correctness only: names that do not exist, syntax errors,
+# comparisons and formats that cannot mean what they say, shadowed imports and
+# mutable defaults. Each one is a defect when it fires, so the check is an
+# error, not advice. Style and formatting rules are deliberately out: this
+# tooling is hand-formatted and a formatter sweep would bury real diffs.
+#
+# First run, 2026-11-10: an undefined name on a refusal path in
+# scripts/todo-graph/validate.py, a test in scripts/overnight/tests that had
+# never executed and could not have, and 23 lines of unreachable code.
+target-version = "py310"
+
+# Fixture files hold deliberately broken Python for the checkers under test.
+extend-exclude = ["scripts/site/tests/fixtures"]
+
+[lint]
+select = ["E9", "F63", "F7", "F82", "F811", "F402", "F502", "F503", "F504",
+          "F601", "F602", "F621", "F622", "F701", "F702", "F704", "F706",
+          "F707", "B006", "B008"]

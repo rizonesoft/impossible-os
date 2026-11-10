@@ -107,6 +107,10 @@ jobs:
       # legacy-XREF sweep drained the pre-existing allowlist, so a release
       # cut now fails if any new numeric-TODO shorthand slipped in outside
       # todo/**.
+      # ruff is lint Check 35 and has no Ubuntu package (pinned, see build.yml).
+      - name: Install ruff
+        run: pipx install ruff==0.17.4
+
       - name: Run style lint
         run: bash scripts/lint.sh
 

@@ -2489,33 +2489,6 @@ class ScanResult:
             if lead[:1] == "<" and _construct_at(lead, 0):
                 out[i] = 1
         return out
-        views = self.leaf_views
-        carry, quote, raw, pending = "", "", "", ""
-        for i, code in enumerate(self.codes):
-            if code not in visible:
-                # Leaving the block resets the walk: no construct stays open
-                # across one this projection does not show.
-                carry, quote, raw, pending = "", "", "", ""
-                continue
-            line = views[i]
-            if raw:
-                # Inside a nested raw-text element: its CONTENT is never prose.
-                out[i] = 1
-                raw, _ = _raw_scan(line, raw)
-                continue
-            opened_before = carry
-            carry, quote = _tag_carry(line, carry, quote)
-            lead = line.lstrip()
-            if opened_before or carry or (
-                    lead[:1] == "<" and _construct_at(lead, 0)):
-                out[i] = 1
-            # UNCONDITIONAL, and not gated on the line already being markup: a
-            # complete `<script>` preceded by ordinary text opens raw mode just
-            # as much as one at the start of the line.
-            raw, saw = _raw_scan(line, raw)
-            if saw:
-                out[i] = 1
-        return out
 
 
 class UnclosedDocument(RuntimeError):

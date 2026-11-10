@@ -69,6 +69,9 @@ case "$DISTRO" in
             "llvm-objcopy-19:llvm-19"
             "clangd-19:clangd-19"
             "bear:bear"
+            # Developer tooling (2026-11-10): compile cache, static analysis.
+            "ccache:ccache"
+            "clang-tidy-19:clang-tidy-19"
             "gcc:build-essential"
             "xorriso:xorriso"
             "mtools:mtools"
@@ -219,6 +222,25 @@ else
         INSTALLED=$((INSTALLED + 1))
     else
         echo -e "  ${YELLOW}warn:${NC} PyYAML still missing after install; tooling-doctor.sh --json and workflow YAML checks will fall back to warn-only."
+    fi
+fi
+
+# ruff (required by scripts/lint.sh Check 35; no distro package on Ubuntu, so
+# it comes from pipx or uv, both of which install per user and need no root).
+if command -v ruff >/dev/null 2>&1; then
+    skip "ruff"
+else
+    echo -e "  ${YELLOW}Installing ruff...${NC}"
+    if command -v pipx >/dev/null 2>&1; then
+        pipx install ruff >/dev/null 2>&1 || true
+    elif command -v uv >/dev/null 2>&1; then
+        uv tool install ruff >/dev/null 2>&1 || true
+    fi
+    if command -v ruff >/dev/null 2>&1 || [ -x "$HOME/.local/bin/ruff" ]; then
+        ok "ruff installed"
+        INSTALLED=$((INSTALLED + 1))
+    else
+        echo -e "  ${YELLOW}warn:${NC} ruff not installed (need pipx or uv); scripts/lint.sh Check 35 will fail until it is."
     fi
 fi
 

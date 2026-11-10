@@ -490,6 +490,9 @@ def test_every_start_and_restart_begins_with_the_goal():
                          cwd=REPO, capture_output=True, text=True, timeout=30, check=True).stdout
     goal, fresh, resume = out.split("\n")
     assert "rivals Windows and Linux" in goal and "verified fixpoint" in goal, goal
+    assert "Operating Mandate in CLAUDE.md" in goal, goal
+    mandate = (REPO / "CLAUDE.md").read_text()
+    assert "## Operating Mandate" in mandate and "Autonomy never lowers the proof" in mandate
     assert fresh.startswith(goal) and resume.startswith(goal), (fresh, resume)
     # The prompt is spliced into a double-quoted tmux command line.
     assert not any(c in goal for c in '"$`\\'), goal

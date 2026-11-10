@@ -783,6 +783,92 @@ _tt_nested_fail_detail() {
         | grep -vE '^\[test_build\] |\[PASS\]' | head -20 | sed 's/^/    | /'
 }
 
+# THE NESTED SUITES RUN SIDE BY SIDE (2026-11-10). They are nine child
+# processes that share nothing: each builds its own cache and fixtures under
+# its own temporary directory (test_build.sh is the only one that rewrites the
+# real build/todo-cache.json, and no other nested suite reads it). Run in
+# sequence they were about 660 s of an 800 s pack, which is what pushed every
+# pack-touching push past the 10-minute tool wall. Started together here, the
+# block costs what its longest member does.
+#
+# Only the START moved. Each suite is still collected, judged and reported by
+# its own block below, in the same order, by the same code: `_tt_nested_collect`
+# hands that block the suite's output on stdout and its exit status, exactly
+# what the `$(cmd 2>&1)` it replaces did. The inline tests after this block
+# stay serial and start only once every nested suite has been collected,
+# because they read build/ and .claude/state.
+#
+# TEST_TOOLING_SERIAL=1 restores one-at-a-time execution (a suite that is not
+# started here is simply run by its collect call), for triaging a failure that
+# might be contention.
+_TT_NESTED_TMP="$(mktemp -d -t tt-nested.XXXXXX)" || _TT_NESTED_TMP=""
+_tt_would_run() {
+    [ -n "$_TT_CHANGED" ] || return 0
+    printf '%s\n' "$_TT_CHANGED" | grep -qE "$1"
+}
+# _tt_nested_start <name> <command...>
+_tt_nested_start() {
+    local name="$1"; shift
+    [ "${TEST_TOOLING_SERIAL:-0}" = "1" ] && return 0
+    [ -n "$_TT_NESTED_TMP" ] || return 0
+    # setsid: each suite leads its own process group, so an interrupted pack
+    # can stop the whole tree (clangd, python children) and not only the shell
+    # that started it. A child never outlives its test.
+    _TT_N_OUT="$_TT_NESTED_TMP/$name.out" _TT_N_RC="$_TT_NESTED_TMP/$name.rc" \
+        setsid bash -c '"$@" > "$_TT_N_OUT" 2>&1; echo "$?" > "$_TT_N_RC.tmp"; mv "$_TT_N_RC.tmp" "$_TT_N_RC"' _ "$@" &
+    echo "$!" > "$_TT_NESTED_TMP/$name.pid"
+}
+_tt_nested_kill() {
+    local f
+    [ -n "$_TT_NESTED_TMP" ] || return 0
+    for f in "$_TT_NESTED_TMP"/*.pid; do
+        [ -f "$f" ] && kill -TERM -- "-$(cat "$f")" 2>/dev/null
+    done
+    rm -rf "$_TT_NESTED_TMP"
+}
+# The pack's own INT/TERM traps are saved and put back after the block.
+_TT_SAVED_INT="$(trap -p INT)"; _TT_SAVED_TERM="$(trap -p TERM)"
+trap '_tt_nested_kill; exit 130' INT TERM
+# _tt_nested_collect <name> <command...>: stdout = the suite's combined output,
+# status = its exit status. Runs the command itself when it was never started.
+_tt_nested_collect() {
+    local name="$1" pid; shift
+    if [ -z "$_TT_NESTED_TMP" ] || [ ! -f "$_TT_NESTED_TMP/$name.pid" ]; then
+        "$@" 2>&1
+        return $?
+    fi
+    pid="$(cat "$_TT_NESTED_TMP/$name.pid")"
+    # Polled, not `wait`ed: this runs inside a command substitution, and a
+    # subshell cannot wait for its parent's child. A job that died without
+    # writing its status is a failure (125), never a hang.
+    while [ ! -f "$_TT_NESTED_TMP/$name.rc" ]; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            [ -f "$_TT_NESTED_TMP/$name.rc" ] && break
+            cat "$_TT_NESTED_TMP/$name.out" 2>/dev/null
+            echo "[test-tooling] nested suite '$name' exited without recording a status"
+            return 125
+        fi
+        sleep 0.2
+    done
+    cat "$_TT_NESTED_TMP/$name.out"
+    return "$(cat "$_TT_NESTED_TMP/$name.rc")"
+}
+_tt_nested_x() { [ -x "$1" ] && _tt_nested_start "$2" "$1"; return 0; }
+_tt_nested_py() { [ -f "$1" ] && _tt_nested_start "$2" python3 "$1"; return 0; }
+if _tt_would_run "$_TT_TRIG_TODO_GRAPH"; then
+    _tt_nested_x "$REPO_ROOT/scripts/todo-graph/tests/test_build.sh" test_build
+fi
+if [ "${TEST_TOOLING_SKIP_LSP_MCP:-0}" != "1" ] && _tt_would_run "$_TT_TRIG_LSP_MCP"; then
+    _tt_nested_x "$REPO_ROOT/scripts/lsp-mcp/tests/test_bridge.sh" lsp_bridge
+    _tt_nested_x "$REPO_ROOT/scripts/lsp-mcp/tests/test_boundary.sh" lsp_boundary
+fi
+_tt_nested_py "$REPO_ROOT/scripts/tests/test_format_md_tables.py" fmt_tables
+_tt_nested_py "$REPO_ROOT/scripts/tests/test_release_image_binding.py" image_binding
+_tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_fence.py" todo_fence
+_tt_nested_py "$REPO_ROOT/scripts/site/tests/test_build.py" site_build
+_tt_nested_py "$REPO_ROOT/scripts/tests/test_alias_staleness.py" alias_staleness
+_tt_nested_x "$REPO_ROOT/scripts/todo-graph/tests/test_query_bounds.sh" query_bounds
+
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[todo-graph]${NC}"
 TODO_GRAPH_TEST="$REPO_ROOT/scripts/todo-graph/tests/test_build.sh"
 if ! _tt_suite_needed "todo-graph (test_build.sh, ~252s)" "$_TT_TRIG_TODO_GRAPH"; then
@@ -792,7 +878,7 @@ elif [ -x "$TODO_GRAPH_TEST" ]; then
     # aggregate runner's message tracks the current sub-test count
     # instead of drifting (prior hard-coded "37 sub-tests" went stale
     # as -+ review passes added more sub-tests through 105+).
-    TG_OUT=$("$TODO_GRAPH_TEST" 2>&1)
+    TG_OUT=$(_tt_nested_collect test_build "$TODO_GRAPH_TEST")
     TG_RC=$?
     TG_SUMMARY=$(printf '%s\n' "$TG_OUT" | grep -E '^\[test_build\] ' | tail -1)
     if [ "$TG_RC" = "0" ]; then
@@ -813,7 +899,7 @@ fi
 # Check 17 shells out to its --check to decide whether to block a commit.
 FMT_TABLE_TEST="$REPO_ROOT/scripts/tests/test_format_md_tables.py"
 if [ -f "$FMT_TABLE_TEST" ]; then
-    FMT_OUT=$(python3 "$FMT_TABLE_TEST" 2>&1)
+    FMT_OUT=$(_tt_nested_collect fmt_tables python3 "$FMT_TABLE_TEST")
     if [ "$?" = "0" ]; then
         t_pass "scripts/tests/test_format_md_tables.py PASS ($(printf '%s\n' "$FMT_OUT" | tail -1))"
     else
@@ -828,7 +914,7 @@ fi
 # GPT + FAT fixtures with a decoy at the old guessed ESP offset.
 IMG_BIND_TEST="$REPO_ROOT/scripts/tests/test_release_image_binding.py"
 if [ -f "$IMG_BIND_TEST" ]; then
-    IMG_BIND_OUT=$(python3 "$IMG_BIND_TEST" 2>&1)
+    IMG_BIND_OUT=$(_tt_nested_collect image_binding python3 "$IMG_BIND_TEST")
     if [ "$?" = "0" ]; then
         t_pass "scripts/tests/test_release_image_binding.py PASS ($(printf '%s\n' "$IMG_BIND_OUT" | tail -1))"
     else
@@ -847,7 +933,7 @@ fi
 # a fixture that asserts nothing cannot pass.
 FENCE_TEST="$REPO_ROOT/scripts/tests/test_todo_fence.py"
 if [ -f "$FENCE_TEST" ]; then
-    FENCE_OUT=$(python3 "$FENCE_TEST" 2>&1)
+    FENCE_OUT=$(_tt_nested_collect todo_fence python3 "$FENCE_TEST")
     if [ "$?" = "0" ]; then
         t_pass "scripts/tests/test_todo_fence.py PASS ($(printf '%s\n' "$FENCE_OUT" | tail -1))"
     else
@@ -871,7 +957,7 @@ fi
 # back lint Check 30, which runs on every commit.
 SITE_TEST="$REPO_ROOT/scripts/site/tests/test_build.py"
 if [ -f "$SITE_TEST" ]; then
-    SITE_OUT=$(python3 "$SITE_TEST" 2>&1)
+    SITE_OUT=$(_tt_nested_collect site_build python3 "$SITE_TEST")
     if [ "$?" = "0" ]; then
         t_pass "scripts/site/tests/test_build.py PASS ($(printf '%s\n' "$SITE_OUT" | grep -E '^Ran ' | tail -1))"
     else
@@ -891,7 +977,7 @@ fi
 # annotation-shaped signature difference that is not drift.
 ALIAS_TEST="$REPO_ROOT/scripts/tests/test_alias_staleness.py"
 if [ -f "$ALIAS_TEST" ]; then
-    ALIAS_OUT=$(python3 "$ALIAS_TEST" 2>&1)
+    ALIAS_OUT=$(_tt_nested_collect alias_staleness python3 "$ALIAS_TEST")
     if [ "$?" = "0" ]; then
         t_pass "scripts/tests/test_alias_staleness.py PASS ($(printf '%s\n' "$ALIAS_OUT" | tail -1))"
     else
@@ -909,7 +995,7 @@ fi
 # set). Shelled out the same way so failures bubble into the aggregate.
 QUERY_BOUNDS_TEST="$REPO_ROOT/scripts/todo-graph/tests/test_query_bounds.sh"
 if [ -x "$QUERY_BOUNDS_TEST" ]; then
-    QB_OUT=$("$QUERY_BOUNDS_TEST" 2>&1)
+    QB_OUT=$(_tt_nested_collect query_bounds "$QUERY_BOUNDS_TEST")
     QB_RC=$?
     QB_SUMMARY=$(printf '%s\n' "$QB_OUT" | grep -E '^== test_query_bounds' | tail -1)
     if [ "$QB_RC" = "0" ]; then
@@ -959,7 +1045,7 @@ else
     [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[lsp-mcp]${NC}"
     LSP_MCP_TEST="$REPO_ROOT/scripts/lsp-mcp/tests/test_bridge.sh"
     if [ -x "$LSP_MCP_TEST" ]; then
-        LM_OUT=$("$LSP_MCP_TEST" 2>&1)
+        LM_OUT=$(_tt_nested_collect lsp_bridge "$LSP_MCP_TEST")
         LM_RC=$?
         # The harness appends ", N shape(s) SKIPPED" to this line when a
         # host could not build a fixture. Match the suffix too, or the
@@ -987,7 +1073,7 @@ else
     fi
     LSP_BOUNDARY_TEST="$REPO_ROOT/scripts/lsp-mcp/tests/test_boundary.sh"
     if [ -x "$LSP_BOUNDARY_TEST" ]; then
-        LB_OUT=$("$LSP_BOUNDARY_TEST" 2>&1)
+        LB_OUT=$(_tt_nested_collect lsp_boundary "$LSP_BOUNDARY_TEST")
         LB_RC=$?
         LB_SUMMARY=$(printf '%s\n' "$LB_OUT" | grep -E '^\[boundary\] ' | tail -1)
         if [ "$LB_RC" = "0" ]; then
@@ -999,6 +1085,10 @@ else
         t_fail "scripts/lsp-mcp/tests/test_boundary.sh not found or not executable"
     fi
 fi
+# Every nested suite has been collected; nothing started above is still alive.
+_tt_nested_kill
+eval "${_TT_SAVED_INT:-trap - INT}"
+eval "${_TT_SAVED_TERM:-trap - TERM}"
 
 # ============================================================================
 # Cross-tool MCP drift detection (TODO-08 in 00-infrastructure section 1)

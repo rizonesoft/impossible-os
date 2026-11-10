@@ -26,8 +26,31 @@ CHECK = REPO / "scripts/lint/check_stub_behind_stamp.py"
 BASELINE = REPO / "scripts/lint/stub-lint-baseline.json"
 
 
+_CACHE_DIR = None
+
+
+def _fresh_cache():
+    """Build this suite's OWN cache of the current corpus, once.
+
+    The suite read the ambient build/todo-cache.json, which any
+    `build-and-validate.sh` run without --keep-cache deletes and any todo/
+    edit stales. On 2026-11-10 it failed twice that way (once stale, once
+    missing) with nothing wrong in the lint it tests. A private cache built
+    from the tree under test removes the dependence on what ran before.
+    """
+    global _CACHE_DIR
+    if _CACHE_DIR is None:
+        _CACHE_DIR = tempfile.TemporaryDirectory()
+        out = pathlib.Path(_CACHE_DIR.name) / "todo-cache.json"
+        subprocess.run([sys.executable, str(REPO / "scripts/todo-graph/build.py"),
+                        "--quiet", "--output", str(out)],
+                       cwd=str(REPO), check=True, timeout=300)
+    return str(pathlib.Path(_CACHE_DIR.name) / "todo-cache.json")
+
+
 def _run(env_extra=None):
     env = dict(os.environ)
+    env["STUB_LINT_CACHE"] = _fresh_cache()
     env.update(env_extra or {})
     return subprocess.run([sys.executable, str(CHECK)], cwd=str(REPO),
                           capture_output=True, text=True, env=env, timeout=300)
@@ -229,7 +252,7 @@ def test_unpaired_refs_are_counted_so_the_POPULATION_cannot_shrink():
     # only that an `unpaired-ref=` key exists is not enough -- reintroducing the
     # bug leaves the key present at 0, so a weaker form of this test passed the
     # mutation that removes the fix.
-    cache = json.loads((REPO / "build/todo-cache.json").read_text(encoding="utf-8"))
+    cache = json.loads(pathlib.Path(_fresh_cache()).read_text(encoding="utf-8"))
     expected = sum(1
                    for node in cache
                    for it in (node.get("stamped_items") or [])
@@ -299,7 +322,7 @@ def test_the_classifier_is_cached_PER_FILE_not_per_symbol():
     rr = importlib.import_module("ref_resolution")
     rr.clear_caches()
     m._is_stub_cached.cache_clear()
-    nodes = json.loads((REPO / "build/todo-cache.json").read_text(encoding="utf-8"))
+    nodes = json.loads(pathlib.Path(_fresh_cache()).read_text(encoding="utf-8"))
     m._walk(nodes, REPO)
     builds = rr._CODE_TEXT_BUILDS
     # Distinct files that needed stripping must be well under the number of

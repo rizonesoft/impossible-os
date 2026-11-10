@@ -1699,9 +1699,9 @@ def feature_cards(facts: dict, errors: list[str]) -> str:
         check_sources(where, [x.rstrip("/") for x in sources], errors)
         if card.get("reviewed") and not valid_reviewed(card["reviewed"]):
             errors.append(f"{where}: reviewed must be YYYY-MM-DD or YYYY-MM-DDTHH:MM, got {card['reviewed']!r}")
-        for field in ("title", "text"):
-            if any(d in card.get(field, "") for d in (chr(0x2014), chr(0x2013))):
-                errors.append(f"{where}: {field} contains an em or en dash")
+        for key in ("title", "text"):
+            if any(d in card.get(key, "") for d in (chr(0x2014), chr(0x2013))):
+                errors.append(f"{where}: {key} contains an em or en dash")
         good = [o for o in owners if o in known]
         # What is AHEAD, not what is done: much of the foundation predates the
         # roadmap, so a done-count would read "0 of 12" on a card whose features

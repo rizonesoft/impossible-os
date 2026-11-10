@@ -1955,7 +1955,7 @@ def check_in_file_anchor(nodes: list, snapshot: dict) -> list:
             # so raising that gate to this one's rc 2 would HIDE an unclosed
             # document from the completion gate. Same name, different codes, and
             # the difference is the deliberate half.
-            _refuse(f"{_cs.terminal_category(_scan.terminal)}: {rel}: {reason}")
+            _refuse(f"{cache_schema.terminal_category(_scan.terminal)}: {rel}: {reason}")
         valid = _heading_slugs(
             ev[1] for ev in _scan_markdown(_scan) if ev[0] == "heading")
         dead: dict = {}

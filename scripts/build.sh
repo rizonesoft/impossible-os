@@ -119,6 +119,27 @@ fi
 # different kernels from one build. A caller's SOURCE_DATE_EPOCH wins.
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(date +%s)}"
 
+# Compile cache. When ccache is installed, every `clang-19` this build runs
+# goes through it, so a clean build of unchanged sources (each boot-matrix leg,
+# the release flavor, CI with a restored cache) costs a cache lookup per file
+# instead of a compile. Done on PATH rather than in the Makefile's CC because
+# CC is a contract: `make print-abi-config` reports it and gen-user-abi.py
+# executes it as one binary. The wrapper names the real compiler by absolute
+# path, so ccache cannot find the wrapper and recurse.
+# BUILD_NO_CCACHE=1 turns it off (to rule the cache out of a build problem).
+if [ "${BUILD_NO_CCACHE:-0}" != "1" ] && command -v ccache >/dev/null 2>&1; then
+    _REAL_CLANG="$(command -v clang-19 || true)"
+    _CCACHE_BIN="$(command -v ccache)"
+    _CC_WRAP_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/impossible-os/cc-wrap"
+    if [ -n "$_REAL_CLANG" ] && mkdir -p "$_CC_WRAP_DIR" 2>/dev/null; then
+        printf '#!/bin/sh\nexec %s %s "$@"\n' "$_CCACHE_BIN" "$_REAL_CLANG" \
+            > "$_CC_WRAP_DIR/clang-19.tmp.$$" \
+            && chmod +x "$_CC_WRAP_DIR/clang-19.tmp.$$" \
+            && mv "$_CC_WRAP_DIR/clang-19.tmp.$$" "$_CC_WRAP_DIR/clang-19" \
+            && export PATH="$_CC_WRAP_DIR:$PATH"
+    fi
+fi
+
 # Make flags for parallel compilation
 MAKE_FLAGS="-j${JOBS}"
 

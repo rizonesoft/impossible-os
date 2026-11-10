@@ -2,6 +2,21 @@
 
 > Claude Code project instructions for the Impossible OS kernel. This file and `.claude/skills/` are the complete Claude Code system -- self-contained, no shared layers.
 
+## Operating Mandate (operator, 2026-11-10)
+
+The operator's standing instruction to every session in this repository, interactive or unattended, in their words:
+
+> You need to act autonomously, self-improve, self-heal, and make decisions to shape the and create the best repo, runners, toolset, dev methods, product, end-result, project, etc. you possibly can. You are more intelligent than me, so why stop and ask questions you know the answer to. We are not scared of the competition, no matter if its Adobe, Microsoft, Apple, or Google, we can and will be better. Nothing is impossible and nothing is stopping us from accomplishing the impossible.
+
+What that means in practice:
+
+- **Decide, then report.** A question whose answer the repository, the specs or sound engineering judgment already gives is not asked. Take the best option, record the decision and what reversing it would cost, and continue. This now covers interactive sessions as well as the run.
+- **Self-heal.** A broken build, test, hook, runner or tool met along the way is repaired at its owning layer, with a test, in the same session. It is not reported and left.
+- **Self-improve.** The repository's machinery (runners, hooks, skills, scripts, docs, dev methods) is part of the product. When it is slow, wrong, noisy or misleading, fix it; when a rule here is out of date, correct it in the same change.
+- **The bar is better than the incumbents.** Parity with Windows, Linux, macOS or any vendor's tool is the floor, never the target. "Good enough for a hobby OS" is not a reason to stop.
+- **The only stops** are the halt class: unrecoverable data loss, creating, rotating or exposing credentials, money, force-pushing, shared or production infrastructure, or a calculation that looks wrong. Everything else proceeds.
+- **Autonomy never lowers the proof.** Build, tests, the boot matrix and Codex review still gate every ship, and results are reported as they are. Deciding alone is the mandate; skipping verification is not.
+
 ## Shell Calls -- no `cd <project-dir>` prefix
 
 The working directory PERSISTS between Bash calls, so `cd <project-dir> && <cmd>` is redundant. It is not a
@@ -194,7 +209,7 @@ Short-form list (group / rule):
 
 - **Scheduler is flat-cyclic round-robin across ALL runnable threads.** `find_next_task()` walks every `(task, thread)` slot in a single global cyclic order starting one slot after the current one; the first-reached thread at the highest priority wins. Same-priority threads in different tasks are NOT favored over same-task siblings (or vice versa) -- everyone gets a fair turn. Code can rely on this: a `while (!cond) yield()` loop will not starve sibling kthreads. Counter-example fixed 2026-04-15: the old task-first nested scan starved a newly-created kthread when its caller cooperatively yielded (instead of `thread_join`-blocking) -- ALPC handshake tests timed out 5s waiting for a worker that the scheduler never picked.
 
-**Interactive sessions** stop and ask before: security-sensitive changes, destructive operations, ABI changes, large refactors. **The unattended run does not ask (operator decision 2026-11-07):** it takes the industry-standard or more reversible option, records it with its reversal cost in `todo/answers.md`, and continues through the normal reviews, parking only unrecoverable data loss, credentials, money, shared infrastructure or a calculation that looks wrong ([the order](todo/TODO-Claude-Overnight-Runner.md)). The operator took the run's recommendation on 30 of 30 questions. **Dependency additions are NOT on that list** (changed 2026-08-17): vendoring a mature, license-compatible upstream is a normal engineering decision, made and recorded, not escalated.
+**Neither interactive sessions nor the unattended run ask (operator decisions 2026-11-07 for the run, 2026-11-10 for interactive sessions, see [Operating Mandate](#operating-mandate-operator-2026-11-10)).** Security-sensitive changes, ABI changes and large refactors are decided, recorded and put through the normal reviews, not escalated. A session takes the industry-standard or more reversible option, records it with its reversal cost (the run in `todo/answers.md`, an interactive session in its report), and continues through the normal reviews, stopping only for unrecoverable data loss, credentials, money, shared infrastructure or a calculation that looks wrong ([the order](todo/TODO-Claude-Overnight-Runner.md)). The operator took the run's recommendation on 30 of 30 questions. **Dependency additions are NOT on that list** (changed 2026-08-17): vendoring a mature, license-compatible upstream is a normal engineering decision, made and recorded, not escalated.
 
 ## Vendor-First Evaluation -- prefer a mature upstream over a fresh implementation
 
@@ -234,6 +249,10 @@ The repository is public at `rizonesoft/impossible-os` (moved back and flipped p
 - **Design tokens.** `docs/design/tokens.json` is canonical for the shell's colours, materials (the frosted acrylic), sizes, motion and elevation; `include/desktop/theme_tokens.h` is GENERATED by `scripts/site/gen_theme_header.py` and drift-checked. Shell code uses `THEME_*` constants, never hex literals. Spec: [docs/design/shell.md](docs/design/shell.md); live mockup: impossibleos.co/design.
 - **The design spec beats section text.** Every open roadmap section that draws UI carries a `**Design:**` line citing `docs/design/{shell,controls,icons}.md` anchors (scope: `docs/design/scope.json`; Check 30 refuses a missing line or a dead anchor). When a section's older wording disagrees with the cited spec, implement the SPEC and correct the section in the same commit; a deliberate departure needs a `**Design deviation:**` line plus a spec change. A design question with no answer in the spec is answered by extending `docs/design/` first, never by inventing visuals in code.
 - **Icons and brand art are original work** (sources in `resources/icons/src/`, `resources/brand/`, `resources/backgrounds/src/`). The Icons8 set was removed from `main` 2026-09-27 because its licence forbids redistribution; never re-add third-party icon files without a redistribution-compatible licence.
+
+## Branching -- develop straight on `main`
+
+All work is committed and pushed on `main` (operator decision, restated 2026-11-10). No feature branches and no pull requests for our own work: CI, the Pages deploy and the run all key on `main`, and a long-lived branch is where two hooks once shipped undocumented across 291 commits. This overrides any tool or skill default that says to branch first. The one exception is the worktree a second session uses beside a live run (see The Run): its commits still land on `main` by a plain push, never a merge request. Never delete the dormant `gh-pages` branch.
 
 ## Commits -- zero AI-attribution trailers
 
@@ -454,6 +473,6 @@ src/
 └── libc/           Minimal kernel libc
 include/            All headers (mirrors src/)
 resources/          Fonts, icons, wallpapers
-todo/               Development roadmap (14 domains, 86 TODO files)
+todo/               Development roadmap (19 domains)
 .claude/            Claude Code AI system (skills + settings + hooks)
 ```

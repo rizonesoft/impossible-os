@@ -556,7 +556,6 @@ def _is_codex_write_dispatch(cmd: str) -> bool:
     """True if a Codex dispatch carries a WRITE/sandbox-escalation marker.
     Caller must have confirmed `_is_codex_bash_trigger(cmd)` first so a bare
     `--write` on some unrelated command cannot false-match."""
-    import shlex
     try:
         toks = shlex.split(cmd)
     except ValueError:

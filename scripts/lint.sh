@@ -634,6 +634,17 @@ else
     #       mid-run so returned coordinates no longer describe it -- NEVER a
     #       coverage finding, NEVER silently downgraded to "unresolved")
     CACHE="$REPO_ROOT/build/todo-cache.json"
+    # A MISSING cache is built here, not skipped. `build-and-validate.sh`
+    # without its keep flag deletes the cache on exit and build/ is untracked,
+    # so "missing" was the common state, and rc 2 turned the whole stub walk
+    # into one warning among two hundred (2026-11-10: the check skipped
+    # through a full lint and failed its own integration test, twice). A build
+    # is about 3 s. If it fails, the rc 2 warning below still says so.
+    if [ ! -f "$CACHE" ]; then
+        mkdir -p "$REPO_ROOT/build"
+        python3 "$REPO_ROOT/scripts/todo-graph/build.py" --quiet --output "$CACHE" \
+            >/dev/null 2>&1 || rm -f "$CACHE"
+    fi
     # GUARDED, because line 17 sets `set -euo pipefail`: an unguarded
     # command-substitution assignment that fails takes the ENTIRE linter down
     # before Check 7 can report a controlled error or the summary can print,
@@ -2957,6 +2968,32 @@ else
     if [ "$IRQLW_RC" -ne 0 ]; then
         printf '%s\n' "$IRQLW_OUT" | sed 's/^/  /'
         echo -e "${RED}error${NC}: Check 34 (IRQL write surface) -- the control fixture was misjudged; the detector cannot be trusted"
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+# ============================================================================
+# Check 35: Python tooling has no undefined names, syntax errors or shadowed
+# imports (ruff, rule set in ruff.toml)
+# ============================================================================
+# The repository's gates are Python. A NameError on a path no test reaches is a
+# gate that crashes exactly when it should refuse, and nothing compiled these
+# files before 2026-11-10. Whole tree, every run: 355 files take well under a
+# second. A missing ruff is an ERROR, not a skip: a check that silently does
+# not run reads as a check that passed (`bash scripts/setup.sh` installs it).
+# Skip via SKIP_LINT_RUFF=1.
+if [ "${SKIP_LINT_RUFF:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 35 (ruff) skipped via SKIP_LINT_RUFF=1"
+    WARNINGS=$((WARNINGS + 1))
+elif ! command -v ruff >/dev/null 2>&1; then
+    echo -e "${RED}error${NC}: Check 35 (ruff) -- ruff is not installed; run bash scripts/setup.sh (or: uv tool install ruff / pipx install ruff)"
+    ERRORS=$((ERRORS + 1))
+else
+    RUFF_RC=0
+    RUFF_OUT=$(cd "$REPO_ROOT" && git ls-files -z '*.py' | xargs -0 ruff check --no-cache --output-format concise --config "$REPO_ROOT/ruff.toml" --force-exclude 2>&1) || RUFF_RC=$?
+    if [ "$RUFF_RC" -ne 0 ]; then
+        printf '%s\n' "$RUFF_OUT" | grep -E '^[^ ]+:[0-9]+:[0-9]+: ' | head -40 | sed 's/^/  /'
+        echo -e "${RED}error${NC}: Check 35 (ruff) -- $(printf '%s\n' "$RUFF_OUT" | grep -cE '^[^ ]+:[0-9]+:[0-9]+: ') Python defect(s); each is a real error, fix it rather than excluding it"
         ERRORS=$((ERRORS + 1))
     fi
 fi
