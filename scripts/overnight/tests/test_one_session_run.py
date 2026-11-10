@@ -539,6 +539,13 @@ def test_stop_guard_holds_the_session_until_the_work_is_done():
     assert _stop(oracle="BLOCKED") == 0
 
 
+def test_the_desktop_shortcuts_attach_with_the_keyboard_on():
+    text = (REPO / "scripts/run-desktop.sh").read_text()
+    assert "$RUN watch" not in text, "a shortcut that attaches read-only cannot talk to the run"
+    assert text.count("exec $RUN attach") == 3, text
+    subprocess.run(["bash", "-n", str(REPO / "scripts/run-desktop.sh")], check=True)
+
+
 def test_run_script_shape():
     text = (REPO / "scripts/run.sh").read_text()
     for verb in ("start)", "attach)", "watch)", "status)", "stop)", "autostart)"):

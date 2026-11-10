@@ -279,7 +279,7 @@ Canonical path is `.githooks/` (activated by `core.hooksPath`). `.githooks/pre-p
 
 ## The Run
 
-**One session runs everything (2026-11-07).** `bash scripts/run.sh start`, then `attach` to watch it and talk to it (`watch` is the same with the keyboard off, and is what the desktop shortcuts use), and `stop` from your own shell to stop it. Design and reasons: [the run supervisor](docs/specs/2026-11-07-run-supervisor-design.md).
+**One session runs everything (2026-11-07).** `bash scripts/run.sh start`, then `attach` to watch it and talk to it (the desktop shortcuts do this; `watch` is the same with the keyboard off), and `stop` from your own shell to stop it. Design and reasons: [the run supervisor](docs/specs/2026-11-07-run-supervisor-design.md).
 
 - **A failure stops one item, never the run.** After 2 refused rollovers a section is reverted, parked with its reason, and the queue moves on.
 - **`run.sh start` refuses only** a missing tool or a permission deny on a pipeline skill. There are no canary runs.

@@ -36,7 +36,7 @@ state_set() {
 
 RUN_T="$(run_target "$RUN_SESSION")"
 # A person attached may be mid-sentence, and Enter would send their half-typed prompt.
-# A read-only viewer (`run.sh watch`, the desktop shortcuts) cannot type, so it does not count:
+# A read-only viewer (`run.sh watch`) cannot type, so it does not count:
 # a watch window left open must not switch the nudges off.
 someone_attached() { tmux list-clients -t "$RUN_T" -F '#{client_readonly}' 2>/dev/null | grep -qx 0; }
 nudge() {
