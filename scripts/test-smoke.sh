@@ -1539,7 +1539,7 @@ if [ -f "$STRIPPED_LOG" ]; then
         # that one line is the leg's evidence, not noise, and is excused for
         # this leg only (never baselined, so a real refusal still fails).
         if [ "$is_baselined" = false ] && [ "$DEGRADE" = "fb" ]; then
-            case "$fail_line" in *"gfx: Unsupported pixel format 255"*) is_baselined=true ;; esac
+            case "$fail_line" in *"gfx: Framebuffer refused: unsupported pixel format (format 255,"*) is_baselined=true ;; esac
         fi
         if [ "$is_baselined" = false ]; then
             UNEXPECTED_FAILS="${UNEXPECTED_FAILS}${fail_line}"$'\n'

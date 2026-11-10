@@ -155,6 +155,7 @@ static uint8_t compositor_locked; /* when set, fb_putchar/draw_char are no-ops *
 
 static uint8_t  fb_ready;       /* 1 if framebuffer is initialized */
 static uint8_t  fb_refused;     /* 1 once fb_init() rejected the GOP layout */
+static uint16_t fb_refuse_why;  /* FB_REFUSE_*, written before fb_refused */
 
 /* VBE page flip state -- two pages in VRAM for tear-free rendering */
 static uint8_t  page_flip_ok;   /* 1 if VBE page flipping is available */
@@ -204,6 +205,55 @@ static void mem_cpy32(uint32_t *dst, const uint32_t *src, uint32_t count)
  * Lifecycle
  * ============================================================================ */
 
+/* The layout fb_init() accepts, as a pure predicate (unit-tested). The
+ * renderers assume 4-byte RGBX/BGRX pixels and a pitch that is a whole number
+ * of pixels at least one visible row long; FB_MAX_DIM per side keeps the
+ * uint32 size products below (pitch * height * 2 for the WC map, width *
+ * height * 4 for the back buffer) from wrapping, the same cap the halt
+ * screen applies. Geometry is checked before the pitch so no product is
+ * formed from an unbounded width. */
+uint16_t fb_layout_refusal(uint32_t pixel_format, uint32_t bpp, uint32_t pitch,
+                           uint32_t width, uint32_t height)
+{
+    if (pixel_format != GOP_PIXEL_BGRX && pixel_format != GOP_PIXEL_RGBX)
+        return FB_REFUSE_PIXEL_FORMAT;
+    if (bpp != 32u)
+        return FB_REFUSE_BPP;
+    if (width == 0u || height == 0u || width > FB_MAX_DIM ||
+        height > FB_MAX_DIM || pitch > FB_MAX_DIM * 4u)
+        return FB_REFUSE_GEOMETRY;
+    if ((pitch % 4u) != 0u)
+        return FB_REFUSE_PITCH_ALIGN;
+    if (pitch < width * 4u)
+        return FB_REFUSE_PITCH_SHORT;
+    return FB_REFUSE_NONE;
+}
+
+/* Whether [phys, phys + size) lies wholly inside the boot identity window,
+ * which is the only place the WC-fallback pointer is mapped. Subtraction
+ * form: phys + size wraps for a base near UINT64_MAX and would pass a sum
+ * compared against the window end. */
+int fb_identity_reachable(uint64_t phys, uint64_t size)
+{
+    if (phys >= BOOT_INFO_EARLY_MAP_END)
+        return 0;
+    return size <= BOOT_INFO_EARLY_MAP_END - phys;
+}
+
+const char *fb_refusal_name(uint16_t why)
+{
+    switch (why) {
+    case FB_REFUSE_NONE:         return "none";
+    case FB_REFUSE_PIXEL_FORMAT: return "unsupported pixel format";
+    case FB_REFUSE_BPP:          return "unsupported bpp";
+    case FB_REFUSE_GEOMETRY:     return "implausible geometry";
+    case FB_REFUSE_PITCH_ALIGN:  return "pitch not a whole number of pixels";
+    case FB_REFUSE_PITCH_SHORT:  return "pitch shorter than a row";
+    case FB_REFUSE_UNMAPPED:     return "VRAM above the identity map with no WC mapping";
+    default:                     return "unknown";
+    }
+}
+
 /* A refused framebuffer leaves the driver exactly as a machine with no GOP
  * framebuffer does: zero geometry, no VRAM pointer, no back buffer. Every
  * accessor (fb_get_width/height/stride/backbuffer) then reports an empty
@@ -211,13 +261,14 @@ static void mem_cpy32(uint32_t *dst, const uint32_t *src, uint32_t count)
  * instead of writing through a format or pitch this function just rejected.
  * Only the geometry the guardrails had already copied needs clearing; the
  * pointers are still NULL at every refusal site, cleared again for clarity. */
-static uint8_t fb_refuse(void)
+static uint8_t fb_refuse(uint16_t why)
 {
     fb_pitch = fb_width = fb_height = fb_bpp = fb_stride = 0;
     max_cols = max_rows = 0;
     hw_addr  = (uint32_t *)0;
     back_buf = (uint32_t *)0;
     fb_ready = 0;
+    fb_refuse_why = why;
     __atomic_store_n(&fb_refused, 1, __ATOMIC_RELEASE);
     return BOOT_LOAD_FAILED;
 }
@@ -253,29 +304,16 @@ uint8_t fb_init(void)
         pixel_format = 0xFFu;
     }
 #endif
-    if (pixel_format != GOP_PIXEL_BGRX &&
-        pixel_format != GOP_PIXEL_RGBX) {
-        klog(LOG_ERROR, "gfx", "Unsupported pixel format %u (expected RGBX=0 or BGRX=1)",
-             (uint64_t)pixel_format);
-        return fb_refuse();
-    }
-    if (fb_bpp != 32) {
-        klog(LOG_ERROR, "gfx", "Unsupported bpp %u (expected 32)", (uint64_t)fb_bpp);
-        return fb_refuse();
-    }
-
-    /* --- Guardrail: pitch must be aligned to pixel size and >= width ---
-     * PixelsPerScanLine may include padding beyond visible width. If pitch
-     * is not a multiple of bpp/8, stride math produces wrong values. */
-    if ((fb_pitch % (fb_bpp / 8)) != 0) {
-        klog(LOG_ERROR, "gfx", "Pitch %u not aligned to %u-byte pixels",
-             (uint64_t)fb_pitch, (uint64_t)(fb_bpp / 8));
-        return fb_refuse();
-    }
-    if (fb_pitch < fb_width * (fb_bpp / 8)) {
-        klog(LOG_ERROR, "gfx", "Pitch %u too small for %u pixels @ %u bpp",
-             (uint64_t)fb_pitch, (uint64_t)fb_width, (uint64_t)fb_bpp);
-        return fb_refuse();
+    {
+        uint16_t why = fb_layout_refusal(pixel_format, fb_bpp, fb_pitch,
+                                         fb_width, fb_height);
+        if (why != FB_REFUSE_NONE) {
+            klog(LOG_ERROR, "gfx", "Framebuffer refused: %s (format %u, %ux%u, %u bpp, pitch %u)",
+                 fb_refusal_name(why), (uint64_t)pixel_format,
+                 (uint64_t)fb_width, (uint64_t)fb_height, (uint64_t)fb_bpp,
+                 (uint64_t)fb_pitch);
+            return fb_refuse(why);
+        }
     }
 
     /* Remap framebuffer VRAM as Write-Combining for fast sequential writes.
@@ -294,8 +332,18 @@ uint8_t fb_init(void)
         } else {
             /* Guardrail: WC mapping is required for bare-metal performance.
              * Falling back to identity map silently would hide a VMM bug. */
+            /* The identity fallback reaches VRAM only below the boot
+             * identity window's 4 GiB end; above it (Above-4G decoding,
+             * ReBAR) the first draw would page-fault, so that is a refusal,
+             * not a slow display. */
+            if (!fb_identity_reachable(fb_phys, fb_size)) {
+                klog(LOG_ERROR, "gfx", "Framebuffer WC remap failed and VRAM %p is above the identity map",
+                     fb_phys);
+                return fb_refuse(FB_REFUSE_UNMAPPED);
+            }
             klog(LOG_ERROR, "gfx", "Framebuffer WC remap failed -- falling back to identity map");
             hw_addr = (uint32_t *)(uintptr_t)fb_phys;
+            state = BOOT_LOAD_DEGRADED;
         }
     }
 
@@ -874,6 +922,11 @@ void fb_set_color(uint32_t fg, uint32_t bg)
  * ============================================================================ */
 
 int fb_is_refused(void) { return __atomic_load_n(&fb_refused, __ATOMIC_ACQUIRE); }
+
+uint16_t fb_refusal_reason(void)
+{
+    return fb_is_refused() ? fb_refuse_why : (uint16_t)FB_REFUSE_NONE;
+}
 
 #ifdef KERNEL_TESTS
 uint64_t fb_test_vram_digest(void)

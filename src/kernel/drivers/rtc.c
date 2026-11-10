@@ -171,6 +171,13 @@ int rtc_init(void)
 
     rtc_probe_availability();
     if (!s_rtc_available) {
+        /* Refused because ACPI never validated is NOT an established
+         * absence: the FADT bit cannot be read, so the RTC is FAILED
+         * (degraded), and only a validated FADT saying "no CMOS" is ABSENT. */
+        if (!acpi_is_ready()) {
+            klog(LOG_WARN, "rtc", "RTC: ACPI not validated -- CMOS ports refused");
+            return BOOT_PROBE_FAILED;
+        }
         klog(LOG_INFO, "rtc", "RTC: no CMOS (ACPI gate) -- skipped");
         return BOOT_PROBE_ABSENT;
     }

@@ -123,6 +123,28 @@ int fb_is_ready(void);
  * by ANY raw renderer (VPD, the halt screen) that cached g_boot_info.fb. */
 int fb_is_refused(void);
 
+/* Why fb_init() refused the framebuffer: the err= code of the "gfx" row in
+ * X:\Diag\boot-load-status.txt. 0 = not refused. */
+#define FB_REFUSE_NONE          0u
+#define FB_REFUSE_PIXEL_FORMAT  1u  /* not RGBX/BGRX */
+#define FB_REFUSE_BPP           2u  /* not 32 bits per pixel */
+#define FB_REFUSE_PITCH_ALIGN   3u  /* pitch not a whole number of pixels */
+#define FB_REFUSE_PITCH_SHORT   4u  /* pitch shorter than one visible row */
+#define FB_REFUSE_GEOMETRY      5u  /* zero, or above FB_MAX_DIM per side */
+#define FB_REFUSE_UNMAPPED      6u  /* no WC map and VRAM above the 4 GiB identity map */
+#define FB_MAX_DIM              16384u
+uint16_t fb_refusal_reason(void);
+
+/* Pure: the FB_REFUSE_* reason fb_init() would give a GOP layout, or
+ * FB_REFUSE_NONE when it is usable. */
+uint16_t fb_layout_refusal(uint32_t pixel_format, uint32_t bpp, uint32_t pitch,
+                           uint32_t width, uint32_t height);
+/* Pure: 1 when [phys, phys + size) is inside the boot identity window (the
+ * WC-fallback mapping), 0 otherwise, without wrapping on a high base. */
+int fb_identity_reachable(uint64_t phys, uint64_t size);
+/* Short English name of an FB_REFUSE_* code, for the refusal log line. */
+const char *fb_refusal_name(uint16_t why);
+
 #ifdef KERNEL_TESTS
 /* SMOKE_DEGRADE=fb evidence (resilient-boot roadmap): FNV-1a digest of the whole
  * visible surface of the REAL GOP framebuffer, read through g_boot_info.fb whatever

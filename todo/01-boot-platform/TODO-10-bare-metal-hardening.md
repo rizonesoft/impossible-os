@@ -356,7 +356,7 @@ Wrap every Phase 1--3 subsystem init in a protective pattern: emit POST code, ca
 
 **Test checkpoint:** Disable a non-critical subsystem (e.g., force `rtc_init()` to fail). Boot completes. Desktop shows degraded notification. Serial log shows `[WARN] RTC: init failed -- degraded`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | full suite 37224 kernel + 17 user-mode PASS; smoke matrix 20/20; `SMOKE_DEGRADE=rtc|fb bash scripts/test-smoke.sh` PASS (both legs in `test-smoke-matrix.sh`)
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | full suite 37243 kernel + 17 user-mode PASS; smoke matrix 20/20 (2720s); `SMOKE_DEGRADE=rtc|fb bash scripts/test-smoke.sh` PASS (both legs in `test-smoke-matrix.sh`)
 
 > **Notes:**
 > - Infrastructure shipped: `BOOT_TRY` macro, `kernel_subsystem_apply_result()`, the degraded bitmap (then `g_boot_info.degraded_mask`), and the Phase 3 degraded-subsystem summary (bounded by `SUBSYS_COUNT`).
@@ -364,10 +364,11 @@ Wrap every Phase 1--3 subsystem init in a protective pattern: emit POST code, ca
 > - Review hardening (2026-06-07): `BOOT_TRY` now delegates to `apply_result` (was OK-only ready + unbounded shift); added `_Static_assert(SUBSYS_COUNT <= 32)` guarding the uint32 shift (superseded 2026-11-10: 64-bit kernel bitmap, `SUBSYS_COUNT <= 64`).
 > - Downgraded to `[/]`: most non-critical inits (`rtc/keyboard/mouse/fb` void, `ahci_init` return ignored) mark ready unconditionally and several lack a `SUBSYS_` slot, so their failures were never recorded. The 3 `[ ]` items filed then shipped 2026-11-10.
 > - Scope boundary: this section owns the degradation INFRASTRUCTURE; per-driver result-returning signatures + the forced-failure test are the filed follow-ups.
-> **Verified:** 2026-06-07 | commit `2340c34e` | 5/8 items | build OK | boot 1723 PASS, smoke PASS (KVM 3.0s)
+> **Verified:** 2026-11-10 | commit `a6121ddff` + post-ship fixes | 11/12 items (1 parked `[/]`) | build OK | 37243 kernel + 17 user-mode PASS, smoke matrix 20/20
 > **Notes:** (2026-11-10) Wiring shipped. The degraded set moved out of the loader handoff: it is kernel-written only and needed 36 bits. SKIPPED is the state the old two-channel mapping could not express, so a NIC-less machine no longer reports a degraded boot. `post_display16` refuses raw VRAM after a refused framebuffer, and SUBSYS_FB is published before the next POST. Decisions in todo/answers.md Q36-Q37.
 > **Notes:** Reopened 2026-11-07, was Deferred: [H] resilient wrapping not wired for most non-critical subsystems (void/ignored-return inits + missing enum slots). The stamp and its items named each other, so none could clear; an all-callers change is work, not a blocker. `boot_interrupts.c:388-400,973` and `boot_storage.c:565` still ignore these results.
-> **Quality reviewed:** 2026-06-07 | Codex 3x (adversarial, consistency, perf) | 2M fixed, 1H deferred (re-adversarial skipped: header-only fix, no faultable region) | scope: kernel-code-quality
+> **Notes:** (2026-11-10, post-ship review) The load log now names why a subsystem failed: `gfx` carries an `FB_REFUSE_*` code and `rtc` its probe error. `fb_layout_refusal()` is the pure layout predicate with an `FB_MAX_DIM` cap that keeps both uint32 size products from wrapping. A failed WC map falls back to the identity map only when `fb_identity_reachable()` holds (subtraction form; the first version summed and wrapped for a base near `UINT64_MAX`, Codex [high]). RTC is FAILED, not ABSENT, when ACPI never validated. A refused RSDP marks ACPI FAILED in the readiness oracle. The readiness dump reads ready before the degraded bit. Re-probe of a degraded subsystem is filed in 04-drivers-hardware/TODO-07 section 10.
+> **Quality reviewed:** 2026-11-10 | Codex adversarial 2x on the post-ship fix diff (round 1: 1H fixed with boundary test; round 2: clean) after the ship review (adversarial, consistency, perf) | scope: kernel-code-quality
 
 ---
 

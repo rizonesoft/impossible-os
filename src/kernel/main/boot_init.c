@@ -107,11 +107,13 @@ void kernel_subsystem_dump(void)
      * one: OK (ready), DEGR (ready but reduced), FAIL (not ready AND recorded
      * degraded -- init was attempted and failed), and "----" (not ready, no
      * failure recorded: absent, disabled, or not initialised yet). */
-    uint64_t mask = kernel_subsystem_degraded_mask();
     klog(LOG_INFO, "BOOT", "--- Subsystem readiness ---");
     for (uint32_t i = 0; i < SUBSYS_COUNT; i++) {
+        /* Ready FIRST, then the bit: the reverse of the publish order (bit,
+         * then ready), so a publish racing this dump on another CPU can never
+         * show a DEGRADED subsystem as OK or a FAILED one as absent. */
         bool ready = __atomic_load_n(&g_subsys.ready[i], __ATOMIC_ACQUIRE) != 0;
-        bool degr  = (mask & ((uint64_t)1u << i)) != 0;
+        bool degr  = (kernel_subsystem_degraded_mask() & ((uint64_t)1u << i)) != 0;
         const char *tag = ready ? (degr ? "DEGR" : "OK  ")
                                 : (degr ? "FAIL" : "----");
         klog(LOG_INFO, "BOOT", "  [%s] %s", tag, s_subsys_names[i]);

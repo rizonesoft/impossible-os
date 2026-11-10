@@ -213,6 +213,9 @@ Expose "Unload Driver" and "Reload Driver" actions in the Device Manager context
 - [ ] Device Manager context menu handler: on `Unload Driver` → confirm dialog → call `driver_unload_by_device()`; on `Reload Driver` → call `driver_reload_by_device()`
 - [ ] Guard: if device has no bound driver (`driver_name[0]=='\0'`), gray out `Unload Driver`; show `Install Driver` (stub, links to future driver store)
 - [ ] Health update: after reload, if `driver_health_get(name) == OK`, show `✅`; update tree node badge
+- [ ] Re-probe a subsystem that degraded at boot: a reload that now succeeds clears its bit in the kernel degraded bitmap and marks it ready
+  - XREF: 01-boot-platform/TODO-10 §7 made the bitmap sticky for the boot (`subsys_publish` only ORs bits in, `src/kernel/main/boot_init.c`), so a transient NIC or mouse failure stays degraded all session; Linux retries with `-EPROBE_DEFER`, Windows re-enables a device from Device Manager.
+  - Needs a `kernel_subsystem_clear_degraded()` that clears the bit with release order before republishing readiness, plus a `boot-health.json` refresh.
 - [ ] Commit: `"desktop: driver unload/reload -- module_unload/load, driver_probe_all, DevMgr context menu"`
 
 ---

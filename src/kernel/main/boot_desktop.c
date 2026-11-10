@@ -714,12 +714,16 @@ void boot_phase3(void)
         int empty = fb_is_refused() && !fb_is_ready() &&
                     fb_get_width() == 0 && fb_get_height() == 0 &&
                     fb_get_backbuffer() == (uint32_t *)0;
-        if (empty && now == boot_test_fb_refusal_digest)
+        /* The load log names WHY: the injected pixel format, not a bare 0. */
+        uint16_t why = fb_refusal_reason();
+        if (empty && why == FB_REFUSE_PIXEL_FORMAT &&
+            now == boot_test_fb_refusal_digest)
             klog(LOG_INFO, "boot", "test_fail_fb: refused display untouched since refusal");
         else
             klog(LOG_ERROR, "boot",
-                 "test_fail_fb: refused display WRITTEN or not empty (empty=%u, digest %p -> %p)",
-                 (uint64_t)empty, boot_test_fb_refusal_digest, now);
+                 "test_fail_fb: refused display WRITTEN, not empty or unattributed "
+                 "(empty=%u, reason=%u, digest %p -> %p)",
+                 (uint64_t)empty, (uint64_t)why, boot_test_fb_refusal_digest, now);
     }
 #endif
 

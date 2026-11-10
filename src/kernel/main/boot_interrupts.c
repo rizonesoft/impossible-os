@@ -304,7 +304,11 @@ void boot_phase1(void)
                          acpi_rc == 0 ? BOOT_LOAD_LOADED : BOOT_LOAD_FAILED,
                          acpi_rc == 0 ? 0u : (uint16_t)BOOT_DEGRADED,
                          POST16_ACPI_OK);
-        kernel_subsystem_set_ready(SUBSYS_ACPI, true);
+        /* A refused RSDP or mandatory table is FAILED in the oracle too, so
+         * the end-of-boot summary names ACPI (it degrades RTC, IOAPIC and
+         * power gating downstream). */
+        kernel_subsystem_apply_load_state(SUBSYS_ACPI,
+            acpi_rc == 0 ? BOOT_LOAD_LOADED : BOOT_LOAD_FAILED);
         /* Arm the ACPI WDAT hardware watchdog now that ACPI is parsed; no-op
          * (HW_WD_NONE) when no usable WDAT exists, e.g. QEMU. */
         hw_watchdog_init();
@@ -409,14 +413,16 @@ void boot_phase1(void)
          * leave SUBSYS_RTC not ready, which is what rtc_available() callers
          * already assume. */
         uint8_t st;
+        int rc = BOOT_PROBE_ABSENT;
         if (acpi_has_cmos_rtc()) {
-            int rc = rtc_init();
+            rc = rtc_init();
             st = boot_probe_load_state(rc);
         } else {
             klog(LOG_INFO, "rtc", "skipped (ACPI: no CMOS RTC -- hardware-reduced)");
             st = BOOT_LOAD_SKIPPED;
         }
-        boot_load_record("rtc", BOOT_LOAD_CLASS_CORE, st, 0u, POST16_RTC_OK);
+        boot_load_record("rtc", BOOT_LOAD_CLASS_CORE, st,
+                         boot_probe_err_code(rc), POST16_RTC_OK);
         kernel_subsystem_apply_load_state(SUBSYS_RTC, st);
     }
     POST16(POST16_RTC_OK);
@@ -449,7 +455,8 @@ void boot_phase1(void)
                 boot_test_fb_refusal_digest = fb_test_vram_digest();
 #endif
         }
-        boot_load_record("gfx", BOOT_LOAD_CLASS_GFX, st, 0u, POST16_FB_OK);
+        boot_load_record("gfx", BOOT_LOAD_CLASS_GFX, st, fb_refusal_reason(),
+                         POST16_FB_OK);
         POST16(POST16_FB_OK);
     }
     boot_progress(1, "FB", POST16_FB_OK);

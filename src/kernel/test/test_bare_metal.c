@@ -26,6 +26,7 @@
 #include "kernel/mm/boot_stack.h"
 #include "kernel/mm/user_range.h"
 #include "kernel/drivers/lapic.h"
+#include "kernel/drivers/framebuffer.h"
 
 /* strcmp lives in the kernel libc, not the freestanding headers (see snprintf
  * above). The guard-label assertion below compares the exact registered text. */
@@ -458,6 +459,78 @@ static void test_bm_degraded_mask_is_well_formed(void)
         TEST_ASSERT_NOT_NULL((void *)kernel_subsystem_name((kernel_subsys_t)i),
                              msg);
     }
+}
+
+/* ---- Framebuffer layout refusal -------------------------------------------
+ *
+ * fb_init() refuses a GOP layout the renderers cannot draw and the boot
+ * continues headless; the reason lands in the "gfx" row of the load log.
+ * fb_layout_refusal() is that decision as a pure predicate, so every reason
+ * and the boundary on each side of it is checked here without touching the
+ * live framebuffer.
+ */
+
+static void test_bm_fb_layout_refusal_names_each_reason(void)
+{
+    TEST_ASSERT_EQ(fb_layout_refusal(GOP_PIXEL_BGRX, 32, 7680, 1920, 1080),
+                   FB_REFUSE_NONE, "1080p BGRX is accepted");
+    TEST_ASSERT_EQ(fb_layout_refusal(GOP_PIXEL_RGBX, 32, 8192, 1920, 1080),
+                   FB_REFUSE_NONE, "padded pitch is accepted");
+    TEST_ASSERT_EQ(fb_layout_refusal(2u, 32, 7680, 1920, 1080),
+                   FB_REFUSE_PIXEL_FORMAT, "bit-mask format is refused");
+    TEST_ASSERT_EQ(fb_layout_refusal(GOP_PIXEL_BGRX, 24, 5760, 1920, 1080),
+                   FB_REFUSE_BPP, "24 bpp is refused");
+    TEST_ASSERT_EQ(fb_layout_refusal(GOP_PIXEL_BGRX, 32, 7682, 1920, 1080),
+                   FB_REFUSE_PITCH_ALIGN, "pitch off a pixel boundary is refused");
+    TEST_ASSERT_EQ(fb_layout_refusal(GOP_PIXEL_BGRX, 32, 7676, 1920, 1080),
+                   FB_REFUSE_PITCH_SHORT, "pitch one pixel short is refused");
+    TEST_ASSERT_EQ(fb_layout_refusal(GOP_PIXEL_BGRX, 32, 0, 0, 1080),
+                   FB_REFUSE_GEOMETRY, "zero width is refused");
+    TEST_ASSERT_EQ(fb_layout_refusal(GOP_PIXEL_BGRX, 32, 7680, 1920, 0),
+                   FB_REFUSE_GEOMETRY, "zero height is refused");
+}
+
+static void test_bm_fb_layout_refusal_caps_the_size_math(void)
+{
+    /* At the cap both uint32 products fit: pitch*height*2 = 2^31 and
+     * width*height*4 = 2^30. One past it on any side is refused BEFORE a
+     * product is formed, which is the wrap the cap exists to prevent: a
+     * width of 0x40000000 makes width*4 wrap to 0 and pass the pitch test. */
+    TEST_ASSERT_EQ(fb_layout_refusal(GOP_PIXEL_BGRX, 32, FB_MAX_DIM * 4u,
+                                     FB_MAX_DIM, FB_MAX_DIM),
+                   FB_REFUSE_NONE, "FB_MAX_DIM square is accepted");
+    TEST_ASSERT_EQ(fb_layout_refusal(GOP_PIXEL_BGRX, 32, FB_MAX_DIM * 4u,
+                                     FB_MAX_DIM + 1u, 1080),
+                   FB_REFUSE_GEOMETRY, "width past the cap is refused");
+    TEST_ASSERT_EQ(fb_layout_refusal(GOP_PIXEL_BGRX, 32, 7680, 1920,
+                                     FB_MAX_DIM + 1u),
+                   FB_REFUSE_GEOMETRY, "height past the cap is refused");
+    TEST_ASSERT_EQ(fb_layout_refusal(GOP_PIXEL_BGRX, 32, FB_MAX_DIM * 4u + 4u,
+                                     1920, 1080),
+                   FB_REFUSE_GEOMETRY, "pitch past the cap is refused");
+    TEST_ASSERT_EQ(fb_layout_refusal(GOP_PIXEL_BGRX, 32, 0, 0x40000000u, 1),
+                   FB_REFUSE_GEOMETRY, "a width whose pitch product wraps is refused");
+    TEST_ASSERT(fb_refusal_name(FB_REFUSE_UNMAPPED)[0] != '\0' &&
+                fb_refusal_name(0xFFFFu)[0] != '\0',
+                "every reason, known or not, has a printable name");
+}
+
+static void test_bm_fb_identity_bound_does_not_wrap(void)
+{
+    /* The WC-fallback pointer is valid only inside the 4 GiB identity
+     * window. A sum compared against the window end wraps for a base near
+     * UINT64_MAX (0xfffffffffffff000 + 16 MiB = 0xfd1000) and accepts it. */
+    uint64_t end = BOOT_INFO_EARLY_MAP_END;
+    TEST_ASSERT(fb_identity_reachable(0xE0000000ull, 16588800ull),
+                "VRAM below 4 GiB is reachable");
+    TEST_ASSERT(fb_identity_reachable(end - 0x1000ull, 0x1000ull),
+                "a range ending exactly at 4 GiB is reachable");
+    TEST_ASSERT(!fb_identity_reachable(end - 0x1000ull, 0x1001ull),
+                "a range crossing 4 GiB is refused");
+    TEST_ASSERT(!fb_identity_reachable(end, 1ull),
+                "a base at 4 GiB is refused");
+    TEST_ASSERT(!fb_identity_reachable(0xfffffffffffff000ull, 16588800ull),
+                "a base whose end wraps is refused");
 }
 
 /* ---- CPU hardening verification -------------------------------------------
@@ -1268,6 +1341,12 @@ void test_register_bare_metal(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("BM: degraded bitmap is well formed",
                             test_bm_degraded_mask_is_well_formed, TEST_CAT_BOOT);
+    test_suite_register_cat("BM: framebuffer refusal names each reason",
+                            test_bm_fb_layout_refusal_names_each_reason, TEST_CAT_BOOT);
+    test_suite_register_cat("BM: framebuffer refusal caps the size math",
+                            test_bm_fb_layout_refusal_caps_the_size_math, TEST_CAT_BOOT);
+    test_suite_register_cat("BM: framebuffer identity bound does not wrap",
+                            test_bm_fb_identity_bound_does_not_wrap, TEST_CAT_BOOT);
     test_suite_register_cat("BM: CPU hardening verified by smoke",
                             test_bm_cpu_hardening_verified_by_smoke,
                             TEST_CAT_BOOT);

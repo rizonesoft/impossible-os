@@ -289,8 +289,8 @@ void boot_halt(const char *reason)
     uint32_t fb_w_snap      = g_boot_info.fb.width;
     uint32_t fb_h_snap      = g_boot_info.fb.height;
     /* Sanity cap before any arithmetic on the snapshots. */
-    int fb_dims_ok = (fb_w_snap > 0 && fb_w_snap <= 16384u &&
-                      fb_h_snap > 0 && fb_h_snap <= 16384u);
+    int fb_dims_ok = (fb_w_snap > 0 && fb_w_snap <= FB_MAX_DIM &&
+                      fb_h_snap > 0 && fb_h_snap <= FB_MAX_DIM);
     /* Pitch must be 4-byte aligned; compare as pixels (overflow-
      * safe -- pitch_bytes / 4 cannot exceed UINT32_MAX/4 by
      * construction). */
