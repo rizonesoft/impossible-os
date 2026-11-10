@@ -308,7 +308,7 @@ Driver and module formats are tracked separately in the [kernel module system TO
 
 ## Model Roles
 
-Use the strongest available Opus-class model for Claude implementation and judgment-heavy work such as `implement-todo-section`, `review-todo-section`, `create-todo`, `gap-audit-todo`, `quality-review-section`, and design-heavy roadmap shaping. Keep Codex review passes for adversarial review, consistency audit, and performance review.
+Use the strongest available Opus-class model for Claude implementation and judgment-heavy work such as `implement-todo-section`, `review-todo-section`, `create-todo`, `gap-audit-todo`, `quality-review-section`, and design-heavy roadmap shaping. Keep Codex review passes for adversarial review, consistency audit, and performance review. **When Claude is the writer, the reviewer is always GPT-6 Astra** (operator decision 2026-11-10): Codex running `model = "gpt-6-astra"` from `~/.codex/config.toml`, never another model and never a Claude pass.
 
 External review does not replace self-review. The agent must always perform its own integration-level check for completeness, polish, regressions, parity gaps, and ownerless adjacent work.
 
