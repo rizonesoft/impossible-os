@@ -279,12 +279,12 @@ Canonical path is `.githooks/` (activated by `core.hooksPath`). `.githooks/pre-p
 
 ## The Run
 
-**One session runs everything (2026-11-07).** `bash scripts/run.sh start`, then `attach` to watch it and talk to it, and `stop` from your own shell to stop it. Design and reasons: [the run supervisor](docs/specs/2026-11-07-run-supervisor-design.md).
+**One session runs everything (2026-11-07).** `bash scripts/run.sh start`, then `attach` to watch it and talk to it (`watch` is the same with the keyboard off, and is what the desktop shortcuts use), and `stop` from your own shell to stop it. Design and reasons: [the run supervisor](docs/specs/2026-11-07-run-supervisor-design.md).
 
 - **A failure stops one item, never the run.** After 2 refused rollovers a section is reverted, parked with its reason, and the queue moves on.
 - **`run.sh start` refuses only** a missing tool or a permission deny on a pipeline skill. There are no canary runs.
 - **Stop guard.** The Stop hook holds the session until fixpoint, an operator stop, or a fully blocked queue.
-- **Heartbeat.** `scripts/overnight/heartbeat.sh` acts only on faults: it restarts a dead session on its own session id, nudges an idle one unless someone is attached, and tells a stalled one to diagnose. After a WSL restart or reboot, the `impossible-os-run` systemd user service (installed by `start`) runs `run.sh autostart`, which resumes a run that was live and leaves a stopped one down.
+- **Heartbeat.** `scripts/overnight/heartbeat.sh` acts only on faults: it restarts a dead session on its own session id, nudges an idle one unless someone is attached with a keyboard (a `watch` viewer does not count), and tells a stalled one to diagnose. After a WSL restart or reboot, the `impossible-os-run` systemd user service (installed by `start`) runs `run.sh autostart`, which resumes a run that was live and leaves a stopped one down.
 - **Compaction at 400K replaces rotation,** so the disk is the memory: the cursor, git and the TODO files.
 - **Checks.** Product checks (build, tests, boot matrix, Codex review) and safety checks block. The 22 process gates that only logged were deleted on 2026-11-09, after a watched run showed none was needed; `.claude/hooks/gate.py` now only lists the frozen files.
 - **Self-repair.** The run may fix its own machinery with a test. If nothing else is produced for 3 hours and the session is idle, `supervisor.py` reverts those commits as one. Frozen files, listed in `gate.py`, are what recovers from every other mistake.

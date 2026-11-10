@@ -4,6 +4,7 @@
 #   bash scripts/run.sh start     start the run, or resume it if it was running
 #   bash scripts/run.sh start --ships N   the same, stopping after N sections ship
 #   bash scripts/run.sh attach    watch it and talk to it (detach: Ctrl-b d)
+#   bash scripts/run.sh watch     watch it with the keyboard off (detach: Ctrl-b d)
 #   bash scripts/run.sh status    alive or not, and the health numbers
 #   bash scripts/run.sh stop      stop it; `start` picks the work up again
 #   bash scripts/run.sh autostart start it only if it was live (the boot service runs this)
@@ -124,6 +125,9 @@ case "${1:-status}" in
   attach)
     exec tmux attach -t "$RUN_T"
     ;;
+  watch)
+    exec tmux attach -r -t "$RUN_T"
+    ;;
   status)
     tmux has-session -t "$RUN_T" 2>/dev/null && echo "session: alive" || echo "session: not running"
     tmux has-session -t "$HEART_T" 2>/dev/null && echo "heartbeat: alive" || echo "heartbeat: not running"
@@ -147,7 +151,7 @@ case "${1:-status}" in
     echo "stopped. \`start\` resumes this run's conversation; delete .claude/state/run-session-id for a new one."
     ;;
   *)
-    echo "usage: run.sh start|attach|status|stop|autostart" >&2
+    echo "usage: run.sh start|attach|watch|status|stop|autostart" >&2
     exit 2
     ;;
 esac

@@ -6,7 +6,8 @@
 #   bash scripts/run-desktop.sh stop      show the run's state and stop it after a yes
 #   bash scripts/run-desktop.sh install   create the three shortcuts on the Windows desktop
 #
-# Detach from the run with Ctrl-b then d; the tab closes and the run keeps going.
+# The shortcuts watch with the keyboard off, so a stray key cannot reach the run; to talk to
+# it use `bash scripts/run.sh attach`. Ctrl-b then d closes the tab and the run keeps going.
 # The run itself is scripts/run.sh; this file only adds the prompts a shortcut needs.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -29,8 +30,8 @@ install_shortcuts() {
   local verb name tip
   for verb in watch start stop; do
     case "$verb" in
-      watch) name="Impossible OS - Watch run"; tip="Attach to the Impossible OS run (detach: Ctrl-b d)" ;;
-      start) name="Impossible OS - Start run"; tip="Start or resume the Impossible OS run, then attach" ;;
+      watch) name="Impossible OS - Watch run"; tip="Watch the Impossible OS run, keyboard off (close: Ctrl-b d)" ;;
+      start) name="Impossible OS - Start run"; tip="Start or resume the unattended Impossible OS run, then watch it" ;;
       stop)  name="Impossible OS - Stop run";  tip="Stop the Impossible OS run (asks first)" ;;
     esac
     # Values reach PowerShell as environment variables, never spliced into its source.
@@ -50,14 +51,14 @@ install_shortcuts() {
 
 case "${1:-}" in
   watch)
-    if running; then exec $RUN attach; fi
+    if running; then exec $RUN watch; fi
     $RUN status
-    if yes_to "The run is not running. Start it?"; then $RUN start && exec $RUN attach; fi
+    if yes_to "The run is not running. Start it?"; then $RUN start && exec $RUN watch; fi
     pause
     ;;
   start)
     $RUN start || { pause; exit 1; }
-    exec $RUN attach
+    exec $RUN watch
     ;;
   stop)
     $RUN status

@@ -88,10 +88,41 @@ def test_refusal_undo_is_not_offered_while_someone_is_attached():
         root, log, env = _fixture(d, idle=4000)
         (root / "scripts/overnight/supervisor.py").write_text(
             'import sys,os\nopen(os.environ["LOG"],"a").write("supervisor %s\\n" % sys.argv[1:])\nprint("{}")\n')
-        _once(root, {**env, "CLIENTS": "/dev/pts/3: x"})
+        _once(root, {**env, "CLIENTS": "0"})
         assert "--idle" not in log.read_text(), log.read_text()
         _once(root, env)
         assert "--idle" in log.read_text(), log.read_text()
+
+
+def test_a_read_only_viewer_does_not_switch_the_nudges_off():
+    with tempfile.TemporaryDirectory() as d:
+        root, log, env = _fixture(d, idle=4000)
+        _once(root, {**env, "CLIENTS": "1"})
+        assert "Continue the run." in log.read_text(), log.read_text()
+
+
+def test_real_tmux_reports_a_read_only_client_as_1():
+    if not shutil.which("tmux") or not shutil.which("script"):
+        return
+    sock = "hb-ro-%d" % os.getpid()
+    try:
+        assert _real_tmux("new-session", "-d", "-s", "ro", "sleep 60", sock=sock).returncode == 0
+        viewer = subprocess.Popen(["script", "-qc", f"tmux -L {sock} attach -r -t =ro", "/dev/null"],
+                                  stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL, start_new_session=True)
+        try:
+            seen = ""
+            for _ in range(50):
+                seen = _real_tmux("list-clients", "-t", "=ro", "-F", "#{client_readonly}", sock=sock).stdout.strip()
+                if seen:
+                    break
+                time.sleep(0.1)
+            assert seen == "1", seen
+        finally:
+            os.killpg(viewer.pid, 15)
+            viewer.wait(timeout=10)
+    finally:
+        _real_tmux("kill-server", sock=sock)
 
 
 def test_refusal_a_session_that_keeps_dying_backs_off():
@@ -112,7 +143,7 @@ def test_an_idle_session_is_nudged():
 def test_refusal_a_person_attached_is_never_typed_over():
     with tempfile.TemporaryDirectory() as d:
         root, log, env = _fixture(d, idle=4000)
-        _once(root, {**env, "CLIENTS": "/dev/pts/3: impossible-os-run"})
+        _once(root, {**env, "CLIENTS": "0"})
         assert "send-keys" not in log.read_text(), log.read_text()
 
 
@@ -510,7 +541,7 @@ def test_stop_guard_holds_the_session_until_the_work_is_done():
 
 def test_run_script_shape():
     text = (REPO / "scripts/run.sh").read_text()
-    for verb in ("start)", "attach)", "status)", "stop)", "autostart)"):
+    for verb in ("start)", "attach)", "watch)", "status)", "stop)", "autostart)"):
         assert verb in text, verb
     subprocess.run(["bash", "-n", str(REPO / "scripts/run.sh")], check=True)
 
