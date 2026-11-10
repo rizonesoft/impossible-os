@@ -378,7 +378,8 @@ jobs:
             clang-${{ env.LLVM_VERSION }} \
             clangd-${{ env.LLVM_VERSION }} \
             lld-${{ env.LLVM_VERSION }} \
-            llvm-${{ env.LLVM_VERSION }}
+            llvm-${{ env.LLVM_VERSION }} \
+            libclang-rt-${{ env.LLVM_VERSION }}-dev
 
       # ── Install build dependencies ──────────────────────────────────────────
       # LLVM is installed above with caching; this step brings in the rest of

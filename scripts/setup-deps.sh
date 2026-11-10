@@ -72,6 +72,8 @@ case "$DISTRO" in
             # Developer tooling (2026-11-10): compile cache, static analysis.
             "ccache:ccache"
             "clang-tidy-19:clang-tidy-19"
+            # libFuzzer + sanitizer runtimes for tools/fuzz
+            "/usr/lib/llvm-19/lib/clang/19/lib/linux/libclang_rt.fuzzer-x86_64.a:libclang-rt-19-dev"
             "gcc:build-essential"
             "xorriso:xorriso"
             "mtools:mtools"

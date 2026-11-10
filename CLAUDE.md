@@ -36,6 +36,8 @@ bash scripts/build.sh run       # build + QEMU
 ```
 Check `tail -1 build/build.log` for result -- must show `=== BUILD OK ===`.
 
+`build.sh` uses `ccache` when installed (`BUILD_NO_CCACHE=1` to rule it out). Python tooling is linted by ruff (lint Check 35, correctness rules in `ruff.toml`, a missing ruff is an error). Parsers of untrusted input are fuzzed on the host: `bash tools/fuzz/run.sh` (libFuzzer + ASan + UBSan over the kernel's and loader's own sources; runs 10 s a target in `test-tooling.sh`). A new validator for untrusted bytes gets a fuzz target and a seed. Details: [development-tooling.md](docs/infrastructure/development-tooling.md#compile-cache).
+
 Host bootstrap (deps, supported distros, required-tool sentinels, idempotence): [docs/infrastructure/development-tooling.md#host-bootstrap-contract](docs/infrastructure/development-tooling.md#host-bootstrap-contract). Host profiles (support tiers, min versions, devcontainer, unsupported-host policy): [docs/infrastructure/development-tooling.md#supported-host-profiles-and-reproducible-environments](docs/infrastructure/development-tooling.md#supported-host-profiles-and-reproducible-environments). Re-check with `bash scripts/setup.sh --verify`; version floors via `bash scripts/setup.sh --versions`.
 
 ## Testing -- Category-Based Test Infrastructure

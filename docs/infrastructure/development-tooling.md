@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/build.sh,scripts/setup.sh,scripts/test.sh,scripts/lint.sh,scripts/debug.sh,scripts/run-qemu.sh reviewed=2026-09-30T14:20 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/build.sh,scripts/setup.sh,tools/fuzz/run.sh,ruff.toml,scripts/test.sh,scripts/lint.sh,scripts/debug.sh,scripts/run-qemu.sh reviewed=2026-11-10 -->
 # Development Tooling & Automation
 
 > Complete build system, test framework, asset pipeline, and development utilities for Impossible OS.
@@ -67,6 +67,10 @@ Installed by `setup-deps.sh` for full developer experience but not required for 
 | `bear`           | Generates `compile_commands.json` for clangd intel.    |
 | `clangd-19`      | Editor LSP for C intelligence.                         |
 | `cppcheck`       | Static analysis.                                       |
+| `ccache`         | Compile cache for clean builds (see Compile Cache).    |
+| `ruff`           | Python correctness lint. REQUIRED by lint Check 35.    |
+| `clang-tidy-19`  | C static analysis.                                     |
+| `libclang-rt-19-dev` | libFuzzer and sanitizer runtimes for `tools/fuzz`. |
 | `python3-pil`    | Asset pipeline JPEG decode (optional).                 |
 | `xorriso`        | Legacy ISO image path (retained for compatibility).    |
 | `parted`         | Partition table utilities.                             |
@@ -449,6 +453,43 @@ Default: `-j$(nproc)`. Override with `--jobs=N`.
 | `-j1` clean        | 19.6s                   |
 | `-j12` clean       | 8.0s (**2.5× speedup**) |
 | `-j12` kernel only | 3.7s (**3.6× speedup**) |
+
+### Compile Cache
+
+`scripts/build.sh` routes every `clang-19` call through `ccache` when it is installed. It does this on `PATH` with a wrapper that names the real compiler by absolute path, not in the Makefile's `CC`, because `CC` is a contract: `make print-abi-config` reports it and `scripts/gen-user-abi.py` executes it as one binary. `BUILD_NO_CCACHE=1` turns the cache off.
+
+Measured 2026-11-10 on a 10-core WSL2 host, `bash scripts/build.sh clean`:
+
+| Configuration                | Time  |
+| ---------------------------- | ----- |
+| no ccache                    | 68 s  |
+| ccache, warm (all hits)      | 42 s  |
+| ccache, first build (filling) | 145 s |
+
+The warm figure is the floor for a clean build: the remaining 42 s is asset generation, host tools, linking and image assembly, which no compile cache touches.
+
+### Python Lint (ruff)
+
+`ruff.toml` selects correctness rules only (undefined names, syntax errors, shadowed imports, mutable defaults) and lint Check 35 runs them over every tracked Python file as an error. A missing `ruff` fails the check: a check that silently does not run reads as one that passed. Install with `bash scripts/setup.sh`, or `pipx install ruff` / `uv tool install ruff`.
+
+### Fuzzing Untrusted-Input Parsers
+
+`tools/fuzz/` builds the loader's and kernel's own parser sources for the host with libFuzzer, AddressSanitizer and UndefinedBehaviorSanitizer:
+
+```bash
+bash tools/fuzz/run.sh                          # every target, 20 s each
+FUZZ_SECONDS=600 bash tools/fuzz/run.sh         # soak
+bash tools/fuzz/run.sh --repro <target> <file>  # replay one input
+```
+
+| Target                | Code under test                                                        |
+| --------------------- | ---------------------------------------------------------------------- |
+| `boot_entries`        | `boot_entries_parse()` in `src/boot/uefi/boot_entries_parser.c`        |
+| `security_descriptor` | `RtlLengthSidBounded`, `RtlValidAcl`, `RtlGetAceEx`, `RtlSelfRelativeToAbsoluteSD` |
+
+`scripts/test-tooling.sh` runs every target for 10 s on each pack run. The checked-in corpus under `tools/fuzz/corpus/<target>/` is replayed first, so the reproducer of a fixed defect fails immediately if the fix is lost. When a run finds a defect, fix it at the validator and add the reproducer to the corpus. First run, 2026-11-10: the security-descriptor target found, in 15 seconds, a SID read at an attacker-chosen unaligned offset.
+
+A new target is a `fuzz_<name>.c` with `LLVMFuzzerTestOneInput`, a `build_target` case in `run.sh`, and at least one seed. Good candidates are pure functions over a byte buffer; a parser that needs `klog`, `kmalloc` or VFS should be split so its parsing core is one.
 
 > [!NOTE]
 > Generated headers (`os_logo.h`, `bsod_icon.h`, `boot_splash_font_data.h`) use order-only prerequisites (`| $(GENERATED_HDRS)`) to prevent races on first clean build.

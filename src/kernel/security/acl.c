@@ -187,6 +187,10 @@ static uint32_t sr_offset_avail(uint32_t off, uint32_t rel_len)
 {
     if (off < sizeof(SECURITY_DESCRIPTOR_RELATIVE) || off >= rel_len)
         return 0;
+    /* Components are DWORD-aligned (MS-DTYP 2.4.6): an odd offset would put
+     * a SID or ACL at an address its uint16/uint32 fields cannot be read from. */
+    if ((off & 3u) != 0)
+        return 0;
     return rel_len - off;
 }
 
@@ -201,6 +205,11 @@ int RtlSelfRelativeToAbsoluteSD(const void *rel, uint32_t rel_len,
     uint32_t off, avail, len;
 
     if (!rel || !abs || !abs_buf)
+        return -1;
+    /* Both buffers hold SIDs and ACLs in place, so both must be 4-aligned;
+     * with aligned offsets and 4-multiple component sizes (enforced below)
+     * every component then lands aligned in the source and in the copy. */
+    if ((((uintptr_t)rel | (uintptr_t)abs_buf) & 3u) != 0)
         return -1;
 
     /* The fixed header must be fully readable before any offset field is
@@ -301,6 +310,9 @@ int RtlCreateAcl(ACL *acl, uint16_t size, uint8_t rev)
     if (!acl || size < sizeof(ACL))
         return -1;
 
+    /* AclSize is a multiple of 4, as NT rounds it: a following component in
+     * a self-relative descriptor starts where this one ends. */
+    size &= (uint16_t)~3u;
     memset(acl, 0, size);
     acl->AclRevision = rev;
     acl->AclSize     = size;
@@ -435,6 +447,10 @@ static uint32_t ace_body_valid(const ACE_HEADER *hdr, uint32_t remaining)
     ace_size = (uint32_t)hdr->AceSize;
     if (ace_size < sizeof(ACE_HEADER) || ace_size > remaining)
         return 0;
+    /* AceSize MUST be a multiple of 4 (MS-DTYP 2.4.4.1), which is what keeps
+     * the NEXT ACE, and the SID inside it, on a DWORD boundary. */
+    if ((ace_size & 3u) != 0)
+        return 0;
 
     /* Every ACE type we support is SID-bearing (fixed Header+Mask+SidStart).
      * Reject any other type: object/unknown ACEs have a variable Flags+GUID
@@ -468,10 +484,12 @@ static uint32_t acl_header_valid(const ACL *acl, uint32_t avail)
 
     if (!acl || avail < sizeof(ACL))
         return 0;
+    if (((uintptr_t)acl & 3u) != 0)
+        return 0;
     if (acl->AclRevision != ACL_REVISION && acl->AclRevision != ACL_REVISION_DS)
         return 0;
     acl_size = (uint32_t)acl->AclSize;   /* widen from uint16_t */
-    if (acl_size < sizeof(ACL) || acl_size > avail)
+    if (acl_size < sizeof(ACL) || acl_size > avail || (acl_size & 3u) != 0)
         return 0;
     return acl_size;
 }

@@ -92,6 +92,12 @@ uint32_t RtlLengthSidBounded(const SID *sid, uint32_t avail)
     if (!sid)
         return 0;
 
+    /* A SID holds uint32 sub-authorities, so one at an address that is not
+     * 4-aligned cannot be read as a SID at all. An untrusted offset decides
+     * the address, so this is part of the bound (found by tools/fuzz). */
+    if (((uintptr_t)sid & 3u) != 0)
+        return 0;
+
     /* Need the fixed 8-byte header (Revision + count + 6-byte authority)
      * readable before we may look at SubAuthorityCount. */
     if (avail < 8)

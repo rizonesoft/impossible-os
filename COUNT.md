@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     509 |     402496 |
+| **C sources** (`.c`)  |     509 |     402520 |
 | **Headers** (`.h`)    |     360 |      84124 |
 | **Assembly** (`.asm`) |      11 |       1388 |
-| **Subtotal**          | **880** | **488008** |
+| **Subtotal**          | **880** | **488032** |
 
 ## SDK Tools
 
@@ -32,7 +32,7 @@
 
 |                                   |   Files |      Lines |
 | --------------------------------- | ------: | ---------: |
-| **Shell scripts** (`.sh`)         |     106 |      99639 |
+| **Shell scripts** (`.sh`)         |     106 |      99656 |
 | **Batch scripts** (`.bat`)        |      74 |       1054 |
 | **PowerShell** (`.ps1`)           |      18 |       3610 |
 | **Python** (`.py`)                |     283 |     115933 |
@@ -40,29 +40,29 @@
 | **Include fragments** (`.inc`)    |       7 |       3249 |
 | **Makefile**                      |       3 |       2209 |
 | **Linker scripts** (`.ld`/`.lds`) |       3 |        200 |
-| **Subtotal**                      | **496** | **226752** |
+| **Subtotal**                      | **496** | **226769** |
 
 ## Documentation & Project Metadata
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     687 |     155441 |
-| **JSON** (`.json`)          |      23 |       3060 |
-| **YAML** (`.yml`/`.yaml`)   |      17 |       2371 |
+| **Markdown** (`.md`)        |     687 |     155484 |
+| **JSON** (`.json`)          |      24 |       3114 |
+| **YAML** (`.yml`/`.yaml`)   |      17 |       2372 |
 | **HTML** (`.html`)          |      22 |       3479 |
 | **CSS** (`.css`)            |       1 |        491 |
 | **Config** (`.cfg`/`.conf`) |       1 |        105 |
-| **Subtotal**                | **751** | **164947** |
+| **Subtotal**                | **752** | **165045** |
 
 ## Grand Total
 
 |                                                      |    Files |       Lines |
 | ---------------------------------------------------- | -------: | ----------: |
-| **Core code + tooling**                              | **1383** |  **716479** |
-| **Supporting text + metadata**                       |  **751** |  **164947** |
-| **Written here**                                     | **2134** |  **881426** |
+| **Core code + tooling**                              | **1383** |  **716520** |
+| **Supporting text + metadata**                       |  **752** |  **165045** |
+| **Written here**                                     | **2135** |  **881565** |
 | **Vendored ([third-party](src/libs/PROVENANCE.md))** |      590 |      476296 |
-| **All lines in tree**                                | **2724** | **1357722** |
+| **All lines in tree**                                | **2725** | **1357861** |
 
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,15 +77,15 @@
 
 |                       |         Linux |     Windows |        Impossible OS |
 | --------------------- | ------------: | ----------: | -------------------: |
-| **All lines in tree** |   ~28,000,000 | ~50,000,000 |            1,357,722 |
+| **All lines in tree** |   ~28,000,000 | ~50,000,000 |            1,357,861 |
 | **Developers**        | ~1,000 active | ~5,000 peak |                    1 |
 | **Time span**         |      33 years |    40 years | 8 month(s), 8 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 716,479 lines
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 716,520 lines
 > written here imply **105 developers** working for **8 month(s), 8 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-11-10 03:27 · commit `fe55e9aaa`*
+*Last updated: 2026-11-10 03:42 · commit `d10a5ee25`*

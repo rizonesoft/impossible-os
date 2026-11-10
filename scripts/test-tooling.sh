@@ -868,6 +868,7 @@ _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_fence.py" todo_fence
 _tt_nested_py "$REPO_ROOT/scripts/site/tests/test_build.py" site_build
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_alias_staleness.py" alias_staleness
 _tt_nested_x "$REPO_ROOT/scripts/todo-graph/tests/test_query_bounds.sh" query_bounds
+FUZZ_SECONDS="${TEST_TOOLING_FUZZ_SECONDS:-10}" _tt_nested_start fuzz bash "$REPO_ROOT/tools/fuzz/run.sh"
 
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[todo-graph]${NC}"
 TODO_GRAPH_TEST="$REPO_ROOT/scripts/todo-graph/tests/test_build.sh"
@@ -1085,6 +1086,20 @@ else
         t_fail "scripts/lsp-mcp/tests/test_boundary.sh not found or not executable"
     fi
 fi
+# Host fuzzers (tools/fuzz): the loader's boot-entry parser and the kernel's
+# SID / ACL / security-descriptor validators under libFuzzer + ASan + UBSan.
+# Short here (10 s a target; the checked-in corpus is replayed first, so a
+# fixed defect's reproducer fails at once if the fix is lost); soak with
+# `FUZZ_SECONDS=600 bash tools/fuzz/run.sh`. A missing compiler or runtime is
+# a failure, not a skip.
+FUZZ_OUT_TXT=$(FUZZ_SECONDS="${TEST_TOOLING_FUZZ_SECONDS:-10}" _tt_nested_collect fuzz bash "$REPO_ROOT/tools/fuzz/run.sh")
+if [ "$?" = "0" ]; then
+    t_pass "tools/fuzz/run.sh PASS ($(printf '%s\n' "$FUZZ_OUT_TXT" | grep -c '^  PASS') targets clean)"
+else
+    t_fail "tools/fuzz/run.sh FAIL ($(printf '%s\n' "$FUZZ_OUT_TXT" | grep -E '^  FAIL|^fuzz:' | head -3 | tr '\n' ' '))"
+    _tt_nested_fail_detail "fuzz" "$FUZZ_OUT_TXT"
+fi
+
 # Every nested suite has been collected; nothing started above is still alive.
 _tt_nested_kill
 eval "${_TT_SAVED_INT:-trap - INT}"
