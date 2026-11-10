@@ -463,24 +463,14 @@ Added 2026-11-10 on the operator's instruction to adopt the tools that find defe
 - [x] `ccache` through `scripts/build.sh` (clean build 68 s to 42 s warm)
 - [x] `scripts/static-analysis.sh` + `.clang-tidy` (Clang static analyzer core checks plus defect-class bugprone checks) over the compile database
 - [x] `scripts/test-tooling.sh` starts its nested suites together and prints its time split
-- [ ] Shard `scripts/todo-graph/tests/test_build.sh`, which now bounds the pack
-  - Measured 2026-11-10 with the suites started together: 949 s total = 5 s setup + 590 s nested + 354 s inline. Starting the suites together removed the lsp-mcp and small suites from the sum, but the nested block cannot be shorter than its longest member, and that is `test_build.sh`: one 29,000-line serial script with shared counters and one temporary directory.
-  - Split it into independent files by test group (each with its own temporary directory and tally) so they can run as separate nested suites. The groups that rewrite the real `build/todo-cache.json` stay in one file, and `test_query_bounds.sh` keeps running after it.
-  - The 354 s inline block is the next target after that: it is serial because its tests read `build/` and `.claude/state`.
-- [ ] Triage the static analyzer's findings in production code and make the changed-file run a pre-push gate
-  - Whole-tree run 2026-11-10: 157 findings after dropping dead stores and cloned branches, 108 of them in `src/kernel/test/`. The 49 in production code include 11 "garbage value" reports: `cpu_security.c:1486`, `ex/ex_slist.c:97,123,140`, `fs/ntfs/ntfs_attr.c:324`, `fs/ntfs/ntfs_io.c:871`, `mm/boot_stack.c:186`, `ob/ob_ns.c:266`, `registry.c:1989`, `smbios.c:1050`.
-  - Each is fixed or marked with a reasoned `NOLINT`; the gate goes in only when `bash scripts/static-analysis.sh --all` is clean, so it never blocks on inherited debt.
-  - Declaring `boot_halt` noreturn (done) removes the null-dereference reports that followed every `if (!p) boot_halt(...)`; `panic`-class helpers still missing the attribute are the next cut.
-- [ ] Fuzz targets for the remaining parsers of untrusted bytes
-  - `eif_parse_metadata` (`src/kernel/eif.c`) needs a no-op `klog` shim and `src/libs/lz4`.
-  - The registry hive parser (`hive_validate_payload`, `src/kernel/registry.c`) is trapped in a 4,000-line translation unit; extract `hive_buf_*` and `hive_parse_*` into their own file first.
-  - FAT32 BPB and directory parsing, `parse_boot_conf` in `bootx64.c`, and the PE and ELF loaders need their parsing cores split from allocation and mapping before they can be fuzzed.
-- [ ] Widen kernel UBSan to `bounds`, `bool`, `enum`, `alignment` and `null` once the image has room
-  - Measured 2026-11-10: adding `bounds,bool,enum` grows `.text` by about 122 KiB and the image ends 32 KiB past the user base (`BSS COLLISION`). Owner of the room: [higher-half kernel relocation](../02-kernel-core/TODO-33-higher-half-kernel-relocation.md).
-- [ ] Build once per boot matrix
-  - Every leg of `scripts/test-smoke-matrix.sh` runs `bash scripts/build.sh clean` (`scripts/test-smoke.sh:586`), so 20 legs are 20 clean builds: 2,720 s on 2026-11-10 against about 2 s of boot per KVM leg. Build once, keep a pristine copy of the disk image and the OVMF variable store, and restore them per leg. The store legs that carry state across boots (`SMOKE_STORE_RECORD`, `SMOKE_MENU=saved`) define what "pristine" must preserve.
-- [ ] Restore the CI compile cache
-  - `actions/cache` on the ccache directory in `build.yml`, keyed on the compiler version, so CI's clean builds hit.
+- [ ] Shard `scripts/todo-graph/tests/test_build.sh` into independent suites, since it alone bounds the pack's nested block
+  - The groups that rewrite the real `build/todo-cache.json` stay in one file.
+- [ ] Triage the production findings of `bash scripts/static-analysis.sh --all` (fix or reasoned `NOLINT`), then make the changed-file run a pre-push gate
+- [ ] Fuzz targets for the remaining untrusted-input parsers: EIF metadata, registry hive, FAT32, `boot.conf`, PE and ELF loaders
+- [ ] Widen kernel UBSan to `bounds`, `bool`, `enum`, `alignment` and `null`
+  - Blocked on image room: [higher-half kernel relocation](../02-kernel-core/TODO-33-higher-half-kernel-relocation.md).
+- [x] Build once per boot matrix (`SMOKE_PRISTINE_IMAGE`)
+- [ ] Restore the ccache directory in CI with `actions/cache`
 
 **Test checkpoint:** `bash tools/fuzz/run.sh` exits 0 and fails on the checked-in reproducer when the alignment check in `RtlLengthSidBounded` is removed; `bash scripts/lint.sh` fails on a Python file with an undefined name; `make -n kernel` shows `-fsanitize` and `make -n KERNEL_TESTS=off kernel` does not; `bash scripts/static-analysis.sh` exits 0 on a clean change set.
 

@@ -29,6 +29,8 @@ Behavior:
 
 Environment:
   TIMEOUT_SEC    QEMU wait budget in seconds (default: 30).
+  SMOKE_PRISTINE_IMAGE  Skip the build and boot a restored copy of this
+                 untouched image (the boot matrix sets it after building once).
 
 Exit codes:
   0 = PASS (boot completed successfully)
@@ -583,7 +585,37 @@ if [ "${SMOKE_MENU:-0}" = "saved" ]; then
     fi
 fi
 
-bash scripts/build.sh clean >/dev/null 2>&1
+# SMOKE_PRISTINE_IMAGE (set by test-smoke-matrix.sh): the matrix clean-built
+# once and kept a copy of the image no boot has touched. This leg restores that
+# copy instead of rebuilding, so it still boots pristine bytes (QEMU attaches
+# the image read-write and a boot does write to it). Measured 2026-11-10: 20
+# legs each doing their own clean build took 2720 s. The build receipt must
+# still match the tree, so an edit made while the matrix runs fails the leg
+# instead of booting a build that no longer matches the source.
+if [ -n "${SMOKE_PRISTINE_IMAGE:-}" ]; then
+    if [ ! -s "$SMOKE_PRISTINE_IMAGE" ]; then
+        echo -e "${RED}SMOKE TEST FAILED: SMOKE_PRISTINE_IMAGE=$SMOKE_PRISTINE_IMAGE is missing or empty${NC}"
+        exit 1
+    fi
+    if ! receipt_reason=$(python3 scripts/overnight/receipts.py check-build . 2>&1); then
+        echo -e "${RED}SMOKE TEST FAILED: SMOKE_PRISTINE_IMAGE is set but the build is not current: ${receipt_reason}${NC}"
+        exit 1
+    fi
+    # The receipt above only says the build in build/ matches the tree. The
+    # copy must also be THAT build: a rebuild between legs refreshes the receipt
+    # while the copy stays old, and restoring it would boot the older kernel.
+    # The matrix saved the receipt it built with beside the copy.
+    if ! cmp -s "$SMOKE_PRISTINE_IMAGE.receipt" build/build-receipt.json; then
+        echo -e "${RED}SMOKE TEST FAILED: SMOKE_PRISTINE_IMAGE is not the build now in build/ (its saved receipt is missing or differs from build/build-receipt.json)${NC}"
+        exit 1
+    fi
+    if ! cp --sparse=always "$SMOKE_PRISTINE_IMAGE" "$DISK"; then
+        echo -e "${RED}SMOKE TEST FAILED: could not restore the pristine image${NC}"
+        exit 1
+    fi
+else
+    bash scripts/build.sh clean >/dev/null 2>&1
+fi
 
 BUILD_RESULT=$(tail -1 build/build.log 2>/dev/null || echo "UNKNOWN")
 if [ "$BUILD_RESULT" != "=== BUILD OK ===" ]; then

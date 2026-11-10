@@ -34,7 +34,7 @@ flowchart LR
 | `bash scripts/setup.sh [--verify\|--versions\|--check-versions]` | Install dependencies; verify presence and version floors |
 | `bash scripts/build.sh [clean\|run]` | Incremental or clean build, or build and boot in QEMU |
 | `bash scripts/test.sh [SUITE=<cat>] [QUIET=1]` | Kernel and user-mode tests, optionally one category |
-| `bash scripts/test-smoke.sh` / `bash scripts/test-smoke-matrix.sh` | Boot to the command prompt on one QEMU configuration, or on four engine/CPU legs plus the boot-store and UKI-direct fixture legs |
+| `bash scripts/test-smoke.sh` / `bash scripts/test-smoke-matrix.sh` | Boot to the command prompt on one QEMU configuration, or on four engine/CPU legs plus the boot-store and UKI-direct fixture legs. The matrix builds once and restores an untouched copy of the image for each leg |
 | `bash scripts/lint.sh` | Repository lint, the same checks the pre-commit hook runs |
 | `bash scripts/install-hooks.sh [--status\|--with-pre-push\|--remove]` | Manage the tracked git hooks |
 | `bash scripts/tooling-doctor.sh [--quiet\|--json]` | One-command health check |

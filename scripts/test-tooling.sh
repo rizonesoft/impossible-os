@@ -4181,6 +4181,34 @@ if printf '%s' "$_sm_legs" | grep -q 'kvm:1' \
 else
     t_fail "smoke_matrix_legs  default legs incomplete" "got: $_sm_legs"
 fi
+# Build-once matrix: a leg handed a pristine image that is not there must fail
+# and say so, never fall back to booting whatever image is lying in build/.
+_sm_out=$(SMOKE_PRISTINE_IMAGE="$REPO_ROOT/build/no-such-pristine.img" timeout 60 bash "$REPO_ROOT/scripts/test-smoke.sh" 2>&1); _sm_rc=$?
+if [ "$_sm_rc" = "1" ] && printf '%s' "$_sm_out" | grep -q 'SMOKE_PRISTINE_IMAGE=.*missing or empty'; then
+    t_pass "smoke_pristine_missing  a leg refuses a missing pristine image"
+else
+    t_fail "smoke_pristine_missing  a leg did not refuse a missing pristine image" "rc=$_sm_rc"
+fi
+# A copy whose saved receipt is not the one in build/ is another build's image
+# (a rebuild between legs refreshes the live receipt): refuse it. Runs only
+# where a current build exists, since the receipt check comes first.
+if python3 "$REPO_ROOT/scripts/overnight/receipts.py" check-build "$REPO_ROOT" >/dev/null 2>&1; then
+    _sm_fake="$(mktemp "${TMPDIR:-/tmp}/tt-smoke-pristine.XXXXXX")"
+    printf 'x' > "$_sm_fake"; printf '{"other":"build"}' > "$_sm_fake.receipt"
+    _sm_out=$(cd "$REPO_ROOT" && SMOKE_PRISTINE_IMAGE="$_sm_fake" timeout 60 bash scripts/test-smoke.sh 2>&1); _sm_rc=$?
+    rm -f "$_sm_fake" "$_sm_fake.receipt"
+    if [ "$_sm_rc" = "1" ] && printf '%s' "$_sm_out" | grep -q 'is not the build now in build/'; then
+        t_pass "smoke_pristine_other_build  a leg refuses a copy saved from another build"
+    else
+        t_fail "smoke_pristine_other_build  a leg accepted a copy saved from another build" "rc=$_sm_rc"
+    fi
+fi
+if grep -q 'export SMOKE_PRISTINE_IMAGE=' "$REPO_ROOT/scripts/test-smoke-matrix.sh" 2>/dev/null \
+   && grep -q 'receipts.py check-build' "$REPO_ROOT/scripts/test-smoke.sh" 2>/dev/null; then
+    t_pass "smoke_matrix_builds_once  the matrix builds once and each leg checks the build receipt"
+else
+    t_fail "smoke_matrix_builds_once  the matrix no longer builds once, or a leg skips the receipt check"
+fi
 # The smoke oracles' verdict functions against synthetic transcripts (no boot,
 # milliseconds): each self-test includes the rejections a correct build can never
 # produce, so a weakened oracle fails here rather than passing every real boot.

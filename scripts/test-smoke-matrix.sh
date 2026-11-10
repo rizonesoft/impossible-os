@@ -68,6 +68,35 @@ START_ALL=$(date +%s)
 
 echo -e "${CYAN}=== smoke matrix: $LEGS ===${NC}"
 
+# BUILD ONCE. Every leg used to run its own `build.sh clean` inside
+# test-smoke.sh: 20 identical clean builds, 2720 s on 2026-11-10 for about
+# 150 s of booting. The matrix now clean-builds here, keeps a copy of the image
+# before any boot has written to it, and hands that copy to each leg
+# (SMOKE_PRISTINE_IMAGE), which restores it instead of rebuilding. The copy
+# lives outside build/ and is removed on exit. SMOKE_MATRIX_BUILD_EACH=1 brings
+# the per-leg builds back.
+_SM_PRISTINE=""
+_sm_cleanup() { [ -n "$_SM_PRISTINE" ] && rm -f "$_SM_PRISTINE" "$_SM_PRISTINE.receipt"; }
+trap _sm_cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if [ "${SMOKE_MATRIX_BUILD_EACH:-0}" != "1" ]; then
+    t0=$(date +%s)
+    bash scripts/build.sh clean >/dev/null 2>&1
+    if [ "$(tail -1 build/build.log 2>/dev/null)" != "=== BUILD OK ===" ]; then
+        echo -e "${RED}SMOKE MATRIX FAILED${NC}  (the build failed before any leg ran; see build/build.log)"
+        exit 1
+    fi
+    _SM_PRISTINE="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-pristine.XXXXXX")"
+    if ! cp --sparse=always build/system-disk.img "$_SM_PRISTINE" \
+        || ! cp build/build-receipt.json "$_SM_PRISTINE.receipt"; then
+        echo -e "${RED}SMOKE MATRIX FAILED${NC}  (could not keep a pristine copy of build/system-disk.img and its build receipt)"
+        exit 1
+    fi
+    export SMOKE_PRISTINE_IMAGE="$_SM_PRISTINE"
+    printf "  ${DIM}built once in %ds; every leg boots a restored copy of that image${NC}\n" "$(( $(date +%s) - t0 ))"
+fi
+
 for leg in $LEGS; do
     engine="${leg%%:*}"; cpus="${leg##*:}"
     log="$LOG_DIR/${engine}-${cpus}cpu.log"
@@ -90,9 +119,9 @@ for leg in $LEGS; do
     # documented location for the operator.
     cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-${engine}-${cpus}cpu.XXXXXX")"
 
-    # Each leg is a full test-smoke.sh run: it rebuilds nothing new (the build is
-    # already current after the first leg) but re-boots and re-asserts, which is
-    # the point -- the assertions are what differ per configuration.
+    # Each leg is a full test-smoke.sh run on the image built above: it
+    # re-boots and re-asserts, which is the point -- the assertions are what
+    # differ per configuration.
     if [ "$engine" = "tcg" ]; then
         SMOKE_FORCE_TCG=1 SMOKE_SMP="$cpus" bash scripts/test-smoke.sh > "$cap" 2>&1
     else
