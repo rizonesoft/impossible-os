@@ -462,7 +462,11 @@ Added 2026-11-10 on the operator's instruction to adopt the tools that find defe
 - [x] Trap-mode UBSan in the test-flavor kernel (`KERNEL_UBSAN`, default follows `KERNEL_TESTS`): shift, integer-divide-by-zero, unreachable, vla-bound, builtin
 - [x] `ccache` through `scripts/build.sh` (clean build 68 s to 42 s warm)
 - [x] `scripts/static-analysis.sh` + `.clang-tidy` (Clang static analyzer core checks plus defect-class bugprone checks) over the compile database
-- [x] `scripts/test-tooling.sh` starts its nested suites together
+- [x] `scripts/test-tooling.sh` starts its nested suites together and prints its time split
+- [ ] Shard `scripts/todo-graph/tests/test_build.sh`, which now bounds the pack
+  - Measured 2026-11-10 with the suites started together: 949 s total = 5 s setup + 590 s nested + 354 s inline. Starting the suites together removed the lsp-mcp and small suites from the sum, but the nested block cannot be shorter than its longest member, and that is `test_build.sh`: one 29,000-line serial script with shared counters and one temporary directory.
+  - Split it into independent files by test group (each with its own temporary directory and tally) so they can run as separate nested suites. The groups that rewrite the real `build/todo-cache.json` stay in one file, and `test_query_bounds.sh` keeps running after it.
+  - The 354 s inline block is the next target after that: it is serial because its tests read `build/` and `.claude/state`.
 - [ ] Triage the static analyzer's findings in production code and make the changed-file run a pre-push gate
   - Whole-tree run 2026-11-10: 157 findings after dropping dead stores and cloned branches, 108 of them in `src/kernel/test/`. The 49 in production code include 11 "garbage value" reports: `cpu_security.c:1486`, `ex/ex_slist.c:97,123,140`, `fs/ntfs/ntfs_attr.c:324`, `fs/ntfs/ntfs_io.c:871`, `mm/boot_stack.c:186`, `ob/ob_ns.c:266`, `registry.c:1989`, `smbios.c:1050`.
   - Each is fixed or marked with a reasoned `NOLINT`; the gate goes in only when `bash scripts/static-analysis.sh --all` is clean, so it never blocks on inherited debt.
