@@ -123,15 +123,21 @@ override CFLAGS += $(KERNEL_TESTS_FLAG)
 # and `llvm-addr2line-19 -e build/kernel.exe -f <RIP>` names the line. Trap
 # mode needs no runtime, so there are no __ubsan_handle_* symbols to provide.
 #
-# The set is what FITS. Measured 2026-11-10: these five add about 6 KiB of
-# .text. Adding `bounds,bool,enum` adds about 122 KiB and the image ends
-# 32 KiB past the user base (BSS COLLISION), so they wait for the higher-half
-# relocation. Alignment and null checks are out for the same reason.
+# The set is what FITS in the image below the user base. Measured 2026-11-10
+# with clean builds: shift, integer-divide-by-zero, unreachable, vla-bound and
+# builtin add about 6 KiB of .text. `bool` and `enum` add nothing today (the
+# kernel loads no _Bool from memory and C enums have no checked range), so they
+# are on and start trapping the day such a load appears. `null` adds 36 KiB,
+# which is nearly half of the 80 KiB left, and `bounds` adds about 122 KiB and
+# ends the image past the user base (BSS COLLISION). `null`, `bounds` and
+# `alignment` wait for the higher-half relocation.
 # Off in the release flavor. KERNEL_UBSAN=off rules it out of a problem.
 KERNEL_UBSAN ?= $(KERNEL_TESTS)
+# One list: the compiler flag and the flavor stamp both read it, so changing
+# the set rebuilds every object.
+KERNEL_UBSAN_CHECKS := shift,integer-divide-by-zero,unreachable,vla-bound,builtin,bool,enum
 ifeq ($(KERNEL_UBSAN),on)
-    override CFLAGS += -fsanitize=shift,integer-divide-by-zero,unreachable,vla-bound,builtin \
-                       -fsanitize-trap=all
+    override CFLAGS += -fsanitize=$(KERNEL_UBSAN_CHECKS) -fsanitize-trap=all
 else ifneq ($(KERNEL_UBSAN),off)
     $(error KERNEL_UBSAN must be one of: on, off (got '$(KERNEL_UBSAN)'))
 endif
@@ -269,8 +275,9 @@ $(BUILD_INFO_H): .FORCE
 		rm -f $(BUILD_INFO_H).tmp; \
 	fi
 
-# The stamp also carries KERNEL_UBSAN: it changes every object's code the same
-# way, and without it a flip left traps in (or out of) every unchanged object.
+# The stamp also carries KERNEL_UBSAN and its check list: either changes every
+# object's code the same way, and without them a flip, or a change to the set,
+# left the old traps in every unchanged object.
 # Generate the KERNEL_TESTS flavor stamp: always run the recipe (.FORCE), but
 # only overwrite when the flavor actually changed (cmp -s), so the stamp's
 # mtime moves ONLY on a real flip. Every C object rule depends on it, so an
@@ -278,7 +285,7 @@ $(BUILD_INFO_H): .FORCE
 # rebuild stays fully incremental.
 $(KERNEL_TESTS_STAMP): .FORCE
 	@mkdir -p $(dir $@)
-	@echo '$(KERNEL_TESTS) ubsan=$(KERNEL_UBSAN)' > $@.tmp
+	@echo '$(KERNEL_TESTS) ubsan=$(KERNEL_UBSAN) checks=$(if $(filter on,$(KERNEL_UBSAN)),$(KERNEL_UBSAN_CHECKS),none)' > $@.tmp
 	@if ! cmp -s $@.tmp $@ 2>/dev/null; then \
 		mv $@.tmp $@; \
 		echo "[GEN] $@ (KERNEL_TESTS=$(KERNEL_TESTS) KERNEL_UBSAN=$(KERNEL_UBSAN))"; \

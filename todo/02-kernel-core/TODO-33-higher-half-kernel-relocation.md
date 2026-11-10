@@ -289,6 +289,7 @@ Layer the high-half kernel onto the existing per-process page tables: every proc
 
 With user space owning the lower half, drop the hardcoded ceiling and all the bookkeeping that defended it.
 
+- [ ] Widen `KERNEL_UBSAN_CHECKS` with `bounds`, `alignment` and `null` once the guard is gone (root `Makefile`; `null` costs 36 KiB, `bounds` about 122 KiB) ← XREF: `00-infrastructure/TODO-01-developer-tooling-stack.md` §14
 - [/] Re-add `src/kernel/test/test_highhalf.c` + `test_register_highhalf()` (`TEST_CAT_MM`): authored in §1 but reverted because it tripped the BSS guard with zero headroom. Do this FIRST in §7 -- it is the regression net for the whole relocation
   - BLOCKED: 3 of its 5 assertions describe a high-half kernel; §11 measured them failing today. Waits on §3, `todo/answers.md` Q3.
 - [/] `test_highhalf.c` also covers the §9 identity-map-disabled walker exercise + absent-PML4/PDPT/PD `vmm_set_user_page`/`_remap` no-crash cases → XREF: §9

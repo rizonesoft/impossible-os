@@ -530,6 +530,92 @@ else
             fi
         done
     done
+
+    # Compile cache: every job that builds the OS restores ccache, and the
+    # release build does not. The selftest breaks each rule in a copy of the
+    # workflows and requires the check to refuse it with that rule's message.
+    assert_exit_zero "every building CI job restores the compile cache" \
+        python3 "$SCRIPT_DIR/ci/check-compile-cache.py" "$REPO_ROOT/.github/workflows"
+    assert_exit_zero "compile-cache check refuses each broken rule (selftest)" \
+        python3 "$SCRIPT_DIR/ci/check-compile-cache.py" --selftest "$REPO_ROOT/.github/workflows"
+fi
+
+# ============================================================================
+# Kernel UBSan flavor contract
+# ============================================================================
+# The test flavor compiles with the trap-mode checks and the release flavor
+# with none, and the flavor stamp carries the check list, so a change to the
+# set rebuilds every object (before 2026-11-10 it left the old traps in).
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[kernel UBSan flavor]${NC}"
+# Captured output is matched with here-strings, never `printf | grep -q`: under
+# pipefail a grep that exits at its first match kills the writer with SIGPIPE,
+# and the pipeline then reads as "no match" (or, negated, as a clean release).
+UB_ON="$(make -C "$REPO_ROOT" -n kernel 2>/dev/null)"; UB_ON_RC=$?
+UB_OFF="$(make -C "$REPO_ROOT" -n KERNEL_TESTS=off kernel 2>/dev/null)"; UB_OFF_RC=$?
+UB_DB="$(make -C "$REPO_ROOT" -pn 2>/dev/null)"
+UB_LIST="$(sed -n 's/^KERNEL_UBSAN_CHECKS := //p' <<<"$UB_DB" | head -1)"
+UB_STAMP_ON="$(make -C "$REPO_ROOT" -n build/.kernel-tests.stamp 2>/dev/null)"
+UB_STAMP_OFF="$(make -C "$REPO_ROOT" -n KERNEL_TESTS=off build/.kernel-tests.stamp 2>/dev/null)"
+if [ "$UB_ON_RC" = "0" ] && [ -n "$UB_LIST" ] \
+        && grep -qF -- "-fsanitize=$UB_LIST -fsanitize-trap=all" <<<"$UB_ON"; then
+    t_pass "test-flavor kernel compiles with the UBSan trap checks ($UB_LIST)"
+else
+    t_fail "test-flavor kernel compiles with the UBSan trap checks" \
+        "dry run exit $UB_ON_RC; list '$UB_LIST' not on the compile line"
+fi
+# The release plan must be a real plan (it compiles the kernel) before the
+# absence of a sanitizer flag in it means anything.
+if [ "$UB_OFF_RC" = "0" ] && grep -qF -- "src/kernel/panic.c" <<<"$UB_OFF" \
+        && ! grep -qF -- "-fsanitize" <<<"$UB_OFF"; then
+    t_pass "release-flavor kernel compiles with no sanitizer"
+else
+    t_fail "release-flavor kernel compiles with no sanitizer" \
+        "dry run exit $UB_OFF_RC, no kernel compile in the plan, or -fsanitize on a compile line"
+fi
+if [ -n "$UB_LIST" ] && grep -qF -- "checks=$UB_LIST'" <<<"$UB_STAMP_ON"; then
+    t_pass "flavor stamp carries the UBSan check list"
+else
+    t_fail "flavor stamp carries the UBSan check list" "the stamp recipe does not write checks=$UB_LIST"
+fi
+if grep -qF -- "checks=none'" <<<"$UB_STAMP_OFF"; then
+    t_pass "release-flavor stamp records no checks"
+else
+    t_fail "release-flavor stamp records no checks"
+fi
+# The stamp recipe itself, run in a scratch build directory: the same list
+# leaves the stamp's mtime alone (objects stay current), a different list
+# rewrites it (every object depends on it and rebuilds), and UBSan off with the
+# tests on records no checks and compiles with no sanitizer.
+UB_TMP="$(mktemp -d)"
+ub_stamp() { make -s -C "$REPO_ROOT" BUILD_DIR="$UB_TMP" "$@" "$UB_TMP/.kernel-tests.stamp" >/dev/null 2>&1; }
+ub_stamp; UB_S1="$(cat "$UB_TMP/.kernel-tests.stamp" 2>/dev/null)"; UB_M1="$(stat -c %y "$UB_TMP/.kernel-tests.stamp" 2>/dev/null)"
+ub_stamp; UB_M2="$(stat -c %y "$UB_TMP/.kernel-tests.stamp" 2>/dev/null)"
+ub_stamp KERNEL_UBSAN_CHECKS=shift; UB_S3="$(cat "$UB_TMP/.kernel-tests.stamp" 2>/dev/null)"
+ub_stamp KERNEL_UBSAN=off; UB_S4="$(cat "$UB_TMP/.kernel-tests.stamp" 2>/dev/null)"
+rm -rf "$UB_TMP"
+if [ -n "$UB_M1" ] && [ "$UB_M1" = "$UB_M2" ] && [ "$UB_S1" = "on ubsan=on checks=$UB_LIST" ]; then
+    t_pass "flavor stamp is left alone when the check list is unchanged"
+else
+    t_fail "flavor stamp is left alone when the check list is unchanged" "'$UB_S1' at '$UB_M1' then '$UB_M2'"
+fi
+if [ "$UB_S3" = "on ubsan=on checks=shift" ]; then
+    t_pass "flavor stamp is rewritten when the check list changes"
+else
+    t_fail "flavor stamp is rewritten when the check list changes" "stamp reads '$UB_S3'"
+fi
+UB_TOFF="$(make -C "$REPO_ROOT" -n KERNEL_UBSAN=off kernel 2>/dev/null)"; UB_TOFF_RC=$?
+if [ "$UB_S4" = "on ubsan=off checks=none" ] && [ "$UB_TOFF_RC" = "0" ] \
+        && grep -qF -- "src/kernel/panic.c" <<<"$UB_TOFF" && ! grep -qF -- "-fsanitize" <<<"$UB_TOFF"; then
+    t_pass "KERNEL_UBSAN=off with the tests on compiles with no sanitizer and records no checks"
+else
+    t_fail "KERNEL_UBSAN=off with the tests on compiles with no sanitizer and records no checks" \
+        "stamp '$UB_S4', dry run exit $UB_TOFF_RC"
+fi
+UB_BOGUS="$(make -C "$REPO_ROOT" -n KERNEL_UBSAN=bogus kernel 2>&1)"; UB_BOGUS_RC=$?
+if [ "$UB_BOGUS_RC" != "0" ] && grep -qF -- "KERNEL_UBSAN must be one of: on, off" <<<"$UB_BOGUS"; then
+    t_pass "an unknown KERNEL_UBSAN value is refused by name"
+else
+    t_fail "an unknown KERNEL_UBSAN value is refused by name" "exit $UB_BOGUS_RC"
 fi
 
 # ============================================================================
@@ -4116,7 +4202,10 @@ if [ -f "$_arg_state" ] && [ -e "$REPO_ROOT/.claude/state/sequencer-armed" ] && 
     else
         t_fail "attended_repair_guard_inert_in_run  guard blocked INSIDE the unattended run (wedge risk)"
     fi
-    if printf '%s' "$_arg_payload" | python3 "$REPO_ROOT/.claude/hooks/attended_repair_guard.py" >/dev/null 2>&1; then
+    # An attended session's environment: when the run itself executes this pack
+    # it exports OVERNIGHT_SEQUENCER_RUN=1, and inheriting that made the guard
+    # (correctly) inert and this assertion fail.
+    if printf '%s' "$_arg_payload" | env -u OVERNIGHT_SEQUENCER_RUN -u ATTENDED_REPAIR_OVERRIDE python3 "$REPO_ROOT/.claude/hooks/attended_repair_guard.py" >/dev/null 2>&1; then
         t_fail "attended_repair_guard_live_block  guard did NOT block git add -A with a run live"
     else
         t_pass "attended_repair_guard_live_block  blocks whole-tree staging while a run is live"

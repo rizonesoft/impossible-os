@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/build.sh,scripts/setup.sh,tools/fuzz/run.sh,ruff.toml,scripts/static-analysis.sh,scripts/test.sh,scripts/lint.sh,scripts/debug.sh,scripts/run-qemu.sh reviewed=2026-11-10 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/build.sh,scripts/setup.sh,scripts/ci/check-compile-cache.py,tools/fuzz/run.sh,ruff.toml,scripts/static-analysis.sh,scripts/test.sh,scripts/lint.sh,scripts/debug.sh,scripts/run-qemu.sh reviewed=2026-11-10 -->
 # Development Tooling & Automation
 
 > Complete build system, test framework, asset pipeline, and development utilities for Impossible OS.
@@ -468,6 +468,8 @@ Measured 2026-11-10 on a 10-core WSL2 host, `bash scripts/build.sh clean`:
 
 The warm figure is the floor for a clean build: the remaining 42 s is asset generation, host tools, linking and image assembly, which no compile cache touches.
 
+CI restores the cache too. The `build` and `build-release-flavor` jobs of `build.yml` and the `visual-regression.yml` job install `ccache` and restore `~/.cache/ccache` with `actions/cache` before the build, under a key that ends in the commit, so each run starts from the newest earlier cache of its own flavor and saves a new one. The cache step cannot fail a job (a cache-service fault costs a cold compile), each job prints `ccache --show-stats` after the build, and `release.yml` uses no cache, so a release is always compiled from source. `scripts/ci/check-compile-cache.py` holds those rules and runs in `scripts/test-tooling.sh`.
+
 ### Python Lint (ruff)
 
 `ruff.toml` selects correctness rules only (undefined names, syntax errors, shadowed imports, mutable defaults) and lint Check 35 runs them over every tracked Python file as an error. A missing `ruff` fails the check: a check that silently does not run reads as one that passed. Install with `bash scripts/setup.sh`, or `pipx install ruff` / `uv tool install ruff`.
@@ -493,7 +495,9 @@ A new target is a `fuzz_<name>.c` with `LLVMFuzzerTestOneInput`, a `build_target
 
 ### Undefined-Behaviour Traps in the Kernel
 
-The test-flavor kernel (`KERNEL_TESTS=on`, the default) is compiled with `-fsanitize=shift,integer-divide-by-zero,unreachable,vla-bound,builtin -fsanitize-trap=all`. Undefined behaviour of those classes executes `ud2`; the #UD report gives the RIP and `llvm-addr2line-19 -e build/kernel.exe -f <RIP>` names the line. Trap mode needs no runtime. The release flavor is built without it, and `KERNEL_UBSAN=off` turns it off to rule it out of a problem.
+The test-flavor kernel (`KERNEL_TESTS=on`, the default) is compiled with `-fsanitize=shift,integer-divide-by-zero,unreachable,vla-bound,builtin,bool,enum -fsanitize-trap=all` (the list is `KERNEL_UBSAN_CHECKS` in the root `Makefile`). Undefined behaviour of those classes executes `ud2`; the #UD report gives the RIP and `llvm-addr2line-19 -e build/kernel.exe -f <RIP>` names the line. Trap mode needs no runtime. The release flavor is built without it, and `KERNEL_UBSAN=off` turns it off to rule it out of a problem.
+
+The set is what fits below the user base. Measured 2026-11-10 with clean builds: `bool` and `enum` add no code today (the kernel loads no `_Bool` from memory, and C enums have no checked range), `null` adds 36 KiB of the 80 KiB the image has left, and `bounds` adds about 122 KiB and ends the image past the user base. `null`, `bounds` and `alignment` wait for the [higher-half kernel relocation](../../todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md). The flavor stamp `build/.kernel-tests.stamp` records the check list, so changing it rebuilds every object.
 
 The set is what fits: these five checks add about 6 KiB of `.text`. `bounds`, `bool` and `enum` add about 122 KiB and push the image past the user base, so they wait for the higher-half relocation.
 

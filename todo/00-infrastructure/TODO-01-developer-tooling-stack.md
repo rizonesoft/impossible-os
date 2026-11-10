@@ -78,7 +78,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 | ⭐  |  11   | Bare section-ref sweep (lint Check 5 zero-allowlist)  | §9             |  [x]   |
 | 💎  |  12   | Enforce required-tool version floors in `--verify`    | §1, §2         |  [x]   |
 | 💎  |  13   | Duplicate-recipe sweep in the root Makefile           | §3             |  [/]   |
-| 💎  |  14   | Defect-finding tools: fuzzers, UBSan, static analysis | §3, §7         |  [ ]   |
+| 💎  |  14   | Defect-finding tools: fuzzers, UBSan, static analysis | §3, §7         |  [x]   |
 | 💎  |  15   | Static-analysis triage and changed-file gate          | §14            |  [ ]   |
 | 💎  |  16   | Fuzz targets for the remaining untrusted parsers      | §14            |  [ ]   |
 | ⭐  |  17   | Shard the todo-graph build suite                      | §7, §14        |  [ ]   |
@@ -466,14 +466,25 @@ Added 2026-11-10 on the operator's instruction to adopt the tools that find defe
 - [x] `ccache` through `scripts/build.sh` (clean build 68 s to 42 s warm)
 - [x] `scripts/static-analysis.sh` + `.clang-tidy` (Clang static analyzer core checks plus defect-class bugprone checks) over the compile database
 - [x] `scripts/test-tooling.sh` starts its nested suites together and prints its time split
-- [ ] Widen kernel UBSan to `bounds`, `bool`, `enum`, `alignment` and `null`
-  - Blocked on image room: [higher-half kernel relocation](../02-kernel-core/TODO-33-higher-half-kernel-relocation.md).
+- [x] Kernel UBSan also carries `bool` and `enum` (no image cost); `KERNEL_UBSAN_CHECKS` is one list that the flavor stamp records, so a change to the set rebuilds every object
+- [/] Widen kernel UBSan to `bounds`, `alignment` and `null`
+  - Blocked on image room: `null` alone costs 36 KiB of the 80 KiB left. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Widen `KERNEL_UBSAN_CHECKS` with `bounds`, `alignment` and `null` once the guard is gone")
 - [x] Build once per boot matrix (`SMOKE_PRISTINE_IMAGE`)
-- [ ] Restore the ccache directory in CI with `actions/cache`
+- [x] CI restores `~/.cache/ccache` with `actions/cache` in every job that builds (`build.yml`, `visual-regression.yml`), never in `release.yml`; `scripts/ci/check-compile-cache.py` holds the rules
+- [x] Commit: `"ci: restore the compile cache; ubsan: bool and enum, and the stamp records the check list"`
 
 Split 2026-11-10: the analyzer triage, the remaining fuzz targets and the suite shard are the three sections that follow this one.
 
 **Test checkpoint:** `bash tools/fuzz/run.sh` exits 0 and fails on the checked-in reproducer when the alignment check in `RtlLengthSidBounded` is removed; `bash scripts/lint.sh` fails on a Python file with an undefined name; `make -n kernel` shows `-fsanitize` and `make -n KERNEL_TESTS=off kernel` does not; `bash scripts/static-analysis.sh` exits 0 on a clean change set.
+
+> **Test runner:** `bash scripts/test-tooling.sh` (groups `[workflow YAML]` and `[kernel UBSan flavor]`) and `bash tools/fuzz/run.sh`; no kernel test surface, these are host tools.
+
+> **Notes:**
+> - Shipped: two host fuzzers, ruff as lint Check 35, trap-mode UBSan (seven checks), ccache locally and in CI, the static-analysis wrapper, a build-once boot matrix.
+> - Integration: `scripts/build.sh` puts a ccache wrapper on `PATH`; the root `Makefile` owns `KERNEL_UBSAN_CHECKS`; CI workflows restore `~/.cache/ccache`.
+> - Downstream: analyzer triage, the remaining fuzz targets and the suite shard are sections 15 to 17.
+> - Canonical doc: [development-tooling.md](../../docs/infrastructure/development-tooling.md#compile-cache).
+> - Scope boundary: `bounds`, `alignment` and `null` are parked on the higher-half relocation for image room.
 
 ---
 
@@ -536,6 +547,7 @@ One libFuzzer target and a checked-in seed corpus per parser, built from the ker
 | ⭐  | Boot smoke assertions         | ⚠️ Log-string matches     | ⚠️ Log-string matches       | ✅ §10 -- POST16 manifest drift-detects; inverse-validated per emission          |
 | ⭐  | Bare section-sign drift gate  | ❌ Unenforced             | ❌ Unenforced               | ✅ §11 -- lint Check 5 + PreToolUse hook; allowlist drained to zero              |
 | 💎  | Min tool-version floors       | ⚠️ Build-time checks      | ✅ changes.rst + build gate | ✅ §12 -- --verify fails closed on below-floor required tools; drift-guarded     |
+| ⭐  | Defect-finding tools in-tree  | ⚠️ Driver Verifier, SDV   | ✅ KASAN, UBSAN, syzkaller  | ⚠️ §14 -- host fuzzers, trap UBSan, clang-tidy, ruff; KASAN-class not yet        |
 
 > **After §1-§6:** Impossible OS reaches the same baseline as well-run Windows and Linux projects for setup, reproducible environments, wrappers, hooks, and CI policy.
 > **After §7-§12:** the repo pulls ahead of either baseline with a first-class operator doctor, drift-guarded cross-references and section-refs, boot assertions that cannot silently regress when a contributor edits a printf, and a hard required-tool version-floor gate that fails closed before the build.

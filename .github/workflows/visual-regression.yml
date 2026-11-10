@@ -47,6 +47,11 @@ env:
   LLVM_VERSION: "19"
   # Node 20 runtime removed from runners 2026-09-16; opt in to Node 24 now.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # Compile cache (ccache through scripts/build.sh). The size bound keeps one
+  # saved cache small; the compiler is identified by its version output, since
+  # a runner image reinstalls the same package with a new mtime.
+  CCACHE_MAXSIZE: "400M"
+  CCACHE_COMPILERCHECK: "%compiler% --version"
 
 jobs:
   visual-regression:
@@ -102,6 +107,7 @@ jobs:
             ovmf \
             qemu-system-x86 \
             gcc \
+            ccache \
             python3-yaml \
             python3-pil \
             python3-numpy \
@@ -113,8 +119,31 @@ jobs:
       - name: Verify toolchain sentinels
         run: bash scripts/setup.sh --verify
 
+      # scripts/build.sh routes clang through ccache when it is installed. The
+      # cache lives in the runner's home, never a root-owned path (unprivileged
+      # tar cannot restore those). A cache-service fault costs a cold compile,
+      # not the job.
+      - name: Restore compile cache
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ runner.os }}-llvm${{ env.LLVM_VERSION }}-visual-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-llvm${{ env.LLVM_VERSION }}-visual-
+            ccache-${{ runner.os }}-llvm${{ env.LLVM_VERSION }}-tests-on-
+
+      - name: Configure compile cache
+        run: |
+          echo "CCACHE_DIR=$HOME/.cache/ccache" >> "$GITHUB_ENV"
+          CCACHE_DIR="$HOME/.cache/ccache" ccache --zero-stats
+
       - name: Build OS
         run: bash scripts/build.sh
+
+      - name: Compile cache statistics
+        if: always()
+        run: ccache --show-stats
 
       - name: Verify build sentinel
         run: |

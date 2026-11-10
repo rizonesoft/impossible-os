@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -3282,27 +3283,45 @@ class LinkCheck(unittest.TestCase):
             # stops counting as in flight.
             real_step = self.L.step
 
+            # The budget is 3 s, not a fraction of one: it has to cover Node starting
+            # twice and one local request, and under the tooling pack's load a 0.2 s
+            # budget ran out before any request was made (so nothing was in flight
+            # and the run correctly returned UNVERIFIED instead of raising).
+            budget = 3.0
+            began = [0.0]
+
             def slow_step(*args, **kw):
                 try:
                     return real_step(*args, **kw)
                 except self.L.NormalizeError:
-                    time.sleep(0.6)
+                    # Hold the worker's own report until the budget has run out. The run
+                    # must already have raised by then, from the failure the resolver
+                    # published; a run that waited for this report would return green.
+                    time.sleep(max(0.0, began[0] + budget + 0.4 - time.monotonic()))
                     raise
             self.L.step = slow_step
             try:
+                began[0] = time.monotonic()
                 with self.assertRaises(self.L.NormalizeError):
-                    self.L.run_checks([f"{b}/redir-rel"], retries=1, wait=0, timeout=5, budget=0.2)
+                    self.L.run_checks([f"{b}/redir-rel"], retries=1, wait=0, timeout=5, budget=budget)
             finally:
                 self.L.step = real_step
             # A parser call that outlives even the grace after the budget fails closed.
             real_resolve = self.L.resolve_location
-            self.L.resolve_location = lambda loc, base, t: time.sleep(4)
+            entered = threading.Event()
+
+            def stuck_resolve(loc, base, t):
+                entered.set()
+                time.sleep(12)
+            self.L.resolve_location = stuck_resolve
             try:
                 start = time.monotonic()
                 with self.assertRaises(self.L.NormalizeError) as cm:
-                    self.L.run_checks([f"{b}/redir-rel"], retries=1, wait=0, timeout=0.3, budget=0.2)
+                    self.L.run_checks([f"{b}/redir-rel"], retries=1, wait=0, timeout=0.3, budget=budget)
+                self.assertTrue(entered.is_set())
                 self.assertIn("still running", str(cm.exception))
-                self.assertLess(time.monotonic() - start, 3.5)
+                # Budget, then the grace (timeout + 2 s); well short of the 12 s the call sleeps.
+                self.assertLess(time.monotonic() - start, budget + 0.3 + 2 + 2.5)
             finally:
                 self.L.resolve_location = real_resolve
             # Undecodable parser output is the same parser failure, never a verdict.
