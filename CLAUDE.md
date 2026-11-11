@@ -70,12 +70,12 @@ Register new tests with `test_suite_register_cat("name", fn, TEST_CAT_XX)`. Use 
 
 ```bash
 bash scripts/test-smoke.sh        # builds, boots in QEMU, checks for Boot complete + C:\>
-bash scripts/test-smoke-matrix.sh # TCG+KVM x 1+2 CPUs, plus the boot-store, boot-menu, forced-degradation and UKI-direct fixture legs (20 legs)
+bash scripts/test-smoke-matrix.sh # TCG+KVM x 1+2 CPUs, plus the boot-store, boot-menu, forced-degradation, bad-strings crash and UKI-direct fixture legs (21 legs)
 ```
 
 The smoke test complements unit tests: unit tests cover individual behaviors against in-memory fixtures, the smoke test proves **the image actually boots to userspace**. It auto-selects KVM if `/dev/kvm` is writable and falls back to TCG otherwise. 30-second timeout, fail-fast on missing markers.
 
-**Boot-validation matrix (2026-07-28).** `test-smoke-matrix.sh` boots the image on **TCG and KVM at 1 and 2 CPUs** and fails if any leg fails. Prefer it over the single-config smoke test wherever a section is being validated; run it under `scripts/overnight/run-artifact.sh` so only the verdict enters context (full logs land in `build/smoke-matrix/`). The matrix builds once and every leg boots a restored copy of that untouched image (20 legs in 306 s on 2026-11-10, against 2,720 s when each leg clean-built); a leg refuses if a source changed after the build.
+**Boot-validation matrix (2026-07-28).** `test-smoke-matrix.sh` boots the image on **TCG and KVM at 1 and 2 CPUs** and fails if any leg fails. Prefer it over the single-config smoke test wherever a section is being validated; run it under `scripts/overnight/run-artifact.sh` so only the verdict enters context (full logs land in `build/smoke-matrix/`). The matrix builds once and every leg boots a restored copy of that untouched image (21 legs in 345 s on 2026-11-11, against 2,720 s for 20 legs when each leg clean-built); a leg refuses if a source changed after the build.
 
 Why four legs. Until 2026-07-28 the smoke gate passed **no `-smp` flag at all**, so it had never booted SMP -- and a section changing the TEB <-> `kernel_gs_base` handoff across context switches shipped green through it, then halted on a 2-CPU boot with `[CRIT] ... has TEB but kernel_gs_base=0`. The engines are not redundant either (see the KVM-vs-TCG table below). **A leg that fails on ONE configuration is the finding, not noise** -- never widen an assertion to make it pass; the engine/CPU difference IS the evidence.
 

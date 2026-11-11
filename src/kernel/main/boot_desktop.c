@@ -426,6 +426,22 @@ void boot_phase3(void)
                      "CRASH_TEST: Deliberate panic for testing",
                      __FILE__, __LINE__);
     }
+    else if (g_boot_info.config.crash_test == 3) {
+        /* The same early site, with a description AND a file pointer that
+         * fault on their first byte: the corruption being reported has
+         * reached the panic strings themselves. The boot passes only if the
+         * BSOD still renders both placeholders and the crash dump still
+         * lands, which no unit test can observe (they cannot call
+         * panic_screen). Driven by SMOKE_CRASH_TEST=bad-strings. */
+        extern void panic_screen(struct interrupt_frame *frame,
+                                 uint64_t error_code,
+                                 const char *description,
+                                 const char *file, uint32_t line);
+        klog(LOG_WARN, "boot",
+             "crash_test=3 -- triggering deliberate BSOD with unreadable panic strings");
+        panic_screen((struct interrupt_frame *)0, 0xDEAD,
+                     PANIC_FAULTING_STR_PTR, PANIC_FAULTING_STR_PTR, __LINE__);
+    }
     else if (g_boot_info.config.crash_test != 0 &&
              g_boot_info.config.crash_test != 2) {
         /* Say so rather than booting normally. Before the exact-match
@@ -434,7 +450,8 @@ void boot_phase3(void)
          * nobody and the knob would just look broken. */
         klog(LOG_WARN, "boot",
              "crash_test=%u is not a known crash site (0=off, 1=here, "
-             "2=pre-first-composite) -- no crash will be triggered",
+             "2=pre-first-composite, 3=here with unreadable strings) -- "
+             "no crash will be triggered",
              (uint64_t)g_boot_info.config.crash_test);
     }
 

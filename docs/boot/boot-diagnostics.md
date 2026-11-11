@@ -51,7 +51,7 @@ make test-boot                             # same, as a make target
 scripts\debug\kernel\run-boot-tests.bat    # Windows equivalent
 ```
 
-Set `crash_test=1` in `boot.conf` to trigger a deliberate stop during desktop init, or `crash_test=2` for a crash in the compositor's first frame. Reboot, then look for the `[PANIC] Previous crash evidence found` line on serial and read `X:\Crash\last-panic.txt`.
+Set `crash_test=1` in `boot.conf` to trigger a deliberate stop during desktop init, or `crash_test=2` for a crash in the compositor's first frame. `crash_test=3` stops at the desktop-init site with a description and file pointer that fault when read, which proves the stop screen and the crash dump survive a crash whose damage reached the panic strings themselves (`SMOKE_CRASH_TEST=bad-strings bash scripts/test-smoke.sh` boots it, reads the stop screen's text back from a QEMU display capture with `scripts/smoke-screen.py`, and checks the dump's saved line). Reboot, then look for the `[PANIC] Previous crash evidence found` line on serial and read `X:\Crash\last-panic.txt`.
 
 On every boot the top-right corner of the screen shows the current POST code until the desktop is ready, and serial carries a `[BOOT-LOAD]` summary line (`all subsystems loaded clean`, or the degraded and failed records by name). Afterwards, `X:\Diag\` holds `boot-load-status.txt` and `boot-loader-identity.txt`, and `X:\Perf\` holds `boot-timeline.json`; [BlackBox Diagnostic Artifacts](black-box-artifacts.md) lists every file.
 

@@ -1215,6 +1215,7 @@ _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_fence.py" todo_fence
 _tt_nested_py "$REPO_ROOT/scripts/site/tests/test_build.py" site_build
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_alias_staleness.py" alias_staleness
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_plan.py" todo_plan
+_tt_nested_py "$REPO_ROOT/scripts/tests/test_smoke_screen.py" smoke_screen
 # test_query_bounds.sh is NOT started here: its MCP sub-test reads the real
 # build/todo-cache.json, which test_build.sh deletes and rebuilds as it runs
 # (first parallel pack run, 2026-11-10: `cache-unusable`). Its collect call
@@ -1357,6 +1358,21 @@ if [ -f "$PLAN_TEST" ]; then
     fi
 else
     t_fail "scripts/tests/test_todo_plan.py not found"
+fi
+
+# The crash smoke leg's screen verdict (scripts/smoke-screen.py): frames drawn
+# with the kernel's own console font, plus truncated and malformed captures.
+SCREEN_TEST="$REPO_ROOT/scripts/tests/test_smoke_screen.py"
+if [ -f "$SCREEN_TEST" ]; then
+    SCREEN_TEST_OUT=$(_tt_nested_collect smoke_screen python3 "$SCREEN_TEST")
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/tests/test_smoke_screen.py PASS ($(printf '%s\n' "$SCREEN_TEST_OUT" | tail -1))"
+    else
+        t_fail "scripts/tests/test_smoke_screen.py FAIL ($(printf '%s\n' "$SCREEN_TEST_OUT" | tail -3 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_smoke_screen" "$SCREEN_TEST_OUT"
+    fi
+else
+    t_fail "scripts/tests/test_smoke_screen.py not found"
 fi
 
 # Query-surface output bounds (test_query_bounds.sh). Separate suite from

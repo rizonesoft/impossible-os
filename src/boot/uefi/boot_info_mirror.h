@@ -98,7 +98,8 @@ struct boot_config {
     UINT8   async_init;        /* 1 = parallel subsystem init on APs, 0 = sequential (default) */
     UINT8   crash_test;        /* 0 = off, 1 = deliberate BSOD early in Phase 3,
                                 * 2 = deliberate BSOD inside the compositor
-                                *     loop, before the first composite */
+                                *     loop, before the first composite,
+                                * 3 = as 1, with unreadable panic strings */
     UINT8   ob_handle_trace;   /* 1 = log every handle alloc/free to klog */
     UINT8   config_version;    /* 0 = legacy, 1+ = versioned (S7) */
     UINT8   error_screen_test; /* 1 = call boot_fatal() before kernel load (S14) */

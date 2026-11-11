@@ -334,6 +334,12 @@ void     panic_declared_ctx_calls_reset(void);
 #define PANIC_STR_NONE        "(no description)"
 #define PANIC_TRACE_NO_GUARD  "(stack trace withheld: no guarded read in this context)"
 
+/* A string pointer every read of which faults: the first address past the
+ * lower canonical half, never mapped, so even a one-byte read takes the guard.
+ * The unit suite and the crash_test=3 boot both hand it to the panic path to
+ * prove every renderer copes with a description that is itself the damage. */
+#define PANIC_FAULTING_STR_PTR ((const char *)0x0000800000000000ULL)
+
 /* Copy a CALLER-SUPPLIED panic string into kernel-owned storage, ONCE, at panic
  * entry, so that every terminal renderer downstream (serial, BSOD, disk crash
  * dump, cross-boot evidence record) reads the copy and none of them walks a

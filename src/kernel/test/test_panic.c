@@ -76,7 +76,7 @@ static void test_panic_snap_null_uses_fallback(void)
  * UNREADABLE -- two different strings, so the test cannot pass either way. A
  * readable literal here would prove nothing, because an implementation that
  * walked it and then overwrote the result would still look correct. */
-#define TD_UNREADABLE_SRC ((const char *)0x0000800000000000ULL)
+#define TD_UNREADABLE_SRC PANIC_FAULTING_STR_PTR
 
 static void test_panic_snap_nmi_never_walks(void)
 {

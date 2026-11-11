@@ -170,6 +170,7 @@ Found while writing the host-tools docs pages (`00-infrastructure/TODO-10` §26)
 
 - [ ] Pad the SDK `struct ixfs_inode` to 128 bytes to match `include/kernel/fs/ixfs.h`, and pin both it and `struct ixfs_dir_entry` (256) with `_Static_assert`
   - The SDK copy has no `i_reserved[36]` and is 92 bytes; the kernel was padded in `161d194bd`. Measured 2026-09-30: `test_ixfs_core build/system-disk.img 3` finds the superblock and lists an empty root.
+  - Waiting on it: the bad-strings crash smoke leg reads `C:\Impossible\System\crashdump.log` back through this parser -> XREF: `01-boot-platform/TODO-10-bare-metal-hardening.md` §19 (item: "read `crashdump.log` back off the fixture disk")
 - [ ] Refuse a read-write mount unless every metadata structure the kernel checks is maintained, or maintain them
   - The kernel keeps a CRC32C data-block checksum table, a journal, block refcounts and snapshots; `ixfs-core.c` updates none of them, so a host write leaves blocks the kernel reports as corrupt.
 - [ ] Implement cross-directory rename (or return `EXDEV`): `ixfs_fuse_rename` resolves only the source's parent, so `mv a/x b/y` renames `x` to `y` inside `a/`

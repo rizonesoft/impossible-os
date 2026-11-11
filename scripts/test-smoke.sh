@@ -766,6 +766,15 @@ FORCE_MODE="${SMOKE_FORCE_MODE:-}"
 # only when the boot STILL reaches the prompt AND serial names the failure
 # twice -- at the moment it happens and in the end-of-boot summary.
 DEGRADE="${SMOKE_DEGRADE:-}"
+# SMOKE_CRASH_TEST=bad-strings boots crash_test=3: a deliberate panic whose
+# description and file pointers fault when read. No unit test can call
+# panic_screen, so this is where "the BSOD still renders and the crash dump
+# still lands when the damage reached the panic strings" is observed.
+CRASH_TEST="${SMOKE_CRASH_TEST:-}"
+case "$CRASH_TEST" in
+    ""|bad-strings) ;;
+    *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_TEST must be bad-strings (got: $CRASH_TEST)${NC}"; exit 1 ;;
+esac
 case "$DEGRADE" in
     ""|rtc|fb) ;;
     *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_DEGRADE must be rtc or fb (got: $DEGRADE)${NC}"; exit 1 ;;
@@ -781,7 +790,7 @@ if [ "$LOWRES" = "1" ]; then FORCE_MODE="$LOWRES_MODE"; EXPECT_TIER="compact"; f
 # fingerprints the CANONICAL build image: recording one here would certify the
 # untouched image using evidence from a boot of different bytes.
 IMAGE_MODIFIED=0
-if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ "$SHADOW_STORE" != "0" ] || [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$UKI_MODE" ] || [ -n "$DEGRADE" ]; then
+if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ "$SHADOW_STORE" != "0" ] || [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$UKI_MODE" ] || [ -n "$DEGRADE" ] || [ -n "$CRASH_TEST" ]; then
     if ! command -v mcopy >/dev/null 2>&1; then
         echo -e "${RED}SMOKE TEST FAILED: image fixtures need mtools (mcopy)${NC}"
         exit 1
@@ -860,7 +869,7 @@ if [ "$CORRUPT_STORE" = "1" ]; then
           ::EFI/ImpossibleOS/bootentries.json
     echo -e "  ${DIM}corrupt-store fixture staged into $(basename "$DISK")${NC}"
 fi
-if [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$DEGRADE" ]; then
+if [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$DEGRADE" ] || [ -n "$CRASH_TEST" ]; then
     CONF_FIXTURE="$BUILD/boot.conf.fixture"
     if ! mcopy -i "$DISK@@$EFI_OFFSET" -o ::EFI/ImpossibleOS/boot.conf \
                "$CONF_FIXTURE" 2>/dev/null; then
@@ -887,6 +896,10 @@ if [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$DEGRADE" ]; then
     fi
     if [ "$ERROR_SCREEN" = "1" ]; then
         printf 'error_screen_test=1\n' >> "$CONF_FIXTURE"
+    fi
+    if [ -n "$CRASH_TEST" ]; then
+        sed -i -E '/^[[:space:]]*crash_test[[:space:]]*=/d' "$CONF_FIXTURE"
+        printf 'crash_test=3\n' >> "$CONF_FIXTURE"
     fi
     mcopy -i "$DISK@@$EFI_OFFSET" -o "$CONF_FIXTURE" ::EFI/ImpossibleOS/boot.conf
     echo -e "  ${DIM}boot.conf fixture: $(tr '\n' ' ' < "$CONF_FIXTURE" | tail -c 60)${NC}"
@@ -947,6 +960,30 @@ if [ "$ERROR_SCREEN" = "1" ]; then
     )
 fi
 
+# The bad-strings crash leg panics on purpose, so the end-to-end markers can
+# never appear and the stop screen is the expected output. Its pass markers are
+# the renderers' own lines: the BSOD printed the unreadable placeholder for BOTH
+# strings (so neither renderer walked the faulting pointers) and the disk dump
+# finished. Any fault the panic path takes on its way there still fails.
+if [ -n "$CRASH_TEST" ]; then
+    CT_PLACEHOLDER='(unreadable: the panic string pointer faulted)'
+    PASS_PATTERNS_ALL=(
+        "crash_test=3 -- triggering deliberate BSOD with unreadable panic strings"
+        "Description: $CT_PLACEHOLDER"
+        "Source:  $CT_PLACEHOLDER:"
+        'Crash dump saved to C:\Impossible\System\crashdump.log'
+    )
+    FAIL_PATTERNS=(
+        "ASSERT FAILED"
+        "triple fault"
+        "General Protection Fault"
+        "Page Fault"
+        "Double Fault"
+        "Crash dump write FAILED"
+        "[BOOT HALT]"
+    )
+fi
+
 # The override leg must stop in the loader, so the end-to-end markers can never
 # appear and its [CRIT] BOOT FATAL line is the expected output. Unrelated faults
 # still fail it; the no-handoff assertions are in uki_check_override_log.
@@ -1000,7 +1037,7 @@ QEMU_FLAGS=(
     -no-shutdown
     -display none
 )
-if [ "$MENU" = "keys" ] || [ "$MENU" = "default" ]; then
+if [ "$MENU" = "keys" ] || [ "$MENU" = "default" ] || [ -n "$CRASH_TEST" ]; then
     rm -f "$MONITOR_SOCK"
     QEMU_FLAGS+=(-monitor "unix:$MONITOR_SOCK,server,nowait")
 fi
@@ -1162,6 +1199,15 @@ if [ "$BOOT_PASSED" = true ] && [ -z "${SMOKE_NO_GRACE:-}" ]; then
     printf "\r"
 fi
 
+# The bad-strings crash leg judges the SCREEN, not only serial: printk writes
+# serial before the framebuffer, so serial alone cannot show the stop screen
+# painted. Capture the scanout while the guest still sits on the stop screen.
+CT_SCREEN="$BUILD/smoke-crash-screen.ppm"
+CT_SCREEN_ERR=""
+if [ -n "$CRASH_TEST" ] && [ "$BOOT_PASSED" = true ]; then
+    CT_SCREEN_ERR=$(python3 "$SCRIPT_DIR/smoke-screen.py" capture "$MONITOR_SOCK" "$CT_SCREEN" 2>&1) || true
+fi
+
 # ---- S23 deliberate-fatal verdict (SMOKE_ERROR_SCREEN=1) -------------------
 # Runs BEFORE every later layer, because those layers assert an end-to-end boot
 # this leg deliberately does not perform. Each assertion below is one a broken
@@ -1183,6 +1229,40 @@ if [ "$ERROR_SCREEN" = "1" ]; then
     echo -e "  ${GREEN}✓${NC} $ES_RENDERED"
     echo ""
     echo -e "${GREEN}  ERROR-SCREEN LEG PASSED${NC}"
+    echo -e "${DIM}  smoke receipt not recorded (fixture image)${NC}"
+    exit 0
+fi
+
+# ---- Bad-strings crash verdict (SMOKE_CRASH_TEST=bad-strings) --------------
+# Runs before the end-to-end layers, which assert a boot this leg deliberately
+# does not complete. Exactly one stop screen: a renderer that faulted on the
+# strings and re-entered the panic path would print a second one.
+if [ -n "$CRASH_TEST" ]; then
+    strip_ansi
+    ct_fail() {
+        echo -e "${RED}SMOKE TEST FAILED (bad-strings crash leg): $1${NC}"
+        grep -aE "crash_test|Description:|Source:|Crash dump|Stop code" "$STRIPPED_LOG" 2>/dev/null \
+            | sed 's/^/    /' | head -12
+        exit 1
+    }
+    [ "$BOOT_FAILED" = true ] && ct_fail "$FAIL_REASON"
+    [ "$BOOT_PASSED" = true ] || ct_fail "the stop screen or the crash dump never finished within ${TIMEOUT_SEC}s"
+    stops=$(grep -ac "Stop code:" "$STRIPPED_LOG" 2>/dev/null || true)
+    [ "$stops" = "1" ] || ct_fail "expected one stop screen, saw ${stops:-0}"
+    [ -z "$CT_SCREEN_ERR" ] || ct_fail "screen capture: $CT_SCREEN_ERR"
+    # The verdict reads the stop screen's TEXT back from the capture, glyph by
+    # glyph against the kernel's console font (scripts/smoke-screen.py), and
+    # needs most of the frame in the panic blue.
+    if ! ct_screen=$(python3 "$SCRIPT_DIR/smoke-screen.py" check "$CT_SCREEN" \
+            "Description: (unreadable: the panic string pointer faulted)" \
+            "Source:  (unreadable: the panic string pointer faulted):" 2>&1); then
+        ct_fail "the screen capture is not the stop screen ($ct_screen)"
+    fi
+    echo -e "  ${GREEN}✓${NC} description and file rendered as the unreadable placeholder"
+    echo -e "  ${GREEN}✓${NC} crash dump saved; one stop screen"
+    echo -e "  ${GREEN}✓${NC} stop screen on the display: $ct_screen"
+    echo ""
+    echo -e "${GREEN}  BAD-STRINGS CRASH LEG PASSED${NC}"
     echo -e "${DIM}  smoke receipt not recorded (fixture image)${NC}"
     exit 0
 fi

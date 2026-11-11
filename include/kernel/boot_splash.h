@@ -37,7 +37,9 @@ void boot_splash_delay(uint32_t seconds);
 void boot_splash_tick(void);
 
 /* Finish the splash: clear screen and hand off to the desktop.
- * After this call, the framebuffer is fully available for wm/desktop. */
+ * After this call, the framebuffer is fully available for wm/desktop.
+ * It fades out with sleep_ms(), so it needs interrupts enabled: a terminal
+ * path (panic, fatal halt) uses boot_splash_abort() instead. */
 void boot_splash_finish(void);
 
 /* Returns 1 if the boot splash is currently active (screen owned by splash). */
@@ -51,5 +53,6 @@ int boot_splash_active(void);
 int boot_splash_text_ready(void);
 
 /* Abort the splash immediately (no fade) and unlock framebuffer for printk.
- * Used by debug boot mode to show text output on screen. */
+ * Never waits, so it is the teardown for interrupts-masked terminal paths
+ * (the panic stop screen) as well as debug boot mode. */
 void boot_splash_abort(void);

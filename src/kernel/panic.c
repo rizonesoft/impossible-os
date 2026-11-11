@@ -3235,9 +3235,14 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
         for (;;) __asm__ volatile ("hlt");
     }
 
-    /* Stop boot animation dots if still running */
+    /* Tear the boot splash down WITHOUT its fade. boot_splash_finish() plays
+     * five frames with sleep_ms() between them, and a tick-driven sleep
+     * waits with `hlt`: here interrupts are masked, so the first frame never
+     * ended and every panic raised while the splash was up hung before the
+     * stop screen painted. boot_splash_abort() stops the spinner, clears and
+     * unlocks the framebuffer, and never waits. */
     if (boot_splash_active())
-        boot_splash_finish();
+        boot_splash_abort();
 
     /* Unlock the compositor so we can draw directly */
     fb_unlock_compositor();
