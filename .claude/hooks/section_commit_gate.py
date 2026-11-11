@@ -1461,6 +1461,65 @@ def _dispatch_content_fresh(root: Path, disp_head: str,
     return (True, "")
 
 
+# The passes of the reviewer pin (.conclave/reviewers.toml). A TODO whose stamp
+# entry holds any of them was reviewed in the three-pass shape and is judged by
+# that shape; an entry holding only the older kinds is judged as before, so a
+# section already under review finishes on the rules it started with.
+_PASS_KINDS = ("plan", "round", "completion", "reconciliation")
+
+
+def _stamp(entry: dict, kind: str) -> tuple[int, str]:
+    """(timestamp, dispatch head) of one recorded kind; (0, "") when absent or malformed."""
+    ts = entry.get(kind)
+    head = entry.get(f"{kind}_head")
+    return (ts if isinstance(ts, int) and ts > 0 else 0, head if isinstance(head, str) else "")
+
+
+def _three_pass_shape(entry: dict) -> bool:
+    return any(_stamp(entry, kind)[0] for kind in _PASS_KINDS)
+
+
+def _three_pass_final(root: Path, entry: dict, current_head: str) -> tuple[bool, str]:
+    """Whether the section's last pass covers the candidate being stamped.
+
+    The last pass is the newer of completion and reconciliation. It must be
+    content-valid: dispatched at HEAD, or at an ancestor with no source change
+    since. A fix made after it is exactly what it has not seen.
+    """
+    c_ts, c_head = _stamp(entry, "completion")
+    r_ts, r_head = _stamp(entry, "reconciliation")
+    if not c_ts:
+        return (False, "missing: completion")
+    kind, head = ("reconciliation", r_head) if r_ts > c_ts else ("completion", c_head)
+    if not head:
+        return (False, f"{kind} has no dispatch head recorded")
+    fresh, why = _dispatch_content_fresh(root, head, current_head)
+    return (True, "") if fresh else (False, f"{kind} is not the last word on this candidate ({why})")
+
+
+def _three_pass_issues(root: Path, entry: dict, current_head: str) -> list[str]:
+    """What a three-pass section still owes before its stamp, as message parts.
+
+    plan and round must have been dispatched on this history (their heads are
+    ancestors of HEAD): the plan precedes the code and the round precedes its
+    own fixes, so neither can be required to match the final source. The final
+    pass must.
+    """
+    parts: list[str] = []
+    for kind in ("plan", "round"):
+        ts, head = _stamp(entry, kind)
+        if not ts:
+            parts.append(f"missing: {kind}")
+        elif not head or not current_head:
+            parts.append(f"{kind} has no dispatch head recorded")
+        elif not _git_is_ancestor(root, head, current_head):
+            parts.append(f"{kind} was dispatched at {head[:10]}, which is not in this history (cross-branch)")
+    ok, why = _three_pass_final(root, entry, current_head)
+    if not ok:
+        parts.append(why)
+    return parts
+
+
 def _four_dispatch_evidence(
     root: Path, stamped_todos: list[str]
 ) -> tuple[bool, str]:
@@ -1539,6 +1598,15 @@ def _four_dispatch_evidence(
                 f"{todo}: no dispatch entries recorded -- run all three "
                 f"dispatches with the TODO path in the prompt"
             )
+            continue
+        if _three_pass_shape(entry):
+            owed = _three_pass_issues(root, entry, current_head)
+            if owed:
+                issues.append(
+                    f"{todo}: three-pass review incomplete -- {'; '.join(owed)}. "
+                    f"Dispatch the pass with scripts/codex-dispatch.sh and "
+                    f"`[review-kind: plan|round|completion|reconciliation]`"
+                )
             continue
         missing: list[str] = []
         stale: list[str] = []
@@ -1994,6 +2062,14 @@ def _re_adversarial_trigger_check(
             state = json.loads(stamps_path.read_text(encoding="utf-8"))
             if isinstance(state, dict):
                 entry = state.get(todo)
+                if isinstance(entry, dict) and _three_pass_shape(entry):
+                    # A three-pass section has no review between a fix and
+                    # its commit: the fix is committed and the completion (or
+                    # reconciliation) pass then reads that candidate. The
+                    # stamp commit is where that pass is required to cover
+                    # the final source (_three_pass_issues), so a fix commit
+                    # is not held here.
+                    return (True, "")
                 if isinstance(entry, dict):
                     ts = entry.get("re-adversarial")
                     if isinstance(ts, int) and ts > 0:
