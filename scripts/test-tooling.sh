@@ -701,6 +701,11 @@ SA_BAD="$(sa_fixture 100644 "$SA_FILE" "$SA_DEFECT")"
 SA_REL="$(sa_fixture 100644 "$SA_FILE" '#ifndef KERNEL_TESTS
 int sa_gate_release_fixture(int p) { int u; if (p) u = 1; return u; }
 #endif')"
+# The same, as a defect only code generation rejects: the parser accepts any
+# inline-assembly text, so a syntax-only compile calls this clean.
+SA_ASM="$(sa_fixture 100644 "$SA_FILE" '#ifndef KERNEL_TESTS
+void sa_gate_release_asm_fixture(void) { __asm__ volatile("sa_gate_no_such_insn"); }
+#endif')"
 # The control source includes kernel/abi_hash.h, which reaches a tracked header
 # outside src/ and include/: the snapshot must carry the whole tracked tree.
 SA_OK="$(sa_fixture 100644 src/kernel/time/kusd_time.c '/* static-analysis gate fixture: a comment changes nothing */')"
@@ -726,7 +731,7 @@ SA_HDR="$(sa_fixture 100644 src/kernel/version.c '/* fixture */' 100644 include/
 SA_MKW="$(sa_fixture 100644 "$SA_FILE" '/* fixture */' 100644 Makefile \
     'SA_GATE_PROBE := $(file >build/boot_proto_sha.h,/* sa gate fixture overwrote this */)')"
 if [ -z "$SA_BAD" ] || [ -z "$SA_OK" ] || [ -z "$SA_NEW" ] || [ -z "$SA_UNC" ] \
-        || [ -z "$SA_UTF" ] || [ -z "$SA_SPC" ] || [ -z "$SA_LNK" ] || [ -z "$SA_TYP" ] || [ -z "$SA_MKW" ] || [ -z "$SA_LDR" ] || [ -z "$SA_HDR" ] || [ -z "$SA_REL" ]; then
+        || [ -z "$SA_UTF" ] || [ -z "$SA_SPC" ] || [ -z "$SA_LNK" ] || [ -z "$SA_TYP" ] || [ -z "$SA_MKW" ] || [ -z "$SA_LDR" ] || [ -z "$SA_HDR" ] || [ -z "$SA_REL" ] || [ -z "$SA_ASM" ]; then
     t_fail "static-analysis gate fixtures could be created" "bad='$SA_BAD' ok='$SA_OK' new='$SA_NEW' unc='$SA_UNC'"
 else
     # Both refusals are about the pushed commit, so they are made with no
@@ -791,6 +796,13 @@ else
             t_pass "gate refuses a source that compiles only with the test seams (release flavor, KERNEL_TESTS=off)"
         else
             t_fail "gate refuses a source that compiles only with the test seams (release flavor, KERNEL_TESTS=off)" "exit $SA_R7_RC: $SA_R7"
+        fi
+        SA_R8="$(bash "$SA_GATE" origin "$SA_ASM" "$SA_HEAD" 2>&1)"; SA_R8_RC=$?
+        if [ "$SA_R8_RC" = "1" ] && grep -qE "^$SA_FILE:[0-9]+:[0-9]+: error: invalid instruction mnemonic" <<<"$SA_R8" \
+                && grep -qF "the release flavor does not compile" <<<"$SA_R8"; then
+            t_pass "gate refuses a release-only defect that only code generation rejects (invalid instruction)"
+        else
+            t_fail "gate refuses a release-only defect that only code generation rejects (invalid instruction)" "exit $SA_R8_RC: $SA_R8"
         fi
         SA_R6="$(bash "$SA_GATE" origin "$SA_LDR" "$SA_HEAD" 2>&1)"; SA_R6_RC=$?
         if [ "$SA_R6_RC" = "1" ] \

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile named sources as the RELEASE flavor builds them, syntax only.
+"""Compile named sources as the RELEASE flavor builds them, to a throwaway object.
 
     python3 scripts/release-flavor-check.py --db PATH --work ROOT FILE...
     python3 scripts/release-flavor-check.py --selftest
@@ -10,8 +10,11 @@ KERNEL_TESTS undefined (a variable that only test code initialises, a helper
 only a test caller uses) passes analysis and fails the release build under
 -Werror. On 2026-11-11 one did: a local read under `#ifdef KERNEL_TESTS` set
 only there failed CI's KERNEL_TESTS=off job, and main stayed red until a fix
-landed. This runs each named source's release command with -fsyntax-only, so
-the pre-push gate refuses that commit instead.
+landed. This runs each named source's release command, writing its object to a
+temporary directory, so the pre-push gate refuses that commit instead. It is a
+real compile and not -fsyntax-only: the backend rejects what the parser accepts
+(an invalid inline-assembly instruction, for one), and such a source would
+pass a syntax check and still fail the release build.
 
 --db is the release-flavor database (gen-compile-db.py --release-output). A
 named source the release flavor does not compile is skipped: the generator
@@ -31,12 +34,12 @@ import tempfile
 
 # Options that make the compiler write something, with the value they take.
 WRITES_WITH_VALUE = {"-o", "-MF", "-MT", "-MQ"}
-WRITES_BARE = {"-c", "-MMD", "-MD", "-MP", "-M", "-MM"}
+WRITES_BARE = {"-MMD", "-MD", "-MP", "-M", "-MM"}
 DIAG = re.compile(r"^(?P<path>[^:\s][^:]*):(?P<rest>\d+:\d+: (?:warning|error|fatal error): .*)$")
 
 
-def syntax_only(argv):
-    """The same compile, writing nothing: outputs and dependency files dropped."""
+def object_compile(argv, obj):
+    """The same compile, writing only `obj`: its own output and dependency files dropped."""
     out, skip = [], False
     for a in argv:
         if skip:
@@ -52,7 +55,9 @@ def syntax_only(argv):
         out.append(a)
     if skip:
         raise ValueError("an output option has no value")
-    return out + ["-fsyntax-only"]
+    if "-c" not in out:
+        raise ValueError("not a compile command (no -c)")
+    return out + ["-o", obj]
 
 
 def check(db_path, work, files):
@@ -66,12 +71,13 @@ def check(db_path, work, files):
         rel = os.path.relpath(os.path.join(e["directory"], e["file"]), work)
         by_file.setdefault(rel, e)
     failed = checked = 0
+    objs = tempfile.TemporaryDirectory(prefix="release-flavor-check-")
     for f in files:
         e = by_file.get(f)
         if e is None:
             continue
         try:
-            argv = syntax_only(e["arguments"])
+            argv = object_compile(e["arguments"], os.path.join(objs.name, f"{checked}.o"))
             # deadline: 300 s a source; the largest compiles in under ten.
             r = subprocess.run(argv, cwd=e["directory"], stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, text=True, errors="replace", timeout=300)
@@ -101,45 +107,61 @@ def check(db_path, work, files):
 def selftest():
     cases = [
         (["clang-19", "-Wall", "-MMD", "-MP", "-c", "src/a.c", "-o", "build/a.o"],
-         ["clang-19", "-Wall", "src/a.c", "-fsyntax-only"]),
+         ["clang-19", "-Wall", "-c", "src/a.c", "-o", "/t/x.o"]),
         (["clang", "-MF", "a.d", "-MT", "a.o", "-c", "a.c", "-obuild/a.o"],
-         ["clang", "a.c", "-fsyntax-only"]),
+         ["clang", "-c", "a.c", "-o", "/t/x.o"]),
         (["clang", "-MF=a.d", "-DX=-o", "-I", "-c", "a.c"],
-         ["clang", "-DX=-o", "-I", "a.c", "-fsyntax-only"]),
+         ["clang", "-DX=-o", "-I", "-c", "a.c", "-o", "/t/x.o"]),
         (["clang", "-MFbuild/a.d", "-MTa.o", "-MQa.o", "-Werror", "-c", "a.c"],
-         ["clang", "-Werror", "a.c", "-fsyntax-only"]),
+         ["clang", "-Werror", "-c", "a.c", "-o", "/t/x.o"]),
     ]
     for argv, want in cases:
-        got = syntax_only(argv)
+        got = object_compile(argv, "/t/x.o")
         if got != want:
             print(f"release-flavor-check selftest FAIL: {argv} -> {got}, want {want}", file=sys.stderr)
             return 1
-    try:
-        syntax_only(["clang", "-c", "a.c", "-o"])
-        print("release-flavor-check selftest FAIL: a dangling -o was accepted", file=sys.stderr)
-        return 1
-    except ValueError:
-        pass
+    for bad, why in ((["clang", "-c", "a.c", "-o"], "a dangling -o"), (["clang", "-E", "a.c"], "a command with no -c")):
+        try:
+            object_compile(bad, "/t/x.o")
+            print(f"release-flavor-check selftest FAIL: {why} was accepted", file=sys.stderr)
+            return 1
+        except ValueError:
+            pass
     # The real compiler under -Werror: what the transformation leaves must
     # compile a clean source with no unused-argument complaint.
     cc = next((c for c in ("clang-19", "clang") if shutil.which(c)), None)
     if cc is None:
-        print("release-flavor-check selftest: 5 checks passed (no clang for the compiler case)")
+        print("release-flavor-check selftest: 6 checks passed (no clang for the compiler cases)")
         return 0
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "a.c")
         with open(src, "w", encoding="utf-8") as f:
             f.write("int a(void) { return 0; }\n")
-        argv = syntax_only([cc, "-Wall", "-Werror", "-MMD", "-MP", "-MF" + os.path.join(d, "a.d"),
-                            "-MT" + "a.o", "-c", src, "-o" + os.path.join(d, "a.o")])
+        out = os.path.join(d, "out")
+        os.mkdir(out)
+        argv = object_compile([cc, "-Wall", "-Werror", "-MMD", "-MP", "-MF" + os.path.join(d, "a.d"),
+                               "-MT" + "a.o", "-c", src, "-o" + os.path.join(d, "a.o")],
+                              os.path.join(out, "x.o"))
         # deadline: 60 s for one trivial compile.
         r = subprocess.run(argv, cwd=d, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                            timeout=60)
-        if r.returncode != 0 or os.listdir(d) != ["a.c"]:
+        if r.returncode != 0 or sorted(os.listdir(d)) != ["a.c", "out"] or os.listdir(out) != ["x.o"]:
             print(f"release-flavor-check selftest FAIL: {argv} -> rc {r.returncode}, files "
                   f"{os.listdir(d)}: {r.stderr.strip()}", file=sys.stderr)
             return 1
-    print("release-flavor-check selftest: 6 checks passed")
+        # What only code generation rejects: the parser accepts any inline-assembly text.
+        with open(src, "w", encoding="utf-8") as f:
+            f.write('void a(void) { __asm__ volatile("release_flavor_no_such_insn"); }\n')
+        # deadline: 60 s for one trivial compile, each.
+        syntax = subprocess.run([cc, "-fsyntax-only", src], cwd=d, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, timeout=60)
+        real = subprocess.run(object_compile([cc, "-c", src], os.path.join(out, "y.o")), cwd=d,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
+        if syntax.returncode != 0 or real.returncode == 0:
+            print(f"release-flavor-check selftest FAIL: an invalid instruction gave syntax rc "
+                  f"{syntax.returncode} and compile rc {real.returncode}", file=sys.stderr)
+            return 1
+    print("release-flavor-check selftest: 8 checks passed")
     return 0
 
 
