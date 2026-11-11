@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **944 of 2593 sections complete (36%).** 115 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **944 of 2594 sections complete (36%).** 115 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -651,6 +651,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [ ]  | `D01 T22 §7`  | Recovery UI                                                                                       |
 | [ ]  | `D01 T22 §8`  | Gate IXFS fsck Repairs on Complete, Readable Scans                                                |
 | [ ]  | `D01 T13 §10` | Recovery and Mismatch UX                                                                          |
+| [ ]  | `D01 T13 §36` | Kernel Event-Log Parse Capacity Beyond 256 Events                                                 |
 | [x]  | `D01 T23 §1`  | Software Watchdog via LAPIC NMI Timer                                                             |
 | [x]  | `D01 T23 §2`  | Per-Phase Timeout Configuration                                                                   |
 | [x]  | `D01 T23 §3`  | Watchdog Pet at boot_progress()                                                                   |

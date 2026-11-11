@@ -72,6 +72,9 @@ build_target() {
             # shellcheck disable=SC2086
             "$CLANG" $BASE $SAN -o "$OUT/$1" "$HERE/fuzz_boot_conf.c" \
                 "$REPO_ROOT/src/boot/uefi/boot_conf_lexer.c" ;;
+        tcg_evlog)
+            # shellcheck disable=SC2086
+            "$CLANG" $BASE $SAN -o "$OUT/$1" "$HERE/fuzz_tcg_evlog.c" ;;
         utest_klog_attr)
             # shellcheck disable=SC2086
             # KERNEL_TESTS: the watch caps in klog.h are test-flavor only, as
@@ -81,7 +84,7 @@ build_target() {
         *) echo "fuzz: unknown target '$1'" >&2; exit 2 ;;
     esac
 }
-ALL_TARGETS="boot_entries boot_conf security_descriptor pe elf eif fat32 registry_hive utest_klog_attr"
+ALL_TARGETS="boot_entries boot_conf security_descriptor pe elf eif fat32 registry_hive utest_klog_attr tcg_evlog"
 
 mkdir -p "$OUT"
 

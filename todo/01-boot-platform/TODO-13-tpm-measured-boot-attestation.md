@@ -73,6 +73,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  33   | PCR-layer contention loses its retry                          | §29, §25                                                  |  [ ]   |
 | 💎  |  34   | Headless authority lifecycle: revocation, record, budget      | §30, §23, §28                                             |  [ ]   |
 | 💎  |  35   | Shared fake-TIS fixture extension and the coverage it unlocks | §32, §28, §29, §30                                        |  [ ]   |
+| 💎  |  36   | Kernel event-log parse capacity beyond 256 events             | §1                                                        |  [ ]   |
 
 ## 1. Harden TCG Event-Log Parser
 
@@ -88,17 +89,17 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 **Test checkpoint:** Kernel unit fixtures parse a TPM 1.2 SHA-1 log and a TPM 2.0 crypto-agile (multi-bank) log with zero unaligned reads; a truncated log is rejected with an explicit byte offset + status code (not a silent stop); `X:\Diag\tpm-events.json` lists per-event PCR index / type / digest count; the page-aligned bootloader copy is retained by the legacy `tpm_event_log` boot_reserved reservation (no double-reserve fatal at boot). Platforms: kernel unit tests (fixtures) + QEMU swtpm KVM smoke; bare metal (test laptop fTPM).
 
-> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 9 tpm-evlog suites in `test_tpm_event_log.c`, 0 failures | `bash tools/boot-header-tests/run.sh` (loader chain walk, 78 checks)
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 9 tpm-evlog suites in `test_tpm_event_log.c`, 0 failures | `bash tools/boot-header-tests/run.sh` (loader chain walk, 78 checks) | `bash tools/fuzz/run.sh tcg_evlog`
 
 > **Notes:**
 > - **What shipped:** pure `tpm_evlog_parse()` (unaligned-safe byte loads, per-event `struct tpm_event` metadata, structured status + fail offset) + streaming CEL-JSON exporter; bootloader chain-proven exact-size copy (`tcgl_chain_end`) or cap-degrade.
 > - **How it integrates:** parse runs Phase 0 from `tpm_init` (which wraps the pure walker); CEL export runs post-mount from `boot_desktop.c`; the log is retained by the legacy `tpm_event_log` boot_reserved reservation.
 > - **Downstream:** §4 PCR replay + §9 attestation/CEL consume the preserved metadata + offsets. Codex 4x (design + adversarial + re-adversarial) adoptions in the commit message.
 > - **Canonical doc:** `include/kernel/tpm.h` (parse contract); TCG CEL-JSON for the export format.
-> - **Scope boundary:** a non-zero garbage gap in a TPM 1.2 log is not provable without a SpecID record; the kernel parse and PCR replay own it. Retention is legacy-fields-only.
+> - **Scope boundary:** a non-zero garbage gap in a TPM 1.2 log is not provable without a SpecID record. Kernel parsing past 256 events -> XREF: 01-boot-platform/TODO-13 §36 (item: "Parse logs of any record count").
 
-> **Verified:** 2026-11-11 | loader record-chain proof | 8/8 items | build OK | boot-header-tests 78/78 | smoke PASS + smoke matrix 24/24 (451 s)
-> **Quality reviewed:** 2026-11-11 | Codex adversarial, re-adversarial, consistency, perf | 1M fixed (legacy zero-gap), all legs approve | scope: boot-code-quality
+> **Verified:** 2026-11-11 | commit `a0204f542` + review fixes | 8/8 items | build OK | boot-header-tests 78/78 | smoke PASS + smoke matrix 24/24 (451 s)
+> **Quality reviewed:** 2026-11-11 | Codex 8x (adversarial x2, re-adversarial x2, consistency x2, perf x2) + boot-quality-auditor | 1M+3L fixed, fuzz target added, 0 open | scope: boot-code-quality
 
 ---
 
@@ -1563,6 +1564,25 @@ The fixture item is listed FIRST and deliberately carries no coverage claim of i
 **Test checkpoint:** `tpm_baseline_enroll_bound` is driven end to end through the fake-TIS seam and proven to bind the EXACT stored bytes and generation, with a control that an unbound blob and a bound one report differently, and with a readback or bind failure propagating rather than reporting success. The pairing DIRECTION is observed at `tpm_baseline_verify_detail`'s own call site for UNCOMMITTED, TORN and IMPOSSIBLE, so deleting the MISMATCH-arm assignment turns a suite red rather than leaving it green. A NON-VERDICT bind failure leaves `*out_overall` untouched, asserted on a fixture where the blob read succeeds and only the bind read fails. A verified headless token increments the counter exactly once, a failed increment reports `CONSUME_FAILED` rather than admitting, and a replay of the same bytes is `STALE_OR_SPENT`. Scope: this section owns the shared fixture and the four items gated on it; the coverage writable on today's fixtures is §32, the production hardening is §29, and the headless authority lifecycle is §34. Platforms: fake-TIS unit suites are the whole automatable surface; live swtpm is operator-gated (no `swtpm` on the dev host).
 
 > **Notes:** Unparked 2026-11-07 on `02-kernel-core/TODO-33` s11's sweep: `scripts/overnight/bss-headroom.py` measures a `.text` budget of 153647 bytes at `9b55ec6f0`, `__kernel_end` 0x7da000. Re-measure at implementation; the guard still applies. Earlier measurement, kept for its costs: [H] Not attempted, for the same measured reason as §33 and §34: a +96-byte `.text` change tripped the guard on 2026-08-30. This section is a shared-fixture extension plus four end-to-end tests, and its sibling §32 measured 5,216 bytes for three test functions alone, so it is blocked by size and not by any missing capability
+
+---
+
+## 36. Kernel Event-Log Parse Capacity Beyond 256 Events
+
+> **Spawned-by:** §1 (review)
+
+> **User impact:** on a machine whose firmware logs more than 256 events, measured boot reports no usable log: no PCR replay, no baseline compare, no tamper verdict.
+
+The loader now copies any log whose record chain it can prove, up to a 1 MiB read ceiling, but `tpm_init()` parses into a static `s_events[TPM_EVENT_MAX]` (256) and rejects the WHOLE log with `TPM_EVLOG_CAP_EXCEEDED` when there are more. Firmware with many option ROMs, boot entries or db/dbx variable events passes 256, and then PCR replay, the baseline compare and the CEL export all report no log, although the log is well-formed.
+
+- [ ] Parse logs of any record count the loader can deliver, so no well-formed log is rejected for its length.
+  - Validate count-only in Phase 0 (`tpm_evlog_parse()` already accepts `out == NULL`), then size the `struct tpm_event` metadata to the counted records once an allocator exists.
+  - Keep the Phase 0 verdict authoritative: a log that fails the count-only walk is rejected exactly as today, and the metadata fill must reproduce the same count or report a distinct status.
+  - Consumers of `tpm_event_count()` / the event array (PCR replay, baseline, CEL export) must not run on the empty pre-fill state; gate them on the filled state, not on the parse status alone.
+- [ ] Test with a fixture log of more than 256 records: parsed OK, replay sees every event, and a malformed record past index 256 is still rejected with its offset.
+- [ ] Commit: `"tpm: parse event logs beyond 256 events"`
+
+**Test checkpoint:** a fixture crypto-agile log of 300 records parses to `TPM_EVLOG_OK` with 300 events, the metadata array holds all 300, and a record corrupted at index 280 is rejected with its exact offset. Platforms: kernel unit fixtures (`test_tpm_event_log.c`), then a bare-metal machine whose log exceeds 256 events.
 
 ---
 

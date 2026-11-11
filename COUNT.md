@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     519 |     406911 |
+| **C sources** (`.c`)  |     519 |     406936 |
 | **Headers** (`.h`)    |     364 |      85154 |
 | **Assembly** (`.asm`) |      11 |       1388 |
-| **Subtotal**          | **894** | **493453** |
+| **Subtotal**          | **894** | **493478** |
 
 ## SDK Tools
 
@@ -46,23 +46,23 @@
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     690 |     158786 |
+| **Markdown** (`.md`)        |     690 |     158807 |
 | **JSON** (`.json`)          |      24 |       3116 |
 | **YAML** (`.yml`/`.yaml`)   |      17 |       2454 |
 | **HTML** (`.html`)          |      22 |       3479 |
 | **CSS** (`.css`)            |       1 |        491 |
 | **Config** (`.cfg`/`.conf`) |       1 |        110 |
-| **Subtotal**                | **755** | **168436** |
+| **Subtotal**                | **755** | **168457** |
 
 ## Grand Total
 
 |                                                      |    Files |       Lines |
 | ---------------------------------------------------- | -------: | ----------: |
-| **Core code + tooling**                              | **1419** |  **728677** |
-| **Supporting text + metadata**                       |  **755** |  **168436** |
-| **Written here**                                     | **2174** |  **897113** |
+| **Core code + tooling**                              | **1419** |  **728702** |
+| **Supporting text + metadata**                       |  **755** |  **168457** |
+| **Written here**                                     | **2174** |  **897159** |
 | **Vendored ([third-party](src/libs/PROVENANCE.md))** |      590 |      476296 |
-| **All lines in tree**                                | **2764** | **1373409** |
+| **All lines in tree**                                | **2764** | **1373455** |
 
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,15 +77,15 @@
 
 |                       |         Linux |     Windows |         Impossible OS |
 | --------------------- | ------------: | ----------: | --------------------: |
-| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,373,409 |
+| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,373,455 |
 | **Developers**        | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**         |      33 years |    40 years | 8 month(s), 10 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 728,677 lines
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 728,702 lines
 > written here imply **106 developers** working for **8 month(s), 10 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-11-11 17:37 · commit `5d55f5c7d`*
+*Last updated: 2026-11-11 17:49 · commit `de4ff90a3`*

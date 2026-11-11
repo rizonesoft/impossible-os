@@ -11555,7 +11555,17 @@ static void fill_runtime_map(EFI_MEMORY_DESCRIPTOR *mmap,
  * protocol is a boot service.  We copy the event log to a separate buffer
  * since firmware may reclaim the original memory after ExitBootServices.
  * ============================================================================ */
-#define TPM_EVENT_LOG_MAX (32 * 1024)  /* 32 KiB max event log */
+/* A ceiling on the bytes the record walk may READ, not a log size: the copy
+ * is the chain-derived length. EDK2's default log area is 64 KiB
+ * (PcdTcgLogAreaMinLen) and a log carrying full db/dbx variable payloads
+ * exceeds the 32 KiB this once was, which degraded real machines' logs
+ * wholesale. 1 MiB stays far below any memory-map descriptor worth
+ * distrusting while covering every published firmware log area. */
+#define TPM_EVENT_LOG_MAX (1024 * 1024)
+/* Event-log acquisition: entry, and a log proven and copied. A boot that halts
+ * between them died inside the record walk over firmware memory. */
+#define POST16_BL_TPM_EVLOG     0xB0AA
+#define POST16_BL_TPM_EVLOG_OK  0xB0AB
 
 /* Return a hard CEILING for event-log reads: the byte count from `addr` to the end
  * of the UEFI memory-map descriptor that contains it, capped at TPM_EVENT_LOG_MAX.
@@ -11618,6 +11628,8 @@ static void retrieve_tpm_event_log(void)
     EFI_STATUS status;
     EFI_GUID tcg2_guid = EFI_TCG2_PROTOCOL_GUID;
     EFI_TCG2_PROTOCOL *tcg2 = (EFI_TCG2_PROTOCOL *)0;
+
+    post_code16(POST16_BL_TPM_EVLOG);
 
     /* Try to locate the TCG2 protocol */
     status = gBS->LocateProtocol(&tcg2_guid, (VOID *)0, (VOID **)&tcg2);
@@ -11712,8 +11724,16 @@ static void retrieve_tpm_event_log(void)
             log_size = (UINT64)end;   /* chain-derived, within the ceiling */
     }
     if (log_size == 0ull) {
+        /* Name the real refusal: the walk's status only when the walk ran. */
+        const char *why = tcgl_status_name(chain_rc);
+        if (log_truncated)
+            why = "firmware-reported-truncation";
+        else if (cap < 32ull)
+            why = "no-memory-descriptor";
+        else if (log_last_entry < log_location)
+            why = "last-entry-before-log";
         serial_early_print("[WARN] TPM: event log record chain unproven (");
-        serial_early_print(tcgl_status_name(chain_rc));
+        serial_early_print(why);
         serial_early_print("); capability degraded, no buffer published\n");
         tpm_publish_log_degraded(tpm_ver);
         return;
@@ -11761,7 +11781,12 @@ static void retrieve_tpm_event_log(void)
      * in boot_reserved overlap detection, so the typed descriptor is
      * intentionally NOT emitted -- the legacy fields are the single retention
      * path. */
-    serial_early_print("[BOOT] TPM: event log retrieved\n");
+    serial_early_print("[BOOT] TPM: event log retrieved, chain proven: bytes=");
+    serial_early_print_uint((UINT32)log_size);
+    serial_early_print(" records=");
+    serial_early_print_uint((UINT32)chain_count);
+    serial_early_print(tpm_ver == 2 ? " format=crypto-agile\n" : " format=tcg-1.2\n");
+    post_code16(POST16_BL_TPM_EVLOG_OK);
 }
 
 /* ============================================================================
