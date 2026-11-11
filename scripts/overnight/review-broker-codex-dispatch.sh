@@ -142,7 +142,9 @@ MANIFEST_DIR=".claude/overnight/reviews"
 mkdir -p "$MANIFEST_DIR"
 MANIFEST="$MANIFEST_DIR/manifest.jsonl"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-LOG_FILE="$PWD/$MANIFEST_DIR/${STAMP}-${KIND}.out"
+# The process id is in the name: two reviews of one kind started in the same
+# second (two sections, say) must not write one transcript.
+LOG_FILE="$PWD/$MANIFEST_DIR/${STAMP}-$$-${KIND}.out"
 UNIT="codex-rev-${KIND}-${STAMP}-$$"
 
 # CGROUP SURVIVAL IS LOAD-BEARING (live incident 2026-07-11): a review
@@ -156,37 +158,26 @@ UNIT="codex-rev-${KIND}-${STAMP}-$$"
 # poll (and any recovering next session) watches for.
 PROMPT_FILE="$(mktemp)"
 printf '%s' "$PROMPT" > "$PROMPT_FILE"
+# Every value placed in the detached command is shell-quoted by printf %q. A
+# path or a ref may hold an apostrophe (refs/heads/owner's-fix is a valid ref),
+# which inside hand-written single quotes ends the quoting.
+q() { printf '%q' "$1"; }
 if [[ "$PASS_KIND" == "1" ]]; then
   # The wrapper's own messages (a refusal, an incomplete pass) go to the log too.
   # The detached job gets a fresh environment, so everything the wrapper reads is named here.
-  RUN="REVIEW_BASE='${REVIEW_BASE:-}' CODEX_REVIEWS_DIR='$PWD/$MANIFEST_DIR' CODEX_COMPANION_PATH='$COMPANION' bash '$PASS_WRAPPER' \"\$(cat '$PROMPT_FILE')\""
+  RUN="REVIEW_BASE=$(q "${REVIEW_BASE:-}") CODEX_REVIEWS_DIR=$(q "$PWD/$MANIFEST_DIR") CODEX_COMPANION_PATH=$(q "$COMPANION") bash $(q "$PASS_WRAPPER") \"\$(cat $(q "$PROMPT_FILE"))\""
 else
-  RUN="node '$COMPANION' adversarial-review \"\$(cat '$PROMPT_FILE')\""
+  RUN="node $(q "$COMPANION") adversarial-review \"\$(cat $(q "$PROMPT_FILE"))\""
 fi
-# LIFECYCLE-WAIVER: this detaches a REVIEW (Codex) into its own scope so it
-# survives the session's rollover -- it does NOT relaunch or watch the session.
-# The session still polls this review's logFile IN-SESSION; nothing here is the
-# removed exit-and-relaunch apparatus.
-if systemd-run --user --collect "--unit=$UNIT" \
-     "--setenv=CODEX_REVIEWER_DISPATCH=1" "--setenv=HOME=$HOME" \
-     "--setenv=PATH=$PATH" --same-dir \
-     /bin/bash -c "$RUN > '$LOG_FILE' 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> '$LOG_FILE'; rm -f '$PROMPT_FILE'" \
-     >/dev/null 2>&1; then
-  DETACH="systemd-run:$UNIT"
-else
-  # Non-systemd fallback: setsid detach (survives plain shells; NOT a
-  # systemd cgroup -- callers inside a service should have systemd-run).
-  # LIFECYCLE-WAIVER: detaches a REVIEW on non-systemd hosts, not the session.
-  setsid bash -c "$RUN > '$LOG_FILE' 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> '$LOG_FILE'; rm -f '$PROMPT_FILE'" \
-    < /dev/null >/dev/null 2>&1 &
-  DETACH="setsid:$!"
-fi
+Q_LOG="$(q "$LOG_FILE")"; Q_PROMPT="$(q "$PROMPT_FILE")"
 
+# REGISTERED BEFORE IT IS LAUNCHED. The gate reads the newest manifest line for
+# a pass. Written after the launch, this line could land after a fast job's
+# finished receipt and hide it. Which tree the review examines is recorded at
+# the same moment (v16 carry, closed 2026-08-29: HEAD, the index tree and a
+# working-tree digest; all three are advisory strings).
+DETACH="detached:$UNIT"
 PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
-# Which TREE did this leg examine? (v16 carry, closed 2026-08-29.) Two legs once
-# disagreed because one read the index and the other the working tree, and
-# nothing in the artifacts could say so. Record HEAD, the index tree and a
-# working-tree digest at dispatch time; all three are advisory strings.
 TREE_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 TREE_INDEX="$(git write-tree 2>/dev/null || echo unknown)"
 TREE_WORK="$({ git diff HEAD -- 2>/dev/null; git status --porcelain 2>/dev/null; } | sha256sum | cut -d' ' -f1)"
@@ -196,6 +187,24 @@ if [[ -n "$SECTION" ]]; then
 else
   printf '{"ts": %s, "kind": "%s", "todo": "%s", "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s"}\n' \
     "$(date +%s)" "$KIND" "$TODO_PATH" "$DETACH" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" >> "$MANIFEST"
+fi
+# LIFECYCLE-WAIVER: this detaches a REVIEW (Codex) into its own scope so it
+# survives the session's rollover -- it does NOT relaunch or watch the session.
+# The session still polls this review's logFile IN-SESSION; nothing here is the
+# removed exit-and-relaunch apparatus.
+if systemd-run --user --collect "--unit=$UNIT" \
+     "--setenv=CODEX_REVIEWER_DISPATCH=1" "--setenv=HOME=$HOME" \
+     "--setenv=PATH=$PATH" --same-dir \
+     /bin/bash -c "$RUN > $Q_LOG 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> $Q_LOG; rm -f $Q_PROMPT" \
+     >/dev/null 2>&1; then
+  :
+else
+  # Non-systemd fallback: setsid detach (survives plain shells; NOT a
+  # systemd cgroup -- callers inside a service should have systemd-run).
+  # LIFECYCLE-WAIVER: detaches a REVIEW on non-systemd hosts, not the session.
+  setsid bash -c "$RUN > $Q_LOG 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> $Q_LOG; rm -f $Q_PROMPT" \
+    < /dev/null >/dev/null 2>&1 &
+  :
 fi
 
 printf '{"kind": "%s", "jobId": "%s", "logFile": "%s", "manifest": "%s"}\n' \

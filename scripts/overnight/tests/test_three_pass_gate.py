@@ -61,7 +61,8 @@ def _receipt(kind, head, order, section="7", **over):
     return line
 
 
-def _judge(root, stamp_under="7", also_stage=None, highest=None, receipt=None, manifest_tail="", **stamps):
+def _judge(root, stamp_under="7", also_stage=None, highest=None, receipt=None, manifest_tail="",
+           manifest_head="", **stamps):
     """stamps: kind=(head, order) or (head, order, section). A pass kind becomes the dispatcher's receipt in the
     reviews manifest, oldest first by `order` (worst level `none` unless `highest` names another; `receipt` gives
     per-kind overrides). An older kind becomes a stamp. Stages a stamp under one section (or several,
@@ -88,7 +89,8 @@ def _judge(root, stamp_under="7", also_stage=None, highest=None, receipt=None, m
     state.write_text(json.dumps({TODO: entry} if entry else {}))
     manifest = root / gate._PASS_MANIFEST
     manifest.parent.mkdir(parents=True, exist_ok=True)
-    manifest.write_text("".join(json.dumps(r) + "\n" for _, r in sorted(receipts, key=lambda x: x[0])) + manifest_tail)
+    manifest.write_text(manifest_head + "".join(json.dumps(r) + "\n" for _, r in sorted(receipts, key=lambda x: x[0]))
+                        + manifest_tail)
     text = (root / TODO).read_text()
     for n in stamp_under.split(","):
         marker = {"7": "## 7. Seven\n\n- [x] item\n", "8": "## 8. Eight\n\n- [ ] item\n"}[n]
@@ -288,23 +290,89 @@ def test_refusal_a_receipt_behind_an_unreadable_line_is_not_trusted(tmp_path):
     assert _judge(root, **_good(h)) == (True, "")
     cut = '{"kind": "completion", "todo": "' + TODO + '", "section": 7, "head": "' + h["final"] + '", "rc": 0, "pas'
     ok, why = _judge(root, manifest_tail=cut, **_good(h))
-    assert not ok and "has a line that cannot be read" in why and "missing: completion" in why, why
+    assert not ok and "cannot be read past a line" in why and "missing: completion" in why, why
+    assert _judge(root, manifest_tail="\n  \n", **_good(h)) == (True, ""), "blank lines are not receipts"
     # Cut too short to say which TODO it was for: it may be this one's.
     ok, why = _judge(root, manifest_tail='{"ts": 17943', **_good(h))
-    assert not ok and "has a line that cannot be read" in why, why
+    assert not ok and "cannot be read past a line" in why, why
     # An unreadable line that names another TODO is not this one's.
     other = '{"kind": "completion", "todo": "todo/00-x/TODO-02-other.md", "section": 7, "rc": 0, "pas'
     assert _judge(root, manifest_tail=other + "\n", **_good(h)) == (True, "")
-    assert _judge(root, manifest_tail="\n  \n", **_good(h)) == (True, ""), "blank lines are not receipts"
-    # An unreadable line OLDER than every receipt of this section does not matter.
-    assert _judge(root, **_good(h)) == (True, "")
-    manifest = root / gate._PASS_MANIFEST
-    receipts, readable = gate._pass_receipts(root, TODO, "7")
-    assert readable and set(receipts) == {"plan", "round", "performance", "completion"}
-    manifest.write_text("{cut short\n" + manifest.read_text())
-    receipts, readable = gate._pass_receipts(root, TODO, "7")
-    assert not readable and set(receipts) == {"plan", "round", "performance", "completion"}
+
+
+def test_passes_dispatched_again_after_old_corruption_are_accepted(tmp_path):
+    """Review finding: an unreadable line OLDER than every required receipt still refused the stamp, so
+    dispatching the passes again, the remedy the message offered, never worked."""
+    root, h = _history(tmp_path)
+    assert _judge(root, manifest_head="{cut short\n", **_good(h)) == (True, "")
+    # A pass that is NOT among the newer receipts would have to be looked for past the line.
+    ok, why = _judge(root, manifest_head="{cut short\n", **_good(h, performance=None))
+    assert not ok and "cannot be read past a line" in why and "missing: performance" in why, why
     # With no receipt of its own in the readable part, a TODO cannot be called an older-shape one either.
     ok, why = _judge(root, manifest_tail="{cut short", adversarial=(h["fix"], 1), consistency=(h["fix"], 2),
                      perf=(h["fix"], 3))
-    assert not ok and "has a line that cannot be read" in why, why
+    assert not ok and "cannot be read past a line" in why, why
+
+
+def test_refusal_a_manifest_that_exists_and_cannot_be_read_is_not_an_empty_one(tmp_path):
+    """Review finding: any read error was taken for "no passes", which sent a pass-reviewed section to the
+    older rules, where leftover stamps could carry it."""
+    import os
+    root, h = _history(tmp_path)
+    legacy = dict(adversarial=(h["fix"], 1), consistency=(h["fix"], 2), perf=(h["fix"], 3))
+    assert _judge(root, **legacy) == (True, "")
+    manifest = root / gate._PASS_MANIFEST
+    assert gate._pass_receipts(root, TODO, None) == ({}, True)
+    manifest.unlink()
+    assert gate._pass_receipts(root, TODO, None) == ({}, True), "a manifest that was never written"
+    manifest.mkdir()                                  # exists, and reading it fails
+    try:
+        assert gate._pass_receipts(root, TODO, None) == ({}, False)
+    finally:
+        manifest.rmdir()
+    manifest.write_bytes(b"\xff\xfe not text \xff\n")
+    assert gate._pass_receipts(root, TODO, None) == ({}, False)
+    if os.geteuid() != 0:
+        manifest.write_text("")
+        manifest.chmod(0)
+        try:
+            assert gate._pass_receipts(root, TODO, None) == ({}, False)
+        finally:
+            manifest.chmod(0o644)
+
+
+def test_refusal_another_sections_receipt_does_not_lift_the_fix_commit_hold(tmp_path, monkeypatch):
+    """Review finding: a plan receipt for section 7 released a locking fix in section 8, an older-shape
+    section, from the re-adversarial hold, and nothing later made up for it."""
+    root, h = _history(tmp_path)
+    for name in ("_skill_entry_stale", "_entry_is_foreign"):
+        monkeypatch.setattr(gate, name, lambda *a, **k: False)
+    monkeypatch.setattr(gate, "_skill_entry_finished", lambda *a, **k: False)
+    progress = root / ".claude/state/skill-progress.json"
+
+    def active(section_args):
+        progress.parent.mkdir(parents=True, exist_ok=True)
+        progress.write_text(json.dumps({"review-todo-section": {"todo_path": TODO, "args": f"{TODO} {section_args}"}}))
+
+    def hold():
+        (root / "src/kernel/a.c").write_text("int a = 1;\nspinlock_t sa_lock;\n")
+        _git(root, "add", "src/kernel/a.c")
+        try:
+            return gate._re_adversarial_trigger_check(root, ["src/kernel/a.c"], [])
+        finally:
+            _git(root, "reset", "-q", "--hard", "HEAD")
+
+    manifest = root / gate._PASS_MANIFEST
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(json.dumps(_receipt("plan", h["plan"], 1, "7")) + "\n")
+    active("section 8")
+    (root / ".claude/state/last-review-stamps.json").write_text("{}")
+    assert gate._active_section(root) == (TODO, "8")
+    ok, why = hold()
+    assert not ok and "re-adversarial" in why, why
+    active("section 7")
+    assert hold() == (True, "")
+    active("with no section named")
+    assert gate._active_section(root) == (TODO, "")
+    ok, _why = hold()
+    assert not ok, "a section that cannot be identified keeps the hold"

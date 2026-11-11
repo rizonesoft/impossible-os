@@ -368,6 +368,78 @@ def test_the_broker_runs_a_pass_through_the_checking_wrapper(tmp_path):
     receipts = [e for e in lines if e.get("pass_checked") is True]
     assert len(receipts) == 1 and receipts[0]["kind"] == "completion" and receipts[0]["section"] == 7 \
         and receipts[0]["rc"] == 0 and receipts[0]["highest"] == "none", lines
+    # The broker registers the job BEFORE launching it, so the finished receipt is the newest line.
+    assert "pass_checked" not in lines[0] and lines[0]["jobId"].startswith("detached:codex-rev-completion-")
+    assert lines[-1] is not lines[0] and lines[-1].get("pass_checked") is True, lines
+
+
+def test_the_broker_survives_an_apostrophe_and_a_space_in_every_value(tmp_path):
+    """Review finding: paths and REVIEW_BASE were placed inside hand-written single quotes in the detached
+    command, so an apostrophe (a valid ref is refs/heads/owner's-fix) ended the quoting."""
+    import json
+    import os
+    import subprocess
+    import time
+    home = tmp_path / "it's a dir"
+    repo = home / "the repo"
+    repo.mkdir(parents=True)
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        "-c", "core.hooksPath=/dev/null", *args], capture_output=True, text=True, timeout=60, check=True)
+
+    git("init", "-q")
+    (repo / ".gitignore").write_text(".claude/\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "candidate")
+    git("branch", "owner's-fix")
+    fake = home / "companion.js"
+    fake.write_text(SELF_CONTAINED_COMPANION)
+    pin = _pin()
+    (home / "review.txt").write_text(
+        "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["completion"]) + "\nHIGHEST: none\n")
+    marker = tmp_path / "injected"
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_OUTAGE_OVERRIDE": "1",
+           "REVIEW_BASE": "refs/heads/owner's-fix"}
+    done = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                           f"[review-kind: completion] todo/00-x/TODO-01-x.md section 7\nIt's fine; $(touch {marker})"],
+                          capture_output=True, text=True, timeout=60, cwd=str(repo), env=env)
+    assert done.returncode == 0, done.stderr
+    log = pathlib.Path(json.loads(done.stdout.strip().splitlines()[-1])["logFile"])
+    deadline = time.time() + 60
+    while time.time() < deadline and not (log.exists() and "Turn completed (rc=" in log.read_text()):
+        time.sleep(0.2)
+    assert "Turn completed (rc=0)" in log.read_text(), log.read_text()[-400:]
+    assert "It's fine; $(touch" in (home / "prompt.txt").read_text(), "the prompt arrived as written"
+    assert not marker.exists(), "nothing in a value or the prompt was run as a command"
+
+
+def test_two_passes_of_one_kind_in_the_same_second_keep_their_own_transcripts(tmp_path):
+    """Review finding: the transcript name was the second and the kind, so two same-kind passes started
+    together wrote one file and each was checked against the other's verdict."""
+    import os
+    import subprocess
+    fake = tmp_path / "companion.js"
+    fake.write_text(FAKE_COMPANION)
+    pin = _pin()
+    clean = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["completion"]) + "\nHIGHEST: none\n"
+    procs = []
+    for n, review in enumerate((clean, "no verdict lines here\n")):
+        (tmp_path / f"review{n}.txt").write_text(review)
+        env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(tmp_path / "reviews"),
+               "FAKE_PROMPT_OUT": str(tmp_path / f"prompt{n}.txt"), "FAKE_REVIEW": str(tmp_path / f"review{n}.txt"),
+               "REVIEW_BASE": "HEAD"}
+        procs.append(subprocess.Popen(
+            ["bash", str(REPO / "scripts/codex-dispatch.sh"),
+             f"[review-kind: completion] todo/00-x/TODO-01-x.md section {n + 1}\nReview it."],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(REPO), env=env))
+    codes = []
+    for proc in procs:
+        # deadline: 120 s for a fake reviewer that answers at once.
+        proc.communicate(timeout=120)
+        codes.append(proc.returncode)
+    assert codes == [0, 3], codes
+    assert len(list((tmp_path / "reviews").glob("*-completion-direct.out"))) == 2
 
 
 

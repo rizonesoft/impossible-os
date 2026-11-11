@@ -208,7 +208,9 @@ $PIN_LENSES"
 fi
 STAMP="$(date +%Y%m%d-%H%M%S)"
 if mkdir -p "$REVIEWS_DIR" 2>/dev/null; then
-    LOG_FILE="$(cd "$REVIEWS_DIR" && pwd)/${STAMP}-${KIND}-direct.out"
+    # The process id is in the name: two passes of one kind started in the same
+    # second must not share a transcript, or one is checked against the other's verdict.
+    LOG_FILE="$(cd "$REVIEWS_DIR" && pwd)/${STAMP}-$$-${KIND}-direct.out"
 else
     LOG_FILE=""
 fi

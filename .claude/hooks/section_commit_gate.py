@@ -1594,8 +1594,10 @@ def _pass_receipts(root: Path, todo: str, section: str | None) -> tuple[dict, bo
     found: dict = {}
     try:
         lines = (root / _PASS_MANIFEST).read_text().splitlines()
-    except OSError:
-        return (found, True)
+    except FileNotFoundError:
+        return (found, True)      # no pass has ever been dispatched here
+    except (OSError, UnicodeDecodeError):
+        return (found, False)     # it exists and cannot be read: nothing may be assumed absent
     age = 0
     for line in reversed(lines):
         if not line.strip():
@@ -1672,9 +1674,13 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
     """
     parts: list[str] = []
     blocking = _blocking_levels(root)
-    if not readable:
-        parts.append(f"{_PASS_MANIFEST} has a line that cannot be read and may be this TODO's; receipts older "
-                     f"than it are not trusted (repair or remove that line, or dispatch the passes again)")
+    # Receipts found before an unreadable line are newer than it and stand. Only
+    # a pass that would have to be looked for PAST that line is affected, so
+    # dispatching it again restores the section.
+    needed = ("plan", "round", "performance", "completion")
+    if not readable and any(k not in receipts for k in needed):
+        parts.append(f"{_PASS_MANIFEST} cannot be read past a line that may be this TODO's; a pass not found "
+                     f"before it is not trusted (dispatch that pass again, or repair the line)")
 
     plan = receipts.get("plan", (None, 0))[0]
     if plan is None:
@@ -2105,22 +2111,31 @@ def _skill_entry_finished(skill: str, entry: dict) -> bool:
         return False
 
 
+_ARGS_SECTION_RE = re.compile(r"(?:\bsection\b[\s_:-]*|§\s*)(\d+)", re.IGNORECASE)
+
+
 def _active_section_todo(root: Path) -> str:
-    """The TODO path of the in-flight implement/review-todo-section skill, or "".
+    """The TODO path of the in-flight implement/review-todo-section skill, or ""."""
+    return _active_section(root)[0]
+
+
+def _active_section(root: Path) -> tuple[str, str]:
+    """(TODO path, section number) of the in-flight implement/review-todo-section skill; "" for what is unknown.
 
     Reads skill-progress.json, preferring the structured `todo_path` recorded by
     skill_step_observer at skill-start (a single authoritative regex run) over a
     loose parse of `args`. Checks review-todo-section first (the section-ship
-    context), then implement-todo-section (a fix-loop commit before review)."""
+    context), then implement-todo-section (a fix-loop commit before review).
+    The section is the entry's own `section`, else the one its `args` name."""
     state_path = root / ".claude" / "state" / "skill-progress.json"
     if not state_path.exists():
-        return ""
+        return ("", "")
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
     except Exception:
-        return ""
+        return ("", "")
     if not isinstance(state, dict):
-        return ""
+        return ("", "")
     for skill in ("review-todo-section", "implement-todo-section"):
         entry = state.get(skill)
         if not isinstance(entry, dict) or entry.get("compaction_orphaned") is True:
@@ -2129,16 +2144,22 @@ def _active_section_todo(root: Path) -> str:
             continue
         if _skill_entry_finished(skill, entry):
             continue
+        args = entry.get("args", "")
+        args = args if isinstance(args, str) else ""
+        section = entry.get("section")
+        section = str(section).lstrip("§").strip() if isinstance(section, (str, int)) and not isinstance(section, bool) else ""
+        if not section.isdigit():
+            m = _ARGS_SECTION_RE.search(args)
+            section = m.group(1) if m else ""
         todo_path = entry.get("todo_path")
         if isinstance(todo_path, str) and todo_path.endswith(".md") \
            and "todo/" in todo_path.replace("\\", "/"):
-            return todo_path
-        args = entry.get("args", "")
-        if isinstance(args, str) and args:
+            return (todo_path, section)
+        if args:
             m = re.search(r"todo/[\w./-]+TODO-\d[\w./-]*\.md", args)
             if m:
-                return m.group(0)
-    return ""
+                return (m.group(0), section)
+    return ("", "")
 
 
 def _attribute_review_todo(root: Path, todo_files: list[str]) -> str:
@@ -2284,11 +2305,15 @@ def _re_adversarial_trigger_check(
         )
         return (True, "")
 
-    if _pass_receipts(root, todo, None)[0]:
-        # A TODO reviewed under the reviewer pin has no review between a fix
-        # and its commit: the fix is committed and the passes then read that
-        # candidate. The stamp commit is where they are required to cover the
-        # final source (_three_pass_issues), so a fix commit is not held here.
+    active_todo, active_section = _active_section(root)
+    if active_section and active_todo == todo and _pass_receipts(root, todo, active_section)[0]:
+        # A section reviewed under the reviewer pin has no review between a
+        # fix and its commit: the fix is committed and the passes then read
+        # that candidate. The stamp commit is where they are required to cover
+        # the final source (_three_pass_issues), so a fix commit is not held
+        # here. Only for the section in flight and its own receipts: another
+        # section's passes say nothing about this one, and a section that
+        # cannot be identified keeps the hold.
         return (True, "")
 
     stamps_path = root / ".claude" / "state" / "last-review-stamps.json"
