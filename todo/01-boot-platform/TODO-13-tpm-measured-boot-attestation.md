@@ -52,7 +52,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  12   | PCR allocation table and policy masks                         | (foundational; consumed by §6/§8/§13)                     |  [x]   |
 | 💎  |  13   | Attestation key provisioning and TPM2 quote                   | §3, §7, §12                                               |  [/]   |
 | 💎  |  14   | Post-ship follow-up backfill (2026-07-31 cohort)              | --                                                        |  [x]   |
-| 💎  |  15   | Trusted enrollment provenance                                 | §6, §14                                                   |  [ ]   |
+| 💎  |  15   | Trusted enrollment provenance                                 | §6, §14                                                   |  [x]   |
 | 💎  |  16   | Baseline ABI-manifest identity (populate reserved digest)     | §6, §14                                                   |  [x]   |
 | 💎  |  17   | Write-locked and monotonic NV index primitives                | §6, §7, §14                                               |  [x]   |
 | 💎  |  18   | Atomic boot-integrity report publication                      | §6, §12, §14                                              |  [x]   |
@@ -74,6 +74,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |  34   | Headless authority lifecycle: revocation, record, budget      | §30, §23, §28                                             |  [ ]   |
 | 💎  |  35   | Shared fake-TIS fixture extension and the coverage it unlocks | §32, §28, §29, §30                                        |  [ ]   |
 | 💎  |  36   | Kernel event-log parse capacity beyond 256 events             | §1                                                        |  [ ]   |
+| 💎  |  37   | First provisioning of the anti-rollback anchors               | §15, §27                                                  |  [ ]   |
 
 ## 1. Harden TCG Event-Log Parser
 
@@ -496,12 +497,6 @@ Half the substrate exists, which the cohort item's own text ("owner: recovery-ki
 - [/] PARKED, owner §10 (recovery UX): quiesce and resynchronize the PS/2 mouse across a console take-over, REQUIRED before any non-terminal caller uses `BOOT_CONFIRM_IRQ_TAKE_OVER` after `mouse_init()`.
   - Found by adversarial review round 2. Masking IRQ12 stops the mouse DRIVER but not the DEVICE, and the poll discards the auxiliary bytes it sees, so the driver's 3-byte packet cursor is not guaranteed to be where it was when IRQ12 is restored. Nothing observes this today because the only take-over caller is the recovery screen, which is terminal on every path, and `boot_confirm.h` now states that limit rather than promising post-`mouse_init` reuse is safe.
   - The fix is device-level (disable reporting, drain, reset the driver's `mouse_cycle`, re-enable) and belongs with whoever builds the first returning recovery console; doing it blind now would add an untested 8042 sequence to a path no caller exercises. -> XREF: §10 (item: "In recovery, explain whether firmware, bootloader, kernel, Secure Boot db, or baseline changed").
-- [ ] Provision the authorized anti-rollback anchors: define them under the §27 authPolicy and make the FIRST authorized write. -> XREF: 01-boot-platform/TODO-13 §27 (item: "The A/B floor is an authenticated DATA record").
-  - Reopened 2026-11-07: §27 is `[x]`, so the wait is over. `tpm_record_transition_ok` accepts a first record (`tpm_record.c:220`), and grep finds nothing that makes that first write. The ordering question below is this section's own.
-  - §27 ships TRANSITIONS between existing records and deliberately refuses to invent a first one: an advance that wrote a fresh floor over a missing record could not tell an unprovisioned anchor from a destroyed one, which is the laundering the whole section exists to stop.
-  - The ordering has to INVERT for the first write, and that is why it is a design question rather than a missing call. A fresh `TPM_NT_COUNTER` initializes to the TPM's largest-ever NV counter value on its first increment, so the generation the first record must carry is unknowable until AFTER that increment; write-then-increment cannot be used to establish the sequence it depends on.
-  - That also means the offline authority cannot pre-sign the first record, since its cpHash covers bytes containing a generation nobody knows yet. Enrollment authority is this section's subject, so the first-provisioning authorization belongs here rather than with the transition layer.
-  - Until it lands, a machine with an authority key compiled in has the boundary but no way through it, and `tpm_baseline_verify` reports `TPM_BASELINE_UNBOUND`. Found by §27's re-adversarial round.
 - [x] Built the trigger producer: physical presence at the boot console arms the next boot's enrollment (`boot_interrupts.c`, Q12 answer A).
   - Offered only with `tpm_enroll=1`, no baseline, and a refusal of `STICKY_TRIGGER_CLEAR`/`STICKY_ABSENT` (config, enforcing chain and verified replay all held). YES writes `recovery_trigger = 1`.
   - The offer is one-shot: a decline or timeout stores `enroll_offer_dismissed` in the sticky record, so an ordinary boot never waits on it twice; a `tpm_enroll=0` boot clears it.
@@ -529,7 +524,7 @@ Half the substrate exists, which the cohort item's own text ("owner: recovery-ki
 > - **Scope boundary:** this section owns WHO may enroll. Baseline content is §16, the NV mechanism is §17/§21, the headless escape hatch is §23, and reset/rotation UX stays §10.
 > - **Not yet reachable:** the decision shipped and is tested, but nothing in the tree SETS the sticky recovery trigger it anchors on, so no enrollment can complete end to end; §15 stays `[/]` until the producer lands.
 
-> **Verified:** 2026-08-17 | commit `625d3a48b` | 7/17 items (3 parked, 7 open) | build OK (`=== BUILD OK ===`) | lint rc 0 | SUITE=security 1315 kernel + 17 user-mode PASS | smoke matrix 4/4 legs (kvm/tcg x 1/2 cpu) | evidence: single admitting path at `tpm_enroll_gate.c:219` (1 of 18 result-setting calls covering all 19 returns); every early return in `boot_confirm_wait_keys` lies outside the `confirm_irq_begin`/`confirm_irq_end` window (380/390/393/399 before, 421/424 after); test wiring proven by a deliberate assertion break (`FAIL: 1 of 1291`) then revert
+> **Verified:** 2026-11-12 | commit `042e33e47` | 15/18 items (3 parked, owner §10; first anchor provisioning moved to §37) | build OK (`=== BUILD OK ===`) | lint rc 0 | full suite 38003 kernel + 17 user-mode PASS | smoke matrix 24/24 legs | evidence: arming and spend pinned by `tpm_enroll_arm_decide` and `trigger_spent`, each with a mutant control that fails
 > **Note:** 2026-11-07, Deferred stamp retired: [Critical] trigger producer, now `todo/answers.md` Q12.
 > **Note:** 2026-11-07, Deferred stamp retired: [H] `secure_boot_enforcing` input, reopened.
 > **Note:** 2026-11-07, Deferred stamp retired: [H] one-shot consume, parked on Q12 with the producer.
@@ -1138,7 +1133,7 @@ Split out of §21 on 2026-08-17, which was carrying seven greenfield work items 
   - An authPolicy is fixed at `NV_DefineSpace` and is hashed into the index Name, so an enrolled baseline index cannot ACQUIRE this boundary in place. The boundary therefore ships as a SIDE-BY-SIDE v2 index: this section owns the v2 contract constants, the detection of a legacy v1 index and the refusal to silently fall back to it. -> XREF: 01-boot-platform/TODO-13 §19 (item: "Migrate an enrolled v1 baseline index to the policy-bearing v2 contract").
   - Never auto-wrap the legacy blob into the protected index: v1 content is owner-writable, so copying it across would authenticate attacker-controlled data under the new policy and leave the boundary worse than no boundary.
   - The BOUNDARY is enforced, not merely offered: `tpm_baseline_enroll_bound` writes the blob and binds the bytes it reads back, and the bare `tpm_baseline_enroll` REFUSES with `TPM_BASELINE_UNBOUND` while an authority is provisioned. An adversarial round caught the first version of this item marked done on the API existing while production still did a bare owner write.
-  - The production CALLER is not this section's to supply: `boot_interrupts.c` still calls the plain enroll, because nothing yet produces transition grants. That is the same first-provisioning gap filed with the enrollment owner, and it is stated here rather than left to be re-discovered. -> XREF: 01-boot-platform/TODO-13 §15 (item: "Provision the authorized anti-rollback anchors").
+  - The production CALLER is not this section's to supply: `boot_interrupts.c` still calls the plain enroll, because nothing yet produces transition grants. That is the same first-provisioning gap filed with the enrollment owner, and it is stated here rather than left to be re-discovered. -> XREF: 01-boot-platform/TODO-13 §37 (item: "Make the first authorized write of each anti-rollback anchor").
   - A second round caught the bound path binding a FRESH snapshot rather than the stored blob; a snapshot's generation is zero where the stored blob carries the one the enroll assigned, so every rotation would have verified as a mismatch. It now binds the bytes read back from the index.
   - Test the relabelling directly: old baseline content, current counter generation, valid CRC, must be REFUSED.
 - [x] The enrolled `struct tpm_nv_identity` is DERIVED from a compiled manifest (`s_manifest`, `src/kernel/tpm_authz.c`), and every record read verifies identity, lifecycle and contents inside ONE bounded sequence.
@@ -1166,7 +1161,7 @@ Split out of §21 on 2026-08-17, which was carrying seven greenfield work items 
 
 > **Verified:** 2026-08-18 | commit `ace8b6533` + review fixes | 5/13 items (8 open, every one filed above from this review) | build OK (`=== BUILD OK ===`) | 31317 kernel + 17 user-mode tests, 0 failures | smoke matrix 4/4 legs | evidence the tests can fail: five mutation probes (removed rollback check, skipped commit increment, pre-fix aHash defect, pre-fix counter-Name cpHash, reordered policy assertions) each flipped the suite red | stack measured by the kernel auditor at ~5 KB peak on the authorized-write chain, about 31% of the 16 KiB boot stack
 > **Accepted:** [H] the authorized transition issues roughly 24 TPM commands against a budget sized for one NV operation, and every verified read adds a trial-session policy derivation -> XREF: 01-boot-platform/TODO-13 §28 (item: "Benchmark the aggregate Phase-1 verified-read cost before adoption, and impose ONE boot deadline rather than a fresh budget per record").
-> **Accepted:** [H] nothing provisions a FIRST record, so a machine with an authority compiled in has the boundary and no way through it -> XREF: 01-boot-platform/TODO-13 §15 (item: "Provision the authorized anti-rollback anchors").
+> **Accepted:** [H] nothing provisions a FIRST record, so a machine with an authority compiled in has the boundary and no way through it -> XREF: 01-boot-platform/TODO-13 §37 (item: "Make the first authorized write of each anti-rollback anchor").
 > **Deferred:** [M] read-side counter identity, exec-failure handle accounting, two conflated status values and the named coverage gaps -> XREF: 01-boot-platform/TODO-13 §29 (item: "Verify the COUNTER index identity on the read path").
 > **Quality reviewed:** 2026-08-18 | Codex 9x (design, adversarial x3, re-adversarial x3, consistency, perf, test-coverage x2) | 21 H+M fixed, 8 open (every one an item above) | scope: kernel-code-quality (kernel-quality-auditor: all 10 gates walked, 1H+4M+5L, the High and three Mediums fixed; concurrency-evidence-mapper: handle, sequence and ownership inventory) | two independent reviewers found the same A/B floor size contradiction (record 72 against an index of 96, compared for EXACT equality), which would have made every verified read and authorized write MISMATCH forever; it is now pinned by a `_Static_assert` across the two headers
 
@@ -1574,6 +1569,22 @@ The loader now copies any log whose record chain it can prove, up to a 1 MiB rea
 - [ ] Commit: `"tpm: parse event logs beyond 256 events"`
 
 **Test checkpoint:** a fixture crypto-agile log of 300 records parses to `TPM_EVLOG_OK` with 300 events, the metadata array holds all 300, and a record corrupted at index 280 is rejected with its exact offset. Platforms: kernel unit fixtures (`test_tpm_event_log.c`), then a bare-metal machine whose log exceeds 256 events.
+
+
+## 37. First Provisioning of the Anti-Rollback Anchors
+
+> **Spawned-by:** §15 (split)
+
+> **User impact:** a machine with a headless authority compiled in has the anti-rollback boundary but no way through it: `tpm_baseline_verify` reports `TPM_BASELINE_UNBOUND` because nothing writes a first record.
+
+§27 ships transitions between existing records and refuses to invent a first one. The first write cannot use write-then-increment: a fresh `TPM_NT_COUNTER` takes the TPM's largest-ever counter value on its first increment, so the first record's generation is unknown until after it, and an offline authority cannot pre-sign it.
+
+- [ ] Make the first authorized write of each anti-rollback anchor under the §27 authPolicy, increment first and record second. -> XREF: 01-boot-platform/TODO-13 §27 (item: "The A/B floor is an authenticated DATA record")
+- [ ] Decide and build the first-write authorization (its signed form cannot cover the unknown generation).
+- [ ] Tests: unprovisioned to provisioned, and a missing record after provisioning still refused as destroyed, not re-provisioned.
+- [ ] Commit: `"tpm: first provisioning of the anti-rollback anchors"`
+
+**Test checkpoint:** on a fake-TIS TPM with no anchor records, the first authorized provisioning leaves `tpm_baseline_verify` past `UNBOUND`, and deleting a provisioned record afterwards is refused, never re-provisioned.
 
 ---
 

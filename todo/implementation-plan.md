@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **944 of 2604 sections complete (36%).** 115 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **945 of 2605 sections complete (36%).** 115 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -554,7 +554,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T13 §13` | Attestation Key Provisioning and TPM2 Quote                                                       | none       |    10 |
 | [x]  | `D01 T13 §9`  | Attestation Report Export                                                                         | none       |    12 |
 | [x]  | `D01 T13 §14` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     2 |
-| [ ]  | `D01 T13 §15` | Trusted Enrollment Provenance                                                                     | none       |    19 |
+| [x]  | `D01 T13 §15` | Trusted Enrollment Provenance                                                                     | none       |    18 |
 | [x]  | `D01 T13 §16` | Baseline ABI-Manifest Identity -- Populate the Reserved Digest                                    | none       |     6 |
 | [x]  | `D01 T13 §17` | Write-Locked and Monotonic NV Index Primitives                                                    | none       |     6 |
 | [x]  | `D01 T13 §18` | Atomic Boot-Integrity Report Publication                                                          | none       |     7 |
@@ -664,6 +664,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [ ]  | `D01 T22 §8`  | Gate IXFS fsck Repairs on Complete, Readable Scans                                                | none       |     6 |
 | [ ]  | `D01 T13 §10` | Recovery and Mismatch UX                                                                          | none       |     5 |
 | [ ]  | `D01 T13 §36` | Kernel Event-Log Parse Capacity Beyond 256 Events                                                 | none       |     3 |
+| [ ]  | `D01 T13 §37` | First Provisioning of the Anti-Rollback Anchors                                                   | none       |     4 |
 | [x]  | `D01 T23 §1`  | Software Watchdog via LAPIC NMI Timer                                                             | none       |     9 |
 | [x]  | `D01 T23 §2`  | Per-Phase Timeout Configuration                                                                   | none       |     6 |
 | [x]  | `D01 T23 §3`  | Watchdog Pet at boot_progress()                                                                   | none       |     5 |
