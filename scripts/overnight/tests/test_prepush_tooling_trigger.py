@@ -51,6 +51,28 @@ def test_the_exemption_is_exact_not_a_prefix():
     assert len(got) == 2, got
 
 
+READS = REPO / "scripts/hooks/tooling-pack-reads.sh"
+
+
+def test_a_source_the_pack_reads_is_listed_so_a_push_touching_it_gates(tmp_path):
+    """Live 2026-11-11: 0fd8bf1c0 changed test_usermode.c only, the pack was not run, and CI went red."""
+    done = subprocess.run(["bash", str(READS)], capture_output=True, text=True, timeout=30)
+    listed = done.stdout.split()
+    assert done.returncode == 0 and "src/kernel/test/test_usermode.c" in listed, done
+    assert all(p.startswith(("src/", "include/", "user/")) for p in listed) and listed == sorted(set(listed))
+    # The list is derived: a check written a minute ago is covered without editing the hook.
+    pack = tmp_path / "pack.sh"
+    pack.write_text('grep -q x "$REPO_ROOT/src/kernel/new_thing.c"\ncat "$REPO_ROOT/scripts/lint.sh" "$REPO_ROOT/src/a b.c"\n')
+    done = subprocess.run(["bash", str(READS), str(pack)], capture_output=True, text=True, timeout=30)
+    assert done.stdout.split() == ["src/kernel/new_thing.c"], done.stdout
+    assert subprocess.run(["bash", str(READS), str(tmp_path / "absent.sh")], capture_output=True,
+                          timeout=30).returncode == 2
+    hook = HOOK.read_text(encoding="utf-8")
+    assert hook.index("tooling-pack-reads.sh") < hook.index('if [ -n "$TOOLING_HITS" ]; then'), \
+        "the reads must join TOOLING_HITS before the gate decides"
+    assert "refusing rather than guessing" in hook
+
+
 if __name__ == "__main__":
     test_baseline_only_push_does_not_gate()
     test_the_checker_still_gates()

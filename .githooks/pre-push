@@ -137,6 +137,19 @@ fi
 # still runs the full pack. Any OTHER tooling path in the same push still gates.
 TOOLING_EXEMPT_RE='^scripts/lint/stub-lint-baseline\.json$'
 TOOLING_HITS="$(pushed_files | sort -u | grep -E "$TOOLING_PATHS_RE" | grep -vE "$TOOLING_EXEMPT_RE" || true)"
+# The pack also reads the TEXT of some kernel, loader and user sources. A push
+# that changes one of those can fail the pack while touching no tooling path:
+# 0fd8bf1c0 moved one expression in test_usermode.c and CI's tooling job went
+# red (2026-11-11). Such a push gates on the pack too; with no tooling path in
+# it the nested suites are unreachable and only the inline checks run.
+TOOLING_READS="$(bash "$REPO_ROOT/scripts/hooks/tooling-pack-reads.sh" "$REPO_ROOT/scripts/test-tooling.sh")" || {
+  echo "Pre-push: the tooling pack's source reads could not be listed; refusing rather than guessing." >&2
+  exit 1
+}
+if [ -n "$TOOLING_READS" ]; then
+  TOOLING_READ_HITS="$(pushed_files | sort -u | grep -Fx -f <(printf '%s\n' "$TOOLING_READS") || true)"
+  TOOLING_HITS="$(printf '%s\n%s\n' "$TOOLING_HITS" "$TOOLING_READ_HITS" | sed '/^$/d' | sort -u)"
+fi
 if [ -n "$TOOLING_HITS" ]; then
   echo ""
   echo "Pre-push: tooling change in this push -- gating on scripts/test-tooling.sh:"
