@@ -9,7 +9,7 @@ It runs almost entirely in Phase 1, after the TPM2 transport and the IDT exist, 
 
 ## How does it work?
 
-Phase 0 parses the TCG event log the bootloader copied into `boot_info` (`tpm_evlog_parse()`, unaligned-safe, TPM 1.2 and TPM 2.0 crypto-agile logs) and later exports it as `X:\Diag\tpm-events.json`.
+The bootloader copies the log only after proving its record chain lands exactly on the firmware-reported last entry (`tcgl_chain_end()` in [`tcg_evlog.h`](../../include/boot/tcg_evlog.h)); a log it cannot prove is not copied, and the event-log capability is reported degraded. Phase 0 parses the TCG event log the bootloader copied into `boot_info` (`tpm_evlog_parse()`, unaligned-safe, TPM 1.2 and TPM 2.0 crypto-agile logs) and later exports it as `X:\Diag\tpm-events.json`.
 
 Phase 1 brings up the TPM2 command transport (`tpm2_submit()` over TIS or CRB, discovered from the ACPI TPM2 table or a TIS fixed base), reads the measured-boot PCR bank into a lock-free cache (`tpm_pcr_cache_init()`), reconciles the Secure Boot `EV_EFI_VARIABLE_*` measurements against the live UEFI variables, then replays every event in the log into a fresh in-memory PCR state (`tpm_replay_verify()`) and compares it with the cached hardware reads. A mismatch is `TPM_REPLAY_TAMPER`, distinct from `UNVERIFIABLE` (a degraded or incomplete log), and it outranks every later verdict.
 

@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/05-storage-filesystems/TODO-01-block-storage-hardening.md sources=include/kernel/drivers/blkdev.h,src/kernel/drivers/blkdev.c,src/kernel/drivers/virtio/blk_api.c,src/kernel/drivers/virtio/blk_init.c,src/kernel/drivers/ahci/ahci_ncq.c,src/kernel/drivers/ahci/ahci_rw.c,src/kernel/drivers/ahci/ahci_core.c,src/kernel/drivers/ahci/ahci_error.c,src/kernel/test/test_storage.c reviewed=2026-09-28 order=1 -->
+<!-- docs: covers=todo/05-storage-filesystems/TODO-01-block-storage-hardening.md sources=include/kernel/drivers/blkdev.h,src/kernel/drivers/blkdev.c,src/kernel/drivers/virtio/blk_api.c,src/kernel/drivers/virtio/blk_init.c,src/kernel/drivers/ahci/ahci_ncq.c,src/kernel/drivers/ahci/ahci_rw.c,src/kernel/drivers/ahci/ahci_core.c,src/kernel/drivers/ahci/ahci_error.c,src/kernel/test/test_storage.c reviewed=2026-11-11 order=1 -->
 # Block Storage Hardening
 
 ## What is it?
@@ -13,7 +13,7 @@ Block storage hardening makes the disk layer survive errors and report on itself
 
 **AHCI already uses NCQ.** When the controller reports `CAP.SNCQ` and the drive's IDENTIFY data says it supports queuing, [`ahci_rw.c`](../../src/kernel/drivers/ahci/ahci_rw.c) logs the depth and sends reads and writes through [`ahci_ncq.c`](../../src/kernel/drivers/ahci/ahci_ncq.c), which allocates a tag from a bitmap and issues READ/WRITE FPDMA QUEUED. After three command failures the port drops back to single-command DMA. The roadmap still lists NCQ as open work because its race and test items have not been done.
 
-**AHCI error handling is partial.** The interrupt handler in [`ahci_core.c`](../../src/kernel/drivers/ahci/ahci_core.c) counts fatal, non-fatal and CRC errors and fails any queued NCQ commands. Recovery (command list override, then a COMRESET link reset) runs only when a command finds the drive stuck busy, not on every task-file error. [`ahci_error.c`](../../src/kernel/drivers/ahci/ahci_error.c) copies the per-port counters to the Registry.
+**AHCI error handling is partial.** The interrupt handler in [`ahci_core.c`](../../src/kernel/drivers/ahci/ahci_core.c) counts fatal, non-fatal and CRC errors. On a fatal error it holds the outstanding NCQ tags rather than failing them, and queues one recovery on the system workqueue ([`ahci_ncq.c`](../../src/kernel/drivers/ahci/ahci_ncq.c)): it stops the command engine, hands failed buffers back only after the stop is confirmed, sends a COMRESET and restarts the port. A queued command that times out takes the same path. Under a panic every wait is bounded and needs no interrupts. Legacy (non-NCQ) commands still recover only when a command finds the drive stuck busy. [`ahci_error.c`](../../src/kernel/drivers/ahci/ahci_error.c) copies the per-port counters to the Registry.
 
 ```mermaid
 flowchart LR
@@ -41,7 +41,7 @@ Nothing needs configuring. On an AHCI machine the serial log shows whether a dri
 Port <n>: NCQ supported (depth <d>)
 ```
 
-A port that keeps failing queued commands logs `Port <n>: NCQ disabled (cmd_failures=<k>) -- falling back to legacy ATA DMA`, and a recovered stuck drive logs `Port <n>: CLO recovery complete`. The VirtIO retry messages are at debug level. `bash scripts/test.sh SUITE=storage` (or `make test-storage`) runs the two storage suites in [`test_storage.c`](../../src/kernel/test/test_storage.c), which read sector 0 from an AHCI and a VirtIO disk and skip when the disk is absent. No suite covers flush, retry, NCQ or recovery.
+A port that keeps failing queued commands logs `Port <n>: NCQ disabled (cmd_failures=<k>) -- falling back to legacy ATA DMA`, a recovered NCQ port logs `Port <n>: NCQ tag <t> failed or timed out; port recovered`, and a recovered stuck drive logs `Port <n>: CLO recovery complete`. The VirtIO retry messages are at debug level. `bash scripts/test.sh SUITE=storage` (or `make test-storage`) runs the two storage suites in [`test_storage.c`](../../src/kernel/test/test_storage.c), which read sector 0 from an AHCI and a VirtIO disk (skipping when the disk is absent) and test the AHCI recovery rules against in-memory ports: a single recovery owner, poll timeouts, the retry decision and the HBA-reset closure. No suite covers VirtIO flush or retry, or NCQ against a real drive.
 
 ## What is not implemented yet?
 
