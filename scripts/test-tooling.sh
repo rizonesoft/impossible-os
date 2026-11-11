@@ -636,6 +636,11 @@ if python3 "$REPO_ROOT/scripts/gen-compile-db.py" --selftest >/dev/null 2>&1; th
 else
     t_fail "compile-database generator parses dry-run output (selftest)"
 fi
+if python3 "$REPO_ROOT/scripts/release-flavor-check.py" --selftest >/dev/null 2>&1; then
+    t_pass "release-flavor check strips outputs from a compile command (selftest)"
+else
+    t_fail "release-flavor check strips outputs from a compile command (selftest)"
+fi
 SA_GATE="$REPO_ROOT/scripts/hooks/static-analysis-gate.sh"
 SA_FILE="src/kernel/crypto/sha1.c"
 # sa_fixture <mode> <path> <text> [<mode> <path> <text>]...: a child commit of
@@ -691,6 +696,11 @@ else
 fi
 SA_DEFECT='int sa_gate_fixture(int x) { int z = 0; return x / z; }'
 SA_BAD="$(sa_fixture 100644 "$SA_FILE" "$SA_DEFECT")"
+# A defect only the RELEASE flavor compiles: clean under the test flavor's
+# command (the one the analyzer reads), an error with KERNEL_TESTS undefined.
+SA_REL="$(sa_fixture 100644 "$SA_FILE" '#ifndef KERNEL_TESTS
+int sa_gate_release_fixture(int p) { int u; if (p) u = 1; return u; }
+#endif')"
 # The control source includes kernel/abi_hash.h, which reaches a tracked header
 # outside src/ and include/: the snapshot must carry the whole tracked tree.
 SA_OK="$(sa_fixture 100644 src/kernel/time/kusd_time.c '/* static-analysis gate fixture: a comment changes nothing */')"
@@ -716,7 +726,7 @@ SA_HDR="$(sa_fixture 100644 src/kernel/version.c '/* fixture */' 100644 include/
 SA_MKW="$(sa_fixture 100644 "$SA_FILE" '/* fixture */' 100644 Makefile \
     'SA_GATE_PROBE := $(file >build/boot_proto_sha.h,/* sa gate fixture overwrote this */)')"
 if [ -z "$SA_BAD" ] || [ -z "$SA_OK" ] || [ -z "$SA_NEW" ] || [ -z "$SA_UNC" ] \
-        || [ -z "$SA_UTF" ] || [ -z "$SA_SPC" ] || [ -z "$SA_LNK" ] || [ -z "$SA_TYP" ] || [ -z "$SA_MKW" ] || [ -z "$SA_LDR" ] || [ -z "$SA_HDR" ]; then
+        || [ -z "$SA_UTF" ] || [ -z "$SA_SPC" ] || [ -z "$SA_LNK" ] || [ -z "$SA_TYP" ] || [ -z "$SA_MKW" ] || [ -z "$SA_LDR" ] || [ -z "$SA_HDR" ] || [ -z "$SA_REL" ]; then
     t_fail "static-analysis gate fixtures could be created" "bad='$SA_BAD' ok='$SA_OK' new='$SA_NEW' unc='$SA_UNC'"
 else
     # Both refusals are about the pushed commit, so they are made with no
@@ -774,6 +784,13 @@ else
             t_pass "a source that exists only in the pushed commit is compiled by that commit's build and analysed"
         else
             t_fail "a source that exists only in the pushed commit is compiled by that commit's build and analysed" "exit $SA_R3_RC: $SA_R3"
+        fi
+        SA_R7="$(bash "$SA_GATE" origin "$SA_REL" "$SA_HEAD" 2>&1)"; SA_R7_RC=$?
+        if [ "$SA_R7_RC" = "1" ] && grep -qE "^$SA_FILE:[0-9]+:[0-9]+: error: variable 'u' is used uninitialized" <<<"$SA_R7" \
+                && grep -qF "the release flavor does not compile" <<<"$SA_R7"; then
+            t_pass "gate refuses a source that compiles only with the test seams (release flavor, KERNEL_TESTS=off)"
+        else
+            t_fail "gate refuses a source that compiles only with the test seams (release flavor, KERNEL_TESTS=off)" "exit $SA_R7_RC: $SA_R7"
         fi
         SA_R6="$(bash "$SA_GATE" origin "$SA_LDR" "$SA_HEAD" 2>&1)"; SA_R6_RC=$?
         if [ "$SA_R6_RC" = "1" ] \

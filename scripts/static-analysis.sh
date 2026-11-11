@@ -107,12 +107,14 @@ if [ -n "$COMMIT" ]; then
     fi
     # The compile commands come from that commit's own Makefiles.
     python3 scripts/gen-compile-db.py --root "$SNAP" \
-        --output "$SNAP/.static-analysis/compile_commands.json" >/dev/null || {
+        --output "$SNAP/.static-analysis/compile_commands.json" \
+        --release-output "$SNAP/.static-analysis/release/compile_commands.json" >/dev/null || {
         echo "static-analysis: could not derive the compile database of $OID" >&2
         echo "static-analysis: the tree needs a build first (bash scripts/build.sh)" >&2; exit 2; }
     WORK="$SNAP"; DB_DIR="$SNAP/.static-analysis"
 else
-    python3 scripts/gen-compile-db.py --output "$DB_DIR/compile_commands.json" >/dev/null || {
+    python3 scripts/gen-compile-db.py --output "$DB_DIR/compile_commands.json" \
+        --release-output "$DB_DIR/release/compile_commands.json" >/dev/null || {
         echo "static-analysis: could not derive the compile database" >&2; exit 2; }
 fi
 
@@ -237,10 +239,27 @@ fi
 
 FINDINGS="$(grep -E '^.+:[0-9]+:[0-9]+: warning: ' "$OUT" \
     | grep -vE '^include/stb_' | sort -u)"
-if [ -z "$FINDINGS" ]; then
+
+# The analyzer reads the test flavor's command for every source both flavors
+# compile, so the same sources are also compiled as the RELEASE flavor builds
+# them (KERNEL_TESTS undefined, -Werror). A source that compiles only with the
+# test seams in place is a defect in the commit, reported with the findings.
+REL_RC=0
+REL_OUT="$(python3 scripts/release-flavor-check.py --db "$DB_DIR/release/compile_commands.json" \
+    --work "$WORK" "${FILES[@]}" 2>&1)" || REL_RC=$?
+case "$REL_RC" in
+    0) ;;
+    1) printf '%s\n' "$REL_OUT" ;;
+    *) printf '%s\n' "$REL_OUT" >&2
+       echo "static-analysis: the release-flavor compile could not run; this is not a clean result" >&2
+       exit 2 ;;
+esac
+
+if [ -z "$FINDINGS" ] && [ "$REL_RC" = "0" ]; then
     echo "static-analysis: ${#FILES[@]} file(s), no findings"
     exit 0
 fi
-printf '%s\n' "$FINDINGS"
-echo "static-analysis: ${#FILES[@]} file(s), $(printf '%s\n' "$FINDINGS" | wc -l) finding(s)"
+[ -z "$FINDINGS" ] || printf '%s\n' "$FINDINGS"
+echo "static-analysis: ${#FILES[@]} file(s), $(printf '%s' "$FINDINGS" | grep -c .) finding(s)$( \
+    [ "$REL_RC" = "0" ] || echo ", and the release flavor does not compile")"
 exit 1

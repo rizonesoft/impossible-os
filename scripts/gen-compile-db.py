@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Write a compile database from a dry run of the build.
 
-    python3 scripts/gen-compile-db.py [--root DIR] [--output PATH] [--selftest]
+    python3 scripts/gen-compile-db.py [--root DIR] [--output PATH]
+                                      [--release-output PATH] [--selftest]
 
 `make -n -B` prints every compile command the build would run without running
 any, in about a second. That gives a database that is always current: it lists
@@ -11,7 +12,10 @@ recorded during the last clean build does.
 
 The test flavor is read first and wins; the release flavor adds the sources
 only it compiles. --root reads another tree (a snapshot of a commit) with
-that tree's own Makefiles. Exit 0 written, 2 the build could not be read.
+that tree's own Makefiles. --release-output also writes the release flavor's
+own commands from the same dry run, which the merged database hides for every
+source both flavors compile (release-flavor-check.py compiles from it). Exit 0
+written, 2 the build could not be read.
 """
 import json
 import os
@@ -104,15 +108,60 @@ def dry_run(extra, root):
     return parse(r.stdout, root)
 
 
-def build(root, run=dry_run):
-    """Both flavours merged: the first flavour to compile a source keeps it."""
+def build(root, run=dry_run, per_flavor=None):
+    """Both flavours merged: the first flavour to compile a source keeps it.
+    `per_flavor`, when given, receives each flavour's own list by label."""
     seen, db = set(), []
-    for _label, extra in FLAVORS:
-        for e in run(extra, root):
+    for label, extra in FLAVORS:
+        entries = run(extra, root)
+        if per_flavor is not None:
+            per_flavor[label] = entries
+        for e in entries:
             if e["file"] not in seen:
                 seen.add(e["file"])
                 db.append(e)
     return db
+
+
+def release_omissions(test_files, release_files, root, pruned):
+    """Sources the test flavour compiles and the release list lacks, less those
+    the Makefile prunes on purpose (`pruned`, repo-relative). A non-empty result
+    is a release compile command the parser could not read."""
+    pruned = set(pruned)
+    return sorted(os.path.relpath(f, root) for f in set(test_files) - set(release_files)
+                  if os.path.relpath(f, root) not in pruned)
+
+
+def pruned_sources(root):
+    """What the release flavour prunes, from the Makefile's own source list: its
+    C_SRCS with the test flavour less its C_SRCS with KERNEL_TESTS=off. Asked of
+    that tree's Makefile, so any commit answers it, old or new."""
+    def srcs(extra):
+        env = dict(os.environ, LC_ALL="C")
+        env.pop("MAKEFLAGS", None)
+        env.pop("MFLAGS", None)
+        try:
+            r = subprocess.run(["make", "-s", "--no-print-directory", "-f", "Makefile", "-f", "-"]
+                               + extra + ["_gen_compile_db_c_srcs"], cwd=root, env=env,
+                               input="_gen_compile_db_c_srcs: ; @echo $(C_SRCS)\n",
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                               timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise SystemExit(f"gen-compile-db: could not run make: {e}") from e
+        words = r.stdout.split()
+        if r.returncode != 0 or not words:
+            raise SystemExit("gen-compile-db: could not read the Makefile's C_SRCS")
+        return {os.path.normpath(w) for w in words}
+    flavors = dict(FLAVORS)
+    return sorted(srcs(flavors["test"]) - srcs(flavors["release"]))
+
+
+def write_db(db, out):
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    tmp = out + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(db, f, indent=1)
+    os.replace(tmp, out)
 
 
 def selftest():
@@ -159,11 +208,24 @@ def selftest():
         return [{"directory": "/r", "file": "/r/shared.c", "arguments": [tag]},
                 {"directory": "/r", "file": only, "arguments": [tag]}]
 
-    merged = [(e["file"], e["arguments"][0]) for e in build("/r", fake)]
+    each = {}
+    merged = [(e["file"], e["arguments"][0]) for e in build("/r", fake, each)]
     if merged != [("/r/shared.c", "test"), ("/r/t_only.c", "test"), ("/r/r_only.c", "release")]:
         print(f"gen-compile-db selftest FAIL: flavour merge {merged}", file=sys.stderr)
         return 1
-    print("gen-compile-db selftest: 6 checks passed")
+    # The release flavour's own list keeps ITS command for the shared source,
+    # which is what the merge hides and the release-flavor check compiles.
+    rel = [(e["file"], e["arguments"][0]) for e in each.get("release", [])]
+    if rel != [("/r/shared.c", "release"), ("/r/r_only.c", "release")]:
+        print(f"gen-compile-db selftest FAIL: release flavour list {rel}", file=sys.stderr)
+        return 1
+    # An omission the Makefile does not explain is reported; a pruned one is not.
+    om = release_omissions(["/r/src/kernel/test/t.c", "/r/src/x_test.c", "/r/src/k.c", "/r/src/p.c"],
+                           ["/r/src/p.c"], "/r", ["src/kernel/test/t.c", "src/x_test.c"])
+    if om != ["src/k.c"]:
+        print(f"gen-compile-db selftest FAIL: release omissions {om}", file=sys.stderr)
+        return 1
+    print("gen-compile-db selftest: 8 checks passed")
     return 0
 
 
@@ -184,7 +246,15 @@ def main(argv):
             print("gen-compile-db: --output needs a path", file=sys.stderr)
             return 2
         out = argv[i + 1]
-    db = build(root)
+    rel_out = None
+    if "--release-output" in argv:
+        i = argv.index("--release-output")
+        if i + 1 >= len(argv):
+            print("gen-compile-db: --release-output needs a path", file=sys.stderr)
+            return 2
+        rel_out = argv[i + 1]
+    each = {}
+    db = build(root, per_flavor=each)
     files = {e["file"] for e in db}
     # A database with no kernel or no loader source is a misread build, not a result.
     for must in ("src/kernel/mm/pmm.c", "src/boot/uefi/bootx64.c"):
@@ -192,12 +262,19 @@ def main(argv):
             print(f"gen-compile-db: the dry run did not compile {must}; refusing to write",
                   file=sys.stderr)
             return 2
-    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
-    tmp = out + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(db, f, indent=1)
-    os.replace(tmp, out)
+    write_db(db, out)
     print(f"gen-compile-db: {len(db)} compile commands -> {out}")
+    if rel_out:
+        rel = each.get("release", [])
+        missing = release_omissions([e["file"] for e in each.get("test", [])],
+                                    [e["file"] for e in rel], root, pruned_sources(root))
+        if missing:
+            print("gen-compile-db: the release dry run has no readable command for "
+                  f"{len(missing)} source(s) the Makefile does not prune: {' '.join(missing[:10])}; "
+                  "refusing to write", file=sys.stderr)
+            return 2
+        write_db(rel, rel_out)
+        print(f"gen-compile-db: {len(rel)} release-flavor compile commands -> {rel_out}")
     return 0
 
 
