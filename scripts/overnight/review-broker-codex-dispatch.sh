@@ -96,6 +96,13 @@ EOF
 esac
 
 KIND="${BASH_REMATCH[1],,}"
+# A pass of the reviewer pin goes through scripts/codex-dispatch.sh, the one
+# route that appends its lenses and checks the returned review for a verdict
+# per lens. Dispatched here it would be an unchecked pass.
+case "$KIND" in plan|round|completion|reconciliation)
+    echo "ERROR: a '$KIND' pass is dispatched with scripts/codex-dispatch.sh, not the broker" >&2
+    exit 2 ;;
+esac
 
 # BACKEND OUTAGE GATE (2026-09-28): a Codex outage used to cost a retry storm
 # (5 dispatch+wait pairs, ~4m20s, run-20260903-160406.log:423-436) before the

@@ -711,6 +711,23 @@ def _detect_review_kind(skill_name: str, prompt: str) -> str:
     return kinds.pop()
 
 
+def _pass_route_ok(kind: str, raw_cmd: str) -> bool:
+    """Whether this command may be credited with `kind`.
+
+    A pass of the reviewer pin is credited only when dispatched through
+    scripts/codex-dispatch.sh: that wrapper checks the pin, appends the lenses
+    and reads the returned review for a verdict per lens. The broker and a
+    direct companion call do none of that. Every other kind is unaffected.
+    """
+    if kind not in SECTION_PASS_KINDS:
+        return True
+    try:
+        words = shlex.split(raw_cmd or "")
+    except ValueError:
+        return False
+    return any(os.path.basename(w) == "codex-dispatch.sh" for w in words)
+
+
 def _all_dispatch_targets(cmd: str, root: Path) -> list:
     """Every `(kind, todo_path, section)` a compound Bash call dispatches.
 
@@ -1482,8 +1499,14 @@ def main() -> int:
         is_broker = bool(raw_cmd and _cd.is_review_broker_dispatch(raw_cmd))
         state["review_broker_dispatch"] = is_broker
         _write_atomic(state_path, state)
+        route_ok = _pass_route_ok(review_kind, raw_cmd)
+        if not route_ok:
+            sys.stderr.write(
+                f"[review-stamps] WARN: a {review_kind!r} pass is credited only when "
+                f"dispatched with scripts/codex-dispatch.sh; this one is NOT recorded.\n"
+            )
         stamp_attempted = bool(
-            review_kind and todo_path
+            review_kind and todo_path and route_ok
             and (not state.get("background_dispatch") or is_broker)
         )
         if stamp_attempted:
@@ -1498,7 +1521,7 @@ def main() -> int:
             # decision out across the dispatches the same command carries.
             _seen_targets = {(review_kind, todo_path)}
             for _k, _tp, _sec in _all_dispatch_targets(raw_cmd, root):
-                if (_k, _tp) in _seen_targets:
+                if (_k, _tp) in _seen_targets or not _pass_route_ok(_k, raw_cmd):
                     continue
                 _seen_targets.add((_k, _tp))
                 _ok2, _err2 = _record_stamp(

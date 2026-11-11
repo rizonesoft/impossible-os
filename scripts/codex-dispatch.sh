@@ -160,16 +160,41 @@ SECTION="$(printf '%s' "$_m" | grep -oE '[0-9]+' | tail -1 || true)"
 # (the combined prompt was split in April 2026 because one angle was read and
 # the rest skimmed). REVIEW_BASE names the commit the section started from;
 # its changed files decide the conditional lenses.
+#
+# The review recorder reads the marker more loosely than the line above does
+# (leading space, `review_kind`, any case, anywhere on the first line). A marker
+# only it would read names a kind this wrapper never saw: the pass would be
+# credited with no pin check and no lens check. So the marker is written one
+# way, once, at the start of the first line, or the dispatch is refused.
+MARKERS="$(printf '%s\n' "$FIRST_LINE" | grep -oiE '\[[[:space:]]*review[-_ ]kind[[:space:]]*:' | wc -l)"
+if [ "$MARKERS" -gt 1 ] || { [ "$MARKERS" = "1" ] && [ "$KIND" = "direct" ]; }; then
+    echo "[$SELF_NAME] BLOCK -- write the marker once, as the first thing on the first line: [review-kind: <kind>]" >&2
+    exit 2
+fi
 PIN_KIND=0; PIN_TOOL=""; PATHS_FILE=""
 case "$KIND" in plan|round|completion|reconciliation) PIN_KIND=1 ;; esac
 if [ "$PIN_KIND" = "1" ]; then
     PIN_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_pin.py"
     python3 "$PIN_TOOL" --check >&2 || {
         echo "[$SELF_NAME] BLOCK -- the reviewer pin refuses a '$KIND' dispatch (reason above)" >&2; exit 2; }
+    # A pass is validated from its transcript, so one that cannot be kept is not dispatched.
+    mkdir -p "$REVIEWS_DIR" 2>/dev/null || {
+        echo "[$SELF_NAME] BLOCK -- no writable reviews directory ($REVIEWS_DIR); a '$KIND' pass cannot be checked" >&2; exit 2; }
     PATHS_FILE="$(mktemp -t codex-dispatch-paths.XXXXXX)" || exit 2
     trap 'rm -f "$PATHS_FILE"' EXIT
-    { git diff --name-only "${REVIEW_BASE:-HEAD~1}" HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null; } \
-        | sort -u > "$PATHS_FILE"
+    # The changed files decide the conditional lenses, so a base that cannot
+    # be read refuses the pass: an empty list would drop those lenses silently.
+    if [ -n "${REVIEW_BASE:-}" ]; then
+        BASE_OID="$(git rev-parse --quiet --verify "${REVIEW_BASE}^{commit}" 2>/dev/null)" || {
+            echo "[$SELF_NAME] BLOCK -- REVIEW_BASE is not a commit here: $REVIEW_BASE" >&2; exit 2; }
+    else
+        BASE_OID="$(git rev-parse --quiet --verify 'HEAD~1^{commit}' 2>/dev/null)" \
+            || BASE_OID="4b825dc642cb6eb9a060e54bf8d69288fbee4904"      # a first commit: against the empty tree
+    fi
+    { git diff --name-only "$BASE_OID" HEAD && git diff --name-only HEAD; } > "$PATHS_FILE.all" 2>/dev/null || {
+        rm -f "$PATHS_FILE.all"
+        echo "[$SELF_NAME] BLOCK -- the changed files of this pass could not be listed" >&2; exit 2; }
+    sort -u "$PATHS_FILE.all" > "$PATHS_FILE"; rm -f "$PATHS_FILE.all"
     PIN_LENSES="$(python3 "$PIN_TOOL" --lenses "$KIND" --paths-file "$PATHS_FILE")" || {
         echo "[$SELF_NAME] BLOCK -- the lenses of a '$KIND' pass could not be read" >&2; exit 2; }
     PROMPT="$PROMPT

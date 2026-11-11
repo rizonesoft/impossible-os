@@ -178,11 +178,32 @@ def lens_block(pin, kind, changed_paths=()):
     return "\n".join(lines)
 
 
+# The heading the Codex companion prints above the reviewer's final response.
+REVIEW_HEADER = "# Codex Adversarial Review"
+
+
+def final_response(transcript):
+    """The reviewer's final response in a dispatch transcript: what follows the last review heading.
+
+    A transcript also holds progress lines and can echo the prompt, and a prompt can contain example
+    verdict lines. Only the final response answers for the lenses, so a transcript with no heading
+    has no response to read and every lens is missing.
+    """
+    lines = transcript.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].strip() == REVIEW_HEADER:
+            return "\n".join(lines[i + 1:])
+    return ""
+
+
 def missing_lens_verdicts(pin, kind, review_text, changed_paths=()):
     """The scheduled lenses a returned review gave no verdict line for. Empty means the pass is complete."""
     seen = set()
     for line in review_text.splitlines():
-        parts = line.strip().strip("`").split()
+        text = line.strip()
+        if text[:2] in ("- ", "* "):          # the companion renders a closing list
+            text = text[2:].strip()
+        parts = text.strip("`").split()
         if len(parts) == 3 and parts[0] == "LENS" and parts[1].endswith(":") and parts[2] in ("clean", "findings"):
             seen.add(parts[1][:-1])
     return tuple(name for name in lenses_for(pin, kind, changed_paths) if name not in seen)
@@ -225,7 +246,7 @@ def main(argv=None):
                 text = pathlib.Path(args.transcript).read_text(errors="replace")
             except OSError as exc:
                 raise Refused(f"the transcript cannot be read: {exc}") from exc
-            missing = missing_lens_verdicts(pin, args.verdicts, text, paths)
+            missing = missing_lens_verdicts(pin, args.verdicts, final_response(text), paths)
             print("\n".join(missing))
             return 1 if missing else 0
         if args.check:

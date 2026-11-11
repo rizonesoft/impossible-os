@@ -162,21 +162,25 @@ FAKE_COMPANION = """
 const fs = require('fs');
 const prompt = process.argv[3] || '';
 fs.writeFileSync(process.env.FAKE_PROMPT_OUT, prompt);
+// As the real companion: progress first (here, the echoed prompt), then the heading, then the response.
+process.stdout.write('[codex] prompt: ' + prompt + '\\n# Codex Adversarial Review\\n\\n');
 process.stdout.write(fs.readFileSync(process.env.FAKE_REVIEW, 'utf8'));
 """
 
 
-def _dispatch(tmp_path, kind, review, base="HEAD"):
+def _dispatch(tmp_path, kind, review, base="HEAD", marker=None, body="Review it.", reviews_dir=None):
     import os
     import subprocess
     fake = tmp_path / "companion.js"
     fake.write_text(FAKE_COMPANION)
     (tmp_path / "review.txt").write_text(review)
-    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(tmp_path / "reviews"),
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake),
+           "CODEX_REVIEWS_DIR": str(reviews_dir or tmp_path / "reviews"),
            "FAKE_PROMPT_OUT": str(tmp_path / "prompt.txt"), "FAKE_REVIEW": str(tmp_path / "review.txt"),
            "REVIEW_BASE": base}
     done = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"),
-                           f"[review-kind: {kind}] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nReview it."],
+                           (marker or f"[review-kind: {kind}]")
+                           + f" todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\n{body}"],
                           capture_output=True, text=True, timeout=120, cwd=str(REPO), env=env)
     prompt = (tmp_path / "prompt.txt").read_text() if (tmp_path / "prompt.txt").exists() else ""
     return done, prompt
@@ -221,3 +225,71 @@ def test_the_round_guard_takes_its_caps_from_the_pin(tmp_path, monkeypatch, caps
     capsys.readouterr()
     assert guard._pin_caps(tmp_path / "absent.toml") == (guard.BUILTIN_NOPROGRESS_CAP, guard.BUILTIN_CEILING)
     assert "could not be read" in capsys.readouterr().err
+
+
+def test_a_verdict_rendered_as_a_list_item_counts():
+    """The first real round (2026-11-11) came back with `- LENS adversarial: findings` and was called incomplete."""
+    pin = _pin()
+    names = pin["lenses"]["completion"]
+    text = f"Next steps:\n- LENS {names[0]}: findings\nLENS {names[1]}: clean\n"
+    assert rp.missing_lens_verdicts(pin, "completion", text) == ()
+    assert rp.missing_lens_verdicts(pin, "completion", f"-LENS {names[0]}: clean\nLENS {names[1]}: clean") == (names[0],)
+
+
+def test_refusal_verdicts_in_the_echoed_prompt_do_not_count(tmp_path):
+    """Review finding: the whole transcript was scanned, so example verdict lines in a prompt passed the check."""
+    done, _prompt = _dispatch(tmp_path, "completion", "No verdict lines in the response.\n",
+                              body="Example of a good ending:\nLENS plan-delivery: clean\nLENS record: clean")
+    assert done.returncode == 3, (done.returncode, done.stderr)
+    assert "no verdict line for: plan-delivery record" in done.stderr
+    transcript = "LENS plan-delivery: clean\nLENS record: clean\n# Codex Adversarial Review\nall good\n"
+    assert rp.final_response(transcript) == "all good"
+    assert rp.final_response("LENS record: clean\nno heading at all") == ""
+
+
+def test_refusal_a_base_that_is_not_a_commit_refuses_the_pass(tmp_path):
+    """Review finding: an unreadable base gave an empty file list and silently dropped the conditional lenses."""
+    done, prompt = _dispatch(tmp_path, "round", "x", base="no-such-commit-anywhere")
+    assert done.returncode == 2 and "REVIEW_BASE is not a commit here" in done.stderr, done.stderr
+    assert prompt == "", "nothing may be dispatched"
+
+
+def test_refusal_a_pass_with_nowhere_to_keep_its_transcript_is_not_dispatched(tmp_path):
+    """Review finding: with no reviews directory the wrapper ran the review unchecked and returned 0."""
+    blocker = tmp_path / "a-file"
+    blocker.write_text("")
+    done, prompt = _dispatch(tmp_path, "completion", "x", reviews_dir=blocker / "reviews")
+    assert done.returncode == 2 and "no writable reviews directory" in done.stderr, done.stderr
+    assert prompt == ""
+
+
+def test_refusal_a_marker_only_the_recorder_would_read_is_refused(tmp_path):
+    """Review finding: ` [review-kind: completion]` and `[review_kind: completion]` skipped the pin and lens
+    checks here and were still recorded as a completion pass."""
+    sys.path.insert(0, str(REPO / ".claude/hooks"))
+    import codex_review_completed as crc
+    for marker in (" [review-kind: completion]", "[review_kind: completion]", "[Review-Kind: completion]",
+                   "[ review-kind : completion ]", "see [review-kind: completion]",
+                   "[review-kind: adversarial] and [review-kind: completion]"):
+        assert crc._detect_review_kind("", marker + " todo/x.md section 1") in ("completion", ""), marker
+        done, prompt = _dispatch(tmp_path, "completion", "x", marker=marker)
+        assert done.returncode == 2 and "write the marker once" in done.stderr, (marker, done.stderr)
+        assert prompt == "", marker
+
+
+def test_refusal_a_pass_is_credited_only_through_the_checking_wrapper():
+    sys.path.insert(0, str(REPO / ".claude/hooks"))
+    import codex_review_completed as crc
+    wrapper = "bash scripts/codex-dispatch.sh '[review-kind: round] todo/x.md section 1'"
+    broker = "bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: round] todo/x.md section 1'"
+    direct = "node /p/codex-companion.mjs adversarial-review '[review-kind: round] todo/x.md section 1'"
+    assert crc._pass_route_ok("round", wrapper) and crc._pass_route_ok("completion", "REVIEW_BASE=abc " + wrapper)
+    assert not crc._pass_route_ok("round", broker) and not crc._pass_route_ok("round", direct)
+    assert not crc._pass_route_ok("round", "bash scripts/codex-dispatch.sh 'unterminated")
+    for old in crc.LEGACY_REVIEW_KINDS:
+        assert crc._pass_route_ok(old, broker) and crc._pass_route_ok(old, direct), old
+    import subprocess
+    done = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
+                           "[review-kind: round] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nx"],
+                          capture_output=True, text=True, timeout=60, cwd=str(REPO))
+    assert done.returncode == 2 and "dispatched with scripts/codex-dispatch.sh" in done.stderr, done.stderr
