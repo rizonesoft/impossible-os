@@ -276,12 +276,18 @@ int tpm_attest_report_to_json(const struct boot_attestation_report *r,
 #define ATTEST_REPORT_JSON_MAX  (12u * 1024u)
 
 /* Build this boot's report once (with a CSPRNG nonce when the CSPRNG is
- * crypto-ready, else an unsigned self-test report), publish its JSON as the
- * snapshot tpm_attest_report_snapshot() returns, then write it to
- * X:\Diag\attestation.json. The snapshot is published whether or not that
- * volume is writable. Best effort: logs and returns on any failure, never
- * halts. A second call is refused and leaves the published snapshot alone. */
-void tpm_attest_report_export(void);
+ * crypto-ready, else an unsigned self-test report) and publish its JSON as the
+ * snapshot tpm_attest_report_snapshot() returns; the administrator query class
+ * is its only reader. Deletes the unprotected X:\Diag\attestation.json an
+ * older kernel wrote, since that FAT32 volume cannot restrict who reads it.
+ * Best effort: logs and returns on any failure, never halts. A second call is
+ * refused and leaves the published snapshot alone. Call once X:\ is mounted. */
+void tpm_attest_report_publish(void);
+
+/* Delete `path` if it exists: 1 removed, 0 absent (or its volume unmounted),
+ * -1 present but not removable. tpm_attest_report_publish() retires the old
+ * X:\Diag\attestation.json through it. */
+int tpm_attest_retire_file(const char *path);
 
 /* The published report: 1 with `*bytes`/`*len` naming the immutable JSON
  * document (schema ATTEST_REPORT_SCHEMA_VERSION, no NUL), or 0 when none has

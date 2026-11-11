@@ -16,6 +16,7 @@
 #include "kernel/nt/ssdt.h"               /* ssdt_dispatch */
 #include "kernel/nt/zw.h"                 /* ssdt_set_previous_mode, SSDT_USER_MODE */
 #include "kernel/klog.h"
+#include "kernel/fs/vfs.h"
 #include "kernel/nt/service_numbers.h"    /* SSDT_NtQuerySystemInformation */
 #include "kernel/nt/attest_syscall_info.h"
 #include "kernel/security/token.h"        /* SeCreateUserToken */
@@ -639,6 +640,35 @@ static void test_attest_query_dispatch(void)
     }
 }
 
+/* A previous boot's unprotected report copy is deleted, and an absent one is
+ * not an error. Exercised on a scratch file so no real artifact is touched. */
+static void test_attest_retire_file(void)
+{
+    static const char path[] = "C:\\Impossible\\test_attest_retire.tmp";
+    static const uint8_t body[] = "{\"ek\":1}";
+    struct vfs_node *f;
+    struct vfs_stat st;
+
+    TEST_ASSERT_EQ(tpm_attest_retire_file((const char *)0), 0, "NULL path -> nothing to do");
+    (void)vfs_unlink(path);
+    TEST_ASSERT_EQ(tpm_attest_retire_file(path), 0, "absent file -> 0");
+    if (vfs_create(path, VFS_FILE) != 0) {
+        TEST_SKIP("C:\\ not writable in this run");
+        return;
+    }
+    f = vfs_open(path, VFS_O_WRITE);
+    TEST_ASSERT(f != (struct vfs_node *)0, "scratch file opened");
+    if (f) {
+        TEST_ASSERT(vfs_write(f, 0, sizeof body - 1u, body) == (int)(sizeof body - 1u),
+                    "scratch evidence written");
+        vfs_close(f);
+    }
+    TEST_ASSERT_EQ(vfs_stat(path, &st), 0, "scratch file exists before retire");
+    TEST_ASSERT_EQ(tpm_attest_retire_file(path), 1, "present file -> removed");
+    TEST_ASSERT(vfs_stat(path, &st) != 0, "the file is gone");
+    TEST_ASSERT_EQ(tpm_attest_retire_file(path), 0, "second retire finds nothing");
+}
+
 void test_register_tpm_attest_report(void)
 {
     test_suite_register_cat("tpm: attest handoff snapshot capture",
@@ -657,4 +687,6 @@ void test_register_tpm_attest_report(void)
                             test_attest_query_class, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: attest query class dispatch",
                             test_attest_query_dispatch, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: attest retire unprotected report file",
+                            test_attest_retire_file, TEST_CAT_SECURITY);
 }

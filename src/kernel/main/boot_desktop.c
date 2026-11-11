@@ -713,11 +713,12 @@ void boot_phase3(void)
         tpm_evlog_export_cel();
     }
 
-    /* Export the TPM-rooted boot attestation report (identity + handoff + the
-     * SHA-256 quoted PCR bank + quote/AK/EK) as X:\Diag\attestation.json. */
+    /* Publish the TPM-rooted boot attestation report (identity + handoff + the
+     * SHA-256 quoted PCR bank + quote/AK/EK) for the administrator query class,
+     * and delete the unprotected X:\Diag\attestation.json older kernels wrote. */
     {
-        extern void tpm_attest_report_export(void);
-        tpm_attest_report_export();
+        extern void tpm_attest_report_publish(void);
+        tpm_attest_report_publish();
     }
 
     /* Boot protocol section 6: dump the boot_reserved region table to

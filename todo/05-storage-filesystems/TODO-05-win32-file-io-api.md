@@ -25,7 +25,7 @@ title: "TODO-05 -- Win32 File I/O API & IRP Layer"
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §4` -- `GetDiskFreeSpaceEx` and `GetVolumeInformation` (§13) depend on Registry volume entries from `vfs_probe()`
 - → XREF: `12-user-platform-sdk` Win32 API TODO -- `CreateFile`/`ReadFile`/`WriteFile` defined here are the kernel implementations; the SDK exposes them as user-mode wrappers
 - → XREF: `02-kernel-core/TODO-07-irql-model-dpcs.md §11,§12` -- KAPC object and KiDeliverApc; §6 async I/O completion queues a user-mode APC to the issuing thread via KeInsertQueueApc
-- → XREF: `02-kernel-core/TODO-15-security-reference-monitor.md §8` -- `SeAccessCheck` enforcement; `NtCreateFile` in §6 must call `SeAccessCheck` with `FILE_GENERIC_READ`/`WRITE` desired access against the file object's DACL
+- → XREF: `02-kernel-core/TODO-15-security-reference-monitor.md §5` -- `SeAccessCheck` enforcement; `NtCreateFile` in §6 must call `SeAccessCheck` with `FILE_GENERIC_READ`/`WRITE` desired access against the file object's DACL
 
 ## Outcome
 

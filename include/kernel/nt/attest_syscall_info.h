@@ -2,9 +2,9 @@
  * attest_syscall_info.h -- SystemAttestationReportInformation
  *
  * NtQuerySystemInformation(SystemAttestationReportInformation) returns this
- * boot's measured-boot attestation report: the same UTF-8 JSON document the
- * kernel writes to X:\Diag\attestation.json (schema 3, no trailing NUL), so a
- * user-mode reader and an offline reader parse one format. Impossible OS
+ * boot's measured-boot attestation report as one UTF-8 JSON document (schema 3,
+ * no trailing NUL). It is the report's only channel: the X:\Diag copy older
+ * kernels wrote sat on FAT32, which cannot restrict readers. Impossible OS
  * extension class 0x1004, after 0x1000 kernel config, 0x1001 NLS, 0x1002
  * notification and 0x1003 resource pressure.
  *
@@ -20,7 +20,7 @@
  * SIZE. ReturnLength (when given) always receives the full document length.
  * A buffer smaller than that returns STATUS_INFO_LENGTH_MISMATCH and writes
  * nothing to it, so a caller queries the size first and then the bytes. When
- * no report was published this boot (no export yet, a build failure, or an
+ * no report was published this boot (not yet published, a build failure, or an
  * oversized report) the class returns STATUS_NOT_FOUND.
  *
  * FRESHNESS. The report is built once per boot with a kernel CSPRNG nonce. It

@@ -17,7 +17,7 @@ Baseline enrollment and verification run next, gated on `tpm_enroll_gate_evaluat
 
 A single aggregate deadline (`tpm_boot_budget_arm()`, `TPM_BOOT_BUDGET_MS`) bounds every verified NV read the boot performs, so a stuck or slow TPM degrades the verdict to unverified instead of hanging Phase 1.
 
-Two consumers sit downstream of the same PCR state. `tpm_seal_secret()` and `tpm_unseal_secret()` bind a secret to the PCR 7 seal policy (PCR 11 is deliberately excluded, so a kernel rebuild cannot brick unseal). `tpm2_quote()` has the TPM sign the SHA-256 PCR digest plus a caller nonce under a per-boot Attestation Key, and `tpm_attest_report_build()` assembles that into `X:\Diag\attestation.json` (and the administrator query class) alongside the Endorsement Key certificate and the integrity verdict.
+Two consumers sit downstream of the same PCR state. `tpm_seal_secret()` and `tpm_unseal_secret()` bind a secret to the PCR 7 seal policy (PCR 11 is deliberately excluded, so a kernel rebuild cannot brick unseal). `tpm2_quote()` has the TPM sign the SHA-256 PCR digest plus a caller nonce under a per-boot Attestation Key, and `tpm_attest_report_build()` assembles that into the attestation report, read through an administrator-only query class, alongside the Endorsement Key certificate and the integrity verdict.
 
 ```mermaid
 flowchart LR
@@ -46,7 +46,7 @@ flowchart LR
 | `tpm_nv_define_data()` / `tpm_nv_write()` / `tpm_nv_read()` | Owner-auth and PCR-policy NV index operations ([`tpm_nv.h`](../../include/kernel/tpm_nv.h)) |
 | `tpm_seal_secret()` / `tpm_unseal_secret()` | Seal and unseal a secret to the PCR 7 policy ([`tpm_seal.h`](../../include/kernel/tpm_seal.h)) |
 | `tpm2_quote()` / `tpm_ak_public_get()` / `tpm_ek_cert_read()` | TPM-signed PCR quote and the AK/EK material a verifier needs; a quote is returned only when its `qualifiedSigner` equals the AK's Qualified Name under the EK ([`tpm_attest.h`](../../include/kernel/tpm_attest.h)) |
-| `tpm_attest_report_build()` / `tpm_attest_report_export()` | Assembles and writes the signed attestation report ([`tpm_attest_report.h`](../../include/kernel/tpm_attest_report.h)) |
+| `tpm_attest_report_build()` / `tpm_attest_report_publish()` | Assembles the signed attestation report and publishes it for the query class ([`tpm_attest_report.h`](../../include/kernel/tpm_attest_report.h)) |
 | `tpm_enroll_gate_evaluate()` | The enrollment-authority predicate ([`tpm_enroll_gate.h`](../../include/kernel/tpm_enroll_gate.h)) |
 | `tpm_integrity_status_label()` | One-word status for VPD and klog from the boot integrity report ([`tpm.h`](../../include/kernel/tpm.h)) |
 | `tpm_enroll` in `boot.conf` | Opt-in that lets the kernel enroll or rotate the baseline this boot, honoured only under the enrollment gate ([boot_info Field Ownership](boot-info-fields.md)) |
@@ -61,7 +61,7 @@ bash scripts/test-swtpm.sh            # boots QEMU against swtpm; skips cleanly 
 
 On a live boot with a TPM, serial shows `TPM2 transport up (TIS, vendor ...)` (or `CRB`), then `PCR cache populated (measured-boot PCRs, active banks)`, then `PCR replay: event-log TAMPER at PCR N` only on a mismatch, and finally `Boot integrity status: <label> (<scope>)`. Without a TPM the transport reports `no TPM2 table and no firmware TPM; transport not started` and the rest of the pipeline reports its no-TPM status without halting.
 
-`X:\Diag\tpm-events.json` (the event log) and `X:\Diag\attestation.json` are written after the BlackBox volume mounts, for offline inspection. `attestation.json` is a diagnostic report that carries a signed PCR quote only when one was produced: when the CSPRNG is not yet crypto-ready it is an unsigned self-test report, and a failed quote is omitted. A consumer must check the quote's presence and verify its signature, never trust the file's existence.
+`X:\Diag\tpm-events.json` (the event log) is written after the BlackBox volume mounts, for offline inspection. The attestation report is not: that volume is FAT32, which carries no security descriptor, and the report holds the machine-identifying EK certificate, so it is published only as an in-memory snapshot behind the administrator query class, and a `X:\Diag\attestation.json` left by an older kernel is deleted at boot. The report carries a signed PCR quote only when one was produced: when the CSPRNG is not yet crypto-ready it is an unsigned self-test report, and a failed quote is omitted. A consumer must check the quote's presence and verify its signature, never trust the report's existence.
 
 ### What the attestation report claims (schema 3)
 
@@ -75,7 +75,7 @@ Adding the extend changes PCR 11 once. A baseline enrolled before this change th
 
 ## What is not implemented yet?
 
-- An administrator reads the same document live through `NtQuerySystemInformation(SystemAttestationReportInformation)` (class `0x1004`, `include/kernel/nt/attest_syscall_info.h`). The caller's effective token must carry BUILTIN\Administrators as an enabled, not deny-only, group (`SeSubjectIsMemberOf`), so a standard user and a filtered UAC administrator get `STATUS_ACCESS_DENIED` before any size is revealed. A size query returns the length with `STATUS_INFO_LENGTH_MISMATCH`, and `STATUS_NOT_FOUND` means no report was published this boot. The report is built once per boot with a kernel nonce and kept as an immutable snapshot (at most `ATTEST_REPORT_JSON_MAX`, 12 KiB), so the query works even when `X:\` is not writable.
+- An administrator reads the report through `NtQuerySystemInformation(SystemAttestationReportInformation)` (class `0x1004`, `include/kernel/nt/attest_syscall_info.h`). The caller's effective token must carry BUILTIN\Administrators as an enabled, not deny-only, group (`SeSubjectIsMemberOf`), so a standard user and a filtered UAC administrator get `STATUS_ACCESS_DENIED` before any size is revealed. A size query returns the length with `STATUS_INFO_LENGTH_MISMATCH`, and `STATUS_NOT_FOUND` means no report was published this boot. The report is built once per boot with a kernel nonce and kept as an immutable snapshot (at most `ATTEST_REPORT_JSON_MAX`, 12 KiB).
 - The report is evidence of how this boot was measured, not a fresh challenge-response: a verifier-supplied nonce and the remote-attestation protocol (what a verifier calls, over what transport) are not chosen yet: [Attestation Report Export](../../todo/01-boot-platform/TODO-13-tpm-measured-boot-attestation.md#9-attestation-report-export).
 - `TPM2_MakeCredential`/`TPM2_ActivateCredential` (proving to a remote verifier that the AK is bound to a trusted EK) is not implemented, and stays parked until a platform service needs remote attestation: [Attestation Key Provisioning and TPM2 Quote](../../todo/01-boot-platform/TODO-13-tpm-measured-boot-attestation.md#13-attestation-key-provisioning-and-tpm2-quote).
 - Recovery mode does not name which layer changed on a mismatch, there is no UI to reset a trusted baseline, and an unexpected kernel measurement does not trigger A/B rollback: [Recovery and Mismatch UX](../../todo/01-boot-platform/TODO-13-tpm-measured-boot-attestation.md#10-recovery-and-mismatch-ux).
