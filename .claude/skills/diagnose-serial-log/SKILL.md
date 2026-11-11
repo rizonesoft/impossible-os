@@ -340,7 +340,7 @@ For each actionable finding, in ranked order:
       ```
     - **Mandatory angles for the prompt:** (1) does the fix actually close the finding's root cause or only the visible symptom? (2) are there error paths, SMP cases, or boundary values the fix misses? (3) does the fix introduce a regression in adjacent code? (4) for POLICY fixes: does the fix match the POLICIES.md Remediation shape?
     - Apply `superpowers:receiving-code-review` to every Codex finding. Codex can be wrong; verify each finding against code before acting.
-    - Unresolved Critical/High Codex findings block commit. Iterate: fix -> rebuild -> re-dispatch, until a clean round, up to the pass cap (`pass_cap` in `.conclave/reviewers.toml`, 45). By round 3 on one boundary, change the structure rather than the next shape (review-todo-section step 6). At the cap, mark the finding's fix status "attempted", file the unresolved finding as a concrete `[ ]` item with an XREF in its owning TODO, and record it in the report.
+    - Unresolved Critical/High Codex findings block commit. Iterate: fix -> rebuild -> re-dispatch, until a clean round, up to the pass cap (`pass_cap` in `.conclave/reviewers.toml`, 55). By round 3 on one boundary, change the structure rather than the next shape (review-todo-section step 6). At the cap, mark the finding's fix status "attempted", file the unresolved finding as a concrete `[ ]` item with an XREF in its owning TODO, and record it in the report.
     - Skip only when `--skip-fix` was passed (no fixes means no review).
 
 24. **Verify against the original symptom**

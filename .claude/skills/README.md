@@ -42,7 +42,7 @@ Every live skill below has a matching row in [`../../CLAUDE.md`](../../CLAUDE.md
 | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | [`codex-design-review`](codex-design-review/)                | Pre-implementation design review -- catch plan flaws early   |
 | [`codex-review-todo`](codex-review-todo/)                    | Adversarial review of all sections in a TODO                 |
-| [`codex-adversarial-review-section`](codex-adversarial-review-section/) | Single-section adversarial review loop (cap 45)        |
+| [`codex-adversarial-review-section`](codex-adversarial-review-section/) | Single-section adversarial review loop (cap 55)        |
 | [`codex-fix-review`](codex-fix-review/)                      | Fix findings and re-review until clean                       |
 | [`codex-test-coverage`](codex-test-coverage/)                | Test-coverage gap analysis                                   |
 | [`codex-impact-analysis`](codex-impact-analysis/)            | Dependency impact analysis for refactors                     |

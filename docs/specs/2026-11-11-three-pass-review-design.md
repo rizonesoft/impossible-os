@@ -18,8 +18,8 @@ A clean section costs four passes, against five to seven today. The round and th
 
 `.conclave/reviewers.toml` is the only place the schedule lives. `scripts/review_pin.py` loads and validates it, strictly: unknown keys, unknown lenses, more than one round, or a route with no reviewer are refused.
 
-- `pass_cap = 45`: every returned pass counts (plan, round, performance, completion, reconciliations). The old 42 counted adversarial re-dispatches only.
-- `no_progress_cap = 3`: three passes in a row with no new finding end the loop, as today.
+- `pass_cap = 45`: every returned pass counts (plan, round, performance, completion, reconciliations). The old 42 counted adversarial re-dispatches only. Raised to 55 by the operator later on 2026-11-11.
+- `no_progress_cap = 3`: three passes in a row with no new finding end the loop, as today. Raised to 5 by the operator later on 2026-11-11.
 - `model` is checked against `~/.codex/config.toml` and never passed as a flag. There is no `effort` key: effort stays the operator's dial in the Codex config.
 - A missing or invalid pin refuses the dispatch. It never falls back to the old shape.
 

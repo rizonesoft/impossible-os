@@ -8,11 +8,11 @@ than one capped early on a fixed count. A hard round-count cap would ship
 unfixed HIGH-severity bugs just because the review ran "too long".
 
 So the backstop fires on **stalled progress**, not round count:
-  - STOP when K consecutive rounds find NOTHING NEW (default K=3) -- a genuine
+  - STOP when K consecutive rounds find NOTHING NEW (default K=5, `no_progress_cap`) -- a genuine
     loop (same finding repeating / no forward motion), not a deep escalating
     review.
   - Plus a very high COUNT CEILING as a final infinite-loop guard: `pass_cap`
-    in .conclave/reviewers.toml (45, the one cap for all code; it counts every
+    in .conclave/reviewers.toml (55, the one cap for all code; it counts every
     returned pass of a section, where the 42 it replaced counted re-dispatches).
 A round that finds a NEW finding resets the stall streak to 0 -- the review
 may run as long as it stays productive.
@@ -40,7 +40,7 @@ CLI:
 Both numbers come from the reviewer pin (.conclave/reviewers.toml: pass_cap and
 no_progress_cap). Env OVERNIGHT_REVIEW_NOPROGRESS_CAP and
 OVERNIGHT_REVIEW_ROUND_CEILING override them for one call. A pin that cannot be
-read leaves the built-in 3 and 45 and says so on stderr: the backstop must keep
+read leaves the built-in 5 and 55 and says so on stderr: the backstop must keep
 working when the pin is broken. Optional --state PATH (testability). Stdlib only.
 """
 from __future__ import annotations
@@ -53,8 +53,8 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STATE = ROOT / ".claude" / "state" / "review-rounds"
 
 
-BUILTIN_NOPROGRESS_CAP = 3
-BUILTIN_CEILING = 45
+BUILTIN_NOPROGRESS_CAP = 5
+BUILTIN_CEILING = 55
 
 
 def _pin_caps(pin_path: Path | None = None) -> tuple[int, int]:

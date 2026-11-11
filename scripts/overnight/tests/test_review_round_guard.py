@@ -4,6 +4,7 @@
 # Critical/High, plus a high ceiling as an infinite-loop guard -- NEVER a fixed
 # round cap, so a productive deep review runs as long as it keeps finding bugs).
 # This puts it under the deterministic suite so the wiring can't silently rot.
+import os
 import pathlib
 import subprocess
 import sys
@@ -14,9 +15,12 @@ SCRIPT = HERE.parents[2] / ".claude" / "hooks" / "review_round_guard.py"
 
 
 def _bump(state, slice_id, progress):
+    # The stall cap is fixed at 3 here: these tests cover the guard's behaviour, and the repository pin's own
+    # numbers (which the operator changes) are covered by test_review_pin.py.
     r = subprocess.run([sys.executable, str(SCRIPT), "--bump", slice_id,
                         "--progress", progress, "--state", str(state)],
-                       text=True, capture_output=True)
+                       text=True, capture_output=True,
+                       env={**os.environ, "OVERNIGHT_REVIEW_NOPROGRESS_CAP": "3"})
     return r.returncode, r.stdout
 
 

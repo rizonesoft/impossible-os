@@ -35,8 +35,8 @@ claude = ["astra"]
 
 [schedule]
 policy = "four-pass"
-pass_cap = 45
-no_progress_cap = 3
+pass_cap = 55
+no_progress_cap = 5
 blocking = ["P1", "P2"]
 
 [schedule.plan]
