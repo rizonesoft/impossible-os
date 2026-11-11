@@ -284,9 +284,10 @@ int tpm_attest_report_to_json(const struct boot_attestation_report *r,
  * refused and leaves the published snapshot alone. Call once X:\ is mounted. */
 void tpm_attest_report_publish(void);
 
-/* Delete `path` if it exists: 1 removed, 0 absent (or its volume unmounted),
- * -1 present but not removable. tpm_attest_report_publish() retires the old
- * X:\Diag\attestation.json through it. */
+/* Retire `path`: 1 removed; 2 could not be removed (e.g. still open) but was
+ * emptied, confirmed by a fresh stat; 0 absent (or its volume unmounted); -1
+ * neither removed nor emptied, logged as an error. tpm_attest_report_publish()
+ * retires the old X:\Diag\attestation.json through it. */
 int tpm_attest_retire_file(const char *path);
 
 /* The published report: 1 with `*bytes`/`*len` naming the immutable JSON

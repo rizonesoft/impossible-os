@@ -2,6 +2,7 @@
  * bootloader-to-kernel handoff snapshot and the report builder. */
 
 #include "kernel/test/test.h"
+#include "kernel/test/klog_suppress.h"
 #include "kernel/test/boot_info_fixture.h" /* TEST_BOOT_INFO: the shared fixture */
 #include "kernel/tpm_attest_report.h"
 #include "kernel/tpm.h"                   /* TPM_ALG_SHA256 */
@@ -667,6 +668,35 @@ static void test_attest_retire_file(void)
     TEST_ASSERT_EQ(tpm_attest_retire_file(path), 1, "present file -> removed");
     TEST_ASSERT(vfs_stat(path, &st) != 0, "the file is gone");
     TEST_ASSERT_EQ(tpm_attest_retire_file(path), 0, "second retire finds nothing");
+
+    /* Deletion refused (the file is held open): the evidence is emptied. */
+    TEST_ASSERT_EQ(vfs_create(path, VFS_FILE), 0, "scratch file recreated");
+    f = vfs_open(path, VFS_O_WRITE);
+    TEST_ASSERT(f != (struct vfs_node *)0, "scratch file held open");
+    if (f) {
+        TEST_ASSERT(vfs_write(f, 0, sizeof body - 1u, body) == (int)(sizeof body - 1u),
+                    "evidence written again");
+        TEST_ASSERT(vfs_unlink(path) != 0, "precondition: an open file cannot be unlinked");
+        TEST_ASSERT_EQ(tpm_attest_retire_file(path), 2, "refused unlink -> emptied");
+        TEST_ASSERT_EQ(vfs_stat(path, &st), 0, "the entry survives the refused unlink");
+        TEST_ASSERT_EQ(st.size, 0u, "but no evidence byte remains");
+        vfs_close(f);
+    }
+    TEST_ASSERT_EQ(tpm_attest_retire_file(path), 1, "once closed, the empty file is removed");
+
+    /* Neither removable nor emptiable (a non-empty directory): reported, -1. */
+    {
+        static const char dir[]   = "C:\\Impossible\\test_attest_retire.dir";
+        static const char child[] = "C:\\Impossible\\test_attest_retire.dir\\x";
+        if (vfs_create(dir, VFS_DIRECTORY) == 0 && vfs_create(child, VFS_FILE) == 0) {
+            TEST_KLOG_EXPECT("TPM", "could neither remove nor empty");
+            TEST_ASSERT_EQ(tpm_attest_retire_file(dir), -1, "unremovable, unemptiable -> -1");
+            (void)vfs_unlink(child);
+            (void)vfs_unlink(dir);
+        } else {
+            TEST_SKIP("could not build the unremovable fixture");
+        }
+    }
 }
 
 void test_register_tpm_attest_report(void)

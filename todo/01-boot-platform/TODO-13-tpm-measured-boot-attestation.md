@@ -276,9 +276,9 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [x] Administrator query class: `NtQuerySystemInformation(SystemAttestationReportInformation)` (0x1004) returns the boot's report JSON (Q13).
   - Gate: BUILTIN\Administrators enabled and not deny-only (`SeSubjectIsMemberOf`); a refusal reveals no size. Size query, then bytes; NOT_FOUND when unpublished.
   - Built once per boot into an immutable 12 KiB snapshot (`tpm_attest_report_snapshot`), the report's only channel.
-  - `X:\Diag\attestation.json` is no longer written and an old copy is deleted: FAT32 cannot restrict readers, and the report holds the EK certificate.
+  - `X:\Diag\attestation.json` is no longer written; an old copy is deleted, or emptied when deletion is refused (`tpm_attest_retire_file`): FAT32 cannot restrict readers.
 - [/] Add remote-attestation placeholder for platform services.
-  - Parked, awaiting-answer Q14: a remote-attestation protocol has to be chosen before any placeholder means anything.
+  - Parked by operator decision Q14 (2026-11-07, `todo/answers.md`): reopens when a platform service needs remote attestation and a verifier protocol is chosen.
 - [x] Scoped verdict exported, schema 3: the `integrity` block carries label, scope, `failureClass` (four classes), `baselineStatus`, `cause`/`causePcr` and `kernelImageMeasured:false`.
   - Provenance is published with the verdict in one snapshot: `tpm_integrity_publish_baseline` takes the baseline status and cause; `tpm_integrity_failure_class()` classifies, tamper first.
   - A corrupt own identity exports a diagnostic document (no quote, AK, EK or digest) through `tpm_attest_report_build_from`, instead of an empty file.
@@ -295,14 +295,14 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 **Test checkpoint:** A `boot_attestation_report_t` carries the SHA-256-quoted PCRs, event digest, Secure Boot state and nonce and serializes as schema-3 JSON; the bootloader PCR 11 manifest extend runs pre-jump and sets `BOOT_CAP_MANIFEST_PCR_BOUND` (degraded, boot continues, with no TPM); `pcrBound` is 1 only with the claim, the logged manifest digest and a verified replay; the integrity block names its scope and failure class; a corrupt own identity yields a diagnostic report; the handoff triple and the DRTM slots (entryPcr 255, others 0) round-trip. An administrator reads it through `SystemAttestationReportInformation`; a standard user is refused, and no copy is left on the unprotected `X:\` volume. Platforms: QEMU swtpm KVM; bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 3763 kernel + 17 user-mode, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 3772 kernel + 17 user-mode, 0 failures
 > **Notes:**
 > - Shipped: Phase-0 handoff snapshot + `boot_attestation_report_t`/`tpm_attest_report_build()` (manifest + handoff + SHA-256-quoted PCR bank + quote/AK/EK + coherence) + streaming JSON (schema 3 since 2026-11-11), published to the administrator query class; the `X:\Diag` file export was retired 2026-11-11 (FAT32 cannot restrict readers).
 > - Trust model: only the SHA-256 bank is TPM-quoted; AK<->EK binding stays UNVERIFIED; an EK-cert read failure is UNKNOWN not ABSENT; a malformed nonce is BADARG not a degraded report.
 > - Tests: `test_tpm_attest_report.c` (9 suites: snapshot, builder, JSON, manifest binding, scoped verdict, size bound, query marshaller, query dispatch, file retire), `test_security.c` (token membership) and `test_tpm_baseline.c` (failure provenance).
 > - Canonical doc: the trust/coherence/DRTM schema lives in the `boot_attestation_report` struct header comment.
 > - Schema 3 (2026-11-11): manifest PCR binding proved from the log + replay, scoped integrity verdict with failure provenance, loader identity, diagnostic report on a corrupt own identity. Doc: `docs/boot/tpm-measured-boot.md`.
-> - Scope boundary: the remote-attestation placeholder (Q14) stays parked on its operator answer and keeps §9 at `[/]`; the query class (Q13) shipped 2026-11-11. Authorizing opens on `X:\Diag` (the event log file) is owned by -> XREF: `02-kernel-core/TODO-15-security-reference-monitor.md` §5 (item: "Opens on a volume with no on-disk security").
+> - Scope boundary: the remote-attestation placeholder stays parked by operator decision Q14 (until a platform service needs it) and keeps §9 at `[/]`; the query class (Q13) shipped 2026-11-11. Authorizing opens on `X:\Diag` (the event log file) is owned by -> XREF: `02-kernel-core/TODO-15-security-reference-monitor.md` §5 (item: "Opens on a volume with no on-disk security").
 > **Verified:** 2026-06-14 | commit `2355ba5f` (report+export) + review fixes | 5/10 items | build OK | security 982 PASS, smoke PASS (KVM 2.490s)
 > **Note:** 2026-11-07, Deferred stamp retired: [M] native query API, now `todo/answers.md` Q13 (shipped 2026-11-11).
 > **Note:** 2026-11-07, Deferred stamp retired: [M] PCR-11 extend and cap bit, code half reopened.

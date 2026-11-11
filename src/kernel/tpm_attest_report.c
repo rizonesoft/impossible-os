@@ -737,8 +737,15 @@ int tpm_attest_retire_file(const char *path)
              "(the report is the administrator query class)", path);
         return 1;
     }
-    klog(LOG_ERROR, "TPM", "attestation: could not remove %s; "
-         "a previous boot's evidence stays readable", path);
+    /* The entry could not be removed (the file is open, or the directory
+     * update failed to flush). The evidence is the CONTENT, so empty it, and
+     * claim that only once a fresh stat confirms zero bytes remain. */
+    if (vfs_truncate(path, 0) == 0 && vfs_stat(path, &st) == 0 && st.size == 0) {
+        klog(LOG_WARN, "TPM", "attestation: could not remove %s; emptied it instead", path);
+        return 2;
+    }
+    klog(LOG_ERROR, "TPM", "attestation: could neither remove nor empty %s; a previous "
+         "boot's evidence stays readable until X:\\Diag opens are authorized", path);
     return -1;
 }
 
@@ -753,6 +760,9 @@ void tpm_attest_report_publish(void)
     tpm_attest_status_t bs;
     int rc;
 
+    /* Every outcome is logged inside; a -1 (neither removed nor emptied, so
+     * the volume refuses writes) is closed only by authorizing X:\\Diag
+     * opens, owned by the SeAccessCheck engine work. The query still ships. */
     (void)tpm_attest_retire_file(ATTEST_LEGACY_FILE);
 
     /* One boot, one report: a second call keeps the published snapshot. */
