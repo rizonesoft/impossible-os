@@ -683,27 +683,54 @@ int tpm_attest_report_to_json(const struct boot_attestation_report *r,
     return s.err ? -1 : 0;
 }
 
+/* The boot's report, serialized once and kept for the query class.
+ *
+ * WRITE-ONCE PUBLICATION. s_snap_state moves 0 -> 1 (one writer claimed it,
+ * by compare-exchange) -> 2 (bytes complete, release store). A reader acquires
+ * the state and copies only after seeing 2; the bytes never change after that,
+ * so a copy needs no lock and can never observe a half-written document. A
+ * second export call cannot claim the slot and leaves the published snapshot
+ * alone. Static rather than allocated: the export runs after the scheduler is
+ * live, where pmm_alloc_pages_hhdm must not be called. */
+static uint8_t  s_snap[ATTEST_REPORT_JSON_MAX];
+static uint32_t s_snap_len;
+static volatile uint32_t s_snap_state;   /* 0 none, 1 writing, 2 published */
+
+int tpm_attest_json_mem_write(void *ctx, uint32_t off, const uint8_t *data, uint32_t n)
+{
+    struct attest_json_mem *m = (struct attest_json_mem *)ctx;
+    if (!m || off != m->len || n > m->cap - m->len)
+        return -1;
+    memcpy(m->buf + off, data, n);
+    m->len += n;
+    return 0;
+}
+
+int tpm_attest_report_snapshot(const uint8_t **bytes, uint32_t *len)
+{
+    if (!bytes || !len)
+        return 0;
+    if (__atomic_load_n(&s_snap_state, __ATOMIC_ACQUIRE) != 2u)
+        return 0;
+    *bytes = s_snap;
+    *len = s_snap_len;
+    return 1;
+}
+
 static int rpt_vfs_write(void *ctx, uint32_t off, const uint8_t *data, uint32_t n)
 {
     struct vfs_node *f = (struct vfs_node *)ctx;
     return (vfs_write(f, off, n, data) == (int)n) ? 0 : -1;
 }
 
-void tpm_attest_report_export(void)
+/* Write the published snapshot to X:\Diag\attestation.json. A write error
+ * re-truncates the file so a consumer never reads a partial report. */
+static void snapshot_write_file(const uint8_t *bytes, uint32_t len)
 {
-    struct boot_attestation_report *r;
-    struct vfs_node *dir, *f;
-    uint8_t nonce[TPM_QUOTE_NONCE_MAX];
-    const uint8_t *np = 0;
-    uint16_t nl = 0;
-    int rc;
-    tpm_attest_status_t bs;
+    struct vfs_node *dir, *f, *z;
+    uint32_t off = 0;
+    int ok = 1;
 
-    /* Open the destination FIRST, before any live TPM work: on a boot where
-     * diagnostics storage is unavailable we must not pay the quote + AK/EK
-     * transaction latency only to discard the result. Create via the parent dir
-     * (FAT32 dir-cache re-walk). O_TRUNC: a shorter report must not leave stale
-     * previous-boot tail bytes. */
     dir = vfs_open("X:\\Diag\\", VFS_O_READ);
     if (dir && dir->ops && dir->ops->create)
         dir->ops->create(dir, "attestation.json", VFS_FILE);
@@ -711,19 +738,68 @@ void tpm_attest_report_export(void)
         vfs_close(dir);
     f = vfs_open("X:\\Diag\\attestation.json", VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
     if (!f) {
-        klog(LOG_WARN, "TPM", "attestation export: cannot open X:\\Diag\\attestation.json");
-        return;   /* no TPM work paid on unwritable storage */
+        klog(LOG_WARN, "TPM", "attestation export: cannot open X:\\Diag\\attestation.json "
+             "(the report stays queryable)");
+        return;
+    }
+    while (ok && off < len) {
+        uint32_t n = (len - off > 4096u) ? 4096u : (len - off);
+        ok = (rpt_vfs_write(f, off, bytes + off, n) == 0);
+        off += n;
+    }
+    vfs_close(f);
+    if (ok) {
+        klog(LOG_INFO, "TPM", "attestation report exported: X:\\Diag\\attestation.json");
+        return;
+    }
+    z = vfs_open("X:\\Diag\\attestation.json", VFS_O_WRITE | VFS_O_TRUNC);
+    if (z) {
+        vfs_close(z);
+        klog(LOG_WARN, "TPM",
+             "attestation export: write error -> zeroed partial X:\\Diag\\attestation.json");
+    } else {
+        klog(LOG_ERROR, "TPM",
+             "attestation export: write error AND could not zero -> partial "
+             "X:\\Diag\\attestation.json may remain");
+    }
+}
+
+/* Leave X:\Diag\attestation.json EMPTY when this boot publishes no report, so
+ * a previous boot's document can never be read as this boot's. */
+static void snapshot_zero_file(void)
+{
+    struct vfs_node *z = vfs_open("X:\\Diag\\attestation.json", VFS_O_WRITE | VFS_O_TRUNC);
+    if (z)
+        vfs_close(z);
+}
+
+void tpm_attest_report_export(void)
+{
+    struct boot_attestation_report *r;
+    struct attest_json_mem m;
+    uint8_t nonce[TPM_QUOTE_NONCE_MAX];
+    const uint8_t *np = 0;
+    uint16_t nl = 0;
+    uint32_t expect = 0u;
+    tpm_attest_status_t bs;
+    int rc;
+
+    /* One boot, one report: a second call keeps the published snapshot. */
+    if (!__atomic_compare_exchange_n(&s_snap_state, &expect, 1u, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        klog(LOG_WARN, "TPM", "attestation export: report already built this boot");
+        return;
     }
 
     r = (struct boot_attestation_report *)kmalloc(sizeof *r);
     if (!r) {
-        klog(LOG_WARN, "TPM", "attestation export: out of memory");
-        vfs_close(f);
-        return;
+        klog(LOG_WARN, "TPM", "attestation export: out of memory -> no report this boot");
+        snapshot_zero_file();
+        return;   /* state stays 1: never published, never retried */
     }
 
-    /* A fresh CSPRNG challenge so the file carries a signed quote; fall back to an
-     * unsigned self-test report when the CSPRNG is not yet crypto-ready. */
+    /* A fresh CSPRNG challenge so the report carries a signed quote; fall back
+     * to an unsigned self-test report when the CSPRNG is not yet crypto-ready. */
     if (csprng_crypto_ok()) {
         csprng_fill(nonce, sizeof nonce);
         np = nonce;
@@ -735,19 +811,14 @@ void tpm_attest_report_export(void)
      * no TPM evidence, which the serializer renders without any trust field.
      * That is the one case a relying party most needs to see. Every other
      * non-OK status means the struct holds unevaluated zeros, and zero is a
-     * VALID enum value for quote_status, ak_status and ek_status, so it is
-     * written as nothing: the file is truncated on open, and the explicit
-     * re-truncate keeps that true even if a future edit writes a prefix first. */
+     * VALID enum value for quote_status, ak_status and ek_status, so nothing is
+     * published and the file is truncated to empty. */
     bs = tpm_attest_report_build(np, nl, r);
     if (bs != TPM_ATTEST_OK && bs != TPM_ATTEST_SELF_CORRUPT) {
-        struct vfs_node *z;
-        vfs_close(f);
         kfree(r);
-        z = vfs_open("X:\\Diag\\attestation.json", VFS_O_WRITE | VFS_O_TRUNC);
-        if (z)
-            vfs_close(z);
+        snapshot_zero_file();
         klog(LOG_ERROR, "TPM",
-             "attestation export: report build failed (status %u) -> no artifact written",
+             "attestation export: report build failed (status %u) -> no report this boot",
              (uint64_t)bs);
         return;
     }
@@ -755,28 +826,20 @@ void tpm_attest_report_export(void)
         klog(LOG_ERROR, "TPM",
              "attestation export: kernel identity invalid -> diagnostic report only");
 
-    rc = tpm_attest_report_to_json(r, rpt_vfs_write, f);
-    vfs_close(f);
+    m.buf = s_snap;
+    m.cap = (uint32_t)sizeof s_snap;
+    m.len = 0u;
+    rc = tpm_attest_report_to_json(r, tpm_attest_json_mem_write, &m);
     kfree(r);
-
     if (rc != 0) {
-        /* A mid-stream write failure may have left a partial JSON prefix on disk.
-         * Re-truncate to zero so a consumer sees a clear empty (absent) artifact,
-         * never a corrupt partial report. The cleanup reopen can ITSELF fail under
-         * the same storage fault -- only claim "zeroed" when it actually happened,
-         * else warn loudly that a partial file may remain. */
-        struct vfs_node *z = vfs_open("X:\\Diag\\attestation.json",
-                                      VFS_O_WRITE | VFS_O_TRUNC);
-        if (z) {
-            vfs_close(z);
-            klog(LOG_WARN, "TPM",
-                 "attestation export: write error -> zeroed partial X:\\Diag\\attestation.json");
-        } else {
-            klog(LOG_ERROR, "TPM",
-                 "attestation export: write error AND could not zero -> partial "
-                 "X:\\Diag\\attestation.json may remain");
-        }
-    } else {
-        klog(LOG_INFO, "TPM", "attestation report exported: X:\\Diag\\attestation.json");
+        klog(LOG_ERROR, "TPM", "attestation export: report exceeds %u bytes -> not published",
+             (uint64_t)ATTEST_REPORT_JSON_MAX);
+        snapshot_zero_file();
+        return;
     }
+    s_snap_len = m.len;
+    __atomic_store_n(&s_snap_state, 2u, __ATOMIC_RELEASE);
+    klog(LOG_INFO, "TPM", "attestation report published (%u bytes)", (uint64_t)m.len);
+
+    snapshot_write_file(s_snap, s_snap_len);
 }

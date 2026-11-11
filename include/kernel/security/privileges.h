@@ -9,6 +9,7 @@
 #pragma once
 
 #include "kernel/security/luid.h"
+#include "kernel/security/sid.h"   /* SID, for the membership checks */
 
 /* --- Privilege LUID constants -------------------------------------------- */
 
@@ -179,3 +180,17 @@ int SePrivilegeCheckToken(struct access_token *token, PRIVILEGE_SET *ps,
  * kernel syscall handlers call before privileged operations.
  */
 int SeSinglePrivilegeCheck(const LUID *privilege, uint32_t access_mode);
+
+/*
+ * SeTokenIsMemberOf -- does `token` carry `sid` as its user, or as a group that
+ * is ENABLED and not USE_FOR_DENY_ONLY? This is CheckTokenMembership: a
+ * filtered (UAC split) administrator token, whose Administrators group is
+ * deny-only, is not a member. NULL token, NULL sid, or a GroupCount above
+ * TOKEN_MAX_GROUPS fails closed (returns 0).
+ *
+ * SeSubjectIsMemberOf -- the same over the current subject's effective token
+ * (the impersonation token when one is set, else the primary). KernelMode
+ * (access_mode 0) returns 1, as SeSinglePrivilegeCheck does.
+ */
+int SeTokenIsMemberOf(const struct access_token *token, const SID *sid);
+int SeSubjectIsMemberOf(const SID *sid, uint32_t access_mode);

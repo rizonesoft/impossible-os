@@ -12,8 +12,21 @@
 #include "kernel/crypto/sha256.h"
 #include "boot/pcr_manifest.h"            /* the loader's PCR-11 manifest event */
 #include "libc/string.h"
+#include "kernel/nt/ntstatus.h"
+#include "kernel/nt/ssdt.h"               /* ssdt_dispatch */
+#include "kernel/nt/zw.h"                 /* ssdt_set_previous_mode, SSDT_USER_MODE */
+#include "kernel/klog.h"
+#include "kernel/nt/service_numbers.h"    /* SSDT_NtQuerySystemInformation */
+#include "kernel/nt/attest_syscall_info.h"
+#include "kernel/security/token.h"        /* SeCreateUserToken */
+#include "kernel/ob/ob.h"
+#include "kernel/sched/task.h"
 
 extern const struct boot_proto_descriptor kernel_boot_proto;
+extern NTSTATUS nt_query_attestation_information_from(int allowed, const uint8_t *snap,
+                                                      uint32_t snap_len, void *buffer,
+                                                      uint32_t buf_size,
+                                                      uint32_t *return_length);
 
 /* Static fixtures off the test stack: boot_info is large and the report is ~2.3 KB. */
 static struct boot_attestation_report s_report;
@@ -480,6 +493,152 @@ static void test_attest_report_scoped_verdict(void)
                    "NULL descriptor -> SELF_CORRUPT");
 }
 
+/* The snapshot buffer must hold the largest report the serializer accepts:
+ * every length at its cap and every text field escaped at six bytes a byte. */
+static uint8_t s_big[ATTEST_REPORT_JSON_MAX];
+static char    s_label[65];
+static char    s_scope[513];
+
+static void test_attest_report_size_bound(void)
+{
+    uint8_t nonce[TPM_QUOTE_NONCE_MIN];
+    struct attest_json_mem m;
+    uint32_t i;
+    int rc;
+
+    memset(nonce, 0x5Au, sizeof nonce);
+    rc = (int)tpm_attest_report_build(nonce, sizeof nonce, &s_report);
+    TEST_ASSERT_EQ((uint32_t)rc, (uint32_t)TPM_ATTEST_OK, "base report built");
+    TEST_ASSERT_EQ((uint32_t)s_report.manifest_valid, 1u, "full (non-diagnostic) rendering");
+
+    s_report.pcr_count = ATTEST_REPORT_PCR_MAX;
+    for (i = 0; i < ATTEST_REPORT_PCR_MAX; i++) {
+        s_report.pcrs[i].digest_len = (uint16_t)sizeof s_report.pcrs[i].digest;
+        memset(s_report.pcrs[i].digest, 0xFF, sizeof s_report.pcrs[i].digest);
+    }
+    s_report.nonce_len          = (uint16_t)sizeof s_report.nonce;
+    s_report.quote.nonce_len    = (uint16_t)sizeof s_report.quote.nonce;
+    s_report.quote_sig_len      = (uint32_t)sizeof s_report.quote_sig;
+    s_report.quote.attest_raw_len = (uint16_t)sizeof s_report.quote.attest_raw;
+    s_report.quote.pcr_digest_len = (uint16_t)sizeof s_report.quote.pcr_digest;
+    s_report.ak_pub_len         = (uint16_t)sizeof s_report.ak_pub;
+    s_report.ek_cert_len        = (uint16_t)sizeof s_report.ek_cert;
+    s_report.quote.clock        = ~0ull;
+    s_report.quote.firmware_version = ~0ull;
+    s_report.quote.reset_count  = ~0u;
+    s_report.quote.restart_count = ~0u;
+    memset(s_label, 0x01, sizeof s_label - 1u);
+    memset(s_scope, 0x01, sizeof s_scope - 1u);
+    s_label[sizeof s_label - 1u] = 0;
+    s_scope[sizeof s_scope - 1u] = 0;
+    s_report.integrity_label = s_label;
+    s_report.integrity_scope = s_scope;
+    memset(s_report.loader_identity.build_label, 0x01,
+           sizeof s_report.loader_identity.build_label);
+
+    m.buf = s_big;
+    m.cap = (uint32_t)sizeof s_big;
+    m.len = 0u;
+    rc = tpm_attest_report_to_json(&s_report, tpm_attest_json_mem_write, &m);
+    TEST_ASSERT_EQ(rc, 0, "worst-case report fits ATTEST_REPORT_JSON_MAX");
+    TEST_ASSERT(m.len + 1024u <= ATTEST_REPORT_JSON_MAX, "with at least 1 KiB headroom");
+    klog(LOG_INFO, "test", "attest worst-case report: %u of %u bytes",
+         (uint64_t)m.len, (uint64_t)ATTEST_REPORT_JSON_MAX);
+
+    /* The memory sink refuses what does not fit, and an out-of-order write. */
+    m.cap = 16u;
+    m.len = 0u;
+    TEST_ASSERT(tpm_attest_report_to_json(&s_report, tpm_attest_json_mem_write, &m) != 0,
+                "a short sink fails the serializer");
+    m.cap = (uint32_t)sizeof s_big;
+    m.len = 4u;
+    TEST_ASSERT(tpm_attest_json_mem_write(&m, 0u, nonce, 1u) != 0, "out-of-order write refused");
+    TEST_ASSERT(tpm_attest_json_mem_write(&m, 4u, nonce, 1u) == 0, "in-order write accepted");
+    TEST_ASSERT(tpm_attest_json_mem_write((void *)0, 0u, nonce, 1u) != 0, "NULL sink refused");
+}
+
+/* NtQuerySystemInformation(SystemAttestationReportInformation): refusal first,
+ * then not-found, then the size query, then the bytes. */
+static void test_attest_query_class(void)
+{
+    static const uint8_t doc[] = "{\"schemaVersion\":3}\n";
+    const uint32_t dl = (uint32_t)(sizeof doc - 1u);
+    uint8_t  out[64];
+    uint32_t rl;
+    NTSTATUS st;
+
+    rl = 0xDEADu;
+    memset(out, 0xAA, sizeof out);
+    st = nt_query_attestation_information_from(0, doc, dl, out, sizeof out, &rl);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_ACCESS_DENIED, "non-administrator refused");
+    TEST_ASSERT_EQ(rl, 0xDEADu, "a refusal reveals no size");
+    TEST_ASSERT_EQ((uint32_t)out[0], 0xAAu, "a refusal writes nothing");
+
+    st = nt_query_attestation_information_from(1, (const uint8_t *)0, 0u, out, sizeof out, &rl);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_NOT_FOUND, "no published report -> NOT_FOUND");
+    TEST_ASSERT_EQ(rl, 0xDEADu, "NOT_FOUND reports no size");
+
+    st = nt_query_attestation_information_from(1, doc, dl, (void *)0, 0u, &rl);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INFO_LENGTH_MISMATCH, "size query");
+    TEST_ASSERT_EQ(rl, dl, "size query returns the document length");
+
+    rl = 0u;
+    st = nt_query_attestation_information_from(1, doc, dl, out, dl - 1u, &rl);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INFO_LENGTH_MISMATCH, "one byte short");
+    TEST_ASSERT_EQ(rl, dl, "short buffer still learns the length");
+    TEST_ASSERT_EQ((uint32_t)out[0], 0xAAu, "short buffer is not written");
+
+    rl = 0u;
+    st = nt_query_attestation_information_from(1, doc, dl, out, sizeof out, &rl);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "exact document returned");
+    TEST_ASSERT_EQ(rl, dl, "return length is the document length");
+    TEST_ASSERT_EQ(memcmp(out, doc, dl), 0, "bytes match");
+    TEST_ASSERT_EQ((uint32_t)out[dl], 0xAAu, "nothing past the document");
+
+    st = nt_query_attestation_information_from(1, doc, dl, out, sizeof out, (uint32_t *)0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "ReturnLength is optional");
+}
+
+/* The class is wired into the real dispatcher and gated on the CALLER: a
+ * user-mode standard user is refused; kernel mode reaches the snapshot. */
+static void test_attest_query_dispatch(void)
+{
+    struct task  *cur = task_current();
+    ACCESS_TOKEN *usr = SeCreateUserToken(SeBuiltinUsersSid, 0);
+    void         *saved;
+    const uint8_t *snap;
+    uint32_t snap_len = 0u, rl = 0xDEADu;
+    NTSTATUS st;
+
+    TEST_ASSERT(cur && usr, "standard-user token created");
+    if (!cur || !usr) {
+        if (usr) ObDereferenceObject(usr);
+        return;
+    }
+    saved = cur->token;
+    cur->token = usr;
+    ssdt_set_previous_mode(SSDT_USER_MODE);
+    st = ssdt_dispatch(SSDT_NtQuerySystemInformation, SystemAttestationReportInformation,
+                       0, 0, (uint64_t)(uintptr_t)&rl, 0, 0);
+    ssdt_set_previous_mode(SSDT_KERNEL_MODE);
+    cur->token = saved;
+    ObDereferenceObject(usr);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_ACCESS_DENIED,
+                   "user-mode standard user refused through the dispatcher");
+    TEST_ASSERT_EQ(rl, 0xDEADu, "dispatcher refusal reveals no size");
+
+    st = ssdt_dispatch(SSDT_NtQuerySystemInformation, SystemAttestationReportInformation,
+                       0, 0, (uint64_t)(uintptr_t)&rl, 0, 0);
+    if (tpm_attest_report_snapshot(&snap, &snap_len)) {
+        TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INFO_LENGTH_MISMATCH,
+                       "kernel-mode size query of the published report");
+        TEST_ASSERT_EQ(rl, snap_len, "size is the published length");
+    } else {
+        TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_NOT_FOUND,
+                       "no report published yet -> NOT_FOUND");
+    }
+}
+
 void test_register_tpm_attest_report(void)
 {
     test_suite_register_cat("tpm: attest handoff snapshot capture",
@@ -492,4 +651,10 @@ void test_register_tpm_attest_report(void)
                             test_attest_manifest_binding, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: attest report scoped verdict",
                             test_attest_report_scoped_verdict, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: attest report size bound",
+                            test_attest_report_size_bound, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: attest query class marshaller",
+                            test_attest_query_class, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: attest query class dispatch",
+                            test_attest_query_dispatch, TEST_CAT_SECURITY);
 }

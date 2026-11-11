@@ -200,9 +200,9 @@ struct boot_attestation_report {
     uint16_t ek_cert_len;
     uint8_t  ek_cert[TPM_EK_CERT_MAX];
 
-    /* Forward-compat DRTM slots: zeroed today (native BOOTX64 issues no
-     * SENTER/SKINIT); a future Secure Launch adapter populates without a
-     * schema break. */
+    /* Forward-compat DRTM slots: no entry today (entry PCR 0xFF, the others 0;
+     * native BOOTX64 issues no SENTER/SKINIT); a future Secure Launch adapter
+     * populates them without a schema break. */
     uint8_t  drtm_entry_pcr;        /* 0xFF = none (typically 17 when present) */
     uint8_t  drtm_acm_status;       /* 0 = none */
     uint8_t  drtm_measurement_type; /* 0=none, 1=TXT SENTER, 2=SKINIT */
@@ -269,7 +269,27 @@ typedef int (*attest_json_write_fn)(void *ctx, uint32_t off, const uint8_t *data
 int tpm_attest_report_to_json(const struct boot_attestation_report *r,
                               attest_json_write_fn write, void *ctx);
 
-/* Build a fresh report (with a CSPRNG nonce when the CSPRNG is crypto-ready, else
- * an unsigned self-test report) and export it to X:\Diag\attestation.json. Best
- * effort: logs and returns on any failure, never halts. Call once X:\ is mounted. */
+/* Upper bound of one serialized report. Every variable field is capped by its
+ * array (9 PCRs, 64-byte nonce, 72-byte signature, 160-byte AK, 1024-byte EK
+ * cert, each hex-doubled); a unit test serializes a report with every length
+ * at its cap and checks it fits with headroom. */
+#define ATTEST_REPORT_JSON_MAX  (12u * 1024u)
+
+/* Build this boot's report once (with a CSPRNG nonce when the CSPRNG is
+ * crypto-ready, else an unsigned self-test report), publish its JSON as the
+ * snapshot tpm_attest_report_snapshot() returns, then write it to
+ * X:\Diag\attestation.json. The snapshot is published whether or not that
+ * volume is writable. Best effort: logs and returns on any failure, never
+ * halts. A second call is refused and leaves the published snapshot alone. */
 void tpm_attest_report_export(void);
+
+/* The published report: 1 with `*bytes`/`*len` naming the immutable JSON
+ * document (schema ATTEST_REPORT_SCHEMA_VERSION, no NUL), or 0 when none has
+ * been published this boot. Safe from any CPU without a lock: the bytes never
+ * change once visible (acquire on the publication state). */
+int tpm_attest_report_snapshot(const uint8_t **bytes, uint32_t *len);
+
+/* attest_json_write_fn over a memory sink (ctx is a struct attest_json_mem);
+ * refuses a write that is out of order or past cap. */
+struct attest_json_mem { uint8_t *buf; uint32_t cap; uint32_t len; };
+int tpm_attest_json_mem_write(void *ctx, uint32_t off, const uint8_t *data, uint32_t n);

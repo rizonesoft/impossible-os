@@ -1177,6 +1177,84 @@ static void test_se_privilege_check_token(void)
 
 /* SeAssignSecurity: SD inheritance, canonical ordering, propagation flags,
  * SE_DACL_PROTECTED, fallback, and owned-storage teardown. */
+/* SeTokenIsMemberOf is CheckTokenMembership: the user SID, or a group that is
+ * ENABLED and not deny-only. The administrator-only query class rests on it. */
+static int admins_index(const ACCESS_TOKEN *t)
+{
+    uint32_t i;
+    for (i = 0; i < t->GroupCount; i++)
+        if (RtlEqualSid(t->Groups[i].Sid, SeBuiltinAdministratorsSid))
+            return (int)i;
+    return -1;
+}
+
+static void test_se_token_membership(void)
+{
+    struct task  *cur = task_current();
+    void         *saved;
+    ACCESS_TOKEN *sys = SeCreateSystemToken();
+    ACCESS_TOKEN *adm = SeCreateUserToken(SeBuiltinUsersSid, 1);
+    ACCESS_TOKEN *usr = SeCreateUserToken(SeBuiltinUsersSid, 0);
+    uint32_t keep;
+    int ai;
+
+    TEST_ASSERT(cur && sys && adm && usr, "tokens created");
+    if (!cur || !sys || !adm || !usr)
+        goto out;
+    saved = cur->token;
+
+    TEST_ASSERT_EQ(SeTokenIsMemberOf((struct access_token *)sys, SeBuiltinAdministratorsSid), 1,
+                   "SYSTEM is an administrator");
+    TEST_ASSERT_EQ(SeTokenIsMemberOf((struct access_token *)sys, SeLocalSystemSid), 1,
+                   "the user SID counts");
+    TEST_ASSERT_EQ(SeTokenIsMemberOf((struct access_token *)adm, SeBuiltinAdministratorsSid), 1,
+                   "an elevated administrator is a member");
+    TEST_ASSERT_EQ(SeTokenIsMemberOf((struct access_token *)usr, SeBuiltinAdministratorsSid), 0,
+                   "a standard user is not");
+    TEST_ASSERT_EQ(SeTokenIsMemberOf((struct access_token *)usr, SeWorldSid), 1,
+                   "an enabled group counts");
+
+    ai = admins_index(adm);
+    TEST_ASSERT(ai >= 0, "admin token carries the Administrators group");
+    if (ai >= 0) {
+        keep = adm->Groups[ai].Attributes;
+        adm->Groups[ai].Attributes = SE_GROUP_USE_FOR_DENY_ONLY;
+        TEST_ASSERT_EQ(SeTokenIsMemberOf((struct access_token *)adm, SeBuiltinAdministratorsSid), 0,
+                       "a filtered (deny-only) administrator is not a member");
+        adm->Groups[ai].Attributes = SE_GROUP_ENABLED | SE_GROUP_USE_FOR_DENY_ONLY;
+        TEST_ASSERT_EQ(SeTokenIsMemberOf((struct access_token *)adm, SeBuiltinAdministratorsSid), 0,
+                       "deny-only wins over enabled");
+        adm->Groups[ai].Attributes = 0u;
+        TEST_ASSERT_EQ(SeTokenIsMemberOf((struct access_token *)adm, SeBuiltinAdministratorsSid), 0,
+                       "a disabled group is not membership");
+        adm->Groups[ai].Attributes = keep;
+    }
+    keep = adm->GroupCount;
+    adm->GroupCount = TOKEN_MAX_GROUPS + 1u;
+    TEST_ASSERT_EQ(SeTokenIsMemberOf((struct access_token *)adm, SeBuiltinAdministratorsSid), 0,
+                   "an over-large group count fails closed");
+    adm->GroupCount = keep;
+    TEST_ASSERT_EQ(SeTokenIsMemberOf((struct access_token *)0, SeBuiltinAdministratorsSid), 0,
+                   "NULL token fails closed");
+    TEST_ASSERT_EQ(SeTokenIsMemberOf((struct access_token *)adm, (const SID *)0), 0,
+                   "NULL SID fails closed");
+
+    /* The subject form reads the effective token; KernelMode passes. */
+    cur->token = usr;
+    TEST_ASSERT_EQ(SeSubjectIsMemberOf(SeBuiltinAdministratorsSid, 1), 0,
+                   "user-mode standard subject refused");
+    TEST_ASSERT_EQ(SeSubjectIsMemberOf(SeBuiltinAdministratorsSid, 0), 1,
+                   "kernel mode passes");
+    cur->token = adm;
+    TEST_ASSERT_EQ(SeSubjectIsMemberOf(SeBuiltinAdministratorsSid, 1), 1,
+                   "user-mode administrator subject passes");
+    cur->token = saved;
+out:
+    if (sys) ObDereferenceObject(sys);
+    if (adm) ObDereferenceObject(adm);
+    if (usr) ObDereferenceObject(usr);
+}
+
 static void test_se_assign_security(void)
 {
     uint8_t pbuf[256];
@@ -1328,6 +1406,8 @@ void test_register_security(void)
     test_suite_register_cat("Security: SePrivilegeCheck", test_privilege_check, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: SePrivilegeCheckToken (token-explicit)",
                             test_se_privilege_check_token, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: SeTokenIsMemberOf (CheckTokenMembership)",
+                            test_se_token_membership, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: SeAssignSecurity SD inheritance",
                             test_se_assign_security, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: privilege set to string", test_privilege_set_to_string, TEST_CAT_SECURITY);

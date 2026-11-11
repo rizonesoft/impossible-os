@@ -197,6 +197,8 @@ Recommended: A, since it adds no SSDT entry. I did not check how the existing cl
 
 A: (operator, 2026-11-07) A: an `NtQuerySystemInformation` class restricted to administrators. The section must confirm how existing classes gate access.
 
+Shipped 2026-11-11: `SystemAttestationReportInformation` (0x1004). Existing classes gate on a privilege (`SeSinglePrivilegeCheck`, e.g. SeSystemProfilePrivilege); none means "administrator", so the class checks BUILTIN\Administrators membership instead (`SeSubjectIsMemberOf`: enabled, not deny-only, so a filtered UAC token is refused). Reversal cost: one gate call in `nt_query_attestation_information`.
+
 ## Q14 (TODO-13 §9/§13): which remote-attestation protocol does the platform target?
 
 A verifier-side challenge does not exist in the tree, so `TPM2_MakeCredential` / `TPM2_ActivateCredential` has no peer and the "remote-attestation placeholder" has nothing to be a placeholder for. No candidate protocol was researched for this question.

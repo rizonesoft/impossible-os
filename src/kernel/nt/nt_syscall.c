@@ -36,6 +36,9 @@
 #include "kernel/nt/nls_syscall_info.h" /* SYSTEM_NLS_INFORMATION ABI */
 #include "kernel/nt/knf_syscall_info.h" /* SYSTEM_NOTIFICATION_INFORMATION ABI */
 #include "kernel/nt/quota_pressure_info.h" /* SYSTEM_RESOURCE_PRESSURE_INFORMATION ABI */
+#include "kernel/nt/attest_syscall_info.h" /* SystemAttestationReportInformation */
+#include "kernel/tpm_attest_report.h"       /* tpm_attest_report_snapshot */
+#include "kernel/security/sid.h"            /* SeBuiltinAdministratorsSid */
 #include "kernel/quota/quota_stall.h"  /* stall telemetry snapshot source */
 
 /* The wire row count and the kernel domain count are two independent
@@ -1170,6 +1173,51 @@ NTSTATUS nt_query_nls_information(void *buffer, uint32_t buf_size,
     return STATUS_SUCCESS;
 }
 
+/* SystemAttestationReportInformation marshaller (contract in
+ * nt/attest_syscall_info.h). `allowed` is the access decision and `snap` the
+ * published document (NULL when none), both supplied by the caller so the unit
+ * tests drive every branch with real tokens and a fixture document. The
+ * decision comes first: a refused caller learns nothing, not even the size. */
+NTSTATUS nt_query_attestation_information_from(int allowed, const uint8_t *snap,
+                                               uint32_t snap_len, void *buffer,
+                                               uint32_t buf_size, uint32_t *return_length)
+{
+    if (!allowed)
+        return STATUS_ACCESS_DENIED;
+    if (!snap || snap_len == 0u)
+        return STATUS_NOT_FOUND;
+    if (return_length) {
+        NTSTATUS pst = ProbeForWriteIfUser(return_length, (uint32_t)sizeof(uint32_t), 4);
+        if (pst != STATUS_SUCCESS)
+            return pst;
+        if (copy_to_user(return_length, &snap_len, (uint32_t)sizeof(uint32_t)) != 0)
+            return STATUS_ACCESS_VIOLATION;
+    }
+    if (!buffer || buf_size < snap_len)
+        return STATUS_INFO_LENGTH_MISMATCH;
+    {
+        NTSTATUS pst = ProbeForWriteIfUser(buffer, snap_len, 1);
+        if (pst != STATUS_SUCCESS)
+            return pst;
+    }
+    if (copy_to_user(buffer, snap, snap_len) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS nt_query_attestation_information(void *buffer, uint32_t buf_size,
+                                                 uint32_t *return_length)
+{
+    const uint8_t *snap = (const uint8_t *)0;
+    uint32_t len = 0u;
+    int allowed = SeSubjectIsMemberOf(SeBuiltinAdministratorsSid, ssdt_previous_mode());
+
+    if (allowed && !tpm_attest_report_snapshot(&snap, &len))
+        snap = (const uint8_t *)0;
+    return nt_query_attestation_information_from(allowed, snap, len, buffer, buf_size,
+                                                 return_length);
+}
+
 static NTSTATUS NtQuerySystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
                                          uint64_t a4, uint64_t a5, uint64_t a6)
 {
@@ -1542,6 +1590,8 @@ static NTSTATUS NtQuerySystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
         return nt_query_notification_information(buffer, buf_size, return_length);
     case SystemResourcePressureInformation:
         return nt_query_resource_pressure_information(buffer, buf_size, return_length);
+    case SystemAttestationReportInformation:
+        return nt_query_attestation_information(buffer, buf_size, return_length);
     default:
         /* SCOPE-GAP-ALLOWED: NT API contract default for unrecognized
          * SystemInformationClass values; Windows ntoskrnl returns the

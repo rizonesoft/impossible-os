@@ -238,6 +238,31 @@ int SePrivilegeCheck(PRIVILEGE_SET *ps, uint32_t access_mode)
                                  ps, access_mode);
 }
 
+int SeTokenIsMemberOf(const struct access_token *token, const SID *sid)
+{
+    const ACCESS_TOKEN *tok = (const ACCESS_TOKEN *)token;
+    uint32_t i;
+
+    if (!tok || !sid || tok->GroupCount > TOKEN_MAX_GROUPS)
+        return 0;
+    if (tok->UserSid && RtlEqualSid(tok->UserSid, sid))
+        return 1;
+    for (i = 0; i < tok->GroupCount; i++) {
+        uint32_t a = tok->Groups[i].Attributes;
+        if (tok->Groups[i].Sid && RtlEqualSid(tok->Groups[i].Sid, sid) &&
+            (a & SE_GROUP_ENABLED) && !(a & SE_GROUP_USE_FOR_DENY_ONLY))
+            return 1;
+    }
+    return 0;
+}
+
+int SeSubjectIsMemberOf(const SID *sid, uint32_t access_mode)
+{
+    if (access_mode == SE_KERNEL_MODE)
+        return 1;
+    return SeTokenIsMemberOf((const struct access_token *)sep_effective_token(), sid);
+}
+
 int SeSinglePrivilegeCheck(const LUID *privilege, uint32_t access_mode)
 {
     if (access_mode == SE_KERNEL_MODE)
