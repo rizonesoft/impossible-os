@@ -11,7 +11,9 @@ So the backstop fires on **stalled progress**, not round count:
   - STOP when K consecutive rounds find NOTHING NEW (default K=3) -- a genuine
     loop (same finding repeating / no forward motion), not a deep escalating
     review.
-  - Plus a very high COUNT CEILING (default 42, the one cap for all code) as a final infinite-loop guard.
+  - Plus a very high COUNT CEILING as a final infinite-loop guard: `pass_cap`
+    in .conclave/reviewers.toml (45, the one cap for all code; it counts every
+    returned pass of a section, where the 42 it replaced counted re-dispatches).
 A round that finds a NEW finding resets the stall streak to 0 -- the review
 may run as long as it stays productive.
 
@@ -35,8 +37,11 @@ CLI:
         2 = CAPPED (stop the loop: spin unresolved findings to a follow-up + escalate).
   --status [SLICE]
   --reset
-Env: OVERNIGHT_REVIEW_NOPROGRESS_CAP (default 3), OVERNIGHT_REVIEW_ROUND_CEILING
-(default 42). Optional --state PATH (testability). Stdlib only.
+Both numbers come from the reviewer pin (.conclave/reviewers.toml: pass_cap and
+no_progress_cap). Env OVERNIGHT_REVIEW_NOPROGRESS_CAP and
+OVERNIGHT_REVIEW_ROUND_CEILING override them for one call. A pin that cannot be
+read leaves the built-in 3 and 45 and says so on stderr: the backstop must keep
+working when the pin is broken. Optional --state PATH (testability). Stdlib only.
 """
 from __future__ import annotations
 
@@ -48,18 +53,38 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STATE = ROOT / ".claude" / "state" / "review-rounds"
 
 
-def _noprogress_cap() -> int:
+BUILTIN_NOPROGRESS_CAP = 3
+BUILTIN_CEILING = 45
+
+
+def _pin_caps(pin_path: Path | None = None) -> tuple[int, int]:
+    """(no_progress_cap, pass_cap) from the reviewer pin, or the built-in pair when it cannot be read."""
+    scripts = str(ROOT / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
     try:
-        return max(1, int(os.environ.get("OVERNIGHT_REVIEW_NOPROGRESS_CAP", "3")))
+        import review_pin
+        pin = review_pin.load_pin(pin_path) if pin_path else review_pin.load_pin()
+        return pin["no_progress_cap"], pin["pass_cap"]
+    except Exception as exc:  # noqa: BLE001 -- any failure to read the pin keeps the backstop alive
+        sys.stderr.write(f"[review-round-guard] the reviewer pin could not be read ({exc}); "
+                         f"using {BUILTIN_NOPROGRESS_CAP} and {BUILTIN_CEILING}\n")
+        return BUILTIN_NOPROGRESS_CAP, BUILTIN_CEILING
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, "")))
     except ValueError:
-        return 3
+        return default
+
+
+def _noprogress_cap() -> int:
+    return _env_int("OVERNIGHT_REVIEW_NOPROGRESS_CAP", _pin_caps()[0])
 
 
 def _ceiling() -> int:
-    try:
-        return max(1, int(os.environ.get("OVERNIGHT_REVIEW_ROUND_CEILING", "42")))
-    except ValueError:
-        return 42
+    return _env_int("OVERNIGHT_REVIEW_ROUND_CEILING", _pin_caps()[1])
 
 
 def _read(state: Path) -> tuple[str, int, int]:

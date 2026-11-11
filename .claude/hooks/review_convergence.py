@@ -129,6 +129,12 @@ KIND_SCOPES = {
     "consistency": ("src", "todo", "tooling"),
     "design": ("src", "todo", "tooling"),
     "gap-audit": ("src", "todo", "tooling"),
+    # The reviewer pin's four passes read the plan and the record as well as
+    # the code, so each takes the widest scope.
+    "plan": ("src", "todo", "tooling"),
+    "round": ("src", "todo", "tooling"),
+    "completion": ("src", "todo", "tooling"),
+    "reconciliation": ("src", "todo", "tooling"),
 }
 
 

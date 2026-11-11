@@ -10,6 +10,8 @@ A pin that is missing or invalid raises Refused. Nothing here falls back to an e
     python3 scripts/review_pin.py --check          # the pin holds, and Codex is configured for its model
     python3 scripts/review_pin.py --kinds          # one schedule kind per line
     python3 scripts/review_pin.py --lenses round   # that pass's lenses with their questions
+    python3 scripts/review_pin.py --verdicts round --transcript FILE   # lenses the review gave no verdict for
+    --paths-file FILE                              # the section's changed files, one a line (conditional lenses)
     python3 scripts/review_pin.py --caps           # pass_cap and no_progress_cap
 """
 import argparse
@@ -28,12 +30,14 @@ SECTION_KINDS = ("plan", "round", "completion", "reconciliation")
 FILE_KINDS = ("gap-audit",)
 
 # The lenses a schedule may name, each with the question the reviewer is given for it.
+# No quote character and no word starting with two dashes: the Codex companion re-splits the
+# prompt into shell-like tokens and would read either as syntax (held by test_review_pin.py).
 LENSES = {
     "plan": "Is the plan sound, complete and buildable as written, and what would it miss on SMP or bare metal?",
     "adversarial": "What input, ordering, failure or concurrent caller breaks this change?",
     "integration": "Does every caller, registration, init phase and teardown path agree with the change?",
     "source-defect": "Which lines are wrong as written: bounds, lifetimes, locking, error paths, undefined behaviour?",
-    "plan-delivery": "Does the candidate deliver every item the section's plan promised, with nothing stubbed?",
+    "plan-delivery": "Does the candidate deliver every item the plan of the section promised, with nothing stubbed?",
     "consistency": "Do constants, struct offsets, tables and contracts match across header, source, assembly and test?",
     "record": "Does the TODO record (items, stamps, counts, cross-references) match what the candidate contains?",
     "quality": "Is this at or above the standard of Windows and Linux for the same feature, and where is it below?",
@@ -201,18 +205,36 @@ def main(argv=None):
     group.add_argument("--kinds", action="store_true")
     group.add_argument("--lenses", metavar="KIND", choices=SECTION_KINDS)
     group.add_argument("--caps", action="store_true")
+    group.add_argument("--verdicts", metavar="KIND", choices=SECTION_KINDS)
+    parser.add_argument("--transcript")
+    parser.add_argument("--paths-file")
     parser.add_argument("--pin", default=str(PIN))
     parser.add_argument("--codex-config", default=str(CODEX_CONFIG))
     args = parser.parse_args(argv)
     try:
         pin = load_pin(args.pin)
+        paths = ()
+        if args.paths_file:
+            try:
+                paths = tuple(p for p in pathlib.Path(args.paths_file).read_text().splitlines() if p)
+            except OSError as exc:
+                raise Refused(f"the changed-paths file cannot be read: {exc}") from exc
+        if args.verdicts:
+            _need(args.transcript, "--verdicts needs --transcript FILE")
+            try:
+                text = pathlib.Path(args.transcript).read_text(errors="replace")
+            except OSError as exc:
+                raise Refused(f"the transcript cannot be read: {exc}") from exc
+            missing = missing_lens_verdicts(pin, args.verdicts, text, paths)
+            print("\n".join(missing))
+            return 1 if missing else 0
         if args.check:
             check_codex_model(pin, args.codex_config)
             print(f"ok: {pin['reviewer']} ({pin['model']}), {THREE_PASS}, pass_cap {pin['pass_cap']}")
         elif args.kinds:
             print("\n".join(kinds(pin)))
         elif args.lenses:
-            print(lens_block(pin, args.lenses))
+            print(lens_block(pin, args.lenses, paths))
         else:
             print(f"pass_cap {pin['pass_cap']}\nno_progress_cap {pin['no_progress_cap']}")
     except Refused as exc:

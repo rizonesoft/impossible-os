@@ -388,7 +388,7 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/codex-gap-audit` | Codex red-team of a TODO gap-audit inventory (mandatory in `gap-audit-todo` Phase 3.5) |
 | `/codex-design-review` | Codex pre-implementation design review |
 | `/codex-review-todo` | Codex adversarial review of all implemented sections in a TODO |
-| `/codex-adversarial-review-section` | Codex adversarial review for a single section (until a clean round, cap 42) |
+| `/codex-adversarial-review-section` | Codex adversarial review for a single section (until a clean round, cap 45 from `.conclave/reviewers.toml`) |
 | `/codex-fix-review` | Fix Codex findings, re-review until resolved |
 | `/codex-test-coverage` | Codex test coverage gap analysis |
 | `/codex-impact-analysis` | Codex dependency impact analysis |

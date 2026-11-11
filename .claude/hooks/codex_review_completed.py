@@ -613,10 +613,20 @@ DISPATCH_KIND_BY_SKILL = {
 # step 8 + codex-prompt-template.md require a leading
 # `[review-kind: <kind>]` marker at the start of the prompt. The
 # regex tolerates whitespace and different bracket spellings.
+# The kinds a dispatch may carry: the per-angle kinds, and the four passes of
+# the reviewer pin (.conclave/reviewers.toml; scripts/review_pin.py SECTION_KINDS,
+# held equal by test_review_pin.py). ONE list: until 2026-11-11 the marker
+# regex and the stamp allowlist each spelled the kinds out, and a kind missing
+# from either was dropped with no error.
+LEGACY_REVIEW_KINDS = ("adversarial", "consistency", "perf", "re-adversarial",
+                       "adversarial-impl", "test-coverage", "design", "gap-audit")
+SECTION_PASS_KINDS = ("plan", "round", "completion", "reconciliation")
+REVIEW_KINDS = LEGACY_REVIEW_KINDS + SECTION_PASS_KINDS
 _REVIEW_KIND_RE = re.compile(
-    r"\[\s*review[-_ ]kind\s*:\s*(adversarial|consistency|perf|re-adversarial|adversarial-impl|test-coverage|design|gap-audit)\s*\]",
+    r"\[\s*review[-_ ]kind\s*:\s*(" + "|".join(REVIEW_KINDS) + r")\s*\]",
     re.IGNORECASE,
 )
+_ANY_REVIEW_KIND_RE = re.compile(r"\[\s*review[-_ ]kind\s*:\s*([A-Za-z][A-Za-z-]*)\s*\]")
 
 # TODO path locator: matches `todo/<domain>/TODO-XX-<slug>.md`. First
 # match wins; multiple matches surface a stderr WARN. The regex is
@@ -682,6 +692,13 @@ def _detect_review_kind(skill_name: str, prompt: str) -> str:
         return ""
     matches = _REVIEW_KIND_RE.findall(first_line)
     if not matches:
+        unknown = _ANY_REVIEW_KIND_RE.findall(first_line)
+        if unknown:
+            sys.stderr.write(
+                f"[review-stamps] WARN: unknown review kind {unknown[0]!r}; the "
+                f"dispatch is NOT recorded and no gate will credit it. Known "
+                f"kinds: {', '.join(REVIEW_KINDS)}.\n"
+            )
         return ""
     kinds = {m.lower() for m in matches}
     if len(kinds) != 1:
@@ -858,7 +875,7 @@ def _record_stamp(
     of the current HEAD before accepting the stamp; this prevents
     cross-branch reuse of dispatch evidence.
     """
-    if not todo_path or kind not in ("adversarial", "consistency", "perf", "re-adversarial", "adversarial-impl", "test-coverage", "design", "gap-audit"):
+    if not todo_path or kind not in REVIEW_KINDS:
         return (False, f"invalid kind={kind!r} or empty todo_path")
     path = _stamps_path(root)
     lock_path = _stamps_lock_path(root)

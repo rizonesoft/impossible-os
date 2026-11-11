@@ -153,6 +153,29 @@ _rest="${FIRST_LINE#*.md}"
 _m="$(printf '%s\n' "$_rest" | grep -oiE "^[[:space:]]*(section[[:space:]_:-]*|§[[:space:]]*)[0-9]+" | head -1 || true)"
 [[ -n "$_m" ]] || _m="$(printf '%s\n' "$_rest" | grep -oiE "(section[[:space:]_:-]*|§[[:space:]]*)[0-9]+" | head -1 || true)"
 SECTION="$(printf '%s' "$_m" | grep -oE '[0-9]+' | tail -1 || true)"
+# A pass of the reviewer pin (.conclave/reviewers.toml): the pin must hold and
+# Codex must be configured for its model, the pass's lenses are appended with
+# the verdict line each one owes, and below the returned review is checked for
+# those lines. A lens with no verdict is an incomplete pass, never a clean one
+# (the combined prompt was split in April 2026 because one angle was read and
+# the rest skimmed). REVIEW_BASE names the commit the section started from;
+# its changed files decide the conditional lenses.
+PIN_KIND=0; PIN_TOOL=""; PATHS_FILE=""
+case "$KIND" in plan|round|completion|reconciliation) PIN_KIND=1 ;; esac
+if [ "$PIN_KIND" = "1" ]; then
+    PIN_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_pin.py"
+    python3 "$PIN_TOOL" --check >&2 || {
+        echo "[$SELF_NAME] BLOCK -- the reviewer pin refuses a '$KIND' dispatch (reason above)" >&2; exit 2; }
+    PATHS_FILE="$(mktemp -t codex-dispatch-paths.XXXXXX)" || exit 2
+    trap 'rm -f "$PATHS_FILE"' EXIT
+    { git diff --name-only "${REVIEW_BASE:-HEAD~1}" HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null; } \
+        | sort -u > "$PATHS_FILE"
+    PIN_LENSES="$(python3 "$PIN_TOOL" --lenses "$KIND" --paths-file "$PATHS_FILE")" || {
+        echo "[$SELF_NAME] BLOCK -- the lenses of a '$KIND' pass could not be read" >&2; exit 2; }
+    PROMPT="$PROMPT
+
+$PIN_LENSES"
+fi
 STAMP="$(date +%Y%m%d-%H%M%S)"
 if mkdir -p "$REVIEWS_DIR" 2>/dev/null; then
     LOG_FILE="$(cd "$REVIEWS_DIR" && pwd)/${STAMP}-${KIND}-direct.out"
@@ -164,6 +187,18 @@ if [ -n "$LOG_FILE" ]; then
     set -o pipefail
     node "$COMPANION" adversarial-review "$PROMPT" 2>&1 | tee "$LOG_FILE"
     rc=$?
+    if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
+        PIN_MISSING="$(python3 "$PIN_TOOL" --verdicts "$KIND" --transcript "$LOG_FILE" --paths-file "$PATHS_FILE")"
+        case "$?" in
+            0) ;;
+            1) rc=3
+               echo "[$SELF_NAME] INCOMPLETE -- the review gave no verdict line for: $(printf '%s' "$PIN_MISSING" | tr '\n' ' ')" \
+                   | tee -a "$LOG_FILE" >&2
+               echo "[$SELF_NAME]   This pass does not count as clean. Dispatch it again." | tee -a "$LOG_FILE" >&2 ;;
+            *) rc=3
+               echo "[$SELF_NAME] INCOMPLETE -- the lens verdicts could not be checked" | tee -a "$LOG_FILE" >&2 ;;
+        esac
+    fi
     echo "Turn completed (rc=$rc)" >> "$LOG_FILE"
     PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
     TREE_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
