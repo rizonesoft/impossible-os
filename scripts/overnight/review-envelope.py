@@ -81,10 +81,21 @@ def leg_summary(entry: dict) -> dict:
     # verdict, and the review's worst level. rc 3 there is an INCOMPLETE pass
     # (a lens or the HIGHEST line is missing), not a crash: the reviewer ran,
     # and the same pass is dispatched again.
+    # The receipt, not the transcript, says how a pass ended: a review can
+    # quote a "Turn completed (rc=0)" line, and the first such line in the
+    # text would otherwise decide.
     if entry.get("pass_checked") is True:
-        out["pass"] = {"rc": entry.get("rc"), "highest": entry.get("highest") or None}
-        if entry.get("rc") == 3:
-            out["incomplete"] = True
+        rc, highest = entry.get("rc"), entry.get("highest") or None
+        out["pass"] = {"rc": rc, "highest": highest}
+        out["rc"] = rc
+        out["complete"] = True
+        if rc == 0 and highest in ("P1", "P2", "P3", "none"):
+            out["crashed"] = False
+        elif rc == 3 or rc == 0:
+            out["crashed"] = False
+            out["incomplete"] = True          # a lens or the HIGHEST line is missing
+        else:
+            out["crashed"] = True             # the dispatcher itself failed
     return out
 
 

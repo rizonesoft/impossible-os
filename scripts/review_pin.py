@@ -268,14 +268,16 @@ def section_status(root, todo, section):
     ("passes", <plan head>)  a pass was dispatched for it: it is on the reviewer pin's rules. The head is
                              the plan pass's candidate, the commit before the section's code (REVIEW_BASE);
                              "" when no checked plan receipt can be read.
-    ("older", "")            it has no pass and a review of the older kinds was recorded for it: it started
-                             before the pin and finishes on those rules.
+    ("older", "")            it has no pass and a review of the older kinds was recorded for it, in the
+                             reviews manifest or the stamp file: it started before the pin and finishes on
+                             those rules. The manifest is read first: the stamp file keeps one entry per
+                             kind per TODO, so a later section's review overwrites an earlier one's there.
     ("new", "")              nothing has been dispatched for it: it starts on the pin's rules.
     """
     import json
     root = pathlib.Path(root)
     section = str(section)
-    base, seen = "", False
+    base, seen, older = "", False, False
     try:
         lines = (root / MANIFEST).read_text().splitlines()
     except FileNotFoundError:
@@ -287,8 +289,11 @@ def section_status(root, todo, section):
             e = json.loads(line)
         except ValueError:
             continue
-        if not isinstance(e, dict) or e.get("todo") != todo or str(e.get("section", "")) != section \
-                or e.get("kind") not in SECTION_KINDS:
+        if not isinstance(e, dict) or e.get("todo") != todo or str(e.get("section", "")) != section:
+            continue
+        if e.get("kind") in OLDER_KINDS:
+            older = True
+        if e.get("kind") not in SECTION_KINDS:
             continue
         seen = True
         if e.get("kind") == "plan" and e.get("pass_checked") is True and e.get("rc") == 0 \
@@ -296,6 +301,8 @@ def section_status(root, todo, section):
             base = e["head"]
     if seen:
         return ("passes", base)
+    if older:
+        return ("older", "")
     try:
         entry = json.loads((root / STAMPS).read_text()).get(todo)
     except (OSError, ValueError, AttributeError):

@@ -84,11 +84,16 @@ _IMPLEMENT_TODO_SECTION: List[StepRule] = [
     # plan is the review before the code, round the mandatory review of the
     # build, and the performance, completion and reconciliation passes belong
     # to the post-implementation review.
-    (4,  "Bash",  "__REVIEW_KIND__:plan"),
-    (13, "Bash",  "__REVIEW_KIND__:round"),
-    (20, "Bash",  "__REVIEW_KIND__:performance"),
-    (20, "Bash",  "__REVIEW_KIND__:completion"),
-    (20, "Bash",  "__REVIEW_KIND__:reconciliation"),
+    # __PASS_KIND__: the kind counts only when the command sends it through
+    # scripts/codex-dispatch.sh or the broker, the two routes that check a
+    # pass. A direct companion call marked `round` checks nothing and writes
+    # no receipt, so it earns no step. A step record is telemetry, not proof:
+    # the section-ship gate and the stamp gate read the receipt itself.
+    (4,  "Bash",  "__PASS_KIND__:plan"),
+    (13, "Bash",  "__PASS_KIND__:round"),
+    (20, "Bash",  "__PASS_KIND__:performance"),
+    (20, "Bash",  "__PASS_KIND__:completion"),
+    (20, "Bash",  "__PASS_KIND__:reconciliation"),
 ]
 
 
@@ -121,10 +126,10 @@ _REVIEW_TODO_SECTION: List[StepRule] = [
     # The passes of the reviewer pin: the round is the defect review (step 5),
     # the performance and completion passes are the quality audit (step 8), and
     # a reconciliation is the review of a fix (step 13).
-    (5,    "Bash", "__REVIEW_KIND__:round"),
-    (8,    "Bash", "__REVIEW_KIND__:performance"),
-    (8,    "Bash", "__REVIEW_KIND__:completion"),
-    (13,   "Bash", "__REVIEW_KIND__:reconciliation"),
+    (5,    "Bash", "__PASS_KIND__:round"),
+    (8,    "Bash", "__PASS_KIND__:performance"),
+    (8,    "Bash", "__PASS_KIND__:completion"),
+    (13,   "Bash", "__PASS_KIND__:reconciliation"),
 ]
 
 
@@ -295,6 +300,9 @@ MULTI_STEP_SKILLS = frozenset(SKILL_STEP_MAP.keys())
 # drift named in TODO-08 §17 deferred-XREF M2 (step-5 telemetry vs
 # phase1_evidence_gate marker-rule mismatch).
 _SENTINEL_REVIEW_KIND_PREFIX = "__REVIEW_KIND__:"
+_SENTINEL_PASS_KIND_PREFIX = "__PASS_KIND__:"
+# The wrapper or the broker as a command word, not as text inside a prompt.
+_PASS_ROUTE_RE = re.compile(r"(?:^|[\s/;&|(])(?:review-broker-)?codex-dispatch\.sh(?=\s)")
 
 
 def bound_review_kinds(skill: str) -> List[str]:
@@ -306,10 +314,11 @@ def bound_review_kinds(skill: str) -> List[str]:
     """
     kinds: List[str] = []
     for _step_n, _evidence_tool, pattern in SKILL_STEP_MAP.get(skill, []):
-        if pattern.startswith(_SENTINEL_REVIEW_KIND_PREFIX):
-            kind = pattern[len(_SENTINEL_REVIEW_KIND_PREFIX):]
-            if kind not in kinds:
-                kinds.append(kind)
+        for prefix in (_SENTINEL_REVIEW_KIND_PREFIX, _SENTINEL_PASS_KIND_PREFIX):
+            if pattern.startswith(prefix):
+                kind = pattern[len(prefix):]
+                if kind not in kinds:
+                    kinds.append(kind)
     return kinds
 
 
@@ -327,6 +336,16 @@ def match_step(skill: str, tool_name: str, signature: str) -> List[int]:
     detect_kind = None
     for step_n, evidence_tool, pattern in rules:
         if evidence_tool != tool_name:
+            continue
+        if pattern.startswith(_SENTINEL_PASS_KIND_PREFIX):
+            if detect_kind is None:
+                from _review_kind import detect_review_kinds_from_cmd
+                detect_kind = detect_review_kinds_from_cmd(signature)
+            # The route is looked for before the first quote: a prompt that
+            # mentions the script's name is not a dispatch through it.
+            head = re.split(r"['\"]", signature, maxsplit=1)[0]
+            if pattern[len(_SENTINEL_PASS_KIND_PREFIX):] in detect_kind and _PASS_ROUTE_RE.search(head):
+                matched.append(step_n)
             continue
         if pattern.startswith(_SENTINEL_REVIEW_KIND_PREFIX):
             if detect_kind is None:

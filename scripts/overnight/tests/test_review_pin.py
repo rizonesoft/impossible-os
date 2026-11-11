@@ -618,3 +618,43 @@ def test_a_section_is_told_which_review_rules_it_is_on(tmp_path):
     for kind in rp.SECTION_KINDS:
         assert f"`{kind}`" in howto, kind
     assert "--kinds round,performance,completion" in howto and "REVIEW_BASE=<sha>" in howto
+
+
+def test_refusal_an_older_section_whose_stamp_was_overwritten_is_still_older(tmp_path):
+    """Review finding: section_status read the older kinds only from the stamp file, which keeps one entry per
+    kind per TODO, so reviewing section 8 made section 7 read as new and sent it for a plan after its code."""
+    import json
+    todo = "todo/00-x/TODO-01-x.md"
+    (tmp_path / rp.STAMPS).parent.mkdir(parents=True)
+    (tmp_path / rp.STAMPS).write_text(json.dumps({todo: {"adversarial": 9, "adversarial_section": "8"}}))
+    manifest = tmp_path / rp.MANIFEST
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps({"kind": "adversarial", "todo": todo, "section": 7, "head": "a" * 40}) + "\n")
+    assert rp.section_status(tmp_path, todo, 7) == ("older", "")
+    assert rp.section_status(tmp_path, todo, 8) == ("older", "")
+    assert rp.section_status(tmp_path, todo, 9) == ("new", "")
+    # Both kinds of evidence for one section: a pass decides.
+    with manifest.open("a") as f:
+        f.write(json.dumps({"kind": "plan", "todo": todo, "section": 7, "head": "b" * 40, "rc": 0,
+                            "pass_checked": True}) + "\n")
+    assert rp.section_status(tmp_path, todo, 7) == ("passes", "b" * 40)
+
+
+def test_a_pass_earns_a_step_only_through_a_dispatcher_that_checks_it():
+    """Review finding: any command carrying the marker earned the step, so a direct companion call marked
+    `round`, which checks nothing and writes no receipt, counted as the mandatory review."""
+    sys.path.insert(0, str(REPO / ".claude/hooks"))
+    import skill_step_map as m
+    wrapper = "REVIEW_BASE=abc bash scripts/codex-dispatch.sh '[review-kind: round] todo/x.md section 1\nbody'"
+    broker = "bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: completion] todo/x.md section 1'"
+    direct = "node /x/codex-companion.mjs adversarial-review '[review-kind: round] todo/x.md section 1'"
+    quoting = direct[:-1] + " as scripts/codex-dispatch.sh would'"
+    assert m.match_step("implement-todo-section", "Bash", wrapper) == [13]
+    assert m.match_step("review-todo-section", "Bash", wrapper) == [5]
+    assert m.match_step("review-todo-section", "Bash", broker) == [8]
+    for cmd in (direct, quoting):
+        assert m.match_step("implement-todo-section", "Bash", cmd) == [], cmd
+        assert m.match_step("review-todo-section", "Bash", cmd) == [], cmd
+    older = "node /x/codex-companion.mjs adversarial-review '[review-kind: adversarial] todo/x.md'"
+    assert m.match_step("review-todo-section", "Bash", older) == [5], "the older kinds are bound as before"
+    assert set(rp.SECTION_KINDS) <= set(m.bound_review_kinds("implement-todo-section"))

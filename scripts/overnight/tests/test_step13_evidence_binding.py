@@ -153,7 +153,44 @@ def test_refusal_names_the_actual_reason():
     assert len({m.split(SEC + "22: ")[-1] for m in seen}) == 3, seen
 
 
+def _round_fixture(tmp, receipt=None, section=22, drift=False, with_stamps=False):
+    """A section reviewed as passes of the reviewer pin: no stamp, and a `round` receipt in the manifest."""
+    d = _fixture(tmp, drift=drift)
+    st = d / ".claude/state"
+    if with_stamps:
+        (st / "last-review-stamps.json").write_text("{}")
+    else:
+        (st / "last-review-stamps.json").unlink()
+    g = ["git", "-C", str(d)]
+    base = subprocess.run(g + ["rev-list", "--max-parents=0", "HEAD"], capture_output=True, text=True).stdout.strip()
+    line = {"kind": "round", "todo": "todo/x.md", "section": section, "head": base, "jobId": "direct:1",
+            "route": "codex-dispatch.sh", "rc": 0, "pass_checked": True, "highest": "P2"}
+    line.update(receipt or {})
+    rev = d / ".claude/overnight/reviews"
+    rev.mkdir(parents=True)
+    (rev / "manifest.jsonl").write_text(json.dumps(line) + "\n")
+    return d
+
+
+def test_a_checked_round_for_the_section_carries_the_ship_commit():
+    """Review finding (2026-11-11): the skills dispatch `round` at step 13 for a section on the passes, the
+    recorder writes no stamp for a pass, and this gate accepted only an `adversarial` stamp, so a section
+    reviewed as passes could never be shipped."""
+    mod = _load()
+    for with_stamps in (False, True):
+        with tempfile.TemporaryDirectory() as t:
+            ok, msg = _check(mod, _round_fixture(t, with_stamps=with_stamps))
+            assert ok, (with_stamps, msg)
+    refused = (({"pass_checked": False}, {}), ({"rc": 3}, {}), ({"route": "review-broker"}, {}),
+               ({}, {"section": 21}), ({}, {"drift": True}), ({"kind": "performance"}, {}))
+    for receipt, kwargs in refused:
+        with tempfile.TemporaryDirectory() as t:
+            ok, msg = _check(mod, _round_fixture(t, receipt=receipt, **kwargs))
+            assert not ok and "[review-kind: round]" in msg, (receipt, kwargs, msg)
+
+
 if __name__ == "__main__":
+    test_a_checked_round_for_the_section_carries_the_ship_commit()
     test_head_bound_evidence_does_not_age_out()
     test_both_review_kind_tags_are_accepted()
     test_drifted_source_now_refuses_however_fresh()

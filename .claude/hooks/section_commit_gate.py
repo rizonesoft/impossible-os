@@ -3177,21 +3177,19 @@ def _step13_impl_adversarial_check(
     except Exception:
         pass
 
+    # A section reviewed under the reviewer pin has no stamp: its step-13
+    # evidence is a checked `round` receipt (_round_covers_ship). The stamp
+    # file is therefore optional here; with neither, the refusal below names
+    # both ways to supply the evidence.
     stamps_path = root / ".claude" / "state" / "last-review-stamps.json"
-    if not stamps_path.exists():
-        return (False, (
-            f"IO row [x] flip on {flipped_todos[0]} requires step-13 "
-            f"`[review-kind: adversarial]` Codex dispatch within the "
-            f"last 30 minutes (`adversarial-impl` is accepted as a "
-            f"legacy alias/variant); .claude/state/last-review-stamps.json "
-            f"does not exist."
-        ))
-    try:
-        state = json.loads(stamps_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        return (False, f"last-review-stamps.json malformed ({exc})")
-    if not isinstance(state, dict):
-        return (False, "last-review-stamps.json is not a JSON object")
+    state: dict = {}
+    if stamps_path.exists():
+        try:
+            state = json.loads(stamps_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return (False, f"last-review-stamps.json malformed ({exc})")
+        if not isinstance(state, dict):
+            return (False, "last-review-stamps.json is not a JSON object")
 
     now_ns = time.time_ns()
     # LEGACY FALLBACK ONLY -- see the module header: "these wall-clock TTLs apply
@@ -3254,7 +3252,19 @@ def _step13_impl_adversarial_check(
         if sections_for_todo:
             required_sections.append((todo, sections_for_todo[0]))
 
+    def _round_covers_ship(todo: str, required_section: str) -> bool:
+        """A checked, complete `round` receipt for this section, dispatched on
+        the source being committed: at HEAD, or at an ancestor with no source
+        change since. It is dispatched on the working tree before the commit,
+        so its candidate is the HEAD this commit is made on."""
+        receipt = _pass_receipts(root, todo, required_section)[0].get("round", (None, 0))[0]
+        if receipt is None or not _receipt_complete(receipt) or not current_head:
+            return False
+        return _dispatch_content_fresh(root, receipt["head"], current_head)[0]
+
     def _entry_has_matching_impl_adv(todo: str, required_section: str) -> bool:
+        if _round_covers_ship(todo, required_section):
+            return True
         entry = state.get(todo)
         if not isinstance(entry, dict):
             return False
@@ -3345,7 +3355,11 @@ def _step13_impl_adversarial_check(
                 if not _entry_has_matching_impl_adv(todo, section)
             )
             + f". Run: `bash scripts/codex-dispatch.sh "
-              f"'[review-kind: adversarial] <todo-path> <section-N> <prompt>'`."
+              f"'[review-kind: adversarial] <todo-path> <section-N> <prompt>'`, "
+              f"or for a section reviewed as passes of the reviewer pin, "
+              f"`[review-kind: round] <todo-path> section <N>` "
+              f"(.claude/skills/three-pass-review.md); a round counts once its "
+              f"receipt is checked and complete."
         ))
 
     for todo in flipped_todos:

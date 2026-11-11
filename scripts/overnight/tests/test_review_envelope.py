@@ -261,7 +261,26 @@ def test_an_older_kind_is_reported_exactly_as_before():
         assert rc == 0 and env["blocking"] == [] and env["incomplete"] == [] and "pass" not in env["kinds"]["perf"]
 
 
+def test_the_receipt_decides_how_a_pass_ended_not_the_transcript():
+    """Review finding: the first `Turn completed (rc=N)` in the text decided, so a review that quoted an rc=0
+    line and whose dispatcher then failed was reported clean with its own receipt saying rc 1."""
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        quoted = "the log said: Turn completed (rc=0)\nthen it broke\nTurn completed (rc=1)\n"
+        _build_passes(root, {"round": (quoted, _receipt(1, "")),
+                             "performance": ("app-server exited unexpectedly, rc=1 was the old failure\n"
+                                             "HIGHEST: none\nTurn completed (rc=0)\n", _receipt(0, "none")),
+                             "completion": ("HIGHEST: none\nTurn completed (rc=0)\n", _receipt(0, ""))})
+        rc, env = _run_args(root, "--kinds", "round,performance,completion", "--section", "7")
+        assert rc == 1, env
+        assert env["crashed"] == ["round"] and env["kinds"]["round"]["rc"] == 1
+        assert env["incomplete"] == ["completion"], "rc 0 with no recorded level is not a verdict"
+        assert env["needs_redispatch"] == ["round", "completion"], env["needs_redispatch"]
+        assert env["kinds"]["performance"]["crashed"] is False, "a quoted crash line does not fail a receipted pass"
+
+
 if __name__ == "__main__":
+    test_the_receipt_decides_how_a_pass_ended_not_the_transcript()
     test_a_pass_reports_its_receipt_and_a_blocking_level_is_named()
     test_an_incomplete_pass_is_not_a_crash_and_is_dispatched_again()
     test_a_pass_with_no_checked_receipt_is_not_usable()
