@@ -2299,8 +2299,8 @@ COMMIT_LANDED_DIR = "claude-commit-landed"
 _SESSION_ID_RE = re.compile(r"[A-Za-z0-9-]{8,64}")
 
 
-def commit_landed_root(session_id: str, consumer: str) -> str | None:
-    """The work tree this session's last Bash call committed to, or None.
+def commit_landed_roots(session_id: str, consumer: str) -> list[str]:
+    """The work trees this session committed to since `consumer` last asked.
 
     For the post-commit hooks. Live 2026-11-11: a commit made in the repair
     worktree ran the kernel suite in the PRIMARY tree, because the hooks tested
@@ -2308,39 +2308,41 @@ def commit_landed_root(session_id: str, consumer: str) -> str | None:
     build/ under a live run's smoke matrix twice.
 
     Nothing is inferred from the command text or from a timestamp. git's own
-    post-commit hook (.githooks/post-commit) writes, for the session whose
-    shell ran the commit, the tree it landed in and a mark unique to that
-    commit. Each consumer acts once per mark, so a refused commit, a commit by
-    another session, and a commit in another tree each start nothing here.
+    post-commit hook (.githooks/post-commit) appends one receipt per commit,
+    for the session whose shell ran it: the tree it landed in and a mark. Each
+    consumer drains the receipts it has not seen, so two worktrees committed in
+    one Bash call are both returned, and a refused commit, a commit by another
+    session, and a commit in another tree each start nothing here.
     """
     if not isinstance(session_id, str) or not _SESSION_ID_RE.fullmatch(session_id) \
             or not re.fullmatch(r"[a-z-]{1,32}", consumer or ""):
-        return None
+        return []
     try:
         common = subprocess.check_output(
             ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
             text=True, timeout=5, stderr=subprocess.DEVNULL,
         ).strip()
-        marker = Path(common) / COMMIT_LANDED_DIR / session_id
-        lines = marker.read_text().splitlines()
+        receipts = Path(common) / COMMIT_LANDED_DIR / session_id
+        lines = receipts.read_text().splitlines()
     except Exception:
-        return None
-    if len(lines) != 2 or not lines[0] or not lines[1]:
-        return None
-    root, mark = lines
-    seen = marker.with_name(f"{session_id}.{consumer}")
+        return []
+    seen_path = receipts.with_name(f"{session_id}.{consumer}")
     try:
-        if seen.read_text() == mark:
-            return None
-    except OSError:
-        pass
-    if not os.path.isdir(root):
-        return None
+        seen = int(seen_path.read_text())
+    except (OSError, ValueError):
+        seen = 0   # first use: nothing drained yet
+    if not 0 <= seen <= len(lines):
+        seen = 0
     try:
-        seen.write_text(mark)
+        seen_path.write_text(str(len(lines)))
     except OSError:
-        return None   # a mark that cannot be kept would act on every later call
-    return root
+        return []   # a position that cannot be kept would act on every later call
+    roots: list[str] = []
+    for line in lines[seen:]:
+        root, tab, mark = line.rpartition("\t")
+        if tab and root and mark and root not in roots and os.path.isdir(root):
+            roots.append(root)
+    return roots
 
 
 def _harness_main() -> int:

@@ -13,6 +13,8 @@
 # Hook category: REMINDER. Not a wrap.sh candidate (same reason
 # as post_commit_smoketest.py -- wrapped-commit detection requires
 # the full classifier, not a substring prefilter).
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -106,13 +108,29 @@ def main() -> int:
     if not is_commit:
         return 0
 
-    # The tree this session's commit landed in, as git's own post-commit hook
-    # recorded it: a commit made in another worktree must not start a build in
-    # this one, and a refused commit starts nothing.
-    root = scg.commit_landed_root(d.get("session_id") or "", "smoketest-boot")
-    if root is None:
-        return 0
+    # The trees this session's commits landed in, as git's own post-commit
+    # hook recorded them: a commit made in another worktree must not start a
+    # build in this one, and a refused commit starts nothing. One run per
+    # tree, one message for the call.
+    messages = []
+    for root in scg.commit_landed_roots(d.get("session_id") or "", "smoketest-boot"):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            _for_tree(root)
+        for line in out.getvalue().splitlines():
+            try:
+                text = json.loads(line).get("systemMessage")
+            except (ValueError, AttributeError):
+                continue
+            if text:
+                messages.append(text)
+    if messages:
+        print(json.dumps({"systemMessage": " | ".join(messages)}))
+    return 0
 
+
+def _for_tree(root: str) -> int:
+    """Run this hook's suite in one tree whose HEAD this session just committed."""
     try:
         changed = subprocess.check_output(
             ["git", "show", "--name-only", "--format=", "HEAD"],

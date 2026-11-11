@@ -137,51 +137,86 @@ def _trees(tmp_path):
     return here, other.resolve()
 
 
+def _receipts(here):
+    common = _git(here, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()
+    return pathlib.Path(common) / gate.COMMIT_LANDED_DIR / SESSION
+
+
 def test_a_post_commit_hook_acts_only_where_this_sessions_commit_landed(tmp_path, monkeypatch):
     """Live 2026-11-11: worktree commits ran the suite in the primary tree, under a live run's matrix."""
     here, other = _trees(tmp_path)
     monkeypatch.chdir(here)                       # a harness hook always runs in the primary tree
-    assert gate.commit_landed_root(SESSION, "smoketest") == str(here)      # the fixture's first commit
-    assert gate.commit_landed_root(SESSION, "smoketest") is None           # acted on once
+    assert gate.commit_landed_roots(SESSION, "smoketest") == [str(here)]   # the fixture's first commit
+    assert gate.commit_landed_roots(SESSION, "smoketest") == []            # drained once
     # The commit goes to the worktree, with a message no shell-text parser reads: that tree is tested.
     assert _git(other, "commit", "-q", "--allow-empty", "-m", "fix #123 $(x); y").returncode == 0
-    assert gate.commit_landed_root(SESSION, "smoketest") == str(other)
-    assert gate.commit_landed_root(SESSION, "smoketest-boot") == str(other), "each consumer has its own mark"
-    assert gate.commit_landed_root(SESSION, "smoketest") is None
+    assert gate.commit_landed_roots(SESSION, "smoketest") == [str(other)]
+    assert gate.commit_landed_roots(SESSION, "smoketest-boot") == [str(here), str(other)], \
+        "each consumer drains for itself"
+    assert gate.commit_landed_roots(SESSION, "smoketest") == []
     # A refused commit lands nothing, however soon after the last one.
     (other / "refuse-commits").write_text("")
     assert _git(other, "commit", "-q", "--allow-empty", "-m", "refused").returncode != 0
-    assert gate.commit_landed_root(SESSION, "smoketest") is None
+    assert gate.commit_landed_roots(SESSION, "smoketest") == []
     (other / "refuse-commits").unlink()
     # Another session's commit, and one made outside any session, are not this session's.
     assert _git(here, "commit", "-q", "--allow-empty", "-m", "the run", session="ffffffff-other").returncode == 0
     assert _git(here, "commit", "-q", "--allow-empty", "-m", "a person", session=None).returncode == 0
-    assert gate.commit_landed_root(SESSION, "smoketest") is None
-    assert gate.commit_landed_root("ffffffff-other", "smoketest") == str(here)
+    assert gate.commit_landed_roots(SESSION, "smoketest") == []
+    assert gate.commit_landed_roots("ffffffff-other", "smoketest") == [str(here)]
     # A commit followed by a long tail in the same call is still seen: nothing depends on its age.
     assert _git(other, "commit", "-q", "--allow-empty", "-m", "then a long build").returncode == 0
     import os
-    marker = pathlib.Path(_git(here, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()) \
-        / gate.COMMIT_LANDED_DIR / SESSION
-    os.utime(marker, (1, 1))
-    assert gate.commit_landed_root(SESSION, "smoketest") == str(other)
+    os.utime(_receipts(here), (1, 1))
+    assert gate.commit_landed_roots(SESSION, "smoketest") == [str(other)]
 
 
-def test_refusal_a_bad_session_id_or_marker_starts_nothing(tmp_path, monkeypatch):
+def test_two_worktrees_committed_in_one_call_are_both_returned(tmp_path, monkeypatch):
+    """Review round 2: the second commit used to replace the first one's receipt."""
+    here, other = _trees(tmp_path)
+    monkeypatch.chdir(here)
+    gate.commit_landed_roots(SESSION, "smoketest")
+    assert _git(other, "commit", "-q", "--allow-empty", "-m", "source in A").returncode == 0
+    assert _git(here, "commit", "-q", "--allow-empty", "-m", "docs in B").returncode == 0
+    assert _git(other, "commit", "-q", "--allow-empty", "-m", "A again").returncode == 0
+    assert gate.commit_landed_roots(SESSION, "smoketest") == [str(other), str(here)]
+
+
+def test_refusal_a_count_only_refresh_is_not_a_commit(tmp_path, monkeypatch):
+    """Review round 2: a manual refresh before a refused commit published a receipt."""
+    import os
+    import subprocess
+    here, _other = _trees(tmp_path)
+    monkeypatch.chdir(here)
+    gate.commit_landed_roots(SESSION, "smoketest")
+    hook = HOOKS.parents[1] / ".githooks/post-commit"
+    env = {"PATH": os.environ["PATH"], "HOME": str(here), "CLAUDE_CODE_SESSION_ID": SESSION, "COUNT_ONLY": "1"}
+    before = _receipts(here).read_text()
+    subprocess.run(["bash", str(hook)], cwd=str(here), env=env, capture_output=True, timeout=120)
+    assert _receipts(here).read_text() == before
+    (here / "refuse-commits").write_text("")
+    assert _git(here, "commit", "-q", "--allow-empty", "-m", "refused").returncode != 0
+    assert gate.commit_landed_roots(SESSION, "smoketest") == []
+
+
+def test_refusal_a_bad_session_id_or_receipt_starts_nothing(tmp_path, monkeypatch):
     here, _other = _trees(tmp_path)
     monkeypatch.chdir(here)
     for bad in ("", "short", "../../etc/passwd", "a" * 65, None, 7):
-        assert gate.commit_landed_root(bad, "smoketest") is None, bad
-    assert gate.commit_landed_root(SESSION, "../x") is None
-    marker = pathlib.Path(_git(here, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()) \
-        / gate.COMMIT_LANDED_DIR / SESSION
-    for text in ("", "only-one-line\n", "/no/such/tree\nmark\n", "\nmark\n"):
-        marker.write_text(text)
-        assert gate.commit_landed_root(SESSION, "smoketest") is None, text
+        assert gate.commit_landed_roots(bad, "smoketest") == [], bad
+    assert gate.commit_landed_roots(SESSION, "../x") == []
+    for text in ("", "no-tab-in-this-line\n", "/no/such/tree\tmark\n", "\tmark\n", f"{here}\t\n"):
+        _receipts(here).write_text(text)
+        _receipts(here).with_name(f"{SESSION}.smoketest").unlink(missing_ok=True)
+        assert gate.commit_landed_roots(SESSION, "smoketest") == [], text
+    # A position left over from a longer file starts again from the top.
+    _receipts(here).write_text(f"{here}\tmark\n")
+    _receipts(here).with_name(f"{SESSION}.smoketest").write_text("99")
+    assert gate.commit_landed_roots(SESSION, "smoketest") == [str(here)]
 
 
-def test_both_post_commit_hooks_ask_where_the_commit_landed():
+def test_both_post_commit_hooks_ask_where_the_commits_landed():
     for name, consumer in (("post_commit_smoketest.py", "smoketest"), ("post_commit_smoketest_boot.py", "smoketest-boot")):
         text = (HOOKS / name).read_text()
-        assert f'scg.commit_landed_root(d.get("session_id") or "", "{consumer}")' in text, name
+        assert f'scg.commit_landed_roots(d.get("session_id") or "", "{consumer}")' in text, name
         assert '"rev-parse", "--show-toplevel"' not in text, name

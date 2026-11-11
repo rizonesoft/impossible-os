@@ -5,15 +5,16 @@
 # Manual refresh without amend: COUNT_ONLY=1 bash .githooks/post-commit
 
 # Which tree this commit landed in, for the Claude harness post-commit hooks
-# (.claude/hooks/section_commit_gate.py commit_landed_root). The session id is
-# in the environment of the shell that ran the commit; the mark is unique to
-# this commit, so each hook acts on it once. Written before anything can exit.
-if [[ "${CLAUDE_CODE_SESSION_ID:-}" =~ ^[A-Za-z0-9-]{8,64}$ ]]; then
+# (.claude/hooks/section_commit_gate.py commit_landed_roots). The session id is
+# in the environment of the shell that ran the commit. One receipt is APPENDED
+# per commit, so two worktrees committed in one call are both kept. A manual
+# COUNT_ONLY refresh is not a commit and writes none. Written before anything
+# below can exit.
+if [ "${COUNT_ONLY:-}" != "1" ] && [[ "${CLAUDE_CODE_SESSION_ID:-}" =~ ^[A-Za-z0-9-]{8,64}$ ]]; then
     _landed="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/claude-commit-landed"
     if mkdir -p "$_landed" 2>/dev/null; then
-        printf '%s\n%s %s\n' "$(git rev-parse --show-toplevel)" "$(git rev-parse HEAD)" "$(date +%s%N)" \
-            > "$_landed/$CLAUDE_CODE_SESSION_ID.tmp" 2>/dev/null \
-            && mv -f "$_landed/$CLAUDE_CODE_SESSION_ID.tmp" "$_landed/$CLAUDE_CODE_SESSION_ID"
+        printf '%s\t%s %s\n' "$(git rev-parse --show-toplevel)" "$(git rev-parse HEAD)" "$(date +%s%N)" \
+            >> "$_landed/$CLAUDE_CODE_SESSION_ID" 2>/dev/null
     fi
 fi
 
