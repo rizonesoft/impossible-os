@@ -235,6 +235,22 @@ Short-form list (group / rule):
 
 **Reference implementations may be used as ORACLES without vendoring.** Where the code is ours by design but the constants are not, validate against upstream instead of adopting it: `tools/uefi-guid-check/` checks the hand-written `src/boot/uefi/efi.h` GUIDs against EDK2's MdePkg, because a mistyped GUID fails no build, no test, and no QEMU boot -- only real firmware.
 
+## The Implementation Plan
+
+[`todo/implementation-plan.md`](todo/implementation-plan.md) lists every section of every TODO file once, in build order, in phases. The boxes are derived by a script and never ticked by hand; the phase headings, their paragraphs and the row order are written by hand.
+
+```bash
+python3 scripts/todo-plan.py --next 5     # the first rows that can be built now
+python3 scripts/todo-plan.py --sync       # after a TODO edit that ships, stamps, renames or files a section
+python3 scripts/todo-plan.py --check      # lint Check 37: stale plan, or a row before its dependency
+```
+
+- **Never read the plan file into context.** It is about 2,700 lines; `--next` and `--resolve '<row>'` answer from it.
+- **Sync before the commit** whenever a section's status, stamps or heading changed or a section was filed. The sync is mechanical and spends no model.
+- A row pasted from the plan (box, address, title) is a complete instruction for `/implement-todo-section`; `--resolve` turns the address into its file and section.
+
+Details: [docs/infrastructure/todo-metadata.md](docs/infrastructure/todo-metadata.md#the-implementation-plan).
+
 ## Doc Sync
 
 When you change code or conventions, update `CLAUDE.md`, `.claude/skills/`, and affected TODO files in the same task.

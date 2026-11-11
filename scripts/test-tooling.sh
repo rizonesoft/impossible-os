@@ -135,6 +135,11 @@ if [ -n "$_TT_CHANGED_FILE" ] && [ -r "$_TT_CHANGED_FILE" ]; then
     _TT_CHANGED="$(tr -d '\r' < "$_TT_CHANGED_FILE" | sed '/^[[:space:]]*$/d' || true)"
 fi
 _TT_SKIPPED=()
+# Groups skipped because the HOST lacks something (an analyzer, a built kernel
+# object). Kept apart from the scoping skips above: those are a choice the
+# changed paths made, these are coverage this machine cannot give, and the CI
+# tooling job is one such machine.
+_TT_NO_PREREQ=()
 
 # _tt_suite_needed <label> <trigger-regex>
 #   0 = run it (needed, or scoping not in use, or anything uncertain)
@@ -746,7 +751,7 @@ else
     fi
     if ! command -v "${CLANG_TIDY:-clang-tidy-19}" >/dev/null 2>&1 || [ ! -f "$REPO_ROOT/build/boot_proto_sha.h" ]; then
         [ "$QUIET" = "0" ] && echo -e "  ${DIM}SKIP  gate fixture analysis (needs clang-tidy-19 and a built tree)${NC}"
-        _TT_SKIPPED+=("static-analysis gate fixtures (no clang-tidy-19 or no build)")
+        _TT_NO_PREREQ+=("static-analysis gate fixtures (no clang-tidy-19 or no build)")
     else
         SA_R1="$(bash "$SA_GATE" origin "$SA_BAD" "$SA_HEAD" 2>&1)"; SA_R1_RC=$?
         if [ "$SA_R1_RC" = "1" ] && grep -qE "^$SA_FILE:[0-9]+:[0-9]+: warning: Division by zero" <<<"$SA_R1" \
@@ -1170,6 +1175,7 @@ _tt_nested_py "$REPO_ROOT/scripts/tests/test_release_image_binding.py" image_bin
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_fence.py" todo_fence
 _tt_nested_py "$REPO_ROOT/scripts/site/tests/test_build.py" site_build
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_alias_staleness.py" alias_staleness
+_tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_plan.py" todo_plan
 # test_query_bounds.sh is NOT started here: its MCP sub-test reads the real
 # build/todo-cache.json, which test_build.sh deletes and rebuilds as it runs
 # (first parallel pack run, 2026-11-10: `cache-unusable`). Its collect call
@@ -1293,6 +1299,22 @@ if [ -f "$ALIAS_TEST" ]; then
     fi
 else
     t_fail "scripts/tests/test_alias_staleness.py not found"
+fi
+
+# The implementation plan (scripts/tests/test_todo_plan.py): seed, sync, check,
+# next and resolve over a fixture corpus built in a temporary directory, so it
+# never reads or writes the real build/todo-cache.json.
+PLAN_TEST="$REPO_ROOT/scripts/tests/test_todo_plan.py"
+if [ -f "$PLAN_TEST" ]; then
+    PLAN_TEST_OUT=$(_tt_nested_collect todo_plan python3 "$PLAN_TEST")
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/tests/test_todo_plan.py PASS ($(printf '%s\n' "$PLAN_TEST_OUT" | tail -1))"
+    else
+        t_fail "scripts/tests/test_todo_plan.py FAIL ($(printf '%s\n' "$PLAN_TEST_OUT" | tail -3 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_todo_plan" "$PLAN_TEST_OUT"
+    fi
+else
+    t_fail "scripts/tests/test_todo_plan.py not found"
 fi
 
 # Query-surface output bounds (test_query_bounds.sh). Separate suite from
@@ -1901,7 +1923,7 @@ assert_exit_zero "atomic-claim gate: matcher negative controls" \
 _ac_out="$(bash "$REPO_ROOT/tools/atomic-claim-check/check.sh" 2>&1)"; _ac_rc=$?
 case "$_ac_rc" in
     0) t_pass "atomic-claim gate: one lock cmpxchg per audited transition" ;;
-    2) _TT_SKIPPED+=("atomic-claim gate (kernel object not built)")
+    2) _TT_NO_PREREQ+=("atomic-claim gate (kernel object not built)")
        [ "$QUIET" = "0" ] && echo "  SKIP: $(echo "$_ac_out" | tail -1)" ;;
     *) t_fail "atomic-claim gate: one lock cmpxchg per audited transition" \
               "exit $_ac_rc; $(echo "$_ac_out" | grep '^FAIL' | head -1)" ;;
@@ -21814,6 +21836,12 @@ if [ "${#_TT_SKIPPED[@]}" -gt 0 ]; then
         echo -e "        ${DIM}- $s${NC}"
     done
     echo -e "        ${DIM}(CI runs the full pack; unset TEST_TOOLING_CHANGED_PATHS to run everything here)${NC}"
+fi
+if [ "${#_TT_NO_PREREQ[@]}" -gt 0 ]; then
+    echo -e "  ${YELLOW}NOT RUN${NC}  ${#_TT_NO_PREREQ[@]} group(s) this host cannot run:"
+    for s in "${_TT_NO_PREREQ[@]}"; do
+        echo -e "        ${DIM}- $s${NC}"
+    done
 fi
 if [ "$QUIET" = "0" ]; then
     echo -e "${CYAN}══════════════════════════════════════════════════${NC}"

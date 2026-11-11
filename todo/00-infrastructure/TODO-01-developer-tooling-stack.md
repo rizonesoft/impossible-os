@@ -63,25 +63,26 @@ title: "TODO-01 -- Developer Tooling Stack"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                           | Depends On     | Status |
-| --- | :---: | ----------------------------------------------------- | -------------- | :----: |
-| 💎  |   1   | Host bootstrap and dependency contract                | --             |  [x]   |
-| 💎  |   2   | Supported host profiles and reproducible environments | §1             |  [x]   |
-| 💎  |   3   | Build, test, lint, and run wrapper contract           | §1, §2         |  [x]   |
-| 💎  |   4   | Machine launcher and debug profile matrix             | §2, §3         |  [x]   |
-| 💎  |   5   | Git hooks and local automation lifecycle              | §1, §3         |  [x]   |
-| 💎  |   6   | GitHub Actions and artifact policy alignment          | §2, §3, §4, §5 |  [x]   |
-| ⭐  |   7   | Tooling doctor and regression pack                    | §1-§6          |  [x]   |
-| 💎  |   8   | Unify specialist-launcher `-ExtraArgs` surface        | §4             |  [x]   |
-| 💎  |   9   | Legacy-XREF sweep (lint Check 5 -> 0 errors; CI gate) | §3, §6         |  [x]   |
-| 💎  |  10   | Smoke-test POST16 assertions (boot-phase manifest)    | §3             |  [x]   |
-| ⭐  |  11   | Bare section-ref sweep (lint Check 5 zero-allowlist)  | §9             |  [x]   |
-| 💎  |  12   | Enforce required-tool version floors in `--verify`    | §1, §2         |  [x]   |
-| 💎  |  13   | Duplicate-recipe sweep in the root Makefile           | §3             |  [/]   |
-| 💎  |  14   | Defect-finding tools: fuzzers, UBSan, static analysis | §3, §7         |  [x]   |
-| 💎  |  15   | Static-analysis triage and changed-file gate          | §14            |  [x]   |
-| 💎  |  16   | Fuzz targets for the remaining untrusted parsers      | §14            |  [ ]   |
-| ⭐  |  17   | Shard the todo-graph build suite                      | §7, §14        |  [ ]   |
+| ⭐  | Order | Deliverable                                              | Depends On     | Status |
+| --- | :---: | -------------------------------------------------------- | -------------- | :----: |
+| 💎  |   1   | Host bootstrap and dependency contract                   | --             |  [x]   |
+| 💎  |   2   | Supported host profiles and reproducible environments    | §1             |  [x]   |
+| 💎  |   3   | Build, test, lint, and run wrapper contract              | §1, §2         |  [x]   |
+| 💎  |   4   | Machine launcher and debug profile matrix                | §2, §3         |  [x]   |
+| 💎  |   5   | Git hooks and local automation lifecycle                 | §1, §3         |  [x]   |
+| 💎  |   6   | GitHub Actions and artifact policy alignment             | §2, §3, §4, §5 |  [x]   |
+| ⭐  |   7   | Tooling doctor and regression pack                       | §1-§6          |  [x]   |
+| 💎  |   8   | Unify specialist-launcher `-ExtraArgs` surface           | §4             |  [x]   |
+| 💎  |   9   | Legacy-XREF sweep (lint Check 5 -> 0 errors; CI gate)    | §3, §6         |  [x]   |
+| 💎  |  10   | Smoke-test POST16 assertions (boot-phase manifest)       | §3             |  [x]   |
+| ⭐  |  11   | Bare section-ref sweep (lint Check 5 zero-allowlist)     | §9             |  [x]   |
+| 💎  |  12   | Enforce required-tool version floors in `--verify`       | §1, §2         |  [x]   |
+| 💎  |  13   | Duplicate-recipe sweep in the root Makefile              | §3             |  [/]   |
+| 💎  |  14   | Defect-finding tools: fuzzers, UBSan, static analysis    | §3, §7         |  [x]   |
+| 💎  |  15   | Static-analysis triage and changed-file gate             | §14            |  [x]   |
+| 💎  |  16   | Fuzz targets for the remaining untrusted parsers         | §14            |  [ ]   |
+| ⭐  |  17   | Shard the todo-graph build suite                         | §7, §14        |  [ ]   |
+| ⭐  |  18   | Implementation plan: clear cycles, drive the run from it | §7             |  [ ]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
 > ⭐ = exclusive work: Impossible OS can provide a single operator-facing developer workflow with self-diagnosis instead of scattered scripts and tribal knowledge.
@@ -546,6 +547,21 @@ One libFuzzer target and a checked-in seed corpus per parser, built from the ker
 - [ ] The pack's printed time split shows the nested block bounded by a shard, not by the whole suite
 
 **Test checkpoint:** `bash scripts/test-tooling.sh --quiet` passes with the same sub-test total as before the split, and its nested block is shorter than the 2026-11-10 measurement of 590 s.
+
+---
+
+## 18. Implementation Plan: Clear the Dependency Cycles and Drive the Run From It
+> **Spawned-by:** root
+
+[`todo/implementation-plan.md`](../implementation-plan.md) orders every section, kept current by `scripts/todo-plan.py` and held by lint Check 37 ([the implementation plan](../../docs/infrastructure/todo-metadata.md#the-implementation-plan)). Two things it does not do yet.
+
+- [ ] Correct the `Depends On` cells until `python3 scripts/todo-plan.py --cycles` prints nothing
+- [ ] `--check` fails on a dependency cycle once none remain
+- [ ] `/overnight-sequencer` picks its next file as the owner of the first row `python3 scripts/todo-plan.py --next` prints, then works that file as it does today
+  - The run stays in one file until its ready sections are done. It never hops between files row by row.
+- [ ] Within a file the run skips a section whose dependencies are not done, and returns to it when they are
+
+**Test checkpoint:** `python3 scripts/todo-plan.py --cycles` prints nothing, `--check` exits 1 on a fixture cycle, and a run started on a clean tree opens the file that owns the first row `--next` prints.
 
 ---
 

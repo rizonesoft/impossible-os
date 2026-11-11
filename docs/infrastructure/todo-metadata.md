@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-06-todo-metadata-layer.md sources=scripts/todo-graph/build.py,scripts/todo-graph/validate.py,scripts/todo-graph/cache_schema.py,scripts/todo-graph/build-and-validate.sh,scripts/lint.sh,scripts/todo-graph/tests/test_build.sh reviewed=2026-09-30T14:20 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-06-todo-metadata-layer.md sources=scripts/todo-graph/build.py,scripts/todo-graph/validate.py,scripts/todo-graph/cache_schema.py,scripts/todo-graph/build-and-validate.sh,scripts/lint.sh,scripts/todo-graph/tests/test_build.sh,scripts/todo-plan.py reviewed=2026-11-11 -->
 # TODO Metadata Layer -- Frontmatter Spec
 
 > Canonical spec for the YAML frontmatter block that every TODO file under `todo/**/*.md` carries (post-migration). The frontmatter is the stable identity layer the [`scripts/todo-graph/build.py`](../../scripts/todo-graph/build.py) generator parses into `build/todo-cache.json`, decoupling cross-TODO references from filename-based lookups (which break silently on renumbering).
@@ -128,13 +128,13 @@ A reader declares what it CONSUMES via a `cache_schema.Profile`, and is validate
 
 **`query.py` fails closed on an unusable cache, through every transport** ([query.py fail-closed through every transport](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#22-querypy-fail-closed-through-every-transport)). It previously dropped malformed rows silently, so `stats`, `ready`, `blocked` and `backlinks` could be computed from a SUBSET of the corpus and still look complete -- and a scalar `depends_on` made the unmet-dependency loop iterate zero times, reporting a blocked TODO as **ready**. The exit codes are:
 
-| Code | Meaning |
-|---|---|
-| 0 | A real answer (an empty result set is a legitimate 0). |
-| 1 | A verdict -- the graph itself has findings. |
-| 2 | **Infrastructure: the cache exists and cannot be trusted.** A machine-readable `{"error": "cache-unusable", "reason", "detail"}` body goes to stdout. |
-| 3 | Output-ceiling breach -- a bounded answer, not a refusal. |
-| 4 | **The request, not the cache** -- an unresolvable or ambiguous target, an unsupported `--scope`, an unknown `--fields` column, a negative `--offset`/`--limit`. A `{"error": "query-input", "reason", "detail"}` body goes to stdout. |
+| Code | Meaning                                                                                                                                                                                                                               |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | A real answer (an empty result set is a legitimate 0).                                                                                                                                                                                |
+| 1    | A verdict -- the graph itself has findings.                                                                                                                                                                                           |
+| 2    | **Infrastructure: the cache exists and cannot be trusted.** A machine-readable `{"error": "cache-unusable", "reason", "detail"}` body goes to stdout.                                                                                 |
+| 3    | Output-ceiling breach -- a bounded answer, not a refusal.                                                                                                                                                                             |
+| 4    | **The request, not the cache** -- an unresolvable or ambiguous target, an unsupported `--scope`, an unknown `--fields` column, a negative `--offset`/`--limit`. A `{"error": "query-input", "reason", "detail"}` body goes to stdout. |
 
 - The refusal body is written to **stdout**, not only stderr, because `mcp_server.py` runs `query.main()` in-process with stdout captured; a stderr-only refusal left that buffer empty and the old `buf.getvalue() or "[]"` turned it into an empty result array an agent could not distinguish from "nothing matched".
 - **Freshness is checked for this repo's canonical `build/todo-cache.json`.** A cache supplied with `--cache` pointing elsewhere describes a different corpus by construction, so it is validated for SHAPE (still fail-closed) while freshness is skipped, and the reader says so on stderr. Comparing the RESOLVED path means `--cache build/todo-cache.json` is checked exactly like the default.
@@ -247,6 +247,31 @@ jsonschema.validate(sample, schema)
 print("OK: schema valid + sample validates against it")
 PY
 ```
+
+## The Implementation Plan
+
+[`todo/implementation-plan.md`](../../todo/implementation-plan.md) is the graph laid out as one ordered list: every numbered section of every TODO file appears in exactly one row, grouped into phases, in the order it should be built. `scripts/todo-plan.py` keeps it current. The script is plain Python over a privately rebuilt graph cache (about 2.5 seconds for 2,591 sections), so keeping the plan current spends no model.
+
+A row is a box, an address in backticks and a title. The address is `D` and the two digits of the domain directory, then `T` and the file's number (or letter, for a master-table file), then the section sign and the section number.
+
+| Command                                          | What it does                                                                                                                    |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `python3 scripts/todo-plan.py --sync`            | Rewrites each row's box and title, places new sections, removes rows whose section is gone, updates the progress line.          |
+| `python3 scripts/todo-plan.py --check`           | Exits 1 when a sync would change the file, or an open section sits before an open section it depends on. Lint Check 37 runs it. |
+| `python3 scripts/todo-plan.py --next 5`          | The first five rows that can be built now, in plan order. `--next 0` lists all of them. Add `--json` for a tool.                |
+| `python3 scripts/todo-plan.py --resolve '<row>'` | The file and section a row names, from a pasted row in any shape.                                                               |
+| `python3 scripts/todo-plan.py --cycles`          | Open sections whose `Depends On` cells form a cycle.                                                                            |
+| `python3 scripts/todo-plan.py --seed`            | Writes a first plan from the roadmap domains. Refuses when a plan exists.                                                       |
+
+**What is derived and what is written by hand.** The box is the section's lifecycle class from `sequencer_triage.py`, the classifier the run obeys: `[x]` done (shipped with both stamps, or parked by a terminal deferral), `[/]` shipped or in progress and still owed work or review, `[ ]` not started. The title is the section heading without appended notes or model tags, cut at 120 characters. Phase headings, the paragraph under each, and the order of rows are written by hand: a sync never moves a row and never edits prose.
+
+**Where a new section lands.** After the last row of its own file, or in a later phase when it depends on a section there. Move it by hand when it belongs elsewhere; the check holds the result.
+
+**The order rule.** An open section never sits before an open section it depends on. Finished work constrains nothing: many done sections still name prerequisites that were never formally closed, and holding them to order would push shipped boot work behind the installer. Members of a dependency cycle may sit in either order and are never offered by `--next`; the fix belongs in the Implementation Order tables ([the tooling roadmap's implementation-plan section](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#18-implementation-plan-clear-the-dependency-cycles-and-drive-the-run-from-it)).
+
+**When to sync.** After any TODO edit that ships, stamps, renames or files a section, before the commit. Stage the plan with the TODO edit: under the commit gate the check reads the git index (`--check --staged`), which is what the commit carries, so a plan synced but left unstaged is refused and a TODO edit outside the commit changes nothing. Syncs take a lock (`build/.todo-plan.lock`), so two at once run one after the other. A hand edit made while a sync runs does not take that lock: the sync notices the file changed under it, writes nothing, and is run again.
+
+**Do not read the plan into a session.** It is about 2,700 lines. Ask for `--next`.
 
 ## See Also
 

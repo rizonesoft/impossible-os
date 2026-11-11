@@ -404,6 +404,10 @@ if [ "$#" -eq 0 ]; then
             .github/PULL_REQUEST_TEMPLATE.md) continue ;;
             scripts/test-ai-system.sh) continue ;;
             scripts/todo-graph/*) continue ;;
+            # Fixture rows for the implementation-plan tool: every reference
+            # names a section of a corpus the test writes into a temporary
+            # directory, never one in this tree.
+            scripts/tests/test_todo_plan.py) continue ;;
             *.claude/*) continue ;;
             # Append-only historical run log (archived out of the doctrine
             # file 2026-07-11): entries reference TODO numbers/sections AS
@@ -3035,6 +3039,36 @@ if [ "$URLHOST_RC" -ne 0 ]; then
     printf '%s\n' "$URLHOST_OUT" | sed 's/^/  /'
     echo -e "${RED}error${NC}: Check 36 (project URL host) -- shipped source names a project URL on a host that is not the project's"
     ERRORS=$((ERRORS + 1))
+fi
+
+# ============================================================================
+# Check 37: the implementation plan agrees with the TODO graph
+# ============================================================================
+# todo/implementation-plan.md lists every section once, with a box derived from
+# the section's lifecycle class. It goes stale whenever a section ships, is
+# stamped, renamed or filed, and `todo-plan.py --sync` repairs it with no
+# judgement involved. A row moved before its dependency is refused too.
+#
+# Under the commit gate it judges the git index, which is what the commit
+# carries: a plan synced but left unstaged does not pass, and a TODO edit that
+# is not part of the commit does not fail it.
+# The staged form runs whether or not the working tree still has the file: the
+# index may hold a plan the working tree deleted, and the commit carries it.
+if { [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ] || [ -f "$REPO_ROOT/todo/implementation-plan.md" ]; } \
+        && [ "${SKIP_LINT_TODO_PLAN:-}" != "1" ]; then
+    PLAN_RC=0
+    PLAN_ARGS=(--check)
+    [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ] && PLAN_ARGS+=(--staged)
+    PLAN_OUT="$(python3 "$REPO_ROOT/scripts/todo-plan.py" "${PLAN_ARGS[@]}" 2>&1)" || PLAN_RC=$?
+    if [ "$PLAN_RC" -ne 0 ]; then
+        printf '%s\n' "$PLAN_OUT" | head -20 | sed 's/^/  /'
+        if [ "$PLAN_RC" -eq 1 ]; then
+            echo -e "${RED}error${NC}: Check 37 (implementation plan) todo/implementation-plan.md is stale or out of order; repair with: python3 scripts/todo-plan.py --sync, then stage it (a row before its dependency is moved by hand)"
+        else
+            echo -e "${RED}error${NC}: Check 37 (implementation plan) scripts/todo-plan.py could not read the graph (exit $PLAN_RC); the check did not run"
+        fi
+        ERRORS=$((ERRORS + 1))
+    fi
 fi
 
 # ============================================================================
