@@ -59,6 +59,7 @@ if str(_HOOK_DIR) not in sys.path:
 # pylint: disable=wrong-import-position
 from skill_step_map import (  # noqa: E402
     MULTI_STEP_SKILLS,
+    REQUIRED_TERMINAL_STEPS,
     SKILL_STEP_MAP,
     bound_review_kinds,
     match_step,
@@ -110,6 +111,38 @@ def _head_sha(root: str) -> str:
         ).strip()
     except Exception:
         return ""
+
+
+def _invocation_finished(state: Dict, skill: str, args: str) -> bool:
+    """Whether the orphaned entries for this exact (skill, args) invocation
+    already recorded every terminal step the skill requires.
+
+    The transcript fallback below returns the most recent Skill call in the
+    whole session, so after each compaction it would start a skill that has
+    already finished again. Compaction splits one invocation's steps across
+    several orphans, so they are united before the comparison. Only orphans
+    count: they are the invocation's history, and the live entry is the
+    current attempt. Unknown skills and parse problems answer False, so an
+    interrupted skill always resumes.
+    """
+    required = set(REQUIRED_TERMINAL_STEPS.get(skill) or [])
+    if not required or not isinstance(state, dict):
+        return False
+    seen = set()
+    prefix = skill + ".orphan."
+    for name, entry in state.items():
+        if not isinstance(entry, dict) or not isinstance(name, str):
+            continue
+        # An orphan sits under the bare name until it is archived lazily.
+        if not (name.startswith(prefix)
+                or (name == skill and entry.get("compaction_orphaned") is True)):
+            continue
+        if entry.get("args", "") != args:
+            continue
+        for o in entry.get("steps_observed") or []:
+            if isinstance(o, dict):
+                seen.add(o.get("n"))
+    return required.issubset(seen)
 
 
 def _scan_transcript_for_active_skill(
@@ -579,6 +612,8 @@ def main() -> int:
             # recent Skill(implement-todo-section/...) invocation.
             transcript = d.get("transcript_path", "")
             skill, args, sid = _scan_transcript_for_active_skill(transcript)
+            if skill and _invocation_finished(state, skill, args or ""):
+                return 0
         if not skill:
             return 0
         tn = d.get("tool_name", "")
