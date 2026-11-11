@@ -476,7 +476,7 @@ From the TODO-10 §26 docs pass (2026-09-30), measured on the image the smoke te
 - [ ] A replace keeps the destination's stored spelling, so `report.json` replaced through the name `REPORT.JSON` stays `report.json`
   - Windows takes the new spelling. Fixing it means writing fresh entries, which brings back the two-owner window the single-sector switch avoids, so it needs its own design.
 - [ ] `scache_flush` writes dirty sectors in cache-slot order, so metadata dependencies are not ordered on the way to disk
-  - A cached dirent or FAT link can reach the disk before what it references. Directory extension and rename now order their phases with flushes; `fat32_create_dir_vol`'s dot entries and other publish paths do not.
+  - A cached dirent or FAT link can reach the disk before what it references. Directory extension, rename and truncate now order their phases with flushes; `fat32_create_dir_vol`'s dot entries and other publish paths do not.
   - The device's volatile cache is also unordered: `blkdev_sync` can sleep, so it cannot run under `vol->lock`. Replace and rename therefore order writes only as far as the device. Closing this needs the `vol->lock` overhaul in this section.
   - Also confirmed on disk: the `~1` collision in the rename item above. LFN `boot-trend.json.tmp` sits over SFN `BOOT-T~1.JSO` with a wrong checksum, and `X:\Perf\boot-timeline.json` is absent.
 - [ ] Mount FAT32 volumes with 1024-, 2048- and 4096-byte logical sectors (4Kn disks and large USB drives formatted by Windows)
