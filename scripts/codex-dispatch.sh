@@ -262,15 +262,14 @@ if [ -n "$LOG_FILE" ]; then
     fi
     echo "Turn completed (rc=$rc)" >> "$LOG_FILE"
     PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
-    if [ -n "$SECTION" ]; then
-        printf '{"ts": %s, "kind": "%s", "todo": "%s", "section": %s, "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s", "route": "codex-dispatch.sh", "rc": %s, "pass_checked": %s, "highest": "%s"}\n' \
-            "$(date +%s)" "$KIND" "$TODO_PATH" "$SECTION" "direct:$STAMP-$$" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" "$rc" "$PASS_CHECKED" "$PASS_HIGHEST" >> "$REVIEWS_DIR/manifest.jsonl" 2>/dev/null \
-            || echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
-    else
-        printf '{"ts": %s, "kind": "%s", "todo": "%s", "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s", "route": "codex-dispatch.sh", "rc": %s, "pass_checked": %s, "highest": "%s"}\n' \
-            "$(date +%s)" "$KIND" "$TODO_PATH" "direct:$STAMP-$$" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" "$rc" "$PASS_CHECKED" "$PASS_HIGHEST" >> "$REVIEWS_DIR/manifest.jsonl" 2>/dev/null \
-            || echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
-    fi
+    # Written by a JSON serializer: a path or TODO name holding a quote, a
+    # backslash or a newline must not produce a line no reader can parse.
+    python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/overnight/manifest-line.py" --append "$REVIEWS_DIR/manifest.jsonl" \
+        "int:ts=$(date +%s)" "kind=$KIND" "todo=$TODO_PATH" "opt:int:section=$SECTION" "jobId=direct:$STAMP-$$" \
+        "logFile=$LOG_FILE" "prompt_sha256=$PROMPT_SHA" "head=$TREE_HEAD" "index_tree=$TREE_INDEX" \
+        "worktree_sha256=$TREE_WORK" "route=codex-dispatch.sh" "int:rc=$rc" "bool:pass_checked=$PASS_CHECKED" \
+        "highest=$PASS_HIGHEST" \
+        || echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
     exit "$rc"
 fi
 # No writable reviews directory: behave exactly as before (nothing retained).

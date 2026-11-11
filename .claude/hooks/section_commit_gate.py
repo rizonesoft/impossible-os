@@ -2148,9 +2148,11 @@ def _active_section(root: Path) -> tuple[str, str]:
         args = args if isinstance(args, str) else ""
         section = entry.get("section")
         section = str(section).lstrip("§").strip() if isinstance(section, (str, int)) and not isinstance(section, bool) else ""
-        if not section.isdigit():
-            m = _ARGS_SECTION_RE.search(args)
-            section = m.group(1) if m else ""
+        named = {m.group(1) for m in _ARGS_SECTION_RE.finditer(args)}
+        if section.isdigit():
+            named.add(section)
+        # Two identifiers that disagree identify nothing: the caller keeps its hold.
+        section = named.pop() if len(named) == 1 else ""
         todo_path = entry.get("todo_path")
         if isinstance(todo_path, str) and todo_path.endswith(".md") \
            and "todo/" in todo_path.replace("\\", "/"):
@@ -2306,14 +2308,17 @@ def _re_adversarial_trigger_check(
         return (True, "")
 
     active_todo, active_section = _active_section(root)
-    if active_section and active_todo == todo and _pass_receipts(root, todo, active_section)[0]:
+    if active_section and active_todo == todo and any(
+            _receipt_complete(receipt)
+            for receipt, _age in _pass_receipts(root, todo, active_section)[0].values()):
         # A section reviewed under the reviewer pin has no review between a
         # fix and its commit: the fix is committed and the passes then read
         # that candidate. The stamp commit is where they are required to cover
         # the final source (_three_pass_issues), so a fix commit is not held
-        # here. Only for the section in flight and its own receipts: another
-        # section's passes say nothing about this one, and a section that
-        # cannot be identified keeps the hold.
+        # here. Only for the section in flight and a checked, complete receipt
+        # of its own: another section's passes say nothing about this one, a
+        # broker's registration of a job that was then refused is not a pass,
+        # and a section that cannot be identified keeps the hold.
         return (True, "")
 
     stamps_path = root / ".claude" / "state" / "last-review-stamps.json"

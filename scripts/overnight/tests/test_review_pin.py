@@ -547,3 +547,39 @@ def test_refusal_every_kind_of_fence_hides_its_contents():
     assert rp.highest(f"HIGHEST: P2\n~~~\nHIGHEST: none\n~~~\n") == "P2"
     assert rp.highest(f"~~~\nHIGHEST: none\n~~~\n`HIGHEST: P1`\n") == "P1"
     assert rp.missing_lens_verdicts(pin, "completion", f"```\nexample\n```\n- LENS {a}: clean\n`LENS {b}: findings`") == ()
+
+
+def test_manifest_lines_are_serialized_not_formatted(tmp_path):
+    """Review finding: manifest lines were built with printf, so a path holding a quote, a backslash or a
+    newline produced a line no reader could parse, and every later dispatch added another."""
+    import json
+    import subprocess
+    tool = str(REPO / "scripts/overnight/manifest-line.py")
+    out = tmp_path / "m.jsonl"
+    awkward = 'a "quoted"\\path\nwith a second line'
+    for args in ([f"logFile={awkward}", "int:section=7", "bool:pass_checked=true", "opt:int:rc=", "highest="],
+                 ["kind=round", "opt:int:section=12"]):
+        done = subprocess.run([sys.executable, tool, "--append", str(out), *args], capture_output=True, text=True,
+                              timeout=30)
+        assert done.returncode == 0, done.stderr
+    lines = [json.loads(ln) for ln in out.read_text().splitlines()]
+    assert lines == [{"logFile": awkward, "section": 7, "pass_checked": True, "highest": ""},
+                     {"kind": "round", "section": 12}]
+    printed = subprocess.run([sys.executable, tool, "kind=plan"], capture_output=True, text=True, timeout=30)
+    assert json.loads(printed.stdout) == {"kind": "plan"}
+    for bad in (["no-equals-sign"], ["int:section=seven"], ["bool:pass_checked=yes"], ["--append"],
+                ["--append", str(tmp_path / "no-such-dir" / "m.jsonl"), "kind=x"]):
+        assert subprocess.run([sys.executable, tool, *bad], capture_output=True, timeout=30).returncode == 2, bad
+
+
+def test_a_receipt_survives_an_awkward_reviews_directory(tmp_path):
+    import json
+    pin = _pin()
+    awkward = tmp_path / 'a "quoted" dir\nsecond line'
+    awkward.mkdir()
+    full = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["completion"]) + "\nHIGHEST: none\n"
+    done, _prompt = _dispatch(tmp_path, "completion", full, reviews_dir=awkward)
+    assert done.returncode == 0, done.stderr
+    receipt = json.loads((awkward / "manifest.jsonl").read_text())
+    assert receipt["pass_checked"] is True and receipt["rc"] == 0 and receipt["section"] == 99 \
+        and receipt["logFile"].startswith(str(awkward)), receipt

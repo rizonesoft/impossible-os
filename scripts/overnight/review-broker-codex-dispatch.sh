@@ -181,17 +181,19 @@ PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
 TREE_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 TREE_INDEX="$(git write-tree 2>/dev/null || echo unknown)"
 TREE_WORK="$({ git diff HEAD -- 2>/dev/null; git status --porcelain 2>/dev/null; } | sha256sum | cut -d' ' -f1)"
-if [[ -n "$SECTION" ]]; then
-  printf '{"ts": %s, "kind": "%s", "todo": "%s", "section": %s, "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s"}\n' \
-    "$(date +%s)" "$KIND" "$TODO_PATH" "$SECTION" "$DETACH" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" >> "$MANIFEST"
-else
-  printf '{"ts": %s, "kind": "%s", "todo": "%s", "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s"}\n' \
-    "$(date +%s)" "$KIND" "$TODO_PATH" "$DETACH" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" >> "$MANIFEST"
-fi
-# LIFECYCLE-WAIVER: this detaches a REVIEW (Codex) into its own scope so it
-# survives the session's rollover -- it does NOT relaunch or watch the session.
-# The session still polls this review's logFile IN-SESSION; nothing here is the
-# removed exit-and-relaunch apparatus.
+# Written by a JSON serializer, as the receipt is: a path holding a quote, a
+# backslash or a newline must not leave a line no reader can parse.
+MANIFEST_LINE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/manifest-line.py"
+python3 "$MANIFEST_LINE" --append "$MANIFEST" \
+    "int:ts=$(date +%s)" "kind=$KIND" "todo=$TODO_PATH" "opt:int:section=$SECTION" "jobId=$DETACH" \
+    "logFile=$LOG_FILE" "prompt_sha256=$PROMPT_SHA" "head=$TREE_HEAD" "index_tree=$TREE_INDEX" \
+    "worktree_sha256=$TREE_WORK" || {
+  echo "ERROR: the dispatch could not be registered in $MANIFEST; nothing was launched" >&2
+  rm -f "$PROMPT_FILE"
+  exit 1
+}
+# LIFECYCLE-WAIVER: detaches a REVIEW into its own scope (the reasons are above
+# PROMPT_FILE); it does not relaunch or watch the session.
 if systemd-run --user --collect "--unit=$UNIT" \
      "--setenv=CODEX_REVIEWER_DISPATCH=1" "--setenv=HOME=$HOME" \
      "--setenv=PATH=$PATH" --same-dir \
@@ -207,5 +209,4 @@ else
   :
 fi
 
-printf '{"kind": "%s", "jobId": "%s", "logFile": "%s", "manifest": "%s"}\n' \
-  "$KIND" "$DETACH" "$LOG_FILE" "$MANIFEST"
+python3 "$MANIFEST_LINE" "kind=$KIND" "jobId=$DETACH" "logFile=$LOG_FILE" "manifest=$MANIFEST"

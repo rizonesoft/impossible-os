@@ -376,3 +376,18 @@ def test_refusal_another_sections_receipt_does_not_lift_the_fix_commit_hold(tmp_
     assert gate._active_section(root) == (TODO, "")
     ok, _why = hold()
     assert not ok, "a section that cannot be identified keeps the hold"
+    # Two identifiers that disagree identify nothing (the confirmation pass: section=7 with args naming 8
+    # resolved to 7 and released section 8).
+    progress.write_text(json.dumps({"review-todo-section": {"todo_path": TODO, "section": 7,
+                                                             "args": f"{TODO} section 8"}}))
+    assert gate._active_section(root) == (TODO, "")
+    ok, _why = hold()
+    assert not ok
+    progress.write_text(json.dumps({"review-todo-section": {"todo_path": TODO, "section": "7",
+                                                             "args": f"{TODO} section 7"}}))
+    assert gate._active_section(root) == (TODO, "7") and hold() == (True, "")
+    # A broker's registration of a job that was then refused is not a pass.
+    manifest.write_text(json.dumps({"kind": "plan", "todo": TODO, "section": 7, "head": h["plan"],
+                                    "jobId": "detached:codex-rev-plan-x"}) + "\n")
+    ok, why = hold()
+    assert not ok and "re-adversarial" in why, why
