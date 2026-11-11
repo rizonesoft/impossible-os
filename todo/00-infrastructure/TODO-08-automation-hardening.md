@@ -2,7 +2,7 @@
 schema_version: 1
 id: automation-hardening
 domain: 00-infrastructure
-status: draft
+status: active
 title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)"
 ---
 
@@ -98,6 +98,15 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  30   |   §30   | Shell-aware Codex dispatch segmentation in `_review_kind` (close §25 round-7 deferred)           | §25                        |  [x]   |
 | 💎  |  31   |   §31   | Post-commit hook concurrency: serialize build/smoke via flock (end stomp-stamp races)            | --                         |  [x]   |
 | ⭐  |  32   |   §32   | Grammar-accurate shell segmentation for the gate exemptions (retire the hand-rolled walk)        | §30                        |  [/]   |
+| 💎  |  33   |   §33   | Section-commit gate reads an untokenizable commit line as a commit                               | §4                         |  [ ]   |
+| 💎  |  34   |   §34   | Section-commit gate test wiring that kernel sources can satisfy                                  | §4                         |  [ ]   |
+| 💎  |  35   |   §35   | Cross-section review of a closed TODO file                                                       | §5                         |  [ ]   |
+| 💎  |  36   |   §36   | Second-boot leg in the smoke matrix                                                              | --                         |  [ ]   |
+| 💎  |  37   |   §37   | Syscall argument counts in the ABI fingerprint                                                   | --                         |  [ ]   |
+| 💎  |  38   |   §38   | Release-flavor build at the section boundary                                                     | --                         |  [ ]   |
+| 💎  |  39   |   §39   | Re-judge the closed parks under the never-park rule                                              | --                         |  [ ]   |
+| 💎  |  40   |   §40   | Pytest-style control-plane tests run in the suite                                                | --                         |  [ ]   |
+| 💎  |  41   |   §41   | CI jobs run in the pinned image                                                                  | --                         |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -1169,6 +1178,128 @@ The PreToolUse gates decide their exemptions by hand-scanning command text. [`.c
 > **What this leaves.** The first item stands but its prescribed MEANS does not: "or equivalent" now has to name a parser that handles quoted heredocs and `case`, or the item becomes a deliberate hand-rolled tokenizer with the plan rewritten to say so. That is an operator design call, and it is the reason this section stays parked rather than being attempted again.
 
 > **Deferred:** [M] operator-gated -- every deliverable here edits `.claude/hooks/**`, which the unattended run is forbidden to touch, so no run can ever implement this section. It is not blocked on another TODO; it is blocked on an ATTENDED session. Reached and correctly parked rather than discovered mid-pass (2026-08-05).
+
+## 33. Section-commit gate reads an untokenizable commit line as a commit
+
+> **Spawned-by:** root
+
+`section_commit_gate.py` decides whether a command is a commit by tokenizing it. A line `shlex` cannot tokenize is read as no commit at all, so `git commit -m $'a\';b' -n` passes the gate unjudged.
+
+- [ ] Measure first: replay the recorded tool history through the gate and count lines that name `git commit` and fail to tokenize. Done when the count and three examples are in the commit message.
+- [ ] Read an untokenizable line that names `git commit` as a commit in `.claude/hooks/section_commit_gate.py`. Done when the example above is judged and the replay shows no line newly refused that is not a commit.
+- [ ] Unit tests: the example, a heredoc message and a plain commit, in the gate's own test file. Done when they fail on the old reading.
+- [ ] Commit: `"hooks: the commit gate judges a commit line it cannot tokenize"`
+
+**Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes with the new cases.
+
+## 34. Section-commit gate test wiring that kernel sources can satisfy
+
+> **Spawned-by:** root
+
+The gate's step-8 rule binds a staged source file to a test named for its basename. 434 of 516 kernel sources have no test of that name, because suites are registered per subsystem, so the rule cannot be met and is opted out of.
+
+- [ ] Count, from `.claude/state` refusal records and `git log`, how often the rule refused a kernel section and how it was passed. Done when the numbers are in the commit message.
+- [ ] Match a staged kernel source to the suite that registers its subsystem, not to a test of the same file name. Done when the 434 sources resolve to a suite or are listed as untested.
+  - Covered means the same commit touches a test whose `test_suite_register_cat` suite includes the source.
+- [ ] Ship it as a warning for ten sections, then as a refusal. Done when the switch date is recorded in the hook.
+- [ ] Unit tests: a source with a subsystem suite, a source with none, a test-only commit. Done when they fail on the basename rule.
+- [ ] Commit: `"hooks: the commit gate finds a kernel source's tests by suite, not by file name"`
+
+**Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes with the new cases.
+
+## 35. Cross-section review of a closed TODO file
+
+> **Spawned-by:** root
+
+Every review reads one section. Nothing reads a finished file as a whole, so a defect that only shows across sections (two sections each correct, wrong together) has no reviewer. `codex-review-todo` exists and is never scheduled.
+
+- [ ] Run `codex-review-todo` once on the most recently closed TODO file and count findings that no single-section review could have made. Done when the count and the findings are recorded in this section.
+- [ ] If the count is above zero, add the pass to `complete-todo-file` as its last step before the closing commit, bounded to one pass plus one fix round. Done when a file close-out runs it and its findings are fixed or filed.
+- [ ] If the count is zero on two closed files, record that here and close this section without the step. Done when the two results are recorded.
+- [ ] Commit: `"skills: a closing TODO file gets one review across its sections"`
+
+**Test checkpoint:** The next file the run closes shows the pass in its close-out commit, or this section records two empty results.
+
+## 36. Second-boot leg in the smoke matrix
+
+> **Spawned-by:** root
+
+Every boot test starts from a fresh image, so anything that depends on what the previous boot left behind is unproven. The first concrete need is the open item in `01-boot-platform/TODO-29-boot-perf-health-observability.md` ("second boot updates index 0").
+
+- [ ] Add a two-boot leg to `scripts/test-smoke-matrix.sh` that boots, shuts down cleanly and boots the same disk and OVMF variable store again, following the store legs' `SMOKE_STORE_RECORD` shape. Done when the leg is green on TCG and KVM.
+- [ ] Assert one cross-boot fact in the leg: the boot-trend record written by boot one is read by boot two. Done when the leg fails if the record is not persisted.
+- [ ] Unit tests: the leg is counted by the matrix's leg-list test in `scripts/test-tooling.sh`. Done when the count includes it.
+- [ ] Commit: `"test: the smoke matrix boots the same disk twice"`
+
+**Test checkpoint:** `bash scripts/test-smoke-matrix.sh` passes with the two-boot leg listed.
+
+## 37. Syscall argument counts in the ABI fingerprint
+
+> **Spawned-by:** root
+
+`render()` in `scripts/gen-user-abi.py` fingerprints syscall names and numbers. A syscall whose arguments change keeps its fingerprint, so user and kernel can disagree on a call's shape with every check green. `SYS_EXEC` is due to change from `(path, len)` to `(path, argv, envp)`.
+
+- [ ] Add each syscall's argument count to the canonical table in `scripts/gen-user-abi.py` and to the fingerprint. Done when changing one count changes the fingerprint and `make check-abi` fails until both facades are regenerated.
+- [ ] Fill the counts from the kernel's handlers, not by hand. Done when a host check fails if a handler's arity and the table disagree.
+- [ ] Unit tests: a count change, a rename and a renumber each move the fingerprint. Done when they fail on the old `render()`.
+- [ ] Commit: `"abi: the user ABI fingerprint covers syscall argument counts"`
+
+**Test checkpoint:** `make check-abi` passes, and fails when one count is edited in the table alone.
+
+## 38. Release-flavor build at the section boundary
+
+> **Spawned-by:** root
+
+Sections are built and tested as the test flavor. A parameter used only under `KERNEL_TESTS` breaks the release flavor with `-Werror`, and only CI's release job sees it, after the push.
+
+- [ ] Add a release-flavor compile (`KERNEL_TESTS` undefined) of the changed kernel and loader sources to the build the section pipeline runs before its commit. Done when a parameter used only under `KERNEL_TESTS` fails locally.
+- [ ] Keep it under 30 seconds on an incremental tree by compiling changed sources only, as `scripts/static-analysis.sh` already does. Done when the measured time is in the commit message.
+- [ ] Unit tests: a fixture source that builds as the test flavor and fails as release. Done when the pipeline step refuses it.
+- [ ] Commit: `"build: a section compiles as the release flavor before it is committed"`
+
+**Test checkpoint:** The fixture fails the step, and a full section build stays within its time.
+
+## 39. Re-judge the closed parks under the never-park rule
+
+> **Spawned-by:** root
+
+About 445 `Deferred:` stamps carry no `awaiting-` token, so their sections read done and nothing reads them again. About 60 name hardware or an operator decision. Since 2026-11-11 a section is parked only on something outside the run, named on a `**Needs:**` line.
+
+- [ ] List every such stamp with `scripts/overnight/stale_parks.py`: add a class for a closed park that names hardware, an operator or a decision. Done when `--check` prints the list and its count.
+- [ ] Re-judge each listed stamp in file order: reopen it with a recorded decision (`todo/answers.md`) or an emulated stand-in, or keep it and add the section's `**Needs:**` line. Done when the list is empty.
+- [ ] Make the check a fixpoint refusal once the list is empty, so a new one cannot accumulate. Done when `run_phase_guard.py` refuses fixpoint with one planted.
+- [ ] Unit tests: a fixture stamp of each kind is listed, and a stamp with a `**Needs:**` line is not. Done when they fail without the new class.
+- [ ] Commit: `"run: closed parks that name a person or a machine are re-judged"`
+
+**Test checkpoint:** `python3 scripts/overnight/stale_parks.py --check` reports none of the new class.
+
+## 40. Pytest-style control-plane tests run in the suite
+
+> **Spawned-by:** root
+
+`scripts/overnight/tests/run-all.sh` runs each file as `python3 <file>`. Six files are written for pytest and have no `__main__` block, so they define their tests and exit 0: `test_review_pin.py` and five more run nothing in the gate.
+
+- [ ] Make `run-all.sh` run a file through `python3 -m pytest -q` when it imports pytest or uses a pytest fixture, and fail when pytest is missing. Done when the six files' tests are counted in the suite's output.
+- [ ] Add pytest to the host bootstrap's required tools (`scripts/setup.sh`) and to the CI image. Done when `bash scripts/setup.sh --verify` names it.
+- [ ] Fix whatever the six files report once they actually run. Done when the suite is green.
+- [ ] Unit tests: a fixture file with one failing pytest test fails the runner. Done when the old runner passes it.
+- [ ] Commit: `"run: the control-plane suite runs its pytest files"`
+
+**Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` reports the six files' test counts.
+
+## 41. CI jobs run in the pinned image
+
+> **Spawned-by:** root
+
+Every CI job installs its toolchain with apt on each run. On 2026-11-11 nine Build runs in a row failed in the install step because the runner could not resolve the Ubuntu mirror; no project code had run. `CI_CONTAINER=1` already builds in a pinned image locally.
+
+- [ ] Run the `build.yml` jobs in the pinned CI image, so no job needs the package mirror. Done when a Build run passes with no apt step.
+- [ ] Publish the image from its own workflow when its definition changes, and pin it by digest in `build.yml`. Done when a digest change is the only way the toolchain moves.
+- [ ] Keep `scripts/ci-qemu-version.txt` in step: it records the image's QEMU version. Done when the pre-push parity gate reads the same version the image holds.
+- [ ] Unit tests: the workflow scanner in `scripts/test-tooling.sh` refuses an apt install step in `build.yml`. Done when it fails on the current file.
+- [ ] Commit: `"ci: the build jobs run in the pinned image and need no package mirror"`
+
+**Test checkpoint:** A Build run on `main` is green with no package-install step in its log.
 
 ## Format Quick Reference
 
