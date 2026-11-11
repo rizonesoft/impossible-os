@@ -4464,8 +4464,15 @@ fi
 # the very run it protects), and inert with no run live (else it taxes ordinary
 # solo work). Both are asserted against a real payload, not read off the source.
 _arg_payload='{"tool_name":"Bash","tool_input":{"command":"git add -A"}}'
-_arg_state="$REPO_ROOT/.claude/state/sequencer-run.json"
-if [ -f "$_arg_state" ] && [ -e "$REPO_ROOT/.claude/state/sequencer-armed" ] && python3 -c "import json,sys;sys.exit(0 if json.load(open('$_arg_state')).get('active') is True else 1)" 2>/dev/null; then
+# The run's state lives in the PRIMARY worktree, and the guard resolves it there
+# (the parent of the shared git dir). Reading it under $REPO_ROOT made this pack
+# take the "no run" branch in a repair worktree beside a live run, where the
+# guard, correctly, blocks: the push gate refused every push from that worktree
+# (2026-11-11). With one worktree the two paths are the same directory.
+_arg_primary="$(cd "$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd -P)"
+[ -n "$_arg_primary" ] && [ -d "$_arg_primary/.claude" ] || _arg_primary="$REPO_ROOT"
+_arg_state="$_arg_primary/.claude/state/sequencer-run.json"
+if [ -f "$_arg_state" ] && [ -e "$_arg_primary/.claude/state/sequencer-armed" ] && python3 -c "import json,sys;sys.exit(0 if json.load(open('$_arg_state')).get('active') is True else 1)" 2>/dev/null; then
     if printf '%s' "$_arg_payload" | OVERNIGHT_SEQUENCER_RUN=1 python3 "$REPO_ROOT/.claude/hooks/attended_repair_guard.py" >/dev/null 2>&1; then
         t_pass "attended_repair_guard_inert_in_run  OVERNIGHT_SEQUENCER_RUN=1 never blocks"
     else
