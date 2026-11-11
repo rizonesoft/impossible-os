@@ -177,6 +177,11 @@ if [ "$PIN_KIND" = "1" ]; then
     PIN_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_pin.py"
     python3 "$PIN_TOOL" --check >&2 || {
         echo "[$SELF_NAME] BLOCK -- the reviewer pin refuses a '$KIND' dispatch (reason above)" >&2; exit 2; }
+    # The commit gate finds a pass by its TODO and section, read from this line.
+    if [ -z "$TODO_PATH" ] || [ -z "$SECTION" ]; then
+        echo "[$SELF_NAME] BLOCK -- a '$KIND' pass names its TODO and section on the first line: [review-kind: $KIND] todo/<path>.md section <N>" >&2
+        exit 2
+    fi
     # A pass is validated from its transcript, so one that cannot be kept is not dispatched.
     mkdir -p "$REVIEWS_DIR" 2>/dev/null || {
         echo "[$SELF_NAME] BLOCK -- no writable reviews directory ($REVIEWS_DIR); a '$KIND' pass cannot be checked" >&2; exit 2; }

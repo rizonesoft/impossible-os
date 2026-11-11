@@ -46,7 +46,7 @@ Decisions that follow: performance is a pass of its own and `optimization` is no
 
 1. **One verdict per lens.** The dispatcher appends each scheduled lens with its question and requires a `LENS <name>: clean | findings` line for each, read from the reviewer's final response only. A pass missing one is incomplete and earns no credit.
 2. **The worst level is on the receipt.** The dispatcher records the review's `HIGHEST:` line. A pass that ended at a blocking level is not the last word, so a completion that returned gaps cannot carry a stamp.
-3. **Credit comes from the dispatcher's receipt**, not from the command text: only `scripts/codex-dispatch.sh` writes one, after it has checked the pass.
+3. **The gate judges a pass from the dispatcher's receipt alone.** Only `scripts/codex-dispatch.sh` writes one, after it has checked the pass, and it names the candidate identified before the reviewer ran. The recorder's stamp file is not used for a pass: it is written when a dispatch starts, which for the run's background broker is before there is anything to judge, and it keeps one entry per TODO across sections. The broker runs a pass through the same wrapper inside its detached job.
 
 Limits of the replay: eight known defects on five candidates; one prompt wording changed between the first and third runs ("report every defect"); and the rerun of the dedicated performance review used a checklist adapted to tooling, one item of which points at the class of defect it then found.
 

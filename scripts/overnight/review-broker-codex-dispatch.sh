@@ -96,13 +96,15 @@ EOF
 esac
 
 KIND="${BASH_REMATCH[1],,}"
-# A pass of the reviewer pin goes through scripts/codex-dispatch.sh, the one
-# route that appends its lenses and checks the returned review for a verdict
-# per lens. Dispatched here it would be an unchecked pass.
-case "$KIND" in plan|round|performance|completion|reconciliation)
-    echo "ERROR: a '$KIND' pass is dispatched with scripts/codex-dispatch.sh, not the broker" >&2
-    exit 2 ;;
-esac
+# A pass of the reviewer pin (.conclave/reviewers.toml) is run by
+# scripts/codex-dispatch.sh inside the detached job below: that wrapper checks
+# the pin, appends the pass's lenses, reads the returned review for a verdict
+# per lens and its HIGHEST level, and writes the receipt the commit gate
+# judges. The job's exit status is the wrapper's, so an incomplete pass ends
+# "Turn completed (rc=3)" here. REVIEW_BASE is passed through.
+PASS_KIND=0
+case "$KIND" in plan|round|performance|completion|reconciliation) PASS_KIND=1 ;; esac
+PASS_WRAPPER="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/codex-dispatch.sh"
 
 # BACKEND OUTAGE GATE (2026-09-28): a Codex outage used to cost a retry storm
 # (5 dispatch+wait pairs, ~4m20s, run-20260903-160406.log:423-436) before the
@@ -154,6 +156,13 @@ UNIT="codex-rev-${KIND}-${STAMP}-$$"
 # poll (and any recovering next session) watches for.
 PROMPT_FILE="$(mktemp)"
 printf '%s' "$PROMPT" > "$PROMPT_FILE"
+if [[ "$PASS_KIND" == "1" ]]; then
+  # The wrapper's own messages (a refusal, an incomplete pass) go to the log too.
+  # The detached job gets a fresh environment, so everything the wrapper reads is named here.
+  RUN="REVIEW_BASE='${REVIEW_BASE:-}' CODEX_REVIEWS_DIR='$PWD/$MANIFEST_DIR' CODEX_COMPANION_PATH='$COMPANION' bash '$PASS_WRAPPER' \"\$(cat '$PROMPT_FILE')\""
+else
+  RUN="node '$COMPANION' adversarial-review \"\$(cat '$PROMPT_FILE')\""
+fi
 # LIFECYCLE-WAIVER: this detaches a REVIEW (Codex) into its own scope so it
 # survives the session's rollover -- it does NOT relaunch or watch the session.
 # The session still polls this review's logFile IN-SESSION; nothing here is the
@@ -161,14 +170,14 @@ printf '%s' "$PROMPT" > "$PROMPT_FILE"
 if systemd-run --user --collect "--unit=$UNIT" \
      "--setenv=CODEX_REVIEWER_DISPATCH=1" "--setenv=HOME=$HOME" \
      "--setenv=PATH=$PATH" --same-dir \
-     /bin/bash -c "node '$COMPANION' adversarial-review \"\$(cat '$PROMPT_FILE')\" > '$LOG_FILE' 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> '$LOG_FILE'; rm -f '$PROMPT_FILE'" \
+     /bin/bash -c "$RUN > '$LOG_FILE' 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> '$LOG_FILE'; rm -f '$PROMPT_FILE'" \
      >/dev/null 2>&1; then
   DETACH="systemd-run:$UNIT"
 else
   # Non-systemd fallback: setsid detach (survives plain shells; NOT a
   # systemd cgroup -- callers inside a service should have systemd-run).
   # LIFECYCLE-WAIVER: detaches a REVIEW on non-systemd hosts, not the session.
-  setsid bash -c "node '$COMPANION' adversarial-review \"\$(cat '$PROMPT_FILE')\" > '$LOG_FILE' 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> '$LOG_FILE'; rm -f '$PROMPT_FILE'" \
+  setsid bash -c "$RUN > '$LOG_FILE' 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> '$LOG_FILE'; rm -f '$PROMPT_FILE'" \
     < /dev/null >/dev/null 2>&1 &
   DETACH="setsid:$!"
 fi

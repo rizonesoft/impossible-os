@@ -18,7 +18,7 @@ TODO = "todo/00-x/TODO-01-x.md"
 BODY = "# X\n\n## 7. Seven\n\n- [x] item\n\n## 8. Eight\n\n- [ ] item\n"
 STAMP = "> **Verified:** 2026-11-11 by the gate test.\n"
 README = "# Project\n\nSuites: <!-- project:stat_x -->1<!-- /project --> so far.\n\nHand-written text.\n"
-CHECKED = ("round", "performance", "completion", "reconciliation")
+PASSES = ("plan", "round", "performance", "completion", "reconciliation")
 
 
 def _git(root, *args):
@@ -54,29 +54,41 @@ def _history(tmp_path):
     return root, heads
 
 
-def _judge(root, stamp_under="7", also_stage=None, highest=None, receipts=True, **stamps):
-    """stamps: kind=(head, order) or (head, order, section). Writes the stamp file and, for every checked pass,
-    the dispatcher's receipt (worst level `none` unless `highest` names another); stages a stamp under one
-    section (or several, comma-separated); asks the gate about TODO; puts the tree back."""
+def _receipt(kind, head, order, section="7", **over):
+    line = {"kind": kind, "todo": TODO, "section": int(section), "head": head, "jobId": f"direct:{order}",
+            "route": "codex-dispatch.sh", "rc": 0, "pass_checked": True, "highest": "none"}
+    line.update(over)
+    return line
+
+
+def _judge(root, stamp_under="7", also_stage=None, highest=None, receipt=None, manifest_tail="", **stamps):
+    """stamps: kind=(head, order) or (head, order, section). A pass kind becomes the dispatcher's receipt in the
+    reviews manifest, oldest first by `order` (worst level `none` unless `highest` names another; `receipt` gives
+    per-kind overrides). An older kind becomes a stamp. Stages a stamp under one section (or several,
+    comma-separated), asks the gate about TODO, and puts the tree back."""
     now = time.time_ns()
-    entry, lines = {}, []
+    entry, receipts = {}, []
     for kind, spec in stamps.items():
         head, order = spec[0], spec[1]
         section = spec[2] if len(spec) > 2 else "7"
         kind = kind.replace("_", "-")
-        entry[kind] = now - (100 - order) * 1_000_000_000
-        entry[f"{kind}_head"] = head
-        entry[f"{kind}_section"] = section
-        if kind in CHECKED and receipts:
-            lines.append(json.dumps({"kind": kind, "todo": TODO, "section": int(section), "head": head,
-                                     "jobId": f"direct:{order}", "route": "codex-dispatch.sh", "rc": 0,
-                                     "pass_checked": True, "highest": (highest or {}).get(kind, "none")}))
+        if kind in PASSES:
+            over = dict((receipt or {}).get(kind, {}))
+            if kind in (highest or {}):
+                over["highest"] = highest[kind]
+            line = _receipt(kind, head, order, section)
+            line.update(over)
+            receipts.append((order, line))
+        else:
+            entry[kind] = now - (100 - order) * 1_000_000_000
+            entry[f"{kind}_head"] = head
+            entry[f"{kind}_section"] = section
     state = root / ".claude/state/last-review-stamps.json"
     state.parent.mkdir(parents=True, exist_ok=True)
-    state.write_text(json.dumps({TODO: entry}))
+    state.write_text(json.dumps({TODO: entry} if entry else {}))
     manifest = root / gate._PASS_MANIFEST
     manifest.parent.mkdir(parents=True, exist_ok=True)
-    manifest.write_text("\n".join(lines) + ("\n" if lines else ""))
+    manifest.write_text("".join(json.dumps(r) + "\n" for _, r in sorted(receipts, key=lambda x: x[0])) + manifest_tail)
     text = (root / TODO).read_text()
     for n in stamp_under.split(","):
         marker = {"7": "## 7. Seven\n\n- [x] item\n", "8": "## 8. Eight\n\n- [ ] item\n"}[n]
@@ -135,7 +147,7 @@ def test_refusal_each_missing_or_outdated_pass_is_named(tmp_path):
         (_good(h, plan=(h["elsewhere"], 1)), "not in this history"),
         (_good(h, round=(h["elsewhere"], 2)), "not in this history"),
         (_good(h, completion=(h["elsewhere"], 4)), "not in this history"),
-        (_good(h, round=("", 2)), "round has no dispatch head recorded"),
+        (_good(h, round=("", 2)), "round has no checked, complete receipt"),
         # A reconciliation alone is not a completion.
         (_good(h, completion=None, reconciliation=(h["final"], 5)), "missing: completion"),
     )
@@ -158,21 +170,20 @@ def test_refusal_a_pass_that_ended_at_a_blocking_level_does_not_count(tmp_path):
     assert not ok and "records no HIGHEST level" in why, why
 
 
-def test_refusal_a_pass_without_the_dispatchers_receipt_does_not_count(tmp_path):
-    """A stamp says a dispatch was recorded. Only the receipt says the pass was checked and how it ended."""
+def test_refusal_only_a_checked_complete_receipt_from_the_dispatcher_counts(tmp_path):
+    """A receipt is what scripts/codex-dispatch.sh writes once it has checked a pass. A line the broker writes
+    when a dispatch starts, an incomplete pass, and a line from any other route are not receipts."""
     root, h = _history(tmp_path)
-    ok, why = _judge(root, receipts=False, **_good(h))
-    assert not ok and "round has no checked, complete receipt" in why \
-        and "performance has no checked, complete receipt" in why \
-        and "completion has no checked, complete receipt" in why, why
-    # A receipt for another dispatch head is not this pass's receipt.
-    _judge(root, **_good(h))
-    manifest = root / gate._PASS_MANIFEST
-    manifest.write_text(manifest.read_text().replace(h["final"], h["build"]))
-    state = json.loads((root / ".claude/state/last-review-stamps.json").read_text())
-    assert gate._pass_receipt(root, TODO, "7", "round", h["final"]) is None
-    assert gate._pass_receipt(root, TODO, "7", "round", h["build"])["kind"] == "round"
-    assert state[TODO]["round_head"] == h["final"]
+    for kind in ("round", "performance", "completion"):
+        for bad in ({"pass_checked": False}, {"rc": 3}, {"route": "review-broker"}, {"head": ""}):
+            ok, why = _judge(root, receipt={kind: bad}, **_good(h))
+            assert not ok and f"{kind} has no checked, complete receipt" in why, (kind, bad, why)
+    ok, why = _judge(root, receipt={"plan": {"rc": 3}}, **_good(h))
+    assert not ok and "plan has no checked, complete receipt" in why, why
+    # A pass dispatched again and still running: the newest line for it is the one that decides.
+    running = json.dumps({"kind": "round", "todo": TODO, "section": 7, "head": h["final"], "jobId": "systemd-run:x"})
+    ok, why = _judge(root, manifest_tail=running + "\n", **_good(h))
+    assert not ok and "round has no checked, complete receipt" in why, why
 
 
 def test_refusal_a_tooling_change_after_a_pass_is_unread(tmp_path):
@@ -188,12 +199,11 @@ def test_refusal_a_pass_for_another_section_does_not_count(tmp_path):
     plan and round of section 7 with only a fresh completion of its own."""
     root, h = _history(tmp_path)
     ok, why = _judge(root, stamp_under="8", **_good(h, completion=(h["final"], 4, "8")))
-    assert not ok and "plan was dispatched for section '7', not section 8" in why \
-        and "round was dispatched for section '7', not section 8" in why, why
+    assert not ok and "missing: plan" in why and "missing: round" in why and "missing: performance" in why, why
     eight = {k: (v[0], v[1], "8") for k, v in _good(h).items()}
     assert _judge(root, stamp_under="8", **eight) == (True, "")
     ok, why = _judge(root, **_good(h, completion=(h["final"], 4, "8")))
-    assert not ok and "completion was dispatched for section '8', not section 7" in why, why
+    assert not ok and "missing: completion" in why, why
     ok, why = _judge(root, stamp_under="7,8", **_good(h))
     assert not ok and "one commit stamps one section" in why, why
     assert gate._stamped_sections(root, TODO) is None, "nothing staged: no section to read"
@@ -243,16 +253,23 @@ def test_an_older_section_is_judged_exactly_as_before(tmp_path):
     assert not ok and "source changed since dispatch" in why, why
 
 
-def test_refusal_one_pass_stamp_puts_the_section_on_the_new_rules(tmp_path):
+def test_refusal_one_pass_puts_the_section_on_the_new_rules(tmp_path):
     """The three older stamps cannot be topped up with a single pass, nor a pass set with older kinds."""
     root, h = _history(tmp_path)
     ok, why = _judge(root, adversarial=(h["fix"], 1), consistency=(h["fix"], 2), perf=(h["fix"], 3),
                      round=(h["final"], 4))
     assert not ok and "missing: plan" in why and "missing: completion" in why \
         and "missing: performance" in why, why
-    assert gate._three_pass_shape({"plan": 5}) and gate._three_pass_shape({"performance": 5})
-    assert not gate._three_pass_shape({"adversarial": 5, "plan": 0})
-    assert not gate._three_pass_shape({"plan": "5"}) and not gate._three_pass_shape({})
+    # Passes for another section of the same TODO leave this one on the older rules it started with.
+    assert _judge(root, adversarial=(h["fix"], 1), consistency=(h["fix"], 2), perf=(h["fix"], 3),
+                  round=(h["final"], 4, "8")) == (True, "")
+
+
+def test_a_fix_commit_in_a_reviewed_todo_is_not_held_for_a_re_adversarial(tmp_path):
+    root, h = _history(tmp_path)
+    _judge(root, plan=(h["plan"], 1))
+    assert gate._pass_receipts(root, TODO, None)[0], "the plan receipt marks the TODO as reviewed under the pin"
+    assert not gate._pass_receipts(root, "todo/other.md", None)[0]
 
 
 def test_a_broken_pin_does_not_open_the_gate(tmp_path):
@@ -269,25 +286,25 @@ def test_refusal_a_receipt_behind_an_unreadable_line_is_not_trusted(tmp_path):
     clean receipt behind it carried the stamp."""
     root, h = _history(tmp_path)
     assert _judge(root, **_good(h)) == (True, "")
+    cut = '{"kind": "completion", "todo": "' + TODO + '", "section": 7, "head": "' + h["final"] + '", "rc": 0, "pas'
+    ok, why = _judge(root, manifest_tail=cut, **_good(h))
+    assert not ok and "has a line that cannot be read" in why and "missing: completion" in why, why
+    # Cut too short to say which TODO it was for: it may be this one's.
+    ok, why = _judge(root, manifest_tail='{"ts": 17943', **_good(h))
+    assert not ok and "has a line that cannot be read" in why, why
+    # An unreadable line that names another TODO is not this one's.
+    other = '{"kind": "completion", "todo": "todo/00-x/TODO-02-other.md", "section": 7, "rc": 0, "pas'
+    assert _judge(root, manifest_tail=other + "\n", **_good(h)) == (True, "")
+    assert _judge(root, manifest_tail="\n  \n", **_good(h)) == (True, ""), "blank lines are not receipts"
+    # An unreadable line OLDER than every receipt of this section does not matter.
+    assert _judge(root, **_good(h)) == (True, "")
     manifest = root / gate._PASS_MANIFEST
-    clean = manifest.read_text()
-
-    def judge_with(tail):
-        # _judge rewrites the manifest, so the gate is asked directly on the same staged stamp.
-        text = (root / TODO).read_text()
-        (root / TODO).write_text(text.replace("## 7. Seven\n\n- [x] item\n", "## 7. Seven\n\n- [x] item\n\n" + STAMP))
-        _git(root, "add", "--", TODO)
-        manifest.write_text(clean + tail)
-        try:
-            return gate._four_dispatch_evidence(root, [TODO])
-        finally:
-            _git(root, "reset", "-q", "--hard", "HEAD")
-
-    assert judge_with("") == (True, "")
-    ok, why = judge_with('{"kind": "completion", "todo": "' + TODO + '", "section": 7, "head": "' + h["final"] + '", "rc": 0, "pas')
-    assert not ok and "has no checked, complete receipt" in why, why
-    assert judge_with("\n\n") == (True, ""), "blank lines are not receipts"
-    sys.path.insert(0, str(REPO / ".claude/hooks"))
-    import codex_review_completed as crc
-    (root / crc.PASS_MANIFEST).write_text(clean + "{cut short")
-    assert not crc._pass_receipt_ok(root, "round", TODO, "7")
+    receipts, readable = gate._pass_receipts(root, TODO, "7")
+    assert readable and set(receipts) == {"plan", "round", "performance", "completion"}
+    manifest.write_text("{cut short\n" + manifest.read_text())
+    receipts, readable = gate._pass_receipts(root, TODO, "7")
+    assert not readable and set(receipts) == {"plan", "round", "performance", "completion"}
+    # With no receipt of its own in the readable part, a TODO cannot be called an older-shape one either.
+    ok, why = _judge(root, manifest_tail="{cut short", adversarial=(h["fix"], 1), consistency=(h["fix"], 2),
+                     perf=(h["fix"], 3))
+    assert not ok and "has a line that cannot be read" in why, why

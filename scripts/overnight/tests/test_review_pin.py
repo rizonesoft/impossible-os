@@ -281,43 +281,15 @@ def test_refusal_a_marker_only_the_recorder_would_read_is_refused(tmp_path):
         assert prompt == "", marker
 
 
-def test_refusal_a_pass_is_credited_only_against_the_wrappers_own_receipt(tmp_path):
-    """Review finding: the recorder looked for the script's NAME in the command, so a same-named script
-    elsewhere, or the name as a stray argument, earned credit for an unchecked pass."""
-    import json
-    sys.path.insert(0, str(REPO / ".claude/hooks"))
-    import codex_review_completed as crc
-    todo = "todo/00-infrastructure/TODO-01-developer-tooling-stack.md"
-    manifest = tmp_path / crc.PASS_MANIFEST
-    manifest.parent.mkdir(parents=True)
-
-    def receipt(**over):
-        e = {"kind": "round", "todo": todo, "section": 99, "jobId": f"direct:{len(manifest.read_text()) if manifest.exists() else 0}",
-             "route": "codex-dispatch.sh", "rc": 0, "pass_checked": True}
-        e.update(over)
-        with manifest.open("a") as f:
-            f.write(json.dumps(e) + "\n")
-
-    assert not crc._pass_receipt_ok(tmp_path, "round", todo, 99), "no manifest: nothing to credit"
-    for bad in ({"route": "review-broker"}, {"pass_checked": False}, {"rc": 3}, {"rc": "0"}, {"jobId": ""}):
-        receipt(**bad)
-        assert not crc._pass_receipt_ok(tmp_path, "round", todo, 99), bad
-    receipt()
-    assert not crc._pass_receipt_ok(tmp_path, "completion", todo, 99), "another kind"
-    assert not crc._pass_receipt_ok(tmp_path, "round", "todo/other.md", 99), "another TODO"
-    assert not crc._pass_receipt_ok(tmp_path, "round", todo, 7), "another section"
-    assert crc._pass_receipt_ok(tmp_path, "round", todo, 99)
-    assert not crc._pass_receipt_ok(tmp_path, "round", todo, 99), "a receipt is credited once"
-    # An incomplete pass after a complete one: the newest receipt decides.
-    receipt()
-    receipt(rc=3)
-    assert not crc._pass_receipt_ok(tmp_path, "round", todo, 99)
-    # The older kinds never needed a receipt.
-    for old in crc.LEGACY_REVIEW_KINDS:
-        assert crc._pass_receipt_ok(tmp_path, old, "todo/anything.md", None), old
+def test_the_recorder_writes_no_stamp_for_a_pass():
+    """The commit gate judges a pass from the dispatcher's receipt. A stamp written when a dispatch starts,
+    which for the background broker is before there is anything to judge, would say nothing it may use."""
+    text = (REPO / ".claude/hooks/codex_review_completed.py").read_text()
+    assert "review_kind not in SECTION_PASS_KINDS" in text and "_k in SECTION_PASS_KINDS" in text
+    assert "_pass_receipt_ok" not in text and "pass-receipts-credited" not in text
 
 
-def test_the_wrapper_writes_the_receipt_the_recorder_reads(tmp_path):
+def test_the_wrapper_writes_the_receipt_the_gate_reads(tmp_path):
     import json
     pin = _pin()
     full = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["completion"]) + "\nHIGHEST: none\n"
@@ -331,12 +303,72 @@ def test_the_wrapper_writes_the_receipt_the_recorder_reads(tmp_path):
     assert all(e["route"] == "codex-dispatch.sh" and e["section"] == 99 for e in lines)
 
 
-def test_refusal_the_broker_does_not_dispatch_a_pass():
+def test_refusal_a_pass_names_its_todo_and_section(tmp_path):
+    for first in ("[review-kind: round] just some words", "[review-kind: round] todo/x.md with no section"):
+        done, prompt = _dispatch(tmp_path, "round", "x", marker=first.split("]")[0] + "]",
+                                 body="")
+        assert done.returncode in (0, 3), "the helper's own first line names both"
+    import os
     import subprocess
+    fake = tmp_path / "companion.js"
+    for first in ("[review-kind: round] just some words", "[review-kind: round] todo/x.md with no section number"):
+        done = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"), first + "\nReview it."],
+                              capture_output=True, text=True, timeout=60, cwd=str(REPO),
+                              env={**os.environ, "CODEX_COMPANION_PATH": str(fake),
+                                   "CODEX_REVIEWS_DIR": str(tmp_path / "reviews2")})
+        assert done.returncode == 2 and "names its TODO and section on the first line" in done.stderr, done.stderr
+
+
+SELF_CONTAINED_COMPANION = """
+const fs = require('fs');
+const path = require('path');
+fs.writeFileSync(path.join(__dirname, 'prompt.txt'), process.argv[3] || '');
+process.stdout.write('# Codex Adversarial Review\\n\\n' + fs.readFileSync(path.join(__dirname, 'review.txt'), 'utf8'));
+"""
+
+
+def test_the_broker_runs_a_pass_through_the_checking_wrapper(tmp_path):
+    """The run dispatches in the background through the broker. A pass sent that way is run by the wrapper
+    inside the detached job, so it is checked and receipted exactly as a foreground one."""
+    import json
+    import os
+    import subprocess
+    import time
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        "-c", "core.hooksPath=/dev/null", *args], capture_output=True, text=True, timeout=60, check=True)
+
+    git("init", "-q")
+    (repo / ".gitignore").write_text(".claude/\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "candidate")
+    # The detached job has a fresh environment, so this companion finds its files beside itself. It is the
+    # only reviewer this test can reach: the broker hands the wrapper the companion path it was given.
+    fake = tmp_path / "companion.js"
+    fake.write_text(SELF_CONTAINED_COMPANION)
+    pin = _pin()
+    (tmp_path / "review.txt").write_text(
+        "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["completion"]) + "\nHIGHEST: none\n")
+    env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "REVIEW_BASE": "HEAD", "CODEX_OUTAGE_OVERRIDE": "1"}
     done = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
-                           "[review-kind: round] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nx"],
-                          capture_output=True, text=True, timeout=60, cwd=str(REPO))
-    assert done.returncode == 2 and "dispatched with scripts/codex-dispatch.sh" in done.stderr, done.stderr
+                           "[review-kind: completion] todo/00-x/TODO-01-x.md section 7\nReview it."],
+                          capture_output=True, text=True, timeout=60, cwd=str(repo), env=env)
+    assert done.returncode == 0, done.stderr
+    log = pathlib.Path(json.loads(done.stdout.strip().splitlines()[-1])["logFile"])
+    deadline = time.time() + 60
+    while time.time() < deadline and not (log.exists() and "Turn completed (rc=" in log.read_text()):
+        time.sleep(0.2)
+    assert "Turn completed (rc=0)" in log.read_text(), log.read_text()[-400:]
+    assert "[codex]" not in log.read_text(), "the real reviewer must not have been reached"
+    assert "- record: " in (tmp_path / "prompt.txt").read_text(), "the lenses were appended"
+    lines = [json.loads(ln) for ln in (repo / ".claude/overnight/reviews/manifest.jsonl").read_text().splitlines()]
+    receipts = [e for e in lines if e.get("pass_checked") is True]
+    assert len(receipts) == 1 and receipts[0]["kind"] == "completion" and receipts[0]["section"] == 7 \
+        and receipts[0]["rc"] == 0 and receipts[0]["highest"] == "none", lines
+
 
 
 def test_the_worst_level_of_a_review_is_read_from_its_last_highest_line():

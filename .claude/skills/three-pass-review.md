@@ -26,7 +26,9 @@ REVIEW_BASE=<sha the section started from> bash scripts/codex-dispatch.sh '[revi
 - The marker is written once, as the first thing on the first line. Any other spelling is refused.
 - `REVIEW_BASE` decides the lenses that depend on the changed files (`concurrency` and `bare-metal` for kernel and boot paths, `design` for drawn UI). Without it the base is `HEAD~1`, which is wrong for a section of more than one commit.
 - The wrapper appends the lenses and the verdict line each one owes. Do not write them into the body.
-- A pass is dispatched through `scripts/codex-dispatch.sh` only. The broker refuses a pass kind, and the recorder credits a pass only against the wrapper's own receipt.
+- In the background, send the same prompt through `scripts/overnight/review-broker-codex-dispatch.sh` (with `REVIEW_BASE` set the same way): its detached job runs `scripts/codex-dispatch.sh`, so the pass is checked and receipted exactly as a foreground one, and its log ends `Turn completed (rc=N)` with the wrapper's exit status.
+- The first line names the TODO and the section (`todo/<path>.md section <N>`). The commit gate finds a pass by them.
+- The commit gate judges a pass from the receipt the wrapper appends to `.claude/overnight/reviews/manifest.jsonl` once the pass has been checked: the candidate it identified before the reviewer ran, whether every lens gave a verdict, and the review's `HIGHEST:` level. A direct companion call writes no receipt and counts for nothing.
 - Each pass is a fresh Codex session. Never resume the previous pass.
 
 ## Reading the result

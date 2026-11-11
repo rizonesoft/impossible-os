@@ -711,57 +711,6 @@ def _detect_review_kind(skill_name: str, prompt: str) -> str:
     return kinds.pop()
 
 
-PASS_MANIFEST = ".claude/overnight/reviews/manifest.jsonl"
-PASS_CREDITED = ".claude/state/pass-receipts-credited"
-
-
-def _pass_receipt_ok(root: Path, kind: str, todo_path: str, section) -> bool:
-    """Whether this dispatch may be credited with `kind`.
-
-    A pass of the reviewer pin is credited only against the receipt
-    scripts/codex-dispatch.sh writes after it has checked the pin, appended the
-    lenses and read the returned review for a verdict per lens: a manifest line
-    for this kind and TODO with `pass_checked` true and rc 0, not credited
-    before. The command text is not consulted: a script of the same name
-    elsewhere, the broker and a direct companion call write no such line, and
-    an incomplete pass writes one with rc 3. Every other kind is unaffected.
-    """
-    if kind not in SECTION_PASS_KINDS:
-        return True
-    try:
-        lines = (root / PASS_MANIFEST).read_text().splitlines()
-    except OSError:
-        return False
-    credited_path = root / PASS_CREDITED
-    try:
-        credited = set(credited_path.read_text().split())
-    except OSError:
-        credited = set()   # nothing credited yet
-    for line in reversed(lines):
-        if not line.strip():
-            continue
-        try:
-            e = json.loads(line)
-        except ValueError:
-            return False   # an unreadable newer line may be this pass's own, cut short
-        if not isinstance(e, dict) or e.get("kind") != kind or e.get("todo") != todo_path:
-            continue
-        if section not in (None, "") and str(e.get("section", "")) != str(section):
-            continue
-        job = e.get("jobId")
-        if e.get("route") != "codex-dispatch.sh" or e.get("pass_checked") is not True \
-                or e.get("rc") != 0 or not isinstance(job, str) or not job or job in credited:
-            return False   # the newest receipt for this pass decides
-        try:
-            credited_path.parent.mkdir(parents=True, exist_ok=True)
-            with credited_path.open("a") as f:
-                f.write(job + "\n")
-        except OSError:
-            return False   # a receipt that cannot be marked would be credited twice
-        return True
-    return False
-
-
 def _all_dispatch_targets(cmd: str, root: Path) -> list:
     """Every `(kind, todo_path, section)` a compound Bash call dispatches.
 
@@ -1533,14 +1482,12 @@ def main() -> int:
         is_broker = bool(raw_cmd and _cd.is_review_broker_dispatch(raw_cmd))
         state["review_broker_dispatch"] = is_broker
         _write_atomic(state_path, state)
-        route_ok = bool(review_kind and todo_path) and _pass_receipt_ok(root, review_kind, todo_path, section)
-        if review_kind in SECTION_PASS_KINDS and todo_path and not route_ok:
-            sys.stderr.write(
-                f"[review-stamps] WARN: no checked, complete receipt from scripts/codex-dispatch.sh "
-                f"for this {review_kind!r} pass; it is NOT recorded.\n"
-            )
+        # A pass of the reviewer pin earns no stamp here. The commit gate judges
+        # it from the receipt scripts/codex-dispatch.sh writes when the pass has
+        # been checked; a stamp written now, when the dispatch has only started,
+        # would say nothing the gate may use.
         stamp_attempted = bool(
-            review_kind and todo_path and route_ok
+            review_kind and todo_path and review_kind not in SECTION_PASS_KINDS
             and (not state.get("background_dispatch") or is_broker)
         )
         if stamp_attempted:
@@ -1555,7 +1502,7 @@ def main() -> int:
             # decision out across the dispatches the same command carries.
             _seen_targets = {(review_kind, todo_path)}
             for _k, _tp, _sec in _all_dispatch_targets(raw_cmd, root):
-                if (_k, _tp) in _seen_targets or not _pass_receipt_ok(root, _k, _tp, _sec):
+                if (_k, _tp) in _seen_targets or _k in SECTION_PASS_KINDS:
                     continue
                 _seen_targets.add((_k, _tp))
                 _ok2, _err2 = _record_stamp(
