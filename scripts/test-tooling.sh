@@ -13098,7 +13098,9 @@ fi
 # The compound and invalid-report paths are the two that used to disagree, so
 # assert the escalation chain still STORES a reason on both -- a single TAP
 # emit fed by an empty `reason` would be a different silent regression.
-if grep -q 'reason\[0\] == .\\0. && leaked > 0 && \*out_verdict == 1' \
+# The leak escalation moved into u_escalate_run (2026-11-11), which takes the
+# reason by pointer; the expression is the same rule under its new spelling.
+if grep -q '(\*reason)\[0\] == .\\0. && in->leaked > 0 && verdict == 1' \
         "$REPO_ROOT/src/kernel/test/test_usermode.c" &&
    grep -q 'if (!was_failing && reason\[0\] == .\\0.)' \
         "$REPO_ROOT/src/kernel/test/test_usermode.c"; then
