@@ -100,7 +100,7 @@ def row_title(raw: str) -> str:
 
 class Section:
     __slots__ = ("ref", "path", "n", "title", "box", "deps", "wait", "unmet", "blocked", "domain", "sort", "label", "selfdep", "dead",
-                 "needs", "items", "needs_fault")
+                 "needs", "items", "needs_fault", "needs_seen")
 
     def __init__(self, ref, path, n, title, box, domain, sort):
         self.ref, self.path, self.n, self.title, self.box = ref, path, n, title, box
@@ -114,6 +114,7 @@ class Section:
         self.dead = []      # dependency tokens no work can satisfy (no such section, not a TODO)
         self.needs = []     # the values of its **Needs:** line, in the order written
         self.items = 0      # its checklist items
+        self.needs_seen = False
         self.needs_fault = None  # why its **Needs:** line cannot be read, if it cannot
 
 
@@ -264,9 +265,10 @@ def read_bodies(sections: dict, root: Path) -> None:
 
 
 def _read_needs(s: Section, value: str) -> None:
-    if s.needs or s.needs_fault:
-        s.needs_fault = "has more than one **Needs:** line"
+    if s.needs_seen:
+        s.needs, s.needs_fault = [], "has more than one **Needs:** line"
         return
+    s.needs_seen = True
     names = [v.strip() for v in value.split(",")]
     if names == ["none"]:
         return
@@ -477,31 +479,62 @@ def write_atomic(path: Path, text: str, expect) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def unconflicted(text: str) -> tuple:
+    """A plan git could not merge, without its conflict markers, and whether it held any.
+
+    Both sides' lines are in the file, so the copies a plan may hold only once
+    go here, before the plan is parsed: a second progress line, a phase heading
+    already seen, and a table header or rule in the middle of a table. A row
+    both sides carry is dropped by the sync as a duplicate, and a line the
+    second side repeats word for word is dropped here. Hand-written prose the
+    two sides wrote differently stays, both copies, for a person to settle.
+    """
+    lines = text.split("\n")
+    if not any(CONFLICT_RE.match(line) for line in lines):
+        return text, False
+    out, phases, progress, prev = [], set(), False, ""
+    side, ours = "", set()  # which part of a conflict the line is in, and the lines its first side held
+    for line in lines:
+        if CONFLICT_RE.match(line):
+            side = {"<": "ours", "|": "base", "=": "theirs", ">": ""}[line[0]]
+            if side in ("ours", ""):
+                ours = set()
+            continue
+        if side == "base":
+            continue  # the common ancestor, shown by diff3-style conflicts
+        kind = ("head" if HEAD_RE.match(line) else "rule" if RULE_RE.match(line) else
+                "row" if ROW_RE.match(line) else "")
+        mp = PHASE_RE.match(line)
+        if side == "ours":
+            ours.add(line)
+        if ((kind == "head" and prev) or (kind == "rule" and prev in ("rule", "row"))
+                or (PROGRESS_RE.match(line) and progress) or (mp and mp.group("n") in phases)
+                or (side == "theirs" and kind != "row" and line in ours)):
+            continue
+        if mp:
+            phases.add(mp.group("n"))
+        progress = progress or bool(PROGRESS_RE.match(line))
+        if line.strip():
+            prev = kind
+        out.append(line)
+    return "\n".join(out), True
+
+
 def synced_text(text: str, sections: dict) -> tuple:
     """The plan text brought up to date, and what changed (as messages)."""
+    text, repaired = unconflicted(text)
     plan = Plan(text)
-    notes = []
+    notes = ["removed merge conflict markers"] if repaired else []
     lines = plan.lines
     drop = set()
-    conflicted = any(CONFLICT_RE.match(line) for line in lines)
-    if conflicted:
-        notes.append("removed merge conflict markers")
-    in_table = seen_progress = False
     for i, line in enumerate(lines):
         mr = ROW_RE.match(line)
         if not mr:
-            if conflicted and (CONFLICT_RE.match(line) or (in_table and (HEAD_RE.match(line) or RULE_RE.match(line)))
-                               or (seen_progress and PROGRESS_RE.match(line))):
-                drop.add(i)  # a marker, or the other side's copy of a line the plan already has
-                continue
-            in_table = in_table and bool(line.strip()) and not line.startswith("#")
             if PROGRESS_RE.match(line):
-                seen_progress = True
                 lines[i] = progress_line(sections)
             elif OLD_HEAD_RE.match(line) and i + 1 < len(lines) and OLD_RULE_RE.match(lines[i + 1]):
                 lines[i], lines[i + 1] = TABLE_HEAD  # a table from before the Needs and Items columns
             continue
-        in_table = True
         ref = mr.group("ref")
         if ref not in sections:
             drop.add(i)

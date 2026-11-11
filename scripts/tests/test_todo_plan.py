@@ -223,10 +223,13 @@ def test_a_needs_value_outside_the_list_fails_the_check():
             r = run(root, "--check")
             assert r.returncode == 1 and said in r.stderr and f"D01 T01 {S}1" in r.stderr, (value, r.stderr)
     with tempfile.TemporaryDirectory() as d:
-        root = make_repo(d, beta_bodies={1: ("Base Layer", "**Needs:** operator\n\n**Needs:** none"), 2: ("Top Layer", "")})
-        assert run(root, "--seed").returncode == 0
-        r = run(root, "--check")
-        assert r.returncode == 1 and "more than one" in r.stderr, r.stderr
+        pass
+    for two in ("**Needs:** operator\n\n**Needs:** none", "**Needs:** none\n\n**Needs:** operator"):
+        with tempfile.TemporaryDirectory() as d:
+            root = make_repo(d, beta_bodies={1: ("Base Layer", two), 2: ("Top Layer", "")})
+            assert run(root, "--seed").returncode == 0
+            r = run(root, "--check")
+            assert r.returncode == 1 and "more than one" in r.stderr, (two, r.stderr)
 
 
 def test_sync_upgrades_a_three_column_plan():
@@ -264,6 +267,21 @@ def test_sync_repairs_a_plan_git_could_not_merge():
         r = run(root, "--sync")
         assert r.returncode == 0 and "conflict markers" in r.stdout, (r.stdout, r.stderr)
         assert plan.read_text() == clean, plan.read_text()
+        assert run(root, "--check").returncode == 0
+        # A conflict that takes in a phase heading, its paragraph and the table header, the other side in three columns.
+        lines = clean.splitlines()
+        a = next(k for k, ln in enumerate(lines) if ln.startswith("### Phase 1 "))
+        b = index_of(lines, f"D01 T01 {S}1")
+        ours = lines[a:b + 1]
+        theirs = ["|".join(ln.split("|")[:4]) + "|" if ln.startswith("|") else ln for ln in ours]
+        assert theirs != ours
+        lines[a:b + 1] = ["<<<<<<< HEAD", *ours, "=======", *theirs, ">>>>>>> abc1234 (ship)"]
+        plan.write_text("\n".join(lines) + "\n")
+        r = run(root, "--sync")
+        assert r.returncode == 0, r.stderr
+        got = plan.read_text()
+        assert got.count("### Phase 1 ") == 1 and got.count("| Done") == clean.count("| Done"), got
+        assert rows(root) == [ln for ln in clean.splitlines() if ln.startswith("| [")]
         assert run(root, "--check").returncode == 0
 
 
