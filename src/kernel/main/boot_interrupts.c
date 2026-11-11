@@ -76,6 +76,7 @@ uint64_t boot_test_fb_refusal_digest;
 #include "kernel/tpm_baseline.h"
 #include "kernel/tpm_budget.h"
 #include "kernel/tpm_enroll_gate.h"
+#include "kernel/boot_audit.h"
 #include "kernel/tpm_headless_authz.h"
 #include "kernel/boot_headless_authz.h"
 #include "kernel/boot_confirm.h"
@@ -649,7 +650,7 @@ void boot_phase1(void)
             .audit_degraded          = g_boot_info.audit_degraded,
             .sticky_present          = g_boot_info.sticky_present,
             .sticky_recovery_trigger = g_boot_info.sticky_recovery_trigger,
-            .secure_boot_enabled     = g_boot_info.secure_boot_enabled,
+            .secure_boot_enforcing   = (uint8_t)uefi_secureboot_enforcing(),
             /* Whole-chain coverage, NOT just "Secure Boot is on": only the
              * UKI path runs a kernel the signature actually covered. The
              * split path loads an unsigned kernel.exe from the ESP even with
@@ -699,6 +700,18 @@ void boot_phase1(void)
                 case BOOT_CONFIRM_TIMEOUT:     gi.confirm = TPM_CONFIRM_TIMEOUT; break;
                 case BOOT_CONFIRM_UNAVAILABLE: gi.confirm = TPM_CONFIRM_UNAVAILABLE; break;
             }
+            /* ONE ARM, ONE ENROLLMENT. needs_confirm means the sticky trigger
+             * was set, and the arm authorizes exactly this confirmation step,
+             * whatever its answer, so it is spent now: durably, BEFORE the
+             * headless token below is consumed and before any NV write. A
+             * spend that does not land leaves trigger_spent 0 and the gate
+             * refuses, so a write failure can never let one arm enroll twice.
+             * A timeout spends it too; the operator re-arms (one-shot offer). */
+            gi.trigger_spent = (boot_sticky_set_field(
+                BOOT_STICKY_FIELD_RECOVERY_TRIGGER, 0) == 0) ? 1u : 0u;
+            if (!gi.trigger_spent)
+                klog(LOG_ERROR, "TPM", "Enrollment trigger could not be spent; "
+                     "enrollment refused this boot");
             /* HEADLESS ESCAPE HATCH. Reached only when no console answered and
              * every non-operator condition above already held, so a signed
              * token supplies the operator factor and nothing else.
@@ -726,7 +739,7 @@ void boot_phase1(void)
              * widening this without widening the gate would destroy the
              * operator's authorization for nothing. Whether the two no-answer
              * shapes should be treated alike is filed, not decided here. */
-            if (gi.confirm == TPM_CONFIRM_UNAVAILABLE) {
+            if (gi.confirm == TPM_CONFIRM_UNAVAILABLE && gi.trigger_spent) {
                 const uint8_t *hl_blob = (const uint8_t *)0;
                 uint32_t hl_len = boot_headless_authz_take(&hl_blob);
                 uint32_t hl_op = (uint32_t)TPM_HEADLESS_OP_ENROLL_BASELINE;
@@ -841,6 +854,11 @@ void boot_phase1(void)
                  "Baseline enroll REFUSED (%s; authority %s)",
                  tpm_enroll_refusal_label(gr.refusal),
                  tpm_enroll_authority_label(gr.authority));
+        } else if (boot_sticky_offer_dismissed() == 1) {
+            /* Enrollment is not requested this boot: the operator withdrew
+             * it, so a later request is offered afresh. One GetVariable on an
+             * ordinary boot; a write only when a dismissal is stored. */
+            (void)boot_sticky_set_field(BOOT_STICKY_FIELD_OFFER_DISMISSED, 0);
         }
 
         if (!gr.admit) {
@@ -924,6 +942,38 @@ void boot_phase1(void)
                 tpm_baseline_status_is_failure(bs))
                 tpm_integrity_publish_baseline(overall, pcr_status, pcr_n,
                                                (uint8_t)bs, &cause);
+
+            /* ARM THE NEXT BOOT. Offered only when enrollment was requested,
+             * no baseline exists, and the gate refused for nothing but the
+             * missing trigger, so config, the enforcing chain and a verified
+             * replay all held (the trigger check runs after them). The offer
+             * is ONE-SHOT: a decline or an unanswered prompt dismisses it
+             * durably, so an ordinary boot never waits on it twice; a boot
+             * with tpm_enroll=0 clears the dismissal. With no console nothing
+             * is asked; console-free arming belongs to the headless authority
+             * work (Q12 answer A: physical presence first). */
+            if (bs == TPM_BASELINE_NO_BASELINE && g_boot_info.config.tpm_enroll &&
+                (gr.refusal == TPM_ENROLL_REFUSE_STICKY_TRIGGER_CLEAR ||
+                 gr.refusal == TPM_ENROLL_REFUSE_STICKY_ABSENT) &&
+                boot_sticky_offer_dismissed() == 0) {
+                boot_confirm_result_t ar =
+                    boot_confirm_prompt("[TPM] Arm trusted baseline enrollment "
+                                        "for the next boot? [y/N]",
+                                        'y', 'n', BOOT_CONFIRM_TIMEOUT_MS,
+                                        BOOT_CONFIRM_IRQ_LEAVE_ALONE,
+                                        BOOT_CONFIRM_CLOCK_REQUIRED);
+                if (ar == BOOT_CONFIRM_YES) {
+                    if (boot_sticky_set_field(BOOT_STICKY_FIELD_RECOVERY_TRIGGER, 1) == 0)
+                        klog(LOG_WARN, "TPM", "Baseline enrollment ARMED: "
+                             "reboot and confirm to enroll");
+                    else
+                        klog(LOG_ERROR, "TPM", "Baseline enrollment arm not stored");
+                } else if (ar == BOOT_CONFIRM_DECLINED || ar == BOOT_CONFIRM_TIMEOUT) {
+                    (void)boot_sticky_set_field(BOOT_STICKY_FIELD_OFFER_DISMISSED, 1);
+                    klog(LOG_INFO, "TPM", "Baseline enrollment offer dismissed "
+                         "(boot once with tpm_enroll=0 to offer it again)");
+                }
+            }
 
             /* WHICH field stopped this boot verifying. Without it every cause
              * -- a firmware update, a Secure Boot toggle, a re-enroll needed

@@ -92,7 +92,7 @@ void tpm_enroll_gate_evaluate(const struct tpm_enroll_gate_inputs *in,
      *    below is consumed by kernel code loaded by the loader. Without an
      *    authenticated chain an attacker replaces that code, so no answer
      *    binds and a "confirmed" enrollment would be theatre. */
-    if (!in->secure_boot_enabled) {
+    if (!in->secure_boot_enforcing) {
         gate_result(out, 0, 0, TPM_ENROLL_AUTH_ESP_CONFIG_ONLY,
                     TPM_ENROLL_REFUSE_BOOT_CHAIN_UNTRUSTED);
         return;
@@ -225,6 +225,11 @@ void tpm_enroll_gate_evaluate(const struct tpm_enroll_gate_inputs *in,
             return;
         case TPM_CONFIRM_YES:
             /* The single admitting path in this function. */
+            if (!in->trigger_spent) {
+                gate_result(out, 0, 0, TPM_ENROLL_AUTH_LOADER_SIGNAL_ONLY,
+                            TPM_ENROLL_REFUSE_TRIGGER_UNSPENT);
+                return;
+            }
             gate_result(out, 1, 0,
                         TPM_ENROLL_AUTH_LOCAL_CONSOLE_ON_TRUSTED_CHAIN,
                         TPM_ENROLL_REFUSE_NONE);
@@ -259,6 +264,11 @@ void tpm_enroll_gate_evaluate(const struct tpm_enroll_gate_inputs *in,
              * token itself; admitting on a verdict that was never spent is the
              * ordering defect the caller-side API shape exists to prevent. */
             if (in->headless_authz == (uint8_t)TPM_HEADLESS_OK) {
+                if (!in->trigger_spent) {
+                    gate_result(out, 0, 0, TPM_ENROLL_AUTH_LOADER_SIGNAL_ONLY,
+                                TPM_ENROLL_REFUSE_TRIGGER_UNSPENT);
+                    return;
+                }
                 gate_result(out, 1, 0,
                             TPM_ENROLL_AUTH_HEADLESS_SIGNED_AUTHORIZATION,
                             TPM_ENROLL_REFUSE_NONE);
@@ -307,6 +317,7 @@ const char *tpm_enroll_refusal_label(uint8_t refusal)
         case TPM_ENROLL_REFUSE_CONFIRM_WRONG_KEY:    return "confirm-wrong-key";
         case TPM_ENROLL_REFUSE_CONFIRM_UNAVAILABLE:  return "confirm-unavailable";
         case TPM_ENROLL_REFUSE_HEADLESS_AUTHZ:       return "headless-authz-refused";
+        case TPM_ENROLL_REFUSE_TRIGGER_UNSPENT:      return "trigger-unspent";
         default:                                     return "unknown";
     }
 }

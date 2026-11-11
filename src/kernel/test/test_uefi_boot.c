@@ -1328,8 +1328,101 @@ static void test_loader_readback_live(void)
         "LoaderInfo and LoaderEntrySelected read back as boot_info records them");
 }
 
+
+/* The enforcing predicate admits exactly one state, a readable User or
+ * Deployed Mode with a PK, and every single deviation from it refuses. */
+static void test_uefi_secureboot_enforcing_eval(void)
+{
+    const struct uefi_sb_mode user = {
+        .sb_valid = 1, .secure_boot = 1,
+        .setup_status = UEFI_SB_BYTE_READ, .setup_raw = 0,
+        .audit_status = UEFI_SB_BYTE_READ, .audit_raw = 0,
+        .pk_present = 1,
+    };
+    struct uefi_sb_mode m;
+
+    TEST_ASSERT_EQ(uefi_secureboot_enforcing_eval(&user), 1, "User Mode with PK enforces");
+    TEST_ASSERT_EQ(uefi_secureboot_enforcing_eval((const struct uefi_sb_mode *)0), 0,
+                   "no input refuses");
+
+    m = user; m.sb_valid = 0;
+    TEST_ASSERT_EQ(uefi_secureboot_enforcing_eval(&m), 0, "unreadable SecureBoot refuses");
+    m = user; m.secure_boot = 0;
+    TEST_ASSERT_EQ(uefi_secureboot_enforcing_eval(&m), 0, "SecureBoot off refuses");
+    m = user; m.secure_boot = 2;
+    TEST_ASSERT_EQ(uefi_secureboot_enforcing_eval(&m), 0, "an out-of-range SecureBoot refuses");
+    m = user; m.setup_raw = 1;
+    TEST_ASSERT_EQ(uefi_secureboot_enforcing_eval(&m), 0,
+                   "Setup Mode refuses even when SecureBoot reads 1");
+    m = user; m.setup_raw = 2;
+    TEST_ASSERT_EQ(uefi_secureboot_enforcing_eval(&m), 0,
+                   "a malformed SetupMode byte does not pass for User Mode");
+    m = user; m.setup_status = UEFI_SB_BYTE_ERROR;
+    TEST_ASSERT_EQ(uefi_secureboot_enforcing_eval(&m), 0,
+                   "an unreadable SetupMode does not pass for User Mode");
+    m = user; m.setup_status = UEFI_SB_BYTE_ABSENT;
+    TEST_ASSERT_EQ(uefi_secureboot_enforcing_eval(&m), 0,
+                   "an absent SetupMode does not pass for User Mode");
+    m = user; m.audit_raw = 1;
+    TEST_ASSERT_EQ(uefi_secureboot_enforcing_eval(&m), 0, "Audit Mode refuses");
+    m = user; m.audit_raw = 2;
+    TEST_ASSERT_EQ(uefi_secureboot_enforcing_eval(&m), 0, "a malformed AuditMode byte refuses");
+    m = user; m.audit_status = UEFI_SB_BYTE_ERROR;
+    TEST_ASSERT_EQ(uefi_secureboot_enforcing_eval(&m), 0, "an unreadable AuditMode refuses");
+    m = user; m.audit_status = UEFI_SB_BYTE_ABSENT; m.audit_raw = 7;
+    TEST_ASSERT_EQ(uefi_secureboot_enforcing_eval(&m), 1,
+                   "an absent AuditMode (pre-2.5 firmware) is not Audit Mode");
+    m = user; m.pk_present = 0;
+    TEST_ASSERT_EQ(uefi_secureboot_enforcing_eval(&m), 0, "no Platform Key refuses");
+}
+
+/* Revalidation drift over the raw mode bytes: a byte that turns malformed or
+ * disappears latches drift; a read that failed on either side does not. */
+static void test_uefi_sb_mode_bytes_drifted(void)
+{
+    const struct uefi_sb_mode boot = {
+        .setup_status = UEFI_SB_BYTE_READ, .setup_raw = 0,
+        .audit_status = UEFI_SB_BYTE_READ, .audit_raw = 0,
+    };
+    struct uefi_sb_mode live;
+
+    live = boot;
+    TEST_ASSERT_EQ(uefi_sb_mode_bytes_drifted(&boot, &live), 0, "unchanged bytes do not drift");
+    live = boot; live.setup_raw = 2;
+    TEST_ASSERT_EQ(uefi_sb_mode_bytes_drifted(&boot, &live), 1, "SetupMode 0 -> 2 drifts");
+    live = boot; live.setup_status = UEFI_SB_BYTE_ABSENT;
+    TEST_ASSERT_EQ(uefi_sb_mode_bytes_drifted(&boot, &live), 1, "SetupMode read -> absent drifts");
+    live = boot; live.audit_raw = 2;
+    TEST_ASSERT_EQ(uefi_sb_mode_bytes_drifted(&boot, &live), 1, "AuditMode 0 -> 2 drifts");
+    live = boot; live.setup_status = UEFI_SB_BYTE_ERROR; live.setup_raw = 9;
+    TEST_ASSERT_EQ(uefi_sb_mode_bytes_drifted(&boot, &live), 0, "a failed live read is not drift");
+    live = boot;
+    {
+        struct uefi_sb_mode b2 = boot;
+        b2.audit_status = UEFI_SB_BYTE_ERROR;
+        live.audit_raw = 1;
+        TEST_ASSERT_EQ(uefi_sb_mode_bytes_drifted(&b2, &live), 0,
+                       "a byte the boot could not read has no baseline");
+    }
+    {
+        struct uefi_sb_mode b3 = boot;
+        b3.setup_status = UEFI_SB_BYTE_ERROR;
+        live = boot; live.setup_raw = 1;
+        TEST_ASSERT_EQ(uefi_sb_mode_bytes_drifted(&b3, &live), 0,
+                       "a failed boot SetupMode read followed by Setup Mode is not drift");
+    }
+    live = boot; live.setup_raw = 1;
+    TEST_ASSERT_EQ(uefi_sb_mode_bytes_drifted(&boot, &live), 1, "User Mode -> Setup Mode drifts");
+    TEST_ASSERT_EQ(uefi_sb_mode_bytes_drifted((const struct uefi_sb_mode *)0, &live), 0,
+                   "no input is not drift");
+}
+
 void test_register_uefi_boot(void)
 {
+    test_suite_register_cat("UEFI: Secure Boot mode-byte drift",
+                            test_uefi_sb_mode_bytes_drifted, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: Secure Boot enforcing predicate",
+                            test_uefi_secureboot_enforcing_eval, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: runtime available",
                             test_uefi_rt_available, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: var_get SecureBoot",

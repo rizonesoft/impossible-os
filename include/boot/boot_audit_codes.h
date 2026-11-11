@@ -82,7 +82,9 @@ struct boot_sticky_record {
     unsigned int   last_boot_seq;                /* monotonic boot counter (matches JSONL boot_seq) */
     unsigned int   consumed_trigger_seq;         /* boot_seq when trigger was last consumed (ack) */
 
-    unsigned char  _reserved_b[228];             /* zero-fill; future fields shrink this */
+    unsigned char  enroll_offer_dismissed;       /* 1 = the enrollment-arming offer was declined or
+                                                  * went unanswered; cleared by a tpm_enroll=0 boot */
+    unsigned char  _reserved_b[227];             /* zero-fill; future fields shrink this */
 
     unsigned int   crc32;                        /* CRC-32/IEEE-802.3 over bytes [0..251] */
 };
@@ -100,6 +102,7 @@ _Static_assert(__builtin_offsetof(struct boot_sticky_record, audit_degraded_last
 _Static_assert(__builtin_offsetof(struct boot_sticky_record, last_event_code) == 12, "");
 _Static_assert(__builtin_offsetof(struct boot_sticky_record, last_boot_seq) == 16, "");
 _Static_assert(__builtin_offsetof(struct boot_sticky_record, consumed_trigger_seq) == 20, "");
+_Static_assert(__builtin_offsetof(struct boot_sticky_record, enroll_offer_dismissed) == 24, "");
 _Static_assert(__builtin_offsetof(struct boot_sticky_record, crc32) == 252, "");
 
 /* CRC-32/IEEE-802.3 over the first 252 bytes of `r` (everything except

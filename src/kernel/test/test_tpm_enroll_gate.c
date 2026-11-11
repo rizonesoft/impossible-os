@@ -17,6 +17,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/tpm_enroll_gate.h"
+#include "kernel/tpm_headless_authz.h"
 #include "kernel/tpm_replay.h"
 #include "kernel/boot_info.h"
 #include "boot/boot_policy.h"
@@ -28,6 +29,8 @@
  * this and breaks exactly ONE thing, so a failure names its own cause. */
 static void gate_good_inputs(struct tpm_enroll_gate_inputs *in)
 {
+    for (uint32_t i = 0; i < (uint32_t)sizeof *in; i++)
+        ((uint8_t *)in)[i] = 0u;
     in->boot_path               = BOOT_PATH_RECOVERY;
     in->boot_reason             = BOOT_REASON_RECOVERY_TRIGGER;
     in->boot_source_flags       = BOOT_SOURCE_FLAG_RECOVERY_TRIGGERED;
@@ -35,12 +38,49 @@ static void gate_good_inputs(struct tpm_enroll_gate_inputs *in)
     in->audit_degraded          = 0;
     in->sticky_present          = 1;
     in->sticky_recovery_trigger = 1;
-    in->secure_boot_enabled     = 1;
+    in->secure_boot_enforcing     = 1;
     in->whole_chain_verified    = 1;
     in->replay_known            = 1;
     in->replay_verdict          = TPM_REPLAY_VERIFIED;
     in->tpm_enroll              = 1;
     in->confirm                 = TPM_CONFIRM_YES;
+    in->trigger_spent           = 1;
+}
+
+/* One arm, one enrollment: a yes, or a valid token, admits only when the armed
+ * trigger was durably spent first. Any other outcome keeps its own reason. */
+static void test_enroll_gate_requires_spent_trigger(void)
+{
+    struct tpm_enroll_gate_inputs in;
+    struct tpm_enroll_gate_result r;
+
+    gate_good_inputs(&in);
+    in.trigger_spent = 0;
+    tpm_enroll_gate_evaluate(&in, &r);
+    TEST_ASSERT_EQ(r.admit, 0, "an unspent trigger cannot admit a yes");
+    TEST_ASSERT_EQ(r.refusal, TPM_ENROLL_REFUSE_TRIGGER_UNSPENT, "reported as trigger-unspent");
+
+    gate_good_inputs(&in);
+    in.trigger_spent = 0;
+    in.confirm = TPM_CONFIRM_UNAVAILABLE;
+    in.headless_authz = (uint8_t)TPM_HEADLESS_OK;
+    tpm_enroll_gate_evaluate(&in, &r);
+    TEST_ASSERT_EQ(r.admit, 0, "an unspent trigger cannot admit a token");
+    TEST_ASSERT_EQ(r.refusal, TPM_ENROLL_REFUSE_TRIGGER_UNSPENT, "token path reports it too");
+
+    gate_good_inputs(&in);
+    in.trigger_spent = 0;
+    in.confirm = TPM_CONFIRM_TIMEOUT;
+    tpm_enroll_gate_evaluate(&in, &r);
+    TEST_ASSERT_EQ(r.refusal, TPM_ENROLL_REFUSE_CONFIRM_TIMEOUT, "a timeout keeps its own reason");
+
+    gate_good_inputs(&in);
+    in.trigger_spent = 0;
+    in.confirm = TPM_CONFIRM_PENDING;
+    tpm_enroll_gate_evaluate(&in, &r);
+    TEST_ASSERT_EQ(r.needs_confirm, 1, "the prompt is still requested before the spend");
+    TEST_ASSERT(strcmp(tpm_enroll_refusal_label(TPM_ENROLL_REFUSE_TRIGGER_UNSPENT),
+                       "trigger-unspent") == 0, "label");
 }
 
 /* The whole point of the section: a confirmed, loader-signalled, verified
@@ -145,7 +185,7 @@ static void test_enroll_gate_refuses_untrusted_boot_chain(void)
     struct tpm_enroll_gate_result r;
 
     gate_good_inputs(&in);
-    in.secure_boot_enabled = 0;
+    in.secure_boot_enforcing = 0;
     tpm_enroll_gate_evaluate(&in, &r);
 
     TEST_ASSERT_EQ(r.admit, 0, "no Secure Boot means no trusted enrollment");
@@ -418,7 +458,7 @@ static void test_enroll_gate_labels_are_total(void)
  * was covered by it. On the legacy split path the firmware verifies
  * BOOTX64.EFI and the loader then reads an UNSIGNED kernel.exe off the ESP
  * (src/boot/uefi/bootx64.c:7894-7896, 12281-12283). The first version of
- * this gate checked only secure_boot_enabled and would have stamped such a
+ * this gate checked only the Secure Boot bit and would have stamped such a
  * boot "local-console-on-trusted-chain" -- the exact lie the authority value
  * exists to prevent. */
 static void test_enroll_gate_requires_verified_kernel(void)
@@ -427,7 +467,7 @@ static void test_enroll_gate_requires_verified_kernel(void)
     struct tpm_enroll_gate_result r;
 
     gate_good_inputs(&in);
-    in.secure_boot_enabled  = 1;  /* firmware verified the LOADER... */
+    in.secure_boot_enforcing  = 1;  /* firmware verified the LOADER... */
     in.whole_chain_verified = 0;  /* ...but not the kernel it then loaded */
     tpm_enroll_gate_evaluate(&in, &r);
 
@@ -441,7 +481,7 @@ static void test_enroll_gate_requires_verified_kernel(void)
 
     /* Secure Boot off is still its own, differently-remedied refusal. */
     gate_good_inputs(&in);
-    in.secure_boot_enabled = 0;
+    in.secure_boot_enforcing = 0;
     tpm_enroll_gate_evaluate(&in, &r);
     TEST_ASSERT_EQ(r.refusal, TPM_ENROLL_REFUSE_BOOT_CHAIN_UNTRUSTED,
                    "Secure Boot off stays distinct from kernel-unverified");
@@ -462,14 +502,14 @@ static void test_enroll_gate_refusal_precedence_is_pinned(void)
 
     /* config before secure boot */
     gate_good_inputs(&in);
-    in.tpm_enroll = 0; in.secure_boot_enabled = 0;
+    in.tpm_enroll = 0; in.secure_boot_enforcing = 0;
     tpm_enroll_gate_evaluate(&in, &r);
     TEST_ASSERT_EQ(r.refusal, TPM_ENROLL_REFUSE_CONFIG_DISABLED,
                    "config opt-in is reported before Secure Boot");
 
     /* secure boot before whole-chain */
     gate_good_inputs(&in);
-    in.secure_boot_enabled = 0; in.whole_chain_verified = 0;
+    in.secure_boot_enforcing = 0; in.whole_chain_verified = 0;
     tpm_enroll_gate_evaluate(&in, &r);
     TEST_ASSERT_EQ(r.refusal, TPM_ENROLL_REFUSE_BOOT_CHAIN_UNTRUSTED,
                    "Secure Boot is reported before whole-chain coverage");
@@ -578,6 +618,8 @@ static void test_enroll_gate_labels_map_exactly(void)
 
 void test_register_tpm_enroll_gate(void)
 {
+    test_suite_register_cat("tpm: enroll gate requires the armed trigger spent",
+                            test_enroll_gate_requires_spent_trigger, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: enroll gate admits confirmed recovery",
         test_enroll_gate_admits_confirmed_recovery, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: enroll gate refuses ESP-spoofed recovery",

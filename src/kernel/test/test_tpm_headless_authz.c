@@ -392,13 +392,14 @@ static void ha_gate_inputs(struct tpm_enroll_gate_inputs *gi)
     for (i = 0; i < (uint32_t)sizeof *gi; i++)
         ((uint8_t *)gi)[i] = 0u;
     gi->tpm_enroll = 1u;
-    gi->secure_boot_enabled = 1u;
+    gi->secure_boot_enforcing = 1u;
     gi->whole_chain_verified = 1u;
     gi->replay_known = 1u;
     gi->replay_verdict = 0u;              /* TPM_REPLAY_VERIFIED */
     gi->sticky_present = 1u;
     gi->sticky_recovery_trigger = 1u;
     gi->confirm = TPM_CONFIRM_UNAVAILABLE;
+    gi->trigger_spent = 1u;
 }
 
 static void test_ha_gate_admits_and_reports(void)
@@ -444,7 +445,7 @@ static void test_ha_gate_never_substitutes(void)
      * with a good token is still boot-chain-untrusted, not an admission. */
     ha_gate_inputs(&gi);
     gi.headless_authz = (uint8_t)TPM_HEADLESS_OK;
-    gi.secure_boot_enabled = 0u;
+    gi.secure_boot_enforcing = 0u;
     tpm_enroll_gate_evaluate(&gi, &gr);
     TEST_ASSERT_EQ(gr.admit, 0, "a token does not substitute for Secure Boot");
     TEST_ASSERT_EQ(gr.refusal, TPM_ENROLL_REFUSE_BOOT_CHAIN_UNTRUSTED,

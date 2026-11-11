@@ -1073,6 +1073,14 @@ static int s_sb_state_valid;  /* 1 if SecureBoot var read returned authoritative
                                  StateValid=0 signal so the read-failure path
                                  is distinguishable from genuinely-disabled. */
 static int s_sb_setup_mode;   /* SetupMode variable = 1 */
+/* Raw SetupMode / AuditMode bytes and their UEFI_SB_BYTE_* read status, for
+ * the enforcing predicate only (s_sb_setup_mode / s_sb_audit_mode are the
+ * normalised values every reporting consumer reads). Written at init and on
+ * an authoritative refresh under s_sb_lock, like the other s_sb_* fields. */
+static int s_sb_setup_status = UEFI_SB_BYTE_ERROR;
+static int s_sb_setup_raw;
+static int s_sb_audit_status = UEFI_SB_BYTE_ERROR;
+static int s_sb_audit_raw;
 static int s_sb_deployed_mode;/* DeployedMode variable = 1 (UEFI 2.5+) */
 static int s_sb_audit_mode;   /* AuditMode variable = 1 (UEFI 2.5+) */
 static int s_sb_pk_present;   /* PK variable exists with data */
@@ -1084,6 +1092,12 @@ static int s_sb_kek_present;  /* KEK variable exists with data */
  * SUCCESS with sz != 1, leaving `val` at the zero-init or filling only
  * part of the byte.  Require both SUCCESS AND sz == sizeof(val);
  * anything else is a read failure. */
+/* Returns UEFI_SB_BYTE_READ with *out set, UEFI_SB_BYTE_ABSENT, or
+ * UEFI_SB_BYTE_ERROR; defined with the revalidation readers below. */
+static int read_global_byte_status(const uint16_t *name, uint8_t *out);
+_Static_assert(UEFI_SB_BYTE_READ == 1 && UEFI_SB_BYTE_ABSENT == 0 &&
+               UEFI_SB_BYTE_ERROR == -1, "read_global_byte_status returns these");
+
 static int read_global_byte(const uint16_t *name)
 {
     struct boot_uefi_guid global = EFI_GLOBAL_VARIABLE_GUID;
@@ -1223,6 +1237,10 @@ boot_result_t uefi_secureboot_init(void)
     s_sb_enabled = 0;
     s_sb_state_valid = 0;
     s_sb_setup_mode = 0;
+    s_sb_setup_status = UEFI_SB_BYTE_ERROR;
+    s_sb_setup_raw = 0;
+    s_sb_audit_status = UEFI_SB_BYTE_ERROR;
+    s_sb_audit_raw = 0;
     s_sb_deployed_mode = 0;
     s_sb_audit_mode = 0;
     s_sb_pk_present = 0;
@@ -1263,9 +1281,12 @@ boot_result_t uefi_secureboot_init(void)
     static const uint16_t sm_name[] = {
         'S','e','t','u','p','M','o','d','e', 0
     };
-    int sm_val = read_global_byte(sm_name);
-    if (sm_val >= 0)
-        s_sb_setup_mode = (sm_val == 1) ? 1 : 0;
+    uint8_t sm_byte = 0;
+    s_sb_setup_status = read_global_byte_status(sm_name, &sm_byte);
+    if (s_sb_setup_status == UEFI_SB_BYTE_READ) {
+        s_sb_setup_raw = sm_byte;
+        s_sb_setup_mode = (sm_byte == 1) ? 1 : 0;
+    }
 
     /* Read DeployedMode variable (UEFI 2.5+: 0=not deployed, 1=deployed) */
     static const uint16_t dm_name[] = {
@@ -1279,9 +1300,12 @@ boot_result_t uefi_secureboot_init(void)
     static const uint16_t am_name[] = {
         'A','u','d','i','t','M','o','d','e', 0
     };
-    int am_val = read_global_byte(am_name);
-    if (am_val >= 0)
-        s_sb_audit_mode = (am_val == 1) ? 1 : 0;
+    uint8_t am_byte = 0;
+    s_sb_audit_status = read_global_byte_status(am_name, &am_byte);
+    if (s_sb_audit_status == UEFI_SB_BYTE_READ) {
+        s_sb_audit_raw = am_byte;
+        s_sb_audit_mode = (am_byte == 1) ? 1 : 0;
+    }
 
     /* Check PK existence */
     static const uint16_t pk_name[] = { 'P','K', 0 };
@@ -1628,6 +1652,58 @@ int uefi_secureboot_state_valid(void)
 }
 
 int uefi_secureboot_setup_mode(void) { return s_sb_setup_mode; }
+
+int uefi_secureboot_enforcing_eval(const struct uefi_sb_mode *m)
+{
+    if (!m || !m->sb_valid || m->secure_boot != 1)
+        return 0;
+    /* UEFI 2.10 section 32.3: SecureBoot should already read 0 outside User
+     * and Deployed Mode, but firmware is not trusted to keep that rule, and
+     * an unreadable SetupMode must not pass for User Mode. AuditMode implies
+     * SetupMode per the spec; it is checked on its own for the same reason.
+     * An absent AuditMode (pre-2.5 firmware) reads as 0, which is correct. */
+    if (m->setup_status != UEFI_SB_BYTE_READ || m->setup_raw != 0)
+        return 0;
+    if (m->audit_status == UEFI_SB_BYTE_ERROR ||
+        (m->audit_status == UEFI_SB_BYTE_READ && m->audit_raw != 0))
+        return 0;
+    return m->pk_present ? 1 : 0;   /* no PK means no signature authority */
+}
+
+static int sb_byte_drifted(int boot_status, int boot_raw, int live_status, int live_raw)
+{
+    /* A side that could not be read has no value to compare. */
+    if (boot_status == UEFI_SB_BYTE_ERROR || live_status == UEFI_SB_BYTE_ERROR)
+        return 0;
+    if (boot_status != live_status)
+        return 1;
+    return (boot_status == UEFI_SB_BYTE_READ && boot_raw != live_raw) ? 1 : 0;
+}
+
+int uefi_sb_mode_bytes_drifted(const struct uefi_sb_mode *boot,
+                               const struct uefi_sb_mode *live)
+{
+    if (!boot || !live)
+        return 0;
+    return sb_byte_drifted(boot->setup_status, boot->setup_raw,
+                           live->setup_status, live->setup_raw) ||
+           sb_byte_drifted(boot->audit_status, boot->audit_raw,
+                           live->audit_status, live->audit_raw);
+}
+
+int uefi_secureboot_enforcing(void)
+{
+    struct uefi_sb_mode m = {
+        .sb_valid    = (uint8_t)uefi_secureboot_state_valid(),
+        .secure_boot = (uint8_t)s_sb_enabled,
+        .setup_status = (int8_t)s_sb_setup_status,
+        .setup_raw    = (uint8_t)s_sb_setup_raw,
+        .audit_status = (int8_t)s_sb_audit_status,
+        .audit_raw    = (uint8_t)s_sb_audit_raw,
+        .pk_present  = (uint8_t)s_sb_pk_present,
+    };
+    return uefi_secureboot_enforcing_eval(&m);
+}
 int uefi_secureboot_pk_present(void) { return s_sb_pk_present; }
 int uefi_secureboot_kek_present(void) { return s_sb_kek_present; }
 
@@ -1658,6 +1734,9 @@ struct sb_state_vector {
     int audit_mode;
     int pk_present;
     int kek_present;
+    /* Raw bytes and UEFI_SB_BYTE_* statuses for the enforcing predicate;
+     * NOT part of the drift comparison, which reads the normalised fields. */
+    int setup_status, setup_raw, audit_status, audit_raw;
 };
 
 static struct sb_state_vector s_sb_snapshot;
@@ -1752,14 +1831,18 @@ static int uefi_secureboot_read_locked_state(struct sb_state_vector *out)
         out->sb_state_valid = 1;
     }
 
+    out->setup_raw = 0;
+    out->audit_raw = 0;
     s_sm = read_global_byte_status(sm_name, &b);
-    if (s_sm == 1) out->setup_mode = (b == 1) ? 1 : 0;
+    out->setup_status = s_sm;
+    if (s_sm == 1) { out->setup_mode = (b == 1) ? 1 : 0; out->setup_raw = b; }
 
     s_dm = read_global_byte_status(dm_name, &b);
     if (s_dm == 1) out->deployed_mode = (b == 1) ? 1 : 0;
 
     s_am = read_global_byte_status(am_name, &b);
-    if (s_am == 1) out->audit_mode = (b == 1) ? 1 : 0;
+    out->audit_status = s_am;
+    if (s_am == 1) { out->audit_mode = (b == 1) ? 1 : 0; out->audit_raw = b; }
 
     s_pk = global_var_exists_status(pk_name);
     if (s_pk >= 0) out->pk_present = s_pk;
@@ -1787,6 +1870,10 @@ void uefi_secureboot_snapshot(void)
     s_sb_snapshot.audit_mode     = s_sb_audit_mode;
     s_sb_snapshot.pk_present     = s_sb_pk_present;
     s_sb_snapshot.kek_present    = s_sb_kek_present;
+    s_sb_snapshot.setup_status   = s_sb_setup_status;
+    s_sb_snapshot.setup_raw      = s_sb_setup_raw;
+    s_sb_snapshot.audit_status   = s_sb_audit_status;
+    s_sb_snapshot.audit_raw      = s_sb_audit_raw;
     s_sb_snapshot_valid          = 1;
     spin_unlock_irqrestore(&s_sb_lock, flags);
 }
@@ -1851,6 +1938,10 @@ static int uefi_secureboot_do_revalidate(void)
         s_sb_state_valid   = 1;
         s_sb_enabled       = live.sb_enabled;
         s_sb_setup_mode    = live.setup_mode;
+        s_sb_setup_status  = live.setup_status;   /* READ or ABSENT here */
+        s_sb_setup_raw     = live.setup_raw;
+        s_sb_audit_status  = live.audit_status;
+        s_sb_audit_raw     = live.audit_raw;
         s_sb_deployed_mode = live.deployed_mode;
         s_sb_audit_mode    = live.audit_mode;
         s_sb_pk_present    = live.pk_present;
@@ -1869,13 +1960,33 @@ static int uefi_secureboot_do_revalidate(void)
         return sticky;
     }
 
+    /* SetupMode and AuditMode are compared by uefi_sb_mode_bytes_drifted
+     * below, never here: their normalised copies read 0 after a failed boot
+     * read, so comparing them would raise drift on the first good read. */
     if (live.sb_enabled      != s_sb_snapshot.sb_enabled    ||
-        live.setup_mode      != s_sb_snapshot.setup_mode    ||
         live.deployed_mode   != s_sb_snapshot.deployed_mode ||
-        live.audit_mode      != s_sb_snapshot.audit_mode    ||
         live.pk_present      != s_sb_snapshot.pk_present    ||
         live.kek_present     != s_sb_snapshot.kek_present) {
         drifted_now = 1;
+    }
+    /* The mode bytes, raw and with their read status: a byte turning
+     * malformed (SetupMode 0 -> 2), disappearing or flipping 0 -> 1 drifts;
+     * a byte the boot could not read has no baseline and never does. */
+    {
+        const struct uefi_sb_mode boot_m = {
+            .setup_status = (int8_t)s_sb_snapshot.setup_status,
+            .setup_raw    = (uint8_t)s_sb_snapshot.setup_raw,
+            .audit_status = (int8_t)s_sb_snapshot.audit_status,
+            .audit_raw    = (uint8_t)s_sb_snapshot.audit_raw,
+        };
+        const struct uefi_sb_mode live_m = {
+            .setup_status = (int8_t)live.setup_status,
+            .setup_raw    = (uint8_t)live.setup_raw,
+            .audit_status = (int8_t)live.audit_status,
+            .audit_raw    = (uint8_t)live.audit_raw,
+        };
+        if (uefi_sb_mode_bytes_drifted(&boot_m, &live_m))
+            drifted_now = 1;
     }
 
     drift_was_already_detected = s_sb_drift_detected;

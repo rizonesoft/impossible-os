@@ -26,6 +26,7 @@
 #include "boot/boot_audit_codes.h"
 #include "boot/boot_policy.h"
 #include "kernel/boot_audit.h"
+#include "kernel/nt/ntstatus.h"
 
 extern size_t boot_audit_compose_line(const struct boot_info *bi,
                                       uint32_t boot_seq,
@@ -705,8 +706,101 @@ static void test_audit_seq_damaged_high_water_fails_closed(void)
 }
 
 void test_register_boot_audit(void);
+
+/* A sticky write is read-modify-write: only an authoritative not-found builds
+ * a fresh record; every other read outcome refuses, so a transient failure can
+ * never erase a pending watchdog request or the sequence fields. */
+static void test_audit_sticky_rmw_prepare(void)
+{
+    struct boot_sticky_record cur, out;
+    uint8_t *p = (uint8_t *)&cur;
+
+    for (uint32_t i = 0; i < sizeof cur; i++) p[i] = 0;
+    cur.magic = BOOT_STICKY_RECORD_MAGIC;
+    cur.version = BOOT_STICKY_RECORD_VERSION;
+    cur.size = BOOT_STICKY_VAR_SIZE;
+    cur.watchdog_rollback_request = 1;
+    cur.last_boot_seq = 77;
+    cur.crc32 = boot_sticky_compute_crc(&cur);
+
+    TEST_ASSERT_EQ(boot_sticky_rmw_prepare(STATUS_SUCCESS, sizeof cur, &cur, &out), 0,
+                   "a valid record is modifiable");
+    TEST_ASSERT_EQ(out.watchdog_rollback_request, 1, "its watchdog request is kept");
+    TEST_ASSERT_EQ(out.last_boot_seq, 77u, "and its sequence");
+
+    TEST_ASSERT_EQ(boot_sticky_rmw_prepare(STATUS_NOT_FOUND, 0, &cur, &out), 0,
+                   "an absent variable gets a fresh record");
+    TEST_ASSERT_EQ(out.magic, BOOT_STICKY_RECORD_MAGIC, "fresh record carries the magic");
+    TEST_ASSERT_EQ(out.watchdog_rollback_request, 0, "and nothing else");
+
+    TEST_ASSERT_EQ(boot_sticky_rmw_prepare(STATUS_UNSUCCESSFUL, sizeof cur, &cur, &out), -1,
+                   "a failed read refuses");
+    TEST_ASSERT_EQ(boot_sticky_rmw_prepare(STATUS_BUFFER_TOO_SMALL, sizeof cur, &cur, &out), -1,
+                   "an oversized variable refuses");
+    TEST_ASSERT_EQ(boot_sticky_rmw_prepare(STATUS_SUCCESS, sizeof cur - 1u, &cur, &out), -1,
+                   "a short record refuses");
+    cur.crc32 ^= 1u;
+    TEST_ASSERT_EQ(boot_sticky_rmw_prepare(STATUS_SUCCESS, sizeof cur, &cur, &out), -1,
+                   "a corrupt record refuses rather than being replaced");
+    TEST_ASSERT_EQ(boot_sticky_rmw_prepare(STATUS_SUCCESS, sizeof cur, &cur,
+                                           (struct boot_sticky_record *)0), -1,
+                   "no output refuses");
+}
+
+
+static void test_audit_sticky_ack_apply(void)
+{
+    struct boot_sticky_record r;
+
+    r.recovery_trigger = 1; r.watchdog_rollback_request = 1;
+    boot_sticky_ack_apply(&r, 0, 1, 1);
+    TEST_ASSERT_EQ(r.watchdog_rollback_request, 0, "consumed watchdog cleared");
+    TEST_ASSERT_EQ(r.recovery_trigger, 1, "beside it, this boot's arm survives");
+
+    r.recovery_trigger = 1; r.watchdog_rollback_request = 1;
+    boot_sticky_ack_apply(&r, 1, 1, 1);
+    TEST_ASSERT_EQ(r.recovery_trigger, 1, "a ladder-consumed trigger does not erase a new arm");
+
+    r.recovery_trigger = 1; r.watchdog_rollback_request = 1;
+    boot_sticky_ack_apply(&r, 0, 1, 0);
+    TEST_ASSERT_EQ(r.recovery_trigger, 0, "a spent trigger is not resurrected by the snapshot");
+    TEST_ASSERT_EQ(r.watchdog_rollback_request, 0, "consumed watchdog cleared");
+
+    r.recovery_trigger = 1; r.watchdog_rollback_request = 1;
+    boot_sticky_ack_apply(&r, 1, 0, -1);
+    TEST_ASSERT_EQ(r.recovery_trigger, 0, "untouched: the ladder's consume clears it");
+    TEST_ASSERT_EQ(r.watchdog_rollback_request, 1, "an unconsumed watchdog request persists");
+}
+
+
+static void test_audit_sticky_ack_build(void)
+{
+    struct boot_sticky_record cur, out;
+    uint8_t *p = (uint8_t *)&cur;
+
+    for (uint32_t i = 0; i < sizeof cur; i++) p[i] = 0;
+    cur.magic = BOOT_STICKY_RECORD_MAGIC;
+    cur.version = BOOT_STICKY_RECORD_VERSION;
+    cur.size = BOOT_STICKY_VAR_SIZE;
+    cur.watchdog_rollback_request = 1;
+    cur.enroll_offer_dismissed = 1;
+    cur.crc32 = boot_sticky_compute_crc(&cur);
+
+    TEST_ASSERT_EQ(boot_sticky_ack_build(STATUS_UNSUCCESSFUL, sizeof cur, &cur, 0, 1, -1, &out), -1,
+                   "a failed read skips the ack rather than rebuilding the record");
+    TEST_ASSERT_EQ(boot_sticky_ack_build(STATUS_SUCCESS, sizeof cur, &cur, 0, 1, -1, &out), 0,
+                   "a readable record is acked");
+    TEST_ASSERT_EQ(out.watchdog_rollback_request, 0, "the consumed watchdog request is cleared");
+    TEST_ASSERT_EQ(out.enroll_offer_dismissed, 1, "the offer dismissal survives the ack");
+}
+
 void test_register_boot_audit(void)
 {
+    test_suite_register_cat("boot_audit sticky read-modify-write", test_audit_sticky_rmw_prepare, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_audit sticky ack never rebuilds an unreadable record",
+                            test_audit_sticky_ack_build, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_audit sticky ack honours this boot's trigger write",
+                            test_audit_sticky_ack_apply, TEST_CAT_BOOT);
     test_suite_register_cat("boot_audit seq classify", test_audit_seq_classify, TEST_CAT_BOOT);
     test_suite_register_cat("boot_audit seq format", test_audit_seq_format, TEST_CAT_BOOT);
     test_suite_register_cat("boot_audit seq clean boots", test_audit_seq_clean_boots, TEST_CAT_BOOT);

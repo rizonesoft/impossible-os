@@ -268,6 +268,38 @@ int uefi_secureboot_state_valid(void);
 /* Returns 1 if firmware is in Setup Mode (no Platform Key enrolled). */
 int uefi_secureboot_setup_mode(void);
 
+/* Read status of a firmware mode byte, as the enforcing predicate sees it. */
+#define UEFI_SB_BYTE_READ    1   /* read: `*_raw` holds the firmware's byte */
+#define UEFI_SB_BYTE_ABSENT  0   /* EFI_NOT_FOUND */
+#define UEFI_SB_BYTE_ERROR  (-1) /* any other failure, or a size other than 1 */
+
+/* Inputs of the Secure Boot ENFORCING predicate. The mode bytes are RAW, not
+ * normalised, so a malformed value (SetupMode = 2) cannot pass for 0. */
+struct uefi_sb_mode {
+    uint8_t sb_valid;      /* the SecureBoot variable read succeeded */
+    uint8_t secure_boot;   /* SecureBoot = 1 */
+    int8_t  setup_status;  /* UEFI_SB_BYTE_* for SetupMode */
+    uint8_t setup_raw;
+    int8_t  audit_status;  /* UEFI_SB_BYTE_* for AuditMode */
+    uint8_t audit_raw;
+    uint8_t pk_present;    /* a Platform Key is enrolled */
+};
+
+/* 1 only when firmware is ENFORCING signatures: a readable SecureBoot = 1 in
+ * User or Deployed Mode (SetupMode read and exactly 0; AuditMode absent, as on
+ * pre-2.5 firmware, or read and exactly 0) with a PK enrolled. The raw
+ * SecureBoot bit is not that: firmware can report it in Setup or Audit Mode.
+ * A security decision that rests on Secure Boot uses this, never the raw bit. */
+int uefi_secureboot_enforcing_eval(const struct uefi_sb_mode *m);
+int uefi_secureboot_enforcing(void);
+
+/* Pure. 1 when a raw SetupMode or AuditMode byte changed between the boot
+ * snapshot and a live read: a different read status (read vs absent) or a
+ * different byte. Only the mode-byte fields are read. A side whose read
+ * failed has no value and never counts as drift. */
+int uefi_sb_mode_bytes_drifted(const struct uefi_sb_mode *boot,
+                               const struct uefi_sb_mode *live);
+
 /* Returns 1 if a Platform Key (PK) is enrolled. */
 int uefi_secureboot_pk_present(void);
 

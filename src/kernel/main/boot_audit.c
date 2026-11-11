@@ -389,6 +389,109 @@ audit_append_file(const char *path, const char *rotated_path,
     return 1;
 }
 
+/* The recovery trigger as THIS boot last wrote it: -1 untouched, 0 spent, 1
+ * armed. Phase 1 writes it (single CPU, before smp_init); the Phase-3 ack
+ * reads it. The atomics order that handoff without depending on the phases. */
+static int s_trigger_written = -1;
+
+void boot_sticky_ack_apply(struct boot_sticky_record *rec, int recovery_consumed,
+                           int watchdog_consumed, int trigger_written)
+{
+    if (!rec)
+        return;
+    /* A trigger this boot armed is a NEW request, not the one the ladder
+     * consumed, so a consumed-by-selection ack must not clear it; a trigger
+     * this boot spent stays spent whatever the snapshot said. */
+    if (trigger_written >= 0)
+        rec->recovery_trigger = (unsigned char)(trigger_written ? 1 : 0);
+    if (recovery_consumed && trigger_written != 1)
+        rec->recovery_trigger = 0;
+    if (watchdog_consumed)
+        rec->watchdog_rollback_request = 0;
+}
+
+int boot_sticky_ack_build(int32_t read_status, size_t read_size,
+                          const struct boot_sticky_record *cur,
+                          int recovery_consumed, int watchdog_consumed,
+                          int trigger_written, struct boot_sticky_record *out)
+{
+    if (boot_sticky_rmw_prepare(read_status, read_size, cur, out) != 0)
+        return -1;
+    boot_sticky_ack_apply(out, recovery_consumed, watchdog_consumed, trigger_written);
+    return 0;
+}
+
+int boot_sticky_rmw_prepare(int32_t read_status, size_t read_size,
+                            const struct boot_sticky_record *cur,
+                            struct boot_sticky_record *out)
+{
+    if (!out)
+        return -1;
+    if (read_status == (int32_t)STATUS_NOT_FOUND) {
+        uint8_t *p = (uint8_t *)out;
+        for (size_t i = 0; i < sizeof(*out); i++) p[i] = 0;
+        out->magic   = BOOT_STICKY_RECORD_MAGIC;
+        out->version = BOOT_STICKY_RECORD_VERSION;
+        out->size    = BOOT_STICKY_VAR_SIZE;
+        return 0;
+    }
+    if (read_status != (int32_t)STATUS_SUCCESS || !cur ||
+        read_size != sizeof(*cur) || !boot_sticky_record_is_valid(cur))
+        return -1;
+    *out = *cur;
+    return 0;
+}
+
+/* Read the live record and prepare it for modification. */
+static int sticky_read_prepared(struct boot_sticky_record *out)
+{
+    struct boot_sticky_record cur;
+    size_t sz = sizeof(cur);
+    NTSTATUS st = uefi_var_get(s_sticky_var_name, &s_sticky_guid, &cur, &sz,
+                               (uint32_t *)0);
+    return boot_sticky_rmw_prepare((int32_t)st, sz, &cur, out);
+}
+
+static int sticky_write(struct boot_sticky_record *rec)
+{
+    rec->crc32 = boot_sticky_compute_crc(rec);
+    return uefi_var_set(s_sticky_var_name, &s_sticky_guid, rec, sizeof(*rec),
+                        UEFI_VAR_NV_BOOT_RUNTIME) == STATUS_SUCCESS ? 0 : -1;
+}
+
+int boot_sticky_set_field(enum boot_sticky_field field, uint8_t value)
+{
+    struct boot_sticky_record rec;
+    uint8_t v = value ? 1u : 0u;
+
+    if (sticky_read_prepared(&rec) != 0) {
+        klog(LOG_WARN, "BOOT", "sticky: record unreadable; field %u not written",
+             (uint64_t)field);
+        return -1;
+    }
+    switch (field) {
+    case BOOT_STICKY_FIELD_RECOVERY_TRIGGER: rec.recovery_trigger = v; break;
+    case BOOT_STICKY_FIELD_OFFER_DISMISSED:  rec.enroll_offer_dismissed = v; break;
+    default: return -1;
+    }
+    if (sticky_write(&rec) != 0) {
+        klog(LOG_WARN, "BOOT", "sticky: write of field %u failed", (uint64_t)field);
+        return -1;
+    }
+    if (field == BOOT_STICKY_FIELD_RECOVERY_TRIGGER)
+        __atomic_store_n(&s_trigger_written, (int)v, __ATOMIC_RELEASE);
+    return 0;
+}
+
+int boot_sticky_offer_dismissed(void)
+{
+    struct boot_sticky_record rec;
+
+    if (sticky_read_prepared(&rec) != 0)
+        return -1;
+    return rec.enroll_offer_dismissed ? 1 : 0;
+}
+
 /* Pure helper: classify whether each sticky trigger bit was ACTUALLY
  * consumed by the ladder this boot. A bit is consumed only when
  * selection_reason matches the corresponding ladder branch:
@@ -450,36 +553,31 @@ audit_ack_consumed_triggers(const struct boot_info *bi, uint32_t boot_seq)
         return;
     }
 
-    /* Build a fresh record. Writing a complete record (CRC + magic)
-     * is simpler than read-modify-write because we already have the
-     * current state via the bootloader's surfaced snapshot, and the
-     * bootloader is read-only so no concurrent writer can race us.
-     * Each unconsumed trigger is preserved at its observed value. */
-    struct boot_sticky_record rec;
-    uint8_t *p = (uint8_t *)&rec;
-    for (size_t i = 0; i < sizeof(rec); i++) p[i] = 0;
-
-    rec.magic   = BOOT_STICKY_RECORD_MAGIC;
-    rec.version = BOOT_STICKY_RECORD_VERSION;
-    rec.size    = BOOT_STICKY_VAR_SIZE;
-    rec.recovery_trigger          = recovery_consumed ? 0 :
-                                        (bi->sticky_recovery_trigger ? 1 : 0);
-    rec.watchdog_rollback_request = watchdog_consumed ? 0 :
-                                        (bi->sticky_watchdog_rollback_request ? 1 : 0);
+    /* Read-modify-write the LIVE record: Phase 1 may already have armed or
+     * spent the recovery trigger and dismissed the enrollment offer, and a
+     * record rebuilt from the loader's snapshot would undo both. Only when
+     * the live record cannot be read is it rebuilt from that snapshot, and
+     * then this boot's own trigger write still wins. */
+    struct boot_sticky_record cur, rec;
+    size_t cur_sz = sizeof(cur);
+    NTSTATUS rs = uefi_var_get(s_sticky_var_name, &s_sticky_guid, &cur, &cur_sz,
+                               (uint32_t *)0);
+    if (boot_sticky_ack_build((int32_t)rs, cur_sz, &cur, recovery_consumed,
+                              watchdog_consumed,
+                              __atomic_load_n(&s_trigger_written, __ATOMIC_ACQUIRE),
+                              &rec) != 0) {
+        klog(LOG_WARN, "BOOT", "audit: sticky record unreadable; ack skipped, trigger remains");
+        return;
+    }
     rec.last_outcome              = 0;       /* unconfirmed until mark-good */
     rec.audit_degraded_last_boot  = bi->audit_degraded ? 1u : 0u;
     rec.last_event_code           = boot_audit_event_from_selection_reason(
                                         bi->selection_reason);
     rec.last_boot_seq             = boot_seq;
     rec.consumed_trigger_seq      = boot_seq;
-    rec.crc32                     = boot_sticky_compute_crc(&rec);
 
-    NTSTATUS s = uefi_var_set(s_sticky_var_name, &s_sticky_guid,
-                              &rec, sizeof(rec), UEFI_VAR_NV_BOOT_RUNTIME);
-    if (s != STATUS_SUCCESS) {
-        klog(LOG_WARN, "BOOT",
-             "audit: sticky ack write failed (status=0x%x); trigger remains",
-             (uint64_t)s);
+    if (sticky_write(&rec) != 0) {
+        klog(LOG_WARN, "BOOT", "audit: sticky ack write failed; trigger remains");
         return;
     }
 

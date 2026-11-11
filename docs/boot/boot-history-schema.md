@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=include/boot/boot_audit_codes.h,src/boot/uefi/boot_sticky.c,src/kernel/main/boot_audit.c,tools/bootcfg/bootcfg.py reviewed=2026-11-08 -->
+<!-- docs: covers=todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md sources=include/boot/boot_audit_codes.h,src/boot/uefi/boot_sticky.c,src/kernel/main/boot_audit.c,tools/bootcfg/bootcfg.py reviewed=2026-11-11 -->
 # Boot Policy Audit Schema
 
 > Canonical doc for the policy audit trail feature owned by [TODO-07 boot-entry-store-menu-policy](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md). Two streams:
@@ -161,10 +161,13 @@ A reset between phases leaves the trigger pending. That is the correct sticky se
 | 14 | 2 | `_reserved_a` | 0 |
 | 16 | 4 | `last_boot_seq` | monotonic boot counter |
 | 20 | 4 | `consumed_trigger_seq` | boot_seq of last successful trigger ack |
-| 24 | 228 | `_reserved_b[228]` | zero-fill; future fields shrink this |
+| 24 | 1 | `enroll_offer_dismissed` | 1 if the TPM enrollment-arming offer was declined or unanswered; a `tpm_enroll=0` boot clears it |
+| 25 | 227 | `_reserved_b[227]` | zero-fill; future fields shrink this |
 | 252 | 4 | `crc32` | CRC-32/IEEE-802.3 over bytes [0..251] |
 
 The kernel-side ABI lives at [`include/boot/boot_audit_codes.h`](../../include/boot/boot_audit_codes.h); offsets are pinned with `_Static_assert`s.
+
+Every kernel write of the record is read-modify-write: it reads the live record, changes only the field it owns and recomputes the CRC. A fresh record is built only when the variable does not exist; a read that fails or a record that fails validation refuses the write, so a transient firmware error never erases a pending watchdog request.
 
 ### Validation
 

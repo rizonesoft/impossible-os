@@ -41,7 +41,7 @@
  *     no remote or file-level attacker holds, which is why it is REQUIRED
  *     rather than advisory.
  *
- * The authenticated-chain condition is why `secure_boot_enabled` AND
+ * The authenticated-chain condition is why `secure_boot_enforcing` AND
  * `whole_chain_verified` are both inputs: every field above is consumed by
  * kernel code, so if the RUNNING KERNEL is not itself verified an attacker
  * replaces the code that asks the question and none of the answers bind.
@@ -116,9 +116,13 @@ typedef enum {
      * a keyboard. The specific reason is reported alongside as the headless
      * verdict label (tpm_headless_verdict_label). */
     TPM_ENROLL_REFUSE_HEADLESS_AUTHZ       = 15,
+    /* The operator (or a token) said yes, but the armed recovery trigger was
+     * not durably spent first, so the same arm could authorize a second
+     * enrollment. The remedy is NVRAM, not the operator. */
+    TPM_ENROLL_REFUSE_TRIGGER_UNSPENT      = 16,
 } tpm_enroll_refusal_t;
 
-#define TPM_ENROLL_REFUSE_MAX TPM_ENROLL_REFUSE_HEADLESS_AUTHZ
+#define TPM_ENROLL_REFUSE_MAX TPM_ENROLL_REFUSE_TRIGGER_UNSPENT
 
 /* Outcome of the console confirmation. An ENUM, not a bool: a timeout on
  * a headless machine and an operator pressing the wrong key are different
@@ -144,7 +148,7 @@ struct tpm_enroll_gate_inputs {
     uint8_t  audit_degraded;          /* 1 = sticky_* fields must be read as zero */
     uint8_t  sticky_present;          /* 1 = a trusted sticky record was read */
     uint8_t  sticky_recovery_trigger; /* 1 = NVRAM asked for recovery */
-    uint8_t  secure_boot_enabled;     /* 1 = firmware reports Secure Boot active */
+    uint8_t  secure_boot_enforcing;   /* 1 = uefi_secureboot_enforcing(), not the raw bit */
     /* 1 = Secure Boot actually covered THE RUNNING KERNEL, not merely the
      * loader. These are two different facts and conflating them was a
      * critical defect in the first version of this gate.
@@ -178,6 +182,10 @@ struct tpm_enroll_gate_inputs {
      * without an authority key installed, and it is why the admitting verdict
      * is deliberately NOT the zero value. */
     uint8_t  headless_authz;
+    /* 1 = the caller durably cleared the sticky recovery trigger after the
+     * confirmation step resolved and before any write (one arm, one
+     * enrollment). Zero, the default, refuses both admitting outcomes. */
+    uint8_t  trigger_spent;
 };
 
 /* The decision. `admit` is the only field a caller may use to authorize
