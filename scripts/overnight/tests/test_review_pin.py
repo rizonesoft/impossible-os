@@ -421,3 +421,25 @@ def test_refusal_a_candidate_that_moved_during_the_review_is_not_the_one_reviewe
         assert receipt["head"] == start and receipt["rc"] == want_rc, receipt
         if want_rc == 3:
             assert receipt["head"] == reviewed and "candidate changed while it was being reviewed" in done.stderr
+
+
+def test_refusal_every_kind_of_fence_hides_its_contents():
+    """Review finding: only triple backticks were tracked, so a tilde block, or a short fence inside a longer
+    one, still passed an example off as the verdict."""
+    pin = _pin()
+    a, b = pin["lenses"]["completion"]
+    body = f"LENS {a}: clean\nLENS {b}: clean\nHIGHEST: none\n"
+    for opening, closing in (("~~~", "~~~"), ("~~~~", "~~~~"), ("```text", "```"), ("````", "````"),
+                             ("~~~ example", "~~~")):
+        text = f"{opening}\n{body}{closing}\n"
+        assert rp.highest(text) == "" and rp.missing_lens_verdicts(pin, "completion", text) == (a, b), opening
+    # A shorter or different fence inside the block does not close it.
+    for inner in ("```", "~~~", "```` trailing"):
+        text = f"````\n{inner}\n{body}````\n"
+        assert rp.highest(text) == "", inner
+    # A block left open runs to the end.
+    assert rp.highest(f"```\n{body}") == "" and rp.highest(f"~~~\n{body}") == ""
+    # What is outside still counts, before and after a block, and in inline code.
+    assert rp.highest(f"HIGHEST: P2\n~~~\nHIGHEST: none\n~~~\n") == "P2"
+    assert rp.highest(f"~~~\nHIGHEST: none\n~~~\n`HIGHEST: P1`\n") == "P1"
+    assert rp.missing_lens_verdicts(pin, "completion", f"```\nexample\n```\n- LENS {a}: clean\n`LENS {b}: findings`") == ()

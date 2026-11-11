@@ -221,15 +221,23 @@ def final_response(transcript):
 def _declarations(review_text):
     """The verdict-shaped lines of a review as word lists, outside fenced code blocks.
 
-    A fenced block is an example or a quotation, never the reviewer's own verdict.
+    A fenced block is an example or a quotation, never the reviewer's own verdict. Fences follow CommonMark:
+    backticks or tildes, and a block left open runs to the end.
     """
-    fenced = False
+    fence = None                              # (character, length) of the open fence
     for line in review_text.splitlines():
         text = line.strip()
-        if text.startswith("```"):
-            fenced = not fenced
-            continue
-        if fenced:
+        run = len(text) - len(text.lstrip(text[0])) if text[:1] in ("`", "~") else 0
+        rest = text[run:]
+        if fence is None:
+            # A fence opens with three or more backticks or tildes; a backtick fence's info string holds none.
+            if run >= 3 and (text[0] == "~" or "`" not in rest):
+                fence = (text[0], run)
+                continue
+        else:
+            # It closes only on the same character, at least as long, with nothing after it.
+            if run >= fence[1] and text[0] == fence[0] and not rest.strip():
+                fence = None
             continue
         if text[:2] in ("- ", "* "):          # the companion renders a closing list
             text = text[2:].strip()
