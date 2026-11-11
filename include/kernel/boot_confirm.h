@@ -173,8 +173,13 @@ int boot_confirm_key_accepted(char ch, const char *accept);
 
 /* One keyboard byte through the answer state machine: a MAKE of an accepted
  * key sets *pending and returns 0; the BREAK of the pending key returns it.
- * An answer lands on release, so a held or taped key never answers. */
+ * An answer lands on release, so a held or taped key never answers. An 0xE0
+ * prefix drops the byte after it, so an extended key never answers. */
 char boot_confirm_key_step(char *pending, uint8_t sc, const char *accept);
+
+/* *pending after an 0xE0 prefix: the next byte belongs to an extended key and
+ * is dropped. Not a character the decoder can return. */
+#define BOOT_CONFIRM_PENDING_EXTENDED ((char)0x7F)
 
 /* Millisecond timeout to a TSC tick budget at `freq` Hz. 1 and *out set on
  * success; 0 with *out untouched for timeout_ms == 0, freq below 1 kHz, or

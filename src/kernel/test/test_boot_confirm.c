@@ -86,6 +86,18 @@ static void test_confirm_key_step(void)
     pending = 'y';
     TEST_ASSERT_EQ(boot_confirm_key_step(&pending, 0x16, NULL), 0, "undecoded make");
     TEST_ASSERT_EQ(pending, 'y', "an undecoded byte does not disturb pending");
+
+    /* An extended key reusing a letter's code (E0 2E is Volume Down, which
+     * aliases 'c') never answers, make or break, and the next plain key does. */
+    pending = 0;
+    TEST_ASSERT_EQ(boot_confirm_key_step(&pending, 0xE0, "rcp"), 0, "E0 prefix answers nothing");
+    TEST_ASSERT_EQ(boot_confirm_key_step(&pending, 0x2E, "rcp"), 0, "E0 2E make is not c");
+    TEST_ASSERT_EQ(boot_confirm_key_step(&pending, 0xE0, "rcp"), 0, "E0 prefix before the break");
+    TEST_ASSERT_EQ(boot_confirm_key_step(&pending, 0x2E | I8042_BREAK_CODE, "rcp"), 0,
+                   "E0 AE break is not a c press");
+    (void)boot_confirm_key_step(&pending, 0x2E, "rcp");
+    TEST_ASSERT_EQ(boot_confirm_key_step(&pending, 0x2E | I8042_BREAK_CODE, "rcp"), 'c',
+                   "a plain c press after the extended key answers c");
 }
 
 static void test_confirm_budget(void)

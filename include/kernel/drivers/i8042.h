@@ -24,6 +24,7 @@
 #define I8042_STATUS_ABSENT 0xFF
 
 #define I8042_BREAK_CODE   0x80  /* scancode set 1: set on key release */
+#define I8042_EXTENDED_PREFIX 0xE0 /* scancode set 1: an extended key follows */
 
 /* The ISA lines are IRQ_KEYBOARD and IRQ_MOUSE in kernel/drivers/pic.h. */
 

@@ -173,7 +173,7 @@ static void keyboard_irq_callback(uint8_t vector, void *ctx)
     }
 
     /* Handle 0xE0 prefix (extended scan codes for arrow keys etc.) */
-    if (scancode == 0xE0) {
+    if (scancode == I8042_EXTENDED_PREFIX) {
         e0_prefix = 1;
         return;
     }
@@ -427,7 +427,7 @@ void keyboard_inject_scancode(uint8_t scancode)
     char c;
 
     /* Handle 0xE0 prefix */
-    if (scancode == 0xE0) {
+    if (scancode == I8042_EXTENDED_PREFIX) {
         e0_prefix = 1;
         return;
     }

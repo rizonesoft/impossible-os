@@ -252,7 +252,24 @@ int boot_confirm_key_accepted(char ch, const char *accept)
  * tests: this is the step that turns 0x15 into an authorizing 'y'. */
 char boot_confirm_key_step(char *pending, uint8_t sc, const char *accept)
 {
-    char ch = boot_confirm_scancode_to_ascii((uint8_t)(sc & ~I8042_BREAK_CODE));
+    char ch;
+
+    /* Scancode set 1 sends 0xE0 before an extended key, and the byte after it
+     * reuses a letter's code (E0 2E is Volume Down, which would decode as
+     * 'c'). Latch the prefix and drop the next byte, so a media or hotkey
+     * never answers. A pending make is discarded too: the press is restarted,
+     * never completed by a different key. Pause (0xE1) needs no latch, since
+     * none of its bytes decode. */
+    if (sc == I8042_EXTENDED_PREFIX) {
+        *pending = BOOT_CONFIRM_PENDING_EXTENDED;
+        return 0;
+    }
+    if (*pending == BOOT_CONFIRM_PENDING_EXTENDED) {
+        *pending = 0;
+        return 0;
+    }
+
+    ch = boot_confirm_scancode_to_ascii((uint8_t)(sc & ~I8042_BREAK_CODE));
 
     if (!ch || !boot_confirm_key_accepted(ch, accept))
         return 0;

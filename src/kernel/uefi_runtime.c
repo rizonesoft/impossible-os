@@ -1691,17 +1691,27 @@ int uefi_sb_mode_bytes_drifted(const struct uefi_sb_mode *boot,
                            live->audit_status, live->audit_raw);
 }
 
+/* Guards the s_sb_* group against the revalidation worker, which rewrites
+ * it as a unit. Defined here because the composite reader below needs it. */
+static DEFINE_SPINLOCK(s_sb_lock);
+
+/* A composite of several s_sb_* fields, so it reads them as one consistent
+ * snapshot under s_sb_lock: a worker refresh between two loads would
+ * otherwise mix boot and live values in the one predicate. */
 int uefi_secureboot_enforcing(void)
 {
-    struct uefi_sb_mode m = {
-        .sb_valid    = (uint8_t)uefi_secureboot_state_valid(),
-        .secure_boot = (uint8_t)s_sb_enabled,
-        .setup_status = (int8_t)s_sb_setup_status,
-        .setup_raw    = (uint8_t)s_sb_setup_raw,
-        .audit_status = (int8_t)s_sb_audit_status,
-        .audit_raw    = (uint8_t)s_sb_audit_raw,
-        .pk_present  = (uint8_t)s_sb_pk_present,
-    };
+    uint64_t flags;
+    struct uefi_sb_mode m;
+
+    m.sb_valid = (uint8_t)uefi_secureboot_state_valid();
+    spin_lock_irqsave(&s_sb_lock, &flags);
+    m.secure_boot  = (uint8_t)s_sb_enabled;
+    m.setup_status = (int8_t)s_sb_setup_status;
+    m.setup_raw    = (uint8_t)s_sb_setup_raw;
+    m.audit_status = (int8_t)s_sb_audit_status;
+    m.audit_raw    = (uint8_t)s_sb_audit_raw;
+    m.pk_present   = (uint8_t)s_sb_pk_present;
+    spin_unlock_irqrestore(&s_sb_lock, flags);
     return uefi_secureboot_enforcing_eval(&m);
 }
 int uefi_secureboot_pk_present(void) { return s_sb_pk_present; }
@@ -1722,9 +1732,10 @@ int uefi_secureboot_kek_present(void) { return s_sb_kek_present; }
  * is created so the snapshot capture there does not race. After init,
  * uefi_secureboot_refresh() (S3 resume / periodic) can mutate and any
  * concurrent reader on another CPU could see a torn read. Serialize
- * the post-init refresh + comparison under s_sb_lock; the per-byte
- * accessors stay lock-free for legacy callers because torn reads on
- * a uint8_t-sized field are atomic on x86-64. */
+ * the post-init refresh + comparison under s_sb_lock; the per-field
+ * accessors stay lock-free because an aligned int load is atomic on
+ * x86-64, so each field reads whole. A reader that combines several
+ * fields, such as uefi_secureboot_enforcing(), takes s_sb_lock. */
 
 struct sb_state_vector {
     int sb_state_valid; /* SecureBoot variable read succeeded */
@@ -1748,7 +1759,6 @@ static int s_sb_snapshot_valid; /* 1 once uefi_secureboot_init captured the snap
  * adversarial 2026-05-01 H1 fix. */
 static int s_sb_drift_detected;
 static int s_sb_drift_published;
-static DEFINE_SPINLOCK(s_sb_lock);
 
 /* Tri-state byte read: returns 1 if `*out` was set from a definitive
  * SUCCESS read, 0 if the variable was definitively NOT_FOUND, -1 if

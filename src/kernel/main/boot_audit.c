@@ -472,7 +472,9 @@ int boot_sticky_set_field(enum boot_sticky_field field, uint8_t value)
     switch (field) {
     case BOOT_STICKY_FIELD_RECOVERY_TRIGGER: rec.recovery_trigger = v; break;
     case BOOT_STICKY_FIELD_OFFER_DISMISSED:  rec.enroll_offer_dismissed = v; break;
-    default: return -1;
+    default:
+        klog(LOG_ERROR, "BOOT", "sticky: unknown field %u not written", (uint64_t)field);
+        return -1;
     }
     if (sticky_write(&rec) != 0) {
         klog(LOG_WARN, "BOOT", "sticky: write of field %u failed", (uint64_t)field);
@@ -555,9 +557,9 @@ audit_ack_consumed_triggers(const struct boot_info *bi, uint32_t boot_seq)
 
     /* Read-modify-write the LIVE record: Phase 1 may already have armed or
      * spent the recovery trigger and dismissed the enrollment offer, and a
-     * record rebuilt from the loader's snapshot would undo both. Only when
-     * the live record cannot be read is it rebuilt from that snapshot, and
-     * then this boot's own trigger write still wins. */
+     * record rebuilt from the loader's snapshot would undo both. When the
+     * live record cannot be read the ack is skipped, never rebuilt: the
+     * trigger stays set and the next boot retries. */
     struct boot_sticky_record cur, rec;
     size_t cur_sz = sizeof(cur);
     NTSTATUS rs = uefi_var_get(s_sticky_var_name, &s_sticky_guid, &cur, &cur_sz,

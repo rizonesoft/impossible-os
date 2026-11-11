@@ -554,7 +554,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T13 §13` | Attestation Key Provisioning and TPM2 Quote                                                       | none       |    10 |
 | [x]  | `D01 T13 §9`  | Attestation Report Export                                                                         | none       |    12 |
 | [x]  | `D01 T13 §14` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     2 |
-| [x]  | `D01 T13 §15` | Trusted Enrollment Provenance                                                                     | none       |    18 |
+| [x]  | `D01 T13 §15` | Trusted Enrollment Provenance                                                                     | none       |    20 |
 | [x]  | `D01 T13 §16` | Baseline ABI-Manifest Identity -- Populate the Reserved Digest                                    | none       |     6 |
 | [x]  | `D01 T13 §17` | Write-Locked and Monotonic NV Index Primitives                                                    | none       |     6 |
 | [x]  | `D01 T13 §18` | Atomic Boot-Integrity Report Publication                                                          | none       |     7 |
