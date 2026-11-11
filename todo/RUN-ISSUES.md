@@ -40,3 +40,5 @@ Open problems with the run itself: flow, gates, cost. One running file, replacin
 - Review depth across 831 sections: dispatches p50 5, p90 13, p99 32, max 62.
 - `Build` runs: 37 success, 3 failure and 0 cancelled, of the 40 before the job split.
 - Kernel image headroom: 66,500 bytes on the tightest section, down about 85 KB during the 2026-11-07 run.
+
+- 2026-11-11: an attended session in the primary tree rebuilt `build/` twice during the run's smoke matrix (10:24:37, 10:28:24), failing 8 and 11 legs on the pristine-image receipt check; the legs refused correctly and a quiet re-run passed 20/20. `attended_repair_guard.py` covers whole-tree git verbs but not builds; a build from a second session in the primary tree should be steered to its worktree the same way.

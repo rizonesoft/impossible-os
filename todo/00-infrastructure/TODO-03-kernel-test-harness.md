@@ -470,7 +470,7 @@ Found closing §10, which replaced a fixed-offset subsystem probe (`subsystem[4]
   - A registration that cannot be honoured (empty, over-long, table full at 24, no suite running) fails the test at its call site instead of matching nothing.
   - Outside the test phase the watch is OFF: no record is judged, and a suite window cannot open without a run.
   - Errors are judged before the verbosity filter too: under `TEST_KLOG_SUPPRESS` the suite's own error on that tag counts as declared (87 suites rely on this), while another context's stays unexpected.
-  - An expectation matches only records the suite's own execution logs (`klog_watch_ctx_owns`: same CPU, task and thread, not inside an interrupt (new per-CPU `isr_depth`, counted by `isr_handler` for hardware vectors only, since a legacy IRQ runs at DISPATCH and a syscall body can exit without returning) and not a DPC (new NT `KeIsExecutingDpc`)); anything else during the suite is unexpected, whatever its text.
+  - An expectation matches only records the suite's own execution logs (`klog_watch_ctx_owns`: same CPU, task and thread, not inside an interrupt (new per-CPU `isr_depth`, counted by `isr_handler` for hardware vectors, NMI and #MC only, since a legacy IRQ runs at DISPATCH and a syscall body can exit without returning) and not a DPC (new NT `KeIsExecutingDpc`)); anything else during the suite is unexpected, whatever its text.
 - [x] Every one of the kernel phase's lines classified by its emitting suite: all 38 suites provoke them deliberately, so each carries exact `TEST_KLOG_EXPECT`s; none was a defect
   - The `QuotaPressure` creation failure is the seam's installed `STATUS_OBJECT_NAME_COLLISION` (`test_quota_pressure.c`); the guard-install pair was hidden by the reporter bug below.
 - [x] An unexpected error during a suite (its body or its cleanup actions, any thread, any CPU) fails THAT suite once, naming the first line, the count, and its CPU and pid
@@ -487,6 +487,8 @@ Found closing §10, which replaced a fixed-offset subsystem probe (`subsystem[4]
 > - Integration: the window opens before the suite body and closes after `test_actions_drain`, so cleanup errors are the suite's own.
 > - Downstream: a new provoked error must be expected, or its suite fails; `TEST_KLOG_SUPPRESS` stays for nondeterministic output.
 > - Scope: kernel unit-test phase only; the ring-3 binaries' provoked lines are section 13.
+> **Verified:** 2026-11-11 | commit `f7cde7c21` | 5/5 items | build OK | tests 37482 kernel + 17 user-mode PASS, 0 [FAIL] in the kernel phase; smoke matrix 20/20; lint 0 errors
+> **Quality reviewed:** 2026-11-11 | Codex 27x (design, adversarial x6, test-coverage, consistency x6, perf x5, re-adversarial x8) | 1H+8M+2L fixed, 0 open | scope: kernel-code-quality
 
 ---
 

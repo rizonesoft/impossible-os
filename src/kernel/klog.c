@@ -355,7 +355,8 @@ int klog_watch_ctx_owns(const struct klog_watch_ctx *owner, const struct klog_wa
 }
 
 /* The calling execution. Only the CPU's own per-CPU data and the scheduler's
- * current objects are read, so it is callable from klog_emit under the lock. */
+ * current objects are read, and no lock is taken. Both callers run it BEFORE
+ * s_klog_lock, because taking that lock moves this CPU's IRQL. */
 static void watch_ctx_here(struct klog_watch_ctx *c)
 {
     struct per_cpu_data *cpu = smp_this_cpu();

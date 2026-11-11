@@ -536,11 +536,15 @@ uint64_t isr_handler(struct interrupt_frame *frame)
      * Raising IRQL to a device DIRQL for it would run the fast-fail terminal
      * path at DISPATCH_LEVEL, where its panic/termination work must not be
      * gated. Keep it at the interrupted thread's IRQL like the vec<32 faults. */
-    /* Hardware interrupts only. The software gates run a thread's own work:
-     * a syscall body can yield, block or exit without coming back through
-     * irql_restore, so counting it would strand the depth on this CPU. */
-    int counted_isr = (vec >= 32 && vec != VECTOR_FASTFAIL && vec != VECTOR_NT_SYSCALL &&
-                       vec != VECTOR_LINUX_SYSCALL && vec != VECTOR_YIELD);
+    /* Asynchronous interrupts only: hardware vectors, plus NMI and #MC, which
+     * arrive below 32 but are no more the interrupted thread's work than an
+     * IRQ is (a handled one returns through irql_restore, an unhandled one
+     * panics). The software gates and the synchronous faults run a thread's
+     * own work: a syscall body can yield, block or exit without coming back
+     * through irql_restore, so counting it would strand the depth on this CPU. */
+    int counted_isr = (vec == VECTOR_NMI || vec == VECTOR_MACHINE_CHECK ||
+                       (vec >= 32 && vec != VECTOR_FASTFAIL && vec != VECTOR_NT_SYSCALL &&
+                        vec != VECTOR_LINUX_SYSCALL && vec != VECTOR_YIELD));
     if (counted_isr)
         pcpu->isr_depth++;
     if (vec >= 32 && vec != VECTOR_FASTFAIL) {
