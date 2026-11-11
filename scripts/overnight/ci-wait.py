@@ -57,20 +57,43 @@ def verdict(runs_by_workflow: dict, elapsed: float, grace: float) -> tuple:
     failed = {wf: r for wf, r in newest.items() if r.get("conclusion") not in ("success", "skipped", "cancelled")}
     if failed:
         return "red", {"failed": {wf: r.get("databaseId") for wf, r in sorted(failed.items())}}
-    passed = sorted(wf for wf, r in newest.items() if r.get("conclusion") in ("success", "skipped"))
-    if not passed:
-        return "unknown", {"reason": "no watched workflow finished with a verdict on this commit"}
-    return "green", {"passed": passed, "not_triggered": sorted(missing)}
+    cancelled = sorted(wf for wf, r in newest.items() if r.get("conclusion") == "cancelled")
+    if cancelled or not newest:
+        # A cancelled run never finished: the others passing says nothing about it.
+        return "unknown", {"reason": "no verdict on this commit", "cancelled": cancelled}
+    return "green", {"passed": sorted(newest), "not_triggered": sorted(missing)}
 
 
 def _run(cmd, cwd, timeout=GH_TIMEOUT_S):
     return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout, check=False)
 
 
-def _runs(project, sha):
+def _first_seen(project, sha):
+    """When this commit was first waited for, kept across calls.
+
+    The wait for a run to appear is measured from here, not from the commit's
+    date (a commit can sit behind the pre-push gates for many minutes) and not
+    from this call's start (the call is issued again after exit 124)."""
+    try:
+        path = Path(_run(["git", "rev-parse", "--git-path", "ci-wait-first-seen"], project, 10).stdout.strip())
+        if not path.is_absolute():
+            path = project / path
+        if path.exists():
+            seen_sha, _, when = path.read_text(encoding="utf-8").strip().partition(" ")
+            if seen_sha == sha:
+                return float(when)
+        now = time.time()
+        path.write_text(f"{sha} {now}\n", encoding="utf-8")
+        return now
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return time.time()
+
+
+def _runs(project, sha, budget):
     out = {}
     for wf in WORKFLOWS:
-        r = _run(["gh", "run", "list", "--workflow", wf, "--commit", sha, "--limit", "20", "--json", _FIELDS], project)
+        r = _run(["gh", "run", "list", "--workflow", wf, "--commit", sha, "--limit", "20", "--json", _FIELDS], project,
+                 max(5, min(GH_TIMEOUT_S, budget())))
         if r.returncode != 0:
             raise RuntimeError(f"gh run list failed for {wf}: {(r.stderr or '').strip()[:200]}")
         out[wf] = json.loads(r.stdout or "[]")
@@ -110,17 +133,15 @@ def main(argv=None) -> int:
         out["reason"] = "HEAD is not the commit on origin/main: push first (or the remote moved: rebase and push)"
         return done(3)
 
-    # The commit's age, not this call's, decides when a missing run stops being waited for:
-    # the call is issued again after exit 124, and the grace must not start over each time.
-    try:
-        pushed_ago = time.time() - float(_run(["git", "log", "-1", "--format=%ct", head], project, 10).stdout.strip())
-    except (subprocess.SubprocessError, OSError, ValueError):
-        pushed_ago = 0.0
-    start = time.monotonic()
+    first_seen = _first_seen(project, head)
+    deadline = time.monotonic() + args.max
+
+    def budget():
+        return deadline - time.monotonic()
+
     while True:
-        waited = time.monotonic() - start
         try:
-            state, detail = verdict(_runs(project, head), pushed_ago + waited, args.grace)
+            state, detail = verdict(_runs(project, head, budget), time.time() - first_seen, args.grace)
         except (subprocess.SubprocessError, OSError, RuntimeError, ValueError) as exc:
             out["reason"] = f"CI unavailable ({str(exc)[:200]})"
             return done(3)
@@ -132,7 +153,8 @@ def main(argv=None) -> int:
             return done(1)
         if state == "unknown":
             return done(3)
-        if waited + POLL_S > args.max:
+        # Leave room for one more round of queries before the call's own limit.
+        if budget() < POLL_S + len(WORKFLOWS) * 5:
             return done(124)
         time.sleep(POLL_S)
 

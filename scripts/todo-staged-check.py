@@ -691,23 +691,25 @@ _PARK_SHAPE_RE = re.compile(r"^(?:- \[/\] |> \*\*Deferred:\*\*|\s+- BLOCKED\b)")
 _NEEDS_SOMETHING_RE = re.compile(r"^\*\*Needs:\*\*[ \t]*(?!none\b)\S")
 
 
-def _parks_on_a_person(lines, added):
+def _parks_on_a_person(lines, heads_view, added):
     """[(lineno, text)] for park lines this commit adds that wait on the operator
     in a section with no `**Needs:**` line naming what it waits for.
 
-    `lines` is the staged post-image with fenced lines blanked."""
-    fence = _fence()
+    `lines` is the staged post-image with fenced lines blanked. Section bounds
+    come from `heads_view`, the shared heading projection, as they do for
+    `_park_into_shipping_section`: a nested `- ## N.` starts a section, so a
+    park under it cannot borrow the `**Needs:**` line of the section above."""
+    starts = [i for i, ln in enumerate(heads_view, 1) if _is_section(ln.strip())]
     out = []
     for n, text in added:
         if not (_PARK_SHAPE_RE.match(text) and _WAITS_ON_PERSON_RE.search(text)):
             continue
-        start = n - 1
-        while start > 0 and not fence.is_h2(lines[start]):
-            start -= 1
-        end = n
-        while end < len(lines) and not fence.is_h2(lines[end]):
-            end += 1
-        if not any(_NEEDS_SOMETHING_RE.match(ln) for ln in lines[start:end]):
+        before = [s for s in starts if s <= n]
+        if not before:
+            continue  # above the first section: no section to hold to the rule
+        start = before[-1]
+        end = next((s - 1 for s in starts if s > n), len(lines))
+        if not any(_NEEDS_SOMETHING_RE.match(ln) for ln in lines[start - 1:end]):
             out.append((n, text))
     return out
 
@@ -828,7 +830,7 @@ def main(argv) -> int:
             oscomp.append((f, n, w, cell))
         for n, head, text in _park_into_shipping_section(vis, sec_vis, added, f):
             parked.append((f, n, head, text))
-        for n, text in _parks_on_a_person(vis, added):
+        for n, text in _parks_on_a_person(vis, sec_vis, added):
             waits.append((f, n, text))
         # THE SECTION-AWARE CHECKS GET THE LOGICAL ADDITIONS, the line-based
         # ones keep the raw diff. A section can be created by a container edit

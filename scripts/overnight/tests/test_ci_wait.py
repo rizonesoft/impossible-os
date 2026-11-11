@@ -48,6 +48,21 @@ def test_a_rerun_replaces_the_failure_it_reran():
 
 def test_a_cancelled_run_alone_is_no_verdict():
     assert cw.verdict({"build.yml": [run("completed", "cancelled")]}, 10, 180)[0] == "unknown"
+    # A cancelled build is not certified by another workflow passing.
+    mixed = {"build.yml": [run("completed", "cancelled")], "todo-graph.yml": [run("completed", "success")]}
+    assert cw.verdict(mixed, 10, 180)[0] == "unknown"
+
+
+def test_the_wait_for_a_run_starts_when_the_commit_is_first_seen():
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        first = cw._first_seen(root, "a" * 40)
+        assert cw._first_seen(root, "a" * 40) == first       # the same commit keeps its first sighting across calls
+        assert cw._first_seen(root, "b" * 40) >= first       # another commit starts its own
+        assert cw._first_seen(root, "a" * 40) > first        # and replaces the record
 
 
 if __name__ == "__main__":

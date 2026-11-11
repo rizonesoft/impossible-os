@@ -16,7 +16,16 @@ def found(body, needs=None):
     start = len(lines)
     lines += body + ["", "## 3. Later", "", "**Needs:** bare-metal"]
     added = [(start + i + 1, text) for i, text in enumerate(body)]
-    return [text for _, text in tsc._parks_on_a_person(lines, added)]
+    return [text for _, text in tsc._parks_on_a_person(lines, lines, added)]
+
+
+def test_a_nested_section_does_not_borrow_the_need_above_it():
+    lines = ["## 1. Earlier", "", "**Needs:** operator", "", "- ## 2. Nested", "  - BLOCKED: awaiting the operator"]
+    heads = list(lines)
+    heads[4] = "## 2. Nested"  # what the shared projection shows for a heading inside a list item
+    added = [(6, lines[5])]
+    assert tsc._parks_on_a_person(lines, heads, added) == added
+    assert tsc._parks_on_a_person(lines, lines, added) == []  # the control: physical lines alone miss it
 
 
 PARKS = ["- [/] Pick the wire encoding: operator-gated ABI decision",
