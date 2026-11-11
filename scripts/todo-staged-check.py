@@ -493,8 +493,15 @@ def _oscomp_over_cap(lines, added):
 # existence. Raising the hard cap would hand the one genuinely oversized file in
 # the repo fresh slots, and CLAUDE.md already rejected a cap of 99 on the grounds
 # that a number above every file can never bind.
-SECTION_SOFT_CAP = 50
-SECTION_HARD_CAP = 60
+#
+# RAISED 50/60 -> 90/99 (operator decision 2026-11-11). The roadmap is 2,594
+# sections and grows as gaps are found, and the run was spending its time
+# deciding where an over-cap section should go instead of building it. 99 is
+# what a two-digit section address holds, the same bound as files in a domain
+# and domains in the tree. The earlier objection, that a cap above every file
+# never binds, is accepted: a file's size is no longer something to manage.
+SECTION_SOFT_CAP = 90
+SECTION_HARD_CAP = 99
 # NO LOCAL `## N.` GRAMMAR (section 43). This was a sixth private copy --
 # column-0 anchored, unbounded digit run -- found by the AST allowlist test
 # the same section added, which is the point of checking the AST rather than
@@ -668,6 +675,43 @@ _REVIEW_SPAWN_RE = re.compile(
     r"^>\s*\*\*Spawned-by:\*\*\s*(?:\u00a7|section\s*)\d+\s*\(review\)", re.I)
 
 
+# A PARK THAT WAITS ON A PERSON NAMES WHAT IT NEEDS (operating mandate, wired in
+# 2026-11-11). The run decides: a design, ABI or security choice is made,
+# recorded in todo/answers.md with what reversing it costs, and built. Measured
+# that day: 36 sections sat parked on questions that all had answers, and about
+# 100 items were marked operator-gated on decisions the mandate hands to the run.
+# So a NEW park line that waits on the operator is refused unless its section
+# says, on a `**Needs:**` line, which outside thing it cannot finish without.
+# Only the three park shapes are read, never prose, so a note that quotes an old
+# park is not refused.
+_WAITS_ON_PERSON_RE = re.compile(
+    r"\b(?:awaiting-answer|awaiting-operator|awaiting the operator|operator-gated|operator-reserved|"
+    r"user-reserved|operator decision|owner decision)\b", re.I)
+_PARK_SHAPE_RE = re.compile(r"^(?:- \[/\] |> \*\*Deferred:\*\*|\s+- BLOCKED\b)")
+_NEEDS_SOMETHING_RE = re.compile(r"^\*\*Needs:\*\*[ \t]*(?!none\b)\S")
+
+
+def _parks_on_a_person(lines, added):
+    """[(lineno, text)] for park lines this commit adds that wait on the operator
+    in a section with no `**Needs:**` line naming what it waits for.
+
+    `lines` is the staged post-image with fenced lines blanked."""
+    fence = _fence()
+    out = []
+    for n, text in added:
+        if not (_PARK_SHAPE_RE.match(text) and _WAITS_ON_PERSON_RE.search(text)):
+            continue
+        start = n - 1
+        while start > 0 and not fence.is_h2(lines[start]):
+            start -= 1
+        end = n
+        while end < len(lines) and not fence.is_h2(lines[end]):
+            end += 1
+        if not any(_NEEDS_SOMETHING_RE.match(ln) for ln in lines[start:end]):
+            out.append((n, text))
+    return out
+
+
 def _review_sections_missing_user_impact(path, lines, heads_view, added):
     """[(lineno, heading)] for `(review)`-spawned sections this commit ADDS that
     carry no `> **User impact:**` line.
@@ -748,7 +792,7 @@ def main(argv) -> int:
             "  Opt-out: SKIP_TODO_STAGED_CHECK=1 git commit ...\n" % snap_err)
         return 1
     docs, tree_id = snap
-    bad, wrapped, oscomp, parked, noprov, noimpact = [], [], [], [], [], []
+    bad, wrapped, oscomp, parked, noprov, noimpact, waits = [], [], [], [], [], [], []
     unscannable = []
     # section-count cap: judged per file, on files this commit GROWS
     capped_hard, capped_soft = [], []
@@ -784,6 +828,8 @@ def main(argv) -> int:
             oscomp.append((f, n, w, cell))
         for n, head, text in _park_into_shipping_section(vis, sec_vis, added, f):
             parked.append((f, n, head, text))
+        for n, text in _parks_on_a_person(vis, added):
+            waits.append((f, n, text))
         # THE SECTION-AWARE CHECKS GET THE LOGICAL ADDITIONS, the line-based
         # ones keep the raw diff. A section can be created by a container edit
         # that never touches the heading line; a line-length or wrap check run
@@ -919,6 +965,25 @@ def main(argv) -> int:
                 "work across two owners, and every counter will read as if the\n"
                 "corpus improved. `grep -rn <capability> todo/` before filing.\n"
                 "Override (last resort): SKIP_TODO_STAGED_CHECK=1 git commit ...\n\n")
+        return 1
+
+    if waits:
+        for f, n, text in waits[:10]:
+            sys.stderr.write("\n[todo-staged-check] %s:%d parks work on a person:\n    %s\n"
+                             % (f, n, text.strip()[:200]))
+        sys.stderr.write(
+            "\n  The run decides, it does not wait to be told. Take the industry-standard or\n"
+            "  more reversible option, record it in todo/answers.md with what reversing it\n"
+            "  costs, and write the item as open work (`- [ ]`).\n"
+            "  A park is right only when the work cannot finish without something outside\n"
+            "  the run. Then say which, on one line under the section heading:\n"
+            "    **Needs:** operator        <- an account or machine only the owner has\n"
+            "    **Needs:** bare-metal      <- a physical machine no emulator stands in for\n"
+            "    **Needs:** owner-decision  <- the halt class only: data loss, credentials,\n"
+            "                                  money, shared infrastructure\n"
+            "  (full list: todo/README.md). Build everything else in the section first and\n"
+            "  park only the one check that needs it.\n"
+            "  Opt-out: SKIP_TODO_STAGED_CHECK=1 git commit ...\n")
         return 1
 
     if noprov:

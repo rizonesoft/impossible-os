@@ -21,8 +21,20 @@ Open problems with the run itself: flow, gates, cost. One running file, replacin
   - A parameter used only under `KERNEL_TESTS` breaks `KERNEL_TESTS=off` with `-Werror`, and only CI's release job sees it. A release-flavor build in the J1 chain is about 20 s.
 - [ ] Does a single session hold up for days, and how much does compaction lose?
   - Untested. Watch the first runs. A WSL restart now resumes a live run by itself (`run.sh autostart`, from the boot service `start` installs); WSL still has to be started for that to happen.
-- [ ] Do the 36 `awaiting-answer` stamps pick up their answers?
-  - All 30 questions are answered in `todo/answers.md`. Three answers mean stay as you are (Q14, Q17, Q24 report-only), so those need a plain Deferred reason or they read BLOCKED forever. Check with `sequencer_triage.py --blockers`.
+- [x] Do the 36 `awaiting-answer` stamps pick up their answers?
+  - They did not: nothing read `todo/answers.md` back. Fixed 2026-11-11: the classifier treats an answered park as open work, 36 stamps and 128 parked items were reopened, and Q17 (leave as is) became a plain Deferred reason.
+- [ ] About 445 terminal `Deferred:` stamps are never re-read, and about 60 of them name hardware or an operator decision
+  - Done when each has been re-judged under the never-park rule: reopened with an emulated stand-in or a recorded decision, or kept with a `**Needs:**` line. Work a file's stamps when the run is in that file.
+- [ ] The run transcript grows about 50 MB a day and a restart resumes the same session id
+  - `run_launch` falls back to a fresh session only when the transcript file is missing. Done when a failed resume, or a transcript over a set size, starts a fresh session from the cursor. Frozen file: an attended change.
+- [ ] Nothing restarts the heartbeat if it dies, and a busy session that ships nothing is never nudged
+  - Done when the boot service (or a timer) respawns a dead heartbeat, and the alert keys on sections shipped per day, not on idleness. Frozen files: an attended change.
+- [ ] An expired Codex, Claude or `gh` login stalls every section with no distinct signal
+  - Done when a daily probe of the three logins raises the critical alert and names which one failed.
+- [ ] Six pytest-style files in `scripts/overnight/tests/` run no tests under `run-all.sh`
+  - `run-all.sh` runs `python3 <file>`, and a file with no `__main__` block defines its tests and exits 0 (`test_review_pin.py` and five more). Done when `run-all.sh` runs those through pytest, or each file runs its own tests.
+- [ ] At about 7 sections a day the 1,649 open sections take about 8 months if the plan stops growing, and it grows
+  - Measured 2026-11-11 from `supervisor-state.json`. One push per section with a CI wait adds about 25 minutes a section. Watch sections per day for a week before tuning anything.
 - [x] Do the logged gates matter?
   - No. After a watched run that shipped 22 sections the operator saw no sign any was needed, so all 22 and the log/enforce wrapper were deleted on 2026-11-09 (docs/plans/2026-11-07-run-supervisor.md, Stage 7).
 - [ ] Does medium effort hold quality?

@@ -226,7 +226,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 **Test checkpoint:** `test_knf` drives each `Nt*WnfStateData` handler through the SSDT: `NtCreateWnfStateName` returns a 64-bit state name, `NtUpdateWnfStateData` advances the sequence, `NtQueryWnfStateData` returns the payload + change stamp, an unchanged query returns `STATUS_NO_MORE_ENTRIES`, and `NtSubscribeWnfStateChange` wakes on the next update. Serial: `"[KNF] WNF syscalls: 6 SSDT slots live"`. Test on: QEMU WHPX + TCG.
 
-> **Deferred:** [H] §8 blocked on the `WNF_STATE_NAME` compat-level decision -- ABI-defining, cannot change post-ship, so operator-reserved (byte-compatible Windows encoding vs syscall-arg-shape only); every handler encodes this ABI. awaiting-answer (todo/answers.md Q1). SSDT numbers 0x01E0-0x01E6 are reserved in service_numbers.h; handlers await the decision. -> XREF: 02-kernel-core/TODO-16 §8 (item: "DECIDE + document the" at line 223)
+> **Notes:** Reopened 2026-11-11: Q1 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [H] §8 blocked on the `WNF_STATE_NAME` compat-level decision -- ABI-defining, cannot change post-ship, so operator-reserved (byte-compatible Windows encoding vs syscall-arg-shape only); every handler encodes this ABI. awaiting-answer (todo/answers.md Q1). SSDT numbers 0x01E0-0x01E6 are reserved in service_numbers.h; handlers await the decision. -> XREF: 02-kernel-core/TODO-16 §8 (item: "DECIDE + document the" at line 223)
 
 ---
 

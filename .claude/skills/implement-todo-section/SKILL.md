@@ -159,10 +159,11 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - **SSDT audit trigger:** if this section implemented or modified SSDT handlers, recommend running `/audit-ssdt` after commit to verify master table consistency.
     - **Filed-in-owner check** and **Accepted-XREF concreteness check (MANDATORY):** every follow-up `[ ]` that names an owner must ALSO exist as a checklist item in that owner section with a reciprocal XREF, and every "Accepted with XREF" finding from step 13 must point at a **concrete `[ ]` item** (a section title or prose mention is NOT concrete) -- create it now if missing, via scope-gap protocol Branch C/D if no owner section fits. Both rules in full: [references/todo-bookkeeping.md](references/todo-bookkeeping.md).
     - **Completion radar, post-implementation (MANDATORY):** ask one last time whether the feature is merely section-complete or genuinely credible. If obvious adjacent work remains and fits one-session same-subsystem scope, implement it now. If it does not fit, create or extend the owner TODO now before committing.
-19. **Commit and push** -- only after steps 13-18 are ALL complete.
+    - **No new park on a decision.** If an item cannot be finished, the cause is either a decision (make it now, record it in `todo/answers.md`, build) or something outside the run (name it on the section's `**Needs:**` line, build the emulated stand-in, and park only the one check that needs the real thing). The commit check refuses a park that waits on the operator without that line.
+19. **Commit, do not push** -- only after steps 13-18 are ALL complete. The section is pushed once, complete and stamped, at the end of `review-todo-section` (operator decision 2026-11-11).
     - Use the section's `Commit:` line as the commit message.
     - Stage all changed source files, headers, the updated TODO file(s), and test changes together.
-    - Push to `origin/main` immediately after successful commit.
+    - Do NOT push here. The review in step 20 reads the local commit, and the one push follows the stamp commit.
     - Mark the section's `- [ ] Commit: "..."` item `[x]`.
     - **Section-commit gate enforcement:** the new `.claude/hooks/section_commit_gate.py` hook BLOCKS this commit (exit 2) if the staged diff carries the section-commit signature (source change + Implementation Order `[x]` flip) but the evidence is missing -- a stale build, a Codex review whose `trigger_files` don't cover the staged source, or a review never received through `superpowers:receiving-code-review`. Steps 13-17 produce that evidence; skipping any of them means the gate refuses the commit, not "reminder-then-proceed". The gate runs at BOTH harness PreToolUse AND `.githooks/pre-commit` (the latter catches `git add foo && git commit -m bar` chains the harness layer cannot see). Opt-out requires BOTH `SKIP_REVIEW_HOOK=1` AND `SKIP_REVIEW_HOOK_REASON="<text >= 12 chars>"`; the reason is logged to `.claude/state/skip-log.jsonl` AND `last-codex-review.json` is reset so the skip cannot be reused.
 
@@ -172,7 +173,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 >
 > **This step is NEVER skippable.** Not for "straightforward plumbing." Not for "Codex already ran in step 13." Not for "same pattern as the previous section." Step 13 reviews the diff in isolation during implementation; step 20 reviews the committed code in full context -- they catch different classes of bugs. The pattern of "looks simple, I'll skip the review" is the exact signal to NOT skip. (Incident 2026-04-12: §2 review skipped, user had to ask for it.)
 
-20. **Invoke `/review-todo-section`** on the section just committed. **This is the LITERAL next tool call after `git push` succeeds** -- not "soon after", not "if the code feels risky", not "after checking whether it is needed". Invocation format:
+20. **Invoke `/review-todo-section`** on the section just committed. **This is the LITERAL next tool call after the step 19 commit lands** -- not "soon after", not "if the code feels risky", not "after checking whether it is needed". Invocation format:
 
     ```
     Skill(name="review-todo-section", args="<todo path> §<N> <title>")

@@ -157,41 +157,41 @@ Relink the kernel at the high virtual base, map the image there, and make the ex
 > [!IMPORTANT]
 > **Site (a) is pinned by §1: the bootloader.** There is no `entry.asm` in the tree -- `bootx64.c` builds the only early page tables and calls `kernel_main` via ELF-symbol lookup, so `setup_page_tables()` installs the high mapping and the EXISTING call at `bootx64.c:10675` becomes the transition. No far jump, no `lretq`, no CS reload. Consequently §5's `boot_info`/framebuffer translation is CO-DESIGNED with this section rather than following it: `kernel_main` executes high from its first instruction, so there is no "boots low, reinterprets `boot_info` later" phase to defer into.
 
-- [/] Set the linker VMA to `MM_KERNEL_VIRT_BASE` and keep the LMA at the load address via `AT(...)`, so symbols resolve high but the image still loads low. `linker.ld:25` is `. = 1M` with no `AT()` today
-  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
-- [/] Move the LMA to `MM_KERNEL_PHYS_BASE` (`0x200000`) -- NOT the historical `0x100000`: a `PS=1` PDE needs a 2 MiB-aligned frame, and 1 MiB sets reserved PDE bit 20, faulting before `kernel_main` can report it
-  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
-- [/] No codegen flag change: `-mcmodel=kernel` is already in `Makefile:25` and its `R_X86_64_32S` relocs resolve in the top 2 GiB
-  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
-- [/] Export LMA-derived `__kernel_phys_start`/`__kernel_phys_end` from `linker.ld`, then repoint `pmm.c` kernel_end_phys, bitmap placement, the 1 MiB reservation, and the disjointness checks at PHYSICAL bounds
-  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
-- [/] Teach the `scripts/build.sh` BSS check to read high VMA + low LMA. `load_kernel()` needs NO change -- it already copies by `p_paddr`
-  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
-- [/] Claim loaded kernel-image pages (`AllocatePages(AllocateAddress)`) right after `load_kernel()`, before any post-load alloc, so none lands on the unclaimed image (pre-existing; §2 guards only its arena). ← XREF: §2
-  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
-- [/] Map the kernel image to `MM_KERNEL_IMAGE_BASE` with 4 KiB pages (per-section W^X; a 2 MiB page forces `.text` and `.rodata` to share permissions), plus a TRANSIENT identity map of the bootloader RIP + stack
-  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
-- [/] No far jump / `lretq` / CS reload: the existing call at `bootx64.c:10675` IS the transition once CR3 carries both maps and `kernel_main` high `st_value` is mapped (CS is already a long-mode selector)
-  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
-- [/] Replace the `kernel_base = 0x100000` NX bound (`vmm.c:1452`) with image-window bounds; assert `.text` executable and `.rodata`/`.data`/`.bss` NX at their real high VAs
-  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
-- [/] After the jump switch the stack to a high VA. Do NOT shrink the identity map here: early code still derefs handoff pointers physically (`boot_progress.c:137`), and that translation is §5. Teardown moves to §5
-  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
-- [/] Keep the AP envelope: `ap_trampoline.asm` is `[ORG 0x8000]` with `AP_DATA 0x8E00`, and `smp.c:317` hands each AP the BSP live CR3, so trampoline + data + temp stack stay identity-mapped in EVERY bring-up CR3 until all APs ack (§4)
-  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
-- [/] Confirm `readelf -l build/kernel.exe` shows VirtAddr `MM_KERNEL_VIRT_BASE` with PhysAddr preserved at the LMA
-  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
-- [/] Add `POST16` entry/exit codes around CR3-enable and the high-half jump (teardown codes land with the teardown in §5)
-  - BLOCKED: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
-- [/] Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`
-  - BLOCKED: commit line for the items above.
+- [ ] Set the linker VMA to `MM_KERNEL_VIRT_BASE` and keep the LMA at the load address via `AT(...)`, so symbols resolve high but the image still loads low. `linker.ld:25` is `. = 1M` with no `AT()` today
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [ ] Move the LMA to `MM_KERNEL_PHYS_BASE` (`0x200000`) -- NOT the historical `0x100000`: a `PS=1` PDE needs a 2 MiB-aligned frame, and 1 MiB sets reserved PDE bit 20, faulting before `kernel_main` can report it
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [ ] No codegen flag change: `-mcmodel=kernel` is already in `Makefile:25` and its `R_X86_64_32S` relocs resolve in the top 2 GiB
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [ ] Export LMA-derived `__kernel_phys_start`/`__kernel_phys_end` from `linker.ld`, then repoint `pmm.c` kernel_end_phys, bitmap placement, the 1 MiB reservation, and the disjointness checks at PHYSICAL bounds
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [ ] Teach the `scripts/build.sh` BSS check to read high VMA + low LMA. `load_kernel()` needs NO change -- it already copies by `p_paddr`
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [ ] Claim loaded kernel-image pages (`AllocatePages(AllocateAddress)`) right after `load_kernel()`, before any post-load alloc, so none lands on the unclaimed image (pre-existing; §2 guards only its arena). ← XREF: §2
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [ ] Map the kernel image to `MM_KERNEL_IMAGE_BASE` with 4 KiB pages (per-section W^X; a 2 MiB page forces `.text` and `.rodata` to share permissions), plus a TRANSIENT identity map of the bootloader RIP + stack
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [ ] No far jump / `lretq` / CS reload: the existing call at `bootx64.c:10675` IS the transition once CR3 carries both maps and `kernel_main` high `st_value` is mapped (CS is already a long-mode selector)
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [ ] Replace the `kernel_base = 0x100000` NX bound (`vmm.c:1452`) with image-window bounds; assert `.text` executable and `.rodata`/`.data`/`.bss` NX at their real high VAs
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [ ] After the jump switch the stack to a high VA. Do NOT shrink the identity map here: early code still derefs handoff pointers physically (`boot_progress.c:137`), and that translation is §5. Teardown moves to §5
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [ ] Keep the AP envelope: `ap_trampoline.asm` is `[ORG 0x8000]` with `AP_DATA 0x8E00`, and `smp.c:317` hands each AP the BSP live CR3, so trampoline + data + temp stack stay identity-mapped in EVERY bring-up CR3 until all APs ack (§4)
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [ ] Confirm `readelf -l build/kernel.exe` shows VirtAddr `MM_KERNEL_VIRT_BASE` with PhysAddr preserved at the LMA
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [ ] Add `POST16` entry/exit codes around CR3-enable and the high-half jump (teardown codes land with the teardown in §5)
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q3: §3 cannot start until the operator picks the sequencing.
+- [ ] Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: commit line for the items above.
 
 **Test checkpoint:** Serial shows the high-half POST16 sequence in order; the kernel reaches its existing Phase-1 banner from a high virtual RIP (`llvm-addr2line` on a logged RIP resolves to a `MM_KERNEL_VIRT_BASE` address). `=== BUILD OK ===` and the smoke test boots to `C:\>`. Test on: QEMU KVM + TCG; **bare metal (deferred human sign-off per the policy above -- NOT an implementation prerequisite)**.
 
 > [!WARNING]
 > **Regression risk: HIGHEST in the system.** A wrong transient identity map or a non-canonical base triple-faults at the CR3 load with NO serial output. The split and the jump ship as ONE commit -- an intermediate commit that links high without mapping high does not boot, so it must never be pushed alone. Rollback: revert to the identity-mapped low kernel (this whole section as a unit); §2's direct map is independent and stays. Keep `scripts/test-smoke.sh` green at every step.
 
-> **Deferred:** [Critical] 2026-07-17 -- awaiting-operator design decision. `codex-design-review` returned **NO-SHIP** (2 Critical + 2 High, all verified at file:line); §3 cannot ship standalone. **BLOCKER (crit #2): physical collision.** The image is 6.99 MiB (`__kernel_start` 0x100000 .. `__kernel_end` 0x7fe000); at LMA `MM_KERNEL_PHYS_BASE` 0x200000 it ends at phys 0x8fe000, overlapping `USER_PT_WINDOW` [0x800000, 0xa00000]. User exec still writes the launcher ELF + stack to identity-mapped phys 0x800000, overwriting the kernel `.bss` tail + PMM bitmap; PMM reservation cannot stop a direct user write, and the smoke test reaches `cmd.exe` so gating userspace fails the ship checkpoint. A 6.99 MiB image does not fit 2 MiB-aligned below 0x800000 (only 6 MiB free), so the fix is a SEQUENCING decision the runner will not make unattended: (a) relocate user processes to private physical frames BEFORE §3 (pull §6 ahead of the jump), or (b) re-base `MM_KERNEL_PHYS_BASE` above `USER_PT_WINDOW` in `memmap.h` (pinned-SSOT/layout change). Circular dep (§3 <-> §6/§7) the plan did not resolve. Re-attempt corrections captured: crit #1 -- checklist item "Set the linker VMA to `MM_KERNEL_VIRT_BASE`" is WRONG; VMA must be `MM_KERNEL_IMAGE_BASE` (0xffffffff80200000) or `kernel_main`'s `st_value` falls outside the image leaves and triple-faults. high #3 -- `boot_payload.c:152-153` also reads `__kernel_start`/`__kernel_end` as PHYSICAL bounds; after the split they are high VMAs, silently disabling payload-vs-image overlap detection (repoint to `__kernel_phys_start/end`). high #4 -- the post-load reservation must claim the image PLUS the max PMM bitmap extent before ANY post-load Boot Services alloc. Confirmed OK: `AT()` + LMA-derived symbols is valid, and the existing 4 GiB identity map already covers the transition RIP/stack (no second transient map needed). -> XREF: `todo/answers.md` Q3 (higher-half vs user-frame relocation sequencing -- operator decision); implementation owner for option (a) is this file §6 (item: "User mappings go in the lower half only; remove the assumption that user pages live just above the kernel").
+> **Notes:** Reopened 2026-11-11: Q3 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [Critical] 2026-07-17 -- awaiting-operator design decision. `codex-design-review` returned **NO-SHIP** (2 Critical + 2 High, all verified at file:line); §3 cannot ship standalone. **BLOCKER (crit #2): physical collision.** The image is 6.99 MiB (`__kernel_start` 0x100000 .. `__kernel_end` 0x7fe000); at LMA `MM_KERNEL_PHYS_BASE` 0x200000 it ends at phys 0x8fe000, overlapping `USER_PT_WINDOW` [0x800000, 0xa00000]. User exec still writes the launcher ELF + stack to identity-mapped phys 0x800000, overwriting the kernel `.bss` tail + PMM bitmap; PMM reservation cannot stop a direct user write, and the smoke test reaches `cmd.exe` so gating userspace fails the ship checkpoint. A 6.99 MiB image does not fit 2 MiB-aligned below 0x800000 (only 6 MiB free), so the fix is a SEQUENCING decision the runner will not make unattended: (a) relocate user processes to private physical frames BEFORE §3 (pull §6 ahead of the jump), or (b) re-base `MM_KERNEL_PHYS_BASE` above `USER_PT_WINDOW` in `memmap.h` (pinned-SSOT/layout change). Circular dep (§3 <-> §6/§7) the plan did not resolve. Re-attempt corrections captured: crit #1 -- checklist item "Set the linker VMA to `MM_KERNEL_VIRT_BASE`" is WRONG; VMA must be `MM_KERNEL_IMAGE_BASE` (0xffffffff80200000) or `kernel_main`'s `st_value` falls outside the image leaves and triple-faults. high #3 -- `boot_payload.c:152-153` also reads `__kernel_start`/`__kernel_end` as PHYSICAL bounds; after the split they are high VMAs, silently disabling payload-vs-image overlap detection (repoint to `__kernel_phys_start/end`). high #4 -- the post-load reservation must claim the image PLUS the max PMM bitmap extent before ANY post-load Boot Services alloc. Confirmed OK: `AT()` + LMA-derived symbols is valid, and the existing 4 GiB identity map already covers the transition RIP/stack (no second transient map needed). -> XREF: `todo/answers.md` Q3 (higher-half vs user-frame relocation sequencing -- operator decision); implementation owner for option (a) is this file §6 (item: "User mappings go in the lower half only; remove the assumption that user pages live just above the kernel").
 
 ---
 
@@ -199,24 +199,24 @@ Relink the kernel at the high virtual base, map the image there, and make the ex
 
 Move the GDT, IDT, TSS, and per-CPU/`GS_BASE` state to high virtual addresses, and route SMP AP startup through the high-half transition.
 
-- [/] Relocate GDT/IDT/TSS pointers (`lgdt`/`lidt`/`ltr`) to high-virtual addresses after the §3 switch; verify the GDT user-segment order (SYSRET) constraint still holds (`gdt.h` static asserts).
-  - BLOCKED: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
-- [/] Set `GS_BASE`/`KERNEL_GS_BASE` and per-CPU data to high-virtual addresses before any interrupt fires (bare-metal-gotcha: GS_BASE before first interrupt).
-  - BLOCKED: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
-- [/] AP trampoline: APs start in the low real/protected-mode trampoline, then load the shared kernel page tables and far-jump into the high half (mirror §3 for each AP).
-  - BLOCKED: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
-- [/] Own the AP low envelope: reserve + identity-map the trampoline (0x8000), shared data (0x8E00), temp stack, and every table an AP reads, in each bring-up CR3; retire it only after all APs ack, with a timeout policy + TLB invalidation
-  - BLOCKED: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
-- [/] Re-point the IST stacks (DF/NMI/MCE) and their guard pages to high-virtual addresses.
-  - BLOCKED: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
-- [/] Add `POST16` codes around AP high-half entry.
-  - BLOCKED: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
+- [ ] Relocate GDT/IDT/TSS pointers (`lgdt`/`lidt`/`ltr`) to high-virtual addresses after the §3 switch; verify the GDT user-segment order (SYSRET) constraint still holds (`gdt.h` static asserts).
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
+- [ ] Set `GS_BASE`/`KERNEL_GS_BASE` and per-CPU data to high-virtual addresses before any interrupt fires (bare-metal-gotcha: GS_BASE before first interrupt).
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
+- [ ] AP trampoline: APs start in the low real/protected-mode trampoline, then load the shared kernel page tables and far-jump into the high half (mirror §3 for each AP).
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
+- [ ] Own the AP low envelope: reserve + identity-map the trampoline (0x8000), shared data (0x8E00), temp stack, and every table an AP reads, in each bring-up CR3; retire it only after all APs ack, with a timeout policy + TLB invalidation
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
+- [ ] Re-point the IST stacks (DF/NMI/MCE) and their guard pages to high-virtual addresses.
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
+- [ ] Add `POST16` codes around AP high-half entry.
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: builds on §3's high-half jump, which waits on `todo/answers.md` Q3.
 - [/] Commit: `"boot: descriptor tables + per-CPU + AP startup in the higher half"`
   - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** All CPUs reach the scheduler from high-virtual RIPs; an intentional #DF still shows the guard-page label. Serial shows per-AP high-half POST16. Test on: QEMU WHPX (2 CPUs) + TCG; **bare metal**.
 
-> **Deferred:** [Critical] 2026-07-17 -- cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
+> **Notes:** Reopened 2026-11-11: §3 is open work again (Q3 is answered), and the Depends On cell already orders this section after it. Was Deferred: [Critical] 2026-07-17 -- cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
 
 ---
 
@@ -230,28 +230,28 @@ The bootloader runs identity-mapped and hands the kernel physical/low pointers; 
 > [!IMPORTANT]
 > **This section OWNS the identity-map teardown** (moved out of §3 by the 2026-07-16 design review). §3 makes the jump but deliberately leaves the identity map live, because early code still derefs handoff pointers physically -- `boot_progress.c:137` reads `g_boot_info.fb.addr` directly. Shrinking the map before those pointers are translated faults early boot with no output. The map staying live through §3/§4 is the status quo (it is already live and User-mapped today), so this is a not-yet-fixed hazard, never a new regression.
 
-- [/] Audit every `boot_info` pointer (memory map, ACPI tables, framebuffer base, command line, initrd/UKI sections) for physical vs virtual; access them via the direct map after §3.
-  - BLOCKED: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
-- [/] Decide framebuffer mapping: map the GOP framebuffer into the kernel's high MMIO window (WC) rather than touching its physical address directly.
-  - BLOCKED: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
-- [/] Once every handoff pointer above is translated, SHRINK the identity map to the AP envelope and CLEAR the User bit on what remains -- a retained 4 GiB map is a writable+User+exec low alias of kernel text (§1 Decision 6)
-  - BLOCKED: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
-- [/] Teardown lands HERE, not in §3: `boot_progress.c:137` derefs `g_boot_info.fb.addr` physically, so shrinking the map before this section faults early boot. Add the `POST16` teardown codes with it
-  - BLOCKED: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
-- [/] Convert the remaining raw phys-as-pointer consumers before the map is retired, starting with `src/kernel/env.c:309`.
-  - BLOCKED: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [ ] Audit every `boot_info` pointer (memory map, ACPI tables, framebuffer base, command line, initrd/UKI sections) for physical vs virtual; access them via the direct map after §3.
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [ ] Decide framebuffer mapping: map the GOP framebuffer into the kernel's high MMIO window (WC) rather than touching its physical address directly.
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [ ] Once every handoff pointer above is translated, SHRINK the identity map to the AP envelope and CLEAR the User bit on what remains -- a retained 4 GiB map is a writable+User+exec low alias of kernel text (§1 Decision 6)
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [ ] Teardown lands HERE, not in §3: `boot_progress.c:137` derefs `g_boot_info.fb.addr` physically, so shrinking the map before this section faults early boot. Add the `POST16` teardown codes with it
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [ ] Convert the remaining raw phys-as-pointer consumers before the map is retired, starting with `src/kernel/env.c:309`.
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
   - That site casts a `pmm_alloc_contiguous` result straight to `struct env_buf_hdr *`, and `include/kernel/env.h:103` documents the identity-mapped assumption as a contract rather than an accident.
   - Raised by §16's kernel-quality audit as the production twin of the test allocator §16 converted: `test_scratch_alloc` now routes through `pmm_alloc_pages_hhdm()`, and `env.c` is the same shape in the very subsystem whose test file was converted alongside it. There are roughly 20 such sites (`nvme.c`, xHCI, gfx, ixfs); each one is a fault the instant this section shrinks the identity map, so the inventory belongs to the teardown, not to the consumers. -> XREF: this file §16 (item: "Decided: it DID block the charter, and is routed through the HHDM")
-- [/] Bump `BOOT_INFO_VERSION` if the handoff contract changes (mirror header + kernel header together per the boot_info ABI rules); update the drift manifest.
-  - BLOCKED: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
-- [/] Record the high-half handoff in the boot protocol schema changelog (`D01 T01 §8`).
-  - BLOCKED: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [ ] Bump `BOOT_INFO_VERSION` if the handoff contract changes (mirror header + kernel header together per the boot_info ABI rules); update the drift manifest.
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [ ] Record the high-half handoff in the boot protocol schema changelog (`D01 T01 §8`).
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: handoff translation needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
 - [/] Commit: `"boot: boot_info + framebuffer handoff translated for higher-half kernel"`
   - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** Desktop renders (framebuffer reachable via the high MMIO window); ACPI tables parse; `boot_info` validation passes; the identity map is gone except the AP envelope, and what remains carries no User bit. `boot-info-manifest` compare gate passes. Test on: QEMU KVM + TCG; **bare metal** (real GOP framebuffer, deferred human sign-off).
 
-> **Deferred:** [Critical] 2026-07-17 -- cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
+> **Notes:** Reopened 2026-11-11: §3 is open work again (Q3 is answered), and the Depends On cell already orders this section after it. Was Deferred: [Critical] 2026-07-17 -- cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
 
 ---
 
@@ -259,18 +259,18 @@ The bootloader runs identity-mapped and hands the kernel physical/low pointers; 
 
 Layer the high-half kernel onto the existing per-process page tables: every process PML4 shares the kernel's upper-half entries and owns a private lower half.
 
-- [/] On PML4 creation (`TODO-10 §8` path), copy/alias the kernel's upper-half PML4 entries into every new process PML4 (shared, supervisor-only).
-  - BLOCKED: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
-- [/] Prepopulate + permanently own the kernel upper-half hierarchy so a later kernel mapping never needs a NEW top-level entry propagated into live PML4s; otherwise implement synchronized propagation to every process PML4
-  - BLOCKED: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
-- [/] Pin shared-frame ownership: process PML4 teardown must never free kernel upper-half tables; require a cross-CPU TLB-shootdown test for a kernel mapping added after processes exist
-  - BLOCKED: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
-- [/] User mappings go in the lower half only; remove the assumption that user pages live just above the kernel.
-  - BLOCKED: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
-- [/] Ensure kernel upper-half entries are marked supervisor (no User bit) -- this is the clean split that unblocks SMEP/SMAP and KPTI.
-  - BLOCKED: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
-- [/] Verify TLB/CR3 switch semantics: switching to a user process keeps the kernel mapped (high half) while swapping the lower half.
-  - BLOCKED: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [ ] On PML4 creation (`TODO-10 §8` path), copy/alias the kernel's upper-half PML4 entries into every new process PML4 (shared, supervisor-only).
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [ ] Prepopulate + permanently own the kernel upper-half hierarchy so a later kernel mapping never needs a NEW top-level entry propagated into live PML4s; otherwise implement synchronized propagation to every process PML4
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [ ] Pin shared-frame ownership: process PML4 teardown must never free kernel upper-half tables; require a cross-CPU TLB-shootdown test for a kernel mapping added after processes exist
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [ ] User mappings go in the lower half only; remove the assumption that user pages live just above the kernel.
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [ ] Ensure kernel upper-half entries are marked supervisor (no User bit) -- this is the clean split that unblocks SMEP/SMAP and KPTI.
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
+- [ ] Verify TLB/CR3 switch semantics: switching to a user process keeps the kernel mapped (high half) while swapping the lower half.
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: upper-half sharing needs §3's high-half kernel, which waits on `todo/answers.md` Q3.
 - [/] Commit: `"mm: per-process PML4 -- kernel high-half shared, user low-half private"`
   - BLOCKED: commit line for the items above.
 
@@ -281,7 +281,7 @@ Layer the high-half kernel onto the existing per-process page tables: every proc
 > → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md` -- the LIVE owner, whose sections are Deferred-stamped on this TODO: §2 (item: "Commit: `kernel/security: CR4 SMEP/SMAP live, IDT clac/SMAP entry path`"), §6 (item: "Commit: `\"kernel/security: KPTI dual page tables, user_cr3 allocation, Meltdown isolation active\"`"), §7 (item: "Commit: `\"kernel/security: PCID TLB tagging, NOFLUSH CR3 writes, INVPCID for targeted flush\"`"), §14 (item: "Commit: `\"kernel/security: KASLR: bootloader RDRAND slide, ELF relocation, kaslr_slide in boot_info\"`").
 > → XREF: `03-memory-concurrency/TODO-02-memory-security.md §3/§4` (SMEP / SMAP) + `§6` (KPTI) -- a PARALLEL all-`[ ]` plan for the same features, with no cross-reference to D02 T10 in either direction. Ownership is FORKED; resolving it is a cross-domain call filed for the operator (`overnight-todo.md`), not this TODO's to make. PCID is already owned by D02 T10 §7 -- do not re-file it here.
 
-> **Deferred:** [Critical] 2026-07-17 -- cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
+> **Notes:** Reopened 2026-11-11: §3 is open work again (Q3 is answered), and the Depends On cell already orders this section after it. Was Deferred: [Critical] 2026-07-17 -- cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
 
 ---
 
@@ -290,20 +290,20 @@ Layer the high-half kernel onto the existing per-process page tables: every proc
 With user space owning the lower half, drop the hardcoded ceiling and all the bookkeeping that defended it.
 
 - [ ] Widen `KERNEL_UBSAN_CHECKS` with `bounds`, `alignment` and `null` once the guard is gone (root `Makefile`; `null` costs 36 KiB, `bounds` about 122 KiB) ← XREF: `00-infrastructure/TODO-01-developer-tooling-stack.md` §14
-- [/] Re-add `src/kernel/test/test_highhalf.c` + `test_register_highhalf()` (`TEST_CAT_MM`): authored in §1 but reverted because it tripped the BSS guard with zero headroom. Do this FIRST in §7 -- it is the regression net for the whole relocation
-  - BLOCKED: 3 of its 5 assertions describe a high-half kernel; §11 measured them failing today. Waits on §3, `todo/answers.md` Q3.
+- [ ] Re-add `src/kernel/test/test_highhalf.c` + `test_register_highhalf()` (`TEST_CAT_MM`): authored in §1 but reverted because it tripped the BSS guard with zero headroom. Do this FIRST in §7 -- it is the regression net for the whole relocation
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: 3 of its 5 assertions describe a high-half kernel; §11 measured them failing today. Waits on §3, `todo/answers.md` Q3.
 - [/] `test_highhalf.c` also covers the §9 identity-map-disabled walker exercise + absent-PML4/PDPT/PD `vmm_set_user_page`/`_remap` no-crash cases → XREF: §9
   - BLOCKED: part of the test above.
 - [ ] `scripts/lint.sh` check rejecting raw page-table phys-as-pointer casts outside the bootloader + `pt_walk` (§9 design-review F1 hardening) → XREF: §9
   - Left open 2026-11-07: a lint check adds no kernel `.text` and needs no §3; `scripts/lint.sh` has no such check yet.
-- [/] Choose the new conventional user load base (e.g. `0x400000`, or PIE/ASLR-randomized once `D03 T02 §2` lands) and update `user/user.ld` + `scripts/build-eif.py`.
-  - BLOCKED: §7 removes the ceiling only after §3 and §6, which wait on `todo/answers.md` Q3.
-- [/] Reduce `include/kernel/mm/user_range.h` to the new base (or remove it if ASLR makes it dynamic); update the three includers (`vmm.c`, `pmm.c`, `task.c`) and their static asserts.
-  - BLOCKED: §7 removes the ceiling only after §3 and §6, which wait on `todo/answers.md` Q3.
-- [/] Remove the `scripts/build.sh` BSS-collision guard (no longer meaningful) and the `0x900000` user-range guard page; replace with the relevant lower-half guard if still needed.
-  - BLOCKED: §7 removes the ceiling only after §3 and §6, which wait on `todo/answers.md` Q3. The guard is live at `scripts/build.sh:405`.
-- [/] Confirm the §10 static-pool conversions are no longer load-bearing for HEADROOM. KEEP them (freestanding rule: no large static); only the headroom justification retires -> XREF: this file §10 (item: "Convert `reg_value_pool`").
-  - BLOCKED: §7 removes the ceiling only after §3 and §6, which wait on `todo/answers.md` Q3.
+- [ ] Choose the new conventional user load base (e.g. `0x400000`, or PIE/ASLR-randomized once `D03 T02 §2` lands) and update `user/user.ld` + `scripts/build-eif.py`.
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: §7 removes the ceiling only after §3 and §6, which wait on `todo/answers.md` Q3.
+- [ ] Reduce `include/kernel/mm/user_range.h` to the new base (or remove it if ASLR makes it dynamic); update the three includers (`vmm.c`, `pmm.c`, `task.c`) and their static asserts.
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: §7 removes the ceiling only after §3 and §6, which wait on `todo/answers.md` Q3.
+- [ ] Remove the `scripts/build.sh` BSS-collision guard (no longer meaningful) and the `0x900000` user-range guard page; replace with the relevant lower-half guard if still needed.
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: §7 removes the ceiling only after §3 and §6, which wait on `todo/answers.md` Q3. The guard is live at `scripts/build.sh:405`.
+- [ ] Confirm the §10 static-pool conversions are no longer load-bearing for HEADROOM. KEEP them (freestanding rule: no large static); only the headroom justification retires -> XREF: this file §10 (item: "Convert `reg_value_pool`").
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: §7 removes the ceiling only after §3 and §6, which wait on `todo/answers.md` Q3.
 - [x] Unblocks the kernel sections the ceiling stalled: re-run each deferred section once the guard is gone -> XREF `02-kernel-core/TODO-22` §23 (item: "Commit: `\"ntdll: live-environment adoption over an atomic env exchange\"`")
   - Answered 2026-11-07 by §11's sweep with the guard still in place; `02-kernel-core/TODO-22` s23 itself is row `[x]`, shipped.
 - [x] Re-run `02-kernel-core/TODO-22` §24 once the guard is gone (item: "Commit: `\"ntdll: measured expansion budget + lookup cache for Rtl env\"`"); it also carries a latent non-atomic `env_buf_free` SMP fix
@@ -435,22 +435,22 @@ Optional competitive edge: support 57-bit virtual addresses on capable hardware.
 >
 > **UNBLOCKED by §1:** enablement lives in the bootloader, which is the same site §1 already pinned for the high-half switch -- so LA57 rides the existing `setup_page_tables()` + `jump_to_kernel()` window rather than needing a new mechanism. `MM_KERNEL_VIRT_BASE` is canonical under BOTH 4- and 5-level paging (asserted in `memmap.h`), so the kernel image base does NOT move; only `MM_HHDM_BASE` must be re-based (Linux's 5-level base `0xff11000000000000` is not 4-level canonical, which is why consumers never hardcode a literal).
 
-- [/] Detect LA57 via `CPUID` leaf 7 subleaf 0 ECX bit 16 and (optionally) honor a `boot.conf` opt-in; default to 4-level if absent
-  - BLOCKED: re-bases the layout §3 establishes, which waits on `todo/answers.md` Q3.
-- [/] Place enablement in the bootloader's pre-paging window (pinned by §1 -- the same site as the high-half switch): the paging-mode choice must be made where `CR0.PG` can legally be cleared, not from `kernel_main`
-  - BLOCKED: re-bases the layout §3 establishes, which waits on `todo/answers.md` Q3.
-- [/] Negative tests: unsupported CPU falls back to 4-level cleanly; an already-LA57 firmware handoff is detected rather than re-enabled
-  - BLOCKED: re-bases the layout §3 establishes, which waits on `todo/answers.md` Q3.
-- [/] Re-base `MM_HHDM_BASE` for 5-level (sign extension at bit 56 vs 47) and parameterize the page-table walk depth. `MM_KERNEL_VIRT_BASE` is mode-INVARIANT (asserted canonical under both) and must NOT move
-  - BLOCKED: re-bases the layout §3 establishes, which waits on `todo/answers.md` Q3.
-- [/] Boot identically on 4-level and 5-level hosts; log the active paging mode.
-  - BLOCKED: re-bases the layout §3 establishes, which waits on `todo/answers.md` Q3.
+- [ ] Detect LA57 via `CPUID` leaf 7 subleaf 0 ECX bit 16 and (optionally) honor a `boot.conf` opt-in; default to 4-level if absent
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: re-bases the layout §3 establishes, which waits on `todo/answers.md` Q3.
+- [ ] Place enablement in the bootloader's pre-paging window (pinned by §1 -- the same site as the high-half switch): the paging-mode choice must be made where `CR0.PG` can legally be cleared, not from `kernel_main`
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: re-bases the layout §3 establishes, which waits on `todo/answers.md` Q3.
+- [ ] Negative tests: unsupported CPU falls back to 4-level cleanly; an already-LA57 firmware handoff is detected rather than re-enabled
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: re-bases the layout §3 establishes, which waits on `todo/answers.md` Q3.
+- [ ] Re-base `MM_HHDM_BASE` for 5-level (sign extension at bit 56 vs 47) and parameterize the page-table walk depth. `MM_KERNEL_VIRT_BASE` is mode-INVARIANT (asserted canonical under both) and must NOT move
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: re-bases the layout §3 establishes, which waits on `todo/answers.md` Q3.
+- [ ] Boot identically on 4-level and 5-level hosts; log the active paging mode.
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: re-bases the layout §3 establishes, which waits on `todo/answers.md` Q3.
 - [/] Commit: `"mm: optional 5-level paging (LA57) -- 57-bit address space on capable CPUs"`
   - BLOCKED: commit line for the items above.
 
 **Test checkpoint:** On a 4-level host the kernel boots in 4-level mode; on an LA57-capable host (or QEMU `-cpu ...,la57=on`) it boots in 5-level mode. Serial logs the active mode. Test on: QEMU TCG (la57 toggled); **bare metal (Arrow Lake / Zen 5)**.
 
-> **Deferred:** [Critical] 2026-07-17 -- cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
+> **Notes:** Reopened 2026-11-11: §3 is open work again (Q3 is answered), and the Depends On cell already orders this section after it. Was Deferred: [Critical] 2026-07-17 -- cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
 
 ---
 

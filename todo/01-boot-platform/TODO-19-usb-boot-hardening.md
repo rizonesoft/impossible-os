@@ -69,6 +69,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |  14   | IXFS boot tests: slow-media-aware                   | §10        |  [x]   |
 | ⭐  |  15   | Flush progress on splash diagnostic line            | §9         |  [ ]   |
 | 💎  |  16   | xHCI command ring + BOT transport SMP serialization | §4         |  [/]   |
+| 💎  |  17   | USB-disk boot legs in the smoke matrix              | §6         |  [ ]   |
 
 > 💎 = parity -- Windows usbstor.sys and Linux usb-storage both handle SCSI retry, stall recovery, transfer timeouts, and EHCI fallback.
 > ⭐ = exclusive -- comprehensive USB boot diagnostic report and splash flush progress.
@@ -225,13 +226,10 @@ Add bounded timeouts to all bulk transfers. The current code polls the xHCI even
 
 ## 6. Remove sleep_ms(2000) Hack
 
-**Needs:** bare-metal
-
 With proper SCSI retry (§1-§3) and USB transport recovery (§4-§5), the 2-second sleep after xhci_init is no longer needed.
 
 - [x] No global `sleep_ms(2000)` exists -- grep-confirmed empty across `src/`; `boot_phase2` calls `xhci_init()` with no trailing sleep, readiness is event-driven via `msc_poll_unit_ready` (§2) in `usb_msc_init`
-- [/] Verify USB boot works on: QEMU TCG, bare metal i5-11600K, bare metal i5-4210U -- bare-metal "moment of truth"; user hardware action (no QEMU USB-drive-boot harness in WSL)
-- [/] If any platform fails without the sleep: investigate root cause, don't add the sleep back -- contingent on the platform-boot validation above
+- [/] Boot from USB without the sleep: the emulated legs are built by §17 of this file (item: "Leg on `qemu-xhci`"). The i5-11600K and i5-4210U machines are a check for whoever has them and hold nothing.
 - [x] Verified: §4-§5 endpoint-stall + timeout recovery covers the readiness window the sleep masked -- now handled by §2 TUR poll + §3 BOT retry + §4 stall recovery + §5 bulk timeouts (`usb_msc_init` chain)
 - [x] Commit: `"drivers: remove USB 2-second sleep hack -- SCSI retry + transport recovery handles readiness"`
 
@@ -244,7 +242,7 @@ With proper SCSI retry (§1-§3) and USB transport recovery (§4-§5), the 2-sec
 > - Open items: cross-platform boot validation (QEMU TCG, i5-11600K, i5-4210U) is a bare-metal "moment of truth" user action -- kept `[ ]`; no QEMU USB-drive-boot harness exists in WSL.
 > **Verified:** 2026-06-15 | commit `pending` | 2/4 items | build OK | verify-only -- grep empty across `src/`, readiness chain code-truth confirmed
 > **Quality reviewed:** 2026-06-15 | Codex 0x (verify-only -- no code diff to review) | 0 findings | scope: N/A (verify-only, no source change)
-> **Deferred:** [awaiting-operator] bare-metal USB boot verification needs the operator's i5-11600K / i5-4210U hardware -- no unattended pass can perform this; operator action required (cohort 2026-07-31)
+> **Notes:** 2026-11-11: the wait on machines is over; the emulated legs are section 17 of this file. Was Deferred: bare-metal USB boot verification needs the operator's i5-11600K / i5-4210U hardware -- no unattended pass can perform this; operator action required (cohort 2026-07-31)
 
 **Regression risk:** HIGH -- this is the moment of truth. If retry logic isn't sufficient, USB boot breaks on slow hardware. Rollback: temporarily re-add `sleep_ms(500)` as a smaller delay while investigating.
 
@@ -563,6 +561,23 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1M fixed | scope: kernel-code-quality
 
 ---
+
+## 17. USB-Disk Boot Legs in the Smoke Matrix
+
+> **Spawned-by:** root
+
+The image has never booted from a USB disk in an automated run: §6 and `TODO-17-xhci-usb-boot.md §6` both parked that proof on physical machines. Decided 2026-11-11: QEMU's USB controllers stand in, so the proof is built and no section waits on hardware.
+
+- [ ] Leg on `qemu-xhci`: boot the image from `usb-storage` in `scripts/test-smoke-matrix.sh`, on TCG and KVM at 1 and 2 CPUs. Done when every leg reaches `Boot complete` with `boot_device_removable == 1` on serial.
+  - `scripts/machines/storage/run-usb-test.ps1` has the QEMU device lines to start from.
+- [ ] Leg on `nec-usb-xhci`: the same boot on QEMU's Renesas uPD720200 model, which takes the generic non-Intel path. Done when the leg is green and fails when the generic path is disabled.
+- [ ] A failing leg is fixed at its cause; the `sleep_ms(2000)` that §6 removed never comes back. Done when a grep for it under `src/` is empty and the legs are green.
+- [ ] Unit tests: the new legs are counted by the matrix's leg-list test in `scripts/test-tooling.sh`.
+- [ ] Commit: `"test: the image boots from a USB disk on two emulated xHCI controllers"`
+
+-> XREF: `01-boot-platform/TODO-17-xhci-usb-boot.md §6` (item: "Vendor boot matrix") -- the vendor proof this section builds in emulation
+
+**Test checkpoint:** `bash scripts/test-smoke-matrix.sh` passes with the USB legs listed.
 
 ## OS Comparison
 

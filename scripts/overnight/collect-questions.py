@@ -6,8 +6,9 @@ slices `Deferred: awaiting-answer`. Rather than make the operator grep every
 todo file across 14 domains, this scans the queue and writes ONE punch-list --
 .claude/overnight/questions-for-operator.md -- listing every awaiting-answer
 item + the open "Question:" lines, grouped by todo file. The operator answers
-them in todo/answers.md and re-arms; the watchdog then heals the
-awaiting-answer slices (see scripts/overnight/lifecycle-unblocked.sh).
+them in todo/answers.md. The triage classifier reads that file: a park whose
+questions all have an answer is open work again (sequencer_triage.py,
+park_is_answered), so nothing has to edit the stamp for the run to return.
 
 TODO tree is NESTED (todo/NN-domain/TODO-NN-*.md), so the scan is recursive.
 todo/TODO-Claude-Overnight-Runner.md and any other non-"TODO-<digits>-*" file
@@ -215,7 +216,7 @@ def render(project_dir: Path, stamp: str) -> tuple[str, int]:
         f"{total} open item(s) blocked on an operator/product decision"
         + (f"; {len(proposed)} proposed-default answer(s) awaiting confirmation." if proposed else "."),
         "Answer them in `todo/answers.md` (create it if missing),",
-        "then re-arm: the watchdog heals the awaiting-answer slices on the next tick.",
+        "and the run returns to each section on its own: an answered park reads as open work.",
         "",
     ]
     if total == 0:

@@ -39,7 +39,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 | 💎  |   2   | DHCP/PXE provenance capture                  | §1              |  [ ]   |
 | 💎  |   3   | TFTP kernel and boot.conf load               | §1, §2          |  [x]   |
 | 💎  |   4   | UEFI HTTP Boot load path                     | §1, §2          |  [x]   |
-| 💎  |   5   | Network boot asset integrity                 | §3, §4, TODO-13 |  [/]   |
+| 💎  |   5   | Network boot asset integrity                 | §3, §4, TODO-13 |  [ ]   |
 | 💎  |   6   | boot_info network provenance                 | TODO-01 §4, §12 |  [ ]   |
 | 💎  |   7   | Fallback ordering with local media           | TODO-05 §5, §6  |  [/]   |
 | ⭐  |   8   | Recovery and installer over network          | §3-§7, TODO-22  |  [/]   |
@@ -144,7 +144,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 > [!IMPORTANT] Deferred (2026-06-17, unattended sequencer + Codex design review): the bootloader has no asymmetric crypto (it has since gained runtime SHA-256, `include/boot/sha256_boot.h`), and `efi.h` exposes no `EFI_PKCS7_VERIFY_PROTOCOL`. The whole section pivots on the network-asset **manifest signature trust model** (firmware-PKCS7 verify vs in-bootloader X.509 vs wrapping the network payload in a Secure-Boot-signed PE like the UKI) -- a user-reserved security-architecture decision. Shipping a digest/manifest wire format before that choice would authenticate nothing and risks cementing the wrong trust boundary. Anti-rollback, revocation/allowlist, and PCR attestation each need signing-toolchain + TPM-NV infrastructure owned elsewhere. Network boot stays fail-closed-to-local until the trust model is chosen. See Deferred stamps below.
 
-- [/] **BLOCKER, awaiting-answer Q28:** choose the manifest trust model (firmware PKCS7 vs in-bootloader X.509 vs Secure-Boot-signed-PE wrap); gates every item below. -> XREF: `01-boot-platform/TODO-02 §11`, `02-kernel-core/TODO-19 §3`
+- [ ] **BLOCKER, awaiting-answer Q28:** choose the manifest trust model (firmware PKCS7 vs in-bootloader X.509 vs Secure-Boot-signed-PE wrap); gates every item below. -> XREF: `01-boot-platform/TODO-02 §11`, `02-kernel-core/TODO-19 §3`
 - [/] Require signed manifest for all network-booted assets. Waits on the §5 trust-model BLOCKER.
 - [/] Verify kernel, boot.conf, initrd, and modules by digest. Waits on the §5 trust-model BLOCKER.
 - [/] Bind manifest to Secure Boot/TPM state when available. Waits on the §5 trust-model BLOCKER.
@@ -152,7 +152,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [/] Manifest anti-rollback: monotonic counter refuses a signed-but-older manifest than the last booted. Waits on the trust-model BLOCKER -> XREF: `01-boot-platform/TODO-13 §7`, `01-boot-platform/TODO-01 §13`
 - [/] Key revocation + allowlist: SBAT-style list + per-device key allowlist. Waits on the trust-model BLOCKER -> XREF: `01-boot-platform/TODO-02 §17`, `02-kernel-core/TODO-19 §6`
 - [/] Attestation chain: extend a PCR with manifest identity + asset digests, tie §6 + §9 to it, fail closed to local without firmware TLS/time. Waits on the trust-model BLOCKER -> XREF: `01-boot-platform/TODO-13 §6`, §9, §13
-- [/] Commit: `"boot: verify network boot assets"`: Waits on the §5 trust-model BLOCKER.
+- [ ] Commit: `"boot: verify network boot assets"`: Waits on the §5 trust-model BLOCKER.
 
 **Test checkpoint:** A network asset with a bad/absent manifest digest is REFUSED with a serial refusal line (boot halts to local fallback) unless `network_boot_insecure=1` AND the physical console confirms; a correctly signed manifest boots and binds to Secure Boot/TPM state when available. Verify on QEMU WHPX, bare metal.
 
@@ -163,7 +163,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 > - Until unblocked, network boot stays fail-closed-to-local (existing §3/§4 probes fetch-and-free, no asset is executed from the network without local trust); no integrity claim is made.
 > - Owners for the prerequisites: signing/trust = TODO-02 §11/§16 + TODO-19 §3/§4; anti-rollback = TODO-13 §7 + TODO-01 §13; revocation = TODO-02 §17 + TODO-19 §6; attestation = TODO-13 §6/§9/§13.
 
-> **Deferred:** awaiting-answer Q28 (`todo/answers.md`). [H] manifest signature trust model is a user-reserved security-architecture decision; not guessed unattended (firmware PKCS7 / in-bootloader X.509 / Secure-Boot-signed-PE wrap) -> XREF: 01-boot-platform/TODO-02 §11 (Unified Signed Boot Artifact) + 02-kernel-core/TODO-19 §3 (Hashing and Signature Provider Bridge), §4 (Embedded Signature Validation)
+> **Notes:** Reopened 2026-11-11: Q28 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: awaiting-answer Q28 (`todo/answers.md`). [H] manifest signature trust model is a user-reserved security-architecture decision; not guessed unattended (firmware PKCS7 / in-bootloader X.509 / Secure-Boot-signed-PE wrap) -> XREF: 01-boot-platform/TODO-02 §11 (Unified Signed Boot Artifact) + 02-kernel-core/TODO-19 §3 (Hashing and Signature Provider Bridge), §4 (Embedded Signature Validation)
 > **Deferred:** [H] manifest anti-rollback monotonic counter needs TPM-NV / secure-counter infra -> XREF: 01-boot-platform/TODO-13 §7 (TPM NV Index Support) + 01-boot-platform/TODO-01 §13 (Anti-Rollback and Security-Version Binding)
 > **Deferred:** [M] key revocation + per-device allowlist (SBAT-style) needs the cert/key + revocation infra -> XREF: 01-boot-platform/TODO-02 §17 (SBAT Revocation Metadata) + 02-kernel-core/TODO-19 §6 (Revocation and Deny Lists)
 > **Deferred:** [M] TPM PCR attestation-extend chain needs measured-boot baseline + quote -> XREF: 01-boot-platform/TODO-13 §6 (Baseline Enrollment), §9 (Attestation Report Export), §13 (Attestation Key Provisioning and TPM2 Quote)
@@ -242,7 +242,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 > - Honest current state: recovery + installer still boot from local trusted media; no network repair path is wired.
 > - Owners: verification gate = TODO-25 §5; installer launch consumer = TODO-11 §2.
 
-> **Deferred:** [H] downloading + booting recovery image / installer over the network requires §5 asset verification; unverified network-fetched executable assets are exactly what §5's fail-closed contract forbids -> XREF: 01-boot-platform/TODO-25 §5 (BLOCKER: trust model) + consumer 10-platform-services/TODO-11 §2 (installer ISO)
+> **Notes:** Reopened 2026-11-11: §5 is open work again (Q28 is answered), and the Depends On cell already orders this section after it. Was Deferred: [H] downloading + booting recovery image / installer over the network requires §5 asset verification; unverified network-fetched executable assets are exactly what §5's fail-closed contract forbids -> XREF: 01-boot-platform/TODO-25 §5 (BLOCKER: trust model) + consumer 10-platform-services/TODO-11 §2 (installer ISO)
 
 ---
 
@@ -278,7 +278,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Add QEMU PXE/TFTP test harness.
 - [ ] Add HTTP Boot mock server test.
 - [/] Test missing file, bad manifest, timeout, retry, and fallback. Bad-manifest waits on §5 and fallback on §7; the missing-file, timeout and retry cases can land with the harness.
-- [/] operator-gated (needs physical firmware): test bare-metal firmware PXE where available.
+- [/] Physical confirmation of firmware PXE on a real machine. A check for whoever has one; it does not hold this section.
 - [/] Commit: `"test: PXE and HTTP boot coverage"`: waits on the test items above.
 
 -> XREF: `01-boot-platform/TODO-28` §6 (item: "Start local DHCP/TFTP/HTTP fixtures") reuses this harness.

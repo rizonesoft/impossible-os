@@ -43,7 +43,7 @@ Frontmatter, the title, `> **Goal:**` and `> **Current state:**`, `## Inputs`, `
 
 - **The Implementation Order table is the dependency graph.** Every `## N.` section has one row and every row one section. `Depends On` names sections; a cycle, a self-dependency or a dependency on nothing real fails `todo-plan.py --check`.
 - **A new section takes the next free number and its body goes last.** `scripts/lint.sh` Check 22 refuses an out-of-order file.
-- **A file holds at most 60 sections** (a warning from 50). Past that, the work goes to the TODO a reader would look in for it, never to a `-part-2` file.
+- **A file holds at most 99 sections** (a warning from 90), a domain 99 files, and the tree 99 domains: what a two-digit address holds. Past 99 sections the next work opens a new file in the same domain, split by subject.
 - **Search before filing.** Work that already exists in any state (parked, deferred, stamped, misplaced) is reopened or moved, never written a second time.
 
 ## Addresses

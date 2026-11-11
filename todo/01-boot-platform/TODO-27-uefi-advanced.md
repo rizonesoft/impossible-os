@@ -142,7 +142,7 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
   - (b) When `vmm_set_nx` / `vmm_set_ro` modify a UEFI runtime page, ALSO call the protocol's `SetMemoryAttributes(EFI_MEMORY_XP)` / `EFI_MEMORY_RO`, so firmware-internal page-table state matches the OS view. This is what avoids drift on systems where firmware re-asserts permissions after `SetVirtualAddressMap`.
   - (c) Graceful degradation: when the protocol is absent (UEFI < 2.10 or stripped firmware), log `[UEFI] memory-attribute protocol absent; falling back to static MAT enforcement only` and continue.
   - Tests: a synthetic UEFI 2.10 fixture (protocol present) asserts both paths fire; a synthetic UEFI 2.6 fixture (protocol absent) asserts the absence is logged and the static path still works.
-  - BLOCKED on a `boot_info` ABI add plus a pre-ExitBootServices `LocateProtocol` in the bootloader. Both are this section's own work: nothing external gates it and no other TODO is waiting to provide it, so the park waits only on the ABI answer: awaiting-answer Q20 (`todo/answers.md`).
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: on a `boot_info` ABI add plus a pre-ExitBootServices `LocateProtocol` in the bootloader. Both are this section's own work: nothing external gates it and no other TODO is waiting to provide it, so the park waits only on the ABI answer: awaiting-answer Q20 (`todo/answers.md`).
 - [x] Commit: `"kernel: UEFI runtime W^X enforcement via EFI_MEMORY_ATTRIBUTES_TABLE"`
 
 **Regression risk:** Modifies page table permissions on UEFI runtime regions. Rollback: skip enforcement (BOOT_DEGRADED path).
@@ -283,7 +283,7 @@ Detect when the installed UEFI dbx is missing revocations shipped with OS update
   - BLOCKED on the integrity-bound official revocation-list baseline. The compiled-in digest / signed manifest it needs is the host-side release-signing primitive -> XREF: `15-installer-release/TODO-01 §5` (Code Signing); vendoring the official UEFI revocation list itself is operator-gated release data.
 - [/] -> XREF: `TODO-02-uefi-hardening-secureboot.md §17` -- SBAT generation-based revocation complements dbx hash lists
   - Context pointer for the freshness work above, parked with it on the same baseline blocker.
-- [/] Commit: `"kernel: DBX revocation freshness check (verified baseline, full-ESL subset compare)"`
+- [ ] Commit: `"kernel: DBX revocation freshness check (verified baseline, full-ESL subset compare)"`
   - BLOCKED on the integrity-bound official revocation-list baseline. The compiled-in digest / signed manifest it needs is the host-side release-signing primitive -> XREF: `15-installer-release/TODO-01 §5` (Code Signing); vendoring the official UEFI revocation list itself is operator-gated release data.
 
 - [/] `secureboot_dbx_apply(path)` authenticated `APPEND_WRITE` of a signed dbx update -- deferred (see note below): needs `EFI_VARIABLE_AUTHENTICATION_2` write + SBAT-compat preflight + rollback guard (irreversible NVRAM write risks bricking)
@@ -294,7 +294,7 @@ Detect when the installed UEFI dbx is missing revocations shipped with OS update
 > [!NOTE]
 > **Deferred 2026-06-19 (Codex design review).** dbx freshness is a SECURITY signal (`DbxStale`), so it cannot ship as infrastructure-only: an absent or unverified on-disk baseline makes the check either a permanent no-op or tamperable (an attacker deletes the baseline to suppress detection, or injects hashes to force a false alarm). Shipping it that way is paper completion for a security feature. Authoritative operation requires (1) the official UEFI revocation-list baseline (external release data, not autonomously vendorable) integrity-bound to a compiled-in digest or signed release manifest; (2) full-`EFI_SIGNATURE_LIST`-type comparison (SHA-256 + X.509 + other), not SHA-256-only; (3) Phase-3 wiring after VFS + registry. None of the trust primitives (verified baseline + release-signing) exist yet. The authenticated `secureboot_dbx_apply` write additionally needs `EFI_VARIABLE_AUTHENTICATION_2` + a brick-safety preflight. The dbx read/parse/count surface already ships via [TODO-02 §9](TODO-02-uefi-hardening-secureboot.md#9-sbat-ops-secure-boot-db-registry-mirror-and-exitbootservices-retry).
 
-> **Deferred:** awaiting-answer Q24 (`todo/answers.md`). [H] dbx freshness check blocked on an integrity-bound official revocation-list baseline (the list itself is operator-gated release data) + full-ESL comparison; authenticated apply blocked on `EFI_VARIABLE_AUTHENTICATION_2` write + brick-safety preflight, also operator-gated -> XREF: 15-installer-release/TODO-01 §5 (Code Signing: the release-signing primitive the compiled-in digest needs)
+> **Notes:** Reopened 2026-11-11: Q24 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: awaiting-answer Q24 (`todo/answers.md`). [H] dbx freshness check blocked on an integrity-bound official revocation-list baseline (the list itself is operator-gated release data) + full-ESL comparison; authenticated apply blocked on `EFI_VARIABLE_AUTHENTICATION_2` write + brick-safety preflight, also operator-gated -> XREF: 15-installer-release/TODO-01 §5 (Code Signing: the release-signing primitive the compiled-in digest needs)
 
 ---
 

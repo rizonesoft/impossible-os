@@ -507,51 +507,51 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 ## 16. TEB Multi-Page Mapping and User-VA Non-Overlap
 `sizeof(TEB)` is 0x2000 -- `TlsSlots` at 0x1480 and `TlsExpansionSlots` at 0x1780 push the struct into a second page -- but `teb_alloc_for_task()` allocates one frame, maps one 4 KiB page, zeroes 4096 bytes, and strides per-thread TEBs by 0x1000. Triple-confirmed by the §1 review (Codex adversarial + consistency + perf): `gs:[0x1480]`/`gs:[0x1780]` and `tls_get_value`/`tls_set_value` touch the unmapped second page, which for TID 0 aliases the env block (0x7FFDC000) and for TID N aliases TID N-1's TEB. Latent today (single-thread binaries; short env lands in the zeroed page-tail) but a real isolation/corruption defect. -> XREF: §1 (TEB struct/size), §6 (teb_alloc_for_task), §15 (per-thread TEB stride).
 
-- [/] Define `TEB_PAGES = 2` / `TEB_STRIDE = 0x2000` in `task.c`; `_Static_assert(sizeof(TEB) <= TEB_PAGES * 0x1000)`
-  - BLOCKED: `todo/answers.md` Q4. `teb.h` pads TEB to 0x2000 and neither constant exists.
-- [/] `teb_alloc_for_task()`: `pmm_alloc_contiguous(TEB_PAGES)`, map both pages, zero the full `TEB_PAGES * 0x1000` (today: one frame/page/4096 bytes)
-  - BLOCKED: `todo/answers.md` Q4. `task.c:3359-3371` still allocates, maps and zeroes one page.
-- [/] Stride per-thread TEB VAs by `TEB_STRIDE` (`TEB_USER_BASE - tid * TEB_STRIDE`), not 0x1000
-  - BLOCKED: `todo/answers.md` Q4. The stride is still 0x1000 (`task.c:3358`).
-- [/] Relocate the TEB region to a design-pinned dedicated band: `TEB_USER_BASE=0x7FF88000`, band [0x7FF6A000,0x7FF8A000) below USER_THREAD_STACK_LOWEST; PEB/RTLPP/ENV/TLS-expansion/user-stacks unchanged
-  - BLOCKED: `todo/answers.md` Q4: TEB VA-layout move, parked with the campaign. `TEB_USER_BASE` is still 0x7FFDB000 (`task.c:3349`).
-- [/] Sequence (dep §19): create cr3 first, map both TEB pages via vmm_map_user_page(cr3), init via identity-mapped frames, set threads[0].teb/kernel_gs_base, THEN publish exec_pending
-  - BLOCKED: `todo/answers.md` Q4. Only the mapping half is left: the publish order already holds (`task.c:4480`).
-- [/] `task_cleanup()`: unmap `TEB_PAGES` per secondary-thread TEB
-  - BLOCKED: `todo/answers.md` Q4. `task.c:4969-4971` unmaps one page per secondary thread.
-- [/] Non-overlap unit test: `sizeof(TEB)` vs stride; TID 0 + highest-TID TEB ranges vs env/RTLPP/PEB/TLS-expansion/user-stack ranges
-  - BLOCKED: `todo/answers.md` Q4. Tests the layout the items above introduce.
-- [/] [HIGH] teb_alloc_for_task maps via vmm_map_page (kernel PML4, GLOBAL) so all processes share the per-tid TEB VA (cross-process aliasing); cleanup uses vmm_unmap_user_page(cr3). Fix: map via vmm_map_user_page(cr3) + check return/free
-  - BLOCKED: `todo/answers.md` Q4. Still `vmm_map_page` at `task.c:3364`.
+- [ ] Define `TEB_PAGES = 2` / `TEB_STRIDE = 0x2000` in `task.c`; `_Static_assert(sizeof(TEB) <= TEB_PAGES * 0x1000)`
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. `teb.h` pads TEB to 0x2000 and neither constant exists.
+- [ ] `teb_alloc_for_task()`: `pmm_alloc_contiguous(TEB_PAGES)`, map both pages, zero the full `TEB_PAGES * 0x1000` (today: one frame/page/4096 bytes)
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. `task.c:3359-3371` still allocates, maps and zeroes one page.
+- [ ] Stride per-thread TEB VAs by `TEB_STRIDE` (`TEB_USER_BASE - tid * TEB_STRIDE`), not 0x1000
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. The stride is still 0x1000 (`task.c:3358`).
+- [ ] Relocate the TEB region to a design-pinned dedicated band: `TEB_USER_BASE=0x7FF88000`, band [0x7FF6A000,0x7FF8A000) below USER_THREAD_STACK_LOWEST; PEB/RTLPP/ENV/TLS-expansion/user-stacks unchanged
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4: TEB VA-layout move, parked with the campaign. `TEB_USER_BASE` is still 0x7FFDB000 (`task.c:3349`).
+- [ ] Sequence (dep §19): create cr3 first, map both TEB pages via vmm_map_user_page(cr3), init via identity-mapped frames, set threads[0].teb/kernel_gs_base, THEN publish exec_pending
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. Only the mapping half is left: the publish order already holds (`task.c:4480`).
+- [ ] `task_cleanup()`: unmap `TEB_PAGES` per secondary-thread TEB
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. `task.c:4969-4971` unmaps one page per secondary thread.
+- [ ] Non-overlap unit test: `sizeof(TEB)` vs stride; TID 0 + highest-TID TEB ranges vs env/RTLPP/PEB/TLS-expansion/user-stack ranges
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. Tests the layout the items above introduce.
+- [ ] [HIGH] teb_alloc_for_task maps via vmm_map_page (kernel PML4, GLOBAL) so all processes share the per-tid TEB VA (cross-process aliasing); cleanup uses vmm_unmap_user_page(cr3). Fix: map via vmm_map_user_page(cr3) + check return/free
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. Still `vmm_map_page` at `task.c:3364`.
   - The stated fix is not sufficient. `vmm_map_user_page(cr3)` reuses a present PDPT entry (`vmm.c:1238-1240`) and `vmm.c:1099-1101` copies the kernel PDPT[1..] into every user PML4, so a VA in 1-2 GiB lands in the shared kernel PD and is still not per-process. Read from the code, not run. The design must clone PDPT[1] privately or move the band.
-- [/] Commit: `"kernel: peb -- map full 2-page TEB + non-overlapping per-thread VA stride"`
-  - BLOCKED: commit line for the items above.
+- [ ] Commit: `"kernel: peb -- map full 2-page TEB + non-overlapping per-thread VA stride"`
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: commit line for the items above.
 
 **Test checkpoint:** `tls_set_value(pid, 0, 0xCAFE)` writes inside the mapped TEB (not the env page) and a read of `gs:[0x1480]` returns it; two threads' TEB ranges and the env/RTLPP/PEB pages are provably disjoint (unit test); boot still reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [Critical] the §19 blocker this stamp named has ended: `task_exec` now stages the TEB and GS and stores `exec_pending` last. §16 still moves the TEB band and rewrites per-process mapping, so it stays parked on an operator answer, awaiting-answer (`todo/answers.md` Q4). -> XREF: `todo/answers.md` (item: "Q4 (TODO-11 §16/§17/§19/§21/§23)")
+> **Notes:** Reopened 2026-11-11: Q4 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [Critical] the §19 blocker this stamp named has ended: `task_exec` now stages the TEB and GS and stores `exec_pending` last. §16 still moves the TEB band and rewrites per-process mapping, so it stays parked on an operator answer, awaiting-answer (`todo/answers.md` Q4). -> XREF: `todo/answers.md` (item: "Q4 (TODO-11 §16/§17/§19/§21/§23)")
 
 ---
 
 ## 17. PEB x64 Version-Field Offsets
 The §2 PEB places OSMajorVersion at 0xA4, OSMinorVersion at 0xA8, OSBuildNumber at 0xAC, CriticalSectionTimeout at 0xC8, TlsBitmap at 0x230 -- these are the **x86-32** PEB offsets. The real x64 `_PEB` (Geoff Chappell pebteb / ntdoc / bytepointer tebpeb64) puts OSMajorVersion at 0x118, OSMinorVersion at 0x11C, OSBuildNumber at 0x120, CriticalSectionTimeout at 0xC0. The early pointer block (ImageBaseAddress 0x10, Ldr 0x18, ProcessParameters 0x20) is x64-correct; only the post-0x28 region is wrong. A real Win64 ntdll reading `PEB+0x118` gets the reserved-zero pad, not 10.0.22621. Latent today (in-tree tests assert the same wrong offsets; no real ntdll yet) but breaks Win64 compat when the PE loader lands. -> XREF: §2 (PEB struct), §5 (population), `D02 T17` (PE loader / ntdll).
 
-- [/] Rebuild the post-0x28 PEB region in `peb.h` to the authoritative x64 `_PEB`: OSMajorVersion 0x118, OSMinorVersion 0x11C, OSBuildNumber 0x120, OSCSDVersion 0x122, OSPlatformId 0x124, ImageSubsystem 0x128
-  - BLOCKED: `todo/answers.md` Q4. `peb.h:121-134` still has OSMajorVersion at 0xA4 and OSBuildNumber at 0xAC.
-- [/] Move CriticalSectionTimeout to 0xC0, and NtGlobalFlag / heap thresholds / NumberOfProcessors / TlsBitmap to their real x64 offsets; resize the reserved-pad spans
-  - BLOCKED: `todo/answers.md` Q4. Moves with the layout rebuild above.
-- [/] Update the `_Static_assert` offset checks to the corrected x64 offsets
-  - BLOCKED: `todo/answers.md` Q4. Pins the layout rebuild above.
-- [/] Update `test_peb_offsets` in `test_peb_teb.c` to assert the x64 offsets (it currently asserts the 32-bit ones)
-  - BLOCKED: `todo/answers.md` Q4. `test_peb_teb.c:55-58` still asserts 0xA4 and 0xAC.
-- [/] Confirm `peb_alloc_for_task` resolves by field name (no literal offsets) and cmd.exe still boots
-  - BLOCKED: `todo/answers.md` Q4. Check of the layout rebuild above.
-- [/] Commit: `"kernel: peb -- correct PEB version-field offsets to x64 ABI (0x118/0x120)"`
-  - BLOCKED: commit line for the items above.
+- [ ] Rebuild the post-0x28 PEB region in `peb.h` to the authoritative x64 `_PEB`: OSMajorVersion 0x118, OSMinorVersion 0x11C, OSBuildNumber 0x120, OSCSDVersion 0x122, OSPlatformId 0x124, ImageSubsystem 0x128
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. `peb.h:121-134` still has OSMajorVersion at 0xA4 and OSBuildNumber at 0xAC.
+- [ ] Move CriticalSectionTimeout to 0xC0, and NtGlobalFlag / heap thresholds / NumberOfProcessors / TlsBitmap to their real x64 offsets; resize the reserved-pad spans
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. Moves with the layout rebuild above.
+- [ ] Update the `_Static_assert` offset checks to the corrected x64 offsets
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. Pins the layout rebuild above.
+- [ ] Update `test_peb_offsets` in `test_peb_teb.c` to assert the x64 offsets (it currently asserts the 32-bit ones)
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. `test_peb_teb.c:55-58` still asserts 0xA4 and 0xAC.
+- [ ] Confirm `peb_alloc_for_task` resolves by field name (no literal offsets) and cmd.exe still boots
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. Check of the layout rebuild above.
+- [ ] Commit: `"kernel: peb -- correct PEB version-field offsets to x64 ABI (0x118/0x120)"`
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: commit line for the items above.
 
 **Test checkpoint:** `__builtin_offsetof(PEB, OSMajorVersion) == 0x118` and `OSBuildNumber == 0x120`; `test_peb_offsets` asserts the x64 offsets; the PEB populated by `peb_alloc_for_task` reads 10.0.22621 at the corrected offsets; boot reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] PEB layout rewrite: a user-visible ABI change, so operator-reserved, awaiting-answer (`todo/answers.md` Q4). -> XREF: `todo/answers.md` (item: "Q4 (TODO-11 §16/§17/§19/§21/§23)")
+> **Notes:** Reopened 2026-11-11: Q4 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [H] PEB layout rewrite: a user-visible ABI change, so operator-reserved, awaiting-answer (`todo/answers.md` Q4). -> XREF: `todo/answers.md` (item: "Q4 (TODO-11 §16/§17/§19/§21/§23)")
 
 ---
 
@@ -586,18 +586,18 @@ The §4 context-switch save/restore (per-thread GS, NULL guard, fail-closed) is 
       - **This is the finding that generalises it beyond KVM.** Every prior sighting was KVM (5 in 20 matrix runs) plus one plain `test.sh`; the working hypothesis was "KVM's real-CPU timing lands the tick inside the window". WHPX is a DIFFERENT hypervisor with a different timer path, and it reproduces at a HIGHER rate (1-in-2 vs ~1-in-4). So the window is a property of the exec_pending-to-TEB-prime sequence itself, not of any one accelerator -- do not scope the fix, the repro, or the regression to KVM. TCG remains the only engine that has never shown it, which is consistent with the tick landing outside the window rather than with TCG being safe.
       - **The WHPX run also carried an unstable TSC** (`[WARN] time: clocksource: demoting TSC -> HPET (17397 ppm)`) and 11 DPC overruns (worst 310 us) before the halt. Whether a demoted clocksource widens the window is UNTESTED and is a hypothesis, not a finding -- but it is the first sighting where the tick source visibly changed mid-boot, so record the clocksource state when reproducing.
       - **Also fires outside the smoke matrix (2026-07-30, TODO-04 §30 review).** A plain `bash scripts/test.sh XML=1 JSON=1` on kvm:2cpu halted with the identical `[CRIT]` at `[  7.990]`, again booting a ring-3 task on a tree whose only changes were host-side shell in `scripts/`, and the immediately following identical invocation passed with 27037 kernel + 17 user-mode green. Evidence: `.claude/overnight/artifacts/20260730-020020-e2e-r4.log`. So the window is not a property of the smoke path either: any KVM boot that reaches the exec_pending-to-TEB-prime window can land the tick inside it, which widens the reproduction surface for whoever takes the fix
-- [/] [HIGH] task_fork (1241-1248) publishes a runnable child with the parent TEB+GS, no child TEB alloc (fork: syscall.c:401); a child run before exec gets the parent PID/TID/TLS. Fix: alloc a child TEB before publishing
-  - BLOCKED: `todo/answers.md` Q4. A child TEB needs §16's per-process mapping. Still copied from the parent at `task.c:3019-3025`, and that comment's promise of a new TEB is not kept until exec.
+- [ ] [HIGH] task_fork (1241-1248) publishes a runnable child with the parent TEB+GS, no child TEB alloc (fork: syscall.c:401); a child run before exec gets the parent PID/TID/TLS. Fix: alloc a child TEB before publishing
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. A child TEB needs §16's per-process mapping. Still copied from the parent at `task.c:3019-3025`, and that comment's promise of a new TEB is not kept until exec.
 - [ ] [MEDIUM] Switch save (852/1071) updates only `threads[prev].kernel_gs_base`; for prev_thread==0 the task-level mirror goes stale and fork copies it stale. Fix: update the mirror + fork copies one canonical value
 - [ ] [MEDIUM] Switch readback (859/1073) does 3 MSR ops per user-thread switch (rdmsr+wrmsr+rdmsr). Fix: cache the programmed GS per CPU + skip when unchanged, or gate the readback to one-time/post-exec
 - [x] Update §4's checklist text to the post-§15 per-thread reality (per-thread field + task-level thread-0 mirror)
   - Done 2026-11-07 in §4's items and scope note, per-thread field and task-level thread-0 mirror.
-- [/] Commit: `"kernel: sched -- exec/fork/switch GS-base staging correctness + cost"`
-  - BLOCKED: commit line for the items above.
+- [ ] Commit: `"kernel: sched -- exec/fork/switch GS-base staging correctness + cost"`
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: commit line for the items above.
 
 **Test checkpoint:** a forced preemption between exec_pending publish and TEB prime does not clobber the primed GS; a fork child reads its OWN PID/TID/TLS before exec; the task/thread-0 mirror stays equal across switches + fork; steady-state switches skip the redundant readback (instrumentation counter). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] the CRITICAL exec_pending item closed in `D02 T21 §19`. The fork TEB needs the per-process mapping §16 pins, so this stays parked with §16, awaiting-answer (`todo/answers.md` Q4). The mirror and readback items have no blocker of their own and are left open. -> XREF: `todo/answers.md` (item: "Q4 (TODO-11 §16/§17/§19/§21/§23)")
+> **Notes:** Reopened 2026-11-11: Q4 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [H] the CRITICAL exec_pending item closed in `D02 T21 §19`. The fork TEB needs the per-process mapping §16 pins, so this stays parked with §16, awaiting-answer (`todo/answers.md` Q4). The mirror and readback items have no blocker of their own and are left open. -> XREF: `todo/answers.md` (item: "Q4 (TODO-11 §16/§17/§19/§21/§23)")
 
 ---
 
@@ -621,15 +621,15 @@ The §5 review (Codex 3x) found the PEB/RTLPP/env setup proceeds through uncheck
 ## 21. Format-Specific User Startup Frame (ELF / PE / EIF) + Env Unification
 `task_exec` emits one SysV ELF process-init stack (argc/argv/envp/auxv) for EVERY loaded format, only zeroing PHDR metadata for non-ELF, then also sets the Win64 RCX=PEB. The ELF stack is correct for ELF (the §7 adversarial pass found no overflow/alignment/overlap bug), but a real PE32+ CRT/ntdll needs a format-specific Win64 startup frame and EIF its own; the current single frame works only for the bare-asm PE smoke test that ignores CRT startup. -> XREF: §7 (ELF stack), `D02 T17` (PE loader / ntdll startup), §5 (PEB env).
 
-- [/] [HIGH] Branch the initial user-frame builder by loaded format: keep argc/argv/envp/auxv for ELF; add an explicit PE32+ Win64 startup frame (shadow/home space, no argc-at-rsp) for ntdll/CRT; give EIF a documented native startup contract
-  - BLOCKED: `todo/answers.md` Q4. `task.c:4076-4244` builds one frame for every format, and `is_elf` only gates the PHDR values.
+- [ ] [HIGH] Branch the initial user-frame builder by loaded format: keep argc/argv/envp/auxv for ELF; add an explicit PE32+ Win64 startup frame (shadow/home space, no argc-at-rsp) for ntdll/CRT; give EIF a documented native startup contract
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. `task.c:4076-4244` builds one frame for every format, and `is_elf` only gates the PHDR values.
 - [ ] [MEDIUM] PEB `Environment` is hard-coded and ELF `envp[]` empty, but `task->environ` is authoritative (SYS_EXEC envp adoption lands there, TODO-22 §4); build the PEB env block + ELF envp from it (`env_build_block_utf16`)
-- [/] Commit: `"kernel: exec -- format-specific user startup frame (ELF/PE/EIF) + unified env"`
-  - BLOCKED: commit line for the items above.
+- [ ] Commit: `"kernel: exec -- format-specific user startup frame (ELF/PE/EIF) + unified env"`
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: commit line for the items above.
 
 **Test checkpoint:** an ELF binary still starts with the SysV stack; a PE32+ fixture enters its Win64 startup contract (RCX=PEB + home space, no argc-at-rsp dependency); `getenv("PATH")` and the Win32 environment block agree. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] the startup frame is the ring-3 entry contract for PE32+ and EIF: an ABI decision, awaiting-answer (`todo/answers.md` Q4). The env half has no such question and is left open. -> XREF: `todo/answers.md` (item: "Q4 (TODO-11 §16/§17/§19/§21/§23)")
+> **Notes:** Reopened 2026-11-11: Q4 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [H] the startup frame is the ring-3 entry contract for PE32+ and EIF: an ABI decision, awaiting-answer (`todo/answers.md` Q4). The env half has no such question and is left open. -> XREF: `todo/answers.md` (item: "Q4 (TODO-11 §16/§17/§19/§21/§23)")
 
 ---
 
@@ -649,16 +649,16 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 ## 23. Per-thread TLS Value Storage (Static + Expansion)
 §9's TLS allocation bitmaps are per-process (correct), but the value-access helpers index `tasks[pid].teb` (the thread-0 mirror) after §15 made `TEB.TlsSlots` per-thread. A secondary thread's `tls_get/set/free` hit thread-0's slots, and the expansion-array pointer is installed only in thread-0's TEB (secondary threads see `TlsExpansionSlots == NULL`). Breaks the Windows current-thread `TlsGetValue/TlsSetValue` contract; sharpens the vague §12 deferred "per-thread TLS expansion" item. -> XREF: §9 (TLS helpers), §12 (deferred per-thread expansion), §16 (TEB under-mapping + VA non-overlap).
 
-- [/] [HIGH] Route static-slot `tls_get_value`/`tls_set_value`/`tls_free` through the current thread's TEB (`tasks[pid].threads[current_thread].teb` when pid==current_task) or add a TID param; add a 2-user-thread test
-  - BLOCKED: `todo/answers.md` Q4. Per-thread slots need §16's two-page TEB. The TLS calls still index `tasks[pid].teb` (`task.c:5196`, `:5222`, `:5303`, `:5340`, `:5370`).
-- [/] [HIGH] Publish the shared task expansion-array pointer into EVERY live user-thread TEB (`tls_expansion_demand_alloc` + `uthread_create` from `tasks[pid].tls_expansion_virt`); clear all live thread TEB pointers on cleanup
-  - BLOCKED: `todo/answers.md` Q4. The pointer lives in the same second TEB page; `task.c:5224` publishes it to the main-thread TEB only.
-- [/] Commit: `"kernel: peb -- per-thread TLS value storage (static + expansion pointer)"`
-  - BLOCKED: commit line for the items above.
+- [ ] [HIGH] Route static-slot `tls_get_value`/`tls_set_value`/`tls_free` through the current thread's TEB (`tasks[pid].threads[current_thread].teb` when pid==current_task) or add a TID param; add a 2-user-thread test
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. Per-thread slots need §16's two-page TEB. The TLS calls still index `tasks[pid].teb` (`task.c:5196`, `:5222`, `:5303`, `:5340`, `:5370`).
+- [ ] [HIGH] Publish the shared task expansion-array pointer into EVERY live user-thread TEB (`tls_expansion_demand_alloc` + `uthread_create` from `tasks[pid].tls_expansion_virt`); clear all live thread TEB pointers on cleanup
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: `todo/answers.md` Q4. The pointer lives in the same second TEB page; `task.c:5224` publishes it to the main-thread TEB only.
+- [ ] Commit: `"kernel: peb -- per-thread TLS value storage (static + expansion pointer)"`
+  - Unblocked 2026-11-11 (the question is answered in `todo/answers.md`). Was blocked: commit line for the items above.
 
 **Test checkpoint:** two threads in one process alloc one slot index, set distinct values, and each reads back its own (no cross-thread bleed); a secondary thread created after expansion alloc sees a non-NULL `TlsExpansionSlots`; cleanup clears every thread's pointer. Gated on the §16 TEB-mapping fix for the static-slot storage to be page-correct. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] needs §16's second TEB page: `TlsSlots` at 0x1480 lies outside today's one mapped page, awaiting-answer (`todo/answers.md` Q4). -> XREF: `todo/answers.md` (item: "Q4 (TODO-11 §16/§17/§19/§21/§23)")
+> **Notes:** Reopened 2026-11-11: Q4 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [H] needs §16's second TEB page: `TlsSlots` at 0x1480 lies outside today's one mapped page, awaiting-answer (`todo/answers.md` Q4). -> XREF: `todo/answers.md` (item: "Q4 (TODO-11 §16/§17/§19/§21/§23)")
 
 ---
 

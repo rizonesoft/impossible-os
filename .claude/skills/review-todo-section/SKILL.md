@@ -203,7 +203,10 @@ Never bypass the gate via `SKIP_PHASE1_BLOCK`. Verification reads are SLICES (`R
     - **If there are no accepted/deferred items, OMIT both lines** -- never write `Accepted: none`.
     - **Verify the `> **Notes:**` block is present and canonical-shape**, and TRIM it back if it is over-stuffed. If `notes_bloat_check.py` fires during the review, that is the signal to delete content, not to opt out via `SKIP_REVIEW_HOOK`.
 
-17. **Commit and push** -- `"review: <TODO> §N -- <summary>"`. If step 15 created or modified items in other TODO files, stage and commit those in the SAME commit as the stamp.
+17. **Commit, then the section's one push** -- `"review: <TODO> §N -- <summary>"`. If step 15 created or modified items in other TODO files, stage and commit those in the SAME commit as the stamp. This push is the only one the section gets: it carries the implementation commit, the review's fixes and the stamps (operator decision 2026-11-11).
+    - Push by the sequence in [`overnight-sequencer`](../overnight-sequencer/SKILL.md) ("ONE PUSH PER SECTION"): `git pull --rebase origin main`, the push in the background, a bounded poll until it lands.
+    - Then `python3 scripts/overnight/ci-wait.py .` (tool `timeout: 600000`; exit 124 = issue it again) until CI answers for that commit. Start nothing else while either wait runs.
+    - Gates refuse or CI is red: fix the cause with a test, commit, push, wait again. The section is finished when its push is green.
 
 ## Rules
 

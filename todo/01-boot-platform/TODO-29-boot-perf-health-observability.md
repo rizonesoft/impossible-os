@@ -302,11 +302,11 @@ A 1.3s SMBIOS init looks identical on serial to a hung boot until either (a) the
 - -> XREF: `TODO-23-boot-watchdog.md` owns the LAPIC/NMI timer + hard-cap reset; §8 is the SOFT serial-counter signal layered on TODO-23's timer (no duplicate timer ownership). TODO-14 §4 (in-ISR visual heartbeat) stays permanently deferred; §8 is serial-only + ISR-safe-drain.
 - [/] Boot-health.json (§2) records the maximum heartbeat gap observed during the boot, surfacing pauses that stayed under the WARN threshold but were unusually slow.
   - PARKED: needs TODO-23's LAPIC/NMI timer plus a `boot_info.heartbeat_seq` ABI bump -> XREF: `01-boot-platform/TODO-23-boot-watchdog.md` (timer owner).
-- [/] Commit: `"boot: heartbeat telemetry during long phases"`
+- [ ] Commit: `"boot: heartbeat telemetry during long phases"`
 
 **Test checkpoint:** A 1342ms SMBIOS init with target 100ms emits 4-5 `[BOOT-HB] phase=SMBIOS elapsed=Xms target=100` lines. A <250ms phase emits zero heartbeats. Heartbeat ISR is harmless when LAPIC timer is the active scheduler tick (no double-fire, no priority inversion).
 
-> **Deferred:** awaiting-answer Q20 (`todo/answers.md`). [M] Heartbeat needs a `boot_info.heartbeat_seq` field (BOOT_INFO_VERSION bump via the ABI owner path) + TODO-23's LAPIC/NMI timer + ISR-safe serial drain (gap-audit constraint); multi-commit boot-path. -> XREF: 01-boot-platform/TODO-23-boot-watchdog.md (timer owner); §8 owns the soft serial-counter signal.
+> **Notes:** Reopened 2026-11-11: Q20 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: awaiting-answer Q20 (`todo/answers.md`). [M] Heartbeat needs a `boot_info.heartbeat_seq` field (BOOT_INFO_VERSION bump via the ABI owner path) + TODO-23's LAPIC/NMI timer + ISR-safe serial drain (gap-audit constraint); multi-commit boot-path. -> XREF: 01-boot-platform/TODO-23-boot-watchdog.md (timer owner); §8 owns the soft serial-counter signal.
 ---
 
 ## 9. EXEC Step Latency Profile
@@ -395,12 +395,12 @@ Today `boot_error_history` rings 8 entries. After 8 boots the oldest rolls off; 
   - PARKED, operator-gated: the NVRAM-blob migration decision plus live RegSetBinary validation. Ring owner: `01-boot-platform/TODO-03` §20.
 - [/] Verify ring-wrap behavior remains correct at the larger size (existing wrap tests just need re-tuning to 32-entry shape).
   - PARKED, operator-gated: the NVRAM-blob migration decision plus live RegSetBinary validation. Ring owner: `01-boot-platform/TODO-03` §20.
-- [/] Decide, awaiting-answer Q30: grow the NVRAM variable in place with a tail-append schema, or version-bump and migrate.
-- [/] Commit: `"boot: boot_history ring depth 8 -> 32 entries (operator UX)"`
+- [ ] Decide, awaiting-answer Q30: grow the NVRAM variable in place with a tail-append schema, or version-bump and migrate.
+- [ ] Commit: `"boot: boot_history ring depth 8 -> 32 entries (operator UX)"`
 
 **Test checkpoint:** Existing unit tests pass at the 32-entry size. Smoke shows no regression in `boot_history: Recent boot history (N attempts)` output. NVRAM bin file is 512 bytes (32 × 16); RegSetBinary handles the larger blob.
 
-> **Deferred:** awaiting-answer Q30 (`todo/answers.md`). [L] boot_history ring 8->32: NVRAM size bump + size-pin asserts + schema migration -- needs the NVRAM-blob migration decision + live RegSetBinary validation, so the park is operator-gated. CORRECTED 2026-09-03: this stamp named `01-boot-platform/TODO-01` §11 as the boot history owner, which is Capability Negotiation and Degraded-Feature Flags. `BOOT_HIST_RING_LEN` and `BOOT_HIST_BIN_SIZE` are defined and owned by `01-boot-platform/TODO-03-bootloader-error-recovery.md` §20 (ring producer, `[x]`), with §21 the consumer. -> XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §20 (item: "`BOOT_HIST_RING_LEN` (8) + `BOOT_HIST_BIN_SIZE` (128) + sentinels").
+> **Notes:** Reopened 2026-11-11: Q30 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: awaiting-answer Q30 (`todo/answers.md`). [L] boot_history ring 8->32: NVRAM size bump + size-pin asserts + schema migration -- needs the NVRAM-blob migration decision + live RegSetBinary validation, so the park is operator-gated. CORRECTED 2026-09-03: this stamp named `01-boot-platform/TODO-01` §11 as the boot history owner, which is Capability Negotiation and Degraded-Feature Flags. `BOOT_HIST_RING_LEN` and `BOOT_HIST_BIN_SIZE` are defined and owned by `01-boot-platform/TODO-03-bootloader-error-recovery.md` §20 (ring producer, `[x]`), with §21 the consumer. -> XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §20 (item: "`BOOT_HIST_RING_LEN` (8) + `BOOT_HIST_BIN_SIZE` (128) + sentinels").
 ---
 
 ## 14. FAT32 Dirty-Mount fsck Cost in VFS Step

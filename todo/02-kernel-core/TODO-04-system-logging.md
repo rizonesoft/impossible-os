@@ -68,7 +68,7 @@ title: "TODO-04 -- System Logging"
 | 💎  |   7   | ETW tracing syscalls wired to SSDT                                  | §4, T12 §4       |  [x]   |
 | 💎  |   8   | Crash-persistent log capture                                        | §1               |  [ ]   |
 | 💎  |   9   | Per-entry context metadata                                          | §2               |  [x]   |
-| ⭐  |  10   | Log integrity verification (HMAC)                                   | §6, T03 §5       |  [/]   |
+| ⭐  |  10   | Log integrity verification (HMAC)                                   | §6, T03 §5       |  [ ]   |
 | 💎  |  11   | ETW provider registration + filtering                               | §7, T12 §5       |  [/]   |
 | 💎  |  12   | ETW advanced capture (stack/autologger/schema)                      | §11, T23, T18 §4 |  [/]   |
 | 💎  |  13   | Rotated-log compression (LZ4)                                       | §4, T03 §3       |  [x]   |
@@ -369,7 +369,7 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 - [/] Define `klog_integrity_ctx_t`: previous HMAC (32B), session key (32B), key-id/epoch, init flag (deferred -- see Design-review WARNING)
 - [/] At `klog_disk_enable()`: MINT the session key via `csprng_fill()` gated on `csprng_crypto_ok()` (skip+WARN on degraded entropy); split MINT from PUBLISH (→ XREF: TODO-03 §5 CSPRNG)
 - [/] In JSON Lines flush: append `"hmac":"<64hex>"` = `crypto_blake2b_keyed(key, prev_hmac || json_body)`; chain tail MUST mirror the §6 commit/rollback/salvage state machine; bump `line[512]` to >=640
-- [/] Anchor the verifier key OUTSIDE the mutable log domain (TPM/protected UEFI NVRAM, NOT `HKLM`); publish after the registry/TPM subsystem is up; WARN+disable on failure (operator-reserved)
+- [ ] Anchor the verifier key OUTSIDE the mutable log domain (TPM/protected UEFI NVRAM, NOT `HKLM`); publish after the registry/TPM subsystem is up; WARN+disable on failure (operator-reserved)
 - [/] Implement `klog_verify_chain(const char *jsonl_path)`: recompute each HMAC against the chain (constant-time `crypto_verify32`); per-file epoch header so a rotation reset cannot mask truncation
 - [/] Wire into `dmpanalyze.exe` (-> XREF: TODO-27 §9): `dmpanalyze /verifylog` verifies the chain -- BLOCKED: `dmpanalyze.exe` (TODO-27 §9) not implemented
       - PARKED on the analyzer not existing yet; the blocker is named in the item and in this section's second Deferred stamp -> XREF: `02-kernel-core/TODO-27-crash-dump-generation.md` §9 (item: "`src/apps/dmpanalyze/dmpanalyze.c` -- standalone command-line app").
@@ -377,12 +377,12 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 - [/] Add Phase-2 key-mint POST codes only (`POST16(0xDE20)` entry, `POST16(0xDE21)` key minted; range `0xDE2x` free); runtime seal/verify are post-Phase-3 (no POST16)
 - [/] Consumer: Code Integrity allow/deny/audit decisions emit INTO this HMAC chain for tamper-evident CI forensics. -> XREF: D02 T19 §10 (CI audit events).
       - PARKED on the producing side: this is the Code Integrity audit-event work emitting into the chain, so it cannot land before that emitter exists. Owner named in the item's own XREF.
-- [/] Commit: `"kernel: HMAC-chain integrity verification for events.jsonl"`
+- [ ] Commit: `"kernel: HMAC-chain integrity verification for events.jsonl"`
       - PARKED, **operator-gated**: this section's Critical Deferred stamp records that verifier-key anchoring is an operator-reserved security-architecture decision (the 2026-06-21 design review found `HKLM` key storage gives a false integrity guarantee). No TODO can clear it; only a human decision can, so the sweep will never re-open this on its own.
 
 **Test checkpoint:** Boot with `debug=1`; `events.jsonl` entries contain `"hmac":"..."` field (64 hex chars). `klog_verify_chain("X:\\Logs\\events.jsonl")` returns 0 (valid chain). Manually corrupt one JSON line; `klog_verify_chain()` returns the corrupted line number. Boot with `log_integrity=0`; `events.jsonl` entries have no `"hmac"` field. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [Critical] awaiting-answer Q10: HMAC verifier-key anchoring is a security-architecture decision -- the Codex design review (2026-06-21) found the planned `HKLM` key storage gives a FALSE integrity guarantee (attacker rewrites log + key + all hmacs); the section also needs the §6-mirroring chain state machine and rotation epochs -> XREF: `todo/answers.md` (item: "Q10 (TODO-04 §10): where does the log-integrity verifier key live?")
+> **Notes:** Reopened 2026-11-11: Q10 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [Critical] awaiting-answer Q10: HMAC verifier-key anchoring is a security-architecture decision -- the Codex design review (2026-06-21) found the planned `HKLM` key storage gives a FALSE integrity guarantee (attacker rewrites log + key + all hmacs); the section also needs the §6-mirroring chain state machine and rotation epochs -> XREF: `todo/answers.md` (item: "Q10 (TODO-04 §10): where does the log-integrity verifier key live?")
 > **Deferred:** [M] `dmpanalyze /verifylog` wiring blocked on the analyzer existing -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §9 (item: "`src/apps/dmpanalyze/dmpanalyze.c` -- standalone command-line app" at line 295)
 
 ---
@@ -402,12 +402,12 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 - [/] Persist provider manifest under Registry `HKLM\SYSTEM\Logs\ETW\Providers\<guid>` AFTER dropping `s_etw_lock`; never call registry/VFS/heap under the irqsave lock
 - [/] `klog(LOG_INFO, "etw", ...)` trace on provider register/unregister (observable; ETW is post-boot, no POST16)
 - [/] Unit tests in `test_klog.c`: provider register + enumerate roundtrip; two sessions enabling one provider; one session enabling two providers with different masks; non-matching keyword dropped; bad/non-NUL-terminated name rejected
-- [/] Commit: `"kernel: ETW provider registration + per-session keyword/level filtering"`
+- [ ] Commit: `"kernel: ETW provider registration + per-session keyword/level filtering"`
       - PARKED behind this section's own ETW ABI redesign, which its High Deferred stamp records as required before any code: there is no event-metadata wire ABI for provider/keyword and scalar masks cannot hold multiple providers. The commit marker lands when that redesign does.
 
 **Test checkpoint:** Register a provider GUID, enumerate it by name via `NtQueryTrace`. Enable it into a session with a keyword mask; `NtTraceEvent` with a non-matching keyword does not appear in that session's buffer; a matching event does. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] awaiting-answer Q11: §11 needs an ETW ABI redesign before code -- the Codex design review (2026-06-21) found the plan misroutes events (no event-metadata wire ABI for provider/keyword, single-session-vs-broadcast conflict, scalar masks cannot hold multiple providers, registry-under-irqsave-lock); the corrected design (versioned metadata + broadcast routing + per-session provider table + two-phase registration) extends the §7-hardened syscall surface and warrants a focused pass -> XREF: `todo/answers.md` (item: "Q11 (TODO-04 §11): may the run define the ETW event-metadata wire ABI?")
+> **Notes:** Reopened 2026-11-11: Q11 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [H] awaiting-answer Q11: §11 needs an ETW ABI redesign before code -- the Codex design review (2026-06-21) found the plan misroutes events (no event-metadata wire ABI for provider/keyword, single-session-vs-broadcast conflict, scalar masks cannot hold multiple providers, registry-under-irqsave-lock); the corrected design (versioned metadata + broadcast routing + per-session provider table + two-phase registration) extends the §7-hardened syscall surface and warrants a focused pass -> XREF: `todo/answers.md` (item: "Q11 (TODO-04 §11): may the run define the ETW event-metadata wire ABI?")
 
 ---
 

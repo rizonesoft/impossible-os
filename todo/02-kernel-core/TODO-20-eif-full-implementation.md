@@ -230,10 +230,10 @@ Spec normative rule 5: skipped optional imports MUST have their dispatch table e
 - [/] In the dispatch table write pass: for optional imports where `available=0`, point the entry at a kernel-provided stub returning `STATUS_NOT_IMPLEMENTED` (0xC0000002). BLOCKED: only exists if Q6 picks callable slots.
 - [/] The stub address should be a well-known kernel page mapped read-only into user space. BLOCKED: only exists if Q6 picks callable slots.
 - [/] User code calling an unavailable optional import gets a clean `STATUS_NOT_IMPLEMENTED` return instead of a crash. BLOCKED: Q6; no user code reads the table at 0x8F0000 today.
-- [/] Commit: `"kernel: eif -- optional import stub generation"` -- BLOCKED: Q6.
+- [ ] Commit: `"kernel: eif -- optional import stub generation"` -- BLOCKED: Q6.
 
 **Test checkpoint:** An EIF importing an unregistered optional SSDT entry gets `STATUS_NOT_IMPLEMENTED` (0xC0000002) return value, not a crash. Serial log shows `"eif: optional import 0x%x stubbed"`. EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-> **Deferred:** [M] awaiting-answer Q6: optional-import stub slots (spec rule 5) contradict the data-only dispatch table (`{syscall_id, available}`), and this section and `TODO-17` §13 each waited on the other for the import-CALL ABI, so the decision had no owner. -> XREF: `todo/answers.md` Q6; 02-kernel-core/TODO-17 §13 (item: "Generate import table -> the required-import CALL ABI").
+> **Notes:** Reopened 2026-11-11: Q6 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [M] awaiting-answer Q6: optional-import stub slots (spec rule 5) contradict the data-only dispatch table (`{syscall_id, available}`), and this section and `TODO-17` §13 each waited on the other for the import-CALL ABI, so the decision had no owner. -> XREF: `todo/answers.md` Q6; 02-kernel-core/TODO-17 §13 (item: "Generate import table -> the required-import CALL ABI").
 
 ---
 
@@ -307,10 +307,10 @@ The spec'd signature block (`algo`, `sig_size`, `signature` over `[0, signature_
 - [/] Amend `specs/eif-format.md` signature block to carry signer `pubkey[32]` (+ key-id) alongside `algo`/`sig_size`/`signature`; map `algo` to `ci_sig_alg_t` (Ed25519; reject RSA = unsupported). BLOCKED: `todo/answers.md` Q7.
 - [/] Bump `EIF_VERSION` for the signature-block layout change; gate old vs new by version. BLOCKED: Q7.
 - [/] Verifier contract: `ci_crypto_verify(ED25519, [0,sig_off), sig, pubkey)` AND the pubkey hash must match a trusted CI anchor tier. BLOCKED: Q7. -> XREF: D02 T19 §3, D02 T19 §4.
-- [/] Commit: `"kernel: eif -- signature-block ABI (signer key delivery)"` -- BLOCKED: Q7.
+- [ ] Commit: `"kernel: eif -- signature-block ABI (signer key delivery)"` -- BLOCKED: Q7.
 
 **Test checkpoint:** the amended signature block round-trips through `elf2eif` + the loader; a signed EIF with a pubkey whose hash matches a trusted anchor verifies, and one with an untrusted pubkey is rejected. (Verify impl lands in TODO-17 §17.) Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-> **Deferred:** [M] awaiting-answer Q7: security-sensitive EIF signature-block ABI + `EIF_VERSION` bump. The producer (`eifsign`) and verifier are unbuilt and no compiled CI anchor exists, so no end-to-end test can validate the format yet, and `TODO-19` §4 waits on this. -> XREF: `todo/answers.md` Q7; `TODO-17-binary-system.md §17` (verify impl + `eifsign` producer); `TODO-19-code-integrity-trust-policy.md §4` (item: "EIF sig-block ABI decision").
+> **Notes:** Reopened 2026-11-11: Q7 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [M] awaiting-answer Q7: security-sensitive EIF signature-block ABI + `EIF_VERSION` bump. The producer (`eifsign`) and verifier are unbuilt and no compiled CI anchor exists, so no end-to-end test can validate the format yet, and `TODO-19` §4 waits on this. -> XREF: `todo/answers.md` Q7; `TODO-17-binary-system.md §17` (verify impl + `eifsign` producer); `TODO-19-code-integrity-trust-policy.md §4` (item: "EIF sig-block ABI decision").
 
 ---
 

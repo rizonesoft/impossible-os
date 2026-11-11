@@ -165,8 +165,6 @@ The baseline boot path in §1-§4 is already good enough to boot from USB media.
 
 ## 6. Hardware Compatibility -- Non-Intel xHCI Vendors
 
-**Needs:** bare-metal
-
 Finish the baseline xHCI boot path across controller vendors. The generic non-Intel path -- skip Intel-only XUSB2PR port routing, rely on BIOS handoff + CCS -- is already implemented (`xhci.c` gates routing on Intel VID 0x8086). What remains here is the Renesas firmware-skip decision, vendor diagnostics, and graceful degradation. EHCI/UHCI/OHCI fallback, USB hubs, USBLEGSUP handoff, and transport stall/halt robustness are owned by other TODOs (Routed block below) -- TODO-17 does NOT own them. (Section de-scoped from a 34-item sprawl that forked ownership with T10/T19/T20.)
 
 **Files:** `src/kernel/drivers/xhci.c`
@@ -176,8 +174,8 @@ Finish the baseline xHCI boot path across controller vendors. The generic non-In
 - [x] Renesas (0x1912): detect vendor ID in the discovery loop; warn `Renesas controller -- USB unavailable if host firmware not loaded` so a firmware-less board is diagnosable; graceful skip via the existing no-device path (`xhci.c` `xhci_init`)
 - [x] Vendor diagnostics: `xhci_vendor_name()` maps VID to Intel/AMD/ASMedia/Renesas/VIA/QEMU; logged on bring-up (`Found xHCI at PCI ...: <vendor>`) on both the full-init and handover paths -- validated live (run-usb-ci: `QEMU (VID:DID 1b36:000d)`)
 - [x] Graceful degradation: no-xHCI logs `continuing boot without USB` (not a boot failure); init-failure logs + continues; `boot_storage.c` ignores the count and proceeds -- PS/2 + SATA/NVMe still work
-- [/] Hardware test matrix (manual -- bare metal): AMD, ASMedia, Renesas, VIA controllers boot from USB via the generic path
-- [/] Commit: `"drivers: xHCI non-Intel vendor compatibility + graceful degradation"`
+- [/] Vendor boot matrix: the emulated `nec-usb-xhci` leg is built by `01-boot-platform/TODO-19-usb-boot-hardening.md §17` (item: "Leg on `nec-usb-xhci`"). Physical AMD, ASMedia and VIA machines are a check for whoever has them and hold nothing.
+- [x] Commit: `"drivers: xHCI non-Intel vendor compatibility + graceful degradation"`
 
 **Routed to owning TODOs (NOT owned by TODO-17 §6):**
 - BIOS/OS USBLEGSUP handoff (all vendors) -> XREF: `01-boot-platform/TODO-20-usb-zero-delay-handover.md §2` (implemented + marked complete)
@@ -195,7 +193,7 @@ Finish the baseline xHCI boot path across controller vendors. The generic non-In
 > - Scope boundary: §6 owns non-Intel xHCI vendor compat; legacy controllers + transport robustness are owned by the usb-stack / usb-boot-hardening / zero-delay-handover TODOs.
 > **Verified:** 2026-06-15 | this commit | 5/6 items [x], 1 [ ] manual (HW matrix) | build OK | run-usb-ci PASS (vendor "QEMU" logged on bring-up)
 > **Quality reviewed:** 2026-06-15 | Codex 1x (adversarial, §6 vendor diff: no material findings) | diagnostics/logging only; subsystem covered by the §1-§5 Codex 3x pass | scope: kernel-code-quality
-> **Deferred:** [awaiting-operator] the vendor hardware matrix needs physical AMD/ASMedia/Renesas/VIA machines -- no unattended pass can perform this; operator action required (cohort 2026-07-31)
+> **Notes:** 2026-11-11: the wait on machines is over; the emulated legs are section 17 of the USB boot hardening TODO. Was Deferred: the vendor hardware matrix needs physical AMD/ASMedia/Renesas/VIA machines -- no unattended pass can perform this; operator action required (cohort 2026-07-31)
 
 ---
 

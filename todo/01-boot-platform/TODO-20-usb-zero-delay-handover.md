@@ -139,12 +139,12 @@ Enumerate connected devices in the bootloader so slot contexts and endpoint ring
 
 **Files:** `src/boot/uefi/bootx64.c`
 
-- [/] For each port with CCS=1: port reset, Enable Slot, Address Device: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
-- [/] GET_DESCRIPTOR (device + configuration): store in persistent buffers: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
-- [/] SET_CONFIGURATION: device is now configured: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
-- [/] For MSC: Configure Endpoint (bulk-IN/OUT) using persistent transfer rings: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
-- [/] Record slot_id, port, speed, VID:PID, endpoint addresses in boot_info: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
-- [/] Commit: `"boot: enumerate USB devices with persistent DMA state"`: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
+- [ ] For each port with CCS=1: port reset, Enable Slot, Address Device: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
+- [ ] GET_DESCRIPTOR (device + configuration): store in persistent buffers: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
+- [ ] SET_CONFIGURATION: device is now configured: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
+- [ ] For MSC: Configure Endpoint (bulk-IN/OUT) using persistent transfer rings: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
+- [ ] Record slot_id, port, speed, VID:PID, endpoint addresses in boot_info: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
+- [ ] Commit: `"boot: enumerate USB devices with persistent DMA state"`: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
 
 **Test checkpoint:** Serial shows enumerated devices with slot IDs. POST code 0xB086. Device descriptors match Phase A discovery. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
 
@@ -160,7 +160,7 @@ Enumerate connected devices in the bootloader so slot contexts and endpoint ring
 > - **Scope boundary:** §3 enumerates in the bootloader; §5 inherits; §4 carries the schema.
 
 > **Verified:** 2026-06-15 | commit `832af15c` | 0/5 items | deferred (design parked on §4 ABI) | gap-audit scoped
-> **Deferred:** awaiting-answer Q21 (`todo/answers.md`). [feature] bootloader device enumeration (per-device slot context + EP0/bulk rings) -- needs the ~350-line xhci_dev.c port + the §4 boot_info per-device payload schema -> XREF: 01-boot-platform/TODO-20 §4 (item: "DMA-shape design (blocks typed-payload item)")
+> **Notes:** Reopened 2026-11-11: Q21 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: awaiting-answer Q21 (`todo/answers.md`). [feature] bootloader device enumeration (per-device slot context + EP0/bulk rings) -- needs the ~350-line xhci_dev.c port + the §4 boot_info per-device payload schema -> XREF: 01-boot-platform/TODO-20 §4 (item: "DMA-shape design (blocks typed-payload item)")
 
 ---
 
@@ -170,11 +170,11 @@ Extend boot_info to carry the full controller state: DCBAA physical address, scr
 **Files:** `include/kernel/boot_info.h`, `src/boot/uefi/bootx64.c`
 
 - [x] Add `struct boot_usb_controller` to boot_info: BAR0, DCBAA phys, scratchpad phys, ring addresses -- shipped in §1
-- [/] Add per-device: slot_id, output context phys, EP0 ring phys, bulk ring phys addresses: absent from `boot_usb_device`; waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
+- [ ] Add per-device: slot_id, output context phys, EP0 ring phys, bulk ring phys addresses: absent from `boot_usb_device`; waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
 - [x] Add `usb_handover_complete` flag -- 1 if bootloader successfully configured the controller -- shipped in §1
-- [/] DMA-shape design (blocks typed-payload item): operator-gated `boot_info` ABI change. §1 allocates DCBAA/cmd/evt/ERST/scratchpad as disjoint pages, so one contiguous descriptor can't cover them: contiguous arena or scatter/gather
+- [ ] DMA-shape design (blocks typed-payload item): operator-gated `boot_info` ABI change. §1 allocates DCBAA/cmd/evt/ERST/scratchpad as disjoint pages, so one contiguous descriptor can't cover them: contiguous arena or scatter/gather
 - [/] Publish a typed `BOOT_PAYLOAD_USB_HANDOVER` descriptor for the xHCI DMA state: waits on the DMA-shape decision -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
-- [/] Commit: `"boot: extend boot_info with xHCI controller DMA state"`: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
+- [ ] Commit: `"boot: extend boot_info with xHCI controller DMA state"`: waits on the §4 DMA-shape decision (operator-gated `boot_info` ABI change)
 
 **Test checkpoint:** Kernel reads boot_info, logs controller state with matching physical addresses. POST code 0xD754. Test on: QEMU `run-usb`, bare metal i5-4210U (EHCI+xHCI), bare metal i5-11600K (xHCI only).
 
@@ -190,7 +190,7 @@ Extend boot_info to carry the full controller state: DCBAA physical address, scr
 > - **Scope boundary:** §4 owns the schema; §3 produces per-device data into it; §5/§6 consume it.
 
 > **Verified:** 2026-06-15 | commit `832af15c` | 2/5 items | build OK | controller-level fields shipped (§1)
-> **Deferred:** awaiting-answer Q21 (`todo/answers.md`). [feature] per-device DMA payload + typed `BOOT_PAYLOAD_USB_HANDOVER` descriptor + the contiguous-vs-scatter DMA-shape decision -- a stop-and-ask `boot_info` ABI change needing user sign-off -> XREF: 01-boot-platform/TODO-01 §4 (item: "Optional payload descriptor array") + TODO-20 §4 (item: "DMA-shape design")
+> **Notes:** Reopened 2026-11-11: Q21 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: awaiting-answer Q21 (`todo/answers.md`). [feature] per-device DMA payload + typed `BOOT_PAYLOAD_USB_HANDOVER` descriptor + the contiguous-vs-scatter DMA-shape decision -- a stop-and-ask `boot_info` ABI change needing user sign-off -> XREF: 01-boot-platform/TODO-01 §4 (item: "Optional payload descriptor array") + TODO-20 §4 (item: "DMA-shape design")
 
 ---
 

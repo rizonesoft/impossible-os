@@ -2349,7 +2349,7 @@ fi
 # affected files (TODO-04 usermode x10, TODO-07 lsp-mcp x1, TODO-04
 # system-logging x1) were then repaired by `--fix` as verified pure block moves
 # -- identical line count, byte count and sorted content -- and the tree-wide
-# scan returns clean. The 60-section hard cap prevents the condition from being
+# scan returns clean. The 99-section hard cap prevents the condition from being
 # reintroduced at scale, so blocking is now safe rather than merely correct.
 if [ -f "$REPO_ROOT/scripts/todo-section-order.py" ]; then
     # Envelope-validated for the same reason as Check 22 above: this mode turns

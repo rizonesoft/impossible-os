@@ -298,10 +298,10 @@ night's preflight -- which is how a fork+exec panic sat in a red
 `Build Impossible OS` job. Checking here moves detection from per-file to
 per-section for one JSON query.
 
-It does not block on purpose: `gh run watch` costs ~9 min per section
-serialized, and by the time the next section starts the previous push has
-already had a full section of wall-clock to finish. A run still `in_progress` is
-NOT a verdict -- carry on and let the next boundary pick it up.
+This check does not wait, and since 2026-11-11 it is the second net, not the
+first: every section's one push is watched to green by `ci-wait.py` before the
+next section starts (see "ONE PUSH PER SECTION" below), so a red run here means
+something moved `main` from outside the run.
 
 - `"ours_red": false` -> proceed.
 - `"ours_red": true` -> a FAILED run's head SHA is an ancestor of local HEAD.
@@ -381,8 +381,11 @@ information or judgment; none of this weakens a gate):**
 - `NEEDS_WORK` -> `Skill(implement-todo-section)` (its step 20 chains
   `review-todo-section`). For a near-complete section with one or two open
   items, `Skill(implement-todo-item)` is allowed.
-- **Commit AND push after every section** (one atomic act). After a section
-  ships+reviews+pushes, `run_phase_guard.py progress`.
+- **ONE PUSH PER SECTION, AND NOTHING ELSE UNTIL IT IS GREEN (operator decision 2026-11-11).** The implementation is committed, never pushed (`implement-todo-section` step 19). The review runs on that local commit. The stamps are committed. Only then is the section pushed, once, complete and stamped (`review-todo-section` step 17), by the sequence below. After the push: wait for it to land, then wait for CI on that commit, and start nothing else in between (no next section, no edits, no suite). Then `run_phase_guard.py progress`.
+  - **Why.** Two pushes a section, each with the next piece of work started behind it, is how a red commit sat under later work, and how a push lost 18 minutes of gates to another push that landed first (twice on 2026-11-11). One push that is watched to green has neither failure.
+  - **Push gates fail:** read the refusal, fix the cause with a test, commit, and run the sequence again. Never an opt-out variable to get past a real failure.
+  - **CI wait:** `python3 scripts/overnight/ci-wait.py .` as its own call with tool `timeout: 600000`. Exit 124 = still running, issue the same call again. Exit 0 = green, move on. Exit 3 = no verdict can be had (GitHub unreachable, every run cancelled): note it in the Run Log and move on. Exit 1 = red: the JSON names the run and its failed jobs.
+  - **CI red:** `gh run view <id> --log-failed` for the failed slice, diagnose (`superpowers:systematic-debugging`), fix with a test, commit, push by the sequence below, wait again. A failure where no step of ours ran (the runner, a package mirror, the network) is not ours to fix: `gh run rerun <id> --failed`, wait again, at most three times; after that record it in `todo/RUN-ISSUES.md` and move on.
 - **REBASE BEFORE EVERY PUSH -- `main` can now move underneath you.** Attended control-plane repairs land on `main` from the operator's repair worktree while you are mid-section, so a ship push can be rejected as non-fast-forward through no fault of your own (observed 2026-07-31: `! [remote rejected] main -> main (cannot lock ref ...)`). The ship sequence is therefore `git pull --rebase origin main` and THEN `git push origin main`. **Run that sequence EXACTLY as shown below -- the SHAPE is load-bearing, not just the order.** Two things bite otherwise, both observed live 2026-08-08 on the TODO-06 section-22 ship. (1) A pipeline's exit status is its LAST command, so `git pull --rebase ... | tail -3 && git push ...` gates the push on `tail`, which always succeeds -- a FAILED rebase reaches the push anyway and strands the run mid-rebase reading a non-fast-forward error that does not name the cause. Never pipe the rebase; `pipefail` is off by default and you cannot rely on it. (2) `.githooks/pre-push` runs `scripts/test-tooling.sh` (its own comment prices it at ~6 minutes) whenever the push touches `scripts/lint/`, `scripts/todo-graph/`, `scripts/test-tooling.sh` or `.claude/hooks/`, on top of the CI-parity compile -- which EXCEEDS the 10-minute tool wall, kills the call at 143, leaves `git push` running as an orphan and the commit unpushed. So background the push and poll it, exactly as you already do for the J1 receipt chain. Do NOT reach for `SKIP_TOOLING_SUITE=1` to dodge this: the suite has not run anywhere else, so skipping it would be a false receipt.
 
 ```bash
@@ -391,10 +394,8 @@ git pull --rebase origin main || { echo "REBASE FAILED -- do not push"; exit 1; 
 # flag, not a shell `&`): a `( ... ) &` subshell was observed to die even on a call
 # that returned NORMALLY (2026-09-05, section-23 ship: no rc= line, commit unpushed).
 git push origin main > /tmp/ship-push.log 2>&1; echo "rc=$?" >> /tmp/ship-push.log
-# A SECTION SHIP: invoke Skill(review-todo-section) BEFORE polling. The post-ship
-# gate refuses non-review Bash until the review is running (a poll issued first
-# was refused 12+ times across 21 logs); once it runs, the poll below passes
-# and belongs inside the review, before any stamp commit.
+# This is the section's ONE push: it carries the implementation, the review's
+# fixes and the stamps. Do nothing else until the two waits below are over.
 # Poll in a SEPARATE, BOUNDED call. 540 < the 600s wall, so this RETURNS
 # instead of being killed: rc 0 = the push finished (read the rc= line),
 # rc 124 = still running -> re-issue this exact call. Never an unbounded

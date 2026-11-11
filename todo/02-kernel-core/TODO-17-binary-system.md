@@ -79,7 +79,7 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 | 💎  |  10   | PE32+ base relocation                          | §8              |  [/]   |
 | 💎  |  11   | PE32+ TLS directory processing                 | §8, TODO-11 §3  |  [/]   |
 | 💎  |  12   | PE32+ Load Config and CFG bitmap               | §8              |  [/]   |
-| ⭐  |  13   | `elf2eif` host-side converter                  | §4              |  [/]   |
+| ⭐  |  13   | `elf2eif` host-side converter                  | §4              |  [ ]   |
 | 💎  |  14   | ELF dynamic linker (shared libraries)          | §2              |  [/]   |
 | 💎  |  15   | ASLR for all three formats                     | §2, §5, §8      |  [/]   |
 | ⭐  |  16   | Script/shebang interpreter support             | §1              |  [/]   |
@@ -402,12 +402,12 @@ Standard developer workflow: `clang-19 → ld.lld → elf2eif` -- no custom comp
 - [/] Generate import table -> the required-import CALL ABI (thunks or EIF runtime import lib) -- BLOCKED: not deferrable but depends on the EIF import call ABI
 - [/] Write canonical-layout EIF (overflow-safe ELF bounds, caps, filesz<=memsz, executable-entry) with metadata/`api_version` (unblocked), via temp-file + atomic rename
 - [/] CLI `--api-version`/`--pic`/metadata (lz4 `EIF_FLAG_COMPRESSED` + `eifsign` signature deferred)
-- [/] Commit: `"tools: elf2eif converter"`
+- [ ] Commit: `"tools: elf2eif converter"`
   - Parked: the required-import CALL binding that makes `NtXxx` callsites actually SYSCALL, and PIC base normalization, both depend on the EIF import call ABI and runtime base, which are unsettled. The lz4 and `eifsign` halves are separately deferred in the stamp beside it.
 
 **Test checkpoint:** `make elf2eif` builds successfully. `tools/elf2eif hello.elf hello.eif` produces output with `EIF!` magic at offset 0. Kernel loads the resulting EIF and reaches entry point. No runtime POST codes -- host-side tool.
 
-> **Deferred:** [H] awaiting-answer Q6 (`todo/answers.md`): §13 elf2eif not implemented -- the required-import CALL binding (making NtXxx callsites actually SYSCALL) and PIC base normalization depend on the unsettled EIF import call ABI / runtime base; a segment-only converter would emit non-runnable EIFs (same gap as PE §9) -> XREF: 02-kernel-core/TODO-20-eif-full-implementation.md
+> **Notes:** Reopened 2026-11-11: Q6 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [H] awaiting-answer Q6 (`todo/answers.md`): §13 elf2eif not implemented -- the required-import CALL binding (making NtXxx callsites actually SYSCALL) and PIC base normalization depend on the unsettled EIF import call ABI / runtime base; a segment-only converter would emit non-runnable EIFs (same gap as PE §9) -> XREF: 02-kernel-core/TODO-20-eif-full-implementation.md
 > **Deferred:** [M] lz4 (`EIF_FLAG_COMPRESSED`) + `eifsign` signature emission deferred. The kernel loader now SUPPORTS compressed segments (`TODO-20` §6 shipped `eif_decompress_segment` + preflight), so this is the missing PRODUCER half -- until it lands, `scripts/build-eif.py`/`elf2eif` emit only uncompressed EIFs -> XREF: 02-kernel-core/TODO-20-eif-full-implementation.md §6
 
 ## 14. ELF Dynamic Linker

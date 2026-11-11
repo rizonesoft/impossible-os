@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **945 of 2594 sections complete (36%).** 117 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **944 of 2595 sections complete (36%).** 115 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -139,7 +139,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T04 §59` | Capture Reconciliation Runs on the Default Test Path, Not Only for Artifacts                                          | none     |     6 |
 | [x]  | `D00 T04 §60` | An Aggregate Budget for Pointer Validation Under the Retention Mutex                                                  | none     |     8 |
 | [x]  | `D00 T04 §61` | Validate the Commit Marker as a Shape, and Read Each Record Document From One Snapshot                                | none     |     9 |
-| [/]  | `D00 T04 §62` | Detaching an Age Candidate Before Classifying It                                                                      | none     |    10 |
+| [x]  | `D00 T04 §62` | Detaching an Age Candidate Before Classifying It                                                                      | none     |    10 |
 | [x]  | `D00 T05 §1`  | Framebuffer Snapshot API                                                                                              | none     |     5 |
 | [x]  | `D00 T05 §2`  | QEMU Framebuffer Dump                                                                                                 | none     |     5 |
 | [x]  | `D00 T05 §3`  | Desktop Smoke Test                                                                                                    | none     |     7 |
@@ -593,7 +593,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T15 §10` | Seamless Tier Transition                                                                          | none       |     6 |
 | [x]  | `D01 T15 §11` | Phase Grouping and Diagnostic Layout                                                              | none       |     6 |
 | [x]  | `D01 T15 §12` | HV_BAR Removal and Migration                                                                      | none       |     5 |
-| [/]  | `D01 T15 §13` | Panic Integration and Failure Highlighting                                                        | none       |     6 |
+| [x]  | `D01 T15 §13` | Panic Integration and Failure Highlighting                                                        | none       |     6 |
 | [x]  | `D01 T16 §1`  | NVMe Controller Discovery and BAR Mapping                                                         | none       |     9 |
 | [x]  | `D01 T16 §2`  | Admin Queue Setup and Identify Commands                                                           | none       |     8 |
 | [x]  | `D01 T16 §3`  | I/O Queue Creation and Sector Read/Write                                                          | none       |     9 |
@@ -605,7 +605,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T17 §3`  | USB MSC BOT (Bulk-Only Transport) Driver                                                          | none       |     7 |
 | [x]  | `D01 T17 §4`  | Block Device Registration and VFS Integration                                                     | none       |     5 |
 | [x]  | `D01 T17 §5`  | Interrupt-Driven Hot-Plug and Post-Boot Lifecycle                                                 | none       |     8 |
-| [/]  | `D01 T17 §6`  | Hardware Compatibility -- Non-Intel xHCI Vendors                                                  | bare-metal |     7 |
+| [x]  | `D01 T17 §6`  | Hardware Compatibility -- Non-Intel xHCI Vendors                                                  | none       |     7 |
 | [x]  | `D01 T18 §1`  | xHCI Interrupt Endpoint Setup                                                                     | none       |     6 |
 | [x]  | `D01 T18 §2`  | Interrupt Transfer Polling                                                                        | none       |     6 |
 | [x]  | `D01 T18 §3`  | USB HID Boot-Protocol Keyboard Driver                                                             | none       |     9 |
@@ -619,7 +619,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T19 §4`  | USB Transport Error Recovery (Stall/Halt Handling)                                                | none       |     9 |
 | [ ]  | `D01 T19 §5`  | Bulk Transfer Timeouts                                                                            | none       |    10 |
 | [ ]  | `D01 T19 §7`  | XUSB2PR Port-Ready Polling (Intel EHCI→xHCI)                                                      | none       |     5 |
-| [/]  | `D01 T19 §6`  | Remove sleep_ms(2000) Hack                                                                        | bare-metal |     5 |
+| [x]  | `D01 T19 §6`  | Remove sleep_ms(2000) Hack                                                                        | none       |     4 |
 | [x]  | `D01 T19 §8`  | klog_disk_flush Bounded Loop                                                                      | none       |     7 |
 | [x]  | `D01 T19 §9`  | klog Deferred Flush Mode                                                                          | none       |     6 |
 | [x]  | `D01 T19 §10` | Boot Media Speed Detection                                                                        | none       |     6 |
@@ -629,6 +629,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T19 §14` | IXFS Boot Tests: Slow-Media-Aware                                                                 | none       |     7 |
 | [ ]  | `D01 T19 §15` | Flush Progress on Splash Diagnostic Line                                                          | none       |     6 |
 | [x]  | `D01 T19 §16` | xHCI Command Ring + BOT Transport SMP Serialization                                               | none       |     6 |
+| [ ]  | `D01 T19 §17` | USB-Disk Boot Legs in the Smoke Matrix                                                            | none       |     5 |
 | [ ]  | `D01 T20 §1`  | Bootloader Allocates xHCI DMA Structures                                                          | none       |    14 |
 | [ ]  | `D01 T20 §2`  | Bootloader Performs USBLEGSUP + Controller Takeover                                               | none       |    12 |
 | [/]  | `D01 T20 §3`  | Bootloader Enumerates Devices with Persistent State                                               | none       |     6 |
@@ -681,10 +682,10 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [ ]  | `D01 T25 §2`  | DHCP/PXE Provenance Capture                                                                       | none       |     6 |
 | [x]  | `D01 T25 §3`  | TFTP Kernel and boot.conf Load                                                                    | none       |     5 |
 | [x]  | `D01 T25 §4`  | UEFI HTTP Boot Load Path                                                                          | none       |     6 |
-| [/]  | `D01 T25 §5`  | Network Boot Asset Integrity                                                                      | none       |     9 |
+| [ ]  | `D01 T25 §5`  | Network Boot Asset Integrity                                                                      | none       |     9 |
 | [ ]  | `D01 T25 §6`  | boot_info Network Provenance                                                                      | none       |     8 |
 | [x]  | `D01 T25 §7`  | Fallback Ordering with Local Media                                                                | none       |     5 |
-| [x]  | `D01 T25 §8`  | Recovery and Installer over Network                                                               | none       |     6 |
+| [/]  | `D01 T25 §8`  | Recovery and Installer over Network                                                               | none       |     6 |
 | [ ]  | `D01 T25 §9`  | Network Boot Diagnostics and BlackBox Report                                                      | none       |     5 |
 | [ ]  | `D01 T25 §10` | PXE/HTTP Boot Tests                                                                               | bare-metal |     5 |
 | [x]  | `D01 T26 §1`  | Hibernation Image Metadata Format                                                                 | none       |     7 |
@@ -787,7 +788,7 @@ The kernel's own model comes straight after boot because every driver, filesyste
 | [x]  | `D02 T04 §7`  | ETW Tracing Syscalls Wired to SSDT                                                                | none  |     9 |
 | [ ]  | `D02 T04 §8`  | Crash-Persistent Log Capture                                                                      | none  |    13 |
 | [x]  | `D02 T04 §9`  | Per-Entry Context Metadata                                                                        | none  |    10 |
-| [/]  | `D02 T04 §10` | Log Integrity Verification                                                                        | none  |    10 |
+| [ ]  | `D02 T04 §10` | Log Integrity Verification                                                                        | none  |    10 |
 | [/]  | `D02 T04 §11` | ETW Provider Registration and Session Filtering                                                   | none  |     9 |
 | [x]  | `D02 T04 §12` | ETW Advanced Capture -- Stack-Walk, Autologger, Self-Describing Schema                            | none  |     6 |
 | [x]  | `D02 T04 §13` | Rotated-Log Compression                                                                           | none  |     8 |
@@ -1027,7 +1028,7 @@ The kernel's own model comes straight after boot because every driver, filesyste
 | [x]  | `D02 T17 §10` | PE32+ Base Relocation                                                                             | none  |     4 |
 | [x]  | `D02 T17 §11` | PE32+ TLS Directory Processing                                                                    | none  |     6 |
 | [x]  | `D02 T17 §12` | PE32+ Load Config and CFG Bitmap                                                                  | none  |     6 |
-| [/]  | `D02 T17 §13` | `elf2eif` Host-Side Converter                                                                     | none  |     7 |
+| [ ]  | `D02 T17 §13` | `elf2eif` Host-Side Converter                                                                     | none  |     7 |
 | [x]  | `D02 T17 §14` | ELF Dynamic Linker                                                                                | none  |     8 |
 | [x]  | `D02 T17 §15` | ASLR -- Address Space Layout Randomization                                                        | none  |     7 |
 | [x]  | `D02 T17 §16` | Script/Shebang Interpreter Support                                                                | none  |     5 |
@@ -1269,16 +1270,16 @@ The kernel's own model comes straight after boot because every driver, filesyste
 | [x]  | `D02 T33 §1`  | Memory-Map Design + Canonical Layout Decision                                                     | none  |     9 |
 | [ ]  | `D02 T33 §2`  | Direct Map Construction (kernel still low)                                                        | none  |    11 |
 | [/]  | `D02 T33 §3`  | Linker VMA/LMA Split + Higher-Half Jump                                                           | none  |    14 |
-| [x]  | `D02 T33 §4`  | Descriptor Tables + Per-CPU at High Addresses + AP Path                                           | none  |     7 |
-| [x]  | `D02 T33 §5`  | Bootloader / `boot_info` / Framebuffer High Handoff                                               | none  |     8 |
-| [x]  | `D02 T33 §6`  | Per-Process PML4: Kernel High Shared, User Low Private                                            | none  |     7 |
+| [/]  | `D02 T33 §4`  | Descriptor Tables + Per-CPU at High Addresses + AP Path                                           | none  |     7 |
+| [/]  | `D02 T33 §5`  | Bootloader / `boot_info` / Framebuffer High Handoff                                               | none  |     8 |
+| [/]  | `D02 T33 §6`  | Per-Process PML4: Kernel High Shared, User Low Private                                            | none  |     7 |
 | [ ]  | `D02 T33 §7`  | Retire the `0x800000` USER_BASE Ceiling + BSS Guard                                               | none  |    35 |
 | [ ]  | `D01 T14 §13` | klog Format-Width Contract, Compiler-Checked                                                      | none  |     4 |
 | [ ]  | `D01 T14 §15` | Anti-Rollback Terminal Give-Up: Durable Record                                                    | none  |     4 |
 | [ ]  | `D01 T14 §17` | Restore Panic Evidence Before Phase 0 Can Overwrite It                                            | none  |     4 |
 | [ ]  | `D01 T14 §19` | Record the Panic-Page Pin Outcome in the `boot_info` Handoff                                      | none  |     5 |
 | [ ]  | `D01 T29 §19` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none  |     3 |
-| [x]  | `D02 T33 §8`  | 5-Level Paging (LA57) Support -- Exceeds Win11                                                    | none  |     6 |
+| [/]  | `D02 T33 §8`  | 5-Level Paging (LA57) Support -- Exceeds Win11                                                    | none  |     6 |
 | [x]  | `D02 T33 §9`  | VMM Walker Conversion -- Route Every Deref Through the HHDM Helper                                | none  |    14 |
 | [x]  | `D02 T33 §10` | Tactical BSS Headroom -- Large Static Pools to Dynamic Allocation                                 | none  |     7 |
 | [ ]  | `D02 T33 §11` | Unpark the Ceiling-Stalled Kernel Queue                                                           | none  |    11 |

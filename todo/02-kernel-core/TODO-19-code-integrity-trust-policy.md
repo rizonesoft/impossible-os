@@ -139,11 +139,11 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 - [/] Reject malformed/ambiguous signed ranges -- `eif_validate()` already bounds-checks `signature_offset` + canonical ordering in `src/kernel/eif.c`; PE/ELF range checks land with those formats.
 - [/] Per-page hash validation on demand-paging (parity 💎: Win page-hashes + Linux fs-verity): a pre-map whole-file hash is bypassed if a page faults in later. Validate each executable page as paged in. -> XREF: TODO-17 (paging/loader).
 - [/] IMA/EVM-style appraisal of image security metadata, not just file bytes: appraise integrity-protected attributes alongside the content digest. BLOCKED on the §4 signer-key delivery decision. -> XREF: D02 T20 §11.
-- [/] Commit: `"kernel: ci -- embedded signature validation"` -- BLOCKED: no code shippable until the §4 prereq decisions land. -> XREF: D02 T20 §11.
+- [ ] Commit: `"kernel: ci -- embedded signature validation"` -- BLOCKED: no code shippable until the §4 prereq decisions land. -> XREF: D02 T20 §11.
 
 **Test checkpoint:** a signed EIF trailer validates before segment mapping; a malformed/overlapping signed range is rejected with an error (not silently accepted); PE Authenticode digest excludes the checksum + certificate-table fields per spec. Test on: QEMU WHPX + TCG; bare metal.
 >
-> **Deferred:** [H] awaiting-answer Q7: embedded-signature validation needs the signer-key delivery decision, plus a compiled trust anchor + anchor-lookup and §2 loader wiring; the stamp named only its own prereq items, so the decision was never surfaced. No code shippable without it. -> XREF: `todo/answers.md` (item: "Q7 (TODO-20 §11, TODO-19 §4, TODO-17 §17)")
+> **Notes:** Reopened 2026-11-11: Q7 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [H] awaiting-answer Q7: embedded-signature validation needs the signer-key delivery decision, plus a compiled trust anchor + anchor-lookup and §2 loader wiring; the stamp named only its own prereq items, so the decision was never surfaced. No code shippable without it. -> XREF: `todo/answers.md` (item: "Q7 (TODO-20 §11, TODO-19 §4, TODO-17 §17)")
 
 ---
 
@@ -154,11 +154,11 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 - [/] Catalog maps image hash to signer, policy tag, timestamp, allowed image type. BLOCKED on the format decision + §4 signer identity.
 - [/] Catalog cache indexed by hash + ERESOURCE-protected (the cache structure is format-independent). BLOCKED on the §5 catalog file-format decision. -> XREF: T19 §5.
 - [/] Recovery path if catalogs missing in Safe Mode. BLOCKED on the §5 catalog file-format decision + the catalog loader. -> XREF: T19 §5.
-- [/] Commit: `"kernel: ci -- catalog database"` -- BLOCKED on the §5 catalog file-format decision. -> XREF: T19 §5.
+- [ ] Commit: `"kernel: ci -- catalog database"` -- BLOCKED on the §5 catalog file-format decision. -> XREF: T19 §5.
 
 **Test checkpoint:** a catalog file maps a known image hash to its signer; a hash lookup hits the ERESOURCE-protected cache; Safe Mode with missing catalogs takes the recovery path without hanging. Test on: QEMU WHPX + TCG; bare metal.
 >
-> **Deferred:** [H] awaiting-answer Q7: the catalog format (ASN.1 `.cat` is out of scope for the raw-Ed25519 `ci_crypto` bridge) needs §4's signer identity, which waits on that answer. The hash-indexed ERESOURCE cache is implementable once the format lands. -> XREF: `todo/answers.md` (item: "Q7 (TODO-20 §11, TODO-19 §4, TODO-17 §17)")
+> **Notes:** Reopened 2026-11-11: Q7 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [H] awaiting-answer Q7: the catalog format (ASN.1 `.cat` is out of scope for the raw-Ed25519 `ci_crypto` bridge) needs §4's signer identity, which waits on that answer. The hash-indexed ERESOURCE cache is implementable once the format lands. -> XREF: `todo/answers.md` (item: "Q7 (TODO-20 §11, TODO-19 §4, TODO-17 §17)")
 
 ---
 

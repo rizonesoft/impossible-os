@@ -116,7 +116,7 @@ _MAX_CACHE_BYTES = 64 * 1024 * 1024
 # modulus hashes to itself, so collisions cannot be engineered -- and it bounds
 # the COUNT as a side effect, because duplicates are refused on first repeat.
 #
-# 65535 against a live maximum of 62 (TODO-04) and a documented 60-section hard
+# 65535 against a live maximum of 62 (TODO-04) and a documented 99-section hard
 # cap in CLAUDE.md: ~1000x headroom, so no real corpus can reach it.
 _MAX_SECTION_N = 65535
 

@@ -325,11 +325,11 @@ When `postbars=1`, the boot splash status text area shows VPD-style named stages
 
 **Files:** `src/kernel/boot_splash.c`, `src/kernel/vpd.c`
 
-- [/] operator-gated (Tier 2 splash design not finalised): `boot_splash_status()` in `postbars=1` mode: instead of rendering bare `msg` text, render `"STAGE_NAME +NNNms ✓"` using the existing TTF font renderer
-- [/] operator-gated (Tier 2 splash design not finalised): Stage history scroll: show the last 3-4 completed stages above the current one, with decreasing opacity (100%, 60%, 30%)
-- [/] operator-gated (Tier 2 splash design not finalised): Progress bar integration: use the splash's existing bottom area to render the VPD progress bar, matching the splash accent color
-- [/] operator-gated (Tier 2 splash design not finalised): `postbars=2` (diagnostic mode): skip splash art entirely; render the full Tier 1 VPD layout using the TTF font at larger scale (12px instead of 7px) with phase grouping
-- [/] operator-gated (Tier 2 splash design not finalised): Commit: `"boot: Tier 2 splash-integrated VPD progress display"`
+- [ ] operator-gated (Tier 2 splash design not finalised): `boot_splash_status()` in `postbars=1` mode: instead of rendering bare `msg` text, render `"STAGE_NAME +NNNms ✓"` using the existing TTF font renderer
+- [ ] operator-gated (Tier 2 splash design not finalised): Stage history scroll: show the last 3-4 completed stages above the current one, with decreasing opacity (100%, 60%, 30%)
+- [ ] operator-gated (Tier 2 splash design not finalised): Progress bar integration: use the splash's existing bottom area to render the VPD progress bar, matching the splash accent color
+- [ ] operator-gated (Tier 2 splash design not finalised): `postbars=2` (diagnostic mode): skip splash art entirely; render the full Tier 1 VPD layout using the TTF font at larger scale (12px instead of 7px) with phase grouping
+- [ ] operator-gated (Tier 2 splash design not finalised): Commit: `"boot: Tier 2 splash-integrated VPD progress display"`
 
 **Test checkpoint:** With §9 shipped: `postbars=1` shows splash status with stage timing and recent history per checklist; `postbars=2` uses TTF diagnostic layout. QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
 > **Test runner:** N/A (deferred -- no code shipped; `test_vpd.c` file-wide gap) | validation: end-user Tier 2 splash UX on QEMU/hardware (manual, post-bare-metal)
@@ -338,7 +338,7 @@ When `postbars=1`, the boot splash status text area shows VPD-style named stages
 > - Why now-deferred: building end-user boot UX before Tier 1 is hardware-proven would churn the design; the [!NOTE] records the revisit condition. `postbars=2` already drops the splash (§5) so Tier 1 stays authoritative.
 > - Scope boundary: §9 owns the Tier 2 splash integration; the Tier 1 renderer is §4; the raw-to-splash handoff is §10 (also deferred).
 > **Verified:** 2026-06-15 | deferred -- no code shipped | 0/5 items | build OK (no code change) | manual (design-gated, revisit post-bare-metal)
-> **Deferred:** [M] awaiting-answer Q19: Tier 2 splash-integrated VPD progress unimplemented (reason: end-user UX gated on finalized splash design + proven bare-metal boot reliability; Tier 1 is the shipped diagnostic path) -> XREF: 01-boot-platform/TODO-15 §9 (item: "boot_splash_status() in postbars=1 mode renders STAGE_NAME +NNNms" at line 324)
+> **Notes:** Reopened 2026-11-11: Q19 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [M] awaiting-answer Q19: Tier 2 splash-integrated VPD progress unimplemented (reason: end-user UX gated on finalized splash design + proven bare-metal boot reliability; Tier 1 is the shipped diagnostic path) -> XREF: 01-boot-platform/TODO-15 §9 (item: "boot_splash_status() in postbars=1 mode renders STAGE_NAME +NNNms" at line 324)
 
 ## 10. Seamless Tier Transition *(deferred)*
 > [!NOTE] Deferred -- depends on §9 (Tier 2 splash integration). No transition needed until Tier 2 exists. Currently `vpd_stop_tier1()` is called before splash init and the splash background simply overwrites the VPD area.
@@ -411,7 +411,7 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 - [x] `boot_post_nvram_write16(POST16_BOOT_FAILED)` writes failure marker to NVRAM for next-boot detection
 - [x] Pre-splash panic (Tier 1): failed stage visible as red square on black screen before halt
 - [x] Next boot info header shows "FAILED Phase N (0xNNNN)" from NVRAM
-- [/] operator-gated (Tier 2 splash design not finalised): Tier 2 post-splash panic display *(deferred -- depends on §9)*
+- [x] Retired by Q19 (`todo/answers.md`): the Tier 2 post-splash panic display is dropped; stage detail stays on the Tier 1 diagnostic screen.
 - [x] Commit: `"boot: VPD panic integration -- failure highlighting"`
 
 **Test checkpoint:** Forced panic shows Tier 1 failed stage in red; next boot shows last POST banner; Tier 2 panic path stays open until §9. QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
@@ -422,7 +422,7 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 > - Review: Codex 3x fixed the 0xFFFE info-header misclassification (now "FAILED (panic)" not "Phase 3") + a stale `boot_halt` NVRAM comment; exact-stage preservation deferred (shared with §8).
 > - Scope boundary: §13 owns the at-panic stage-red marking; the next-boot banner is §8; Tier 2 post-splash panic display is deferred to §9.
 > **Verified:** 2026-06-14 | this review commit (fixes in-commit) | 4/5 items | build OK | manual (forced-panic pending)
-> **Deferred:** [M] awaiting-answer Q19: Tier 2 post-splash panic display unimplemented (depends on the Tier 2 splash) -> XREF: 01-boot-platform/TODO-15 §13 (item: "Tier 2 post-splash panic display" at line 414)
+> **Notes:** Reopened 2026-11-11: Q19 is answered in `todo/answers.md`, so apply the answer and build this section. Was Deferred: [M] awaiting-answer Q19: Tier 2 post-splash panic display unimplemented (depends on the Tier 2 splash) -> XREF: 01-boot-platform/TODO-15 §13 (item: "Tier 2 post-splash panic display" at line 414)
 > **Deferred:** [M] exact failing stage lost on clean panic (generic POST16_BOOT_FAILED), shared with §8 -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 304)
 > **Quality reviewed:** 2026-06-14 | Codex 3x (adversarial, consistency, perf) | 0H+2M fixed, 1M deferred | scope: kernel-code-quality
 

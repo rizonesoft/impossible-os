@@ -19,7 +19,9 @@ Classes
   DONE        shipped [x]/[/] with BOTH Verified AND Quality-reviewed stamps,
               OR a [x]/[/] section carrying a TERMINAL Deferred stamp (parked).
   BLOCKED     a [x]/[/] section whose Deferred stamp carries an `awaiting-*`
-              token (recoverable: operator answer, hardware, infra). The run
+              token (recoverable: operator answer, hardware, infra). A stamp
+              that waits only on questions answered in todo/answers.md is no
+              longer a park: the section reads NEEDS_WORK. The run
               stays armed; fixpoint refuses (3-state oracle, runner-kit
               2026-07-03 -- prevents a mass recoverable-park reading as DONE).
   NEEDS_WORK  anything else -- [ ]/blank, an in-progress [/], OR a shipped [x]
@@ -124,6 +126,47 @@ BLOCKED = "BLOCKED"
 # (resolved out-of-band via its XREF owner) and stays DONE-equivalent,
 # preserving the pre-2026-07-03 behavior for every existing stamp.
 DEFERRED_RECOVERABLE_RE = re.compile(r"\bawaiting-[a-z0-9-]+\b", re.I)
+# A stamp that waits on an ANSWER stops waiting when the answer exists. Until
+# 2026-11-11 nothing read todo/answers.md back: all 37 questions had an answer
+# and 36 sections still read BLOCKED on them, so the run would never return to
+# work whose decision had been made. Such a stamp now counts as no stamp, and
+# the section is open work: the answer is the instruction.
+AWAITING_ANSWER_RE = re.compile(r"\bawaiting-answer\b", re.I)
+_ANSWERED_CACHE = {}
+
+
+def _answered_questions(md_path):
+    """The numbers of the answered questions in the todo/answers.md above `md_path`.
+
+    The reading rules are scripts/overnight/collect-questions.py's own (what
+    counts as a question block and as an answer), loaded from it, never copied.
+    Any failure reads as "nothing answered": the park then holds, as before."""
+    try:
+        answers = Path(md_path).resolve().parents[1] / "answers.md"
+        stat = answers.stat()
+        key = (str(answers), stat.st_mtime_ns, stat.st_size)
+        if key not in _ANSWERED_CACHE:
+            import importlib.util
+            src = Path(__file__).resolve().parents[2] / "scripts" / "overnight" / "collect-questions.py"
+            spec = importlib.util.spec_from_file_location("_collect_questions_for_triage", str(src))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _ANSWERED_CACHE.clear()
+            _ANSWERED_CACHE[key] = (mod, mod.answered_question_numbers(answers.read_text(encoding="utf-8")))
+        return _ANSWERED_CACHE[key]
+    except Exception:  # noqa: BLE001 -- an unreadable answers file must not open a park
+        return None, set()
+
+
+def park_is_answered(stamp_line, md_path):
+    """True when a Deferred stamp waits only on questions that have an answer."""
+    if not AWAITING_ANSWER_RE.search(stamp_line):
+        return False
+    waits_on_other = [m for m in DEFERRED_RECOVERABLE_RE.findall(stamp_line) if m.lower() != "awaiting-answer"]
+    if waits_on_other:
+        return False  # it also waits on hardware, an operator action or the like
+    mod, answered = _answered_questions(md_path)
+    return bool(mod) and mod._waits_only_on_answered(stamp_line, answered)
 
 
 def repo_root(override=None):
@@ -246,6 +289,8 @@ def section_stamps(md_path):
             elif QUALITY_RE.match(phys):
                 kinds.add("Q")
             elif DEFERRED_RE.match(phys):
+                if park_is_answered(phys, md_path):
+                    continue  # the question it waited on is answered: open work again
                 kinds.add("D")
                 if DEFERRED_RECOVERABLE_RE.search(phys):
                     kinds.add("DR")  # recoverable deferral (awaiting-*)
