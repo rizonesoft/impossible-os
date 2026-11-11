@@ -494,6 +494,7 @@ bash tools/fuzz/run.sh --repro <target> <file>  # replay one input
 | `eif`                 | `eif_check()` and segment decompression in `src/kernel/eif_parse.c`    |
 | `fat32`               | boot sector, FSInfo and long-name binding in `src/kernel/fs/fat32/fat32_parse.c` |
 | `registry_hive`       | `hive_parse_payload()` and the header check in `src/kernel/registry_hive_parse.c` |
+| `utest_klog_attr`     | `utest_klog_attr_decode()` in `src/kernel/test/utest_klog_attr.c` (a manifest's `expects_klog=` / `allows_klog=` value) |
 
 `scripts/test-tooling.sh` runs every target for 10 s on each pack run. The checked-in corpus under `tools/fuzz/corpus/<target>/` (seeds are named `*.seed` or by format, never `*.bin`, which `.gitignore` drops) is replayed first, so the reproducer of a fixed defect fails immediately if the fix is lost. When a run finds a defect, fix it at the validator and add the reproducer to the corpus. First run, 2026-11-10: the security-descriptor target found, in 15 seconds, a SID read at an attacker-chosen unaligned offset. On 2026-11-11 the PE target found the same class in the section table (a header at a file-chosen unaligned offset); every PE, ELF and FAT read through a file offset now goes through the byte accessors in `include/kernel/le_bytes.h` or a copy into a local struct.
 

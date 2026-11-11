@@ -311,7 +311,9 @@ int klog_probe_tag_is(const char *tag, const char *name);
  *   - a record from the suite's own execution (klog_watch_ctx_owns) matching
  *     a registered expectation (tag by klog_tag_is, plus a substring of the
  *     formatted message) is counted against it and reaches no sink. Unless it
- *     was also filtered it enters the ring and spends no output budget;
+ *     was also filtered it enters the ring and spends no output budget. An
+ *     expectation registered with klog_watch_allow may match and may not; one
+ *     from klog_watch_expect fails the suite when nothing matched it;
  *   - a record from the suite's own execution on a tag below its threshold
  *     (TEST_KLOG_SUPPRESS) counts as declared noise;
  *   - any other record while a SUITE window is open is counted as unexpected
@@ -322,8 +324,10 @@ int klog_probe_tag_is(const char *tag, const char *name);
  *     stray, which the runner reports and never gates.
  * A filtered record never enters the ring. Unexpected records are charged to
  * the suite that was running when they were emitted, from whichever CPU or
- * thread; expected ones only to the suite's own execution. The runner is the
- * only caller of the window functions; tests register through TEST_KLOG_EXPECT.
+ * thread; expected ones only to the suite's own execution. The kernel runner
+ * opens a window per suite (tests register through TEST_KLOG_EXPECT); the
+ * user-mode launcher opens one per ring-3 binary (klog_watch_utest_begin),
+ * whose execution is every task captured for that binary.
  * Allocation-free, so it is safe from ISR context and on any CPU.
  *
  * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 12 */
@@ -344,6 +348,7 @@ struct klog_watch_expect {
     const char *file;        /* registering call site (a string literal) */
     int         line;
     uint32_t    hits;
+    uint8_t     optional;    /* 1: klog_watch_allow, an unmatched one is not a failure */
 };
 
 struct klog_watch_report {
@@ -373,14 +378,26 @@ uint32_t klog_watch_run_end(void);
  * be absorbed by an expectation's text.
  * Does nothing while the watch is OFF (outside a run). */
 void klog_watch_suite_begin(void);
+/* Open a SUITE window for a user-mode binary: its execution is every task
+ * captured for `owner_pid` (utest_capture_owner_pid: the launched task and its
+ * fork descendants) on the CALLING CPU, outside ISR and DPC context. The CPU
+ * is kept because task_current() reads a global cursor, so another CPU can
+ * name a captured task while running something else. 0 opens nothing.
+ * Does nothing while the watch is OFF. */
+void klog_watch_utest_begin(uint32_t owner_pid);
 /* Close the SUITE window back to RUN and snapshot it into `out`. */
 void klog_watch_suite_end(struct klog_watch_report *out);
 /* Register an expectation in the open SUITE window. */
 int klog_watch_expect(const char *tag, const char *text, const char *file, int line);
+/* Register an allowance: an error the window's execution may log (it matches
+ * like an expectation and reaches no sink) but need not. For a probe whose
+ * outcome legitimately varies, such as an allocation sweep. */
+int klog_watch_allow(const char *tag, const char *text, const char *file, int line);
 /* The current mode (for the harness's own tests). */
 klog_watch_mode_t klog_watch_mode(void);
-/* How many failures the runner charges for `r`: one per expectation that
- * never matched, plus one when any unexpected record appeared. Pure. */
+/* How many failures the runner charges for `r`: one per expectation (not
+ * allowance) that never matched, plus one when any unexpected record
+ * appeared. Pure. */
 uint32_t klog_watch_failures(const struct klog_watch_report *r);
 /* Snapshot the open window without closing it. */
 void klog_watch_peek(struct klog_watch_report *out);
@@ -406,6 +423,8 @@ struct klog_watch_ctx {
     uint32_t    cpu;
     const void *task;
     const void *thread;
+    uint32_t    capture_owner;  /* the user-mode binary the task is captured for, 0 none;
+                                 * in an OWNER, non-zero selects the binary's window */
 };
 
 struct klog_watch_state {
@@ -415,9 +434,11 @@ struct klog_watch_state {
     struct klog_watch_report report;
 };
 
-/* 1 when a record logged from `ctx` belongs to the suite `owner` opened: the
- * same CPU, task and thread, in ordinary thread context (not an ISR, not a
- * DPC), with both contexts known. Pure. */
+/* 1 when a record logged from `ctx` belongs to the window `owner` opened: the
+ * same CPU, in ordinary thread context (not an ISR, not a DPC), with both
+ * contexts known, and then the same task and thread, or for a user-mode
+ * binary's window (owner->capture_owner != 0) a task captured for the same
+ * binary. Pure. */
 int klog_watch_ctx_owns(const struct klog_watch_ctx *owner, const struct klog_watch_ctx *ctx);
 void     klog_watch_fx_init(struct klog_watch_state *st);
 void     klog_watch_fx_run_begin(struct klog_watch_state *st);
@@ -426,6 +447,8 @@ void     klog_watch_fx_suite_begin(struct klog_watch_state *st);
 void     klog_watch_fx_suite_end(struct klog_watch_state *st, struct klog_watch_report *out);
 int      klog_watch_fx_expect(struct klog_watch_state *st, const char *tag, const char *text,
                               const char *file, int line);
+int      klog_watch_fx_allow(struct klog_watch_state *st, const char *tag, const char *text,
+                             const char *file, int line);
 /* Judge a synthetic record exactly as klog_emit judges a real one: 1 = kept
  * off the sinks (matched), 0 = counted and printed, -1 = not watched (or the
  * message does not fit a record). fx_probe logs as the fixture's owner;

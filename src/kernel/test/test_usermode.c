@@ -50,6 +50,8 @@
 #include "kernel/ob/ob_process.h"
 #include "kernel/timer.h"
 #include "kernel/test/test_usermode.h"
+#include "kernel/test/utest_klog_attr.h"
+#include "kernel/smp.h"
 #include "kernel/csprng.h"
 #include "kernel/crypto/sha256.h"
 #include "kernel/exec.h"
@@ -1312,6 +1314,56 @@ typedef enum {
     UTEST_PLAN_REFUSAL = 1,   /* an identity to publish as a counted failure */
 } utest_plan_kind_t;
 
+/* The kernel error lines one binary provokes on purpose, from its manifest
+ * line's `expects_klog=` / `allows_klog=` attributes (grammar in
+ * include/kernel/test/utest_klog_attr.h). Each `decl` is "<tag>\0<text>",
+ * decoded in place in the manifest arena, so it lives exactly as long as the
+ * entry's name does. The launcher registers them in the binary's error
+ * window (test_usermode_capture_begin); bit i of `optional` marks decl i as
+ * an allowance rather than an expectation. */
+#define UTEST_KLOG_DECL_MAX 8u
+_Static_assert(UTEST_KLOG_DECL_MAX <= KLOG_WATCH_MAX_EXPECTS,
+               "every declaration a manifest line may carry must fit the error window");
+_Static_assert(UTEST_KLOG_DECL_MAX <= 8u, "`optional` is an 8-bit mask");
+struct u_klog_decls {
+    const char *decl[UTEST_KLOG_DECL_MAX];
+    uint8_t     n;
+    uint8_t     optional;
+};
+
+static const char *u_klog_decl_text(const char *decl)
+{
+    while (*decl)
+        decl++;
+    return decl + 1;
+}
+
+/* Same declarations in the same order: two manifest lines naming one file
+ * fold only when they declare the same error lines, like type= and
+ * expects_tasks=. NULL is the empty set. */
+static int u_klog_decls_equal(const struct u_klog_decls *a, const struct u_klog_decls *b)
+{
+    uint8_t an = a ? a->n : 0, bn = b ? b->n : 0;
+
+    if (an != bn)
+        return 0;
+    if (an == 0)
+        return 1;
+    if (a->optional != b->optional)
+        return 0;
+    for (uint8_t i = 0; i < an; i++) {
+        const char *x = a->decl[i], *y = b->decl[i];
+        /* Tag, its NUL, then the text: compare both strings. */
+        for (int part = 0; part < 2; part++) {
+            while (*x && *x == *y) { x++; y++; }
+            if (*x != *y)
+                return 0;
+            x++; y++;
+        }
+    }
+    return 1;
+}
+
 struct plan_entry {
     /* Stable for the whole run -- see the lifetime rules above. */
     const char  *name;
@@ -1375,6 +1427,9 @@ struct plan_entry {
      * any entry it cannot digest into a REFUSAL, so "a RUN entry carries a
      * frozen identity" is structural rather than a flag anyone must test. */
     uint8_t      content_digest[SHA256_DIGEST_LEN];
+    /* RUN only: the kernel error lines this binary declares. Empty for a
+     * glob-discovered binary, whose window then expects nothing. */
+    struct u_klog_decls klog;
 };
 
 #define UTEST_PLAN_BLOCK_BYTES                                             \
@@ -1498,6 +1553,9 @@ _Static_assert(sizeof(struct manifest_state) <= 4096,
  * what removes the old independent runnable cap. */
 static int u_plan_add_run(struct plan_state *ps, const char *name,
                           utest_type_t type, uint8_t expects, int intern);
+static int u_plan_add_run_klog(struct plan_state *ps, const char *name,
+                               utest_type_t type, uint8_t expects, int intern,
+                               const struct u_klog_decls *kd);
 
 /* The classification half of the parser, split from the loader below so
  * it can be exercised over caller-owned bytes. */
@@ -1626,6 +1684,16 @@ static int u_manifest_load(struct manifest_state *ms, struct plan_state *ps)
  * plan does: every accepted name is stored as a pointer into it.
  * Callers pass a buffer of at least `len + 1` bytes, because the
  * tokenizer's `*line_end = '\0'` can write at buf[len]. */
+/* 1 when manifest token `tok` starts with the literal `lit`. */
+static int u_attr_has_prefix(const char *tok, const char *lit)
+{
+    while (*lit) {
+        if (*tok++ != *lit++)
+            return 0;
+    }
+    return 1;
+}
+
 static void u_manifest_parse(struct manifest_state *ms, struct plan_state *ps,
                              char *buf, uint32_t len)
 {
@@ -1703,6 +1771,15 @@ static void u_manifest_parse(struct manifest_state *ms, struct plan_state *ps,
                     while (e < line_end && *e != ' ' && *e != '\t')
                         e++;
                     name_span = (uint32_t)(e - name_start);
+                    /* A raw NUL past the name ends every C-string scan
+                     * below early, so the attributes after it would be
+                     * dropped unseen (a later expects_klog= among them,
+                     * leaving the binary under a weaker policy than its
+                     * line states). The name's own NUL is the name check's
+                     * refusal; one anywhere after it refuses the line. */
+                    for (; e < line_end; e++)
+                        if (*e == '\0')
+                            bad_attr = 1;
                 }
                 while (*tok && *tok != ' ' && *tok != '\t')
                     tok++;
@@ -1715,6 +1792,9 @@ static void u_manifest_parse(struct manifest_state *ms, struct plan_state *ps,
                  * expects_tasks to 1 (launcher task only). */
                 entry_type = u_type_for_name(name_start);
                 uint32_t entry_expects = 1u;
+                struct u_klog_decls entry_klog;
+                entry_klog.n = 0u;
+                entry_klog.optional = 0u;
                 /* Walk remaining tokens, honouring `type=<value>` and
                  * `expects_tasks=<N>`. */
                 while (*tok) {
@@ -1762,6 +1842,28 @@ static void u_manifest_parse(struct manifest_state *ms, struct plan_state *ps,
                         if (n == 0) n = 1;
                         if (n > 255u) n = 255u;
                         entry_expects = n;
+                    } else if (u_attr_has_prefix(tok, "expects_klog=") ||
+                               u_attr_has_prefix(tok, "allows_klog=")) {
+                        /* A kernel error line this binary provokes. A value
+                         * the decoder refuses, or a ninth declaration, is the
+                         * same recognised-attribute refusal as a bad type=:
+                         * dropping it would leave the line it names
+                         * undeclared, and the binary failing for a reason the
+                         * manifest author never wrote. */
+                        int optional = (tok[0] == 'a');
+                        char *v = tok + (optional ? 12 : 13);
+                        char *text = (char *)0;
+
+                        if (entry_klog.n >= UTEST_KLOG_DECL_MAX ||
+                            utest_klog_attr_decode(v, KLOG_WATCH_TAG_MAX,
+                                                   KLOG_WATCH_TEXT_MAX,
+                                                   &text) != UTEST_KLOG_ATTR_OK) {
+                            bad_attr = 1;
+                        } else {
+                            if (optional)
+                                entry_klog.optional |= (uint8_t)(1u << entry_klog.n);
+                            entry_klog.decl[entry_klog.n++] = v;
+                        }
                     }
                     tok = kv_end;
                     while (*tok == ' ' || *tok == '\t') tok++;
@@ -1852,8 +1954,8 @@ static void u_manifest_parse(struct manifest_state *ms, struct plan_state *ps,
                  * caller turns into a fail-closed aggregate; parsing
                  * continues either way so the tail is still scanned for
                  * refusals. */
-                if (u_plan_add_run(ps, name_start, entry_type,
-                                   (uint8_t)entry_expects, 0))
+                if (u_plan_add_run_klog(ps, name_start, entry_type,
+                                        (uint8_t)entry_expects, 0, &entry_klog))
                     ms->count++;
             }
         }
@@ -2835,6 +2937,8 @@ _Static_assert(UTEST_SKIP_RECORD_BUDGET <= 9999999u,
 #define UTEST_RSNC_LEAK         " handle(s) leaked"
 #define UTEST_RSNC_ISOLATE      "isolation failed"
 #define UTEST_RSNC_INVALID      "invalid test report"
+#define UTEST_RSNC_KLOG         "kernel error mismatch"
+#define UTEST_RSNC_ISR          "interrupt depth leaked"
 /* The launcher stopped waiting because the monotonic clock stopped, so the one
  * number a timeout reason carries -- the deadline it passed -- is exactly the
  * thing this reason must NOT claim. It names the fault and nothing else. */
@@ -2849,6 +2953,8 @@ _Static_assert(UTEST_SKIP_RECORD_BUDGET <= 9999999u,
 #define UTEST_REASON_LEAK    (UTEST_DIGITS_U32 + UTEST_LIT(UTEST_RSNC_LEAK))
 #define UTEST_REASON_ISOLATE UTEST_LIT(UTEST_RSNC_ISOLATE)
 #define UTEST_REASON_INVALID UTEST_LIT(UTEST_RSNC_INVALID)
+#define UTEST_REASON_KLOG    UTEST_LIT(UTEST_RSNC_KLOG)
+#define UTEST_REASON_ISR     UTEST_LIT(UTEST_RSNC_ISR)
 /* Every refusal reason is NAMED here and used at its call site through
  * these macros, so the set below is the complete set by construction.
  * Enumerating one of them as a proxy (as the first version did) left the
@@ -2920,8 +3026,10 @@ _Static_assert(UTEST_SKIP_RECORD_BUDGET <= 9999999u,
                                      UTEST_REASON_EXIT),                   \
                           UTEST_MAX2(UTEST_REASON_LEAK,                    \
                                      UTEST_REASON_ISOLATE)),               \
-               UTEST_MAX2(UTEST_MAX2(UTEST_REASON_INVALID,                 \
-                                     UTEST_REASON_STALL),                  \
+               UTEST_MAX2(UTEST_MAX2(UTEST_MAX2(UTEST_REASON_INVALID,      \
+                                                UTEST_REASON_STALL),       \
+                                     UTEST_MAX2(UTEST_REASON_KLOG,         \
+                                                UTEST_REASON_ISR)),        \
                           UTEST_REASON_REFUSAL))
 _Static_assert(UTEST_REASON_MAX < UTEST_REASON_BUF,
                "the widest reason the launcher composes must fit the buffer "
@@ -3007,6 +3115,22 @@ static void u_reason_isolate(char (*dst)[UTEST_REASON_BUF])
     u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);
 }
 
+static void u_reason_klog(char (*dst)[UTEST_REASON_BUF])
+{
+    uint32_t rp = 0;
+
+    (*dst)[0] = '\0';
+    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_KLOG);
+}
+
+static void u_reason_isr(char (*dst)[UTEST_REASON_BUF])
+{
+    uint32_t rp = 0;
+
+    (*dst)[0] = '\0';
+    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_ISR);
+}
+
 static void u_reason_invalid(char (*dst)[UTEST_REASON_BUF])
 {
     uint32_t rp = 0;
@@ -3022,8 +3146,11 @@ static void u_reason_invalid(char (*dst)[UTEST_REASON_BUF])
 
 /* Per-kind fixed cost -- everything on the record that is NOT the name. */
 #define UTEST_FIXED_VERDICT                                                \
-    (UTEST_LIT(": FAIL (") + UTEST_DIGITS_U32 +                            \
-     UTEST_LIT(UTEST_RSNC_LEAK " -- escalated from PASS)"))
+    UTEST_MAX2(UTEST_LIT(": FAIL (") + UTEST_DIGITS_U32 +                  \
+                   UTEST_LIT(UTEST_RSNC_LEAK " -- escalated from PASS)"),  \
+               UTEST_LIT(": FAIL (") +                                     \
+                   UTEST_MAX2(UTEST_REASON_KLOG, UTEST_REASON_ISR) +       \
+                   UTEST_LIT(" -- escalated)"))
 /* A non-PASS binary testcase carries ONE of two elements, and the wider of
  * the two is what the bound must reserve. `<failure` binds today; naming
  * both keeps the derivation honest if either literal ever changes, which
@@ -6342,12 +6469,214 @@ void test_usermode_cap_settle_dead_thread(struct task *t, struct thread *thr)
  * framing records, and because a chunk record is only reconcilable at all
  * when its owner has a BEGIN: declaration and use then have exactly the
  * same lifetime. */
+/* ---- Per-binary kernel error window ----
+ *
+ * Every launched binary gets its own error window (klog_watch_utest_begin):
+ * the kernel error lines the manifest declares for it are registered, any
+ * other kernel error logged while it runs is unexpected, and either outcome
+ * fails THAT binary. The window opens in test_usermode_capture_begin, which
+ * task_create_internal calls after the child's capture fields are armed and
+ * BEFORE the child is published to the scheduler, so the child cannot log
+ * anything the window misses. It closes after the whole capture tree is
+ * reaped, so a fork descendant's error is the binary's too.
+ *
+ * Launcher thread only: u_run_one arms the window and capture_begin runs on
+ * the creating thread, which is the launcher, so these need no lock. A kernel
+ * unit test that calls capture_begin directly finds the window unarmed. */
+static struct {
+    const struct u_klog_decls *decls;   /* the binary about to be spawned */
+    uint8_t armed;        /* the next capture_begin opens a window */
+    uint8_t open;         /* a window is open for the current binary */
+    uint8_t setup_failed; /* a declaration could not be registered */
+    uint8_t watching;     /* this run opened the RUN window, so it may open windows */
+    /* The judged window's snapshot, about 3.6 KB: allocated once per run
+     * (kernel .bss has no room for it and a kernel stack should not carry
+     * it). NULL while watching means the allocation failed, and every
+     * binary then fails closed rather than going unjudged. */
+    struct klog_watch_report *report;
+} s_klog_win;
+
+/* The watch the window drives: the live one, or a test's fixture through
+ * test_usermode_klog_window_cycle, so the lifecycle and its fail-closed
+ * paths are tested without the live launcher. */
+static void u_klog_live_begin(void *ctx, uint32_t owner_pid)
+{
+    (void)ctx;
+    klog_watch_utest_begin(owner_pid);
+}
+static int u_klog_live_mode(void *ctx)
+{
+    (void)ctx;
+    return (int)klog_watch_mode();
+}
+static int u_klog_live_declare(void *ctx, int optional, const char *tag, const char *text)
+{
+    (void)ctx;
+    return optional ? klog_watch_allow(tag, text, "usermode.manifest", 0)
+                    : klog_watch_expect(tag, text, "usermode.manifest", 0);
+}
+static void u_klog_live_end(void *ctx, struct klog_watch_report *out)
+{
+    (void)ctx;
+    klog_watch_suite_end(out);
+}
+static const struct utest_klog_watch_ops s_klog_live_ops = {
+    u_klog_live_begin, u_klog_live_mode, u_klog_live_declare, u_klog_live_end,
+};
+static const struct utest_klog_watch_ops *s_klog_ops = &s_klog_live_ops;
+static void *s_klog_ops_ctx;
+
+static void u_klog_window_open(uint32_t owner_pid)
+{
+    const struct u_klog_decls *kd = s_klog_win.decls;
+
+    if (!s_klog_win.armed)
+        return;
+    s_klog_win.armed = 0;
+    s_klog_ops->begin(s_klog_ops_ctx, owner_pid);
+    if (s_klog_ops->mode(s_klog_ops_ctx) != (int)KLOG_WATCH_SUITE) {
+        s_klog_win.setup_failed = 1;
+        return;
+    }
+    s_klog_win.open = 1;
+    for (uint8_t i = 0; kd && i < kd->n; i++) {
+        const char *tag = kd->decl[i];
+        if (s_klog_ops->declare(s_klog_ops_ctx, (kd->optional >> i) & 1u, tag,
+                                u_klog_decl_text(tag)) != KLOG_WATCH_OK)
+            s_klog_win.setup_failed = 1;
+    }
+}
+
 void test_usermode_capture_begin(uint32_t owner_pid, const char *name)
 {
     utest_record_log(LOG_INFO,
                      "[UTEST-CAPTURE-BEGIN] owner=%u chunk_max=%u name=%s",
                      (uint64_t)owner_pid,
                      (uint64_t)UTEST_CAPTURE_CHUNK_MAX, name);
+    u_klog_window_open(owner_pid);
+}
+
+static int u_report_apply_invalid(int verdict, uint32_t *counters);
+
+/* The verdict after the binary's window and interrupt depth are judged.
+ * A PASS or SKIP with either fault becomes a FAIL, moving exactly one count
+ * from its bucket to failed; an existing FAIL keeps its own reason. `*why`
+ * names the reason to record: the interrupt depth when it changed (it makes
+ * every later error read as ISR context, so it is the root cause), else the
+ * kernel error mismatch, else none. */
+static int u_klog_escalate(int verdict, uint32_t klog_fails, uint8_t depth_before,
+                           uint8_t depth_after, uint32_t *counters, int *why)
+{
+    int fault = UTEST_KLOG_ESC_NONE;
+
+    if (depth_after != depth_before)
+        fault = UTEST_KLOG_ESC_ISR;
+    else if (klog_fails)
+        fault = UTEST_KLOG_ESC_KLOG;
+    *why = (verdict == 1) ? UTEST_KLOG_ESC_NONE : fault;
+    if (fault == UTEST_KLOG_ESC_NONE)
+        return verdict;
+    return u_report_apply_invalid(verdict, counters);
+}
+
+int test_usermode_klog_escalate(int verdict, uint32_t klog_fails, uint8_t depth_before,
+                                uint8_t depth_after, uint32_t *counters, int *why)
+{
+    return u_klog_escalate(verdict, klog_fails, depth_before, depth_after, counters, why);
+}
+
+/* Arm the window for the binary u_run_one is about to spawn. */
+static void u_klog_window_arm(const struct u_klog_decls *kd)
+{
+    s_klog_win.decls        = kd;
+    s_klog_win.armed        = s_klog_win.watching;
+    s_klog_win.open         = 0;
+    s_klog_win.setup_failed = 0;
+}
+
+/* Close the binary's window. Returns the failures to charge it: one per
+ * expectation that never matched, one for any unexpected error, and one when
+ * the declarations could not be registered; each is reported by name. */
+static uint32_t u_klog_window_judge(const char *name)
+{
+    struct klog_watch_report *r = s_klog_win.report;
+    uint32_t fails = 0;
+
+    s_klog_win.armed = 0;
+    if (s_klog_win.watching && !r) {
+        /* Close the window unread: there is nowhere to put its report. */
+        if (s_klog_win.open)
+            s_klog_ops->end(s_klog_ops_ctx, (struct klog_watch_report *)0);
+        s_klog_win.open = 0;
+        klog(LOG_ERROR, "UTEST",
+             "%s :: no memory for its kernel error report, so it cannot be judged", name);
+        return 1;
+    }
+    if (s_klog_win.setup_failed) {
+        klog(LOG_ERROR, "UTEST",
+             "%s :: its manifest kernel error lines could not be registered", name);
+        fails++;
+    }
+    if (!s_klog_win.open)
+        return fails;
+    s_klog_win.open = 0;
+    s_klog_ops->end(s_klog_ops_ctx, r);
+    fails += klog_watch_failures(r);
+    if (r->n_expects) {
+        uint32_t met = 0;
+        for (uint32_t i = 0; i < r->n_expects && i < KLOG_WATCH_MAX_EXPECTS; i++)
+            met += r->expects[i].hits ? 1u : 0u;
+        klog(LOG_INFO, "UTEST", "%s :: %u of %u declared kernel error line(s) appeared",
+             name, (uint64_t)met, (uint64_t)r->n_expects);
+    }
+    for (uint32_t i = 0; i < r->n_expects && i < KLOG_WATCH_MAX_EXPECTS; i++) {
+        const struct klog_watch_expect *x = &r->expects[i];
+        if (x->hits || x->optional)
+            continue;
+        klog(LOG_ERROR, "UTEST",
+             "%s :: expected kernel error line never appeared: %s: \"%s\"",
+             name, x->tag, x->text);
+    }
+    if (r->unexpected)
+        klog(LOG_ERROR, "UTEST",
+             "%s :: unexpected kernel error line (%u in all; first on cpu %u pid %u): %s",
+             name, (uint64_t)r->unexpected, (uint64_t)r->first_cpu,
+             (uint64_t)r->first_pid, r->first_line);
+    return fails;
+}
+
+uint32_t test_usermode_klog_window_cycle(const struct utest_klog_watch_ops *ops, void *ctx,
+                                         struct klog_watch_report *report, int watching,
+                                         const char *const *decls, uint8_t n,
+                                         uint8_t optional, uint32_t owner_pid,
+                                         int spawn, uint8_t *out_left_open)
+{
+    const struct utest_klog_watch_ops *saved_ops = s_klog_ops;
+    void *saved_ctx = s_klog_ops_ctx;
+    struct u_klog_decls kd;
+    uint32_t fails;
+    __typeof__(s_klog_win) saved = s_klog_win;
+
+    if (!ops || n > UTEST_KLOG_DECL_MAX)
+        return 0xFFFFFFFFu;
+    kd.n = n;
+    kd.optional = optional;
+    for (uint8_t i = 0; i < n; i++)
+        kd.decl[i] = decls[i];
+    s_klog_ops = ops;
+    s_klog_ops_ctx = ctx;
+    s_klog_win.watching = (uint8_t)(watching != 0);
+    s_klog_win.report = report;
+    u_klog_window_arm(&kd);
+    if (spawn)
+        u_klog_window_open(owner_pid);   /* what test_usermode_capture_begin does */
+    fails = u_klog_window_judge("seam.exe");
+    if (out_left_open)
+        *out_left_open = (uint8_t)(s_klog_win.open | s_klog_win.armed);
+    s_klog_win = saved;
+    s_klog_ops = saved_ops;
+    s_klog_ops_ctx = saved_ctx;
+    return fails;
 }
 
 struct u_report {
@@ -7542,6 +7871,8 @@ static struct plan_entry *u_plan_alloc(struct plan_state *ps)
     e->expects_tasks = 1u;
     e->exact_name     = 1u;
     e->smoke_selected = 0u;
+    e->klog.n         = 0u;
+    e->klog.optional  = 0u;
     return e;
 }
 
@@ -7563,6 +7894,15 @@ static struct plan_entry *u_plan_alloc(struct plan_state *ps)
  * runs under neither policy. */
 static int u_plan_add_run(struct plan_state *ps, const char *name,
                           utest_type_t type, uint8_t expects, int intern)
+{
+    return u_plan_add_run_klog(ps, name, type, expects, intern,
+                               (const struct u_klog_decls *)0);
+}
+
+/* `kd` NULL: no kernel error declarations. */
+static int u_plan_add_run_klog(struct plan_state *ps, const char *name,
+                               utest_type_t type, uint8_t expects, int intern,
+                               const struct u_klog_decls *kd)
 {
     struct plan_entry *e;
     uint32_t i;
@@ -7624,7 +7964,8 @@ static int u_plan_add_run(struct plan_state *ps, const char *name,
         }
         if (!u_name_equal_fs(prev->name, name, VFS_MAX_NAME))
             continue;
-        if (prev->type == type && prev->expects_tasks == expects)
+        if (prev->type == type && prev->expects_tasks == expects &&
+            u_klog_decls_equal(&prev->klog, kd))
             return 1;   /* one file, one policy, one plan slot */
         /* If EITHER declaration called this a smoke binary, the identity
          * is a smoke prerequisite and refusing it is a smoke non-PASS.
@@ -7668,6 +8009,8 @@ static int u_plan_add_run(struct plan_state *ps, const char *name,
     e->type          = type;
     e->kind          = (uint8_t)UTEST_PLAN_RUN;
     e->expects_tasks = expects;
+    if (kd)
+        e->klog = *kd;
     return 1;
 }
 
@@ -8437,7 +8780,8 @@ static int u_binary_present(const char *name)
 static void u_run_one(const char *name, utest_type_t type,
                       uint32_t *tap_point, uint32_t *counters,
                       struct u_report_totals *rt, int *out_verdict,
-                      const uint8_t *expect_digest)
+                      const uint8_t *expect_digest,
+                      const struct u_klog_decls *klog_decls)
 {
     char name_copy[VFS_MAX_NAME];
     char path[VFS_MAX_NAME + 4];
@@ -8458,6 +8802,9 @@ static void u_run_one(const char *name, utest_type_t type,
     struct u_report report;
     struct u_loader_evidence loader;
     uint64_t start_ms;
+    uint8_t isr_depth_before = 0;
+    uint8_t klog_escalated = 0;   /* a PASS/SKIP became FAIL over kernel errors or ISR depth */
+    uint32_t klog_fails;
     uint64_t end_ms;
     /* The verdict the ARTIFACTS carry, which is not always the verdict the
      * launcher aggregates: a loader that never reached ring 3 is a FAIL to
@@ -8512,6 +8859,17 @@ static void u_run_one(const char *name, utest_type_t type,
      * s_stress_iters boot.conf knob is RESERVED for a future
      * env-passing syscall that lets stress binaries query the desired
      * iteration count at runtime. */
+    /* The binary's kernel error window opens inside the spawn (see
+     * u_klog_window_open), and the interrupt depth is read on both sides of
+     * the run: the launcher runs in thread context, so a binary whose
+     * syscall or fault path enters an interrupt frame and never leaves it
+     * shows up here as a changed depth, and every error after it would read
+     * as ISR context. */
+    {
+        struct per_cpu_data *cpu = smp_this_cpu();
+        isr_depth_before = cpu ? cpu->isr_depth : 0;
+    }
+    u_klog_window_arm(klog_decls);
     u_spawn_one(name_copy, path, &pid, &exit_status,
                 &timed_out, &stalled, &leaked, &report, have_stem, expect_digest,
                 &loader);
@@ -8539,6 +8897,10 @@ static void u_run_one(const char *name, utest_type_t type,
          * construction and silently. */
         u_publish_never_ran(name_copy, type, UTEST_RSN_TASK_CREATE,
                             tap_point, counters, rt);
+        /* The window may have opened before the create failed: close it.
+         * The binary already failed as never-ran, so its count changes
+         * nothing, but anything it caught is still reported by name. */
+        (void)u_klog_window_judge(name_copy);
         /* Set EXPLICITLY, not by the helper: `out_verdict` drives the
          * launcher's own aggregation and the smoke gate, which classify by
          * pass/fail/skip and have no never-ran dimension. The caller reads
@@ -8748,6 +9110,29 @@ static void u_run_one(const char *name, utest_type_t type,
         u_cleanup_manifest_apply();
     }
 
+    /* The binary's kernel error window, judged now that its whole capture
+     * tree is reaped. A declared line that never appeared, or an error the
+     * manifest did not declare, fails THIS binary: a PASS or a SKIP becomes a
+     * FAIL, and an existing FAIL keeps its own reason. */
+    klog_fails = u_klog_window_judge(name_copy);
+    {
+        struct per_cpu_data *cpu = smp_this_cpu();
+        uint8_t after = cpu ? cpu->isr_depth : 0;
+        int why;
+
+        if (after != isr_depth_before)
+            klog(LOG_ERROR, "UTEST",
+                 "%s :: interrupt depth changed across the run (%u -> %u)",
+                 name_copy, (uint64_t)isr_depth_before, (uint64_t)after);
+        *out_verdict = u_klog_escalate(*out_verdict, klog_fails, isr_depth_before,
+                                       after, counters, &why);
+        if (why == UTEST_KLOG_ESC_ISR)
+            u_reason_isr(&reason);
+        else if (why == UTEST_KLOG_ESC_KLOG)
+            u_reason_klog(&reason);
+        klog_escalated = (uint8_t)(why != UTEST_KLOG_ESC_NONE);
+    }
+
     /* Isolation contract violated: if setup or reap left stale state
      * behind (rmtree cap exhausted, vfs_create failed), the next
      * binary can no longer assume a clean scratch dir. Escalate the
@@ -8830,6 +9215,11 @@ static void u_run_one(const char *name, utest_type_t type,
         utest_record_log(LOG_ERROR,
              "%s: FAIL (" UTEST_RSNC_ISOLATE " -- escalated from PASS)",
              name_copy);
+    } else if (klog_escalated && !isolation_failed) {
+        /* Escalated from PASS or SKIP by the kernel error window or the
+         * interrupt depth check: `reason` names which, and the lines that
+         * caused it were logged by name just above. */
+        utest_record_log(LOG_ERROR, "%s: FAIL (%s -- escalated)", name_copy, reason);
     } else if (timed_out && stalled) {
         /* SERIAL AGREES WITH THE ARTIFACTS. This branch re-derives its text
          * from the flags rather than using the finalized `reason` below, which
@@ -8995,7 +9385,29 @@ int test_usermode_run(void)
              "constructor holding a task slot");
         return UTEST_BOOT_POISONED;
     }
+    /* The phase's RUN window, so errors between binaries are counted as
+     * stray and each binary can open its own window. Only when no watch is
+     * open: a caller already inside a run keeps its own windows. */
+    s_klog_win.watching = (uint8_t)(klog_watch_mode() == KLOG_WATCH_OFF);
+    s_klog_win.report   = (struct klog_watch_report *)0;
+    if (s_klog_win.watching) {
+        _Static_assert(sizeof(struct klog_watch_report) <= 4096u,
+                       "the report must stay within kmalloc's 4 KiB limit");
+        s_klog_win.report = (struct klog_watch_report *)kmalloc(sizeof(struct klog_watch_report));
+        klog_watch_run_begin();
+    }
     u_run_plan();
+    if (s_klog_win.watching) {
+        uint32_t stray = klog_watch_run_end();
+        if (s_klog_win.report)
+            kfree(s_klog_win.report);
+        s_klog_win.report   = (struct klog_watch_report *)0;
+        s_klog_win.watching = 0;
+        if (stray)
+            klog(LOG_WARN, "UTEST",
+                 "%u kernel error line(s) between binaries, outside any binary's window",
+                 (uint64_t)stray);
+    }
     return test_usermode_boot_verdict();
 }
 
@@ -9541,7 +9953,7 @@ static void u_run_plan(void)
                 }
                 total_ran++;
                 u_run_one(e->name, e->type, &tap_point, counters, &rt,
-                          &verdict, e->content_digest);
+                          &verdict, e->content_digest, &e->klog);
                 if (s_run_latches.wait_stalled) {
                     /* Infrastructure-fatal for the same reason a degraded reap
                      * is, one step earlier in the chain: every remaining bound
@@ -10214,6 +10626,59 @@ int test_usermode_manifest_parse(char *buf, uint32_t len, const char *filter,
                                     : (uint32_t)ps.entries[last].type;
     if (out_last_expects)
         *out_last_expects = (last < 0) ? 0u : ps.entries[last].expects_tasks;
+    u_plan_free(&ps);
+    return 1;
+}
+
+/* Parse `buf` as a manifest and report what the FIRST runnable entry
+ * declares about kernel error lines: the count, the allowance mask, and its
+ * first declaration's tag and text (pointers into `buf`, decoded in place).
+ * Refusals are staged exactly as test_usermode_manifest_parse stages them. */
+int test_usermode_manifest_klog(char *buf, uint32_t len, uint32_t *out_runs,
+                                uint32_t *out_refusals, uint32_t *out_n,
+                                uint32_t *out_optional, const char **out_tag0,
+                                const char **out_text0);
+int test_usermode_manifest_klog(char *buf, uint32_t len, uint32_t *out_runs,
+                                uint32_t *out_refusals, uint32_t *out_n,
+                                uint32_t *out_optional, const char **out_tag0,
+                                const char **out_text0)
+{
+    struct plan_state     ps;
+    struct manifest_state ms;
+    const struct plan_entry *first = (const struct plan_entry *)0;
+    uint32_t i, runs = 0, refusals = 0;
+    const char *saved_filter = s_filter;
+
+    if (!u_plan_init(&ps))
+        return 0;
+    u_manifest_reset(&ms);
+    s_filter = (const char *)0;
+    u_manifest_parse(&ms, &ps, buf, len);
+    s_filter = saved_filter;
+    for (i = 0; i < ms.refused_count; i++) {
+        if (!u_plan_add_refusal(&ps, ms.refused_names[i], ms.refused_digest[i],
+                                ms.refused_verdict[i], (const char *)0, 0, 1,
+                                ms.refused_smoke_selected[i]))
+            break;
+    }
+    for (i = 0; i < ps.count; i++) {
+        if (ps.entries[i].kind == (uint8_t)UTEST_PLAN_RUN) {
+            if (!first)
+                first = &ps.entries[i];
+            runs++;
+        } else {
+            refusals++;
+        }
+    }
+    if (out_runs)     *out_runs = runs;
+    if (out_refusals) *out_refusals = refusals;
+    if (out_n)        *out_n = first ? first->klog.n : 0u;
+    if (out_optional) *out_optional = first ? first->klog.optional : 0u;
+    if (out_tag0)
+        *out_tag0 = (first && first->klog.n) ? first->klog.decl[0] : (const char *)0;
+    if (out_text0)
+        *out_text0 = (first && first->klog.n) ? u_klog_decl_text(first->klog.decl[0])
+                                              : (const char *)0;
     u_plan_free(&ps);
     return 1;
 }

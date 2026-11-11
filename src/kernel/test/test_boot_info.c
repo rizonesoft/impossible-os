@@ -15,6 +15,7 @@
 #ifdef KERNEL_TESTS
 
 #include "kernel/test/test.h"
+#include "kernel/test/boot_info_fixture.h" /* TEST_BOOT_INFO: the shared fixture */
 #include "kernel/test/klog_suppress.h"   /* silence boot_payload [FAIL] klog on negative tests */
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
@@ -24,22 +25,21 @@
 /* Production-shape buffer: real sizeof(struct boot_info) so the range
  * check exercises the same arithmetic boot_phase0() runs.  Aligned to
  * 16 bytes to guarantee the 8-byte alignment the validator requires. */
-static struct boot_info s_test_buf __attribute__((aligned(16)));
 
 static void bi_zero(void)
 {
-    uint8_t *p = (uint8_t *)&s_test_buf;
+    uint8_t *p = (uint8_t *)&TEST_BOOT_INFO;
     uint32_t i;
-    for (i = 0; i < sizeof(s_test_buf); i++)
+    for (i = 0; i < sizeof(TEST_BOOT_INFO); i++)
         p[i] = 0;
 }
 
 static void bi_fill_valid(void)
 {
     bi_zero();
-    s_test_buf.header.magic   = BOOT_INFO_MAGIC;
-    s_test_buf.header.version = BOOT_INFO_VERSION;
-    s_test_buf.header.size    = (uint16_t)sizeof(struct boot_info);
+    TEST_BOOT_INFO.header.magic   = BOOT_INFO_MAGIC;
+    TEST_BOOT_INFO.header.version = BOOT_INFO_VERSION;
+    TEST_BOOT_INFO.header.size    = (uint16_t)sizeof(struct boot_info);
 }
 
 /* ---- boot_info_validate_addr() -------------------------------------- */
@@ -77,7 +77,7 @@ static void test_validate_addr_size_too_small(void)
 {
     /* Caller passed a size smaller than the header -- impossible to
      * read magic/version/size from the buffer.  Rejected. */
-    TEST_ASSERT_EQ(boot_info_validate_addr(&s_test_buf,
+    TEST_ASSERT_EQ(boot_info_validate_addr(&TEST_BOOT_INFO,
                                            sizeof(struct boot_info_header) - 1,
                                            (uintptr_t)-1),
                    BOOT_FATAL,
@@ -87,7 +87,7 @@ static void test_validate_addr_size_too_small(void)
 static void test_validate_addr_size_too_large(void)
 {
     /* header.size is uint16_t so sizes above 65535 cannot round-trip. */
-    TEST_ASSERT_EQ(boot_info_validate_addr(&s_test_buf,
+    TEST_ASSERT_EQ(boot_info_validate_addr(&TEST_BOOT_INFO,
                                            65536,
                                            (uintptr_t)-1),
                    BOOT_FATAL,
@@ -144,7 +144,7 @@ static void test_validate_addr_ok_kernel_va(void)
     /* Static buffer lives at a kernel VA well above 4 GiB.  Must pass
      * when the caller uses the unbounded (uintptr_t)-1 max. */
     bi_fill_valid();
-    TEST_ASSERT_EQ(boot_info_validate_addr(&s_test_buf,
+    TEST_ASSERT_EQ(boot_info_validate_addr(&TEST_BOOT_INFO,
                                            sizeof(struct boot_info),
                                            (uintptr_t)-1),
                    BOOT_OK,
@@ -202,8 +202,8 @@ static void test_validate_header_null(void)
 static void test_validate_header_bad_magic(void)
 {
     bi_fill_valid();
-    s_test_buf.header.magic = 0xDEADBEEFu;
-    TEST_ASSERT_EQ(boot_info_validate_header(&s_test_buf.header,
+    TEST_BOOT_INFO.header.magic = 0xDEADBEEFu;
+    TEST_ASSERT_EQ(boot_info_validate_header(&TEST_BOOT_INFO.header,
                                              sizeof(struct boot_info)),
                    BOOT_FATAL,
                    "bad magic rejected");
@@ -212,8 +212,8 @@ static void test_validate_header_bad_magic(void)
 static void test_validate_header_bad_version(void)
 {
     bi_fill_valid();
-    s_test_buf.header.version = (uint16_t)(BOOT_INFO_VERSION + 1);
-    TEST_ASSERT_EQ(boot_info_validate_header(&s_test_buf.header,
+    TEST_BOOT_INFO.header.version = (uint16_t)(BOOT_INFO_VERSION + 1);
+    TEST_ASSERT_EQ(boot_info_validate_header(&TEST_BOOT_INFO.header,
                                              sizeof(struct boot_info)),
                    BOOT_FATAL,
                    "wrong version rejected");
@@ -222,8 +222,8 @@ static void test_validate_header_bad_version(void)
 static void test_validate_header_bad_size(void)
 {
     bi_fill_valid();
-    s_test_buf.header.size = (uint16_t)(sizeof(struct boot_info) - 1);
-    TEST_ASSERT_EQ(boot_info_validate_header(&s_test_buf.header,
+    TEST_BOOT_INFO.header.size = (uint16_t)(sizeof(struct boot_info) - 1);
+    TEST_ASSERT_EQ(boot_info_validate_header(&TEST_BOOT_INFO.header,
                                              sizeof(struct boot_info)),
                    BOOT_FATAL,
                    "wrong size rejected");
@@ -232,7 +232,7 @@ static void test_validate_header_bad_size(void)
 static void test_validate_header_ok(void)
 {
     bi_fill_valid();
-    TEST_ASSERT_EQ(boot_info_validate_header(&s_test_buf.header,
+    TEST_ASSERT_EQ(boot_info_validate_header(&TEST_BOOT_INFO.header,
                                              sizeof(struct boot_info)),
                    BOOT_OK,
                    "fully valid header accepted");
@@ -251,8 +251,8 @@ static void test_validate_combined_null(void)
 static void test_validate_combined_bad_magic(void)
 {
     bi_fill_valid();
-    s_test_buf.header.magic = 0u;
-    TEST_ASSERT_EQ(boot_info_validate(&s_test_buf,
+    TEST_BOOT_INFO.header.magic = 0u;
+    TEST_ASSERT_EQ(boot_info_validate(&TEST_BOOT_INFO,
                                       sizeof(struct boot_info)),
                    BOOT_FATAL,
                    "combined bad magic rejected");
@@ -261,7 +261,7 @@ static void test_validate_combined_bad_magic(void)
 static void test_validate_combined_ok(void)
 {
     bi_fill_valid();
-    TEST_ASSERT_EQ(boot_info_validate(&s_test_buf,
+    TEST_ASSERT_EQ(boot_info_validate(&TEST_BOOT_INFO,
                                       sizeof(struct boot_info)),
                    BOOT_OK,
                    "combined valid buffer accepted");
@@ -508,7 +508,7 @@ static void test_validate_header_fuzz_perturbations(void)
 /* ============================================================================
  * -- Typed payload descriptor array validator
  *
- * Exercises boot_payload_validate() against the in-BSS s_test_buf with
+ * Exercises boot_payload_validate() against the in-BSS TEST_BOOT_INFO with
  * synthetic descriptor layouts. All tests run on a zero-initialized
  * buffer (no fb, no rt_mmap, no USB DMA, no kernel-visible overlap)
  * except where a test explicitly populates one of those regions to
@@ -524,7 +524,7 @@ static void test_validate_header_fuzz_perturbations(void)
 
 static void bi_payload_zero(void)
 {
-    /* Descriptor array + counts + total are within s_test_buf, already
+    /* Descriptor array + counts + total are within TEST_BOOT_INFO, already
      * cleared by bi_zero() / bi_fill_valid(). This helper documents the
      * intent at the test call site. */
     bi_fill_valid();
@@ -536,7 +536,7 @@ static void test_payload_empty_valid(void)
 
     bi_payload_zero();
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_OK,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_OK,
                    "empty payload array accepted");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OK,
                    "empty payload array error=OK");
@@ -548,9 +548,9 @@ static void test_payload_count_out_of_range(void)
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
-    s_test_buf.payload_count = BOOT_PAYLOAD_MAX + 1;
+    TEST_BOOT_INFO.payload_count = BOOT_PAYLOAD_MAX + 1;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "payload_count > BOOT_PAYLOAD_MAX rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_COUNT_OOR,
                    "err=COUNT_OOR");
@@ -563,12 +563,12 @@ static void test_payload_prefix_violated(void)
 
     bi_payload_zero();
     /* Occupied slot past payload_count (which is 0) */
-    s_test_buf.payload_descriptors[3].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[3].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[3].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[3].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_descriptors[3].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[3].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[3].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[3].length     = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "occupied slot past payload_count rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_PREFIX_VIOLATED,
                    "err=PREFIX_VIOLATED");
@@ -580,13 +580,13 @@ static void test_payload_range_wrap(void)
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
-    s_test_buf.payload_count              = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = (uint64_t)-0x100;
-    s_test_buf.payload_descriptors[0].length     = 0x200;  /* wraps past (uint64_t)-1 */
+    TEST_BOOT_INFO.payload_count              = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = (uint64_t)-0x100;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = 0x200;  /* wraps past (uint64_t)-1 */
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "phys_start + length overflow rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_RANGE_WRAP,
                    "err=RANGE_WRAP");
@@ -598,16 +598,16 @@ static void test_payload_overlap_boot_info(void)
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
-    s_test_buf.payload_count              = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_INITRD;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_count              = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_INITRD;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
     /* Straddle the real handoff base, not a hand-copied literal: the case
      * must follow BOOT_INFO_PHYS_ADDR if it ever moves. */
-    s_test_buf.payload_descriptors[0].phys_start = BOOT_INFO_PHYS_ADDR + 0x10ull;
-    s_test_buf.payload_descriptors[0].length     = 0x100ull;
-    s_test_buf.payload_total_bytes        = 0x100ull;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = BOOT_INFO_PHYS_ADDR + 0x10ull;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = 0x100ull;
+    TEST_BOOT_INFO.payload_total_bytes        = 0x100ull;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "overlap with boot_info rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OVERLAP_BOOT_INFO,
                    "err=OVERLAP_BOOT_INFO");
@@ -621,19 +621,19 @@ static void test_payload_overlap_framebuffer(void)
     bi_payload_zero();
     /* Stage a framebuffer at a known-safe physical address far from
      * BOOT_INFO_PHYS_ADDR; then place a payload that straddles it. */
-    s_test_buf.fb_available               = 1;
-    s_test_buf.fb.addr                    = 0xFD000000ull;
-    s_test_buf.fb.pitch                   = 4 * 1280;
-    s_test_buf.fb.width                   = 1280;
-    s_test_buf.fb.height                  = 720;
-    s_test_buf.payload_count              = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = 0xFD000000ull + 0x1000ull;
-    s_test_buf.payload_descriptors[0].length     = 0x1000ull;
-    s_test_buf.payload_total_bytes        = 0x1000ull;
+    TEST_BOOT_INFO.fb_available               = 1;
+    TEST_BOOT_INFO.fb.addr                    = 0xFD000000ull;
+    TEST_BOOT_INFO.fb.pitch                   = 4 * 1280;
+    TEST_BOOT_INFO.fb.width                   = 1280;
+    TEST_BOOT_INFO.fb.height                  = 720;
+    TEST_BOOT_INFO.payload_count              = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = 0xFD000000ull + 0x1000ull;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = 0x1000ull;
+    TEST_BOOT_INFO.payload_total_bytes        = 0x1000ull;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "overlap with framebuffer rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OVERLAP_FB,
                    "err=OVERLAP_FB");
@@ -647,20 +647,20 @@ static void test_payload_overlap_rt_mmap(void)
     bi_payload_zero();
     /* Stage one runtime memory region at a known-safe physical address
      * and place a payload that lands inside it. 4 KiB entry (num_pages=1). */
-    s_test_buf.rt_mmap_count      = 1;
-    s_test_buf.rt_mmap[0].phys_addr  = 0x80000000ull;
-    s_test_buf.rt_mmap[0].num_pages  = 1;
-    s_test_buf.rt_mmap[0].type       = 0;
-    s_test_buf.rt_mmap[0].attribute  = 0;
+    TEST_BOOT_INFO.rt_mmap_count      = 1;
+    TEST_BOOT_INFO.rt_mmap[0].phys_addr  = 0x80000000ull;
+    TEST_BOOT_INFO.rt_mmap[0].num_pages  = 1;
+    TEST_BOOT_INFO.rt_mmap[0].type       = 0;
+    TEST_BOOT_INFO.rt_mmap[0].attribute  = 0;
 
-    s_test_buf.payload_count      = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_TPM_EVENT_LOG;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = 0x80000100ull;  /* inside the 4 KiB page */
-    s_test_buf.payload_descriptors[0].length     = 0x100ull;
-    s_test_buf.payload_total_bytes        = 0x100ull;
+    TEST_BOOT_INFO.payload_count      = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_TPM_EVENT_LOG;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = 0x80000100ull;  /* inside the 4 KiB page */
+    TEST_BOOT_INFO.payload_descriptors[0].length     = 0x100ull;
+    TEST_BOOT_INFO.payload_total_bytes        = 0x100ull;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "overlap with rt_mmap rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OVERLAP_RT_MMAP,
                    "err=OVERLAP_RT_MMAP");
@@ -672,17 +672,17 @@ static void test_payload_overlap_usb_dma(void)
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
-    s_test_buf.usb_controller.dma_page_count = 1;
-    s_test_buf.usb_controller.dma_pages[0]   = 0x40000000ull;
+    TEST_BOOT_INFO.usb_controller.dma_page_count = 1;
+    TEST_BOOT_INFO.usb_controller.dma_pages[0]   = 0x40000000ull;
 
-    s_test_buf.payload_count      = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_USB_HANDOVER;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = 0x40000800ull;  /* within the 4 KiB page */
-    s_test_buf.payload_descriptors[0].length     = 0x100ull;
-    s_test_buf.payload_total_bytes        = 0x100ull;
+    TEST_BOOT_INFO.payload_count      = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_USB_HANDOVER;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = 0x40000800ull;  /* within the 4 KiB page */
+    TEST_BOOT_INFO.payload_descriptors[0].length     = 0x100ull;
+    TEST_BOOT_INFO.payload_total_bytes        = 0x100ull;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "overlap with USB DMA page rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OVERLAP_USB_DMA,
                    "err=OVERLAP_USB_DMA");
@@ -694,18 +694,18 @@ static void test_payload_descriptor_overlap_exact_duplicate(void)
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
-    s_test_buf.payload_count                     = 2;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_descriptors[1].type       = BOOT_PAYLOAD_INITRD;
-    s_test_buf.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[1].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes               = 2ull * SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_count                     = 2;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_descriptors[1].type       = BOOT_PAYLOAD_INITRD;
+    TEST_BOOT_INFO.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[1].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes               = 2ull * SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "exact-duplicate phys range rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_DESCRIPTOR_OVERLAP,
                    "err=DESCRIPTOR_OVERLAP");
@@ -720,18 +720,18 @@ static void test_payload_descriptor_overlap_partial(void)
     /* MODULE@X..X+0x2000; INITRD@X+0x1000..X+0x3000 -- second straddles
      * the upper half of first by 0x1000 bytes. Neither hits a retained
      * boot region (SAFE_PAYLOAD_START is 64 GiB, far from any). */
-    s_test_buf.payload_count                     = 2;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = 0x2000ull;
-    s_test_buf.payload_descriptors[1].type       = BOOT_PAYLOAD_INITRD;
-    s_test_buf.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x1000ull;
-    s_test_buf.payload_descriptors[1].length     = 0x2000ull;
-    s_test_buf.payload_total_bytes               = 0x4000ull;
+    TEST_BOOT_INFO.payload_count                     = 2;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = 0x2000ull;
+    TEST_BOOT_INFO.payload_descriptors[1].type       = BOOT_PAYLOAD_INITRD;
+    TEST_BOOT_INFO.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x1000ull;
+    TEST_BOOT_INFO.payload_descriptors[1].length     = 0x2000ull;
+    TEST_BOOT_INFO.payload_total_bytes               = 0x4000ull;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "partial-overlap phys ranges rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_DESCRIPTOR_OVERLAP,
                    "err=DESCRIPTOR_OVERLAP partial");
@@ -749,17 +749,17 @@ static void test_payload_warm_update_required_with_cont_accepted(void)
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
-    s_test_buf.payload_count = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_WARM_UPDATE_STATE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID
+    TEST_BOOT_INFO.payload_count = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_WARM_UPDATE_STATE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID
                                                  | BOOT_PAYLOAD_FLAG_RESERVED
                                                  | BOOT_PAYLOAD_FLAG_REQUIRED
                                                  | BOOT_WARM_UPDATE_CONT_PAGE_TABLES;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes               = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes               = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_OK,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_OK,
                    "REQUIRED warm-update + known cont bit accepted (type-aware mask)");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OK, "err=OK");
 }
@@ -770,20 +770,20 @@ static void test_payload_warm_update_required_with_unknown_rejected(void)
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
-    s_test_buf.payload_count = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_WARM_UPDATE_STATE;
+    TEST_BOOT_INFO.payload_count = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_WARM_UPDATE_STATE;
     /* Bit 14: outside both BOOT_PAYLOAD_FLAG_MASK_KNOWN and
      * BOOT_WARM_UPDATE_CONT_MASK_KNOWN; must still trip the
      * REQUIRED+unknown-flags check. */
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID
                                                  | BOOT_PAYLOAD_FLAG_RESERVED
                                                  | BOOT_PAYLOAD_FLAG_REQUIRED
                                                  | (1u << 14);
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes               = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes               = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "REQUIRED warm-update + truly unknown bit still rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_UNKNOWN_FLAGS, "err=UNKNOWN_FLAGS");
 }
@@ -799,14 +799,14 @@ static void test_payload_missing_valid_flag(void)
      * regardless of whether the range/alignment/overlap fields are
      * sound. This protects the FLAG_VALID gate from becoming
      * informational. */
-    s_test_buf.payload_count                     = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = 0u;  /* missing FLAG_VALID */
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes               = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_count                     = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = 0u;  /* missing FLAG_VALID */
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes               = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "occupied slot without FLAG_VALID rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_MISSING_VALID_FLAG,
                    "err=MISSING_VALID_FLAG");
@@ -822,14 +822,14 @@ static void test_payload_warm_update_cold_fallback_accepted(void)
      * handoff contract. Validator MUST accept (boot_warm_update_consume
      * handles the cold-fallback decision later); halting here would
      * turn a soft fallback into a fatal halt. */
-    s_test_buf.payload_count                     = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_WARM_UPDATE_STATE;
-    s_test_buf.payload_descriptors[0].flags      = 0u;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes               = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_count                     = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_WARM_UPDATE_STATE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = 0u;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes               = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_OK,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_OK,
                    "warm-update cold-fallback shape (no flags) accepted");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OK,
                    "err=OK warm-update cold-fallback");
@@ -846,14 +846,14 @@ static void test_payload_warm_update_reserved_only_rejected(void)
      * to cold-fallback. Memory leak on cold boot. Validator MUST
      * reject as malformed; the cold-fallback exemption is only for
      * the no-flags shape. */
-    s_test_buf.payload_count                     = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_WARM_UPDATE_STATE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_RESERVED;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes               = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_count                     = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_WARM_UPDATE_STATE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_RESERVED;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes               = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "warm-update RESERVED-without-VALID rejected as malformed");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_MISSING_VALID_FLAG,
                    "err=MISSING_VALID_FLAG malformed warm-update");
@@ -869,14 +869,14 @@ static void test_payload_warm_update_checksummed_only_rejected(void)
      * the exemption only covers d->flags == 0 exactly. Any non-zero
      * flag bit without FLAG_VALID is producer drift, not a documented
      * cold-fallback case. */
-    s_test_buf.payload_count                     = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_WARM_UPDATE_STATE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_CHECKSUMMED;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes               = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_count                     = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_WARM_UPDATE_STATE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_CHECKSUMMED;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes               = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "warm-update CHECKSUMMED-without-VALID rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_MISSING_VALID_FLAG,
                    "err=MISSING_VALID_FLAG nonzero-flags-without-VALID");
@@ -889,18 +889,18 @@ static void test_payload_descriptor_overlap_adjacent_ok(void)
     bi_payload_zero();
     /* Adjacent (touching) ranges MUST NOT overlap: ranges_overlap uses
      * half-open [start, start+len) semantics so X+len == Y is allowed. */
-    s_test_buf.payload_count                     = 2;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = 0x1000ull;
-    s_test_buf.payload_descriptors[1].type       = BOOT_PAYLOAD_INITRD;
-    s_test_buf.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x1000ull;
-    s_test_buf.payload_descriptors[1].length     = 0x1000ull;
-    s_test_buf.payload_total_bytes               = 0x2000ull;
+    TEST_BOOT_INFO.payload_count                     = 2;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = 0x1000ull;
+    TEST_BOOT_INFO.payload_descriptors[1].type       = BOOT_PAYLOAD_INITRD;
+    TEST_BOOT_INFO.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x1000ull;
+    TEST_BOOT_INFO.payload_descriptors[1].length     = 0x1000ull;
+    TEST_BOOT_INFO.payload_total_bytes               = 0x2000ull;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_OK,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_OK,
                    "adjacent non-overlapping ranges accepted");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OK,
                    "err=OK adjacent");
@@ -912,15 +912,15 @@ static void test_payload_bad_alignment(void)
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
-    s_test_buf.payload_count              = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_descriptors[0].alignment  = 3;  /* not a power of 2 */
-    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_count              = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_descriptors[0].alignment  = 3;  /* not a power of 2 */
+    TEST_BOOT_INFO.payload_total_bytes        = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "non-power-of-two alignment rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_ALIGNMENT,
                    "err=ALIGNMENT");
@@ -932,15 +932,15 @@ static void test_payload_unknown_type_required_fatal(void)
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
-    s_test_buf.payload_count              = 1;
-    s_test_buf.payload_descriptors[0].type       = 0xDEADBEEF;  /* unknown */
-    s_test_buf.payload_descriptors[0].flags      =
+    TEST_BOOT_INFO.payload_count              = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = 0xDEADBEEF;  /* unknown */
+    TEST_BOOT_INFO.payload_descriptors[0].flags      =
         BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_REQUIRED;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes        = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "unknown type + REQUIRED aborts boot");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_UNKNOWN_REQUIRED,
                    "err=UNKNOWN_REQUIRED");
@@ -951,17 +951,17 @@ static void test_payload_unknown_type_optional_accepted(void)
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
-    s_test_buf.payload_count              = 1;
+    TEST_BOOT_INFO.payload_count              = 1;
     /* Unknown type, no REQUIRED flag -> forward-compat skip. Generic
      * checks (range, overlap) still pass because the payload lies in
      * the known-safe region. */
-    s_test_buf.payload_descriptors[0].type       = 0xDEADBEEF;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = 0xDEADBEEF;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes        = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_OK,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_OK,
                    "unknown type without REQUIRED is forward-compat skipped");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OK,
                    "err=OK (optional unknown)");
@@ -973,16 +973,16 @@ static void test_payload_unknown_flags_required_fatal(void)
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
-    s_test_buf.payload_count              = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;  /* known type */
+    TEST_BOOT_INFO.payload_count              = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;  /* known type */
     /* REQUIRED set + an unknown bit (0x100) -> unknown-flags fatal. */
-    s_test_buf.payload_descriptors[0].flags      =
+    TEST_BOOT_INFO.payload_descriptors[0].flags      =
         BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_REQUIRED | 0x100u;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes        = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "unknown flag bits + REQUIRED aborts boot");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_UNKNOWN_FLAGS,
                    "err=UNKNOWN_FLAGS");
@@ -994,14 +994,14 @@ static void test_payload_total_mismatch(void)
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
-    s_test_buf.payload_count              = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN + 1ull;  /* lies */
+    TEST_BOOT_INFO.payload_count              = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes        = SAFE_PAYLOAD_LEN + 1ull;  /* lies */
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "payload_total_bytes disagreement rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_TOTAL_MISMATCH,
                    "err=TOTAL_MISMATCH");
@@ -1012,20 +1012,20 @@ static void test_payload_two_descriptors_ok(void)
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
-    s_test_buf.payload_count              = 2;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_INITRD;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_descriptors[0].alignment  = 4096;  /* valid power of 2 */
+    TEST_BOOT_INFO.payload_count              = 2;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_INITRD;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_descriptors[0].alignment  = 4096;  /* valid power of 2 */
 
-    s_test_buf.payload_descriptors[1].type       = BOOT_PAYLOAD_RANDOM_SEED;
-    s_test_buf.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x100000ull;
-    s_test_buf.payload_descriptors[1].length     = 0x40ull;
-    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN + 0x40ull;
+    TEST_BOOT_INFO.payload_descriptors[1].type       = BOOT_PAYLOAD_RANDOM_SEED;
+    TEST_BOOT_INFO.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x100000ull;
+    TEST_BOOT_INFO.payload_descriptors[1].length     = 0x40ull;
+    TEST_BOOT_INFO.payload_total_bytes        = SAFE_PAYLOAD_LEN + 0x40ull;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_OK,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_OK,
                    "two disjoint known-type payloads accepted");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OK,
                    "err=OK");
@@ -1040,15 +1040,15 @@ static void test_payload_empty_slot_in_prefix(void)
      * reserved slot 1 but deferred the payload (length == 0). This is
      * allowed by the contract and payload_total_bytes should include
      * only the populated slot's length. */
-    s_test_buf.payload_count              = 2;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_count              = 2;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
     /* Slot 1 stays zero (type=NONE, length=0) */
-    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes        = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_OK,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_OK,
                    "empty slot within packed prefix accepted");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OK,
                    "err=OK (empty slot in prefix)");
@@ -1064,14 +1064,14 @@ static void test_payload_none_with_length_rejected(void)
      * with type=NONE but non-zero length is ABI drift -- the old code path
      * treated it as occupied and silently validated it, but type-keyed
      * consumers would skip it entirely. Reject at the validator. */
-    s_test_buf.payload_count              = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_NONE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_count              = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_NONE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes        = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "type=NONE with non-zero length rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_NONE_NOT_EMPTY,
                    "err=NONE_NOT_EMPTY");
@@ -1086,12 +1086,12 @@ static void test_payload_none_with_flags_rejected(void)
     /* type=NONE + length=0 but flags != 0 -- must still be rejected.
      * A lenient validator that only checked 'length != 0' would let this
      * pass as an empty slot while the flags carry unchecked metadata. */
-    s_test_buf.payload_count                  = 1;
-    s_test_buf.payload_descriptors[0].type    = BOOT_PAYLOAD_NONE;
-    s_test_buf.payload_descriptors[0].flags   = BOOT_PAYLOAD_FLAG_REQUIRED;
+    TEST_BOOT_INFO.payload_count                  = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type    = BOOT_PAYLOAD_NONE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags   = BOOT_PAYLOAD_FLAG_REQUIRED;
     /* all other fields stay zero */
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "type=NONE + length=0 + flags!=0 rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_NONE_NOT_EMPTY,
                    "err=NONE_NOT_EMPTY (flags smuggling)");
@@ -1107,18 +1107,18 @@ static void test_payload_none_past_prefix_with_phys_start_rejected(void)
      * type=NONE, length=0, but non-zero phys_start. The old loop
      * treated this as 'unoccupied, skip' -- the new loop rejects any
      * NONE slot that is not fully zeroed, regardless of position. */
-    s_test_buf.payload_count              = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_count              = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes        = SAFE_PAYLOAD_LEN;
 
     /* Slot 1 past prefix -- type NONE + length 0 but phys_start set */
-    s_test_buf.payload_descriptors[1].type       = BOOT_PAYLOAD_NONE;
-    s_test_buf.payload_descriptors[1].phys_start = 0xDEADBEEFull;
+    TEST_BOOT_INFO.payload_descriptors[1].type       = BOOT_PAYLOAD_NONE;
+    TEST_BOOT_INFO.payload_descriptors[1].phys_start = 0xDEADBEEFull;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "type=NONE past prefix with phys_start!=0 rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_NONE_NOT_EMPTY,
                    "err=NONE_NOT_EMPTY (past-prefix smuggling)");
@@ -1133,55 +1133,55 @@ static void test_payload_find_returns_nth_of_type(void)
      * return index 0 of MODULE as slot 0, index 1 of MODULE as slot 2,
      * index 0 of INITRD as slot 1, and index 2 of MODULE (only 2 exist)
      * as NULL. This is the contract section 5 relies on. */
-    s_test_buf.payload_count                     = 3;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = 0x1000ull;
+    TEST_BOOT_INFO.payload_count                     = 3;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = 0x1000ull;
 
-    s_test_buf.payload_descriptors[1].type       = BOOT_PAYLOAD_INITRD;
-    s_test_buf.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x10000ull;
-    s_test_buf.payload_descriptors[1].length     = 0x2000ull;
+    TEST_BOOT_INFO.payload_descriptors[1].type       = BOOT_PAYLOAD_INITRD;
+    TEST_BOOT_INFO.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x10000ull;
+    TEST_BOOT_INFO.payload_descriptors[1].length     = 0x2000ull;
 
-    s_test_buf.payload_descriptors[2].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[2].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[2].phys_start = SAFE_PAYLOAD_START + 0x20000ull;
-    s_test_buf.payload_descriptors[2].length     = 0x4000ull;
+    TEST_BOOT_INFO.payload_descriptors[2].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[2].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[2].phys_start = SAFE_PAYLOAD_START + 0x20000ull;
+    TEST_BOOT_INFO.payload_descriptors[2].length     = 0x4000ull;
 
-    s_test_buf.payload_total_bytes = 0x1000ull + 0x2000ull + 0x4000ull;
+    TEST_BOOT_INFO.payload_total_bytes = 0x1000ull + 0x2000ull + 0x4000ull;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_OK,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_OK,
                    "three-descriptor fixture passes validator");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OK, "validator err=OK");
 
     const struct boot_payload_desc *d;
-    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_MODULE, 0);
+    d = boot_payload_find(&TEST_BOOT_INFO, BOOT_PAYLOAD_MODULE, 0);
     TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)1,
                    "find MODULE [0] non-NULL");
     TEST_ASSERT_EQ((unsigned long)d->phys_start,
                    (unsigned long)SAFE_PAYLOAD_START,
                    "find MODULE [0] -> slot 0 phys_start");
 
-    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_MODULE, 1);
+    d = boot_payload_find(&TEST_BOOT_INFO, BOOT_PAYLOAD_MODULE, 1);
     TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)1,
                    "find MODULE [1] non-NULL");
     TEST_ASSERT_EQ((unsigned long)d->phys_start,
                    (unsigned long)(SAFE_PAYLOAD_START + 0x20000ull),
                    "find MODULE [1] -> slot 2 phys_start");
 
-    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_INITRD, 0);
+    d = boot_payload_find(&TEST_BOOT_INFO, BOOT_PAYLOAD_INITRD, 0);
     TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)1,
                    "find INITRD [0] non-NULL");
     TEST_ASSERT_EQ((unsigned long)d->length,
                    (unsigned long)0x2000ull,
                    "find INITRD [0] -> slot 1 length");
 
-    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_MODULE, 2);
+    d = boot_payload_find(&TEST_BOOT_INFO, BOOT_PAYLOAD_MODULE, 2);
     TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)0,
                    "find MODULE [2] NULL (only 2 exist)");
 
-    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_RECOVERY_IMAGE, 0);
+    d = boot_payload_find(&TEST_BOOT_INFO, BOOT_PAYLOAD_RECOVERY_IMAGE, 0);
     TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)0,
                    "find RECOVERY_IMAGE [0] NULL (none in fixture)");
 }
@@ -1195,38 +1195,38 @@ static void test_payload_find_skips_retired_descriptors(void)
      * FLAG_VALID after wipe/free) must make it undiscoverable, and the
      * surviving descriptor must pop into occurrence 0 -- the contract
      * boot_seed_consume's find(type, 0) retire loop relies on. */
-    s_test_buf.payload_count                     = 2;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_RANDOM_SEED;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = 0x1000ull;
-    s_test_buf.payload_descriptors[1].type       = BOOT_PAYLOAD_RANDOM_SEED;
-    s_test_buf.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x10000ull;
-    s_test_buf.payload_descriptors[1].length     = 0x1000ull;
-    s_test_buf.payload_total_bytes               = 0x2000ull;
+    TEST_BOOT_INFO.payload_count                     = 2;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_RANDOM_SEED;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = 0x1000ull;
+    TEST_BOOT_INFO.payload_descriptors[1].type       = BOOT_PAYLOAD_RANDOM_SEED;
+    TEST_BOOT_INFO.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x10000ull;
+    TEST_BOOT_INFO.payload_descriptors[1].length     = 0x1000ull;
+    TEST_BOOT_INFO.payload_total_bytes               = 0x2000ull;
 
-    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_RANDOM_SEED, 1);
+    d = boot_payload_find(&TEST_BOOT_INFO, BOOT_PAYLOAD_RANDOM_SEED, 1);
     TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)1,
                    "both seed descriptors discoverable pre-retire");
 
-    s_test_buf.payload_descriptors[0].flags &=
+    TEST_BOOT_INFO.payload_descriptors[0].flags &=
         ~(uint32_t)BOOT_PAYLOAD_FLAG_VALID;
 
-    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_RANDOM_SEED, 0);
+    d = boot_payload_find(&TEST_BOOT_INFO, BOOT_PAYLOAD_RANDOM_SEED, 0);
     TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)1,
                    "survivor pops into occurrence 0");
     TEST_ASSERT_EQ((unsigned long)d->phys_start,
                    (unsigned long)(SAFE_PAYLOAD_START + 0x10000ull),
                    "occurrence 0 is the still-valid slot 1");
 
-    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_RANDOM_SEED, 1);
+    d = boot_payload_find(&TEST_BOOT_INFO, BOOT_PAYLOAD_RANDOM_SEED, 1);
     TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)0,
                    "retired descriptor is not rediscoverable");
 
-    s_test_buf.payload_descriptors[1].flags &=
+    TEST_BOOT_INFO.payload_descriptors[1].flags &=
         ~(uint32_t)BOOT_PAYLOAD_FLAG_VALID;
-    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_RANDOM_SEED, 0);
+    d = boot_payload_find(&TEST_BOOT_INFO, BOOT_PAYLOAD_RANDOM_SEED, 0);
     TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)0,
                    "all retired -> find returns NULL (loop terminates)");
 }
@@ -1240,15 +1240,15 @@ static void test_payload_find_rejects_null_info_and_none_type(void)
                    "find(NULL, MODULE, 0) returns NULL");
 
     bi_payload_zero();
-    s_test_buf.payload_count              = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = 0x1000ull;
-    s_test_buf.payload_total_bytes        = 0x1000ull;
+    TEST_BOOT_INFO.payload_count              = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = 0x1000ull;
+    TEST_BOOT_INFO.payload_total_bytes        = 0x1000ull;
 
     /* NONE is the empty-slot sentinel -- looking it up is always NULL. */
-    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_NONE, 0);
+    d = boot_payload_find(&TEST_BOOT_INFO, BOOT_PAYLOAD_NONE, 0);
     TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)0,
                    "find(info, NONE, 0) returns NULL");
 }
@@ -1261,14 +1261,14 @@ static void test_payload_find_rejects_out_of_range_count(void)
     /* Synthesize a count past BOOT_PAYLOAD_MAX. A real bootloader could
      * not get past the validator with this, but boot_payload_find must
      * still defend against a caller that skipped validation. */
-    s_test_buf.payload_count = BOOT_PAYLOAD_MAX + 1;
+    TEST_BOOT_INFO.payload_count = BOOT_PAYLOAD_MAX + 1;
     /* slot 0 has a real descriptor; find() must refuse to walk anyway */
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = 0x1000ull;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = 0x1000ull;
 
-    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_MODULE, 0);
+    d = boot_payload_find(&TEST_BOOT_INFO, BOOT_PAYLOAD_MODULE, 0);
     TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)0,
                    "find rejects payload_count > BOOT_PAYLOAD_MAX");
 }
@@ -1289,17 +1289,17 @@ static void test_payload_phys_unaligned_vs_required_alignment(void)
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
-    s_test_buf.payload_count              = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_count              = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
     /* alignment = 4096 is a valid power of 2, but phys_start is not
      * 4 KiB-aligned -- the descriptor lies about its alignment. */
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START + 1ull;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_descriptors[0].alignment  = 4096;
-    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START + 1ull;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_descriptors[0].alignment  = 4096;
+    TEST_BOOT_INFO.payload_total_bytes        = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "power-of-two alignment with unaligned phys_start rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_ALIGNMENT,
                    "err=ALIGNMENT (phys_start not a multiple of alignment)");
@@ -1311,7 +1311,7 @@ static void test_payload_aggregate_total_wrap(void)
     enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
 
     bi_payload_zero();
-    s_test_buf.payload_count              = 2;
+    TEST_BOOT_INFO.payload_count              = 2;
 
     /* Two individually-valid descriptors whose lengths sum past
      * UINT64_MAX. Each length passes the per-descriptor overflow
@@ -1325,19 +1325,19 @@ static void test_payload_aggregate_total_wrap(void)
      * defense in depth for any future code path that bypasses the
      * pairwise loop, but the user-visible failure for this fixture
      * is the overlap rejection. */
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = ((uint64_t)-1) / 2ull;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = ((uint64_t)-1) / 2ull;
 
-    s_test_buf.payload_descriptors[1].type       = BOOT_PAYLOAD_INITRD;
-    s_test_buf.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x1000000000000ull;
-    s_test_buf.payload_descriptors[1].length     = ((uint64_t)-1) / 2ull + 4ull;
+    TEST_BOOT_INFO.payload_descriptors[1].type       = BOOT_PAYLOAD_INITRD;
+    TEST_BOOT_INFO.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x1000000000000ull;
+    TEST_BOOT_INFO.payload_descriptors[1].length     = ((uint64_t)-1) / 2ull + 4ull;
 
-    s_test_buf.payload_total_bytes        = 0;
+    TEST_BOOT_INFO.payload_total_bytes        = 0;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "aggregate sum overflow rejected (now via pairwise overlap)");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_DESCRIPTOR_OVERLAP,
                    "err=DESCRIPTOR_OVERLAP (overlap fires before aggregate wrap)");
@@ -1353,19 +1353,19 @@ static void test_payload_retained_rt_mmap_wrap_rejected(void)
      * UINT64_MAX. Without the range_end_overflows() guard the payload
      * would compare against a wrapped interval and could be
      * falsely-reported as disjoint. */
-    s_test_buf.rt_mmap_count         = 1;
-    s_test_buf.rt_mmap[0].phys_addr  = ((uint64_t)-1) - 0x1000ull;
-    s_test_buf.rt_mmap[0].num_pages  = 16;  /* 64 KiB -- wraps */
-    s_test_buf.rt_mmap[0].type       = 0;
+    TEST_BOOT_INFO.rt_mmap_count         = 1;
+    TEST_BOOT_INFO.rt_mmap[0].phys_addr  = ((uint64_t)-1) - 0x1000ull;
+    TEST_BOOT_INFO.rt_mmap[0].num_pages  = 16;  /* 64 KiB -- wraps */
+    TEST_BOOT_INFO.rt_mmap[0].type       = 0;
 
-    s_test_buf.payload_count              = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_count              = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes        = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "rt_mmap range whose end wraps UINT64_MAX rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OVERLAP_RT_MMAP,
                    "err=OVERLAP_RT_MMAP (retained-region wrap)");
@@ -1382,15 +1382,15 @@ static void test_payload_overflow_truncated_rejected(void)
      * consistent, but payload_overflow=1 flags dropped payloads.'s
      * contract refuses the handoff so a consumer can never silently
      * treat a truncated set as complete. */
-    s_test_buf.payload_count              = 1;
-    s_test_buf.payload_overflow           = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_count              = 1;
+    TEST_BOOT_INFO.payload_overflow           = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes        = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "payload_overflow=1 rejects the entire handoff");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OVERFLOW_TRUNCATED,
                    "err=OVERFLOW_TRUNCATED");
@@ -1575,14 +1575,14 @@ static void test_payload_table_exactly_full_with_both_implicit(void)
     /* Staging filled to its bound. These stand in for load_staged_payloads,
      * which is not this section's surface. */
     for (i = 0; i < stage_max; i++) {
-        s_test_buf.payload_descriptors[i].type       = BOOT_PAYLOAD_MODULE;
-        s_test_buf.payload_descriptors[i].flags      = BOOT_PAYLOAD_FLAG_VALID;
-        s_test_buf.payload_descriptors[i].phys_start = SAFE_PAYLOAD_START +
+        TEST_BOOT_INFO.payload_descriptors[i].type       = BOOT_PAYLOAD_MODULE;
+        TEST_BOOT_INFO.payload_descriptors[i].flags      = BOOT_PAYLOAD_FLAG_VALID;
+        TEST_BOOT_INFO.payload_descriptors[i].phys_start = SAFE_PAYLOAD_START +
                                                        ((uint64_t)i * SAFE_PAYLOAD_LEN);
-        s_test_buf.payload_descriptors[i].length     = SAFE_PAYLOAD_LEN;
+        TEST_BOOT_INFO.payload_descriptors[i].length     = SAFE_PAYLOAD_LEN;
     }
-    s_test_buf.payload_count       = stage_max;
-    s_test_buf.payload_total_bytes = (uint64_t)stage_max * SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_count       = stage_max;
+    TEST_BOOT_INFO.payload_total_bytes = (uint64_t)stage_max * SAFE_PAYLOAD_LEN;
 
     /* Both implicit publishers go in through the SAME macro bootx64.c commits
      * with, so a wrong index or a dropped counter update fails HERE rather than
@@ -1595,21 +1595,21 @@ static void test_payload_table_exactly_full_with_both_implicit(void)
         d.flags      = BOOT_PAYLOAD_FLAG_VALID;
         d.phys_start = SAFE_PAYLOAD_START + ((uint64_t)at * SAFE_PAYLOAD_LEN);
         d.length     = SAFE_PAYLOAD_LEN;
-        BOOT_IMPLICIT_PAYLOAD_COMMIT(&s_test_buf, &d);
-        TEST_ASSERT_EQ((int)s_test_buf.payload_count, (int)(at + 1), "count+1");
-        TEST_ASSERT_EQ((int)s_test_buf.payload_descriptors[at].type, (int)implicit_types[i],
+        BOOT_IMPLICIT_PAYLOAD_COMMIT(&TEST_BOOT_INFO, &d);
+        TEST_ASSERT_EQ((int)TEST_BOOT_INFO.payload_count, (int)(at + 1), "count+1");
+        TEST_ASSERT_EQ((int)TEST_BOOT_INFO.payload_descriptors[at].type, (int)implicit_types[i],
                        "idx ok");
     }
-    TEST_ASSERT_EQ((int)(s_test_buf.payload_total_bytes == total), 1,
+    TEST_ASSERT_EQ((int)(TEST_BOOT_INFO.payload_total_bytes == total), 1,
                    "total ok");
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_OK,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_OK,
                    "full table ok");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OK, "no payload error");
 
     for (i = 0; i < BOOT_PAYLOAD_MAX; i++) {
-        if (s_test_buf.payload_descriptors[i].type == BOOT_PAYLOAD_HEADLESS_AUTHZ) { saw[0] = 1; }
-        if (s_test_buf.payload_descriptors[i].type == BOOT_PAYLOAD_RANDOM_SEED)    { saw[1] = 1; }
+        if (TEST_BOOT_INFO.payload_descriptors[i].type == BOOT_PAYLOAD_HEADLESS_AUTHZ) { saw[0] = 1; }
+        if (TEST_BOOT_INFO.payload_descriptors[i].type == BOOT_PAYLOAD_RANDOM_SEED)    { saw[1] = 1; }
     }
     TEST_ASSERT_EQ(saw[0], 1, "authz kept");
     TEST_ASSERT_EQ(saw[1], 1, "seed kept");
@@ -1624,20 +1624,20 @@ static void test_payload_retained_fb_wrap_rejected(void)
     /* Framebuffer whose declared size wraps past UINT64_MAX. The
      * pitch*height multiplication guard rejects insane dimensions; the
      * range_end_overflows() check rejects fb_addr near UINT64_MAX. */
-    s_test_buf.fb_available               = 1;
-    s_test_buf.fb.addr                    = ((uint64_t)-1) - 0x100ull;
-    s_test_buf.fb.pitch                   = 4 * 1024;
-    s_test_buf.fb.width                   = 1024;
-    s_test_buf.fb.height                  = 16;
+    TEST_BOOT_INFO.fb_available               = 1;
+    TEST_BOOT_INFO.fb.addr                    = ((uint64_t)-1) - 0x100ull;
+    TEST_BOOT_INFO.fb.pitch                   = 4 * 1024;
+    TEST_BOOT_INFO.fb.width                   = 1024;
+    TEST_BOOT_INFO.fb.height                  = 16;
 
-    s_test_buf.payload_count              = 1;
-    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
-    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
-    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
-    s_test_buf.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
-    s_test_buf.payload_total_bytes        = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_count              = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type       = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    TEST_BOOT_INFO.payload_descriptors[0].length     = SAFE_PAYLOAD_LEN;
+    TEST_BOOT_INFO.payload_total_bytes        = SAFE_PAYLOAD_LEN;
 
-    TEST_ASSERT_EQ(boot_payload_validate(&s_test_buf, &err), BOOT_FATAL,
+    TEST_ASSERT_EQ(boot_payload_validate(&TEST_BOOT_INFO, &err), BOOT_FATAL,
                    "framebuffer range whose end wraps UINT64_MAX rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_PAYLOAD_ERR_OVERLAP_FB,
                    "err=OVERLAP_FB (fb retained-region wrap)");

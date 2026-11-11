@@ -351,7 +351,15 @@ int klog_watch_ctx_owns(const struct klog_watch_ctx *owner, const struct klog_wa
         return 0;
     if (ctx->in_isr || ctx->in_dpc || ctx->irql > DISPATCH_LEVEL)
         return 0;
-    return ctx->cpu == owner->cpu && ctx->task == owner->task && ctx->thread == owner->thread;
+    if (ctx->cpu != owner->cpu)
+        return 0;
+    /* A user-mode binary's window: any task captured for that binary (the
+     * launched task and every fork descendant) on the launcher's CPU. The CPU
+     * test stays because task_current() reads a global cursor: another CPU
+     * can name the same task, and its errors are not the binary's. */
+    if (owner->capture_owner)
+        return ctx->capture_owner == owner->capture_owner;
+    return ctx->task == owner->task && ctx->thread == owner->thread;
 }
 
 /* The calling execution. Only the CPU's own per-CPU data and the scheduler's
@@ -368,7 +376,12 @@ static void watch_ctx_here(struct klog_watch_ctx *c)
     c->irql   = (uint8_t)cpu->current_irql;
     c->in_dpc = (uint8_t)(KeIsExecutingDpc() ? 1 : 0);
     c->in_isr = (uint8_t)(cpu->isr_depth ? 1 : 0);
-    c->task   = task_current();
+    {
+        struct task *t = task_current();
+        c->task = t;
+        if (t && t->utest_capture_active)
+            c->capture_owner = t->utest_capture_owner_pid;
+    }
     c->thread = thread_current();
     c->valid  = (uint8_t)(c->task && c->thread);
 }
@@ -462,15 +475,16 @@ static int watch_add(struct klog_watch_state *st, const struct klog_watch_expect
 }
 
 static int watch_prepare(struct klog_watch_expect *x, const char *tag, const char *text,
-                         const char *file, int line)
+                         const char *file, int line, int optional)
 {
     if (!tag || !tag[0] || !text || !text[0])
         return KLOG_WATCH_ERR_ARG;
     watch_zero(x, sizeof(*x));
     if (!watch_copy(x->tag, sizeof(x->tag), tag) || !watch_copy(x->text, sizeof(x->text), text))
         return KLOG_WATCH_ERR_LONG;
-    x->file = file;
-    x->line = line;
+    x->file     = file;
+    x->line     = line;
+    x->optional = (uint8_t)(optional ? 1 : 0);
     return KLOG_WATCH_OK;
 }
 
@@ -503,6 +517,20 @@ void klog_watch_suite_begin(void)
     spin_unlock_irqrestore(&s_klog_lock, f);
 }
 
+void klog_watch_utest_begin(uint32_t owner_pid)
+{
+    uint64_t f;
+    struct klog_watch_ctx me;
+
+    if (!owner_pid)
+        return;   /* 0 means "not captured": it must never name an owner */
+    watch_ctx_here(&me);
+    me.capture_owner = owner_pid;
+    spin_lock_irqsave(&s_klog_lock, &f);
+    watch_suite_begin(&s_watch_live, &me);
+    spin_unlock_irqrestore(&s_klog_lock, f);
+}
+
 void klog_watch_suite_end(struct klog_watch_report *out)
 {
     uint64_t f;
@@ -511,11 +539,12 @@ void klog_watch_suite_end(struct klog_watch_report *out)
     spin_unlock_irqrestore(&s_klog_lock, f);
 }
 
-int klog_watch_expect(const char *tag, const char *text, const char *file, int line)
+static int watch_register(const char *tag, const char *text, const char *file, int line,
+                          int optional)
 {
     struct klog_watch_expect x;
     uint64_t f;
-    int rc = watch_prepare(&x, tag, text, file, line);
+    int rc = watch_prepare(&x, tag, text, file, line, optional);
 
     if (rc != KLOG_WATCH_OK)
         return rc;
@@ -525,6 +554,16 @@ int klog_watch_expect(const char *tag, const char *text, const char *file, int l
     return rc;
 }
 
+int klog_watch_expect(const char *tag, const char *text, const char *file, int line)
+{
+    return watch_register(tag, text, file, line, 0);
+}
+
+int klog_watch_allow(const char *tag, const char *text, const char *file, int line)
+{
+    return watch_register(tag, text, file, line, 1);
+}
+
 uint32_t klog_watch_failures(const struct klog_watch_report *r)
 {
     uint32_t n = 0;
@@ -532,7 +571,7 @@ uint32_t klog_watch_failures(const struct klog_watch_report *r)
     if (!r)
         return 0;
     for (uint32_t i = 0; i < r->n_expects && i < KLOG_WATCH_MAX_EXPECTS; i++)
-        if (!r->expects[i].hits)
+        if (!r->expects[i].hits && !r->expects[i].optional)
             n++;
     return n + (r->unexpected ? 1u : 0u);
 }
@@ -583,16 +622,28 @@ void klog_watch_fx_suite_end(struct klog_watch_state *st, struct klog_watch_repo
         watch_suite_end(st, out);
 }
 
-int klog_watch_fx_expect(struct klog_watch_state *st, const char *tag, const char *text,
-                         const char *file, int line)
+static int watch_fx_register(struct klog_watch_state *st, const char *tag, const char *text,
+                             const char *file, int line, int optional)
 {
     struct klog_watch_expect x;
     int rc;
 
     if (!st)
         return KLOG_WATCH_ERR_ARG;
-    rc = watch_prepare(&x, tag, text, file, line);
+    rc = watch_prepare(&x, tag, text, file, line, optional);
     return rc != KLOG_WATCH_OK ? rc : watch_add(st, &x);
+}
+
+int klog_watch_fx_expect(struct klog_watch_state *st, const char *tag, const char *text,
+                         const char *file, int line)
+{
+    return watch_fx_register(st, tag, text, file, line, 0);
+}
+
+int klog_watch_fx_allow(struct klog_watch_state *st, const char *tag, const char *text,
+                        const char *file, int line)
+{
+    return watch_fx_register(st, tag, text, file, line, 1);
 }
 
 int klog_watch_fx_probe(struct klog_watch_state *st, log_level_t level, const char *tag,

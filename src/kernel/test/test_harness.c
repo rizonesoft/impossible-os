@@ -768,6 +768,7 @@ static void test_harness_klog_watch_ownership(void)
 {
     struct klog_watch_ctx owner, c;
 
+    memset(&owner, 0, sizeof(owner));   /* every field this test does not name is 0 */
     owner.valid = 1; owner.in_dpc = 0; owner.in_isr = 0; owner.irql = PASSIVE_LEVEL;
     owner.cpu = 0; owner.task = &s_fx_task; owner.thread = &s_fx_thread;
 
@@ -798,6 +799,93 @@ static void test_harness_klog_watch_ownership(void)
      * since boot, thread context reads zero. A missed decrement would make
      * every later record look like an ISR's and no expectation could match. */
     TEST_ASSERT_EQ((uint32_t)smp_this_cpu()->isr_depth, 0u, "thread context is not inside an interrupt");
+}
+
+/* A user-mode binary's window (klog_watch_utest_begin): its execution is
+ * every task captured for that binary, on the launcher's CPU, in thread
+ * context. Each case is a context that must not be credited to the binary. */
+static void test_harness_klog_watch_utest_owner(void)
+{
+    struct klog_watch_state *st = &s_fx;
+    struct klog_watch_report *r = &s_expect_report;   /* ~3.5 KB: never on the stack */
+    struct klog_watch_ctx owner, c, launcher;
+
+    memset(&owner, 0, sizeof(owner));
+    owner.valid = 1; owner.irql = PASSIVE_LEVEL; owner.cpu = 0;
+    owner.task = &s_fx_task; owner.thread = &s_fx_thread;
+    owner.capture_owner = 12u;
+
+    c = owner; c.task = &s_fx_other; c.thread = &s_fx_other;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 1,
+                   "a fork descendant captured for the binary (another task and thread)");
+    c.cpu = 1;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 0,
+                   "the same captured task named from another CPU through the global cursor");
+    c = owner; c.capture_owner = 13u;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 0, "a task captured for another binary");
+    launcher = owner; launcher.capture_owner = 0u;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &launcher), 0,
+                   "an uncaptured task, such as the launcher itself, even as the same task and thread");
+    c = owner; c.in_isr = 1;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 0, "an interrupt over a captured task");
+    c = owner; c.in_dpc = 1;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 0, "a DPC over a captured task");
+    c = owner; c.irql = (uint8_t)(DISPATCH_LEVEL + 1);
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 0, "a captured task above DISPATCH");
+    c = owner; c.valid = 0;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 0, "an unknown context");
+    /* A suite window is unchanged by capture: it still needs its own task
+     * and thread, so a captured task cannot satisfy a kernel suite. */
+    c = owner; c.task = &s_fx_other;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&launcher, &c), 0,
+                   "a captured task against a suite owner with no capture");
+
+    /* The same machine end to end on a fixture: an expectation, an
+     * allowance that matches, and an allowance that never does. */
+    fx_reset(st);
+    st->owner = owner;
+    klog_watch_fx_run_begin(st);
+    klog_watch_fx_suite_begin(st);
+    TEST_ASSERT_EQ(klog_watch_fx_expect(st, "_u", "provoked", __FILE__, __LINE__), KLOG_WATCH_OK,
+                   "an expectation registers");
+    TEST_ASSERT_EQ(klog_watch_fx_allow(st, "_u", "sometimes", __FILE__, __LINE__), KLOG_WATCH_OK,
+                   "an allowance registers");
+    TEST_ASSERT_EQ(klog_watch_fx_allow(st, "_u", "never", __FILE__, __LINE__), KLOG_WATCH_OK,
+                   "a second allowance registers");
+    TEST_ASSERT_EQ((uint32_t)st->report.expects[1].optional, 1u, "an allowance is marked optional");
+    TEST_ASSERT_EQ((uint32_t)st->report.expects[0].optional, 0u, "an expectation is not");
+    c = owner; c.task = &s_fx_other; c.thread = &s_fx_other;
+    TEST_ASSERT_EQ(klog_watch_fx_probe_from(st, &c, 0, LOG_ERROR, "_u", "a provoked line"), 1,
+                   "a descendant's declared line is claimed");
+    TEST_ASSERT_EQ(klog_watch_fx_probe_from(st, &c, 0, LOG_ERROR, "_u", "sometimes it fails"), 1,
+                   "an allowed line is claimed when it appears");
+    TEST_ASSERT_EQ(klog_watch_fx_probe_from(st, &launcher, 0, LOG_ERROR, "_u", "provoked"), 0,
+                   "the launcher's own matching text is unexpected");
+    TEST_ASSERT_EQ(klog_watch_fx_probe_from(st, &launcher, 1, LOG_ERROR, "_s", "suppressed"), 0,
+                   "and so is its error on a suppressed tag");
+    klog_watch_fx_suite_end(st, r);
+    TEST_ASSERT_EQ(r->expects[0].hits + r->expects[1].hits, 2u, "both claimed lines were counted");
+    TEST_ASSERT_EQ(r->expects[2].hits, 0u, "the unmatched allowance has no hit");
+    TEST_ASSERT_EQ(r->unexpected, 2u, "the launcher's two lines are unexpected");
+    TEST_ASSERT_EQ(klog_watch_failures(r), 1u,
+                   "an unmatched allowance costs nothing; the unexpected lines cost one");
+    r->unexpected = 0;
+    r->expects[0].hits = 0;
+    TEST_ASSERT_EQ(klog_watch_failures(r), 1u, "an unmatched expectation costs one");
+    klog_watch_fx_run_end(st);
+
+    /* 0 is "not captured", so it can never open a window: the live call
+     * must return before it touches the suite this test runs in. */
+    {
+        uint32_t before;
+        klog_watch_peek(r);
+        before = r->n_expects + r->unexpected;
+        klog_watch_utest_begin(0u);
+        TEST_ASSERT_EQ((uint32_t)klog_watch_mode(), (uint32_t)KLOG_WATCH_SUITE,
+                       "owner 0 leaves the running suite's window open");
+        klog_watch_peek(r);
+        TEST_ASSERT_EQ(r->n_expects + r->unexpected, before, "and its report untouched");
+    }
 }
 
 static void test_harness_klog_watch_edges(void)
@@ -1882,6 +1970,8 @@ void test_register_harness(void)
                             test_harness_klog_watch_sees_suppressed, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: error watch ownership (CPU, task, thread, ISR, DPC)",
                             test_harness_klog_watch_ownership, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: error watch owner for a user-mode binary (capture, CPU, allowance)",
+                            test_harness_klog_watch_utest_owner, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: error watch lifecycle, bounds and saturation",
                             test_harness_klog_watch_edges, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: TEST_KLOG_SUPPRESS demotes level",

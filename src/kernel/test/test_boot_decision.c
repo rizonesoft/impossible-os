@@ -16,34 +16,34 @@
  * ============================================================================ */
 
 #include "kernel/test/test.h"
+#include "kernel/test/boot_info_fixture.h" /* TEST_BOOT_INFO: the shared fixture */
 #include "kernel/test/klog_suppress.h"
 #include "kernel/boot_info.h"
 #include "boot/boot_policy.h"  /* v19 selection ABI constants */
 #include "libc/string.h"
 
-static struct boot_info s_dec_buf;
 
 static void dec_zero(void)
 {
-    uint64_t *p = (uint64_t *)&s_dec_buf;
+    uint64_t *p = (uint64_t *)&TEST_BOOT_INFO;
     uint32_t i;
-    for (i = 0u; i < sizeof(s_dec_buf) / sizeof(uint64_t); i++)
+    for (i = 0u; i < sizeof(TEST_BOOT_INFO) / sizeof(uint64_t); i++)
         p[i] = 0u;
     /* boot_media_role: Rule 3.5 (always-on range gate) rejects UNSET as
      * a producer-must-overwrite sentinel. Default to NORMAL so existing
      * happy-path fixtures don't trip the gate; tests exercising the
      * UNSET sentinel set the field explicitly after dec_zero(). */
-    s_dec_buf.boot_media_role = BOOT_MEDIA_ROLE_NORMAL;
+    TEST_BOOT_INFO.boot_media_role = BOOT_MEDIA_ROLE_NORMAL;
     /* v19 selection ABI defaults (Rules 9-11). UNSET selection_reason
      * is now FATAL post-bootloader live producer; happy-path fixtures need a
      * valid reason + non-empty selected_entry_id. Tests exercising the
      * UNSET / out-of-range / non-NUL-terminated sentinels override
      * after dec_zero(). */
-    s_dec_buf.selection_reason = (uint32_t)BOOT_SELECTION_STORE_DEFAULT;
-    s_dec_buf.selected_entry_id[0] = 'd';
-    s_dec_buf.selected_entry_id[1] = 'e';
-    s_dec_buf.selected_entry_id[2] = 'f';
-    s_dec_buf.selected_entry_id[3] = 0;
+    TEST_BOOT_INFO.selection_reason = (uint32_t)BOOT_SELECTION_STORE_DEFAULT;
+    TEST_BOOT_INFO.selected_entry_id[0] = 'd';
+    TEST_BOOT_INFO.selected_entry_id[1] = 'e';
+    TEST_BOOT_INFO.selected_entry_id[2] = 'f';
+    TEST_BOOT_INFO.selected_entry_id[3] = 0;
 }
 
 static void test_boot_decision_null_info(void)
@@ -60,13 +60,13 @@ static void test_boot_decision_cold_boot_happy(void)
     TEST_KLOG_SUPPRESS("boot");   /* LOG_INFO summary */
     dec_zero();
     /* Cold boot, no flags, zero fallback depth. */
-    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason         = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.boot_fallback_depth = 0u;
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags   = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.boot_fallback_depth = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "cold boot -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
 }
@@ -76,14 +76,14 @@ static void test_boot_decision_recovery_boot_happy(void)
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
     /* Forced recovery boot -- trigger flag is set, path/reason match. */
-    s_dec_buf.boot_path           = BOOT_PATH_RECOVERY;
-    s_dec_buf.boot_reason         = BOOT_REASON_RECOVERY_TRIGGER;
-    s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_RECOVERY_TRIGGERED |
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_RECOVERY;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_RECOVERY_TRIGGER;
+    TEST_BOOT_INFO.boot_source_flags   = BOOT_SOURCE_FLAG_RECOVERY_TRIGGERED |
                                     BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.boot_fallback_depth = 0u;
+    TEST_BOOT_INFO.boot_fallback_depth = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "recovery boot -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
 }
@@ -95,13 +95,13 @@ static void test_boot_decision_network_boot_happy(void)
     /* Network boot flagged insecure. Loader selected NETWORK but
      * reason reflects the insecure-channel condition so attestation
      * knows this boot was not transport-authenticated. */
-    s_dec_buf.boot_path           = BOOT_PATH_NETWORK;
-    s_dec_buf.boot_reason         = BOOT_REASON_NETWORK_INSECURE;
-    s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_NETWORK_INSECURE;
-    s_dec_buf.boot_fallback_depth = 0u;
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_NETWORK;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_NETWORK_INSECURE;
+    TEST_BOOT_INFO.boot_source_flags   = BOOT_SOURCE_FLAG_NETWORK_INSECURE;
+    TEST_BOOT_INFO.boot_fallback_depth = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "network boot -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
 }
@@ -114,14 +114,14 @@ static void test_boot_decision_rejected_resume_fallback_happy(void)
      * NORMAL (the path that actually ran), reason is
      * RESUME_INVALIDATED (the policy that made the loader take the
      * fallback), fallback_depth=1 (one rung traversed). */
-    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason         = BOOT_REASON_RESUME_INVALIDATED;
-    s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_RESUME_INVALIDATED |
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_RESUME_INVALIDATED;
+    TEST_BOOT_INFO.boot_source_flags   = BOOT_SOURCE_FLAG_RESUME_INVALIDATED |
                                     BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.boot_fallback_depth = 1u;
+    TEST_BOOT_INFO.boot_fallback_depth = 1u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "resume-reject fallback -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
 }
@@ -131,13 +131,13 @@ static void test_boot_decision_bad_path_rejected(void)
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
     /* Value just past the enum range. */
-    s_dec_buf.boot_path           = (uint32_t)BOOT_PATH_TYPE_MAX + 1u;
-    s_dec_buf.boot_reason         = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags   = 0u;
-    s_dec_buf.boot_fallback_depth = 0u;
+    TEST_BOOT_INFO.boot_path           = (uint32_t)BOOT_PATH_TYPE_MAX + 1u;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags   = 0u;
+    TEST_BOOT_INFO.boot_fallback_depth = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                 "bad boot_path -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_BAD_PATH, "err=BAD_PATH");
 }
@@ -146,13 +146,13 @@ static void test_boot_decision_bad_reason_rejected(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason         = (uint32_t)BOOT_REASON_CODE_MAX + 1u;
-    s_dec_buf.boot_source_flags   = 0u;
-    s_dec_buf.boot_fallback_depth = 0u;
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason         = (uint32_t)BOOT_REASON_CODE_MAX + 1u;
+    TEST_BOOT_INFO.boot_source_flags   = 0u;
+    TEST_BOOT_INFO.boot_fallback_depth = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                   "bad boot_reason -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_BAD_REASON, "err=BAD_REASON");
 }
@@ -162,13 +162,13 @@ static void test_boot_decision_unknown_flag_rejected(void)
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
     /* Bit 31 is guaranteed reserved today (MASK_KNOWN covers bits 0..9). */
-    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason         = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags   = (1u << 31);
-    s_dec_buf.boot_fallback_depth = 0u;
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags   = (1u << 31);
+    TEST_BOOT_INFO.boot_fallback_depth = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                     "unknown flag -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_UNKNOWN_FLAG, "err=UNKNOWN_FLAG");
 }
@@ -177,13 +177,13 @@ static void test_boot_decision_fallback_depth_cap(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason         = BOOT_REASON_FALLBACK;
-    s_dec_buf.boot_source_flags   = 0u;
-    s_dec_buf.boot_fallback_depth = (uint32_t)BOOT_FALLBACK_DEPTH_MAX + 1u;
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_FALLBACK;
+    TEST_BOOT_INFO.boot_source_flags   = 0u;
+    TEST_BOOT_INFO.boot_fallback_depth = (uint32_t)BOOT_FALLBACK_DEPTH_MAX + 1u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                     "fallback OOR -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_FALLBACK_OOR, "err=FALLBACK_OOR");
 }
@@ -193,13 +193,13 @@ static void test_boot_decision_fallback_depth_at_cap(void)
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
     /* Exactly MAX is accepted (boundary); MAX+1 rejects. */
-    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason         = BOOT_REASON_FALLBACK;
-    s_dec_buf.boot_source_flags   = 0u;
-    s_dec_buf.boot_fallback_depth = (uint32_t)BOOT_FALLBACK_DEPTH_MAX;
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_FALLBACK;
+    TEST_BOOT_INFO.boot_source_flags   = 0u;
+    TEST_BOOT_INFO.boot_fallback_depth = (uint32_t)BOOT_FALLBACK_DEPTH_MAX;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "fallback at MAX -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
 }
@@ -217,16 +217,16 @@ static void test_boot_decision_all_known_flags_accepted(void)
      * valid with reason=NORMAL would let a producer set a recovery
      * trigger flag while the registry/attestation record claimed
      * reason=normal. */
-    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason         = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_BOOT_NEXT_SET
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags   = BOOT_SOURCE_FLAG_BOOT_NEXT_SET
                                   | BOOT_SOURCE_FLAG_BOOT_CURRENT_MISMATCH
                                   | BOOT_SOURCE_FLAG_MEDIA_REMOVABLE
                                   | BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.boot_fallback_depth = 0u;
+    TEST_BOOT_INFO.boot_fallback_depth = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "all informational flags -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
 }
@@ -237,13 +237,13 @@ static void test_boot_decision_trigger_flag_without_reason_rejected(void)
      * is a provenance contradiction. Codex 2026-04-30 finding. */
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason         = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_RECOVERY_TRIGGERED;
-    s_dec_buf.boot_fallback_depth = 0u;
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags   = BOOT_SOURCE_FLAG_RECOVERY_TRIGGERED;
+    TEST_BOOT_INFO.boot_fallback_depth = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                       "trigger w/o reason -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_REASON_FLAG,    "err=REASON_FLAG");
 }
@@ -255,13 +255,13 @@ static void test_boot_decision_unset_path_rejected(void)
      * and the validator MUST reject. Codex 2026-04-30 H1 finding. */
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();  /* leaves boot_path = BOOT_PATH_UNSET = 0 */
-    s_dec_buf.boot_reason         = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags   = 0u;
-    s_dec_buf.boot_fallback_depth = 0u;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags   = 0u;
+    TEST_BOOT_INFO.boot_fallback_depth = 0u;
     /* boot_path intentionally left at UNSET */
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                  "UNSET path -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_BAD_PATH,  "err=BAD_PATH");
 }
@@ -273,13 +273,13 @@ static void test_boot_decision_reason_requires_path(void)
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
     /* RESUME_VALIDATED reason but path=NORMAL -- contradictory. */
-    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason         = BOOT_REASON_RESUME_VALIDATED;
-    s_dec_buf.boot_source_flags   = 0u;
-    s_dec_buf.boot_fallback_depth = 0u;
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_RESUME_VALIDATED;
+    TEST_BOOT_INFO.boot_source_flags   = 0u;
+    TEST_BOOT_INFO.boot_fallback_depth = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                    "RESUME_VALIDATED + path=NORMAL -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_REASON_PATH, "err=REASON_PATH");
 }
@@ -290,13 +290,13 @@ static void test_boot_decision_reason_forbids_path(void)
     dec_zero();
     /* RESUME_INVALIDATED means the resume image was rejected; path
      * MUST NOT be RESUME (we can't be resumed if the resume failed). */
-    s_dec_buf.boot_path           = BOOT_PATH_RESUME;
-    s_dec_buf.boot_reason         = BOOT_REASON_RESUME_INVALIDATED;
-    s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_RESUME_INVALIDATED;
-    s_dec_buf.boot_fallback_depth = 0u;
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_RESUME;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_RESUME_INVALIDATED;
+    TEST_BOOT_INFO.boot_source_flags   = BOOT_SOURCE_FLAG_RESUME_INVALIDATED;
+    TEST_BOOT_INFO.boot_fallback_depth = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                    "RESUME_INVALIDATED + path=RESUME -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_REASON_PATH, "err=REASON_PATH");
 }
@@ -307,13 +307,13 @@ static void test_boot_decision_fallback_requires_fallback_reason(void)
     dec_zero();
     /* depth>0 with reason=NORMAL -- primary-path reason cannot explain
      * a fallback walk. */
-    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason         = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags   = 0u;
-    s_dec_buf.boot_fallback_depth = 3u;
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags   = 0u;
+    TEST_BOOT_INFO.boot_fallback_depth = 3u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                        "depth>0 reason=NORMAL -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_FALLBACK_REASON, "err=FALLBACK_REASON");
 }
@@ -325,13 +325,13 @@ static void test_boot_decision_reason_requires_flag(void)
     /* reason=MANIFEST_FAILURE without MANIFEST_FAILED flag -- the
      * producer is asserting a policy outcome without the matching
      * audit flag. */
-    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;  /* allowed by R5 for this reason */
-    s_dec_buf.boot_reason         = BOOT_REASON_MANIFEST_FAILURE;
-    s_dec_buf.boot_source_flags   = 0u;               /* MANIFEST_FAILED bit NOT set */
-    s_dec_buf.boot_fallback_depth = 1u;
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_NORMAL;  /* allowed by R5 for this reason */
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_MANIFEST_FAILURE;
+    TEST_BOOT_INFO.boot_source_flags   = 0u;               /* MANIFEST_FAILED bit NOT set */
+    TEST_BOOT_INFO.boot_fallback_depth = 1u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                    "MANIFEST_FAILURE without flag -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_REASON_FLAG, "err=REASON_FLAG");
 }
@@ -345,14 +345,14 @@ static void test_boot_decision_boot_current_mismatch_fixture(void)
      * be set so consumers can distinguish this from an ordinary cold
      * boot. Validator accepts; the flag is informational and compatible
      * with reason=NORMAL (R5 path-agnostic). */
-    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason         = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_BOOT_CURRENT_MISMATCH |
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags   = BOOT_SOURCE_FLAG_BOOT_CURRENT_MISMATCH |
                                     BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.boot_fallback_depth = 0u;
+    TEST_BOOT_INFO.boot_fallback_depth = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "boot_current_mismatch -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
 }
@@ -362,13 +362,13 @@ static void test_boot_decision_fallback_class_reasons_accepted(void)
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
     /* depth>0 with reason=ROLLBACK + matching flag -- should pass. */
-    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason         = BOOT_REASON_ROLLBACK;
-    s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_ROLLBACK_TRIGGERED;
-    s_dec_buf.boot_fallback_depth = 2u;
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_ROLLBACK;
+    TEST_BOOT_INFO.boot_source_flags   = BOOT_SOURCE_FLAG_ROLLBACK_TRIGGERED;
+    TEST_BOOT_INFO.boot_fallback_depth = 2u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "rollback fallback -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
 }
@@ -428,15 +428,15 @@ static void test_boot_decision_media_role_installer_happy(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path                = BOOT_PATH_INSTALLER;
-    s_dec_buf.boot_reason              = BOOT_REASON_MEDIA_ROLE_MARKER;
-    s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.boot_fallback_depth      = 0u;
-    s_dec_buf.boot_media_role          = BOOT_MEDIA_ROLE_INSTALLER;
-    s_dec_buf.boot_media_role_mismatch = 0u;
+    TEST_BOOT_INFO.boot_path                = BOOT_PATH_INSTALLER;
+    TEST_BOOT_INFO.boot_reason              = BOOT_REASON_MEDIA_ROLE_MARKER;
+    TEST_BOOT_INFO.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.boot_fallback_depth      = 0u;
+    TEST_BOOT_INFO.boot_media_role          = BOOT_MEDIA_ROLE_INSTALLER;
+    TEST_BOOT_INFO.boot_media_role_mismatch = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "installer media-role -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
 }
@@ -445,15 +445,15 @@ static void test_boot_decision_media_role_recovery_happy(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path                = BOOT_PATH_RECOVERY;
-    s_dec_buf.boot_reason              = BOOT_REASON_MEDIA_ROLE_MARKER;
-    s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.boot_fallback_depth      = 0u;
-    s_dec_buf.boot_media_role          = BOOT_MEDIA_ROLE_RECOVERY;
-    s_dec_buf.boot_media_role_mismatch = 0u;
+    TEST_BOOT_INFO.boot_path                = BOOT_PATH_RECOVERY;
+    TEST_BOOT_INFO.boot_reason              = BOOT_REASON_MEDIA_ROLE_MARKER;
+    TEST_BOOT_INFO.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.boot_fallback_depth      = 0u;
+    TEST_BOOT_INFO.boot_media_role          = BOOT_MEDIA_ROLE_RECOVERY;
+    TEST_BOOT_INFO.boot_media_role_mismatch = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "recovery media-role -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
 }
@@ -463,13 +463,13 @@ static void test_boot_decision_media_role_normal_path_rejected(void)
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
     /* MEDIA_ROLE_MARKER reason MUST NOT pair with NORMAL path. */
-    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason         = BOOT_REASON_MEDIA_ROLE_MARKER;
-    s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.boot_fallback_depth = 0u;
+    TEST_BOOT_INFO.boot_path           = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason         = BOOT_REASON_MEDIA_ROLE_MARKER;
+    TEST_BOOT_INFO.boot_source_flags   = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.boot_fallback_depth = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                  "media-role NORMAL path -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_REASON_PATH, "err=REASON_PATH (forbidden)");
 }
@@ -480,15 +480,15 @@ static void test_boot_decision_media_role_mismatch_path_role_rejected(void)
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
     /* INSTALLER path with RECOVERY role -- path/role disagree, validator must reject. */
-    s_dec_buf.boot_path                = BOOT_PATH_INSTALLER;
-    s_dec_buf.boot_reason              = BOOT_REASON_MEDIA_ROLE_MARKER;
-    s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.boot_fallback_depth      = 0u;
-    s_dec_buf.boot_media_role          = BOOT_MEDIA_ROLE_RECOVERY;
-    s_dec_buf.boot_media_role_mismatch = 0u;
+    TEST_BOOT_INFO.boot_path                = BOOT_PATH_INSTALLER;
+    TEST_BOOT_INFO.boot_reason              = BOOT_REASON_MEDIA_ROLE_MARKER;
+    TEST_BOOT_INFO.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.boot_fallback_depth      = 0u;
+    TEST_BOOT_INFO.boot_media_role          = BOOT_MEDIA_ROLE_RECOVERY;
+    TEST_BOOT_INFO.boot_media_role_mismatch = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                  "path/role disagree -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_REASON_PATH, "err=REASON_PATH");
 }
@@ -500,15 +500,15 @@ static void test_boot_decision_media_role_mismatch_flag_rejected(void)
     /* mismatch=1 with reason=MEDIA_ROLE_MARKER is contradictory: a
      * mismatch causes fallback to NORMAL, so the marker reason should
      * NOT be set on a mismatched boot. */
-    s_dec_buf.boot_path                = BOOT_PATH_INSTALLER;
-    s_dec_buf.boot_reason              = BOOT_REASON_MEDIA_ROLE_MARKER;
-    s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.boot_fallback_depth      = 0u;
-    s_dec_buf.boot_media_role          = BOOT_MEDIA_ROLE_INSTALLER;
-    s_dec_buf.boot_media_role_mismatch = 1u;
+    TEST_BOOT_INFO.boot_path                = BOOT_PATH_INSTALLER;
+    TEST_BOOT_INFO.boot_reason              = BOOT_REASON_MEDIA_ROLE_MARKER;
+    TEST_BOOT_INFO.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.boot_fallback_depth      = 0u;
+    TEST_BOOT_INFO.boot_media_role          = BOOT_MEDIA_ROLE_INSTALLER;
+    TEST_BOOT_INFO.boot_media_role_mismatch = 1u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                  "mismatch=1 with MARKER -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_REASON_PATH, "err=REASON_PATH");
 }
@@ -548,15 +548,15 @@ static void test_boot_decision_media_role_table_driven(void)
     uint32_t i;
     for (i = 0; i < sizeof(rows) / sizeof(rows[0]); i++) {
         dec_zero();
-        s_dec_buf.boot_path                = rows[i].path;
-        s_dec_buf.boot_reason              = BOOT_REASON_MEDIA_ROLE_MARKER;
-        s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-        s_dec_buf.boot_fallback_depth      = 0u;
-        s_dec_buf.boot_media_role          = rows[i].role;
-        s_dec_buf.boot_media_role_mismatch = rows[i].mismatch;
+        TEST_BOOT_INFO.boot_path                = rows[i].path;
+        TEST_BOOT_INFO.boot_reason              = BOOT_REASON_MEDIA_ROLE_MARKER;
+        TEST_BOOT_INFO.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+        TEST_BOOT_INFO.boot_fallback_depth      = 0u;
+        TEST_BOOT_INFO.boot_media_role          = rows[i].role;
+        TEST_BOOT_INFO.boot_media_role_mismatch = rows[i].mismatch;
 
         enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-        boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+        boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
         TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)rows[i].want_r,   "row.r");
         TEST_ASSERT_EQ((uint64_t)err, (uint64_t)rows[i].want_err, "row.err");
     }
@@ -569,15 +569,15 @@ static void test_boot_decision_media_role_range_normal_boot(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path                = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason              = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.boot_fallback_depth      = 0u;
-    s_dec_buf.boot_media_role          = (uint32_t)BOOT_MEDIA_ROLE_MAX + 1u;
-    s_dec_buf.boot_media_role_mismatch = 0u;
+    TEST_BOOT_INFO.boot_path                = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason              = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.boot_fallback_depth      = 0u;
+    TEST_BOOT_INFO.boot_media_role          = (uint32_t)BOOT_MEDIA_ROLE_MAX + 1u;
+    TEST_BOOT_INFO.boot_media_role_mismatch = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                "OOR role on NORMAL boot -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_BAD_REASON, "err=BAD_REASON");
 }
@@ -591,15 +591,15 @@ static void test_boot_decision_media_role_unset_rejected(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path                = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason              = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.boot_fallback_depth      = 0u;
-    s_dec_buf.boot_media_role          = BOOT_MEDIA_ROLE_UNSET;
-    s_dec_buf.boot_media_role_mismatch = 0u;
+    TEST_BOOT_INFO.boot_path                = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason              = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.boot_fallback_depth      = 0u;
+    TEST_BOOT_INFO.boot_media_role          = BOOT_MEDIA_ROLE_UNSET;
+    TEST_BOOT_INFO.boot_media_role_mismatch = 0u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                "UNSET role on NORMAL boot -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_BAD_REASON, "err=BAD_REASON");
 }
@@ -608,15 +608,15 @@ static void test_boot_decision_media_role_mismatch_nonboolean(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path                = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason              = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.boot_fallback_depth      = 0u;
-    s_dec_buf.boot_media_role          = BOOT_MEDIA_ROLE_NORMAL;
-    s_dec_buf.boot_media_role_mismatch = 255u;
+    TEST_BOOT_INFO.boot_path                = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason              = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.boot_fallback_depth      = 0u;
+    TEST_BOOT_INFO.boot_media_role          = BOOT_MEDIA_ROLE_NORMAL;
+    TEST_BOOT_INFO.boot_media_role_mismatch = 255u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                "non-boolean mismatch -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_BAD_REASON, "err=BAD_REASON");
 }
@@ -721,14 +721,14 @@ static void test_boot_decision_trust_flags_in_mask_accepted(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path     = (uint32_t)BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason   = (uint32_t)BOOT_REASON_NORMAL;
-    s_dec_buf.degraded_trust_flags =
+    TEST_BOOT_INFO.boot_path     = (uint32_t)BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason   = (uint32_t)BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.degraded_trust_flags =
         BOOT_DEGRADED_TRUST_SECURE_BOOT_OFF |
         BOOT_DEGRADED_TRUST_SBAT_ABSENT |
         BOOT_DEGRADED_TRUST_DBX_ABSENT;
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,                  "in-mask bits -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK,     "no err on in-mask bits");
 }
@@ -737,12 +737,12 @@ static void test_boot_decision_trust_flags_unknown_rejected(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path   = (uint32_t)BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason = (uint32_t)BOOT_REASON_NORMAL;
-    s_dec_buf.degraded_trust_flags =
+    TEST_BOOT_INFO.boot_path   = (uint32_t)BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason = (uint32_t)BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.degraded_trust_flags =
         BOOT_DEGRADED_TRUST_SECURE_BOOT_OFF | (1u << 31);
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                    "OOR trust bit -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_UNKNOWN_FLAG,"err=UNKNOWN_FLAG");
 }
@@ -756,15 +756,15 @@ static void test_boot_decision_trust_unreadable_trio(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path   = (uint32_t)BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason = (uint32_t)BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_path   = (uint32_t)BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason = (uint32_t)BOOT_REASON_NORMAL;
     uint32_t trio =
         BOOT_DEGRADED_TRUST_SECURE_BOOT_UNREADABLE |
         BOOT_DEGRADED_TRUST_SBAT_ABSENT |
         BOOT_DEGRADED_TRUST_DBX_ABSENT;
-    s_dec_buf.degraded_trust_flags = trio;
+    TEST_BOOT_INFO.degraded_trust_flags = trio;
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,                  "unreadable-trio -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK,     "no err");
     TEST_ASSERT_EQ((uint64_t)((trio & ~(uint32_t)BOOT_DEGRADED_TRUST_MASK_KNOWN) == 0u),
@@ -775,11 +775,11 @@ static void test_boot_decision_trust_flags_zero_accepted(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path   = (uint32_t)BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason = (uint32_t)BOOT_REASON_NORMAL;
-    s_dec_buf.degraded_trust_flags = 0u;
+    TEST_BOOT_INFO.boot_path   = (uint32_t)BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason = (uint32_t)BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.degraded_trust_flags = 0u;
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "clean trust -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "no err");
 }
@@ -790,14 +790,14 @@ static void test_boot_decision_v19_unset_selection_reason_fatal(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.boot_path     = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason   = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
     /* Override the dec_zero default to UNSET. */
-    s_dec_buf.selection_reason = (uint32_t)BOOT_SELECTION_UNSET;
+    TEST_BOOT_INFO.selection_reason = (uint32_t)BOOT_SELECTION_UNSET;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: UNSET selection_reason -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err,
                    (uint64_t)BOOT_DECISION_ERR_BAD_SELECTION_REASON,
@@ -808,13 +808,13 @@ static void test_boot_decision_v19_oor_selection_reason_fatal(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.selection_reason = (uint32_t)BOOT_SELECTION_REASON_MAX + 1u;
+    TEST_BOOT_INFO.boot_path     = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason   = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.selection_reason = (uint32_t)BOOT_SELECTION_REASON_MAX + 1u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: OOR selection_reason -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err,
                    (uint64_t)BOOT_DECISION_ERR_BAD_SELECTION_REASON,
@@ -825,16 +825,16 @@ static void test_boot_decision_v19_non_nul_terminated_id_fatal(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.boot_path     = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason   = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
     /* Fill all 64 bytes with non-NUL chars -- producer wrote raw bytes
      * without a terminator. */
-    for (uint32_t i = 0; i < sizeof(s_dec_buf.selected_entry_id); i++)
-        s_dec_buf.selected_entry_id[i] = (char)('a' + (i % 26));
+    for (uint32_t i = 0; i < sizeof(TEST_BOOT_INFO.selected_entry_id); i++)
+        TEST_BOOT_INFO.selected_entry_id[i] = (char)('a' + (i % 26));
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: non-NUL-terminated id -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err,
                    (uint64_t)BOOT_DECISION_ERR_BAD_SELECTED_ID,
@@ -845,16 +845,16 @@ static void test_boot_decision_v19_empty_id_with_non_store_invalid_fatal(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.boot_path     = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason   = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
     /* Empty id is the documented STORE_INVALID sentinel; using it with
      * any other selection_reason is a producer bug. */
-    s_dec_buf.selection_reason = (uint32_t)BOOT_SELECTION_STORE_DEFAULT;
-    s_dec_buf.selected_entry_id[0] = 0;
+    TEST_BOOT_INFO.selection_reason = (uint32_t)BOOT_SELECTION_STORE_DEFAULT;
+    TEST_BOOT_INFO.selected_entry_id[0] = 0;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: empty id with non-STORE_INVALID -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err,
                    (uint64_t)BOOT_DECISION_ERR_BAD_SELECTED_ID,
@@ -865,14 +865,14 @@ static void test_boot_decision_v19_store_invalid_with_empty_id_ok(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.selection_reason = (uint32_t)BOOT_SELECTION_FALLBACK_STORE_INVALID;
-    s_dec_buf.selected_entry_id[0] = 0;  /* documented sentinel */
+    TEST_BOOT_INFO.boot_path     = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason   = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.selection_reason = (uint32_t)BOOT_SELECTION_FALLBACK_STORE_INVALID;
+    TEST_BOOT_INFO.selected_entry_id[0] = 0;  /* documented sentinel */
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_OK,
                    "v19: STORE_INVALID + empty id is the documented sentinel");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
@@ -882,13 +882,13 @@ static void test_boot_decision_v19_rejected_count_oor_fatal(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.rejected_entry_count = (uint32_t)BOOT_ENTRIES_MAX_ENTRIES + 1u;
+    TEST_BOOT_INFO.boot_path     = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason   = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.rejected_entry_count = (uint32_t)BOOT_ENTRIES_MAX_ENTRIES + 1u;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: rejected_count > MAX -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err,
                    (uint64_t)BOOT_DECISION_ERR_BAD_REJECTED_ENTRY,
@@ -899,13 +899,13 @@ static void test_boot_decision_v19_rejected_overflow_non_boolean_fatal(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.rejected_entry_overflow = 2u;  /* not 0/1 */
+    TEST_BOOT_INFO.boot_path     = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason   = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.rejected_entry_overflow = 2u;  /* not 0/1 */
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: rejected_overflow non-boolean -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err,
                    (uint64_t)BOOT_DECISION_ERR_BAD_REJECTED_ENTRY,
@@ -916,20 +916,20 @@ static void test_boot_decision_v19_rejected_none_sentinel_fatal(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.rejected_entry_count = 1u;
-    s_dec_buf.rejected_entries[0].id[0] = 'b';
-    s_dec_buf.rejected_entries[0].id[1] = 'a';
-    s_dec_buf.rejected_entries[0].id[2] = 'd';
-    s_dec_buf.rejected_entries[0].id[3] = 0;
+    TEST_BOOT_INFO.boot_path     = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason   = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.rejected_entry_count = 1u;
+    TEST_BOOT_INFO.rejected_entries[0].id[0] = 'b';
+    TEST_BOOT_INFO.rejected_entries[0].id[1] = 'a';
+    TEST_BOOT_INFO.rejected_entries[0].id[2] = 'd';
+    TEST_BOOT_INFO.rejected_entries[0].id[3] = 0;
     /* NONE (0) is documented as "sentinel; never written" -- a producer
      * asserting NONE on a populated rejected entry is a bug. */
-    s_dec_buf.rejected_entries[0].reason = (uint32_t)BOOT_REJECT_REASON_NONE;
+    TEST_BOOT_INFO.rejected_entries[0].reason = (uint32_t)BOOT_REJECT_REASON_NONE;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: rejected[].reason==NONE -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err,
                    (uint64_t)BOOT_DECISION_ERR_BAD_REJECTED_ENTRY,
@@ -944,15 +944,15 @@ static void test_boot_decision_v19_rejected_empty_id_fatal(void)
      * the entry. The tighter Rule 11 check rejects it. */
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.rejected_entry_count = 1u;
-    s_dec_buf.rejected_entries[0].id[0] = 0;  /* empty NUL-terminated */
-    s_dec_buf.rejected_entries[0].reason = (uint32_t)BOOT_REJECT_REASON_KIND_SKIPPED;
+    TEST_BOOT_INFO.boot_path     = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason   = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.rejected_entry_count = 1u;
+    TEST_BOOT_INFO.rejected_entries[0].id[0] = 0;  /* empty NUL-terminated */
+    TEST_BOOT_INFO.rejected_entries[0].reason = (uint32_t)BOOT_REJECT_REASON_KIND_SKIPPED;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: empty rejected[].id -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err,
                    (uint64_t)BOOT_DECISION_ERR_BAD_REJECTED_ENTRY,
@@ -963,17 +963,17 @@ static void test_boot_decision_v19_rejected_id_not_nul_terminated_fatal(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     dec_zero();
-    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
-    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
-    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
-    s_dec_buf.rejected_entry_count = 1u;
+    TEST_BOOT_INFO.boot_path     = BOOT_PATH_NORMAL;
+    TEST_BOOT_INFO.boot_reason   = BOOT_REASON_NORMAL;
+    TEST_BOOT_INFO.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    TEST_BOOT_INFO.rejected_entry_count = 1u;
     /* Fill 64 bytes with no NUL. */
-    for (uint32_t i = 0; i < sizeof(s_dec_buf.rejected_entries[0].id); i++)
-        s_dec_buf.rejected_entries[0].id[i] = (char)('a' + (i % 26));
-    s_dec_buf.rejected_entries[0].reason = (uint32_t)BOOT_REJECT_REASON_KIND_SKIPPED;
+    for (uint32_t i = 0; i < sizeof(TEST_BOOT_INFO.rejected_entries[0].id); i++)
+        TEST_BOOT_INFO.rejected_entries[0].id[i] = (char)('a' + (i % 26));
+    TEST_BOOT_INFO.rejected_entries[0].reason = (uint32_t)BOOT_REJECT_REASON_KIND_SKIPPED;
 
     enum boot_decision_error err = BOOT_DECISION_ERR_OK;
-    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    boot_result_t r = boot_decision_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: rejected[].id non-NUL-terminated -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err,
                    (uint64_t)BOOT_DECISION_ERR_BAD_REJECTED_ENTRY,

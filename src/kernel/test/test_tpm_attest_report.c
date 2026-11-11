@@ -2,6 +2,7 @@
  * bootloader-to-kernel handoff snapshot and the report builder. */
 
 #include "kernel/test/test.h"
+#include "kernel/test/boot_info_fixture.h" /* TEST_BOOT_INFO: the shared fixture */
 #include "kernel/tpm_attest_report.h"
 #include "kernel/tpm.h"                   /* TPM_ALG_SHA256 */
 #include "kernel/boot_info.h"
@@ -11,7 +12,6 @@
 extern const struct boot_proto_descriptor kernel_boot_proto;
 
 /* Static fixtures off the test stack: boot_info is large and the report is ~2.3 KB. */
-static struct boot_info s_fixture_bi;
 static struct boot_attestation_report s_report;
 
 /* In-memory JSON sink so the serializer is tested without a live filesystem. */
@@ -45,16 +45,16 @@ static void test_attest_handoff_capture(void)
 {
     struct boot_attest_handoff h;
 
-    memset(&s_fixture_bi, 0, sizeof s_fixture_bi);
-    s_fixture_bi.caps_required       = 0x1234u;
-    s_fixture_bi.caps_present        = 0x5678u;
-    s_fixture_bi.caps_degraded       = 0x9ABCu;
-    s_fixture_bi.boot_path           = 3u;
-    s_fixture_bi.boot_reason         = 7u;
-    s_fixture_bi.boot_source_flags   = 0xF0u;
-    s_fixture_bi.boot_fallback_depth = 2u;
+    memset(&TEST_BOOT_INFO, 0, sizeof TEST_BOOT_INFO);
+    TEST_BOOT_INFO.caps_required       = 0x1234u;
+    TEST_BOOT_INFO.caps_present        = 0x5678u;
+    TEST_BOOT_INFO.caps_degraded       = 0x9ABCu;
+    TEST_BOOT_INFO.boot_path           = 3u;
+    TEST_BOOT_INFO.boot_reason         = 7u;
+    TEST_BOOT_INFO.boot_source_flags   = 0xF0u;
+    TEST_BOOT_INFO.boot_fallback_depth = 2u;
 
-    tpm_attest_handoff_capture(&s_fixture_bi, &h);
+    tpm_attest_handoff_capture(&TEST_BOOT_INFO, &h);
     TEST_ASSERT_EQ((uint32_t)h.valid, 1u, "capture marks the snapshot valid");
     TEST_ASSERT_EQ((uint32_t)h.caps_required, 0x1234u, "caps_required copied");
     TEST_ASSERT_EQ((uint32_t)h.caps_present, 0x5678u, "caps_present copied");
@@ -67,7 +67,7 @@ static void test_attest_handoff_capture(void)
     /* The load-bearing property: the snapshot is a COPY. A later kernel refinement
      * of the live boot_info (e.g. boot_caps_mark_present) must NOT change what the
      * attestation report attributes to the loader handoff. */
-    s_fixture_bi.caps_present = 0xFFFFu;
+    TEST_BOOT_INFO.caps_present = 0xFFFFu;
     TEST_ASSERT_EQ((uint32_t)h.caps_present, 0x5678u,
                    "snapshot immutable to a later boot_info caps change");
 
@@ -86,9 +86,9 @@ static void test_attest_handoff_capture(void)
         TEST_ASSERT(g != 0, "handoff getter is never NULL");
         TEST_ASSERT_EQ((uint32_t)g->valid, 1u, "boot_phase0 captured a valid snapshot");
         boot_caps = g->caps_present;
-        memset(&s_fixture_bi, 0, sizeof s_fixture_bi);
-        s_fixture_bi.caps_present = ~boot_caps;        /* a value the boot snapshot is not */
-        tpm_attest_handoff_snapshot_init(&s_fixture_bi);   /* latched -> no-op */
+        memset(&TEST_BOOT_INFO, 0, sizeof TEST_BOOT_INFO);
+        TEST_BOOT_INFO.caps_present = ~boot_caps;        /* a value the boot snapshot is not */
+        tpm_attest_handoff_snapshot_init(&TEST_BOOT_INFO);   /* latched -> no-op */
         TEST_ASSERT_EQ((uint32_t)g->caps_present, (uint32_t)boot_caps,
                        "write-once: a later init does not overwrite the boot snapshot");
     }

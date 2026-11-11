@@ -1343,7 +1343,7 @@ static void test_watch_judge(const char *suite)
     g_test_state.failed += klog_watch_failures(r);
     for (uint32_t i = 0; i < r->n_expects && i < KLOG_WATCH_MAX_EXPECTS; i++) {
         const struct klog_watch_expect *x = &r->expects[i];
-        if (x->hits)
+        if (x->hits || x->optional)
             continue;
         klog(LOG_ERROR, test_tag(), "%s :: expected error line never appeared: %s: \"%s\" (%s:%u)",
              suite, x->tag, x->text, x->file ? x->file : "?", (uint64_t)(uint32_t)x->line);

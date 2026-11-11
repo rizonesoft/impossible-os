@@ -13,16 +13,16 @@
  * ============================================================================ */
 
 #include "kernel/test/test.h"
+#include "kernel/test/boot_info_fixture.h" /* TEST_BOOT_INFO: the shared fixture */
 #include "kernel/test/klog_suppress.h"
 #include "kernel/boot_info.h"
 
-static struct boot_info s_caps_buf;
 
 static void caps_zero(void)
 {
-    uint64_t *p = (uint64_t *)&s_caps_buf;
+    uint64_t *p = (uint64_t *)&TEST_BOOT_INFO;
     uint32_t i;
-    for (i = 0u; i < sizeof(s_caps_buf) / sizeof(uint64_t); i++)
+    for (i = 0u; i < sizeof(TEST_BOOT_INFO) / sizeof(uint64_t); i++)
         p[i] = 0u;
 }
 
@@ -41,12 +41,12 @@ static void test_boot_caps_happy_path(void)
     /* Typical shape: every known bit classified as present, nothing
      * required, nothing degraded. This is the "ideal world" where a
      * loader populated every feature. */
-    s_caps_buf.caps_required = 0ull;
-    s_caps_buf.caps_present  = BOOT_CAP_MASK_KNOWN;
-    s_caps_buf.caps_degraded = 0ull;
+    TEST_BOOT_INFO.caps_required = 0ull;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_MASK_KNOWN;
+    TEST_BOOT_INFO.caps_degraded = 0ull;
 
     enum boot_caps_error err = BOOT_CAPS_ERR_OK;
-    boot_result_t r = boot_caps_validate(&s_caps_buf, &err);
+    boot_result_t r = boot_caps_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "happy path -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_CAPS_ERR_OK,     "err=OK");
 }
@@ -63,12 +63,12 @@ static void test_boot_caps_happy_with_degraded(void)
                             BOOT_CAP_RUNTIME_SERVICES    |
                             BOOT_CAP_USB_HANDOVER        |
                             BOOT_CAP_MEDIA_ROLE;
-    s_caps_buf.caps_required = 0ull;
-    s_caps_buf.caps_present  = present_set;
-    s_caps_buf.caps_degraded = BOOT_CAP_MASK_KNOWN & ~present_set;
+    TEST_BOOT_INFO.caps_required = 0ull;
+    TEST_BOOT_INFO.caps_present  = present_set;
+    TEST_BOOT_INFO.caps_degraded = BOOT_CAP_MASK_KNOWN & ~present_set;
 
     enum boot_caps_error err = BOOT_CAPS_ERR_OK;
-    boot_result_t r = boot_caps_validate(&s_caps_buf, &err);
+    boot_result_t r = boot_caps_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,          "mixed classify -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_CAPS_ERR_OK, "err=OK");
 }
@@ -79,12 +79,12 @@ static void test_boot_caps_unknown_required_rejected(void)
     caps_zero();
     /* Set a required bit outside BOOT_CAP_MASK_KNOWN. Bit 63 is the
      * highest possible u64 bit and guaranteed to be reserved today. */
-    s_caps_buf.caps_required = (1ull << 63);
-    s_caps_buf.caps_present  = 0ull;
-    s_caps_buf.caps_degraded = 0ull;
+    TEST_BOOT_INFO.caps_required = (1ull << 63);
+    TEST_BOOT_INFO.caps_present  = 0ull;
+    TEST_BOOT_INFO.caps_degraded = 0ull;
 
     enum boot_caps_error err = BOOT_CAPS_ERR_OK;
-    boot_result_t r = boot_caps_validate(&s_caps_buf, &err);
+    boot_result_t r = boot_caps_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                        "unknown_required -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_CAPS_ERR_UNKNOWN_REQUIRED,    "err=UNKNOWN_REQUIRED");
 }
@@ -94,12 +94,12 @@ static void test_boot_caps_required_is_known(void)
     caps_zero();
     /* Required bits that ARE in the known mask must pass rule 1. Every
      * known bit is classified so rule 4 passes too. */
-    s_caps_buf.caps_required = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_caps_buf.caps_present  = BOOT_CAP_MASK_KNOWN;
-    s_caps_buf.caps_degraded = 0ull;
+    TEST_BOOT_INFO.caps_required = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_MASK_KNOWN;
+    TEST_BOOT_INFO.caps_degraded = 0ull;
 
     enum boot_caps_error err = BOOT_CAPS_ERR_OK;
-    boot_result_t r = boot_caps_validate(&s_caps_buf, &err);
+    boot_result_t r = boot_caps_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,          "known required -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_CAPS_ERR_OK, "err=OK");
 }
@@ -112,13 +112,13 @@ static void test_boot_caps_unclassified_known_rejected(void)
      * violates the producer contract ("classify every known feature").
      * Validator must reject this under rule 4 even though rules 1-3
      * all pass. */
-    s_caps_buf.caps_required = 0ull;
+    TEST_BOOT_INFO.caps_required = 0ull;
     /* Cover everything EXCEPT one known bit -- here USB_HANDOVER. */
-    s_caps_buf.caps_present  = BOOT_CAP_MASK_KNOWN & ~BOOT_CAP_USB_HANDOVER;
-    s_caps_buf.caps_degraded = 0ull;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_MASK_KNOWN & ~BOOT_CAP_USB_HANDOVER;
+    TEST_BOOT_INFO.caps_degraded = 0ull;
 
     enum boot_caps_error err = BOOT_CAPS_ERR_OK;
-    boot_result_t r = boot_caps_validate(&s_caps_buf, &err);
+    boot_result_t r = boot_caps_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                          "unclassified known -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_CAPS_ERR_UNCLASSIFIED_KNOWN,    "err=UNCLASSIFIED_KNOWN");
 }
@@ -131,12 +131,12 @@ static void test_boot_caps_required_and_degraded_rejected(void)
      * contradiction ("asserted required but could not provide"). Rule
      * 2 must fire BEFORE rule 3 or rule 4, so we also set the offending
      * bit in present to prove rule 2 takes priority. */
-    s_caps_buf.caps_required = BOOT_CAP_TPM_EVENT_LOG;
-    s_caps_buf.caps_present  = BOOT_CAP_MASK_KNOWN & ~BOOT_CAP_TPM_EVENT_LOG;
-    s_caps_buf.caps_degraded = BOOT_CAP_TPM_EVENT_LOG;
+    TEST_BOOT_INFO.caps_required = BOOT_CAP_TPM_EVENT_LOG;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_MASK_KNOWN & ~BOOT_CAP_TPM_EVENT_LOG;
+    TEST_BOOT_INFO.caps_degraded = BOOT_CAP_TPM_EVENT_LOG;
 
     enum boot_caps_error err = BOOT_CAPS_ERR_OK;
-    boot_result_t r = boot_caps_validate(&s_caps_buf, &err);
+    boot_result_t r = boot_caps_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                          "required&degraded -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_CAPS_ERR_REQUIRED_DEGRADED,     "err=REQUIRED_DEGRADED");
 }
@@ -149,12 +149,12 @@ static void test_boot_caps_present_and_degraded_rejected(void)
      * (a capability is populated OR skipped, never both). Set every
      * other known bit in present so rule 4 does not catch this case
      * first. */
-    s_caps_buf.caps_required = 0ull;
-    s_caps_buf.caps_present  = BOOT_CAP_MASK_KNOWN;
-    s_caps_buf.caps_degraded = BOOT_CAP_USB_HANDOVER;
+    TEST_BOOT_INFO.caps_required = 0ull;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_MASK_KNOWN;
+    TEST_BOOT_INFO.caps_degraded = BOOT_CAP_USB_HANDOVER;
 
     enum boot_caps_error err = BOOT_CAPS_ERR_OK;
-    boot_result_t r = boot_caps_validate(&s_caps_buf, &err);
+    boot_result_t r = boot_caps_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                         "present&degraded -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_CAPS_ERR_PRESENT_DEGRADED,     "err=PRESENT_DEGRADED");
 }
@@ -166,12 +166,12 @@ static void test_boot_caps_unknown_present_tolerated(void)
      * older kernel booting against newer loader that populated a
      * reserved bit must still boot cleanly. Every known bit must still
      * be classified, so we set all of them in present. */
-    s_caps_buf.caps_required = 0ull;
-    s_caps_buf.caps_present  = BOOT_CAP_MASK_KNOWN | (1ull << 62);
-    s_caps_buf.caps_degraded = 0ull;
+    TEST_BOOT_INFO.caps_required = 0ull;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_MASK_KNOWN | (1ull << 62);
+    TEST_BOOT_INFO.caps_degraded = 0ull;
 
     enum boot_caps_error err = BOOT_CAPS_ERR_OK;
-    boot_result_t r = boot_caps_validate(&s_caps_buf, &err);
+    boot_result_t r = boot_caps_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,          "unknown present -> OK (forward compat)");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_CAPS_ERR_OK, "err=OK");
 }

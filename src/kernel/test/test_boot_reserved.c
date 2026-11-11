@@ -20,6 +20,7 @@
  * ============================================================================ */
 
 #include "kernel/test/test.h"
+#include "kernel/test/boot_info_fixture.h" /* TEST_BOOT_INFO: the shared fixture */
 #include "kernel/test/klog_suppress.h"
 #include "kernel/mm/boot_reserved.h"
 #include "kernel/boot_info.h"
@@ -29,7 +30,6 @@
 
 /* BSS-resident fixture: struct boot_info is ~23 KiB. Allocating on the
  * test stack would blow past IST sizes on some configurations.  */
-static struct boot_info s_br_buf;
 
 /* The RAM every fixture declares: one conventional entry from 0 to here. The
  * reservation pass now asks the memory map whether a payload is readable RAM,
@@ -39,18 +39,18 @@ static struct boot_info s_br_buf;
 
 static void br_set_map(uint32_t i, uint64_t base, uint64_t len, uint32_t type)
 {
-    s_br_buf.mmap[i].base_addr        = base;
-    s_br_buf.mmap[i].length           = len;
-    s_br_buf.mmap[i].uefi_memory_type = type;
-    if (s_br_buf.mmap_count < i + 1u)
-        s_br_buf.mmap_count = i + 1u;
+    TEST_BOOT_INFO.mmap[i].base_addr        = base;
+    TEST_BOOT_INFO.mmap[i].length           = len;
+    TEST_BOOT_INFO.mmap[i].uefi_memory_type = type;
+    if (TEST_BOOT_INFO.mmap_count < i + 1u)
+        TEST_BOOT_INFO.mmap_count = i + 1u;
 }
 
 static void br_zero_fixture(void)
 {
-    uint64_t *p = (uint64_t *)&s_br_buf;
+    uint64_t *p = (uint64_t *)&TEST_BOOT_INFO;
     uint32_t i;
-    for (i = 0u; i < sizeof(s_br_buf) / sizeof(uint64_t); i++)
+    for (i = 0u; i < sizeof(TEST_BOOT_INFO) / sizeof(uint64_t); i++)
         p[i] = 0u;
     /* Header magic + size must be valid so populate doesn't misread,
      * but boot_reserved doesn't consult them directly; zero is fine. */
@@ -69,18 +69,18 @@ static void test_boot_reserved_populate_happy_path(void)
 
     /* TPM event log at 1 MiB, 4 KiB. Gate: caps_present must carry
      * BOOT_CAP_TPM_EVENT_LOG for the reservation path to enter. */
-    s_br_buf.tpm_event_log      = 0x100000u;
-    s_br_buf.tpm_event_log_size = 0x1000u;
-    s_br_buf.caps_present       = BOOT_CAP_TPM_EVENT_LOG;
+    TEST_BOOT_INFO.tpm_event_log      = 0x100000u;
+    TEST_BOOT_INFO.tpm_event_log_size = 0x1000u;
+    TEST_BOOT_INFO.caps_present       = BOOT_CAP_TPM_EVENT_LOG;
 
     /* Framebuffer at 0xE0000000, pitch=1920*4, height=1080 -> 8 MiB. */
-    s_br_buf.fb.addr        = 0xE0000000u;
-    s_br_buf.fb.pitch       = 1920u * 4u;
-    s_br_buf.fb.height      = 1080u;
-    s_br_buf.fb_available   = 1;
+    TEST_BOOT_INFO.fb.addr        = 0xE0000000u;
+    TEST_BOOT_INFO.fb.pitch       = 1920u * 4u;
+    TEST_BOOT_INFO.fb.height      = 1080u;
+    TEST_BOOT_INFO.fb_available   = 1;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
 
     TEST_ASSERT_EQ((int)r, (int)BOOT_OK, "populate happy path -> BOOT_OK");
     TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OK, "err=OK");
@@ -116,23 +116,23 @@ static void test_boot_reserved_payload_reserved_flag(void)
     br_zero_fixture();
 
     /* One payload with FLAG_RESERVED set (section 5 bootloader). */
-    s_br_buf.caps_present                        = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count                       = 2;
-    s_br_buf.payload_descriptors[0].type         = BOOT_PAYLOAD_MODULE;
-    s_br_buf.payload_descriptors[0].flags        = BOOT_PAYLOAD_FLAG_VALID |
+    TEST_BOOT_INFO.caps_present                        = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count                       = 2;
+    TEST_BOOT_INFO.payload_descriptors[0].type         = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags        = BOOT_PAYLOAD_FLAG_VALID |
                                                    BOOT_PAYLOAD_FLAG_RESERVED;
-    s_br_buf.payload_descriptors[0].phys_start   = 0x2000000ull;
-    s_br_buf.payload_descriptors[0].length       = 0x1000ull;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start   = 0x2000000ull;
+    TEST_BOOT_INFO.payload_descriptors[0].length       = 0x1000ull;
 
     /* One payload without FLAG_RESERVED -- must NOT be added. */
-    s_br_buf.payload_descriptors[1].type         = BOOT_PAYLOAD_INITRD;
-    s_br_buf.payload_descriptors[1].flags        = BOOT_PAYLOAD_FLAG_VALID;
-    s_br_buf.payload_descriptors[1].phys_start   = 0x3000000ull;
-    s_br_buf.payload_descriptors[1].length       = 0x1000ull;
-    s_br_buf.payload_total_bytes                 = 0x2000ull;
+    TEST_BOOT_INFO.payload_descriptors[1].type         = BOOT_PAYLOAD_INITRD;
+    TEST_BOOT_INFO.payload_descriptors[1].flags        = BOOT_PAYLOAD_FLAG_VALID;
+    TEST_BOOT_INFO.payload_descriptors[1].phys_start   = 0x3000000ull;
+    TEST_BOOT_INFO.payload_descriptors[1].length       = 0x1000ull;
+    TEST_BOOT_INFO.payload_total_bytes                 = 0x2000ull;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((int)r, (int)BOOT_OK, "two-payload fixture populates OK");
 
     /* Expected: 1 boot_info + 1 RESERVED payload = 2 entries (INITRD
@@ -161,12 +161,12 @@ static void test_boot_reserved_overlap_rejected(void)
      * so the case keeps constructing a real overlap if the handoff base
      * ever moves. populate_from_info adds boot_info first, then the TPM
      * entry overlaps -> error. */
-    s_br_buf.tpm_event_log      = BOOT_INFO_PHYS_ADDR;
-    s_br_buf.tpm_event_log_size = 0x1000u;
-    s_br_buf.caps_present       = BOOT_CAP_TPM_EVENT_LOG;
+    TEST_BOOT_INFO.tpm_event_log      = BOOT_INFO_PHYS_ADDR;
+    TEST_BOOT_INFO.tpm_event_log_size = 0x1000u;
+    TEST_BOOT_INFO.caps_present       = BOOT_CAP_TPM_EVENT_LOG;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((int)r, (int)BOOT_FATAL,
                    "overlap with boot_info rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OVERLAP,
@@ -179,12 +179,12 @@ static void test_boot_reserved_range_wrap_rejected(void)
     br_zero_fixture();
 
     /* TPM event log near UINT64_MAX with length that wraps. */
-    s_br_buf.tpm_event_log      = 0xFFFFFFFFFFFFF000ull;
-    s_br_buf.tpm_event_log_size = 0x4000u;  /* wraps past UINT64_MAX */
-    s_br_buf.caps_present       = BOOT_CAP_TPM_EVENT_LOG;
+    TEST_BOOT_INFO.tpm_event_log      = 0xFFFFFFFFFFFFF000ull;
+    TEST_BOOT_INFO.tpm_event_log_size = 0x4000u;  /* wraps past UINT64_MAX */
+    TEST_BOOT_INFO.caps_present       = BOOT_CAP_TPM_EVENT_LOG;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((int)r, (int)BOOT_FATAL, "range-wrap rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_RANGE_WRAP,
                    "err=RANGE_WRAP");
@@ -202,16 +202,16 @@ static void test_boot_reserved_xhci_scratchpad_no_self_overlap(void)
      * xHCI system. This test locks the correct behavior: both
      * entries are accepted and the scratchpad entry covers
      * sp_base alone. */
-    s_br_buf.usb_controller.active                = 1;
-    s_br_buf.usb_controller.dma_page_count        = 3u;
-    s_br_buf.usb_controller.dma_pages[0]          = 0x200000ull;  /* DCBAA */
-    s_br_buf.usb_controller.dma_pages[1]          = 0x201000ull;  /* cmd ring */
-    s_br_buf.usb_controller.dma_pages[2]          = 0x202000ull;  /* sp_base also here */
-    s_br_buf.usb_controller.scratchpad_base_phys  = 0x202000ull;
-    s_br_buf.usb_controller.scratchpad_page_count = 2u;           /* 8 KiB total */
+    TEST_BOOT_INFO.usb_controller.active                = 1;
+    TEST_BOOT_INFO.usb_controller.dma_page_count        = 3u;
+    TEST_BOOT_INFO.usb_controller.dma_pages[0]          = 0x200000ull;  /* DCBAA */
+    TEST_BOOT_INFO.usb_controller.dma_pages[1]          = 0x201000ull;  /* cmd ring */
+    TEST_BOOT_INFO.usb_controller.dma_pages[2]          = 0x202000ull;  /* sp_base also here */
+    TEST_BOOT_INFO.usb_controller.scratchpad_base_phys  = 0x202000ull;
+    TEST_BOOT_INFO.usb_controller.scratchpad_page_count = 2u;           /* 8 KiB total */
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
 
     TEST_ASSERT_EQ((int)r, (int)BOOT_OK,
                    "xHCI scratchpad self-overlap de-duped");
@@ -235,15 +235,15 @@ static void test_boot_reserved_scratchpad_array_multi_page(void)
      * corruption. This test pins the per-base length: dma_pages[0] entry
      * covering scratchpad_array_phys must reserve ((600*8 + 4095) & ~4095)
      * = 8192 bytes, not 4096. */
-    s_br_buf.usb_controller.active                = 1;
-    s_br_buf.usb_controller.dma_page_count        = 1u;
-    s_br_buf.usb_controller.dma_pages[0]          = 0x300000ull; /* sp_array base */
-    s_br_buf.usb_controller.scratchpad_array_phys = 0x300000ull;
-    s_br_buf.usb_controller.scratchpad_base_phys  = 0x400000ull; /* far away */
-    s_br_buf.usb_controller.scratchpad_page_count = 600u;
+    TEST_BOOT_INFO.usb_controller.active                = 1;
+    TEST_BOOT_INFO.usb_controller.dma_page_count        = 1u;
+    TEST_BOOT_INFO.usb_controller.dma_pages[0]          = 0x300000ull; /* sp_array base */
+    TEST_BOOT_INFO.usb_controller.scratchpad_array_phys = 0x300000ull;
+    TEST_BOOT_INFO.usb_controller.scratchpad_base_phys  = 0x400000ull; /* far away */
+    TEST_BOOT_INFO.usb_controller.scratchpad_page_count = 600u;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((int)r, (int)BOOT_OK, "multi-page scratchpad array accepted");
 
     /* Walk the published table: find the entry whose phys_start matches
@@ -276,13 +276,13 @@ static void test_boot_reserved_rt_mmap_num_pages_wrap(void)
      * Codex 2026-04-30: rt_mmap loop is now gated on
      * BOOT_CAP_RUNTIME_SERVICES; set the cap so the loop runs and
      * the wrap check fires. */
-    s_br_buf.caps_present = BOOT_CAP_RUNTIME_SERVICES;
-    s_br_buf.rt_mmap_count = 1u;
-    s_br_buf.rt_mmap[0].phys_addr = 0x100000000ull;
-    s_br_buf.rt_mmap[0].num_pages = ((uint64_t)-1 / 4096ull) + 1ull;
+    TEST_BOOT_INFO.caps_present = BOOT_CAP_RUNTIME_SERVICES;
+    TEST_BOOT_INFO.rt_mmap_count = 1u;
+    TEST_BOOT_INFO.rt_mmap[0].phys_addr = 0x100000000ull;
+    TEST_BOOT_INFO.rt_mmap[0].num_pages = ((uint64_t)-1 / 4096ull) + 1ull;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((int)r, (int)BOOT_FATAL, "num_pages wrap rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_RANGE_WRAP,
                    "err=RANGE_WRAP (pre-multiply)");
@@ -295,10 +295,10 @@ static void test_boot_reserved_rt_mmap_count_oor(void)
 
     /* rt_mmap_count above the table cap -- producer bug; refuse rather
      * than truncate. */
-    s_br_buf.rt_mmap_count = BOOT_RT_MMAP_MAX + 1u;
+    TEST_BOOT_INFO.rt_mmap_count = BOOT_RT_MMAP_MAX + 1u;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((int)r, (int)BOOT_FATAL, "rt_mmap_count > MAX rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_COUNT_OOR,
                    "err=COUNT_OOR");
@@ -328,17 +328,17 @@ static void test_boot_reserved_payload_vs_pmm_internal(void)
     br_zero_fixture();
 
     /* Reserved payload at 0x2000000 (32 MiB), 4 KiB long. */
-    s_br_buf.caps_present                        = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count                       = 1;
-    s_br_buf.payload_descriptors[0].type         = BOOT_PAYLOAD_MODULE;
-    s_br_buf.payload_descriptors[0].flags        = BOOT_PAYLOAD_FLAG_VALID |
+    TEST_BOOT_INFO.caps_present                        = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count                       = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type         = BOOT_PAYLOAD_MODULE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags        = BOOT_PAYLOAD_FLAG_VALID |
                                                    BOOT_PAYLOAD_FLAG_RESERVED;
-    s_br_buf.payload_descriptors[0].phys_start   = 0x2000000ull;
-    s_br_buf.payload_descriptors[0].length       = 0x1000ull;
-    s_br_buf.payload_total_bytes                 = 0x1000ull;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start   = 0x2000000ull;
+    TEST_BOOT_INFO.payload_descriptors[0].length       = 0x1000ull;
+    TEST_BOOT_INFO.payload_total_bytes                 = 0x1000ull;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    TEST_ASSERT_EQ((int)boot_reserved_populate_from_info(&s_br_buf, &err),
+    TEST_ASSERT_EQ((int)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err),
                    (int)BOOT_OK, "payload fixture populates OK");
 
     /* Disjoint PMM-internal range returns 0 (no collision). */
@@ -364,12 +364,12 @@ static void test_boot_reserved_payload_count_oor_still_rejected_with_degraded_ca
      * bit. */
     TEST_KLOG_SUPPRESS("mm");
     br_zero_fixture();
-    s_br_buf.caps_present  = 0u;
-    s_br_buf.caps_degraded = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count = BOOT_PAYLOAD_MAX + 1u;  /* corrupt */
+    TEST_BOOT_INFO.caps_present  = 0u;
+    TEST_BOOT_INFO.caps_degraded = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = BOOT_PAYLOAD_MAX + 1u;  /* corrupt */
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((int)r,   (int)BOOT_FATAL,                       "corrupt count rejected with degraded caps");
     TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_COUNT_OOR,      "err=COUNT_OOR");
 }
@@ -384,16 +384,16 @@ static void test_boot_reserved_rt_mmap_runtime_services_degraded_skipped(void)
      * kernel has explicitly decided it will never call into. */
     TEST_KLOG_SUPPRESS("mm");
     br_zero_fixture();
-    s_br_buf.caps_present  = 0u;  /* RUNTIME_SERVICES not advertised */
-    s_br_buf.caps_degraded = BOOT_CAP_RUNTIME_SERVICES;
+    TEST_BOOT_INFO.caps_present  = 0u;  /* RUNTIME_SERVICES not advertised */
+    TEST_BOOT_INFO.caps_degraded = BOOT_CAP_RUNTIME_SERVICES;
     /* Populate rt_mmap as if the producer DID write it (stale or
      * companion-field-without-cap pattern). */
-    s_br_buf.rt_mmap_count       = 1u;
-    s_br_buf.rt_mmap[0].phys_addr = 0x200000000ull;
-    s_br_buf.rt_mmap[0].num_pages = 4ull;
+    TEST_BOOT_INFO.rt_mmap_count       = 1u;
+    TEST_BOOT_INFO.rt_mmap[0].phys_addr = 0x200000000ull;
+    TEST_BOOT_INFO.rt_mmap[0].num_pages = 4ull;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((int)r,   (int)BOOT_OK,                    "degraded RT -> populate OK");
     TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OK,       "err=OK");
     /* Expected: only boot_info entry; rt_mmap skipped. */
@@ -411,18 +411,18 @@ static void test_boot_reserved_warm_update_no_flag_skipped(void)
      * cold-fallbacked it. */
     TEST_KLOG_SUPPRESS("mm");
     br_zero_fixture();
-    s_br_buf.caps_present                        = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags                               = 0u;  /* BOOT_FLAG_WARM_UPDATE clear */
-    s_br_buf.payload_count                       = 1;
-    s_br_buf.payload_descriptors[0].type         = BOOT_PAYLOAD_WARM_UPDATE_STATE;
-    s_br_buf.payload_descriptors[0].flags        = BOOT_PAYLOAD_FLAG_VALID
+    TEST_BOOT_INFO.caps_present                        = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags                               = 0u;  /* BOOT_FLAG_WARM_UPDATE clear */
+    TEST_BOOT_INFO.payload_count                       = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type         = BOOT_PAYLOAD_WARM_UPDATE_STATE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags        = BOOT_PAYLOAD_FLAG_VALID
                                                  | BOOT_PAYLOAD_FLAG_RESERVED;
-    s_br_buf.payload_descriptors[0].phys_start   = 0x4000000ull;
-    s_br_buf.payload_descriptors[0].length       = 0x1000ull;
-    s_br_buf.payload_total_bytes                 = 0x1000ull;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start   = 0x4000000ull;
+    TEST_BOOT_INFO.payload_descriptors[0].length       = 0x1000ull;
+    TEST_BOOT_INFO.payload_total_bytes                 = 0x1000ull;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((int)r,   (int)BOOT_OK,                    "warm-update no-flag -> populate OK");
     TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OK,       "err=OK");
     /* Expected: only boot_info entry; warm-update descriptor skipped. */
@@ -437,18 +437,18 @@ static void test_boot_reserved_warm_update_with_flag_pinned(void)
      * runtime expects the preserved memory range to survive PMM
      * handoff). */
     br_zero_fixture();
-    s_br_buf.caps_present                        = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags                               = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count                       = 1;
-    s_br_buf.payload_descriptors[0].type         = BOOT_PAYLOAD_WARM_UPDATE_STATE;
-    s_br_buf.payload_descriptors[0].flags        = BOOT_PAYLOAD_FLAG_VALID
+    TEST_BOOT_INFO.caps_present                        = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags                               = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count                       = 1;
+    TEST_BOOT_INFO.payload_descriptors[0].type         = BOOT_PAYLOAD_WARM_UPDATE_STATE;
+    TEST_BOOT_INFO.payload_descriptors[0].flags        = BOOT_PAYLOAD_FLAG_VALID
                                                  | BOOT_PAYLOAD_FLAG_RESERVED;
-    s_br_buf.payload_descriptors[0].phys_start   = 0x4000000ull;
-    s_br_buf.payload_descriptors[0].length       = 0x1000ull;
-    s_br_buf.payload_total_bytes                 = 0x1000ull;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start   = 0x4000000ull;
+    TEST_BOOT_INFO.payload_descriptors[0].length       = 0x1000ull;
+    TEST_BOOT_INFO.payload_total_bytes                 = 0x1000ull;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((int)r,   (int)BOOT_OK,                    "warm-update with flag -> populate OK");
     TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OK,       "err=OK");
     /* Expected: boot_info + warm-update RESERVED entry = 2. */
@@ -464,14 +464,14 @@ static void test_boot_reserved_tpm_log_degraded_skipped(void)
      * tpm_event_log_size are populated. Prevents a loader from
      * forcing the kernel to pin a degraded region. */
     br_zero_fixture();
-    s_br_buf.tpm_event_log      = 0x100000u;
-    s_br_buf.tpm_event_log_size = 0x1000u;
+    TEST_BOOT_INFO.tpm_event_log      = 0x100000u;
+    TEST_BOOT_INFO.tpm_event_log_size = 0x1000u;
     /* caps_present does NOT carry BOOT_CAP_TPM_EVENT_LOG */
-    s_br_buf.caps_present       = 0u;
-    s_br_buf.caps_degraded      = BOOT_CAP_TPM_EVENT_LOG;
+    TEST_BOOT_INFO.caps_present       = 0u;
+    TEST_BOOT_INFO.caps_degraded      = BOOT_CAP_TPM_EVENT_LOG;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((int)r,   (int)BOOT_OK,                    "degraded TPM -> populate OK");
     TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OK,       "err=OK");
     /* Expected: only boot_info entry; TPM skipped. */
@@ -498,12 +498,12 @@ static void test_boot_reserved_boot_stack_entry(void)
 
     br_zero_fixture();
 
-    s_br_buf.kstack_base       = BR_KS_BASE;
-    s_br_buf.kstack_size       = (uint32_t)BR_KS_SIZE;
-    s_br_buf.kstack_guard_size = 0x1000u;
+    TEST_BOOT_INFO.kstack_base       = BR_KS_BASE;
+    TEST_BOOT_INFO.kstack_size       = (uint32_t)BR_KS_SIZE;
+    TEST_BOOT_INFO.kstack_guard_size = 0x1000u;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((int)r, (int)BOOT_OK, "a lone boot-stack run must populate");
     TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OK, "err=OK");
 
@@ -536,7 +536,7 @@ static void test_boot_reserved_boot_stack_absent_when_unpublished(void)
      * an older bootloader into a boot failure inside the PMM instead of the
      * explicit refusal boot_stack_init already gives. */
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((int)r, (int)BOOT_OK, "an unpublished stack must not fail populate");
     for (i = 0u; i < boot_reserved_count(); i++)
         TEST_ASSERT(boot_reserved_get(i)->kind != (uint32_t)BOOT_RESERVED_BOOT_STACK,
@@ -553,12 +553,12 @@ static void test_boot_reserved_boot_stack_overlap_rejected(void)
      * stack goes through this table instead of a private
      * pmm_mark_region_used() call: a direct mark would have made this
      * collision two successful bitmap writes and no complaint. */
-    s_br_buf.kstack_base       = BOOT_INFO_PHYS_ADDR;
-    s_br_buf.kstack_size       = (uint32_t)BR_KS_SIZE;
-    s_br_buf.kstack_guard_size = 0x1000u;
+    TEST_BOOT_INFO.kstack_base       = BOOT_INFO_PHYS_ADDR;
+    TEST_BOOT_INFO.kstack_size       = (uint32_t)BR_KS_SIZE;
+    TEST_BOOT_INFO.kstack_guard_size = 0x1000u;
 
     enum boot_reserved_error err = BOOT_RESERVED_ERR_OK;
-    boot_result_t r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    boot_result_t r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((int)r, (int)BOOT_FATAL,
                    "a boot stack overlapping boot_info must be rejected");
     TEST_ASSERT_EQ((int)err, (int)BOOT_RESERVED_ERR_OVERLAP, "err=OVERLAP");
@@ -588,9 +588,9 @@ static uint32_t br_baseline_count(void)
     uint32_t n;
 
     br_zero_fixture();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count = 0;
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = 0;
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     n = (uint32_t)boot_reserved_count();
     br_zero_fixture();
     return n;
@@ -600,12 +600,12 @@ static uint32_t br_baseline_count(void)
 static void br_stage_payload(uint32_t i, uint32_t type, uint64_t phys,
                              uint64_t len, uint32_t extra_flags)
 {
-    s_br_buf.payload_descriptors[i].type       = type;
-    s_br_buf.payload_descriptors[i].flags      = BOOT_PAYLOAD_FLAG_VALID |
+    TEST_BOOT_INFO.payload_descriptors[i].type       = type;
+    TEST_BOOT_INFO.payload_descriptors[i].flags      = BOOT_PAYLOAD_FLAG_VALID |
                                                  BOOT_PAYLOAD_FLAG_RESERVED |
                                                  extra_flags;
-    s_br_buf.payload_descriptors[i].phys_start = phys;
-    s_br_buf.payload_descriptors[i].length     = len;
+    TEST_BOOT_INFO.payload_descriptors[i].phys_start = phys;
+    TEST_BOOT_INFO.payload_descriptors[i].length     = len;
 }
 
 static void test_boot_reserved_payload_length_contract(void)
@@ -619,8 +619,8 @@ static void test_boot_reserved_payload_length_contract(void)
      * warnings so the boot log does not read as failing. */
     TEST_KLOG_SUPPRESS("mm");
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count = 4;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = 4;
 
     /* A module EXACTLY at its 256 MiB maximum is pinned; one byte over is
      * not. The boundary is the assertion that matters: an off-by-one would
@@ -632,7 +632,7 @@ static void test_boot_reserved_payload_length_contract(void)
     br_stage_payload(2, BOOT_PAYLOAD_TPM_EVENT_LOG,  0x50000000ull, 0x1000ull, 0u);
     br_stage_payload(3, BOOT_PAYLOAD_NETWORK_CONFIG, 0x51000000ull, 0x1000ull, 0u);
 
-    r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
 
     TEST_ASSERT_EQ((unsigned long)r, (unsigned long)BOOT_OK,
                    "an over-contract descriptor DEGRADES the boot, never halts it");
@@ -651,15 +651,15 @@ static void test_boot_reserved_payload_singleton(void)
 
     TEST_KLOG_SUPPRESS("mm");
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count = 2;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = 2;
     /* Two initrds. INITRD is a singleton by meaning, so the second is a
      * malformed handoff; pinning it would let one type claim twice its
      * declared maximum, which no per-descriptor bound can see. */
     br_stage_payload(0, BOOT_PAYLOAD_INITRD, 0x10000000ull, 0x1000ull, 0u);
     br_stage_payload(1, BOOT_PAYLOAD_INITRD, 0x20000000ull, 0x1000ull, 0u);
 
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
 
     TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
                    (unsigned long)(base + 1u),
@@ -673,12 +673,12 @@ static void test_boot_reserved_payload_singleton(void)
      * is the control -- without it the assertions above pass just as
      * happily against a rule that refuses every repeat. */
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count = 2;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = 2;
     br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x10000000ull, 0x1000ull, 0u);
     br_stage_payload(1, BOOT_PAYLOAD_MODULE, 0x20000000ull, 0x1000ull, 0u);
 
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
 
     TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
                    (unsigned long)(base + 2u),
@@ -692,8 +692,8 @@ static void test_boot_reserved_payload_budget(void)
 
     TEST_KLOG_SUPPRESS("mm");
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count = 4;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = 4;
     /* Four modules, each exactly at its 256 MiB per-type maximum, so every
      * one passes the per-descriptor contract. Three fit the 768 MiB
      * aggregate budget exactly and the fourth must not be pinned: bounding
@@ -704,7 +704,7 @@ static void test_boot_reserved_payload_budget(void)
     br_stage_payload(2, BOOT_PAYLOAD_MODULE, 0x50000000ull, 268435456ull, 0u);
     br_stage_payload(3, BOOT_PAYLOAD_MODULE, 0x70000000ull, 268435456ull, 0u);
 
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
 
     TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
                    (unsigned long)(base + 3u),
@@ -718,8 +718,8 @@ static void test_boot_reserved_payload_required_first(void)
 
     TEST_KLOG_SUPPRESS("mm");
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count = 4;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = 4;
     /* Three optional at-maximum modules sit BEFORE a REQUIRED one and would
      * consume the whole budget in table order. The pass claims required
      * payloads first, so the boot outcome is decided by policy rather than
@@ -730,7 +730,7 @@ static void test_boot_reserved_payload_required_first(void)
     br_stage_payload(3, BOOT_PAYLOAD_INITRD, 0x70000000ull, 0x1000ull,
                      BOOT_PAYLOAD_FLAG_REQUIRED);
 
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
 
     TEST_ASSERT_EQ((unsigned long)boot_reserved_get((int)base)->phys_start,
                    (unsigned long)0x70000000ull,
@@ -746,8 +746,8 @@ static void test_boot_reserved_payload_is_pinned_query(void)
 
     TEST_KLOG_SUPPRESS("mm");
     (void)br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count = 4;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = 4;
     /* Three at-maximum modules exhaust the 768 MiB budget; the fourth is in
      * contract, carries FLAG_RESERVED, and is NOT pinned. Re-deriving its
      * status from the descriptor alone says "fine": the length passes, the
@@ -757,7 +757,7 @@ static void test_boot_reserved_payload_is_pinned_query(void)
     br_stage_payload(2, BOOT_PAYLOAD_MODULE, 0x50000000ull, 268435456ull, 0u);
     br_stage_payload(3, BOOT_PAYLOAD_MODULE, 0x70000000ull, 0x1000ull, 0u);
 
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
 
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(0u, 0x10000000ull, 268435456ull), 1ul,
                    "an admitted descriptor reads as pinned");
@@ -786,10 +786,10 @@ static void test_boot_reserved_pinned_is_identity_bound(void)
 
     TEST_KLOG_SUPPRESS("mm");
     (void)br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x10000000ull, 0x1000ull, 0u);
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
 
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        0u, 0x10000000ull, 0x1000ull), 1ul,
@@ -821,8 +821,8 @@ static void test_boot_reserved_singleton_after_budget_reject(void)
 
     TEST_KLOG_SUPPRESS("mm");
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count = 5;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = 5;
     /* Two at-maximum modules plus one at 256 MiB minus 8 KiB leaves exactly
      * 8 KiB of the 768 MiB budget. */
     br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x10000000ull, 268435456ull, 0u);
@@ -836,7 +836,7 @@ static void test_boot_reserved_singleton_after_budget_reject(void)
      * duplicate instead. */
     br_stage_payload(4, BOOT_PAYLOAD_INITRD, 0x71000000ull, 4096ull, 0u);
 
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
 
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        3u, 0x70000000ull, 16384ull), 0ul,
@@ -859,13 +859,13 @@ static void test_boot_reserved_singleton_across_passes(void)
 
     TEST_KLOG_SUPPRESS("mm");
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count = 2;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = 2;
     br_stage_payload(0, BOOT_PAYLOAD_INITRD, 0x10000000ull, 0x1000ull, 0u);
     br_stage_payload(1, BOOT_PAYLOAD_INITRD, 0x20000000ull, 0x1000ull,
                      BOOT_PAYLOAD_FLAG_REQUIRED);
 
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
 
     TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
                    (unsigned long)(base + 1u),
@@ -891,12 +891,12 @@ static void test_boot_reserved_seed_is_repeatable(void)
 
     TEST_KLOG_SUPPRESS("mm");
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count = 2;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = 2;
     br_stage_payload(0, BOOT_PAYLOAD_RANDOM_SEED, 0x10000000ull, 4096ull, 0u);
     br_stage_payload(1, BOOT_PAYLOAD_RANDOM_SEED, 0x20000000ull, 4096ull, 0u);
 
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
 
     TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
                    (unsigned long)(base + 2u),
@@ -923,14 +923,14 @@ static void test_boot_reserved_warm_update_matches_consumer(void)
      * one descriptor at a time -- which is also the only shape that isolates
      * WHICH rule refused. */
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 1;
     /* Admissible: page-multiple start and length, no unknown continuation
      * bits. This is the control -- without it the refusals below would pass
      * against a rule that pins nothing. */
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        0u, 0x10000000ull, 0x1000ull), 1ul,
                    "admissible warm pinned");
@@ -940,23 +940,23 @@ static void test_boot_reserved_warm_update_matches_consumer(void)
 
     /* Not page-aligned: the consumer refuses it, so the pass must not pin it. */
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x20000100ull, 0x1000ull, 0u);
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        0u, 0x20000100ull, 0x1000ull), 0ul,
                    "unaligned: not pinned");
 
     /* An unknown continuation bit: likewise refused by the consumer. */
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x30000000ull, 0x1000ull,
                      0x80000000u);
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        0u, 0x30000000ull, 0x1000ull), 0ul,
                    "unknown cont bit: not pinned");
@@ -979,21 +979,21 @@ static void test_boot_reserved_warm_update_duplicates_refused(void)
     TEST_KLOG_SUPPRESS("mm");
     TEST_KLOG_SUPPRESS("boot");
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 2;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 2;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
     br_stage_payload(1, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x20000000ull, 0x1000ull,
                      BOOT_PAYLOAD_FLAG_REQUIRED);
 
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->verdict,
                    (unsigned long)BOOT_WARM_UPDATE_SELECT_AMBIGUOUS,
                    "two candidates is AMBIGUOUS");
     TEST_ASSERT_EQ((unsigned long)sel->candidate_count, 2ul,
                    "count is recorded");
 
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        0u, 0x10000000ull, 0x1000ull), 0ul,
                    "optional dup not pinned");
@@ -1005,21 +1005,21 @@ static void test_boot_reserved_warm_update_duplicates_refused(void)
 
 
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 2;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 2;
     /* Perfectly admissible on its own -- proven by the parity test above. */
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
     /* Unknown continuation bit: refused by the per-descriptor validator. */
     br_stage_payload(1, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x20000000ull, 0x1000ull,
                      0x80000000u);
 
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->verdict,
                    (unsigned long)BOOT_WARM_UPDATE_SELECT_AMBIGUOUS,
                    "admissible+malformed=two");
 
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        0u, 0x10000000ull, 0x1000ull), 0ul,
                    "fail closed, none pinned");
@@ -1028,19 +1028,19 @@ static void test_boot_reserved_warm_update_duplicates_refused(void)
 
 
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = 0u;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = 0u;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
 
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->verdict,
                    (unsigned long)BOOT_WARM_UPDATE_SELECT_NONE,
                    "no BOOT_FLAG_WARM_UPDATE means no selection");
     TEST_ASSERT_EQ((unsigned long)sel->candidate_count, 0ul,
                    "and the scan stops before counting candidates");
 
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)base,
                    "so nothing of that type is pinned");
 
@@ -1075,9 +1075,9 @@ static void test_boot_reserved_warm_update_identity_agrees(void)
     uint64_t p2 = mid + 0x20000ull;
 
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 3;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 3;
     /* A normal payload before and after, so the selected index is not 0 and a
      * test that merely counted entries could not tell the difference. */
     br_stage_payload(0, BOOT_PAYLOAD_MODULE, p0, 0x1000ull, 0u);
@@ -1085,7 +1085,7 @@ static void test_boot_reserved_warm_update_identity_agrees(void)
     br_stage_payload(2, BOOT_PAYLOAD_MODULE, p2, 0x1000ull, 0u);
 
     /* Phase 0's view, sealed. */
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->verdict,
                    (unsigned long)BOOT_WARM_UPDATE_SELECT_ONE,
                    "one admissible candidate");
@@ -1097,7 +1097,7 @@ static void test_boot_reserved_warm_update_identity_agrees(void)
                    "extent");
 
     /* The reservation pass's view, later, over the same handoff. */
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        sel->index, sel->phys_start, sel->length), 1ul,
                    "pass pinned the selected");
@@ -1107,27 +1107,27 @@ static void test_boot_reserved_warm_update_identity_agrees(void)
 
 
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
 
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->verdict,
                    (unsigned long)BOOT_WARM_UPDATE_SELECT_ONE,
                    "sealed SELECT_ONE");
 
     /* Someone moves the preserved region after the seal. */
-    s_br_buf.payload_descriptors[0].phys_start = 0x70000000ull;
+    TEST_BOOT_INFO.payload_descriptors[0].phys_start = 0x70000000ull;
 
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->mismatch, 1ul,
                    "mutation detected");
     TEST_ASSERT_EQ((unsigned long)sel->verdict,
                    (unsigned long)BOOT_WARM_UPDATE_SELECT_ONE,
                    "verdict not revoked");
 
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        0u, 0x10000000ull, 0x1000ull), 1ul,
                    "sealed range is pinned");
@@ -1140,20 +1140,20 @@ static void test_boot_reserved_warm_update_identity_agrees(void)
 
 
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
 
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->verdict,
                    (unsigned long)BOOT_WARM_UPDATE_SELECT_ONE,
                    "sealed with caps");
 
     /* The capability bit disappears between the two phases. */
-    s_br_buf.caps_present = 0u;
+    TEST_BOOT_INFO.caps_present = 0u;
 
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        0u, 0x10000000ull, 0x1000ull), 1ul,
                    "caps loss keeps the pin");
@@ -1193,31 +1193,31 @@ static void test_boot_reserved_warm_update_pinned_is_the_commit(void)
 
     /* Happy path: selected, then admitted. */
     br_zero_fixture();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->pinned, 0ul,
                    "not yet a commit");
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)sel->pinned, 1ul,
                    "the pass commits it");
 
     /* The range collides with the kernel boot stack: the pass fatals and the
      * selection must never read as committed. */
     br_zero_fixture();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 1;
-    s_br_buf.kstack_base   = 0x10000000ull;
-    s_br_buf.kstack_size   = 0x4000u;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 1;
+    TEST_BOOT_INFO.kstack_base   = 0x10000000ull;
+    TEST_BOOT_INFO.kstack_size   = 0x4000u;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10001000ull, 0x1000ull, 0u);
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->verdict,
                    (unsigned long)BOOT_WARM_UPDATE_SELECT_ONE,
                    "well-formed, unambiguous");
-    r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)r, (unsigned long)BOOT_FATAL,
                    "kstack overlap fatal");
     TEST_ASSERT_EQ((unsigned long)err, (unsigned long)BOOT_RESERVED_ERR_OVERLAP,
@@ -1232,17 +1232,17 @@ static void test_boot_reserved_warm_update_pinned_is_the_commit(void)
     past_end = BR_FIXTURE_RAM_END;   /* past the fixture's declared RAM: a gap */
 
     br_zero_fixture();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, past_end, 0x1000ull, 0u);
 
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->verdict,
                    (unsigned long)BOOT_WARM_UPDATE_SELECT_ONE,
                    "well-formed at Phase 0");
 
-    r = boot_reserved_populate_from_info(&s_br_buf, &err);
+    r = boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)r, (unsigned long)BOOT_OK,
                    "unbacked: not fatal");
     TEST_ASSERT_EQ((unsigned long)sel->pinned, 0ul,
@@ -1266,25 +1266,25 @@ static void test_boot_reserved_warm_update_seals_continuation_bits(void)
     TEST_KLOG_SUPPRESS("mm");
     TEST_KLOG_SUPPRESS("boot");
     br_zero_fixture();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull,
                      BOOT_WARM_UPDATE_CONT_FD_TABLE);
 
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)(sel->flags
                                    & (uint32_t)BOOT_WARM_UPDATE_CONT_MASK_KNOWN),
                    (unsigned long)BOOT_WARM_UPDATE_CONT_FD_TABLE,
                    "cont bits sealed");
 
     /* Same range, same index, different recognized continuation bit. */
-    s_br_buf.payload_descriptors[0].flags =
-        (s_br_buf.payload_descriptors[0].flags
+    TEST_BOOT_INFO.payload_descriptors[0].flags =
+        (TEST_BOOT_INFO.payload_descriptors[0].flags
          & ~(uint32_t)BOOT_WARM_UPDATE_CONT_FD_TABLE)
         | (uint32_t)BOOT_WARM_UPDATE_CONT_HW_QUEUES;
 
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->mismatch, 1ul,
                    "cont-bit swap: mutation");
     TEST_ASSERT_EQ((unsigned long)(sel->flags
@@ -1297,17 +1297,17 @@ static void test_boot_reserved_warm_update_seals_continuation_bits(void)
 
     /* Value-only mutation: same range, same flags, different CRC. */
     br_zero_fixture();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull,
                      BOOT_PAYLOAD_FLAG_CHECKSUMMED);
-    s_br_buf.payload_descriptors[0].checksum = 0xC0FFEEull;
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_BOOT_INFO.payload_descriptors[0].checksum = 0xC0FFEEull;
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->checksum, 0xC0FFEEul,
                    "CRC sealed");
-    s_br_buf.payload_descriptors[0].checksum = 0xDEADBEEFull;
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_BOOT_INFO.payload_descriptors[0].checksum = 0xDEADBEEFull;
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->mismatch, 1ul,
                    "CRC-only swap: mutation");
     TEST_ASSERT_EQ((unsigned long)sel->checksum, 0xC0FFEEul,
@@ -1315,19 +1315,19 @@ static void test_boot_reserved_warm_update_seals_continuation_bits(void)
 
     /* Flag-only mutation: clearing CHECKSUMMED would skip verification. */
     br_zero_fixture();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull,
                      BOOT_PAYLOAD_FLAG_CHECKSUMMED);
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)(sel->flags
                                    & (uint32_t)BOOT_PAYLOAD_FLAG_CHECKSUMMED),
                    (unsigned long)BOOT_PAYLOAD_FLAG_CHECKSUMMED,
                    "CHECKSUMMED bit sealed");
-    s_br_buf.payload_descriptors[0].flags &=
+    TEST_BOOT_INFO.payload_descriptors[0].flags &=
         ~(uint32_t)BOOT_PAYLOAD_FLAG_CHECKSUMMED;
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->mismatch, 1ul,
                    "clearing it: mutation");
     br_zero_fixture();
@@ -1395,14 +1395,14 @@ static void test_boot_warm_update_selection_refusal_classes(void)
         const struct boot_warm_update_sel *sel;
         uint32_t base = br_baseline_count();
 
-        s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-        s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-        s_br_buf.payload_count = 1;
+        TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+        TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+        TEST_BOOT_INFO.payload_count = 1;
         br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, cases[c].phys,
                          cases[c].len, cases[c].extra_flags);
-        s_br_buf.payload_descriptors[0].flags &= ~cases[c].clear_flags;
+        TEST_BOOT_INFO.payload_descriptors[0].flags &= ~cases[c].clear_flags;
 
-        sel = boot_warm_update_selection_get(&s_br_buf);
+        sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
         TEST_ASSERT_EQ((unsigned long)sel->verdict,
                        (unsigned long)BOOT_WARM_UPDATE_SELECT_NONE,
                        cases[c].what);
@@ -1412,7 +1412,7 @@ static void test_boot_warm_update_selection_refusal_classes(void)
                        (unsigned long)cases[c].expect_err,
                        "err names the rule");
 
-        (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+        (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
         TEST_ASSERT_EQ((unsigned long)boot_reserved_count(),
                        (unsigned long)base,
                        "refused pins nothing");
@@ -1435,20 +1435,20 @@ static void test_boot_warm_update_selection_input_bounds(void)
                    "NULL selects nothing");
 
     br_zero_fixture();
-    s_br_buf.caps_present  = 0u;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = 0u;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->verdict,
                    (unsigned long)BOOT_WARM_UPDATE_SELECT_NONE,
                    "no caps: skipped");
 
     br_zero_fixture();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 0;
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 0;
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->verdict,
                    (unsigned long)BOOT_WARM_UPDATE_SELECT_NONE,
                    "empty: no candidate");
@@ -1458,11 +1458,11 @@ static void test_boot_warm_update_selection_input_bounds(void)
     /* A count past the array bound is a malformed handoff. The scan must
      * refuse rather than read off the end of payload_descriptors[]. */
     br_zero_fixture();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = (uint32_t)BOOT_PAYLOAD_MAX + 1u;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = (uint32_t)BOOT_PAYLOAD_MAX + 1u;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->verdict,
                    (unsigned long)BOOT_WARM_UPDATE_SELECT_NONE,
                    "count>MAX refuses");
@@ -1472,12 +1472,12 @@ static void test_boot_warm_update_selection_input_bounds(void)
     /* The last legal slot is reachable: an off-by-one in the scan bound would
      * report zero candidates here and nothing else would notice. */
     br_zero_fixture();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = (uint32_t)BOOT_PAYLOAD_MAX;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = (uint32_t)BOOT_PAYLOAD_MAX;
     br_stage_payload((uint32_t)BOOT_PAYLOAD_MAX - 1u,
                      BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x10000000ull, 0x1000ull, 0u);
-    sel = boot_warm_update_selection_get(&s_br_buf);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
     TEST_ASSERT_EQ((unsigned long)sel->verdict,
                    (unsigned long)BOOT_WARM_UPDATE_SELECT_ONE,
                    "last slot reachable");
@@ -1506,26 +1506,26 @@ static void test_boot_reserved_warm_update_order_independent(void)
 
     /* Warm descriptor FIRST, then exactly the full 768 MiB of modules. */
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 4;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 4;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x08000000ull, 67108864ull, 0u);
     br_stage_payload(1, BOOT_PAYLOAD_MODULE, 0x10000000ull, 268435456ull, 0u);
     br_stage_payload(2, BOOT_PAYLOAD_MODULE, 0x30000000ull, 268435456ull, 0u);
     br_stage_payload(3, BOOT_PAYLOAD_MODULE, 0x50000000ull, 268435456ull, 0u);
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     warm_first = (uint32_t)boot_reserved_count() - base;
 
     /* The same four descriptors, warm LAST. */
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 4;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 4;
     br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x10000000ull, 268435456ull, 0u);
     br_stage_payload(1, BOOT_PAYLOAD_MODULE, 0x30000000ull, 268435456ull, 0u);
     br_stage_payload(2, BOOT_PAYLOAD_MODULE, 0x50000000ull, 268435456ull, 0u);
     br_stage_payload(3, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x08000000ull, 67108864ull, 0u);
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     warm_last = (uint32_t)boot_reserved_count() - base;
 
     TEST_ASSERT_EQ((unsigned long)warm_first, (unsigned long)warm_last,
@@ -1621,100 +1621,100 @@ static void test_boot_reserved_range_backing_verdicts(void)
 
     br_zero_fixture();
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x10000000ull, 0x1000ull, 0, &t),
+                       &TEST_BOOT_INFO, 0x10000000ull, 0x1000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_BACKED, "inside declared RAM");
     TEST_ASSERT_EQ((unsigned long)t, 0ul, "no offending type on success");
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, BR_FIXTURE_RAM_END - 0x1000ull, 0x2000ull, 0, &t),
+                       &TEST_BOOT_INFO, BR_FIXTURE_RAM_END - 0x1000ull, 0x2000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_GAP, "runs off the end of RAM");
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, BOOT_INFO_EARLY_MAP_END - 0x1000ull, 0x2000ull, 0, &t),
+                       &TEST_BOOT_INFO, BOOT_INFO_EARLY_MAP_END - 0x1000ull, 0x2000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_ABOVE_MAP, "crosses the 4 GiB identity map");
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x1000ull, 0u, 0, &t),
+                       &TEST_BOOT_INFO, 0x1000ull, 0u, 0, &t),
                    (unsigned long)BOOT_RANGE_GAP, "zero length is never backed");
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, ~0ull - 0xFFFull, 0x2000ull, 0, &t),
+                       &TEST_BOOT_INFO, ~0ull - 0xFFFull, 0x2000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_GAP, "a wrapping range is never backed");
 
     /* A forbidden entry laid OVER readable RAM vetoes it, whatever the order. */
     br_set_map(1u, 0x40000000ull, 0x1000ull, UEFI_MMAP_MMIO);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x40000000ull, 0x1000ull, 0, &t),
+                       &TEST_BOOT_INFO, 0x40000000ull, 0x1000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_FORBIDDEN, "MMIO below the RAM end");
     TEST_ASSERT_EQ((unsigned long)t, (unsigned long)UEFI_MMAP_MMIO, "names the type");
     br_set_map(2u, 0x41000000ull, 0x1000ull, UEFI_MMAP_RESERVED);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x40FFF000ull, 0x2000ull, 0, &t),
+                       &TEST_BOOT_INFO, 0x40FFF000ull, 0x2000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_FORBIDDEN, "reserved memory is not on the allowlist");
     br_set_map(3u, 0x42000000ull, 0x1000ull, BOOT_MMAP_WARM_UPDATE);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x42000000ull, 0x1000ull, 0, &t),
+                       &TEST_BOOT_INFO, 0x42000000ull, 0x1000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_FORBIDDEN, "type 15 refused for an ordinary payload");
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x42000000ull, 0x1000ull, 1, &t),
+                       &TEST_BOOT_INFO, 0x42000000ull, 0x1000ull, 1, &t),
                    (unsigned long)BOOT_RANGE_BACKED, "type 15 admitted for the warm extent");
 
     /* Unsorted, adjacent entries of two readable types cover a range together. */
     br_zero_fixture();
-    s_br_buf.mmap_count = 0u;
+    TEST_BOOT_INFO.mmap_count = 0u;
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x30000000ull, 0x1000ull, 0, &t),
+                       &TEST_BOOT_INFO, 0x30000000ull, 0x1000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_NO_MAP, "no map refuses everything");
     br_set_map(0u, 0x30001000ull, 0x1000ull, UEFI_MMAP_LOADER_DATA);
     br_set_map(1u, 0x30000000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x30000000ull, 0x2000ull, 0, &t),
+                       &TEST_BOOT_INFO, 0x30000000ull, 0x2000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_BACKED, "unsorted adjacent entries cover it");
     br_set_map(1u, 0x2FFFF000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x30000000ull, 0x2000ull, 0, &t),
+                       &TEST_BOOT_INFO, 0x30000000ull, 0x2000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_GAP, "a hole at the start is a gap");
 
     /* A one-page hole BETWEEN backed endpoints, in both entry orders: a check
      * of the endpoints alone, or a jump across the gap, would pass this. */
     br_zero_fixture();
-    s_br_buf.mmap_count = 0u;
+    TEST_BOOT_INFO.mmap_count = 0u;
     br_set_map(0u, 0x30000000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
     br_set_map(1u, 0x30002000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x30000000ull, 0x3000ull, 0, &t),
+                       &TEST_BOOT_INFO, 0x30000000ull, 0x3000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_GAP, "interior hole, ascending entries");
-    s_br_buf.mmap_count = 0u;
+    TEST_BOOT_INFO.mmap_count = 0u;
     br_set_map(0u, 0x30002000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
     br_set_map(1u, 0x30000000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x30000000ull, 0x3000ull, 0, &t),
+                       &TEST_BOOT_INFO, 0x30000000ull, 0x3000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_GAP, "interior hole, descending entries");
     br_set_map(2u, 0x30001000ull, 0x1000ull, UEFI_MMAP_LOADER_CODE);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x30000000ull, 0x3000ull, 0, &t),
+                       &TEST_BOOT_INFO, 0x30000000ull, 0x3000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_BACKED, "the hole closed: backed");
     /* Forbidden entries that only TOUCH either exclusive bound do not overlap. */
     br_set_map(3u, 0x2FFFF000ull, 0x1000ull, UEFI_MMAP_MMIO);
     br_set_map(4u, 0x30003000ull, 0x1000ull, UEFI_MMAP_UNUSABLE);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x30000000ull, 0x3000ull, 0, &t),
+                       &TEST_BOOT_INFO, 0x30000000ull, 0x3000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_BACKED, "adjacent forbidden entries do not veto");
 
     /* A readable entry whose base + length wraps covers nothing: neither as
      * the sole backing nor by bridging a gap between two good entries. */
     br_zero_fixture();
-    s_br_buf.mmap_count = 0u;
+    TEST_BOOT_INFO.mmap_count = 0u;
     br_set_map(0u, 0x100000ull, ~0ull, UEFI_MMAP_CONVENTIONAL);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x200000ull, 0x1000ull, 0, &t),
+                       &TEST_BOOT_INFO, 0x200000ull, 0x1000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_GAP, "a wrapping entry is not backing");
     br_set_map(1u, 0x30000000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
     br_set_map(2u, 0x30002000ull, 0x1000ull, UEFI_MMAP_CONVENTIONAL);
     br_set_map(3u, 0x30001000ull, ~0ull, UEFI_MMAP_CONVENTIONAL);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x30000000ull, 0x3000ull, 0, &t),
+                       &TEST_BOOT_INFO, 0x30000000ull, 0x3000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_GAP, "a wrapping entry does not bridge a gap");
     /* ...but it still vetoes when its type is forbidden. */
     br_set_map(4u, 0x2FFFF000ull, ~0ull, UEFI_MMAP_MMIO);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_range_backing(
-                       &s_br_buf, 0x30000000ull, 0x1000ull, 0, &t),
+                       &TEST_BOOT_INFO, 0x30000000ull, 0x1000ull, 0, &t),
                    (unsigned long)BOOT_RANGE_FORBIDDEN, "a wrapping forbidden entry vetoes");
     br_zero_fixture();
 }
@@ -1728,16 +1728,16 @@ static void test_boot_reserved_payload_must_be_backed(void)
 
     TEST_KLOG_SUPPRESS("mm");
     base = br_baseline_count();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
     br_set_map(1u, 0x40000000ull, 0x1000ull, UEFI_MMAP_MMIO);
-    s_br_buf.payload_count = 4;
+    TEST_BOOT_INFO.payload_count = 4;
     br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x40000000ull, 0x1000ull, 0u);   /* MMIO */
     br_stage_payload(1, BOOT_PAYLOAD_MODULE, BR_FIXTURE_RAM_END, 0x1000ull, 0u); /* past RAM */
     /* A refused first INITRD must not block a valid later one. */
     br_stage_payload(2, BOOT_PAYLOAD_INITRD, BR_FIXTURE_RAM_END + 0x1000ull, 0x1000ull, 0u);
     br_stage_payload(3, BOOT_PAYLOAD_INITRD, 0x20000000ull, 0x1000ull, 0u);
 
-    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err),
                    (unsigned long)BOOT_OK, "an unbacked payload is declined, not fatal");
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        0u, 0x40000000ull, 0x1000ull), 0ul, "MMIO payload not pinned");
@@ -1752,34 +1752,34 @@ static void test_boot_reserved_payload_must_be_backed(void)
     /* A truncated map is checked against the entries it carries: an omitted
      * interval below the RAM end is a gap, not a pass. */
     br_zero_fixture();
-    s_br_buf.mmap_count = 0u;
+    TEST_BOOT_INFO.mmap_count = 0u;
     br_set_map(0u, 0u, 0x10000000ull, UEFI_MMAP_CONVENTIONAL);
     br_set_map(1u, 0x30000000ull, 0x10000000ull, UEFI_MMAP_CONVENTIONAL);
-    s_br_buf.mmap_truncated = 1u;
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.mmap_truncated = 1u;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x20000000ull, 0x1000ull, 0u);
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        0u, 0x20000000ull, 0x1000ull), 0ul,
                    "truncated map: an omitted interval is refused");
     /* ...while a range the retained entries DO cover is still admitted. */
     br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x30000000ull, 0x1000ull, 0u);
     boot_reserved_reset_for_test();
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        0u, 0x30000000ull, 0x1000ull), 1ul,
                    "truncated map: a covered range is pinned");
 
     /* A payload whose only backing is a wrapping entry is refused. */
     br_zero_fixture();
-    s_br_buf.mmap_count = 0u;
+    TEST_BOOT_INFO.mmap_count = 0u;
     br_set_map(0u, 0u, 0x10000000ull, UEFI_MMAP_CONVENTIONAL);
     br_set_map(1u, 0x20000000ull, ~0ull, UEFI_MMAP_CONVENTIONAL);
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x20001000ull, 0x1000ull, 0u);
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
                        0u, 0x20001000ull, 0x1000ull), 0ul,
                    "wrapping-entry backing is refused at admission");
@@ -1797,16 +1797,16 @@ static void test_boot_reserved_warm_extent_backing(void)
     TEST_KLOG_SUPPRESS("mm");
     br_zero_fixture();
     /* Backed ONLY by the type-15 entry: no conventional RAM under it. */
-    s_br_buf.mmap_count = 0u;
+    TEST_BOOT_INFO.mmap_count = 0u;
     br_set_map(0u, 0u, 0x42000000ull, UEFI_MMAP_CONVENTIONAL);
     br_set_map(1u, 0x42000000ull, 0x1000ull, BOOT_MMAP_WARM_UPDATE);
     br_set_map(2u, 0x42001000ull, BR_FIXTURE_RAM_END - 0x42001000ull, UEFI_MMAP_CONVENTIONAL);
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x42000000ull, 0x1000ull, 0u);
-    sel = boot_warm_update_selection_get(&s_br_buf);
-    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err),
                    (unsigned long)BOOT_OK, "warm extent on type-15 memory: ok");
     TEST_ASSERT_EQ((unsigned long)sel->pinned, 1ul, "committed");
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
@@ -1819,16 +1819,16 @@ static void test_boot_reserved_warm_extent_backing(void)
 
     /* The exception admits type 15 only: MMIO laid over it still vetoes. */
     br_zero_fixture();
-    s_br_buf.mmap_count = 0u;
+    TEST_BOOT_INFO.mmap_count = 0u;
     br_set_map(0u, 0u, 0x42000000ull, UEFI_MMAP_CONVENTIONAL);
     br_set_map(1u, 0x42000000ull, 0x1000ull, BOOT_MMAP_WARM_UPDATE);
     br_set_map(2u, 0x42000000ull, 0x1000ull, UEFI_MMAP_MMIO);
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x42000000ull, 0x1000ull, 0u);
-    sel = boot_warm_update_selection_get(&s_br_buf);
-    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err),
                    (unsigned long)BOOT_OK, "MMIO under the warm extent: declined, not fatal");
     TEST_ASSERT_EQ((unsigned long)sel->pinned, 0ul, "never committed");
     TEST_ASSERT_EQ((unsigned long)boot_reserved_payload_is_pinned(
@@ -1836,15 +1836,15 @@ static void test_boot_reserved_warm_extent_backing(void)
 
     /* A wrapping type-15 entry is not backing for the warm extent either. */
     br_zero_fixture();
-    s_br_buf.mmap_count = 0u;
+    TEST_BOOT_INFO.mmap_count = 0u;
     br_set_map(0u, 0u, 0x42000000ull, UEFI_MMAP_CONVENTIONAL);
     br_set_map(1u, 0x42000000ull, ~0ull, BOOT_MMAP_WARM_UPDATE);
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.flags         = BOOT_FLAG_WARM_UPDATE;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.flags         = BOOT_FLAG_WARM_UPDATE;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_WARM_UPDATE_STATE, 0x42000000ull, 0x1000ull, 0u);
-    sel = boot_warm_update_selection_get(&s_br_buf);
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    sel = boot_warm_update_selection_get(&TEST_BOOT_INFO);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)sel->pinned, 0ul, "wrapping warm backing: never committed");
     br_zero_fixture();
 }
@@ -1868,10 +1868,10 @@ static void test_boot_reserved_tracked_and_copy(void)
                    (unsigned long)BOOT_RESERVED_TRACKED_NONE, "zero length tracks nothing");
 
     br_zero_fixture();
-    s_br_buf.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
-    s_br_buf.payload_count = 1;
+    TEST_BOOT_INFO.caps_present  = BOOT_CAP_PAYLOAD_DESCRIPTORS;
+    TEST_BOOT_INFO.payload_count = 1;
     br_stage_payload(0, BOOT_PAYLOAD_MODULE, 0x20000000ull, 0x1000ull, 0u);
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     total = boot_reserved_count();
     TEST_ASSERT(total >= 2u, "baseline plus the payload");
     /* Capacity: nothing past `cap` is written. */
@@ -1931,12 +1931,12 @@ static void test_boot_reserved_tracked_and_copy(void)
 static void br_stage_uki(uint64_t ia, uint64_t is, uint64_t ra, uint64_t rs,
                          uint64_t ma, uint64_t ms)
 {
-    s_br_buf.uki_initrd_addr   = ia;
-    s_br_buf.uki_initrd_size   = is;
-    s_br_buf.uki_recovery_addr = ra;
-    s_br_buf.uki_recovery_size = rs;
-    s_br_buf.uki_modules_addr  = ma;
-    s_br_buf.uki_modules_size  = ms;
+    TEST_BOOT_INFO.uki_initrd_addr   = ia;
+    TEST_BOOT_INFO.uki_initrd_size   = is;
+    TEST_BOOT_INFO.uki_recovery_addr = ra;
+    TEST_BOOT_INFO.uki_recovery_size = rs;
+    TEST_BOOT_INFO.uki_modules_addr  = ma;
+    TEST_BOOT_INFO.uki_modules_size  = ms;
 }
 
 /* UKI signed-payload sections: the signed UKI payload copies live in EfiLoaderData,
@@ -1949,10 +1949,10 @@ static void test_boot_reserved_uki_payloads_pinned(void)
 
     TEST_KLOG_SUPPRESS("mm");
     base = br_baseline_count();
-    s_br_buf.flags = BOOT_FLAG_INVOKED_VIA_UKI;
+    TEST_BOOT_INFO.flags = BOOT_FLAG_INVOKED_VIA_UKI;
     br_stage_uki(0x20000000ull, 4096ull, 0x20100000ull, 8192ull,
                  0x20200000ull, 512ull);
-    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err),
                    (unsigned long)BOOT_OK, "three backed UKI payloads populate");
     TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)(base + 3u),
                    "one table entry per UKI payload");
@@ -2004,7 +2004,7 @@ static void test_boot_reserved_uki_payloads_refused(void)
 
     /* Fields on a handoff that did not come through the UKI path. */
     br_stage_uki(0x20000000ull, 4096ull, 0u, 0u, 0u, 0u);
-    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err),
                    (unsigned long)BOOT_OK, "split-path UKI fields declined, not fatal");
     TEST_ASSERT_EQ((unsigned long)boot_reserved_uki_payload_is_pinned(
                        UKI_PAYLOAD_SLOT_INITRD, 0x20000000ull, 4096ull), 0ul,
@@ -2014,18 +2014,18 @@ static void test_boot_reserved_uki_payloads_refused(void)
 
     /* Half-set fields and an over-cap size. */
     br_zero_fixture();
-    s_br_buf.flags = BOOT_FLAG_INVOKED_VIA_UKI;
+    TEST_BOOT_INFO.flags = BOOT_FLAG_INVOKED_VIA_UKI;
     br_stage_uki(0x20000000ull, 0u, 0u, 8192ull,
                  0x20200000ull, UKI_PAYLOAD_MAX_BYTES + 1ull);
-    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err),
                    (unsigned long)BOOT_OK, "malformed UKI fields declined");
     TEST_ASSERT_EQ((unsigned long)boot_reserved_count(), (unsigned long)base,
                    "address-only, size-only and over-cap entries all refused");
     /* The cap is inclusive: exactly UKI_PAYLOAD_MAX_BYTES is admitted. */
     br_zero_fixture();
-    s_br_buf.flags = BOOT_FLAG_INVOKED_VIA_UKI;
+    TEST_BOOT_INFO.flags = BOOT_FLAG_INVOKED_VIA_UKI;
     br_stage_uki(0x20000000ull, UKI_PAYLOAD_MAX_BYTES, 0u, 0u, 0u, 0u);
-    (void)boot_reserved_populate_from_info(&s_br_buf, &err);
+    (void)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((unsigned long)boot_reserved_uki_payload_is_pinned(
                        UKI_PAYLOAD_SLOT_INITRD, 0x20000000ull, UKI_PAYLOAD_MAX_BYTES), 1ul,
                    "a payload of exactly the cap is pinned");
@@ -2034,12 +2034,12 @@ static void test_boot_reserved_uki_payloads_refused(void)
      * identity map even where the map calls it RAM. One refusal does not
      * cost the others: the valid .modules copy is still pinned. */
     br_zero_fixture();
-    s_br_buf.flags = BOOT_FLAG_INVOKED_VIA_UKI;
+    TEST_BOOT_INFO.flags = BOOT_FLAG_INVOKED_VIA_UKI;
     br_set_map(1u, 0x40000000ull, 0x1000ull, UEFI_MMAP_MMIO);
     br_set_map(2u, BOOT_INFO_EARLY_MAP_END, 0x10000000ull, UEFI_MMAP_CONVENTIONAL);
     br_stage_uki(0x40000000ull, 0x1000ull, BOOT_INFO_EARLY_MAP_END, 0x1000ull,
                  0x20200000ull, 512ull);
-    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err),
                    (unsigned long)BOOT_OK, "unbacked UKI payloads declined");
     TEST_ASSERT_EQ((unsigned long)boot_reserved_uki_payload_is_pinned(
                        UKI_PAYLOAD_SLOT_INITRD, 0x40000000ull, 0x1000ull), 0ul,
@@ -2056,12 +2056,12 @@ static void test_boot_reserved_uki_payloads_refused(void)
     /* A UKI copy that overlaps another retained region is a fatal handoff
      * error, like every other entry: the boot stack is retained first. */
     br_zero_fixture();
-    s_br_buf.flags       = BOOT_FLAG_INVOKED_VIA_UKI;
-    s_br_buf.kstack_base = 0x20000000ull;
-    s_br_buf.kstack_size = 0x10000u;
+    TEST_BOOT_INFO.flags       = BOOT_FLAG_INVOKED_VIA_UKI;
+    TEST_BOOT_INFO.kstack_base = 0x20000000ull;
+    TEST_BOOT_INFO.kstack_size = 0x10000u;
     br_stage_uki(0x20008000ull, 0x1000ull, 0u, 0u, 0u, 0u);
     err = BOOT_RESERVED_ERR_OK;
-    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&s_br_buf, &err),
+    TEST_ASSERT_EQ((unsigned long)boot_reserved_populate_from_info(&TEST_BOOT_INFO, &err),
                    (unsigned long)BOOT_FATAL, "UKI copy over the boot stack is fatal");
     TEST_ASSERT_EQ((unsigned long)err, (unsigned long)BOOT_RESERVED_ERR_OVERLAP,
                    "and reported as an overlap");

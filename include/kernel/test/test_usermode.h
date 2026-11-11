@@ -306,6 +306,36 @@ int test_usermode_capture_claim_settlement(struct thread *thr);
  * before their owner binding exists on the wire. */
 void test_usermode_capture_begin(uint32_t owner_pid, const char *name);
 
+/* ---- Per-binary kernel error window seams ---- */
+struct klog_watch_report;
+
+/* The watch operations the window uses; the launcher's are the live watch. */
+struct utest_klog_watch_ops {
+    void (*begin)(void *ctx, uint32_t owner_pid);
+    int  (*mode)(void *ctx);   /* a klog_watch_mode_t value */
+    int  (*declare)(void *ctx, int optional, const char *tag, const char *text);
+    void (*end)(void *ctx, struct klog_watch_report *out);
+};
+
+/* One binary's window, driven through `ops`: arm with `decls` (each "tag\0text",
+ * bit i of `optional` marks an allowance), open it if `spawn` (as
+ * capture_begin does), then judge. Returns the failures charged to the
+ * binary; `*out_left_open` is nonzero if the window stayed armed or open. */
+uint32_t test_usermode_klog_window_cycle(const struct utest_klog_watch_ops *ops, void *ctx,
+                                         struct klog_watch_report *report, int watching,
+                                         const char *const *decls, uint8_t n,
+                                         uint8_t optional, uint32_t owner_pid,
+                                         int spawn, uint8_t *out_left_open);
+
+#define UTEST_KLOG_ESC_NONE 0
+#define UTEST_KLOG_ESC_ISR  1
+#define UTEST_KLOG_ESC_KLOG 2
+
+/* The verdict escalation u_run_one applies (0 PASS, 1 FAIL, 2 SKIP;
+ * counters[0..2] are pass/fail/skip). */
+int test_usermode_klog_escalate(int verdict, uint32_t klog_fails, uint8_t depth_before,
+                                uint8_t depth_after, uint32_t *counters, int *why);
+
 /* --- The launcher's per-run infrastructure latches --------------------------
  *
  * A condition that is sticky for the rest of a run and aborts it, where "the

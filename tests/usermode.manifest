@@ -17,6 +17,17 @@
 # filename-derived default, e.g.:
 #   test_foo.exe type=smoke     # force `test_foo.exe` into the smoke phase
 #
+# Kernel error lines (TODO-03 section 13). Each binary runs inside its own
+# kernel error window: a kernel LOG_ERROR line logged while it runs (by it,
+# by a fork descendant, or by anything else in the kernel) fails THAT binary
+# unless its line declares it:
+#   expects_klog=<tag>:<text>   the line must appear (a provoked failure)
+#   allows_klog=<tag>:<text>    the line may appear (a probe whose path varies)
+# <tag> is the klog tag; <text> is a substring of the message, percent-encoded
+# because a token ends at whitespace (`%20` is a space, `%25` a percent sign).
+# The value splits at its first `:` before decoding. At most 8 a line; a value
+# that does not decode refuses the whole line, like an unusable type=.
+#
 # To restrict the run to ONE binary, set `utest_filter=test_foo.exe`
 # in boot.conf (TODO-04 §4). Glob matching is supported: `test_smoke_*.exe`.
 
@@ -58,7 +69,7 @@ test_ipc.exe
 # step with the TASK-SLOT BUDGET comment at the top of test_process.c: a stale
 # value here reports capacity the run does not have, and the binary then
 # exhausts TASK_MAX and destabilises whatever runs after it.
-test_process.exe expects_tasks=9
+test_process.exe expects_tasks=9 expects_klog=sched:exec:%20post-commit%20failure allows_klog=sys:exec:%20short%20read
 test_fileio.exe
 test_win32.exe
 # §15 binary-format loader coverage: one binary per registered format.
@@ -80,7 +91,7 @@ test_loader_eif.exe
 # and task_cleanup does not return slots, so the budget must name all four or
 # the launcher's TASK_MAX pre-flight undercounts and a later stress test
 # fails without the capacity warning.
-test_faultinject.exe expects_tasks=4
+test_faultinject.exe expects_tasks=4 expects_klog=sched:task_exec:%20OOM%20allocating%20argv%20address%20table expects_klog=sched:task_exec:%20OOM%20allocating%20private-frame%20table expects_klog=sched:task_fork:%20per-process%20PML4%20allocation%20failed
 
 # §8 stress + perf phase -- run after all correctness passes.
 test_stress_libc.exe

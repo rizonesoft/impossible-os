@@ -67,7 +67,7 @@ title: "TODO-03 -- Kernel Test Harness"
 | 💎  |  10   |   §10   | Bound the failing-assertion message (long one wedges)    | --           |  [x]   |
 | 💎  |  11   |   §11   | Poisoned-boundary fixture so an overread fails a test    | §10          |  [x]   |
 | 💎  |  12   |   §12   | Assert or fix the 55 test-phase [FAIL] lines             | §5           |  [x]   |
-| 💎  |  13   |   §13   | Expect or attribute kernel errors per user-mode binary   | §12          |  [ ]   |
+| 💎  |  13   |   §13   | Expect or attribute kernel errors per user-mode binary   | §12          |  [x]   |
 
 > 💎 = parity work -- Linux kernel self-test framework has `lib/fault-inject.c` (multi-allocator fault injection), `kunit_add_action` (test-scoped cleanup registry), `kcsan`/`kasan` fences, `kunit_kzalloc()` scratch helpers, and `kmemleak` leak detection. This TODO brings the same floor to the Impossible OS kernel test runner without requiring the Driver Verifier / WDK workflow Windows leans on.
 > **Order vs section-number:** Implementation Order is execution sequence; section numbers (§N) preserve file stability. §7 (action registry) ships at Order 2 because §3, §5, and §8 all consume it.
@@ -502,12 +502,18 @@ Section 12 brought the kernel unit-test phase to zero `[FAIL]` lines, but the us
 
 **Files:** `src/kernel/test/test_usermode.c`, `tests/usermode.manifest`, the manifest parser and its fuzz target under `tools/fuzz/`
 
-- [ ] Manifest attribute `expects_klog=<tag>:<text>` (repeatable; the grammar for spaces in `<text>` decided and documented in the manifest header), parsed into the binary's plan entry
-  - An over-long or malformed value is a refusal of that line, like the other attributes; add a fuzz seed for it.
-- [ ] The launcher opens a SUITE window around each binary's run and judges it as `test_watch_judge` does: an unmet expectation or an unexpected error fails THAT binary's verdict
-- [ ] Classify the six lines by binary and declare each as an expectation, or fix its source
-- [ ] Each binary's verdict fails when it leaves `isr_depth` non-zero (the watch reads it for ownership); control: count the syscall vectors in `isr_handler` again and see the first exiting binary fail
-- [ ] Commit: "utest: each ring-3 binary's provoked kernel errors are declared, and a stray one fails that binary"
+- [x] Manifest attributes `expects_klog=<tag>:<text>` (must appear) and `allows_klog=<tag>:<text>` (may appear), percent-encoded, at most 8 a line
+  - `utest_klog_attr_decode()` in `src/kernel/test/utest_klog_attr.c` splits at the first literal `:`, validates the tag, decodes the text once in place and refuses an empty field, a bad escape, a byte outside 0x20..0x7E or an over-long value.
+  - A refused value, a ninth declaration or a raw NUL past the name refuses the line (`bad_attr`); a duplicate line that declares differently is a policy conflict. Fuzz target `utest_klog_attr` with two seeds.
+- [x] The launcher opens a SUITE window per binary in `test_usermode_capture_begin`, before the child is published, and judges it in `u_run_one` after the capture tree is reaped
+  - `klog_watch_utest_begin(owner_pid)`: the owner is any task with that `utest_capture_owner_pid`, on the launcher's CPU, outside ISR and DPC context; the launcher itself is not captured, so its own errors stay unexpected.
+  - An unmet expectation or an unexpected error escalates that binary to `FAIL (kernel error mismatch -- escalated)` and names the line; a RUN window spans `u_run_plan`, so errors between binaries are counted as stray.
+- [x] Declare the five in-window lines: `test_faultinject.exe` expects its three OOM sites, `test_process.exe` expects the post-commit failure and allows the sweep's short read
+  - Each window logs `N of M declared kernel error line(s) appeared`. The sixth, `task_create: max tasks reached`, is logged after the user phase by boot code. -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md` (item: "Replace `static struct task tasks[TASK_MAX]`" at line 297)
+- [x] Each binary's verdict fails when its run changes the launcher CPU's `isr_depth` (`FAIL (interrupt depth leaked -- escalated)`)
+  - Every `isr_handler` exit runs through `irql_restore`, so no ring-3 path strands the depth today; the control skips the decrement for interrupts that arrived from ring 3, and the first binary fails by name.
+- [x] Image ceiling: six suites' private 28 KiB `boot_info` statics now share `TEST_BOOT_INFO` (`include/kernel/test/boot_info_fixture.h`), taking headroom from -4 KiB to 137 KiB
+- [x] Commit: "utest: each ring-3 binary's provoked kernel errors are declared, and a stray one fails that binary"
 
 **Test checkpoint:** `bash scripts/test.sh QUIET=1` prints no `[FAIL]` line in either phase; removing one `expects_klog=` from the manifest fails that binary by name.
 

@@ -33,6 +33,9 @@
                                      * the watchdog's rate bound must cover     */
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"         /* KLOG_SUBSYSTEM_MAX (frame-tag bound)    */
+#include "kernel/test/utest_klog_attr.h"
+#include "kernel/test/klog_suppress.h" /* TEST_KLOG_SUPPRESS for the window judge */
+#include "libc/string.h"         /* strcmp, strlen for the declaration assertions */
 #include "registry.h"
 
 /* Exposed by src/kernel/test/test_usermode.c for unit-test use. Kept as
@@ -87,6 +90,10 @@ int test_usermode_freeze_refuses(const char *name, int as_smoke,
                                  uint32_t *out_kind,
                                  uint32_t *out_smoke_refused,
                                  const char **out_reason);
+int test_usermode_manifest_klog(char *buf, uint32_t len, uint32_t *out_runs,
+                                uint32_t *out_refusals, uint32_t *out_n,
+                                uint32_t *out_optional, const char **out_tag0,
+                                const char **out_text0);
 int test_usermode_manifest_parse(char *buf, uint32_t len, const char *filter,
                                  uint32_t *out_runs,
                                  uint32_t *out_refusals,
@@ -7683,8 +7690,377 @@ static void test_degraded_reap_poisons_the_boot_verdict(void)
                    "the seam must restore the boot's real verdict");
 }
 
+/* ---- Kernel error declarations (the per-binary kernel error window) ---- */
+
+/* The longest value the decoder tests build: a full tag or 95 escapes. */
+#define KATTR_BUF (KLOG_WATCH_TEXT_MAX * 3u + 8u)
+
+/* Decode `src` from the writable copy `buf`; returns the code, tag and text. */
+static int kattr_in(char *buf, const char *src, unsigned tag_cap, unsigned text_cap,
+                    const char **tag, const char **text)
+{
+    uint32_t i = 0;
+    char *t = (char *)0;
+    int rc;
+
+    while (src[i] && i + 1 < KATTR_BUF) { buf[i] = src[i]; i++; }
+    buf[i] = '\0';
+    rc = utest_klog_attr_decode(buf, tag_cap, text_cap, &t);
+    *tag = buf;
+    *text = t;
+    return rc;
+}
+#define kattr(src, tc, xc, tag, text) kattr_in(work, (src), (tc), (xc), (tag), (text))
+
+static void test_klog_attr_decode(void)
+{
+    const char *tag, *text;
+    const unsigned TC = KLOG_WATCH_TAG_MAX, XC = KLOG_WATCH_TEXT_MAX;
+    char work[KATTR_BUF], longv[KATTR_BUF];
+    uint32_t p, i;
+
+    TEST_ASSERT_EQ(kattr("sched:exec:%20post-commit%20failure", TC, XC, &tag, &text),
+                   UTEST_KLOG_ATTR_OK, "a percent-encoded value decodes");
+    TEST_ASSERT_EQ(strcmp(tag, "sched"), 0, "the tag is the part before the first colon");
+    TEST_ASSERT_EQ(strcmp(text, "exec: post-commit failure"), 0,
+                   "the text keeps later colons and decodes %20 to a space");
+    TEST_ASSERT_EQ(kattr("a%3Ab:c", TC, XC, &tag, &text), UTEST_KLOG_ATTR_E_TAG,
+                   "an encoded colon cannot move the split (the tag is never decoded)");
+    TEST_ASSERT_EQ(kattr("t:%3a%3A%25%7e", TC, XC, &tag, &text), UTEST_KLOG_ATTR_OK,
+                   "both hex cases decode");
+    TEST_ASSERT_EQ(strcmp(text, "::%~"), 0, "to the bytes they name, once");
+    TEST_ASSERT_EQ(kattr("t:%2541", TC, XC, &tag, &text), UTEST_KLOG_ATTR_OK, "%25 then 41");
+    TEST_ASSERT_EQ(strcmp(text, "%41"), 0, "is decoded exactly once");
+    TEST_ASSERT_EQ(kattr("sched.x-y_0:z", TC, XC, &tag, &text), UTEST_KLOG_ATTR_OK,
+                   "a tag may hold letters, digits, dot, dash and underscore");
+    TEST_ASSERT_EQ(kattr("nocolon", TC, XC, &tag, &text), UTEST_KLOG_ATTR_E_SHAPE, "no colon");
+    TEST_ASSERT_EQ(kattr(":text", TC, XC, &tag, &text), UTEST_KLOG_ATTR_E_SHAPE, "an empty tag");
+    TEST_ASSERT_EQ(kattr("tag:", TC, XC, &tag, &text), UTEST_KLOG_ATTR_E_SHAPE, "an empty text");
+    TEST_ASSERT_EQ(kattr("", TC, XC, &tag, &text), UTEST_KLOG_ATTR_E_SHAPE, "an empty value");
+    TEST_ASSERT_EQ(kattr("ta/g:x", TC, XC, &tag, &text), UTEST_KLOG_ATTR_E_TAG,
+                   "a tag byte outside the set");
+    TEST_ASSERT_EQ(kattr("t:%2", TC, XC, &tag, &text), UTEST_KLOG_ATTR_E_ESCAPE,
+                   "an escape cut short by the end");
+    TEST_ASSERT_EQ(kattr("t:%", TC, XC, &tag, &text), UTEST_KLOG_ATTR_E_ESCAPE, "a bare percent");
+    TEST_ASSERT_EQ(kattr("t:%zz", TC, XC, &tag, &text), UTEST_KLOG_ATTR_E_ESCAPE,
+                   "an escape with no hex digits");
+    TEST_ASSERT_EQ(kattr("t:%0A", TC, XC, &tag, &text), UTEST_KLOG_ATTR_E_BYTE,
+                   "a decoded control byte");
+    TEST_ASSERT_EQ(kattr("t:%00x", TC, XC, &tag, &text), UTEST_KLOG_ATTR_E_BYTE, "a decoded NUL");
+    TEST_ASSERT_EQ(kattr("t:%7F", TC, XC, &tag, &text), UTEST_KLOG_ATTR_E_BYTE, "DEL");
+    TEST_ASSERT_EQ(kattr("t:\x80", TC, XC, &tag, &text), UTEST_KLOG_ATTR_E_BYTE,
+                   "a raw byte above ASCII");
+    TEST_ASSERT_EQ(utest_klog_attr_decode((char *)0, TC, XC, (char **)&text),
+                   UTEST_KLOG_ATTR_E_SHAPE, "NULL value");
+
+    /* The caps count the NUL: a tag of cap-1 bytes fits, cap does not. */
+    p = 0;
+    for (i = 0; i + 1 < TC; i++) longv[p++] = 'g';
+    longv[p++] = ':'; longv[p++] = 'x'; longv[p] = '\0';
+    TEST_ASSERT_EQ(kattr(longv, TC, XC, &tag, &text), UTEST_KLOG_ATTR_OK, "the longest tag fits");
+    longv[0] = 'g'; p = 0;
+    for (i = 0; i < TC; i++) longv[p++] = 'g';
+    longv[p++] = ':'; longv[p++] = 'x'; longv[p] = '\0';
+    TEST_ASSERT_EQ(kattr(longv, TC, XC, &tag, &text), UTEST_KLOG_ATTR_E_LONG, "one byte more does not");
+    /* The text cap is on the DECODED length: 95 escapes are 285 bytes in. */
+    p = 0; longv[p++] = 't'; longv[p++] = ':';
+    for (i = 0; i + 1 < XC; i++) { longv[p++] = '%'; longv[p++] = '4'; longv[p++] = '1'; }
+    longv[p] = '\0';
+    TEST_ASSERT_EQ(kattr(longv, TC, XC, &tag, &text), UTEST_KLOG_ATTR_OK,
+                   "the longest decoded text fits, however long its encoding");
+    TEST_ASSERT_EQ((uint32_t)strlen(text), XC - 1u, "and is all there");
+    longv[p++] = 'A'; longv[p] = '\0';
+    TEST_ASSERT_EQ(kattr(longv, TC, XC, &tag, &text), UTEST_KLOG_ATTR_E_LONG,
+                   "one decoded byte more does not");
+}
+
+#define KMAN_BUF 256u   /* the longest manifest these tests write is under 200 bytes */
+
+static int kman_in(char *buf, const char *src, uint32_t *runs, uint32_t *refusals, uint32_t *n,
+                   uint32_t *opt, const char **tag0, const char **text0)
+{
+    uint32_t i = 0;
+
+    while (src[i] && i + 2 < KMAN_BUF) { buf[i] = src[i]; i++; }
+    buf[i] = '\0';
+    return test_usermode_manifest_klog(buf, i, runs, refusals, n, opt, tag0, text0);
+}
+#define kman(src, r, f, n, o, t, x) kman_in(mbuf, (src), (r), (f), (n), (o), (t), (x))
+
+static void test_manifest_klog_declarations(void)
+{
+    uint32_t runs, refusals, n, opt;
+    const char *tag0, *text0;
+    char mbuf[KMAN_BUF];
+
+    if (!kman("test_k.exe expects_tasks=2 expects_klog=sched:exec:%20post "
+              "allows_klog=sys:short%20read\n",
+              &runs, &refusals, &n, &opt, &tag0, &text0)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 1u, "a line with declarations runs");
+    TEST_ASSERT_EQ(refusals, 0u, "and is not refused");
+    TEST_ASSERT_EQ(n, 2u, "both declarations reach the plan");
+    TEST_ASSERT_EQ(opt, 2u, "only the second is an allowance");
+    TEST_ASSERT_EQ(tag0 ? strcmp(tag0, "sched") : -1, 0, "the first declaration's tag");
+    TEST_ASSERT_EQ(text0 ? strcmp(text0, "exec: post") : -1, 0, "and its decoded text");
+
+    (void)kman("test_k.exe\n", &runs, &refusals, &n, &opt, &tag0, &text0);
+    TEST_ASSERT_EQ(runs + n, 1u, "a line without declarations declares nothing");
+
+    (void)kman("test_k.exe expects_klog=sched:x%2\n", &runs, &refusals, &n, &opt, &tag0, &text0);
+    TEST_ASSERT_EQ(runs, 0u, "a value that does not decode refuses the line");
+    TEST_ASSERT_EQ(refusals, 1u, "and the refusal is counted");
+
+    (void)kman("test_k.exe expects_klog=a:1 expects_klog=a:2 expects_klog=a:3 expects_klog=a:4 "
+               "expects_klog=a:5 expects_klog=a:6 expects_klog=a:7 allows_klog=a:8\n",
+               &runs, &refusals, &n, &opt, &tag0, &text0);
+    TEST_ASSERT_EQ(runs, 1u, "eight declarations fit a line");
+    TEST_ASSERT_EQ(n, 8u, "all eight are kept");
+    TEST_ASSERT_EQ(opt, 0x80u, "the eighth is the allowance");
+    (void)kman("test_k.exe expects_klog=a:1 expects_klog=a:2 expects_klog=a:3 expects_klog=a:4 "
+               "expects_klog=a:5 expects_klog=a:6 expects_klog=a:7 expects_klog=a:8 "
+               "expects_klog=a:9\n", &runs, &refusals, &n, &opt, &tag0, &text0);
+    TEST_ASSERT_EQ(runs * 10u + refusals, 1u, "a ninth refuses the line instead of being dropped");
+
+    (void)kman("test_k.exe expects_klog=a:1\ntest_k.exe expects_klog=a:1\n",
+               &runs, &refusals, &n, &opt, &tag0, &text0);
+    TEST_ASSERT_EQ(runs * 10u + refusals, 10u, "an identical duplicate line folds into one run");
+    (void)kman("test_k.exe expects_klog=a:1\ntest_k.exe allows_klog=a:1\n",
+               &runs, &refusals, &n, &opt, &tag0, &text0);
+    TEST_ASSERT_EQ(runs * 10u + refusals, 1u,
+                   "a duplicate declaring the same line differently is a policy conflict");
+    (void)kman("test_k.exe expects_klog=a:1\ntest_k.exe\n", &runs, &refusals, &n, &opt, &tag0, &text0);
+    TEST_ASSERT_EQ(runs * 10u + refusals, 1u,
+                   "and so is a duplicate that drops the declarations");
+}
+
+/* A raw NUL inside a line, given by explicit length: the line must be a
+ * counted refusal, never a runnable entry with the attributes after the NUL
+ * silently dropped. */
+static void test_manifest_klog_embedded_nul(void)
+{
+    static const char a[] = "test_k.exe allows_klog=sched:x\0 expects_klog=sched:required\n";
+    static const char b[] = "test_k.exe expects_klog=sched:ab\0cd\n";
+    static const char c[] = "test_k.exe expects_tasks=2\0 expects_klog=sched:req\n";
+    const char *cases[3] = { a, b, c };
+    const uint32_t lens[3] = { sizeof(a) - 1u, sizeof(b) - 1u, sizeof(c) - 1u };
+    char mbuf[KMAN_BUF];
+    uint32_t runs, refusals, n, opt;
+    const char *tag0, *text0;
+
+    for (uint32_t k = 0; k < 3u; k++) {
+        for (uint32_t i = 0; i < lens[k]; i++)
+            mbuf[i] = cases[k][i];
+        mbuf[lens[k]] = '\0';
+        if (!test_usermode_manifest_klog(mbuf, lens[k], &runs, &refusals, &n, &opt,
+                                         &tag0, &text0)) {
+            TEST_SKIP("plan allocation unavailable");
+            return;
+        }
+        TEST_ASSERT_EQ(runs, 0u, "a line with a NUL past its name never runs");
+        TEST_ASSERT_EQ(refusals, 1u, "and is a counted refusal");
+    }
+}
+
+/* The verdict escalation u_run_one applies after the window is judged. */
+static void test_klog_escalation(void)
+{
+    uint32_t c[3];
+    int why, v;
+
+#define ESC_RESET() do { c[0] = 5u; c[1] = 5u; c[2] = 5u; } while (0)
+    ESC_RESET();
+    v = test_usermode_klog_escalate(0, 0u, 0u, 0u, c, &why);
+    TEST_ASSERT_EQ((uint32_t)v, 0u, "a clean PASS stays PASS");
+    TEST_ASSERT_EQ(c[0] * 100u + c[1] * 10u + c[2], 555u, "and moves no count");
+    TEST_ASSERT_EQ((uint32_t)why, (uint32_t)UTEST_KLOG_ESC_NONE, "with no reason");
+    ESC_RESET();
+    v = test_usermode_klog_escalate(0, 2u, 1u, 1u, c, &why);
+    TEST_ASSERT_EQ((uint32_t)v, 1u, "a PASS with a kernel error mismatch fails");
+    TEST_ASSERT_EQ(c[0] * 100u + c[1] * 10u + c[2], 465u, "one count moves from pass to fail");
+    TEST_ASSERT_EQ((uint32_t)why, (uint32_t)UTEST_KLOG_ESC_KLOG, "naming the mismatch");
+    ESC_RESET();
+    v = test_usermode_klog_escalate(2, 0u, 0u, 3u, c, &why);
+    TEST_ASSERT_EQ((uint32_t)v, 1u, "a SKIP whose run changed the interrupt depth fails");
+    TEST_ASSERT_EQ(c[0] * 100u + c[1] * 10u + c[2], 564u, "one count moves from skip to fail");
+    TEST_ASSERT_EQ((uint32_t)why, (uint32_t)UTEST_KLOG_ESC_ISR, "naming the depth");
+    ESC_RESET();
+    v = test_usermode_klog_escalate(0, 1u, 0u, 1u, c, &why);
+    TEST_ASSERT_EQ((uint32_t)v, 1u, "both faults fail the binary once");
+    TEST_ASSERT_EQ(c[0] * 100u + c[1] * 10u + c[2], 465u, "with exactly one count moved");
+    TEST_ASSERT_EQ((uint32_t)why, (uint32_t)UTEST_KLOG_ESC_ISR, "the depth is named as the cause");
+    ESC_RESET();
+    v = test_usermode_klog_escalate(1, 1u, 0u, 1u, c, &why);
+    TEST_ASSERT_EQ((uint32_t)v, 1u, "an existing FAIL stays FAIL");
+    TEST_ASSERT_EQ(c[0] * 100u + c[1] * 10u + c[2], 555u, "and moves no count");
+    TEST_ASSERT_EQ((uint32_t)why, (uint32_t)UTEST_KLOG_ESC_NONE, "keeping its own reason");
+#undef ESC_RESET
+}
+
+/* ---- The window lifecycle on a fixture watch ---- */
+
+static struct klog_watch_state s_kw_fx;      /* ~3.7 KB each: never on a kernel stack */
+static struct klog_watch_report s_kw_report;
+static int s_kw_task, s_kw_thread;           /* stand-ins: only their addresses matter */
+
+struct kw_ctx {
+    struct klog_watch_state *st;
+    uint32_t begins;
+    int open_on_begin;            /* 0: begin leaves the watch in RUN (a refused open) */
+    int refuse_declare;           /* every declaration returns an error */
+    const char *probe_tag;        /* a line the "binary" logs before it ends */
+    const char *probe_text;
+};
+
+static void kw_begin(void *vctx, uint32_t owner_pid)
+{
+    struct kw_ctx *k = (struct kw_ctx *)vctx;
+    k->begins++;
+    k->st->owner.capture_owner = owner_pid;
+    if (k->open_on_begin)
+        klog_watch_fx_suite_begin(k->st);
+}
+static int kw_mode(void *vctx)
+{
+    return (int)((struct kw_ctx *)vctx)->st->mode;
+}
+static int kw_declare(void *vctx, int optional, const char *tag, const char *text)
+{
+    struct kw_ctx *k = (struct kw_ctx *)vctx;
+    if (k->refuse_declare)
+        return KLOG_WATCH_ERR_FULL;
+    return optional ? klog_watch_fx_allow(k->st, tag, text, __FILE__, __LINE__)
+                    : klog_watch_fx_expect(k->st, tag, text, __FILE__, __LINE__);
+}
+static void kw_end(void *vctx, struct klog_watch_report *out)
+{
+    struct kw_ctx *k = (struct kw_ctx *)vctx;
+    if (k->probe_tag && k->st->mode == KLOG_WATCH_SUITE) {
+        struct klog_watch_ctx c = k->st->owner;   /* a task captured for the binary */
+        c.task = &s_kw_thread;
+        (void)klog_watch_fx_probe_from(k->st, &c, 0, LOG_ERROR, k->probe_tag, k->probe_text);
+    }
+    klog_watch_fx_suite_end(k->st, out);
+}
+static const struct utest_klog_watch_ops s_kw_ops = { kw_begin, kw_mode, kw_declare, kw_end };
+
+static void kw_reset(struct kw_ctx *k)
+{
+    klog_watch_fx_init(&s_kw_fx);
+    s_kw_fx.owner.valid  = 1;
+    s_kw_fx.owner.cpu    = 0;
+    s_kw_fx.owner.task   = &s_kw_task;
+    s_kw_fx.owner.thread = &s_kw_thread;
+    klog_watch_fx_run_begin(&s_kw_fx);
+    k->st = &s_kw_fx;
+    k->begins = 0;
+    k->open_on_begin = 1;
+    k->refuse_declare = 0;
+    k->probe_tag = (const char *)0;
+    k->probe_text = (const char *)0;
+}
+
+static void test_klog_window_lifecycle(void)
+{
+    static const char *const one_expect[1] = { "sched\0provoked line" };
+    static const char *const one_allow[1]  = { "sched\0sometimes" };
+    struct kw_ctx k;
+    uint8_t left;
+    uint32_t f;
+
+    TEST_KLOG_SUPPRESS("UTEST");   /* the judge names each failure on serial */
+
+    kw_reset(&k);
+    f = test_usermode_klog_window_cycle(&s_kw_ops, &k, &s_kw_report, 1, one_expect, 1, 0, 9, 1, &left);
+    TEST_ASSERT_EQ(f, 1u, "a declared line that never appears costs one failure");
+    TEST_ASSERT_EQ(left + (uint32_t)(s_kw_fx.mode != KLOG_WATCH_RUN), 0u,
+                   "and the window is closed, the watch back in RUN");
+    TEST_ASSERT_EQ(s_kw_fx.owner.capture_owner, 9u, "the window was opened for the binary's pid");
+
+    kw_reset(&k);
+    k.probe_tag = "sched"; k.probe_text = "a provoked line here";
+    f = test_usermode_klog_window_cycle(&s_kw_ops, &k, &s_kw_report, 1, one_expect, 1, 0, 9, 1, &left);
+    TEST_ASSERT_EQ(f, 0u, "the declared line from a captured descendant is claimed");
+    TEST_ASSERT_EQ(s_kw_report.expects[0].hits, 1u, "and counted");
+
+    kw_reset(&k);
+    f = test_usermode_klog_window_cycle(&s_kw_ops, &k, &s_kw_report, 1, one_allow, 1, 1, 9, 1, &left);
+    TEST_ASSERT_EQ(f, 0u, "an allowance that never appears costs nothing");
+
+    kw_reset(&k);
+    k.probe_tag = "sched"; k.probe_text = "an undeclared failure";
+    f = test_usermode_klog_window_cycle(&s_kw_ops, &k, &s_kw_report, 1, one_allow, 1, 1, 9, 1, &left);
+    TEST_ASSERT_EQ(f, 1u, "an undeclared line fails the binary");
+
+    kw_reset(&k);
+    f = test_usermode_klog_window_cycle(&s_kw_ops, &k, (struct klog_watch_report *)0, 1, one_allow, 1, 1, 9, 1, &left);
+    TEST_ASSERT_EQ(f, 1u, "no report storage fails the binary closed");
+    TEST_ASSERT_EQ(left + (uint32_t)(s_kw_fx.mode != KLOG_WATCH_RUN), 0u, "and still closes its window");
+
+    kw_reset(&k);
+    k.refuse_declare = 1;
+    f = test_usermode_klog_window_cycle(&s_kw_ops, &k, &s_kw_report, 1, one_allow, 1, 1, 9, 1, &left);
+    TEST_ASSERT_EQ(f, 1u, "a declaration the watch refuses fails the binary");
+    TEST_ASSERT_EQ(left + (uint32_t)(s_kw_fx.mode != KLOG_WATCH_RUN), 0u, "and the window closes");
+
+    kw_reset(&k);
+    k.open_on_begin = 0;
+    f = test_usermode_klog_window_cycle(&s_kw_ops, &k, &s_kw_report, 1, one_allow, 1, 1, 9, 1, &left);
+    TEST_ASSERT_EQ(f, 1u, "a window that did not open fails the binary");
+    TEST_ASSERT_EQ((uint32_t)left, 0u, "and nothing is left armed");
+
+    kw_reset(&k);
+    f = test_usermode_klog_window_cycle(&s_kw_ops, &k, &s_kw_report, 1, one_expect, 1, 0, 9, 0, &left);
+    TEST_ASSERT_EQ(f + k.begins, 0u, "a binary whose task was never created opens no window");
+    TEST_ASSERT_EQ((uint32_t)left, 0u, "and its arming is cleared, so the next binary's create cannot open it");
+
+    kw_reset(&k);
+    f = test_usermode_klog_window_cycle(&s_kw_ops, &k, &s_kw_report, 0, one_expect, 1, 0, 9, 1, &left);
+    TEST_ASSERT_EQ(f + k.begins, 0u, "outside the launcher's RUN window no binary window opens");
+
+    /* Mixed declarations: the allowance bit is per index. */
+    {
+        static const char *const mixed[2] = { "sched\0sometimes", "sched\0required" };
+        static const char *const eight[8] = {
+            "a\0l0", "a\0l1", "a\0l2", "a\0l3", "a\0l4", "a\0l5", "a\0l6", "a\0l7" };
+        uint32_t flags = 0;
+
+        kw_reset(&k);
+        k.probe_tag = "sched"; k.probe_text = "it sometimes fails";
+        f = test_usermode_klog_window_cycle(&s_kw_ops, &k, &s_kw_report, 1, mixed, 2, 0x01, 9, 1, &left);
+        TEST_ASSERT_EQ(f, 1u, "a matched allowance does not excuse the required line beside it");
+        kw_reset(&k);
+        f = test_usermode_klog_window_cycle(&s_kw_ops, &k, &s_kw_report, 1, eight, 8, 0x81, 9, 1, &left);
+        TEST_ASSERT_EQ(f, 6u, "with indexes 0 and 7 allowed, the six required lines each cost one");
+        for (uint32_t i = 0; i < 8u; i++)
+            flags |= (uint32_t)(s_kw_report.expects[i].optional ? 1u : 0u) << i;
+        TEST_ASSERT_EQ(flags, 0x81u, "each declaration is registered with its own bit");
+    }
+
+    /* Two binaries in turn: the second inherits nothing from the first. */
+    kw_reset(&k);
+    k.probe_tag = "sched"; k.probe_text = "provoked line";
+    f = test_usermode_klog_window_cycle(&s_kw_ops, &k, &s_kw_report, 1, one_expect, 1, 0, 9, 1, &left);
+    TEST_ASSERT_EQ(f, 0u, "the first binary's declared line is claimed");
+    f = test_usermode_klog_window_cycle(&s_kw_ops, &k, &s_kw_report, 1, (const char *const *)0, 0, 0, 10, 1, &left);
+    TEST_ASSERT_EQ(f, 1u, "the same line from the next binary, which declared nothing, fails it");
+    TEST_ASSERT_EQ(s_kw_fx.owner.capture_owner, 10u, "whose window was opened for its own pid");
+}
+
 void test_register_usermode_launcher(void)
 {
+    test_suite_register_cat("UTEST: manifest line with an embedded NUL is refused",
+                            test_manifest_klog_embedded_nul, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: kernel error and interrupt depth escalation",
+                            test_klog_escalation, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: per-binary kernel error window lifecycle",
+                            test_klog_window_lifecycle, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: manifest kernel error value decoding",
+                            test_klog_attr_decode, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: manifest kernel error declarations reach the plan",
+                            test_manifest_klog_declarations, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: degraded reap poisons the boot verdict",
                             test_degraded_reap_poisons_the_boot_verdict,
                             TEST_CAT_EXEC);

@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **941 of 2593 sections complete (36%).** 115 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **941 of 2593 sections complete (36%).** 116 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -75,7 +75,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T03 §10` | An Over-Long Failing Assertion Wedges the Boot Instead of Reporting                                                   |
 | [x]  | `D00 T03 §11` | A Read One Byte Past a Buffer Is Invisible to Every Test We Can Write                                                 |
 | [x]  | `D00 T03 §12` | Assert or Fix the 55 Test-Phase [FAIL] Lines                                                                          |
-| [ ]  | `D00 T03 §13` | Expect or Attribute Kernel Errors per User-Mode Binary                                                                |
+| [/]  | `D00 T03 §13` | Expect or Attribute Kernel Errors per User-Mode Binary                                                                |
 | [x]  | `D00 T04 §1`  | User-Mode Test Assertion Macro                                                                                        |
 | [x]  | `D00 T04 §2`  | Userland syscall.h Parity with Kernel INT 0x80 ABI                                                                    |
 | [x]  | `D00 T04 §3`  | Kernel Test Launcher                                                                                                  |

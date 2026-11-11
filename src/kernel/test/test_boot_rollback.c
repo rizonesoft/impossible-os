@@ -17,18 +17,18 @@
  * ============================================================================ */
 
 #include "kernel/test/test.h"
+#include "kernel/test/boot_info_fixture.h" /* TEST_BOOT_INFO: the shared fixture */
 #include "kernel/test/klog_suppress.h"
 #include "kernel/boot_info.h"
 #include "kernel/uefi_runtime.h"
 #include "kernel/sched/workqueue.h"
 
-static struct boot_info s_rb_buf;
 
 static void rb_zero(void)
 {
-    uint64_t *p = (uint64_t *)&s_rb_buf;
+    uint64_t *p = (uint64_t *)&TEST_BOOT_INFO;
     uint32_t i;
-    for (i = 0u; i < sizeof(s_rb_buf) / sizeof(uint64_t); i++)
+    for (i = 0u; i < sizeof(TEST_BOOT_INFO) / sizeof(uint64_t); i++)
         p[i] = 0u;
 }
 
@@ -47,12 +47,12 @@ static void test_boot_rollback_first_ever_boot(void)
     rb_zero();
     /* First-ever boot: NVRAM variable absent -> required=0, shipped=N
      * passes because shipped >= required for any N. */
-    s_rb_buf.flags                       = 0u;
-    s_rb_buf.os_loader_security_version  = 5u;
-    s_rb_buf.required_security_version   = 0u;
+    TEST_BOOT_INFO.flags                       = 0u;
+    TEST_BOOT_INFO.os_loader_security_version  = 5u;
+    TEST_BOOT_INFO.required_security_version   = 0u;
 
     enum boot_rollback_error err = BOOT_ROLLBACK_ERR_OK;
-    boot_result_t r = boot_rollback_validate(&s_rb_buf, &err);
+    boot_result_t r = boot_rollback_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,                "first-ever boot -> OK");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_ROLLBACK_ERR_OK,   "err=OK");
 }
@@ -62,15 +62,15 @@ static void test_boot_rollback_equal_versions(void)
     TEST_KLOG_SUPPRESS("boot");
     rb_zero();
     /* shipped == required (5==5): accepted; no raise. */
-    s_rb_buf.os_loader_security_version  = 5u;
-    s_rb_buf.required_security_version   = 5u;
+    TEST_BOOT_INFO.os_loader_security_version  = 5u;
+    TEST_BOOT_INFO.required_security_version   = 5u;
 
     enum boot_rollback_error err = BOOT_ROLLBACK_ERR_OK;
-    boot_result_t r = boot_rollback_validate(&s_rb_buf, &err);
+    boot_result_t r = boot_rollback_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK, "equal versions -> OK");
 
     uint32_t new_value = 0xBEEF;
-    int raise = boot_rollback_should_raise(&s_rb_buf, /*opt_in*/ 1, &new_value);
+    int raise = boot_rollback_should_raise(&TEST_BOOT_INFO, /*opt_in*/ 1, &new_value);
     TEST_ASSERT_EQ((uint64_t)raise, 0u, "equal versions -> no raise");
     /* new_value must not be written when raise returns 0 */
     TEST_ASSERT_EQ((uint64_t)new_value, 0xBEEFu, "new_value untouched on no-raise");
@@ -80,12 +80,12 @@ static void test_boot_rollback_unknown_flag_rejected(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     rb_zero();
-    s_rb_buf.flags                       = (1u << 31);
-    s_rb_buf.os_loader_security_version  = 1u;
-    s_rb_buf.required_security_version   = 0u;
+    TEST_BOOT_INFO.flags                       = (1u << 31);
+    TEST_BOOT_INFO.os_loader_security_version  = 1u;
+    TEST_BOOT_INFO.required_security_version   = 0u;
 
     enum boot_rollback_error err = BOOT_ROLLBACK_ERR_OK;
-    boot_result_t r = boot_rollback_validate(&s_rb_buf, &err);
+    boot_result_t r = boot_rollback_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                     "unknown flag -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_ROLLBACK_ERR_UNKNOWN_FLAG, "err=UNKNOWN_FLAG");
 }
@@ -94,11 +94,11 @@ static void test_boot_rollback_version_oor_rejected(void)
 {
     TEST_KLOG_SUPPRESS("boot");
     rb_zero();
-    s_rb_buf.os_loader_security_version  = BOOT_SECURITY_VERSION_MAX + 1u;
-    s_rb_buf.required_security_version   = 0u;
+    TEST_BOOT_INFO.os_loader_security_version  = BOOT_SECURITY_VERSION_MAX + 1u;
+    TEST_BOOT_INFO.required_security_version   = 0u;
 
     enum boot_rollback_error err = BOOT_ROLLBACK_ERR_OK;
-    boot_result_t r = boot_rollback_validate(&s_rb_buf, &err);
+    boot_result_t r = boot_rollback_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                     "version OOR -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_ROLLBACK_ERR_VERSION_OOR,  "err=VERSION_OOR");
 }
@@ -110,12 +110,12 @@ static void test_boot_rollback_reserved_pad_nonzero_rejected(void)
      * future-policy data the validator does not interpret. */
     TEST_KLOG_SUPPRESS("boot");
     rb_zero();
-    s_rb_buf.os_loader_security_version  = 1u;
-    s_rb_buf.required_security_version   = 0u;
-    s_rb_buf._rollback_pad               = 0xCAFEBABEu;
+    TEST_BOOT_INFO.os_loader_security_version  = 1u;
+    TEST_BOOT_INFO.required_security_version   = 0u;
+    TEST_BOOT_INFO._rollback_pad               = 0xCAFEBABEu;
 
     enum boot_rollback_error err = BOOT_ROLLBACK_ERR_OK;
-    boot_result_t r = boot_rollback_validate(&s_rb_buf, &err);
+    boot_result_t r = boot_rollback_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                          "_rollback_pad nonzero -> FATAL");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_ROLLBACK_ERR_RESERVED_NONZERO,  "err=RESERVED_NONZERO");
 }
@@ -128,12 +128,12 @@ static void test_boot_rollback_refusal_flag_warning(void)
      * this because the bootloader should have halted, but if it
      * does, the validator logs a WARN and keeps booting (the kernel
      * running IS proof the downgrade check passed). */
-    s_rb_buf.flags                       = BOOT_FLAG_ROLLBACK_REFUSAL;
-    s_rb_buf.os_loader_security_version  = 5u;
-    s_rb_buf.required_security_version   = 3u;
+    TEST_BOOT_INFO.flags                       = BOOT_FLAG_ROLLBACK_REFUSAL;
+    TEST_BOOT_INFO.os_loader_security_version  = 5u;
+    TEST_BOOT_INFO.required_security_version   = 3u;
 
     enum boot_rollback_error err = BOOT_ROLLBACK_ERR_OK;
-    boot_result_t r = boot_rollback_validate(&s_rb_buf, &err);
+    boot_result_t r = boot_rollback_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "stale REFUSAL flag -> OK + WARN");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_ROLLBACK_ERR_OK, "err=OK");
 }
@@ -144,12 +144,12 @@ static void test_boot_rollback_read_failed_flag_accepted(void)
     rb_zero();
     /* READ_FAILED flag alone (without REFUSAL) is legitimate telemetry
      * from the bootloader -- validator accepts with WARN. */
-    s_rb_buf.flags                       = BOOT_FLAG_ROLLBACK_READ_FAILED;
-    s_rb_buf.os_loader_security_version  = 1u;
-    s_rb_buf.required_security_version   = 0u;
+    TEST_BOOT_INFO.flags                       = BOOT_FLAG_ROLLBACK_READ_FAILED;
+    TEST_BOOT_INFO.os_loader_security_version  = 1u;
+    TEST_BOOT_INFO.required_security_version   = 0u;
 
     enum boot_rollback_error err = BOOT_ROLLBACK_ERR_OK;
-    boot_result_t r = boot_rollback_validate(&s_rb_buf, &err);
+    boot_result_t r = boot_rollback_validate(&TEST_BOOT_INFO, &err);
     TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "READ_FAILED flag stale -> OK + WARN");
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_ROLLBACK_ERR_OK, "err=OK");
 }
@@ -159,11 +159,11 @@ static void test_boot_rollback_should_raise_opt_out(void)
     rb_zero();
     /* shipped=7, required=5, opt_in=0: MUST NOT raise even though
      * shipped > required. Policy opt-out keeps the counter frozen. */
-    s_rb_buf.os_loader_security_version  = 7u;
-    s_rb_buf.required_security_version   = 5u;
+    TEST_BOOT_INFO.os_loader_security_version  = 7u;
+    TEST_BOOT_INFO.required_security_version   = 5u;
 
     uint32_t new_value = 0xBEEF;
-    int raise = boot_rollback_should_raise(&s_rb_buf, /*opt_in*/ 0, &new_value);
+    int raise = boot_rollback_should_raise(&TEST_BOOT_INFO, /*opt_in*/ 0, &new_value);
     TEST_ASSERT_EQ((uint64_t)raise, 0u, "opt-out -> no raise");
     TEST_ASSERT_EQ((uint64_t)new_value, 0xBEEFu, "new_value untouched on opt-out");
 }
@@ -172,11 +172,11 @@ static void test_boot_rollback_should_raise_opt_in(void)
 {
     rb_zero();
     /* shipped=7, required=5, opt_in=1: raise to 7. */
-    s_rb_buf.os_loader_security_version  = 7u;
-    s_rb_buf.required_security_version   = 5u;
+    TEST_BOOT_INFO.os_loader_security_version  = 7u;
+    TEST_BOOT_INFO.required_security_version   = 5u;
 
     uint32_t new_value = 0;
-    int raise = boot_rollback_should_raise(&s_rb_buf, /*opt_in*/ 1, &new_value);
+    int raise = boot_rollback_should_raise(&TEST_BOOT_INFO, /*opt_in*/ 1, &new_value);
     TEST_ASSERT_EQ((uint64_t)raise, 1u, "opt-in + newer -> raise");
     TEST_ASSERT_EQ((uint64_t)new_value, 7u, "new_value == shipped");
 }
@@ -186,11 +186,11 @@ static void test_boot_rollback_should_raise_downgrade_impossible(void)
     rb_zero();
     /* shipped=3, required=5: would be rejected pre-jump by bootloader;
      * if we somehow reach the raise path, never decrease. */
-    s_rb_buf.os_loader_security_version  = 3u;
-    s_rb_buf.required_security_version   = 5u;
+    TEST_BOOT_INFO.os_loader_security_version  = 3u;
+    TEST_BOOT_INFO.required_security_version   = 5u;
 
     uint32_t new_value = 0xBEEF;
-    int raise = boot_rollback_should_raise(&s_rb_buf, /*opt_in*/ 1, &new_value);
+    int raise = boot_rollback_should_raise(&TEST_BOOT_INFO, /*opt_in*/ 1, &new_value);
     TEST_ASSERT_EQ((uint64_t)raise, 0u, "shipped < required -> no raise (never decrease)");
     TEST_ASSERT_EQ((uint64_t)new_value, 0xBEEFu, "new_value untouched on downgrade");
 }
@@ -201,7 +201,7 @@ static void test_boot_rollback_should_raise_null_safe(void)
     int raise = boot_rollback_should_raise((struct boot_info *)0, /*opt_in*/ 1, &new_value);
     TEST_ASSERT_EQ((uint64_t)raise, 0u, "NULL info -> no raise");
     /* Also null new_value pointer */
-    raise = boot_rollback_should_raise(&s_rb_buf, /*opt_in*/ 1, (uint32_t *)0);
+    raise = boot_rollback_should_raise(&TEST_BOOT_INFO, /*opt_in*/ 1, (uint32_t *)0);
     TEST_ASSERT_EQ((uint64_t)raise, 0u, "NULL new_value safe");
 }
 
