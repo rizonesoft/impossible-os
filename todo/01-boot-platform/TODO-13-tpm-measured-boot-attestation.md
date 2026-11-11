@@ -46,7 +46,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |   6   | Baseline enrollment and storage                               | §3, §4, §7                                                |  [/]   |
 | 💎  |   7   | TPM NV index support                                          | §2 (transport); §12 (baseline mask)                       |  [/]   |
 | ⭐  |   8   | Sealed-secret boot policy hooks                               | §7, §12, 02-kernel-core/TODO-03 §7                        |  [/]   |
-| 💎  |   9   | Attestation report export                                     | §3-§6, §12, §13                                           |  [ ]   |
+| 💎  |   9   | Attestation report export                                     | §3-§6, §12, §13                                           |  [/]   |
 | ⭐  |  10   | Recovery and mismatch UX                                      | §6, TODO-22                                               |  [ ]   |
 | 💎  |  11   | TPM tests and event-log fixtures                              | §1-§10, §12, §13                                          |  [x]   |
 | 💎  |  12   | PCR allocation table and policy masks                         | (foundational; consumed by §6/§8/§13)                     |  [x]   |
@@ -287,17 +287,17 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
   - POST16 0xB0AC (required) / 0xB0AD (optional, needs a TPM). Real-firmware run is the operator's: no swtpm on this host.
 - [x] Handoff triple in the report: manifest sha256 (validated `.bootproto`), the caps words and boot-path provenance (Phase-0 snapshot), and the loader build identity copied into `struct boot_attest_handoff`.
   - `loader.valid` is 0 for the all-zero git_sha sentinel; `buildLabel` is JSON-escaped and bounded at its 24 bytes.
-- [x] DRTM forward-compat slots reserved + round-tripped: `drtm_entry_pcr`/`drtm_acm_status`/`drtm_measurement_type` in `boot_attestation_report_t` (zeroed today, serialized in attestation.json) for a future Secure Launch adapter.
+- [x] DRTM forward-compat slots reserved + round-tripped: `drtm_entry_pcr`/`drtm_acm_status`/`drtm_measurement_type` in `boot_attestation_report_t` (entryPcr 255 = none, others 0; in attestation.json) for a future Secure Launch adapter.
 - [x] Commit: `"tpm: export boot attestation report"`
   - The report and export shipped in `2355ba5f`; the cap bit, PCR-11 extend, scoped verdict and triple ship with this section's close.
 
-**Test checkpoint:** A signed `boot_attestation_report_t` carries PCRs + event digest + Secure Boot state + nonce and exports to `X:\Diag\attestation.json`; the native query API returns the same snapshot to user-mode; the bootloader manifest PCR-extend (PCR 11) ran pre-jump and set `BOOT_CAP_MANIFEST_PCR_BOUND` (clear + boot-continue when no TPM); the report snapshots the handoff triple (manifest sha256, caps words, boot-path provenance) and round-trips the zeroed DRTM forward-compat slots. Platforms: QEMU swtpm KVM; bare metal.
+**Test checkpoint:** A `boot_attestation_report_t` carries the SHA-256-quoted PCRs, event digest, Secure Boot state and nonce and exports to `X:\Diag\attestation.json` (schema 3); the bootloader PCR 11 manifest extend runs pre-jump and sets `BOOT_CAP_MANIFEST_PCR_BOUND` (degraded, boot continues, with no TPM); `pcrBound` is 1 only with the claim, the logged manifest digest and a verified replay; the integrity block names its scope and failure class; a corrupt own identity exports a diagnostic report; the handoff triple and the DRTM slots (entryPcr 255, others 0) round-trip. Deferred to the parked query-API item (Q13): the same snapshot returned to user mode. Platforms: QEMU swtpm KVM; bare metal.
 
 > **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 3712 kernel + 17 user-mode, 0 failures
 > **Notes:**
-> - Shipped: Phase-0 handoff snapshot + `boot_attestation_report_t`/`tpm_attest_report_build()` (manifest + handoff + SHA-256-quoted PCR bank + quote/AK/EK + coherence) + streaming JSON export to `X:\Diag\attestation.json` (schema v2).
+> - Shipped: Phase-0 handoff snapshot + `boot_attestation_report_t`/`tpm_attest_report_build()` (manifest + handoff + SHA-256-quoted PCR bank + quote/AK/EK + coherence) + streaming JSON export to `X:\Diag\attestation.json` (schema 3 since 2026-11-11).
 > - Trust model: only the SHA-256 bank is TPM-quoted; AK<->EK binding stays UNVERIFIED; an EK-cert read failure is UNKNOWN not ABSENT; a malformed nonce is BADARG not a degraded report.
-> - Tests: `test_tpm_attest_report.c` (3 suites): snapshot write-once, builder field/coherence/trust + nonce contract, JSON serializer via in-memory sink (schema/freshness fields, overlong-length refusal).
+> - Tests: `test_tpm_attest_report.c` (5 suites: snapshot, builder, JSON, manifest binding, scoped verdict) and `test_tpm_baseline.c` (failure provenance).
 > - Canonical doc: the trust/coherence/DRTM schema lives in the `boot_attestation_report` struct header comment.
 > - Schema 3 (2026-11-11): manifest PCR binding proved from the log + replay, scoped integrity verdict with failure provenance, loader identity, diagnostic report on a corrupt own identity. Doc: `docs/boot/tpm-measured-boot.md`.
 > - Scope boundary: the native query API (Q13) and the remote-attestation placeholder (Q14) stay parked on operator answers and keep §9 at `[/]`.
@@ -1601,7 +1601,7 @@ The loader now copies any log whose record chain it can prove, up to a 1 MiB rea
 | 💎  | Measured-boot baseline (enroll/verify)        | Measured Boot baseline              | IMA + systemd-pcrlock                             | ⚠️ §6 recovery-gated enroll + Phase-1 verify + generation rotation               |
 | 💎  | Kernel-ABI identity bound in baseline         | Boot config / WBCL binding          | IMA template hash binding                         | ✅ §16 build-time `.bootproto` sha256, fail-closed, symmetric presence gate      |
 | 💎  | Sealed secrets                                | BitLocker                           | systemd-cryptenroll                               | ✅ §8 PCR-7 KEYEDHASH seal (PolicyPCR) + FDE/CI hooks + recovery handoff         |
-| ⭐  | Boot attestation report (JSON)                | Device Health Attestation           | Keylime AK quote JSON                             | ⚠️ §9 signed report to `X:\Diag\attestation.json`; query API + PCR-11 pending    |
+| ⭐  | Boot attestation report (JSON)                | Device Health Attestation           | Keylime AK quote JSON                             | ⚠️ §9 schema 3: PCR-11 bound, scoped verdict; query API parked                   |
 | 💎  | Remote attestation (TPM2 Quote)               | Device Health Attestation           | Keylime AK quote                                  | ✅ §13 EK->AK provision + TPM2_Quote + nonce anti-replay                         |
 | 💎  | PCR allocation policy                         | PCR7+11 BitLocker seal              | systemd-pcrlock CEL                               | ✅ §12 event-centric table + derived masks                                       |
 | ⭐  | Baseline enrollment authority                 | TPM PPI physical presence           | root + interactive prompt                         | ✅ §15 NVRAM-anchored gate + console confirm + reported authority value          |
