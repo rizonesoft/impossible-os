@@ -16,8 +16,9 @@ Exit codes
 ----------
   0    every watched workflow that ran on this commit succeeded
   1    a watched workflow failed: the JSON names the run and its failed jobs
-  3    no verdict can be had (gh unreachable, HEAD not pushed, every run
-       cancelled): a note, never a reason to stop the run
+  3    no verdict can be had (gh unreachable, HEAD not pushed, a run
+       cancelled, no run started within 45 minutes of the push, or none
+       finished within 3 hours): a note, never a reason to stop the run
   124  still queued or running after --max seconds: issue the call again
 """
 from __future__ import annotations
@@ -33,6 +34,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ci_status import WORKFLOWS  # noqa: E402
 
 POLL_S = 20
+# How long a commit's runs may sit unstarted, and how long the whole wait may last, before the answer is
+# "no verdict". On 2026-11-11 GitHub Actions had an outage and every run stayed queued: a wait with no end
+# would have held the run for as long as the outage lasted, with nothing of ours at fault.
+QUEUED_LIMIT_S = 45 * 60
+TOTAL_LIMIT_S = 3 * 60 * 60
 GH_TIMEOUT_S = 60
 _FIELDS = "databaseId,status,conclusion,createdAt"
 
@@ -51,7 +57,14 @@ def verdict(runs_by_workflow: dict, elapsed: float, grace: float) -> tuple:
         if runs:
             newest[wf] = max(runs, key=lambda r: (r.get("createdAt") or "", r.get("databaseId") or 0))
     missing = [wf for wf in runs_by_workflow if wf not in newest]
-    if any(r.get("status") != "completed" for r in newest.values()) or (missing and elapsed < grace):
+    open_runs = {wf: r for wf, r in newest.items() if r.get("status") != "completed"}
+    never_started = open_runs and all(r.get("status") != "in_progress" for r in open_runs.values())
+    if (never_started and elapsed > QUEUED_LIMIT_S) or (open_runs and elapsed > TOTAL_LIMIT_S):
+        return "unknown", {"reason": f"CI has not answered {int(elapsed // 60)} minutes after the push "
+                                     f"({'no run has started' if never_started else 'runs are still going'}): "
+                                     "GitHub's side, not a verdict on the commit",
+                           "waiting_on": sorted(open_runs)}
+    if open_runs or (missing and elapsed < grace):
         return "running", {"waiting_on": sorted(wf for wf, r in newest.items() if r.get("status") != "completed")
                            + sorted(missing)}
     failed = {wf: r for wf, r in newest.items() if r.get("conclusion") not in ("success", "skipped", "cancelled")}

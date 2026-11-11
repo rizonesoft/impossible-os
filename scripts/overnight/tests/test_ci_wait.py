@@ -24,6 +24,19 @@ def test_a_queued_or_running_run_is_not_a_verdict():
         assert state == "running" and detail["waiting_on"] == ["build.yml"], (status, state, detail)
 
 
+def test_runs_that_never_start_stop_being_waited_for():
+    queued = {"build.yml": [run("queued")], "todo-graph.yml": [run("queued")]}
+    assert cw.verdict(queued, cw.QUEUED_LIMIT_S - 1, 180)[0] == "running"
+    state, detail = cw.verdict(queued, cw.QUEUED_LIMIT_S + 1, 180)
+    assert state == "unknown" and "no run has started" in detail["reason"], detail
+    # A run that did start is given the longer limit, and then is no verdict either.
+    going = {"build.yml": [run("in_progress")], "todo-graph.yml": [run("queued")]}
+    assert cw.verdict(going, cw.QUEUED_LIMIT_S + 1, 180)[0] == "running"
+    assert cw.verdict(going, cw.TOTAL_LIMIT_S + 1, 180)[0] == "unknown"
+    # A failure that is already in is still reported once nothing is left running.
+    assert cw.verdict({"build.yml": [run("completed", "failure", rid=9)]}, cw.TOTAL_LIMIT_S + 1, 180)[0] == "red"
+
+
 def test_a_missing_run_is_waited_for_then_counts_as_not_triggered():
     runs = {"build.yml": [run("completed", "success")], "todo-graph.yml": []}
     assert cw.verdict(runs, 60, 180)[0] == "running"
