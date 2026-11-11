@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md sources=src/kernel/registry.c,src/kernel/main/boot_storage.c,src/kernel/cpu_security.c,src/kernel/quota/quota_owner.c,src/kernel/eif.c,scripts/overnight/stranded_deferrals.py reviewed=2026-11-09 order=35 -->
+<!-- docs: covers=todo/02-kernel-core/TODO-35-unblocked-deferral-backfill.md sources=src/kernel/registry.c,src/kernel/main/boot_storage.c,src/kernel/cpu_security.c,src/kernel/quota/quota_owner.c,src/kernel/eif.c,scripts/overnight/stranded_deferrals.py reviewed=2026-11-11 order=35 -->
 # Unblocked-Deferral Backfill
 
 ## What is it?
