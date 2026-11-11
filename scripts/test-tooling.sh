@@ -641,6 +641,69 @@ if python3 "$REPO_ROOT/scripts/release-flavor-check.py" --selftest >/dev/null 2>
 else
     t_fail "release-flavor check strips outputs from a compile command (selftest)"
 fi
+# heavy.sh: a heavy hook job goes through bosun when it is installed and runs
+# directly when it is not, with the command's own exit status either way.
+HV="$REPO_ROOT/scripts/hooks/heavy.sh"
+HV_DIR="$(mktemp -d -t heavy-test.XXXXXX)"
+cat > "$HV_DIR/bosun" <<'HVEOF'
+#!/usr/bin/env bash
+[ "$1" = "run" ] && [ "$2" = "--" ] || exit 99
+echo queued >> "$HEAVY_TEST_LOG"
+shift 2
+exec "$@"
+HVEOF
+chmod +x "$HV_DIR/bosun"
+HV_LOG="$HV_DIR/log"
+HEAVY_TEST_LOG="$HV_LOG" PATH="$HV_DIR:$PATH" bash "$HV" sh -c 'exit 3'; HV_RC=$?
+if [ "$HV_RC" = "3" ] && [ "$(cat "$HV_LOG" 2>/dev/null)" = "queued" ]; then
+    t_pass "heavy.sh queues a job through bosun and keeps its exit status"
+else
+    t_fail "heavy.sh queues a job through bosun and keeps its exit status (rc=$HV_RC)"
+fi
+: > "$HV_LOG"
+HEAVY_TEST_LOG="$HV_LOG" HEAVY_NO_BOSUN=1 PATH="$HV_DIR:$PATH" bash "$HV" sh -c 'exit 0'; HV_RC=$?
+if [ "$HV_RC" = "0" ] && [ ! -s "$HV_LOG" ]; then
+    t_pass "heavy.sh runs directly with HEAVY_NO_BOSUN=1"
+else
+    t_fail "heavy.sh runs directly with HEAVY_NO_BOSUN=1 (rc=$HV_RC)"
+fi
+HV_NOPATH="$HV_DIR/nobosun"; mkdir -p "$HV_NOPATH"
+for HV_T in bash sh cat; do ln -s "$(command -v "$HV_T")" "$HV_NOPATH/$HV_T"; done
+PATH="$HV_NOPATH" "$HV_NOPATH/bash" "$HV" sh -c 'exit 5'; HV_RC=$?
+if [ "$HV_RC" = "5" ]; then
+    t_pass "heavy.sh runs the job directly when bosun is not installed"
+else
+    t_fail "heavy.sh runs the job directly when bosun is not installed (rc=$HV_RC)"
+fi
+HV_SITES=0
+grep -qF 'heavy.sh" bash "$REPO_ROOT/scripts/test-tooling.sh"' "$REPO_ROOT/.githooks/pre-push" && HV_SITES=$((HV_SITES + 1))
+grep -qF 'heavy.sh "${CI_PARITY_LOCKED[@]}"' "$REPO_ROOT/.githooks/pre-push" && HV_SITES=$((HV_SITES + 1))
+grep -qF 'heavy.sh bash scripts/build.sh' "$REPO_ROOT/scripts/hooks/pre-push" && HV_SITES=$((HV_SITES + 1))
+grep -qF 'heavy.sh bash scripts/test.sh' "$REPO_ROOT/scripts/hooks/pre-push" && HV_SITES=$((HV_SITES + 1))
+grep -qF 'heavy.sh" bash "$REPO_ROOT/scripts/static-analysis.sh"' "$REPO_ROOT/scripts/hooks/static-analysis-gate.sh" && HV_SITES=$((HV_SITES + 1))
+if [ "$HV_SITES" = "5" ]; then
+    t_pass "every heavy pre-push step runs through heavy.sh"
+else
+    t_fail "every heavy pre-push step runs through heavy.sh ($HV_SITES of 5)"
+fi
+# The parity lock is taken inside the queued job: a push waiting in the queue
+# holds no lock, and a lock that times out reads 75 (skip), never a pass.
+if ! grep -qF 'exec 9>' "$REPO_ROOT/.githooks/pre-push"; then
+    t_pass "the CI-parity lock is not held across the bosun queue wait"
+else
+    t_fail "the CI-parity lock is not held across the bosun queue wait"
+fi
+HV_LOCK="$HV_DIR/parity.lock"
+flock "$HV_LOCK" sleep 5 & HV_HOLDER=$!
+sleep 0.3
+HEAVY_NO_BOSUN=1 bash "$HV" flock -E 75 -w 1 "$HV_LOCK" true; HV_RC=$?
+kill "$HV_HOLDER" 2>/dev/null; wait "$HV_HOLDER" 2>/dev/null
+if [ "$HV_RC" = "75" ]; then
+    t_pass "a parity lock held elsewhere reads as a timeout (75), not a pass"
+else
+    t_fail "a parity lock held elsewhere reads as a timeout (75), not a pass (rc=$HV_RC)"
+fi
+rm -rf "$HV_DIR"
 SA_GATE="$REPO_ROOT/scripts/hooks/static-analysis-gate.sh"
 SA_FILE="src/kernel/crypto/sha1.c"
 # sa_fixture <mode> <path> <text> [<mode> <path> <text>]...: a child commit of

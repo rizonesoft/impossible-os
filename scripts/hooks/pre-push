@@ -30,14 +30,14 @@ if ! bash scripts/todo-graph/build-and-validate.sh --keep-cache --quiet; then
 fi
 
 # Build first, fast fail
-if ! bash scripts/build.sh > /dev/null 2>&1; then
+if ! bash scripts/hooks/heavy.sh bash scripts/build.sh > /dev/null 2>&1; then
     echo -e "${RED}${BOLD}[pre-push] BUILD FAILED${RESET}: push blocked"
     echo "  Run 'bash scripts/build.sh' to see errors."
     exit 1
 fi
 
 # Run tests via test.sh (handles boot.conf patching, QEMU, parsing)
-if bash scripts/test.sh > /dev/null 2>&1; then
+if bash scripts/hooks/heavy.sh bash scripts/test.sh > /dev/null 2>&1; then
     echo -e "${GREEN}[pre-push]${RESET} All tests passed — push allowed"
     exit 0
 else

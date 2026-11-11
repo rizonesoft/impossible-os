@@ -209,7 +209,7 @@ if [ -n "$TOOLING_HITS" ]; then
     # out the very push that introduced it.
     echo -e "\033[33m  SKIP_TOOLING_SUITE=1 set -- tooling suite not run\033[0m"
   elif ! TEST_TOOLING_CHANGED_PATHS="$TT_CHANGED" \
-         bash "$REPO_ROOT/scripts/test-tooling.sh" --quiet; then
+         bash "$REPO_ROOT/scripts/hooks/heavy.sh" bash "$REPO_ROOT/scripts/test-tooling.sh" --quiet; then
     rm -f "$TT_CHANGED" 2>/dev/null || true
     echo ""
     echo -e "\033[31mTooling suite failed -- push blocked\033[0m"
@@ -479,21 +479,26 @@ else
   # On timeout the gate SKIPS with a warning rather than failing -- a stuck lock
   # must not wedge an unattended run's push, and something else is demonstrably
   # testing this tree if the lock is still held ten minutes on.
+  #
+  # The lock is taken INSIDE the queued job, never before it: a push that held
+  # it through a bosun queue wait would hold it while nothing tested, and a
+  # second push would then time out on it and skip, which is exactly the case
+  # the "a held lock means something is testing" reasoning above excludes.
+  # flock exits 75 when the wait times out, so a timeout stays a skip and a
+  # failed suite stays a failure.
   CI_PARITY_LOCK="${IMPOSSIBLE_OS_POSTCOMMIT_LOCK:-/tmp/impossible-os-postcommit.lock}"
-  CI_PARITY_RC=0
-  exec 9>"$CI_PARITY_LOCK" 2>/dev/null || true
-  if command -v flock >/dev/null 2>&1 && ! flock -w 600 9 2>/dev/null; then
-    echo -e "\033[33m  CI-parity SKIPPED: another test run held $CI_PARITY_LOCK for 600s\033[0m"
-    exec 9>&- 2>/dev/null || true
-    CI_PARITY_RC=-1
+  CI_PARITY_LOCKED=()
+  if command -v flock >/dev/null 2>&1; then
+    CI_PARITY_LOCKED=(flock -E 75 -w 600 "$CI_PARITY_LOCK")
   fi
-  if [ "$CI_PARITY_RC" = "0" ] && (cd "$REPO_ROOT" && CI_PARITY=1 bash scripts/test.sh QUIET=1 >/tmp/ci-parity-prepush.log 2>&1); then
-    exec 9>&- 2>/dev/null || true
+  (cd "$REPO_ROOT" && CI_PARITY=1 bash scripts/hooks/heavy.sh "${CI_PARITY_LOCKED[@]}" \
+      bash scripts/test.sh QUIET=1 >/tmp/ci-parity-prepush.log 2>&1)
+  CI_PARITY_RC=$?
+  if [ "$CI_PARITY_RC" = "0" ]; then
     echo -e "\033[32m  CI-parity: PASS\033[0m"
-  elif [ "$CI_PARITY_RC" = "-1" ]; then
-    : # already reported as skipped above
+  elif [ "$CI_PARITY_RC" = "75" ] && [ "${#CI_PARITY_LOCKED[@]}" -gt 0 ]; then
+    echo -e "\033[33m  CI-parity SKIPPED: another test run held $CI_PARITY_LOCK for 600s\033[0m"
   else
-    exec 9>&- 2>/dev/null || true
     echo -e "\033[31m  CI-parity gate FAILED -- this is what CI would have reported.\033[0m"
     tail -15 /tmp/ci-parity-prepush.log | sed 's/^/    /'
     echo "  Full log: /tmp/ci-parity-prepush.log"

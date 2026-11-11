@@ -78,7 +78,7 @@ if [ "${SKIP_STATIC_ANALYSIS:-}" = "1" ]; then
 fi
 
 echo "static-analysis-gate: analysing ${#FILES[@]} changed source(s) at ${HEAD_OID:0:12}" >&2
-bash "$REPO_ROOT/scripts/static-analysis.sh" --commit "$HEAD_OID" "${FILES[@]}"
+bash "$REPO_ROOT/scripts/hooks/heavy.sh" bash "$REPO_ROOT/scripts/static-analysis.sh" --commit "$HEAD_OID" "${FILES[@]}"
 rc=$?
 case "$rc" in
     0) [ -z "$SEEN" ] || printf "$HEAD_OID %s\n" "${FILES[@]}" >>"$SEEN"

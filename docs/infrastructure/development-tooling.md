@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/build.sh,scripts/setup.sh,scripts/ci/check-compile-cache.py,tools/fuzz/run.sh,ruff.toml,scripts/release-flavor-check.py,scripts/static-analysis.sh,scripts/gen-compile-db.py,scripts/hooks/static-analysis-gate.sh,scripts/test.sh,scripts/lint.sh,scripts/debug.sh,scripts/run-qemu.sh reviewed=2026-11-11T17:00 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/build.sh,scripts/hooks/heavy.sh,scripts/setup.sh,scripts/ci/check-compile-cache.py,tools/fuzz/run.sh,ruff.toml,scripts/release-flavor-check.py,scripts/static-analysis.sh,scripts/gen-compile-db.py,scripts/hooks/static-analysis-gate.sh,scripts/test.sh,scripts/lint.sh,scripts/debug.sh,scripts/run-qemu.sh reviewed=2026-11-12 -->
 # Development Tooling & Automation
 
 > Complete build system, test framework, asset pipeline, and development utilities for Impossible OS.
@@ -1022,6 +1022,8 @@ No external dependencies (stdlib only, Pillow optional for JPEG). Negative test 
 ## Local CI Hooks
 
 **Clean-container tier.** `CI_CONTAINER=1 bash scripts/test.sh` runs lint, a clean build and the CI-parity suite from a clean copy of HEAD inside the image `build.yml` pins; `bash scripts/ci-container.sh --tooling` adds the tooling pack. It reads its install steps out of the workflow, so it cannot drift from what CI installs, and it refuses if a step is missing. It tests HEAD, not the working tree, so commit first. Output lands in `build/ci-container.log`.
+
+**Heavy hook jobs queue through bosun.** Each heavy pre-push step (the CI-parity suite, the tooling pack, the static analyzer, and the opt-in build and test gate) runs through `scripts/hooks/heavy.sh`, which hands it to `bosun run --` when bosun is installed, so pushes from every repo on the host take turns for memory and a runaway job is stopped at its write budget. Without bosun (CI, a fresh clone) the step runs directly, and `HEAVY_NO_BOSUN=1` forces that. The post-commit unit-test hook is not routed through it, because a queue wait would exceed its 60 s budget.
 
 **Host gates on push.** When a push touches `src/`, `include/` or `tools/`, `.githooks/pre-push` runs `scripts/host-gates.sh` (about 5 s), the gates under `tools/` that compile kernel and loader sources. `SKIP_HOST_GATES=1` overrides it.
 
