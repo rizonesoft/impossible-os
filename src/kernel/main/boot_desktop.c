@@ -68,6 +68,13 @@
 #include "kernel/ipc/alpc.h"
 #include "kernel/main/shell_loader.h"
 #include "main/main_internal.h"
+#include "kernel/smp.h"               /* crash_test=4: pick an online AP */
+#include "kernel/drivers/lapic.h"       /* crash_test=4: lapic_send_nmi */
+
+/* crash_test=5/6: how long this CPU waits for the AP to reach its ordering
+ * point. 2^27 `pause`s is about a second on current parts; the AP gets there in
+ * microseconds unless its NMI was lost, which the timeout then reports. */
+#define CRASH_TEST_ORDER_SPINS  (1u << 27)
 
 /* ---- Phase 3 ------------------------------------------------------------ */
 
@@ -442,15 +449,79 @@ void boot_phase3(void)
         panic_screen((struct interrupt_frame *)0, 0xDEAD,
                      PANIC_FAULTING_STR_PTR, PANIC_FAULTING_STR_PTR, __LINE__);
     }
+    else if (g_boot_info.config.crash_test >= 4 &&
+             g_boot_info.config.crash_test <= 6) {
+        /* Two CPUs panic at once: an NMI makes one online AP raise
+         * KeBugCheckExFrame(MANUALLY_INITIATED_CRASH) through
+         * nmi_crash_handler while this CPU panics here, so both race the
+         * panic owner claim and the cross-boot evidence record. Each prints
+         * its reason with its CPU, and the loser prints that it parked.
+         * Driven by the SMOKE_CRASH_TEST=double* legs on 2 CPUs. The value
+         * picks the ORDERING, so each one is forced rather than left to luck:
+         *   4  race: NMI, then panic here at once (this CPU usually wins);
+         *   5  the AP wins: wait until it has claimed the panic owner;
+         *   6  split: the AP takes the evidence record and is held before its
+         *      owner claim, so this CPU wins terminal while the AP owns the
+         *      record first; the terminal winner then replaces it, so the
+         *      next boot's record names this CPU's STOP 0xDEAD.
+         * With no second online CPU it says so and panics alone, which those
+         * legs then fail on. */
+        extern void panic_screen(struct interrupt_frame *frame,
+                                 uint64_t error_code,
+                                 const char *description,
+                                 const char *file, uint32_t line);
+        uint32_t ct = g_boot_info.config.crash_test;
+        struct per_cpu_data *self = smp_this_cpu();
+        struct per_cpu_data *ap = (struct per_cpu_data *)0;
+
+        for (uint32_t cpu = 0; cpu < MAX_CPUS && !ap; cpu++) {
+            struct per_cpu_data *pc;
+
+            if (!smp_cpu_is_online(cpu))
+                continue;
+            pc = smp_get_cpu(cpu);
+            if (pc && pc != self)
+                ap = pc;
+        }
+        if (ap) {
+            uint32_t want = (ct == 5) ? PANIC_FIXTURE_OWNER_CLAIMED
+                          : (ct == 6) ? PANIC_FIXTURE_HELD : 0u;
+            uint32_t spins = 0;
+
+            if (ct == 6)
+                panic_fixture_hold_claim(ap->lapic_id);
+            klog(LOG_WARN, "boot",
+                 "crash_test=%u -- NMI to CPU %u (apic %u), then a BSOD here",
+                 (uint64_t)ct, (uint64_t)ap->cpu_id, (uint64_t)ap->lapic_id);
+            lapic_send_nmi((uint8_t)ap->lapic_id);
+            while (want && (panic_fixture_state() & want) != want &&
+                   spins < CRASH_TEST_ORDER_SPINS) {
+                __asm__ volatile ("pause" ::: "memory");
+                spins++;
+            }
+            if (want && (panic_fixture_state() & want) != want)
+                klog(LOG_ERROR, "boot",
+                     "crash_test=%u: CPU %u never reached the ordering point; "
+                     "panicking anyway", (uint64_t)ct, (uint64_t)ap->cpu_id);
+        } else {
+            klog(LOG_ERROR, "boot",
+                 "crash_test=%u needs a second online CPU; panicking on this one alone",
+                 (uint64_t)ct);
+        }
+        panic_screen((struct interrupt_frame *)0, 0xDEAD,
+                     "CRASH_TEST: Deliberate panic racing a second CPU",
+                     __FILE__, __LINE__);
+    }
     else if (g_boot_info.config.crash_test != 0 &&
              g_boot_info.config.crash_test != 2) {
         /* Say so rather than booting normally. Before the exact-match
          * narrowing above, ANY nonzero value fired this site, so an
-         * operator typo was self-evident; now 3-255 are handled by
+         * operator typo was self-evident; now 7-255 are handled by
          * nobody and the knob would just look broken. */
         klog(LOG_WARN, "boot",
              "crash_test=%u is not a known crash site (0=off, 1=here, "
-             "2=pre-first-composite, 3=here with unreadable strings) -- "
+             "2=pre-first-composite, 3=here with unreadable strings, "
+             "4-6=here racing a second CPU) -- "
              "no crash will be triggered",
              (uint64_t)g_boot_info.config.crash_test);
     }

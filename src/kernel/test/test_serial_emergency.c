@@ -2034,8 +2034,81 @@ static void test_serial_first_probe_present_may_wait(void)
                    "a real but busy transmitter takes the ordinary budget path");
 }
 
+/* The bounded acquire takes a free lock and forgets a recovered holder. */
+static void test_serial_acquire_wait_free_lock(void)
+{
+    serial_lock_t lock = SERIAL_LOCK_INIT;
+    volatile uint32_t gave_up = TEST_SERIAL_OWNER_B;
+
+    TEST_ASSERT_EQ(serial_emergency_acquire_wait(&lock, TEST_SERIAL_OWNER_A, 0u, &gave_up), 1,
+                   "a free lock is acquired even with no wait budget");
+    TEST_ASSERT_EQ(lock.owner, TEST_SERIAL_OWNER_A, "and records the owner");
+    TEST_ASSERT_EQ(gave_up, SERIAL_LOCK_FREE,
+                   "a successful acquire clears the given-up holder");
+    serial_emergency_release(&lock, 1);
+}
+
+/* A lock held by THIS owner is the interrupted code's: never waited on. The
+ * budget is the largest there is, so a wait here would hang the suite. */
+static void test_serial_acquire_wait_own_holder_returns(void)
+{
+    serial_lock_t lock = SERIAL_LOCK_INIT;
+    volatile uint32_t gave_up = SERIAL_LOCK_FREE;
+
+    TEST_ASSERT_EQ(serial_lock_try_acquire_owned(&lock, TEST_SERIAL_OWNER_A), 1,
+                   "fixture: this owner already holds it");
+    TEST_ASSERT_EQ(serial_emergency_acquire_wait(&lock, TEST_SERIAL_OWNER_A, 0xFFFFFFFFu,
+                                                 &gave_up), 0,
+                   "its own holder returns 0 at once");
+    TEST_ASSERT_EQ(lock.owner, TEST_SERIAL_OWNER_A, "the lock word is untouched");
+    TEST_ASSERT_EQ(gave_up, SERIAL_LOCK_FREE, "and nobody is marked given-up");
+    serial_lock_try_release_owned(&lock, TEST_SERIAL_OWNER_A);
+}
+
+/* Another holder is waited on for the budget, then remembered, and a holder
+ * already outlasting one full wait is not waited on again (the second call
+ * has the largest budget, so waiting would hang the suite). */
+static void test_serial_acquire_wait_gives_up_once(void)
+{
+    serial_lock_t lock = SERIAL_LOCK_INIT;
+    volatile uint32_t gave_up = SERIAL_LOCK_FREE;
+
+    TEST_ASSERT_EQ(serial_lock_try_acquire_owned(&lock, TEST_SERIAL_OWNER_B), 1,
+                   "fixture: another owner holds it");
+    TEST_ASSERT_EQ(serial_emergency_acquire_wait(&lock, TEST_SERIAL_OWNER_A, 64u, &gave_up), 0,
+                   "a held lock is not acquired once the budget runs out");
+    TEST_ASSERT_EQ(lock.owner, TEST_SERIAL_OWNER_B, "the holder keeps it");
+    TEST_ASSERT_EQ(gave_up, TEST_SERIAL_OWNER_B, "and is remembered as given up on");
+    TEST_ASSERT_EQ(serial_emergency_acquire_wait(&lock, TEST_SERIAL_OWNER_A, 0xFFFFFFFFu,
+                                                 &gave_up), 0,
+                   "a given-up holder is not waited on a second time");
+    serial_lock_try_release_owned(&lock, TEST_SERIAL_OWNER_B);
+}
+
+/* Invalid input is refused with the lock word left as it was. */
+static void test_serial_acquire_wait_invalid_input(void)
+{
+    serial_lock_t lock = SERIAL_LOCK_INIT;
+
+    TEST_ASSERT_EQ(serial_emergency_acquire_wait((serial_lock_t *)0, TEST_SERIAL_OWNER_A, 0u,
+                                                 (volatile uint32_t *)0), 0,
+                   "a NULL lock is refused");
+    TEST_ASSERT_EQ(serial_emergency_acquire_wait(&lock, SERIAL_LOCK_FREE, 0u,
+                                                 (volatile uint32_t *)0), 0,
+                   "the FREE owner is refused");
+    TEST_ASSERT_EQ(lock.owner, SERIAL_LOCK_FREE, "and the lock stays free");
+}
+
 void test_register_serial_emergency(void)
 {
+    test_suite_register_cat("serial_emergency: bounded acquire takes a free lock",
+                            test_serial_acquire_wait_free_lock, TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: bounded acquire never waits on itself",
+                            test_serial_acquire_wait_own_holder_returns, TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: bounded acquire gives up on a holder once",
+                            test_serial_acquire_wait_gives_up_once, TEST_CAT_BOOT);
+    test_suite_register_cat("serial_emergency: bounded acquire refuses invalid input",
+                            test_serial_acquire_wait_invalid_input, TEST_CAT_BOOT);
     test_suite_register_cat("serial_emergency: a ready transmitter always sends",
                             test_serial_first_probe_ready_always_sends,
                             TEST_CAT_BOOT);

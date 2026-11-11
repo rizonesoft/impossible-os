@@ -236,6 +236,31 @@ else
     [ -n "$reason" ] && printf "        ${DIM}%s${NC}\n" "$reason"
 fi
 
+# Double-panic fixtures, one 2-CPU boot each on the default engine: two CPUs
+# panic in one boot in a forced ordering, the guest is warm-reset, and the leg
+# passes only when both CPUs' reports, the one park line, the winner's stop
+# code on screen and the next boot's evidence record all name the same winner
+# (scripts/smoke-double-panic.py). These are the only legs that panic on more
+# than one CPU and the only ones that read a crash record across a reset.
+for mode in race ap split; do
+    log="$LOG_DIR/crash-double-$mode.log"
+    cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-double.XXXXXX")"
+    t0=$(date +%s)
+    SMOKE_CRASH_TEST="double-$mode" SMOKE_SMP=2 bash scripts/test-smoke.sh > "$cap" 2>&1
+    rc=$?
+    CAPTURES="$CAPTURES $cap:$log"
+    dur=$(( $(date +%s) - t0 ))
+    if [ "$rc" = "0" ]; then
+        PASS=$((PASS + 1))
+        printf "  ${GREEN}PASS${NC}  crash    %-8s %2ds   ${DIM}%s${NC}\n" "dbl-$mode" "$dur" "$log"
+    else
+        FAIL=$((FAIL + 1)); FAILED_LEGS="$FAILED_LEGS crash:double-$mode"
+        printf "  ${RED}FAIL${NC}  crash    %-8s %2ds   ${DIM}%s${NC}\n" "dbl-$mode" "$dur" "$log"
+        reason=$(grep -a 'SMOKE TEST FAILED' "$cap" 2>/dev/null | head -1)
+        [ -n "$reason" ] && printf "        ${DIM}%s${NC}\n" "$reason"
+    fi
+done
+
 # UKI-direct fixtures (UKI signed-payload sections), one boot each on the default engine.
 # Every leg above boots the split-path loader, so none of them exercises the
 # signed-payload copy, its kernel pin, or the two layers that refuse a disk

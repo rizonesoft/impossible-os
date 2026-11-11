@@ -55,6 +55,31 @@ void panic_build_context(struct interrupt_frame *frame, CONTEXT *ctx);
 void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
                   const char *description, const char *file, uint32_t line);
 
+/* --- Multi-CPU panic fixture seam (crash_test=5 and 6 only) ---
+ *
+ * panic_fixture_state() reports what the panic path has reached, for a fixture
+ * that must order two CPUs' panics deterministically instead of by luck:
+ *   PANIC_FIXTURE_OWNER_CLAIMED  some CPU has won panic_try_claim_owner
+ *   PANIC_FIXTURE_HELD           the CPU named by panic_fixture_hold_claim is
+ *                                waiting, its evidence and reason already out
+ * panic_fixture_hold_claim(apic) makes that CPU (panic-safe APIC id) wait,
+ * bounded, just before it claims the panic owner, until another CPU has
+ * claimed it. That is the ordering where the eventual LOSER owns the evidence
+ * record before the WINNER claims terminal. PANIC_FIXTURE_NO_HOLD (the boot
+ * default) disables it; the panic path then pays one load and compare. */
+#define PANIC_FIXTURE_OWNER_CLAIMED  0x1u
+#define PANIC_FIXTURE_HELD           0x2u
+#define PANIC_FIXTURE_NO_HOLD        0xFFFFFFFFu
+/* The stop screen's "Stop code:" name: the bugcheck's own name when
+ * `bugcheck_code` is one the bugcheck table knows, else the exception vector's
+ * name when `frame` is a CPU exception (int_no < 32), else "KERNEL_PANIC".
+ * Pure; never NULL. */
+const char *panic_stop_code_name(const struct interrupt_frame *frame,
+                                 uint32_t bugcheck_code);
+
+uint32_t panic_fixture_state(void);
+void     panic_fixture_hold_claim(uint32_t apic_id);
+
 /* Convenience macro that captures file/line automatically.
  * Routes through KeBugCheckEx for uniform bugcheck handling.
  * Usage: KPANIC("something terrible happened"); */
@@ -515,6 +540,19 @@ void panic_evidence_restore_early(void);
 /* True if panic_evidence_restore_early() found a valid prior-crash record this
  * boot. The desktop reads this to surface an "unexpected shutdown" notice. */
 int panic_had_previous_crash(void);
+
+/* 1 once a CPU owns the crash (panic_try_claim_owner succeeded), else 0.
+ * Lock-free. Lets a driver lock that the crash dump crosses stop waiting on a
+ * holder that a secondary panic may have parked for good. */
+int panic_in_progress(void);
+
+/* Panic only: a crash-dump write whose buffer cannot be handed back (the
+ * storage controller would not stop DMA into it) ends the panic here, never
+ * returning, so that buffer is never reused. It first makes the same bounded
+ * terminal evidence retry the normal panic tail makes (which reports when the
+ * cross-boot record could not be published), then takes the configured
+ * terminal action: reset when auto-restart is set, halt otherwise. */
+void panic_abandon_storage(const char *why) __attribute__((noreturn));
 
 /* Post-VFS emission of the restored record to X:\Crash\last-panic.txt (BlackBox)
  * or the C:\ fallback. Best-effort; no-op when no prior crash was restored. On

@@ -4,6 +4,7 @@
 
 #ifdef KERNEL_TESTS
 
+#include "kernel/sched/workqueue.h"
 #include "kernel/test/test.h"
 #include "kernel/test/race_barrier.h"
 #include "kernel/sched/task.h"
@@ -2475,8 +2476,37 @@ static void test_acct_current_task_create_time(void)
                     "sourced clock -> current task CreateTime is stamped (not 1601)");
 }
 
+/* A caller-owned work item takes no pool node, so it is queued even with the
+ * pool empty, and the queue tells its own pool nodes from caller-owned ones (the
+ * worker returns only the former to the pool). A static queue with no worker:
+ * only the list is exercised. */
+static void test_workqueue_enqueue_owned_item(void)
+{
+    static workqueue_t wq;
+    static work_item_t a, b;
+
+    __builtin_memset(&wq, 0, sizeof wq);   /* free_head NULL: the pool is exhausted */
+    TEST_ASSERT_EQ(workqueue_enqueue(&wq, (work_fn_t)test_workqueue_enqueue_owned_item, 0), 0,
+                   "a pooled enqueue fails with the pool empty");
+    TEST_ASSERT_EQ(workqueue_enqueue_item(&wq, &a, (work_fn_t)test_workqueue_enqueue_owned_item, &a), 1,
+                   "a caller-owned item is queued regardless");
+    TEST_ASSERT_EQ(workqueue_enqueue_item(&wq, &b, (work_fn_t)test_workqueue_enqueue_owned_item, &b), 1,
+                   "and a second one");
+    TEST_ASSERT(wq.head == &a && wq.tail == &b && a.next == &b, "in FIFO order");
+    TEST_ASSERT_EQ(wq.sem_count, 2, "each signals the worker once");
+    TEST_ASSERT_EQ(workqueue_item_is_pooled(&wq, &a), 0, "an owned item is not a pool node");
+    TEST_ASSERT_EQ(workqueue_item_is_pooled(&wq, &wq.pool[0]), 1, "a pool node is");
+    TEST_ASSERT_EQ(workqueue_item_is_pooled(&wq, &wq.pool[WQ_POOL_SIZE - 1]), 1, "up to the last");
+    TEST_ASSERT_EQ(workqueue_enqueue_item(&wq, &wq.pool[0], (work_fn_t)test_workqueue_enqueue_owned_item, 0), 0,
+                   "a pool node cannot be queued as caller-owned");
+    TEST_ASSERT_EQ(workqueue_enqueue_item(&wq, (work_item_t *)0, (work_fn_t)test_workqueue_enqueue_owned_item, 0), 0,
+                   "nor a NULL item");
+}
+
 void test_register_sched(void)
 {
+    test_suite_register_cat("Sched: workqueue caller-owned items",
+                            test_workqueue_enqueue_owned_item, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: accounting FILETIME conversion",
                             test_acct_filetime_conversion, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: accounting tick quantum",

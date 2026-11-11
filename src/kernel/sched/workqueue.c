@@ -103,13 +103,17 @@ static void worker_thread_fn(void)
         if (item->fn)
             item->fn(item->arg);
 
-        /* Return node to free pool */
-        spin_lock_irqsave((spinlock_t *)&wq->lock_flag, &irq_flags);
-        item->fn   = (work_fn_t)0;
-        item->arg  = (void *)0;
-        item->next = wq->free_head;
-        wq->free_head = item;
-        spin_unlock_irqrestore((spinlock_t *)&wq->lock_flag, irq_flags);
+        /* Return a pool node to the free pool. A caller-owned node
+         * (workqueue_enqueue_item) is left alone: its owner may already have
+         * queued it again from inside fn. */
+        if (workqueue_item_is_pooled(wq, item)) {
+            spin_lock_irqsave((spinlock_t *)&wq->lock_flag, &irq_flags);
+            item->fn   = (work_fn_t)0;
+            item->arg  = (void *)0;
+            item->next = wq->free_head;
+            wq->free_head = item;
+            spin_unlock_irqrestore((spinlock_t *)&wq->lock_flag, irq_flags);
+        }
     }
 }
 
@@ -206,6 +210,32 @@ int workqueue_enqueue(workqueue_t *wq, work_fn_t fn, void *arg)
 
     spin_unlock_irqrestore((spinlock_t *)&wq->lock_flag, irq_flags);
 
+    return 1;
+}
+
+int workqueue_item_is_pooled(const workqueue_t *wq, const work_item_t *item)
+{
+    return wq && item >= &wq->pool[0] && item < &wq->pool[WQ_POOL_SIZE];
+}
+
+int workqueue_enqueue_item(workqueue_t *wq, work_item_t *item, work_fn_t fn, void *arg)
+{
+    uint64_t irq_flags;
+
+    if (!wq || !item || !fn || workqueue_item_is_pooled(wq, item))
+        return 0;
+
+    spin_lock_irqsave((spinlock_t *)&wq->lock_flag, &irq_flags);
+    item->fn   = fn;
+    item->arg  = arg;
+    item->next = (work_item_t *)0;
+    if (wq->tail)
+        wq->tail->next = item;
+    else
+        wq->head = item;
+    wq->tail = item;
+    wq->sem_count++;
+    spin_unlock_irqrestore((spinlock_t *)&wq->lock_flag, irq_flags);
     return 1;
 }
 

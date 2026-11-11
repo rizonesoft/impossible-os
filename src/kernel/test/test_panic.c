@@ -922,8 +922,58 @@ static void test_park_claim_rejects_null_slot(void)
 
 /* ---- Registration ---- */
 
+/* strcmp lives in the kernel libc, not the freestanding headers. */
+extern int strcmp(const char *a, const char *b);
+
+/* The stop screen names what the cross-boot record and the dump name. Before
+ * 2026-11-11 it read only the exception vector, so an NMI crash recorded as
+ * STOP 0xE2 showed "NMI_INTERRUPT" and a frameless KeBugCheckEx(0xE2) showed
+ * "KERNEL_PANIC". Each row is one rung of the precedence. */
+static void test_panic_stop_code_name_precedence(void)
+{
+    struct interrupt_frame f = { 0 };
+
+    f.int_no = 2;   /* an NMI, which is how nmi_crash_handler's frame arrives */
+    TEST_ASSERT_EQ(strcmp(panic_stop_code_name(&f, 0xE2u), "MANUALLY_INITIATED_CRASH"), 0,
+                   "a known bugcheck names itself, not the vector it came on");
+    TEST_ASSERT_EQ(strcmp(panic_stop_code_name((const struct interrupt_frame *)0, 0xE2u),
+                          "MANUALLY_INITIATED_CRASH"), 0,
+                   "a frameless known bugcheck names itself, not KERNEL_PANIC");
+    TEST_ASSERT_EQ(strcmp(panic_stop_code_name(&f, 0u), "NMI_INTERRUPT"), 0,
+                   "a raw exception with no bugcheck code names its vector");
+    f.int_no = 14;
+    TEST_ASSERT_EQ(strcmp(panic_stop_code_name(&f, 0xDEADu), "PAGE_FAULT"), 0,
+                   "an unknown bugcheck code over an exception frame names the vector");
+    TEST_ASSERT_EQ(strcmp(panic_stop_code_name((const struct interrupt_frame *)0, 0xDEADu),
+                          "KERNEL_PANIC"), 0,
+                   "an unknown code with no frame is KERNEL_PANIC");
+    f.int_no = 32;
+    TEST_ASSERT_EQ(strcmp(panic_stop_code_name(&f, 0u), "KERNEL_PANIC"), 0,
+                   "a frame past the exception vectors is KERNEL_PANIC");
+}
+
+/* The fixture seam reports nothing on a boot that has not panicked, and
+ * re-arming it to NO_HOLD (the reset the fixture relies on) clears HELD. A
+ * test cannot drive the hold itself: that is the live panic path. */
+static void test_panic_fixture_state_idle(void)
+{
+    TEST_ASSERT_EQ(panic_fixture_state() & PANIC_FIXTURE_OWNER_CLAIMED, 0u,
+                   "no CPU has claimed the panic owner while the suite runs");
+    TEST_ASSERT_EQ(panic_in_progress(), 0,
+                   "panic_in_progress agrees: drivers keep their unbounded lock waits");
+    panic_fixture_hold_claim(PANIC_FIXTURE_NO_HOLD);
+    TEST_ASSERT_EQ(panic_fixture_state(), 0u,
+                   "a NO_HOLD re-arm leaves neither bit set");
+}
+
 void test_register_panic(void)
 {
+    test_suite_register_cat("Crash: stop code names the bugcheck first",
+                            test_panic_stop_code_name_precedence,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("Crash: fixture seam is idle on a live boot",
+                            test_panic_fixture_state_idle,
+                            TEST_CAT_BOOT);
     test_suite_register_cat("Crash: publication owed before it is recorded",
                             test_park_publication_owed_before_it_is_recorded,
                             TEST_CAT_BOOT);

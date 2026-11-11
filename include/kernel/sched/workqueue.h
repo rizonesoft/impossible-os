@@ -109,6 +109,16 @@ workqueue_t *workqueue_create(const char *name);
  * Returns 1 on success, 0 if the work item pool is exhausted. */
 int workqueue_enqueue(workqueue_t *wq, work_fn_t fn, void *arg);
 
+/* Enqueue a CALLER-OWNED work item: no pool node is taken, so it cannot fail
+ * for lack of one, which is what a delivery that must happen needs. The caller
+ * owns `item` for the queue's lifetime and must not enqueue it again while it
+ * is still queued (once fn has started it may). IRQ-safe. Returns 1, or 0 on
+ * a NULL argument or a pool node. */
+int workqueue_enqueue_item(workqueue_t *wq, work_item_t *item, work_fn_t fn, void *arg);
+
+/* 1 when `item` is one of `wq`'s own pool nodes. */
+int workqueue_item_is_pooled(const workqueue_t *wq, const work_item_t *item);
+
 /* Block until all currently-pending items have been processed.
  * MUST be called from thread context. */
 void workqueue_flush(workqueue_t *wq);

@@ -193,8 +193,38 @@ void ahci_hotplug_remove(int port_idx)
         return;
     }
 
-    /* Step 1: Stop command engine */
-    port_stop_cmd(pregs);
+    /* Step 1: Close NCQ and claim every pending tag as failed, under the
+     * completion lock and BEFORE any hardware transition: stopping the engine
+     * and clearing PxIS empties the registers a concurrent poller reads, so a
+     * request left unclaimed would complete as a success. The failures are
+     * NOT published yet: a waiter that saw one could free its buffer while the
+     * engine still runs DMA into it. They are published, and the callbacks
+     * run, only after the engine is stopped (Step 3b). A poller meanwhile sees
+     * its tag already claimed and keeps waiting. */
+    uint32_t gone_tags = 0;
+    struct ahci_tag_done gone[32];
+    {
+        uint64_t flags;
+        int t;
+
+        if (!ahci_tag_lock(p, &flags)) {
+            klog(LOG_ERROR, "ahci",
+                 "Port %u: removal re-entered under its own completion lock; not removed",
+                 (uint64_t)p->port_num);
+            return;
+        }
+        p->ncq_closed = 1;
+        gone_tags = ahci_tags_claim(p, 0xFFFFFFFFu) | p->tags_held;
+        p->tags_held = 0;
+        for (t = 0; t < 32; t++)
+            if (gone_tags & (1U << t))
+                p->tag_status[t] = -1;
+        ahci_tags_detach(p, gone_tags, 1, gone);
+        ahci_tag_unlock(p, flags);
+    }
+
+    /* Step 1b: Stop command engine */
+    int stopped = port_stop_cmd(pregs);
 
     /* Step 2: Flush dirty buffers -- skip if device is already gone.
      * Check PxSSTS.DET first; if 0, the device is physically absent. */
@@ -208,7 +238,7 @@ void ahci_hotplug_remove(int port_idx)
             /* Best-effort flush: don't block on failure */
             port_start_cmd(pregs);
             ahci_flush(port_idx);
-            port_stop_cmd(pregs);
+            stopped = port_stop_cmd(pregs);
         }
     }
 
@@ -216,28 +246,24 @@ void ahci_hotplug_remove(int port_idx)
     port_write(pregs, AHCI_PxIS, 0xFFFFFFFF);
     port_write(pregs, AHCI_PxSERR, 0xFFFFFFFF);
 
+    /* Step 3b: only a CONFIRMED stop (PxCMD.CR and FR clear) puts the
+     * buffers out of the HBA's reach, so only then may a waiter or a callback
+     * see its request fail. An engine that will not stop keeps them: its
+     * waiters stay blocked rather than free memory the HBA can still write. */
+    if (stopped) {
+        ahci_tags_complete(p, gone_tags);
+        ahci_tags_run(port_idx, gone);
+    } else if (gone_tags) {
+        klog(LOG_ERROR, "ahci",
+             "Port %u: command engine did not stop on removal; "
+             "%u NCQ request(s) held so their buffers stay out of DMA reach",
+             (uint64_t)p->port_num, (uint64_t)__builtin_popcount(gone_tags));
+    }
+
     /* Step 4: Mark port as inactive */
     p->active = 0;
     p->device_type = AHCI_DEV_NULL;
     p->sectors = 0;
-
-    /* Step 5: Clear NCQ state if any */
-    if (p->ncq_supported) {
-        int t;
-        uint32_t pending = p->tags_pending;
-        for (t = 0; t < 32; t++) {
-            if (pending & (1U << t)) {
-                p->tag_status[t] = -1;
-                p->tags_completed |= (1U << t);
-                if (p->tag_callbacks[t]) {
-                    p->tag_callbacks[t](port_idx, t, -1,
-                                        p->tag_cb_ctx[t]);
-                    p->tag_callbacks[t] = (ahci_callback_t)0;
-                }
-            }
-        }
-        p->tags_pending = 0;
-    }
 
     /* Step 6: Signal completion event for any waiters */
     event_set(&p->completion);

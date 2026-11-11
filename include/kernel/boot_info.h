@@ -1435,7 +1435,10 @@ struct boot_config {
     uint8_t  crash_test;       /* 0 = off, 1 = deliberate BSOD early in Phase 3,
                                 * 2 = deliberate BSOD inside the compositor
                                 *     loop, before the first composite,
-                                * 3 = as 1, with unreadable panic strings */
+                                * 3 = as 1, with unreadable panic strings,
+                                * 4-6 = as 1 racing an NMI'd AP's panic
+                                *     (4 race, 5 AP wins, 6 AP owns the
+                                *     record first, BSP wins) */
     /* Object Manager tracing (S15) */
     uint8_t  ob_handle_trace;  /* 1 = log every handle alloc/free to klog */
     /* Config version (S7) -- future boot.conf changes can key on this */

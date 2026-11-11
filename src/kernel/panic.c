@@ -15,6 +15,7 @@
  * to ensure it works even when the graphics stack is broken.
  * ============================================================================ */
 
+#include "kernel/boot_timing.h"
 #include "kernel/panic.h"
 #include "kernel/bugcheck.h"
 #include "kernel/idt.h"
@@ -142,13 +143,40 @@ static const struct { BUGCHECK_CODE code; const char *name; } s_bugcheck_names[]
     { 0xE0000004, "IOS_INVARIANT_VIOLATION" },
 };
 
-const char *bugcheck_name(BUGCHECK_CODE code)
+/* The table's name for `code`, or NULL when the table does not know it. */
+static const char *bugcheck_lookup(BUGCHECK_CODE code)
 {
     for (uint32_t i = 0; i < sizeof(s_bugcheck_names) / sizeof(s_bugcheck_names[0]); i++) {
         if (s_bugcheck_names[i].code == code)
             return s_bugcheck_names[i].name;
     }
-    return "UNKNOWN";
+    return (const char *)0;
+}
+
+const char *bugcheck_name(BUGCHECK_CODE code)
+{
+    const char *n = bugcheck_lookup(code);
+
+    return n ? n : "UNKNOWN";
+}
+
+/* The name the stop screen shows, by the same precedence Windows uses: a
+ * structured bugcheck names itself (an NMI crash is MANUALLY_INITIATED_CRASH,
+ * not the vector it arrived on, which is what the cross-boot record and the
+ * crash dump also say); a raw exception with no bugcheck code names its
+ * vector; anything else, including a bugcheck code this table does not know,
+ * is KERNEL_PANIC. */
+const char *panic_stop_code_name(const struct interrupt_frame *frame,
+                                 uint32_t bugcheck_code)
+{
+    const char *n = bugcheck_code ? bugcheck_lookup(bugcheck_code)
+                                  : (const char *)0;
+
+    if (n)
+        return n;
+    if (frame && frame->int_no < 32)
+        return panic_exception_names[frame->int_no];
+    return "KERNEL_PANIC";
 }
 
 const BUGCHECK_INFO *bugcheck_get_last(void)
@@ -459,6 +487,136 @@ static int panic_try_claim_owner(void)
      * - other:      another CPU owns it */
     uint32_t prev = __sync_val_compare_and_swap(&s_panic_owner, 0xFFFFFFFF, my_id);
     return (prev == 0xFFFFFFFF || prev == my_id);
+}
+
+/* The multi-CPU panic fixture seam; contract in panic.h. Atomics only: the
+ * reader is another CPU's boot path, the writers are panic paths. */
+static volatile uint32_t s_fixture_hold_apic = PANIC_FIXTURE_NO_HOLD;
+static volatile uint32_t s_fixture_held = 0;
+/* How long the held CPU waits for another to claim before claiming itself:
+ * 2^28 `pause`s, seconds on current parts, so a fixture whose second CPU never
+ * panics still ends in a stop screen rather than a hang. */
+#define PANIC_FIXTURE_HOLD_SPINS  (1u << 28)
+
+int panic_in_progress(void)
+{
+    return __atomic_load_n(&s_panic_owner, __ATOMIC_ACQUIRE) != 0xFFFFFFFFu;
+}
+
+/* The terminal reset: ACPI reset (port 0xCF9), then a triple fault if that
+ * did not take. Never returns. */
+static void __attribute__((noreturn)) panic_machine_reset(void)
+{
+    __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0x06), "Nd"((uint16_t)0xCF9));
+    {
+        struct { uint16_t limit; uint64_t base; } __attribute__((packed)) null_idt = {0, 0};
+        __asm__ volatile ("lidt %0" : : "m"(null_idt));
+        __asm__ volatile ("int $0");  /* triple fault -> reboot */
+    }
+    for (;;)
+        __asm__ volatile ("cli; hlt");
+}
+
+/* One second of the restart countdown without interrupts or the scheduler
+ * clock: TSC-paced when the TSC was calibrated at boot, else an iteration
+ * bound (`pause` costs roughly 10-150 cycles, so this is about 0.1-1.5 s on a
+ * 1-4 GHz part: imprecise, but always finite). */
+#define PANIC_FALLBACK_PAUSES_PER_SECOND  10000000u
+
+static void panic_wait_one_second(void)
+{
+    uint64_t hz = boot_timing_tsc_freq();
+    uint32_t lo, hi;
+    uint64_t start, now;
+    uint32_t n;
+
+    if (hz) {
+        __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+        start = ((uint64_t)hi << 32) | lo;
+        do {
+            __asm__ volatile ("pause" ::: "memory");
+            __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+            now = ((uint64_t)hi << 32) | lo;
+        } while (now - start < hz);
+        return;
+    }
+    for (n = 0; n < PANIC_FALLBACK_PAUSES_PER_SECOND; n++)
+        __asm__ volatile ("pause" ::: "memory");
+}
+
+/* The configured restart seconds, published by the panic owner before it
+ * writes the dump; -1 until then. */
+static volatile int32_t s_panic_restart_secs = -1;
+
+/* The owner's terminal evidence context, saved beside the restart policy so
+ * an abandoned dump still makes the bounded terminal takeover retry the normal
+ * tail would have made. Written once by the panic owner; read only by that
+ * same CPU, from inside its own dump write. */
+static struct {
+    int                     valid;
+    struct interrupt_frame *frame;
+    uint32_t                code;
+    uint64_t                params[4];
+    const char             *desc;
+    const char             *file;
+    uint32_t                line, me, token, ctx;
+} s_panic_terminal;
+
+static void panic_evidence_terminal_retry(struct interrupt_frame *frame,
+                                          uint32_t bugcheck_code,
+                                          const uint64_t bugcheck_params[4],
+                                          const char *desc, const char *file,
+                                          uint32_t line, uint32_t me,
+                                          uint32_t token, uint32_t ctx);
+
+void panic_abandon_storage(const char *why)
+{
+    serial_write("\n[PANIC] crash dump abandoned: ");
+    serial_write(why ? why : "storage unrecoverable");
+    serial_write("\n");
+    __asm__ volatile ("cli");
+    if (s_panic_terminal.valid)
+        panic_evidence_terminal_retry(s_panic_terminal.frame, s_panic_terminal.code,
+                                      s_panic_terminal.params, s_panic_terminal.desc,
+                                      s_panic_terminal.file, s_panic_terminal.line,
+                                      s_panic_terminal.me, s_panic_terminal.token,
+                                      s_panic_terminal.ctx);
+    cache_writeback_all();
+    if (__atomic_load_n(&s_panic_restart_secs, __ATOMIC_ACQUIRE) > 0)
+        panic_machine_reset();
+    for (;;)
+        __asm__ volatile ("cli; hlt");
+}
+
+uint32_t panic_fixture_state(void)
+{
+    uint32_t st = 0;
+
+    if (__atomic_load_n(&s_panic_owner, __ATOMIC_ACQUIRE) != 0xFFFFFFFFu)
+        st |= PANIC_FIXTURE_OWNER_CLAIMED;
+    if (__atomic_load_n(&s_fixture_held, __ATOMIC_ACQUIRE))
+        st |= PANIC_FIXTURE_HELD;
+    return st;
+}
+
+void panic_fixture_hold_claim(uint32_t apic_id)
+{
+    __atomic_store_n(&s_fixture_held, 0u, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_fixture_hold_apic, apic_id, __ATOMIC_RELEASE);
+}
+
+static void panic_fixture_hold_point(uint32_t ev_cpu)
+{
+    uint32_t spins;
+
+    if (__atomic_load_n(&s_fixture_hold_apic, __ATOMIC_ACQUIRE) != ev_cpu)
+        return;
+    __atomic_store_n(&s_fixture_held, 1u, __ATOMIC_RELEASE);
+    for (spins = 0; spins < PANIC_FIXTURE_HOLD_SPINS; spins++) {
+        if (__atomic_load_n(&s_panic_owner, __ATOMIC_ACQUIRE) != 0xFFFFFFFFu)
+            return;
+        __asm__ volatile ("pause" ::: "memory");
+    }
 }
 
 /* ---- Async-worker park stage, keyed GS-INDEPENDENTLY (S30) ----
@@ -788,6 +946,38 @@ static inline uint64_t read_cr3(void)
 static void panic_emit(const char *s)
 {
     serial_write_emergency(s);
+}
+
+/* --- One panic report on serial at a time, across CPUs ---
+ *
+ * Each emergency CHUNK is serialised by the UART lock, but a report is ~40
+ * separate emits, so two CPUs panicking together still alternated fragments:
+ * the 2026-11-11 crash_test=4 boot printed one CPU's reason and the other's
+ * park line braided into each other. This lock spans a CPU's whole report.
+ *
+ * Bounded, never blocking: the same primitive as the UART lock. It returns at
+ * once when THIS CPU already holds it (a nested panic inside its own report
+ * must still print), waits a bounded time for another CPU, and stops waiting
+ * on a holder that outlasted one full wait, so a CPU wedged mid-report costs
+ * the next one a single wait and never its output. Keyed by the panic-safe
+ * APIC id, not gs:-derived state. */
+static serial_lock_t s_panic_report_lock = SERIAL_LOCK_INIT;
+static volatile uint32_t s_panic_report_gave_up = SERIAL_LOCK_FREE;
+/* A report is at most a few hundred bytes of reason plus registers, ~1 KiB of
+ * UART time (~90 ms at 115200); 2^24 `pause`s comfortably covers it. */
+#define PANIC_REPORT_WAIT_SPINS  (1u << 24)
+
+static int panic_report_begin(uint32_t ev_cpu)
+{
+    return serial_emergency_acquire_wait(&s_panic_report_lock,
+                                         SERIAL_LOCK_OWNER_OF(ev_cpu),
+                                         PANIC_REPORT_WAIT_SPINS,
+                                         &s_panic_report_gave_up);
+}
+
+static void panic_report_end(int locked)
+{
+    serial_emergency_release(&s_panic_report_lock, locked);
 }
 
 
@@ -3068,13 +3258,26 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
          * panic-entry snapshot -- all memory this kernel owns and cannot fault
          * on, so the context-aware writer has nothing left to guard against and
          * the plain emitter (which keeps the recoverable-vs-terminal accounting
-         * this branch depends on) is the right writer. */
+         * this branch depends on) is the right writer.
+         *
+         * ONE REPORT AT A TIME across CPUs: the whole block below is held
+         * under s_panic_report_lock, so a second CPU panicking at the same
+         * moment prints its report after this one instead of between its
+         * fragments (see panic_report_begin). */
+        int report_locked = panic_report_begin(ev_cpu);
+
         panic_emit("\n\n[PANIC] ");
         panic_emit(desc_snap);
         if (have_file) {
             panic_emit("\n  at ");
             panic_emit(file_snap);
         }
+        /* WHICH CPU. On SMP two CPUs can panic at once and both print a
+         * reason; without the identity a reader cannot tell one crash from
+         * two, nor match a reason to the "parked" line a losing CPU prints.
+         * The panic-safe APIC id, not gs:-derived per-CPU state. */
+        panic_emit("\n  on CPU apic=");
+        serial_write_hex(ev_cpu);
         panic_emit("\n");
 
         if (frame) {
@@ -3099,6 +3302,7 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
             panic_emit(" RSP=");      serial_write_hex(frame->rsp);
             panic_emit("\n");
         }
+        panic_report_end(report_locked);
     }
 
     /* --- Async init fault isolation, FIRST-FAULT entry ---
@@ -3117,6 +3321,9 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * and builds the CONTEXT record. Secondary CPUs that panic simultaneously
      * park immediately to avoid clobbering the owner's crash data.
      * Placed after async isolation so APs doing async work park even earlier. */
+    int owner_report_locked = 0;
+
+    panic_fixture_hold_point(ev_cpu);
     if (panic_try_claim_owner()) {
         /* CLASSIFY THE STANDING RECORD TERMINAL IMMEDIATELY, before anything
          * else in this branch.
@@ -3141,6 +3348,16 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
         panic_evidence_promote_terminal(
             (volatile struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR,
             ev_cpu, ev_token);
+
+        /* The owner's serial dumps (transition ring, subsystem readiness,
+         * quota) are one report too. Taking the report lock here waits out a
+         * report another CPU is still printing, and holding it to the last dump
+         * keeps a losing CPU's park line after them, not inside them. Taken
+         * only AFTER the promotion above, never before it: its bounded wait
+         * would otherwise widen the window in which a nested abort reads this
+         * fatal record as survivable and replaces it. Released before the stop
+         * screen is drawn. */
+        owner_report_locked = panic_report_begin(ev_cpu);
 
         /* SYSTEM-TERMINAL from here: async isolation declined to park this CPU
          * and we own the panic, so the machine is going to the BSOD and halt.
@@ -3193,7 +3410,21 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
         transition_ring_dump_to_serial(smp_this_cpu());
     } else {
         /* Secondary panic CPU -- park without touching global crash state.
-         * The owner CPU will handle BSOD rendering and dump writing. */
+         * The owner CPU will handle BSOD rendering and dump writing.
+         *
+         * Say so first, through the emergency writer (try-lock, bounded
+         * waits), so a second simultaneous crash is visible on serial
+         * instead of vanishing: its reason line above is otherwise the only
+         * trace, and nothing would say this CPU stopped there. The owner id
+         * is the LOGICAL id panic_try_claim_owner recorded. */
+        int report_locked = panic_report_begin(ev_cpu);
+
+        panic_emit("[PANIC] secondary panic on CPU apic=");
+        serial_write_hex(ev_cpu);
+        panic_emit(" parked; logical CPU ");
+        serial_write_hex(__atomic_load_n(&s_panic_owner, __ATOMIC_ACQUIRE));
+        panic_emit(" owns the crash\n");
+        panic_report_end(report_locked);
         for (;;) __asm__ volatile("hlt");
     }
 
@@ -3215,6 +3446,7 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
      * was at its cap. Non-blocking and allocation-free by contract -- see
      * quota_dump_crash; the plain quota_dump() must NEVER be called here. */
     quota_dump_crash();
+    panic_report_end(owner_report_locked);
 
     /* If framebuffer is not yet initialized (Phase 0 panic), fall back to
      * serial-only output via boot_halt(). No BSOD drawing is possible. */
@@ -3279,11 +3511,8 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
 
     /* Stop code */
     fb_set_color(PANIC_DIM_COLOR, PANIC_BG_COLOR);
-    if (frame && frame->int_no < 32) {
-        printk("    Stop code:  %s\n", (uint64_t)(uintptr_t)panic_exception_names[frame->int_no]);
-    } else {
-        printk("    Stop code:  KERNEL_PANIC\n");
-    }
+    printk("    Stop code:  %s\n",
+           (uint64_t)(uintptr_t)panic_stop_code_name(frame, bugcheck_code));
 
     /* Description */
     fb_set_color(PANIC_FG_COLOR, PANIC_BG_COLOR);
@@ -3366,30 +3595,9 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
            (uint64_t)(uintptr_t)version_branch(),
            (uint64_t)(uintptr_t)version_git_hash());
 
-    /* === Write crash dump to disk === */
-    /* The SAME capture the BSOD rendered above, not a second walk: sharing it
-     * halves the guarded reads on the terminal path and guarantees the screen
-     * and the file describe one stack. */
-    int dump_written = write_crash_dump(frame, snap_ctx, desc_snap,
-                                        have_file ? file_snap : (const char *)0,
-                                        line, frames, nframes);
-
-    /* === Persist klog ring buffer to reserved physical memory === */
-    klog_crash_persist();
-
-    {
-        fb_set_color(PANIC_DIM_COLOR, PANIC_BG_COLOR);
-        if (dump_written)
-            printk("\n    Crash dump saved to C:\\Impossible\\System\\crashdump.log\n");
-        else if (vfs_is_mounted('C'))
-            printk("\n    Crash dump write FAILED (see serial/klog persist for the record)\n");
-    }
-
-    /* Swap to show everything */
-    fb_swap();
-
-    /* === Auto-restart countdown === */
-    /* Check Registry for auto-restart preference */
+    /* === Restart policy === */
+    /* Read BEFORE the dump is written, so a dump write that can never finish
+     * (panic_abandon_storage) still ends the way the operator configured. */
     {
         HKEY hRecovery = (HKEY)0;
         long rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Recovery",
@@ -3427,19 +3635,52 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
         int32_t t = g_panic_tunable_restart_secs;
         if (t >= 0) restart_secs = t;
     }
+    __atomic_store_n(&s_panic_restart_secs, restart_secs, __ATOMIC_RELEASE);
+    s_panic_terminal.frame = frame;
+    s_panic_terminal.code  = bugcheck_code;
+    for (int pi = 0; pi < 4; pi++)
+        s_panic_terminal.params[pi] = bugcheck_params ? bugcheck_params[pi] : 0;
+    s_panic_terminal.desc  = desc_snap;
+    s_panic_terminal.file  = have_file ? file_snap : (const char *)0;
+    s_panic_terminal.line  = line;
+    s_panic_terminal.me    = ev_cpu;
+    s_panic_terminal.token = ev_token;
+    s_panic_terminal.ctx   = snap_ctx;
+    s_panic_terminal.valid = 1;
 
+    /* === Write crash dump to disk === */
+    /* The SAME capture the BSOD rendered above, not a second walk: sharing it
+     * halves the guarded reads on the terminal path and guarantees the screen
+     * and the file describe one stack. */
+    int dump_written = write_crash_dump(frame, snap_ctx, desc_snap,
+                                        have_file ? file_snap : (const char *)0,
+                                        line, frames, nframes);
+
+    /* === Persist klog ring buffer to reserved physical memory === */
+    klog_crash_persist();
+
+    {
+        fb_set_color(PANIC_DIM_COLOR, PANIC_BG_COLOR);
+        if (dump_written)
+            printk("\n    Crash dump saved to C:\\Impossible\\System\\crashdump.log\n");
+        else if (vfs_is_mounted('C'))
+            printk("\n    Crash dump write FAILED (see serial/klog persist for the record)\n");
+    }
+
+    /* Swap to show everything */
+    fb_swap();
+
+    /* === Auto-restart countdown === */
     if (restart_secs > 0) {
-        /* Countdown loop using PIT ticks */
+        /* Countdown paced by panic_wait_one_second(), never by interrupts:
+         * with an AP owning the panic and the BSP parked, the BSP-driven
+         * clock stops, so a tick-paced countdown (or an hlt waiting for a
+         * tick) would never reach the reset. */
         int32_t secs_left = restart_secs;
-        uint64_t last_tick = uptime();
-
-        /* Re-enable interrupts just for the PIT timer */
-        __asm__ volatile ("sti");
 
         while (secs_left > 0) {
-            uint64_t now = uptime();
-            if (now != last_tick) {
-                last_tick = now;
+            panic_wait_one_second();
+            {
                 secs_left--;
 
                 /* Redraw countdown line at bottom */
@@ -3459,21 +3700,15 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
 
                 fb_swap();
             }
-
-            /* Busy-wait (HLT until next interrupt) */
-            __asm__ volatile ("hlt");
         }
 
-        /* MASK INTERRUPTS BEFORE COLLECTING. The countdown above re-enabled them
-         * (`sti`, so the timer can tick the seconds down), and the collector
-         * zeroes and rewrites the fixed 0x80000 page plus the shared klog
-         * scratch -- exactly the state the invariant at the top of this function
-         * says nothing may re-enter while it is being touched. Running it
-         * preemptibly lets a timer ISR schedule a thread that panics, whose
-         * same-CPU take would hand a second writer the page. The other two
-         * terminal retries are already masked; this one had drifted out from
-         * under that guarantee. Nothing below re-enables: the next step resets
-         * the machine. */
+        /* INTERRUPTS STAY MASKED WHILE COLLECTING. The countdown no longer
+         * enables them (it is TSC-paced), and the `cli` is kept as the
+         * statement of that invariant: the collector zeroes and rewrites the
+         * fixed 0x80000 page plus the shared klog scratch, which nothing may
+         * re-enter while it is being touched, since a timer ISR scheduling a
+         * thread that panics would hand a second writer the page. Nothing
+         * below re-enables: the next step resets the machine. */
         __asm__ volatile ("cli");
         panic_evidence_terminal_retry(frame, bugcheck_code, bugcheck_params,
                                       desc_snap,
@@ -3493,14 +3728,7 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
              * next instruction resets the machine. */
             cache_writeback_all();
 
-            /* Try ACPI reset first (port 0xCF9) */
-            __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0x06), "Nd"((uint16_t)0xCF9));
-            /* If that didn't work, triple fault by loading invalid IDT */
-            {
-                struct { uint16_t limit; uint64_t base; } __attribute__((packed)) null_idt = {0, 0};
-                __asm__ volatile ("lidt %0" : : "m"(null_idt));
-                __asm__ volatile ("int $0");  /* triple fault → reboot */
-            }
+            panic_machine_reset();
         }
     }
 

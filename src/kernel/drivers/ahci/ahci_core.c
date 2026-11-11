@@ -74,8 +74,11 @@ void port_write(volatile uint8_t *pregs, uint32_t off, uint32_t val)
     ahci_write32(pregs, off, val);
 }
 
-/* ---- Stop command engine ---- */
-void port_stop_cmd(volatile uint8_t *pregs)
+/* ---- Stop command engine ----
+ * Returns 1 when the HBA confirms both engines stopped (PxCMD.CR and FR
+ * clear), 0 when either is still running after its bounded wait: a caller
+ * that hands request buffers back on the strength of the stop must check it. */
+int port_stop_cmd(volatile uint8_t *pregs)
 {
     uint32_t cmd = port_read(pregs, AHCI_PxCMD);
     uint32_t timeout;
@@ -102,6 +105,59 @@ void port_stop_cmd(volatile uint8_t *pregs)
         if (!(port_read(pregs, AHCI_PxCMD) & AHCI_PxCMD_FR))
             break;
     }
+    return (port_read(pregs, AHCI_PxCMD) & (AHCI_PxCMD_CR | AHCI_PxCMD_FR)) == 0;
+}
+
+/* Panic only: reset the whole HBA (GHC.HR), which returns every port's data
+ * transfer and queuing state machine to idle (AHCI 1.3.1 section 3.1.2). The
+ * last way to stop DMA when a port's engine will not stop; drastic, so never
+ * used while the system runs, since nothing re-initialises the ports after. */
+#define AHCI_HBA_RESET_READS  1000000u
+
+/* Bumped before every (panic-only, never undone) HBA reset. A legacy command
+ * issued once it is non-zero is refused, and one in flight across a bump
+ * fails, because the reset clears PxCI and that would read as done. */
+static volatile uint32_t s_hba_reset_gen;
+
+int ahci_reset_voids_cmd(uint32_t gen_at_issue, uint32_t gen_now)
+{
+    /* An issuer that sampled the bumped generation may still write PxCI
+     * before HR lands, so a non-zero sample is refused outright rather than
+     * trusted to be compared later. */
+    return gen_at_issue != 0 || gen_now != gen_at_issue;
+}
+
+void ahci_port_close_for_reset(struct ahci_port *p)
+{
+    uint64_t flags;
+    int locked = ahci_tag_lock(p, &flags);
+
+    /* Under the port's completion lock, so no ISR or poller is between
+     * sampling the registers and publishing. A refused lock is a holder that
+     * cannot proceed (parked by the panic), and the store still lands. */
+    __atomic_store_n(&p->ncq_closed, 1, __ATOMIC_RELEASE);
+    if (locked)
+        ahci_tag_unlock(p, flags);
+}
+
+int ahci_hba_reset_for_panic(void)
+{
+    uint32_t n;
+    int i;
+
+    /* An HBA reset clears every port's PxSACT/PxCI/PxIS, which to an ISR or a
+     * poller on any port reads as "every command finished". Close them all
+     * first, so none can publish success for a request the reset aborted;
+     * their waiters then fail through recovery. */
+    for (i = 0; i < AHCI_MAX_PORTS; i++)
+        if (ports[i].regs)
+            ahci_port_close_for_reset(&ports[i]);
+    __atomic_add_fetch(&s_hba_reset_gen, 1, __ATOMIC_SEQ_CST);   /* before HR: see port_issue_cmd */
+    ahci_write32(abar, AHCI_GHC, ahci_read32(abar, AHCI_GHC) | AHCI_GHC_HR);
+    for (n = 0; n < AHCI_HBA_RESET_READS; n++)
+        if (!(ahci_read32(abar, AHCI_GHC) & AHCI_GHC_HR))
+            return 1;
+    return 0;
 }
 
 /* ---- Start command engine ---- */
@@ -140,10 +196,12 @@ int port_find_slot(volatile uint8_t *pregs)
  * clear), 0 when it does not. */
 static int port_quiesce(volatile uint8_t *pregs)
 {
+    int stopped;
+
     port_write(pregs, AHCI_PxIE, 0);
-    port_stop_cmd(pregs);
+    stopped = port_stop_cmd(pregs);
     port_write(pregs, AHCI_PxIS, 0xFFFFFFFF);
-    return (port_read(pregs, AHCI_PxCMD) & (AHCI_PxCMD_CR | AHCI_PxCMD_FR)) == 0;
+    return stopped;
 }
 
 void ahci_port_drop_buffers(struct ahci_port *p, int may_free)
@@ -340,41 +398,72 @@ static int ahci_irq_body(uint8_t vector, void *ctx)
         if (!(is & (1U << ports[i].port_num)))
             continue;
 
-        uint32_t pxis = port_read(ports[i].regs, AHCI_PxIS);
-        port_write(ports[i].regs, AHCI_PxIS, pxis);
+        uint32_t pxis, serr = 0, held = 0, done = 0;
+        struct ahci_tag_done odone[32];
+
+        /* ONE critical section from the status read to the claim, shared with
+         * the synchronous poller and the issuer (ahci_tag_lock): acking PxIS
+         * before the failure is recorded, sampling PxSACT before a claim a
+         * reissue of the same tag can slip between, or reading a callback slot
+         * after a waiter could have reissued the tag would each let a command
+         * complete with the wrong result. Callbacks and logging run after.
+         *
+         * While recovery owns the port its engine is being stopped, so the
+         * cleared PxSACT/PxCI mean nothing: claim nothing. A fatal error
+         * does not prove its commands stopped moving data, so their tags are
+         * HELD (claimed, failed, unpublished) for recovery to publish once
+         * the engine stop is confirmed; recovery is queued below. */
+        {
+            uint64_t flags;
+            int recovering;
+
+            /* Only an NMI-nested path on this CPU can find the lock its own
+             * CPU holds, and the ISR is never one; touch nothing if so. */
+            if (!ahci_tag_lock(&ports[i], &flags))
+                continue;
+            /* A closed port (removed, or shut for an HBA reset) claims
+             * nothing: its registers no longer describe its requests, and
+             * whoever closed it fails them. */
+            recovering = __atomic_load_n(&ports[i].ncq_recovering, __ATOMIC_ACQUIRE) ||
+                         __atomic_load_n(&ports[i].ncq_closed, __ATOMIC_ACQUIRE);
+            pxis = port_read(ports[i].regs, AHCI_PxIS);
+            port_write(ports[i].regs, AHCI_PxIS, pxis);
+            if (pxis & AHCI_PxIS_FATAL) {
+                serr = port_read(ports[i].regs, AHCI_PxSERR);
+                port_write(ports[i].regs, AHCI_PxSERR, serr);
+                if (ports[i].ncq_supported && !recovering) {
+                    int t;
+
+                    held = ahci_tags_claim(&ports[i], 0xFFFFFFFFu);
+                    for (t = 0; t < 32; t++)
+                        if (held & (1U << t))
+                            ports[i].tag_status[t] = -1;
+                    ports[i].tags_held |= held;
+                }
+            }
+            if ((pxis & AHCI_PxIS_SDBS) && ports[i].ncq_supported && !recovering) {
+                uint32_t busy = port_read(ports[i].regs, AHCI_PxSACT) |
+                                port_read(ports[i].regs, AHCI_PxCI);
+
+                done = ahci_tags_claim(&ports[i], ~busy);
+            }
+            ahci_tags_detach(&ports[i], done, 0, odone);
+            /* Published LAST: a waiter that sees completed may free the tag. */
+            ahci_tags_complete(&ports[i], done);
+            ahci_tag_unlock(&ports[i], flags);
+        }
+        if (held)
+            ahci_ncq_queue_recovery(&ports[i]);
 
         /* ---- Error classification ---- */
         if (pxis & AHCI_PxIS_FATAL) {
             ports[i].errors.fatal_errors++;
-
-            uint32_t serr = port_read(ports[i].regs, AHCI_PxSERR);
-            port_write(ports[i].regs, AHCI_PxSERR, serr);
-
             if (serr & AHCI_PxSERR_ERR_M)
                 ports[i].errors.crc_errors++;
-
             klog(LOG_WARN, "ahci",
                    "Port %u: fatal error PxIS=0x%x PxSERR=0x%x",
                    (uint64_t)ports[i].port_num,
                    (uint64_t)pxis, (uint64_t)serr);
-
-            if (ports[i].ncq_supported && ports[i].tags_pending) {
-                uint32_t pending = ports[i].tags_pending;
-                int t;
-                for (t = 0; t < 32; t++) {
-                    if (pending & (1U << t)) {
-                        ports[i].tag_status[t] = -1;
-                        ports[i].tags_completed |= (1U << t);
-                        if (ports[i].tag_callbacks[t]) {
-                            ports[i].tag_callbacks[t](
-                                i, t, -1, ports[i].tag_cb_ctx[t]);
-                            ports[i].tag_callbacks[t] =
-                                (ahci_callback_t)0;
-                        }
-                    }
-                }
-                ports[i].tags_pending = 0;
-            }
         }
 
         if (pxis & AHCI_PxIS_NONFATAL) {
@@ -384,30 +473,16 @@ static int ahci_irq_body(uint8_t vector, void *ctx)
                    (uint64_t)ports[i].port_num, (uint64_t)pxis);
         }
 
-        /* ---- NCQ completion via Set Device Bits FIS ---- */
-        if ((pxis & AHCI_PxIS_SDBS) && ports[i].ncq_supported) {
-            uint32_t sact = port_read(ports[i].regs, AHCI_PxSACT);
-            uint32_t completed = ports[i].tags_pending & ~sact;
-            int t;
-
-            for (t = 0; t < 32; t++) {
-                if (!(completed & (1U << t)))
-                    continue;
-                ports[i].tags_completed |= (1U << t);
-                if (ports[i].tag_callbacks[t]) {
-                    ports[i].tag_callbacks[t](
-                        i, t, ports[i].tag_status[t],
-                        ports[i].tag_cb_ctx[t]);
-                    ports[i].tag_callbacks[t] = (ahci_callback_t)0;
-                }
-            }
-            ports[i].tags_pending &= ~completed;
-        }
+        /* Async completions captured under the lock above. */
+        ahci_tags_run(i, odone);
 
         event_set(&ports[i].completion);
 
         /* ---- Hot-plug detection (PCS / PRCS) ---- */
-        if (pxis & (AHCI_PxIS_PCS | AHCI_PxIS_PRCS)) {
+        if ((pxis & (AHCI_PxIS_PCS | AHCI_PxIS_PRCS)) &&
+            !__atomic_load_n(&ports[i].ncq_recovering, __ATOMIC_ACQUIRE)) {
+            /* Not during recovery: its own COMRESET drops the link on purpose,
+             * and ncq_abort_port closes the port itself if no device returns. */
             ahci_hotplug_check(i);
         }
     }
@@ -423,15 +498,16 @@ static void ahci_irq_handler(uint8_t vector, void *ctx)
 }
 
 /* ---- CLO + COMRESET recovery for stuck BSY/DRQ ---- */
-int port_clo_reset(struct ahci_port *p)
+/* The register half of stuck-device recovery: Command List Override when the
+ * HBA has it, then a COMRESET, then wait for the link and for BSY to clear.
+ * Expects the command engine already stopped and does not restart it, takes
+ * no lock and logs nothing, so a caller that owns the port can run it in the
+ * middle of its own recovery. Returns 0 with a device on the link, -1 when
+ * none came back. */
+int port_comreset_regs(volatile uint8_t *pregs)
 {
-    volatile uint8_t *pregs = p->regs;
     uint32_t cmd, wait;
-
-    klog(LOG_WARN, "ahci", "Port %u: CLO recovery -- BSY/DRQ stuck, link reset",
-           (uint64_t)p->port_num);
-
-    port_stop_cmd(pregs);
+    int linked = 0;
 
     if (ahci_clo_supported) {
         cmd = port_read(pregs, AHCI_PxCMD);
@@ -461,26 +537,39 @@ int port_clo_reset(struct ahci_port *p)
         port_write(pregs, AHCI_PxSCTL, sctl);
     }
 
-    wait = 1000000;
-    while (wait--) {
-        uint32_t ssts = port_read(pregs, AHCI_PxSSTS);
-        if ((ssts & AHCI_SSTS_DET_MASK) == AHCI_SSTS_DET_OK)
+    /* Decided by what the link reports, not by the loop counter: the
+     * post-decrement leaves `wait` at UINT32_MAX when the bound runs out, so a
+     * `wait == 0` test never saw a missing device. */
+    for (wait = 0; wait < 1000000u; wait++) {
+        if ((port_read(pregs, AHCI_PxSSTS) & AHCI_SSTS_DET_MASK) == AHCI_SSTS_DET_OK) {
+            linked = 1;
             break;
+        }
     }
-    if (wait == 0) {
-        klog(LOG_WARN, "ahci", "Port %u: device not present after COMRESET",
-               (uint64_t)p->port_num);
+    if (!linked)
         return -1;
-    }
 
     port_write(pregs, AHCI_PxSERR, 0xFFFFFFFF);
     port_write(pregs, AHCI_PxIS, 0xFFFFFFFF);
 
-    wait = 1000000;
-    while (wait--) {
-        uint32_t tfd = port_read(pregs, AHCI_PxTFD);
-        if (!(tfd & AHCI_PxTFD_BSY))
+    for (wait = 0; wait < 1000000u; wait++)
+        if (!(port_read(pregs, AHCI_PxTFD) & AHCI_PxTFD_BSY))
             break;
+    return 0;
+}
+
+int port_clo_reset(struct ahci_port *p)
+{
+    volatile uint8_t *pregs = p->regs;
+
+    klog(LOG_WARN, "ahci", "Port %u: CLO recovery -- BSY/DRQ stuck, link reset",
+           (uint64_t)p->port_num);
+
+    port_stop_cmd(pregs);
+    if (port_comreset_regs(pregs) != 0) {
+        klog(LOG_WARN, "ahci", "Port %u: device not present after COMRESET",
+               (uint64_t)p->port_num);
+        return -1;
     }
 
     port_start_cmd(pregs);
@@ -498,13 +587,22 @@ int port_issue_cmd(struct ahci_port *p, int slot)
     uint32_t tfd;
     int retries = 3;
     int result;
+    uint32_t reset_gen;
 
 retry:
     result = 0;
+    reset_gen = __atomic_load_n(&s_hba_reset_gen, __ATOMIC_SEQ_CST);
+    if (ahci_reset_voids_cmd(reset_gen, reset_gen)) {
+        p->errors.cmd_failures++;
+        return -1;   /* the controller was reset under a panic: no new commands */
+    }
 
     port_write(pregs, AHCI_PxCI, 1U << slot);
 
-    if (use_events) {
+    /* Under a panic, poll: event_wait_timeout's deadline reads uptime_ns(),
+     * which stops once timer interrupts do, and the event lock may be held by
+     * a parked CPU. The polling branch is bounded by iteration count. */
+    if (use_events && !panic_in_progress()) {
         int signalled;
 
         /* Clear any stale event signal from a previous command.
@@ -519,7 +617,7 @@ retry:
          * the IRQ fires but nobody is waiting → signal gets set.
          * Check CI directly first to avoid unnecessary blocking. */
         {
-            uint32_t quick = 100000;
+            uint32_t quick = AHCI_QUICK_POLL_READS;
             while (quick--) {
                 uint32_t ci = port_read(pregs, AHCI_PxCI);
                 if (!(ci & (1U << slot)))
@@ -551,47 +649,28 @@ retry:
 
             /* Command still pending -- poll for completion */
             {
-                uint32_t poll_timeout = 5000000;
-                while (poll_timeout--) {
-                    uint32_t ci = port_read(pregs, AHCI_PxCI);
-                    if (!(ci & (1U << slot)))
-                        break;
+                int pr = ahci_poll_slot(pregs, slot, AHCI_POLL_SLOT_READS);
 
-                    tfd = port_read(pregs, AHCI_PxTFD);
-                    if (tfd & AHCI_PxTFD_ERR) {
-                        result = -1;
-                        break;
-                    }
-                }
-                if (poll_timeout == 0 && result == 0) {
+                if (pr == AHCI_POLL_TIMEOUT)
                     klog(LOG_DEBUG, "ahci",
                            "Port %u: command timeout (poll after event fallback)",
                            (uint64_t)p->port_num);
+                if (pr != AHCI_POLL_DONE)
                     result = -1;
-                }
                 port_write(pregs, AHCI_PxIS, port_read(pregs, AHCI_PxIS));
             }
         }
     } else {
-        uint32_t timeout = 5000000;
-        while (timeout--) {
-            uint32_t ci = port_read(pregs, AHCI_PxCI);
-            if (!(ci & (1U << slot)))
-                break;
+        int pr = ahci_poll_slot(pregs, slot, AHCI_POLL_SLOT_READS);
 
-            tfd = port_read(pregs, AHCI_PxTFD);
-            if (tfd & AHCI_PxTFD_ERR) {
-                klog(LOG_DEBUG, "ahci", "Port %u: TFD error 0x%x",
-                       (uint64_t)p->port_num, (uint64_t)tfd);
-                result = -1;
-                break;
-            }
-        }
-        if (timeout == 0 && result == 0) {
+        if (pr == AHCI_POLL_ERR)
+            klog(LOG_DEBUG, "ahci", "Port %u: TFD error 0x%x",
+                   (uint64_t)p->port_num, (uint64_t)port_read(pregs, AHCI_PxTFD));
+        else if (pr == AHCI_POLL_TIMEOUT)
             klog(LOG_DEBUG, "ahci", "Port %u: command timeout (poll)",
                    (uint64_t)p->port_num);
+        if (pr != AHCI_POLL_DONE)
             result = -1;
-        }
 
         port_write(pregs, AHCI_PxIS, port_read(pregs, AHCI_PxIS));
     }
@@ -600,24 +679,62 @@ done:
     tfd = port_read(pregs, AHCI_PxTFD);
     if (tfd & AHCI_PxTFD_ERR)
         result = -1;
+    /* An HBA reset during the command cleared PxCI: that is not completion. */
+    if (ahci_reset_voids_cmd(reset_gen, __atomic_load_n(&s_hba_reset_gen, __ATOMIC_SEQ_CST)))
+        result = -1;
 
-    if (result != 0 && retries > 0) {
-        tfd = port_read(pregs, AHCI_PxTFD);
-        if (tfd & (AHCI_PxTFD_BSY | AHCI_PxTFD_DRQ)) {
-            if (port_clo_reset(p) == 0) {
-                retries--;
-                klog(LOG_DEBUG, "ahci",
-                       "Port %u: retrying command (%d retries left)",
-                       (uint64_t)p->port_num, (uint64_t)retries);
-                goto retry;
-            }
+    if (port_issue_should_retry(result, retries, port_read(pregs, AHCI_PxTFD),
+                                panic_in_progress())) {
+        if (port_clo_reset(p) == 0) {
+            retries--;
+            klog(LOG_DEBUG, "ahci",
+                   "Port %u: retrying command (%d retries left)",
+                   (uint64_t)p->port_num, (uint64_t)retries);
+            goto retry;
         }
     }
+
+    /* Under a panic, a command that never completed may still be moving data
+     * into or out of the caller's buffer (a crash-dump page): stop the engine
+     * before the caller reuses it, and end the panic if nothing stops it.
+     * Outside a panic the legacy path's ownership is the port's own work
+     * (the block-storage hardening roadmap: per-port submission ownership). */
+    if (result != 0 && panic_in_progress() &&
+        (port_read(pregs, AHCI_PxCI) & (1U << slot)) &&
+        !port_stop_cmd(pregs) && !ahci_hba_reset_for_panic())
+        panic_abandon_storage("AHCI command timed out and DMA did not stop");
 
     if (result != 0)
         p->errors.cmd_failures++;
 
     return result;
+}
+
+int port_issue_should_retry(int result, int retries, uint32_t tfd, int in_panic)
+{
+    /* Never under a panic: the CLO/COMRESET recovery stops the engine
+     * without confirming it, and clearing ST can clear PxCI on its own, which
+     * would hide an outstanding command from the DMA-stop check that follows
+     * and hand a crash-dump buffer back while the device may still own it. */
+    if (in_panic || result == 0 || retries <= 0)
+        return 0;
+    return (tfd & (AHCI_PxTFD_BSY | AHCI_PxTFD_DRQ)) != 0;
+}
+
+int ahci_poll_slot(volatile uint8_t *pregs, int slot, uint32_t budget)
+{
+    uint32_t n;
+
+    /* Completion is OBSERVED, never inferred from the counter: an exhausted
+     * `while (n--)` leaves n at UINT32_MAX, which is how a stalled command
+     * once read as success. */
+    for (n = 0; n < budget; n++) {
+        if (!(port_read(pregs, AHCI_PxCI) & (1U << slot)))
+            return AHCI_POLL_DONE;
+        if (port_read(pregs, AHCI_PxTFD) & AHCI_PxTFD_ERR)
+            return AHCI_POLL_ERR;
+    }
+    return AHCI_POLL_TIMEOUT;
 }
 
 /* ---- Initialization ---- */

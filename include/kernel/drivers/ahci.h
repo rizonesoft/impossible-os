@@ -17,6 +17,7 @@
 
 #include "kernel/types.h"
 #include "kernel/sched/event.h"
+#include "kernel/sched/spinlock.h"
 
 /* ---- PCI identification ---- */
 #define AHCI_PCI_CLASS      0x01   /* Mass Storage */
@@ -317,6 +318,20 @@ struct ahci_port {
 
     /* NCQ state */
     uint8_t  ncq_supported;        /* 1 if both HBA and device support NCQ */
+    uint8_t  ncq_closed;           /* 1 once teardown failed every pending tag:
+                                    * no issue, and a poll completes as failed.
+                                    * Written under tag_lock. */
+    uint32_t tags_held;            /* claimed as FAILED by the ISR's fatal path
+                                    * but not yet published: their commands are
+                                    * not known to have stopped, so only
+                                    * ncq_abort_port, after a confirmed engine
+                                    * stop, publishes them. Written under
+                                    * tag_lock. */
+    uint8_t  recovery_queued;      /* 1 while a recovery work item is queued */
+    uint8_t  ncq_recovering;       /* 1 while ncq_abort_port owns the port: the
+                                    * engine is stopped or mid-COMRESET, so no
+                                    * issue and no hot-plug check. Written under
+                                    * tag_lock. */
     uint8_t  ncq_depth;            /* Effective max queue depth (1–32) */
     uint32_t tags_allocated;       /* Bitmap of allocated tags */
     uint32_t tags_pending;         /* Bitmap of issued/pending tags */
@@ -324,6 +339,12 @@ struct ahci_port {
     int8_t   tag_status[32];       /* Per-tag completion status (0=ok, -1=err) */
     ahci_callback_t tag_callbacks[32]; /* Async callbacks (NULL = sync) */
     void    *tag_cb_ctx[32];       /* Per-tag callback context */
+    /* Serialises NCQ completion: HBA status sampling, the PxIS ack, the tag
+     * claim and the failure mark, against a reissue of the same tag. Taken
+     * only through ahci_tag_lock. The owner IS the lock word (one CAS), so an
+     * NMI landing inside the section can tell its own CPU holds it.
+     * Zero-initialised, like ports[]. */
+    volatile uint32_t tag_owner;   /* 0 free, else holder's cpu_id + 1 */
 
     /* TRIM state */
     uint8_t  trim_supported;       /* 1 if device supports DATA SET MANAGEMENT */

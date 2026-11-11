@@ -86,6 +86,7 @@ int ahci_do_identify(struct ahci_port *p)
     if (ahci_ncq_capable && (ident_buf[76] & (1U << 8))) {
         uint8_t dev_depth = (uint8_t)(ident_buf[75] & 0x1F) + 1;
         p->ncq_supported = 1;
+        p->ncq_closed = 0;
         p->ncq_depth = (dev_depth < ahci_max_cmd_slots)
                      ? dev_depth : ahci_max_cmd_slots;
         klog(LOG_INFO, "ahci", "Port %u: NCQ supported (depth %u)",

@@ -131,6 +131,17 @@ _Static_assert(SERIAL_EMERG_CHUNK_BUF == SERIAL_EMERG_CHUNK + 1u,
 _Static_assert(SERIAL_EMERG_CHUNK <= SERIAL_EMERG_MAX_CHARS,
                "a chunk cannot exceed the total emergency character budget");
 
+/* How long an emergency chunk waits for ANOTHER CPU's chunk before writing
+ * over it. A chunk is at most SERIAL_EMERG_CHUNK (128) bytes, about 11 ms at
+ * 115200 baud; 2^20 `pause`s is tens of ms on current parts, so a live holder
+ * finishes inside the bound and a wedged one costs it once (see
+ * serial_emergency_acquire_wait and s_emerg_lock_gave_up). */
+#define SERIAL_EMERG_LOCK_WAIT_SPINS  (1u << 20)
+
+/* The holder the last emergency wait gave up on, ENCODED; SERIAL_LOCK_FREE when
+ * none. Shared by every CPU's emergency writer, atomics only. */
+static volatile uint32_t s_emerg_lock_gave_up = SERIAL_LOCK_FREE;
+
 /* Bounded retries for the full-wait reservation CAS -- see
  * serial_emerg_reserve. Contention losers degrade to a single status probe. */
 #define SERIAL_EMERG_CAS_TRIES    64u
@@ -1195,6 +1206,37 @@ int serial_emergency_acquire(serial_lock_t *lock, uint32_t owner)
     return serial_lock_try_acquire_owned(lock, owner);
 }
 
+int serial_emergency_acquire_wait(serial_lock_t *lock, uint32_t owner,
+                                  uint32_t spins, volatile uint32_t *gave_up)
+{
+    if (!lock || owner == SERIAL_LOCK_FREE)
+        return 0;
+
+    for (;;) {
+        uint32_t cur;
+
+        if (serial_lock_try_acquire_owned(lock, owner)) {
+            if (gave_up)
+                __atomic_store_n(gave_up, SERIAL_LOCK_FREE, __ATOMIC_RELEASE);
+            return 1;
+        }
+        cur = __atomic_load_n(&lock->owner, __ATOMIC_ACQUIRE);
+        if (cur == SERIAL_LOCK_FREE)
+            continue;                      /* released between CAS and load */
+        if (cur == owner)
+            return 0;                      /* our own interrupted holder */
+        if (gave_up && __atomic_load_n(gave_up, __ATOMIC_ACQUIRE) == cur)
+            return 0;                      /* already outlasted a full wait */
+        if (spins == 0u) {
+            if (gave_up)
+                __atomic_store_n(gave_up, cur, __ATOMIC_RELEASE);
+            return 0;
+        }
+        spins--;
+        __asm__ volatile ("pause" ::: "memory");
+    }
+}
+
 /* A plain release-store, not an owner-compare: `acquired` is only ever non-zero
  * on the return path of an acquire that WON, so this caller provably owns the
  * word. It touches no IRQL, because the try-acquire raised none. */
@@ -2081,8 +2123,9 @@ static void serial_emergency_emit(const char *buf, uint32_t len,
      * NOT the `me` above: that one is deliberately 0 on a terminal record so the
      * drop policy treats it as unowned. The lock owner must always be this CPU's
      * real identity, or the handback would compare against the wrong value. */
-    locked = serial_emergency_acquire(
-        &g_serial_lock, SERIAL_LOCK_OWNER_OF(serial_emerg_self_cpu()));
+    locked = serial_emergency_acquire_wait(
+        &g_serial_lock, SERIAL_LOCK_OWNER_OF(serial_emerg_self_cpu()),
+        SERIAL_EMERG_LOCK_WAIT_SPINS, &s_emerg_lock_gave_up);
 
     serial_emergency_restore_lcr();
 

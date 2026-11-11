@@ -323,6 +323,24 @@ void lapic_send_ipi_all_but_self(uint8_t vector)
     lapic_irq_restore(flags);
 }
 
+void lapic_send_nmi(uint8_t target_apic_id)
+{
+    uint64_t flags;
+
+    if (!lapic_base)
+        return;
+
+    flags = lapic_irq_save();
+    ipi_wait_delivery();
+    lapic_write(LAPIC_REG_ICR_HI, (uint32_t)target_apic_id << 24);
+    /* Intel SDM Vol. 3A 11.6.1: NMI delivery is edge-triggered and the
+     * vector field is ignored. */
+    lapic_write(LAPIC_REG_ICR_LO,
+                ICR_NMI | ICR_DEST_FIELD |
+                ICR_LEVEL_ASSERT | ICR_TRIGGER_EDGE);
+    lapic_irq_restore(flags);
+}
+
 void lapic_send_init(uint8_t target_apic_id)
 {
     if (!lapic_base)

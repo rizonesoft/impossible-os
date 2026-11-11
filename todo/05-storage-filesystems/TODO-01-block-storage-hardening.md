@@ -92,7 +92,8 @@ Detect NCQ capability via `CAP.SNCQ`. Issue `READ_FPDMA_QUEUED (0x60)` / `WRITE_
 - [ ] `ahci_ncq_read(port, lba, count, buf)` / `ahci_ncq_write(port, lba, count, buf)`: allocate tag; build command FIS with `0x60`/`0x61`; set `PxSACT |= (1 << tag)`; set `PxCI |= (1 << tag)`; store callback in `port->pending[tag]`
 - [ ] NCQ completion: IRQ handler -- if `PxIS.SDBS` set: read `PxSACT`; for each bit 0 in `~PxSACT & port->ncq_active`: call `port->pending[tag].callback`; `ahci_free_tag(port, tag)`
 - [ ] Non-NCQ fallback: if `ncq_depth == 0`, fall through to existing DMA R/W path unchanged
-- [ ] Guard NCQ tag state vs AHCI ISR: `ncq_sync_rw` timeout path in `ahci_ncq.c` races the `ahci_irq.c` SDB completion path on `tags_pending`/`tag_status` -- IRQ-save per-port lock or atomic bitops, reconcile HW completion before tag free
+- [x] Guard NCQ tag state vs AHCI ISR: one per-port completion lock (`ahci_tag_lock`) covers the ISR, the poller, issue and teardown; shipped by `01-boot-platform/TODO-10 §19`
+  - Sampling, PxIS ack, claim and reissue happen in one critical section; callbacks run after it; a timed-out request recovers through `ncq_abort_port` before its tag or buffer is released.
 - [ ] Log: `[AHCI] Port %u NCQ enabled, depth=%u`
 - [ ] Commit: `"drivers: AHCI NCQ -- CAP.SNCQ detect, READ/WRITE_FPDMA_QUEUED, 32-deep tag allocator, SDB FIS"`
 
@@ -107,6 +108,10 @@ Handle `PxIS.TFES` (Task File Error Status). Issue COMRESET on persistent failur
 
 - [ ] IRQ handler: if `PxIS & (1 << 30)` (TFES): read `PxTFD.STS` (error register); increment `port->error_count`; if `error_count < 3`: clear `PxCMD.ST`, wait `CR==0`, clear `PxSERR`, set `PxCMD.ST`, re-issue command; else COMRESET sequence
 - [ ] COMRESET: `ahci_port_comreset(port)`: `PxCMD.ST=0`; spin until `CR==0`; `PxSCTL.DET=1`; `timer_spin_us(1000)`; `PxSCTL.DET=0`; spin until `PxSSTS.DET==3`; set `PxCMD.ST=1`; reset `error_count`
+- [ ] Per-port submission ownership: the legacy slot path (`port_find_slot`/`port_issue_cmd`, flush, TRIM, NCQ tag-exhaustion fallback) joins `ncq_abort_port`'s exclusion
+  - Today two CPUs can take the same legacy slot, a non-queued command can be issued while NCQ tags are outstanding (SATA forbids it), and recovery can reset a legacy command mid-flight. Done when every issuer waits on one owner. XREF: `01-boot-platform/TODO-10 §19`.
+- [ ] Hot-plug under recovery: the ISR's link-change dispatch and `ahci_hotplug_remove` take recovery ownership under the completion lock; a change seen during recovery is deferred and re-checked when it ends
+  - Today the ISR tests `ncq_recovering` before the lock, so a recovery starting after that test can have its own COMRESET read as a removal. Done when a forced COMRESET never removes a present disk.
 - [ ] Persistent failure: after COMRESET, if device still returns error: call `blkdev_io_error(dev)`, wake pending callers with `-EIO`, log `[AHCI] Port %u unrecoverable error; drive offline`
 - [ ] NCQ-aware recovery: before COMRESET, abort all in-flight NCQ tags: for each set bit in `port->ncq_active`: call pending callback with `-EIO`; clear bitmask
 - [ ] Commit: `"drivers: AHCI error recovery -- PxIS.TFES, 3× retry, COMRESET, EIO surface, NCQ abort"`

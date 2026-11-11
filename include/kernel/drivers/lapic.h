@@ -52,6 +52,7 @@
 #define ICR_FIXED             0x00000000
 #define ICR_INIT              0x00000500
 #define ICR_STARTUP           0x00000600
+#define ICR_NMI               0x00000400  /* delivery mode NMI (vector field ignored) */
 
 /* ICR destination shorthand */
 #define ICR_DEST_FIELD        0x00000000  /* use destination field */
@@ -110,6 +111,11 @@ int  lapic_send_ipi_nowait(uint8_t target_apic_id, uint8_t vector);
 
 /* Send a fixed IPI to all CPUs except self */
 void lapic_send_ipi_all_but_self(uint8_t vector);
+
+/* Deliver an NMI to one CPU (by LAPIC ID). The target takes vector 2, which
+ * no `cli` masks: today's only caller is the crash_test=4 double-panic
+ * fixture, which makes a second CPU panic while the first one does. */
+void lapic_send_nmi(uint8_t target_apic_id);
 
 /* Send INIT IPI to target CPU (for AP bringup) */
 void lapic_send_init(uint8_t target_apic_id);

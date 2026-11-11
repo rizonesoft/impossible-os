@@ -1216,6 +1216,7 @@ _tt_nested_py "$REPO_ROOT/scripts/site/tests/test_build.py" site_build
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_alias_staleness.py" alias_staleness
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_plan.py" todo_plan
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_smoke_screen.py" smoke_screen
+_tt_nested_py "$REPO_ROOT/scripts/tests/test_smoke_double_panic.py" smoke_double_panic
 # test_query_bounds.sh is NOT started here: its MCP sub-test reads the real
 # build/todo-cache.json, which test_build.sh deletes and rebuilds as it runs
 # (first parallel pack run, 2026-11-10: `cache-unusable`). Its collect call
@@ -1373,6 +1374,22 @@ if [ -f "$SCREEN_TEST" ]; then
     fi
 else
     t_fail "scripts/tests/test_smoke_screen.py not found"
+fi
+
+# The double-panic smoke legs' verdict (scripts/smoke-double-panic.py): logs
+# shaped like the real 2-CPU boots, plus each way a looser check would pass a
+# braided report, a missing acknowledgment or a record naming the wrong CPU.
+DP_TEST="$REPO_ROOT/scripts/tests/test_smoke_double_panic.py"
+if [ -f "$DP_TEST" ]; then
+    DP_TEST_OUT=$(_tt_nested_collect smoke_double_panic python3 "$DP_TEST")
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/tests/test_smoke_double_panic.py PASS ($(printf '%s\n' "$DP_TEST_OUT" | tail -1))"
+    else
+        t_fail "scripts/tests/test_smoke_double_panic.py FAIL ($(printf '%s\n' "$DP_TEST_OUT" | tail -3 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_smoke_double_panic" "$DP_TEST_OUT"
+    fi
+else
+    t_fail "scripts/tests/test_smoke_double_panic.py not found"
 fi
 
 # Query-surface output bounds (test_query_bounds.sh). Separate suite from

@@ -10,6 +10,9 @@ so the text can be decoded cell by cell against that same font table.
     smoke-screen.py capture <monitor-socket> <out.ppm>
         screendump through the QEMU HMP monitor, wait for the command's prompt,
         then wait until the file is a complete PPM (bounded by a deadline)
+    smoke-screen.py monitor <monitor-socket> <hmp-command>
+        send one HMP command (the double-panic legs' system_reset) and wait
+        for the prompt after it, under the same deadline
     smoke-screen.py check <ppm> <needle> [<needle> ...]
         exit 0 only when most of the frame is the panic blue AND every needle
         appears in the decoded console text
@@ -168,20 +171,25 @@ def _read_until(sock: socket.socket, buf: bytearray, count: int, deadline: float
         buf.extend(chunk)
 
 
+def monitor(sock_path: str, command: str, deadline: float) -> None:
+    """Send one HMP command and wait for the prompt that follows it."""
+    buf = bytearray()
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.settimeout(max(deadline - time.monotonic(), 0.1))
+        sock.connect(sock_path)
+        _read_until(sock, buf, 1, deadline)  # the greeting's prompt
+        sock.sendall((command + "\n").encode())
+        _read_until(sock, buf, 2, deadline)  # the prompt after the command
+    finally:
+        sock.close()
+
+
 def capture(sock_path: str, out: str, timeout: float = 15.0) -> None:
     out_path = pathlib.Path(out)
     out_path.unlink(missing_ok=True)
     deadline = time.monotonic() + timeout
-    buf = bytearray()
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        sock.settimeout(timeout)
-        sock.connect(sock_path)
-        _read_until(sock, buf, 1, deadline)  # the greeting's prompt
-        sock.sendall(("screendump %s\n" % out).encode())
-        _read_until(sock, buf, 2, deadline)  # the prompt after the command
-    finally:
-        sock.close()
+    monitor(sock_path, "screendump %s" % out, deadline)
     # The prompt follows the command, but confirm the file is whole rather
     # than trusting the order: judge only a capture that parses completely.
     last = "no file written"
@@ -199,6 +207,9 @@ def capture(sock_path: str, out: str, timeout: float = 15.0) -> None:
 
 def main(argv: list[str]) -> int:
     try:
+        if len(argv) == 3 and argv[0] == "monitor":
+            monitor(argv[1], argv[2], time.monotonic() + 15.0)
+            return 0
         if len(argv) == 3 and argv[0] == "capture":
             capture(argv[1], argv[2])
             return 0

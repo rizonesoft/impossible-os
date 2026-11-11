@@ -98,6 +98,27 @@ typedef struct {
 int  serial_emergency_acquire(serial_lock_t *lock, uint32_t owner);
 void serial_emergency_release(serial_lock_t *lock, int acquired);
 
+/* serial_emergency_acquire, but WAITING a bounded time for another CPU.
+ *
+ * The single try above is right when the holder is THIS CPU (the code the abort
+ * interrupted can never release it) and wrong when it is ANOTHER CPU that is
+ * mid-way through a chunk: proceeding unlocked then interleaves the two CPUs'
+ * bytes, which on 2026-11-11 cut the winning panic's reason line to
+ * "[PANIC] CRASH_TES" under a second CPU's simultaneous panic.
+ *
+ *   1  acquired; release with serial_emergency_release(lock, 1).
+ *   0  not acquired, and the caller proceeds without the lock, because:
+ *      - NULL lock or an `owner` of SERIAL_LOCK_FREE (lock word untouched);
+ *      - the holder is `owner` itself: never waited on, returns at once;
+ *      - the holder is the one *gave_up names: it already outlasted one full
+ *        wait, so it is treated as wedged and not waited on again;
+ *      - `spins` pause iterations passed with the lock held by another owner,
+ *        which then becomes *gave_up.
+ * A successful acquire clears *gave_up, so a holder that recovers is waited on
+ * again. `gave_up` may be NULL (no memory). ENCODED owner, like the others. */
+int  serial_emergency_acquire_wait(serial_lock_t *lock, uint32_t owner,
+                                   uint32_t spins, volatile uint32_t *gave_up);
+
 /* Hand the driver's own UART lock back if THIS CPU is the recorded holder.
  *
  * For a CPU that is about to park forever and therefore can never release it

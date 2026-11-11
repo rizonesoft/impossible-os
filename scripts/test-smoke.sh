@@ -770,11 +770,27 @@ DEGRADE="${SMOKE_DEGRADE:-}"
 # description and file pointers fault when read. No unit test can call
 # panic_screen, so this is where "the BSOD still renders and the crash dump
 # still lands when the damage reached the panic strings" is observed.
+#
+# SMOKE_CRASH_TEST=double-race|double-ap|double-split boots crash_test=4/5/6:
+# two CPUs panic in one boot (an NMI'd AP and the BSP), each ordering forced
+# (see boot_desktop.c), then the guest is reset (double-ap: by the kernel's own
+# auto-restart countdown, the others through the monitor) and the next boot
+# must report the cross-boot record. scripts/smoke-double-panic.py
+# is the verdict. These legs need 2 CPUs and drop -no-reboot for the reset.
 CRASH_TEST="${SMOKE_CRASH_TEST:-}"
+CT_VAL=""
+CT_MODE=""
 case "$CRASH_TEST" in
-    ""|bad-strings) ;;
-    *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_TEST must be bad-strings (got: $CRASH_TEST)${NC}"; exit 1 ;;
+    "") ;;
+    bad-strings) CT_VAL=3 ;;
+    double-race) CT_VAL=4; CT_MODE=race ;;
+    double-ap) CT_VAL=5; CT_MODE=ap ;;
+    double-split) CT_VAL=6; CT_MODE=split ;;
+    *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_TEST must be bad-strings, double-race, double-ap or double-split (got: $CRASH_TEST)${NC}"; exit 1 ;;
 esac
+if [ -n "$CT_MODE" ] && [ "${SMOKE_SMP:-2}" -lt 2 ]; then
+    echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_TEST=$CRASH_TEST needs SMOKE_SMP >= 2 (got: ${SMOKE_SMP})${NC}"; exit 1
+fi
 case "$DEGRADE" in
     ""|rtc|fb) ;;
     *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_DEGRADE must be rtc or fb (got: $DEGRADE)${NC}"; exit 1 ;;
@@ -899,7 +915,7 @@ if [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$DEGRADE" ] || [ -
     fi
     if [ -n "$CRASH_TEST" ]; then
         sed -i -E '/^[[:space:]]*crash_test[[:space:]]*=/d' "$CONF_FIXTURE"
-        printf 'crash_test=3\n' >> "$CONF_FIXTURE"
+        printf 'crash_test=%s\n' "$CT_VAL" >> "$CONF_FIXTURE"
     fi
     mcopy -i "$DISK@@$EFI_OFFSET" -o "$CONF_FIXTURE" ::EFI/ImpossibleOS/boot.conf
     echo -e "  ${DIM}boot.conf fixture: $(tr '\n' ' ' < "$CONF_FIXTURE" | tail -c 60)${NC}"
@@ -965,7 +981,23 @@ fi
 # the renderers' own lines: the BSOD printed the unreadable placeholder for BOTH
 # strings (so neither renderer walked the faulting pointers) and the disk dump
 # finished. Any fault the panic path takes on its way there still fails.
-if [ -n "$CRASH_TEST" ]; then
+if [ -n "$CT_MODE" ]; then
+    # Both CPUs' acknowledgments are judged by smoke-double-panic.py after the
+    # reset; these only say the crash boot has finished its part.
+    PASS_PATTERNS_ALL=(
+        "crash_test=$CT_VAL -- NMI to CPU"
+        "owns the crash"
+        'Crash dump saved to C:\Impossible\System\crashdump.log'
+    )
+    FAIL_PATTERNS=(
+        "ASSERT FAILED"
+        "triple fault"
+        "Crash dump write FAILED"
+        "[BOOT HALT]"
+        "never reached the ordering point"
+        "needs a second online CPU"
+    )
+elif [ -n "$CRASH_TEST" ]; then
     CT_PLACEHOLDER='(unreadable: the panic string pointer faulted)'
     PASS_PATTERNS_ALL=(
         "crash_test=3 -- triggering deliberate BSOD with unreadable panic strings"
@@ -1037,6 +1069,13 @@ QEMU_FLAGS=(
     -no-shutdown
     -display none
 )
+if [ -n "$CT_MODE" ]; then
+    # The double-panic legs warm-reset the guest through the monitor and judge
+    # the NEXT boot, which -no-reboot would turn into a QEMU exit.
+    _qf=()
+    for _f in "${QEMU_FLAGS[@]}"; do [ "$_f" = "-no-reboot" ] || _qf+=("$_f"); done
+    QEMU_FLAGS=("${_qf[@]}")
+fi
 if [ "$MENU" = "keys" ] || [ "$MENU" = "default" ] || [ -n "$CRASH_TEST" ]; then
     rm -f "$MONITOR_SOCK"
     QEMU_FLAGS+=(-monitor "unix:$MONITOR_SOCK,server,nowait")
@@ -1233,11 +1272,60 @@ if [ "$ERROR_SCREEN" = "1" ]; then
     exit 0
 fi
 
+# ---- Double-panic verdict (SMOKE_CRASH_TEST=double-*) ----------------------
+# The stop screen is captured above, before anything else happens. Then the
+# guest is warm-reset through the monitor and the next boot is waited for,
+# bounded, until it reports the cross-boot record or reaches the prompt.
+# smoke-double-panic.py judges both boots and names the stop code the screen
+# must show, which the capture is then read back against.
+if [ -n "$CT_MODE" ]; then
+    strip_ansi
+    dp_fail() {
+        echo -e "${RED}SMOKE TEST FAILED (double-panic $CT_MODE leg): $1${NC}"
+        grep -aE "crash_test|^\[PANIC\]|on CPU apic|Stop code|Crash dump|Previous crash|efi_main entered" \
+            "$STRIPPED_LOG" 2>/dev/null | sed 's/^/    /' | head -20
+        exit 1
+    }
+    [ "$BOOT_FAILED" = true ] && dp_fail "$FAIL_REASON"
+    [ "$BOOT_PASSED" = true ] || dp_fail "the crash boot never finished both panics and the dump within ${TIMEOUT_SEC}s"
+    [ -z "$CT_SCREEN_ERR" ] || dp_fail "screen capture: $CT_SCREEN_ERR"
+    # The ap leg (an AP owns the panic, the BSP is parked) waits for the
+    # kernel's OWN restart: that is the case where a countdown paced by the
+    # BSP's clock never ended. The other legs reset through the monitor.
+    if [ "$CT_MODE" = ap ]; then
+        dp_deadline=$(( $(date +%s) + ${SMOKE_AUTO_RESTART_TIMEOUT_SEC:-120} ))
+    else
+        dp_err=$(python3 "$SCRIPT_DIR/smoke-screen.py" monitor "$MONITOR_SOCK" system_reset 2>&1) \
+            || dp_fail "monitor reset: $dp_err"
+        dp_deadline=$(( $(date +%s) + ${SMOKE_RESET_TIMEOUT_SEC:-60} ))
+    fi
+    while [ "$(date +%s)" -lt "$dp_deadline" ]; do
+        [ "$(grep -ac 'efi_main entered' "$SERIAL_LOG" 2>/dev/null || true)" -ge 2 ] \
+            && grep -aqE "Previous crash evidence found|Boot complete" "$SERIAL_LOG" 2>/dev/null \
+            && break
+        sleep 1
+    done
+    strip_ansi
+    dp_out=$(python3 "$SCRIPT_DIR/smoke-double-panic.py" check "$STRIPPED_LOG" "$CT_MODE" 2>&1) \
+        || dp_fail "$dp_out"
+    dp_stop=$(printf '%s\n' "$dp_out" | sed -n 's/^STOP_NAME=//p')
+    if ! dp_screen=$(python3 "$SCRIPT_DIR/smoke-screen.py" check "$CT_SCREEN" \
+            "Stop code:  $dp_stop" 2>&1); then
+        dp_fail "the screen capture does not show the winner's stop code ($dp_screen)"
+    fi
+    echo -e "  ${GREEN}✓${NC} $(printf '%s\n' "$dp_out" | tail -1)"
+    echo -e "  ${GREEN}✓${NC} stop screen on the display: $dp_screen"
+    echo ""
+    echo -e "${GREEN}  DOUBLE-PANIC $CT_MODE LEG PASSED${NC}"
+    echo -e "${DIM}  smoke receipt not recorded (fixture image)${NC}"
+    exit 0
+fi
+
 # ---- Bad-strings crash verdict (SMOKE_CRASH_TEST=bad-strings) --------------
 # Runs before the end-to-end layers, which assert a boot this leg deliberately
 # does not complete. Exactly one stop screen: a renderer that faulted on the
 # strings and re-entered the panic path would print a second one.
-if [ -n "$CRASH_TEST" ]; then
+if [ "$CRASH_TEST" = "bad-strings" ]; then
     strip_ansi
     ct_fail() {
         echo -e "${RED}SMOKE TEST FAILED (bad-strings crash leg): $1${NC}"
