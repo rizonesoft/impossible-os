@@ -47,6 +47,11 @@ char keyboard_trygetchar(void);
  * exactly as if the scan code came from the PS/2 IRQ handler. */
 void keyboard_inject_scancode(uint8_t scancode);
 
+/* Unshifted US QWERTY ASCII for a scan code set 1 MAKE code, 0 when it has
+ * none. Pure. The boot confirmation prompt's own small decode is tested
+ * against it so the two maps cannot drift. */
+char keyboard_scancode_ascii(uint8_t scancode);
+
 /* Inject one newly-pressed USB HID boot-protocol key (usage ID + the report's
  * modifier byte). Independent of the PS/2 modifier latches; routes to the same
  * Ctrl-C / terminal / kb_buffer path so keyboard_trygetchar() is source-blind.

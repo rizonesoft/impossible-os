@@ -9,6 +9,7 @@
  * ============================================================================ */
 
 #include "kernel/drivers/keyboard.h"
+#include "kernel/drivers/i8042.h"
 #include "kernel/irq.h"
 #include "kernel/boot_probe.h"
 #include "kernel/drivers/pic.h"
@@ -22,8 +23,6 @@
 #include "desktop/wm.h"
 
 /* --- Port I/O --- */
-#define KB_DATA_PORT  0x60
-#define KB_STATUS_PORT 0x64
 
 static inline uint8_t inb(uint16_t port)
 {
@@ -165,7 +164,7 @@ static void keyboard_irq_callback(uint8_t vector, void *ctx)
     (void)ctx;
 
     /* Read the scan code from the keyboard data port */
-    scancode = inb(KB_DATA_PORT);
+    scancode = inb(I8042_DATA_PORT);
 
     /* Ctrl+ScrollLock crash trigger (TODO-16 S1) */
     {
@@ -316,8 +315,8 @@ void keyboard_init(void)
         return;
     }
     {
-        uint8_t probe = inb(KB_STATUS_PORT);
-        if (probe == 0xFF) {
+        uint8_t probe = inb(I8042_STATUS_PORT);
+        if (!i8042_status_says_present(probe)) {
             klog(LOG_INFO, "input", "PS/2 keyboard: skipped (no i8042 -- port 0x64 reads 0xFF)");
             s_kbd_probe_rc = BOOT_PROBE_ABSENT;
             return;
@@ -332,8 +331,8 @@ void keyboard_init(void)
      * controller where port 0x64 returns 0xFF. */
     {
         uint32_t timeout = 1024;
-        while ((inb(KB_STATUS_PORT) & 0x01) && --timeout)
-            inb(KB_DATA_PORT);
+        while ((inb(I8042_STATUS_PORT) & I8042_STATUS_OBF) && --timeout)
+            inb(I8042_DATA_PORT);
     }
 
     /* Register keyboard via GSI-based routing (IOAPIC handles vector
@@ -414,6 +413,13 @@ char keyboard_trygetchar(void)
     kb_tail = (kb_tail + 1) % KB_BUFFER_SIZE;
     spin_unlock_irqrestore(&kb_lock, flags);
     return c;
+}
+
+char keyboard_scancode_ascii(uint8_t scancode)
+{
+    if (scancode >= sizeof(scancode_normal))
+        return 0;
+    return scancode_normal[scancode];
 }
 
 void keyboard_inject_scancode(uint8_t scancode)

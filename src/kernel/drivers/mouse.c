@@ -12,6 +12,7 @@
  * ============================================================================ */
 
 #include "kernel/drivers/mouse.h"
+#include "kernel/drivers/i8042.h"
 #include "kernel/irq.h"
 #include "kernel/vectors.h"
 #include "kernel/drivers/pic.h"
@@ -34,9 +35,6 @@ static inline uint64_t mouse_rdtsc(void)
 
 /* ---- Port I/O ---- */
 
-#define PS2_DATA_PORT    0x60
-#define PS2_STATUS_PORT  0x64
-#define PS2_CMD_PORT     0x64
 
 static inline uint8_t inb(uint16_t port)
 {
@@ -73,9 +71,9 @@ static int ps2_wait_input(void)
 {
     uint32_t timeout = PS2_WAIT_SHORT;
     while (--timeout) {
-        uint8_t s = inb(PS2_STATUS_PORT);
-        if (s == 0xFF) return 0;       /* controller absent */
-        if (!(s & 0x02)) return 1;     /* input buffer empty */
+        uint8_t s = inb(I8042_STATUS_PORT);
+        if (!i8042_status_says_present(s)) return 0;
+        if (!(s & I8042_STATUS_IBF)) return 1;
     }
     s_timeout_hits++;
     return 0;
@@ -85,9 +83,9 @@ static int ps2_wait_output(void)
 {
     uint32_t timeout = PS2_WAIT_SHORT;
     while (--timeout) {
-        uint8_t s = inb(PS2_STATUS_PORT);
-        if (s == 0xFF) return 0;       /* controller absent */
-        if (s & 0x01) return 1;        /* output buffer full */
+        uint8_t s = inb(I8042_STATUS_PORT);
+        if (!i8042_status_says_present(s)) return 0;
+        if (s & I8042_STATUS_OBF) return 1;
     }
     s_timeout_hits++;
     return 0;
@@ -99,9 +97,9 @@ static int ps2_wait_output_long(void)
 {
     uint32_t timeout = PS2_WAIT_LONG;
     while (--timeout) {
-        uint8_t s = inb(PS2_STATUS_PORT);
-        if (s == 0xFF) return 0;
-        if (s & 0x01) return 1;
+        uint8_t s = inb(I8042_STATUS_PORT);
+        if (!i8042_status_says_present(s)) return 0;
+        if (s & I8042_STATUS_OBF) return 1;
     }
     s_timeout_hits++;
     return 0;
@@ -110,21 +108,21 @@ static int ps2_wait_output_long(void)
 static void ps2_send_cmd(uint8_t cmd)
 {
     ps2_wait_input();
-    outb(PS2_CMD_PORT, cmd);
+    outb(I8042_CMD_PORT, cmd);
 }
 
 static void mouse_write(uint8_t data)
 {
     ps2_wait_input();
-    outb(PS2_CMD_PORT, 0xD4);   /* next byte goes to mouse */
+    outb(I8042_CMD_PORT, 0xD4);   /* next byte goes to mouse */
     ps2_wait_input();
-    outb(PS2_DATA_PORT, data);
+    outb(I8042_DATA_PORT, data);
 }
 
 static uint8_t mouse_read(void)
 {
     ps2_wait_output();
-    return inb(PS2_DATA_PORT);
+    return inb(I8042_DATA_PORT);
 }
 
 /* Read + validate that the device returned 0xFA (ACK).  Returns 1 on
@@ -133,7 +131,7 @@ static uint8_t mouse_read(void)
 static int mouse_expect_ack(void)
 {
     if (!ps2_wait_output()) return 0;
-    return inb(PS2_DATA_PORT) == 0xFA;
+    return inb(I8042_DATA_PORT) == 0xFA;
 }
 
 /* Long-deadline read for BAT/reset response sequences.  Returns 1 on
@@ -147,8 +145,8 @@ static int mouse_read_long(uint8_t *out)
         if (out) *out = 0xFF;
         return 0;
     }
-    if (out) *out = inb(PS2_DATA_PORT);
-    else (void)inb(PS2_DATA_PORT);
+    if (out) *out = inb(I8042_DATA_PORT);
+    else (void)inb(I8042_DATA_PORT);
     return 1;
 }
 
@@ -242,20 +240,20 @@ static volatile uint32_t mouse_irq_count;
 
 static void mouse_irq_callback(uint8_t vector, void *ctx)
 {
-    uint8_t status = inb(PS2_STATUS_PORT);
+    uint8_t status = inb(I8042_STATUS_PORT);
 
     (void)vector;
     (void)ctx;
 
     mouse_irq_count++;
     /* Bit 0 = output buffer full, Bit 5 = mouse data */
-    if (!(status & 0x01))
+    if (!(status & I8042_STATUS_OBF))
         return;  /* EOI handled by wrapper */
 
-    uint8_t data = inb(PS2_DATA_PORT);
+    uint8_t data = inb(I8042_DATA_PORT);
 
     /* Only process if bit 5 indicates auxiliary (mouse) data */
-    if (!(status & 0x20))
+    if (!(status & I8042_STATUS_AUX))
         return;  /* EOI handled by wrapper */
 
     switch (mouse_cycle) {
@@ -366,7 +364,7 @@ int mouse_init(void)
     }
     {
         uint8_t probe = inb(0x64);
-        if (probe == 0xFF) {
+        if (!i8042_status_says_present(probe)) {
             exit_reason = "no i8042 (port 0x64 reads 0xFF)";
             probe_rc = BOOT_PROBE_ABSENT;
             goto report;
@@ -384,7 +382,7 @@ int mouse_init(void)
     /* Enable IRQ 12 in PS/2 config byte */
     ps2_send_cmd(0x20);
     ps2_wait_output();
-    status_byte = inb(PS2_DATA_PORT);
+    status_byte = inb(I8042_DATA_PORT);
 
     /* If status reads 0xFF, the PS/2 controller has no auxiliary port
      * (common on laptops with USB/I2C touchpads).  Bail out. */
@@ -401,7 +399,7 @@ int mouse_init(void)
     status_byte &= ~0x02;      /* Bit 1 = 0 = IRQ 12 stays off for now */
     ps2_send_cmd(0x60);
     ps2_wait_input();
-    outb(PS2_DATA_PORT, status_byte);
+    outb(I8042_DATA_PORT, status_byte);
 
     /* Probe: reset mouse and check for ACK (0xFA).
      * - ACK is immediate from the controller (microseconds): short
@@ -465,8 +463,8 @@ int mouse_init(void)
     /* Flush -- timeout prevents hang on platforms without i8042 */
     {
         uint32_t timeout = 1024;
-        while ((inb(PS2_STATUS_PORT) & 0x01) && --timeout)
-            inb(PS2_DATA_PORT);
+        while ((inb(I8042_STATUS_PORT) & I8042_STATUS_OBF) && --timeout)
+            inb(I8042_DATA_PORT);
     }
 
     /* Claim the interrupt BEFORE the controller may raise it. The mouse has no
@@ -505,7 +503,7 @@ int mouse_init(void)
     status_byte |= 0x02;       /* Bit 1 = enable IRQ 12 */
     ps2_send_cmd(0x60);
     ps2_wait_input();
-    outb(PS2_DATA_PORT, status_byte);
+    outb(I8042_DATA_PORT, status_byte);
     if (!ioapic_available())
         pic_unmask_irq(IRQ_MOUSE);
 

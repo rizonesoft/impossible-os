@@ -946,6 +946,7 @@ extern void test_register_ab_boot(void);
 extern void test_register_boot_warm_update(void);
 extern void test_register_boot_history(void);
 extern void test_register_boot_audit(void);
+extern void test_register_boot_confirm(void);
 extern void test_register_boot_diag(void);
 extern void test_register_vpd(void);
 extern void test_register_klog(void);
@@ -1092,6 +1093,7 @@ void test_runner_init(void)
     test_register_boot_warm_update();
     test_register_boot_history();
     test_register_boot_audit();
+    test_register_boot_confirm();
     test_register_boot_diag();
     test_register_vpd();
     test_register_klog();

@@ -236,6 +236,11 @@ struct kernel_subsys_state {
  * or the wipe would otherwise land with no port-80 narrowing at all. */
 #define POST16_BOOT_HL_AUTHZ    0x105A
 #define POST16_BOOT_HL_AUTHZ_OK 0x105B
+/* TPM enrollment console prompt (Phase 1). It can hold the boot for up to
+ * BOOT_CONFIRM_TIMEOUT_MS inside the TPM transport bracket, so it carries its
+ * own pair: a stall here must not read as a TPM transport hang on a POST card. */
+#define POST16_TPM_CONFIRM      0x105C
+#define POST16_TPM_CONFIRM_OK   0x105D
 #define POST16_KBD              0x1060
 #define POST16_KBD_OK           0x1061
 #define POST16_MOUSE            0x1070

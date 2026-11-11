@@ -682,12 +682,14 @@ void boot_phase1(void)
          * what keeps a normal boot silent: a machine that never asked to
          * enroll is refused at the config check and no prompt is drawn. */
         if (gr.needs_confirm) {
-            boot_confirm_result_t cr =
-                boot_confirm_prompt("[TPM] Enroll THIS boot as the trusted "
-                                    "measured-boot baseline? [y/N]",
-                                    'y', 'n', BOOT_CONFIRM_TIMEOUT_MS,
-                                    BOOT_CONFIRM_IRQ_LEAVE_ALONE,
-                                    BOOT_CONFIRM_CLOCK_REQUIRED);
+            boot_confirm_result_t cr;
+            POST16(POST16_TPM_CONFIRM);
+            cr = boot_confirm_prompt("[TPM] Enroll THIS boot as the trusted "
+                                     "measured-boot baseline? [y/N]",
+                                     'y', 'n', BOOT_CONFIRM_TIMEOUT_MS,
+                                     BOOT_CONFIRM_IRQ_LEAVE_ALONE,
+                                     BOOT_CONFIRM_CLOCK_REQUIRED);
+            POST16(POST16_TPM_CONFIRM_OK);
             /* IRQ_LEAVE_ALONE is correct here and is load-bearing: this runs
              * BEFORE keyboard_init() below, so nothing has claimed IRQ1 and
              * IOAPIC entries are still masked from reset. Leaving interrupts
@@ -956,12 +958,14 @@ void boot_phase1(void)
                 (gr.refusal == TPM_ENROLL_REFUSE_STICKY_TRIGGER_CLEAR ||
                  gr.refusal == TPM_ENROLL_REFUSE_STICKY_ABSENT) &&
                 boot_sticky_offer_dismissed() == 0) {
-                boot_confirm_result_t ar =
-                    boot_confirm_prompt("[TPM] Arm trusted baseline enrollment "
-                                        "for the next boot? [y/N]",
-                                        'y', 'n', BOOT_CONFIRM_TIMEOUT_MS,
-                                        BOOT_CONFIRM_IRQ_LEAVE_ALONE,
-                                        BOOT_CONFIRM_CLOCK_REQUIRED);
+                boot_confirm_result_t ar;
+                POST16(POST16_TPM_CONFIRM);
+                ar = boot_confirm_prompt("[TPM] Arm trusted baseline enrollment "
+                                         "for the next boot? [y/N]",
+                                         'y', 'n', BOOT_CONFIRM_TIMEOUT_MS,
+                                         BOOT_CONFIRM_IRQ_LEAVE_ALONE,
+                                         BOOT_CONFIRM_CLOCK_REQUIRED);
+                POST16(POST16_TPM_CONFIRM_OK);
                 if (ar == BOOT_CONFIRM_YES) {
                     if (boot_sticky_set_field(BOOT_STICKY_FIELD_RECOVERY_TRIGGER, 1) == 0)
                         klog(LOG_WARN, "TPM", "Baseline enrollment ARMED: "

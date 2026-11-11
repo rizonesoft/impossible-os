@@ -160,3 +160,23 @@ boot_confirm_result_t boot_confirm_wait_keys(const char *keys,
                                              uint32_t timeout_ms,
                                              boot_confirm_irq_mode_t irq_mode,
                                              boot_confirm_clock_t clock_policy);
+
+/* ---- Pure helpers (exported for the unit tests) ------------------------ */
+
+/* Scancode set 1 MAKE code to the small ASCII set the prompt answers with
+ * ('y', 'n', 'r', 'c', 'p', and 0x1B for Escape); 0 for anything else. */
+char boot_confirm_scancode_to_ascii(uint8_t sc);
+
+/* 1 when `ch` is in the NUL-terminated `accept` set; NULL accepts any
+ * decoded key (the yes/no prompt's mode). */
+int boot_confirm_key_accepted(char ch, const char *accept);
+
+/* One keyboard byte through the answer state machine: a MAKE of an accepted
+ * key sets *pending and returns 0; the BREAK of the pending key returns it.
+ * An answer lands on release, so a held or taped key never answers. */
+char boot_confirm_key_step(char *pending, uint8_t sc, const char *accept);
+
+/* Millisecond timeout to a TSC tick budget at `freq` Hz. 1 and *out set on
+ * success; 0 with *out untouched for timeout_ms == 0, freq below 1 kHz, or
+ * an overflowing product. */
+int boot_confirm_budget_ticks(uint32_t timeout_ms, uint64_t freq, uint64_t *out);

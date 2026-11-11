@@ -11,6 +11,8 @@
  * ============================================================================ */
 
 #include "kernel/boot_confirm.h"
+#include "kernel/acpi.h"
+#include "kernel/drivers/i8042.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_timing.h"
 #include "kernel/drivers/ioapic.h"
@@ -20,27 +22,16 @@
 
 /* ---- Port I/O ----------------------------------------------------------- */
 
-#define PS2_DATA_PORT   0x60
-#define PS2_STATUS_PORT 0x64
-#define PS2_STATUS_OBF  0x01  /* output buffer full */
-/* Bit 5 of the 8042 status byte: the pending byte came from the AUXILIARY
- * device (the mouse), not the keyboard. Both share port 0x60, so a poll
- * that checks only OBF will happily decode a mouse movement byte as a
- * scancode -- and movement bytes span the whole 0x00-0xFF range, so byte
- * 0x15 would decode as 'y' and CONFIRM a baseline enrollment with nobody
- * touching the keyboard. The same convention is used by the mouse driver
- * at src/kernel/drivers/mouse.c:238. */
-#define PS2_STATUS_AUX  0x20
-#define PS2_BREAK_CODE  0x80  /* set on key-release scancodes */
-
-/* The ISA lines the two 8042 devices sit on. IRQ12 matters even though this
- * primitive only ever wants keyboard input: both devices share port 0x60,
- * so a live mouse ISR would consume bytes out from under the poll (and the
- * poll would desynchronize the driver's 3-byte packet state machine by
- * discarding AUX bytes). Taking over the controller means taking over both
- * lines, not just the one whose data is wanted. */
-#define PS2_KEYBOARD_ISA_IRQ 1
-#define PS2_MOUSE_ISA_IRQ    12
+/* The 8042 interface comes from kernel/drivers/i8042.h, shared with the
+ * keyboard and mouse drivers. The AUX status bit is load-bearing here: both
+ * devices share port 0x60, and a poll that checked only OBF would decode a
+ * mouse movement byte as a scancode, so byte 0x15 would read as 'y' and
+ * CONFIRM a baseline enrollment with nobody touching the keyboard.
+ *
+ * IRQ12 is taken over as well as IRQ1 even though only keyboard input is
+ * wanted: a live mouse ISR would consume bytes out from under the poll, and
+ * the poll would desynchronize the driver's 3-byte packet state by
+ * discarding AUX bytes. */
 
 /* Bounded drain of the 8042 output buffer. The buffer is a single byte, so
  * 64 reads is far more than a real controller ever holds; the bound exists
@@ -90,7 +81,7 @@ static inline uint64_t confirm_rdtsc(void)
  * Deliberately a small set. This primitive asks yes/no questions and drives
  * the recovery menu; it is not a text input path, and a full keymap here
  * would be a second source of truth against the real keyboard driver. */
-static char confirm_scancode_to_ascii(uint8_t sc)
+char boot_confirm_scancode_to_ascii(uint8_t sc)
 {
     switch (sc) {
         case 0x13: return 'r';
@@ -158,20 +149,20 @@ static void confirm_irq_begin(struct confirm_irq_state *st,
     if (ioapic_available()) {
         /* Mask the ROUTED GSIs, not the raw ISA numbers -- ACPI may carry
          * an interrupt source override remapping either line. */
-        st->kbd_gsi = ioapic_isa_to_gsi(PS2_KEYBOARD_ISA_IRQ);
+        st->kbd_gsi = ioapic_isa_to_gsi(IRQ_KEYBOARD);
         st->kbd_ioapic_masked = ioapic_irq_masked(st->kbd_gsi);
         ioapic_mask_irq(st->kbd_gsi);
 
-        st->mouse_gsi = ioapic_isa_to_gsi(PS2_MOUSE_ISA_IRQ);
+        st->mouse_gsi = ioapic_isa_to_gsi(IRQ_MOUSE);
         st->mouse_ioapic_masked = ioapic_irq_masked(st->mouse_gsi);
         ioapic_mask_irq(st->mouse_gsi);
     }
     if (pic_available()) {
-        st->kbd_pic_masked = pic_irq_masked(PS2_KEYBOARD_ISA_IRQ);
-        pic_mask_irq(PS2_KEYBOARD_ISA_IRQ);
+        st->kbd_pic_masked = pic_irq_masked(IRQ_KEYBOARD);
+        pic_mask_irq(IRQ_KEYBOARD);
 
-        st->mouse_pic_masked = pic_irq_masked(PS2_MOUSE_ISA_IRQ);
-        pic_mask_irq(PS2_MOUSE_ISA_IRQ);
+        st->mouse_pic_masked = pic_irq_masked(IRQ_MOUSE);
+        pic_mask_irq(IRQ_MOUSE);
     }
 }
 
@@ -183,8 +174,8 @@ static void confirm_irq_end(const struct confirm_irq_state *st)
     /* Restore every line to the state it was ACTUALLY in. Unmasking
      * unconditionally would enable a line that was masked before this call
      * ran, delivering an interrupt with no registered handler. */
-    confirm_restore_line(st->kbd_pic_masked, 0, 0, PS2_KEYBOARD_ISA_IRQ);
-    confirm_restore_line(st->mouse_pic_masked, 0, 0, PS2_MOUSE_ISA_IRQ);
+    confirm_restore_line(st->kbd_pic_masked, 0, 0, IRQ_KEYBOARD);
+    confirm_restore_line(st->mouse_pic_masked, 0, 0, IRQ_MOUSE);
     confirm_restore_line(st->kbd_ioapic_masked, 1, st->kbd_gsi, 0);
     confirm_restore_line(st->mouse_ioapic_masked, 1, st->mouse_gsi, 0);
 
@@ -203,14 +194,18 @@ static void confirm_irq_end(const struct confirm_irq_state *st)
  * drives the bus, so the read floats high). */
 static int confirm_console_present(void)
 {
-    return confirm_inb(PS2_STATUS_PORT) != 0xFF;
+    /* A hardware-reduced platform has no legacy fixed hardware: never read
+     * port 0x64 there, the same rule keyboard_init() and mouse_init() keep. */
+    if (acpi_hw_reduced())
+        return 0;
+    return i8042_status_says_present(confirm_inb(I8042_STATUS_PORT));
 }
 
 static void confirm_drain(void)
 {
     uint32_t drain = PS2_DRAIN_LIMIT;
-    while ((confirm_inb(PS2_STATUS_PORT) & PS2_STATUS_OBF) && drain--)
-        (void)confirm_inb(PS2_DATA_PORT);
+    while ((confirm_inb(I8042_STATUS_PORT) & I8042_STATUS_OBF) && drain--)
+        (void)confirm_inb(I8042_DATA_PORT);
 }
 
 /* Read one KEYBOARD byte if one is pending.
@@ -222,23 +217,23 @@ static void confirm_drain(void)
  * byte behind it would never arrive. */
 static int confirm_read_kbd_byte(uint8_t *out_sc)
 {
-    uint8_t status = confirm_inb(PS2_STATUS_PORT);
+    uint8_t status = confirm_inb(I8042_STATUS_PORT);
 
-    if (!(status & PS2_STATUS_OBF))
+    if (!(status & I8042_STATUS_OBF))
         return 0;
 
-    if (status & PS2_STATUS_AUX) {
-        (void)confirm_inb(PS2_DATA_PORT);  /* mouse byte: drop it */
+    if (status & I8042_STATUS_AUX) {
+        (void)confirm_inb(I8042_DATA_PORT);  /* mouse byte: drop it */
         return 0;
     }
 
-    *out_sc = confirm_inb(PS2_DATA_PORT);
+    *out_sc = confirm_inb(I8042_DATA_PORT);
     return 1;
 }
 
 /* Is `ch` an answer this caller will take? NULL accept means "any decoded
  * key", which is the yes/no prompt's mode. */
-static int confirm_key_accepted(char ch, const char *accept)
+int boot_confirm_key_accepted(char ch, const char *accept)
 {
     const char *p;
     if (!accept)
@@ -247,6 +242,25 @@ static int confirm_key_accepted(char ch, const char *accept)
         if (*p == ch)
             return 1;
     return 0;
+}
+
+/* One keyboard byte through the answer state machine. A MAKE of an accepted
+ * key is remembered in *pending and answers nothing; the BREAK of that same
+ * key returns it as a complete press. Anything else returns 0. The break bit
+ * is stripped BEFORE decoding, because a release carries the same scancode
+ * with bit 7 set and the machine needs both halves. Pure, for the unit
+ * tests: this is the step that turns 0x15 into an authorizing 'y'. */
+char boot_confirm_key_step(char *pending, uint8_t sc, const char *accept)
+{
+    char ch = boot_confirm_scancode_to_ascii((uint8_t)(sc & ~I8042_BREAK_CODE));
+
+    if (!ch || !boot_confirm_key_accepted(ch, accept))
+        return 0;
+    if (!(sc & I8042_BREAK_CODE)) {
+        *pending = ch;      /* MAKE: remember it, do not answer yet */
+        return 0;
+    }
+    return (*pending == ch) ? ch : 0;  /* BREAK for that key: a press */
 }
 
 /* Poll for one accepted KEYBOARD key until the budget expires.
@@ -295,16 +309,9 @@ static char confirm_poll_key(const char *accept, uint64_t budget_ticks,
     for (;;) {
         uint8_t sc;
         if (confirm_read_kbd_byte(&sc)) {
-            /* Strip the break bit BEFORE decoding: a release carries the same
-             * scancode with bit 7 set, and this loop needs both halves. */
-            char ch = confirm_scancode_to_ascii((uint8_t)(sc & 0x7F));
-            if (ch && confirm_key_accepted(ch, accept)) {
-                if (!(sc & PS2_BREAK_CODE)) {
-                    pending = ch;   /* MAKE: remember it, do not answer yet */
-                } else if (pending == ch) {
-                    return ch;      /* BREAK for that key: a complete press */
-                }
-            }
+            char ch = boot_confirm_key_step(&pending, sc, accept);
+            if (ch)
+                return ch;
         }
 
         if (++pet >= CONFIRM_PET_INTERVAL) {
@@ -328,15 +335,15 @@ static char confirm_poll_key(const char *accept, uint64_t budget_ticks,
  * absolute deadline -- see confirm_poll_key for why that distinction is
  * load-bearing).
  *
- * Writes the budget to *out (0 meaning "unbounded", produced only for an
- * explicit timeout_ms == 0) and returns 1. Returns 0 when a bounded wait
- * was asked for but cannot be honoured: no calibrated TSC, or a
- * multiplication that would overflow. That is a distinct outcome rather
+ * `freq` is the TSC frequency in Hz. Writes the budget to *out and returns
+ * 1. Returns 0, leaving *out untouched, when the wait cannot be honoured:
+ * timeout_ms == 0 (there is no unbounded mode), no calibrated TSC, a
+ * sub-kHz frequency, or a multiplication that would overflow. That is a distinct outcome rather
  * than a budget value, because silently degrading either case into an
  * unbounded wait would hang the boot on a keyboard-less machine. */
-static int confirm_budget(uint32_t timeout_ms, uint64_t *out)
+int boot_confirm_budget_ticks(uint32_t timeout_ms, uint64_t freq, uint64_t *out)
 {
-    uint64_t freq, per_ms;
+    uint64_t per_ms;
 
     /* No unbounded mode. An earlier draft let timeout_ms == 0 mean "wait
      * forever" for terminal callers; no caller ever wanted it, and once the
@@ -347,7 +354,6 @@ static int confirm_budget(uint32_t timeout_ms, uint64_t *out)
     if (timeout_ms == 0)
         return 0;
 
-    freq = boot_timing_tsc_freq();
     if (freq == 0)
         return 0;
 
@@ -362,6 +368,11 @@ static int confirm_budget(uint32_t timeout_ms, uint64_t *out)
 
     *out = per_ms * (uint64_t)timeout_ms;
     return 1;
+}
+
+static int confirm_budget(uint32_t timeout_ms, uint64_t *out)
+{
+    return boot_confirm_budget_ticks(timeout_ms, boot_timing_tsc_freq(), out);
 }
 
 boot_confirm_result_t boot_confirm_wait_keys(const char *keys,
