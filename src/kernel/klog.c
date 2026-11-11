@@ -1946,8 +1946,8 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
     uint64_t irq_flags;
     int rate_dropped = 0;
     int first_drop = 0;
-    int prefilled = 0;   /* `snapshot` already holds this record (the watch formatted it) */
 #ifdef KERNEL_TESTS
+    int prefilled = 0;   /* `snapshot` already holds this record (the watch formatted it) */
     int swallowed = 0;   /* it matched an expectation: keep it off the sinks */
 #endif
 
@@ -2049,9 +2049,14 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
     /* ---- Store formatted message in ring buffer ---- */
     {
         klog_entry_t *e = &klog_ring[klog_ring_head];
+        /* Only the test-build watch formats a record ahead of the ring. A
+         * release build has no such path, so `snapshot` is first written by
+         * the copy below and must not be read here. */
+#ifdef KERNEL_TESTS
         if (prefilled)
             *e = snapshot;
         else
+#endif
             klog_entry_fill(e, level, subsystem, fmt, ap);
 
         /* Snapshot for output outside the lock */
