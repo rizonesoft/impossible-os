@@ -3081,8 +3081,13 @@ class LinkCheck(unittest.TestCase):
                     self.wfile.flush()
                     time.sleep(3)
                     return
-                if path == "/slow" or route == "/stall":
+                if path == "/slow":
                     time.sleep(3)
+                if route == "/stall":
+                    # Longer than the stalled-redirect test's budget by a wide
+                    # margin, so that test can give its one healthy link real
+                    # scheduling headroom on a loaded box.
+                    time.sleep(8)
                 # `/a^b` and `/a%5Eb` are one resource to a real server, and which
                 # one Node sends depends on its URL-parser build: the official
                 # builds encode `^` in a path, Ubuntu's apt nodejs and the CI
@@ -3170,8 +3175,12 @@ class LinkCheck(unittest.TestCase):
         port = self.srv.server_address[1]
         urls = [f"http://localhost:{port}/redir-stall?{i}" for i in range(16)] + [f"http://localhost:{port}/gone"]
         start = time.monotonic()
-        got = self.L.run_checks(urls, retries=1, wait=0, timeout=10, budget=1.5)
-        self.assertLess(time.monotonic() - start, 2.5)
+        # The budget is 4 s, half the 8 s stall: /gone must be decided while
+        # every redirect target is still stalled. It was 1.5 s against a 3 s
+        # stall, which the tooling pack's parallel load missed on 2026-11-11
+        # (/gone came back "not finished within the budget").
+        got = self.L.run_checks(urls, retries=1, wait=0, timeout=10, budget=4)
+        self.assertLess(time.monotonic() - start, 5.5)
         self.assertEqual(got[f"http://localhost:{port}/gone"], ("DEAD", "HTTP 404"))
         self.assertIn("budget", got[f"http://localhost:{port}/redir-stall?0"][1])
 

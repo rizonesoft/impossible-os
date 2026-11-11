@@ -3482,24 +3482,37 @@ def test_container_phase_section45():
     # each re-matched every one of them: 0.082s at 1,000 levels, 0.435s at
     # 2,000 and 1.372s at 4,000 -- 3 KB to 12 KB of input, far below the 16 MiB
     # per-TODO ceiling, stalling `build.py` and every migrated gate.
-    def scan_secs(n):
+    #
+    # Measured in EXECUTED LINES, not seconds. The wall-clock ratio this used to
+    # take read 8.4x for linear code on 2026-11-11 while the tooling pack ran its
+    # nested suites in parallel, and blocked a push touching nothing here; a
+    # line count is the same on every box. Linear is 27.0 lines per byte at
+    # 1,000, 2,000 and 4,000 levels (4.0x for 4x the input); quadratic is ~16x.
+    def scan_work(n):
         src = "- " * n + "x\n" + "\n" * n
-        t0 = time.monotonic()
-        cs.scan_text(src)
-        return time.monotonic() - t0
+        count = 0
 
-    t1k, t4k = scan_secs(1000), scan_secs(4000)
-    # RATIO, NOT AN ABSOLUTE, for the shape: 4x the nesting and 4x the blank
-    # lines is 16x the work when quadratic and ~4x when linear. The bound is
-    # generous (8x) because this runs on a loaded CI box, and it still fails by
-    # a wide margin against the measured 16.7x regression.
+        def tracer(frame, event, arg):
+            nonlocal count
+            if event == "line":
+                count += 1
+            return tracer
+        sys.settrace(tracer)
+        try:
+            cs.scan_text(src)
+        finally:
+            sys.settrace(None)
+        return count, len(src)
+
+    scan_work(10)  # first call pays one-time setup; keep it out of the ratio
+    (w1k, _), (w4k, n4k) = scan_work(1000), scan_work(4000)
     check("s45 blank-line matching scales near-linearly, not quadratically "
-          "(4k/1k = %.1fx)" % (t4k / t1k if t1k else 0),
-          t1k > 0 and t4k / t1k < 8)
-    # ...and the absolute bound the section promised, which a uniformly slow
-    # box would otherwise satisfy by making the ratio look fine.
-    check("s45 a 4,000-level document scans in under 0.5s (%.3fs)" % t4k,
-          t4k < 0.5)
+          "(4k/1k = %.1fx executed lines)" % (w4k / w1k if w1k else 0),
+          w1k > 0 and w4k / w1k < 8)
+    # ...and a per-byte cap, which a uniformly heavier implementation would
+    # otherwise satisfy by keeping the ratio flat.
+    check("s45 a 4,000-level document costs under 54 executed lines per byte "
+          "(%.1f)" % (w4k / n4k), w4k < 54 * n4k)
 
     # ---- An under-indented blank ends a substring-terminated HTML block. ----
     # PRE-EXISTING and verified so: the same divergence reproduces with `<!--`

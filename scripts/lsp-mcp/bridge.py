@@ -4535,8 +4535,12 @@ def _self_test_pyright(workspace_root: Path) -> int:
 
     # Pyright analyzes an opened file asynchronously; documentSymbol
     # against a freshly-opened file can briefly return an empty list
-    # before the parse completes. Poll with a bounded deadline (10 s;
-    # a single-file parse is sub-second on a warm host).
+    # before the parse completes. Poll with a bounded deadline (30 s;
+    # a single-file parse is sub-second on a warm host, but the tooling
+    # pack runs this beside its other nested suites, and 10 s failed
+    # there on 2026-11-11 while the same call took 5 s alone. The poll
+    # returns on the first non-empty answer, so the bound costs a green
+    # run nothing).
     #
     # documentSymbol is scoped to the URI we pass, so ANY non-empty
     # result is proof pyright ingested THIS file end-to-end (did_open
@@ -4546,7 +4550,7 @@ def _self_test_pyright(workspace_root: Path) -> int:
     # open-source pyright lacks (returns empty here) -- see
     # python_server.required_capabilities() and TODO-07.
     import time as _time
-    deadline = _time.monotonic() + 10.0
+    deadline = _time.monotonic() + 30.0
     last_err: Optional[LspError] = None
     symbols: Any = None
     while _time.monotonic() < deadline:
@@ -4589,7 +4593,7 @@ def _self_test_pyright(workspace_root: Path) -> int:
     if not symbols:
         sys.stderr.write(
             f"[lsp-mcp] FAIL: pyright documentSymbol on {uri} returned "
-            "an empty list after 10s. The file was did_open'd but "
+            "an empty list after 30s. The file was did_open'd but "
             "pyright reported zero symbols -- either the parse is still "
             "cold (raise the deadline), the did_open uri did not match "
             "what pyright expects, or scripts/todo-graph/build.py no "
