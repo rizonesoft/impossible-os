@@ -266,10 +266,20 @@ const char *tpm_headless_verdict_label(uint8_t verdict)
  * MEANING with any other digest the subsystem takes over similar bytes; the
  * tag makes each digest answer exactly one question. */
 static const uint8_t HL_TAG_DEV[8] = { 'I','H','A','Z','D','E','V','1' };
+static const uint8_t HL_TAG_ARM[8] = { 'I','H','A','Z','A','R','M','1' };
 /* There is no measured-state tag here any more. The transition digest is
  * computed by tpm_baseline_transition_id, which carries its own domain
  * separators, and it is computed there precisely so its coverage lives beside
  * the struct whose fields it covers. */
+
+void tpm_headless_arm_transition_id(uint8_t out[TPM_HEADLESS_ID_LEN])
+{
+    struct sha256_ctx ctx;
+
+    sha256_init(&ctx);
+    sha256_update(&ctx, HL_TAG_ARM, (uint32_t)sizeof HL_TAG_ARM);
+    sha256_final(&ctx, out);
+}
 
 /* Device identity: SHA-256 over the EK PRIMARY public. Returns 0 on success. */
 static int hl_device_id(uint8_t out[TPM_HEADLESS_ID_LEN])

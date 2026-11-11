@@ -951,9 +951,13 @@ void boot_phase1(void)
              * replay all held (the trigger check runs after them). The offer
              * is ONE-SHOT: a decline or an unanswered prompt dismisses it
              * durably, so an ordinary boot never waits on it twice; a boot
-             * with tpm_enroll=0 clears the dismissal. With no console nothing
-             * is asked; console-free arming belongs to the headless authority
-             * work (Q12 answer A: physical presence first). */
+             * with tpm_enroll=0 clears the dismissal. With no console (the
+             * prompt reports UNAVAILABLE, which also covers a prompt that could
+             * not be drawn) a signed ARM_ENROLLMENT authorization arms instead:
+             * verified and consumed before the trigger is written, so one
+             * token is one attempt. A present console stays authoritative and
+             * the token is not even read. The decision is
+             * tpm_enroll_arm_decide(), pure so the tests pin it. */
             if (bs == TPM_BASELINE_NO_BASELINE && g_boot_info.config.tpm_enroll &&
                 (gr.refusal == TPM_ENROLL_REFUSE_STICKY_TRIGGER_CLEAR ||
                  gr.refusal == TPM_ENROLL_REFUSE_STICKY_ABSENT) &&
@@ -966,16 +970,43 @@ void boot_phase1(void)
                                          BOOT_CONFIRM_IRQ_LEAVE_ALONE,
                                          BOOT_CONFIRM_CLOCK_REQUIRED);
                 POST16(POST16_TPM_CONFIRM_OK);
-                if (ar == BOOT_CONFIRM_YES) {
-                    if (boot_sticky_set_field(BOOT_STICKY_FIELD_RECOVERY_TRIGGER, 1) == 0)
-                        klog(LOG_WARN, "TPM", "Baseline enrollment ARMED: "
-                             "reboot and confirm to enroll");
-                    else
-                        klog(LOG_ERROR, "TPM", "Baseline enrollment arm not stored");
-                } else if (ar == BOOT_CONFIRM_DECLINED || ar == BOOT_CONFIRM_TIMEOUT) {
-                    (void)boot_sticky_set_field(BOOT_STICKY_FIELD_OFFER_DISMISSED, 1);
-                    klog(LOG_INFO, "TPM", "Baseline enrollment offer dismissed "
-                         "(boot once with tpm_enroll=0 to offer it again)");
+                {
+                    uint8_t a_confirm = (uint8_t)TPM_CONFIRM_PENDING;
+                    uint8_t a_hl = (uint8_t)TPM_HEADLESS_ABSENT;
+                    switch (ar) {
+                        case BOOT_CONFIRM_YES:         a_confirm = TPM_CONFIRM_YES; break;
+                        case BOOT_CONFIRM_DECLINED:    a_confirm = TPM_CONFIRM_WRONG_KEY; break;
+                        case BOOT_CONFIRM_TIMEOUT:     a_confirm = TPM_CONFIRM_TIMEOUT; break;
+                        case BOOT_CONFIRM_UNAVAILABLE: a_confirm = TPM_CONFIRM_UNAVAILABLE; break;
+                    }
+                    if (a_confirm == (uint8_t)TPM_CONFIRM_UNAVAILABLE) {
+                        const uint8_t *a_blob = (const uint8_t *)0;
+                        uint32_t a_len = boot_headless_authz_take(&a_blob);
+                        uint8_t a_tid[TPM_HEADLESS_ID_LEN];
+
+                        tpm_headless_arm_transition_id(a_tid);
+                        a_hl = (uint8_t)tpm_headless_authz_authorize(
+                            a_blob, a_len, (uint32_t)TPM_HEADLESS_OP_ARM_ENROLLMENT, a_tid);
+                        if (a_hl != (uint8_t)TPM_HEADLESS_ABSENT)
+                            klog(LOG_INFO, "TPM", "Headless arm authorization: %s",
+                                 tpm_headless_verdict_label(a_hl));
+                    }
+                    switch (tpm_enroll_arm_decide(a_confirm, a_hl)) {
+                        case TPM_ARM_SET_TRIGGER:
+                            if (boot_sticky_set_field(BOOT_STICKY_FIELD_RECOVERY_TRIGGER, 1) == 0)
+                                klog(LOG_WARN, "TPM", "Baseline enrollment ARMED: "
+                                     "reboot and confirm to enroll");
+                            else
+                                klog(LOG_ERROR, "TPM", "Baseline enrollment arm not stored");
+                            break;
+                        case TPM_ARM_DISMISS:
+                            (void)boot_sticky_set_field(BOOT_STICKY_FIELD_OFFER_DISMISSED, 1);
+                            klog(LOG_INFO, "TPM", "Baseline enrollment offer dismissed "
+                                 "(boot once with tpm_enroll=0 to offer it again)");
+                            break;
+                        case TPM_ARM_NONE:
+                            break;
+                    }
                 }
             }
 

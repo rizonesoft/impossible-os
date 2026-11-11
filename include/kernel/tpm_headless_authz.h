@@ -111,9 +111,14 @@ typedef enum {
     TPM_HEADLESS_OP_ENROLL_BASELINE = 1u,
     TPM_HEADLESS_OP_ROTATE_BASELINE = 2u,
     TPM_HEADLESS_OP_RESET_BASELINE  = 3u,
+    /* Arm the sticky recovery trigger on a machine with no console, so the
+     * NEXT boot may enroll. Writes no baseline: that boot still needs its own
+     * ENROLL authorization, bound to the real transition at the next counter
+     * value, and spends the trigger before it is consulted. */
+    TPM_HEADLESS_OP_ARM_ENROLLMENT  = 4u,
 } tpm_headless_op_t;
 
-#define TPM_HEADLESS_OP_MAX TPM_HEADLESS_OP_RESET_BASELINE
+#define TPM_HEADLESS_OP_MAX TPM_HEADLESS_OP_ARM_ENROLLMENT
 
 /* The signed authorization, exactly as it appears on the wire. Fixed layout,
  * little-endian scalars, no implicit padding: the signature covers bytes
@@ -357,6 +362,13 @@ tpm_headless_enroll_dispatch(uint8_t authority, int have_transition,
                              uint32_t nv_index, uint16_t alg,
                              const struct tpm_baseline *cand,
                              const uint8_t *transition_id);
+
+/* The transition digest an ARM_ENROLLMENT authorization is signed over: a
+ * fixed, domain-separated SHA-256, because arming writes no baseline and so
+ * has no state transition of its own to bind. The token is still bound to
+ * this device, to the ARM operation and to one counter value, and the
+ * enrollment it enables needs a second, transition-bound authorization. Pure. */
+void tpm_headless_arm_transition_id(uint8_t out[TPM_HEADLESS_ID_LEN]);
 
 /* Stable label for a verdict, for logs and the integrity report. Never NULL --
  * an out-of-range value returns "unknown". */

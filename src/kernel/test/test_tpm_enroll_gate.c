@@ -616,8 +616,37 @@ static void test_enroll_gate_labels_map_exactly(void)
                        "each authority maps to its own exact label");
 }
 
+static void test_enroll_arm_decide(void)
+{
+    uint8_t v;
+
+    TEST_ASSERT_EQ(tpm_enroll_arm_decide(TPM_CONFIRM_YES, TPM_HEADLESS_ABSENT),
+                   TPM_ARM_SET_TRIGGER, "a console yes arms");
+    TEST_ASSERT_EQ(tpm_enroll_arm_decide(TPM_CONFIRM_WRONG_KEY, TPM_HEADLESS_ABSENT),
+                   TPM_ARM_DISMISS, "a console no dismisses");
+    TEST_ASSERT_EQ(tpm_enroll_arm_decide(TPM_CONFIRM_TIMEOUT, TPM_HEADLESS_ABSENT),
+                   TPM_ARM_DISMISS, "an unanswered console dismisses");
+    TEST_ASSERT_EQ(tpm_enroll_arm_decide(TPM_CONFIRM_WRONG_KEY, TPM_HEADLESS_OK),
+                   TPM_ARM_DISMISS, "a token never overrides a console no");
+    TEST_ASSERT_EQ(tpm_enroll_arm_decide(TPM_CONFIRM_TIMEOUT, TPM_HEADLESS_OK),
+                   TPM_ARM_DISMISS, "a token never overrides a console timeout");
+    TEST_ASSERT_EQ(tpm_enroll_arm_decide(TPM_CONFIRM_UNAVAILABLE, TPM_HEADLESS_OK),
+                   TPM_ARM_SET_TRIGGER, "no console and a consumed token arms");
+    TEST_ASSERT_EQ(tpm_enroll_arm_decide(TPM_CONFIRM_UNAVAILABLE, TPM_HEADLESS_ABSENT),
+                   TPM_ARM_NONE, "no console and no token changes nothing");
+    for (v = 2u; v <= (uint8_t)TPM_HEADLESS_VERDICT_MAX; v++)
+        TEST_ASSERT_EQ(tpm_enroll_arm_decide(TPM_CONFIRM_UNAVAILABLE, v), TPM_ARM_NONE,
+                       "no console and a refused token changes nothing");
+    TEST_ASSERT_EQ(tpm_enroll_arm_decide(TPM_CONFIRM_PENDING, TPM_HEADLESS_OK),
+                   TPM_ARM_NONE, "an unasked prompt changes nothing");
+    TEST_ASSERT_EQ(tpm_enroll_arm_decide(0xEEu, TPM_HEADLESS_OK),
+                   TPM_ARM_NONE, "an out-of-range answer changes nothing");
+}
+
 void test_register_tpm_enroll_gate(void)
 {
+    test_suite_register_cat("tpm: arming offer decision",
+                            test_enroll_arm_decide, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: enroll gate requires the armed trigger spent",
                             test_enroll_gate_requires_spent_trigger, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: enroll gate admits confirmed recovery",

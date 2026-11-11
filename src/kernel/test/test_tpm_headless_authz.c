@@ -175,6 +175,62 @@ static void test_ha_wrong_operation(void)
                    "the same token authorizes the operation it was signed for");
 }
 
+/* ARM and ENROLL are not interchangeable in either direction, and an ARM
+ * token is bound to the fixed ARM digest, not to any baseline transition. */
+static void test_ha_arm_operation(void)
+{
+    uint8_t blob[TPM_HEADLESS_BLOB_LEN];
+    uint8_t arm_a[TPM_HEADLESS_ID_LEN], arm_b[TPM_HEADLESS_ID_LEN];
+    struct tpm_headless_authz_inputs in;
+    uint32_t i, same = 1, all_zero = 1;
+
+    tpm_headless_arm_transition_id(arm_a);
+    tpm_headless_arm_transition_id(arm_b);
+    for (i = 0; i < TPM_HEADLESS_ID_LEN; i++) {
+        if (arm_a[i] != arm_b[i]) same = 0;
+        if (arm_a[i] != 0u) all_zero = 0;
+    }
+    TEST_ASSERT_EQ(same, 1u, "the ARM digest is deterministic");
+    TEST_ASSERT_EQ(all_zero, 0u, "the ARM digest is not the zero digest");
+
+    ha_fixture_init();
+    for (i = 0; i < TPM_HEADLESS_ID_LEN; i++)
+        g_transition[i] = arm_a[i];
+
+    ha_build(blob, TPM_HEADLESS_OP_ARM_ENROLLMENT, HA_COUNTER);
+    ha_inputs(&in, blob, TPM_HEADLESS_OP_ARM_ENROLLMENT);
+    TEST_ASSERT_EQ(tpm_headless_authz_evaluate(&in), TPM_HEADLESS_OK,
+                   "an ARM token authorizes arming");
+
+    ha_inputs(&in, blob, TPM_HEADLESS_OP_ENROLL_BASELINE);
+    TEST_ASSERT_EQ(tpm_headless_authz_evaluate(&in), TPM_HEADLESS_WRONG_OPERATION,
+                   "an ARM token does not authorize an enrollment");
+
+    ha_build(blob, TPM_HEADLESS_OP_ENROLL_BASELINE, HA_COUNTER);
+    ha_inputs(&in, blob, TPM_HEADLESS_OP_ARM_ENROLLMENT);
+    TEST_ASSERT_EQ(tpm_headless_authz_evaluate(&in), TPM_HEADLESS_WRONG_OPERATION,
+                   "an ENROLL token does not arm");
+
+    /* An ARM token signed over a real transition does not match the ARM
+     * digest, so a caller cannot reuse enrollment-shaped bytes to arm. */
+    ha_fixture_init();
+    ha_build(blob, TPM_HEADLESS_OP_ARM_ENROLLMENT, HA_COUNTER);
+    ha_inputs(&in, blob, TPM_HEADLESS_OP_ARM_ENROLLMENT);
+    for (i = 0; i < TPM_HEADLESS_ID_LEN; i++)
+        in.transition_id[i] = arm_a[i];
+    TEST_ASSERT_EQ(tpm_headless_authz_evaluate(&in), TPM_HEADLESS_WRONG_TRANSITION,
+                   "an ARM token must be signed over the ARM digest");
+
+    /* Replay: the same ARM token at a counter that has moved is spent. */
+    for (i = 0; i < TPM_HEADLESS_ID_LEN; i++)
+        g_transition[i] = arm_a[i];
+    ha_build(blob, TPM_HEADLESS_OP_ARM_ENROLLMENT, HA_COUNTER);
+    ha_inputs(&in, blob, TPM_HEADLESS_OP_ARM_ENROLLMENT);
+    in.counter = HA_COUNTER + 1u;
+    TEST_ASSERT_EQ(tpm_headless_authz_evaluate(&in), TPM_HEADLESS_STALE_OR_SPENT,
+                   "a consumed ARM token does not arm again");
+}
+
 static void test_ha_stale_or_spent(void)
 {
     uint8_t blob[TPM_HEADLESS_BLOB_LEN];
@@ -1564,6 +1620,8 @@ void test_register_tpm_headless_authz(void)
                             test_ha_wrong_transition, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm headless: wrong operation",
                             test_ha_wrong_operation, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm headless: ARM is its own operation",
+                            test_ha_arm_operation, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm headless: stale or spent",
                             test_ha_stale_or_spent, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm headless: not yet valid",

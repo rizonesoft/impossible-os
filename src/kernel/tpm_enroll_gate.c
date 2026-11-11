@@ -335,3 +335,19 @@ const char *tpm_enroll_authority_label(uint8_t authority)
         default:                                 return "unknown";
     }
 }
+
+tpm_arm_action_t tpm_enroll_arm_decide(uint8_t confirm, uint8_t headless_verdict)
+{
+    switch (confirm) {
+    case TPM_CONFIRM_YES:
+        return TPM_ARM_SET_TRIGGER;
+    case TPM_CONFIRM_WRONG_KEY:
+    case TPM_CONFIRM_TIMEOUT:
+        return TPM_ARM_DISMISS;
+    case TPM_CONFIRM_UNAVAILABLE:
+        return (headless_verdict == (uint8_t)TPM_HEADLESS_OK) ? TPM_ARM_SET_TRIGGER
+                                                              : TPM_ARM_NONE;
+    default:
+        return TPM_ARM_NONE;
+    }
+}

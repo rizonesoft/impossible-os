@@ -212,3 +212,24 @@ const char *tpm_enroll_refusal_label(uint8_t refusal);
 
 /* Stable label for an authority value. Never NULL. */
 const char *tpm_enroll_authority_label(uint8_t authority);
+
+/* What the arming offer does with its answer. Arming sets the sticky
+ * recovery trigger so the NEXT boot may enroll; it never writes a baseline. */
+typedef enum {
+    TPM_ARM_NONE        = 0,  /* change nothing (the zero value refuses) */
+    TPM_ARM_SET_TRIGGER = 1,  /* arm the next boot's enrollment */
+    TPM_ARM_DISMISS     = 2,  /* store the one-shot dismissal */
+} tpm_arm_action_t;
+_Static_assert((int)TPM_ARM_NONE == 0,
+               "the zero arming action must change nothing");
+
+/* Decide the arming offer. PURE and TOTAL.
+ *
+ * `confirm` is the console answer as a tpm_confirm_t. YES arms; a decline or
+ * a timeout dismisses, and a present console stays authoritative: its
+ * refusal is never overridden by a token. Only UNAVAILABLE (no console, or a
+ * prompt that could not be drawn) consults `headless_verdict`, the result of
+ * tpm_headless_authz_authorize() for TPM_HEADLESS_OP_ARM_ENROLLMENT, and only
+ * its OK, a token verified AND already consumed, arms. Anything else,
+ * including PENDING and out-of-range values, changes nothing. */
+tpm_arm_action_t tpm_enroll_arm_decide(uint8_t confirm, uint8_t headless_verdict);
