@@ -32,6 +32,7 @@
 #include "../../../include/boot/devpath_filepath.h" /* bounded LoadedImage FilePath parser */
 #include "../../../include/boot/pe_authenticode.h" /* Authenticode PE image hash, as firmware computes it */
 #include "../../../include/boot/tcg_evlog.h"       /* strict TCG event-log walk + image-load event identity */
+#include "../../../include/boot/pcr_manifest.h"    /* PCR 11 manifest measurement: index, event name, type */
 #include "../../../include/boot/uki_cmdline_check.h" /* uki_find_disk_override_token() shared with kernel test */
 #include "../../../include/boot/uki_cmdline_media_role.h" /* uki_cmdline_extract_media_role() shared with kernel test */
 #include "../../../include/boot/boot_entries_parser.h"   /* boot entries parser + envelope */
@@ -1205,10 +1206,18 @@ static void boot_fatal_statics_reset(void)
  * is what stops a later edit from separating them or inserting a diagnostic
  * between them -- either of which would silently reintroduce the window each
  * one exists to close. */
+/* Set by measure_manifest_pcr() when firmware extended PCR 11 with the kernel's
+ * .bootproto manifest and logged the event; read by the capability block. A wide
+ * exact-match cookie, volatile, because UEFI leaves .bss holding firmware poison
+ * or the previous boot's value (CLAUDE.md "Uninitialised loader .bss"). */
+#define MANIFEST_PCR_BOUND_COOKIE  0x4D50435242303131ull   /* "MPCRB011" */
+static volatile UINT64 g_manifest_pcr_bound_cookie;
+
 static void boot_early_reset_all(void)
 {
     early_diag_reset();
     boot_fatal_statics_reset();
+    g_manifest_pcr_bound_cookie = 0;
 }
 
 /* --- NVRAM boot error persistence (S13) ---
@@ -9700,6 +9709,56 @@ static __attribute__((noreturn)) void bpp_render_rollback_and_halt(
         __asm__ volatile ("cli; hlt");
 }
 
+#define POST16_BL_MANIFEST_PCR     0xB0AC
+#define POST16_BL_MANIFEST_PCR_OK  0xB0AD
+
+/* Measure the verified kernel's .bootproto manifest sha256 into PCR 11 through
+ * EFI_TCG2_PROTOCOL.HashLogExtendEvent, before control reaches the kernel. A
+ * measurement, never a gate: every failure leaves the cookie clear, which the
+ * capability block reports as BOOT_CAP_MANIFEST_PCR_BOUND degraded, and the
+ * boot continues. Runs before retrieve_tpm_event_log(), so the event is in the
+ * log the kernel replays. The kernel does not trust the capability bit alone:
+ * it re-checks the logged digest and the replay (tpm_attest_manifest_event_ok). */
+static void measure_manifest_pcr(const UINT8 sha256[32])
+{
+    static const char name[] = TPM_PCR_MANIFEST_EVENT;
+    UINT8 buf[sizeof(EFI_TCG2_EVENT) + sizeof name - 1u];
+    EFI_TCG2_EVENT *ev = (EFI_TCG2_EVENT *)buf;
+    EFI_GUID tcg2_guid = EFI_TCG2_PROTOCOL_GUID;
+    EFI_TCG2_PROTOCOL *tcg2 = (EFI_TCG2_PROTOCOL *)0;
+    EFI_STATUS status;
+    UINTN i;
+
+    post_code16(POST16_BL_MANIFEST_PCR);
+    status = gBS->LocateProtocol(&tcg2_guid, (VOID *)0, (VOID **)&tcg2);
+    if (EFI_ERROR(status) || !tcg2 || !tcg2->HashLogExtendEvent) {
+        serial_early_print("[BOOT] manifest PCR 11: no TCG2 protocol, not measured\n");
+        return;
+    }
+
+    ev->Size                 = (UINT32)sizeof buf;
+    ev->Header.HeaderSize    = (UINT32)sizeof(EFI_TCG2_EVENT_HEADER);
+    ev->Header.HeaderVersion = (UINT16)EFI_TCG2_EVENT_HEADER_VERSION;
+    ev->Header.PCRIndex      = (UINT32)TPM_PCR_MANIFEST_INDEX;
+    ev->Header.EventType     = (UINT32)TPM_PCR_MANIFEST_EVENT_TYPE;
+    for (i = 0; i < sizeof name - 1u; i++)   /* event data: the name, no NUL */
+        ev->Event[i] = (UINT8)name[i];
+
+    status = tcg2->HashLogExtendEvent(tcg2, 0, (EFI_PHYSICAL_ADDRESS)(UINTN)sha256,
+                                      32u, ev);
+    if (EFI_ERROR(status)) {
+        /* EFI_VOLUME_FULL lands here too: PCR 11 moved but the log has no
+         * record of it, so the kernel's replay will report the mismatch. */
+        serial_early_print("[BOOT] manifest PCR 11: HashLogExtendEvent failed status=0x");
+        serial_early_print_hex64((UINT64)status);
+        serial_early_print(", not bound\n");
+        return;
+    }
+    g_manifest_pcr_bound_cookie = MANIFEST_PCR_BOUND_COOKIE;
+    post_code16(POST16_BL_MANIFEST_PCR_OK);
+    serial_early_print("[BOOT] manifest PCR 11: extended (EV_IPL " TPM_PCR_MANIFEST_EVENT ")\n");
+}
+
 /* Verify the loaded kernel image carries a matching .bootproto
  * descriptor. Called from load_kernel right before its final success
  * return, with file_buf still valid. */
@@ -9788,6 +9847,8 @@ static void bootproto_verify_or_reset(const UINT8 *kernel_image,
     serial_early_print(" struct_size=");
     serial_early_print_uint(desc.struct_size);
     serial_early_print(" sha256=match\n");
+
+    measure_manifest_pcr(desc.sha256);
 }
 
 /* ============================================================================
@@ -19943,6 +20004,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
          * is absent by design. Classify as degraded; a real adapter
          * (TODO-08) would set this bit in caps_present instead. */
         degraded |= BOOT_CAP_ALT_PROTOCOL_ADAPTER;
+
+        /* Manifest PCR binding: present only when measure_manifest_pcr()
+         * extended PCR 11 and firmware logged it. */
+        if (g_manifest_pcr_bound_cookie == MANIFEST_PCR_BOUND_COOKIE)
+            present  |= BOOT_CAP_MANIFEST_PCR_BOUND;
+        else
+            degraded |= BOOT_CAP_MANIFEST_PCR_BOUND;
 
         g_boot_info_ptr->caps_required = 0ull;
         g_boot_info_ptr->caps_present  = present;

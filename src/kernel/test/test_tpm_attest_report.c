@@ -7,6 +7,10 @@
 #include "kernel/tpm.h"                   /* TPM_ALG_SHA256 */
 #include "kernel/boot_info.h"
 #include "kernel/boot_proto_descriptor.h" /* kernel_boot_proto identity check */
+#include "kernel/tpm_replay.h"            /* TPM_REPLAY_* verdicts */
+#include "kernel/tpm_baseline.h"          /* TPM_BASELINE_* status and cause */
+#include "kernel/crypto/sha256.h"
+#include "boot/pcr_manifest.h"            /* the loader's PCR-11 manifest event */
 #include "libc/string.h"
 
 extern const struct boot_proto_descriptor kernel_boot_proto;
@@ -63,6 +67,20 @@ static void test_attest_handoff_capture(void)
     TEST_ASSERT_EQ(h.boot_reason, 7u, "boot_reason copied");
     TEST_ASSERT_EQ(h.boot_source_flags, 0xF0u, "boot_source_flags copied");
     TEST_ASSERT_EQ(h.boot_fallback_depth, 2u, "boot_fallback_depth copied");
+    TEST_ASSERT_EQ((uint32_t)h.loader_identity_valid, 0u,
+                   "all-zero git_sha is the loader-did-not-populate sentinel");
+
+    /* The loader build identity is part of the handoff triple and is copied
+     * verbatim, so the report never re-reads the live struct for it. */
+    TEST_BOOT_INFO.loader_identity.git_sha[19]     = 0x5Au;
+    TEST_BOOT_INFO.loader_identity.build_unix_time = 1789000000ull;
+    memcpy(TEST_BOOT_INFO.loader_identity.build_label, "v1.2-dirty", 11);
+    tpm_attest_handoff_capture(&TEST_BOOT_INFO, &h);
+    TEST_ASSERT_EQ((uint32_t)h.loader_identity_valid, 1u, "populated identity is valid");
+    TEST_ASSERT_EQ((uint32_t)h.loader_identity.git_sha[19], 0x5Au, "git_sha copied");
+    TEST_ASSERT(h.loader_identity.build_unix_time == 1789000000ull, "build time copied");
+    TEST_ASSERT_EQ(memcmp(h.loader_identity.build_label, "v1.2-dirty", 11), 0,
+                   "build label copied");
 
     /* The load-bearing property: the snapshot is a COPY. A later kernel refinement
      * of the live boot_info (e.g. boot_caps_mark_present) must NOT change what the
@@ -216,7 +234,7 @@ static void test_attest_report_json(void)
     TEST_ASSERT(s_json_len < sizeof s_json_buf, "json within buffer");
 
     /* Well-formed envelope. */
-    TEST_ASSERT_EQ(memcmp(s_json_buf, "{\"schemaVersion\":2,", 19), 0, "json header prefix");
+    TEST_ASSERT_EQ(memcmp(s_json_buf, "{\"schemaVersion\":3,", 19), 0, "json header prefix");
     TEST_ASSERT_EQ((uint32_t)s_json_buf[s_json_len - 1u], (uint32_t)'\n', "trailing newline");
     TEST_ASSERT_EQ((uint32_t)s_json_buf[s_json_len - 2u], (uint32_t)'}', "closes top object");
 
@@ -243,6 +261,225 @@ static void test_attest_report_json(void)
     TEST_ASSERT_EQ((uint32_t)s_json_len, 0u, "malformed report emits no bytes");
 }
 
+/* One synthetic EVENT2 record: a {alg, digest} list at `dig_off` and the event
+ * data at `pay_off`, both inside s_log. */
+static uint8_t s_log[256];
+
+static void mk_event(struct tpm_event *e, uint32_t pcr, uint32_t type,
+                     uint32_t dig_off, uint16_t alg, const uint8_t *digest,
+                     uint32_t pay_off, const char *payload, uint32_t pay_len)
+{
+    uint16_t dl = tpm_alg_digest_len_pub(alg);
+    memset(e, 0, sizeof *e);
+    e->pcr_index    = pcr;
+    e->event_type   = type;
+    e->digest_count = 1u;
+    e->digests_off  = dig_off;
+    e->payload_off  = pay_off;
+    e->payload_size = pay_len;
+    s_log[dig_off]      = (uint8_t)(alg & 0xFFu);
+    s_log[dig_off + 1u] = (uint8_t)(alg >> 8);
+    memcpy(s_log + dig_off + 2u, digest, dl);
+    memcpy(s_log + pay_off, payload, pay_len);
+}
+
+static void test_attest_manifest_binding(void)
+{
+    static const char name[] = TPM_PCR_MANIFEST_EVENT;
+    const uint32_t nl = (uint32_t)sizeof name - 1u;
+    uint8_t m[32], good[32], bad[32];
+    struct tpm_event ev[3];
+    struct boot_attest_handoff h;
+    uint8_t i;
+
+    for (i = 0; i < 32u; i++) m[i] = (uint8_t)(0x30u + i);
+    sha256(m, 32u, good);
+    memcpy(bad, good, 32);
+    bad[0] ^= 0x01u;
+
+    /* The real shape: an unrelated event first, then the manifest record. */
+    memset(s_log, 0, sizeof s_log);
+    mk_event(&ev[0], 4u, 0x80000003u, 0u, TPM_ALG_SHA256, bad, 34u, "other", 5u);
+    mk_event(&ev[1], TPM_PCR_MANIFEST_INDEX, TPM_PCR_MANIFEST_EVENT_TYPE,
+             40u, TPM_ALG_SHA256, good, 74u, name, nl);
+    TEST_ASSERT_EQ(tpm_attest_manifest_event_ok(s_log, sizeof s_log, ev, 2u, m), 1,
+                   "logged SHA-256(manifest) on PCR 11 binds");
+    TEST_ASSERT_EQ(tpm_attest_manifest_event_ok(s_log, sizeof s_log, ev, 1u, m), 0,
+                   "no manifest event -> not bound");
+    TEST_ASSERT_EQ(tpm_attest_manifest_event_ok(s_log, 74u + nl - 1u, ev, 2u, m), 0,
+                   "event data past the log end -> not bound");
+
+    /* A different manifest than this kernel's. */
+    m[5] ^= 0x80u;
+    TEST_ASSERT_EQ(tpm_attest_manifest_event_ok(s_log, sizeof s_log, ev, 2u, m), 0,
+                   "digest of another manifest -> not bound");
+    m[5] ^= 0x80u;
+
+    /* Wrong PCR, wrong type, the name with its NUL: none is the manifest event. */
+    ev[1].pcr_index = 12u;
+    TEST_ASSERT_EQ(tpm_attest_manifest_event_ok(s_log, sizeof s_log, ev, 2u, m), 0,
+                   "manifest event on another PCR -> not bound");
+    ev[1].pcr_index = TPM_PCR_MANIFEST_INDEX;
+    ev[1].event_type = 0x0Eu;
+    TEST_ASSERT_EQ(tpm_attest_manifest_event_ok(s_log, sizeof s_log, ev, 2u, m), 0,
+                   "manifest name under another event type -> not bound");
+    ev[1].event_type = TPM_PCR_MANIFEST_EVENT_TYPE;
+    ev[1].payload_size = nl + 1u;
+    TEST_ASSERT_EQ(tpm_attest_manifest_event_ok(s_log, sizeof s_log, ev, 2u, m), 0,
+                   "name plus a trailing byte is a different name");
+    ev[1].payload_size = nl;
+
+    /* A second manifest record with another digest voids the first. */
+    mk_event(&ev[2], TPM_PCR_MANIFEST_INDEX, TPM_PCR_MANIFEST_EVENT_TYPE,
+             120u, TPM_ALG_SHA256, bad, 154u, name, nl);
+    TEST_ASSERT_EQ(tpm_attest_manifest_event_ok(s_log, sizeof s_log, ev, 3u, m), 0,
+                   "two disagreeing manifest records -> not bound");
+
+    /* A SHA-1-only record has no SHA-256 digest to check. */
+    mk_event(&ev[2], TPM_PCR_MANIFEST_INDEX, TPM_PCR_MANIFEST_EVENT_TYPE,
+             120u, TPM_ALG_SHA1, good, 154u, name, nl);
+    TEST_ASSERT_EQ(tpm_attest_manifest_event_ok(s_log, sizeof s_log, ev, 3u, m), 0,
+                   "manifest record without a SHA-256 digest -> not bound");
+    ev[1].legacy = 1u;
+    TEST_ASSERT_EQ(tpm_attest_manifest_event_ok(s_log, sizeof s_log, ev, 2u, m), 0,
+                   "legacy SHA-1 record -> not bound");
+    TEST_ASSERT_EQ(tpm_attest_manifest_event_ok(0, sizeof s_log, ev, 2u, m), 0, "NULL log");
+
+    /* The decision: the capability, the record and the replay, all three. */
+    memset(&h, 0, sizeof h);
+    h.valid = 1u;
+    h.caps_present = BOOT_CAP_MANIFEST_PCR_BOUND;
+    TEST_ASSERT_EQ((uint32_t)tpm_attest_pcr_bound_decide(&h, 1, (uint8_t)TPM_REPLAY_VERIFIED), 1u,
+                   "claimed + recorded + replayed -> bound");
+    TEST_ASSERT_EQ((uint32_t)tpm_attest_pcr_bound_decide(&h, 1, (uint8_t)TPM_REPLAY_TAMPER), 0u,
+                   "a record in a tampered log proves nothing");
+    TEST_ASSERT_EQ((uint32_t)tpm_attest_pcr_bound_decide(&h, 1, (uint8_t)TPM_REPLAY_UNVERIFIABLE), 0u,
+                   "an unreplayed log proves nothing");
+    TEST_ASSERT_EQ((uint32_t)tpm_attest_pcr_bound_decide(&h, 0, (uint8_t)TPM_REPLAY_VERIFIED), 0u,
+                   "claim without the record -> not bound");
+    h.caps_present = 0u;
+    h.caps_degraded = BOOT_CAP_MANIFEST_PCR_BOUND;
+    TEST_ASSERT_EQ((uint32_t)tpm_attest_pcr_bound_decide(&h, 1, (uint8_t)TPM_REPLAY_VERIFIED), 0u,
+                   "record without the loader's claim -> not bound");
+    h.caps_present = BOOT_CAP_MANIFEST_PCR_BOUND;
+    h.valid = 0u;
+    TEST_ASSERT_EQ((uint32_t)tpm_attest_pcr_bound_decide(&h, 1, (uint8_t)TPM_REPLAY_VERIFIED), 0u,
+                   "invalid handoff -> not bound");
+    TEST_ASSERT_EQ((uint32_t)tpm_attest_pcr_bound_decide(0, 1, (uint8_t)TPM_REPLAY_VERIFIED), 0u,
+                   "NULL handoff -> not bound");
+}
+
+static void json_render(void)
+{
+    s_json_len = 0u;
+    memset(s_json_buf, 0, sizeof s_json_buf);
+    TEST_ASSERT_EQ(tpm_attest_report_to_json(&s_report, json_mem_writer, 0), 0, "serialize ok");
+}
+
+/* The scoped verdict as a relying party reads it, one case per class. */
+static void test_attest_report_scoped_verdict(void)
+{
+    struct boot_proto_descriptor bad;
+    tpm_attest_status_t st;
+
+    st = tpm_attest_report_build(0, 0, &s_report);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)TPM_ATTEST_OK, "self-test report builds");
+    TEST_ASSERT_EQ((uint32_t)s_report.manifest_valid, 1u, "own identity validates");
+    TEST_ASSERT_EQ((uint32_t)s_report.kernel_image_measured, 0u,
+                   "no kernel image digest is claimed");
+    TEST_ASSERT(s_report.integrity_label != 0 && s_report.integrity_scope != 0,
+                "label and scope are filled from the published verdict");
+
+    /* Baseline-verified. */
+    s_report.overall_status = (uint8_t)BOOT_INTEGRITY_VERIFIED;
+    s_report.failure_class = (uint8_t)BOOT_INTEGRITY_CLASS_NONE;
+    s_report.baseline_status = (uint8_t)TPM_BASELINE_OK;
+    s_report.integrity_label = "baseline-verified";
+    json_render();
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"label\":\"baseline-verified\""),
+                "verified label");
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len,
+                             "\"failureClass\":\"none\",\"baselineStatus\":0,\"cause\":null,\"causePcr\":null"),
+                "verified carries no cause");
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"kernelImageMeasured\":false"),
+                "image-measured flag is explicit");
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"manifest\":{\"sha256\":\""),
+                "manifest identity present");
+
+    /* Field mismatch with its PCR. */
+    s_report.overall_status = (uint8_t)BOOT_INTEGRITY_MISMATCH;
+    s_report.failure_class = (uint8_t)BOOT_INTEGRITY_CLASS_BASELINE_FIELD;
+    s_report.mismatch_cause = (uint8_t)TPM_BASELINE_CAUSE_PCR_DIGEST;
+    s_report.mismatch_pcr = 7u;
+    s_report.mismatch_pcr_valid = 1u;
+    json_render();
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len,
+                             "\"failureClass\":\"baseline-field\",\"baselineStatus\":0,"
+                             "\"cause\":\"pcr-digest\",\"causePcr\":7"),
+                "field mismatch names the field and the PCR");
+
+    /* Stored-baseline failure: the class, no field cause. */
+    s_report.failure_class = (uint8_t)BOOT_INTEGRITY_CLASS_STORED_BASELINE;
+    s_report.baseline_status = (uint8_t)TPM_BASELINE_TORN;
+    json_render();
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len,
+                             "\"failureClass\":\"stored-baseline\",\"baselineStatus\":8,"
+                             "\"cause\":null,\"causePcr\":null"),
+                "blob failure carries the class and no field cause");
+
+    /* Replay tamper. */
+    s_report.failure_class = (uint8_t)BOOT_INTEGRITY_CLASS_REPLAY_TAMPER;
+    json_render();
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"failureClass\":\"event-log-tamper\""),
+                "tamper class");
+
+    /* Nothing published yet. */
+    s_report.overall_status = (uint8_t)BOOT_INTEGRITY_NO_BASELINE;
+    s_report.failure_class = (uint8_t)BOOT_INTEGRITY_CLASS_NONE;
+    s_report.baseline_status = (uint8_t)BOOT_INTEGRITY_BS_UNPUBLISHED;
+    json_render();
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len,
+                             "\"baselineStatus\":null,\"cause\":null,\"causePcr\":null"),
+                "unpublished status renders null, not 0 (OK)");
+
+    /* Loader text is escaped: a quote, a backslash and a control byte. */
+    s_report.loader_identity_valid = 1u;
+    memset(s_report.loader_identity.build_label, 0, sizeof s_report.loader_identity.build_label);
+    memcpy(s_report.loader_identity.build_label, "a\"b\\c\x01", 6);
+    json_render();
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"buildLabel\":\"a\\\"b\\\\c\\u0001\""),
+                "build label JSON-escaped");
+    /* An unterminated 24-byte label stops at the field, never past it. */
+    memset(s_report.loader_identity.build_label, 'x', sizeof s_report.loader_identity.build_label);
+    json_render();
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len,
+                             "\"buildLabel\":\"xxxxxxxxxxxxxxxxxxxxxxxx\"}"),
+                "unterminated label bounded at 24 bytes");
+
+    /* Class 3 through the real builder: a corrupt own descriptor yields a
+     * diagnostic report, never an empty one and never one with trust fields. */
+    memcpy(&bad, &kernel_boot_proto, sizeof bad);
+    bad.magic ^= 0xFFFFFFFFu;
+    st = tpm_attest_report_build_from(&bad, 0, 0, &s_report);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)TPM_ATTEST_SELF_CORRUPT, "corrupt identity -> SELF_CORRUPT");
+    TEST_ASSERT_EQ((uint32_t)s_report.valid, 0u, "diagnostic report is not valid evidence");
+    TEST_ASSERT_EQ((uint32_t)s_report.manifest_valid, 0u, "identity marked invalid");
+    TEST_ASSERT_EQ((uint32_t)s_report.failure_class, (uint32_t)BOOT_INTEGRITY_CLASS_SELF_IDENTITY,
+                   "class is self-identity");
+    TEST_ASSERT_EQ((uint32_t)s_report.pcr_bound, 0u, "no binding claimed");
+    json_render();
+    TEST_ASSERT_EQ(memcmp(s_json_buf, "{\"schemaVersion\":3,\"valid\":0,\"diagnostic\":true,", 47), 0,
+                   "diagnostic envelope");
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"failureClass\":\"self-identity\""),
+                "diagnostic names the class");
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"handoff\":{"), "diagnostic keeps the handoff");
+    TEST_ASSERT(!buf_contains(s_json_buf, s_json_len, "\"quote\""), "diagnostic emits no quote");
+    TEST_ASSERT(!buf_contains(s_json_buf, s_json_len, "\"ak\""), "diagnostic emits no AK");
+    TEST_ASSERT(!buf_contains(s_json_buf, s_json_len, "\"sha256\""), "diagnostic emits no identity digest");
+    TEST_ASSERT_EQ(tpm_attest_report_build_from(0, 0, 0, &s_report), TPM_ATTEST_SELF_CORRUPT,
+                   "NULL descriptor -> SELF_CORRUPT");
+}
+
 void test_register_tpm_attest_report(void)
 {
     test_suite_register_cat("tpm: attest handoff snapshot capture",
@@ -251,4 +488,8 @@ void test_register_tpm_attest_report(void)
                             test_attest_report_build, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: attest report json export",
                             test_attest_report_json, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: attest manifest PCR binding",
+                            test_attest_manifest_binding, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: attest report scoped verdict",
+                            test_attest_report_scoped_verdict, TEST_CAT_SECURITY);
 }

@@ -236,7 +236,42 @@ struct boot_integrity_report {
     uint8_t  replay_verdict;           /* tpm_replay_verdict_t from the Phase-1 replay-vs-
                                         * hardware check (VERIFIED/TAMPER/UNVERIFIABLE);
                                         * event-log integrity, distinct from baseline */
+    /* Failure provenance, published in the SAME snapshot as the verdict it
+     * explains (tpm_integrity_publish_baseline), so a reader can never pair a
+     * fresh verdict with a stale cause. Read through tpm_integrity_failure_class,
+     * never by branching on baseline_status alone. */
+    uint8_t  baseline_status;          /* tpm_baseline_status_t of the last baseline
+                                        * publication; BOOT_INTEGRITY_BS_UNPUBLISHED
+                                        * until one lands */
+    uint8_t  mismatch_cause;           /* tpm_baseline_cause_t; NONE unless the
+                                        * baseline compared and found a field */
+    uint8_t  mismatch_pcr;             /* PCR of a PCR-digest/absent cause */
+    uint8_t  mismatch_pcr_valid;       /* 1 when mismatch_pcr is meaningful */
 };
+
+/* baseline_status before any baseline verdict was published (Phase 0). */
+#define BOOT_INTEGRITY_BS_UNPUBLISHED  0xFFu
+
+/* WHICH of the four MISMATCH classes (see BOOT_INTEGRITY_MISMATCH above) a
+ * report carries. NONE whenever the overall status is not MISMATCH. UNKNOWN is a
+ * MISMATCH whose producer recorded no classifiable provenance: it never reads as
+ * one of the named classes. */
+#define BOOT_INTEGRITY_CLASS_NONE            0u
+#define BOOT_INTEGRITY_CLASS_BASELINE_FIELD  1u  /* live state differs from the enrolled baseline */
+#define BOOT_INTEGRITY_CLASS_STORED_BASELINE 2u  /* the stored baseline failed its own checks */
+#define BOOT_INTEGRITY_CLASS_SELF_IDENTITY   3u  /* this kernel's own identity failed validation */
+#define BOOT_INTEGRITY_CLASS_REPLAY_TAMPER   4u  /* the event log does not replay to the hardware PCRs */
+#define BOOT_INTEGRITY_CLASS_UNKNOWN         5u
+
+struct tpm_baseline_mismatch;
+
+/* Classify `r` into a BOOT_INTEGRITY_CLASS_*. Replay tamper outranks every
+ * baseline class, matching tpm_integrity_status_label. Pure; NULL -> NONE. */
+uint8_t tpm_integrity_failure_class(const struct boot_integrity_report *r);
+
+/* Stable one-word name for a BOOT_INTEGRITY_CLASS_* ("none", "baseline-field",
+ * "stored-baseline", "self-identity", "event-log-tamper", "unknown"). Pure. */
+const char *tpm_integrity_failure_class_label(uint8_t cls);
 
 /* Assemble the FIRST boot-integrity snapshot from already-sampled inputs. PURE
  * -- no UEFI calls, no TPM, no logging, no locking, no publication -- so the
@@ -423,9 +458,17 @@ void tpm_integrity_set_replay_verdict(uint8_t verdict);
  * those PCRs is itself VERIFIED. A partial, truncated, oversized, absent, or
  * non-verified detail set downgrades the published verdict to UNKNOWN rather
  * than asserting a match the report cannot back. Other verdicts pass through
- * unchanged -- they assert nothing that needs backing. */
+ * unchanged -- they assert nothing that needs backing.
+ *
+ * PROVENANCE travels in the same publication: `baseline_status` is the
+ * tpm_baseline_status_t that produced the verdict, and `cause` (may be NULL) the
+ * first differing field. The cause is recorded only for a compared MISMATCH
+ * (baseline_status TPM_BASELINE_OK); every other publication clears it, so a
+ * later verdict can never inherit an earlier boot path's cause. */
 void tpm_integrity_publish_baseline(uint8_t status,
-                                    const uint8_t *pcr_status, uint8_t n);
+                                    const uint8_t *pcr_status, uint8_t n,
+                                    uint8_t baseline_status,
+                                    const struct tpm_baseline_mismatch *cause);
 
 #ifdef KERNEL_TESTS
 /* Republish an exact snapshot (kernel unit tests only), so a test can restore

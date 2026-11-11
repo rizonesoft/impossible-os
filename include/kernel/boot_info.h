@@ -1135,7 +1135,8 @@ const char *boot_media_role_name(uint32_t role);
     X(MEDIA_ROLE,           5)  /* boot_device classification + removable-media flags */    \
     X(NETWORK_PROVENANCE,   6)  /* reserved for network-boot provenance */                  \
     X(RESUME_METADATA,      7)  /* reserved for hibernation/resume handoff */               \
-    X(ALT_PROTOCOL_ADAPTER, 8)  /* 1 = non-native-UEFI adapter (Multiboot2/etc.) */
+    X(ALT_PROTOCOL_ADAPTER, 8)  /* 1 = non-native-UEFI adapter (Multiboot2/etc.) */ \
+    X(MANIFEST_PCR_BOUND,  10)  /* loader extended PCR 11 with the .bootproto manifest */
 
 /* Generate the BOOT_CAP_* mask constants from BOOT_CAP_LIST. Values
  * fit in `int` for all current entries; widening to uint64_t at use

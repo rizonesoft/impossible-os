@@ -190,7 +190,8 @@ static void test_boot_caps_mask_known_is_stable(void)
         BOOT_CAP_MEDIA_ROLE          |
         BOOT_CAP_NETWORK_PROVENANCE  |
         BOOT_CAP_RESUME_METADATA     |
-        BOOT_CAP_ALT_PROTOCOL_ADAPTER;
+        BOOT_CAP_ALT_PROTOCOL_ADAPTER |
+        BOOT_CAP_MANIFEST_PCR_BOUND;
     TEST_ASSERT_EQ((uint64_t)BOOT_CAP_MASK_KNOWN, expected, "BOOT_CAP_MASK_KNOWN coverage");
 }
 

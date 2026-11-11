@@ -55,15 +55,16 @@ for future runtime measurements).
 ## Producer/consumer drift guard
 
 The manifest event index + name (`TPM_PCR_MANIFEST_INDEX` = 11,
-`TPM_PCR_MANIFEST_EVENT` = `IMPOSSIBLE_OS_KERNEL_ABI_MANIFEST`) are defined ONCE
+`TPM_PCR_MANIFEST_EVENT` = `IMPOSSIBLE_OS_KERNEL_ABI_MANIFEST`, event type
+`TPM_PCR_MANIFEST_EVENT_TYPE` = EV_IPL) are defined ONCE
 in the dependency-free [`include/boot/pcr_manifest.h`](../../include/boot/pcr_manifest.h)
 (no `kernel/types.h` or other include), so the freestanding UEFI bootloader
 producer and the kernel allocation table both consume the exact same values.
-`include/kernel/tpm_pcr_alloc.h` includes it; the bootloader pre-jump manifest
-extend MUST include it too (rather than hard-coding 11 / the event string), with
-a build-time drift check. That producer-side wire-up is owned by the bootloader
-manifest-extend work (TODO-13 attestation export section); this table is the
-authoritative definition it must match.
+`include/kernel/tpm_pcr_alloc.h` includes it, and so does the bootloader's
+pre-jump extend, `measure_manifest_pcr()` in `src/boot/uefi/bootx64.c`, so
+neither side hard-codes 11, the type or the event string. The kernel's
+`tpm_attest_manifest_event_ok()` checks the logged record against the same
+definitions.
 
 ## Conventions referenced
 

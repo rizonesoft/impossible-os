@@ -18,6 +18,9 @@
 #include "kernel/fs/vfs.h"               /* X:\Diag\attestation.json export */
 #include "kernel/mm/heap.h"              /* kmalloc/kfree the ~2.3 KB report */
 #include "kernel/klog.h"                 /* best-effort export logging */
+#include "kernel/tpm_replay.h"           /* tpm_event_bank_digest, TPM_REPLAY_VERIFIED */
+#include "kernel/tpm_baseline.h"         /* tpm_baseline_cause_label */
+#include "boot/pcr_manifest.h"           /* the PCR-11 manifest event the loader extends */
 
 /* The exported manifest field is filled by boot_proto_abi_digest(), which
  * writes exactly BOOT_PROTO_ABI_DIGEST_LEN bytes. Pinning the two together
@@ -60,7 +63,73 @@ void tpm_attest_handoff_capture(const struct boot_info *bi,
     out->boot_reason         = bi->boot_reason;
     out->boot_source_flags   = bi->boot_source_flags;
     out->boot_fallback_depth = bi->boot_fallback_depth;
+    memcpy(&out->loader_identity, &bi->loader_identity, sizeof out->loader_identity);
+    {
+        uint32_t k;
+        for (k = 0; k < sizeof out->loader_identity.git_sha; k++)
+            if (out->loader_identity.git_sha[k] != 0u) {
+                out->loader_identity_valid = 1u;
+                break;
+            }
+    }
     out->valid               = 1u;
+}
+
+/* ----------------------------------------------------------------------------
+ * Manifest PCR binding.
+ * ------------------------------------------------------------------------- */
+
+static int manifest_event_named(const uint8_t *log, uint32_t log_size,
+                                const struct tpm_event *e)
+{
+    static const char name[] = TPM_PCR_MANIFEST_EVENT;
+    const uint32_t nlen = (uint32_t)sizeof name - 1u;
+    if (e->pcr_index != TPM_PCR_MANIFEST_INDEX ||
+        e->event_type != TPM_PCR_MANIFEST_EVENT_TYPE ||
+        e->payload_size != nlen)
+        return 0;
+    if (e->payload_off > log_size || log_size - e->payload_off < nlen)
+        return 0;
+    return memcmp(log + e->payload_off, name, nlen) == 0;
+}
+
+int tpm_attest_manifest_event_ok(const uint8_t *log, uint32_t log_size,
+                                 const struct tpm_event *ev, uint32_t count,
+                                 const uint8_t manifest_sha256[32])
+{
+    uint8_t want[SHA256_DIGEST_LEN];
+    uint32_t i;
+    int matched = 0;
+
+    if (!log || !ev || !manifest_sha256 || count == 0u)
+        return 0;
+    /* The loader hands firmware the 32 manifest bytes as DataToHash, so the
+     * logged SHA-256 digest is SHA-256 of those bytes. */
+    sha256(manifest_sha256, 32u, want);
+    for (i = 0; i < count; i++) {
+        const uint8_t *d = 0;
+        if (!manifest_event_named(log, log_size, &ev[i]))
+            continue;
+        if (tpm_event_bank_digest(log, log_size, &ev[i], TPM_ALG_SHA256, &d) !=
+                SHA256_DIGEST_LEN || !d)
+            return 0;   /* a manifest event without a SHA-256 digest proves nothing */
+        if (memcmp(d, want, SHA256_DIGEST_LEN) != 0)
+            return 0;   /* a second, different manifest measurement voids the claim */
+        matched = 1;
+    }
+    return matched;
+}
+
+uint8_t tpm_attest_pcr_bound_decide(const struct boot_attest_handoff *h,
+                                    int event_ok, uint8_t replay_verdict)
+{
+    if (!h || !h->valid)
+        return 0u;
+    if (!(h->caps_present & (uint64_t)BOOT_CAP_MANIFEST_PCR_BOUND))
+        return 0u;
+    /* A matching log record is evidence only when the log replays to the
+     * hardware PCRs, which is what makes it the value PCR 11 actually holds. */
+    return (event_ok && replay_verdict == (uint8_t)TPM_REPLAY_VERIFIED) ? 1u : 0u;
 }
 
 /* The one canonical Phase-0 handoff snapshot. Written ONCE on the BSP at Phase 0
@@ -127,6 +196,13 @@ static uint8_t report_pcr_coherence(const struct boot_attestation_report *out)
 tpm_attest_status_t tpm_attest_report_build(const uint8_t *nonce, uint16_t nonce_len,
                                             struct boot_attestation_report *out)
 {
+    return tpm_attest_report_build_from(&kernel_boot_proto, nonce, nonce_len, out);
+}
+
+tpm_attest_status_t tpm_attest_report_build_from(const struct boot_proto_descriptor *desc,
+                                                 const uint8_t *nonce, uint16_t nonce_len,
+                                                 struct boot_attestation_report *out)
+{
     const struct boot_attest_handoff *h;
     struct boot_integrity_report ir;
     uint32_t qmask;
@@ -150,7 +226,7 @@ tpm_attest_status_t tpm_attest_report_build(const uint8_t *nonce, uint16_t nonce
     out->schema_version          = ATTEST_REPORT_SCHEMA_VERSION;
     out->quoted_bank_alg         = TPM_ALG_SHA256;
     out->pcr_coherence           = ATTEST_COHERENCE_NA;
-    out->pcr_bound               = 0u;   /* gates on BOOT_CAP_MANIFEST_PCR_BOUND once that cap-bit ships */
+    out->pcr_bound               = 0u;   /* proved below by tpm_attest_pcr_bound_decide */
     out->drtm_entry_pcr          = 0xFFu;/* none: native BOOTX64 issues no SENTER/SKINIT */
     out->ak_credential_status    = ATTEST_TRUST_UNVERIFIED;
     out->qualified_signer_status = ATTEST_TRUST_UNVERIFIED;
@@ -167,10 +243,13 @@ tpm_attest_status_t tpm_attest_report_build(const uint8_t *nonce, uint16_t nonce
      * all-zero) identity as a VALID manifest. On failure the report carries no
      * manifest identity and is marked invalid rather than shipping zeros that a
      * verifier could mistake for a real digest. */
-    if (!boot_proto_abi_digest(out->manifest_sha256))
-        return TPM_ATTEST_SELF_CORRUPT;
-    out->manifest_version     = kernel_boot_proto.version;
-    out->manifest_struct_size = kernel_boot_proto.struct_size;
+    out->manifest_valid = (desc && boot_proto_abi_digest_from(desc, out->manifest_sha256)) ? 1u : 0u;
+    if (out->manifest_valid) {
+        out->manifest_version     = desc->version;
+        out->manifest_struct_size = desc->struct_size;
+    } else {
+        memset(out->manifest_sha256, 0, sizeof out->manifest_sha256);
+    }
 
     /* (2) Handoff provenance: the immutable Phase-0 snapshot, never live g_boot_info. */
     h = tpm_attest_handoff_get();
@@ -182,6 +261,8 @@ tpm_attest_status_t tpm_attest_report_build(const uint8_t *nonce, uint16_t nonce
     out->boot_reason         = h->boot_reason;
     out->boot_source_flags   = h->boot_source_flags;
     out->boot_fallback_depth = h->boot_fallback_depth;
+    out->loader_identity_valid = h->loader_identity_valid;
+    memcpy(&out->loader_identity, &h->loader_identity, sizeof out->loader_identity);
 
     /* (3) Integrity verdict. Copied out under the report's publication lock, so
      * these six fields all come from the SAME snapshot -- a field-by-field read
@@ -195,6 +276,33 @@ tpm_attest_status_t tpm_attest_report_build(const uint8_t *nonce, uint16_t nonce
     out->secure_boot       = ir.secure_boot;
     out->secure_boot_valid = ir.secure_boot_valid;
     out->event_count       = ir.event_count;
+    out->baseline_status    = ir.baseline_status;
+    out->mismatch_cause     = ir.mismatch_cause;
+    out->mismatch_pcr       = ir.mismatch_pcr;
+    out->mismatch_pcr_valid = ir.mismatch_pcr_valid;
+    out->failure_class      = tpm_integrity_failure_class(&ir);
+    out->integrity_label    = tpm_integrity_status_label(&ir);
+    out->integrity_scope    = tpm_integrity_status_scope(&ir);
+    out->kernel_image_measured = 0u;   /* nothing measures the kernel IMAGE (tpm.h) */
+
+    /* A corrupt own identity outranks whatever the published verdict says: the
+     * report becomes diagnostic only. No nonce is echoed and no TPM evidence is
+     * gathered, because a report that cannot name the kernel it describes must
+     * not carry a signature a verifier could accept. */
+    if (!out->manifest_valid) {
+        out->failure_class = BOOT_INTEGRITY_CLASS_SELF_IDENTITY;
+        return TPM_ATTEST_SELF_CORRUPT;
+    }
+
+    /* (3b) Manifest PCR binding: claimed by the loader, proved here. */
+    {
+        uint32_t ne = tpm_event_count();
+        const struct tpm_event *ev = ne ? tpm_event_get(0) : 0;
+        int ok = tpm_attest_manifest_event_ok((const uint8_t *)g_boot_info.tpm_event_log,
+                                              g_boot_info.tpm_event_log_size,
+                                              ev, ne, out->manifest_sha256);
+        out->pcr_bound = tpm_attest_pcr_bound_decide(h, ok, ir.replay_verdict);
+    }
 
     /* (4) Verifier nonce: exact copy (validated MIN..MAX above; no truncation). */
     if (!self_test) {
@@ -354,6 +462,97 @@ static void sink_u64hex(struct rpt_sink *s, uint64_t v)
     sink_lit(s, "\"");
 }
 
+/* A JSON string literal, quotes included, from at most `max` bytes of `str`
+ * (stopping at NUL). Escapes the quote, the backslash and every control or
+ * non-ASCII byte as \u00XX, so firmware- or loader-supplied text cannot break
+ * the document. NULL renders the JSON literal null. */
+static void sink_jstr(struct rpt_sink *s, const char *str, uint32_t max)
+{
+    static const char hx[] = "0123456789abcdef";
+    uint32_t i;
+    if (!str) {
+        sink_lit(s, "null");
+        return;
+    }
+    sink_lit(s, "\"");
+    for (i = 0; i < max && str[i]; i++) {
+        uint8_t c = (uint8_t)str[i];
+        if (c == '"' || c == '\\') {
+            char e[2] = { '\\', (char)c };
+            sink_raw(s, e, 2u);
+        } else if (c < 0x20u || c >= 0x7Fu) {
+            char e[6] = { '\\', 'u', '0', '0', hx[c >> 4], hx[c & 0x0Fu] };
+            sink_raw(s, e, 6u);
+        } else {
+            sink_raw(s, (const char *)&str[i], 1u);
+        }
+    }
+    sink_lit(s, "\"");
+}
+
+/* The scoped integrity verdict, the loader identity and the handoff: the part a
+ * diagnostic report and a full report share. */
+static void sink_shared_blocks(struct rpt_sink *s, const struct boot_attestation_report *r)
+{
+    char chunk[RPT_CHUNK];
+    int n;
+
+    sink_lit(s, "\"integrity\":{\"label\":");
+    sink_jstr(s, r->integrity_label, 64u);
+    sink_lit(s, ",\"scope\":");
+    sink_jstr(s, r->integrity_scope, 512u);
+    sink_lit(s, ",\"failureClass\":");
+    sink_jstr(s, tpm_integrity_failure_class_label(r->failure_class), 32u);
+    if (r->baseline_status == (uint8_t)BOOT_INTEGRITY_BS_UNPUBLISHED)
+        sink_lit(s, ",\"baselineStatus\":null,\"cause\":null,\"causePcr\":null");
+    else {
+        n = snprintf(chunk, sizeof chunk, ",\"baselineStatus\":%u,\"cause\":",
+                     r->baseline_status);
+        sink_chunk(s, chunk, n);
+        if (r->failure_class == BOOT_INTEGRITY_CLASS_BASELINE_FIELD)
+            sink_jstr(s, tpm_baseline_cause_label(r->mismatch_cause), 32u);
+        else
+            sink_lit(s, "null");
+        if (r->failure_class == BOOT_INTEGRITY_CLASS_BASELINE_FIELD && r->mismatch_pcr_valid) {
+            n = snprintf(chunk, sizeof chunk, ",\"causePcr\":%u", r->mismatch_pcr);
+            sink_chunk(s, chunk, n);
+        } else {
+            sink_lit(s, ",\"causePcr\":null");
+        }
+    }
+    sink_lit(s, r->kernel_image_measured ? ",\"kernelImageMeasured\":true},"
+                                         : ",\"kernelImageMeasured\":false},");
+
+    /* Handoff provenance. */
+    n = snprintf(chunk, sizeof chunk, "\"handoff\":{\"valid\":%u,\"capsRequired\":",
+                 r->handoff_valid);
+    sink_chunk(s, chunk, n);
+    sink_u64hex(s, r->caps_required);
+    sink_lit(s, ",\"capsPresent\":");
+    sink_u64hex(s, r->caps_present);
+    sink_lit(s, ",\"capsDegraded\":");
+    sink_u64hex(s, r->caps_degraded);
+    n = snprintf(chunk, sizeof chunk,
+        ",\"bootPath\":%u,\"bootReason\":%u,\"bootSourceFlags\":%u,\"bootFallbackDepth\":%u,",
+        r->boot_path, r->boot_reason, r->boot_source_flags, r->boot_fallback_depth);
+    sink_chunk(s, chunk, n);
+    n = snprintf(chunk, sizeof chunk, "\"loader\":{\"valid\":%u,\"gitSha\":\"",
+                 r->loader_identity_valid);
+    sink_chunk(s, chunk, n);
+    if (r->loader_identity_valid)
+        sink_hex(s, r->loader_identity.git_sha, (uint32_t)sizeof r->loader_identity.git_sha);
+    n = snprintf(chunk, sizeof chunk, "\",\"buildUnixTime\":%llu,\"buildLabel\":",
+                 (unsigned long long)(r->loader_identity_valid
+                                          ? r->loader_identity.build_unix_time : 0u));
+    sink_chunk(s, chunk, n);
+    if (r->loader_identity_valid)
+        sink_jstr(s, r->loader_identity.build_label,
+                  (uint32_t)sizeof r->loader_identity.build_label);
+    else
+        sink_lit(s, "null");
+    sink_lit(s, "}},");
+}
+
 int tpm_attest_report_to_json(const struct boot_attestation_report *r,
                               attest_json_write_fn write, void *ctx)
 {
@@ -384,6 +583,21 @@ int tpm_attest_report_to_json(const struct boot_attestation_report *r,
 
     s.wr = write; s.ctx = ctx; s.woff = 0u; s.alen = 0u; s.err = 0;
 
+    /* Diagnostic report: this kernel could not validate its own identity, so
+     * no TPM evidence was gathered and no trust field may be emitted (their
+     * zero values are valid "OK" enums). */
+    if (!r->manifest_valid) {
+        n = snprintf(chunk, sizeof chunk,
+            "{\"schemaVersion\":%u,\"valid\":0,\"diagnostic\":true,"
+            "\"overallStatus\":%u,\"replayVerdict\":%u,\"manifest\":{\"valid\":0},",
+            r->schema_version, r->overall_status, r->replay_verdict);
+        sink_chunk(&s, chunk, n);
+        sink_shared_blocks(&s, r);
+        sink_lit(&s, "\"end\":true}\n");
+        sink_flush(&s);
+        return s.err ? -1 : 0;
+    }
+
     n = snprintf(chunk, sizeof chunk,
         "{\"schemaVersion\":%u,\"valid\":%u,\"tpmVersion\":%u,\"overallStatus\":%u,"
         "\"replayVerdict\":%u,\"secureBoot\":%u,\"secureBootValid\":%u,"
@@ -396,23 +610,11 @@ int tpm_attest_report_to_json(const struct boot_attestation_report *r,
     /* Kernel-image identity. */
     sink_lit(&s, "\"manifest\":{\"sha256\":\"");
     sink_hex(&s, r->manifest_sha256, (uint32_t)sizeof r->manifest_sha256);
-    n = snprintf(chunk, sizeof chunk, "\",\"version\":%u,\"structSize\":%u},",
+    n = snprintf(chunk, sizeof chunk, "\",\"valid\":1,\"version\":%u,\"structSize\":%u},",
                  r->manifest_version, r->manifest_struct_size);
     sink_chunk(&s, chunk, n);
 
-    /* Handoff provenance. */
-    n = snprintf(chunk, sizeof chunk, "\"handoff\":{\"valid\":%u,\"capsRequired\":",
-                 r->handoff_valid);
-    sink_chunk(&s, chunk, n);
-    sink_u64hex(&s, r->caps_required);
-    sink_lit(&s, ",\"capsPresent\":");
-    sink_u64hex(&s, r->caps_present);
-    sink_lit(&s, ",\"capsDegraded\":");
-    sink_u64hex(&s, r->caps_degraded);
-    n = snprintf(chunk, sizeof chunk,
-        ",\"bootPath\":%u,\"bootReason\":%u,\"bootSourceFlags\":%u,\"bootFallbackDepth\":%u},",
-        r->boot_path, r->boot_reason, r->boot_source_flags, r->boot_fallback_depth);
-    sink_chunk(&s, chunk, n);
+    sink_shared_blocks(&s, r);
 
     /* SHA-256 quoted PCR bank. */
     n = snprintf(chunk, sizeof chunk,
@@ -527,18 +729,17 @@ void tpm_attest_report_export(void)
         np = nonce;
         nl = (uint16_t)sizeof nonce;
     }
-    /* The builder's status is load-bearing, not advisory. It can now abandon the
-     * report early (SELF_CORRUPT: this kernel's own ABI identity failed
-     * validation), at which point the struct holds only the memset zeros plus a
-     * few defaults -- and zero is a VALID enum value for quote_status,
-     * ak_status and ek_status, so serializing it would publish TPM_ATTEST_OK
-     * for three trust fields that were never evaluated, under a success log.
-     * Write nothing instead: an absent artifact is honest, a confidently-wrong
-     * one is not. The file is truncated on open, so closing without writing
-     * already leaves it empty; the explicit re-truncate keeps that true even if
-     * a future edit writes a prefix before this point. */
+    /* The builder's status is load-bearing, not advisory. SELF_CORRUPT (this
+     * kernel's own ABI identity failed validation) still yields a report, a
+     * DIAGNOSTIC one: manifest_valid 0, the integrity verdict and handoff, and
+     * no TPM evidence, which the serializer renders without any trust field.
+     * That is the one case a relying party most needs to see. Every other
+     * non-OK status means the struct holds unevaluated zeros, and zero is a
+     * VALID enum value for quote_status, ak_status and ek_status, so it is
+     * written as nothing: the file is truncated on open, and the explicit
+     * re-truncate keeps that true even if a future edit writes a prefix first. */
     bs = tpm_attest_report_build(np, nl, r);
-    if (bs != TPM_ATTEST_OK) {
+    if (bs != TPM_ATTEST_OK && bs != TPM_ATTEST_SELF_CORRUPT) {
         struct vfs_node *z;
         vfs_close(f);
         kfree(r);
@@ -550,6 +751,9 @@ void tpm_attest_report_export(void)
              (uint64_t)bs);
         return;
     }
+    if (bs == TPM_ATTEST_SELF_CORRUPT)
+        klog(LOG_ERROR, "TPM",
+             "attestation export: kernel identity invalid -> diagnostic report only");
 
     rc = tpm_attest_report_to_json(r, rpt_vfs_write, f);
     vfs_close(f);

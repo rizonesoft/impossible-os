@@ -236,6 +236,7 @@ Tri-word bitmask negotiation between bootloader and kernel. `caps_required` asse
 | 6 | `NETWORK_PROVENANCE` | reserved for PXE / HTTPboot / iSCSI metadata | always `degraded` today (no network-boot producer); reserved for the future PXE adapter. |
 | 7 | `RESUME_METADATA` | reserved for hibernation / S4 resume handoff | always `degraded` today (no resume producer); reserved for the future suspend-to-disk path. |
 | 8 | `ALT_PROTOCOL_ADAPTER` | -- (informational) | `present` iff the producer is a non-native-UEFI adapter (Multiboot2 GRUB, etc.); native UEFI bootloader reports it `degraded`. Used by validator to log "adapter=alternate" vs "adapter=native-UEFI" on degraded summaries. |
+| 10 | `MANIFEST_PCR_BOUND` | -- (a claim about PCR 11) | `present` when the loader extended PCR 11 with the verified kernel `.bootproto` manifest sha256 through `EFI_TCG2_PROTOCOL.HashLogExtendEvent` (EV_IPL, event data `IMPOSSIBLE_OS_KERNEL_ABI_MANIFEST`) before the jump; `degraded` with no TCG2 protocol or a failed extend. The kernel does not trust the bit alone: the attestation report sets `pcrBound` only when the event log also carries that record with the expected digest and replays to the hardware PCRs. Bit 9 is unassigned. |
 
 ### Boot-path provenance
 

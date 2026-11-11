@@ -818,6 +818,12 @@ int tpm_integrity_build_report(struct boot_integrity_report *out,
     memset(out, 0, sizeof(*out));
     out->event_count = events;
     out->tpm_version = version;
+    /* Zero is TPM_BASELINE_OK, which would claim a baseline compare ran. */
+    out->baseline_status = (uint8_t)BOOT_INTEGRITY_BS_UNPUBLISHED;
+    /* TPM_REPLAY_VERIFIED is 0, so the memset alone would claim a replay that
+     * has not run (it runs in Phase 1, after this). Until
+     * tpm_integrity_set_replay_verdict publishes one, the log is unverified. */
+    out->replay_verdict = (uint8_t)TPM_REPLAY_UNVERIFIABLE;
 
     /* NEVER collapse an unreadable Secure Boot state into "off": secure_boot is
      * 1 only when the state is readable AND active, and secure_boot_valid
@@ -1089,6 +1095,38 @@ int tpm_integrity_render_mismatched_pcrs(const struct boot_integrity_report *r,
     return w ? 1 : 0;
 }
 
+uint8_t tpm_integrity_failure_class(const struct boot_integrity_report *r)
+{
+    if (!r)
+        return BOOT_INTEGRITY_CLASS_NONE;
+    /* Same precedence as tpm_integrity_status_label: a log that does not replay
+     * to the hardware is reported as tamper whatever the baseline said. */
+    if (r->replay_verdict == (uint8_t)TPM_REPLAY_TAMPER)
+        return BOOT_INTEGRITY_CLASS_REPLAY_TAMPER;
+    if (r->overall_status != (uint8_t)BOOT_INTEGRITY_MISMATCH)
+        return BOOT_INTEGRITY_CLASS_NONE;
+    if (r->baseline_status == (uint8_t)TPM_BASELINE_SELF_CORRUPT)
+        return BOOT_INTEGRITY_CLASS_SELF_IDENTITY;
+    if (r->baseline_status == (uint8_t)TPM_BASELINE_OK)
+        return BOOT_INTEGRITY_CLASS_BASELINE_FIELD;
+    if (r->baseline_status != (uint8_t)BOOT_INTEGRITY_BS_UNPUBLISHED &&
+        tpm_baseline_status_is_failure((tpm_baseline_status_t)r->baseline_status))
+        return BOOT_INTEGRITY_CLASS_STORED_BASELINE;
+    return BOOT_INTEGRITY_CLASS_UNKNOWN;
+}
+
+const char *tpm_integrity_failure_class_label(uint8_t cls)
+{
+    switch (cls) {
+    case BOOT_INTEGRITY_CLASS_NONE:            return "none";
+    case BOOT_INTEGRITY_CLASS_BASELINE_FIELD:  return "baseline-field";
+    case BOOT_INTEGRITY_CLASS_STORED_BASELINE: return "stored-baseline";
+    case BOOT_INTEGRITY_CLASS_SELF_IDENTITY:   return "self-identity";
+    case BOOT_INTEGRITY_CLASS_REPLAY_TAMPER:   return "event-log-tamper";
+    default:                                   return "unknown";
+    }
+}
+
 const char *tpm_integrity_status_scope(const struct boot_integrity_report *r)
 {
     if (!r || r->overall_status == BOOT_INTEGRITY_UNKNOWN)
@@ -1179,7 +1217,9 @@ void tpm_integrity_test_republish(const struct boot_integrity_report *r)
 #endif /* KERNEL_TESTS */
 
 void tpm_integrity_publish_baseline(uint8_t status,
-                                    const uint8_t *pcr_status, uint8_t n)
+                                    const uint8_t *pcr_status, uint8_t n,
+                                    uint8_t baseline_status,
+                                    const struct tpm_baseline_mismatch *cause)
 {
     struct boot_integrity_report r;
     uint64_t flags;
@@ -1187,6 +1227,19 @@ void tpm_integrity_publish_baseline(uint8_t status,
 
     spin_lock_irqsave(&s_publish_lock, &flags);
     integrity_base_locked(&r);
+
+    /* Provenance is replaced wholesale on every publication: a cause belongs to
+     * the compare that produced it, and only a compared MISMATCH has one. */
+    r.baseline_status    = baseline_status;
+    r.mismatch_cause     = (uint8_t)TPM_BASELINE_CAUSE_NONE;
+    r.mismatch_pcr       = 0u;
+    r.mismatch_pcr_valid = 0u;
+    if (cause && baseline_status == (uint8_t)TPM_BASELINE_OK &&
+        status == (uint8_t)BOOT_INTEGRITY_MISMATCH) {
+        r.mismatch_cause     = cause->cause;
+        r.mismatch_pcr_valid = cause->pcr_valid ? 1u : 0u;
+        r.mismatch_pcr       = cause->pcr_valid ? cause->pcr_index : 0u;
+    }
 
     /* Per-PCR detail is refreshed FIRST and unconditionally, so it is applied
      * even on the TAMPER path below that pins the overall verdict. Pinning the

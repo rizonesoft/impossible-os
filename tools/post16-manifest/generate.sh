@@ -155,6 +155,7 @@ POST16_REQUIRED_NAMES=(
     POST16_BL_SELF_MEASURE_OK
     POST16_BL_PCR4_CORRELATE
     POST16_BL_TPM_EVLOG
+    POST16_BL_MANIFEST_PCR
     POST16_BL_BOOT_POLICY
     POST16_BL_BOOT_POLICY_DECIDE
     POST16_BL_BOOT_POLICY_OK
@@ -174,6 +175,7 @@ POST16_REQUIRED_NAMES=(
 # Every entry needs a short reason so future maintainers know WHY it's
 # optional rather than required. Format: NAME=reason
 POST16_OPTIONAL_REASONS=(
+    "POST16_BL_MANIFEST_PCR_OK=scenario-dependent: the measurement entry code is unconditional once the .bootproto descriptor matches, but the extend needs a TPM, which no default emulated dev-host boot provides"
     "POST16_BL_TPM_EVLOG_OK=scenario-dependent: the acquisition entry code is unconditional, but a proven and copied log needs a TPM, which no default emulated dev-host boot provides"
     "POST16_BL_PCR4_LOG_MATCH=scenario-dependent: the PCR 4 correlation entry code is unconditional, but a log match needs a real TPM whose event log carries this image own load event, which no emulated dev-host boot provides"
     "POST16_BL_HL_AUTHZ=scenario-dependent: headless-authorization publish is gated on boot.conf tpm_enroll, so an ordinary boot emits nothing (the marker itself costs polled-UART time)"

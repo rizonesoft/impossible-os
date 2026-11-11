@@ -23,3 +23,8 @@
 
 /* Stable TCG event name for the kernel-ABI manifest measurement. */
 #define TPM_PCR_MANIFEST_EVENT  "IMPOSSIBLE_OS_KERNEL_ABI_MANIFEST"
+
+/* TCG event type of that measurement: EV_IPL, the type systemd-stub and GRUB use
+ * for loader-measured PCR 11 / 8 data. The event data is the name above, ASCII,
+ * with no NUL terminator. */
+#define TPM_PCR_MANIFEST_EVENT_TYPE  0x0000000Du

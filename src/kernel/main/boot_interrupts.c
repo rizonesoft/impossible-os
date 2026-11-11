@@ -811,7 +811,8 @@ void boot_phase1(void)
                      (uint64_t)bs,
                      repair ? " -- " : "",
                      repair ? repair : "");
-                tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, 0, 0);
+                tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, 0, 0,
+                                               (uint8_t)bs, 0);
             } else if (bs != TPM_BASELINE_OK) {
                 /* A NON-FAILURE that is also not success is a CONFIGURATION
                  * state -- no authority installed, or an authority installed
@@ -921,7 +922,8 @@ void boot_phase1(void)
              * record exists to catch. */
             if (bs == TPM_BASELINE_OK || bs == TPM_BASELINE_NO_BASELINE ||
                 tpm_baseline_status_is_failure(bs))
-                tpm_integrity_publish_baseline(overall, pcr_status, pcr_n);
+                tpm_integrity_publish_baseline(overall, pcr_status, pcr_n,
+                                               (uint8_t)bs, &cause);
 
             /* WHICH field stopped this boot verifying. Without it every cause
              * -- a firmware update, a Secure Boot toggle, a re-enroll needed

@@ -860,6 +860,38 @@ typedef EFI_STATUS (EFIAPI *EFI_TCG2_GET_EVENT_LOG)(
     EFI_PHYSICAL_ADDRESS *EventLogLastEntry,
     BOOLEAN *EventLogTruncated);
 
+/* EFI_TCG2_EVENT (TCG PC Client Platform EFI Protocol Specification, Family
+ * "2.0", section 6.6.5). Byte-packed in the specification: HeaderSize is 14, not
+ * 16, and firmware rejects an event whose Size disagrees. */
+#define EFI_TCG2_EVENT_HEADER_VERSION  1u
+typedef struct __attribute__((packed)) {
+    UINT32 HeaderSize;     /* sizeof(EFI_TCG2_EVENT_HEADER) */
+    UINT16 HeaderVersion;  /* EFI_TCG2_EVENT_HEADER_VERSION */
+    UINT32 PCRIndex;
+    UINT32 EventType;
+} EFI_TCG2_EVENT_HEADER;
+
+typedef struct __attribute__((packed)) {
+    UINT32                Size;     /* whole structure, Event[] included */
+    EFI_TCG2_EVENT_HEADER Header;
+    UINT8                 Event[];  /* event data written to the log */
+} EFI_TCG2_EVENT;
+
+_Static_assert(sizeof(EFI_TCG2_EVENT_HEADER) == 14, "EFI_TCG2_EVENT_HEADER is 14 packed bytes");
+_Static_assert(__builtin_offsetof(EFI_TCG2_EVENT, Header) == 4, "EFI_TCG2_EVENT.Header at 4");
+_Static_assert(__builtin_offsetof(EFI_TCG2_EVENT, Event) == 18, "EFI_TCG2_EVENT.Event at 18");
+
+/* Measures DataToHash into PCRIndex in every active bank and records the event
+ * in the log. EFI_VOLUME_FULL means the PCR WAS extended but the log entry was
+ * not written, which leaves the log unable to replay; callers treat it as a
+ * failure. */
+typedef EFI_STATUS (EFIAPI *EFI_TCG2_HASH_LOG_EXTEND_EVENT)(
+    struct EFI_TCG2_PROTOCOL *This,
+    UINT64 Flags,
+    EFI_PHYSICAL_ADDRESS DataToHash,
+    UINT64 DataToHashLen,
+    EFI_TCG2_EVENT *EfiTcgEvent);
+
 /* Sends a raw TPM2 command buffer to the TPM and returns its response. The
  * loader has no TIS/CRB transport of its own before ExitBootServices, so this
  * is the only way pre-kernel code can talk to the TPM. The block sizes are
@@ -902,7 +934,7 @@ typedef EFI_STATUS (EFIAPI *EFI_TCG2_SUBMIT_COMMAND)(
 typedef struct EFI_TCG2_PROTOCOL {
     EFI_TCG2_GET_CAPABILITY     GetCapability;
     EFI_TCG2_GET_EVENT_LOG      GetEventLog;
-    VOID                        *HashLogExtendEvent;           /* slot 2, unused */
+    EFI_TCG2_HASH_LOG_EXTEND_EVENT HashLogExtendEvent;
     EFI_TCG2_SUBMIT_COMMAND     SubmitCommand;
     VOID                        *GetActivePcrBanks;            /* slot 4, unused */
     VOID                        *SetActivePcrBanks;            /* slot 5, unused */

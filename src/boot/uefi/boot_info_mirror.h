@@ -383,6 +383,10 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, build_label) == 2
 #define BOOT_CAP_NETWORK_PROVENANCE   (1ull << 6)
 #define BOOT_CAP_RESUME_METADATA      (1ull << 7)
 #define BOOT_CAP_ALT_PROTOCOL_ADAPTER (1ull << 8)
+/* Bit 9 is unassigned. Bit 10: the loader extended PCR 11 with the kernel's
+ * .bootproto manifest sha256 (TPM_PCR_MANIFEST_* in include/boot/pcr_manifest.h)
+ * before the jump. A claim only: the kernel proves it from the event log. */
+#define BOOT_CAP_MANIFEST_PCR_BOUND   (1ull << 10)
 
 /* Boot-path provenance enums and flag bits (v8). Mirror of the
  * enum boot_path_type / boot_reason_code / BOOT_SOURCE_FLAG_* block in

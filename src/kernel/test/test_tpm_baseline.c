@@ -9,6 +9,7 @@
 #include "kernel/tpm.h"
 #include "kernel/klog.h"   /* klog_entry_t.message cap -- the guidance lines must fit */
 #include "kernel/tpm_baseline.h"
+#include "kernel/tpm_replay.h"        /* TPM_REPLAY_* verdicts */
 #include "kernel/tpm_nv.h"          /* TPM_NV_INDEX_BASELINE */
 #include "kernel/tpm_pcr_alloc.h"   /* tpm_pcr_baseline_pcrs (canonical set) */
 #include "kernel/tpm_transport.h"
@@ -654,7 +655,8 @@ static void test_integrity_publication(void)
     for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
         st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
     tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
-                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     tpm_integrity_report_copy(&b);
     TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_VERIFIED,
                    "verified verdict published");
@@ -664,7 +666,8 @@ static void test_integrity_publication(void)
 
     /* A path that never compared publishes NOT-EVALUATED per-PCR rather than
      * leaving the stale VERIFIED detail standing beside a NO_BASELINE verdict. */
-    tpm_integrity_publish_baseline(BOOT_INTEGRITY_NO_BASELINE, (const uint8_t *)0, 0u);
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_NO_BASELINE, (const uint8_t *)0, 0u,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     tpm_integrity_report_copy(&b);
     TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_NO_BASELINE,
                    "no-baseline verdict published");
@@ -679,7 +682,8 @@ static void test_integrity_publication(void)
     for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
         st[i] = (uint8_t)BOOT_INTEGRITY_MISMATCH;
     tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, st,
-                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     TEST_ASSERT_EQ(a.overall_status, (uint8_t)BOOT_INTEGRITY_NO_BASELINE,
                    "an earlier copy is unaffected by a later publication");
     tpm_integrity_report_copy(&b);
@@ -696,7 +700,8 @@ static void test_integrity_publication(void)
         uint8_t j;
         for (j = 0; j < BOOT_INTEGRITY_MAX_PCRS; j++)
             st[j] = want;
-        tpm_integrity_publish_baseline(want, st, (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+        tpm_integrity_publish_baseline(want, st, (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
         tpm_integrity_report_copy(&b);
         TEST_ASSERT_EQ(b.overall_status, want,
                        "each publication is observed whole");
@@ -720,7 +725,8 @@ static void test_integrity_publication(void)
     for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
         st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
     tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
-                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     tpm_integrity_report_copy(&b);
     TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_MISMATCH,
                    "a baseline VERIFIED never overwrites a replay TAMPER");
@@ -750,7 +756,8 @@ static void test_integrity_publication(void)
 
     for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
         st[i] = (uint8_t)BOOT_INTEGRITY_NO_TPM;
-    tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, st, 255u);
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, st, 255u,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     tpm_integrity_report_copy(&b);
     /* pcr_count is NORMALIZED at publication, so no reader can be handed a
      * count larger than pcrs[] holds -- a reader's natural
@@ -786,7 +793,8 @@ static void test_integrity_publication(void)
     for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
         st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
     tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
-                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     tpm_integrity_report_copy(&b);
     TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_MISMATCH,
                    "tamper-then-verified: the tamper verdict stands");
@@ -796,7 +804,8 @@ static void test_integrity_publication(void)
      * tamper signal was late is the failure this ordering exists to catch. */
     tpm_integrity_test_republish(&a);
     tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
-                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     tpm_integrity_report_copy(&b);
     TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_VERIFIED,
                    "control: with no tamper the baseline verdict is published");
@@ -806,7 +815,8 @@ static void test_integrity_publication(void)
                    "verified-then-tamper: the tamper verdict wins");
     /* And a later baseline verdict still cannot undo it. */
     tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
-                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     tpm_integrity_report_copy(&b);
     TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_MISMATCH,
                    "the pin holds against a repeat baseline publication");
@@ -823,7 +833,8 @@ static void test_integrity_publication(void)
      * detail falls back to NOT-EVALUATED. */
     tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH,
                                    (const uint8_t *)0,
-                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     tpm_integrity_report_copy(&b);
     for (i = 0; i < b.pcr_count; i++)
         TEST_ASSERT_EQ(b.pcrs[i].status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
@@ -833,7 +844,8 @@ static void test_integrity_publication(void)
      * rather than leaving stale values in the uncovered tail. */
     for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
         st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
-    tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, st, 4u);
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, st, 4u,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     tpm_integrity_report_copy(&b);
     for (i = 0; i < b.pcr_count; i++)
         TEST_ASSERT_EQ(b.pcrs[i].status,
@@ -862,12 +874,14 @@ static void test_integrity_publication(void)
 
     for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
         st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
-    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st, 4u);
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st, 4u,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     tpm_integrity_report_copy(&b);
     TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
                    "VERIFIED is refused when the detail does not cover every PCR");
     /* A NULL detail array cannot back a VERIFIED verdict either. */
-    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, (const uint8_t *)0, 0u);
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, (const uint8_t *)0, 0u,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     tpm_integrity_report_copy(&b);
     TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
                    "VERIFIED is refused when no detail was evaluated at all");
@@ -876,14 +890,16 @@ static void test_integrity_publication(void)
     for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
         st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
     tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
-                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     tpm_integrity_report_copy(&b);
     TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_VERIFIED,
                    "control: full VERIFIED detail publishes a VERIFIED verdict");
     /* And a single non-VERIFIED slot is enough to withhold the claim. */
     st[6] = (uint8_t)BOOT_INTEGRITY_MISMATCH;
     tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
-                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     tpm_integrity_report_copy(&b);
     TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
                    "one non-verified PCR withholds the VERIFIED verdict");
@@ -898,7 +914,8 @@ static void test_integrity_publication(void)
     for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
         st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
     tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
-                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS);
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     tpm_integrity_report_copy(&b);
     TEST_ASSERT_EQ(b.pcr_count, 0u, "control: the base really carries no slots");
     TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
@@ -916,7 +933,8 @@ static void test_integrity_publication(void)
     tpm_integrity_test_republish(&a);
     for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
         st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
-    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st, 4u);
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st, 4u,
+                                   (uint8_t)TPM_BASELINE_OK, 0);
     tpm_integrity_report_copy(&b);
     TEST_ASSERT_EQ(b.pcr_count, 4u, "control: the base really is truncated");
     TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_UNKNOWN,
@@ -980,6 +998,15 @@ static void test_integrity_build_report(void)
     TEST_ASSERT_EQ(r.overall_status, (uint8_t)BOOT_INTEGRITY_NO_TPM, "status NO_TPM");
     TEST_ASSERT_EQ(r.pcr_count, 0u, "no-TPM reports no PCRs");
     TEST_ASSERT_EQ(r.event_count, 42u, "event count is carried through");
+    /* Phase 0 runs before the replay and the baseline verify. Zero is
+     * TPM_REPLAY_VERIFIED and TPM_BASELINE_OK, so a memset-only report would
+     * claim both had run and passed. */
+    TEST_ASSERT_EQ(r.replay_verdict, (uint8_t)TPM_REPLAY_UNVERIFIABLE,
+                   "no replay has run: the log is unverified, not verified");
+    TEST_ASSERT_EQ(r.baseline_status, (uint8_t)BOOT_INTEGRITY_BS_UNPUBLISHED,
+                   "no baseline verdict has been published yet");
+    TEST_ASSERT_EQ(tpm_integrity_failure_class(&r), (uint8_t)BOOT_INTEGRITY_CLASS_NONE,
+                   "a non-MISMATCH report carries no failure class");
 
     /* A stray set with no TPM is still NO_TPM, never a PCR report. */
     TEST_ASSERT_EQ(tpm_integrity_build_report(&r, 0, 0u, 0u, 1, 1, canonical, n),
@@ -2804,6 +2831,95 @@ static void test_baseline_enroll_dispatch_routes_by_authority(void)
                    "CONTROL: a console authority still enrolls by snapshot");
 }
 
+/* Failure provenance travels with the verdict: the class and the first
+ * differing field are published in the same snapshot, a cause is kept only for
+ * a compared MISMATCH, and a later publication clears it. */
+static void test_integrity_provenance(void)
+{
+    struct boot_integrity_report saved, a, b;
+    struct tpm_baseline_mismatch c;
+    uint8_t st[BOOT_INTEGRITY_MAX_PCRS];
+    uint8_t i;
+
+    tpm_integrity_report_copy(&saved);
+    memset(&a, 0, sizeof(a));
+    a.pcr_count = (uint8_t)BOOT_INTEGRITY_MAX_PCRS;
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++) {
+        a.pcrs[i].pcr_index = (i < 8u) ? i : 11u;
+        st[i] = (uint8_t)BOOT_INTEGRITY_MISMATCH;
+    }
+    a.replay_verdict = (uint8_t)TPM_REPLAY_VERIFIED;
+    a.baseline_status = (uint8_t)BOOT_INTEGRITY_BS_UNPUBLISHED;
+    tpm_integrity_test_republish(&a);
+
+    /* Class 1: a compared field differs. The cause and its PCR are kept. */
+    c.cause = (uint8_t)TPM_BASELINE_CAUSE_PCR_DIGEST;
+    c.pcr_index = 7u;
+    c.pcr_valid = 1u;
+    c.pad = 0u;
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, st,
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                                   (uint8_t)TPM_BASELINE_OK, &c);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(tpm_integrity_failure_class(&b), (uint8_t)BOOT_INTEGRITY_CLASS_BASELINE_FIELD,
+                   "compared mismatch -> baseline-field class");
+    TEST_ASSERT_EQ(b.mismatch_cause, (uint8_t)TPM_BASELINE_CAUSE_PCR_DIGEST, "cause published");
+    TEST_ASSERT_EQ(b.mismatch_pcr, 7u, "cause PCR published");
+    TEST_ASSERT_EQ(b.mismatch_pcr_valid, 1u, "cause PCR marked valid");
+
+    /* Class 2: the stored baseline failed. A cause handed in anyway is dropped,
+     * and the previous cause does not survive. */
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, 0, 0,
+                                   (uint8_t)TPM_BASELINE_TORN, &c);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(tpm_integrity_failure_class(&b), (uint8_t)BOOT_INTEGRITY_CLASS_STORED_BASELINE,
+                   "torn record -> stored-baseline class");
+    TEST_ASSERT_EQ(b.mismatch_cause, (uint8_t)TPM_BASELINE_CAUSE_NONE,
+                   "a blob verdict carries no field cause");
+    TEST_ASSERT_EQ(b.mismatch_pcr_valid, 0u, "and no cause PCR");
+
+    /* Class 3: this kernel's own identity. Never routed with class 2. */
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, 0, 0,
+                                   (uint8_t)TPM_BASELINE_SELF_CORRUPT, 0);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(tpm_integrity_failure_class(&b), (uint8_t)BOOT_INTEGRITY_CLASS_SELF_IDENTITY,
+                   "self-corrupt -> self-identity class, not stored-baseline");
+
+    /* A MISMATCH with a non-failure status names no class it cannot prove. */
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_MISMATCH, 0, 0,
+                                   (uint8_t)TPM_BASELINE_NOAUTH, 0);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(tpm_integrity_failure_class(&b), (uint8_t)BOOT_INTEGRITY_CLASS_UNKNOWN,
+                   "unclassifiable mismatch -> unknown");
+
+    /* VERIFIED clears provenance. */
+    for (i = 0; i < BOOT_INTEGRITY_MAX_PCRS; i++)
+        st[i] = (uint8_t)BOOT_INTEGRITY_VERIFIED;
+    tpm_integrity_publish_baseline(BOOT_INTEGRITY_VERIFIED, st,
+                                   (uint8_t)BOOT_INTEGRITY_MAX_PCRS,
+                                   (uint8_t)TPM_BASELINE_OK, &c);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(b.overall_status, (uint8_t)BOOT_INTEGRITY_VERIFIED, "verified published");
+    TEST_ASSERT_EQ(tpm_integrity_failure_class(&b), (uint8_t)BOOT_INTEGRITY_CLASS_NONE,
+                   "verified -> no class");
+    TEST_ASSERT_EQ(b.mismatch_cause, (uint8_t)TPM_BASELINE_CAUSE_NONE,
+                   "verified carries no cause even when one is passed");
+
+    /* Class 4: replay tamper outranks every baseline class. */
+    tpm_integrity_set_replay_verdict((uint8_t)TPM_REPLAY_TAMPER);
+    tpm_integrity_report_copy(&b);
+    TEST_ASSERT_EQ(tpm_integrity_failure_class(&b), (uint8_t)BOOT_INTEGRITY_CLASS_REPLAY_TAMPER,
+                   "replay tamper -> event-log-tamper class");
+    TEST_ASSERT(strcmp(tpm_integrity_failure_class_label(BOOT_INTEGRITY_CLASS_REPLAY_TAMPER),
+                       "event-log-tamper") == 0, "tamper class label");
+    TEST_ASSERT(strcmp(tpm_integrity_failure_class_label(0xEEu), "unknown") == 0,
+                "out-of-range class renders unknown");
+    TEST_ASSERT_EQ(tpm_integrity_failure_class((const struct boot_integrity_report *)0),
+                   (uint8_t)BOOT_INTEGRITY_CLASS_NONE, "NULL -> none");
+
+    tpm_integrity_test_republish(&saved);
+}
+
 void test_register_tpm_baseline(void)
 {
     test_suite_register_cat("tpm: baseline finalize/validate", test_baseline_finalize_validate, TEST_CAT_SECURITY);
@@ -2830,6 +2946,8 @@ void test_register_tpm_baseline(void)
                             test_baseline_verify_detail_no_transport, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: boot-integrity report publication",
                             test_integrity_publication, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: boot-integrity failure provenance",
+                            test_integrity_provenance, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: boot-integrity initial-report builder",
                             test_integrity_build_report, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: baseline verify end-to-end match",

@@ -23,6 +23,8 @@
 
 #include "kernel/types.h"
 #include "kernel/tpm_attest.h"   /* struct tpm_quote_attest, tpm_attest_status_t, TPM_*_MAX */
+#include "kernel/boot_info.h"    /* struct boot_loader_identity, BOOT_CAP_MANIFEST_PCR_BOUND */
+#include "kernel/tpm.h"          /* struct tpm_event */
 
 struct boot_info;   /* forward decl: the capture reads the handoff fields */
 
@@ -39,7 +41,10 @@ struct boot_attest_handoff {
     uint32_t boot_source_flags;    /* BOOT_SOURCE_FLAG_* bitmask: inputs consulted */
     uint32_t boot_fallback_depth;  /* 0 = primary, N = Nth fallback */
     uint8_t  valid;                /* 1 once captured from a non-NULL boot_info */
-    uint8_t  _pad[7];
+    uint8_t  loader_identity_valid;/* 1 when the loader populated loader_identity
+                                    * (its git_sha is not the all-zero sentinel) */
+    uint8_t  _pad[6];
+    struct boot_loader_identity loader_identity;  /* bootloader build identity, copied verbatim */
 };
 
 /* Copy the handoff triple out of `bi` into `out` (pure, MMIO-free). On a NULL `bi`
@@ -81,7 +86,7 @@ const struct boot_attest_handoff *tpm_attest_handoff_get(void);
 /* Report schema version -- bump on any field add/reorder so a serialized
  * consumer can tell variants apart. v2 added the quote freshness fields
  * (echoedNonce, clock, resetCount, restartCount, safe, firmwareVersion). */
-#define ATTEST_REPORT_SCHEMA_VERSION   2u
+#define ATTEST_REPORT_SCHEMA_VERSION   3u
 
 /* Quoted PCR set == tpm_pcr_quote_mask() == PCR {0-7, 11} == 9 slots. */
 #define ATTEST_REPORT_PCR_MAX          9u
@@ -118,7 +123,9 @@ struct boot_attestation_report {
     uint8_t  replay_verdict;        /* tpm_replay_verdict_t */
     uint8_t  secure_boot;           /* 1 if SB state readable AND active */
     uint8_t  secure_boot_valid;     /* 1 if the live SB state was readable */
-    uint8_t  pcr_bound;             /* 1 once BOOT_CAP_MANIFEST_PCR_BOUND gates; 0 until that cap-bit ships */
+    uint8_t  pcr_bound;             /* 1 only when tpm_attest_manifest_bound() proved it: the loader
+                                     * advertised BOOT_CAP_MANIFEST_PCR_BOUND, the log holds the PCR-11
+                                     * manifest event with the expected digest, and the log replays */
     uint8_t  quote_present;         /* 1 if tpm2_quote succeeded */
     uint32_t event_count;           /* total measured events */
 
@@ -128,6 +135,20 @@ struct boot_attestation_report {
     uint8_t  manifest_sha256[32];   /* == BOOT_PROTO_ABI_DIGEST_LEN; asserted in tpm_attest_report.c */
     uint32_t manifest_version;      /* kernel_boot_proto.version (== BOOT_INFO_VERSION) */
     uint32_t manifest_struct_size;  /* kernel_boot_proto.struct_size */
+    uint8_t  manifest_valid;        /* 1 when the descriptor validated; 0 = this kernel's own
+                                     * identity is corrupt and the report is diagnostic only */
+
+    /* Scoped integrity verdict (schema 3): what overall_status covers, which of
+     * the four MISMATCH classes it is, and the first differing field. */
+    uint8_t  failure_class;         /* BOOT_INTEGRITY_CLASS_* */
+    uint8_t  baseline_status;       /* tpm_baseline_status_t, or BOOT_INTEGRITY_BS_UNPUBLISHED */
+    uint8_t  mismatch_cause;        /* tpm_baseline_cause_t */
+    uint8_t  mismatch_pcr;          /* meaningful only when mismatch_pcr_valid */
+    uint8_t  mismatch_pcr_valid;
+    uint8_t  kernel_image_measured; /* always 0: no kernel IMAGE digest is measured or verified */
+    uint8_t  _pad_iv;
+    const char *integrity_label;    /* tpm_integrity_status_label: static string, NULL = unset */
+    const char *integrity_scope;    /* tpm_integrity_status_scope: static string, NULL = unset */
 
     /* Handoff provenance: from the immutable Phase-0 snapshot, never live g_boot_info. */
     uint8_t  handoff_valid;         /* boot_attest_handoff.valid */
@@ -139,6 +160,9 @@ struct boot_attestation_report {
     uint32_t boot_reason;
     uint32_t boot_source_flags;
     uint32_t boot_fallback_depth;
+    uint8_t  loader_identity_valid;
+    uint8_t  _pad_li[3];
+    struct boot_loader_identity loader_identity;
 
     /* SHA-256 PCR bank: the ONLY TPM-quoted (trusted) bank. */
     uint16_t quoted_bank_alg;       /* TPM_ALG_SHA256 */
@@ -195,9 +219,39 @@ struct boot_attestation_report {
  * (valid=1, quote_present=0) -- a missing TPM is degraded, never a hard failure.
  * Returns TPM_ATTEST_BADARG on a NULL `out` OR a malformed non-NULL nonce (out of
  * the MIN..MAX range); a malformed nonce is a caller error, NOT a degraded report
- * (the report is left untouched so a bad challenge cannot masquerade as valid). */
+ * (the report is left untouched so a bad challenge cannot masquerade as valid).
+ * Returns TPM_ATTEST_SELF_CORRUPT when this kernel's own .bootproto identity
+ * fails validation: `out` then holds a DIAGNOSTIC report (valid 0,
+ * manifest_valid 0, failure_class SELF_IDENTITY, handoff + integrity verdict
+ * filled, no nonce and no TPM evidence), which the serializer renders without
+ * any trust field. */
 tpm_attest_status_t tpm_attest_report_build(const uint8_t *nonce, uint16_t nonce_len,
                                             struct boot_attestation_report *out);
+
+struct boot_proto_descriptor;
+
+/* tpm_attest_report_build over a CALLER-SUPPLIED descriptor: build() is exactly
+ * this applied to kernel_boot_proto. The seam exists so the SELF_CORRUPT
+ * diagnostic path is testable, since kernel_boot_proto is const and linked in. */
+tpm_attest_status_t tpm_attest_report_build_from(const struct boot_proto_descriptor *desc,
+                                                 const uint8_t *nonce, uint16_t nonce_len,
+                                                 struct boot_attestation_report *out);
+
+/* 1 when the parsed event log proves the loader's manifest measurement: at least
+ * one PCR-11 event of TPM_PCR_MANIFEST_EVENT_TYPE whose payload is exactly
+ * TPM_PCR_MANIFEST_EVENT, carrying a SHA-256 digest equal to
+ * SHA-256(manifest_sha256), and NO such event with any other digest. Pure and
+ * bounds-checked against `log_size` (the log is firmware-supplied). */
+int tpm_attest_manifest_event_ok(const uint8_t *log, uint32_t log_size,
+                                 const struct tpm_event *ev, uint32_t count,
+                                 const uint8_t manifest_sha256[32]);
+
+/* The report's pcr_bound: 1 only when the handoff snapshot is valid and carries
+ * BOOT_CAP_MANIFEST_PCR_BOUND, `event_ok` (tpm_attest_manifest_event_ok) holds,
+ * AND the SHA-256 replay verdict is VERIFIED, so the record is what PCR 11
+ * really holds. Any other combination is 0. Pure. */
+uint8_t tpm_attest_pcr_bound_decide(const struct boot_attest_handoff *h,
+                                    int event_ok, uint8_t replay_verdict);
 
 /* Sequential write sink for the JSON serializer: called with a monotonically
  * increasing `off` and the chunk to write there. Return 0 on success, non-zero
@@ -205,8 +259,10 @@ tpm_attest_status_t tpm_attest_report_build(const uint8_t *nonce, uint16_t nonce
  * thin adapter; a unit test can pass a memory-buffer writer instead. */
 typedef int (*attest_json_write_fn)(void *ctx, uint32_t off, const uint8_t *data, uint32_t len);
 
-/* Serialize a built report as a single JSON object via `write`. Every value is a
- * number or a hex string (no free-text), so no JSON string escaping is required.
+/* Serialize a built report as a single JSON object via `write`. Text values (the
+ * integrity label and scope, the loader build label) are JSON-escaped; the rest
+ * are numbers or hex strings. A diagnostic report (manifest_valid 0) is rendered
+ * with its identity, handoff and integrity blocks only.
  * Byte arrays (digests, signature, AK pub, EK cert) are lowercase hex. Streams in
  * bounded chunks (no full-document buffer). Returns 0 on success, -1 on a NULL
  * arg or a write-callback failure. */
