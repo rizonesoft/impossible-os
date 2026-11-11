@@ -89,7 +89,8 @@ enum tcgl_status {
     TCGL_INCOMPLETE_DIGESTS, /* a record omits a bank the log advertised */
     TCGL_DUPLICATE_ALG,   /* an algorithm declared or recorded twice */
     TCGL_NO_MATCH,        /* no image-load event for the requested device path */
-    TCGL_AMBIGUOUS        /* more than one candidate -- never guess between them */
+    TCGL_AMBIGUOUS,       /* more than one candidate -- never guess between them */
+    TCGL_MISSES_LAST      /* the record chain never starts a record at LastEntry */
 };
 
 TCGL_FN const char *tcgl_status_name(int st)
@@ -109,6 +110,7 @@ TCGL_FN const char *tcgl_status_name(int st)
     case TCGL_DUPLICATE_ALG:   return "duplicate-alg";
     case TCGL_NO_MATCH:        return "no-match";
     case TCGL_AMBIGUOUS:       return "ambiguous";
+    case TCGL_MISSES_LAST:     return "misses-last-entry";
     default:                   return "unknown";
     }
 }
@@ -302,6 +304,190 @@ TCGL_FN int tcgl_dp_equal(const unsigned char *a, unsigned long long alen,
     return 1;
 }
 
+/* One parsed TCG_PCR_EVENT2 record, as offsets into the log. */
+struct tcgl_event2 {
+    unsigned int       pcr;
+    unsigned int       type;
+    unsigned int       has_sha256;
+    unsigned long long sha256_off;   /* valid when has_sha256 */
+    unsigned long long data_off;     /* event data */
+    unsigned int       data_size;
+    unsigned long long end;          /* offset just past the record */
+};
+
+/* Parse the TCG_PCR_EVENT2 record that starts at `off`. This is the ONE place a
+ * record's stride is decided, so every walker over this log agrees on where
+ * each record ends: digests are sized from the log's advertised banks, and the
+ * record must carry exactly one digest per advertised bank (a PCR extend
+ * applies to every active bank). Accepting a subset would let a record present
+ * only the bank a caller compares against, and accepting zero digests would
+ * let a zero-filled buffer tail parse as an endless run of empty records. */
+TCGL_FN int tcgl_read_event2(const struct tcgl_log *lg, unsigned long long off,
+                             struct tcgl_event2 *ev)
+{
+    unsigned long long dpos;
+    unsigned int dcount, seen_mask = 0, d;
+
+    /* pcr(4) type(4) count(4) */
+    if (off > lg->size || (lg->size - off) < 12u)
+        return TCGL_TRUNCATED;
+    ev->pcr        = tcgl_rd32(lg->buf + off);
+    ev->type       = tcgl_rd32(lg->buf + off + 4u);
+    dcount         = tcgl_rd32(lg->buf + off + 8u);
+    ev->has_sha256 = 0;
+    ev->sha256_off = 0;
+    if (dcount > TCGL_MAX_BANKS)
+        return TCGL_TRUNCATED;
+
+    dpos = off + 12u;
+    for (d = 0; d < dcount; d++) {
+        unsigned int dsz, bi, alg;
+        if ((lg->size - dpos) < 2u)
+            return TCGL_TRUNCATED;
+        alg = tcgl_rd16(lg->buf + dpos);
+        if (!tcgl_bank_size(lg, alg, &dsz))
+            return TCGL_UNKNOWN_ALG;
+        if ((lg->size - dpos) < (unsigned long long)(2u + dsz))
+            return TCGL_TRUNCATED;
+        for (bi = 0; bi < lg->nbanks; bi++) {
+            if (lg->banks[bi].alg == alg) {
+                if (seen_mask & (1u << bi))
+                    return TCGL_DUPLICATE_ALG;
+                seen_mask |= (1u << bi);
+                break;
+            }
+        }
+        if (alg == TCGL_ALG_SHA256) {
+            ev->sha256_off = dpos + 2u;
+            ev->has_sha256 = 1;
+        }
+        dpos += 2u + dsz;
+    }
+    if (seen_mask != ((1u << lg->nbanks) - 1u))
+        return TCGL_INCOMPLETE_DIGESTS;
+
+    if ((lg->size - dpos) < 4u)
+        return TCGL_TRUNCATED;
+    ev->data_size = tcgl_rd32(lg->buf + dpos);
+    ev->data_off  = dpos + 4u;
+    if ((lg->size - ev->data_off) < (unsigned long long)ev->data_size)
+        return TCGL_TRUNCATED;
+    ev->end = ev->data_off + ev->data_size;
+    return TCGL_OK;
+}
+
+/* Prove the record chain reaches the firmware's LastEntry EXACTLY, and size the
+ * log from it. EFI_TCG2_PROTOCOL.GetEventLog() reports where the last record
+ * STARTS but not where the buffer ends, so a loader that sizes only that final
+ * record trusts LastEntry blindly: a LastEntry pointing forward past the real
+ * end, still inside the same memory descriptor, makes the copy carry every gap
+ * byte in between as if it were log. Walking from the start removes that
+ * trust: every record boundary is derived from the previous record, and the
+ * walk must START a record at `last_off` -- stepping over it is
+ * TCGL_MISSES_LAST, never a rounded answer.
+ *
+ * `lg` is a log opened with tcgl_open() over the readable extent (the caller's
+ * ceiling, not a log length). `last_off` is LastEntry minus the log base;
+ * 0 means the SpecID record is the only one. On TCGL_OK, *out_end is the byte
+ * length from the log start through the end of the LastEntry record and
+ * *out_count the number of records including the SpecID record. Termination is
+ * structural: every record is at least 16 bytes, so the walk cannot take more
+ * than size/16 steps, and TCGL_MAX_EVENTS caps it again. */
+TCGL_FN int tcgl_chain_end(const struct tcgl_log *lg, unsigned long long last_off,
+                           unsigned long long *out_end, unsigned int *out_count)
+{
+    unsigned long long off;
+    unsigned int n = 1;          /* the SpecID record */
+    struct tcgl_event2 ev;
+    int rc;
+
+    if (!lg || !lg->buf || lg->nbanks == 0u || !out_end)
+        return TCGL_BAD_HEADER;
+    *out_end = 0;
+    if (out_count)
+        *out_count = 0;
+
+    if (last_off == 0u) {
+        *out_end = lg->first_event2;
+        if (out_count)
+            *out_count = n;
+        return TCGL_OK;
+    }
+    for (off = lg->first_event2; off < last_off; off = ev.end) {
+        if (++n > TCGL_MAX_EVENTS)
+            return TCGL_TOO_MANY_EVENTS;
+        rc = tcgl_read_event2(lg, off, &ev);
+        if (rc != TCGL_OK)
+            return rc;
+    }
+    if (off != last_off)
+        return TCGL_MISSES_LAST;
+    if (++n > TCGL_MAX_EVENTS)
+        return TCGL_TOO_MANY_EVENTS;
+    rc = tcgl_read_event2(lg, off, &ev);
+    if (rc != TCGL_OK)
+        return rc;
+    *out_end = ev.end;
+    if (out_count)
+        *out_count = n;
+    return TCGL_OK;
+}
+
+/* The same proof for a TPM 1.2 (TCG_1_2 format) log, where every record is the
+ * legacy TCG_PCR_EVENT: pcr(4) type(4) sha1(20) size(4) data[size]. There is no
+ * SpecID record to validate, so this establishes only that the chain lands on
+ * `last_off`; the kernel's parse remains the authority on the records. */
+TCGL_FN int tcgl_legacy_chain_end(const unsigned char *log,
+                                  unsigned long long size,
+                                  unsigned long long last_off,
+                                  unsigned long long *out_end,
+                                  unsigned int *out_count)
+{
+    unsigned long long off = 0, end;
+    unsigned int n = 0;
+
+    if (!out_end)
+        return TCGL_BAD_HEADER;
+    *out_end = 0;
+    if (out_count)
+        *out_count = 0;
+    if (!log || size == 0u)
+        return TCGL_ABSENT;
+    for (;;) {
+        if (++n > TCGL_MAX_EVENTS)
+            return TCGL_TOO_MANY_EVENTS;
+        if (off > size || (size - off) < TCGL_LEGACY_HDR)
+            return TCGL_TRUNCATED;
+        /* An all-zero header is buffer padding, not a record: it would be
+         * PCR 0, EV_PREBOOT_CERT (never emitted by UEFI firmware), a zero
+         * digest and no data. Without this refusal a zero-filled tail parses
+         * as an endless run of 32-byte records, and a forward-bogus LastEntry
+         * aligned into that tail is "proven" with the gap copied as log. A
+         * non-zero garbage gap is beyond what a TCG_1_2 log can show without
+         * a SpecID record; the kernel parse and PCR replay own that case. */
+        {
+            unsigned int z;
+            for (z = 0; z < TCGL_LEGACY_HDR && log[off + z] == 0u; z++)
+                ;
+            if (z == TCGL_LEGACY_HDR)
+                return TCGL_BAD_HEADER;
+        }
+        end = off + TCGL_LEGACY_HDR;
+        if ((size - end) < (unsigned long long)tcgl_rd32(log + off + 28u))
+            return TCGL_TRUNCATED;
+        end += tcgl_rd32(log + off + 28u);
+        if (off == last_off)
+            break;
+        off = end;
+        if (off > last_off)
+            return TCGL_MISSES_LAST;
+    }
+    *out_end = end;
+    if (out_count)
+        *out_count = n;
+    return TCGL_OK;
+}
+
 /* Walk every EVENT2 record and find the image-load event in `pcr` whose
  * UEFI_IMAGE_LOAD_EVENT device path equals `want_dp[0 .. want_dp_len)`.
  *
@@ -320,6 +506,7 @@ TCGL_FN int tcgl_find_image_load(const struct tcgl_log *lg, unsigned int pcr,
     unsigned long long off;
     unsigned int seen = 0, found = 0, have_sha = 0;
     struct tcgl_match hit;
+    struct tcgl_event2 ev;
     unsigned int i;
 
     if (out_candidates)
@@ -334,72 +521,22 @@ TCGL_FN int tcgl_find_image_load(const struct tcgl_log *lg, unsigned int pcr,
     hit.image_base = 0; hit.image_len = 0;
     hit.devpath = (const unsigned char *)0; hit.devpath_len = 0;
 
-    for (off = lg->first_event2; off < lg->size; ) {
+    for (off = lg->first_event2; off < lg->size; off = ev.end) {
+        int rc;
         if (++seen > TCGL_MAX_EVENTS)
             return TCGL_TOO_MANY_EVENTS;
+        rc = tcgl_read_event2(lg, off, &ev);
+        if (rc != TCGL_OK)
+            return rc;
 
-        /* pcr(4) type(4) count(4) */
-        if ((lg->size - off) < 12u)
-            return TCGL_TRUNCATED;
-        unsigned int rec_pcr  = tcgl_rd32(lg->buf + off);
-        unsigned int rec_type = tcgl_rd32(lg->buf + off + 4u);
-        unsigned int dcount   = tcgl_rd32(lg->buf + off + 8u);
-        if (dcount > TCGL_MAX_BANKS)
-            return TCGL_TRUNCATED;
-
-        unsigned long long dpos = off + 12u;
-        unsigned long long sha_off = 0;
-        unsigned int rec_has_sha = 0;
-        unsigned int seen_mask = 0;
-        unsigned int d;
-        for (d = 0; d < dcount; d++) {
-            unsigned int dsz, bi;
-            if ((lg->size - dpos) < 2u)
-                return TCGL_TRUNCATED;
-            unsigned int alg = tcgl_rd16(lg->buf + dpos);
-            if (!tcgl_bank_size(lg, alg, &dsz))
-                return TCGL_UNKNOWN_ALG;
-            if ((lg->size - dpos) < (unsigned long long)(2u + dsz))
-                return TCGL_TRUNCATED;
-            /* Track WHICH advertised banks this record actually carries. A
-             * digest list is not a free-form subset: a PCR extend applies to
-             * every active bank, so a conforming record carries one digest per
-             * advertised algorithm. Accepting a subset would let a record
-             * present only the bank we happen to compare against, which is the
-             * shape that turns a partial log into an AGREE. */
-            for (bi = 0; bi < lg->nbanks; bi++) {
-                if (lg->banks[bi].alg == alg) {
-                    if (seen_mask & (1u << bi))
-                        return TCGL_DUPLICATE_ALG;
-                    seen_mask |= (1u << bi);
-                    break;
-                }
-            }
-            if (alg == TCGL_ALG_SHA256) {
-                sha_off = dpos + 2u;
-                rec_has_sha = 1;
-            }
-            dpos += 2u + dsz;
-        }
-        if (seen_mask != ((1u << lg->nbanks) - 1u))
-            return TCGL_INCOMPLETE_DIGESTS;
-
-        if ((lg->size - dpos) < 4u)
-            return TCGL_TRUNCATED;
-        unsigned int esize = tcgl_rd32(lg->buf + dpos);
-        unsigned long long epos = dpos + 4u;
-        if ((lg->size - epos) < (unsigned long long)esize)
-            return TCGL_TRUNCATED;
-
-        if (rec_type == TCGL_EV_EFI_BOOT_SERVICES_APPLICATION
-            && rec_pcr == pcr) {
+        if (ev.type == TCGL_EV_EFI_BOOT_SERVICES_APPLICATION && ev.pcr == pcr) {
             /* UEFI_IMAGE_LOAD_EVENT: ImageLocationInMemory(8)
              * ImageLengthInMemory(8) ImageLinkTimeAddress(8)
              * LengthOfDevicePath(8) DevicePath[LengthOfDevicePath]. */
-            if (esize >= 32u) {
-                const unsigned char *pl = lg->buf + epos;
+            if (ev.data_size >= 32u) {
+                const unsigned char *pl = lg->buf + ev.data_off;
                 unsigned long long dp_len = tcgl_rd64(pl + 24u);
-                if (dp_len != 0u && dp_len <= (unsigned long long)esize - 32u
+                if (dp_len != 0u && dp_len <= (unsigned long long)ev.data_size - 32u
                     && tcgl_dp_equal(pl + 32u, dp_len, want_dp, want_dp_len)) {
                     found++;
                     if (found == 1u) {
@@ -407,17 +544,15 @@ TCGL_FN int tcgl_find_image_load(const struct tcgl_log *lg, unsigned int pcr,
                         hit.image_len   = tcgl_rd64(pl + 8u);
                         hit.devpath     = pl + 32u;
                         hit.devpath_len = dp_len;
-                        have_sha = rec_has_sha;
-                        if (rec_has_sha) {
+                        have_sha = ev.has_sha256;
+                        if (ev.has_sha256) {
                             for (i = 0; i < TCGL_SHA256_LEN; i++)
-                                hit.sha256[i] = lg->buf[sha_off + i];
+                                hit.sha256[i] = lg->buf[ev.sha256_off + i];
                         }
                     }
                 }
             }
         }
-
-        off = epos + esize;
     }
 
     if (out_candidates)

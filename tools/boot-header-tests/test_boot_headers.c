@@ -516,6 +516,92 @@ static void t_refuses_unusable_records(void)
              "a record running past the buffer is refused");
 }
 
+/* A legacy TCG_PCR_EVENT record with `dsize` data bytes. */
+static unsigned int log_legacy(unsigned char *b, unsigned int off, unsigned int dsize)
+{
+    unsigned int i;
+    wr32(b + off, 4u);
+    wr32(b + off + 4u, 0x0Du);       /* EV_IPL */
+    for (i = 8u; i < 28u; i++) b[off + i] = 0x5Au;
+    wr32(b + off + 28u, dsize);
+    for (i = 0; i < dsize; i++) b[off + 32u + i] = 0x33u;
+    return off + 32u + dsize;
+}
+
+static void t_chain_reaches_last_entry(void)
+{
+    unsigned char b[LOG_CAP];
+    const unsigned int alg[1] = { TCGL_ALG_SHA256 };
+    const unsigned int sz[1]  = { 32u };
+    struct tcgl_log lg;
+    unsigned long long end = 0;
+    unsigned int r1, r2, r3, n = 0, i;
+
+    memset(b, 0, sizeof(b));
+    r1 = log_specid(b, 1u, alg, sz, 1);
+    r2 = log_image_load(b, r1, 4u, 1u, 0x10u, 0xAAu);
+    r3 = log_image_load(b, r2, 4u, 1u, 0x20u, 0xBBu);
+    i  = log_image_load(b, r3, 4u, 1u, 0x30u, 0xCCu);
+
+    /* Opened over the whole buffer: the ceiling, not the log length. */
+    check_eq(tcgl_open(b, LOG_CAP, &lg), TCGL_OK, "chain: log opens over its ceiling");
+    check_eq(tcgl_chain_end(&lg, r3, &end, &n), TCGL_OK, "chain: lands on the last record");
+    check((unsigned int)end == i, "chain: size is the end of the LastEntry record");
+    check_eq((int)n, 4, "chain: every record counted, SpecID included");
+
+    check_eq(tcgl_chain_end(&lg, 0u, &end, &n), TCGL_OK, "chain: SpecID-only log");
+    check((unsigned int)end == r1 && n == 1u, "chain: SpecID-only size and count");
+
+    /* LastEntry inside a record: the chain steps over it. */
+    check_eq(tcgl_chain_end(&lg, r2 + 4u, &end, &n), TCGL_MISSES_LAST,
+             "chain: LastEntry inside a record is refused");
+    check((unsigned int)end == 0u && n == 0u, "chain: refused walk publishes no size");
+    check_eq(tcgl_chain_end(&lg, r1 - 4u, &end, &n), TCGL_MISSES_LAST,
+             "chain: LastEntry inside the SpecID record is refused");
+
+    /* The case the walk exists for: LastEntry forward past the real end, in the
+     * zero-filled tail of the same buffer. Sizing only that record would carry
+     * the gap as log; the chain refuses to parse zeros as records because a
+     * record must carry one digest per advertised bank. */
+    check_eq(tcgl_chain_end(&lg, (unsigned long long)i + 64u, &end, &n),
+             TCGL_INCOMPLETE_DIGESTS, "chain: forward-bogus LastEntry past a zero gap refused");
+
+    /* A ceiling that cuts the final record: truncated, not rounded. */
+    check_eq(tcgl_open(b, i - 1u, &lg), TCGL_OK, "chain: short ceiling opens");
+    check_eq(tcgl_chain_end(&lg, r3, &end, &n), TCGL_TRUNCATED,
+             "chain: final record past the ceiling is refused");
+}
+
+static void t_legacy_chain_reaches_last_entry(void)
+{
+    unsigned char b[LOG_CAP];
+    unsigned long long end = 0;
+    unsigned int r1, r2, r3, n = 0;
+
+    memset(b, 0, sizeof(b));
+    r1 = log_legacy(b, 0u, 8u);
+    r2 = log_legacy(b, r1, 0u);
+    r3 = log_legacy(b, r2, 17u);
+
+    check_eq(tcgl_legacy_chain_end(b, LOG_CAP, r2, &end, &n), TCGL_OK,
+             "legacy chain: lands on the last record");
+    check((unsigned int)end == r3 && n == 3u, "legacy chain: exact size and count");
+    check_eq(tcgl_legacy_chain_end(b, LOG_CAP, 0u, &end, &n), TCGL_OK,
+             "legacy chain: one-record log");
+    check((unsigned int)end == r1 && n == 1u, "legacy chain: one-record size");
+    check_eq(tcgl_legacy_chain_end(b, LOG_CAP, r1 + 8u, &end, &n), TCGL_MISSES_LAST,
+             "legacy chain: LastEntry inside a record is refused");
+    check((unsigned int)end == 0u, "legacy chain: refused walk publishes no size");
+    check_eq(tcgl_legacy_chain_end(b, r3 - 1u, r2, &end, &n), TCGL_TRUNCATED,
+             "legacy chain: final record past the ceiling is refused");
+    /* Forward-bogus LastEntry aligned into the zero-filled tail. */
+    check_eq(tcgl_legacy_chain_end(b, LOG_CAP, r3 + 64u, &end, &n), TCGL_BAD_HEADER,
+             "legacy chain: forward-bogus LastEntry past a zero gap refused");
+    check((unsigned int)end == 0u, "legacy chain: zero gap publishes no size");
+    check_eq(tcgl_legacy_chain_end(b, 0u, 0u, &end, &n), TCGL_ABSENT,
+             "legacy chain: empty buffer is absent");
+}
+
 int main(void)
 {
     printf("boot-header-tests: pe_authenticode.h + tcg_evlog.h\n");
@@ -529,6 +615,8 @@ int main(void)
     t_finds_own_image_load_event();
     t_refuses_ambiguous_and_absent();
     t_refuses_unusable_records();
+    t_chain_reaches_last_entry();
+    t_legacy_chain_reaches_last_entry();
 
     printf("boot-header-tests: %d/%d checks passed, %d failed\n",
            g_checks - g_failures, g_checks, g_failures);

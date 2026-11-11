@@ -11557,78 +11557,6 @@ static void fill_runtime_map(EFI_MEMORY_DESCRIPTOR *mmap,
  * ============================================================================ */
 #define TPM_EVENT_LOG_MAX (32 * 1024)  /* 32 KiB max event log */
 
-/* Unaligned-safe little-endian byte loads for the firmware event-log buffer. */
-static UINT16 tpm_bl_le16(const UINT8 *p)
-{
-    return (UINT16)((UINT16)p[0] | ((UINT16)p[1] << 8));
-}
-static UINT32 tpm_bl_le32(const UINT8 *p)
-{
-    return (UINT32)p[0] | ((UINT32)p[1] << 8)
-         | ((UINT32)p[2] << 16) | ((UINT32)p[3] << 24);
-}
-
-/* TCG algorithm id -> digest length in bytes; 0 = unknown. */
-static UINT16 tpm_bl_alg_len(UINT16 alg_id)
-{
-    switch (alg_id) {
-        case 0x0004: return 20;  /* SHA-1   */
-        case 0x000B: return 32;  /* SHA-256 */
-        case 0x000C: return 48;  /* SHA-384 */
-        case 0x000D: return 64;  /* SHA-512 */
-        default:     return 0;
-    }
-}
-
-/* Compute the EXACT total event-log size by sizing the final event. The TCG2
- * protocol gives the final event's START offset but not the buffer end, so the
- * legacy code padded the copy with a 256-byte guess -- which truncates a large
- * final event (e.g. a big EV_EFI_VARIABLE db/dbx record). Parse the final
- * event's own length instead. Returns the byte length from log start through
- * the end of the final event, or 0 when it cannot be sized within `cap` (the
- * caller then degrades the capability rather than shipping a guessed copy).
- * Every read is bounded by `cap`, and reads only touch the final event's small
- * header fields (count / alg ids / data-size), all within the firmware buffer
- * when the firmware did not report truncation. */
-static UINT64 tpm_compute_log_size(const UINT8 *log, UINT64 last_off,
-                                   UINT8 tpm_ver, UINT64 cap)
-{
-    if (last_off >= cap) return 0;
-
-    if (tpm_ver == 2 && last_off != 0) {
-        /* Final entry is TCG_PCR_EVENT2: pcr(4) event_type(4)
-         * TPML_DIGEST_VALUES{ count(4) [alg(2) digest[]]* }
-         * event_data_size(4) event_data[]. */
-        UINT64 p = last_off;
-        if (p + 12ull > cap) return 0;
-        UINT32 count = tpm_bl_le32(log + p + 8ull);
-        if (count > 8u) return 0;
-        p += 12ull;
-        UINT32 c;
-        for (c = 0; c < count; c++) {
-            if (p + 2ull > cap) return 0;
-            UINT16 alg = tpm_bl_le16(log + p);
-            UINT16 dsz = tpm_bl_alg_len(alg);
-            if (dsz == 0) return 0;
-            if (p + 2ull + (UINT64)dsz > cap) return 0;
-            p += 2ull + (UINT64)dsz;
-        }
-        if (p + 4ull > cap) return 0;
-        UINT32 dsize = tpm_bl_le32(log + p);
-        p += 4ull + (UINT64)dsize;
-        if (p > cap) return 0;
-        return p;
-    }
-
-    /* Final entry is TCG_PCR_EVENT (TPM 1.2, or the lone first event):
-     * pcr(4) event_type(4) digest[20] event_data_size(4) event_data[]. */
-    if (last_off + 32ull > cap) return 0;
-    UINT32 dsize = tpm_bl_le32(log + last_off + 28ull);
-    UINT64 end = last_off + 32ull + (UINT64)dsize;
-    if (end > cap) return 0;
-    return end;
-}
-
 /* Return a hard CEILING for event-log reads: the byte count from `addr` to the end
  * of the UEFI memory-map descriptor that contains it, capped at TPM_EVENT_LOG_MAX.
  * This is a region-boundary guard, NOT a buffer-size record -- the descriptor is a
@@ -11741,31 +11669,52 @@ static void retrieve_tpm_event_log(void)
 
     /* Size the copy from the EVENT RECORDS themselves, never from a guess. The
      * TCG2 protocol gives the final event's start offset but not the buffer end or
-     * the allocation length, so the ONLY trustworthy size is the one
-     * tpm_compute_log_size() derives by parsing the final event's own length
-     * fields. The memory-map extent (cap) is a secondary hard stop on those parse
+     * the allocation length, so the ONLY trustworthy size is the one the record
+     * chain itself derives (tcgl_chain_end / tcgl_legacy_chain_end in
+     * tcg_evlog.h). The memory-map extent (cap) is a secondary hard stop on those parse
      * reads -- a firmware that reports !truncated can still place a short log pool
      * inside a larger memory descriptor, so the descriptor extent is NOT proof of
      * the buffer length, only a ceiling that keeps the parser from crossing into a
-     * different region. When the firmware reports truncation, or the final event
-     * cannot be sized within that ceiling, the true length is unknown: publish NO
+     * different region. When the firmware reports truncation, or the chain
+     * cannot be proven to LastEntry within that ceiling, the true length is unknown: publish NO
      * copied buffer (a guessed copy would read adjacent firmware memory) and degrade
      * BOOT_CAP_TPM_EVENT_LOG so the kernel skips the parse. */
     UINT64 cap = tpm_log_mmap_extent(log_location);
     UINT64 log_size = 0;
+    unsigned int chain_count = 0;
+    int chain_rc = TCGL_TRUNCATED;
     /* log_last_entry < log_location is a malformed firmware response (the final
      * entry cannot precede the buffer start); fail closed rather than sizing the
      * first record as if it were the whole log. log_last_entry == log_location is
-     * the legitimate one-record case (last_off == 0). */
+     * the legitimate one-record case (last_off == 0).
+     *
+     * The size comes from walking the WHOLE record chain from the log start
+     * and requiring it to start a record exactly at LastEntry, never from
+     * sizing the record LastEntry names: a forward-bogus LastEntry inside the
+     * same descriptor would otherwise make the copy carry the gap bytes before
+     * it as log. */
     if (cap >= 32ull && !log_truncated && log_last_entry >= log_location) {
         UINT64 last_off = log_last_entry - log_location;
-        UINT64 exact = tpm_compute_log_size((const UINT8 *)(UINTN)log_location,
-                                            last_off, tpm_ver, cap);
-        if (exact >= 32ull) log_size = exact;   /* record-derived, within the ceiling */
+        unsigned long long end = 0;
+        const unsigned char *lb = (const unsigned char *)(UINTN)log_location;
+        if (tpm_ver == 2) {
+            struct tcgl_log lg;
+            chain_rc = tcgl_open(lb, (unsigned long long)cap, &lg);
+            if (chain_rc == TCGL_OK)
+                chain_rc = tcgl_chain_end(&lg, (unsigned long long)last_off,
+                                          &end, &chain_count);
+        } else {
+            chain_rc = tcgl_legacy_chain_end(lb, (unsigned long long)cap,
+                                             (unsigned long long)last_off,
+                                             &end, &chain_count);
+        }
+        if (chain_rc == TCGL_OK && end >= 32ull)
+            log_size = (UINT64)end;   /* chain-derived, within the ceiling */
     }
     if (log_size == 0ull) {
-        serial_early_print("[WARN] TPM: event log unsizable from records; "
-                           "capability degraded, no buffer published\n");
+        serial_early_print("[WARN] TPM: event log record chain unproven (");
+        serial_early_print(tcgl_status_name(chain_rc));
+        serial_early_print("); capability degraded, no buffer published\n");
         tpm_publish_log_degraded(tpm_ver);
         return;
     }
@@ -11791,20 +11740,10 @@ static void retrieve_tpm_event_log(void)
     for (i = 0; i < (UINTN)log_size; i++)
         dst[i] = src[i];
 
-    /* Approximate event count for early serial diagnostics only; the kernel
-     * does the authoritative crypto-agile parse + count. */
-    UINT16 event_count = 0;
-    UINTN offset = 0;
-    while (offset + 32 < (UINTN)log_size) {
-        UINT32 event_data_size = tpm_bl_le32(dst + offset + 28);
-        UINTN entry_size = 32 + event_data_size;
-        if (entry_size < 32 || offset + entry_size > (UINTN)log_size)
-            break;
-        event_count++;
-        if (event_count == 1 && tpm_ver == 2)
-            break;  /* remaining entries are EVENT2; kernel parses those */
-        offset += entry_size;
-    }
+    /* The chain walk counted every record it proved, so the published count
+     * is exact; the kernel still re-parses the copy as the authority. */
+    UINT16 event_count = chain_count > 0xFFFFu ? (UINT16)0xFFFFu
+                                               : (UINT16)chain_count;
 
     /* Store in boot_info. log_size is record-derived (the unsizable path returned
      * already), so the published size always matches the copied bytes exactly. */

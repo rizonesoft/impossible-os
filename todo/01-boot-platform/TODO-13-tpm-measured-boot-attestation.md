@@ -38,7 +38,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 | ⭐  | Order | Deliverable                                                   | Depends On                                                | Status |
 | --- | :---: | ------------------------------------------------------------- | --------------------------------------------------------- | :----: |
-| 💎  |   1   | Harden TCG event-log parser                                   | --                                                        |  [ ]   |
+| 💎  |   1   | Harden TCG event-log parser                                   | --                                                        |  [x]   |
 | 💎  |   2   | TPM2 command transport                                        | §1 (ordering-only; transport does not consume the parser) |  [x]   |
 | 💎  |   3   | PCR read API                                                  | §2                                                        |  [x]   |
 | 💎  |   4   | PCR replay engine                                             | §1, ../02-kernel-core/TODO-03 §3                          |  [x]   |
@@ -80,26 +80,25 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [x] Preserve per-event metadata (PCR index, type, digest count, primary digest off/len/alg, payload off/size) in `struct tpm_event` (offset-based into the retained log, no copy).
 - [x] Reject truncation/corruption with `tpm_evlog_status_t` + exact `fail_offset`; partial-tail, cap-overflow, and unsupported-alg are distinct; event count stays 0 on any non-OK status.
 - [x] Export `X:\Diag\tpm-events.json` as a TCG CEL-JSON subset via a streaming writer (`tpm_evlog_export_cel`, one bounded `vfs_write` per event), hooked post-mount in `boot_desktop.c` (parse runs Phase 0, before the filesystem).
-- [x] Bootloader copies the EXACT log (`tpm_compute_log_size`, not the `+256` estimate) or degrades `BOOT_CAP_TPM_EVENT_LOG`; retention via the legacy `tpm_event_log` boot_reserved path (no descriptor: would double-reserve + fatal).
-- [x] Bound the bootloader TPM read by the UEFI memory-map descriptor ceiling (`tpm_log_mmap_extent()`); copy only the record-derived `tpm_compute_log_size()` length, else degrade via `tpm_publish_log_degraded()`.
-- [ ] Validate the record chain reaches `log_last_entry` exactly before the bootloader copy (a forward bogus in-descriptor LastEntry can retain gap bytes); kernel `tpm_evlog_parse()` validates today.
-  - Reopened 2026-11-07: the stamp named only this item and the image ceiling ended (`bss-headroom.py`: `.text` budget 153,647 bytes). `tpm_evlog_parse()` stays the authoritative check, so this is hardening.
+- [x] Bootloader copies the EXACT chain-derived log (not the `+256` estimate) or degrades `BOOT_CAP_TPM_EVENT_LOG`; retention via the legacy `tpm_event_log` boot_reserved path (no descriptor: would double-reserve + fatal).
+- [x] Bound the bootloader TPM read by the UEFI memory-map descriptor ceiling (`tpm_log_mmap_extent()`); copy only the chain-derived length, else degrade via `tpm_publish_log_degraded()`.
+- [x] Loader proves the record chain reaches `log_last_entry` exactly before copying: `tcgl_chain_end()` (crypto-agile, one digest per advertised bank) and `tcgl_legacy_chain_end()` (TPM 1.2) in `include/boot/tcg_evlog.h`.
+  - A forward-bogus LastEntry, including one aligned into a zero-filled tail, degrades the capability; the published `tpm_event_count` is the walk's exact record count. Host tests in `tools/boot-header-tests/`.
 - [x] Commit: `"tpm: harden measured boot event log parser"`
 
 **Test checkpoint:** Kernel unit fixtures parse a TPM 1.2 SHA-1 log and a TPM 2.0 crypto-agile (multi-bank) log with zero unaligned reads; a truncated log is rejected with an explicit byte offset + status code (not a silent stop); `X:\Diag\tpm-events.json` lists per-event PCR index / type / digest count; the page-aligned bootloader copy is retained by the legacy `tpm_event_log` boot_reserved reservation (no double-reserve fatal at boot). Platforms: kernel unit tests (fixtures) + QEMU swtpm KVM smoke; bare metal (test laptop fTPM).
 
-> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 9 tpm-evlog suites in `test_tpm_event_log.c`, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 9 tpm-evlog suites in `test_tpm_event_log.c`, 0 failures | `bash tools/boot-header-tests/run.sh` (loader chain walk, 78 checks)
 
 > **Notes:**
-> - **What shipped:** pure `tpm_evlog_parse()` (unaligned-safe byte loads, per-event `struct tpm_event` metadata, structured status + fail offset) + streaming CEL-JSON exporter; bootloader `tpm_compute_log_size()` exact-size copy or cap-degrade.
+> - **What shipped:** pure `tpm_evlog_parse()` (unaligned-safe byte loads, per-event `struct tpm_event` metadata, structured status + fail offset) + streaming CEL-JSON exporter; bootloader chain-proven exact-size copy (`tcgl_chain_end`) or cap-degrade.
 > - **How it integrates:** parse runs Phase 0 from `tpm_init` (which wraps the pure walker); CEL export runs post-mount from `boot_desktop.c`; the log is retained by the legacy `tpm_event_log` boot_reserved reservation.
 > - **Downstream:** §4 PCR replay + §9 attestation/CEL consume the preserved metadata + offsets. Codex 4x (design + adversarial + re-adversarial) adoptions in the commit message.
 > - **Canonical doc:** `include/kernel/tpm.h` (parse contract); TCG CEL-JSON for the export format.
-> - **Scope boundary:** the UEFI mem-map-extent read bound shipped (descriptor ceiling + record-derived copy); the open `[ ]` item is proving the record chain reaches `log_last_entry` (kernel `tpm_evlog_parse()` validates today). Retention is legacy-fields-only.
+> - **Scope boundary:** a non-zero garbage gap in a TPM 1.2 log is not provable without a SpecID record; the kernel parse and PCR replay own it. Retention is legacy-fields-only.
 
-> **Verified:** 2026-06-14 | commit `53e24f76` (impl) + read-bound (mmap-descriptor ceiling + record-derived copy + degrade contract) | 6/7 items | build OK | 394 kernel tests PASS + smoke PASS (KVM 2.580s)
-> **Note:** 2026-11-07, Deferred stamp retired: it named this section's own item ([M] loader copy does not prove the record chain reaches `log_last_entry`), which is open again.
-> **Quality reviewed:** 2026-06-14 | Codex 11x (design, adversarial, re-adversarial, consistency, perf) | prior 1C+1H+3M + read-bound 2H+2M fixed, 1M deferred | scope: kernel-code-quality + boot-code-quality
+> **Verified:** 2026-11-11 | loader record-chain proof | 8/8 items | build OK | boot-header-tests 78/78 | smoke PASS + smoke matrix 24/24 (451 s)
+> **Quality reviewed:** 2026-11-11 | Codex adversarial, re-adversarial, consistency, perf | 1M fixed (legacy zero-gap), all legs approve | scope: boot-code-quality
 
 ---
 
@@ -1391,18 +1390,16 @@ The gap being closed is a TOCTOU swap. Firmware measured the executed image duri
   - Parked: §19 is itself parked on five independently-verified blockers, so there is no record to grow.
   - BLOCKED, not merely unstarted: §19 is parked on five independently-verified blockers, so there is no record to grow. This section therefore ships a LOCAL DIAGNOSTIC and does not claim the TOCTOU is closed.
   - Three separate needs, all invisible today because the measurement exists only as UART text: the digest never reaches `TPM2_PCR_Extend` or the event log at all, A/B and alternate boot entries make "which file was hashed" a real question, and without a nonce or monotonic counter one boot's line replays as another's.
-- [/] Bind the correlation to a PCR REPLAY, which is what would earn the word AGREE on the wire in place of today's UNAUTHENTICATED-LOG-MATCH. -> XREF: 01-boot-platform/TODO-13 §1 (item: "Validate the record chain")
-  - Parked: a PCR replay is §1's surface and §1 is deferred; until then the wire token says UNAUTHENTICATED-LOG-MATCH rather than AGREE.
+- [/] Bind the correlation to a PCR REPLAY, which is what would earn the word AGREE on the wire in place of today's UNAUTHENTICATED-LOG-MATCH. -> XREF: 01-boot-platform/TODO-13 §1 (item: "Loader proves the record chain")
+  - Parked with §31: §1's loader chain proof shipped 2026-11-11, so the log copied is now exactly the firmware's; the replay binding itself is still unbuilt, and the wire token stays UNAUTHENTICATED-LOG-MATCH.
   - `tcg_evlog.h` proves the log is internally well-formed, never that it is true; only replaying it into the PCRs and comparing against the TPM's own values does that. The header and the loader both state that limit rather than implying the stronger claim.
 - [/] Bound the peak pre-ExitBootServices allocation of the self-measurement, which now holds the WHOLE loader image rather than a 64 KiB streaming window.
   - Parked with §31 rather than technically blocked; runnable the moment the section reopens. Also blocked, like every code change in this file, by the kernel-image ceiling parked on `02-kernel-core/TODO-33` §7.
   - The Authenticode hash needs the section table before it knows which bytes to hash in which order, so one snapshot replaced the streaming hash; the 8 MiB sanity cap is therefore also the worst-case pool request on constrained or fragmented firmware.
   - Lowering the cap to 2 MiB was tried and REVERTED: §20 shipped and verified an 8 MiB bound, so narrowing it would silently refuse a loader in the 2-8 MiB range the contract still promises. The fix is a header-first bounded plan, not a quieter ceiling.
   - Measured 2026-11-08 (TODO-02 §16 UKI smoke leg): the shipped `BOOTX64.UKI.efi` is ~16 MiB because it embeds the kernel, so EVERY UKI-direct boot reports `self-measure: status=over-size-cap digest=ABSENT` and publishes neither digest. The header-first streaming plan is what lifts it: hashing in a bounded window removes the reason for a size cap below the UKI's size. The smoke oracle currently requires the refusal for an over-cap image and will need the digest instead once this lands. -> XREF: 01-boot-platform/TODO-02 §16 (item: "Smoke harness for UKI signed-payload cases")
-- [/] Size the acquired event log from the log's OWN advertised bank table, so a conforming platform carrying an unfamiliar bank is not discarded wholesale.
-  - Parked with §31 rather than technically blocked; runnable the moment the section reopens. Also blocked, like every code change in this file, by the kernel-image ceiling parked on `02-kernel-core/TODO-33` §7.
-  - `tpm_bl_alg_len()` (`src/boot/uefi/bootx64.c:9444`) knows only SHA-1/256/384/512 and returns 0 otherwise, so `tpm_compute_log_size()` returns 0 and `retrieve_tpm_event_log()` drops the entire log. A machine with SHA-256 plus SM3 or SHA-3 reports `no-event-log` though the SHA-256 measurement is present and usable.
-  - Filed rather than fixed here: this is the acquisition path deciding whether ANY log is copied, and the dev host has no TPM to exercise a change against, so a blind rewrite would be an unverified boot-path edit.
+- [x] Size the acquired event log from the log's OWN advertised bank table, so a conforming platform carrying an unfamiliar bank is not discarded wholesale.
+  - Shipped with §1's chain proof: `retrieve_tpm_event_log()` opens the log with `tcgl_open()` and walks it with `tcgl_chain_end()`, which sizes every digest from the SpecID bank table; the local `tpm_bl_alg_len()` table is gone.
 - [x] Commit: `"tpm: correlate the loader digest with the firmware PCR 4 measurement"`
 
 **Test checkpoint:** the computed Authenticode PE hash of the staged loader equals the value an independent host-side implementation produces for the same binary, which a flat file hash cannot satisfy. On a boot whose event log contains the loader's own `EV_EFI_BOOT_SERVICES_APPLICATION` entry, the correlation reports UNAUTHENTICATED-LOG-MATCH, and a deliberately altered digest reports DISAGREE, each beside the other as a control. A boot with no TPM or no event log reports the weaker claim by name and never reports a mismatch. Scope: this section owns the PE hasher, the event correlation and the reporting of its outcome. Scoping the file digest's CLAIM is §25 and already shipped; producing the file digest is §20; the event-log parse it consumes is §1. Platforms: HOST unit suites for the PE hasher and the event-log walker (`tools/boot-header-tests`, not the kernel suite -- the kernel image has no room left, measured at ship), plus the smoke oracle over the real staged loader; a live end-to-end correlation needs firmware that measures into PCR 4 and is operator-gated (no `swtpm` on the dev host).
@@ -1576,6 +1573,7 @@ The fixture item is listed FIRST and deliberately carries no coverage claim of i
 | 💎  | TPM2 command transport (TIS/CRB)              | tpm.sys TIS/CRB                     | tpm_tis/tpm_crb drivers                           | ✅ §2 burst-chunked TIS + CRB                                                    |
 | 💎  | Secure Boot PCR integration                   | Measured Boot                       | IMA/TPM tools                                     | ⚠️ §5 structural SB var reconcile                                                |
 | 💎  | PCR replay                                    | internal/Defender                   | tpm2-tools                                        | ✅ §4 SHA-1/256/384/512 replay + tamper verify                                   |
+| 💎  | Event-log acquisition and parse               | WBCL via TBS                        | tpm_bios_log (sizes from the final event)         | ✅ §1 loader proves the record chain to LastEntry, exact copy or degrade         |
 | 💎  | Loader digest bound to the PCR 4 measurement  | Measured Boot (internal)            | shim skips re-measuring an already-measured image | ⚠️ §31 Authenticode PE hash + event-log correlation, local diagnostic only       |
 | 💎  | Boot-app event identified by full device path | internal                            | ❌ none in-tree                                   | ✅ §31 exactly-one-candidate match; two report AMBIGUOUS rather than the first   |
 | 💎  | TPM NV index storage (PCR-sealed)             | TBS NV / BitLocker                  | tpm2_nvdefine + kernel RM                         | ✅ §7 NV CRUD + PolicyPCR-sealed baseline index                                  |

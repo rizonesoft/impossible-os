@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **943 of 2593 sections complete (36%).** 115 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **944 of 2593 sections complete (36%).** 115 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -530,7 +530,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T12 §9`  | Entropy Diagnostics and Policy Gates                                                              |
 | [x]  | `D01 T12 §10` | Entropy Tests                                                                                     |
 | [x]  | `D01 T12 §11` | Capability Gate on the Seed Payload Consumer                                                      |
-| [ ]  | `D01 T13 §1`  | Harden TCG Event-Log Parser                                                                       |
+| [x]  | `D01 T13 §1`  | Harden TCG Event-Log Parser                                                                       |
 | [x]  | `D01 T13 §2`  | TPM2 Command Transport                                                                            |
 | [x]  | `D01 T13 §3`  | PCR Read API                                                                                      |
 | [x]  | `D01 T13 §4`  | PCR Replay Engine                                                                                 |
