@@ -1233,6 +1233,15 @@ static uint32_t drain_queue(uint32_t cpu_id)
     return dispatched;
 }
 
+int KeIsExecutingDpc(void)
+{
+    struct per_cpu_data *cpu = smp_this_cpu();
+
+    if (!cpu || cpu->cpu_id >= MAX_CPUS)
+        return 0;
+    return __atomic_load_n(&s_wd[cpu->cpu_id].in_flight, __ATOMIC_ACQUIRE) != 0;
+}
+
 /* ---- KiDispatchDpc -- drain at DISPATCH_LEVEL (for non-ISR callers) ----- */
 
 void KiDispatchDpc(void)

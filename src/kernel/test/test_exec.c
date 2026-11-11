@@ -484,6 +484,7 @@ static void test_pe_load_registers_module(void)
 
 static void test_pe_load_rejects_low_imagebase(void)
 {
+    TEST_KLOG_EXPECT("pe", "PE32+ validation failed");
     uint8_t buf[512];
     build_minimal_pe32plus(buf);
 
@@ -511,6 +512,15 @@ static void pe_test_set_base(uint8_t *buf, uint64_t base)
 
 static void test_pe_preflight_layout(void)
 {
+    TEST_KLOG_EXPECT("pe", "sections must be ascending and adjacent");
+    TEST_KLOG_EXPECT("pe", "but SizeOfImage rounds to");
+    TEST_KLOG_EXPECT("pe", "SectionAlignment 0x0 is not a power of two");
+    TEST_KLOG_EXPECT("pe", "SectionAlignment 0x800 is not a power of two");
+    TEST_KLOG_EXPECT("pe", "FileAlignment 0x100 invalid for SectionAlignment");
+    TEST_KLOG_EXPECT("pe", "is not a multiple of 64 KiB");
+    TEST_KLOG_EXPECT("pe", "Image 0x800000000000+0x2000 runs past the user address space");
+    TEST_KLOG_EXPECT("pe", "Image 0xffff800000000000+0x2000 runs past the user address space");
+    TEST_KLOG_EXPECT("pe", "exceeds file size 0x400");
     uint8_t buf[1024];
     pe_validate_result_t v;
     pe_image_layout_t lay;
@@ -587,6 +597,7 @@ static int walk_write(void *ctx, uint32_t rva, uint64_t val)
 
 static void test_pe_walk_imports(void)
 {
+    TEST_KLOG_EXPECT("pe", "Malformed import descriptor 0 -- aborting import resolution");
     static uint8_t img[0x3000];
     pe_import_ops_t ops = { walk_find_dll, walk_lookup, walk_write, img };
     uint32_t i, dlls = 0;

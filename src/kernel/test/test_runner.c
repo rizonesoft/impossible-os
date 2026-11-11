@@ -12,6 +12,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/klog.h"
+#include "kernel/smp.h"   /* smp_this_cpu()->isr_depth: the run-end interrupt-depth check */
 #include "kernel/timer.h"
 #include "kernel/mm/heap.h"             /* kmalloc_fail_* (hygiene) */
 #include "kernel/mm/pmm.h"              /* pmm_alloc_fail_* (hygiene) */
@@ -1327,6 +1328,34 @@ static void quota_sweep_close(const quota_leak_snapshot_t *open,
 
 /* ---- Run all registered suites ---- */
 
+/* Close the suite's error window and fail the suite once for every
+ * expectation that never matched and once if any unexpected error appeared.
+ * Runs on the runner thread after the window is closed, so it is free to
+ * klog (its own records carry the TEST tag, which the watch ignores). The
+ * report is static: it is about 3.5 KB and the runner is single-threaded. */
+static struct klog_watch_report s_watch_report;
+
+static void test_watch_judge(const char *suite)
+{
+    struct klog_watch_report *r = &s_watch_report;
+
+    klog_watch_suite_end(r);
+    g_test_state.failed += klog_watch_failures(r);
+    for (uint32_t i = 0; i < r->n_expects && i < KLOG_WATCH_MAX_EXPECTS; i++) {
+        const struct klog_watch_expect *x = &r->expects[i];
+        if (x->hits)
+            continue;
+        klog(LOG_ERROR, test_tag(), "%s :: expected error line never appeared: %s: \"%s\" (%s:%u)",
+             suite, x->tag, x->text, x->file ? x->file : "?", (uint64_t)(uint32_t)x->line);
+    }
+    if (r->unexpected) {
+        klog(LOG_ERROR, test_tag(),
+             "%s :: unexpected error line during the suite (%u in all; first on cpu %u pid %u): %s",
+             suite, (uint64_t)r->unexpected, (uint64_t)r->first_cpu, (uint64_t)r->first_pid,
+             r->first_line);
+    }
+}
+
 void test_runner_run(void)
 {
     uint64_t run_start = system_get_ticks();
@@ -1348,6 +1377,9 @@ void test_runner_run(void)
     }
 
     test_category_t current_cat = TEST_CAT_COUNT; /* sentinel: no category printed yet */
+
+    /* Between suites, an error is counted as stray and reported, never gated. */
+    klog_watch_run_begin();
 
     /* [COUNT] trace ordinal. A LOCAL, not a static: the suite loop is walked
      * once by the BSP, so a file-scope counter would add a mutable global to a
@@ -1450,6 +1482,10 @@ void test_runner_run(void)
         if (s->cat == TEST_CAT_DESKTOP)
             test_desktop_reset();
 
+        /* The suite's error window spans its body AND its cleanup actions
+         * below: both belong to it, so an error either emits is its own. */
+        klog_watch_suite_begin();
+
         s->fn();
 
         /* Close any collapsed PASS run before the suite's own trailing output
@@ -1465,6 +1501,8 @@ void test_runner_run(void)
          * failed -- that's the whole point of the registry: resources
          * are freed even on assertion-induced early return. */
         test_actions_drain();
+
+        test_watch_judge(s->name);
 
         /* Leak check runs AFTER the action drain so tests that use
          * TEST_SCRATCH_KBUF or TEST_KLOG_SUPPRESS (both register
@@ -1602,6 +1640,29 @@ void test_runner_run(void)
                                         g_test_state.skipped,
                                         g_test_state.pending);
         klog_unrated(LOG_INFO, TEST_COUNT_TAG, "%s", trailer);
+    }
+
+    /* Errors emitted while no suite ran (between suites, in the runner's own
+     * setup) have no owner to fail, so they are reported here and not gated:
+     * a run-wide gate would stall every later section on one environmental
+     * line. LOG_WARN, so this report is not itself a [FAIL] line. */
+    {
+        uint32_t stray = klog_watch_run_end();
+        if (stray)
+            klog(LOG_WARN, "TEST", "%u error line(s) were logged outside any suite (reported, not gated)",
+                 (uint64_t)stray);
+    }
+
+    /* The interrupt depth the watch reads must be balanced after the whole
+     * kernel phase, which runs user tasks that syscall, yield and exit. A
+     * leak would make every later record look like an ISR's. */
+    {
+        struct per_cpu_data *pc = smp_this_cpu();
+        if (pc && pc->isr_depth) {
+            g_test_state.failed++;
+            klog(LOG_ERROR, "TEST", "harness :: interrupt depth leaked: CPU %u reads %u in thread context",
+                 (uint64_t)pc->cpu_id, (uint64_t)pc->isr_depth);
+        }
     }
 
     /* ---- Summary ---- */

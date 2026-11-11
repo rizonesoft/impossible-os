@@ -9,6 +9,7 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/user_range.h"
 #include "kernel/cpuid.h"
+#include "kernel/test/klog_suppress.h"   /* TEST_KLOG_EXPECT */
 
 static void test_vmm_map_roundtrip(void)
 {
@@ -170,6 +171,7 @@ static int guard_test_install_or_release(uintptr_t frame, const char *label)
  * exactly the alias a naive check would miss. */
 static void test_vmm_guard_page_alias_refused(void)
 {
+    TEST_KLOG_EXPECT("mm", "maps a DIFFERENT frame -- refusing to report it freeable");
     uintptr_t frame = pmm_alloc_frame();
     uint32_t free_before, free_guarded;
     int rc;
@@ -267,6 +269,7 @@ static void test_vmm_guard_page_flags_normalized(void)
  * uninstall must refuse rather than wave it through on the address alone. */
 static void test_vmm_guard_page_unregistered_ro_refused(void)
 {
+    TEST_KLOG_EXPECT("mm", "could not be restored to its identity mapping");
     uintptr_t frame = pmm_alloc_frame();
     int rc;
 
@@ -297,6 +300,7 @@ static void test_vmm_guard_page_unregistered_ro_refused(void)
  * and leave the PTE alone. */
 static void test_vmm_guard_page_unregistered_absent_refused(void)
 {
+    TEST_KLOG_EXPECT("mm", "is unmapped with no table entry -- refusing, not ours to repair");
     uintptr_t frame = pmm_alloc_frame();
 
     TEST_ASSERT(frame != 0, "unregistered-absent test frame allocated");
@@ -326,6 +330,7 @@ static void test_vmm_guard_page_unregistered_absent_refused(void)
  * the PMM from returning the frame whose physical address equals it. */
 static void test_vmm_guard_page_install_alias_refused(void)
 {
+    TEST_KLOG_EXPECT("mm", "is not a kernel-writable identity mapping -- refusing, frame is NOT reusable");
     uintptr_t frame = pmm_alloc_frame();
     uintptr_t other = pmm_alloc_frame();
 

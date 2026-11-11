@@ -24,6 +24,7 @@
 #include "kernel/sched/irql.h"           /* KeGetCurrentIrql assertion           */
 #include "kernel/sched/spinlock.h"       /* spin_trylock / spin_tryunlock        */
 #include "kernel/klog.h"                 /* klog_get_ring for the render check   */
+#include "kernel/test/klog_suppress.h"   /* TEST_KLOG_EXPECT */
 
 /* Bounded substring search. The kernel libc has no strstr and this needs no
  * more than "does this rendered line mention X". */
@@ -265,6 +266,7 @@ static void test_quota_dump_crash_uncontended(void)
  * the one ordering the module forbids under the registry lock. */
 static void test_quota_dump_crash_falls_back_when_locked(void)
 {
+    TEST_KLOG_EXPECT("quota", "crash dump: registry unavailable (lock held elsewhere)");
     uint64_t fb_before = quota_test_crash_fallbacks();
     uint64_t gen_before = quota_registry_generation();
     uint64_t flags;

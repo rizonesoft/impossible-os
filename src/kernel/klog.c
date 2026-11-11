@@ -19,6 +19,8 @@
 #include "kernel/sched/task.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/seqlock.h"
+#include "kernel/sched/dpc.h"   /* KeIsExecutingDpc: the error watch's DPC test */
+#include "kernel/sched/irql.h"
 #include "kernel/boot_init.h"
 #include "kernel/test/test_usermode.h"  /* test_usermode_color_active (no-op when KERNEL_TESTS=off) */
 
@@ -279,6 +281,340 @@ static int klog_tag_is(const char *tag, const char *name)
 int klog_probe_tag_is(const char *tag, const char *name)
 {
     return klog_tag_is(tag, name);
+}
+
+/* ---- Test-phase error watch (contract in include/kernel/klog.h) ----
+ * The live state is read and written only under s_klog_lock, which is irqsave
+ * and taken by every emitter on every CPU, so the window functions and the
+ * observer in klog_emit are serialized with no other synchronisation. The
+ * same helpers run on a caller-owned fixture (klog_watch_fx_*), which no other
+ * CPU can reach, so the harness tests the matcher without touching the live
+ * accounting a concurrent real error must land in. */
+static struct klog_watch_state s_watch_live;
+
+#define WATCH_COUNT_MAX 0xFFFFFFFFu   /* counters saturate rather than wrap */
+
+static void watch_zero(void *p, uint32_t n)
+{
+    uint8_t *b = (uint8_t *)p;
+    for (uint32_t i = 0; i < n; i++)
+        b[i] = 0;
+}
+
+/* Bounded copy that refuses rather than truncates. Returns 1 on success. */
+static int watch_copy(char *dst, uint32_t cap, const char *src)
+{
+    uint32_t i = 0;
+
+    if (!src || !src[0])
+        return 0;
+    while (src[i]) {
+        if (i + 1 >= cap)
+            return 0;
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+    return 1;
+}
+
+static int watch_contains(const char *hay, const char *needle)
+{
+    for (uint32_t i = 0; hay[i]; i++) {
+        uint32_t j = 0;
+        while (needle[j] && hay[i + j] == needle[j])
+            j++;
+        if (!needle[j])
+            return 1;
+    }
+    return 0;
+}
+
+/* A record the watch looks at: an error from a non-test tag while a window is
+ * open. Test tags carry the runner's own verdicts, which must stay visible. */
+static int watch_candidate(const struct klog_watch_state *st, log_level_t level,
+                           const char *subsystem)
+{
+    if (st->mode == KLOG_WATCH_OFF || level != LOG_ERROR)
+        return 0;
+    if (subsystem && (klog_tag_is(subsystem, "TEST") || klog_tag_is(subsystem, "DTEST") ||
+                      klog_tag_is(subsystem, "UTEST")))
+        return 0;
+    return 1;
+}
+
+/* Account one candidate record. Returns 1 when it matched an expectation and
+ * must be kept off the output sinks. */
+int klog_watch_ctx_owns(const struct klog_watch_ctx *owner, const struct klog_watch_ctx *ctx)
+{
+    if (!owner || !ctx || !owner->valid || !ctx->valid)
+        return 0;
+    if (ctx->in_isr || ctx->in_dpc || ctx->irql > DISPATCH_LEVEL)
+        return 0;
+    return ctx->cpu == owner->cpu && ctx->task == owner->task && ctx->thread == owner->thread;
+}
+
+/* The calling execution. Only the CPU's own per-CPU data and the scheduler's
+ * current objects are read, so it is callable from klog_emit under the lock. */
+static void watch_ctx_here(struct klog_watch_ctx *c)
+{
+    struct per_cpu_data *cpu = smp_this_cpu();
+
+    watch_zero(c, sizeof(*c));
+    if (!cpu || !kernel_subsystem_ready(SUBSYS_SCHED))
+        return;
+    c->cpu    = cpu->cpu_id;
+    c->irql   = (uint8_t)cpu->current_irql;
+    c->in_dpc = (uint8_t)(KeIsExecutingDpc() ? 1 : 0);
+    c->in_isr = (uint8_t)(cpu->isr_depth ? 1 : 0);
+    c->task   = task_current();
+    c->thread = thread_current();
+    c->valid  = (uint8_t)(c->task && c->thread);
+}
+
+/* `filtered`: the record is below its tag's threshold (TEST_KLOG_SUPPRESS or a
+ * level override), so it would print nothing anyway. */
+static int watch_observe(struct klog_watch_state *st, const klog_entry_t *e,
+                         const struct klog_watch_ctx *from, int filtered)
+{
+    const char *tag = e->subsystem ? e->subsystem : "";
+    struct klog_watch_report *r = &st->report;
+
+    if (st->mode == KLOG_WATCH_SUITE) {
+        int owned = klog_watch_ctx_owns(&st->owner, from);
+        for (uint32_t i = 0; owned && i < r->n_expects; i++) {
+            struct klog_watch_expect *x = &r->expects[i];
+            if (klog_tag_is(tag, x->tag) && watch_contains(e->message, x->text)) {
+                if (x->hits != WATCH_COUNT_MAX)
+                    x->hits++;
+                return 1;
+            }
+        }
+        /* The suite's own error on a tag it suppressed is declared noise.
+         * Suppression never hides another context's error: that one is
+         * unexpected even though it prints nothing. */
+        if (owned && filtered)
+            return 1;
+        if (r->unexpected != WATCH_COUNT_MAX && r->unexpected++ == 0) {
+            uint32_t pos = 0;
+            for (uint32_t i = 0; tag[i] && pos + 1 < KLOG_WATCH_LINE_MAX; i++)
+                r->first_line[pos++] = tag[i];
+            for (const char *p = ": "; *p && pos + 1 < KLOG_WATCH_LINE_MAX; p++)
+                r->first_line[pos++] = *p;
+            for (uint32_t i = 0; e->message[i] && pos + 1 < KLOG_WATCH_LINE_MAX; i++)
+                r->first_line[pos++] = e->message[i];
+            r->first_line[pos] = '\0';
+            r->first_cpu = e->cpu_id;
+            r->first_pid = e->pid;
+        }
+        return 0;
+    }
+    if (st->stray != WATCH_COUNT_MAX)
+        st->stray++;
+    return 0;
+}
+
+static void watch_run_begin(struct klog_watch_state *st)
+{
+    watch_zero(&st->report, sizeof(st->report));
+    st->stray = 0;
+    st->mode  = KLOG_WATCH_RUN;
+}
+
+static uint32_t watch_run_end(struct klog_watch_state *st)
+{
+    uint32_t stray = st->stray;
+    st->mode = KLOG_WATCH_OFF;
+    watch_zero(&st->report, sizeof(st->report));
+    return stray;
+}
+
+/* A suite exists only inside a run: OFF means no test phase, so a stray call
+ * there must not start judging the kernel's error lines. */
+static void watch_suite_begin(struct klog_watch_state *st, const struct klog_watch_ctx *owner)
+{
+    if (st->mode == KLOG_WATCH_OFF)
+        return;
+    watch_zero(&st->report, sizeof(st->report));
+    st->owner = *owner;
+    st->mode  = KLOG_WATCH_SUITE;
+}
+
+static void watch_suite_end(struct klog_watch_state *st, struct klog_watch_report *out)
+{
+    if (out)
+        *out = st->report;
+    watch_zero(&st->report, sizeof(st->report));
+    if (st->mode == KLOG_WATCH_SUITE)
+        st->mode = KLOG_WATCH_RUN;
+}
+
+/* `x` is already validated and copied, so nothing here can fault. */
+static int watch_add(struct klog_watch_state *st, const struct klog_watch_expect *x)
+{
+    if (st->mode != KLOG_WATCH_SUITE)
+        return KLOG_WATCH_ERR_WINDOW;
+    if (st->report.n_expects >= KLOG_WATCH_MAX_EXPECTS)
+        return KLOG_WATCH_ERR_FULL;
+    st->report.expects[st->report.n_expects++] = *x;
+    return KLOG_WATCH_OK;
+}
+
+static int watch_prepare(struct klog_watch_expect *x, const char *tag, const char *text,
+                         const char *file, int line)
+{
+    if (!tag || !tag[0] || !text || !text[0])
+        return KLOG_WATCH_ERR_ARG;
+    watch_zero(x, sizeof(*x));
+    if (!watch_copy(x->tag, sizeof(x->tag), tag) || !watch_copy(x->text, sizeof(x->text), text))
+        return KLOG_WATCH_ERR_LONG;
+    x->file = file;
+    x->line = line;
+    return KLOG_WATCH_OK;
+}
+
+void klog_watch_run_begin(void)
+{
+    uint64_t f;
+    spin_lock_irqsave(&s_klog_lock, &f);
+    watch_run_begin(&s_watch_live);
+    spin_unlock_irqrestore(&s_klog_lock, f);
+}
+
+uint32_t klog_watch_run_end(void)
+{
+    uint64_t f;
+    uint32_t stray;
+    spin_lock_irqsave(&s_klog_lock, &f);
+    stray = watch_run_end(&s_watch_live);
+    spin_unlock_irqrestore(&s_klog_lock, f);
+    return stray;
+}
+
+void klog_watch_suite_begin(void)
+{
+    uint64_t f;
+    struct klog_watch_ctx me;
+
+    watch_ctx_here(&me);
+    spin_lock_irqsave(&s_klog_lock, &f);
+    watch_suite_begin(&s_watch_live, &me);
+    spin_unlock_irqrestore(&s_klog_lock, f);
+}
+
+void klog_watch_suite_end(struct klog_watch_report *out)
+{
+    uint64_t f;
+    spin_lock_irqsave(&s_klog_lock, &f);
+    watch_suite_end(&s_watch_live, out);
+    spin_unlock_irqrestore(&s_klog_lock, f);
+}
+
+int klog_watch_expect(const char *tag, const char *text, const char *file, int line)
+{
+    struct klog_watch_expect x;
+    uint64_t f;
+    int rc = watch_prepare(&x, tag, text, file, line);
+
+    if (rc != KLOG_WATCH_OK)
+        return rc;
+    spin_lock_irqsave(&s_klog_lock, &f);
+    rc = watch_add(&s_watch_live, &x);
+    spin_unlock_irqrestore(&s_klog_lock, f);
+    return rc;
+}
+
+uint32_t klog_watch_failures(const struct klog_watch_report *r)
+{
+    uint32_t n = 0;
+
+    if (!r)
+        return 0;
+    for (uint32_t i = 0; i < r->n_expects && i < KLOG_WATCH_MAX_EXPECTS; i++)
+        if (!r->expects[i].hits)
+            n++;
+    return n + (r->unexpected ? 1u : 0u);
+}
+
+void klog_watch_peek(struct klog_watch_report *out)
+{
+    uint64_t f;
+    if (!out)
+        return;
+    spin_lock_irqsave(&s_klog_lock, &f);
+    *out = s_watch_live.report;
+    spin_unlock_irqrestore(&s_klog_lock, f);
+}
+
+klog_watch_mode_t klog_watch_mode(void)
+{
+    uint64_t f;
+    klog_watch_mode_t m;
+    spin_lock_irqsave(&s_klog_lock, &f);
+    m = s_watch_live.mode;
+    spin_unlock_irqrestore(&s_klog_lock, f);
+    return m;
+}
+
+/* ---- The same machine on a caller-owned fixture (no lock: nothing else can
+ * reach it). ---- */
+void klog_watch_fx_init(struct klog_watch_state *st)
+{
+    if (st)
+        watch_zero(st, sizeof(*st));
+}
+
+void klog_watch_fx_run_begin(struct klog_watch_state *st)       { if (st) watch_run_begin(st); }
+uint32_t klog_watch_fx_run_end(struct klog_watch_state *st)     { return st ? watch_run_end(st) : 0; }
+void klog_watch_fx_suite_begin(struct klog_watch_state *st)
+{
+    struct klog_watch_ctx keep;
+
+    if (!st)
+        return;
+    keep = st->owner;   /* a fixture's owner is whatever the test set */
+    watch_suite_begin(st, &keep);
+}
+
+void klog_watch_fx_suite_end(struct klog_watch_state *st, struct klog_watch_report *out)
+{
+    if (st)
+        watch_suite_end(st, out);
+}
+
+int klog_watch_fx_expect(struct klog_watch_state *st, const char *tag, const char *text,
+                         const char *file, int line)
+{
+    struct klog_watch_expect x;
+    int rc;
+
+    if (!st)
+        return KLOG_WATCH_ERR_ARG;
+    rc = watch_prepare(&x, tag, text, file, line);
+    return rc != KLOG_WATCH_OK ? rc : watch_add(st, &x);
+}
+
+int klog_watch_fx_probe(struct klog_watch_state *st, log_level_t level, const char *tag,
+                        const char *message)
+{
+    return st ? klog_watch_fx_probe_from(st, &st->owner, 0, level, tag, message) : -1;
+}
+
+int klog_watch_fx_probe_from(struct klog_watch_state *st, const struct klog_watch_ctx *ctx,
+                             int filtered, log_level_t level, const char *tag, const char *message)
+{
+    klog_entry_t e;
+
+    if (!st || !ctx)
+        return -1;
+    watch_zero(&e, sizeof(e));
+    e.level     = level;
+    e.subsystem = tag;
+    if (message && !watch_copy(e.message, sizeof(e.message), message))
+        return -1;
+    if (!watch_candidate(st, level, tag))
+        return -1;
+    return watch_observe(st, &e, ctx, filtered);
 }
 #endif
 
@@ -1243,6 +1579,24 @@ static int rate_check(const char *subsystem)
     return 0;  /* drop */
 }
 
+#ifdef KERNEL_TESTS
+/* Contract in include/kernel/klog.h (test-phase error watch). */
+int klog_probe_rate_limited(const char *tag)
+{
+    uint64_t f;
+    int found = 0;
+
+    if (!tag || !tag[0])
+        return 0;
+    spin_lock_irqsave(&s_klog_lock, &f);
+    for (uint32_t i = 0; i < s_rate_count; i++)
+        if (s_rate[i].tag == tag || str_eq(s_rate[i].tag, tag))
+            found = 1;
+    spin_unlock_irqrestore(&s_klog_lock, f);
+    return found;
+}
+#endif
+
 void klog_set_level(const char *subsystem, log_level_t min_level)
 {
     uint32_t i, n;
@@ -1519,6 +1873,48 @@ uint32_t klog_panic_snapshot(klog_entry_t *out, uint32_t max)
     return n;
 }
 
+/* Fill one entry: level, tag, coarse timestamp, CPU/pid/tid context and the
+ * formatted message. Called with s_klog_lock held; consumes `ap`. */
+static void klog_entry_fill(klog_entry_t *e, log_level_t level, const char *subsystem,
+                            const char *fmt, va_list ap)
+{
+    e->level     = level;
+    e->subsystem = subsystem;
+    /* 10 ms units from the coarse cached interrupt time: lock-free (single
+     * __atomic load, NO seqlock/clocksource read) so klog() is panic-safe on
+     * EVERY timer backend (system_get_ticks() takes pit_lock on the PIT/TCG
+     * backend -- unusable in panic context), AND rate-change-safe (interrupt
+     * time is monotonic, not raw lifetime ticks that rewind on a
+     * KeSetTimerResolution change). The cache is published from the first
+     * tick after mono_clock_init(); entries logged before any monotonic
+     * source exists stamp 0 (unavoidable -- no lock-free early clock).
+     * klog_disk reconstructs the entry FILETIME from this same 10 ms unit. */
+    e->timestamp = (uint32_t)(KeQueryInterruptTimeCoarse() / 100000ULL);
+
+    /* Per-entry context: CPU, PID, TID */
+    {
+        struct per_cpu_data *cpu = smp_this_cpu();
+        e->cpu_id = cpu ? cpu->cpu_id : 0;
+    }
+    /* pid/tid come from the scheduler's current task/thread cursor. The
+     * scheduler today is a single GLOBAL cursor (task.c current_task /
+     * current_thread), so these are accurate for the scheduling context and
+     * best-effort otherwise; true per-CPU attribution awaits per-CPU run
+     * queues (see the Accepted limitation in the section stamp). tid is the
+     * real thread id (was previously hardcoded 0). */
+    if (kernel_subsystem_ready(SUBSYS_SCHED)) {
+        struct task   *t  = task_current();
+        struct thread *th = thread_current();
+        e->pid = t  ? t->pid : 0;
+        e->tid = th ? th->id : 0;
+    } else {
+        e->pid = 0;
+        e->tid = 0;
+    }
+
+    vformat_buf(e->message, sizeof(e->message), fmt, ap);
+}
+
 /* Shared core for klog() and klog_unrated(). `bypass_rate` skips ONLY the
  * per-subsystem rate limiter (the verbosity filter, ring/disk/serial path, and
  * lock discipline are identical) so an already-prelimited caller -- e.g. the
@@ -1549,12 +1945,24 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
     uint64_t irq_flags;
     int rate_dropped = 0;
     int first_drop = 0;
+    int prefilled = 0;   /* `snapshot` already holds this record (the watch formatted it) */
+#ifdef KERNEL_TESTS
+    int swallowed = 0;   /* it matched an expectation: keep it off the sinks */
+#endif
 
     /* Per-subsystem verbosity filter: drop entries below threshold.
      * Read-only check on s_overrides -- safe without lock (overrides are
      * append-only and only modified during single-threaded boot or with
      * explicit klog_set_level calls). */
-    if (level < subsys_min_level(subsystem)) {
+    /* An error below its tag's threshold is still JUDGED in a test build (the
+     * watch must see what TEST_KLOG_SUPPRESS hides), then dropped like any
+     * filtered record once the watch has counted it. */
+    int filtered = level < subsys_min_level(subsystem);
+    if (filtered
+#ifdef KERNEL_TESTS
+        && level != LOG_ERROR
+#endif
+       ) {
         /* Declined, not delivered -- but still acknowledged. The record was
          * never handed to serial, so a caller counting what the host must
          * have seen learns that from `delivered`, while its outstanding
@@ -1564,8 +1972,41 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
         return;
     }
 
+#ifdef KERNEL_TESTS
+    /* The logging context, read BEFORE the lock: taking it moves this CPU's
+     * IRQL, and the watch must see the IRQL the caller logged at. Only an
+     * error can be watched, so nothing else pays for it. */
+    struct klog_watch_ctx from;
+    if (level == LOG_ERROR)
+        watch_ctx_here(&from);
+#endif
+
     /* ---- Lock: protect ring buffer + rate-limit mutations ---- */
     spin_lock_irqsave(&s_klog_lock, &irq_flags);
+
+#ifdef KERNEL_TESTS
+    /* The watch judges a record BEFORE the rate limit, so a tag that is busy
+     * this second can neither hide an error from the test audit nor make an
+     * expected one look absent. Only output is limited: a matched record
+     * prints nothing, so it spends no budget; an unexpected one is counted
+     * here and then rate-limited like any other line. */
+    if (watch_candidate(&s_watch_live, level, subsystem)) {
+        klog_entry_fill(&snapshot, level, subsystem, fmt, ap);
+        prefilled = 1;
+        swallowed = watch_observe(&s_watch_live, &snapshot, &from, filtered);
+        if (swallowed)
+            bypass_rate = 1;
+    }
+#endif
+
+    if (filtered) {
+        /* Below the threshold: counted by the watch above if it was an
+         * error it watches, and otherwise exactly the early return. */
+        spin_unlock_irqrestore(&s_klog_lock, irq_flags);
+        if (rcpt)
+            rcpt->fn(rcpt->cookie, 0);
+        return;
+    }
 
     /* Per-subsystem rate limit: drop if over budget this window. An
      * already-prelimited caller (bypass_rate) skips this shared cap. */
@@ -1607,41 +2048,10 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
     /* ---- Store formatted message in ring buffer ---- */
     {
         klog_entry_t *e = &klog_ring[klog_ring_head];
-        e->level     = level;
-        e->subsystem = subsystem;
-        /* 10 ms units from the coarse cached interrupt time: lock-free (single
-         * __atomic load, NO seqlock/clocksource read) so klog() is panic-safe on
-         * EVERY timer backend (system_get_ticks() takes pit_lock on the PIT/TCG
-         * backend -- unusable in panic context), AND rate-change-safe (interrupt
-         * time is monotonic, not raw lifetime ticks that rewind on a
-         * KeSetTimerResolution change). The cache is published from the first
-         * tick after mono_clock_init(); entries logged before any monotonic
-         * source exists stamp 0 (unavoidable -- no lock-free early clock).
-         * klog_disk reconstructs the entry FILETIME from this same 10 ms unit. */
-        e->timestamp = (uint32_t)(KeQueryInterruptTimeCoarse() / 100000ULL);
-
-        /* Per-entry context: CPU, PID, TID */
-        {
-            struct per_cpu_data *cpu = smp_this_cpu();
-            e->cpu_id = cpu ? cpu->cpu_id : 0;
-        }
-        /* pid/tid come from the scheduler's current task/thread cursor. The
-         * scheduler today is a single GLOBAL cursor (task.c current_task /
-         * current_thread), so these are accurate for the scheduling context and
-         * best-effort otherwise; true per-CPU attribution awaits per-CPU run
-         * queues (see the Accepted limitation in the section stamp). tid is the
-         * real thread id (was previously hardcoded 0). */
-        if (kernel_subsystem_ready(SUBSYS_SCHED)) {
-            struct task   *t  = task_current();
-            struct thread *th = thread_current();
-            e->pid = t  ? t->pid : 0;
-            e->tid = th ? th->id : 0;
-        } else {
-            e->pid = 0;
-            e->tid = 0;
-        }
-
-        vformat_buf(e->message, sizeof(e->message), fmt, ap);
+        if (prefilled)
+            *e = snapshot;
+        else
+            klog_entry_fill(e, level, subsystem, fmt, ap);
 
         /* Snapshot for output outside the lock */
         snapshot = *e;
@@ -1653,6 +2063,17 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
     }
 
     spin_unlock_irqrestore(&s_klog_lock, irq_flags);
+
+#ifdef KERNEL_TESTS
+    /* An expected record stays in the ring but reaches no output sink, so a
+     * receipt learns it was not delivered. LOG_ERROR never halts, so nothing
+     * below is skipped that this record needed. */
+    if (swallowed) {
+        if (rcpt)
+            rcpt->fn(rcpt->cookie, 0);
+        return;
+    }
+#endif
 
     /* ---- Build complete serial line in a stack buffer, then write atomically ----
      *

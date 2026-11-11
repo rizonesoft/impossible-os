@@ -587,7 +587,15 @@ struct per_cpu_data {
     /* IRQL a timer interrupt interrupted. isr_handler stores it on the way into
      * CLOCK_LEVEL and irql_tick_lower_to_dispatch reads it. Owning CPU only. */
     uint8_t           clock_interrupted_irql;
-    uint8_t           _drain_pad[2];    /* alignment */
+    /* Interrupt nesting depth on this CPU: isr_handler counts every hardware
+     * vector >= 32 (not the fast-fail, syscall and yield software gates) from
+     * entry to its irql_restore exit, so non-zero
+     * means "running in an interrupt", independent of the IRQL it mapped to
+     * (a legacy IRQ runs at DISPATCH, exactly like a thread that raised).
+     * Balanced per call: a context switch is a returned frame, never an exit
+     * that skips the decrement. Owning CPU only. Takes a former pad byte. */
+    uint8_t           isr_depth;
+    uint8_t           _drain_pad[1];    /* alignment */
 
     /* IRQL contract telemetry (per-CPU, owning-CPU writes, summed for health).
      * irql_violations: IRQL_REQUIRE_AT_MOST/AT_LEAST + monotonic raise/lower

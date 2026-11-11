@@ -182,6 +182,11 @@ void KeSetImportanceDpc(KDPC *dpc, KDPC_IMPORTANCE importance);
  * Must be called at PASSIVE_LEVEL. Used for driver teardown. */
 void KeFlushQueuedDpcs(void);
 
+/* NT KeIsExecutingDpc: non-zero while a non-threaded DPC routine is running on
+ * the calling CPU (including one a timer-ISR drain nested over another).
+ * Threaded DPCs run on their worker thread and do not count. Any IRQL. */
+int KeIsExecutingDpc(void);
+
 /* ---- Per-CPU DPC queue (internal) ---------------------------------------- */
 
 /* Maximum DPC queue depth before overflow warning.  Not a hard limit --

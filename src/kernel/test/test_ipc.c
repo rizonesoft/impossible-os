@@ -13,6 +13,7 @@
 #include "kernel/ipc/shmem.h"
 #include "kernel/mm/pmm.h"   /* pmm_alloc_fail_next -- pipe pool OOM path */
 #include "kernel/klog.h"
+#include "kernel/test/klog_suppress.h"   /* TEST_KLOG_EXPECT */
 
 /* Thread helpers from test_threads.c */
 extern volatile uint32_t thread_shared_counter;
@@ -217,6 +218,8 @@ static void test_shmem_counter(void)
  * Recovers the pool afterward for every later consumer in this boot. */
 static void test_pipe_pool_degrades_on_oom(void)
 {
+    TEST_KLOG_EXPECT("ipc", "pipe: failed to allocate pipe pool");
+    TEST_KLOG_EXPECT("ipc", "pipe_create on a degraded pipe pool");
     /* TEST-SIDE-EFFECT-ALLOWED: controlled fault-recovery test of
      * pipe_init()'s own degrade/recover contract. pipe_init() is idempotent
      * by design (the CAS state machine exists for that), degrades rather

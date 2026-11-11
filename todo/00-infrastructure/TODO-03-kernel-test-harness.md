@@ -66,7 +66,8 @@ title: "TODO-03 -- Kernel Test Harness"
 | 💎  |   9   |   §9    | Audit + classify the 50+ [LEAK] failures §8 surfaced     | §8           |  [/]   |
 | 💎  |  10   |   §10   | Bound the failing-assertion message (long one wedges)    | --           |  [x]   |
 | 💎  |  11   |   §11   | Poisoned-boundary fixture so an overread fails a test    | §10          |  [x]   |
-| 💎  |  12   |   §12   | Assert or fix the 55 test-phase [FAIL] lines             | §5           |  [ ]   |
+| 💎  |  12   |   §12   | Assert or fix the 55 test-phase [FAIL] lines             | §5           |  [x]   |
+| 💎  |  13   |   §13   | Expect or attribute kernel errors per user-mode binary   | §12          |  [ ]   |
 
 > 💎 = parity work -- Linux kernel self-test framework has `lib/fault-inject.c` (multi-allocator fault injection), `kunit_add_action` (test-scoped cleanup registry), `kcsan`/`kasan` fences, `kunit_kzalloc()` scratch helpers, and `kmemleak` leak detection. This TODO brings the same floor to the Impossible OS kernel test runner without requiring the Driver Verifier / WDK workflow Windows leans on.
 > **Order vs section-number:** Implementation Order is execution sequence; section numbers (§N) preserve file stability. §7 (action registry) ships at Order 2 because §3, §5, and §8 all consume it.
@@ -462,18 +463,51 @@ Found closing §10, which replaced a fixed-offset subsystem probe (`subsystem[4]
 
 §5 shipped `TEST_KLOG_SUPPRESS` and made a test-phase `[FAIL]` a real finding (diagnose-serial-log P4.3), but the tests written since did not adopt it: a clean `bash scripts/test.sh QUIET=1` on 2026-11-10 (37,210 kernel tests PASS) still prints 55 `[FAIL]` lines. A sample reads as deliberately provoked negatives (quota over-return, `test_irql_require_*` violations, a pm callback named `'stuck'`, `fsck` on an unreadable FAT, guard-uninstall refusals), which an operator cannot tell from a genuine failure.
 
-**Files:** `src/kernel/test/test_*.c` (quota, irql, pm, fsck, mm guard, ex lookaside, ipc pipe, ctrl, sched suites), `scripts/test.sh`
+**Files:** `src/kernel/klog.c`, `include/kernel/klog.h`, `src/kernel/sched/dpc.c`, `include/kernel/sched/dpc.h`, `src/kernel/idt.c`, `include/kernel/smp.h`, `src/kernel/test/test_runner.c`, `src/kernel/test/klog_suppress.c`, `include/kernel/test/klog_suppress.h`, `src/kernel/test/test_*.c` (vmm, fat32, sched, exec, quota, ipc, pm, desktop, ex suites), `scripts/test.sh`
 
-- [ ] Add `TEST_KLOG_EXPECT(subsys, substring)`: the line stays off serial only if it is emitted, and the test FAILS when it never appears, so a provoked line is asserted, not hidden
-  - `TEST_KLOG_SUPPRESS` only demotes the level and asserts nothing: a negative path that stops logging, or logs the wrong failure, still passes. Prefer EXPECT for every provoked line; keep SUPPRESS for genuinely nondeterministic output.
-- [ ] Classify every one of the 55 lines by its emitting test: provoked negative -> `TEST_KLOG_EXPECT` with the exact message; anything not provoked is a real defect and is fixed at its source, never silenced
-- [ ] Attribute an unexpected `[FAIL]` to the running test: the harness marks THAT test failed and names the line, so it is one owned, fixable failure
-  - Never a run-wide gate: a log-scan that fails the whole suite would stall every later section on one flaky or environmental line, a loop the unattended run cannot leave. Lines emitted outside any test are reported in the summary, never gated.
-- [ ] Commit: "test: provoked negatives are asserted, not printed; a stray [FAIL] fails the test that emitted it"
+- [x] `TEST_KLOG_EXPECT(tag, text)` (`include/kernel/test/klog_suppress.h`): a matching LOG_ERROR record stays off serial, and the suite FAILS when none appeared
+  - The watch lives in `klog_emit` under `s_klog_lock` (`watch_candidate`, `watch_observe`): allocation-free, any CPU or ISR. It judges a record before the rate limit, so a busy tag cannot hide one; a matched record prints nothing and spends no budget, and an unexpected flood is counted in full but printed at the normal rate.
+  - A registration that cannot be honoured (empty, over-long, table full at 24, no suite running) fails the test at its call site instead of matching nothing.
+  - Outside the test phase the watch is OFF: no record is judged, and a suite window cannot open without a run.
+  - Errors are judged before the verbosity filter too: under `TEST_KLOG_SUPPRESS` the suite's own error on that tag counts as declared (87 suites rely on this), while another context's stays unexpected.
+  - An expectation matches only records the suite's own execution logs (`klog_watch_ctx_owns`: same CPU, task and thread, not inside an interrupt (new per-CPU `isr_depth`, counted by `isr_handler` for hardware vectors only, since a legacy IRQ runs at DISPATCH and a syscall body can exit without returning) and not a DPC (new NT `KeIsExecutingDpc`)); anything else during the suite is unexpected, whatever its text.
+- [x] Every one of the kernel phase's lines classified by its emitting suite: all 38 suites provoke them deliberately, so each carries exact `TEST_KLOG_EXPECT`s; none was a defect
+  - The `QuotaPressure` creation failure is the seam's installed `STATUS_OBJECT_NAME_COLLISION` (`test_quota_pressure.c`); the guard-install pair was hidden by the reporter bug below.
+- [x] An unexpected error during a suite (its body or its cleanup actions, any thread, any CPU) fails THAT suite once, naming the first line, the count, and its CPU and pid
+  - `test_watch_judge` in `test_runner.c` charges `klog_watch_failures`: one per unmet expectation, one for any unexpected record. Attribution is temporal for unexpected records (stated as "during the suite"), by thread for expected ones.
+  - Errors between suites are counted and reported as one LOG_WARN line, never gated.
+- [x] `scripts/test.sh` shows a failure line whole: the greedy `sed 's/.*TEST: //'` cut at a `TEST: ` inside the message and hid which line it was
+- [x] Commit: "test: provoked negatives are asserted, not printed; a stray [FAIL] fails the test that emitted it"
 
-**Test checkpoint:** `bash scripts/test.sh QUIET=1` reports PASS with zero `[FAIL]` lines in the test-phase window; a scratch test that logs `klog(LOG_ERROR, ...)` unexpectedly fails as that one named test, and a `TEST_KLOG_EXPECT` whose line is never emitted fails its test.
+**Test checkpoint:** `bash scripts/test.sh QUIET=1` reports PASS with zero `[FAIL]` lines in the kernel unit-test phase; a scratch suite that logs `klog(LOG_ERROR, ...)` unexpectedly fails as that one named suite, and a `TEST_KLOG_EXPECT` whose line is never emitted fails its suite. The user-mode phase's six lines are section 13.
+
+> **Test runner:** `bash scripts/test.sh QUIET=1` (Harness suites "TEST_KLOG_EXPECT matches a provoked error burst", "error watch rules", "error watch sees a suppressed error", "error watch ownership" and "error watch lifecycle, bounds and saturation"; `test_dpc_drain_executes` for `KeIsExecutingDpc`); controls run 2026-11-11: removing an expectation, the watch-before-rate-limit ordering, the matched-record budget exemption, the OFF guard, the owner binding, or judging before the verbosity filter each fails the named suite; the ownership suite covers an AP on the shared scheduler cursor, an ISR (including a legacy IRQ at DISPATCH) or DPC over the owner, another task's thread 0, and a balanced live ISR depth; the runner fails the run if the depth is non-zero after the kernel phase.
+> **Notes:**
+> - Shipped: the klog watch (`klog_watch_*`), `TEST_KLOG_EXPECT`, the runner's per-suite judgment and stray report, expectations in 38 suites.
+> - Integration: the window opens before the suite body and closes after `test_actions_drain`, so cleanup errors are the suite's own.
+> - Downstream: a new provoked error must be expected, or its suite fails; `TEST_KLOG_SUPPRESS` stays for nondeterministic output.
+> - Scope: kernel unit-test phase only; the ring-3 binaries' provoked lines are section 13.
 
 ---
+
+## 13. Expect or Attribute Kernel Errors per User-Mode Binary
+
+> **Spawned-by:** section 12 (review)
+
+> **User impact:** a developer reading a green user-mode phase still sees six `[FAIL]` lines and cannot tell a provoked failure from a real one, and a ring-3 binary that leaks the interrupt depth would go unnoticed.
+
+Section 12 brought the kernel unit-test phase to zero `[FAIL]` lines, but the user-mode phase still prints six, all provoked by ring-3 test binaries through fault injection (`test_faultinject.exe` OOM paths, `test_process.exe` exec and fork failures, a `task_create: max tasks reached`). The launcher in `src/kernel/test/test_usermode.c` runs each binary from `tests/usermode.manifest`, so it is the place to open the same watch per binary.
+
+**Files:** `src/kernel/test/test_usermode.c`, `tests/usermode.manifest`, the manifest parser and its fuzz target under `tools/fuzz/`
+
+- [ ] Manifest attribute `expects_klog=<tag>:<text>` (repeatable; the grammar for spaces in `<text>` decided and documented in the manifest header), parsed into the binary's plan entry
+  - An over-long or malformed value is a refusal of that line, like the other attributes; add a fuzz seed for it.
+- [ ] The launcher opens a SUITE window around each binary's run and judges it as `test_watch_judge` does: an unmet expectation or an unexpected error fails THAT binary's verdict
+- [ ] Classify the six lines by binary and declare each as an expectation, or fix its source
+- [ ] Each binary's verdict fails when it leaves `isr_depth` non-zero (the watch reads it for ownership); control: count the syscall vectors in `isr_handler` again and see the first exiting binary fail
+- [ ] Commit: "utest: each ring-3 binary's provoked kernel errors are declared, and a stray one fails that binary"
+
+**Test checkpoint:** `bash scripts/test.sh QUIET=1` prints no `[FAIL]` line in either phase; removing one `expects_klog=` from the manifest fails that binary by name.
 
 ## OS Comparison
 
@@ -487,6 +521,7 @@ Found closing §10, which replaced a fixed-offset subsystem probe (`subsystem[4]
 | 💎  | Test-scoped scratch allocation                | ⚠️ Manual in TAEF                                   | ✅ `kunit_kzalloc` (kmalloc-only)                   | ✅ §3 `TEST_SCRATCH_KBUF` (kmalloc + PMM)   |
 | 💎  | Per-test leak detection                       | ⚠️ DV verifier pool checks                          | ✅ `kmemleak` (kernel-wide)                         | ✅ §8 heap_used delta (per-test, built-in)  |
 | ⭐  | Test-scoped klog level demotion               | ❌ None                                             | ❌ None                                             | ✅ §5 `TEST_KLOG_SUPPRESS`                  |
+| ⭐  | An unexpected error line fails its test       | ❌ None (DbgPrint is not judged)                    | ⚠️ KUnit judges asserts only, not printk            | ✅ §12 `TEST_KLOG_EXPECT` + per-suite watch |
 | ⭐  | Single-boot 436-suite runner                  | ❌ WDK run per-driver                               | ❌ KUnit one-module-at-a-time                       | ✅ existing `test=1` infrastructure         |
 | ⭐  | CI-gated unannotated-leak counter             | ❌ DV advisory, not CI-gate                         | ⚠️ kmemleak is kernel-wide, not per-test CI-gate    | ✅ §9 `L leaked` folds into FAILED          |
 | 💎  | Over-long log line cannot hang the kernel     | ✅ `DbgPrint` truncates at 512                      | ✅ `printk` truncates at 1024                       | ✅ §10 truncates + marks, never spins       |
@@ -513,6 +548,9 @@ After §1-§8 land (all shipped 2026-04-19), in-kernel test coverage reaches Lin
 - [x] `src/kernel/test/test_harness.c` covers §11 poisoned-boundary fixture (10 TEST_CAT_BOOT suites incl. the detects-a-one-byte-overread control); `test_klog.c` retrofits the §10 short-tag suite onto it
 - [x] `src/kernel/test/test_except.c` adds a §11 fault-address selector matrix (3 TEST_CAT_EXCEPT suites: the two documented data-address codes, a NULL-deref address of 0, and non-address rejection incl. an explicit guard-page exclusion)
 - [x] `src/kernel/test/test_alpc.c` adds 3 §4 retrofit suites in TEST_CAT_IPC (`alpc: kmalloc-fail in pending alloc rolls back PoolUsageBytes`, `alpc: ReplyBodyCap clamps recv_buf_len > 65528`, `alpc: two-port lock-order stress`) consuming TODO-03 §1 + §2 + §3 + §5 primitives to close the TODO-24 §4 deferred test gaps block
+- [x] `src/kernel/test/test_harness.c` covers §12 live and on fixture state (`klog_watch_fx_*`, never the live window)
+  - live: a 150-record burst on a rate-limited tag is fully observed, kept off serial and spends no output budget; a suppressed error still reaches the watch
+  - fixture: match, stray, refusal, OFF, run reset, exact length bounds, overlap, case, test-tag exclusion, ownership, failure count and counter saturation
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) + `scripts\debug\kernel\run-mm-tests.bat` (SUITE=mm) + `scripts\debug\kernel\run-ipc-tests.bat` (SUITE=ipc) | ~72 new suites counted 2026-08-14 across `boot`/`mm`/`sched`/`ipc`/`ob`/`x86`/`except` (5 §1 + 3 §2 + 5 §3 + 3 §4 + 4 §5 + 13 §6 + 11 §7 + 6 §8 + 1 §9 + 8 §10 + 13 §11), 0 failures, summary shows `L=0` on a green tree
 

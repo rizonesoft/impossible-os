@@ -21,6 +21,7 @@
 #include "kernel/ob/ob_job.h"            /* job membership generation test      */
 #include "kernel/ob/handle_table.h"      /* scratch table behind the job handle */
 #include "kernel/ob/ob.h"                /* ObDereferenceObject                 */
+#include "kernel/test/klog_suppress.h"   /* TEST_KLOG_EXPECT */
 
 /* The registry is validated in Phase 2 (quota_register_types) before any
  * consumer runs; the test sweep runs in Phase 3, so it is already ready. */
@@ -264,6 +265,7 @@ static void test_quota_overflow_domain_guarded(void)
  * resource would wipe the accounting for everything allocated since). */
 static void test_quota_return_underflow_refused(void)
 {
+    TEST_KLOG_EXPECT("quota", "return threads: returning more than charged");
     quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
@@ -284,6 +286,7 @@ static void test_quota_return_underflow_refused(void)
  * return must not erase a newer, unrelated charge. */
 static void test_quota_stale_return_cannot_erase_newer_charge(void)
 {
+    TEST_KLOG_EXPECT("quota", "return handles: returning more than charged");
     quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
@@ -1019,6 +1022,7 @@ static void test_quota_task_init_teardown_contract(void)
  * than the job holds) must advance the drift counter. */
 static void test_quota_unabsorb_refusal_counted(void)
 {
+    TEST_KLOG_EXPECT("quota", "return timers: returning more than charged");
     quota_block_t *job = quota_block_create(QUOTA_PRINCIPAL_JOB, NULL, 0);
     quota_absorb_record_t rec = { .taken = { 0 }, .active = 0 };
     uint64_t before;
@@ -1413,6 +1417,7 @@ static void test_quota_concurrent_limit_is_exact(void)
  * otherwise a corrupted block hides behind a routine-looking status. */
 static void test_quota_transfer_corrupt_source(void)
 {
+    TEST_KLOG_EXPECT("quota", "transfer timers: negative usage on SOURCE block, failing closed");
     quota_block_t *src = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     quota_block_t *dst = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)src, "src allocated");
@@ -1441,6 +1446,7 @@ static void test_quota_transfer_corrupt_source(void)
  * against nonsense, and the corrupted value is left exactly as found. */
 static void test_quota_negative_usage_fails_closed(void)
 {
+    TEST_KLOG_EXPECT("quota", "charge processes: negative usage, failing closed");
     quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
@@ -1503,6 +1509,7 @@ static void test_quota_overflow_counts_failure(void)
  * accepts a maximum-length (15 sub-authority) SID exactly. */
 static void test_quota_block_create_failure_paths(void)
 {
+    TEST_KLOG_EXPECT("quota", "block create: out of memory");
     kmalloc_fail_next();
     quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NULL((void *)b, "allocation failure returns NULL, not a partial block");

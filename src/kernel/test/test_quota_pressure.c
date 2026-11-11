@@ -26,6 +26,7 @@
 #include "kernel/sched/task.h"          /* task_current for the ceiling fill */
 #include "kernel/test/scratch.h"        /* TEST_SCRATCH_KBUF for that fill */
 #include "kernel/security/sid.h"
+#include "kernel/test/klog_suppress.h"   /* TEST_KLOG_EXPECT */
 
 /* A distinct resource type per test so tests cannot contaminate each other's
  * domain even if one leaves state behind. */
@@ -1705,6 +1706,8 @@ static void test_pressure_retry_policy_schedule(void)
  * having never entered the code it claims to cover. */
 static void test_pressure_live_create_backoff(void)
 {
+    TEST_KLOG_EXPECT("quota", "still uncreated after 8 attempts");
+    TEST_KLOG_EXPECT("quota", "'QuotaPressure' creation failed");
     /* ZERO-INITIALIZED, and every isolate return code BRANCHED on, not merely
      * asserted. TEST_ASSERT_EQ records a failure and CONTINUES, so treating an
      * assertion as a stop would hand a garbage save record to the restore -- whose

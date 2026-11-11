@@ -27,6 +27,7 @@
 #include "kernel/smp.h"
 #include "kernel/types.h"
 #include "kernel/sched/event.h"
+#include "kernel/test/klog_suppress.h"   /* TEST_KLOG_EXPECT */
 
 #define DPC_WORKER_BLOCK_WAIT_TICKS 200u
 #define EVENT_SETTLE_SPINS 50000000u
@@ -1231,10 +1232,12 @@ static void test_dpc_importance_abi_values(void)
 /* DPC drain callback: records that it ran and at what IRQL. */
 static volatile int      g_dpc_drain_ran;
 static volatile uint32_t g_dpc_drain_irql;
+static volatile int      g_dpc_drain_executing;   /* KeIsExecutingDpc() inside the routine */
 static void dpc_drain_routine(struct _KDPC *dpc, void *ctx, void *a1, void *a2)
 {
     (void)dpc; (void)ctx; (void)a1; (void)a2;
     g_dpc_drain_irql = (uint32_t)KeGetCurrentIrql();
+    g_dpc_drain_executing = KeIsExecutingDpc();
     g_dpc_drain_ran  = 1;
 }
 
@@ -1244,6 +1247,8 @@ static void test_dpc_drain_executes(void)
     KDPC dpc;
     g_dpc_drain_ran  = 0;
     g_dpc_drain_irql = 0xFF;
+    g_dpc_drain_executing = 0;
+    TEST_ASSERT_EQ((uint64_t)KeIsExecutingDpc(), 0u, "a thread is not executing a DPC");
     KeInitializeDpc(&dpc, dpc_drain_routine, (void *)0);
     KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
     /* Drain synchronously. (If a timer tick drained it first the callback has
@@ -1252,6 +1257,8 @@ static void test_dpc_drain_executes(void)
     TEST_ASSERT_EQ((uint64_t)g_dpc_drain_ran, 1u, "DPC callback executed by drain");
     TEST_ASSERT_EQ((uint64_t)g_dpc_drain_irql, (uint64_t)DISPATCH_LEVEL,
                    "DPC callback ran at DISPATCH_LEVEL");
+    TEST_ASSERT_EQ((uint64_t)g_dpc_drain_executing, 1u, "KeIsExecutingDpc is true inside the routine");
+    TEST_ASSERT_EQ((uint64_t)KeIsExecutingDpc(), 0u, "and false again once it returned");
 }
 
 /* Test: KeFlushQueuedDpcs (PASSIVE_LEVEL caller) runs the DPC callback at
@@ -1875,6 +1882,7 @@ static void test_apc_rundown_runs(void)
  * above it (per-CPU irql_violations). */
 static void test_irql_require_at_most(void)
 {
+    TEST_KLOG_EXPECT("irql", "IRQL violation in test_irql_require_at_most");
     struct per_cpu_data *c = smp_this_cpu();
     uint32_t v0 = c->irql_violations;
     KIRQL old;
@@ -1889,6 +1897,7 @@ static void test_irql_require_at_most(void)
 /* Test: IRQL_REQUIRE_AT_LEAST counts a violation below the level, passes at it. */
 static void test_irql_require_at_least(void)
 {
+    TEST_KLOG_EXPECT("irql", "IRQL violation in test_irql_require_at_least");
     struct per_cpu_data *c = smp_this_cpu();
     uint32_t v0 = c->irql_violations;
     KIRQL old;
@@ -1934,6 +1943,7 @@ static void test_irql_store_is_the_visible_level(void)
  * not performed, not counted as a forced lower). */
 static void test_irql_forced_lower_rejects_raise(void)
 {
+    TEST_KLOG_EXPECT("irql", "KeLowerIrqlForced(test-bad)");
     struct per_cpu_data *c = smp_this_cpu();
     uint32_t v0 = c->irql_violations, f0 = c->irql_forced_lowers;
     KeLowerIrqlForced(DISPATCH_LEVEL, "test-bad");   /* at PASSIVE -- a raise */
@@ -1947,6 +1957,15 @@ static void test_irql_forced_lower_rejects_raise(void)
 static void test_irql_monotonic_violation_counted(void)
 {
     struct per_cpu_data *c = smp_this_cpu();
+    char want_raise[KLOG_WATCH_TEXT_MAX], want_lower[KLOG_WATCH_TEXT_MAX];
+    /* Exactly the two transitions provoked below, on this CPU: a violation
+     * another CPU reports meanwhile is not this suite's and must fail it. */
+    snprintf(want_raise, sizeof(want_raise), "KeRaiseIrql violation: CPU %u attempted lower %u -> %u",
+             (uint64_t)c->cpu_id, (uint64_t)DISPATCH_LEVEL, (uint64_t)PASSIVE_LEVEL);
+    snprintf(want_lower, sizeof(want_lower), "KeLowerIrql violation: CPU %u attempted raise %u -> %u",
+             (uint64_t)c->cpu_id, (uint64_t)PASSIVE_LEVEL, (uint64_t)DISPATCH_LEVEL);
+    TEST_KLOG_EXPECT("irql", want_raise);
+    TEST_KLOG_EXPECT("irql", want_lower);
     KIRQL old, dummy;
     KeRaiseIrql(DISPATCH_LEVEL, &old);              /* now DISPATCH (old = PASSIVE) */
     uint32_t v0 = c->irql_violations;

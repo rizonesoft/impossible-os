@@ -18,6 +18,7 @@
 #include "kernel/sched/irql.h"   /* KeRaiseIrql/KeLowerIrql -- paged-lookaside IRQL gate test */
 #include "kernel/mm/heap.h"      /* kmalloc/kfree -- LOOKASIDE_LIST_EX custom backing test */
 #include "kernel/ob/ob.h"   /* ObDereferenceObject -- release caller-owned callback objects */
+#include "kernel/test/klog_suppress.h"   /* TEST_KLOG_EXPECT */
 
 /* ---- S2: Interlocked SLIST ---------------------------------------------- */
 
@@ -443,6 +444,7 @@ static void test_ex_lookaside_depth_cap(void)
 
 static void test_ex_lookaside_paged_rejects_dispatch(void)
 {
+    TEST_KLOG_EXPECT("ex", "paged lookaside alloc at IRQL 2 (> APC_LEVEL)");
     PAGED_LOOKASIDE_LIST la;
     ExInitializePagedLookasideList(&la, 64, 0x47504431u /* '1DPG' */, 4);
 
@@ -523,6 +525,7 @@ static void test_ex_lookaside_nonpaged_dispatch(void)
 
 static void test_ex_lookaside_paged_free_rejects_dispatch(void)
 {
+    TEST_KLOG_EXPECT("ex", "paged lookaside free at IRQL 2 (> APC_LEVEL)");
     PAGED_LOOKASIDE_LIST la;
     ExInitializePagedLookasideList(&la, 64, 0x46474450u /* 'PDGF' */, 4);
 
@@ -623,6 +626,7 @@ static void test_ex_lookaside_failed_init_inert(void)
 
 static void test_ex_lookaside_delete_at_dispatch_recovers(void)
 {
+    TEST_KLOG_EXPECT("ex", "lookaside drain at IRQL 2 (> APC_LEVEL); retry at <= APC_LEVEL");
     NPAGED_LOOKASIDE_LIST la;
     ExInitializeNPagedLookasideList(&la, 64, 0x4C454444u /* 'DDEL' */, 8);
 
@@ -647,6 +651,7 @@ static void test_ex_lookaside_delete_at_dispatch_recovers(void)
 
 static void test_ex_lookaside_verifier_uaf(void)
 {
+    TEST_KLOG_EXPECT("ex", "lookaside use-after-free: tag=0x46414c56");
     ExpSetLookasideVerifier(true);
 
     NPAGED_LOOKASIDE_LIST la;

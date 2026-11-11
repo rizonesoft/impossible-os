@@ -73,8 +73,35 @@ int klog_suppress_begin(const char *subsystem);
 
 /* TEST_KLOG_SUPPRESS -- declare the demotion at any point inside a
  * test body. Takes no lock, allocates a small record (<32 bytes) via
- * kmalloc, and returns. Restoration is automatic at suite exit. */
+ * kmalloc, and returns. Restoration is automatic at suite exit.
+ *
+ * Under the test-phase error watch, an error the suite's OWN execution logs
+ * on a suppressed tag counts as declared; the same error from any other
+ * context (another CPU, task or thread, an ISR, a DPC) still fails the suite.
+ * Prefer TEST_KLOG_EXPECT for a line the test provokes: it also fails the
+ * suite when the line stops appearing. */
 #define TEST_KLOG_SUPPRESS(subsystem) \
     ((void)klog_suppress_begin((subsystem)))
+
+/* TEST_KLOG_EXPECT -- declare that this suite provokes a LOG_ERROR record
+ * from `tag` whose message contains `text`.
+ *
+ * Unlike TEST_KLOG_SUPPRESS, which only lowers the level and asserts
+ * nothing, an expectation is checked: the matching record is kept off
+ * serial, and when the suite ends without one appearing the suite FAILS,
+ * naming the tag, the text and this call site. Any other LOG_ERROR record
+ * emitted while the suite runs (its cleanup actions included) also fails
+ * the suite, naming the line. Use EXPECT for every deliberately provoked
+ * error; keep SUPPRESS for genuinely nondeterministic output.
+ *
+ * Declare it BEFORE the call that provokes the line. A registration that
+ * cannot be honoured (table full, over-long text, no suite running) fails
+ * the test at this call site instead of silently matching nothing.
+ *
+ * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 12 */
+void test_klog_expect(const char *tag, const char *text, const char *file, int line);
+
+#define TEST_KLOG_EXPECT(tag, text) \
+    test_klog_expect((tag), (text), __FILE__, __LINE__)
 
 #endif /* KERNEL_TESTS */

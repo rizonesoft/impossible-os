@@ -133,7 +133,8 @@ between default and strict-only.
   - **WARN / ERROR: flag >= 3 repeats** of the same canonicalized key (one-offs are usually intentional single-fire test stubs).
 - **Severity:** L for WARN/ERROR, M for FAIL/CRIT (higher level = higher visual noise, higher cost of confusion when a real failure is hidden in the sea of fake ones).
 - **Strict-only:** no
-- **Remediation:** wrap the owning test in `TEST_KLOG_SUPPRESS("<subsystem>")` (see `include/kernel/test/klog_suppress.h`). For sites where the test doesn't own the entire call chain (e.g. a shared validator called from both a negative test AND real-boot code), split the validator into a "validate-and-return-errno" core (silent) plus a "validate-and-log-fail" wrapper that real-boot callers use and tests bypass. Only resort to `LOG_DEBUG` unconditionally if the line has NO real-boot diagnostic value.
+- **Since 2026-11-11** the runner itself fails the suite that emits an undeclared `LOG_ERROR` line in the kernel unit-test phase, so a `[FAIL]` there arrives with a failed suite attached; the user-mode phase is not yet watched (kernel test harness TODO-03 section 13).
+- **Remediation:** a provoked error line gets `TEST_KLOG_EXPECT("<tag>", "<stable text>")` at the top of the test body (the suite then fails if it stops appearing); WARN noise gets `TEST_KLOG_SUPPRESS("<subsystem>")` (see `include/kernel/test/klog_suppress.h`). For sites where the test doesn't own the entire call chain (e.g. a shared validator called from both a negative test AND real-boot code), split the validator into a "validate-and-return-errno" core (silent) plus a "validate-and-log-fail" wrapper that real-boot callers use and tests bypass. Only resort to `LOG_DEBUG` unconditionally if the line has NO real-boot diagnostic value.
 
 ---
 

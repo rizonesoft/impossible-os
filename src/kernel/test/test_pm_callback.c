@@ -22,6 +22,7 @@
 #include "kernel/types.h"
 #include "kernel/test/test.h"
 #include "kernel/pm/power_callback.h"
+#include "kernel/test/klog_suppress.h"   /* TEST_KLOG_EXPECT */
 
 /* ---- Fixtures ------------------------------------------------------------
  * Order is recorded into a shared trace so a test can assert the exact
@@ -298,6 +299,10 @@ static void test_pm_transaction_span(void)
 
 static void test_pm_sleep_abort_unwinds(void)
 {
+    TEST_KLOG_EXPECT("pm", "sleep callback 'input' failed with status -42");
+    TEST_KLOG_EXPECT("pm", "sleep aborted at priority 3: unwound 2 quiesced");
+    TEST_KLOG_EXPECT("pm", "sleep callback 'user' failed with status -42");
+    TEST_KLOG_EXPECT("pm", "sleep aborted at priority 5: unwound 0 quiesced");
     pm_cb_table_t  t;
     pm_cb_report_t rep;
 
@@ -345,6 +350,10 @@ static void test_pm_sleep_abort_unwinds(void)
 
 static void test_pm_unwind_failure_degrades(void)
 {
+    TEST_KLOG_EXPECT("pm", "sleep callback 'input' failed with status -42");
+    TEST_KLOG_EXPECT("pm", "unwind callback 'stuck' failed with status -7");
+    TEST_KLOG_EXPECT("pm", "sleep aborted at priority 3: unwound 1 quiesced");
+    TEST_KLOG_EXPECT("pm", "sleep unwind FAILED for 1 slot(s)");
     pm_cb_table_t  t;
     pm_cb_report_t rep;
 
@@ -399,6 +408,10 @@ static void test_pm_unwind_failure_degrades(void)
 
 static void test_pm_resume_failure_policy(void)
 {
+    TEST_KLOG_EXPECT("pm", "resume callback 'net' failed with status -7");
+    TEST_KLOG_EXPECT("pm", "resume callback 'disk' failed with status -7");
+    TEST_KLOG_EXPECT("pm", "resume callback 'ec' failed with status -7");
+    TEST_KLOG_EXPECT("pm", "resume FAILED for 1 slot(s): power state is unknown");
     pm_cb_table_t  t;
     pm_cb_report_t rep;
 
@@ -479,6 +492,8 @@ static void test_pm_resume_failure_policy(void)
 
 static void test_pm_half_registered_slots(void)
 {
+    TEST_KLOG_EXPECT("pm", "sleep callback 'input' failed with status -42");
+    TEST_KLOG_EXPECT("pm", "sleep aborted at priority 3: unwound 0 quiesced");
     pm_cb_table_t  t;
     pm_cb_report_t rep;
 

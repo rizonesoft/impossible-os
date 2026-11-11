@@ -27,6 +27,7 @@
 #include "kernel/mm/heap.h"     /* heap_get_used for delta checks */
 #include "kernel/mm/pmm.h"      /* pmm_get_used_frames for pmm delta checks */
 #include "kernel/mm/memmap.h"   /* mm_virt_in_hhdm / mm_hhdm_to_phys: PMM scratch is HHDM-reached */
+#include "kernel/smp.h"        /* smp_this_cpu()->isr_depth for the watch ownership test */
 #include "kernel/klog.h"        /* klog_get_level / klog_set_level for suppress tests */
 #include "libc/string.h"        /* strcmp for the [COUNT] record shape assertions */
 
@@ -624,6 +625,287 @@ static void test_harness_klog_suppress_restored(void)
     TEST_ASSERT_EQ(klog_has_override(tag), 0,
                    "no lingering override: tag follows global default again "
                    "(would fail if suppress_begin blindly called klog_set_level on restore)");
+}
+
+/* ---------------------------------------------------------------------------
+ * TEST_KLOG_EXPECT and the test-phase error watch (kernel test harness roadmap).
+ *
+ * End to end: an expected error is matched, kept off serial and counted, and
+ * the watch sees every one of a burst that would exceed the shared per-tag
+ * rate limit. The rules suite then closes the runner's window, drives the
+ * matcher on synthetic records (klog_watch_probe emits nothing, so no [FAIL]
+ * line reaches serial), and reopens a clean window for the runner to judge.
+ * ------------------------------------------------------------------------- */
+
+#define EXPECT_BURST 150u   /* more than KLOG_RATE_DEFAULT (100/s) in one burst */
+
+static struct klog_watch_report s_expect_report;
+
+static void test_harness_klog_expect_end_to_end(void)
+{
+    uint32_t dropped0;
+
+    TEST_ASSERT_EQ((uint32_t)klog_watch_mode(), (uint32_t)KLOG_WATCH_SUITE,
+                   "a suite body runs inside an open SUITE window");
+    /* "mm" logs from Phase 0, so it owns one of the limiter's 32 slots; a tag
+     * first seen here would get none (the table is full by now) and could not
+     * show whether the watch bypasses the limit. */
+    TEST_ASSERT(klog_probe_rate_limited("mm"), "precondition: the burst tag is rate limited");
+    TEST_KLOG_EXPECT("mm", "harness watch burst marker");
+    dropped0 = klog_get_dropped("mm");
+    for (uint32_t i = 0; i < EXPECT_BURST; i++)
+        klog(LOG_ERROR, "mm", "harness watch burst marker %u", (uint64_t)i);
+
+    /* <= rather than ==: another "mm" record can roll the limiter's window,
+     * which resets the drop count; spending budget would push it up by 50. */
+    TEST_ASSERT(klog_get_dropped("mm") <= dropped0,
+                "an expected record prints nothing, so it spends none of the tag's output budget");
+    klog_watch_peek(&s_expect_report);
+    TEST_ASSERT_EQ(s_expect_report.n_expects, 1u, "one expectation registered");
+    TEST_ASSERT_EQ(s_expect_report.expects[0].hits, EXPECT_BURST,
+                   "every record of a burst past the rate limit is observed");
+    TEST_ASSERT_EQ(s_expect_report.unexpected, 0u, "an expected record is not unexpected");
+    TEST_ASSERT_EQ(klog_watch_failures(&s_expect_report), 0u, "a met expectation charges nothing");
+}
+
+/* Live: the watch judges an error BEFORE the verbosity filter, so a record a
+ * suite suppressed is still seen (and here, expected). Judged after the filter
+ * it would never arrive and the expectation would fail the suite. */
+static void test_harness_klog_watch_sees_suppressed(void)
+{
+    TEST_KLOG_SUPPRESS("_test_watch_sup");
+    TEST_KLOG_EXPECT("_test_watch_sup", "suppressed but watched");
+    klog(LOG_ERROR, "_test_watch_sup", "suppressed but watched");
+    klog_watch_peek(&s_expect_report);
+    TEST_ASSERT_EQ(s_expect_report.expects[0].hits, 1u, "the suppressed error reached the watch");
+}
+
+/* The rules, lifecycle, bounds and saturation suites drive the SAME watch
+ * machine on a fixture this thread owns, so nothing here can disturb the live
+ * window the runner is judging, and no synthetic record reaches serial. */
+static struct klog_watch_state s_fx;
+static int s_fx_task, s_fx_thread, s_fx_other;   /* stand-in objects: only their addresses matter */
+
+/* A fixture owned by an ordinary thread context on CPU 0. */
+static void fx_reset(struct klog_watch_state *st)
+{
+    klog_watch_fx_init(st);
+    st->owner.valid  = 1;
+    st->owner.cpu    = 0;
+    st->owner.task   = &s_fx_task;
+    st->owner.thread = &s_fx_thread;
+}
+
+static void test_harness_klog_watch_rules(void)
+{
+    struct klog_watch_state *st = &s_fx;
+    struct klog_watch_report *r = &s_expect_report;
+    char long_text[KLOG_WATCH_TEXT_MAX + 1];
+    char long_tag[KLOG_WATCH_TAG_MAX + 1];
+    char long_msg[250];
+
+    for (uint32_t i = 0; i < sizeof(long_text) - 1; i++) long_text[i] = 'x';
+    long_text[sizeof(long_text) - 1] = '\0';
+    for (uint32_t i = 0; i < sizeof(long_tag) - 1; i++) long_tag[i] = 't';
+    long_tag[sizeof(long_tag) - 1] = '\0';
+    for (uint32_t i = 0; i < sizeof(long_msg) - 1; i++) long_msg[i] = 'm';
+    long_msg[sizeof(long_msg) - 1] = '\0';
+
+    fx_reset(st);
+    klog_watch_fx_run_begin(st);
+    TEST_ASSERT_EQ((uint32_t)st->mode, (uint32_t)KLOG_WATCH_RUN, "a run opens RUN");
+    TEST_ASSERT_EQ(klog_watch_fx_expect(st, "_w", "alpha", __FILE__, __LINE__), KLOG_WATCH_ERR_WINDOW,
+                   "no expectation outside a suite");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "_w", "between suites"), 0, "a stray error is printed");
+    TEST_ASSERT_EQ(st->stray, 1u, "and counted as stray");
+
+    klog_watch_fx_suite_begin(st);
+    TEST_ASSERT_EQ(klog_watch_fx_expect(st, "_w", "alpha", __FILE__, __LINE__), KLOG_WATCH_OK, "register");
+    TEST_ASSERT_EQ(klog_watch_fx_expect(st, "", "alpha", __FILE__, __LINE__), KLOG_WATCH_ERR_ARG, "empty tag");
+    TEST_ASSERT_EQ(klog_watch_fx_expect(st, "_w", "", __FILE__, __LINE__), KLOG_WATCH_ERR_ARG, "empty text");
+    TEST_ASSERT_EQ(klog_watch_fx_expect(st, "_w", long_text, __FILE__, __LINE__), KLOG_WATCH_ERR_LONG,
+                   "an over-long text is refused, never truncated into a broader match");
+    TEST_ASSERT_EQ(klog_watch_fx_expect(st, long_tag, "alpha", __FILE__, __LINE__), KLOG_WATCH_ERR_LONG,
+                   "an over-long tag is refused");
+
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "_w", "x alpha y"), 1, "a substring match is swallowed");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "_w:sub", "alpha"), 1, "a tag with a ':' suffix matches");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "_wx", "alpha"), 0, "a longer tag is not the same tag");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_WARN, "_w", "beta"), -1, "only LOG_ERROR is watched");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "TEST", "beta"), -1, "the runner's own verdicts are not");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "DTEST", "beta"), -1, "nor desktop-suite verdicts");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "_w", "beta"), 0, "an unmatched error is unexpected");
+
+    TEST_ASSERT_EQ(klog_watch_fx_expect(st, "_w", "never", __FILE__, __LINE__), KLOG_WATCH_OK, "register unmet");
+    for (uint32_t i = 2; i < KLOG_WATCH_MAX_EXPECTS; i++)
+        (void)klog_watch_fx_expect(st, "_w", "fill", __FILE__, __LINE__);
+    TEST_ASSERT_EQ(klog_watch_fx_expect(st, "_w", "one too many", __FILE__, __LINE__), KLOG_WATCH_ERR_FULL,
+                   "the table refuses past its capacity");
+
+    TEST_ASSERT_EQ(st->report.n_expects, KLOG_WATCH_MAX_EXPECTS, "table full");
+    TEST_ASSERT_EQ(st->report.expects[0].hits, 2u, "both matching records counted");
+    TEST_ASSERT_EQ(st->report.unexpected, 2u, "both unmatched records counted");
+    TEST_ASSERT_EQ(strcmp(st->report.first_line, "_wx: alpha"), 0, "the FIRST unexpected record is kept");
+    TEST_ASSERT_EQ(klog_watch_failures(&st->report), (KLOG_WATCH_MAX_EXPECTS - 1u) + 1u,
+                   "one failure per unmet expectation plus one for the unexpected records");
+    klog_watch_fx_suite_end(st, r);
+    TEST_ASSERT_EQ(r->n_expects, KLOG_WATCH_MAX_EXPECTS, "the snapshot is what was open");
+    TEST_ASSERT_EQ(st->report.n_expects + st->report.unexpected, 0u, "closing the suite clears it");
+    TEST_ASSERT_EQ((uint32_t)st->mode, (uint32_t)KLOG_WATCH_RUN, "and returns to RUN");
+    TEST_ASSERT_EQ(st->stray, 1u, "strays survive a suite");
+
+    /* The first-line copy is bounded. */
+    klog_watch_fx_suite_begin(st);
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "_w", long_msg), 0, "a long unexpected record");
+    TEST_ASSERT_EQ((uint32_t)strlen(st->report.first_line), KLOG_WATCH_LINE_MAX - 1u,
+                   "its copy is cut at the buffer, NUL-terminated");
+}
+
+/* Who may satisfy an expectation: exactly the suite's CPU, task and thread,
+ * in thread context. Each case is a context the global scheduler cursor or a
+ * task-local thread id would have confused with the owner. */
+static void test_harness_klog_watch_ownership(void)
+{
+    struct klog_watch_ctx owner, c;
+
+    owner.valid = 1; owner.in_dpc = 0; owner.in_isr = 0; owner.irql = PASSIVE_LEVEL;
+    owner.cpu = 0; owner.task = &s_fx_task; owner.thread = &s_fx_thread;
+
+    c = owner;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 1, "the owner itself");
+    c.irql = DISPATCH_LEVEL;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 1, "the owner having raised to DISPATCH");
+    c = owner; c.cpu = 1;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 0, "an AP reading the same global cursor");
+    c = owner; c.irql = (uint8_t)(DISPATCH_LEVEL + 1);
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 0, "an ISR over the owner");
+    c = owner; c.in_isr = 1; c.irql = DISPATCH_LEVEL;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 0, "a legacy IRQ over the owner (it runs at DISPATCH)");
+    c = owner; c.in_dpc = 1;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 0, "a DPC over the owner");
+    c = owner; c.task = &s_fx_other;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 0, "another task (its thread 0 shares the owner's id)");
+    c = owner; c.thread = &s_fx_other;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 0, "another thread of the same task");
+    c = owner; c.valid = 0;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 0, "an unknown context");
+    c = owner; owner.valid = 0;
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&owner, &c), 0, "a suite opened with no known owner");
+    TEST_ASSERT_EQ(klog_watch_ctx_owns((const struct klog_watch_ctx *)0, &c), 0, "NULL owner");
+    TEST_ASSERT_EQ(klog_watch_ctx_owns(&c, (const struct klog_watch_ctx *)0), 0, "NULL context");
+
+    /* The live ISR depth isr_handler keeps is balanced: after every interrupt
+     * since boot, thread context reads zero. A missed decrement would make
+     * every later record look like an ISR's and no expectation could match. */
+    TEST_ASSERT_EQ((uint32_t)smp_this_cpu()->isr_depth, 0u, "thread context is not inside an interrupt");
+}
+
+static void test_harness_klog_watch_edges(void)
+{
+    struct klog_watch_state *st = &s_fx;
+    char tag23[KLOG_WATCH_TAG_MAX], text95[KLOG_WATCH_TEXT_MAX], msg[300];
+    const uint32_t MAX = 0xFFFFFFFFu;
+
+    for (uint32_t i = 0; i < sizeof(tag23) - 1; i++) tag23[i] = 'g';
+    tag23[sizeof(tag23) - 1] = '\0';
+    for (uint32_t i = 0; i < sizeof(text95) - 1; i++) text95[i] = 'e';
+    text95[sizeof(text95) - 1] = '\0';
+    for (uint32_t i = 0; i < sizeof(msg) - 1; i++) msg[i] = 'm';
+    msg[sizeof(msg) - 1] = '\0';
+
+    /* OFF and run reset. */
+    fx_reset(st);
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "_w", "off"), -1, "OFF ignores errors");
+    TEST_ASSERT_EQ(klog_watch_fx_expect(st, "_w", "off", __FILE__, __LINE__), KLOG_WATCH_ERR_WINDOW,
+                   "OFF refuses expectations");
+    klog_watch_fx_suite_begin(st);
+    TEST_ASSERT_EQ((uint32_t)st->mode, (uint32_t)KLOG_WATCH_OFF, "a suite cannot open without a run");
+    klog_watch_fx_run_begin(st);
+    (void)klog_watch_fx_probe(st, LOG_ERROR, "_w", "s");
+    klog_watch_fx_suite_begin(st);
+    TEST_ASSERT_EQ(klog_watch_fx_run_end(st), 1u, "run_end from a SUITE returns the stray count");
+    TEST_ASSERT_EQ((uint32_t)st->mode, (uint32_t)KLOG_WATCH_OFF, "and leaves the watch OFF");
+    st->stray = 7u;
+    klog_watch_fx_run_begin(st);
+    TEST_ASSERT_EQ(st->stray, 0u, "run_begin resets the stray count");
+
+    /* Exact length bounds, NULLs, and refusals that leave the table intact. */
+    klog_watch_fx_suite_begin(st);
+    TEST_ASSERT_EQ(klog_watch_fx_expect(st, tag23, text95, "f.c", 7), KLOG_WATCH_OK,
+                   "the longest tag and text are accepted");
+    TEST_ASSERT_EQ(klog_watch_fx_expect(st, NULL, "x", __FILE__, __LINE__), KLOG_WATCH_ERR_ARG, "NULL tag");
+    TEST_ASSERT_EQ(klog_watch_fx_expect(st, "_w", NULL, __FILE__, __LINE__), KLOG_WATCH_ERR_ARG, "NULL text");
+    TEST_ASSERT_EQ(klog_watch_fx_expect(NULL, "_w", "x", __FILE__, __LINE__), KLOG_WATCH_ERR_ARG, "NULL fixture");
+    TEST_ASSERT_EQ(st->report.n_expects, 1u, "refusals add nothing");
+    TEST_ASSERT_EQ(strcmp(st->report.expects[0].tag, tag23), 0, "the tag is stored whole");
+    TEST_ASSERT_EQ(strcmp(st->report.expects[0].text, text95), 0, "the text is stored whole");
+    TEST_ASSERT_EQ((uint32_t)st->report.expects[0].line, 7u, "the call site line is kept");
+    TEST_ASSERT_EQ(st->report.expects[0].hits, 0u, "no hits yet");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, tag23, text95), 1, "the longest pair matches itself");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "_w", NULL), 0, "a NULL message is observed, not matched");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "_w", msg), -1, "a message longer than a record is refused");
+    TEST_ASSERT_EQ(st->report.unexpected, 1u, "the refused probe changed nothing");
+
+    /* Matching rules. */
+    klog_watch_fx_suite_begin(st);
+    TEST_ASSERT_EQ(st->report.n_expects + st->report.unexpected + (uint32_t)st->report.first_line[0], 0u,
+                   "a new suite starts from an empty report");
+    (void)klog_watch_fx_expect(st, "_w", "abc", __FILE__, __LINE__);
+    (void)klog_watch_fx_expect(st, "_w", "ab", __FILE__, __LINE__);
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "_w", "xxabc"), 1, "overlapping expectations");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "_w", "aab"), 1, "a match after a failed partial prefix");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "_w", "ABC"), 0, "matching is case sensitive");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "_w", "a"), 0, "a needle longer than the message");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "UTEST", "x"), -1, "user-test verdicts are not watched");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "TEST:sub", "x"), -1, "nor a suffixed TEST tag");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "TESTx", "x"), 0, "a longer tag is an ordinary tag");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, NULL, "x"), 0, "an untagged error is observed");
+    /* Only the suite's own execution can satisfy an expectation. */
+    {
+        struct klog_watch_ctx other = st->owner;
+        other.thread = &s_fx_other;
+        TEST_ASSERT_EQ(klog_watch_fx_probe_from(st, &other, 0, LOG_ERROR, "_w", "abc"), 0,
+                       "another thread's matching text is unexpected");
+        /* TEST_KLOG_SUPPRESS declares the suite's own noise, nobody else's. */
+        TEST_ASSERT_EQ(klog_watch_fx_probe_from(st, &st->owner, 1, LOG_ERROR, "_s", "suppressed"), 1,
+                       "the owner's error on a suppressed tag is declared");
+        TEST_ASSERT_EQ(klog_watch_fx_probe_from(st, &other, 1, LOG_ERROR, "_s", "suppressed"), 0,
+                       "another context's error on a suppressed tag is still unexpected");
+    }
+    /* An exact expectation does not absorb a neighbour's error. */
+    (void)klog_watch_fx_expect(st, "irql", "KeRaiseIrql violation: CPU 0 attempted lower 2 -> 0",
+                               __FILE__, __LINE__);
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "irql", "KeRaiseIrql violation: CPU 1 attempted lower 2 -> 0"),
+                   0, "the same violation on another CPU is unexpected");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "irql", "KeRaiseIrql violation: CPU 0 attempted lower 1 -> 0"),
+                   0, "another transition is unexpected");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "irql", "KeRaiseIrql violation: CPU 0 attempted lower 2 -> 0"),
+                   1, "the provoked one matches");
+    TEST_ASSERT_EQ(st->report.expects[0].hits, 1u, "only the first matching expectation counts");
+    TEST_ASSERT_EQ(st->report.expects[1].hits, 1u, "the second matched alone once");
+    TEST_ASSERT_EQ(st->report.unexpected, 8u, "eight unmatched records");
+    TEST_ASSERT_EQ(strcmp(st->report.first_line, "_w: ABC"), 0, "the first of them is kept");
+
+    /* Saturation: the counters stop at their ceiling, and a saturated count
+     * still reads as met / still charges its failure. */
+    st->report.expects[0].hits = MAX - 1u;
+    st->report.unexpected      = MAX - 1u;
+    for (int k = 0; k < 2; k++) {
+        TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "_w", "abc"), 1, "a match at the ceiling is still swallowed");
+        TEST_ASSERT_EQ(klog_watch_fx_probe(st, LOG_ERROR, "_w", "zzz"), 0, "an unexpected record at the ceiling");
+    }
+    TEST_ASSERT_EQ(st->report.expects[0].hits, MAX, "hits saturate");
+    TEST_ASSERT_EQ(st->report.unexpected, MAX, "unexpected saturates");
+    TEST_ASSERT_EQ(strcmp(st->report.first_line, "_w: ABC"), 0, "the first line is not replaced");
+    TEST_ASSERT_EQ(klog_watch_failures(&st->report), 1u, "a saturated count is met; the unexpected records charge one");
+    klog_watch_fx_suite_end(st, NULL);
+    st->stray = MAX - 1u;
+    (void)klog_watch_fx_probe(st, LOG_ERROR, "_w", "s1");
+    (void)klog_watch_fx_probe(st, LOG_ERROR, "_w", "s2");
+    TEST_ASSERT_EQ(st->stray, MAX, "strays saturate");
+    TEST_ASSERT_EQ(klog_watch_failures(NULL), 0u, "no report charges nothing");
+    TEST_ASSERT_EQ(klog_watch_fx_probe(NULL, LOG_ERROR, "_w", "x"), -1, "a NULL fixture is not watched");
+    klog_watch_peek(NULL);
 }
 
 /* Distinguish effective-level restore from true override-state restore:
@@ -1592,6 +1874,16 @@ void test_register_harness(void)
                             test_harness_scratch_foreign_free, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: scratch rollback on full action stack",
                             test_harness_scratch_rollback, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: TEST_KLOG_EXPECT matches a provoked error burst",
+                            test_harness_klog_expect_end_to_end, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: error watch rules (match, stray, refusal, bounds)",
+                            test_harness_klog_watch_rules, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: error watch sees a suppressed error",
+                            test_harness_klog_watch_sees_suppressed, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: error watch ownership (CPU, task, thread, ISR, DPC)",
+                            test_harness_klog_watch_ownership, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: error watch lifecycle, bounds and saturation",
+                            test_harness_klog_watch_edges, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: TEST_KLOG_SUPPRESS demotes level",
                             test_harness_klog_suppress_begin, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: klog level restored after action drain",

@@ -90,7 +90,8 @@ Beyond assertions, the harness ships fixtures for exercising rare control flow. 
 - `TEST_SCRATCH_KBUF` / scratch buffers -- `include/kernel/test/scratch.h`
 - `test_add_action` (cleanup registry, runs on suite teardown) -- `include/kernel/test/test.h`
 - `TEST_EXPECT_LEAK` / `TEST_LEAK_IGNORE` (leak-column opt-outs; see the `L leaked` gate above) -- `include/kernel/test/test.h`
-- `TEST_KLOG_SUPPRESS` (silence expected klog during a check) -- `include/kernel/test/test.h`
+- `TEST_KLOG_EXPECT(tag, text)` (declare each `LOG_ERROR` line a negative test provokes; an undeclared error line fails the suite, and a declared one that never appears fails it too) -- `include/kernel/test/klog_suppress.h`
+- `TEST_KLOG_SUPPRESS` (silence nondeterministic klog noise during a check) -- `include/kernel/test/klog_suppress.h`
 - `TEST_POISON_TAIL` / overread fixture -- `include/kernel/test/poison_tail.h`
 
 ### When to use TEST_PENDING vs TEST_ASSERT (MANDATORY)

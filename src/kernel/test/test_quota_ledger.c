@@ -30,6 +30,7 @@
 #include "kernel/mm/heap.h"          /* kmalloc_fail_next injection */
 #include "kernel/sched/irql.h"        /* KeRaiseIrql/KeLowerIrql for the deferral tests */
 #include "kernel/test/scratch.h"      /* TEST_SCRATCH_KBUF for the ceiling walk */
+#include "kernel/test/klog_suppress.h"   /* TEST_KLOG_EXPECT */
 
 /* The resource type these tests charge. SECTION is used by the sibling receipt
  * tests for the same reason: nothing in a test boot charges it, so a delta
@@ -556,6 +557,7 @@ static void test_quota_ledger_obligation_outlives_task_claim(void)
  * and count it as a leak rather than strand the usage for the rest of the boot. */
 static void test_quota_ledger_orphan_reclaimed_and_counted(void)
 {
+    TEST_KLOG_EXPECT("quota", "orphaned obligation(s) reclaimed at reap");
     struct task *t = task_current();
     if (!t || !t->quota)
         return;
@@ -1046,6 +1048,7 @@ static void test_quota_ledger_migrate_skips_and_is_idempotent(void)
  * clamping would erase some other live obligation's usage. */
 static void test_quota_charge_adjust_decrease_underflow_fails_closed(void)
 {
+    TEST_KLOG_EXPECT("quota", "return sections: returning more than charged");
     struct task *t = task_current();
     if (!t || !t->quota)
         return;

@@ -301,6 +301,142 @@ int klog_has_override(const char *subsystem);
  *
  * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 11 */
 int klog_probe_tag_is(const char *tag, const char *name);
+
+/* ---- Test-phase error watch (the kernel unit-test runner's [FAIL] audit) ----
+ *
+ * While a watch is open, every LOG_ERROR record whose tag is not a test tag
+ * (TEST, DTEST, UTEST) is judged inside s_klog_lock, after formatting and
+ * BEFORE both the verbosity filter and the shared rate limit, so neither a
+ * suppressed tag nor a busy one can hide it from the accounting:
+ *   - a record from the suite's own execution (klog_watch_ctx_owns) matching
+ *     a registered expectation (tag by klog_tag_is, plus a substring of the
+ *     formatted message) is counted against it and reaches no sink. Unless it
+ *     was also filtered it enters the ring and spends no output budget;
+ *   - a record from the suite's own execution on a tag below its threshold
+ *     (TEST_KLOG_SUPPRESS) counts as declared noise;
+ *   - any other record while a SUITE window is open is counted as unexpected
+ *     (the first is copied for the failure report), whatever context logged
+ *     it; it is then printed through the normal rate limit, or dropped by the
+ *     filter if its tag is suppressed;
+ *   - while only the RUN window is open (between suites) it is counted as
+ *     stray, which the runner reports and never gates.
+ * A filtered record never enters the ring. Unexpected records are charged to
+ * the suite that was running when they were emitted, from whichever CPU or
+ * thread; expected ones only to the suite's own execution. The runner is the
+ * only caller of the window functions; tests register through TEST_KLOG_EXPECT.
+ * Allocation-free, so it is safe from ISR context and on any CPU.
+ *
+ * XREF: 00-infrastructure/TODO-03-kernel-test-harness.md section 12 */
+#define KLOG_WATCH_MAX_EXPECTS   24u
+#define KLOG_WATCH_TAG_MAX       24u   /* bytes incl. NUL */
+#define KLOG_WATCH_TEXT_MAX      96u   /* bytes incl. NUL */
+#define KLOG_WATCH_LINE_MAX      200u  /* "<tag>: <message>" copy, bytes incl. NUL */
+
+typedef enum {
+    KLOG_WATCH_OFF   = 0,
+    KLOG_WATCH_RUN   = 1,
+    KLOG_WATCH_SUITE = 2,
+} klog_watch_mode_t;
+
+struct klog_watch_expect {
+    char        tag[KLOG_WATCH_TAG_MAX];
+    char        text[KLOG_WATCH_TEXT_MAX];
+    const char *file;        /* registering call site (a string literal) */
+    int         line;
+    uint32_t    hits;
+};
+
+struct klog_watch_report {
+    uint32_t                 n_expects;
+    struct klog_watch_expect expects[KLOG_WATCH_MAX_EXPECTS];
+    uint32_t                 unexpected;     /* SUITE-window records matching nothing */
+    uint32_t                 first_cpu;      /* CPU and pid of the first one */
+    uint32_t                 first_pid;
+    char                     first_line[KLOG_WATCH_LINE_MAX];
+};
+
+/* Status codes for klog_watch_expect(). */
+#define KLOG_WATCH_OK          0
+#define KLOG_WATCH_ERR_ARG    -1   /* NULL or empty tag/text */
+#define KLOG_WATCH_ERR_LONG   -2   /* tag or text does not fit: refused, never truncated */
+#define KLOG_WATCH_ERR_FULL   -3   /* KLOG_WATCH_MAX_EXPECTS already registered */
+#define KLOG_WATCH_ERR_WINDOW -4   /* no SUITE window open */
+
+/* Open the RUN window (resets the stray count). */
+void klog_watch_run_begin(void);
+/* Close every window; returns the stray count seen while it was open. */
+uint32_t klog_watch_run_end(void);
+/* Open a SUITE window owned by the calling thread: clears the expectations
+ * and the unexpected record. Only records that execution logs (same CPU, task
+ * and thread, outside ISR and DPC context) can match an expectation; anything
+ * else during the suite is unexpected, so a real failure elsewhere can never
+ * be absorbed by an expectation's text.
+ * Does nothing while the watch is OFF (outside a run). */
+void klog_watch_suite_begin(void);
+/* Close the SUITE window back to RUN and snapshot it into `out`. */
+void klog_watch_suite_end(struct klog_watch_report *out);
+/* Register an expectation in the open SUITE window. */
+int klog_watch_expect(const char *tag, const char *text, const char *file, int line);
+/* The current mode (for the harness's own tests). */
+klog_watch_mode_t klog_watch_mode(void);
+/* How many failures the runner charges for `r`: one per expectation that
+ * never matched, plus one when any unexpected record appeared. Pure. */
+uint32_t klog_watch_failures(const struct klog_watch_report *r);
+/* Snapshot the open window without closing it. */
+void klog_watch_peek(struct klog_watch_report *out);
+/* 1 when `tag` already owns a rate-limit slot (so a burst on it would be
+ * limited); 0 otherwise. Never creates a slot. Lets a test prove that an
+ * expected burst spends none of a limited tag's output budget. */
+int klog_probe_rate_limited(const char *tag);
+
+/* The watch's whole state. The live instance is private to klog.c; a test
+ * owns a fixture of its own and drives the SAME machine through the
+ * klog_watch_fx_* calls below, so testing the matcher never disturbs the
+ * live accounting a real error on another CPU must land in. A fixture is
+ * caller-owned and unlocked: keep it on one thread. Fields may be set
+ * directly (e.g. a counter seeded near its ceiling). */
+/* The execution context a record was logged from. Thread and task are the
+ * objects themselves (ids are task-local and the scheduler cursor is global,
+ * so neither id nor cursor alone names an execution). */
+struct klog_watch_ctx {
+    uint8_t     valid;     /* 0: the scheduler could not name the context */
+    uint8_t     in_dpc;    /* a DPC routine is running on this CPU */
+    uint8_t     in_isr;    /* an interrupt handler is running on this CPU */
+    uint8_t     irql;      /* the CPU's IRQL; above DISPATCH is never a thread's own */
+    uint32_t    cpu;
+    const void *task;
+    const void *thread;
+};
+
+struct klog_watch_state {
+    klog_watch_mode_t        mode;
+    uint32_t                 stray;   /* RUN-window records outside any suite */
+    struct klog_watch_ctx    owner;   /* the suite's execution: only it can match */
+    struct klog_watch_report report;
+};
+
+/* 1 when a record logged from `ctx` belongs to the suite `owner` opened: the
+ * same CPU, task and thread, in ordinary thread context (not an ISR, not a
+ * DPC), with both contexts known. Pure. */
+int klog_watch_ctx_owns(const struct klog_watch_ctx *owner, const struct klog_watch_ctx *ctx);
+void     klog_watch_fx_init(struct klog_watch_state *st);
+void     klog_watch_fx_run_begin(struct klog_watch_state *st);
+uint32_t klog_watch_fx_run_end(struct klog_watch_state *st);
+void     klog_watch_fx_suite_begin(struct klog_watch_state *st);
+void     klog_watch_fx_suite_end(struct klog_watch_state *st, struct klog_watch_report *out);
+int      klog_watch_fx_expect(struct klog_watch_state *st, const char *tag, const char *text,
+                              const char *file, int line);
+/* Judge a synthetic record exactly as klog_emit judges a real one: 1 = kept
+ * off the sinks (matched), 0 = counted and printed, -1 = not watched (or the
+ * message does not fit a record). fx_probe logs as the fixture's owner;
+ * fx_probe_from logs from `ctx`, to show another context cannot match, and
+ * `filtered` marks a record below its tag's threshold (TEST_KLOG_SUPPRESS):
+ * the owner's is declared noise, anyone else's stays unexpected. */
+int      klog_watch_fx_probe(struct klog_watch_state *st, log_level_t level, const char *tag,
+                             const char *message);
+int      klog_watch_fx_probe_from(struct klog_watch_state *st, const struct klog_watch_ctx *ctx,
+                                  int filtered, log_level_t level, const char *tag,
+                                  const char *message);
 #endif
 
 /* Remove the explicit override for `subsystem`, making the tag follow

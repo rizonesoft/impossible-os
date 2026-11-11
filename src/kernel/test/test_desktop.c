@@ -25,6 +25,7 @@
 #include "icon_store.h"
 #include "kernel/test/icon_store_test.h"
 #include "main/main_internal.h"
+#include "kernel/test/klog_suppress.h"   /* TEST_KLOG_EXPECT */
 
 /* ---- section 4 Input Event Injection ----------------------------------------- */
 
@@ -1622,6 +1623,7 @@ static void test_icon_cache_eviction_borrowed_safe(void)
  * afterward so later tests / gallery_open() see a working subsystem. */
 static void test_ctrl_init_degrades_on_oom(void)
 {
+    TEST_KLOG_EXPECT("ctrl", "controls: failed to allocate window pool");
     /* TEST-SIDE-EFFECT-ALLOWED: controlled fault-recovery test of
      * ctrl_init()'s own degrade/recover contract. ctrl_init() is a
      * desktop-subsystem init that is idempotent by design (the CAS
@@ -1651,6 +1653,7 @@ static void test_ctrl_init_degrades_on_oom(void)
  * usable, not just non-NULL. */
 static void test_ctrl_init_recovers_after_oom(void)
 {
+    TEST_KLOG_EXPECT("ctrl", "controls: failed to allocate window pool");
     int id;
 
     /* TEST-SIDE-EFFECT-ALLOWED: see test_ctrl_init_degrades_on_oom. */

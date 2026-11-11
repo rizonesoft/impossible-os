@@ -4872,16 +4872,20 @@ fi
     if [ -n "$SUITE_FILTER" ]; then
         echo "$line" | grep -qi "$SUITE_FILTER" || continue
     fi
+    # Strip through the FIRST "TEST: " only: that is the klog tag. A greedy
+    # strip cut at a "TEST: " inside the message and showed a stub of the line.
     if echo "$line" | grep -q '\[FAIL\]'; then
-        echo -e "  ${RED}FAIL${RESET}  $(echo "$line" | sed 's/.*TEST: //')"
+        echo -e "  ${RED}FAIL${RESET}  ${line#*TEST: }"
     elif [ "$QUIET_MODE" -eq 0 ]; then
-        echo -e "  ${GREEN} OK ${RESET}  $(echo "$line" | sed 's/.*TEST: //')"
+        echo -e "  ${GREEN} OK ${RESET}  ${line#*TEST: }"
     fi
 done
 
 # Show any FAIL lines that aren't suite results (boot test failures)
+# Shown whole: these carry another subsystem's tag, so there is no TEST tag to
+# strip, and cutting at a "TEST: " inside the message hid which line it was.
 { grep -E '\[FAIL\]' "$TEST_LOG" 2>/dev/null | grep -v '::' || true; } | while IFS= read -r line; do
-    echo -e "  ${RED}FAIL${RESET}  $(echo "$line" | sed 's/.*TEST: //')"
+    echo -e "  ${RED}FAIL${RESET}  $line"
 done
 
 # --- Step 5b: User-mode UTEST results ---

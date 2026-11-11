@@ -59,4 +59,20 @@ void klog_suppress_restore(void *ctx)
     kfree(rec);
 }
 
+void test_klog_expect(const char *tag, const char *text, const char *file, int line)
+{
+    int rc = klog_watch_expect(tag, text, file, line);
+    const char *why = (void *)0;
+
+    switch (rc) {
+    case KLOG_WATCH_OK:         return;
+    case KLOG_WATCH_ERR_ARG:    why = "TEST_KLOG_EXPECT: empty tag or text"; break;
+    case KLOG_WATCH_ERR_LONG:   why = "TEST_KLOG_EXPECT: tag or text too long (refused, not truncated)"; break;
+    case KLOG_WATCH_ERR_FULL:   why = "TEST_KLOG_EXPECT: too many expectations in one suite"; break;
+    case KLOG_WATCH_ERR_WINDOW: why = "TEST_KLOG_EXPECT: no suite is running"; break;
+    default:                    why = "TEST_KLOG_EXPECT: registration failed"; break;
+    }
+    _test_assert(0, why, file, line);
+}
+
 #endif /* KERNEL_TESTS */

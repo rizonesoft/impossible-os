@@ -16,6 +16,7 @@
 #include "kernel/nt/nt_types.h"
 #include "kernel/nt/nt_file.h"
 #include "../fs/fat32/fat32_internal.h"
+#include "kernel/test/klog_suppress.h"   /* TEST_KLOG_EXPECT */
 
 #define FX_SECTORS      4096u
 #define FX_RESERVED     32u
@@ -954,6 +955,7 @@ static void test_fat32_fsck_readonly_reports_fat_mirror(void)
  * must stop before its lost-cluster pass frees what it could not see. */
 static void test_fat32_fsck_unreadable_fat_repairs_nothing(void)
 {
+    TEST_KLOG_EXPECT("fsck", "FAT unreadable; refusing to walk or repair");
     struct fx_volume fx;
     uint64_t fat_off, fat_len, i;
     uint8_t *fat1, *fat2;
@@ -991,6 +993,8 @@ static void test_fat32_fsck_unreadable_fat_repairs_nothing(void)
  * the lost-cluster scan reaches the tail before it reaches the bad sector. */
 static void test_fat32_fsck_walk_read_failure_keeps_live_tail(void)
 {
+    TEST_KLOG_EXPECT("fsck", "FAT entry for cluster 200 unreadable");
+    TEST_KLOG_EXPECT("fsck", "directory traversal incomplete; SKIPPING lost-cluster freeing pass");
     struct fx_volume fx;
     uint8_t *fat1, *fat2;
     uint32_t c, f;
@@ -1291,6 +1295,7 @@ static void test_fat32_dot_names_are_refused(void)
  * volume clean: it would then mount writable with two owners of one chain. */
 static void test_fat32_fsck_owner_scan_failure_is_not_clean(void)
 {
+    TEST_KLOG_EXPECT("fsck", "directory traversal incomplete; SKIPPING lost-cluster freeing pass");
     struct fx_volume fx;
     struct fat32_dirent_loc first, second;
 
@@ -1350,6 +1355,7 @@ static void test_fat32_owner_scan_fat_failure(void)
  * directory would hand its children to the lost-cluster pass. */
 static void test_fat32_fsck_file_directory_conflict(void)
 {
+    TEST_KLOG_EXPECT("fsck", "directory traversal incomplete; SKIPPING lost-cluster freeing pass");
     struct fx_volume fx;
     struct fat32_dirent_loc file, dir;
     uint32_t child, dir_cluster;

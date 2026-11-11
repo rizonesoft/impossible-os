@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-03-kernel-test-harness.md sources=include/kernel/test/test.h,src/kernel/test/test_runner.c,include/kernel/mm/heap.h,include/kernel/test/race_barrier.h,include/kernel/test/scratch.h,scripts/test.sh reviewed=2026-09-28 order=4 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-03-kernel-test-harness.md sources=include/kernel/test/test.h,include/kernel/test/klog_suppress.h,src/kernel/klog.c,src/kernel/test/test_runner.c,include/kernel/mm/heap.h,include/kernel/test/race_barrier.h,include/kernel/test/scratch.h,scripts/test.sh reviewed=2026-11-11 order=4 -->
 # Kernel Test Harness
 
 ## What is it?
@@ -43,7 +43,8 @@ sequenceDiagram
 | `TEST_EXPECT_LEAK(bytes, reason)`, `TEST_LEAK_IGNORE(reason)` | Declare an intentional allocation that outlives the suite |
 | `kmalloc_fail_countdown_set(n)`, `kmalloc_fail_next()` | Force an allocation failure ([`heap.h`](../../include/kernel/mm/heap.h)) |
 | `TEST_SCRATCH_KBUF(name, size)` | Auto-freed scratch buffer larger than the kernel stack allows ([`scratch.h`](../../include/kernel/test/scratch.h)) |
-| `TEST_KLOG_SUPPRESS(subsystem)` | Quiet a subsystem's expected log noise for one test ([`klog_suppress.h`](../../include/kernel/test/klog_suppress.h)) |
+| `TEST_KLOG_SUPPRESS(subsystem)` | Quiet a subsystem's expected log noise for one test; the suite's own errors on that tag count as declared, anyone else's still fail it ([`klog_suppress.h`](../../include/kernel/test/klog_suppress.h)) |
+| `TEST_KLOG_EXPECT(tag, text)` | Declare an error line the suite provokes: a matching `LOG_ERROR` record stays off serial, and the suite fails if none appears. Any OTHER error line during a suite fails that suite ([`klog_suppress.h`](../../include/kernel/test/klog_suppress.h)) |
 | `test_suite=` and `test_quiet=` in `boot.conf` | Category filter and verbosity, parsed by the bootloader |
 
 Test files must not call live boot infrastructure (`panic`, `boot_progress`, a subsystem's `_init`); the rule and its opt-out are in the [Test Code Policy](test-policy.md).

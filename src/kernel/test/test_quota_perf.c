@@ -43,6 +43,7 @@
 #define QUOTA_PERF_HAVE_TSC 1
 #endif
 #include "kernel/klog.h"
+#include "kernel/test/klog_suppress.h"   /* TEST_KLOG_EXPECT */
 
 /* Iterations behind one advisory measurement. Large enough that the timer's
  * granularity is not the dominant term, small enough that the suite stays
@@ -95,6 +96,7 @@ static void quota_perf_restore_limit(void *ctx)
  * it, or the refusal stops being atomic with the check. */
 static void test_quota_charge_lock_budget(void)
 {
+    TEST_KLOG_EXPECT("quota", "return nonpaged-pool: returning more than charged");
     quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
