@@ -189,3 +189,81 @@ if __name__ == "__main__":
     test_section_scope_excludes_other_sections_and_unattributed()
     test_next_step_names_receive_only_when_clean()
     print("PASS: review-envelope")
+
+
+def _build_passes(root: pathlib.Path, legs: dict) -> None:
+    """legs: {kind: (body, receipt-or-None)}. A receipt is what scripts/codex-dispatch.sh adds to the manifest
+    line once it has checked a pass; None is the broker's registration of a pass that has not finished."""
+    rev = root / ".claude" / "overnight" / "reviews"
+    rev.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for i, (kind, (body, receipt)) in enumerate(legs.items(), 1):
+        out = rev / f"{kind}.out"
+        out.write_text(body, encoding="utf-8")
+        line = {"ts": i, "kind": kind, "todo": "todo/x.md", "section": 7, "jobId": f"j{i}", "logFile": str(out)}
+        line.update(receipt or {})
+        lines.append(json.dumps(line))
+    (rev / "manifest.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _receipt(rc=0, highest="none"):
+    return {"route": "codex-dispatch.sh", "rc": rc, "pass_checked": True, "highest": highest}
+
+
+def test_a_pass_reports_its_receipt_and_a_blocking_level_is_named():
+    """A pass ending at P2 was reported with no word that it holds the stamp."""
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        _build_passes(root, {
+            "round": ("- [medium] [P2] a defect (a.c:1)\nHIGHEST: P2\nTurn completed (rc=0)\n", _receipt(0, "P2")),
+            "performance": ("nothing found\nHIGHEST: none\nTurn completed (rc=0)\n", _receipt(0, "none")),
+        })
+        rc, env = _run_args(root, "--kinds", "round,performance", "--todo", "todo/x.md", "--section", "7")
+        assert rc == 0, env
+        assert env["blocking"] == ["round"] and env["needs_redispatch"] == [] and env["incomplete"] == []
+        assert env["kinds"]["round"]["pass"] == {"rc": 0, "highest": "P2"}
+        assert env["kinds"]["performance"]["pass"] == {"rc": 0, "highest": "none"}
+        assert "receiving-code-review" in env["next"] and "dispatch it again" in env["next"], env["next"]
+        assert any("P2" in f for f in env["kinds"]["round"]["findings"])
+
+
+def test_an_incomplete_pass_is_not_a_crash_and_is_dispatched_again():
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        _build_passes(root, {
+            "round": ("LENS adversarial: clean\n[codex-dispatch] INCOMPLETE -- no verdict line for: quality\n"
+                      "Turn completed (rc=3)\n", _receipt(3, "")),
+            "performance": ("HIGHEST: none\nTurn completed (rc=0)\n", _receipt(0, "none")),
+        })
+        rc, env = _run_args(root, "--kinds", "round,performance", "--section", "7")
+        assert rc == 1, env
+        assert env["incomplete"] == ["round"] and env["crashed"] == [] and env["needs_redispatch"] == ["round"]
+        assert env["kinds"]["round"]["incomplete"] is True and env["blocking"] == []
+
+
+def test_a_pass_with_no_checked_receipt_is_not_usable():
+    """Still running under the broker (its log is not finished), or finished some way that checked nothing."""
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        _build_passes(root, {"round": ("still thinking\n", None),
+                             "completion": ("looks fine\nTurn completed (rc=0)\n", None)})
+        rc, env = _run_args(root, "--kinds", "round,completion", "--section", "7")
+        assert rc == 1 and env["needs_redispatch"] == ["round", "completion"], env
+
+
+def test_an_older_kind_is_reported_exactly_as_before():
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        _build(root, {"adversarial": "all good\nTurn completed (rc=0)\n",
+                      "consistency": "- [high] thing (a.c:1)\nTurn completed (rc=0)\n",
+                      "perf": "fine\nTurn completed (rc=0)\n"})
+        rc, env = _run(root)
+        assert rc == 0 and env["blocking"] == [] and env["incomplete"] == [] and "pass" not in env["kinds"]["perf"]
+
+
+if __name__ == "__main__":
+    test_a_pass_reports_its_receipt_and_a_blocking_level_is_named()
+    test_an_incomplete_pass_is_not_a_crash_and_is_dispatched_again()
+    test_a_pass_with_no_checked_receipt_is_not_usable()
+    test_an_older_kind_is_reported_exactly_as_before()
+    print("PASS: review envelope passes")

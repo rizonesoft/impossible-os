@@ -76,7 +76,31 @@ def leg_summary(entry: dict) -> dict:
         findings = findings[:MAX_FINDING_LINES]
     out["findings"] = findings
     out["tail"] = [ln[:400] for ln in lines[-TAIL_LINES:]]
+    # A pass of the reviewer pin (.conclave/reviewers.toml) carries its result
+    # on the receipt scripts/codex-dispatch.sh wrote: whether every lens gave a
+    # verdict, and the review's worst level. rc 3 there is an INCOMPLETE pass
+    # (a lens or the HIGHEST line is missing), not a crash: the reviewer ran,
+    # and the same pass is dispatched again.
+    if entry.get("pass_checked") is True:
+        out["pass"] = {"rc": entry.get("rc"), "highest": entry.get("highest") or None}
+        if entry.get("rc") == 3:
+            out["incomplete"] = True
     return out
+
+
+PASS_KINDS = ("plan", "round", "performance", "completion", "reconciliation")
+
+
+def blocking_levels(project: Path) -> tuple:
+    """The levels that hold a stamp, from the reviewer pin; P1 and P2 when it cannot be read."""
+    scripts = str(Path(__file__).resolve().parents[1])
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    try:
+        import review_pin
+        return tuple(review_pin.load_pin(project / ".conclave" / "reviewers.toml")["blocking"])
+    except Exception:  # noqa: BLE001 -- a broken pin must not make a blocking pass read as clear
+        return ("P1", "P2")
 
 
 def main(argv) -> int:
@@ -138,7 +162,9 @@ def main(argv) -> int:
     #               runner re-dispatches ONLY these, never the whole bundle;
     #               a completed clean leg is reused as-is.
     env = {"kinds": {}, "all_complete": True, "all_clean": True,
-           "missing": [], "crashed": [], "needs_redispatch": []}
+           "missing": [], "crashed": [], "incomplete": [], "blocking": [],
+           "needs_redispatch": []}
+    levels = blocking_levels(project)
     for k in kinds:
         if k not in latest:
             env["missing"].append(k)
@@ -152,6 +178,13 @@ def main(argv) -> int:
             env["all_complete"] = False
             env["all_clean"] = False
             env["needs_redispatch"].append(k)
+        elif leg.get("incomplete"):
+            # A pass whose review skipped a lens or its HIGHEST line. Not a
+            # crash and not a verdict: the same pass is dispatched again.
+            env["incomplete"].append(k)
+            env["all_clean"] = False
+            if k not in env["needs_redispatch"]:
+                env["needs_redispatch"].append(k)
         elif leg["crashed"]:
             # Completed-but-crashed: has a marker, no usable verdict. Re-run
             # this leg only; do NOT let it greenlight the review.
@@ -159,6 +192,17 @@ def main(argv) -> int:
             env["all_clean"] = False
             if k not in env["needs_redispatch"]:
                 env["needs_redispatch"].append(k)
+        elif k in PASS_KINDS and "pass" not in leg:
+            # A pass kind with no checked receipt: still running under the
+            # broker, or dispatched some way that checks nothing.
+            env["all_clean"] = False
+            if k not in env["needs_redispatch"]:
+                env["needs_redispatch"].append(k)
+        elif leg.get("pass", {}).get("highest") in levels:
+            # Usable, and it ended at a level that holds the stamp. The commit
+            # gate will refuse the stamp until this pass is dispatched again
+            # on the fixed candidate and ends below that level.
+            env["blocking"].append(k)
     # THE NEXT STEP, stated where the verdicts are read (2026-09-28). The most
     # common refused call across 21 run logs (85 of 309) was an edit made right
     # after reading a wave's verdicts, before receiving it; 47 of those were
@@ -169,6 +213,10 @@ def main(argv) -> int:
     else:
         env["next"] = ("Skill(superpowers:receiving-code-review) over ALL legs of this wave "
                        "BEFORE any Edit, Write or fix")
+        if env["blocking"]:
+            env["next"] += ("; then fix the findings of " + ", ".join(env["blocking"])
+                            + ", commit, and dispatch " + ("it" if len(env["blocking"]) == 1 else "them")
+                            + " again: a pass that ended at " + " or ".join(levels) + " does not carry a stamp")
     print(json.dumps(env, indent=1))
     # Exit 0 only when the review is genuinely usable (all legs clean). A
     # crashed leg used to slip through on all_complete; gating on all_clean

@@ -628,7 +628,7 @@ def main() -> int:
                         f"adversarial-review marker '[review-kind: {kind}]' "
                         f"is not a canonical kind (canonical set: "
                         f"{sorted(CANONICAL_REVIEW_KINDS)}). Likely a typo "
-                        "(e.g. 'performance' instead of 'perf', 'dead-code' "
+                        "(e.g. 'perfomance' instead of 'perf', 'dead-code' "
                         "is retired). The dispatch lands in the conversation "
                         "but earns NO step credit and NO per-kind stamp. "
                         "Re-run with the correct canonical marker. See "

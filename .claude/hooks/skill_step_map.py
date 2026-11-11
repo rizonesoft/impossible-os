@@ -79,6 +79,16 @@ _IMPLEMENT_TODO_SECTION: List[StepRule] = [
     (20, "Bash",  "__REVIEW_KIND__:perf"),
     (20, "Bash",  "__REVIEW_KIND__:re-adversarial"),
     (20, "Skill", r"^review-todo-section$"),
+    # The passes of the reviewer pin (.conclave/reviewers.toml,
+    # .claude/skills/three-pass-review.md) are evidence for the same steps:
+    # plan is the review before the code, round the mandatory review of the
+    # build, and the performance, completion and reconciliation passes belong
+    # to the post-implementation review.
+    (4,  "Bash",  "__REVIEW_KIND__:plan"),
+    (13, "Bash",  "__REVIEW_KIND__:round"),
+    (20, "Bash",  "__REVIEW_KIND__:performance"),
+    (20, "Bash",  "__REVIEW_KIND__:completion"),
+    (20, "Bash",  "__REVIEW_KIND__:reconciliation"),
 ]
 
 
@@ -108,6 +118,13 @@ _REVIEW_TODO_SECTION: List[StepRule] = [
     (8,    "Skill", r"^codex-test-coverage$"),
     (13,   "Bash", "__REVIEW_KIND__:re-adversarial"),
     (17,   "Bash", r"\bgit\s+commit\b"),
+    # The passes of the reviewer pin: the round is the defect review (step 5),
+    # the performance and completion passes are the quality audit (step 8), and
+    # a reconciliation is the review of a fix (step 13).
+    (5,    "Bash", "__REVIEW_KIND__:round"),
+    (8,    "Bash", "__REVIEW_KIND__:performance"),
+    (8,    "Bash", "__REVIEW_KIND__:completion"),
+    (13,   "Bash", "__REVIEW_KIND__:reconciliation"),
 ]
 
 

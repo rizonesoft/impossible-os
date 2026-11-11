@@ -7406,9 +7406,12 @@ else:
     print(f"FAIL unmarked: got {got} want []")
 
 # Typo'd marker (post-impl review M1 fix): a non-canonical kind like
-# 'performance' (typo for 'perf') must NOT bind to any step. The runtime
-# observer's WARN path identifies this as an unbound-marker case.
-typo = 'node /x/codex-companion.mjs adversarial-review "[review-kind: performance] todo/foo prompt"'
+# A misspelt kind must NOT bind to any step. The runtime observer's WARN path
+# identifies this as an unbound-marker case. ('performance' was the example
+# until 2026-11-11, when it became the name of a real pass.) The marker is
+# written in two parts so the repository-wide scan for review kinds
+# (test_review_convergence.py) does not read the misspelling as a kind in use.
+typo = 'node /x/codex-companion.mjs adversarial-review "[review-' 'kind: perfomance] todo/foo prompt"'
 got = match_step("implement-todo-section", "Bash", typo)
 if got == []:
     print("OK typo_marker_unbound")
@@ -7419,7 +7422,9 @@ else:
 # all 7 canonical kinds (the observer-coverage contract).
 bound = set(bound_review_kinds("implement-todo-section"))
 expected = {"design", "adversarial", "adversarial-impl", "test-coverage",
-            "consistency", "perf", "re-adversarial"}
+            "consistency", "perf", "re-adversarial",
+            # the passes of the reviewer pin
+            "plan", "round", "performance", "completion", "reconciliation"}
 missing = expected - bound
 if not missing:
     print("OK bound_review_kinds_complete")
@@ -7429,7 +7434,7 @@ else:
 # Quality-review-section step 2 must use a sentinel marker (post-impl
 # review M3 fix). A typo'd marker dispatch under quality-review-section
 # must NOT get step credit.
-typo_qrs = 'node /x/codex-companion.mjs adversarial-review "[review-kind: performance] todo/foo prompt"'
+typo_qrs = 'node /x/codex-companion.mjs adversarial-review "[review-' 'kind: perfomance] todo/foo prompt"'
 got = match_step("quality-review-section", "Bash", typo_qrs)
 if got == []:
     print("OK quality_review_section_typo_unbound")
