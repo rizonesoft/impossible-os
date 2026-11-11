@@ -560,22 +560,25 @@ One libFuzzer target and a checked-in seed corpus per parser, built from the ker
   - `test_build_gate.sh` (Test 22) reads a cache it builds itself; `test_build_sections_a.sh` and `test_build_sections_b.sh` hold the fixture-only blocks.
   - `test_build_lib.sh` holds the preamble and every name more than one shard uses (`VALIDATE_PY`, `QUERY_PY`, `SNAP`, `s23_tree`, `s23_tooldir`, `tb_finish`).
   - A shard counts as passed only with exit 0 and its `[test_build:<shard>]` summary line, so a shard that stops early fails instead of reading as a smaller pass.
-- [x] The shards run the same 844 sub-tests: the multiset of names matches the single file's, apart from two renamed on purpose (7d, 12j)
-- [x] The pack's time split shows the nested block bounded by the gate shard: 389 s against 590 s, gate 362 s, core 152 s, sections_b 100 s, sections_a 21 s
+- [x] The shards keep all 844 original sub-tests and add 12j2, 845 in all (core 371, gate 281, sections_a 105, sections_b 88); the name multiset matches the single file's apart from two renamed on purpose (7d, 12j)
+- [x] The pack's time split shows the nested block bounded by the gate shard: 390 s against 590 s, gate 362 s, core 152 s, sections_b 100 s, sections_a 21 s
 - [x] Sub-test 7d scans every `test_build*.sh` file and 7e reads its helpers from the lib; a raw subtraction placed in the gate shard fails 7d
 - [x] Sub-test 12j renders into `TODO_GRAPH_MD` under its temp dir, so a pack run no longer rewrites the committed `docs/infrastructure/todo-graph.md`
   - The Makefile captures it literally at the top and the recipe reads it from the environment, so a name with quotes, a backtick or a `$` is a file name, never code (12j2).
   - The `Makefile` joins the pack's todo-graph trigger.
 
-**Test checkpoint:** `bash scripts/test-tooling.sh --quiet` passes with the same sub-test total as before the split, and its nested block is shorter than the 2026-11-10 measurement of 590 s.
+**Test checkpoint:** `bash scripts/test-tooling.sh --quiet` passes, the shards report every original sub-test name plus 12j2, and its nested block is shorter than the 2026-11-10 measurement of 590 s.
 
 > **Test runner:** `bash scripts/test-tooling.sh --quiet` (the four shards run inside it; each also runs alone, e.g. `bash scripts/todo-graph/tests/test_build_gate.sh`). Controls run 2026-11-11: a raw `$(( reading + 1 ))` in the gate shard fails 7d, and the committed Makefile leaves no file at `TODO_GRAPH_MD`, which fails 12j.
 > **Notes:**
 > - Shipped: `test_build_lib.sh` plus four shards (`test_build.sh` core, `test_build_gate.sh`, `test_build_sections_a.sh`, `test_build_sections_b.sh`), wired through `_TT_TB_SHARDS`.
 > - Integration: every shard is judged by exit 0 plus its `[test_build:<shard>]` summary; the core shard alone touches the real cache, and `test_query_bounds.sh` still runs after all four.
-> - Effect: the nested block fell from 590 s to 389 s and is now bounded by the gate shard (362 s); the inline tests (361 s) are the next pole of the pack.
+> - Effect: the nested block fell from 590 s to 390 s and is now bounded by the gate shard (362 s); the inline tests (358 s) are the next pole of the pack.
 > - Canonical doc: [developer tooling stack](../../docs/infrastructure/developer-tooling-stack.md) (Health) and the header of `test_build_lib.sh`.
 > - Scope: Test 22 stays one shard because its fixtures share one seeded clone; the duplicate `run-debug` recipe make warns about is section 13's.
+> - test-coverage skipped: two new assertions (12j2, the shard wiring check), each with a control that fails it.
+> **Verified:** 2026-11-11 | commit `dcd8457e6` | 5/5 items | build OK | test-tooling 1338/1338, shards 845 (core 371, gate 281, sections_a 105, sections_b 88), lint 0 errors
+> **Quality reviewed:** 2026-11-11 | Codex 8x (design, adversarial, re-adversarial, consistency, perf) | 2H+4M fixed, 0 open | scope: N/A (host tooling, no kernel or boot code)
 
 ---
 
