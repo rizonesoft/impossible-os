@@ -95,7 +95,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 | 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort)    | --         |  [x]   |
 | 💎  |  17   | Emergency-writer robustness residuals (§16 review)  | §16        |  [x]   |
 | 💎  |  18   | Panic-path cross-CPU ownership residuals            | §16, §17   |  [/]   |
-| 💎  |  19   | Panic-path caller-string snapshot (§17 review)      | §17        |  [ ]   |
+| 💎  |  19   | Panic-path caller-string snapshot (§17 review)      | §17        |  [x]   |
 | 💎  |  20   | Panic-path serial ownership atomicity (§18 review)  | §18        |  [x]   |
 | 💎  |  21   | Live CPU online lifecycle (split from §20)          | §18        |  [x]   |
 | 💎  |  22   | Dedicated NMI entry stub (split from §20)           | §18        |  [x]   |
@@ -807,11 +807,11 @@ The three §16 review residuals that are about WHICH CPUs are running and who ow
 > - Canonical doc: `panic.h` carries the contracts (placeholder set, context gating, ownership/publication rules); `docs/infrastructure/bare-metal-gotchas.md` owns the panic-path rules this obeys.
 > - Scope boundary: the guarded-read primitives themselves are §17 and `cpu_security.h`; cross-CPU panic ownership is §18 and its residuals §20--§24; the panic-safe emitter stays `02-kernel-core/TODO-27 §7`. Three residuals are parked in the checklist above with named owners: stack-slot residency (shared with `TODO-23 §7`) and two operator-gated live-panic checkpoints.
 
-> **Verified:** 2026-08-13 | commit `418604911` + review fixes | 4/7 items (3 parked) | build OK | 28591 kernel + 17 user PASS, 0 skipped | smoke matrix 4/4 (KVM/TCG x 1/2 CPU) | lint 0 errors
+> **Verified:** 2026-11-11 | commit `6cfbf20e7` | 11/14 items (3 parked, owners named) | build OK | 37708 kernel + 17 user PASS | smoke matrix 24/24 (398 s) | lint 0 errors
 > **Accepted:** [H] a recovered async fault publishes a surviving cross-boot record, so the next boot reports a crash that never happened -- and while it holds the slot it refuses the record to the crash that does kill the machine (reason: pre-existing, not introduced here; two repairs were attempted during this review and BOTH raced, so it needs an evidence-lifecycle design rather than a patch) (RESOLVED 2026-08-14: §23 shipped the named item `[x]`, commit `3a1723c3d`) -> XREF: 01-boot-platform/TODO-10 §23 (item: "Rework the cross-boot evidence lifecycle so ownership is decided at TERMINAL arbitration" at line 943)
 > **Accepted:** [H] the evidence page has no epoch, so consume/restore/collect each check identity ad hoc and none is atomic against a concurrent panic (reason: pre-existing and shared with the lifecycle rework; four independent patches would not fix it) -> XREF: 01-boot-platform/TODO-10 §23 (item: "Make the evidence page's readers and writers agree on an epoch" at line 951)
 > **Accepted:** [H] the collector spends ~170k instructions of bitwise CRC plus ~2,900 guarded byte-read calls before the record is durable, while a table-driven CRC already linked in this kernel would cut ~88% of the first part (reason: the checksum must be proven byte-identical to Phase-0 restore first, and the byte-read cost needs a new guarded primitive) -> XREF: 01-boot-platform/TODO-10 §24 (item: "Cut the pre-publication latency of the panic collector" at line 990)
-> **Quality reviewed:** 2026-08-13 | Codex 8x (adversarial, consistency x2, perf x2, re-adversarial x3) | 3H+6M+3L fixed, 3 open | scope: kernel-code-quality
+> **Quality reviewed:** 2026-11-11 | Codex rounds to approval on adversarial, consistency, perf and a final re-adversarial over the staged diff | every finding fixed with a mutant-checked test; legacy and hot-plug ownership outside a panic accepted -> XREF: 05-storage-filesystems/TODO-01 §4 (item: "Per-port submission ownership") | scope: kernel-code-quality
 
 ---
 

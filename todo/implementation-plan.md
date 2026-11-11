@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **942 of 2593 sections complete (36%).** 115 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **943 of 2593 sections complete (36%).** 115 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -495,7 +495,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T10 §16` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           |
 | [x]  | `D01 T10 §17` | Emergency-Writer Robustness Residuals (from the §16 review)                                       |
 | [x]  | `D01 T10 §18` | Panic-Path Cross-CPU Ownership Residuals (from the §16 review)                                    |
-| [ ]  | `D01 T10 §19` | Panic-Path Caller-String Snapshot (from the §17 review)                                           |
+| [x]  | `D01 T10 §19` | Panic-Path Caller-String Snapshot (from the §17 review)                                           |
 | [x]  | `D01 T10 §20` | Panic-Path Serial Ownership Atomicity (from the §18 review)                                       |
 | [x]  | `D01 T10 §21` | Live CPU Online Lifecycle (split from §20)                                                        |
 | [x]  | `D01 T10 §22` | Dedicated NMI Entry Stub (split from §20)                                                         |
