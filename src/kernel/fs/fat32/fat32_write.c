@@ -418,7 +418,6 @@ int fat32_truncate_by_sfn(struct fat32_volume *vol, uint32_t dir_cluster,
             if (match) {
                 uint32_t fc = ((uint32_t)de->first_cluster_hi << 16)
                             | (uint32_t)de->first_cluster_lo;
-                struct fat32_dir_entry saved = *de;
                 uint32_t keep_last = 0;   /* last kept cluster of a shrink, 0 = none */
 
                 if (new_size < de->file_size && new_size > 0 && fc >= 2) {
@@ -426,32 +425,36 @@ int fat32_truncate_by_sfn(struct fat32_volume *vol, uint32_t dir_cluster,
                         (new_size + bytes_per_cluster - 1) / bytes_per_cluster;
                     uint32_t ci;
 
+                    /* The checked reader: this walk decides what is freed, and
+                     * the unchecked one reads a failed sector as end of chain,
+                     * which would cut the file short. A failed read cuts nothing. */
                     keep_last = fc;
                     for (ci = 1; ci < clusters_needed; ci++) {
-                        uint32_t next = fat32_get_fat_entry(vol, keep_last);
+                        uint32_t next;
+                        if (fat32_read_fat_entry(vol, keep_last, &next) != 0) {
+                            keep_last = 0;
+                            break;
+                        }
                         if (next < 2 || next >= FAT32_EOC) break;
                         keep_last = next;
                     }
                 }
 
                 /* The entry reaches the device BEFORE any cluster returns to the
-                 * free pool, as in fat32_delete_file_vol: a failed or interrupted
-                 * write then leaves the old entry over its still-allocated chain
-                 * (at worst lost clusters fsck reclaims), never a live entry over
-                 * clusters another file can be given. A failed flush restores
-                 * the entry in the cache, so -1 means the file is unchanged. */
+                 * free pool, as in fat32_delete_file_vol. fat32_write_sectors_multi
+                 * writes straight to the device and touches the cache only after
+                 * the write succeeded, so a -1 here changed nothing anywhere. Its
+                 * success is the ordering point: the frees below only dirty the
+                 * cache, which reaches the device after this write. (A volatile
+                 * DEVICE cache can still reorder them: that barrier waits on the
+                 * FAT32 volume-lock hold-time work, since blkdev_sync can sleep.) */
                 if (new_size == 0) {
                     de->first_cluster_hi = 0;
                     de->first_cluster_lo = 0;
                 }
                 de->file_size = new_size;
                 if (fat32_write_sectors_multi(vol, sector, vol->bpb.sectors_per_cluster,
-                                              cluster_buf) != 0 ||
-                    scache_flush(vol) != 0) {
-                    *de = saved;
-                    (void)fat32_write_sectors_multi(vol, sector,
-                                                    vol->bpb.sectors_per_cluster,
-                                                    cluster_buf);
+                                              cluster_buf) != 0) {
                     kfree(cluster_buf);
                     return -1;
                 }
@@ -460,10 +463,22 @@ int fat32_truncate_by_sfn(struct fat32_volume *vol, uint32_t dir_cluster,
                     if (fc >= 2)
                         fat32_free_chain(vol, fc);
                 } else if (keep_last >= 2) {
-                    uint32_t tail = fat32_get_fat_entry(vol, keep_last);
+                    uint32_t tail;
+                    if (fat32_read_fat_entry(vol, keep_last, &tail) != 0)
+                        tail = FAT32_EOC;   /* unreadable: cut and free nothing */
+                    /* The cut is cached like any FAT write and flushes in
+                     * cache-slot order, so it must reach the device before the
+                     * tail is freed: otherwise the retained cluster can still
+                     * link to clusters another file is given. If the cut does
+                     * not land, the tail stays allocated (lost clusters fsck
+                     * reclaims) and the new size, already on disk, stands. */
                     if (tail >= 2 && tail < FAT32_EOC) {
-                        fat32_set_fat_entry(vol, keep_last, 0x0FFFFFFF);
-                        fat32_free_chain(vol, tail);
+                        if (fat32_set_fat_entry(vol, keep_last, 0x0FFFFFFF) == 0 &&
+                            scache_flush(vol) == 0)
+                            fat32_free_chain(vol, tail);
+                        else
+                            klog(LOG_WARN, "fat32", "truncate: chain cut not durable; "
+                                 "tail at cluster %u left allocated", (uint64_t)tail);
                     }
                 }
 

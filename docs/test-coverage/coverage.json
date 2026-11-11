@@ -1,6 +1,6 @@
 {
-  "total_suites": 3737,
-  "total_assertions": 17459,
+  "total_suites": 3738,
+  "total_assertions": 17472,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 69},
     {"file": "test_acpi_ec.c", "suites": 42, "assertions": 168},
@@ -47,7 +47,7 @@
     {"file": "test_except.c", "suites": 63, "assertions": 269},
     {"file": "test_exec.c", "suites": 63, "assertions": 150},
     {"file": "test_fastpath_hardening.c", "suites": 6, "assertions": 15},
-    {"file": "test_fat32.c", "suites": 57, "assertions": 386},
+    {"file": "test_fat32.c", "suites": 58, "assertions": 399},
     {"file": "test_firmware_advisor.c", "suites": 5, "assertions": 17},
     {"file": "test_firmware_platform.c", "suites": 15, "assertions": 35},
     {"file": "test_firmware_tables.c", "suites": 41, "assertions": 70},

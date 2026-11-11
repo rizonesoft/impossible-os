@@ -1514,6 +1514,52 @@ static void test_fat32_truncate_dir_write_failure_keeps_chain(void)
     fx_close(&fx);
 }
 
+/* A shrink cuts the chain in the cache, and the cache flushes in slot order, so
+ * with the retained cluster and the tail in different FAT sectors the tail could
+ * reach the disk free while the retained cluster still links to it. The cut must
+ * land first; when it cannot, the tail stays allocated. */
+static void test_fat32_shrink_keeps_tail_until_cut_lands(void)
+{
+    struct fx_volume fx;
+    struct fat32_dirent_loc loc;
+    uint32_t head;
+    const uint32_t *fat1;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "two.bin"), 0,
+                   "file created");
+    head = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "two.bin");
+    TEST_ASSERT(head >= 2u && head / FAT32_ENTRIES_PER_SECTOR !=
+                FX_FAR_CLUSTER / FAT32_ENTRIES_PER_SECTOR,
+                "head and tail clusters sit in different FAT sectors");
+    TEST_ASSERT_EQ(fat32_set_fat_entry(fx.vol, head, FX_FAR_CLUSTER), 0, "head links to tail");
+    TEST_ASSERT_EQ(fat32_set_fat_entry(fx.vol, FX_FAR_CLUSTER, 0x0FFFFFFFu), 0, "tail ends");
+    TEST_ASSERT_EQ(fat32_truncate(fx.vol, FX_ROOT_CLUSTER, "two.bin", 1024u), 0,
+                   "the entry records two clusters");
+    scache_flush(fx.vol);
+    scache_invalidate(fx.vol);
+
+    /* The FAT1 sector holding the head's entry refuses writes; the tail's is fine. */
+    fx.fail_write_lba = FX_RESERVED + head / FAT32_ENTRIES_PER_SECTOR;
+    TEST_ASSERT_EQ(fat32_truncate(fx.vol, FX_ROOT_CLUSTER, "two.bin", 512u), 0,
+                   "the new size is committed");
+    TEST_ASSERT(fat32_get_fat_entry(fx.vol, FX_FAR_CLUSTER) != 0u,
+                "the tail is not freed while the cut is not on the device");
+    scache_flush(fx.vol);
+    fat1 = (const uint32_t *)(fx.disk + FX_RESERVED * 512u);
+    TEST_ASSERT_EQ(fat1[head] & 0x0FFFFFFFu, FX_FAR_CLUSTER, "on disk the head still links");
+    TEST_ASSERT(fat1[FX_FAR_CLUSTER] != 0u, "and on disk the tail it links to is allocated");
+
+    fx.fail_write_lba = FX_NO_FAULT;
+    scache_flush(fx.vol);
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "two.bin", &loc), 1, "file remains");
+    TEST_ASSERT_EQ(loc.de.file_size, 512u, "at its new size");
+    TEST_ASSERT_EQ(fat1[head] & 0x0FFFFFFFu, 0x0FFFFFFFu, "the cut lands once the sector writes");
+    fx_close(&fx);
+}
+
 static void test_fat32_replace_failed_removal_keeps_source(void)
 {
     struct fx_volume fx;
@@ -2193,6 +2239,8 @@ void test_register_fat32(void)
                             test_fat32_replace_failed_removal_keeps_source, TEST_CAT_FS);
     test_suite_register_cat("fat32: truncate keeps its chain when the directory write fails",
                             test_fat32_truncate_dir_write_failure_keeps_chain, TEST_CAT_FS);
+    test_suite_register_cat("fat32: a shrink keeps its tail until the chain cut lands",
+                            test_fat32_shrink_keeps_tail_until_cut_lands, TEST_CAT_FS);
     test_suite_register_cat("FAT32: rename into a hole survives a crash at every write",
                             test_fat32_rename_into_hole_crash_sweep, TEST_CAT_FS);
     test_suite_register_cat("FAT32: orphan run after a cleanup failure stays dead",
