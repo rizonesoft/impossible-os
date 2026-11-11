@@ -50,7 +50,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | ⭐  |  10   | Recovery and mismatch UX                                      | §6, TODO-22                                               |  [ ]   |
 | 💎  |  11   | TPM tests and event-log fixtures                              | §1-§10, §12, §13                                          |  [x]   |
 | 💎  |  12   | PCR allocation table and policy masks                         | (foundational; consumed by §6/§8/§13)                     |  [x]   |
-| 💎  |  13   | Attestation key provisioning and TPM2 quote                   | §3, §7, §12                                               |  [ ]   |
+| 💎  |  13   | Attestation key provisioning and TPM2 quote                   | §3, §7, §12                                               |  [/]   |
 | 💎  |  14   | Post-ship follow-up backfill (2026-07-31 cohort)              | --                                                        |  [x]   |
 | 💎  |  15   | Trusted enrollment provenance                                 | §6, §14                                                   |  [ ]   |
 | 💎  |  16   | Baseline ABI-manifest identity (populate reserved digest)     | §6, §14                                                   |  [x]   |
@@ -393,12 +393,12 @@ The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cann
 - [x] Retrieve the EK cert from NV (RSA `0x01c00002`, ECC `0x01c0000a`) -- `tpm_ek_cert_read()`: NV_ReadPublic for size then chunked `tpm_nv_read`; `NO_EK_CERT` when absent (vTPM/fTPM degrade).
 - [x] Provision the AK (`tpm_attest.c`): deterministic ECC-P256 EK `CreatePrimary` (endorsement) + `Create`/`Load` a restricted ECDSA-P256 signing AK under it; `EvictControl` builder present; AK recreated + cached each boot.
 - [/] Support `TPM2_MakeCredential` / `TPM2_ActivateCredential` for the credential-activation challenge (verifier confirms the AK is bound to a trusted EK). -> follow-up (not yet implemented).
-  - Parked, awaiting-answer Q14: EK-public capture exists now (`at_capture_ek_public_seq`, `tpm_attest.c:971`); the missing part is the verifier-side challenge protocol.
+  - Parked by operator decision Q14 (2026-11-07, `todo/answers.md`): until a platform service needs remote attestation; the missing part is the verifier-side challenge protocol.
 - [x] `tpm2_quote()` via `TPM2_CC_Quote`: signs the selected-PCR digest + nonce with the AK (ECDSA); parses + returns `struct tpm_quote_attest` + raw signature. Fixture + fake-TIS lifecycle tested.
 - [x] Anti-replay: rejects a too-short/absent nonce, returns `NONCE_STALE` unless the attest extraData echoes it; surfaces `clockInfo` (clock/resetCount/restartCount/safe) in `struct tpm_quote_attest`.
 - [x] Bind the quote response to the request: reject unless the parsed PCR selection (single SHA-256 bank, 32-byte digest) matches the mask, the scheme is ECDSA+SHA-256, and ECDSA r/s <= 32 bytes; out-of-range `pcr_mask` -> `BADARG`.
-- [ ] Bind `TPMS_ATTEST.qualifiedSigner` to the AK Qualified Name before returning `OK` (needs EK-pub capture + TPM Name-algebra); today the remote verifier binds the signer via the exported AK public. -> follow-up (Codex re-adversarial [H]).
-  - Reopened 2026-11-07: EK-public capture exists, and `tpm_ak_public_get` gives the AK public a Name is hashed from; `tpm2_nv_name_compute` (`tpm_nv.c:211`) shows the algebra. `tpm_attest.c:244` still skips the field. The verifier-side binding stays as it is.
+- [x] `tpm2_quote` returns `OK` only when `TPMS_ATTEST.qualifiedSigner` equals the AK's Qualified Name, else `TPM_ATTEST_SIGNER_MISMATCH`; the report then marks the signer VERIFIED.
+  - `tpm2_qualified_name_compute()` (H(H(endorsement handle || Name(EK)) || Name(AK))) runs at provisioning over the EK outPublic and the AK Create outPublic, and the result is cached with the AK.
 - [x] Wire the quote + AK public + EK-cert chain into §9's report (§13 exposes the query APIs; §9 owns integration). -> XREF: [`§9`](#9-attestation-report-export) (item: "Build the TPM-rooted `boot_attestation_report_t`").
   - Done: `tpm_attest_report_build` calls `tpm2_quote`, `tpm_ak_public_get` and `tpm_ek_cert_read` (`tpm_attest_report.c:234`, `:245`, `:253`) and the JSON carries them (`:455`, `:463`). Read at source 2026-11-07, not run against a real TPM.
 - [x] Degraded: no TPM / no EK cert / AK fail -> classified `tpm_attest_status_t`; every entry point returns a status, NEVER gates boot. Fixture-tested.

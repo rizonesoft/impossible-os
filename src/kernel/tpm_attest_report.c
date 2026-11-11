@@ -235,6 +235,11 @@ tpm_attest_status_t tpm_attest_report_build(const uint8_t *nonce, uint16_t nonce
                                                 &out->quote, out->quote_sig,
                                                 sizeof out->quote_sig, &out->quote_sig_len);
         out->quote_present = (out->quote_status == (uint8_t)TPM_ATTEST_OK) ? 1u : 0u;
+        /* tpm2_quote returns OK only once qualifiedSigner equals the Qualified
+         * Name it computed for this boot's AK under the EK, so an OK quote has a
+         * proven signer. Any failure leaves the status UNVERIFIED. */
+        if (out->quote_present)
+            out->qualified_signer_status = ATTEST_TRUST_VERIFIED;
     }
 
     /* (7) Coherence: bind the listed PCRs to the signed pcrDigest. */

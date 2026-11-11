@@ -361,6 +361,17 @@ static uint32_t af_load_auth;         /* the auth handle the Load command carrie
 static uint8_t  af_quote_pcr0 = 0xFFu;             /* fake CC_QUOTE pcrSelect byte 0 (corrupt to test the bind check) */
 static uint16_t af_quote_hashalg = TPM_ALG_SHA256; /* fake CC_QUOTE sig hashAlg (corrupt to test the bind check) */
 static uint16_t af_quote_bankalg = TPM_ALG_SHA256; /* fake CC_QUOTE PCR-bank hashAlg (corrupt to test the bank bind) */
+/* The Qualified Name of the fixture AK under the fixture EK: QN computed by an
+ * independent implementation (Python hashlib) over the exact outPublic bytes
+ * af_build_response serves for CreatePrimary and Create, with the endorsement
+ * handle as the hierarchy QN. A fake TPM that reports anything else names a
+ * different signer. */
+static const uint8_t af_fixture_ak_qn[TPM_NAME_SHA256_LEN] = {
+    0x00, 0x0b, 0xc8, 0xa8, 0x3a, 0x25, 0x61, 0xe3, 0xb5, 0xdd, 0xa0, 0x6a,
+    0x4d, 0x83, 0x94, 0x06, 0x29, 0xdb, 0xd5, 0x12, 0xf0, 0x93, 0x72, 0x7e,
+    0xa3, 0xba, 0x8c, 0x9a, 0x21, 0xef, 0x65, 0x56, 0x4d, 0xb8,
+};
+static int af_quote_qn_mode;   /* 0 = correct QN, 1 = one byte flipped, 2 = empty */
 static uint32_t af_stall_reads;   /* withhold commandReady for N status polls: a
                                    * slow-but-responsive TPM, exactly the shape a
                                    * cumulative sequence budget exists to bound. */
@@ -428,6 +439,7 @@ static void af_build_response(void)
             tpm2_be16_put(af_rsp + 18, pub_len);
             for (i = 0; i < (uint32_t)pub_len; i++)
                 af_rsp[20u + i] = (uint8_t)(0xC0u + i);
+            tpm2_be16_put(af_rsp + 22, TPM_ALG_SHA256);   /* TPMT_PUBLIC.nameAlg */
         }
         off = af_put_auth(18u + psize);
         tpm2_be32_put(af_rsp + 2, off);
@@ -457,6 +469,7 @@ static void af_build_response(void)
         for (i = 0; i < 200u; i++) af_rsp[16 + i] = (uint8_t)(0x70u + (i & 0x3Fu));
         tpm2_be16_put(af_rsp + 216, 100u);                       /* AK pub @ 16+200 */
         for (i = 0; i < 100u; i++) af_rsp[218 + i] = (uint8_t)(0x80u + (i & 0x3Fu));
+        tpm2_be16_put(af_rsp + 220, TPM_ALG_SHA256);              /* AK TPMT_PUBLIC.nameAlg */
         /* creationData@318/creationHash@320/ticket@322..329 zero -> params end @330. */
         tpm2_be32_put(af_rsp + 10, 330u - 14u);                  /* parameterSize 316 */
         off = af_put_auth(330u);
@@ -473,7 +486,14 @@ static void af_build_response(void)
         a = attest_off;
         tpm2_be32_put(af_rsp + a, TPM2_GENERATED_VALUE); a += 4u;
         tpm2_be16_put(af_rsp + a, TPM2_ST_ATTEST_QUOTE); a += 2u;
-        tpm2_be16_put(af_rsp + a, 0u); a += 2u;    /* qualifiedSigner empty */
+        if (af_quote_qn_mode == 2) {
+            tpm2_be16_put(af_rsp + a, 0u); a += 2u;    /* qualifiedSigner empty */
+        } else {
+            tpm2_be16_put(af_rsp + a, TPM_NAME_SHA256_LEN); a += 2u;
+            for (i = 0; i < TPM_NAME_SHA256_LEN; i++) af_rsp[a + i] = af_fixture_ak_qn[i];
+            if (af_quote_qn_mode == 1) af_rsp[a + 20u] ^= 0x01u;
+            a += TPM_NAME_SHA256_LEN;
+        }
         tpm2_be16_put(af_rsp + a, nlen); a += 2u;  /* extraData = echoed nonce */
         for (i = 0; i < nlen; i++) af_rsp[a + i] = af_cmd[29 + i];
         a += nlen;
@@ -568,6 +588,7 @@ static void af_reset(void)
     af_cmd_len = 0; af_rsp_len = 0; af_rsp_pos = 0; af_ready = 0; af_executed = 0;
     af_seen_n = 0; af_flush_n = 0; af_policy_secret_n = 0; af_load_auth = 0;
     af_quote_pcr0 = 0xFFu; af_quote_hashalg = TPM_ALG_SHA256; af_quote_bankalg = TPM_ALG_SHA256;
+    af_quote_qn_mode = 0;
     bq_digest_len = 32u;
     af_stall_reads = 0u;
     af_stall_after_go = 0u;
@@ -612,6 +633,10 @@ static void test_attest_quote_lifecycle(void)
     TEST_ASSERT(att.nonce[0] == 0x55u && att.nonce[19] == 0x68u, "attest nonce == supplied nonce");
     TEST_ASSERT_EQ(att.pcr_select, 0xFFu, "attest pcrSelect PCRs 0-7");
     TEST_ASSERT(slen == 72u, "ECDSA signature blob returned");
+    TEST_ASSERT_EQ((uint32_t)att.qualified_signer_len, TPM_NAME_SHA256_LEN,
+                   "attest carries the AK Qualified Name");
+    TEST_ASSERT(memcmp(att.qualified_signer, af_fixture_ak_qn, TPM_NAME_SHA256_LEN) == 0,
+                "qualifiedSigner == QN(AK) under the EK");
 }
 
 /* The wrapper binds a reported-OK quote to the REQUEST: a response that parses but
@@ -649,8 +674,65 @@ static void test_attest_quote_bind_reject(void)
     TEST_ASSERT_EQ((int)tpm2_quote(0xFFu, nonce, sizeof nonce, &att, sig, sizeof sig, &slen),
                    (int)TPM_ATTEST_QUOTE_FAIL, "quote over wrong PCR bank rejected");
 
+    /* Wrong signer: a quote naming another key (one QN byte off) is refused. */
+    af_cmd_len = 0; af_rsp_len = 0; af_rsp_pos = 0; af_ready = 0; af_executed = 0;
+    af_quote_bankalg = TPM_ALG_SHA256; af_quote_qn_mode = 1;
+    memset(&att, 0, sizeof att);
+    TEST_ASSERT_EQ((int)tpm2_quote(0xFFu, nonce, sizeof nonce, &att, sig, sizeof sig, &slen),
+                   (int)TPM_ATTEST_SIGNER_MISMATCH, "quote from another signer rejected");
+
+    /* No signer named at all is refused the same way, never read as a match. */
+    af_cmd_len = 0; af_rsp_len = 0; af_rsp_pos = 0; af_ready = 0; af_executed = 0;
+    af_quote_qn_mode = 2;
+    memset(&att, 0, sizeof att);
+    TEST_ASSERT_EQ((int)tpm2_quote(0xFFu, nonce, sizeof nonce, &att, sig, sizeof sig, &slen),
+                   (int)TPM_ATTEST_SIGNER_MISMATCH, "quote with empty qualifiedSigner rejected");
+
+    /* Control: the same fixture with the correct QN is accepted. */
+    af_cmd_len = 0; af_rsp_len = 0; af_rsp_pos = 0; af_ready = 0; af_executed = 0;
+    af_quote_qn_mode = 0;
+    memset(&att, 0, sizeof att);
+    TEST_ASSERT_EQ((int)tpm2_quote(0xFFu, nonce, sizeof nonce, &att, sig, sizeof sig, &slen),
+                   (int)TPM_ATTEST_OK, "the same quote with the AK's QN is accepted");
+
     tpm_t_test_restore(prev);
     af_quote_pcr0 = 0xFFu; af_quote_hashalg = TPM_ALG_SHA256; af_quote_bankalg = TPM_ALG_SHA256;
+    af_quote_qn_mode = 0;
+}
+
+/* Name and Qualified Name algebra against vectors computed independently
+ * (Python hashlib over the same bytes), plus the refusals. */
+static void test_attest_qualified_name(void)
+{
+    static const uint8_t ek[10] = { 0x00, 0x23, 0x00, 0x0b, 0x00, 0x03, 0x00, 0xb2, 0x00, 0x00 };
+    static const uint8_t ak[10] = { 0x00, 0x23, 0x00, 0x0b, 0x00, 0x05, 0x04, 0x72, 0x00, 0x00 };
+    static const uint8_t want_name[TPM_NAME_SHA256_LEN] = {
+        0x00, 0x0b, 0xb0, 0xbf, 0x7f, 0x68, 0x67, 0xb7, 0x15, 0x53, 0x0f, 0x38,
+        0x40, 0xc6, 0x77, 0xe2, 0xb6, 0xa4, 0x53, 0x5b, 0xc7, 0xf6, 0x44, 0xa7,
+        0x01, 0x0e, 0x05, 0xe5, 0xd5, 0x49, 0x1e, 0x8f, 0xcb, 0x1c,
+    };
+    static const uint8_t want_qn[TPM_NAME_SHA256_LEN] = {
+        0x00, 0x0b, 0xc8, 0xdd, 0x01, 0x28, 0xb2, 0x46, 0x5f, 0xb6, 0xea, 0x52,
+        0xd5, 0xe4, 0x31, 0xd5, 0xff, 0x06, 0x5a, 0xb4, 0x7d, 0xe0, 0x89, 0x74,
+        0xb1, 0x31, 0x52, 0x68, 0x74, 0xd0, 0x3a, 0x4e, 0x36, 0x3e,
+    };
+    uint8_t out[TPM_NAME_SHA256_LEN], bad[10];
+
+    TEST_ASSERT_EQ(tpm2_object_name_compute(ek, sizeof ek, out), 0, "Name of a SHA-256 public");
+    TEST_ASSERT(memcmp(out, want_name, sizeof out) == 0, "Name == nameAlg || SHA256(TPMT_PUBLIC)");
+    TEST_ASSERT_EQ(tpm2_qualified_name_compute(TPM_RH_ENDORSEMENT, ek, sizeof ek, ak, sizeof ak, out),
+                   0, "QN computed");
+    TEST_ASSERT(memcmp(out, want_qn, sizeof out) == 0, "QN(AK) == H(H(hierarchy || Name(EK)) || Name(AK))");
+    /* The hierarchy is part of the chain: the same keys under OWNER differ. */
+    TEST_ASSERT_EQ(tpm2_qualified_name_compute(0x40000001u, ek, sizeof ek, ak, sizeof ak, out), 0,
+                   "QN under owner computed");
+    TEST_ASSERT(memcmp(out, want_qn, sizeof out) != 0, "QN depends on the hierarchy handle");
+    memcpy(bad, ak, sizeof bad);
+    tpm2_be16_put(bad + 2, 0x000Cu);   /* SHA-384 nameAlg */
+    TEST_ASSERT_EQ(tpm2_object_name_compute(bad, sizeof bad, out), -1, "non-SHA-256 nameAlg refused");
+    TEST_ASSERT_EQ(tpm2_qualified_name_compute(TPM_RH_ENDORSEMENT, ek, sizeof ek, bad, sizeof bad, out),
+                   -1, "QN over a non-SHA-256 AK refused");
+    TEST_ASSERT_EQ(tpm2_object_name_compute(ek, TPM_PUBLIC_MIN_LEN - 1u, out), -1, "short public refused");
 }
 
 static void test_attest_ek_cert_oversize(void)
@@ -1003,6 +1085,8 @@ void test_register_tpm_attest(void)
     test_suite_register_cat("tpm: attestation no-TPM degrade", test_attest_no_tpm, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: attestation provision+quote lifecycle",
                             test_attest_quote_lifecycle, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: Name and Qualified Name algebra", test_attest_qualified_name,
+                            TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: quote request/response bind rejection",
                             test_attest_quote_bind_reject, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: EK cert oversize rejected", test_attest_ek_cert_oversize, TEST_CAT_SECURITY);

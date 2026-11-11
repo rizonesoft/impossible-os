@@ -71,9 +71,10 @@ const struct boot_attest_handoff *tpm_attest_handoff_get(void);
  *
  * Trust model (design constraint 3): tpm2_quote signs ONLY the SHA-256 bank, so
  * that is the lone TPM-attested (trusted) bank here; any other bank a future
- * slice adds is diagnostic-only. The AK<->EK binding is NOT proven by this build
- * (MakeCredential/ActivateCredential and qualifiedSigner-to-AK-name binding are
- * tracked follow-ups), so ak_credential_status / qualified_signer_status stay
+ * slice adds is diagnostic-only. A quote is returned only when its qualifiedSigner
+ * equals the AK's Qualified Name under the EK, so qualified_signer_status is
+ * VERIFIED for a present quote. The AK<->EK CERTIFICATION (MakeCredential /
+ * ActivateCredential) is a tracked follow-up, so ak_credential_status stays
  * UNVERIFIED -- a consumer must not treat the AK as EK-certified yet.
  * ------------------------------------------------------------------------- */
 
@@ -87,7 +88,7 @@ const struct boot_attest_handoff *tpm_attest_handoff_get(void);
 
 /* Trust status for the AK->EK binding and the quote signer identity. */
 #define ATTEST_TRUST_UNVERIFIED        0u  /* not proven by this build (default) */
-#define ATTEST_TRUST_VERIFIED          1u  /* proven (reserved; unreachable until ActivateCredential ships) */
+#define ATTEST_TRUST_VERIFIED          1u  /* proven by this build (the quote signer today) */
 #define ATTEST_TRUST_ABSENT            2u  /* source material cleanly absent (e.g. vTPM/fTPM with no EK cert) */
 #define ATTEST_TRUST_UNKNOWN           3u  /* could not determine: a read/transport error, NOT a clean absence */
 
@@ -159,10 +160,11 @@ struct boot_attestation_report {
 
     /* AK public + binding status. The verifier checks the quote signature against
      * ak_pub; ak_credential_status / qualified_signer_status say whether the AK is
-     * yet bound to the platform EK and to the quote signer (UNVERIFIED today). */
+     * certified by the platform EK (UNVERIFIED today) and whether the quote signer
+     * is that AK (VERIFIED whenever a quote is present). */
     uint8_t  ak_status;             /* tpm_attest_status_t value, fixed-width */
     uint8_t  ak_credential_status;  /* ATTEST_TRUST_* (UNVERIFIED until ActivateCredential ships) */
-    uint8_t  qualified_signer_status; /* ATTEST_TRUST_* (UNVERIFIED until qualifiedSigner binding ships) */
+    uint8_t  qualified_signer_status; /* ATTEST_TRUST_* (VERIFIED with a present quote) */
     uint8_t  _pad3;
     uint16_t ak_pub_len;
     uint16_t _pad4;

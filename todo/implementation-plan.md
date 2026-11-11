@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **944 of 2594 sections complete (36%).** 116 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **945 of 2594 sections complete (36%).** 116 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -540,7 +540,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T13 §8`  | Sealed-Secret Boot Policy Hooks                                                                   |
 | [x]  | `D01 T13 §11` | TPM Tests and Event-Log Fixtures                                                                  |
 | [x]  | `D01 T13 §12` | PCR Allocation and Policy Mask Table                                                              |
-| [ ]  | `D01 T13 §13` | Attestation Key Provisioning and TPM2 Quote                                                       |
+| [x]  | `D01 T13 §13` | Attestation Key Provisioning and TPM2 Quote                                                       |
 | [ ]  | `D01 T13 §9`  | Attestation Report Export                                                                         |
 | [x]  | `D01 T13 §14` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           |
 | [ ]  | `D01 T13 §15` | Trusted Enrollment Provenance                                                                     |

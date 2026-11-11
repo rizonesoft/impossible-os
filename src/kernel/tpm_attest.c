@@ -23,6 +23,7 @@
 #include "kernel/tpm_pcr_alloc.h"
 #include "kernel/klog.h"
 #include "libc/string.h"
+#include "kernel/crypto/sha256.h"
 
 /* The well-known EK authPolicy (PolicyA), SHA-256, from the TCG EK Credential
  * Profile: the digest of TPM2_PolicySecret(TPM_RH_ENDORSEMENT). Load-bearing --
@@ -215,6 +216,50 @@ static uint64_t at_be64(const uint8_t *p)
     return ((uint64_t)tpm2_be32_get(p) << 32) | (uint64_t)tpm2_be32_get(p + 4u);
 }
 
+int tpm2_object_name_compute(const uint8_t *pub, uint16_t pub_len,
+                             uint8_t out[TPM_NAME_SHA256_LEN])
+{
+    /* TPMT_PUBLIC begins type(2) nameAlg(2). Only a SHA-256 nameAlg is hashed:
+     * hashing another algorithm's object with SHA-256 would give a Name that
+     * looks valid and matches nothing the TPM reports. */
+    if (!pub || !out || pub_len < TPM_PUBLIC_MIN_LEN ||
+        tpm2_be16_get(pub + 2) != TPM_ALG_SHA256)
+        return -1;
+    tpm2_be16_put(out, TPM_ALG_SHA256);
+    sha256(pub, pub_len, out + 2);
+    return 0;
+}
+
+int tpm2_qualified_name_compute(uint32_t hierarchy,
+                                const uint8_t *ek_pub, uint16_t ek_len,
+                                const uint8_t *ak_pub, uint16_t ak_len,
+                                uint8_t out[TPM_NAME_SHA256_LEN])
+{
+    uint8_t name[TPM_NAME_SHA256_LEN], qn[TPM_NAME_SHA256_LEN], hb[4];
+    struct sha256_ctx c;
+
+    if (!out)
+        return -1;
+    /* QN(EK) = SHA256 || H(hierarchy handle || Name(EK)). */
+    if (tpm2_object_name_compute(ek_pub, ek_len, name) != 0)
+        return -1;
+    tpm2_be32_put(hb, hierarchy);
+    sha256_init(&c);
+    sha256_update(&c, hb, sizeof hb);
+    sha256_update(&c, name, sizeof name);
+    tpm2_be16_put(qn, TPM_ALG_SHA256);
+    sha256_final(&c, qn + 2);
+    /* QN(AK) = SHA256 || H(QN(EK) || Name(AK)). */
+    if (tpm2_object_name_compute(ak_pub, ak_len, name) != 0)
+        return -1;
+    sha256_init(&c);
+    sha256_update(&c, qn, sizeof qn);
+    sha256_update(&c, name, sizeof name);
+    tpm2_be16_put(out, TPM_ALG_SHA256);
+    sha256_final(&c, out + 2);
+    return 0;
+}
+
 int tpm2_parse_quote(const uint8_t *rsp, uint32_t len, struct tpm_quote_attest *out,
                      uint8_t *sig_out, uint32_t sig_cap, uint32_t *sig_len)
 {
@@ -241,10 +286,13 @@ int tpm2_parse_quote(const uint8_t *rsp, uint32_t len, struct tpm_quote_attest *
     a += 4u;
     if (tpm2_be16_get(rsp + a) != TPM2_ST_ATTEST_QUOTE) return -1;
     a += 2u;
-    /* qualifiedSigner TPM2B_NAME (skip -- binds to the AK name; verifier checks). */
+    /* qualifiedSigner TPM2B_NAME: captured here, bound to the provisioned AK's
+     * Qualified Name by tpm2_quote (the parser checks structure only). */
     if (a + 2u > end_a) return -1;
     qn = tpm2_be16_get(rsp + a); a += 2u;
-    if ((uint32_t)qn > end_a - a) return -1;
+    if ((uint32_t)qn > end_a - a || (uint32_t)qn > TPM_ATTEST_NAME_MAX) return -1;
+    for (i = 0; i < qn; i++) out->qualified_signer[i] = rsp[a + i];
+    out->qualified_signer_len = qn;
     a += qn;
     /* extraData = the echoed verifier nonce (anti-replay). */
     if (a + 2u > end_a) return -1;
@@ -367,6 +415,10 @@ static volatile int s_ak_busy;
 static uint32_t s_ak_handle;
 static uint8_t  s_ak_pub[TPM_AK_PUB_MAX];
 static uint16_t s_ak_pub_len;
+/* The AK's Qualified Name under the EK, computed from the two publics at
+ * provisioning; tpm2_quote refuses a quote whose qualifiedSigner differs.
+ * Published with the handle under s_ak_ready. */
+static uint8_t  s_ak_qn[TPM_NAME_SHA256_LEN];
 
 /* The EK PRIMARY public, cached for the boot. Separate from the AK cache and
  * separately ready-flagged, because a caller that wants the machine's stable
@@ -536,6 +588,13 @@ static void at_flush_raw_if_created(tpm2_seq_t seq, const uint8_t *rsp, uint32_t
         at_flush(seq, raw);
 }
 
+/* at_exec_handle's response buffer and the length of its last SUCCESSFUL
+ * response, file-scope so at_provision can read the EK outPublic from the
+ * CreatePrimary it just ran. Same single-user argument as the buffer itself:
+ * only at_provision reaches at_exec_handle, under the s_ak_busy gate. */
+static uint8_t  s_exec_rsp[768];
+static uint32_t s_exec_rlen;
+
 /* Submit a leading-object-handle command (CreatePrimary/Load) -> transient
  * handle, 0 on failure (*out_st classified). Mirrors tpm_seal.c seal_exec_handle
  * incl. the malformed-handle recovery flush. */
@@ -546,12 +605,13 @@ static uint32_t at_exec_handle(tpm2_seq_t seq, const uint8_t *cmd, uint32_t n,
      * runs under the s_ak_busy mutual-exclusion gate (one CPU at a time), so a
      * shared response buffer is race-free -- and it keeps this 768B off the deep
      * tpm2_quote -> at_provision -> here chain on the 8 KiB kernel stack. */
-    static uint8_t rsp[768];
+    uint8_t *rsp = s_exec_rsp;
     uint16_t tag;
     uint32_t size, rc, h;
     int r;
+    s_exec_rlen = 0u;
     if (n == 0u) { *out_st = TPM_NV_BADARG; return 0; }
-    r = tpm2_submit_seq(seq, cmd, n, rsp, sizeof rsp);
+    r = tpm2_submit_seq(seq, cmd, n, rsp, sizeof s_exec_rsp);
     if (r < 0) {
         /* BUSY is always pre-dispatch by construction -- genuinely nothing
          * submitted, always safe to retry. */
@@ -598,6 +658,7 @@ static uint32_t at_exec_handle(tpm2_seq_t seq, const uint8_t *cmd, uint32_t n,
         return 0;
     }
     *out_st = TPM_NV_OK;
+    s_exec_rlen = (uint32_t)r;
     return h;
 }
 
@@ -657,7 +718,9 @@ static tpm_attest_status_t at_provision(tpm2_seq_t seq)
      * tpm2_quote -> at_provision call chain stays well within the 8 KiB kernel
      * stack (the Load step also stacks a blob-sized lcmd just below). */
     static uint8_t rsp[768];
-    uint8_t cmd[256], nonce[16];
+    static uint8_t ek_pub[TPM_EK_PUB_MAX];   /* static: same gate, off the deep stack */
+    uint8_t cmd[256], nonce[16], qn[TPM_NAME_SHA256_LEN];
+    uint16_t ek_pub_len = 0;
     uint32_t ek, session = 0, ak, n, rlen = 0, i;
     tpm_nv_status_t st;
     struct tpm_sealed_blob blob;
@@ -670,6 +733,11 @@ static tpm_attest_status_t at_provision(tpm2_seq_t seq)
     ek = at_exec_handle(seq, cmd, n, &st);
     if (ek == 0u)
         return at_provision_err_handle(st);   /* CreatePrimary allocates a handle */
+    /* The EK outPublic is what the AK's Qualified Name is computed over. */
+    if (tpm2_parse_create_primary_public(s_exec_rsp, s_exec_rlen, ek_pub,
+                                         (uint16_t)sizeof ek_pub, &ek_pub_len) != 0) {
+        r = TPM_ATTEST_PROVISION_FAIL; goto out_ek;
+    }
     /* 2. Open a real POLICY session. */
     memset(nonce, 0xA5, sizeof nonce);
     n = tpm2_build_start_auth_session(cmd, sizeof cmd, TPM2_SE_POLICY, TPM_ALG_SHA256,
@@ -730,6 +798,12 @@ static tpm_attest_status_t at_provision(tpm2_seq_t seq)
     if (tpm2_parse_create_sealed(rsp, rlen, &blob) != 0 || blob.pub_len > TPM_AK_PUB_MAX) {
         r = TPM_ATTEST_TRANSPORT; goto out_session;
     }
+    /* A public this file cannot Name (not SHA-256) could never be bound to a
+     * quote's signer, so it is refused before the AK is loaded. */
+    if (tpm2_qualified_name_compute(TPM_RH_ENDORSEMENT, ek_pub, ek_pub_len,
+                                    blob.pub, blob.pub_len, qn) != 0) {
+        r = TPM_ATTEST_PROVISION_FAIL; goto out_session;
+    }
     /* 5. RE-satisfy the EK policy -- the session was consumed by Create. */
     st = at_policy_secret(seq, session);
     if (st != TPM_NV_OK) { r = at_provision_err(st); goto out_session; }
@@ -750,6 +824,7 @@ static tpm_attest_status_t at_provision(tpm2_seq_t seq)
     /* Cache the AK handle + public (the Create outPublic IS the AK TPMT_PUBLIC). */
     for (i = 0; i < blob.pub_len; i++) s_ak_pub[i] = blob.pub[i];
     s_ak_pub_len = blob.pub_len;
+    for (i = 0; i < TPM_NAME_SHA256_LEN; i++) s_ak_qn[i] = qn[i];
     s_ak_handle = ak;
     r = TPM_ATTEST_OK;
 out_session:
@@ -876,6 +951,14 @@ tpm_attest_status_t tpm2_quote(uint32_t pcr_mask, const uint8_t *nonce,
     if (tpm2_be16_get(sig_out) != TPM_ALG_ECDSA ||
         tpm2_be16_get(sig_out + 2u) != TPM_ALG_SHA256)
         return TPM_ATTEST_QUOTE_FAIL;
+    /* Signer identity: the TPM names the key that signed in qualifiedSigner.
+     * Anything but this boot's AK, qualified by the EK it was created under,
+     * means another key signed or the response was substituted. */
+    if (out->qualified_signer_len != TPM_NAME_SHA256_LEN)
+        return TPM_ATTEST_SIGNER_MISMATCH;
+    for (i = 0; i < TPM_NAME_SHA256_LEN; i++)
+        if (out->qualified_signer[i] != s_ak_qn[i])
+            return TPM_ATTEST_SIGNER_MISMATCH;
     /* Anti-replay: the attest MUST echo the supplied nonce exactly. */
     if (out->nonce_len != nonce_len)
         return TPM_ATTEST_NONCE_STALE;
@@ -1165,6 +1248,7 @@ void tpm_attest_test_reset(void)
 {
     s_ak_handle = 0u;
     s_ak_pub_len = 0u;
+    memset(s_ak_qn, 0, sizeof s_ak_qn);
     __atomic_store_n(&s_ak_ready, 0, __ATOMIC_RELEASE);
     __atomic_store_n(&s_ak_busy, 0, __ATOMIC_RELEASE);
     s_ek_pub_len = 0u;

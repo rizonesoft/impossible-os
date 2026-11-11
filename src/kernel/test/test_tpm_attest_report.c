@@ -157,11 +157,15 @@ static void test_attest_report_build(void)
         TEST_ASSERT_EQ((uint32_t)s_report.pcr_coherence, (uint32_t)ATTEST_COHERENCE_NA,
                        "no quote -> coherence NA");
 
-    /* Trust model: AK<->EK binding is never auto-trusted by this build. */
+    /* Trust model: AK<->EK certification is never auto-trusted by this build;
+     * the quote signer is proven exactly when a quote is present (tpm2_quote
+     * returns OK only on a qualifiedSigner match). */
     TEST_ASSERT_EQ((uint32_t)s_report.ak_credential_status, (uint32_t)ATTEST_TRUST_UNVERIFIED,
                    "AK credential binding stays UNVERIFIED");
-    TEST_ASSERT_EQ((uint32_t)s_report.qualified_signer_status, (uint32_t)ATTEST_TRUST_UNVERIFIED,
-                   "qualified-signer binding stays UNVERIFIED");
+    TEST_ASSERT_EQ((uint32_t)s_report.qualified_signer_status,
+                   s_report.quote_present ? (uint32_t)ATTEST_TRUST_VERIFIED
+                                          : (uint32_t)ATTEST_TRUST_UNVERIFIED,
+                   "qualified signer VERIFIED iff a quote is present");
     /* EK cert trust: UNVERIFIED if present, ABSENT only for a clean no-cert,
      * UNKNOWN for a read/transport failure (must not look like benign absence). */
     {

@@ -81,6 +81,13 @@ extern const uint8_t TPM_EK_POLICY_A_SHA256[TPM_EK_POLICY_A_LEN];
 #define TPM_EK_PUB_MAX        160u  /* marshaled EK TPMT_PUBLIC (ECC P-256 template is 122) */
 #define TPM_PUBLIC_MIN_LEN     10u  /* type(2)+nameAlg(2)+attrs(4)+empty authPolicy(2) */
 #define TPM_EK_CERT_MAX       1024u /* DER EK cert chunk we read from NV */
+/* A SHA-256 Name or Qualified Name: nameAlg(2) + digest(32). Both the AK and
+ * its EK parent use SHA-256 as nameAlg (the templates in this file), so this is
+ * the only Name shape tpm2_quote's signer check computes. */
+#define TPM_NAME_SHA256_LEN    34u
+/* Largest TPM2B_NAME the quote parser accepts as qualifiedSigner: nameAlg(2)
+ * plus a SHA-512 digest (sizeof TPMU_NAME on a TPM with that bank). */
+#define TPM_ATTEST_NAME_MAX    66u
 
 /* ---- Classified outcome (degraded states never gate boot) ---- */
 typedef enum {
@@ -100,6 +107,10 @@ typedef enum {
      * read-only kernel data, and a verifier must not read the resulting report
      * as merely degraded evidence. */
     TPM_ATTEST_SELF_CORRUPT  = 10,
+    /* The quote's qualifiedSigner is not the Qualified Name of the AK this
+     * boot provisioned under the EK: the signature came from another key, or
+     * the response was substituted. Never published as a valid quote. */
+    TPM_ATTEST_SIGNER_MISMATCH = 11,
 } tpm_attest_status_t;
 
 /* Parsed TPMS_ATTEST quote fields a verifier / report consumer needs. */
@@ -120,11 +131,32 @@ struct tpm_quote_attest {
      * signature to verify the quote; it also carries qualifiedSigner (AK name). */
     uint8_t  attest_raw[TPM_ATTEST_MAX];
     uint16_t attest_raw_len;
+    /* TPMS_ATTEST.qualifiedSigner: the TPM's Qualified Name of the signing key.
+     * tpm2_quote returns OK only when it equals the provisioned AK's. */
+    uint8_t  qualified_signer[TPM_ATTEST_NAME_MAX];
+    uint16_t qualified_signer_len;
 };
 
 /* ---- Pure marshaling seam (MMIO-free, fixture-tested) ----
  * Each builder returns the marshaled command length, or 0 on bad arg / too-small
  * buffer. Each parser returns 0 on success, -1 on malformed/failed. */
+
+/* Name of an object (TPM 2.0 Part 1, "Names"): nameAlg || H_nameAlg(TPMT_PUBLIC),
+ * over the marshaled TPMT_PUBLIC (the TPM2B_PUBLIC contents, no size prefix).
+ * Writes TPM_NAME_SHA256_LEN bytes. Returns 0, or -1 when the public is shorter
+ * than TPM_PUBLIC_MIN_LEN or its nameAlg is not SHA-256. */
+int tpm2_object_name_compute(const uint8_t *pub, uint16_t pub_len,
+                             uint8_t out[TPM_NAME_SHA256_LEN]);
+
+/* Qualified Name of an AK whose parent is a primary EK under `hierarchy`
+ * (TPM 2.0 Part 1, "Qualified Name"): QN(X) = nameAlg || H(QN(parent) || Name(X)),
+ * where a hierarchy's QN is its 4-byte handle. So QN(AK) =
+ * H(H(hierarchy || Name(EK)) || Name(AK)), each digest prefixed with nameAlg.
+ * Writes TPM_NAME_SHA256_LEN bytes. Returns 0, or -1 on a bad public. */
+int tpm2_qualified_name_compute(uint32_t hierarchy,
+                                const uint8_t *ek_pub, uint16_t ek_len,
+                                const uint8_t *ak_pub, uint16_t ak_len,
+                                uint8_t out[TPM_NAME_SHA256_LEN]);
 
 /* TPM2_CreatePrimary of the standard ECC-P256 EK under the endorsement hierarchy.
  * Authorized by the ENDORSEMENT-HIERARCHY auth (empty password by default ->
