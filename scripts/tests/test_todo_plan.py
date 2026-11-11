@@ -238,6 +238,14 @@ def test_a_dependency_on_a_missing_section_fails_the_check():
         assert r.returncode == 1 and "names no section that work can finish" in r.stderr, r.stderr
 
 
+def test_a_bare_reference_to_the_own_file_is_a_self_dependency():
+    with tempfile.TemporaryDirectory() as d:
+        root = make_repo(d, beta_rows=[(1, S + "1 Base", "--", "x"), (2, S + "2 Top", "TODO-01", " ")])
+        assert run(root, "--seed").returncode == 0
+        r = run(root, "--check")
+        assert r.returncode == 1 and "depends on itself" in r.stderr, r.stderr
+
+
 def test_an_edge_between_two_cycles_is_still_held():
     # Beta 1 and 2 form one cycle, Beta 3 and 4 another, and 1 also waits on 3.
     with tempfile.TemporaryDirectory() as d:

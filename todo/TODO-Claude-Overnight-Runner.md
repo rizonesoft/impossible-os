@@ -38,7 +38,7 @@ The order comes from [the implementation plan](implementation-plan.md) (`scripts
 3. **Then the first file in domain order with a runnable section**, files in ascending `TODO-NN` order (skipping `INDEX.md` and doctrine files such as this one). This catches a shipped section owing review whose own dependencies keep it off the plan's buildable rows.
 4. **Fallback:** when nothing anywhere is runnable, take the first NEEDS_WORK file in domain order, and `--next` adds `"waiting": true`; when the plan cannot answer (no tool, no plan, a graph error), take that file without the flag. Neither stops the run: a dependency named in prose ("ACPI", "VFS") can stay unsatisfied for good, and the section skills defer the items that are genuinely blocked.
 
-Within a file, sections run in file order, skipping any `waiting` section; the run returns to it once its dependencies are done.
+Within a file, sections run in file order, skipping any `waiting` section; the run returns to it once its dependencies are done. When every open section waits, the packet still names the first one (`next_section` carries `waiting`): work it anyway, build what its finished dependencies allow, and defer the rest with an XREF to the owning section.
 
 ## Per-File Pipeline (exact sequence, no deviation)
 
@@ -47,7 +47,7 @@ For each TODO file at the cursor:
 0. **Lifecycle check (skip Stages 1-2 when already done).** Run `python3 .claude/hooks/sequencer_triage.py --classify <file>` and read its `stages_1_2_done` field. The file-preamble stamps `> **Validated:**` and `> **Gap-audited:**` (above `> **Goal:**`) record that Stages 1-2 already ran on a prior pass. If `stages_1_2_done` is true AND no `## N.` section has been ADDED since (a new XREF'd `[ ]` item inside an EXISTING section does NOT count -- it already came from a gap-audit elsewhere), SKIP Stages 1-2 and go straight to Stage 3. This is the guard against the fixpoint loop re-validating / re-gap-auditing a mature file every sweep (incident 2026-06-21). Re-run Stages 1-2 only when the stamps are absent or a genuinely new section appeared.
 1. **Validate** -- `Skill(validate-todo-file)` on the file. Fix structural findings before proceeding. On completion, write/refresh the file-preamble stamp `> **Validated:** <date> | <one-line basis>`.
 2. **Gap analysis** -- `Skill(gap-audit-todo)` on the file (includes the mandatory `codex-gap-audit` secondary pass; its Phase 2.0 maturity gate keys off these same signals). Land the resulting TODO edits before touching code. On completion, write/refresh the file-preamble stamp `> **Gap-audited:** <date> | <one-line basis>`.
-3. **Sections, in order.** For each `## N.` implementation section, first to last, skipping a section `--classify` marks `waiting` until its dependencies are done:
+3. **Sections, in order.** For each `## N.` implementation section, first to last, skipping a section `--classify` marks `waiting` until its dependencies are done (unless every open section waits; see [Traversal Order](#traversal-order)):
    - Section already complete (all items `[x]`, marked `[x]` in the Implementation Order table) -> `Skill(review-todo-section)`.
    - Section not complete -> `Skill(implement-todo-section)`, which chains into `review-todo-section` at step 20 as usual.
    - **Commit AND push after every section** (one atomic act per `feedback_commit_push_workflow`). Never batch sections into one commit.

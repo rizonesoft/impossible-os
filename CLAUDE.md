@@ -247,7 +247,7 @@ python3 scripts/todo-plan.py --check      # lint Check 37: stale plan, or a row 
 
 - **Never read the plan file into context.** It is about 2,700 lines; `--next` and `--resolve '<row>'` answer from it.
 - **Sync before the commit** whenever a section's status, stamps or heading changed or a section was filed. The sync is mechanical and spends no model.
-- **The run follows it.** `sequencer_triage.py --next` stays in the current file while it has a runnable section, then opens the owner of the first row `--next` prints; a section whose dependencies are open is skipped until they are done. A dependency cycle fails `--check`.
+- **The run follows it.** `sequencer_triage.py --next` stays in the current file while it has a runnable section, then opens the owner of the first row `--next` prints; a section whose dependencies are open is skipped until they are done, unless every open section waits, when the packet names the first and the run works what its finished dependencies allow and defers the rest with an XREF. A dependency cycle fails `--check`.
 - A row pasted from the plan (box, address, title) is a complete instruction for `/implement-todo-section`; `--resolve` turns the address into its file and section.
 
 Details: [docs/infrastructure/todo-metadata.md](docs/infrastructure/todo-metadata.md#the-implementation-plan).

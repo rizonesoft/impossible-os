@@ -39,7 +39,10 @@ can be built now (every section it depends on is done). `--next` keeps the
 run's cursor file while that file has a runnable section, so the run finishes a
 file before it moves; then it opens the owner of the first plan row that can be
 built. `--classify` marks every other NEEDS_WORK section `waiting`, and the
-packet builder skips those. When the plan cannot answer (no tool, no plan, a
+packet builder skips those while anything else can start; when every open
+section waits it names the first, which the run works as far as its finished
+dependencies allow. Readiness is computed in-process from this oracle's own
+cache, and only once a file has to be chosen. When the plan cannot answer (no tool, no plan, a
 graph error) every NEEDS_WORK section counts as runnable and `--next` falls back
 to traversal order: the run keeps working rather than stopping on a planning
 fault. Blocked-with-XREF items inside a section are still deferred by the
@@ -58,7 +61,6 @@ import json
 import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 
 VERIFIED_RE = re.compile(r"^>\s*\*\*Verified:\*\*")
@@ -136,8 +138,15 @@ def repo_root(override=None):
     return os.path.abspath(os.getcwd())
 
 
+# The file the oracle's nodes were loaded from, so readiness can tell whether
+# those nodes are fresh enough to plan from (see plan_ready).
+_LOADED_FROM = None
+
+
 def load_cache(cache_path, root):
+    global _LOADED_FROM
     path = cache_path if os.path.isabs(cache_path) else os.path.join(root, cache_path)
+    _LOADED_FROM = path
     if not os.path.exists(path):
         raise FileNotFoundError(
             f"todo-graph cache not found: {path} "
@@ -331,31 +340,59 @@ def traversal_order(cache):
 
 PLAN_TOOL = os.path.join("scripts", "todo-plan.py")
 RUN_STATE = os.path.join(".claude", "state", "sequencer-run.json")
-PLAN_TIMEOUT_S = 120
 
 
-def plan_ready(root):
-    """Set of (file, section) the implementation plan says can be built now,
-    or None when the plan cannot answer (the caller then treats every open
-    section as runnable, which is the pre-plan behaviour)."""
+def plan_ready(root, cache=None):
+    """List of (file, section) the implementation plan says can be built now,
+    in plan order, or None when the plan cannot answer (the caller then treats
+    every open section as runnable, which is the pre-plan behaviour).
+
+    Computed IN-PROCESS by the planner's module (loaded from the repository
+    root, so a root without one has no plan), with no subprocess timeout a
+    hook's own deadline could undercut. The planner gets the oracle's cache
+    file re-read under the strict freshness check (_fresh_nodes), which is a
+    separate read from the nodes classification used; when that check fails
+    it builds its own graph in a private temporary directory (about a second)
+    instead."""
     tool = os.path.join(root, PLAN_TOOL)
     if not os.path.isfile(tool):
         return None
     try:
-        r = subprocess.run([sys.executable, tool, "--repo-root", root, "--next", "0", "--json"],
-                           capture_output=True, text=True, timeout=PLAN_TIMEOUT_S, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if r.returncode != 0:
-        return None
-    try:
-        rows = json.loads(r.stdout)
-    except ValueError:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_todo_plan_for_triage", tool)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        rows = mod.ready_rows(Path(root), _fresh_nodes(root) if cache is not None else None)
+    except (Exception, SystemExit):  # fail-direction: None means "every open section is runnable", never "none is"
         return None
     if not isinstance(rows, list):
         return None
-    return [(row["file"], row["section"]) for row in rows
-            if isinstance(row, dict) and isinstance(row.get("file"), str) and isinstance(row.get("section"), int)]
+    return [(f, n) for f, n in (r for r in rows if isinstance(r, (list, tuple)) and len(r) == 2)
+            if isinstance(f, str) and isinstance(n, int)]
+
+
+def _fresh_nodes(root):
+    """The planner's nodes, read from the cache this oracle loaded, or None.
+
+    Classification tolerates a stale cache (it loads with check_stale=False),
+    but readiness must not: a TODO edit that adds an unfinished prerequisite
+    would otherwise read as buildable. So the cache is read again under the
+    strict corpus-freshness check, with the planner's own validation profile,
+    and THOSE nodes are what the planner gets: the snapshot that was certified
+    is the snapshot that is planned from, even if the file was replaced since
+    the first load. None (stale, unreadable, nothing loaded) means the planner
+    rebuilds its own graph, about a second slower, never that old nodes are
+    used."""
+    if not _LOADED_FROM:
+        return None
+    try:
+        sys.path.insert(0, os.path.join(root, "scripts", "todo-graph"))
+        import cache_schema  # noqa: E402
+        nodes, _ = cache_schema.load_and_validate(Path(_LOADED_FROM), Path(root) / "todo",
+                                                  check_stale=True, profile=cache_schema.PROFILE_QUERY)
+        return nodes
+    except Exception:  # fail-direction: None -> the planner rebuilds, slower but correct
+        return None
 
 
 def runnable_sections(entry, per, ready):
@@ -396,7 +433,15 @@ def next_file(cache, root, ready="unset"):
     return entry, cls
 
 
-def pick_next(cache, root, ready="unset"):
+def section_list(entry, per, ready):
+    """The `sections` array `--classify` and `--next` print: each section's
+    class, plus `waiting` on a NEEDS_WORK section that cannot start yet."""
+    runnable = set(runnable_sections(entry, per, ready))
+    return [{"n": n, "class": c, **({"waiting": True} if c == NEEDS_WORK and n not in runnable else {})}
+            for n, c in per]
+
+
+def pick_next(cache, root, ready="unset", want_ready=False):
     """The next file to work, else (None, BLOCKED) when only recoverable-deferred
     files remain, else (None, None) at true DONE. Returns (entry, class, waiting).
 
@@ -409,8 +454,6 @@ def pick_next(cache, root, ready="unset"):
     prose ("ACPI", "VFS") can stay unsatisfied for good, and the section's own
     skills defer the items that are genuinely blocked. With no plan answer the
     first NEEDS_WORK file is the answer and `waiting` is false."""
-    if ready == "unset":
-        ready = plan_ready(root)
     saw_blocked = False
     needs = {}
     order = []
@@ -422,15 +465,20 @@ def pick_next(cache, root, ready="unset"):
         elif cls == BLOCKED:
             saw_blocked = True
     if not order:
-        return None, (BLOCKED if saw_blocked else None), False
+        res = (None, (BLOCKED if saw_blocked else None), False)
+        return (*res, None, []) if want_ready else res
+    # Only now is there a choice to make, so only now is the plan consulted:
+    # a DONE or BLOCKED answer never pays for it.
+    if ready == "unset":
+        ready = plan_ready(root, cache)
     if ready is None:
-        return needs[order[0]][0], NEEDS_WORK, False
-    cur = _cursor_file(root)
-    candidates = ([cur] if cur in needs else []) + [f for f, _n in ready if f in needs] + order
-    for f in candidates:
-        if runnable_sections(*needs[f], ready):
-            return needs[f][0], NEEDS_WORK, False
-    return needs[order[0]][0], NEEDS_WORK, True
+        res = (needs[order[0]][0], NEEDS_WORK, False)
+    else:
+        cur = _cursor_file(root)
+        candidates = ([cur] if cur in needs else []) + [f for f, _n in ready if f in needs] + order
+        res = next(((needs[f][0], NEEDS_WORK, False) for f in candidates if runnable_sections(*needs[f], ready)),
+                   (needs[order[0]][0], NEEDS_WORK, True))
+    return (*res, ready, needs[res[0]["file_path"]][1]) if want_ready else res
 
 
 def collect_blockers(cache, root):
@@ -472,7 +520,7 @@ def cmd_blockers(cache, root):
 
 
 def cmd_next(cache, root):
-    entry, cls, waiting = pick_next(cache, root)
+    entry, cls, waiting, ready, per = pick_next(cache, root, want_ready=True)
     if entry is None:
         if cls == BLOCKED:
             print(json.dumps({"status": BLOCKED, "file": None,
@@ -490,6 +538,9 @@ def cmd_next(cache, root):
         # true: no open section anywhere can start (every one waits on an
         # unfinished dependency); the run still works this file.
         **({"waiting": True} if waiting else {}),
+        # The chosen file's sections from the same plan snapshot, so a caller
+        # needs no second `--classify` (and no second plan computation).
+        "sections": section_list(entry, per, ready),
     }))
     return 0
 
@@ -503,15 +554,13 @@ def cmd_classify(cache, root, target):
     entry = match[0]
     cls, per = classify_file(entry, root)
     lc = file_lifecycle(os.path.join(root, entry["file_path"]), root, entry["file_path"])
-    runnable = set(runnable_sections(entry, per, plan_ready(root)))
     print(json.dumps({
         "file": entry["file_path"],
         "file_class": cls,
         "lifecycle": lc,
         "stages_1_2_done": lc["validated"] and lc["gap_audited"],
         # `waiting`: still needs work, but a section it depends on is not done.
-        "sections": [{"n": n, "class": c, **({"waiting": True} if c == NEEDS_WORK and n not in runnable else {})}
-                     for n, c in per],
+        "sections": section_list(entry, per, plan_ready(root, cache)),
     }, indent=1))
     return 0
 

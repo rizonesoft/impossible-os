@@ -131,8 +131,10 @@ def main(argv) -> int:
     # waiting on an unfinished dependency (the oracle marks those `waiting`).
     # If every open section waits, the first open one is still named so the
     # worker sees the stall instead of an empty packet.
-    cls = _json_out(["python3", triage, "--classify", todo], root, timeout=180) or {}
-    sections = cls.get("sections") or []
+    sections = nxt.get("sections")
+    if not isinstance(sections, list):  # an oracle without the field: ask for it
+        cls = _json_out(["python3", triage, "--classify", todo], root, timeout=180) or {}
+        sections = cls.get("sections") or []
     nxt_sec = _next_section(sections)
     packet["sections_summary"] = {
         "total": len(sections),

@@ -371,6 +371,10 @@ information or judgment; none of this weakens a gate):**
 
 - `DONE` -> skip.
 - `DONE_UNSTAMPED` -> `Skill(review-todo-section)` (stamps it).
+- `NEEDS_WORK` with `waiting` -> skip it while another section in the file can start; start the section the
+  `advance-work.py` packet names (`next_section`). If every open section waits, the packet names the first:
+  work it, build what its finished dependencies allow, and defer the rest with an XREF
+  ([Traversal Order](../../../todo/TODO-Claude-Overnight-Runner.md#traversal-order)).
 - `NEEDS_WORK` -> `Skill(implement-todo-section)` (its step 20 chains
   `review-todo-section`). For a near-complete section with one or two open
   items, `Skill(implement-todo-item)` is allowed.

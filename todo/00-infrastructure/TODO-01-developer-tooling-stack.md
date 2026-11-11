@@ -596,13 +596,14 @@ One libFuzzer target and a checked-in seed corpus per parser, built from the ker
   - Bare `TODO-NN` names in the domain-10 files (written under domain-09 numbering) and the ntdll and Win32 tables now name their owners; the registry pair names what each side waits for.
   - Plan rows moved where the corrected edges required: 25 rows, each later only as far as its dependencies.
 - [x] `todo-plan.py --check` refuses every dependency shape that can never be built
-  - A cycle (`cycle_problems`), a self-dependency (`self_problems`), an edge no work can finish such as a missing section or an INDEX (`dead_problems`).
+  - A cycle (`cycle_problems`), a self-dependency including a bare own-file reference (`self_problems`), an edge no work can finish such as a missing section or an INDEX (`dead_problems`).
   - A row labelled with another section (`label_problems`, naming both headings so the fixer can tell which half is wrong).
 - [x] `sequencer_triage.py --next` stays in the cursor file while it has a runnable section, then opens the owner of the first row `todo-plan.py --next` prints, then the first runnable file in domain order
   - Runnable: shipped (`[x]` row) and owing only review, or buildable by the plan; an in-progress `[/]` row must be buildable. A planning fault (no tool, no plan, a graph error) means every open section is runnable, never none.
-  - Nothing runnable anywhere: the first open file, with `"waiting": true` in the `--next` answer; the run still works it.
+  - Nothing runnable anywhere: the first open file, with `"waiting": true` in the `--next` answer; the run works its first section and defers what still waits.
+  - Readiness comes in-process from the oracle's cache file, re-read under the strict freshness check (a private rebuild if stale), only once a choice exists; `--next` returns the chosen file's sections so an advance plans once.
 - [x] `--classify` marks an open section `waiting` when its dependencies are not done, and `advance-work.py` starts the first section that is not waiting
-  - `_next_section` picks NEEDS_WORK only, never a BLOCKED one; the summary counts BLOCKED as deferred (it counted a class the oracle never emits).
+  - `_next_section` picks NEEDS_WORK only, never a BLOCKED one, from the sections `--next` returned; the summary counts BLOCKED as deferred (it counted a class the oracle never emits).
 
 **Test checkpoint:** `python3 scripts/todo-plan.py --cycles` prints nothing, `--check` exits 1 on a fixture cycle, and a run started on a clean tree opens the file that owns the first row `--next` prints.
 
@@ -611,6 +612,10 @@ One libFuzzer target and a checked-in seed corpus per parser, built from the ker
 > - Shipped: data fixes across 27 TODO files, `label_problems` and `cycle_problems` in `scripts/todo-plan.py`, `plan_ready`/`runnable_sections`/plan-aware `next_file` in `.claude/hooks/sequencer_triage.py`, `waiting` in `--classify` and `advance-work.py`.
 > - Integration: the run doctrine's Traversal Order now names the plan; Check 37 refuses a cycle or a mislabelled row at commit.
 > - Scope: dependency cells were corrected where they formed a cycle or named a stale number or file; cells that resolve to a real owner were left as written.
+> - Post-ship review: readiness moved in-process and lazy (DONE and BLOCKED never plan, which kept the frozen Stop hook inside its 5 s budget), planned from a strictly re-read fresh cache, one plan per advance; a bare own-file reference is a self-dependency.
+
+> **Verified:** 2026-11-11 | commit `acb831b3c` + post-ship fixes | all items | build OK | todo_plan 18/18, triage plan order 12/12, advance-work PASS, runner suite 82/82, `--check` 0
+> **Quality reviewed:** 2026-11-11 | Codex 14x (adversarial, consistency, perf, re-adversarial) | 4H+12M fixed, 0 open | scope: N/A (host tooling, no kernel or boot code)
 
 ---
 

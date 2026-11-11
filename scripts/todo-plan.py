@@ -93,12 +93,16 @@ class Section:
 
 # --- the graph ---------------------------------------------------------------
 
-def load_sections(root: Path) -> dict:
+def load_sections(root: Path, nodes=None) -> dict:
     """ref -> Section for every numbered section, from a privately built cache.
 
     The cache is rebuilt into a temporary directory on every run: the shared
     build/todo-cache.json goes stale on any TODO edit and is deleted by several
     hooks, and a plan computed from a stale graph would be confidently wrong.
+    A caller that already holds nodes certified fresh against the corpus (the
+    triage oracle re-reads its cache under the strict freshness check) passes
+    them instead, and no rebuild is paid. Never pass nodes loaded without that
+    check: a stale graph would report unfinished prerequisites as met.
     """
     graph_dir = REPO / "scripts" / "todo-graph"
     if str(graph_dir) not in sys.path:
@@ -108,6 +112,8 @@ def load_sections(root: Path) -> dict:
         import query as q
     except ImportError as exc:
         raise PlanError(f"the TODO graph library could not be imported: {exc}") from None
+    if nodes is not None:
+        return _sections_from(nodes, root, q)
     with tempfile.TemporaryDirectory(prefix="todo-plan-") as tmp:
         cache = Path(tmp) / "todo-cache.json"
         try:
@@ -124,6 +130,10 @@ def load_sections(root: Path) -> dict:
             nodes, _ = cs.load_and_validate(cache, root / "todo", check_stale=False, profile=cs.PROFILE_QUERY)
         except cs.CacheSchemaError as exc:
             raise PlanError(f"the graph cache is not usable: {exc}") from None
+    return _sections_from(nodes, root, q)
+
+
+def _sections_from(nodes, root: Path, q) -> dict:
     ctx = q.Ctx(nodes, root, True)
     try:
         deps = q.section_dep_index(ctx)
@@ -178,8 +188,8 @@ def load_sections(root: Path) -> dict:
             if target is None:
                 continue
             m = edge.get("target_section")
-            if target == s.path and m == s.n:
-                s.selfdep = True
+            if target == s.path and m in (s.n, None):
+                s.selfdep = True  # a bare own-file reference includes the section itself
             targets = by_file.get(target, []) if m is None else [by_key[(target, m)]] if (target, m) in by_key else []
             for t in targets:
                 if t.ref != s.ref and t.ref not in seen:
@@ -196,6 +206,17 @@ def load_sections(root: Path) -> dict:
 
 def buildable(s: Section) -> bool:
     return s.box != "x" and not s.unmet and not s.blocked
+
+
+def ready_rows(root: Path, nodes=None) -> list:
+    """(file, section) for every row that can be built now, in plan order: the
+    answer `--next 0` prints. Raises PlanError when there is no plan or graph."""
+    sections = load_sections(root, nodes)
+    path = root / PLAN_REL
+    if not path.exists():
+        raise PlanError(f"{PLAN_REL} does not exist; run --seed once")
+    plan = Plan(path.read_text(encoding="utf-8"))
+    return [(sections[r].path, sections[r].n) for r in plan.order() if r in sections and buildable(sections[r])]
 
 
 def cyclic_refs(sections: dict) -> dict:
