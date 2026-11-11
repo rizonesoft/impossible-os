@@ -76,9 +76,9 @@ title: "TODO-16 -- Kernel Notification Facility"
 > - Canonical doc: this TODO; publish/subscribe/security/retention are the later sections.
 > - Scope boundary: §1 owns the object type + namespace + lifetime/scope/type-id metadata; §2/§3 own publish/subscribe + teardown, §4 owns DACL/token enforcement, §7 owns coalescing/retention + persistent registry backing.
 > **Verified:** 2026-07-05 | commit `678fbd3c` | 8/8 items | build OK | smoke PASS (KVM 3.29s) + test-knf 10/10
-> **Deferred:** [L] `knf_init` failure is silent to boot-health -> XREF: 02-kernel-core/TODO-16 §9 (item: "Report KNF init health" at line 236)
+> **Deferred:** [L] `knf_init` failure is silent to boot-health -> XREF: 02-kernel-core/TODO-16 §9 (item: "Report KNF init health" at line 237)
 > **Deferred:** [L] create-or-open can open an existing privileged state via a Temporary request -> XREF: 02-kernel-core/TODO-16 §4 (item: "Gate create-or-open opens by DACL" at line 140)
-> **Deferred:** [L] concurrent create/delete SMP stress (ObpRemoveFromDirectory idempotent -1 path) -> XREF: 02-kernel-core/TODO-16 §10 (item: "Concurrent create/delete SMP stress" at line 258)
+> **Deferred:** [L] concurrent create/delete SMP stress (ObpRemoveFromDirectory idempotent -1 path) -> XREF: 02-kernel-core/TODO-16 §10 (item: "Concurrent create/delete SMP stress" at line 259)
 > **Quality reviewed:** 2026-07-05 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2M+1L fixed, 3L deferred-XREF | scope: kernel-code-quality
 
 ---
@@ -126,7 +126,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 **Test checkpoint:** `test_knf` blocks a thread on a subscription handle via `NtWaitForSingleObject`, publishes from another thread, and asserts the waiter wakes exactly when the sequence passes its last-seen value; a timeout wait returns `STATUS_TIMEOUT` when no publish occurs; fanout to 3 subscribers allocates zero at DISPATCH_LEVEL (pre-allocated wait blocks). Serial: `"[KNF] subscriber woke seq=%llu"`. Test on: QEMU WHPX + TCG.
 
-> **Deferred:** [H] §3 not started -- blocked on prerequisites owned elsewhere: alertable-wait + user-APC async delivery unimplemented, and the waitable core needs a race-free wait (kernel `event_t` lost-wakeup, ex.h:149) + two-phase rundown-pinned wake (Codex design verdict: No-ship on the naive event_wait design) -> XREF: 02-kernel-core/TODO-07 §12 (item: "Alertable-wait integration" at line 400)
+> **Deferred:** [H] §3 not started -- blocked on prerequisites owned elsewhere: alertable-wait + user-APC async delivery unimplemented, and the waitable core needs a race-free wait (kernel `event_t` lost-wakeup, ex.h:149) + two-phase rundown-pinned wake (Codex design verdict: No-ship on the naive event_wait design) -> XREF: 02-kernel-core/TODO-07 §12 (item: "Alertable-wait integration" at line 399)
 
 ---
 
@@ -226,7 +226,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 **Test checkpoint:** `test_knf` drives each `Nt*WnfStateData` handler through the SSDT: `NtCreateWnfStateName` returns a 64-bit state name, `NtUpdateWnfStateData` advances the sequence, `NtQueryWnfStateData` returns the payload + change stamp, an unchanged query returns `STATUS_NO_MORE_ENTRIES`, and `NtSubscribeWnfStateChange` wakes on the next update. Serial: `"[KNF] WNF syscalls: 6 SSDT slots live"`. Test on: QEMU WHPX + TCG.
 
-> **Deferred:** [H] §8 blocked on the `WNF_STATE_NAME` compat-level decision -- ABI-defining, cannot change post-ship, so operator-reserved (byte-compatible Windows encoding vs syscall-arg-shape only); every handler encodes this ABI. awaiting-answer (todo/answers.md Q1). SSDT numbers 0x01E0-0x01E6 are reserved in service_numbers.h; handlers await the decision. -> XREF: 02-kernel-core/TODO-16 §8 (item: "DECIDE + document the" at line 222)
+> **Deferred:** [H] §8 blocked on the `WNF_STATE_NAME` compat-level decision -- ABI-defining, cannot change post-ship, so operator-reserved (byte-compatible Windows encoding vs syscall-arg-shape only); every handler encodes this ABI. awaiting-answer (todo/answers.md Q1). SSDT numbers 0x01E0-0x01E6 are reserved in service_numbers.h; handlers await the decision. -> XREF: 02-kernel-core/TODO-16 §8 (item: "DECIDE + document the" at line 223)
 
 ---
 

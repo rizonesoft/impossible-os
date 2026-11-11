@@ -1,9 +1,9 @@
 /* ============================================================================
  * pe.c -- PE32+ header parser and loader
  *
- * Validates PE32+ (Windows x64) executables: DOS header, PE signature,
- * COFF header, Optional Header, and section table bounds.
- * Section loading and import resolution are separate passes.
+ * Loads PE32+ (Windows x64) executables for the exec dispatcher: maps the
+ * headers and sections pe_preflight (pe_validate.c) accepted, resolves imports
+ * through pe_walk_imports, parses .pdata and registers the module.
  * ============================================================================ */
 
 #include "kernel/pe.h"
@@ -378,8 +378,7 @@ static int pe_map_one_page(uint64_t va, const uint8_t *data,
 
     if (vmm_map_page((uintptr_t)va, frame, flags) != 0) {
         klog(LOG_ERROR, "pe", "Failed to map page at VA 0x%x", va);
-        /* Frame leaked here -- pmm_free_frame not yet implemented.
-         * When it is, free the frame. For now, log the loss. */
+        pmm_free_frame(frame);   /* never mapped, so rollback cannot reach it */
         return -1;
     }
 
@@ -391,7 +390,6 @@ static int pe_map_one_page(uint64_t va, const uint8_t *data,
 
 uint64_t pe_load(const uint8_t *data, uint64_t size)
 {
-    POST16(0xD80B);
 
     pe_validate_result_t v;
     pe_image_layout_t lay;
@@ -409,7 +407,6 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
 
     uint64_t entry_va = image_base + entry_rva;
 
-    POST16(0xD80C);
 
     /* ---- Map PE headers at ImageBase ---- */
     {
@@ -430,8 +427,10 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
             if (offset + copy_len > size)
                 copy_len = (offset < size) ? (uint32_t)(size - offset) : 0;
 
+            /* Headers are data: read-only and never executable, as Windows
+             * maps them. */
             if (pe_map_one_page(image_base + offset, data, offset, copy_len,
-                                VMM_FLAG_PRESENT | VMM_FLAG_USER,
+                                VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_NX,
                                 &total_pages_mapped) != 0) {
                 pe_rollback(image_base, total_pages_mapped);
                 return 0;
@@ -578,7 +577,6 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
         }
     }
 
-    POST16(0xD80D);
 
     klog(LOG_INFO, "pe",
          "PE32+ loaded at 0x%x, entry 0x%x, %u sections, %u pages",

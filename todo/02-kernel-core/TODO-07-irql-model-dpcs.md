@@ -97,7 +97,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > **Verified:** 2026-06-26 | commit `e9318e14` | 5/5 items | build OK | tests 19 kernel + 16 user PASS
 > **Deferred:** [H] `KeRaiseIrql`/`KeLowerIrql` write the LAPIC TPR even when the byte is unchanged (PASSIVE<->APC both 0x00), taxing the spinlock hot path (RESOLVED 2026-06-26 by §2) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §2 (item: "Skip redundant LAPIC TPR MMIO writes" at line 112)
 > **Deferred:** [M] `isr_handler` reports the LAPIC timer at DISPATCH and IPIs at HIGH instead of the named CLOCK_LEVEL/IPI_LEVEL -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §3 (item: "Report system vectors at named IRQLs" at line 136)
-> **Deferred:** [M] strict-LIFO raise/lower pairing documented but only the monotonic check is enforced (now counted + strict-trappable in §13; LIFO validator still deferred) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §13 (item: "Per-CPU IRQL transition stack" at line 430)
+> **Deferred:** [M] strict-LIFO raise/lower pairing documented but only the monotonic check is enforced (now counted + strict-trappable in §13; LIFO validator still deferred) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §13 (item: "Per-CPU IRQL transition stack" at line 429)
 > **Quality reviewed:** 2026-06-26 | Codex 3x (adversarial, consistency, perf) | 0 fixed in-scope, 2H+2M deferred | scope: kernel-code-quality (re-adversarial skipped: header doc + compile-assert only, no functional change)
 
 ---
@@ -415,7 +415,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 > - Canonical doc: this section + `include/kernel/sched/apc.h` / `irql.h` headers.
 > - Scope boundary: §12 owns kernel-mode delivery + DPC drain-on-lower + rundown. User-mode delivery, alertable waits, `KeTestAlertThread`, `Ex`/`Ex2`, ISR-return delivery deferred (TODO-23 §5 + TODO-10 + a wait primitive).
 > **Verified:** 2026-06-26 | commit `e19187b6` | 4/9 items | build OK | sched 153 PASS | smoke PASS
-> **Accepted:** [M] cross-thread `KeInsertQueueApc` racing a target's `KeLeaveCriticalRegion` can miss the unlocked `kernel_apc_pending` leave-gate (reason: no cross-thread kernel-APC producer yet; same-thread unaffected) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §11 (item: "KAPC cross-thread lifetime hardening" at line 367)
+> **Accepted:** [M] cross-thread `KeInsertQueueApc` racing a target's `KeLeaveCriticalRegion` can miss the unlocked `kernel_apc_pending` leave-gate (reason: no cross-thread kernel-APC producer yet; same-thread unaffected) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §11 (item: "KAPC cross-thread lifetime hardening" at line 366)
 > **Notes:** Reopened 2026-11-07, was Deferred: [M] `KeLowerIrql` drain-on-lower is best-effort -- a DPC queued in the probe->lower window survives the crossing (reason: needs a DPC software-interrupt-on-enqueue; pre-existing, race-neutral vs the unconditional bracket). The stamp named this section's own item with no outside blocker; "latent" and "needs X" describe the work.
 > **Quality reviewed:** 2026-06-26 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+1M+1L fixed, 1M accepted, 1M deferred, 1L open | scope: kernel-code-quality
 
@@ -537,7 +537,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 > - Canonical doc: this section + `src/kernel/sched/dpc.c` `KeFlushQueuedDpcs` + `include/kernel/sched/dpc_config.h`.
 > - Scope boundary: §16 owns the full DPC completion barrier. Per-CPU threaded-worker affinity -> §17; idle-poll worker cost + SMP-safe `event_t` -> §15 deferred item.
 > **Verified:** 2026-06-26 | commit `ad5f1ef9` | 6/6 items | build OK | 177 sched + 16 user tests, smoke PASSED
-> **Accepted:** [M] a normal DPC that ILLEGALLY lowers IRQL to PASSIVE before flushing bypasses the 0x4 entry guard, but still fail-closes via the 0x2 cap bugcheck (no UAF) (reason: a precise in_flight entry check false-positives a legit caller racing a timer-ISR-nested drain; root cause is the unbuilt IRQL-lower LIFO validator) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §13 (item: "Per-CPU IRQL transition stack" at line 430)
+> **Accepted:** [M] a normal DPC that ILLEGALLY lowers IRQL to PASSIVE before flushing bypasses the 0x4 entry guard, but still fail-closes via the 0x2 cap bugcheck (no UAF) (reason: a precise in_flight entry check false-positives a legit caller racing a timer-ISR-nested drain; root cause is the unbuilt IRQL-lower LIFO validator) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §13 (item: "Per-CPU IRQL transition stack" at line 429)
 > **Quality reviewed:** 2026-06-26 | Codex 13x (design + adversarial-impl + re-adversarial + adversarial + consistency + perf) | 6H fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---

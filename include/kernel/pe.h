@@ -12,6 +12,7 @@
 
 #include "kernel/types.h"
 #include "kernel/le_bytes.h"
+#include "kernel/mm/memmap.h"
 
 /* ---- DOS Header (IMAGE_DOS_HEADER) -------------------------------------- */
 
@@ -286,9 +287,15 @@ typedef struct pe_validate_result {
 pe_validate_result_t pe_validate(const uint8_t *data, uint64_t size);
 
 /* Loader limits on the image the file describes. */
-#define PE_MIN_IMAGE_BASE   0x1000000ULL            /* below 16 MiB: kernel range */
+/* The whole aligned image lies in [PE_MIN_IMAGE_BASE, PE_MAX_IMAGE_END): above
+ * the low identity map and below the end of the user half, so a file-chosen
+ * ImageBase can never land on kernel, MMIO or non-canonical addresses. */
+#define PE_MIN_IMAGE_BASE   MM_USER_LOW_IDENTITY_END
+#define PE_MAX_IMAGE_END    MM_USER_END
 #define PE_MAX_SECTIONS     96                      /* linkers emit < 20 */
 #define PE_MAX_IMAGE_SIZE   (256ULL * 1024 * 1024)  /* 256 MiB */
+_Static_assert(PE_MIN_IMAGE_BASE + PE_MAX_IMAGE_SIZE < PE_MAX_IMAGE_END,
+               "the PE image window must hold the largest image");
 
 /* ---- Import table walk (pe_validate.c) ---- */
 
@@ -354,9 +361,10 @@ typedef struct pe_image_layout {
 int pe_preflight(const uint8_t *data, uint64_t size, pe_validate_result_t *vout,
                  pe_image_layout_t *out);
 
-/* PE32+ loader entry point for the exec dispatcher.
- * Currently validates only; section loading lands separately.
- * Returns entry point VA on success, 0 on failure. */
+/* PE32+ loader entry point for the exec dispatcher: pe_preflight, then map the
+ * headers and sections, resolve imports, parse .pdata and register the module.
+ * Returns entry point VA on success, 0 on failure (every page it mapped is
+ * unmapped again). */
 uint64_t pe_load(const uint8_t *data, uint64_t size);
 
 /* Verify every DLL export table in pe.c is strictly sorted ascending by

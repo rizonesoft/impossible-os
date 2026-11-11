@@ -3818,13 +3818,6 @@ int hive_load(const char *filepath, reg_key_t *root)
         goto out;
     }
 
-    /* Sanity check data size */
-    if (hdr->data_size == 0 || hdr->data_size > 1024 * 1024) {
-        klog(LOG_WARN, "hive", "Invalid data size %u in '%s'",
-             (uint64_t)hdr->data_size, filepath);
-        goto out;
-    }
-
     if (hive_read_validated_payload(f, filepath, hdr, &data_ptr, &data_phys,
                                     &buf_pages, &parsed_keys,
                                     &parsed_values) < 0) {
@@ -3834,11 +3827,14 @@ int hive_load(const char *filepath, reg_key_t *root)
     vfs_close(f);
     f = (struct vfs_node *)0;
 
-    if (parsed_keys > 0 &&
-        parsed_keys - 1 > (REG_KEY_POOL_SIZE - reg_key_pool_next))
+    if ((parsed_keys > 0 &&
+         parsed_keys - 1 > (REG_KEY_POOL_SIZE - reg_key_pool_next)) ||
+        parsed_values > (REG_VALUE_POOL_SIZE - reg_value_pool_next)) {
+        klog(LOG_WARN, "hive", "'%s' holds %u keys and %u values, more than the "
+             "registry pools have left; not loaded", filepath,
+             (uint64_t)parsed_keys, (uint64_t)parsed_values);
         goto out;
-    if (parsed_values > (REG_VALUE_POOL_SIZE - reg_value_pool_next))
-        goto out;
+    }
 
     /* Deserialize into the tree */
     {
@@ -3847,7 +3843,8 @@ int hive_load(const char *filepath, reg_key_t *root)
 
         if (hive_parse_payload(data_ptr, hdr->data_size, root, &vis,
                                &parsed_keys, &parsed_values) < 0) {
-            klog(LOG_WARN, "hive", "Corrupt data in '%s'", filepath);
+            klog(LOG_WARN, "hive", "'%s' validated but could not be applied "
+                 "(a key or value could not be allocated)", filepath);
             goto out;
         }
         loaded_values = st.loaded_values;

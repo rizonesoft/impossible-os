@@ -101,8 +101,8 @@ New header and source file providing the result type, readiness oracle, and prog
 > - Scope: §1 owns the result type / oracle / macros; `boot_async_group` lives in `boot_init.c` but is owned by §13 (carries this review's timeout-quiescence + DEFERRED-rank findings).
 >
 > **Verified:** 2026-06-20 | commit `0d72fce6` | 11/11 items | build OK
-> **Accepted:** [H] async-timeout AP not quiesced before sequential fallback (driver-global corruption, `async_init=1`) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Quiesce the AP on async timeout before sequential fallback" at line 559) (still deferred -- `async_init=1`-only, see §13 Deferred stamp)
-> **Accepted:** [M] `boot_async_group` numeric worst-pick lets BOOT_DEFERRED outrank BOOT_FATAL -> XREF: 02-kernel-core/TODO-01 §13 (item: "Explicit `boot_result_t` severity rank in `boot_async_group`" at line 567) (RESOLVED 2026-06-20 by §13 commit 308eb661: `boot_result_severity()` FATAL>DEGRADED>DEFERRED>OK applied at all 3 worst-pick sites)
+> **Accepted:** [H] async-timeout AP not quiesced before sequential fallback (driver-global corruption, `async_init=1`) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Quiesce the AP on async timeout before sequential fallback" at line 562) (still deferred -- `async_init=1`-only, see §13 Deferred stamp)
+> **Accepted:** [M] `boot_async_group` numeric worst-pick lets BOOT_DEFERRED outrank BOOT_FATAL -> XREF: 02-kernel-core/TODO-01 §13 (item: "Explicit `boot_result_t` severity rank in `boot_async_group`" at line 570) (RESOLVED 2026-06-20 by §13 commit 308eb661: `boot_result_severity()` FATAL>DEGRADED>DEFERRED>OK applied at all 3 worst-pick sites)
 > **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 1M fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -255,7 +255,7 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 > **Accepted:** [M] VirtIO-blk registry exposure/tuning runs before `registry_init` (silent HKLM loss) -> XREF: 04-drivers-hardware/TODO-13 §4 (item: "Gate VirtIO-blk registry exposure + tuning reads" at line 68)
 > **Accepted:** [M] BlackBox cleanup `path[64]` truncation can unlink wrong file -> XREF: 01-boot-platform/TODO-24 §10 (item: "Harden cleanup path builders" at line 325)
 > **Accepted:** [H] BlackBox low-space cleanup unbounded -> WDAT watchdog starvation -> XREF: 01-boot-platform/TODO-24 §10 (item: "Budget + batch the unbounded Logs\ delete loop" at line 326)
-> **Accepted:** [H] FAT32 `vol->lock` (`cli`) held across disk I/O in unlink/rename/write -> XREF: 05-storage-filesystems/TODO-04 §17 (item: "Restructure FAT32 unlink/rename/write/fsck" at line 438)
+> **Accepted:** [H] FAT32 `vol->lock` (`cli`) held across disk I/O in unlink/rename/write -> XREF: 05-storage-filesystems/TODO-04 §17 (item: "Restructure FAT32 unlink/rename/write/fsck" at line 441)
 > **Notes:** Reopened 2026-11-07 for the root-mount check, was Deferred: [H] Phase 2 marks SUBSYS_VFS/REGISTRY ready after unchecked `void` inits. `vfs_init()` stays with 05-storage-filesystems/TODO-06 §2.
 > **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 2M fixed, 2H+2M accepted-XREF, 1H deferred | scope: kernel-code-quality
 
@@ -459,7 +459,7 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 > - Scope: §10 owns POST persistence; panic-path NVRAM safety is the Failure Policy section's panic-safe primitive.
 >
 > **Verified:** 2026-06-20 | commit `b54714ab` | 10/10 items | build OK | smoke PASS (KVM 2.92s)
-> **Accepted:** [H] panic-path `boot_post_nvram_write16` takes the blocking RT mutex after `cli` (can hang the panic owner) -> XREF: 02-kernel-core/TODO-01 §7 (item: "Panic fatal path must not call blocking firmware `SetVariable`" at line 341)
+> **Accepted:** [H] panic-path `boot_post_nvram_write16` takes the blocking RT mutex after `cli` (can hang the panic owner) -> XREF: 02-kernel-core/TODO-01 §7 (item: "Panic fatal path must not call blocking firmware `SetVariable`" at line 343)
 > **Quality reviewed:** 2026-06-20 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 5M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---

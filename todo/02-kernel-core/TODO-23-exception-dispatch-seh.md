@@ -270,8 +270,8 @@ For kernel-mode there is no ring-3 leg: first-chance `KiDebugRoutine` -> kernel 
 > - **Scope boundary** -- §4 owns debugger notify + terminal selection; ring-3 delivery §5, kernel SEH §14, VEH/VCH §10-§11, KD attach + user debug port TODO-29; `in_system_service` SMP closure rides with `previous_mode`'s deferred work.
 
 > **Verified:** 2026-07-18 | commit `7a10bb24` | 7/8 items | build OK | smoke PASS (TCG 2.72s)
-> **Accepted:** [M] framed terminal still runs `panic_screen_impl` FPU-capture POST16 + restart-registry I/O unconditionally (pre-existing, panic-path-wide; §4 skips only the persist-write + entry POST16) -> XREF: 02-kernel-core/TODO-27 §1 (item: "Fault-context gating in `panic_screen_impl`" at line 101)
-> **Accepted:** [M] 0x3B vs 0x1E classification reads `thread_current()` global cursor (pre-existing, shared with `previous_mode`; forensic-only) -> XREF: 03-memory-concurrency/TODO-07 (item: "Per-CPU current-thread cursor" at line 121)
+> **Accepted:** [M] framed terminal still runs `panic_screen_impl` FPU-capture POST16 + restart-registry I/O unconditionally (pre-existing, panic-path-wide; §4 skips only the persist-write + entry POST16) -> XREF: 02-kernel-core/TODO-27 §1 (item: "Fault-context gating in `panic_screen_impl`" at line 102)
+> **Accepted:** [M] 0x3B vs 0x1E classification reads `thread_current()` global cursor (pre-existing, shared with `previous_mode`; forensic-only) -> XREF: 03-memory-concurrency/TODO-07 (item: "Per-CPU current-thread cursor" at line 122)
 > **Quality reviewed:** 2026-07-18 | Codex 10x (design + adversarial + consistency + perf + re-adversarial) | 2H+9M+2L fixed, 2M accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"kernel: implement ki_dispatch_exception with debugger first/second-chance notification"`
@@ -363,7 +363,7 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 > - Canonical doc: `include/kernel/rtl/unwind.h` header block (ownership split + SMP/lifetime + bounds-safety contract).
 > - Scope boundary: engine-internal (consumed by §7 stack walk, §12 crash reporting, the debugger); NOT yet exported to user-mode ntdll (`pe.c` export tables unchanged).
 > **Verified:** 2026-07-18 | ship `a63dd05b` + review fixes | 7/13 items | build OK | tests 21887+16 PASS; smoke PASS (TCG 2.57s)
-> **Accepted:** [H] engine trusts the establisher frame; fault-safe stack reads + stack-range validation for UNTRUSTED frames belong to consumers -> XREF: 02-kernel-core/TODO-23 §7 (item: "Fault-safe frame reads" at line 387)
+> **Accepted:** [H] engine trusts the establisher frame; fault-safe stack reads + stack-range validation for UNTRUSTED frames belong to consumers -> XREF: 02-kernel-core/TODO-23 §7 (item: "Fault-safe frame reads" at line 383)
 > **Accepted:** [H] loader-side `.pdata`/`.xdata` mapped-section validation + production kernel-mode unwind metadata (ELF `.eh_frame`) -> XREF: 02-kernel-core/TODO-18 §5 (item: "Register PE `.pdata` ... Translate `.eh_frame`" at line 132)
 > **Quality reviewed:** 2026-07-18 | Codex 42x (design, adversarial, re-adversarial, consistency, perf) + kernel-quality-auditor + concurrency-mapper | 40H+11M+3L fixed, 0 open, 8 accepted/deferred-XREF, 2 rejected | scope: kernel-code-quality
 
@@ -467,9 +467,9 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 > - **Canonical doc** -- the RtlUnwindEx / dispatch-ABI block in `include/kernel/rtl/unwind.h`.
 > - **Scope boundary** -- §9 owns the kernel unwind-to-target + terminal resume ENGINE; ring-3 `RtlDispatchException` is ntdll (TODO-04); the kernel-driver walker + full collided recovery are §14; NtContinue IRET restore is §5.
 > **Verified:** 2026-07-19 | ship `377c693f` + review fixes | 4/8 items | build OK | tests 377+16 PASS; smoke PASS (2.71s)
-> **Accepted:** [H] full stack-safety hardening (guard-page-aware bounds + asm entry-trampoline check before the C prologue + emergency stack + near-guard test); best-effort entry headroom check + compact snapshot + noinline preflight shipped, no ring-0 caller yet -> XREF: 02-kernel-core/TODO-23 §9 (item: "Stack-safety hardening (full)" at line 461)
-> **Accepted:** [H] leaf convention for metadata-free frames + whole-stack EXIT unwind (both fail safe today) -> XREF: 02-kernel-core/TODO-23 §9 (item: "Leaf-convention step for a metadata-free frame" at line 457)
-> **Accepted:** [M] RtlUnwindEx exact ms_abi/winnt.h ABI types (kernel-internal SysV today, like the §6 Rtl* engine) -> XREF: 02-kernel-core/TODO-23 §6 (item: "Exact winnt.h ABI types on the public unwind prototypes" at line 354)
+> **Accepted:** [H] full stack-safety hardening (guard-page-aware bounds + asm entry-trampoline check before the C prologue + emergency stack + near-guard test); best-effort entry headroom check + compact snapshot + noinline preflight shipped, no ring-0 caller yet -> XREF: 02-kernel-core/TODO-23 §9 (item: "Stack-safety hardening (full)" at line 457)
+> **Accepted:** [H] leaf convention for metadata-free frames + whole-stack EXIT unwind (both fail safe today) -> XREF: 02-kernel-core/TODO-23 §9 (item: "Leaf-convention step for a metadata-free frame" at line 453)
+> **Accepted:** [M] RtlUnwindEx exact ms_abi/winnt.h ABI types (kernel-internal SysV today, like the §6 Rtl* engine) -> XREF: 02-kernel-core/TODO-23 §6 (item: "Exact winnt.h ABI types on the public unwind prototypes" at line 351)
 > **Parked at item level:** full nested/multi-scope collided-unwind recovery + fault-safe untrusted-context reads + precise finally-funclet tracking -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` protocol" at line 460)
 > **Quality reviewed:** 2026-07-19 | Codex 18x (design, adversarial, consistency, perf, re-adversarial) | 18H+7M+3L fixed, 0 open, 5 accepted/deferred-XREF | scope: kernel-code-quality
 
@@ -611,9 +611,9 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 > - **Canonical doc** -- the fault-recoverable user-access block in `src/kernel/cpu_security.c` (mechanism owner).
 > - **Scope boundary** -- §13 owns fault RECOVERY (unmapped/RO/misaligned -> error); it is NOT an isolation boundary (mapped-alias isolation owned by `03-memory-concurrency/TODO-01 §2`). Ring-3 delivery is §5, kernel SEH is §14.
 > **Verified:** 2026-07-18 | ship `c2d25f63` + review fixes | 4/4 items | build OK | smoke PASS (KVM 2.66s) | 21775 kernel + 16 user PASS
-> **Accepted:** [H] ALPC recv raw-`memcpy` concurrent-unmap DoS (pre-existing; §13 provides the fix primitive, does not regress it) -> XREF: `02-kernel-core/TODO-24 §7` (item: "Recv-buffer TOCTOU DoS: `alpc_receive_only` + `alpc_sync_request`" at line 311)
+> **Accepted:** [H] ALPC recv raw-`memcpy` concurrent-unmap DoS (pre-existing; §13 provides the fix primitive, does not regress it) -> XREF: `02-kernel-core/TODO-24 §7` (item: "Recv-buffer TOCTOU DoS: `alpc_receive_only` + `alpc_sync_request`" at line 312)
 > **Accepted:** [H] `KERNEL_ACCESS_USER_BEGIN/END` BSP-global `cpu_has` SMAP gate #UDs on a feature-skewed AP (shared macro; `copy_*_user` affected identically) -> XREF: `02-kernel-core/TODO-10 §2` (item: "`KERNEL_ACCESS_USER_BEGIN/END` gate on BSP-global `cpu_has`" at line 143)
-> **Accepted:** [H] Fixed-size query handlers probe the raw user `Length`, so §13's full-range `ProbeForWrite` touch is an O(pages) DoS (caller-side; NtQueryTimer exemplar) -> XREF: `02-kernel-core/TODO-12 §10` (item: "Fixed-size query handlers probe the raw user `Length`" at line 550)
+> **Accepted:** [H] Fixed-size query handlers probe the raw user `Length`, so §13's full-range `ProbeForWrite` touch is an O(pages) DoS (caller-side; NtQueryTimer exemplar) -> XREF: `02-kernel-core/TODO-12 §10` (item: "Fixed-size query handlers probe the raw user `Length`" at line 562)
 > **Quality reviewed:** 2026-07-18 | Codex 10x (design, adversarial x4, re-adversarial, consistency x2, perf x2) | 1C+3H+4M fixed, 3H accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"kernel: add try_copy_{from,to}_user + ProbeForWrite page-touch; re-register #PF"`
@@ -654,7 +654,7 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 > - **Scope boundary** -- §14 owns `__try`/`__except` v1; `__try`/`__finally` collided-unwind and boot/main-thread `KI_TRY` are tracked open items here; the per-CPU current-thread cursor is TODO-07.
 
 > **Verified:** 2026-07-19 | commit `95a4e592` | 5/7 items | build OK | tests 434/434 PASS
-> **Accepted:** [H] pre-existing SMP quiescence gap: a joined/reaped thread's kernel stack can be freed while a KI_TRY victim still runs on it (stack UAF predates SEH; the chain-clears + walk bounds checks contain the SEH surface) (reason: scope) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "thread_join / thread_free_stacks off-CPU barrier" at line 129)
+> **Accepted:** [H] pre-existing SMP quiescence gap: a joined/reaped thread's kernel stack can be freed while a KI_TRY victim still runs on it (stack UAF predates SEH; the chain-clears + walk bounds checks contain the SEH surface) (reason: scope) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "thread_join / thread_free_stacks off-CPU barrier" at line 130)
 > **Quality reviewed:** 2026-07-19 | Codex 8x (design, adversarial, consistency, perf, re-adversarial) | 4H+3M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"kernel: implement kernel-mode __try/__except via KI_EXCEPTION_REGISTRATION"`
@@ -758,9 +758,9 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 
 - [/] Commit: `"mm: guard-page stack auto-grow with commit/reserve tracking"` Waits on: the items above.
 
-> **Deferred:** [H] auto-grow needs the FAULTING task's `cr3` at #PF time (a global VA-keyed registry is wrong: per-process PML4s reuse secondary-stack VAs at `task.c:3795-3810`) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` (item: "Per-CPU current-thread cursor" at line 121)
+> **Deferred:** [H] auto-grow needs the FAULTING task's `cr3` at #PF time (a global VA-keyed registry is wrong: per-process PML4s reuse secondary-stack VAs at `task.c:3795-3810`) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` (item: "Per-CPU current-thread cursor" at line 122)
 > **Deferred:** [H] growable stacks need a reserved-VA window backed on demand + a per-process frame-map primitive (stacks are contiguous identity-mapped today, no headroom) -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "`MEM_COMMIT` path: mark region committed; zero-fill backing frames on first access" at line 124)
-> **Deferred:** [M] reserve-exhausted terminal must deliver `STATUS_STACK_OVERFLOW` without touching the exhausted stack; ring-3 delivery/termination is itself deferred -> XREF: `02-kernel-core/TODO-23 §5` (item: "clear the per-CPU scratch slot THEN hand to a guaranteed idle-frame terminate primitive" at line 315)
+> **Deferred:** [M] reserve-exhausted terminal must deliver `STATUS_STACK_OVERFLOW` without touching the exhausted stack; ring-3 delivery/termination is itself deferred -> XREF: `02-kernel-core/TODO-23 §5` (item: "clear the per-CPU scratch slot THEN hand to a guaranteed idle-frame terminate primitive" at line 312)
 > **Deferred:** [M] COMMIT (`pmm_alloc_frame` + `vmm_map_page`) is unlocked and cannot run under a short spinlock; needs PMM + per-process PML4 locking -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "Per-process PML4 spinlock" at line 129)
 
 

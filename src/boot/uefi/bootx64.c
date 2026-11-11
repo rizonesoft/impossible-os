@@ -4260,12 +4260,27 @@ parse_loop:
     boot_conf_tok_t tok;
     while ((tok = boot_conf_next(buf, (unsigned int)buf_size, &conf_pos,
                                  key, &ki, val, &vi)) != BOOT_CONF_EOF) {
+        if (tok == BOOT_CONF_EMBEDDED_NUL) {
+            serial_early_print("[FATAL] boot.conf: a NUL byte before the end of the file\n");
+            boot_fatal(BOOT_ERR_CONF_INVALID,
+                       "boot.conf: NUL byte inside the file",
+                       "Everything after the NUL would be ignored; "
+                       "rewrite resources/boot/boot.conf as plain text.");
+        }
         if (tok == BOOT_CONF_KEY_TOO_LONG || tok == BOOT_CONF_VALUE_TOO_LONG) {
+            /* The key is untrusted bytes: echo only printable ASCII. */
+            char shown[BOOT_CONF_KEY_MAX];
+            unsigned int si;
+            for (si = 0; si < ki && si < BOOT_CONF_KEY_MAX - 1; si++)
+                shown[si] = (key[si] >= 0x20 && key[si] < 0x7F) ? key[si] : '?';
+            shown[si] = '\0';
             serial_early_print("[FATAL] boot.conf: ");
             serial_early_print(tok == BOOT_CONF_KEY_TOO_LONG ? "key '" : "value of '");
-            serial_early_print(key);
+            serial_early_print(shown);
             serial_early_print(tok == BOOT_CONF_KEY_TOO_LONG
                                ? "...' is too long\n" : "' is too long\n");
+            _Static_assert(BOOT_CONF_KEY_MAX == 64 && BOOT_CONF_VAL_MAX == 256,
+                           "update the limits named in the message below");
             boot_fatal(BOOT_ERR_CONF_INVALID,
                        "boot.conf: key or value too long",
                        "Keys are at most 63 characters and values at most 255; "
@@ -4275,7 +4290,7 @@ parse_loop:
         /* UKI whole-chain Secure Boot: reject any disk-payload key
          * staged by parse_conf_kv when invoked under UKI mode. This
          * is the AUTHORITATIVE rejection gate -- it runs AFTER the
-         * key has been normalized (whitespace stripped at line 2642)
+         * key has been normalized (whitespace stripped by boot_conf_next)
          * so a UKI cmdline like `mod ule = foo` (parser normalizes
          * to `module=foo`) cannot bypass detection. The static-inline
          * helper in include/boot/uki_cmdline_check.h fired earlier

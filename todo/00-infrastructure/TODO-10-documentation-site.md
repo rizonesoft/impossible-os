@@ -720,8 +720,8 @@ Write docs pages that meet the §3 contract for the 11 roadmap files below. Read
 > - **Scope boundary:** the app windows for browser, mail, SSH, FTP and PDF are documented with the apps roadmaps (section 20); these pages cover the protocol and engine halves.
 
 > **Verified:** 2026-09-29 | commit `5f71cff17` | 8/8 items | build OK | site: OK, 150/232 documented; tests 34646 kernel + 17 user-mode PASS; lint 0 errors
-> **Accepted:** [H] NTP replies need root-distance and reference-time checks (reason: unbuilt NTP client design) -> XREF: 07-networking/TODO-06 §2 (item: "Reject replies whose server timing is poor" at line 103)
-> **Accepted:** [H] NTP measurement spanning a local clock change must be discarded (reason: needs a time-service API) -> XREF: 07-networking/TODO-06 §2 (item: "Discard a measurement that spans a local clock change" at line 105)
+> **Accepted:** [H] NTP replies need root-distance and reference-time checks (reason: unbuilt NTP client design) -> XREF: 07-networking/TODO-06 §2 (item: "Reject replies whose server timing is poor" at line 105)
+> **Accepted:** [H] NTP measurement spanning a local clock change must be discarded (reason: needs a time-service API) -> XREF: 07-networking/TODO-06 §2 (item: "Discard a measurement that spans a local clock change" at line 107)
 > **Quality reviewed:** 2026-09-29 | Codex 30x (adversarial, consistency, perf, re-adversarial) | 6H+18M fixed, 2H accepted, 0 open | scope: N/A (docs-only; no source changed; parity research and test coverage N/A)
 
 ---

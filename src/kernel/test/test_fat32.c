@@ -625,6 +625,43 @@ static void fx_lfn(struct fat32_lfn_entry *e, uint8_t seq, uint8_t chk, char c)
     for (i = 0; i < 2; i++) e->name3[i] = (uint16_t)c;
 }
 
+/* FSInfo is a hint: a free count above the volume's cluster count is forged
+ * and becomes "unknown" so the driver rescans; a plausible one is kept. */
+static void fx_put32(uint8_t *b, uint32_t v)
+{
+    b[0] = (uint8_t)v; b[1] = (uint8_t)(v >> 8); b[2] = (uint8_t)(v >> 16); b[3] = (uint8_t)(v >> 24);
+}
+
+static void test_fat32_fsinfo_free_count_bounded(void)
+{
+    static uint8_t fsi[512];
+    struct fat32_bpb bpb;
+    uint32_t free_count, next_free;
+
+    memset(fsi, 0, sizeof(fsi));
+    memset(&bpb, 0, sizeof(bpb));
+    bpb.total_sectors = 1000 + 64;
+    bpb.first_data_sector = 64;
+    bpb.sectors_per_cluster = 1;              /* 1000 data clusters */
+    fx_put32(fsi + 0, FSINFO_LEAD_SIG);
+    fx_put32(fsi + 484, FSINFO_STRUCT_SIG);
+    fx_put32(fsi + 508, FSINFO_TRAIL_SIG);
+    fx_put32(fsi + 492, 5);
+
+    fx_put32(fsi + 488, 1000);
+    TEST_ASSERT_EQ(fat32_parse_fsinfo(fsi, &bpb, &free_count, &next_free), 1, "FSInfo accepted");
+    TEST_ASSERT_EQ(free_count, 1000, "a count equal to the cluster count is kept");
+    TEST_ASSERT_EQ(next_free, 5, "an in-range hint is kept");
+
+    fx_put32(fsi + 488, 1001);
+    fat32_parse_fsinfo(fsi, &bpb, &free_count, &next_free);
+    TEST_ASSERT_EQ(free_count, FSINFO_UNKNOWN, "a count above the cluster count is unknown");
+
+    fx_put32(fsi + 488, FSINFO_UNKNOWN);
+    fat32_parse_fsinfo(fsi, &bpb, &free_count, &next_free);
+    TEST_ASSERT_EQ(free_count, FSINFO_UNKNOWN, "unknown stays unknown");
+}
+
 static void test_fat32_lfn_run_sequence_rules(void)
 {
     static const uint8_t sfn[11] = { 'R','E','P','O','R','T','~','1','J','S','O' };
@@ -2052,6 +2089,8 @@ void test_register_fat32(void)
                             test_fat32_lookup_alias_rules, TEST_CAT_FS);
     test_suite_register_cat("FAT32: lookup ignores an unbound run",
                             test_fat32_lookup_ignores_unbound_run, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: FSInfo free count bounded by the volume",
+                            test_fat32_fsinfo_free_count_bounded, TEST_CAT_FS);
     test_suite_register_cat("FAT32: long-name run sequence rules",
                             test_fat32_lfn_run_sequence_rules, TEST_CAT_FS);
     test_suite_register_cat("FAT32: listing and stat ignore an unbound run",

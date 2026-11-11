@@ -94,6 +94,13 @@
 #define MM_USER_SIZE          0x0000800000000000ULL   /* 128 TiB */
 #define MM_USER_END           (MM_USER_BASE + MM_USER_SIZE)  /* exclusive */
 
+/* The low 4 GiB of the user half is the bring-up identity map (bootx64.c
+ * setup_page_tables: Present+Writable+User 2 MiB pages over kernel frames,
+ * page tables and MMIO). Nothing a user file chooses may be mapped below it:
+ * a 4 KiB leaf split out of it would be overwritten, not added. Loaders that
+ * place an image at a file-chosen address (PE ImageBase) start here. */
+#define MM_USER_LOW_IDENTITY_END  0x0000000100000000ULL   /* 4 GiB, exclusive */
+
 /* ---- HHDM: fixed-offset direct map of physical RAM ----------------------- */
 
 /* MM_HHDM_BASE / MM_HHDM_SIZE are defined in the shared memmap_boot.h
@@ -224,6 +231,11 @@ _Static_assert(MM_KERNEL_PHYS_BASE >= MM_AP_ENVELOPE_END,
     "Kernel image LMA must not overlap the AP bring-up envelope");
 
 /* Window ordering + non-overlap across the whole higher half. */
+_Static_assert(MM_USER_LOW_IDENTITY_END > MM_USER_BASE &&
+               MM_USER_LOW_IDENTITY_END < MM_USER_END,
+               "the low identity window must sit inside the user half");
+_Static_assert(MM_USER_LOW_IDENTITY_END == MM_PML4_PHYS_LIMIT,
+               "the identity window is the 4 GiB the bring-up map covers");
 _Static_assert(MM_USER_END <= MM_HHDM_BASE,
     "User half must end before the HHDM begins");
 _Static_assert(MM_HHDM_END <= MM_MMIO_BASE,

@@ -203,7 +203,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Canonical doc:** [`include/kernel/nt/nls_locale.h`](../../include/kernel/nt/nls_locale.h).
 > - **Scope boundary:** §6 owns records + registry-policy query binding + MUI fallback. Privileged setter -> SRM; WM_SETTINGCHANGE -> TODO-15 §25; tz display -> clock-time §5; CP_THREAD_ACP + hive-refresh deferred (blocked).
 > **Verified:** 2026-07-04 | commit `cea10cbc` | 4/9 items | build OK | nls 75/75 PASS
-> **Accepted:** [M] WM_SETTINGCHANGE(intl) locale-change broadcast -> XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserBroadcastSystemMessage" at line 452)
+> **Accepted:** [M] WM_SETTINGCHANGE(intl) locale-change broadcast -> XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserBroadcastSystemMessage" at line 453)
 > **Accepted:** [M] locale-formatted timezone display names -> XREF: 08-graphics-ui/TODO-12-clock-time.md §5 (item: "Timezone database" at line 49)
 > **Note:** 2026-11-07, Deferred stamp retired: [M] the SRM privilege check shipped, so the `NtSetDefault*` binding is open again.
 > **Note:** 2026-11-07, Deferred stamp retired: [M] per-thread `CP_THREAD_ACP` reopened.
@@ -273,7 +273,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Scope boundary:** §8 ships the read-only NLS/MUI query syscalls; NtGetNlsSectionPtr (section infra), full public FoldStringW (§10 corpus), and LCMapStringEx/CompareStringEx (multi-tier key) are deferred to their owners.
 
 > **Verified:** 2026-07-04 | commit `196cc251` | 2/8 items ([/] partial) | build OK | tests 335/335 PASS
-> **Accepted:** [H] `ProbeFor*IfUser` skips validation on KernelMode but `ssdt_previous_mode()` resolves via a global (not per-CPU) cursor -- systemic SSDT trust-boundary gap on every user-copying handler -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 121)
+> **Accepted:** [H] `ProbeFor*IfUser` skips validation on KernelMode but `ssdt_previous_mode()` resolves via a global (not per-CPU) cursor -- systemic SSDT trust-boundary gap on every user-copying handler -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 122)
 > **Note:** 2026-11-07, Deferred stamp retired: [H] the real `NtGetMUIRegistryInfo` contract is now `todo/answers.md` Q18.
 > **Note:** 2026-11-07, Deferred stamp retired: [M] UI-language store unification reopened: its blocker cleared 2026-08-28.
 > **Quality reviewed:** 2026-07-04 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 4M+1L fixed, 1H accepted-XREF, 1H+1M deferred | scope: kernel-code-quality
@@ -311,7 +311,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Scope boundary:** §9 folds the existing byte-name consumers; the systemic UTF-16 `OBJECT_ATTRIBUTES` ABI (real wide file names, `LoadLibraryW` wide paths) is deferred to its future owner.
 
 > **Verified:** 2026-07-04 | commit `ab27e7c2` | 5/10 items ([/] partial) | build OK | nls 345 + ob 429 PASS
-> **Accepted:** [H] file-name handlers cast a1 to OBJECT_ATTRIBUTES* without ProbeForRead (systemic ssdt previous_mode probe-gating gap) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 121)
+> **Accepted:** [H] file-name handlers cast a1 to OBJECT_ATTRIBUTES* without ProbeForRead (systemic ssdt previous_mode probe-gating gap) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 122)
 > **Note:** 2026-11-07, Deferred stamp retired: [H] `oa_extract_path` decode reopened.
 > **Note:** 2026-11-07, Deferred stamp retired: [H] `OBJ_CASE_INSENSITIVE` plumbing reopened.
 > **Note:** 2026-11-07, Deferred stamp retired: [M] full-BMP folding waits on the §10 corpus, named in its item.

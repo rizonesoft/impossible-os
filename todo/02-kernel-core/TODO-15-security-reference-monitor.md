@@ -131,7 +131,7 @@ title: "TODO-15 -- Security Reference Monitor"
 > - Trusted/untrusted split: `RtlLengthSid`/`RtlEqualSid` assume a valid SID (documented sid.h:92-97, Windows-consistent); untrusted callers use `RtlLengthSidBounded`/`RtlValidSid`.
 > - Scope boundary: §16 owns the SHA-1 service-SID + const-time-compare hardening; token-syscall bounding of untrusted SIDs is the systemic NT trust-boundary gap (TODO-12 §29).
 > **Verified:** 2026-07-05 | commit `4a0943d3` | 6/6 items | build OK | 11 security suites
-> **Accepted:** [H] NtAdjustGroupsToken feeds raw caller SIDs into unbounded RtlEqualSid (kernel overread) -- the §1 primitive is correct-as-documented trusted input; the syscall handler must bound untrusted SIDs -> XREF: 02-kernel-core/TODO-12 §29 (item: "Namespace + token syscalls deref raw user pointers" at line 1235)
+> **Accepted:** [H] NtAdjustGroupsToken feeds raw caller SIDs into unbounded RtlEqualSid (kernel overread) -- the §1 primitive is correct-as-documented trusted input; the syscall handler must bound untrusted SIDs -> XREF: 02-kernel-core/TODO-12 §29 (item: "Namespace + token syscalls deref raw user pointers" at line 1280)
 > **Accepted:** [M] FNV-1a service-SID derivation (not Windows SHA-1) + non-constant-time RtlEqualSid -> XREF: 02-kernel-core/TODO-15 §16 (item: "SHA-1 service SID derivation" at line 782, "Constant-time SID comparison" at line 784)
 > **Quality reviewed:** 2026-07-05 | Codex 3x (adversarial, consistency, perf) + Opus kernel-quality-auditor | 2L fixed, 1H+1M accepted-XREF, 1M rejected | scope: kernel-code-quality
 
@@ -519,7 +519,7 @@ title: "TODO-15 -- Security Reference Monitor"
 > - Effective token = `thread->impersonation_token ?: task->token`; no Ob reference / per-token lock (single-cursor-safe accept, same class as §6/§7) -> §4/§5.
 > - Deferred to owners: `SeCheckPrivilegedObject`+NtOpenProcess/NtSystemDebugControl (§5/§12), `module_load` (TODO-05 §4), RegSaveKey/RegRestoreKey + NtSaveKey/NtRestoreKey hive I/O bodies (TODO-14 §2).
 > **Verified:** 2026-07-05 | commit `0051a8d2` | 6/10 items | build OK | tests 1088 security + 1149 ABI PASS, smoke PASS
-> **Accepted:** [H] SePrivilegeCheck KernelMode bypass via `ssdt_previous_mode()` (global cursor, not per-CPU; single-cursor-safe, shared by every syscall gate) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 121)
+> **Accepted:** [H] SePrivilegeCheck KernelMode bypass via `ssdt_previous_mode()` (global cursor, not per-CPU; single-cursor-safe, shared by every syscall gate) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 122)
 > **Accepted:** [H] Start Menu power button calls `acpi_shutdown()` directly (trusted in-kernel compositor, not a user-mode syscall bypass) -> XREF: 09-desktop-shell/TODO-06 §6 (item: "Route the Start Menu power button through the SeShutdownPrivilege-gated `sys_shutdown()`")
 > **Accepted:** [H] `NtQuerySystemInformation(SystemPerformance)` writes caller pointers unprobed (pre-existing across all its classes) -> XREF: 02-kernel-core/TODO-12 §29 (NT ring-3 trust boundary: user-pointer probes)
 > **Quality reviewed:** 2026-07-05 | Codex 24x (design, adversarial, re-adversarial, consistency, perf) | 1C+7H+4M fixed, 3H+1M accepted-XREF | scope: kernel-code-quality
@@ -703,7 +703,7 @@ Register all token and access control NtXxx entry points in the SSDT. Most imple
 > - Accepted (systemic): ring-3 pointer probe + ClientToken TOKEN_QUERY rights + unref'd token lifetime = the shared NT trust-boundary gap -> XREF: 02-kernel-core/TODO-12 §29 (item: "lifetime-pinned + access-mask token resolution" at line 1226).
 > - Scope boundary: §12 owns SSDT wiring to existing engines; NtQuery/NtSetSecurityObject need the §3 self-relative SD marshaller + §5 SeAccessCheck (the full DACL walk).
 > **Verified:** 2026-07-05 | commit `993bcd60` | 9/20 items | build OK | tests compile (security + ob; runtime on WHPX)
-> **Accepted:** [H] NtPrivilegeCheck reads an unref'd token pointer (concurrent NtClose UAF) -- shared by all token handlers via resolve_token_handle, not a §12 regression -> XREF: 02-kernel-core/TODO-12 §29 (item: "lifetime-pinned + access-mask token resolution" at line 1239)
+> **Accepted:** [H] NtPrivilegeCheck reads an unref'd token pointer (concurrent NtClose UAF) -- shared by all token handlers via resolve_token_handle, not a §12 regression -> XREF: 02-kernel-core/TODO-12 §29 (item: "lifetime-pinned + access-mask token resolution" at line 1284)
 > **Deferred:** [H] SeAccessCheck-dependent + token-lifecycle §12 rows stay [ ] until their engines ship -> XREF: 02-kernel-core/TODO-15 §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`" at line 364)
 > **Quality reviewed:** 2026-07-05 | Codex 5x (design, adversarial, re-adversarial, consistency, perf) | 2H+4M fixed, 1H accepted-XREF | scope: kernel-code-quality
 

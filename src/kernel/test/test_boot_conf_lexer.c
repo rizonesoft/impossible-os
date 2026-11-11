@@ -80,11 +80,27 @@ static void test_boot_conf_lexer_limits(void)
     TEST_ASSERT_EQ(lex(s_buf, n, &pos), BOOT_CONF_KEY_TOO_LONG, "an overlong key is reported");
     TEST_ASSERT_EQ(lex(s_buf, n, &pos), BOOT_CONF_EOF, "and its line is consumed");
 
-    /* A NUL byte ends the file, as it always has. */
+    /* A long line with no '=' is not a setting: skipped, as it always was. */
+    n = 0;
+    for (i = 0; i < 2 * BOOT_CONF_KEY_MAX; i++) s_buf[n++] = 'p';
+    s_buf[n++] = '\n';
+    s_buf[n++] = 'a'; s_buf[n++] = '='; s_buf[n++] = '1';
+    pos = 0;
+    TEST_ASSERT_EQ(lex(s_buf, n, &pos), BOOT_CONF_PAIR, "a long line with no '=' is skipped");
+    TEST_ASSERT_EQ(strcmp(s_key, "a"), 0, "and the next pair is read");
+
+    /* Text after a NUL byte would be lost unread: reported, then EOF. */
     memcpy(s_buf, "a=1\0b=2\n", 8);
     pos = 0;
     TEST_ASSERT_EQ(lex(s_buf, 8, &pos), BOOT_CONF_PAIR, "pair before the NUL");
-    TEST_ASSERT_EQ(lex(s_buf, 8, &pos), BOOT_CONF_EOF, "nothing after the NUL");
+    TEST_ASSERT_EQ(lex(s_buf, 8, &pos), BOOT_CONF_EMBEDDED_NUL, "text after a NUL is reported");
+    TEST_ASSERT_EQ(lex(s_buf, 8, &pos), BOOT_CONF_EOF, "and the next call ends");
+
+    /* NUL padding after the text (a UKI .cmdline section) is not an error. */
+    memcpy(s_buf, "a=1\n\0\0\0", 7);
+    pos = 0;
+    TEST_ASSERT_EQ(lex(s_buf, 7, &pos), BOOT_CONF_PAIR, "pair before the padding");
+    TEST_ASSERT_EQ(lex(s_buf, 7, &pos), BOOT_CONF_EOF, "trailing NULs end the file");
 }
 
 void test_register_boot_conf_lexer(void)

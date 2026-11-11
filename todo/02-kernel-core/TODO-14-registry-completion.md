@@ -167,8 +167,8 @@ title: "TODO-14 -- Registry System Completion"
 > - Scope boundary: §2 owns advanced key ops + KCB cache; SMP locking is §14; value/name size is §15; real `SeAccessCheck` is TODO-15 §5, privilege eval is §8.
 > **Verified:** 2026-07-04 | commit `a5b7b219` | 8/13 items | build OK | tests 1108 ABI PASS
 > **Note:** RegSaveKey/RegRestoreKey SePrivilegeCheck gates wired 2026-07-05 by TODO-15 §8; the hive I/O bodies + NT FileHandle path stay `[/]`.
-> **Accepted:** [H] NtRenameKey collision test uses the repo-wide ASCII-in-`UNICODE_STRING` convention (handler casts `Buffer` to `char*`); real UTF-16 decode is kernel-wide -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 272)
-> **Accepted:** [L] KCB writes counters/clock on every `reg_walk_path` hop (read-side cacheline contention beyond the lock-free baseline) -> XREF: 02-kernel-core/TODO-14 §14 (item: "KCB cache globals" at line 661)
+> **Accepted:** [H] NtRenameKey collision test uses the repo-wide ASCII-in-`UNICODE_STRING` convention (handler casts `Buffer` to `char*`); real UTF-16 decode is kernel-wide -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 273)
+> **Accepted:** [L] KCB writes counters/clock on every `reg_walk_path` hop (read-side cacheline contention beyond the lock-free baseline) -> XREF: 02-kernel-core/TODO-14 §14 (item: "KCB cache globals" at line 714)
 > **Quality reviewed:** 2026-07-04 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 8H+2M+2L fixed, 1H+1L accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -473,7 +473,7 @@ title: "TODO-14 -- Registry System Completion"
 > - Deferred: a truthful `regedit` cannot be shipped as a shell stub today. User-mode `win32.h` explicitly excludes registry APIs, `cmd.exe` has no argv-preserving external command path for a standalone `regedit.exe`, and the live registry NT surface still has §4 gaps (`NtNotifyChangeKey` stub, HKEY-as-raw-pointer handles, UTF-16 decode, missing `NtSetInformationKey`).
 > - `export`/`import` are also blocked by §6, where `reg_import`/`reg_export` are still unimplemented. Shipping only list/query/set/delete/tree would make the §7 deliverable falsely complete because the section contract explicitly includes export/import.
 > **Verified:** 2026-07-04 | deferral evidence checked against `user/include/win32.h`, `user/cmd.c`, `src/kernel/nt/nt_registry.c`, and §4/§6 owners | no code change
-> **Deferred:** [H] `regedit` shell tool blocked until the user-mode registry API/handle surface and `.reg` import/export exist; a stub command would be false completeness. -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 274); -> XREF: 02-kernel-core/TODO-14 §6 (item: "`regedit import <file>` shell wrapper" at line 406)
+> **Deferred:** [H] `regedit` shell tool blocked until the user-mode registry API/handle surface and `.reg` import/export exist; a stub command would be false completeness. -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 275); -> XREF: 02-kernel-core/TODO-14 §6 (item: "`regedit import <file>` shell wrapper" at line 416)
 > **Quality reviewed:** 2026-07-04 | Codex runner review loop (design, adversarial, consistency, perf; test-coverage N/A, no behavior change) | 1M fixed (stale review-infra note), 0 deferred
 
 ---
@@ -652,7 +652,7 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 **Test checkpoint:** Create a symlink key `HKLM\Test\Link` → `HKLM\Test\Target` via `NtCreateKey(REG_OPTION_CREATE_LINK)` + `NtSetValueKey(REG_LINK)`. `NtOpenKey("HKLM\\Test\\Link")` transparently returns target key. `NtOpenKeyEx("HKLM\\Test\\Link", REG_OPTION_OPEN_LINK)` returns the link key itself. Create circular symlink `A → B → A`; `NtOpenKey("A")` returns `STATUS_REPARSE_POINT_NOT_RESOLVED` (not infinite loop). `CurrentControlSet` symlink resolves to `ControlSet001`. Serial log: `"[REG] Symlink resolve: %s -> %s (depth=%u)"`. Test on: QEMU WHPX + TCG.
 
 > **Test runner:** N/A (deferred, no code) | validation: on implementation, `scripts\debug\kernel\run-abi-tests.bat`
-> **Deferred:** [M] Symlink create/open-link completion deferred -- REG_LINK creation/open needs the HKEY->OB handle-table migration (§4, deferred) and the §14 SMP lock -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 274)
+> **Deferred:** [M] Symlink create/open-link completion deferred -- REG_LINK creation/open needs the HKEY->OB handle-table migration (§4, deferred) and the §14 SMP lock -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 275)
 
 ---
 
@@ -686,7 +686,7 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 **Test checkpoint:** Set schema on `HKLM\Test\SchemaKey`: `_AllowedTypes = "REG_DWORD"`, `_MinValue = 0`, `_MaxValue = 100`. `RegSetValueEx("Value", REG_DWORD, 50)` → succeeds. `RegSetValueEx("Value", REG_DWORD, 200)` → `STATUS_INTEGER_OVERFLOW`. `RegSetValueEx("Value", REG_SZ, "hello")` → `STATUS_OBJECT_TYPE_MISMATCH`. Key with no schema → all writes succeed (opt-in). Serial log: `"[REG] Schema reject: %s type=%u expected=%s"`. Test on: QEMU WHPX + TCG.
 
 > **Test runner:** N/A (deferred, no code) | validation: on implementation, `scripts\debug\kernel\run-abi-tests.bat`
-> **Deferred:** [M] Schema-validated keys deferred -- schema enforcement hooks into the write path (§3 notify + §4 handles) and needs the §14 SMP lock; §4 is deferred -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 274)
+> **Deferred:** [M] Schema-validated keys deferred -- schema enforcement hooks into the write path (§3 notify + §4 handles) and needs the §14 SMP lock; §4 is deferred -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 275)
 
 ---
 
@@ -708,6 +708,7 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 - [ ] `reg_dispatch_notify` -> deferred dispatch (snapshot payload under lock, fire lock-free) + watcher refcount/epoch (RegUnregisterNotify frees = UAF) + per-CPU depth. -> XREF: 02-kernel-core/TODO-14 §3
 - [ ] `hive_save`/`hive_load`/`registry_flush`/`registry_save_all`/`registry_load_hives` -- lock only the tree-walk portion, release before PMM+VFS I/O (ISR must not spin behind disk I/O).
 - [ ] `hive_load` reload transactionality: hold lock across validate-to-apply; preflight counts MISSING allocs not total; roll back partial mutations on apply-fail into an existing key. -> XREF: 02-kernel-core/TODO-14 §8
+- [ ] Loading a hive is not a mutation: `hive_apply_value`/`hive_apply_key` (`registry.c`) stop marking keys dirty and firing notifications, so a clean boot rewrites no hive. -> XREF: 00-infrastructure/TODO-01 §16
 - [ ] SMP stress tests -- concurrent create/delete/enum; unregister-during-dispatch (UAF); unrelated-CPU dispatch depth; RegRenameKey racing delete/rename. WHPX 2 vCPU.
 - [/] Upgrade to rwlock if profiling shows read contention (spinlock is v1). Waits on: the lock, then a profile.
 - [ ] KCB cache globals (`reg_kcb_cache`/`reg_kcb_clock`/counters, §2) written on every `reg_walk_path` hop -- covered by `reg_lock` above. -> XREF: 02-kernel-core/TODO-14 §2

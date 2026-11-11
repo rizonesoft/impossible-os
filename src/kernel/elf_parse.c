@@ -375,8 +375,10 @@ struct elf_load_result elf_parse(const uint8_t *data, uint64_t size)
                             ((uint32_t)note[off+9] << 8) |
                             ((uint32_t)note[off+10] << 16) |
                             ((uint32_t)note[off+11] << 24);
-                        uint32_t name_aligned = (namesz + 7) & ~(uint32_t)7;
-                        uint32_t desc_off = 12 + name_aligned;
+                        /* 64-bit: a namesz near 2^32 must not wrap back
+                         * onto the note's own header. */
+                        uint64_t name_aligned = ((uint64_t)namesz + 7) & ~(uint64_t)7;
+                        uint64_t desc_off = 12 + name_aligned;
 
                         if (desc_off > phdr->p_filesz - off ||
                             descsz > phdr->p_filesz - off - desc_off)

@@ -535,10 +535,18 @@ One libFuzzer target and a checked-in seed corpus per parser, built from the ker
   - PE section table read at a file-chosen unaligned offset: all PE, ELF and FAT reads go through `include/kernel/le_bytes.h` or a local copy. Seed `regress-misaligned-section-table.seed`.
   - PE import directory in an unmapped gap made exec fault in ring 0: `pe_preflight` now enforces the spec layout (sections ascending, adjacent, at SectionAlignment; ImageBase 64 KiB aligned) and `pe_load` maps whole aligned spans. Seed `regress-import-dir-in-unmapped-gap.seed`.
   - Found by reading while extracting: FAT32 listing and stat bound a long name with no checksum or sequence check (test `fat32_listing_and_stat_ignore_unbound_run`); the BPB check accepted sector sizes the driver cannot address (refused now, 4 KiB support filed in `todo/05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md` section 18).
+- [x] Post-ship review fixes in the same parsers, each with a test that fails on the shipped code
+  - boot.conf: a long line with no '=' is skipped again instead of stopping the boot; text after a NUL byte is a `boot_fatal` (`BOOT_CONF_EMBEDDED_NUL`); the fatal line echoes only printable key bytes.
+  - PE: the aligned image must lie between 4 GiB and `MM_USER_END` (`PE_MIN_IMAGE_BASE`/`PE_MAX_IMAGE_END` from `memmap.h`), so a crafted ImageBase cannot map over kernel or identity-mapped pages; header pages are NX; a page that fails to map frees its frame.
+  - ELF GNU property note offsets are computed in 64 bits; FSInfo's free count above the cluster count is treated as unknown.
 
 **Test checkpoint:** `bash tools/fuzz/run.sh` builds and runs eight targets and exits 0; reverting any one parser fix makes the run fail on that target's checked-in reproducer.
 
-> **Test runner:** `bash tools/fuzz/run.sh` (eight targets PASS; `scripts/test-tooling.sh` runs it at 10 s a target) and `make test-exec`, `make test-fs`, `make test-boot` for the unit tests. Controls run 2026-11-11: the old PE member access fails on the misaligned seed, the PE build without the end-of-sections rule fails on the gap seed, and FAT32 binding without the checksum fails four assertions.
+> **Test runner:** `bash tools/fuzz/run.sh` (eight targets PASS; `scripts/test-tooling.sh` runs it at 10 s a target) and `make test-exec`, `make test-fs`, `make test-boot` for the unit tests. Controls run 2026-11-11: the old PE member access fails on the misaligned seed, the PE build without the end-of-sections rule fails on the gap seed, and FAT32 binding without the checksum fails four assertions. The post-ship fixes' tests fail on the shipped lexer (3), PE/ELF parsers (5) and FSInfo parser (1).
+> **Verified:** 2026-11-11 | commit `2939b0588` | 8/8 items | build OK | kernel 37380 + 17 PASS, smoke matrix 20/20, fuzz 8/8 targets PASS, static-analysis clean
+> **Accepted:** [M] pe_load allocates every zero-fill page below SizeOfImage up front (reason: needs demand paging) -> XREF: 10-platform-services/TODO-07 §4 (item: "Back zero-fill pages (BSS, alignment padding past a section's data) on first touch instead of at exec" at line 133)
+> **Accepted:** [L] hive load marks every loaded key dirty and fires notifications (reason: registry semantics, predates this section) -> XREF: 02-kernel-core/TODO-14 §14 (item: "Loading a hive is not a mutation" at line 711)
+> **Quality reviewed:** 2026-11-11 | Codex 12x (adversarial, consistency, perf, test-coverage, re-adversarial) | 1H+9M+9L fixed, 0 open, 1M+1L accepted-XREF | scope: kernel-quality-auditor + boot-quality-auditor
 
 ---
 
@@ -587,7 +595,7 @@ One libFuzzer target and a checked-in seed corpus per parser, built from the ker
 | ⭐  | Boot smoke assertions         | ⚠️ Log-string matches     | ⚠️ Log-string matches       | ✅ §10 -- POST16 manifest drift-detects; inverse-validated per emission          |
 | ⭐  | Bare section-sign drift gate  | ❌ Unenforced             | ❌ Unenforced               | ✅ §11 -- lint Check 5 + PreToolUse hook; allowlist drained to zero              |
 | 💎  | Min tool-version floors       | ⚠️ Build-time checks      | ✅ changes.rst + build gate | ✅ §12 -- --verify fails closed on below-floor required tools; drift-guarded     |
-| ⭐  | Defect-finding tools in-tree  | ⚠️ Driver Verifier, SDV   | ✅ KASAN, UBSAN, syzkaller  | ⚠️ §14 -- host fuzzers, trap UBSan, clang-tidy, ruff; KASAN-class not yet        |
+| ⭐  | Defect-finding tools in-tree  | ⚠️ Driver Verifier, SDV   | ✅ KASAN, UBSAN, syzkaller  | ⚠️ §14/§16 -- 8 host fuzzers, trap UBSan, clang-tidy, ruff; no KASAN-class yet   |
 
 > **After §1-§6:** Impossible OS reaches the same baseline as well-run Windows and Linux projects for setup, reproducible environments, wrappers, hooks, and CI policy.
 > **After §7-§12:** the repo pulls ahead of either baseline with a first-class operator doctor, drift-guarded cross-references and section-refs, boot assertions that cannot silently regress when a contributor edits a printf, and a hard required-tool version-floor gate that fails closed before the build.

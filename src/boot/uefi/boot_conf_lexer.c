@@ -35,6 +35,7 @@ boot_conf_tok_t boot_conf_next(const char *buf, unsigned int len, unsigned int *
 
     while (at(buf, len, p) != '\0') {
         unsigned int ki = 0, vi = 0, vend = 0;
+        int over = 0;
         char c;
 
         while (is_blank(at(buf, len, p)))
@@ -45,16 +46,16 @@ boot_conf_tok_t boot_conf_next(const char *buf, unsigned int len, unsigned int *
             continue;
         }
 
-        /* Key: up to '=', end of line or '#'; blanks inside are dropped. */
+        /* Key: up to '=', end of line or '#'; blanks inside are dropped.
+         * A key too long for the buffer is only an error once the '=' shows
+         * the line is a setting: a long line with no '=' is skipped, as any
+         * line with no '=' is. */
         while ((c = at(buf, len, p)) != '\0' && c != '=' && c != '\n' && c != '#') {
             if (!is_blank(c)) {
-                if (ki == BOOT_CONF_KEY_MAX - 1) {
-                    key[ki] = '\0';
-                    *klen = ki;
-                    *pos = skip_line(buf, len, p);
-                    return BOOT_CONF_KEY_TOO_LONG;
-                }
-                key[ki++] = c;
+                if (ki < BOOT_CONF_KEY_MAX - 1)
+                    key[ki++] = c;
+                else
+                    over = 1;
             }
             p++;
         }
@@ -63,6 +64,11 @@ boot_conf_tok_t boot_conf_next(const char *buf, unsigned int len, unsigned int *
         if (at(buf, len, p) != '=') {
             p = skip_line(buf, len, p);
             continue;
+        }
+        if (over) {
+            *klen = ki;
+            *pos = skip_line(buf, len, p);
+            return BOOT_CONF_KEY_TOO_LONG;
         }
         p++;
 
@@ -96,6 +102,16 @@ boot_conf_tok_t boot_conf_next(const char *buf, unsigned int len, unsigned int *
         return BOOT_CONF_PAIR;
     }
 
-    *pos = p;
+    /* Stopped at a NUL before the end: NUL padding after the text is fine
+     * (a UKI .cmdline section carries it), but text after a NUL would be
+     * dropped without a word, so it is reported. */
+    key[0] = '\0';     /* a skipped line may have left text in it */
+    *klen = 0;
+    *pos = len > p ? len : p;
+    while (p < len) {
+        if (buf[p] != '\0')
+            return BOOT_CONF_EMBEDDED_NUL;
+        p++;
+    }
     return BOOT_CONF_EOF;
 }

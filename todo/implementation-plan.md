@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **937 of 2592 sections complete (36%).** 116 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **938 of 2592 sections complete (36%).** 115 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -51,7 +51,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T01 §13` | Duplicate-Recipe Sweep in the Root Makefile                                                                           |
 | [x]  | `D00 T01 §14` | Defect-Finding Tools: Fuzzers, UBSan, Static Analysis, Compile Cache                                                  |
 | [x]  | `D00 T01 §15` | Static-Analysis Triage and Changed-File Gate                                                                          |
-| [/]  | `D00 T01 §16` | Fuzz Targets for the Remaining Untrusted-Input Parsers                                                                |
+| [x]  | `D00 T01 §16` | Fuzz Targets for the Remaining Untrusted-Input Parsers                                                                |
 | [ ]  | `D00 T01 §17` | Shard the todo-graph Build Suite                                                                                      |
 | [ ]  | `D00 T01 §18` | Implementation Plan: Clear the Dependency Cycles and Drive the Run From It                                            |
 | [x]  | `D00 T02 §1`  | Canonical Ownership and Source-of-Truth Map                                                                           |

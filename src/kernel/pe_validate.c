@@ -163,7 +163,7 @@ int pe_preflight(const uint8_t *data, uint64_t size, pe_validate_result_t *vout,
 
     if (image_base < PE_MIN_IMAGE_BASE) {
         klog(LOG_DEBUG, "pe",
-             "ImageBase 0x%x below minimum 0x%x -- rejected",
+             "ImageBase 0x%x inside the low identity map (below 0x%x) -- rejected",
              image_base, (uint64_t)PE_MIN_IMAGE_BASE);
         return -1;
     }
@@ -268,6 +268,11 @@ int pe_preflight(const uint8_t *data, uint64_t size, pe_validate_result_t *vout,
         mapped = pe_align_up(size_of_image, sa);
         if (mapped > PE_MAX_IMAGE_SIZE || image_base + mapped < image_base) {
             klog(LOG_ERROR, "pe", "Aligned image size 0x%x exceeds the maximum", mapped);
+            return -1;
+        }
+        if (image_base > PE_MAX_IMAGE_END - mapped) {
+            klog(LOG_ERROR, "pe", "Image 0x%x+0x%x runs past the user address space",
+                 image_base, mapped);
             return -1;
         }
         next = pe_align_up(size_of_headers, sa);

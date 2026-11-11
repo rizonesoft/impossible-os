@@ -350,5 +350,9 @@ int fat32_parse_fsinfo(const uint8_t *fsi, const struct fat32_bpb *bpb,
                bpb->sectors_per_cluster;
     if (*next_free < 2 || *next_free >= clusters + 2u)
         *next_free = 2;
+    /* More free clusters than the volume has is a forged count: unknown, so
+     * the driver rescans rather than reporting it. */
+    if (*free_count != FSINFO_UNKNOWN && *free_count > clusters)
+        *free_count = FSINFO_UNKNOWN;
     return 1;
 }

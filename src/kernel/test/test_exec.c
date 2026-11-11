@@ -16,6 +16,8 @@
 #include "kernel/elf.h"
 #include "kernel/errno.h"
 #include "kernel/mm/user_range.h"
+#include "kernel/mm/vmm.h"
+#include "kernel/cpuid.h"
 #include "kernel/test/klog_suppress.h"
 #include "libs/lz4.h"
 #include "libc/string.h"
@@ -82,6 +84,45 @@ static void elf_test_build_valid(void)
     p->p_flags = PF_R | PF_X;
     p->p_offset = 0; p->p_filesz = 0; p->p_memsz = 16;
     p->p_vaddr = USER_ELF_BASE;
+}
+
+/* A GNU property note whose namesz rounds up past 2^32 must not wrap back so
+ * its descriptor is read from its own name bytes. Control: the same note with
+ * namesz 0 does reach the property, so the fixture exercises the parser. */
+static void elf_test_put32(uint8_t *b, uint32_t v)
+{
+    b[0] = (uint8_t)v; b[1] = (uint8_t)(v >> 8); b[2] = (uint8_t)(v >> 16); b[3] = (uint8_t)(v >> 24);
+}
+
+static void test_elf_property_note_namesz_wrap(void)
+{
+    struct elf64_header *h = (struct elf64_header *)s_elf_buf;
+    struct elf64_phdr *p = (struct elf64_phdr *)(s_elf_buf + sizeof(struct elf64_header));
+    uint32_t note_off = (uint32_t)(sizeof(struct elf64_header) + 2 * sizeof(struct elf64_phdr));
+    uint8_t *n = s_elf_buf + note_off;
+    struct elf_load_result r;
+
+    elf_test_build_valid();
+    h->e_phnum = 2;
+    p[1].p_type = PT_GNU_PROPERTY;
+    p[1].p_flags = PF_R;
+    p[1].p_offset = note_off;
+    p[1].p_filesz = 32;
+    elf_test_put32(n + 4, 16);                        /* descsz */
+    elf_test_put32(n + 8, 5);                         /* NT_GNU_PROPERTY_TYPE_0 */
+    elf_test_put32(n + 12, GNU_PROPERTY_X86_FEATURE_1_AND);
+    elf_test_put32(n + 16, 4);
+    elf_test_put32(n + 20, GNU_PROPERTY_X86_FEATURE_1_IBT | GNU_PROPERTY_X86_FEATURE_1_SHSTK);
+
+    elf_test_put32(n + 0, 0);                         /* namesz 0: descriptor at +12 */
+    r = elf_parse(s_elf_buf, sizeof(s_elf_buf));
+    TEST_ASSERT_EQ(r.success, 1, "an image with a property note parses");
+    TEST_ASSERT_EQ(r.cet_ibt, 1, "control: a well-formed note is read");
+
+    elf_test_put32(n + 0, 0xFFFFFFF9u);               /* rounds to 2^32 */
+    r = elf_parse(s_elf_buf, sizeof(s_elf_buf));
+    TEST_ASSERT_EQ(r.cet_ibt, 0, "a namesz that wraps is not read as a descriptor");
+    TEST_ASSERT_EQ(r.cet_shstk, 0, "and sets no CET flag");
 }
 
 static void test_elf_reject_bad_phentsize(void)
@@ -425,6 +466,10 @@ static void test_pe_load_maps_and_returns_entry(void)
     uint64_t entry = pe_load(buf, sizeof(buf));
     /* Entry = ImageBase(0x140000000) + AddressOfEntryPoint(0x1000) */
     TEST_ASSERT_EQ(entry, 0x140001000ULL, "pe_load returns correct entry VA");
+    TEST_ASSERT((vmm_query_flags(0x140000000ULL) & VMM_FLAG_PRESENT) != 0, "the header page is mapped");
+    if (cpu_has(CPU_FEATURE_NX))
+        TEST_ASSERT((vmm_query_flags(0x140000000ULL) & VMM_FLAG_NX) != 0,
+                    "the header page is never executable");
 }
 
 static void test_pe_load_registers_module(void)
@@ -458,6 +503,12 @@ static void test_pe_load_rejects_low_imagebase(void)
  * unmapped is refused, because the import walk reads any RVA the file names
  * below SizeOfImage: before 2026-11-11 such an image made exec fault in the
  * kernel (the fuzzer's reproducer is in tools/fuzz/corpus/pe/). */
+static void pe_test_set_base(uint8_t *buf, uint64_t base)
+{
+    uint32_t b;
+    for (b = 0; b < 8; b++) buf[0xB0 + b] = (uint8_t)(base >> (b * 8));
+}
+
 static void test_pe_preflight_layout(void)
 {
     uint8_t buf[1024];
@@ -491,6 +542,20 @@ static void test_pe_preflight_layout(void)
     buf[0xB1] = 0x10;                         /* ImageBase 0x140001000 */
     TEST_ASSERT(pe_preflight(buf, sizeof(buf), &v, &lay) != 0, "an ImageBase off 64 KiB is refused");
     buf[0xB1] = 0x00;
+
+    /* The image must lie above the low identity map and inside the user half. */
+    pe_test_set_base(buf, 0x10000000ULL);     /* 256 MiB: inside the identity map */
+    TEST_ASSERT(pe_preflight(buf, sizeof(buf), &v, &lay) != 0, "an ImageBase in the low identity map is refused");
+    pe_test_set_base(buf, PE_MIN_IMAGE_BASE);
+    TEST_ASSERT_EQ(pe_preflight(buf, sizeof(buf), &v, &lay), 0, "the first address above it is accepted");
+    pe_test_set_base(buf, MM_USER_END - 0x10000ULL);
+    TEST_ASSERT_EQ(pe_preflight(buf, sizeof(buf), &v, &lay), 0, "the last 64 KiB of the user half is accepted");
+    pe_test_set_base(buf, MM_USER_END);       /* non-canonical: aliases the kernel half */
+    TEST_ASSERT(pe_preflight(buf, sizeof(buf), &v, &lay) != 0, "an image past the user half is refused");
+    pe_test_set_base(buf, 0xFFFF800000000000ULL);
+    TEST_ASSERT(pe_preflight(buf, sizeof(buf), &v, &lay) != 0, "an ImageBase in the kernel half is refused");
+    pe_test_set_base(buf, 0x140000000ULL);
+
     buf[0x199] = 0x04;                        /* SizeOfRawData 0x400: past the file */
     TEST_ASSERT(pe_preflight(buf, sizeof(buf), &v, &lay) != 0, "raw data past the file is refused");
 }
@@ -1195,6 +1260,7 @@ void test_register_exec(void)
 
     /* ELF loader malformed-input rejection */
     test_suite_register_cat("ELF: reject bad phentsize", test_elf_reject_bad_phentsize, TEST_CAT_EXEC);
+    test_suite_register_cat("ELF: property note namesz cannot wrap", test_elf_property_note_namesz_wrap, TEST_CAT_EXEC);
     test_suite_register_cat("ELF: reject phoff overflow", test_elf_reject_phoff_overflow, TEST_CAT_EXEC);
     test_suite_register_cat("ELF: reject offset overflow", test_elf_reject_offset_overflow, TEST_CAT_EXEC);
     test_suite_register_cat("ELF: reject filesz>memsz", test_elf_reject_filesz_gt_memsz, TEST_CAT_EXEC);
