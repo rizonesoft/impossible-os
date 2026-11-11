@@ -11,6 +11,7 @@ A pin that is missing or invalid raises Refused. Nothing here falls back to an e
     python3 scripts/review_pin.py --kinds          # one schedule kind per line
     python3 scripts/review_pin.py --lenses round   # that pass's lenses with their questions
     python3 scripts/review_pin.py --verdicts round --transcript FILE   # lenses the review gave no verdict for
+    python3 scripts/review_pin.py --highest --transcript FILE          # the review's worst level: P1, P2, P3, none
     --paths-file FILE                              # the section's changed files, one a line (conditional lenses)
     python3 scripts/review_pin.py --caps           # pass_cap and no_progress_cap
 """
@@ -23,9 +24,11 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 PIN = REPO / ".conclave" / "reviewers.toml"
 CODEX_CONFIG = pathlib.Path.home() / ".codex" / "config.toml"
 
-THREE_PASS = "three-pass"
+POLICY = "four-pass"
 # The passes of a section, in the order they run. `reconciliation` runs only after a completion that returned gaps.
-SECTION_KINDS = ("plan", "round", "completion", "reconciliation")
+# `performance` is its own pass: replayed on shipped sections (2026-11-11), a round carrying an optimization lens
+# beside the defect lenses found one of four known performance defects, and the dedicated pass had found all four.
+SECTION_KINDS = ("plan", "round", "performance", "completion", "reconciliation")
 # A file-level kind the recorder accepts outside the section schedule.
 FILE_KINDS = ("gap-audit",)
 
@@ -41,7 +44,10 @@ LENSES = {
     "consistency": "Do constants, struct offsets, tables and contracts match across header, source, assembly and test?",
     "record": "Does the TODO record (items, stamps, counts, cross-references) match what the candidate contains?",
     "quality": "Is this at or above the standard of Windows and Linux for the same feature, and where is it below?",
-    "optimization": "Which hot path, lock hold time, allocation or algorithm costs more than it should?",
+    "optimization": ("Which hot path, lock hold time, allocation or algorithm costs more than it should? "
+                     "Which wait (a lock, a subprocess, I/O, a timeout or a retry loop) can run longer than its "
+                     "caller or its budget allows? What is computed, rebuilt or re-read more than once in one "
+                     "operation? What work is not bounded by its input?"),
     "test-coverage": "Which error path, boundary or negative case has no assertion?",
     "design": "Does drawn UI follow the cited design spec, and where does it depart from it?",
     "concurrency": "On two or more CPUs, which lock, atomic, IRQ context, refcount or teardown order is wrong?",
@@ -103,20 +109,23 @@ def load_pin(path=PIN, data=None):
           f"reviewer {name!r} needs exactly cli = \"codex\" and model (effort is the operator's Codex setting)")
 
     schedule = pin["schedule"]
-    keys = {"policy", "pass_cap", "no_progress_cap", "blocking", "plan", "rounds", "completion", "reconciliation"}
+    keys = {"policy", "pass_cap", "no_progress_cap", "blocking", "plan", "rounds", "performance", "completion",
+            "reconciliation"}
     conditional = schedule.pop("conditional", []) if isinstance(schedule, dict) else []
-    _need(isinstance(schedule, dict) and set(schedule) == keys and schedule["policy"] == THREE_PASS,
-          f"[schedule] needs policy = \"{THREE_PASS}\" and exactly {', '.join(sorted(keys))}")
+    _need(isinstance(schedule, dict) and set(schedule) == keys and schedule["policy"] == POLICY,
+          f"[schedule] needs policy = \"{POLICY}\" and exactly {', '.join(sorted(keys))}")
     rounds = schedule["rounds"]
-    _need(isinstance(rounds, list) and len(rounds) == 1, f"[schedule] with policy = \"{THREE_PASS}\" needs one round")
+    _need(isinstance(rounds, list) and len(rounds) == 1, f"[schedule] with policy = \"{POLICY}\" needs one round")
     lenses = {
         "plan": _lenses("plan", schedule["plan"]),
         "round": _lenses("rounds", rounds[0]),
+        "performance": _lenses("performance", schedule["performance"]),
         "completion": _lenses("completion", schedule["completion"]),
         "reconciliation": _lenses("reconciliation", schedule["reconciliation"]),
     }
-    owners = [name for kind in ("plan", "round", "completion") for name in lenses[kind]]
-    _need(len(set(owners)) == len(owners), "[schedule] a lens belongs to one of plan, the round or completion")
+    owners = [name for kind in ("plan", "round", "performance", "completion") for name in lenses[kind]]
+    _need(len(set(owners)) == len(owners),
+          "[schedule] a lens belongs to one of plan, the round, performance or completion")
     blocking = schedule["blocking"]
     _need(isinstance(blocking, list) and blocking and all(isinstance(s, str) for s in blocking)
           and len(set(blocking)) == len(blocking) and set(blocking) <= set(SEVERITIES) and "P1" in blocking,
@@ -138,7 +147,7 @@ def load_pin(path=PIN, data=None):
             _need(not set(names) & set(lenses[kind]), f"[[schedule.conditional]] repeats a lens {kind} always has")
         extra.append((names, tuple(passes), tuple(paths)))
     pass_cap, no_progress = _cap(schedule, "pass_cap"), _cap(schedule, "no_progress_cap")
-    _need(pass_cap >= 3, "[schedule] pass_cap must allow the three fixed passes")
+    _need(pass_cap >= 4, "[schedule] pass_cap must allow the four fixed passes")
     _need(no_progress <= pass_cap, "[schedule] no_progress_cap cannot exceed pass_cap")
     return {"reviewer": name, "cli": reviewer["cli"], "model": reviewer["model"],
             "pass_cap": pass_cap, "no_progress_cap": no_progress, "blocking": tuple(blocking),
@@ -159,6 +168,19 @@ def blocks(pin, highest):
     """Whether a review whose worst finding is `highest` (P1, P2, P3 or none) holds the stamp."""
     _need(highest in SEVERITIES + ("none",), f"HIGHEST must be one of {', '.join(SEVERITIES)} or none")
     return highest in pin["blocking"]
+
+
+def highest(review_text):
+    """The worst level a review declares on its last `HIGHEST:` line: P1, P2, P3 or none; "" when it has none."""
+    found = ""
+    for line in review_text.splitlines():
+        text = line.strip()
+        if text[:2] in ("- ", "* "):
+            text = text[2:].strip()
+        parts = text.strip("`").split()
+        if len(parts) == 2 and parts[0] == "HIGHEST:" and parts[1] in SEVERITIES + ("none",):
+            found = parts[1]
+    return found
 
 
 def kinds(pin=None):
@@ -227,6 +249,7 @@ def main(argv=None):
     group.add_argument("--lenses", metavar="KIND", choices=SECTION_KINDS)
     group.add_argument("--caps", action="store_true")
     group.add_argument("--verdicts", metavar="KIND", choices=SECTION_KINDS)
+    group.add_argument("--highest", action="store_true")
     parser.add_argument("--transcript")
     parser.add_argument("--paths-file")
     parser.add_argument("--pin", default=str(PIN))
@@ -240,6 +263,15 @@ def main(argv=None):
                 paths = tuple(p for p in pathlib.Path(args.paths_file).read_text().splitlines() if p)
             except OSError as exc:
                 raise Refused(f"the changed-paths file cannot be read: {exc}") from exc
+        if args.highest:
+            _need(args.transcript, "--highest needs --transcript FILE")
+            try:
+                text = pathlib.Path(args.transcript).read_text(errors="replace")
+            except OSError as exc:
+                raise Refused(f"the transcript cannot be read: {exc}") from exc
+            level = highest(final_response(text))
+            print(level)
+            return 0 if level else 1
         if args.verdicts:
             _need(args.transcript, "--verdicts needs --transcript FILE")
             try:
@@ -251,7 +283,7 @@ def main(argv=None):
             return 1 if missing else 0
         if args.check:
             check_codex_model(pin, args.codex_config)
-            print(f"ok: {pin['reviewer']} ({pin['model']}), {THREE_PASS}, pass_cap {pin['pass_cap']}")
+            print(f"ok: {pin['reviewer']} ({pin['model']}), {POLICY}, pass_cap {pin['pass_cap']}")
         elif args.kinds:
             print("\n".join(kinds(pin)))
         elif args.lenses:

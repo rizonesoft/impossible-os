@@ -172,7 +172,7 @@ if [ "$MARKERS" -gt 1 ] || { [ "$MARKERS" = "1" ] && [ "$KIND" = "direct" ]; }; 
     exit 2
 fi
 PIN_KIND=0; PIN_TOOL=""; PATHS_FILE=""
-case "$KIND" in plan|round|completion|reconciliation) PIN_KIND=1 ;; esac
+case "$KIND" in plan|round|performance|completion|reconciliation) PIN_KIND=1 ;; esac
 if [ "$PIN_KIND" = "1" ]; then
     PIN_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review_pin.py"
     python3 "$PIN_TOOL" --check >&2 || {
@@ -215,7 +215,7 @@ if [ -n "$LOG_FILE" ]; then
     # The receipt below says whether THIS wrapper checked the pass. The review
     # recorder credits a pass kind only against such a receipt with rc 0, so a
     # pass dispatched any other way, or one a lens was skipped in, earns nothing.
-    PASS_CHECKED=false
+    PASS_CHECKED=false; PASS_HIGHEST=""
     if [ "$PIN_KIND" = "1" ]; then PASS_CHECKED=true; fi
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
         PIN_MISSING="$(python3 "$PIN_TOOL" --verdicts "$KIND" --transcript "$LOG_FILE" --paths-file "$PATHS_FILE")"
@@ -229,18 +229,26 @@ if [ -n "$LOG_FILE" ]; then
                echo "[$SELF_NAME] INCOMPLETE -- the lens verdicts could not be checked" | tee -a "$LOG_FILE" >&2 ;;
         esac
     fi
+    # The worst level the review declares goes on the receipt: the commit gate
+    # refuses a stamp whose pass ended at a blocking level, so a completion
+    # that returned gaps cannot stand as the last word.
+    if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
+        PASS_HIGHEST="$(python3 "$PIN_TOOL" --highest --transcript "$LOG_FILE")" || {
+            rc=3; PASS_HIGHEST=""
+            echo "[$SELF_NAME] INCOMPLETE -- the review has no HIGHEST: line (P1, P2, P3 or none)" | tee -a "$LOG_FILE" >&2; }
+    fi
     echo "Turn completed (rc=$rc)" >> "$LOG_FILE"
     PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
     TREE_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
     TREE_INDEX="$(git write-tree 2>/dev/null || echo unknown)"
     TREE_WORK="$({ git diff HEAD -- 2>/dev/null; git status --porcelain 2>/dev/null; } | sha256sum | cut -d' ' -f1)"
     if [ -n "$SECTION" ]; then
-        printf '{"ts": %s, "kind": "%s", "todo": "%s", "section": %s, "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s", "route": "codex-dispatch.sh", "rc": %s, "pass_checked": %s}\n' \
-            "$(date +%s)" "$KIND" "$TODO_PATH" "$SECTION" "direct:$STAMP-$$" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" "$rc" "$PASS_CHECKED" >> "$REVIEWS_DIR/manifest.jsonl" 2>/dev/null \
+        printf '{"ts": %s, "kind": "%s", "todo": "%s", "section": %s, "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s", "route": "codex-dispatch.sh", "rc": %s, "pass_checked": %s, "highest": "%s"}\n' \
+            "$(date +%s)" "$KIND" "$TODO_PATH" "$SECTION" "direct:$STAMP-$$" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" "$rc" "$PASS_CHECKED" "$PASS_HIGHEST" >> "$REVIEWS_DIR/manifest.jsonl" 2>/dev/null \
             || echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
     else
-        printf '{"ts": %s, "kind": "%s", "todo": "%s", "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s", "route": "codex-dispatch.sh", "rc": %s, "pass_checked": %s}\n' \
-            "$(date +%s)" "$KIND" "$TODO_PATH" "direct:$STAMP-$$" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" "$rc" "$PASS_CHECKED" >> "$REVIEWS_DIR/manifest.jsonl" 2>/dev/null \
+        printf '{"ts": %s, "kind": "%s", "todo": "%s", "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s", "route": "codex-dispatch.sh", "rc": %s, "pass_checked": %s, "highest": "%s"}\n' \
+            "$(date +%s)" "$KIND" "$TODO_PATH" "direct:$STAMP-$$" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" "$rc" "$PASS_CHECKED" "$PASS_HIGHEST" >> "$REVIEWS_DIR/manifest.jsonl" 2>/dev/null \
             || echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
     fi
     exit "$rc"

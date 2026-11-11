@@ -1465,7 +1465,9 @@ def _dispatch_content_fresh(root: Path, disp_head: str,
 # entry holds any of them was reviewed in the three-pass shape and is judged by
 # that shape; an entry holding only the older kinds is judged as before, so a
 # section already under review finishes on the rules it started with.
-_PASS_KINDS = ("plan", "round", "completion", "reconciliation")
+_PASS_KINDS = ("plan", "round", "performance", "completion", "reconciliation")
+_PASS_MANIFEST = ".claude/overnight/reviews/manifest.jsonl"
+_BLOCKING_FALLBACK = ("P1", "P2")
 
 
 def _stamp(entry: dict, kind: str) -> tuple[int, str]:
@@ -1570,72 +1572,119 @@ def _stamped_sections(root: Path, todo: str) -> set[str] | None:
     return sections or None
 
 
-def _three_pass_final(root: Path, entry: dict, current_head: str) -> tuple[bool, str, str]:
-    """(ok, why, kind): whether the section's last pass covers the candidate being stamped.
+def _blocking_levels(root: Path) -> tuple[str, ...]:
+    """The levels that hold a stamp, from the reviewer pin; P1 and P2 when the pin cannot be read."""
+    scripts = str(root / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    try:
+        import review_pin
+        return tuple(review_pin.load_pin(root / ".conclave" / "reviewers.toml")["blocking"])
+    except Exception:
+        return _BLOCKING_FALLBACK   # a broken pin must not open the gate
 
-    The last pass is the newer of completion and reconciliation. It must have
-    been dispatched at HEAD, or at an ancestor with nothing changed since that
-    a pass reads (_unread_by_final_pass). A fix made after it is exactly what
-    it has not seen.
+
+def _pass_receipt(root: Path, todo: str, section: str, kind: str, head: str) -> dict | None:
+    """The dispatcher's newest receipt for one pass of one section at one dispatch head."""
+    try:
+        lines = (root / _PASS_MANIFEST).read_text().splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict) and e.get("kind") == kind and e.get("todo") == todo \
+                and str(e.get("section", "")) == section and e.get("head") == head:
+            return e
+    return None
+
+
+def _pass_covers(root: Path, todo: str, section: str, entry: dict, kind: str,
+                 current_head: str, blocking: tuple[str, ...]) -> tuple[bool, str]:
+    """Whether a recorded pass read the candidate being stamped and ended below a blocking level.
+
+    It must have been dispatched at HEAD, or at an ancestor with nothing changed
+    since that a pass reads (_unread_by_final_pass): a fix made after it is
+    exactly what it has not seen. Its receipt, written by scripts/codex-dispatch.sh,
+    must say the pass was checked, complete, and that its worst finding is not
+    one that holds the stamp.
     """
-    c_ts, c_head = _stamp(entry, "completion")
-    r_ts, r_head = _stamp(entry, "reconciliation")
-    if not c_ts:
-        return (False, "missing: completion", "completion")
-    kind, head = ("reconciliation", r_head) if r_ts > c_ts else ("completion", c_head)
+    ts, head = _stamp(entry, kind)
+    if not ts:
+        return (False, f"missing: {kind}")
     if not head or not current_head:
-        return (False, f"{kind} has no dispatch head recorded", kind)
+        return (False, f"{kind} has no dispatch head recorded")
     if head != current_head:
         if not _git_is_ancestor(root, head, current_head):
-            return (False, f"{kind} was dispatched at {head[:10]}, which is not in this history (cross-branch)", kind)
+            return (False, f"{kind} was dispatched at {head[:10]}, which is not in this history (cross-branch)")
         # --no-renames: a script moved into todo/ must show as removed from where it ran.
         changed = _git_lines(root, "diff", "--no-renames", "--name-only", head, current_head)
         if changed is None:
-            return (False, f"{kind}: could not list what changed since {head[:10]}", kind)
+            return (False, f"{kind}: could not list what changed since {head[:10]}")
         unread = _unread_by_final_pass(root, changed, f"{head}:", f"{current_head}:")
         if unread:
             more = f" (+{len(unread) - 3} more)" if len(unread) > 3 else ""
             return (False, f"{kind} is not the last word on this candidate: changed since it ran: "
-                           f"{unread[:3]}{more}", kind)
-    return (True, "", kind)
+                           f"{unread[:3]}{more}")
+    receipt = _pass_receipt(root, todo, section, kind, head)
+    if receipt is None or receipt.get("route") != "codex-dispatch.sh" \
+            or receipt.get("pass_checked") is not True or receipt.get("rc") != 0:
+        return (False, f"{kind} has no checked, complete receipt at {head[:10]}")
+    level = receipt.get("highest")
+    if level not in ("P1", "P2", "P3", "none"):
+        return (False, f"{kind} receipt at {head[:10]} records no HIGHEST level")
+    if level in blocking:
+        return (False, f"{kind} ended at {level}: fix its findings, commit, and dispatch it again")
+    return (True, "")
 
 
 def _three_pass_issues(root: Path, todo: str, entry: dict, current_head: str) -> list[str]:
-    """What a three-pass section still owes before its stamp, as message parts.
+    """What a section reviewed under the reviewer pin still owes before its stamp, as message parts.
 
-    plan and round must have been dispatched on this history (their heads are
-    ancestors of HEAD): the plan precedes the code and the round precedes its
-    own fixes, so neither can be required to match the final source. The final
-    pass must cover the candidate, and nothing a pass reads may ride along in
-    the stamp commit. Every pass must be for the section being stamped: the
-    stamp entry is per TODO and keeps an earlier section's passes.
+    - plan must have been dispatched on this history, for this section. It
+      precedes the code, so it cannot be required to match the final source.
+    - round, performance and the last pass (the newer of completion and
+      reconciliation) must each cover the candidate and end below a blocking
+      level (_pass_covers). The round and the performance pass are dispatched
+      again after their findings are fixed, so the one that counts is the one
+      that read the fixed candidate.
+    - Nothing a pass reads may ride along in the stamp commit, which stamps one
+      section. The stamp entry is per TODO and keeps an earlier section's
+      passes, so every pass must be for the section being stamped.
     """
     parts: list[str] = []
-    for kind in ("plan", "round"):
-        ts, head = _stamp(entry, kind)
-        if not ts:
-            parts.append(f"missing: {kind}")
-        elif not head or not current_head:
-            parts.append(f"{kind} has no dispatch head recorded")
-        elif not _git_is_ancestor(root, head, current_head):
-            parts.append(f"{kind} was dispatched at {head[:10]}, which is not in this history (cross-branch)")
-    ok, why, final_kind = _three_pass_final(root, entry, current_head)
-    if not ok:
-        parts.append(why)
-
     sections = _stamped_sections(root, todo)
     if sections is None:
-        parts.append("the section being stamped could not be read from the staged TODO")
-    elif len(sections) != 1:
-        parts.append(f"one commit stamps one section; this one stamps {sorted(sections)}")
-    else:
-        section = next(iter(sections))
-        for kind in ("plan", "round", final_kind):
-            if not _stamp(entry, kind)[0]:
-                continue
-            recorded = entry.get(f"{kind}_section")
-            if str(recorded if recorded is not None else "") != section:
-                parts.append(f"{kind} was dispatched for section {recorded!r}, not section {section}")
+        return ["the section being stamped could not be read from the staged TODO"]
+    if len(sections) != 1:
+        return [f"one commit stamps one section; this one stamps {sorted(sections)}"]
+    section = next(iter(sections))
+    blocking = _blocking_levels(root)
+
+    ts, head = _stamp(entry, "plan")
+    if not ts:
+        parts.append("missing: plan")
+    elif not head or not current_head:
+        parts.append("plan has no dispatch head recorded")
+    elif not _git_is_ancestor(root, head, current_head):
+        parts.append(f"plan was dispatched at {head[:10]}, which is not in this history (cross-branch)")
+
+    c_ts = _stamp(entry, "completion")[0]
+    r_ts = _stamp(entry, "reconciliation")[0]
+    final_kind = "reconciliation" if c_ts and r_ts > c_ts else "completion"
+    for kind in ("round", "performance", final_kind):
+        ok, why = _pass_covers(root, todo, section, entry, kind, current_head, blocking)
+        if not ok:
+            parts.append(why)
+
+    for kind in ("plan", "round", "performance", final_kind):
+        if not _stamp(entry, kind)[0]:
+            continue
+        recorded = entry.get(f"{kind}_section")
+        if str(recorded if recorded is not None else "") != section:
+            parts.append(f"{kind} was dispatched for section {recorded!r}, not section {section}")
 
     staged = _git_lines(root, "diff", "--cached", "--no-renames", "--name-only")
     if staged is None:
@@ -1645,7 +1694,7 @@ def _three_pass_issues(root: Path, todo: str, entry: dict, current_head: str) ->
         if riding:
             more = f" (+{len(riding) - 3} more)" if len(riding) > 3 else ""
             parts.append(f"staged with the stamp but read by no pass: {riding[:3]}{more}; "
-                         f"commit them first, then dispatch a reconciliation")
+                         f"commit them first, then dispatch the passes again")
     return parts
 
 
@@ -1734,7 +1783,7 @@ def _four_dispatch_evidence(
                 issues.append(
                     f"{todo}: three-pass review incomplete -- {'; '.join(owed)}. "
                     f"Dispatch the pass with scripts/codex-dispatch.sh and "
-                    f"`[review-kind: plan|round|completion|reconciliation]`"
+                    f"`[review-kind: plan|round|performance|completion|reconciliation]`"
                 )
             continue
         missing: list[str] = []

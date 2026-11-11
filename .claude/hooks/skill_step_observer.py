@@ -82,6 +82,7 @@ CANONICAL_REVIEW_KINDS = frozenset({
     # The reviewer pin's four passes (.conclave/reviewers.toml).
     "plan",
     "round",
+    "performance",
     "completion",
     "reconciliation",
 })

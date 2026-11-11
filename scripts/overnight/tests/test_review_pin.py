@@ -22,8 +22,10 @@ def test_the_repository_pin_holds():
     assert (pin["pass_cap"], pin["no_progress_cap"]) == (45, 3)
     assert pin["lenses"]["plan"] == ("plan",) and pin["lenses"]["completion"] == ("plan-delivery", "record")
     assert not set(pin["lenses"]["round"]) & set(pin["lenses"]["completion"]), "one owner per lens"
-    assert {"adversarial", "consistency", "optimization", "test-coverage"} <= set(pin["lenses"]["round"])
-    assert rp.kinds(pin) == ("plan", "round", "completion", "reconciliation", "gap-audit")
+    assert {"adversarial", "consistency", "test-coverage"} <= set(pin["lenses"]["round"])
+    # Performance is its own pass, never a lens of the round (the 2026-11-11 replay).
+    assert pin["lenses"]["performance"] == ("optimization",) and "optimization" not in pin["lenses"]["round"]
+    assert rp.kinds(pin) == ("plan", "round", "performance", "completion", "reconciliation", "gap-audit")
 
 
 @pytest.mark.parametrize("old, new", [
@@ -33,8 +35,10 @@ def test_the_repository_pin_holds():
     ('claude = ["astra"]', 'claude = ["nobody"]'),
     ('cli = "codex"', 'cli = "agy"'),
     ('model = "gpt-6-astra"', 'model = "gpt-6-astra"\neffort = "high"'),
-    ('policy = "three-pass"', 'policy = "rotation"'),
-    ("pass_cap = 45", "pass_cap = 2"),
+    ('policy = "four-pass"', 'policy = "three-pass"'),
+    ("pass_cap = 45", "pass_cap = 3"),
+    ('[schedule.performance]\nlenses = ["optimization"]\n', ""),
+    ('[schedule.performance]\nlenses = ["optimization"]', '[schedule.performance]\nlenses = ["adversarial"]'),
     ("pass_cap = 45", 'pass_cap = "45"'),
     ("pass_cap = 45", "pass_cap = true"),
     ("pass_cap = 45\n", ""),
@@ -78,11 +82,11 @@ def test_a_round_owes_one_verdict_per_lens():
     assert "- record: " in rp.lens_block(pin, "completion")
     full = "\n".join(f"LENS {name}: clean" for name in pin["lenses"]["round"])
     assert rp.missing_lens_verdicts(pin, "round", full) == ()
-    skimmed = full.replace("LENS optimization: clean", "optimization looked fine")
-    assert rp.missing_lens_verdicts(pin, "round", skimmed) == ("optimization",)
+    skimmed = full.replace("LENS quality: clean", "quality looked fine")
+    assert rp.missing_lens_verdicts(pin, "round", skimmed) == ("quality",)
     assert rp.missing_lens_verdicts(pin, "round", full.replace("consistency: clean", "consistency: maybe")) \
         == ("consistency",)
-    assert rp.missing_lens_verdicts(pin, "round", full.replace("LENS quality: clean", "`LENS quality: findings`")) \
+    assert rp.missing_lens_verdicts(pin, "round", full.replace("LENS adversarial: clean", "`LENS adversarial: findings`")) \
         == ()
 
 
@@ -333,3 +337,23 @@ def test_refusal_the_broker_does_not_dispatch_a_pass():
                            "[review-kind: round] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nx"],
                           capture_output=True, text=True, timeout=60, cwd=str(REPO))
     assert done.returncode == 2 and "dispatched with scripts/codex-dispatch.sh" in done.stderr, done.stderr
+
+
+def test_the_worst_level_of_a_review_is_read_from_its_last_highest_line():
+    assert rp.highest("LENS record: clean\nHIGHEST: none\n") == "none"
+    assert rp.highest("- HIGHEST: P2\n") == "P2" and rp.highest("`HIGHEST: P1`") == "P1"
+    assert rp.highest("HIGHEST: P3\nlater text\nHIGHEST: P1\n") == "P1", "the last line decides"
+    for bad in ("", "HIGHEST: P4", "HIGHEST P1", "the highest is P1", "HIGHEST: none at all"):
+        assert rp.highest(bad) == "", bad
+
+
+def test_the_receipt_carries_the_worst_level_and_a_review_without_one_is_incomplete(tmp_path):
+    import json
+    pin = _pin()
+    verdicts = "\n".join(f"LENS {n}: findings" for n in pin["lenses"]["performance"])
+    done, prompt = _dispatch(tmp_path, "performance", verdicts + "\nHIGHEST: P2\n")
+    assert done.returncode == 0 and "- optimization: " in prompt, done.stderr
+    done, _ = _dispatch(tmp_path, "performance", verdicts + "\n")
+    assert done.returncode == 3 and "no HIGHEST: line" in done.stderr, done.stderr
+    lines = [json.loads(ln) for ln in (tmp_path / "reviews/manifest.jsonl").read_text().splitlines()]
+    assert [(e["kind"], e["rc"], e["highest"]) for e in lines] == [("performance", 0, "P2"), ("performance", 3, "")]

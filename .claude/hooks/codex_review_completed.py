@@ -620,7 +620,7 @@ DISPATCH_KIND_BY_SKILL = {
 # from either was dropped with no error.
 LEGACY_REVIEW_KINDS = ("adversarial", "consistency", "perf", "re-adversarial",
                        "adversarial-impl", "test-coverage", "design", "gap-audit")
-SECTION_PASS_KINDS = ("plan", "round", "completion", "reconciliation")
+SECTION_PASS_KINDS = ("plan", "round", "performance", "completion", "reconciliation")
 REVIEW_KINDS = LEGACY_REVIEW_KINDS + SECTION_PASS_KINDS
 _REVIEW_KIND_RE = re.compile(
     r"\[\s*review[-_ ]kind\s*:\s*(" + "|".join(REVIEW_KINDS) + r")\s*\]",

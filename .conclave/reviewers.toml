@@ -2,11 +2,17 @@
 #
 # Operator decision 2026-11-10: when Claude is the writer, the reviewer is always GPT-6 Astra through the Codex CLI.
 # One route, one reviewer, no fallback. An outage is never an approval.
-# Operator decision 2026-11-11: the review shape is three passes per section:
+# Operator decision 2026-11-11: the review shape follows RasterFold's three passes. It is four here, on evidence:
+# replayed on shipped sections the same day, one combined round found one of four known performance defects that
+# the dedicated performance review had found, so performance stays a pass of its own
+# (docs/specs/2026-11-11-three-pass-review-design.md, Replay).
 #   - before the build, one plan review (kind plan);
-#   - after the build and its gates, one combined round carrying every lens (kind round); its findings are fixed and
-#     the gates rerun;
-#   - on that final candidate, one completion review (kind completion).
+#   - after the build and its gates, one round carrying every defect lens (kind round);
+#   - one performance review (kind performance);
+#   - on the final candidate, one completion review (kind completion).
+# The round and the performance pass are dispatched again after their findings are fixed. A section is stamped when
+# the round, the performance pass and the completion pass each ended below a blocking level on the candidate being
+# stamped.
 # A completion that returns gaps is repaired and followed by a reconciliation pass (kind reconciliation), up to
 # pass_cap returned passes per section in all. no_progress_cap ends a loop whose passes stop finding anything new.
 # Each lens has one owner: the round hunts defects, the completion pass checks delivery and the record.
@@ -28,7 +34,7 @@ model = "gpt-6-astra"
 claude = ["astra"]
 
 [schedule]
-policy = "three-pass"
+policy = "four-pass"
 pass_cap = 45
 no_progress_cap = 3
 blocking = ["P1", "P2"]
@@ -37,7 +43,10 @@ blocking = ["P1", "P2"]
 lenses = ["plan"]
 
 [[schedule.rounds]]
-lenses = ["adversarial", "integration", "source-defect", "consistency", "quality", "optimization", "test-coverage"]
+lenses = ["adversarial", "integration", "source-defect", "consistency", "quality", "test-coverage"]
+
+[schedule.performance]
+lenses = ["optimization"]
 
 [schedule.completion]
 lenses = ["plan-delivery", "record"]
