@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **945 of 2594 sections complete (36%).** 116 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **944 of 2594 sections complete (36%).** 117 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -887,7 +887,6 @@ The kernel's own model comes straight after boot because every driver, filesyste
 | [x]  | `D02 T10 §6`  | KPTI User CR3 Allocation + Context Switch                                                         |
 | [x]  | `D02 T10 §7`  | PCID: TLB Tagging for No-Flush CR3 Switch                                                         |
 | [x]  | `D02 T10 §8`  | Spectre Mitigations: IBRS/IBPB + Retpoline                                                        |
-| [x]  | `D02 T10 §9`  | CET Shadow Stack (Kernel Ring 0)                                                                  |
 | [x]  | `D02 T10 §10` | CET Indirect Branch Tracking (IBT / ENDBR64)                                                      |
 | [x]  | `D02 T10 §11` | Kernel Heap Hardening: Cookies & Redzones                                                         |
 | [x]  | `D02 T10 §12` | Stack Canaries (`-fstack-protector-strong`)                                                       |
@@ -1220,6 +1219,7 @@ The kernel's own model comes straight after boot because every driver, filesyste
 | [ ]  | `D02 T29 §4`  | KD Connection Handshake & Breakin Detection                                                       |
 | [ ]  | `D02 T29 §5`  | `#DB` / `#BP` Exception Routing to KD, AP Freeze/Thaw                                             |
 | [ ]  | `D02 T23 §3`  | General Fault-to-Exception Mapping (#DE, #DB, #BP, #OF, #UD, #NP, #SS, #GP, #CP)                  |
+| [/]  | `D02 T10 §9`  | CET Shadow Stack (Kernel Ring 0)                                                                  |
 | [/]  | `D02 T18 §5`  | Unwind Metadata Registry                                                                          |
 | [ ]  | `D02 T29 §6`  | Context Get / Set                                                                                 |
 | [ ]  | `D02 T29 §7`  | Memory Read / Write                                                                               |

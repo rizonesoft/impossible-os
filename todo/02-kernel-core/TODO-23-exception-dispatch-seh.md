@@ -69,7 +69,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | --- | :---: | ------------------------------------------------------------------ | -------------------------- | :----: |
 | 💎  |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS                      | TODO-12 §1, TODO-33 §10    |  [x]   |
 | 💎  |   2   | #PF triage -- user/kernel decode, EXCEPTION_RECORD build, routing  | §1, TODO-07 §3             |  [/]   |
-| 💎  |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP)   | §1, TODO-10 §9, TODO-29 §5 |  [ ]   |
+| 💎  |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP)   | §1, TODO-29 §5             |  [ ]   |
 | 💎  |   4   | Debugger first-chance / second-chance notification                 | §1-§3, TODO-29 §5          |  [/]   |
 | 💎  |   5   | KiUserExceptionDispatcher -- ring-3 delivery                       | §4, §13, TODO-11 §7        |  [/]   |
 | 💎  |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)                  | §1                         |  [ ]   |
