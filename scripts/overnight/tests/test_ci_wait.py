@@ -65,6 +65,34 @@ def test_the_wait_for_a_run_starts_when_the_commit_is_first_seen():
         assert cw._first_seen(root, "a" * 40) > first        # and replaces the record
 
 
+def test_the_report_holds_only_the_last_poll():
+    import io
+    import json
+    from contextlib import redirect_stdout
+    polls = iter([{"build.yml": [run("in_progress")]}, {"build.yml": [run("completed", "success")]}])
+    saved = (cw._runs, cw._run, cw._first_seen, cw.time.sleep, cw.WORKFLOWS)
+
+    class Done:
+        returncode, stderr = 0, ""
+
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    cw._runs = lambda project, sha, budget: next(polls)
+    cw._run = lambda cmd, cwd, timeout=60: Done("a" * 40 + "\n" if cmd[1] == "rev-parse" else "a" * 40 + "\trefs/heads/main\n")
+    cw._first_seen = lambda project, sha: cw.time.time()
+    cw.time.sleep = lambda s: None
+    cw.WORKFLOWS = ("build.yml",)
+    try:
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cw.main(["."])
+    finally:
+        cw._runs, cw._run, cw._first_seen, cw.time.sleep, cw.WORKFLOWS = saved
+    report = json.loads(buf.getvalue())
+    assert rc == 0 and report["state"] == "green" and "waiting_on" not in report, report
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:

@@ -145,6 +145,8 @@ def main(argv=None) -> int:
         except (subprocess.SubprocessError, OSError, RuntimeError, ValueError) as exc:
             out["reason"] = f"CI unavailable ({str(exc)[:200]})"
             return done(3)
+        for key in ("waiting_on", "passed", "not_triggered", "failed", "cancelled", "reason"):
+            out.pop(key, None)  # what an earlier poll of this call reported
         out.update(state=state, **detail)
         if state == "green":
             return done(0)
