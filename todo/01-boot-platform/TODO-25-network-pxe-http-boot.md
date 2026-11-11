@@ -271,6 +271,8 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 ## 10. PXE/HTTP Boot Tests
 
+**Needs:** bare-metal
+
 > [!IMPORTANT] Deferred (2026-06-17, unattended sequencer): the PXE/TFTP + HTTP-Boot integration harness and the bad-manifest/fallback assertions depend on §5-§8 (trust, provenance, recovery, fallback), all deferred; and the §1-§4 transport parsers are UEFI-only (no kernel test surface, per their N/A test-runner notes) so they need extraction into kernel-testable pure helpers first. Gated on §5-§8. See Deferred stamp below.
 
 - [ ] Add QEMU PXE/TFTP test harness.

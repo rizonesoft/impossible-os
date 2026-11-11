@@ -5,7 +5,9 @@ The plan lists every numbered section of every TODO file exactly once, in the
 order it should be built: phases, and rows within a phase. Phase headings and
 their paragraphs are written by hand. The rows are derived, never ticked by
 hand: the box comes from the section's lifecycle class (the same classifier the
-run obeys), the title from the section heading.
+run obeys), the title from the section heading, Needs from the section's
+`**Needs:**` line (`none` when it has no such line) and Items from a count of
+its checklist items.
 
     python3 scripts/todo-plan.py --sync          rewrite boxes and titles, place new sections
     python3 scripts/todo-plan.py --check         exit 1 when the plan is stale or out of order
@@ -24,6 +26,11 @@ depends on while both are open (finished work constrains nothing). A
 dependency cycle fails --check outright, because none of its members can ever
 be built; --cycles lists the edges, and the fix is in the Depends On cells of
 the Implementation Order tables.
+
+Needs: what a section cannot finish without, from a closed list (NEEDS below).
+It is a label and never holds a section back: the run builds every section,
+proves what the emulators can prove, and parks only the one check that needs
+the named thing. A value outside the list fails --check.
 
 Exit: 0 ok, 1 the plan needs attention, 2 the graph could not be read.
 """
@@ -48,11 +55,20 @@ PLAN_REL = "todo/implementation-plan.md"
 SIGN = "§"
 
 REF_PATTERN = r"D\d{2} T[0-9A-Za-z]+ " + SIGN + r"\d+"
-ROW_RE = re.compile(r"^\|\s*\[(?P<box>[ x/])\]\s*\|\s*`(?P<ref>" + REF_PATTERN + r")`\s*\|(?P<title>.*)\|\s*$")
+# A row with or without the Needs and Items cells: a row pasted from an older
+# plan still names its section. No cell holds a pipe (row_title replaces them).
+ROW_RE = re.compile(r"^\|\s*\[(?P<box>[ x/])\]\s*\|\s*`(?P<ref>" + REF_PATTERN + r")`\s*\|(?P<title>[^|]*)\|"
+                    r"(?:(?P<needs>[^|]*)\|(?P<items>[^|]*)\|)?\s*$")
 PHASE_RE = re.compile(r"^### Phase (?P<n>\d+) -- (?P<title>\S.*?)\s*$")
 PROGRESS_RE = re.compile(r"^> \*\*Progress:\*\* ")
 FILE_RE = re.compile(r"^TODO-(?P<tok>[0-9A-Za-z]+)-")
-TABLE_HEAD = ["| Done | Section | Deliverable |", "| :-: | --- | --- |"]
+TABLE_HEAD = ["| Done | Section | Deliverable | Needs | Items |", "| :-: | --- | --- | --- | --: |"]
+OLD_HEAD_RE = re.compile(r"^\|\s*Done\s*\|\s*Section\s*\|\s*Deliverable\s*\|\s*$")
+OLD_RULE_RE = re.compile(r"^\|\s*:?-+:?\s*\|\s*:?-+:?\s*\|\s*:?-+:?\s*\|\s*$")
+# What a section cannot finish without. A label, never a gate (see the module text).
+NEEDS = ("bare-metal", "whpx-host", "display-session", "attended", "owner-decision", "third-party", "operator")
+NEEDS_RE = re.compile(r"^\*\*Needs:\*\*[ \t]*(?P<value>.*?)\s*$")
+ITEM_RE = re.compile(r"^- \[[ x/]\] \S")
 BUILD_TIMEOUT_S = 300
 TITLE_MAX = 120
 # What a heading carries beyond its name: an italic note such as
@@ -77,7 +93,8 @@ def row_title(raw: str) -> str:
 
 
 class Section:
-    __slots__ = ("ref", "path", "n", "title", "box", "deps", "wait", "unmet", "blocked", "domain", "sort", "label", "selfdep", "dead")
+    __slots__ = ("ref", "path", "n", "title", "box", "deps", "wait", "unmet", "blocked", "domain", "sort", "label", "selfdep", "dead",
+                 "needs", "items", "needs_fault")
 
     def __init__(self, ref, path, n, title, box, domain, sort):
         self.ref, self.path, self.n, self.title, self.box = ref, path, n, title, box
@@ -89,6 +106,9 @@ class Section:
         self.label = None   # the section a leading "§N" in the Deliverable names, if any
         self.selfdep = False  # its own Depends On cell names it: never buildable
         self.dead = []      # dependency tokens no work can satisfy (no such section, not a TODO)
+        self.needs = []     # the values of its **Needs:** line, in the order written
+        self.items = 0      # its checklist items
+        self.needs_fault = None  # why its **Needs:** line cannot be read, if it cannot
 
 
 # --- the graph ---------------------------------------------------------------
@@ -202,6 +222,62 @@ def _sections_from(nodes, root: Path, q) -> dict:
         if s.box != "x":
             s.wait = [d for d in s.deps if sections[d].box != "x"]
     return sections
+
+
+def read_bodies(sections: dict, root: Path) -> None:
+    """Fill each section's Needs and Items from its body in the TODO file.
+
+    The fence scan and the heading rule are the graph builder's own, so a
+    `**Needs:**` line or a checklist item inside a code sample is not read."""
+    if str(REPO / "scripts") not in sys.path:
+        sys.path.insert(0, str(REPO / "scripts"))
+    import todo_fence
+    by_file = {}
+    for s in sections.values():
+        by_file.setdefault(s.path, {})[s.n] = s
+    for path, by_n in by_file.items():
+        try:
+            scan = todo_fence.scan_text((root / path).read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise PlanError(f"{path} could not be read: {exc}") from None
+        cur = None
+        for line, masked in zip(scan.lines, scan.mask):
+            if masked:
+                continue
+            if todo_fence.is_h2(line):
+                head = todo_fence.classify_heading(line)
+                cur = by_n.get(head.n) if head.kind == "ok" else None
+            elif cur is None:
+                continue
+            elif ITEM_RE.match(line):
+                cur.items += 1
+            else:
+                m = NEEDS_RE.match(line)
+                if m:
+                    _read_needs(cur, m.group("value"))
+
+
+def _read_needs(s: Section, value: str) -> None:
+    if s.needs or s.needs_fault:
+        s.needs_fault = "has more than one **Needs:** line"
+        return
+    names = [v.strip() for v in value.split(",")]
+    if names == ["none"]:
+        return
+    bad = [v or "(empty)" for v in names if v not in NEEDS]
+    if bad:
+        s.needs_fault = f"names {', '.join(bad)}"
+    elif len(set(names)) != len(names):
+        s.needs_fault = "names a value twice"
+    else:
+        s.needs = names
+
+
+def needs_problems(sections: dict) -> list:
+    """A **Needs:** line the plan cannot show: a value outside the list, a repeat, or a second line."""
+    return [f"{s.ref} ({s.path}) {s.needs_fault} in **Needs:**; write `none` or a comma-separated list from: "
+            + ", ".join(NEEDS)
+            for s in sorted(sections.values(), key=lambda s: s.sort) if s.needs_fault]
 
 
 def buildable(s: Section) -> bool:
@@ -347,7 +423,11 @@ class Plan:
 
 
 def row_line(s: Section) -> str:
-    return f"| [{s.box}] | `{s.ref}` | {s.title} |"
+    return f"| [{s.box}] | `{s.ref}` | {s.title} | {', '.join(s.needs) or 'none'} | {s.items} |"
+
+
+def _row_cells(s: Section) -> tuple:
+    return (s.box, s.title, ", ".join(s.needs) or "none", str(s.items))
 
 
 def progress_line(sections: dict) -> str:
@@ -402,6 +482,8 @@ def synced_text(text: str, sections: dict) -> tuple:
         if not mr:
             if PROGRESS_RE.match(line):
                 lines[i] = progress_line(sections)
+            elif OLD_HEAD_RE.match(line) and i + 1 < len(lines) and OLD_RULE_RE.match(lines[i + 1]):
+                lines[i], lines[i + 1] = TABLE_HEAD  # a table from before the Needs and Items columns
             continue
         ref = mr.group("ref")
         if ref not in sections:
@@ -410,7 +492,7 @@ def synced_text(text: str, sections: dict) -> tuple:
         elif plan.rows[ref] != i:
             drop.add(i)
             notes.append(f"removed a duplicate row for {ref}")
-        elif (mr.group("box"), mr.group("title").strip()) != (sections[ref].box, sections[ref].title):
+        elif tuple((mr.group(k) or "").strip() for k in ("box", "title", "needs", "items")) != _row_cells(sections[ref]):
             # Compared on meaning, so alignment padding is left as it was.
             lines[i] = row_line(sections[ref])
     missing = sorted((r for r in sections if r not in plan.rows), key=lambda r: sections[r].sort)
@@ -661,6 +743,7 @@ def main(argv=None) -> int:
         return 2
     try:
         sections = load_sections(root)
+        read_bodies(sections, root)
         if args.cycles:
             for line in cycle_report(sections):
                 print(line)
@@ -680,7 +763,7 @@ def main(argv=None) -> int:
         if args.sync or args.check:
             new, notes = synced_text(text, sections)
             new = aligned(new)
-            problems = label_problems(sections) + self_problems(sections) + dead_problems(sections) + cycle_problems(sections) + order_problems(Plan(new), sections)
+            problems = needs_problems(sections) + label_problems(sections) + self_problems(sections) + dead_problems(sections) + cycle_problems(sections) + order_problems(Plan(new), sections)
             if args.sync:
                 if new != text:
                     write_atomic(path, new, text)
@@ -690,7 +773,7 @@ def main(argv=None) -> int:
             elif new != text:
                 where = " as staged (sync, then git add it)" if args.staged else ""
                 problems.insert(0, f"{PLAN_REL}{where} is stale ({len(notes)} row(s) to place or remove, or a box, a "
-                                   "title or the progress line differs): python3 scripts/todo-plan.py --sync")
+                                   "title, a Needs or Items cell or the progress line differs): python3 scripts/todo-plan.py --sync")
             for p in problems:
                 print(f"todo-plan: {p}", file=sys.stderr)
             return 1 if problems else 0
@@ -703,7 +786,8 @@ def main(argv=None) -> int:
                 print(f"todo-plan: no section matches {args.resolve!r}", file=sys.stderr)
                 return 1
             rec = {"ref": s.ref, "file": s.path, "section": s.n, "title": s.title, "box": s.box,
-                   "phase": plan.phase_of.get(s.ref), "depends_on": s.deps, "ready": buildable(s)}
+                   "phase": plan.phase_of.get(s.ref), "depends_on": s.deps, "ready": buildable(s),
+                   "needs": s.needs, "items": s.items}
             print(json.dumps(rec, indent=1) if args.json else f"{s.path}\t{s.n}\t{s.title}")
             return 0
 
@@ -711,10 +795,11 @@ def main(argv=None) -> int:
         ready = ready[: args.next] if args.next else ready
         if args.json:
             print(json.dumps([{"ref": s.ref, "file": s.path, "section": s.n, "title": s.title, "box": s.box,
-                               "phase": plan.phase_of[s.ref]} for s in ready], indent=1))
+                               "phase": plan.phase_of[s.ref], "needs": s.needs, "items": s.items}
+                              for s in ready], indent=1))
         else:
             for s in ready:
-                print(f"| [{s.box}] | `{s.ref}` | {s.title} |\tPhase {plan.phase_of[s.ref]}\t{s.path}")
+                print(f"{row_line(s)}\tPhase {plan.phase_of[s.ref]}\t{s.path}")
         return 0
     except PlanError as exc:
         print(f"todo-plan: {exc}", file=sys.stderr)

@@ -164,6 +164,9 @@ The baseline boot path in §1-§4 is already good enough to boot from USB media.
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 4H fixed, 1H deferred (ISR -> TODO-10 §8) | scope: kernel-code-quality
 
 ## 6. Hardware Compatibility -- Non-Intel xHCI Vendors
+
+**Needs:** bare-metal
+
 Finish the baseline xHCI boot path across controller vendors. The generic non-Intel path -- skip Intel-only XUSB2PR port routing, rely on BIOS handoff + CCS -- is already implemented (`xhci.c` gates routing on Intel VID 0x8086). What remains here is the Renesas firmware-skip decision, vendor diagnostics, and graceful degradation. EHCI/UHCI/OHCI fallback, USB hubs, USBLEGSUP handoff, and transport stall/halt robustness are owned by other TODOs (Routed block below) -- TODO-17 does NOT own them. (Section de-scoped from a 34-item sprawl that forked ownership with T10/T19/T20.)
 
 **Files:** `src/kernel/drivers/xhci.c`

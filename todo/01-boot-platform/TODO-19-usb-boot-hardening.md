@@ -225,6 +225,8 @@ Add bounded timeouts to all bulk transfers. The current code polls the xHCI even
 
 ## 6. Remove sleep_ms(2000) Hack
 
+**Needs:** bare-metal
+
 With proper SCSI retry (§1-§3) and USB transport recovery (§4-§5), the 2-second sleep after xhci_init is no longer needed.
 
 - [x] No global `sleep_ms(2000)` exists -- grep-confirmed empty across `src/`; `boot_phase2` calls `xhci_init()` with no trailing sleep, readiness is event-driven via `msc_poll_unit_ready` (§2) in `usb_msc_init`

@@ -120,6 +120,8 @@ Capture the exact current state before changing any GitHub owner setting. The ou
 
 ## 2. `rizonetech` Organization Readiness and Policy Parity
 
+**Needs:** operator
+
 Prepare the receiving organization before transfer so the repository lands into a compatible policy envelope.
 
 - [x] Confirm the `rizonetech` organization exists, has the intended owners, and the human operator has permission to receive transferred repositories. **Verified:** `gh api orgs/rizonetech` returns `login: "Rizonetech"` (canonical), id `279138845`; `gh api user/memberships/orgs/rizonetech` returns `state: active`, `role: admin`, `direct_membership: true` for `rizonesoft`. Cross-referenced from §1 baseline.
@@ -227,6 +229,8 @@ Perform the actual transfer as a short, observable operation with a clear stop/r
 ---
 
 ## 5. Post-Transfer Settings, Workflows, Secrets, and Environments Audit
+
+**Needs:** operator
 
 GitHub transfers repository data, but the project should not trust complex settings until they are checked directly.
 

@@ -6,6 +6,7 @@ own graph from it with the repository's builder and classifier, so these tests
 cover the whole path a real sync takes.
 """
 import importlib.util
+import json
 import os
 import pathlib
 import subprocess
@@ -177,6 +178,72 @@ def test_long_headings_become_short_row_titles():
         assert lines[index_of(lines, f"D01 T01 {S}1")].split("|")[3].strip() == "Panic QR Code", lines
         cell = lines[index_of(lines, f"D01 T01 {S}2")].split("|")[3].strip()
         assert cell.endswith("...") and len(cell) <= 120 and "[Opus]" not in cell and "`" not in cell, cell
+        assert run(root, "--check").returncode == 0
+
+
+def cells(root, ref):
+    lines = rows(root)
+    return [c.strip() for c in lines[index_of(lines, ref)].split("|")[1:-1]]
+
+
+def test_rows_carry_needs_and_items_and_ignore_code_samples():
+    body = ("**Needs:** bare-metal, operator\n- [x] two\n- [/] three\n  - [ ] a sub-bullet is not an item\n"
+            "```\n**Needs:** attended\n- [ ] inside a code sample\n```\n")
+    with tempfile.TemporaryDirectory() as d:
+        root = make_repo(d, beta_bodies={1: ("Base Layer", body), 2: ("Top Layer", "")})
+        assert run(root, "--seed").returncode == 0
+        assert cells(root, f"D01 T01 {S}1")[3:] == ["bare-metal, operator", "3"]
+        assert cells(root, f"D01 T01 {S}2")[3:] == ["none", "1"]
+        assert run(root, "--check").returncode == 0
+        r = run(root, "--next", "--json")
+        # A Need labels a section; it does not hold it back.
+        got = {x["ref"]: (x["needs"], x["items"]) for x in json.loads(r.stdout)}
+        assert got[f"D01 T01 {S}1"] == (["bare-metal", "operator"], 3), got
+
+
+def test_a_needs_or_items_change_makes_the_plan_stale():
+    with tempfile.TemporaryDirectory() as d:
+        root = make_repo(d)
+        assert run(root, "--seed").returncode == 0
+        f = root / "todo" / "01-beta" / "TODO-01-beta.md"
+        f.write_text(f.read_text().replace("## 2. Top Layer\n", "## 2. Top Layer\n\n**Needs:** whpx-host\n- [ ] another\n"))
+        r = run(root, "--check")
+        assert r.returncode == 1 and "stale" in r.stderr, r.stderr
+        assert run(root, "--sync").returncode == 0
+        assert cells(root, f"D01 T01 {S}2")[3:] == ["whpx-host", "2"]
+        assert run(root, "--check").returncode == 0
+
+
+def test_a_needs_value_outside_the_list_fails_the_check():
+    for value, said in (("a-fast-machine", "names a-fast-machine"), ("operator, operator", "twice"),
+                        ("none, operator", "names none"), ("", "(empty)")):
+        with tempfile.TemporaryDirectory() as d:
+            root = make_repo(d, beta_bodies={1: ("Base Layer", f"**Needs:** {value}"), 2: ("Top Layer", "")})
+            assert run(root, "--seed").returncode == 0
+            r = run(root, "--check")
+            assert r.returncode == 1 and said in r.stderr and f"D01 T01 {S}1" in r.stderr, (value, r.stderr)
+    with tempfile.TemporaryDirectory() as d:
+        root = make_repo(d, beta_bodies={1: ("Base Layer", "**Needs:** operator\n\n**Needs:** none"), 2: ("Top Layer", "")})
+        assert run(root, "--seed").returncode == 0
+        r = run(root, "--check")
+        assert r.returncode == 1 and "more than one" in r.stderr, r.stderr
+
+
+def test_sync_upgrades_a_three_column_plan():
+    with tempfile.TemporaryDirectory() as d:
+        root = make_repo(d)
+        assert run(root, "--seed").returncode == 0
+        plan = root / PLAN
+        old = []
+        for ln in plan.read_text().splitlines():
+            parts = ln.split("|")
+            old.append("|".join(parts[:4]) + "|" if ln.startswith("|") and len(parts) == 7 else ln)
+        plan.write_text("\n".join(old) + "\n")
+        assert "Needs" not in plan.read_text()
+        assert run(root, "--check").returncode == 1
+        assert run(root, "--sync").returncode == 0
+        text = plan.read_text()
+        assert text.count("| Needs") == text.count("| Done") > 0 and all(len(ln.split("|")) == 7 for ln in rows(root)), text
         assert run(root, "--check").returncode == 0
 
 
