@@ -418,35 +418,54 @@ int fat32_truncate_by_sfn(struct fat32_volume *vol, uint32_t dir_cluster,
             if (match) {
                 uint32_t fc = ((uint32_t)de->first_cluster_hi << 16)
                             | (uint32_t)de->first_cluster_lo;
+                struct fat32_dir_entry saved = *de;
+                uint32_t keep_last = 0;   /* last kept cluster of a shrink, 0 = none */
+
+                if (new_size < de->file_size && new_size > 0 && fc >= 2) {
+                    uint32_t clusters_needed =
+                        (new_size + bytes_per_cluster - 1) / bytes_per_cluster;
+                    uint32_t ci;
+
+                    keep_last = fc;
+                    for (ci = 1; ci < clusters_needed; ci++) {
+                        uint32_t next = fat32_get_fat_entry(vol, keep_last);
+                        if (next < 2 || next >= FAT32_EOC) break;
+                        keep_last = next;
+                    }
+                }
+
+                /* The entry reaches the device BEFORE any cluster returns to the
+                 * free pool, as in fat32_delete_file_vol: a failed or interrupted
+                 * write then leaves the old entry over its still-allocated chain
+                 * (at worst lost clusters fsck reclaims), never a live entry over
+                 * clusters another file can be given. A failed flush restores
+                 * the entry in the cache, so -1 means the file is unchanged. */
+                if (new_size == 0) {
+                    de->first_cluster_hi = 0;
+                    de->first_cluster_lo = 0;
+                }
+                de->file_size = new_size;
+                if (fat32_write_sectors_multi(vol, sector, vol->bpb.sectors_per_cluster,
+                                              cluster_buf) != 0 ||
+                    scache_flush(vol) != 0) {
+                    *de = saved;
+                    (void)fat32_write_sectors_multi(vol, sector,
+                                                    vol->bpb.sectors_per_cluster,
+                                                    cluster_buf);
+                    kfree(cluster_buf);
+                    return -1;
+                }
 
                 if (new_size == 0) {
                     if (fc >= 2)
                         fat32_free_chain(vol, fc);
-                    de->first_cluster_hi = 0;
-                    de->first_cluster_lo = 0;
-                } else if (new_size < de->file_size && fc >= 2) {
-                    uint32_t clusters_needed =
-                        (new_size + bytes_per_cluster - 1) / bytes_per_cluster;
-                    uint32_t walk = fc;
-                    uint32_t ci;
-
-                    for (ci = 1; ci < clusters_needed; ci++) {
-                        uint32_t next = fat32_get_fat_entry(vol, walk);
-                        if (next < 2 || next >= FAT32_EOC) break;
-                        walk = next;
-                    }
-                    {
-                        uint32_t tail = fat32_get_fat_entry(vol, walk);
-                        fat32_set_fat_entry(vol, walk, 0x0FFFFFFF);
-                        if (tail >= 2 && tail < FAT32_EOC)
-                            fat32_free_chain(vol, tail);
+                } else if (keep_last >= 2) {
+                    uint32_t tail = fat32_get_fat_entry(vol, keep_last);
+                    if (tail >= 2 && tail < FAT32_EOC) {
+                        fat32_set_fat_entry(vol, keep_last, 0x0FFFFFFF);
+                        fat32_free_chain(vol, tail);
                     }
                 }
-
-                de->file_size = new_size;
-                fat32_write_sectors_multi(vol, sector,
-                                          vol->bpb.sectors_per_cluster,
-                                          cluster_buf);
 
                 vol->dir_file_count = 0;
                 kfree(cluster_buf);

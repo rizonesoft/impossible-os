@@ -1468,6 +1468,52 @@ static void test_fat32_replace_survives_slot_cleanup_failure(void)
 
 /* If the source's removal cannot reach the device, a returned error must leave the
  * source named, or a retry has nothing to find. */
+/* A truncate whose directory write fails must leave the file as it was: the old
+ * entry over its still-allocated chain, never an entry pointing at clusters the
+ * free pool can hand to another file. The FAT sectors stay writable, which is
+ * the case where freeing first used to corrupt. */
+static void test_fat32_truncate_dir_write_failure_keeps_chain(void)
+{
+    struct fx_volume fx;
+    struct fat32_dirent_loc loc;
+    uint32_t data;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "evidence.json"), 0,
+                   "file created");
+    data = fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "evidence.json");
+    TEST_ASSERT(data >= 2u, "the file owns a data cluster");
+    scache_flush(fx.vol);
+    scache_invalidate(fx.vol);
+
+    fx.fail_write_lba = cluster_to_sector(fx.vol, FX_ROOT_CLUSTER);
+    TEST_ASSERT(fat32_truncate(fx.vol, FX_ROOT_CLUSTER, "evidence.json", 0u) != 0,
+                "the truncate reports the failed directory write");
+    TEST_ASSERT_EQ(fat32_get_fat_entry(fx.vol, data) != 0u, 1,
+                   "the data cluster is still allocated");
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "evidence.json"), data,
+                   "the cached entry still names its chain");
+
+    fx.fail_write_lba = FX_NO_FAULT;
+    scache_flush(fx.vol);
+    scache_invalidate(fx.vol);
+    TEST_ASSERT_EQ(fx_cluster_of(fx.vol, FX_ROOT_CLUSTER, "evidence.json"), data,
+                   "on disk too, the entry still names its chain");
+    TEST_ASSERT_EQ(fat32_get_fat_entry(fx.vol, data) != 0u, 1,
+                   "and on disk the cluster is not free");
+
+    TEST_ASSERT_EQ(fat32_truncate(fx.vol, FX_ROOT_CLUSTER, "evidence.json", 0u), 0,
+                   "a retry succeeds");
+    TEST_ASSERT_EQ(fat32_dir_lookup(fx.vol, FX_ROOT_CLUSTER, "evidence.json", &loc), 1,
+                   "the file remains");
+    TEST_ASSERT_EQ(fx_first_cluster(&loc), 0u, "with no chain");
+    TEST_ASSERT_EQ(loc.de.file_size, 0u, "and no bytes");
+    TEST_ASSERT_EQ(fat32_get_fat_entry(fx.vol, data), 0u, "its old cluster is free");
+    fx_close(&fx);
+}
+
 static void test_fat32_replace_failed_removal_keeps_source(void)
 {
     struct fx_volume fx;
@@ -2145,6 +2191,8 @@ void test_register_fat32(void)
                             test_fat32_replace_survives_slot_cleanup_failure, TEST_CAT_FS);
     test_suite_register_cat("FAT32: replace keeps the source if its removal fails",
                             test_fat32_replace_failed_removal_keeps_source, TEST_CAT_FS);
+    test_suite_register_cat("fat32: truncate keeps its chain when the directory write fails",
+                            test_fat32_truncate_dir_write_failure_keeps_chain, TEST_CAT_FS);
     test_suite_register_cat("FAT32: rename into a hole survives a crash at every write",
                             test_fat32_rename_into_hole_crash_sweep, TEST_CAT_FS);
     test_suite_register_cat("FAT32: orphan run after a cleanup failure stays dead",
