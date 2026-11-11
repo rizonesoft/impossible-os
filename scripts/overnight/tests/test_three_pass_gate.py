@@ -262,3 +262,32 @@ def test_a_broken_pin_does_not_open_the_gate(tmp_path):
     assert gate._blocking_levels(root) == gate._BLOCKING_FALLBACK
     ok, why = _judge(root, highest={"completion": "P2"}, **_good(h))
     assert not ok and "completion ended at P2" in why, why
+
+
+def test_refusal_a_receipt_behind_an_unreadable_line_is_not_trusted(tmp_path):
+    """Review finding: a newer blocking receipt cut short while it was written was skipped, and the older
+    clean receipt behind it carried the stamp."""
+    root, h = _history(tmp_path)
+    assert _judge(root, **_good(h)) == (True, "")
+    manifest = root / gate._PASS_MANIFEST
+    clean = manifest.read_text()
+
+    def judge_with(tail):
+        # _judge rewrites the manifest, so the gate is asked directly on the same staged stamp.
+        text = (root / TODO).read_text()
+        (root / TODO).write_text(text.replace("## 7. Seven\n\n- [x] item\n", "## 7. Seven\n\n- [x] item\n\n" + STAMP))
+        _git(root, "add", "--", TODO)
+        manifest.write_text(clean + tail)
+        try:
+            return gate._four_dispatch_evidence(root, [TODO])
+        finally:
+            _git(root, "reset", "-q", "--hard", "HEAD")
+
+    assert judge_with("") == (True, "")
+    ok, why = judge_with('{"kind": "completion", "todo": "' + TODO + '", "section": 7, "head": "' + h["final"] + '", "rc": 0, "pas')
+    assert not ok and "has no checked, complete receipt" in why, why
+    assert judge_with("\n\n") == (True, ""), "blank lines are not receipts"
+    sys.path.insert(0, str(REPO / ".claude/hooks"))
+    import codex_review_completed as crc
+    (root / crc.PASS_MANIFEST).write_text(clean + "{cut short")
+    assert not crc._pass_receipt_ok(root, "round", TODO, "7")

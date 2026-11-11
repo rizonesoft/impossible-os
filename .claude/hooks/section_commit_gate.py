@@ -1591,10 +1591,15 @@ def _pass_receipt(root: Path, todo: str, section: str, kind: str, head: str) -> 
     except OSError:
         return None
     for line in reversed(lines):
+        if not line.strip():
+            continue
         try:
             e = json.loads(line)
         except ValueError:
-            continue
+            # A line that cannot be read may be a newer, blocking receipt cut
+            # short while it was written. Reading past it would revive an
+            # older clean one, so nothing older is trusted.
+            return None
         if isinstance(e, dict) and e.get("kind") == kind and e.get("todo") == todo \
                 and str(e.get("section", "")) == section and e.get("head") == head:
             return e

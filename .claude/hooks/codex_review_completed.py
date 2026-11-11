@@ -738,10 +738,12 @@ def _pass_receipt_ok(root: Path, kind: str, todo_path: str, section) -> bool:
     except OSError:
         credited = set()   # nothing credited yet
     for line in reversed(lines):
+        if not line.strip():
+            continue
         try:
             e = json.loads(line)
         except ValueError:
-            continue
+            return False   # an unreadable newer line may be this pass's own, cut short
         if not isinstance(e, dict) or e.get("kind") != kind or e.get("todo") != todo_path:
             continue
         if section not in (None, "") and str(e.get("section", "")) != str(section):

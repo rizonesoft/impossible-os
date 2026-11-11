@@ -210,8 +210,24 @@ fi
 if [ -n "$LOG_FILE" ]; then
     echo "[codex-dispatch] transcript: $LOG_FILE" >&2
     set -o pipefail
+    # The candidate is identified BEFORE the reviewer runs. Read afterwards, a
+    # commit made by another caller during the review would be named as the
+    # one reviewed, and the commit gate would bind the pass to it.
+    TREE_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+    TREE_INDEX="$(git write-tree 2>/dev/null || echo unknown)"
+    TREE_WORK="$({ git diff HEAD -- 2>/dev/null; git status --porcelain 2>/dev/null; } | sha256sum | cut -d' ' -f1)"
     node "$COMPANION" adversarial-review "$PROMPT" 2>&1 | tee "$LOG_FILE"
     rc=$?
+    if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
+        NOW_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+        NOW_WORK="$({ git diff HEAD -- 2>/dev/null; git status --porcelain 2>/dev/null; } | sha256sum | cut -d' ' -f1)"
+        if [ "$NOW_HEAD" != "$TREE_HEAD" ] || [ "$NOW_WORK" != "$TREE_WORK" ]; then
+            rc=3
+            echo "[$SELF_NAME] INCOMPLETE -- the candidate changed while it was being reviewed (HEAD ${TREE_HEAD:0:10} -> ${NOW_HEAD:0:10}, or the working tree moved)" \
+                | tee -a "$LOG_FILE" >&2
+            echo "[$SELF_NAME]   This pass read a candidate that no longer exists. Dispatch it again." | tee -a "$LOG_FILE" >&2
+        fi
+    fi
     # The receipt below says whether THIS wrapper checked the pass. The review
     # recorder credits a pass kind only against such a receipt with rc 0, so a
     # pass dispatched any other way, or one a lens was skipped in, earns nothing.
@@ -239,9 +255,6 @@ if [ -n "$LOG_FILE" ]; then
     fi
     echo "Turn completed (rc=$rc)" >> "$LOG_FILE"
     PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
-    TREE_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-    TREE_INDEX="$(git write-tree 2>/dev/null || echo unknown)"
-    TREE_WORK="$({ git diff HEAD -- 2>/dev/null; git status --porcelain 2>/dev/null; } | sha256sum | cut -d' ' -f1)"
     if [ -n "$SECTION" ]; then
         printf '{"ts": %s, "kind": "%s", "todo": "%s", "section": %s, "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s", "route": "codex-dispatch.sh", "rc": %s, "pass_checked": %s, "highest": "%s"}\n' \
             "$(date +%s)" "$KIND" "$TODO_PATH" "$SECTION" "direct:$STAMP-$$" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" "$rc" "$PASS_CHECKED" "$PASS_HIGHEST" >> "$REVIEWS_DIR/manifest.jsonl" 2>/dev/null \

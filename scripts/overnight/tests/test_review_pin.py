@@ -342,7 +342,7 @@ def test_refusal_the_broker_does_not_dispatch_a_pass():
 def test_the_worst_level_of_a_review_is_read_from_its_last_highest_line():
     assert rp.highest("LENS record: clean\nHIGHEST: none\n") == "none"
     assert rp.highest("- HIGHEST: P2\n") == "P2" and rp.highest("`HIGHEST: P1`") == "P1"
-    assert rp.highest("HIGHEST: P3\nlater text\nHIGHEST: P1\n") == "P1", "the last line decides"
+    assert rp.highest("HIGHEST: P2\nlater text\nHIGHEST: P2\n") == "P2"
     for bad in ("", "HIGHEST: P4", "HIGHEST P1", "the highest is P1", "HIGHEST: none at all"):
         assert rp.highest(bad) == "", bad
 
@@ -357,3 +357,67 @@ def test_the_receipt_carries_the_worst_level_and_a_review_without_one_is_incompl
     assert done.returncode == 3 and "no HIGHEST: line" in done.stderr, done.stderr
     lines = [json.loads(ln) for ln in (tmp_path / "reviews/manifest.jsonl").read_text().splitlines()]
     assert [(e["kind"], e["rc"], e["highest"]) for e in lines] == [("performance", 0, "P2"), ("performance", 3, "")]
+
+
+def test_refusal_a_verdict_inside_an_example_or_contradicted_is_no_verdict():
+    """Review finding: a fenced `HIGHEST: none` after a real `HIGHEST: P1` made the review read as clean, and
+    an example alone read as a verdict."""
+    fence = "```"
+    assert rp.highest(f"HIGHEST: P1\n{fence}\nHIGHEST: none\n{fence}\n") == "P1"
+    assert rp.highest(f"A good ending looks like:\n{fence}\nHIGHEST: none\n{fence}\n") == ""
+    assert rp.highest("HIGHEST: P1\nHIGHEST: none\n") == "", "two different levels: no verdict"
+    pin = _pin()
+    a, b = pin["lenses"]["completion"]
+    assert rp.missing_lens_verdicts(pin, "completion", f"{fence}\nLENS {a}: clean\nLENS {b}: clean\n{fence}\n") == (a, b)
+    assert rp.missing_lens_verdicts(pin, "completion", f"LENS {a}: clean\nLENS {a}: findings\nLENS {b}: clean") == (a,)
+    assert rp.missing_lens_verdicts(pin, "completion", f"LENS {a}: clean\nLENS {a}: clean\nLENS {b}: clean") == ()
+
+
+MOVING_COMPANION = """
+const fs = require('fs');
+const { execSync } = require('child_process');
+fs.writeFileSync(process.env.FAKE_PROMPT_OUT, process.argv[3] || '');
+execSync(process.env.FAKE_DURING, { stdio: 'ignore' });
+process.stdout.write('# Codex Adversarial Review\\n\\n' + fs.readFileSync(process.env.FAKE_REVIEW, 'utf8'));
+"""
+
+
+def test_refusal_a_candidate_that_moved_during_the_review_is_not_the_one_reviewed(tmp_path):
+    """Review finding: the receipt named the HEAD read after the reviewer exited, so a commit made by another
+    caller during the review was recorded as the candidate reviewed."""
+    import json
+    import os
+    import subprocess
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                               "-c", "core.hooksPath=/dev/null", *args], capture_output=True, text=True,
+                              timeout=60, check=True).stdout.strip()
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git("init", "-q")
+    (repo / "a.txt").write_text("one\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "reviewed")
+    reviewed = git("rev-parse", "HEAD")
+    fake = tmp_path / "companion.js"
+    fake.write_text(MOVING_COMPANION)
+    pin = _pin()
+    (tmp_path / "review.txt").write_text(
+        "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["completion"]) + "\nHIGHEST: none\n")
+    moved = ("git -c user.name=t -c user.email=t@example.invalid -c core.hooksPath=/dev/null "
+             "commit -q --allow-empty -m during")
+    for during, want_rc in ((moved, 3), ("true", 0)):
+        env = {**os.environ, "CODEX_COMPANION_PATH": str(fake), "CODEX_REVIEWS_DIR": str(tmp_path / "reviews"),
+               "FAKE_PROMPT_OUT": str(tmp_path / "prompt.txt"), "FAKE_REVIEW": str(tmp_path / "review.txt"),
+               "FAKE_DURING": during, "REVIEW_BASE": "HEAD"}
+        start = git("rev-parse", "HEAD")
+        done = subprocess.run(["bash", str(REPO / "scripts/codex-dispatch.sh"),
+                               "[review-kind: completion] todo/x.md section 9\nReview it."],
+                              capture_output=True, text=True, timeout=120, cwd=str(repo), env=env)
+        assert done.returncode == want_rc, (during, done.returncode, done.stderr)
+        receipt = json.loads((tmp_path / "reviews/manifest.jsonl").read_text().splitlines()[-1])
+        assert receipt["head"] == start and receipt["rc"] == want_rc, receipt
+        if want_rc == 3:
+            assert receipt["head"] == reviewed and "candidate changed while it was being reviewed" in done.stderr

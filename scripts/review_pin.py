@@ -171,16 +171,16 @@ def blocks(pin, highest):
 
 
 def highest(review_text):
-    """The worst level a review declares on its last `HIGHEST:` line: P1, P2, P3 or none; "" when it has none."""
-    found = ""
-    for line in review_text.splitlines():
-        text = line.strip()
-        if text[:2] in ("- ", "* "):
-            text = text[2:].strip()
-        parts = text.strip("`").split()
+    """The worst level a review declares on its `HIGHEST:` line: P1, P2, P3 or none.
+
+    "" when it declares none, or declares two different ones: a review that says P1 and, further down,
+    none has not said how it ended.
+    """
+    found = set()
+    for parts in _declarations(review_text):
         if len(parts) == 2 and parts[0] == "HIGHEST:" and parts[1] in SEVERITIES + ("none",):
-            found = parts[1]
-    return found
+            found.add(parts[1])
+    return found.pop() if len(found) == 1 else ""
 
 
 def kinds(pin=None):
@@ -218,17 +218,34 @@ def final_response(transcript):
     return ""
 
 
-def missing_lens_verdicts(pin, kind, review_text, changed_paths=()):
-    """The scheduled lenses a returned review gave no verdict line for. Empty means the pass is complete."""
-    seen = set()
+def _declarations(review_text):
+    """The verdict-shaped lines of a review as word lists, outside fenced code blocks.
+
+    A fenced block is an example or a quotation, never the reviewer's own verdict.
+    """
+    fenced = False
     for line in review_text.splitlines():
         text = line.strip()
+        if text.startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
         if text[:2] in ("- ", "* "):          # the companion renders a closing list
             text = text[2:].strip()
-        parts = text.strip("`").split()
+        yield text.strip("`").split()
+
+
+def missing_lens_verdicts(pin, kind, review_text, changed_paths=()):
+    """The scheduled lenses a returned review gave no single verdict line for. Empty means the pass is complete.
+
+    A lens declared both clean and findings has not been given a verdict.
+    """
+    seen = {}
+    for parts in _declarations(review_text):
         if len(parts) == 3 and parts[0] == "LENS" and parts[1].endswith(":") and parts[2] in ("clean", "findings"):
-            seen.add(parts[1][:-1])
-    return tuple(name for name in lenses_for(pin, kind, changed_paths) if name not in seen)
+            seen.setdefault(parts[1][:-1], set()).add(parts[2])
+    return tuple(name for name in lenses_for(pin, kind, changed_paths) if len(seen.get(name, ())) != 1)
 
 
 def check_codex_model(pin, config=CODEX_CONFIG):
