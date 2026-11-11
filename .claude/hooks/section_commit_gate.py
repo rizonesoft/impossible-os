@@ -1484,15 +1484,49 @@ def _three_pass_shape(entry: dict) -> bool:
 # else is content the pass has not read. Wider than _DISPATCH_CONTENT_PATHS on
 # purpose: that set is kernel-shaped, and a tooling section's whole candidate
 # lives under .claude/, scripts/ and .githooks/.
-_FINAL_PASS_EXEMPT_DIRS = ("todo/", "docs/test-coverage/")
-_FINAL_PASS_EXEMPT_FILES = frozenset({"COUNT.md", "README.md"})
+#   - Markdown under todo/: the record (stamps, ticked items, the plan file).
+#     Anything else placed there is content.
+#   - docs/test-coverage/ and COUNT.md: written whole by the test run and the
+#     post-commit hook.
+#   - README.md, but only its `<!-- project:key -->` regions, which the
+#     post-commit hook re-syncs; a hand edit anywhere else is content
+#     (_readme_only_regenerated).
+_FINAL_PASS_GENERATED_DIRS = ("docs/test-coverage/",)
+_FINAL_PASS_GENERATED_FILES = frozenset({"COUNT.md"})
+_README_REGION_RE = re.compile(r"<!-- project:([a-z_]+) -->.*?<!-- /project -->", re.S)
 _SECTION_HEADING_RE = re.compile(r"^## (\d+)\.")
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
-def _unread_by_final_pass(paths: list[str]) -> list[str]:
-    return [p for p in paths if p and p not in _FINAL_PASS_EXEMPT_FILES
-            and not p.startswith(_FINAL_PASS_EXEMPT_DIRS)]
+def _readme_only_regenerated(root: Path, old_spec: str, new_spec: str) -> bool:
+    """Whether README.md differs between two blobs only inside its generated regions."""
+    def stripped(spec: str) -> str | None:
+        try:
+            text = subprocess.check_output(["git", "show", spec], cwd=str(root), text=True, timeout=10,
+                                           stderr=subprocess.DEVNULL)
+        except Exception:
+            return None
+        return _README_REGION_RE.sub(lambda m: f"<!-- project:{m.group(1)} --><!-- /project -->", text)
+    a, b = stripped(old_spec), stripped(new_spec)
+    return a is not None and a == b
+
+
+def _unread_by_final_pass(root: Path, paths: list[str], old_spec: str, new_spec: str) -> list[str]:
+    """The paths among `paths` that hold content a pass reads.
+
+    `old_spec` and `new_spec` are the git prefixes of the two sides (`<sha>:`
+    or `:` for the index), used to read README.md on each.
+    """
+    unread = []
+    for p in paths:
+        if not p or p in _FINAL_PASS_GENERATED_FILES or p.startswith(_FINAL_PASS_GENERATED_DIRS):
+            continue
+        if p.startswith("todo/") and p.endswith(".md"):
+            continue
+        if p == "README.md" and _readme_only_regenerated(root, old_spec + p, new_spec + p):
+            continue
+        unread.append(p)
+    return unread
 
 
 def _git_lines(root: Path, *args: str) -> list[str] | None:
@@ -1554,10 +1588,11 @@ def _three_pass_final(root: Path, entry: dict, current_head: str) -> tuple[bool,
     if head != current_head:
         if not _git_is_ancestor(root, head, current_head):
             return (False, f"{kind} was dispatched at {head[:10]}, which is not in this history (cross-branch)", kind)
-        changed = _git_lines(root, "diff", "--name-only", head, current_head)
+        # --no-renames: a script moved into todo/ must show as removed from where it ran.
+        changed = _git_lines(root, "diff", "--no-renames", "--name-only", head, current_head)
         if changed is None:
             return (False, f"{kind}: could not list what changed since {head[:10]}", kind)
-        unread = _unread_by_final_pass(changed)
+        unread = _unread_by_final_pass(root, changed, f"{head}:", f"{current_head}:")
         if unread:
             more = f" (+{len(unread) - 3} more)" if len(unread) > 3 else ""
             return (False, f"{kind} is not the last word on this candidate: changed since it ran: "
@@ -1602,11 +1637,11 @@ def _three_pass_issues(root: Path, todo: str, entry: dict, current_head: str) ->
             if str(recorded if recorded is not None else "") != section:
                 parts.append(f"{kind} was dispatched for section {recorded!r}, not section {section}")
 
-    staged = _git_lines(root, "diff", "--cached", "--name-only")
+    staged = _git_lines(root, "diff", "--cached", "--no-renames", "--name-only")
     if staged is None:
         parts.append("the staged files could not be listed")
     else:
-        riding = _unread_by_final_pass(staged)
+        riding = _unread_by_final_pass(root, staged, "HEAD:", ":")
         if riding:
             more = f" (+{len(riding) - 3} more)" if len(riding) > 3 else ""
             parts.append(f"staged with the stamp but read by no pass: {riding[:3]}{more}; "
@@ -1766,6 +1801,9 @@ def _four_dispatch_evidence(
     if issues:
         joined = " | ".join(issues[:5])
         more = f" (+{len(issues)-5} more)" if len(issues) > 5 else ""
+        if all("three-pass review incomplete" in i for i in issues):
+            # Each part already names the pass to dispatch; the older kinds are not the remedy.
+            return (False, f"the stamp is refused: {joined}{more}")
         return (False, (
             f"review-todo-section step-8 four-dispatch policy violated. "
             f"Stamps added without all three dispatches content-valid "

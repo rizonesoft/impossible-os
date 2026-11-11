@@ -17,6 +17,7 @@ import section_commit_gate as gate  # noqa: E402
 TODO = "todo/00-x/TODO-01-x.md"
 BODY = "# X\n\n## 7. Seven\n\n- [x] item\n\n## 8. Eight\n\n- [ ] item\n"
 STAMP = "> **Verified:** 2026-11-11 by the three-pass gate test.\n"
+README = "# Project\n\nSuites: <!-- project:stat_x -->1<!-- /project --> so far.\n\nHand-written text.\n"
 
 
 def _git(root, *args):
@@ -33,6 +34,7 @@ def _history(tmp_path):
     root.mkdir()
     _git(root, "init", "-q", "-b", "main")
     heads = {}
+    (root / "README.md").write_text(README)
     for name, path, text in (("plan", TODO, BODY), ("build", "src/kernel/a.c", "int a;\n"),
                              ("fix", "src/kernel/a.c", "int a = 1;\n"), ("tool", "scripts/x.sh", "echo x\n"),
                              ("docs", TODO, BODY + "\n")):
@@ -89,8 +91,10 @@ def test_a_three_pass_section_is_accepted_on_its_shape(tmp_path):
     # A completion with gaps, the repair, then a reconciliation on the repaired candidate.
     assert _judge(root, plan=(h["plan"], 1), round=(h["build"], 2), completion=(h["build"], 3),
                   reconciliation=(h["tool"], 4)) == (True, "")
-    # Generated files and the TODO itself may ride along with the stamp.
-    assert _judge(root, also_stage={"COUNT.md": "counts\n", "README.md": "readme\n"},
+    # Generated files, the TODO itself, and README's generated regions may ride along with the stamp.
+    regenerated = README.replace("<!-- project:stat_x -->1<!-- /project -->", "<!-- project:stat_x -->2<!-- /project -->")
+    assert _judge(root, also_stage={"COUNT.md": "counts\n", "README.md": regenerated,
+                                    "docs/test-coverage/coverage.md": "c\n", "todo/00-x/notes.md": "n\n"},
                   plan=(h["plan"], 1), round=(h["build"], 2), completion=(h["docs"], 3)) == (True, "")
 
 
@@ -116,6 +120,7 @@ def test_refusal_each_missing_or_outdated_pass_is_named(tmp_path):
     for stamps, want in cases:
         ok, why = _judge(root, **stamps)
         assert not ok and want in why and "three-pass review incomplete" in why, (stamps, why)
+        assert "adversarial|consistency|perf" not in why, "a three-pass refusal must not point at the older kinds"
 
 
 def test_refusal_a_tooling_change_after_the_last_pass_is_unread(tmp_path):
@@ -173,3 +178,28 @@ def test_refusal_one_pass_stamp_puts_the_section_on_the_new_rules(tmp_path):
     assert not ok and "missing: plan" in why and "missing: completion" in why, why
     assert gate._three_pass_shape({"plan": 5}) and not gate._three_pass_shape({"adversarial": 5, "plan": 0})
     assert not gate._three_pass_shape({"plan": "5"}) and not gate._three_pass_shape({})
+
+
+def test_refusal_an_exemption_covers_generated_content_only(tmp_path):
+    """Review finding: README.md and everything under todo/ were exempt whole, so a hand edit to the README, or
+    a script renamed into todo/, changed reviewed content with no pass reading it."""
+    root, h = _history(tmp_path)
+    good = dict(plan=(h["plan"], 1), round=(h["build"], 2), completion=(h["docs"], 3))
+    # A hand edit to README.md staged with the stamp.
+    ok, why = _judge(root, also_stage={"README.md": README.replace("Hand-written text.", "Changed by hand.")}, **good)
+    assert not ok and "staged with the stamp but read by no pass: ['README.md']" in why, why
+    # Something that is not Markdown placed under todo/.
+    ok, why = _judge(root, also_stage={"todo/00-x/run-me.sh": "echo hi\n"}, **good)
+    assert not ok and "'todo/00-x/run-me.sh'" in why, why
+    # The same two, committed after the completion pass instead of staged.
+    (root / "README.md").write_text(README.replace("Hand-written text.", "Changed by hand."))
+    _git(root, "add", "README.md")
+    _git(root, "commit", "-q", "-m", "hand edit")
+    ok, why = _judge(root, **good)
+    assert not ok and "changed since it ran: ['README.md']" in why, why
+    # A reviewed script renamed into todo/: its removal from where it ran is listed.
+    _git(root, "mv", "scripts/x.sh", "todo/00-x/x.md")
+    _git(root, "commit", "-q", "-m", "moved")
+    ok, why = _judge(root, plan=(h["plan"], 1), round=(h["build"], 2),
+                     completion=(_git(root, "rev-parse", "HEAD~1"), 3))
+    assert not ok and "'scripts/x.sh'" in why, why
