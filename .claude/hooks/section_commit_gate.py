@@ -3254,13 +3254,30 @@ def _step13_impl_adversarial_check(
 
     def _round_covers_ship(todo: str, required_section: str) -> bool:
         """A checked, complete `round` receipt for this section, dispatched on
-        the source being committed: at HEAD, or at an ancestor with no source
-        change since. It is dispatched on the working tree before the commit,
-        so its candidate is the HEAD this commit is made on."""
+        this history with nothing a pass reads COMMITTED since
+        (_unread_by_final_pass: code, hooks, scripts and docs alike, not only
+        kernel paths).
+
+        Uncommitted edits made after the round are deliberately not compared.
+        The round runs before the commit so that its findings can be fixed in
+        the commit: requiring the committed tree to equal the tree it read
+        would forbid applying its own findings without another round, and the
+        wave after the commit already repeats until clean. What the STAMP
+        requires is enforced where it is owned: _pass_covers binds the round,
+        the performance pass and the last pass to the committed candidate.
+        """
         receipt = _pass_receipts(root, todo, required_section)[0].get("round", (None, 0))[0]
         if receipt is None or not _receipt_complete(receipt) or not current_head:
             return False
-        return _dispatch_content_fresh(root, receipt["head"], current_head)[0]
+        head = receipt["head"]
+        if head == current_head:
+            return True
+        if not _git_is_ancestor(root, head, current_head):
+            return False
+        changed = _git_lines(root, "diff", "--no-renames", "--name-only", head, current_head)
+        if changed is None:
+            return False
+        return not _unread_by_final_pass(root, changed, f"{head}:", f"{current_head}:")
 
     def _entry_has_matching_impl_adv(todo: str, required_section: str) -> bool:
         if _round_covers_ship(todo, required_section):

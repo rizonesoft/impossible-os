@@ -645,13 +645,21 @@ def test_a_pass_earns_a_step_only_through_a_dispatcher_that_checks_it():
     `round`, which checks nothing and writes no receipt, counted as the mandatory review."""
     sys.path.insert(0, str(REPO / ".claude/hooks"))
     import skill_step_map as m
-    wrapper = "REVIEW_BASE=abc bash scripts/codex-dispatch.sh '[review-kind: round] todo/x.md section 1\nbody'"
+    prompt = "'[review-kind: round] todo/x.md section 1\nbody; with && shell | characters'"
+    wrapper = "REVIEW_BASE=abc bash scripts/codex-dispatch.sh " + prompt
     broker = "bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: completion] todo/x.md section 1'"
-    direct = "node /x/codex-companion.mjs adversarial-review '[review-kind: round] todo/x.md section 1'"
+    direct = "node /x/codex-companion.mjs adversarial-review " + prompt
     quoting = direct[:-1] + " as scripts/codex-dispatch.sh would'"
     assert m.match_step("implement-todo-section", "Bash", wrapper) == [13]
     assert m.match_step("review-todo-section", "Bash", wrapper) == [5]
     assert m.match_step("review-todo-section", "Bash", broker) == [8]
+    # Review finding: route and kind were matched apart, over the whole line. They belong to one command.
+    for cmd in ('bash "scripts/codex-dispatch.sh" ' + prompt, "REVIEW_BASE='abc' bash scripts/codex-dispatch.sh " + prompt,
+                "bash /home/x/scripts/codex-dispatch.sh " + prompt, "cd /x && bash scripts/codex-dispatch.sh " + prompt):
+        assert m.match_step("implement-todo-section", "Bash", cmd) == [13], cmd
+    for cmd in ("echo scripts/codex-dispatch.sh ; " + direct, "bash scripts/codex-dispatch.sh 'see [review-kind: round] x'",
+                "bash scripts/codex-dispatch.sh '[review-kind: round] todo/x.md"):
+        assert m.match_step("implement-todo-section", "Bash", cmd) == [], cmd
     for cmd in (direct, quoting):
         assert m.match_step("implement-todo-section", "Bash", cmd) == [], cmd
         assert m.match_step("review-todo-section", "Bash", cmd) == [], cmd

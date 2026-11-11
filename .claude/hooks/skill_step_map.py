@@ -301,8 +301,43 @@ MULTI_STEP_SKILLS = frozenset(SKILL_STEP_MAP.keys())
 # phase1_evidence_gate marker-rule mismatch).
 _SENTINEL_REVIEW_KIND_PREFIX = "__REVIEW_KIND__:"
 _SENTINEL_PASS_KIND_PREFIX = "__PASS_KIND__:"
-# The wrapper or the broker as a command word, not as text inside a prompt.
-_PASS_ROUTE_RE = re.compile(r"(?:^|[\s/;&|(])(?:review-broker-)?codex-dispatch\.sh(?=\s)")
+_PASS_ROUTES = ("codex-dispatch.sh", "review-broker-codex-dispatch.sh")
+_ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_MARKER_AT_START_RE = re.compile(r"^\[review-kind:\s*([a-zA-Z-]+)\]")
+
+
+def _pass_kinds_dispatched(command: str) -> set:
+    """The pass kinds a command sends through the wrapper or the broker.
+
+    Route and kind are read from the SAME simple command: its script word,
+    after any `NAME=value` words and a `bash` or `sh`, must be one of the two
+    dispatchers, and the kind is the marker that starts its first argument.
+    A dispatcher named in another command of the line, or inside a prompt, is
+    not a route for this one.
+    """
+    import shlex
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+    lexer.whitespace_split = True
+    try:
+        words = list(lexer)
+    except ValueError:
+        return set()
+    kinds, segment = set(), []
+    for word in words + [";"]:
+        if word and set(word) <= set(";&|"):
+            i = 0
+            while i < len(segment) and _ENV_ASSIGN_RE.match(segment[i]):
+                i += 1
+            if i < len(segment) and segment[i] in ("bash", "sh"):
+                i += 1
+            if i + 1 < len(segment) and segment[i].rsplit("/", 1)[-1] in _PASS_ROUTES:
+                m = _MARKER_AT_START_RE.match(segment[i + 1].lstrip("\n"))
+                if m:
+                    kinds.add(m.group(1).lower())
+            segment = []
+        else:
+            segment.append(word)
+    return kinds
 
 
 def bound_review_kinds(skill: str) -> List[str]:
@@ -334,17 +369,14 @@ def match_step(skill: str, tool_name: str, signature: str) -> List[int]:
     rules = SKILL_STEP_MAP.get(skill, [])
     matched = []
     detect_kind = None
+    pass_kinds = None
     for step_n, evidence_tool, pattern in rules:
         if evidence_tool != tool_name:
             continue
         if pattern.startswith(_SENTINEL_PASS_KIND_PREFIX):
-            if detect_kind is None:
-                from _review_kind import detect_review_kinds_from_cmd
-                detect_kind = detect_review_kinds_from_cmd(signature)
-            # The route is looked for before the first quote: a prompt that
-            # mentions the script's name is not a dispatch through it.
-            head = re.split(r"['\"]", signature, maxsplit=1)[0]
-            if pattern[len(_SENTINEL_PASS_KIND_PREFIX):] in detect_kind and _PASS_ROUTE_RE.search(head):
+            if pass_kinds is None:
+                pass_kinds = _pass_kinds_dispatched(signature)
+            if pattern[len(_SENTINEL_PASS_KIND_PREFIX):] in pass_kinds:
                 matched.append(step_n)
             continue
         if pattern.startswith(_SENTINEL_REVIEW_KIND_PREFIX):

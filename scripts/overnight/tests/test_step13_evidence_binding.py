@@ -187,6 +187,19 @@ def test_a_checked_round_for_the_section_carries_the_ship_commit():
         with tempfile.TemporaryDirectory() as t:
             ok, msg = _check(mod, _round_fixture(t, receipt=receipt, **kwargs))
             assert not ok and "[review-kind: round]" in msg, (receipt, kwargs, msg)
+    # Review finding: the drift check looked at kernel paths only, so a hook or a script committed after
+    # the round did not make it stale. A TODO or generated file committed after it does not.
+    for path, stale in ((".claude/hooks/x.py", True), ("scripts/x.sh", True), ("docs/x.md", True),
+                        ("todo/x.md", False), ("COUNT.md", False)):
+        with tempfile.TemporaryDirectory() as t:
+            d = _round_fixture(t)
+            (d / path).parent.mkdir(parents=True, exist_ok=True)
+            (d / path).write_text("later\n")
+            g = ["git", "-C", str(d)]
+            subprocess.run(g + ["add", "--", path], check=True)
+            subprocess.run(g + ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "later"], check=True)
+            ok, msg = _check(mod, d)
+            assert ok is not stale, (path, msg)
 
 
 if __name__ == "__main__":
