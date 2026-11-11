@@ -2295,37 +2295,52 @@ def _commit_target_root(cmd: str) -> Path | None:
     return Path(out) if out else None
 
 
-# A commit's committer date is set after its pre-commit hooks finish, so the
-# PostToolUse hooks see it seconds old. Anything older was not made by the call.
-COMMIT_LANDED_MAX_AGE_S = 120
+COMMIT_LANDED_DIR = "claude-commit-landed"
+_SESSION_ID_RE = re.compile(r"[A-Za-z0-9-]{8,64}")
 
 
-def commit_landed_root(cmd: str, now: float | None = None) -> str | None:
-    """The work tree `cmd` just committed to, or None when no commit landed.
+def commit_landed_root(session_id: str, consumer: str) -> str | None:
+    """The work tree this session's last Bash call committed to, or None.
 
     For the post-commit hooks. Live 2026-11-11: a commit made in the repair
     worktree ran the kernel suite in the PRIMARY tree, because the hooks tested
-    their own directory whenever the command looked like a commit and that
-    tree's HEAD happened to touch a source file. It rebuilt build/ under a live
-    run's smoke matrix twice. A bare `git -C <dir> commit` is judged on <dir>;
-    every other shape on the hook's own directory; and either way only when
-    that tree's HEAD is seconds old, so a commit made anywhere else, or a
-    refused one, starts nothing.
+    their own directory whenever the command looked like a commit. It rebuilt
+    build/ under a live run's smoke matrix twice.
+
+    Nothing is inferred from the command text or from a timestamp. git's own
+    post-commit hook (.githooks/post-commit) writes, for the session whose
+    shell ran the commit, the tree it landed in and a mark unique to that
+    commit. Each consumer acts once per mark, so a refused commit, a commit by
+    another session, and a commit in another tree each start nothing here.
     """
-    root = _commit_target_root(cmd) or _repo_root()
-    if root is None:
+    if not isinstance(session_id, str) or not _SESSION_ID_RE.fullmatch(session_id) \
+            or not re.fullmatch(r"[a-z-]{1,32}", consumer or ""):
         return None
     try:
-        stamp = subprocess.check_output(
-            ["git", "log", "-1", "--format=%ct", "HEAD"],
-            cwd=str(root), text=True, timeout=5, stderr=subprocess.DEVNULL,
+        common = subprocess.check_output(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            text=True, timeout=5, stderr=subprocess.DEVNULL,
         ).strip()
-        age = (time.time() if now is None else now) - int(stamp)
+        marker = Path(common) / COMMIT_LANDED_DIR / session_id
+        lines = marker.read_text().splitlines()
     except Exception:
         return None
-    if age < -COMMIT_LANDED_MAX_AGE_S or age > COMMIT_LANDED_MAX_AGE_S:
+    if len(lines) != 2 or not lines[0] or not lines[1]:
         return None
-    return str(root)
+    root, mark = lines
+    seen = marker.with_name(f"{session_id}.{consumer}")
+    try:
+        if seen.read_text() == mark:
+            return None
+    except OSError:
+        pass
+    if not os.path.isdir(root):
+        return None
+    try:
+        seen.write_text(mark)
+    except OSError:
+        return None   # a mark that cannot be kept would act on every later call
+    return root
 
 
 def _harness_main() -> int:

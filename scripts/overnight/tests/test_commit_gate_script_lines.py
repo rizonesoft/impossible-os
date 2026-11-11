@@ -107,36 +107,81 @@ def test_any_other_shape_keeps_the_gates_own_directory(tmp_path):
         assert gate._commit_target_root(cmd) is None, cmd
 
 
-def _commit(path, when):
+SESSION = "0a1b2c3d-test-session"
+
+
+def _git(path, *args, session=SESSION):
+    import os
     import subprocess
     env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT_COMMITTER_NAME": "t",
-           "GIT_COMMITTER_EMAIL": "t@example.invalid", "GIT_COMMITTER_DATE": f"@{when} +0000",
-           "PATH": __import__("os").environ["PATH"], "HOME": str(path)}
-    subprocess.run(["git", "-C", str(path), "-c", "core.hooksPath=/dev/null", "commit", "-q", "--allow-empty",
-                    "-m", "x"], check=True, timeout=30, env=env)
+           "GIT_COMMITTER_EMAIL": "t@example.invalid", "PATH": os.environ["PATH"], "HOME": str(path),
+           "SKIP_COUNT": "1"}
+    if session:
+        env["CLAUDE_CODE_SESSION_ID"] = session
+    return subprocess.run(["git", "-C", str(path), *args], capture_output=True, text=True, timeout=60, env=env)
 
 
-def test_a_post_commit_hook_acts_only_where_a_commit_just_landed(tmp_path, monkeypatch):
+def _trees(tmp_path):
+    """A primary tree and a linked worktree, both running the repository's real post-commit hook."""
+    here = pathlib.Path(_repo(tmp_path / "here"))
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    (hooks / "post-commit").write_text((HOOKS.parents[1] / ".githooks/post-commit").read_text())
+    (hooks / "post-commit").chmod(0o755)
+    (hooks / "pre-commit").write_text("#!/bin/sh\n[ ! -e refuse-commits ]\n")
+    (hooks / "pre-commit").chmod(0o755)
+    _git(here, "config", "core.hooksPath", str(hooks))
+    assert _git(here, "commit", "-q", "--allow-empty", "-m", "0").returncode == 0
+    other = tmp_path / "other"
+    assert _git(here, "worktree", "add", "-q", "--detach", str(other)).returncode == 0
+    return here, other.resolve()
+
+
+def test_a_post_commit_hook_acts_only_where_this_sessions_commit_landed(tmp_path, monkeypatch):
     """Live 2026-11-11: worktree commits ran the suite in the primary tree, under a live run's matrix."""
-    here, other = _repo(tmp_path / "here"), _repo(tmp_path / "other")
-    now = 1_800_000_000
-    _commit(pathlib.Path(here), now - 13 * 60)      # the primary tree: its HEAD is the run's, minutes old
-    _commit(pathlib.Path(other), now - 3)           # the worktree: the commit this call made
+    here, other = _trees(tmp_path)
+    monkeypatch.chdir(here)                       # a harness hook always runs in the primary tree
+    assert gate.commit_landed_root(SESSION, "smoketest") == str(here)      # the fixture's first commit
+    assert gate.commit_landed_root(SESSION, "smoketest") is None           # acted on once
+    # The commit goes to the worktree, with a message no shell-text parser reads: that tree is tested.
+    assert _git(other, "commit", "-q", "--allow-empty", "-m", "fix #123 $(x); y").returncode == 0
+    assert gate.commit_landed_root(SESSION, "smoketest") == str(other)
+    assert gate.commit_landed_root(SESSION, "smoketest-boot") == str(other), "each consumer has its own mark"
+    assert gate.commit_landed_root(SESSION, "smoketest") is None
+    # A refused commit lands nothing, however soon after the last one.
+    (other / "refuse-commits").write_text("")
+    assert _git(other, "commit", "-q", "--allow-empty", "-m", "refused").returncode != 0
+    assert gate.commit_landed_root(SESSION, "smoketest") is None
+    (other / "refuse-commits").unlink()
+    # Another session's commit, and one made outside any session, are not this session's.
+    assert _git(here, "commit", "-q", "--allow-empty", "-m", "the run", session="ffffffff-other").returncode == 0
+    assert _git(here, "commit", "-q", "--allow-empty", "-m", "a person", session=None).returncode == 0
+    assert gate.commit_landed_root(SESSION, "smoketest") is None
+    assert gate.commit_landed_root("ffffffff-other", "smoketest") == str(here)
+    # A commit followed by a long tail in the same call is still seen: nothing depends on its age.
+    assert _git(other, "commit", "-q", "--allow-empty", "-m", "then a long build").returncode == 0
+    import os
+    marker = pathlib.Path(_git(here, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()) \
+        / gate.COMMIT_LANDED_DIR / SESSION
+    os.utime(marker, (1, 1))
+    assert gate.commit_landed_root(SESSION, "smoketest") == str(other)
+
+
+def test_refusal_a_bad_session_id_or_marker_starts_nothing(tmp_path, monkeypatch):
+    here, _other = _trees(tmp_path)
     monkeypatch.chdir(here)
-    # The commit went to the other tree: that tree is the one tested, never this one.
-    assert gate.commit_landed_root(f"git -C {other} commit -q -F m.txt -- a.c", now=now) == other
-    # A shape whose target cannot be read is judged here, and here nothing landed.
-    assert gate.commit_landed_root(f"cd {other} && git commit -m x", now=now) is None
-    assert gate.commit_landed_root("git commit -m x", now=now) is None
-    # The control: a commit that did land here is acted on here.
-    _commit(pathlib.Path(here), now - 2)
-    assert gate.commit_landed_root("git commit -m x", now=now) == here
-    # A refused commit in the other tree leaves its old HEAD: nothing to test.
-    assert gate.commit_landed_root(f"git -C {other} commit -m x", now=now + 3600) is None
+    for bad in ("", "short", "../../etc/passwd", "a" * 65, None, 7):
+        assert gate.commit_landed_root(bad, "smoketest") is None, bad
+    assert gate.commit_landed_root(SESSION, "../x") is None
+    marker = pathlib.Path(_git(here, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()) \
+        / gate.COMMIT_LANDED_DIR / SESSION
+    for text in ("", "only-one-line\n", "/no/such/tree\nmark\n", "\nmark\n"):
+        marker.write_text(text)
+        assert gate.commit_landed_root(SESSION, "smoketest") is None, text
 
 
 def test_both_post_commit_hooks_ask_where_the_commit_landed():
-    for name in ("post_commit_smoketest.py", "post_commit_smoketest_boot.py"):
+    for name, consumer in (("post_commit_smoketest.py", "smoketest"), ("post_commit_smoketest_boot.py", "smoketest-boot")):
         text = (HOOKS / name).read_text()
-        assert "scg.commit_landed_root(cmd)" in text, name
+        assert f'scg.commit_landed_root(d.get("session_id") or "", "{consumer}")' in text, name
         assert '"rev-parse", "--show-toplevel"' not in text, name

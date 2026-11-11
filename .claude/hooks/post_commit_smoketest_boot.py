@@ -106,9 +106,10 @@ def main() -> int:
     if not is_commit:
         return 0
 
-    # The tree the commit landed in, and only if one landed there just now:
-    # a commit made in another worktree must not start a build in this one.
-    root = scg.commit_landed_root(cmd)
+    # The tree this session's commit landed in, as git's own post-commit hook
+    # recorded it: a commit made in another worktree must not start a build in
+    # this one, and a refused commit starts nothing.
+    root = scg.commit_landed_root(d.get("session_id") or "", "smoketest-boot")
     if root is None:
         return 0
 
