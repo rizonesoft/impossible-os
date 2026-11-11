@@ -712,8 +712,11 @@ if [ -z "$SA_BAD" ] || [ -z "$SA_OK" ] || [ -z "$SA_NEW" ] || [ -z "$SA_UNC" ] \
         || [ -z "$SA_UTF" ] || [ -z "$SA_SPC" ] || [ -z "$SA_LNK" ] || [ -z "$SA_TYP" ] || [ -z "$SA_MKW" ] || [ -z "$SA_LDR" ] || [ -z "$SA_HDR" ]; then
     t_fail "static-analysis gate fixtures could be created" "bad='$SA_BAD' ok='$SA_OK' new='$SA_NEW' unc='$SA_UNC'"
 else
+    # Both refusals are about the pushed commit, so they are made with no
+    # analyzer on the host: a runner without clang-tidy-19 or a build (the CI
+    # tooling job) must report the commit's defect, not its own missing tool.
     for _sa_case in "non-ASCII:$SA_UTF" "spaced:$SA_SPC"; do
-        SA_RN="$(bash "$SA_GATE" origin "${_sa_case#*:}" "$SA_HEAD" 2>&1)"; SA_RN_RC=$?
+        SA_RN="$(CLANG_TIDY=sa-gate-no-such-analyzer bash "$SA_GATE" origin "${_sa_case#*:}" "$SA_HEAD" 2>&1)"; SA_RN_RC=$?
         if [ "$SA_RN_RC" = "1" ] && grep -qF "unsupported source name" <<<"$SA_RN"; then
             t_pass "gate refuses a pushed source with a ${_sa_case%%:*} name instead of skipping it"
         else
@@ -721,7 +724,7 @@ else
         fi
     done
     for _sa_case in "include/sa_gate_fixture_link.h:$SA_LNK" "$SA_FILE:$SA_TYP"; do
-        SA_RL="$(bash "$SA_GATE" origin "${_sa_case#*:}" "$SA_HEAD" 2>&1)"; SA_RL_RC=$?
+        SA_RL="$(CLANG_TIDY=sa-gate-no-such-analyzer bash "$SA_GATE" origin "${_sa_case#*:}" "$SA_HEAD" 2>&1)"; SA_RL_RC=$?
         if [ "$SA_RL_RC" = "1" ] && grep -qF "tracked symlink in" <<<"$SA_RL" \
                 && grep -qF "refusing to analyse: ${_sa_case%%:*}" <<<"$SA_RL"; then
             t_pass "gate refuses a pushed tree with a tracked symlink (${_sa_case%%:*})"

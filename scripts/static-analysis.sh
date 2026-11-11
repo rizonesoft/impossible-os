@@ -31,8 +31,16 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 2
 
 TIDY="${CLANG_TIDY:-clang-tidy-19}"
-command -v "$TIDY" >/dev/null 2>&1 || {
-    echo "static-analysis: no $TIDY on PATH (bash scripts/setup.sh)" >&2; exit 2; }
+
+# The build cannot compile a source whose name needs quoting, and neither make
+# nor a diagnostic line carries such a name intact. Refused, not skipped.
+check_name() {
+    case "$1" in
+        src/*.c) case "$1" in *[!A-Za-z0-9_./+-]*)
+            printf 'static-analysis: unsupported source name (letters, digits and _ . / + - only): %q\n' "$1" >&2
+            exit 2 ;; esac ;;
+    esac
+}
 
 MODE="changed"; WITH_TESTS=0; NAMED=(); COMMIT=""; WANT_COMMIT=0
 for a in "$@"; do
@@ -50,6 +58,10 @@ done
 if [ -n "$COMMIT" ] && [ "$MODE" != "named" ]; then
     echo "static-analysis: --commit needs the sources to read from it" >&2; exit 2
 fi
+# What is wrong with the input is reported before what the host lacks: a named
+# source, and below a tracked symlink, is refused the same on every host, with
+# or without the analyzer and a build.
+for f in "${NAMED[@]}"; do check_name "$f"; done
 
 WORK="$REPO_ROOT"; SNAP=""; OUT=""; ERR=""
 cleanup() { rm -f "$OUT" "$ERR"; [ -z "$SNAP" ] || rm -rf "$SNAP"; }
@@ -67,6 +79,10 @@ if [ -n "$COMMIT" ]; then
         printf 'static-analysis: tracked symlink in %s, refusing to analyse: %s\n' "${OID:0:12}" "$LINKS" >&2
         exit 2
     fi
+fi
+command -v "$TIDY" >/dev/null 2>&1 || {
+    echo "static-analysis: no $TIDY on PATH (bash scripts/setup.sh)" >&2; exit 2; }
+if [ -n "$COMMIT" ]; then
     SNAP="$(mktemp -d -t static-analysis-snap.XXXXXX)" || exit 2
     SNAP="$(cd "$SNAP" && pwd -P)" || exit 2
     # The tracked tree of that commit: sources, headers, .clang-tidy and the
@@ -136,13 +152,7 @@ for f in "${IN_DB[@]}"; do DB_SET["$f"]=1; done
 FILES=(); UNCOMPILED=()
 for f in "${CANDIDATES[@]}"; do
     [ -n "$f" ] || continue
-    # The build cannot compile a source whose name needs quoting, and neither
-    # make nor a diagnostic line carries such a name intact. Refused, not skipped.
-    case "$f" in
-        src/*.c) case "$f" in *[!A-Za-z0-9_./+-]*)
-            printf 'static-analysis: unsupported source name (letters, digits and _ . / + - only): %q\n' "$f" >&2
-            exit 2 ;; esac ;;
-    esac
+    check_name "$f"
     if [ ! -f "$WORK/$f" ]; then
         # A changed-files run meets deleted sources; a source someone named must exist.
         [ "$MODE" = "changed" ] && continue
