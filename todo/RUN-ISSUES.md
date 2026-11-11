@@ -32,6 +32,10 @@ Open problems with the run itself: flow, gates, cost. One running file, replacin
 
 - [ ] `test-tooling.sh` install-hooks lifecycle failed once in a pre-push run: `pre-push status not ENABLED` with the sentinel present
   - 2026-11-08, push of `4cf186a49`: 1/1414 failed, while the sentinel check just before it passed. It passed in isolation and on the immediate retry; cause not found. If it recurs, capture `install-hooks.sh --status` output and the sentinel path inside the test.
+- [ ] CI goes red whenever the runner cannot reach the Ubuntu mirror, and no project code has run
+  - 2026-11-11 from 14:22 UTC: nine Build runs in a row failed in `Use GNU coreutils` with `Temporary failure resolving 'azure.archive.ubuntu.com'`, a re-run included; every job installs its toolchain with apt on each run. Fix by running the jobs in the pinned CI image (`CI_CONTAINER=1` already builds in it) so no job needs the mirror.
+- [ ] The first section reviewed as passes of the reviewer pin has not been watched end to end
+  - The skills switched on 2026-11-11 (`6b61f0726`). Settled when one section goes plan, wave, stamp in the run with no gate it cannot satisfy; fix what it trips on in `.claude/skills/three-pass-review.md` or the gate.
 
 ## Baselines
 
