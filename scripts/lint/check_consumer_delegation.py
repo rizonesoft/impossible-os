@@ -344,9 +344,9 @@ def _drive_consumer(_rr, _consumer):
     # too would not add coverage -- it would add a second, redundant way for
     # this prober to fail.
     #
-    # It would also be unsatisfiable as invoked: `test_build.sh:6463-6473` copies
-    # this script into a scratch tree and points STUB_LINT_CACHE at the REAL
-    # cache, so `REPO_ROOT` resolves to a directory with no `todo/` at all. With
+    # It would also be unsatisfiable as invoked: the consumer-delegation
+    # fixtures in `test_build_gate.sh` (Test 22) copy this script into a scratch
+    # tree and point STUB_LINT_CACHE at a cache of the live corpus, so `REPO_ROOT` resolves to a directory with no `todo/` at all. With
     # freshness on, all eight delegation fixtures refused at rc 3 against a
     # perfectly good cache. The remaining protections -- size ceiling before
     # allocation, single-descriptor read, MemoryError normalisation and full

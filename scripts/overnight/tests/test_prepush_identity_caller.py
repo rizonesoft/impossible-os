@@ -87,12 +87,19 @@ def test_nested_detail_names_the_failing_assertion_and_keeps_the_log():
 
 def test_nested_detail_is_wired_after_every_nested_t_fail_and_never_a_pass():
     src = TT.read_text()
-    for name in ("test_build", "test_query_bounds", "test_todo_fence",
+    for name in ("test_query_bounds", "test_todo_fence",
                  "test_alias_staleness", "test_format_md_tables"):
         assert f'_tt_nested_fail_detail "{name}"' in src, f"{name} failure has no detail call"
+    # The todo-graph build suite is four shards judged in one loop, so its
+    # detail call names the loop variable; every shard must be in that loop.
+    shards = re.search(r'^_TT_TB_SHARDS="([a-z_ ]+)"$', src, re.M)
+    assert shards, "_TT_TB_SHARDS list not found"
+    assert set(shards.group(1).split()) == {
+        "test_build", "test_build_gate", "test_build_sections_a", "test_build_sections_b"}
+    assert '_tt_nested_fail_detail "$_tt_tb" "$TG_OUT"' in src, "shard failure has no detail call"
     # Refusal direction: the helper is only ever reached on the t_fail path, so
     # it can add a diagnostic but never turn a failure into a pass.
-    for m in re.finditer(r'_tt_nested_fail_detail "[a-z_]+" "\$[A-Z_]+"', src):
+    for m in re.finditer(r'_tt_nested_fail_detail "(?:[a-z_]+|\$_tt_tb)" "\$[A-Z_]+"', src):
         preceding = src[max(0, m.start() - 400):m.start()]
         assert "t_fail" in preceding.rsplit("t_pass", 1)[-1], \
             "detail call not on a t_fail path"

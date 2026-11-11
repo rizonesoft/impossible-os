@@ -81,7 +81,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 | 💎  |  14   | Defect-finding tools: fuzzers, UBSan, static analysis    | §3, §7         |  [x]   |
 | 💎  |  15   | Static-analysis triage and changed-file gate             | §14            |  [x]   |
 | 💎  |  16   | Fuzz targets for the remaining untrusted parsers         | §14            |  [x]   |
-| ⭐  |  17   | Shard the todo-graph build suite                         | §7, §14        |  [ ]   |
+| ⭐  |  17   | Shard the todo-graph build suite                         | §7, §14        |  [x]   |
 | ⭐  |  18   | Implementation plan: clear cycles, drive the run from it | §7             |  [ ]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
@@ -555,12 +555,27 @@ One libFuzzer target and a checked-in seed corpus per parser, built from the ker
 
 `scripts/todo-graph/tests/test_build.sh` runs serially and alone bounds the tooling pack's nested block.
 
-- [ ] Split `scripts/todo-graph/tests/test_build.sh` into independent suites that `scripts/test-tooling.sh` starts together
-  - The groups that rewrite the real `build/todo-cache.json` stay in one file.
-- [ ] The shards together run every sub-test the single file ran, checked by comparing the sub-test names before and after
-- [ ] The pack's printed time split shows the nested block bounded by a shard, not by the whole suite
+- [x] Split the suite into four shards that `scripts/test-tooling.sh` starts together and judges one by one (`_TT_TB_SHARDS`)
+  - `test_build.sh` keeps Tests 1-15 and every block that writes or reads the real `build/todo-cache.json` (9aa5c3, 11c/11d, 14, 23r-w, 25, 28, 45), in their original order.
+  - `test_build_gate.sh` (Test 22) reads a cache it builds itself; `test_build_sections_a.sh` and `test_build_sections_b.sh` hold the fixture-only blocks.
+  - `test_build_lib.sh` holds the preamble and every name more than one shard uses (`VALIDATE_PY`, `QUERY_PY`, `SNAP`, `s23_tree`, `s23_tooldir`, `tb_finish`).
+  - A shard counts as passed only with exit 0 and its `[test_build:<shard>]` summary line, so a shard that stops early fails instead of reading as a smaller pass.
+- [x] The shards run the same 844 sub-tests: the multiset of names matches the single file's, apart from two renamed on purpose (7d, 12j)
+- [x] The pack's time split shows the nested block bounded by the gate shard: 389 s against 590 s, gate 362 s, core 152 s, sections_b 100 s, sections_a 21 s
+- [x] Sub-test 7d scans every `test_build*.sh` file and 7e reads its helpers from the lib; a raw subtraction placed in the gate shard fails 7d
+- [x] Sub-test 12j renders into `TODO_GRAPH_MD` under its temp dir, so a pack run no longer rewrites the committed `docs/infrastructure/todo-graph.md`
+  - The Makefile captures it literally at the top and the recipe reads it from the environment, so a name with quotes, a backtick or a `$` is a file name, never code (12j2).
+  - The `Makefile` joins the pack's todo-graph trigger.
 
 **Test checkpoint:** `bash scripts/test-tooling.sh --quiet` passes with the same sub-test total as before the split, and its nested block is shorter than the 2026-11-10 measurement of 590 s.
+
+> **Test runner:** `bash scripts/test-tooling.sh --quiet` (the four shards run inside it; each also runs alone, e.g. `bash scripts/todo-graph/tests/test_build_gate.sh`). Controls run 2026-11-11: a raw `$(( reading + 1 ))` in the gate shard fails 7d, and the committed Makefile leaves no file at `TODO_GRAPH_MD`, which fails 12j.
+> **Notes:**
+> - Shipped: `test_build_lib.sh` plus four shards (`test_build.sh` core, `test_build_gate.sh`, `test_build_sections_a.sh`, `test_build_sections_b.sh`), wired through `_TT_TB_SHARDS`.
+> - Integration: every shard is judged by exit 0 plus its `[test_build:<shard>]` summary; the core shard alone touches the real cache, and `test_query_bounds.sh` still runs after all four.
+> - Effect: the nested block fell from 590 s to 389 s and is now bounded by the gate shard (362 s); the inline tests (361 s) are the next pole of the pack.
+> - Canonical doc: [developer tooling stack](../../docs/infrastructure/developer-tooling-stack.md) (Health) and the header of `test_build_lib.sh`.
+> - Scope: Test 22 stays one shard because its fixtures share one seeded clone; the duplicate `run-debug` recipe make warns about is section 13's.
 
 ---
 

@@ -50,6 +50,9 @@ def test_triggers_cover_everything_each_suite_reads():
     must_run_todo_graph = [
         "scripts/todo-graph/build.py",
         "scripts/todo-graph/tests/test_build.sh",
+        "scripts/todo-graph/tests/test_build_gate.sh",
+        "scripts/todo-graph/tests/test_build_lib.sh",
+        "Makefile",                    # 12j runs todo-graph-render-mermaid
         "scripts/lint/check_bucket_emission.py",
         "scripts/lint.sh",
         "scripts/todo-reachability.py",

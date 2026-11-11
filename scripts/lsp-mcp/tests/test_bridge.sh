@@ -471,7 +471,7 @@ mono_ns() {
 # than fail a test. elapsed_ms validates BOTH readings and then subtracts, and
 # returns non-zero instead of printing, so its callers keep the refusal inside
 # an `if` condition where `set -e` cannot fire. Sub-test 7d in
-# scripts/todo-graph/tests/test_build.sh pins that this file has no raw
+# scripts/todo-graph/tests/test_build_sections_a.sh pins that this file has no raw
 # arithmetic on a mono_ns reading left anywhere.
 valid_ns() {
     case "${1-}" in

@@ -44,8 +44,9 @@ Environment:
       Opt-in SCOPED run. <file> holds repo-relative changed paths, one per
       line; nested suites whose surface none of them can reach are skipped
       and NAMED in the summary. Measured: a hooks-only change runs in ~320s
-      instead of ~790s, because test_build.sh (252s) and the lsp-mcp
-      harnesses (219s) cannot be affected by it.
+      instead of ~790s, because the todo-graph build suite (252s then; four
+      shards since 2026-11-11) and the lsp-mcp harnesses (219s) cannot be
+      affected by it.
       Absent, empty or unreadable => run EVERYTHING. CI passes nothing and so
       keeps full coverage; a scoping bug costs time, never coverage.
   TEST_TOOLING_SKIP_LSP_MCP=1
@@ -161,8 +162,9 @@ _tt_suite_needed() {
 # test_build.sh: its own tree and fixtures, the live todo/ corpus it primes a
 # cache from, the lint checks it drives, tools/ and docs/infrastructure/ files
 # it asserts against, .githooks/pre-push (section 30 commit-tick tests), and
-# this file (it is invoked from here).
-_TT_TRIG_TODO_GRAPH='^(scripts/todo-graph/|scripts/lint/|scripts/lint\.sh$|scripts/todo-reachability\.py$|scripts/setup-deps\.sh$|todo/|tools/|docs/infrastructure/|\.githooks/|scripts/test-tooling\.sh$)'
+# this file (it is invoked from here), and the Makefile (sub-test 12j runs its
+# todo-graph-render-mermaid target).
+_TT_TRIG_TODO_GRAPH='^(scripts/todo-graph/|scripts/lint/|scripts/lint\.sh$|scripts/todo-reachability\.py$|scripts/setup-deps\.sh$|todo/|tools/|docs/infrastructure/|\.githooks/|scripts/test-tooling\.sh$|Makefile$)'
 # test_bridge.sh: the bridge and its tests, plus this file.
 _TT_TRIG_LSP_MCP='^(scripts/lsp-mcp/|scripts/machines/|scripts/test-tooling\.sh$)'
 
@@ -280,7 +282,7 @@ t_fail() {
 }
 
 # mono_ns / valid_ns -- monotonic duration timing. See the long rationale at
-# scripts/todo-graph/tests/test_build.sh (same helpers, same reasoning): a
+# scripts/todo-graph/tests/test_build_lib.sh (same helpers, same reasoning): a
 # duration must NEVER be bracketed with `date +%s` / `+%s%N` / `+%s.%N`,
 # because those read CLOCK_REALTIME, WSL2 steps it under load, and a backward
 # step makes an elapsed reading NEGATIVE -- which silently SATISFIES every
@@ -305,7 +307,7 @@ mono_ns() {
 # 18 digits, so no difference of two accepted readings can wrap INT64 back into
 # a small non-negative value that PASSES an upper bound. elapsed_ms is the only
 # thing callers should use: it validates BOTH readings and then subtracts, so
-# the guard cannot be forgotten at a call site -- sub-test 7d in test_build.sh
+# the guard cannot be forgotten at a call site -- sub-test 7d in test_build_sections_a.sh
 # pins that property across this file too.
 valid_ns() {
     case "${1-}" in
@@ -1087,13 +1089,14 @@ _tt_nested_fail_detail() {
     # The lines that name the defect. Bounded so a cascade cannot flood the push
     # log; the file above carries everything.
     printf '%s\n' "$out" | grep -E '^[[:space:]]*\[FAIL\]|(^|[[:space:]])FAIL[: ]|rc=13[0-9]|Traceback|Error:' \
-        | grep -vE '^\[test_build\] |\[PASS\]' | head -20 | sed 's/^/    | /'
+        | grep -vE '^\[test_build(:[a-z_]+)?\] |\[PASS\]' | head -20 | sed 's/^/    | /'
 }
 
 # THE NESTED SUITES RUN SIDE BY SIDE (2026-11-10). They are child processes
 # that, with the one exception noted below, share nothing: each builds its own cache and fixtures under
-# its own temporary directory (test_build.sh is the only one that rewrites the
-# real build/todo-cache.json, and no other nested suite reads it). Run in
+# its own temporary directory (test_build.sh, the core shard of the todo-graph
+# build suite, is the only one that rewrites the real build/todo-cache.json,
+# and no other nested suite or shard reads it). Run in
 # sequence they were about 660 s of an 800 s pack, which is what pushed every
 # pack-touching push past the 10-minute tool wall. Started together here, the
 # block costs what its longest member does.
@@ -1163,8 +1166,15 @@ _tt_nested_collect() {
 }
 _tt_nested_x() { [ -x "$1" ] && _tt_nested_start "$2" "$1"; return 0; }
 _tt_nested_py() { [ -f "$1" ] && _tt_nested_start "$2" python3 "$1"; return 0; }
+# The todo-graph build suite is four shards (the suite-sharding work in the developer tooling stack roadmap). test_build.sh
+# is the one that writes the real build/todo-cache.json and holds every block
+# that reads it; the other three use fixtures or a cache they build themselves,
+# so all four start together and the block is bounded by the longest shard.
+_TT_TB_SHARDS="test_build test_build_gate test_build_sections_a test_build_sections_b"
 if _tt_would_run "$_TT_TRIG_TODO_GRAPH"; then
-    _tt_nested_x "$REPO_ROOT/scripts/todo-graph/tests/test_build.sh" test_build
+    for _tt_tb in $_TT_TB_SHARDS; do
+        _tt_nested_x "$REPO_ROOT/scripts/todo-graph/tests/$_tt_tb.sh" "$_tt_tb"
+    done
 fi
 if [ "${TEST_TOOLING_SKIP_LSP_MCP:-0}" != "1" ] && _tt_would_run "$_TT_TRIG_LSP_MCP"; then
     _tt_nested_x "$REPO_ROOT/scripts/lsp-mcp/tests/test_bridge.sh" lsp_bridge
@@ -1183,25 +1193,28 @@ _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_plan.py" todo_plan
 FUZZ_SECONDS="${TEST_TOOLING_FUZZ_SECONDS:-10}" _tt_nested_start fuzz bash "$REPO_ROOT/tools/fuzz/run.sh"
 
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[todo-graph]${NC}"
-TODO_GRAPH_TEST="$REPO_ROOT/scripts/todo-graph/tests/test_build.sh"
-if ! _tt_suite_needed "todo-graph (test_build.sh, ~252s)" "$_TT_TRIG_TODO_GRAPH"; then
-    t_pass "scripts/todo-graph/tests/test_build.sh SKIPPED -- no changed path can reach it (scoped run)"
-elif [ -x "$TODO_GRAPH_TEST" ]; then
-    # Capture the "[test_build] N/N passed, 0 failed" summary so the
-    # aggregate runner's message tracks the current sub-test count
-    # instead of drifting (prior hard-coded "37 sub-tests" went stale
-    # as -+ review passes added more sub-tests through 105+).
-    TG_OUT=$(_tt_nested_collect test_build "$TODO_GRAPH_TEST")
-    TG_RC=$?
-    TG_SUMMARY=$(printf '%s\n' "$TG_OUT" | grep -E '^\[test_build\] ' | tail -1)
-    if [ "$TG_RC" = "0" ]; then
-        t_pass "scripts/todo-graph/tests/test_build.sh PASS (${TG_SUMMARY:-summary unavailable})"
-    else
-        t_fail "scripts/todo-graph/tests/test_build.sh FAIL (${TG_SUMMARY:-run directly for details})"
-        _tt_nested_fail_detail "test_build" "$TG_OUT"
-    fi
+if ! _tt_suite_needed "todo-graph (test_build*.sh, 4 shards)" "$_TT_TRIG_TODO_GRAPH"; then
+    t_pass "scripts/todo-graph/tests/test_build*.sh SKIPPED -- no changed path can reach it (scoped run)"
 else
-    t_fail "scripts/todo-graph/tests/test_build.sh not found or not executable"
+    # One verdict per shard, judged by its exit status; the "[test_build:<shard>]
+    # N/N passed" line is shown beside it. Every shard is collected even after
+    # one fails, and a missing shard is a failure, not a smaller pass.
+    for _tt_tb in $_TT_TB_SHARDS; do
+        TODO_GRAPH_TEST="$REPO_ROOT/scripts/todo-graph/tests/$_tt_tb.sh"
+        if [ ! -x "$TODO_GRAPH_TEST" ]; then
+            t_fail "scripts/todo-graph/tests/$_tt_tb.sh not found or not executable"
+            continue
+        fi
+        TG_OUT=$(_tt_nested_collect "$_tt_tb" "$TODO_GRAPH_TEST")
+        TG_RC=$?
+        TG_SUMMARY=$(printf '%s\n' "$TG_OUT" | grep -E '^\[test_build(:[a-z_]+)?\] ' | tail -1)
+        if [ "$TG_RC" = "0" ] && [ -n "$TG_SUMMARY" ]; then
+            t_pass "scripts/todo-graph/tests/$_tt_tb.sh PASS ($TG_SUMMARY)"
+        else
+            t_fail "scripts/todo-graph/tests/$_tt_tb.sh FAIL (rc=$TG_RC, ${TG_SUMMARY:-no summary line: the shard stopped early})"
+            _tt_nested_fail_detail "$_tt_tb" "$TG_OUT"
+        fi
+    done
 fi
 
 # Markdown table formatter (scripts/tests/test_format_md_tables.py). WIRED

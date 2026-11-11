@@ -25,7 +25,7 @@ flowchart LR
 - **Launchers.** [`scripts/machines/`](../../scripts/machines/) holds one launcher per hypervisor and scenario (KVM, TCG, WHPX, VirtualBox, storage, filesystem, Secure Boot, bare metal), all taking the same `-ExtraArgs` surface.
 - **Hooks.** [`scripts/install-hooks.sh`](../../scripts/install-hooks.sh) points git at the tracked [`.githooks/`](../../.githooks/) directory: pre-commit lint and post-commit bookkeeping are always on, and the build and test pre-push gate is opt-in.
 - **Boot assertions.** [`tools/post16-manifest/generate.sh`](../../tools/post16-manifest/generate.sh) turns the `POST16_*` boot-phase codes into a manifest, so the smoke test asserts codes rather than fragile log strings.
-- **Health.** [`scripts/tooling-doctor.sh`](../../scripts/tooling-doctor.sh) is a read-only health check of the whole stack, and [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) is the regression pack that tests the scripts themselves.
+- **Health.** [`scripts/tooling-doctor.sh`](../../scripts/tooling-doctor.sh) is a read-only health check of the whole stack, and [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) is the regression pack that tests the scripts themselves. It starts its nested suites together, and the todo-graph build suite runs there as four shards (`scripts/todo-graph/tests/test_build*.sh`, sharing `test_build_lib.sh`), so that block costs what its longest shard does: 389 s on 2026-11-11, against 590 s when the suite was one file. Only the core shard, `test_build.sh`, touches the real `build/todo-cache.json`, and no test rewrites a committed file.
 
 ## What are its interfaces?
 
