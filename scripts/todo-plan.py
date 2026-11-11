@@ -20,9 +20,10 @@ terminal deferral), [/] shipped or in progress and still owed work or review,
 [ ] not started.
 
 Order rule, enforced by --check: a section never sits before a section it
-depends on while both are open (finished work constrains nothing). Members of
-a dependency cycle may sit in either order; --cycles lists them, and the fix
-is in the Depends On cells of the Implementation Order tables.
+depends on while both are open (finished work constrains nothing). A
+dependency cycle fails --check outright, because none of its members can ever
+be built; --cycles lists the edges, and the fix is in the Depends On cells of
+the Implementation Order tables.
 
 Exit: 0 ok, 1 the plan needs attention, 2 the graph could not be read.
 """
@@ -76,7 +77,7 @@ def row_title(raw: str) -> str:
 
 
 class Section:
-    __slots__ = ("ref", "path", "n", "title", "box", "deps", "wait", "unmet", "blocked", "domain", "sort")
+    __slots__ = ("ref", "path", "n", "title", "box", "deps", "wait", "unmet", "blocked", "domain", "sort", "label", "selfdep", "dead")
 
     def __init__(self, ref, path, n, title, box, domain, sort):
         self.ref, self.path, self.n, self.title, self.box = ref, path, n, title, box
@@ -85,6 +86,9 @@ class Section:
         self.wait = []      # the deps that constrain ORDER: both ends still open
         self.unmet = False  # an unsatisfied dependency of any kind, resolved or not
         self.blocked = False  # parked on a recoverable deferral: not buildable now
+        self.label = None   # the section a leading "§N" in the Deliverable names, if any
+        self.selfdep = False  # its own Depends On cell names it: never buildable
+        self.dead = []      # dependency tokens no work can satisfy (no such section, not a TODO)
 
 
 # --- the graph ---------------------------------------------------------------
@@ -156,6 +160,8 @@ def load_sections(root: Path) -> dict:
                 box = " "
             title = row_title(headings.get(n) or sec.get("deliverable") or "")
             s = Section(ref, path, n, title, box, domain, (domain, tok.zfill(4), n, i))
+            m_lab = LABEL_RE.match(sec.get("deliverable") or "")
+            s.label = int(m_lab.group(1)) if m_lab else None
             s.blocked = cls == "BLOCKED"
             sections[ref] = s
             by_key[key] = s
@@ -166,10 +172,14 @@ def load_sections(root: Path) -> dict:
         for edge in (deps.selfdeps.get(key) or []) + (deps.cross.get(key) or []):
             if not edge.get("satisfied"):
                 s.unmet = True
+                if edge.get("reason") in DEAD_REASONS:
+                    s.dead.append(edge.get("token") or "?")
             target = edge.get("target_path") or (s.path if edge in (deps.selfdeps.get(key) or []) else None)
             if target is None:
                 continue
             m = edge.get("target_section")
+            if target == s.path and m == s.n:
+                s.selfdep = True
             targets = by_file.get(target, []) if m is None else [by_key[(target, m)]] if (target, m) in by_key else []
             for t in targets:
                 if t.ref != s.ref and t.ref not in seen:
@@ -438,6 +448,64 @@ def order_problems(plan: Plan, sections: dict) -> list:
     return out
 
 
+LABEL_RE = re.compile(SIGN + r"\s?(\d+)\b")
+
+
+def label_problems(sections: dict) -> list:
+    """A row whose Deliverable opens with another section's "§N".
+
+    The graph takes a row's section number from its Section column, else from
+    Order. A table that keeps Order as a build position and writes the real
+    number into the Deliverable is read with every section shifted, so its
+    Depends On cells resolve to the wrong sections. Ten files had that shape
+    until 2026-11-11, and three of the plan's cycles were nothing else. The
+    label can be the wrong half too (IXFS advanced, the same day), so the
+    message names both headings and the reader decides which the row is."""
+    heading = {(s.path, s.n): s.title for s in sections.values()}
+    return [f"{s.path} Order {s.n} is labelled {SIGN}{s.label}: the graph reads it as {SIGN}{s.n} "
+            f"(\"{heading.get((s.path, s.n), '?')}\"), not {SIGN}{s.label} (\"{heading.get((s.path, s.label), '?')}\"). "
+            f"If the row describes {SIGN}{s.label}, add a Section column; if not, the label is wrong and goes"
+            for s in sorted(sections.values(), key=lambda s: s.sort) if s.label is not None and s.label != s.n]
+
+
+# Edge verdicts that no amount of work changes: the target section does not
+# exist, the target is a file the graph does not hold (a domain INDEX or a
+# reference table), or the resolver could not place the token at all.
+DEAD_REASONS = ("dangling", "non-node", "unresolved")
+
+
+def dead_problems(sections: dict) -> list:
+    """An open section with a dependency no work can satisfy.
+
+    The run starts a section only when its dependencies are done, so such an
+    edge parks it until nothing else is left."""
+    return [f"{s.ref} depends on {', '.join(sorted(set(s.dead)))}, which names no section that work can finish: "
+            "point the Depends On cell at the owning section, or write it as prose"
+            for s in sorted(sections.values(), key=lambda s: s.sort) if s.dead and s.box != "x"]
+
+
+def self_problems(sections: dict) -> list:
+    """An open section whose Depends On cell names the section itself.
+
+    The edge can never be satisfied, so the section is never buildable, and the
+    cycle check cannot see it (a self-edge is not kept in the graph). It is the
+    usual trace of a cell written as a build position: a cell naming position
+    three, left on the row that is now section three."""
+    return [f"{s.ref} depends on itself: its Depends On cell names {SIGN}{s.n} "
+            "(a build position written where a section number belongs?)"
+            for s in sorted(sections.values(), key=lambda s: s.sort) if s.selfdep and s.box != "x"]
+
+
+def cycle_problems(sections: dict) -> list:
+    """One problem per dependency cycle: its members can never be built, so --check fails."""
+    groups = {}
+    for ref, cid in cyclic_refs(sections).items():
+        groups.setdefault(cid, []).append(ref)
+    return [f"dependency cycle: {', '.join(sorted(refs, key=lambda r: sections[r].sort))} "
+            "(correct their Depends On cells; python3 scripts/todo-plan.py --cycles lists the edges)"
+            for refs in sorted(groups.values(), key=lambda g: min(sections[r].sort for r in g))]
+
+
 def cycle_report(sections: dict) -> list:
     """One line per open section on a dependency cycle, with the edges that close it."""
     cyc = cyclic_refs(sections)
@@ -586,7 +654,7 @@ def main(argv=None) -> int:
         if args.sync or args.check:
             new, notes = synced_text(text, sections)
             new = aligned(new)
-            problems = order_problems(Plan(new), sections)
+            problems = label_problems(sections) + self_problems(sections) + dead_problems(sections) + cycle_problems(sections) + order_problems(Plan(new), sections)
             if args.sync:
                 if new != text:
                     write_atomic(path, new, text)

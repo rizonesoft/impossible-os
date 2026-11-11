@@ -82,7 +82,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 | 💎  |  15   | Static-analysis triage and changed-file gate             | §14            |  [x]   |
 | 💎  |  16   | Fuzz targets for the remaining untrusted parsers         | §14            |  [x]   |
 | ⭐  |  17   | Shard the todo-graph build suite                         | §7, §14        |  [x]   |
-| ⭐  |  18   | Implementation plan: clear cycles, drive the run from it | §7             |  [ ]   |
+| ⭐  |  18   | Implementation plan: clear cycles, drive the run from it | §7             |  [x]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
 > ⭐ = exclusive work: Impossible OS can provide a single operator-facing developer workflow with self-diagnosis instead of scattered scripts and tribal knowledge.
@@ -587,13 +587,30 @@ One libFuzzer target and a checked-in seed corpus per parser, built from the ker
 
 [`todo/implementation-plan.md`](../implementation-plan.md) orders every section, kept current by `scripts/todo-plan.py` and held by lint Check 37 ([the implementation plan](../../docs/infrastructure/todo-metadata.md#the-implementation-plan)). Two things it does not do yet.
 
-- [ ] Correct the `Depends On` cells until `python3 scripts/todo-plan.py --cycles` prints nothing
-- [ ] `--check` fails on a dependency cycle once none remain
-- [ ] `/overnight-sequencer` picks its next file as the owner of the first row `python3 scripts/todo-plan.py --next` prints, then works that file as it does today
-  - The run stays in one file until its ready sections are done. It never hops between files row by row.
-- [ ] Within a file the run skips a section whose dependencies are not done, and returns to it when they are
+- [x] Correct the `Depends On` cells until `python3 scripts/todo-plan.py --cycles` prints nothing (it printed 65 sections)
+  - Ten tables kept Order as a build position and wrote the real `§N` in the Deliverable, so the graph read every section shifted; each now has a Section column.
+  - Cells still written as build positions translated to section numbers (scheduler, diagnostics, disk benchmark, paint, module system, core drivers, hypervisor).
+  - IXFS advanced: the `§N` labels were the wrong half (Order matched the bodies), so the labels went. Release QA and GitHub release keep Step as a position, so their Section cells now carry the real `§N` and their cells were translated.
+  - Stale section numbers corrected in the USB, input, touchpad, ACPI and block-storage tables; consumers listed as dependencies removed (ELF, email, release).
+  - Readiness now drives the run, so edges that resolved but named the wrong owner were corrected too: scheduler bandwidth control (local tick calibration), diagnostics (preemption count, SLAB), accessibility (animation, theme and DPI owners), explorer shell host (a reference table named as a dependency).
+  - Bare `TODO-NN` names in the domain-10 files (written under domain-09 numbering) and the ntdll and Win32 tables now name their owners; the registry pair names what each side waits for.
+  - Plan rows moved where the corrected edges required: 25 rows, each later only as far as its dependencies.
+- [x] `todo-plan.py --check` refuses every dependency shape that can never be built
+  - A cycle (`cycle_problems`), a self-dependency (`self_problems`), an edge no work can finish such as a missing section or an INDEX (`dead_problems`).
+  - A row labelled with another section (`label_problems`, naming both headings so the fixer can tell which half is wrong).
+- [x] `sequencer_triage.py --next` stays in the cursor file while it has a runnable section, then opens the owner of the first row `todo-plan.py --next` prints, then the first runnable file in domain order
+  - Runnable: shipped (`[x]` row) and owing only review, or buildable by the plan; an in-progress `[/]` row must be buildable. A planning fault (no tool, no plan, a graph error) means every open section is runnable, never none.
+  - Nothing runnable anywhere: the first open file, with `"waiting": true` in the `--next` answer; the run still works it.
+- [x] `--classify` marks an open section `waiting` when its dependencies are not done, and `advance-work.py` starts the first section that is not waiting
+  - `_next_section` picks NEEDS_WORK only, never a BLOCKED one; the summary counts BLOCKED as deferred (it counted a class the oracle never emits).
 
 **Test checkpoint:** `python3 scripts/todo-plan.py --cycles` prints nothing, `--check` exits 1 on a fixture cycle, and a run started on a clean tree opens the file that owns the first row `--next` prints.
+
+> **Test runner:** `python3 -m pytest -q scripts/tests/test_todo_plan.py` (cycle and label checks) and `python3 scripts/overnight/tests/test_triage_plan_order.py` (file and section order); both run in `scripts/test-tooling.sh` and the runner suite. Controls run 2026-11-11: the original advanced-sync table fails `--check`, and so does the scheduler's position-written cell; disabling the plan, the cursor rule, the runnable-file fallback, the shipped-is-runnable rule or the active-run test each fails a test.
+> **Notes:**
+> - Shipped: data fixes across 27 TODO files, `label_problems` and `cycle_problems` in `scripts/todo-plan.py`, `plan_ready`/`runnable_sections`/plan-aware `next_file` in `.claude/hooks/sequencer_triage.py`, `waiting` in `--classify` and `advance-work.py`.
+> - Integration: the run doctrine's Traversal Order now names the plan; Check 37 refuses a cycle or a mislabelled row at commit.
+> - Scope: dependency cells were corrected where they formed a cycle or named a stale number or file; cells that resolve to a real owner were left as written.
 
 ---
 

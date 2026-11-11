@@ -44,17 +44,17 @@ title: "TODO-07 -- SMP Phase 2"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                           | Depends On             | Status |
-| --- | :---: | ----------------------------------------------------- | ---------------------- | :----: |
-| 💎  |   1   | §8 `READ_ONCE`/`WRITE_ONCE` macros                    | --                     |  [ ]   |
-| 💎  |   2   | §1 SMP-safe atomics audit + `smp_mb/rmb/wmb` barriers | §8                     |  [ ]   |
-| 💎  |   3   | §9 CPU feature intersection at AP bringup             | SMP Phase 1            |  [ ]   |
-| 💎  |   4   | §2 TLB shootdown IPI (`tlb_shootdown`)                | §1, §8                 |  [ ]   |
-| 💎  |   5   | §3 Per-CPU run queues                                 | §1, §8, §9, TODO-06 §1 |  [ ]   |
-| 💎  |   6   | §5 Adaptive mutex spin-on-owner                       | §1, §3                 |  [ ]   |
-| ⭐  |   7   | §6 Per-CPU RCU upgrade                                | §1, §3                 |  [ ]   |
-| 💎  |   8   | §4 Work-stealing load balancer                        | §3, §6                 |  [ ]   |
-| 💎  |   9   | §7 CPU hotplug stub                                   | §3, §6, §4             |  [ ]   |
+| ⭐  | Order | Section | Deliverable                                        | Depends On             | Status |
+| --- | :---: | :-----: | -------------------------------------------------- | ---------------------- | :----: |
+| 💎  |   1   |   §8    | `READ_ONCE`/`WRITE_ONCE` macros                    | --                     |  [ ]   |
+| 💎  |   2   |   §1    | SMP-safe atomics audit + `smp_mb/rmb/wmb` barriers | §8                     |  [ ]   |
+| 💎  |   3   |   §9    | CPU feature intersection at AP bringup             | SMP Phase 1            |  [ ]   |
+| 💎  |   4   |   §2    | TLB shootdown IPI (`tlb_shootdown`)                | §1, §8                 |  [ ]   |
+| 💎  |   5   |   §3    | Per-CPU run queues                                 | §1, §8, §9, TODO-06 §1 |  [ ]   |
+| 💎  |   6   |   §5    | Adaptive mutex spin-on-owner                       | §1, §3                 |  [ ]   |
+| ⭐  |   7   |   §6    | Per-CPU RCU upgrade                                | §1, §3                 |  [ ]   |
+| 💎  |   8   |   §4    | Work-stealing load balancer                        | §3, §6                 |  [ ]   |
+| 💎  |   9   |   §7    | CPU hotplug stub                                   | §3, §6, §4             |  [ ]   |
 
 > 💎 = parity -- Windows NT and Linux both implement per-CPU run queues, TLB shootdowns, adaptive spinning, RCU, and hotplug; Impossible OS must match.
 > ⭐ = exclusive -- the per-CPU RCU design (quiescent-state IPI with `call_rcu` deferred callbacks) goes further than Impossible OS's current scheduler-disable approach, matching Linux's `Tree RCU` sophistication.

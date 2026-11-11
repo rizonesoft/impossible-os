@@ -69,10 +69,10 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 | Step | Section                                                   | 💎/⭐ | Dependency                                                            |
 | ---- | --------------------------------------------------------- | ----- | --------------------------------------------------------------------- |
-| 1    | ntdll.dll structure + TEB/PEB extensions                  | 💎    | `TODO-07 §7`; `D10T08 §4` stubs                                       |
+| 1    | ntdll.dll structure + TEB/PEB extensions                  | 💎    | `D10T07 §7`; `D10T08 §4` stubs                                        |
 | 2    | RtlHeap process heap allocator                            | 💎    | §1; `VirtualAlloc` (`D10T08 §5`)                                      |
-| 3    | LdrLoadDll PE DLL loader                                  | 💎    | §1; `TODO-07 §4 §5 §7`; `D10T08 §7`                                   |
-| 4    | Thread-local storage (TLS + PE TLS callbacks)             | 💎    | §1 TEB extensions; `TODO-07 §3` TLS data dir                          |
+| 3    | LdrLoadDll PE DLL loader                                  | 💎    | §1; `D10T07 §4 §5 §7`; `D10T08 §7`                                    |
+| 4    | Thread-local storage (TLS + PE TLS callbacks)             | 💎    | §1 TEB extensions; `D10T07 §3` TLS data dir                           |
 | 5    | Vectored exception handling (VEH)                         | 💎    | §1 TEB VEH chain; `D10T08 §5` VirtualAlloc; `D10T10 §3` SEH fallback  |
 | 6    | Process startup (CRT0)                                    | 💎    | §2 heap init; §3 Ldr init; §4 TLS init; §5 VEH                        |
 | 7    | User-mode libc shims (`user/lib/libc.lib`)                | 💎    | §6 CRT0; `kernel32.dll` stubs                                         |

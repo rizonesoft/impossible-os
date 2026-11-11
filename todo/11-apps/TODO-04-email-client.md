@@ -63,7 +63,7 @@ title: "TODO-04 -- Email Client"
 | 5    | Compose Window                        | 💎    | §4 complete, §8 contacts                                |
 | 6    | Account Management + Credential Store | ⭐    | CNG TODO-07 §1+§4, Registry                             |
 | 7    | Auto-Check + Notifications + Tray     | ⭐    | §2 complete, 09-desktop-shell/TODO-04 §6, TODO-09 §5+§6 |
-| 8    | Contacts Store                        | 💎    | VFS, §5 compose window                                  |
+| 8    | Contacts Store                        | 💎    | VFS                                                     |
 | 9    | Spam & Junk Filter                    | ⭐    | §4 complete, Registry                                   |
 
 ---

@@ -53,7 +53,19 @@ def test_cursor_disagreement_is_a_field_not_a_silent_choice():
     assert m._cursor_disagreement({}, todo, {"n": 59}) is None
 
 
+def test_the_packet_names_a_runnable_section_never_a_blocked_one():
+    m = _mod()
+    secs = [{"n": 1, "class": "NEEDS_WORK", "waiting": True}, {"n": 2, "class": "BLOCKED"},
+            {"n": 3, "class": "NEEDS_WORK"}, {"n": 4, "class": "DONE"}]
+    assert m._next_section(secs)["n"] == 3
+    # Every open section waits: the first is named so the stall is visible.
+    assert m._next_section(secs[:2])["n"] == 1
+    # Only blocked and done work left: no section.
+    assert m._next_section([secs[1], secs[3]]) is None
+
+
 if __name__ == "__main__":
     test_packet_is_well_formed()
     test_cursor_disagreement_is_a_field_not_a_silent_choice()
+    test_the_packet_names_a_runnable_section_never_a_blocked_one()
     print("PASS: advance-work")

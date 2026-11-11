@@ -43,11 +43,11 @@ title: "TODO-08 -- Core Built-in Driver Enhancements"
 | ⭐  | Order | Deliverable                                        | Depends On                        | Status |
 | --- | :---: | -------------------------------------------------- | --------------------------------- | :----: |
 | 💎  |   1   | §1 PCI enhanced config space -- ECAM via ACPI MCFG | ACPI MCFG parsed                  |  [ ]   |
-| 💎  |   2   | §2 PCIe capability chain scanner                   | §5 (ECAM for extended caps)       |  [ ]   |
-| 💎  |   3   | §3 MSI / MSI-X support                             | §4 (capability pointer lookup)    |  [ ]   |
+| 💎  |   2   | §2 PCIe capability chain scanner                   | §1 (ECAM for extended caps)       |  [ ]   |
+| 💎  |   3   | §3 MSI / MSI-X support                             | §2 (capability pointer lookup)    |  [ ]   |
 | 💎  |   4   | §4 HPET timer driver                               | ACPI HPET table, VMM map          |  [ ]   |
-| 💎  |   5   | §5 NVMe storage driver                             | §5, §1 (MSI vector), ACPI         |  [ ]   |
-| 💎  |   6   | §6 PCIe hot-plug                                   | §4 (Slot cap), §1 (MSI interrupt) |  [ ]   |
+| 💎  |   5   | §5 NVMe storage driver                             | §1, §3 (MSI vector), ACPI         |  [ ]   |
+| 💎  |   6   | §6 PCIe hot-plug                                   | §2 (Slot cap), §3 (MSI interrupt) |  [ ]   |
 
 > All six rows are 💎 parity: Windows and Linux both support NVMe, HPET, ECAM, capability scanning, MSI/MSI-X, and hot-plug. These are the minimum gaps between a working QEMU boot and real modern hardware.
 

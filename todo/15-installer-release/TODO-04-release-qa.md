@@ -61,16 +61,16 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 ## Implementation Order
 
-| Step | Section                                  | 💎/⭐ | Dependency                                                   |
-| ---- | ---------------------------------------- | ----- | ------------------------------------------------------------ |
-| 1    | Automated regression test suite          | ⭐    | `01-boot-platform/TODO-14` serial marker; `scripts/build.sh` |
-| 2    | QEMU validation (`qemu-test.sh`)         | ⭐    | §1 test suite; `build.sh run`                                |
-| 3    | Performance benchmarks                   | ⭐    | §2 QEMU; `01-boot-platform/TODO-14` boot stage timing        |
-| 4    | Crash analytics review (QA build + soak) | 💎    | `D03T10` KASAN flags; `D02T27` crash dumps                   |
-| 5    | Hyper-V certification                    | 💎    | §1; `D10T11 §8` OOBE; `TODO-04 §3` HV detect                 |
-| 6    | VirtualBox certification                 | 💎    | §1; §5 (parallel)                                            |
-| 7    | Real hardware checklist                  | 💎    | §4 soak pass; §5 §6 VM pass                                  |
-| 8    | Release readiness checklist              | ⭐    | §1–§7 all done; compat gate (D12T07 §12)                     |
+| Step | Section                                     | 💎/⭐ | Dependency                                                                                 |
+| ---- | ------------------------------------------- | ----- | ------------------------------------------------------------------------------------------ |
+| 1    | §1 Automated regression test suite          | ⭐    | `01-boot-platform/TODO-14` serial marker; `scripts/build.sh`                               |
+| 2    | §2 QEMU validation (`qemu-test.sh`)         | ⭐    | §1 test suite; `build.sh run`                                                              |
+| 3    | §6 Performance benchmarks                   | ⭐    | §2 QEMU; `01-boot-platform/TODO-14` boot stage timing                                      |
+| 4    | §8 Crash analytics review (QA build + soak) | 💎    | `D03T10` KASAN flags; `D02T27` crash dumps                                                 |
+| 5    | §3 Hyper-V certification                    | 💎    | §1; `D10T11 §8` OOBE; `04-drivers-hardware/TODO-09-hypervisor-abstraction.md §1` HV detect |
+| 6    | §4 VirtualBox certification                 | 💎    | §1; §3 (parallel)                                                                          |
+| 7    | §5 Real hardware checklist                  | 💎    | §8 soak pass; §3 §4 VM pass                                                                |
+| 8    | §7 Release readiness checklist              | ⭐    | §1–§6, §8 all done; compat gate (D12T07 §12)                                               |
 
 ---
 

@@ -40,16 +40,16 @@ title: "TODO-02 -- Memory Security Hardening"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                  | Depends On                                                     | Status |
-| --- | :---: | -------------------------------------------- | -------------------------------------------------------------- | :----: |
-| 💎  |   1   | §5 NX/DEP -- data mapping audit + enforce    | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §2, TODO-01 §2 |  [ ]   |
-| 💎  |   2   | §3 SMEP -- enable + test coverage            | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §1, §2         |  [~]   |
-| 💎  |   3   | §4 SMAP + `copy_from_user` / `copy_to_user`  | §3 (CR4 baseline), D02 T11 §3                                  |  [~]   |
-| ⭐  |   4   | §1 User-space ASLR (mandatory for all procs) | TODO-01 §3 demand paging                                       |  [ ]   |
-| 💎  |   5   | §2 KASLR -- bootloader offset + kernel reloc | --                                                             |  [~]   |
-| 💎  |   6   | §6 KPTI basic -- per-mode page table split   | §2, VMM page table work                                        |  [~]   |
-| 💎  |   7   | §7 CET shadow stack stub                     | §3, §4 (CR4 baseline)                                          |  [ ]   |
-| ⭐  |   8   | §8 Security layout report                    | §1, §2                                                         |  [ ]   |
+| ⭐  | Order | Section | Deliverable                               | Depends On                                                     | Status |
+| --- | :---: | :-----: | ----------------------------------------- | -------------------------------------------------------------- | :----: |
+| 💎  |   1   |   §5    | NX/DEP -- data mapping audit + enforce    | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §2, TODO-01 §2 |  [ ]   |
+| 💎  |   2   |   §3    | SMEP -- enable + test coverage            | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §1, §2         |  [~]   |
+| 💎  |   3   |   §4    | SMAP + `copy_from_user` / `copy_to_user`  | §3 (CR4 baseline), D02 T11 §3                                  |  [~]   |
+| ⭐  |   4   |   §1    | User-space ASLR (mandatory for all procs) | TODO-01 §3 demand paging                                       |  [ ]   |
+| 💎  |   5   |   §2    | KASLR -- bootloader offset + kernel reloc | --                                                             |  [~]   |
+| 💎  |   6   |   §6    | KPTI basic -- per-mode page table split   | §2, VMM page table work                                        |  [~]   |
+| 💎  |   7   |   §7    | CET shadow stack stub                     | §3, §4 (CR4 baseline)                                          |  [ ]   |
+| ⭐  |   8   |   §8    | Security layout report                    | §1, §2                                                         |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both implement SMEP/SMAP, KASLR, NX/DEP, KPTI, and CET; Impossible OS must match.
 > ⭐ = exclusive -- ASLR mandatory for every process (no per-binary opt-in) and the structured security layout report are not surfaced the same way on Windows or Linux.

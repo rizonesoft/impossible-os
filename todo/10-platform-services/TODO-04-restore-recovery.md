@@ -16,17 +16,17 @@ title: "TODO-04 -- System Restore, Recovery & Observability"
 ## Inputs
 
 - `include/kernel/klog.h` -- `klog()`, `klog_entry_t`, `klog_get_ring()`; add a security level (4 is `LOG_FATAL`) -- §1 event log
-- `include/kernel/zip.h` (TODO-04 §6) -- `zip_create/add_file/close/open/extract()` -- §2 restore ZIP, §4 rollback extract
-- `include/cng.h` (TODO-07 §1) -- `cng_sha256()` -- §2 rollback integrity verify, §7 kernel ELF verify
+- `include/kernel/zip.h` (09-desktop-shell/TODO-04 §4) -- `zip_create/add_file/close/open/extract()` -- §2 restore ZIP, §4 rollback extract
+- `include/cng.h` (09-desktop-shell/TODO-07 §1) -- `cng_sha256()` -- §2 rollback integrity verify, §7 kernel ELF verify
 - `include/registry.h` -- `RegSaveKey()`, `RegRestoreKey()` (return `ERROR_NOT_SUPPORTED` today), `HKLM\SYSTEM\Restore\*`, `HKLM\SYSTEM\FirstBoot` -- §1, §2, §7
 - `include/kernel/fs/vfs.h` -- `vfs_mkdir/rename/unlink/readdir/stat()` -- §1 restore dir, §2 file replace, §5 factory reset
 - `include/kernel/fs/gpt.h` -- `gpt_write_header()`, CRC recompute -- §6 startup repair
 - `include/kernel/uefi_runtime.h` -- `uefi_reset()`, NVRAM boot entry `uefi_set_variable()` -- §6 UEFI boot entry repair, §5 restart
 - `include/kernel/sched/task.h` -- `sched_task_add()` -- §8 log rotate task, §10 weekly cleanup task
 - `include/kernel/timer.h` -- `uptime()`, `system_get_ticks()` -- §1 restore point timestamps
-- `include/desktop/controls.h` (TODO-05) -- `CTRL_LISTVIEW`, `CTRL_TABSTRIP`, `dialog_confirm()`, `CTRL_PROGRESSBAR` -- §2 rstrui.cpl, §8 event viewer, §10 cleanup UI
-- `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §5 `rstrui.cpl`, §4 Event Viewer applet
-- `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §10 on-boot crash report prompt
+- `include/desktop/controls.h` (06-desktop-foundation/TODO-04) -- `CTRL_LISTVIEW`, `CTRL_TABSTRIP`, `dialog_confirm()`, `CTRL_PROGRESSBAR` -- §2 rstrui.cpl, §8 event viewer, §10 cleanup UI
+- `include/cpl.h` (09-desktop-shell/TODO-11 §1) -- `CPlApplet_t`, `NEWCPLINFO` -- §5 `rstrui.cpl`, §4 Event Viewer applet
+- `include/desktop/notification.h` (08-graphics-ui/TODO-11) -- `notify_send()` -- §10 on-boot crash report prompt
 - `include/desktop/wm.h` -- `wm_create_window()` -- §7 first-boot wizard, §9 crash report viewer
 - → XREF: `02-kernel-core/TODO-27` -- crash dump generation (registers, stack trace); §9 here adds on-boot prompt + formatted viewer on top
 - → XREF: `08-graphics-ui/TODO-13 §5` -- F8 boot-time menu and intercept live there; §7 here implements the recovery content behind it
@@ -51,15 +51,15 @@ title: "TODO-04 -- System Restore, Recovery & Observability"
 | ⭐  | Order | Deliverable                                                                                          | Depends On                                                                              | Status |
 | --- | :---: | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | :----: |
 | 💎  |   1   | §1 Event log -- `kevent_log()`, security events on `events.jsonl`, Event Viewer (13-tools-accessories)  | `klog_get_ring()` (exists); `vfs_write()`; `sched_task_add()` rotate task             |  [ ]   |
-| 💎  |   2   | §2 Restore point creation -- `restore_create/list/delete()`, ZIP archive, Registry CRUD, max-evict   | `zip_create/add_file()` (TODO-04); `registry_backup()` (02-kernel-core/TODO-14-registry-completion.md); `vfs_mkdir()`  |  [ ]   |
-| 💎  |   3   | §3 System rollback -- `restore_rollback()`, SHA-256 manifest verify, ZIP extract, hive restore       | §2; `cng_sha256()` (TODO-07); `zip_extract()` (TODO-04); `registry_restore()`         |  [ ]   |
-| 💎  |   4   | §4 `rstrui.cpl` -- calendar timeline, [Create], [Restore], [Delete]                                  | §2 + §3; `CTRL_LISTVIEW`; `include/cpl.h` (TODO-11)                                   |  [ ]   |
-| 💎  |   5   | §5 First-boot wizard -- 6-page OOBE; timezone/keyboard/user/wallpaper; `HKLM\SYSTEM\FirstBoot`       | `auth_create_user()` (TODO-06); `wallpaper_set()` (TODO-07); `update_check()` (TODO-03) |  [ ]   |
-| 💎  |   6   | §6 Crash dump viewer -- on-boot `notify_send()` prompt + formatted dump viewer window                 | D02T27 crash dump file; `vfs_stat()`; `wm_create_window()`; `notify_send()` (TODO-09)|  [ ]   |
+| 💎  |   2   | §2 Restore point creation -- `restore_create/list/delete()`, ZIP archive, Registry CRUD, max-evict   | `zip_create/add_file()` (09-desktop-shell/TODO-04 §4); `registry_backup()` (02-kernel-core/TODO-14-registry-completion.md §2); `vfs_mkdir()`  |  [ ]   |
+| 💎  |   3   | §3 System rollback -- `restore_rollback()`, SHA-256 manifest verify, ZIP extract, hive restore       | §2; `cng_sha256()` (09-desktop-shell/TODO-07 §1); `zip_extract()` (09-desktop-shell/TODO-04 §4); `registry_restore()`         |  [ ]   |
+| 💎  |   4   | §4 `rstrui.cpl` -- calendar timeline, [Create], [Restore], [Delete]                                  | §2 + §3; `CTRL_LISTVIEW`; `include/cpl.h` (09-desktop-shell/TODO-11 §1)                                   |  [ ]   |
+| 💎  |   5   | §5 First-boot wizard -- 6-page OOBE; timezone/keyboard/user/wallpaper; `HKLM\SYSTEM\FirstBoot`       | `auth_create_user()` (09-desktop-shell/TODO-06 §3); `wallpaper_set()` (08-graphics-ui/TODO-09 §3); `update_check()` (TODO-03 §1) |  [ ]   |
+| 💎  |   6   | §6 Crash dump viewer -- on-boot `notify_send()` prompt + formatted dump viewer window                 | D02T27 §4 crash dump format; `vfs_stat()`; `wm_create_window()`; `notify_send()` (08-graphics-ui/TODO-11 §5)|  [ ]   |
 | ⭐  |   7   | §7 F8 recovery environment -- text-mode boot menu; 15-command recovery shell                         | `08-graphics-ui/TODO-13 §5` F8 menu; boot framebuffer or serial output              |  [ ]   |
 | 💎  |   8   | §8 Factory reset -- typed-YES confirm; wipe user data + apps; recreate dir tree + FirstBoot flag     | §7 recovery env; `vfs_unlink/rmdir()`; `HKLM\SYSTEM\FirstBoot`                        |  [ ]   |
 | ⭐  |   9   | §9 Startup repair -- GPT CRC, UEFI boot entry rewrite, kernel ELF SHA-256, registry hive repair      | `gpt_write_header()`; `uefi_runtime.h`; `cng_sha256()`; §7 recovery env              |  [ ]   |
-| 💎  |  10   | §10 Disk cleanup -- scan Temp/Recycle/old-restore/cached-pkgs, space per category, weekly schedule   | §2 restore list; `trash_count/size()` (TODO-04); `sched_task_add()`                   |  [ ]   |
+| 💎  |  10   | §10 Disk cleanup -- scan Temp/Recycle/old-restore/cached-pkgs, space per category, weekly schedule   | §2 restore list; `trash_count/size()` (09-desktop-shell/TODO-04 §1); `sched_task_add()`                   |  [ ]   |
 
 ---
 
@@ -147,7 +147,7 @@ Runs when `HKLM\SYSTEM\FirstBoot=1`. 6 pages: Welcome, Timezone/Region, Keyboard
 **Files:** `src/apps/oobe/oobe.c` (new), `include/apps/oobe.h` (new)
 
 > [!NOTE]
-> **Trigger**: in kernel init (after full desktop init): `registry_get("HKLM\\SYSTEM\\FirstBoot")` == "1" → `oobe_start()`. Layout per `docs/design/shell.md#first-run-setup`: full-screen dark silk wallpaper (`silk-dark.jpg`) under acrylic, z_order=29000 (above taskbar); a centred 800 x 600 card (radius 8, `window_bg`, `THEME_ELEV_START_*`) with an illustration or icon on the left third and the step on the right: title in the title style (28/36), body in the body style, controls per `docs/design/controls.md`, accent Next bottom right and Back as a standard button. **Page 1 -- Welcome**: "Welcome to Impossible OS" title; "Let's get started." subtitle; [Next]. **Page 2 -- Timezone/Region**: `CTRL_DROPDOWN` timezone (UTC offsets, TZ names); `CTRL_DROPDOWN` region (locale formats); writes `HKLM\SYSTEM\TimeZone` + `HKLM\SYSTEM\Region`. **Page 3 -- Keyboard**: `CTRL_DROPDOWN` keyboard layout; test textbox below; writes `HKLM\SYSTEM\KeyboardLayout`. **Page 4 -- Create User**: username textbox; password + confirm password (masked); `auth_create_user(username, password, PRIV_ADMIN)` (TODO-06); writes `HKLM\SYSTEM\DefaultUser`. **Page 5 -- Wallpaper**: 4-6 wallpaper thumbnails (scan `C:\Impossible\Web\Wallpaper\`); click selects; `wallpaper_set(path)` preview. **Page 6 -- Updates**: "Check for updates automatically?" `CTRL_CHECKBOX` (default on); `update_check()` background if checked; [Finish]. On finish: `registry_set("HKLM\\SYSTEM\\FirstBoot", "0")`; `kevent_log(LOG_INFO, "oobe", "First-boot setup completed: user=%s", username)`.
+> **Trigger**: in kernel init (after full desktop init): `registry_get("HKLM\\SYSTEM\\FirstBoot")` == "1" → `oobe_start()`. Layout per `docs/design/shell.md#first-run-setup`: full-screen dark silk wallpaper (`silk-dark.jpg`) under acrylic, z_order=29000 (above taskbar); a centred 800 x 600 card (radius 8, `window_bg`, `THEME_ELEV_START_*`) with an illustration or icon on the left third and the step on the right: title in the title style (28/36), body in the body style, controls per `docs/design/controls.md`, accent Next bottom right and Back as a standard button. **Page 1 -- Welcome**: "Welcome to Impossible OS" title; "Let's get started." subtitle; [Next]. **Page 2 -- Timezone/Region**: `CTRL_DROPDOWN` timezone (UTC offsets, TZ names); `CTRL_DROPDOWN` region (locale formats); writes `HKLM\SYSTEM\TimeZone` + `HKLM\SYSTEM\Region`. **Page 3 -- Keyboard**: `CTRL_DROPDOWN` keyboard layout; test textbox below; writes `HKLM\SYSTEM\KeyboardLayout`. **Page 4 -- Create User**: username textbox; password + confirm password (masked); `auth_create_user(username, password, PRIV_ADMIN)` (09-desktop-shell/TODO-06); writes `HKLM\SYSTEM\DefaultUser`. **Page 5 -- Wallpaper**: 4-6 wallpaper thumbnails (scan `C:\Impossible\Web\Wallpaper\`); click selects; `wallpaper_set(path)` preview. **Page 6 -- Updates**: "Check for updates automatically?" `CTRL_CHECKBOX` (default on); `update_check()` background if checked; [Finish]. On finish: `registry_set("HKLM\\SYSTEM\\FirstBoot", "0")`; `kevent_log(LOG_INFO, "oobe", "First-boot setup completed: user=%s", username)`.
 
 - [ ] `void oobe_start(void)` -- check `HKLM\SYSTEM\FirstBoot`; create the full-screen wizard (silk wallpaper under acrylic + centred 800 x 600 card)
 - [ ] Page navigation: accent [Next] bottom right, standard [Back]; page index 0–5; render page by index
@@ -176,7 +176,7 @@ On next boot after crash (dump file present in `X:\Crash\`): `notify_send()` pro
 - [ ] "Unread" detection: `.dmp` mtime > `HKLM\SYSTEM\LastBoot` value; update `LastBoot` on each clean boot
 - [ ] `notify_send("Unexpected Shutdown", ..., NOTIFY_PERSISTENT)` with [View] + [Dismiss] action buttons
 - [ ] `crashview_open(const char *dmp_path)` -- `wm_create_window()`; `CTRL_TABSTRIP` 5 tabs
-- [ ] Summary tab: crash reason + timestamp + uptime; parse from dump header (TODO-16 format)
+- [ ] Summary tab: crash reason + timestamp + uptime; parse from dump header (02-kernel-core/TODO-27 format)
 - [ ] Registers tab: 2-column hex layout; `RAX`–`R15`, `RIP`, `RFLAGS`, `CR0/CR2/CR3`
 - [ ] Drivers tab: `CTRL_LISTVIEW` driver name + load address from dump
 - [ ] Memory tab: PMM stats (total/free/used pages) from dump
@@ -250,7 +250,7 @@ Rewrite UEFI boot entry, recompute GPT header CRCs, verify kernel ELF SHA-256 vs
 > [!NOTE]
 > Window: 480×400 px. **Categories** (checkbox + label + size):
 > - **Temp files** (`C:\Temp\*`): `vfs_readdir()` sum sizes
-> - **Recycle Bin** (`C:\Recycle\*`): `trash_size()` (TODO-04)
+> - **Recycle Bin** (`C:\Recycle\*`): `trash_size()` (09-desktop-shell/TODO-04)
 > - **Old restore points** (keep 3 newest): `restore_list()` → sum sizes of entries beyond 3
 > - **Cached update packages** (`C:\Temp\*.ipkg`): `vfs_readdir()` filter by `.ipkg`
 > - **Crash dumps** (`X:\Crash\Archived\*`): sum sizes (-> XREF: TODO-17 §8)
@@ -262,7 +262,7 @@ Rewrite UEFI boot entry, recompute GPT header CRCs, verify kernel ELF SHA-256 vs
 - [ ] Each returns `uint64_t bytes` -- sum for "Total" display
 - [ ] [Clean up system files] button: for each checked category → `cleanup_delete_category(cat)` → `CTRL_PROGRESSBAR`
 - [ ] `cleanup_delete_category(CLEANUP_TEMP)` → `vfs_unlink_tree("C:\\Temp\\")` + `vfs_mkdir("C:\\Temp\\")`
-- [ ] `cleanup_delete_category(CLEANUP_RECYCLE)` → `trash_empty()` (TODO-04)
+- [ ] `cleanup_delete_category(CLEANUP_RECYCLE)` → `trash_empty()` (09-desktop-shell/TODO-04)
 - [ ] `cleanup_delete_category(CLEANUP_RESTORE)` → `restore_list()` → delete all but 3 newest
 - [ ] Weekly `sched_task_add("disk_cleanup_auto", ...)` in kernel init
 - [ ] Commit: `"cleanup: disk cleanup utility -- Temp/Recycle/restore/pkg/crashdumps categories, weekly task"`

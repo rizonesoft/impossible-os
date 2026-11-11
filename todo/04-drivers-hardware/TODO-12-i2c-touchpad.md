@@ -42,11 +42,11 @@ title: "TODO-12 -- I2C/SMBus Bus & Precision Touchpad"
 | 💎  |   1   | §1 I2C/SMBus host controller driver                                       | PCI scan (existing), ACPI base                  |  [ ]   |
 | 💎  |   2   | §2 Synaptics PS/2 touchpad fallback                                       | §1 independent -- PS/2 path; `mouse.c` baseline |  [ ]   |
 | 💎  |   3   | §3 ACPI I2C device enumeration -- `i2c_device_db[]`                       | §1, ACPICA (TODO-03 §1)                         |  [ ]   |
-| 💎  |   4   | §4 HID-over-I2C transport -- descriptor fetch, `hoi2c_reset`, report read | §1, §5 (ACPI address + IRQ known)               |  [ ]   |
-| 💎  |   5   | §5 HID report descriptor parser -- `hid_field[]`, usage codes             | §6 (transport delivers raw descriptor bytes)    |  [ ]   |
-| 💎  |   6   | §6 Microsoft Precision Touchpad (PTP) multi-touch                         | §8 (fields parsed), §6 (reports arriving)       |  [ ]   |
-| 💎  |   7   | §7 ELAN and Goodix I2C touchpad quirks                                    | §5 (ACPI HID strings), §1 (I2C bus)             |  [ ]   |
-| ⭐  |   8   | §8 PTP gesture engine -- scroll, pinch, swipe, tap, palm rejection        | §7 (contact data flowing)                       |  [ ]   |
+| 💎  |   4   | §4 HID-over-I2C transport -- descriptor fetch, `hoi2c_reset`, report read | §1, §3 (ACPI address + IRQ known)               |  [ ]   |
+| 💎  |   5   | §5 HID report descriptor parser -- `hid_field[]`, usage codes             | §4 (transport delivers raw descriptor bytes)    |  [ ]   |
+| 💎  |   6   | §6 Microsoft Precision Touchpad (PTP) multi-touch                         | §5 (fields parsed), §4 (reports arriving)       |  [ ]   |
+| 💎  |   7   | §7 ELAN and Goodix I2C touchpad quirks                                    | §3 (ACPI HID strings), §1 (I2C bus)             |  [ ]   |
+| ⭐  |   8   | §8 PTP gesture engine -- scroll, pinch, swipe, tap, palm rejection        | §6 (contact data flowing)                       |  [ ]   |
 | 💎  |   9   | §9 Touchpad control panel (`mouse.cpl` Touchpad tab)                      | §2 (gestures configurable), Registry            |  [ ]   |
 | 💎  |  10   | §10 `xinput list` / `touchpad-info` shell command                         | §7 (PTP active), §3 (Synaptics active)          |  [ ]   |
 

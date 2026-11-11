@@ -43,7 +43,7 @@ title: "TODO-05 -- Kernel Module System"
 | 💎  |   1   | §1 Kernel symbol table + `EXPORT_SYMBOL`          | --                                               |  [ ]   |
 | 💎  |   2   | §2 Module build system (`src/modules/`, Makefile) | §1 (headers needed for modules)                  |  [ ]   |
 | 💎  |   3   | §3 Driver model + HAL vtables + PCI match         | §1 (exported HAL symbols), PCI scan              |  [ ]   |
-| 💎  |   4   | §4 ELF relocatable module loader                  | §1, §4 (test `.kmod` to load)                    |  [ ]   |
+| 💎  |   4   | §4 ELF relocatable module loader                  | §1, §2 (test `.kmod` to load)                    |  [ ]   |
 | 💎  |   5   | §5 Auto-load modules at boot                      | §3, VFS/IXFS mounted                             |  [ ]   |
 | 💎  |   6   | §6 RTL8139 as first loadable module               | §3, §4, §2, §5                                   |  [ ]   |
 | 💎  |   7   | Plug and Play syscalls wired to SSDT              | §1, 02-kernel-core/TODO-12-native-api-ssdt.md §4 |  [ ]   |

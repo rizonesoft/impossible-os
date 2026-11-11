@@ -32,10 +32,18 @@ review; the operator's bar is shipped AND reviewed.)
 
 File class = DONE if every section is DONE; else NEEDS_WORK.
 
-Blocked-vs-runnable on a NEEDS_WORK section is intentionally NOT decided here:
-the implement/review skills already defer blocked-with-XREF items, and the
-sequencer's fixpoint loop retries them on a later pass. Triage only has to
-avoid re-touching finished work and to pick a stable traversal order.
+Which file and section come next follows the implementation plan
+(scripts/todo-plan.py, todo/implementation-plan.md). A NEEDS_WORK section is
+RUNNABLE when it has shipped and owes only its review, or when the plan says it
+can be built now (every section it depends on is done). `--next` keeps the
+run's cursor file while that file has a runnable section, so the run finishes a
+file before it moves; then it opens the owner of the first plan row that can be
+built. `--classify` marks every other NEEDS_WORK section `waiting`, and the
+packet builder skips those. When the plan cannot answer (no tool, no plan, a
+graph error) every NEEDS_WORK section counts as runnable and `--next` falls back
+to traversal order: the run keeps working rather than stopping on a planning
+fault. Blocked-with-XREF items inside a section are still deferred by the
+implement/review skills and retried by the fixpoint loop.
 
 CLI
   sequencer_triage.py --next            -> next file to work (path + class), or DONE
@@ -50,6 +58,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 VERIFIED_RE = re.compile(r"^>\s*\*\*Verified:\*\*")
@@ -320,17 +329,108 @@ def traversal_order(cache):
     return sorted(impl, key=lambda e: (e.get("domain", ""), _todo_num(e["file_path"])))
 
 
-def next_file(cache, root):
-    """First NEEDS_WORK file in traversal order, else (None, BLOCKED) when
-    only recoverable-deferred files remain, else (None, None) at true DONE."""
+PLAN_TOOL = os.path.join("scripts", "todo-plan.py")
+RUN_STATE = os.path.join(".claude", "state", "sequencer-run.json")
+PLAN_TIMEOUT_S = 120
+
+
+def plan_ready(root):
+    """Set of (file, section) the implementation plan says can be built now,
+    or None when the plan cannot answer (the caller then treats every open
+    section as runnable, which is the pre-plan behaviour)."""
+    tool = os.path.join(root, PLAN_TOOL)
+    if not os.path.isfile(tool):
+        return None
+    try:
+        r = subprocess.run([sys.executable, tool, "--repo-root", root, "--next", "0", "--json"],
+                           capture_output=True, text=True, timeout=PLAN_TIMEOUT_S, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        rows = json.loads(r.stdout)
+    except ValueError:
+        return None
+    if not isinstance(rows, list):
+        return None
+    return [(row["file"], row["section"]) for row in rows
+            if isinstance(row, dict) and isinstance(row.get("file"), str) and isinstance(row.get("section"), int)]
+
+
+def runnable_sections(entry, per, ready):
+    """NEEDS_WORK sections of one file that the run may start now, in file order.
+
+    A shipped section ([x] in its Implementation Order row) owes only its
+    review, which no dependency can block, so it is always runnable. Any other
+    section, an in-progress [/] included (it can still hold implementation
+    work), is runnable only when the plan lists it as buildable. With no plan
+    answer, every NEEDS_WORK section is runnable."""
+    status = {s.get("n"): (s.get("status") or "").strip() for s in entry.get("sections") or []}
+    ready_here = None if ready is None else {n for f, n in ready if f == entry["file_path"]}
+    out = []
+    for n, cls in per:
+        if cls != NEEDS_WORK:
+            continue
+        if ready_here is None or status.get(n) == "x" or n in ready_here:
+            out.append(n)
+    return out
+
+
+def _cursor_file(root):
+    """The live run's cursor file, or None when no run is active."""
+    try:
+        with open(os.path.join(root, RUN_STATE), encoding="utf-8") as fh:
+            state = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(state, dict) or not state.get("active"):
+        return None
+    f = state.get("file")
+    return f if isinstance(f, str) else None
+
+
+def next_file(cache, root, ready="unset"):
+    """(entry, class) of the next file to work; see `pick_next`."""
+    entry, cls, _waiting = pick_next(cache, root, ready)
+    return entry, cls
+
+
+def pick_next(cache, root, ready="unset"):
+    """The next file to work, else (None, BLOCKED) when only recoverable-deferred
+    files remain, else (None, None) at true DONE. Returns (entry, class, waiting).
+
+    Order: the live cursor file while it has a runnable section; then the owner
+    of the first plan row that can be built; then the first file in traversal
+    order that has a runnable section (a shipped section owing review can sit
+    outside the plan's buildable rows when its own dependencies are open); then
+    the first NEEDS_WORK file, with `waiting` true because nothing in it can
+    start yet. That last case does not stop the run: a dependency named in
+    prose ("ACPI", "VFS") can stay unsatisfied for good, and the section's own
+    skills defer the items that are genuinely blocked. With no plan answer the
+    first NEEDS_WORK file is the answer and `waiting` is false."""
+    if ready == "unset":
+        ready = plan_ready(root)
     saw_blocked = False
+    needs = {}
+    order = []
     for entry in traversal_order(cache):
-        cls, _ = classify_file(entry, root)
+        cls, per = classify_file(entry, root)
         if cls == NEEDS_WORK:
-            return entry, cls
-        if cls == BLOCKED:
+            needs[entry["file_path"]] = (entry, per)
+            order.append(entry["file_path"])
+        elif cls == BLOCKED:
             saw_blocked = True
-    return None, (BLOCKED if saw_blocked else None)
+    if not order:
+        return None, (BLOCKED if saw_blocked else None), False
+    if ready is None:
+        return needs[order[0]][0], NEEDS_WORK, False
+    cur = _cursor_file(root)
+    candidates = ([cur] if cur in needs else []) + [f for f, _n in ready if f in needs] + order
+    for f in candidates:
+        if runnable_sections(*needs[f], ready):
+            return needs[f][0], NEEDS_WORK, False
+    return needs[order[0]][0], NEEDS_WORK, True
 
 
 def collect_blockers(cache, root):
@@ -372,7 +472,7 @@ def cmd_blockers(cache, root):
 
 
 def cmd_next(cache, root):
-    entry, cls = next_file(cache, root)
+    entry, cls, waiting = pick_next(cache, root)
     if entry is None:
         if cls == BLOCKED:
             print(json.dumps({"status": BLOCKED, "file": None,
@@ -387,6 +487,9 @@ def cmd_next(cache, root):
         "domain": entry["domain"],
         "lifecycle": lc,
         "stages_1_2_done": lc["validated"] and lc["gap_audited"],
+        # true: no open section anywhere can start (every one waits on an
+        # unfinished dependency); the run still works this file.
+        **({"waiting": True} if waiting else {}),
     }))
     return 0
 
@@ -400,12 +503,15 @@ def cmd_classify(cache, root, target):
     entry = match[0]
     cls, per = classify_file(entry, root)
     lc = file_lifecycle(os.path.join(root, entry["file_path"]), root, entry["file_path"])
+    runnable = set(runnable_sections(entry, per, plan_ready(root)))
     print(json.dumps({
         "file": entry["file_path"],
         "file_class": cls,
         "lifecycle": lc,
         "stages_1_2_done": lc["validated"] and lc["gap_audited"],
-        "sections": [{"n": n, "class": c} for n, c in per],
+        # `waiting`: still needs work, but a section it depends on is not done.
+        "sections": [{"n": n, "class": c, **({"waiting": True} if c == NEEDS_WORK and n not in runnable else {})}
+                     for n, c in per],
     }, indent=1))
     return 0
 

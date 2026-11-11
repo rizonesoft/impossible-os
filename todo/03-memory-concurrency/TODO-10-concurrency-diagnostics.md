@@ -41,18 +41,18 @@ title: "TODO-10 -- Concurrency & Memory Diagnostics"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                        | Depends On                             | Status |
-| --- | :---: | -------------------------------------------------- | -------------------------------------- | :----: |
-| 💎  |   1   | §1 Thread stack guard pages                        | `vmm_map_guard`, page fault handler    |  [ ]   |
-| 💎  |   2   | §2 Preemption count (debug assertions + extension) | TODO-08 §4 definition                  |  [ ]   |
-| 💎  |   3   | §3 Heap canaries + SLAB red zones                  | TODO-03 §1 SLAB layout                 |  [ ]   |
-| 💎  |   4   | §8 Named lock browser (`/sys/locks` + `locks` cmd) | lock registry hook in `mutex_init`     |  [ ]   |
-| 💎  |   5   | §4 Lockdep -- class graph + DFS cycle detection    | §2, §4 (`/sys/locks` for output)       |  [ ]   |
-| 💎  |   6   | §5 Kernel watchdog thread                          | §2, tick counter                       |  [ ]   |
-| 💎  |   7   | §9 KASAN -- 1:8 shadow memory + quarantine         | §3 (canary baseline), PMM hook         |  [ ]   |
-| 💎  |   8   | §6 KCSAN -- `__tsan_*` callbacks + shadow cells    | §2, §7 (shadow memory pattern)         |  [ ]   |
-| ⭐  |   9   | §7 Graphical deadlock visualisation                | §5 (lockdep cycle data), GFX subsystem |  [ ]   |
-| ⭐  |  10   | §10 `/sys/mem` unified memory observability        | §3, §7, §9 (stat sources)              |  [ ]   |
+| ⭐  | Order | Section | Deliverable                                     | Depends On                              | Status |
+| --- | :---: | :-----: | ----------------------------------------------- | --------------------------------------- | :----: |
+| 💎  |   1   |   §1    | Thread stack guard pages                        | `vmm_map_guard`, page fault handler     |  [ ]   |
+| 💎  |   2   |   §2    | Preemption count (debug assertions + extension) | TODO-08 §2 definition                   |  [ ]   |
+| 💎  |   3   |   §3    | Heap canaries + SLAB red zones                  | TODO-03 §1 heap, TODO-03 §4 SLAB layout |  [ ]   |
+| 💎  |   4   |   §8    | Named lock browser (`/sys/locks` + `locks` cmd) | lock registry hook in `mutex_init`      |  [ ]   |
+| 💎  |   5   |   §4    | Lockdep -- class graph + DFS cycle detection    | §2, §8 (`/sys/locks` for output)        |  [ ]   |
+| 💎  |   6   |   §5    | Kernel watchdog thread                          | §2, tick counter                        |  [ ]   |
+| 💎  |   7   |   §9    | KASAN -- 1:8 shadow memory + quarantine         | §3 (canary baseline), PMM hook          |  [ ]   |
+| 💎  |   8   |   §6    | KCSAN -- `__tsan_*` callbacks + shadow cells    | §2, §9 (shadow memory pattern)          |  [ ]   |
+| ⭐  |   9   |   §7    | Graphical deadlock visualisation                | §4 (lockdep cycle data), GFX subsystem  |  [ ]   |
+| ⭐  |  10   |   §10   | `/sys/mem` unified memory observability         | §3, §7, §9 (stat sources)               |  [ ]   |
 
 > 💎 = parity -- stack guards, preempt count, lockdep, watchdog, KASAN, KCSAN, and memory stats all have Linux equivalents; stack guards and named sync objects have Windows equivalents.
 > ⭐ = exclusive -- the graphical deadlock visualiser (framebuffer graph, not a text dump) and the unified `/sys/mem` cross-subsystem snapshot are differentiators over both Linux `dmesg` dumps and Windows bluescreen stop codes.
@@ -78,7 +78,7 @@ Map a `PROT_NONE` page immediately below each thread's stack at `thread_create()
 
 ## 2. Preemption Count -- Debug Extensions `[Opus]`
 
-Extend the `preempt_disable()` / `preempt_enable()` definition from `TODO-08 §4` with debug-mode assertions, a nesting depth cap, and documentation of the interaction with lockdep and KCSAN (both of which call `preempt_disable()` internally to prevent races during their shadow-memory checks).
+Extend the `preempt_disable()` / `preempt_enable()` definition from `TODO-08 §2` with debug-mode assertions, a nesting depth cap, and documentation of the interaction with lockdep and KCSAN (both of which call `preempt_disable()` internally to prevent races during their shadow-memory checks).
 
 **Files:** `include/kernel/sched/task.h`, `src/kernel/sched/sched.c`
 

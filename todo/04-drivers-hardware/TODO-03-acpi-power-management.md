@@ -50,7 +50,7 @@ title: "TODO-03 -- ACPI Full Subsystem & Power Management"
 | 💎  |   5   | §5 Battery status (`_BST`/`_BIF`)                      | §1                                                                                          |  [ ]   |
 | 💎  |   6   | §6 CPU frequency scaling (DVFS, `_PSS` P-states)       | §1, `cpufreq_register_driver` (`03-memory-concurrency/TODO-06-scheduler-enhancement.md §9`) |  [ ]   |
 | 💎  |   7   | §7 Power profiles -- Balanced/Performance/Power Saver  | §4, §6, §8                                                                                  |  [/]   |
-| 💎  |   8   | §8 ACPI C-states idle (`hlt`/`mwait`, `_CST`)          | §1, §7 (policy)                                                                             |  [ ]   |
+| 💎  |   8   | §8 ACPI C-states idle (`hlt`/`mwait`, `_CST`)          | §1                                                                                          |  [ ]   |
 | 💎  |   9   | §9 S3 suspend/resume -- trampoline, state save/restore | §1, §2 (flush), APIC re-init                                                                |  [ ]   |
 | 💎  |  10   | §10 Hibernate (S4) -- hiberfil.sys, bootloader restore | §9 (S3 path), filesystem                                                                    |  [ ]   |
 

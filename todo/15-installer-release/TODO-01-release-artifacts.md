@@ -70,7 +70,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 | 3    | USB-bootable image (`make-usb.sh` + `usb_creator.c`)      | 💎    | §2 compressed image                                      |
 | 4    | Bootable ISO (Joliet+Rock Ridge, versioned, `README.txt`) | 💎    | `D10T11 §1` base ISO; §6 version                         |
 | 5    | Code signing (`sign-release.sh`, bootloader verify)       | 💎    | `D09T07 §7` `codesign_sign/verify`; §1–§4 artifacts      |
-| 6    | Artifact manifest (`release-{version}.json`)              | ⭐    | §2–§5 all artifacts; `TODO-03` consumer                  |
+| 6    | Artifact manifest (`release-{version}.json`)              | ⭐    | §2–§5 all artifacts                                      |
 | 7    | VM image variants (VMDK/VHD/VHDX + `.ovf`)                | 💎    | §2 raw image; `qemu-img` installed                       |
 | 8    | Reproducible builds (`SOURCE_DATE_EPOCH`)                 | ⭐    | §1–§7 all scripts; `make verify-reproducible`            |
 | 9    | Third-party attribution shipped with artifacts            | 💎    | `CREDITS.md`; `src/libs/PROVENANCE.md`; §2 and §4 images |

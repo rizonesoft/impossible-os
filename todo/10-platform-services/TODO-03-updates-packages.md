@@ -20,12 +20,12 @@ title: "TODO-03 -- System Updates & IPKG Package Manager"
 - `include/kernel/zip.h` (`09-desktop-shell/TODO-04` §4) -- `zip_open/extract/list/close()` -- §3 update apply, §8 app install
 - `include/registry.h` -- `HKLM\SYSTEM\Version`, `HKLM\SOFTWARE\{name}\*`, `HKLM\SYSTEM\Update\*` -- §1 version compare, §6 install manifest, §8 app list
 - `include/kernel/fs/vfs.h` -- `vfs_mkdir/rename/unlink/stat()` -- §3 file replace, §6 install, §7 uninstall
-- `include/desktop/shortcut.h` (TODO-02 §4) -- `shortcut_create(path, target, icon)` -- §6 Start Menu + Desktop shortcuts
-- `include/desktop/file_assoc.h` (TODO-02 §1) -- `file_assoc_set(ext, prog_id, app_path)` -- §6 `.ipkg` association + app assoc
-- `include/desktop/controls.h` (TODO-05) -- `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR`, `CTRL_WIZARDPAGE`, `dialog_confirm()` -- §4 wuapp, §6 wizard, §8 appwiz
-- `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §4 `wuapp.cpl`, §8 `appwiz.cpl`
+- `include/desktop/shortcut.h` (09-desktop-shell/TODO-02 §4) -- `shortcut_create(path, target, icon)` -- §6 Start Menu + Desktop shortcuts
+- `include/desktop/file_assoc.h` (09-desktop-shell/TODO-02 §1) -- `file_assoc_set(ext, prog_id, app_path)` -- §6 `.ipkg` association + app assoc
+- `include/desktop/controls.h` (06-desktop-foundation/TODO-04) -- `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR`, `CTRL_WIZARDPAGE`, `dialog_confirm()` -- §4 wuapp, §6 wizard, §8 appwiz
+- `include/cpl.h` (09-desktop-shell/TODO-11 §1) -- `CPlApplet_t`, `NEWCPLINFO` -- §4 `wuapp.cpl`, §8 `appwiz.cpl`
 - `include/kernel/sched/task.h` -- `sched_task_add()` -- §4 boot auto-check background task
-- `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §4 "Update available" toast
+- `include/desktop/notification.h` (08-graphics-ui/TODO-11) -- `notify_send()` -- §4 "Update available" toast
 - → XREF: `07-networking/TODO-03` -- HTTPS client; §1 + §9 depend on HTTP GET being available
 - → XREF: `09-desktop-shell/TODO-07` -- `cng_sha256()`; §2 verify depends on crypto module
 - → XREF: `09-desktop-shell/TODO-04 §4` -- ZIP/IPKG extract; §3 and §8 depend on `zip_extract()`
@@ -44,17 +44,17 @@ title: "TODO-03 -- System Updates & IPKG Package Manager"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                         | Depends On                                                                              | Status |
-| --- | :---: | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | :----: |
-| ⭐  |   1   | §5 IPKG format spec -- `manifest.ini` + `install.ini` + `files/`; parser `ipkg_parse()`             | `zip_open/list()` (TODO-04); `registry_set()` (exists)                                |  [ ]   |
-| ⭐  |   2   | §9 IPKG build tool -- `tools/ipkg_create.c`; `gcc`-compiled; pack dir → `.ipkg`; manifest validate | §5 format spec; host `gcc`; `libzip` or miniz host build                               |  [ ]   |
-| 💎  |   3   | §1 Update check API -- `struct update_info`, `update_check()`, HTTP GET, Registry version compare   | `http_get()` (07-networking/TODO-03-http-tls.md §3); `HKLM\SYSTEM\Version`                                  |  [ ]   |
-| 💎  |   4   | §2 Update download & verify -- `update_download()` with progress; `update_verify()` SHA-256 gate   | §1; `cng_sha256()` (TODO-07); `http_get_to_file()`                                    |  [ ]   |
-| 💎  |   5   | §3 Update apply -- restore point, ZIP extract, file replace, version bump, restart prompt           | §2; `zip_extract()` (TODO-04); `restore_create()` (TODO-04 §2)                        |  [ ]   |
-| 💎  |   6   | §4 `wuapp.cpl` -- check/download/apply UI, auto-check boot task, update history, toast             | §1-3; `CTRL_PROGRESSBAR` (TODO-05); `notify_send()` (TODO-09); `sched_task_add()`    |  [ ]   |
-| 💎  |   7   | §6 App installer wizard -- IPKG parse, file extract, registry, shortcuts, file assoc, UAC           | §5; `zip_extract()` (TODO-04); `shortcut_create()` (TODO-02); `privilege_request()`  |  [ ]   |
-| 💎  |   8   | §7 App uninstaller -- reverse install, confirmation dialog, empty dir cleanup                       | §6 install metadata in registry; `dialog_confirm()`                                    |  [ ]   |
-| 💎  |   9   | §8 `appwiz.cpl` -- `CTRL_LISTVIEW` installed app list, search/filter, [Uninstall] button           | §7; `HKLM\SOFTWARE\*` keys; `CTRL_LISTVIEW` (TODO-05); `include/cpl.h` (TODO-11)     |  [ ]   |
+| ⭐  | Order | Section | Deliverable                                                                                         | Depends On                                                                              | Status |
+| --- | :---: | :---: | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | :----: |
+| ⭐  |   1   | §5 | IPKG format spec -- `manifest.ini` + `install.ini` + `files/`; parser `ipkg_parse()` | `zip_open/list()` (09-desktop-shell/TODO-04 §4); `registry_set()` (exists)                                |  [ ]   |
+| ⭐  |   2   | §9 | IPKG build tool -- `tools/ipkg_create.c`; `gcc`-compiled; pack dir → `.ipkg`; manifest validate | §5 format spec; host `gcc`; `libzip` or miniz host build                               |  [ ]   |
+| 💎  |   3   | §1 | Update check API -- `struct update_info`, `update_check()`, HTTP GET, Registry version compare | `http_get()` over HTTPS (07-networking/TODO-03-http-tls.md §7); `HKLM\SYSTEM\Version`                                  |  [ ]   |
+| 💎  |   4   | §2 | Update download & verify -- `update_download()` with progress; `update_verify()` SHA-256 gate | §1; `cng_sha256()` (09-desktop-shell/TODO-07 §1); `http_get_to_file()`                                    |  [ ]   |
+| 💎  |   5   | §3 | Update apply -- restore point, ZIP extract, file replace, version bump, restart prompt | §2; `zip_extract()` (09-desktop-shell/TODO-04 §4); `restore_create()` (10-platform-services/TODO-04 §2)                        |  [ ]   |
+| 💎  |   6   | §4 | `wuapp.cpl` -- check/download/apply UI, auto-check boot task, update history, toast | §1-3; `CTRL_PROGRESSBAR` (08-graphics-ui/TODO-05 §4); `notify_send()` (08-graphics-ui/TODO-11 §5); `sched_task_add()`    |  [ ]   |
+| 💎  |   7   | §6 | App installer wizard -- IPKG parse, file extract, registry, shortcuts, file assoc, UAC | §5; `zip_extract()` (09-desktop-shell/TODO-04 §4); `shortcut_create()` (09-desktop-shell/TODO-02 §4); `privilege_request()`  |  [ ]   |
+| 💎  |   8   | §7 | App uninstaller -- reverse install, confirmation dialog, empty dir cleanup | §6 install metadata in registry; `dialog_confirm()`                                    |  [ ]   |
+| 💎  |   9   | §8 | `appwiz.cpl` -- `CTRL_LISTVIEW` installed app list, search/filter, [Uninstall] button | §7; `HKLM\SOFTWARE\*` keys; `CTRL_LISTVIEW` (08-graphics-ui/TODO-06 §1); `include/cpl.h` (09-desktop-shell/TODO-11 §1)     |  [ ]   |
 
 ---
 

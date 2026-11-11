@@ -189,15 +189,53 @@ def test_resolve_reads_a_pasted_row():
         assert run(root, "--resolve", f"D07 T01 {S}1").returncode == 1
 
 
-def test_a_cycle_is_listed_and_does_not_fail_the_check():
+def test_a_cycle_is_listed_and_fails_the_check():
     with tempfile.TemporaryDirectory() as d:
         root = make_repo(d, beta_rows=[(1, "Base", S + "2", " "), (2, "Top", S + "1", " ")])
         assert run(root, "--seed").returncode == 0
-        assert run(root, "--check").returncode == 0
+        r = run(root, "--check")
+        assert r.returncode == 1 and f"dependency cycle: D01 T01 {S}1, D01 T01 {S}2" in r.stderr, r.stderr
         r = run(root, "--cycles")
         assert r.returncode == 0 and len(r.stdout.splitlines()) == 2, r.stdout
         # Neither member of the cycle can be built until the tables are corrected.
         assert f"D01 T01 {S}" not in run(root, "--next").stdout
+        # Breaking the cycle in the table clears the check.
+        beta = root / "todo" / "01-beta" / "TODO-01-beta.md"
+        beta.write_text(beta.read_text().replace(f"| 1 | Base | {S}2 |", "| 1 | Base | -- |"))
+        assert run(root, "--sync").returncode == 0
+        r = run(root, "--check")
+        assert r.returncode == 0, r.stderr
+
+
+def test_a_row_labelled_with_another_section_fails_the_check():
+    # Order 1 describes section 2: without a Section column the graph reads
+    # Order as the section number, so every "Depends On" cell naming either
+    # section resolves to the wrong one.
+    with tempfile.TemporaryDirectory() as d:
+        root = make_repo(d, beta_rows=[(1, S + "2 Top", "--", " "), (2, S + "1 Base", "--", " ")])
+        assert run(root, "--seed").returncode == 0
+        r = run(root, "--check")
+        assert r.returncode == 1 and f"todo/01-beta/TODO-01-beta.md Order 1 is labelled {S}2" in r.stderr, r.stderr
+        # A matching label is fine.
+        root2 = make_repo(d + "/ok", beta_rows=[(1, S + "1 Base", "--", " "), (2, S + "2 Top", S + "1", " ")])
+        assert run(root2, "--seed").returncode == 0
+        assert run(root2, "--check").returncode == 0, run(root2, "--check").stderr
+
+
+def test_a_section_that_depends_on_itself_fails_the_check():
+    with tempfile.TemporaryDirectory() as d:
+        root = make_repo(d, beta_rows=[(1, S + "1 Base", "--", " "), (2, S + "2 Top", S + "2", " ")])
+        assert run(root, "--seed").returncode == 0
+        r = run(root, "--check")
+        assert r.returncode == 1 and "depends on itself" in r.stderr, r.stderr
+
+
+def test_a_dependency_on_a_missing_section_fails_the_check():
+    with tempfile.TemporaryDirectory() as d:
+        root = make_repo(d, beta_rows=[(1, S + "1 Base", "--", " "), (2, S + "2 Top", S + "9", " ")])
+        assert run(root, "--seed").returncode == 0
+        r = run(root, "--check")
+        assert r.returncode == 1 and "names no section that work can finish" in r.stderr, r.stderr
 
 
 def test_an_edge_between_two_cycles_is_still_held():
@@ -209,7 +247,8 @@ def test_an_edge_between_two_cycles_is_still_held():
         assert run(root, "--seed").returncode == 0
         lines = rows(root)
         assert index_of(lines, f"D01 T01 {S}3") < index_of(lines, f"D01 T01 {S}1"), lines
-        assert run(root, "--check").returncode == 0
+        r = run(root, "--check")
+        assert "sits before" not in r.stderr and r.stderr.count("dependency cycle:") == 2, r.stderr
         plan = root / PLAN
         text = plan.read_text().split("\n")
         a = next(i for i, ln in enumerate(text) if f"`D01 T01 {S}1`" in ln)

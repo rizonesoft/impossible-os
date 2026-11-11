@@ -70,7 +70,7 @@ title: "TODO-14 -- Registry System Completion"
 | 💎  |   1   | Access rights, API limits, FILETIME & RegFlushKey | TODO-05 §2,§3, TODO-08 §1 |  [/]   |
 | 💎  |   2   | Advanced key ops (copy, rename, save, volatile)   | §1                        |  [/]   |
 | 💎  |   3   | Change notifications (core + exclusive extras)    | §2                        |  [/]   |
-| 💎  |   4   | Nt/Zw registry syscalls & pointer validation      | §1, TODO-12 §14, §15      |  [ ]   |
+| 💎  |   4   | Nt/Zw registry syscalls & pointer validation      | §1, TODO-12 §14           |  [ ]   |
 | 💎  |   5   | advapi32.dll compat (A/W, HKCR, error map)        | §4                        |  [ ]   |
 | 💎  |   6   | Registry virtualization & .reg import/export      | §5                        |  [ ]   |
 | 💎  |   7   | `regedit` shell tool                              | §4                        |  [/]   |

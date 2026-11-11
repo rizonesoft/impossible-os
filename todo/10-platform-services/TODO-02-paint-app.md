@@ -20,9 +20,9 @@ title: "TODO-02 -- Paint App & Image Tools"
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous/pmm_free_contiguous()` -- §1 canvas alloc, §4 undo snapshots, §2 flood-fill BFS stack
 - `include/font_mgr.h` -- `ttf_draw_string(FONT_UI, size)` -- §2 text tool
 - `include/desktop/wm.h` -- `wm_create_window()`, `WM_MOUSE_*`, `WM_KEYDOWN` -- §1 window + events
-- `include/desktop/controls.h` (TODO-05) -- `CTRL_MENUBAR`, `CTRL_STATUSBAR`, `CTRL_SCROLLBAR` -- §1 layout
-- `include/desktop/dialogs.h` (TODO-05) -- `dialog_file_open/save()`, `dialog_input()`, `dialog_color()` -- §5 file dialogs, §2 color picker
-- `include/desktop/clipboard.h` (TODO-01) -- `clipboard_set/get(CLIP_IMAGE)` -- §6 copy/paste region
+- `include/desktop/controls.h` (06-desktop-foundation/TODO-04) -- `CTRL_MENUBAR`, `CTRL_STATUSBAR`, `CTRL_SCROLLBAR` -- §1 layout
+- `include/desktop/dialogs.h` (08-graphics-ui/TODO-06) -- `dialog_file_open/save()`, `dialog_input()`, `dialog_color()` -- §5 file dialogs, §2 color picker
+- `include/desktop/clipboard.h` (09-desktop-shell/TODO-01) -- `clipboard_set/get(CLIP_IMAGE)` -- §6 copy/paste region
 - → XREF: `08-graphics-ui/TODO-05` -- dialog APIs (`dialog_file_open`, `dialog_input`, `dialog_color`); §5 and §2 depend on those
 - → XREF: `09-desktop-shell/TODO-01` -- `CLIP_IMAGE` format in clipboard; §6 selection copy/paste depends on that
 - → XREF: `09-desktop-shell/TODO-02 §1` -- file association `.png/.bmp/.jpg` → Paint; register default editor app
@@ -39,15 +39,15 @@ title: "TODO-02 -- Paint App & Image Tools"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                   | Depends On                                                                          | Status |
-| --- | :---: | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 Canvas & viewport -- `struct paint`, PMM canvas, tool panel, palette bar, scrollbars       | `gfx_surface_create()` (exists); `pmm_alloc_contiguous()`; `CTRL_MENUBAR/STATUSBAR` |  [ ]   |
-| 💎  |   2   | §3 Color system -- 20 swatches, fg/bg squares, right-click bg, swap, `dialog_color()` stretch | `gfx_fill_rect/put_pixel()` (exist); `dialog_color()` (TODO-05 forward dep)         |  [ ]   |
-| 💎  |   3   | §2 Drawing tools -- Pencil, Brush, Eraser, Line, Rect, Ellipse, Fill BFS, Text                | §1 canvas; §2 color; `gfx_draw_line/fill_circle/fill_rect()` (exist)                |  [ ]   |
-| ⭐  |   4   | §4 Undo/Redo -- 32-level PMM snapshot ring; Ctrl+Z/Y; region vs full-canvas                   | §3 tools (stroke begin event); `pmm_alloc_contiguous()`                             |  [ ]   |
-| 💎  |   5   | §5 File operations -- New/Open/Save/Save As; `image_load`; bmp/png format picker              | `image_load/save_bmp/save_png()` (exist); `dialog_file_open/save/input()` (TODO-05) |  [ ]   |
-| 💎  |   6   | §6 Selection tool (stretch) -- dotted rect, Ctrl+C/V/X/Delete, move, `CLIP_IMAGE`             | §1 canvas; `clipboard_set/get(CLIP_IMAGE)` (TODO-01); `dialog_color()` bg fill      |  [ ]   |
-| 💎  |   7   | §7 Zoom & resize (stretch) -- mouse-wheel zoom 25–800%, Image→Resize, Image→Crop              | §1 viewport; `image_scale()` (exists); `dialog_input()` for dimensions              |  [ ]   |
+| ⭐  | Order | Section | Deliverable                                                                                | Depends On                                                                                            | Status |
+| --- | :---: | :-----: | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   |   §1    | Canvas & viewport -- `struct paint`, PMM canvas, tool panel, palette bar, scrollbars       | `gfx_surface_create()` (exists); `pmm_alloc_contiguous()`; `CTRL_MENUBAR/STATUSBAR`                   |  [ ]   |
+| 💎  |   2   |   §3    | Color system -- 20 swatches, fg/bg squares, right-click bg, swap, `dialog_color()` stretch | `gfx_fill_rect/put_pixel()` (exist); `dialog_color()` (08-graphics-ui/TODO-06 §8)                     |  [ ]   |
+| 💎  |   3   |   §2    | Drawing tools -- Pencil, Brush, Eraser, Line, Rect, Ellipse, Fill BFS, Text                | §1 canvas; §3 color; `gfx_draw_line/fill_circle/fill_rect()` (exist)                                  |  [ ]   |
+| ⭐  |   4   |   §4    | Undo/Redo -- 32-level PMM snapshot ring; Ctrl+Z/Y; region vs full-canvas                   | §2 tools (stroke begin event); `pmm_alloc_contiguous()`                                               |  [ ]   |
+| 💎  |   5   |   §5    | File operations -- New/Open/Save/Save As; `image_load`; bmp/png format picker              | `image_load/save_bmp/save_png()` (exist); `dialog_file_open/save/input()` (08-graphics-ui/TODO-06 §8) |  [ ]   |
+| 💎  |   6   |   §6    | Selection tool (stretch) -- dotted rect, Ctrl+C/V/X/Delete, move, `CLIP_IMAGE`             | §1 canvas; `clipboard_set/get(CLIP_IMAGE)` (09-desktop-shell/TODO-01 §5); `dialog_color()` bg fill    |  [ ]   |
+| 💎  |   7   |   §7    | Zoom & resize (stretch) -- mouse-wheel zoom 25–800%, Image→Resize, Image→Crop              | §1 viewport; `image_scale()` (exists); `dialog_input()` for dimensions                                |  [ ]   |
 
 ---
 
@@ -97,7 +97,7 @@ Pencil (Bresenham), Brush (circle stamps), Eraser (bg color), Line (rubber-band)
 **Files:** `src/apps/paint/colors.c` (new)
 
 > [!NOTE]
-> **Preset palette** (20 colors): black, white, red, green, blue, yellow, cyan, magenta, orange, purple, pink, brown, gray (4 shades), + 4 spare accent slots -- define as `uint32_t g_palette[20]` constant array. **Swatch strip**: drawn in bottom palette bar, 40×24 px each, border on hover. **fg/bg indicator**: two overlapping 28×28 px squares in bottom-left of palette area; bg square at (+4,+4) offset; fg on top; click either square → `dialog_color()` (TODO-05 forward dep) to set custom. **Left-click swatch**: `p->fg_color = g_palette[idx]`; update fg square. **Right-click swatch**: `p->bg_color = g_palette[idx]`; update bg square. **Swap button**: ↔ icon (16×16) between the two squares; click → swap `fg_color` and `bg_color`. Status bar shows selected color as small swatch + hex value.
+> **Preset palette** (20 colors): black, white, red, green, blue, yellow, cyan, magenta, orange, purple, pink, brown, gray (4 shades), + 4 spare accent slots -- define as `uint32_t g_palette[20]` constant array. **Swatch strip**: drawn in bottom palette bar, 40×24 px each, border on hover. **fg/bg indicator**: two overlapping 28×28 px squares in bottom-left of palette area; bg square at (+4,+4) offset; fg on top; click either square → `dialog_color()` (08-graphics-ui/TODO-06 §8) to set custom. **Left-click swatch**: `p->fg_color = g_palette[idx]`; update fg square. **Right-click swatch**: `p->bg_color = g_palette[idx]`; update bg square. **Swap button**: ↔ icon (16×16) between the two squares; click → swap `fg_color` and `bg_color`. Status bar shows selected color as small swatch + hex value.
 
 - [ ] `uint32_t g_paint_palette[20]` -- 20 preset ARGB colors (black, white, primaries, secondaries, grays)
 - [ ] `void paint_render_palette_bar(paint_t *p, gfx_surface_t *s)` -- 20 swatches + fg/bg indicator + swap btn

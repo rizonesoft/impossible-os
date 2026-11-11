@@ -67,7 +67,7 @@ at link time. `lsmod`/`insmod`/`rmmod`/`modprobe` shell commands work. The GOT/P
 | 3    | Kernel Module Loader                      | ⭐    | §1 §2; `vmm_map_page`; `vfs_read`      |
 | 4    | Kernel Symbol Export (`EXPORT_SYMBOL`)    | ⭐    | §3; linker script `__ksymtab` section  |
 | 5    | `dlopen` / `dlsym` for Linux Compat       | 💎    | §1 §6; `D10T10 §11` prerequisite       |
-| 6    | GOT / PLT Lazy Binding                    | 💎    | §1 relocation engine; §5 consumer      |
+| 6    | GOT / PLT Lazy Binding                    | 💎    | §1 relocation engine                   |
 | 7    | Module Hot-swap (Stretch)                 | ⭐    | §3 stable; clean `exit_fn` protocol    |
 | 8    | `lsmod` / `insmod` / `rmmod` / `modprobe` | 💎    | §3 §4                                  |
 

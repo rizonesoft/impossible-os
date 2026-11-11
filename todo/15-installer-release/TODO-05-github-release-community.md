@@ -63,16 +63,16 @@ outsiders can track progress without reading 100+ TODO files.
 
 ## Implementation Order
 
-| Step | Section                                         | 💎/⭐ | Dependency                                            |
-| ---- | ----------------------------------------------- | ----- | ----------------------------------------------------- |
-| 1    | Contribution guide overhaul (`CONTRIBUTING.md`) | 💎    | `scripts/build.sh`; existing file                     |
-| 2    | Issue & PR templates (`.github/`)               | ⭐    | §1; existing templates                                |
-| 3    | Changelog discipline (`CHANGELOG.md`)           | 💎    | `gen-changelog.sh` (TODO-03 §3)                       |
-| 4    | GitHub release workflow (`create-release.sh`)   | 💎    | `TODO-01 §5` signing; `D15T03 §2 §3`; SDK `D12T06 §8` |
-| 5    | README overhaul                                 | ⭐    | §4 (download links); desktop screenshot               |
-| 6    | Project website (`docs/website/`)               | ⭐    | §5 content; §4 release links                          |
-| 7    | Community channels (Discussions + Discord)      | 💎    | §6 live; §4 release announcements webhook             |
-| 8    | Roadmap publication + GitHub Milestones sync    | ⭐    | §7; domain `INDEX.md` files                           |
+| Step | Section                                            | 💎/⭐ | Dependency                                            |
+| ---- | -------------------------------------------------- | ----- | ----------------------------------------------------- |
+| 1    | §3 Contribution guide overhaul (`CONTRIBUTING.md`) | 💎    | `scripts/build.sh`; existing file                     |
+| 2    | §4 Issue & PR templates (`.github/`)               | ⭐    | §3; existing templates                                |
+| 3    | §2 Changelog discipline (`CHANGELOG.md`)           | 💎    | `gen-changelog.sh` (TODO-03 §3)                       |
+| 4    | §1 GitHub release workflow (`create-release.sh`)   | 💎    | `TODO-01 §5` signing; `D15T03 §2 §3`; SDK `D12T06 §8` |
+| 5    | §5 README overhaul                                 | ⭐    | §1 (download links); desktop screenshot               |
+| 6    | §6 Project website (`docs/website/`)               | ⭐    | §5 content; §1 release links                          |
+| 7    | §7 Community channels (Discussions + Discord)      | 💎    | §6 live; §1 release announcements webhook             |
+| 8    | §8 Roadmap publication + GitHub Milestones sync    | ⭐    | §7; domain `INDEX.md` files                           |
 
 ---
 

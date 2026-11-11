@@ -37,10 +37,10 @@ title: "TODO-11 -- Input System Enhancement"
 | --- | :---: | ---------------------------------------------------------------- | -------------------------------------- | :----: |
 | 💎  |   1   | §1 Keyboard layout system (`kbd_layout_t`, `kbd_set_layout`)     | keyboard.c baseline                    |  [ ]   |
 | 💎  |   2   | §2 Built-in layouts -- en-US, en-GB, de-DE, fr-FR, es-ES, Dvorak | §6                                     |  [ ]   |
-| 💎  |   3   | §3 UTF-8 / Unicode codepoint output                              | §6 (layout tables emit codepoints)     |  [ ]   |
+| 💎  |   3   | §3 UTF-8 / Unicode codepoint output                              | §1, §2 (layout tables emit codepoints) |  [ ]   |
 | 💎  |   4   | §4 Dead key compose                                              | §6, §5                                 |  [ ]   |
 | 💎  |   5   | §5 PS/2 packet resync -- sync-bit validation                     | mouse.c baseline                       |  [ ]   |
-| 💎  |   6   | §6 Intellimouse scroll wheel (ID 3)                              | §3 (stable packet parser)              |  [ ]   |
+| 💎  |   6   | §6 Intellimouse scroll wheel (ID 3)                              | §5 (stable packet parser)              |  [ ]   |
 | 💎  |   7   | §7 Explorer 5-button extension (ID 4)                            | §6 (scroll already done)               |  [ ]   |
 | 💎  |   8   | §8 Mouse acceleration + sensitivity                              | §3, §6, §7 (final packet layout known) |  [ ]   |
 | 💎  |   9   | §9 Raw input grab API (`WM_INPUT`, syscalls)                     | §8 (acceleration skip for raw mode)    |  [ ]   |

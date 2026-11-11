@@ -22,9 +22,9 @@ title: "TODO-06 -- Accessibility Features"
 - `include/gfx.h` -- `gfx_blit()`, `gfx_fill_rect()`, `gfx_put_pixel()` -- §5 magnifier zoom blit
 - `include/registry.h` -- `HKLM\SYSTEM\Accessibility\*`, `HKCU\Software\Impossible\Display\ScaleFactor` -- §1-8 all Registry keys
 - `include/kernel/timer.h` -- `system_get_ticks()` -- §3 sticky key timing, §5 magnifier follow rate
-- `include/desktop/controls.h` (TODO-05) -- `CTRL_SLIDER`, `CTRL_CHECKBOX`, `CTRL_DROPDOWN` -- §8 ease.cpl
-- `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §8 ease.cpl
-- `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §3 sticky keys audio + visual cue
+- `include/desktop/controls.h` (06-desktop-foundation/TODO-04) -- `CTRL_SLIDER`, `CTRL_CHECKBOX`, `CTRL_DROPDOWN` -- §8 ease.cpl
+- `include/cpl.h` (09-desktop-shell/TODO-11 §1) -- `CPlApplet_t`, `NEWCPLINFO` -- §8 ease.cpl
+- `include/desktop/notification.h` (08-graphics-ui/TODO-11) -- `notify_send()` -- §3 sticky keys audio + visual cue
 - → XREF: `08-graphics-ui/TODO-03-theme-system.md §8, §9` -- theme system (`theme_reload()`, `WM_THEME_CHANGED`, `THEME_FLUENT_HIGH_CONTRAST`); §1 depends on that
 - → XREF: `08-graphics-ui/TODO-09` -- DPI scale factor + `WM_DPI_CHANGED` broadcast; §2 depends on that
 - → XREF: `08-graphics-ui/TODO-04-animation-engine.md` -- animation engine (`anim_set_enabled()`); §7 reduced motion depends on that
@@ -44,16 +44,16 @@ title: "TODO-06 -- Accessibility Features"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                          | Depends On                                                                                   | Status |
-| --- | :---: | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §7 Reduced motion -- `HKLM\SYSTEM\Accessibility\ReducedMotion`; `anim_set_enabled(0)` gate          | `anim_set_enabled()` (08-graphics-ui); `registry_set/get()`                                 |  [ ]   |
-| 💎  |   2   | §1 High contrast -- `THEME_FLUENT_HIGH_CONTRAST` preset; `accessibility_set_high_contrast()`; Registry      | `theme_reload(THEME_FLUENT_HIGH_CONTRAST)` + `WM_THEME_CHANGED` (08-graphics-ui theme)            |  [ ]   |
-| 💎  |   3   | §2 Large text/DPI -- `accessibility_set_dpi(pct)` scale override; `WM_DPI_CHANGED` broadcast        | `WM_DPI_CHANGED` + DPI scale infrastructure (08-graphics-ui DPI TODO)                      |  [ ]   |
-| 💎  |   4   | §3 Sticky keys -- 5× Shift detection; modifier latch; tray indicator; `HKLM\SYSTEM\Accessibility\StickyKeys` | keyboard modifier hook in `keyboard.h`; tray area (TODO-07)                       |  [ ]   |
-| 💎  |   5   | §4 Large cursor -- `cursor_set_size(px)` 32/48/64/96; color options; Registry                        | `cursor_image_t` (exists); cursor loader (TODO-02 file assoc / cursor theme)               |  [ ]   |
-| ⭐  |   6   | §5 Screen magnifier -- `Win+Plus/Minus` zoom 2×–8×; compositor `gfx_blit` zoom overlay; cursor track | `fb_get_backbuffer()` + `gfx_blit()` (exist); `fb_lock_compositor()` (exists)             |  [ ]   |
-| 💎  |   7   | §6 Mouse keys -- Numpad → mouse; Alt+Shift+Numlock toggle; speed config                              | keyboard driver modifier state; WM mouse event injection                                    |  [ ]   |
-| 💎  |   8   | §8 `ease.cpl` -- one-page applet; all 8 toggles+sliders; instant apply                               | §1-7 all APIs; `CTRL_SLIDER/CHECKBOX/DROPDOWN`; `include/cpl.h` (TODO-11)                 |  [ ]   |
+| ⭐  | Order | Section | Deliverable                                                                                          | Depends On                                                                                   | Status |
+| --- | :---: | :---: | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §7 | Reduced motion -- `HKLM\SYSTEM\Accessibility\ReducedMotion`; `anim_set_enabled(0)` gate | animation enable gate (08-graphics-ui/TODO-04 §4); `registry_set/get()`                                 |  [ ]   |
+| 💎  |   2   | §1 | High contrast -- `THEME_FLUENT_HIGH_CONTRAST` preset; `accessibility_set_high_contrast()`; Registry | `theme_reload()` + `WM_THEME_CHANGED` (08-graphics-ui/TODO-03 §8), presets (08-graphics-ui/TODO-03 §3)            |  [ ]   |
+| 💎  |   3   | §2 | Large text/DPI -- `accessibility_set_dpi(pct)` scale override; `WM_DPI_CHANGED` broadcast | `WM_DPI_CHANGED` + DPI scale infrastructure (08-graphics-ui/TODO-09 §4)                      |  [ ]   |
+| 💎  |   4   | §3 | Sticky keys -- 5× Shift detection; modifier latch; tray indicator; `HKLM\SYSTEM\Accessibility\StickyKeys` | keyboard modifier hook in `keyboard.h`; tray area (08-graphics-ui/TODO-11 §4)                       |  [ ]   |
+| 💎  |   5   | §4 | Large cursor -- `cursor_set_size(px)` 32/48/64/96; color options; Registry | `cursor_image_t` (exists); cursor size and theme selection (08-graphics-ui/TODO-01-graphics-asset-foundation.md §4)               |  [ ]   |
+| ⭐  |   6   | §5 | Screen magnifier -- `Win+Plus/Minus` zoom 2×–8×; compositor `gfx_blit` zoom overlay; cursor track | `fb_get_backbuffer()` + `gfx_blit()` (exist); `fb_lock_compositor()` (exists)             |  [ ]   |
+| 💎  |   7   | §6 | Mouse keys -- Numpad → mouse; Alt+Shift+Numlock toggle; speed config | keyboard driver modifier state; WM mouse event injection                                    |  [ ]   |
+| 💎  |   8   | §8 | `ease.cpl` -- one-page applet; all 8 toggles+sliders; instant apply | §1-7 all APIs; `CTRL_SLIDER/CHECKBOX/DROPDOWN`; `include/cpl.h` (09-desktop-shell/TODO-11 §1)                 |  [ ]   |
 
 ---
 

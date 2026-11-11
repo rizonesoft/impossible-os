@@ -46,7 +46,7 @@ title: "TODO-06 -- IXFS Core Foundation & Win32 Compatibility"
 | ⭐  |   3   | §3 Case-insensitive paths -- `ixfs_name_cmp()`, FNV1a fold-to-lower, per-mount override | §2 (v3 inode; no new inode fields needed but must be stable)  |  [ ]   |
 | 💎  |   4   | §4 Alternate Data Streams -- `i_ads_first` chain, `filename:stream` syntax, `FindFirstStreamW` | §2 (`i_ads_first` in v3 inode)                          |  [ ]   |
 | 💎  |   5   | §5 Security descriptors -- hash-deduped table, `i_security_id`, `GetFileSecurity`, DACL inherit | §2 (`i_security_id` in v3 inode)                       |  [ ]   |
-| 💎  |   6   | §6 Hard links -- `CreateHardLink`, `i_links`, cascade-free on last unlink               | §2 (`i_links` already in v2; §6 wires Win32 API)              |  [ ]   |
+| 💎  |   6   | §6 Hard links -- `CreateHardLink`, `i_links`, cascade-free on last unlink               | §2 (`i_links` already in v2; this section wires the Win32 API)              |  [ ]   |
 | 💎  |   7   | §7 Symbolic links + reparse points -- `IXFS_S_SYMLINK`, path follow, `CreateSymbolicLink` | §2 (new inode type in `i_mode`)                             |  [ ]   |
 | 💎  |   8   | §8 Extended attributes -- EA block, `NtQueryEaFile`/`NtSetEaFile`, WSL interop EAs     | §2 (`i_ea_block` in v3 inode)                                  |  [ ]   |
 | ⭐  |   9   | §9 Object IDs -- `i_file_id` UUID, `FSCTL_CREATE_OR_GET_OBJECT_ID`, `OpenFileById`     | §2 (`i_file_id` in v3 inode)                                   |  [ ]   |

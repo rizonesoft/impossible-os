@@ -35,15 +35,15 @@ title: "TODO-14 -- Disk Benchmark & I/O Diagnostics"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                              | Depends On                                                              | Status |
-| --- | :---: | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | :----: |
-| ⭐  |   1   | §4 Generic `blkdev_stats_t` + histogram API -- promote VirtIO telemetry to all drivers   | Existing `blk_telemetry.c`; `blkdev.h` struct extension                 |  [ ]   |
-| ⭐  |   2   | §5 Per-device latency histogram -- 64 buckets, `NtQuerySystemInformation` parity         | §4 (`blkdev_stats_t` must exist before histogram is exposed)            |  [ ]   |
-| ⭐  |   3   | §1 `diskbench` CLI -- seq/rand/mixed throughput, IOPS, p50–max, QD sweep                 | §4 (raw blkdev I/O + TSC timing); `tsc_get_freq_hz()` from boot_timing  |  [ ]   |
-| ⭐  |   4   | §3 SMART extended diagnostics -- ATA SMART READ DATA, health score, registry export      | Existing `atapi_dma_command()`; AHCI ATA passthrough for SMART          |  [ ]   |
-| ⭐  |   5   | §6 VFS hot-path profiler -- `vfs_op_timer_t`, per-fs per-op averages, `/sys/fsperfstats` | §4 (`rdtsc_read()` generic); VFS `read`/`write`/`readdir` call sites    |  [ ]   |
-| ⭐  |   6   | §7 Storage health monitor daemon -- SCHED_IDLE, SMART poll 60s, notification             | §3 (SMART attribute read); SCHED_IDLE thread; desktop notification API  |  [ ]   |
-| ⭐  |   7   | §2 Disk Benchmark GUI -- bar chart, latency histogram, history, export                   | §3 CLI (benchmark engine reused); §4 (histogram data); GUI widget layer |  [ ]   |
+| ⭐  | Order | Section | Deliverable                                                                           | Depends On                                                              | Status |
+| --- | :---: | :-----: | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | :----: |
+| ⭐  |   1   |   §4    | Generic `blkdev_stats_t` + histogram API -- promote VirtIO telemetry to all drivers   | Existing `blk_telemetry.c`; `blkdev.h` struct extension                 |  [ ]   |
+| ⭐  |   2   |   §5    | Per-device latency histogram -- 64 buckets, `NtQuerySystemInformation` parity         | §4 (`blkdev_stats_t` must exist before histogram is exposed)            |  [ ]   |
+| ⭐  |   3   |   §1    | `diskbench` CLI -- seq/rand/mixed throughput, IOPS, p50–max, QD sweep                 | §4 (raw blkdev I/O + TSC timing); `tsc_get_freq_hz()` from boot_timing  |  [ ]   |
+| ⭐  |   4   |   §3    | SMART extended diagnostics -- ATA SMART READ DATA, health score, registry export      | Existing `atapi_dma_command()`; AHCI ATA passthrough for SMART          |  [ ]   |
+| ⭐  |   5   |   §6    | VFS hot-path profiler -- `vfs_op_timer_t`, per-fs per-op averages, `/sys/fsperfstats` | §4 (`rdtsc_read()` generic); VFS `read`/`write`/`readdir` call sites    |  [ ]   |
+| ⭐  |   6   |   §7    | Storage health monitor daemon -- SCHED_IDLE, SMART poll 60s, notification             | §3 (SMART attribute read); SCHED_IDLE thread; desktop notification API  |  [ ]   |
+| ⭐  |   7   |   §2    | Disk Benchmark GUI -- bar chart, latency histogram, history, export                   | §1 CLI (benchmark engine reused); §5 (histogram data); GUI widget layer |  [ ]   |
 
 > All sections are `⭐` exclusive -- Windows 11 has no built-in disk benchmark (requires `CrystalDiskMark`), no VFS hot-path profiler, no per-filesystem op-timing dashboard, and SMART is only accessible via WMI or `smartmontools`. Linux has `/proc/diskstats` and `hdparm` but no GUI benchmark or in-kernel VFS profiler in the default install. Impossible OS makes all of this first-class and built-in.
 

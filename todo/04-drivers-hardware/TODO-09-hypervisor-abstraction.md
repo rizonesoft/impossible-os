@@ -41,8 +41,8 @@ title: "TODO-09 -- Hypervisor Abstraction Layer"
 | 💎  |   3   | §3 Bare-metal null backend                                     | §2 (dispatch table structure defined)       |  [ ]   |
 | 💎  |   4   | §4 VBox display auto-resize                                    | §2, VBox IRQ handler (existing)             |  [ ]   |
 | 💎  |   5   | §5 VBox HGCM client                                            | §2 (VBox confirmed), VBox port I/O baseline |  [ ]   |
-| 💎  |   6   | §6 VBox shared folders                                         | §6 (HGCM), VFS mount point API              |  [ ]   |
-| 💎  |   7   | §7 VBox shared clipboard                                       | §6 (HGCM)                                   |  [ ]   |
+| 💎  |   6   | §6 VBox shared folders                                         | §5 (HGCM), VFS mount point API              |  [ ]   |
+| 💎  |   7   | §7 VBox shared clipboard                                       | §5 (HGCM)                                   |  [ ]   |
 | 💎  |   8   | §8 VirtIO GPU display resize + page flip                       | §2, VirtIO core (existing)                  |  [ ]   |
 | 💎  |   9   | §9 VirtIO 9P shared folders                                    | §2, VirtIO core, VFS mount                  |  [ ]   |
 | 💎  |  10   | §10 Hyper-V synthetic HID (keyboard + mouse)                   | §2, VMBus core (not yet built)              |  [ ]   |

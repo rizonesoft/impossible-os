@@ -76,8 +76,8 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-11 §1     |  [x]   |
 | ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5             |  [x]   |
 | 💎  |  13   | File metadata and device control                               | §6                 |  [x]   |
-| 💎  |  14   | Registry syscalls (core CRUD)                                  | §5, TODO-14 §5     |  [ ]   |
-| 💎  |  15   | Registry syscalls (advanced: flush/notify/save/hive)           | §14, TODO-14 §5    |  [ ]   |
+| 💎  |  14   | Registry syscalls (core CRUD)                                  | §5                 |  [ ]   |
+| 💎  |  15   | Registry syscalls (advanced: flush/notify/save/hive)           | §14, TODO-14 §4    |  [ ]   |
 | 💎  |  16   | Token open/query/adjust syscalls                               | §5, TODO-15 §7     |  [ ]   |
 | 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-05 §3     |  [ ]   |
 | 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-05 §7     |  [ ]   |

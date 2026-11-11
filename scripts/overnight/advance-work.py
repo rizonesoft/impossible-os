@@ -56,6 +56,15 @@ def _load_run_state(root) -> dict:
         return {}
 
 
+def _next_section(sections):
+    """The section the packet names: the first NEEDS_WORK section not waiting
+    on an unfinished dependency; else the first NEEDS_WORK one (a stall the
+    worker should see); else None. A BLOCKED section is a recoverable deferral
+    and is never picked, since the fixpoint loop retries it once unblocked."""
+    open_secs = [s for s in sections if s.get("class") == "NEEDS_WORK"]
+    return next((s for s in open_secs if not s.get("waiting")), None) or next(iter(open_secs), None)
+
+
 def _cursor_disagreement(state: dict, todo, nxt_sec) -> dict | None:
     """The guard's EXPLICIT cursor vs the oracle's answer (v17 close-out,
     2026-08-29). Observed live: the cursor said section 60 (an explicit move
@@ -93,7 +102,7 @@ def main(argv) -> int:
     packet: dict = {"action": "work"}
 
     # 1. oracle: what to do next
-    nxt = _json_out(["python3", triage, "--next"], root, timeout=60) or {}
+    nxt = _json_out(["python3", triage, "--next"], root, timeout=180) or {}
     status = nxt.get("status")
     if status == "DONE":
         packet["action"] = "fixpoint"
@@ -118,15 +127,19 @@ def main(argv) -> int:
         print(json.dumps(packet, indent=1))
         return 0
 
-    # 2. classify -> the first section that still needs work
-    cls = _json_out(["python3", triage, "--classify", todo], root, timeout=60) or {}
+    # 2. classify -> the first section that still needs work and is not
+    # waiting on an unfinished dependency (the oracle marks those `waiting`).
+    # If every open section waits, the first open one is still named so the
+    # worker sees the stall instead of an empty packet.
+    cls = _json_out(["python3", triage, "--classify", todo], root, timeout=180) or {}
     sections = cls.get("sections") or []
-    nxt_sec = next((s for s in sections
-                    if s.get("class") not in ("DONE", "DEFERRED")), None)
+    nxt_sec = _next_section(sections)
     packet["sections_summary"] = {
         "total": len(sections),
         "done": sum(1 for s in sections if s.get("class") == "DONE"),
-        "deferred": sum(1 for s in sections if s.get("class") == "DEFERRED"),
+        # The oracle's class for a recoverable deferral is BLOCKED.
+        "deferred": sum(1 for s in sections if s.get("class") == "BLOCKED"),
+        "waiting": sum(1 for s in sections if s.get("class") == "NEEDS_WORK" and s.get("waiting")),
     }
     if nxt_sec:
         packet["next_section"] = nxt_sec

@@ -71,7 +71,7 @@ synchronous reply. `ChooseColor`/`ChooseFont` show the common dialogs from `08-g
 | Step | Section                                                      | 💎/⭐ | Dependency                                                                                 |
 | ---- | ------------------------------------------------------------ | ----- | ------------------------------------------------------------------------------------------ |
 | 1    | Win32 subsystem architecture + message queue                 | 💎    | `struct task` queue field; `SYS_WAIT_MESSAGE=75`                                           |
-| 2    | Window class registry + built-in classes                     | 💎    | §1; `CTRL_*` (TODO-04); `wm_create_window`                                                 |
+| 2    | Window class registry + built-in classes                     | 💎    | §1; `CTRL_*` (06-desktop-foundation/TODO-04); `wm_create_window`                           |
 | 3    | WndProc dispatch + DefWindowProc                             | 💎    | §1 §2; `TranslateMessage` key tables                                                       |
 | 4    | Win32 painting model (HDC + dirty rect)                      | 💎    | §1 §2; HDC table (see `08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md`); compositor      |
 | 5    | Message filters + accelerator tables                         | 💎    | §1 §3; `TranslateMessage` complete; `SYS_POSTMESSAGE=73`                                   |

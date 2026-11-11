@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **939 of 2592 sections complete (36%).** 115 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **939 of 2592 sections complete (36%).** 116 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -53,7 +53,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T01 §15` | Static-Analysis Triage and Changed-File Gate                                                                          |
 | [x]  | `D00 T01 §16` | Fuzz Targets for the Remaining Untrusted-Input Parsers                                                                |
 | [x]  | `D00 T01 §17` | Shard the todo-graph Build Suite                                                                                      |
-| [ ]  | `D00 T01 §18` | Implementation Plan: Clear the Dependency Cycles and Drive the Run From It                                            |
+| [/]  | `D00 T01 §18` | Implementation Plan: Clear the Dependency Cycles and Drive the Run From It                                            |
 | [x]  | `D00 T02 §1`  | Canonical Ownership and Source-of-Truth Map                                                                           |
 | [x]  | `D00 T02 §2`  | Skill Lifecycle, Templates, and Catalog Rules                                                                         |
 | [x]  | `D00 T02 §3`  | Hook Routing and Policy Contract                                                                                      |
@@ -1296,9 +1296,9 @@ The kernel's own model comes straight after boot because every driver, filesyste
 | [ ]  | `D02 T35 §6`  | Boot, Entropy, Config and SRM Leftovers                                                           |
 | [ ]  | `D02 T12 §14` | Registry Syscalls (Core CRUD)                                                                     |
 | [ ]  | `D02 T14 §14` | Registry SMP Synchronization                                                                      |
+| [ ]  | `D02 T14 §4`  | Nt/Zw Registry Syscalls                                                                           |
 | [ ]  | `D02 T12 §15` | Registry Syscalls (Advanced)                                                                      |
 | [ ]  | `D02 T13 §8`  | Native Atom/NLS/Locale Syscalls                                                                   |
-| [ ]  | `D02 T14 §4`  | Nt/Zw Registry Syscalls                                                                           |
 | [ ]  | `D02 T14 §5`  | advapi32.dll Win32 Compatibility                                                                  |
 | [ ]  | `D02 T14 §6`  | Registry Virtualization & .reg Import/Export                                                      |
 | [ ]  | `D02 T13 §9`  | Retrofit Kernel Consumers                                                                         |
@@ -1374,12 +1374,12 @@ Memory protection, the allocators, paging and reclaim, the scheduler, SMP and th
 | [ ]  | `D03 T05 §11` | Address Windowing Extensions (AWE)                                                 |
 | [ ]  | `D03 T06 §1`  | 40-Level Priority Queues + O(1) Bitmap Dequeue                                     |
 | [ ]  | `D03 T06 §2`  | Dynamic Priority Aging                                                             |
+| [ ]  | `D03 T06 §6`  | CPU Affinity                                                                       |
+| [ ]  | `D03 T06 §8`  | Scheduler Tick Calibration                                                         |
 | [ ]  | `D03 T06 §3`  | CFS vruntime + `prio_to_weight` Table                                              |
 | [ ]  | `D03 T06 §4`  | `SCHED_FIFO` / `SCHED_RR` Real-Time Classes                                        |
 | [ ]  | `D03 T06 §5`  | `SCHED_DEADLINE` EDF Scheduling                                                    |
-| [ ]  | `D03 T06 §6`  | CPU Affinity                                                                       |
 | [ ]  | `D03 T06 §7`  | Scheduler Stats + `/sys/sched` VFS File                                            |
-| [ ]  | `D03 T06 §8`  | Scheduler Tick Calibration                                                         |
 | [ ]  | `D03 T06 §9`  | CPU Frequency Scaling Hook                                                         |
 | [ ]  | `D03 T06 §10` | Worker Factory Syscalls Wired to SSDT                                              |
 | [/]  | `D03 T06 §11` | Per-Thread Kernel Stack + TSS.rsp0 Switching                                       |
@@ -1388,21 +1388,20 @@ Memory protection, the allocators, paging and reclaim, the scheduler, SMP and th
 | [ ]  | `D03 T06 §14` | Process/Job CPU Bandwidth Control                                                  |
 | [ ]  | `D03 T06 §15` | Wait/Wake Transaction Locking (Lost-Wakeup Class)                                  |
 | [ ]  | `D03 T06 §16` | Move XSAVE / FPU State Ownership from `struct task` to `struct thread`             |
+| [ ]  | `D03 T07 §8`  | `READ_ONCE` / `WRITE_ONCE` Macros                                                  |
 | [ ]  | `D03 T07 §1`  | SMP-Safe Atomics Audit + `smp_mb` Barriers                                         |
+| [ ]  | `D03 T07 §2`  | TLB Shootdown IPI                                                                  |
+| [ ]  | `D03 T07 §9`  | CPU Feature Intersection at AP Bringup                                             |
 | [ ]  | `D03 T07 §3`  | Per-CPU Run Queues                                                                 |
 | [ ]  | `D03 T07 §6`  | Per-CPU RCU Upgrade                                                                |
-| [ ]  | `D03 T07 §7`  | CPU Hotplug Stub                                                                   |
-| [ ]  | `D03 T07 §8`  | `READ_ONCE` / `WRITE_ONCE` Macros                                                  |
-| [ ]  | `D03 T07 §2`  | TLB Shootdown IPI                                                                  |
 | [ ]  | `D03 T07 §4`  | Work-Stealing Load Balancer                                                        |
-| [ ]  | `D03 T07 §9`  | CPU Feature Intersection at AP Bringup                                             |
+| [ ]  | `D03 T07 §7`  | CPU Hotplug Stub                                                                   |
 | [ ]  | `D03 T07 §5`  | Adaptive Mutex Spin-on-Owner                                                       |
 | [ ]  | `D03 T08 §1`  | Ticket Locks -- FIFO Fair Spinlocks                                                |
 | [ ]  | `D03 T08 §2`  | Preemption Count                                                                   |
 | [ ]  | `D03 T08 §3`  | Thread-Local Storage (TLS)                                                         |
 | [ ]  | `D03 T08 §4`  | Futexes                                                                            |
 | [ ]  | `D03 T08 §5`  | `pthread_once` / `call_once`                                                       |
-| [ ]  | `D03 T08 §6`  | `pthread_barrier_t` -- Kernel-Level Barrier                                        |
 | [ ]  | `D03 T08 §7`  | Thread Cancellation                                                                |
 | [ ]  | `D03 T08 §11` | Mutex Wait-Queue SMP-Safety Backfill                                               |
 | [ ]  | `D03 T09 §1`  | Named Pipes (NPFS) -- Server Endpoint                                              |
@@ -1412,12 +1411,12 @@ Memory protection, the allocators, paging and reclaim, the scheduler, SMP and th
 | [ ]  | `D03 T10 §1`  | Thread Stack Guard Pages                                                           |
 | [ ]  | `D03 T10 §2`  | Preemption Count -- Debug Extensions                                               |
 | [ ]  | `D03 T10 §3`  | Heap Canaries + SLAB Red Zones                                                     |
-| [ ]  | `D03 T10 §4`  | Lock Dependency Validator (Lockdep)                                                |
 | [ ]  | `D03 T10 §5`  | Kernel Watchdog Thread                                                             |
-| [ ]  | `D03 T10 §6`  | KCSAN -- Kernel Concurrency Sanitiser                                              |
-| [ ]  | `D03 T10 §7`  | Graphical Deadlock Visualisation                                                   |
 | [ ]  | `D03 T10 §8`  | Named Lock Browser (`/sys/locks`)                                                  |
+| [ ]  | `D03 T10 §4`  | Lock Dependency Validator (Lockdep)                                                |
+| [ ]  | `D03 T10 §7`  | Graphical Deadlock Visualisation                                                   |
 | [ ]  | `D03 T10 §9`  | KASAN -- Kernel Address Sanitiser                                                  |
+| [ ]  | `D03 T10 §6`  | KCSAN -- Kernel Concurrency Sanitiser                                              |
 | [ ]  | `D03 T10 §10` | `/sys/mem` Unified Memory Observability                                            |
 | [ ]  | `D03 T11 §1`  | Outgoing-Kernel Staging Area + Folio Preservation                                  |
 | [ ]  | `D03 T11 §2`  | Per-Subsystem Quiesce Callback Registry                                            |
@@ -1426,8 +1425,9 @@ Memory protection, the allocators, paging and reclaim, the scheduler, SMP and th
 | [ ]  | `D03 T11 §5`  | Kexec-Equivalent Jump Into New Kernel Image                                        |
 | [ ]  | `D03 T11 §6`  | Incoming-Kernel Reattach Path (Splice Memory, Restore)                             |
 | [ ]  | `D03 T11 §7`  | Live-Update Syscall + nt_live_update SSDT Entry                                    |
-| [ ]  | `D03 T08 §8`  | `WaitForMultipleObjects` (`waitable_t` vtable)                                     |
 | [ ]  | `D03 T08 §9`  | Unified `_timeout(ms)` API                                                         |
+| [ ]  | `D03 T08 §8`  | `WaitForMultipleObjects` (`waitable_t` vtable)                                     |
+| [ ]  | `D03 T08 §6`  | `pthread_barrier_t` -- Kernel-Level Barrier                                        |
 | [ ]  | `D03 T08 §10` | Sync Syscalls Wired to SSDT (Keyed Events, Alerts)                                 |
 | [ ]  | `D03 T09 §4`  | I/O Completion Ports (IOCP)                                                        |
 | [ ]  | `D03 T09 §5`  | IOCP Worker Thread Pool + DMA Completion Hook                                      |
@@ -1498,9 +1498,9 @@ With the kernel model and its memory and locking rules in place, the hardware co
 | [ ]  | `D04 T08 §4`  | HPET Timer Driver                                              |
 | [ ]  | `D04 T02 §2`  | LAPIC Timer Calibration via HPET                               |
 | [ ]  | `D04 T02 §6`  | Interrupt Profiler -- `/sys/interrupts`                        |
+| [ ]  | `D04 T08 §2`  | PCIe Capability Chain Scanner                                  |
 | [ ]  | `D04 T08 §3`  | MSI / MSI-X Interrupt Support                                  |
 | [ ]  | `D04 T08 §5`  | NVMe Storage Driver (Built-in)                                 |
-| [ ]  | `D04 T08 §2`  | PCIe Capability Chain Scanner                                  |
 | [ ]  | `D04 T08 §6`  | PCIe Hot-Plug                                                  |
 | [ ]  | `D04 T01 §7`  | Hot-Plug and Surprise Removal                                  |
 | [ ]  | `D04 T09 §1`  | Hypervisor Detection                                           |
@@ -1600,8 +1600,8 @@ With the kernel model and its memory and locking rules in place, the hardware co
 | [ ]  | `D04 T25 §5`  | Network/Wireless/Bluetooth Matrix                              |
 | [ ]  | `D04 T25 §6`  | Suspend/Resume and Hot-Plug Matrix                             |
 | [ ]  | `D04 T25 §8`  | Failure Injection and Recovery                                 |
-| [/]  | `D04 T03 §7`  | Power Profiles                                                 |
 | [ ]  | `D04 T03 §8`  | ACPI C-States Idle                                             |
+| [/]  | `D04 T03 §7`  | Power Profiles                                                 |
 | [ ]  | `D02 T26 §16` | CPU Idle Governor Framework                                    |
 | [ ]  | `D02 T26 §18` | Power Plan UI & `powercfg`                                     |
 | [ ]  | `D02 T26 §19` | Energy-Aware Scheduling Integration                            |
@@ -1631,8 +1631,8 @@ With the kernel model and its memory and locking rules in place, the hardware co
 | [ ]  | `D04 T24 §5`  | Display Alt-mode and eGPU Boundary                             |
 | [ ]  | `D04 T24 §6`  | Dock Power and Wake Events                                     |
 | [ ]  | `D04 T24 §9`  | External DMA Risk Report                                       |
-| [ ]  | `D04 T10 §9`  | USB Hub Class Driver                                           |
 | [ ]  | `D04 T10 §8`  | Hot-Plug Interrupt Handling                                    |
+| [ ]  | `D04 T10 §9`  | USB Hub Class Driver                                           |
 | [ ]  | `D04 T10 §10` | EHCI Fallback (USB 2.0)                                        |
 | [ ]  | `D04 T07 §8`  | USB Device Tree Integration                                    |
 | [ ]  | `D04 T07 §6`  | `lspci` / `lsusb` Shell Commands                               |
@@ -1660,9 +1660,9 @@ With the kernel model and its memory and locking rules in place, the hardware co
 | [ ]  | `D04 T25 §7`  | Firmware and License Matrix                                    |
 | [ ]  | `D04 T25 §9`  | Support Bundle and Hardware Fingerprint                        |
 | [ ]  | `D04 T25 §10` | Release Gate Automation                                        |
-| [ ]  | `D04 T11 §3`  | UTF-8 / Unicode Codepoint Output                               |
 | [ ]  | `D04 T11 §6`  | PS/2 Intellimouse Scroll Wheel (ID 3)                          |
 | [ ]  | `D04 T11 §2`  | Built-in Layouts -- en-US, en-GB, de-DE, fr-FR, es-ES, Dvorak  |
+| [ ]  | `D04 T11 §3`  | UTF-8 / Unicode Codepoint Output                               |
 | [ ]  | `D04 T11 §4`  | Dead Key Compose                                               |
 | [ ]  | `D04 T11 §7`  | Explorer 5-Button Extension (ID 4)                             |
 | [ ]  | `D04 T11 §8`  | Mouse Acceleration + Sensitivity                               |
@@ -1679,11 +1679,11 @@ With the kernel model and its memory and locking rules in place, the hardware co
 | [ ]  | `D04 T21 §8`  | Hot-Plug and Latency                                           |
 | [ ]  | `D04 T21 §9`  | Diagnostics                                                    |
 | [ ]  | `D04 T21 §10` | Tests                                                          |
-| [ ]  | `D04 T12 §5`  | HID Report Descriptor Parser                                   |
 | [ ]  | `D04 T12 §4`  | HID-over-I2C (HoI2C) Transport                                 |
+| [ ]  | `D04 T12 §5`  | HID Report Descriptor Parser                                   |
 | [ ]  | `D04 T12 §7`  | ELAN and Goodix I2C Touchpad Quirks                            |
-| [ ]  | `D04 T12 §8`  | PTP Gesture Engine                                             |
 | [ ]  | `D04 T12 §6`  | Microsoft Precision Touchpad (PTP) Multi-Touch                 |
+| [ ]  | `D04 T12 §8`  | PTP Gesture Engine                                             |
 | [ ]  | `D04 T12 §10` | `xinput list` / `touchpad-info` Shell Commands                 |
 | [ ]  | `D04 T19 §3`  | SMBus/I2C hwmon Transport                                      |
 | [ ]  | `D04 T19 §4`  | Fan, Voltage, and Chassis Sensors                              |
@@ -1842,11 +1842,11 @@ Disks need the driver model of Phase 4, and everything from the registry hives t
 | [ ]  | `D05 T13 §8`  | Disk Management GUI                                                             |
 | [ ]  | `D05 T13 §9`  | `diskuse` CLI + GUI                                                             |
 | [ ]  | `D05 T13 §10` | Snapshot Manager CLI + GUI                                                      |
-| [ ]  | `D05 T14 §1`  | `diskbench` CLI                                                                 |
 | [ ]  | `D05 T14 §4`  | Generic `blkdev_stats_t` + Histogram API                                        |
-| [ ]  | `D05 T14 §2`  | Disk Benchmark GUI                                                              |
+| [ ]  | `D05 T14 §1`  | `diskbench` CLI                                                                 |
 | [ ]  | `D05 T14 §3`  | SMART Extended Diagnostics                                                      |
 | [ ]  | `D05 T14 §5`  | Per-Device Latency Histogram + `/sys/ioqueue`                                   |
+| [ ]  | `D05 T14 §2`  | Disk Benchmark GUI                                                              |
 | [ ]  | `D05 T14 §6`  | VFS Hot-Path Profiler                                                           |
 | [ ]  | `D05 T14 §7`  | Storage Health Monitor Daemon                                                   |
 | [ ]  | `D05 T01 §3`  | AHCI Native Command Queuing (NCQ)                                               |
@@ -2267,7 +2267,6 @@ Audio, updates and packages, restore, accessibility, the Win32 PE loader and API
 | [ ]  | `D10 T01 §9`  | Volume Control Popup                                                                                                   |
 | [ ]  | `D10 T02 §1`  | Canvas & Viewport                                                                                                      |
 | [ ]  | `D10 T02 §7`  | Zoom & Resize (Stretch)                                                                                                |
-| [ ]  | `D10 T03 §3`  | Update Application                                                                                                     |
 | [ ]  | `D10 T04 §1`  | Event Log                                                                                                              |
 | [ ]  | `D10 T04 §7`  | F8 Recovery Environment                                                                                                |
 | [ ]  | `D10 T04 §8`  | Factory Reset                                                                                                          |
@@ -2360,8 +2359,8 @@ Audio, updates and packages, restore, accessibility, the Win32 PE loader and API
 | [ ]  | `D10 T12 §1`  | Kernel Debugger (GDB RSP Stub)                                                                                         |
 | [ ]  | `D10 T05 §4`  | Built-in Widgets                                                                                                       |
 | [ ]  | `D10 T01 §8`  | Media Player App                                                                                                       |
-| [ ]  | `D10 T02 §2`  | Drawing Tools                                                                                                          |
 | [ ]  | `D10 T02 §3`  | Color System                                                                                                           |
+| [ ]  | `D10 T02 §2`  | Drawing Tools                                                                                                          |
 | [ ]  | `D10 T02 §4`  | Undo/Redo                                                                                                              |
 | [ ]  | `D10 T02 §5`  | File Operations                                                                                                        |
 | [ ]  | `D10 T02 §6`  | Selection Tool (Stretch)                                                                                               |
@@ -2378,15 +2377,16 @@ Audio, updates and packages, restore, accessibility, the Win32 PE loader and API
 | [ ]  | `D10 T12 §10` | Telemetry (Opt-In, Anonymous)                                                                                          |
 | [ ]  | `D10 T12 §11` | Parental Controls (`parcon.cpl`)                                                                                       |
 | [ ]  | `D10 T03 §1`  | Update Check API                                                                                                       |
-| [ ]  | `D10 T03 §4`  | `wuapp.cpl` -- Windows Update Applet                                                                                   |
 | [ ]  | `D10 T03 §2`  | Update Download & Verification                                                                                         |
-| [ ]  | `D10 T03 §6`  | App Installer Wizard                                                                                                   |
-| [ ]  | `D10 T03 §8`  | `appwiz.cpl` -- Programs & Features Applet                                                                             |
 | [ ]  | `D10 T03 §5`  | IPKG Package Format                                                                                                    |
+| [ ]  | `D10 T03 §6`  | App Installer Wizard                                                                                                   |
 | [ ]  | `D10 T03 §7`  | App Uninstaller                                                                                                        |
+| [ ]  | `D10 T03 §8`  | `appwiz.cpl` -- Programs & Features Applet                                                                             |
 | [ ]  | `D10 T03 §9`  | IPKG Build Tool (Host)                                                                                                 |
-| [ ]  | `D10 T04 §5`  | First-Boot Setup Wizard                                                                                                |
 | [ ]  | `D10 T04 §2`  | Restore Point Creation                                                                                                 |
+| [ ]  | `D10 T03 §3`  | Update Application                                                                                                     |
+| [ ]  | `D10 T03 §4`  | `wuapp.cpl` -- Windows Update Applet                                                                                   |
+| [ ]  | `D10 T04 §5`  | First-Boot Setup Wizard                                                                                                |
 | [ ]  | `D10 T04 §3`  | System Rollback                                                                                                        |
 | [ ]  | `D10 T04 §4`  | `rstrui.cpl` -- System Restore UI                                                                                      |
 | [ ]  | `D10 T04 §10` | Disk Cleanup Utility                                                                                                   |
@@ -2483,8 +2483,8 @@ The bundled applications are the proof that the platform beneath them is complet
 | [ ]  | `D11 T07 §3` | RSS / News Reader                                  |
 | [ ]  | `D11 T07 §6` | VNC Server (Stretch)                               |
 | [ ]  | `D11 T04 §6` | Account Management + Credential Store              |
-| [ ]  | `D11 T04 §5` | Compose Window                                     |
 | [ ]  | `D11 T04 §8` | Contacts Store                                     |
+| [ ]  | `D11 T04 §5` | Compose Window                                     |
 
 ### Phase 12 -- User platform and SDK
 
@@ -2533,8 +2533,8 @@ The kernel libraries, the process ABI, ntdll, the Win32 subsystem in user mode, 
 | [ ]  | `D12 T07 §5`  | Tier 3 -- File I/O                                                          |
 | [ ]  | `D12 T07 §10` | Tier 8 -- Extended Win32 Surface                                            |
 | [ ]  | `D12 T07 §11` | Stub Call Log Analysis                                                      |
-| [ ]  | `D12 T03 §5`  | `dlopen` / `dlsym` for Linux Compat                                         |
 | [ ]  | `D12 T03 §6`  | GOT / PLT Lazy Binding                                                      |
+| [ ]  | `D12 T03 §5`  | `dlopen` / `dlsym` for Linux Compat                                         |
 | [ ]  | `D12 T04 §1`  | ntdll.dll Structure + TEB / PEB Extensions                                  |
 | [ ]  | `D12 T02 §6`  | argv / argc Process ABI + `cmd_tokenize`                                    |
 | [ ]  | `D12 T02 §7`  | Shell `.profile` Startup Script                                             |
@@ -2655,16 +2655,16 @@ The installer, the release pipeline, hosting and the status page run when there 
 | [ ]  | `D15 T04 §2` | QEMU Validation                                |
 | [ ]  | `D15 T04 §3` | Hyper-V Certification                          |
 | [ ]  | `D15 T04 §4` | VirtualBox Certification                       |
-| [ ]  | `D15 T04 §5` | Real Hardware Test Checklist                   |
 | [ ]  | `D15 T04 §6` | Performance Benchmarks                         |
-| [ ]  | `D15 T04 §7` | Release Readiness Checklist                    |
 | [ ]  | `D15 T04 §8` | Crash Analytics Review                         |
-| [ ]  | `D15 T05 §1` | GitHub Release Workflow                        |
-| [ ]  | `D15 T05 §2` | Changelog Discipline                           |
+| [ ]  | `D15 T04 §5` | Real Hardware Test Checklist                   |
+| [ ]  | `D15 T04 §7` | Release Readiness Checklist                    |
 | [ ]  | `D15 T01 §6` | Artifact Manifest                              |
 | [ ]  | `D15 T01 §8` | Reproducible Builds                            |
 | [ ]  | `D15 T03 §2` | CDN & Hosting                                  |
+| [ ]  | `D15 T05 §1` | GitHub Release Workflow                        |
 | [ ]  | `D15 T03 §3` | Release Promotion Pipeline                     |
+| [ ]  | `D15 T05 §2` | Changelog Discipline                           |
 | [ ]  | `D15 T03 §8` | Status Page                                    |
 | [ ]  | `D15 T05 §3` | Contribution Guide Overhaul                    |
 | [ ]  | `D15 T05 §4` | Issue & PR Templates                           |

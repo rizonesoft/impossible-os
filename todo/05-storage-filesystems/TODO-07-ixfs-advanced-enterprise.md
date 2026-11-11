@@ -47,12 +47,12 @@ title: "TODO-07 -- IXFS Advanced Storage, Reliability & Enterprise"
 
 | ⭐  | Order | Deliverable                                                                              | Depends On                                                        | Status |
 | --- | :---: | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | :----: |
-| 💎  |   1   | §5 Sparse files -- hole extents, `FSCTL_SET_SPARSE/SET_ZERO_DATA/QUERY_ALLOCATED_RANGES`  | v3 inode `i_flags` (TODO-06 §2)                                  |  [ ]   |
-| ⭐  |   2   | §6 Real-time TRIM -- journal-batched discard, SSD auto-detect, `blkdev_discard()`         | `blkdev_discard()` exists; §1 (hole extents inform TRIM ranges)  |  [ ]   |
-| ⭐  |   3   | §1 Transparent compression -- LZ4/Zstd 4KiB units, write gate ≥10%, `FSCTL_SET_COMPRESSION` | extent engine; kernel-libraries TODO for codecs              |  [ ]   |
-| ⭐  |   4   | §2 Inline block dedup -- xxHash64, `dedupe_ht`, CoW refcount reuse, per-volume opt-in     | §3 (compression changes write path; dedup runs after compress)   |  [ ]   |
-| ⭐  |   5   | §3 Reflink instant copy -- `ixfs_reflink()`, O(1) `CopyFileW` same-volume, CoW on write  | §4 (dedup + CoW refcounts must be stable)                        |  [ ]   |
-| ⭐  |   6   | §4 Online defrag -- `ixfs_defrag_file()`, background idle thread, `FSCTL_DEFRAGMENT_FILE`  | §5 (reflink stable before extent rewrite path used by defrag)    |  [ ]   |
+| 💎  |   1   | Sparse files -- hole extents, `FSCTL_SET_SPARSE/SET_ZERO_DATA/QUERY_ALLOCATED_RANGES`  | v3 inode `i_flags` (TODO-06 §2)                                  |  [ ]   |
+| ⭐  |   2   | Real-time TRIM -- journal-batched discard, SSD auto-detect, `blkdev_discard()`         | `blkdev_discard()` exists; §1 (hole extents inform TRIM ranges)  |  [ ]   |
+| ⭐  |   3   | Transparent compression -- LZ4/Zstd 4KiB units, write gate ≥10%, `FSCTL_SET_COMPRESSION` | extent engine; kernel-libraries TODO for codecs              |  [ ]   |
+| ⭐  |   4   | Inline block dedup -- xxHash64, `dedupe_ht`, CoW refcount reuse, per-volume opt-in     | §3 (compression changes write path; dedup runs after compress)   |  [ ]   |
+| ⭐  |   5   | Reflink instant copy -- `ixfs_reflink()`, O(1) `CopyFileW` same-volume, CoW on write  | §4 (dedup + CoW refcounts must be stable)                        |  [ ]   |
+| ⭐  |   6   | Online defrag -- `ixfs_defrag_file()`, background idle thread, `FSCTL_DEFRAGMENT_FILE`  | §5 (reflink stable before extent rewrite path used by defrag)    |  [ ]   |
 | ⭐  |   7   | §7 Online volume resize -- `ixfs_grow()`, bitmap extend, superblock update                | §6 (defrag stable before extending block ranges)                 |  [ ]   |
 | ⭐  |   8   | §8 Self-healing metadata -- backup superblock, auto-restore on CRC fail                   | §7 (final volume layout stable before backup SB location fixed)  |  [ ]   |
 | 💎  |   9   | §9 Auto snapshots + Explorer Previous Versions -- schedule, retention, prune              | §8 (self-healing ensures snapshot metadata survives)             |  [ ]   |

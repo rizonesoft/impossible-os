@@ -45,15 +45,15 @@ title: "TODO-03 -- SSH Client"
 
 ## Implementation Order
 
-| Step | Section                                | 💎/⭐ | Dependency                           |
-| ---- | -------------------------------------- | ----- | ------------------------------------ |
-| 1    | SSH2 Transport Layer                   | 💎    | monocypher §4, `kern_connect` §5     |
-| 2    | SSH Authentication                     | 💎    | §1 complete                          |
-| 3    | Interactive Channel + PTY Relay        | 💎    | §2 complete, `terminal.h`            |
-| 4    | Shell Integration + TOFU + Known Hosts | ⭐    | §3 complete, Registry                |
-| 5    | SCP File Transfer                      | 💎    | §2 complete, VFS, progress_bar_print |
-| 6    | SSH Config File                        | ⭐    | §4 complete, Registry                |
-| 7    | sftp Command (Stretch)                 | 💎    | §3 complete                          |
+| Step | Section                                | 💎/⭐ | Dependency                                                                        |
+| ---- | -------------------------------------- | ----- | --------------------------------------------------------------------------------- |
+| 1    | SSH2 Transport Layer                   | 💎    | 02-kernel-core/TODO-03 §5 (monocypher), 07-networking/TODO-02 §5 (`kern_connect`) |
+| 2    | SSH Authentication                     | 💎    | §1 complete                                                                       |
+| 3    | Interactive Channel + PTY Relay        | 💎    | §2 complete, `terminal.h`                                                         |
+| 4    | Shell Integration + TOFU + Known Hosts | ⭐    | §3 complete, Registry                                                             |
+| 5    | SCP File Transfer                      | 💎    | §2 complete, VFS, progress_bar_print                                              |
+| 6    | SSH Config File                        | ⭐    | §4 complete, Registry                                                             |
+| 7    | sftp Command (Stretch)                 | 💎    | §3 complete                                                                       |
 
 ---
 

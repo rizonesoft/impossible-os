@@ -54,8 +54,8 @@ title: "TODO-10 -- USB Stack Completion"
 | 💎  |   5   | §5 USB HID class driver -- keyboard + mouse boot protocol           | §4 (interrupt-IN endpoint)                       |  [ ]   |
 | 💎  |   6   | §6 PS/2 ↔ USB input fallback                                        | §5 (USB HID active flag)                         |  [ ]   |
 | 💎  |   7   | §7 USB MSC BOT completion -- SCSI CBW/CSW, multi-LUN, blkdev        | §1 (usb_submit_bulk), §2 (string descriptors)    |  [ ]   |
-| 💎  |   8   | §8 Hot-plug interrupt handling -- port status change TRB            | §5 + §9 (HID + MSC attach/detach paths needed)   |  [ ]   |
-| 💎  |   9   | §9 USB hub class driver                                             | §10 (hot-plug path established)                  |  [ ]   |
+| 💎  |   8   | §8 Hot-plug interrupt handling -- port status change TRB            | §5 + §7 (HID + MSC attach/detach paths needed)   |  [ ]   |
+| 💎  |   9   | §9 USB hub class driver                                             | §8 (hot-plug path established)                   |  [ ]   |
 | 💎  |  10   | §10 EHCI fallback (USB 2.0)                                         | §1 (HCD vtable), §5, §9 (class drivers to reuse) |  [ ]   |
 | 💎  |  11   | §11 USB CDC-ECM Ethernet                                            | §1 (usb_submit_bulk/interrupt), §2 (iMACAddress) |  [ ]   |
 | 💎  |  12   | §12 USB CDC-ACM serial                                              | §1 (usb_submit_bulk, interrupt-IN)               |  [ ]   |
