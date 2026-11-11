@@ -18,6 +18,7 @@
 #include "kernel/mm/user_range.h"
 #include "kernel/test/klog_suppress.h"
 #include "libs/lz4.h"
+#include "libc/string.h"
 
 /* ---- Exec dispatcher tests ---- */
 
@@ -311,6 +312,8 @@ static uint32_t build_minimal_pe32plus(uint8_t *buf)
     buf[0xB0] = 0x00; buf[0xB1] = 0x00;
     buf[0xB2] = 0x00; buf[0xB3] = 0x40;
     buf[0xB4] = 0x01; buf[0xB5] = 0x00;  /* ImageBase = 0x140000000 */
+    buf[0xB9] = 0x10;                    /* SectionAlignment = 0x1000 */
+    buf[0xBD] = 0x02;                    /* FileAlignment = 0x200 */
     /* SizeOfImage at Optional Header offset 0x38 = file offset 0x98+0x38=0xD0 */
     buf[0xD0] = 0x00; buf[0xD1] = 0x20;  /* SizeOfImage = 0x2000 */
     /* SizeOfHeaders at Optional Header offset 0x3C = file offset 0xD4 */
@@ -449,6 +452,148 @@ static void test_pe_load_rejects_low_imagebase(void)
 }
 
 /* ---- PE32+ import resolver tests ---- */
+
+/* pe_preflight's layout rules (PE/COFF spec: sections ascending and adjacent
+ * at SectionAlignment). An image that leaves a page below SizeOfImage
+ * unmapped is refused, because the import walk reads any RVA the file names
+ * below SizeOfImage: before 2026-11-11 such an image made exec fault in the
+ * kernel (the fuzzer's reproducer is in tools/fuzz/corpus/pe/). */
+static void test_pe_preflight_layout(void)
+{
+    uint8_t buf[1024];
+    pe_validate_result_t v;
+    pe_image_layout_t lay;
+    uint32_t i;
+
+    for (i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    build_minimal_pe32plus(buf);
+    TEST_ASSERT_EQ(pe_preflight(buf, sizeof(buf), &v, &lay), 0, "a well-formed image is accepted");
+    TEST_ASSERT_EQ(lay.section_alignment, 0x1000, "SectionAlignment recorded");
+    TEST_ASSERT_EQ(lay.mapped_size, 0x2000, "the mapped size covers SizeOfImage");
+
+    buf[0x195] = 0x20;                        /* .text at 0x2000: a gap at 0x1000 */
+    buf[0xD1] = 0x30;                         /* SizeOfImage 0x3000 */
+    TEST_ASSERT(pe_preflight(buf, sizeof(buf), &v, &lay) != 0, "a gap after the headers is refused");
+    buf[0x195] = 0x10;
+    TEST_ASSERT(pe_preflight(buf, sizeof(buf), &v, &lay) != 0,
+                "sections that end before SizeOfImage are refused");
+    buf[0xD1] = 0x20;
+    TEST_ASSERT_EQ(pe_preflight(buf, sizeof(buf), &v, &lay), 0, "restored image accepted");
+
+    buf[0xB9] = 0x00;                         /* SectionAlignment 0 */
+    TEST_ASSERT(pe_preflight(buf, sizeof(buf), &v, &lay) != 0, "SectionAlignment 0 is refused");
+    buf[0xB9] = 0x08;                         /* 0x800: below a page */
+    TEST_ASSERT(pe_preflight(buf, sizeof(buf), &v, &lay) != 0, "SectionAlignment below a page is refused");
+    buf[0xB9] = 0x10;
+    buf[0xBD] = 0x01;                         /* FileAlignment 0x100 */
+    TEST_ASSERT(pe_preflight(buf, sizeof(buf), &v, &lay) != 0, "FileAlignment below 512 is refused");
+    buf[0xBD] = 0x02;
+    buf[0xB1] = 0x10;                         /* ImageBase 0x140001000 */
+    TEST_ASSERT(pe_preflight(buf, sizeof(buf), &v, &lay) != 0, "an ImageBase off 64 KiB is refused");
+    buf[0xB1] = 0x00;
+    buf[0x199] = 0x04;                        /* SizeOfRawData 0x400: past the file */
+    TEST_ASSERT(pe_preflight(buf, sizeof(buf), &v, &lay) != 0, "raw data past the file is refused");
+}
+
+/* pe_walk_imports over an image laid out in memory: one DLL, one by-name
+ * import, then the malformed shapes it must refuse. */
+static uint32_t s_walk_writes;
+static uint64_t s_walk_last;
+static const void *walk_find_dll(void *ctx, const char *n) { (void)ctx; return n[0] == 'k' ? n : (const char *)0; }
+static uint32_t walk_lookup(void *ctx, const void *d, const char *f)
+{
+    (void)ctx; (void)d;
+    return (f[0] == 'E') ? 0x42u : (uint32_t)-1;
+}
+static uint32_t s_walk_fail_at = 0xFFFFFFFFu;   /* write number that reports an unmapped page */
+static int walk_write(void *ctx, uint32_t rva, uint64_t val)
+{
+    uint8_t *img = (uint8_t *)ctx;
+    uint32_t b;
+    if (s_walk_writes == s_walk_fail_at) {
+        s_walk_writes++;
+        return 0;
+    }
+    for (b = 0; b < 8; b++) img[rva + b] = (uint8_t)(val >> (b * 8));
+    s_walk_writes++;
+    s_walk_last = val;
+    return 1;
+}
+
+static void test_pe_walk_imports(void)
+{
+    static uint8_t img[0x3000];
+    pe_import_ops_t ops = { walk_find_dll, walk_lookup, walk_write, img };
+    uint32_t i, dlls = 0;
+    uint8_t *d = img + 0x2000;
+
+    for (i = 0; i < sizeof(img); i++) img[i] = 0;
+    /* Descriptor: OFT 0x2040, Name 0x2080, FT 0x2060; then an all-zero one. */
+    d[0x00] = 0x40; d[0x01] = 0x20;
+    d[0x0C] = 0x80; d[0x0D] = 0x20;
+    d[0x10] = 0x60; d[0x11] = 0x20;
+    d[0x40] = 0xA0; d[0x41] = 0x20;           /* INT[0] -> hint/name at 0x20A0 */
+    memcpy(d + 0x80, "kernel32.dll", 13);
+    memcpy(d + 0xA2, "ExitProcess", 12);
+
+    s_walk_writes = 0;
+    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2000, 40, &ops, &dlls), 1,
+                   "one import resolved");
+    TEST_ASSERT_EQ(dlls, 1, "one DLL walked");
+    TEST_ASSERT_EQ(s_walk_writes, 1, "one IAT entry written");
+    TEST_ASSERT_EQ(img[0x2060], 0x42, "the IAT holds the SSDT index");
+
+    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0, 0, &ops, &dlls), 0,
+                   "no import directory resolves nothing");
+    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2FF0, 40, &ops, &dlls), -1,
+                   "a directory past the image is refused");
+
+    d[0xA2] = 'X';                            /* unknown function: stubbed */
+    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2000, 40, &ops, &dlls), 0,
+                   "an unknown function resolves nothing");
+    TEST_ASSERT_EQ(s_walk_last, PE_STUB_THUNK_ADDR, "and its IAT entry is the stub");
+
+    d[0x47] = 0x80;                           /* INT[0] by ordinal */
+    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2000, 40, &ops, &dlls), 0,
+                   "an ordinal import is stubbed");
+    d[0x47] = 0x00;
+
+    for (i = 0x2080; i < 0x2080 + PE_MAX_NAME_LEN + 1; i++) img[i] = 'k';
+    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2000, 40, &ops, &dlls), -1,
+                   "a DLL name with no NUL in bounds is refused");
+
+    d[0x0C] = 0xFF; d[0x0D] = 0x2F;           /* Name RVA 0x2FFF: one byte left */
+    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2000, 40, &ops, &dlls), -1,
+                   "a DLL name at the image end is refused");
+
+    /* No INT (OriginalFirstThunk 0): the IAT is read and then overwritten,
+     * two imports, then a terminator that must stay untouched. */
+    for (i = 0; i < sizeof(img); i++) img[i] = 0;
+    d[0x0C] = 0x80; d[0x0D] = 0x20;
+    d[0x10] = 0x60; d[0x11] = 0x20;
+    d[0x60] = 0xA0; d[0x61] = 0x20;           /* IAT[0] -> "ExitProcess" */
+    d[0x68] = 0xC0; d[0x69] = 0x20;           /* IAT[1] -> "EndTask" */
+    memcpy(d + 0x80, "kernel32.dll", 13);
+    memcpy(d + 0xA2, "ExitProcess", 12);
+    memcpy(d + 0xC2, "EndTask", 8);
+    s_walk_writes = 0;
+    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2000, 40, &ops, &dlls), 2,
+                   "both imports resolve through the IAT alone");
+    TEST_ASSERT_EQ(s_walk_writes, 2, "two IAT entries written");
+    TEST_ASSERT_EQ(img[0x2060], 0x42, "the first IAT entry holds its SSDT index");
+    TEST_ASSERT_EQ(img[0x2068], 0x42, "the second IAT entry holds its SSDT index");
+    TEST_ASSERT_EQ(img[0x2070], 0, "the terminator is untouched");
+
+    /* An IAT page the loader could not write fails the whole walk. */
+    for (i = 0; i < 16; i++) img[0x2060 + i] = 0;
+    d[0x60] = 0xA0; d[0x61] = 0x20;
+    d[0x68] = 0xC0; d[0x69] = 0x20;
+    s_walk_writes = 0;
+    s_walk_fail_at = 1;                       /* the second write fails */
+    TEST_ASSERT_EQ(pe_walk_imports(img, sizeof(img), 0x2000, 40, &ops, &dlls), -1,
+                   "a failed IAT write fails the walk");
+    s_walk_fail_at = 0xFFFFFFFFu;
+}
 
 static void test_pe_import_struct_sizes(void)
 {
@@ -1077,6 +1222,8 @@ void test_register_exec(void)
     test_suite_register_cat("PE: validate rejects NULL", test_pe_validate_null, TEST_CAT_EXEC);
 
     /* PE32+ section loader tests */
+    test_suite_register_cat("PE: preflight layout rules", test_pe_preflight_layout, TEST_CAT_EXEC);
+    test_suite_register_cat("PE: import table walk", test_pe_walk_imports, TEST_CAT_EXEC);
     test_suite_register_cat("PE: load maps+returns entry", test_pe_load_maps_and_returns_entry, TEST_CAT_EXEC);
     test_suite_register_cat("PE: load registers module", test_pe_load_registers_module, TEST_CAT_EXEC);
     test_suite_register_cat("PE: load rejects low ImageBase", test_pe_load_rejects_low_imagebase, TEST_CAT_EXEC);

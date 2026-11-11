@@ -201,6 +201,22 @@ int eif_flags_known(uint32_t flags);
 int eif_parse_metadata(const uint8_t *data, uint64_t size,
                        const eif_header_t *hdr, eif_metadata_t *out);
 
+/* What eif_check accepted, for the loader's write phase. */
+typedef struct eif_check_result {
+    int            compressed;   /* EIF_FLAG_COMPRESSED: every segment is LZ4 */
+    uint64_t       max_decomp;   /* largest mem_size of a compressed segment */
+    eif_metadata_t meta;         /* the parsed metadata records */
+} eif_check_result_t;
+
+/* Every check eif_load makes on file bytes before it writes anything: the
+ * header gate, a signed image (refused until signatures are verified), the
+ * segment table, the import table (a required import must satisfy
+ * import_available), the entry point and the metadata. 1 = accepted and *out
+ * filled, 0 = rejected. Writes nothing else, so it is safe on any input. */
+int eif_check(const uint8_t *data, uint64_t size,
+              int (*import_available)(uint32_t syscall_id),
+              eif_check_result_t *out);
+
 /* Decompress one compressed segment stream into dst and confirm it produces
  * exactly `expect` bytes. Pure (LZ4_decompress_safe bounds all access). Returns
  * 1 on success, 0 on corrupt input or a size != expect. src_size == 0 succeeds

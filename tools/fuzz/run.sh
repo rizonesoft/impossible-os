@@ -26,6 +26,11 @@ command -v "$CLANG" >/dev/null 2>&1 || {
 SAN="-fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined"
 BASE="-std=gnu11 -O1 -g -fno-omit-frame-pointer -Wall -Wextra -Werror -Wno-unused-function"
 
+# Kernel sources build against the kernel headers with the host's fixed-width
+# types forced in first, and link tools/fuzz/host_stubs.c for klog.
+KINC="-I $REPO_ROOT/include -include stdint.h -include stddef.h"
+STUBS="$HERE/host_stubs.c"
+
 # target -> the sources that make it. Kernel sources take -I include with the
 # host <stdint.h> forced in first: kernel/types.h guards each typedef for
 # exactly this coexistence (tools/memmap-check uses the same route).
@@ -41,10 +46,36 @@ build_target() {
                 -o "$OUT/$1" "$HERE/fuzz_security_descriptor.c" \
                 "$REPO_ROOT/src/kernel/security/acl.c" \
                 "$REPO_ROOT/src/kernel/security/sid.c" ;;
+        pe)
+            # shellcheck disable=SC2086
+            "$CLANG" $BASE $SAN $KINC -o "$OUT/$1" "$HERE/fuzz_pe.c" "$STUBS" \
+                "$REPO_ROOT/src/kernel/pe_validate.c" ;;
+        elf)
+            # shellcheck disable=SC2086
+            "$CLANG" $BASE $SAN $KINC -o "$OUT/$1" "$HERE/fuzz_elf.c" "$STUBS" \
+                "$REPO_ROOT/src/kernel/elf_parse.c" ;;
+        eif)
+            # shellcheck disable=SC2086
+            "$CLANG" $BASE $SAN $KINC -I "$REPO_ROOT/src" -o "$OUT/$1" \
+                "$HERE/fuzz_eif.c" "$STUBS" "$REPO_ROOT/src/kernel/eif_parse.c" \
+                "$REPO_ROOT/src/kernel/lz4.c" "$REPO_ROOT/src/libs/lz4/lz4.c" ;;
+        fat32)
+            # shellcheck disable=SC2086
+            "$CLANG" $BASE $SAN $KINC -I "$REPO_ROOT/src/kernel/fs/fat32" \
+                -o "$OUT/$1" "$HERE/fuzz_fat32.c" "$STUBS" \
+                "$REPO_ROOT/src/kernel/fs/fat32/fat32_parse.c" ;;
+        registry_hive)
+            # shellcheck disable=SC2086
+            "$CLANG" $BASE $SAN $KINC -o "$OUT/$1" "$HERE/fuzz_registry_hive.c" \
+                "$STUBS" "$REPO_ROOT/src/kernel/registry_hive_parse.c" ;;
+        boot_conf)
+            # shellcheck disable=SC2086
+            "$CLANG" $BASE $SAN -o "$OUT/$1" "$HERE/fuzz_boot_conf.c" \
+                "$REPO_ROOT/src/boot/uefi/boot_conf_lexer.c" ;;
         *) echo "fuzz: unknown target '$1'" >&2; exit 2 ;;
     esac
 }
-ALL_TARGETS="boot_entries security_descriptor"
+ALL_TARGETS="boot_entries boot_conf security_descriptor pe elf eif fat32 registry_hive"
 
 mkdir -p "$OUT"
 

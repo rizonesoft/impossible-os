@@ -1414,8 +1414,9 @@ else
         t_fail "scripts/lsp-mcp/tests/test_boundary.sh not found or not executable"
     fi
 fi
-# Host fuzzers (tools/fuzz): the loader's boot-entry parser and the kernel's
-# SID / ACL / security-descriptor validators under libFuzzer + ASan + UBSan.
+# Host fuzzers (tools/fuzz): the loader's boot-entry and boot.conf parsers and
+# the kernel's security-descriptor, PE, ELF, EIF, FAT32 and registry hive
+# parsers, under libFuzzer + ASan + UBSan.
 # Short here (10 s a target; the checked-in corpus is replayed first, so a
 # fixed defect's reproducer fails at once if the fix is lost); soak with
 # `FUZZ_SECONDS=600 bash tools/fuzz/run.sh`. A missing compiler or runtime is

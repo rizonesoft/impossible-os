@@ -80,7 +80,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 | 💎  |  13   | Duplicate-recipe sweep in the root Makefile              | §3             |  [/]   |
 | 💎  |  14   | Defect-finding tools: fuzzers, UBSan, static analysis    | §3, §7         |  [x]   |
 | 💎  |  15   | Static-analysis triage and changed-file gate             | §14            |  [x]   |
-| 💎  |  16   | Fuzz targets for the remaining untrusted parsers         | §14            |  [ ]   |
+| 💎  |  16   | Fuzz targets for the remaining untrusted parsers         | §14            |  [x]   |
 | ⭐  |  17   | Shard the todo-graph build suite                         | §7, §14        |  [ ]   |
 | ⭐  |  18   | Implementation plan: clear cycles, drive the run from it | §7             |  [ ]   |
 
@@ -524,15 +524,21 @@ Split 2026-11-10: the analyzer triage, the remaining fuzz targets and the suite 
 
 One libFuzzer target and a checked-in seed corpus per parser, built from the kernel's or loader's own source, run 10 s each by `tools/fuzz/run.sh`.
 
-- [ ] `boot.conf` parser target
-- [ ] PE loader header and section validation target
-- [ ] ELF loader header and program-header validation target
-- [ ] EIF metadata target
-- [ ] Registry hive target
-- [ ] FAT32 boot sector and directory entry target
-- [ ] Every defect a target finds is fixed in the parser, with its reproducer checked in to that target's corpus
+- [x] `boot.conf` target: the line lexer moved out of `parse_boot_conf` into `src/boot/uefi/boot_conf_lexer.c` (`boot_conf_next`), which the loader now calls
+  - An overlong key or value is a `boot_fatal` naming the key instead of a silent truncation; output matches the old loop on the shipped file. Tests: `test_boot_conf_lexer.c` (`TEST_CAT_BOOT`).
+- [x] PE target: headers, section table and import table (`pe_preflight`, `pe_walk_imports` in `src/kernel/pe_validate.c`); the harness maps the image page by page with unmapped pages `PROT_NONE`
+- [x] ELF target: `elf_parse` in `src/kernel/elf_parse.c`, everything `elf_load` decides before it copies; phdrs are read through `elf_phdr_read`
+- [x] EIF target: `eif_check` and segment decompression in `src/kernel/eif_parse.c`; the harness decodes every compressed segment into a buffer of the size `eif_check` allows
+- [x] Registry hive target: `hive_parse_payload` in `src/kernel/registry_hive_parse.c` is the one reader of the layout; validation walks with no visitor, loading walks again with the visitor that builds the tree
+- [x] FAT32 target: boot sector, FSInfo and the long-name run in `src/kernel/fs/fat32/fat32_parse.c`; listing, stat and lookup share `fat32_lfn_run_feed` / `fat32_lfn_run_bind`
+- [x] Every defect found is fixed in the parser, with a reproducer in the target's corpus where a target found it
+  - PE section table read at a file-chosen unaligned offset: all PE, ELF and FAT reads go through `include/kernel/le_bytes.h` or a local copy. Seed `regress-misaligned-section-table.seed`.
+  - PE import directory in an unmapped gap made exec fault in ring 0: `pe_preflight` now enforces the spec layout (sections ascending, adjacent, at SectionAlignment; ImageBase 64 KiB aligned) and `pe_load` maps whole aligned spans. Seed `regress-import-dir-in-unmapped-gap.seed`.
+  - Found by reading while extracting: FAT32 listing and stat bound a long name with no checksum or sequence check (test `fat32_listing_and_stat_ignore_unbound_run`); the BPB check accepted sector sizes the driver cannot address (refused now, 4 KiB support filed in `todo/05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md` section 18).
 
 **Test checkpoint:** `bash tools/fuzz/run.sh` builds and runs eight targets and exits 0; reverting any one parser fix makes the run fail on that target's checked-in reproducer.
+
+> **Test runner:** `bash tools/fuzz/run.sh` (eight targets PASS; `scripts/test-tooling.sh` runs it at 10 s a target) and `make test-exec`, `make test-fs`, `make test-boot` for the unit tests. Controls run 2026-11-11: the old PE member access fails on the misaligned seed, the PE build without the end-of-sections rule fails on the gap seed, and FAT32 binding without the checksum fails four assertions.
 
 ---
 

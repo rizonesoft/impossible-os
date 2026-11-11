@@ -54,15 +54,6 @@ static void fat32_make_short_name(const char *name, uint8_t *short_name)
 
 /* ---- LFN helpers ---- */
 
-uint8_t fat32_lfn_checksum(const uint8_t sfn[11])
-{
-    uint8_t sum = 0;
-    int i;
-    for (i = 0; i < 11; i++)
-        sum = (uint8_t)(((sum & 1) << 7) + (sum >> 1) + sfn[i]);
-    return sum;
-}
-
 int fat32_lfn_slot_count(const char *name)
 {
     int len = 0;
@@ -535,16 +526,12 @@ int fat32_dir_lookup(struct fat32_volume *vol, uint32_t dir_cluster,
 {
     uint32_t bytes_per_cluster = vol->bpb.sectors_per_cluster * 512;
     uint8_t *cluster_buf;
-    char lfn_name[FAT32_MAX_NAME];
+    fat32_lfn_run_t lfn_run;
     char short_str[FAT32_MAX_NAME];
     struct fat32_dirent_loc run;
     uint32_t cur_cluster = dir_cluster;
-    uint8_t lfn_chk = 0;
-    int lfn_active = 0;
-    int lfn_expect_seq = 0;
     int alias_hit = 0;
     int result = -1;
-    int k;
 
     /* Dot entries are the directory's structure, never a file to act on by name.
      * Every by-name operation comes through here, so each of them refuses these. */
@@ -557,6 +544,7 @@ int fat32_dir_lookup(struct fat32_volume *vol, uint32_t dir_cluster,
     cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
     if (!cluster_buf)
         return -1;
+    fat32_lfn_run_reset(&lfn_run);
 
     while (cur_cluster >= 2 && cur_cluster < FAT32_EOC) {
         uint32_t i;
@@ -576,44 +564,29 @@ int fat32_dir_lookup(struct fat32_volume *vol, uint32_t dir_cluster,
                 goto out;
             }
             if (de->name[0] == 0xE5) {
-                lfn_active = 0;
+                lfn_run.active = 0;
                 continue;
             }
             if (de->attr == FAT32_ATTR_LFN) {
                 const struct fat32_lfn_entry *lfn =
                     (const struct fat32_lfn_entry *)&cluster_buf[i];
-                int seq = lfn->seq & LFN_SEQ_MASK;
 
                 if (lfn->seq & LFN_LAST_ENTRY) {
-                    for (k = 0; k < FAT32_MAX_NAME; k++)
-                        lfn_name[k] = '\0';
-                    lfn_active = 1;
-                    lfn_chk = lfn->checksum;
-                    lfn_expect_seq = seq;
                     run.run_cluster = cur_cluster;
                     run.run_offset = i;
-                    run.run_entries = (uint32_t)seq + 1u;
+                    run.run_entries = (uint32_t)(lfn->seq & LFN_SEQ_MASK) + 1u;
                 }
-                if (lfn_active &&
-                    (seq != lfn_expect_seq || lfn->checksum != lfn_chk ||
-                     seq < 1 || seq > FAT32_LFN_MAX_ENTRIES)) {
-                    lfn_active = 0;
-                } else if (lfn_active) {
-                    lfn_extract_chars(lfn, lfn_name, seq - 1);
-                    lfn_expect_seq = seq - 1;
-                }
+                fat32_lfn_run_feed(&lfn_run, lfn);
                 continue;
             }
             if (de->attr & FAT32_ATTR_VOLUME_ID) {
-                lfn_active = 0;
+                lfn_run.active = 0;
                 continue;
             }
 
             /* A run names this entry only if it ran down to slot 1 and its
              * checksum is the one this short name produces. */
-            bound = lfn_active && lfn_expect_seq == 0 && lfn_name[0] != '\0' &&
-                    fat32_lfn_checksum(de->name) == lfn_chk;
-            lfn_active = 0;
+            bound = fat32_lfn_run_bind(&lfn_run, de->name);
             if (!bound) {
                 run.run_cluster = cur_cluster;
                 run.run_offset = i;
@@ -623,7 +596,7 @@ int fat32_dir_lookup(struct fat32_volume *vol, uint32_t dir_cluster,
             run.byte_offset = i;
             run.de = *de;
 
-            if (bound && fat32_strcasecmp(lfn_name, name)) {
+            if (bound && fat32_strcasecmp(lfn_run.name, name)) {
                 *loc = run;
                 result = 1;
                 goto out;
@@ -759,8 +732,7 @@ void fat32_read_dir(struct fat32_volume *vol, uint32_t cluster)
     uint32_t bytes_per_cluster;
     uint8_t *cluster_buf;
     uint32_t i;
-    char lfn_buf[FAT32_MAX_NAME];
-    int lfn_active = 0;
+    fat32_lfn_run_t run;
     /* Same-directory refresh? Slots refilled by the SAME on-disk file
      * (matching SFN) keep their live open state below. */
     int same_dir = (vol->dir_cached_cluster == cluster);
@@ -771,11 +743,7 @@ void fat32_read_dir(struct fat32_volume *vol, uint32_t cluster)
     if (!cluster_buf)
         return;
 
-    {
-        int k;
-        for (k = 0; k < FAT32_MAX_NAME; k++)
-            lfn_buf[k] = '\0';
-    }
+    fat32_lfn_run_reset(&run);
 
     while (cluster < FAT32_EOC && cluster != FAT32_FREE) {
         uint32_t sector = cluster_to_sector(vol, cluster);
@@ -799,44 +767,27 @@ void fat32_read_dir(struct fat32_volume *vol, uint32_t cluster)
                 goto done;
 
             if (de->name[0] == 0xE5) {
-                lfn_active = 0;
+                run.active = 0;
                 continue;
             }
 
             if (de->attr == FAT32_ATTR_LFN) {
-                struct fat32_lfn_entry *lfn =
-                    (struct fat32_lfn_entry *)&cluster_buf[i];
-                int seq = lfn->seq & LFN_SEQ_MASK;
-
-                if (lfn->seq & LFN_LAST_ENTRY) {
-                    int k;
-                    for (k = 0; k < FAT32_MAX_NAME; k++)
-                        lfn_buf[k] = '\0';
-                    lfn_active = 1;
-                }
-
-                if (lfn_active && seq >= 1 && seq <= FAT32_LFN_MAX_ENTRIES)
-                    lfn_extract_chars(lfn, lfn_buf, seq - 1);
-
+                fat32_lfn_run_feed(&run,
+                                   (const struct fat32_lfn_entry *)&cluster_buf[i]);
                 continue;
             }
 
             if (de->attr & FAT32_ATTR_VOLUME_ID) {
-                lfn_active = 0;
+                run.active = 0;
                 continue;
             }
 
             if (de->name[0] == '.') {
-                lfn_active = 0;
+                run.active = 0;
                 continue;
             }
 
-            if (lfn_active && lfn_buf[0] != '\0') {
-                fat32_strcpy(name, lfn_buf, FAT32_MAX_NAME);
-            } else {
-                fat32_short_name_to_str(de->name, name);
-            }
-            lfn_active = 0;
+            (void)fat32_dirent_name(&run, de, name);
 
             fc = ((uint32_t)de->first_cluster_hi << 16)
                | (uint32_t)de->first_cluster_lo;

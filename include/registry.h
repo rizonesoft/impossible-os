@@ -74,7 +74,7 @@
 #define DELETE             0x00010000   /* DELETE standard right (RegDeleteKey) */
 #define MAXIMUM_ALLOWED    0x02000000   /* samDesired: grant the maximum the DACL permits */
 #define REG_MAX_KEY_DEPTH  512          /* Max key path depth (backslash-separated levels) */
-/* Recursion cap for the on-disk hive parser (hive_parse_key). Each recursive
+/* Recursion cap for the on-disk hive parser (walk_key, registry_hive_parse.c). Each recursive
  * frame carries a char name[REG_MAX_KEY_NAME + 1] (~392 bytes with locals), so
  * the API-level REG_MAX_KEY_DEPTH would blow the 8 KiB kernel task stack. Even
  * with the 4 KiB hive header moved off-stack, cap parse recursion well within
@@ -538,6 +538,39 @@ typedef struct __attribute__((packed)) {
     uint32_t data_size;                      /* Total size of key+value data */
     uint8_t  padding[HIVE_HEADER_SIZE - 96]; /* Pad to 4096 bytes */
 } hive_header_t;
+
+/* Largest payload a hive may declare (data_size). */
+#define HIVE_MAX_DATA_SIZE (1024u * 1024u)
+
+/* registry_hive_parse.c: the one reader of the on-disk hive layout. */
+
+/* Called for each key and value in file order. key() returns the handle that
+ * the key's own values and children are passed (NULL rejects the file);
+ * value() returns < 0 to reject. data is the value's bytes in the file, valid
+ * only for the call. */
+typedef struct hive_visitor {
+    void *(*key)(void *ctx, void *parent, const char *name);
+    int   (*value)(void *ctx, void *key, const char *name, uint32_t type,
+                   const uint8_t *data, uint32_t size);
+    void  *ctx;
+} hive_visitor_t;
+
+/* Walk a payload. With vis == NULL nothing is called and nothing is written:
+ * the validation pass. 0 = the records are well formed, every name and value
+ * is in bounds, nesting is at most HIVE_MAX_PARSE_DEPTH, and they end exactly
+ * at size. *keys_out and *values_out count the root key and every value. */
+int hive_parse_payload(const uint8_t *data, uint32_t size, void *root,
+                       const hive_visitor_t *vis, uint32_t *keys_out,
+                       uint32_t *values_out);
+
+/* The validation pass, also requiring the counts the header declared. */
+int hive_validate_payload(const uint8_t *data, uint32_t size,
+                          uint32_t expected_keys, uint32_t expected_values,
+                          uint32_t *keys_out, uint32_t *values_out);
+
+/* Magic, version, data offset and a data size in (0, HIVE_MAX_DATA_SIZE].
+ * The CRC is checked by the caller, which holds a mutable copy. */
+int hive_header_fields_ok(const hive_header_t *hdr);
 
 /* Serialize a root key tree to a hive file on disk.
  * Returns 0 on success, -1 on error. */

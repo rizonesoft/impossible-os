@@ -610,6 +610,108 @@ static void test_fat32_lookup_ignores_unbound_run(void)
     fx_close(&fx);
 }
 
+/* The long-name run state machine on its own: a run names the short entry
+ * only when it starts at a LAST slot, counts down one at a time to slot 1
+ * under one checksum, and that checksum is the short name's. */
+static void fx_lfn(struct fat32_lfn_entry *e, uint8_t seq, uint8_t chk, char c)
+{
+    uint32_t i;
+    memset(e, 0, sizeof(*e));
+    e->seq = seq;
+    e->attr = FAT32_ATTR_LFN;
+    e->checksum = chk;
+    for (i = 0; i < 5; i++) e->name1[i] = (uint16_t)c;
+    for (i = 0; i < 6; i++) e->name2[i] = (uint16_t)c;
+    for (i = 0; i < 2; i++) e->name3[i] = (uint16_t)c;
+}
+
+static void test_fat32_lfn_run_sequence_rules(void)
+{
+    static const uint8_t sfn[11] = { 'R','E','P','O','R','T','~','1','J','S','O' };
+    uint8_t chk = fat32_lfn_checksum(sfn);
+    fat32_lfn_run_t run;
+    struct fat32_lfn_entry e;
+
+    fat32_lfn_run_reset(&run);
+    fx_lfn(&e, LFN_LAST_ENTRY | 2, chk, 'b'); fat32_lfn_run_feed(&run, &e);
+    fx_lfn(&e, 1, chk, 'a');                  fat32_lfn_run_feed(&run, &e);
+    TEST_ASSERT_EQ(fat32_lfn_run_bind(&run, sfn), 1, "a complete descending run binds");
+    TEST_ASSERT_EQ(run.name[0], 'a', "slot 1 holds the first characters");
+    TEST_ASSERT_EQ(run.name[13], 'b', "slot 2 follows");
+    TEST_ASSERT_EQ(fat32_lfn_run_bind(&run, sfn), 0, "a run binds once");
+
+    fat32_lfn_run_reset(&run);
+    fx_lfn(&e, LFN_LAST_ENTRY | 2, chk, 'b'); fat32_lfn_run_feed(&run, &e);
+    TEST_ASSERT_EQ(fat32_lfn_run_bind(&run, sfn), 0, "a run missing slot 1 does not bind");
+
+    fat32_lfn_run_reset(&run);
+    fx_lfn(&e, LFN_LAST_ENTRY | 3, chk, 'c'); fat32_lfn_run_feed(&run, &e);
+    fx_lfn(&e, 1, chk, 'a');                  fat32_lfn_run_feed(&run, &e);
+    TEST_ASSERT_EQ(fat32_lfn_run_bind(&run, sfn), 0, "a skipped slot breaks the run");
+
+    fat32_lfn_run_reset(&run);
+    fx_lfn(&e, LFN_LAST_ENTRY | 2, chk, 'b'); fat32_lfn_run_feed(&run, &e);
+    fx_lfn(&e, 2, chk, 'b');                  fat32_lfn_run_feed(&run, &e);
+    fx_lfn(&e, 1, chk, 'a');                  fat32_lfn_run_feed(&run, &e);
+    TEST_ASSERT_EQ(fat32_lfn_run_bind(&run, sfn), 0, "a repeated slot breaks the run");
+
+    fat32_lfn_run_reset(&run);
+    fx_lfn(&e, LFN_LAST_ENTRY | 2, chk, 'b');          fat32_lfn_run_feed(&run, &e);
+    fx_lfn(&e, 1, (uint8_t)(chk ^ 1u), 'a');           fat32_lfn_run_feed(&run, &e);
+    TEST_ASSERT_EQ(fat32_lfn_run_bind(&run, sfn), 0, "a slot under another checksum breaks the run");
+
+    fat32_lfn_run_reset(&run);
+    fx_lfn(&e, LFN_LAST_ENTRY | 0, chk, 'a'); fat32_lfn_run_feed(&run, &e);
+    TEST_ASSERT_EQ(fat32_lfn_run_bind(&run, sfn), 0, "sequence 0 never binds");
+
+    fat32_lfn_run_reset(&run);
+    fx_lfn(&e, LFN_LAST_ENTRY | (FAT32_LFN_MAX_ENTRIES + 1), chk, 'a');
+    fat32_lfn_run_feed(&run, &e);
+    TEST_ASSERT(run.active == 0, "a sequence past the longest name is dropped");
+
+    fat32_lfn_run_reset(&run);
+    fx_lfn(&e, 1, chk, 'a');                  fat32_lfn_run_feed(&run, &e);
+    TEST_ASSERT_EQ(fat32_lfn_run_bind(&run, sfn), 0, "a run that never started at a LAST slot does not bind");
+}
+
+/* The listing and stat use the same binding rule as lookup: a run whose
+ * checksum does not match the short name that follows it names nothing, so
+ * neither shows a long name that lookup would then refuse to open. */
+static void test_fat32_listing_and_stat_ignore_unbound_run(void)
+{
+    struct fx_volume fx;
+    struct fat32_stat_info info;
+    struct fat32_lfn_entry *lfn;
+
+    TEST_ASSERT_EQ(fx_open(&fx), 0, "fixture volume allocated");
+    if (!fx.vol || !fx.disk) { fx_close(&fx); return; }
+
+    TEST_ASSERT_EQ(fat32_create_file_vol(fx.vol, FX_ROOT_CLUSTER, "report.json"), 0,
+                   "file created");
+    scache_flush(fx.vol);
+    fat32_read_dir(fx.vol, FX_ROOT_CLUSTER);
+    TEST_ASSERT_EQ(fx.vol->dir_file_count, 1, "the listing holds the file");
+    TEST_ASSERT_EQ(strcmp(fx.vol->dir_files[0].node.name, "report.json"), 0,
+                   "a bound run gives the long name");
+
+    lfn = (struct fat32_lfn_entry *)
+        (fx.disk + (uint64_t)cluster_to_sector(fx.vol, FX_ROOT_CLUSTER) * 512u);
+    TEST_ASSERT_EQ(lfn->attr, FAT32_ATTR_LFN, "the first entry is the run");
+    lfn->checksum ^= 0x5Au;
+    scache_invalidate(fx.vol);
+    fx.vol->dir_cached_cluster = 0xFFFFFFFFu;
+
+    fat32_read_dir(fx.vol, FX_ROOT_CLUSTER);
+    TEST_ASSERT_EQ(fx.vol->dir_file_count, 1, "the listing still holds the file");
+    TEST_ASSERT_EQ(strcmp(fx.vol->dir_files[0].node.name, "report~1.jso"), 0,
+                   "an unbound run leaves the short name in the listing");
+    TEST_ASSERT(fat32_stat(fx.vol, "report.json", &info) != 0,
+                "stat does not find the file by an unbound long name");
+    TEST_ASSERT_EQ(fat32_stat(fx.vol, "REPORT~1.JSO", &info), 0,
+                   "stat finds it by its short name");
+    fx_close(&fx);
+}
+
 /* Delete and rmdir must clear a run that starts in an earlier directory cluster,
  * with no slot left behind to bind to a future short name. */
 static void test_fat32_remove_run_across_clusters(void)
@@ -1950,6 +2052,10 @@ void test_register_fat32(void)
                             test_fat32_lookup_alias_rules, TEST_CAT_FS);
     test_suite_register_cat("FAT32: lookup ignores an unbound run",
                             test_fat32_lookup_ignores_unbound_run, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: long-name run sequence rules",
+                            test_fat32_lfn_run_sequence_rules, TEST_CAT_FS);
+    test_suite_register_cat("FAT32: listing and stat ignore an unbound run",
+                            test_fat32_listing_and_stat_ignore_unbound_run, TEST_CAT_FS);
     test_suite_register_cat("FAT32: removal clears a run across clusters",
                             test_fat32_remove_run_across_clusters, TEST_CAT_FS);
     test_suite_register_cat("FAT32: rmdir keeps a directory it cannot read",

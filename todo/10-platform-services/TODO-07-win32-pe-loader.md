@@ -128,7 +128,11 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
 - [ ] Handle `SizeOfImage` > VMM user space guard: `klog_err()` + return `PE_ERR_ALLOC`
 - [ ] Handle section `raw_size=0` (BSS-only sections): just zero `virtual_size` bytes
 - [ ] Test: load `hello.exe` PE32+ binary → `entry_va_out` points within mapped image; no crash on validation
-- [ ] Complete `pe_load()` rollback: `pe_rollback()` (`src/kernel/pe.c`) unmaps a contiguous prefix, missing sections past an RVA gap; `pe_map_one_page()` leaks its frame when `vmm_map_page()` fails (`pmm_free_frame()` now exists)
+- [ ] Complete `pe_load()` rollback: `pe_map_one_page()` leaks its frame when `vmm_map_page()` fails (`pmm_free_frame()` now exists)
+  - The other half (sections past an RVA gap surviving `pe_rollback()`) is gone: since 2026-11-11 `pe_preflight` refuses gaps, so the mapped pages are one contiguous run from `ImageBase`.
+- [ ] Back zero-fill pages (BSS, alignment padding past a section's data) on first touch instead of at exec
+  - Done when exec of an image whose `SizeOfImage` is mostly zero-fill allocates frames only for pages holding file data, with a test counting allocated frames.
+  - Today `pe_load` allocates and zeroes every page below the aligned `SizeOfImage` (up to 256 MiB) before the program runs, so a small file can demand that much memory; Windows commits these pages demand-zero. Found by the 2026-11-11 perf review (XREF: `todo/00-infrastructure/TODO-01-developer-tooling-stack.md` section 16).
 - [ ] Commit: `"kernel: pe_load -- header validation, section mapping, BSS zero, vmm_alloc_user at ImageBase"`
 
 ## 5. Base Relocations `[Sonnet]`

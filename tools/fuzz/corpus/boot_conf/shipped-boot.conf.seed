@@ -1,0 +1,105 @@
+# Impossible OS Boot Configuration
+# Location: \EFI\ImpossibleOS\boot.conf
+
+# --- Core ---
+kernel=\boot\kernel.exe
+cmdline=
+splash_timeout=3
+boot_mode=normal
+
+# --- Debug & Logging ---
+debug=0
+verbose=0
+# Seconds to pause on each diagnostic screen when debug=1 (0 = no pause)
+diag_delay=0
+# Show diagnostics on boot splash (for bare metal without serial access)
+# Requires debug=1. If diag_delay=0, defaults to 5s per screen.
+diag_splash=0
+
+# --- Kernel Heartbeat ---
+heartbeat=auto
+postcode=auto
+
+# --- Visual POST Display (VPD) ---
+# off  = no VPD, normal splash only
+# on   = VPD integrated with splash
+# diag = full diagnostic screen, no splash art
+postbars=on
+
+# --- Deferred Init ---
+# 1 = defer non-critical subsystems (network, optional input) until after desktop
+# 0 = all subsystems init in-phase (old behavior, for debugging)
+deferred=1
+
+# --- Async Init ---
+# 1 = parallel subsystem init on APs (storage drivers probe concurrently)
+# 0 = sequential init (default, safe fallback)
+async_init=0
+
+# --- Serial ---
+serial_debug=1
+
+# --- Deliberate Crash Tests ---
+# 0 = off (default). 1 = BSOD early in Phase 3, right after the boot log
+# flush. 2 = BSOD INSIDE the compositor loop, immediately before the
+# first composite -- a boot that did everything, entered the compositor,
+# and still never became visible. Value 2 is what the anti-rollback
+# fixture harness uses to prove the security floor does not advance on
+# such a boot. Any other value is not a crash site and is reported as
+# such on serial rather than silently doing nothing.
+crash_test=0
+
+# --- Anti-Rollback Security Floor ---
+# 1/on = a boot that reaches the compositor's first stable frame raises
+#     the IPOSRequiredSecVersion NVRAM floor to this image's shipped
+#     version. Only 0/off/1/on are accepted -- anything else is treated
+#     as OFF and reported on serial, because this floor is irreversible
+#     and a typo must never be able to advance it.
+# 0 = never advance the floor (default). Once the floor advances, every
+#     older signed image is refused pre-jump, so leave this off unless you
+#     are deliberately retiring older images. The raise is withheld on any
+#     boot that dies before the first frame, and is skipped entirely under
+#     compositor=headless.
+anti_rollback_raise=0
+
+# --- User-mode test launcher (TODO-04 §4) ---
+# Honoured only when test=1. Defaults shown; uncomment + tweak to customize.
+#
+# utest_filter=<name|*glob*>   literal name or `*`-glob; empty = run all
+# utest_timeout_ms=<0..65535>  per-binary wall-clock watchdog in ms
+#                              (0 = built-in default of 10000 ms)
+# tap=<0|1>                    1 = emit `1..N` plan + `ok N - name` /
+#                              `not ok N - name` / `# SKIP` lines
+#                              parsable by kselftest-style tooling
+#
+# Test binaries can report "not applicable here" by exiting with status
+# 77 (kselftest convention). The launcher counts these as SKIP, not FAIL.
+# utest_filter=
+# utest_timeout_ms=0
+# tap=0
+# utest_isolation=<0|1>       0 disables per-test scratch dir + Registry
+#                              wipe + handle-leak detection. Default 1.
+#                              Only turn off when actively debugging the
+#                              isolation hooks themselves -- production
+#                              runs always isolate.
+# utest_isolation=1
+#
+# xml=<0|1>                    1 emits [UTEST-XML] JUnit XML lines on
+#                              serial; scripts/test.sh harvests them
+#                              into build/test-results.xml for CI tools
+#                              (GitLab artifacts.reports.junit, GH
+#                              Actions actions/upload-artifact, Jenkins
+#                              junit plugin).
+# json=<0|1>                   1 emits [UTEST-JSON] one-line-per-binary
+#                              records + a final summary line for
+#                              downstream automation with typed schema.
+# xml=0
+# json=0
+#
+# stress_iters=<N>             RESERVED -- launcher-side stress looping
+#                              awaits scheduler PID-slot reuse.
+# test_kernel_skip=<0|1>       1 = skip kernel TEST_CAT_* sweep (set by
+#                              -NoKernelTests / per-binary usermode bats).
+# test_usermode_skip=<0|1>     1 = skip user-mode launcher (set by
+#                              -NoUsermodeTests / kernel aggregate bats).
+# debug=1 always runs both halves regardless of these flags.

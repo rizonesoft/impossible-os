@@ -34,7 +34,7 @@ CFLAGS += -MMD -MP
 
 OUTDIR ?= ../../../build/tools
 
-OBJS := bootx64.o reloc.o sbat.o elf_bootproto.o boot_history.o boot_entries_parser.o boot_policy.o boot_sticky.o boot_entry_kind.o loader_vars.o
+OBJS := bootx64.o reloc.o sbat.o elf_bootproto.o boot_history.o boot_entries_parser.o boot_conf_lexer.o boot_policy.o boot_sticky.o boot_entry_kind.o loader_vars.o
 
 .PHONY: all clean
 
@@ -99,6 +99,11 @@ boot_entry_kind.o: boot_entry_kind.c \
 boot_entries_parser.o: boot_entries_parser.c \
                        ../../../include/boot/boot_entries_parser.h \
                        ../../../include/boot/boot_entries.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# boot.conf key=value lexer. Pure C, no UEFI types, no state -- also built
+# for the host by tools/fuzz. Header: include/boot/boot_conf_lexer.h.
+boot_conf_lexer.o: boot_conf_lexer.c ../../../include/boot/boot_conf_lexer.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Boot policy ladder + counter filename parser. Pure C, no UEFI types --

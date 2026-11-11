@@ -11,6 +11,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/le_bytes.h"
 
 /* ---- DOS Header (IMAGE_DOS_HEADER) -------------------------------------- */
 
@@ -237,6 +238,23 @@ typedef struct pe_dll_exports {
     uint32_t                 count;     /* number of entries */
 } pe_dll_exports_t;
 
+/* ---- Field access ------------------------------------------------------ */
+
+/* The address of FIELD in the header of TYPE at P, as bytes. Every header sits
+ * at an offset the file chooses (e_lfanew, SizeOfOptionalHeader, an RVA), so it
+ * can be at an odd address, and naming a member through such a pointer is
+ * undefined behaviour even to take its address. Read fields only through this
+ * and the le*_at loads, never as p->FIELD. */
+#define PE_FIELD(p, type, field) \
+    ((const uint8_t *)(p) + __builtin_offsetof(type, field))
+#define PE_SECTION_FIELD(secs, i, field) \
+    ((const uint8_t *)(secs) + (uint64_t)(i) * sizeof(pe_section_header_t) + \
+     __builtin_offsetof(pe_section_header_t, field))
+#define PE_DATA_DIR_FIELD(opt, i, field) \
+    (PE_FIELD(opt, pe_optional_header64_t, DataDirectory) + \
+     (uint64_t)(i) * sizeof(pe_data_directory_t) + \
+     __builtin_offsetof(pe_data_directory_t, field))
+
 /* ---- PE validation result ----------------------------------------------- */
 
 typedef struct pe_validate_result {
@@ -266,6 +284,75 @@ typedef struct pe_validate_result {
  *   - Section headers within data bounds
  */
 pe_validate_result_t pe_validate(const uint8_t *data, uint64_t size);
+
+/* Loader limits on the image the file describes. */
+#define PE_MIN_IMAGE_BASE   0x1000000ULL            /* below 16 MiB: kernel range */
+#define PE_MAX_SECTIONS     96                      /* linkers emit < 20 */
+#define PE_MAX_IMAGE_SIZE   (256ULL * 1024 * 1024)  /* 256 MiB */
+
+/* ---- Import table walk (pe_validate.c) ---- */
+
+#define PE_STUB_THUNK_ADDR     0ULL  /* IAT value for an unresolved import: a call faults cleanly */
+#define PE_MAX_IMPORT_DLLS     64    /* descriptors walked, so a file cannot make the walk unbounded */
+#define PE_MAX_THUNKS_PER_DLL  4096  /* thunks walked per descriptor, for the same reason */
+#define PE_MAX_NAME_LEN        256   /* longest DLL or function name read from the image */
+
+/* What the walk needs from the loader. find_dll returns a handle for a DLL
+ * the system exports, or NULL; lookup returns the SSDT index of one of its
+ * functions, or (uint32_t)-1; write_iat stores an 8-byte IAT value at an RVA
+ * the walk has bounded inside the image and returns 1, or 0 when the page
+ * holding it is unmapped. */
+typedef struct pe_import_ops {
+    const void *(*find_dll)(void *ctx, const char *dll_name);
+    uint32_t    (*lookup)(void *ctx, const void *dll, const char *func);
+    int         (*write_iat)(void *ctx, uint32_t iat_rva, uint64_t value);
+    void        *ctx;
+} pe_import_ops_t;
+
+/* Walk the import directory [import_rva, import_rva + import_size) of an image
+ * mapped at `image` (size_of_image bytes, all readable) and fill its IAT
+ * through ops. Every descriptor, thunk and name the file names is bounded
+ * inside the image before it is read. Returns the number of imports resolved
+ * (0 when there is no import directory), or -1 when the table is malformed or
+ * an IAT entry could not be written. *dlls_out, if given, counts the DLLs. */
+int pe_walk_imports(const uint8_t *image, uint32_t size_of_image,
+                    uint32_t import_rva, uint32_t import_size,
+                    const pe_import_ops_t *ops, uint32_t *dlls_out);
+
+#define PE_PAGE_SIZE 4096u
+
+static inline uint64_t pe_align_up(uint64_t v, uint32_t align)
+{
+    return (v + align - 1) & ~(uint64_t)(align - 1);
+}
+
+/* A section's size in memory: VirtualSize, or SizeOfRawData when VirtualSize
+ * is 0, as the Windows loader reads it. */
+static inline uint32_t pe_section_span(const pe_section_header_t *secs, uint32_t i)
+{
+    uint32_t vs = le32_at(PE_SECTION_FIELD(secs, i, VirtualSize));
+    return vs ? vs : le32_at(PE_SECTION_FIELD(secs, i, SizeOfRawData));
+}
+
+/* The image layout pe_preflight accepted, read once from the headers. */
+typedef struct pe_image_layout {
+    uint64_t image_base;
+    uint32_t size_of_image;
+    uint32_t size_of_headers;
+    uint32_t entry_rva;
+    uint32_t num_rva_sizes;
+    uint32_t section_alignment;  /* power of two, at least PE_PAGE_SIZE */
+    uint32_t mapped_size;        /* SizeOfImage rounded up to it: every byte below is mapped */
+} pe_image_layout_t;
+
+/* Every check made on file bytes before a page is mapped: pe_validate, then
+ * ImageBase, SizeOfImage, SizeOfHeaders, the entry RVA, the section count, and
+ * each section's virtual range against SizeOfImage and raw range against the
+ * file, all in 64-bit arithmetic. 0 = accepted (*vout and *out filled),
+ * -1 = rejected (*vout holds pe_validate's result). Pure: no allocation and no
+ * mapping, so the host fuzzer runs it as the loader does. */
+int pe_preflight(const uint8_t *data, uint64_t size, pe_validate_result_t *vout,
+                 pe_image_layout_t *out);
 
 /* PE32+ loader entry point for the exec dispatcher.
  * Currently validates only; section loading lands separately.

@@ -541,11 +541,13 @@ $(UEFI_EFI): $(UEFI_LOADER_INPUTS) \
              src/boot/uefi/boot_info_mirror.h \
              src/boot/uefi/boot_history.c \
              src/boot/uefi/boot_entries_parser.c \
+             src/boot/uefi/boot_conf_lexer.c \
              src/boot/uefi/boot_policy.c \
              src/boot/uefi/boot_sticky.c \
              src/boot/uefi/boot_entry_kind.c \
              src/boot/uefi/loader_vars.c \
              include/boot/boot_entries_parser.h \
+             include/boot/boot_conf_lexer.h \
              include/boot/boot_entries.h \
              include/boot/boot_policy.h \
              include/boot/boot_audit_codes.h \

@@ -18,7 +18,7 @@ title: "TODO-20 -- EIF Full Implementation"
 > **Goal:** Complete the Executable Impossible Format (EIF) from its current basic loader to a production-quality native binary format. The basic loader (TODO-17 §5) validates headers, copies segments, and builds import dispatch tables. This TODO fills the gaps. Shipped + reviewed: range overlap validation, API version gating, metadata parsing, LZ4 decompression, CET flag reservation. Open: segment permission enforcement (§2), loader-owned module registration (§3), per-process dispatch isolation (§9), resource section (§12). Parked: optional import stubs (§7) and the signature-block ABI (§11) on operator decisions, ASLR (§8) on a PIC producer. When done, EIF is the fastest, most secure native binary format on any OS.
 
 > [!IMPORTANT]
-> **Current state:** `eif_load()` in `src/kernel/eif.c` validates the canonical section order + range overlap (§1), gates `api_version` (§4), parses the metadata section (§5), transparently LZ4-decompresses compressed segments (§6), and reserves the CET flag bits with fail-closed unknown-flag rejection (§10). The dispatch table at 0x8F0000 sits inside the image range: a fork+exec child gets private frames for it (`task_exec` private-frame remap), a launcher-spawned task loads over the shared identity map, and it is writable from ring 3 either way. Still missing: segment R/W/X enforcement (§2), loader-owned module registration (§3), per-process dispatch isolation (§9), and the parked §7, §8, §11.
+> **Current state:** `eif_load()` in `src/kernel/eif.c` (its checks in `eif_check()`, `src/kernel/eif_parse.c`) validates the canonical section order + range overlap (§1), gates `api_version` (§4), parses the metadata section (§5), transparently LZ4-decompresses compressed segments (§6), and reserves the CET flag bits with fail-closed unknown-flag rejection (§10). The dispatch table at 0x8F0000 sits inside the image range: a fork+exec child gets private frames for it (`task_exec` private-frame remap), a launcher-spawned task loads over the shared identity map, and it is writable from ring 3 either way. Still missing: segment R/W/X enforcement (§2), loader-owned module registration (§3), per-process dispatch isolation (§9), and the parked §7, §8, §11.
 > EIF spec lives at `specs/eif-format.md`. Code signing is tracked separately in TODO-17 §17. The `elf2eif` converter is tracked in TODO-17 §13.
 
 > [!NOTE]
@@ -26,7 +26,7 @@ title: "TODO-20 -- EIF Full Implementation"
 
 ## Inputs
 
-- [`src/kernel/eif.c`](../../src/kernel/eif.c) -- current EIF loader (basic segments + imports)
+- [`src/kernel/eif.c`](../../src/kernel/eif.c) -- current EIF loader (basic segments + imports); [`src/kernel/eif_parse.c`](../../src/kernel/eif_parse.c) -- every check the file drives, fuzzed on the host
 - [`include/kernel/eif.h`](../../include/kernel/eif.h) -- EIF structures and constants
 - [`specs/eif-format.md`](../../specs/eif-format.md) -- normative EIF specification
 - [`src/kernel/exec.c`](../../src/kernel/exec.c) -- exec dispatcher, module registration API
@@ -84,7 +84,7 @@ title: "TODO-20 -- EIF Full Implementation"
 
 The spec mandates `segment_offset < import_offset < metadata_offset < signature_offset` (metadata ALWAYS precedes the signature so the signature covers it, per `specs/eif-format.md` Normative Rules 2-3) and that all ranges must be non-overlapping. Shipped: `eif_validate()` enforces the canonical order + non-overlap, and `eif_load` enforces per-segment data non-overlap.
 
-- [x] `eif_validate()` enforces canonical ordering via an ascending cursor: segment table -> import table -> metadata -> signature, each starting at/after the previous end, skipping absent (0) regions (`src/kernel/eif.c`).
+- [x] `eif_validate()` enforces canonical ordering via an ascending cursor: segment table -> import table -> metadata -> signature, each starting at/after the previous end, skipping absent (0) regions (`src/kernel/eif_parse.c`).
 - [x] Per-segment file-data non-overlap: an O(n) monotonic walk in `eif_load` rejects a segment whose `[file_offset, file_size)` precedes the previous end (spec rule 7).
 - [x] Segment data confined to the canonical region `[tables_end, data_limit)` (after both tables, before metadata/signature) -- data cannot overlap the tables/metadata/signature.
 - [x] Rejection returns 0 -> `exec_load_fmt` maps to `ENOEXEC`; each reject emits a descriptive `klog(..., "eif", ...)` (e.g. "Segment table out of canonical order").
@@ -94,7 +94,7 @@ The spec mandates `segment_offset < import_offset < metadata_offset < signature_
 > **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | EIF range-overlap suites, 0 failures
 >
 > **Notes:**
-> - Shipped (prior EIF hardening, this reconciliation only flips the checkboxes): `eif_validate()` canonical-order cursor (`src/kernel/eif.c`) + `eif_load` per-segment vaddr/file non-overlap walk + segment-data-in-canonical-region check.
+> - Shipped (prior EIF hardening, this reconciliation only flips the checkboxes): `eif_validate()` canonical-order cursor (`src/kernel/eif_parse.c`) + `eif_load` per-segment vaddr/file non-overlap walk + segment-data-in-canonical-region check.
 > - All range math is u64-widened + overflow-safe (check-before-subtract); absent (0) regions are skipped; rejects via `return 0` -> `ENOEXEC` with `klog(..., "eif", ...)`.
 > - Tests: `test_eif_reject_out_of_order_sections` + `test_eif_reject_segment_data_over_table` (test_exec.c, TEST_CAT_EXEC).
 > - Canonical doc: `specs/eif-format.md` Normative Rules 2, 6, 7.
@@ -153,7 +153,7 @@ The `api_version` field is the minimum OS API version a binary requires. `eif_va
 > **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | EIF api-version suite, 0 failures
 >
 > **Notes:**
-> - Shipped: `EIF_CURRENT_API_VERSION` (`include/kernel/eif.h`) + an api-version gate in `eif_validate()` (`src/kernel/eif.c`) rejecting too-new binaries; 1 new `TEST_CAT_EXEC` test.
+> - Shipped: `EIF_CURRENT_API_VERSION` (`include/kernel/eif.h`) + an api-version gate in `eif_validate()` (`src/kernel/eif_parse.c`) rejecting too-new binaries; 1 new `TEST_CAT_EXEC` test.
 > - Runs at EIF load-validation time (post-boot, klog); v0 and <= current accepted, `> current` rejected fail-closed. Design-review approved the plain `>` gate (no v0 special-case).
 > - Closes the TODO-20 §1 review Accepted-XREF (api_version was unenforced -> now owned + done here).
 > - Canonical doc: `specs/eif-format.md` Normative Rule 4.
@@ -170,7 +170,7 @@ The `api_version` field is the minimum OS API version a binary requires. `eif_va
 The spec defines a key-value metadata section (name, version, author, icon, min_os). Currently the `metadata_offset` field is parsed but the section is never read.
 
 - [x] `eif_metadata_t` in `eif.h`: `name[64]`/`version[32]`/`author[64]`/`min_os[16]` + `build_id[32]`/`build_id_len` (raw-byte id). In-memory decode target, not an on-disk struct.
-- [x] `eif_parse_metadata(data, size, hdr, out)` in `eif.c`: pure (no klog), walks `key_len+key+val_len+val` records, maps known keys, skips unknown (forward-compat), terminates on `key_len==0` or range end.
+- [x] `eif_parse_metadata(data, size, hdr, out)` in `eif_parse.c`: pure (no klog), walks `key_len+key+val_len+val` records, maps known keys, skips unknown (forward-compat), terminates on `key_len==0` or range end.
 - [x] Remaining-length bounds check before every length read (`remaining>=4`, then `declared<=remaining`) -- no cursor-addition overflow; 1-3 trailing bytes are malformed.
 - [x] `EIF_MAX_METADATA_RECORDS` (64) cap: reject a record flood before mutation (parser-DoS guard; mirrors the segment/import count caps).
 - [x] Parse in `eif_load` validation phase: a malformed record rejects before the segment copy touches user memory; `name/version/author/min_os` logged after `end_ns` (klog-timing discipline).
@@ -288,7 +288,7 @@ Both Win11 (`IMAGE_DLLCHARACTERISTICS_EX_CET_COMPAT`) and Linux (`.note.gnu.prop
 > **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | EIF flag-validation suite, 0 failures
 >
 > **Notes:**
-> - Shipped: `EIF_FLAG_CET_IBT`/`_SHSTK` (bits 6/7) + `EIF_FLAG_KNOWN_MASK` + `eif_flags_known()` (`eif.h`/`eif.c`); `eif_validate` fail-closed-rejects unknown flag bits; `specs/eif-format.md` rule 10; 3 `TEST_CAT_EXEC` tests.
+> - Shipped: `EIF_FLAG_CET_IBT`/`_SHSTK` (bits 6/7) + `EIF_FLAG_KNOWN_MASK` + `eif_flags_known()` (`eif.h`/`eif_parse.c`); `eif_validate` fail-closed-rejects unknown flag bits; `specs/eif-format.md` rule 10; 3 `TEST_CAT_EXEC` tests.
 > - Format reservation only -- the CET bits are parsed/accepted but UNENFORCED; enforcement (per-process `U_CET`/`PL3_SSP`) is owned by `TODO-10-kernel-security-hardening.md §10`.
 > - Design review (1 HIGH adopted): a single generic CET_COMPAT bit conflates IBT (forward-edge) and SHSTK (backward-edge) -> two independent bits matching the Linux `.note.gnu.property` split.
 > - Canonical doc: `specs/eif-format.md` normative rule 10.

@@ -137,9 +137,19 @@ static void test_fat32_bpb_rejects_bad_bps(void)
 {
     struct fat32_volume vol;
     test_fat32_bpb_make_valid(&vol);
-    vol.bpb.bytes_per_sector = 513;  /* not in {512,1024,2048,4096} */
+    vol.bpb.bytes_per_sector = 513;  /* not a FAT sector size at all */
     TEST_ASSERT(fat32_validate_bpb_q(&vol) == -1,
                 "validate_bpb rejects bytes_per_sector=513");
+    /* Legal FAT sizes the driver cannot address yet (it works in 512-byte
+     * sectors): refused rather than misread. */
+    vol.bpb.bytes_per_sector = 4096;
+    TEST_ASSERT(fat32_validate_bpb_q(&vol) == -1,
+                "validate_bpb refuses bytes_per_sector=4096");
+    vol.bpb.bytes_per_sector = 1024;
+    TEST_ASSERT(fat32_validate_bpb_q(&vol) == -1,
+                "validate_bpb refuses bytes_per_sector=1024");
+    vol.bpb.bytes_per_sector = 512;
+    TEST_ASSERT_EQ(fat32_validate_bpb_q(&vol), 0, "512 stays valid");
 }
 
 static void test_fat32_bpb_rejects_non_pow2_spc(void)

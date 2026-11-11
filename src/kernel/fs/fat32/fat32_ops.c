@@ -719,12 +719,9 @@ int fat32_stat(struct fat32_volume *vol, const char *path,
         found = 0;
         {
             uint32_t cur_cluster = cluster;
-            char lfn_name[FAT32_MAX_NAME];
-            int lfn_active_s = 0;
-            int k;
+            fat32_lfn_run_t run;
 
-            for (k = 0; k < FAT32_MAX_NAME; k++)
-                lfn_name[k] = '\0';
+            fat32_lfn_run_reset(&run);
 
             while (cur_cluster < FAT32_EOC && cur_cluster != FAT32_FREE) {
                 uint32_t sector = cluster_to_sector(vol, cur_cluster);
@@ -739,32 +736,19 @@ int fat32_stat(struct fat32_volume *vol, const char *path,
                     char ename[FAT32_MAX_NAME];
 
                     if (de->name[0] == 0x00) goto stat_not_found;
-                    if (de->name[0] == 0xE5) { lfn_active_s = 0; continue; }
+                    if (de->name[0] == 0xE5) { run.active = 0; continue; }
 
                     if (de->attr == FAT32_ATTR_LFN) {
-                        struct fat32_lfn_entry *lfn =
-                            (struct fat32_lfn_entry *)&cluster_buf[i];
-                        int seq = lfn->seq & LFN_SEQ_MASK;
-                        if (lfn->seq & LFN_LAST_ENTRY) {
-                            for (k = 0; k < FAT32_MAX_NAME; k++)
-                                lfn_name[k] = '\0';
-                            lfn_active_s = 1;
-                        }
-                        if (lfn_active_s && seq >= 1 &&
-                            seq <= FAT32_LFN_MAX_ENTRIES)
-                            lfn_extract_chars(lfn, lfn_name, seq - 1);
+                        fat32_lfn_run_feed(&run,
+                            (const struct fat32_lfn_entry *)&cluster_buf[i]);
                         continue;
                     }
 
                     if (de->attr & FAT32_ATTR_VOLUME_ID) {
-                        lfn_active_s = 0; continue;
+                        run.active = 0; continue;
                     }
 
-                    if (lfn_active_s && lfn_name[0] != '\0')
-                        fat32_strcpy(ename, lfn_name, FAT32_MAX_NAME);
-                    else
-                        fat32_short_name_to_str(de->name, ename);
-                    lfn_active_s = 0;
+                    (void)fat32_dirent_name(&run, de, ename);
 
                     if (fat32_strcasecmp(ename, target)) {
                         uint32_t fc = ((uint32_t)de->first_cluster_hi << 16)
@@ -812,7 +796,6 @@ stat_not_found:
 struct fat32_volume *fat32_init(const struct blkdev *dev)
 {
     struct fat32_volume *vol;
-    uint32_t root_dir_sectors;
     uint32_t pages_needed;
 
     if (!dev) {
@@ -848,47 +831,9 @@ struct fat32_volume *fat32_init(const struct blkdev *dev)
         goto fail;
     }
 
-    if (vol->sector_buf[510] != 0x55 || vol->sector_buf[511] != 0xAA) {
-        klog(LOG_ERROR, "fat32", "FAT32: invalid boot signature");
-        goto fail;
-    }
-
-    /* Parse BPB fields */
-    vol->bpb.bytes_per_sector    = *(uint16_t *)&vol->sector_buf[11];
-    vol->bpb.sectors_per_cluster = vol->sector_buf[13];
-    vol->bpb.reserved_sectors    = *(uint16_t *)&vol->sector_buf[14];
-    vol->bpb.num_fats            = vol->sector_buf[16];
-    vol->bpb.fat_size_sectors    = *(uint32_t *)&vol->sector_buf[36];
-    vol->bpb.root_cluster        = *(uint32_t *)&vol->sector_buf[44];
-    vol->bpb.fs_info_sector      = *(uint16_t *)&vol->sector_buf[48];
-
-    vol->bpb.total_sectors = *(uint16_t *)&vol->sector_buf[19];
-    if (vol->bpb.total_sectors == 0)
-        vol->bpb.total_sectors = *(uint32_t *)&vol->sector_buf[32];
-
-    if (dev->sector_count > 0 &&
-        vol->bpb.total_sectors > (uint32_t)dev->sector_count)
-        vol->bpb.total_sectors = (uint32_t)dev->sector_count;
-
-    vol->bpb.first_fat_sector  = vol->bpb.reserved_sectors;
-    root_dir_sectors            = 0;
-    vol->bpb.first_data_sector = vol->bpb.reserved_sectors
-                               + (vol->bpb.num_fats * vol->bpb.fat_size_sectors)
-                               + root_dir_sectors;
-
-    /* Volume label: BPB offset 71, 11 bytes, space-padded */
-    {
-        int i, end;
-        for (i = 0; i < 11; i++)
-            vol->label[i] = (char)vol->sector_buf[71 + i];
-        vol->label[11] = '\0';
-        /* Trim trailing spaces */
-        for (end = 10; end >= 0 && vol->label[end] == ' '; end--)
-            vol->label[end] = '\0';
-    }
-
-    /* Strict BPB validation (Microsoft FAT spec S3) */
-    if (fat32_validate_bpb(vol) != 0)
+    /* Signature, BPB decode and the strict checks (fat32_parse.c). */
+    if (fat32_parse_boot_sector(vol->sector_buf, dev->sector_count,
+                                &vol->bpb, vol->label) != 0)
         goto fail;
 
     /* Check dirty volume marker via FAT[1] bit 27 */
@@ -975,21 +920,9 @@ struct fat32_volume *fat32_init(const struct blkdev *dev)
         vol->fsinfo_sector < vol->bpb.reserved_sectors) {
         uint8_t fsi[512];
         if (fat32_read_sector(vol, vol->fsinfo_sector, fsi) == 0) {
-            uint32_t lead   = *(uint32_t *)&fsi[0];
-            uint32_t struc  = *(uint32_t *)&fsi[484];
-            uint32_t trail  = *(uint32_t *)&fsi[508];
-
-            if (lead == FSINFO_LEAD_SIG && struc == FSINFO_STRUCT_SIG
-                && trail == FSINFO_TRAIL_SIG) {
-                vol->fsinfo_free_count = *(uint32_t *)&fsi[488];
-                vol->fsinfo_next_free  = *(uint32_t *)&fsi[492];
+            if (fat32_parse_fsinfo(fsi, &vol->bpb, &vol->fsinfo_free_count,
+                                   &vol->fsinfo_next_free)) {
                 vol->fsinfo_valid = 1;
-
-                if (vol->fsinfo_next_free < 2 ||
-                    vol->fsinfo_next_free >= (uint32_t)(
-                        (vol->bpb.total_sectors - vol->bpb.first_data_sector)
-                        / vol->bpb.sectors_per_cluster + 2))
-                    vol->fsinfo_next_free = 2;
 
                 klog(LOG_DEBUG, "fat32",
                      "FSInfo: %u free clusters, hint cluster %u",

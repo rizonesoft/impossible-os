@@ -189,6 +189,26 @@ uint32_t cluster_to_sector(struct fat32_volume *vol, uint32_t cluster);
 
 /* BPB validation */
 int      fat32_validate_bpb(struct fat32_volume *vol);
+/* fat32_parse.c: decoding of on-disk bytes, no I/O and no volume state. */
+int      fat32_bpb_check(const struct fat32_bpb *bpb, const uint8_t *boot);
+int      fat32_parse_boot_sector(const uint8_t *boot, uint64_t dev_sectors,
+                                 struct fat32_bpb *bpb, char label[12]);
+int      fat32_parse_fsinfo(const uint8_t *fsi, const struct fat32_bpb *bpb,
+                            uint32_t *free_count, uint32_t *next_free);
+
+/* A long-name run being collected while a directory is walked in order. */
+typedef struct fat32_lfn_run {
+    char    name[FAT32_MAX_NAME];
+    uint8_t checksum;
+    int     active;
+    int     next_seq;
+} fat32_lfn_run_t;
+
+void     fat32_lfn_run_reset(fat32_lfn_run_t *r);
+void     fat32_lfn_run_feed(fat32_lfn_run_t *r, const struct fat32_lfn_entry *lfn);
+int      fat32_lfn_run_bind(fat32_lfn_run_t *r, const uint8_t sfn[11]);
+int      fat32_dirent_name(fat32_lfn_run_t *r, const struct fat32_dir_entry *de,
+                           char out[FAT32_MAX_NAME]);
 /* Highest cluster number that has data, a FAT entry, and a non-reserved value. */
 uint32_t fat32_last_cluster(const struct fat32_volume *vol);
 void     fat32_validate_set_quiet(int q);  /* test code wraps to silence klog */

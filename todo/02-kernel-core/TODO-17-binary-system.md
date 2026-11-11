@@ -269,7 +269,7 @@ Every loaded executable and shared library must be registered in the per-process
 **Test checkpoint:** `pe_validate()` returns success for a valid PE32+ header (Machine `0x8664`, Magic `0x20B`). Returns error for 32-bit PE (`0x10B`). Returns error for truncated file. `POST16(0xD80B)` on entry. Test on: QEMU WHPX + TCG; bare metal.
 
 > **Notes:**
-> - PE32+ header parser (`pe.c` `pe_validate`): validates the DOS/PE/COFF/optional headers of an untrusted image and returns zero-copy pointers into the buffer; registered as the `PE32+` format (MZ magic) in the exec dispatcher.
+> - PE32+ header parser (`pe_validate.c` `pe_validate`): validates the DOS/PE/COFF/optional headers of an untrusted image and returns zero-copy pointers into the buffer; registered as the `PE32+` format (MZ magic) in the exec dispatcher.
 > - Bounds safety: every offset+size is computed in 64-bit before each dereference (e_lfanew, PE signature, optional header, section table); NumberOfSections*40 is wrap-safe; 32-bit PE (0x10B) and i386 machine are rejected with ENOEXEC.
 > - Unaligned-safe: all multibyte fields (including the 64-bit ImageBase) are read via read_u16/read_u32/read_u64 byte assembly, since the zero-copy pointers can land at odd addresses.
 > - Canonical doc: PE/COFF spec; struct offsets pinned by pe.h static asserts (DOS 64B, COFF 20B + field offsets, optional 240B, section 40B + field offsets).

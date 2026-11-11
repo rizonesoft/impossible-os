@@ -35,6 +35,7 @@
 #include "../../../include/boot/uki_cmdline_check.h" /* uki_find_disk_override_token() shared with kernel test */
 #include "../../../include/boot/uki_cmdline_media_role.h" /* uki_cmdline_extract_media_role() shared with kernel test */
 #include "../../../include/boot/boot_entries_parser.h"   /* boot entries parser + envelope */
+#include "../../../include/boot/boot_conf_lexer.h"       /* boot.conf key=value lexer */
 #include "../../../include/boot/boot_policy.h"           /* boot policy ladder + decision */
 #include "../../../include/boot/loader_vars.h"           /* Boot Loader Interface publication */
 #include "../../../include/boot/boot_entry_kind.h"        /* per-kind payload validators */
@@ -4248,56 +4249,28 @@ static void parse_boot_conf(void)
 
 parse_loop:
     ;  /* C99: a label must be followed by a statement, not a declaration */
-    /* Parse line by line */
-    char *pos = buf;
-    while (*pos) {
-        /* Skip leading whitespace */
-        while (*pos == ' ' || *pos == '\t') pos++;
-
-        /* Skip blank lines and comments */
-        if (*pos == '\n' || *pos == '\r' || *pos == '#' || *pos == '\0') {
-            while (*pos && *pos != '\n') pos++;
-            if (*pos == '\n') pos++;
-            continue;
+    /* Split into key=value pairs (boot_conf_lexer.c, the only reader of the
+     * grammar). An overlong key or value stops the boot: a truncated value is
+     * a different setting, and silent truncation of this file once ran every
+     * test=1 boot with zero tests (docs/infrastructure/bare-metal-gotchas.md). */
+    unsigned int conf_pos = 0;
+    char key[BOOT_CONF_KEY_MAX];
+    char val[BOOT_CONF_VAL_MAX];
+    unsigned int ki, vi;
+    boot_conf_tok_t tok;
+    while ((tok = boot_conf_next(buf, (unsigned int)buf_size, &conf_pos,
+                                 key, &ki, val, &vi)) != BOOT_CONF_EOF) {
+        if (tok == BOOT_CONF_KEY_TOO_LONG || tok == BOOT_CONF_VALUE_TOO_LONG) {
+            serial_early_print("[FATAL] boot.conf: ");
+            serial_early_print(tok == BOOT_CONF_KEY_TOO_LONG ? "key '" : "value of '");
+            serial_early_print(key);
+            serial_early_print(tok == BOOT_CONF_KEY_TOO_LONG
+                               ? "...' is too long\n" : "' is too long\n");
+            boot_fatal(BOOT_ERR_CONF_INVALID,
+                       "boot.conf: key or value too long",
+                       "Keys are at most 63 characters and values at most 255; "
+                       "shorten the line in resources/boot/boot.conf.");
         }
-
-        /* Extract key */
-        char key[64];
-        UINTN ki = 0;
-        while (*pos && *pos != '=' && *pos != '\n' && *pos != '#' &&
-               ki < sizeof(key) - 1) {
-            if (*pos != ' ' && *pos != '\t')  /* skip spaces in key */
-                key[ki++] = *pos;
-            pos++;
-        }
-        key[ki] = '\0';
-
-        if (*pos != '=') {
-            /* No '=' found -- skip line */
-            while (*pos && *pos != '\n') pos++;
-            if (*pos == '\n') pos++;
-            continue;
-        }
-        pos++;  /* skip '=' */
-
-        /* Skip leading whitespace in value */
-        while (*pos == ' ' || *pos == '\t') pos++;
-
-        /* Extract value (until newline, comment, or EOF) */
-        char val[256];
-        UINTN vi = 0;
-        while (*pos && *pos != '\n' && *pos != '\r' && *pos != '#' &&
-               vi < sizeof(val) - 1) {
-            val[vi++] = *pos++;
-        }
-        /* Trim trailing whitespace from value */
-        while (vi > 0 && (val[vi - 1] == ' ' || val[vi - 1] == '\t'))
-            vi--;
-        val[vi] = '\0';
-
-        /* Skip to next line */
-        while (*pos && *pos != '\n') pos++;
-        if (*pos == '\n') pos++;
 
         /* UKI whole-chain Secure Boot: reject any disk-payload key
          * staged by parse_conf_kv when invoked under UKI mode. This

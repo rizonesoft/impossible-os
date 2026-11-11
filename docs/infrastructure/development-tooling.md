@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/build.sh,scripts/setup.sh,scripts/ci/check-compile-cache.py,tools/fuzz/run.sh,ruff.toml,scripts/static-analysis.sh,scripts/gen-compile-db.py,scripts/hooks/static-analysis-gate.sh,scripts/test.sh,scripts/lint.sh,scripts/debug.sh,scripts/run-qemu.sh reviewed=2026-11-11 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/build.sh,scripts/setup.sh,scripts/ci/check-compile-cache.py,tools/fuzz/run.sh,ruff.toml,scripts/static-analysis.sh,scripts/gen-compile-db.py,scripts/hooks/static-analysis-gate.sh,scripts/test.sh,scripts/lint.sh,scripts/debug.sh,scripts/run-qemu.sh reviewed=2026-11-11T16:00 -->
 # Development Tooling & Automation
 
 > Complete build system, test framework, asset pipeline, and development utilities for Impossible OS.
@@ -487,11 +487,17 @@ bash tools/fuzz/run.sh --repro <target> <file>  # replay one input
 | Target                | Code under test                                                        |
 | --------------------- | ---------------------------------------------------------------------- |
 | `boot_entries`        | `boot_entries_parse()` in `src/boot/uefi/boot_entries_parser.c`        |
+| `boot_conf`           | `boot_conf_next()` in `src/boot/uefi/boot_conf_lexer.c`                |
 | `security_descriptor` | `RtlLengthSidBounded`, `RtlValidAcl`, `RtlGetAceEx`, `RtlSelfRelativeToAbsoluteSD` |
+| `pe`                  | `pe_validate()` and `pe_preflight()` in `src/kernel/pe_validate.c`     |
+| `elf`                 | `elf_parse()` in `src/kernel/elf_parse.c`                              |
+| `eif`                 | `eif_check()` and segment decompression in `src/kernel/eif_parse.c`    |
+| `fat32`               | boot sector, FSInfo and long-name binding in `src/kernel/fs/fat32/fat32_parse.c` |
+| `registry_hive`       | `hive_parse_payload()` and the header check in `src/kernel/registry_hive_parse.c` |
 
-`scripts/test-tooling.sh` runs every target for 10 s on each pack run. The checked-in corpus under `tools/fuzz/corpus/<target>/` (seeds are named `*.seed` or by format, never `*.bin`, which `.gitignore` drops) is replayed first, so the reproducer of a fixed defect fails immediately if the fix is lost. When a run finds a defect, fix it at the validator and add the reproducer to the corpus. First run, 2026-11-10: the security-descriptor target found, in 15 seconds, a SID read at an attacker-chosen unaligned offset.
+`scripts/test-tooling.sh` runs every target for 10 s on each pack run. The checked-in corpus under `tools/fuzz/corpus/<target>/` (seeds are named `*.seed` or by format, never `*.bin`, which `.gitignore` drops) is replayed first, so the reproducer of a fixed defect fails immediately if the fix is lost. When a run finds a defect, fix it at the validator and add the reproducer to the corpus. First run, 2026-11-10: the security-descriptor target found, in 15 seconds, a SID read at an attacker-chosen unaligned offset. On 2026-11-11 the PE target found the same class in the section table (a header at a file-chosen unaligned offset); every PE, ELF and FAT read through a file offset now goes through the byte accessors in `include/kernel/le_bytes.h` or a copy into a local struct.
 
-A new target is a `fuzz_<name>.c` with `LLVMFuzzerTestOneInput`, a `build_target` case in `run.sh`, and at least one seed. Good candidates are pure functions over a byte buffer; a parser that needs `klog`, `kmalloc` or VFS should be split so its parsing core is one.
+A new target is a `fuzz_<name>.c` with `LLVMFuzzerTestOneInput`, a `build_target` case in `run.sh`, and at least one seed that reaches the parser's accept path. Good candidates are pure functions over a byte buffer; a parser that needs `klog`, `kmalloc` or VFS is split so its parsing core is one, and the loader keeps only the copy or the allocation. That is how every target after the first two was made: each `*_parse.c` / `*_validate.c` / `boot_conf_lexer.c` file holds every decision the bytes drive, and the loader calls it, so the code the fuzzer runs is the code the kernel runs. `tools/fuzz/host_stubs.c` (a no-op `klog`) is the only stub. The registry hive parser takes a visitor: the validation pass walks with none and the load pass walks again with the one that builds the tree, so the two passes cannot disagree about the layout.
 
 ### Undefined-Behaviour Traps in the Kernel
 

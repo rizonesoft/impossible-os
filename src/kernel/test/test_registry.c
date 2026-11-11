@@ -1553,8 +1553,65 @@ static void test_registry_hive_payload_max_name(void)
     TEST_ASSERT(rc == 0, "hive validator accepts a 255-char root key name");
 }
 
+/* hive_parse_payload with a visitor: a key the visitor cannot create or a
+ * value it cannot store fails the load and stops the walk there, so a hive
+ * is never reported loaded with part of it missing. Pure: no live registry. */
+static uint32_t s_hv_keys, s_hv_values, s_hv_fail_key, s_hv_fail_value;
+static void *hv_key(void *ctx, void *parent, const char *name)
+{
+    (void)ctx; (void)name;
+    if (++s_hv_keys == s_hv_fail_key) return (void *)0;
+    return parent;
+}
+static int hv_value(void *ctx, void *key, const char *name, uint32_t type,
+                    const uint8_t *data, uint32_t size)
+{
+    (void)ctx; (void)key; (void)name; (void)type; (void)data; (void)size;
+    return (++s_hv_values == s_hv_fail_value) ? -1 : 0;
+}
+
+static void test_registry_hive_visitor_failure(void)
+{
+    /* root "R": 1 value, 2 children; "A" (1 value), "B" (1 value). */
+    static const uint8_t p[] = {
+        1, 0, 'R', 1, 0, 2, 0,
+        1, 0, 'v', 4, 0, 0, 0, 1, 0, 0, 0, 'x',
+        1, 0, 'A', 1, 0, 0, 0,
+        1, 0, 'w', 4, 0, 0, 0, 1, 0, 0, 0, 'y',
+        1, 0, 'B', 1, 0, 0, 0,
+        1, 0, 'u', 4, 0, 0, 0, 1, 0, 0, 0, 'z',
+    };
+    static uint8_t root;
+    hive_visitor_t vis = { hv_key, hv_value, (void *)0 };
+    uint32_t k, v;
+
+    s_hv_keys = s_hv_values = 0; s_hv_fail_key = s_hv_fail_value = 0;
+    TEST_ASSERT_EQ(hive_parse_payload(p, sizeof(p), &root, &vis, &k, &v), 0, "the payload loads");
+    TEST_ASSERT_EQ(k, 3, "three keys counted");
+    TEST_ASSERT_EQ(v, 3, "three values counted");
+    TEST_ASSERT_EQ(s_hv_keys, 2, "the visitor creates the two child keys");
+    TEST_ASSERT_EQ(s_hv_values, 3, "and stores three values");
+
+    s_hv_keys = s_hv_values = 0; s_hv_fail_key = 1; s_hv_fail_value = 0;
+    TEST_ASSERT_EQ(hive_parse_payload(p, sizeof(p), &root, &vis, &k, &v), -1,
+                   "a key the visitor cannot create fails the load");
+    TEST_ASSERT_EQ(s_hv_values, 1, "no value after the failed key is stored");
+    TEST_ASSERT_EQ(s_hv_keys, 1, "and no later sibling is created");
+
+    s_hv_keys = s_hv_values = 0; s_hv_fail_key = 0; s_hv_fail_value = 2;
+    TEST_ASSERT_EQ(hive_parse_payload(p, sizeof(p), &root, &vis, &k, &v), -1,
+                   "a value the visitor cannot store fails the load");
+    TEST_ASSERT_EQ(s_hv_keys, 1, "no key after the failed value is created");
+    TEST_ASSERT_EQ(s_hv_values, 2, "and no later value is stored");
+
+    TEST_ASSERT_EQ(hive_parse_payload(p, sizeof(p) - 1, (void *)0, (const hive_visitor_t *)0,
+                                      &k, &v), -1, "a truncated payload is refused");
+}
+
 void test_register_registry(void)
 {
+    test_suite_register_cat("Registry: hive visitor failure stops the load",
+                            test_registry_hive_visitor_failure, TEST_CAT_ABI);
     test_suite_register_cat("Registry: CopyTree", test_registry_copytree, TEST_CAT_ABI);
     test_suite_register_cat("Registry: RenameKey", test_registry_rename, TEST_CAT_ABI);
     test_suite_register_cat("Registry: RenameKey separator", test_registry_rename_separator, TEST_CAT_ABI);

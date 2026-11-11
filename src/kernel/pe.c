@@ -7,6 +7,7 @@
  * ============================================================================ */
 
 #include "kernel/pe.h"
+#include "kernel/le_bytes.h"
 #include "kernel/exec.h"
 #include "kernel/errno.h"
 #include "kernel/klog.h"
@@ -15,170 +16,10 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/nt/service_numbers.h"
 
-/* ---- Helpers ------------------------------------------------------------ */
-
-/* Read a uint16_t from an unaligned buffer position (LE byte order). */
-static uint16_t read_u16(const uint8_t *p)
-{
-    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
-}
-
-/* Read a uint32_t from an unaligned buffer position (LE byte order). */
-static uint32_t read_u32(const uint8_t *p)
-{
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
-           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-/* Read a uint64_t from an unaligned buffer position (LE byte order). The
- * zero-copy header pointers can land at an odd address (the file controls
- * e_lfanew and SizeOfOptionalHeader), so every multibyte field -- including the
- * only 64-bit one, ImageBase -- must be byte-assembled rather than dereferenced
- * as a naturally-aligned member (aligned-load UB on strict-alignment targets). */
-static uint64_t read_u64(const uint8_t *p)
-{
-    return (uint64_t)read_u32(p) | ((uint64_t)read_u32(p + 4) << 32);
-}
-
-/* ---- Validation --------------------------------------------------------- */
-
-pe_validate_result_t pe_validate(const uint8_t *data, uint64_t size)
-{
-    pe_validate_result_t r;
-    r.ok = 0;
-    r.err = ENOEXEC;
-    r.dos = (const pe_dos_header_t *)0;
-    r.coff = (const pe_coff_header_t *)0;
-    r.opt = (const pe_optional_header64_t *)0;
-    r.sections = (const pe_section_header_t *)0;
-    r.num_sections = 0;
-
-    if (!data || size < sizeof(pe_dos_header_t)) {
-        klog(LOG_DEBUG, "pe", "Too small for DOS header (%u bytes)", size);
-        return r;
-    }
-
-    /* ---- DOS Header ---- */
-    const pe_dos_header_t *dos = (const pe_dos_header_t *)data;
-    if (read_u16((const uint8_t *)&dos->e_magic) != PE_DOS_MAGIC) {
-        klog(LOG_DEBUG, "pe", "Bad MZ magic: 0x%x",
-             (uint64_t)read_u16((const uint8_t *)&dos->e_magic));
-        return r;
-    }
-
-    uint32_t lfanew = read_u32((const uint8_t *)&dos->e_lfanew);
-    if (lfanew < sizeof(pe_dos_header_t)) {
-        klog(LOG_DEBUG, "pe", "e_lfanew too small: 0x%x", (uint64_t)lfanew);
-        return r;
-    }
-
-    /* PE signature (4 bytes) + COFF header (20 bytes) must fit */
-    uint64_t pe_hdr_end = (uint64_t)lfanew + PE_SIGNATURE_SIZE + sizeof(pe_coff_header_t);
-    if (pe_hdr_end > size) {
-        klog(LOG_DEBUG, "pe", "Truncated at PE signature (need %u, have %u)",
-             pe_hdr_end, size);
-        return r;
-    }
-
-    /* ---- PE Signature ---- */
-    uint32_t pe_sig = read_u32(data + lfanew);
-    if (pe_sig != PE_SIGNATURE) {
-        klog(LOG_DEBUG, "pe", "Bad PE signature: 0x%x", (uint64_t)pe_sig);
-        return r;
-    }
-
-    /* ---- COFF Header ---- */
-    const pe_coff_header_t *coff =
-        (const pe_coff_header_t *)(data + lfanew + PE_SIGNATURE_SIZE);
-    uint16_t machine = read_u16((const uint8_t *)&coff->Machine);
-    if (machine != PE_MACHINE_AMD64) {
-        if (machine == PE_MACHINE_I386) {
-            klog(LOG_DEBUG, "pe", "32-bit PE (i386) rejected -- PE32+ only");
-        } else {
-            klog(LOG_WARN, "pe", "Unsupported Machine: 0x%x",
-                 (uint64_t)machine);
-        }
-        return r;
-    }
-
-    uint16_t num_sections = read_u16((const uint8_t *)&coff->NumberOfSections);
-    uint16_t opt_hdr_size = read_u16(
-        (const uint8_t *)&coff->SizeOfOptionalHeader);
-
-    /* Optional header must be at least the PE32+ size */
-    if (opt_hdr_size < sizeof(pe_optional_header64_t)) {
-        klog(LOG_DEBUG, "pe",
-             "SizeOfOptionalHeader too small: %u (need %u)",
-             (uint64_t)opt_hdr_size,
-             (uint64_t)sizeof(pe_optional_header64_t));
-        return r;
-    }
-
-    /* ---- Optional Header ---- */
-    uint64_t opt_offset = (uint64_t)lfanew + PE_SIGNATURE_SIZE + sizeof(pe_coff_header_t);
-    if (opt_offset + opt_hdr_size > size) {
-        klog(LOG_DEBUG, "pe", "Truncated at optional header");
-        return r;
-    }
-
-    const pe_optional_header64_t *opt =
-        (const pe_optional_header64_t *)(data + opt_offset);
-    uint16_t magic = read_u16((const uint8_t *)&opt->Magic);
-
-    if (magic == PE_OPT_MAGIC_PE32) {
-        klog(LOG_DEBUG, "pe",
-             "32-bit Optional Header (0x10B) rejected -- PE32+ only");
-        return r;
-    }
-    if (magic != PE_OPT_MAGIC_PE32PLUS) {
-        klog(LOG_DEBUG, "pe", "Bad Optional Header Magic: 0x%x",
-             (uint64_t)magic);
-        return r;
-    }
-
-    /* ---- Section Headers ---- */
-    uint64_t sec_offset = opt_offset + opt_hdr_size;
-    uint64_t sec_end = sec_offset +
-        (uint64_t)num_sections * sizeof(pe_section_header_t);
-    if (sec_end > size) {
-        klog(LOG_DEBUG, "pe",
-             "Truncated at section headers (need %u, have %u)",
-             sec_end, size);
-        return r;
-    }
-
-    const pe_section_header_t *sections =
-        (const pe_section_header_t *)(data + sec_offset);
-
-    /* ---- Success ---- */
-    r.ok = 1;
-    r.err = 0;
-    r.dos = dos;
-    r.coff = coff;
-    r.opt = opt;
-    r.sections = sections;
-    r.num_sections = num_sections;
-
-    klog(LOG_INFO, "pe",
-         "Valid PE32+ -- %u sections, entry RVA 0x%x, ImageBase 0x%x",
-         (uint64_t)num_sections,
-         (uint64_t)read_u32((const uint8_t *)&opt->AddressOfEntryPoint),
-         read_u64((const uint8_t *)&opt->ImageBase));
-
-    return r;
-}
-
 /* ---- Helpers for identity-mapped copy ----------------------------------- */
 
 extern void *memcpy(void *dst, const void *src, uint64_t n);
 extern void *memset(void *s, int c, uint64_t n);
-
-/* Minimum ImageBase to prevent loading over kernel memory.
- * PE64 default is 0x140000000. Anything below 16 MiB is suspicious. */
-#define PE_MIN_IMAGE_BASE   0x1000000ULL
-
-/* Maximum number of PE sections (Windows linker typically emits < 20) */
-#define PE_MAX_SECTIONS     96
 
 /* ---- Kernel-side Win32 export tables -------------------------------
  * Each table maps function names to SSDT service numbers. Tables are sorted
@@ -418,28 +259,6 @@ static const pe_dll_exports_t *pe_find_dll(const char *dll_name)
     return (const pe_dll_exports_t *)0;
 }
 
-/* Stub thunk address for unresolved imports. NULL causes a clean fault
- * on call. A proper stub page returning STATUS_NOT_IMPLEMENTED will be
- * wired when the Win32 subsystem CRT (TODO-07 domain 10) is implemented. */
-#define PE_STUB_THUNK_ADDR  0ULL
-
-/* Maximum import descriptors to prevent DoS from malicious PE */
-#define PE_MAX_IMPORT_DLLS  64
-
-/* Maximum thunks per DLL to prevent unbounded IAT walks */
-#define PE_MAX_THUNKS_PER_DLL  4096
-
-/* Maximum string length for DLL/function names within the image */
-#define PE_MAX_NAME_LEN  256
-
-/* Bounded string length: returns length up to max, or max if no NUL found. */
-static uint32_t pe_strnlen(const char *s, uint32_t max)
-{
-    uint32_t i = 0;
-    while (i < max && s[i]) i++;
-    return i;
-}
-
 /* ---- Import resolver ----------------------------------------------- */
 
 /* Write an 8-byte LE value into an IAT entry at user VA `va`. The PE/COFF spec
@@ -477,205 +296,47 @@ static int pe_write_iat_entry(uint64_t va, uint64_t value)
     return 1;
 }
 
-/* Resolve imports for one DLL. Returns number of resolved imports, or -1 on error. */
-static int pe_resolve_dll_imports(uint64_t image_base, uint32_t size_of_image,
-                                  const uint8_t *mapped_image,
-                                  const pe_import_descriptor_t *desc)
+/* The import walk itself (every bound on the file's descriptors, thunks and
+ * names) is pe_walk_imports in pe_validate.c, which the host fuzzer runs; the
+ * loader supplies the export tables and the page-aware IAT write. */
+
+static const void *pe_import_find_dll(void *ctx, const char *dll_name)
 {
-    uint32_t name_rva = read_u32((const uint8_t *)&desc->Name);
-    uint32_t oft_rva  = read_u32((const uint8_t *)&desc->OriginalFirstThunk);
-    uint32_t ft_rva   = read_u32((const uint8_t *)&desc->FirstThunk);
-
-    /* DLL name must be within image with room for at least 1 char + NUL.
-     * Subtraction form: name_rva is an attacker-controlled uint32, so a naive
-     * `name_rva + 2 > size_of_image` wraps at UINT32_MAX and passes, then the
-     * read below overreads ~4 GiB past image_base -- a kernel fault (no SEH). */
-    if (name_rva >= size_of_image || size_of_image - name_rva < 2) {
-        klog(LOG_DEBUG, "pe", "Import DLL name RVA 0x%x outside image",
-             (uint64_t)name_rva);
-        return -1;
-    }
-
-    /* Verify DLL name is NUL-terminated within image bounds */
-    uint32_t name_max = size_of_image - name_rva;
-    if (name_max > PE_MAX_NAME_LEN) name_max = PE_MAX_NAME_LEN;
-    const char *dll_name = (const char *)(mapped_image + name_rva);
-    if (pe_strnlen(dll_name, name_max) >= name_max) {
-        klog(LOG_DEBUG, "pe", "Import DLL name at RVA 0x%x not NUL-terminated",
-             (uint64_t)name_rva);
-        return -1;
-    }
-
-    const pe_dll_exports_t *dll = pe_find_dll(dll_name);
-
-    /* If INT is zero, use IAT as both source and destination */
-    uint32_t int_rva = (oft_rva != 0) ? oft_rva : ft_rva;
-    if (int_rva >= size_of_image || ft_rva >= size_of_image) {
-        klog(LOG_DEBUG, "pe", "Import thunk RVA outside image for '%s'",
-             dll_name);
-        return -1;
-    }
-
-    uint32_t resolved = 0;
-    uint32_t stubbed = 0;
-    uint32_t write_failed = 0;   /* thunks whose IAT page was unmapped */
-    uint32_t idx;
-
-    for (idx = 0; idx < PE_MAX_THUNKS_PER_DLL; idx++) {
-        uint64_t int_offset = int_rva + (uint64_t)idx * PE_THUNK64_SIZE;
-        uint64_t iat_offset = ft_rva + (uint64_t)idx * PE_THUNK64_SIZE;
-
-        if (int_offset + PE_THUNK64_SIZE > size_of_image ||
-            iat_offset + PE_THUNK64_SIZE > size_of_image)
-            break;
-
-        /* Read INT entry (8 bytes, little-endian) */
-        const uint8_t *int_ptr = mapped_image + int_offset;
-        uint64_t thunk_val = (uint64_t)read_u32(int_ptr) |
-                             ((uint64_t)read_u32(int_ptr + 4) << 32);
-
-        /* NULL terminator */
-        if (thunk_val == 0)
-            break;
-
-        uint32_t ssdt_idx = (uint32_t)-1;
-
-        /* Per-thunk diagnostics are NOT logged here: a crafted PE can present
-         * up to PE_MAX_THUNKS_PER_DLL (4096) thunks across many DLLs, and a
-         * per-thunk klog (spinlock + synchronous serial) would let it stall the
-         * exec path for minutes. Outcomes are folded into the per-DLL summary. */
-        if (thunk_val & PE_ORDINAL_FLAG64) {
-            /* Import by ordinal -- not supported yet, stub it */
-            stubbed++;
-        } else {
-            /* Import by name: thunk_val is RVA to IMAGE_IMPORT_BY_NAME.
-             * Subtraction form (wrap-safe): hint_rva is attacker-controlled. */
-            uint32_t hint_rva = (uint32_t)thunk_val;
-            if (hint_rva >= size_of_image || size_of_image - hint_rva < 3) {
-                stubbed++;
-            } else {
-                /* Verify function name is NUL-terminated within image. The
-                 * PE_IMPORT_HINT_SIZE (2) is the IMAGE_IMPORT_BY_NAME Hint that
-                 * precedes the name; guaranteed <= size_of_image - hint_rva by
-                 * the >= 3 check above, so the subtraction cannot underflow. */
-                const char *func_name =
-                    (const char *)(mapped_image + hint_rva + PE_IMPORT_HINT_SIZE);
-                uint32_t func_max = size_of_image - hint_rva - PE_IMPORT_HINT_SIZE;
-                if (func_max > PE_MAX_NAME_LEN) func_max = PE_MAX_NAME_LEN;
-
-                if (pe_strnlen(func_name, func_max) >= func_max) {
-                    stubbed++;
-                } else {
-                    if (dll)
-                        ssdt_idx = pe_lookup_export(dll, func_name);
-
-                    if (ssdt_idx != (uint32_t)-1)
-                        resolved++;
-                    else
-                        stubbed++;
-                }
-            }
-        }
-
-        /* Write the SSDT thunk value into the IAT via a page-aware write (the
-         * entry may be unaligned / straddle a page). An unmapped IAT page means
-         * the import could not actually be installed -- count it as a write
-         * failure rather than a silent success (a well-formed image maps every
-         * section page; a gap here is a malformed-PE signal). */
-        uint64_t thunk_addr = (ssdt_idx != (uint32_t)-1)
-            ? (uint64_t)ssdt_idx
-            : PE_STUB_THUNK_ADDR;
-
-        if (!pe_write_iat_entry(image_base + iat_offset, thunk_addr))
-            write_failed++;
-    }
-
-    /* One aggregate record per DLL (never per-thunk -- see the DoS note above).
-     * write_failed surfaces the unmapped-IAT gap instead of hiding it. */
-    if (write_failed)
-        klog(LOG_WARN, "pe",
-             "pe: resolved %u imports from %s (%u stubbed, %u IAT writes failed)",
-             (uint64_t)resolved, dll_name, (uint64_t)stubbed,
-             (uint64_t)write_failed);
-    else
-        klog(LOG_INFO, "pe", "pe: resolved %u imports from %s (%u stubbed)",
-             (uint64_t)resolved, dll_name, (uint64_t)stubbed);
-
-    /* Any IAT write failure is a structural resolution failure for this DLL. */
-    if (write_failed)
-        return -1;
-
-    return (int)resolved;
+    (void)ctx;
+    return pe_find_dll(dll_name);
 }
 
-/* Walk the Import Directory and resolve all DLL imports.
- * Returns total resolved count, or -1 on structural error. */
+static uint32_t pe_import_lookup(void *ctx, const void *dll, const char *func)
+{
+    (void)ctx;
+    return pe_lookup_export((const pe_dll_exports_t *)dll, func);
+}
+
+static int pe_import_write(void *ctx, uint32_t iat_rva, uint64_t value)
+{
+    return pe_write_iat_entry(*(const uint64_t *)ctx + iat_rva, value);
+}
+
+/* Resolve every import of the image mapped at image_base. Returns the total
+ * resolved count, or -1 on a structural error. */
 static int pe_resolve_imports(uint64_t image_base, uint32_t size_of_image,
                               uint32_t num_rva_sizes,
                               const pe_optional_header64_t *opt)
 {
+    pe_import_ops_t ops;
+
     if (num_rva_sizes <= PE_DIR_IMPORT)
         return 0;
-
-    uint32_t import_rva = read_u32(
-        (const uint8_t *)&opt->DataDirectory[PE_DIR_IMPORT].VirtualAddress);
-    uint32_t import_size = read_u32(
-        (const uint8_t *)&opt->DataDirectory[PE_DIR_IMPORT].Size);
-
-    if (import_rva == 0 || import_size == 0)
-        return 0;
-
-    /* Validate import directory within image */
-    uint64_t import_end = (uint64_t)import_rva + import_size;
-    if (import_end > size_of_image) {
-        klog(LOG_DEBUG, "pe", "Import directory outside image bounds");
-        return -1;
-    }
-
-    /* The mapped image is at image_base (identity-mapped after mapping) */
-    const uint8_t *mapped_image = (const uint8_t *)image_base;
-
-    int total_resolved = 0;
-    uint32_t dll_count = 0;
-
-    while (dll_count < PE_MAX_IMPORT_DLLS) {
-        /* Bound descriptor walk to import directory, not image */
-        uint64_t desc_offset = import_rva +
-            (uint64_t)dll_count * sizeof(pe_import_descriptor_t);
-        if (desc_offset + sizeof(pe_import_descriptor_t) > import_end)
-            break;
-
-        const pe_import_descriptor_t *desc =
-            (const pe_import_descriptor_t *)(mapped_image + desc_offset);
-
-        uint32_t desc_name = read_u32((const uint8_t *)&desc->Name);
-        uint32_t desc_ft   = read_u32((const uint8_t *)&desc->FirstThunk);
-
-        /* All-zero descriptor terminates the list */
-        if (desc_name == 0 && desc_ft == 0)
-            break;
-
-        int n = pe_resolve_dll_imports(image_base, size_of_image,
-                                       mapped_image, desc);
-        if (n < 0) {
-            klog(LOG_ERROR, "pe",
-                 "Malformed import descriptor %u -- aborting import resolution",
-                 (uint64_t)dll_count);
-            return -1;
-        }
-        total_resolved += n;
-
-        dll_count++;
-    }
-
-    klog(LOG_INFO, "pe", "pe: import resolution complete -- %u DLLs, %u total resolved",
-         (uint64_t)dll_count, (uint64_t)total_resolved);
-
-    return total_resolved;
+    ops.find_dll = pe_import_find_dll;
+    ops.lookup = pe_import_lookup;
+    ops.write_iat = pe_import_write;
+    ops.ctx = &image_base;
+    /* The mapped image is at image_base in the current address space. */
+    return pe_walk_imports((const uint8_t *)image_base, size_of_image,
+        le32_at(PE_DATA_DIR_FIELD(opt, PE_DIR_IMPORT, VirtualAddress)),
+        le32_at(PE_DATA_DIR_FIELD(opt, PE_DIR_IMPORT, Size)),
+        &ops, (uint32_t *)0);
 }
-
-/* Maximum image size: 256 MiB. Rejects pathological PE headers. */
-#define PE_MAX_IMAGE_SIZE   (256ULL * 1024 * 1024)
 
 /* ---- Rollback tracking -------------------------------------------------- */
 
@@ -732,98 +393,19 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
 {
     POST16(0xD80B);
 
-    pe_validate_result_t v = pe_validate(data, size);
-    if (!v.ok) {
+    pe_validate_result_t v;
+    pe_image_layout_t lay;
+    if (pe_preflight(data, size, &v, &lay) != 0) {
         klog(LOG_ERROR, "pe", "PE32+ validation failed");
         return 0;
     }
 
-    uint64_t image_base = read_u64((const uint8_t *)&v.opt->ImageBase);
-    uint32_t size_of_image = read_u32(
-        (const uint8_t *)&v.opt->SizeOfImage);
-    uint32_t size_of_headers = read_u32(
-        (const uint8_t *)&v.opt->SizeOfHeaders);
-    uint32_t entry_rva = read_u32(
-        (const uint8_t *)&v.opt->AddressOfEntryPoint);
-    uint32_t num_rva_sizes = read_u32(
-        (const uint8_t *)&v.opt->NumberOfRvaAndSizes);
+    uint64_t image_base = lay.image_base;
+    uint32_t size_of_image = lay.size_of_image;
+    uint32_t size_of_headers = lay.size_of_headers;
+    uint32_t entry_rva = lay.entry_rva;
+    uint32_t num_rva_sizes = lay.num_rva_sizes;
     uint32_t total_pages_mapped = 0;
-
-    /* ---- Pre-flight validation ---- */
-
-    if (image_base < PE_MIN_IMAGE_BASE) {
-        klog(LOG_DEBUG, "pe",
-             "ImageBase 0x%x below minimum 0x%x -- rejected",
-             image_base, (uint64_t)PE_MIN_IMAGE_BASE);
-        return 0;
-    }
-
-    uint64_t image_end = image_base + size_of_image;
-    if (image_end < image_base) {
-        klog(LOG_ERROR, "pe", "ImageBase + SizeOfImage overflow");
-        return 0;
-    }
-
-    if (size_of_image > PE_MAX_IMAGE_SIZE) {
-        klog(LOG_ERROR, "pe", "SizeOfImage %u exceeds maximum %u",
-             (uint64_t)size_of_image, (uint64_t)PE_MAX_IMAGE_SIZE);
-        return 0;
-    }
-
-    if (size_of_headers > size_of_image) {
-        klog(LOG_ERROR, "pe", "SizeOfHeaders %u > SizeOfImage %u",
-             (uint64_t)size_of_headers, (uint64_t)size_of_image);
-        return 0;
-    }
-
-    if (entry_rva >= size_of_image) {
-        klog(LOG_ERROR, "pe",
-             "Entry RVA 0x%x outside SizeOfImage 0x%x",
-             (uint64_t)entry_rva, (uint64_t)size_of_image);
-        return 0;
-    }
-
-    if (v.num_sections > PE_MAX_SECTIONS) {
-        klog(LOG_ERROR, "pe", "Too many sections: %u (max %u)",
-             (uint64_t)v.num_sections, (uint64_t)PE_MAX_SECTIONS);
-        return 0;
-    }
-
-    /* Validate each section fits within SizeOfImage AND its raw-data
-     * range fits within the file. Doing both in 64-bit arithmetic
-     * before any copy prevents uint32 wraparound (raw_ptr + raw_sz
-     * overflowing past 4 GiB) from smuggling a section whose raw
-     * bytes lie outside the input buffer. */
-    {
-        uint16_t s;
-        for (s = 0; s < v.num_sections; s++) {
-            uint32_t sec_rva = read_u32(
-                (const uint8_t *)&v.sections[s].VirtualAddress);
-            uint32_t sec_vsize = read_u32(
-                (const uint8_t *)&v.sections[s].VirtualSize);
-            uint32_t raw_ptr = read_u32(
-                (const uint8_t *)&v.sections[s].PointerToRawData);
-            uint32_t raw_sz = read_u32(
-                (const uint8_t *)&v.sections[s].SizeOfRawData);
-            uint64_t sec_end = (uint64_t)sec_rva + sec_vsize;
-            uint64_t raw_end = (uint64_t)raw_ptr + raw_sz;
-
-            if (sec_end < sec_rva || sec_end > size_of_image) {
-                klog(LOG_ERROR, "pe",
-                     "Section %u RVA 0x%x + VSize 0x%x exceeds SizeOfImage 0x%x",
-                     (uint64_t)s, (uint64_t)sec_rva,
-                     (uint64_t)sec_vsize, (uint64_t)size_of_image);
-                return 0;
-            }
-            if (raw_sz != 0 && (raw_end < raw_ptr || raw_end > size)) {
-                klog(LOG_ERROR, "pe",
-                     "Section %u raw 0x%x + 0x%x exceeds file size 0x%x",
-                     (uint64_t)s, (uint64_t)raw_ptr,
-                     (uint64_t)raw_sz, size);
-                return 0;
-            }
-        }
-    }
 
     uint64_t entry_va = image_base + entry_rva;
 
@@ -831,13 +413,19 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
 
     /* ---- Map PE headers at ImageBase ---- */
     {
-        uint32_t hdr_pages = (size_of_headers + VMM_PAGE_SIZE - 1) /
-                             VMM_PAGE_SIZE;
+        /* The headers' whole aligned span: pe_preflight placed the first
+         * section exactly at its end, so no page below SizeOfImage is left
+         * unmapped for a file-chosen RVA to land in. */
+        uint32_t hdr_pages = (uint32_t)(pe_align_up(size_of_headers,
+                                                    lay.section_alignment) /
+                                        VMM_PAGE_SIZE);
         uint32_t p;
         for (p = 0; p < hdr_pages; p++) {
             uint32_t offset = p * VMM_PAGE_SIZE;
             uint32_t copy_len = VMM_PAGE_SIZE;
-            if (offset + copy_len > size_of_headers)
+            if (offset >= size_of_headers)
+                copy_len = 0;
+            else if (offset + copy_len > size_of_headers)
                 copy_len = size_of_headers - offset;
             if (offset + copy_len > size)
                 copy_len = (offset < size) ? (uint32_t)(size - offset) : 0;
@@ -855,22 +443,27 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
     {
         uint16_t s;
         for (s = 0; s < v.num_sections; s++) {
-            uint32_t sec_rva = read_u32(
-                (const uint8_t *)&v.sections[s].VirtualAddress);
-            uint32_t sec_vsize = read_u32(
-                (const uint8_t *)&v.sections[s].VirtualSize);
-            uint32_t raw_sz = read_u32(
-                (const uint8_t *)&v.sections[s].SizeOfRawData);
-            uint32_t raw_ptr = read_u32(
-                (const uint8_t *)&v.sections[s].PointerToRawData);
-            uint32_t chars = read_u32(
-                (const uint8_t *)&v.sections[s].Characteristics);
+            uint32_t sec_rva = le32_at(
+                PE_SECTION_FIELD(v.sections, s, VirtualAddress));
+            uint32_t raw_sz = le32_at(
+                PE_SECTION_FIELD(v.sections, s, SizeOfRawData));
+            uint32_t raw_ptr = le32_at(
+                PE_SECTION_FIELD(v.sections, s, PointerToRawData));
+            uint32_t chars = le32_at(
+                PE_SECTION_FIELD(v.sections, s, Characteristics));
 
-            if (sec_vsize == 0)
+            /* Map the section's whole aligned span (the next section starts
+             * at its end); bytes past its data read as zero. A section whose
+             * span is 0 occupies no memory. */
+            uint32_t span = pe_section_span(v.sections, s);
+            if (span == 0)
                 continue;
+            if (raw_sz > span)
+                raw_sz = span;   /* file bytes past the section's size are not loaded */
 
-            uint32_t num_pages = (sec_vsize + VMM_PAGE_SIZE - 1) /
-                                 VMM_PAGE_SIZE;
+            uint32_t num_pages = (uint32_t)((pe_align_up((uint64_t)sec_rva + span,
+                                                         lay.section_alignment) -
+                                             sec_rva) / VMM_PAGE_SIZE);
 
             /* Page flags from Characteristics */
             uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
@@ -904,7 +497,7 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
             char name[PE_SECTION_NAME_SIZE + 1];
             uint32_t ni;
             for (ni = 0; ni < PE_SECTION_NAME_SIZE; ni++)
-                name[ni] = v.sections[s].Name[ni];
+                name[ni] = PE_SECTION_FIELD(v.sections, s, Name)[ni];
             name[PE_SECTION_NAME_SIZE] = 0;
 
             klog(LOG_DEBUG, "pe", "Mapped section '%s' at 0x%x (%s%s%s)",
@@ -933,10 +526,10 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
     uint64_t pdata_size_val = 0;
 
     if (num_rva_sizes > PE_DIR_EXCEPTION) {
-        uint32_t pdata_rva = read_u32(
-            (const uint8_t *)&v.opt->DataDirectory[PE_DIR_EXCEPTION].VirtualAddress);
-        uint32_t pdata_sz = read_u32(
-            (const uint8_t *)&v.opt->DataDirectory[PE_DIR_EXCEPTION].Size);
+        uint32_t pdata_rva = le32_at(
+            PE_DATA_DIR_FIELD(v.opt, PE_DIR_EXCEPTION, VirtualAddress));
+        uint32_t pdata_sz = le32_at(
+            PE_DATA_DIR_FIELD(v.opt, PE_DIR_EXCEPTION, Size));
 
         /* Validate .pdata range within image */
         if (pdata_rva != 0 && pdata_sz != 0) {

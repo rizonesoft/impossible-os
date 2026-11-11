@@ -139,6 +139,23 @@ struct elf_load_result {
     uint16_t _pad_phdr[2];          /* alignment */
 };
 
+/* Validate an ELF64 executable without loading it: every check elf_load makes
+ * on the file, and every field of the result except that no segment has been
+ * copied. success = 1 means elf_load would copy this image. Writes nothing but
+ * its return value. */
+struct elf_load_result elf_parse(const uint8_t *data, uint64_t size);
+
+/* Copy program header I out of the file. The table sits at an offset the file
+ * chooses, so it is never read in place (misaligned struct access). The caller
+ * has checked I < e_phnum against a validated header. */
+static inline void elf_phdr_read(const uint8_t *data,
+                                 const struct elf64_header *hdr, uint16_t i,
+                                 struct elf64_phdr *out)
+{
+    __builtin_memcpy(out, data + hdr->e_phoff + (uint64_t)i * hdr->e_phentsize,
+                     sizeof(*out));
+}
+
 /* Validate and load an ELF64 executable from memory.
  * 'data' points to the raw ELF file, 'size' is the file size.
  * Returns the load result with entry point. */
