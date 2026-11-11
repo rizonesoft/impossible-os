@@ -106,22 +106,20 @@ def main() -> int:
     if not is_commit:
         return 0
 
+    # The tree the commit landed in, and only if one landed there just now:
+    # a commit made in another worktree must not start a build in this one.
+    root = scg.commit_landed_root(cmd)
+    if root is None:
+        return 0
+
     try:
         changed = subprocess.check_output(
             ["git", "show", "--name-only", "--format=", "HEAD"],
-            text=True, timeout=5, stderr=subprocess.DEVNULL,
+            cwd=root, text=True, timeout=5, stderr=subprocess.DEVNULL,
         ).splitlines()
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return 0
     if not any(f.startswith(_BOOT_PATHS) for f in changed if f):
-        return 0
-
-    try:
-        root = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            text=True, timeout=2, stderr=subprocess.DEVNULL,
-        ).strip()
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return 0
 
     parent = ""

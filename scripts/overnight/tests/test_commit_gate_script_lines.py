@@ -105,3 +105,38 @@ def test_any_other_shape_keeps_the_gates_own_directory(tmp_path):
                 f"git -C {other} commit -m 'unterminated",
                 "git commit -m x"):
         assert gate._commit_target_root(cmd) is None, cmd
+
+
+def _commit(path, when):
+    import subprocess
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@example.invalid", "GIT_COMMITTER_DATE": f"@{when} +0000",
+           "PATH": __import__("os").environ["PATH"], "HOME": str(path)}
+    subprocess.run(["git", "-C", str(path), "-c", "core.hooksPath=/dev/null", "commit", "-q", "--allow-empty",
+                    "-m", "x"], check=True, timeout=30, env=env)
+
+
+def test_a_post_commit_hook_acts_only_where_a_commit_just_landed(tmp_path, monkeypatch):
+    """Live 2026-11-11: worktree commits ran the suite in the primary tree, under a live run's matrix."""
+    here, other = _repo(tmp_path / "here"), _repo(tmp_path / "other")
+    now = 1_800_000_000
+    _commit(pathlib.Path(here), now - 13 * 60)      # the primary tree: its HEAD is the run's, minutes old
+    _commit(pathlib.Path(other), now - 3)           # the worktree: the commit this call made
+    monkeypatch.chdir(here)
+    # The commit went to the other tree: that tree is the one tested, never this one.
+    assert gate.commit_landed_root(f"git -C {other} commit -q -F m.txt -- a.c", now=now) == other
+    # A shape whose target cannot be read is judged here, and here nothing landed.
+    assert gate.commit_landed_root(f"cd {other} && git commit -m x", now=now) is None
+    assert gate.commit_landed_root("git commit -m x", now=now) is None
+    # The control: a commit that did land here is acted on here.
+    _commit(pathlib.Path(here), now - 2)
+    assert gate.commit_landed_root("git commit -m x", now=now) == here
+    # A refused commit in the other tree leaves its old HEAD: nothing to test.
+    assert gate.commit_landed_root(f"git -C {other} commit -m x", now=now + 3600) is None
+
+
+def test_both_post_commit_hooks_ask_where_the_commit_landed():
+    for name in ("post_commit_smoketest.py", "post_commit_smoketest_boot.py"):
+        text = (HOOKS / name).read_text()
+        assert "scg.commit_landed_root(cmd)" in text, name
+        assert '"rev-parse", "--show-toplevel"' not in text, name

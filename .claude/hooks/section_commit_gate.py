@@ -2295,6 +2295,39 @@ def _commit_target_root(cmd: str) -> Path | None:
     return Path(out) if out else None
 
 
+# A commit's committer date is set after its pre-commit hooks finish, so the
+# PostToolUse hooks see it seconds old. Anything older was not made by the call.
+COMMIT_LANDED_MAX_AGE_S = 120
+
+
+def commit_landed_root(cmd: str, now: float | None = None) -> str | None:
+    """The work tree `cmd` just committed to, or None when no commit landed.
+
+    For the post-commit hooks. Live 2026-11-11: a commit made in the repair
+    worktree ran the kernel suite in the PRIMARY tree, because the hooks tested
+    their own directory whenever the command looked like a commit and that
+    tree's HEAD happened to touch a source file. It rebuilt build/ under a live
+    run's smoke matrix twice. A bare `git -C <dir> commit` is judged on <dir>;
+    every other shape on the hook's own directory; and either way only when
+    that tree's HEAD is seconds old, so a commit made anywhere else, or a
+    refused one, starts nothing.
+    """
+    root = _commit_target_root(cmd) or _repo_root()
+    if root is None:
+        return None
+    try:
+        stamp = subprocess.check_output(
+            ["git", "log", "-1", "--format=%ct", "HEAD"],
+            cwd=str(root), text=True, timeout=5, stderr=subprocess.DEVNULL,
+        ).strip()
+        age = (time.time() if now is None else now) - int(stamp)
+    except Exception:
+        return None
+    if age < -COMMIT_LANDED_MAX_AGE_S or age > COMMIT_LANDED_MAX_AGE_S:
+        return None
+    return str(root)
+
+
 def _harness_main() -> int:
     is_commit, has_no_verify, cmd = _harness_command_is_git_commit()
     if not is_commit:
