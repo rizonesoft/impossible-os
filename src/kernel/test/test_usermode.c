@@ -2914,6 +2914,8 @@ _Static_assert(UTEST_SKIP_RECORD_BUDGET <= 9999999u,
  * every site that writes `reason` is enumerated here, so the widest one is
  * a fact rather than an estimate. */
 #define UTEST_REASON_BUF     96u
+_Static_assert(UTEST_REASON_BUF == UTEST_ESCALATION_REASON_BUF,
+               "the escalation seam's reason buffer is the launcher's");
 /* The five COMPOSED reasons are built at run time rather than named by one
  * literal, so each one's fragments are macros here and the ONLY code that
  * concatenates them is the matching `u_reason_<name>` helper below. Before
@@ -6585,6 +6587,55 @@ int test_usermode_klog_escalate(int verdict, uint32_t klog_fails, uint8_t depth_
     return u_klog_escalate(verdict, klog_fails, depth_before, depth_after, counters, why);
 }
 
+/* Every escalation a finished binary's verdict goes through, in the one
+ * order u_run_one applies them: a handle leak (PASS only), then the kernel
+ * error window and interrupt depth (PASS or SKIP), then an isolation breach
+ * (PASS only), then the leak reason when nothing else wrote one. Each step
+ * acts only on a verdict that is not already FAIL, so the FIRST escalation
+ * both claims `reason` and is the one `*line` names, and the serial FAIL
+ * line prints that same `reason`: serial, TAP, XML and JSON cannot disagree
+ * about the cause, whatever combination of faults one run carries. */
+static int u_escalate_run(int verdict, const struct utest_escalation *in, uint32_t *counters,
+                          char (*reason)[UTEST_REASON_BUF], int *line)
+{
+    int why;
+
+    *line = UTEST_FAIL_LINE_OTHER;
+    if (in->have_stem && in->leaked > 0 && verdict == 0) {
+        verdict = 1;
+        counters[0]--;  /* undo PASS */
+        counters[1]++;  /* record FAIL */
+        *line = UTEST_FAIL_LINE_LEAK;
+    }
+    verdict = u_klog_escalate(verdict, in->klog_fails, in->depth_before, in->depth_after,
+                              counters, &why);
+    if (why != UTEST_KLOG_ESC_NONE) {
+        if (why == UTEST_KLOG_ESC_ISR)
+            u_reason_isr(reason);
+        else
+            u_reason_klog(reason);
+        *line = UTEST_FAIL_LINE_KLOG;
+    }
+    if (in->isolation_failed && verdict == 0) {
+        verdict = 1;
+        counters[0]--;
+        counters[1]++;
+        u_reason_isolate(reason);
+        *line = UTEST_FAIL_LINE_ISOLATE;
+    }
+    /* Handle-leak reason: only when the verdict is FAIL and nothing claimed
+     * `reason` first. */
+    if ((*reason)[0] == '\0' && in->leaked > 0 && verdict == 1)
+        u_reason_leak(reason, in->leaked);
+    return verdict;
+}
+
+int test_usermode_escalate_run(int verdict, const struct utest_escalation *in,
+                               uint32_t *counters, char *reason, int *line)
+{
+    return u_escalate_run(verdict, in, counters, (char (*)[UTEST_REASON_BUF])reason, line);
+}
+
 /* Arm the window for the binary u_run_one is about to spawn. */
 static void u_klog_window_arm(const struct u_klog_decls *kd)
 {
@@ -8803,7 +8854,7 @@ static void u_run_one(const char *name, utest_type_t type,
     struct u_loader_evidence loader;
     uint64_t start_ms;
     uint8_t isr_depth_before = 0;
-    uint8_t klog_escalated = 0;   /* a PASS/SKIP became FAIL over kernel errors or ISR depth */
+    int fail_line = UTEST_FAIL_LINE_OTHER;   /* the escalation that claimed `reason`, if any */
     uint32_t klog_fails;
     uint64_t end_ms;
     /* The verdict the ARTIFACTS carry, which is not always the verdict the
@@ -9015,11 +9066,8 @@ static void u_run_one(const char *name, utest_type_t type,
      * and Linux kselftest / Windows HLK both treat resource leaks as
      * test failures. A passing binary that leaks is lying about its
      * cleanup invariant; surfacing that as FAIL makes CI reject it. */
-    if (have_stem && leaked > 0 && *out_verdict == 0) {
-        *out_verdict = 1;
-        counters[0]--;  /* undo PASS */
-        counters[1]++;  /* record FAIL */
-    }
+    /* The PASS -> FAIL flip itself happens with the other escalations in
+     * u_escalate_run, after the error window is judged. */
 
     /* Fence and reap the descendant tree BEFORE the owner's own cleanup.
      * The launcher waited on one pid; fork() handed the same capture channel
@@ -9117,42 +9165,23 @@ static void u_run_one(const char *name, utest_type_t type,
     klog_fails = u_klog_window_judge(name_copy);
     {
         struct per_cpu_data *cpu = smp_this_cpu();
-        uint8_t after = cpu ? cpu->isr_depth : 0;
-        int why;
+        struct utest_escalation esc = {0};
 
-        if (after != isr_depth_before)
+        esc.leaked = leaked;
+        esc.klog_fails = klog_fails;
+        esc.depth_before = isr_depth_before;
+        esc.depth_after = cpu ? cpu->isr_depth : 0;
+        esc.have_stem = (uint8_t)have_stem;
+        /* An isolation breach (setup or reap left stale state behind) means
+         * the next binary can no longer assume a clean scratch dir, so a
+         * PASS becomes FAIL; a FAIL or SKIP keeps its verdict and the WARN
+         * below names the breach. Codex quality M 2026-04-20. */
+        esc.isolation_failed = (uint8_t)isolation_failed;
+        if (esc.depth_after != isr_depth_before)
             klog(LOG_ERROR, "UTEST",
                  "%s :: interrupt depth changed across the run (%u -> %u)",
-                 name_copy, (uint64_t)isr_depth_before, (uint64_t)after);
-        *out_verdict = u_klog_escalate(*out_verdict, klog_fails, isr_depth_before,
-                                       after, counters, &why);
-        if (why == UTEST_KLOG_ESC_ISR)
-            u_reason_isr(&reason);
-        else if (why == UTEST_KLOG_ESC_KLOG)
-            u_reason_klog(&reason);
-        klog_escalated = (uint8_t)(why != UTEST_KLOG_ESC_NONE);
-    }
-
-    /* Isolation contract violated: if setup or reap left stale state
-     * behind (rmtree cap exhausted, vfs_create failed), the next
-     * binary can no longer assume a clean scratch dir. Escalate the
-     * verdict: a PASS becomes FAIL so CI surfaces the broken
-     * invariant. Already-FAIL/SKIP keeps its stronger verdict plus a
-     * WARN noting the isolation breach. Codex quality M 2026-04-20. */
-    if (isolation_failed && *out_verdict == 0) {
-        *out_verdict = 1;
-        counters[0]--;
-        counters[1]++;
-        u_reason_isolate(&reason);
-    }
-
-    /* Handle-leak reason: only fill `reason` when we escalated from
-     * PASS. For FAIL/SKIP the exit-code or timeout reason already
-     * dominates; adding the leak count to a JSON blob would be nice
-     * but would require a structured reason schema and is a
-     * nice-to-have, not a correctness issue. */
-    if (reason[0] == '\0' && leaked > 0 && *out_verdict == 1) {
-        u_reason_leak(&reason, leaked);
+                 name_copy, (uint64_t)isr_depth_before, (uint64_t)esc.depth_after);
+        *out_verdict = u_escalate_run(*out_verdict, &esc, counters, &reason, &fail_line);
     }
 
     /* Ring-3 self-report reconciliation. The counts are the binary's own
@@ -9204,22 +9233,13 @@ static void u_run_one(const char *name, utest_type_t type,
     } else if (*out_verdict == 2) {
         utest_record_log(LOG_INFO, "%s: SKIP (exit=77)", name_copy);
         u_emit_tap_point(1, test_num, name_copy, "SKIP");
-    } else if (have_stem && leaked > 0 && exit_status == 0 && !timed_out &&
-               !isolation_failed) {
-        /* Escalated from PASS by leak detection only. */
-        utest_record_log(LOG_ERROR,
-             "%s: FAIL (%u" UTEST_RSNC_LEAK " -- escalated from PASS)",
-             name_copy, (uint64_t)leaked);
-    } else if (isolation_failed && exit_status == 0 && !timed_out) {
-        /* Escalated from PASS by isolation failure only. */
-        utest_record_log(LOG_ERROR,
-             "%s: FAIL (" UTEST_RSNC_ISOLATE " -- escalated from PASS)",
-             name_copy);
-    } else if (klog_escalated && !isolation_failed) {
-        /* Escalated from PASS or SKIP by the kernel error window or the
-         * interrupt depth check: `reason` names which, and the lines that
-         * caused it were logged by name just above. */
-        utest_record_log(LOG_ERROR, "%s: FAIL (%s -- escalated)", name_copy, reason);
+    } else if (fail_line != UTEST_FAIL_LINE_OTHER) {
+        /* A leak, the kernel error window or an isolation breach turned the
+         * verdict into a FAIL: print the reason that escalation recorded,
+         * which is the one TAP, XML and JSON carry. Only the error window can
+         * escalate a SKIP, so the others always started from PASS. */
+        utest_record_log(LOG_ERROR, "%s: FAIL (%s -- escalated%s)", name_copy, reason,
+                         fail_line == UTEST_FAIL_LINE_KLOG ? "" : " from PASS");
     } else if (timed_out && stalled) {
         /* SERIAL AGREES WITH THE ARTIFACTS. This branch re-derives its text
          * from the flags rather than using the finalized `reason` below, which
@@ -9257,16 +9277,16 @@ static void u_run_one(const char *name, utest_type_t type,
     if (*out_verdict == 1)
         u_emit_tap_point(0, test_num, name_copy, reason);
 
-    /* Extra WARN context for leaks / isolation failures that ride on
-     * top of an already-FAIL/SKIP verdict (exit_status != 0). The
-     * primary verdict line above already reflects the dominant
-     * reason (exit / timeout). */
-    if (have_stem && leaked > 0 && !(exit_status == 0 && !timed_out)) {
+    /* Extra WARN context for a leak or an isolation breach that did not
+     * claim the verdict line: it rode on an exit, timeout or SKIP verdict,
+     * or an earlier escalation claimed `reason` first. The primary verdict
+     * line above already names that dominant cause. */
+    if (have_stem && leaked > 0 && fail_line != UTEST_FAIL_LINE_LEAK) {
         klog(LOG_WARN, "UTEST",
              "%s: %u" UTEST_RSNC_LEAK " (open at exit)",
              name_copy, (uint64_t)leaked);
     }
-    if (isolation_failed && !(exit_status == 0 && !timed_out)) {
+    if (isolation_failed && fail_line != UTEST_FAIL_LINE_ISOLATE) {
         klog(LOG_WARN, "UTEST",
              "%s: " UTEST_RSNC_ISOLATE " (scratch/registry state may persist)",
              name_copy);

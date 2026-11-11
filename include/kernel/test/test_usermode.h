@@ -336,6 +336,31 @@ uint32_t test_usermode_klog_window_cycle(const struct utest_klog_watch_ops *ops,
 int test_usermode_klog_escalate(int verdict, uint32_t klog_fails, uint8_t depth_before,
                                 uint8_t depth_after, uint32_t *counters, int *why);
 
+#define UTEST_FAIL_LINE_OTHER   0   /* no escalation: the timeout, stall or exit line */
+#define UTEST_FAIL_LINE_KLOG    1   /* the kernel error window or interrupt depth */
+#define UTEST_FAIL_LINE_LEAK    2
+#define UTEST_FAIL_LINE_ISOLATE 3
+
+/* The size of the `reason` buffer test_usermode_escalate_run writes. */
+#define UTEST_ESCALATION_REASON_BUF 96u
+
+/* What a finished binary's run left behind, judged after it is reaped. */
+struct utest_escalation {
+    uint32_t leaked;            /* handles still open at exit */
+    uint32_t klog_fails;        /* the error window's failure count */
+    uint8_t  depth_before;      /* launcher CPU's isr_depth before the spawn */
+    uint8_t  depth_after;       /* and after the reap */
+    uint8_t  have_stem;         /* isolation ran, so `leaked` was measured */
+    uint8_t  isolation_failed;  /* setup or reap left stale state behind */
+};
+
+/* Apply every escalation to `verdict` (0 PASS, 1 FAIL, 2 SKIP) in the order
+ * the launcher does, moving counters[0..2] (pass, fail, skip) and writing the
+ * reason into `reason` (UTEST_ESCALATION_REASON_BUF bytes). `*line` names the
+ * escalation that claimed it, UTEST_FAIL_LINE_OTHER when none did. */
+int test_usermode_escalate_run(int verdict, const struct utest_escalation *in,
+                               uint32_t *counters, char *reason, int *line);
+
 /* --- The launcher's per-run infrastructure latches --------------------------
  *
  * A condition that is sticky for the rest of a run and aborts it, where "the

@@ -875,16 +875,22 @@ static void test_harness_klog_watch_utest_owner(void)
     klog_watch_fx_run_end(st);
 
     /* 0 is "not captured", so it can never open a window: the live call
-     * must return before it touches the suite this test runs in. */
+     * must return before it touches the suite this test runs in. An
+     * allowance registered first makes that observable, since a window that
+     * reopened would zero it (an unmatched allowance costs the suite
+     * nothing). */
     {
         uint32_t before;
+        TEST_ASSERT_EQ(klog_watch_allow("_h0", "owner zero never opens", __FILE__, __LINE__),
+                       KLOG_WATCH_OK, "a live allowance registers in the running suite");
         klog_watch_peek(r);
-        before = r->n_expects + r->unexpected;
+        before = r->n_expects;
+        TEST_ASSERT(before >= 1u, "the running suite's report holds that allowance");
         klog_watch_utest_begin(0u);
         TEST_ASSERT_EQ((uint32_t)klog_watch_mode(), (uint32_t)KLOG_WATCH_SUITE,
                        "owner 0 leaves the running suite's window open");
         klog_watch_peek(r);
-        TEST_ASSERT_EQ(r->n_expects + r->unexpected, before, "and its report untouched");
+        TEST_ASSERT_EQ(r->n_expects, before, "and its registrations untouched");
     }
 }
 

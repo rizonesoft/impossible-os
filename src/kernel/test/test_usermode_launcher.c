@@ -7899,6 +7899,79 @@ static void test_klog_escalation(void)
 #undef ESC_RESET
 }
 
+/* The escalation sequence a finished binary goes through: the first
+ * escalation claims `reason`, and the serial line names that escalation. */
+static int esc_run(int verdict, uint32_t leaked, uint32_t klog_fails, uint8_t depth_after,
+                   uint8_t isolation_failed, uint32_t *c, char *reason, int *line)
+{
+    struct utest_escalation in;
+
+    memset(&in, 0, sizeof(in));
+    in.leaked = leaked;
+    in.klog_fails = klog_fails;
+    in.depth_after = depth_after;
+    in.have_stem = 1;
+    in.isolation_failed = isolation_failed;
+    c[0] = verdict == 0;
+    c[1] = verdict == 1;
+    c[2] = verdict == 2;
+    reason[0] = '\0';
+    return test_usermode_escalate_run(verdict, &in, c, reason, line);
+}
+
+static void test_escalation_sequence(void)
+{
+    char reason[UTEST_ESCALATION_REASON_BUF];
+    uint32_t c[3];
+    int line, v;
+
+    v = esc_run(0, 2u, 0u, 0u, 1u, c, reason, &line);
+    TEST_ASSERT_EQ((uint32_t)v, 1u, "a leak and an isolation breach fail a PASS");
+    TEST_ASSERT_EQ((uint32_t)line, (uint32_t)UTEST_FAIL_LINE_LEAK, "the leak escalated first");
+    TEST_ASSERT_EQ((uint32_t)strcmp(reason, "2 handle(s) leaked"), 0u,
+                   "so the recorded reason is the leak too");
+    TEST_ASSERT_EQ(c[0] + c[1] * 10u, 10u, "one count moved from passed to failed");
+
+    v = esc_run(0, 2u, 1u, 0u, 0u, c, reason, &line);
+    TEST_ASSERT_EQ((uint32_t)line, (uint32_t)UTEST_FAIL_LINE_LEAK,
+                   "a leak beside a kernel error mismatch claims the line");
+    TEST_ASSERT_EQ((uint32_t)strcmp(reason, "2 handle(s) leaked"), 0u, "and the reason");
+    TEST_ASSERT_EQ(c[1], 1u, "the mismatch does not count the binary twice");
+
+    v = esc_run(0, 0u, 1u, 0u, 1u, c, reason, &line);
+    TEST_ASSERT_EQ((uint32_t)line, (uint32_t)UTEST_FAIL_LINE_KLOG,
+                   "a mismatch beside an isolation breach names the mismatch");
+    TEST_ASSERT_EQ((uint32_t)strcmp(reason, "kernel error mismatch"), 0u, "in the reason too");
+
+    v = esc_run(2, 0u, 1u, 0u, 1u, c, reason, &line);
+    TEST_ASSERT_EQ((uint32_t)v, 1u, "a mismatch fails a SKIP");
+    TEST_ASSERT_EQ((uint32_t)line, (uint32_t)UTEST_FAIL_LINE_KLOG, "and names the mismatch");
+    TEST_ASSERT_EQ(c[2] + c[1] * 10u, 10u, "one count moved from skipped to failed");
+
+    v = esc_run(0, 0u, 1u, 1u, 0u, c, reason, &line);
+    TEST_ASSERT_EQ((uint32_t)line, (uint32_t)UTEST_FAIL_LINE_KLOG, "a changed depth claims the line");
+    TEST_ASSERT_EQ((uint32_t)strcmp(reason, "interrupt depth leaked"), 0u,
+                   "with the interrupt depth as the reason, over the mismatch");
+
+    v = esc_run(0, 0u, 0u, 0u, 1u, c, reason, &line);
+    TEST_ASSERT_EQ((uint32_t)line, (uint32_t)UTEST_FAIL_LINE_ISOLATE, "a breach alone names itself");
+    TEST_ASSERT_EQ((uint32_t)strcmp(reason, "isolation failed"), 0u, "in the reason too");
+
+    v = esc_run(2, 3u, 0u, 0u, 1u, c, reason, &line);
+    TEST_ASSERT_EQ((uint32_t)v, 2u, "a leak and a breach leave a SKIP a SKIP");
+    TEST_ASSERT_EQ((uint32_t)line, (uint32_t)UTEST_FAIL_LINE_OTHER, "no escalation claims the line");
+
+    v = esc_run(1, 3u, 1u, 0u, 1u, c, reason, &line);
+    TEST_ASSERT_EQ((uint32_t)line, (uint32_t)UTEST_FAIL_LINE_OTHER,
+                   "an existing FAIL keeps its own line");
+    TEST_ASSERT_EQ(c[1], 1u, "and is counted once");
+
+    v = esc_run(0, 0u, 0u, 0u, 0u, c, reason, &line);
+    TEST_ASSERT_EQ((uint32_t)v, 0u, "a clean run stays PASS");
+    TEST_ASSERT_EQ((uint32_t)line, (uint32_t)UTEST_FAIL_LINE_OTHER, "with no escalation");
+    TEST_ASSERT_EQ((uint32_t)reason[0], 0u, "and no reason");
+}
+
 /* ---- The window lifecycle on a fixture watch ---- */
 
 static struct klog_watch_state s_kw_fx;      /* ~3.7 KB each: never on a kernel stack */
@@ -8053,6 +8126,8 @@ void test_register_usermode_launcher(void)
 {
     test_suite_register_cat("UTEST: manifest line with an embedded NUL is refused",
                             test_manifest_klog_embedded_nul, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: escalations claim the reason and the serial line in order",
+                            test_escalation_sequence, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: kernel error and interrupt depth escalation",
                             test_klog_escalation, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: per-binary kernel error window lifecycle",

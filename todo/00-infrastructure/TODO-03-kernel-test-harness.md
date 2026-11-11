@@ -513,9 +513,21 @@ Section 12 brought the kernel unit-test phase to zero `[FAIL]` lines, but the us
 - [x] Each binary's verdict fails when its run changes the launcher CPU's `isr_depth` (`FAIL (interrupt depth leaked -- escalated)`)
   - Every `isr_handler` exit runs through `irql_restore`, so no ring-3 path strands the depth today; the control skips the decrement for interrupts that arrived from ring 3, and the first binary fails by name.
 - [x] Image ceiling: six suites' private 28 KiB `boot_info` statics now share `TEST_BOOT_INFO` (`include/kernel/test/boot_info_fixture.h`), taking headroom from -4 KiB to 137 KiB
+- [x] Serial, TAP, XML and JSON name one cause: `u_escalate_run` applies the leak, error-window and isolation escalations in one order, and the serial line prints the reason the first one recorded (post-ship consistency, re-adversarial round 3)
+- [x] The owner-0 harness check registers a live allowance first, so a window that wrongly reopened would be visible (post-ship kernel audit)
 - [x] Commit: "utest: each ring-3 binary's provoked kernel errors are declared, and a stray one fails that binary"
 
 **Test checkpoint:** `bash scripts/test.sh QUIET=1` prints no `[FAIL]` line in either phase; removing one `expects_klog=` from the manifest fails that binary by name.
+
+> **Test runner:** `bash scripts/test.sh QUIET=1` (UTEST suites for the attribute decoder, manifest declarations, embedded NUL, escalation table, escalation sequence and window lifecycle; Harness "error watch owner for a user-mode binary"; fuzz target `utest_klog_attr` via `bash tools/fuzz/run.sh`); controls run 2026-11-11: a removed `expects_klog=`, an unmet expectation, a stranded `isr_depth`, the escalation order and the owner-0 guard each fail by name.
+> **Notes:**
+> - Shipped: per-binary error windows (`u_klog_window_*`), the `expects_klog=`/`allows_klog=` manifest grammar and decoder, `u_escalate_run`, and the shared `TEST_BOOT_INFO` fixture.
+> - Integration: the window opens in `test_usermode_capture_begin` before the child is published and is judged after the whole capture tree is reaped.
+> - Downstream: a ring-3 binary that provokes a kernel error must declare it on its manifest line, or it fails.
+> - Scope: errors from a captured task on another CPU fail closed until per-CPU dispatch (TODO-07 section 3).
+> **Verified:** 2026-11-11 | commit `402663245` | 8/8 items | build OK | tests 37618 kernel + 17 user-mode PASS; smoke PASS; lint 0 errors
+> **Accepted:** [L] the error window owns an error only on its owner's CPU, so a captured task dispatched on an AP would fail its binary once dispatch is per-CPU (reason: per-CPU dispatch is SMP phase-2 work) -> XREF: 03-memory-concurrency/TODO-07 §3 (item: "Keep the user-mode kernel error window correct once a captured task can run on an AP" at line 138)
+> **Quality reviewed:** 2026-11-11 | Codex 11x (design, adversarial x3, test-coverage x2, consistency, perf, re-adversarial x3) | 0H+6M+1L fixed, 0 open | scope: kernel-code-quality
 
 ## OS Comparison
 
