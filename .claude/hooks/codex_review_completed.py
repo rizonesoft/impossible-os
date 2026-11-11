@@ -711,21 +711,53 @@ def _detect_review_kind(skill_name: str, prompt: str) -> str:
     return kinds.pop()
 
 
-def _pass_route_ok(kind: str, raw_cmd: str) -> bool:
-    """Whether this command may be credited with `kind`.
+PASS_MANIFEST = ".claude/overnight/reviews/manifest.jsonl"
+PASS_CREDITED = ".claude/state/pass-receipts-credited"
 
-    A pass of the reviewer pin is credited only when dispatched through
-    scripts/codex-dispatch.sh: that wrapper checks the pin, appends the lenses
-    and reads the returned review for a verdict per lens. The broker and a
-    direct companion call do none of that. Every other kind is unaffected.
+
+def _pass_receipt_ok(root: Path, kind: str, todo_path: str, section) -> bool:
+    """Whether this dispatch may be credited with `kind`.
+
+    A pass of the reviewer pin is credited only against the receipt
+    scripts/codex-dispatch.sh writes after it has checked the pin, appended the
+    lenses and read the returned review for a verdict per lens: a manifest line
+    for this kind and TODO with `pass_checked` true and rc 0, not credited
+    before. The command text is not consulted: a script of the same name
+    elsewhere, the broker and a direct companion call write no such line, and
+    an incomplete pass writes one with rc 3. Every other kind is unaffected.
     """
     if kind not in SECTION_PASS_KINDS:
         return True
     try:
-        words = shlex.split(raw_cmd or "")
-    except ValueError:
+        lines = (root / PASS_MANIFEST).read_text().splitlines()
+    except OSError:
         return False
-    return any(os.path.basename(w) == "codex-dispatch.sh" for w in words)
+    credited_path = root / PASS_CREDITED
+    try:
+        credited = set(credited_path.read_text().split())
+    except OSError:
+        credited = set()   # nothing credited yet
+    for line in reversed(lines):
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(e, dict) or e.get("kind") != kind or e.get("todo") != todo_path:
+            continue
+        if section not in (None, "") and str(e.get("section", "")) != str(section):
+            continue
+        job = e.get("jobId")
+        if e.get("route") != "codex-dispatch.sh" or e.get("pass_checked") is not True \
+                or e.get("rc") != 0 or not isinstance(job, str) or not job or job in credited:
+            return False   # the newest receipt for this pass decides
+        try:
+            credited_path.parent.mkdir(parents=True, exist_ok=True)
+            with credited_path.open("a") as f:
+                f.write(job + "\n")
+        except OSError:
+            return False   # a receipt that cannot be marked would be credited twice
+        return True
+    return False
 
 
 def _all_dispatch_targets(cmd: str, root: Path) -> list:
@@ -1499,11 +1531,11 @@ def main() -> int:
         is_broker = bool(raw_cmd and _cd.is_review_broker_dispatch(raw_cmd))
         state["review_broker_dispatch"] = is_broker
         _write_atomic(state_path, state)
-        route_ok = _pass_route_ok(review_kind, raw_cmd)
-        if not route_ok:
+        route_ok = bool(review_kind and todo_path) and _pass_receipt_ok(root, review_kind, todo_path, section)
+        if review_kind in SECTION_PASS_KINDS and todo_path and not route_ok:
             sys.stderr.write(
-                f"[review-stamps] WARN: a {review_kind!r} pass is credited only when "
-                f"dispatched with scripts/codex-dispatch.sh; this one is NOT recorded.\n"
+                f"[review-stamps] WARN: no checked, complete receipt from scripts/codex-dispatch.sh "
+                f"for this {review_kind!r} pass; it is NOT recorded.\n"
             )
         stamp_attempted = bool(
             review_kind and todo_path and route_ok
@@ -1521,7 +1553,7 @@ def main() -> int:
             # decision out across the dispatches the same command carries.
             _seen_targets = {(review_kind, todo_path)}
             for _k, _tp, _sec in _all_dispatch_targets(raw_cmd, root):
-                if (_k, _tp) in _seen_targets or not _pass_route_ok(_k, raw_cmd):
+                if (_k, _tp) in _seen_targets or not _pass_receipt_ok(root, _k, _tp, _sec):
                     continue
                 _seen_targets.add((_k, _tp))
                 _ok2, _err2 = _record_stamp(

@@ -277,17 +277,57 @@ def test_refusal_a_marker_only_the_recorder_would_read_is_refused(tmp_path):
         assert prompt == "", marker
 
 
-def test_refusal_a_pass_is_credited_only_through_the_checking_wrapper():
+def test_refusal_a_pass_is_credited_only_against_the_wrappers_own_receipt(tmp_path):
+    """Review finding: the recorder looked for the script's NAME in the command, so a same-named script
+    elsewhere, or the name as a stray argument, earned credit for an unchecked pass."""
+    import json
     sys.path.insert(0, str(REPO / ".claude/hooks"))
     import codex_review_completed as crc
-    wrapper = "bash scripts/codex-dispatch.sh '[review-kind: round] todo/x.md section 1'"
-    broker = "bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: round] todo/x.md section 1'"
-    direct = "node /p/codex-companion.mjs adversarial-review '[review-kind: round] todo/x.md section 1'"
-    assert crc._pass_route_ok("round", wrapper) and crc._pass_route_ok("completion", "REVIEW_BASE=abc " + wrapper)
-    assert not crc._pass_route_ok("round", broker) and not crc._pass_route_ok("round", direct)
-    assert not crc._pass_route_ok("round", "bash scripts/codex-dispatch.sh 'unterminated")
+    todo = "todo/00-infrastructure/TODO-01-developer-tooling-stack.md"
+    manifest = tmp_path / crc.PASS_MANIFEST
+    manifest.parent.mkdir(parents=True)
+
+    def receipt(**over):
+        e = {"kind": "round", "todo": todo, "section": 99, "jobId": f"direct:{len(manifest.read_text()) if manifest.exists() else 0}",
+             "route": "codex-dispatch.sh", "rc": 0, "pass_checked": True}
+        e.update(over)
+        with manifest.open("a") as f:
+            f.write(json.dumps(e) + "\n")
+
+    assert not crc._pass_receipt_ok(tmp_path, "round", todo, 99), "no manifest: nothing to credit"
+    for bad in ({"route": "review-broker"}, {"pass_checked": False}, {"rc": 3}, {"rc": "0"}, {"jobId": ""}):
+        receipt(**bad)
+        assert not crc._pass_receipt_ok(tmp_path, "round", todo, 99), bad
+    receipt()
+    assert not crc._pass_receipt_ok(tmp_path, "completion", todo, 99), "another kind"
+    assert not crc._pass_receipt_ok(tmp_path, "round", "todo/other.md", 99), "another TODO"
+    assert not crc._pass_receipt_ok(tmp_path, "round", todo, 7), "another section"
+    assert crc._pass_receipt_ok(tmp_path, "round", todo, 99)
+    assert not crc._pass_receipt_ok(tmp_path, "round", todo, 99), "a receipt is credited once"
+    # An incomplete pass after a complete one: the newest receipt decides.
+    receipt()
+    receipt(rc=3)
+    assert not crc._pass_receipt_ok(tmp_path, "round", todo, 99)
+    # The older kinds never needed a receipt.
     for old in crc.LEGACY_REVIEW_KINDS:
-        assert crc._pass_route_ok(old, broker) and crc._pass_route_ok(old, direct), old
+        assert crc._pass_receipt_ok(tmp_path, old, "todo/anything.md", None), old
+
+
+def test_the_wrapper_writes_the_receipt_the_recorder_reads(tmp_path):
+    import json
+    pin = _pin()
+    full = "\n".join(f"LENS {n}: clean" for n in pin["lenses"]["completion"]) + "\nHIGHEST: none\n"
+    _dispatch(tmp_path, "completion", full)
+    _dispatch(tmp_path, "completion", "LENS record: clean\n")
+    _dispatch(tmp_path, "adversarial", "anything\n")
+    lines = [json.loads(ln) for ln in (tmp_path / "reviews/manifest.jsonl").read_text().splitlines()]
+    assert [(e["kind"], e["rc"], e["pass_checked"]) for e in lines] == \
+        [("completion", 0, True), ("completion", 3, True), ("adversarial", 0, False)]
+    assert len({e["jobId"] for e in lines}) == 3
+    assert all(e["route"] == "codex-dispatch.sh" and e["section"] == 99 for e in lines)
+
+
+def test_refusal_the_broker_does_not_dispatch_a_pass():
     import subprocess
     done = subprocess.run(["bash", str(REPO / "scripts/overnight/review-broker-codex-dispatch.sh"),
                            "[review-kind: round] todo/00-infrastructure/TODO-01-developer-tooling-stack.md section 99\nx"],

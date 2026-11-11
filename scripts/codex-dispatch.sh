@@ -212,6 +212,11 @@ if [ -n "$LOG_FILE" ]; then
     set -o pipefail
     node "$COMPANION" adversarial-review "$PROMPT" 2>&1 | tee "$LOG_FILE"
     rc=$?
+    # The receipt below says whether THIS wrapper checked the pass. The review
+    # recorder credits a pass kind only against such a receipt with rc 0, so a
+    # pass dispatched any other way, or one a lens was skipped in, earns nothing.
+    PASS_CHECKED=false
+    if [ "$PIN_KIND" = "1" ]; then PASS_CHECKED=true; fi
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
         PIN_MISSING="$(python3 "$PIN_TOOL" --verdicts "$KIND" --transcript "$LOG_FILE" --paths-file "$PATHS_FILE")"
         case "$?" in
@@ -230,11 +235,13 @@ if [ -n "$LOG_FILE" ]; then
     TREE_INDEX="$(git write-tree 2>/dev/null || echo unknown)"
     TREE_WORK="$({ git diff HEAD -- 2>/dev/null; git status --porcelain 2>/dev/null; } | sha256sum | cut -d' ' -f1)"
     if [ -n "$SECTION" ]; then
-        printf '{"ts": %s, "kind": "%s", "todo": "%s", "section": %s, "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s", "route": "codex-dispatch.sh"}\n' \
-            "$(date +%s)" "$KIND" "$TODO_PATH" "$SECTION" "direct:$STAMP" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" >> "$REVIEWS_DIR/manifest.jsonl" 2>/dev/null || true
+        printf '{"ts": %s, "kind": "%s", "todo": "%s", "section": %s, "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s", "route": "codex-dispatch.sh", "rc": %s, "pass_checked": %s}\n' \
+            "$(date +%s)" "$KIND" "$TODO_PATH" "$SECTION" "direct:$STAMP-$$" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" "$rc" "$PASS_CHECKED" >> "$REVIEWS_DIR/manifest.jsonl" 2>/dev/null \
+            || echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
     else
-        printf '{"ts": %s, "kind": "%s", "todo": "%s", "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s", "route": "codex-dispatch.sh"}\n' \
-            "$(date +%s)" "$KIND" "$TODO_PATH" "direct:$STAMP" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" >> "$REVIEWS_DIR/manifest.jsonl" 2>/dev/null || true
+        printf '{"ts": %s, "kind": "%s", "todo": "%s", "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s", "head": "%s", "index_tree": "%s", "worktree_sha256": "%s", "route": "codex-dispatch.sh", "rc": %s, "pass_checked": %s}\n' \
+            "$(date +%s)" "$KIND" "$TODO_PATH" "direct:$STAMP-$$" "$LOG_FILE" "$PROMPT_SHA" "$TREE_HEAD" "$TREE_INDEX" "$TREE_WORK" "$rc" "$PASS_CHECKED" >> "$REVIEWS_DIR/manifest.jsonl" 2>/dev/null \
+            || echo "[$SELF_NAME] the receipt could not be written to $REVIEWS_DIR/manifest.jsonl; a pass kind will not be credited" >&2
     fi
     exit "$rc"
 fi
