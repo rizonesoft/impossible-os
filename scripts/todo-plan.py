@@ -640,6 +640,11 @@ def main(argv=None) -> int:
             print(f"todo-plan: {exc}", file=sys.stderr)
             return 2
         root = Path(staged_dir.name)
+        # The export is not a repository. A hook in a linked worktree exports GIT_DIR, and the graph build
+        # would then read the real repository's history from the export's directory and refuse the build as
+        # "the corpus git history moved" (2026-11-11). The index has been read; the build gets a plain shell.
+        for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX"):
+            os.environ.pop(name, None)
     path = root / PLAN_REL
     lock = WriterLock(root) if (args.sync or args.seed) else contextlib.nullcontext()
 

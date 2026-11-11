@@ -83,7 +83,7 @@ Signal fires (A.1)
   |
   YES (clear) -> BRANCH A. Report: "scope gap detected, sizing X/Y/Z, taking Branch A inline."
   NO  (clear) -> Branch B/C/D dispatch (next box).
-  BORDERLINE  -> ASK USER which branch (sizing report + recommendation).
+  BORDERLINE  -> defer: Branch B/C/D dispatch. Report the sizing and the choice.
                  |
                  v
 Branch B/C/D dispatch:
@@ -98,7 +98,7 @@ Branch B/C/D dispatch:
   Branch C (new TODO file via /create-todo scope-gap mode)
 ```
 
-**Branch decision authority:** Claude decides automatically for clear cases, reports the choice in chat, and asks the user only when sizing is borderline (900-1100 lines, ambiguous subsystem boundary).
+**Branch decision authority:** Claude decides every case and reports the choice in chat (Operating Mandate in CLAUDE.md). When sizing is borderline (900-1100 lines, ambiguous subsystem boundary) the tiebreak is defer: the more reversible Branch B/C/D, never inline and never a question.
 
 ---
 

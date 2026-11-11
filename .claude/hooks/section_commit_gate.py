@@ -2265,6 +2265,36 @@ def _git_hook_mode_main(root: Path) -> int:
     return _evaluate(root, mode="git-hook")
 
 
+_SHELL_META = frozenset("\n;&|$`()<>\\#*?[]{}~!")
+
+
+def _commit_target_root(cmd: str) -> Path | None:
+    """The work tree a bare `git -C <dir> commit ...` call commits to.
+
+    Live 2026-11-11: a commit in the repair worktree beside a run was refused on the
+    PRIMARY tree's staged section, because the gate always read the index of its own
+    directory. Only this one shape is read, as a whole command with no shell syntax
+    anywhere in it; every other command keeps the gate's own directory, so a shape
+    this does not recognise is judged exactly as before.
+    """
+    if not isinstance(cmd, str) or _SHELL_META & set(cmd):
+        return None
+    try:
+        toks = shlex.split(cmd, posix=True, comments=False)
+    except ValueError:
+        return None
+    if len(toks) < 4 or toks[:2] != ["git", "-C"] or toks[3] != "commit":
+        return None
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", toks[2], "rev-parse", "--show-toplevel"],
+            text=True, timeout=2, stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return None
+    return Path(out) if out else None
+
+
 def _harness_main() -> int:
     is_commit, has_no_verify, cmd = _harness_command_is_git_commit()
     if not is_commit:
@@ -2287,7 +2317,7 @@ def _harness_main() -> int:
             "--no-verify; the .githooks/pre-commit layer recognizes it).\n"
         )
         return 2
-    root = _repo_root()
+    root = _commit_target_root(cmd) or _repo_root()
     if root is None:
         # Outside a repo (shouldn't happen for a git-commit Bash);
         # fail open per H2 pre-signature semantics.

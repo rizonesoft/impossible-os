@@ -83,6 +83,41 @@ def test_both_hooks_isolate_before_their_suites():
     assert "isolate_git_env" in commit[run_all - 200:run_all], "pre-commit runs run-all.sh unisolated"
 
 
+def _toplevel_seen_from_a_subdirectory(d: pathlib.Path, anchor: bool) -> tuple[str, str]:
+    """What `git rev-parse --show-toplevel` answers from sub/ inside a linked worktree's pre-commit hook."""
+    main = d / "main"
+    _git("init", "-q", str(main), cwd=d)
+    _git("commit", "-q", "--allow-empty", "-m", "0", cwd=main)
+    hooks = d / "hooks"
+    hooks.mkdir()
+    source = f'. "{HELPER}"\nanchor_git_env\n' if anchor else ""
+    hook = hooks / "pre-commit"
+    hook.write_text(f'#!/bin/bash\n{source}mkdir -p sub\ngit -C sub rev-parse --show-toplevel > "{d}/seen"\n')
+    hook.chmod(0o755)
+    _git("config", "core.hooksPath", str(hooks), cwd=main)
+    wt = d / "wt"
+    _git("worktree", "add", "-q", "--detach", str(wt), cwd=main)
+    _git("commit", "-q", "--allow-empty", "-m", "1", cwd=wt)
+    return (d / "seen").read_text().strip(), str(wt.resolve())
+
+
+def test_the_control_an_unanchored_hook_takes_a_subdirectory_for_the_work_tree():
+    with tempfile.TemporaryDirectory() as d:
+        seen, wt = _toplevel_seen_from_a_subdirectory(pathlib.Path(d).resolve(), anchor=False)
+        assert seen == wt + "/sub", (seen, wt)
+
+
+def test_an_anchored_hook_keeps_the_work_tree_root_from_a_subdirectory():
+    with tempfile.TemporaryDirectory() as d:
+        seen, wt = _toplevel_seen_from_a_subdirectory(pathlib.Path(d).resolve(), anchor=True)
+        assert seen == wt, (seen, wt)
+
+
+def test_pre_commit_anchors_before_the_lint():
+    commit = (REPO / ".githooks/pre-commit").read_text()
+    assert commit.index("\nanchor_git_env\n") < commit.index('bash "$REPO_ROOT/scripts/lint.sh"')
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

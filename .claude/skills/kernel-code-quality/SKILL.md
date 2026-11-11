@@ -123,7 +123,7 @@ Every create/modify of `.c`, `.h`, `.asm` under `src/kernel/` or
 - [ ] **Wrong ABI/signature/behavior? Implement the correct one** (Windows Internals 7e / MSDN / UEFI 2.10 / the SSDT master tables) -- never silently drop the registration.
 - [ ] **Corner-cutting handlers with the right ABI** are Gate 11 work: extend to full spec, same commit when scope fits.
 - [ ] **Only legitimate removal:** the syscall NUMBER itself is wrong -- and that is a MOVE, not a delete.
-- [ ] **When in doubt, ask the user before removing any Win32 surface** (30 seconds vs an hour + regression scare; incident 2026-04-27 in references/incidents.md).
+- [ ] **When in doubt, keep the surface and implement it correctly.** Doubt is never a reason to remove a Win32 surface: the operator's answer on 2026-04-27 was "implement it correctly" (references/incidents.md), and that answer stands for every later case.
 
 ### Gate 11: Spec Compliance -- No Sub-Standard Code
 

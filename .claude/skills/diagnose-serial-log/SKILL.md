@@ -285,7 +285,7 @@ For each actionable finding, in ranked order:
     - **Leaks:** identify alloc/free imbalance and the failing rollback path.
     - **Perf regressions:** identify which init step moved, what dependency changed, and whether the slowdown is causal or noise.
     - **Deferred init failures:** verify all `[DEFERRED] name +Nms` lines have matching completion and that they ran inline on BSP.
-    - **Policy violations:** follow the Remediation line in POLICIES.md verbatim. If the remediation does not fit the observed case (rare), record the mismatch and escalate to the user before editing code.
+    - **Policy violations:** follow the Remediation line in POLICIES.md verbatim. If the remediation does not fit the observed case (rare), fix the root cause the policy protects, correct the Remediation line in POLICIES.md in the same change, and record the mismatch and the decision in the report.
     - **Accuracy drift:** find the code that emits the `[OK]` line; confirm whether the log is lying (missing POST16 exit) or the check is misclassified (POST16 exit actually ran under a different code path).
     - **Baseline regression:** find the commit that introduced the delta via `git log` and the delta's subsystem(s); if the regression is intentional, update the baseline rather than chasing a phantom fix.
     - **Scope creep:** report the out-of-scope subsystem; do not fix unless the user confirms the scope expansion.
@@ -340,7 +340,7 @@ For each actionable finding, in ranked order:
       ```
     - **Mandatory angles for the prompt:** (1) does the fix actually close the finding's root cause or only the visible symptom? (2) are there error paths, SMP cases, or boundary values the fix misses? (3) does the fix introduce a regression in adjacent code? (4) for POLICY fixes: does the fix match the POLICIES.md Remediation shape?
     - Apply `superpowers:receiving-code-review` to every Codex finding. Codex can be wrong; verify each finding against code before acting.
-    - Unresolved Critical/High Codex findings block commit. Iterate: fix -> rebuild -> re-dispatch, until a clean round, up to the 42-round cap. After round 3 with still-unresolved Critical/High, stop, downgrade the finding's fix status to "attempted", and escalate to the user.
+    - Unresolved Critical/High Codex findings block commit. Iterate: fix -> rebuild -> re-dispatch, until a clean round, up to the 42-round cap. By round 3 on one boundary, change the structure rather than the next shape (review-todo-section step 6). At the cap, mark the finding's fix status "attempted", file the unresolved finding as a concrete `[ ]` item with an XREF in its owning TODO, and record it in the report.
     - Skip only when `--skip-fix` was passed (no fixes means no review).
 
 24. **Verify against the original symptom**

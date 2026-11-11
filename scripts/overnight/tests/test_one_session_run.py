@@ -529,6 +529,19 @@ def test_every_start_and_restart_begins_with_the_goal():
     assert not any(c in goal for c in '"$`\\'), goal
 
 
+def test_no_skill_tells_a_session_to_ask_the_operator():
+    """Operating Mandate 2026-11-10: skills decide and record. On 2026-11-11 five skills still
+    said to ask or wait for sign-off, a day after the mandate landed in CLAUDE.md."""
+    phrases = ("ask the user", "asks the user", "ask user", "escalate to the user",
+               "user sign-off", "wait for approval", "ask the operator")
+    hits = [f"{p.relative_to(REPO)}:{n}: {phrase}"
+            for p in sorted((REPO / ".claude/skills").rglob("*.md"))
+            if "incidents" not in p.name
+            for n, line in enumerate(p.read_text().lower().splitlines(), 1)
+            for phrase in phrases if phrase in line]
+    assert not hits, "\n".join(hits)
+
+
 def test_stop_guard_holds_the_session_until_the_work_is_done():
     assert _stop() == 2
     # A verified rollover used to end the session for a relaunch. Nothing relaunches now.

@@ -238,14 +238,14 @@ against the current tree:
       today as a deliberate downgrade signal. Applying the TODO diff
       would either (1) silently pass on a degraded return the project
       used to catch, or (2) fail on correct code. **NEVER APPLY THIS
-      DIFF.** Leave the test untouched. Mark the TODO item with
-      `[ ]` still; add an inline `> **Rejected:**` note under the item:
+      DIFF.** Leave the test untouched. Rewrite the TODO item to the
+      assertion the existing test makes, mark it `[x]` once that test
+      covers it, and add an inline `> **Rejected:**` note under the item:
       `> **Rejected:** TODO item would regress existing coverage.
       Reality: test at <file:line> asserts <what>; current implementation
       returns <actual>. Applying the TODO diff would <specific regression>.
-      TODO item dropped; see commit <hash> for rationale.` Flag in chat
-      so the user can confirm the rejection, and **do not mark `[x]`
-      without user sign-off on the rejection.** Regressions dressed up
+      TODO item corrected; see commit <hash> for rationale.` Record the
+      rejection in the report. Regressions dressed up
       as "implementing the TODO" is exactly the failure mode this step
       exists to prevent.
 
@@ -495,7 +495,7 @@ For all three subdirs, the root-level `scripts/debug/run-all-tests.bat` aggregat
 - Do not change other TODO sections
 - Do not skip assertions listed in the TODO -- implement all of them
 - If an assertion cannot be tested (e.g., requires hardware), note it in the TODO and mark it `[x]` with `(skipped: reason)`
-- **NEVER introduce a regression to satisfy a stale TODO item.** If the Unit Tests section asks for a weaker assertion than the existing test already has, or asks to change an assertion in a way that would mask real behavior, the TODO item is wrong (see step 2a case d). Reject the diff, leave the existing test untouched, flag the rejection in chat, and wait for user sign-off before any further action. Every TODO item that reaches `[x]` must strictly INCREASE or preserve test coverage -- never decrease it.
+- **NEVER introduce a regression to satisfy a stale TODO item.** If the Unit Tests section asks for a weaker assertion than the existing test already has, or asks to change an assertion in a way that would mask real behavior, the TODO item is wrong (see step 2a case d). Reject the diff, leave the existing test untouched, correct the TODO item to match the stronger existing test in the same change, and record the rejection in the report. Every TODO item that reaches `[x]` must strictly INCREASE or preserve test coverage -- never decrease it.
 - **Reconciliation notes are mandatory when the TODO item text changes.** If step 2a updates a TODO item's text to match the shipped test (cases a, c, d), the new text must be visible to a future reader and the inline `-- reconciled: ...` note explains WHY it changed. A silent flip `[x]` without a note is indistinguishable from a blind "marked done" lie.
 - If the TODO lists 30+ test cases, consider splitting into multiple test files grouped by sub-feature rather than one giant file
 - **Test isolation:** some subsystems (e.g., module registry `s_modules[]`, SSDT dispatch table) have no reset/cleanup mechanism. Tests that modify global state may affect later tests. Document this limitation in a comment and use unique values (e.g., unique base addresses) to avoid collisions with prior tests.

@@ -74,3 +74,34 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
     print("OK")
+
+
+def _repo(path):
+    import subprocess
+    subprocess.run(["git", "init", "-q", str(path)], check=True, timeout=30)
+    return str(path.resolve())
+
+
+def test_a_bare_git_C_commit_is_judged_on_the_tree_it_commits_to(tmp_path):
+    """Live 2026-11-11: a repair-worktree commit was refused on the primary tree's index."""
+    other = _repo(tmp_path / "other")
+    for cmd in (f"git -C {other} commit -q -F msg.txt",
+                f"git -C {other} commit -m 'plain words'",
+                f"git -C '{other}' commit"):
+        assert str(gate._commit_target_root(cmd)) == other, cmd
+
+
+def test_any_other_shape_keeps_the_gates_own_directory(tmp_path):
+    other = _repo(tmp_path / "other")
+    for cmd in (f"cd {other} && git commit -m x",
+                f"git -C {other} status; git commit -m x",
+                f"git -C {other} status\ngit commit -m x",
+                f"git -C {other} commit -m x && git commit -m y",
+                f"git -C {other} commit -m \"$(cat f)\"",
+                f"git -C {other} log commit",
+                f"git -c a=b -C {other} commit -m x",
+                f"env X=1 git -C {other} commit -m x",
+                f"git -C {tmp_path / 'missing'} commit -m x",
+                f"git -C {other} commit -m 'unterminated",
+                "git commit -m x"):
+        assert gate._commit_target_root(cmd) is None, cmd

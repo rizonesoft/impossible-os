@@ -6,6 +6,7 @@ own graph from it with the repository's builder and classifier, so these tests
 cover the whole path a real sync takes.
 """
 import importlib.util
+import os
 import pathlib
 import subprocess
 import sys
@@ -307,6 +308,29 @@ def test_staged_check_judges_the_index_not_the_working_tree():
         git(root, "add", "todo/00-alpha")
         (root / PLAN).unlink()
         assert run(root, "--check", "--staged").returncode == 1
+
+
+def test_staged_check_passes_inside_a_linked_worktree_hook():
+    """Live 2026-11-11: a hook in a linked worktree exports GIT_DIR, and the build of the staged export read the
+    real repository's history from the export's directory, refusing every commit made in a repair worktree."""
+    with tempfile.TemporaryDirectory() as d:
+        root = make_repo(pathlib.Path(d) / "main")
+        assert run(root, "--seed").returncode == 0
+        git(root, "init", "-q")
+        git(root, "add", "-A")
+        git(root, "commit", "-q", "-m", "fixture")
+        # The newest commit must not touch todo/: that is when the whole repository's history and the
+        # corpus's own history give different answers.
+        (root / "README.md").write_text("not the corpus\n")
+        git(root, "add", "README.md")
+        git(root, "commit", "-q", "-m", "outside the corpus")
+        wt = pathlib.Path(d) / "wt"
+        git(root, "worktree", "add", "-q", "--detach", str(wt))
+        gitdir = git(wt, "rev-parse", "--absolute-git-dir").strip()
+        done = subprocess.run([sys.executable, str(SCRIPT), "--repo-root", str(wt), "--check", "--staged"],
+                              text=True, capture_output=True, timeout=300, cwd=str(wt),
+                              env={**os.environ, "GIT_DIR": gitdir, "GIT_INDEX_FILE": gitdir + "/index"})
+        assert done.returncode == 0, done.stderr
 
 
 def test_a_second_sync_waits_for_the_first_and_gives_up_by_name():
