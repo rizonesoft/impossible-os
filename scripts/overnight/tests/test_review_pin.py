@@ -654,11 +654,18 @@ def test_a_pass_earns_a_step_only_through_a_dispatcher_that_checks_it():
     assert m.match_step("review-todo-section", "Bash", wrapper) == [5]
     assert m.match_step("review-todo-section", "Bash", broker) == [8]
     # Review finding: route and kind were matched apart, over the whole line. They belong to one command.
-    for cmd in ('bash "scripts/codex-dispatch.sh" ' + prompt, "REVIEW_BASE='abc' bash scripts/codex-dispatch.sh " + prompt,
-                "bash /home/x/scripts/codex-dispatch.sh " + prompt, "cd /x && bash scripts/codex-dispatch.sh " + prompt):
+    # One dispatcher name per source line: lint Check 15 reads two on a line as a bundled dispatch.
+    route = "scripts/codex-dispatch.sh"
+    credited = (f'bash "{route}" ' + prompt,
+                f"REVIEW_BASE='abc' bash {route} " + prompt,
+                f"bash /home/x/{route} " + prompt,
+                f"cd /x && bash {route} " + prompt)
+    for cmd in credited:
         assert m.match_step("implement-todo-section", "Bash", cmd) == [13], cmd
-    for cmd in ("echo scripts/codex-dispatch.sh ; " + direct, "bash scripts/codex-dispatch.sh 'see [review-kind: round] x'",
-                "bash scripts/codex-dispatch.sh '[review-kind: round] todo/x.md"):
+    uncredited = (f"echo {route} ; " + direct,
+                  f"bash {route} 'see [review-kind: round] x'",
+                  f"bash {route} '[review-kind: round] todo/x.md")
+    for cmd in uncredited:
         assert m.match_step("implement-todo-section", "Bash", cmd) == [], cmd
     for cmd in (direct, quoting):
         assert m.match_step("implement-todo-section", "Bash", cmd) == [], cmd
