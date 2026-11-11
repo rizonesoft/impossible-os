@@ -277,6 +277,8 @@ A row is a box, an address in backticks, a title, the section's Needs and its co
 
 **When to sync.** After any TODO edit that ships, stamps, renames or files a section, before the commit. Stage the plan with the TODO edit: under the commit gate the check reads the git index (`--check --staged`), which is what the commit carries, so a plan synced but left unstaged is refused and a TODO edit outside the commit changes nothing. Syncs take a lock (`build/.todo-plan.lock`), so two at once run one after the other. A hand edit made while a sync runs does not take that lock: the sync notices the file changed under it, writes nothing, and is run again.
 
+**A merge conflict in the plan.** The rows are derived, so a plan git could not merge (a rebase over a commit that also synced it) is repaired by a sync: `python3 scripts/todo-plan.py --sync` removes the conflict markers, keeps one copy of each row and rewrites every cell from the TODO files. Then `git add todo/implementation-plan.md` and continue the rebase. Never pick a side by hand.
+
 **Do not read the plan into a session.** It is about 2,700 lines. Ask for `--next`.
 
 ## See Also

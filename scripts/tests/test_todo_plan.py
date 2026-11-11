@@ -247,6 +247,26 @@ def test_sync_upgrades_a_three_column_plan():
         assert run(root, "--check").returncode == 0
 
 
+def test_sync_repairs_a_plan_git_could_not_merge():
+    with tempfile.TemporaryDirectory() as d:
+        root = make_repo(d)
+        assert run(root, "--seed").returncode == 0
+        plan = root / PLAN
+        clean = plan.read_text()
+        lines = clean.splitlines()
+        i = index_of(lines, f"D01 T01 {S}1")
+        theirs = "|".join(lines[i].split("|")[:4]) + "|"  # the other side still writes three columns
+        j = next(k for k, ln in enumerate(lines) if ln.startswith("> **Progress:**"))
+        lines[i:i + 1] = ["<<<<<<< HEAD", lines[i], "=======", theirs.replace("[ ]", "[x]"), ">>>>>>> abc1234 (ship)"]
+        lines[j:j + 1] = ["<<<<<<< HEAD", lines[j], "||||||| base", lines[j], "=======", lines[j] + " stale", ">>>>>>> abc1234 (ship)"]
+        plan.write_text("\n".join(lines) + "\n")
+        assert run(root, "--check").returncode == 1
+        r = run(root, "--sync")
+        assert r.returncode == 0 and "conflict markers" in r.stdout, (r.stdout, r.stderr)
+        assert plan.read_text() == clean, plan.read_text()
+        assert run(root, "--check").returncode == 0
+
+
 def test_resolve_reads_a_pasted_row():
     with tempfile.TemporaryDirectory() as d:
         root = make_repo(d)

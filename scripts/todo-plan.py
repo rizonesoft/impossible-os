@@ -63,11 +63,17 @@ PHASE_RE = re.compile(r"^### Phase (?P<n>\d+) -- (?P<title>\S.*?)\s*$")
 PROGRESS_RE = re.compile(r"^> \*\*Progress:\*\* ")
 FILE_RE = re.compile(r"^TODO-(?P<tok>[0-9A-Za-z]+)-")
 TABLE_HEAD = ["| Done | Section | Deliverable | Needs | Items |", "| :-: | --- | --- | --- | --: |"]
+HEAD_RE = re.compile(r"^\|\s*Done\s*\|\s*Section\s*\|\s*Deliverable\s*\|")
+RULE_RE = re.compile(r"^\|(?:\s*:?-+:?\s*\|)+\s*$")
 OLD_HEAD_RE = re.compile(r"^\|\s*Done\s*\|\s*Section\s*\|\s*Deliverable\s*\|\s*$")
 OLD_RULE_RE = re.compile(r"^\|\s*:?-+:?\s*\|\s*:?-+:?\s*\|\s*:?-+:?\s*\|\s*$")
 # What a section cannot finish without. A label, never a gate (see the module text).
 NEEDS = ("bare-metal", "whpx-host", "display-session", "attended", "owner-decision", "third-party", "operator")
 NEEDS_RE = re.compile(r"^\*\*Needs:\*\*[ \t]*(?P<value>.*?)\s*$")
+# The lines git leaves in a file it could not merge. The rows are derived, so a
+# conflicted plan is repaired by a sync: the markers go, a row both sides carry
+# is kept once, and every cell is rewritten from the TODO files.
+CONFLICT_RE = re.compile(r"^(?:<{7}|>{7}|\|{7})(?: .*)?$|^={7}$")
 ITEM_RE = re.compile(r"^- \[[ x/]\] \S")
 BUILD_TIMEOUT_S = 300
 TITLE_MAX = 120
@@ -477,14 +483,25 @@ def synced_text(text: str, sections: dict) -> tuple:
     notes = []
     lines = plan.lines
     drop = set()
+    conflicted = any(CONFLICT_RE.match(line) for line in lines)
+    if conflicted:
+        notes.append("removed merge conflict markers")
+    in_table = seen_progress = False
     for i, line in enumerate(lines):
         mr = ROW_RE.match(line)
         if not mr:
+            if conflicted and (CONFLICT_RE.match(line) or (in_table and (HEAD_RE.match(line) or RULE_RE.match(line)))
+                               or (seen_progress and PROGRESS_RE.match(line))):
+                drop.add(i)  # a marker, or the other side's copy of a line the plan already has
+                continue
+            in_table = in_table and bool(line.strip()) and not line.startswith("#")
             if PROGRESS_RE.match(line):
+                seen_progress = True
                 lines[i] = progress_line(sections)
             elif OLD_HEAD_RE.match(line) and i + 1 < len(lines) and OLD_RULE_RE.match(lines[i + 1]):
                 lines[i], lines[i + 1] = TABLE_HEAD  # a table from before the Needs and Items columns
             continue
+        in_table = True
         ref = mr.group("ref")
         if ref not in sections:
             drop.add(i)

@@ -246,6 +246,7 @@ python3 scripts/todo-plan.py --check      # lint Check 37: stale plan, or a row 
 ```
 
 - **A row is box, address, title, Needs, Items.** Items is the count of the section's checklist items. Needs comes from a `**Needs:** <value>` line under the section heading (`bare-metal`, `whpx-host`, `display-session`, `attended`, `owner-decision`, `third-party`, `operator`; no line reads as `none`; a value outside the list fails `--check`). A Need labels a section and never holds it back: build it, prove what the emulators and the host can prove, and park only the one check that needs the named thing. Write the line only when no substitute exists.
+- **A merge conflict in the plan is repaired by `--sync`,** which removes the markers and rewrites the rows; then `git add` it and continue the rebase. Never pick a side by hand.
 - **Never read the plan file into context.** It is about 2,700 lines; `--next` and `--resolve '<row>'` answer from it.
 - **Sync before the commit** whenever a section's status, stamps or heading changed or a section was filed. The sync is mechanical and spends no model.
 - **The run follows it.** `sequencer_triage.py --next` stays in the current file while it has a runnable section, then opens the owner of the first row `--next` prints; a section whose dependencies are open is skipped until they are done, unless every open section waits, when the packet names the first and the run works what its finished dependencies allow and defers the rest with an XREF. A dependency cycle fails `--check`.
