@@ -1,0 +1,56 @@
+# Reviewer pin and review schedule for Impossible OS. Same format as RasterFold's pin (schema_version 1).
+#
+# Operator decision 2026-11-10: when Claude is the writer, the reviewer is always GPT-6 Astra through the Codex CLI.
+# One route, one reviewer, no fallback. An outage is never an approval.
+# Operator decision 2026-11-11: the review shape is three passes per section:
+#   - before the build, one plan review (kind plan);
+#   - after the build and its gates, one combined round carrying every lens (kind round); its findings are fixed and
+#     the gates rerun;
+#   - on that final candidate, one completion review (kind completion).
+# A completion that returns gaps is repaired and followed by a reconciliation pass (kind reconciliation), up to
+# pass_cap returned passes per section in all. no_progress_cap ends a loop whose passes stop finding anything new.
+# Each lens has one owner: the round hunts defects, the completion pass checks delivery and the record.
+# Findings are tagged P1, P2 or P3. Only the levels in `blocking` hold the stamp; the rest are filed as tracked
+# items and spend no further passes. A [[schedule.conditional]] entry adds its lenses to the named passes only
+# when the section's changed files fall under one of its paths.
+# A section keeps the schedule it started under, so sections already under review finish on the earlier rules.
+#
+# `model` is a declaration, never a flag: the dispatcher refuses when ~/.codex/config.toml names a different model.
+# There is no `effort` key here. Reasoning effort is the operator's dial in the Codex config.
+
+schema_version = 1
+
+[reviewers.astra]
+cli = "codex"
+model = "gpt-6-astra"
+
+[routes]
+claude = ["astra"]
+
+[schedule]
+policy = "three-pass"
+pass_cap = 45
+no_progress_cap = 3
+blocking = ["P1", "P2"]
+
+[schedule.plan]
+lenses = ["plan"]
+
+[[schedule.rounds]]
+lenses = ["adversarial", "integration", "source-defect", "consistency", "quality", "optimization", "test-coverage"]
+
+[schedule.completion]
+lenses = ["plan-delivery", "record"]
+
+[schedule.reconciliation]
+lenses = ["adversarial", "integration", "plan-delivery", "record"]
+
+[[schedule.conditional]]
+lenses = ["concurrency", "bare-metal"]
+passes = ["round", "reconciliation"]
+paths = ["src/kernel/", "include/kernel/", "src/boot/"]
+
+[[schedule.conditional]]
+lenses = ["design"]
+passes = ["plan", "round"]
+paths = ["src/desktop/", "src/shell/", "src/apps/", "user/", "gh-pages/"]
