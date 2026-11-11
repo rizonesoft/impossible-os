@@ -99,7 +99,10 @@ re-polls). The fix is one blocking call, no narration:
 # 1. Dispatch the review (harness backgrounds it, or the broker for a bounded
 #    multi-kind envelope). Reviews are READ-ONLY (adversarial-review sandbox).
 bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: design] <todo> <body>'
-#    -> returns {logFile: ...}; works for design/adversarial/consistency/perf.
+#    -> returns {logFile: ...}; works for design/adversarial/consistency/perf,
+#       and for the passes of the reviewer pin (plan/round/performance/
+#       completion/reconciliation), which a section that starts now uses:
+#       .claude/skills/three-pass-review.md has the wave and the envelope call.
 # 2. Wait with the CANONICAL waiter (B1) in ONE LONG call (R3, 2026-07-19).
 #    Use the long shape: `--max 540` AND the Bash tool parameter `timeout: 600000` -- the
 #    tool's ~120s default kill would otherwise end the wait early (B1). The

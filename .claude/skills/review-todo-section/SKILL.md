@@ -17,6 +17,8 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
 
 ## Pipeline
 
+> **Which reviews this section gets (2026-11-11).** Run `python3 scripts/review_pin.py --section <todo-path> <N>` before the first Codex dispatch. If it prints `older`, the section started before the reviewer pin: follow the steps below as written. If it prints `new` or `passes`, the section is reviewed as passes of the reviewer pin (`plan`, `round`, `performance`, `completion`, `reconciliation`): read [three-pass-review.md](../three-pass-review.md) and, wherever a step below names `design`, `adversarial`, `test-coverage`, `consistency`, `perf` or `re-adversarial`, dispatch what its "In the skills" table says instead. The rest of each step applies unchanged.
+
 ### Phase 1: Evidence + Verify
 
 1. **Evidence map -- DETERMINISTIC FIRST.** For each `[x]` item, prove via Grep/Read: "claim -> file:line". Downgrade on regression. **Run `python3 scripts/overnight/diff-facts.py` FIRST** (worktree-aware; or `--range <section-commit-range>` for a committed diff): it derives the changed defs/symbols/callers/header-includers/tests/registration touches, a concurrency/safety inventory (locks, atomics, IRQ state, allocations, frees, refcounts, teardown, user-pointer boundaries, ABI), and cppcheck static findings -- and writes a content-bound receipt. Your reads and the Codex prompts target that bounded set (widen when it reports `global_state_escalation`). The gates themselves still cover the whole diff. **A fresh diff-facts receipt SATISFIES the `review_dispatch_gate` mapper requirement** (it IS the mapper's deterministic evidence-gathering). Route the remaining, JUDGMENT part by diff size:

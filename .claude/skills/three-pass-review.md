@@ -94,6 +94,58 @@ The commit that adds a section's `**Verified:**` stamp is accepted when, for tha
 
 A fix made after a pass means that pass has not read the candidate: commit the fix, then dispatch the round and the performance pass again, and a reconciliation.
 
+## Which rules a section is on
+
+```bash
+python3 scripts/review_pin.py --section <todo-path> <N>
+```
+
+| It prints | Meaning | Do |
+| --------- | ------- | -- |
+| `new` | nothing has been dispatched for the section | start it with a `plan` pass |
+| `passes REVIEW_BASE=<sha>` | a pass was dispatched for it | continue with the passes; `<sha>` is the commit before the section's code |
+| `older` | a review of the older kinds was recorded for it and no pass | finish it on the older kinds, as the skill steps are written |
+
+## In the skills
+
+The steps of `implement-todo-section` and `review-todo-section` name the older kinds. For a `new` or `passes` section, dispatch the pass in the right column where a step names the kind in the left one. Everything else in those steps applies unchanged: the fix discipline, the self-diff gate before a re-dispatch, one reception per wave, the round counter, how a round closes the loop.
+
+| The step dispatches | Dispatch instead |
+| ------------------- | ---------------- |
+| `design` (implement step 4) | `plan`. It is no longer optional: the stamp needs one. |
+| `test-coverage` (implement step 9) | nothing. `test-coverage` is a lens of the round. |
+| `adversarial` (implement step 13) | `round`, on the working tree, before the commit. It finds defects early; it does not count for the stamp, because the candidate changes when you commit. |
+| `adversarial`, then `consistency` and `perf` (review steps 5 and 8) | one wave of three on the committed candidate: `round`, `performance`, `completion` |
+| `re-adversarial` (review step 13.5) | the wave again, with `reconciliation` in place of `completion` once a completion has returned gaps |
+
+Three things differ from the older kinds, because the commit gate requires each of the three passes to have read the candidate being stamped and to have ended below a blocking level:
+
+- **Any fix after a wave means the wave again.** There is no lighter path for a test-only or cosmetic fix: a pass that ran before the fix has not read it. Batch the fixes of one wave into one commit, then dispatch the next wave.
+- **Do not skip a pass on a CONVERGED verdict** from `review_convergence.py`. A pass that is skipped has no receipt on the final candidate.
+- **The stamp commit carries nothing a pass reads.** Commit code, hooks, scripts and docs first; the stamp commit holds the TODO, the plan file and generated files only, and stamps one section.
+
+## The review loop
+
+```bash
+# 1. One wave: three calls in one message, in the background through the broker.
+REVIEW_BASE=<sha> bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: round] <todo-path> section <N>
+<body>'
+REVIEW_BASE=<sha> bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: performance] <todo-path> section <N>
+<body>'
+REVIEW_BASE=<sha> bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: completion] <todo-path> section <N>
+<body>'
+# 2. Wait on the three logFiles the broker printed, in one long call.
+bash scripts/overnight/wait-for-codex-verdict.sh --max 540 <log1> <log2> <log3>
+# 3. Read the wave.
+python3 scripts/overnight/review-envelope.py . --kinds round,performance,completion --todo <todo-path> --section <N>
+```
+
+- `needs_redispatch` names a pass to dispatch again as it is: it crashed, or it is under `incomplete` because its review skipped a lens or its `HIGHEST:` line.
+- When nothing needs a re-dispatch, receive the wave once (`superpowers:receiving-code-review`), then bump the round counter.
+- `blocking` names each pass that ended at a blocking level. Fix what is real, commit, and dispatch the whole wave again on the new candidate, with `reconciliation` in place of `completion` if the completion returned gaps. Use `--kinds round,performance,reconciliation` for that wave.
+- When `blocking` is empty and nothing changed after the wave, add the stamp.
+- A finding you reject with code evidence still leaves the pass at the level it declared. Name it in the next wave's body as `rejected: <finding> because <evidence>` so the reviewer does not raise it again.
+
 ## Sections that started under the older kinds
 
 A section whose stamp entry holds only `adversarial`, `consistency` and `perf` finishes on those rules. One pass stamp moves a section onto the three-pass rules; the two shapes are not mixed.

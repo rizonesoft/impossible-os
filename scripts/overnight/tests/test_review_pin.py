@@ -583,3 +583,38 @@ def test_a_receipt_survives_an_awkward_reviews_directory(tmp_path):
     receipt = json.loads((awkward / "manifest.jsonl").read_text())
     assert receipt["pass_checked"] is True and receipt["rc"] == 0 and receipt["section"] == 99 \
         and receipt["logFile"].startswith(str(awkward)), receipt
+
+
+def test_a_section_is_told_which_review_rules_it_is_on(tmp_path):
+    """The skills name the older kinds. A section in flight under them must finish on them, and a section that
+    starts now must use the passes, so each one asks before its first dispatch."""
+    import json
+    import subprocess
+    todo = "todo/00-x/TODO-01-x.md"
+    assert rp.section_status(tmp_path, todo, 7) == ("new", "")
+    stamps = tmp_path / rp.STAMPS
+    stamps.parent.mkdir(parents=True)
+    stamps.write_text(json.dumps({todo: {"adversarial": 5, "adversarial_section": "7", "perf": 6, "perf_section": "6"}}))
+    assert rp.section_status(tmp_path, todo, 7) == ("older", "")
+    assert rp.section_status(tmp_path, todo, "6") == ("older", "")
+    assert rp.section_status(tmp_path, todo, 8) == ("new", ""), "another section of the same TODO starts on the passes"
+    assert rp.section_status(tmp_path, "todo/00-x/TODO-02-y.md", 7) == ("new", "")
+    manifest = tmp_path / rp.MANIFEST
+    manifest.parent.mkdir(parents=True)
+    lines = [{"kind": "adversarial", "todo": todo, "section": 8, "head": "a" * 40},
+             {"kind": "plan", "todo": todo, "section": 8, "head": "b" * 40, "rc": 3, "pass_checked": True},
+             {"kind": "plan", "todo": todo, "section": 9, "head": "c" * 40, "rc": 0, "pass_checked": True}]
+    manifest.write_text("\n".join(json.dumps(e) for e in lines) + "\n{cut short\n")
+    assert rp.section_status(tmp_path, todo, 8) == ("passes", ""), "an incomplete plan is no base"
+    assert rp.section_status(tmp_path, todo, 9) == ("passes", "c" * 40)
+    assert rp.section_status(tmp_path, todo, 7) == ("older", ""), "its own receipts decide, not another section's"
+    done = subprocess.run([sys.executable, str(REPO / "scripts/review_pin.py"), "--root", str(tmp_path),
+                           "--section", todo, "9"], capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0 and done.stdout.strip() == "passes REVIEW_BASE=" + "c" * 40, done
+    for skill in ("implement-todo-section", "review-todo-section"):
+        text = (REPO / ".claude/skills" / skill / "SKILL.md").read_text()
+        assert "python3 scripts/review_pin.py --section <todo-path> <N>" in text and "three-pass-review.md" in text, skill
+    howto = (REPO / ".claude/skills/three-pass-review.md").read_text()
+    for kind in rp.SECTION_KINDS:
+        assert f"`{kind}`" in howto, kind
+    assert "--kinds round,performance,completion" in howto and "REVIEW_BASE=<sha>" in howto

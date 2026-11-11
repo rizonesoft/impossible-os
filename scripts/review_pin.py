@@ -12,6 +12,7 @@ A pin that is missing or invalid raises Refused. Nothing here falls back to an e
     python3 scripts/review_pin.py --lenses round   # that pass's lenses with their questions
     python3 scripts/review_pin.py --verdicts round --transcript FILE   # lenses the review gave no verdict for
     python3 scripts/review_pin.py --highest --transcript FILE          # the review's worst level: P1, P2, P3, none
+    python3 scripts/review_pin.py --section TODO N                     # passes | older | new: the rules a section is on
     --paths-file FILE                              # the section's changed files, one a line (conditional lenses)
     python3 scripts/review_pin.py --caps           # pass_cap and no_progress_cap
 """
@@ -256,6 +257,54 @@ def missing_lens_verdicts(pin, kind, review_text, changed_paths=()):
     return tuple(name for name in lenses_for(pin, kind, changed_paths) if len(seen.get(name, ())) != 1)
 
 
+MANIFEST = ".claude/overnight/reviews/manifest.jsonl"
+STAMPS = ".claude/state/last-review-stamps.json"
+OLDER_KINDS = ("design", "adversarial", "adversarial-impl", "test-coverage", "consistency", "perf", "re-adversarial")
+
+
+def section_status(root, todo, section):
+    """Which review rules a section is on, and the commit it started from when that is known.
+
+    ("passes", <plan head>)  a pass was dispatched for it: it is on the reviewer pin's rules. The head is
+                             the plan pass's candidate, the commit before the section's code (REVIEW_BASE);
+                             "" when no checked plan receipt can be read.
+    ("older", "")            it has no pass and a review of the older kinds was recorded for it: it started
+                             before the pin and finishes on those rules.
+    ("new", "")              nothing has been dispatched for it: it starts on the pin's rules.
+    """
+    import json
+    root = pathlib.Path(root)
+    section = str(section)
+    base, seen = "", False
+    try:
+        lines = (root / MANIFEST).read_text().splitlines()
+    except FileNotFoundError:
+        lines = []
+    except (OSError, UnicodeDecodeError) as exc:
+        raise Refused(f"{MANIFEST} cannot be read: {exc}") from exc
+    for line in lines:
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(e, dict) or e.get("todo") != todo or str(e.get("section", "")) != section \
+                or e.get("kind") not in SECTION_KINDS:
+            continue
+        seen = True
+        if e.get("kind") == "plan" and e.get("pass_checked") is True and e.get("rc") == 0 \
+                and isinstance(e.get("head"), str):
+            base = e["head"]
+    if seen:
+        return ("passes", base)
+    try:
+        entry = json.loads((root / STAMPS).read_text()).get(todo)
+    except (OSError, ValueError, AttributeError):
+        entry = None
+    if isinstance(entry, dict) and any(str(entry.get(f"{k}_section", "")) == section for k in OLDER_KINDS):
+        return ("older", "")
+    return ("new", "")
+
+
 def check_codex_model(pin, config=CODEX_CONFIG):
     """Refuse when Codex is configured for a model other than the pinned one. The pin never sets it by flag."""
     try:
@@ -275,6 +324,8 @@ def main(argv=None):
     group.add_argument("--caps", action="store_true")
     group.add_argument("--verdicts", metavar="KIND", choices=SECTION_KINDS)
     group.add_argument("--highest", action="store_true")
+    group.add_argument("--section", nargs=2, metavar=("TODO", "N"))
+    parser.add_argument("--root", default=str(REPO))
     parser.add_argument("--transcript")
     parser.add_argument("--paths-file")
     parser.add_argument("--pin", default=str(PIN))
@@ -288,6 +339,10 @@ def main(argv=None):
                 paths = tuple(p for p in pathlib.Path(args.paths_file).read_text().splitlines() if p)
             except OSError as exc:
                 raise Refused(f"the changed-paths file cannot be read: {exc}") from exc
+        if args.section:
+            status, base = section_status(args.root, args.section[0], args.section[1])
+            print(status + (f" REVIEW_BASE={base}" if base else ""))
+            return 0
         if args.highest:
             _need(args.transcript, "--highest needs --transcript FILE")
             try:
