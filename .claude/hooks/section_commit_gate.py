@@ -1479,31 +1479,101 @@ def _three_pass_shape(entry: dict) -> bool:
     return any(_stamp(entry, kind)[0] for kind in _PASS_KINDS)
 
 
-def _three_pass_final(root: Path, entry: dict, current_head: str) -> tuple[bool, str]:
-    """Whether the section's last pass covers the candidate being stamped.
+# What may change after a section's last pass without a new pass: the TODO
+# record the stamp itself edits, and files a commit regenerates. Everything
+# else is content the pass has not read. Wider than _DISPATCH_CONTENT_PATHS on
+# purpose: that set is kernel-shaped, and a tooling section's whole candidate
+# lives under .claude/, scripts/ and .githooks/.
+_FINAL_PASS_EXEMPT_DIRS = ("todo/", "docs/test-coverage/")
+_FINAL_PASS_EXEMPT_FILES = frozenset({"COUNT.md", "README.md"})
+_SECTION_HEADING_RE = re.compile(r"^## (\d+)\.")
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
-    The last pass is the newer of completion and reconciliation. It must be
-    content-valid: dispatched at HEAD, or at an ancestor with no source change
-    since. A fix made after it is exactly what it has not seen.
+
+def _unread_by_final_pass(paths: list[str]) -> list[str]:
+    return [p for p in paths if p and p not in _FINAL_PASS_EXEMPT_FILES
+            and not p.startswith(_FINAL_PASS_EXEMPT_DIRS)]
+
+
+def _git_lines(root: Path, *args: str) -> list[str] | None:
+    try:
+        out = subprocess.check_output(["git", *args], cwd=str(root), text=True, timeout=10,
+                                      stderr=subprocess.DEVNULL)
+    except Exception:
+        return None
+    return out.splitlines()
+
+
+def _stamped_sections(root: Path, todo: str) -> set[str] | None:
+    """The section numbers whose stamp the staged diff of `todo` adds; None when they cannot be read.
+
+    A stamp line belongs to the nearest `## N.` heading above it in the STAGED file.
+    """
+    diff = _git_lines(root, "diff", "--cached", "-U0", "--", todo)
+    staged = _git_lines(root, "show", f":{todo}")
+    if diff is None or staged is None:
+        return None
+    sections: set[str] = set()
+    line_no = 0
+    for line in diff:
+        m = _HUNK_RE.match(line)
+        if m:
+            line_no = int(m.group(1))
+            continue
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        if _STAMP_ADDED_RE.match(line):
+            found = None
+            for i in range(min(line_no, len(staged)) - 1, -1, -1):
+                h = _SECTION_HEADING_RE.match(staged[i])
+                if h:
+                    found = h.group(1)
+                    break
+            if found is None:
+                return None
+            sections.add(found)
+        line_no += 1
+    return sections or None
+
+
+def _three_pass_final(root: Path, entry: dict, current_head: str) -> tuple[bool, str, str]:
+    """(ok, why, kind): whether the section's last pass covers the candidate being stamped.
+
+    The last pass is the newer of completion and reconciliation. It must have
+    been dispatched at HEAD, or at an ancestor with nothing changed since that
+    a pass reads (_unread_by_final_pass). A fix made after it is exactly what
+    it has not seen.
     """
     c_ts, c_head = _stamp(entry, "completion")
     r_ts, r_head = _stamp(entry, "reconciliation")
     if not c_ts:
-        return (False, "missing: completion")
+        return (False, "missing: completion", "completion")
     kind, head = ("reconciliation", r_head) if r_ts > c_ts else ("completion", c_head)
-    if not head:
-        return (False, f"{kind} has no dispatch head recorded")
-    fresh, why = _dispatch_content_fresh(root, head, current_head)
-    return (True, "") if fresh else (False, f"{kind} is not the last word on this candidate ({why})")
+    if not head or not current_head:
+        return (False, f"{kind} has no dispatch head recorded", kind)
+    if head != current_head:
+        if not _git_is_ancestor(root, head, current_head):
+            return (False, f"{kind} was dispatched at {head[:10]}, which is not in this history (cross-branch)", kind)
+        changed = _git_lines(root, "diff", "--name-only", head, current_head)
+        if changed is None:
+            return (False, f"{kind}: could not list what changed since {head[:10]}", kind)
+        unread = _unread_by_final_pass(changed)
+        if unread:
+            more = f" (+{len(unread) - 3} more)" if len(unread) > 3 else ""
+            return (False, f"{kind} is not the last word on this candidate: changed since it ran: "
+                           f"{unread[:3]}{more}", kind)
+    return (True, "", kind)
 
 
-def _three_pass_issues(root: Path, entry: dict, current_head: str) -> list[str]:
+def _three_pass_issues(root: Path, todo: str, entry: dict, current_head: str) -> list[str]:
     """What a three-pass section still owes before its stamp, as message parts.
 
     plan and round must have been dispatched on this history (their heads are
     ancestors of HEAD): the plan precedes the code and the round precedes its
     own fixes, so neither can be required to match the final source. The final
-    pass must.
+    pass must cover the candidate, and nothing a pass reads may ride along in
+    the stamp commit. Every pass must be for the section being stamped: the
+    stamp entry is per TODO and keeps an earlier section's passes.
     """
     parts: list[str] = []
     for kind in ("plan", "round"):
@@ -1514,9 +1584,33 @@ def _three_pass_issues(root: Path, entry: dict, current_head: str) -> list[str]:
             parts.append(f"{kind} has no dispatch head recorded")
         elif not _git_is_ancestor(root, head, current_head):
             parts.append(f"{kind} was dispatched at {head[:10]}, which is not in this history (cross-branch)")
-    ok, why = _three_pass_final(root, entry, current_head)
+    ok, why, final_kind = _three_pass_final(root, entry, current_head)
     if not ok:
         parts.append(why)
+
+    sections = _stamped_sections(root, todo)
+    if sections is None:
+        parts.append("the section being stamped could not be read from the staged TODO")
+    elif len(sections) != 1:
+        parts.append(f"one commit stamps one section; this one stamps {sorted(sections)}")
+    else:
+        section = next(iter(sections))
+        for kind in ("plan", "round", final_kind):
+            if not _stamp(entry, kind)[0]:
+                continue
+            recorded = entry.get(f"{kind}_section")
+            if str(recorded if recorded is not None else "") != section:
+                parts.append(f"{kind} was dispatched for section {recorded!r}, not section {section}")
+
+    staged = _git_lines(root, "diff", "--cached", "--name-only")
+    if staged is None:
+        parts.append("the staged files could not be listed")
+    else:
+        riding = _unread_by_final_pass(staged)
+        if riding:
+            more = f" (+{len(riding) - 3} more)" if len(riding) > 3 else ""
+            parts.append(f"staged with the stamp but read by no pass: {riding[:3]}{more}; "
+                         f"commit them first, then dispatch a reconciliation")
     return parts
 
 
@@ -1600,7 +1694,7 @@ def _four_dispatch_evidence(
             )
             continue
         if _three_pass_shape(entry):
-            owed = _three_pass_issues(root, entry, current_head)
+            owed = _three_pass_issues(root, todo, entry, current_head)
             if owed:
                 issues.append(
                     f"{todo}: three-pass review incomplete -- {'; '.join(owed)}. "
