@@ -206,6 +206,7 @@ bare-metal deployment.
   - **Unlock at boot** (in `kmod_load` or kernel init pre-IXFS mount):
     1. `tpm2_unseal(sealed_blob, pcr_policy)` → `volume_key` (succeeds only if PCRs match)
     2. If TPM unsealing fails: prompt for recovery password → `argon2i(password, salt)` → AES-GCM decrypt blob → `volume_key`
+    - The prompt is the parked live-console recovery prompt of the sealed-secret hooks -> XREF: 01-boot-platform/TODO-13 §8 (item: "Follow-up: live-console recovery prompt on unseal failure"); `tpm_seal_set_recovery_handler` is the hook it registers.
     3. Mount IXFS with `volume_key` passed to block layer
 - [ ] **Block layer integration** (`src/kernel/fde.c`):
   - Register `fde_blkdev_t` wrapping the underlying IXFS blkdev

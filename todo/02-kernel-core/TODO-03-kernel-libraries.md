@@ -321,37 +321,33 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > [!IMPORTANT]
 > **Scope overlap -- `07-networking/TODO-03-http-tls.md` §3** also claims "Mbed TLS Kernel Port". This §7 is the canonical freestanding port; `07-networking/TODO-03 §3` must depend on this section being complete and should not re-implement the library itself. When `07-networking/TODO-03` is next validated, update its §3 to reference this TODO-03 §7 as its prerequisite.
 
-- [/] Clone Mbed TLS source into `src/libs/mbedtls/` (Apache-2.0) -- Mbed TLS 3.6.2 LTS vendored 2026-06-20 (`library/` + `include/` + LICENSE); freestanding `mbedtls_config.h` enabling only the required subset still remains:
-  - `MBEDTLS_AES_C` + `MBEDTLS_GCM_C` -- AES-128-GCM / AES-256-GCM
+- [ ] Freestanding `mbedtls_config.h` enabling only the required subset (source vendored 2026-06-20: Mbed TLS 3.6.2 LTS):
+  - `MBEDTLS_AES_C` + `MBEDTLS_GCM_C` + `MBEDTLS_CIPHER_MODE_CFB` -- AES-GCM, and AES-128-CFB for TPM parameter encryption
+  - `MBEDTLS_ECDH_C` + `MBEDTLS_ECP_C` + `MBEDTLS_BIGNUM_C` -- P-256 ECDH for TPM salted sessions (the first in-tree consumer)
   - `MBEDTLS_SHA256_C` + `MBEDTLS_SHA512_C` -- hash primitives
   - `MBEDTLS_RSA_C` + `MBEDTLS_PKCS1_V21` -- RSA-OAEP for certificate public key operations
   - `MBEDTLS_ECDSA_C` + `MBEDTLS_ECP_DP_SECP256R1_ENABLED` -- ECDSA P-256
   - `MBEDTLS_SSL_TLS_C` + `MBEDTLS_SSL_PROTO_TLS1_3` -- TLS 1.3 record layer
   - `MBEDTLS_CTR_DRBG_C` backed by the kernel CSPRNG (§5)
   - **Disable:** `MBEDTLS_NET_C`, `MBEDTLS_TIMING_C`, `MBEDTLS_FS_IO` -- all OS-dependent components
-- [/] Platform abstraction layer (`include/libs/mbedtls/mbedtls_platform.h`):
+- [ ] Platform abstraction layer (`include/libs/mbedtls/mbedtls_platform.h`):
   - `mbedtls_calloc` -> `kmalloc` (zero-initialised, <= 4 KiB)
   - `mbedtls_free` -> `kfree`
   - Large crypto scratch buffers (key agreement, certificate parsing) use `pmm_alloc_contiguous()`; wrap via custom `mbedtls_platform_set_calloc_free`
   - `mbedtls_printf` -> `klog(LOG_DEBUG, "tls", ...)`
   - Entropy source -> `csprng_fill()` (§5) fed into `mbedtls_entropy_add_source`
 
-- [/] Build the minimal Mbed TLS subset with the kernel flags: `-ffreestanding -nostdlib -fno-stack-protector -mno-red-zone -O2 -g` -- confirm zero link errors
-      - Blocked on: the Mbed TLS freestanding port is deferred on scope, not on a missing prerequisite: the 3.6.2 LTS source is vendored in `src/libs/mbedtls/` and the tree is excluded from the C-source auto-glob until ported. Pull the whole section forward when HTTPS needs it.
-      -> XREF: `07-networking/TODO-03-http-tls.md §5` (item: "entropy source backed by the kernel CSPRNG" at line 133) -- the Mbed TLS Kernel Port, the HTTPS consumer whose arrival unblocks this section. This section's own Deferred stamp cites that TODO as §3, which is now its HTTP POST section: the Mbed TLS port renumbered to §5.
-- [/] Implement `tls_selftest()`: run `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` -- pass means AES and SHA-256 are functionally correct in freestanding mode
-      - Blocked on: the same section-wide scope deferral as the item above; the selftest cannot run until the subset builds.
+- [ ] Build the minimal Mbed TLS subset with the kernel flags: `-ffreestanding -nostdlib -fno-stack-protector -mno-red-zone -O2 -g` -- confirm zero link errors
+- [ ] Implement `tls_selftest()`: run `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` -- pass means AES and SHA-256 are functionally correct in freestanding mode
 - [/] The full TLS session layer (handshake, certificates, SNI) is NOT this section's work -- it is implemented in `07-networking`, and this section only validates the port.
       - Kept as a scope boundary rather than a work item, parked because the port it bounds has not shipped.
       -> XREF: `07-networking/TODO-03-http-tls.md §5` (item: "entropy source backed by the kernel CSPRNG" at line 133) -- the Mbed TLS Kernel Port, the HTTPS consumer whose arrival unblocks this section. This section's own Deferred stamp cites that TODO as §3, which is now its HTTP POST section: the Mbed TLS port renumbered to §5.
 
-- [/] Commit: `"libs: Mbed TLS 3.x freestanding port, AES/SHA256/TLS1.3 config, CSPRNG entropy hook"`
-      - Blocked on: the section itself is deferred, so there is nothing to commit yet.
-      -> XREF: `07-networking/TODO-03-http-tls.md §5` (item: "entropy source backed by the kernel CSPRNG" at line 133) -- the Mbed TLS Kernel Port, the HTTPS consumer whose arrival unblocks this section. This section's own Deferred stamp cites that TODO as §3, which is now its HTTP POST section: the Mbed TLS port renumbered to §5.
+- [ ] Commit: `"libs: Mbed TLS 3.x freestanding port, AES/SHA256/ECDH config, CSPRNG entropy hook"`
 
 **Test checkpoint:** `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` return 0; kernel links with `src/libs/mbedtls/` objects only via this port; serial shows entropy hook OK. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] Source now vendored 2026-06-20 (Mbed TLS 3.6.2 LTS in `src/libs/mbedtls/`), so the prior fetch-blocker is cleared -- but the freestanding TLS port is large (config trim to the required subset, entropy hook to `csprng_fill`, CSPRNG/AES/SHA wiring, record-layer interop tests) and has no in-tree consumer until networking. Deferred on scope/effort, not on a blocker; pull forward when `07-networking/TODO-03 §3` (HTTPS) needs it. The tree is excluded from the C-source auto-glob until ported. -> XREF: 07-networking/TODO-03-http-tls.md §5 (item: "entropy source backed by the kernel CSPRNG")
+> **Note:** 2026-11-11, Deferred stamp retired: it parked the port until an in-tree consumer existed, and one does. Salted, bound TPM sessions with parameter encryption need P-256 ECDH and AES-128-CFB -> XREF: 01-boot-platform/TODO-13 §8 (item: "Follow-up: salted/bound HMAC sessions + parameter encryption").
 
 ---
 

@@ -45,7 +45,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎  |   5   | Secure Boot variable measurement reconciliation (structural)  | §1, TODO-02 §3                                            |  [x]   |
 | 💎  |   6   | Baseline enrollment and storage                               | §3, §4, §7                                                |  [/]   |
 | 💎  |   7   | TPM NV index support                                          | §2 (transport); §12 (baseline mask)                       |  [/]   |
-| ⭐  |   8   | Sealed-secret boot policy hooks                               | §7, §12                                                   |  [ ]   |
+| ⭐  |   8   | Sealed-secret boot policy hooks                               | §7, §12, 02-kernel-core/TODO-03 §7                        |  [/]   |
 | 💎  |   9   | Attestation report export                                     | §3-§6, §12, §13                                           |  [ ]   |
 | ⭐  |  10   | Recovery and mismatch UX                                      | §6, TODO-22                                               |  [ ]   |
 | 💎  |  11   | TPM tests and event-log fixtures                              | §1-§10, §12, §13                                          |  [x]   |
@@ -245,10 +245,10 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [x] FDE key-unlock hook (`tpm_seal_fde_key`/`tpm_unseal_fde_key`, domain-tagged forward-API; stub consumer until storage-encryption lands).
 - [x] Code-integrity policy seal hook (`tpm_seal_ci_policy`/`tpm_unseal_ci_policy`, forward-API; stub consumer until CI-policy lands).
 - [x] Structured unseal-failure reporting (`struct tpm_unseal_result`: status + raw rc + domain) + callable recovery handoff (`tpm_seal_set_recovery_handler`, fired on every failure).
-- [ ] Follow-up: live-console recovery prompt on unseal failure (the input path now exists). -> shared owner with the §6 console-input infra follow-up.
-  - Reopened 2026-11-07: `boot_confirm_wait_keys()` (`src/kernel/main/boot_confirm.c`) is that path, already used by the enrollment prompt and `boot_recovery.c:270`. Wiring it to an unseal failure is this item.
-- [ ] Follow-up: salted/bound HMAC sessions + parameter encryption (response-HMAC authenticity + sealed-key bus confidentiality). `tpm_session_auth_response_ok` is structural-only; transport-wide (§7/§8/§13). Parity: BitLocker bus protection.
-  - Reopened 2026-11-07: no outside owner exists and transport-wide work is not a blocker. mbedtls is vendored (`src/libs/mbedtls`); whether this kernel's config carries the primitive the salt needs is unchecked. Proving it against a real bus interposer stays an operator hardware step.
+- [/] Follow-up: live-console recovery prompt on unseal failure -> XREF: 18-future-research/TODO-04 §4 (item: "Volume key management").
+  - The prompt collects the recovery key that unlocks the volume when the TPM refuses, so it ships with the FDE unlock flow that owns that key; `boot_confirm_wait_keys()` is the input path it will use.
+- [/] Follow-up: salted/bound HMAC sessions + parameter encryption (response-HMAC authenticity + sealed-key bus confidentiality) -> XREF: 02-kernel-core/TODO-03 §7 (item: "Freestanding `mbedtls_config.h`").
+  - `tpm_session_auth_response_ok` is structural-only; transport-wide (§7/§8/§13). Parity: BitLocker bus protection. The salt needs P-256 ECDH and the encryption AES-128-CFB, neither of which the kernel has until the Mbed TLS port lands.
 - [x] Commit: `"tpm: sealed boot policy hooks"`
 
 **Test checkpoint:** Seal a small secret to the SEAL PCR policy (`tpm_pcr_seal_mask()`, PCR 7), then unseal succeeds while PCR 7 matches and is DENIED (`TPM_RC_POLICY_FAIL`, with structured failure reporting + a callable recovery handoff) after PCR 7 changes; a PCR 11 / kernel-manifest-only change does NOT break unseal (seal excludes PCR 11); the FDE key-unlock + code-integrity seal hooks are present + callable (stub consumers OK). The Create/Load/Unseal marshal/parse + policy selection are fixture-tested; the live seal->PCR-change->deny cycle is QEMU-swtpm/bare-metal validation. Platforms: QEMU swtpm KVM; bare metal.

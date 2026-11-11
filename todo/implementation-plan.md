@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **944 of 2594 sections complete (36%).** 115 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **944 of 2594 sections complete (36%).** 116 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -537,7 +537,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T13 §5`  | Secure Boot Variable Measurement Reconciliation                                                   |
 | [x]  | `D01 T13 §6`  | Baseline Enrollment and Storage                                                                   |
 | [x]  | `D01 T13 §7`  | TPM NV Index Support                                                                              |
-| [ ]  | `D01 T13 §8`  | Sealed-Secret Boot Policy Hooks                                                                   |
+| [x]  | `D01 T13 §8`  | Sealed-Secret Boot Policy Hooks                                                                   |
 | [x]  | `D01 T13 §11` | TPM Tests and Event-Log Fixtures                                                                  |
 | [x]  | `D01 T13 §12` | PCR Allocation and Policy Mask Table                                                              |
 | [ ]  | `D01 T13 §13` | Attestation Key Provisioning and TPM2 Quote                                                       |
@@ -772,7 +772,7 @@ The kernel's own model comes straight after boot because every driver, filesyste
 | [x]  | `D02 T03 §4`  | miniz Deflate / Inflate + ZIP                                                                     |
 | [x]  | `D02 T03 §5`  | Monocypher Crypto Primitives + Kernel CSPRNG                                                      |
 | [ ]  | `D02 T03 §6`  | cJSON DOM Parser                                                                                  |
-| [x]  | `D02 T03 §7`  | Mbed TLS Freestanding Port                                                                        |
+| [/]  | `D02 T03 §7`  | Mbed TLS Freestanding Port                                                                        |
 | [x]  | `D02 T03 §8`  | Checksum and Codec Dispatch (CRC32 / CRC32C / base64 / hex)                                       |
 | [x]  | `D02 T03 §9`  | Zstandard (zstd) Compression                                                                      |
 | [x]  | `D02 T03 §10` | SHA-3 / SHAKE (Keccak) Hash Family                                                                |
