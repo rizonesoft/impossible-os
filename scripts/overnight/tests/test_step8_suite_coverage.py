@@ -418,7 +418,8 @@ def test_a_user_mode_test_starts_at_main():
                     + "$(SYSROOT)/test_libc_x.exe:\n\t@true\n",
                     USER_MAKE + "$(SYSROOT)/test_libc_x.exe:\n\t@true\n",
                     USER_MAKE + "$(SYSROOT)/test_libc_x.exe: ; @true\n",
-                    USER_MAKE + "$(SYSROOT)/test_libc_x.exe: ;\n"):
+                    USER_MAKE + "$(SYSROOT)/test_libc_x.exe: ;\n",
+                    USER_MAKE.replace("\t$(CC)", "\t@echo $(CC)").replace("\t$(LD)", "\t@echo $(LD)")):
         ok, msg, _ = _check({"user/lib/string_x.c": libc, "user/test/test_libc_x.c": test, "Makefile": unbuilt})
         assert not ok and "string_x.c" in msg, "a test the Makefile never builds never runs"
 
@@ -490,6 +491,8 @@ def test_a_one_step_user_build_enters_where_it_says():
     assert tcs.user_built_tests(make) == {"user/test/test_pe_x.c": "_start"}
     unreached = make.replace("$(SYSROOT)/test_pe_x.exe: user", "unused: user")
     assert tcs.user_built_tests(unreached) == {}, "a recipe nothing in userland reaches never runs"
+    printed = make.replace("\tclang-19", "\t@printf '%s\\n' clang-19")
+    assert tcs.user_built_tests(printed) == {}, "a printed compiler command builds nothing"
     real = tcs.user_built_tests((HOOKS.parents[1] / "Makefile").read_text())
     assert real.get("user/test/test_loader_pe.c") == "_start" and real.get("user/test/test_libc.c") == "main"
 
@@ -507,8 +510,11 @@ def test_refusal_a_parameter_or_local_named_like_the_function():
                  "static int (*dpc_queue)(void) = stub;\n    dpc_queue();",
                  "unsigned int (*dpc_queue)(void) = (unsigned int (*)(void))stub;\n    dpc_queue();",
                  "int (dpc_queue) = 0;\n    (void)dpc_queue;",
-                 "enum { A, dpc_queue = 1 };\n    (void)dpc_queue;"):
-        test = ("static int stub(void) { return 0; }\n"
+                 "enum { A, dpc_queue = 1 };\n    (void)dpc_queue;",
+                 "struct s v = { .dpc_queue = 1 };\n    v.dpc_queue = 2;\n    (&v)->dpc_queue = 3;",
+                 "void helper(int dpc_queue);",
+                 "dpc_t (dpc_queue) = 0;\n    (void)dpc_queue;"):
+        test = ("typedef int dpc_t;\nstatic int stub(void) { return 0; }\n"
                 f"static void suite(void) {{\n    {body}\n}}\n"
                 "void test_register_x(void) {\n    test_suite_register_cat(\"x\", suite, TEST_CAT_SCHED);\n}\n")
         ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": test})
@@ -528,7 +534,9 @@ def test_a_call_through_a_dereference_is_still_a_use():
     for body in ("int r = (*dpc_queue)(1);\n    (void)r;", "(void)(*dpc_queue)(1);",
                  "int r = (int){dpc_queue(1)};\n    (void)r;",
                  "int scale = 2;\n    int r = scale * dpc_queue(1);\n    (void)r;",
-                 "int (*dpc_queue(int));\n    (void)dpc_queue(1);"):
+                 "int (*dpc_queue(int));\n    (void)dpc_queue(1);",
+                 "int scale = 2;\n    scale * dpc_queue(1);",
+                 "int (dpc_queue)(int);\n    dpc_queue(1);"):
         test = (f"static void suite(void) {{\n    {body}\n}}\n"
                 "void test_register_x(void) {\n    test_suite_register_cat(\"x\", suite, TEST_CAT_SCHED);\n}\n")
         ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": test})
@@ -542,6 +550,12 @@ def test_local_declarations_parse_in_linear_time():
     t0 = time.monotonic()
     tcs._body_uses(body)
     assert time.monotonic() - t0 < 2.0, "22,000 initialised declarators took the hook's budget"
+
+
+def test_refusal_a_prototype_parameter_in_the_runner_starts_nothing():
+    runner = "void boot_tests_run(void) {\n    void helper(int test_register_x);\n}\n"
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": SCHED_TEST}, runner=runner)
+    assert not ok and "dpc.c" in msg, "a parameter name in a prototype calls nothing"
 
 
 if __name__ == "__main__":

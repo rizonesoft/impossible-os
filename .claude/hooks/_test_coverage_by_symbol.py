@@ -580,19 +580,42 @@ def _ident(t: str) -> bool:
     return t[:1].isalpha() or t[:1] == "_"
 
 
-def _declared(s: list[str]) -> tuple[set[str], list[str]]:
+def _typedef_names(text: str) -> frozenset[str]:
+    """The names `text` declares as types with `typedef`, each one's declarator
+    read like any other (`typedef int (*cb_t)(void);` names cb_t)."""
+    toks = _TOKEN.findall(text)
+    names: set[str] = set()
+    for k, t in enumerate(toks):
+        if t == "typedef":
+            end = k + 1
+            while end < len(toks) and toks[end] != ";":
+                end = _skip(toks, end) if toks[end] in _OPEN and toks[end] != "(" else end + 1
+            local, _ = _declared(toks[k + 1:end])
+            names |= local
+    return frozenset(names)
+
+
+def _declared(s: list[str], objects: frozenset[str] | set[str] = frozenset(),
+              types: frozenset[str] = frozenset()) -> tuple[set[str], list[str]]:
     """The names one statement declares, read by C's declaration grammar:
     specifiers (qualifiers, storage classes, type words, a tagged type with or
     without a body, attributes, or one typedef name) then declarators, each of
     pointer stars and qualifiers around a name or `( declarator )`, with array and
     parameter suffixes and an initialiser skipped to the next top-level comma.
-    Returns (locals, prototypes): the objects declared, enumerators included, and
-    the functions declared (a prototype declares no local; the function a
-    declarator names is the one whose innermost suffix is a parameter list, so
-    `int (*f(int))` is a function and `int (*f)(int)` an object). Anything else,
-    a call, an assignment or a cast, declares nothing."""
+    Whether a leading name is a type follows C's scope rule: a name in `objects`
+    (a parameter or a local already declared) is never one, a name in `types` (a
+    typedef) always is, and any other is taken as one only where an expression
+    reading is implausible. Returns (locals, declaration-only tokens): the objects
+    declared, enumerators included, and the identifiers that only declare, which
+    are the names of functions declared (prototypes declare no local), their
+    parameter lists, and member declarations in a struct or union body. A
+    declarator names a function when the suffix nearest its name is a parameter
+    list, through any parentheses: `int (*f(int))` and `int (f)(int)` are
+    functions, `int (*f)(int)` an object. Anything else, a call, an assignment or
+    a cast, declares nothing."""
     n, j, typed, guessed = len(s), 0, False, False
     enumerators: list[str] = []
+    only: list[str] = []
     while j < n:
         t = s[j]
         if t in _TAGS:
@@ -608,6 +631,8 @@ def _declared(s: list[str]) -> tuple[set[str], list[str]]:
                         depth -= s[k] in (")", "]", "}")
                         if depth == 1 and s[k - 1] in ("{", ",") and _ident(s[k]):
                             enumerators.append(s[k])
+                else:  # member declarations name no function
+                    only.extend(x for x in s[j:end] if _ident(x))
                 j = end
             typed = True
         elif t in ("__attribute__", "__declspec", "_Alignas", "typeof", "__typeof__"):
@@ -621,6 +646,12 @@ def _declared(s: list[str]) -> tuple[set[str], list[str]]:
             typed = True
             j += 1
         elif _ident(t) and t not in _NOT_TYPES and not typed:
+            if t in objects:
+                return set(), []  # an object in scope: this is an expression
+            if t in types:
+                typed = True
+                j += 1
+                continue
             nxt, after = s[j + 1] if j + 1 < n else "", s[j + 2] if j + 2 < n else ""
             if not ((_ident(nxt) and nxt not in _KEYWORDS) or nxt == "*" or (nxt == "(" and after == "*")):
                 return set(), []
@@ -631,64 +662,77 @@ def _declared(s: list[str]) -> tuple[set[str], list[str]]:
     if not typed:
         return set(), []
     names: set[str] = set(enumerators)
-    protos: list[str] = []
 
-    def declarator(j: int) -> tuple[str | None, bool, int]:
-        """(name, is a function declarator, next index), or name None on no match."""
+    def declarator(j: int) -> tuple[str | None, bool, bool, int, int]:
+        """(name, is a function, binds a suffix or a pointer, index of the first
+        parameter list bound to the name or -1, next index); name None on no match."""
+        starred = False
         while j < n and (s[j] == "*" or s[j] in _QUALIFIERS):
+            starred = starred or s[j] == "*"
             j += 1
         if j < n and _ident(s[j]) and s[j] not in _NOT_TYPES:
             name, j = s[j], j + 1
             func = j < n and s[j] == "("
+            params = j if func else -1
+            suffixed = starred or (j < n and s[j] in ("(", "["))
         elif j + 1 < n and s[j] == "(" and (s[j + 1] == "*" or not guessed):
-            name, func, j = declarator(j + 1)
+            name, func, suffixed, params, j = declarator(j + 1)
             if name is None or j >= n or s[j] != ")":
-                return None, False, j
+                return None, False, False, -1, j
             j += 1
             if guessed and not (j < n and s[j] in ("(", "[")):
-                return None, False, j  # `f(*p);` is a call, not a declaration
+                return None, False, False, -1, j  # `f(*p);` is a call, not a declaration
+            if not suffixed and j < n and s[j] in ("(", "["):
+                func = s[j] == "("  # `(f)(int)`: nothing in the parentheses binds first
+                params = j if func else -1
+            suffixed = True
         else:
-            return None, False, j
+            return None, False, False, -1, j
         while j < n and s[j] in ("(", "["):
             j = _skip(s, j)
-        return name, func, j
+        return name, func, suffixed, params, j
 
     while j < n:
-        name, func, j = declarator(j)
+        name, func, _, params, j = declarator(j)
         if name is None:
             break
-        (protos.append if func else names.add)(name)
+        if func:
+            only.append(name)
+            only.extend(x for x in s[params:_skip(s, params)] if _ident(x))
+        else:
+            names.add(name)
         while j < n and s[j] != ",":
             j = _skip(s, j) if s[j] in _OPEN else j + 1
         j += 1
-    return names, protos
+    return names, only
 
 
-def _body_uses(body: str) -> set[str]:
-    """The identifiers a function uses, less its parameters and the names its
-    declarations bind (see _declared; for-loop init clauses included). `body` may
-    start with the function's parameter list (as _file_scope gives it). A name
-    declared anywhere in the body counts as local throughout it, which can only
-    under-credit. A block-scope prototype names the real function without using
-    it, so the name is a use only where it appears beyond its prototypes."""
+def _body_uses(body: str, types: frozenset[str] = frozenset()) -> set[str]:
+    """The identifiers a function uses, less its parameters, the names its
+    declarations bind, the identifiers that only declare (see _declared; for-loop
+    init clauses included) and member names after `.` or `->`. `body` may start
+    with the function's parameter list (as _file_scope gives it); `types` are the
+    file's typedef names. A name declared anywhere in the body counts as local
+    throughout it, which can only under-credit. A block-scope prototype names the
+    real function without using it, so a name is a use only where it appears
+    beyond its declaration-only occurrences."""
     params = set()
     if body.startswith("("):
         end = _close(body, 0)
         params, body = _param_names(body[:end]), body[end:]
     toks = _TOKEN.findall(body)
-    idents = [t for t in toks if _ident(t)]
-    local: set[str] = set()
-    protos: dict[str, int] = {}
-    for stmt in _statements(toks):
-        names, declared = _declared(stmt)
-        local |= names
-        for name in declared:
-            protos[name] = protos.get(name, 0) + 1
     seen: dict[str, int] = {}
-    for t in idents:
-        seen[t] = seen.get(t, 0) + 1
-    only_declared = {name for name, k in protos.items() if seen.get(name, 0) <= k}
-    return set(idents) - local - params - only_declared
+    for k, t in enumerate(toks):
+        if _ident(t) and not (k and (toks[k - 1] == "." or (toks[k - 1] == ">" and k > 1 and toks[k - 2] == "-"))):
+            seen[t] = seen.get(t, 0) + 1
+    local: set[str] = set()
+    only: dict[str, int] = {}
+    for stmt in _statements(toks):
+        names, decl_only = _declared(stmt, params | local, types)
+        local |= names
+        for name in decl_only:
+            only[name] = only.get(name, 0) + 1
+    return {t for t, k in seen.items() if k > only.get(t, 0)} - local - params
 
 
 def _bodies(text: str, defines: dict | None = None) -> tuple[dict[str, str], set[str]]:
@@ -715,6 +759,7 @@ def test_names(text: str, entry_points: frozenset[str] = frozenset(),
     reaches only that function.
     """
     bodies, exported = _bodies(text, defines)
+    types = _typedef_names(text)
     seen: set[str] = set()
     used: set[str] = set()
     todo = list(exported & entry_points)
@@ -724,7 +769,7 @@ def test_names(text: str, entry_points: frozenset[str] = frozenset(),
             continue
         seen.add(fn)
         body = bodies[fn]
-        ids = _body_uses(body)
+        ids = _body_uses(body, types)
         for m in _REGISTER.finditer(body):
             end = _close(body, m.end() - 1)
             ids |= set(_IDENT.findall(body[m.end():end if end > 0 else len(body)]))
@@ -745,11 +790,13 @@ def runner_entry_points(runner_texts) -> frozenset[str]:
     RUNNER_ROOT. A declaration, a comment, a call under `#if 0` or a helper nothing
     on that path calls starts nothing. A static function resolves within its own file."""
     files = []
+    types: list[frozenset[str]] = []
     exported: dict[str, tuple[int, str]] = {}
     for text in runner_texts:
         if text:
             b, e = _bodies(text)
             files.append(b)
+            types.append(_typedef_names(text))
             for name in e:
                 exported[name] = (len(files) - 1, name)
     seen: set[tuple[int, str]] = set()
@@ -760,7 +807,7 @@ def runner_entry_points(runner_texts) -> frozenset[str]:
         if key in seen:
             continue
         seen.add(key)
-        for u in _body_uses(files[key[0]][key[1]]):
+        for u in _body_uses(files[key[0]][key[1]], types[key[0]]):
             nxt = (key[0], u) if u in files[key[0]] else exported.get(u)
             if nxt is None:
                 names.add(u)  # defined outside the runners: an entry point into a test
@@ -773,6 +820,18 @@ _MAKE_COND = re.compile(r"\s*(ifeq|ifneq|ifdef|ifndef)\b")
 
 
 _MAKE_RULE = re.compile(r"^([^\t=#][^=]*?)\s*(?:&:|::|:)(?![=:])(.*)$")
+
+
+# The command a recipe runs, by its first word: the compiler or the linker, never
+# an argument to echo or printf.
+_COMPILER = re.compile(r"(?:\$[({]CC[)}]|clang(?:-\d+)?|gcc|cc)(?:\s|$)")
+_LINKER = re.compile(r"(?:\$[({]LD[)}]|ld\.lld(?:-\d+)?|ld|lld-link)(?:\s|$)")
+
+
+def _recipe_commands(line: str) -> list[str]:
+    """The shell commands of one recipe line, split at `;`, `&&`, `||` and `|`,
+    each without Make's `@`, `-` and `+` prefixes."""
+    return [c.strip().lstrip("@-+").strip() for c in re.split(r"&&|\|\||[;|]", line.strip())]
 
 
 def user_built_tests(makefile_text: str | None) -> dict[str, str]:
@@ -825,10 +884,12 @@ def user_built_tests(makefile_text: str | None) -> dict[str, str]:
             wanted.extend(prereqs.get(name, ()))
     recipes = list(dict.fromkeys(ln for t in reached for body in recipe.get(t, ()) for ln in body))
     shipped = {m for p in prereqs.get("userland", ()) for m in re.findall(r"\b(test_[\w-]+)\.exe$", p)}
-    compiled = {m for ln in recipes for m in re.findall(r"-c\s+user/test/(test_[\w-]+)\.c\b", ln)}
-    linked = {m for ln in recipes if "$(LD)" in ln for m in re.findall(r"user/test/(test_[\w-]+)\.o\b", ln)}
+    commands = [c for ln in recipes for c in _recipe_commands(ln)]
+    cc = [c for c in commands if _COMPILER.match(c)]
+    compiled = {m for c in cc for m in re.findall(r"-c\s+user/test/(test_[\w-]+)\.c\b", c)}
+    linked = {m for c in commands if _LINKER.match(c) for m in re.findall(r"user/test/(test_[\w-]+)\.o\b", c)}
     built = {n: USER_TEST_ROOT for n in compiled & linked}
-    for ln in recipes:
+    for ln in cc:
         for n in re.findall(r"-o\s+\S*user/test/(test_[\w-]+)\.exe\b", ln):
             if re.search(rf"(?<![\w/])user/test/{n}\.c\b", ln):
                 entry = re.search(r"/entry:([A-Za-z_]\w*)", ln)
