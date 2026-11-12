@@ -62,8 +62,8 @@ def _check(files: dict[str, str], refuse: bool = True, todo: dict | None = None,
            runner: str | None = DEFAULT_RUNNER):
     """(ok, message, stderr) for a commit staging `files`, in a repository whose
     index holds `runner` as the suite runner (None: no runner)."""
-    saved = getattr(gate, "STEP8_REFUSE_FROM", None)
-    gate.STEP8_REFUSE_FROM = "2000-01-01" if refuse else "2999-01-01"
+    saved = gate._step8_sections_stamped
+    gate._step8_sections_stamped = lambda root: gate.STEP8_WARN_SECTIONS if refuse else 3
     err = io.StringIO()
     try:
         with tempfile.TemporaryDirectory() as d:
@@ -75,7 +75,7 @@ def _check(files: dict[str, str], refuse: bool = True, todo: dict | None = None,
             with contextlib.redirect_stderr(err):
                 ok, msg = gate._step8_test_wiring_check(repo, staged, todos)
     finally:
-        gate.STEP8_REFUSE_FROM = saved
+        gate._step8_sections_stamped = saved
     return ok, msg, err.getvalue()
 
 
@@ -125,9 +125,33 @@ def test_upstream_acpica_is_not_ours_but_its_local_additions_are():
     assert not ok and "acimpossible.h" in msg, msg
 
 
-def test_before_the_switch_date_it_warns_and_lets_the_commit_through():
+def test_for_the_first_ten_sections_it_warns_and_lets_the_commit_through():
     ok, msg, err = _check({"src/kernel/sched/dpc.c": DPC_C}, refuse=False)
-    assert ok and "WARN (step-8" in err and "dpc.c" in err, err
+    assert ok and "WARN (step-8, 3 of 10" in err and "dpc.c" in err, err
+
+
+def test_the_warning_sections_are_the_stamps_added_since_the_rule():
+    with tempfile.TemporaryDirectory() as d:
+        repo = _repo(d)
+
+        def commit(path, text):
+            _stage(repo, {path: text})
+            subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "--no-verify",
+                            "-m", "x"], cwd=d, check=True, timeout=30)
+            return subprocess.run(["git", "rev-parse", "HEAD"], cwd=d, capture_output=True,
+                                  text=True, check=True, timeout=30).stdout.strip()
+        base = commit("todo/T.md", "> **Verified:** old\n")
+        commit("todo/T.md", "> **Verified:** old\n> **Verified:** one\n")
+        commit("todo/U.md", "> **Verified:** two\n")
+        commit("src/x.c", "> **Verified:** not a stamp outside todo/\n")
+        saved = gate.STEP8_WARN_SINCE
+        gate.STEP8_WARN_SINCE = base
+        try:
+            assert gate._step8_sections_stamped(repo) == 2
+            gate.STEP8_WARN_SINCE = "0" * 40
+            assert gate._step8_sections_stamped(repo) is None
+        finally:
+            gate.STEP8_WARN_SINCE = saved
 
 
 def test_the_no_test_surface_note_still_exempts():
@@ -176,11 +200,12 @@ def test_a_deleted_source_needs_no_test():
         _stage(repo, {"src/kernel/sched/dpc.c": DPC_C})
         subprocess.run(["git", "rm", "-q", "--cached", "src/kernel/sched/dpc.c"], cwd=d,
                        check=True, timeout=30)
-        saved, gate.STEP8_REFUSE_FROM = gate.STEP8_REFUSE_FROM, "2000-01-01"
+        saved = gate._step8_sections_stamped
+        gate._step8_sections_stamped = lambda root: gate.STEP8_WARN_SECTIONS
         try:
             ok, msg = gate._step8_test_wiring_check(repo, ["src/kernel/sched/dpc.c"], [])
         finally:
-            gate.STEP8_REFUSE_FROM = saved
+            gate._step8_sections_stamped = saved
     assert ok, msg
 
 
@@ -306,6 +331,30 @@ def test_the_test_build_defines_match_the_makefile():
     for name, value in tcs.TEST_BUILD_DEFINES.items():
         if name != "__x86_64__":  # the compiler predefines it for --target=x86_64-elf
             assert re.search(rf"-D{name}(=|\b)", makefile), f"-D{name} is not in the Makefile"
+
+
+def test_if_conditions_follow_c_precedence():
+    import _test_coverage_by_symbol as tcs
+    env = dict(tcs.TEST_BUILD_DEFINES)
+    for expr, want in (("!2 == 1", False), ("2 == 2 == 1", True), ("(2 && 3) == 1", True),
+                       ("1 + 2 * 3 == 7", True), ("1 ? 0 : 1", False), ("(0)", False),
+                       ("HEADER_VALUE", None), ("0 && HEADER_VALUE", False)):
+        assert tcs._condition("if", expr, env) is want, expr
+
+
+def test_macros_changed_where_compilation_is_unknown_become_unknown():
+    import _test_coverage_by_symbol as tcs
+    code = ("#if HEADER_FLAG\n#define SKIP_TEST 1\n#endif\n#ifndef SKIP_TEST\nCALL_A\n#endif\n"
+            "#define F 1\n#undef F\n#if F\nX\n#else\nCALL_B\n#endif\n")
+    assert tcs._first_branches(code).split() == ["CALL_B"]
+
+
+def test_refusal_a_registration_in_an_uncalled_runner_helper():
+    runner = ("void test_run_all(void) {\n}\n"
+              "static void forgotten(void) {\n    test_register_x();\n}\n")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": SCHED_TEST},
+                        runner=runner)
+    assert not ok and "dpc.c" in msg, msg
 
 
 if __name__ == "__main__":

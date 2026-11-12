@@ -3883,11 +3883,24 @@ _NO_TEST_SURFACE_RE = re.compile(
 )
 
 
-# Until this date an uncovered source is a warning; from it, a refusal. The rule was
-# rewritten on 2026-11-12 (tests found by symbol, not file name) and runs as a warning
-# for about ten kernel sections first: 26 kernel and boot commits landed in the 14 days
-# before, about two a day.
-STEP8_REFUSE_FROM = "2026-11-19"
+# An uncovered source is a warning for the first STEP8_WARN_SECTIONS sections stamped
+# after the rule shipped (commit STEP8_WARN_SINCE, 2026-11-12), then a refusal. A
+# section counts when a commit adds its `> **Verified:**` stamp under todo/.
+STEP8_WARN_SINCE = "d56710370b54e3e34c6ef8f3714cc2ae4ce84430"
+STEP8_WARN_SECTIONS = 10
+
+
+def _step8_sections_stamped(root: Path) -> int | None:
+    """How many section stamps were added since STEP8_WARN_SINCE, or None when the
+    history cannot say (a shallow clone without that commit)."""
+    try:
+        diff = subprocess.run(
+            ["git", "log", "--format=", "-p", f"{STEP8_WARN_SINCE}..HEAD", "--", "todo/"],
+            cwd=str(root), capture_output=True, text=True, timeout=3, check=True,
+            errors="replace").stdout  # deadline: 3 s, a local history read
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return sum(1 for line in diff.splitlines() if line.startswith("+> **Verified:**"))
 
 
 class _StagedReadError(Exception):
@@ -3947,7 +3960,8 @@ def _step8_test_wiring_check(
     apps}/ or user/ needs a test staged in the same commit that covers it: one that uses
     a public symbol the source defines, or that the source names in a `tested-by:` line
     (_test_coverage_by_symbol). A `**Note:** No <surface> test surface` line in a staged
-    TODO exempts the commit. Before STEP8_REFUSE_FROM an uncovered source only warns.
+    TODO exempts the commit. For the first STEP8_WARN_SECTIONS stamped sections an uncovered
+    source only warns.
     SKIP_REVIEW_HOOK=1 and bootstrap mode are honored by the caller and below.
     """
     candidates = [
@@ -4018,9 +4032,14 @@ def _step8_test_wiring_check(
         f"the TODO section. `python3 .claude/hooks/_test_coverage_by_symbol.py --report` "
         f"lists every kernel source's tests."
     )
-    if time.strftime("%Y-%m-%d") < STEP8_REFUSE_FROM:
-        sys.stderr.write(f"[section-commit-gate] WARN (step-8, refusal from "
-                         f"{STEP8_REFUSE_FROM}) -- {why}\n")
+    stamped = _step8_sections_stamped(root)
+    if stamped is None or stamped < STEP8_WARN_SECTIONS:
+        # fail-direction: history that cannot be read keeps the warning, since the
+        # warning period is what an unknown count cannot prove has ended.
+        seen = "an unknown number" if stamped is None else str(stamped)
+        sys.stderr.write(f"[section-commit-gate] WARN (step-8, {seen} of "
+                         f"{STEP8_WARN_SECTIONS} warning sections stamped; a refusal "
+                         f"after that) -- {why}\n")
         return (True, "")
     return (False, why)
 

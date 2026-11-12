@@ -54,9 +54,14 @@ _COND = re.compile(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif|define|undef
 # each -D name against the Makefile.
 TEST_BUILD_DEFINES = {"KERNEL_TESTS": 1, "CONFIG_SMP": 1, "CONFIG_EXCEPT_TELEMETRY": 1,
                       "BUILD_ALT_BOOT_OFF": 1, "__IMPOSSIBLE_OS__": 1, "__x86_64__": 1}
-_UNDEF = object()   # known to be undefined (#undef)
-_UNKNOWN = object()  # defined, value not an integer
-_EXPR_TOKEN = re.compile(r"\s*(defined|[A-Za-z_]\w*|0[xX][0-9a-fA-F]+|\d+|&&|\|\||==|!=|<=|>=|[()!<>+\-*])")
+_UNDEF = object()      # known to be undefined (#undef)
+_UNKNOWN = object()    # defined, value not an integer literal
+_UNCERTAIN = object()  # changed inside a branch that may or may not compile
+_EXPR_TOKEN = re.compile(
+    r"\s*(defined\b|[A-Za-z_]\w*|0[xX][0-9a-fA-F]+[uUlL]*|\d+[uUlL]*"
+    r"|&&|\|\||==|!=|<=|>=|<<|>>|[()!~<>+\-*/%&|^?:])")
+_BINARY = {"||": 1, "&&": 2, "|": 3, "^": 4, "&": 5, "==": 6, "!=": 6, "<": 7, ">": 7,
+           "<=": 7, ">=": 7, "<<": 8, ">>": 8, "+": 9, "-": 9, "*": 10, "/": 10, "%": 10}
 
 
 def _int(text: str):
@@ -67,113 +72,192 @@ def _int(text: str):
         return _UNKNOWN
 
 
+class _Expr:
+    """A C preprocessor #if expression, evaluated with C's precedence and its 0/1
+    results. None stands for a value this file cannot know and propagates, except
+    where && or || is decided by its known side."""
+
+    def __init__(self, toks: list[str], env: dict):
+        self.toks, self.env, self.i = toks, env, 0
+
+    def peek(self):
+        return self.toks[self.i] if self.i < len(self.toks) else None
+
+    def take(self):
+        t = self.peek()
+        if t is None:
+            raise ValueError("truncated #if expression")
+        self.i += 1
+        return t
+
+    def ternary(self):
+        cond = self.binary(1)
+        if self.peek() != "?":
+            return cond
+        self.take()
+        yes = self.ternary()
+        if self.take() != ":":
+            raise ValueError("?: without :")
+        no = self.ternary()
+        return None if cond is None else (yes if cond else no)
+
+    def binary(self, floor: int):
+        left = self.unary()
+        while (op := self.peek()) in _BINARY and _BINARY[op] >= floor:
+            self.take()
+            right = self.binary(_BINARY[op] + 1)
+            left = self.apply(op, left, right)
+        return left
+
+    @staticmethod
+    def apply(op, a, b):
+        if op == "&&":
+            return 0 if 0 in (a, b) else (None if None in (a, b) else 1)
+        if op == "||":
+            return 1 if (a not in (0, None) or b not in (0, None)) else (None if None in (a, b) else 0)
+        if a is None or b is None:
+            return None
+        if op in ("/", "%") and b == 0:
+            return None
+        return {"|": a | b, "^": a ^ b, "&": a & b, "==": int(a == b), "!=": int(a != b),
+                "<": int(a < b), ">": int(a > b), "<=": int(a <= b), ">=": int(a >= b),
+                "<<": a << b if 0 <= b < 64 else None, ">>": a >> b if 0 <= b < 64 else None,
+                "+": a + b, "-": a - b, "*": a * b,
+                "/": int(a / b) if b else None, "%": a - b * int(a / b) if b else None}[op]
+
+    def unary(self):
+        t = self.take()
+        if t in ("!", "~", "-", "+"):
+            v = self.unary()
+            return None if v is None else {"!": int(not v), "~": ~v, "-": -v, "+": v}[t]
+        if t == "(":
+            v = self.ternary()
+            if self.take() != ")":
+                raise ValueError("unbalanced ( in #if")
+            return v
+        if t == "defined":
+            paren = self.peek() == "("
+            if paren:
+                self.take()
+            name = self.take()
+            if paren and self.take() != ")":
+                raise ValueError("defined( without )")
+            v = self.env.get(name, _UNDEF)
+            return None if v is _UNCERTAIN else int(v is not _UNDEF)
+        if t[0].isdigit():
+            v = _int(t)
+            return None if v is _UNKNOWN else v
+        v = self.env.get(t)
+        if v is _UNDEF:
+            return 0  # C: an identifier that is not a macro is 0
+        if v is None or v is _UNKNOWN or v is _UNCERTAIN:
+            return None  # a header's macro, or a value this file cannot know
+        return v
+
+
 def _condition(kind: str, expr: str, env: dict) -> bool | None:
     """The value of an #if/#ifdef/#ifndef/#elif condition for the test build, or None
-    when it depends on a macro whose value is not known here (one from a header).
-    A name never defined in `env` is undefined, as C reads it, so include guards and a
-    file's own flags evaluate; a header macro used for its VALUE is unknown."""
+    when it depends on what this file cannot see. A name the file never defines is
+    undefined for defined()/#ifdef, as C reads it, so include guards and a file's own
+    flags evaluate; a header macro used for its value is unknown."""
     expr = _code_only(expr).strip()
     if kind in ("ifdef", "ifndef"):
         name = expr.split()[0] if expr.split() else ""
-        defined = name in env and env[name] is not _UNDEF
-        return defined == (kind == "ifdef")
-    out = []
-    pos = 0
-    toks = []
+        v = env.get(name, _UNDEF)
+        if v is _UNCERTAIN:
+            return None
+        return (v is not _UNDEF) == (kind == "ifdef")
+    toks, pos = [], 0
     while pos < len(expr):
         m = _EXPR_TOKEN.match(expr, pos)
         if not m:
-            return None
+            if expr[pos:].strip():
+                return None
+            break
         toks.append(m.group(1))
         pos = m.end()
-    i = 0
-    while i < len(toks):
-        t = toks[i]
-        if t == "defined":
-            j = i + 1
-            paren = j < len(toks) and toks[j] == "("
-            j += paren
-            if j >= len(toks):
-                return None
-            name = toks[j]
-            out.append("1" if name in env and env[name] is not _UNDEF else "0")
-            i = j + 1 + (paren and j + 1 < len(toks) and toks[j + 1] == ")")
-            continue
-        if t[0].isalpha() or t[0] == "_":
-            v = env.get(t, _UNDEF if t not in env else env[t])
-            if t not in env or v is _UNDEF:
-                return None  # a value from a header this file cannot see
-            if v is _UNKNOWN:
-                return None
-            out.append(str(v))
-        elif t[0].isdigit():
-            v = _int(t)
-            if v is _UNKNOWN:
-                return None
-            out.append(str(v))
-        else:
-            out.append({"&&": " and ", "||": " or ", "!": " not "}.get(t, t))
-        i += 1
     try:
-        return bool(eval("".join(out) or "0", {"__builtins__": {}}, {}))  # noqa: S307 (tokens are ints and operators only)
-    except Exception:
+        parser = _Expr(toks, env)
+        value = parser.ternary()
+        if parser.peek() is not None:
+            return None
+    except (ValueError, KeyError):
         return None
+    return None if value is None else bool(value)
 
 
 def _first_branches(code: str) -> str:
     """`code` without preprocessor lines, keeping the #if branches the test build
-    compiles. A branch whose condition is unknown is dropped, and so is every later
-    branch of its chain, because whether they compile is unknown too: disabled code
-    must never earn credit. #define and #undef in compiled regions update the macros."""
+    compiles. Each branch is on (compiles), off (does not) or maybe (depends on what
+    this file cannot see). Only code under no off and no maybe branch is kept, so code
+    that may not compile never earns credit. #define and #undef update the macros
+    where they compile, and make the name uncertain where they only may."""
     env = dict(TEST_BUILD_DEFINES)
-    out = []
-    stack: list[list] = []  # per open #if: [this branch compiled, a branch taken, unknown seen]
+    out: list[str] = []
+    frames: list[dict] = []  # state: "on" | "off" | "maybe"; taken; unknown
+
+    def region():
+        states = {f["state"] for f in frames}
+        return "off" if "off" in states else ("maybe" if "maybe" in states else "on")
+
+    def state_for(c, taken, unknown):
+        if taken or c is False:
+            return "off"
+        if unknown or c is None:
+            return "maybe"
+        return "on"
+
     lines = code.split("\n")
     n = 0
     while n < len(lines):
         line = lines[n]
         if not line.lstrip().startswith("#"):
-            out.append(line if all(f[0] for f in stack) else "")
+            out.append(line if region() == "on" else "")
             n += 1
             continue
         full = line
+        out.append("")
         while full.rstrip().endswith("\\") and n + 1 < len(lines):
             n += 1
             full = full.rstrip()[:-1] + " " + lines[n]
             out.append("")
-        out.append("")
         n += 1
         m = _COND.match(full)
         if not m:
             continue
         kind, expr = m.group(1), m.group(2)
-        live = all(f[0] for f in stack)
+        where = region()
         if kind in ("if", "ifdef", "ifndef"):
-            c = _condition(kind, expr, env) if live else False
-            stack.append([c is True, c is True, c is None])
-        elif kind == "elif" and stack:
-            f = stack[-1]
-            outer = all(g[0] for g in stack[:-1])
-            if f[1] or f[2] or not outer:
-                f[0] = False
-            else:
-                c = _condition("if", expr, env)
-                f[0] = c is True
-                f[1] = c is True
-                f[2] = c is None
-        elif kind == "else" and stack:
-            f = stack[-1]
-            f[0] = not f[1] and not f[2] and all(g[0] for g in stack[:-1])
-            f[1] = True
-        elif kind == "endif" and stack:
-            stack.pop()
-        elif kind == "define" and live:
+            if where == "off":
+                frames.append({"state": "off", "taken": True, "unknown": False})
+                continue
+            c = _condition(kind, expr, env)
+            frames.append({"state": state_for(c, False, False), "taken": c is True, "unknown": c is None})
+        elif kind == "elif" and frames:
+            f = frames[-1]
+            c = None if f["taken"] else _condition("if", expr, env)
+            f["state"] = state_for(c, f["taken"], f["unknown"])
+            f["taken"] = f["taken"] or (c is True and not f["unknown"])
+            f["unknown"] = f["unknown"] or (c is None and not f["taken"])
+        elif kind == "else" and frames:
+            f = frames[-1]
+            f["state"] = state_for(True, f["taken"], f["unknown"])
+            f["taken"] = True
+        elif kind == "endif" and frames:
+            frames.pop()
+        elif kind in ("define", "undef") and where != "off":
             dm = re.match(r"\s*([A-Za-z_]\w*)(\([^)]*\))?\s*(.*)", expr)
-            if dm:
-                env[dm.group(1)] = _UNKNOWN if dm.group(2) else (_int(dm.group(3)) if dm.group(3).strip() else 1)
-        elif kind == "undef" and live:
-            name = expr.split()[0] if expr.split() else ""
-            env[name] = _UNDEF
+            if not dm:
+                continue
+            name = dm.group(1)
+            if where == "maybe":
+                env[name] = _UNCERTAIN
+            elif kind == "undef":
+                env[name] = _UNDEF
+            elif dm.group(2):
+                env[name] = _UNKNOWN
+            else:
+                env[name] = _int(dm.group(3)) if dm.group(3).strip() else 1
     return "\n".join(out)
 
 
@@ -343,13 +427,28 @@ RUNNERS = ("src/kernel/test/test_runner.c", "src/kernel/main/boot_tests.c")
 
 
 def runner_entry_points(runner_texts) -> frozenset[str]:
-    """What the runners call: the uses in the bodies of their compiled functions, so a
-    declaration, a comment or a call under `#if 0` starts nothing."""
-    names: set[str] = set()
+    """What the runners run: starting from their non-static functions (what the boot
+    path calls into), the uses in every runner function those reach. A declaration, a
+    comment, a call under `#if 0` or an uncalled static helper starts nothing."""
+    bodies: dict[str, str] = {}
+    exported: set[str] = set()
     for text in runner_texts:
         if text:
-            for body in _bodies(text)[0].values():
-                names |= _body_uses(body)
+            b, e = _bodies(text)
+            for name, body in b.items():
+                bodies[name] = bodies.get(name, "") + body
+            exported |= e
+    seen: set[str] = set()
+    names: set[str] = set()
+    todo = list(exported)
+    while todo:
+        fn = todo.pop()
+        if fn in seen:
+            continue
+        seen.add(fn)
+        uses = _body_uses(bodies[fn])
+        names |= uses
+        todo.extend(u for u in uses if u in bodies and u not in seen)
     return frozenset(names)
 
 
