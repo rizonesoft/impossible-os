@@ -551,14 +551,17 @@ def runner_entry_points(runner_texts) -> frozenset[str]:
 _MAKE_COND = re.compile(r"\s*(ifeq|ifneq|ifdef|ifndef)\b")
 
 
+_MAKE_RULE = re.compile(r"^([^\t=#][^=]*?)\s*(?:&:|::|:)(?![=:])(.*)$")
+
+
 def user_built_tests(makefile_text: str | None) -> dict[str, str]:
-    """{user/test/NAME.c: entry function} for the user-mode tests the Makefile builds
-    and ships: the `userland:` target lists NAME.exe, and either a recipe compiles
-    user/test/NAME.c and an $(LD) recipe links its object over crt0 (entry main), or
-    one recipe builds NAME.exe straight from NAME.c (entry from its /entry: flag,
-    main without one). Anything inside a Makefile conditional is not counted, since
-    whether it runs depends on the configuration, and neither is a comment or a bare
-    prerequisite."""
+    """{user/test/NAME.c: entry function} for the user-mode tests `make userland`
+    builds: the userland target lists NAME.exe, and a rule reachable from it through
+    prerequisites either compiles user/test/NAME.c and links its object with $(LD)
+    over crt0 (entry main), or builds NAME.exe straight from NAME.c in one recipe
+    (entry from its /entry: flag, main without one). A recipe under a target nothing
+    reaches does not count, and neither does anything inside a Makefile conditional
+    (whether it runs depends on the configuration), a comment or a bare prerequisite."""
     lines: list[str] = []
     depth = 0
     for raw in re.sub(r"\\\n", " ", makefile_text or "").split("\n"):
@@ -569,10 +572,31 @@ def user_built_tests(makefile_text: str | None) -> dict[str, str]:
             depth = max(depth - 1, 0)
         elif depth == 0:
             lines.append(line)
-    recipes = [ln for ln in lines if ln.startswith("\t")]
+    rules: list[tuple[list[str], list[str], list[str]]] = []  # targets, prerequisites, recipe
+    for line in lines:
+        if line.startswith("\t"):
+            if rules:
+                rules[-1][2].append(line)
+            continue
+        m = _MAKE_RULE.match(line)
+        if m:
+            rules.append((m.group(1).split(), m.group(2).split(";", 1)[0].split(), []))
+        elif line.strip():
+            rules.append(([], [], []))  # an assignment or directive ends the previous recipe
+    wanted, reached = ["userland"], set()
+    while wanted:
+        name = wanted.pop()
+        if name in reached:
+            continue
+        reached.add(name)
+        for targets, prereqs, _ in rules:
+            if name in targets:
+                wanted.extend(prereqs)
+    live = [r for r in rules if reached & set(r[0])]
+    recipes = [ln for r in live for ln in r[2]]
+    shipped = {m for r in rules if "userland" in r[0] for p in r[1] for m in re.findall(r"\b(test_[\w-]+)\.exe$", p)}
     compiled = {m for ln in recipes for m in re.findall(r"-c\s+user/test/(test_[\w-]+)\.c\b", ln)}
     linked = {m for ln in recipes if "$(LD)" in ln for m in re.findall(r"user/test/(test_[\w-]+)\.o\b", ln)}
-    shipped = {m for ln in lines if re.match(r"userland\s*:", ln) for m in re.findall(r"\b(test_[\w-]+)\.exe\b", ln)}
     built = {n: USER_TEST_ROOT for n in compiled & linked}
     for ln in recipes:
         for n in re.findall(r"-o\s+\S*user/test/(test_[\w-]+)\.exe\b", ln):

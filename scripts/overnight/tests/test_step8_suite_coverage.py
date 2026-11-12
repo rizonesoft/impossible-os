@@ -413,7 +413,9 @@ def test_a_user_mode_test_starts_at_main():
                     "userland: $(SYSROOT)/test_libc_x.exe\nall: user/test/test_libc_x.c\n\t@true\n",
                     "ifeq (0,1)\n" + USER_MAKE + "endif\n",
                     USER_MAKE.replace("$(LD)", "@echo"),
-                    USER_MAKE.replace("userland: $(SYSROOT)/test_libc_x.exe", "userland:")):
+                    USER_MAKE.replace("userland: $(SYSROOT)/test_libc_x.exe", "userland:"),
+                    USER_MAKE.replace("$(SYSROOT)/test_libc_x.exe: user", "unused: user")
+                    + "$(SYSROOT)/test_libc_x.exe:\n\t@true\n"):
         ok, msg, _ = _check({"user/lib/string_x.c": libc, "user/test/test_libc_x.c": test, "Makefile": unbuilt})
         assert not ok and "string_x.c" in msg, "a test the Makefile never builds never runs"
 
@@ -479,9 +481,12 @@ def test_a_user_test_is_read_with_the_user_build_flags():
 def test_a_one_step_user_build_enters_where_it_says():
     import _test_coverage_by_symbol as tcs
     make = ("userland: $(SYSROOT)/test_pe_x.exe\n"
-            "x:\n\tclang-19 -Wl,/entry:_start -o $(BUILD_DIR)/user/test/test_pe_x.exe \\\n"
+            "$(SYSROOT)/test_pe_x.exe: user/test/test_pe_x.c\n"
+            "\tclang-19 -Wl,/entry:_start -o $(BUILD_DIR)/user/test/test_pe_x.exe \\\n"
             "\t\tuser/test/test_pe_x.c\n")
     assert tcs.user_built_tests(make) == {"user/test/test_pe_x.c": "_start"}
+    unreached = make.replace("$(SYSROOT)/test_pe_x.exe: user", "unused: user")
+    assert tcs.user_built_tests(unreached) == {}, "a recipe nothing in userland reaches never runs"
     real = tcs.user_built_tests((HOOKS.parents[1] / "Makefile").read_text())
     assert real.get("user/test/test_loader_pe.c") == "_start" and real.get("user/test/test_libc.c") == "main"
 
