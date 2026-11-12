@@ -768,6 +768,10 @@ class _BashLexer:
         # collect is read again from the body, and collecting it here too made the
         # work grow exponentially with nesting (`"a[$("a[$(...)]")]"`).
         self.collect = True
+        # The `)` matching each `(` a `_close` scan has passed. A later scan from inside
+        # one is that scan's continuation, so it is answered from here: `(( (( ... ) ) ) )`
+        # rescanned the nest once per opener (8.5 s at 5500).
+        self.paren_match: dict[int, int] = {}
         self.stop_at = -1
         self.parens = 0
         self.cases = 0
@@ -835,6 +839,10 @@ class _BashLexer:
         quote holds its own substitutions, whose parentheses and quotes are their own."""
         if self.depth + nest > _MAX_NESTING:
             raise _TooDeep
+        parens = open_ch == "("
+        if parens and i - 1 in self.paren_match:
+            return self.paren_match[i - 1]
+        opened = [i - 1]
         s, n, depth = self.s, self.n, 1
         while i < n:
             ch = s[i]
@@ -875,8 +883,12 @@ class _BashLexer:
                 continue
             if ch == open_ch:
                 depth += 1
+                if parens:
+                    opened.append(i)
             elif ch == close_ch:
                 depth -= 1
+                if parens:
+                    self.paren_match[opened.pop()] = i
                 if depth == 0:
                     return i
             i += 1

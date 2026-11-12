@@ -433,7 +433,8 @@ def test_nested_substitutions_stay_polynomial():
 
 
 def test_unclosed_arithmetic_openers_stay_linear():
-    """Performance pass: each unclosed `((` rescanned the rest of the script (9 s at 9000)."""
+    """Performance passes: each `((` rescanned the rest of the script, unclosed (9 s at
+    9000) or closed by `) )` and so read as subshells (8.5 s at 5500)."""
     import time
 
     def best(k):
@@ -447,6 +448,18 @@ def test_unclosed_arithmetic_openers_stay_linear():
 
     small, big = best(1000), best(8000)
     assert big < small * 8 * 2.5, (small, big)  # 8x the input: linear with headroom, quadratic is ~64x
+
+    def balanced(k):  # closed, but by `) )`, so each `((` falls back to subshells
+        cmd = "(( " * k + "git commit -m x; " + ") " * (2 * k)
+        times = []
+        for _ in range(3):
+            t = time.perf_counter()
+            assert gate._bash_is_git_commit(cmd) == (True, False)
+            times.append(time.perf_counter() - t)
+        return min(times)
+
+    small, big = balanced(500), balanced(4000)
+    assert big < small * 8 * 2.5, (small, big)  # each opener rescanned the nest: 8.5 s at 5500
 
 
 def test_continued_heredoc_lines_stay_linear():

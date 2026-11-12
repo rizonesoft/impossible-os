@@ -95,7 +95,8 @@ jobs:
             gcc \
             bear \
             qemu-utils \
-            python3-yaml
+            python3-yaml \
+            python3-pytest
 
       # ── Verify toolchain matches scripts/setup.sh sentinel contract ─────
       - name: Verify toolchain sentinels and version floors

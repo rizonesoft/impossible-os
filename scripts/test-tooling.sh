@@ -521,6 +521,14 @@ else
         assert_grep "$wf invokes bash scripts/setup.sh --verify" "$path" 'bash scripts/setup.sh --verify'
     done
 
+    # Every workflow that runs setup.sh --verify installs what its import sentinels
+    # need: __PYTEST__ (2026-11-12) checks `import pytest`, and ci-container.sh
+    # installs from build.yml's list before the same check.
+    for wf in build.yml release.yml visual-regression.yml; do
+        path="$REPO_ROOT/.github/workflows/$wf"
+        assert_grep "$wf installs python3-pytest for the __PYTEST__ sentinel" "$path" 'python3-pytest'
+    done
+
     # Maintenance / deployment workflows (pages, labeler, stale) are not
     # build-participants so they don't need to invoke build.sh / test.sh,
     # but they MUST parse as YAML (checked above) and MUST NOT reference
