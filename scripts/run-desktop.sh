@@ -20,13 +20,37 @@ running() { tmux has-session -t "$(run_target "$RUN_SESSION")" 2>/dev/null; }
 pause() { read -r -p "Press Enter to close." _ || true; }
 yes_to() { local a; read -r -p "$1 [y/N] " a || return 1; [ "$a" = y ] || [ "$a" = Y ]; }
 
+# Render the logo (resources/brand/logo.svg) to an .ico on the Windows side and print its Windows path.
+# The icon lives on a Windows drive, not in WSL, so the shortcuts keep it while WSL is stopped.
+# Prints nothing and returns 1 when it cannot be made; the caller then keeps the WSL icon.
+install_icon() {
+  local svg="$ROOT/resources/brand/logo.svg" appdata dir tmp size pngs=()
+  command -v rsvg-convert >/dev/null 2>&1 && command -v magick >/dev/null 2>&1 || return 1
+  [ -f "$svg" ] || return 1
+  appdata="$(powershell.exe -NoProfile -Command '[Environment]::GetFolderPath("LocalApplicationData")' | tr -d '\r')"
+  [ -n "$appdata" ] || return 1
+  dir="$(wslpath -u "$appdata\\ImpossibleOS")" || return 1
+  tmp="$(mktemp -d)" || return 1
+  for size in 16 24 32 48 64 256; do
+    rsvg-convert -w "$size" -h "$size" "$svg" -o "$tmp/$size.png" || { rm -rf "$tmp"; return 1; }
+    pngs+=("$tmp/$size.png")
+  done
+  if ! { mkdir -p "$dir" && magick "${pngs[@]}" "$dir/impossible-os.ico"; }; then rm -rf "$tmp"; return 1; fi
+  rm -rf "$tmp"
+  printf '%s\n' "$appdata\\ImpossibleOS\\impossible-os.ico"
+}
+
 install_shortcuts() {
   command -v powershell.exe >/dev/null 2>&1 || { echo "powershell.exe not found: run this from WSL on Windows" >&2; return 1; }
-  local wt desktop distro="${WSL_DISTRO_NAME:-Ubuntu}"
+  local wt desktop icon distro="${WSL_DISTRO_NAME:-Ubuntu}"
   wt="$(powershell.exe -NoProfile -Command '(Get-Command wt.exe -ErrorAction SilentlyContinue).Source' | tr -d '\r')"
   desktop="$(powershell.exe -NoProfile -Command '[Environment]::GetFolderPath("Desktop")' | tr -d '\r')"
   [ -n "$wt" ] || { echo "Windows Terminal (wt.exe) not found" >&2; return 1; }
   [ -n "$desktop" ] || { echo "could not find the Windows desktop folder" >&2; return 1; }
+  if ! icon="$(install_icon)"; then
+    icon='%SystemRoot%\System32\wsl.exe,0'
+    echo "the Impossible OS icon could not be made (needs rsvg-convert and magick): using the WSL icon" >&2
+  fi
   local verb name tip
   for verb in watch start stop; do
     case "$verb" in
@@ -35,15 +59,15 @@ install_shortcuts() {
       stop)  name="Impossible OS - Stop run";  tip="Stop the Impossible OS run (asks first)" ;;
     esac
     # Values reach PowerShell as environment variables, never spliced into its source.
-    SC_PATH="$desktop\\$name.lnk" SC_TARGET="$wt" SC_TIP="$tip" \
+    SC_PATH="$desktop\\$name.lnk" SC_TARGET="$wt" SC_TIP="$tip" SC_ICON="$icon" \
     SC_ARGS="--title \"$name\" wsl.exe -d $distro --cd $ROOT -- bash -l scripts/run-desktop.sh $verb" \
-    WSLENV="SC_PATH/w:SC_TARGET/w:SC_ARGS/w:SC_TIP/w" \
+    WSLENV="SC_PATH/w:SC_TARGET/w:SC_ARGS/w:SC_TIP/w:SC_ICON/w" \
       powershell.exe -NoProfile -Command '
         $s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:SC_PATH)
         $s.TargetPath = $env:SC_TARGET
         $s.Arguments = $env:SC_ARGS
         $s.Description = $env:SC_TIP
-        $s.IconLocation = "$env:SystemRoot\System32\wsl.exe,0"
+        $s.IconLocation = $env:SC_ICON
         $s.Save()' || { echo "could not create: $name" >&2; return 1; }
     echo "created: $desktop\\$name.lnk"
   done
