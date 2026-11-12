@@ -975,12 +975,14 @@ def image_of(path: str) -> str:
 
 def covering_tests(path: str, text: str, tests: dict[str, set[str]]) -> list[str]:
     """The tests in `tests` ({path: test_names}) that cover `path`: one named by
-    its `tested-by:` line, or one in the same image that uses a symbol it defines."""
+    its `tested-by:` line, or one in the same image that uses a symbol it defines.
+    Either way the test must run: a test nothing registers, or a user test
+    `make userland` does not build, reaches no code, so test_names is empty."""
     named = set(_TESTED_BY.findall(text))
     symbols = public_symbols(path, text)
     image = image_of(path)
     return sorted(t for t, used in tests.items()
-                  if Path(t).name in named or (image_of(t) == image and symbols & used))
+                  if used and (Path(t).name in named or (image_of(t) == image and symbols & used)))
 
 
 def _git(root: Path, *args: str) -> str:
