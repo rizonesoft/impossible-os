@@ -462,6 +462,23 @@ def test_unclosed_arithmetic_openers_stay_linear():
     assert big < small * 8 * 2.5, (small, big)  # each opener rescanned the nest: 8.5 s at 5500
 
 
+def test_long_reserved_leader_prefixes_stay_linear():
+    """Performance pass: each leading `!` copied the rest of the command (14 s at 160000)."""
+    import time
+
+    def best(k):
+        cmd = "! " * k + "git status"
+        times = []
+        for _ in range(3):
+            t = time.perf_counter()
+            assert gate._bash_is_git_commit(cmd) == (False, False)
+            times.append(time.perf_counter() - t)
+        return min(times)
+
+    small, big = best(5000), best(40000)
+    assert big < small * 8 * 2.5, (small, big)  # 8x the input: linear with headroom, quadratic ~64x
+
+
 def test_continued_heredoc_lines_stay_linear():
     """Performance review: each continued heredoc line re-copied the whole logical line."""
     import time

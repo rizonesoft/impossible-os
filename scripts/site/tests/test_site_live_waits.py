@@ -33,12 +33,18 @@ def _busy(runs):
 
 
 def test_a_run_stranded_behind_a_finished_deploy_does_not_hold_the_wait():
-    """Run 43096022843 sat queued 16 h behind three finished deploys (2026-11-12)."""
-    old = {"status": "queued", "createdAt": "2026-11-11T20:26:02Z"}
-    done = {"status": "completed", "createdAt": "2026-11-12T02:04:29Z"}
-    assert _busy([done, old]) == 0
-    assert _busy([{"status": "in_progress", "createdAt": "2026-11-12T03:00:00Z"}, done, old]) == 1
-    assert _busy([old]) == 1, "with no finished deploy, every unfinished run counts"
+    """Run 43096022843 sat queued 16 h behind three successful deploys (2026-11-12)."""
+    def run(status, at, conclusion=""):
+        return {"status": status, "conclusion": conclusion, "createdAt": f"2026-11-12T{at}:00Z"}
+    stranded, ok = run("queued", "01:00"), run("completed", "02:00", "success")
+    assert _busy([ok, stranded]) == 0
+    assert _busy([run("queued", "03:00"), ok, stranded]) == 1, "queued after the deploy"
+    assert _busy([stranded]) == 1, "with no successful deploy, every unfinished run counts"
+    active = run("in_progress", "01:00")
+    for later in ("cancelled", "failure"):  # proves nothing about the site
+        assert _busy([run("completed", "02:00", later), active]) == 1, later
+        assert _busy([run("completed", "02:00", later), stranded]) == 1, later
+    assert _busy([ok, active]) == 1, "a running deploy always counts"
 
 
 if __name__ == "__main__":

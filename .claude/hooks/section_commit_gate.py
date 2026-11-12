@@ -1488,8 +1488,10 @@ def _read_git_commit(cmd: str) -> tuple[bool, bool]:
     if saw_no_verify:
         return (True, True)
     for seg in _commands(toks):
-        while seg and seg[0] in _RESERVED_LEADERS:
-            seg = seg[1:]
+        lead = 0  # an index, not `seg = seg[1:]`: 160000 leading `!` copied the rest each time
+        while lead < len(seg) and seg[lead] in _RESERVED_LEADERS:
+            lead += 1
+        seg = seg[lead:]
         if not seg:
             continue
         is_commit, no_verify = _segment_is_git_commit(seg)
