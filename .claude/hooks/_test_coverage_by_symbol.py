@@ -6,8 +6,8 @@ The section-commit gate's step-8 rule once bound `src/kernel/x/foo.c` to a test 
 tests, `test_exec.c` the EIF ones), so 434 of 516 kernel sources had no test of that
 name and 23 kernel section commits opted out of the rule though each staged its test.
 
-A test covers a source when code it runs (a suite it registers with
-test_suite_register_cat, or an entry point a runner calls) reaches a use of a
+A test covers a source when code the runners start (test_runner.c's calls into the
+file, and the suites those register with test_suite_register_cat) reaches a use of a
 public symbol the source defines: a non-static C function, a `#define` or
 function in a header, a `global` label in assembly. A source
 whose code no test can name (a flat binary such as the AP trampoline) says which test
@@ -48,56 +48,132 @@ def _code_only(text: str) -> str:
     return _LEXEMES.sub(lambda m: "\n" * m.group(0).count("\n") or " ", text)
 
 
-_COND = re.compile(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif)\b(.*)")
-# What the kernel's test flavour defines (KERNEL_TESTS; x86-64 target). A condition
-# over anything else is unknown.
-TEST_BUILD_DEFINES = frozenset({"KERNEL_TESTS", "__x86_64__"})
+_COND = re.compile(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif|define|undef)\b(.*)")
+# The macros the kernel's test flavour defines: the Makefile's test CFLAGS plus what
+# the compiler predefines for --target=x86_64-elf. test_step8_suite_coverage.py checks
+# each -D name against the Makefile.
+TEST_BUILD_DEFINES = {"KERNEL_TESTS": 1, "CONFIG_SMP": 1, "CONFIG_EXCEPT_TELEMETRY": 1,
+                      "BUILD_ALT_BOOT_OFF": 1, "__IMPOSSIBLE_OS__": 1, "__x86_64__": 1}
+_UNDEF = object()   # known to be undefined (#undef)
+_UNKNOWN = object()  # defined, value not an integer
+_EXPR_TOKEN = re.compile(r"\s*(defined|[A-Za-z_]\w*|0[xX][0-9a-fA-F]+|\d+|&&|\|\||==|!=|<=|>=|[()!<>+\-*])")
 
 
-def _condition(kind: str, expr: str) -> bool | None:
-    """The value of an #if/#ifdef/#ifndef/#elif condition, or None when unknown."""
-    expr = expr.strip()
+def _int(text: str):
+    text = re.sub(r"[uUlL]+$", "", text.strip())
+    try:
+        return int(text, 0)
+    except ValueError:
+        return _UNKNOWN
+
+
+def _condition(kind: str, expr: str, env: dict) -> bool | None:
+    """The value of an #if/#ifdef/#ifndef/#elif condition for the test build, or None
+    when it depends on a macro whose value is not known here (one from a header).
+    A name never defined in `env` is undefined, as C reads it, so include guards and a
+    file's own flags evaluate; a header macro used for its VALUE is unknown."""
+    expr = _code_only(expr).strip()
     if kind in ("ifdef", "ifndef"):
         name = expr.split()[0] if expr.split() else ""
-        return (name in TEST_BUILD_DEFINES) == (kind == "ifdef")
-    neg = expr.startswith("!")
-    expr = expr.lstrip("!").strip()
-    m = re.fullmatch(r"defined\s*\(?\s*([A-Za-z_]\w*)\s*\)?|([A-Za-z_]\w*)|(\d+)", expr)
-    if not m:
+        defined = name in env and env[name] is not _UNDEF
+        return defined == (kind == "ifdef")
+    out = []
+    pos = 0
+    toks = []
+    while pos < len(expr):
+        m = _EXPR_TOKEN.match(expr, pos)
+        if not m:
+            return None
+        toks.append(m.group(1))
+        pos = m.end()
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        if t == "defined":
+            j = i + 1
+            paren = j < len(toks) and toks[j] == "("
+            j += paren
+            if j >= len(toks):
+                return None
+            name = toks[j]
+            out.append("1" if name in env and env[name] is not _UNDEF else "0")
+            i = j + 1 + (paren and j + 1 < len(toks) and toks[j + 1] == ")")
+            continue
+        if t[0].isalpha() or t[0] == "_":
+            v = env.get(t, _UNDEF if t not in env else env[t])
+            if t not in env or v is _UNDEF:
+                return None  # a value from a header this file cannot see
+            if v is _UNKNOWN:
+                return None
+            out.append(str(v))
+        elif t[0].isdigit():
+            v = _int(t)
+            if v is _UNKNOWN:
+                return None
+            out.append(str(v))
+        else:
+            out.append({"&&": " and ", "||": " or ", "!": " not "}.get(t, t))
+        i += 1
+    try:
+        return bool(eval("".join(out) or "0", {"__builtins__": {}}, {}))  # noqa: S307 (tokens are ints and operators only)
+    except Exception:
         return None
-    if m.group(3) is not None:
-        value = int(m.group(3)) != 0
-    elif m.group(1) or m.group(2) in TEST_BUILD_DEFINES:
-        value = (m.group(1) or m.group(2)) in TEST_BUILD_DEFINES
-    else:
-        return None  # a bare macro whose value the test build does not pin
-    return value != neg
 
 
 def _first_branches(code: str) -> str:
-    """`code` without preprocessor lines, keeping one branch of each #if chain: the
-    first whose condition the test build makes true, else the first unknown one, else
-    the #else. Mutually exclusive branches therefore never both open a brace."""
+    """`code` without preprocessor lines, keeping the #if branches the test build
+    compiles. A branch whose condition is unknown is dropped, and so is every later
+    branch of its chain, because whether they compile is unknown too: disabled code
+    must never earn credit. #define and #undef in compiled regions update the macros."""
+    env = dict(TEST_BUILD_DEFINES)
     out = []
-    stack: list[list[bool]] = []  # per open #if: [this branch kept, a branch taken]
-    cont = False
-    for line in code.split("\n"):
-        directive = cont or line.lstrip().startswith("#")
-        cont = directive and line.rstrip().endswith("\\")
-        m = _COND.match(line) if directive else None
-        if m:
-            kind, expr = m.group(1), m.group(2)
-            if kind.startswith("if"):
-                keep = _condition(kind, expr) is not False
-                stack.append([keep, keep])
-            elif stack and kind == "elif":
-                keep = not stack[-1][1] and _condition("if", expr) is not False
-                stack[-1] = [keep, stack[-1][1] or keep]
-            elif stack and kind == "else":
-                stack[-1] = [not stack[-1][1], True]
-            elif stack and kind == "endif":
-                stack.pop()
-        out.append("" if directive or not all(k for k, _ in stack) else line)
+    stack: list[list] = []  # per open #if: [this branch compiled, a branch taken, unknown seen]
+    lines = code.split("\n")
+    n = 0
+    while n < len(lines):
+        line = lines[n]
+        if not line.lstrip().startswith("#"):
+            out.append(line if all(f[0] for f in stack) else "")
+            n += 1
+            continue
+        full = line
+        while full.rstrip().endswith("\\") and n + 1 < len(lines):
+            n += 1
+            full = full.rstrip()[:-1] + " " + lines[n]
+            out.append("")
+        out.append("")
+        n += 1
+        m = _COND.match(full)
+        if not m:
+            continue
+        kind, expr = m.group(1), m.group(2)
+        live = all(f[0] for f in stack)
+        if kind in ("if", "ifdef", "ifndef"):
+            c = _condition(kind, expr, env) if live else False
+            stack.append([c is True, c is True, c is None])
+        elif kind == "elif" and stack:
+            f = stack[-1]
+            outer = all(g[0] for g in stack[:-1])
+            if f[1] or f[2] or not outer:
+                f[0] = False
+            else:
+                c = _condition("if", expr, env)
+                f[0] = c is True
+                f[1] = c is True
+                f[2] = c is None
+        elif kind == "else" and stack:
+            f = stack[-1]
+            f[0] = not f[1] and not f[2] and all(g[0] for g in stack[:-1])
+            f[1] = True
+        elif kind == "endif" and stack:
+            stack.pop()
+        elif kind == "define" and live:
+            dm = re.match(r"\s*([A-Za-z_]\w*)(\([^)]*\))?\s*(.*)", expr)
+            if dm:
+                env[dm.group(1)] = _UNKNOWN if dm.group(2) else (_int(dm.group(3)) if dm.group(3).strip() else 1)
+        elif kind == "undef" and live:
+            name = expr.split()[0] if expr.split() else ""
+            env[name] = _UNDEF
     return "\n".join(out)
 
 
@@ -224,48 +300,57 @@ def _body_uses(body: str) -> set[str]:
     return set(_IDENT.findall(body)) - declared
 
 
-def test_names(text: str, entry_points: frozenset[str] = frozenset()) -> set[str]:
-    """The identifiers the test's executed code uses: the bodies of the functions passed
-    to test_suite_register(_cat), of this file's non-static functions the runner names
-    (`entry_points`, the identifiers of the RUNNERS), and of every function in this
-    file those bodies reach. A declaration, a comment, a string, a local variable, or a
-    function nothing runs is not a call.
-    """
-    code = _first_branches(_code_only(text))
+def _bodies(text: str) -> tuple[dict[str, str], set[str]]:
+    """{function: body} for every function the test build compiles in `text`, and the
+    names of the non-static ones."""
     bodies: dict[str, str] = {}
     exported: set[str] = set()
-    for name, prefix, kind, body in _file_scope(code):
+    for name, prefix, kind, body in _file_scope(_first_branches(_code_only(text))):
         if kind == "def":
             bodies[name] = bodies.get(name, "") + body
             if not re.search(r"\bstatic\b", prefix):
                 exported.add(name)
-    roots = exported & entry_points
-    for body in bodies.values():
-        for m in _REGISTER.finditer(body):
-            end = _close(body, m.end() - 1)
-            roots |= set(_IDENT.findall(body[m.end():end if end > 0 else len(body)])) & set(bodies)
+    return bodies, exported
+
+
+def test_names(text: str, entry_points: frozenset[str] = frozenset()) -> set[str]:
+    """The identifiers the test's executed code uses. Execution starts at this file's
+    non-static functions a runner calls (`entry_points`, from runner_entry_points) and
+    follows the calls in their bodies; a test_suite_register(_cat) call in a reached
+    body adds its callback. A declaration, a comment, a string, a local variable, code
+    the test build does not compile, or a function nothing reaches is not a use.
+    """
+    bodies, exported = _bodies(text)
     seen: set[str] = set()
     used: set[str] = set()
-    todo = list(roots)
+    todo = list(exported & entry_points)
     while todo:
         fn = todo.pop()
         if fn in seen:
             continue
         seen.add(fn)
-        ids = _body_uses(bodies[fn])
+        body = bodies[fn]
+        ids = _body_uses(body)
+        for m in _REGISTER.finditer(body):
+            end = _close(body, m.end() - 1)
+            ids |= set(_IDENT.findall(body[m.end():end if end > 0 else len(body)]))
         used |= ids
         todo.extend(i for i in ids if i in bodies and i not in seen)
     return used
 
 
-# The files that start test code: the suite runner, and the boot path that launches the
-# user-mode suite. A test file's non-static function runs only if one of them names it.
 RUNNERS = ("src/kernel/test/test_runner.c", "src/kernel/main/boot_tests.c")
 
 
 def runner_entry_points(runner_texts) -> frozenset[str]:
-    """The identifiers the runners' code uses: the entry points they call."""
-    return frozenset().union(*(_IDENT.findall(_code_only(t)) for t in runner_texts if t))
+    """What the runners call: the uses in the bodies of their compiled functions, so a
+    declaration, a comment or a call under `#if 0` starts nothing."""
+    names: set[str] = set()
+    for text in runner_texts:
+        if text:
+            for body in _bodies(text)[0].values():
+                names |= _body_uses(body)
+    return frozenset(names)
 
 
 def covering_tests(path: str, text: str, tests: dict[str, set[str]]) -> list[str]:

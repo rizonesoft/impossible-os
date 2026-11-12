@@ -1219,7 +1219,7 @@ The gate's step-8 rule binds a staged source file to a test named for its basena
   - Per source, in the same commit; `tested-by:` for flat binaries; upstream ACPICA exempt, its local additions not.
 - [x] Warning until `STEP8_REFUSE_FROM` (2026-11-19) in `section_commit_gate.py`, then a refusal.
   - A date, not a section count: about ten kernel sections at the measured pace, with no counter to keep.
-- [x] Unit tests in `test_step8_suite_coverage.py`: 23 cases, 14 fail on the basename rule.
+- [x] Unit tests in `test_step8_suite_coverage.py`: 27 cases; 15 of the 26 gate cases fail on the basename rule.
 - [x] Commit: `"hooks: the commit gate finds a kernel source's tests by suite, not by file name"`
 
 **Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes with the new cases.

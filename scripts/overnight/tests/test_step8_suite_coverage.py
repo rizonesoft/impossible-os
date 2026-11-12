@@ -11,6 +11,7 @@ import contextlib
 import io
 import json
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -53,14 +54,22 @@ def _stage(repo: pathlib.Path, files: dict[str, str]) -> list[str]:
     return list(files)
 
 
-def _check(files: dict[str, str], refuse: bool = True, todo: dict | None = None):
-    """(ok, message, stderr) for a commit staging `files`."""
+RUNNER = "src/kernel/test/test_runner.c"
+DEFAULT_RUNNER = "void test_run_all(void) {\n    test_register_x();\n}\n"
+
+
+def _check(files: dict[str, str], refuse: bool = True, todo: dict | None = None,
+           runner: str | None = DEFAULT_RUNNER):
+    """(ok, message, stderr) for a commit staging `files`, in a repository whose
+    index holds `runner` as the suite runner (None: no runner)."""
     saved = getattr(gate, "STEP8_REFUSE_FROM", None)
     gate.STEP8_REFUSE_FROM = "2000-01-01" if refuse else "2999-01-01"
     err = io.StringIO()
     try:
         with tempfile.TemporaryDirectory() as d:
             repo = _repo(d)
+            if runner is not None and RUNNER not in files:
+                _stage(repo, {RUNNER: runner})
             staged = _stage(repo, files)
             todos = list(_stage(repo, todo)) if todo else []
             with contextlib.redirect_stderr(err):
@@ -236,7 +245,7 @@ def test_an_entry_point_the_runner_calls_counts():
     files = {"src/kernel/sched/dpc.c": DPC_C,
              "src/kernel/test/test_x.c": "int test_x_run(void) {\n    return dpc_queue(1);\n}\n"}
     ok, msg, _ = _check(files)
-    assert not ok, "no runner names test_x_run yet"
+    assert not ok, "no runner calls test_x_run yet"
     ok, msg, _ = _check({**files, "src/kernel/main/boot_tests.c": "/* tested-by: test_x.c */\nvoid go(void) { test_x_run(); }\n"})
     assert ok, msg
 
@@ -263,6 +272,40 @@ def test_a_function_taken_by_address_after_a_block_prototype_counts():
     addr = suite("extern int dpc_queue(int);\n    probe((void *)dpc_queue);")
     ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": addr})
     assert ok, msg
+
+
+def test_refusal_a_registration_no_runner_calls():
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": SCHED_TEST},
+                        runner="void test_run_all(void) {\n    test_register_other();\n}\n")
+    assert not ok and "dpc.c" in msg, msg
+
+
+def test_refusal_a_runner_that_declares_or_disables_the_call():
+    files = {"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": SCHED_TEST}
+    ok, msg, _ = _check(files, runner="extern void test_register_x(void);\nvoid run(void) {}\n")
+    assert not ok, "a declaration starts nothing"
+    ok, msg, _ = _check(files, runner="void run(void) {\n#if 0\n    test_register_x();\n#endif\n}\n")
+    assert not ok, "a call under #if 0 starts nothing"
+
+
+def test_conditions_are_evaluated_with_the_files_own_macros():
+    parens = suite("\n#if (0)\n    dpc_queue(1);\n#endif\n")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": parens})
+    assert not ok, "#if (0) never compiles"
+    local = "#define ENABLE_PROBE 1\n" + suite("\n#ifdef ENABLE_PROBE\n    dpc_queue(1);\n#endif\n")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": local})
+    assert ok, msg
+    header_value = suite("\n#if HEAP_INIT_ON_ALLOC\n    dpc_queue(1);\n#endif\n")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": header_value})
+    assert not ok, "a branch on a header macro's value may not compile, so it earns no credit"
+
+
+def test_the_test_build_defines_match_the_makefile():
+    import _test_coverage_by_symbol as tcs
+    makefile = (HOOKS.parents[1] / "Makefile").read_text()
+    for name, value in tcs.TEST_BUILD_DEFINES.items():
+        if name != "__x86_64__":  # the compiler predefines it for --target=x86_64-elf
+            assert re.search(rf"-D{name}(=|\b)", makefile), f"-D{name} is not in the Makefile"
 
 
 if __name__ == "__main__":

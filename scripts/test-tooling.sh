@@ -6576,6 +6576,8 @@ with tempfile.TemporaryDirectory() as tmp:
     (repo / "src" / "kernel" / "test" / "test_sched.c").write_text(
         "static void t(void) { newcode_run(); }\n"
         "void test_register_sched(void) { test_suite_register_cat(\"s\", t, TEST_CAT_SCHED); }\n")
+    (repo / "src" / "kernel" / "test" / "test_runner.c").write_text(
+        "void test_run_all(void) { test_register_sched(); }\n")
     subprocess.run(["git", "add", "-A"], cwd=tmp, check=True)
     ok, err = scg._step8_test_wiring_check(
         repo, ["src/kernel/newcode.c", "src/kernel/test/test_sched.c"], []
