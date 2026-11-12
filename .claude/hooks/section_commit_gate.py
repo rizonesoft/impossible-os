@@ -4041,7 +4041,8 @@ def _step8_test_wiring_check(
     if not sources:
         return (True, "")
     entry = tcs.runner_entry_points(staged.get(r) for r in tcs.RUNNERS)
-    built = tcs.user_built_tests(staged.get("Makefile"))
+    built = (tcs.user_built_tests(staged.get("Makefile"))
+             if any(p.startswith("user/") for p in test_paths) else {})
     tests = {p: tcs.test_names(staged[p], tcs.entry_points_for(p, entry, built), tcs.defines_for(p))
              for p in test_paths if staged.get(p) is not None}
     uncovered = [p for p, text in sources.items() if not tcs.covering_tests(p, text, tests)]

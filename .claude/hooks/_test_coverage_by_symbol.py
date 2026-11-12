@@ -370,7 +370,8 @@ def _file_scope(code: str):
     """Each `name(...)` declared or defined at file scope, as
     (name, prefix, kind, body) where kind is "def" (a body follows), "decl" (`;` or
     `,` follows) or "other", prefix is the declaration text since the previous `;` or
-    `}`, and body is the function body text for a "def". Bodies are skipped whole.
+    `}`, and body is, for a "def", its parameter list `(...)` followed by the body
+    text. Bodies are skipped whole.
     """
     start = 0
     i = 0
@@ -403,7 +404,7 @@ def _file_scope(code: str):
                     body_end = _close(code, k, "{", "}")
                     if body_end < 0:
                         return
-                    yield m.group(1), prefix, "def", code[k:body_end]
+                    yield m.group(1), prefix, "def", code[m.end() - 1:end] + code[k:body_end]
                     i = start = body_end
                     continue
                 yield m.group(1), prefix, ("decl" if follows in ";," else "other"), ""
@@ -461,13 +462,71 @@ _LOCAL_DECL = re.compile(r"\b([A-Za-z_]\w*)[\s\*]+([A-Za-z_]\w*)\s*(?=[=;\[,)])"
 _LOCAL_PROTO = re.compile(r"\b([A-Za-z_]\w*)[\s\*]+([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*;")
 
 
+_DECL_START = re.compile(
+    r"\s*(?:(?:const|static|volatile|register|unsigned|signed|struct|union|enum)\s+)*"
+    r"[A-Za-z_]\w*[\s\*]+\**\s*[A-Za-z_]\w*\s*(?=[=;\[,])")
+
+
+def _split_top(text: str, sep: str = ",") -> list[str]:
+    """`text` split at `sep` outside (), [] and {}."""
+    parts, depth, cur = [], 0, []
+    for ch in text:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == sep and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur))
+    return parts
+
+
+def _param_names(params: str) -> set[str]:
+    """The names a parameter list `(...)` binds: the last identifier of each
+    parameter, or the name of a function-pointer parameter `(*name)(...)`."""
+    names = set()
+    for part in _split_top(params.strip()[1:-1]):
+        fp = re.search(r"\(\s*\*\s*([A-Za-z_]\w*)\s*\)", part)
+        ids = _IDENT.findall(re.sub(r"\[[^\]]*\]", "", part))
+        if fp:
+            names.add(fp.group(1))
+        elif len(ids) > 1:
+            names.add(ids[-1])
+    return names
+
+
+def _local_names(body: str) -> set[str]:
+    """Every name a declaration statement in `body` declares, each declarator of
+    `int a = 0, b = 0;` included."""
+    names = set()
+    for stmt in re.split(r"[;{}]", body):
+        m = _DECL_START.match(stmt)
+        if not m or m.group(0).split()[0] in _KEYWORDS:
+            continue
+        for part in _split_top(stmt):
+            d = re.match(r"[^=\[]*?\**\s*([A-Za-z_]\w*)\s*(?:=|\[|$)", part.strip())
+            if d:
+                names.add(d.group(1))
+    return names
+
+
 def _body_uses(body: str) -> set[str]:
-    """The identifiers a function body uses, less the locals it declares. A block-scope
-    prototype is dropped as text: it is not a use, but it does not shadow the name."""
+    """The identifiers a function uses, less its parameters and the locals it
+    declares. `body` may start with the function's parameter list (as _file_scope
+    gives it). A name declared anywhere in the body counts as local throughout it,
+    which can only under-credit. A block-scope prototype is dropped as text: it is
+    not a use, but it does not shadow the name."""
+    params = set()
+    if body.startswith("("):
+        end = _close(body, 0)
+        params, body = _param_names(body[:end]), body[end:]
     # A prototype names the real function: drop only its text. `return f(x);` is a call.
     body = _LOCAL_PROTO.sub(lambda m: m.group(0) if m.group(1) in _KEYWORDS else " ", body)
     declared = {m.group(2) for m in _LOCAL_DECL.finditer(body) if m.group(1) not in _KEYWORDS}
-    return set(_IDENT.findall(body)) - declared
+    return set(_IDENT.findall(body)) - declared - _local_names(body) - params
 
 
 def _bodies(text: str, defines: dict | None = None) -> tuple[dict[str, str], set[str]]:
@@ -572,7 +631,7 @@ def user_built_tests(makefile_text: str | None) -> dict[str, str]:
             depth = max(depth - 1, 0)
         elif depth == 0:
             lines.append(line)
-    rules: list[tuple[list[str], list[str], list[str]]] = []  # targets, prerequisites, recipe
+    rules: list[tuple[list[str], list[str], list[str], bool]] = []  # targets, prereqs, recipe, double-colon
     for line in lines:
         if line.startswith("\t"):
             if rules:
@@ -580,21 +639,26 @@ def user_built_tests(makefile_text: str | None) -> dict[str, str]:
             continue
         m = _MAKE_RULE.match(line)
         if m:
-            rules.append((m.group(1).split(), m.group(2).split(";", 1)[0].split(), []))
+            rules.append((m.group(1).split(), m.group(2).split(";", 1)[0].split(), [],
+                          "::" in line[len(m.group(1)):len(m.group(1)) + 3]))
         elif line.strip():
-            rules.append(([], [], []))  # an assignment or directive ends the previous recipe
+            rules.append(([], [], [], False))  # an assignment or directive ends the previous recipe
+    prereqs: dict[str, list[str]] = {}
+    recipe: dict[str, list[list[str]]] = {}  # the recipes Make runs for each target
+    for targets, pre, body, double in rules:
+        for t in targets:
+            prereqs.setdefault(t, []).extend(pre)
+            if body:
+                # a later single-colon recipe replaces an earlier one; double-colon rules each run
+                recipe[t] = recipe.get(t, []) + [body] if double else [body]
     wanted, reached = ["userland"], set()
     while wanted:
         name = wanted.pop()
-        if name in reached:
-            continue
-        reached.add(name)
-        for targets, prereqs, _ in rules:
-            if name in targets:
-                wanted.extend(prereqs)
-    live = [r for r in rules if reached & set(r[0])]
-    recipes = [ln for r in live for ln in r[2]]
-    shipped = {m for r in rules if "userland" in r[0] for p in r[1] for m in re.findall(r"\b(test_[\w-]+)\.exe$", p)}
+        if name not in reached:
+            reached.add(name)
+            wanted.extend(prereqs.get(name, ()))
+    recipes = list(dict.fromkeys(ln for t in reached for body in recipe.get(t, ()) for ln in body))
+    shipped = {m for p in prereqs.get("userland", ()) for m in re.findall(r"\b(test_[\w-]+)\.exe$", p)}
     compiled = {m for ln in recipes for m in re.findall(r"-c\s+user/test/(test_[\w-]+)\.c\b", ln)}
     linked = {m for ln in recipes if "$(LD)" in ln for m in re.findall(r"user/test/(test_[\w-]+)\.o\b", ln)}
     built = {n: USER_TEST_ROOT for n in compiled & linked}

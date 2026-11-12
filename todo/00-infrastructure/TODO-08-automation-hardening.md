@@ -1218,7 +1218,7 @@ The gate's step-8 rule binds a staged source file to a test named for its basena
 - [x] A staged test covers a source when code the boot runs (from `boot_tests_run`, or the entry of a user test `make userland` builds) reaches a use of a symbol it defines (`_test_coverage_by_symbol.py`).
   - Per source, in the same commit; `tested-by:` for flat binaries; upstream ACPICA exempt, its local additions not.
 - [x] Warning for the first ten sections stamped after the rule (`STEP8_WARN_SECTIONS`, counted from `STEP8_WARN_SINCE`), then a refusal.
-- [x] Unit tests in `test_step8_suite_coverage.py`: 43 cases; each finding's case fails on the code it replaced.
+- [x] Unit tests in `test_step8_suite_coverage.py`: 45 cases; each finding's case fails on the code it replaced.
 - [x] Commit: `"hooks: the commit gate finds a kernel source's tests by suite, not by file name"`
 
 **Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes with the new cases.

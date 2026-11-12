@@ -415,7 +415,8 @@ def test_a_user_mode_test_starts_at_main():
                     USER_MAKE.replace("$(LD)", "@echo"),
                     USER_MAKE.replace("userland: $(SYSROOT)/test_libc_x.exe", "userland:"),
                     USER_MAKE.replace("$(SYSROOT)/test_libc_x.exe: user", "unused: user")
-                    + "$(SYSROOT)/test_libc_x.exe:\n\t@true\n"):
+                    + "$(SYSROOT)/test_libc_x.exe:\n\t@true\n",
+                    USER_MAKE + "$(SYSROOT)/test_libc_x.exe:\n\t@true\n"):
         ok, msg, _ = _check({"user/lib/string_x.c": libc, "user/test/test_libc_x.c": test, "Makefile": unbuilt})
         assert not ok and "string_x.c" in msg, "a test the Makefile never builds never runs"
 
@@ -489,6 +490,23 @@ def test_a_one_step_user_build_enters_where_it_says():
     assert tcs.user_built_tests(unreached) == {}, "a recipe nothing in userland reaches never runs"
     real = tcs.user_built_tests((HOOKS.parents[1] / "Makefile").read_text())
     assert real.get("user/test/test_loader_pe.c") == "_start" and real.get("user/test/test_libc.c") == "main"
+
+
+def test_refusal_a_parameter_or_local_named_like_the_function():
+    helper = ("static void check(int dpc_queue) {\n    (void)dpc_queue;\n}\n"
+              "static void suite(void) {\n    int x = 0, dpc_queue = 0;\n    check(x + dpc_queue);\n}\n"
+              "void test_register_x(void) {\n    test_suite_register_cat(\"x\", suite, TEST_CAT_SCHED);\n}\n")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": helper})
+    assert not ok and "dpc.c" in msg, "a parameter or a second declarator is not the function"
+
+
+def test_the_userland_walk_scales_linearly():
+    import time
+    import _test_coverage_by_symbol as tcs
+    make = "userland: " + " ".join(f"t{i}" for i in range(20000)) + "\n" + "".join(f"t{i}:\n" for i in range(20000))
+    t0 = time.monotonic()
+    tcs.user_built_tests(make)
+    assert time.monotonic() - t0 < 2.0, "20,000 reachable targets took the hook's budget"
 
 
 if __name__ == "__main__":
