@@ -31,6 +31,11 @@ Environment:
   TIMEOUT_SEC    QEMU wait budget in seconds (default: 30).
   SMOKE_PRISTINE_IMAGE  Skip the build and boot a restored copy of this
                  untouched image (the boot matrix sets it after building once).
+  SMOKE_KEEP_DISK=1  Second boot of the same machine: keep the previous
+                 run's disk and variable store instead of a fresh image.
+  SMOKE_TREND_BOOTS=N  Require X:\Perf\boot-trend.json to hold N boots.
+  SMOKE_SHUTDOWN=1  End the boot with the ACPI power button and require a
+                 clean power-off (SMOKE_SHUTDOWN_SEC, default 30).
 
 Exit codes:
   0 = PASS (boot completed successfully)
@@ -555,7 +560,21 @@ PREVIOUS_VARS=""
 # SMOKE_MENU=saved is the second boot of the machine SMOKE_MENU=default set a
 # saved default on, so it keeps that boot's variable store too.
 REUSED_VARS=0
-if { [ -n "$STORE_RECORD" ] && [ "$STORE_RECORD" != "written" ]; } || [ "${SMOKE_MENU:-0}" = "saved" ]; then
+# SMOKE_KEEP_DISK=1 is the second boot of the machine the previous run booted:
+# it keeps that run's disk and variable store, so state one boot wrote to disk
+# (the boot-trend file under X:\Perf) is what this boot reads back.
+KEEP_DISK="${SMOKE_KEEP_DISK:-0}"
+# SMOKE_SHUTDOWN=1 ends the boot the way a user does: the ACPI power button,
+# which flushes X: and powers off (S5). The leg fails unless the guest logs the
+# shutdown and QEMU exits on its own within SMOKE_SHUTDOWN_SEC.
+SHUTDOWN="${SMOKE_SHUTDOWN:-0}"
+SHUTDOWN_SEC="${SMOKE_SHUTDOWN_SEC:-30}"
+TREND_BOOTS="${SMOKE_TREND_BOOTS:-}"
+case "$TREND_BOOTS" in
+    ''|[1-9]|[1-9][0-9]) ;;
+    *) echo -e "${RED}SMOKE TEST FAILED: SMOKE_TREND_BOOTS=$TREND_BOOTS is not a boot count from 1 to 99${NC}"; exit 1 ;;
+esac
+if { [ -n "$STORE_RECORD" ] && [ "$STORE_RECORD" != "written" ]; } || [ "${SMOKE_MENU:-0}" = "saved" ] || [ "$KEEP_DISK" = "1" ]; then
     REUSED_VARS=1
     if [ ! -f "$OVMF_VARS_CP" ]; then
         echo -e "${RED}SMOKE TEST FAILED: SMOKE_STORE_RECORD=$STORE_RECORD / SMOKE_MENU=${SMOKE_MENU:-0} needs a previous boot's variable store${NC}"
@@ -563,11 +582,20 @@ if { [ -n "$STORE_RECORD" ] && [ "$STORE_RECORD" != "written" ]; } || [ "${SMOKE
     fi
     PREVIOUS_VARS="$(mktemp "${TMPDIR:-/tmp}/smoke-previous-vars.XXXXXX")"
     cp "$OVMF_VARS_CP" "$PREVIOUS_VARS"
+    # A refusal below exits before the copy is moved back; the store itself was
+    # only copied, so dropping the copy loses nothing. Replaced by cleanup_qemu's
+    # trap once QEMU is about to start, by which point the copy has been moved.
+    trap 'rm -f "$PREVIOUS_VARS"' EXIT
 fi
 # A second boot of the same machine also keeps its disk's per-entry try
 # counters: the first boot's kernel marked its entry good, and only the counter
 # it names lets this boot's loader consume that mark. The fixture disk is rebuilt
 # from the clean image, so the counters are carried across like the variables.
+# The kept disk is booted in place: nothing below overwrites it, so it needs no copy.
+if [ "$KEEP_DISK" = "1" ] && [ ! -s "$DISK" ]; then
+    echo -e "${RED}SMOKE TEST FAILED: SMOKE_KEEP_DISK=1 needs the previous boot's disk at $DISK${NC}"
+    exit 1
+fi
 PREVIOUS_COUNTERS=""
 if [ "${SMOKE_MENU:-0}" = "saved" ]; then
     prev_disk="$BUILD/system-disk.fixture.img"
@@ -609,8 +637,16 @@ if [ -n "${SMOKE_PRISTINE_IMAGE:-}" ]; then
         echo -e "${RED}SMOKE TEST FAILED: SMOKE_PRISTINE_IMAGE is not the build now in build/ (its saved receipt is missing or differs from build/build-receipt.json)${NC}"
         exit 1
     fi
-    if ! cp --sparse=always "$SMOKE_PRISTINE_IMAGE" "$DISK"; then
+    # A second boot of one machine keeps the disk the first boot wrote.
+    if [ "$KEEP_DISK" != "1" ] && ! cp --sparse=always "$SMOKE_PRISTINE_IMAGE" "$DISK"; then
         echo -e "${RED}SMOKE TEST FAILED: could not restore the pristine image${NC}"
+        exit 1
+    fi
+elif [ "$KEEP_DISK" = "1" ]; then
+    # The kept disk carries the previous run's build; a rebuild would stage a
+    # loader that no longer matches the one on it. Boot that build, if current.
+    if ! receipt_reason=$(python3 scripts/overnight/receipts.py check-build . 2>&1); then
+        echo -e "${RED}SMOKE TEST FAILED: SMOKE_KEEP_DISK=1 needs the build the previous boot used, and it is not current: ${receipt_reason}${NC}"
         exit 1
     fi
 else
@@ -725,13 +761,39 @@ MONITOR_SOCK="$BUILD/smoke-monitor.sock"
 # Send one key to the guest through the QEMU monitor. Returns non-zero when the
 # monitor cannot be reached, so a dead socket fails the leg instead of reading
 # as "the menu ignored the key".
-monitor_sendkey() {
+monitor_sendkey() { monitor_cmd "sendkey $1"; }
+# Print the monitor's "info status" line (empty when the monitor is unreachable).
+monitor_status() {
+    python3 - "$MONITOR_SOCK" <<'PYEOF' 2>/dev/null
+import socket, sys, time
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(2.0)
+s.connect(sys.argv[1])
+s.sendall(b"info status\n")
+buf = b""
+end = time.time() + 2.0
+while b"VM status" not in buf and time.time() < end:
+    try:
+        chunk = s.recv(4096)
+    except socket.timeout:
+        break
+    if not chunk:
+        break
+    buf += chunk
+s.close()
+for line in buf.decode("latin-1").splitlines():
+    if "VM status" in line:
+        print(line.strip())
+PYEOF
+}
+# Send one monitor command (system_powerdown, sendkey, ...); same failure rule.
+monitor_cmd() {
     python3 - "$MONITOR_SOCK" "$1" <<'PYEOF'
 import socket, sys
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.settimeout(2.0)
 s.connect(sys.argv[1])
-s.sendall(("sendkey %s\n" % sys.argv[2]).encode())
+s.sendall((sys.argv[2] + "\n").encode())
 try:
     s.recv(4096)
 except socket.timeout:
@@ -806,6 +868,7 @@ if [ "$LOWRES" = "1" ]; then FORCE_MODE="$LOWRES_MODE"; EXPECT_TIER="compact"; f
 # fingerprints the CANONICAL build image: recording one here would certify the
 # untouched image using evidence from a boot of different bytes.
 IMAGE_MODIFIED=0
+[ "$KEEP_DISK" = "1" ] && IMAGE_MODIFIED=1
 if [ "$CORRUPT_STORE" = "1" ] || [ "$VALID_STORE" = "1" ] || [ "$SHADOW_STORE" != "0" ] || [ -n "$FORCE_MODE" ] || [ "$ERROR_SCREEN" = "1" ] || [ -n "$UKI_MODE" ] || [ -n "$DEGRADE" ] || [ -n "$CRASH_TEST" ]; then
     if ! command -v mcopy >/dev/null 2>&1; then
         echo -e "${RED}SMOKE TEST FAILED: image fixtures need mtools (mcopy)${NC}"
@@ -1040,6 +1103,11 @@ if [ "$VALID_STORE" = "1" ] && [ "$ERROR_SCREEN" != "1" ] && [ -z "$UKI_MODE" ];
     PASS_PATTERNS_ALL+=("BOOT: health: entry marked good (id=")
 fi
 
+# The trend file is written after the prompt; wait for it, not the grace period.
+if [ -n "$TREND_BOOTS" ]; then
+    PASS_PATTERNS_ALL+=('boot_trend: wrote X:\Perf\boot-trend.json (')
+fi
+
 # Boot the canonical GPT image via AHCI (matches Makefile run: target).
 QEMU_FLAGS=(
     -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE"
@@ -1076,7 +1144,7 @@ if [ -n "$CT_MODE" ]; then
     for _f in "${QEMU_FLAGS[@]}"; do [ "$_f" = "-no-reboot" ] || _qf+=("$_f"); done
     QEMU_FLAGS=("${_qf[@]}")
 fi
-if [ "$MENU" = "keys" ] || [ "$MENU" = "default" ] || [ -n "$CRASH_TEST" ]; then
+if [ "$MENU" = "keys" ] || [ "$MENU" = "default" ] || [ -n "$CRASH_TEST" ] || [ "$SHUTDOWN" = "1" ]; then
     rm -f "$MONITOR_SOCK"
     QEMU_FLAGS+=(-monitor "unix:$MONITOR_SOCK,server,nowait")
 fi
@@ -1230,7 +1298,31 @@ printf "\r"
 # zeros.  3 seconds matches the longest observed post-"Boot complete" write
 # (hwdump.txt at +3.4s in the test=1 boot log).  Skip on FAIL since waiting
 # longer for a broken boot wastes operator time.
-if [ "$BOOT_PASSED" = true ] && [ -z "${SMOKE_NO_GRACE:-}" ]; then
+if [ "$BOOT_PASSED" = true ] && [ "$SHUTDOWN" = "1" ]; then
+    printf "  ${DIM}PASS markers detected; pressing the power button...${NC}  "
+    if ! monitor_cmd system_powerdown; then
+        BOOT_PASSED=false; BOOT_FAILED=true
+        FAIL_REASON="SMOKE_SHUTDOWN=1: the QEMU monitor could not be reached to press the power button"
+    else
+        # -no-shutdown keeps QEMU up after the guest powers off and reports the VM
+        # as "paused (shutdown)"; only the guest's own power-off sets that state.
+        _sd_end=$(( $(date +%s) + SHUTDOWN_SEC )); _sd_off=0
+        while [ "$(date +%s)" -lt "$_sd_end" ] && kill -0 "$QEMU_PID" 2>/dev/null; do
+            if monitor_status | grep -q 'VM status: paused (shutdown)'; then _sd_off=1; break; fi
+            sleep 0.3
+        done
+        strip_ansi
+        if [ "$_sd_off" != "1" ]; then
+            BOOT_PASSED=false; BOOT_FAILED=true
+            FAIL_REASON="SMOKE_SHUTDOWN=1: the guest did not power off within ${SHUTDOWN_SEC}s of the power button"
+        elif ! grep -qaF 'power button: shutting down' "$STRIPPED_LOG" \
+             || ! grep -qaF '[ACPI] Initiating shutdown' "$STRIPPED_LOG"; then
+            BOOT_PASSED=false; BOOT_FAILED=true
+            FAIL_REASON="SMOKE_SHUTDOWN=1: QEMU exited but the guest never logged a power-button shutdown"
+        fi
+    fi
+    printf "\r"
+elif [ "$BOOT_PASSED" = true ] && [ -z "${SMOKE_NO_GRACE:-}" ]; then
     GRACE_SEC="${SMOKE_GRACE_SEC:-3}"
     printf "  ${DIM}PASS markers detected; waiting %ds for disk flushes...${NC}  " "$GRACE_SEC"
     sleep "$GRACE_SEC"
@@ -1807,6 +1899,17 @@ elif [ "$BOOT_PASSED" = true ]; then
     if [ "$LT_PUB" != "$LT_WANT" ]; then
         echo -e "${RED}SMOKE TEST FAILED: timing must be all set with a calibrated TSC and all cleared without one (want $LT_WANT published, got: $LV_TIME)${NC}"
         exit 1
+    fi
+
+    # ---- Boot-trend count ---------------------------------------------------
+    # Boot N of one machine must find the N-1 boots the earlier runs wrote.
+    if [ -n "$TREND_BOOTS" ]; then
+        if ! grep -qaE "boot_trend: wrote X:.Perf.boot-trend\.json \([0-9]+ bytes, $TREND_BOOTS boots\)" "$STRIPPED_LOG" 2>/dev/null; then
+            echo -e "${RED}SMOKE TEST FAILED: the boot-trend file does not hold $TREND_BOOTS boots, so a previous boot's record was not read back${NC}"
+            grep -aF 'boot_trend:' "$STRIPPED_LOG" 2>/dev/null | head -4
+            exit 1
+        fi
+        echo -e "  ${GREEN}✓${NC} boot-trend file holds $TREND_BOOTS boots"
     fi
 
     # ---- Valid-store assertions -------------------------------------------

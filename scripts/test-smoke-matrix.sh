@@ -122,10 +122,13 @@ for leg in $LEGS; do
     # Each leg is a full test-smoke.sh run on the image built above: it
     # re-boots and re-asserts, which is the point -- the assertions are what
     # differ per configuration.
+    # A 2-CPU leg is also the first boot of that engine's two-boot pair (below):
+    # it records its boot-trend entry and ends with the power button (S5).
+    trend=""; sd=0; [ "$cpus" = "2" ] && { trend=1; sd=1; }
     if [ "$engine" = "tcg" ]; then
-        SMOKE_FORCE_TCG=1 SMOKE_SMP="$cpus" bash scripts/test-smoke.sh > "$cap" 2>&1
+        SMOKE_TREND_BOOTS="$trend" SMOKE_SHUTDOWN="$sd" SMOKE_FORCE_TCG=1 SMOKE_SMP="$cpus" bash scripts/test-smoke.sh > "$cap" 2>&1
     else
-        SMOKE_SMP="$cpus" bash scripts/test-smoke.sh > "$cap" 2>&1
+        SMOKE_TREND_BOOTS="$trend" SMOKE_SHUTDOWN="$sd" SMOKE_SMP="$cpus" bash scripts/test-smoke.sh > "$cap" 2>&1
     fi
     rc=$?
     # Publish at the END of the run, not here: a LATER leg's build wipes
@@ -147,8 +150,34 @@ for leg in $LEGS; do
         # has the path when they want the rest. Read the live CAPTURE, not the
         # published path -- publication happens after the last leg, so $log
         # does not exist yet while this leg is being reported.
-        reason=$(grep -aoE 'Detected[^"]{0,90}|Log ends on a fatal shape[^"]{0,70}' "$cap" 2>/dev/null | head -1)
+        reason=$(grep -aoE 'Detected[^"]{0,90}|Log ends on a fatal shape[^"]{0,70}|SMOKE TEST FAILED[^"]{0,90}' "$cap" 2>/dev/null | head -1)
         [ -n "$reason" ] && printf "        ${DIM}%s${NC}\n" "$reason"
+    fi
+
+    # Second boot of the same machine, after the first powered off cleanly, run
+    # now, before another leg replaces the disk and variables. Every other leg boots a fresh disk, so state a boot
+    # leaves on disk for the next was never booted: this one keeps the first
+    # boot's disk and variables and must read back its boot-trend record.
+    if [ "$cpus" = "2" ] && [ "$rc" = "0" ]; then
+        name="$engine-2"; blog="$LOG_DIR/boots-$name.log"
+        bcap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-boots-$name.XXXXXX")"
+        settings="SMOKE_TREND_BOOTS=2 SMOKE_KEEP_DISK=1 SMOKE_SMP=2"
+        [ "$engine" = "tcg" ] && settings="$settings SMOKE_FORCE_TCG=1"
+        t0=$(date +%s)
+        # shellcheck disable=SC2086  # word-split on purpose: one assignment per word
+        env $settings bash scripts/test-smoke.sh > "$bcap" 2>&1
+        brc=$?
+        CAPTURES="$CAPTURES $bcap:$blog"
+        dur=$(( $(date +%s) - t0 ))
+        if [ "$brc" = "0" ]; then
+            PASS=$((PASS + 1))
+            printf "  ${GREEN}PASS${NC}  boots    %-8s %2ds   ${DIM}%s${NC}\n" "$name" "$dur" "$blog"
+        else
+            FAIL=$((FAIL + 1)); FAILED_LEGS="$FAILED_LEGS boots:$name"
+            printf "  ${RED}FAIL${NC}  boots    %-8s %2ds   ${DIM}%s${NC}\n" "$name" "$dur" "$blog"
+            reason=$(grep -a 'SMOKE TEST FAILED' "$bcap" 2>/dev/null | head -1)
+            [ -n "$reason" ] && printf "        ${DIM}%s${NC}\n" "$reason"
+        fi
     fi
 done
 

@@ -101,7 +101,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |  33   |   §33   | Section-commit gate reads an untokenizable commit line as a commit                               | §4                         |  [x]   |
 | 💎  |  34   |   §34   | Section-commit gate test wiring that kernel sources can satisfy                                  | §4                         |  [x]   |
 | 💎  |  35   |   §35   | Cross-section review of a closed TODO file                                                       | §5                         |  [/]   |
-| 💎  |  36   |   §36   | Second-boot leg in the smoke matrix                                                              | --                         |  [ ]   |
+| 💎  |  36   |   §36   | Second-boot leg in the smoke matrix                                                              | --                         |  [x]   |
 | 💎  |  37   |   §37   | Syscall argument counts in the ABI fingerprint                                                   | --                         |  [ ]   |
 | 💎  |  38   |   §38   | Release-flavor build at the section boundary                                                     | --                         |  [ ]   |
 | 💎  |  39   |   §39   | Re-judge the closed parks under the never-park rule                                              | --                         |  [ ]   |
@@ -1258,12 +1258,14 @@ Every review reads one section. Nothing reads a finished file as a whole, so a d
 
 Every boot test starts from a fresh image, so anything that depends on what the previous boot left behind is unproven. The first concrete need is the open item in `01-boot-platform/TODO-29-boot-perf-health-observability.md` ("second boot updates index 0").
 
-- [ ] Add a two-boot leg to `scripts/test-smoke-matrix.sh` that boots, shuts down cleanly and boots the same disk and OVMF variable store again, following the store legs' `SMOKE_STORE_RECORD` shape. Done when the leg is green on TCG and KVM.
-- [ ] Assert one cross-boot fact in the leg: the boot-trend record written by boot one is read by boot two. Done when the leg fails if the record is not persisted.
-- [ ] Unit tests: the leg is counted by the matrix's leg-list test in `scripts/test-tooling.sh`. Done when the count includes it.
-- [ ] Commit: `"test: the smoke matrix boots the same disk twice"`
+- [x] The matrix boots one disk twice on KVM and TCG: each 2-CPU leg ends with the power button (`SMOKE_SHUTDOWN=1`, S5), then a `SMOKE_KEEP_DISK=1` boot reuses its disk and variables. Green on both.
+- [x] `SMOKE_TREND_BOOTS=N` waits for the trend write and requires `X:\Perf\boot-trend.json` to hold N boots; a fresh disk asked for 2 fails.
+- [x] `scripts/test-tooling.sh` runs the matrix against stub scripts (26 legs; each clean-shutdown 2-CPU boot followed by a kept-disk boot, with a control that drops it), and checks a refused second boot keeps the disk and a bad count is refused.
+- [x] Commit: `"test: the smoke matrix boots the same disk twice"`
 
 **Test checkpoint:** `bash scripts/test-smoke-matrix.sh` passes with the two-boot leg listed.
+
+> **Test runner:** `bash scripts/test-smoke-matrix.sh` (26 legs, the two `boots` legs included); the pair alone (KVM, 2 CPUs; add `SMOKE_FORCE_TCG=1` to both for TCG): `SMOKE_SMP=2 SMOKE_TREND_BOOTS=1 SMOKE_SHUTDOWN=1 bash scripts/test-smoke.sh`, then `SMOKE_SMP=2 SMOKE_TREND_BOOTS=2 SMOKE_KEEP_DISK=1 bash scripts/test-smoke.sh`.
 
 ## 37. Syscall argument counts in the ABI fingerprint
 

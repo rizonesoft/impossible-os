@@ -71,7 +71,7 @@ Register new tests with `test_suite_register_cat("name", fn, TEST_CAT_XX)`. Use 
 
 ```bash
 bash scripts/test-smoke.sh        # builds, boots in QEMU, checks for Boot complete + C:\>
-bash scripts/test-smoke-matrix.sh # TCG+KVM x 1+2 CPUs, plus the boot-store, boot-menu, forced-degradation, bad-strings and double-panic crash, and UKI-direct fixture legs (24 legs)
+bash scripts/test-smoke-matrix.sh # TCG+KVM x 1+2 CPUs, plus the boot-store, boot-menu, forced-degradation, bad-strings and double-panic crash, UKI-direct fixture and two-boot legs (26 legs)
 ```
 
 The smoke test complements unit tests: unit tests cover individual behaviors against in-memory fixtures, the smoke test proves **the image actually boots to userspace**. It auto-selects KVM if `/dev/kvm` is writable and falls back to TCG otherwise. 30-second timeout, fail-fast on missing markers.

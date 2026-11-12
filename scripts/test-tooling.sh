@@ -4725,6 +4725,64 @@ for _sm_st in SMOKE_ES_SELFTEST SMOKE_UKI_SELFTEST; do
         t_fail "smoke_oracle_selftest  $_sm_st has a case with the wrong verdict"
     fi
 done
+# Two boots of one machine (the second-boot smoke leg): each engine's 2-CPU leg is
+# the first boot, a kept-disk boot follows it, and a leg refuses a count it cannot check.
+if <<<"$_sm_legs" grep -q 'kvm:2' && <<<"$_sm_legs" grep -q 'tcg:2' \
+   && grep -q 'trend=""; sd=0; \[ "\$cpus" = "2" \] && { trend=1; sd=1; }' "$REPO_ROOT/scripts/test-smoke-matrix.sh" 2>/dev/null \
+   && grep -q 'settings="SMOKE_TREND_BOOTS=2 SMOKE_KEEP_DISK=1 SMOKE_SMP=2"' "$REPO_ROOT/scripts/test-smoke-matrix.sh" 2>/dev/null; then
+    t_pass "smoke_matrix_two_boots  the matrix boots one disk twice on kvm and tcg"
+else
+    t_fail "smoke_matrix_two_boots  the matrix has no two-boot leg on both engines"
+fi
+# A second boot refused before QEMU starts (here: a copy saved from another build)
+# leaves the kept disk as it was and no copy of the variable store behind.
+if python3 "$REPO_ROOT/scripts/overnight/receipts.py" check-build "$REPO_ROOT" >/dev/null 2>&1 \
+   && [ -s "$REPO_ROOT/build/system-disk.img" ] && [ -f "$REPO_ROOT/build/OVMF_VARS_4M.fd" ]; then
+    _sm_tmp="$(mktemp -d "${TMPDIR:-/tmp}/tt-smoke-keep.XXXXXX")"
+    printf 'x' > "$_sm_tmp/img"; printf '{"other":"build"}' > "$_sm_tmp/img.receipt"
+    _sm_before=$(sha256sum "$REPO_ROOT/build/system-disk.img" | cut -d' ' -f1)
+    _sm_out=$(cd "$REPO_ROOT" && TMPDIR="$_sm_tmp" SMOKE_KEEP_DISK=1 SMOKE_PRISTINE_IMAGE="$_sm_tmp/img" timeout 60 bash scripts/test-smoke.sh 2>&1); _sm_rc=$?
+    _sm_after=$(sha256sum "$REPO_ROOT/build/system-disk.img" | cut -d' ' -f1)
+    _sm_left=$(find "$_sm_tmp" -name 'smoke-previous-*' | wc -l)
+    rm -rf "$_sm_tmp"
+    if [ "$_sm_rc" = "1" ] && [ "$_sm_before" = "$_sm_after" ] && [ "$_sm_left" = "0" ]; then
+        t_pass "smoke_keep_disk_refused  a refused second boot keeps the disk and leaks no copy"
+    else
+        t_fail "smoke_keep_disk_refused  a refused second boot changed the disk or left a copy" "rc=$_sm_rc same_disk=$([ "$_sm_before" = "$_sm_after" ] && echo y || echo n) left=$_sm_left"
+    fi
+fi
+# The matrix's orchestration, run against stub build and smoke scripts that only
+# record their settings: the default run is 26 legs, and each engine's clean-
+# shutdown 2-CPU boot is followed at once by a kept-disk boot that counts 2.
+# The control removes the second boot and must fail the same assertion.
+_sm_orch() {  # $1 = matrix script to run; prints "<invocations> <pairs>"
+    local d; d="$(mktemp -d "${TMPDIR:-/tmp}/tt-smoke-orch.XXXXXX")"
+    mkdir -p "$d/scripts"
+    cp "$1" "$d/scripts/test-smoke-matrix.sh"
+    printf '%s\n' 'mkdir -p build; echo "=== BUILD OK ===" > build/build.log; : > build/system-disk.img; echo "{}" > build/build-receipt.json' > "$d/scripts/build.sh"
+    printf '%s\n' 'echo "smp=${SMOKE_SMP:-} tcg=${SMOKE_FORCE_TCG:-} trend=${SMOKE_TREND_BOOTS:-} sd=${SMOKE_SHUTDOWN:-} keep=${SMOKE_KEEP_DISK:-}" >> "$ORCH_LOG"' > "$d/scripts/test-smoke.sh"
+    ORCH_LOG="$d/calls" TMPDIR="$d" timeout 60 bash "$d/scripts/test-smoke-matrix.sh" >/dev/null 2>&1
+    local n pairs
+    n=$(wc -l < "$d/calls" 2>/dev/null || echo 0)
+    pairs=$(awk '/smp=2 .*trend=1 sd=1 keep=$/ {want=1; next} want && /trend=2 .*keep=1$/ {p++} {want=0} END {print p+0}' "$d/calls" 2>/dev/null)
+    rm -rf "$d"
+    echo "$n $pairs"
+}
+_sm_got=$(_sm_orch "$REPO_ROOT/scripts/test-smoke-matrix.sh")
+_sm_ctl_src="$(mktemp "${TMPDIR:-/tmp}/tt-smoke-ctl.XXXXXX")"
+grep -v 'env $settings bash scripts/test-smoke.sh > "$bcap"' "$REPO_ROOT/scripts/test-smoke-matrix.sh" > "$_sm_ctl_src"
+_sm_ctl=$(_sm_orch "$_sm_ctl_src"); rm -f "$_sm_ctl_src"
+if [ "$_sm_got" = "26 2" ] && [ "$_sm_ctl" != "26 2" ]; then
+    t_pass "smoke_matrix_orchestration  26 legs, each engine's clean-shutdown boot followed by a kept-disk boot (control without it: $_sm_ctl)"
+else
+    t_fail "smoke_matrix_orchestration  matrix legs or two-boot order wrong" "got '$_sm_got' (want '26 2'), control '$_sm_ctl'"
+fi
+_sm_out=$(cd "$REPO_ROOT" && SMOKE_TREND_BOOTS=x timeout 60 bash scripts/test-smoke.sh 2>&1); _sm_rc=$?
+if [ "$_sm_rc" = "1" ] && <<<"$_sm_out" grep -q 'SMOKE_TREND_BOOTS=x is not a boot count'; then
+    t_pass "smoke_trend_boots_refused  a leg refuses a boot count it cannot check"
+else
+    t_fail "smoke_trend_boots_refused  a leg accepted SMOKE_TREND_BOOTS=x" "rc=$_sm_rc"
+fi
 if grep -q 'UKI-direct fixtures' "$REPO_ROOT/scripts/test-smoke-matrix.sh" 2>/dev/null; then
     t_pass "smoke_matrix_uki  the matrix boots the UKI signed + override fixtures"
 else
