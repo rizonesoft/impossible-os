@@ -392,9 +392,22 @@ def _walk_wrappers(words: list[str]) -> tuple[list[str], str | None]:
     return list(out), None
 
 
+# Characters one top-level reading may spend re-reading the scripts its commands run.
+# Each `eval` re-reads what follows it and the lexer's depth starts again inside, so
+# `eval eval ... <200 KB>` cost payload x depth: 10 s at 160 levels.
+_REREAD_BUDGET = 2_000_000
+_REREAD_LEFT = _REREAD_BUDGET
+
+
 def _inner_script_is_git_commit(script: str) -> tuple[bool, bool]:
     """A script a command runs again (`bash -c`, `eval`), read with the same reader as
-    the outer command. Nesting too deep to read is refused as a possible commit."""
+    the outer command. Nesting too deep, or more re-reading than the budget allows, is
+    judged unread: a possible commit is refused."""
+    global _REREAD_LEFT
+    if script not in (_COMMIT_MEMO or {}):
+        _REREAD_LEFT -= len(script)
+        if _REREAD_LEFT < 0:
+            return _unread_commit(script)
     try:
         return _bash_is_git_commit(script)
     except RecursionError:
@@ -1460,10 +1473,11 @@ def _bash_is_git_commit(cmd: str) -> tuple[bool, bool]:
     """_read_git_commit, each script read once per top-level call. A shell's script
     (`eval "$(...)"`, `bash -c "$(...)"`) is read again where its command is judged,
     and nested ones re-read every deeper level: 2x the work per level, 2.5 s at twelve."""
-    global _COMMIT_MEMO
+    global _COMMIT_MEMO, _REREAD_LEFT
     outer = _COMMIT_MEMO is None
     if outer:
         _COMMIT_MEMO = {}
+        _REREAD_LEFT = _REREAD_BUDGET
     try:
         if cmd not in _COMMIT_MEMO:
             _COMMIT_MEMO[cmd] = _read_git_commit(cmd)

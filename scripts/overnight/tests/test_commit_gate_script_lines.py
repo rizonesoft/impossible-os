@@ -507,6 +507,18 @@ def test_malformed_bodies_without_a_commit_spawn_no_syntax_check():
     assert gate._bash_is_git_commit("bash -c \"git commit -n '\"") == (True, True), "a commit is still read"
 
 
+def test_nested_eval_rereading_is_bounded():
+    """Performance pass: each `eval` re-read its whole payload (10 s at 160 levels)."""
+    import time
+    t = time.perf_counter()
+    assert gate._bash_is_git_commit("eval " * 160 + "echo git " + "x" * 200000) == (False, False)
+    took = time.perf_counter() - t
+    assert took < 3, took
+    deep = "eval " * 160 + "git commit -n -m y " + "x" * 200000
+    assert gate._bash_is_git_commit(deep) == (True, True), "past the budget a commit is refused"
+    assert gate._bash_is_git_commit("eval eval eval \"'git commit -n'\"") == (True, True)
+
+
 def test_continued_heredoc_lines_stay_linear():
     """Performance review: each continued heredoc line re-copied the whole logical line."""
     import time
