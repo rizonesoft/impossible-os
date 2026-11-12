@@ -6557,45 +6557,35 @@ sys.path.insert(0, '.claude/hooks')
 # Ensure the integration with our shared module surfaces is intact.
 import section_commit_gate as scg
 
-# Test 3: unit_test_wiring -- existing test at HEAD counts as evidence.
+# Test 3: unit_test_wiring -- a test staged in the same commit covers a source
+# when it calls what the source defines (the commit gate test-wiring rule); the full matrix is
+# scripts/overnight/tests/test_step8_suite_coverage.py.
 with tempfile.TemporaryDirectory() as tmp:
     repo = pathlib.Path(tmp)
     (repo / ".claude" / "state").mkdir(parents=True)
     (repo / "src" / "kernel" / "test").mkdir(parents=True)
-    (repo / "todo" / "00-infra").mkdir(parents=True)
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp, check=True)
-    subprocess.run(["git", "config", "user.email", "t@x"], cwd=tmp, check=True)
-    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp, check=True)
-    # Codex H1 fix: basename-bound match. test_newcode.c must match
-    # newcode.c (NOT just any test_*.c).
-    (repo / "src" / "kernel" / "test" / "test_newcode.c").write_text("/*x*/\n")
-    subprocess.run(["git", "add", "-A"], cwd=tmp, check=True)
-    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-q",
-                    "--no-verify", "-m", "seed"], cwd=tmp, check=True)
-    # Activate implement-todo-section so the skill-aware gate fires.
-    skill_state = repo / ".claude" / "state" / "skill-progress.json"
-    skill_state.write_text(json.dumps({
+    (repo / ".claude" / "state" / "skill-progress.json").write_text(json.dumps({
         "implement-todo-section": {
             "started_ts": time.time_ns(),
             "args": "test", "todo_path": "",
         }
     }))
-    # Stage a new src/kernel/newcode.c -- the matching test_newcode.c
-    # at HEAD satisfies step-8 evidence (basename-bound, Codex H1).
-    (repo / "src" / "kernel" / "newcode.c").write_text("int x;\n")
-    subprocess.run(["git", "add", "src/kernel/newcode.c"], cwd=tmp, check=True)
+    scg.STEP8_REFUSE_FROM = "2000-01-01"
+    (repo / "src" / "kernel" / "newcode.c").write_text("int newcode_run(void) {\n    return 0;\n}\n")
+    (repo / "src" / "kernel" / "test" / "test_sched.c").write_text("static void t(void) { newcode_run(); }\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp, check=True)
     ok, err = scg._step8_test_wiring_check(
-        repo, ["src/kernel/newcode.c"], []
+        repo, ["src/kernel/newcode.c", "src/kernel/test/test_sched.c"], []
     )
-    assert ok, f"step-8 basename-match should pass: {err}"
-    # Negative: unrelated test_other.c at HEAD must NOT satisfy.
-    (repo / "src" / "kernel" / "different.c").write_text("int y;\n")
+    assert ok, f"step-8 symbol-match should pass: {err}"
+    (repo / "src" / "kernel" / "different.c").write_text("int different_run(void) {\n    return 1;\n}\n")
     subprocess.run(["git", "add", "src/kernel/different.c"], cwd=tmp, check=True)
     ok2, err2 = scg._step8_test_wiring_check(
-        repo, ["src/kernel/different.c"], []
+        repo, ["src/kernel/different.c", "src/kernel/test/test_sched.c"], []
     )
-    assert not ok2, "step-8 must reject test_newcode.c as evidence for different.c"
-print("OK unit_test_wiring_basename_binding")
+    assert not ok2, "step-8 must reject a staged test that never calls different.c"
+print("OK unit_test_wiring_symbol_binding")
 
 # Test 4: impl_adversarial -- accepts EITHER adversarial-impl OR plain
 # adversarial. The previous design demanded a distinct `adversarial-impl`

@@ -3883,28 +3883,52 @@ _NO_TEST_SURFACE_RE = re.compile(
 )
 
 
+# Until this date an uncovered source is a warning; from it, a refusal. The rule was
+# rewritten on 2026-11-12 (tests found by symbol, not file name) and runs as a warning
+# for about ten kernel sections first: 26 kernel and boot commits landed in the 14 days
+# before, about two a day.
+STEP8_REFUSE_FROM = "2026-11-19"
+
+
+class _StagedReadError(Exception):
+    """A staged blob that is in the index could not be read."""
+
+
+def _staged_text(root: Path, path: str) -> str | None:
+    """The staged blob of `path`, or None when the index has no entry for it (a
+    deletion). A failed read raises _StagedReadError: an unread source is missing
+    evidence, never a source that needs no test.
+    """
+    try:
+        entry = subprocess.run(["git", "ls-files", "-s", "-z", "--", path], cwd=str(root),
+                               capture_output=True, text=True, timeout=5,
+                               check=True).stdout  # deadline: 5 s, an index read
+        if not entry:
+            return None
+        blob = entry.split()[1]
+        return subprocess.run(["git", "cat-file", "blob", blob], cwd=str(root),
+                              capture_output=True, text=True, timeout=5, check=True,
+                              errors="replace").stdout  # deadline: 5 s, a blob read
+    except (OSError, subprocess.SubprocessError, IndexError) as exc:
+        raise _StagedReadError(f"{path}: {exc}") from exc
+
+
 def _step8_test_wiring_check(
     root: Path, staged_src: list[str], todo_files: list[str]
 ) -> tuple[bool, str]:
-    """TODO-08 §20 step-8: when staged diff touches src/{kernel,desktop,
-    shell,apps}/ or user/, require ONE of:
-      (a) staged diff also touches a `test_*.c` file in the matching
-          test directory, OR
-      (b) a `test_*.c` covering the same surface already exists at HEAD
-          (Codex design M1: prior-commit coverage counts; same-commit
-          test diff is too strict), OR
-      (c) the section body contains `**Note:** No <surface> test surface`
-          exemption phrase.
-    SKIP_REVIEW_HOOK=1 honored (caller; same-skip path as build/review/
-    four-dispatch). _bootstrap_mode honored when this hook's own file
-    is in the staged diff (caller).
+    """Step 8 (test wiring): every source the commit stages under src/{kernel,desktop,shell,
+    apps}/ or user/ needs a test staged in the same commit that covers it: one that uses
+    a public symbol the source defines, or that the source names in a `tested-by:` line
+    (_test_coverage_by_symbol). A `**Note:** No <surface> test surface` line in a staged
+    TODO exempts the commit. Before STEP8_REFUSE_FROM an uncovered source only warns.
+    SKIP_REVIEW_HOOK=1 and bootstrap mode are honored by the caller and below.
     """
-    triggering_paths = [
+    candidates = [
         p for p in staged_src
         if any(p.startswith(pre) for pre in _TEST_WIRING_SRC_PREFIXES)
         and not any(td in p for td in _TEST_WIRING_TEST_DIRS.values())
     ]
-    if not triggering_paths:
+    if not candidates:
         return (True, "")
     # Skill-aware gate: only fire when implement-todo-section is active.
     skill_state_path = root / ".claude" / "state" / "skill-progress.json"
@@ -3926,76 +3950,48 @@ def _step8_test_wiring_check(
             return (True, "")
     except Exception:
         pass
+    import _test_coverage_by_symbol as tcs
 
-    # (a) Same-commit test diff matching the staged source basename.
-    # Same H1 fix as (b): test_heap.c must not satisfy drivers/acpi.c.
-    staged_tests = [p for p in staged_src
-                    if "/test/" in p and re.search(r"test_[\w-]+\.c$", p)]
-    for src_path in triggering_paths:
-        src_base = os.path.basename(src_path)
-        if "." in src_base:
-            src_base = src_base.rsplit(".", 1)[0]
-        base_pattern = re.compile(
-            r"(^|/)test_" + re.escape(src_base) + r"(_[\w-]+)?\.c$"
-        )
-        if any(base_pattern.search(t) for t in staged_tests):
+    try:
+        local = tcs.local_additions(_staged_text(root, "src/libs/PROVENANCE.md") or "")
+        sources = {}
+        for p in candidates:
+            if p.endswith(tcs.SOURCE_EXTS) and not tcs.is_vendored(p, local):
+                text = _staged_text(root, p)
+                if text is not None:
+                    sources[p] = text
+        if not sources:
             return (True, "")
-
-    # (b) Existing test_*.c at HEAD covering BASENAME of staged source.
-    # Codex adversarial H1 fix: bind to source basename (e.g.
-    # src/kernel/drivers/acpi.c -> test_acpi*.c) instead of accepting
-    # any test_*.c in the broad surface directory. test_heap.c must
-    # NOT satisfy a section that touches drivers/acpi.c.
-    matched_existing = False
-    for src_path in triggering_paths:
-        # Extract basename without extension.
-        src_base = os.path.basename(src_path)
-        if "." in src_base:
-            src_base = src_base.rsplit(".", 1)[0]
-        # Find the matching test directory.
-        test_dir = ""
-        for src_pre, td in _TEST_WIRING_TEST_DIRS.items():
-            if src_path.startswith(src_pre):
-                test_dir = td
-                break
-        if not test_dir:
-            continue
-        try:
-            out = subprocess.check_output(
-                ["git", "ls-tree", "-r", "--name-only", "HEAD", test_dir],
-                cwd=str(root), text=True, timeout=3,
-                stderr=subprocess.DEVNULL,
-            )
-            # Match `test_<basename>` exactly OR `test_<basename>_*`
-            # (e.g. test_acpi.c, test_acpi_smp.c -- both bind to
-            # acpi.c). The .c suffix is required.
-            base_pattern = re.compile(
-                r"(^|/)test_" + re.escape(src_base) + r"(_[\w-]+)?\.c$"
-            )
-            if any(base_pattern.search(line) for line in out.splitlines()):
-                matched_existing = True
-                break
-        except Exception:
-            pass
-    if matched_existing:
+        tests = {}
+        for p in staged_src:
+            if any(td in p for td in _TEST_WIRING_TEST_DIRS.values()) and re.search(r"test_[\w-]+\.c$", p):
+                text = _staged_text(root, p)
+                if text is not None:
+                    tests[p] = tcs.test_names(text)
+    except _StagedReadError as exc:
+        return (False, f"step-8 could not read a staged file, so its tests are unknown: {exc}")
+    uncovered = [p for p, text in sources.items() if not tcs.covering_tests(p, text, tests)]
+    if not uncovered:
         return (True, "")
-
-    # (c) Section-body exemption phrase in any staged TODO?
     for tf in todo_files:
         try:
-            content = (root / tf).read_text(encoding="utf-8")
-            if _NO_TEST_SURFACE_RE.search(content):
+            if _NO_TEST_SURFACE_RE.search((root / tf).read_text(encoding="utf-8")):
                 return (True, "")
         except Exception:
             pass
-
-    return (False, (
-        f"staged diff touches {triggering_paths[0]} (and {len(triggering_paths)-1} "
-        f"more) but neither a same-commit test_*.c diff, an existing "
-        f"test_*.c at HEAD in the matching test directory, nor a "
-        f"`**Note:** No <surface> test surface` exemption is present. "
-        f"Wire a unit test or add the exemption phrase to the TODO section."
-    ))
+    why = (
+        f"{len(uncovered)} staged source(s) have no test in this commit that covers them: "
+        f"{', '.join(uncovered[:5])}{' ...' if len(uncovered) > 5 else ''}. Stage a test "
+        f"that calls what the source defines, add a `tested-by: test_<name>.c` line to a "
+        f"source no test can call, or add a `**Note:** No <surface> test surface` line to "
+        f"the TODO section. `python3 .claude/hooks/_test_coverage_by_symbol.py --report` "
+        f"lists every kernel source's tests."
+    )
+    if time.strftime("%Y-%m-%d") < STEP8_REFUSE_FROM:
+        sys.stderr.write(f"[section-commit-gate] WARN (step-8, refusal from "
+                         f"{STEP8_REFUSE_FROM}) -- {why}\n")
+        return (True, "")
+    return (False, why)
 
 
 def _step13_impl_adversarial_check(

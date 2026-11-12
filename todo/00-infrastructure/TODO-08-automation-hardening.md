@@ -99,7 +99,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |  31   |   §31   | Post-commit hook concurrency: serialize build/smoke via flock (end stomp-stamp races)            | --                         |  [x]   |
 | ⭐  |  32   |   §32   | Grammar-accurate shell segmentation for the gate exemptions (retire the hand-rolled walk)        | §30                        |  [/]   |
 | 💎  |  33   |   §33   | Section-commit gate reads an untokenizable commit line as a commit                               | §4                         |  [x]   |
-| 💎  |  34   |   §34   | Section-commit gate test wiring that kernel sources can satisfy                                  | §4                         |  [ ]   |
+| 💎  |  34   |   §34   | Section-commit gate test wiring that kernel sources can satisfy                                  | §4                         |  [x]   |
 | 💎  |  35   |   §35   | Cross-section review of a closed TODO file                                                       | §5                         |  [ ]   |
 | 💎  |  36   |   §36   | Second-boot leg in the smoke matrix                                                              | --                         |  [ ]   |
 | 💎  |  37   |   §37   | Syscall argument counts in the ABI fingerprint                                                   | --                         |  [ ]   |
@@ -1214,12 +1214,12 @@ The PreToolUse gates decide their exemptions by hand-scanning command text. [`.c
 
 The gate's step-8 rule binds a staged source file to a test named for its basename. 434 of 516 kernel sources have no test of that name, because suites are registered per subsystem, so the rule cannot be met and is opted out of.
 
-- [ ] Count, from `.claude/state` refusal records and `git log`, how often the rule refused a kernel section and how it was passed. Done when the numbers are in the commit message.
-- [ ] Match a staged kernel source to the suite that registers its subsystem, not to a test of the same file name. Done when the 434 sources resolve to a suite or are listed as untested.
-  - Covered means the same commit touches a test whose `test_suite_register_cat` suite includes the source.
-- [ ] Ship it as a warning for ten sections, then as a refusal. Done when the switch date is recorded in the hook.
-- [ ] Unit tests: a source with a subsystem suite, a source with none, a test-only commit. Done when they fail on the basename rule.
-- [ ] Commit: `"hooks: the commit gate finds a kernel source's tests by suite, not by file name"`
+- [x] Counted refusals and opt-outs: 23 kernel section commits, all staging their test (in the commit message).
+- [x] A staged test covers a source when it calls a public symbol the source defines (`_test_coverage_by_symbol.py`, `--report`).
+  - Per source, in the same commit; `tested-by:` for flat binaries; upstream ACPICA exempt, its local additions not.
+- [x] Warning until `STEP8_REFUSE_FROM` (2026-11-19) in `section_commit_gate.py`, then a refusal.
+- [x] Unit tests in `test_step8_suite_coverage.py`; five fail on the basename rule.
+- [x] Commit: `"hooks: the commit gate finds a kernel source's tests by suite, not by file name"`
 
 **Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes with the new cases.
 
