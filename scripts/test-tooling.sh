@@ -1284,6 +1284,7 @@ _tt_nested_py "$REPO_ROOT/scripts/tests/test_format_md_tables.py" fmt_tables
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_release_image_binding.py" image_binding
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_fence.py" todo_fence
 _tt_nested_py "$REPO_ROOT/scripts/site/tests/test_build.py" site_build
+_tt_nested_py "$REPO_ROOT/scripts/site/tests/test_site_live_waits.py" site_live_waits
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_alias_staleness.py" alias_staleness
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_plan.py" todo_plan
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_smoke_screen.py" smoke_screen
@@ -1394,6 +1395,18 @@ if [ -f "$SITE_TEST" ]; then
     fi
 else
     t_fail "scripts/site/tests/test_build.py not found"
+fi
+
+# The live-site check's deploy wait (scripts/site/tests/test_site_live_waits.py): it
+# runs the wait step's own jq filter, which once counted a Pages run stranded in the
+# queue behind finished deploys and held the check to its timeout (2026-11-12).
+SLW_TEST="$REPO_ROOT/scripts/site/tests/test_site_live_waits.py"
+SLW_OUT=$(_tt_nested_collect site_live_waits python3 "$SLW_TEST")
+if [ "$?" = "0" ]; then
+    t_pass "scripts/site/tests/test_site_live_waits.py PASS"
+else
+    t_fail "scripts/site/tests/test_site_live_waits.py FAIL ($(printf '%s\n' "$SLW_OUT" | tail -3 | tr '\n' ' '))"
+    _tt_nested_fail_detail "test_site_live_waits" "$SLW_OUT"
 fi
 
 # The alias-staleness promotion check (scripts/tests/test_alias_staleness.py).

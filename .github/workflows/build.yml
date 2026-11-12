@@ -129,7 +129,8 @@ jobs:
             gcc \
             ccache \
             python3-yaml \
-            python3-pytest
+            python3-pytest \
+            jq
 
       # ── Verify toolchain matches scripts/setup.sh sentinel contract ─────────
       # If this fails, the inline apt install above and scripts/setup.sh have
@@ -430,7 +431,8 @@ jobs:
             qemu-utils \
             gcc \
             python3-yaml \
-            python3-pytest
+            python3-pytest \
+            jq
 
       # ── Verify toolchain matches scripts/setup.sh sentinel contract ─────────
       # If this fails, the inline apt install above and scripts/setup.sh have

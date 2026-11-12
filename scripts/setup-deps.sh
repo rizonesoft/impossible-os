@@ -86,6 +86,7 @@ case "$DISTRO" in
             "mkfs.fat:dosfstools"
             "parted:parted"
             "cppcheck:cppcheck"
+            "jq:jq"
         )
         INSTALL_CMD="sudo apt-get install -y"
         UPDATE_CMD="sudo apt-get update"
@@ -110,6 +111,7 @@ case "$DISTRO" in
             "mkfs.fat:dosfstools"
             "parted:parted"
             "cppcheck:cppcheck"
+            "jq:jq"
         )
         INSTALL_CMD="sudo dnf install -y"
         UPDATE_CMD="true"
@@ -134,6 +136,7 @@ case "$DISTRO" in
             "mkfs.fat:dosfstools"
             "parted:parted"
             "cppcheck:cppcheck"
+            "jq:jq"
         )
         INSTALL_CMD="sudo pacman -S --noconfirm --needed"
         UPDATE_CMD="true"
