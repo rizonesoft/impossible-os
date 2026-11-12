@@ -1426,6 +1426,13 @@ def _sub_script_tokens(cmd: str, depth: int) -> tuple[tuple, str, int]:
 _BASH_ERROR_LINE = re.compile(r"line (\d+):")
 
 
+# `bash -n` runs one top-level reading may spend: each is a process (~2 ms), and 6000
+# distinct malformed `bash -c` bodies naming a commit took 10.5 s. Past it the rest is
+# read conservatively. A real command needs one or two.
+_SYNTAX_CHECK_BUDGET = 64
+_SYNTAX_CHECKS_LEFT = _SYNTAX_CHECK_BUDGET
+
+
 def _bash_rejects_from(cmd: str, line: int) -> bool:
     """True when bash refuses to parse `cmd` at or after `line`, so nothing from there runs.
 
@@ -1435,8 +1442,12 @@ def _bash_rejects_from(cmd: str, line: int) -> bool:
     what follows it do not. Anything that stops the check answers False, and the caller
     then reads the unfinished text conservatively.
     """
+    global _SYNTAX_CHECKS_LEFT
     if line < 1:
         return False
+    if _SYNTAX_CHECKS_LEFT <= 0:
+        return False  # fail-direction: past the budget the text is read conservatively
+    _SYNTAX_CHECKS_LEFT -= 1
     try:
         done = subprocess.run(["bash", "-n", "-c", cmd], capture_output=True, text=True,
                               timeout=5)  # deadline: 5 s, a parse only
@@ -1461,6 +1472,7 @@ def _unread_commit(text: str) -> tuple[bool, bool]:
     """
     # Quotes and backslashes join a word in bash (`c'ommit'`, `gi\\t`): drop them first.
     words = _PLAIN_WORD.findall(re.sub(r"[\'\"\\\\]", "", text))
+    words = [w.rsplit("/", 1)[-1] for w in words]  # /usr/bin/git is git
     if "git" not in words or "commit" not in words[words.index("git"):]:
         return (False, False)
     return (True, True)
@@ -1473,11 +1485,12 @@ def _bash_is_git_commit(cmd: str) -> tuple[bool, bool]:
     """_read_git_commit, each script read once per top-level call. A shell's script
     (`eval "$(...)"`, `bash -c "$(...)"`) is read again where its command is judged,
     and nested ones re-read every deeper level: 2x the work per level, 2.5 s at twelve."""
-    global _COMMIT_MEMO, _REREAD_LEFT
+    global _COMMIT_MEMO, _REREAD_LEFT, _SYNTAX_CHECKS_LEFT
     outer = _COMMIT_MEMO is None
     if outer:
         _COMMIT_MEMO = {}
         _REREAD_LEFT = _REREAD_BUDGET
+        _SYNTAX_CHECKS_LEFT = _SYNTAX_CHECK_BUDGET
     try:
         if cmd not in _COMMIT_MEMO:
             _COMMIT_MEMO[cmd] = _read_git_commit(cmd)

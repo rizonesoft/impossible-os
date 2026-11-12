@@ -489,7 +489,7 @@ def test_long_reserved_leader_prefixes_stay_linear():
         return min(times)
 
     for head in ("env ", ""):
-        small, big = wrapped(20000, head), wrapped(160000, head)
+        small, big = wrapped(40000, head), wrapped(320000, head)  # small enough to be noise below 40000
         assert big < small * 8 * 2.5, (head, small, big)  # 14.7 s at 320000 under `env`
 
 
@@ -517,6 +517,22 @@ def test_nested_eval_rereading_is_bounded():
     deep = "eval " * 160 + "git commit -n -m y " + "x" * 200000
     assert gate._bash_is_git_commit(deep) == (True, True), "past the budget a commit is refused"
     assert gate._bash_is_git_commit("eval eval eval \"'git commit -n'\"") == (True, True)
+    path = "eval " * 160 + "/usr/bin/git commit -n -m y " + "x" * 20000
+    assert gate._bash_is_git_commit(path) == (True, True), "a git path past the budget too"
+
+
+def test_syntax_checks_per_reading_are_bounded():
+    """Performance pass: each distinct malformed body naming a commit ran bash -n (10.5 s
+    at 6000). Past the budget the rest is read conservatively: refused."""
+    import time
+    cmd = ";".join(f"bash -c '# git commit {n}\n'\"'\"" for n in range(6000))
+    t = time.perf_counter()
+    gate._bash_is_git_commit(cmd)
+    took = time.perf_counter() - t
+    assert took < 3, took
+    # bash rejects from line 2, so the quoted commit never runs: only a check says so.
+    assert gate._bash_is_git_commit("echo hi\n'git commit -n") == (False, False), \
+        "the budget resets for every top-level reading"
 
 
 def test_continued_heredoc_lines_stay_linear():
