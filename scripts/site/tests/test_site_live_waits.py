@@ -47,7 +47,19 @@ def test_a_run_stranded_behind_a_finished_deploy_does_not_hold_the_wait():
     assert _busy([ok, active]) == 1, "a running deploy always counts"
 
 
+def test_the_wait_ends_by_the_clock_before_its_step_times_out():
+    step = next(s for s in yaml.safe_load(WF.read_text())["jobs"]["verify"]["steps"]
+                if s.get("name") == "Wait for any Pages deploy to finish")
+    budget = re.search(r"deadline=\$\(\( \$\(date \+%s\) \+ (\d+) \* 60 \)\)", step["run"])
+    assert budget, "the loop is bounded by elapsed time, not an iteration count"
+    query = re.search(r"timeout (\d+) gh run list", step["run"])
+    assert query, "each query has its own deadline"
+    worst = int(budget.group(1)) * 60 + int(query.group(1)) + 30  # one last query and sleep
+    assert worst < step["timeout-minutes"] * 60, (worst, step["timeout-minutes"])
+
+
 if __name__ == "__main__":
+    test_the_wait_ends_by_the_clock_before_its_step_times_out()
     test_a_run_stranded_behind_a_finished_deploy_does_not_hold_the_wait()
     test_the_wait_comes_before_the_comparison()
     test_refusal_no_shared_group_that_could_cancel_a_pending_deploy()

@@ -62,6 +62,7 @@ Fail behavior split (Codex H2):
 Owner: TODO-08-automation-hardening section 4.
 """
 
+import collections
 import functools
 import json
 import os
@@ -244,7 +245,7 @@ def _walk_wrappers(words: list[str]) -> tuple[list[str], str | None]:
     """Strip command-runner wrappers (`sudo -u x`, `timeout 5`, `/usr/bin/env FOO=1`,
     `flock f`) from the front of a command. Returns the words of the command that runs,
     and the script of a `flock -c` (the words are then empty)."""
-    out = list(words)
+    out = collections.deque(words)  # popleft: pop(0) shifted every token (14.7 s at 320000)
     # Walk wrappers using a per-wrapper value-flag table (Codex H2
     # round-3 + round-4): `env -u FOO git ...` and `sudo -u alice
     # git ...` and `timeout -k 5 30 git ...` all need the value-bearing
@@ -322,7 +323,7 @@ def _walk_wrappers(words: list[str]) -> tuple[list[str], str | None]:
         return False
 
     while out and out[0].rsplit("/", 1)[-1] in _WRAPPER_TOKENS:
-        wrapper = out.pop(0).rsplit("/", 1)[-1]  # /usr/bin/env is env
+        wrapper = out.popleft().rsplit("/", 1)[-1]  # /usr/bin/env is env
         # flock special-case (Codex H2 round-4): `flock -c "cmd" file`
         # OR `flock file -c "cmd"` runs cmd as a shell. `flock -n file
         # cmd args` runs cmd with args. Both forms have a lockfile/fd
@@ -332,18 +333,18 @@ def _walk_wrappers(words: list[str]) -> tuple[list[str], str | None]:
             consumed_lockfile = False
             while out and (out[0].startswith("-") or not consumed_lockfile):
                 if out[0].startswith("-"):
-                    flag = out.pop(0)
+                    flag = out.popleft()
                     if "=" in flag:
                         head_eq, val_eq = flag.split("=", 1)
                         if head_eq in ("-c", "--command"):
                             inner_cmd = val_eq
                         continue
                     if flag in ("-c", "--command") and out:
-                        inner_cmd = out.pop(0)
+                        inner_cmd = out.popleft()
                         continue
                     if flag in ("-w", "--timeout", "-E",
                                 "--conflict-exit-code") and out:
-                        out.pop(0)
+                        out.popleft()
                         continue
                     # bare flock flags: -s/-x/-u/-n/-o/-F/-E/-h/-V (no value)
                     continue
@@ -351,7 +352,7 @@ def _walk_wrappers(words: list[str]) -> tuple[list[str], str | None]:
                 # or fd; consume it once, then exit so the real command
                 # head can be processed by the outer logic.
                 if not consumed_lockfile:
-                    out.pop(0)
+                    out.popleft()
                     consumed_lockfile = True
                     continue
                 break
@@ -360,20 +361,20 @@ def _walk_wrappers(words: list[str]) -> tuple[list[str], str | None]:
             continue  # flock with no -c -- proceed to next wrapper iter
         value_flags = _WRAPPER_VALUE_FLAGS.get(wrapper, frozenset())
         while out and out[0].startswith("-"):
-            flag = out.pop(0)
+            flag = out.popleft()
             if "=" in flag:
                 continue
             if flag in value_flags and out:
-                out.pop(0)
+                out.popleft()
         # Wrapper-specific positional args before the real command.
         if wrapper == "timeout" and out and _is_duration(out[0]):
-            out.pop(0)
+            out.popleft()
         elif wrapper == "taskset" and out and _looks_like_cpu_mask(out[0]):
             # `taskset MASK cmd args` -- MASK is hex/decimal bitmask
             # (e.g. 03, 0x3, ff). With -p it's a PID after -p flag
             # (already consumed). With -c it's a list after -c (also
             # already consumed). Round-5 fix.
-            out.pop(0)
+            out.popleft()
         elif wrapper == "env":
             # `env FOO=bar BAZ=qux git commit ...` -- consume KEY=VAL pairs.
             while out and "=" in out[0] and not out[0].startswith("="):
@@ -381,14 +382,14 @@ def _walk_wrappers(words: list[str]) -> tuple[list[str], str | None]:
                 if head_a and (head_a[0].isalpha() or head_a[0] == "_") and all(
                     c.isalnum() or c == "_" for c in head_a
                 ):
-                    out.pop(0)
+                    out.popleft()
                 else:
                     break
         elif wrapper == "nice" and out and out[0].lstrip("-").isdigit():
-            out.pop(0)
+            out.popleft()
         elif wrapper == "chrt" and out and out[0].isdigit():
-            out.pop(0)
-    return out, None
+            out.popleft()
+    return list(out), None
 
 
 def _inner_script_is_git_commit(script: str) -> tuple[bool, bool]:
@@ -475,16 +476,18 @@ def _segment_is_git_commit(seg_tokens: list[str]) -> tuple[bool, bool]:
     H1: --no-verify skips .githooks/pre-commit entirely, so the
     harness layer must catch it).
     """
-    out = list(seg_tokens)
-    # Strip env-prefix assignments.
-    while out and "=" in out[0] and not out[0].startswith("="):
-        head = out[0].split("=", 1)[0]
+    # Strip env-prefix assignments: counted, then sliced once (pop(0) per assignment
+    # shifted the rest every time).
+    k = 0
+    while k < len(seg_tokens) and "=" in seg_tokens[k] and not seg_tokens[k].startswith("="):
+        head = seg_tokens[k].split("=", 1)[0]
         if head and (head[0].isalpha() or head[0] == "_") and all(
             c.isalnum() or c == "_" for c in head
         ):
-            out.pop(0)
+            k += 1
         else:
             break
+    out = list(seg_tokens[k:])
     # Codex H1c + H2 round-2 + round-3: descend into `bash -c "..."` /
     # `bash -lc "..."` / `bash --rcfile myrc -c "..."` / `sh -ec ...`
     # so combined short flags AND long-flag-with-value forms don't

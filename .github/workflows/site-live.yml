@@ -46,17 +46,19 @@ jobs:
         # it has since succeeded, which leaves it nothing to change: run 43096022843 sat
         # queued for 16 hours behind three successful deploys and held this step to its
         # timeout. A cancelled or failed run proves nothing about the site, so only a
-        # success supersedes. The loop ends at 25 minutes so the fallback below runs
-        # inside the step's timeout.
+        # success supersedes. The wait is bounded by elapsed time with each query capped
+        # (counting only the sleeps let slow queries overrun it), so the fallback below
+        # runs well inside the step's timeout.
         run: |
-          for _ in $(seq 1 50); do
-            busy="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow pages.yml --limit 20 \
+          deadline=$(( $(date +%s) + 25 * 60 ))
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            busy="$(timeout 60 gh run list --repo "$GITHUB_REPOSITORY" --workflow pages.yml --limit 20 \
                       --json status,conclusion,createdAt --jq '
                         ([.[] | select(.conclusion == "success") | .createdAt] | max) as $ok
                         | [.[] | select(.status != "completed"
                                         and (.status == "in_progress" or $ok == null or .createdAt > $ok))]
-                        | length')"
-            [ "${busy:-0}" = 0 ] && exit 0
+                        | length')" || busy=unknown
+            [ "$busy" = 0 ] && exit 0
             echo "a Pages deploy is still running ($busy); waiting"
             sleep 30
           done
