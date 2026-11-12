@@ -505,7 +505,9 @@ def test_refusal_a_parameter_or_local_named_like_the_function():
                  "int x[] = {0}, dpc_queue = 0;\n    (void)dpc_queue; (void)x;",
                  "int a = (int){0}, dpc_queue = 0;\n    (void)dpc_queue; (void)a;",
                  "static int (*dpc_queue)(void) = stub;\n    dpc_queue();",
-                 "unsigned int (*dpc_queue)(void) = (unsigned int (*)(void))stub;\n    dpc_queue();"):
+                 "unsigned int (*dpc_queue)(void) = (unsigned int (*)(void))stub;\n    dpc_queue();",
+                 "int (dpc_queue) = 0;\n    (void)dpc_queue;",
+                 "enum { A, dpc_queue = 1 };\n    (void)dpc_queue;"):
         test = ("static int stub(void) { return 0; }\n"
                 f"static void suite(void) {{\n    {body}\n}}\n"
                 "void test_register_x(void) {\n    test_suite_register_cat(\"x\", suite, TEST_CAT_SCHED);\n}\n")
@@ -524,7 +526,9 @@ def test_the_userland_walk_scales_linearly():
 
 def test_a_call_through_a_dereference_is_still_a_use():
     for body in ("int r = (*dpc_queue)(1);\n    (void)r;", "(void)(*dpc_queue)(1);",
-                 "int r = (int){dpc_queue(1)};\n    (void)r;"):
+                 "int r = (int){dpc_queue(1)};\n    (void)r;",
+                 "int scale = 2;\n    int r = scale * dpc_queue(1);\n    (void)r;",
+                 "int (*dpc_queue(int));\n    (void)dpc_queue(1);"):
         test = (f"static void suite(void) {{\n    {body}\n}}\n"
                 "void test_register_x(void) {\n    test_suite_register_cat(\"x\", suite, TEST_CAT_SCHED);\n}\n")
         ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": test})

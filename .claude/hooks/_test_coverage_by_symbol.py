@@ -457,9 +457,6 @@ _REGISTER = re.compile(r"\btest_suite_register(?:_cat)?\s*\(")
 _KEYWORDS = frozenset({"return", "else", "case", "goto", "sizeof", "do", "if", "while", "for", "switch"})
 # `type name =`, `type *name;`, `type name[`: a local the body declares. The type is
 # one or more words, so `return x;` (a keyword before the name) is not one.
-_LOCAL_DECL = re.compile(r"\b([A-Za-z_]\w*)[\s\*]+([A-Za-z_]\w*)\s*(?=[=;\[,)])")
-# `int f(int);` inside a body: a prototype, not a call.
-_LOCAL_PROTO = re.compile(r"\b([A-Za-z_]\w*)[\s\*]+([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*;")
 
 
 def _split_top(text: str, sep: str = ",") -> list[str]:
@@ -583,15 +580,19 @@ def _ident(t: str) -> bool:
     return t[:1].isalpha() or t[:1] == "_"
 
 
-def _declared(s: list[str]) -> set[str]:
+def _declared(s: list[str]) -> tuple[set[str], list[str]]:
     """The names one statement declares, read by C's declaration grammar:
     specifiers (qualifiers, storage classes, type words, a tagged type with or
     without a body, attributes, or one typedef name) then declarators, each of
-    pointer stars and qualifiers around a name or `( * declarator )`, with array and
-    parameter suffixes and an initialiser skipped to the next top-level comma. A
-    function declarator (a prototype) declares no local. Anything else, a call,
-    an assignment or a cast, declares nothing."""
+    pointer stars and qualifiers around a name or `( declarator )`, with array and
+    parameter suffixes and an initialiser skipped to the next top-level comma.
+    Returns (locals, prototypes): the objects declared, enumerators included, and
+    the functions declared (a prototype declares no local; the function a
+    declarator names is the one whose innermost suffix is a parameter list, so
+    `int (*f(int))` is a function and `int (*f)(int)` an object). Anything else,
+    a call, an assignment or a cast, declares nothing."""
     n, j, typed, guessed = len(s), 0, False, False
+    enumerators: list[str] = []
     while j < n:
         t = s[j]
         if t in _TAGS:
@@ -599,7 +600,15 @@ def _declared(s: list[str]) -> set[str]:
             if j < n and _ident(s[j]) and s[j] not in _NOT_TYPES:
                 j += 1
             if j < n and s[j] == "{":
-                j = _skip(s, j)
+                end = _skip(s, j)
+                if t == "enum":  # each enumerator is a name in this scope
+                    depth = 0
+                    for k in range(j, end):
+                        depth += s[k] in _OPEN
+                        depth -= s[k] in (")", "]", "}")
+                        if depth == 1 and s[k - 1] in ("{", ",") and _ident(s[k]):
+                            enumerators.append(s[k])
+                j = end
             typed = True
         elif t in ("__attribute__", "__declspec", "_Alignas", "typeof", "__typeof__"):
             j += 1
@@ -614,14 +623,15 @@ def _declared(s: list[str]) -> set[str]:
         elif _ident(t) and t not in _NOT_TYPES and not typed:
             nxt, after = s[j + 1] if j + 1 < n else "", s[j + 2] if j + 2 < n else ""
             if not ((_ident(nxt) and nxt not in _KEYWORDS) or nxt == "*" or (nxt == "(" and after == "*")):
-                return set()
+                return set(), []
             typed = guessed = True
             j += 1
         else:
             break
     if not typed:
-        return set()
-    names: set[str] = set()
+        return set(), []
+    names: set[str] = set(enumerators)
+    protos: list[str] = []
 
     def declarator(j: int) -> tuple[str | None, bool, int]:
         """(name, is a function declarator, next index), or name None on no match."""
@@ -630,14 +640,13 @@ def _declared(s: list[str]) -> set[str]:
         if j < n and _ident(s[j]) and s[j] not in _NOT_TYPES:
             name, j = s[j], j + 1
             func = j < n and s[j] == "("
-        elif j + 1 < n and s[j] == "(" and s[j + 1] == "*":
-            name, _, j = declarator(j + 1)
+        elif j + 1 < n and s[j] == "(" and (s[j + 1] == "*" or not guessed):
+            name, func, j = declarator(j + 1)
             if name is None or j >= n or s[j] != ")":
                 return None, False, j
             j += 1
             if guessed and not (j < n and s[j] in ("(", "[")):
                 return None, False, j  # `f(*p);` is a call, not a declaration
-            func = False
         else:
             return None, False, j
         while j < n and s[j] in ("(", "["):
@@ -648,37 +657,38 @@ def _declared(s: list[str]) -> set[str]:
         name, func, j = declarator(j)
         if name is None:
             break
-        if not func:
-            names.add(name)
+        (protos.append if func else names.add)(name)
         while j < n and s[j] != ",":
             j = _skip(s, j) if s[j] in _OPEN else j + 1
         j += 1
-    return names
-
-
-def _local_names(body: str) -> set[str]:
-    """Every name a declaration statement in `body` declares (see _declared),
-    for-loop init clauses included."""
-    names: set[str] = set()
-    for stmt in _statements(_TOKEN.findall(body)):
-        names |= _declared(stmt)
-    return names
+    return names, protos
 
 
 def _body_uses(body: str) -> set[str]:
-    """The identifiers a function uses, less its parameters and the locals it
-    declares. `body` may start with the function's parameter list (as _file_scope
-    gives it). A name declared anywhere in the body counts as local throughout it,
-    which can only under-credit. A block-scope prototype is dropped as text: it is
-    not a use, but it does not shadow the name."""
+    """The identifiers a function uses, less its parameters and the names its
+    declarations bind (see _declared; for-loop init clauses included). `body` may
+    start with the function's parameter list (as _file_scope gives it). A name
+    declared anywhere in the body counts as local throughout it, which can only
+    under-credit. A block-scope prototype names the real function without using
+    it, so the name is a use only where it appears beyond its prototypes."""
     params = set()
     if body.startswith("("):
         end = _close(body, 0)
         params, body = _param_names(body[:end]), body[end:]
-    # A prototype names the real function: drop only its text. `return f(x);` is a call.
-    body = _LOCAL_PROTO.sub(lambda m: m.group(0) if m.group(1) in _KEYWORDS else " ", body)
-    declared = {m.group(2) for m in _LOCAL_DECL.finditer(body) if m.group(1) not in _KEYWORDS}
-    return set(_IDENT.findall(body)) - declared - _local_names(body) - params
+    toks = _TOKEN.findall(body)
+    idents = [t for t in toks if _ident(t)]
+    local: set[str] = set()
+    protos: dict[str, int] = {}
+    for stmt in _statements(toks):
+        names, declared = _declared(stmt)
+        local |= names
+        for name in declared:
+            protos[name] = protos.get(name, 0) + 1
+    seen: dict[str, int] = {}
+    for t in idents:
+        seen[t] = seen.get(t, 0) + 1
+    only_declared = {name for name, k in protos.items() if seen.get(name, 0) <= k}
+    return set(idents) - local - params - only_declared
 
 
 def _bodies(text: str, defines: dict | None = None) -> tuple[dict[str, str], set[str]]:
