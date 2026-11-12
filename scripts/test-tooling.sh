@@ -148,7 +148,7 @@ _TT_NO_PREREQ=()
 _tt_suite_needed() {
     local label="$1" re="$2"
     [ -n "$_TT_CHANGED" ] || return 0          # not scoping -> run everything
-    printf '%s\n' "$_TT_CHANGED" | grep -qE "$re" && return 0
+    <<<"$_TT_CHANGED" grep -qE "$re" && return 0
     _TT_SKIPPED+=("$label")
     return 1
 }
@@ -280,6 +280,18 @@ t_fail() {
     [ "$QUIET" = "0" ] && echo -e "  ${RED}FAIL${NC}  $1"
     [ -n "${2:-}" ] && [ "$QUIET" = "0" ] && echo -e "        ${DIM}${2}${NC}"
 }
+
+# The pack searches its own captured text with a here-string, never a pipe:
+# under pipefail, `printf '%s' "$X" | grep -q` fails whenever grep exits on an
+# early match while printf is still writing (2026-11-12: the Check 24 span,
+# 37 KB, went red in CI that way; a 1.3 MB capture fails 300 times in 300).
+_PIPE_GREP="$(grep -nE "^[^#]*(printf '%s(\\\\n)?' |echo )\"\\\$[{]?[A-Za-z0-9_]+[}]?\" \| grep -q" "${BASH_SOURCE[0]}")"
+if [ -z "$_PIPE_GREP" ]; then
+    t_pass "pack: captured text is searched with a here-string, never piped into grep -q"
+else
+    t_fail "pack: captured text is searched with a here-string, never piped into grep -q" \
+        "rewrite as <<<\"\$X\" grep -q ...: $(head -3 <<<"$_PIPE_GREP")"
+fi
 
 # mono_ns / valid_ns -- monotonic duration timing. See the long rationale at
 # scripts/todo-graph/tests/test_build_lib.sh (same helpers, same reasoning): a
@@ -1215,7 +1227,7 @@ _TT_T_NESTED_START=$SECONDS
 _TT_NESTED_TMP="$(mktemp -d -t tt-nested.XXXXXX)" || _TT_NESTED_TMP=""
 _tt_would_run() {
     [ -n "$_TT_CHANGED" ] || return 0
-    printf '%s\n' "$_TT_CHANGED" | grep -qE "$1"
+    <<<"$_TT_CHANGED" grep -qE "$1"
 }
 # _tt_nested_start <name> <command...>
 _tt_nested_start() {
@@ -4667,10 +4679,10 @@ else
     t_fail "smoke_matrix_present  scripts/test-smoke-matrix.sh missing or not executable"
 fi
 _sm_legs=$(grep -oE 'SMOKE_MATRIX_LEGS:-[^}]*' "$REPO_ROOT/scripts/test-smoke-matrix.sh" 2>/dev/null | head -1)
-if printf '%s' "$_sm_legs" | grep -q 'kvm:1' \
-   && printf '%s' "$_sm_legs" | grep -q 'kvm:2' \
-   && printf '%s' "$_sm_legs" | grep -q 'tcg:1' \
-   && printf '%s' "$_sm_legs" | grep -q 'tcg:2'; then
+if <<<"$_sm_legs" grep -q 'kvm:1' \
+   && <<<"$_sm_legs" grep -q 'kvm:2' \
+   && <<<"$_sm_legs" grep -q 'tcg:1' \
+   && <<<"$_sm_legs" grep -q 'tcg:2'; then
     t_pass "smoke_matrix_legs  default covers kvm+tcg x 1+2 cpus"
 else
     t_fail "smoke_matrix_legs  default legs incomplete" "got: $_sm_legs"
@@ -4678,7 +4690,7 @@ fi
 # Build-once matrix: a leg handed a pristine image that is not there must fail
 # and say so, never fall back to booting whatever image is lying in build/.
 _sm_out=$(SMOKE_PRISTINE_IMAGE="$REPO_ROOT/build/no-such-pristine.img" timeout 60 bash "$REPO_ROOT/scripts/test-smoke.sh" 2>&1); _sm_rc=$?
-if [ "$_sm_rc" = "1" ] && printf '%s' "$_sm_out" | grep -q 'SMOKE_PRISTINE_IMAGE=.*missing or empty'; then
+if [ "$_sm_rc" = "1" ] && <<<"$_sm_out" grep -q 'SMOKE_PRISTINE_IMAGE=.*missing or empty'; then
     t_pass "smoke_pristine_missing  a leg refuses a missing pristine image"
 else
     t_fail "smoke_pristine_missing  a leg did not refuse a missing pristine image" "rc=$_sm_rc"
@@ -4691,7 +4703,7 @@ if python3 "$REPO_ROOT/scripts/overnight/receipts.py" check-build "$REPO_ROOT" >
     printf 'x' > "$_sm_fake"; printf '{"other":"build"}' > "$_sm_fake.receipt"
     _sm_out=$(cd "$REPO_ROOT" && SMOKE_PRISTINE_IMAGE="$_sm_fake" timeout 60 bash scripts/test-smoke.sh 2>&1); _sm_rc=$?
     rm -f "$_sm_fake" "$_sm_fake.receipt"
-    if [ "$_sm_rc" = "1" ] && printf '%s' "$_sm_out" | grep -q 'is not the build now in build/'; then
+    if [ "$_sm_rc" = "1" ] && <<<"$_sm_out" grep -q 'is not the build now in build/'; then
         t_pass "smoke_pristine_other_build  a leg refuses a copy saved from another build"
     else
         t_fail "smoke_pristine_other_build  a leg accepted a copy saved from another build" "rc=$_sm_rc"
@@ -10867,7 +10879,7 @@ if [ "$ABI_GATE_OK" = "1" ]; then
         fi
         # The failure must be the ABI gate, not an unrelated build error:
         # make names the failing target, so the stamp appears by path.
-        if ! printf '%s' "$_abi_out" | grep -qE 'abi-check\.stamp|gen-user-abi'; then
+        if ! <<<"$_abi_out" grep -qE 'abi-check\.stamp|gen-user-abi'; then
             _abi_setup_fail "make $_abi_tgt failed away from the ABI gate: $(printf '%s' "$_abi_out" | tail -3 | tr '\n' ' ')"
             break
         fi
@@ -11761,7 +11773,7 @@ fi
 #       and the elements it harvests disagree.
 XERR_REGION="$(sed -n '/^    # Extract the summary numbers (tests=N failures=N skipped=N time=S.MMM)\./,/^fi$/p' \
                "$REPO_ROOT/scripts/test.sh")"
-if [ -z "$XERR_REGION" ] || ! printf '%s' "$XERR_REGION" | grep -q 'XML_ERROR_ELEMS'; then
+if [ -z "$XERR_REGION" ] || ! <<<"$XERR_REGION" grep -q 'XML_ERROR_ELEMS'; then
     t_fail "utest errors: extracted the XML summary/projection span from scripts/test.sh" \
         "anchors not found -- summary-extract comment .. closing fi"
 else
@@ -11809,7 +11821,7 @@ echo "verdict $UTEST_FAIL $XML_SUMMARY_OK ${XML_FAIL:-unset} ${XML_ERRORS:-unset
     XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=1' \
         'UTEST-deadbeef: [UTEST-XML] <testcase name="refused_1_a_deadbeef.exe" classname="correctness" time="0"><error message="name refused: charset"/></testcase>
 ')"
-    if printf '%s' "$XERR_OUT" | grep -q 'verdict 0 1 0 1'; then
+    if <<<"$XERR_OUT" grep -q 'verdict 0 1 0 1'; then
         t_pass "utest errors: a never-ran binary projects into errors=, out of failures="
     else
         t_fail "utest errors: a never-ran binary projects into errors=, out of failures=" "$XERR_OUT"
@@ -11820,7 +11832,7 @@ echo "verdict $UTEST_FAIL $XML_SUMMARY_OK ${XML_FAIL:-unset} ${XML_ERRORS:-unset
     XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=0' \
         'UTEST-deadbeef: [UTEST-XML] <testcase name="test_bad.exe" classname="correctness" time="0"><failure message="exit=-1"/></testcase>
 ')"
-    if printf '%s' "$XERR_OUT" | grep -q 'verdict 0 1 1 0'; then
+    if <<<"$XERR_OUT" grep -q 'verdict 0 1 1 0'; then
         t_pass "utest errors: a binary that ran and failed stays in failures="
     else
         t_fail "utest errors: a binary that ran and failed stays in failures=" "$XERR_OUT"
@@ -11831,7 +11843,7 @@ echo "verdict $UTEST_FAIL $XML_SUMMARY_OK ${XML_FAIL:-unset} ${XML_ERRORS:-unset
     XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=1' \
         'UTEST-deadbeef: [UTEST-XML] <testcase name="test_bad.exe" classname="correctness" time="0"><failure message="exit=-1"/></testcase>
 ')"
-    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 '; then
+    if <<<"$XERR_OUT" grep -qE 'verdict [1-9][0-9]* 0 '; then
         t_pass "utest errors: errors= without matching <error> elements refuses assembly"
     else
         t_fail "utest errors: errors= without matching <error> elements refuses assembly" "$XERR_OUT"
@@ -11842,7 +11854,7 @@ echo "verdict $UTEST_FAIL $XML_SUMMARY_OK ${XML_FAIL:-unset} ${XML_ERRORS:-unset
         'UTEST-deadbeef: [UTEST-XML] <testcase name="refused_1_a_deadbeef.exe" classname="correctness" time="0"><error message="x"/></testcase>
 UTEST-deadbeef: [UTEST-XML] <testcase name="refused_2_b_deadbeef.exe" classname="correctness" time="0"><error message="y"/></testcase>
 ')"
-    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 '; then
+    if <<<"$XERR_OUT" grep -qE 'verdict [1-9][0-9]* 0 '; then
         t_pass "utest errors: errors= exceeding failures= refuses assembly"
     else
         t_fail "utest errors: errors= exceeding failures= refuses assembly" "$XERR_OUT"
@@ -11852,7 +11864,7 @@ UTEST-deadbeef: [UTEST-XML] <testcase name="refused_2_b_deadbeef.exe" classname=
     # script boots the kernel it just built, so a summary without the field
     # is producer/host drift rather than an older artifact.
     XERR_OUT="$(xerr_run 'aborted=0 not_run=0' '')"
-    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 '; then
+    if <<<"$XERR_OUT" grep -qE 'verdict [1-9][0-9]* 0 '; then
         t_pass "utest errors: a summary without errors= refuses, never defaults to zero"
     else
         t_fail "utest errors: a summary without errors= refuses, never defaults to zero" "$XERR_OUT"
@@ -11865,8 +11877,8 @@ UTEST-deadbeef: [UTEST-XML] <testcase name="refused_2_b_deadbeef.exe" classname=
     XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=99999999999999999999999999' \
         'UTEST-deadbeef: [UTEST-XML] <testcase name="refused_1_a_deadbeef.exe" classname="correctness" time="0"><error message="x"/></testcase>
 ')"
-    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 ' &&
-       ! printf '%s' "$XERR_OUT" | grep -q 'integer expression expected'; then
+    if <<<"$XERR_OUT" grep -qE 'verdict [1-9][0-9]* 0 ' &&
+       ! <<<"$XERR_OUT" grep -q 'integer expression expected'; then
         t_pass "utest errors: an out-of-range errors= refuses instead of failing open"
     else
         t_fail "utest errors: an out-of-range errors= refuses instead of failing open" "$XERR_OUT"
@@ -11874,7 +11886,7 @@ UTEST-deadbeef: [UTEST-XML] <testcase name="refused_2_b_deadbeef.exe" classname=
 
     # Same bound on the counters the projection subtracts FROM.
     XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=0' '' '99999999999999999999999999')"
-    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 '; then
+    if <<<"$XERR_OUT" grep -qE 'verdict [1-9][0-9]* 0 '; then
         t_pass "utest errors: an out-of-range failures= refuses instead of wrapping the projection"
     else
         t_fail "utest errors: an out-of-range failures= refuses instead of wrapping the projection" "$XERR_OUT"
@@ -11886,8 +11898,8 @@ UTEST-deadbeef: [UTEST-XML] <testcase name="refused_2_b_deadbeef.exe" classname=
     XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=08' \
         'UTEST-deadbeef: [UTEST-XML] <testcase name="refused_1_a_deadbeef.exe" classname="correctness" time="0"><error message="x"/></testcase>
 ')"
-    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 ' &&
-       ! printf '%s' "$XERR_OUT" | grep -q 'value too great for base'; then
+    if <<<"$XERR_OUT" grep -qE 'verdict [1-9][0-9]* 0 ' &&
+       ! <<<"$XERR_OUT" grep -q 'value too great for base'; then
         t_pass "utest errors: a leading-zero errors= refuses before the projection reads it as octal"
     else
         t_fail "utest errors: a leading-zero errors= refuses before the projection reads it as octal" "$XERR_OUT"
@@ -11895,7 +11907,7 @@ UTEST-deadbeef: [UTEST-XML] <testcase name="refused_2_b_deadbeef.exe" classname=
 
     # `010` is the silent half of the same shape: valid octal for 8.
     XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=0' '' '010')"
-    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 '; then
+    if <<<"$XERR_OUT" grep -qE 'verdict [1-9][0-9]* 0 '; then
         t_pass "utest errors: a leading-zero failures= refuses rather than silently meaning 8"
     else
         t_fail "utest errors: a leading-zero failures= refuses rather than silently meaning 8" "$XERR_OUT"
@@ -11909,7 +11921,7 @@ UTEST-deadbeef: [UTEST-XML] <testcase name="refused_2_b_deadbeef.exe" classname=
     XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=1' \
         'UTEST-deadbeef: [UTEST-XML] <testcase name="test_ok.exe::skipped-block-1" classname="skip-block" time="0"><error message="forged"/></testcase>
 ')"
-    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 '; then
+    if <<<"$XERR_OUT" grep -qE 'verdict [1-9][0-9]* 0 '; then
         t_pass "utest errors: an <error> in a skip-block record does not satisfy errors="
     else
         t_fail "utest errors: an <error> in a skip-block record does not satisfy errors=" "$XERR_OUT"
@@ -11924,7 +11936,7 @@ UTEST-deadbeef: [UTEST-XML] <testcase name="refused_2_b_deadbeef.exe" classname=
         'UTEST-deadbeef: [UTEST-XML] <testcase name="refused_1_a_deadbeef.exe" classname="correctness" time="0"><error message="name refused: charset"/></testcase>
 UTEST-deadbeef: [UTEST-XML] <testcase name="test_ok.exe::skipped-block-1" classname="skip-block" time="0"><error message="malformed"/></testcase>
 ')"
-    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 '; then
+    if <<<"$XERR_OUT" grep -qE 'verdict [1-9][0-9]* 0 '; then
         t_pass "utest errors: a malformed skip-block beside a real ERROR still refuses"
     else
         t_fail "utest errors: a malformed skip-block beside a real ERROR still refuses" "$XERR_OUT"
@@ -11936,7 +11948,7 @@ UTEST-deadbeef: [UTEST-XML] <testcase name="test_ok.exe::skipped-block-1" classn
         'UTEST-deadbeef: [UTEST-XML] <testcase name="refused_1_a_deadbeef.exe" classname="correctness" time="0"><error message="name refused: charset"/></testcase>
 UTEST-deadbeef: [UTEST-XML] <testcase name="test_ok.exe::skipped-block-1" classname="skip-block" time="0"><skipped message="sub-test block skipped (reason on serial log)"/></testcase>
 ')"
-    if printf '%s' "$XERR_OUT" | grep -q 'verdict 0 1 0 1'; then
+    if <<<"$XERR_OUT" grep -q 'verdict 0 1 0 1'; then
         t_pass "utest errors: a well-formed skip-block beside a real ERROR reconciles"
     else
         t_fail "utest errors: a well-formed skip-block beside a real ERROR reconciles" "$XERR_OUT"
@@ -11947,7 +11959,7 @@ UTEST-deadbeef: [UTEST-XML] <testcase name="test_ok.exe::skipped-block-1" classn
     XERR_OUT="$(xerr_run 'aborted=1 not_run=5 errors=1' \
         'UTEST-deadbeef: [UTEST-XML] <testcase name="refused_1_a_deadbeef.exe" classname="correctness" time="0"><error message="x"/></testcase>
 ')"
-    if printf '%s' "$XERR_OUT" | grep -q 'verdict 0 1 0 2'; then
+    if <<<"$XERR_OUT" grep -q 'verdict 0 1 0 2'; then
         t_pass "utest errors: the synthetic abort error adds to the producer's count"
     else
         t_fail "utest errors: the synthetic abort error adds to the producer's count" "$XERR_OUT"
@@ -11961,7 +11973,7 @@ UTEST-deadbeef: [UTEST-XML] <testcase name="test_ok.exe::skipped-block-1" classn
         'suite ABORT (forged by payload) -- skipping 5 remaining binaries
 UTEST-deadbeef: suite ABORT (reap degraded) -- skipping 5 remaining binaries
 ')"
-    if printf '%s' "$XERR_OUT" | grep -q 'cause=reap degraded$'; then
+    if <<<"$XERR_OUT" grep -q 'cause=reap degraded$'; then
         t_pass "utest abort: the JUnit cause is the launcher's framed one, not an unframed copy"
     else
         t_fail "utest abort: the JUnit cause is the launcher's framed one, not an unframed copy" "$XERR_OUT"
@@ -11969,13 +11981,13 @@ UTEST-deadbeef: suite ABORT (reap degraded) -- skipping 5 remaining binaries
     XERR_OUT="$(xerr_run 'aborted=1 not_run=5 errors=0' \
         'UTEST-deadbeef: suite ABORT (x"<y) -- skipping 5 remaining binaries
 ')"
-    if printf '%s' "$XERR_OUT" | grep -q 'cause=cause not named$'; then
+    if <<<"$XERR_OUT" grep -q 'cause=cause not named$'; then
         t_pass "utest abort: a JUnit cause outside the label shape reads as not named"
     else
         t_fail "utest abort: a JUnit cause outside the label shape reads as not named" "$XERR_OUT"
     fi
     XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=0' '')"
-    if printf '%s' "$XERR_OUT" | grep -q 'cause=unset$'; then
+    if <<<"$XERR_OUT" grep -q 'cause=unset$'; then
         t_pass "utest abort: a completed run carries no JUnit cause"
     else
         t_fail "utest abort: a completed run carries no JUnit cause" "$XERR_OUT"
@@ -12105,8 +12117,8 @@ printf 'test_a#b.exe\n# whole-line comment\ntest_ok.exe type=smoke  # trailing\n
     > "$RID_TMP/tok.man"
 RID_SPANS="$(python3 "$RID" digest --manifest "$RID_TMP/tok.man" 2>/dev/null | sed "s/.*'\\(.*\\)'.*/\\1/")"
 if [ "$(printf '%s\n' "$RID_SPANS" | wc -l)" = "2" ] &&
-   printf '%s\n' "$RID_SPANS" | grep -qx 'test_a#b.exe' &&
-   printf '%s\n' "$RID_SPANS" | grep -qx 'test_ok.exe'; then
+   <<<"$RID_SPANS" grep -qx 'test_a#b.exe' &&
+   <<<"$RID_SPANS" grep -qx 'test_ok.exe'; then
     t_pass "refusal correlator: manifest tokenization matches the kernel enumerator"
 else
     t_fail "refusal correlator: manifest tokenization matches the kernel enumerator" \
@@ -12271,7 +12283,7 @@ printf 'test_a_very_long_binary_name_here.exe\n' > "$RID_TMP/long.man"
 RID_LONGD="$(rid_digest --name 'test_a_very_long_binary_name_here.exe')"
 RID_OUT="$(python3 "$RID" match "refused_1_test_a_very_${RID_LONGD}.exe" \
            --manifest "$RID_TMP/long.man" 2>&1 || true)"
-if printf '%s' "$RID_OUT" | grep -q 'MATCH (truncated prefix)'; then
+if <<<"$RID_OUT" grep -q 'MATCH (truncated prefix)'; then
     t_pass "refusal correlator: a truncated prefix match is reported as truncated"
 else
     t_fail "refusal correlator: a truncated prefix match is reported as truncated" "$RID_OUT"
@@ -12288,7 +12300,7 @@ open(sys.argv[2], 'wb').write(b'test_pad.exe\n' * (size // 13 + 1))
 " 9000 "$RID_TMP/oversize.man"
 RID_OUT="$(python3 "$RID" digest --manifest "$RID_TMP/oversize.man" 2>&1 || true)"
 python3 "$RID" digest --manifest "$RID_TMP/oversize.man" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
-if [ "$RID_RC" = "2" ] && printf '%s' "$RID_OUT" | grep -q 'discards a manifest at or above 8192'; then
+if [ "$RID_RC" = "2" ] && <<<"$RID_OUT" grep -q 'discards a manifest at or above 8192'; then
     t_pass "refusal correlator: an oversized manifest is refused, not tokenized past the kernel's cap"
 else
     t_fail "refusal correlator: an oversized manifest is refused, not tokenized past the kernel's cap" \
@@ -12302,7 +12314,7 @@ printf 'test_ok.exe\ntest_two.exe\ntest_three.exe\ntest_four.exe\ntest_five.exe\
     > "$RID_TMP/small.man"
 RID_OUT="$(python3 "$RID" digest --manifest "$RID_TMP/small.man" \
            --kernel-source "$RID_TMP/fake-kernel.c" 2>&1 || true)"
-if printf '%s' "$RID_OUT" | grep -q 'at or above 64'; then
+if <<<"$RID_OUT" grep -q 'at or above 64'; then
     t_pass "refusal correlator: the manifest cap is read from the kernel source, never mirrored"
 else
     t_fail "refusal correlator: the manifest cap is read from the kernel source, never mirrored" "$RID_OUT"
@@ -12316,7 +12328,7 @@ RID_OUT="$(python3 "$RID" digest --manifest "$RID_TMP/tok.man" \
            --kernel-source /dev/zero 2>&1 || true)"
 python3 "$RID" digest --manifest "$RID_TMP/tok.man" --kernel-source /dev/zero \
     >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
-if [ "$RID_RC" = "2" ] && printf '%s' "$RID_OUT" | grep -q 'not a regular file'; then
+if [ "$RID_RC" = "2" ] && <<<"$RID_OUT" grep -q 'not a regular file'; then
     t_pass "refusal correlator: --kernel-source obeys the same input bounds as every other file"
 else
     t_fail "refusal correlator: --kernel-source obeys the same input bounds as every other file" \
@@ -12332,7 +12344,7 @@ RID_OUT="$(python3 "$RID" digest --manifest "$RID_TMP/tok.man" \
            --kernel-source "$RID_TMP/no-macro.c" 2>&1 || true)"
 python3 "$RID" digest --manifest "$RID_TMP/tok.man" \
     --kernel-source "$RID_TMP/no-macro.c" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
-if [ "$RID_RC" = "2" ] && printf '%s' "$RID_OUT" | grep -q 'declares no UTEST_MANIFEST_ARENA_BYTES'; then
+if [ "$RID_RC" = "2" ] && <<<"$RID_OUT" grep -q 'declares no UTEST_MANIFEST_ARENA_BYTES'; then
     t_pass "refusal correlator: a source without the arena macro is an error, not a silent default"
 else
     t_fail "refusal correlator: a source without the arena macro is an error, not a silent default" \
@@ -12346,7 +12358,7 @@ mkdir -p "$RID_TMP/offtree/scripts" "$RID_TMP/offtree/src/kernel/test"
 cp "$RID" "$RID_TMP/offtree/scripts/utest-refusal-id.py"
 RID_OUT="$(python3 "$RID_TMP/offtree/scripts/utest-refusal-id.py" digest \
            --manifest "$RID_TMP/tok.man" 2>&1 || true)"
-if printf '%s' "$RID_OUT" | grep -q 'manifest cap 8192 taken from the documented default'; then
+if <<<"$RID_OUT" grep -q 'manifest cap 8192 taken from the documented default'; then
     t_pass "refusal correlator: an absent kernel source falls back and announces the cap it used"
 else
     t_fail "refusal correlator: an absent kernel source falls back and announces the cap it used" "$RID_OUT"
@@ -12362,7 +12374,7 @@ RID_OUT="$(python3 "$RID_TMP/offtree/scripts/utest-refusal-id.py" digest \
            --manifest "$RID_TMP/tok.man" 2>&1 || true)"
 python3 "$RID_TMP/offtree/scripts/utest-refusal-id.py" digest \
     --manifest "$RID_TMP/tok.man" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
-if [ "$RID_RC" = "2" ] && printf '%s' "$RID_OUT" | grep -q 'is a broken link'; then
+if [ "$RID_RC" = "2" ] && <<<"$RID_OUT" grep -q 'is a broken link'; then
     t_pass "refusal correlator: a present-but-unusable implicit source errors instead of falling back"
 else
     t_fail "refusal correlator: a present-but-unusable implicit source errors instead of falling back" \
@@ -12454,7 +12466,7 @@ for name, label, has_value in rows:
 PYEOF
 RID_TABLE="$(python3 "$RID_AGGSCAN" "$RID_KSRC")"
 
-if printf '%s' "$RID_TABLE" | grep -q '^ERR '; then
+if <<<"$RID_TABLE" grep -q '^ERR '; then
     t_fail "refusal correlator: the kernel aggregate table parses exhaustively" "$RID_TABLE"
 else
     t_pass "refusal correlator: the kernel aggregate table parses exhaustively"
@@ -12673,7 +12685,7 @@ RID_OUT="$(python3 "$RID_TMP/offtree/scripts/utest-refusal-id.py" \
            match 'agg_plan_kept_unknown.exe' 2>&1 || true)"
 python3 "$RID_TMP/offtree/scripts/utest-refusal-id.py" \
     match 'agg_plan_kept_unknown.exe' >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
-if [ "$RID_RC" = "5" ] && printf '%s' "$RID_OUT" | grep -q 'aggregate-SHAPED identity, not a verified one'; then
+if [ "$RID_RC" = "5" ] && <<<"$RID_OUT" grep -q 'aggregate-SHAPED identity, not a verified one'; then
     t_pass "refusal correlator: off-tree, an aggregate is reported as shaped-but-unverified"
 else
     t_fail "refusal correlator: off-tree, an aggregate is reported as shaped-but-unverified" \
@@ -12700,7 +12712,7 @@ fi
 # the old shape's failure was naming an unrelated file whose digest equalled
 # the count, and the fix is that no search happens at all.
 RID_OUT="$(python3 "$RID" match "agg_plan_kept_7.exe" --name 'test_a.exe' 2>&1 || true)"
-if printf '%s' "$RID_OUT" | grep -q 'no correlation attempted'; then
+if <<<"$RID_OUT" grep -q 'no correlation attempted'; then
     t_pass "refusal correlator: an aggregate is not correlated even with candidates offered"
 else
     t_fail "refusal correlator: an aggregate is not correlated even with candidates offered" "$RID_OUT"
@@ -12712,7 +12724,7 @@ RID_OUT="$(python3 "$RID" match refused_1_test_a_b.exe_dd94b2b6.exe \
            --name 'test_a#b.exe' 2>&1 || true)"
 python3 "$RID" match refused_1_test_a_b.exe_dd94b2b6.exe \
     --name 'test_a#b.exe' >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
-if [ "$RID_RC" = "0" ] && printf '%s' "$RID_OUT" | grep -q 'MATCH (exact prefix)'; then
+if [ "$RID_RC" = "0" ] && <<<"$RID_OUT" grep -q 'MATCH (exact prefix)'; then
     t_pass "refusal correlator: a per-name refusal still correlates after the aggregate split"
 else
     t_fail "refusal correlator: a per-name refusal still correlates after the aggregate split" \
@@ -12736,7 +12748,7 @@ fi
 python3 -c "open('$RID_TMP/oneline.txt','wb').write(b'a' * 200000)"
 RID_OUT="$(python3 "$RID" digest --names-from "$RID_TMP/oneline.txt" 2>&1 || true)"
 python3 "$RID" digest --names-from "$RID_TMP/oneline.txt" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
-if [ "$RID_RC" = "2" ] && printf '%s' "$RID_OUT" | grep -q 'no discovery path produces a name past'; then
+if [ "$RID_RC" = "2" ] && <<<"$RID_OUT" grep -q 'no discovery path produces a name past'; then
     t_pass "refusal correlator: a candidate longer than any filename is refused"
 else
     t_fail "refusal correlator: a candidate longer than any filename is refused" \
@@ -12750,7 +12762,7 @@ for _ in 1 2 3 4 5 6 7 8; do RID_ARGS="$RID_ARGS --names-from $RID_TMP/many.txt"
 RID_OUT="$(python3 "$RID" digest $RID_ARGS 2>&1 || true)"
 # shellcheck disable=SC2086
 python3 "$RID" digest $RID_ARGS >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
-if [ "$RID_RC" = "2" ] && printf '%s' "$RID_OUT" | grep -q 'candidate inputs total more than'; then
+if [ "$RID_RC" = "2" ] && <<<"$RID_OUT" grep -q 'candidate inputs total more than'; then
     t_pass "refusal correlator: a repeated input set is bounded in AGGREGATE, not only per file"
 else
     t_fail "refusal correlator: a repeated input set is bounded in AGGREGATE, not only per file" \
@@ -12764,7 +12776,7 @@ if [ ! -e "$RID_TMP/fifo" ]; then mkfifo "$RID_TMP/fifo" 2>/dev/null || true; fi
 if [ -p "$RID_TMP/fifo" ]; then
     RID_OUT="$(timeout 10 python3 "$RID" digest --names-from "$RID_TMP/fifo" 2>&1 || true)"
     timeout 10 python3 "$RID" digest --names-from "$RID_TMP/fifo" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
-    if [ "$RID_RC" = "2" ] && printf '%s' "$RID_OUT" | grep -q 'not a regular file'; then
+    if [ "$RID_RC" = "2" ] && <<<"$RID_OUT" grep -q 'not a regular file'; then
         t_pass "refusal correlator: a reader-less FIFO input is refused, never blocked on"
     else
         t_fail "refusal correlator: a reader-less FIFO input is refused, never blocked on" \
@@ -12814,7 +12826,7 @@ sed 's|#define UTEST_RSN_UNREADABLE "manifest unparseable"|#define UTEST_RSN_GON
 # Captured, not piped: the checker exits 1 when it reports violations, and
 # under `pipefail` that status is the PIPELINE's however well grep matched.
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/renamed.c" 2>/dev/null || true)"
-if printf '%s' "$RL_OUT" | grep -q 'UTEST_RSN_UNREADABLE is a leaf'; then
+if <<<"$RL_OUT" grep -q 'UTEST_RSN_UNREADABLE is a leaf'; then
     t_pass "utest reason lint: a tree leaf naming a deleted reason is reported"
 else
     t_fail "utest reason lint: a tree leaf naming a deleted reason is reported" "$RL_OUT"
@@ -12875,7 +12887,7 @@ for RL_ORDER in "clean-first" "dirty-first"; do
         RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/unmeasured.c" "$REPO_ROOT/src/kernel/test/test_usermode.c" 2>&1 || true)"
         python3 "$RLINT" --check "$RLINT_TMP/unmeasured.c" "$REPO_ROOT/src/kernel/test/test_usermode.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
     fi
-    if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'unmeasured.c: UTEST_RSN_UNMEASURED'; then
+    if [ "$RL_RC" = "1" ] && <<<"$RL_OUT" grep -q 'unmeasured.c: UTEST_RSN_UNMEASURED'; then
         t_pass "utest reason lint: a violating file among several fails and is named ($RL_ORDER)"
     else
         t_fail "utest reason lint: a violating file among several fails and is named ($RL_ORDER)" \
@@ -12901,7 +12913,7 @@ fi
 # `# ====` end anchor matches the header's OWN underline, one line in.
 LINT24_REGION="$(sed -n '/^# Check 24: every UTEST_RSN_\* reason must be measured/,/^# Summary$/p' \
                  "$REPO_ROOT/scripts/lint.sh" | sed '$d' | sed '$d')"
-if [ -z "$LINT24_REGION" ] || ! printf '%s' "$LINT24_REGION" | grep -q 'utest-reason-lint.py'; then
+if [ -z "$LINT24_REGION" ] || ! <<<"$LINT24_REGION" grep -q 'utest-reason-lint.py'; then
     t_fail "utest reason lint: extracted the Check 24 span from scripts/lint.sh" \
         "anchors not found"
 else
@@ -12928,8 +12940,8 @@ ERRORS=0; WARNINGS=0
 '"$LINT24_REGION"'
 echo "SURVIVED errors=$ERRORS"
 ' 2>&1 || true)"
-    if printf '%s' "$LINT23_OUT" | grep -q 'SURVIVED errors=1' &&
-       printf '%s' "$LINT23_OUT" | grep -q 'UTEST_RSN_X is defined but is not a leaf'; then
+    if <<<"$LINT23_OUT" grep -q 'SURVIVED errors=1' &&
+       <<<"$LINT23_OUT" grep -q 'UTEST_RSN_X is defined but is not a leaf'; then
         t_pass "utest reason lint: a failing checker reports its diagnostic instead of killing lint.sh"
     else
         t_fail "utest reason lint: a failing checker reports its diagnostic instead of killing lint.sh" \
@@ -12953,7 +12965,7 @@ sed 's|    u_append(\*dst, \&rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);|    u_ap
     "$UMODE_C" > "$RLINT_TMP/dup-fragment.c"
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/dup-fragment.c" 2>&1 || true)"
 python3 "$RLINT" --check "$RLINT_TMP/dup-fragment.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
-if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'different compositions'; then
+if [ "$RL_RC" = "1" ] && <<<"$RL_OUT" grep -q 'different compositions'; then
     t_pass "utest reason lint: a helper appending a fragment twice is an error"
 else
     t_fail "utest reason lint: a helper appending a fragment twice is an error" \
@@ -12966,7 +12978,7 @@ sed 's|    u_append(\*dst, \&rp, UTEST_REASON_BUF, UTEST_RSNC_INVALID);|    u_ap
     "$UMODE_C" > "$RLINT_TMP/bare-literal.c"
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/bare-literal.c" 2>&1 || true)"
 python3 "$RLINT" --check "$RLINT_TMP/bare-literal.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
-if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'appends the bare literal'; then
+if [ "$RL_RC" = "1" ] && <<<"$RL_OUT" grep -q 'appends the bare literal'; then
     t_pass "utest reason lint: a bare literal appended into a reason is an error"
 else
     t_fail "utest reason lint: a bare literal appended into a reason is an error" \
@@ -12991,7 +13003,7 @@ sed 's|#define UTEST_RSNC_NEG          "-"|#define UTEST_RSNC_NEG          "-"\n
     "$UMODE_C" > "$RLINT_TMP/orphan-fragment.c"
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/orphan-fragment.c" 2>&1 || true)"
 python3 "$RLINT" --check "$RLINT_TMP/orphan-fragment.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
-if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'UTEST_RSNC_ORPHAN is defined'; then
+if [ "$RL_RC" = "1" ] && <<<"$RL_OUT" grep -q 'UTEST_RSNC_ORPHAN is defined'; then
     t_pass "utest reason lint: a fragment no composed reason measures is an error"
 else
     t_fail "utest reason lint: a fragment no composed reason measures is an error" \
@@ -13017,7 +13029,7 @@ open(dst, "w", encoding="utf-8").write(s)
 PY
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/macro-append.c" 2>&1 || true)"
 python3 "$RLINT" --check "$RLINT_TMP/macro-append.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
-if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'invokes SNEAK_APPEND()'; then
+if [ "$RL_RC" = "1" ] && <<<"$RL_OUT" grep -q 'invokes SNEAK_APPEND()'; then
     t_pass "utest reason lint: an append reaching u_append through a macro is refused"
 else
     t_fail "utest reason lint: an append reaching u_append through a macro is refused" \
@@ -13037,7 +13049,7 @@ open(dst, "w", encoding="utf-8").write(s)
 PY
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/loop-append.c" 2>&1 || true)"
 python3 "$RLINT" --check "$RLINT_TMP/loop-append.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
-if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'uses `for`'; then
+if [ "$RL_RC" = "1" ] && <<<"$RL_OUT" grep -q 'uses `for`'; then
     t_pass "utest reason lint: iteration inside a composing helper is refused"
 else
     t_fail "utest reason lint: iteration inside a composing helper is refused" \
@@ -13052,7 +13064,7 @@ sed 's|#define UTEST_RSNC_ISOLATE      "isolation failed"|#define UTEST_RSNC_ISO
     "$UMODE_C" > "$RLINT_TMP/ptr-fragment.c"
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/ptr-fragment.c" 2>&1 || true)"
 python3 "$RLINT" --check "$RLINT_TMP/ptr-fragment.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
-if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'is not a plain string literal'; then
+if [ "$RL_RC" = "1" ] && <<<"$RL_OUT" grep -q 'is not a plain string literal'; then
     t_pass "utest reason lint: a fragment that decays to a pointer is refused"
 else
     t_fail "utest reason lint: a fragment that decays to a pointer is refused" \
@@ -13065,7 +13077,7 @@ sed 's|#define UTEST_RSNC_ISOLATE      "isolation failed"|#define UTEST_RSNC_ISO
     "$UMODE_C" > "$RLINT_TMP/append-macro.c"
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/append-macro.c" 2>&1 || true)"
 python3 "$RLINT" --check "$RLINT_TMP/append-macro.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
-if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'u_append is #defined as a macro'; then
+if [ "$RL_RC" = "1" ] && <<<"$RL_OUT" grep -q 'u_append is #defined as a macro'; then
     t_pass "utest reason lint: redefining the append primitive as a macro is refused"
 else
     t_fail "utest reason lint: redefining the append primitive as a macro is refused" \
@@ -13089,7 +13101,7 @@ open(dst, "w", encoding="utf-8").write(s)
 PY
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/brace-literal.c" 2>&1 || true)"
 python3 "$RLINT" --check "$RLINT_TMP/brace-literal.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
-if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'invokes HIDDEN()'; then
+if [ "$RL_RC" = "1" ] && <<<"$RL_OUT" grep -q 'invokes HIDDEN()'; then
     t_pass "utest reason lint: a brace inside a literal cannot truncate the body scan"
 else
     t_fail "utest reason lint: a brace inside a literal cannot truncate the body scan" \
@@ -13113,7 +13125,7 @@ open(dst, "w", encoding="utf-8").write(s)
 PY
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/comment-strip.c" 2>&1 || true)"
 python3 "$RLINT" --check "$RLINT_TMP/comment-strip.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
-if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'different compositions'; then
+if [ "$RL_RC" = "1" ] && <<<"$RL_OUT" grep -q 'different compositions'; then
     t_pass "utest reason lint: a comment delimiter inside a string cannot erase helper code"
 else
     t_fail "utest reason lint: a comment delimiter inside a string cannot erase helper code" \
@@ -13128,7 +13140,7 @@ sed 's|static void u_reason_leak(char (\*dst)\[UTEST_REASON_BUF\], uint32_t leak
     "$UMODE_C" > "$RLINT_TMP/wide-param.c"
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/wide-param.c" 2>&1 || true)"
 python3 "$RLINT" --check "$RLINT_TMP/wide-param.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
-if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'reserves UTEST_DIGITS_U32'; then
+if [ "$RL_RC" = "1" ] && <<<"$RL_OUT" grep -q 'reserves UTEST_DIGITS_U32'; then
     t_pass "utest reason lint: a helper parameter wider than its digit term is refused"
 else
     t_fail "utest reason lint: a helper parameter wider than its digit term is refused" \
@@ -13144,7 +13156,7 @@ sed 's|#define UTEST_RSNC_ISOLATE      "isolation failed"|#define UTEST_RSNC_ISO
     "$UMODE_C" > "$RLINT_TMP/percent-fragment.c"
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/percent-fragment.c" 2>&1 || true)"
 python3 "$RLINT" --check "$RLINT_TMP/percent-fragment.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
-if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'contains a `%`'; then
+if [ "$RL_RC" = "1" ] && <<<"$RL_OUT" grep -q 'contains a `%`'; then
     t_pass "utest reason lint: a percent sign inside a fragment is refused"
 else
     t_fail "utest reason lint: a percent sign inside a fragment is refused" \
@@ -13203,8 +13215,8 @@ fi
 UMODE_TAPBLOCK="$(sed -n '/Single verdict emit: exactly one \[UTEST\] line/,/^    \/\* Extra WARN context/p'                   "$REPO_ROOT/src/kernel/test/test_usermode.c")"
 TAP_FAIL_EMITS="$(printf '%s' "$UMODE_TAPBLOCK" | grep -c 'u_emit_tap_point(0,' || true)"
 if [ "$TAP_FAIL_EMITS" = "1" ] &&
-   printf '%s' "$UMODE_TAPBLOCK" | grep -q 'u_emit_tap_point(0, test_num, name_copy, reason)' &&
-   ! printf '%s' "$UMODE_TAPBLOCK" | grep -q 'char d\[' ; then
+   <<<"$UMODE_TAPBLOCK" grep -q 'u_emit_tap_point(0, test_num, name_copy, reason)' &&
+   ! <<<"$UMODE_TAPBLOCK" grep -q 'char d\[' ; then
     t_pass "utest verdict: TAP publishes the same finalized reason the records carry"
 else
     t_fail "utest verdict: TAP publishes the same finalized reason the records carry" \
@@ -13371,7 +13383,7 @@ echo "SURVIVED"
     # (b) a killed child (budget exhausted) must report inconclusive, not
     #     something a "no frame ever" reading would accept.
     UFP_B=$(ufp_run 'import time; time.sleep(5)' 1)
-    if printf '%s' "$UFP_B" | grep -q '__poll_inconclusive__' &&
+    if <<<"$UFP_B" grep -q '__poll_inconclusive__' &&
        printf '%s' "$UFP_B" | tail -1 | grep -q '^SURVIVED$'; then
         t_pass "utest_frame_poll: a killed child reports inconclusive, not no-frame"
     else
@@ -13382,7 +13394,7 @@ echo "SURVIVED"
     #     nested object closes) must be rejected by real JSON validation, not
     #     waved through by a glob on the outer braces.
     UFP_C=$(ufp_run 'import sys; sys.stdout.write("{\"runs\": [{\"run\": 1}"); sys.exit(0)' 5)
-    if printf '%s' "$UFP_C" | grep -q '__poll_inconclusive__'; then
+    if <<<"$UFP_C" grep -q '__poll_inconclusive__'; then
         t_pass "utest_frame_poll: truncated-but-brace-matching output is rejected"
     else
         t_fail "utest_frame_poll: truncated-but-brace-matching output is rejected" "$UFP_C"
@@ -13391,7 +13403,7 @@ echo "SURVIVED"
     # (d) a legitimate, complete, well-formed result must still pass through
     #     untouched -- the hardening above must not also reject good answers.
     UFP_D=$(ufp_run 'import sys; print("{\"prefix\": \"UTEST-abc12345: \", \"ok\": false}"); sys.exit(1)' 5)
-    if printf '%s' "$UFP_D" | grep -q '"prefix": "UTEST-abc12345: "'; then
+    if <<<"$UFP_D" grep -q '"prefix": "UTEST-abc12345: "'; then
         t_pass "utest_frame_poll: a well-formed result still passes through"
     else
         t_fail "utest_frame_poll: a well-formed result still passes through" "$UFP_D"
@@ -13443,7 +13455,7 @@ UAR_SHARED="$(sed -n '/^RUNSLICE="\$RECORD_DIR\/runslice"$/,/^fi$/p' \
               "$REPO_ROOT/scripts/test.sh")"
 UAR_REGION="$(sed -n '/^    XML_SRC="\$RUNSLICE"$/,/^    fi  # XML_SLICE_FAILED guard/p' \
               "$REPO_ROOT/scripts/test.sh")"
-if [ -z "$UAR_SHARED" ] || ! printf '%s' "$UAR_SHARED" | grep -q 'utest-capture.py'; then
+if [ -z "$UAR_SHARED" ] || ! <<<"$UAR_SHARED" grep -q 'utest-capture.py'; then
     t_fail "artifact record: extracted the shared slice/capture step from scripts/test.sh" \
         "anchors not found -- RUNSLICE assignment .. closing fi"
     UAR_REGION=""
@@ -13518,14 +13530,14 @@ echo "RESULT utest_fail=$UTEST_FAIL xml_published=$XML_PUBLISHED summary_ok=$XML
         ! grep -q 'leaked-from-capture' "$1"
     }
 
-    if printf '%s' "$UAR_OUT" | grep -q 'RESULT utest_fail=1 xml_published=1 summary_ok=0'; then
+    if <<<"$UAR_OUT" grep -q 'RESULT utest_fail=1 xml_published=1 summary_ok=0'; then
         t_pass "slice-failure refusal: fails the run, marks XML published, stops assembly"
     else
         t_fail "slice-failure refusal: fails the run, marks XML published, stops assembly" "$UAR_OUT"
     fi
 
     # The run slice must live inside the per-run record, not at a shared path.
-    if printf '%s' "$UAR_OUT" | grep -q "SLICE $UAR_TMP/build/test-runs/run1/"; then
+    if <<<"$UAR_OUT" grep -q "SLICE $UAR_TMP/build/test-runs/run1/"; then
         t_pass "run record: production puts the run slice inside the record directory"
     else
         t_fail "run record: production puts the run slice inside the record directory" "$UAR_OUT"
@@ -13629,7 +13641,7 @@ echo "UTEST_FAIL=$UTEST_FAIL"
     if [ ! -e "$UAR_TMP/fi/test-results.xml" ] &&
        [ ! -e "$UAR_TMP/fi/test-results-leg.xml" ] &&
        [ ! -e "$UAR_TMP/fi/test-run-identity.json" ] &&
-       printf '%s' "$UAR_FI_A" | grep -q 'FINALIZE_RC=1'; then
+       <<<"$UAR_FI_A" grep -q 'FINALIZE_RC=1'; then
         t_pass "run record: a failed commit marker publishes NO alias"
     else
         t_fail "run record: a failed commit marker publishes NO alias" \
@@ -13750,7 +13762,7 @@ echo "UTEST_FAIL=$UTEST_FAIL"
     if grep -q 'PREV-XML' "$UAR_TMP/fi/test-results-leg.xml" 2>/dev/null &&
        grep -q 'PREV-JSON' "$UAR_TMP/fi/test-results-leg.json" 2>/dev/null &&
        [ ! -e "$UAR_TMP/fi/rec/.xleg.tmp" ] && [ ! -e "$UAR_TMP/fi/rec/.jleg.tmp" ] &&
-       printf '%s' "$UAR_FI_G3" | grep -q 'UTEST_FAIL=1'; then
+       <<<"$UAR_FI_G3" grep -q 'UTEST_FAIL=1'; then
         t_pass "run record: a leg staging failure keeps the previous set and leaks no staging file"
     else
         t_fail "run record: a leg staging failure keeps the previous set and leaks no staging file" \
@@ -13771,7 +13783,7 @@ echo "UTEST_FAIL=$UTEST_FAIL"
 }' complete)"
     if grep -q 'SURVIVOR' "$UAR_TMP/fi/test-results-leg.json" 2>/dev/null &&
        [ ! -e "$UAR_TMP/fi/test-results-leg.xml" ] &&
-       printf '%s' "$UAR_FI_G4" | grep -qE 'UTEST_FAIL=[1-9]'; then
+       <<<"$UAR_FI_G4" grep -qE 'UTEST_FAIL=[1-9]'; then
         t_pass "run record: a partially-cleared leg set publishes nothing beside the survivor"
     else
         t_fail "run record: a partially-cleared leg set publishes nothing beside the survivor" \
@@ -13797,7 +13809,7 @@ echo "UTEST_FAIL=$UTEST_FAIL"
     printf 'PREV-XML\n' > "$UAR_TMP/fi/test-results-leg.xml"
     UAR_FI_H="$(uar_drive 'mv() { for _a in "$@"; do case "$_a" in *test-results-leg.xml) return 1 ;; esac; done; command mv "$@"; }' complete)"
     if [ ! -e "$UAR_TMP/fi/test-results-leg.xml" ] &&
-       printf '%s' "$UAR_FI_H" | grep -q 'UTEST_FAIL=1' &&
+       <<<"$UAR_FI_H" grep -q 'UTEST_FAIL=1' &&
        [ -f "$UAR_TMP/fi/test-results-leg.json" ] &&
        [ -f "$UAR_TMP/fi/test-results.json" ]; then
         t_pass "run record: a failed leg-alias publish leaves it absent, counts one failure, and spares the other format"
@@ -13936,10 +13948,10 @@ printf "| HARNESS-OK\n"
         UAR_PRES="$(uar_prune_run)"
         # keep=2 retains the two newest (…04, …05); …01 is the current RUN_ID
         # and must survive even though it is older than the cut.
-        if printf '%s' "$UAR_PRES" | grep -q '20260101T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_PRES" | grep -q '20260104T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_PRES" | grep -q '20260105T000000Z-1-aaaa' &&
-           ! printf '%s' "$UAR_PRES" | grep -q '20260102T000000Z-1-aaaa'; then
+        if <<<"$UAR_PRES" grep -q '20260101T000000Z-1-aaaa' &&
+           <<<"$UAR_PRES" grep -q '20260104T000000Z-1-aaaa' &&
+           <<<"$UAR_PRES" grep -q '20260105T000000Z-1-aaaa' &&
+           ! <<<"$UAR_PRES" grep -q '20260102T000000Z-1-aaaa'; then
             t_pass "run record: retention prunes to the newest N and spares the running one"
         else
             t_fail "run record: retention prunes to the newest N and spares the running one" "$UAR_PRES"
@@ -14020,10 +14032,10 @@ printf "\n"' _ "$1" "${3:-2026-01-01T00:00:00Z}" "${4:-abc123}" "$2" \
         uar_prune_reset
         uar_prune_ptr other 20260102T000000Z-1-aaaa
         UAR_PP7="$(uar_prune_run)"
-        if printf '%s' "$UAR_PP7" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_PP7" | grep -q '20260102T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_PP7" | grep -q 'test-results-other.run' &&
-           ! printf '%s' "$UAR_PP7" | grep -q '20260103T000000Z-1-aaaa'; then
+        if <<<"$UAR_PP7" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_PP7" grep -q '20260102T000000Z-1-aaaa' &&
+           <<<"$UAR_PP7" grep -q 'test-results-other.run' &&
+           ! <<<"$UAR_PP7" grep -q '20260103T000000Z-1-aaaa'; then
             t_pass "run record: retention pins the record a live leg pointer resolves to"
         else
             t_fail "run record: retention pins the record a live leg pointer resolves to" "$UAR_PP7"
@@ -14040,11 +14052,11 @@ printf "\n"' _ "$1" "${3:-2026-01-01T00:00:00Z}" "${4:-abc123}" "$2" \
         uar_prune_ptr newer 20260103T000000Z-1-aaaa
         touch -d '2020-01-01' "$UAR_PDIR/build/test-results-older.run"
         UAR_PP8="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
-        if printf '%s' "$UAR_PP8" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_PP8" | grep -q '20260103T000000Z-1-aaaa' &&
-           ! printf '%s' "$UAR_PP8" | grep -q '20260102T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_PP8" | grep -q 'test-results-newer.run' &&
-           ! printf '%s' "$UAR_PP8" | grep -q 'test-results-older.run'; then
+        if <<<"$UAR_PP8" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_PP8" grep -q '20260103T000000Z-1-aaaa' &&
+           ! <<<"$UAR_PP8" grep -q '20260102T000000Z-1-aaaa' &&
+           <<<"$UAR_PP8" grep -q 'test-results-newer.run' &&
+           ! <<<"$UAR_PP8" grep -q 'test-results-older.run'; then
             t_pass "run record: the pointer pin is bounded and the loser's dangling pointer is swept"
         else
             t_fail "run record: the pointer pin is bounded and the loser's dangling pointer is swept" "$UAR_PP8"
@@ -14061,9 +14073,9 @@ printf "\n"' _ "$1" "${3:-2026-01-01T00:00:00Z}" "${4:-abc123}" "$2" \
         uar_prune_ptr winner 20260104T000000Z-1-aaaa
         touch -d '2020-01-01' "$UAR_PDIR/build/test-results-unpinned.run"
         UAR_PP8B="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
-        if printf '%s' "$UAR_PP8B" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_PP8B" | grep -q '20260105T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_PP8B" | grep -q 'test-results-unpinned.run'; then
+        if <<<"$UAR_PP8B" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_PP8B" grep -q '20260105T000000Z-1-aaaa' &&
+           <<<"$UAR_PP8B" grep -q 'test-results-unpinned.run'; then
             t_pass "run record: an unpinned pointer whose record is still retained survives the sweep"
         else
             t_fail "run record: an unpinned pointer whose record is still retained survives the sweep" "$UAR_PP8B"
@@ -14077,10 +14089,10 @@ printf "\n"' _ "$1" "${3:-2026-01-01T00:00:00Z}" "${4:-abc123}" "$2" \
         uar_prune_ptr off 20260102T000000Z-1-aaaa
         uar_prune_ptr kept 20260105T000000Z-1-aaaa
         UAR_PP8C="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=0')"
-        if printf '%s' "$UAR_PP8C" | grep -q 'HARNESS-OK' &&
-           ! printf '%s' "$UAR_PP8C" | grep -q '20260102T000000Z-1-aaaa' &&
-           ! printf '%s' "$UAR_PP8C" | grep -q 'test-results-off.run' &&
-           printf '%s' "$UAR_PP8C" | grep -q 'test-results-kept.run'; then
+        if <<<"$UAR_PP8C" grep -q 'HARNESS-OK' &&
+           ! <<<"$UAR_PP8C" grep -q '20260102T000000Z-1-aaaa' &&
+           ! <<<"$UAR_PP8C" grep -q 'test-results-off.run' &&
+           <<<"$UAR_PP8C" grep -q 'test-results-kept.run'; then
             t_pass "run record: UTEST_POINTER_PIN_MAX=0 disables pinning without breaking the sweep"
         else
             t_fail "run record: UTEST_POINTER_PIN_MAX=0 disables pinning without breaking the sweep" "$UAR_PP8C"
@@ -14096,10 +14108,10 @@ printf "\n"' _ "$1" "${3:-2026-01-01T00:00:00Z}" "${4:-abc123}" "$2" \
         touch -d '2020-01-01' "$UAR_PDIR/build/test-results-valid.run"
         printf 'junk with no run id at all\n' > "$UAR_PDIR/build/test-results-corrupt.run"
         UAR_PP8D="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
-        if printf '%s' "$UAR_PP8D" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_PP8D" | grep -q '20260102T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_PP8D" | grep -q 'test-results-valid.run' &&
-           ! printf '%s' "$UAR_PP8D" | grep -q 'test-results-corrupt.run'; then
+        if <<<"$UAR_PP8D" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_PP8D" grep -q '20260102T000000Z-1-aaaa' &&
+           <<<"$UAR_PP8D" grep -q 'test-results-valid.run' &&
+           ! <<<"$UAR_PP8D" grep -q 'test-results-corrupt.run'; then
             t_pass "run record: a corrupt pointer does not spend the pin budget a valid one needs"
         else
             t_fail "run record: a corrupt pointer does not spend the pin budget a valid one needs" "$UAR_PP8D"
@@ -14135,9 +14147,9 @@ PY
                     rm -f "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/record-complete.json" ;;
             esac
             UAR_PP8E="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
-            if printf '%s' "$UAR_PP8E" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_PP8E" | grep -q '20260102T000000Z-1-aaaa' &&
-               printf '%s' "$UAR_PP8E" | grep -q 'test-results-valid.run'; then
+            if <<<"$UAR_PP8E" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_PP8E" grep -q '20260102T000000Z-1-aaaa' &&
+               <<<"$UAR_PP8E" grep -q 'test-results-valid.run'; then
                 t_pass "run record: a '$_shape' pointer parses but does not spend the pin budget"
             else
                 t_fail "run record: a '$_shape' pointer parses but does not spend the pin budget" "$UAR_PP8E"
@@ -14190,9 +14202,9 @@ PY
                         > "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/record-complete.json" ;;
             esac
             UAR_PP8F="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
-            if printf '%s' "$UAR_PP8F" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_PP8F" | grep -q '20260102T000000Z-1-aaaa' &&
-               printf '%s' "$UAR_PP8F" | grep -q 'test-results-valid.run'; then
+            if <<<"$UAR_PP8F" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_PP8F" grep -q '20260102T000000Z-1-aaaa' &&
+               <<<"$UAR_PP8F" grep -q 'test-results-valid.run'; then
                 t_pass "run record: a '$_bypass' pointer does not spend the pin budget a valid one needs"
             else
                 t_fail "run record: a '$_bypass' pointer does not spend the pin budget a valid one needs" "$UAR_PP8F"
@@ -14211,10 +14223,10 @@ PY
                        [ -f "$UAR_PDIR/build/test-results-junk.run" ] && echo FIXTURES-OK || echo MISSING)"
         UAR_PP9="$(uar_prune_run)"
         if [ "$UAR_PP9_PRE" = FIXTURES-OK ] &&
-           printf '%s' "$UAR_PP9" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_PP9" | grep -q '20260105T000000Z-1-aaaa' &&
-           ! printf '%s' "$UAR_PP9" | grep -q 'test-results-gone.run' &&
-           ! printf '%s' "$UAR_PP9" | grep -q 'test-results-junk.run'; then
+           <<<"$UAR_PP9" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_PP9" grep -q '20260105T000000Z-1-aaaa' &&
+           ! <<<"$UAR_PP9" grep -q 'test-results-gone.run' &&
+           ! <<<"$UAR_PP9" grep -q 'test-results-junk.run'; then
             t_pass "run record: a dangling or unreadable leg pointer is swept, never left resolving to nothing"
         else
             t_fail "run record: a dangling or unreadable leg pointer is swept, never left resolving to nothing" \
@@ -14237,11 +14249,11 @@ PY
         uar_prune_ptr real 20260105T000000Z-1-aaaa
         ln -sf "$UAR_PDIR/build/test-results-real.run" "$UAR_PDIR/build/test-results-link.run"
         UAR_PP10="$(uar_prune_run)"
-        if printf '%s' "$UAR_PP10" | grep -q 'HARNESS-OK' &&
-           ! printf '%s' "$UAR_PP10" | grep -q 'test-results-dotdot.run' &&
-           ! printf '%s' "$UAR_PP10" | grep -q 'test-results-dot.run' &&
-           ! printf '%s' "$UAR_PP10" | grep -q 'test-results-link.run' &&
-           printf '%s' "$UAR_PP10" | grep -q 'test-results-real.run'; then
+        if <<<"$UAR_PP10" grep -q 'HARNESS-OK' &&
+           ! <<<"$UAR_PP10" grep -q 'test-results-dotdot.run' &&
+           ! <<<"$UAR_PP10" grep -q 'test-results-dot.run' &&
+           ! <<<"$UAR_PP10" grep -q 'test-results-link.run' &&
+           <<<"$UAR_PP10" grep -q 'test-results-real.run'; then
             t_pass "run record: dot, dot-dot and symlinked leg pointers are swept, never treated as live"
         else
             t_fail "run record: dot, dot-dot and symlinked leg pointers are swept, never treated as live" "$UAR_PP10"
@@ -14264,7 +14276,7 @@ PY
             uar_prune_reset
             UAR_PP11="$(uar_prune_run "UTEST_RECORD_KEEP=$_kv; UTEST_POINTER_PIN_MAX=0")"
             UAR_PP11_N="$(printf '%s' "$UAR_PP11" | grep -o '2026010[0-9]T000000Z-1-aaaa' | sort -u | wc -l)"
-            if printf '%s' "$UAR_PP11" | grep -q 'HARNESS-OK' && [ "$UAR_PP11_N" -eq 5 ]; then
+            if <<<"$UAR_PP11" grep -q 'HARNESS-OK' && [ "$UAR_PP11_N" -eq 5 ]; then
                 t_pass "run record: UTEST_RECORD_KEEP='$_kv' normalises to a permissive bound, keeping all 5"
             else
                 t_fail "run record: UTEST_RECORD_KEEP='$_kv' normalises to a permissive bound, keeping all 5" \
@@ -14285,9 +14297,9 @@ PY
             uar_prune_reset
             uar_prune_ptr pinned 20260102T000000Z-1-aaaa
             UAR_PP12="$(uar_prune_run "UTEST_POINTER_PIN_MAX=$_pv")"
-            if printf '%s' "$UAR_PP12" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_PP12" | grep -q '20260102T000000Z-1-aaaa' &&
-               printf '%s' "$UAR_PP12" | grep -q 'test-results-pinned.run'; then
+            if <<<"$UAR_PP12" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_PP12" grep -q '20260102T000000Z-1-aaaa' &&
+               <<<"$UAR_PP12" grep -q 'test-results-pinned.run'; then
                 t_pass "run record: UTEST_POINTER_PIN_MAX='$_pv' falls back to pinning ON, never to the zero opt-out"
             else
                 t_fail "run record: UTEST_POINTER_PIN_MAX='$_pv' falls back to pinning ON, never to the zero opt-out" \
@@ -14307,7 +14319,7 @@ PY
         uar_prune_reset
         UAR_PP12B="$(uar_prune_run 'UTEST_RECORD_KEEP=000002; UTEST_POINTER_PIN_MAX=0')"
         UAR_PP12B_N="$(printf '%s' "$UAR_PP12B" | grep -o '2026010[0-9]T000000Z-1-aaaa' | sort -u | wc -l)"
-        if printf '%s' "$UAR_PP12B" | grep -q 'HARNESS-OK' && [ "$UAR_PP12B_N" -eq 3 ]; then
+        if <<<"$UAR_PP12B" grep -q 'HARNESS-OK' && [ "$UAR_PP12B_N" -eq 3 ]; then
             t_pass "run record: UTEST_RECORD_KEEP='000002' means 2, not a six-digit clamp to the ceiling"
         else
             t_fail "run record: UTEST_RECORD_KEEP='000002' means 2, not a six-digit clamp to the ceiling" \
@@ -14317,9 +14329,9 @@ PY
         uar_prune_reset
         uar_prune_ptr zeroed 20260102T000000Z-1-aaaa
         UAR_PP12C="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=0000000')"
-        if printf '%s' "$UAR_PP12C" | grep -q 'HARNESS-OK' &&
-           ! printf '%s' "$UAR_PP12C" | grep -q '20260102T000000Z-1-aaaa' &&
-           ! printf '%s' "$UAR_PP12C" | grep -q 'test-results-zeroed.run'; then
+        if <<<"$UAR_PP12C" grep -q 'HARNESS-OK' &&
+           ! <<<"$UAR_PP12C" grep -q '20260102T000000Z-1-aaaa' &&
+           ! <<<"$UAR_PP12C" grep -q 'test-results-zeroed.run'; then
             t_pass "run record: UTEST_POINTER_PIN_MAX='0000000' is the zero opt-out, not a clamp to the ceiling"
         else
             t_fail "run record: UTEST_POINTER_PIN_MAX='0000000' is the zero opt-out, not a clamp to the ceiling" \
@@ -14349,8 +14361,8 @@ printf "| pointers: "
 { ls -1 "$PROJECT/build" 2>/dev/null | grep "\.run$" | sort | tr "\n" " "; } || true
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-            if printf '%s' "$UAR_PP13" | grep -q 'HARNESS-OK' &&
-               ! printf '%s' "$UAR_PP13" | grep -q 'test-results-fifo.run' &&
+            if <<<"$UAR_PP13" grep -q 'HARNESS-OK' &&
+               ! <<<"$UAR_PP13" grep -q 'test-results-fifo.run' &&
                [ ! -e "$UAR_PDIR/build/test-results-fifo.run" ]; then
                 t_pass "run record: a FIFO under the pointer name is swept without ever being opened"
             else
@@ -14415,9 +14427,9 @@ printf "| staging-left: "
 { ls -1a "$PROJECT/build" 2>/dev/null | grep -c "utest-sweep" | tr -d "\n"; } || true
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-            if printf '%s' "$UAR_PP14" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_PP14" | grep -q '"run_id":"20260105T000000Z-1-aaaa"' &&
-               printf '%s' "$UAR_PP14" | grep -q 'staging-left: 0'; then
+            if <<<"$UAR_PP14" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_PP14" grep -q '"run_id":"20260105T000000Z-1-aaaa"' &&
+               <<<"$UAR_PP14" grep -q 'staging-left: 0'; then
                 t_pass "run record: a pointer published during the sweep survives the unlink of what it replaced"
             else
                 t_fail "run record: a pointer published during the sweep survives the unlink of what it replaced" \
@@ -14463,9 +14475,9 @@ printf "| staging-left: "
 { ls -1a "$PROJECT/build" 2>/dev/null | grep -c "utest-sweep" | tr -d "\n"; } || true
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_PP15" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_PP15" | grep -q 'racea: SWEPT' &&
-           printf '%s' "$UAR_PP15" | grep -q 'staging-left: 0'; then
+        if <<<"$UAR_PP15" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_PP15" grep -q 'racea: SWEPT' &&
+           <<<"$UAR_PP15" grep -q 'staging-left: 0'; then
             t_pass "run record: a FIFO swapped in mid-parse is swept under the timeout bound, never wedging the sweep"
         else
             t_fail "run record: a FIFO swapped in mid-parse is swept under the timeout bound, never wedging the sweep" \
@@ -14497,9 +14509,9 @@ printf "| staging-left: "
 { ls -1a "$PROJECT/build" 2>/dev/null | grep -c "utest-sweep" | tr -d "\n"; } || true
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_PP16" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_PP16" | grep -q '"run_id":"20260105T000000Z-1-aaaa"' &&
-           printf '%s' "$UAR_PP16" | grep -q 'staging-left: 0'; then
+        if <<<"$UAR_PP16" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_PP16" grep -q '"run_id":"20260105T000000Z-1-aaaa"' &&
+           <<<"$UAR_PP16" grep -q 'staging-left: 0'; then
             t_pass "run record: an entry the recheck votes to keep is relinked at its published name"
         else
             t_fail "run record: an entry the recheck votes to keep is relinked at its published name" "$UAR_PP16"
@@ -14535,10 +14547,10 @@ printf "| preserved: "
 { ls -1a "$PROJECT/build" 2>/dev/null | grep -c "utest-sweep" | tr -d "\n"; } || true
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_PP17" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_PP17" | grep -q 'name: DIR' &&
-           printf '%s' "$UAR_PP17" | grep -q 'linked-inside: 0' &&
-           printf '%s' "$UAR_PP17" | grep -q 'preserved: 1'; then
+        if <<<"$UAR_PP17" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_PP17" grep -q 'name: DIR' &&
+           <<<"$UAR_PP17" grep -q 'linked-inside: 0' &&
+           <<<"$UAR_PP17" grep -q 'preserved: 1'; then
             t_pass "run record: a directory at the destination neither swallows the relink nor destroys the staged object"
         else
             t_fail "run record: a directory at the destination neither swallows the relink nor destroys the staged object" \
@@ -14600,15 +14612,15 @@ printf " d-name: "; if [ -e "$P" ] || [ -L "$P" ]; then printf "PRESENT"; else p
 printf " d-preserved: "; { find "$PROJECT/build" -name obj -path "*utest-sweep*" | wc -l | tr -d "\\n"; } || true
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_PP18" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_PP18" | grep -q 'a-rc: 1 a-calls: 0 a-entry: INTACT' &&
-           printf '%s' "$UAR_PP18" | grep -q 'b-rc: 0 b-calls: 0' &&
-           printf '%s' "$UAR_PP18" | grep -q 'c-rc: 0' &&
-           printf '%s' "$UAR_PP18" | grep -q 'c-name: 20260104T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_PP18" | grep -q 'c-staging: 0' &&
-           printf '%s' "$UAR_PP18" | grep -q 'd-rc: 1' &&
-           printf '%s' "$UAR_PP18" | grep -q 'd-name: FREE' &&
-           printf '%s' "$UAR_PP18" | grep -q 'd-preserved: 1'; then
+        if <<<"$UAR_PP18" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_PP18" grep -q 'a-rc: 1 a-calls: 0 a-entry: INTACT' &&
+           <<<"$UAR_PP18" grep -q 'b-rc: 0 b-calls: 0' &&
+           <<<"$UAR_PP18" grep -q 'c-rc: 0' &&
+           <<<"$UAR_PP18" grep -q 'c-name: 20260104T000000Z-1-aaaa' &&
+           <<<"$UAR_PP18" grep -q 'c-staging: 0' &&
+           <<<"$UAR_PP18" grep -q 'd-rc: 1' &&
+           <<<"$UAR_PP18" grep -q 'd-name: FREE' &&
+           <<<"$UAR_PP18" grep -q 'd-preserved: 1'; then
             t_pass "run record: every sweep refusal and recovery branch reports the outcome it actually produced"
         else
             t_fail "run record: every sweep refusal and recovery branch reports the outcome it actually produced" \
@@ -14661,10 +14673,10 @@ printf "| stale-held: "
 if [ -f "$PROJECT/build/.utest-sweep.stale-held.d/obj" ]; then printf "PRESERVED"; else printf "DESTROYED"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_PP19" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_PP19" | grep -q 'order: 20260105T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_PP19" | grep -q 'stale-empty: REAPED' &&
-           printf '%s' "$UAR_PP19" | grep -q 'stale-held: PRESERVED'; then
+        if <<<"$UAR_PP19" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_PP19" grep -q 'order: 20260105T000000Z-1-aaaa' &&
+           <<<"$UAR_PP19" grep -q 'stale-empty: REAPED' &&
+           <<<"$UAR_PP19" grep -q 'stale-held: PRESERVED'; then
             t_pass "run record: the full prune relinks through the real selector and reaps only empty staging claims"
         else
             t_fail "run record: the full prune relinks through the real selector and reaps only empty staging claims" \
@@ -14701,11 +14713,11 @@ printf "| dangling: "
 if [ -e "$PROJECT/build/test-results-gone.run" ]; then printf "KEPT"; else printf "SWEPT"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_PP20" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_PP20" | grep -q 'blocked: IN-PLACE' &&
-           printf '%s' "$UAR_PP20" | grep -q 'content: PRESERVED' &&
-           printf '%s' "$UAR_PP20" | grep -q 'dangling: SWEPT' &&
-           printf '%s' "$UAR_PP20" | grep -q 'a DIRECTORY occupies .*test-results-blocked.run'; then
+        if <<<"$UAR_PP20" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_PP20" grep -q 'blocked: IN-PLACE' &&
+           <<<"$UAR_PP20" grep -q 'content: PRESERVED' &&
+           <<<"$UAR_PP20" grep -q 'dangling: SWEPT' &&
+           <<<"$UAR_PP20" grep -q 'a DIRECTORY occupies .*test-results-blocked.run'; then
             t_pass "run record: a directory at a pointer name is named in a diagnostic and left whole, and the sweep still works around it"
         else
             t_fail "run record: a directory at a pointer name is named in a diagnostic and left whole, and the sweep still works around it" \
@@ -14743,12 +14755,12 @@ printf "| HARNESS-OK\n"
             touch -d '2020-01-01' "$UAR_PDIR/build/test-results-junk$_j.run"
         done
         UAR_PP21="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=2')"
-        if printf '%s' "$UAR_PP21" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_PP21" | grep -q 'pointer pinning is INCOMPLETE' &&
-           printf '%s' "$UAR_PP21" | grep -q 'more than 8 candidate pointer' &&
-           printf '%s' "$UAR_PP21" | grep -q 'test-results-valid.run' &&
-           printf '%s' "$UAR_PP21" | grep -q '20260102T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_PP21" | grep -q '20260103T000000Z-1-aaaa'; then
+        if <<<"$UAR_PP21" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_PP21" grep -q 'pointer pinning is INCOMPLETE' &&
+           <<<"$UAR_PP21" grep -q 'more than 8 candidate pointer' &&
+           <<<"$UAR_PP21" grep -q 'test-results-valid.run' &&
+           <<<"$UAR_PP21" grep -q '20260102T000000Z-1-aaaa' &&
+           <<<"$UAR_PP21" grep -q '20260103T000000Z-1-aaaa'; then
             t_pass "run record: more candidate pointers than the pin bound admits defers the age cut and says so"
         else
             t_fail "run record: more candidate pointers than the pin bound admits defers the age cut and says so" "$UAR_PP21"
@@ -14820,12 +14832,12 @@ printf "| pointers: "
 { ls -1 "$PROJECT/build" 2>/dev/null | grep "\.run$" | sort | tr "\n" " "; } || true
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-            if printf '%s' "$UAR_PP22" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_PP22" | grep -q 'pointer pinning is INCOMPLETE' &&
-               printf '%s' "$UAR_PP22" | grep -q 'the age cut is deferred this run' &&
-               printf '%s' "$UAR_PP22" | grep -q 'test-results-valid.run' &&
-               printf '%s' "$UAR_PP22" | grep -q '20260102T000000Z-1-aaaa' &&
-               printf '%s' "$UAR_PP22" | grep -q '20260103T000000Z-1-aaaa'; then
+            if <<<"$UAR_PP22" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_PP22" grep -q 'pointer pinning is INCOMPLETE' &&
+               <<<"$UAR_PP22" grep -q 'the age cut is deferred this run' &&
+               <<<"$UAR_PP22" grep -q 'test-results-valid.run' &&
+               <<<"$UAR_PP22" grep -q '20260102T000000Z-1-aaaa' &&
+               <<<"$UAR_PP22" grep -q '20260103T000000Z-1-aaaa'; then
                 t_pass "run record: an exhausted pin budget defers the age cut and says so"
             else
                 t_fail "run record: an exhausted pin budget defers the age cut and says so" "$UAR_PP22"
@@ -14921,13 +14933,13 @@ printf "| HARNESS-OK\n"
                 # just past keep=2. Pinned means one survived and the other did
                 # not; unpinned means the classification was incomplete, the cut
                 # was deferred, and BOTH stand.
-                if printf '%s' "$UAR_PP23" | grep -q '20260103T000000Z-1-aaaa'; then
+                if <<<"$UAR_PP23" grep -q '20260103T000000Z-1-aaaa'; then
                     _p23_got=no
                 else
                     _p23_got=yes
                 fi
-                if printf '%s' "$UAR_PP23" | grep -q 'HARNESS-OK' &&
-                   printf '%s' "$UAR_PP23" | grep -q '20260102T000000Z-1-aaaa' &&
+                if <<<"$UAR_PP23" grep -q 'HARNESS-OK' &&
+                   <<<"$UAR_PP23" grep -q '20260102T000000Z-1-aaaa' &&
                    [ "$_p23_got" = "$_p23_pinned" ]; then
                     t_pass "run record: $_p23_name"
                 else
@@ -14976,10 +14988,10 @@ utest_prune_records
 ls -1 "$RUNS_DIR" | sort | tr "\n" " "
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-            if printf '%s' "$UAR_PP24" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_PP24" | grep -q 'a pointer document read ran out of its' &&
-               printf '%s' "$UAR_PP24" | grep -q '20260102T000000Z-1-aaaa' &&
-               printf '%s' "$UAR_PP24" | grep -q '20260103T000000Z-1-aaaa'; then
+            if <<<"$UAR_PP24" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_PP24" grep -q 'a pointer document read ran out of its' &&
+               <<<"$UAR_PP24" grep -q '20260102T000000Z-1-aaaa' &&
+               <<<"$UAR_PP24" grep -q '20260103T000000Z-1-aaaa'; then
                 t_pass "run record: a read that runs out of its bound is not a classified pointer"
             else
                 t_fail "run record: a read that runs out of its bound is not a classified pointer" "$UAR_PP24"
@@ -15011,8 +15023,8 @@ printf "| HARNESS-OK\n"
         UAR_PP25_VICTIM='20260105T000000Z-1-aaaa'
         if mkdir "$UAR_PDIR/build/test-runs/$(printf 'aa\n%s' "$UAR_PP25_VICTIM")" 2>/dev/null; then
             UAR_PP25="$(uar_prune_run)"
-            if printf '%s' "$UAR_PP25" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_PP25" | grep -q 'outside the run-id grammar are HELD' &&
+            if <<<"$UAR_PP25" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_PP25" grep -q 'outside the run-id grammar are HELD' &&
                [ -f "$UAR_PDIR/build/test-runs/$UAR_PP25_VICTIM/record-complete.json" ]; then
                 t_pass "run record: a newline-bearing record name cannot redirect the age cut onto a real record"
             else
@@ -15067,8 +15079,8 @@ done
 printf "holders: %s | HARNESS-OK\n" "$_n"
 wait
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-            if printf '%s' "$UAR_PP26" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_PP26" | grep -q 'holders: 1 '; then
+            if <<<"$UAR_PP26" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_PP26" grep -q 'holders: 1 '; then
                 t_pass "run record: discovery does not leak the retention descriptor to any child"
             else
                 t_fail "run record: discovery does not leak the retention descriptor to any child" "$UAR_PP26"
@@ -15111,9 +15123,9 @@ utest_prune_records
 ls -1 "$RUNS_DIR" | sort | tr "\n" " "
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-            if printf '%s' "$UAR_PP27" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_PP27" | grep -q '20260102T000000Z-1-aaaa' &&
-               ! printf '%s' "$UAR_PP27" | grep -q 'INCOMPLETE'; then
+            if <<<"$UAR_PP27" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_PP27" grep -q '20260102T000000Z-1-aaaa' &&
+               ! <<<"$UAR_PP27" grep -q 'INCOMPLETE'; then
                 t_pass "run record: a validation reads each document from one snapshot, never a size probe plus a read"
             else
                 t_fail "run record: a validation reads each document from one snapshot, never a size probe plus a read" "$UAR_PP27"
@@ -15163,10 +15175,10 @@ printf "| HARNESS-OK\n"
                       printf '  "extra": "field"\n}\n'; } > "$_mfile" ;;
             esac
             UAR_PP28="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
-            if printf '%s' "$UAR_PP28" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_PP28" | grep -q '20260102T000000Z-1-aaaa' &&
-               printf '%s' "$UAR_PP28" | grep -q 'test-results-valid.run' &&
-               ! printf '%s' "$UAR_PP28" | grep -q '20260103T000000Z-1-aaaa'; then
+            if <<<"$UAR_PP28" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_PP28" grep -q '20260102T000000Z-1-aaaa' &&
+               <<<"$UAR_PP28" grep -q 'test-results-valid.run' &&
+               ! <<<"$UAR_PP28" grep -q '20260103T000000Z-1-aaaa'; then
                 t_pass "run record: a '$_mshape' commit marker wins no pin and does not deny a valid one"
             else
                 t_fail "run record: a '$_mshape' commit marker wins no pin and does not deny a valid one" "$UAR_PP28"
@@ -15215,10 +15227,10 @@ printf "| HARNESS-OK\n"
                         '"test-results.xml"' '"test-results.json"' '"test-run-identity.json"' > "$_mfile" ;;
             esac
             UAR_PP29="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
-            if printf '%s' "$UAR_PP29" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_PP29" | grep -q '20260102T000000Z-1-aaaa' &&
-               printf '%s' "$UAR_PP29" | grep -q 'test-results-valid.run' &&
-               ! printf '%s' "$UAR_PP29" | grep -q '20260103T000000Z-1-aaaa'; then
+            if <<<"$UAR_PP29" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_PP29" grep -q '20260102T000000Z-1-aaaa' &&
+               <<<"$UAR_PP29" grep -q 'test-results-valid.run' &&
+               ! <<<"$UAR_PP29" grep -q '20260103T000000Z-1-aaaa'; then
                 t_pass "run record: a marker field a consumer could not resolve ('$_mfield') wins no pin"
             else
                 t_fail "run record: a marker field a consumer could not resolve ('$_mfield') wins no pin" "$UAR_PP29"
@@ -15238,10 +15250,10 @@ printf "| HARNESS-OK\n"
             '"test-run-identity.json"' \
             > "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/record-complete.json"
         UAR_PP30="$(uar_prune_run)"
-        if printf '%s' "$UAR_PP30" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_PP30" | grep -q '20260102T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_PP30" | grep -q 'test-results-valid.run' &&
-           ! printf '%s' "$UAR_PP30" | grep -q '20260103T000000Z-1-aaaa'; then
+        if <<<"$UAR_PP30" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_PP30" grep -q '20260102T000000Z-1-aaaa' &&
+           <<<"$UAR_PP30" grep -q 'test-results-valid.run' &&
+           ! <<<"$UAR_PP30" grep -q '20260103T000000Z-1-aaaa'; then
             t_pass "run record: a canonical marker whose inventory reports no documents still pins"
         else
             t_fail "run record: a canonical marker whose inventory reports no documents still pins" "$UAR_PP30"
@@ -15278,10 +15290,10 @@ open(os.path.join(d, "record-complete.json"), "wb").write(
 os.unlink(os.path.join(d, ".marker.canon"))
 PY
         UAR_PP31="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
-        if printf '%s' "$UAR_PP31" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_PP31" | grep -q '20260102T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_PP31" | grep -q 'test-results-valid.run' &&
-           ! printf '%s' "$UAR_PP31" | grep -q '20260103T000000Z-1-aaaa'; then
+        if <<<"$UAR_PP31" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_PP31" grep -q '20260102T000000Z-1-aaaa' &&
+           <<<"$UAR_PP31" grep -q 'test-results-valid.run' &&
+           ! <<<"$UAR_PP31" grep -q '20260103T000000Z-1-aaaa'; then
             t_pass "run record: a marker padded with NULs past the read cap wins no pin"
         else
             t_fail "run record: a marker padded with NULs past the read cap wins no pin" "$UAR_PP31"
@@ -15325,9 +15337,9 @@ utest_prune_records
 ls -1 "$RUNS_DIR" | sort | tr "\n" " "
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-            if printf '%s' "$UAR_PP33" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_PP33" | grep -q 'pointer pinning is INCOMPLETE' &&
-               printf '%s' "$UAR_PP33" | grep -q '20260103T000000Z-1-aaaa'; then
+            if <<<"$UAR_PP33" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_PP33" grep -q 'pointer pinning is INCOMPLETE' &&
+               <<<"$UAR_PP33" grep -q '20260103T000000Z-1-aaaa'; then
                 t_pass "run record: a pin budget at the three-second floor is honoured, not replaced by the default"
             else
                 t_fail "run record: a pin budget at the three-second floor is honoured, not replaced by the default" "$UAR_PP33"
@@ -15405,9 +15417,9 @@ utest_lease_doc_for "$1" "$2" "$3" "$4" "$5"' _ "$1" "$2" "$3" "$4" "$5" > "$_d/
         uar_prune_ptr held 20260105T000000Z-1-aaaa
         UAR_L1="$(uar_prune_run)"
         if [ -n "$UAR_L1A" ] &&
-           printf '%s' "$UAR_L1" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L1" | grep -q '20260102T000000Z-1-aaaa' &&
-           ! printf '%s' "$UAR_L1" | grep -q '20260103T000000Z-1-aaaa' &&
+           <<<"$UAR_L1" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L1" grep -q '20260102T000000Z-1-aaaa' &&
+           ! <<<"$UAR_L1" grep -q '20260103T000000Z-1-aaaa' &&
            [ -r "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/test-results.xml" ] &&
            [ -r "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/test-results.json" ]; then
             t_pass "reader lease: a leased generation survives republish + prune with BOTH documents readable"
@@ -15427,8 +15439,8 @@ utest_lease_doc_for "$1" "$2" "$3" "$4" "$5"' _ "$1" "$2" "$3" "$4" "$5" > "$_d/
             uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LDEAD.1.${UAR_LNS:-0}.$UAR_LBID" dead01 \
                 "$UAR_LNOW" "$(( UAR_LNOW + 3600 ))"
             UAR_L2="$(uar_prune_run)"
-            if printf '%s' "$UAR_L2" | grep -q 'HARNESS-OK' &&
-               ! printf '%s' "$UAR_L2" | grep -q '20260102T000000Z-1-aaaa' &&
+            if <<<"$UAR_L2" grep -q 'HARNESS-OK' &&
+               ! <<<"$UAR_L2" grep -q '20260102T000000Z-1-aaaa' &&
                [ ! -d "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa" ]; then
                 t_pass "reader lease: a dead holder's lease is reclaimed and its record prunes normally"
             else
@@ -15447,8 +15459,8 @@ utest_lease_doc_for "$1" "$2" "$3" "$4" "$5"' _ "$1" "$2" "$3" "$4" "$5" > "$_d/
         uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" exp01 \
             "$(( UAR_LNOW - 7200 ))" "$(( UAR_LNOW - 3600 ))"
         UAR_L3="$(uar_prune_run)"
-        if printf '%s' "$UAR_L3" | grep -q 'HARNESS-OK' &&
-           ! printf '%s' "$UAR_L3" | grep -q '20260102T000000Z-1-aaaa'; then
+        if <<<"$UAR_L3" grep -q 'HARNESS-OK' &&
+           ! <<<"$UAR_L3" grep -q '20260102T000000Z-1-aaaa'; then
             t_pass "reader lease: an expired lease is reclaimed and KEEP still bounds the directory"
         else
             t_fail "reader lease: an expired lease is reclaimed and KEEP still bounds the directory" "$UAR_L3"
@@ -15462,8 +15474,8 @@ utest_lease_doc_for "$1" "$2" "$3" "$4" "$5"' _ "$1" "$2" "$3" "$4" "$5" > "$_d/
         uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" ttl01 \
             "$(( UAR_LNOW - 60 ))" "999999999999"
         UAR_L4="$(uar_prune_run 'UTEST_LEASE_TTL=1')"
-        if printf '%s' "$UAR_L4" | grep -q 'HARNESS-OK' &&
-           ! printf '%s' "$UAR_L4" | grep -q '20260102T000000Z-1-aaaa'; then
+        if <<<"$UAR_L4" grep -q 'HARNESS-OK' &&
+           ! <<<"$UAR_L4" grep -q '20260102T000000Z-1-aaaa'; then
             t_pass "reader lease: a self-declared far-future expiry is clamped to the TTL ceiling"
         else
             t_fail "reader lease: a self-declared far-future expiry is clamped to the TTL ceiling" "$UAR_L4"
@@ -15482,9 +15494,9 @@ utest_lease_doc_for "$1" "$2" "$3" "$4" "$5"' _ "$1" "$2" "$3" "$4" "$5" > "$_d/
         uar_prune_ptr cap 20260105T000000Z-1-aaaa
         UAR_L5="$(uar_prune_run 'UTEST_LEASE_MAX=1')"
         if [ -n "$UAR_L5A" ] && [ -z "$UAR_L5B" ] &&
-           printf '%s' "$UAR_L5" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L5" | grep -q '20260102T000000Z-1-aaaa' &&
-           ! printf '%s' "$UAR_L5" | grep -q '20260103T000000Z-1-aaaa'; then
+           <<<"$UAR_L5" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L5" grep -q '20260102T000000Z-1-aaaa' &&
+           ! <<<"$UAR_L5" grep -q '20260103T000000Z-1-aaaa'; then
             t_pass "reader lease: an over-capacity acquisition is refused outright, never silently revoked"
         else
             t_fail "reader lease: an over-capacity acquisition is refused outright, never silently revoked" \
@@ -15499,9 +15511,9 @@ utest_lease_doc_for "$1" "$2" "$3" "$4" "$5"' _ "$1" "$2" "$3" "$4" "$5" > "$_d/
         printf 'not a lease\n' > "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/junk.lease"
         printf 'not a lease\n' > "$UAR_PDIR/build/test-runs/20260105T000000Z-1-aaaa/leases/junk.lease"
         UAR_L6="$(uar_prune_run)"
-        if printf '%s' "$UAR_L6" | grep -q 'HARNESS-OK' &&
-           ! printf '%s' "$UAR_L6" | grep -q '20260102T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_L6" | grep -q '20260105T000000Z-1-aaaa' &&
+        if <<<"$UAR_L6" grep -q 'HARNESS-OK' &&
+           ! <<<"$UAR_L6" grep -q '20260102T000000Z-1-aaaa' &&
+           <<<"$UAR_L6" grep -q '20260105T000000Z-1-aaaa' &&
            [ ! -e "$UAR_PDIR/build/test-runs/20260105T000000Z-1-aaaa/leases/junk.lease" ]; then
             t_pass "reader lease: a malformed lease protects nothing and is swept from a retained record"
         else
@@ -15522,9 +15534,9 @@ utest_lease_doc_for "$1" "$2" "$3" "$4" "$5"' _ "$1" "$2" "$3" "$4" "$5" > "$_d/
         mv -f "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.name01.lease" \
               "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.other01.lease"
         UAR_L7="$(uar_prune_run)"
-        if printf '%s' "$UAR_L7" | grep -q 'HARNESS-OK' &&
-           ! printf '%s' "$UAR_L7" | grep -q '20260102T000000Z-1-aaaa' &&
-           ! printf '%s' "$UAR_L7" | grep -q '20260103T000000Z-1-aaaa'; then
+        if <<<"$UAR_L7" grep -q 'HARNESS-OK' &&
+           ! <<<"$UAR_L7" grep -q '20260102T000000Z-1-aaaa' &&
+           ! <<<"$UAR_L7" grep -q '20260103T000000Z-1-aaaa'; then
             t_pass "reader lease: a lease is bound to its record AND its filename, so neither is transferable"
         else
             t_fail "reader lease: a lease is bound to its record AND its filename, so neither is transferable" "$UAR_L7"
@@ -15542,8 +15554,8 @@ utest_lease_doc_for "$1" "$2" "$3" "$4" "$5"' _ "$1" "$2" "$3" "$4" "$5" > "$_d/
         uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" oct01 \
             "000000000008" "999999999999"
         UAR_L8="$(uar_prune_run)"
-        if printf '%s' "$UAR_L8" | grep -q 'HARNESS-OK' &&
-           ! printf '%s' "$UAR_L8" | grep -q '20260102T000000Z-1-aaaa'; then
+        if <<<"$UAR_L8" grep -q 'HARNESS-OK' &&
+           ! <<<"$UAR_L8" grep -q '20260102T000000Z-1-aaaa'; then
             t_pass "reader lease: a leading-zero timestamp is rejected as malformed, never arithmetic'd as octal"
         else
             t_fail "reader lease: a leading-zero timestamp is rejected as malformed, never arithmetic'd as octal" "$UAR_L8"
@@ -15570,8 +15582,8 @@ utest_prune_records
 ls -1 "$RUNS_DIR" | sort | tr "\n" " "
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-            if printf '%s' "$UAR_L9" | grep -q 'HARNESS-OK' &&
-               ! printf '%s' "$UAR_L9" | grep -q 'TIMED-OUT-OR-FAILED'; then
+            if <<<"$UAR_L9" grep -q 'HARNESS-OK' &&
+               ! <<<"$UAR_L9" grep -q 'TIMED-OUT-OR-FAILED'; then
                 t_pass "reader lease: a FIFO under a lease name never blocks the pruner holding the mutex"
             else
                 t_fail "reader lease: a FIFO under a lease name never blocks the pruner holding the mutex" "$UAR_L9"
@@ -15626,9 +15638,9 @@ _rc=0
 utest_read_doc "$PROJECT/racefifo" 4096 2 >/dev/null || _rc=$?
 printf "RC=%s VALIDATOR-RETURNED\n" "$_rc"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-            if printf '%s' "$UAR_L9B" | grep -q 'VALIDATOR-RETURNED' &&
-               ! printf '%s' "$UAR_L9B" | grep -q 'TIMED-OUT-OR-FAILED' &&
-               printf '%s' "$UAR_L9B" | grep -q 'RC=2'; then
+            if <<<"$UAR_L9B" grep -q 'VALIDATOR-RETURNED' &&
+               ! <<<"$UAR_L9B" grep -q 'TIMED-OUT-OR-FAILED' &&
+               <<<"$UAR_L9B" grep -q 'RC=2'; then
                 t_pass "reader lease: an open racing a FIFO swap is bounded and classified, never a wedge"
             else
                 t_fail "reader lease: an open racing a FIFO swap is bounded and classified, never a wedge" \
@@ -15645,8 +15657,8 @@ printf "RC=%s VALIDATOR-RETURNED\n" "$_rc"
         uar_lease_reset
         printf 'abandoned\n' > "$UAR_PDIR/build/test-runs/20260105T000000Z-1-aaaa/leases/.deadbeef.tmp"
         UAR_L10="$(uar_prune_run)"
-        if printf '%s' "$UAR_L10" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L10" | grep -q '20260105T000000Z-1-aaaa' &&
+        if <<<"$UAR_L10" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L10" grep -q '20260105T000000Z-1-aaaa' &&
            [ ! -e "$UAR_PDIR/build/test-runs/20260105T000000Z-1-aaaa/leases/.deadbeef.tmp" ]; then
             t_pass "reader lease: an abandoned staging file is reclaimed from a retained record"
         else
@@ -15663,8 +15675,8 @@ printf "RC=%s VALIDATOR-RETURNED\n" "$_rc"
         uar_lease_put 20260102T000000Z-1-aaaa "1.1.4026500000.${UAR_LBID:-nobootid}" ns01 \
             "$UAR_LNOW" "$(( UAR_LNOW + 3600 ))"
         UAR_L11="$(uar_prune_run)"
-        if printf '%s' "$UAR_L11" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L11" | grep -q '20260102T000000Z-1-aaaa'; then
+        if <<<"$UAR_L11" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L11" grep -q '20260102T000000Z-1-aaaa'; then
             t_pass "reader lease: a holder in another PID namespace is UNKNOWN and held to its TTL, not reclaimed"
         else
             t_fail "reader lease: a holder in another PID namespace is UNKNOWN and held to its TTL, not reclaimed" "$UAR_L11"
@@ -15770,9 +15782,9 @@ utest_lease_holder_state "$2"' _ "$1" "$2" 2>&1
             "999999999999" "999999999999"
         UAR_L15A="$(uar_prune_run)"
         UAR_L15B="$(uar_prune_run)"
-        if printf '%s' "$UAR_L15B" | grep -q 'HARNESS-OK' &&
-           ! printf '%s' "$UAR_L15A" | grep -q '20260102T000000Z-1-aaaa' &&
-           ! printf '%s' "$UAR_L15B" | grep -q '20260102T000000Z-1-aaaa'; then
+        if <<<"$UAR_L15B" grep -q 'HARNESS-OK' &&
+           ! <<<"$UAR_L15A" grep -q '20260102T000000Z-1-aaaa' &&
+           ! <<<"$UAR_L15B" grep -q '20260102T000000Z-1-aaaa'; then
             t_pass "reader lease: a future acquired_at is rejected, so the TTL cannot be renewed by each prune"
         else
             t_fail "reader lease: a future acquired_at is rejected, so the TTL cannot be renewed by each prune" \
@@ -15852,8 +15864,8 @@ utest_lease_doc_for 20260731T104512Z-4711-9f2c1a0b \
             "$(date -u +%s)" "$(( $(date -u +%s) + 3600 ))"
         UAR_L18="$(uar_prune_run)"
         wait "$UAR_L18LOCK" 2>/dev/null || true
-        if printf '%s' "$UAR_L18" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L18" | grep -q '20260102T000000Z-1-aaaa'; then
+        if <<<"$UAR_L18" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L18" grep -q '20260102T000000Z-1-aaaa'; then
             t_pass "reader lease: a lease published while the pruner waited for the lock is not read as future-dated"
         else
             t_fail "reader lease: a lease published while the pruner waited for the lock is not read as future-dated" "$UAR_L18"
@@ -15870,8 +15882,8 @@ utest_lease_doc_for 20260731T104512Z-4711-9f2c1a0b \
         uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" skew01 \
             "$(( UAR_LNOW + 86400 ))" "$(( UAR_LNOW + 90000 ))"
         UAR_L19="$(uar_prune_run)"
-        if printf '%s' "$UAR_L19" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L19" | grep -q '20260102T000000Z-1-aaaa'; then
+        if <<<"$UAR_L19" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L19" grep -q '20260102T000000Z-1-aaaa'; then
             t_pass "reader lease: a future-dated lease with a LIVE holder survives a backwards clock"
         else
             t_fail "reader lease: a future-dated lease with a LIVE holder survives a backwards clock" "$UAR_L19"
@@ -15893,7 +15905,7 @@ UTEST_PROC="$UAR_FP"
 utest_prime_ident
 rm -f "$UTEST_PROC/sys/kernel/random/boot_id" "$UTEST_PROC/self/ns/pid"
 printf "boot=%s ns=%s\n" "$(utest_boot_id)" "$(utest_pid_ns_id)"' 2>&1)"
-        if printf '%s' "$UAR_L20" | grep -q 'boot=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee ns=4026531836'; then
+        if <<<"$UAR_L20" grep -q 'boot=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee ns=4026531836'; then
             t_pass "reader lease: the identity cache is primed in the calling shell, so subshell reads are served from it"
         else
             t_fail "reader lease: the identity cache is primed in the calling shell, so subshell reads are served from it" \
@@ -15931,10 +15943,10 @@ printf "| staging-left: "
 { ls -1a "$RUNS_DIR/20260102T000000Z-1-aaaa/leases" 2>/dev/null | grep -c "utest-sweep" | tr -d "\n"; } || true
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L21" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L21" | grep -q 'lease: RESTORED' &&
-           printf '%s' "$UAR_L21" | grep -q 'live: 1' &&
-           printf '%s' "$UAR_L21" | grep -q 'staging-left: 0'; then
+        if <<<"$UAR_L21" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L21" grep -q 'lease: RESTORED' &&
+           <<<"$UAR_L21" grep -q 'live: 1' &&
+           <<<"$UAR_L21" grep -q 'staging-left: 0'; then
             t_pass "reader lease: a detached lease is validated against its published name, not its staging name"
         else
             t_fail "reader lease: a detached lease is validated against its published name, not its staging name" \
@@ -15972,10 +15984,10 @@ printf "| staging-left: "
 { ls -1a "$D" 2>/dev/null | grep -c "utest-sweep" | tr -d "\n"; } || true
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L22" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L22" | grep -q 'live: 1' &&
-           printf '%s' "$UAR_L22" | grep -q '"acquired_at":1000000090' &&
-           printf '%s' "$UAR_L22" | grep -q 'staging-left: 0'; then
+        if <<<"$UAR_L22" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L22" grep -q 'live: 1' &&
+           <<<"$UAR_L22" grep -q '"acquired_at":1000000090' &&
+           <<<"$UAR_L22" grep -q 'staging-left: 0'; then
             t_pass "reader lease: a grant published during the reclaim survives the unlink of the lease it replaced"
         else
             t_fail "reader lease: a grant published during the reclaim survives the unlink of the lease it replaced" \
@@ -16002,9 +16014,9 @@ if [ -e "$D/$UAR_LHOLD.dang01.lease" ] || [ -L "$D/$UAR_LHOLD.dang01.lease" ]; t
 else printf "RECLAIMED"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L23" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L23" | grep -q 'live: 0' &&
-           printf '%s' "$UAR_L23" | grep -q 'dangling: RECLAIMED'; then
+        if <<<"$UAR_L23" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L23" grep -q 'live: 0' &&
+           <<<"$UAR_L23" grep -q 'dangling: RECLAIMED'; then
             t_pass "reader lease: a dangling symlink under a lease name is reclaimed, not skipped forever"
         else
             t_fail "reader lease: a dangling symlink under a lease name is reclaimed, not skipped forever" "$UAR_L23"
@@ -16041,10 +16053,10 @@ printf "| staging-left: "
 { ls -1a "$D" 2>/dev/null | grep -c "utest-sweep" | tr -d "\n"; } || true
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L24" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L24" | grep -q 'live: 0' &&
-           printf '%s' "$UAR_L24" | grep -q 'lease: GONE' &&
-           printf '%s' "$UAR_L24" | grep -q 'staging-left: 0'; then
+        if <<<"$UAR_L24" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L24" grep -q 'live: 0' &&
+           <<<"$UAR_L24" grep -q 'lease: GONE' &&
+           <<<"$UAR_L24" grep -q 'staging-left: 0'; then
             t_pass "reader lease: a lock-free release landing inside the detach window is never undone by the recheck"
         else
             t_fail "reader lease: a lock-free release landing inside the detach window is never undone by the recheck" \
@@ -16073,10 +16085,10 @@ printf "| lease: "
 if [ -f "$D/$UAR_LHOLD.keep02.lease" ]; then printf "INTACT"; else printf "COLLATERAL-DAMAGE"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L25" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L25" | grep -q 'live: 1' &&
-           printf '%s' "$UAR_L25" | grep -q 'staging: REAPED' &&
-           printf '%s' "$UAR_L25" | grep -q 'lease: INTACT'; then
+        if <<<"$UAR_L25" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L25" grep -q 'live: 1' &&
+           <<<"$UAR_L25" grep -q 'staging: REAPED' &&
+           <<<"$UAR_L25" grep -q 'lease: INTACT'; then
             t_pass "reader lease: a dangling symlink under an abandoned-staging name is reaped, not skipped forever"
         else
             t_fail "reader lease: a dangling symlink under an abandoned-staging name is reaped, not skipped forever" \
@@ -16109,10 +16121,10 @@ printf "| hidden: "
 { ls -1a "$D" | grep -c "utest-sweep" | tr -d "\\n"; } || true
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L26" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L26" | grep -q 'live: 1' &&
-           printf '%s' "$UAR_L26" | grep -q 'dir: IN-PLACE' &&
-           printf '%s' "$UAR_L26" | grep -q 'hidden: 0'; then
+        if <<<"$UAR_L26" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L26" grep -q 'live: 1' &&
+           <<<"$UAR_L26" grep -q 'dir: IN-PLACE' &&
+           <<<"$UAR_L26" grep -q 'hidden: 0'; then
             t_pass "reader lease: a directory under a lease name stays published and uncounted, never hidden in staging"
         else
             t_fail "reader lease: a directory under a lease name stays published and uncounted, never hidden in staging" \
@@ -16149,11 +16161,11 @@ printf "| unblocked-aged: "
 if [ -d "$RUNS_DIR/20260103T000000Z-1-aaaa" ]; then printf "KEPT"; else printf "PRUNED"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L26B" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L26B" | grep -q 'record: HELD' &&
-           printf '%s' "$UAR_L26B" | grep -q 'content: PRESERVED' &&
-           printf '%s' "$UAR_L26B" | grep -q 'unblocked-aged: PRUNED' &&
-           printf '%s' "$UAR_L26B" | grep -q 'held by a directory at a lease or lease-staging name'; then
+        if <<<"$UAR_L26B" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L26B" grep -q 'record: HELD' &&
+           <<<"$UAR_L26B" grep -q 'content: PRESERVED' &&
+           <<<"$UAR_L26B" grep -q 'unblocked-aged: PRUNED' &&
+           <<<"$UAR_L26B" grep -q 'held by a directory at a lease or lease-staging name'; then
             t_pass "reader lease: a directory at a lease name holds its record against the age cut, contents intact, and is announced"
         else
             t_fail "reader lease: a directory at a lease name holds its record against the age cut, contents intact, and is announced" \
@@ -16188,9 +16200,9 @@ printf "| stuck-record: "
 if [ -f "$RUNS_DIR/20260103T000000Z-1-aaaa/leases/.utest-sweep.stuck.d/obj" ]; then printf "PRESERVED"; else printf "DESTROYED"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L26C" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L26C" | grep -q 'blocked-record: PRESERVED' &&
-           printf '%s' "$UAR_L26C" | grep -q 'stuck-record: PRESERVED'; then
+        if <<<"$UAR_L26C" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L26C" grep -q 'blocked-record: PRESERVED' &&
+           <<<"$UAR_L26C" grep -q 'stuck-record: PRESERVED'; then
             t_pass "reader lease: UTEST_LEASE_MAX=0 disables lease admission, not the fail-closed directory and sweep-claim holds"
         else
             t_fail "reader lease: UTEST_LEASE_MAX=0 disables lease admission, not the fail-closed directory and sweep-claim holds" \
@@ -16255,11 +16267,11 @@ printf "| claims: "
 printf "%s" "$(ls -1d "$RUNS_DIR"/.utest-prune.*.d 2>/dev/null | grep -c . || echo 0)"
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L26E" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L26E" | grep -q 'record: HELD' &&
-           printf '%s' "$UAR_L26E" | grep -q 'content: PRESERVED' &&
-           printf '%s' "$UAR_L26E" | grep -q 'blocker: PRESERVED' &&
-           printf '%s' "$UAR_L26E" | grep -q 'claims: 0'; then
+        if <<<"$UAR_L26E" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L26E" grep -q 'record: HELD' &&
+           <<<"$UAR_L26E" grep -q 'content: PRESERVED' &&
+           <<<"$UAR_L26E" grep -q 'blocker: PRESERVED' &&
+           <<<"$UAR_L26E" grep -q 'claims: 0'; then
             t_pass "reader lease: a blocker appearing between classification and destruction restores the record whole"
         else
             t_fail "reader lease: a blocker appearing between classification and destruction restores the record whole" \
@@ -16310,9 +16322,9 @@ printf "| record: "
 if [ -d "$RUNS_DIR/20260102T000000Z-1-aaaa" ]; then printf "HELD"; else printf "PRUNED"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_P34" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_P34" | grep -q 'pointer: PRESERVED' &&
-           printf '%s' "$UAR_P34" | grep -q 'record: HELD'; then
+        if <<<"$UAR_P34" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_P34" grep -q 'pointer: PRESERVED' &&
+           <<<"$UAR_P34" grep -q 'record: HELD'; then
             t_pass "run record: a pointer that could not be READ is preserved, and so is its record, on the pass after"
         else
             t_fail "run record: a pointer that could not be READ is preserved, and so is its record, on the pass after" \
@@ -16342,7 +16354,7 @@ printf "| HARNESS-OK\n"
         # age it out again -- so the assertion would be measuring the age cut
         # rather than the restore it is about.
         UAR_P35="$(uar_prune_run 'UTEST_RECORD_KEEP=20')"
-        if printf '%s' "$UAR_P35" | grep -q 'HARNESS-OK' &&
+        if <<<"$UAR_P35" grep -q 'HARNESS-OK' &&
            [ -f "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/test-results.xml" ] &&
            [ ! -d "$UAR_PDIR/build/test-runs/.utest-prune.999.1.d" ]; then
             t_pass "run record: a detach the previous pass could not finish is restored, claim and all"
@@ -16374,8 +16386,8 @@ printf "| HARNESS-OK\n"
         rm -rf "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa"
         printf 'occupant\n' > "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa"
         UAR_P35B="$(uar_prune_run 2>&1)"
-        if printf '%s' "$UAR_P35B" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_P35B" | grep -q 'unresolved prune claim' &&
+        if <<<"$UAR_P35B" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_P35B" grep -q 'unresolved prune claim' &&
            [ -f "$UAR_PDIR/build/test-runs/.utest-prune.999.2.d/20260102T000000Z-1-aaaa/test-results.xml" ] &&
            [ -f "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa" ] &&
            [ -f "$UAR_PDIR/build/test-results-valid.run" ]; then
@@ -16399,8 +16411,8 @@ printf "| HARNESS-OK\n"
         done
         UAR_P36="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1' 2>&1)"
         UAR_P36N="$(ls -1 "$UAR_PDIR/build" 2>/dev/null | grep -c '\.run$' || echo 0)"
-        if printf '%s' "$UAR_P36" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_P36" | grep -q 'least-recently-published leg pointer' &&
+        if <<<"$UAR_P36" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_P36" grep -q 'least-recently-published leg pointer' &&
            [ "$UAR_P36N" -lt 6 ]; then
             t_pass "run record: a pointer-namespace overflow converges instead of deferring retention forever"
         else
@@ -16431,9 +16443,9 @@ printf "| HARNESS-OK\n"
                 ci_parity)  uar_prune_ident_fields 20260103T000000Z-1-aaaa fielded '' '' '' '' '' '' '' '' '"false"' ;;
             esac
             UAR_P37="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
-            if printf '%s' "$UAR_P37" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_P37" | grep -q '20260102T000000Z-1-aaaa' &&
-               ! printf '%s' "$UAR_P37" | grep -q '20260103T000000Z-1-aaaa'; then
+            if <<<"$UAR_P37" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_P37" grep -q '20260102T000000Z-1-aaaa' &&
+               ! <<<"$UAR_P37" grep -q '20260103T000000Z-1-aaaa'; then
                 t_pass "run record: an identity field outside its own grammar ('$_ifield') wins no pin"
             else
                 t_fail "run record: an identity field outside its own grammar ('$_ifield') wins no pin" "$UAR_P37"
@@ -16445,9 +16457,9 @@ printf "| HARNESS-OK\n"
         uar_prune_reset
         uar_prune_ptr valid 20260102T000000Z-1-aaaa
         UAR_P37B="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
-        if printf '%s' "$UAR_P37B" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_P37B" | grep -q '20260102T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_P37B" | grep -q 'test-results-valid.run'; then
+        if <<<"$UAR_P37B" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_P37B" grep -q '20260102T000000Z-1-aaaa' &&
+           <<<"$UAR_P37B" grep -q 'test-results-valid.run'; then
             t_pass "run record: a canonical identity document still pins after the per-field grammars"
         else
             t_fail "run record: a canonical identity document still pins after the per-field grammars" "$UAR_P37B"
@@ -16501,9 +16513,9 @@ printf "| claimed: "
 if ls -1d "$RUNS_DIR"/.utest-prune.*.d >/dev/null 2>&1; then printf "HELD"; else printf "NONE"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_P38" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_P38" | grep -q 'pointer: PRESERVED' &&
-           printf '%s' "$UAR_P38" | grep -q 'claimed: HELD'; then
+        if <<<"$UAR_P38" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_P38" grep -q 'pointer: PRESERVED' &&
+           <<<"$UAR_P38" grep -q 'claimed: HELD'; then
             t_pass "run record: a claim created this pass protects its pointer from the sweep in the same pass"
         else
             t_fail "run record: a claim created this pass protects its pointer from the sweep in the same pass" "$UAR_P38"
@@ -16528,7 +16540,7 @@ printf "| HARNESS-OK\n"
         done
         UAR_P39="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=2' 2>&1)"
         UAR_P39N="$(ls -1 "$UAR_PDIR/build" 2>/dev/null | grep -c '\.run$' || echo 0)"
-        if printf '%s' "$UAR_P39" | grep -q 'HARNESS-OK' && [ "$UAR_P39N" = "8" ] &&
+        if <<<"$UAR_P39" grep -q 'HARNESS-OK' && [ "$UAR_P39N" = "8" ] &&
            [ ! -f "$UAR_PDIR/build/test-results-leg1.run" ] &&
            [ -f "$UAR_PDIR/build/test-results-leg2.run" ]; then
             t_pass "run record: an overflow of one removes exactly one pointer, the least recently published"
@@ -16553,7 +16565,7 @@ printf "| HARNESS-OK\n"
             > "$UAR_PDIR/build/test-results-valid.run.big"
         mv -f "$UAR_PDIR/build/test-results-valid.run.big" "$UAR_PDIR/build/test-results-valid.run"
         UAR_P40="$(uar_prune_run 'UTEST_RECORD_KEEP=20')"
-        if printf '%s' "$UAR_P40" | grep -q 'HARNESS-OK' &&
+        if <<<"$UAR_P40" grep -q 'HARNESS-OK' &&
            [ -f "$UAR_PDIR/build/test-results-valid.run" ]; then
             t_pass "run record: an oversized pointer that still names a live record is not swept"
         else
@@ -16583,7 +16595,7 @@ printf "| HARNESS-OK\n"
         printf 'occupant\n' > "$UAR_PDIR/build/test-runs/20260101T000000Z-1-aaaa"
         UAR_P41="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1
 RUN_ID=20260105T000000Z-1-aaaa' 2>&1)"
-        if printf '%s' "$UAR_P41" | grep -q 'HARNESS-OK' &&
+        if <<<"$UAR_P41" grep -q 'HARNESS-OK' &&
            [ -f "$UAR_PDIR/build/test-results-leg1.run" ] &&
            [ ! -f "$UAR_PDIR/build/test-results-leg2.run" ]; then
             t_pass "run record: overflow convergence spares a pointer whose record is held in a claim"
@@ -16610,8 +16622,8 @@ RUN_ID=20260105T000000Z-1-aaaa' 2>&1)"
         printf '{}\n' > "$UAR_PDIR/build/test-runs/.utest-prune.999.4.d/20260102T000000Z-1-aaaa/record-complete.json"
         : > "$UAR_PDIR/build/test-runs/.utest-prune.999.4.d/.deleting"
         UAR_P42="$(uar_prune_run 'UTEST_RECORD_KEEP=20' 2>&1)"
-        if printf '%s' "$UAR_P42" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_P42" | grep -q 'PARTIALLY DESTROYED' &&
+        if <<<"$UAR_P42" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_P42" grep -q 'PARTIALLY DESTROYED' &&
            [ -f "$UAR_PDIR/build/test-runs/.utest-prune.999.4.d/20260102T000000Z-1-aaaa/record-complete.json" ] &&
            [ ! -d "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa" ] &&
            [ -f "$UAR_PDIR/build/test-results-valid.run" ]; then
@@ -16633,9 +16645,9 @@ RUN_ID=20260105T000000Z-1-aaaa' 2>&1)"
         uar_prune_reset
         mkdir -p "$UAR_PDIR/build/test-runs/.utest-prune.999.5.d/.deleting"
         UAR_P42B="$(uar_prune_run 'UTEST_RECORD_KEEP=20' 2>&1)"
-        if printf '%s' "$UAR_P42B" | grep -q 'HARNESS-OK' &&
+        if <<<"$UAR_P42B" grep -q 'HARNESS-OK' &&
            [ ! -d "$UAR_PDIR/build/test-runs/.utest-prune.999.5.d" ] &&
-           ! printf '%s' "$UAR_P42B" | grep -q 'PARTIALLY DESTROYED'; then
+           ! <<<"$UAR_P42B" grep -q 'PARTIALLY DESTROYED'; then
             t_pass "run record: a claim left holding only the deletion mark is collected, not quarantined forever"
         else
             t_fail "run record: a claim left holding only the deletion mark is collected, not quarantined forever" "$UAR_P42B"
@@ -16656,8 +16668,8 @@ RUN_ID=20260105T000000Z-1-aaaa' 2>&1)"
         mkdir -p "$UAR_P42C_EXT/.deleting"
         ln -s "$UAR_P42C_EXT" "$UAR_PDIR/build/test-runs/.utest-prune.999.6.d"
         UAR_P42D="$(uar_prune_run 'UTEST_RECORD_KEEP=20' 2>&1)"
-        if printf '%s' "$UAR_P42D" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_P42D" | grep -q 'is a SYMLINK' &&
+        if <<<"$UAR_P42D" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_P42D" grep -q 'is a SYMLINK' &&
            [ -d "$UAR_P42C_EXT/.deleting" ] &&
            [ -L "$UAR_PDIR/build/test-runs/.utest-prune.999.6.d" ]; then
             t_pass "run record: a symlinked prune claim is reported and never followed out of the runs directory"
@@ -16693,10 +16705,10 @@ printf "| content: "
 if [ -f "$D/leases/.stg01.tmp/inside" ]; then printf "PRESERVED"; else printf "DESTROYED"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L26F" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L26F" | grep -q 'record: HELD' &&
-           printf '%s' "$UAR_L26F" | grep -q 'content: PRESERVED' &&
-           printf '%s' "$UAR_L26F" | grep -q 'a DIRECTORY occupies .*stg01.tmp'; then
+        if <<<"$UAR_L26F" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L26F" grep -q 'record: HELD' &&
+           <<<"$UAR_L26F" grep -q 'content: PRESERVED' &&
+           <<<"$UAR_L26F" grep -q 'a DIRECTORY occupies .*stg01.tmp'; then
             t_pass "reader lease: a directory at a staging name is held and announced, at UTEST_LEASE_MAX=0 too"
         else
             t_fail "reader lease: a directory at a staging name is held and announced, at UTEST_LEASE_MAX=0 too" \
@@ -16745,12 +16757,12 @@ printf "| target: "
 if [ -f "$PROJECT/elsewhere/inside" ]; then printf "UNTOUCHED"; else printf "DESTROYED"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L26G" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L26G" | grep -q 'setup: LINKED' &&
-           printf '%s' "$UAR_L26G" | grep -q 'ptr-link: SWEPT' &&
-           printf '%s' "$UAR_L26G" | grep -q 'lease-link-record: PRUNED' &&
-           printf '%s' "$UAR_L26G" | grep -q 'target: UNTOUCHED' &&
-           ! printf '%s' "$UAR_L26G" | grep -q 'a DIRECTORY occupies'; then
+        if <<<"$UAR_L26G" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L26G" grep -q 'setup: LINKED' &&
+           <<<"$UAR_L26G" grep -q 'ptr-link: SWEPT' &&
+           <<<"$UAR_L26G" grep -q 'lease-link-record: PRUNED' &&
+           <<<"$UAR_L26G" grep -q 'target: UNTOUCHED' &&
+           ! <<<"$UAR_L26G" grep -q 'a DIRECTORY occupies'; then
             t_pass "reader lease: a symlink to a directory is swept, never mistaken for a blocker, and its target is untouched"
         else
             t_fail "reader lease: a symlink to a directory is swept, never mistaken for a blocker, and its target is untouched" \
@@ -16813,23 +16825,23 @@ printf "| HARNESS-OK\n"
         # `reports: 1` is the dedup: the path is recorded once even though it is
         # reported twice, so a second announcement of the same path cannot spam
         # a run whose sweep and publisher both meet it.
-        if printf '%s' "$UAR_L26H" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L26H" | grep -q 'dir-yes: 1' &&
-           printf '%s' "$UAR_L26H" | grep -q 'file-no: 0' &&
-           printf '%s' "$UAR_L26H" | grep -q 'absent-no: 0' &&
-           printf '%s' "$UAR_L26H" | grep -q 'empty-arg-no: 0' &&
-           printf '%s' "$UAR_L26H" | grep -q 'reports: 1' &&
-           printf '%s' "$UAR_L26H" | grep -q 'silent-ok: 1' &&
-           printf '%s' "$UAR_L26H" | grep -q 'star: 1' &&
-           printf '%s' "$UAR_L26H" | grep -q 'nomatch: 0' &&
-           printf '%s' "$UAR_L26H" | grep -q 'emptyglob: 0' &&
-           printf '%s' "$UAR_L26H" | grep -q 'wsglob: 0' &&
-           printf '%s' "$UAR_L26H" | grep -q 'splitglob: 0' &&
-           printf '%s' "$UAR_L26H" | grep -q 'dotglob: 0' &&
-           printf '%s' "$UAR_L26H" | grep -q 'dotdotglob: 0' &&
-           printf '%s' "$UAR_L26H" | grep -q 'slashglob: 0' &&
-           printf '%s' "$UAR_L26H" | grep -q 'noglob: 0' &&
-           printf '%s' "$UAR_L26H" | grep -q 'absentdir: 0'; then
+        if <<<"$UAR_L26H" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L26H" grep -q 'dir-yes: 1' &&
+           <<<"$UAR_L26H" grep -q 'file-no: 0' &&
+           <<<"$UAR_L26H" grep -q 'absent-no: 0' &&
+           <<<"$UAR_L26H" grep -q 'empty-arg-no: 0' &&
+           <<<"$UAR_L26H" grep -q 'reports: 1' &&
+           <<<"$UAR_L26H" grep -q 'silent-ok: 1' &&
+           <<<"$UAR_L26H" grep -q 'star: 1' &&
+           <<<"$UAR_L26H" grep -q 'nomatch: 0' &&
+           <<<"$UAR_L26H" grep -q 'emptyglob: 0' &&
+           <<<"$UAR_L26H" grep -q 'wsglob: 0' &&
+           <<<"$UAR_L26H" grep -q 'splitglob: 0' &&
+           <<<"$UAR_L26H" grep -q 'dotglob: 0' &&
+           <<<"$UAR_L26H" grep -q 'dotdotglob: 0' &&
+           <<<"$UAR_L26H" grep -q 'slashglob: 0' &&
+           <<<"$UAR_L26H" grep -q 'noglob: 0' &&
+           <<<"$UAR_L26H" grep -q 'absentdir: 0'; then
             t_pass "reader lease: the blocking-directory helpers hold at every boundary, and an empty glob never counts the scanned directory"
         else
             t_fail "reader lease: the blocking-directory helpers hold at every boundary, and an empty glob never counts the scanned directory" \
@@ -16898,16 +16910,16 @@ printf "| ifs: "
 if [ "$IFS" = $'"'"' \t\n'"'"' ]; then printf "CLEARED"; else printf "STILL-SET"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L26I" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L26I" | grep -q 'inherited: NOGLOB' &&
-           printf '%s' "$UAR_L26I" | grep -q 'noglob: CLEARED' &&
-           printf '%s' "$UAR_L26I" | grep -q 'failglob: CLEARED' &&
-           printf '%s' "$UAR_L26I" | grep -q 'nullglob: CLEARED' &&
-           printf '%s' "$UAR_L26I" | grep -q 'dotglob: CLEARED' &&
-           printf '%s' "$UAR_L26I" | grep -q 'nocaseglob: CLEARED' &&
-           printf '%s' "$UAR_L26I" | grep -q 'nocasematch: CLEARED' &&
-           printf '%s' "$UAR_L26I" | grep -q 'globignore: CLEARED' &&
-           printf '%s' "$UAR_L26I" | grep -q 'ifs: CLEARED'; then
+        if <<<"$UAR_L26I" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L26I" grep -q 'inherited: NOGLOB' &&
+           <<<"$UAR_L26I" grep -q 'noglob: CLEARED' &&
+           <<<"$UAR_L26I" grep -q 'failglob: CLEARED' &&
+           <<<"$UAR_L26I" grep -q 'nullglob: CLEARED' &&
+           <<<"$UAR_L26I" grep -q 'dotglob: CLEARED' &&
+           <<<"$UAR_L26I" grep -q 'nocaseglob: CLEARED' &&
+           <<<"$UAR_L26I" grep -q 'nocasematch: CLEARED' &&
+           <<<"$UAR_L26I" grep -q 'globignore: CLEARED' &&
+           <<<"$UAR_L26I" grep -q 'ifs: CLEARED'; then
             t_pass "reader lease: executing scripts/test.sh's real prefix clears every ambient glob, match and splitting input"
         else
             t_fail "reader lease: executing scripts/test.sh's real prefix clears every ambient glob, match and splitting input" \
@@ -16941,10 +16953,10 @@ printf "| empty-record: "
 if [ -d "$RUNS_DIR/20260103T000000Z-1-aaaa" ]; then printf "KEPT"; else printf "PRUNED"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L26J" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L26J" | grep -q 'record: HELD' &&
-           printf '%s' "$UAR_L26J" | grep -q 'content: PRESERVED' &&
-           printf '%s' "$UAR_L26J" | grep -q 'empty-record: PRUNED'; then
+        if <<<"$UAR_L26J" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L26J" grep -q 'record: HELD' &&
+           <<<"$UAR_L26J" grep -q 'content: PRESERVED' &&
+           <<<"$UAR_L26J" grep -q 'empty-record: PRUNED'; then
             t_pass "reader lease: with glob modes normalised, a blocked record survives and an empty leases/ does not abort retention"
         else
             t_fail "reader lease: with glob modes normalised, a blocked record survives and an empty leases/ does not abort retention" \
@@ -16973,9 +16985,9 @@ printf "| aged: "
 if [ -d "$RUNS_DIR/20260102T000000Z-1-aaaa" ]; then printf "HELD"; else printf "PRUNED"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L26D" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L26D" | grep -q 'aged: PRUNED' &&
-           ! printf '%s' "$UAR_L26D" | grep -q 'a DIRECTORY occupies'; then
+        if <<<"$UAR_L26D" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L26D" grep -q 'aged: PRUNED' &&
+           ! <<<"$UAR_L26D" grep -q 'a DIRECTORY occupies'; then
             t_pass "reader lease: the artifacts a healthy run writes under leases/ never take a directory hold"
         else
             t_fail "reader lease: the artifacts a healthy run writes under leases/ never take a directory hold" \
@@ -17009,10 +17021,10 @@ printf "| staging: "
 { ls -1a "$D" | grep -c "utest-sweep" | tr -d "\\n"; } || true
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L27" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L27" | grep -q 'rc: RETAINED' &&
-           printf '%s' "$UAR_L27" | grep -q 'lease: RESTORED' &&
-           printf '%s' "$UAR_L27" | grep -q 'staging: 0'; then
+        if <<<"$UAR_L27" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L27" grep -q 'rc: RETAINED' &&
+           <<<"$UAR_L27" grep -q 'lease: RESTORED' &&
+           <<<"$UAR_L27" grep -q 'staging: 0'; then
             t_pass "reader lease: a lease the recheck votes to keep is restored AND reported retained, never counted reclaimed"
         else
             t_fail "reader lease: a lease the recheck votes to keep is restored AND reported retained, never counted reclaimed" \
@@ -17063,13 +17075,13 @@ if utest_lease_reclaimable "$LIVE" "$BLIVE" 20260102T000000Z-1-aaaa 1000000100 3
     printf "| live-bound: RECLAIM"; else printf "| live-bound: KEEP"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L28" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L28" | grep -q 'unbound: RECLAIM' &&
-           printf '%s' "$UAR_L28" | grep -q 'snapshot: PUBLISHED' &&
-           printf '%s' "$UAR_L28" | grep -q 'same: RECLAIM' &&
-           printf '%s' "$UAR_L28" | grep -q 'changed: KEEP' &&
-           printf '%s' "$UAR_L28" | grep -q 'live-unbound: KEEP' &&
-           printf '%s' "$UAR_L28" | grep -q 'live-bound: RECLAIM'; then
+        if <<<"$UAR_L28" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L28" grep -q 'unbound: RECLAIM' &&
+           <<<"$UAR_L28" grep -q 'snapshot: PUBLISHED' &&
+           <<<"$UAR_L28" grep -q 'same: RECLAIM' &&
+           <<<"$UAR_L28" grep -q 'changed: KEEP' &&
+           <<<"$UAR_L28" grep -q 'live-unbound: KEEP' &&
+           <<<"$UAR_L28" grep -q 'live-bound: RECLAIM'; then
             t_pass "reader lease: the recheck is bound to the selection snapshot, so a changed object is kept not judged"
         else
             t_fail "reader lease: the recheck is bound to the selection snapshot, so a changed object is kept not judged" \
@@ -17105,10 +17117,10 @@ printf "| staging: "
 { ls -1a "$D" | grep -c "utest-sweep" | tr -d "\\n"; } || true
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L29" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L29" | grep -q 'live: 1' &&
-           printf '%s' "$UAR_L29" | grep -q 'lease: RESTORED' &&
-           printf '%s' "$UAR_L29" | grep -q 'staging: 0'; then
+        if <<<"$UAR_L29" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L29" grep -q 'live: 1' &&
+           <<<"$UAR_L29" grep -q 'lease: RESTORED' &&
+           <<<"$UAR_L29" grep -q 'staging: 0'; then
             t_pass "reader lease: the reclaim loop counts a restored lease as live, so its record is not pruned"
         else
             t_fail "reader lease: the reclaim loop counts a restored lease as live, so its record is not pruned" \
@@ -17149,11 +17161,11 @@ printf "| object: "
 if [ -f "$D/.utest-sweep.held.d/obj" ]; then printf "PRESERVED"; else printf "DESTROYED"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L30" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L30" | grep -q 'p1-live: 0' &&
-           printf '%s' "$UAR_L30" | grep -q 'p2-live: 0' &&
-           printf '%s' "$UAR_L30" | grep -q 'record: HELD' &&
-           printf '%s' "$UAR_L30" | grep -q 'object: PRESERVED'; then
+        if <<<"$UAR_L30" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L30" grep -q 'p1-live: 0' &&
+           <<<"$UAR_L30" grep -q 'p2-live: 0' &&
+           <<<"$UAR_L30" grep -q 'record: HELD' &&
+           <<<"$UAR_L30" grep -q 'object: PRESERVED'; then
             t_pass "reader lease: an unresolved staging claim holds its record across passes, never just a warning"
         else
             t_fail "reader lease: an unresolved staging claim holds its record across passes, never just a warning" \
@@ -17194,9 +17206,9 @@ printf "| claim-new: "
 if [ -d "$RUNS_DIR/20260105T000000Z-1-aaaa" ]; then printf "HELD"; else printf "EVICTED"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-        if printf '%s' "$UAR_L32" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L32" | grep -q 'leased-old: HELD' &&
-           printf '%s' "$UAR_L32" | grep -q 'claim-new: HELD'; then
+        if <<<"$UAR_L32" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L32" grep -q 'leased-old: HELD' &&
+           <<<"$UAR_L32" grep -q 'claim-new: HELD'; then
             t_pass "reader lease: an unresolved claim is held without spending a capped lease slot"
         else
             t_fail "reader lease: an unresolved claim is held without spending a capped lease slot" "$UAR_L32"
@@ -17222,9 +17234,9 @@ printf "| lease: "
 if [ -e "$D/$UAR_LHOLD.oct01.lease" ]; then printf "STILL-THERE"; else printf "RECLAIMED"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "ABORTED-OR-FAILED")"
-        if printf '%s' "$UAR_L31" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L31" | grep -q 'live: 0' &&
-           printf '%s' "$UAR_L31" | grep -q 'lease: RECLAIMED'; then
+        if <<<"$UAR_L31" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L31" grep -q 'live: 0' &&
+           <<<"$UAR_L31" grep -q 'lease: RECLAIMED'; then
             t_pass "run record: a leading-zero UTEST_SWEEP_SEQ is normalised, never an octal abort mid-sweep"
         else
             t_fail "run record: a leading-zero UTEST_SWEEP_SEQ is normalised, never an octal abort mid-sweep" \
@@ -17264,10 +17276,10 @@ printf "| HARNESS-OK\n"
         uar_prune_ptr cross 20260103T000000Z-1-aaaa
         uar_prune_ident 20260103T000000Z-1-aaaa producedbyanotherleg
         UAR_L33P="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
-        if printf '%s' "$UAR_L33P" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L33P" | grep -q '20260102T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_L33P" | grep -q 'test-results-valid.run' &&
-           ! printf '%s' "$UAR_L33P" | grep -q '20260103T000000Z-1-aaaa'; then
+        if <<<"$UAR_L33P" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L33P" grep -q '20260102T000000Z-1-aaaa' &&
+           <<<"$UAR_L33P" grep -q 'test-results-valid.run' &&
+           ! <<<"$UAR_L33P" grep -q '20260103T000000Z-1-aaaa'; then
             t_pass "run record: a cross-leg pointer pins nothing and does not spend the pin budget"
         else
             t_fail "run record: a cross-leg pointer pins nothing and does not spend the pin budget" "$UAR_L33P"
@@ -17291,10 +17303,10 @@ printf "| HARNESS-OK\n"
             '"test-results.xml"' '"test-results.json"' null \
             > "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/record-complete.json"
         UAR_L34="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
-        if printf '%s' "$UAR_L34" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L34" | grep -q '20260102T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_L34" | grep -q 'test-results-valid.run' &&
-           ! printf '%s' "$UAR_L34" | grep -q '20260103T000000Z-1-aaaa'; then
+        if <<<"$UAR_L34" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L34" grep -q '20260102T000000Z-1-aaaa' &&
+           <<<"$UAR_L34" grep -q 'test-results-valid.run' &&
+           ! <<<"$UAR_L34" grep -q '20260103T000000Z-1-aaaa'; then
             t_pass "run record: an identity the marker disclaims cannot bind a record to a leg"
         else
             t_fail "run record: an identity the marker disclaims cannot bind a record to a leg" "$UAR_L34"
@@ -17330,11 +17342,11 @@ d = json.load(open(sys.argv[1]))
 print("PARSER-SEES-NULL" if d.get("identity") is None else "PARSER-SEES-%r" % d.get("identity"))
 ' "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/record-complete.json" 2>&1)"
         UAR_L35="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
-        if printf '%s' "$UAR_L35" | grep -q 'HARNESS-OK' &&
+        if <<<"$UAR_L35" grep -q 'HARNESS-OK' &&
            [ "$UAR_L35J" = PARSER-SEES-NULL ] &&
-           printf '%s' "$UAR_L35" | grep -q '20260102T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_L35" | grep -q 'test-results-valid.run' &&
-           ! printf '%s' "$UAR_L35" | grep -q '20260103T000000Z-1-aaaa'; then
+           <<<"$UAR_L35" grep -q '20260102T000000Z-1-aaaa' &&
+           <<<"$UAR_L35" grep -q 'test-results-valid.run' &&
+           ! <<<"$UAR_L35" grep -q '20260103T000000Z-1-aaaa'; then
             t_pass "run record: an escaped duplicate identity key in a marker binds nothing"
         else
             t_fail "run record: an escaped duplicate identity key in a marker binds nothing" \
@@ -17372,11 +17384,11 @@ except ValueError:
     print("UNPARSEABLE")
 ' "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/test-run-identity.json" 2>&1)"
         UAR_L36="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
-        if printf '%s' "$UAR_L36" | grep -q 'HARNESS-OK' &&
+        if <<<"$UAR_L36" grep -q 'HARNESS-OK' &&
            [ "$UAR_L36J" = UNPARSEABLE ] &&
-           printf '%s' "$UAR_L36" | grep -q '20260102T000000Z-1-aaaa' &&
-           printf '%s' "$UAR_L36" | grep -q 'test-results-valid.run' &&
-           ! printf '%s' "$UAR_L36" | grep -q '20260103T000000Z-1-aaaa'; then
+           <<<"$UAR_L36" grep -q '20260102T000000Z-1-aaaa' &&
+           <<<"$UAR_L36" grep -q 'test-results-valid.run' &&
+           ! <<<"$UAR_L36" grep -q '20260103T000000Z-1-aaaa'; then
             t_pass "run record: an identity a JSON parser rejects binds nothing"
         else
             t_fail "run record: an identity a JSON parser rejects binds nothing" \
@@ -17401,10 +17413,10 @@ utest_leg_pointer_doc_for "$1" "$2"' _ "$_inj" 20260103T000000Z-1-aaaa \
                 > "$UAR_PDIR/build/test-results-$_inj.run"
             uar_prune_ident 20260103T000000Z-1-aaaa "$_inj"
             UAR_L37="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
-            if printf '%s' "$UAR_L37" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_L37" | grep -q '20260102T000000Z-1-aaaa' &&
-               printf '%s' "$UAR_L37" | grep -q 'test-results-valid.run' &&
-               ! printf '%s' "$UAR_L37" | grep -q '20260103T000000Z-1-aaaa'; then
+            if <<<"$UAR_L37" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_L37" grep -q '20260102T000000Z-1-aaaa' &&
+               <<<"$UAR_L37" grep -q 'test-results-valid.run' &&
+               ! <<<"$UAR_L37" grep -q '20260103T000000Z-1-aaaa'; then
                 t_pass "run record: a pointer whose filename encodes leg '$_inj' pins nothing"
             else
                 t_fail "run record: a pointer whose filename encodes leg '$_inj' pins nothing" "$UAR_L37"
@@ -17435,9 +17447,9 @@ shopt -q nocasematch && printf "inherited: ON" || printf "inherited: OFF"
 printf "| pin: [%s]" "$(utest_pointer_pin_id "$PROJECT/build/test-results-UPPER.run")"
 printf "| HARNESS-OK\n"
 ' 2>&1)"
-        if printf '%s' "$UAR_L38" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L38" | grep -q 'inherited: ON' &&
-           printf '%s' "$UAR_L38" | grep -q 'pin: \[\]'; then
+        if <<<"$UAR_L38" grep -q 'HARNESS-OK' &&
+           <<<"$UAR_L38" grep -q 'inherited: ON' &&
+           <<<"$UAR_L38" grep -q 'pin: \[\]'; then
             t_pass "run record: the leg alphabet guard survives an inherited nocasematch"
         else
             t_fail "run record: the leg alphabet guard survives an inherited nocasematch" "$UAR_L38"
@@ -17589,8 +17601,8 @@ utest_lease_acquire slowleg || true
             printf '#!/bin/sh\nprintf "99999 %%s\\n" "$*"\n' > "$UAR_PDIR/slowbin/wc"
             chmod +x "$UAR_PDIR/slowbin/wc"
             UAR_L40="$(uar_prune_run 'PATH="'"$UAR_PDIR"'/slowbin:$PATH"')"
-            if printf '%s' "$UAR_L40" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_L40" | grep -q '20260102T000000Z-1-aaaa'; then
+            if <<<"$UAR_L40" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_L40" grep -q '20260102T000000Z-1-aaaa'; then
                 t_pass "reader lease: a lease document is read from one snapshot, never a size probe plus a read"
             else
                 t_fail "reader lease: a lease document is read from one snapshot, never a size probe plus a read" "$UAR_L40"
@@ -17627,9 +17639,9 @@ utest_lease_acquire slowleg || true
             UAR_L41="$(uar_prune_run 'PATH="'"$UAR_PDIR"'/slowbin:$PATH"')"
             UAR_L41LEFT="$(find "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases" \
                            -maxdepth 1 -name '*.lease' 2>/dev/null | grep -c . || true)"
-            if printf '%s' "$UAR_L41" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_L41" | grep -q '20260102T000000Z-1-aaaa' &&
-               printf '%s' "$UAR_L41" | grep -q 'lease census could not be completed' &&
+            if <<<"$UAR_L41" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_L41" grep -q '20260102T000000Z-1-aaaa' &&
+               <<<"$UAR_L41" grep -q 'lease census could not be completed' &&
                [ "$UAR_L41LEFT" = "1" ]; then
                 t_pass "reader lease: a census the pruner could not complete holds its record, never deletes it"
             else
@@ -17663,9 +17675,9 @@ utest_lease_acquire slowleg || true
             UAR_L42="$(uar_prune_run 'PATH="'"$UAR_PDIR"'/slowbin:$PATH"')"
             UAR_L42LEFT="$(find "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases" \
                            -maxdepth 1 -name '*.lease' 2>/dev/null | grep -c . || true)"
-            if printf '%s' "$UAR_L42" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_L42" | grep -q '20260102T000000Z-1-aaaa' &&
-               printf '%s' "$UAR_L42" | grep -q 'lease census could not be completed' &&
+            if <<<"$UAR_L42" grep -q 'HARNESS-OK' &&
+               <<<"$UAR_L42" grep -q '20260102T000000Z-1-aaaa' &&
+               <<<"$UAR_L42" grep -q 'lease census could not be completed' &&
                [ "$UAR_L42LEFT" = "1" ]; then
                 t_pass "reader lease: a lease read that fails without timing out holds its record too"
             else
@@ -17848,7 +17860,7 @@ PY
     UAR_P2="$(uar_ptr_gen run2 2)"
     UAR_P2_XML="$(printf '%s' "$UAR_RESOLVE" | sed -n 's/.*XML=\([^ ]*\).*/\1/p')"
     UAR_P2_JSON="$(printf '%s' "$UAR_RESOLVE" | sed -n 's/.*JSON=\([^ ]*\).*/\1/p')"
-    if printf '%s' "$UAR_RESOLVE" | grep -q "RECORD=$UAR_PTR/build/test-runs/run1 " &&
+    if <<<"$UAR_RESOLVE" grep -q "RECORD=$UAR_PTR/build/test-runs/run1 " &&
        [ -n "$UAR_P2_XML" ] && [ -n "$UAR_P2_JSON" ] &&
        grep -q 'GEN-1-XML' "$UAR_P2_XML" 2>/dev/null &&
        grep -q 'GEN-1-JSON' "$UAR_P2_JSON" 2>/dev/null &&
@@ -17893,7 +17905,7 @@ PY
     #      disagrees with it.
     UAR_P4="$(uar_ptr_gen run4 4 'mv() { for _a in "$@"; do case "$_a" in *test-results-leg.xml) return 1 ;; esac; done; command mv "$@"; }')"
     if grep -q '"run_id": "run3"' "$UAR_PTR/build/test-results-leg.run" &&
-       printf '%s' "$UAR_P4" | grep -qE 'UTEST_FAIL=[1-9]'; then
+       <<<"$UAR_P4" grep -qE 'UTEST_FAIL=[1-9]'; then
         t_pass "leg pointer: a torn alias set leaves the pointer on the previous complete generation"
     else
         t_fail "leg pointer: a torn alias set leaves the pointer on the previous complete generation" \
@@ -17905,7 +17917,7 @@ PY
     #      and it must leak no staging file into the retained record.
     UAR_P5="$(uar_ptr_gen run5 5 'mv() { for _a in "$@"; do case "$_a" in *test-results-leg.run) return 1 ;; esac; done; command mv "$@"; }')"
     if grep -q '"run_id": "run3"' "$UAR_PTR/build/test-results-leg.run" &&
-       printf '%s' "$UAR_P5" | grep -qE 'UTEST_FAIL=[1-9]' &&
+       <<<"$UAR_P5" grep -qE 'UTEST_FAIL=[1-9]' &&
        [ ! -e "$UAR_PTR/build/test-runs/run5/.legptr.tmp" ]; then
         t_pass "leg pointer: a failed pointer advance counts a failure and leaks no staging file"
     else
@@ -17948,7 +17960,7 @@ PY
     #       previous pointer untouched, and leak no temp into the record.
     UAR_P5C="$(uar_ptr_gen run7 7 'utest_leg_pointer_doc() { return 1; }')"
     if grep -q '"run_id": "run6"' "$UAR_PTR/build/test-results-leg.run" &&
-       printf '%s' "$UAR_P5C" | grep -qE 'UTEST_FAIL=[1-9]' &&
+       <<<"$UAR_P5C" grep -qE 'UTEST_FAIL=[1-9]' &&
        [ ! -e "$UAR_PTR/build/test-runs/run7/.legptr.tmp" ]; then
         t_pass "leg pointer: a failed pointer WRITE is counted and leaves the previous generation named"
     else
@@ -17960,7 +17972,7 @@ PY
     #       name, so there is no pointer to publish -- and that must be silent,
     #       not a counted failure, or every early refusal would report one.
     UAR_P5D="$(uar_ptr_gen run8 8 'RUN_POINTER_OUT=""')"
-    if printf '%s' "$UAR_P5D" | grep -q 'UTEST_FAIL=0' &&
+    if <<<"$UAR_P5D" grep -q 'UTEST_FAIL=0' &&
        grep -q '"run_id": "run6"' "$UAR_PTR/build/test-results-leg.run"; then
         t_pass "leg pointer: an unnamed leg publishes no pointer and counts no failure"
     else
@@ -17985,9 +17997,9 @@ PY
     UAR_P5E="$(uar_ptr_gen run9 9 2>&1)"
     if [ -d "$UAR_PTR/build/test-results-leg.run" ] &&
        [ -z "$(ls -A "$UAR_PTR/build/test-results-leg.run" 2>/dev/null)" ] &&
-       printf '%s' "$UAR_P5E" | grep -qE 'UTEST_FAIL=[1-9]' &&
-       printf '%s' "$UAR_P5E" | grep -q 'a DIRECTORY occupies .*test-results-leg.run' &&
-       printf '%s' "$UAR_P5E" | grep -q 'cannot publish its pointer' &&
+       <<<"$UAR_P5E" grep -qE 'UTEST_FAIL=[1-9]' &&
+       <<<"$UAR_P5E" grep -q 'a DIRECTORY occupies .*test-results-leg.run' &&
+       <<<"$UAR_P5E" grep -q 'cannot publish its pointer' &&
        [ ! -e "$UAR_PTR/build/test-runs/run9/.legptr.tmp" ]; then
         t_pass "leg pointer: a directory at the pointer pathname is a counted failure that names its cause, never a silent success"
     else
@@ -18262,11 +18274,11 @@ fi
 PUBFN=$(awk '/^utest_publish\(\)/{f=1} f{print} f&&/^\}/{exit}' "$LEGSH")
 ALIASFN=$(awk '/^utest_alias_record\(\)/{f=1} f{print} f&&/^\}/{exit}' "$LEGSH")
 LEGSETFN=$(awk '/^utest_publish_leg_set\(\)/{f=1} f{print} f&&/^\}/{exit}' "$LEGSH")
-if printf '%s' "$PUBFN" | grep -q 'mv -f "\$staged" "\$record" || return 1' &&
-   printf '%s' "$ALIASFN" | grep -q 'cp -f "\$record" "\$RECORD_DIR/\.\${tag}canon\.tmp"' &&
+if <<<"$PUBFN" grep -q 'mv -f "\$staged" "\$record" || return 1' &&
+   <<<"$ALIASFN" grep -q 'cp -f "\$record" "\$RECORD_DIR/\.\${tag}canon\.tmp"' &&
    [ "$(printf '%s' "$ALIASFN" | grep -c 'UTEST_FAIL=')" -eq 1 ] &&
-   ! printf '%s' "$ALIASFN" | grep -q 'return 1' &&
-   printf '%s' "$LEGSETFN" | grep -q 'UTEST_FAIL='; then
+   ! <<<"$ALIASFN" grep -q 'return 1' &&
+   <<<"$LEGSETFN" grep -q 'UTEST_FAIL='; then
     t_pass "identity: a landed leg artifact survives an alias-copy failure"
 else
     t_fail "identity: a landed leg artifact survives an alias-copy failure" "$PUBFN$ALIASFN$LEGSETFN"
@@ -18317,9 +18329,9 @@ FIN_ALIAS=$(printf '%s\n' "$FINFN" | grep -n 'utest_alias_record' | head -1 | cu
 FIN_REFUSE=$(printf '%s\n' "$FINFN" | grep -n 'utest_publish_missing_refusals' | head -1 | cut -d: -f1)
 if [ -n "$FIN_COMMIT" ] && [ -n "$FIN_ALIAS" ] && [ -n "$FIN_REFUSE" ] &&
    [ "$FIN_REFUSE" -lt "$FIN_COMMIT" ] && [ "$FIN_COMMIT" -lt "$FIN_ALIAS" ] &&
-   printf '%s' "$FINFN" | grep -q 'if ! utest_commit_record' &&
-   ! printf '%s' "$FINFN" | grep -q 'utest_commit_record .* || true' &&
-   ! printf '%s' "$PUBFN" | grep -q 'utest_alias_record'; then
+   <<<"$FINFN" grep -q 'if ! utest_commit_record' &&
+   ! <<<"$FINFN" grep -q 'utest_commit_record .* || true' &&
+   ! <<<"$PUBFN" grep -q 'utest_alias_record'; then
     t_pass "identity: aliases are published only after the record commit marker"
 else
     t_fail "identity: aliases are published only after the record commit marker" "$FINFN"
@@ -18328,8 +18340,8 @@ fi
 # i12d. A marker that cannot land must FAIL the run. A green exit over an
 #       uncommitted record is the false-green the lifecycle exists to close.
 COMMITFN=$(awk '/^utest_commit_record\(\)/{f=1} f{print} f&&/^\}/{exit}' "$LEGSH")
-if printf '%s' "$COMMITFN" | grep -q 'UTEST_FAIL=' &&
-   printf '%s' "$COMMITFN" | grep -q 'return 1'; then
+if <<<"$COMMITFN" grep -q 'UTEST_FAIL=' &&
+   <<<"$COMMITFN" grep -q 'return 1'; then
     t_pass "identity: a record whose commit marker fails to land fails the run"
 else
     t_fail "identity: a record whose commit marker fails to land fails the run" "$COMMITFN"
@@ -18461,10 +18473,10 @@ fi
 #      inline block is exactly the drift this now catches.
 REFUSALFN=$(awk '/^utest_xml_refusal_doc\(\)/{f=1} f{print} f&&/^\}/{exit}' "$LEGSH")
 REFUSAL_OPENERS=$(grep -c 'errors="1" time="0"' "$LEGSH")
-if printf '%s' "$REFUSALFN" | grep -q 'property name="aborted" value="true"' &&
-   printf '%s' "$REFUSALFN" | grep -q 'property name="not_run" value="0"' &&
-   printf '%s' "$REFUSALFN" | grep -q 'utest_xml_identity_props$' &&
-   printf '%s' "$REFUSALFN" | grep -q 'errors="1"' &&
+if <<<"$REFUSALFN" grep -q 'property name="aborted" value="true"' &&
+   <<<"$REFUSALFN" grep -q 'property name="not_run" value="0"' &&
+   <<<"$REFUSALFN" grep -q 'utest_xml_identity_props$' &&
+   <<<"$REFUSALFN" grep -q 'errors="1"' &&
    [ "$REFUSAL_OPENERS" -eq 1 ]; then
     t_pass "identity: every synthetic XML error document carries the completeness properties"
 else
@@ -19841,7 +19853,7 @@ PUBLISHED_NORMAL=0
 utest_splice_capture "'"$CAP_INT"'/doc.xml" && { PUBLISHED_NORMAL=1; }
 echo "RESULT normal=$PUBLISHED_NORMAL fail=$UTEST_FAIL published=$XML_PUBLISHED"
 ' 2>&1)"
-if printf '%s' "$CAP_INT_OUT" | grep -q 'RESULT normal=0 fail=1 published=1' &&
+if <<<"$CAP_INT_OUT" grep -q 'RESULT normal=0 fail=1 published=1' &&
    grep -q 'errors="1"' "$CAP_INT/record/test-results.xml" 2>/dev/null &&
    ! grep -q 'test_other.exe' "$CAP_INT/record/test-results.xml" 2>/dev/null; then
     t_pass "capture: population drift stops the XML publish chain and refuses instead"
@@ -20361,9 +20373,9 @@ fi
 S59_BLOCK="$(awk '/--- Canonical run slice \+ captured-output model/,/^XML_SUMMARY_OK=1/' \
     "$REPO_ROOT/scripts/test.sh" | sed 's/[[:space:]]*#.*$//')"
 if [ -n "$S59_BLOCK" ] &&
-   printf '%s' "$S59_BLOCK" | grep -q 'if \[ -n "\$FRAME_COMPLETE_RUN" \]; then' &&
-   ! printf '%s' "$S59_BLOCK" | grep -q 'HAS_XML' &&
-   ! printf '%s' "$S59_BLOCK" | grep -q 'JSON_MODE'; then
+   <<<"$S59_BLOCK" grep -q 'if \[ -n "\$FRAME_COMPLETE_RUN" \]; then' &&
+   ! <<<"$S59_BLOCK" grep -q 'HAS_XML' &&
+   ! <<<"$S59_BLOCK" grep -q 'JSON_MODE'; then
     t_pass "test.sh: capture reconciliation is gated on a complete framed run, not on an artifact mode"
 else
     t_fail "test.sh: capture reconciliation is gated on a complete framed run, not on an artifact mode" \
@@ -20376,7 +20388,7 @@ fi
 # while this block was artifact-only. Once reconciliation is part of the
 # primary gate, either one means the required check did not run, which would
 # make every refusal above suppressible by breaking the checker.
-if printf '%s' "$S59_BLOCK" | grep -q 'capture reconciliation could not run' &&
+if <<<"$S59_BLOCK" grep -q 'capture reconciliation could not run' &&
    [ "$(printf '%s' "$S59_BLOCK" | grep -c 'capture reconciliation could not run')" = "2" ] &&
    [ "$(printf '%s' "$S59_BLOCK" | grep -c 'UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))')" -ge 3 ]; then
     t_pass "test.sh: a slice failure and a capture-tool error both fail the run"
@@ -20441,8 +20453,8 @@ else
         "emit rc=$S59_EMIT_RC json_empty=$([ -z "$S59_EMIT_JSON" ] && echo yes || echo no); test.sh has no non-emitting fallback, so an unwritable slice path would exit the run green"
 fi
 
-if ! printf '%s' "$S59_BLOCK" | grep -q 'utest-frame\.py' &&
-   printf '%s' "$S59_BLOCK" | grep -q 'RUNSLICE="\$RECORD_DIR/runslice"' &&
+if ! <<<"$S59_BLOCK" grep -q 'utest-frame\.py' &&
+   <<<"$S59_BLOCK" grep -q 'RUNSLICE="\$RECORD_DIR/runslice"' &&
    awk '/^utest_frame_scan\(\)/,/^}/' "$REPO_ROOT/scripts/test.sh" |
        grep -q '\-\-emit-run'; then
     t_pass "test.sh: the run slice costs no second full parse of the capture"
@@ -20456,7 +20468,7 @@ fi
 # without one the harvester treats capture as unattached and can publish a
 # green envelope for a run that exited red, while XML goes red via CAPTURE_OK
 # -- the two artifacts disagreeing about the same run.
-if printf '%s' "$S59_BLOCK" | grep -q 'capture_tool_unavailable' &&
+if <<<"$S59_BLOCK" grep -q 'capture_tool_unavailable' &&
    [ "$(printf '%s' "$S59_BLOCK" | grep -c '"schema": "utest-capture-v1", "ok": false')" = "2" ]; then
     t_pass "test.sh: a capture-tool failure publishes a refusal model for both artifacts"
 else
@@ -20568,7 +20580,7 @@ fi
 #      unrelated code that legitimately mentions both artifact modes.
 C17_BLOCK="$(awk '/--- Canonical run slice \+ captured-output model/,/^XML_SUMMARY_OK=1/' \
     "$REPO_ROOT/scripts/test.sh" | sed 's/[[:space:]]*#.*$//')"
-if [ -n "$C17_BLOCK" ] && ! printf '%s' "$C17_BLOCK" | grep -qE 'HAS_XML|JSON_MODE'; then
+if [ -n "$C17_BLOCK" ] && ! <<<"$C17_BLOCK" grep -qE 'HAS_XML|JSON_MODE'; then
     t_pass "capture: the shared slice/model step covers a JSON-only run"
 else
     t_fail "capture: the shared slice/model step covers a JSON-only run" \
@@ -20613,7 +20625,7 @@ sleep 0.3
 
 QO_OUT="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" detect --path "$QO_HELD" 2>&1)"
 QO_RC=$?
-if [ "$QO_RC" = "3" ] && printf '%s' "$QO_OUT" | grep -q "^${QO_HOLDER}	"; then
+if [ "$QO_RC" = "3" ] && <<<"$QO_OUT" grep -q "^${QO_HOLDER}	"; then
     t_pass "qemu-orphan: a live descriptor holder is detected and named (exit 3)"
 else
     t_fail "qemu-orphan: a live descriptor holder is detected and named (exit 3)" \
@@ -20646,7 +20658,7 @@ fi
 # an unrelated process that inherited the number.
 QO_OUT="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" reap --pid "$QO_HOLDER" \
              --path "$QO_HELD" --expect-starttime 999999999 2>&1)"
-if [ "$?" = "4" ] && printf '%s' "$QO_OUT" | grep -q "pid reused"; then
+if [ "$?" = "4" ] && <<<"$QO_OUT" grep -q "pid reused"; then
     t_pass "qemu-orphan: reap REFUSES a pid whose starttime does not match (exit 4)"
 else
     t_fail "qemu-orphan: reap REFUSES a pid whose starttime does not match (exit 4)" \
@@ -20657,7 +20669,7 @@ fi
 # a recorded starttime is meaningless without the boot it was measured in.
 QO_OUT="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" reap --pid "$QO_HOLDER" \
              --path "$QO_HELD" --expect-boot-id "00000000-0000-0000-0000-000000000000" 2>&1)"
-if [ "$?" = "4" ] && printf '%s' "$QO_OUT" | grep -q "previous boot"; then
+if [ "$?" = "4" ] && <<<"$QO_OUT" grep -q "previous boot"; then
     t_pass "qemu-orphan: reap REFUSES a boot_id from a previous boot (exit 4)"
 else
     t_fail "qemu-orphan: reap REFUSES a boot_id from a previous boot (exit 4)" "$QO_OUT"
@@ -20669,7 +20681,7 @@ QO_IDENT="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" identity --pid "$QO_HOLD
 QO_START="$(printf '%s' "$QO_IDENT" | awk '{print $2}')"
 QO_OUT="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" reap --pid "$QO_HOLDER" \
              --path "$QO_TMP/never-existed" --expect-starttime "$QO_START" 2>&1)"
-if [ "$?" = "4" ] && printf '%s' "$QO_OUT" | grep -q "no longer holds"; then
+if [ "$?" = "4" ] && <<<"$QO_OUT" grep -q "no longer holds"; then
     t_pass "qemu-orphan: reap REFUSES a pid that holds none of this tree's files"
 else
     t_fail "qemu-orphan: reap REFUSES a pid that holds none of this tree's files" "$QO_OUT"
@@ -20732,7 +20744,7 @@ print("sig0=%s readable=%s" % (sig0, "yes" if ready else "no"))
 os.close(fd)
 PY
 )"
-    if printf '%s' "$QO_ZOMB" | grep -q "readable=yes"; then
+    if <<<"$QO_ZOMB" grep -q "readable=yes"; then
         t_pass "qemu-orphan: a pidfd is readable for a terminated-but-unreaped process"
     else
         t_fail "qemu-orphan: a pidfd is readable for a terminated-but-unreaped process" "$QO_ZOMB"
@@ -20851,7 +20863,7 @@ QO_REAP_ELAPSED="$(printf '%s' "$QO_REAP_OUT" | sed -n 's/.*elapsed=\([0-9]*\).*
 # patched boot.conf far past the configured grace. So: the structural records
 # decide the CLAIM, and this stays purely as a catastrophic-stall net.
 if [ "$QO_REAP_RC" = "0" ] && [ -f "$QO_READY" ] && [ -n "$QO_REAP_PID" ] \
-   && printf '%s' "$QO_REAP_OUT" | grep -q "state=reaped" \
+   && <<<"$QO_REAP_OUT" grep -q "state=reaped" \
    && grep -qx -- "sleep-begin 2" "$QO_DEADLINE_LOG" 2>/dev/null \
    && grep -qx -- "sleep-end 2 rc=0" "$QO_DEADLINE_LOG" 2>/dev/null \
    && grep -qx -- "kill -9 $QO_REAP_PID" "$QO_DEADLINE_LOG" 2>/dev/null \
@@ -20960,7 +20972,7 @@ for QO_ZEROGRACE in 0 00 .0 0.0; do
     # checked exactly and the timing is irrelevant. Same lesson as the
     # kernel-total bimodality gotcha: gate on the mechanism, not on a number
     # that drifts with load.
-    if printf '%s' "$QO_Z_OUT" | grep -q "state=reaped" \
+    if <<<"$QO_Z_OUT" grep -q "state=reaped" \
        && [ "$QO_Z_RESOLVED" = "5" ]; then
         t_pass "test.sh: a zero grace ('$QO_ZEROGRACE') falls back to the default, not an instant kill"
     else
@@ -20987,7 +20999,7 @@ for QO_BADGRACE in bogus -5 "" 0x5; do
     # "reached the deadline" alone cannot distinguish the 5s default from any
     # other usable value the validator might drift to.
     QO_BAD_RESOLVED="$(printf '%s' "$QO_BAD_OUT" | sed -n 's/.*resolved=\([^ ]*\).*/\1/p')"
-    if [ "$QO_BAD_RC" = "0" ] && printf '%s' "$QO_BAD_OUT" | grep -q "state=reaped" \
+    if [ "$QO_BAD_RC" = "0" ] && <<<"$QO_BAD_OUT" grep -q "state=reaped" \
        && [ "$QO_BAD_RESOLVED" = "5" ]; then
         t_pass "test.sh: an invalid reap grace ('$QO_BADGRACE') still reaches the deadline"
     else
@@ -21056,8 +21068,8 @@ QO_GONE_OTHER="$(grep -cv -- "^kill -0 $QO_REAP_PID2\$" "$QO_GONE_LOG" 2>/dev/nu
 # failed by then) is a legitimate refactor that still reaps correctly. The test
 # should reject broken behaviour, not a cleanup.
 if [ "$QO_REAP_RC2" = "0" ] && [ -n "$QO_REAP_PID2" ] \
-   && printf '%s' "$QO_REAP_OUT2" | grep -q "state=reaped" \
-   && printf '%s' "$QO_REAP_OUT2" | grep -q "gone=yes" \
+   && <<<"$QO_REAP_OUT2" grep -q "state=reaped" \
+   && <<<"$QO_REAP_OUT2" grep -q "gone=yes" \
    && [ "${QO_GONE_PROBES:-0}" -ge 1 ] && [ "${QO_GONE_OTHER:-1}" -eq 0 ]; then
     t_pass "test.sh: an already-collected pid settles to reaped without signalling anything"
 else
@@ -21142,8 +21154,8 @@ done
 # the bootstrap before it exec'd the sleep, and the case would then pass without
 # ever exercising the live-at-entry path it exists to cover.
 if [ "$QO_PROMPT_RC" = "0" ] && [ -n "$QO_PROMPT_PID" ] \
-   && printf '%s' "$QO_PROMPT_OUT" | grep -q "state=reaped" \
-   && printf '%s' "$QO_PROMPT_OUT" | grep -q "ready=yes" \
+   && <<<"$QO_PROMPT_OUT" grep -q "state=reaped" \
+   && <<<"$QO_PROMPT_OUT" grep -q "ready=yes" \
    && [ "$QO_PROMPT_RESOLVED" = "100" ] \
    && ! grep -qx -- "kill -9 $QO_PROMPT_PID" "$QO_PROMPT_LOG" 2>/dev/null; then
     t_pass "test.sh: a VM that exits on SIGTERM is reaped without waiting out the grace"
@@ -21172,7 +21184,7 @@ QO_REAP_OUT3="$(cd "$REPO_ROOT" && timeout 30 bash -c '
     if kill -0 "$victim" 2>/dev/null; then echo "VICTIM=alive"; else echo "VICTIM=signalled"; fi
     kill -9 "$victim" 2>/dev/null || true
 ' 2>&1)"
-if printf '%s' "$QO_REAP_OUT3" | grep -q "VICTIM=alive"; then
+if <<<"$QO_REAP_OUT3" grep -q "VICTIM=alive"; then
     t_pass "utest_reap_qemu: a second call after state=reaped never re-signals the pid"
 else
     t_fail "utest_reap_qemu: a second call after state=reaped never re-signals the pid" \
@@ -21211,8 +21223,8 @@ fi
 # evidence that no VM holds this tree's boot state, and continuing rebuilds
 # system-disk.img underneath one if it does.
 QO_GUARD_SRC="$(sed -n '/^utest_orphan_guard() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
-if printf '%s' "$QO_GUARD_SRC" | grep -q 'refusing the run' \
-   && printf '%s' "$QO_GUARD_SRC" | grep -q 'UTEST_ORPHAN_UNCHECKED'; then
+if <<<"$QO_GUARD_SRC" grep -q 'refusing the run' \
+   && <<<"$QO_GUARD_SRC" grep -q 'UTEST_ORPHAN_UNCHECKED'; then
     t_pass "test.sh: a failed orphan scan refuses the run instead of warning past it"
 else
     t_fail "test.sh: a failed orphan scan refuses the run instead of warning past it" \
@@ -21220,8 +21232,8 @@ else
 fi
 # The detector's own diagnostic must survive: 2>/dev/null threw away the one
 # explanation an operator has at exactly the moment the scan fails.
-if printf '%s' "$QO_GUARD_SRC" | grep -q 'qemu-orphan.py" detect' \
-   && ! printf '%s' "$QO_GUARD_SRC" | grep -q 'detect.*2>/dev/null'; then
+if <<<"$QO_GUARD_SRC" grep -q 'qemu-orphan.py" detect' \
+   && ! <<<"$QO_GUARD_SRC" grep -q 'detect.*2>/dev/null'; then
     t_pass "test.sh: the orphan detector's stderr is kept, not discarded"
 else
     t_fail "test.sh: the orphan detector's stderr is kept, not discarded" \
@@ -21229,8 +21241,8 @@ else
 fi
 # The bypass must be a SEPARATE opt-in from the reap opt-in: "reap what you
 # find" and "proceed having found nothing out" are different decisions.
-if printf '%s' "$QO_GUARD_SRC" | grep -q 'UTEST_ORPHAN_REAP' \
-   && printf '%s' "$QO_GUARD_SRC" | grep -q 'UTEST_ORPHAN_UNCHECKED'; then
+if <<<"$QO_GUARD_SRC" grep -q 'UTEST_ORPHAN_REAP' \
+   && <<<"$QO_GUARD_SRC" grep -q 'UTEST_ORPHAN_UNCHECKED'; then
     t_pass "test.sh: the unchecked-run bypass is separate from the reap opt-in"
 else
     t_fail "test.sh: the unchecked-run bypass is separate from the reap opt-in" \
@@ -21292,7 +21304,7 @@ QO_NOFD_BID="$(printf '%s' "$QO_NOFD_ID" | awk '{print $3}')"
 QO_OUT="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" detect --path "$QO_TMP/never-existed" \
     --recorded-pid "$QO_NOFD" --recorded-starttime "$QO_NOFD_ST" \
     --recorded-boot-id "$QO_NOFD_BID" 2>&1)"; QO_RC=$?
-if [ "$QO_RC" = "3" ] && printf '%s' "$QO_OUT" | grep -q "no descriptor open yet"; then
+if [ "$QO_RC" = "3" ] && <<<"$QO_OUT" grep -q "no descriptor open yet"; then
     t_pass "qemu-orphan: a live recorded launch with no descriptor open is still a holder"
 else
     t_fail "qemu-orphan: a live recorded launch with no descriptor open is still a holder" \
@@ -21332,7 +21344,7 @@ QO_BOUND_OUT="$(cd "$REPO_ROOT" && timeout 30 bash -c '
 ' 2>&1)"
 rm -f "$QO_READY"
 # The bound message is the observable: 120 was substituted for 99999999.
-if printf '%s' "$QO_BOUND_OUT" | grep -q "exceeds the 120s bound"; then
+if <<<"$QO_BOUND_OUT" grep -q "exceeds the 120s bound"; then
     t_pass "test.sh: an unbounded reap grace is clamped to the 120s bound"
 else
     t_fail "test.sh: an unbounded reap grace is clamped to the 120s bound" "$QO_BOUND_OUT"
@@ -21349,7 +21361,7 @@ exec(compile(src, mod, "exec"), ns)
 print("refused" if not ns["_publish_provenance"](sys.argv[2], "r") else "published")
 EMPTYPY
 )"
-if printf '%s' "$QO_OUT" | grep -q "refused"; then
+if <<<"$QO_OUT" grep -q "refused"; then
     t_pass "pdeathsig: an unreadable boot_id refuses to publish provenance"
 else
     t_fail "pdeathsig: an unreadable boot_id refuses to publish provenance" "$QO_OUT"
@@ -21405,7 +21417,7 @@ for _c in /bin/su /usr/bin/su /usr/bin/passwd /bin/mount; do
 done
 if [ -n "$QO_SETUID" ]; then
     QO_OUT="$(python3 "$REPO_ROOT/scripts/pdeathsig.py" --check --exe "$QO_SETUID" 2>&1)"
-    if [ "$?" = "4" ] && printf '%s' "$QO_OUT" | grep -q "set-id"; then
+    if [ "$?" = "4" ] && <<<"$QO_OUT" grep -q "set-id"; then
         t_pass "pdeathsig: --check flags a set-id target (PDEATHSIG is cleared on exec)"
     else
         t_fail "pdeathsig: --check flags a set-id target (PDEATHSIG is cleared on exec)" \
@@ -21419,7 +21431,7 @@ fi
 # is already gone, exec'ing is precisely how the orphan gets created, so the
 # helper must refuse. A bogus --parent is the same condition, deterministically.
 QO_OUT="$(python3 "$REPO_ROOT/scripts/pdeathsig.py" --parent 999999999 -- /bin/true 2>&1)"
-if [ "$?" = "3" ] && printf '%s' "$QO_OUT" | grep -q "already gone"; then
+if [ "$?" = "3" ] && <<<"$QO_OUT" grep -q "already gone"; then
     t_pass "pdeathsig: refuses to exec when the expected parent is not this process's"
 else
     t_fail "pdeathsig: refuses to exec when the expected parent is not this process's" \
@@ -21455,9 +21467,9 @@ fi
 # assertion pinned to a single physical line would fail on formatting alone
 # while saying nothing about the guarantees it is supposed to protect.
 QO_LAUNCH="$(sed -n '/pdeathsig.py" --parent/,/^fi$/p' "$REPO_ROOT/scripts/test.sh" | tr '\n' ' ')"
-if printf '%s' "$QO_LAUNCH" | grep -q -- '--parent "\$\$"' \
-   && printf '%s' "$QO_LAUNCH" | grep -q -- '--provenance "\$UTEST_QEMU_PIDFILE"' \
-   && printf '%s' "$QO_LAUNCH" | grep -q -- '-- "\${QEMU_ARGV\[@\]}" 2>/dev/null 9>&-'; then
+if <<<"$QO_LAUNCH" grep -q -- '--parent "\$\$"' \
+   && <<<"$QO_LAUNCH" grep -q -- '--provenance "\$UTEST_QEMU_PIDFILE"' \
+   && <<<"$QO_LAUNCH" grep -q -- '-- "\${QEMU_ARGV\[@\]}" 2>/dev/null 9>&-'; then
     t_pass "test.sh: the pdeathsig launch keeps --parent, --provenance, the argv array, and 9>&-"
 else
     t_fail "test.sh: the pdeathsig launch keeps --parent, the argv array, and 9>&-" \
@@ -21500,8 +21512,8 @@ RUN_ID="run-marker"; UTEST_FAIL=0; QEMU_PID=""; QEMU_STATE=none
 utest_commit_record complete >/dev/null 2>&1
 cat "$RECORD_MARKER"
 ')"
-if printf '%s' "$QO_MARK" | grep -q '"qemu_pid": null' &&
-   printf '%s' "$QO_MARK" | grep -q '"qemu_state": "none"'; then
+if <<<"$QO_MARK" grep -q '"qemu_pid": null' &&
+   <<<"$QO_MARK" grep -q '"qemu_state": "none"'; then
     t_pass "record marker: a pre-launch exit records qemu_pid null and qemu_state none"
 else
     t_fail "record marker: a pre-launch exit records qemu_pid null and qemu_state none" \
@@ -21519,8 +21531,8 @@ RUN_ID="run-marker2"; UTEST_FAIL=0; QEMU_PID=4242; QEMU_STATE=reaped
 utest_commit_record complete >/dev/null 2>&1
 cat "$RECORD_MARKER"
 ')"
-if printf '%s' "$QO_MARK" | grep -q '"qemu_pid": 4242' &&
-   printf '%s' "$QO_MARK" | grep -q '"qemu_state": "reaped"'; then
+if <<<"$QO_MARK" grep -q '"qemu_pid": 4242' &&
+   <<<"$QO_MARK" grep -q '"qemu_state": "reaped"'; then
     t_pass "record marker: a reaped run records the pid as a JSON number plus qemu_state"
 else
     t_fail "record marker: a reaped run records the pid as a JSON number plus qemu_state" \
@@ -21584,9 +21596,9 @@ printf "%s\n" "import sys" "print(\"777\t1\t2\tqemu\t/x\")" "sys.exit(3)" > "$PR
 utest_orphan_guard /x 2>&1
 echo "GUARD_RETURNED=$?"
 ')"
-if printf '%s' "$QO_OUT" | grep -q "pid 777" &&
-   printf '%s' "$QO_OUT" | grep -q "Refusing instead of interleaving" &&
-   ! printf '%s' "$QO_OUT" | grep -q "GUARD_RETURNED="; then
+if <<<"$QO_OUT" grep -q "pid 777" &&
+   <<<"$QO_OUT" grep -q "Refusing instead of interleaving" &&
+   ! <<<"$QO_OUT" grep -q "GUARD_RETURNED="; then
     t_pass "utest_orphan_guard: a detected orphan refuses the run and names the pid"
 else
     t_fail "utest_orphan_guard: a detected orphan refuses the run and names the pid" "$QO_OUT"
@@ -21609,8 +21621,8 @@ printf "%s\n" "import sys" "print(\"777\t111\tBOOT\ttail\t/x\")" "sys.exit(3)" >
 utest_orphan_guard /x 2>&1
 echo "GUARD_RETURNED=$?"
 ')"
-if printf '%s' "$QO_OUT" | grep -q "NOT reaping pid 777" \
-   && ! printf '%s' "$QO_OUT" | grep -q "GUARD_RETURNED="; then
+if <<<"$QO_OUT" grep -q "NOT reaping pid 777" \
+   && ! <<<"$QO_OUT" grep -q "GUARD_RETURNED="; then
     t_pass "utest_orphan_guard: reap mode REFUSES a holder this tree never launched"
 else
     t_fail "utest_orphan_guard: reap mode REFUSES a holder this tree never launched" "$QO_OUT"
@@ -21639,8 +21651,8 @@ printf "777 111 BOOT run-1\n" > "$UTEST_QEMU_PIDFILE"
 utest_orphan_guard /x 2>&1
 echo "GUARD_RETURNED=$?"
 ')"
-if printf '%s' "$QO_OUT" | grep -q "reaping orphaned VM pid 777" \
-   && printf '%s' "$QO_OUT" | grep -q "GUARD_RETURNED=0"; then
+if <<<"$QO_OUT" grep -q "reaping orphaned VM pid 777" \
+   && <<<"$QO_OUT" grep -q "GUARD_RETURNED=0"; then
     t_pass "utest_orphan_guard: reap mode DOES reap the holder the pidfile records"
 else
     t_fail "utest_orphan_guard: reap mode DOES reap the holder the pidfile records" "$QO_OUT"
@@ -21671,9 +21683,9 @@ utest_orphan_guard /x 2>&1
 echo "GUARD_RETURNED=$?"
 ')"
 # It must refuse, naming the RESIDUAL holder (888) and NOT the reaped one (777).
-if printf '%s' "$QO_OUT" | grep -q "pid 888" \
-   && ! printf '%s' "$QO_OUT" | grep -q "pid 777 (qemu) holds" \
-   && ! printf '%s' "$QO_OUT" | grep -q "GUARD_RETURNED="; then
+if <<<"$QO_OUT" grep -q "pid 888" \
+   && ! <<<"$QO_OUT" grep -q "pid 777 (qemu) holds" \
+   && ! <<<"$QO_OUT" grep -q "GUARD_RETURNED="; then
     t_pass "utest_orphan_guard: a sole-orphan reap still rescans and reports only residual holders"
 else
     t_fail "utest_orphan_guard: a sole-orphan reap still rescans and reports only residual holders" "$QO_OUT"
@@ -21699,8 +21711,8 @@ printf "777 111 BOOT run-1\n" > "$UTEST_QEMU_PIDFILE"
 utest_orphan_guard /x 2>&1
 echo "GUARD_RETURNED=$?"
 ')"
-if printf '%s' "$QO_OUT" | grep -q "re-detection FAILED" \
-   && ! printf '%s' "$QO_OUT" | grep -q "GUARD_RETURNED="; then
+if <<<"$QO_OUT" grep -q "re-detection FAILED" \
+   && ! <<<"$QO_OUT" grep -q "GUARD_RETURNED="; then
     t_pass "utest_orphan_guard: a rescan error after a reap fails CLOSED"
 else
     t_fail "utest_orphan_guard: a rescan error after a reap fails CLOSED" "$QO_OUT"
@@ -21724,8 +21736,8 @@ printf "%s\n" "import sys" "sys.stderr.write(\"boom\n\")" "sys.exit(2)" > "$PROJ
 utest_orphan_guard /x 2>&1
 echo "GUARD_RETURNED=$?"
 ')"
-if printf '%s' "$QO_OUT" | grep -q "refusing the run" &&
-   ! printf '%s' "$QO_OUT" | grep -q "GUARD_RETURNED="; then
+if <<<"$QO_OUT" grep -q "refusing the run" &&
+   ! <<<"$QO_OUT" grep -q "GUARD_RETURNED="; then
     t_pass "utest_orphan_guard: an unavailable detector FAILS CLOSED, refusing the run"
 else
     t_fail "utest_orphan_guard: an unavailable detector FAILS CLOSED, refusing the run" \
@@ -21733,7 +21745,7 @@ else
 fi
 # The detector's own stderr has to reach the operator: it is the only
 # explanation of WHY the scan failed, and it used to go to /dev/null.
-if printf '%s' "$QO_OUT" | grep -q "boom"; then
+if <<<"$QO_OUT" grep -q "boom"; then
     t_pass "utest_orphan_guard: the detector's diagnostic is surfaced, not swallowed"
 else
     t_fail "utest_orphan_guard: the detector's diagnostic is surfaced, not swallowed" "$QO_OUT"
@@ -21749,8 +21761,8 @@ printf "%s\n" "import sys" "sys.exit(2)" > "$PROJECT/scripts/qemu-orphan.py"
 utest_orphan_guard /x 2>&1
 echo "GUARD_RETURNED=$?"
 ')"
-if printf '%s' "$QO_OUT" | grep -q "guarantee ABSENT" &&
-   printf '%s' "$QO_OUT" | grep -q "GUARD_RETURNED=0"; then
+if <<<"$QO_OUT" grep -q "guarantee ABSENT" &&
+   <<<"$QO_OUT" grep -q "GUARD_RETURNED=0"; then
     t_pass "utest_orphan_guard: UTEST_ORPHAN_UNCHECKED=1 proceeds, and says the guarantee is gone"
 else
     t_fail "utest_orphan_guard: UTEST_ORPHAN_UNCHECKED=1 proceeds, and says the guarantee is gone" \
