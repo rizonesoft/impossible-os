@@ -502,7 +502,10 @@ def test_refusal_a_parameter_or_local_named_like_the_function():
     assert not ok and "dpc.c" in msg, "a parameter or a second declarator is not the function"
     for body in ("int (*dpc_queue)(void) = stub;\n    dpc_queue();",
                  "for (int x = 0, dpc_queue = 0; x < 1; ++x) { (void)dpc_queue; }",
-                 "int x[] = {0}, dpc_queue = 0;\n    (void)dpc_queue; (void)x;"):
+                 "int x[] = {0}, dpc_queue = 0;\n    (void)dpc_queue; (void)x;",
+                 "int a = (int){0}, dpc_queue = 0;\n    (void)dpc_queue; (void)a;",
+                 "static int (*dpc_queue)(void) = stub;\n    dpc_queue();",
+                 "unsigned int (*dpc_queue)(void) = (unsigned int (*)(void))stub;\n    dpc_queue();"):
         test = ("static int stub(void) { return 0; }\n"
                 f"static void suite(void) {{\n    {body}\n}}\n"
                 "void test_register_x(void) {\n    test_suite_register_cat(\"x\", suite, TEST_CAT_SCHED);\n}\n")
@@ -517,6 +520,24 @@ def test_the_userland_walk_scales_linearly():
     t0 = time.monotonic()
     tcs.user_built_tests(make)
     assert time.monotonic() - t0 < 2.0, "20,000 reachable targets took the hook's budget"
+
+
+def test_a_call_through_a_dereference_is_still_a_use():
+    for body in ("int r = (*dpc_queue)(1);\n    (void)r;", "(void)(*dpc_queue)(1);",
+                 "int r = (int){dpc_queue(1)};\n    (void)r;"):
+        test = (f"static void suite(void) {{\n    {body}\n}}\n"
+                "void test_register_x(void) {\n    test_suite_register_cat(\"x\", suite, TEST_CAT_SCHED);\n}\n")
+        ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": test})
+        assert ok, f"{body!r} calls the function: {msg}"
+
+
+def test_local_declarations_parse_in_linear_time():
+    import time
+    import _test_coverage_by_symbol as tcs
+    body = "() { int " + ", ".join(f"a{i}[] = {{0}}" for i in range(22000)) + "; }"
+    t0 = time.monotonic()
+    tcs._body_uses(body)
+    assert time.monotonic() - t0 < 2.0, "22,000 initialised declarators took the hook's budget"
 
 
 if __name__ == "__main__":

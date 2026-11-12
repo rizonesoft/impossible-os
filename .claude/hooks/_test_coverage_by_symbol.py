@@ -462,11 +462,6 @@ _LOCAL_DECL = re.compile(r"\b([A-Za-z_]\w*)[\s\*]+([A-Za-z_]\w*)\s*(?=[=;\[,)])"
 _LOCAL_PROTO = re.compile(r"\b([A-Za-z_]\w*)[\s\*]+([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*;")
 
 
-_DECL_START = re.compile(
-    r"\s*(?:(?:const|static|volatile|register|unsigned|signed|struct|union|enum)\s+)*"
-    r"[A-Za-z_]\w*[\s\*]+\**\s*[A-Za-z_]\w*\s*(?=[=;\[,]|$)")
-
-
 def _split_top(text: str, sep: str = ",") -> list[str]:
     """`text` split at `sep` outside (), [] and {}."""
     parts, depth, cur = [], 0, []
@@ -498,63 +493,175 @@ def _param_names(params: str) -> set[str]:
     return names
 
 
-_FN_PTR_DECL = re.compile(r"\(\s*\*\s*([A-Za-z_]\w*)\s*\)\s*\(")
+_TOKEN = re.compile(r"[A-Za-z_]\w*|\d[\w.]*|\S")
+_CONTROL = frozenset({"if", "while", "for", "switch"})
+_TAGS = frozenset({"struct", "union", "enum"})
+_TYPE_WORDS = frozenset({"void", "char", "short", "int", "long", "float", "double", "signed", "unsigned",
+                         "_Bool", "bool", "_Complex", "__int128"})
+_QUALIFIERS = frozenset({"const", "volatile", "restrict", "__restrict", "__volatile__", "_Atomic",
+                         "static", "extern", "register", "auto", "inline", "__inline", "_Thread_local",
+                         "__extension__"})
+_NOT_TYPES = _KEYWORDS | _TAGS | _TYPE_WORDS | _QUALIFIERS | frozenset({"typedef", "break", "continue",
+                                                                         "default"})
+_OPEN = {"(": ")", "[": "]", "{": "}"}
 
 
-def _statements(body: str) -> list[str]:
-    """`body` cut into statements at `;` and block braces outside parentheses, an
-    initialiser `{...}` (after `=` or inside another initialiser) kept whole, plus
-    the init clause of each `for (...)`, which declares names of its own."""
-    out, cur, depth, i, n = [], [], 0, 0, len(body)
-    while i < n:
-        ch = body[i]
-        if ch == "(":
+def _skip(toks: list[str], j: int) -> int:
+    """The index after the bracket group opening at toks[j]."""
+    depth, n = 0, len(toks)
+    while j < n:
+        if toks[j] in _OPEN:
             depth += 1
-        elif ch == ")":
+        elif toks[j] in (")", "]", "}"):
             depth -= 1
-        elif ch == "{" and depth == 0:
-            prev = "".join(cur).rstrip()[-1:]
-            if prev in ("=", ","):
-                end = _close(body, i, "{", "}")
-                if end < 0:
-                    end = n
-                cur.append(body[i:end])
-                i = end
-                continue
-            out.append("".join(cur))
+            if depth == 0:
+                return j + 1
+        j += 1
+    return n
+
+
+def _statements(toks: list[str]) -> list[list[str]]:
+    """The tokens of a function body cut into statements, in one pass: a `;` or a
+    block brace ends one, while a brace that opens an initialiser (after `=`, inside
+    another initialiser or parentheses, a compound literal after a non-control
+    `)`, or a struct, union or enum body) stays inside its statement. The init
+    clause of each `for (...)` is added as a statement of its own."""
+    out: list[list[str]] = []
+    cur: list[str] = []
+    parens: list[bool] = []  # per open "(": was it a control keyword's
+    braces: list[bool] = []  # per open "{": is it an initialiser
+    held = 0  # open initialiser braces plus open parentheses
+    prev, closed_control = "", False
+    for k, t in enumerate(toks):
+        if t == "(":
+            parens.append(prev in _CONTROL)
+            held += 1
+            cur.append(t)
+            if prev == "for":
+                end = k + 1
+                depth = 0
+                while end < len(toks) and not (toks[end] == ";" and depth == 0):
+                    depth += toks[end] in _OPEN
+                    depth -= toks[end] in (")", "]", "}")
+                    if depth < 0:
+                        break
+                    end += 1
+                out.append(toks[k + 1:end])
+        elif t == ")":
+            closed_control = parens.pop() if parens else False
+            held = max(held - 1, 0)
+            cur.append(t)
+        elif t == "{":
+            tag = prev in _TAGS or (len(cur) >= 2 and cur[-2] in _TAGS)
+            init = (held > 0 or prev == "=" or tag or (prev in (",", "{") and any(braces))
+                    or (prev == ")" and not closed_control))
+            braces.append(bool(init))
+            if init:
+                held += 1
+                cur.append(t)
+            else:
+                out.append(cur)
+                cur = []
+        elif t == "}":
+            if braces and braces.pop():
+                held = max(held - 1, 0)
+                cur.append(t)
+            else:
+                out.append(cur)
+                cur = []
+        elif t == ";" and held == 0:
+            out.append(cur)
             cur = []
-            i += 1
-            continue
-        elif (ch == ";" or ch == "}") and depth == 0:
-            out.append("".join(cur))
-            cur = []
-            i += 1
-            continue
-        cur.append(ch)
-        i += 1
-    out.append("".join(cur))
-    for m in re.finditer(r"\bfor\s*\(", body):
-        end = _close(body, m.end() - 1)
-        inner = body[m.end():end - 1] if end > 0 else body[m.end():]
-        out.append(_split_top(inner, ";")[0])
+        else:
+            cur.append(t)
+        prev = t
+    out.append(cur)
     return out
 
 
+def _ident(t: str) -> bool:
+    return t[:1].isalpha() or t[:1] == "_"
+
+
+def _declared(s: list[str]) -> set[str]:
+    """The names one statement declares, read by C's declaration grammar:
+    specifiers (qualifiers, storage classes, type words, a tagged type with or
+    without a body, attributes, or one typedef name) then declarators, each of
+    pointer stars and qualifiers around a name or `( * declarator )`, with array and
+    parameter suffixes and an initialiser skipped to the next top-level comma. A
+    function declarator (a prototype) declares no local. Anything else, a call,
+    an assignment or a cast, declares nothing."""
+    n, j, typed, guessed = len(s), 0, False, False
+    while j < n:
+        t = s[j]
+        if t in _TAGS:
+            j += 1
+            if j < n and _ident(s[j]) and s[j] not in _NOT_TYPES:
+                j += 1
+            if j < n and s[j] == "{":
+                j = _skip(s, j)
+            typed = True
+        elif t in ("__attribute__", "__declspec", "_Alignas", "typeof", "__typeof__"):
+            j += 1
+            if j < n and s[j] == "(":
+                j = _skip(s, j)
+            typed = typed or t in ("typeof", "__typeof__")
+        elif t in _QUALIFIERS:
+            j += 1
+        elif t in _TYPE_WORDS:
+            typed = True
+            j += 1
+        elif _ident(t) and t not in _NOT_TYPES and not typed:
+            nxt, after = s[j + 1] if j + 1 < n else "", s[j + 2] if j + 2 < n else ""
+            if not ((_ident(nxt) and nxt not in _KEYWORDS) or nxt == "*" or (nxt == "(" and after == "*")):
+                return set()
+            typed = guessed = True
+            j += 1
+        else:
+            break
+    if not typed:
+        return set()
+    names: set[str] = set()
+
+    def declarator(j: int) -> tuple[str | None, bool, int]:
+        """(name, is a function declarator, next index), or name None on no match."""
+        while j < n and (s[j] == "*" or s[j] in _QUALIFIERS):
+            j += 1
+        if j < n and _ident(s[j]) and s[j] not in _NOT_TYPES:
+            name, j = s[j], j + 1
+            func = j < n and s[j] == "("
+        elif j + 1 < n and s[j] == "(" and s[j + 1] == "*":
+            name, _, j = declarator(j + 1)
+            if name is None or j >= n or s[j] != ")":
+                return None, False, j
+            j += 1
+            if guessed and not (j < n and s[j] in ("(", "[")):
+                return None, False, j  # `f(*p);` is a call, not a declaration
+            func = False
+        else:
+            return None, False, j
+        while j < n and s[j] in ("(", "["):
+            j = _skip(s, j)
+        return name, func, j
+
+    while j < n:
+        name, func, j = declarator(j)
+        if name is None:
+            break
+        if not func:
+            names.add(name)
+        while j < n and s[j] != ",":
+            j = _skip(s, j) if s[j] in _OPEN else j + 1
+        j += 1
+    return names
+
+
 def _local_names(body: str) -> set[str]:
-    """Every name a declaration statement in `body` declares: each declarator of
-    `int a = 0, b = 0;` (an initialiser list included), a `for` init clause, and a
-    function pointer `int (*f)(void) = g;`."""
-    names = set()
-    for stmt in _statements(body):
-        names.update(_FN_PTR_DECL.findall(stmt) if re.match(r"\s*[A-Za-z_]\w*[\s\*]*\(", stmt) else ())
-        m = _DECL_START.match(stmt)
-        if not m or m.group(0).split()[0] in _KEYWORDS:
-            continue
-        for part in _split_top(stmt):
-            fp = _FN_PTR_DECL.search(part)
-            d = fp or re.match(r"[^=\[]*?\**\s*([A-Za-z_]\w*)\s*(?:=|\[|$)", part.strip())
-            if d:
-                names.add(d.group(1))
+    """Every name a declaration statement in `body` declares (see _declared),
+    for-loop init clauses included."""
+    names: set[str] = set()
+    for stmt in _statements(_TOKEN.findall(body)):
+        names |= _declared(stmt)
     return names
 
 
