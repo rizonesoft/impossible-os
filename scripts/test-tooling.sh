@@ -4718,7 +4718,7 @@ fi
 # The smoke oracles' verdict functions against synthetic transcripts (no boot,
 # milliseconds): each self-test includes the rejections a correct build can never
 # produce, so a weakened oracle fails here rather than passing every real boot.
-for _sm_st in SMOKE_ES_SELFTEST SMOKE_UKI_SELFTEST; do
+for _sm_st in SMOKE_ES_SELFTEST SMOKE_UKI_SELFTEST SMOKE_SHUTDOWN_SELFTEST; do
     if env "$_sm_st=1" bash "$REPO_ROOT/scripts/test-smoke.sh" >/dev/null 2>&1; then
         t_pass "smoke_oracle_selftest  $_sm_st verdicts all as expected"
     else

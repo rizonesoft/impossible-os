@@ -490,6 +490,50 @@ $L_DG"
     exit 0
 fi
 
+# The clean-shutdown oracle: the guest started a power-button shutdown, its
+# storage quiesce reported no failure, and it reached S5. acpi_storage_quiesce()
+# powers off even after a failed flush, so S5 alone does not mean clean.
+shutdown_check_log() {  # $1 = stripped serial log; sets SD_FAIL_MSG, returns 1 on reject
+    local log="$1"
+    SD_FAIL_MSG=""
+    if ! grep -qaF 'power button: shutting down' "$log" || ! grep -qaF '[ACPI] Initiating shutdown' "$log"; then
+        SD_FAIL_MSG="the guest never logged a power-button shutdown"; return 1
+    fi
+    local bad
+    bad=$(grep -aE 'X: cache flush failed|storage did not cleanly quiesce|cache flush FAILED on shutdown|controller shutdown FAILED' "$log" | head -1)
+    if [ -n "$bad" ]; then
+        SD_FAIL_MSG="the storage quiesce failed before power-off: $bad"; return 1
+    fi
+    return 0
+}
+if [ "${SMOKE_SHUTDOWN_SELFTEST:-0}" = "1" ]; then
+    sd_st_fails=0
+    sd_st_log="$(mktemp "${TMPDIR:-/tmp}/sd-selftest.XXXXXX")"
+    sd_expect() {  # $1 accept|reject, $2 label, rest = log lines
+        local want="$1" label="$2" got; shift 2
+        printf '%s\n' "$@" > "$sd_st_log"
+        if shutdown_check_log "$sd_st_log"; then got=accept; else got=reject; fi
+        if [ "$got" != "$want" ]; then
+            echo -e "  ${RED}✗${NC} shutdown oracle self-test: $label -- wanted $want, got $got ($SD_FAIL_MSG)"
+            sd_st_fails=$((sd_st_fails + 1))
+        else
+            echo -e "  ${GREEN}✓${NC} shutdown oracle self-test: $label ($got)"
+        fi
+    }
+    S_BTN='[  4.890] [cpu:0] [ OK ] acpi: power button: shutting down'
+    S_INIT='[ACPI] Initiating shutdown...'
+    sd_expect accept "clean power-button shutdown" "$S_BTN" "$S_INIT"
+    sd_expect reject "no power-button line"        "$S_INIT"
+    sd_expect reject "never initiated"             "$S_BTN"
+    sd_expect reject "X: flush failed"             "$S_BTN" "$S_INIT" '[ACPI] WARNING: X: cache flush failed -- clean bit may not be durable'
+    sd_expect reject "storage did not quiesce"     "$S_BTN" "$S_INIT" '[ACPI] WARNING: storage did not cleanly quiesce'
+    sd_expect reject "device flush failed"         "$S_BTN" "$S_INIT" '[  4.150] [cpu:0] [ERROR] blk: sata0: cache flush FAILED on shutdown'
+    sd_expect reject "controller shutdown failed"  "$S_BTN" "$S_INIT" '[  4.150] [cpu:0] [WARN] blk: nvme0: controller shutdown FAILED'
+    rm -f "$sd_st_log"
+    [ "$sd_st_fails" = "0" ] && exit 0
+    exit 1
+fi
+
 # ---- Oracle self-test (SMOKE_ES_SELFTEST=1) --------------------------------
 # Runs es_check_log against synthetic transcripts and asserts its VERDICT.
 # Boots nothing, so it costs milliseconds and can assert the rejections a
@@ -1315,10 +1359,9 @@ if [ "$BOOT_PASSED" = true ] && [ "$SHUTDOWN" = "1" ]; then
         if [ "$_sd_off" != "1" ]; then
             BOOT_PASSED=false; BOOT_FAILED=true
             FAIL_REASON="SMOKE_SHUTDOWN=1: the guest did not power off within ${SHUTDOWN_SEC}s of the power button"
-        elif ! grep -qaF 'power button: shutting down' "$STRIPPED_LOG" \
-             || ! grep -qaF '[ACPI] Initiating shutdown' "$STRIPPED_LOG"; then
+        elif ! shutdown_check_log "$STRIPPED_LOG"; then
             BOOT_PASSED=false; BOOT_FAILED=true
-            FAIL_REASON="SMOKE_SHUTDOWN=1: QEMU exited but the guest never logged a power-button shutdown"
+            FAIL_REASON="SMOKE_SHUTDOWN=1: the guest reached S5 but $SD_FAIL_MSG"
         fi
     fi
     printf "\r"
