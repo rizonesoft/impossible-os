@@ -493,6 +493,20 @@ def test_long_reserved_leader_prefixes_stay_linear():
         assert big < small * 8 * 2.5, (head, small, big)  # 14.7 s at 320000 under `env`
 
 
+def test_malformed_bodies_without_a_commit_spawn_no_syntax_check():
+    """Performance pass: each malformed `bash -c` body ran bash -n (5500 took 11 s)."""
+    calls = []
+    real = gate._bash_rejects_from
+    gate._bash_rejects_from = lambda *a: calls.append(a) or real(*a)
+    try:
+        cmd = "\n".join(f"bash -c \"echo git {n} '\"" for n in range(200))
+        assert gate._bash_is_git_commit(cmd) == (False, False)
+    finally:
+        gate._bash_rejects_from = real
+    assert not calls, len(calls)
+    assert gate._bash_is_git_commit("bash -c \"git commit -n '\"") == (True, True), "a commit is still read"
+
+
 def test_continued_heredoc_lines_stay_linear():
     """Performance review: each continued heredoc line re-copied the whole logical line."""
     import time

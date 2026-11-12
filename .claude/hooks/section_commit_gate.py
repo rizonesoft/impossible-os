@@ -1486,7 +1486,9 @@ def _read_git_commit(cmd: str) -> tuple[bool, bool]:
     except (_TooDeep, RecursionError):
         return _unread_commit(cmd)  # too deep to read: refuse a possible commit, never crash
     saw_commit = saw_no_verify = False
-    if unread and not _bash_rejects_from(cmd, unread_line):
+    # Unread text with no possible commit in it changes nothing, so bash -n is asked only
+    # when its answer could (one spawn per malformed body: 5500 took 11 s).
+    if unread and _unread_commit(cmd)[0] and not _bash_rejects_from(cmd, unread_line):
         saw_commit, saw_no_verify = _unread_commit(cmd)  # the whole command: its prefix too
     if saw_no_verify:
         return (True, True)
