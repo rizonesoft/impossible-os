@@ -1026,6 +1026,8 @@ No external dependencies (stdlib only, Pillow optional for JPEG). Negative test 
 
 **Heavy hook jobs queue through bosun.** Each heavy pre-push step (the CI-parity suite, the tooling pack, the static analyzer, and the opt-in build and test gate) runs through `scripts/hooks/heavy.sh`, which hands it to `bosun run --` when bosun is installed, so pushes from every repo on the host take turns for memory and a runaway job is stopped at its write budget. Without bosun (CI, a fresh clone) the step runs directly, and `HEAVY_NO_BOSUN=1` forces that. The post-commit unit-test hook is not routed through it, because a queue wait would exceed its 60 s budget.
 
+**CI runs the tooling pack; the push does not wait for it (2026-11-13).** `build.yml` runs `scripts/test-tooling.sh` on every push to `main`, and a section is finished only when `scripts/overnight/ci-wait.py` reports its commit green, so the pre-push hook no longer runs the pack on a tooling change: it names the change and leaves the pack to CI. `PRE_PUSH_TOOLING=1 git push` runs it locally first (scoped, with the receipt short-circuit), for example while repairing the pack itself. The fast local gates stay: host gates, the identity gate, the control-plane runner suite and the CI-parity unit suite. Decision and reversal cost: `todo/answers.md` Q40.
+
 **Host gates on push.** When a push touches `src/`, `include/` or `tools/`, `.githooks/pre-push` runs `scripts/host-gates.sh` (about 5 s), the gates under `tools/` that compile kernel and loader sources. `SKIP_HOST_GATES=1` overrides it.
 
 ### Install path

@@ -150,7 +150,19 @@ if [ -n "$TOOLING_READS" ]; then
   TOOLING_READ_HITS="$(pushed_files | sort -u | grep -Fx -f <(printf '%s\n' "$TOOLING_READS") || true)"
   TOOLING_HITS="$(printf '%s\n%s\n' "$TOOLING_HITS" "$TOOLING_READ_HITS" | sed '/^$/d' | sort -u)"
 fi
-if [ -n "$TOOLING_HITS" ]; then
+# CI RUNS THE PACK; THE PUSH DOES NOT WAIT FOR IT (operator decision 2026-11-13,
+# todo/answers.md Q40). build.yml runs this same pack on the same commit, and a
+# section is not finished until `scripts/overnight/ci-wait.py` reports that
+# commit green, so running it here only doubled a 15-minute wait on every push
+# (measured 2026-11-12: about 20 minutes of local gates per push, then CI ran
+# the same pack again). A red pack now shows as a red CI the run fixes before
+# any other work. Run it here with PRE_PUSH_TOOLING=1, for example while
+# repairing the pack itself.
+if [ -n "$TOOLING_HITS" ] && [ "${PRE_PUSH_TOOLING:-0}" != "1" ]; then
+  echo ""
+  echo "Pre-push: tooling change in this push; CI runs scripts/test-tooling.sh on it"
+  echo "  (watch it with scripts/overnight/ci-wait.py; PRE_PUSH_TOOLING=1 runs it here first)."
+elif [ -n "$TOOLING_HITS" ]; then
   echo ""
   echo "Pre-push: tooling change in this push -- gating on scripts/test-tooling.sh:"
   printf '%s\n' "$TOOLING_HITS" | sort -u | head -6 | sed 's/^/  touched: /'

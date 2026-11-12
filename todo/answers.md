@@ -471,3 +471,12 @@ The gate reads C and Make text inside a 10 s hook, because the compiler cannot: 
 - **B:** keep treating every valid C or Make construct the reader misreads as blocking.
 
 A: (run decision, 2026-11-12) A: B has no end state without a compiler front end that does not fit the hook. Reversal cost: none in code; the next review rounds would grade contrived constructs as blocking again.
+
+## Q40 (00-infrastructure/TODO-08): does a push wait for the local tooling pack?
+
+The pre-push hook ran `scripts/test-tooling.sh` (about 15 minutes) on every push that touched tooling, and `build.yml` then ran the same pack on the same commit. A section is finished only when `scripts/overnight/ci-wait.py` reports its commit green, so nothing proceeds on a red pack either way. Measured 2026-11-12 on TODO-08 section 34: about 20 minutes of local gates per push, then CI ran the pack again. The operator asked for the heavy lifting to move to CI, keeping CI monitoring and an early fix for a red CI.
+
+- **A:** CI runs the pack; the push names the tooling change and does not wait. `PRE_PUSH_TOOLING=1` runs it locally. The fast local gates stay (host gates, identity gate, control-plane runner suite, CI-parity). A red pack is a red CI, fixed with a test before any other work.
+- **B:** keep the local pack, which reverses the 2026-08-05 rule only in the receipt case.
+
+A: (operator direction, 2026-11-13) A. Reversal cost: one condition in `.githooks/pre-push` and this paragraph in CLAUDE.md and `docs/infrastructure/development-tooling.md`; the cost it brings back is a red `main` for one CI cycle (about 17 minutes) when the pack fails, which the run fixes first.
