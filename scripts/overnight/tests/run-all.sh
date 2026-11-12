@@ -102,10 +102,25 @@ run_one() {
 
 echo "== overnight-runner test suite =="
 
-# All plain-assert python contract tests in this directory.
+# All python contract tests in this directory. A file that only DEFINES test
+# functions (pytest style: fixtures such as tmp_path, parametrize) runs nothing under
+# plain python3 and exits 0, so until 2026-11-12 test_review_pin.py (65 tests) and
+# test_three_pass_gate.py (17) passed here without one assertion running. Such a file
+# goes to pytest; without pytest it fails, never passes.
+needs_pytest() {
+  grep -q '^def test_' "$1" && ! grep -q '^if __name__ == "__main__"' "$1"
+}
 while IFS= read -r t; do
   [ -n "$t" ] || continue
-  run_one "$(basename "$t")" python3 "$t"
+  if needs_pytest "$t"; then
+    if python3 -c 'import pytest' 2>/dev/null; then
+      run_one "$(basename "$t")" python3 -m pytest -q -p no:cacheprovider "$t"
+    else
+      run_one "$(basename "$t") (defines pytest tests; pytest is not installed)" false
+    fi
+  else
+    run_one "$(basename "$t")" python3 "$t"
+  fi
 done < <(ls -1 "$HERE"/test_*.py 2>/dev/null)
 
 # The launcher DRYRUN + flock smoke (bash, not python).
