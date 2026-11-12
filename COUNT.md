@@ -48,21 +48,21 @@
 | --------------------------- | ------: | ---------: |
 | **Markdown** (`.md`)        |     691 |     159176 |
 | **JSON** (`.json`)          |      24 |       3117 |
-| **YAML** (`.yml`/`.yaml`)   |      17 |       2458 |
+| **YAML** (`.yml`/`.yaml`)   |      17 |       2465 |
 | **HTML** (`.html`)          |      22 |       3479 |
 | **CSS** (`.css`)            |       1 |        491 |
 | **Config** (`.cfg`/`.conf`) |       1 |        110 |
-| **Subtotal**                | **756** | **168831** |
+| **Subtotal**                | **756** | **168838** |
 
 ## Grand Total
 
 |                                                      |    Files |       Lines |
 | ---------------------------------------------------- | -------: | ----------: |
 | **Core code + tooling**                              | **1430** |  **734475** |
-| **Supporting text + metadata**                       |  **756** |  **168831** |
-| **Written here**                                     | **2186** |  **903306** |
+| **Supporting text + metadata**                       |  **756** |  **168838** |
+| **Written here**                                     | **2186** |  **903313** |
 | **Vendored ([third-party](src/libs/PROVENANCE.md))** |      590 |      476328 |
-| **All lines in tree**                                | **2776** | **1379634** |
+| **All lines in tree**                                | **2776** | **1379641** |
 
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,7 +77,7 @@
 
 |                       |         Linux |     Windows |         Impossible OS |
 | --------------------- | ------------: | ----------: | --------------------: |
-| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,379,634 |
+| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,379,641 |
 | **Developers**        | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**         |      33 years |    40 years | 8 month(s), 10 day(s) |
 
@@ -88,4 +88,4 @@
 
 ---
 
-*Last updated: 2026-11-12 11:33 · commit `6d20f56cd`*
+*Last updated: 2026-11-12 11:39 · commit `fc337469c`*
