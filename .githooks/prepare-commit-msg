@@ -52,7 +52,9 @@ read_argv() {
 git_subcommand() {
     read_argv "$1" || return 1
     local -a argv=("${ARGV[@]}")
-    case "${argv[0]##*/}" in git|git-*) ;; *) return 1 ;; esac
+    local base="${argv[0]##*/}"
+    base="${base%.exe}"  # Git for Windows runs as git.exe, git-commit.exe
+    case "$base" in git|git-*) ;; *) return 1 ;; esac
     local i=1
     while [ "$i" -lt "${#argv[@]}" ]; do
         case "${argv[$i]}" in
@@ -62,7 +64,6 @@ git_subcommand() {
         esac
     done
     local sub="${argv[$i]:-}"
-    local base="${argv[0]##*/}"
     if [ "${base#git-}" != "$base" ]; then
         sub="${base#git-}"  # /usr/lib/git-core/git-commit runs commit directly
     elif ! git --list-cmds=builtins 2>/dev/null | grep -qxF -- "$sub"; then
@@ -136,7 +137,7 @@ is_history_op "$SUB" "$PPID" && exit 0
 PARENT="$(ps -o ppid= -p "$PPID" 2>/dev/null | tr -d ' ')"
 read_argv "$PPID" && ARGV0="${ARGV[0]}" || ARGV0=
 if [ -n "$PARENT" ] && [ -n "${GIT_REFLOG_ACTION:-}" ] && [ -n "${GIT_EXEC_PATH:-}" ] \
-    && [ "$ARGV0" = "$GIT_EXEC_PATH/git" ] && PSUB="$(git_subcommand "$PARENT")"; then
+    && [ "${ARGV0%.exe}" = "$GIT_EXEC_PATH/git" ] && PSUB="$(git_subcommand "$PARENT")"; then
     is_history_op "$PSUB" "$PARENT" && exit 0
 fi
 

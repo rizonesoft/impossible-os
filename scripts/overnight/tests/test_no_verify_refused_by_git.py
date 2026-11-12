@@ -195,6 +195,32 @@ def test_without_proc_the_hook_reads_ps():
         EXTRA_ENV.clear()
 
 
+def test_git_named_git_exe_is_still_git():
+    """Git for Windows runs as git.exe: its history operations pass, its -n is refused."""
+    with tempfile.TemporaryDirectory() as d:
+        repo = _repo(pathlib.Path(d))
+        bindir = pathlib.Path(d) / "bin"
+        bindir.mkdir()
+        (bindir / "git.exe").symlink_to(shutil.which("git"))
+        exe = str(bindir / "git.exe")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | EXTRA_ENV
+
+        def run(*args):
+            return subprocess.run([exe, *args], cwd=str(repo), capture_output=True, text=True,
+                                  timeout=60, env=env)
+        _commit_file(repo, "a")
+        _git(repo, "checkout", "-q", "-b", "side")
+        _commit_file(repo, "b")
+        _git(repo, "checkout", "-q", "main")
+        _commit_file(repo, "c")
+        done = run("cherry-pick", "side")
+        assert done.returncode == 0, ("git.exe cherry-pick", done.stderr)
+        (repo / "d").write_text("d\n")
+        _git(repo, "add", "d")
+        done = run("commit", "-q", "-n", "-m", "d")
+        assert done.returncode != 0 and "pre-commit did not run" in done.stderr, done.stderr
+
+
 def test_the_post_commit_amend_is_the_one_internal_no_verify_commit():
     with tempfile.TemporaryDirectory() as d:
         repo = _repo(pathlib.Path(d), post_commit=True)

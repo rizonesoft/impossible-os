@@ -521,6 +521,20 @@ def test_nested_eval_rereading_is_bounded():
     assert gate._bash_is_git_commit(path) == (True, True), "a git path past the budget too"
 
 
+def test_nested_eval_substitutions_share_the_budget():
+    """Performance pass: substitution bodies were re-read outside the budget, and each
+    eval restarted their depth (11 s at 24 levels of `eval "$(...)"`)."""
+    import time
+    cmd = "echo git commit " + "x" * 120000
+    for _ in range(24):
+        cmd = 'eval "$(' + cmd + ')"'
+    t = time.perf_counter()
+    assert gate._bash_is_git_commit(cmd)[0], "past the budget a possible commit is refused"
+    took = time.perf_counter() - t
+    assert took < 3, took
+    assert gate._bash_is_git_commit('eval "$(echo hi)"\ngit status') == (False, False)
+
+
 def test_syntax_checks_per_reading_are_bounded():
     """Performance pass: each distinct malformed body naming a commit ran bash -n (10.5 s
     at 6000). Past the budget the rest is read conservatively: refused."""

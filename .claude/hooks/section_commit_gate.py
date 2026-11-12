@@ -1418,7 +1418,14 @@ def _script_tokens(cmd: str, _depth: int = 0) -> tuple[list[str], str, int]:
 
 @functools.lru_cache(maxsize=512)
 def _sub_script_tokens(cmd: str, depth: int) -> tuple[tuple, str, int]:
-    """_script_tokens of a substitution body, read once however often it is collected."""
+    """_script_tokens of a substitution body, read once however often it is collected.
+    A body not read before is charged to the reading's re-read budget: nested
+    `eval "$(...)"` restarts the depth and misses this cache at every level (11 s at
+    24). Past the budget the whole command is judged unread."""
+    global _REREAD_LEFT
+    _REREAD_LEFT -= len(cmd)
+    if _REREAD_LEFT < 0:
+        raise _TooDeep
     toks, unread, line = _script_tokens(cmd, depth)
     return tuple(toks), unread, line
 
