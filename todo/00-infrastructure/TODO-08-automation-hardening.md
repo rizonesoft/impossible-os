@@ -1190,9 +1190,23 @@ The PreToolUse gates decide their exemptions by hand-scanning command text. [`.c
 - [x] `.githooks/prepare-commit-msg` refuses a `git commit` that skipped `pre-commit`; `test_no_verify_refused_by_git.py`.
 - [x] At `pass_cap` the stamp needs no clean round; performance and the last pass still must (`test_three_pass_gate.py`).
 - [x] Tests in `test_commit_gate_script_lines.py`: the example, heredocs, substitutions, prose; they fail on HEAD.
+- [x] The reader is linear on long, nested and malformed input; re-reads and `bash -n` share per-reading budgets.
+- [x] `run-all.sh` runs every test plain python3 never calls under pytest; pytest is a `setup.sh --verify` sentinel.
 - [x] Commit: `"hooks: the commit gate reads a command as bash reads it"`
 
 **Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes with the new cases.
+
+> **Test runner:** `bash scripts/overnight/tests/run-all.sh` | 90 files, 0 failures (reader cases, real-git oracle, scaling tests, no-verify refusal)
+
+> **Notes:**
+> - What shipped: `_BashLexer` reads a command as bash does; `git commit` options are read as parse-options reads them; prepare-commit-msg refuses a commit pre-commit never saw.
+> - How it integrates: the PreToolUse gate judges each Bash call; git's own hook is the backstop for any spelling the reader misses.
+> - Downstream effects: 160 of 575 recorded commands the old shlex reader called no commit are now read; the reader is linear and budgeted, so it cannot time the hook out.
+> - Canonical doc: [Automation Hardening](../../docs/infrastructure/automation-hardening.md) and the Host Bootstrap Contract (pytest sentinel).
+> - Scope boundary: grammar-accurate segmentation for the gate exemptions stays with section 32.
+
+> **Verified:** 2026-11-12 | commit `1bd151153` | 8/8 items | build N/A (hooks-only) | run-all.sh 90/90 PASS | 575-command replay: 0 changed verdicts | lint exit 0
+> **Quality reviewed:** 2026-11-12 | Codex passes: plan, rounds to the 55 cap, performance x12, completion x12; final performance and completion approve on `1bd151153` | every P2 fixed with a test failing on its prior candidate | scope: N/A (host tooling, no kernel/boot surface)
 
 ## 34. Section-commit gate test wiring that kernel sources can satisfy
 

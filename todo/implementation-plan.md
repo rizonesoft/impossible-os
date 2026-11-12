@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **945 of 2605 sections complete (36%).** 116 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **946 of 2605 sections complete (36%).** 115 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -273,7 +273,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T08 §30` | Shell-Aware Codex Dispatch Segmentation in `_review_kind`                                                             | none     |     9 |
 | [x]  | `D00 T08 §31` | Post-Commit Hook Concurrency: Serialize Build/Smoke via flock                                                         | none     |     5 |
 | [x]  | `D00 T08 §32` | Grammar-Accurate Shell Segmentation for the Gate Exemptions                                                           | none     |     4 |
-| [/]  | `D00 T08 §33` | Section-commit gate reads an untokenizable commit line as a commit                                                    | none     |     6 |
+| [x]  | `D00 T08 §33` | Section-commit gate reads an untokenizable commit line as a commit                                                    | none     |     8 |
 | [ ]  | `D00 T08 §34` | Section-commit gate test wiring that kernel sources can satisfy                                                       | none     |     5 |
 | [ ]  | `D00 T08 §35` | Cross-section review of a closed TODO file                                                                            | none     |     4 |
 | [ ]  | `D00 T08 §36` | Second-boot leg in the smoke matrix                                                                                   | none     |     4 |
