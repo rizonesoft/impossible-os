@@ -21,6 +21,9 @@ CLEAN = (
     "git commit -F - <<'E'\nsubject\n\n-n\nE\ngrep -n x y",
     "git commit -m 'one\n-n\ntwo' -- a.md",
     "git commit -mn -- a.md",
+    "git commit -m x -- -n",           # after `--`, a pathspec
+    "git commit --end-of-options -n",
+    "git -c alias.ci='commit -m' ci -n",  # the alias's -m takes the command's -n
     "git commit -qa -m x",
     "cat > f <<'E'\nit's -n\nE\ngit commit -F f",
 )
@@ -31,6 +34,7 @@ REFUSED = (
     "git commit -qn -F f",
     "git commit -an -m x",
     "git commit -nm x",
+    "git -c alias.ci='commit -n' ci -m x",
     "git commit \\\n  -n -F f",
     "ls\ngit commit -n -m x",
     "git commit -q -F f\ngit commit -n -m x",
@@ -225,8 +229,23 @@ BASH_QUOTED_NO_VERIFY = (
     'a=abc; echo ${a:"`git commit \\"-n\\" -m x`"}',
     'a=abc; echo ${a:0:"`git commit \\"-n\\" -m x`"}',
     'a=(abc); echo ${a["`git commit \\"-n\\" -m x`"]}',
+    # Completion pass: an arithmetic command's `<<` is a shift, not a heredoc; and git
+    # reads its options as parse-options does (a unique prefix, the last of -n/--verify).
+    "(( x = 1 << 2 ))\ngit commit -n -m x",
+    "for (( i=0; i < 1<<1; i++ )); do git commit -n -m x; done",
+    "git commit --no-veri -m x",
+    "git commit --verify -n -m x",
+    "git commit -m x file -n",
 )
 BASH_QUOTED_PLAIN = (
+    # Completion pass: a value option takes its value, whatever it reads.
+    "(( x = 1 << 2 ))\ngit commit -m x",
+    'git commit -m "- new feature"',
+    "git commit -m '-n'",
+    "git commit --mess -n",
+    "git commit --message=-n",
+    "git commit -n --verify -m x",
+    "git commit -Sn -m x",
     'a=abc; echo ${a:"`git commit -m \\"subject -n body\\"`"}',
     'echo $(( "`git commit -m \\"subject -n body\\"`" + 0 ))',
     'echo "`git commit -m \\"subject -n body\\"`"',           # one message argument
@@ -276,6 +295,9 @@ KNOWN_FALSE_REFUSALS = (
     "bash 3<<'EOF' 3</dev/null <&3\ngit commit -n -m x\nEOF\ngit commit -m ordinary",
     "bash <<'EOF' </dev/null\ngit commit -n -m x\nEOF\ngit commit -m ordinary",
     "bash <<'A' <<'B'\ngit commit -n -m x\nA\n:\nB\ngit commit -m ordinary",
+    # Options git itself refuses: no commit happens, and the reader refuses them.
+    "git commit --no-ver -m x",          # ambiguous: --no-verbose or --no-verify
+    "git commit --no-verify=x -m x",
 )
 
 
@@ -294,26 +316,78 @@ def test_a_commit_is_read_as_bash_reads_it():
 
 
 def test_the_reading_matches_what_bash_runs():
-    """Oracle: run each case under bash with a git function that records its argv."""
+    """Oracle: run each case under bash with a git function that records each call's argv,
+    then run every recorded `commit` argv through real git, whose pre-commit hook marks
+    that it ran. The gate refuses exactly the commits where git skipped it."""
     import subprocess
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         _oracle(pathlib.Path(d), subprocess)
 
 
+# git fails before its hooks on these, so whether one would have run is unknown.
+_BEFORE_HOOKS = ("pathspec", "could not lookup commit", "ambiguous option", "unknown option",
+                 "takes no value", "requires a value", "unknown switch")
+
+
+def _real_git_skips_hook(repo, args, subprocess):
+    """True / False: real `git commit <args>` skipped / ran pre-commit. None: git stopped
+    before its hooks."""
+    marker = repo / "ran"
+    marker.unlink(missing_ok=True)
+    env = {"PATH": "/usr/bin:/bin", "GIT_EDITOR": "true", "HOME": str(repo)}
+    done = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", *args],
+                          cwd=str(repo), capture_output=True, text=True, timeout=30, env=env,
+                          stdin=subprocess.DEVNULL)
+    if marker.exists():
+        return False
+    if done.returncode == 129 or any(m in done.stderr for m in _BEFORE_HOOKS):
+        return None
+    return True
+
+
+def _scratch_repo(path, subprocess):
+    path.mkdir()
+    hooks = path / "h"
+    hooks.mkdir()
+    (hooks / "pre-commit").write_text("#!/bin/sh\necho ran > ran\nexit 1\n")  # mark it, commit nothing
+    (hooks / "pre-commit").chmod(0o755)
+    for args in (["init", "-q"], ["config", "core.hooksPath", "h"], ["config", "user.name", "t"],
+                 ["config", "user.email", "t@example.invalid"]):
+        subprocess.run(["git", *args], cwd=str(path), check=True, capture_output=True, timeout=30)
+    (path / "f").write_text("f\n")
+    subprocess.run(["git", "add", "f"], cwd=str(path), check=True, capture_output=True, timeout=30)
+    subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "init"], cwd=str(path),
+                   check=True, capture_output=True, timeout=30)
+    return path
+
+
 def _oracle(tmp_path, subprocess):
-    shim = 'git() { for a; do [ "$a" = commit ] && { printf "%s\\n" "$@" >> "$OUT"; break; }; done; return 0; }; export -f git; export OUT\n'
+    calls = tmp_path / "calls"
+    calls.mkdir()
+    shim = ('git() { for a; do [ "$a" = commit ] && { printf "%s\\0" "$@" > "$(mktemp "$CALLS/c.XXXXXX")"; '
+            'break; }; done; return 0; }; export -f git; export CALLS\n')
+    repo = _scratch_repo(tmp_path / "gr", subprocess)
     skip = ("env ", "(cd r")  # env runs the real binary; cd r fails
+    decided = undecided = refused = 0
     for cmd in BASH_QUOTED_NO_VERIFY + BASH_QUOTED_PLAIN + NOT_A_COMMIT:
         if cmd.startswith(skip):
             continue
-        out = tmp_path / "argv"
-        out.unlink(missing_ok=True)
+        for old in calls.iterdir():
+            old.unlink()
         subprocess.run(["bash", "-c", shim + cmd], cwd=str(tmp_path), capture_output=True, timeout=30,
-                       env={"OUT": str(out), "PATH": "/usr/bin:/bin"})
-        argv = out.read_text().split("\n") if out.exists() else []
-        truth = (bool(argv), any(a in ("-n", "--no-verify") for a in argv))
-        assert gate._bash_is_git_commit(cmd) == truth, (cmd, argv)
+                       env={"CALLS": str(calls), "PATH": "/usr/bin:/bin"})
+        argvs = [f.read_bytes().decode("utf-8", "surrogateescape").split("\0")[:-1] for f in calls.iterdir()]
+        verdicts = [_real_git_skips_hook(repo, argv[argv.index("commit") + 1:], subprocess) for argv in argvs]
+        got = gate._bash_is_git_commit(cmd)
+        assert got[0] == bool(argvs), (cmd, argvs)
+        if True in verdicts or (verdicts and None not in verdicts):
+            decided += 1
+            refused += True in verdicts
+            assert got[1] == (True in verdicts), (cmd, argvs, verdicts)
+        elif verdicts:
+            undecided += 1
+    assert decided >= 9 * undecided and refused >= 20, (decided, undecided, refused)  # the oracle decides
 
 
 def test_many_substitutions_stay_linear():
@@ -331,6 +405,24 @@ def test_many_substitutions_stay_linear():
 
     small, big = best(4000), best(32000)
     assert big < small * 8 * 2.5, (small, big)  # 8x the input: linear with headroom, quadratic is ~50x
+
+
+def test_nested_subscripted_substitutions_stay_linear():
+    """Performance pass: a close-finding lexer collected what the body is read for again,
+    so `"a[$(...)]"` nested ten deep took 3 s (and 12 s at twelve)."""
+    import time
+
+    def took(depth):
+        cmd = "echo git" + "x" * 1000
+        for _ in range(depth):
+            cmd = 'echo "a[$(' + cmd + ')]"'
+        gate._sub_script_tokens.cache_clear()
+        t = time.perf_counter()
+        assert gate._bash_is_git_commit(cmd) == (False, False)
+        return time.perf_counter() - t
+
+    shallow, deep = min(took(4) for _ in range(3)), min(took(12) for _ in range(3))
+    assert deep < shallow * 3 * 4, (shallow, deep)  # 3x the depth: quadratic at worst, exponential is ~600x
 
 
 def test_continued_heredoc_lines_stay_linear():

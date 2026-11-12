@@ -62,6 +62,7 @@ Fail behavior split (Codex H2):
 Owner: TODO-08-automation-hardening section 4.
 """
 
+import functools
 import json
 import os
 import re
@@ -399,6 +400,73 @@ def _inner_script_is_git_commit(script: str) -> tuple[bool, bool]:
         return _unread_commit(script)
 
 
+# git commit's options as its parse-options reads them (`git commit
+# --git-completion-helper-all`, git 2.53): "b" takes no value, "r" a required one (the
+# next argument, or after `=`), "o" an optional one (after `=` only).
+_COMMIT_OPTIONS: dict[str, str] = {}
+for _names, _kind in (
+        ("quiet verbose reset-author signoff edit status all include interactive patch only "
+         "dry-run short branch ahead-behind porcelain long null amend pathspec-file-nul "
+         "allow-empty allow-empty-message", "b"),
+        ("file author date message reedit-message reuse-message fixup squash template "
+         "cleanup pathspec-from-file", "r"),
+        ("gpg-sign untracked-files", "o")):
+    for _name in _names.split():
+        _COMMIT_OPTIONS[_name] = _kind
+        _COMMIT_OPTIONS["no-" + _name] = "b"
+_COMMIT_OPTIONS.update({"trailer": "r", "unified": "r", "inter-hunk-context": "r",
+                        "no-verify": "b", "verify": "b", "no-post-rewrite": "b", "post-rewrite": "b"})
+_COMMIT_SHORT = {**dict.fromkeys("qvseaipozn", "b"), **dict.fromkeys("FmcCtU", "r"), "S": "o", "u": "o"}
+_COMMIT_SHORT_LONG = {"n": "no-verify"}
+
+
+def _commit_skips_verify(args: list[str]) -> bool:
+    """Whether `git commit <args>` skips pre-commit, read as git's parse-options reads
+    them: a value option takes its value (`-m -n` is a message, `-mn` too), `--` and
+    `--end-of-options` end the options, a long option may be any unique prefix
+    (`--no-veri`), and the last of `--no-verify` and `--verify` wins. Text git itself
+    would refuse (an unknown or ambiguous option, a value on a flag) is read as skipping:
+    a false refusal costs one retry, a missed one disables the gate."""
+    skip = False
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if arg in ("--", "--end-of-options"):
+            break
+        if arg.startswith("--"):
+            name, eq, _value = arg[2:].partition("=")
+            if name in _COMMIT_OPTIONS:
+                hits = [name]
+            else:
+                hits = [o for o in _COMMIT_OPTIONS if o.startswith(name)] if name else []
+            if len(hits) != 1:
+                return True
+            kind = _COMMIT_OPTIONS[hits[0]]
+            if kind == "b" and eq:
+                return True
+            if kind == "r" and not eq:
+                i += 1  # the next argument is the value, whatever it reads
+            if hits[0] in ("no-verify", "verify"):
+                skip = hits[0] == "no-verify"
+            continue
+        if arg.startswith("-") and len(arg) > 1:
+            for k, ch in enumerate(arg[1:], 1):
+                kind = _COMMIT_SHORT.get(ch)
+                if kind is None:
+                    return True
+                if _COMMIT_SHORT_LONG.get(ch) == "no-verify":
+                    skip = True
+                if kind == "r":
+                    if k == len(arg) - 1:
+                        i += 1  # `-m`: the next argument is the message
+                    break  # `-mfoo`: the rest of the word is the message
+                if kind == "o":
+                    break  # `-Skey`: the rest of the word is the key
+        # anything else is a pathspec; git reads options after it too
+    return skip
+
+
 def _segment_is_git_commit(seg_tokens: list[str]) -> tuple[bool, bool]:
     """Returns (is_git_commit, has_no_verify). Walks env-prefix +
     wrapper tokens, then handles git's own pre-subcommand options
@@ -510,6 +578,7 @@ def _segment_is_git_commit(seg_tokens: list[str]) -> tuple[bool, bool]:
         else:
             idx += 1
     subcmd = out[idx] if idx < len(out) else ""
+    commit_args = list(out[idx + 1:])  # an alias may put its own arguments first
     # Codex H2 round-2 + round-6: subcommand allowlist + custom-alias
     # resolution. `commit`/`ci`/`cm` are the conventional commit names;
     # any user alias defined inline via `-c alias.<X>=<Y>` whose value
@@ -581,10 +650,8 @@ def _segment_is_git_commit(seg_tokens: list[str]) -> tuple[bool, bool]:
             alias_subcmd = alias_toks[a_idx] if a_idx < len(alias_toks) else ""
             if alias_subcmd in ("commit", "ci", "cm"):
                 subcmd = "commit"
-                for tok in alias_toks[a_idx + 1:]:
-                    if tok in ("--no-verify", "-n") or tok.startswith("--no-verify="):
-                        extra_no_verify = True
-                        break
+                # The alias's own arguments come first and the command's follow them.
+                commit_args = alias_toks[a_idx + 1:] + commit_args
             if not extra_no_verify:
                 for tok in alias_toks[:a_idx]:
                     if tok in ("--no-verify", "-n") or tok.startswith("--no-verify="):
@@ -592,31 +659,7 @@ def _segment_is_git_commit(seg_tokens: list[str]) -> tuple[bool, bool]:
                         break
     if subcmd not in ("commit", "ci", "cm"):
         return (False, False)
-    # Codex H1: scan post-subcommand args for --no-verify / -n. The
-    # `-n` short form is ambiguous (could be a value-arg of an
-    # earlier flag), but in `git commit` argv positions after the
-    # subcommand it is unambiguously --no-verify per `git-commit(1)`.
-    has_no_verify = extra_no_verify
-    if not has_no_verify:
-        for tok in out[idx + 1:]:
-            if tok in ("--no-verify", "-n"):
-                has_no_verify = True
-                break
-            if tok.startswith("--no-verify="):
-                has_no_verify = True
-                break
-            # A clustered short flag: `-qn`, `-an`, `-nm subject`. Letters after
-            # one that takes a value belong to that value (`-mn` is a message).
-            if tok.startswith("-") and not tok.startswith("--") and len(tok) > 2:
-                for ch in tok[1:]:
-                    if ch == "n":
-                        has_no_verify = True
-                        break
-                    if ch in "mFcCtSu":
-                        break
-                if has_no_verify:
-                    break
-    return (True, has_no_verify)
+    return (True, extra_no_verify or _commit_skips_verify(commit_args))
 
 
 _ANSI_C = {"n": "\n", "t": "\t", "r": "\r", "e": "\x1b", "E": "\x1b", "a": "\a", "b": "\b",
@@ -721,6 +764,10 @@ class _BashLexer:
         self.herestring_next = False
         self.skip_operand = False
         self.stop_paren = False  # lex only up to the `)` that closes a substitution
+        # False in a lexer that only finds where a substitution closes: what it would
+        # collect is read again from the body, and collecting it here too made the
+        # work grow exponentially with nesting (`"a[$("a[$(...)]")]"`).
+        self.collect = True
         self.stop_at = -1
         self.parens = 0
         self.cases = 0
@@ -732,6 +779,11 @@ class _BashLexer:
         self.pattern = False  # an extglob interior: `#` is text, not a comment
         self.compound = False  # inside `a=( ... )`, whose `[key]=v` elements are subscripts
 
+    def _expand(self, *args, **kw) -> None:
+        """Collect the commands inside `_expansions(...)` unless this lexer only finds a close."""
+        if self.collect:
+            self.subs.extend(_expansions(*args, **kw))
+
     def _subscript(self, text: str) -> None:
         """`a['$(cmd)']=x`, `unset 'a[$(cmd)]'`, `read a'[$''(cmd)]'`: an array subscript
         runs its substitutions through quotes. Which words name an array is not in the
@@ -740,9 +792,9 @@ class _BashLexer:
         refusal at worst). A prompt '[review-kind: x] ...' opens with no name."""
         m = _SUBSCRIPT_OPEN_RE.match(text)
         if m:
-            self.subs.extend(_expansions(text[m.end():], self.depth + 1))
+            self._expand(text[m.end():], self.depth + 1)
         elif self.compound and text.startswith("["):  # `a=( ['$(cmd)']=x )`
-            self.subs.extend(_expansions(text[1:], self.depth + 1))
+            self._expand(text[1:], self.depth + 1)
 
     def _case_word(self, text: str) -> None:
         """Follow `case WORD in PATTERN) ... ;; esac` so that a pattern's `)` is not
@@ -774,7 +826,7 @@ class _BashLexer:
         if self.depth + nest > _MAX_NESTING:
             raise _TooDeep
         sub = _BashLexer(self.s, self.depth + nest + 1)
-        sub.i, sub.stop_paren = i, True
+        sub.i, sub.stop_paren, sub.collect = i, True, False
         sub.lex()
         return sub.stop_at
 
@@ -845,7 +897,7 @@ class _BashLexer:
                 word.append(s[i:k + 1])
                 return k + 1
             word.append(s[i:k + 2])  # arithmetic: only the substitutions inside run
-            self.subs.extend(_expansions(s[i + 3:k], self.depth + 1, dquotes=True))
+            self._expand(s[i + 3:k], self.depth + 1, dquotes=True)
             return k + 2
         if s.startswith("$(", i):
             k = self._close_subst(i + 2)
@@ -875,13 +927,13 @@ class _BashLexer:
                 # An indexed array's subscript is arithmetic and runs its substitutions
                 # through any quotes; an associative one does not. The array's type is not
                 # in the text, so the subscript is read as running them (a false refusal).
-                self.subs.extend(_expansions(inner[name_end + 1:j - 1], self.depth + 1,
-                                             dquotes=True))
+                self._expand(inner[name_end + 1:j - 1], self.depth + 1,
+                                             dquotes=True)
             pattern = inner[j:j + 1] in ("#", "%", "/", "^", ",")
             # ${a:off:len} is arithmetic, which runs substitutions through any quotes.
             arithmetic = inner[j:j + 1] == ":" and inner[j + 1:j + 2] not in ("-", "=", "?", "+")
-            self.subs.extend(_expansions(inner[j:], self.depth + 1, dquotes=arithmetic,
-                                         single_quotes=not arithmetic and (pattern or not in_dquote)))
+            self._expand(inner[j:], self.depth + 1, dquotes=arithmetic,
+                                         single_quotes=not arithmetic and (pattern or not in_dquote))
             return k + 1
         k = i + 1  # a backtick
         while k < self.n and s[k] != "`":
@@ -1024,11 +1076,11 @@ class _BashLexer:
                 if not quoted:
                     # The outer shell expands an unquoted body first: `\\\\-n` reaches the
                     # inner shell as `\\-n`, and its substitutions run out here.
-                    self.subs.extend(_expansions(text, self.depth + 1))
+                    self._expand(text, self.depth + 1)
                     text = re.sub(r"\\([\\$`])", r"\1", text)
                 self.subs.append(text)
             elif not quoted:  # an unquoted body expands as a whole: its substitutions run
-                self.subs.extend(_expansions("\n".join(body), self.depth + 1))
+                self._expand("\n".join(body), self.depth + 1)
         self.heredocs = []
 
     def lex(self) -> bool:
@@ -1191,12 +1243,22 @@ class _BashLexer:
                 # Its patterns are words, so the lexer reads them: their substitutions
                 # (`$(...)`, `<(...)`) run, their quotes quote, and their words are no command.
                 group = _BashLexer(s[self.i + 1:k], self.depth + 1)
-                group.pattern = True
+                group.pattern, group.collect = True, self.collect
                 if not group.lex():
                     return False
                 self.subs.extend(group.subs)
                 self.i = k + 1
                 continue
+            if ch == "(" and not inword and not self.compound and s.startswith("((", self.i):
+                # `(( x = 1 << 2 ))`, `for (( ...; ...; ))`: an arithmetic command, whose
+                # `<<` is a shift, not a heredoc. Only its substitutions run. Without a
+                # closing `))` it is two subshells, as in bash.
+                k = self._close(self.i + 2, "(", ")")
+                if k >= 0 and k + 1 < n and s[k + 1] == ")":
+                    self._expand(s[self.i + 2:k], self.depth + 1, dquotes=True)
+                    self.toks.append(_SEP)
+                    self.i = k + 2
+                    continue
             if ch in ";&|()":
                 end_word()
                 if ch == "(" and self.toks and not isinstance(self.toks[-1], _Op) and \
@@ -1305,13 +1367,22 @@ def _script_tokens(cmd: str, _depth: int = 0) -> tuple[list[str], str, int]:
     toks = lx.toks
     unread = "" if complete else cmd[lx.i:]
     unread_line = 0 if complete else cmd.count("\n", 0, lx.i) + 1
-    for sub in lx.subs:  # nesting is bounded by _BashLexer, which raises _TooDeep
-        sub_toks, sub_unread, _line = _script_tokens(sub, _depth + 1)
+    # nesting is bounded by _BashLexer, which raises _TooDeep. A body collected twice
+    # (its substitution and a subscript holding it) is read once.
+    for sub in dict.fromkeys(lx.subs):
+        sub_toks, sub_unread, _line = _sub_script_tokens(sub, _depth + 1)
         toks.append(_SEP)
         toks.extend(sub_toks)
         if not unread and sub_unread:
             unread, unread_line = sub_unread, 0
     return toks, unread, unread_line
+
+
+@functools.lru_cache(maxsize=512)
+def _sub_script_tokens(cmd: str, depth: int) -> tuple[tuple, str, int]:
+    """_script_tokens of a substitution body, read once however often it is collected."""
+    toks, unread, line = _script_tokens(cmd, depth)
+    return tuple(toks), unread, line
 
 
 _BASH_ERROR_LINE = re.compile(r"line (\d+):")
