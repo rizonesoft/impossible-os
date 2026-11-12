@@ -416,7 +416,9 @@ def test_a_user_mode_test_starts_at_main():
                     USER_MAKE.replace("userland: $(SYSROOT)/test_libc_x.exe", "userland:"),
                     USER_MAKE.replace("$(SYSROOT)/test_libc_x.exe: user", "unused: user")
                     + "$(SYSROOT)/test_libc_x.exe:\n\t@true\n",
-                    USER_MAKE + "$(SYSROOT)/test_libc_x.exe:\n\t@true\n"):
+                    USER_MAKE + "$(SYSROOT)/test_libc_x.exe:\n\t@true\n",
+                    USER_MAKE + "$(SYSROOT)/test_libc_x.exe: ; @true\n",
+                    USER_MAKE + "$(SYSROOT)/test_libc_x.exe: ;\n"):
         ok, msg, _ = _check({"user/lib/string_x.c": libc, "user/test/test_libc_x.c": test, "Makefile": unbuilt})
         assert not ok and "string_x.c" in msg, "a test the Makefile never builds never runs"
 
@@ -498,6 +500,14 @@ def test_refusal_a_parameter_or_local_named_like_the_function():
               "void test_register_x(void) {\n    test_suite_register_cat(\"x\", suite, TEST_CAT_SCHED);\n}\n")
     ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": helper})
     assert not ok and "dpc.c" in msg, "a parameter or a second declarator is not the function"
+    for body in ("int (*dpc_queue)(void) = stub;\n    dpc_queue();",
+                 "for (int x = 0, dpc_queue = 0; x < 1; ++x) { (void)dpc_queue; }",
+                 "int x[] = {0}, dpc_queue = 0;\n    (void)dpc_queue; (void)x;"):
+        test = ("static int stub(void) { return 0; }\n"
+                f"static void suite(void) {{\n    {body}\n}}\n"
+                "void test_register_x(void) {\n    test_suite_register_cat(\"x\", suite, TEST_CAT_SCHED);\n}\n")
+        ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": test})
+        assert not ok and "dpc.c" in msg, f"a local declared as {body!r} is not the function"
 
 
 def test_the_userland_walk_scales_linearly():

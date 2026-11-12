@@ -464,7 +464,7 @@ _LOCAL_PROTO = re.compile(r"\b([A-Za-z_]\w*)[\s\*]+([A-Za-z_]\w*)\s*\([^;{}()]*\
 
 _DECL_START = re.compile(
     r"\s*(?:(?:const|static|volatile|register|unsigned|signed|struct|union|enum)\s+)*"
-    r"[A-Za-z_]\w*[\s\*]+\**\s*[A-Za-z_]\w*\s*(?=[=;\[,])")
+    r"[A-Za-z_]\w*[\s\*]+\**\s*[A-Za-z_]\w*\s*(?=[=;\[,]|$)")
 
 
 def _split_top(text: str, sep: str = ",") -> list[str]:
@@ -498,16 +498,61 @@ def _param_names(params: str) -> set[str]:
     return names
 
 
+_FN_PTR_DECL = re.compile(r"\(\s*\*\s*([A-Za-z_]\w*)\s*\)\s*\(")
+
+
+def _statements(body: str) -> list[str]:
+    """`body` cut into statements at `;` and block braces outside parentheses, an
+    initialiser `{...}` (after `=` or inside another initialiser) kept whole, plus
+    the init clause of each `for (...)`, which declares names of its own."""
+    out, cur, depth, i, n = [], [], 0, 0, len(body)
+    while i < n:
+        ch = body[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "{" and depth == 0:
+            prev = "".join(cur).rstrip()[-1:]
+            if prev in ("=", ","):
+                end = _close(body, i, "{", "}")
+                if end < 0:
+                    end = n
+                cur.append(body[i:end])
+                i = end
+                continue
+            out.append("".join(cur))
+            cur = []
+            i += 1
+            continue
+        elif (ch == ";" or ch == "}") and depth == 0:
+            out.append("".join(cur))
+            cur = []
+            i += 1
+            continue
+        cur.append(ch)
+        i += 1
+    out.append("".join(cur))
+    for m in re.finditer(r"\bfor\s*\(", body):
+        end = _close(body, m.end() - 1)
+        inner = body[m.end():end - 1] if end > 0 else body[m.end():]
+        out.append(_split_top(inner, ";")[0])
+    return out
+
+
 def _local_names(body: str) -> set[str]:
-    """Every name a declaration statement in `body` declares, each declarator of
-    `int a = 0, b = 0;` included."""
+    """Every name a declaration statement in `body` declares: each declarator of
+    `int a = 0, b = 0;` (an initialiser list included), a `for` init clause, and a
+    function pointer `int (*f)(void) = g;`."""
     names = set()
-    for stmt in re.split(r"[;{}]", body):
+    for stmt in _statements(body):
+        names.update(_FN_PTR_DECL.findall(stmt) if re.match(r"\s*[A-Za-z_]\w*[\s\*]*\(", stmt) else ())
         m = _DECL_START.match(stmt)
         if not m or m.group(0).split()[0] in _KEYWORDS:
             continue
         for part in _split_top(stmt):
-            d = re.match(r"[^=\[]*?\**\s*([A-Za-z_]\w*)\s*(?:=|\[|$)", part.strip())
+            fp = _FN_PTR_DECL.search(part)
+            d = fp or re.match(r"[^=\[]*?\**\s*([A-Za-z_]\w*)\s*(?:=|\[|$)", part.strip())
             if d:
                 names.add(d.group(1))
     return names
@@ -631,24 +676,28 @@ def user_built_tests(makefile_text: str | None) -> dict[str, str]:
             depth = max(depth - 1, 0)
         elif depth == 0:
             lines.append(line)
-    rules: list[tuple[list[str], list[str], list[str], bool]] = []  # targets, prereqs, recipe, double-colon
+    # [targets, prerequisites, recipe lines or None when the rule gives no recipe, double-colon]
+    rules: list[list] = []
     for line in lines:
         if line.startswith("\t"):
             if rules:
+                if rules[-1][2] is None:
+                    rules[-1][2] = []
                 rules[-1][2].append(line)
             continue
         m = _MAKE_RULE.match(line)
         if m:
-            rules.append((m.group(1).split(), m.group(2).split(";", 1)[0].split(), [],
-                          "::" in line[len(m.group(1)):len(m.group(1)) + 3]))
+            pre, semi, inline = m.group(2).partition(";")  # `target: prereqs ; recipe` (an empty one too)
+            rules.append([m.group(1).split(), pre.split(), [inline] if semi else None,
+                          "::" in line[len(m.group(1)):len(m.group(1)) + 3]])
         elif line.strip():
-            rules.append(([], [], [], False))  # an assignment or directive ends the previous recipe
+            rules.append([[], [], None, False])  # an assignment or directive ends the previous recipe
     prereqs: dict[str, list[str]] = {}
     recipe: dict[str, list[list[str]]] = {}  # the recipes Make runs for each target
     for targets, pre, body, double in rules:
         for t in targets:
             prereqs.setdefault(t, []).extend(pre)
-            if body:
+            if body is not None:
                 # a later single-colon recipe replaces an earlier one; double-colon rules each run
                 recipe[t] = recipe.get(t, []) + [body] if double else [body]
     wanted, reached = ["userland"], set()
