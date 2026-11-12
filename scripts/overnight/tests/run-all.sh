@@ -102,34 +102,51 @@ run_one() {
 
 echo "== overnight-runner test suite =="
 
-# All python contract tests in this directory. A test function that takes a fixture
-# (tmp_path, monkeypatch, parametrize), or one defined after a file's `__main__` runner,
-# never runs under plain python3, which exits 0 anyway: until 2026-11-12
-# test_review_pin.py (65 tests), test_three_pass_gate.py (17) and the last seven of
-# test_commit_gate_script_lines.py passed here without running. So with pytest
-# installed every file that defines tests runs under it (all of them pass that way),
-# and without it a file holding such a test fails, never passes.
+# All python contract tests in this directory. Every file runs under plain python3, so
+# a file whose `__main__` block turns its collected check() failures into the exit
+# code keeps doing so. Plain python3 only DEFINES a test it never calls (one taking a
+# fixture such as tmp_path, one after the runner, or any in a file with no runner)
+# and exits 0: until 2026-11-12 test_review_pin.py (65 tests), test_three_pass_gate.py
+# (17) and the last seven of test_commit_gate_script_lines.py passed here without
+# running. pytest runs exactly those tests too; without pytest such a file fails.
 PYTEST=0
 python3 -c 'import pytest' 2>/dev/null && PYTEST=1
-needs_pytest() {  # a test plain python3 would define and never call
+uncalled_tests() {  # the tests in $1 that plain python3 defines and never calls
   python3 - "$1" <<'PY'
 import ast, sys
 tree = ast.parse(open(sys.argv[1]).read())
-main = next((i for i, n in enumerate(tree.body) if isinstance(n, ast.If)
-             and "__main__" in ast.unparse(n.test)), None)
-sys.exit(0 if any(isinstance(n, ast.FunctionDef) and n.name.startswith("test_")
-                  and (n.args.args or main is None or i > main)
-                  for i, n in enumerate(tree.body)) else 1)
+tests = [(i, n.name) for i, n in enumerate(tree.body)
+         if isinstance(n, ast.FunctionDef) and n.name.startswith("test_")]
+main = next((i for i, n in enumerate(tree.body)
+             if isinstance(n, ast.If) and "__main__" in ast.unparse(n.test)), None)
+called = set()
+if main is not None:
+    block = tree.body[main]
+    called |= {n.id for n in ast.walk(block) if isinstance(n, ast.Name)}
+    if "globals()" in ast.unparse(block):  # the house loop calls each test defined above it
+        called |= {name for i, name in tests if i < main}
+for n in tree.body:  # a module-level call
+    if isinstance(n, ast.Expr) and isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Name):
+        called.add(n.value.func.id)
+for i, name in tests:  # one called without its fixture fails the plain run loudly
+    if name not in called or (main is not None and i > main):  # defined after the runner ran
+        print(name)
 PY
+}
+plain_then_pytest() {  # plain python3, then pytest on the tests it did not call
+  local file="$1"; shift
+  python3 "$file" || return 1
+  python3 -m pytest -q -p no:cacheprovider "$@"
 }
 while IFS= read -r t; do
   [ -n "$t" ] || continue
-  if [ "$PYTEST" = 1 ] && grep -q '^def test_' "$t"; then
-    run_one "$(basename "$t")" python3 -m pytest -q -p no:cacheprovider "$t"
-  elif needs_pytest "$t"; then
-    run_one "$(basename "$t") (holds tests only pytest runs; pytest is not installed)" false
-  else
+  mapfile -t extra < <(uncalled_tests "$t")
+  if [ "${#extra[@]}" -eq 0 ]; then
     run_one "$(basename "$t")" python3 "$t"
+  elif [ "$PYTEST" = 1 ]; then
+    run_one "$(basename "$t")" plain_then_pytest "$t" "${extra[@]/#/$t::}"
+  else
+    run_one "$(basename "$t") (holds tests only pytest runs; pytest is not installed)" false
   fi
 done < <(ls -1 "$HERE"/test_*.py 2>/dev/null)
 

@@ -411,11 +411,12 @@ def test_nested_substitutions_stay_polynomial():
     """Performance passes: work doubled per nesting level where a close-finding lexer
     read what the body is read for again (`"a[$(...)]"` ten deep: 3 s; `@("$(...)")`
     twelve deep with 10 KB of text: over 11 s), and where a shell's script was re-read
-    with every deeper one (`eval "$(...)"` twelve deep: 2.5 s)."""
+    with every deeper one (`eval "$(...)"` twelve deep: 2.5 s), and where a close-finder
+    read a `${a[...]}` subscript (eight deep with 60 KB: 12 s)."""
     import time
 
     def took(wrap, depth):
-        cmd = "echo git" + "x" * 1000
+        cmd = "echo git commit " + "x" * 4000  # past the nesting limit this reads as a commit
         for _ in range(depth):
             cmd = wrap.format(cmd)
         gate._sub_script_tokens.cache_clear()
@@ -423,9 +424,10 @@ def test_nested_substitutions_stay_polynomial():
         assert gate._bash_is_git_commit(cmd) == (False, False), wrap
         return time.perf_counter() - t
 
-    for wrap in ('echo "a[$({})]"', 'echo @("$({})")', 'eval "$({})"', 'bash -c "$({})"'):
-        shallow, deep = min(took(wrap, 4) for _ in range(3)), min(took(wrap, 12) for _ in range(3))
-        assert deep < shallow * 3 * 4, (wrap, shallow, deep)  # 3x the depth: quadratic at worst
+    for wrap in ('echo "a[$({})]"', 'echo @("$({})")', 'eval "$({})"', 'bash -c "$({})"',
+                 'echo ${{a["$({})"]}}'):
+        shallow, deep = min(took(wrap, 3) for _ in range(3)), min(took(wrap, 8) for _ in range(3))
+        assert deep < shallow * 9, (wrap, shallow, deep)  # 8/3 the depth: quadratic is ~7x, doubling 32x
 
 
 def test_continued_heredoc_lines_stay_linear():

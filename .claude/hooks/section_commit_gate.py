@@ -911,6 +911,8 @@ class _BashLexer:
             if k < 0:
                 return -1
             word.append(s[i:k + 1])
+            if not self.collect:
+                return k + 1  # only its end was wanted; what runs inside is read elsewhere
             # ${x:-$(cmd)} runs cmd; ${x:-'$(cmd)'} does not, unless inside "...". A
             # pattern (${x#p} ${x%p} ${x/p/r} ${x^p} ${x,p}) quotes with '...' even there.
             inner = s[i + 2:k]

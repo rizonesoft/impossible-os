@@ -44,6 +44,23 @@ def test_refusal_a_fixture_test_after_the_runner_fails_the_suite():
     assert done.returncode != 0 and "FAIL test_a.py" in done.stdout, done.stdout
 
 
+LEGACY_FAILING = ("FAILS = []\n\n\ndef test_x():\n    FAILS.append('x')\n\n\n"
+                  'if __name__ == "__main__":\n    test_x()\n    raise SystemExit(1 if FAILS else 0)\n')
+FORGOTTEN = ('def test_listed():\n    assert True\n\n\ndef test_forgotten():\n    assert False\n\n\n'
+             'if __name__ == "__main__":\n    test_listed()\n')
+
+
+def test_refusal_a_legacy_check_that_failed_fails_the_suite():
+    """Its `__main__` turns collected failures into the exit code; pytest alone would not."""
+    done = _suite({"test_a.py": LEGACY_FAILING})
+    assert done.returncode != 0 and "FAIL test_a.py" in done.stdout, done.stdout
+
+
+def test_refusal_a_test_its_runner_does_not_call_still_runs():
+    done = _suite({"test_a.py": FORGOTTEN})
+    assert done.returncode != 0 and "FAIL test_a.py" in done.stdout, done.stdout
+
+
 def test_a_passing_pytest_style_test_passes():
     done = _suite({"test_a.py": PASSING_PYTEST_STYLE})
     assert done.returncode == 0 and "== 1 passed, 0 failed ==" in done.stdout, done.stdout
