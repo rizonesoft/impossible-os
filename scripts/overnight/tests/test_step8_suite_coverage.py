@@ -90,6 +90,16 @@ def test_a_source_is_covered_by_the_suite_that_calls_it():
     assert ok, msg
 
 
+def test_refusal_a_kernel_test_does_not_cover_a_user_source_of_the_same_name():
+    user_string = "void *memset(void *d, int c, unsigned long n) {\n    return d;\n}\n"
+    ok, msg, _ = _check({"user/lib/string.c": user_string,
+                         "src/kernel/test/test_tpm.c": suite("memset(0, 0, 1);")})
+    assert not ok and "string.c" in msg, "the kernel test runs src/libc's memset"
+    ok, msg, _ = _check({"user/lib/string.c": user_string, "Makefile": USER_MAKE,
+                         "user/test/test_libc_x.c": "int main(void) {\n    memset(0, 0, 1);\n    return 0;\n}\n"})
+    assert ok, msg
+
+
 def test_refusal_a_source_no_staged_test_calls():
     ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C,
                          "src/kernel/test/test_heap.c": OTHER_TEST})

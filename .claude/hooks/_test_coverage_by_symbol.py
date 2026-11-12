@@ -965,12 +965,22 @@ def entry_points_for(test_path: str, kernel_entry: frozenset[str],
     return kernel_entry
 
 
+def image_of(path: str) -> str:
+    """The binary a file is linked into: `user` for user/ (the user-mode images),
+    `kernel` for everything else step 8 reads (kernel.exe, with src/libc and the
+    desktop). A symbol name means the same function only inside one image: the
+    kernel's memset is src/libc/string.c, a user test's is user/lib/string.c."""
+    return "user" if path.startswith("user/") else "kernel"
+
+
 def covering_tests(path: str, text: str, tests: dict[str, set[str]]) -> list[str]:
-    """The tests in `tests` ({path: test_names}) that cover `path`."""
+    """The tests in `tests` ({path: test_names}) that cover `path`: one named by
+    its `tested-by:` line, or one in the same image that uses a symbol it defines."""
     named = set(_TESTED_BY.findall(text))
     symbols = public_symbols(path, text)
+    image = image_of(path)
     return sorted(t for t, used in tests.items()
-                  if Path(t).name in named or symbols & used)
+                  if Path(t).name in named or (image_of(t) == image and symbols & used))
 
 
 def _git(root: Path, *args: str) -> str:
