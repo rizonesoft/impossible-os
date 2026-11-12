@@ -63,7 +63,7 @@ def _check(files: dict[str, str], refuse: bool = True, todo: dict | None = None,
     """(ok, message, stderr) for a commit staging `files`, in a repository whose
     index holds `runner` as the suite runner (None: no runner)."""
     saved = gate._step8_sections_stamped
-    gate._step8_sections_stamped = lambda root: gate.STEP8_WARN_SECTIONS if refuse else 3
+    gate._step8_sections_stamped = lambda root, deadline=None: gate.STEP8_WARN_SECTIONS if refuse else 3
     err = io.StringIO()
     try:
         with tempfile.TemporaryDirectory() as d:
@@ -187,7 +187,7 @@ def test_refusal_a_name_in_a_string_is_not_a_call():
 def test_refusal_an_unreadable_staged_file_is_missing_evidence():
     saved = gate._staged_texts
 
-    def broken(root, paths):
+    def broken(root, paths, deadline=None):
         raise gate._StagedReadError("git cat-file: timed out")
     gate._staged_texts = broken
     try:
@@ -205,7 +205,7 @@ def test_a_deleted_source_needs_no_test():
         subprocess.run(["git", "rm", "-q", "--cached", "src/kernel/sched/dpc.c"], cwd=d,
                        check=True, timeout=30)
         saved = gate._step8_sections_stamped
-        gate._step8_sections_stamped = lambda root: gate.STEP8_WARN_SECTIONS
+        gate._step8_sections_stamped = lambda root, deadline=None: gate.STEP8_WARN_SECTIONS
         try:
             ok, msg = gate._step8_test_wiring_check(repo, ["src/kernel/sched/dpc.c"], [])
         finally:
@@ -398,11 +398,56 @@ def test_if_integers_follow_c_signedness_and_division():
 def test_a_user_mode_test_starts_at_main():
     libc = "int strlen_x(const char *s) {\n    return 0;\n}\n"
     test = "int main(void) {\n    return strlen_x(\"a\");\n}\n"
-    ok, msg, _ = _check({"user/lib/string_x.c": libc, "user/test/test_libc_x.c": test})
+    make = "tests:\n\t$(CC) -c user/test/test_libc_x.c -o test_libc_x.o\n"
+    ok, msg, _ = _check({"user/lib/string_x.c": libc, "user/test/test_libc_x.c": test, "Makefile": make})
     assert ok, msg
-    ok, msg, _ = _check({"user/lib/string_x.c": libc,
+    ok, msg, _ = _check({"user/lib/string_x.c": libc, "Makefile": make,
                          "user/test/test_libc_x.c": test.replace("int main", "int not_main")})
     assert not ok and "string_x.c" in msg, msg
+    for unbuilt in ("all:\n", "# $(CC) -c user/test/test_libc_x.c\n"):
+        ok, msg, _ = _check({"user/lib/string_x.c": libc, "user/test/test_libc_x.c": test, "Makefile": unbuilt})
+        assert not ok and "string_x.c" in msg, "a test the Makefile never builds never runs"
+
+
+def test_refusal_a_fallback_define_is_not_an_include_guard():
+    fallback = ('#include "kernel/test/test.h"\n' + suite(
+        "\n#ifndef TEST_MAX_SUITES\n#define TEST_MAX_SUITES 4\n    dpc_queue(1);\n#endif\n"))
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": fallback})
+    assert not ok, "a header may already define the name, so the block may not compile"
+    late = "#ifndef TEST_X_H\n#define TEST_X_H\n" + SCHED_TEST + "#endif\nint trailer;\n"
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": late})
+    assert not ok, "code after the #endif means the block is not a whole-file guard"
+
+
+def test_refusal_a_runner_static_shadows_a_test_function():
+    runner = ("static void test_register_x(void) {\n}\n"
+              "void boot_tests_run(void) {\n    test_register_x();\n}\n")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": SCHED_TEST},
+                        runner=runner)
+    assert not ok and "dpc.c" in msg, "the runner's call binds to its own static function"
+
+
+def test_step8_io_shares_one_deadline():
+    import time
+    with tempfile.TemporaryDirectory() as d:
+        repo = _repo(d)
+        _stage(repo, {"todo/T.md": "## 1. A\n"})
+        spent = time.monotonic() - 1
+        try:
+            gate._staged_texts(repo, ["todo/T.md"], spent)
+            raise AssertionError("a spent deadline must not read")
+        except gate._StagedReadError:
+            pass
+        assert gate._step8_sections_stamped(repo, spent) is None
+
+
+def test_guard_detection_scales_linearly():
+    import time
+    import _test_coverage_by_symbol as tcs
+    header = "".join(f"#ifndef M{i}\n#define M{i} 1\n#endif\n" for i in range(40000)) + "int f(void);\n"
+    t0 = time.monotonic()
+    tcs.public_symbols("include/kernel/x.h", header)
+    assert time.monotonic() - t0 < 2.0, "40,000 conditional defines took the hook's budget"
 
 
 if __name__ == "__main__":

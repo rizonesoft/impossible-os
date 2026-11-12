@@ -255,6 +255,7 @@ def _first_branches(code: str) -> str:
         return "on"
 
     lines = code.split("\n")
+    guard = _file_guard(lines)
     n = 0
     while n < len(lines):
         line = lines[n]
@@ -262,7 +263,7 @@ def _first_branches(code: str) -> str:
             out.append(line if region() == "on" else "")
             n += 1
             continue
-        full = line
+        full, start = line, n
         out.append("")
         while full.rstrip().endswith("\\") and n + 1 < len(lines):
             n += 1
@@ -279,7 +280,7 @@ def _first_branches(code: str) -> str:
                 frames.append({"state": "off", "taken": True, "unknown": False})
                 continue
             c = _condition(kind, expr, env)
-            if c is None and _is_include_guard(kind, expr, lines, n):
+            if c is None and start == guard:
                 c = True
             frames.append({"state": state_for(c, False, False), "taken": c is True, "unknown": c is None})
         elif kind == "elif" and frames:
@@ -310,23 +311,32 @@ def _first_branches(code: str) -> str:
     return "\n".join(out)
 
 
-_GUARD = re.compile(r"\s*(?:ifndef\s+([A-Za-z_]\w*)|if\s*!\s*defined\s*\(?\s*([A-Za-z_]\w*)\s*\)?)\s*$")
+_GUARD = re.compile(r"\s*#\s*(?:ifndef\s+([A-Za-z_]\w*)|if\s*!\s*defined\s*\(?\s*([A-Za-z_]\w*)\s*\)?)\s*$")
 
 
-def _is_include_guard(kind: str, expr: str, lines: list[str], n: int) -> bool:
-    """An `#ifndef NAME` (or `#if !defined(NAME)`) whose next directive is
-    `#define NAME`: an include guard, which compiles on the file's first inclusion,
-    the case compilers recognise for the same reason."""
-    m = _GUARD.match(kind + " " + _code_only(expr)) if kind in ("ifndef", "if") else None
-    if not m:
-        return False
-    name = m.group(1) or m.group(2)
-    for line in lines[n:]:
-        if line.lstrip().startswith("#"):
-            return re.match(rf"\s*#\s*define\s+{name}\b", line) is not None
-        if line.strip():
-            return False
-    return False
+def _file_guard(lines: list[str]) -> int | None:
+    """The line of the file's include guard: the first line is `#ifndef NAME` (or
+    `#if !defined(NAME)`), the next is `#define NAME`, and the `#endif` closing it is
+    the last line. Such a block compiles on the file's first inclusion. A fallback
+    `#ifndef X / #define X` anywhere else is not a guard: a header may define X."""
+    code = [i for i, line in enumerate(lines) if line.strip()]
+    if len(code) < 3:
+        return None
+    m = _GUARD.match(lines[code[0]])
+    if not m or not re.match(rf"\s*#\s*define\s+{m.group(1) or m.group(2)}\b", lines[code[1]]):
+        return None
+    depth = 0
+    for i in code:
+        d = _COND.match(lines[i])
+        if not d:
+            continue
+        if d.group(1) in ("if", "ifdef", "ifndef"):
+            depth += 1
+        elif d.group(1) == "endif":
+            depth -= 1
+            if depth == 0:
+                return code[0] if i == code[-1] else None
+    return None
 
 
 def _close(code: str, i: int, open_: str = "(", close: str = ")") -> int:
@@ -518,19 +528,28 @@ def runner_entry_points(runner_texts) -> frozenset[str]:
         if key in seen:
             continue
         seen.add(key)
-        uses = _body_uses(files[key[0]][key[1]])
-        names |= uses
-        for u in uses:
+        for u in _body_uses(files[key[0]][key[1]]):
             nxt = (key[0], u) if u in files[key[0]] else exported.get(u)
-            if nxt and nxt not in seen:
+            if nxt is None:
+                names.add(u)  # defined outside the runners: an entry point into a test
+            elif nxt not in seen:
                 todo.append(nxt)
     return frozenset(names)
 
 
-def entry_points_for(test_path: str, kernel_entry: frozenset[str]) -> frozenset[str]:
-    """Where execution enters a test file: main for a user-mode test binary, what the
-    kernel runners call for a kernel test."""
-    return frozenset({USER_TEST_ROOT}) if test_path.startswith("user/") else kernel_entry
+def user_built_tests(makefile_text: str | None) -> frozenset[str]:
+    """The user-mode test sources the Makefile compiles into a test binary."""
+    live = re.sub(r"#.*", "", makefile_text or "")  # a commented-out rule builds nothing
+    return frozenset(re.findall(r"(?<![\w/])(user/test/test_[\w-]+\.c)\b", live))
+
+
+def entry_points_for(test_path: str, kernel_entry: frozenset[str],
+                     user_built: frozenset[str] = frozenset()) -> frozenset[str]:
+    """Where execution enters a test file: main for a user-mode test the Makefile
+    builds, nothing for one it does not, what the kernel runners call for a kernel test."""
+    if test_path.startswith("user/"):
+        return frozenset({USER_TEST_ROOT}) if test_path in user_built else frozenset()
+    return kernel_entry
 
 
 def covering_tests(path: str, text: str, tests: dict[str, set[str]]) -> list[str]:
@@ -553,7 +572,8 @@ def report(root: Path) -> tuple[dict[str, list[str]], list[str]]:
         raise SystemExit("src/libs/PROVENANCE.md has no Local additions heading")
     files = _git(root, "ls-tree", "-r", "--name-only", "HEAD", "src/kernel").split()
     entry = runner_entry_points((root / r).read_text(errors="replace") for r in RUNNERS)
-    tests = {f: test_names((root / f).read_text(errors="replace"), entry_points_for(f, entry)) for f in files
+    built = user_built_tests((root / "Makefile").read_text(errors="replace"))
+    tests = {f: test_names((root / f).read_text(errors="replace"), entry_points_for(f, entry, built)) for f in files
              if re.search(r"/test/test_[\w-]+\.c$", f)}
     covered: dict[str, list[str]] = {}
     untested: list[str] = []

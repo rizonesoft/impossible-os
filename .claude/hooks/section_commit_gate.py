@@ -3890,14 +3890,14 @@ STEP8_WARN_SINCE = "d56710370b54e3e34c6ef8f3714cc2ae4ce84430"
 STEP8_WARN_SECTIONS = 10
 
 
-def _step8_stamped_at(root: Path, rev: str) -> set[tuple[str, str]]:
+def _step8_stamped_at(root: Path, rev: str, deadline: float) -> set[tuple[str, str]]:
     """The (TODO file, section number) pairs carrying a `> **Verified:**` stamp at
     `rev`: one git grep over todo/, so the cost follows the roadmap's size, never the
     length of history."""
     out = subprocess.run(
         ["git", "grep", "-n", "-e", "^## [0-9]", "-e", "^> \\*\\*Verified:\\*\\*", rev, "--", "todo/"],
-        cwd=str(root), capture_output=True, text=True, timeout=3, check=True,
-        errors="replace").stdout  # deadline: 3 s, a local tree read
+        cwd=str(root), capture_output=True, text=True, timeout=_left(deadline), check=True,
+        errors="replace").stdout  # deadline: step 8's shared I/O deadline
     stamped: set[tuple[str, str]] = set()
     section: dict[str, str] = {}
     for line in out.splitlines():
@@ -3909,12 +3909,14 @@ def _step8_stamped_at(root: Path, rev: str) -> set[tuple[str, str]]:
     return stamped
 
 
-def _step8_sections_stamped(root: Path) -> int | None:
+def _step8_sections_stamped(root: Path, deadline: float | None = None) -> int | None:
     """How many sections have gained a Verified stamp since STEP8_WARN_SINCE: stamped
     at HEAD and not at that commit. Refreshing a stamp, or a second stamp line, adds
     nothing. None when either tree cannot be read (a shallow clone without the commit)."""
+    deadline = time.monotonic() + STEP8_IO_BUDGET_S if deadline is None else deadline
     try:
-        return len(_step8_stamped_at(root, "HEAD") - _step8_stamped_at(root, STEP8_WARN_SINCE))
+        return len(_step8_stamped_at(root, "HEAD", deadline)
+                   - _step8_stamped_at(root, STEP8_WARN_SINCE, deadline))
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
 
@@ -3924,21 +3926,31 @@ class _StagedReadError(Exception):
 
 
 # The hook has 10 s (.claude/settings.json) for every check; step 8's reads get this.
-STEP8_READ_BUDGET_S = 4.0
+# Everything step 8 reads (the staged files, then the two roadmap snapshots) shares one
+# deadline, so its I/O cannot use up the hook's 10 s however slow the disk is.
+STEP8_IO_BUDGET_S = 4.0
 
 
-def _staged_texts(root: Path, paths: list[str]) -> dict[str, str | None]:
+def _left(deadline: float) -> float:
+    """Seconds left before `deadline`; a spent budget raises TimeoutExpired."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise subprocess.TimeoutExpired("step 8", STEP8_IO_BUDGET_S)
+    return remaining
+
+
+def _staged_texts(root: Path, paths: list[str], deadline: float | None = None) -> dict[str, str | None]:
     """The staged blob of each path, None for a path the index has no entry for (a
     deletion). One `ls-files` and one `cat-file --batch` under a shared deadline,
     however many paths. A failed or late read raises _StagedReadError: an unread file
     is missing evidence, never a file that needs no test.
     """
-    deadline = time.monotonic() + STEP8_READ_BUDGET_S
+    deadline = time.monotonic() + STEP8_IO_BUDGET_S if deadline is None else deadline
     try:
         listing = subprocess.run(
             ["git", "--literal-pathspecs", "ls-files", "-s", "-z", "--", *paths],
-            cwd=str(root), capture_output=True, timeout=STEP8_READ_BUDGET_S,
-            check=True).stdout  # deadline: STEP8_READ_BUDGET_S, shared by both reads
+            cwd=str(root), capture_output=True, timeout=_left(deadline),
+            check=True).stdout  # deadline: step 8's shared I/O deadline
         blob_of: dict[str, str] = {}
         for rec in listing.split(b"\0"):
             if rec:
@@ -3947,13 +3959,10 @@ def _staged_texts(root: Path, paths: list[str]) -> dict[str, str | None]:
         shas = sorted(set(blob_of.values()))
         content: dict[str, bytes] = {}
         if shas:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise subprocess.TimeoutExpired("git ls-files", STEP8_READ_BUDGET_S)
             data = subprocess.run(
                 ["git", "cat-file", "--batch"], cwd=str(root), input="\n".join(shas).encode() + b"\n",
-                capture_output=True, timeout=remaining,
-                check=True).stdout  # deadline: what is left of STEP8_READ_BUDGET_S
+                capture_output=True, timeout=_left(deadline),
+                check=True).stdout  # deadline: what is left of step 8's shared I/O deadline
             pos = 0
             for _ in shas:
                 eol = data.index(b"\n", pos)
@@ -4010,12 +4019,14 @@ def _step8_test_wiring_check(
     import _test_coverage_by_symbol as tcs
 
     provenance = "src/libs/PROVENANCE.md"
+    io_deadline = time.monotonic() + STEP8_IO_BUDGET_S
     test_paths = [p for p in staged_src
                   if any(td in p for td in _TEST_WIRING_TEST_DIRS.values())
                   and re.search(r"test_[\w-]+\.c$", p)]
     wanted = [p for p in candidates if p.endswith(tcs.SOURCE_EXTS)]
     try:
-        staged = _staged_texts(root, sorted({provenance, *tcs.RUNNERS, *wanted, *test_paths}))
+        staged = _staged_texts(root, sorted({provenance, "Makefile", *tcs.RUNNERS, *wanted, *test_paths}),
+                               io_deadline)
     except _StagedReadError as exc:
         return (False, f"step-8 could not read the staged files, so their tests are unknown: {exc}")
     if any(p.startswith(tcs.VENDORED_ROOT) for p in wanted):
@@ -4030,7 +4041,8 @@ def _step8_test_wiring_check(
     if not sources:
         return (True, "")
     entry = tcs.runner_entry_points(staged.get(r) for r in tcs.RUNNERS)
-    tests = {p: tcs.test_names(staged[p], tcs.entry_points_for(p, entry))
+    built = tcs.user_built_tests(staged.get("Makefile"))
+    tests = {p: tcs.test_names(staged[p], tcs.entry_points_for(p, entry, built))
              for p in test_paths if staged.get(p) is not None}
     uncovered = [p for p, text in sources.items() if not tcs.covering_tests(p, text, tests)]
     if not uncovered:
@@ -4049,7 +4061,7 @@ def _step8_test_wiring_check(
         f"the TODO section. `python3 .claude/hooks/_test_coverage_by_symbol.py --report` "
         f"lists every kernel source's tests."
     )
-    stamped = _step8_sections_stamped(root)
+    stamped = _step8_sections_stamped(root, io_deadline)
     if stamped is None or stamped < STEP8_WARN_SECTIONS:
         # fail-direction: history that cannot be read keeps the warning, since the
         # warning period is what an unknown count cannot prove has ended.

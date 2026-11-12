@@ -6571,7 +6571,7 @@ with tempfile.TemporaryDirectory() as tmp:
             "args": "test", "todo_path": "",
         }
     }))
-    scg._step8_sections_stamped = lambda root: scg.STEP8_WARN_SECTIONS
+    scg._step8_sections_stamped = lambda root, deadline=None: scg.STEP8_WARN_SECTIONS
     (repo / "src" / "kernel" / "newcode.c").write_text("int newcode_run(void) {\n    return 0;\n}\n")
     (repo / "src" / "kernel" / "test" / "test_sched.c").write_text(
         "static void t(void) { newcode_run(); }\n"
