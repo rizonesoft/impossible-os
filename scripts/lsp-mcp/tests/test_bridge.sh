@@ -5276,20 +5276,28 @@ PY
 t_warm_start_mode_bg_fast_exit() {
     python3 - <<'PY' || return 1
 import subprocess, sys, time
-t0 = time.monotonic()
-r = subprocess.run(
-    ["python3", "scripts/lsp-mcp/bridge.py",
-     "--warm-start=c", "--warm-start-mode=background",
-     "--self-test"],
-    capture_output=True, text=True, timeout=30,
-)
-elapsed = time.monotonic() - t0
-if r.returncode != 0:
-    print(f"[17a] FAIL: rc={r.returncode}\nSTDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}",
-          file=sys.stderr)
-    sys.exit(1)
-if elapsed >= 1.5:
-    print(f"[17a] FAIL: took {elapsed:.2f}s (budget 1.5s)", file=sys.stderr)
+# Best of three (2026-11-12): one sample read load as blocking inside a loaded
+# pre-push pack. A background mode that really blocks waits on the ~2 s clangd
+# spawn on every run, so it still fails; the loop stops at the first fast run.
+best = None
+for _ in range(3):
+    t0 = time.monotonic()
+    r = subprocess.run(
+        ["python3", "scripts/lsp-mcp/bridge.py",
+         "--warm-start=c", "--warm-start-mode=background",
+         "--self-test"],
+        capture_output=True, text=True, timeout=30,
+    )
+    elapsed = time.monotonic() - t0
+    if r.returncode != 0:
+        print(f"[17a] FAIL: rc={r.returncode}\nSTDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}",
+              file=sys.stderr)
+        sys.exit(1)
+    best = elapsed if best is None else min(best, elapsed)
+    if best < 1.5:
+        break
+if best >= 1.5:
+    print(f"[17a] FAIL: best of 3 took {best:.2f}s (budget 1.5s)", file=sys.stderr)
     sys.exit(1)
 PY
     return 0

@@ -30,13 +30,21 @@ BUILD_MS_PER_MB=250
 CORPUS_KB=$(( $(find "$REPO_ROOT/todo" -name '*.md' -type f -print0 | xargs -0 cat | wc -c) / 1024 ))
 BUILD_BUDGET_MS=$(( CORPUS_KB * BUILD_MS_PER_MB / 1024 ))
 [ "$BUILD_BUDGET_MS" -ge 2000 ] || BUILD_BUDGET_MS=2000
+# The reading is the BEST of three builds (2026-11-12): CPU time still rises
+# under contention (a pre-push pack read 3253 ms, 260 ms/MiB, for a build that
+# takes 118-153 ms/MiB at rest), and one sample cannot tell that from real work.
+# A build whose per-byte work really doubled is over budget on every sample.
 BUILD_CPU_MS=$(python3 - "$BUILD_PY" "$TMP_DIR/cache-perf.json" <<'PYCPU'
 import resource, subprocess, sys
-r0 = resource.getrusage(resource.RUSAGE_CHILDREN)
-subprocess.run([sys.executable, sys.argv[1], "--quiet", "--output", sys.argv[2]],
-               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-r1 = resource.getrusage(resource.RUSAGE_CHILDREN)
-print(int(round(((r1.ru_utime - r0.ru_utime) + (r1.ru_stime - r0.ru_stime)) * 1000)))
+best = None
+for _ in range(3):
+    r0 = resource.getrusage(resource.RUSAGE_CHILDREN)
+    subprocess.run([sys.executable, sys.argv[1], "--quiet", "--output", sys.argv[2]],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+    r1 = resource.getrusage(resource.RUSAGE_CHILDREN)
+    ms = int(round(((r1.ru_utime - r0.ru_utime) + (r1.ru_stime - r0.ru_stime)) * 1000))
+    best = ms if best is None else min(best, ms)
+print(best)
 PYCPU
 )
 START_NS=$(mono_ns)
