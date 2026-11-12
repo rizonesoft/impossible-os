@@ -1267,6 +1267,16 @@ Every boot test starts from a fresh image, so anything that depends on what the 
 
 > **Test runner:** `bash scripts/test-smoke-matrix.sh` (26 legs, the two `boots` legs included); the pair alone (KVM, 2 CPUs; add `SMOKE_FORCE_TCG=1` to both for TCG): `SMOKE_SMP=2 SMOKE_TREND_BOOTS=1 SMOKE_SHUTDOWN=1 bash scripts/test-smoke.sh`, then `SMOKE_SMP=2 SMOKE_TREND_BOOTS=2 SMOKE_KEEP_DISK=1 bash scripts/test-smoke.sh`.
 
+> **Notes:**
+> - What shipped: `test-smoke.sh` gains `SMOKE_SHUTDOWN` (ACPI power button, guest must reach S5), `SMOKE_KEEP_DISK` (boot the previous run's disk and variables, no rebuild) and `SMOKE_TREND_BOOTS` (boot-trend file must hold N boots).
+> - How it integrates: each engine's 2-CPU matrix leg is the first boot of a pair and a kept-disk boot follows it at once; the matrix stays at 26 legs and dropped from 498 s to 419 s.
+> - Downstream effects: state a boot leaves on disk for the next is now booted on every matrix run, and a guest that cannot power off fails the matrix.
+> - Canonical doc: [Boot Validation and Certification Matrix](../../docs/boot/boot-validation-matrix.md).
+> - Scope boundary: proves one cross-boot fact (the boot-trend record); the other trend checks (index 0 order, the 16-entry trim) stay with the boot observability TODO.
+
+> **Verified:** 2026-11-13 | commit `dbdd38522` | 4/4 items | build OK | matrix 26/26 PASS on `dbdd38522` (kvm and tcg pairs read back 2 boots; a fresh disk asked for 2 fails) | shutdown oracle self-test 7/7 | orchestration test 26 legs, 2 pairs, control 24/0 | lint exit 0
+> **Quality reviewed:** 2026-11-13 | Codex passes: plan, 6 rounds, 2 performance, 4 completions; final round and performance approve on `dbdd38522` | 4M fixed (leaked kept-disk copies, duplicate first boots, kill instead of a clean shutdown, failed quiesce accepted as clean), 2L fixed, 0 open | scope: N/A (host test harness, no kernel/boot source)
+
 ## 37. Syscall argument counts in the ABI fingerprint
 
 > **Spawned-by:** root

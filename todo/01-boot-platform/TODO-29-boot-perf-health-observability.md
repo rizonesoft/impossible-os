@@ -647,6 +647,7 @@ Tests live under `src/kernel/test/test_boot_health.c` (NEW). Registered via `tes
 - [ ] All unit tests in `## Unit Tests` PASS under `SUITE=boot`.
 - [ ] QEMU OVMF boot writes `X:\Diag\boot-health.json` post-Phase-3 with non-zero size and parses through `cJSON_Parse`.
 - [ ] QEMU OVMF boot writes `X:\Perf\boot-trend.json`; second boot updates index 0; sixteenth boot trims to 16 entries.
+  - The smoke matrix's two-boot pair (00-infrastructure/TODO-08 §36) already boots one disk twice and checks the boot count; extend `SMOKE_TREND_BOOTS` there for index 0 and the trim.
 - [ ] SMBIOS init drops from 1342ms to <100ms (boot log `SMBIOS Xms`).
 - [ ] Mouse init drops from 1149ms to <100ms.
 - [ ] Font/icon load no longer blocks `DESKTOP_READY`.
