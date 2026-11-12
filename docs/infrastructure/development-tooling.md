@@ -1045,11 +1045,13 @@ bash scripts/install-hooks.sh --remove       # unset core.hooksPath + drop pre-p
 | Hook | Path | Default | Blocks | Re-run manually |
 | ---- | ---- | ------- | ------ | --------------- |
 | `pre-commit` | [`.githooks/pre-commit`](../../.githooks/pre-commit) | **always on** once `core.hooksPath` is set | commit, on lint failure | `bash scripts/lint.sh` |
+| `prepare-commit-msg` | [`.githooks/prepare-commit-msg`](../../.githooks/prepare-commit-msg) | **always on** | a `git commit` that skipped `pre-commit` (`--no-verify`, `-n`, in any spelling) | runs on every commit |
 | `post-commit` | [`.githooks/post-commit`](../../.githooks/post-commit) | **always on** | nothing (amends commit with `COUNT.md`) | `COUNT_ONLY=1 bash .githooks/post-commit` (refresh only) or `bash .githooks/post-commit` (will amend `HEAD`) |
 | `pre-push` | [`.githooks/pre-push`](../../.githooks/pre-push) -> [`scripts/hooks/pre-push`](../../scripts/hooks/pre-push) | **opt-in** via `.git/.impossible-os-prepush` sentinel | push, on build or test failure | `bash scripts/build.sh && bash scripts/test.sh` |
 
 Mandatory (`always on`) vs opt-in matters because wall-clock cost differs:
 - `pre-commit` runs in under a millisecond when no C/H files are staged, and over staged files only when they actually changed.
+- `prepare-commit-msg` reads one small file: `pre-commit` records its git process id (`.githooks/lib/pre-commit-mark.sh`) and this hook, a child of the same process, refuses a `git commit` with no record. Cherry-pick, revert, merge and rebase run no `pre-commit` and pass; the one internal `--no-verify` commit, `post-commit`'s `COUNT.md` amend, records its pid and is let through.
 - `post-commit` regenerates the tracked code + supporting-text tally in `COUNT.md` and amends -- silent on success.
 - `pre-push` rebuilds and runs the full test suite (~10s on KVM, longer on TCG). That is why it is opt-in. GitHub Actions is the mandatory gate at PR time; `--with-pre-push` is for contributors who prefer to catch failures locally before the push leaves their machine.
 
@@ -1306,6 +1308,7 @@ scripts/
 | `.clangd`                         | clangd language server config                        |
 | `compile_commands.json`           | Bear compilation database (generated on clean build) |
 | `.githooks/pre-commit`            | Active pre-commit lint hook                          |
+| `.githooks/prepare-commit-msg`    | Refuses a commit that skipped `pre-commit`           |
 | `.githooks/post-commit`           | Active `COUNT.md` refresh hook                       |
 | `src/kernel/test/test_runner.c`   | Unit test framework runner                           |
 | `src/kernel/test/test_*.c`        | Kernel test files; live per-file counts in the generated coverage report below (a hand-kept number here goes stale on every new suite) |

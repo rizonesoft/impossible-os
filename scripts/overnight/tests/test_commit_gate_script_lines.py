@@ -25,6 +25,7 @@ CLEAN = (
     "cat > f <<'E'\nit's -n\nE\ngit commit -F f",
 )
 REFUSED = (
+    "/usr/bin/env git commit -n -m x",  # a wrapper by path (env runs the binary, not a shim)
     "git commit -n -F f",
     "git commit --no-verify -F f",
     "git commit -qn -F f",
@@ -67,6 +68,298 @@ def test_refusal_a_real_no_verify_is_still_seen():
 
 def test_no_commit_is_no_commit():
     assert gate._bash_is_git_commit("grep -n x y\nls -n") == (False, False)
+
+
+# A script shlex cannot read (automation hardening, untokenizable commit line). Each of
+# these is a real commit carrying -n that an earlier reading passed as no -n or no commit.
+BASH_QUOTED_NO_VERIFY = (
+    "git commit -m $'a\\';b' -n",                          # the section's own example
+    "git commit -m $'it\\'s\nbody' -n",                   # an ANSI-C quote spanning lines
+    "git -C 'some dir' commit -m $'it\\'s' -n",            # a quoted global-option value
+    "env FOO=bar git commit -m $'it\\'s' -n",              # a wrapper and its argument
+    "ls; git -C ../r commit -n -m $'q\\''",                # after a separator
+    'git commit -m "$(cat f)" -n',                         # a substitution is a word, not the end
+    "git commit -m \"$(printf '%s' \"it's\")\" -n",         # quotes nested in a substitution
+    "x=$(git commit -n -m y)",                             # a commit inside a substitution runs
+    "echo `git commit -n -m y`",
+    "if git commit -n -m x; then :; fi",
+    "{ git commit -n -m x; }",
+    "(cd r && git commit -n -m x)",
+    # Round review: each of these was read as clean or as no commit.
+    'git commit -n -m x\necho "unterminated',             # a later syntax error: line 1 ran
+    "cat <<EOF\n$(git commit -n -m x)\nEOF",             # an unquoted heredoc body expands
+    "echo $(( $(git commit -n -m x) + 1 ))",              # inside arithmetic
+    "echo ${x:-$(git commit -n -m x)}",                    # inside a parameter expansion
+    "git commit -m x $'\\x2dn'",                          # ANSI-C hex escape for -n
+    "git commit -m x $'\\055n'",                          # ANSI-C octal escape for -n
+    "git commit>/dev/null -n -m x",                        # an attached redirection
+    ">/dev/null git commit -n -m x",                       # a leading redirection
+    "git commit 2>&1 -n -m x",
+    "git commit &>log -n -m x",
+    "git commit <<<x -n -m y",
+    # Second round review.
+    'git commit -m "$(printf %s "$(printf ")")")" -n',      # quotes nested in a quoted substitution
+    "cat <<EOF\n$(\ngit commit -n -m x\n)\nEOF",           # a substitution spanning heredoc lines
+    "cat <<$'EOF'\ntext\nEOF\ngit commit -n -m x",         # an ANSI-C quoted delimiter
+    "git commit -m x $'--no-verify\\0suffix'",             # a NUL ends the fragment's text
+    "echo " + "${x:-" * 500 + "$(git commit -n -m x)" + "}" * 500,  # deep nesting
+    # Third round review.
+    "cat <<$'E\\x4fF'\ntext\nEOF\ngit commit -n -m x",       # an escape in an ANSI-C delimiter
+    "git commit -m x $'\\0'-n",                            # a NUL ends only its own fragment
+    "echo " + "${x:-" * 30 + "$(git commit -m x $'\\x2dn')" + "}" * 30,  # too deep: refused
+    # Fourth round review.
+    "cat <<EOF\nE\\\nOF\ngit commit -n -m x",               # a continued delimiter line
+    'cat <<"E\\"F"\ntext\nE"F\ngit commit -n -m x',          # an escaped quote in a delimiter
+    "git commit -m $'\\c\\\\' -n",                         # \c\\ is one character
+    "git commit -m \"$(echo # '\n)\" -n",                    # a comment in a substitution
+    "echo " + "${x:-" * 30 + "$(git c'ommit' -n -m x)" + "}" * 30,  # too deep, quoted word
+    # Seventh round review.
+    "cat <<\\\nEOF\nbody\nEOF\ngit commit -n -m x",            # a continued delimiter word
+    "git commit -m $'\\x3b' -n",                             # a decoded ; is an argument
+    "git commit -m ';' -n",                                   # so is a quoted one
+    # Eighth round review.
+    'cat <<"E\\\nOF"\nbody\nEOF\ngit commit -n -m x',            # continued in a quoted delimiter
+    'bash -c "git commit -m \';\' -n"',                         # a quoted ; inside bash -c
+    "eval \"git commit -m \\$'\\\\x3b' -n\"",                   # and inside eval
+    # Ninth round review.
+    "bash <<'EOF'\ngit commit -n -m x\nEOF",                  # a heredoc a shell runs
+    "FOO=1 bash -s <<EOF\ngit commit -n -m x\nEOF",           # with flags and an assignment
+    # Tenth round review.
+    "bash 0<<'EOF'\ngit commit -n -m x\nEOF",                 # fd 0 named
+    "bash -s -- arg <<'EOF'\ngit commit -n -m x\nEOF",        # -s with positional arguments
+    # Eleventh round review.
+    "command bash <<'EOF'\ngit commit -n -m x\nEOF",          # a wrapped shell
+    "bash +x <<'EOF'\ngit commit -n -m x\nEOF",               # a plus option
+    # Twelfth round review.
+    "env -u UNUSED bash <<'EOF'\ngit commit -n -m x\nEOF",    # a wrapper's option value
+    "nice -n 5 bash <<'EOF'\ngit commit -n -m x\nEOF",
+    "/usr/bin/env bash <<'EOF'\ngit commit -n -m x\nEOF",     # a wrapper by path
+    # Fourteenth round review.
+    'git commit -m x $"-n"',                                  # a localized double quote
+    "bash 3<<'EOF' <&3\ngit commit -n -m x\nEOF",             # a heredoc reached through fd 3
+    # Fifteenth round review.
+    "bash 3<<'EOF' <& 3\ngit commit -n -m x\nEOF",            # with a space
+    "bash 3<<'EOF' 4<&3 <&4\ngit commit -n -m x\nEOF",        # through a second duplicate
+    # Sixteenth round review.
+    "bash 3<<'EOF' <&3-\ngit commit -n -m x\nEOF",            # a descriptor move
+    "bash 3<<'EOF' 4<&3- <&4\ngit commit -n -m x\nEOF",
+    "bash 3<<'EOF' <&\"3\"\ngit commit -n -m x\nEOF",          # a quoted source
+    # Seventeenth round review.
+    "bash {fd}<<'EOF' <&$fd\ngit commit -n -m x\nEOF",         # a named descriptor
+    # Eighteenth round review.
+    "bash <<< 'git commit -n -m x'",                          # a here-string a shell runs
+    "bash -s <<< 'git commit -n -m x'",
+    "bash <<< 'git commit -n -m x'; git commit -m ordinary",  # hidden before an ordinary commit
+    # Nineteenth round review.
+    "bash <<EOF\ngit commit \\\\-n -m x\nEOF",                 # two expansions, two backslashes
+    "bash <<EOF\ngit commit \\$'\\x2dn' -m x\nEOF",              # an escaped dollar quote
+    # Twentieth round review.
+    "timeout 5 bash <<'EOF'\ngit commit -n -m x\nEOF",        # the commit reader's wrappers
+    "timeout -k 1 5 bash <<< 'git commit -n -m x'",
+    'timeout 5 bash -c "git commit -n -m x"',
+    # Twenty-first round review.
+    "git commit -m \"${x:-'$(git commit -n -m y)'}\"",        # in "...", the quote is text
+    # Twenty-second round review.
+    "git commit -m \"${x:-${y:-'$(git commit -n -m z)'}}\"",  # nested, still in "..."
+    "echo ${x:-\"'$(git commit -n -m z)'\"}",                  # "..." opened inside ${...}
+    # Twenty-fifth round review.
+    "declare -A x=(); git commit -m \"${x[']#']:-'$(git commit -n -m inner)'}\"",  # a quoted ]
+    # Twenty-sixth round review.
+    "x=(abc); git commit -m \"${x['$(git commit -n -m i)']#a}\"",  # an indexed subscript runs
+    # Twenty-seventh round review.
+    "a=(x); echo ${#a['$(git commit -n -m x)0']}",            # a length of an element
+    # Twenty-eighth round review.
+    "a=abc; git commit -m ${a:'$(git commit -n -m inner)0'}",  # a substring offset
+    "a=abc; git commit -m ${a:0:'$(git commit -n -m inner)1'}",  # and its length
+    # Twenty-ninth round review.
+    'git commit -m "$(case x in x) git commit -n -m inner;; esac)"',  # a case pattern's )
+    'git commit -m "$(if true; then case x in (x) git commit -n -m i;; esac; fi)"',
+    # Thirtieth round review.
+    'git commit -m "$(echo # )\ngit commit -n -m inner\n)"',  # a comment's )
+    "git commit -m \"$(cat <<'E'\n)\nE\ngit commit -n -m inner\n)\"",  # a heredoc's )
+    # Thirty-first round review.
+    "git commit -m \"$(case x in y) :;; 'esac') :;; x) git commit -n -m inner;; esac)\"",
+    'git commit -m "$(case x in case) :;; x) git commit -n -m i;; esac)"',  # a pattern word
+    # Thirty-second round review.
+    'git commit -m "$(case esac in y|esac) git commit -n -m inner;; esac)"',  # esac after |
+    'git commit -m "$(case esac in (esac) git commit -n -m inner;; esac)"',  # and after (
+    # Thirty-third round review: the commit in a LATER clause.
+    'git commit -m "$(case x in y|esac) :;; x) git commit -n -m inner;; esac)"',
+    'git commit -m "$(case x in (esac) :;; x) git commit -n -m inner;; esac)"',
+    'git commit -m "$(case x in y|case) :;; x) git commit -n -m inner;; esac)"',
+    # Thirty-fourth round review (extglob patterns; the oracle runs bash -O extglob too).
+    'shopt -s extglob\ngit commit -m "$(case x in @(y|z)) :;; x) git commit -n -m inner;; esac)"',
+    'shopt -s extglob\ngit commit -m "$(case x in !(*(x)|+(z))) :;; x) git commit -n -m i;; esac)"',
+    # Thirty-fifth round review.
+    'shopt -s extglob\ngit commit -m "$(case x in @($(git commit -n -m inner))) echo ok;; esac)"',
+    # Thirty-sixth round review.
+    "shopt -s extglob\ngit commit -m @(<(git commit -n -m inner))",
+    "shopt -s extglob\ngit commit -m @(>(git commit -n -m inner))",
+    # Thirty-seventh round review.
+    "shopt -s extglob\ngit commit -m @(#$(git commit -n -m inner))",  # `#` is pattern text
+    "shopt -s extglob\ngit commit -m @(x|#$(git commit -n -m inner))",
+    # Thirty-eighth round review.
+    "a['$(git commit -n -m inner)']=x; git commit -m ordinary",  # an assignment subscript
+    "a=(1); unset 'a[$(git commit -n -m inner)]'",
+    # Thirty-ninth round review.
+    "a=(1); unset a'[$(git commit -n -m inner)]'; git commit -m ordinary",  # split fragments
+    # Fortieth round review.
+    "a=(1); unset 'a[$''(git commit -n -m inner)]'; git commit -m ordinary",  # `$` + `(`
+    # Forty-first round review.
+    "a=(1); unset 'a[\\]$(git commit -n -m inner)]'; git commit -m ordinary",  # an escaped ]
+    # Forty-second round review.
+    "a['x]$(git commit -n -m x)']=1",                         # a quoted ]
+    # Forty-third round review.
+    "a=( ['$(git commit -n -m inner)']=x ); git commit -m ordinary",  # a compound element
+    "a=( ['$(git commit -n -m inner)']=x )",
+    # Forty-fourth round review.
+    "echo `git commit \\\\-n -m x`",                          # a backtick removes one backslash
+    "echo `gi\\\\t commit -n -m x`",
+    # Forty-fifth round review.
+    'echo "`git commit \\"-n\\" -m x`"',                     # an escaped " in "`...`"
+    # Forty-sixth round review: a heredoc body is not double quotes.
+    'cat <<EOF\n`git commit --allow-empty -m \\"subject -n #\\"`\nEOF',
+    # Forty-seventh round review: "..." inside arithmetic quotes.
+    'echo $(( "`git commit \\"-n\\" -m x`" + 0 ))',
+    # Forty-eighth round review: and in the other arithmetic contexts.
+    'a=abc; echo ${a:"`git commit \\"-n\\" -m x`"}',
+    'a=abc; echo ${a:0:"`git commit \\"-n\\" -m x`"}',
+    'a=(abc); echo ${a["`git commit \\"-n\\" -m x`"]}',
+)
+BASH_QUOTED_PLAIN = (
+    'a=abc; echo ${a:"`git commit -m \\"subject -n body\\"`"}',
+    'echo $(( "`git commit -m \\"subject -n body\\"`" + 0 ))',
+    'echo "`git commit -m \\"subject -n body\\"`"',           # one message argument
+    "echo '[review-kind: x] $( backtick git commit -n'; git commit -m ordinary",  # no name[
+    "shopt -s extglob\ngit commit -m @('<(git commit -n)')",  # quoted, inert
+    "shopt -s extglob\ngit commit -m \"$(case x in @('$(git commit -n)')) :;; x) echo ok;; esac)\"",
+    "function case { printf ok; }; git commit -m \"$('case')\"",  # a quoted word is a command
+    'git commit -m "$(case=foo; echo ok)"',                   # an assignment, not a keyword
+    'case-tool() { echo ok; }; git commit -m "$(case-tool x)"',  # nor a command name
+    'git commit -m "$(echo case; echo esac)"; echo "$(case x in x) echo ok;; esac) -n"',
+    "declare -A x=([']']=abc); git commit -m \"${x[']']#'$(git commit -n -m i)'}\"",
+    "x=(abc); git commit -m \"${x[0]#'$(git commit -n -m i)'}\"",  # an array subscript
+    "r=x; x=abc; git commit -m \"${!r#'$(git commit -n -m i)'}\"",  # an indirect reference
+    "x=abc; git commit -m \"${x//a/'$(git commit -n -m i)'}\"",  # a pattern quotes in "..."
+    "x=abc; git commit -m \"${x#'$(git commit -n -m i)'}\"",
+    "x=abc; git commit -m \"${x%'$(git commit -n -m i)'}\"",
+    "subject=${subject:-'$(git commit -n)'}; git commit -m \"$subject\"",  # a quoted default
+    "bash <<'EOF'\ngit commit -m '\\\\-n'\nEOF",               # quoted: the body is read as written
+    "git commit -q -m $'it\\'s'",
+    "git commit -F - <<'E'\nwe don't\ngit commit -n\nE\necho done",  # a heredoc body runs nothing
+    "git commit -m 'x' 2>&1 | tail -3",
+    "git commit -q -F - > log 2>&1 <<'E'\n$(git commit -n)\nE",  # a quoted heredoc body is inert
+    "git commit -m x >-n",                                  # -n is the redirection's file
+    "git commit -m \"$(printf '%s' $'it\\'s')\"",              # an ANSI-C quote in a substitution
+)
+NOT_A_COMMIT = (
+    "bash <<'EOF' -c ':'\ngit commit -n -m x\nEOF",          # -c after the heredoc: stdin is data
+    "echo $'advice; git commit -n isn\\'t needed'",       # a quoted separator is not a boundary
+    "echo don't git commit -n",                            # bash rejects these: nothing runs
+    "say 'run git commit -n\nlater",
+    "codex '[review-kind: round] see git commit -n here\nit's",
+    "echo $((1 << 2)) # git commit -n",
+)
+
+
+# Every heredoc of a shell reading stdin is read as a script, though bash runs only the
+# one its descriptors leave on stdin: these bodies are data to bash and still refused.
+KNOWN_FALSE_REFUSALS = (
+    # Quoted text inside a word-opening `name[` is read as a subscript, which runs its
+    # substitutions.
+    "echo 'a[$(git commit -n -m x)]'",
+    "git commit -m 'a[0] documents $(git commit -n)'",  # read whole, past its `]`
+    "declare -A a=( ['$(git commit -n -m inner)']=x )",  # an associative key is literal
+    # An array subscript runs its substitutions when the array is indexed; the type is
+    # not in the text, so an associative array's quoted key is refused too.
+    "declare -A x=([a]=abc); git commit -m \"${x['$(git commit -n -m i)']:-ok}\"",
+    "bash 3<<'EOF' 3</dev/null <&3\ngit commit -n -m x\nEOF\ngit commit -m ordinary",
+    "bash <<'EOF' </dev/null\ngit commit -n -m x\nEOF\ngit commit -m ordinary",
+    "bash <<'A' <<'B'\ngit commit -n -m x\nA\n:\nB\ngit commit -m ordinary",
+)
+
+
+def test_refusal_text_bash_may_run_is_refused():
+    for cmd in KNOWN_FALSE_REFUSALS:
+        assert gate._bash_is_git_commit(cmd) == (True, True), cmd
+
+
+def test_a_commit_is_read_as_bash_reads_it():
+    for cmd in BASH_QUOTED_NO_VERIFY:
+        assert gate._bash_is_git_commit(cmd) == (True, True), cmd
+    for cmd in BASH_QUOTED_PLAIN:
+        assert gate._bash_is_git_commit(cmd) == (True, False), cmd
+    for cmd in NOT_A_COMMIT:
+        assert gate._bash_is_git_commit(cmd) == (False, False), cmd
+
+
+def test_the_reading_matches_what_bash_runs():
+    """Oracle: run each case under bash with a git function that records its argv."""
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        _oracle(pathlib.Path(d), subprocess)
+
+
+def _oracle(tmp_path, subprocess):
+    shim = 'git() { for a; do [ "$a" = commit ] && { printf "%s\\n" "$@" >> "$OUT"; break; }; done; return 0; }; export -f git; export OUT\n'
+    skip = ("env ", "(cd r")  # env runs the real binary; cd r fails
+    for cmd in BASH_QUOTED_NO_VERIFY + BASH_QUOTED_PLAIN + NOT_A_COMMIT:
+        if cmd.startswith(skip):
+            continue
+        out = tmp_path / "argv"
+        out.unlink(missing_ok=True)
+        subprocess.run(["bash", "-c", shim + cmd], cwd=str(tmp_path), capture_output=True, timeout=30,
+                       env={"OUT": str(out), "PATH": "/usr/bin:/bin"})
+        argv = out.read_text().split("\n") if out.exists() else []
+        truth = (bool(argv), any(a in ("-n", "--no-verify") for a in argv))
+        assert gate._bash_is_git_commit(cmd) == truth, (cmd, argv)
+
+
+def test_many_substitutions_stay_linear():
+    """Performance review: sibling substitutions copied the whole token list each time."""
+    import time
+
+    def best(k):
+        cmd = "git commit -m \"" + "$(:) " * k + "\" -n"
+        times = []
+        for _ in range(3):
+            t = time.perf_counter()
+            assert gate._bash_is_git_commit(cmd) == (True, True)
+            times.append(time.perf_counter() - t)
+        return min(times)
+
+    small, big = best(4000), best(32000)
+    assert big < small * 8 * 2.5, (small, big)  # 8x the input: linear with headroom, quadratic is ~50x
+
+
+def test_continued_heredoc_lines_stay_linear():
+    """Performance review: each continued heredoc line re-copied the whole logical line."""
+    import time
+
+    def best(k):
+        cmd = "cat <<EOF\n" + "abcdefghijklmnopqrstuvwxyz012\\\n" * k + "\nEOF\ngit commit -n -m x"
+        times = []
+        for _ in range(3):
+            t = time.perf_counter()
+            assert gate._bash_is_git_commit(cmd) == (True, True)
+            times.append(time.perf_counter() - t)
+        return min(times)
+
+    small, big = best(5000), best(40000)
+    assert big < small * 8 * 2.5, (small, big)
+
+
+def test_refusal_text_the_lexer_cannot_finish_is_read_conservatively():
+    # If the lexer stops where bash would not, the rest is judged, never dropped.
+    real = gate._bash_rejects_from
+    gate._bash_rejects_from = lambda cmd, line: False
+    try:
+        assert gate._bash_is_git_commit("ls\necho 'x\ngit commit -n -m y") == (True, True)
+        assert gate._bash_is_git_commit("ls\necho 'x\ngit commit -m y") == (True, True)  # unread: refused
+        assert gate._bash_is_git_commit("echo 'unterminated prose") == (False, False)
+    finally:
+        gate._bash_rejects_from = real
 
 
 if __name__ == "__main__":

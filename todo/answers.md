@@ -452,3 +452,13 @@ A: (run decision, 2026-11-09) A with 1 and 2. Reversal cost: the mask accessor i
 - **DHCP:** no slot yet. `dhcp_discover()` is fire-and-forget with no timeout or lease state, so there is no outcome to report; the slot is filed with the lease daemon in 07-networking/TODO-06 §1.
 
 A: (run decision, 2026-11-10) A, DHCP deferred. Reversal: restoring the halt is four lines in `framebuffer.c`; the DHCP slot is one enum value and one name once lease states exist.
+
+## Q38 (00-infrastructure/TODO-08 §33): what may a section stamp once it has spent `pass_cap` passes?
+
+The spec said a section that spent `pass_cap` passes is stamped, but the commit gate still required a clean round, so a capped section could not be stamped at all. §33's round loop reached the cap on 2026-11-12 with every finding fixed and the last fix read by no round.
+
+- **A:** the round no longer has to be clean or current; the performance pass and the last pass (completion or reconciliation) must still read the final candidate and end below a blocking level.
+- **B:** waive every pass at the cap, as the spec's sentence read.
+- **C:** keep requiring a clean round, so the cap blocks the stamp forever.
+
+A: (run decision, 2026-11-12) A: every line still reaches a reviewer, and the loop ends. Reversal cost: one `continue` in `_three_pass_issues` and its test; the spec and skill sentences.

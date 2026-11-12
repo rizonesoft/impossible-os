@@ -12,7 +12,7 @@
 | `completion` | on the final candidate | nothing: this pass is new | did the section deliver its plan, and does the TODO record match what shipped |
 | `reconciliation` | only after a completion that returned gaps | `re-adversarial` | are the named gaps closed, with nothing reopened |
 
-A clean section costs four passes, against five to seven today. The round and the performance pass are dispatched again after their findings are fixed. A section is stamped when the round, the performance pass and the last pass (completion, or the reconciliation after it) each read the candidate being stamped and ended below a blocking level, or the section has spent `pass_cap` returned passes.
+A clean section costs four passes, against five to seven today. The round and the performance pass are dispatched again after their findings are fixed. A section is stamped when the round, the performance pass and the last pass (completion, or the reconciliation after it) each read the candidate being stamped and ended below a blocking level. A section that has spent `pass_cap` checked passes ends its round loop: the round no longer has to be clean, but the performance pass and the last pass still must read the candidate and end below a blocking level, so every fix after the last round is read (decided 2026-11-12, `section_commit_gate._three_pass_issues`).
 
 ## The settings file
 

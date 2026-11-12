@@ -98,7 +98,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  30   |   §30   | Shell-aware Codex dispatch segmentation in `_review_kind` (close §25 round-7 deferred)           | §25                        |  [x]   |
 | 💎  |  31   |   §31   | Post-commit hook concurrency: serialize build/smoke via flock (end stomp-stamp races)            | --                         |  [x]   |
 | ⭐  |  32   |   §32   | Grammar-accurate shell segmentation for the gate exemptions (retire the hand-rolled walk)        | §30                        |  [/]   |
-| 💎  |  33   |   §33   | Section-commit gate reads an untokenizable commit line as a commit                               | §4                         |  [ ]   |
+| 💎  |  33   |   §33   | Section-commit gate reads an untokenizable commit line as a commit                               | §4                         |  [x]   |
 | 💎  |  34   |   §34   | Section-commit gate test wiring that kernel sources can satisfy                                  | §4                         |  [ ]   |
 | 💎  |  35   |   §35   | Cross-section review of a closed TODO file                                                       | §5                         |  [ ]   |
 | 💎  |  36   |   §36   | Second-boot leg in the smoke matrix                                                              | --                         |  [ ]   |
@@ -1185,10 +1185,12 @@ The PreToolUse gates decide their exemptions by hand-scanning command text. [`.c
 
 `section_commit_gate.py` decides whether a command is a commit by tokenizing it. A line `shlex` cannot tokenize is read as no commit at all, so `git commit -m $'a\';b' -n` passes the gate unjudged.
 
-- [ ] Measure first: replay the recorded tool history through the gate and count lines that name `git commit` and fail to tokenize. Done when the count and three examples are in the commit message.
-- [ ] Read an untokenizable line that names `git commit` as a commit in `.claude/hooks/section_commit_gate.py`. Done when the example above is judged and the replay shows no line newly refused that is not a commit.
-- [ ] Unit tests: the example, a heredoc message and a plain commit, in the gate's own test file. Done when they fail on the old reading.
-- [ ] Commit: `"hooks: the commit gate judges a commit line it cannot tokenize"`
+- [x] Measured: 575 recorded commit commands, 165 misread; counts and examples in the commit message.
+- [x] The gate reads a command as bash does (`_BashLexer`); lines after a syntax error `bash -n` reports never run.
+- [x] `.githooks/prepare-commit-msg` refuses a `git commit` that skipped `pre-commit`; `test_no_verify_refused_by_git.py`.
+- [x] At `pass_cap` the stamp needs no clean round; performance and the last pass still must (`test_three_pass_gate.py`).
+- [x] Tests in `test_commit_gate_script_lines.py`: the example, heredocs, substitutions, prose; they fail on HEAD.
+- [x] Commit: `"hooks: the commit gate reads a command as bash reads it"`
 
 **Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes with the new cases.
 

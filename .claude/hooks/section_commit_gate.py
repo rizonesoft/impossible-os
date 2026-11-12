@@ -239,85 +239,11 @@ _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 # ----------------------------------------------------------------------
 
 
-def _segment_is_git_commit(seg_tokens: list[str]) -> tuple[bool, bool]:
-    """Returns (is_git_commit, has_no_verify). Walks env-prefix +
-    wrapper tokens, then handles git's own pre-subcommand options
-    (`-c key=value`, `-C path`, `--git-dir=...`, etc.) before
-    matching the subcommand. Also flags `--no-verify`/`-n` (Codex
-    H1: --no-verify skips .githooks/pre-commit entirely, so the
-    harness layer must catch it).
-    """
-    out = list(seg_tokens)
-    # Strip env-prefix assignments.
-    while out and "=" in out[0] and not out[0].startswith("="):
-        head = out[0].split("=", 1)[0]
-        if head and (head[0].isalpha() or head[0] == "_") and all(
-            c.isalnum() or c == "_" for c in head
-        ):
-            out.pop(0)
-        else:
-            break
-    # Codex H1c + H2 round-2 + round-3: descend into `bash -c "..."` /
-    # `bash -lc "..."` / `bash --rcfile myrc -c "..."` / `sh -ec ...`
-    # so combined short flags AND long-flag-with-value forms don't
-    # bypass. Any combined short flag containing 'c' (e.g. `-lc`, `-ec`,
-    # `-cl`) acts as the script marker; the script is the next
-    # positional arg.
-    _SHELL_LONG_VALUE_FLAGS = frozenset({"--rcfile", "--init-file",
-                                          "--noprofile-file", "-O"})
-    if len(out) >= 3 and out[0].rsplit("/", 1)[-1] in ("bash", "sh", "zsh", "dash"):
-        idx = 1
-        found_c = False
-        while idx < len(out) and out[idx].startswith("-"):
-            flag = out[idx]
-            if flag == "-c":
-                found_c = True
-                idx += 1
-                break
-            # Combined short flag: `-lc`, `-ec`, `-cl`. Long flags
-            # (`--login`) don't carry the c semantic.
-            if not flag.startswith("--") and len(flag) > 1 and "c" in flag[1:]:
-                found_c = True
-                idx += 1
-                break
-            # Long-flag-with-value forms: `--rcfile myrc`. Skip the
-            # value too. The `=value` attached form is single-token.
-            if flag in _SHELL_LONG_VALUE_FLAGS and "=" not in flag:
-                idx += 2
-                continue
-            idx += 1
-        if found_c and idx < len(out):
-            inner = out[idx]
-            try:
-                inner_toks = shlex.split(inner, posix=True, comments=False)
-            except ValueError:
-                inner_toks = []
-            for inner_seg in crc._segment_by_separators(inner_toks):
-                inner_seg = crc._trim_heredoc_body(inner_seg)
-                if not inner_seg:
-                    continue
-                is_inner, inner_no_verify = _segment_is_git_commit(inner_seg)
-                if is_inner:
-                    return (True, inner_no_verify)
-            return (False, False)
-    # `eval "git commit --no-verify -m foo"` -- eval re-shells its arg.
-    # Concatenate all positional args (eval joins with spaces in POSIX
-    # shells) and re-tokenize. Codex H2 round-4 fix.
-    if out and out[0].rsplit("/", 1)[-1] == "eval":
-        joined = " ".join(out[1:])
-        if joined.strip():
-            try:
-                inner_toks = shlex.split(joined, posix=True, comments=False)
-            except ValueError:
-                inner_toks = []
-            for inner_seg in crc._segment_by_separators(inner_toks):
-                inner_seg = crc._trim_heredoc_body(inner_seg)
-                if not inner_seg:
-                    continue
-                is_inner, inner_no_verify = _segment_is_git_commit(inner_seg)
-                if is_inner:
-                    return (True, inner_no_verify)
-        return (False, False)
+def _walk_wrappers(words: list[str]) -> tuple[list[str], str | None]:
+    """Strip command-runner wrappers (`sudo -u x`, `timeout 5`, `/usr/bin/env FOO=1`,
+    `flock f`) from the front of a command. Returns the words of the command that runs,
+    and the script of a `flock -c` (the words are then empty)."""
+    out = list(words)
     # Walk wrappers using a per-wrapper value-flag table (Codex H2
     # round-3 + round-4): `env -u FOO git ...` and `sudo -u alice
     # git ...` and `timeout -k 5 30 git ...` all need the value-bearing
@@ -394,8 +320,8 @@ def _segment_is_git_commit(seg_tokens: list[str]) -> tuple[bool, bool]:
             return tok.replace(".", "", 1).isdigit()
         return False
 
-    while out and out[0] in _WRAPPER_TOKENS:
-        wrapper = out.pop(0)
+    while out and out[0].rsplit("/", 1)[-1] in _WRAPPER_TOKENS:
+        wrapper = out.pop(0).rsplit("/", 1)[-1]  # /usr/bin/env is env
         # flock special-case (Codex H2 round-4): `flock -c "cmd" file`
         # OR `flock file -c "cmd"` runs cmd as a shell. `flock -n file
         # cmd args` runs cmd with args. Both forms have a lockfile/fd
@@ -429,19 +355,7 @@ def _segment_is_git_commit(seg_tokens: list[str]) -> tuple[bool, bool]:
                     continue
                 break
             if inner_cmd is not None:
-                try:
-                    inner_toks = shlex.split(inner_cmd, posix=True, comments=False)
-                except ValueError:
-                    inner_toks = []
-                for inner_seg in crc._segment_by_separators(inner_toks):
-                    inner_seg = crc._trim_heredoc_body(inner_seg)
-                    if not inner_seg:
-                        continue
-                    is_inner, inner_no_verify = _segment_is_git_commit(inner_seg)
-                    if is_inner:
-                        return (True, inner_no_verify)
-                # -c was used; no further positional command follows.
-                return (False, False)
+                return [], inner_cmd  # -c: the command is that script, nothing follows
             continue  # flock with no -c -- proceed to next wrapper iter
         value_flags = _WRAPPER_VALUE_FLAGS.get(wrapper, frozenset())
         while out and out[0].startswith("-"):
@@ -473,6 +387,78 @@ def _segment_is_git_commit(seg_tokens: list[str]) -> tuple[bool, bool]:
             out.pop(0)
         elif wrapper == "chrt" and out and out[0].isdigit():
             out.pop(0)
+    return out, None
+
+
+def _inner_script_is_git_commit(script: str) -> tuple[bool, bool]:
+    """A script a command runs again (`bash -c`, `eval`), read with the same reader as
+    the outer command. Nesting too deep to read is refused as a possible commit."""
+    try:
+        return _bash_is_git_commit(script)
+    except RecursionError:
+        return _unread_commit(script)
+
+
+def _segment_is_git_commit(seg_tokens: list[str]) -> tuple[bool, bool]:
+    """Returns (is_git_commit, has_no_verify). Walks env-prefix +
+    wrapper tokens, then handles git's own pre-subcommand options
+    (`-c key=value`, `-C path`, `--git-dir=...`, etc.) before
+    matching the subcommand. Also flags `--no-verify`/`-n` (Codex
+    H1: --no-verify skips .githooks/pre-commit entirely, so the
+    harness layer must catch it).
+    """
+    out = list(seg_tokens)
+    # Strip env-prefix assignments.
+    while out and "=" in out[0] and not out[0].startswith("="):
+        head = out[0].split("=", 1)[0]
+        if head and (head[0].isalpha() or head[0] == "_") and all(
+            c.isalnum() or c == "_" for c in head
+        ):
+            out.pop(0)
+        else:
+            break
+    # Codex H1c + H2 round-2 + round-3: descend into `bash -c "..."` /
+    # `bash -lc "..."` / `bash --rcfile myrc -c "..."` / `sh -ec ...`
+    # so combined short flags AND long-flag-with-value forms don't
+    # bypass. Any combined short flag containing 'c' (e.g. `-lc`, `-ec`,
+    # `-cl`) acts as the script marker; the script is the next
+    # positional arg.
+    _SHELL_LONG_VALUE_FLAGS = frozenset({"--rcfile", "--init-file",
+                                          "--noprofile-file", "-O"})
+    if len(out) >= 3 and out[0].rsplit("/", 1)[-1] in ("bash", "sh", "zsh", "dash"):
+        idx = 1
+        found_c = False
+        while idx < len(out) and out[idx].startswith("-"):
+            flag = out[idx]
+            if flag == "-c":
+                found_c = True
+                idx += 1
+                break
+            # Combined short flag: `-lc`, `-ec`, `-cl`. Long flags
+            # (`--login`) don't carry the c semantic.
+            if not flag.startswith("--") and len(flag) > 1 and "c" in flag[1:]:
+                found_c = True
+                idx += 1
+                break
+            # Long-flag-with-value forms: `--rcfile myrc`. Skip the
+            # value too. The `=value` attached form is single-token.
+            if flag in _SHELL_LONG_VALUE_FLAGS and "=" not in flag:
+                idx += 2
+                continue
+            idx += 1
+        if found_c and idx < len(out):
+            return _inner_script_is_git_commit(out[idx])  # read as bash reads it
+    # `eval "git commit --no-verify -m foo"` -- eval re-shells its arg.
+    # Concatenate all positional args (eval joins with spaces in POSIX
+    # shells) and re-tokenize. Codex H2 round-4 fix.
+    if out and out[0].rsplit("/", 1)[-1] == "eval":
+        return _inner_script_is_git_commit(" ".join(out[1:]))
+    walked, flock_script = _walk_wrappers(out)
+    if flock_script is not None:
+        return _inner_script_is_git_commit(flock_script)
+    if walked != out and walked and walked[0].rsplit("/", 1)[-1] in _SHELLS | {"eval"}:
+        return _segment_is_git_commit(walked)  # `timeout 5 bash -c "..."`
+    out = walked
     if not out:
         return (False, False)
     head = out[0].rsplit("/", 1)[-1]
@@ -633,76 +619,764 @@ def _segment_is_git_commit(seg_tokens: list[str]) -> tuple[bool, bool]:
     return (True, has_no_verify)
 
 
-def _script_tokens(cmd: str) -> list[str]:
-    """Tokens of a whole script, with its commands separated. NOTHING IS REMOVED.
+_ANSI_C = {"n": "\n", "t": "\t", "r": "\r", "e": "\x1b", "E": "\x1b", "a": "\a", "b": "\b",
+           "f": "\f", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
 
-    shlex treats an unquoted newline as whitespace and leaves `;` glued to its word,
-    so `git commit -F f` and a later `grep -n` read as ONE commit carrying `-n` (v22,
-    live 2026-11-07). This only adds separators. An earlier version also dropped
-    heredoc bodies and comments, and review found commands it hid each way (a quoted
-    `<<EOF`, `$((1<<x))` with a matching line, `foo\\ # hi ; git commit -n`). Refusing
-    a heredoc that mentions `git commit -n` costs one retry; hiding a commit does not.
 
-    A line that will not tokenize alone, such as an apostrophe in a heredoc body, used
-    to make the whole script read as no commit at all. Now only that line is skipped.
-    """
-    _ensure_crc()  # puts this directory on sys.path
-    from _codex_dispatch import has_unmodelled_quoting
-    src = cmd
-    # ALLOWLIST, after four review rounds: a script with substitutions, `(` or
-    # `$'...'` keeps HEAD's reading, one token run. In `git commit -m "x$(printf "a;b")"
-    # -n` the inner quote is not the outer quote's end, and that `-n` is real.
-    if not has_unmodelled_quoting(cmd):
-        out, quote, j, n = [], None, 0, len(cmd)
-        while j < n:
-            ch = cmd[j]
-            if quote:
-                out.append(ch)
-                if ch == "\\" and quote == '"' and j + 1 < n:
-                    out.append(cmd[j + 1])
-                    j += 1
-                elif ch == quote:
-                    quote = None
-            elif ch in "'\"":
-                quote = ch
-                out.append(ch)
-            elif ch == "\\" and j + 1 < n:
-                out.append(" " if cmd[j + 1] == "\n" else ch + cmd[j + 1])
+def _ansi_c_escape(s: str, k: int) -> tuple[str, int]:
+    """Decode the escape at s[k] (a backslash) inside `$'...'` as bash does: \\xHH,
+    \\NNN octal, \\uHHHH, \\UHHHHHHHH, \\cX and the single letters. Returns (text, next k)."""
+    nx = s[k + 1]
+    hexd = "0123456789abcdefABCDEF"
+    for lead, width in (("x", 2), ("u", 4), ("U", 8)):
+        if nx == lead:
+            j = k + 2
+            while j < len(s) and j < k + 2 + width and s[j] in hexd:
                 j += 1
-            elif ch in "\n;":
-                out.append(" ; ")
-            else:
-                out.append(ch)
+            if j == k + 2:
+                return "\\" + nx, k + 2
+            try:
+                return chr(int(s[k + 2:j], 16)), j
+            except (ValueError, OverflowError):
+                return "", j
+    if nx in "01234567":
+        j = k + 1
+        while j < len(s) and j < k + 4 and s[j] in "01234567":
             j += 1
-        src = "".join(out)
-    try:
-        return shlex.split(src, posix=True, comments=False)
-    except ValueError:
-        pass
-    toks: list[str] = []
-    for line in cmd.replace("\\\n", " ").split("\n"):
-        try:
-            toks += shlex.split(line, posix=True, comments=False) + [";"]
-        except ValueError:
+        return chr(int(s[k + 1:j], 8) & 0xFF), j
+    if nx == "c" and k + 2 < len(s):
+        if s.startswith("\\\\", k + 2):  # \c\\ is control-backslash: both backslashes go
+            return chr(0x1C), k + 4
+        return chr(ord(s[k + 2]) & 0x1F), k + 3
+    return _ANSI_C.get(nx, "\\" + nx), k + 2
+
+
+# How deep substitutions and expansions may nest before the reading gives up. Past it
+# the whole command is read conservatively (_unread_commit), never crashes the hook.
+_MAX_NESTING = 24
+
+
+class _TooDeep(Exception):
+    """Nesting past _MAX_NESTING."""
+
+
+class _Op(str):
+    """A shell control operator. Only these split commands: a word that merely reads `;`
+    (`$'\\x3b'`, `';'`) is an argument and stays one."""
+
+
+_SEP = _Op(";")
+_SHELLS = frozenset(("bash", "sh", "zsh", "dash", "ksh"))
+_SUBSCRIPT_OPEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\[")
+_COMPOUND_ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+
+
+def _strip_wrappers(words: list[str]) -> list[str]:
+    """`if FOO=1 timeout 5 /usr/bin/env -u X bash`: the words from the command that
+    runs, through the same wrapper walk the commit reader uses."""
+    k = 0
+    while k < len(words) and (words[k] in _RESERVED_LEADERS
+                              or ("=" in words[k] and not words[k].startswith("-"))):
+        k += 1
+    out, flock_script = _walk_wrappers(words[k:])
+    return [] if flock_script is not None else out
+
+
+def _commands(toks: list[str]) -> list[list[str]]:
+    """The simple commands of a token list, split only at real operators."""
+    out: list[list[str]] = [[]]
+    for tok in toks:
+        if isinstance(tok, _Op):
+            if out[-1]:
+                out.append([])
+        else:
+            out[-1].append(tok)
+    return [c for c in out if c]
+
+
+class _BashLexer:
+    """Words and control operators of a bash script, read as bash reads them.
+
+    shlex knows neither `$'...'`, a quote that spans lines, a heredoc, a comment nor a
+    command substitution, and every reading built on it was wrong somewhere: a line it
+    could not tokenize hid its commit (`git commit -m $'a\\';b' -n`), and a word
+    starting with `$(` cut the rest of a commit off (`git commit -m "$(cat f)" -n`).
+    This reads the script once, in bash's own quoting. A heredoc body is dropped, since
+    bash runs none of it; the text of a substitution stays in its word, and its contents
+    are read as commands too, since bash runs them. `subs` collects the text of those
+    substitutions; the caller reads each as a script after the script's own.
+    """
+
+    def __init__(self, src: str, depth: int = 0):
+        if depth > _MAX_NESTING:
+            raise _TooDeep
+        self.depth = depth
+        self.s, self.n, self.i = src, len(src), 0
+        self.toks: list[str] = []
+        self.subs: list[str] = []
+        # [delim, strip, quoted, is_script]; is_script is settled when its command ends.
+        self.heredocs: list[list] = []
+        self.cmd_heredocs: list[int] = []  # heredocs of the command being read
+        self.cmd_herestrings: list[str] = []  # and its `<<<` words
+        self.herestring_next = False
+        self.skip_operand = False
+        self.stop_paren = False  # lex only up to the `)` that closes a substitution
+        self.stop_at = -1
+        self.parens = 0
+        self.cases = 0
+        # Within a case: 1 its subject is next, 2 `in` is next, 3 a pattern list starts
+        # (where only `esac` is a keyword), 4 inside one (after `(`, `|` or a word, where
+        # `esac` is a pattern too); `)` ends it. 0 elsewhere.
+        self.case_state = 0
+        self.word_quoted = False
+        self.pattern = False  # an extglob interior: `#` is text, not a comment
+        self.compound = False  # inside `a=( ... )`, whose `[key]=v` elements are subscripts
+
+    def _subscript(self, text: str) -> None:
+        """`a['$(cmd)']=x`, `unset 'a[$(cmd)]'`, `read a'[$''(cmd)]'`: an array subscript
+        runs its substitutions through quotes. Which words name an array is not in the
+        text, and where a subscript ends is decided by quotes already removed here, so a
+        quoted word that opens with `name[` is read whole as running them (a false
+        refusal at worst). A prompt '[review-kind: x] ...' opens with no name."""
+        m = _SUBSCRIPT_OPEN_RE.match(text)
+        if m:
+            self.subs.extend(_expansions(text[m.end():], self.depth + 1))
+        elif self.compound and text.startswith("["):  # `a=( ['$(cmd)']=x )`
+            self.subs.extend(_expansions(text[1:], self.depth + 1))
+
+    def _case_word(self, text: str) -> None:
+        """Follow `case WORD in PATTERN) ... ;; esac` so that a pattern's `)` is not
+        read as the end of the substitution. A quoted word is never a keyword."""
+        keyword = not self.word_quoted
+        command = not self.toks or isinstance(self.toks[-1], _Op) or self.toks[-1] in _RESERVED_LEADERS
+        if self.case_state == 1:
+            self.case_state = 2
+        elif self.case_state == 2:
+            self.case_state = 3 if keyword and text == "in" else 2
+        elif self.case_state == 3:
+            if keyword and text == "esac":
+                self.cases -= 1
+                self.case_state = 0
+            else:
+                self.case_state = 4
+        elif self.case_state == 4:
+            pass  # a pattern word, whatever it spells
+        elif keyword and command and text == "case":
+            self.cases += 1
+            self.case_state = 1
+        elif keyword and command and text == "esac" and self.cases:
+            self.cases -= 1
+
+    def _close_subst(self, i: int, nest: int = 0) -> int:
+        """Index of the `)` closing a `$(` or `<(` whose body starts at `i`, or -1. The
+        body is read by the lexer itself, so a `)` in a comment, a heredoc, a quote or a
+        case pattern closes nothing, as in bash."""
+        if self.depth + nest > _MAX_NESTING:
+            raise _TooDeep
+        sub = _BashLexer(self.s, self.depth + nest + 1)
+        sub.i, sub.stop_paren = i, True
+        sub.lex()
+        return sub.stop_at
+
+    def _close(self, i: int, open_ch: str, close_ch: str, nest: int = 0) -> int:
+        """Index of the `close_ch` matching an `open_ch` just before `i`, or -1. A double
+        quote holds its own substitutions, whose parentheses and quotes are their own."""
+        if self.depth + nest > _MAX_NESTING:
+            raise _TooDeep
+        s, n, depth = self.s, self.n, 1
+        while i < n:
+            ch = s[i]
+            if ch == "\\":
+                i += 2
+                continue
+            if s.startswith("$'", i):  # $'it\\'s': an escaped quote does not close it
+                _text, i = self._ansi_c_fragment(i)
+                if i < 0:
+                    return -1
+                continue
+            if ch == "'":
+                k = s.find("'", i + 1)
+                if k < 0:
+                    return -1
+                i = k + 1
+                continue
+            if ch == '"':
+                k = i + 1
+                while k < n and s[k] != '"':
+                    if s[k] == "\\":
+                        k += 2
+                    elif s.startswith("$(", k):
+                        k = self._close_subst(k + 2, nest + 1)
+                        if k < 0:
+                            return -1
+                        k += 1
+                    elif s[k] == "`":
+                        k = s.find("`", k + 1)
+                        if k < 0:
+                            return -1
+                        k += 1
+                    else:
+                        k += 1
+                if k >= n:
+                    return -1
+                i = k + 1
+                continue
+            if ch == open_ch:
+                depth += 1
+            elif ch == close_ch:
+                depth -= 1
+                if depth == 0:
+                    return i
+            i += 1
+        return -1
+
+    def _subst(self, i: int, word: list[str], in_dquote: bool = False,
+               tick_dquote: bool | None = None) -> int:
+        """`$(`, `$((`, `${` or a backtick at `i`; returns the index after it, or -1.
+        Outside double quotes a single quote inside `${...}` quotes; inside, it is text."""
+        s = self.s
+        if s.startswith("$((", i):
+            k = self._close(i + 3, "(", ")")
+            if k < 0 or k + 1 >= self.n or s[k + 1] != ")":
+                k = self._close_subst(i + 2)
+                if k < 0:
+                    return -1
+                self.subs.append(s[i + 2:k])
+                word.append(s[i:k + 1])
+                return k + 1
+            word.append(s[i:k + 2])  # arithmetic: only the substitutions inside run
+            self.subs.extend(_expansions(s[i + 3:k], self.depth + 1, dquotes=True))
+            return k + 2
+        if s.startswith("$(", i):
+            k = self._close_subst(i + 2)
+            if k < 0:
+                return -1
+            self.subs.append(s[i + 2:k])
+            word.append(s[i:k + 1])
+            return k + 1
+        if s.startswith("${", i):
+            k = self._close(i + 2, "{", "}")
+            if k < 0:
+                return -1
+            word.append(s[i:k + 1])
+            # ${x:-$(cmd)} runs cmd; ${x:-'$(cmd)'} does not, unless inside "...". A
+            # pattern (${x#p} ${x%p} ${x/p/r} ${x^p} ${x,p}) quotes with '...' even there.
+            inner = s[i + 2:k]
+            j = 1 if inner[:1] in "!#" and inner[1:2] not in ("", "}") else 0  # ${!r} ${#a}
+            start = j
+            while j < len(inner) and (inner[j].isalnum() or inner[j] == "_"):
+                j += 1
+            if j == start and inner[j:j + 1] and inner[j] in "#?$!@*-0123456789":
+                j += 1  # a special parameter (${#}, ${@}...) or ${#name}
+            name_end = j
+            if inner[j:j + 1] == "[":  # ${x[0]#p}: the subscript belongs to the name
+                close = _BashLexer(inner, self.depth + 1)._close(j + 1, "[", "]")  # quote-aware
+                j = close + 1 if close >= 0 else len(inner)
+                # An indexed array's subscript is arithmetic and runs its substitutions
+                # through any quotes; an associative one does not. The array's type is not
+                # in the text, so the subscript is read as running them (a false refusal).
+                self.subs.extend(_expansions(inner[name_end + 1:j - 1], self.depth + 1,
+                                             dquotes=True))
+            pattern = inner[j:j + 1] in ("#", "%", "/", "^", ",")
+            # ${a:off:len} is arithmetic, which runs substitutions through any quotes.
+            arithmetic = inner[j:j + 1] == ":" and inner[j + 1:j + 2] not in ("-", "=", "?", "+")
+            self.subs.extend(_expansions(inner[j:], self.depth + 1, dquotes=arithmetic,
+                                         single_quotes=not arithmetic and (pattern or not in_dquote)))
+            return k + 1
+        k = i + 1  # a backtick
+        while k < self.n and s[k] != "`":
+            k += 2 if s[k] == "\\" else 1
+        if k >= self.n:
+            return -1
+        # In backticks a backslash quotes only `$`, a backtick and itself (and `"` within
+        # double quotes); bash removes it before the body is parsed, so `\\-n` is `-n`.
+        dq = in_dquote if tick_dquote is None else tick_dquote  # a heredoc body is not "..."
+        quoted = r'\\([\\$`"])' if dq else r"\\([\\$`])"
+        self.subs.append(re.sub(quoted, r"\1", s[i + 1:k]))
+        word.append(s[i:k + 1])
+        return k + 1
+
+    def _ansi_c_fragment(self, i: int) -> tuple[str, int]:
+        """The decoded text of the `$'...'` starting at `i`, and the index after it; -1 if
+        unterminated. A NUL ends the fragment's text, as in bash, where `$'a\\0b'c` is `ac`."""
+        s, n, k = self.s, self.n, i + 2
+        out: list[str] = []
+        while k < n and s[k] != "'":
+            if s[k] == "\\" and k + 1 < n:
+                text, k = _ansi_c_escape(s, k)
+                out.append(text)
+            else:
+                out.append(s[k])
+                k += 1
+        if k >= n:
+            return "", -1
+        return "".join(out).split("\0", 1)[0], k + 1
+
+    def _heredoc_word(self) -> None:
+        s, n = self.s, self.n
+        strip = s.startswith("-", self.i)
+        if strip:
+            self.i += 1
+        while self.i < n and s[self.i] in " \t":
+            self.i += 1
+        delim: list[str] = []
+        quoted = False
+        while self.i < n and s[self.i] not in " \t\n;&|()<>":
+            ch = s[self.i]
+            if s.startswith("$'", self.i):  # $'E\\x4fF' is EOF
+                text, k = self._ansi_c_fragment(self.i)
+                quoted = True
+                delim.append(text)
+                self.i = k if k >= 0 else n
+                continue
+            if s.startswith('$"', self.i):
+                self.i += 1  # $"EOF": the quotes go, so does the dollar
+                continue
+            if s.startswith("\\\n", self.i):  # a line continuation is removed, not quoting
+                self.i += 2
+                continue
+            if ch in "'\"\\":
+                quoted = True
+            if ch == "'":
+                k = s.find(ch, self.i + 1)
+                if k < 0:
+                    k = n
+                delim.append(s[self.i + 1:k])
+                self.i = k + 1
+            elif ch == '"':  # inside double quotes a backslash escapes " \\ $ and `
+                k = self.i + 1
+                while k < n and s[k] != '"':
+                    if s.startswith("\\\n", k):  # a line continuation goes, here too
+                        k += 2
+                        continue
+                    if s[k] == "\\" and k + 1 < n and s[k + 1] in '"\\$`':
+                        k += 1
+                    delim.append(s[k])
+                    k += 1
+                self.i = k + 1
+            elif ch == "\\" and self.i + 1 < n:
+                delim.append(s[self.i + 1])
+                self.i += 2
+            else:
+                delim.append(ch)
+                self.i += 1
+        self.heredocs.append(["".join(delim), strip, quoted, False])
+        self.cmd_heredocs.append(len(self.heredocs) - 1)
+
+    def _end_command(self) -> None:
+        """A simple command ended. When it is a shell reading its script from stdin
+        (`bash <<EOF`, `bash -s -- a <<EOF`), EVERY heredoc it has is read as a script.
+        Which one bash reads depends on descriptor plumbing (`3<<E <&3-`, `<&"3"`, a
+        later `<file`) that this reader does not model, so it does not guess: a data
+        heredoc that holds a commit is refused (one retry), a script is never missed."""
+        if (self.cmd_heredocs or self.cmd_herestrings) and self._command_is_shell():
+            for k in self.cmd_heredocs:
+                self.heredocs[k][3] = True
+            self.subs.extend(self.cmd_herestrings)  # a here-string is a one-line script
+        self.cmd_heredocs = []
+        self.cmd_herestrings = []
+
+    def _command_is_shell(self) -> bool:
+        words: list[str] = []
+        for tok in reversed(self.toks):
+            if isinstance(tok, _Op):
+                break
+            words.append(tok)
+        words.reverse()
+        words = _strip_wrappers(words)
+        if not words or words[0].rsplit("/", 1)[-1] not in _SHELLS:
+            return False
+        args, from_stdin = words[1:], False
+        k = 0
+        while k < len(args) and args[k][:1] in "-+" and args[k] != "--":
+            if args[k] in ("--rcfile", "--init-file", "-o", "-O", "+O", "+o"):
+                k += 2
+                continue
+            flags = "" if args[k].startswith("--") else args[k][1:]
+            if "c" in flags:
+                return False  # bash -c: the script is an argument, stdin is data
+            from_stdin = from_stdin or "s" in flags
+            k += 1
+        positional = args[k + 1:] if k < len(args) and args[k] == "--" else args[k:]
+        return from_stdin or not positional  # else the first positional is a script file
+
+    def _skip_heredoc_bodies(self) -> None:
+        s = self.s
+        for delim, strip, quoted, script in self.heredocs:
+            body: list[str] = []
+            while self.i < self.n:
+                end = s.find("\n", self.i)
+                line = s[self.i:end if end >= 0 else self.n]
+                self.i = end + 1 if end >= 0 else self.n
+                # An unquoted body joins a backslash-newline before the delimiter test.
+                parts = [line]
+                while not quoted and self.i < self.n and (len(parts[-1]) - len(parts[-1].rstrip("\\"))) % 2:
+                    parts[-1] = parts[-1][:-1]
+                    end = s.find("\n", self.i)
+                    parts.append(s[self.i:end if end >= 0 else self.n])
+                    self.i = end + 1 if end >= 0 else self.n
+                line = "".join(parts) if len(parts) > 1 else line
+                if (line.lstrip("\t") if strip else line) == delim:
+                    break
+                body.append(line)
+            if script:  # fed to a shell: the body is a script and its commands run
+                text = "\n".join(body)
+                if not quoted:
+                    # The outer shell expands an unquoted body first: `\\\\-n` reaches the
+                    # inner shell as `\\-n`, and its substitutions run out here.
+                    self.subs.extend(_expansions(text, self.depth + 1))
+                    text = re.sub(r"\\([\\$`])", r"\1", text)
+                self.subs.append(text)
+            elif not quoted:  # an unquoted body expands as a whole: its substitutions run
+                self.subs.extend(_expansions("\n".join(body), self.depth + 1))
+        self.heredocs = []
+
+    def lex(self) -> bool:
+        """Tokenize the whole script; False when it ends inside a quote or substitution."""
+        s, n = self.s, self.n
+        word: list[str] = []
+        inword = False
+
+        def end_word():
+            nonlocal inword
+            if inword:
+                if self.skip_operand:
+                    self.skip_operand = False  # a redirection target is not an argument
+                    if self.herestring_next:  # `bash <<< 'git commit'`: maybe a script
+                        self.cmd_herestrings.append("".join(word))
+                else:
+                    text = "".join(word)
+                    if self.word_quoted:
+                        self._subscript(text)
+                    if self.stop_paren:
+                        self._case_word(text)
+                    self.toks.append(text)
+                word.clear()
+                inword = False
+                self.word_quoted = False
+
+        def redirect(op_len: int):
+            nonlocal inword
+            fd = "".join(word)
+            if inword and (fd.isdigit() or (fd.startswith("{") and fd.endswith("}"))):
+                word.clear()  # `2>`, `{fd}>`: the number names a descriptor, not an argument
+                inword = False
+            else:
+                fd = ""
+            end_word()
+            op = s[self.i:self.i + op_len]
+            self.i += op_len
+            self.herestring_next = op == "<<<"
+            if op in ("<&", ">&"):
+                j = self.i
+                while j < n and s[j] in " \t":  # `<& 3` is `<&3`
+                    j += 1
+                k = j
+                while k < n and s[k].isdigit():
+                    k += 1
+                if k < n and s[k] == "-":
+                    k += 1
+                if k > j:  # `>&2`, `<&3`, `<&3-`, `>&-`: a descriptor, no operand word
+                    self.i = k
+                    return
+            self.skip_operand = True
+
+        while self.i < n:
+            ch = s[self.i]
+            if ch == "\\":
+                if self.i + 1 < n and s[self.i + 1] == "\n":
+                    self.i += 2
+                    continue
+                word.append(s[self.i + 1] if self.i + 1 < n else ch)
+                inword = self.word_quoted = True
+                self.i += 2
+                continue
+            if ch == "'":
+                k = s.find("'", self.i + 1)
+                if k < 0:
+                    return False
+                word.append(s[self.i + 1:k])
+                inword = self.word_quoted = True
+                self.i = k + 1
+                continue
+            if s.startswith('$"', self.i):  # $"..." is a localized double quote
+                self.i += 1
+                continue
+            if ch == "$" and s.startswith("$'", self.i):
+                text, k = self._ansi_c_fragment(self.i)
+                if k < 0:
+                    return False
+                word.append(text)
+                inword = self.word_quoted = True
+                self.i = k
+                continue
+            if ch == '"':
+                k = self.i + 1
+                while k < n and s[k] != '"':
+                    c = s[k]
+                    if c == "\\" and k + 1 < n:
+                        nx = s[k + 1]
+                        word.append("" if nx == "\n" else nx if nx in '$`"\\' else c + nx)
+                        k += 2
+                    elif c == "`" or (c == "$" and k + 1 < n and s[k + 1] in "({"):
+                        k = self._subst(k, word, in_dquote=True)
+                        if k < 0:
+                            return False
+                    else:
+                        word.append(c)
+                        k += 1
+                if k >= n:
+                    return False
+                inword = self.word_quoted = True
+                self.i = k + 1
+                continue
+            if ch == "`" or (ch == "$" and self.i + 1 < n and s[self.i + 1] in "({"):
+                k = self._subst(self.i, word)
+                if k < 0:
+                    return False
+                inword = True
+                self.i = k
+                continue
+            if ch == "#" and not inword and not self.pattern:
+                k = s.find("\n", self.i)
+                self.i = k if k >= 0 else n
+                continue
+            if ch in "<>" and self.i + 1 < n and s[self.i + 1] == "(":
+                k = self._close_subst(self.i + 2)  # process substitution
+                if k < 0:
+                    return False
+                self.subs.append(s[self.i + 2:k])
+                word.append(s[self.i:k + 1])
+                inword = True
+                self.i = k + 1
+                continue
+            if s.startswith("<<<", self.i):
+                redirect(3)
+                continue
+            if s.startswith("<<", self.i):
+                fd = "".join(word)
+                if word and (fd.isdigit() or (fd.startswith("{") and fd.endswith("}"))):
+                    word.clear()  # `0<<EOF`, `{fd}<<EOF`: a descriptor, not a word
+                    inword = False
+                end_word()
+                self.i += 2
+                self._heredoc_word()
+                continue
+            if ch in "<>" or s.startswith("&>", self.i):
+                two = s[self.i:self.i + 2]
+                if s.startswith("&>>", self.i):
+                    redirect(3)
+                elif two in (">>", ">&", ">|", "<>", "<&", "&>"):
+                    redirect(2)
+                else:
+                    redirect(1)
+                continue
+            if ch in " \t":
+                end_word()
+                self.i += 1
+                continue
+            if ch == "\n":
+                end_word()
+                self.skip_operand = False
+                self._end_command()
+                self.toks.append(_SEP)
+                self.i += 1
+                self._skip_heredoc_bodies()
+                continue
+            if ch == "(" and inword and word and word[-1][-1:] in ("@", "!", "*", "+", "?"):
+                k = self._close(self.i + 1, "(", ")")  # extglob `@(y|z)`: part of the word
+                if k < 0:
+                    return False
+                word.append(s[self.i:k + 1])
+                # Its patterns are words, so the lexer reads them: their substitutions
+                # (`$(...)`, `<(...)`) run, their quotes quote, and their words are no command.
+                group = _BashLexer(s[self.i + 1:k], self.depth + 1)
+                group.pattern = True
+                if not group.lex():
+                    return False
+                self.subs.extend(group.subs)
+                self.i = k + 1
+                continue
+            if ch in ";&|()":
+                end_word()
+                if ch == "(" and self.toks and not isinstance(self.toks[-1], _Op) and \
+                        _COMPOUND_ASSIGN_RE.fullmatch(self.toks[-1]):
+                    self.compound = True
+                elif ch == ")":
+                    self.compound = False
+                if self.stop_paren and self.case_state in (3, 4) and ch in "()|":
+                    # `)` ends the pattern list and its commands follow; `(` opens it,
+                    # optionally; `|` separates patterns.
+                    self.case_state = 0 if ch == ")" else 4
+                    self.toks.append(_SEP)
+                    self.i += 1
+                    continue
+                if self.stop_paren and ch == ";" and self.cases and s.startswith(";;", self.i):
+                    self.case_state = 3  # `;;`, `;;&`: a pattern is next
+                elif self.stop_paren and ch == ";" and self.cases and s.startswith(";&", self.i):
+                    self.case_state = 3
+                if self.stop_paren and ch in "()":
+                    if ch == "(":
+                        self.parens += 1
+                    elif self.parens:
+                        self.parens -= 1
+                    else:  # the substitution's own `)`
+                        self.stop_at = self.i
+                        self.skip_operand = False
+                        self._end_command()
+                        return True
+                self.skip_operand = False
+                self._end_command()
+                two = s[self.i:self.i + 2]
+                if two in ("&&", "||", "|&"):
+                    self.toks.append(_Op(two))
+                    self.i += 2
+                else:
+                    self.toks.append(_SEP if ch in ";()" else _Op(ch))
+                    self.i += 1
+                continue
+            word.append(ch)
+            inword = True
+            self.i += 1
+        end_word()
+        self._end_command()
+        return True
+
+
+# Words that open or close a compound command; the command after one starts a fresh
+# argv (`if git commit -n -m x; then`, `{ git commit -n; }`).
+_RESERVED_LEADERS = frozenset(("if", "then", "else", "elif", "fi", "do", "done", "while",
+                               "until", "!", "{", "}", "time"))
+
+
+def _expansions(text: str, depth: int = 0, single_quotes: bool = False,
+                dquotes: bool = False) -> list[str]:
+    """The commands inside the substitutions of `text` read as plain expanding text
+    (an unquoted heredoc body, the inside of `${...}` or `$((...))`). With
+    `single_quotes`, '...' and $'...' quote, as in an unquoted `${x:-'...'}`."""
+    lx = _BashLexer(text, depth)
+    scratch: list[str] = []
+    dquote = False  # a "..." opened inside: single quotes are text there
+    i = 0
+    while i < lx.n:
+        ch = text[i]
+        if ch == "\\":
+            i += 2
             continue
-    return toks
+        if (single_quotes or dquotes) and ch == '"':  # not in a heredoc body: text there
+            dquote = not dquote
+            i += 1
+            continue
+        if single_quotes and not dquote and text.startswith("$'", i):
+            _text, i = lx._ansi_c_fragment(i)
+            if i < 0:
+                break
+            continue
+        if single_quotes and not dquote and ch == "'":
+            k = text.find("'", i + 1)
+            if k < 0:
+                break
+            i = k + 1
+            continue
+        if ch == "`" or (ch == "$" and i + 1 < lx.n and text[i + 1] in "({"):
+            # A heredoc body or a "..." is double-quote context for a nested ${...}.
+            k = lx._subst(i, scratch, in_dquote=dquote or not single_quotes, tick_dquote=dquote)
+            if k < 0:
+                lx.subs.append(text[i:])  # unterminated: read the rest as a command
+                break
+            i = k
+            continue
+        i += 1
+    return lx.subs
+
+
+def _script_tokens(cmd: str, _depth: int = 0) -> tuple[list[str], str, int]:
+    """(tokens, unread, unread_line) of a whole script, its commands separated by `;`.
+    NOTHING IS REMOVED that bash would run: heredoc bodies and comments go, redirection
+    targets leave the argv, substitutions are read as commands.
+
+    `unread` is the text from where the script stopped parsing (an unterminated quote or
+    substitution), and `unread_line` its 1-based line in `cmd` (0 when it came from inside
+    a substitution). bash runs the complete lines before it; the caller decides about the
+    rest.
+    """
+    lx = _BashLexer(cmd, _depth)
+    complete = lx.lex()
+    toks = lx.toks
+    unread = "" if complete else cmd[lx.i:]
+    unread_line = 0 if complete else cmd.count("\n", 0, lx.i) + 1
+    for sub in lx.subs:  # nesting is bounded by _BashLexer, which raises _TooDeep
+        sub_toks, sub_unread, _line = _script_tokens(sub, _depth + 1)
+        toks.append(_SEP)
+        toks.extend(sub_toks)
+        if not unread and sub_unread:
+            unread, unread_line = sub_unread, 0
+    return toks, unread, unread_line
+
+
+_BASH_ERROR_LINE = re.compile(r"line (\d+):")
+
+
+def _bash_rejects_from(cmd: str, line: int) -> bool:
+    """True when bash refuses to parse `cmd` at or after `line`, so nothing from there runs.
+
+    `bash -n` reads without executing: no command, substitution or expansion runs. bash
+    runs a script one complete command at a time, so the lines before a syntax error do
+    run (`git commit -n -m x` then a stray quote commits); only the unfinished command and
+    what follows it do not. Anything that stops the check answers False, and the caller
+    then reads the unfinished text conservatively.
+    """
+    if line < 1:
+        return False
+    try:
+        done = subprocess.run(["bash", "-n", "-c", cmd], capture_output=True, text=True,
+                              timeout=5)  # deadline: 5 s, a parse only
+    except (OSError, subprocess.SubprocessError):
+        return False  # fail-direction: False keeps the conservative reading
+    if done.returncode == 0:
+        return False
+    m = _BASH_ERROR_LINE.search(done.stderr or "")
+    return bool(m) and int(m.group(1)) >= line
+
+
+_PLAIN_WORD = re.compile(r"[A-Za-z0-9_.,/=+-]+")
+
+
+def _unread_commit(text: str) -> tuple[bool, bool]:
+    """(is_commit, has_no_verify) for text the gate could not read: the rest of a script
+    the lexer could not finish though bash would, or a command nested too deep.
+
+    Unread text can hold a no-verify flag in any encoding (`$'\\x2dn'`), so a `git` word
+    followed later by a `commit` word is a commit AND is refused. A false refusal costs
+    one retry; a hidden `-n` disables the gate.
+    """
+    # Quotes and backslashes join a word in bash (`c'ommit'`, `gi\\t`): drop them first.
+    words = _PLAIN_WORD.findall(re.sub(r"[\'\"\\\\]", "", text))
+    if "git" not in words or "commit" not in words[words.index("git"):]:
+        return (False, False)
+    return (True, True)
 
 
 def _bash_is_git_commit(cmd: str) -> tuple[bool, bool]:
-    """Returns (is_git_commit, has_no_verify) for any segment of
-    `cmd`. Same shape as crc._is_codex_bash_trigger -- per-segment
-    heredoc trim, segment-by-operator, scan each segment. Also
-    handles inner `bash -c "..."` shells via _segment_is_git_commit.
+    """Returns (is_git_commit, has_no_verify) for any command `cmd` runs:
+    each simple command of the script as bash reads it (_BashLexer), the
+    commands inside its substitutions, and an inner `bash -c "..."` via
+    _segment_is_git_commit.
     """
     if not isinstance(cmd, str) or not cmd.strip():
         return (False, False)
-    toks = _script_tokens(cmd)
-    if not toks:
-        return (False, False)
-    saw_commit = False
-    saw_no_verify = False
-    for seg in crc._segment_by_separators(toks):
-        seg = crc._trim_heredoc_body(seg)
+    try:
+        toks, unread, unread_line = _script_tokens(cmd)
+    except (_TooDeep, RecursionError):
+        return _unread_commit(cmd)  # too deep to read: refuse a possible commit, never crash
+    saw_commit = saw_no_verify = False
+    if unread and not _bash_rejects_from(cmd, unread_line):
+        saw_commit, saw_no_verify = _unread_commit(cmd)  # the whole command: its prefix too
+    if saw_no_verify:
+        return (True, True)
+    for seg in _commands(toks):
+        while seg and seg[0] in _RESERVED_LEADERS:
+            seg = seg[1:]
         if not seg:
             continue
         is_commit, no_verify = _segment_is_git_commit(seg)
@@ -1617,6 +2291,36 @@ def _pass_receipts(root: Path, todo: str, section: str | None) -> tuple[dict, bo
     return (found, True)
 
 
+def _pass_cap(root: Path) -> int | None:
+    """The reviewer pin's pass_cap, or None when the pin cannot be read (no waiver then)."""
+    scripts = str(root / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    try:
+        import review_pin
+        return int(review_pin.load_pin(root / ".conclave" / "reviewers.toml")["pass_cap"])
+    except Exception:
+        return None
+
+
+def _spent_passes(root: Path, todo: str, section: str) -> int:
+    """How many checked, complete passes this section has had: its spend against pass_cap."""
+    try:
+        lines = (root / _PASS_MANIFEST).read_text().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return 0
+    spent = 0
+    for line in lines:
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict) and e.get("todo") == todo and str(e.get("section", "")) == section \
+                and e.get("kind") in _PASS_KINDS and _receipt_complete(e):
+            spent += 1
+    return spent
+
+
 def _receipt_complete(receipt: dict) -> bool:
     return receipt.get("route") == "codex-dispatch.sh" and receipt.get("pass_checked") is True \
         and receipt.get("rc") == 0 and isinstance(receipt.get("head"), str) and len(receipt["head"]) >= 7
@@ -1660,7 +2364,7 @@ def _pass_covers(root: Path, kind: str, receipt: dict | None, current_head: str,
 
 
 def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
-                       current_head: str) -> list[str]:
+                       current_head: str, capped: bool = False) -> list[str]:
     """What a section reviewed under the reviewer pin still owes before its stamp, as message parts.
 
     - plan must have been checked, on this history. It precedes the code, so
@@ -1671,6 +2375,11 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
       again after their findings are fixed, so the receipt that counts is the
       one for the fixed candidate.
     - Nothing a pass reads may ride along in the stamp commit.
+    - `capped`: the section has spent pass_cap passes, which ends its round loop
+      (docs/specs/2026-11-11-three-pass-review-design.md). The round is then not
+      required to be clean; the performance pass and the last pass still must
+      read the candidate and end below a blocking level, so every fix after the
+      last round is read by a pass.
     """
     parts: list[str] = []
     blocking = _blocking_levels(root)
@@ -1697,6 +2406,8 @@ def _three_pass_issues(root: Path, section: str, receipts: dict, readable: bool,
     for kind, receipt in (("round", receipts.get("round", (None, 0))[0]),
                           ("performance", receipts.get("performance", (None, 0))[0]),
                           (final_kind, final)):
+        if kind == "round" and capped and receipt is not None:
+            continue
         ok, why = _pass_covers(root, kind, receipt, current_head, blocking)
         if not ok:
             parts.append(why)
@@ -1751,7 +2462,9 @@ def _four_dispatch_evidence(
                 # This TODO has passes, but none for this section: it started under the older kinds.
                 legacy.append(todo)
                 continue
-            owed = _three_pass_issues(root, section, receipts, readable, current_head)
+            cap = _pass_cap(root)
+            capped = cap is not None and _spent_passes(root, todo, section) >= cap
+            owed = _three_pass_issues(root, section, receipts, readable, current_head, capped)
         if owed:
             issues.append(
                 f"{todo}: three-pass review incomplete -- {'; '.join(owed)}. "

@@ -12,6 +12,7 @@ import time
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / ".claude/hooks"))
+sys.path.insert(0, str(REPO / "scripts"))  # review_pin, which reads each test repo's own pin
 import section_commit_gate as gate  # noqa: E402
 
 TODO = "todo/00-x/TODO-01-x.md"
@@ -170,6 +171,25 @@ def test_refusal_a_pass_that_ended_at_a_blocking_level_does_not_count(tmp_path):
     assert not ok and "reconciliation ended at P1" in why, why
     ok, why = _judge(root, highest={"completion": "sort of fine"}, **_good(h))
     assert not ok and "records no HIGHEST level" in why, why
+
+
+def test_a_section_that_spent_the_pass_cap_needs_no_clean_round(tmp_path):
+    """At pass_cap the round loop ends (the spec); the performance and last passes still read the candidate."""
+    root, h = _history(tmp_path)
+    cap = int(gate._pass_cap(root))
+    def spent(n):  # n earlier checked rounds that read the build and ended at P2
+        return "".join(json.dumps(_receipt("round", h["build"], 0, highest="P2")) + "\n" for _ in range(n))
+    stuck = _good(h, round=(h["build"], 2))
+    ok, why = _judge(root, highest={"round": "P2"}, manifest_head=spent(cap - 5), **stuck)
+    assert not ok and "round" in why, why  # 4 passes short of the cap: the round still holds the stamp
+    ok, why = _judge(root, highest={"round": "P2"}, manifest_head=spent(cap - 4), **stuck)
+    assert ok, why
+    for kind in ("performance", "completion"):  # neither is waived
+        ok, why = _judge(root, highest={"round": "P2"}, manifest_head=spent(cap),
+                         **_good(h, round=(h["build"], 2), **{kind: (h["build"], 3)}))
+        assert not ok and f"{kind} is not the last word" in why, (kind, why)
+    ok, why = _judge(root, highest={"round": "P2", "performance": "P2"}, manifest_head=spent(cap), **stuck)
+    assert not ok and "performance ended at P2" in why, why
 
 
 def test_refusal_only_a_checked_complete_receipt_from_the_dispatcher_counts(tmp_path):

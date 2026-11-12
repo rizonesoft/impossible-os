@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# ============================================================================
+# .githooks/prepare-commit-msg -- refuse a `git commit` that skipped pre-commit.
+#
+# --no-verify skips pre-commit, the load-bearing layer of the section-commit gate
+# and the lint gate. This hook still runs, and it is a child of the same git process
+# as pre-commit, so a missing record of that process (lib/pre-commit-mark.sh) means
+# pre-commit did not run. Only `git commit` runs pre-commit: cherry-pick, revert,
+# merge and rebase commits never do, and are let through. post-commit's own COUNT.md
+# amend is the one internal --no-verify commit, allowed by the pid it records.
+#
+# Args: $1 message file, $2 source (message, template, merge, squash, commit).
+# ============================================================================
+set -u
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=.githooks/lib/pre-commit-mark.sh
+. "$REPO_ROOT/.githooks/lib/pre-commit-mark.sh"
+
+GIT_DIR_PATH="$(git rev-parse --git-dir)"
+MARK="$(pre_commit_mark_path)"
+RAN="$(cat "$MARK" 2>/dev/null || true)"
+rm -f "$MARK"
+[ "$RAN" = "$PPID" ] && exit 0
+
+AMENDER="$(cat "$GIT_DIR_PATH/hook-amend.by" 2>/dev/null || true)"
+if [ -n "$AMENDER" ]; then
+    rm -f "$GIT_DIR_PATH/hook-amend.by"
+    GRANDPARENT="$(ps -o ppid= -p "$PPID" 2>/dev/null | tr -d ' ')"
+    [ "$GRANDPARENT" = "$AMENDER" ] && exit 0
+fi
+
+# A process's argv into the array ARGV: /proc where it exists, `ps` elsewhere (macOS,
+# Git for Windows), whose space-joined args still give the command and subcommand.
+# PROC_ROOT moves /proc only so a test can take the ps path.
+PROC_ROOT="${PREPARE_COMMIT_MSG_PROC_ROOT:-/proc}"
+read_argv() {
+    ARGV=()
+    ARGV_FROM_PS=
+    local arg
+    if [ -r "$PROC_ROOT/$1/cmdline" ]; then
+        while IFS= read -r -d '' arg; do ARGV+=("$arg"); done < "$PROC_ROOT/$1/cmdline"
+    else
+        read -r -a ARGV <<< "$(ps -o args= -p "$1" 2>/dev/null)"
+        ARGV_FROM_PS=1
+    fi
+    [ "${#ARGV[@]}" -gt 0 ]
+}
+
+# The git subcommand that is committing, from its own command line: the first word
+# after git's global options, with an alias resolved one step. Unreadable: fail.
+git_subcommand() {
+    read_argv "$1" || return 1
+    local -a argv=("${ARGV[@]}")
+    case "${argv[0]##*/}" in git|git-*) ;; *) return 1 ;; esac
+    local i=1
+    while [ "$i" -lt "${#argv[@]}" ]; do
+        case "${argv[$i]}" in
+            -c|-C|--git-dir|--work-tree|--namespace|--super-prefix|--config-env|--exec-path) i=$((i + 2)) ;;
+            -*) i=$((i + 1)) ;;
+            *) break ;;
+        esac
+    done
+    local sub="${argv[$i]:-}"
+    local base="${argv[0]##*/}"
+    if [ "${base#git-}" != "$base" ]; then
+        sub="${base#git-}"  # /usr/lib/git-core/git-commit runs commit directly
+    elif ! git --list-cmds=builtins 2>/dev/null | grep -qxF -- "$sub"; then
+        # git never lets an alias shadow a built-in, so only a non-built-in is resolved.
+        local alias
+        alias="$(git config --get "alias.$sub" 2>/dev/null || true)"
+        [ -n "$alias" ] && sub="${alias%% *}"
+    fi
+    # ps joins arguments with spaces, so `-c 'x=a rebase'` splits into a fake
+    # subcommand: after a global option, a ps reading is marked unsure.
+    if [ -n "$ARGV_FROM_PS" ] && [ "$i" -ne 1 ]; then
+        printf '%s?' "$sub"
+    else
+        printf '%s' "$sub"
+    fi
+}
+
+# Whether $1 (a subcommand, `?` when read unsure from ps) of process $2 is a history
+# operation that commits without pre-commit. An unsure reading must also hold no word
+# that names commit (`commit`, or an alias for it), since `-c 'x=a rebase' commit`
+# splits that way, and that operation's own state must be in the git dir.
+is_history_op() {
+    local sub="${1%\?}" unsure=
+    [ "$sub" != "$1" ] && unsure=1
+    if [ -z "$unsure" ]; then
+        case "$sub" in
+            cherry-pick|revert|merge|pull|rebase|am) return 0 ;;
+            *) return 1 ;;
+        esac
+    fi
+    # Unsure: a spaced value (`-C '/tmp/my repo'`) moved the words, so the operation is
+    # the first history-operation word anywhere in the command line.
+    read_argv "$2" || return 1
+    local word commits
+    sub=
+    for word in "${ARGV[@]:1}"; do
+        case "$word" in
+            cherry-pick|revert|merge|pull|rebase|am) sub="$word"; break ;;
+        esac
+    done
+    [ -n "$sub" ] || return 1
+    commits=" commit $(git config --get-regexp '^alias\.' 2>/dev/null \
+        | awk '$2 == "commit" { sub(/^alias\./, "", $1); printf "%s ", $1 }')"
+    for word in "${ARGV[@]:1}"; do
+        case "$commits" in *" $word "*) return 1 ;; esac
+    done
+    local state
+    case "$sub" in
+        cherry-pick) state="CHERRY_PICK_HEAD sequencer" ;;
+        revert) state="REVERT_HEAD sequencer MERGE_MSG" ;;
+        merge|pull) state="MERGE_HEAD" ;;
+        rebase) state="rebase-merge rebase-apply" ;;
+        am) state="rebase-apply" ;;
+    esac
+    for f in $state; do
+        [ -e "$GIT_DIR_PATH/$f" ] && return 0
+    done
+    return 1
+}
+
+# Only the operations that commit without running pre-commit are let through. A command
+# line that cannot be read at all is treated as a commit and refused.
+SUB="$(git_subcommand "$PPID")" || SUB=commit
+is_history_op "$SUB" "$PPID" && exit 0
+# The sequencer of rebase, cherry-pick and revert runs a child `git commit -n` (a
+# squash, a continue after a conflict). Its parent is that git process, never a
+# shell, so a hand-typed `git commit -n` during a paused rebase is refused. The
+# sequencer starts it as "$GIT_EXEC_PATH/git" with GIT_REFLOG_ACTION set; an
+# `exec git commit -n` line of a rebase todo has neither, and is refused too.
+# LIMIT: a command that forges both on purpose is circumvention, not a spelling.
+PARENT="$(ps -o ppid= -p "$PPID" 2>/dev/null | tr -d ' ')"
+read_argv "$PPID" && ARGV0="${ARGV[0]}" || ARGV0=
+if [ -n "$PARENT" ] && [ -n "${GIT_REFLOG_ACTION:-}" ] && [ -n "${GIT_EXEC_PATH:-}" ] \
+    && [ "$ARGV0" = "$GIT_EXEC_PATH/git" ] && PSUB="$(git_subcommand "$PARENT")"; then
+    is_history_op "$PSUB" "$PARENT" && exit 0
+fi
+
+cat >&2 <<'MSG'
+
+prepare-commit-msg: REFUSED -- pre-commit did not run for this commit.
+  `git commit --no-verify` (or -n, in any spelling) skips .githooks/pre-commit, the
+  lint and section-commit gate. Commit without it. A gate that is wrong is fixed at
+  its source; the section-commit gate's own opt-out is SKIP_REVIEW_HOOK=1 with
+  SKIP_REVIEW_HOOK_REASON="..." on the commit, which pre-commit reads.
+MSG
+exit 1

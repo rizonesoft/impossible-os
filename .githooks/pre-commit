@@ -24,6 +24,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=.githooks/lib/isolate-git-env.sh
 . "$REPO_ROOT/.githooks/lib/isolate-git-env.sh"
 anchor_git_env
+# shellcheck source=.githooks/lib/pre-commit-mark.sh
+. "$REPO_ROOT/.githooks/lib/pre-commit-mark.sh"
+mark_pre_commit_ran  # before any early exit: prepare-commit-msg refuses a commit without it
 
 # If nothing is staged (e.g., `git commit --allow-empty`), skip.
 if git diff --cached --quiet --exit-code 2>/dev/null; then

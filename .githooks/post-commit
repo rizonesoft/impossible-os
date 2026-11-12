@@ -572,6 +572,9 @@ if [ "$README_PLUMB" = "1" ]; then
 else
     AMEND_PATHS=("$COUNT_FILE")
     [ "$README_CLEAN" = "1" ] && AMEND_PATHS+=("$README_FILE")
+    # shellcheck source=.githooks/lib/pre-commit-mark.sh
+    . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pre-commit-mark.sh"
+    allow_hook_amend  # this --no-verify amend is the one prepare-commit-msg allows
     SKIP_COUNT=1 git commit --amend --only --no-edit --no-verify \
       -- "${AMEND_PATHS[@]}" 2>/dev/null
 fi

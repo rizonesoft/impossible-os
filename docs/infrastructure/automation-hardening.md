@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md sources=.claude/hooks/MANIFEST.md,scripts/audit-hooks.sh,scripts/audit-ai-system.sh,.claude/hooks/section_commit_gate.py,.claude/hooks/codex_review_completed.py,.claude/hooks/codex_model_flag_block.py reviewed=2026-11-09 order=9 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-08-automation-hardening.md sources=.claude/hooks/MANIFEST.md,scripts/audit-hooks.sh,scripts/audit-ai-system.sh,.claude/hooks/section_commit_gate.py,.claude/hooks/codex_review_completed.py,.claude/hooks/codex_model_flag_block.py reviewed=2026-11-12 order=9 -->
 # Automation Hardening
 
 ## What is it?
@@ -22,7 +22,7 @@ flowchart LR
 
 - **Codex invocation policy.** [`codex_model_flag_block.py`](../../.claude/hooks/codex_model_flag_block.py) refuses any Codex dispatch that passes a model or effort flag; the user sets those centrally. See [Codex Invocation Policy](codex-invocation-policy.md).
 - **Review reception record.** [`codex_review_completed.py`](../../.claude/hooks/codex_review_completed.py) records each Codex review and when its findings were received, and `section_commit_gate.py` reads that record. The PreToolUse gate that blocked edits until reception (`receiving_review_required.py`) was deleted on 2026-11-09 with the other process gates.
-- **Section commit gate.** [`section_commit_gate.py`](../../.claude/hooks/section_commit_gate.py) refuses a section-ship commit without a fresh build and reviews bound to the staged content.
+- **Section commit gate.** [`section_commit_gate.py`](../../.claude/hooks/section_commit_gate.py) refuses a section-ship commit without a fresh build and reviews bound to the staged content. It finds the commit in a Bash call by reading the command as bash does (`_BashLexer`): `$'...'` and quotes that span lines, heredoc bodies dropped, substitutions read as commands; the lines after a syntax error bash reports (`bash -n`) never run, and text it cannot read is refused as a possible no-verify commit. Before 2026-11-12 it used shlex and misread 165 of 575 recorded commit commands, 160 of them as no commit at all. Reading a command is still a guess, so `--no-verify` is refused by git itself: `.githooks/prepare-commit-msg` refuses a `git commit` whose `pre-commit` never ran, however `-n` was spelled.
 - **Step telemetry.** Skill steps are recorded as they happen and survive context compaction, so a skill cannot claim a step it never ran.
 - **Content lints.** [`scripts/lint.sh`](../../scripts/lint.sh) flags tautological tests, stubs behind a completion stamp, and roadmap sections whose stamps or OS Comparison rows are incomplete.
 - **Audits.** [`scripts/audit-hooks.sh`](../../scripts/audit-hooks.sh) checks every wired hook against [`MANIFEST.md`](../../.claude/hooks/MANIFEST.md), and [`scripts/audit-ai-system.sh`](../../scripts/audit-ai-system.sh) checks the Claude and Codex configurations against each other.

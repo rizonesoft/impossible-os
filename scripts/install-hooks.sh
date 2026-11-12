@@ -5,9 +5,11 @@
 #
 # Canonical hook path: .githooks/ (set via core.hooksPath). Once configured,
 # git runs every executable in .githooks/ that matches a hook name; the
-# .git/hooks/ directory is ignored. The repo ships three hooks:
+# .git/hooks/ directory is ignored. The repo ships four hooks:
 #   - .githooks/pre-commit   always-on: lints staged .c/.h; blocks commit
 #                            on lint failure.
+#   - .githooks/prepare-commit-msg  always-on: refuses a git commit that
+#                            skipped pre-commit (--no-verify in any spelling).
 #   - .githooks/post-commit  always-on: regenerates COUNT.md (core code +
 #                            supporting text counts), amends commit.
 #   - .githooks/pre-push     opt-in: delegates to scripts/hooks/pre-push
