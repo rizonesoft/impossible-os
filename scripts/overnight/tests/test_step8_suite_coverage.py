@@ -131,6 +131,10 @@ def test_refusal_code_no_test_can_call_needs_a_tested_by_line():
     ok, msg, _ = _check({"src/kernel/smp/ap_trampoline.asm": "; tested-by: test_smp.c\n" + flat,
                          "src/kernel/test/test_smp.c": suite("").replace("test_register_x", "test_register_smp")})
     assert not ok, "a named test the runner never registers does not run"
+    for stub in ("void test_register_x(void) {\n    return;\n}\n", "void test_register_x(void) {\n    if (0) return;\n}\n"):
+        ok, msg, _ = _check({"src/kernel/smp/ap_trampoline.asm": "; tested-by: test_smp.c\n" + flat,
+                             "src/kernel/test/test_smp.c": stub})
+        assert not ok, "a registration that registers nothing runs no test"
     ok, msg, _ = _check({"user/lib/crt0.asm": "; tested-by: test_libc_y.c\n" + flat, "Makefile": USER_MAKE,
                          "user/test/test_libc_y.c": "int main(void) {\n    return 0;\n}\n"})
     assert not ok, "a named user test make userland does not build does not run"

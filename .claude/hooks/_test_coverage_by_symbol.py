@@ -732,6 +732,8 @@ def _body_uses(body: str, types: frozenset[str] = frozenset()) -> set[str]:
     toks = _TOKEN.findall(body)
     seen: dict[str, int] = {}
     for k, t in enumerate(toks):
+        if t in _NOT_TYPES:  # a C keyword names nothing a test runs
+            continue
         if _ident(t) and not (k and (toks[k - 1] == "." or (toks[k - 1] == ">" and k > 1 and toks[k - 2] == "-"))):
             seen[t] = seen.get(t, 0) + 1
     local: set[str] = set()
