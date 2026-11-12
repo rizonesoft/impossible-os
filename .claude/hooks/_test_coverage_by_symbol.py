@@ -521,7 +521,8 @@ def _statements(toks: list[str]) -> list[list[str]]:
     block brace ends one, while a brace that opens an initialiser (after `=`, inside
     another initialiser or parentheses, a compound literal after a non-control
     `)`, or a struct, union or enum body) stays inside its statement. The init
-    clause of each `for (...)` is added as a statement of its own."""
+    clause of each `for (...)` is added as a statement of its own. A block brace
+    also adds a marker statement, `["{"]` or `["}"]`, so scope can be followed."""
     out: list[list[str]] = []
     cur: list[str] = []
     parens: list[bool] = []  # per open "(": was it a control keyword's
@@ -557,6 +558,7 @@ def _statements(toks: list[str]) -> list[list[str]]:
                 cur.append(t)
             else:
                 out.append(cur)
+                out.append(["{"])
                 cur = []
         elif t == "}":
             if braces and braces.pop():
@@ -564,6 +566,7 @@ def _statements(toks: list[str]) -> list[list[str]]:
                 cur.append(t)
             else:
                 out.append(cur)
+                out.append(["}"])
                 cur = []
         elif t == ";" and held == 0:
             out.append(cur)
@@ -734,10 +737,18 @@ def _body_uses(body: str, types: frozenset[str] = frozenset()) -> set[str]:
     local: set[str] = set()
     objects = set(params)  # names known as objects so far, grown in place
     only: dict[str, int] = {}
+    outer: list[frozenset[str]] = []  # the types in scope outside each open block
     for stmt in _statements(toks):
+        if stmt == ["{"]:
+            outer.append(types)
+            continue
+        if stmt == ["}"]:
+            types = outer.pop() if outer else types  # a block's typedefs end with it
+            continue
         if stmt[:1] == ["typedef"]:  # a block-scope typedef names a type from here on
             named, decl_only = _declared(stmt[1:], objects, types)
             types = types | named
+            local |= named  # the name is a type, never a use of a function
         else:
             named, decl_only = _declared(stmt, objects, types)
             local |= named
@@ -839,10 +850,13 @@ _LINKER = re.compile(r"(?:\$[({]LD[)}]|ld\.lld(?:-\d+)?|ld|lld-link)(?:\s|$)")
 
 
 def _recipe_commands(line: str) -> list[str]:
-    """The shell commands of one recipe line, split at `;`, `&&`, `||` and `|`
-    outside quotes and escapes, as the shell reads them, each without Make's `@`,
-    `-` and `+` prefixes. A quoted argument (what echo prints) is never a command."""
+    """The shell commands of one recipe line that run whenever the line runs,
+    split at `;`, `&&`, `||` and `|` outside quotes and escapes as the shell reads
+    them, each without Make's `@`, `-` and `+` prefixes. A quoted argument (what
+    echo prints) is never a command, and a command after `&&` or `||` is dropped:
+    whether it runs depends on the one before it."""
     out, cur, quote, i, n = [], [], "", 0, len(line)
+    conditional, flags = False, []
     while i < n:
         ch = line[i]
         if quote:
@@ -861,15 +875,20 @@ def _recipe_commands(line: str) -> list[str]:
             quote = ch
             cur.append(ch)
         elif ch in ";|&":
+            out.append("".join(cur))
+            flags.append(conditional)
             if ch in "|&" and line[i + 1:i + 2] == ch:
                 i += 1
-            out.append("".join(cur))
+                conditional = True  # this command and the rest of the line hang on the last
+            elif ch == ";":
+                conditional = False
             cur = []
         else:
             cur.append(ch)
         i += 1
     out.append("".join(cur))
-    return [c.strip().lstrip("@-+").strip() for c in out]
+    flags.append(conditional)
+    return [c.strip().lstrip("@-+").strip() for c, cond in zip(out, flags) if not cond]
 
 
 def user_built_tests(makefile_text: str | None) -> dict[str, str]:

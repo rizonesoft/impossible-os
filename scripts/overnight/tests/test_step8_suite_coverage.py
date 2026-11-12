@@ -422,7 +422,9 @@ def test_a_user_mode_test_starts_at_main():
                     USER_MAKE.replace("\t$(CC)", "\t@echo $(CC)").replace("\t$(LD)", "\t@echo $(LD)"),
                     "userland: $(SYSROOT)/test_libc_x.exe\n$(SYSROOT)/test_libc_x.exe:\n"
                     "\t@echo 'preview; $(CC) -c user/test/test_libc_x.c -o x.o; "
-                    "$(LD) -o x.exe crt0.o user/test/test_libc_x.o'\n"):
+                    "$(LD) -o x.exe crt0.o user/test/test_libc_x.o'\n",
+                    USER_MAKE.replace("\t$(CC)", "\ttrue || $(CC)").replace("\t$(LD)", "\ttrue || $(LD)"),
+                    USER_MAKE.replace("\t$(CC)", "\tfalse && $(CC)").replace("\t$(LD)", "\tfalse && $(LD)")):
         ok, msg, _ = _check({"user/lib/string_x.c": libc, "user/test/test_libc_x.c": test, "Makefile": unbuilt})
         assert not ok and "string_x.c" in msg, "a test the Makefile never builds never runs"
 
@@ -517,6 +519,7 @@ def test_refusal_a_parameter_or_local_named_like_the_function():
                  "struct s v = { .dpc_queue = 1 };\n    v.dpc_queue = 2;\n    (&v)->dpc_queue = 3;",
                  "void helper(int dpc_queue);",
                  "void (*helper)(int dpc_queue);",
+                 "typedef int dpc_queue;\n    (void)sizeof(dpc_queue);",
                  "dpc_t (dpc_queue) = 0;\n    (void)dpc_queue;"):
         test = ("typedef int dpc_t;\nstatic int stub(void) { return 0; }\n"
                 f"static void suite(void) {{\n    {body}\n}}\n"
@@ -557,7 +560,8 @@ def test_local_declarations_parse_in_linear_time():
 
 
 def test_refusal_a_prototype_parameter_in_the_runner_starts_nothing():
-    for decl in ("void helper(int test_register_x);", "void (*helper)(int test_register_x);"):
+    for decl in ("void helper(int test_register_x);", "void (*helper)(int test_register_x);",
+                 "typedef int test_register_x;"):
         runner = f"void boot_tests_run(void) {{\n    {decl}\n}}\n"
         ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": SCHED_TEST}, runner=runner)
         assert not ok and "dpc.c" in msg, f"a parameter name in {decl!r} calls nothing"
@@ -575,7 +579,7 @@ def test_refusal_a_registered_name_a_local_shadows_is_not_the_function():
 def test_a_typedef_out_of_scope_or_not_compiled_hides_no_use():
     test = ("/* typedef int consume; */\n#if 0\ntypedef int consume;\n#endif\n"
             "static void other(void) {\n    typedef int consume;\n}\n"
-            "static void suite(void) {\n    consume(dpc_queue);\n}\n"
+            "static void suite(void) {\n    { typedef int consume; }\n    consume(dpc_queue);\n}\n"
             "void test_register_x(void) {\n    test_suite_register_cat(\"x\", suite, TEST_CAT_SCHED);\n}\n")
     ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": test})
     assert ok, msg
