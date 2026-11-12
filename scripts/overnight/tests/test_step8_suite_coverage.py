@@ -519,7 +519,7 @@ def test_refusal_a_parameter_or_local_named_like_the_function():
                  "struct s v = { .dpc_queue = 1 };\n    v.dpc_queue = 2;\n    (&v)->dpc_queue = 3;",
                  "void helper(int dpc_queue);",
                  "void (*helper)(int dpc_queue);",
-                 "typedef int dpc_queue;\n    (void)sizeof(dpc_queue);",
+                 "typedef int dpc_queue;",
                  "dpc_t (dpc_queue) = 0;\n    (void)dpc_queue;"):
         test = ("typedef int dpc_t;\nstatic int stub(void) { return 0; }\n"
                 f"static void suite(void) {{\n    {body}\n}}\n"
@@ -579,7 +579,8 @@ def test_refusal_a_registered_name_a_local_shadows_is_not_the_function():
 def test_a_typedef_out_of_scope_or_not_compiled_hides_no_use():
     test = ("/* typedef int consume; */\n#if 0\ntypedef int consume;\n#endif\n"
             "static void other(void) {\n    typedef int consume;\n}\n"
-            "static void suite(void) {\n    { typedef int consume; }\n    consume(dpc_queue);\n}\n"
+            "static void suite(void) {\n    { typedef int consume; }\n    consume(dpc_queue);\n"
+            "    { typedef int dpc_queue; }\n    dpc_queue(1);\n}\n"
             "void test_register_x(void) {\n    test_suite_register_cat(\"x\", suite, TEST_CAT_SCHED);\n}\n")
     ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": test})
     assert ok, msg

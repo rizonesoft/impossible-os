@@ -462,3 +462,12 @@ The spec said a section that spent `pass_cap` passes is stamped, but the commit 
 - **C:** keep requiring a clean round, so the cap blocks the stamp forever.
 
 A: (run decision, 2026-11-12) A: every line still reaches a reviewer, and the loop ends. Reversal cost: one `continue` in `_three_pass_issues` and its test; the spec and skill sentences.
+
+## Q39 (00-infrastructure/TODO-08 §34): what does the step-8 coverage gate have to get right?
+
+The gate reads C and Make text inside a 10 s hook, because the compiler cannot: on 2026-11-12 clang took 17 s for syntax-only parsing of `test_usermode.c` and 688 s for its JSON AST. A text reader can always be fooled by some valid program, and review rounds 12 to 18 found only constructs written to fool it (`if false; then $(CC) ...; fi`, a typedef re-declaring an expired local, a typedef nested 200 blocks deep), while the real-tree result never moved (238 sources covered, 143 untested, 16 user tests).
+
+- **A:** the gate guards against honest mistakes: a test that never runs, never registers, is never built, or exercises the wrong file, and any misread of real-tree code. Deliberate evasion is out of scope (CI, the boot matrix and review are the proof behind it); a finding that needs code written to fool the reader is P3 and recorded, not blocking.
+- **B:** keep treating every valid C or Make construct the reader misreads as blocking.
+
+A: (run decision, 2026-11-12) A: B has no end state without a compiler front end that does not fit the hook. Reversal cost: none in code; the next review rounds would grade contrived constructs as blocking again.

@@ -748,7 +748,7 @@ def _body_uses(body: str, types: frozenset[str] = frozenset()) -> set[str]:
         if stmt[:1] == ["typedef"]:  # a block-scope typedef names a type from here on
             named, decl_only = _declared(stmt[1:], objects, types)
             types = types | named
-            local |= named  # the name is a type, never a use of a function
+            decl_only = [*decl_only, *named]  # the declaring occurrence only; later uses count
         else:
             named, decl_only = _declared(stmt, objects, types)
             local |= named
