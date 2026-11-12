@@ -389,9 +389,9 @@
 #  16f -- server-initiated window/workDoneProgress/create gets a
 #         {result: null} ack at the same id (fake-LSP driver).
 #
-#  17a -- --warm-start --warm-start-mode=background --self-test exits
-#         in under 1.5s wall-clock (proves srv.run()-equivalent gate
-#         is not delayed by the bg warm worker).
+#  17a -- --warm-start-mode=background adds < 3s over a plain --self-test
+#         (proves the srv.run()-equivalent gate is not delayed by the
+#         bg warm worker).
 #  17b -- background mode emits the warm-bg-dispatched JSON log line
 #         (proves the dispatch fires on the main thread).
 #  17c -- omitting --warm-start-mode keeps blocking semantics
@@ -5266,38 +5266,42 @@ PY
     return 0
 }
 
-# --- 17a: --warm-start --warm-start-mode=background --self-test < 1.5s ----
+# --- 17a: --warm-start-mode=background adds < 3s over a plain --self-test ---
 # Asserts: --warm-start-mode=background returns to the self-test exit
-# gate without blocking on the bg warm worker. Wall-clock measured by
-# Python's time.monotonic before subprocess.run + after; budget is
-# 1.5s (cold-cache budget of warm-start is 60s, on-demand spawn of
-# clangd takes ~2s; if --warm-start-mode=background was actually
-# blocking we'd see >2s).
+# gate without blocking on the bg warm worker, measured against a plain
+# --self-test timed back to back (see the comment in the body).
 t_warm_start_mode_bg_fast_exit() {
     python3 - <<'PY' || return 1
 import subprocess, sys, time
-# Best of three (2026-11-12): one sample read load as blocking inside a loaded
-# pre-push pack. A background mode that really blocks waits on the ~2 s clangd
-# spawn on every run, so it still fails; the loop stops at the first fast run.
-best = None
-for _ in range(3):
+# RELATIVE, not a wall budget (2026-11-12): a fixed 1.5 s read host load as
+# blocking inside the pre-push pack, even as best of three, because a plain
+# --self-test alone took ~1.9 s on that host. So each round times a plain
+# self-test and the background warm start back to back, and the check is the
+# DIFFERENCE: load inflates both alike, while a blocking warm start adds the
+# clangd warm (~10 s measured: 10.7 s blocking vs 0.66 s background).
+MARGIN = 3.0
+
+def timed(args):
     t0 = time.monotonic()
-    r = subprocess.run(
-        ["python3", "scripts/lsp-mcp/bridge.py",
-         "--warm-start=c", "--warm-start-mode=background",
-         "--self-test"],
-        capture_output=True, text=True, timeout=30,
-    )
-    elapsed = time.monotonic() - t0
+    r = subprocess.run(["python3", "scripts/lsp-mcp/bridge.py", *args],
+                       capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
-        print(f"[17a] FAIL: rc={r.returncode}\nSTDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}",
+        print(f"[17a] FAIL: {args} rc={r.returncode}\nSTDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}",
               file=sys.stderr)
         sys.exit(1)
-    best = elapsed if best is None else min(best, elapsed)
-    if best < 1.5:
+    return time.monotonic() - t0
+
+best = None
+for _ in range(3):
+    base = timed(["--self-test"])
+    bg = timed(["--warm-start=c", "--warm-start-mode=background", "--self-test"])
+    extra = bg - base
+    best = extra if best is None else min(best, extra)
+    if best < MARGIN:
         break
-if best >= 1.5:
-    print(f"[17a] FAIL: best of 3 took {best:.2f}s (budget 1.5s)", file=sys.stderr)
+if best >= MARGIN:
+    print(f"[17a] FAIL: background warm start added {best:.2f}s over a plain self-test "
+          f"(margin {MARGIN}s): it is blocking on the warm worker", file=sys.stderr)
     sys.exit(1)
 PY
     return 0
@@ -12016,7 +12020,7 @@ run "16c warm-start unknown lang"        t_warm_start_unknown_lang
 run "16d warm-start empty spec"          t_warm_start_empty_spec
 run "16e progress snapshot race"         t_warm_progress_snapshot_race
 run "16f workdone/create ack"            t_warm_workdone_create_ack
-run "17a bg mode <1.5s exit"             t_warm_start_mode_bg_fast_exit
+run "17a bg mode adds <3s over self-test" t_warm_start_mode_bg_fast_exit
 run "17b bg dispatch event"              t_warm_start_mode_bg_dispatch_event
 run "17c blocking default no bg event"   t_warm_start_mode_blocking_default
 run "17d argparse rejects bogus mode"    t_warm_start_mode_argparse_reject
