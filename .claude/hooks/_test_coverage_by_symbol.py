@@ -55,6 +55,9 @@ _COND = re.compile(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif|define|undef
 TEST_BUILD_DEFINES = {"KERNEL_TESTS": (1, False), "CONFIG_SMP": (1, False),
                       "CONFIG_EXCEPT_TELEMETRY": (1, False), "BUILD_ALT_BOOT_OFF": (1, False),
                       "__IMPOSSIBLE_OS__": (1, False), "__x86_64__": (1, False)}
+# The user-mode build (USER_CFLAGS) passes no -D at all; the compiler predefines
+# __x86_64__ for --target=x86_64-elf. A test checks USER_CFLAGS against this.
+USER_BUILD_DEFINES = {"__x86_64__": (1, False)}
 _UNDEF = object()      # known to be undefined (#undef)
 _UNKNOWN = object()    # defined, value not an integer literal
 _UNCERTAIN = object()  # changed inside a branch that may or may not compile
@@ -233,13 +236,18 @@ def _condition(kind: str, expr: str, env: dict) -> bool | None:
     return None if value is None else bool(value[0])
 
 
-def _first_branches(code: str) -> str:
+def defines_for(path: str) -> dict:
+    """The macros the build that compiles `path` defines on its command line."""
+    return USER_BUILD_DEFINES if path.startswith("user/") else TEST_BUILD_DEFINES
+
+
+def _first_branches(code: str, defines: dict | None = None) -> str:
     """`code` without preprocessor lines, keeping the #if branches the test build
     compiles. Each branch is on (compiles), off (does not) or maybe (depends on what
     this file cannot see). Only code under no off and no maybe branch is kept, so code
     that may not compile never earns credit. #define and #undef update the macros
     where they compile, and make the name uncertain where they only may."""
-    env = dict(TEST_BUILD_DEFINES)
+    env = dict(TEST_BUILD_DEFINES if defines is None else defines)
     out: list[str] = []
     frames: list[dict] = []  # state: "on" | "off" | "maybe"; taken; unknown
 
@@ -438,7 +446,7 @@ def public_symbols(path: str, text: str) -> set[str]:
     code = _code_only(text)
     header = path.endswith(".h")
     names = set(_DEFINE.findall(code)) if header else set()
-    names |= _top_level_functions(_first_branches(code), declarations=header)
+    names |= _top_level_functions(_first_branches(code, defines_for(path)), declarations=header)
     if header:  # a header's static inline helpers are its interface too
         names |= {m.group(1) for m in re.finditer(r"\bstatic\s+inline\b[^;{(]*?\b([A-Za-z_]\w*)\s*\(", code)}
     return names - _NOT_NAMES
@@ -462,12 +470,12 @@ def _body_uses(body: str) -> set[str]:
     return set(_IDENT.findall(body)) - declared
 
 
-def _bodies(text: str) -> tuple[dict[str, str], set[str]]:
-    """{function: body} for every function the test build compiles in `text`, and the
-    names of the non-static ones."""
+def _bodies(text: str, defines: dict | None = None) -> tuple[dict[str, str], set[str]]:
+    """{function: body} for every function the build (`defines`, the kernel test build
+    by default) compiles in `text`, and the names of the non-static ones."""
     bodies: dict[str, str] = {}
     exported: set[str] = set()
-    for name, prefix, kind, body in _file_scope(_first_branches(_code_only(text))):
+    for name, prefix, kind, body in _file_scope(_first_branches(_code_only(text), defines)):
         if kind == "def":
             bodies[name] = bodies.get(name, "") + body
             if not re.search(r"\bstatic\b", prefix):
@@ -475,14 +483,17 @@ def _bodies(text: str) -> tuple[dict[str, str], set[str]]:
     return bodies, exported
 
 
-def test_names(text: str, entry_points: frozenset[str] = frozenset()) -> set[str]:
+def test_names(text: str, entry_points: frozenset[str] = frozenset(),
+               defines: dict | None = None) -> set[str]:
     """The identifiers the test's executed code uses. Execution starts at this file's
     non-static functions a runner calls (`entry_points`, from runner_entry_points) and
     follows the calls in their bodies; a test_suite_register(_cat) call in a reached
     body adds its callback. A declaration, a comment, a string, a local variable, code
-    the test build does not compile, or a function nothing reaches is not a use.
+    the build (`defines`) does not compile, or a function nothing reaches is not a use,
+    and a call to a function the test defines itself (a stub named like the real one)
+    reaches only that function.
     """
-    bodies, exported = _bodies(text)
+    bodies, exported = _bodies(text, defines)
     seen: set[str] = set()
     used: set[str] = set()
     todo = list(exported & entry_points)
@@ -498,7 +509,7 @@ def test_names(text: str, entry_points: frozenset[str] = frozenset()) -> set[str
             ids |= set(_IDENT.findall(body[m.end():end if end > 0 else len(body)]))
         used |= ids
         todo.extend(i for i in ids if i in bodies and i not in seen)
-    return used
+    return used - set(bodies)
 
 
 RUNNERS = ("src/kernel/test/test_runner.c", "src/kernel/main/boot_tests.c")
@@ -537,18 +548,48 @@ def runner_entry_points(runner_texts) -> frozenset[str]:
     return frozenset(names)
 
 
-def user_built_tests(makefile_text: str | None) -> frozenset[str]:
-    """The user-mode test sources the Makefile compiles into a test binary."""
-    live = re.sub(r"#.*", "", makefile_text or "")  # a commented-out rule builds nothing
-    return frozenset(re.findall(r"(?<![\w/])(user/test/test_[\w-]+\.c)\b", live))
+_MAKE_COND = re.compile(r"\s*(ifeq|ifneq|ifdef|ifndef)\b")
+
+
+def user_built_tests(makefile_text: str | None) -> dict[str, str]:
+    """{user/test/NAME.c: entry function} for the user-mode tests the Makefile builds
+    and ships: the `userland:` target lists NAME.exe, and either a recipe compiles
+    user/test/NAME.c and an $(LD) recipe links its object over crt0 (entry main), or
+    one recipe builds NAME.exe straight from NAME.c (entry from its /entry: flag,
+    main without one). Anything inside a Makefile conditional is not counted, since
+    whether it runs depends on the configuration, and neither is a comment or a bare
+    prerequisite."""
+    lines: list[str] = []
+    depth = 0
+    for raw in re.sub(r"\\\n", " ", makefile_text or "").split("\n"):
+        line = raw.split("#", 1)[0]  # a commented-out rule builds nothing
+        if _MAKE_COND.match(line) and not line.startswith("\t"):
+            depth += 1
+        elif re.match(r"\s*endif\b", line) and not line.startswith("\t"):
+            depth = max(depth - 1, 0)
+        elif depth == 0:
+            lines.append(line)
+    recipes = [ln for ln in lines if ln.startswith("\t")]
+    compiled = {m for ln in recipes for m in re.findall(r"-c\s+user/test/(test_[\w-]+)\.c\b", ln)}
+    linked = {m for ln in recipes if "$(LD)" in ln for m in re.findall(r"user/test/(test_[\w-]+)\.o\b", ln)}
+    shipped = {m for ln in lines if re.match(r"userland\s*:", ln) for m in re.findall(r"\b(test_[\w-]+)\.exe\b", ln)}
+    built = {n: USER_TEST_ROOT for n in compiled & linked}
+    for ln in recipes:
+        for n in re.findall(r"-o\s+\S*user/test/(test_[\w-]+)\.exe\b", ln):
+            if re.search(rf"(?<![\w/])user/test/{n}\.c\b", ln):
+                entry = re.search(r"/entry:([A-Za-z_]\w*)", ln)
+                built[n] = entry.group(1) if entry else USER_TEST_ROOT
+    return {f"user/test/{n}.c": e for n, e in built.items() if n in shipped}
 
 
 def entry_points_for(test_path: str, kernel_entry: frozenset[str],
-                     user_built: frozenset[str] = frozenset()) -> frozenset[str]:
-    """Where execution enters a test file: main for a user-mode test the Makefile
-    builds, nothing for one it does not, what the kernel runners call for a kernel test."""
+                     user_built: dict[str, str] | None = None) -> frozenset[str]:
+    """Where execution enters a test file: the entry of a user-mode test the Makefile
+    builds (user_built_tests), nothing for one it does not, what the kernel runners
+    call for a kernel test."""
     if test_path.startswith("user/"):
-        return frozenset({USER_TEST_ROOT}) if test_path in user_built else frozenset()
+        entry = (user_built or {}).get(test_path)
+        return frozenset({entry}) if entry else frozenset()
     return kernel_entry
 
 
@@ -573,7 +614,8 @@ def report(root: Path) -> tuple[dict[str, list[str]], list[str]]:
     files = _git(root, "ls-tree", "-r", "--name-only", "HEAD", "src/kernel").split()
     entry = runner_entry_points((root / r).read_text(errors="replace") for r in RUNNERS)
     built = user_built_tests((root / "Makefile").read_text(errors="replace"))
-    tests = {f: test_names((root / f).read_text(errors="replace"), entry_points_for(f, entry, built)) for f in files
+    tests = {f: test_names((root / f).read_text(errors="replace"), entry_points_for(f, entry, built), defines_for(f))
+             for f in files
              if re.search(r"/test/test_[\w-]+\.c$", f)}
     covered: dict[str, list[str]] = {}
     untested: list[str] = []

@@ -55,6 +55,11 @@ def _stage(repo: pathlib.Path, files: dict[str, str]) -> list[str]:
 
 
 RUNNER = "src/kernel/test/test_runner.c"
+USER_MAKE = ("userland: $(SYSROOT)/test_libc_x.exe\n"
+             "$(SYSROOT)/test_libc_x.exe: user/test/test_libc_x.c\n"
+             "\t$(CC) $(USER_CFLAGS) -c user/test/test_libc_x.c -o $(BUILD_DIR)/user/test/test_libc_x.o\n"
+             "\t$(LD) -o $(BUILD_DIR)/user/test/test_libc_x.exe \\\n"
+             "\t\t$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/test/test_libc_x.o\n")
 DEFAULT_RUNNER = "void boot_tests_run(void) {\n    test_register_x();\n}\n"
 
 
@@ -398,13 +403,17 @@ def test_if_integers_follow_c_signedness_and_division():
 def test_a_user_mode_test_starts_at_main():
     libc = "int strlen_x(const char *s) {\n    return 0;\n}\n"
     test = "int main(void) {\n    return strlen_x(\"a\");\n}\n"
-    make = "tests:\n\t$(CC) -c user/test/test_libc_x.c -o test_libc_x.o\n"
+    make = USER_MAKE
     ok, msg, _ = _check({"user/lib/string_x.c": libc, "user/test/test_libc_x.c": test, "Makefile": make})
     assert ok, msg
     ok, msg, _ = _check({"user/lib/string_x.c": libc, "Makefile": make,
                          "user/test/test_libc_x.c": test.replace("int main", "int not_main")})
     assert not ok and "string_x.c" in msg, msg
-    for unbuilt in ("all:\n", "# $(CC) -c user/test/test_libc_x.c\n"):
+    for unbuilt in ("all:\n", "# $(CC) -c user/test/test_libc_x.c\n",
+                    "userland: $(SYSROOT)/test_libc_x.exe\nall: user/test/test_libc_x.c\n\t@true\n",
+                    "ifeq (0,1)\n" + USER_MAKE + "endif\n",
+                    USER_MAKE.replace("$(LD)", "@echo"),
+                    USER_MAKE.replace("userland: $(SYSROOT)/test_libc_x.exe", "userland:")):
         ok, msg, _ = _check({"user/lib/string_x.c": libc, "user/test/test_libc_x.c": test, "Makefile": unbuilt})
         assert not ok and "string_x.c" in msg, "a test the Makefile never builds never runs"
 
@@ -448,6 +457,33 @@ def test_guard_detection_scales_linearly():
     t0 = time.monotonic()
     tcs.public_symbols("include/kernel/x.h", header)
     assert time.monotonic() - t0 < 2.0, "40,000 conditional defines took the hook's budget"
+
+
+def test_refusal_a_test_stub_named_like_the_source_function():
+    stub = "static int dpc_queue(int x) {\n    return x;\n}\n" + SCHED_TEST
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": stub})
+    assert not ok and "dpc.c" in msg, "the call reaches the stub, not dpc.c"
+
+
+def test_a_user_test_is_read_with_the_user_build_flags():
+    import _test_coverage_by_symbol as tcs
+    libc = "int strlen_x(const char *s) {\n    return 0;\n}\n"
+    test = "int main(void) {\n#ifdef KERNEL_TESTS\n    return strlen_x(\"a\");\n#endif\n    return 0;\n}\n"
+    ok, msg, _ = _check({"user/lib/string_x.c": libc, "user/test/test_libc_x.c": test, "Makefile": USER_MAKE})
+    assert not ok and "string_x.c" in msg, "the user build does not define KERNEL_TESTS"
+    makefile = (HOOKS.parents[1] / "Makefile").read_text()
+    flags = re.search(r"^USER_CFLAGS\s*:=((?:.*\\\n)*.*)", makefile, re.M).group(1)
+    assert set(re.findall(r"-D(\w+)", flags)) <= set(tcs.USER_BUILD_DEFINES)
+
+
+def test_a_one_step_user_build_enters_where_it_says():
+    import _test_coverage_by_symbol as tcs
+    make = ("userland: $(SYSROOT)/test_pe_x.exe\n"
+            "x:\n\tclang-19 -Wl,/entry:_start -o $(BUILD_DIR)/user/test/test_pe_x.exe \\\n"
+            "\t\tuser/test/test_pe_x.c\n")
+    assert tcs.user_built_tests(make) == {"user/test/test_pe_x.c": "_start"}
+    real = tcs.user_built_tests((HOOKS.parents[1] / "Makefile").read_text())
+    assert real.get("user/test/test_loader_pe.c") == "_start" and real.get("user/test/test_libc.c") == "main"
 
 
 if __name__ == "__main__":
