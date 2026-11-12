@@ -1242,11 +1242,15 @@ class _BashLexer:
                 word.append(s[self.i:k + 1])
                 # Its patterns are words, so the lexer reads them: their substitutions
                 # (`$(...)`, `<(...)`) run, their quotes quote, and their words are no command.
-                group = _BashLexer(s[self.i + 1:k], self.depth + 1)
-                group.pattern, group.collect = True, self.collect
-                if not group.lex():
-                    return False
-                self.subs.extend(group.subs)
+                # A close-finding lexer has its position from `_close` and keeps no
+                # subs, so it does not read them: reading them too doubled the work
+                # at every nesting level.
+                if self.collect:
+                    group = _BashLexer(s[self.i + 1:k], self.depth + 1)
+                    group.pattern = True
+                    if not group.lex():
+                        return False
+                    self.subs.extend(group.subs)
                 self.i = k + 1
                 continue
             if ch == "(" and not inword and not self.compound and s.startswith("((", self.i):
@@ -1428,7 +1432,27 @@ def _unread_commit(text: str) -> tuple[bool, bool]:
     return (True, True)
 
 
+_COMMIT_MEMO: dict | None = None  # one top-level reading's answers, by script text
+
+
 def _bash_is_git_commit(cmd: str) -> tuple[bool, bool]:
+    """_read_git_commit, each script read once per top-level call. A shell's script
+    (`eval "$(...)"`, `bash -c "$(...)"`) is read again where its command is judged,
+    and nested ones re-read every deeper level: 2x the work per level, 2.5 s at twelve."""
+    global _COMMIT_MEMO
+    outer = _COMMIT_MEMO is None
+    if outer:
+        _COMMIT_MEMO = {}
+    try:
+        if cmd not in _COMMIT_MEMO:
+            _COMMIT_MEMO[cmd] = _read_git_commit(cmd)
+        return _COMMIT_MEMO[cmd]
+    finally:
+        if outer:
+            _COMMIT_MEMO = None
+
+
+def _read_git_commit(cmd: str) -> tuple[bool, bool]:
     """Returns (is_git_commit, has_no_verify) for any command `cmd` runs:
     each simple command of the script as bash reads it (_BashLexer), the
     commands inside its substitutions, and an inner `bash -c "..."` via

@@ -102,22 +102,32 @@ run_one() {
 
 echo "== overnight-runner test suite =="
 
-# All python contract tests in this directory. A file that only DEFINES test
-# functions (pytest style: fixtures such as tmp_path, parametrize) runs nothing under
-# plain python3 and exits 0, so until 2026-11-12 test_review_pin.py (65 tests) and
-# test_three_pass_gate.py (17) passed here without one assertion running. Such a file
-# goes to pytest; without pytest it fails, never passes.
-needs_pytest() {
-  grep -q '^def test_' "$1" && ! grep -q '^if __name__ == "__main__"' "$1"
+# All python contract tests in this directory. A test function that takes a fixture
+# (tmp_path, monkeypatch, parametrize), or one defined after a file's `__main__` runner,
+# never runs under plain python3, which exits 0 anyway: until 2026-11-12
+# test_review_pin.py (65 tests), test_three_pass_gate.py (17) and the last seven of
+# test_commit_gate_script_lines.py passed here without running. So with pytest
+# installed every file that defines tests runs under it (all of them pass that way),
+# and without it a file holding such a test fails, never passes.
+PYTEST=0
+python3 -c 'import pytest' 2>/dev/null && PYTEST=1
+needs_pytest() {  # a test plain python3 would define and never call
+  python3 - "$1" <<'PY'
+import ast, sys
+tree = ast.parse(open(sys.argv[1]).read())
+main = next((i for i, n in enumerate(tree.body) if isinstance(n, ast.If)
+             and "__main__" in ast.unparse(n.test)), None)
+sys.exit(0 if any(isinstance(n, ast.FunctionDef) and n.name.startswith("test_")
+                  and (n.args.args or main is None or i > main)
+                  for i, n in enumerate(tree.body)) else 1)
+PY
 }
 while IFS= read -r t; do
   [ -n "$t" ] || continue
-  if needs_pytest "$t"; then
-    if python3 -c 'import pytest' 2>/dev/null; then
-      run_one "$(basename "$t")" python3 -m pytest -q -p no:cacheprovider "$t"
-    else
-      run_one "$(basename "$t") (defines pytest tests; pytest is not installed)" false
-    fi
+  if [ "$PYTEST" = 1 ] && grep -q '^def test_' "$t"; then
+    run_one "$(basename "$t")" python3 -m pytest -q -p no:cacheprovider "$t"
+  elif needs_pytest "$t"; then
+    run_one "$(basename "$t") (holds tests only pytest runs; pytest is not installed)" false
   else
     run_one "$(basename "$t")" python3 "$t"
   fi

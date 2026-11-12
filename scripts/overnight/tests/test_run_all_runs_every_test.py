@@ -39,6 +39,11 @@ def test_refusal_a_failing_pytest_style_test_fails_the_suite():
     assert "ok   test_b.py" in done.stdout, done.stdout
 
 
+def test_refusal_a_fixture_test_after_the_runner_fails_the_suite():
+    done = _suite({"test_a.py": PLAIN + "\n\n" + FAILING_PYTEST_STYLE})
+    assert done.returncode != 0 and "FAIL test_a.py" in done.stdout, done.stdout
+
+
 def test_a_passing_pytest_style_test_passes():
     done = _suite({"test_a.py": PASSING_PYTEST_STYLE})
     assert done.returncode == 0 and "== 1 passed, 0 failed ==" in done.stdout, done.stdout
@@ -50,7 +55,11 @@ def test_refusal_without_pytest_such_a_file_fails():
         shim.write_text('#!/bin/sh\n[ "$1" = -c ] && case "$2" in *pytest*) exit 1;; esac\nexec /usr/bin/python3 "$@"\n')
         shim.chmod(0o755)
         done = _suite({"test_a.py": PASSING_PYTEST_STYLE}, path=f"{bindir}:/usr/bin:/bin")
-    assert done.returncode != 0 and "pytest is not installed" in done.stdout, done.stdout
+        assert done.returncode != 0 and "pytest is not installed" in done.stdout, done.stdout
+        done = _suite({"test_a.py": PLAIN + "\n\n" + PASSING_PYTEST_STYLE}, path=f"{bindir}:/usr/bin:/bin")
+        assert done.returncode != 0 and "pytest is not installed" in done.stdout, done.stdout
+        done = _suite({"test_b.py": PLAIN, "test_c.py": "assert True\n"}, path=f"{bindir}:/usr/bin:/bin")
+        assert done.returncode == 0 and "== 2 passed, 0 failed ==" in done.stdout, done.stdout
 
 
 if __name__ == "__main__":

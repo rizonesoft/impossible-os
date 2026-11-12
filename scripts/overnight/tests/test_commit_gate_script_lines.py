@@ -407,22 +407,25 @@ def test_many_substitutions_stay_linear():
     assert big < small * 8 * 2.5, (small, big)  # 8x the input: linear with headroom, quadratic is ~50x
 
 
-def test_nested_subscripted_substitutions_stay_linear():
-    """Performance pass: a close-finding lexer collected what the body is read for again,
-    so `"a[$(...)]"` nested ten deep took 3 s (and 12 s at twelve)."""
+def test_nested_substitutions_stay_polynomial():
+    """Performance passes: work doubled per nesting level where a close-finding lexer
+    read what the body is read for again (`"a[$(...)]"` ten deep: 3 s; `@("$(...)")`
+    twelve deep with 10 KB of text: over 11 s), and where a shell's script was re-read
+    with every deeper one (`eval "$(...)"` twelve deep: 2.5 s)."""
     import time
 
-    def took(depth):
+    def took(wrap, depth):
         cmd = "echo git" + "x" * 1000
         for _ in range(depth):
-            cmd = 'echo "a[$(' + cmd + ')]"'
+            cmd = wrap.format(cmd)
         gate._sub_script_tokens.cache_clear()
         t = time.perf_counter()
-        assert gate._bash_is_git_commit(cmd) == (False, False)
+        assert gate._bash_is_git_commit(cmd) == (False, False), wrap
         return time.perf_counter() - t
 
-    shallow, deep = min(took(4) for _ in range(3)), min(took(12) for _ in range(3))
-    assert deep < shallow * 3 * 4, (shallow, deep)  # 3x the depth: quadratic at worst, exponential is ~600x
+    for wrap in ('echo "a[$({})]"', 'echo @("$({})")', 'eval "$({})"', 'bash -c "$({})"'):
+        shallow, deep = min(took(wrap, 4) for _ in range(3)), min(took(wrap, 12) for _ in range(3))
+        assert deep < shallow * 3 * 4, (wrap, shallow, deep)  # 3x the depth: quadratic at worst
 
 
 def test_continued_heredoc_lines_stay_linear():
