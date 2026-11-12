@@ -3890,17 +3890,33 @@ STEP8_WARN_SINCE = "d56710370b54e3e34c6ef8f3714cc2ae4ce84430"
 STEP8_WARN_SECTIONS = 10
 
 
+def _step8_stamped_at(root: Path, rev: str) -> set[tuple[str, str]]:
+    """The (TODO file, section number) pairs carrying a `> **Verified:**` stamp at
+    `rev`: one git grep over todo/, so the cost follows the roadmap's size, never the
+    length of history."""
+    out = subprocess.run(
+        ["git", "grep", "-n", "-e", "^## [0-9]", "-e", "^> \\*\\*Verified:\\*\\*", rev, "--", "todo/"],
+        cwd=str(root), capture_output=True, text=True, timeout=3, check=True,
+        errors="replace").stdout  # deadline: 3 s, a local tree read
+    stamped: set[tuple[str, str]] = set()
+    section: dict[str, str] = {}
+    for line in out.splitlines():
+        _, path, _, text = line.split(":", 3)
+        if text.startswith("## "):
+            section[path] = text[3:].split(".")[0].strip()
+        elif path in section:
+            stamped.add((path, section[path]))
+    return stamped
+
+
 def _step8_sections_stamped(root: Path) -> int | None:
-    """How many section stamps were added since STEP8_WARN_SINCE, or None when the
-    history cannot say (a shallow clone without that commit)."""
+    """How many sections have gained a Verified stamp since STEP8_WARN_SINCE: stamped
+    at HEAD and not at that commit. Refreshing a stamp, or a second stamp line, adds
+    nothing. None when either tree cannot be read (a shallow clone without the commit)."""
     try:
-        diff = subprocess.run(
-            ["git", "log", "--format=", "-p", f"{STEP8_WARN_SINCE}..HEAD", "--", "todo/"],
-            cwd=str(root), capture_output=True, text=True, timeout=3, check=True,
-            errors="replace").stdout  # deadline: 3 s, a local history read
-    except (OSError, subprocess.SubprocessError):
+        return len(_step8_stamped_at(root, "HEAD") - _step8_stamped_at(root, STEP8_WARN_SINCE))
+    except (OSError, subprocess.SubprocessError, ValueError):
         return None
-    return sum(1 for line in diff.splitlines() if line.startswith("+> **Verified:**"))
 
 
 class _StagedReadError(Exception):
@@ -4014,7 +4030,8 @@ def _step8_test_wiring_check(
     if not sources:
         return (True, "")
     entry = tcs.runner_entry_points(staged.get(r) for r in tcs.RUNNERS)
-    tests = {p: tcs.test_names(staged[p], entry) for p in test_paths if staged.get(p) is not None}
+    tests = {p: tcs.test_names(staged[p], tcs.entry_points_for(p, entry))
+             for p in test_paths if staged.get(p) is not None}
     uncovered = [p for p, text in sources.items() if not tcs.covering_tests(p, text, tests)]
     if not uncovered:
         return (True, "")

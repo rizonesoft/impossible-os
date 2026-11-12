@@ -52,8 +52,9 @@ _COND = re.compile(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif|define|undef
 # The macros the kernel's test flavour defines: the Makefile's test CFLAGS plus what
 # the compiler predefines for --target=x86_64-elf. test_step8_suite_coverage.py checks
 # each -D name against the Makefile.
-TEST_BUILD_DEFINES = {"KERNEL_TESTS": 1, "CONFIG_SMP": 1, "CONFIG_EXCEPT_TELEMETRY": 1,
-                      "BUILD_ALT_BOOT_OFF": 1, "__IMPOSSIBLE_OS__": 1, "__x86_64__": 1}
+TEST_BUILD_DEFINES = {"KERNEL_TESTS": (1, False), "CONFIG_SMP": (1, False),
+                      "CONFIG_EXCEPT_TELEMETRY": (1, False), "BUILD_ALT_BOOT_OFF": (1, False),
+                      "__IMPOSSIBLE_OS__": (1, False), "__x86_64__": (1, False)}
 _UNDEF = object()      # known to be undefined (#undef)
 _UNKNOWN = object()    # defined, value not an integer literal
 _UNCERTAIN = object()  # changed inside a branch that may or may not compile
@@ -64,18 +65,36 @@ _BINARY = {"||": 1, "&&": 2, "|": 3, "^": 4, "&": 5, "==": 6, "!=": 6, "<": 7, "
            "<=": 7, ">=": 7, "<<": 8, ">>": 8, "+": 9, "-": 9, "*": 10, "/": 10, "%": 10}
 
 
+_MASK = (1 << 64) - 1
+_SMIN, _SMAX = -(1 << 63), (1 << 63) - 1
+
+
 def _int(text: str):
-    text = re.sub(r"[uUlL]+$", "", text.strip())
-    try:
-        return int(text, 0)
-    except ValueError:
+    """A C integer literal as (value, unsigned), the type rules of a 64-bit
+    preprocessor: a U suffix, or a value past INT64_MAX, makes it unsigned."""
+    m = re.fullmatch(r"(0[xX][0-9a-fA-F]+|0[0-7]*|[1-9]\d*)([uUlL]*)", text.strip())
+    if not m:
         return _UNKNOWN
+    v = int(m.group(1), 16 if m.group(1)[:2].lower() == "0x" else (8 if m.group(1).startswith("0") else 10))
+    if v > _MASK:
+        return _UNKNOWN
+    return (v, "u" in m.group(2).lower() or v > _SMAX)
+
+
+def _fit(v: int, unsigned: bool):
+    """`v` as the C result type: unsigned wraps modulo 2**64, signed overflow (undefined
+    behaviour) is unknown."""
+    if unsigned:
+        return (v & _MASK, True)
+    return (v, False) if _SMIN <= v <= _SMAX else None
 
 
 class _Expr:
-    """A C preprocessor #if expression, evaluated with C's precedence and its 0/1
-    results. None stands for a value this file cannot know and propagates, except
-    where && or || is decided by its known side."""
+    """A C preprocessor #if expression, evaluated as a 64-bit preprocessor does: C's
+    precedence, signed and unsigned operands with the usual conversions, truncating
+    integer division, 0/1 results. A value is (int, unsigned); None stands for one
+    this file cannot know and propagates, except where && or || is decided by its
+    known side."""
 
     def __init__(self, toks: list[str], env: dict):
         self.toks, self.env, self.i = toks, env, 0
@@ -99,7 +118,10 @@ class _Expr:
         if self.take() != ":":
             raise ValueError("?: without :")
         no = self.ternary()
-        return None if cond is None else (yes if cond else no)
+        if cond is None or yes is None or no is None:
+            return None  # the result type depends on both arms
+        v = yes if cond[0] else no
+        return _fit(v[0], yes[1] or no[1])
 
     def binary(self, floor: int):
         left = self.unary()
@@ -112,24 +134,43 @@ class _Expr:
     @staticmethod
     def apply(op, a, b):
         if op == "&&":
-            return 0 if 0 in (a, b) else (None if None in (a, b) else 1)
+            if (a is not None and not a[0]) or (b is not None and not b[0]):
+                return (0, False)
+            return None if None in (a, b) else (1, False)
         if op == "||":
-            return 1 if (a not in (0, None) or b not in (0, None)) else (None if None in (a, b) else 0)
+            if (a is not None and a[0]) or (b is not None and b[0]):
+                return (1, False)
+            return None if None in (a, b) else (0, False)
         if a is None or b is None:
             return None
-        if op in ("/", "%") and b == 0:
-            return None
-        return {"|": a | b, "^": a ^ b, "&": a & b, "==": int(a == b), "!=": int(a != b),
-                "<": int(a < b), ">": int(a > b), "<=": int(a <= b), ">=": int(a >= b),
-                "<<": a << b if 0 <= b < 64 else None, ">>": a >> b if 0 <= b < 64 else None,
-                "+": a + b, "-": a - b, "*": a * b,
-                "/": int(a / b) if b else None, "%": a - b * int(a / b) if b else None}[op]
+        if op in ("<<", ">>"):
+            count = b[0]
+            if not 0 <= count < 64:
+                return None
+            if op == ">>":
+                return (a[0] >> count, a[1])
+            return _fit(a[0] << count, True) if a[1] else (None if a[0] < 0 else _fit(a[0] << count, False))
+        u = a[1] or b[1]
+        x, y = (a[0] & _MASK, b[0] & _MASK) if u else (a[0], b[0])
+        if op in ("==", "!=", "<", ">", "<=", ">="):
+            return (int({"==": x == y, "!=": x != y, "<": x < y, ">": x > y,
+                         "<=": x <= y, ">=": x >= y}[op]), False)
+        if op in ("/", "%"):
+            if y == 0:
+                return None
+            q = abs(x) // abs(y) * (1 if (x < 0) == (y < 0) else -1)
+            return _fit(q if op == "/" else x - y * q, u)
+        return _fit({"|": x | y, "^": x ^ y, "&": x & y, "+": x + y, "-": x - y, "*": x * y}[op], u)
 
     def unary(self):
         t = self.take()
         if t in ("!", "~", "-", "+"):
             v = self.unary()
-            return None if v is None else {"!": int(not v), "~": ~v, "-": -v, "+": v}[t]
+            if v is None:
+                return None
+            if t == "!":
+                return (int(not v[0]), False)
+            return _fit({"~": ~v[0], "-": -v[0], "+": v[0]}[t], v[1])
         if t == "(":
             v = self.ternary()
             if self.take() != ")":
@@ -142,31 +183,37 @@ class _Expr:
             name = self.take()
             if paren and self.take() != ")":
                 raise ValueError("defined( without )")
-            v = self.env.get(name, _UNDEF)
-            return None if v is _UNCERTAIN else int(v is not _UNDEF)
+            presence = _defined(self.env, name)
+            return None if presence is None else (int(presence), False)
         if t[0].isdigit():
             v = _int(t)
             return None if v is _UNKNOWN else v
         v = self.env.get(t)
         if v is _UNDEF:
-            return 0  # C: an identifier that is not a macro is 0
-        if v is None or v is _UNKNOWN or v is _UNCERTAIN:
+            return (0, False)  # C: an identifier that is not a macro is 0
+        if not isinstance(v, tuple):
             return None  # a header's macro, or a value this file cannot know
         return v
 
 
+def _defined(env: dict, name: str) -> bool | None:
+    """Whether `name` is a macro here: known for the build's own flags and what this
+    file defines or undefines, unknown (None) otherwise, since a header the file
+    includes may define it."""
+    v = env.get(name)
+    if v is None or v is _UNCERTAIN:
+        return None
+    return v is not _UNDEF
+
+
 def _condition(kind: str, expr: str, env: dict) -> bool | None:
     """The value of an #if/#ifdef/#ifndef/#elif condition for the test build, or None
-    when it depends on what this file cannot see. A name the file never defines is
-    undefined for defined()/#ifdef, as C reads it, so include guards and a file's own
-    flags evaluate; a header macro used for its value is unknown."""
+    when it depends on what this file cannot see (a macro a header may define, or a
+    value it gives)."""
     expr = _code_only(expr).strip()
     if kind in ("ifdef", "ifndef"):
-        name = expr.split()[0] if expr.split() else ""
-        v = env.get(name, _UNDEF)
-        if v is _UNCERTAIN:
-            return None
-        return (v is not _UNDEF) == (kind == "ifdef")
+        presence = _defined(env, expr.split()[0] if expr.split() else "")
+        return None if presence is None else presence == (kind == "ifdef")
     toks, pos = [], 0
     while pos < len(expr):
         m = _EXPR_TOKEN.match(expr, pos)
@@ -183,7 +230,7 @@ def _condition(kind: str, expr: str, env: dict) -> bool | None:
             return None
     except (ValueError, KeyError):
         return None
-    return None if value is None else bool(value)
+    return None if value is None else bool(value[0])
 
 
 def _first_branches(code: str) -> str:
@@ -232,6 +279,8 @@ def _first_branches(code: str) -> str:
                 frames.append({"state": "off", "taken": True, "unknown": False})
                 continue
             c = _condition(kind, expr, env)
+            if c is None and _is_include_guard(kind, expr, lines, n):
+                c = True
             frames.append({"state": state_for(c, False, False), "taken": c is True, "unknown": c is None})
         elif kind == "elif" and frames:
             f = frames[-1]
@@ -257,8 +306,27 @@ def _first_branches(code: str) -> str:
             elif dm.group(2):
                 env[name] = _UNKNOWN
             else:
-                env[name] = _int(dm.group(3)) if dm.group(3).strip() else 1
+                env[name] = _int(dm.group(3)) if dm.group(3).strip() else _UNKNOWN
     return "\n".join(out)
+
+
+_GUARD = re.compile(r"\s*(?:ifndef\s+([A-Za-z_]\w*)|if\s*!\s*defined\s*\(?\s*([A-Za-z_]\w*)\s*\)?)\s*$")
+
+
+def _is_include_guard(kind: str, expr: str, lines: list[str], n: int) -> bool:
+    """An `#ifndef NAME` (or `#if !defined(NAME)`) whose next directive is
+    `#define NAME`: an include guard, which compiles on the file's first inclusion,
+    the case compilers recognise for the same reason."""
+    m = _GUARD.match(kind + " " + _code_only(expr)) if kind in ("ifndef", "if") else None
+    if not m:
+        return False
+    name = m.group(1) or m.group(2)
+    for line in lines[n:]:
+        if line.lstrip().startswith("#"):
+            return re.match(rf"\s*#\s*define\s+{name}\b", line) is not None
+        if line.strip():
+            return False
+    return False
 
 
 def _close(code: str, i: int, open_: str = "(", close: str = ")") -> int:
@@ -424,32 +492,45 @@ def test_names(text: str, entry_points: frozenset[str] = frozenset()) -> set[str
 
 
 RUNNERS = ("src/kernel/test/test_runner.c", "src/kernel/main/boot_tests.c")
+# Where a test boot enters the runners: boot_desktop.c calls it (a test checks that).
+RUNNER_ROOT = "boot_tests_run"
+# Where a user-mode test binary starts: crt0 calls main.
+USER_TEST_ROOT = "main"
 
 
 def runner_entry_points(runner_texts) -> frozenset[str]:
-    """What the runners run: starting from their non-static functions (what the boot
-    path calls into), the uses in every runner function those reach. A declaration, a
-    comment, a call under `#if 0` or an uncalled static helper starts nothing."""
-    bodies: dict[str, str] = {}
-    exported: set[str] = set()
+    """What a test boot runs: the uses in every runner function reachable from
+    RUNNER_ROOT. A declaration, a comment, a call under `#if 0` or a helper nothing
+    on that path calls starts nothing. A static function resolves within its own file."""
+    files = []
+    exported: dict[str, tuple[int, str]] = {}
     for text in runner_texts:
         if text:
             b, e = _bodies(text)
-            for name, body in b.items():
-                bodies[name] = bodies.get(name, "") + body
-            exported |= e
-    seen: set[str] = set()
+            files.append(b)
+            for name in e:
+                exported[name] = (len(files) - 1, name)
+    seen: set[tuple[int, str]] = set()
     names: set[str] = set()
-    todo = list(exported)
+    todo = [exported[RUNNER_ROOT]] if RUNNER_ROOT in exported else []
     while todo:
-        fn = todo.pop()
-        if fn in seen:
+        key = todo.pop()
+        if key in seen:
             continue
-        seen.add(fn)
-        uses = _body_uses(bodies[fn])
+        seen.add(key)
+        uses = _body_uses(files[key[0]][key[1]])
         names |= uses
-        todo.extend(u for u in uses if u in bodies and u not in seen)
+        for u in uses:
+            nxt = (key[0], u) if u in files[key[0]] else exported.get(u)
+            if nxt and nxt not in seen:
+                todo.append(nxt)
     return frozenset(names)
+
+
+def entry_points_for(test_path: str, kernel_entry: frozenset[str]) -> frozenset[str]:
+    """Where execution enters a test file: main for a user-mode test binary, what the
+    kernel runners call for a kernel test."""
+    return frozenset({USER_TEST_ROOT}) if test_path.startswith("user/") else kernel_entry
 
 
 def covering_tests(path: str, text: str, tests: dict[str, set[str]]) -> list[str]:
@@ -472,7 +553,7 @@ def report(root: Path) -> tuple[dict[str, list[str]], list[str]]:
         raise SystemExit("src/libs/PROVENANCE.md has no Local additions heading")
     files = _git(root, "ls-tree", "-r", "--name-only", "HEAD", "src/kernel").split()
     entry = runner_entry_points((root / r).read_text(errors="replace") for r in RUNNERS)
-    tests = {f: test_names((root / f).read_text(errors="replace"), entry) for f in files
+    tests = {f: test_names((root / f).read_text(errors="replace"), entry_points_for(f, entry)) for f in files
              if re.search(r"/test/test_[\w-]+\.c$", f)}
     covered: dict[str, list[str]] = {}
     untested: list[str] = []

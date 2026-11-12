@@ -55,7 +55,7 @@ def _stage(repo: pathlib.Path, files: dict[str, str]) -> list[str]:
 
 
 RUNNER = "src/kernel/test/test_runner.c"
-DEFAULT_RUNNER = "void test_run_all(void) {\n    test_register_x();\n}\n"
+DEFAULT_RUNNER = "void boot_tests_run(void) {\n    test_register_x();\n}\n"
 
 
 def _check(files: dict[str, str], refuse: bool = True, todo: dict | None = None,
@@ -130,24 +130,28 @@ def test_for_the_first_ten_sections_it_warns_and_lets_the_commit_through():
     assert ok and "WARN (step-8, 3 of 10" in err and "dpc.c" in err, err
 
 
-def test_the_warning_sections_are_the_stamps_added_since_the_rule():
+def test_the_warning_sections_are_sections_first_stamped_since_the_rule():
     with tempfile.TemporaryDirectory() as d:
         repo = _repo(d)
 
-        def commit(path, text):
-            _stage(repo, {path: text})
+        def commit(files):
+            _stage(repo, files)
             subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "--no-verify",
                             "-m", "x"], cwd=d, check=True, timeout=30)
             return subprocess.run(["git", "rev-parse", "HEAD"], cwd=d, capture_output=True,
                                   text=True, check=True, timeout=30).stdout.strip()
-        base = commit("todo/T.md", "> **Verified:** old\n")
-        commit("todo/T.md", "> **Verified:** old\n> **Verified:** one\n")
-        commit("todo/U.md", "> **Verified:** two\n")
-        commit("src/x.c", "> **Verified:** not a stamp outside todo/\n")
+        base = commit({"todo/T.md": "## 1. Old\n> **Verified:** old\n## 2. Open\n"})
+        for i in range(10):  # ten refreshes of one existing stamp add no section
+            commit({"todo/T.md": f"## 1. Old\n> **Verified:** refresh {i}\n## 2. Open\n"})
+        commit({"todo/T.md": "## 1. Old\n> **Verified:** x\n## 2. Open\n> **Verified:** a\n> **Verified:** b\n",
+                "todo/U.md": "## 7. New\n> **Verified:** c\n",
+                "src/x.c": "## 9. Not\n> **Verified:** not a TODO\n"})
         saved = gate.STEP8_WARN_SINCE
         gate.STEP8_WARN_SINCE = base
         try:
             assert gate._step8_sections_stamped(repo) == 2
+            commit({**{f"todo/S{i}.md": "## 1. S\n> **Verified:** s\n" for i in range(8)}})
+            assert gate._step8_sections_stamped(repo) == 10
             gate.STEP8_WARN_SINCE = "0" * 40
             assert gate._step8_sections_stamped(repo) is None
         finally:
@@ -271,7 +275,7 @@ def test_an_entry_point_the_runner_calls_counts():
              "src/kernel/test/test_x.c": "int test_x_run(void) {\n    return dpc_queue(1);\n}\n"}
     ok, msg, _ = _check(files)
     assert not ok, "no runner calls test_x_run yet"
-    ok, msg, _ = _check({**files, "src/kernel/main/boot_tests.c": "/* tested-by: test_x.c */\nvoid go(void) { test_x_run(); }\n"})
+    ok, msg, _ = _check({**files, "src/kernel/main/boot_tests.c": "/* tested-by: test_x.c */\nvoid boot_tests_run(void) { test_x_run(); }\n"})
     assert ok, msg
 
 
@@ -301,15 +305,15 @@ def test_a_function_taken_by_address_after_a_block_prototype_counts():
 
 def test_refusal_a_registration_no_runner_calls():
     ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": SCHED_TEST},
-                        runner="void test_run_all(void) {\n    test_register_other();\n}\n")
+                        runner="void boot_tests_run(void) {\n    test_register_other();\n}\n")
     assert not ok and "dpc.c" in msg, msg
 
 
 def test_refusal_a_runner_that_declares_or_disables_the_call():
     files = {"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": SCHED_TEST}
-    ok, msg, _ = _check(files, runner="extern void test_register_x(void);\nvoid run(void) {}\n")
+    ok, msg, _ = _check(files, runner="extern void test_register_x(void);\nvoid boot_tests_run(void) {}\n")
     assert not ok, "a declaration starts nothing"
-    ok, msg, _ = _check(files, runner="void run(void) {\n#if 0\n    test_register_x();\n#endif\n}\n")
+    ok, msg, _ = _check(files, runner="void boot_tests_run(void) {\n#if 0\n    test_register_x();\n#endif\n}\n")
     assert not ok, "a call under #if 0 starts nothing"
 
 
@@ -350,11 +354,55 @@ def test_macros_changed_where_compilation_is_unknown_become_unknown():
 
 
 def test_refusal_a_registration_in_an_uncalled_runner_helper():
-    runner = ("void test_run_all(void) {\n}\n"
+    runner = ("void boot_tests_run(void) {\n}\n"
               "static void forgotten(void) {\n    test_register_x();\n}\n")
     ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": SCHED_TEST},
                         runner=runner)
     assert not ok and "dpc.c" in msg, msg
+
+
+def test_refusal_a_registration_in_an_uncalled_exported_runner_function():
+    runner = ("void boot_tests_run(void) {\n}\n"
+              "void forgotten(void) {\n    test_register_x();\n}\n")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": SCHED_TEST},
+                        runner=runner)
+    assert not ok and "dpc.c" in msg, msg
+
+
+def test_the_runner_root_is_what_the_boot_calls():
+    import _test_coverage_by_symbol as tcs
+    boot = (HOOKS.parents[1] / "src/kernel/main/boot_desktop.c").read_text()
+    assert re.search(rf"\b{tcs.RUNNER_ROOT}\s*\(\s*\)\s*;", boot)
+
+
+def test_refusal_a_macro_a_header_may_define_is_not_known_absent():
+    for guard in ("#ifndef TEST_MAX_SUITES", "#if !defined(TEST_MAX_SUITES)", "#ifdef TEST_MAX_SUITES"):
+        code = suite(f"\n{guard}\n    dpc_queue(1);\n#endif\n")
+        ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": code})
+        assert not ok, guard
+    guarded = "#ifndef TEST_X_H\n#define TEST_X_H\n" + SCHED_TEST + "#endif\n"
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": guarded})
+    assert ok, "an include guard compiles on first inclusion: " + msg
+
+
+def test_if_integers_follow_c_signedness_and_division():
+    import _test_coverage_by_symbol as tcs
+    env = dict(tcs.TEST_BUILD_DEFINES)
+    for expr, want in (("-1 < 1U", False), ("18446744073709551615ULL / 3 == 6148914691236517205ULL", True),
+                       ("9223372036854775807 / 3 == 3074457345618258602", True), ("-7 / 2 == -3", True),
+                       ("-7 % 2 == -1", True), ("(1 ? -1 : 0u) > 0", True),
+                       ("9223372036854775807 + 1 > 0", None)):
+        assert tcs._condition("if", expr, env) is want, expr
+
+
+def test_a_user_mode_test_starts_at_main():
+    libc = "int strlen_x(const char *s) {\n    return 0;\n}\n"
+    test = "int main(void) {\n    return strlen_x(\"a\");\n}\n"
+    ok, msg, _ = _check({"user/lib/string_x.c": libc, "user/test/test_libc_x.c": test})
+    assert ok, msg
+    ok, msg, _ = _check({"user/lib/string_x.c": libc,
+                         "user/test/test_libc_x.c": test.replace("int main", "int not_main")})
+    assert not ok and "string_x.c" in msg, msg
 
 
 if __name__ == "__main__":
