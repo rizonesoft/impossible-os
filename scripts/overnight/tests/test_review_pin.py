@@ -164,8 +164,10 @@ def test_a_lens_block_survives_the_companions_argument_split():
 
 FAKE_COMPANION = """
 const fs = require('fs');
-const prompt = process.argv[3] || '';
+const tail = process.argv.slice(3);
+const prompt = tail[0] === '--' ? tail.slice(1).join(' ') : tail.join(' ');
 fs.writeFileSync(process.env.FAKE_PROMPT_OUT, prompt);
+fs.writeFileSync(process.env.FAKE_PROMPT_OUT + '.argv', JSON.stringify(tail));
 // As the real companion: progress first (here, the echoed prompt), then the heading, then the response.
 process.stdout.write('[codex] prompt: ' + prompt + '\\n# Codex Adversarial Review\\n\\n');
 process.stdout.write(fs.readFileSync(process.env.FAKE_REVIEW, 'utf8'));
@@ -206,6 +208,15 @@ def test_refusal_a_review_that_skips_a_lens_is_incomplete_not_clean(tmp_path):
     assert "INCOMPLETE -- the review gave no verdict line for: plan-delivery" in done.stderr
     log = next((tmp_path / "reviews").glob("*-completion-direct.out")).read_text()
     assert log.rstrip().endswith("Turn completed (rc=3)"), log[-200:]
+
+
+def test_a_flag_word_in_the_prompt_is_never_read_as_an_option(tmp_path):
+    """Live 2026-11-12: `git -C after` in a plan body became --cwd after, and the pass died "git is not installed"."""
+    import json
+    done, prompt = _dispatch(tmp_path, "adversarial", "no lens lines at all\n", body="see git -C after a separator, `git diff --cached` and --base x")
+    assert done.returncode == 0, done.stderr
+    argv = json.loads((tmp_path / "prompt.txt.argv").read_text())
+    assert argv[0] == "--" and len(argv) == 2 and argv[1].endswith("git -C after a separator, `git diff --cached` and --base x"), argv
 
 
 def test_an_older_kind_is_dispatched_exactly_as_before(tmp_path):
@@ -322,7 +333,7 @@ def test_refusal_a_pass_names_its_todo_and_section(tmp_path):
 SELF_CONTAINED_COMPANION = """
 const fs = require('fs');
 const path = require('path');
-fs.writeFileSync(path.join(__dirname, 'prompt.txt'), process.argv[3] || '');
+fs.writeFileSync(path.join(__dirname, 'prompt.txt'), (a => a[0] === '--' ? a.slice(1).join(' ') : a.join(' '))(process.argv.slice(3)));
 process.stdout.write('# Codex Adversarial Review\\n\\n' + fs.readFileSync(path.join(__dirname, 'review.txt'), 'utf8'));
 """
 
@@ -480,7 +491,7 @@ def test_refusal_a_verdict_inside_an_example_or_contradicted_is_no_verdict():
 MOVING_COMPANION = """
 const fs = require('fs');
 const { execSync } = require('child_process');
-fs.writeFileSync(process.env.FAKE_PROMPT_OUT, process.argv[3] || '');
+fs.writeFileSync(process.env.FAKE_PROMPT_OUT, (a => a[0] === '--' ? a.slice(1).join(' ') : a.join(' '))(process.argv.slice(3)));
 execSync(process.env.FAKE_DURING, { stdio: 'ignore' });
 process.stdout.write('# Codex Adversarial Review\\n\\n' + fs.readFileSync(process.env.FAKE_REVIEW, 'utf8'));
 """

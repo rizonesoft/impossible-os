@@ -95,35 +95,12 @@ case "$PROMPT" in
 esac
 
 SELF_NAME="codex-dispatch"
-# A bare `--flag` token ANYWHERE in the prompt body is parsed as a companion CLI
-# flag, because codex-companion.mjs `normalizeArgv` re-splits a single-argv
-# prompt into shell-like tokens (codex-companion.mjs:127-135 ->
-# lib/args.mjs splitRawArgumentString). MEASURED 2026-08-24 against the real
-# parser: `--base / ` yields {base:"/"} and the review dies in 88 bytes on
-# `git merge-base HEAD /`; worse, `--scope and` yields {scope:"and"} and the
-# review RUNS, against the wrong scope, returning findings that look legitimate.
-# Only `'` and `"` are quote characters there, so BACKTICKS neutralise the token
-# (`--base` parses as an ordinary positional) -- which is also the correct
-# markdown for naming an option in a review prompt. This run writes such prompts
-# routinely for tooling sections, so the guard is argv-time and deterministic.
-case "$PROMPT" in
-    --[a-zA-Z]*|*[[:space:]]--[a-zA-Z]*)
-        BAD_FLAG="$(printf '%s' "$PROMPT" | grep -oE '(^|[[:space:]])--[a-zA-Z][a-zA-Z0-9-]*' | head -1 | tr -d '[:space:]')"
-        cat >&2 <<EOF
-[$SELF_NAME] BLOCK -- the prompt body contains a bare CLI flag token: $BAD_FLAG
-
-codex-companion re-splits a one-argv prompt into CLI tokens, so this is
-consumed as a real flag rather than read as prose. Two outcomes, both silent:
-  --base <x>   the review dies with 'Not a valid object name'
-  --scope <x>  the review RUNS against the wrong scope and returns findings
-
-Fix: wrap the flag in backticks -- \`$BAD_FLAG\` -- which the companion's
-tokenizer leaves as an ordinary word (only ' and " are quotes there), and which
-is the right markdown for naming an option anyway.
-EOF
-        exit 2
-        ;;
-esac
+# The prompt is passed after `--`. Given ONE argument, codex-companion.mjs re-splits
+# it on whitespace (normalizeArgv -> lib/args.mjs splitRawArgumentString) and reads
+# any word starting with `-` as its own option: `--base /` killed a review,
+# `--scope and` ran one against the wrong scope, and on 2026-11-12 `git -C after`
+# became --cwd after and every pass died "git is not installed". After `--` the
+# prompt is one positional, kept exactly as written.
 
 # Hook attribution: the wrapper invocation IS the canonical shape that
 # .claude/hooks/_review_kind.py recognizes. The hook scans for either
@@ -223,7 +200,7 @@ if [ -n "$LOG_FILE" ]; then
     TREE_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
     TREE_INDEX="$(git write-tree 2>/dev/null || echo unknown)"
     TREE_WORK="$({ git diff HEAD -- 2>/dev/null; git status --porcelain 2>/dev/null; } | sha256sum | cut -d' ' -f1)"
-    node "$COMPANION" adversarial-review "$PROMPT" 2>&1 | tee "$LOG_FILE"
+    node "$COMPANION" adversarial-review -- "$PROMPT" 2>&1 | tee "$LOG_FILE"
     rc=$?
     if [ "$PIN_KIND" = "1" ] && [ "$rc" = "0" ]; then
         NOW_HEAD="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
@@ -273,4 +250,4 @@ if [ -n "$LOG_FILE" ]; then
     exit "$rc"
 fi
 # No writable reviews directory: behave exactly as before (nothing retained).
-exec node "$COMPANION" adversarial-review "$PROMPT"
+exec node "$COMPANION" adversarial-review -- "$PROMPT"

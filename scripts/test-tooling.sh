@@ -6466,7 +6466,7 @@ else
     cat > "$CPS_TMP/fake-plugin/codex-companion.mjs" <<'PLUGIN'
 #!/usr/bin/env node
 // Stub: echo the prompt argument so the test can grep it.
-process.stdout.write(process.argv[3] || "");
+process.stdout.write((a => a[0] === "--" ? a.slice(1).join(" ") : a.join(" "))(process.argv.slice(3)));
 PLUGIN
     chmod +x "$CPS_TMP/fake-plugin/codex-companion.mjs"
     # Patch the wrapper to point at the stub plugin path (HOME-relative

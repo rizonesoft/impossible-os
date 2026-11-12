@@ -351,7 +351,7 @@ Every Codex dispatch prompt MUST be **single-quoted** so bash never evaluates th
 bash scripts/codex-dispatch.sh '[review-kind: <kind>] <todo-path> <body>'
 ```
 
-The wrapper `exec`s into `node "$HOME/.../codex-companion.mjs" adversarial-review "$1"` after enforcing `argc == 1`. Hook recognition (`_review_kind.detect_review_kind_from_cmd`, `codex_review_completed.py _is_codex_bash_trigger`) accepts both the wrapper shape and the legacy direct-node shape so existing logs and ad-hoc invocations remain attributed.
+The wrapper `exec`s into `node "$HOME/.../codex-companion.mjs" adversarial-review -- "$1"` after enforcing `argc == 1`; the `--` keeps the companion from reading a word such as `-C` or `--base` in the prompt as its own option. Hook recognition (`_review_kind.detect_review_kind_from_cmd`, `codex_review_completed.py _is_codex_bash_trigger`) accepts both the wrapper shape and the legacy direct-node shape so existing logs and ad-hoc invocations remain attributed.
 
 Enforcement: `scripts/lint.sh` Check 12 scans `.claude/skills/`, `scripts/`, `docs/` for documented dispatch examples and WARNs when the prompt body is in DOUBLE quotes containing `$(...)` / `${...}` / unescaped `<` (bash would expand or redirect on those). The lint check is the load-bearing safety: argv-time validation in the wrapper cannot detect post-expansion damage. Single-quote at the source.
 

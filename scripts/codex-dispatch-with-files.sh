@@ -46,7 +46,7 @@ export CODEX_REVIEWER_DISPATCH=1
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [ -z "$REPO_ROOT" ]; then
     # Not in a repo: pass through unchanged.
-    exec node "$CODEX_COMPANION" adversarial-review "$PROMPT"
+    exec node "$CODEX_COMPANION" adversarial-review -- "$PROMPT"
 fi
 
 # Clean-tree detection: `git diff --quiet HEAD --` exits 0 when no
@@ -55,7 +55,7 @@ fi
 # and we pass through.
 if ! git -C "$REPO_ROOT" diff --quiet HEAD -- 2>/dev/null \
    || ! git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null; then
-    exec node "$CODEX_COMPANION" adversarial-review "$PROMPT"
+    exec node "$CODEX_COMPANION" adversarial-review -- "$PROMPT"
 fi
 
 # Clean tree path: extract repo-relative file mentions from the prompt.
@@ -69,7 +69,7 @@ FILE_LIST="$(printf '%s\n' "$PROMPT" | grep -oE \
 
 if [ -z "$FILE_LIST" ]; then
     # Prompt names no files -- nothing to embed. Pass through.
-    exec node "$CODEX_COMPANION" adversarial-review "$PROMPT"
+    exec node "$CODEX_COMPANION" adversarial-review -- "$PROMPT"
 fi
 
 # Cap embedded content to keep the prompt under the 80-line ceiling +
@@ -106,7 +106,7 @@ $CONTENT"
 done <<< "$FILE_LIST"
 
 if [ -z "$EMBED" ]; then
-    exec node "$CODEX_COMPANION" adversarial-review "$PROMPT"
+    exec node "$CODEX_COMPANION" adversarial-review -- "$PROMPT"
 fi
 
 AUGMENTED="$PROMPT
@@ -117,4 +117,4 @@ so Codex sees real diff context instead of an empty working-tree diff)
 $EMBED
 --- END COMMITTED FILE CONTENT ---"
 
-exec node "$CODEX_COMPANION" adversarial-review "$AUGMENTED"
+exec node "$CODEX_COMPANION" adversarial-review -- "$AUGMENTED"

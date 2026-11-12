@@ -53,7 +53,7 @@ export CODEX_REVIEWER_DISPATCH=1
 
 # task --background --json returns immediately with {jobId, status, logFile}.
 # The detached worker continues reasoning in the background (no Bash wall).
-OUTPUT="$(node "$COMPANION" task --background --json "$PROMPT")"
+OUTPUT="$(node "$COMPANION" task --background --json -- "$PROMPT")"
 
 echo "$OUTPUT"
 echo ""
