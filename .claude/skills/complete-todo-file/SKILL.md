@@ -64,11 +64,13 @@ description: Finalize a TODO file whose `## N.` implementation sections are all 
    - On FAIL, keep it `[ ]`, record the failure reason inline as a NOTE, and do NOT proceed to stamp the TODO as closed. The user resolves the failure before re-running this skill.
 7. **For semi-automatable smoke-test items:** run `bash scripts/test-smoke.sh`, grep `build/smoke-test.stripped.log` for each expected POST16 code / klog marker, and mark individually.
 8. **For manual-only items:** leave `[ ]`, append a `(manual -- run on <platform>)` tag so the user sees the remaining surface. Do NOT mark manual items `[x]` under any circumstance unless the step 4 sweep already demonstrated them via the destructively-reversible recipe.
+8a. **One review across the file's sections (full close-out only, not sweep-only).** Dispatch ONE `[review-kind: adversarial] <todo-path>` pass over the whole file that reports only defects needing two or more sections to see (a contract one section defines and another breaks), each naming the sections whose combination causes it. Receive it once; then ONE fix round: fix what fits this close-out, and file the rest in the file itself as a new section (next free number, IO row, body before the closing blocks). No second pass. Why: TODO-08 §35 ran it on 01-boot-platform/TODO-07 and found three such defects that 25 per-section reviews had all passed.
 9. **Generate a close-out report** (printed to the chat, not written into the TODO):
    - Implementation Order rows: N/N `[x]`.
    - **Loose ends closed (step 4):** named list grouped by category (stale XREFs annotated, stale counts refreshed, placeholders filled, `[/]` items narrowed or closed, `[ ]` manual items demonstrated). Each entry cites the file:line touched + the new value.
    - Unit Tests: `implement-unit-tests` result (suite count + pass count) OR "N/A (docs-only)" OR "skipped -- user gap-noted" OR "skipped -- sweep-only mode".
    - Verification items: M automated PASS, K automated FAIL (listed with reason), L manual-only (listed with platform).
+   - Cross-section review (step 8a): N findings, each fixed or filed (section number).
    - Close-out state: **CLOSED** if all gates pass + 0 FAIL, **PARTIAL** if any FAIL exists, **MANUAL-PENDING** if only manual items remain, **SWEEP-ONLY** if the run was sweep-only mode.
 10. **Commit and push** (only if state is CLOSED, MANUAL-PENDING, or SWEEP-ONLY-with-edits):
     - After the push, confirm CI directly: `gh run list --workflow=build.yml --limit 2 --json headSha,conclusion,status` (+ todo-graph.yml) -- a status query is deterministic JSON, no agent needed. If red on the pushed sha, treat it as a close-out failure to diagnose; dispatch `gh-query-runner` ONLY then, for the paginated `--log-failed` slices.

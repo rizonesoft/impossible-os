@@ -100,7 +100,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |  32   |   §32   | Grammar-accurate shell segmentation for the gate exemptions (retire the hand-rolled walk)        | §30                        |  [/]   |
 | 💎  |  33   |   §33   | Section-commit gate reads an untokenizable commit line as a commit                               | §4                         |  [x]   |
 | 💎  |  34   |   §34   | Section-commit gate test wiring that kernel sources can satisfy                                  | §4                         |  [x]   |
-| 💎  |  35   |   §35   | Cross-section review of a closed TODO file                                                       | §5                         |  [ ]   |
+| 💎  |  35   |   §35   | Cross-section review of a closed TODO file                                                       | §5                         |  [/]   |
 | 💎  |  36   |   §36   | Second-boot leg in the smoke matrix                                                              | --                         |  [ ]   |
 | 💎  |  37   |   §37   | Syscall argument counts in the ABI fingerprint                                                   | --                         |  [ ]   |
 | 💎  |  38   |   §38   | Release-flavor build at the section boundary                                                     | --                         |  [ ]   |
@@ -1241,9 +1241,13 @@ The gate's step-8 rule binds a staged source file to a test named for its basena
 
 Every review reads one section. Nothing reads a finished file as a whole, so a defect that only shows across sections (two sections each correct, wrong together) has no reviewer. `codex-review-todo` exists and is never scheduled.
 
-- [ ] Run `codex-review-todo` once on the most recently closed TODO file and count findings that no single-section review could have made. Done when the count and the findings are recorded in this section.
-- [ ] If the count is above zero, add the pass to `complete-todo-file` as its last step before the closing commit, bounded to one pass plus one fix round. Done when a file close-out runs it and its findings are fixed or filed.
-- [ ] If the count is zero on two closed files, record that here and close this section without the step. Done when the two results are recorded.
+- [x] Ran one cross-section pass on 01-boot-platform/TODO-07 (closed 2026-11-09, 25 sections): 3 findings no single-section review could make, all verified in the code.
+  - All entries exhausted: the synthesized `fallback` id is no menu candidate, so F11 cannot open the menu (sections 3, 5, 6, 7, 9).
+  - Watchdog rollback removes the peak-tries entry among already-filtered candidates, so it can drop the last viable entry (sections 3, 5, 12).
+  - `LoaderEntries` publishes inactive and unsupported entries policy refuses (sections 3, 6, 15, 16, 21).
+  - Filed as 01-boot-platform/TODO-07 §26 (item: "With every entry exhausted, F11 and `menu-force` still open the menu").
+- [/] `complete-todo-file` step 8a runs the pass before the close-out report: one pass, one fix round, the rest filed as a new section in the file. Waits on the next file close-out to run it.
+- [x] Not needed: the first file returned 3, so the step is kept.
 - [ ] Commit: `"skills: a closing TODO file gets one review across its sections"`
 
 **Test checkpoint:** The next file the run closes shows the pass in its close-out commit, or this section records two empty results.

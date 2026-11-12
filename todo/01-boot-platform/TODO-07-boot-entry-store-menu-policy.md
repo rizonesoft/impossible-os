@@ -79,6 +79,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  23   | A rejected store has no repair path, only a one-entry fallback      | §1, §20                                 |  [x]   |
 | 💎  |  24   | Boot menu help, power and saved-default keys                        | §6, §7, §15                             |  [x]   |
 | 💎  |  25   | Menu timeout keys and one-off edit                                  | §21, §24                                |  [x]   |
+| 💎  |  26   | Cross-section policy, menu and loader-variable seams                | §3, §5, §6, §9, §12, §15                |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -996,6 +997,29 @@ Found by the §24 parity pass against systemd-boot (https://www.freedesktop.org/
 > - Review fixes: `LoaderFeatures` bit 13 (`MENU_DISABLE`) is advertised, without which `bootctl` writes `menu-force` as `4294967295`, and that number is now read as `menu-force` too; a keyboard that returns only device errors for 1 s restarts a 5 s countdown (`boot_menu_input_fault_step()`), so a dead keyboard after a key press cannot hold the boot forever; the kernel logs a bounded copy of the loader's command line and warns on an out-of-range `cmdline_source`.
 > **Verified:** 2026-11-09 | commit `75e4d3e57` + review fixes | 5/5 items | build OK | SUITE=boot 7902 kernel + 17 user tests PASS | `SMOKE_MENU=default` and `saved` PASS | mutation controls (rank, editor terminator, timeout word, fault reset) each fail
 > **Quality reviewed:** 2026-11-09 | Codex 6x (adversarial, consistency x2, perf, re-adversarial x2) + boot-quality-auditor + kernel-quality-auditor + parity-research-analyst | 2M+5L fixed, 0 open | scope: boot-code-quality, kernel-code-quality
+
+## 26. Cross-Section Policy, Menu and Loader-Variable Seams
+
+> **Spawned-by:** root
+> **Found by:** 00-infrastructure/TODO-08 §35, a cross-section review of this closed file (2026-11-12).
+> **User impact:** when every entry has used its tries the menu cannot be opened even with F11, a watchdog rollback can throw away the one entry that would boot, and `bootctl list` offers entries the loader refuses to start.
+
+Each defect needs two or more sections to see: every section's own review passed. Found by one Codex adversarial pass over the whole file.
+
+**Design:** [boot menu](../../docs/design/shell.md#boot-menu)
+
+- [ ] With every entry exhausted, F11 and `menu-force` still open the menu, listing the retryable entries and the fallback as a choice.
+  - Today the ladder selects the synthesized `fallback` id, which is not a menu candidate, so `default_visible` is false and `bootx64.c` suppresses the menu (sections 3, 5, 6, 7, 9).
+  - Done when a test of all counters exhausted plus F11 renders the menu and the fallback still boots on timeout.
+- [ ] Watchdog rollback excludes the entry that was attempted, not the entry with the most tries among the remaining candidates.
+  - Today `boot_policy.c` looks for the peak after the counter filter has already removed an exhausted failed entry, so it removes a viable one instead (sections 3, 5, 12).
+  - Done when an exhausted failed entry plus one viable entry boots the viable one and acknowledges the watchdog request.
+- [ ] `LoaderEntries` lists exactly the entries policy and the menu would boot, from one shared eligibility predicate.
+  - Today `lv_entry_visible()` in `loader_vars.c` skips only skipped kinds and HIDDEN, so the shipped seed publishes inactive `slot-b` and an unsupported recovery entry (sections 3, 6, 15, 16, 21).
+  - Done when a seed-based test shows inactive, unsupported and other-machine entries absent.
+- [ ] Commit: `"boot: the menu, the watchdog rollback and LoaderEntries agree on which entries can boot"`
+
+**Test checkpoint:** `bash scripts/test.sh SUITE=boot` passes with the three new cases, and `SMOKE_MENU=default` still boots.
 
 ## OS Comparison
 
