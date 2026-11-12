@@ -21,8 +21,17 @@ sys.path.insert(0, str(HOOKS))
 import section_commit_gate as gate  # noqa: E402
 
 DPC_C = "int dpc_queue(int x) {\n    return x;\n}\n\nstatic int helper(void) { return 0; }\n"
-SCHED_TEST = '#include "x.h"\nstatic void t(void) { dpc_queue(1); }\n'
-OTHER_TEST = "static void t(void) { /* dpc_queue is named only here */ heap_alloc(1); }\n"
+REGISTERED = ('static void suite(void) {{ {body} }}\n'
+              'void test_register_x(void) {{\n    test_suite_register_cat("x",\n        suite, TEST_CAT_SCHED);\n}}\n')
+
+
+def suite(body: str) -> str:
+    """A test file whose registered suite runs `body`."""
+    return REGISTERED.format(body=body)
+
+
+SCHED_TEST = '#include "x.h"\n' + suite("dpc_queue(1);")
+OTHER_TEST = suite("/* dpc_queue is named only here */ heap_alloc(1);")
 
 
 def _repo(d: str) -> pathlib.Path:
@@ -93,7 +102,7 @@ def test_refusal_code_no_test_can_call_needs_a_tested_by_line():
                          "src/kernel/test/test_heap.c": OTHER_TEST})
     assert not ok, "an unrelated staged test does not cover a flat binary"
     ok, msg, _ = _check({"src/kernel/smp/ap_trampoline.asm": "; tested-by: test_smp.c\n" + flat,
-                         "src/kernel/test/test_smp.c": "static void t(void) {}\n"})
+                         "src/kernel/test/test_smp.c": suite("")})
     assert ok, msg
 
 
@@ -128,7 +137,7 @@ def test_definitions_the_line_rules_missed_are_found():
 def test_refusal_a_static_helper_on_a_split_line_is_not_public():
     src = "static\nint helper(void)\n{\n    return 0;\n}\nint dpc_queue(int x) {\n    return x;\n}\n"
     ok, msg, _ = _check({"src/kernel/sched/dpc.c": src,
-                         "src/kernel/test/test_x.c": "static void t(void) { helper(); }\n"})
+                         "src/kernel/test/test_x.c": suite("helper();")})
     assert not ok and "dpc.c" in msg, msg
 
 
@@ -166,21 +175,18 @@ def test_a_deleted_source_needs_no_test():
     assert ok, msg
 
 
-REGISTERED = ('static void suite(void) {{ {body} }}\n'
-              'void test_register_x(void) {{\n    test_suite_register_cat("x",\n        suite, TEST_CAT_SCHED);\n}}\n')
-
 
 def test_refusal_a_declaration_or_an_unregistered_caller_is_not_a_call():
-    decl = "extern int dpc_queue(int);\n" + REGISTERED.format(body="heap_alloc(1);")
+    decl = "extern int dpc_queue(int);\n" + suite("heap_alloc(1);")
     ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": decl})
     assert not ok and "dpc.c" in msg, msg
-    unreg = "void stray(void) { dpc_queue(1); }\n" + REGISTERED.format(body="heap_alloc(1);")
+    unreg = "void stray(void) { dpc_queue(1); }\n" + suite("heap_alloc(1);")
     ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": unreg})
     assert not ok and "dpc.c" in msg, msg
 
 
 def test_a_call_through_a_helper_the_suite_reaches_counts():
-    reached = "static void helper(void) { dpc_queue(1); }\n" + REGISTERED.format(body="helper();")
+    reached = "static void helper(void) { dpc_queue(1); }\n" + suite("helper();")
     ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": reached})
     assert ok, msg
 
@@ -189,7 +195,7 @@ def test_alternative_if_branches_do_not_hide_the_next_definition():
     src = ("int dpc_queue(int x) {\n#if A\n    if (x) {\n#else\n    if (!x) {\n#endif\n"
            "        return 1;\n    }\n    return 0;\n}\nint dpc_flush(void) {\n    return 0;\n}\n")
     ok, msg, _ = _check({"src/kernel/sched/dpc.c": src,
-                         "src/kernel/test/test_x.c": REGISTERED.format(body="dpc_flush();")})
+                         "src/kernel/test/test_x.c": suite("dpc_flush();")})
     assert ok, msg
 
 
@@ -203,7 +209,7 @@ def test_refusal_acpica_without_its_provenance_record():
 
 def test_hundreds_of_staged_files_are_read_in_two_git_calls():
     files = {f"src/kernel/x/f{i}.c": f"int f{i}(void) {{\n    return {i};\n}}\n" for i in range(300)}
-    files["src/kernel/test/test_x.c"] = "static void t(void) { " + " ".join(f"f{i}();" for i in range(300)) + " }\n"
+    files["src/kernel/test/test_x.c"] = suite(" ".join(f"f{i}();" for i in range(300)))
     real, calls = gate.subprocess.run, []
 
     def counting(*a, **k):
@@ -218,6 +224,45 @@ def test_hundreds_of_staged_files_are_read_in_two_git_calls():
         finally:
             gate.subprocess.run = real
     assert len(calls) == 2 and texts["src/kernel/x/f7.c"].startswith("int f7"), calls
+
+
+def test_refusal_a_file_that_registers_nothing_runs_nothing():
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C,
+                         "src/kernel/test/test_x.c": "static void unused(void) { dpc_queue(1); }\n"})
+    assert not ok and "dpc.c" in msg, msg
+
+
+def test_an_entry_point_the_runner_calls_counts():
+    files = {"src/kernel/sched/dpc.c": DPC_C,
+             "src/kernel/test/test_x.c": "int test_x_run(void) {\n    return dpc_queue(1);\n}\n"}
+    ok, msg, _ = _check(files)
+    assert not ok, "no runner names test_x_run yet"
+    ok, msg, _ = _check({**files, "src/kernel/main/boot_tests.c": "/* tested-by: test_x.c */\nvoid go(void) { test_x_run(); }\n"})
+    assert ok, msg
+
+
+def test_the_test_build_decides_which_if_branch_runs():
+    disabled = suite("\n#if 0\n    dpc_queue(1);\n#endif\n")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": disabled})
+    assert not ok, "a call under #if 0 never runs"
+    active = suite("\n#if 0\n    heap_alloc(1);\n#else\n    dpc_queue(1);\n#endif\n")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": active})
+    assert ok, msg
+    flavour = suite("\n#ifndef KERNEL_TESTS\n    heap_alloc(1);\n#else\n    dpc_queue(1);\n#endif\n")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": flavour})
+    assert ok, msg
+
+
+def test_refusal_a_local_named_like_the_function_is_not_a_use():
+    shadow = suite('int dpc_queue = 0;\n    TEST_ASSERT_EQ(dpc_queue, 0, "x");')
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": shadow})
+    assert not ok and "dpc.c" in msg, msg
+
+
+def test_a_function_taken_by_address_after_a_block_prototype_counts():
+    addr = suite("extern int dpc_queue(int);\n    probe((void *)dpc_queue);")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": addr})
+    assert ok, msg
 
 
 if __name__ == "__main__":

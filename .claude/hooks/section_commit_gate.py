@@ -3985,7 +3985,7 @@ def _step8_test_wiring_check(
                   and re.search(r"test_[\w-]+\.c$", p)]
     wanted = [p for p in candidates if p.endswith(tcs.SOURCE_EXTS)]
     try:
-        staged = _staged_texts(root, sorted({provenance, *wanted, *test_paths}))
+        staged = _staged_texts(root, sorted({provenance, *tcs.RUNNERS, *wanted, *test_paths}))
     except _StagedReadError as exc:
         return (False, f"step-8 could not read the staged files, so their tests are unknown: {exc}")
     if any(p.startswith(tcs.VENDORED_ROOT) for p in wanted):
@@ -3999,7 +3999,8 @@ def _step8_test_wiring_check(
                if staged.get(p) is not None and not tcs.is_vendored(p, local)}
     if not sources:
         return (True, "")
-    tests = {p: tcs.test_names(staged[p]) for p in test_paths if staged.get(p) is not None}
+    entry = tcs.runner_entry_points(staged.get(r) for r in tcs.RUNNERS)
+    tests = {p: tcs.test_names(staged[p], entry) for p in test_paths if staged.get(p) is not None}
     uncovered = [p for p, text in sources.items() if not tcs.covering_tests(p, text, tests)]
     if not uncovered:
         return (True, "")

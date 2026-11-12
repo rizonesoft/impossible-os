@@ -1215,11 +1215,11 @@ The PreToolUse gates decide their exemptions by hand-scanning command text. [`.c
 The gate's step-8 rule binds a staged source file to a test named for its basename. 434 of 516 kernel sources have no test of that name, because suites are registered per subsystem, so the rule cannot be met and is opted out of.
 
 - [x] Counted refusals and opt-outs: 23 kernel section commits, all staging their test (in the commit message).
-- [x] A staged test covers a source when a registered suite reaches a call to a symbol it defines (`_test_coverage_by_symbol.py`, `--report`).
+- [x] A staged test covers a source when code a runner starts reaches a use of a symbol it defines (`_test_coverage_by_symbol.py`, `--report`).
   - Per source, in the same commit; `tested-by:` for flat binaries; upstream ACPICA exempt, its local additions not.
 - [x] Warning until `STEP8_REFUSE_FROM` (2026-11-19) in `section_commit_gate.py`, then a refusal.
   - A date, not a section count: about ten kernel sections at the measured pace, with no counter to keep.
-- [x] Unit tests in `test_step8_suite_coverage.py`: 18 cases, 11 fail on the basename rule.
+- [x] Unit tests in `test_step8_suite_coverage.py`: 23 cases, 14 fail on the basename rule.
 - [x] Commit: `"hooks: the commit gate finds a kernel source's tests by suite, not by file name"`
 
 **Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes with the new cases.

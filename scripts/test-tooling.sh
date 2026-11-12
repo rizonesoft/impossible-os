@@ -6573,7 +6573,9 @@ with tempfile.TemporaryDirectory() as tmp:
     }))
     scg.STEP8_REFUSE_FROM = "2000-01-01"
     (repo / "src" / "kernel" / "newcode.c").write_text("int newcode_run(void) {\n    return 0;\n}\n")
-    (repo / "src" / "kernel" / "test" / "test_sched.c").write_text("static void t(void) { newcode_run(); }\n")
+    (repo / "src" / "kernel" / "test" / "test_sched.c").write_text(
+        "static void t(void) { newcode_run(); }\n"
+        "void test_register_sched(void) { test_suite_register_cat(\"s\", t, TEST_CAT_SCHED); }\n")
     subprocess.run(["git", "add", "-A"], cwd=tmp, check=True)
     ok, err = scg._step8_test_wiring_check(
         repo, ["src/kernel/newcode.c", "src/kernel/test/test_sched.c"], []

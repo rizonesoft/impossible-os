@@ -6,8 +6,9 @@ The section-commit gate's step-8 rule once bound `src/kernel/x/foo.c` to a test 
 tests, `test_exec.c` the EIF ones), so 434 of 516 kernel sources had no test of that
 name and 23 kernel section commits opted out of the rule though each staged its test.
 
-A test covers a source when a suite it registers (test_suite_register_cat) reaches a
-call to a public symbol the source defines: a non-static C function, a `#define` or
+A test covers a source when code it runs (a suite it registers with
+test_suite_register_cat, or an entry point a runner calls) reaches a use of a
+public symbol the source defines: a non-static C function, a `#define` or
 function in a header, a `global` label in assembly. A source
 whose code no test can name (a flat binary such as the AP trampoline) says which test
 covers it with a `tested-by: test_<name>.c` line; without one it is untested, never
@@ -47,28 +48,56 @@ def _code_only(text: str) -> str:
     return _LEXEMES.sub(lambda m: "\n" * m.group(0).count("\n") or " ", text)
 
 
-_COND = re.compile(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif)\b")
+_COND = re.compile(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif)\b(.*)")
+# What the kernel's test flavour defines (KERNEL_TESTS; x86-64 target). A condition
+# over anything else is unknown.
+TEST_BUILD_DEFINES = frozenset({"KERNEL_TESTS", "__x86_64__"})
+
+
+def _condition(kind: str, expr: str) -> bool | None:
+    """The value of an #if/#ifdef/#ifndef/#elif condition, or None when unknown."""
+    expr = expr.strip()
+    if kind in ("ifdef", "ifndef"):
+        name = expr.split()[0] if expr.split() else ""
+        return (name in TEST_BUILD_DEFINES) == (kind == "ifdef")
+    neg = expr.startswith("!")
+    expr = expr.lstrip("!").strip()
+    m = re.fullmatch(r"defined\s*\(?\s*([A-Za-z_]\w*)\s*\)?|([A-Za-z_]\w*)|(\d+)", expr)
+    if not m:
+        return None
+    if m.group(3) is not None:
+        value = int(m.group(3)) != 0
+    elif m.group(1) or m.group(2) in TEST_BUILD_DEFINES:
+        value = (m.group(1) or m.group(2)) in TEST_BUILD_DEFINES
+    else:
+        return None  # a bare macro whose value the test build does not pin
+    return value != neg
 
 
 def _first_branches(code: str) -> str:
-    """`code` without preprocessor lines, keeping only the first branch of each
-    `#if` chain, so mutually exclusive branches never both open a brace."""
+    """`code` without preprocessor lines, keeping one branch of each #if chain: the
+    first whose condition the test build makes true, else the first unknown one, else
+    the #else. Mutually exclusive branches therefore never both open a brace."""
     out = []
-    stack: list[bool] = []  # per open #if: is the current branch dropped
+    stack: list[list[bool]] = []  # per open #if: [this branch kept, a branch taken]
     cont = False
     for line in code.split("\n"):
         directive = cont or line.lstrip().startswith("#")
         cont = directive and line.rstrip().endswith("\\")
         m = _COND.match(line) if directive else None
         if m:
-            kind = m.group(1)
+            kind, expr = m.group(1), m.group(2)
             if kind.startswith("if"):
-                stack.append(False)
-            elif kind in ("elif", "else") and stack:
-                stack[-1] = True
-            elif kind == "endif" and stack:
+                keep = _condition(kind, expr) is not False
+                stack.append([keep, keep])
+            elif stack and kind == "elif":
+                keep = not stack[-1][1] and _condition("if", expr) is not False
+                stack[-1] = [keep, stack[-1][1] or keep]
+            elif stack and kind == "else":
+                stack[-1] = [not stack[-1][1], True]
+            elif stack and kind == "endif":
                 stack.pop()
-        out.append("" if directive or any(stack) else line)
+        out.append("" if directive or not all(k for k, _ in stack) else line)
     return "\n".join(out)
 
 
@@ -178,40 +207,65 @@ def public_symbols(path: str, text: str) -> set[str]:
 
 
 _REGISTER = re.compile(r"\btest_suite_register(?:_cat)?\s*\(")
+_KEYWORDS = frozenset({"return", "else", "case", "goto", "sizeof", "do", "if", "while", "for", "switch"})
+# `type name =`, `type *name;`, `type name[`: a local the body declares. The type is
+# one or more words, so `return x;` (a keyword before the name) is not one.
+_LOCAL_DECL = re.compile(r"\b([A-Za-z_]\w*)[\s\*]+([A-Za-z_]\w*)\s*(?=[=;\[,)])")
+# `int f(int);` inside a body: a prototype, not a call.
+_LOCAL_PROTO = re.compile(r"\b([A-Za-z_]\w*)[\s\*]+([A-Za-z_]\w*)\s*\([^;{}()]*\)\s*;")
 
 
-def test_names(text: str) -> set[str]:
-    """The identifiers a test's registered suites can reach: the bodies of the
-    functions passed to test_suite_register(_cat), and of every function in this file
-    those bodies name, transitively. A declaration, a comment, a string or a function
-    no suite reaches is not a call. A file that registers nothing (a helper included by
-    the runner) offers every function body.
+def _body_uses(body: str) -> set[str]:
+    """The identifiers a function body uses, less the locals it declares. A block-scope
+    prototype is dropped as text: it is not a use, but it does not shadow the name."""
+    # A prototype names the real function: drop only its text. `return f(x);` is a call.
+    body = _LOCAL_PROTO.sub(lambda m: m.group(0) if m.group(1) in _KEYWORDS else " ", body)
+    declared = {m.group(2) for m in _LOCAL_DECL.finditer(body) if m.group(1) not in _KEYWORDS}
+    return set(_IDENT.findall(body)) - declared
+
+
+def test_names(text: str, entry_points: frozenset[str] = frozenset()) -> set[str]:
+    """The identifiers the test's executed code uses: the bodies of the functions passed
+    to test_suite_register(_cat), of this file's non-static functions the runner names
+    (`entry_points`, the identifiers of the RUNNERS), and of every function in this
+    file those bodies reach. A declaration, a comment, a string, a local variable, or a
+    function nothing runs is not a call.
     """
     code = _first_branches(_code_only(text))
     bodies: dict[str, str] = {}
-    for name, _, kind, body in _file_scope(code):
+    exported: set[str] = set()
+    for name, prefix, kind, body in _file_scope(code):
         if kind == "def":
             bodies[name] = bodies.get(name, "") + body
-    roots: set[str] = set()
+            if not re.search(r"\bstatic\b", prefix):
+                exported.add(name)
+    roots = exported & entry_points
     for body in bodies.values():
         for m in _REGISTER.finditer(body):
             end = _close(body, m.end() - 1)
-            roots |= set(_IDENT.findall(body[m.end():end if end > 0 else len(body)]))
-    if not roots:
-        return set().union(*(set(_IDENT.findall(b)) for b in bodies.values())) if bodies else set()
+            roots |= set(_IDENT.findall(body[m.end():end if end > 0 else len(body)])) & set(bodies)
     seen: set[str] = set()
     used: set[str] = set()
-    todo = [r for r in roots if r in bodies]
-    used |= roots
+    todo = list(roots)
     while todo:
         fn = todo.pop()
         if fn in seen:
             continue
         seen.add(fn)
-        ids = set(_IDENT.findall(bodies[fn]))
+        ids = _body_uses(bodies[fn])
         used |= ids
         todo.extend(i for i in ids if i in bodies and i not in seen)
     return used
+
+
+# The files that start test code: the suite runner, and the boot path that launches the
+# user-mode suite. A test file's non-static function runs only if one of them names it.
+RUNNERS = ("src/kernel/test/test_runner.c", "src/kernel/main/boot_tests.c")
+
+
+def runner_entry_points(runner_texts) -> frozenset[str]:
+    """The identifiers the runners' code uses: the entry points they call."""
+    return frozenset().union(*(_IDENT.findall(_code_only(t)) for t in runner_texts if t))
 
 
 def covering_tests(path: str, text: str, tests: dict[str, set[str]]) -> list[str]:
@@ -233,7 +287,8 @@ def report(root: Path) -> tuple[dict[str, list[str]], list[str]]:
     if local is None:
         raise SystemExit("src/libs/PROVENANCE.md has no Local additions heading")
     files = _git(root, "ls-tree", "-r", "--name-only", "HEAD", "src/kernel").split()
-    tests = {f: test_names((root / f).read_text(errors="replace")) for f in files
+    entry = runner_entry_points((root / r).read_text(errors="replace") for r in RUNNERS)
+    tests = {f: test_names((root / f).read_text(errors="replace"), entry) for f in files
              if re.search(r"/test/test_[\w-]+\.c$", f)}
     covered: dict[str, list[str]] = {}
     untested: list[str] = []
