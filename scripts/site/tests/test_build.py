@@ -3340,11 +3340,18 @@ class LinkCheck(unittest.TestCase):
             with self.assertRaises(self.L.NormalizeError):
                 self.L.run_checks([f"{b}/redir-rel"], retries=1, wait=0, timeout=5, budget=30)
             # ... and so does one that STALLS on a redirect when the budget runs out first.
+            # The budget covers Node's up-front start and one local request even under
+            # the tooling pack's load (0.3 s did not, so nothing was in flight and the
+            # run correctly returned UNVERIFIED); the parse timeout outlasts it, so the
+            # budget still runs out while the stalled parse is in flight.
             self.L.NODE_URL = self.L.NODE_URL.replace("process.exit(3)", "setTimeout(() => {}, 20000)")
+            stall_budget, stall_timeout = 2.0, 4.0
             start = time.monotonic()
             with self.assertRaises(self.L.NormalizeError):
-                self.L.run_checks([f"{b}/redir-rel"], retries=1, wait=0, timeout=1, budget=0.3)
-            self.assertLess(time.monotonic() - start, 4)
+                self.L.run_checks([f"{b}/redir-rel"], retries=1, wait=0, timeout=stall_timeout,
+                                  budget=stall_budget)
+            # Fails closed by the parse timeout plus grace, never by the 20 s stall.
+            self.assertLess(time.monotonic() - start, stall_budget + stall_timeout + 2 + 1)
             self.L.NODE_URL = "setTimeout(() => {}, 20000)"       # a stalled parser respects the budget
             start = time.monotonic()
             with self.assertRaises(self.L.NormalizeError):
