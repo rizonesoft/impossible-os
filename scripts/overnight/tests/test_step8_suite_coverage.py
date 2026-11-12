@@ -419,7 +419,10 @@ def test_a_user_mode_test_starts_at_main():
                     USER_MAKE + "$(SYSROOT)/test_libc_x.exe:\n\t@true\n",
                     USER_MAKE + "$(SYSROOT)/test_libc_x.exe: ; @true\n",
                     USER_MAKE + "$(SYSROOT)/test_libc_x.exe: ;\n",
-                    USER_MAKE.replace("\t$(CC)", "\t@echo $(CC)").replace("\t$(LD)", "\t@echo $(LD)")):
+                    USER_MAKE.replace("\t$(CC)", "\t@echo $(CC)").replace("\t$(LD)", "\t@echo $(LD)"),
+                    "userland: $(SYSROOT)/test_libc_x.exe\n$(SYSROOT)/test_libc_x.exe:\n"
+                    "\t@echo 'preview; $(CC) -c user/test/test_libc_x.c -o x.o; "
+                    "$(LD) -o x.exe crt0.o user/test/test_libc_x.o'\n"):
         ok, msg, _ = _check({"user/lib/string_x.c": libc, "user/test/test_libc_x.c": test, "Makefile": unbuilt})
         assert not ok and "string_x.c" in msg, "a test the Makefile never builds never runs"
 
@@ -513,6 +516,7 @@ def test_refusal_a_parameter_or_local_named_like_the_function():
                  "enum { A, dpc_queue = 1 };\n    (void)dpc_queue;",
                  "struct s v = { .dpc_queue = 1 };\n    v.dpc_queue = 2;\n    (&v)->dpc_queue = 3;",
                  "void helper(int dpc_queue);",
+                 "void (*helper)(int dpc_queue);",
                  "dpc_t (dpc_queue) = 0;\n    (void)dpc_queue;"):
         test = ("typedef int dpc_t;\nstatic int stub(void) { return 0; }\n"
                 f"static void suite(void) {{\n    {body}\n}}\n"
@@ -553,9 +557,37 @@ def test_local_declarations_parse_in_linear_time():
 
 
 def test_refusal_a_prototype_parameter_in_the_runner_starts_nothing():
-    runner = "void boot_tests_run(void) {\n    void helper(int test_register_x);\n}\n"
-    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": SCHED_TEST}, runner=runner)
-    assert not ok and "dpc.c" in msg, "a parameter name in a prototype calls nothing"
+    for decl in ("void helper(int test_register_x);", "void (*helper)(int test_register_x);"):
+        runner = f"void boot_tests_run(void) {{\n    {decl}\n}}\n"
+        ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": SCHED_TEST}, runner=runner)
+        assert not ok and "dpc.c" in msg, f"a parameter name in {decl!r} calls nothing"
+
+
+def test_refusal_a_registered_name_a_local_shadows_is_not_the_function():
+    test = ("static void unused(void) {\n    dpc_queue(1);\n}\n"
+            "static void empty(void) {\n}\n"
+            "void test_register_x(void) {\n    void (*unused)(void) = empty;\n"
+            "    test_suite_register_cat(\"x\", unused, TEST_CAT_SCHED);\n}\n")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": test})
+    assert not ok and "dpc.c" in msg, "the registered callback is the local pointer, which calls empty()"
+
+
+def test_a_typedef_out_of_scope_or_not_compiled_hides_no_use():
+    test = ("/* typedef int consume; */\n#if 0\ntypedef int consume;\n#endif\n"
+            "static void other(void) {\n    typedef int consume;\n}\n"
+            "static void suite(void) {\n    consume(dpc_queue);\n}\n"
+            "void test_register_x(void) {\n    test_suite_register_cat(\"x\", suite, TEST_CAT_SCHED);\n}\n")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": test})
+    assert ok, msg
+
+
+def test_many_locals_read_in_linear_time():
+    import time
+    import _test_coverage_by_symbol as tcs
+    body = "() {" + "".join(f"int a{i} = 0; a{i}++;" for i in range(20000)) + "}"
+    t0 = time.monotonic()
+    tcs._body_uses(body)
+    assert time.monotonic() - t0 < 2.0, "20,000 locals took the hook's budget"
 
 
 if __name__ == "__main__":

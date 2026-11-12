@@ -453,7 +453,6 @@ def public_symbols(path: str, text: str) -> set[str]:
     return names - _NOT_NAMES
 
 
-_REGISTER = re.compile(r"\btest_suite_register(?:_cat)?\s*\(")
 _KEYWORDS = frozenset({"return", "else", "case", "goto", "sizeof", "do", "if", "while", "for", "switch"})
 # `type name =`, `type *name;`, `type name[`: a local the body declares. The type is
 # one or more words, so `return x;` (a keyword before the name) is not one.
@@ -580,13 +579,18 @@ def _ident(t: str) -> bool:
     return t[:1].isalpha() or t[:1] == "_"
 
 
-def _typedef_names(text: str) -> frozenset[str]:
-    """The names `text` declares as types with `typedef`, each one's declarator
-    read like any other (`typedef int (*cb_t)(void);` names cb_t)."""
-    toks = _TOKEN.findall(text)
+def _typedef_names(code: str) -> frozenset[str]:
+    """The names `code` (comment-free, as the build compiles it) declares as types
+    with a file-scope `typedef`, each one's declarator read like any other
+    (`typedef int (*cb_t)(void);` names cb_t). A typedef inside a function body
+    is scoped to that body (see _body_uses)."""
+    toks = _TOKEN.findall(code)
     names: set[str] = set()
+    depth = 0
     for k, t in enumerate(toks):
-        if t == "typedef":
+        depth += t == "{"
+        depth -= t == "}"
+        if t == "typedef" and depth == 0:
             end = k + 1
             while end < len(toks) and toks[end] != ";":
                 end = _skip(toks, end) if toks[end] in _OPEN and toks[end] != "(" else end + 1
@@ -689,7 +693,10 @@ def _declared(s: list[str], objects: frozenset[str] | set[str] = frozenset(),
         else:
             return None, False, False, -1, j
         while j < n and s[j] in ("(", "["):
-            j = _skip(s, j)
+            end = _skip(s, j)
+            if s[j] == "(":  # parameter names declare, whatever the declarator is
+                only.extend(x for x in s[j:end] if _ident(x))
+            j = end
         return name, func, suffixed, params, j
 
     while j < n:
@@ -698,7 +705,6 @@ def _declared(s: list[str], objects: frozenset[str] | set[str] = frozenset(),
             break
         if func:
             only.append(name)
-            only.extend(x for x in s[params:_skip(s, params)] if _ident(x))
         else:
             names.add(name)
         while j < n and s[j] != ",":
@@ -726,40 +732,47 @@ def _body_uses(body: str, types: frozenset[str] = frozenset()) -> set[str]:
         if _ident(t) and not (k and (toks[k - 1] == "." or (toks[k - 1] == ">" and k > 1 and toks[k - 2] == "-"))):
             seen[t] = seen.get(t, 0) + 1
     local: set[str] = set()
+    objects = set(params)  # names known as objects so far, grown in place
     only: dict[str, int] = {}
     for stmt in _statements(toks):
-        names, decl_only = _declared(stmt, params | local, types)
-        local |= names
+        if stmt[:1] == ["typedef"]:  # a block-scope typedef names a type from here on
+            named, decl_only = _declared(stmt[1:], objects, types)
+            types = types | named
+        else:
+            named, decl_only = _declared(stmt, objects, types)
+            local |= named
+            objects |= named
         for name in decl_only:
             only[name] = only.get(name, 0) + 1
     return {t for t, k in seen.items() if k > only.get(t, 0)} - local - params
 
 
-def _bodies(text: str, defines: dict | None = None) -> tuple[dict[str, str], set[str]]:
+def _bodies(text: str, defines: dict | None = None) -> tuple[dict[str, str], set[str], frozenset[str]]:
     """{function: body} for every function the build (`defines`, the kernel test build
-    by default) compiles in `text`, and the names of the non-static ones."""
+    by default) compiles in `text`, the names of the non-static ones, and the
+    file-scope typedef names in that compiled code."""
     bodies: dict[str, str] = {}
     exported: set[str] = set()
-    for name, prefix, kind, body in _file_scope(_first_branches(_code_only(text), defines)):
+    code = _first_branches(_code_only(text), defines)
+    for name, prefix, kind, body in _file_scope(code):
         if kind == "def":
             bodies[name] = bodies.get(name, "") + body
             if not re.search(r"\bstatic\b", prefix):
                 exported.add(name)
-    return bodies, exported
+    return bodies, exported, _typedef_names(code)
 
 
 def test_names(text: str, entry_points: frozenset[str] = frozenset(),
                defines: dict | None = None) -> set[str]:
     """The identifiers the test's executed code uses. Execution starts at this file's
     non-static functions a runner calls (`entry_points`, from runner_entry_points) and
-    follows the calls in their bodies; a test_suite_register(_cat) call in a reached
-    body adds its callback. A declaration, a comment, a string, a local variable, code
+    follows the names their bodies use, so a test_suite_register(_cat) call in a
+    reached body reaches its callback (unless a local of that name shadows it). A declaration, a comment, a string, a local variable, code
     the build (`defines`) does not compile, or a function nothing reaches is not a use,
     and a call to a function the test defines itself (a stub named like the real one)
     reaches only that function.
     """
-    bodies, exported = _bodies(text, defines)
-    types = _typedef_names(text)
+    bodies, exported, types = _bodies(text, defines)
     seen: set[str] = set()
     used: set[str] = set()
     todo = list(exported & entry_points)
@@ -770,9 +783,6 @@ def test_names(text: str, entry_points: frozenset[str] = frozenset(),
         seen.add(fn)
         body = bodies[fn]
         ids = _body_uses(body, types)
-        for m in _REGISTER.finditer(body):
-            end = _close(body, m.end() - 1)
-            ids |= set(_IDENT.findall(body[m.end():end if end > 0 else len(body)]))
         used |= ids
         todo.extend(i for i in ids if i in bodies and i not in seen)
     return used - set(bodies)
@@ -794,9 +804,9 @@ def runner_entry_points(runner_texts) -> frozenset[str]:
     exported: dict[str, tuple[int, str]] = {}
     for text in runner_texts:
         if text:
-            b, e = _bodies(text)
+            b, e, ty = _bodies(text)
             files.append(b)
-            types.append(_typedef_names(text))
+            types.append(ty)
             for name in e:
                 exported[name] = (len(files) - 1, name)
     seen: set[tuple[int, str]] = set()
@@ -829,9 +839,37 @@ _LINKER = re.compile(r"(?:\$[({]LD[)}]|ld\.lld(?:-\d+)?|ld|lld-link)(?:\s|$)")
 
 
 def _recipe_commands(line: str) -> list[str]:
-    """The shell commands of one recipe line, split at `;`, `&&`, `||` and `|`,
-    each without Make's `@`, `-` and `+` prefixes."""
-    return [c.strip().lstrip("@-+").strip() for c in re.split(r"&&|\|\||[;|]", line.strip())]
+    """The shell commands of one recipe line, split at `;`, `&&`, `||` and `|`
+    outside quotes and escapes, as the shell reads them, each without Make's `@`,
+    `-` and `+` prefixes. A quoted argument (what echo prints) is never a command."""
+    out, cur, quote, i, n = [], [], "", 0, len(line)
+    while i < n:
+        ch = line[i]
+        if quote:
+            if ch == "\\" and quote == '"' and i + 1 < n:
+                cur.append(line[i:i + 2])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+            cur.append(ch)
+        elif ch == "\\" and i + 1 < n:
+            cur.append(line[i:i + 2])
+            i += 2
+            continue
+        elif ch in ("'", '"'):
+            quote = ch
+            cur.append(ch)
+        elif ch in ";|&":
+            if ch in "|&" and line[i + 1:i + 2] == ch:
+                i += 1
+            out.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+        i += 1
+    out.append("".join(cur))
+    return [c.strip().lstrip("@-+").strip() for c in out]
 
 
 def user_built_tests(makefile_text: str | None) -> dict[str, str]:
