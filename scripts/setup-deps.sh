@@ -246,6 +246,25 @@ else
     fi
 fi
 
+# pytest (required by scripts/overnight/tests/run-all.sh, which the pre-commit and
+# pre-push gates run: it runs the fixture tests plain python3 would only define).
+if python3 -c "import pytest" 2>/dev/null; then
+    skip "pytest (python3-pytest)"
+else
+    case "$DISTRO" in
+        debian) echo -e "  ${YELLOW}Installing python3-pytest...${NC}"; sudo apt-get install -y python3-pytest ;;
+        fedora) echo -e "  ${YELLOW}Installing python3-pytest...${NC}"; sudo dnf install -y python3-pytest ;;
+        arch)   echo -e "  ${YELLOW}Installing python-pytest...${NC}"; sudo pacman -S --noconfirm python-pytest ;;
+        *) echo -e "  ${YELLOW}Install pytest for python3 manually for your distro${NC}" ;;
+    esac
+    if python3 -c "import pytest" 2>/dev/null; then
+        ok "pytest installed"
+        INSTALLED=$((INSTALLED + 1))
+    else
+        echo -e "  ${YELLOW}warn:${NC} pytest still missing after install; scripts/overnight/tests/run-all.sh (the commit and push gate) will FAIL until it is."
+    fi
+fi
+
 # python3-jsonschema (required by scripts/todo-graph/tests/test_build.sh
 # sub-test 6d to validate docs/infrastructure/todo-metadata.schema.json
 # as a Draft 2020-12 schema and to validate the authoritative example

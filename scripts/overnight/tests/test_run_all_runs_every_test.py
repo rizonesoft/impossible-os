@@ -59,6 +59,9 @@ def test_refusal_a_legacy_check_that_failed_fails_the_suite():
 def test_refusal_a_test_its_runner_does_not_call_still_runs():
     done = _suite({"test_a.py": FORGOTTEN})
     assert done.returncode != 0 and "FAIL test_a.py" in done.stdout, done.stdout
+    referenced = FORGOTTEN.replace("    test_listed()\n", "    tests = [test_listed, test_forgotten]\n    test_listed()\n")
+    done = _suite({"test_a.py": referenced})  # named in a list, never called
+    assert done.returncode != 0 and "FAIL test_a.py" in done.stdout, done.stdout
 
 
 def test_a_passing_pytest_style_test_passes():

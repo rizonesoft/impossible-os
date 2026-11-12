@@ -53,6 +53,7 @@ Unsupported distros: `setup-deps.sh` exits with the required package list printe
 | `mcopy` (mtools)                          | `mtools`                | FAT image population (EFI + logs parts)  |
 | `mmd` (mtools)                            | `mtools`                | BlackBox FAT directory creation (Makefile L391-L392) |
 | `mkfs.fat` (dosfstools)                   | `dosfstools`            | FAT32 partition formatting               |
+| `import pytest` (python3)                 | `python3-pytest`        | Not the Makefile: `scripts/overnight/tests/run-all.sh`, the commit and push gate, runs the fixture tests that plain `python3` would only define |
 | `/usr/share/OVMF/OVMF_CODE_4M.fd`         | `ovmf`                  | `OVMF_CODE := /usr/share/OVMF/OVMF_CODE_4M.fd` |
 | `/usr/share/OVMF/OVMF_VARS_4M.fd`         | `ovmf`                  | `OVMF_VARS := /usr/share/OVMF/OVMF_VARS_4M.fd` |
 

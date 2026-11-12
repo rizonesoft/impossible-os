@@ -278,6 +278,8 @@ NOT_A_COMMIT = (
     "say 'run git commit -n\nlater",
     "codex '[review-kind: round] see git commit -n here\nit's",
     "echo $((1 << 2)) # git commit -n",
+    "(( (( x ))\ngit commit -n -m y",                     # no `)` closes the first `((`
+    "(( 1\ngit commit -n -m y",
 )
 
 
@@ -428,6 +430,23 @@ def test_nested_substitutions_stay_polynomial():
                  'echo ${{a["$({})"]}}'):
         shallow, deep = min(took(wrap, 3) for _ in range(3)), min(took(wrap, 8) for _ in range(3))
         assert deep < shallow * 9, (wrap, shallow, deep)  # 8/3 the depth: quadratic is ~7x, doubling 32x
+
+
+def test_unclosed_arithmetic_openers_stay_linear():
+    """Performance pass: each unclosed `((` rescanned the rest of the script (9 s at 9000)."""
+    import time
+
+    def best(k):
+        cmd = "(( " * k + "true # git status"
+        times = []
+        for _ in range(3):
+            t = time.perf_counter()
+            assert gate._bash_is_git_commit(cmd) == (False, False)
+            times.append(time.perf_counter() - t)
+        return min(times)
+
+    small, big = best(1000), best(8000)
+    assert big < small * 8 * 2.5, (small, big)  # 8x the input: linear with headroom, quadratic is ~64x
 
 
 def test_continued_heredoc_lines_stay_linear():

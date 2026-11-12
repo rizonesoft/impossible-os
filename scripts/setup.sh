@@ -33,10 +33,11 @@ NC='\033[0m'
 
 # ---- Required tools (see "Host Bootstrap Contract" in the canonical doc) ----
 # Sentinel format: "check:label"; "check" is a command name, or a marker
-# (__OVMF_CODE__, __OVMF_VARS__, __GNU_TIMEOUT__) with its own branch. Kept in one array so install, verify, and the doc
+# (__OVMF_CODE__, __OVMF_VARS__, __GNU_TIMEOUT__, __PYTEST__) with its own branch. Kept in one array so install, verify, and the doc
 # stay aligned. Every entry below maps to an exact Makefile command or path.
 REQUIRED_SENTINELS=(
     "__GNU_TIMEOUT__:GNU timeout (the gates rely on it killing a stalled child; Ubuntu 26.04 defaults to uutils)"
+    "__PYTEST__:pytest for python3 (scripts/overnight/tests/run-all.sh, the commit and push gate, runs fixture tests under it)"
     "clang-19:clang-19 (Makefile CC)"
     "ld.lld-19:ld.lld-19 (Makefile LD)"
     "llvm-objcopy-19:llvm-objcopy-19 (Makefile OBJCOPY)"
@@ -189,6 +190,14 @@ verify_tools() {
                     echo -e "  ${GREEN}OK${NC}   $label"
                 else
                     echo -e "  ${RED}MISS${NC} $label  (fix: sudo apt-get install --allow-remove-essential coreutils-from-gnu coreutils-from-uutils-)"
+                    missing=$((missing + 1))
+                fi
+                ;;
+            __PYTEST__)
+                if python3 -c 'import pytest' 2>/dev/null; then
+                    echo -e "  ${GREEN}OK${NC}   $label"
+                else
+                    echo -e "  ${RED}MISS${NC} $label  (fix: sudo apt-get install python3-pytest)"
                     missing=$((missing + 1))
                 fi
                 ;;
@@ -428,7 +437,7 @@ check_versions() {
     local sent check
     for sent in "${REQUIRED_SENTINELS[@]}"; do
         check="${sent%%:*}"
-        case "$check" in __OVMF_CODE__|__OVMF_VARS__|__GNU_TIMEOUT__) continue ;; esac
+        case "$check" in __OVMF_CODE__|__OVMF_VARS__|__GNU_TIMEOUT__|__PYTEST__) continue ;; esac
         local found=0 vs
         for vs in "${VERSION_SPECS[@]}"; do
             [ "${vs%%:*}" = "$check" ] && { found=1; break; }

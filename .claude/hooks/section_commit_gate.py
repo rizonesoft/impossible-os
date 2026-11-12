@@ -1258,8 +1258,12 @@ class _BashLexer:
             if ch == "(" and not inword and not self.compound and s.startswith("((", self.i):
                 # `(( x = 1 << 2 ))`, `for (( ...; ...; ))`: an arithmetic command, whose
                 # `<<` is a shift, not a heredoc. Only its substitutions run. Without a
-                # closing `))` it is two subshells, as in bash.
+                # closing `))` it is two subshells, as in bash. With no `)` closing it at
+                # all the script is unfinished: stop, and the caller asks bash about the
+                # rest (rescanning to the end for every later `((` was quadratic).
                 k = self._close(self.i + 2, "(", ")")
+                if k < 0:
+                    return False
                 if k >= 0 and k + 1 < n and s[k + 1] == ")":
                     self._expand(s[self.i + 2:k], self.depth + 1, dquotes=True)
                     self.toks.append(_SEP)

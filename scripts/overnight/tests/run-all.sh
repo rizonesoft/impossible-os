@@ -119,15 +119,17 @@ tests = [(i, n.name) for i, n in enumerate(tree.body)
          if isinstance(n, ast.FunctionDef) and n.name.startswith("test_")]
 main = next((i for i, n in enumerate(tree.body)
              if isinstance(n, ast.If) and "__main__" in ast.unparse(n.test)), None)
+def calls(node):  # `test_x(...)` written out; a mere reference (`[test_x]`) proves nothing
+    return {n.func.id for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
 called = set()
 if main is not None:
     block = tree.body[main]
-    called |= {n.id for n in ast.walk(block) if isinstance(n, ast.Name)}
+    called |= calls(block)
     if "globals()" in ast.unparse(block):  # the house loop calls each test defined above it
         called |= {name for i, name in tests if i < main}
 for n in tree.body:  # a module-level call
-    if isinstance(n, ast.Expr) and isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Name):
-        called.add(n.value.func.id)
+    if isinstance(n, ast.Expr):
+        called |= calls(n)
 for i, name in tests:  # one called without its fixture fails the plain run loudly
     if name not in called or (main is not None and i > main):  # defined after the runner ran
         print(name)
