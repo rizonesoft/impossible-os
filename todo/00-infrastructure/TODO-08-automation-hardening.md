@@ -1223,6 +1223,18 @@ The gate's step-8 rule binds a staged source file to a test named for its basena
 
 **Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes with the new cases.
 
+> **Test runner:** `bash scripts/overnight/tests/run-all.sh` | 91 files, 0 failures (`test_step8_suite_coverage.py` 52 cases: suite reachability, user builds, scope, image, tested-by)
+
+> **Notes:**
+> - What shipped: `_test_coverage_by_symbol.py` reads the runners, the suites they register and the user tests `make userland` builds, and credits a source only with code a test runs, in its own image.
+> - How it integrates: `section_commit_gate.py` step 8 checks every staged source against the staged tests; `--report` lists each kernel source's tests (238 covered, 143 untested at `6caec1a3a`).
+> - Downstream effects: kernel section commits no longer opt out of step 8; the rule warns for ten stamped sections, then refuses.
+> - Canonical doc: [AI System](../../docs/infrastructure/ai-system.md) (implement-pipeline section-commit gates); the gate's scope is `todo/answers.md` Q39.
+> - Scope boundary: a C and Make text reader inside the 10 s hook, not a compiler; code written to fool it is out of scope (Q39), and a clean build or CI refuses a broken link recipe.
+
+> **Verified:** 2026-11-12 | commit `9e0cee875` | 5/5 items | build N/A (hooks-only) | run-all.sh 91/91 PASS | real tree: 238 covered, 143 untested, 16 user tests | lint exit 0
+> **Quality reviewed:** 2026-11-12 | Codex passes: plan, 22 rounds, performance and reconciliation each wave; final round, performance and reconciliation approve on `9e0cee875` | every in-scope P2 fixed with a test failing on its prior candidate; contrived constructs P3 under Q39 | scope: N/A (host tooling, no kernel/boot surface)
+
 ## 35. Cross-section review of a closed TODO file
 
 > **Spawned-by:** root
