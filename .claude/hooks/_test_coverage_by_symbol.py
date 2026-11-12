@@ -6,8 +6,9 @@ The section-commit gate's step-8 rule once bound `src/kernel/x/foo.c` to a test 
 tests, `test_exec.c` the EIF ones), so 434 of 516 kernel sources had no test of that
 name and 23 kernel section commits opted out of the rule though each staged its test.
 
-A test covers a source when it names a public symbol the source defines: a non-static C
-function, a `#define` or function in a header, a `global` label in assembly. A source
+A test covers a source when a suite it registers (test_suite_register_cat) reaches a
+call to a public symbol the source defines: a non-static C function, a `#define` or
+function in a header, a `global` label in assembly. A source
 whose code no test can name (a flat binary such as the AP trampoline) says which test
 covers it with a `tested-by: test_<name>.c` line; without one it is untested, never
 covered by whichever test happens to be staged beside it.
@@ -46,75 +47,116 @@ def _code_only(text: str) -> str:
     return _LEXEMES.sub(lambda m: "\n" * m.group(0).count("\n") or " ", text)
 
 
-def _close(code: str, i: int) -> int:
-    """Index just past the `)` matching the `(` at `i`, or -1."""
+_COND = re.compile(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif)\b")
+
+
+def _first_branches(code: str) -> str:
+    """`code` without preprocessor lines, keeping only the first branch of each
+    `#if` chain, so mutually exclusive branches never both open a brace."""
+    out = []
+    stack: list[bool] = []  # per open #if: is the current branch dropped
+    cont = False
+    for line in code.split("\n"):
+        directive = cont or line.lstrip().startswith("#")
+        cont = directive and line.rstrip().endswith("\\")
+        m = _COND.match(line) if directive else None
+        if m:
+            kind = m.group(1)
+            if kind.startswith("if"):
+                stack.append(False)
+            elif kind in ("elif", "else") and stack:
+                stack[-1] = True
+            elif kind == "endif" and stack:
+                stack.pop()
+        out.append("" if directive or any(stack) else line)
+    return "\n".join(out)
+
+
+def _close(code: str, i: int, open_: str = "(", close: str = ")") -> int:
+    """Index just past the bracket matching the one at `i`, or -1."""
     depth = 0
     for j in range(i, len(code)):
-        if code[j] == "(":
+        if code[j] == open_:
             depth += 1
-        elif code[j] == ")":
+        elif code[j] == close:
             depth -= 1
             if depth == 0:
                 return j + 1
     return -1
 
 
-def _top_level_functions(code: str, declarations: bool) -> set[str]:
-    """Non-static functions named at file scope: each `name(...)` at brace depth 0 that
-    a body follows (or, with `declarations`, a `;`). The storage class is read from the
-    whole declaration since the previous `;` or `}`, so `static` on the line above counts.
+def _skip_space(code: str, k: int) -> int:
+    while k < len(code) and code[k].isspace():
+        k += 1
+    return k
+
+
+def _file_scope(code: str):
+    """Each `name(...)` declared or defined at file scope, as
+    (name, prefix, kind, body) where kind is "def" (a body follows), "decl" (`;` or
+    `,` follows) or "other", prefix is the declaration text since the previous `;` or
+    `}`, and body is the function body text for a "def". Bodies are skipped whole.
     """
-    names: set[str] = set()
-    depth = 0
-    start = 0  # where the current top-level declaration begins
+    start = 0
     i = 0
     n = len(code)
     while i < n:
         c = code[i]
         if c == "{":
-            depth += 1
-        elif c == "}":
-            depth = max(depth - 1, 0)
-            if depth == 0:
-                start = i + 1
-        elif c == ";" and depth == 0:
+            end = _close(code, i, "{", "}")
+            if end < 0:
+                return
+            i = start = end  # a struct, enum or initialiser body at file scope
+            continue
+        if c == ";":
             start = i + 1
-        elif depth == 0 and (c.isalpha() or c == "_") and (i == 0 or not (code[i - 1].isalnum() or code[i - 1] == "_")):
+        elif (c.isalpha() or c == "_") and (i == 0 or not (code[i - 1].isalnum() or code[i - 1] == "_")):
             m = _NAME_THEN_PAREN.match(code, i)
             if m and m.group(1) not in _NOT_NAMES:
                 end = _close(code, m.end() - 1)
                 if end < 0:
-                    break
-                k = end
-                while k < n and code[k].isspace():
-                    k += 1
-                while code.startswith("__attribute__", k):  # trailing attributes
-                    p = code.find("(", k)
-                    k = _close(code, p) if p >= 0 else -1
+                    return
+                k = _skip_space(code, end)
+                while code.startswith("__attribute__", k):
+                    k = _close(code, code.find("(", k))
                     if k < 0:
-                        return names
-                    while k < n and code[k].isspace():
-                        k += 1
+                        return
+                    k = _skip_space(code, k)
                 follows = code[k] if k < n else ""
                 prefix = code[start:i]
-                typed = prefix.strip() != "" and "=" not in prefix
-                if typed and (follows == "{" or (declarations and follows in ";,")) \
-                        and not re.search(r"\b(static|typedef)\b", prefix):
-                    names.add(m.group(1))
+                if follows == "{":
+                    body_end = _close(code, k, "{", "}")
+                    if body_end < 0:
+                        return
+                    yield m.group(1), prefix, "def", code[k:body_end]
+                    i = start = body_end
+                    continue
+                yield m.group(1), prefix, ("decl" if follows in ";," else "other"), ""
                 i = m.end()
                 continue
             while i < n and (code[i].isalnum() or code[i] == "_"):
                 i += 1
             continue
         i += 1
+
+
+def _top_level_functions(code: str, declarations: bool) -> set[str]:
+    """Non-static functions defined (or, with `declarations`, declared) at file scope."""
+    names = set()
+    for name, prefix, kind, _ in _file_scope(code):
+        typed = prefix.strip() != "" and "=" not in prefix
+        if typed and (kind == "def" or (declarations and kind == "decl")) \
+                and not re.search(r"\b(static|typedef)\b", prefix):
+            names.add(name)
     return names
 
 
-def local_additions(provenance_text: str) -> set[str]:
-    """The paths PROVENANCE.md lists under its "Local additions" heading."""
+def local_additions(provenance_text: str) -> set[str] | None:
+    """The paths PROVENANCE.md lists under its "Local additions" heading, or None when
+    the heading is missing (the vendored/ours split is then unknown)."""
     m = re.search(r"^## Local additions.*?$(.*?)(?=^## |\Z)", provenance_text, re.M | re.S)
     if not m:
-        return set()
+        return None
     return {p for p in re.findall(r"`([^`\s]+)`", m.group(1)) if p.startswith("src/")}
 
 
@@ -129,15 +171,47 @@ def public_symbols(path: str, text: str) -> set[str]:
     code = _code_only(text)
     header = path.endswith(".h")
     names = set(_DEFINE.findall(code)) if header else set()
-    names |= _top_level_functions(_PREPROCESSOR.sub("", code), declarations=header)
+    names |= _top_level_functions(_first_branches(code), declarations=header)
     if header:  # a header's static inline helpers are its interface too
         names |= {m.group(1) for m in re.finditer(r"\bstatic\s+inline\b[^;{(]*?\b([A-Za-z_]\w*)\s*\(", code)}
     return names - _NOT_NAMES
 
 
+_REGISTER = re.compile(r"\btest_suite_register(?:_cat)?\s*\(")
+
+
 def test_names(text: str) -> set[str]:
-    """The identifiers a test's code uses (not its comments or string literals)."""
-    return set(_IDENT.findall(_code_only(text)))
+    """The identifiers a test's registered suites can reach: the bodies of the
+    functions passed to test_suite_register(_cat), and of every function in this file
+    those bodies name, transitively. A declaration, a comment, a string or a function
+    no suite reaches is not a call. A file that registers nothing (a helper included by
+    the runner) offers every function body.
+    """
+    code = _first_branches(_code_only(text))
+    bodies: dict[str, str] = {}
+    for name, _, kind, body in _file_scope(code):
+        if kind == "def":
+            bodies[name] = bodies.get(name, "") + body
+    roots: set[str] = set()
+    for body in bodies.values():
+        for m in _REGISTER.finditer(body):
+            end = _close(body, m.end() - 1)
+            roots |= set(_IDENT.findall(body[m.end():end if end > 0 else len(body)]))
+    if not roots:
+        return set().union(*(set(_IDENT.findall(b)) for b in bodies.values())) if bodies else set()
+    seen: set[str] = set()
+    used: set[str] = set()
+    todo = [r for r in roots if r in bodies]
+    used |= roots
+    while todo:
+        fn = todo.pop()
+        if fn in seen:
+            continue
+        seen.add(fn)
+        ids = set(_IDENT.findall(bodies[fn]))
+        used |= ids
+        todo.extend(i for i in ids if i in bodies and i not in seen)
+    return used
 
 
 def covering_tests(path: str, text: str, tests: dict[str, set[str]]) -> list[str]:
@@ -156,6 +230,8 @@ def _git(root: Path, *args: str) -> str:
 def report(root: Path) -> tuple[dict[str, list[str]], list[str]]:
     """Every own kernel source at HEAD: {source: covering tests}, and the untested ones."""
     local = local_additions(_git(root, "show", "HEAD:src/libs/PROVENANCE.md"))
+    if local is None:
+        raise SystemExit("src/libs/PROVENANCE.md has no Local additions heading")
     files = _git(root, "ls-tree", "-r", "--name-only", "HEAD", "src/kernel").split()
     tests = {f: test_names((root / f).read_text(errors="replace")) for f in files
              if re.search(r"/test/test_[\w-]+\.c$", f)}
@@ -180,6 +256,8 @@ def main(argv: list[str]) -> int:
     covered, untested = report(root)
     print(f"{len(covered)} covered, {len(untested)} untested "
           f"(own src/kernel sources at HEAD; upstream ACPICA excluded)")
+    for f, tests in covered.items():
+        print(f"covered   {f}  <- {', '.join(Path(t).name for t in tests)}")
     for f in untested:
         print(f"untested  {f}")
     return 0

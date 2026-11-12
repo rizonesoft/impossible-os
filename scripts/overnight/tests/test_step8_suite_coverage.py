@@ -139,16 +139,16 @@ def test_refusal_a_name_in_a_string_is_not_a_call():
 
 
 def test_refusal_an_unreadable_staged_file_is_missing_evidence():
-    saved = gate._staged_text
+    saved = gate._staged_texts
 
-    def broken(root, path):
-        raise gate._StagedReadError(f"{path}: timed out")
-    gate._staged_text = broken
+    def broken(root, paths):
+        raise gate._StagedReadError("git cat-file: timed out")
+    gate._staged_texts = broken
     try:
         ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C,
                              "src/kernel/test/test_sched.c": SCHED_TEST}, refuse=False)
     finally:
-        gate._staged_text = saved
+        gate._staged_texts = saved
     assert not ok and "could not read" in msg, msg
 
 
@@ -164,6 +164,60 @@ def test_a_deleted_source_needs_no_test():
         finally:
             gate.STEP8_REFUSE_FROM = saved
     assert ok, msg
+
+
+REGISTERED = ('static void suite(void) {{ {body} }}\n'
+              'void test_register_x(void) {{\n    test_suite_register_cat("x",\n        suite, TEST_CAT_SCHED);\n}}\n')
+
+
+def test_refusal_a_declaration_or_an_unregistered_caller_is_not_a_call():
+    decl = "extern int dpc_queue(int);\n" + REGISTERED.format(body="heap_alloc(1);")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": decl})
+    assert not ok and "dpc.c" in msg, msg
+    unreg = "void stray(void) { dpc_queue(1); }\n" + REGISTERED.format(body="heap_alloc(1);")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": unreg})
+    assert not ok and "dpc.c" in msg, msg
+
+
+def test_a_call_through_a_helper_the_suite_reaches_counts():
+    reached = "static void helper(void) { dpc_queue(1); }\n" + REGISTERED.format(body="helper();")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": DPC_C, "src/kernel/test/test_x.c": reached})
+    assert ok, msg
+
+
+def test_alternative_if_branches_do_not_hide_the_next_definition():
+    src = ("int dpc_queue(int x) {\n#if A\n    if (x) {\n#else\n    if (!x) {\n#endif\n"
+           "        return 1;\n    }\n    return 0;\n}\nint dpc_flush(void) {\n    return 0;\n}\n")
+    ok, msg, _ = _check({"src/kernel/sched/dpc.c": src,
+                         "src/kernel/test/test_x.c": REGISTERED.format(body="dpc_flush();")})
+    assert ok, msg
+
+
+def test_refusal_acpica_without_its_provenance_record():
+    hdr = {"src/kernel/acpica/include/platform/acimpossible.h": "#define ACPI_SINGLE_THREADED\n"}
+    ok, msg, _ = _check(hdr)
+    assert not ok and "Local additions" in msg, msg
+    ok, msg, _ = _check({"src/libs/PROVENANCE.md": "# no such heading\n", **hdr})
+    assert not ok and "Local additions" in msg, msg
+
+
+def test_hundreds_of_staged_files_are_read_in_two_git_calls():
+    files = {f"src/kernel/x/f{i}.c": f"int f{i}(void) {{\n    return {i};\n}}\n" for i in range(300)}
+    files["src/kernel/test/test_x.c"] = "static void t(void) { " + " ".join(f"f{i}();" for i in range(300)) + " }\n"
+    real, calls = gate.subprocess.run, []
+
+    def counting(*a, **k):
+        calls.append(a[0][:3])
+        return real(*a, **k)
+    with tempfile.TemporaryDirectory() as d:
+        repo = _repo(d)
+        staged = _stage(repo, files)
+        gate.subprocess.run = counting
+        try:
+            texts = gate._staged_texts(repo, staged)
+        finally:
+            gate.subprocess.run = real
+    assert len(calls) == 2 and texts["src/kernel/x/f7.c"].startswith("int f7"), calls
 
 
 if __name__ == "__main__":

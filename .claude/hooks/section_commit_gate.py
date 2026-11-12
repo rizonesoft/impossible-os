@@ -3894,23 +3894,50 @@ class _StagedReadError(Exception):
     """A staged blob that is in the index could not be read."""
 
 
-def _staged_text(root: Path, path: str) -> str | None:
-    """The staged blob of `path`, or None when the index has no entry for it (a
-    deletion). A failed read raises _StagedReadError: an unread source is missing
-    evidence, never a source that needs no test.
+# The hook has 10 s (.claude/settings.json) for every check; step 8's reads get this.
+STEP8_READ_BUDGET_S = 4.0
+
+
+def _staged_texts(root: Path, paths: list[str]) -> dict[str, str | None]:
+    """The staged blob of each path, None for a path the index has no entry for (a
+    deletion). One `ls-files` and one `cat-file --batch` under a shared deadline,
+    however many paths. A failed or late read raises _StagedReadError: an unread file
+    is missing evidence, never a file that needs no test.
     """
+    deadline = time.monotonic() + STEP8_READ_BUDGET_S
     try:
-        entry = subprocess.run(["git", "ls-files", "-s", "-z", "--", path], cwd=str(root),
-                               capture_output=True, text=True, timeout=5,
-                               check=True).stdout  # deadline: 5 s, an index read
-        if not entry:
-            return None
-        blob = entry.split()[1]
-        return subprocess.run(["git", "cat-file", "blob", blob], cwd=str(root),
-                              capture_output=True, text=True, timeout=5, check=True,
-                              errors="replace").stdout  # deadline: 5 s, a blob read
-    except (OSError, subprocess.SubprocessError, IndexError) as exc:
-        raise _StagedReadError(f"{path}: {exc}") from exc
+        listing = subprocess.run(
+            ["git", "--literal-pathspecs", "ls-files", "-s", "-z", "--", *paths],
+            cwd=str(root), capture_output=True, timeout=STEP8_READ_BUDGET_S,
+            check=True).stdout  # deadline: STEP8_READ_BUDGET_S, shared by both reads
+        blob_of: dict[str, str] = {}
+        for rec in listing.split(b"\0"):
+            if rec:
+                meta, path = rec.split(b"\t", 1)
+                blob_of[path.decode("utf-8", "surrogateescape")] = meta.split()[1].decode()
+        shas = sorted(set(blob_of.values()))
+        content: dict[str, bytes] = {}
+        if shas:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired("git ls-files", STEP8_READ_BUDGET_S)
+            data = subprocess.run(
+                ["git", "cat-file", "--batch"], cwd=str(root), input="\n".join(shas).encode() + b"\n",
+                capture_output=True, timeout=remaining,
+                check=True).stdout  # deadline: what is left of STEP8_READ_BUDGET_S
+            pos = 0
+            for _ in shas:
+                eol = data.index(b"\n", pos)
+                sha, kind, size = data[pos:eol].split()
+                if kind != b"blob":
+                    raise ValueError(f"{sha.decode()} is a {kind.decode()}")
+                start = eol + 1
+                content[sha.decode()] = data[start:start + int(size)]
+                pos = start + int(size) + 1
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise _StagedReadError(str(exc)) from exc
+    return {p: (content[blob_of[p]].decode("utf-8", "replace") if p in blob_of else None)
+            for p in paths}
 
 
 def _step8_test_wiring_check(
@@ -3952,24 +3979,27 @@ def _step8_test_wiring_check(
         pass
     import _test_coverage_by_symbol as tcs
 
+    provenance = "src/libs/PROVENANCE.md"
+    test_paths = [p for p in staged_src
+                  if any(td in p for td in _TEST_WIRING_TEST_DIRS.values())
+                  and re.search(r"test_[\w-]+\.c$", p)]
+    wanted = [p for p in candidates if p.endswith(tcs.SOURCE_EXTS)]
     try:
-        local = tcs.local_additions(_staged_text(root, "src/libs/PROVENANCE.md") or "")
-        sources = {}
-        for p in candidates:
-            if p.endswith(tcs.SOURCE_EXTS) and not tcs.is_vendored(p, local):
-                text = _staged_text(root, p)
-                if text is not None:
-                    sources[p] = text
-        if not sources:
-            return (True, "")
-        tests = {}
-        for p in staged_src:
-            if any(td in p for td in _TEST_WIRING_TEST_DIRS.values()) and re.search(r"test_[\w-]+\.c$", p):
-                text = _staged_text(root, p)
-                if text is not None:
-                    tests[p] = tcs.test_names(text)
+        staged = _staged_texts(root, sorted({provenance, *wanted, *test_paths}))
     except _StagedReadError as exc:
-        return (False, f"step-8 could not read a staged file, so its tests are unknown: {exc}")
+        return (False, f"step-8 could not read the staged files, so their tests are unknown: {exc}")
+    if any(p.startswith(tcs.VENDORED_ROOT) for p in wanted):
+        local = tcs.local_additions(staged.get(provenance) or "")
+        if local is None:
+            return (False, f"step-8 cannot tell upstream ACPICA from our files: the staged "
+                           f"{provenance} has no `## Local additions` heading")
+    else:
+        local = set()
+    sources = {p: staged[p] for p in wanted
+               if staged.get(p) is not None and not tcs.is_vendored(p, local)}
+    if not sources:
+        return (True, "")
+    tests = {p: tcs.test_names(staged[p]) for p in test_paths if staged.get(p) is not None}
     uncovered = [p for p, text in sources.items() if not tcs.covering_tests(p, text, tests)]
     if not uncovered:
         return (True, "")
