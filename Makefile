@@ -1575,14 +1575,20 @@ update-ui-refs: all
 ## test-usb-img: Create a 64 MiB FAT32 test USB disk image
 USB_TEST_IMG := $(BUILD_DIR)/test-usb.img
 test-usb-img: $(USB_TEST_IMG)
+.PRECIOUS: $(USB_TEST_IMG)   # a VM may have written it; never let make unlink it
 $(USB_TEST_IMG):
 	@echo "[USB] Creating 64 MiB FAT32 test USB disk..."
 	@mkdir -p $(BUILD_DIR)
-	dd if=/dev/zero of=$@ bs=1M count=64 status=none
-	mkfs.fat -F 32 -n "USB_TEST" $@
+	@# Built as $@.new and published by a rename under the image lock, so a VM
+	@# booting the old image keeps its own inode (as for the system disk).
+	@$(BOOT_LOCKED) true
+	@rm -f $@.new
+	dd if=/dev/zero of=$@.new bs=1M count=64 status=none
+	mkfs.fat -F 32 -n "USB_TEST" $@.new
 	@echo "Hello from USB!" > /tmp/usb_test.txt
-	mcopy -i $@ /tmp/usb_test.txt ::
+	mcopy -i $@.new /tmp/usb_test.txt ::
 	@rm -f /tmp/usb_test.txt
+	$(BOOT_LOCKED) mv -f $@.new $@
 	@echo "[USB] $@ ready (64 MiB FAT32)"
 
 ## run-usb: Launch QEMU with xHCI controller + 64 MiB USB mass storage device
@@ -1651,14 +1657,20 @@ clean-usb:
 
 NVME_TEST_IMG := $(BUILD_DIR)/test-nvme.img
 test-nvme-img: $(NVME_TEST_IMG)
+.PRECIOUS: $(NVME_TEST_IMG)   # a VM may have written it; never let make unlink it
 $(NVME_TEST_IMG):
 	@echo "[NVMe] Creating 128 MiB FAT32 test NVMe disk..."
 	@mkdir -p $(BUILD_DIR)
-	dd if=/dev/zero of=$@ bs=1M count=128 status=none
-	mkfs.fat -F 32 -n "NVME_TEST" $@
+	@# Built as $@.new and published by a rename under the image lock, so a VM
+	@# booting the old image keeps its own inode (as for the system disk).
+	@$(BOOT_LOCKED) true
+	@rm -f $@.new
+	dd if=/dev/zero of=$@.new bs=1M count=128 status=none
+	mkfs.fat -F 32 -n "NVME_TEST" $@.new
 	@echo "Hello from NVMe!" > /tmp/nvme_test.txt
-	mcopy -i $@ /tmp/nvme_test.txt ::
+	mcopy -i $@.new /tmp/nvme_test.txt ::
 	@rm -f /tmp/nvme_test.txt
+	$(BOOT_LOCKED) mv -f $@.new $@
 	@echo "[NVMe] $@ ready (128 MiB FAT32)"
 
 ## run-nvme: Launch QEMU with NVMe controller + 128 MiB NVMe drive

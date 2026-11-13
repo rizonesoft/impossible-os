@@ -4993,6 +4993,12 @@ for _bl_t in clean-usb clean-nvme; do
 done
 # .DELETE_ON_ERROR must never unlink the published image a VM may have written.
 grep -qE '^\.PRECIOUS:.*\$\(SYSTEM_DISK\)' "$_bl_mk" || _bl_disk="n (not .PRECIOUS)"
+# The USB and NVMe test images a running VM attaches are built as $@.new and
+# renamed into place under the lock, and are .PRECIOUS too.
+for _bl_v in USB_TEST_IMG NVME_TEST_IMG; do
+    awk -v t="$(printf '$(%s):' "$_bl_v")" '$1==t{f=1;next} f&&/of=\$@ |-n "[A-Z_]*" \$@$|-i \$@ /{bad=1} f&&/BOOT_LOCKED\) mv -f \$@\.new \$@/{pub=1} f&&/^$|^##/{exit} END{exit !(pub&&!bad)}' "$_bl_mk" || _bl_disk="n ($_bl_v not published under the lock)"
+    grep -qE "^\.PRECIOUS:.*\\\$\($_bl_v\)" "$_bl_mk" || _bl_disk="n ($_bl_v not .PRECIOUS)"
+done
 # ...and every script that starts QEMU and names build/system-disk.img holds it.
 _bl_scripts=""
 while IFS= read -r _bl_f; do
@@ -5004,6 +5010,9 @@ done < <(cd "$REPO_ROOT" && {
     # ...and release scripts that write one (an --out image; build-manifest.sh
     # writes a manifest, not an image)
     git ls-files 'scripts/release/*.sh' | grep -vE '/test-|/build-manifest\.sh$' | xargs grep -l -- '--out)' 2>/dev/null
+    # ...and orchestrators that run the smoke test across legs (the image must
+    # not change between legs, so the hold spans them all)
+    git ls-files 'scripts/*.sh' 'tools/*.sh' | grep -v 'test-tooling\.sh$' | xargs grep -lE '(bash|exec|sh) +[^ ]*test-smoke(-matrix)?\.sh' 2>/dev/null
     # ...and any script that makes a disk image under build/. Readers of an
     # image (write-usb.sh copies it to a device, read-blackbox.sh reads it,
     # setup.sh only installs tools) and patch-boot-conf.sh (takes the lock
