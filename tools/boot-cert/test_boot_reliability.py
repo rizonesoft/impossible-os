@@ -302,6 +302,12 @@ with open(_MOCK_PASS_THEN_SKIP, "w", encoding="utf-8") as fh:
 os.chmod(_MOCK_PASS_THEN_SKIP, os.stat(_MOCK_PASS_THEN_SKIP).st_mode | stat.S_IEXEC)
 
 
+# The orchestration tests below boot mocks, not the canonical image, so the
+# canonical boot.conf reset is stubbed (a fresh checkout has no image to reset);
+# one test restores a failing reset to prove it stops the series.
+br._reset_boot_conf = lambda: 0
+
+
 def mk_args(**kw):
     base = dict(platform="qemu-tcg", tier="stable", row_id="boot-reliability",
                 cold=2, warm=2, timeout=5, disk="build/system-disk.img",
@@ -434,6 +440,22 @@ rc = br.run_reliability(mk_args(launcher_cmd=["bash", _MOCK_QEMU], cold=1, warm=
 check("a free lock lets the series run and restores BOOT_CONF_LOCK_HELD",
       rc == 0 and os.environ.get("BOOT_CONF_LOCK_HELD") == _env_before)
 
+# A failed canonical reset stops the series before any boot.
+_marker2 = os.path.join(_MOCK_DIR, "launched-after-failed-reset")
+_mock_mark2 = os.path.join(_MOCK_DIR, "mock-mark2.sh")
+with open(_mock_mark2, "w") as fh:
+    fh.write(f'#!/bin/bash\n: > "{_marker2}"\nexit 3\n')
+br._reset_boot_conf = lambda: 1
+_raised = False
+try:
+    br.run_reliability(mk_args(launcher_cmd=["bash", _mock_mark2], cold=1, warm=0,
+                               out=os.path.join(_MOCK_DIR, "out-badreset")))
+except RuntimeError:
+    _raised = True
+br._reset_boot_conf = lambda: 0
+check("a failed boot.conf reset stops the series before any boot",
+      _raised and not os.path.exists(_marker2))
+
 # A supplied --disk is certified as it is: no canonical boot.conf reset (it
 # needs build/system-disk.img, which a release host may not have).
 _resets = []
@@ -459,6 +481,7 @@ with open(_mock_hold, "w") as fh:
     fh.write(f'#!/bin/bash\necho $$ > "{_pidf}"\nsleep 20\nexit 3\n')
 _child = subprocess.Popen([sys.executable, "-c", (
     "import sys, argparse; sys.path.insert(0, %r); import boot_reliability as br; "
+    "br._reset_boot_conf = lambda: 0; "
     "br.run_reliability(argparse.Namespace(platform='qemu-tcg', tier='stable', "
     "row_id='r', cold=1, warm=0, timeout=30, disk='build/system-disk.img', "
     "test_suite='', boot_conf_patch=[], screenshot=False, no_shell_prompt=False, "

@@ -35,11 +35,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BUILD="$REPO_ROOT/build"
-# Hold .boot-conf.lock for this run, so no other run patches or resets
-# the image's boot.conf while it boots (scripts/lib/boot-conf-lock.sh).
-. "$SCRIPT_DIR/../lib/boot-conf-lock.sh"
-boot_conf_lock_hold "$REPO_ROOT" 9 || exit 1
-
 DISK="$BUILD/system-disk.img"
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"
 OVMF_VARS_SRC="/usr/share/OVMF/OVMF_VARS_4M.fd"
@@ -77,6 +72,14 @@ while [ "$#" -gt 0 ]; do
         *) err "unknown arg: $1"; usage >&2; exit 2 ;;
     esac
 done
+
+# Booting build/system-disk.img: hold .boot-conf.lock for the run, so no other
+# run patches, resets, rebuilds or deletes it meanwhile
+# (scripts/lib/boot-conf-lock.sh). Any other --disk is booted without it.
+if [ "$(realpath -m "$DISK")" = "$(realpath -m "$BUILD/system-disk.img")" ]; then
+    . "$SCRIPT_DIR/../lib/boot-conf-lock.sh"
+    boot_conf_lock_hold "$REPO_ROOT" 9 || exit 1
+fi
 
 case "$ACCEL" in auto|kvm|tcg) ;; *) err "bad --accel: $ACCEL"; exit 2 ;; esac
 case "$TIMEOUT_SEC" in ''|*[!0-9]*) err "bad --timeout: $TIMEOUT_SEC"; exit 2 ;; esac
