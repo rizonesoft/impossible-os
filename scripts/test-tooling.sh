@@ -4979,15 +4979,28 @@ done
 _uf_out="fixture-unavailable"
 if _lk_fx=$(_lk_fixture); then
     _uf_long=$(printf 'a%.0s' $(seq 1 64))
-    _uf_out=$( { env -u BOOT_CONF_LOCK_HELD timeout 30 bash "$_lk_fx/scripts/test.sh" "UTEST_FILTER=$_uf_long" 2>&1; echo "rc=$?"
-                 env -u BOOT_CONF_LOCK_HELD timeout 30 bash "$_lk_fx/scripts/test.sh" UTEST_TIMEOUT_MS=0 2>&1; echo "rc=$?"
-                 env -u BOOT_CONF_LOCK_HELD timeout 30 bash "$_lk_fx/scripts/test.sh" UTEST_TIMEOUT_MS=65536 2>&1; echo "rc=$?"; } )
+    # Each refusal runs over a previous run's green artifact, which it must not
+    # leave behind for CI to attribute to the refused invocation.
+    _uf_out=$( for _uf_arg in "UTEST_FILTER=$_uf_long" UTEST_TIMEOUT_MS=0 UTEST_TIMEOUT_MS=65536; do
+                   echo '{"stale": "previous green run"}' > "$_lk_fx/build/test-results.json"
+                   env -u BOOT_CONF_LOCK_HELD timeout 30 bash "$_lk_fx/scripts/test.sh" JSON=1 "$_uf_arg" 2>&1; echo "rc=$?"
+                   grep -qs 'previous green run' "$_lk_fx/build/test-results.json" && echo "stale-artifact-survived"
+               done )
 fi
 if [ "$(grep -c '^rc=2$' <<<"$_uf_out")" -eq 3 ] && grep -q 'holds at most 63' <<<"$_uf_out" \
-   && [ "$(grep -c 'must be 1..65535' <<<"$_uf_out")" -eq 2 ]; then
-    t_pass "utest_args_refused  test.sh refuses an over-long UTEST_FILTER and an out-of-range UTEST_TIMEOUT_MS"
+   && [ "$(grep -c 'must be 1..65535' <<<"$_uf_out")" -eq 2 ] && ! grep -q 'stale-artifact-survived' <<<"$_uf_out"; then
+    t_pass "utest_args_refused  test.sh refuses an over-long UTEST_FILTER and an out-of-range UTEST_TIMEOUT_MS, leaving no stale artifact"
 else
     t_fail "utest_args_refused  test.sh accepted a UTEST_FILTER or UTEST_TIMEOUT_MS boot.conf cannot hold" "$(tr '\n' ' ' <<<"$_uf_out" | tail -c 300)"
+fi
+
+# The identity proof refuses a RUNS that is not a positive integer: RUNS=0
+# once printed PASS having checked no boot at all.
+_ir_out=$(for _ir in 0 -1 x; do RUNS=$_ir timeout 30 bash "$REPO_ROOT/scripts/test-identity-path.sh" 2>&1; echo "rc=$?"; done)
+if [ "$(grep -c '^rc=2$' <<<"$_ir_out")" -eq 3 ] && ! grep -q PASS <<<"$_ir_out"; then
+    t_pass "identity_runs_refused  test-identity-path.sh refuses RUNS=0, negative and non-numeric"
+else
+    t_fail "identity_runs_refused  test-identity-path.sh accepted a RUNS that checks no boot" "$(tr '\n' ' ' <<<"$_ir_out")"
 fi
 
 # Serial text is printed with printf '%s', never `echo -e`: it carries Windows

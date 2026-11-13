@@ -11,8 +11,10 @@
 # "planned binary replaced", in JSON and JUnit; the victim's marker never
 # reached serial; the run was not aborted and its counts reconcile.
 #
-# Boots RUNS times (default 2) against the same image: the swap must keep
-# every boot a mismatch, never a match on the second boot.
+# Boots RUNS times (default 4, the smoke matrix's leg count) on ONE image:
+# the first boot builds it, every later boot is KEEP_DISK=1, so it boots the
+# disk the previous boot rewrote. The swap must keep every boot a mismatch; a
+# fixed replacement payload would pass boot 1 and run the victim on boot 2.
 #
 # Usage: bash scripts/test-identity-path.sh   (exit 0 = the branch holds)
 # =============================================================================
@@ -20,16 +22,25 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT="$(dirname "$SCRIPT_DIR")"
 FILTER="test_optin_swap.exe:test_optin_victim.exe"
-RUNS="${RUNS:-2}"
+RUNS="${RUNS:-4}"
+if ! [[ "$RUNS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[IDENTITY-PATH] FAIL: RUNS must be a positive integer (got '$RUNS')" >&2
+    exit 2
+fi
 
 . "$SCRIPT_DIR/lib/optin-path-run.sh"
 optin_path_lock IDENTITY-PATH
 
 expected=$(( $(optin_default_count) + 2 ))
-for i in $(seq 1 "$RUNS"); do
-    optin_path_run IDENTITY-PATH "UTEST_FILTER=$FILTER" || exit 1
+checked=0
+for ((i = 1; i <= RUNS; i++)); do
+    keep=()
+    [ "$i" -gt 1 ] && keep=(KEEP_DISK=1)
+    optin_path_run IDENTITY-PATH "UTEST_FILTER=$FILTER" "${keep[@]}" || exit 1
     python3 "$SCRIPT_DIR/lib/optin_path_check.py" identity "$OPTIN_JSON" "$OPTIN_XML" \
         "$OPTIN_SLICE" "$OPTIN_RUN_ID" "$expected" || { echo "[IDENTITY-PATH] FAIL on boot $i" >&2; exit 1; }
+    checked=$((checked + 1))
     echo "[IDENTITY-PATH] boot $i: victim refused as planned binary replaced, never executed (rc=$OPTIN_RC)"
 done
-echo "[IDENTITY-PATH] PASS: $RUNS boots, every one a refused mismatch"
+[ "$checked" -eq "$RUNS" ] || { echo "[IDENTITY-PATH] FAIL: checked $checked of $RUNS boots" >&2; exit 1; }
+echo "[IDENTITY-PATH] PASS: $RUNS boots of one image, every one a refused mismatch"

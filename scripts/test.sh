@@ -114,6 +114,7 @@ Usage:
   bash scripts/test.sh UTEST_FILTER=test_harness_*  Filter the user-mode binaries (a `:`-separated
                                     pattern list; an opt-in test_optin_*.exe must be named exactly)
   bash scripts/test.sh UTEST_TIMEOUT_MS=2000  Per-binary wall-clock limit (default 10000, max 65535)
+  bash scripts/test.sh KEEP_DISK=1  Boot the disk the last run left, without rebuilding (build must be current)
   bash scripts/test.sh --help       Show this help
 
 Categories (SUITE=...):
@@ -161,6 +162,8 @@ UTEST_FILTER=""
 # Per-binary wall-clock limit for the user-mode launcher, in ms; empty keeps
 # the launcher default. boot.conf stores it as 16 bits.
 UTEST_TIMEOUT_MS=""
+# KEEP_DISK=1: boot the disk the previous run left, without rebuilding.
+KEEP_DISK=0
 
 # Per-suite [COUNT] trace, off unless asked for: it costs ~7s of extra serial
 # on a ~4s suite, which is why no ordinary run pays it.
@@ -204,20 +207,9 @@ for arg in "$@"; do
         TAP=1)    TAP_MODE=1 ;;
         UTEST_FILTER=*) UTEST_FILTER="${arg#UTEST_FILTER=}" ;;
         UTEST_TIMEOUT_MS=*) UTEST_TIMEOUT_MS="${arg#UTEST_TIMEOUT_MS=}" ;;
+        KEEP_DISK=1) KEEP_DISK=1 ;;
     esac
 done
-
-# boot.conf's utest_filter[] holds 63 bytes (UTEST_FILTER_MAX - 1). A longer
-# value would boot, be refused by the launcher as `utest_filter truncated`,
-# and fail the run after a full build and boot; say so before any of that.
-if [ -n "$UTEST_TIMEOUT_MS" ] && ! { [[ "$UTEST_TIMEOUT_MS" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$UTEST_TIMEOUT_MS" -le 65535 ]; }; then
-    echo "[TEST] UTEST_TIMEOUT_MS must be 1..65535 (got '$UTEST_TIMEOUT_MS')" >&2
-    exit 2
-fi
-if [ "${#UTEST_FILTER}" -gt 63 ]; then
-    echo "[TEST] UTEST_FILTER is ${#UTEST_FILTER} bytes; boot.conf's utest_filter= holds at most 63" >&2
-    exit 2
-fi
 
 # --- Step 0a: Artifact lifecycle, armed before ANY exit ---
 #
@@ -4154,6 +4146,21 @@ trap 'UTEST_SIGNALLED=1; utest_artifact_guard 143; exit 143' TERM
 # belonging to this run rather than the previous run's success.
 utest_prune_records
 
+# boot.conf's utest_filter[] holds 63 bytes (UTEST_FILTER_MAX - 1). A longer
+# value would boot, be refused by the launcher as `utest_filter truncated`,
+# and fail the run after a full build and boot; say so before any of that.
+# Refused HERE, after the artifact lifecycle is armed: the canonical aliases
+# are cleared and the guard publishes this run's refusal, so a bad argument
+# never leaves the previous run's green artifact for CI to upload.
+if [ -n "$UTEST_TIMEOUT_MS" ] && ! { [[ "$UTEST_TIMEOUT_MS" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$UTEST_TIMEOUT_MS" -le 65535 ]; }; then
+    echo "[TEST] UTEST_TIMEOUT_MS must be 1..65535 (got '$UTEST_TIMEOUT_MS')" >&2
+    exit 2
+fi
+if [ "${#UTEST_FILTER}" -gt 63 ]; then
+    echo "[TEST] UTEST_FILTER is ${#UTEST_FILTER} bytes; boot.conf's utest_filter= holds at most 63" >&2
+    exit 2
+fi
+
 # CI_CONTAINER=1 -- the same suites from a clean clone of HEAD in the pinned CI image.
 # Checked first and handed off whole: nothing below applies to this host's tree.
 if [ "${CI_CONTAINER:-0}" = "1" ]; then
@@ -4376,12 +4383,31 @@ boot_conf_lock_hold "$PROJECT" 7 || exit 1
 rm -f "$TEST_LOG"
 
 # --- Step 1: Build ---
-echo -e "${CYAN}${BOLD}[TEST]${RESET} Building kernel..."
-if ! bash "$PROJECT/scripts/build.sh" > /dev/null 2>&1; then
-    echo -e "${RED}${BOLD}[FAIL]${RESET} Build failed. Check build/build.log"
-    exit 1
+#
+# KEEP_DISK=1 boots the disk the previous run left, as test-smoke.sh's
+# SMOKE_KEEP_DISK does: no build, because build.sh restages the sysroot and
+# recreates system-disk.img, which would discard what that boot wrote. It is
+# refused unless the build in build/ still matches the tree, so a source edit
+# in between cannot boot a stale kernel. scripts/test-identity-path.sh uses it
+# to prove a fixture stays correct on later boots of one image.
+if [ "$KEEP_DISK" = "1" ]; then
+    if ! receipt_reason=$(python3 "$PROJECT/scripts/overnight/receipts.py" check-build "$PROJECT" 2>&1); then
+        echo -e "${RED}${BOLD}[FAIL]${RESET} KEEP_DISK=1 needs the build the previous boot used, and it is not current: ${receipt_reason}"
+        exit 1
+    fi
+    if [ ! -s "$DISK" ]; then
+        echo -e "${RED}${BOLD}[FAIL]${RESET} KEEP_DISK=1 but $DISK is missing"
+        exit 1
+    fi
+    echo -e "${GREEN}[TEST]${RESET} Build current; booting the kept disk"
+else
+    echo -e "${CYAN}${BOLD}[TEST]${RESET} Building kernel..."
+    if ! bash "$PROJECT/scripts/build.sh" > /dev/null 2>&1; then
+        echo -e "${RED}${BOLD}[FAIL]${RESET} Build failed. Check build/build.log"
+        exit 1
+    fi
+    echo -e "${GREEN}[TEST]${RESET} Build OK"
 fi
-echo -e "${GREEN}[TEST]${RESET} Build OK"
 
 # --- Step 2: Patch boot.conf for test mode ---
 #
