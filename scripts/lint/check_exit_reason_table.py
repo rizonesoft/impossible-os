@@ -4,14 +4,20 @@
 include/kernel/sched/task.h generates every reserved exit reason, its count,
 _LAST and the classifier bounds from one X-macro table. A reason declared
 anywhere else (a `#define TASK_EXIT_X (TASK_EXIT_REASON_LAST - 1)`, an enum
-or const `TASK_EXIT_X = ...`) builds clean and classifies as an ordinary
-application status, which is the defect the table exists to make impossible.
+or const) builds clean and classifies as an ordinary application status,
+which is the defect the table exists to make impossible.
 
-Scope: the guard is against an HONEST declaration in any layout the compiler
-accepts: the source is read after C translation phases 2 and 3 (splices
-removed, then each comment one space), so whitespace, comments and line
-continuations anywhere in it change nothing. A name BUILT by token pasting or
-another macro is out of scope; the table's own row asserts and review own that.
+The table therefore defines the WHOLE `TASK_EXIT_*` namespace: one name per
+row plus the table's own machinery. Any other `TASK_EXIT_*` identifier in the
+code, declared or used, in any declaration form, is a finding. No declaration
+syntax is parsed, so attributes, parenthesised declarators and implicit
+enumerators need no special case.
+
+Identifiers are read after C translation phases 2 and 3 (splices removed,
+then each comment one space, literals emptied), so a comment or string that
+mentions a name is not code and a name split by a continuation is still found.
+A name BUILT by token pasting is out of scope; the table's own row asserts and
+review own that.
 
     check_exit_reason_table.py --root <repo>   exit 1 on any such declaration
     check_exit_reason_table.py --control       exit 1 unless the built-in
@@ -22,16 +28,18 @@ import os
 import re
 import sys
 
-# The table's own machinery: the base, the table, _LAST and the X helpers.
-ALLOWED = {
+# The table's own machinery: the base, the table, its count and _LAST, the X
+# helpers and the row-position enum prefix the table pastes.
+MACHINERY = {
     "TASK_EXIT_REASON_BASE", "TASK_EXIT_REASONS", "TASK_EXIT_REASON_LAST",
-    "TASK_EXIT_REASON_CONST", "TASK_EXIT_REASON_ROW", "TASK_EXIT_REASON_ORD_CHECK",
-    "TASK_EXIT_REASON_NAME",
+    "TASK_EXIT_REASON_COUNT", "TASK_EXIT_REASON_CONST", "TASK_EXIT_REASON_ROW",
+    "TASK_EXIT_REASON_ROW_", "TASK_EXIT_REASON_ORD_CHECK", "TASK_EXIT_REASON_NAME",
+    "TASK_EXIT_",  # the prefix TASK_EXIT_##name pastes each row name onto
 }
-DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(TASK_EXIT_[A-Z0-9_]+)\b", re.M)
-# An enumerator or initialised constant: NAME = value (not ==). Any C
-# whitespace, newlines included, may sit before the `=`.
-ASSIGN = re.compile(r"\b(TASK_EXIT_[A-Z][A-Z0-9_]*)\s*=(?!=)")
+TABLE_H = os.path.join("include", "kernel", "sched", "task.h")
+IDENT = re.compile(r"\bTASK_EXIT_[A-Za-z0-9_]*")
+TABLE = re.compile(r"#[ \t]*define[ \t]+TASK_EXIT_REASONS\(X\)((?:[^\n]*\\\n)*[^\n]*)")
+ROW = re.compile(r"\bX\(\s*([A-Za-z0-9_]+)\s*,")
 
 
 def translate(text):
@@ -89,76 +97,112 @@ def translate(text):
     return "".join(out), origin
 
 
-def findings(text, path):
+def table_names(text):
+    """The names the TASK_EXIT_REASONS table defines, or None if it is absent."""
+    m = TABLE.search(text)
+    if not m:
+        return None
+    return {"TASK_EXIT_" + r for r in ROW.findall(m.group(1))}
+
+
+def findings(text, path, allowed):
+    # Fast rejection: no file without the prefix (after splices) can name one.
+    if "TASK_EXIT_" not in text.replace("\\\n", ""):
+        return []
     body, origin = translate(text)
     out = []
-    for rx, shape in ((DEFINE, "#define"), (ASSIGN, "declaration")):
-        for m in rx.finditer(body):
-            if m.group(1) in ALLOWED:
-                continue
-            line = origin[m.start(1)] if origin else 1
-            out.append(f"{path}:{line}: {shape} of {m.group(1)} outside TASK_EXIT_REASONS "
-                       f"(add it as a table row instead)")
+    for m in IDENT.finditer(body):
+        if m.group(0) in allowed:
+            continue
+        out.append(f"{path}:{origin[m.start()]}: {m.group(0)} is not a TASK_EXIT_REASONS row "
+                   f"(add it as a row in {TABLE_H})")
     return out
 
 
-CONTROL_BAD = """\
-/* #define TASK_EXIT_IN_A_COMMENT (TASK_EXIT_REASON_LAST - 1) */
-#define TASK_EXIT_UTEST_PROBE (TASK_EXIT_REASON_LAST - 1)
-enum { TASK_EXIT_UTEST_PROBE2 = TASK_EXIT_REASON_BASE - 9 };
-static const int TASK_EXIT_UTEST_PROBE3 = -1007;
-enum { TASK_EXIT_UTEST_PROBE4
-       = TASK_EXIT_REASON_LAST - 1 };
-#define/**/TASK_EXIT_UTEST_PROBE5 (-1006)
-#define \\
-    TASK_EXIT_UTEST_PROBE6 (-1006)
-#define /* a reason
-   spread over lines */ TASK_EXIT_UTEST_PROBE7 (-1006)
-#defi\\
-ne TASK_EXIT_UTEST_PROBE8 (-1006)
-#define TASK_EXIT_\\
-UTEST_PROBE9 (-1006)
+# A table, then one name that is not in it per bypass shape: a #define and
+# enumerators in any layout, an attributed and a parenthesised declarator, an
+# implicit enumerator, a use with no declaration, a splice inside the name.
+CONTROL_TABLE = """\
+#define TASK_EXIT_REASONS(X) \\
+    X(KNOWN_A, 1) \\
+    X(KNOWN_B, 2)
 """
-CONTROL_GOOD = """\
+CONTROL_BAD = CONTROL_TABLE + """\
+#define TASK_EXIT_UTEST_PROBE (TASK_EXIT_REASON_LAST - 1)
+enum { TASK_EXIT_UTEST_PROBE2
+       = TASK_EXIT_REASON_BASE - 9 };
+static const int TASK_EXIT_UTEST_PROBE3 __attribute__((unused)) = -1007;
+static const int (TASK_EXIT_UTEST_PROBE4) = -1007;
+enum { anchor = TASK_EXIT_REASON_LAST - 2, TASK_EXIT_UTEST_PROBE5 };
+#define /* a reason
+   spread over lines */ TASK_EXIT_UTEST_PROBE6 (-1006)
+if (s == TASK_EXIT_UTEST_PROBE7) return;
+#define TASK_EXIT_\\
+UTEST_PROBE8 (-1006)
+"""
+CONTROL_BAD_COUNT = 8
+CONTROL_GOOD = CONTROL_TABLE + """\
 #define TASK_EXIT_REASON_BASE (-1000)
 #define TASK_EXIT_REASON_CONST(name, ord) TASK_EXIT_##name = TASK_EXIT_REASON_BASE - (ord),
 #define TASK_EXIT_REASON_LAST (TASK_EXIT_REASON_BASE - TASK_EXIT_REASON_COUNT)
-if (status == TASK_EXIT_UTEST_TIMEOUT) t->exit_status = TASK_EXIT_UTEST_TIMEOUT;
-klog(LOG_INFO, "#define TASK_EXIT_IN_A_STRING (-1006) /* or TASK_EXIT_X = 1 */");
+if (status == TASK_EXIT_KNOWN_A) t->exit_status = TASK_EXIT_KNOWN_B;
+/* TASK_EXIT_ONLY_IN_A_COMMENT */
+klog(LOG_INFO, "TASK_EXIT_ONLY_IN_A_STRING");
 """
 
 
 def tree_files(root):
-    for top in ("include", "src"):
+    for top in ("include", "src", "user"):
         for d, _dirs, files in os.walk(os.path.join(root, top)):
             for f in files:
                 if f.endswith((".c", ".h")):
                     yield os.path.join(d, f)
 
 
+def read(p):
+    with open(p, encoding="utf-8", errors="replace") as fh:
+        return fh.read()
+
+
 def main(argv):
     if argv[1:] == ["--control"]:
-        bad = findings(CONTROL_BAD, "control-bad")
-        good = findings(CONTROL_GOOD, "control-good")
-        if len(bad) == 9 and not good:
+        allowed = MACHINERY | table_names(CONTROL_TABLE)
+        bad = findings(CONTROL_BAD, "control-bad", allowed)
+        good = findings(CONTROL_GOOD, "control-good", allowed)
+        if len(bad) == CONTROL_BAD_COUNT and not good:
             return 0
-        print(f"control misjudged: {len(bad)} of 9 bad declarations flagged, "
+        print(f"control misjudged: {len(bad)} of {CONTROL_BAD_COUNT} names flagged, "
               f"{len(good)} false positives: {bad + good}", file=sys.stderr)
         return 1
     if argv[1:2] == ["--root"] and len(argv) == 3:
-        paths = list(tree_files(argv[2]))
+        root = argv[2]
+        paths = list(tree_files(root))
     elif len(argv) > 1 and not argv[1].startswith("-"):
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         paths = argv[1:]
     else:
         print(__doc__, file=sys.stderr)
         return 2
-    out = []
+    # The table comes from the files checked when one of them holds it (a
+    # mutant header), else from the tree's task.h.
+    texts, out = {}, []
     for p in paths:
         try:
-            with open(p, encoding="utf-8", errors="replace") as fh:
-                out += findings(fh.read(), p)
+            texts[p] = read(p)
         except OSError as e:
             out.append(f"{p}: unreadable: {e}")
+    names = next((n for n in map(table_names, texts.values()) if n is not None), None)
+    if names is None:
+        try:
+            names = table_names(read(os.path.join(root, TABLE_H)))
+        except OSError:
+            names = None
+    if not names:
+        print(f"no TASK_EXIT_REASONS table found in {TABLE_H}", file=sys.stderr)
+        return 1
+    allowed = MACHINERY | names
+    for p, text in texts.items():
+        out += findings(text, p, allowed)
     for line in out:
         print(line)
     return 1 if out else 0
