@@ -1357,6 +1357,16 @@ About 445 `Deferred:` stamps carry no `awaiting-` token, so their sections read 
 
 > **Test runner:** `python3 scripts/overnight/stale_parks.py --selftest`; `python3 scripts/overnight/tests/test_stranded_gate.py`; `python3 -m pytest scripts/overnight/tests/test_answered_parks.py scripts/overnight/tests/test_park_needs_a_need.py`.
 
+> **Notes:**
+> - What shipped: `stale_parks.py` lists closed parks (person, machine, retired guard); all 42 were re-judged, 28 sections reopened under Q42 and Q43, six labelled `**Needs:** bare-metal`.
+> - How it integrates: `stranded_deferrals.py --gate` refuses a closed park at fixpoint; the oracle's `DA` kind reopens an answered park unless a `DR` stamp still blocks; the staged check reads answers from the staged snapshot.
+> - Downstream effects: a park that waits on a person or a machine with no `**Needs:**` line can no longer reach fixpoint unseen, and a reopened owner no longer counts as shipped for its dependants.
+> - Canonical doc: [TODO metadata](../../docs/infrastructure/todo-metadata.md).
+> - Scope boundary: judges `Deferred:` stamps inside numbered sections; preamble and closing-matter stamps park nothing and are skipped.
+
+> **Verified:** 2026-11-13 | commit `244c827ed` | 5/5 items | stale_parks selftest OK, `--check` closed 0 | test_stranded_gate OK | pytest 12/12 | every new test fails on the previous code (controls run)
+> **Quality reviewed:** 2026-11-13 | Codex passes: staged waves of plan, round, performance and completion over four commits, then round, performance and completion on committed `244c827ed`, all approving | 16 fixed (answers read from disk, exemption on every park shape, Needs by physical heading, receipt-surface spelling, silicon parks hidden whole, LKGS semantics twice, DA ignored by the stranded audit, AMX wording twice, TCG AMX claim, DA over DR, reopened owner counted shipped, operator policy and fetch words, unowned stamps, advisory probes in `--gate`), 0 open | scope: N/A (host tooling, no kernel/boot source)
+
 ## 40. Pytest-style control-plane tests run in the suite
 
 > **Spawned-by:** root
