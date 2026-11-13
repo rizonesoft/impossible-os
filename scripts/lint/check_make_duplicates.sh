@@ -47,7 +47,9 @@ fi
 
 # deadline: 60 s, far above the measured 0.2 s parse.
 RC=0
-OUT="$(cd "$TMP" && timeout 60 make --no-print-directory -f Makefile "$SENTINEL" 2>&1)" || RC=$?
+# LC_ALL=C: the warnings matched below are make's English text, and a
+# translated make would otherwise report a duplicate the grep cannot see.
+OUT="$(cd "$TMP" && LC_ALL=C LANGUAGE= timeout 60 make --no-print-directory -f Makefile "$SENTINEL" 2>&1)" || RC=$?
 DUP="$(printf '%s\n' "$OUT" | grep -E 'warning: (overriding|ignoring old) recipe for target')"
 if [ -n "$DUP" ]; then
     printf '%s\n' "$DUP" | sed "s|$TMP/Makefile|$MK|g; s|^Makefile:|$MK:|"

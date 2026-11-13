@@ -4886,7 +4886,7 @@ if command -v make >/dev/null 2>&1; then
     [ "$(id -u)" = "0" ] && _mk_unread=2   # root reads a mode-000 file; nothing to prove
     bash "$REPO_ROOT/scripts/lint/check_make_duplicates.sh" "$REPO_ROOT/Makefile" >/dev/null 2>&1; _mk_real=$?
     bash "$REPO_ROOT/scripts/lint/check_make_duplicates.sh" "$_mk_d/clean.mk" >/dev/null 2>&1; _mk_clean=$?
-    _mk_dup_out=$(bash "$REPO_ROOT/scripts/lint/check_make_duplicates.sh" "$_mk_d/dup.mk" 2>&1); _mk_dup=$?
+    _mk_dup_out=$(LC_ALL=de_DE.UTF-8 LANGUAGE=de bash "$REPO_ROOT/scripts/lint/check_make_duplicates.sh" "$_mk_d/dup.mk" 2>&1); _mk_dup=$?
     chmod 600 "$_mk_d/unreadable.mk" 2>/dev/null; rm -rf "$_mk_d"
     if [ "$_mk_dry" = "0" ] && [ "$_mk_real" = "0" ] && [ "$_mk_clean" = "0" ] && [ "$_mk_dup" = "1" ] && [ "$_mk_err" = "2" ] && [ "$_mk_unread" = "2" ] \
        && <<<"$_mk_dup_out" grep -q "overriding recipe for target 'a'"; then
