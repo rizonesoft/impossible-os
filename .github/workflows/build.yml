@@ -32,6 +32,7 @@ concurrency:
 
 permissions:
   contents: read
+  packages: read
 
 env:
   LLVM_VERSION: "19"
@@ -44,10 +45,22 @@ env:
   CCACHE_MAXSIZE: "400M"
   CCACHE_COMPILERCHECK: "%compiler% --version"
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     name: Build and test the OS
     runs-on: ubuntu-26.04
+    # The pinned CI image holds the whole toolchain (scripts/ci/image/Dockerfile);
+    # this job installs nothing, so a package-mirror outage cannot fail it.
+    container:
+      image: ghcr.io/rizonesoft/impossible-os-ci@sha256:d5d684cc6bc2740e127b72c56189f9a424c800041db489844d1939e39b019176
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --user 1001:1001
     # A runaway backstop, NOT a performance budget -- and it has now been eaten
     # by suite growth twice. 15 became a live gate on 2026-08-04 (last green
     # 30864937433 at 14m52s, 8s of margin; run 31056543625 then had `Stale-ABI
@@ -74,64 +87,6 @@ jobs:
         with:
           fetch-depth: 0  # Full history for build_info.h commit hash
 
-      # ── Install LLVM (clang-19, clangd-19, lld-19, llvm-19) ─────────────────
-      # llvm-${VERSION} owns llvm-ar-${VERSION} / llvm-nm-${VERSION} /
-      # llvm-objcopy-${VERSION}; install it explicitly so setup.sh --verify
-      # does not rely on apt Recommends auto-pulling it. clangd-${VERSION}
-      # is required by the LSP-MCP bridge stress sub-test 8a.
-      # NOTE: do NOT cache the /usr/lib + /usr/bin LLVM paths with
-      # actions/cache -- restore extracts with unprivileged tar, which cannot
-      # write root-owned paths and fails the job with tar exit 2 (hit
-      # 2026-06-11; the apt install only costs ~30s, cache removed).
-      # Ubuntu 26.04 defaults to uutils, whose `timeout -s KILL` leaves a stalled child
-      # running, so the identity gate's time bounds stop holding. Same tools as dev hosts.
-      - name: Use GNU coreutils
-        timeout-minutes: 5
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo -E apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
-          sudo -E apt-get install -y --allow-remove-essential -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
-            coreutils-from-gnu coreutils-from-uutils-
-          timeout --version | grep -q 'GNU coreutils'
-
-      - name: Install LLVM ${{ env.LLVM_VERSION }}
-        # A hung apt once used this job's whole 40 minutes with nothing in the log, and
-        # GitHub reports that as `cancelled`. Fail fast and show what apt was doing.
-        timeout-minutes: 15
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          # Each attempt is wall-clock bounded and a stalled mirror is retried
-          # (scripts/ci/apt-install.sh); its worst case fits the step timeout.
-          bash scripts/ci/apt-install.sh \
-            clang-${{ env.LLVM_VERSION }} \
-            clangd-${{ env.LLVM_VERSION }} \
-            lld-${{ env.LLVM_VERSION }} \
-            llvm-${{ env.LLVM_VERSION }}
-
-      # ── Install build dependencies ──────────────────────────────────────────
-      # LLVM is installed above with caching; this step brings in the rest of
-      # the sentinel set that scripts/setup.sh declares.
-      - name: Install dependencies
-        timeout-minutes: 15
-        run: |
-          bash scripts/ci/apt-install.sh \
-            gawk \
-            make \
-            nasm \
-            mtools \
-            dosfstools \
-            fdisk \
-            ovmf \
-            qemu-system-x86 \
-            qemu-utils \
-            gcc \
-            ccache \
-            python3-yaml \
-            python3-pytest \
-            jq
-
       # ── Verify toolchain matches scripts/setup.sh sentinel contract ─────────
       # If this fails, the inline apt install above and scripts/setup.sh have
       # drifted. Fix whichever side is out of sync -- do NOT mask with `|| true`.
@@ -144,11 +99,6 @@ jobs:
       # numeric-TODO shorthand (TODO-NN sectionN, DNN TNN) outside todo/**.
       # The legacy-XREF sweep drained the pre-existing allowlist, so any new
       # drift is now a CI failure instead of a silent warning.
-      # ruff is lint Check 35 and has no Ubuntu package. Pinned, so a new
-      # release cannot turn the gate red on an unrelated push.
-      - name: Install ruff
-        run: pipx install ruff==0.17.4
-
       - name: Run style lint
         run: bash scripts/lint.sh
 
@@ -367,6 +317,14 @@ jobs:
   tooling-pack:
     name: Tooling regression pack
     runs-on: ubuntu-26.04
+    # The pinned CI image holds the whole toolchain (scripts/ci/image/Dockerfile);
+    # this job installs nothing, so a package-mirror outage cannot fail it.
+    container:
+      image: ghcr.io/rizonesoft/impossible-os-ci@sha256:d5d684cc6bc2740e127b72c56189f9a424c800041db489844d1939e39b019176
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --user 1001:1001
     timeout-minutes: 60
 
     steps:
@@ -376,73 +334,11 @@ jobs:
         with:
           fetch-depth: 0  # Full history for build_info.h commit hash
 
-      # ── Install LLVM (clang-19, clangd-19, lld-19, llvm-19) ─────────────────
-      # llvm-${VERSION} owns llvm-ar-${VERSION} / llvm-nm-${VERSION} /
-      # llvm-objcopy-${VERSION}; install it explicitly so setup.sh --verify
-      # does not rely on apt Recommends auto-pulling it. clangd-${VERSION}
-      # is required by the LSP-MCP bridge stress sub-test 8a.
-      # NOTE: do NOT cache the /usr/lib + /usr/bin LLVM paths with
-      # actions/cache -- restore extracts with unprivileged tar, which cannot
-      # write root-owned paths and fails the job with tar exit 2 (hit
-      # 2026-06-11; the apt install only costs ~30s, cache removed).
-      # Ubuntu 26.04 defaults to uutils, whose `timeout -s KILL` leaves a stalled child
-      # running, so the identity gate's time bounds stop holding. Same tools as dev hosts.
-      - name: Use GNU coreutils
-        timeout-minutes: 5
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo -E apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
-          sudo -E apt-get install -y --allow-remove-essential -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
-            coreutils-from-gnu coreutils-from-uutils-
-          timeout --version | grep -q 'GNU coreutils'
-
-      - name: Install LLVM ${{ env.LLVM_VERSION }}
-        # A hung apt once used this job's whole 40 minutes with nothing in the log, and
-        # GitHub reports that as `cancelled`. Fail fast and show what apt was doing.
-        timeout-minutes: 15
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          # Each attempt is wall-clock bounded and a stalled mirror is retried
-          # (scripts/ci/apt-install.sh); its worst case fits the step timeout.
-          bash scripts/ci/apt-install.sh \
-            clang-${{ env.LLVM_VERSION }} \
-            clangd-${{ env.LLVM_VERSION }} \
-            lld-${{ env.LLVM_VERSION }} \
-            llvm-${{ env.LLVM_VERSION }} \
-            libclang-rt-${{ env.LLVM_VERSION }}-dev
-
-      # ── Install build dependencies ──────────────────────────────────────────
-      # LLVM is installed above with caching; this step brings in the rest of
-      # the sentinel set that scripts/setup.sh declares.
-      - name: Install dependencies
-        timeout-minutes: 15
-        run: |
-          bash scripts/ci/apt-install.sh \
-            gawk \
-            make \
-            nasm \
-            mtools \
-            dosfstools \
-            fdisk \
-            ovmf \
-            qemu-system-x86 \
-            qemu-utils \
-            gcc \
-            python3-yaml \
-            python3-pytest \
-            jq
-
       # ── Verify toolchain matches scripts/setup.sh sentinel contract ─────────
       # If this fails, the inline apt install above and scripts/setup.sh have
       # drifted. Fix whichever side is out of sync -- do NOT mask with `|| true`.
       - name: Verify toolchain sentinels and version floors
         run: bash scripts/setup.sh --verify
-
-      # The pack runs scripts/lint.sh, whose Check 35 needs ruff.
-      - name: Install ruff
-        run: pipx install ruff==0.17.4
 
       # ── Host-side tooling regression pack (cheap, no build required) ───────
       # Exercises the wrapper contract, hook lifecycle, and workflow YAML
@@ -490,6 +386,14 @@ jobs:
   build-release-flavor:
     name: Build (KERNEL_TESTS=off release flavor)
     runs-on: ubuntu-26.04
+    # The pinned CI image holds the whole toolchain (scripts/ci/image/Dockerfile);
+    # this job installs nothing, so a package-mirror outage cannot fail it.
+    container:
+      image: ghcr.io/rizonesoft/impossible-os-ci@sha256:d5d684cc6bc2740e127b72c56189f9a424c800041db489844d1939e39b019176
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --user 1001:1001
     timeout-minutes: 35
 
     steps:
@@ -497,37 +401,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      # Ubuntu 26.04 defaults to uutils, whose `timeout -s KILL` leaves a stalled child
-      # running, so the identity gate's time bounds stop holding. Same tools as dev hosts.
-      - name: Use GNU coreutils
-        timeout-minutes: 5
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo -E apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
-          sudo -E apt-get install -y --allow-remove-essential -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
-            coreutils-from-gnu coreutils-from-uutils-
-          timeout --version | grep -q 'GNU coreutils'
-
-      - name: Install LLVM ${{ env.LLVM_VERSION }}
-        # A hung apt once used this job's whole 40 minutes with nothing in the log, and
-        # GitHub reports that as `cancelled`. Fail fast and show what apt was doing.
-        timeout-minutes: 15
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          # Each attempt is wall-clock bounded and a stalled mirror is retried
-          # (scripts/ci/apt-install.sh); its worst case fits the step timeout.
-          bash scripts/ci/apt-install.sh \
-            clang-${{ env.LLVM_VERSION }} \
-            lld-${{ env.LLVM_VERSION }} \
-            llvm-${{ env.LLVM_VERSION }}
-
-      - name: Install build dependencies
-        timeout-minutes: 15
-        run: |
-          bash scripts/ci/apt-install.sh nasm mtools dosfstools ccache
 
       # scripts/build.sh routes clang through ccache when it is installed. The
       # cache lives in the runner's home, never a root-owned path (unprivileged

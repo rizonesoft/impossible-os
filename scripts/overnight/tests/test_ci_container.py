@@ -1,42 +1,25 @@
 #!/usr/bin/env python3
-"""The container tier installs what CI installs, and refuses a workflow it cannot read."""
+"""The container tier runs in the image CI runs in, as CI's unprivileged uid."""
 import pathlib
+import re
 import subprocess
-import sys
 
 import yaml
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "scripts"))
-import ci_container_setup as setup  # noqa: E402
-
 WF = (REPO / ".github/workflows/build.yml").read_text()
+TIER = (REPO / "scripts/ci-container.sh").read_text()
 
 
-def test_setup_comes_from_the_real_workflow():
-    got = setup.setup_script(WF)
-    assert "coreutils-from-gnu" in got and "clang-19" in got and "qemu-system-x86" in got
-    assert "${{" not in got
-
-
-def test_refusal_a_missing_step_or_expression_is_an_error():
-    wf = yaml.safe_load(WF)
-    wf["jobs"]["build"]["steps"] = [s for s in wf["jobs"]["build"]["steps"]
-                                    if not str(s.get("name", "")).startswith("Install LLVM")]
-    try:
-        setup.setup_script(yaml.safe_dump(wf))
-    except SystemExit as e:
-        assert "Install LLVM" in str(e)
-    else:
-        raise AssertionError("a missing install step must refuse")
-    wf = yaml.safe_load(WF)
-    wf.pop("env", None)
-    try:
-        setup.setup_script(yaml.safe_dump(wf))
-    except SystemExit as e:
-        assert "unresolved" in str(e)
-    else:
-        raise AssertionError("an unresolved expression must refuse")
+def test_the_tier_runs_ci_s_image_as_ci_s_uid():
+    """The image comes from build.yml's build job, so the tier cannot drift from CI's
+    toolchain; it installs nothing; and it runs as uid 1001, as the jobs do."""
+    assert '["jobs"]["build"]["container"]["image"]' in TIER
+    image = yaml.safe_load(WF)["jobs"]["build"]["container"]["image"]
+    assert re.fullmatch(r"ghcr\.io/[a-z0-9-]+/impossible-os-ci@sha256:[0-9a-f]{64}", image), image
+    assert "apt-get" not in TIER and "ci_container_setup" not in TIER
+    assert "-u 1001:1001" in TIER
+    assert not (REPO / "scripts/ci_container_setup.py").exists(), "retired with the install steps"
 
 
 def test_test_sh_hands_off_before_touching_this_tree():
@@ -60,8 +43,9 @@ def test_split_keeps_required_check_and_the_pack_still_runs():
     assert "Run tooling regression pack" in names
     assert not [s for s in jobs["build"]["steps"] if s.get("name") == "Run tooling regression pack"]
     build_names = [s.get("name", "") for s in jobs["build"]["steps"]]
-    for step in ("Use GNU coreutils", "Install dependencies", "Verify toolchain sentinels and version floors"):
-        assert step in names and step in build_names, step
+    step = "Verify toolchain sentinels and version floors"
+    assert step in names and step in build_names, step
+    assert jobs["tooling-pack"]["container"] == jobs["build"]["container"], "one image for both"
     run = [s for s in jobs["tooling-pack"]["steps"] if s.get("name") == "Run tooling regression pack"][0]
     assert run["env"]["TEST_TOOLING_SKIP_LSP_MCP"] == "1"
 

@@ -533,13 +533,19 @@ else
         assert_grep "$wf invokes bash scripts/setup.sh --verify" "$path" 'bash scripts/setup.sh --verify'
     done
 
-    # Every workflow that runs setup.sh --verify installs what its import sentinels
-    # need: __PYTEST__ (2026-11-12) checks `import pytest`, and ci-container.sh
-    # installs from build.yml's list before the same check.
-    for wf in build.yml release.yml visual-regression.yml; do
-        path="$REPO_ROOT/.github/workflows/$wf"
-        assert_grep "$wf installs python3-pytest for the __PYTEST__ sentinel" "$path" 'python3-pytest'
-    done
+    # The CI image holds what setup.sh --verify's import sentinels need:
+    # __PYTEST__ (2026-11-12) checks `import pytest`. Every job and the local
+    # container tier run in that one image, so its package list is the place.
+    assert_grep "the CI image holds python3-pytest for the __PYTEST__ sentinel" \
+        "$SCRIPT_DIR/ci/toolchain-packages.txt" '^python3-pytest$'
+
+    # The jobs run in one image pinned by digest and install nothing at run time
+    # (2026-11-11: nine Build runs failed in their install step). The selftest
+    # breaks each rule in a copy of the workflows and requires a refusal.
+    assert_exit_zero "every checkout job runs in one pinned image and installs nothing" \
+        python3 "$SCRIPT_DIR/ci/check-pinned-image.py" "$REPO_ROOT/.github/workflows"
+    assert_exit_zero "pinned-image check refuses each broken rule (selftest)" \
+        python3 "$SCRIPT_DIR/ci/check-pinned-image.py" --selftest "$REPO_ROOT/.github/workflows"
 
     # Maintenance / deployment workflows (pages, labeler, stale) are not
     # build-participants so they don't need to invoke build.sh / test.sh,

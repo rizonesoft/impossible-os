@@ -106,7 +106,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |  38   |   §38   | Release-flavor build at the section boundary                                                     | --                         |  [x]   |
 | 💎  |  39   |   §39   | Re-judge the closed parks under the never-park rule                                              | --                         |  [x]   |
 | 💎  |  40   |   §40   | Pytest-style control-plane tests run in the suite                                                | --                         |  [x]   |
-| 💎  |  41   |   §41   | CI jobs run in the pinned image                                                                  | --                         |  [ ]   |
+| 💎  |  41   |   §41   | CI jobs run in the pinned image                                                                  | --                         |  [x]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -1400,11 +1400,16 @@ About 445 `Deferred:` stamps carry no `awaiting-` token, so their sections read 
 
 Every CI job installs its toolchain with apt on each run. On 2026-11-11 nine Build runs in a row failed in the install step because the runner could not resolve the Ubuntu mirror; no project code had run. `CI_CONTAINER=1` already builds in a pinned image locally.
 
-- [ ] Run the `build.yml` jobs in the pinned CI image, so no job needs the package mirror. Done when a Build run passes with no apt step.
-- [ ] Publish the image from its own workflow when its definition changes, and pin it by digest in `build.yml`. Done when a digest change is the only way the toolchain moves.
-- [ ] Keep `scripts/ci-qemu-version.txt` in step: it records the image's QEMU version. Done when the pre-push parity gate reads the same version the image holds.
-- [ ] Unit tests: the workflow scanner in `scripts/test-tooling.sh` refuses an apt install step in `build.yml`. Done when it fails on the current file.
-- [ ] Commit: `"ci: the build jobs run in the pinned image and need no package mirror"`
+- [x] Every checkout job of `build.yml`, `release.yml`, `visual-regression.yml` and `todo-graph.yml` runs in `ghcr.io/rizonesoft/impossible-os-ci` by digest, as uid 1001, with no install step.
+  - The image (`scripts/ci/image/Dockerfile`) installs `scripts/ci/toolchain-packages.txt` once through `scripts/ci/toolchain.sh` and the bounded `scripts/ci/apt-install.sh`; the list holds the tools the hosted runner used to supply (zip, gh, nodejs, jq).
+  - The release job sets `BUILD_NO_CCACHE=1`, so a release still compiles from source.
+- [x] `.github/workflows/ci-image.yml` publishes the image when its inputs change; moving the toolchain is publish, then a digest commit (`todo/answers.md` Q44).
+- [x] `ci-image.yml` refuses an image whose QEMU is not `scripts/ci-qemu-version.txt` (10.2.1).
+- [x] `scripts/ci-container.sh` runs the same digest as uid 1001; `scripts/ci_container_setup.py` is retired.
+- [x] The release-flavor proof passes in the image: `scripts/lib/release-seam-inventory.py` and `test-only-ref-audit.py` read bear's database correctly (`make print-kernel-c-srcs`).
+- [x] Unit tests: `scripts/ci/check-pinned-image.py` (tooling pack, selftest) refuses an install step, a checkout job with no image, a tag, two digests and a non-bash default; it failed on the old workflows.
+  - `scripts/overnight/tests/test_ci_toolchain_install.py` and `test_ci_container.py` hold the image build and the tier; `scripts/lib/tests/test_release_compile_db.py` holds the release database.
+- [x] Commit: `"ci: the build jobs run in the pinned image and need no package mirror"`
 
 **Test checkpoint:** A Build run on `main` is green with no package-install step in its log.
 

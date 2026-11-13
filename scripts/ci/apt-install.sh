@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install apt packages on a CI runner, surviving a stalled mirror.
+# Install apt packages into the CI image, surviving a stalled mirror.
 #
 #   bash scripts/ci/apt-install.sh <package>...
 #
@@ -15,21 +15,22 @@
 # Only when every package is in the local archive does the real install run,
 # with no network left to stall on.
 #
-# Worst case with the defaults: three stalled attempts (40 s update + 120 s
-# download, plus 10 s kill grace each), 15 s of pauses, then a 240 s install:
-# about 13.5 minutes. Callers give the step 15 minutes, and
-# test_ci_toolchain_install.py recomputes this from the caps below.
+# Worst case: three stalled attempts (update cap + download cap, plus 10 s kill
+# grace each), 15 s of pauses, then the install cap. toolchain.sh raises the
+# download and install caps for the whole toolchain, and
+# test_ci_toolchain_install.py checks that worst case against the publishing
+# job's timeout.
 #
-# Needs GNU timeout (the workflows install it first: uutils `timeout` leaves a
+# Needs GNU timeout (toolchain.sh installs it first: uutils `timeout` leaves a
 # stalled child running).
 #
 # Exit: 0 installed, 1 every download attempt failed or the install failed.
 set -uo pipefail
 
 [ $# -gt 0 ] || { echo "usage: apt-install.sh <package>..." >&2; exit 1; }
-# Root (the CI image build, scripts/ci/toolchain.sh) runs apt directly; the base
-# image has no sudo. A runner user goes through sudo.
-if [ "$(id -u)" = 0 ]; then SUDO=(); else SUDO=(sudo -E); fi
+# Its one caller is the CI image build (scripts/ci/toolchain.sh), as root; the
+# base image has no sudo, and no CI job installs anything.
+[ "$(id -u)" = 0 ] || { echo "apt-install.sh: run as root (the CI image build)" >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30)
 ATTEMPTS="${APT_INSTALL_ATTEMPTS:-3}"
@@ -46,29 +47,29 @@ for n in $(seq 1 "$ATTEMPTS"); do
     # order: an index update that has to fetch every list again, as it does
     # right after a mirror switch, may run into the download's share.
     t_start=$(date +%s)
-    if "${SUDO[@]}" timeout -k 10 "$((UPDATE_CAP + DOWNLOAD_CAP - 10))" apt-get update "${OPTS[@]}" \
+    if timeout -k 10 "$((UPDATE_CAP + DOWNLOAD_CAP - 10))" apt-get update "${OPTS[@]}" \
         && left=$((UPDATE_CAP + DOWNLOAD_CAP - ($(date +%s) - t_start))) && [ "$left" -ge 10 ] \
-        && "${SUDO[@]}" timeout -k 10 "$left" apt-get install -y --download-only "${OPTS[@]}" "$@"; then
+        && timeout -k 10 "$left" apt-get install -y --download-only "${OPTS[@]}" "$@"; then
         echo "apt-install: packages downloaded; installing"
-        if "${SUDO[@]}" timeout -k 10 "$INSTALL_CAP" apt-get install -y --no-download "${OPTS[@]}" "$@"; then
+        if timeout -k 10 "$INSTALL_CAP" apt-get install -y --no-download "${OPTS[@]}" "$@"; then
             exit 0
         fi
         echo "apt-install: the install failed after a complete download: $*" >&2
         exit 1
     fi
     echo "apt-install: download attempt $n failed or stalled" >&2
-    "${SUDO[@]}" killall -q apt-get 2>/dev/null || true
-    "${SUDO[@]}" rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock
+    killall -q apt-get 2>/dev/null || true
+    rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock
     # A retry against the same mirror does not help when this runner's route to
     # it is what is broken: on 2026-11-10 one job failed all three attempts on
     # azure.archive.ubuntu.com while two jobs beside it downloaded in seconds.
     # After the first failure, point apt at the primary archive instead.
     # GitHub's runners name the mirror in /etc/apt/apt-mirrors.txt (the sources
     # point at that list), other hosts in the sources themselves.
-    if [ "$n" = "1" ] && "${SUDO[@]}" grep -rqsF "$MIRROR" /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d; then
+    if [ "$n" = "1" ] && grep -rqsF "$MIRROR" /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d; then
         echo "apt-install: switching from $MIRROR to $FALLBACK_MIRROR" >&2
         for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*; do
-            [ -f "$f" ] && "${SUDO[@]}" sed -i "s|//$MIRROR/|//$FALLBACK_MIRROR/|g" "$f"
+            [ -f "$f" ] && sed -i "s|//$MIRROR/|//$FALLBACK_MIRROR/|g" "$f"
         done
     fi
     [ "$n" -lt "$ATTEMPTS" ] && sleep $((n * 5))

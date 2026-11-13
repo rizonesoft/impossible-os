@@ -16,17 +16,34 @@ on:
 
 permissions:
   contents: write          # Needed to create/delete releases and upload assets
+  packages: read
 
 env:
   LLVM_VERSION: "19"
   # Node 20 runtime removed from runners 2026-09-16; opt in to Node 24 now.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   release:
     name: Build & Publish Release
     runs-on: ubuntu-26.04
+    # The pinned CI image holds the whole toolchain (scripts/ci/image/Dockerfile);
+    # this job installs nothing, so a package-mirror outage cannot fail it.
+    container:
+      image: ghcr.io/rizonesoft/impossible-os-ci@sha256:d5d684cc6bc2740e127b72c56189f9a424c800041db489844d1939e39b019176
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --user 1001:1001
     timeout-minutes: 40
+    # A release is compiled from source: no cache is restored (check-compile-cache.py),
+    # and the image's ccache is not used either, as before the image held one.
+    env:
+      BUILD_NO_CCACHE: "1"
 
     steps:
       # ── Checkout ────────────────────────────────────────────────────────────
@@ -51,53 +68,6 @@ jobs:
           fi
           echo "✅ Tag: $TAG (pre-release: $(echo "$TAG" | grep -qE '-(alpha|beta|rc)' && echo yes || echo no))"
 
-      # ── Install LLVM (clang-19, lld-19, llvm-19) ───────────────────────
-      # No actions/cache on the /usr LLVM paths: unprivileged tar cannot
-      # restore root-owned paths (tar exit 2, hit 2026-06-11 in build.yml).
-      # Ubuntu 26.04 defaults to uutils, whose `timeout -s KILL` leaves a stalled child
-      # running, so the identity gate's time bounds stop holding. Same tools as dev hosts.
-      - name: Use GNU coreutils
-        timeout-minutes: 5
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo -E apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
-          sudo -E apt-get install -y --allow-remove-essential -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
-            coreutils-from-gnu coreutils-from-uutils-
-          timeout --version | grep -q 'GNU coreutils'
-
-      - name: Install LLVM ${{ env.LLVM_VERSION }}
-        # A hung apt once used this job's whole 40 minutes with nothing in the log, and
-        # GitHub reports that as `cancelled`. Fail fast and show what apt was doing.
-        timeout-minutes: 15
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          # Bounded download with retry, then install (scripts/ci/apt-install.sh).
-          bash scripts/ci/apt-install.sh \
-            clang-${{ env.LLVM_VERSION }} \
-            lld-${{ env.LLVM_VERSION }} \
-            llvm-${{ env.LLVM_VERSION }}
-
-      # ── Install build dependencies ──────────────────────────────────────
-      - name: Install dependencies
-        timeout-minutes: 15
-        run: |
-          bash scripts/ci/apt-install.sh \
-            gawk \
-            make \
-            nasm \
-            mtools \
-            dosfstools \
-            fdisk \
-            ovmf \
-            qemu-system-x86 \
-            gcc \
-            bear \
-            qemu-utils \
-            python3-yaml \
-            python3-pytest
-
       # ── Verify toolchain matches scripts/setup.sh sentinel contract ─────
       - name: Verify toolchain sentinels and version floors
         run: bash scripts/setup.sh --verify
@@ -108,10 +78,6 @@ jobs:
       # legacy-XREF sweep drained the pre-existing allowlist, so a release
       # cut now fails if any new numeric-TODO shorthand slipped in outside
       # todo/**.
-      # ruff is lint Check 35 and has no Ubuntu package (pinned, see build.yml).
-      - name: Install ruff
-        run: pipx install ruff==0.17.4
-
       - name: Run style lint
         run: bash scripts/lint.sh
 
