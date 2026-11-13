@@ -106,16 +106,41 @@ def _is_prose(line: str) -> bool:
     return True
 
 
+# The shared fence and comment tracker (`scripts/todo_fence.py`), LOADED
+# LAZILY so this module still imports where only `.claude/hooks/` exists.
+# Until 2026-11-13 both scans below toggled on any stripped line starting with
+# three backticks, which mishandled tilde fences, longer outer runs, closer
+# rules and HTML comments; a private grammar is the drift the tracker exists
+# to end, so a failed import raises rather than falling back to one.
+_fence = None
+
+
+def _load_fence():
+    global _fence
+    if _fence is None:
+        scripts_dir = str(Path(__file__).resolve().parents[2] / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import todo_fence as _f
+        _fence = _f
+    return _fence
+
+
+def _prose_mask(lines):
+    """True for each line that is not prose to this check: fenced code, HTML
+    comments and verbatim blocks. The PROSE projection is the one
+    `todo-reflow.py` repairs with, so the reminder and the repair agree about
+    which lines are prose."""
+    return _load_fence().fence_scan(lines).prose_mask()
+
+
 def _blocks(lines):
-    cur, incode = [], False
-    for line in lines:
-        if line.strip().startswith("```"):
-            incode = not incode
+    cur = []
+    for line, masked in zip(lines, _prose_mask(lines)):
+        if masked:
             if cur:
                 yield cur
-                cur = []
-            continue
-        if incode:
+            cur = []
             continue
         if _is_prose(line):
             cur.append(line)
@@ -176,12 +201,10 @@ def _is_continuation(line: str) -> bool:
 
 def long_continuation(text: str) -> int:
     """Longest over-cap continuation line, or 0 when every body line fits."""
-    worst, incode = 0, False
-    for line in text.split("\n"):
-        if line.strip().startswith("```"):
-            incode = not incode
-            continue
-        if incode:
+    worst = 0
+    lines = text.split("\n")
+    for line, masked in zip(lines, _prose_mask(lines)):
+        if masked:
             continue
         if _is_continuation(line):
             n = len(line.rstrip())
@@ -312,6 +335,17 @@ def _selftest() -> int:
     # message must win if both ever fire, since re-emitting as one line is the
     # prerequisite for judging the body length at all.
     check("hard-wrap detector unaffected by the new check", scan_text(big) == 0)
+
+    # Fence grammar comes from the shared tracker. Each case below was judged
+    # wrongly by the old any-line-starting-with-three-backticks toggle.
+    check("a ``` line inside a tilde fence does not hide the prose after it",
+          scan_text("~~~\n```\n~~~\n\n" + wrapped + "\n") > 0)
+    check("a ``` line inside a four-backtick fence does not close it",
+          scan_text("````\n```\n" + wrapped + "\n````\n") == 0)
+    check("wrapped prose after a commented ``` is still caught",
+          scan_text("<!--\n```\n-->\n\n" + wrapped + "\n") > 0)
+    check("an over-cap body after a commented ``` is still caught",
+          long_continuation("<!--\n```\n-->\n- [ ] lead\n" + big + "\n") > CONT_CAP)
 
     # Path targeting.
     check("todo path matches", _targets_todo("todo/02-kernel-core/TODO-21.md"))

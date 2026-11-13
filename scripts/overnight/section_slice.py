@@ -54,6 +54,8 @@ to sys.path and import it the same way they already import worktree_hash.
 from __future__ import annotations
 
 import re
+import sys
+from pathlib import Path
 
 # Start of the section we want: `## 12. Title`.
 SECTION_RE = re.compile(r"^## (\d+)\.\s*(.*)")
@@ -64,6 +66,17 @@ SECTION_RE = re.compile(r"^## (\d+)\.\s*(.*)")
 SECTION_END_RE = re.compile(r"^##\s+\S")
 
 
+def _fence():
+    """The shared fence tracker (`scripts/todo_fence.py`), imported on first
+    use. A failed import raises: a private fence grammar is the drift the
+    tracker exists to end."""
+    scripts_dir = str(Path(__file__).resolve().parents[1])
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import todo_fence
+    return todo_fence
+
+
 def section_block(text: str, n: int) -> str:
     """Body of section `n`, from its `## n.` heading up to (not including)
     the next level-2 heading, or EOF when it is genuinely the last block in
@@ -72,8 +85,14 @@ def section_block(text: str, n: int) -> str:
     Returns "" when the section is absent. The heading line itself is
     included, matching the behavior both callers already relied on."""
     lines = text.splitlines()
+    # A heading inside a fence or an HTML comment is an example, not a
+    # boundary: the shared tracker's STRUCTURAL mask says which lines count.
+    # Until 2026-11-13 a fenced `## N.` example ended the real section early.
+    mask = _fence().fence_scan(lines).mask
     start = None
     for i, ln in enumerate(lines):
+        if mask[i]:
+            continue
         if start is None:
             m = SECTION_RE.match(ln)
             if m and int(m.group(1)) == n:
@@ -146,6 +165,12 @@ def _selftest() -> int:
     check("- [ ] b" not in section_block(odd, 1),
           "unlisted trailing heading must still terminate the slice")
 
+    # A `## N.` inside a fence or a comment is an example, not a boundary.
+    fenced = "\n".join(["## 1. One", "- [ ] a", "```", "## 2. Example", "```",
+                         "<!--", "## 3. Hidden", "-->", "- [ ] b", "", "## 2. Two", "- [ ] c"])
+    check("- [ ] b" in section_block(fenced, 1), "a fenced or commented heading ended the section")
+    check(section_block(fenced, 2).startswith("## 2. Two"), "a fenced heading was taken as the section start")
+    check(section_block(fenced, 3) == "", "a commented heading was found as a section")
     for f in failures:
         print(f"FAIL: {f}")
     print(f"section_slice selftest: {'PASS' if not failures else 'FAIL'} "
@@ -154,5 +179,4 @@ def _selftest() -> int:
 
 
 if __name__ == "__main__":
-    import sys
     raise SystemExit(_selftest() if "--selftest" in sys.argv else 0)

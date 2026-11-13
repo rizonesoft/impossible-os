@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **933 of 2609 sections complete (35%).** 137 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **934 of 2609 sections complete (35%).** 136 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -195,7 +195,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T06 §38` | Every Gate Parser Adopts the Shared Fence Tracker                                                                     | none     |    12 |
 | [x]  | `D00 T06 §39` | The Shared Fence Tracker Becomes Container-Aware                                                                      | none     |     6 |
 | [x]  | `D00 T06 §40` | An Inputs Section Marker Keeps Its Closing Backtick, So One Dependency Is Two Edges                                   | none     |     4 |
-| [/]  | `D00 T06 §41` | The Two Mutating Repair Tools Adopt the Shared Fence Tracker                                                          | none     |     6 |
+| [x]  | `D00 T06 §41` | The Two Mutating Repair Tools Adopt the Shared Fence Tracker                                                          | none     |     6 |
 | [x]  | `D00 T06 §42` | HTML Blocks Join the Tracker, and the Terminal Contract Carries the Block Kind                                        | none     |     8 |
 | [x]  | `D00 T06 §43` | Finish the One-Contract Consolidation Across the Consumer Closure                                                     | none     |     3 |
 | [x]  | `D00 T06 §44` | The Inline Scanner Honours CommonMark Precedence, and the Table Cell Reaches It Unmodified                            | none     |    10 |
