@@ -15,6 +15,7 @@ on:
       - scripts/ci/apt-install.sh
       - scripts/ci/toolchain-packages.txt
       - scripts/ci-qemu-version.txt
+      - scripts/ci/check-qemu-version.py
       - .github/workflows/ci-image.yml
   workflow_dispatch:
 
@@ -52,13 +53,7 @@ jobs:
       # must name the QEMU the image holds.
       - name: The image's QEMU is the one scripts/ci-qemu-version.txt records
         run: |
-          want="$(grep -vE '^[[:space:]]*(#|$)' scripts/ci-qemu-version.txt | head -1 | tr -d '[:space:]')"
-          got="$(docker run --rm "$IMAGE:$GITHUB_SHA" qemu-system-x86_64 --version | head -1)"
-          echo "image: $got; recorded: $want"
-          if [[ "$got" != *"version $want"* ]]; then
-            echo "::error::the image holds '$got' but scripts/ci-qemu-version.txt records $want"
-            exit 1
-          fi
+          docker run --rm "$IMAGE:$GITHUB_SHA" qemu-system-x86_64 --version | python3 scripts/ci/check-qemu-version.py
 
       - name: The toolchain passes setup.sh --verify as the unprivileged user
         run: docker run --rm -u 1001 -v "$PWD:/w" -w /w "$IMAGE:$GITHUB_SHA" bash scripts/setup.sh --verify

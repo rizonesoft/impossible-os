@@ -99,6 +99,28 @@ def test_no_workflow_follows_a_floating_image():
     assert re.fullmatch(r"ubuntu:\d+\.\d+@sha256:[0-9a-f]{64}", base), base
 
 
+
+def test_the_published_qemu_matches_the_record_exactly():
+    """A substring test accepted 10.2.10 for a recorded 10.2.1 (Codex, 2026-11-13),
+    and the CI-parity gate would then compare the local QEMU with a stale record."""
+    with tempfile.TemporaryDirectory() as d:
+        rec = pathlib.Path(d, "v.txt")
+        rec.write_text("# the CI image's QEMU\n10.2.1\n")
+        def check(out):
+            return subprocess.run([sys.executable, str(CI / "check-qemu-version.py"), str(rec)],
+                                  input=out, capture_output=True, text=True, timeout=30).returncode
+        assert check("QEMU emulator version 10.2.1 (Debian 1:10.2.1+ds-1ubuntu1)\n") == 0
+        assert check("QEMU emulator version 10.2.1\n") == 0
+        for bad in ("QEMU emulator version 10.2.10\n", "QEMU emulator version 10.2.1.5\n",
+                    "QEMU emulator version 10.2.0\n", "", "garbage\n"):
+            assert check(bad) == 1, bad
+        rec.write_text("# nothing recorded\n")
+        assert check("QEMU emulator version 10.2.1\n") == 1
+    wf = (REPO / ".github/workflows/ci-image.yml").read_text()
+    assert "| python3 scripts/ci/check-qemu-version.py" in wf
+    assert "scripts/ci/check-qemu-version.py" in yaml.safe_load(wf)[True]["push"]["paths"]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
