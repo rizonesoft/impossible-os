@@ -18,6 +18,8 @@
 #                                           the fastpath SSDT_NtClose probe
 #   include/kernel/sched/task.h         -- allowlisted TASK_EXIT_* exit-status
 #                                           constants a ring-3 test asserts on
+#   src/kernel/sched/syscall.c          -- syscall_handler(): the argument
+#                                           count each INT 0x80 case reads
 #
 # Output -- exactly ONE generated file:
 #   abi/generated/abi_contract.h  -- generated; committed; do NOT edit by hand
@@ -43,6 +45,7 @@
 import argparse
 import concurrent.futures
 import itertools
+import json
 import os
 import re
 import shutil
@@ -58,6 +61,13 @@ SYSCALL_H = os.path.join(REPO_ROOT, 'include', 'kernel', 'sched', 'syscall.h')
 SSDT_H    = os.path.join(REPO_ROOT, 'include', 'kernel', 'nt', 'service_numbers.h')
 NTSTATUS_H = os.path.join(REPO_ROOT, 'include', 'kernel', 'nt', 'ntstatus.h')
 TASK_H    = os.path.join(REPO_ROOT, 'include', 'kernel', 'sched', 'task.h')
+# The INT 0x80 dispatcher. Not a header: it is read for the ARGUMENT COUNT of
+# each SYS_* call, which only the handler knows (see handler_arities). The
+# stamp key in scripts/abi-stamp-check.sh hashes headers by glob, so every
+# non-header input listed here must also be named there; a test pins that.
+SYSCALL_C = os.path.join(REPO_ROOT, 'src', 'kernel', 'sched', 'syscall.c')
+SYSCALL_HANDLER = 'syscall_handler'
+NON_HEADER_INPUTS = (SYSCALL_C,)
 # The SINGLE generated destination. Both former destinations
 # (user/include/abi_numbers.h, include/kernel/abi_hash.h) are now static
 # committed shims over this file -- see HEADER_TEMPLATE for why one file is
@@ -1086,6 +1096,362 @@ def resolve_exit_statuses(path: str, export: tuple, resolve_only: tuple,
     return ([(n, values[n], f'({values[n]})') for n in export], [])
 
 
+# ---- INT 0x80 argument counts --------------------------------------------
+#
+# The header gives each SYS_* call a NUMBER; only the handler gives it a SHAPE.
+# A fingerprint over numbers alone let a kernel that reads (path, argv, envp)
+# agree at the crt0 handshake with a binary that passes (path, len). The count
+# is therefore read out of syscall_handler() itself, by the compiler, in every
+# build flavor: for each `case SYS_X:` it is the highest INT 0x80 argument the
+# case reads, following C fallthrough into the next case.
+#
+# The INT 0x80 ABI carries three arguments, in RDI, RSI and RDX (the banner of
+# include/kernel/sched/syscall.h). syscall_handler() copies them into arg1..arg3;
+# a case may also read the frame registers directly. Passing the whole frame to
+# a callee (task_fork) is not an argument read: fork takes none.
+HANDLER_ARG_LOCALS = {'arg1': 1, 'arg2': 2, 'arg3': 3}
+HANDLER_ARG_REGS = {'rdi': 1, 'rsi': 2, 'rdx': 3}
+ARGC_PREFIX = 'ARGC_'
+
+
+def _json_stream(text: str) -> list:
+    """`-ast-dump=json` with a filter prints one JSON value per matching
+    declaration, back to back. Decode them all."""
+    dec = json.JSONDecoder()
+    out, i, n = [], 0, len(text)
+    while True:
+        while i < n and text[i].isspace():
+            i += 1
+        if i >= n:
+            return out
+        obj, i = dec.raw_decode(text, i)
+        out.append(obj)
+
+
+def _children(node: dict) -> list:
+    return [c for c in node.get('inner') or [] if isinstance(c, dict) and c]
+
+
+def _walk(node: dict):
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        yield n
+        stack.extend(reversed(_children(n)))
+
+
+def _outer_switches(node: dict) -> list:
+    found, stack = [], [node]
+    while stack:
+        n = stack.pop()
+        if n.get('kind') == 'SwitchStmt':
+            found.append(n)
+            continue
+        stack.extend(_children(n))
+    return found
+
+
+def _arg_index(node: dict, arg_ids: dict) -> int:
+    """The INT 0x80 argument a node reads: a reference to one of the handler's
+    own argN locals (matched by declaration identity, so a nested variable that
+    reuses the name is not one), or a frame register member. 0 otherwise."""
+    kind = node.get('kind')
+    if kind == 'DeclRefExpr':
+        return arg_ids.get((node.get('referencedDecl') or {}).get('id'), 0)
+    if kind == 'MemberExpr':
+        return HANDLER_ARG_REGS.get(node.get('name'), 0)
+    return 0
+
+
+def _arg_reads(stmts, arg_ids: dict) -> int:
+    """Highest INT 0x80 argument index read anywhere under `stmts`."""
+    top = 0
+    for stmt in stmts:
+        for n in _walk(stmt):
+            top = max(top, _arg_index(n, arg_ids))
+    return top
+
+
+_TRANSPARENT = ('ImplicitCastExpr', 'CStyleCastExpr', 'ParenExpr')
+
+
+def _direct_register(expr: dict):
+    """The register name when `expr` is exactly `frame->REG` (a member of a
+    plain variable through `->`), seen through casts and parentheses only;
+    None for any other expression."""
+    while expr.get('kind') in _TRANSPARENT:
+        kids = _children(expr)
+        if len(kids) != 1:
+            return None
+        expr = kids[0]
+    if expr.get('kind') != 'MemberExpr' or not expr.get('isArrow'):
+        return None
+    base = _children(expr)
+    while len(base) == 1 and base[0].get('kind') in _TRANSPARENT:
+        base = _children(base[0])
+    if len(base) != 1 or base[0].get('kind') != 'DeclRefExpr':
+        return None
+    return expr.get('name')
+
+
+def _exits(stmt: dict) -> bool:
+    """Does control leave the switch at the end of this statement?"""
+    kind = stmt.get('kind')
+    if kind in ('BreakStmt', 'ReturnStmt', 'GotoStmt', 'ContinueStmt'):
+        return True
+    if kind == 'CompoundStmt':
+        inner = _children(stmt)
+        return bool(inner) and _exits(inner[-1])
+    return False
+
+
+def _peel_labels(stmt: dict) -> tuple:
+    """`case A: case B: default: body` nests each label around the next.
+    Returns ([case label exprs], first body statement or None, error)."""
+    labels = []
+    while stmt is not None and stmt.get('kind') in ('CaseStmt', 'DefaultStmt'):
+        inner = _children(stmt)
+        if stmt.get('kind') == 'CaseStmt':
+            if len(inner) != 2:
+                return (labels, None, 'a GNU case range (`case A ... B:`) has '
+                                      'no single syscall name')
+            labels.append(inner[0])
+        stmt = inner[-1] if inner else None
+    return (labels, stmt, None)
+
+
+def _label_name(label: dict, source: bytes) -> tuple:
+    """The token the case label is SPELLED with in the handler's source, and
+    the value the compiler gave it. The name comes from the compiler-reported
+    location of the label; the caller checks it against the number table, so a
+    misread location cannot pass as a different syscall."""
+    begin = (label.get('range') or {}).get('begin') or {}
+    loc = begin.get('expansionLoc') or begin
+    off, length = loc.get('offset'), loc.get('tokLen')
+    value = None
+    for n in _walk(label):
+        if n.get('kind') in ('IntegerLiteral', 'ConstantExpr') and 'value' in n:
+            value = int(n['value'])
+            break
+    if off is None or length is None:
+        return (None, value)
+    return (source[off:off + length].decode('ascii', 'replace'), value)
+
+
+def handler_arities(ast_text: str, source: bytes, handler: str,
+                    values: dict) -> tuple:
+    """Read each SYS_* case's argument count out of `handler`'s clang JSON AST.
+    `values` maps every SYS_* name to its number. Returns
+    ({name: count}, errors); any shape the reader does not understand is an
+    error, because a count it guessed would go into the fingerprint."""
+    try:
+        decls = _json_stream(ast_text)
+    except ValueError as exc:
+        return ({}, [f'the AST dump of {handler}() is not JSON: {exc}'])
+    defs = [d for d in decls if d.get('kind') == 'FunctionDecl'
+            and d.get('name') == handler and _children(d)]
+    if len(defs) != 1:
+        return ({}, [f'expected one definition of {handler}() in the AST, '
+                     f'found {len(defs)}'])
+    fn = defs[0]
+
+    # The argument locals must still be what this reader assumes: argN copied
+    # from the Nth INT 0x80 register. A rename would otherwise make every
+    # count read 0 and the fingerprint would quietly describe no arguments.
+    errors = []
+    reg_of = {v: k for k, v in HANDLER_ARG_REGS.items()}
+    locals_seen = {}
+    arg_ids = {}        # VarDecl id -> argument index
+    copy_nodes = set()  # node ids inside the validated register copies
+    fn_body = _children(fn)[-1] if _children(fn) else {}
+    for n in _children(fn_body):
+        if n.get('kind') != 'DeclStmt':
+            continue
+        for d in _children(n):
+            if d.get('kind') == 'VarDecl' and d.get('name') in HANDLER_ARG_LOCALS:
+                # The copy is exempt from the stray-read check only when its
+                # initializer IS `frame->REG`, under casts and parentheses at
+                # most. An allowlist, because every other shape (another
+                # register, another argN, any arithmetic) can hide a second
+                # argument inside a read this reader would not count.
+                own = reg_of[HANDLER_ARG_LOCALS[d['name']]]
+                init = [c for c in _children(d)
+                        if not c.get('kind', '').endswith('Attr')]
+                locals_seen[d['name']] = (
+                    {own} if len(init) == 1 and _direct_register(init[0]) == own
+                    else set())
+                arg_ids[d.get('id')] = HANDLER_ARG_LOCALS[d['name']]
+                copy_nodes |= {m.get('id') for m in _walk(d)}
+    for name, idx in sorted(HANDLER_ARG_LOCALS.items(), key=lambda e: e[1]):
+        if reg_of[idx] not in locals_seen.get(name, set()):
+            errors.append(f'{handler}() no longer declares `{name}` from '
+                          f'frame->{reg_of[idx]}; teach handler_arities() the '
+                          f'new argument names')
+    if errors:
+        return ({}, errors)
+
+    switches = _outer_switches(fn)
+    if len(switches) != 1:
+        return ({}, [f'{handler}() has {len(switches)} outermost switch '
+                     f'statements; expected exactly one dispatch switch'])
+    sw_kids = _children(switches[0])
+    body = sw_kids[-1] if sw_kids else {}
+    if body.get('kind') != 'CompoundStmt':
+        return ({}, [f'the dispatch switch in {handler}() has no braced body'])
+
+    segments = []   # [labels, [statements]] in source order
+    for stmt in _children(body):
+        if stmt.get('kind') in ('CaseStmt', 'DefaultStmt'):
+            labels, first, err = _peel_labels(stmt)
+            if err:
+                errors.append(err)
+                continue
+            segments.append([labels, [first] if first else []])
+        elif segments:
+            segments[-1][1].append(stmt)
+
+    # Every argument read must be one this reader attributed: inside a case of
+    # the dispatch switch, or the register copy itself. A read anywhere else (a
+    # value derived from arg2 before the switch, a shared tail after it) feeds
+    # some case the counts cannot see, so it is refused rather than counted as
+    # nothing. A goto is refused for the same reason: it carries a case into
+    # code outside its segment.
+    in_cases = set()
+    for _labels, stmts in segments:
+        for stmt in stmts:
+            in_cases |= {n.get('id') for n in _walk(stmt)}
+    for n in _walk(fn_body):
+        if n.get('kind') in ('GotoStmt', 'IndirectGotoStmt'):
+            errors.append(f'{handler}() uses goto; a jump out of a case '
+                          f'carries reads this reader cannot attribute')
+            break
+    stray = sorted({_arg_index(n, arg_ids) for n in _walk(fn_body)
+                    if _arg_index(n, arg_ids)
+                    and n.get('id') not in in_cases
+                    and n.get('id') not in copy_nodes})
+    for idx in stray:
+        errors.append(f'{handler}() reads argument {idx} outside the cases of '
+                      f'its dispatch switch, so no syscall\'s count includes '
+                      f'it; read it inside the case that uses it')
+    if errors:
+        return ({}, errors)
+
+    counts = [0] * len(segments)
+    carry = 0
+    for i in range(len(segments) - 1, -1, -1):
+        stmts = segments[i][1]
+        own = _arg_reads(stmts, arg_ids)
+        falls = not (stmts and _exits(stmts[-1]))
+        counts[i] = max(own, carry) if falls else own
+        carry = counts[i]
+
+    out = {}
+    for (labels, _stmts), count in zip(segments, counts):
+        for label in labels:
+            name, value = _label_name(label, source)
+            if name not in values:
+                errors.append(f'a case in {handler}() is labelled {name!r}, '
+                              f'not a SYS_* name from the number table; label '
+                              f'every case with its SYS_* name')
+                continue
+            if value != values[name]:
+                errors.append(f'the case labelled {name} in {handler}() has '
+                              f'value {value}, but the table gives {values[name]}')
+                continue
+            out[name] = count
+    return (out, errors)
+
+
+def handler_ast(clang: str, flags, source: str, handler: str) -> tuple:
+    """clang's JSON AST for `handler` in `source`. Returns (text, None) or
+    (None, reason)."""
+    cmd = [clang] + list(flags) + ['-fsyntax-only', '-Xclang', '-ast-dump=json',
+                                   '-Xclang', f'-ast-dump-filter={handler}', source]
+    try:
+        proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True,
+                              check=False, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return (None, f'cannot dump the AST of {handler}(): {exc}')
+    if proc.returncode != 0:
+        detail = proc.stderr.strip().splitlines()
+        head = '; '.join(detail[:3]) if detail else 'no diagnostic'
+        return (None, f'clang refused {os.path.relpath(source, REPO_ROOT)} '
+                      f'(rc={proc.returncode}): {head}')
+    return (proc.stdout, None)
+
+
+def syscall_arities(syscalls, clang, flavors=None, source=None,
+                    handler=None) -> tuple:
+    """Every SYS_* name with the argument count its INT 0x80 handler reads, or
+    None when no case is labelled with it (a reserved number, or an INT 0x2E
+    alias). Returns ([(name, count)], errors).
+
+    Read in every build flavor: a case that only some flavors compile (the
+    KERNEL_TESTS-gated calls) takes its count from those flavors, and a call
+    whose count differs between flavors is refused, because one contract serves
+    them all."""
+    source = source or SYSCALL_C
+    handler = handler or SYSCALL_HANDLER
+    values = {n: v for n, v, _l in syscalls}
+    names = sorted(n for n in values if n.startswith('SYS_'))
+    if flavors is None:
+        flavors, reason = flavor_combinations()
+        if reason:
+            return ([], [reason])
+    if not flavors:
+        return ([], ['the build-flavor matrix is empty, so no handler was read'])
+    try:
+        with open(source, 'rb') as f:
+            src = f.read()
+    except OSError as exc:
+        return ([], [f'cannot read {source}: {exc}'])
+
+    def probe(flavor):
+        flags, reason = kernel_cpp_flags(flavor)
+        if reason:
+            return (flavor, None, reason)
+        text, reason = handler_ast(clang, flags, source, handler)
+        return (flavor, text, reason)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(flavors)) as pool:
+        results = list(pool.map(probe, flavors))
+
+    seen: dict = {}
+    errors = []
+    for flavor, text, reason in results:
+        desc = ' '.join(f'{k}={v}' for k, v in sorted(flavor.items()))
+        if reason:
+            return ([], [reason])
+        got, errs = handler_arities(text, src, handler, values)
+        errors += [f'{e} (flavor {desc})' for e in errs]
+        for name, count in got.items():
+            seen.setdefault(name, {}).setdefault(count, []).append(desc)
+    for name in sorted(seen):
+        if len(seen[name]) > 1:
+            shapes = '; '.join(f'{c} under {", ".join(sorted(d))}'
+                               for c, d in sorted(seen[name].items()))
+            errors.append(f'{name} reads a different number of arguments per '
+                          f'build flavor ({shapes}); one contract serves every '
+                          f'flavor')
+    if errors:
+        return ([], sorted(set(errors)))
+    return ([(n, next(iter(seen[n])) if n in seen else None) for n in names], [])
+
+
+def format_arity_block(arities) -> str:
+    handled = [(n, c) for n, c in arities if c is not None]
+    absent = [n for n, c in arities if c is None]
+    lines = ['/* ---- INT 0x80 argument counts (ARGC_SYS_*), read from '
+             'syscall_handler() -------------- */']
+    for name, count in handled:
+        lines.append(f'#define {ARGC_PREFIX + name:<28} {count}')
+    if absent:
+        lines.append('/* No INT 0x80 case, so no count ("none" in the fingerprint):')
+        lines += [f' *   {name}' for name in absent]
+        lines.append(' */')
+    return '\n'.join(lines) + '\n'
+
+
 # ---- Emitter ------------------------------------------------------------
 
 HEADER_TEMPLATE = '''\
@@ -1100,6 +1466,7 @@ HEADER_TEMPLATE = '''\
  *   include/kernel/nt/service_numbers.h  (SSDT_* service numbers)
  *   include/kernel/nt/ntstatus.h         (NTSTATUS return codes)
  *   include/kernel/sched/task.h          (TASK_EXIT_* exit statuses)
+ *   src/kernel/sched/syscall.c           (ARGC_SYS_* argument counts)
  *
  * Any kernel-side renumber that forgets to regenerate this header will
  * fail `make check-abi` before the drift leaks to runtime. User-mode
@@ -1140,6 +1507,7 @@ HEADER_TEMPLATE = '''\
 #define IMPOSSIBLE_OS_ABI_NUMBERS_H
 
 {syscall_block}
+{arity_block}
 {ssdt_block}
 {ntstatus_block}
 {exit_status_block}
@@ -1160,10 +1528,11 @@ def format_block(title: str, entries: list[tuple[str, int, str]], name_width: in
     return '\n'.join(lines) + '\n'
 
 
-def render(syscalls, ssdt, ntstatus, exit_status, abi_hash: int) -> str:
+def render(syscalls, ssdt, ntstatus, exit_status, abi_hash: int,
+           arities) -> str:
     hash_block = (
         '/* ---- ABI fingerprint (FNV-1a 64-bit) --------------------------------------------------------- */\n'
-        '/* Hash over the sorted tuple of (SYS_*, SSDT_*, FAULT_*, exported\n'
+        '/* Hash over the sorted tuple of (SYS_*, ARGC_SYS_*, SSDT_*, FAULT_*, exported\n'
         ' * TASK_EXIT_* statuses, TEB offsets, KUSD offsets). The STATUS_* codes\n'
         ' * in the number block are NOT fingerprinted -- they mirror a stable external\n'
         ' * contract rather than a number this kernel assigns. Changing an\n'
@@ -1188,6 +1557,7 @@ def render(syscalls, ssdt, ntstatus, exit_status, abi_hash: int) -> str:
     return HEADER_TEMPLATE.format(
         hash_block=hash_block,
         syscall_block=format_block('INT 0x80 syscall numbers (SYS_*, FAULT_*)', syscalls, 24),
+        arity_block=format_arity_block(arities),
         ssdt_block=format_block('SSDT service numbers (SSDT_*) -- fastpath probe', ssdt, 32),
         ntstatus_block=format_block('NTSTATUS return codes used by user probes', ntstatus, 32),
         exit_status_block=format_block(
@@ -1209,7 +1579,8 @@ def fnv1a_update(h: int, data: bytes) -> int:
     return h
 
 
-def compute_abi_hash(syscalls, ssdt, exit_status, teb_layout, kusd_layout) -> int:
+def compute_abi_hash(syscalls, ssdt, exit_status, teb_layout, kusd_layout,
+                     *, arities) -> int:
     """Deterministic FNV-1a 64-bit fingerprint over the load-bearing
     ABI surface. Sorted tuples keep the hash stable across reorderings
     in the source headers -- only name/value changes shift the hash.
@@ -1219,10 +1590,19 @@ def compute_abi_hash(syscalls, ssdt, exit_status, teb_layout, kusd_layout) -> in
     allowlist), so a user-invisible SSDT renumber also flags the hash.
     Exit statuses use the EXPORTED list only -- a resolve-only helper
     symbol is not a ring-3 contract and must not version-skew binaries.
+
+    `arities` is the (SYS_name, argument count or None) list from
+    syscall_arities(). Keyword-only and required: a number alone does not
+    fix a call's shape, so a caller that forgot the counts would publish a
+    fingerprint under which a binary passing (path, len) still agrees with a
+    kernel reading (path, argv, envp).
     """
     h = FNV_OFFSET_BASIS
     for name, _value, literal in sorted(syscalls, key=lambda e: e[0]):
         h = fnv1a_update(h, f'SYS\0{name}\0{literal}\n'.encode('ascii'))
+    for name, argc in sorted(arities, key=lambda e: e[0]):
+        count = 'none' if argc is None else str(argc)
+        h = fnv1a_update(h, f'ARGC\0{name}\0{count}\n'.encode('ascii'))
     for name, _value, literal in sorted(ssdt, key=lambda e: e[0]):
         h = fnv1a_update(h, f'SSDT\0{name}\0{literal}\n'.encode('ascii'))
     for name, _value, literal in sorted(exit_status, key=lambda e: e[0]):
@@ -1237,7 +1617,7 @@ def compute_abi_hash(syscalls, ssdt, exit_status, teb_layout, kusd_layout) -> in
 # Constant families the generator owns. Any macro whose name starts with one of
 # these is an ABI number that must come from the generated contract and from
 # nowhere else.
-SHIM_OWNED_PREFIXES = ('SYS_', 'SSDT_', 'STATUS_', 'FAULT_', 'TASK_EXIT_',
+SHIM_OWNED_PREFIXES = ('SYS_', 'ARGC_SYS_', 'SSDT_', 'STATUS_', 'FAULT_', 'TASK_EXIT_',
                        'IMPOSSIBLE_OS_ABI_HASH', 'EX_ABI_MISMATCH')
 
 def user_cpp_flags() -> tuple:
@@ -1918,10 +2298,24 @@ def main() -> int:
     # Hash over the FULL SSDT registry (not just the user allowlist) so
     # any renumber in the kernel table bumps the fingerprint even when
     # user-visible names are unchanged.
-    abi_hash = compute_abi_hash(syscalls, ssdt_all, exit_status,
-                                TEB_LAYOUT, KUSD_LAYOUT)
+    # The SHAPE of each INT 0x80 call, read from its handler. Certified by the
+    # compiler in the same sense as the numbers: clang parses the handler in
+    # every flavor and the count is what its AST reads.
+    arities, arity_errs = syscall_arities(syscalls, clang)
+    if arity_errs:
+        for e in arity_errs:
+            print(f'gen-user-abi: argc: {e}', file=sys.stderr)
+        print('               a syscall whose argument count cannot be read '
+              'from its handler', file=sys.stderr)
+        print('               cannot be fingerprinted; fix the handler shape or '
+              'teach handler_arities()', file=sys.stderr)
+        return 1
 
-    rendered_contract = render(syscalls, ssdt, ntstatus, exit_status, abi_hash)
+    abi_hash = compute_abi_hash(syscalls, ssdt_all, exit_status,
+                                TEB_LAYOUT, KUSD_LAYOUT, arities=arities)
+
+    rendered_contract = render(syscalls, ssdt, ntstatus, exit_status, abi_hash,
+                               arities)
 
     if args.check:
         drift = False

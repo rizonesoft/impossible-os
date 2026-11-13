@@ -9,6 +9,7 @@
  *   include/kernel/nt/service_numbers.h  (SSDT_* service numbers)
  *   include/kernel/nt/ntstatus.h         (NTSTATUS return codes)
  *   include/kernel/sched/task.h          (TASK_EXIT_* exit statuses)
+ *   src/kernel/sched/syscall.c           (ARGC_SYS_* argument counts)
  *
  * Any kernel-side renumber that forgets to regenerate this header will
  * fail `make check-abi` before the drift leaks to runtime. User-mode
@@ -43,7 +44,7 @@
 #define IMPOSSIBLE_OS_ABI_CONTRACT_H
 
 /* ---- ABI fingerprint (FNV-1a 64-bit) --------------------------------------------------------- */
-/* Hash over the sorted tuple of (SYS_*, SSDT_*, FAULT_*, exported
+/* Hash over the sorted tuple of (SYS_*, ARGC_SYS_*, SSDT_*, FAULT_*, exported
  * TASK_EXIT_* statuses, TEB offsets, KUSD offsets). The STATUS_* codes
  * in the number block are NOT fingerprinted -- they mirror a stable external
  * contract rather than a number this kernel assigns. Changing an
@@ -55,7 +56,7 @@
  * disagreement. A kernel-side renumber that slipped through review
  * but skipped this generator surfaces at process start, not at the
  * first syscall with corrupted semantics. */
-#define IMPOSSIBLE_OS_ABI_HASH   0x448A9D27775243B3ULL
+#define IMPOSSIBLE_OS_ABI_HASH   0x1F4B2AC476B3B3ADULL
 
 #endif /* IMPOSSIBLE_OS_ABI_CONTRACT_H */
 
@@ -135,6 +136,64 @@
 #define SYS_NT_SHMEM_CREATE      0x005C
 #define SYS_NT_SHMEM_MAP         0x005E
 #define SYS_NT_CLOSE             0x0000
+
+/* ---- INT 0x80 argument counts (ARGC_SYS_*), read from syscall_handler() -------------- */
+#define ARGC_SYS_ABI_HANDSHAKE       0
+#define ARGC_SYS_CLOSEHANDLE         1
+#define ARGC_SYS_EXEC                3
+#define ARGC_SYS_EXIT                1
+#define ARGC_SYS_FAULT_INJECT        2
+#define ARGC_SYS_FORK                0
+#define ARGC_SYS_GENCONSOLECTRL      2
+#define ARGC_SYS_GETPGID             1
+#define ARGC_SYS_GETPGRP             0
+#define ARGC_SYS_GETPID              0
+#define ARGC_SYS_GETPROCS            2
+#define ARGC_SYS_GETSID              1
+#define ARGC_SYS_KILL                1
+#define ARGC_SYS_LOG                 3
+#define ARGC_SYS_NETINFO             2
+#define ARGC_SYS_OPENDIROBJ          2
+#define ARGC_SYS_OPENFILE            2
+#define ARGC_SYS_PING                2
+#define ARGC_SYS_PIPE                1
+#define ARGC_SYS_QUERYDIROBJ         3
+#define ARGC_SYS_READ                3
+#define ARGC_SYS_READDIR             3
+#define ARGC_SYS_READFILE            3
+#define ARGC_SYS_READHANDLE          3
+#define ARGC_SYS_REBOOT              0
+#define ARGC_SYS_SETPGID             2
+#define ARGC_SYS_SETSID              0
+#define ARGC_SYS_SHMEM_CREATE        2
+#define ARGC_SYS_SHMEM_MAP           1
+#define ARGC_SYS_SHUTDOWN            0
+#define ARGC_SYS_SIGNAL              2
+#define ARGC_SYS_TCGETPGRP           0
+#define ARGC_SYS_TCSETPGRP           1
+#define ARGC_SYS_TEST_REPORT         3
+#define ARGC_SYS_UNMAPVIEW           1
+#define ARGC_SYS_UPTIME              0
+#define ARGC_SYS_WAITPID             1
+#define ARGC_SYS_WRITE               3
+#define ARGC_SYS_WRITEHANDLE         3
+#define ARGC_SYS_YIELD               0
+/* No INT 0x80 case, so no count ("none" in the fingerprint):
+ *   SYS_MMAP
+ *   SYS_MUNMAP
+ *   SYS_NT_CLOSE
+ *   SYS_NT_EXIT
+ *   SYS_NT_GETPROCS
+ *   SYS_NT_PIPE
+ *   SYS_NT_READ
+ *   SYS_NT_READDIR
+ *   SYS_NT_SHMEM_CREATE
+ *   SYS_NT_SHMEM_MAP
+ *   SYS_NT_SHUTDOWN
+ *   SYS_NT_WAITPID
+ *   SYS_NT_WRITE
+ *   SYS_NT_YIELD
+ */
 
 /* ---- SSDT service numbers (SSDT_*) -- fastpath probe --------------------------------------------------------- */
 #define SSDT_NtClose                     0x0000

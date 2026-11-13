@@ -94,7 +94,11 @@ struct user_net_config {
 
 /* --- Inline syscall wrappers --- */
 
-static inline long syscall0(long nr)
+/* syscall_rawN issue INT 0x80 with N arguments and check nothing. Call the
+ * checked syscallN macros below instead; the raw forms exist for them and for
+ * a test that must send a shape the kernel does not accept. */
+
+static inline long syscall_raw0(long nr)
 {
     long ret;
     __asm__ volatile(
@@ -106,7 +110,7 @@ static inline long syscall0(long nr)
     return ret;
 }
 
-static inline long syscall1(long nr, long a1)
+static inline long syscall_raw1(long nr, long a1)
 {
     long ret;
     __asm__ volatile(
@@ -118,7 +122,7 @@ static inline long syscall1(long nr, long a1)
     return ret;
 }
 
-static inline long syscall2(long nr, long a1, long a2)
+static inline long syscall_raw2(long nr, long a1, long a2)
 {
     long ret;
     __asm__ volatile(
@@ -130,7 +134,7 @@ static inline long syscall2(long nr, long a1, long a2)
     return ret;
 }
 
-static inline long syscall3(long nr, long a1, long a2, long a3)
+static inline long syscall_raw3(long nr, long a1, long a2, long a3)
 {
     long ret;
     __asm__ volatile(
@@ -141,6 +145,33 @@ static inline long syscall3(long nr, long a1, long a2, long a3)
     );
     return ret;
 }
+
+/* Checked INT 0x80 calls. `syscallN(SYS_X, ...)` compiles only when the kernel's
+ * handler for SYS_X reads exactly N arguments: ARGC_SYS_X is read out of
+ * syscall_handler() by scripts/gen-user-abi.py. A wrapper that passes a
+ * different number, or names a syscall with no INT 0x80 case, is a build error
+ * instead of a call whose registers the kernel reads differently. The syscall
+ * must be written by its SYS_* name; a computed number has no count to check
+ * and goes through syscall_rawN. */
+/* The paste and the stringize sit in each macro itself: an argument handed on
+ * to a helper macro is expanded first, and the check would then name ARGC_6
+ * instead of ARGC_SYS_EXEC. */
+#define syscall0(nr) \
+    __extension__ ({ _Static_assert(ARGC_##nr == 0, \
+        #nr " does not read 0 arguments in syscall_handler()"); \
+        syscall_raw0(nr); })
+#define syscall1(nr, a1) \
+    __extension__ ({ _Static_assert(ARGC_##nr == 1, \
+        #nr " does not read 1 argument in syscall_handler()"); \
+        syscall_raw1(nr, (a1)); })
+#define syscall2(nr, a1, a2) \
+    __extension__ ({ _Static_assert(ARGC_##nr == 2, \
+        #nr " does not read 2 arguments in syscall_handler()"); \
+        syscall_raw2(nr, (a1), (a2)); })
+#define syscall3(nr, a1, a2, a3) \
+    __extension__ ({ _Static_assert(ARGC_##nr == 3, \
+        #nr " does not read 3 arguments in syscall_handler()"); \
+        syscall_raw3(nr, (a1), (a2), (a3)); })
 
 /* --- Convenience wrappers --- */
 
@@ -362,7 +393,7 @@ static inline long sys_querydirobj(HANDLE dir, void *buf, uint16_t count,
  * that a sibling kthread or launcher task would consume). */
 static inline long sys_fault_inject(uint32_t kind, uint32_t countdown)
 {
-    return syscall3(SYS_FAULT_INJECT, (long)kind, (long)countdown, 0L);
+    return syscall2(SYS_FAULT_INJECT, (long)kind, (long)countdown);
 }
 
 /* Test-harness self-report. Submits what this binary counted -- assertions

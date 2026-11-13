@@ -8644,7 +8644,7 @@ _B = exit_entries("#define X_BASE (-2000)\n#define X_STATUS (X_BASE - 1)\n")
 _C = exit_entries("#define X_BASE (-2000)\n#define X_STATUS (-1001)\n")
 
 def h(exit_status):
-    return gua.compute_abi_hash([], [], exit_status, [], [])
+    return gua.compute_abi_hash([], [], exit_status, [], [], arities=[])
 
 check("hash_moves_on_exported_value_change", h(_A) != h(_B))
 # A resolve-only helper is not a ring-3 contract: rewriting it while the
@@ -8653,8 +8653,8 @@ check("hash_stable_when_only_resolve_only_changes", h(_A) == h(_C))
 # The EXIT tag must domain-separate: the same (name, literal) pair fed to the
 # SYS slot has to produce a different fingerprint.
 check("hash_exit_tag_is_domain_separated",
-      gua.compute_abi_hash([], [], _A, [], []) !=
-      gua.compute_abi_hash(_A, [], [], [], []))
+      gua.compute_abi_hash([], [], _A, [], [], arities=[]) !=
+      gua.compute_abi_hash(_A, [], [], [], [], arities=[]))
 
 # --- shipped repo invariants -------------------------------------------
 entries, errors = gua.resolve_exit_statuses(
@@ -9210,6 +9210,316 @@ if [ "$GUA_OK" = "$GUA_EXPECT" ]; then
 else
     t_fail "gen_user_abi: exit-status resolver coverage incomplete" \
            "ok=$GUA_OK/$GUA_EXPECT out=$GUA_OUT"
+fi
+
+# Syscall argument counts in the ABI fingerprint (automation hardening, the
+# argument-count section). The count of each INT 0x80 call is read from clang's
+# AST of syscall_handler(), published as ARGC_SYS_*, hashed, and enforced on the
+# ring-3 wrappers. Fixture handlers pin the reader; the real tree pins the
+# values this repo ships; a mutated copy of the real dispatcher pins that the
+# gate refuses a contract the handler has moved away from.
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[gen-user-abi syscall argument counts]${NC}"
+ARGC_OUT=$(cd "$REPO_ROOT" && python3 - <<'PYARGC'
+import contextlib, importlib.util, io, os, shlex, subprocess, sys, tempfile
+
+spec = importlib.util.spec_from_file_location("gua", "scripts/gen-user-abi.py")
+gua = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gua)
+
+def check(label, cond):
+    print(("OK " if cond else "FAIL ") + label)
+
+CLANG, _err = gua.clang_binary()
+TMP = tempfile.mkdtemp(prefix="tt-argc.")
+ON = {'KERNEL_TESTS': 'on', 'EXCEPT_TELEMETRY': 'on', 'BUILD_ALT_BOOT': 'off'}
+OFF = dict(ON, KERNEL_TESTS='off')
+
+PRE = """struct frame { unsigned long rax, rdi, rsi, rdx; };
+long f1(unsigned long);
+long f3(unsigned long, unsigned long, unsigned long);
+"""
+LOCALS = """    unsigned long nr = frame->rax;
+    __attribute__((unused)) unsigned long arg1 = frame->rdi;
+    __attribute__((unused)) unsigned long arg2 = frame->rsi;
+    __attribute__((unused)) unsigned long arg3 = frame->rdx;
+    long ret = -1;
+"""
+POST = """    frame->rax = (unsigned long)ret;
+    return 0;
+}
+"""
+
+def fixture(defines, cases, locals_=LOCALS, name="h.c"):
+    path = os.path.join(TMP, name)
+    with open(path, "w") as f:
+        f.write(PRE + "".join(f"#define {n} {v}\n" for n, v in defines)
+                + "unsigned long h(struct frame *frame)\n{\n" + locals_
+                + cases + POST)
+    return path
+
+def arities(defines, cases, flavors=(ON,), **kw):
+    path = fixture(defines, cases, **kw)
+    table = [(n, int(str(v), 0), str(v)) for n, v in defines]
+    return gua.syscall_arities(table, CLANG, flavors=list(flavors),
+                               source=path, handler="h")
+
+D = [("SYS_A", 1), ("SYS_B", 2), ("SYS_C", 3), ("SYS_D", 4), ("SYS_E", 5),
+     ("SYS_F", 6), ("SYS_G", 7), ("SYS_H", 8), ("SYS_I", 9), ("SYS_UNUSED", 10),
+     ("SYS_ALIAS", "0x8"), ("FAULT_X", 1)]
+SWITCH = """    switch (nr) {
+    case SYS_A: ret = 0; break;
+    case SYS_B: { ret = f1(arg1); break; }
+    case SYS_C: /* would read arg3 if this were code */ ret = f1(arg2); break;
+    case SYS_D:
+    case SYS_E: ret = f3(arg1, arg2, arg3); break;
+    case SYS_F: ret = f1(arg1);
+    case SYS_G: ret = f1(arg2); break;
+    case SYS_H: ret = (long)frame->rdx; break;
+    case SYS_I:
+        switch (arg1) { case 7: ret = 1; break; default: break; }
+        break;
+    default: ret = f1(arg3); break;
+    }
+"""
+got, errs = arities(D, SWITCH)
+want = {"SYS_A": 0, "SYS_B": 1, "SYS_C": 2, "SYS_D": 3, "SYS_E": 3,
+        "SYS_F": 2, "SYS_G": 2, "SYS_H": 3, "SYS_I": 1,
+        "SYS_UNUSED": None, "SYS_ALIAS": None}
+check("reads_each_case_count", not errs and dict(got) == want)
+check("a_comment_is_not_an_argument_read", dict(got).get("SYS_C") == 2)
+check("stacked_labels_share_a_count",
+      dict(got).get("SYS_D") == 3 and dict(got).get("SYS_E") == 3)
+check("fallthrough_takes_the_next_case_reads", dict(got).get("SYS_F") == 2)
+check("a_frame_register_read_counts", dict(got).get("SYS_H") == 3)
+check("a_nested_switch_label_is_not_a_syscall", dict(got).get("SYS_I") == 1)
+# SYS_ALIAS has SYS_H's number but labels no case: the count belongs to the
+# NAME the handler is written with, not to every name sharing its value.
+check("an_alias_with_the_same_number_has_no_count",
+      dict(got).get("SYS_ALIAS") is None)
+check("only_sys_names_get_a_count", "FAULT_X" not in dict(got))
+check("the_default_arm_gives_no_name_a_count",
+      dict(got).get("SYS_UNUSED") is None)
+
+def refuses(label, needle, defines, cases, **kw):
+    got, errs = arities(defines, cases, **kw)
+    check(label, got == [] and any(needle in e for e in errs))
+
+refuses("refuses_a_bare_number_label", "not a SYS_* name",
+        [("SYS_A", 1)], "    switch (nr) { case 1: ret = 0; break; }\n")
+refuses("refuses_a_case_range", "case range", [("SYS_A", 1), ("SYS_B", 3)],
+        "    switch (nr) { case SYS_A ... SYS_B: ret = 0; break; }\n")
+refuses("refuses_two_dispatch_switches", "outermost switch", [("SYS_A", 1)],
+        "    switch (nr) { case SYS_A: ret = 0; break; }\n"
+        "    switch (nr) { case SYS_A: ret = 1; break; }\n")
+refuses("refuses_renamed_argument_locals", "teach handler_arities",
+        [("SYS_A", 1)], "    switch (nr) { case SYS_A: ret = f1(a1); break; }\n",
+        locals_="    unsigned long nr = frame->rax;\n"
+                "    __attribute__((unused)) unsigned long a1 = frame->rdi;\n"
+                "    __attribute__((unused)) unsigned long arg1 = 0, arg2 = 0, arg3 = 0;\n"
+                "    long ret = -1;\n")
+refuses("refuses_swapped_argument_registers", "frame->rdi", [("SYS_A", 1)],
+        "    switch (nr) { case SYS_A: ret = f1(arg1); break; }\n",
+        locals_="    unsigned long nr = frame->rax;\n"
+                "    __attribute__((unused)) unsigned long arg1 = frame->rsi;\n"
+                "    __attribute__((unused)) unsigned long arg2 = frame->rdi;\n"
+                "    __attribute__((unused)) unsigned long arg3 = frame->rdx;\n"
+                "    long ret = -1;\n")
+
+# Every argument read must be attributed to a case. A value derived from an
+# argument before the switch, or a shared tail reached by goto, would otherwise
+# let a case consume a register its count leaves out (plan and round findings).
+refuses("refuses_an_argument_alias_before_the_switch", "outside the cases",
+        [("SYS_A", 1)],
+        "    unsigned long flags = arg2;\n"
+        "    switch (nr) { case SYS_A: ret = f1(arg1 + flags); break; }\n")
+refuses("refuses_a_frame_register_read_outside_the_cases", "outside the cases",
+        [("SYS_A", 1)],
+        "    if (frame->rdx) ret = 0;\n"
+        "    switch (nr) { case SYS_A: ret = f1(arg1); break; }\n")
+refuses("refuses_a_goto_into_a_shared_tail", "goto", [("SYS_A", 1)],
+        "    switch (nr) { case SYS_A: ret = f1(arg1); goto finish; }\n"
+        "finish:\n    ret += f1(arg2);\n")
+got, errs = arities([("SYS_A", 1)],
+                    "    switch (nr) { case SYS_A: { unsigned long arg2 = 5;\n"
+                    "        ret = f1(arg1 + arg2); break; } }\n")
+check("a_local_that_reuses_an_argument_name_is_not_a_read",
+      not errs and dict(got) == {"SYS_A": 1})
+
+refuses("refuses_a_register_copy_that_reads_another_register", "frame->rdi",
+        [("SYS_A", 1)], "    switch (nr) { case SYS_A: ret = f1(arg1); break; }\n",
+        locals_="    unsigned long nr = frame->rax;\n"
+                "    __attribute__((unused)) unsigned long arg1 = frame->rdi & frame->rsi;\n"
+                "    __attribute__((unused)) unsigned long arg2 = frame->rsi;\n"
+                "    __attribute__((unused)) unsigned long arg3 = frame->rdx;\n"
+                "    long ret = -1;\n")
+
+refuses("refuses_a_register_copy_that_reads another_argument".replace(" ", "_"),
+        "frame->rdi", [("SYS_A", 1)],
+        "    switch (nr) { case SYS_A: ret = f1(arg1); break; }\n",
+        locals_="    unsigned long nr = frame->rax;\n"
+                "    __attribute__((unused)) unsigned long arg2 = frame->rsi;\n"
+                "    __attribute__((unused)) unsigned long arg1 = frame->rdi + arg2;\n"
+                "    __attribute__((unused)) unsigned long arg3 = frame->rdx;\n"
+                "    long ret = -1;\n")
+got, errs = arities([("SYS_A", 1)],
+                    "    switch (nr) { case SYS_A: ret = f1(arg1); break; }\n",
+                    locals_="    unsigned long nr = frame->rax;\n"
+                            "    __attribute__((unused)) unsigned long arg1 = (unsigned long)(frame->rdi);\n"
+                            "    __attribute__((unused)) unsigned long arg2 = frame->rsi;\n"
+                            "    __attribute__((unused)) unsigned long arg3 = frame->rdx;\n"
+                            "    long ret = -1;\n")
+check("a_cast_register_copy_is_accepted", not errs and dict(got) == {"SYS_A": 1})
+
+# The table and the handler must agree on what number a name is.
+path = fixture([("SYS_A", 1)], "    switch (nr) { case SYS_A: ret = 0; break; }\n")
+got, errs = gua.syscall_arities([("SYS_A", 5, "5")], CLANG, flavors=[ON],
+                                source=path, handler="h")
+check("refuses_a_label_whose_value_differs_from_the_table",
+      got == [] and any("the table gives 5" in e for e in errs))
+
+# Flavors. A case only one flavor compiles takes that flavor's count; a count
+# that differs between flavors has no single value to publish.
+GATED = """    switch (nr) {
+    case SYS_A: ret = f1(arg1); break;
+#ifdef KERNEL_TESTS
+    case SYS_B: ret = f1(arg2); break;
+#endif
+    }
+"""
+got, errs = arities([("SYS_A", 1), ("SYS_B", 2)], GATED, flavors=(ON, OFF))
+check("a_flavor_gated_case_keeps_its_count",
+      not errs and dict(got) == {"SYS_A": 1, "SYS_B": 2})
+SPLIT = """    switch (nr) {
+#ifdef KERNEL_TESTS
+    case SYS_A: ret = f1(arg2); break;
+#else
+    case SYS_A: ret = f1(arg1); break;
+#endif
+    }
+"""
+got, errs = arities([("SYS_A", 1)], SPLIT, flavors=(ON, OFF))
+check("refuses_a_count_that_differs_per_flavor",
+      got == [] and any("per build flavor" in e for e in errs))
+got, errs = arities([("SYS_A", 1)], SPLIT, flavors=())
+check("refuses_an_empty_flavor_matrix", got == [] and bool(errs))
+
+# --- the fingerprint ------------------------------------------------------
+SYS = [("SYS_A", 1, "1"), ("SYS_B", 2, "2")]
+def fp(sys_=SYS, ar=(("SYS_A", 1), ("SYS_B", 2))):
+    return gua.compute_abi_hash(sys_, [], [], [], [], arities=list(ar))
+
+base = fp()
+check("fingerprint_moves_on_a_count_change",
+      fp(ar=(("SYS_A", 1), ("SYS_B", 3))) != base)
+check("fingerprint_moves_on_a_rename",
+      fp([("SYS_A", 1, "1"), ("SYS_C", 2, "2")],
+         (("SYS_A", 1), ("SYS_C", 2))) != base)
+check("fingerprint_moves_on_a_renumber",
+      fp([("SYS_A", 1, "1"), ("SYS_B", 9, "9")]) != base)
+check("fingerprint_tells_no_handler_from_zero_arguments",
+      fp(ar=(("SYS_A", 1), ("SYS_B", None))) != fp(ar=(("SYS_A", 1), ("SYS_B", 0))))
+check("fingerprint_ignores_count_order",
+      fp(ar=(("SYS_B", 2), ("SYS_A", 1))) == base)
+try:
+    gua.compute_abi_hash(SYS, [], [], [], [])
+    check("fingerprint_requires_the_counts", False)
+except TypeError:
+    check("fingerprint_requires_the_counts", True)
+
+# --- the tree this repo ships --------------------------------------------
+flags, _r = gua.kernel_cpp_flags()
+_ev, macros, _r = gua.run_preprocessor([gua.SYSCALL_H], flags, CLANG)
+real, _skipped = gua.propose_defines(macros, gua.SYSCALL_H, ('SYS_', 'FAULT_'))
+got, errs = gua.syscall_arities(real, CLANG)
+shipped = dict(got)
+check("repo_handler_reads_clean_in_every_flavor", not errs and bool(got))
+check("repo_exec_reads_path_argv_envp", shipped.get("SYS_EXEC") == 3)
+check("repo_test_only_calls_have_counts",
+      shipped.get("SYS_FAULT_INJECT") == 2 and shipped.get("SYS_TEST_REPORT") == 3)
+check("repo_reserved_numbers_have_no_count",
+      shipped.get("SYS_MMAP", 0) is None and shipped.get("SYS_MUNMAP", 0) is None)
+# SYS_NT_READ is 0x12, the number of SYS_GETPID. It must not inherit a count.
+check("repo_nt_alias_does_not_inherit_a_count",
+      shipped.get("SYS_NT_READ", 0) is None and shipped.get("SYS_GETPID") == 0)
+contract = open(gua.OUT_CONTRACT, encoding="utf-8").read()
+check("contract_publishes_every_count",
+      all(f"#define {gua.ARGC_PREFIX + n:<28} {c}\n" in contract
+          for n, c in got if c is not None))
+check("contract_names_no_count_for_an_unhandled_call",
+      "ARGC_SYS_MMAP" not in contract and " *   SYS_MMAP\n" in contract)
+
+def gate(mutate):
+    """Run the real --check against a copy of the dispatcher."""
+    src = open(gua.SYSCALL_C, encoding="utf-8").read()
+    path = os.path.join(TMP, "syscall.c")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(mutate(src))
+    saved, saved_argv = gua.SYSCALL_C, sys.argv
+    gua.SYSCALL_C, sys.argv = path, ['gen-user-abi.py', '--check']
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(buf):
+            rc = gua.main()
+    finally:
+        gua.SYSCALL_C, sys.argv = saved, saved_argv
+    return rc, buf.getvalue()
+
+rc, _out = gate(lambda s: s)
+check("gate_passes_on_the_shipped_handler", rc == 0)
+ONE = "        ret = (int64_t)task_waitpid((uint32_t)arg1);"
+def more(s):
+    assert s.count(ONE) == 1
+    return s.replace(ONE, ONE[:-2] + " + (uint32_t)arg2);")
+rc, out = gate(more)
+check("gate_refuses_a_handler_that_reads_another_argument",
+      rc == 1 and "stale" in out)
+
+# --- ring 3 ---------------------------------------------------------------
+uflags, _r = gua.user_cpp_flags()
+def user_tu(body):
+    path = os.path.join(TMP, "u.c")
+    with open(path, "w") as f:
+        f.write('#include "syscall.h"\nlong probe(void) { return ' + body + '; }\n')
+    p = subprocess.run([CLANG] + list(uflags) + ['-fsyntax-only', path],
+                       cwd=gua.REPO_ROOT, capture_output=True, text=True,
+                       timeout=120)
+    return p.returncode, p.stderr
+rc, err = user_tu("syscall2(SYS_FAULT_INJECT, 1, 2)")
+check("ring3_call_with_the_kernel_count_compiles", rc == 0)
+rc, err = user_tu("syscall3(SYS_FAULT_INJECT, 1, 2, 0)")
+check("ring3_call_with_another_count_is_a_build_error",
+      rc != 0 and "SYS_FAULT_INJECT does not read 3 arguments" in err)
+rc, err = user_tu("syscall0(SYS_MMAP)")
+check("ring3_call_to_an_unhandled_number_is_a_build_error",
+      rc != 0 and "ARGC_SYS_MMAP" in err)
+rc, err = user_tu("syscall_raw3(SYS_MMAP, 0, 0, 0)")
+check("ring3_raw_call_stays_available_to_tests", rc == 0)
+
+# --- the stamp key --------------------------------------------------------
+stamp = open("scripts/abi-stamp-check.sh", encoding="utf-8").read()
+listed = []
+for line in stamp.splitlines():
+    if line.startswith("ABI_NON_HEADER_INPUTS=("):
+        listed = shlex.split(line[len("ABI_NON_HEADER_INPUTS=("):].rstrip(")"))
+want = sorted(os.path.relpath(p, gua.REPO_ROOT) for p in gua.NON_HEADER_INPUTS)
+check("stamp_key_hashes_every_non_header_input", sorted(listed) == want)
+check("stamp_key_reads_the_list_it_declares",
+      '"${ABI_NON_HEADER_INPUTS[@]}"; \\' in stamp)
+
+import shutil
+shutil.rmtree(TMP, ignore_errors=True)
+PYARGC
+)
+ARGC_OK=$(grep -c "^OK " <<< "$ARGC_OUT")
+ARGC_EXPECT=46
+if [ "$ARGC_OK" = "$ARGC_EXPECT" ] && ! grep -q "^FAIL " <<< "$ARGC_OUT"; then
+    while IFS= read -r line; do
+        [ "$QUIET" = "0" ] && echo -e "  ${GREEN}PASS${NC}  gen_user_abi argc: ${line#OK }"
+    done < <(grep "^OK " <<< "$ARGC_OUT")
+    PASS=$((PASS + ARGC_EXPECT))
+else
+    t_fail "gen_user_abi: syscall argument count coverage incomplete" \
+           "ok=$ARGC_OK/$ARGC_EXPECT out=$ARGC_OUT"
 fi
 
 # The canonical build path must RUN the drift check. `make all` USED TO list

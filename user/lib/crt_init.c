@@ -23,6 +23,10 @@
  * be called before any wrapper in syscall.h is available (same
  * translation unit is fine, but keeping this self-contained helps
  * when the handshake runs before ctor ordering). */
+_Static_assert(ARGC_SYS_ABI_HANDSHAKE == 0,
+               "crt_abi_handshake passes no arguments; syscall_handler() reads some");
+_Static_assert(ARGC_SYS_EXIT == 1,
+               "crt_exit passes one argument; syscall_handler() reads another count");
 static inline uint64_t crt_abi_handshake(void)
 {
     uint64_t ret;

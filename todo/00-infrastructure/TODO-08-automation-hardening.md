@@ -102,7 +102,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |  34   |   §34   | Section-commit gate test wiring that kernel sources can satisfy                                  | §4                         |  [x]   |
 | 💎  |  35   |   §35   | Cross-section review of a closed TODO file                                                       | §5                         |  [/]   |
 | 💎  |  36   |   §36   | Second-boot leg in the smoke matrix                                                              | --                         |  [x]   |
-| 💎  |  37   |   §37   | Syscall argument counts in the ABI fingerprint                                                   | --                         |  [ ]   |
+| 💎  |  37   |   §37   | Syscall argument counts in the ABI fingerprint                                                   | --                         |  [x]   |
 | 💎  |  38   |   §38   | Release-flavor build at the section boundary                                                     | --                         |  [ ]   |
 | 💎  |  39   |   §39   | Re-judge the closed parks under the never-park rule                                              | --                         |  [ ]   |
 | 💎  |  40   |   §40   | Pytest-style control-plane tests run in the suite                                                | --                         |  [ ]   |
@@ -1281,14 +1281,19 @@ Every boot test starts from a fresh image, so anything that depends on what the 
 
 > **Spawned-by:** root
 
-`render()` in `scripts/gen-user-abi.py` fingerprints syscall names and numbers. A syscall whose arguments change keeps its fingerprint, so user and kernel can disagree on a call's shape with every check green. `SYS_EXEC` is due to change from `(path, len)` to `(path, argv, envp)`.
+`render()` in `scripts/gen-user-abi.py` fingerprints syscall names and numbers. A syscall whose arguments change keeps its fingerprint, so user and kernel can disagree on a call's shape with every check green. `SYS_EXEC` had already moved from `(path, len)` to `(path, argv, envp)` with the header comment still giving the old shape, and `sys_fault_inject` passed three arguments to a handler that reads two.
 
-- [ ] Add each syscall's argument count to the canonical table in `scripts/gen-user-abi.py` and to the fingerprint. Done when changing one count changes the fingerprint and `make check-abi` fails until both facades are regenerated.
-- [ ] Fill the counts from the kernel's handlers, not by hand. Done when a host check fails if a handler's arity and the table disagree.
-- [ ] Unit tests: a count change, a rename and a renumber each move the fingerprint. Done when they fail on the old `render()`.
-- [ ] Commit: `"abi: the user ABI fingerprint covers syscall argument counts"`
+- [x] The fingerprint hashes an `ARGC` record per `SYS_*` name, and the contract publishes `ARGC_SYS_*`; a changed count moves `IMPOSSIBLE_OS_ABI_HASH`.
+  - `make check-abi` refuses the committed contract until it is regenerated; `abi-stamp-check.sh` keys on `syscall.c` so the check runs.
+- [x] `gen-user-abi.py` reads each count from clang's AST of `syscall_handler()` in all 12 flavors, not from a hand table.
+  - Highest `arg1..arg3` or `frame->rdi/rsi/rdx` read, following fallthrough; bare-number labels, case ranges, renamed locals and per-flavor differences are refused.
+- [x] Ring-3 wrappers compile only with the kernel's count: `syscall0..3` are `_Static_assert` macros over `syscall_raw0..3`; `sys_fault_inject` now passes the two arguments the kernel reads.
+- [x] Unit tests: `scripts/test-tooling.sh` "gen-user-abi syscall argument counts", 46 checks (count, rename and renumber each move the fingerprint; reader fixtures; real tree; mutated handler; ring-3 compile).
+- [x] Commit: `"abi: the user ABI fingerprint covers syscall argument counts"`
 
-**Test checkpoint:** `make check-abi` passes, and fails when one count is edited in the table alone.
+**Test checkpoint:** `make check-abi` passes, and fails when a handler reads another argument until the contract is regenerated.
+
+> **Test runner:** `bash scripts/test-tooling.sh` (block "gen-user-abi syscall argument counts", 46 checks); `make check-abi` for the gate.
 
 ## 38. Release-flavor build at the section boundary
 

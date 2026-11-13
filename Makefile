@@ -330,8 +330,9 @@ $(EXCEPT_TELEMETRY_STAMP): .FORCE
 # recipe could run concurrently with the compilation it was meant to precede.
 #
 # .FORCE-driven rather than derived from a written-out prerequisite list. The
-# generator reads six kernel headers, the contract, both facades and itself, and
-# queries the flag vector back out of this Makefile (print-abi-config,
+# generator reads six kernel headers, the INT 0x80 dispatcher, the contract, both
+# facades and itself, and queries the flag vector back out of this Makefile
+# (print-abi-config,
 # print-abi-cppflags, print-user-cflags) -- then preprocesses those headers with
 # clang, so its true read-set includes transitive includes no prerequisite list
 # can enumerate. A list that goes stale is fail-OPEN, which is the failure this
@@ -1411,7 +1412,8 @@ test: all
 
 ## check-abi: Verify abi/generated/abi_contract.h -- the ONE generated ABI
 ## artifact -- is in sync with kernel source (include/kernel/sched/syscall.h +
-## nt/service_numbers.h + nt/ntstatus.h + sched/task.h), and that the two static
+## nt/service_numbers.h + nt/ntstatus.h + sched/task.h, and the argument counts
+## syscall_handler() reads in src/kernel/sched/syscall.c), and that the two static
 ## facades over it (user/include/abi_numbers.h, include/kernel/abi_hash.h) still
 ## hold their canonical text. Fails the build when a kernel-side
 ## SYS_*/SSDT_*/STATUS_* renumber forgot to regenerate the contract -- silent

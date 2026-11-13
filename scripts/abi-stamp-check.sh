@@ -429,6 +429,19 @@ fi
 
 HDR_SYMLINKS="$(printf '%s\n' "$_ABI_SYMLINK_CLASSIFY" | sed -n 's/^LEAF //p')"
 
+# The generator's inputs that are not headers, so the glob above cannot see
+# them. It reads each INT 0x80 call's argument count out of the dispatcher
+# (NON_HEADER_INPUTS in scripts/gen-user-abi.py); without this a handler that
+# starts reading a third argument would leave the key unchanged and skip the
+# check that refuses the stale contract. A test pins the two lists together.
+ABI_NON_HEADER_INPUTS=(src/kernel/sched/syscall.c)
+for _abi_in in "${ABI_NON_HEADER_INPUTS[@]}"; do
+    [ -f "$_abi_in" ] && [ ! -L "$_abi_in" ] || {
+        echo "[ABI] refusing: $_abi_in is missing or not a regular file" >&2
+        exit 1
+    }
+done
+
 HDR_DIGESTS="$(printf '%s\n%s\n' "$HDR_HASHED" "$HDR_SYMLINKS" | sort -k2)"
 [ -n "$HDR_DIGESTS" ] || {
     echo "[ABI] no headers found under: ${ROOTS[*]}" >&2
@@ -439,7 +452,8 @@ set +e
 KEY="$( { printf '%s\n' "$HDR_DIGESTS"; \
           printf 'CC=%s\nCCDIGEST=%s\nCCBEHAVIOR=%s\nKFLAGS=%s\nUFLAGS=%s\n' \
               "$EFFECTIVE_CC" "$CC_DIGEST" "$CC_BEHAVIOR_DIGEST" "$KFLAGS" "$UFLAGS"; \
-          cat scripts/gen-user-abi.py Makefile scripts/abi-stamp-check.sh; \
+          cat scripts/gen-user-abi.py Makefile scripts/abi-stamp-check.sh \
+              "${ABI_NON_HEADER_INPUTS[@]}"; \
         } | sha256sum | awk '{print $1}')"
 _ABI_RC=$?
 set -e

@@ -18,7 +18,7 @@ struct task;   /* sched/task.h -- only the test-flavor decls below need it */
 #define SYS_EXIT     3   /* sys_exit(code)           → no return */
 #define SYS_YIELD    4   /* sys_yield()              → 0 */
 #define SYS_FORK     5   /* sys_fork()               → child PID / 0 */
-#define SYS_EXEC     6   /* sys_exec(name, len)      → 0 / -1 */
+#define SYS_EXEC     6   /* sys_exec(path, argv, envp) → 0 / -1 */
 #define SYS_WAITPID  7   /* sys_waitpid(child_pid)   → exit status */
 #define SYS_READFILE 8   /* sys_readfile(name, buf, bufsize) → bytes read */
 #define SYS_READDIR  9   /* sys_readdir(name_buf, bufsize, index) → 0=ok / -1 */
@@ -50,7 +50,7 @@ struct task;   /* sched/task.h -- only the test-flavor decls below need it */
 #define SYS_READHANDLE   41 /* sys_readhandle(handle, buf, size) → bytes / -1 */
 #define SYS_OPENDIROBJ   42 /* NtOpenDirectoryObject(name, access, &handle) → 0 / -1 */
 #define SYS_QUERYDIROBJ  43 /* NtQueryDirectoryObject(handle, buf, count, &ctx, &ret) → 0 / -1 */
-#define SYS_FAULT_INJECT 44 /* sys_fault_inject(kind, countdown, flags) → 0 / -1
+#define SYS_FAULT_INJECT 44 /* sys_fault_inject(kind, countdown) → 0 / -1
                              * (test=1 gated, self-pid scoped) -- see the
                              * user-mode fault-injection bridge section in
                              * the user-mode test framework TODO
