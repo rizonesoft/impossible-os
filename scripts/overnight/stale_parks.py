@@ -118,7 +118,10 @@ def closed_parks(files: dict) -> list:
         needs = {owner[i] for i, line in enumerate(lines)
                  if not fenced[i] and owner[i] is not None and _NEEDS_SOMETHING_RE.match(line)}
         for line, sec, stamp in stamps(text):
-            if not _STAMP_RE.match(stamp) or "awaiting-" in stamp:
+            # A stamp outside any numbered section (preamble, `## Verification` and
+            # other closing matter) belongs to no section the oracle classifies, so
+            # it parks nothing and is not a closed park.
+            if sec is None or not _STAMP_RE.match(stamp) or "awaiting-" in stamp:
                 continue
             kind = ("retired-guard" if _RETIRED_GUARD_RE.search(stamp)
                     else "person" if _WAITS_ON_PERSON_RE.search(stamp)
@@ -191,6 +194,7 @@ def _selftest() -> int:
         fails.append(f"quiet {quiet}")
     b = "y/TODO-02-b.md"
     closed = closed_parks({b: (
+        "> **Deferred:** [L] preamble note: operator-gated, before any section\n"
         "## 1. One\n> **Deferred:** [M] operator-gated ABI decision on the wire encoding\n"
         "## 2. Two\n> **Deferred:** [L] VirtualBox + bare-metal verification (hardware availability)\n"
         "## 3. Three\n**Needs:** bare-metal\n\n> **Deferred:** [L] verify on bare metal\n"
@@ -203,6 +207,7 @@ def _selftest() -> int:
         "## 16. Sixteen\n> **Deferred:** [M] AMX has no bare metal platform in the matrix\n"
         "## 17. Seventeen\n> **Deferred:** [H] not vendored (reason: infra -- operator fetch + consumer workspace)\n"
         "## 18. Eighteen\n> **Deferred:** [H] fail-closed is a new refusal -- an operator policy call\n"
+        "## Verification\n\n**Needs:** bare-metal\n\n> **Deferred:** [L] bare-metal verification\n"
         "## 4. Four\n> **Deferred:** [M] awaiting-operator design decision\n"
         "## 5. Five\n> **Deferred:** [H] blocked on the loader wiring another section owns\n"
         "## 8. Eight\n> **Deferred:** [M] fix edits the Makefile, receipt surface an unattended run may not touch\n"
@@ -210,24 +215,44 @@ def _selftest() -> int:
         "```\n## 7. Seven\n> **Deferred:** operator decision in a fence\n```\n")})
     if [(c["section"], c["waits_on"]) for c in closed] != [(1, "person"), (2, "machine"), (10, "retired-guard"), (12, "person"), (13, "person"), (14, "retired-guard"), (15, "machine"), (16, "machine"), (17, "person"), (18, "person"), (8, "retired-guard")]:
         fails.append(f"closed {closed}")
+    # --gate reads only the closed class: neither advisory probe may run.
+    global smallest_budget, outage_active, load
+    saved = smallest_budget, outage_active, load
+
+    def _probe(*_a, **_k):
+        raise AssertionError("an advisory probe ran in --gate mode")
+    smallest_budget, outage_active, load = _probe, _probe, lambda _root: {}
+    try:
+        if main(["--gate"]) != 0:
+            fails.append("gate on an empty corpus refused")
+    except AssertionError as exc:
+        fails.append(str(exc))
+    finally:
+        smallest_budget, outage_active, load = saved
     print(f"stale_parks selftest: {fails or 'OK'}")
     return 1 if fails else 0
+
+
+def _print_closed(rows) -> None:
+    for row in rows:
+        print(f"closed {row['file']}:{row['line']} section {row['section']} waits on a {row['waits_on']}")
 
 
 def main(argv: list) -> int:
     if "--selftest" in argv:
         return _selftest()
+    if "--gate" in argv:
+        # The verdict reads only the closed class, so the advisory probes behind
+        # the other two (a bss-headroom run, the outage ledger) are never waited on.
+        closed = closed_parks(load(REPO))
+        _print_closed(closed)
+        return 1 if closed else 0
     res = audit(load(REPO), smallest_budget(REPO), outage_active(REPO))
     if "--json" in argv:
         print(json.dumps(res, indent=1))
-    elif "--gate" in argv:
-        for row in res["closed"]:
-            print(f"closed {row['file']}:{row['line']} section {row['section']} waits on a {row['waits_on']}")
-        return 1 if res["closed"] else 0
     elif "--check" in argv:
         n = {k: len(v) for k, v in res.items()}
-        for row in res["closed"]:
-            print(f"closed {row['file']}:{row['line']} section {row['section']} waits on a {row['waits_on']}")
+        _print_closed(res["closed"])
         if any(n.values()):
             print(f"WARNING: stale Deferred parks, re-judge them: {n} (scripts/overnight/stale_parks.py)")
     else:
