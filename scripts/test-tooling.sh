@@ -4907,6 +4907,21 @@ if command -v make >/dev/null 2>&1; then
         t_fail "make_duplicate_recipes  a duplicate recipe or a failed parse passed, or the tree has one" "dry-run warnings=$_mk_dry real=$_mk_real clean=$_mk_clean dup=$_mk_dup parse-error=$_mk_err unreadable=$_mk_unread discovered=$_mk_disc build-write=$_mk_side"
     fi
 fi
+# test.sh and test-swtpm.sh arm their boot.conf reset before they patch, so a
+# patch interrupted after writing still ends at the default.
+_bo_bad=""
+for _bo_f in scripts/test.sh scripts/test-swtpm.sh; do
+    _bo_trap=$(grep -n "^trap '\(UTEST_SIGNALLED=1; \)\?cleanup" "$REPO_ROOT/$_bo_f" | tail -1 | cut -d: -f1)
+    [ -n "$_bo_trap" ] || _bo_trap=$(grep -n '^trap cleanup EXIT' "$REPO_ROOT/$_bo_f" | tail -1 | cut -d: -f1)
+    _bo_patch=$(grep -n 'patch-boot-conf.sh" [^r]' "$REPO_ROOT/$_bo_f" | grep -v reset | head -1 | cut -d: -f1)
+    { [ -n "$_bo_trap" ] && [ -n "$_bo_patch" ] && [ "$_bo_trap" -lt "$_bo_patch" ]; } || _bo_bad="$_bo_bad $_bo_f(trap=$_bo_trap patch=$_bo_patch)"
+done
+if [ -z "$_bo_bad" ]; then
+    t_pass "boot_conf_reset_armed  test.sh and test-swtpm.sh arm the boot.conf reset before patching"
+else
+    t_fail "boot_conf_reset_armed  a runner patches boot.conf before its reset is armed" "$_bo_bad"
+fi
+
 # run-with-boot-conf.sh restores boot.conf when the boot fails: a stub `make`
 # that exits 3 stands in for QEMU, on a 4 MiB FAT image laid out like the EFI
 # partition, and boot.conf must read back as the default afterwards with the

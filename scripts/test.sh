@@ -4393,9 +4393,10 @@ fi
 # launcher patches or resets it under this boot (scripts/lib/boot-conf-lock.sh).
 . "$PROJECT/scripts/lib/boot-conf-lock.sh"
 boot_conf_lock_hold "$PROJECT" 7 || exit 1
-bash "$PROJECT/scripts/patch-boot-conf.sh" "${PATCH_ARGS[@]}" > /dev/null
 
-# Install cleanup trap now that boot.conf is patched. Runs on normal exit,
+# Install the cleanup trap BEFORE the patch, so a patch that fails or is
+# interrupted after writing still ends with the default boot.conf (reset
+# rewrites the default whatever the disk holds). Runs on normal exit,
 # SIGINT (Ctrl-C), or SIGTERM, restoring boot.conf and killing any backgrounded
 # QEMU process. Preserves the caller's exit code.
 cleanup() {
@@ -4421,6 +4422,7 @@ cleanup() {
 trap 'cleanup $?' EXIT
 trap 'UTEST_SIGNALLED=1; cleanup 130' INT
 trap 'UTEST_SIGNALLED=1; cleanup 143' TERM
+bash "$PROJECT/scripts/patch-boot-conf.sh" "${PATCH_ARGS[@]}" > /dev/null
 
 # --- Step 3: Boot QEMU headless ---
 cp "$OVMF_VARS" "$OVMF_VARS_CP"
