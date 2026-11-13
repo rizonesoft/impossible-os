@@ -98,7 +98,7 @@ title: "TODO-04 -- User-Mode Test Framework"
 | 💎  |  38   | Per-leg generation pointer for coherent resolution                           | §30                           |  [x]   |
 | ⭐  |  39   | Executable identity for a planned entry                                      | §35                           |  [x]   |
 | 💎  |  40   | Producer-side capture emission budget                                        | §33, §36                      |  [x]   |
-| 💎  |  41   | Post-ship follow-up backfill (2026-07-31 cohort)                             | --                            |  [/]   |
+| 💎  |  41   | Post-ship follow-up backfill (2026-07-31 cohort)                             | --                            |  [x]   |
 | 💎  |  42   | Structural reap-grace assertions (no wall-clock margin)                      | §34                           |  [x]   |
 | 💎  |  43   | Distinguishable identity kind for aggregate refusals                         | §35, §37                      |  [x]   |
 | 💎  |  44   | Close the residual completeness gaps §37's review found                      | §37                           |  [x]   |
@@ -1702,16 +1702,18 @@ The enumeration plan §35 shipped freezes WHICH names a run will execute, and th
 
 ## 41. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
 
-> **Deferred:** awaiting-answer Q42 (`todo/answers.md`, the receipt-surface guard is gone): 2026-07-31 | operator-only surface: the section's sole item resolves to an edit of `scripts/gen-user-abi.py`, which `receipt_surface_guard.py:71` lists as ABI machinery and BLOCKs in the unattended run (receipt surface). Confirmed at source at this HEAD: `render()` (`gen-user-abi.py:1163-1178`) fingerprints `(SYS_*, SSDT_*, FAULT_*, TASK_EXIT_*, TEB/KUSD offsets)` -- names and numbers only, no signature input. Not blocked on design; blocked on the boundary. -> XREF: `overnight-runner-improvements/overnight-runner-improvements-v06.md` (item: "Fold syscall ARG COUNTS into the ABI fingerprint in `scripts/gen-user-abi.py`")
 
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 18:
-- [/] Fold syscall arg counts into the ABI fingerprint in `gen-user-abi.py` (today only SYS_* numbers) so a signature change (SYS_EXEC path,len->path,argv,envp, TODO-22 §4) bumps IMPOSSIBLE_OS_ABI_HASH and stale binaries fail the handshake
-      - Deferred 2026-07-31: `scripts/gen-user-abi.py` is on the receipt surface, so the unattended run cannot make this edit; the work itself is unambiguous and is queued for an attended operator -> XREF: `overnight-runner-improvements/overnight-runner-improvements-v06.md` (item: "Fold syscall ARG COUNTS into the ABI fingerprint in `scripts/gen-user-abi.py`")
-      - The two generated headers it feeds (`include/kernel/abi_hash.h`, `user/include/abi_numbers.h`) are ordinary source and NOT gated; only the generator itself needs an operator
+- [x] Fold syscall arg counts into the ABI fingerprint in `gen-user-abi.py` (today only SYS_* numbers) so a signature change (SYS_EXEC path,len->path,argv,envp, TODO-22 §4) bumps IMPOSSIBLE_OS_ABI_HASH and stale binaries fail the handshake
+      - Closed 2026-11-13 by TODO-08 §37 (`0dbf1a923`): the generator reads each INT 0x80 call's argument count from clang's AST in all 12 flavors, publishes `ARGC_SYS_*` and hashes it; the pack's `fingerprint_moves_on_a_count_change` proves a changed count moves the hash -> XREF: `00-infrastructure/TODO-08-automation-hardening.md` §37 (item: "The fingerprint hashes an `ARGC` record per `SYS_*` name, and the contract publishes `ARGC_SYS_*`; a changed count moves `IMPOSSIBLE_OS_ABI_HASH`.")
+      - The earlier XREF to `overnight-runner-improvements-v06.md` named a file that no longer exists; §37 is the owner that shipped it
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
+
+> **Verified:** 2026-11-13 | closed by TODO-08 §37 (`0dbf1a923`), no new code | 1/1 items | tooling pack 1430/1430 PASS (includes the arity fingerprint checks) | 38104 kernel + 17 user-mode tests PASS
+> **Quality reviewed:** 2026-11-13 | duplicate closure: the shipping section's own review covers the code (TODO-08 §37) | 0 findings | scope: TODO hygiene
 
 ---
 

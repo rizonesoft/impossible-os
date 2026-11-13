@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **931 of 2609 sections complete (35%).** 139 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **932 of 2609 sections complete (35%).** 138 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -118,7 +118,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T04 §38` | Per-Leg Generation Pointer for Coherent Document Resolution                                                           | none     |     2 |
 | [x]  | `D00 T04 §39` | Executable Identity for a Planned Entry                                                                               | none     |     4 |
 | [x]  | `D00 T04 §40` | Producer-Side Capture Emission Budget                                                                                 | none     |     5 |
-| [/]  | `D00 T04 §41` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                                               | none     |     1 |
+| [x]  | `D00 T04 §41` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                                               | none     |     1 |
 | [x]  | `D00 T04 §42` | Structural Reap-Grace Assertions Instead of a Wall-Clock Margin                                                       | none     |     3 |
 | [x]  | `D00 T04 §43` | Distinguishable Identity Kind for Aggregate Refusals                                                                  | none     |     4 |
 | [x]  | `D00 T04 §44` | Close the Residual Completeness Gaps §37's Review Found                                                               | none     |     4 |
