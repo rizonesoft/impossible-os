@@ -3093,6 +3093,36 @@ if [ -f "$REPO_ROOT/Makefile" ] && [ "${SKIP_LINT_MAKE_DUPLICATES:-}" != "1" ]; 
 fi
 
 # ============================================================================
+# Check 39: a reserved exit reason is declared only in TASK_EXIT_REASONS
+# ============================================================================
+# scripts/lint/check_exit_reason_table.py. include/kernel/sched/task.h generates
+# the reasons, count, _LAST and classifier bounds from one table; a reason
+# declared outside it builds clean and classifies as an application status.
+# The control fixture must be judged exactly as marked. Skip via
+# SKIP_LINT_EXIT_REASONS=1.
+if [ "${SKIP_LINT_EXIT_REASONS:-0}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 39 (exit-reason table) skipped via SKIP_LINT_EXIT_REASONS=1"
+    WARNINGS=$((WARNINGS + 1))
+elif [ ! -f "$REPO_ROOT/scripts/lint/check_exit_reason_table.py" ]; then
+    :   # throwaway fixture repos (scripts/test-tooling.sh) carry no kernel tree
+else
+    EXR_RC=0
+    EXR_OUT=$(python3 "$REPO_ROOT/scripts/lint/check_exit_reason_table.py" --root "$REPO_ROOT" 2>&1) || EXR_RC=$?
+    if [ "$EXR_RC" -ne 0 ]; then
+        printf '%s\n' "$EXR_OUT" | sed 's/^/  /'
+        echo -e "${RED}error${NC}: Check 39 (exit-reason table) -- add the reason as a TASK_EXIT_REASONS row in include/kernel/sched/task.h"
+        ERRORS=$((ERRORS + 1))
+    fi
+    EXR_RC=0
+    EXR_OUT=$(python3 "$REPO_ROOT/scripts/lint/check_exit_reason_table.py" --control 2>&1) || EXR_RC=$?
+    if [ "$EXR_RC" -ne 0 ]; then
+        printf '%s\n' "$EXR_OUT" | sed 's/^/  /'
+        echo -e "${RED}error${NC}: Check 39 (exit-reason table) -- the control fixture was misjudged; the detector cannot be trusted"
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

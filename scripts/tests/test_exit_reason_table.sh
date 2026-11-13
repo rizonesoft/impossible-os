@@ -101,12 +101,21 @@ mutant dup-name
 if build; then bad "a duplicate name fails to build" "it compiled"
 else ok "a duplicate name fails to build"; fi
 
-# No reserved reason outside the table: a #define in the reserved block's
-# namespace computed from the base, anywhere in the tree.
-strays=$(grep -rnE '^[[:space:]]*#[[:space:]]*define[[:space:]]+TASK_EXIT_[A-Z0-9_]+[[:space:]]+\(?[[:space:]]*TASK_EXIT_REASON_BASE' \
-    "$REPO_ROOT/include" "$REPO_ROOT/src" | grep -v 'TASK_EXIT_REASON_LAST' || true)
-[ -z "$strays" ] && ok "no reserved exit reason is defined outside TASK_EXIT_REASONS" \
-    || bad "a reserved exit reason is defined outside TASK_EXIT_REASONS" "$(head -2 <<<"$strays")"
+# No reserved reason outside the table (lint Check 39's detector): the tree is
+# clean, and the exact out-of-table shape the table replaced -- a reason
+# defined as TASK_EXIT_REASON_LAST - 1 beside it -- still BUILDS and classifies
+# as an application status, so the detector is what refuses it.
+DET="$REPO_ROOT/scripts/lint/check_exit_reason_table.py"
+python3 "$DET" --root "$REPO_ROOT" >"$work/det.log" 2>&1 \
+    && ok "no reserved exit reason is declared outside TASK_EXIT_REASONS" \
+    || bad "a reserved exit reason is declared outside TASK_EXIT_REASONS" "$(head -2 "$work/det.log")"
+mutant baseline
+printf '#define TASK_EXIT_UTEST_PROBE (TASK_EXIT_REASON_LAST - 1)\n' >> "$work/inc/kernel/sched/task.h"
+if python3 "$DET" "$work/inc/kernel/sched/task.h" >/dev/null 2>&1; then
+    bad "an out-of-table TASK_EXIT_REASON_LAST - 1 reason is refused" "the detector passed it"
+else
+    ok "an out-of-table TASK_EXIT_REASON_LAST - 1 reason is refused by the detector"
+fi
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

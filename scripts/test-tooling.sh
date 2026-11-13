@@ -9102,6 +9102,18 @@ check("repo_exports_exec_image_destroyed",
       [n for n, _v, _l in entries] == ['TASK_EXIT_EXEC_IMAGE_DESTROYED'])
 check("repo_exec_image_destroyed_is_negative",
       bool(entries) and entries[0][1] < 0)
+# The reserved reasons are enum constants (the TASK_EXIT_REASONS table), so the
+# uncached call above must find them exactly as the build's cached call does:
+# deciding "not a macro" without the preprocessor once made every enum read as
+# undefined on this path while the build stayed green.
+_rc_clang, _ = gua.clang_binary()
+_rc_flags, _ = gua.kernel_cpp_flags()
+_rc_events, _rc_macros, _rc_err = gua.run_preprocessor([gua.TASK_H], _rc_flags, _rc_clang)
+_cached, _cached_err = gua.resolve_exit_statuses(
+    gua.TASK_H, gua.EXIT_STATUS_EXPORT, gua.EXIT_STATUS_RESOLVE_ONLY,
+    _rc_macros, _rc_events)
+check("repo_exit_status_cached_matches_uncached",
+      _rc_err is None and not _cached_err and _cached == entries)
 
 # The SINGLE generated artifact -- user/include/abi_numbers.h is a static shim
 # over it and carries no constants of its own, so reading the shim here would
