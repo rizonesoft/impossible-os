@@ -223,30 +223,40 @@ done
 # Stale crash-region pointer fixtures, one boot each on the default engine.
 # Every other leg boots a fresh variable store, so none of them sees the
 # ImpossibleCrashLog pointer an update inherits from an older build; on
-# 2026-11-13 one named the new heap guard page and Phase 0 faulted. `guard`
-# plants THIS build's heap guard address and must be claimed with the heap
-# placed elsewhere (the claim runs before the heap exists); `stack` plants the
-# loader's boot-stack guard page, which the PMM owns, and `mmio` the IOAPIC
-# window; both are in range for the old check and must be skipped. The two
-# guard addresses come from the serial log of the last leg above, which
-# test-smoke.sh rewrites on every boot; a log older than this run is refused.
+# 2026-11-13 one named the new heap guard page and Phase 0 faulted. `mmio`
+# plants the IOAPIC window and `runtime` a firmware runtime-services region,
+# which the PMM owns; both are in range for the old check and must be
+# skipped. `guard` plants THIS build's heap guard address and must be claimed
+# with the heap placed elsewhere (the claim runs before the heap exists).
+# `mmio` runs first and the other two addresses are read from ITS serial log,
+# a boot of the same configuration. Both were the same on every boot measured;
+# the loader's boot stack was not (it moved between identical boots), so it
+# cannot be planted from an earlier boot. Each leg's serial log is published
+# beside its capture.
 serial="$REPO_ROOT/build/smoke-test.stripped.log"
-heap_guard=""; stack_guard=""
-if [ -f "$serial" ] && [ "$(stat -c %Y "$serial")" -ge "$START_ALL" ]; then
-    heap_guard="$(grep -aoE 'Kernel heap: .*guard at 0x[0-9a-fA-F]+' "$serial" | head -1 | grep -oE '0x[0-9a-fA-F]+$')"
-    stack_guard="$(grep -aoE 'boot stack: guard page installed at 0x[0-9a-fA-F]+' "$serial" | head -1 | grep -oE '0x[0-9a-fA-F]+$')"
-fi
-for leg in "guard|${heap_guard}|claimed" "stack|${stack_guard}|skipped" "mmio|0xFEC00000|skipped"; do
+heap_guard=""; rt_region=""
+for leg in "mmio|0xFEC00000|skipped" "guard|@heap|claimed" "runtime|@runtime|skipped"; do
     name="${leg%%|*}"; rest="${leg#*|}"
     addr="${rest%%|*}"; expect="${rest#*|}"
+    case "$addr" in @heap) addr="$heap_guard" ;; @runtime) addr="$rt_region" ;; esac
     log="$LOG_DIR/crashptr-$name.log"
     cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-crashptr-$name.XXXXXX")"
     t0=$(date +%s)
     if [ -z "$addr" ]; then
-        echo "SMOKE TEST FAILED: no $name guard address in this run's serial log ($serial)" > "$cap"; rc=1
+        echo "SMOKE TEST FAILED: no $name address in the mmio leg's serial log" > "$cap"; rc=1
     else
         SMOKE_CRASH_NVRAM="$addr" SMOKE_CRASH_NVRAM_EXPECT="$expect" bash scripts/test-smoke.sh > "$cap" 2>&1
         rc=$?
+    fi
+    # The serial log of THIS boot only: test-smoke.sh rewrites it every boot.
+    if [ -f "$serial" ] && [ "$(stat -c %Y "$serial")" -ge "$t0" ]; then
+        scap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-crashptr-$name-serial.XXXXXX")"
+        cp "$serial" "$scap"
+        CAPTURES="$CAPTURES $scap:$LOG_DIR/crashptr-$name.serial.log"
+        if [ "$name" = "mmio" ]; then
+            heap_guard="$(grep -aoE 'Kernel heap: .*guard at 0x[0-9a-fA-F]+' "$scap" | head -1 | grep -oE '0x[0-9a-fA-F]+$')"
+            rt_region="$(grep -aoE 'kind=rt_mmap src=1 phys=0x[0-9a-fA-F]+' "$scap" | head -1 | grep -oE '0x[0-9a-fA-F]+$')"
+        fi
     fi
     CAPTURES="$CAPTURES $cap:$log"
     dur=$(( $(date +%s) - t0 ))

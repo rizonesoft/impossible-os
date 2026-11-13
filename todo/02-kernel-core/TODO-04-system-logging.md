@@ -619,10 +619,10 @@ A caller can ask klog what the current sequence is (`klog_get_seq`), how much of
 - [x] Read the claimed run only through pages proven identity-mapped, then release it to the allocator.
 - [x] Check both NVRAM results: a failed get, delete or publish of this boot's region is reported on serial.
 - [x] Plant the variable in the smoke test's store with `tools/uefi-varstore/plant.py` (OVMF authenticated variable format).
-  - `SMOKE_CRASH_NVRAM` plants it. Matrix legs, addresses read from this run's serial log: `crashptr-guard` (heap guard, claimed, faults on the old code), `crashptr-stack` (loader boot-stack guard, PMM-owned, skipped), `crashptr-mmio` (0xFEC00000, skipped).
+  - `SMOKE_CRASH_NVRAM` plants it. Matrix legs, addresses read from the `mmio` leg's serial log: `crashptr-guard` (heap guard, claimed, faults on the old code), `crashptr-runtime` (firmware runtime-services region, PMM-owned, skipped), `crashptr-mmio` (0xFEC00000, skipped).
 - [x] Commit: `"klog: claim the previous boot's crash region before any allocation"`
 
-**Test checkpoint:** a boot whose store names the current heap guard page reaches `C:\>` with the region claimed and the heap placed elsewhere; stores naming the loader's boot-stack guard page or an MMIO address reach `C:\>` with the skip warning naming the address. Replay of the claimed region is §8's (its item on the region surviving a warm reset).
+**Test checkpoint:** a boot whose store names the current heap guard page reaches `C:\>` with the region claimed and the heap placed elsewhere; stores naming a firmware runtime-services region or an MMIO address reach `C:\>` with the skip warning naming the address. Replay of the claimed region is §8's (its item on the region surviving a warm reset).
 
 ## OS Comparison
 
