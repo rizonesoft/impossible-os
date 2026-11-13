@@ -38,7 +38,9 @@ MACHINERY = {
 }
 TABLE_H = os.path.join("include", "kernel", "sched", "task.h")
 IDENT = re.compile(r"\bTASK_EXIT_[A-Za-z0-9_]*")
-TABLE = re.compile(r"#[ \t]*define[ \t]+TASK_EXIT_REASONS\(X\)((?:[^\n]*\\\n)*[^\n]*)")
+# Matched on TRANSLATED text, where the table's splices are gone and a
+# commented-out row is a space: only a row the compiler sees counts.
+TABLE = re.compile(r"#[ \t]*define[ \t]+TASK_EXIT_REASONS[ \t]*\(X\)([^\n]*)")
 ROW = re.compile(r"\bX\(\s*([A-Za-z0-9_]+)\s*,")
 
 
@@ -99,7 +101,7 @@ def translate(text):
 
 def table_names(text):
     """The names the TASK_EXIT_REASONS table defines, or None if it is absent."""
-    m = TABLE.search(text)
+    m = TABLE.search(translate(text)[0])
     if not m:
         return None
     return {"TASK_EXIT_" + r for r in ROW.findall(m.group(1))}
@@ -121,11 +123,13 @@ def findings(text, path, allowed):
 
 # A table, then one name that is not in it per bypass shape: a #define and
 # enumerators in any layout, an attributed and a parenthesised declarator, an
-# implicit enumerator, a use with no declaration, a splice inside the name.
+# implicit enumerator, a use with no declaration, a splice inside the name,
+# and a name whose only row is commented out.
 CONTROL_TABLE = """\
 #define TASK_EXIT_REASONS(X) \\
     X(KNOWN_A, 1) \\
-    X(KNOWN_B, 2)
+    X(KNOWN_B, 2) \\
+    /* X(UTEST_PROBE9, 3) reserved for later */
 """
 CONTROL_BAD = CONTROL_TABLE + """\
 #define TASK_EXIT_UTEST_PROBE (TASK_EXIT_REASON_LAST - 1)
@@ -139,8 +143,9 @@ enum { anchor = TASK_EXIT_REASON_LAST - 2, TASK_EXIT_UTEST_PROBE5 };
 if (s == TASK_EXIT_UTEST_PROBE7) return;
 #define TASK_EXIT_\\
 UTEST_PROBE8 (-1006)
+#define TASK_EXIT_UTEST_PROBE9 (TASK_EXIT_REASON_LAST - 1)
 """
-CONTROL_BAD_COUNT = 8
+CONTROL_BAD_COUNT = 9
 CONTROL_GOOD = CONTROL_TABLE + """\
 #define TASK_EXIT_REASON_BASE (-1000)
 #define TASK_EXIT_REASON_CONST(name, ord) TASK_EXIT_##name = TASK_EXIT_REASON_BASE - (ord),
