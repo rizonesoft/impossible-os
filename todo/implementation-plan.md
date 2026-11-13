@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **948 of 2606 sections complete (36%).** 117 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **949 of 2607 sections complete (36%).** 116 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -277,7 +277,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T08 §34` | Section-commit gate test wiring that kernel sources can satisfy                                                       | none     |     5 |
 | [/]  | `D00 T08 §35` | Cross-section review of a closed TODO file                                                                            | none     |     4 |
 | [x]  | `D00 T08 §36` | Second-boot leg in the smoke matrix                                                                                   | none     |     4 |
-| [/]  | `D00 T08 §37` | Syscall argument counts in the ABI fingerprint                                                                        | none     |     5 |
+| [x]  | `D00 T08 §37` | Syscall argument counts in the ABI fingerprint                                                                        | none     |     5 |
 | [ ]  | `D00 T08 §38` | Release-flavor build at the section boundary                                                                          | none     |     4 |
 | [ ]  | `D00 T08 §39` | Re-judge the closed parks under the never-park rule                                                                   | none     |     5 |
 | [ ]  | `D00 T08 §40` | Pytest-style control-plane tests run in the suite                                                                     | none     |     5 |
@@ -1314,6 +1314,7 @@ The kernel's own model comes straight after boot because every driver, filesyste
 | [ ]  | `D02 T14 §14` | Registry SMP Synchronization                                                                      | none  |    17 |
 | [ ]  | `D02 T14 §4`  | Nt/Zw Registry Syscalls                                                                           | none  |    35 |
 | [ ]  | `D02 T12 §15` | Registry Syscalls (Advanced)                                                                      | none  |     9 |
+| [ ]  | `D02 T12 §34` | Per-service SSDT argument counts                                                                  | none  |     4 |
 | [ ]  | `D02 T13 §8`  | Native Atom/NLS/Locale Syscalls                                                                   | none  |     9 |
 | [ ]  | `D02 T14 §5`  | advapi32.dll Win32 Compatibility                                                                  | none  |    15 |
 | [ ]  | `D02 T14 §6`  | Registry Virtualization & .reg Import/Export                                                      | none  |    11 |

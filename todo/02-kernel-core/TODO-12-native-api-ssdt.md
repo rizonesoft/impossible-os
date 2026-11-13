@@ -96,6 +96,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |  31   | Modern ALPC port syscalls                                      | §20, TODO-24 §8-§9 |  [x]   |
 | 💎  |  32   | Post-ship follow-up backfill (2026-07-31 cohort)               | --                 |  [ ]   |
 | 💎  |  33   | Legacy `SYS_*` number allocation across roadmaps               | §4                 |  [ ]   |
+| 💎  |  34   | Per-service SSDT argument counts                               | §4                 |  [ ]   |
 
 > 💎 = parity -- Windows NT and Linux both have equivalents for these categories.
 > ⭐ = exclusive -- the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.
@@ -1404,6 +1405,23 @@ Roadmaps outside this file reserve fixed legacy `INT 0x80` numbers for services 
 - [ ] Commit: `"todo: legacy syscall numbers allocated from the live table, not reserved in roadmaps"`
 
 **Test checkpoint:** the grep above returns no reservation above the live maximum; the new lint check fails on a planted `SYS_TEST=99` line and passes after it is removed. Test on: WSL2 dev host.
+
+---
+
+## 34. Per-service SSDT argument counts
+
+> **Spawned-by:** root
+
+Every SSDT handler takes six `uint64_t` registers and the table records no argument count per service, so nothing checks that a user stub passes what its handler reads, and a call with more than six arguments has no place to say how much of the user stack to copy. Windows keeps that count per service (`KiArgumentTable`). Found while making the INT 0x80 fingerprint cover argument counts (`00-infrastructure/TODO-08-automation-hardening.md` section 37, which covers INT 0x80 only).
+
+-> XREF: `00-infrastructure/TODO-08-automation-hardening.md` §37 (the `ARGC_SYS_*` generator to extend).
+
+- [ ] Record an argument count with each `ssdt_register()` entry, taken from the handler, not typed by hand
+- [ ] Copy stack arguments past the sixth by that count on entry, with the same user-pointer checks as the register arguments
+- [ ] Hash the counts into `IMPOSSIBLE_OS_ABI_HASH` and refuse a user stub that passes another count at build time
+- [ ] Commit: `"nt: SSDT services carry their argument count"`
+
+**Test checkpoint:** a service registered with one count and called with another fails the build or the ABI check; a seven-argument service reads its seventh argument from the user stack. Test on: WSL2 dev host.
 
 ---
 

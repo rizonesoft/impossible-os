@@ -1295,6 +1295,16 @@ Every boot test starts from a fresh image, so anything that depends on what the 
 
 > **Test runner:** `bash scripts/test-tooling.sh` (block "gen-user-abi syscall argument counts", 46 checks); `make check-abi` for the gate.
 
+> **Notes:**
+> - What shipped: `gen-user-abi.py` reads each INT 0x80 call's argument count from clang's AST of `syscall_handler()` in all 12 flavors, publishes `ARGC_SYS_*`, and hashes it; ring-3 `syscall0..3` refuse to compile with any other count.
+> - How it integrates: the build's ABI stamp keys on `src/kernel/sched/syscall.c`, so a handler that reads another argument fails `make kernel` until the contract is regenerated, and an old binary fails the crt0 handshake.
+> - Downstream effects: `sys_fault_inject` passes the two arguments the kernel reads; the `SYS_EXEC` and fault-inject header comments now give the real shapes.
+> - Canonical doc: [Development Tooling](../../docs/infrastructure/development-tooling.md#the-fingerprint-covers-each-syscalls-argument-count).
+> - Scope boundary: INT 0x80 only; a callee handed the whole frame (`task_fork`) is not followed; SSDT argument counts -> XREF: `02-kernel-core/TODO-12-native-api-ssdt.md` §34.
+
+> **Verified:** 2026-11-13 | commit `0dbf1a923` | 5/5 items | build OK | argc block 46/46 (each fix's fixture fails on the previous generator) | suite 38008 kernel + 17 user-mode PASS | make check-abi OK | lint exit 0
+> **Quality reviewed:** 2026-11-13 | Codex passes: 3 plans, 5 rounds, performance, completion; final round, performance and completion approve on `0dbf1a923` | 4M fixed (argument reads outside the cases, goto, register copies reading another register or argument), 1L fixed (shadowed argN name counted), 0 open | scope: userland-code-quality (ring-3 macros); generator is host tooling
+
 ## 38. Release-flavor build at the section boundary
 
 > **Spawned-by:** root
@@ -1403,6 +1413,8 @@ Every CI job installs its toolchain with apt on each run. On 2026-11-11 nine Bui
 | ⭐  | Standardized PreToolUse prefix-list     | ❌ N/A      | ❌ N/A         | ✅ §29 (`_review_pipeline_passthrough.py`)              |
 | ⭐  | Shell-aware Codex dispatch parser       | ❌ N/A      | ❌ N/A         | ✅ §30 (`_codex_dispatch.py` shared helper)             |
 | 💎  | Post-commit hook concurrency: serialize | ❌ N/A      | ❌ N/A         | ✅ §31 (flock-based serializer; ends stomp-stamp races) |
+| 💎  | Second-boot leg in the smoke matrix     | ❌ N/A      | ❌ N/A         | ✅ §36 (kept-disk boot after a clean ACPI shutdown)     |
+| 💎  | Syscall argument counts in ABI hash     | ❌ N/A      | ❌ N/A         | ✅ §37 (`ARGC_SYS_*` read from the handler AST)         |
 
 > **After §1-§5:** Claude and Codex share the same MCP server set, the same Codex invocation policy, the same hard gates around reviews and section commits. Drift between the two automation sides is detectable.
 > **After §6-§9:** The whole automation surface is auditable in one script. Hook system is documented; MCP usage is doctrine; superpowers plugin behavior is reconciled with Impossible OS rules.
