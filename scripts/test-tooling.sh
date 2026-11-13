@@ -4898,7 +4898,8 @@ fi
 # run-with-boot-conf.sh restores boot.conf when the boot fails: a stub `make`
 # that exits 3 stands in for QEMU, on a 4 MiB FAT image laid out like the EFI
 # partition, and boot.conf must read back as the default afterwards with the
-# boot's status passed through.
+# wrapper failing too. A second run while the first holds the image lock is
+# refused and leaves boot.conf as the first run patched it.
 if command -v mkfs.fat >/dev/null 2>&1 && command -v mtype >/dev/null 2>&1; then
     _bc_d="$(mktemp -d "${TMPDIR:-/tmp}/tt-bootconf.XXXXXX")"
     mkdir -p "$_bc_d/repo/scripts" "$_bc_d/repo/build" "$_bc_d/repo/resources/boot" "$_bc_d/bin"
@@ -4914,10 +4915,18 @@ if command -v mkfs.fat >/dev/null 2>&1 && command -v mtype >/dev/null 2>&1; then
     PATH="$_bc_d/bin:$PATH" timeout 60 bash "$_bc_d/repo/scripts/run-with-boot-conf.sh" test 1 >/dev/null 2>&1; _bc_rc=$?
     _bc_after=$(mtype -i "$_bc_img" ::/EFI/ImpossibleOS/boot.conf 2>/dev/null)
     _bc_def=$(cat "$REPO_ROOT/resources/boot/boot.conf")
-    if [ "$_bc_rc" = "3" ] && grep -qE '^test *= *1' "$_bc_d/during" && [ "$_bc_after" = "$_bc_def" ]; then
-        t_pass "run_with_boot_conf  the boot sees test=1 and boot.conf is restored when it fails"
+    # deadline: the lock holder sleeps at most 30 s and is killed below.
+    bash "$_bc_d/repo/scripts/patch-boot-conf.sh" debug 7 >/dev/null 2>&1 || true
+    flock "$_bc_d/repo/build/.boot-conf.lock" sleep 30 & _bc_hold=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do flock -n "$_bc_d/repo/build/.boot-conf.lock" true 2>/dev/null || break; sleep 0.1; done
+    PATH="$_bc_d/bin:$PATH" timeout 60 bash "$_bc_d/repo/scripts/run-with-boot-conf.sh" test 1 >/dev/null 2>&1; _bc_rc2=$?
+    _bc_held=$(mtype -i "$_bc_img" ::/EFI/ImpossibleOS/boot.conf 2>/dev/null | grep -cE '^debug=7')
+    kill "$_bc_hold" 2>/dev/null; wait "$_bc_hold" 2>/dev/null
+    if [ "$_bc_rc" != "0" ] && grep -qE '^test *= *1' "$_bc_d/during" && [ "$_bc_after" = "$_bc_def" ] \
+       && [ "$_bc_rc2" = "1" ] && [ "$_bc_held" = "1" ]; then
+        t_pass "run_with_boot_conf  the boot sees test=1, boot.conf is restored when it fails, a second run is refused"
     else
-        t_fail "run_with_boot_conf  the patch was not seen or not restored" "rc=$_bc_rc during=$(grep -cE '^test *= *1' "$_bc_d/during" 2>/dev/null) restored=$([ "$_bc_after" = "$_bc_def" ] && echo y || echo n)"
+        t_fail "run_with_boot_conf  the patch was not seen, not restored, or a second run touched it" "rc=$_bc_rc during=$(grep -cE '^test *= *1' "$_bc_d/during" 2>/dev/null) restored=$([ "$_bc_after" = "$_bc_def" ] && echo y || echo n) second=$_bc_rc2 held=$_bc_held"
     fi
     rm -rf "$_bc_d"
 fi

@@ -5,7 +5,9 @@
 # Patches KEY=VALUE into the system disk's boot.conf, launches QEMU through
 # `make run-only` (which has no prerequisites, so nothing rebuilds the disk
 # and overwrites the patch), and restores boot.conf when QEMU exits, fails or
-# is interrupted. Used by `make run-unit-tests` and `make run-boot-tests`.
+# is interrupted. A failing boot fails this script (make reports a failed
+# recipe as status 2, whatever QEMU returned). Used by `make run-unit-tests`
+# and `make run-boot-tests`.
 #
 # It is a script rather than a recipe line because GNU make runs any recipe
 # line that names $(MAKE) even under `make -n`, and the patch must not.
@@ -22,6 +24,17 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT="$(dirname "$SCRIPT_DIR")"
+
+# One run at a time owns the disk's boot.conf: a second run (make -j
+# run-unit-tests run-boot-tests, or another shell) would patch or reset the
+# image under the first. The lock is taken BEFORE the restore trap, so a run
+# that does not get it leaves the other run's boot.conf alone.
+mkdir -p "$PROJECT/build"
+exec 9>"$PROJECT/build/.boot-conf.lock"
+if ! flock -n 9; then
+    echo "run-with-boot-conf: another run is booting this image with a patched boot.conf" >&2
+    exit 1
+fi
 
 # The restore is installed BEFORE the patch, so a patch that fails or is
 # interrupted half way still ends with the default boot.conf (reset rewrites
