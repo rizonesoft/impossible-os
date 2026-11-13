@@ -5,9 +5,10 @@
 # Sourced by every script that boots build/system-disk.img or patches its
 # boot.conf: run-with-boot-conf.sh, with-boot-conf-lock.sh (every Makefile
 # QEMU recipe), run-qemu.sh, test.sh, test-swtpm.sh, test-smoke.sh,
-# test-smoke-matrix.sh, test-fs.sh, test-desktop.sh and scripts/machines/{run-qemu-kvm,
+# test-smoke-matrix.sh, test-fs.sh, test-desktop.sh, test-visual-regression.sh and scripts/machines/{run-qemu-kvm,
 # run-qemu-tcg,boot-test-qemu}.sh. The caller
-# holds build/.boot-conf.lock from before its patch until it exits, and
+# holds .boot-conf.lock (at the worktree root, never under build/, which
+# `build.sh clean` deletes) from before its patch until it exits, and
 # exports BOOT_CONF_LOCK_HELD=1 so its own patch-boot-conf.sh calls do not
 # wait on it; every other patch or reset is refused while it is held, so no
 # run patches or resets boot.conf under another run's boot.
@@ -23,11 +24,10 @@ boot_conf_lock_hold() {
     # run-with-boot-conf -> make run-only) shares its parent's hold.
     [ "${BOOT_CONF_LOCK_HELD:-}" = "1" ] && return 0
     command -v flock >/dev/null 2>&1 || return 0
-    mkdir -p "$project/build" || return 1
-    eval "exec ${fd}>\"\$project/build/.boot-conf.lock\"" || return 1
+    eval "exec ${fd}>\"\$project/.boot-conf.lock\"" || return 1
     if ! flock -n "$fd"; then
         eval "exec ${fd}>&-"
-        echo "another run is booting $project/build/system-disk.img with a patched boot.conf (build/.boot-conf.lock)" >&2
+        echo "another run is booting $project/build/system-disk.img with a patched boot.conf (.boot-conf.lock)" >&2
         return 1
     fi
     export BOOT_CONF_LOCK_HELD=1

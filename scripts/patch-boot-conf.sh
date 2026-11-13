@@ -35,14 +35,14 @@ if [ -z "$EFI_OFFSET" ]; then
 fi
 
 # One run at a time owns this image's boot.conf. A run that patches, boots and
-# resets holds build/.boot-conf.lock for its whole life through
+# resets holds .boot-conf.lock for its whole life through
 # scripts/lib/boot-conf-lock.sh and exports BOOT_CONF_LOCK_HELD=1 to its own
 # calls here; any other caller takes the lock for its one write and is
 # refused while a launcher holds it, so it cannot patch or reset under a boot.
 if [ "${BOOT_CONF_LOCK_HELD:-}" != "1" ] && command -v flock >/dev/null 2>&1; then
-    exec 9>"$PROJECT/build/.boot-conf.lock"
+    exec 9>"$PROJECT/.boot-conf.lock"
     if ! flock -n 9; then
-        echo "ERROR: another run is booting $DISK with a patched boot.conf (build/.boot-conf.lock)." >&2
+        echo "ERROR: another run is booting $DISK with a patched boot.conf (.boot-conf.lock)." >&2
         exit 1
     fi
 fi

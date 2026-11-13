@@ -24,7 +24,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BUILD="$PROJECT/build"
-# Hold build/.boot-conf.lock for this run, so no other run patches or resets
+# Hold .boot-conf.lock for this run, so no other run patches or resets
 # the image's boot.conf while it boots (scripts/lib/boot-conf-lock.sh).
 . "$SCRIPT_DIR/../lib/boot-conf-lock.sh"
 boot_conf_lock_hold "$PROJECT" 9 || exit 1

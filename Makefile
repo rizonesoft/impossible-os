@@ -1372,7 +1372,7 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
 run: all
 	@$(MAKE) --no-print-directory run-only
 
-# Every recipe that boots $(SYSTEM_DISK) runs QEMU under build/.boot-conf.lock
+# Every recipe that boots $(SYSTEM_DISK) runs QEMU under .boot-conf.lock
 # (scripts/with-boot-conf-lock.sh), so no run patches or resets boot.conf
 # while this boot reads it.
 BOOT_LOCKED := bash scripts/with-boot-conf-lock.sh

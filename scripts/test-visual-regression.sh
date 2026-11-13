@@ -57,6 +57,10 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Hold .boot-conf.lock for this run, so no other run patches or resets the
+# image's boot.conf while its session boots (scripts/lib/boot-conf-lock.sh).
+. "$SCRIPT_DIR/lib/boot-conf-lock.sh"
+boot_conf_lock_hold "$(cd "$SCRIPT_DIR/.." && pwd)" 9 || exit 1
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="$PROJECT_ROOT/build"
 REF_DIR="$PROJECT_ROOT/tests/references"

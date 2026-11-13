@@ -116,3 +116,6 @@ debug-tmp/
 
 # Docs accessibility audit dependencies (scripts/site/a11y/package-lock.json pins them)
 scripts/site/a11y/node_modules/
+
+# boot.conf lock held by every boot of build/system-disk.img (scripts/lib/boot-conf-lock.sh)
+/.boot-conf.lock

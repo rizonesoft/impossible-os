@@ -53,7 +53,7 @@ if command -v flock >/dev/null 2>&1 && { exec 8>"$_SM_LOCK"; } 2>/dev/null; then
     fi
 fi
 
-# Hold build/.boot-conf.lock across the build and every leg, so no other run
+# Hold .boot-conf.lock across the build and every leg, so no other run
 # patches or resets the image between or during legs; each leg's
 # test-smoke.sh shares this hold (scripts/lib/boot-conf-lock.sh).
 . "$REPO_ROOT/scripts/lib/boot-conf-lock.sh"
