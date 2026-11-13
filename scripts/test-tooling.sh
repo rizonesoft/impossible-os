@@ -4844,7 +4844,9 @@ if python3 "$REPO_ROOT/scripts/overnight/receipts.py" check-build "$REPO_ROOT" >
     fi
 fi
 # The matrix's orchestration, run against stub build and smoke scripts that only
-# record their settings: the default run is 26 legs, and each engine's clean-
+# record their settings: the default run is 27 test-smoke.sh boots (the
+# crashptr guard and runtime legs fail without booting, because the stub
+# writes no serial log for them to read an address from), and each engine's clean-
 # shutdown 2-CPU boot is followed at once by a kept-disk boot that counts 2.
 # The control removes the second boot and must fail the same assertion.
 _sm_orch() {  # $1 = matrix script to run; prints "<invocations> <pairs>"
@@ -4864,10 +4866,10 @@ _sm_got=$(_sm_orch "$REPO_ROOT/scripts/test-smoke-matrix.sh")
 _sm_ctl_src="$(mktemp "${TMPDIR:-/tmp}/tt-smoke-ctl.XXXXXX")"
 grep -v 'env $settings bash scripts/test-smoke.sh > "$bcap"' "$REPO_ROOT/scripts/test-smoke-matrix.sh" > "$_sm_ctl_src"
 _sm_ctl=$(_sm_orch "$_sm_ctl_src"); rm -f "$_sm_ctl_src"
-if [ "$_sm_got" = "26 2" ] && [ "$_sm_ctl" != "26 2" ]; then
-    t_pass "smoke_matrix_orchestration  26 legs, each engine's clean-shutdown boot followed by a kept-disk boot (control without it: $_sm_ctl)"
+if [ "$_sm_got" = "27 2" ] && [ "$_sm_ctl" != "27 2" ]; then
+    t_pass "smoke_matrix_orchestration  27 boots, each engine's clean-shutdown boot followed by a kept-disk boot (control without it: $_sm_ctl)"
 else
-    t_fail "smoke_matrix_orchestration  matrix legs or two-boot order wrong" "got '$_sm_got' (want '26 2'), control '$_sm_ctl'"
+    t_fail "smoke_matrix_orchestration  matrix legs or two-boot order wrong" "got '$_sm_got' (want '27 2'), control '$_sm_ctl'"
 fi
 _sm_out=$(cd "$REPO_ROOT" && SMOKE_TREND_BOOTS=x timeout 60 bash scripts/test-smoke.sh 2>&1); _sm_rc=$?
 if [ "$_sm_rc" = "1" ] && <<<"$_sm_out" grep -q 'SMOKE_TREND_BOOTS=x is not a boot count'; then
