@@ -1311,6 +1311,9 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
 	@# The image is built as $@.new and published by one rename under the image
 	@# lock at the end, so a run booting the old image keeps its own inode and
 	@# is never truncated, and no run's boot.conf patch is replaced mid-run.
+	@# Fail fast while a run holds the image: the publish below would be refused
+	@# after all the work. The rename itself is what the lock protects.
+	@$(BOOT_LOCKED) true
 	@rm -f $@.new $@.new.info
 	@mkdir -p $(BUILD_DIR)/tools
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-system-disk tools/make-system-disk.c

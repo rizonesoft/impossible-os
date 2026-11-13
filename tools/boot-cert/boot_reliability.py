@@ -538,9 +538,12 @@ def run_reliability(args):
     # the image between those writes, so no other run may patch, reset,
     # rebuild or boot it meanwhile. Children (the launcher, patch-boot-conf.sh)
     # share the hold through BOOT_CONF_LOCK_HELD=1.
+    # Only the canonical image has a boot.conf to reset and a lock to hold; a
+    # supplied --disk (a release artifact) is booted as it is.
+    canonical = disk_abs == os.path.abspath(os.path.join(REPO_ROOT, DEFAULT_DISK))
     conf_fd = None
     prior_held = os.environ.get("BOOT_CONF_LOCK_HELD")
-    if prior_held != "1":
+    if canonical and prior_held != "1":
         conf_fd = open(os.path.join(REPO_ROOT, ".boot-conf.lock"), "w")
         try:
             fcntl.flock(conf_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -558,7 +561,7 @@ def run_reliability(args):
     restore_failed = False
     try:
         for phase, count in phases:
-            if phase == "cold":
+            if phase == "cold" and canonical:
                 if _reset_boot_conf() != 0:
                     raise RuntimeError("boot-reliability: could not reset boot.conf before the cold series")
                 _apply_boot_conf(args.boot_conf_patch, args.test_suite)

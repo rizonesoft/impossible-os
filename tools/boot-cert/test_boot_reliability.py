@@ -434,6 +434,19 @@ rc = br.run_reliability(mk_args(launcher_cmd=["bash", _MOCK_QEMU], cold=1, warm=
 check("a free lock lets the series run and restores BOOT_CONF_LOCK_HELD",
       rc == 0 and os.environ.get("BOOT_CONF_LOCK_HELD") == _env_before)
 
+# A supplied --disk is certified as it is: no canonical boot.conf reset (it
+# needs build/system-disk.img, which a release host may not have).
+_resets = []
+_orig_reset = br._reset_boot_conf
+br._reset_boot_conf = lambda: _resets.append(1) or 1
+_custom = os.path.join(_MOCK_DIR, "release.img")
+open(_custom, "w").close()
+rc = br.run_reliability(mk_args(launcher_cmd=["bash", _MOCK_QEMU], cold=1, warm=0,
+                                disk=_custom, out=os.path.join(_MOCK_DIR, "out-custom")))
+br._reset_boot_conf = _orig_reset
+check("a custom --disk boots without resetting the canonical boot.conf",
+      rc == 0 and not _resets)
+
 # Killed mid-boot, the runner's launcher keeps holding the image lock: the
 # lock's descriptor is passed to it, so no other run can rebuild, clean or
 # patch the image under a VM that outlived its parent.
