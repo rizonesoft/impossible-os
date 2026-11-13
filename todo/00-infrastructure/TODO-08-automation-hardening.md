@@ -1342,10 +1342,10 @@ Sections are built and tested as the test flavor. A parameter used only under `K
 
 About 445 `Deferred:` stamps carry no `awaiting-` token, so their sections read done and nothing reads them again. About 60 name hardware or an operator decision. Since 2026-11-11 a section is parked only on something outside the run, named on a `**Needs:**` line.
 
-- [x] `stale_parks.py` lists closed parks that wait on a person, a machine or the retired receipt-surface guard (`closed`, 38 at first run).
+- [x] `stale_parks.py` lists closed parks that wait on a person, a machine or the retired receipt-surface guard (`closed`, 39 at first run).
   - Person words are the staged check's own; a guard park is listed even under a `**Needs:**` line.
   - Sections are the triage oracle's own walk: a nested `- ## N.` opens one, an unnumbered closing heading ends one.
-- [x] Re-judged all 38: 21 reopened under Q42 (guard gone), 11 under Q43 (decided), 5 kept under `**Needs:** bare-metal`, 1 stale owner text fixed.
+- [x] Re-judged all 39: 21 reopened under Q42 (guard gone), 11 under Q43 (decided), 6 kept under `**Needs:** bare-metal`, 1 stale owner text fixed.
   - An answered park now reopens a reviewed section too (`sequencer_triage.py`, kind `DA`), and the staged check accepts it, reading answers from the staged snapshot.
   - FRED, LKGS and IBS are reopened around their silicon check (Q43 g): only the default-on run stays parked.
 - [x] The end-of-run gate refuses a closed park through `stranded_deferrals.py --gate`, which the frozen phase guard already runs.

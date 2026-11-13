@@ -512,33 +512,35 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 
 ## 17. AMX Tile State + XFD Dynamic XSAVE
 
+**Needs:** bare-metal
+
 Intel AMX adds 8 KiB of TMM tile state (XSAVE components 17/18). XFD (Extended Feature Disable) keeps tile state out of the per-task XSAVE save/restore until first use. Parity: Linux dynamic-AMX/XFD.
 
 > [!WARNING]
 > Gate XCR0[17]/[18] on the XFD-supported bit AND the AMX feature bits as **separate** checks. **Design (Codex-vetted 2026-06-28): EAGER area, not lazy-grow** -- `task_alloc_xsave()` already sizes from `xsave_size_max` (the CPUID.0D.0:ECX aggregate that counts AMX 17/18), so every task area is AMX-big from boot and the #NM handler MUST NOT grow memory in exception context (it only disarms XFD for the faulting task). **BLOCKED** on the per-thread-XSAVE prerequisite below: shipping AMX on the per-`struct task` FPU model leaks tile state across sibling threads.
 
-- [/] AMX CPUID detection in `cpuid.h`: `CPU_FEATURE_AMX_TILE` (CPUID.(7,0):EDX[24]), `CPU_FEATURE_AMX_BF16` (EDX[22]), `CPU_FEATURE_AMX_INT8` (EDX[25]) in `cpuid_init()` -- parked: per-thread XSAVE first, then operator-gated AMX HW
-- [/] XFD enumeration: `CPU_FEATURE_XFD` from `CPUID.(0x0D,1):EAX[4]`; per-component faultable `CPUID.(0x0D,n):ECX[2]`; AMX size/offset from `CPUID.(0x0D,17)`/`(0x0D,18)` -- parked: per-thread XSAVE first, then operator-gated AMX HW
-- [/] MSR constants in `msr.h`: `MSR_IA32_XFD = 0x000001C4`, `MSR_IA32_XFD_ERR = 0x000001C5` -- parked: per-thread XSAVE first, then operator-gated AMX HW
-- [/] `cpu_configure_xcr0()` (§1): add XCR0 bits 17/18 only when `CPU_FEATURE_AMX_TILE` AND `CPU_FEATURE_XFD` (separate gates; never one without the other) -- parked: per-thread XSAVE first, then operator-gated AMX HW
+- [/] AMX CPUID detection in `cpuid.h`: `CPU_FEATURE_AMX_TILE` (CPUID.(7,0):EDX[24]), `CPU_FEATURE_AMX_BF16` (EDX[22]), `CPU_FEATURE_AMX_INT8` (EDX[25]) in `cpuid_init()` -- parked: waits on per-thread XSAVE (`03-memory-concurrency/TODO-06` §16)
+- [/] XFD enumeration: `CPU_FEATURE_XFD` from `CPUID.(0x0D,1):EAX[4]`; per-component faultable `CPUID.(0x0D,n):ECX[2]`; AMX size/offset from `CPUID.(0x0D,17)`/`(0x0D,18)` -- parked: waits on per-thread XSAVE (`03-memory-concurrency/TODO-06` §16)
+- [/] MSR constants in `msr.h`: `MSR_IA32_XFD = 0x000001C4`, `MSR_IA32_XFD_ERR = 0x000001C5` -- parked: waits on per-thread XSAVE (`03-memory-concurrency/TODO-06` §16)
+- [/] `cpu_configure_xcr0()` (§1): add XCR0 bits 17/18 only when `CPU_FEATURE_AMX_TILE` AND `CPU_FEATURE_XFD` (separate gates; never one without the other) -- parked: waits on per-thread XSAVE (`03-memory-concurrency/TODO-06` §16)
 - [/] AP feature consistency: add AMX_TILE + XFD to the §6 AP-probe / global mask; clear global AMX if any online AP lacks the XCR0[17:18] components (no BSP-publishes-while-AP-lacks-it skew)
   - Parked: needs the per-`struct thread` XSAVE redesign first, then operator-gated AMX hardware.
 - [/] Default-arm `IA32_XFD = (1<<17)|(1<<18)`: BSP `wrmsr` AFTER XCR0[17:18] + BEFORE `cpu_record_bsp_profile()` (the profile snapshots the live BSP MSR; arming later replays 0); APs replay gated on live XCR0[17:18]
   - Parked: needs the per-`struct thread` XSAVE redesign first, then operator-gated AMX hardware.
 - [/] Eager XSAVE area (NOT lazy-grow): `task_alloc_xsave()` already sizes from `xsave_size_max` (counts AMX 17/18), so every task area is AMX-big; the #NM handler never reallocs in exception context
   - Parked: needs the per-`struct thread` XSAVE redesign first, then operator-gated AMX hardware.
-- [/] Per-task `xfd_mask` (uint64) in `struct task`; gated `wrmsr(IA32_XFD, next->xfd_mask)` at the XSAVE-restore point in BOTH `schedule()` AND `schedule_now()` -- parked: per-thread XSAVE first, then operator-gated AMX HW
+- [/] Per-task `xfd_mask` (uint64) in `struct task`; gated `wrmsr(IA32_XFD, next->xfd_mask)` at the XSAVE-restore point in BOTH `schedule()` AND `schedule_now()` -- parked: waits on per-thread XSAVE (`03-memory-concurrency/TODO-06` §16)
 - [/] `#NM` handler (vector 7): read `IA32_XFD_ERR` FIRST (before `clts`); non-zero = XFD fault -> clear faulting task's `xfd_mask` bit + `wrmsr(IA32_XFD)` + clear `IA32_XFD_ERR` + return (NO grow); zero = existing CR0.TS path
   - Parked: needs the per-`struct thread` XSAVE redesign first, then operator-gated AMX hardware.
 - [/] PREREQUISITE (blocker) -- per-thread XSAVE: `xsave_area`/`fpu_used` are per `struct task` (shared across sibling threads), so AMX tile state leaks between threads; parity needs per-`struct thread` XSAVE + FPU re-save on thread switches (§1)
   - Parked: needs the per-`struct thread` XSAVE redesign first, then operator-gated AMX hardware. The redesign now has an owner -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md` §16 (item: "Move `xsave_area` and `fpu_used` from `struct task` to `struct thread`").
-- [/] Commit: `"kernel/cpu: AMX tile state + XFD dynamic XSAVE (eager area, IA32_XFD ctx-switch)"` -- parked: per-thread XSAVE first, then operator-gated AMX HW
+- [/] Commit: `"kernel/cpu: AMX tile state + XFD dynamic XSAVE (eager area, IA32_XFD ctx-switch)"` -- parked: waits on per-thread XSAVE (`03-memory-concurrency/TODO-06` §16)
 
-**Test checkpoint:** On an AMX+XFD CPU (QEMU TCG `-cpu max` / Sapphire Rapids+), a task that never touches AMX keeps `IA32_XFD` armed; first `TILELOADD` raises #NM with `IA32_XFD_ERR != 0` and the handler disarms XFD for that task (no area grow -- the area is already AMX-sized); tile state survives a `schedule()` round-trip. On non-AMX/non-XFD CPUs (the `-cpu Haswell` harness) XCR0[17:18] stay clear and no XFD MSR is touched. Test on: QEMU TCG `-cpu max`, bare metal (Sapphire Rapids+).
+**Test checkpoint:** On an AMX+XFD CPU (Sapphire Rapids or later, or KVM on one; QEMU 10.2.1 TCG emulates neither, verified 2026-11-13), a task that never touches AMX keeps `IA32_XFD` armed; first `TILELOADD` raises #NM with `IA32_XFD_ERR != 0` and the handler disarms XFD for that task (no area grow -- the area is already AMX-sized); tile state survives a `schedule()` round-trip. On non-AMX/non-XFD CPUs (the `-cpu Haswell` harness) XCR0[17:18] stay clear and no XFD MSR is touched. Test on: QEMU TCG `-cpu max`, bare metal (Sapphire Rapids+).
 
 > **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
 
-> **Deferred:** 2026-06-28 -- AMX state management is blocked on a per-thread XSAVE redesign: FPU/XSAVE state is stored per `struct task` (shared across sibling threads), so AMX tile data would leak between threads (a security/correctness violation -- sub-standard to ship). That redesign is foundational scheduler work beyond AMX scope, and AMX has no bare-metal platform in the matrix (only TCG `-cpu max` emulation). Codex design review hardened the deferred plan (eager-area not lazy-grow; BSP-arm-before-`cpu_record_bsp_profile`; AP-XCR0-skew gating). Revisit once per-`struct thread` XSAVE + AMX validation land. -> XREF: this section's per-thread-XSAVE prerequisite item + §1 (XSAVE/FPU model owner).
+> **Deferred:** 2026-06-28 -- AMX state management is blocked on a per-thread XSAVE redesign: FPU/XSAVE state is stored per `struct task` (shared across sibling threads), so AMX tile data would leak between threads (a security/correctness violation -- sub-standard to ship). That redesign is foundational scheduler work beyond AMX scope, and once it lands the AMX/XFD gating and the XFD `#NM` decision are proved with CPUID and MSR fixtures and the feature-absent path on the matrix; QEMU 10.2.1 TCG emulates neither AMX nor XFD, so the positive tile path waits for AMX silicon (`**Needs:** bare-metal`). Codex design review hardened the deferred plan (eager-area not lazy-grow; BSP-arm-before-`cpu_record_bsp_profile`; AP-XCR0-skew gating). Revisit when `03-memory-concurrency/TODO-06` §16 ships. -> XREF: 03-memory-concurrency/TODO-06-scheduler-enhancement.md §16 (item: "Move `xsave_area` and `fpu_used` from `struct task` to `struct thread`") + §1 (XSAVE/FPU model owner).
 
 ---
 

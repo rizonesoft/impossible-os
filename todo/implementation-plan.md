@@ -889,7 +889,7 @@ The kernel's own model comes straight after boot because every driver, filesyste
 | [ ]  | `D02 T09 §14` | Boot Self-Benchmark + Auto-Tune                                                                   | none       |    10 |
 | [x]  | `D02 T09 §15` | Future Silicon Extensions                                                                         | none       |     6 |
 | [/]  | `D02 T09 §16` | Boot Page Tables: 1 GiB Pages From entry.asm                                                      | bare-metal |     7 |
-| [x]  | `D02 T09 §17` | AMX Tile State + XFD Dynamic XSAVE                                                                | none       |    11 |
+| [x]  | `D02 T09 §17` | AMX Tile State + XFD Dynamic XSAVE                                                                | bare-metal |    11 |
 | [ ]  | `D02 T09 §18` | Split-Lock + Bus-Lock Detection                                                                   | none       |     8 |
 | [x]  | `D02 T09 §19` | Additional CPU Feature Adoption: WAITPKG, SERIALIZE, RDPID                                        | none       |     6 |
 | [ ]  | `D02 T09 §20` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     1 |
