@@ -31,6 +31,7 @@ title: "TODO-01 -- Advanced 2D Graphics and Visual Asset Foundation"
 - [`src/kernel/drivers/cursor.c`](../../src/kernel/drivers/cursor.c) -- Xcur cursor loader and fallback sprites
 - -> XREF: `TODO-14-win32-gdi-user32-stubs.md §1,§3,§7` -- GDI and USER wrappers must consume one native graphics foundation, not fork their own raster model
 - -> XREF: `TODO-15-win32k-shadow-ssdt.md §3,§5,§9,§24` -- Win32k drawing, bitmap, cursor, and display syscalls are downstream consumers
+- -> XREF: `TODO-18-ui-framework-engines.md §12` -- the composition visual tree draws through the §1 render targets and the §2 clip and transform stack
 
 ## Outcome
 

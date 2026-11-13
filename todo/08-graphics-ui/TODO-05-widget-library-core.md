@@ -25,6 +25,7 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
 - → XREF: `08-graphics-ui/TODO-04-animation-engine.md` -- prerequisite for §4 indeterminate progress bar; `anim_mgr_add()` must be available
 - Related (no stable XREF target): `08-graphics-ui/TODO-06-widget-dialogs.md` (advanced widgets) -- ListView, TreeView, Tooltip, Dialog use these 6 controls as building blocks; Tab Strip is consumed by Settings applet immediately
 - → XREF: `08-graphics-ui/TODO-07-ui-accessibility-automation-ime.md §1-§3` -- §8 name/role helpers are only the seed; full semantic-tree and provider ownership lives there
+- -> XREF: `TODO-19-fluent-component-library.md §1` -- the control authoring contract these widgets adopt; the rest of the modern control set lives there
 
 ## Outcome
 

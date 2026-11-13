@@ -25,6 +25,7 @@ title: "TODO-08 -- Window Manager Enhancements"
 - `include/registry.h` -- Registry persistence for window state + desktop icon positions
 - → XREF: `08-graphics-ui/TODO-04-animation-engine.md` -- `wm_anim_state_t` fields in `struct wm_window` prerequisite for §1 minimize/maximize animations
 - Related (no stable XREF target): `08-graphics-ui/TODO-10-taskbar.md` (taskbar) -- minimize animation target rect requires taskbar button position; taskbar height defines usable area for maximize
+- -> XREF: `TODO-19-fluent-component-library.md §22` -- window decorations of §2 render through the one title bar control
 
 ## Outcome
 

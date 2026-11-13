@@ -25,6 +25,7 @@ title: "TODO-06 -- Extended Widget Library: Complex Controls & Dialogs"
 - `scripts/convert-icons.sh` + `resources/icons/src/` -- message box icons join the original icon set (`docs/design/icons.md`)
 - → XREF: `08-graphics-ui/TODO-05-widget-library-core.md` -- `CTRL_DROPDOWN` overlay pattern + `CTRL_SCROLLBAR` used by ListView/TreeView; must be complete before this TODO starts
 - Related (no stable XREF target): `08-graphics-ui/TODO-09` §1 (context menu engine) -- MenuBar popup dropdown may be refactored to share context menu engine once it exists; this TODO implements a self-contained popup
+- -> XREF: `TODO-19-fluent-component-library.md §1,§12,§13,§14` -- authoring contract, and the menu flyout, app bar button and dialog frame these controls share
 
 ## Outcome
 

@@ -27,6 +27,7 @@ title: "TODO-10 -- Taskbar"
 - → XREF: `08-graphics-ui/TODO-08-window-manager.md` -- §1 window list wires to `wm_minimize/maximize/restore`; §3 Aero Peek temporarily overrides compositor window opacity
 - → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §1` -- context menu engine must exist before §2 right-click and §7 jump list popup; §9 vdesk present for "Move to Desktop ►"
 - Related (no stable XREF target): `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` (notifications) -- §5 progress badge toast is a forward ref; use serial log stub until TODO-11 §5 is live
+- -> XREF: `TODO-17-win11-parity-inventory.md §9,§10,§50` -- the taskbar and tray records this file's sections are assigned as owners of
 
 ## Outcome
 

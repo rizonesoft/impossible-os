@@ -22,6 +22,7 @@ title: "TODO-13 -- Explorer Shell Host (`explorer.exe`)"
 | [`../10-platform-services/TODO-08-win32-api-surface.md`](../10-platform-services/TODO-08-win32-api-surface.md) Sections 12 and 14 | `shell32.c` and `ShellExecute` |
 | [`../08-graphics-ui/TODO-10-taskbar.md`](../08-graphics-ui/TODO-10-taskbar.md) | Taskbar SYS hooks and progress APIs |
 | [`TODO-09-file-manager.md`](TODO-09-file-manager.md) | Optional host for `explore` verb; keep scope split |
+| `D08 T18 §22` | The shell process model generalises this host into supervised surface hosts |
 | [`../10-platform-services/TODO-11-installer-iso.md`](../10-platform-services/TODO-11-installer-iso.md) Section 2 | `InstallerMode` vs `explorer.exe` boot |
 | [`TODO-07-win32-pe-loader.md`](../10-platform-services/TODO-07-win32-pe-loader.md) | `pe_exec` ring-3 launch |
 

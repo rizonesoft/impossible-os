@@ -21,6 +21,8 @@ title: "TODO-03 -- Theme System"
 - `include/desktop/wm.h` -- WM message constants and window list -- extended in §8 to add `WM_THEME_CHANGED` and `wm_post_message_all()`
 - Related (no stable XREF target): `08-graphics-ui/TODO-05-widget-library-core.md` (controls TODO) -- must use `theme_get()->field` from day one; this TODO is a hard prerequisite for all graphics-ui work
 - Related (no stable XREF target): `08-graphics-ui/TODO-10-taskbar.md` and `TODO-11-startmenu-tray-notifications.md` (desktop shell) -- Start Menu, taskbar, compositor all depend on theme tokens being live
+- -> XREF: `TODO-17-win11-parity-inventory.md §52` -- tokens are re-measured against the captured Windows 11 reference
+- -> XREF: `TODO-18-ui-framework-engines.md §6` -- theme resource dictionaries resolve through `theme_get()` and the hot reload of §8
 
 ## Outcome
 

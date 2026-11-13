@@ -34,6 +34,7 @@ title: "TODO-11 -- Control Panel & Settings"
 - → XREF: `08-graphics-ui/TODO-12-clock-time.md §1` -- `time_now/set/set_timezone()` + `SYS_TIME` for `timedate.cpl`
 - → XREF: `07-networking/TODO-05-firewall.md` -- `firewall_enable/rule_add/remove()` for `firewall.cpl`
 - → XREF: `07-networking/TODO-06-ntp-status-winsock.md` -- `ntp_sync()` for `timedate.cpl` sync button
+- -> XREF: `D08 T17 §38,§39` -- the Windows 11 applet list and property sheets are inventoried there; `D08 T18 §16` supplies the single-definition settings platform
 
 ## Outcome
 

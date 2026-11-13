@@ -29,6 +29,7 @@ title: "TODO-B -- comctl32.dll Export Master Table"
 | `https://raw.githubusercontent.com/wine-mirror/wine/master/dlls/comctl32/comctl32.spec`       | Scaffold: legacy `comctl32` ordinals + exports (Wine `master`)            |
 | `https://raw.githubusercontent.com/wine-mirror/wine/master/dlls/comctl32_v6/comctl32_v6.spec` | Scaffold: v6 forwarder surface merged into same checklist (Wine `master`) |
 | `dumpbin /exports` or `llvm-readobj --coff-exports` on `C:\Windows\System32\comctl32.dll`     | Win11 ground truth on a pinned build; diff against Tier 3                 |
+| `D08 T19 §24`                                                                                 | Classic control classes rendered by adapters over the modern controls     |
 
 ## Outcome
 

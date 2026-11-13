@@ -20,6 +20,7 @@ title: "TODO-02 -- File Associations, Shortcuts & System Resources"
 - `include/kernel/fs/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_write`, `vfs_create`, `vfs_readdir` -- used by §4 .lnk parsing, §8 font scan
 - `include/kernel/sched/task.h` -- `task_exec(data, size)` -- used by §1 `file_assoc_open()` and §4 `shortcut_execute()`
 - `include/desktop/context_menu.h` (08-graphics-ui/TODO-09 §1) -- `context_menu_show()` -- used by §6 recycle bin right-click and §3 Open With
+- -> XREF: `D08 T18 §20` -- the app model builds registration and default-app resolution on §1, §3 and §4
 - `include/desktop/controls.h` (08-graphics-ui/TODO-06) -- `CTRL_LISTVIEW`, `dialog_input()` -- used by §3 Open With app list and §8 font list
 - `include/font_mgr.h` -- `ttf_get()`, `ttf_draw_string()` -- used by §8 font preview rendering
 - `include/gfx.h` -- `gfx_blit_alpha()`, `gfx_fill_rounded_rect()`, `gfx_draw_line()` -- used by §5 shortcut arrow overlay and §7 system sounds UI stub

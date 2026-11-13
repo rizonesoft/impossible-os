@@ -23,6 +23,7 @@ title: "TODO-04 -- Animation Engine"
 - → XREF: `08-graphics-ui/TODO-03-theme-system.md` -- prerequisite; `theme_get()` must be live before animated windows can paint correctly
 - Related (no stable XREF target): `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` (Start Menu) -- depends on §3 animation manager being live; Start Menu slide-up uses `gfx_tween_start()`
 - Related (no stable XREF target): `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` (Notifications) -- slide-in notifications depend on §1 tween + §3 manager
+- -> XREF: `TODO-18-ui-framework-engines.md §5,§12` -- visual state transitions and implicit visual animations run on the §1 tween engine and §7 compositor integration
 
 ## Outcome
 

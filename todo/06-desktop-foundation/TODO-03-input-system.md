@@ -16,6 +16,7 @@ title: "TODO-03 -- Input System"
 - [`src/desktop/controls.c`](../../src/desktop/controls.c) -- `ctrl_handle_key()`, `ctrl_handle_mouse()`
 - [`src/kernel/drivers/keyboard.c`](../../src/kernel/drivers/keyboard.c) -- PS/2 keyboard driver, scancode to ASCII
 - -> XREF: `D08 T07 §4` -- IME and composition work builds on the key-event and focus-routing pipeline owned here
+- -> XREF: `D08 T18 §7` -- routed events, focus scopes and access keys build on the §2 key pipeline and §3 focus model
 
 ## Outcome
 

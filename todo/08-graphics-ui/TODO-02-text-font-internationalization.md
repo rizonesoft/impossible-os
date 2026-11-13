@@ -31,6 +31,7 @@ title: "TODO-02 -- Text, Font, and Internationalization Foundation"
 - -> XREF: `TODO-14-win32-gdi-user32-stubs.md §4,§8` -- GDI text APIs and `ChooseFont` wrappers consume the shared text/font foundation
 - -> XREF: `TODO-15-win32k-shadow-ssdt.md §4,§16,§21` -- Win32k font, text, and IME-facing syscalls build on this layer
 - -> XREF: `D12 T05 §8` -- the Win32 subsystem's common-dialog and font-picker work needs one canonical font catalog and layout owner
+- -> XREF: `TODO-18-ui-framework-engines.md §2` and `TODO-19-fluent-component-library.md §4,§7` -- layout and the text controls consume §3 paragraph layout and §4 caret services
 
 ## Outcome
 

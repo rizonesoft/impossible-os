@@ -27,6 +27,7 @@ title: "TODO-09 -- Desktop Shell Features"
 - → XREF: `08-graphics-ui/TODO-08-window-manager.md` -- desktop right-click (§2) and quick settings (§8) depend on WM overlay being live; `wm_post_message_all()` used for `WM_DPI_CHANGED`
 - → XREF: `08-graphics-ui/TODO-10-taskbar.md` -- §9 virtual desktops needs a per-desktop taskbar button group
 - → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md` §5 (toasts) -- §5 screenshot toast and §7 DND mode depend on the toast API; use a stub until it is live
+- -> XREF: `TODO-19-fluent-component-library.md §12` -- the §1 context menu engine is rendered by the menu flyout control
 
 ## Outcome
 

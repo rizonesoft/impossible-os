@@ -25,3 +25,6 @@ One page per graphics roadmap file, each following the [page contract](../contri
 | [Win32k Shadow SSDT](win32k-shadow-ssdt.md) | The empty, dispatched shadow table today; planned `NtGdi` and `NtUser` services in 27 waves |
 | [Win32k Shadow Native API](win32k-shadow-router.md) | The table-selector routing and range checks today; planned headers, static checks, index generation and the callback review |
 | [Win32k Shadow SSDT Master Table](win32k-shadow-master-table.md) | The 1,300-row service ledger, its capacity gap and its planned audit |
+| [Windows 11 Parity Inventory](win11-parity-inventory.md) | Planned machine-readable record of the whole Windows 11 interface, its completeness baselines, consistency ledger and built-OS layout check |
+| [UI Framework Engines](ui-framework-engines.md) | The four hand-placed controls today; planned element tree, layout, styles, input, commands, markup compiler, composition and the shell data engines |
+| [Fluent Component Library](fluent-component-library.md) | Planned modern control set, the control contract, the gallery app and the state matrix conformance suite |

@@ -30,6 +30,7 @@ title: "TODO-11 -- Start Menu, System Tray & Notifications"
 - → XREF: `08-graphics-ui/TODO-05-widget-library-core.md §3` -- `CTRL_SLIDER` used in §6 volume flyout slider
 - → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §7` -- Focus/DND mode must exist before §5 toast suppression
 - → XREF: `08-graphics-ui/TODO-10-taskbar.md §1` -- system tray icons (§4) are drawn at the right of the taskbar window list; taskbar draw loop must be stable first
+- -> XREF: `TODO-17-win11-parity-inventory.md §11,§12,§14,§50` -- the Start, search and notification records this file's sections are assigned as owners of
 
 ## Outcome
 

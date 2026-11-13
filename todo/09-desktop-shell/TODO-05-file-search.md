@@ -27,6 +27,7 @@ title: "TODO-05 -- File Search & Indexing"
 - → XREF: `09-desktop-shell/TODO-04-recycle-zip-scheduler.md §1` -- `sched_task_add("index_rebuild", search_index_rebuild, 1800, 1)` is registered there; §2 here provides the real body that stub forwards to
 - → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §4` -- Start Menu search bar calls `search_query()`; §5 is the integration layer that wires §2 into the existing search-bar input handler
 - Future dependency (no XREF target yet): `11-apps/TODO-file-manager.md` -- §5 File Manager integration is a forward hook; no File Manager TODO exists yet
+- -> XREF: `D08 T18 §16,§17` -- setting definitions and shell items are indexed through §1 and §2
 
 ## Outcome
 

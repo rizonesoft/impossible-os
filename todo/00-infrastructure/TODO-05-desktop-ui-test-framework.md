@@ -32,6 +32,7 @@ title: "TODO-05 -- Desktop & UI Test Framework"
 - → XREF: `T04 §4` -- shared timeout, TAP, skip, and environment-matrix policy for automated UI runs
 - → XREF: `D08 T07 §6` -- deterministic automation transport provider; §14 consumes the semantic tree for WCAG sweep
 - → XREF: `D10 T06 §6` -- `mouse_event_inject()` primitive owner; §4 and §11 reuse it, no duplicate API
+- -> XREF: `D08 T17 §51` -- the built-OS layout check is the structural comparison beside the §6 and §9 pixel comparison; `D08 T19 §26` reuses the §14 contrast checker
 
 ---
 

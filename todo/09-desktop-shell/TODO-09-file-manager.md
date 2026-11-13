@@ -35,6 +35,7 @@ title: "TODO-09 -- File Manager"
 - → XREF: `09-desktop-shell/TODO-04-recycle-zip-scheduler.md §2` -- §6 Delete uses `trash_delete()` from there
 - → XREF: `09-desktop-shell/TODO-02-file-associations-resources.md §1` -- `file_assoc_open()` for double-click; §3 Open With dialog
 - → XREF: `09-desktop-shell/TODO-06-security-accounts.md §9` -- §5 Properties dialog shows `i_uid/i_mode` permissions
+- -> XREF: `D08 T17 §33,§34,§35,§36` -- the File Explorer inventory; `D08 T18 §17,§18,§19` supply the namespace, property and extension engines
 
 ## Outcome
 
