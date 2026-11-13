@@ -442,6 +442,21 @@ with open(_conf_lock, "w") as _holder:
                                     out=os.path.join(_MOCK_DIR, "out-held-build")))
 check("a held lock also refuses an image under build/ (clean deletes it)",
       rc == 1 and not os.path.exists(_marker))
+# ...and a series whose warm firmware vars live under build/, even with a disk
+# elsewhere: refused before it deletes the previous warm-vars.fd.
+_wv_out = os.path.join(_REPO_ROOT, "build", "boot-reliability-locktest")
+os.makedirs(_wv_out, exist_ok=True)
+_wv = os.path.join(_wv_out, "warm-vars.fd")
+with open(_wv, "w") as fh:
+    fh.write("nvram")
+with open(_conf_lock, "w") as _holder:
+    fcntl.flock(_holder, fcntl.LOCK_EX)
+    rc = br.run_reliability(mk_args(launcher_cmd=["bash", _mock_mark], cold=1, warm=1,
+                                    disk=os.path.join(_MOCK_DIR, "release.img"),
+                                    out=_wv_out))
+check("warm vars under build/ take the lock; a refusal keeps warm-vars.fd",
+      rc == 1 and os.path.exists(_wv) and not os.path.exists(_marker))
+__import__("shutil").rmtree(_wv_out, ignore_errors=True)
 rc = br.run_reliability(mk_args(launcher_cmd=["bash", _MOCK_QEMU], cold=1, warm=0,
                                 out=os.path.join(_MOCK_DIR, "out-free")))
 check("a free lock lets the series run and restores BOOT_CONF_LOCK_HELD",

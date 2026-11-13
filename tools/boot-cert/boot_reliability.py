@@ -506,8 +506,6 @@ def run_reliability(args):
     # warm iteration (missing path) and reuses it after. Cold runs get a fresh
     # ephemeral copy inside the launcher.
     warm_vars = os.path.join(out_dir, "warm-vars.fd") if spec["cold_warm"] else None
-    if warm_vars and os.path.exists(warm_vars):
-        os.remove(warm_vars)
 
     # Fold the build's required POST16 codes into the required-signal set so the
     # reliability classifier matches scripts/test-smoke.sh's CORE boot gate: a
@@ -539,11 +537,12 @@ def run_reliability(args):
     # rebuild or boot it meanwhile. Children (the launcher, patch-boot-conf.sh)
     # share the hold through BOOT_CONF_LOCK_HELD=1.
     # Only the canonical image has a boot.conf to reset. The lock covers every
-    # image under build/, which `make clean` deletes under it; a supplied
-    # --disk elsewhere (a release artifact) is booted as it is.
+    # image under build/ (the disk or the warm firmware vars), which `make
+    # clean` deletes under it; a supplied --disk elsewhere is booted as it is.
     canonical = disk_abs == os.path.abspath(os.path.join(REPO_ROOT, DEFAULT_DISK))
-    under_build = os.path.realpath(disk_abs).startswith(
-        os.path.realpath(os.path.join(REPO_ROOT, "build")) + os.sep)
+    build_root = os.path.realpath(os.path.join(REPO_ROOT, "build")) + os.sep
+    under_build = any(os.path.realpath(p).startswith(build_root)
+                      for p in (disk_abs, warm_vars) if p)
     conf_fd = None
     prior_held = os.environ.get("BOOT_CONF_LOCK_HELD")
     if (canonical or under_build) and prior_held != "1":
@@ -558,6 +557,10 @@ def run_reliability(args):
                              "build/system-disk.img (.boot-conf.lock)\n")
             return 1
         os.environ["BOOT_CONF_LOCK_HELD"] = "1"
+
+    # Only now, holding the lock, discard the previous series' warm vars.
+    if warm_vars and os.path.exists(warm_vars):
+        os.remove(warm_vars)
 
     patched = bool(args.boot_conf_patch or args.test_suite)
     phases = [("cold", args.cold)] + ([("warm", args.warm)] if args.warm else [])

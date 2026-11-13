@@ -54,7 +54,9 @@ done
 # build, clean or boot of the same tree touches it meanwhile
 # (scripts/lib/boot-conf-lock.sh).
 . "$REPO_ROOT/scripts/lib/boot-conf-lock.sh"
-boot_conf_lock_if_under_build "$REPO_ROOT" 9 "$ISO" || exit 1
+# The run directory (firmware vars) is always made under build/, so the lock
+# is always taken.
+boot_conf_lock_if_under_build "$REPO_ROOT" 9 "$ISO" "$BUILD/boot-test-iso.run" || exit 1
 
 [ -f "$ISO" ] || { err "missing ISO: $ISO (run scripts/release/build-iso.sh)"; exit 2; }
 [ -f "$OVMF_CODE" ] || { err "missing OVMF: $OVMF_CODE (apt install ovmf)"; exit 2; }

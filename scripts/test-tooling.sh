@@ -4949,10 +4949,11 @@ if command -v flock >/dev/null 2>&1; then
     for _ in 1 2 3 4 5 6 7 8 9 10; do flock -n "$REPO_ROOT/.boot-conf.lock" true 2>/dev/null || break; sleep 0.1; done
     _bt_custom=$(timeout 20 bash "$REPO_ROOT/scripts/machines/boot-test-qemu.sh" --disk "${TMPDIR:-/tmp}/no-such-release.img" --timeout 1 2>&1 >/dev/null)
     _bt_inbuild=$(timeout 20 bash "$REPO_ROOT/scripts/machines/boot-test-qemu.sh" --disk "$REPO_ROOT/build/no-such-release.img" --timeout 1 2>&1 >/dev/null)
+    _bt_vars=$(timeout 20 bash "$REPO_ROOT/scripts/machines/boot-test-qemu.sh" --disk "${TMPDIR:-/tmp}/no-such-release.img" --vars "$REPO_ROOT/build/no-such-vars.fd" --timeout 1 2>&1 >/dev/null)
     _bt_canon=$(timeout 20 bash "$REPO_ROOT/scripts/machines/boot-test-qemu.sh" --timeout 1 2>&1 >/dev/null); _bt_rc=$?
     kill "$_bt_hold" 2>/dev/null; wait "$_bt_hold" 2>/dev/null
     if ! <<<"$_bt_custom" grep -q 'another run' && [ "$_bt_rc" = 1 ] && <<<"$_bt_canon" grep -q 'another run' \
-       && <<<"$_bt_inbuild" grep -q 'another run'; then
+       && <<<"$_bt_inbuild" grep -q 'another run' && <<<"$_bt_vars" grep -q 'another run'; then
         t_pass "boot_test_qemu_lock  the launcher locks images under build/ and only those"
     else
         t_fail "boot_test_qemu_lock  the launcher refused an outside disk or booted a held image under build/" "canonical rc=$_bt_rc"

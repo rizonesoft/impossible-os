@@ -56,7 +56,9 @@ done
 # build, clean or boot of the same tree touches it meanwhile
 # (scripts/lib/boot-conf-lock.sh).
 . "$REPO_ROOT/scripts/lib/boot-conf-lock.sh"
-boot_conf_lock_if_under_build "$REPO_ROOT" 9 "$DISK" || exit 1
+# The run directory (firmware vars) is always made under build/, so the lock
+# is always taken.
+boot_conf_lock_if_under_build "$REPO_ROOT" 9 "$DISK" "$BUILD/boot-test-vhdx.run" || exit 1
 
 [ -f "$DISK" ] || { err "missing disk: $DISK (run scripts/release/to-vhdx.sh)"; exit 2; }
 [ -f "$OVMF_CODE" ] || { err "missing OVMF: $OVMF_CODE (apt install ovmf)"; exit 2; }
