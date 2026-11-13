@@ -34,3 +34,18 @@ boot_conf_lock_hold() {
     fi
     export BOOT_CONF_LOCK_HELD=1
 }
+
+# boot_conf_lock_if_under_build <project> <fd> <path>...: hold the lock (as
+# boot_conf_lock_hold) when any path lies under <project>/build/, which
+# `make clean` deletes under this lock; a run on images elsewhere needs none.
+boot_conf_lock_if_under_build() {
+    local project="$1" fd="$2" path build
+    shift 2
+    build="$(realpath -m -- "$project/build")"
+    for path in "$@"; do
+        case "$(realpath -m -- "$path")" in
+            "$build"/*) boot_conf_lock_hold "$project" "$fd"; return ;;
+        esac
+    done
+    return 0
+}

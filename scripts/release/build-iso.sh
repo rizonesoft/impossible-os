@@ -58,6 +58,11 @@ while [ "$#" -gt 0 ]; do
         *) err "unknown arg: $1"; usage >&2; exit 2 ;;
     esac
 done
+# An image under build/ is held under .boot-conf.lock for the run, so no
+# build, clean or boot of the same tree touches it meanwhile
+# (scripts/lib/boot-conf-lock.sh).
+. "$REPO_ROOT/scripts/lib/boot-conf-lock.sh"
+boot_conf_lock_if_under_build "$REPO_ROOT" 9 "$IN_IMG" "$OUT_ISO" || exit 1
 
 [ -f "$IN_IMG" ] || { err "missing input: $IN_IMG (run scripts/release/build-image.sh)"; exit 1; }
 for tool in xorriso dd python3; do

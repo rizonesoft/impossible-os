@@ -4993,8 +4993,14 @@ grep -qE '^\.PRECIOUS:.*\$\(SYSTEM_DISK\)' "$_bl_mk" || _bl_disk="n (not .PRECIO
 _bl_scripts=""
 while IFS= read -r _bl_f; do
     case "$_bl_f" in scripts/test-tooling.sh) continue ;; esac
-    grep -q 'boot_conf_lock_hold' "$REPO_ROOT/$_bl_f" || _bl_scripts="$_bl_scripts $_bl_f"
-done < <(cd "$REPO_ROOT" && git ls-files 'scripts/*.sh' 'tools/*.sh' | xargs grep -lE 'qemu-system|\$\{?QEMU' 2>/dev/null | xargs grep -l 'system-disk\.img' 2>/dev/null)
+    grep -qE 'boot_conf_lock_(hold|if_under_build)' "$REPO_ROOT/$_bl_f" || _bl_scripts="$_bl_scripts $_bl_f"
+done < <(cd "$REPO_ROOT" && {
+    # launchers that boot an image under build/ ...
+    git ls-files 'scripts/*.sh' 'tools/*.sh' | xargs grep -lE 'qemu-system|\$\{?QEMU' 2>/dev/null | xargs grep -lE 'system-disk\.img|/release/' 2>/dev/null
+    # ...and release scripts that write one (an --out image; build-manifest.sh
+    # writes a manifest, not an image)
+    git ls-files 'scripts/release/*.sh' | grep -vE '/test-|/build-manifest\.sh$' | xargs grep -l -- '--out)' 2>/dev/null
+} | sort -u)
 if [ -z "$_bl_bare" ] && [ "$_bl_disk" = "y" ] && [ "$_bl_clean" = "y" ] && [ -z "$_bl_scripts" ]; then
     t_pass "boot_locked_recipes  every QEMU recipe and launcher holds the image lock; the disk is published and cleaned under it"
 else

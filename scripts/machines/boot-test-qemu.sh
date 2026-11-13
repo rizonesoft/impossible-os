@@ -77,10 +77,8 @@ done
 # hold .boot-conf.lock for the run, so no other run patches, resets, rebuilds
 # or deletes it meanwhile (`make clean` removes build/ under that lock;
 # scripts/lib/boot-conf-lock.sh). A --disk outside build/ is booted without it.
-case "$(realpath -m "$DISK")" in "$(realpath -m "$BUILD")"/*)
-    . "$SCRIPT_DIR/../lib/boot-conf-lock.sh"
-    boot_conf_lock_hold "$REPO_ROOT" 9 || exit 1 ;;
-esac
+. "$SCRIPT_DIR/../lib/boot-conf-lock.sh"
+boot_conf_lock_if_under_build "$REPO_ROOT" 9 "$DISK" || exit 1
 
 case "$ACCEL" in auto|kvm|tcg) ;; *) err "bad --accel: $ACCEL"; exit 2 ;; esac
 case "$TIMEOUT_SEC" in ''|*[!0-9]*) err "bad --timeout: $TIMEOUT_SEC"; exit 2 ;; esac
