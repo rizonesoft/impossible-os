@@ -1295,10 +1295,12 @@ REQUIRE_SHIM ?= 0
 # address metadata, not IXFS -- do not reintroduce static BB/IXFS offset vars.
 EFI_OFFSET  := 1048576
 
-# The system-disk recipe mutates $@ in place across several mkfs/mmd/mcopy steps.
-# Without this, a failure mid-recipe leaves a newer-but-half-built image that make
-# treats as up-to-date next run. Delete the partial target on any recipe failure.
+# Delete a partly written target when its recipe fails.
 .DELETE_ON_ERROR:
+# ...except the disk image: its recipe writes only $@.new and publishes it by a
+# rename, so a failure never leaves a half-built image, and a VM may have written
+# the published one (changing its mtime). Make must never unlink it.
+.PRECIOUS: $(SYSTEM_DISK)
 
 system-disk: $(SYSTEM_DISK)
 

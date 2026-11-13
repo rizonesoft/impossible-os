@@ -4961,6 +4961,8 @@ _bl_bare=$(grep -nE '\$\(QEMU\) \\$' "$_bl_mk" | grep -vF '$(BOOT_LOCKED) $(QEMU
 # The disk rule writes only $@.new and publishes it by a rename under the lock.
 _bl_disk=$(awk '/^\$\(SYSTEM_DISK\):/{f=1} f&&/-o \$@ |\$@@@|\$@\.info/{bad=1} f&&/BOOT_LOCKED\) sh -c .mv /{pub=1} f&&/^$/{exit} END{print (pub&&!bad)?"y":"n"}' "$_bl_mk")
 _bl_clean=$(awk '/^clean:/{f=1} f&&/BOOT_LOCKED\) rm -rf \$\(BUILD_DIR\)/{print "y"; exit} f&&/^$/{exit}' "$_bl_mk")
+# .DELETE_ON_ERROR must never unlink the published image a VM may have written.
+grep -qE '^\.PRECIOUS:.*\$\(SYSTEM_DISK\)' "$_bl_mk" || _bl_disk="n (not .PRECIOUS)"
 # ...and every script that starts QEMU and names build/system-disk.img holds it.
 _bl_scripts=""
 while IFS= read -r _bl_f; do
