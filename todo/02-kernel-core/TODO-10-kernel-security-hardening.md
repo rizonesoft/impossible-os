@@ -946,7 +946,7 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 > - Canonical doc: [development-tooling.md "Build Flavors"](../../docs/infrastructure/development-tooling.md#build-flavors).
 > - Scope boundary: §29 owns the helper guards + advisory audit; §27 owns the proof gate; §28 owns whole test TUs; §30 owns the signed attestation + DB fingerprint.
 > **Verified:** 2026-07-17 | commit `04d4cbd3` | 3/5 items ([x]; 2 [/] deferred to §30) | build OK (both flavors) | smoke PASS (KVM 2.97s), off gate PASS, 21504+16 tests PASS
-> **Deferred:** [M] F8/F9 gate-robustness residuals (signed CI attestation + per-flag compile-DB fingerprint + validate-not-recompute receipt) need cryptographic signing infrastructure (a new tool dependency + a keyless-OIDC-vs-keyed operator decision), so they are operator-reserved. Rehomed as concrete items -> XREF: §30 (F8/F9/Perf items).
+> **Deferred:** awaiting-answer Q43 (`todo/answers.md` item c, decided): [M] F8/F9 gate-robustness residuals (signed CI attestation + per-flag compile-DB fingerprint + validate-not-recompute receipt) need cryptographic signing infrastructure (a new tool dependency + a keyless-OIDC-vs-keyed operator decision), so they are operator-reserved. Rehomed as concrete items -> XREF: §30 (F8/F9/Perf items).
 > **Quality reviewed:** 2026-07-17 | Codex 5x (design, adversarial, consistency, perf) | 1H+6M fixed | scope: kernel-code-quality
 
 ---
@@ -965,7 +965,7 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 
 > **Scope boundary:** §30 owns the tamper-resistant signed attestation + the reusable validate-not-recompute receipt + the DB flag-fingerprint (§27 F8/F9 + perf residuals). §27 owns the proof gate; §29 owns the helper guards + advisory audit. -> XREF: §27 + §29.
 
-> **Deferred:** [H] signed CI attestation + DB flag-fingerprint (F8/F9) need cryptographic signing infrastructure (a new tool dependency + a keyless-OIDC-vs-keyed operator decision), which is operator-reserved -> awaiting operator decision on the signing mechanism (XREF from §29 items "Gate robustness (§27 F8 ...)" + "(§27 F9 ...)").
+> **Deferred:** awaiting-answer Q43 (`todo/answers.md` item c, decided): [H] signed CI attestation + DB flag-fingerprint (F8/F9) need cryptographic signing infrastructure (a new tool dependency + a keyless-OIDC-vs-keyed operator decision), which is operator-reserved -> awaiting operator decision on the signing mechanism (XREF from §29 items "Gate robustness (§27 F8 ...)" + "(§27 F9 ...)").
 
 ---
 

@@ -967,7 +967,7 @@ Split out of §25 (2026-08-05): the three findings §25 ACCEPTED rather than fix
 > - Rejected on evidence: nothing -- all 10 findings across four review legs were verified at file:line and fixed.
 
 > **Verified:** 2026-08-05 | commit `9d635e79` + review fixes | 4/4 items | build OK | 118/118 lsp-mcp sub-tests, 0 write-capable methods, 1287/1287 tooling, 28326 kernel + 17 user-mode, lint 0 errors
-> **Deferred:** [L] reap hardening beyond dev-tool depth -- operator-gated. A completed descriptor claim is a third record state `retired` cannot express, so it must choose between wedging `alive` and reaping before descendant collection; §26 shipped the fail-closed residual -> XREF: 00-infrastructure/TODO-07 §26 (item: "Model CLAIMED-and-in-use separately from safely RETIRED on `_SpawnRecord`")
+> **Deferred:** awaiting-answer Q43 (`todo/answers.md` item e, decided): [L] reap hardening beyond dev-tool depth -- operator-gated. A completed descriptor claim is a third record state `retired` cannot express, so it must choose between wedging `alive` and reaping before descendant collection; §26 shipped the fail-closed residual -> XREF: 00-infrastructure/TODO-07 §26 (item: "Model CLAIMED-and-in-use separately from safely RETIRED on `_SpawnRecord`")
 > **Quality reviewed:** 2026-08-05 | Codex 9x (design, adversarial x2, test-coverage, consistency, perf, re-adversarial x3) | 12H+8M+1L fixed, 1 deferred, 1 accepted | scope: N/A (host-side Python tooling; no kernel/boot/desktop/shell/userland surface)
 
 ## Format Quick Reference

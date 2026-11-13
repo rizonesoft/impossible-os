@@ -805,7 +805,7 @@ The RtlUnwindEx fixtures in `src/kernel/test/test_unwind.c` register a synthetic
 
 **Test checkpoint:** deliberately moving a function used outside a `#if CONFIG_*` region to inside it makes the new gate FAIL, and moving it back makes it pass; the default build time is unchanged.
 
-> **Deferred:** [M] not started this pass -- this section's own text already marks it operator work ("touches `Makefile`/`scripts/build.sh`, the receipt surface -- an unattended run may not edit those"). No source changed.
+> **Deferred:** awaiting-answer Q42 (`todo/answers.md`, the receipt-surface guard is gone): [M] not started this pass -- this section's own text already marks it operator work ("touches `Makefile`/`scripts/build.sh`, the receipt surface -- an unattended run may not edit those"). No source changed.
 
 ---
 

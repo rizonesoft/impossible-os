@@ -135,22 +135,35 @@ AWAITING_ANSWER_RE = re.compile(r"\bawaiting-answer\b", re.I)
 _ANSWERED_CACHE = {}
 
 
-def _answered_questions(md_path):
-    """The numbers of the answered questions in the todo/answers.md above `md_path`.
+def _questions_module():
+    """scripts/overnight/collect-questions.py, the owner of the answer-reading rules."""
+    import importlib.util
+    src = Path(__file__).resolve().parents[2] / "scripts" / "overnight" / "collect-questions.py"
+    spec = importlib.util.spec_from_file_location("_collect_questions_for_triage", str(src))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
-    The reading rules are scripts/overnight/collect-questions.py's own (what
-    counts as a question block and as an answer), loaded from it, never copied.
-    Any failure reads as "nothing answered": the park then holds, as before."""
+
+def _answered_questions(md_path, answers_text=None):
+    """The numbers of the answered questions in `answers_text`, or else in the
+    todo/answers.md above `md_path`.
+
+    A caller judging a snapshot other than the working tree (the staged-commit
+    check reads the index) passes that snapshot's answers.md text, so a park and
+    its answer are judged from the same generation. The reading rules are
+    scripts/overnight/collect-questions.py's own (what counts as a question block
+    and as an answer), loaded from it, never copied. Any failure reads as
+    "nothing answered": the park then holds, as before."""
     try:
+        if answers_text is not None:
+            mod = _questions_module()
+            return mod, mod.answered_question_numbers(answers_text)
         answers = Path(md_path).resolve().parents[1] / "answers.md"
         stat = answers.stat()
         key = (str(answers), stat.st_mtime_ns, stat.st_size)
         if key not in _ANSWERED_CACHE:
-            import importlib.util
-            src = Path(__file__).resolve().parents[2] / "scripts" / "overnight" / "collect-questions.py"
-            spec = importlib.util.spec_from_file_location("_collect_questions_for_triage", str(src))
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
+            mod = _questions_module()
             _ANSWERED_CACHE.clear()
             _ANSWERED_CACHE[key] = (mod, mod.answered_question_numbers(answers.read_text(encoding="utf-8")))
         return _ANSWERED_CACHE[key]
@@ -158,14 +171,15 @@ def _answered_questions(md_path):
         return None, set()
 
 
-def park_is_answered(stamp_line, md_path):
-    """True when a Deferred stamp waits only on questions that have an answer."""
+def park_is_answered(stamp_line, md_path, answers_text=None):
+    """True when a Deferred stamp waits only on questions that have an answer
+    (in `answers_text` when given, else in the answers.md beside `md_path`'s TODO tree)."""
     if not AWAITING_ANSWER_RE.search(stamp_line):
         return False
     waits_on_other = [m for m in DEFERRED_RECOVERABLE_RE.findall(stamp_line) if m.lower() != "awaiting-answer"]
     if waits_on_other:
         return False  # it also waits on hardware, an operator action or the like
-    mod, answered = _answered_questions(md_path)
+    mod, answered = _answered_questions(md_path, answers_text)
     return bool(mod) and mod._waits_only_on_answered(stamp_line, answered)
 
 
@@ -290,7 +304,12 @@ def section_stamps(md_path):
                 kinds.add("Q")
             elif DEFERRED_RE.match(phys):
                 if park_is_answered(phys, md_path):
-                    continue  # the question it waited on is answered: open work again
+                    # The question it waited on is answered: open work again, even in a
+                    # section that also carries Verified and Quality-reviewed. Dropping
+                    # the stamp instead left such a section DONE, so the reopened
+                    # residual was never read again (the closed-park re-judge, 2026-11-13).
+                    kinds.add("DA")
+                    continue
                 kinds.add("D")
                 if DEFERRED_RECOVERABLE_RE.search(phys):
                     kinds.add("DR")  # recoverable deferral (awaiting-*)
@@ -342,6 +361,8 @@ def classify_section(section, stamps):
     if st not in ("x", "/"):
         return NEEDS_WORK
     kinds = stamps.get(n, frozenset())
+    if "DA" in kinds:
+        return NEEDS_WORK  # a park whose question is answered: the answer is the instruction
     if "DR" in kinds:
         return BLOCKED
     if "D" in kinds:

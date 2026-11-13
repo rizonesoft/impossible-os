@@ -254,56 +254,57 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 
 ## 7. FRED Unified Event Delivery
 
-> [!WARNING]
-> **Blocked: no test platform.** FRED requires Intel Granite Rapids (2024 server) or later. No available platform (WHPX i5-11600K, TCG, VirtualBox, Haswell bare metal) supports FRED. QEMU does not emulate FRED. Implementing untested interrupt entry code risks total system failure on the first FRED-capable hardware. Implement when FRED hardware or a FRED-capable emulator becomes available.
+**Needs:** bare-metal
 
-- [/] Check `cpu_has(CPU_FEATURE_FRED)` (CPUID leaf 7, ECX=1, EAX bit 17) -- parked: operator-gated, no FRED platform
-- [/] FRED delivers all events (interrupts, exceptions, `SYSCALL`) to a single kernel entry point with the event type and vector in registers; eliminates IDT corruption edge-cases and provides native NMI nesting
-  - Parked: operator-gated -- needs FRED silicon or QEMU `fred` emulation in the test matrix.
-- [/] Enable: `cpu_set_cr4_bit(CR4_FRED)` where `CR4_FRED = (1ULL << 32)`; program the full FRED MSR set (Intel SDM Vol. 3 FRED chapter), not just a single config word:
-  - Parked: operator-gated -- needs FRED silicon or QEMU `fred` emulation in the test matrix.
+> [!WARNING]
+> **Built under emulation, enabled on silicon.** FRED is built behind `fred=on`, default off, as Linux 6.9 shipped it; CPUID detection, the frame decoder, the MSR values and the unchanged IDT fallback are proved on the matrix with fixtures. Only the default-on flip waits for FRED silicon (`todo/answers.md` Q43 item g).
+
+- [ ] Check `cpu_has(CPU_FEATURE_FRED)` (CPUID leaf 7, ECX=1, EAX bit 17)
+- [ ] FRED delivers all events (interrupts, exceptions, `SYSCALL`) to a single kernel entry point with the event type and vector in registers; eliminates IDT corruption edge-cases and provides native NMI nesting
+- [ ] Enable: `cpu_set_cr4_bit(CR4_FRED)` where `CR4_FRED = (1ULL << 32)`; program the full FRED MSR set (Intel SDM Vol. 3 FRED chapter), not just a single config word:
   - `IA32_FRED_CONFIG`: unified entry RIP (`fred_entry_asm` in `src/kernel/fred.asm`) + current-stack-level field
   - `IA32_FRED_RSP0..3`: one ring-0 stack per level (RSP0 = normal kernel stack; higher levels are the NMI/#DF/#MC equivalents of today's IST stacks)
   - `IA32_FRED_STKLVLS`: per-vector stack-level assignment so NMI/#DF/#MC land on dedicated stacks (replaces the IDT IST mechanism)
   - `IA32_FRED_SSP0..3`: shadow-stack pointers per level when CET SS is active (-> XREF: `TODO-10` §9 CET shadow stack)
-- [/] `fred_entry_asm` unified handler:
-  - Parked: operator-gated -- needs FRED silicon or QEMU `fred` emulation in the test matrix.
+- [ ] `fred_entry_asm` unified handler:
   - Reads event type and vector from the FRED stack frame
   - Dispatches to the existing `isr_handler(frame)` or `kd_debug_exception_handler` (-> XREF: `TODO-29-kernel-debugger-kd-protocol.md` §4) via the same `handlers[]` table in `idt.c`
-- [/] FRED event-frame + nesting: decode the pushed FRED frame (RIP/CS/RFLAGS/RSP/SS + error + event-data) per SDM; FRED un-blocks NMI natively on `ERETS`; #DF/#MC still escalate to assigned stack levels -- parked: operator-gated, no FRED platform
-- [/] Interaction audit before real-silicon enable: FRED entry keeps KPTI CR3 swap, SMAP AC, and auto kernel-GS correct -- reconcile with `TODO-10` §4-§6/§2 and §8 LKGS / §11 GS-base -- parked: operator-gated, no FRED platform
-- [/] Replace `IRET` with FRED return instructions where FRED is active:
-  - Parked: operator-gated -- needs FRED silicon or QEMU `fred` emulation in the test matrix.
+- [ ] FRED event-frame + nesting: decode the pushed FRED frame (RIP/CS/RFLAGS/RSP/SS + error + event-data) per SDM; FRED un-blocks NMI natively on `ERETS`; #DF/#MC still escalate to assigned stack levels
+- [ ] Interaction audit before real-silicon enable: FRED entry keeps KPTI CR3 swap, SMAP AC, and auto kernel-GS correct -- reconcile with `TODO-10` §4-§6/§2 and §8 LKGS / §11 GS-base
+- [ ] Replace `IRET` with FRED return instructions where FRED is active:
   - `ERETS`: return to ring 0
   - `ERETU`: return to ring 3
-- [/] `SYSCALL` via FRED: automatically uses FRED entry; `IA32_LSTAR` still needed for non-FRED fallback path -- parked: operator-gated, no FRED platform
-- [/] Fallback: if `CPU_FEATURE_FRED` not present, IDT path unchanged -- parked: operator-gated, no FRED platform
-- [/] Commit: `"kernel/cpu: FRED unified event delivery"` -- parked: operator-gated, no FRED platform
+- [ ] `SYSCALL` via FRED: automatically uses FRED entry; `IA32_LSTAR` still needed for non-FRED fallback path
+- [ ] Fallback: if `CPU_FEATURE_FRED` not present, IDT path unchanged
+- [/] Turn the default on only after a recorded run on a FRED-capable CPU (Intel Granite Rapids or later) passes the test checkpoint -- parked: needs FRED hardware (`**Needs:** bare-metal`)
+- [ ] Commit: `"kernel/cpu: FRED unified event delivery"`
 
 **Test checkpoint:** On a FRED-modeling CPU (a QEMU `-cpu` exposing the `fred` flag once a FRED-emulating QEMU is in the matrix, or Granite Rapids+ bare metal -- NOT Cooper Lake, which predates FRED), a timer IRQ reaches `isr_handler` via the FRED unified entry, NMI/#DF land on their assigned stack levels, and `ERETU`/`ERETS` return correctly; every non-FRED CPU boots unchanged on the IDT path. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** 2026-06-28 -- FRED requires Intel Granite Rapids+ (or a FRED-emulating QEMU); no platform in the test matrix (WHPX i5-11600K / TCG / VBox / Haswell) supports it, and shipping untested interrupt-entry code risks total failure on first FRED silicon (see the section `[!WARNING]`). Plan Codex-hardened this pass (full FRED MSR set + stack levels + KPTI/SMAP/GS interaction audit). Revisit when FRED hardware or QEMU `fred` emulation enters the matrix. -> XREF: this section's `[!WARNING]` (no-test-platform).
+> **Deferred:** awaiting-answer Q43 (`todo/answers.md` item g, decided): 2026-06-28 -- FRED requires Intel Granite Rapids+ (or a FRED-emulating QEMU); no platform in the test matrix (WHPX i5-11600K / TCG / VBox / Haswell) supports it, and shipping untested interrupt-entry code risks total failure on first FRED silicon (see the section `[!WARNING]`). Plan Codex-hardened this pass (full FRED MSR set + stack levels + KPTI/SMAP/GS interaction audit). Revisit when FRED hardware or QEMU `fred` emulation enters the matrix. -> XREF: this section's `[!WARNING]` (no-test-platform).
 
 ---
 
 ## 8. LKGS Fast GS-Base Swap
 
+**Needs:** bare-metal
+
 > [!WARNING]
-> **Blocked: no test platform.** LKGS requires Intel Granite Rapids or later (same silicon as FRED). No available platform supports LKGS. Replacing SWAPGS with untested LKGS in the syscall/ISR entry path risks corrupting per-CPU GS-base on the first LKGS-capable hardware. Implement when LKGS hardware becomes available.
+> **Built under emulation, enabled on silicon.** LKGS reloads the user GS selector only where FRED is on (as in Linux), so it rides the same `fred=on` gate; CPUID detection and the unchanged SWAPGS fallback are proved on the matrix. Only the default-on flip waits for LKGS silicon (`todo/answers.md` Q43 item g).
 
-- [/] Check `cpu_has(CPU_FEATURE_LKGS)` (CPUID leaf 7, ECX=1, EAX bit 18) -- parked: operator-gated, no LKGS platform
-- [/] `LKGS reg` writes directly to `IA32_KERNEL_GS_BASE` without touching the active GS; eliminates `SWAPGS` and its speculative side-channel -- parked: operator-gated, no LKGS platform
-- [/] In `src/kernel/sched/syscall_entry.asm`:
-  - Parked: operator-gated -- needs LKGS silicon in the test matrix.
-  - On SYSCALL entry: `LKGS [saved_user_gs]` instead of `SWAPGS`
-  - On SYSRET: `LKGS [user_gs_base]` before `SYSRETQ`
-- [/] Same replacement in IDT common stubs that currently use `SWAPGS` -- parked: operator-gated, no LKGS platform
-- [/] Fallback: if LKGS unavailable, keep existing `SWAPGS` (no regression) -- parked: operator-gated, no LKGS platform
-- [/] Commit: `"kernel/cpu: LKGS replaces SWAPGS in syscall and ISR entry"` -- parked: operator-gated, no LKGS platform
+- [ ] Check `cpu_has(CPU_FEATURE_LKGS)` (CPUID leaf 7, ECX=1, EAX bit 18)
+- [ ] Load the user GS selector with `LKGS r/m16` where FRED is on: it puts the descriptor's base in `IA32_KERNEL_GS_BASE` and leaves the active GS alone.
+  - It replaces the `SWAPGS; MOV GS; SWAPGS` selector-reload sequence in the context switch, nothing else. LKGS carries a selector, never a 64-bit base.
+  - The full user GS base (the TEB) is then written with `WRMSR IA32_KERNEL_GS_BASE`, as `task.c` does today. Never `WRGSBASE`: in kernel context it overwrites the active per-CPU base.
+- [ ] FRED entry and `ERETU` exchange the GS base themselves: the FRED entry stub (section 7) has no `SWAPGS`. The legacy IDT and `SYSCALL`/`SYSRETQ` stubs keep `SWAPGS` unchanged.
+- [ ] Tests: before the return to user mode, active GS is the current CPU's kernel base and `IA32_KERNEL_GS_BASE` is the incoming thread's TEB, on both the FRED and the legacy path.
+- [ ] Fallback: if LKGS or FRED is unavailable, the existing `SWAPGS` sequence is unchanged (no regression)
+- [/] Turn the default on only after a recorded run on an LKGS-capable CPU (Intel Granite Rapids or later) passes the test checkpoint -- parked: needs LKGS hardware (`**Needs:** bare-metal`)
+- [ ] Commit: `"kernel/cpu: LKGS selector reload under FRED"`
 
-**Test checkpoint:** Syscall path uses LKGS when `CPU_FEATURE_LKGS`; per-CPU data still accessible via GS after LKGS; fallback CPU boots with SWAPGS unchanged. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** With FRED on, a context switch reloads the user GS selector through LKGS and the user TEB GS base and per-CPU kernel GS read back unchanged; a CPU without FRED or LKGS boots with the SWAPGS sequence unchanged. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** 2026-06-28 -- LKGS requires Intel Granite Rapids+ (same silicon class as FRED §7); no platform in the matrix supports it, and replacing SWAPGS in the syscall/ISR entry with untested LKGS risks per-CPU GS-base corruption on first LKGS silicon (see the section `[!WARNING]`). Revisit with LKGS hardware. -> XREF: this section's `[!WARNING]` (no-test-platform).
+> **Deferred:** awaiting-answer Q43 (`todo/answers.md` item g, decided): 2026-06-28 -- LKGS requires Intel Granite Rapids+ (same silicon class as FRED §7); no platform in the matrix supports it, and replacing SWAPGS in the syscall/ISR entry with untested LKGS risks per-CPU GS-base corruption on first LKGS silicon (see the section `[!WARNING]`). Revisit with LKGS hardware. -> XREF: this section's `[!WARNING]` (no-test-platform).
 
 ---
 
@@ -372,31 +373,32 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 
 ## 12. AMD IBS Profiling (Stretch)
 
-> [!WARNING]
-> **Blocked: no test platform.** AMD IBS requires AMD Zen+ or later bare metal. No available platform (Intel WHPX, TCG, VirtualBox, Haswell bare metal) supports IBS. The NMI handler modifications and per-CPU ring buffer require real IBS hardware to validate. Implement when AMD bare metal with IBS is available.
+**Needs:** bare-metal
 
-- [/] Check `cpu_has(CPU_FEATURE_IBS)` (from §1) -- parked: operator-gated, no AMD Zen+ bare metal
-- [/] **IBS Fetch Sampling:** samples random instruction fetch ops:
-  - Parked: operator-gated -- needs AMD Zen+ bare metal in the test matrix.
+> [!WARNING]
+> **Built under emulation, enabled on silicon.** IBS is built against a fake MSR backend so the sample packing, the per-CPU ring and the start/stop/read API are unit-tested on the matrix; the NMI path stays off unless `CPU_FEATURE_IBS` is present. Only the at-rate run and its NMI-cost benchmark wait for AMD hardware (`todo/answers.md` Q43 item g).
+
+- [ ] Check `cpu_has(CPU_FEATURE_IBS)` (from §1)
+- [ ] **IBS Fetch Sampling:** samples random instruction fetch ops:
   - Configure `MSR 0xC001_1030` (IBS_FETCH_CTL): set `IbsFetchEn (bit 17)`, `IbsFetchCnt (bits 15:0)` = sample rate (~100K ops)
   - On NMI: read `0xC001_1031` (linear fetch address) + `0xC001_1032` (physical + status: cache hit/miss, iTLB miss, L1/L2/L3 source)
-- [/] **IBS Op Sampling:** samples random instruction completion ops:
-  - Parked: operator-gated -- needs AMD Zen+ bare metal in the test matrix.
+- [ ] **IBS Op Sampling:** samples random instruction completion ops:
   - Configure `MSR 0xC001_1033` (IBS_OP_CTL): `IbsOpEn + IbsOpCnt`
   - On NMI: read `0xC001_1035` (RIP), `0xC001_1036` (op data: micro-op info, cache miss, DRAM latency), `0xC001_1037` (data address + NUMA source)
-- [/] IBS NMI handler: read all IBS MSRs; pack into a ring buffer of `ibs_sample_t` structs (256 entries per CPU, static allocation); re-arm counter; return from NMI -- parked: operator-gated, no AMD Zen+ bare metal
-- [/] `ibs_start(rate)` / `ibs_stop()` / `ibs_read_samples(buf, max)` API -- parked: operator-gated, no AMD Zen+ bare metal
-- [/] Future: wire to a profiler GUI in `11-apps` -- parked: operator-gated, no AMD Zen+ bare metal
-- [/] Before enabling the returning IBS NMI, re-weigh the vector-2 NMI depth-marker cost this handler is the first to pay at rate, and close the return-tail residual it makes reachable. -- parked: operator-gated, no AMD Zen+ bare metal
+- [ ] IBS NMI handler: read all IBS MSRs; pack into a ring buffer of `ibs_sample_t` structs (256 entries per CPU, static allocation); re-arm counter; return from NMI
+- [ ] `ibs_start(rate)` / `ibs_stop()` / `ibs_read_samples(buf, max)` API
+- [/] Future: wire to a profiler GUI in `11-apps` -- parked: waits on a profiler app in `11-apps`, which does not exist yet
+- [/] Before enabling the returning IBS NMI, re-weigh the vector-2 NMI depth-marker cost this handler is the first to pay at rate, and close the return-tail residual it makes reachable. -- parked: needs IBS at rate (`**Needs:** bare-metal`)
   - The cost: the entry stub executes a serializing CPUID and a `lock`-prefixed RMW on BOTH the raise and the lower, and `g_nmi_depth` packs 4-byte per-CPU slots so per-core sampling shares cache lines. Nil for a terminal NMI, not nil at ~100K-op sample rates. Benchmark before deciding.
   - An RDPID fast path is possible but is NOT a drop-in, and needs a gate proving every ONLINE-OR-COMMITTED-ONLINE CPU supports RDPID and has a recorded successful `IA32_TSC_AUX` write published BEFORE its `AP_BRINGUP_ONLINE` CAS. Online-only is insufficient: an AP commits to coming online before publishing its mask bit and the bounded BSP wait can finish while it is unpublished, so use `cpu_slot_committed_online()`.
   - Three existing signals are each insufficient alone: `g_tsc_aux_available` is set by the BSP probe only, `per_cpu_data.tsc_aux` is recorded as the cpu id even when the write was skipped, and RDPID is absent from `CPU_FEATURES_AP_PROBE_MASK` so `cpu_has(CPU_FEATURE_RDPID)` proves only the BSP. Without such a latch keep the CPUID-derived path.
   - And converge the identities first: `TSC_AUX` holds a LOGICAL CPU INDEX while the depth counter is keyed by APIC ID, and the C helper's derivation is pinned to the assembly's by static assert -> XREF: `01-boot-platform/TODO-10 §22` (item: "PARKED, blocked on a returning NMI handler existing: close the last return-tail residual so no instruction after the lower runs with the depth clear")
-- [/] Commit: `"kernel/pmc: AMD IBS fetch+op sampling, NMI handler, sample ring buffer"` -- parked: operator-gated, no AMD Zen+ bare metal
+- [/] Mark IBS supported only after a recorded at-rate run on AMD Zen or later bare metal passes the test checkpoint -- parked: needs IBS hardware (`**Needs:** bare-metal`)
+- [ ] Commit: `"kernel/pmc: AMD IBS fetch+op sampling, NMI handler, sample ring buffer"`
 
 **Test checkpoint:** With `CPU_FEATURE_IBS`, NMI handler fills ring without nested NMI deadlock; `ibs_read_samples` returns monotonic sequence numbers. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal (AMD).
 
-> **Deferred:** 2026-06-28 -- AMD IBS requires AMD Zen+ bare metal; no platform in the matrix (Intel WHPX / TCG / VBox / Haswell) supports it, and the NMI handler + per-CPU ring buffer need real IBS hardware to validate (see the section `[!WARNING]`). Stretch goal; revisit on AMD Zen+ bare metal. -> XREF: this section's `[!WARNING]` (no-test-platform).
+> **Deferred:** awaiting-answer Q43 (`todo/answers.md` item g, decided): 2026-06-28 -- AMD IBS requires AMD Zen+ bare metal; no platform in the matrix (Intel WHPX / TCG / VBox / Haswell) supports it, and the NMI handler + per-CPU ring buffer need real IBS hardware to validate (see the section `[!WARNING]`). Stretch goal; revisit on AMD Zen+ bare metal. -> XREF: this section's `[!WARNING]` (no-test-platform).
 
 ---
 
@@ -482,6 +484,8 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 
 ## 16. Boot Page Tables: 1 GiB Pages From entry.asm
 
+**Needs:** bare-metal
+
 > **Why:** `vmm_promote_to_1g()` (§6) upgrades 2 MiB identity-map entries to 1 GiB pages at runtime, but later code (KUSD at 0x7FFE0000, guard pages, MMIO mappings) splits them back to 2 MiB via `vmm_split_huge_page()`. This promote-then-split cycle wastes boot time and allocates throwaway PD frames. Windows and Linux build 1 GiB pages from the start in their initial page tables.
 >
 > **Premise correction (2026-06-28):** there is NO `src/boot/entry.asm` -- the kernel is ELF and the initial identity-map page tables are built by the UEFI bootloader [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c), then `vmm_promote_to_1g()` (`boot_hw.c:627`) upgrades them at runtime. The "1 GiB from boot" work belongs in `bootx64.c`'s PDPT construction (PDPT[1-3] PS=1, CPUID PAGE1GB-gated -- option (b) "always build 1G + runtime downgrade" is unsafe because the bootloader builds paging BEFORE any #PF handler exists, so a non-PAGE1GB CPU like some TCG models would triple-fault); the items below referencing `entry.asm` map to that file. The `vmm_promote_to_1g()` removal + `vmm_split_huge_page()` retention still apply.
@@ -502,7 +506,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 
 -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §9` (PAT AP sync uses same page table infrastructure)
 
-> **Deferred:** 2026-06-28 -- pure boot-paging optimization (the promote-then-split path via `vmm_promote_to_1g()` already works correctly). The real change is in the UEFI bootloader `src/boot/uefi/bootx64.c` (not the nonexistent `entry.asm`); rewriting the firmware-handoff page-table construction touches the highest-stakes boot path, whose acceptance criterion per `CLAUDE.md` is bare-metal + real-UEFI-firmware validation (a malformed initial PDPTE triple-faults with no graceful degradation, and TCG-vs-bare-metal PAGE1GB behavior diverges). The unattended WSL/KVM run cannot establish that. Revisit in a session with bare-metal sign-off. -> XREF: this section's premise-correction NOTE + §6 (`vmm_promote_to_1g` owner).
+> **Deferred:** awaiting-answer Q43 (`todo/answers.md` item f, decided): 2026-06-28 -- pure boot-paging optimization (the promote-then-split path via `vmm_promote_to_1g()` already works correctly). The real change is in the UEFI bootloader `src/boot/uefi/bootx64.c` (not the nonexistent `entry.asm`); rewriting the firmware-handoff page-table construction touches the highest-stakes boot path, whose acceptance criterion per `CLAUDE.md` is bare-metal + real-UEFI-firmware validation (a malformed initial PDPTE triple-faults with no graceful degradation, and TCG-vs-bare-metal PAGE1GB behavior diverges). The unattended WSL/KVM run cannot establish that. Revisit in a session with bare-metal sign-off. -> XREF: this section's premise-correction NOTE + §6 (`vmm_promote_to_1g` owner).
 
 ---
 

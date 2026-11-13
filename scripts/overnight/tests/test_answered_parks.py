@@ -44,7 +44,17 @@ def test_an_answered_question_reopens_the_section():
                   "> **Deferred:** [M] awaiting-answer Q2: a run decision counts as an answer",
                   "> **Deferred:** awaiting-answer Q1 and Q2 (`todo/answers.md`)."):
         kinds, cls = classes(stamp)
-        assert kinds == set() and cls == st.NEEDS_WORK, (stamp, kinds, cls)
+        assert kinds == {"DA"} and cls == st.NEEDS_WORK, (stamp, kinds, cls)
+
+
+def test_an_answered_question_reopens_a_reviewed_section():
+    """Verified and Quality-reviewed do not hide a residual whose question is answered:
+    dropping the stamp left the section DONE and the residual unread (the closed-park re-judge, 2026-11-13)."""
+    reviewed = ("> **Verified:** 2026-11-01 | commit `abc1234`\n"
+                "> **Quality reviewed:** 2026-11-01 | Codex passes: 1\n"
+                "> **Deferred:** [M] awaiting-answer Q1: the residual is runnable")
+    kinds, cls = classes(reviewed)
+    assert kinds == {"V", "Q", "DA"} and cls == st.NEEDS_WORK, (kinds, cls)
 
 
 def test_a_park_that_still_waits_holds():

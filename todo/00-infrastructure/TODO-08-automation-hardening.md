@@ -104,7 +104,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |  36   |   §36   | Second-boot leg in the smoke matrix                                                              | --                         |  [x]   |
 | 💎  |  37   |   §37   | Syscall argument counts in the ABI fingerprint                                                   | --                         |  [x]   |
 | 💎  |  38   |   §38   | Release-flavor build at the section boundary                                                     | --                         |  [x]   |
-| 💎  |  39   |   §39   | Re-judge the closed parks under the never-park rule                                              | --                         |  [ ]   |
+| 💎  |  39   |   §39   | Re-judge the closed parks under the never-park rule                                              | --                         |  [x]   |
 | 💎  |  40   |   §40   | Pytest-style control-plane tests run in the suite                                                | --                         |  [ ]   |
 | 💎  |  41   |   §41   | CI jobs run in the pinned image                                                                  | --                         |  [ ]   |
 
@@ -1177,7 +1177,7 @@ The PreToolUse gates decide their exemptions by hand-scanning command text. [`.c
 >
 > **What this leaves.** The first item stands but its prescribed MEANS does not: "or equivalent" now has to name a parser that handles quoted heredocs and `case`, or the item becomes a deliberate hand-rolled tokenizer with the plan rewritten to say so. That is an operator design call, and it is the reason this section stays parked rather than being attempted again.
 
-> **Deferred:** [M] operator-gated -- every deliverable here edits `.claude/hooks/**`, which the unattended run is forbidden to touch, so no run can ever implement this section. It is not blocked on another TODO; it is blocked on an ATTENDED session. Reached and correctly parked rather than discovered mid-pass (2026-08-05).
+> **Deferred:** awaiting-answer Q42 (`todo/answers.md`, the receipt-surface guard is gone): [M] operator-gated -- every deliverable here edits `.claude/hooks/**`, which the unattended run is forbidden to touch, so no run can ever implement this section. It is not blocked on another TODO; it is blocked on an ATTENDED session. Reached and correctly parked rather than discovered mid-pass (2026-08-05).
 
 ## 33. Section-commit gate reads an untokenizable commit line as a commit
 
@@ -1342,13 +1342,20 @@ Sections are built and tested as the test flavor. A parameter used only under `K
 
 About 445 `Deferred:` stamps carry no `awaiting-` token, so their sections read done and nothing reads them again. About 60 name hardware or an operator decision. Since 2026-11-11 a section is parked only on something outside the run, named on a `**Needs:**` line.
 
-- [ ] List every such stamp with `scripts/overnight/stale_parks.py`: add a class for a closed park that names hardware, an operator or a decision. Done when `--check` prints the list and its count.
-- [ ] Re-judge each listed stamp in file order: reopen it with a recorded decision (`todo/answers.md`) or an emulated stand-in, or keep it and add the section's `**Needs:**` line. Done when the list is empty.
-- [ ] Make the check a fixpoint refusal once the list is empty, so a new one cannot accumulate. Done when `run_phase_guard.py` refuses fixpoint with one planted.
-- [ ] Unit tests: a fixture stamp of each kind is listed, and a stamp with a `**Needs:**` line is not. Done when they fail without the new class.
-- [ ] Commit: `"run: closed parks that name a person or a machine are re-judged"`
+- [x] `stale_parks.py` lists closed parks that wait on a person, a machine or the retired receipt-surface guard (`closed`, 38 at first run).
+  - Person words are the staged check's own; a guard park is listed even under a `**Needs:**` line.
+  - Sections are the triage oracle's own walk: a nested `- ## N.` opens one, an unnumbered closing heading ends one.
+- [x] Re-judged all 38: 21 reopened under Q42 (guard gone), 11 under Q43 (decided), 5 kept under `**Needs:** bare-metal`, 1 stale owner text fixed.
+  - An answered park now reopens a reviewed section too (`sequencer_triage.py`, kind `DA`), and the staged check accepts it, reading answers from the staged snapshot.
+  - FRED, LKGS and IBS are reopened around their silicon check (Q43 g): only the default-on run stays parked.
+- [x] The end-of-run gate refuses a closed park through `stranded_deferrals.py --gate`, which the frozen phase guard already runs.
+- [x] Unit tests: each kind refuses the gate, a Need clears a machine park, an answered park reopens a reviewed section and passes the staged check.
+  - Every one fails on the previous code.
+- [x] Commit: `"run: closed parks that name a person or a machine are re-judged"`
 
 **Test checkpoint:** `python3 scripts/overnight/stale_parks.py --check` reports none of the new class.
+
+> **Test runner:** `python3 scripts/overnight/stale_parks.py --selftest`; `python3 scripts/overnight/tests/test_stranded_gate.py`; `python3 -m pytest scripts/overnight/tests/test_answered_parks.py scripts/overnight/tests/test_park_needs_a_need.py`.
 
 ## 40. Pytest-style control-plane tests run in the suite
 

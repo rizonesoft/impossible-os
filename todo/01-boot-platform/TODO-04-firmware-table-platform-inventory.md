@@ -295,6 +295,8 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 ## 10. Firmware Inventory Tests and Host Decoder
 
+**Needs:** bare-metal
+
 - [x] Unit tests in `test_firmware_tables.c` cover GUID lookup, range rejection, checksum failures, conformance levels (~957 assertions across §1-§7).
 - [x] Positive-case fixture directory `src/kernel/test/fixtures/firmware/` with schema_version=1 snapshot + README.
 - [x] Host tool `tools/firmware-tables-decode.c` -- self-contained parser + canonical re-emitter (pretty-print / `--canonical` / `--round-trip`); `host-tools` aggregate; regression via `scripts/test-firmware-decode.sh`.

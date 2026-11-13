@@ -689,9 +689,29 @@ _WAITS_ON_PERSON_RE = re.compile(
     r"user-reserved|operator decision|owner decision)\b", re.I)
 _PARK_SHAPE_RE = re.compile(r"^(?:- \[/\] |> \*\*Deferred:\*\*|\s+- BLOCKED\b)")
 _NEEDS_SOMETHING_RE = re.compile(r"^\*\*Needs:\*\*[ \t]*(?!none\b)\S")
+_DEFERRED_STAMP_RE = re.compile(r"^>\s*\*\*Deferred:\*\*")  # the oracle's DEFERRED_RE
 
 
-def _parks_on_a_person(lines, heads_view, added):
+def _park_is_answered(text, answers_text):
+    """True when the park waits only on questions answered in `answers_text`, the
+    STAGED todo/answers.md, by the triage oracle's own rule
+    (`sequencer_triage.park_is_answered`, loaded, never copied). Such a park waits on
+    no one: the oracle reads it as open work, so refusing it would refuse the shape
+    the run reopens work with. The answers come from the same index snapshot as the
+    park, so an answer left unstaged cannot admit a park the commit does not answer.
+    Any failure to load the rule reads as "not answered", which keeps the refusal."""
+    try:
+        import importlib.util
+        src = pathlib.Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "sequencer_triage.py"
+        spec = importlib.util.spec_from_file_location("_triage_for_staged_check", str(src))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return bool(mod.park_is_answered(text, "", answers_text))
+    except Exception:  # noqa: BLE001  fail-direction: unknown keeps the refusal
+        return False
+
+
+def _parks_on_a_person(lines, heads_view, added, answers_text=None):
     """[(lineno, text)] for park lines this commit adds that wait on the operator
     in a section with no `**Needs:**` line naming what it waits for.
 
@@ -704,6 +724,12 @@ def _parks_on_a_person(lines, heads_view, added):
     for n, text in added:
         if not (_PARK_SHAPE_RE.match(text) and _WAITS_ON_PERSON_RE.search(text)):
             continue
+        # Only a section's Deferred stamp reopens work when its question is answered
+        # (`sequencer_triage.section_stamps`, kind DA). An answered `[/]` item or a
+        # BLOCKED bullet reopens nothing, so it is still a park and still refused.
+        if (answers_text is not None and _DEFERRED_STAMP_RE.match(text)
+                and _park_is_answered(text, answers_text)):
+            continue  # waits only on answered questions: open work, not a park
         before = [s for s in starts if s <= n]
         if not before:
             continue  # above the first section: no section to hold to the rule
@@ -830,7 +856,7 @@ def main(argv) -> int:
             oscomp.append((f, n, w, cell))
         for n, head, text in _park_into_shipping_section(vis, sec_vis, added, f):
             parked.append((f, n, head, text))
-        for n, text in _parks_on_a_person(vis, sec_vis, added):
+        for n, text in _parks_on_a_person(vis, sec_vis, added, docs.get("todo/answers.md", "")):
             waits.append((f, n, text))
         # THE SECTION-AWARE CHECKS GET THE LOGICAL ADDITIONS, the line-based
         # ones keep the raw diff. A section can be created by a container edit

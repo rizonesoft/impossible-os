@@ -489,3 +489,26 @@ Section 38 asked for a release-flavor compile (`KERNEL_TESTS` undefined) before 
 - **B:** run it again at every commit, which repeats the same compile on each commit of a section for no defect the push cannot catch.
 
 A: (run decision, 2026-11-13) A. Reversal cost: one call to `scripts/release-flavor-check.py` in the post-commit section pipeline (about an hour with its test); nothing in the existing gate changes.
+
+## Q42 (00-infrastructure/TODO-08 §39): does a park on the receipt-surface guard still hold?
+
+About 20 Deferred stamps park work because `receipt_surface_guard.py` kept the unattended run out of the root `Makefile`, `scripts/build.sh`, `scripts/gen-user-abi.py`, `tools/boot-info-manifest/` and the control plane (`.claude/hooks/**`, `.githooks/**`). That guard was deleted with the process gates on 2026-11-09 (`71f25965a`); only the files in `.claude/hooks/gate.py` `FROZEN` stay out of the run's reach, and none of these parks needs one.
+
+- **A:** reopen every such park: the run builds the work, tested like any other change.
+- **B:** keep them parked for an attended session, which nothing schedules.
+
+A: (run decision, 2026-11-13) A. Each stamp carries `awaiting-answer Q42`, so the triage oracle reads its section as open work. Reversal cost: re-adding the guard (its file is in git history) and dropping the tag from the stamps; the work already built stays built.
+
+## Q43 (00-infrastructure/TODO-08 §39): the decisions parks were waiting on
+
+Section 39 listed the parks that waited on an operator decision. The mandate hands each to the run:
+
+- **a (01-boot-platform/TODO-10 §28):** `panic_evidence_abandon` keeps ownership through a retiring state until its durable publication-word clear lands, so a reset in that window finds a record marked retiring, never a live one. Reversal: drop the state (one enum value and its transitions).
+- **b (02-kernel-core/TODO-02 §3, §4):** §4's control-set selection runs before §3's merge; the merge applies only to keys consumed after Phase 2, and a Phase 0/1 key it would change is reported, not overridden. Reversal: reorder the two sections back.
+- **c (02-kernel-core/TODO-10 §29, §30):** the CI attestation is keyless Sigstore through GitHub OIDC (GitHub artifact attestations, verified with `gh attestation verify`); no long-lived key to store. Reversal: swap the signer for a keyed one and add its secret.
+- **d (02-kernel-core/TODO-21 §15):** `PROCESS_OBJECT` owns a refcounted terminal-state record (exit status and times) that outlives the task slot, as NT's process object does; a handle reads the record, never `tasks[]`. Reversal: one struct and its reads.
+- **e (00-infrastructure/TODO-07 §26):** `_SpawnRecord` gains a `claimed` state between `alive` and `retired`, so a completed claim is neither wedged nor reaped early. Reversal: drop the state.
+- **f (02-kernel-core/TODO-09 §16):** the loader builds the 1 GiB direct map itself; the matrix and WHPX prove it, and only the bare-metal check waits, on a `**Needs:**` line. Reversal: keep the promote-then-split path, which stays as the fallback.
+- **g (02-kernel-core/TODO-09 §7, §8, §12):** FRED, LKGS and AMD IBS are built now, not parked whole. FRED and LKGS go behind a `fred=on` boot option, default off, as Linux 6.9 shipped FRED; IBS behind `CPU_FEATURE_IBS`, against a fake MSR backend in its tests. CPUID detection, the FRED frame decoder, the MSR values, the IBS ring and API, and the unchanged fallbacks are proved on the matrix. Only the default-on flip and the at-rate IBS benchmark wait for the silicon, under `**Needs:** bare-metal`. Reversal: delete the gated code; the fallback paths are the code that runs today.
+
+A: (run decision, 2026-11-13) as listed. Each stamp carries `awaiting-answer Q43`, so its section is open work.

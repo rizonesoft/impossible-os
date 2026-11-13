@@ -160,7 +160,7 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 **Test checkpoint:** with local DHCP/TFTP/HTTP fixtures, PXE + HTTP Boot + signed-manifest + missing-file + bad-hash + timeout + local-fallback each produce the expected result and capture `network-boot.json`; bare-metal PXE flagged manual when the lab lacks automation.
 
-> **Deferred:** [H] Network-boot suite waits on the network-boot owner: its QEMU harness, trust model and report are not shipped, though TFTP and HTTP load paths are. -> XREF: 01-boot-platform/TODO-25 §10 (item: "Add QEMU PXE/TFTP test harness"); 01-boot-platform/TODO-25 §5 (operator-gated trust model); 01-boot-platform/TODO-25 §9 (item: "Write `X:\Diag\network-boot.json`").
+> **Deferred:** [H] Network-boot suite waits on the network-boot owner: its QEMU harness, trust model and report are not shipped, though TFTP and HTTP load paths are. -> XREF: 01-boot-platform/TODO-25 §10 (item: "Add QEMU PXE/TFTP test harness"); 01-boot-platform/TODO-25 §5 (trust model: a signature the loader cannot yet verify); 01-boot-platform/TODO-25 §9 (item: "Write `X:\Diag\network-boot.json`").
 
 ---
 

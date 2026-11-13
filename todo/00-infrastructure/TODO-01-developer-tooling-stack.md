@@ -452,7 +452,7 @@ Rewrite the ~187 source / test / header / script files on the `scripts/lint.sh` 
 
 **Test checkpoint:** `make --dry-run all` emits zero `overriding recipe` / `ignoring old recipe` warnings; `make run-test` and `make run-debug` each behave as their `##` help text describes; adding a deliberate duplicate target fails `scripts/lint.sh`. Test on: build host only.
 
-> **Deferred:** 2026-07-31 | operator-only surface: every item resolves to an edit of the root `Makefile`, which `receipt_surface_guard.py` BLOCKs in the unattended run (receipt surface). Defect confirmed live at this HEAD: `make --dry-run all` emits 4 warnings, `run-test` defined at `Makefile:1271` + `Makefile:1642`, `run-debug` at `Makefile:1265` + `Makefile:1687`. Items 2-3 are gated on item 1 (their gates fail against the un-reconciled tree). -> XREF: `overnight-runner-improvements/overnight-runner-improvements-v05.md` (item: "TODO-01 §13 is unreachable unattended: its whole scope is the root Makefile")
+> **Deferred:** awaiting-answer Q42 (`todo/answers.md`, the receipt-surface guard is gone): 2026-07-31 | operator-only surface: every item resolves to an edit of the root `Makefile`, which `receipt_surface_guard.py` BLOCKs in the unattended run (receipt surface). Defect confirmed live at this HEAD: `make --dry-run all` emits 4 warnings, `run-test` defined at `Makefile:1271` + `Makefile:1642`, `run-debug` at `Makefile:1265` + `Makefile:1687`. Items 2-3 are gated on item 1 (their gates fail against the un-reconciled tree). -> XREF: `overnight-runner-improvements/overnight-runner-improvements-v05.md` (item: "TODO-01 §13 is unreachable unattended: its whole scope is the root Makefile")
 
 ---
 

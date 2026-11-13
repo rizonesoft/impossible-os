@@ -550,6 +550,8 @@ Define the minimum CPU feature set required to boot, verify features are actuall
 
 ## 14. Bare-Metal Test Matrix and Validation Plan
 
+**Needs:** bare-metal
+
 Define the hardware platforms to test on, expected boot timings per phase, and a regression detection framework so bare-metal issues are caught early.
 
 **Files:** `todo/01-boot-platform/TODO-10-bare-metal-hardening.md` (this file -- Bare Metal Testing Plan + matrix tables)
@@ -1140,6 +1142,8 @@ Both defects predate §21 and neither is created by it: the async timeout has fa
 
 ## 28. Cross-Boot Evidence Durability Across a Hardware Reset (from the §23 review)
 
+**Needs:** bare-metal
+
 > **Spawned-by:** §23 (review)
 > **User impact:** On real hardware the crash record can be silently lost. Publication is a plain release store into the WB-mapped `0x80000` page, and an x86 RESET invalidates caches WITHOUT writing back modified lines, so the record may never reach DRAM. The user reboots after a crash and finds no `last-panic.txt` and no unexpected-shutdown notice. Invisible under QEMU/KVM/WHPX, which model no cache hierarchy -- so every gate the repo runs today reports success on a mechanism that does not work on the target platform.
 
@@ -1177,7 +1181,7 @@ The §23 lifecycle work made a single release store the sole durability point fo
 > **Accepted:** [H] nothing preserves the `0x80000` page between the reset and Phase 0, so firmware and bootloader allocations can clobber a record that did reach memory (reason: bootloader-side reservation, not memory-type policy) -> XREF: `01-boot-platform/TODO-14` §5 (item: "`0x80000` kept out of the allocator by the existing pmm_init first-1-MiB reservation")
 > **Accepted:** [H] `vfs_flush() == 0` is not a device-level durability predicate, so consume is left non-durable rather than risking loss of both the file and the record (reason: filesystem sync semantics) -> XREF: `05-storage-filesystems/TODO-06` §1 (item: "Flush must reach the DEVICE")
 > **Accepted:** [M] the klog crash region overwrites a complete record in place, so a nested panic that dies before republishing can still lose it -- narrowed here, not closed (reason: needs a two-slot or arbitrated publication protocol the region does not have) -> XREF: `02-kernel-core/TODO-04` §8 (item: "PARKED: eviction-independent publication for the crash region")
-> **Deferred:** [M] `panic_evidence_abandon` relinquishes ownership before its durable publication-word clear, so a reset in that window leaves a complete CRC-valid record standing and the next boot reports a fault the machine survived (reason: repair is a retiring state in the evidence ownership state machine) -> XREF: `01-boot-platform/TODO-10` §23 (item: "PARKED, operator-gated: a terminal takeover that cannot prove writer quiescence declines to write")
+> **Deferred:** awaiting-answer Q43 (`todo/answers.md` item a, decided): [M] `panic_evidence_abandon` relinquishes ownership before its durable publication-word clear, so a reset in that window leaves a complete CRC-valid record standing and the next boot reports a fault the machine survived (reason: repair is a retiring state in the evidence ownership state machine) -> XREF: `01-boot-platform/TODO-10` §23 (item: "PARKED, operator-gated: a terminal takeover that cannot prove writer quiescence declines to write")
 > **Quality reviewed:** 2026-08-15 | Codex 9x (design, adversarial x4, re-adversarial x2, test-coverage, consistency, perf) + kernel-quality-auditor + concurrency-evidence-mapper + kernel-explorer + spec-research-analyst | 7H+11M+4L fixed, 4 parked with owners, 2 rejected with code evidence | scope: kernel-code-quality
 
 ---

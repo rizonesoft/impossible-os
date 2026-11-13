@@ -507,6 +507,13 @@ git fetch -q origin main && [ -z "$(git log --oneline @{u}..HEAD)" ] && echo "PU
       money, shared infrastructure, or a calculation that looks wrong. The operator
       took the run's recommendation on 30 of 30 questions, so a park here costs more
       than a decision that gets vetoed.
+    - **Reopen a park with a recorded decision.** Record the answer as a `## Qn` in
+      `todo/answers.md`, then tag the stamp `awaiting-answer Qn`: the oracle reads a
+      park that waits only on answered questions as open work, Verified and
+      Quality-reviewed stamps notwithstanding, and the staged check accepts it. A park
+      that truly waits on a machine keeps its stamp and the section gets a
+      `**Needs:**` line; fixpoint refuses one that has neither
+      (`stale_parks.py --gate`).
 
     **This is a QUALITY BAR, not a checkable rule -- do not expect a gate, and do
     not invent one.** A detector for "parked without an owner" was built on

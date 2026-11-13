@@ -163,8 +163,12 @@ def _section_is_parked(stamps: set) -> bool:
     fixpoint loop never re-visits it): shipped+reviewed (V AND Q), or a TERMINAL
     Deferred stamp (D without an awaiting-* recoverable marker DR). An item in
     such a section will NOT flip naturally on an overnight run -- it is genuinely
-    stranded."""
-    return ({"V", "Q"} <= stamps) or ("D" in stamps and "DR" not in stamps)
+    stranded.
+
+    Decided by the oracle's own `classify_section`, never a copy of its rule, so
+    the two cannot disagree: an answered park (DA) reopens a reviewed section to
+    the oracle and so is not parked here either."""
+    return st.classify_section({"status": "x", "n": 0}, {0: frozenset(stamps)}) == st.DONE
 
 
 def audit(root: Path) -> list:
@@ -338,8 +342,36 @@ def save_disposition(root: Path, key: str, action: str, reason: str) -> None:
     tmp.replace(p)
 
 
+def _closed_parks(root: Path) -> list:
+    """`stale_parks.closed_parks()` over `root`: Deferred stamps that wait on a person
+    or a machine with no `**Needs:**` line, or on the retired receipt-surface guard.
+    The fixpoint CLI runs only this gate, and `run_phase_guard.py` is frozen, so the
+    never-park rule (2026-11-11) is enforced here. A failure to load reads as none."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_stale_parks_for_gate", str(Path(__file__).resolve().parent / "stale_parks.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.closed_parks(mod.load(root))
+    except Exception:  # noqa: BLE001  fail-direction: a broken detector must not strand a run
+        return []
+
+
 def cmd_gate(root: Path, res: list) -> int:
-    """Exit 0 when every STRANDED item is dispositioned; 1 otherwise."""
+    """Exit 0 when every STRANDED item is dispositioned and no closed park waits on a
+    person or a machine without a Need; 1 otherwise."""
+    closed = _closed_parks(root)
+    if closed:
+        print(f"stranded-deferral gate: REFUSED -- {len(closed)} closed park(s) wait on a "
+              f"person, a machine or the retired receipt-surface guard with no `**Needs:**` "
+              f"line. Re-judge each: reopen it with a decision recorded in todo/answers.md "
+              f"(tag the stamp `awaiting-answer Q<n>`), or keep it and add the section's "
+              f"`**Needs:**` line.", file=sys.stderr)
+        for c in closed:
+            print(f"  {c['file']}:{c['line']} section {c['section']} waits on a {c['waits_on']}",
+                  file=sys.stderr)
+        return 1
     disp = load_dispositions(root)
     pending = [e for e in res if e.get("stranded")
                and disp.get(item_key(e), {}).get("action") not in VALID_ACTIONS]

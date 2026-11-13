@@ -124,6 +124,41 @@ def test_owner_sweep_filters_to_the_shipping_section():
               f"{expected} inbound parked item" in out)
 
 
+def test_parked_means_what_the_oracle_calls_done():
+    """A section the oracle reopens (an answered park, DA) is not parked, so its
+    items are not stranded; the oracle's DONE shapes still are."""
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import stranded_deferrals as sd
+    check("answered-park-not-parked", sd._section_is_parked({"V", "Q", "DA"}) is False)
+    check("reviewed-is-parked", sd._section_is_parked({"V", "Q"}) is True)
+    check("terminal-deferred-is-parked", sd._section_is_parked({"D"}) is True)
+    check("recoverable-deferred-not-parked", sd._section_is_parked({"D", "DR"}) is False)
+
+
+def test_gate_refuses_a_closed_park_until_it_names_a_need():
+    """The never-park rule at fixpoint (the closed-park re-judge, 2026-11-13): a Deferred stamp that waits
+    on a person or a machine refuses the gate until its section names a `**Needs:**`
+    line, and a park on the retired receipt-surface guard refuses even with one."""
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import stranded_deferrals as sd
+
+    def gate(body):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "todo" / "01-x").mkdir(parents=True)
+            (root / "todo" / "01-x" / "TODO-01-x.md").write_text(body)
+            return sd.cmd_gate(root, [])
+
+    person = "## 1. One\n\n> **Deferred:** [M] operator-gated ABI decision\n"
+    machine = "## 1. One\n\n> **Deferred:** [L] VirtualBox + bare-metal verification\n"
+    guard = "## 1. One\n\n**Needs:** bare-metal\n\n> **Deferred:** [M] the Makefile is receipt surface\n"
+    check("closed-person-refused", gate(person) == 1)
+    check("closed-machine-refused", gate(machine) == 1)
+    check("closed-guard-refused-despite-need", gate(guard) == 1)
+    check("need-clears-machine", gate(machine.replace("\n\n>", "\n\n**Needs:** bare-metal\n\n>", 1)) == 0)
+    check("plain-park-passes", gate("## 1. One\n\n> **Deferred:** [M] blocked on an item another section owns\n") == 0)
+
+
 def test_reopen_guidance_forbids_the_invisible_in_place_flip():
     """The oracle classifies on the Implementation Order ROW + section stamps,
     never on checklist items. So flipping `- [/]` -> `- [ ]` inside a shipped
@@ -157,6 +192,8 @@ if __name__ == "__main__":
     test_owner_sweep_filters_to_the_shipping_section()
     test_reopen_guidance_forbids_the_invisible_in_place_flip()
     test_fixpoint_wires_the_gate()
+    test_gate_refuses_a_closed_park_until_it_names_a_need()
+    test_parked_means_what_the_oracle_calls_done()
     if FAILS:
         for f in FAILS:
             print("FAIL:", f, file=sys.stderr)

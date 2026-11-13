@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **950 of 2607 sections complete (36%).** 116 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **923 of 2607 sections complete (35%).** 144 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -50,7 +50,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T01 §10` | Smoke-Test POST16 Assertions                                                                                          | none     |     5 |
 | [x]  | `D00 T01 §11` | Bare Section-Ref Sweep                                                                                                | none     |     5 |
 | [x]  | `D00 T01 §12` | Enforce Required-Tool Version Floors                                                                                  | none     |     8 |
-| [x]  | `D00 T01 §13` | Duplicate-Recipe Sweep in the Root Makefile                                                                           | none     |     4 |
+| [/]  | `D00 T01 §13` | Duplicate-Recipe Sweep in the Root Makefile                                                                           | none     |     4 |
 | [x]  | `D00 T01 §14` | Defect-Finding Tools: Fuzzers, UBSan, Static Analysis, Compile Cache                                                  | none     |    11 |
 | [x]  | `D00 T01 §15` | Static-Analysis Triage and Changed-File Gate                                                                          | none     |     5 |
 | [x]  | `D00 T01 §16` | Fuzz Targets for the Remaining Untrusted-Input Parsers                                                                | none     |     8 |
@@ -101,7 +101,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T04 §21` | Naming Fork's Child-PML4 Allocation, and Failing That Fork Closed                                                     | none     |     5 |
 | [x]  | `D00 T04 §22` | Honest Machine Artifacts for Skipped Sub-Tests                                                                        | none     |     8 |
 | [x]  | `D00 T04 §23` | Generated Exit-Status ABI for Ring-3 Assertions                                                                       | none     |     3 |
-| [x]  | `D00 T04 §24` | Host-Side JSON Artifact File and Abort-Aware Summaries                                                                | none     |     6 |
+| [/]  | `D00 T04 §24` | Host-Side JSON Artifact File and Abort-Aware Summaries                                                                | none     |     6 |
 | [x]  | `D00 T04 §25` | Non-Forgeable Launcher Record Framing                                                                                 | none     |     8 |
 | [x]  | `D00 T04 §26` | Generator Hardening: Preprocessor-Faithful Constant Extraction                                                        | none     |    11 |
 | [x]  | `D00 T04 §27` | Artifact Consumer Completeness: Run Identity and the Record Name Bound                                                | none     |     5 |
@@ -116,15 +116,15 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T04 §36` | Per-Binary Output Artifacts and Fail-Closed Byte Reconciliation                                                       | none     |     4 |
 | [x]  | `D00 T04 §37` | Refusal-Name Correlator and JUnit Error/Failure Classification                                                        | none     |     4 |
 | [x]  | `D00 T04 §38` | Per-Leg Generation Pointer for Coherent Document Resolution                                                           | none     |     2 |
-| [x]  | `D00 T04 §39` | Executable Identity for a Planned Entry                                                                               | none     |     4 |
+| [/]  | `D00 T04 §39` | Executable Identity for a Planned Entry                                                                               | none     |     4 |
 | [x]  | `D00 T04 §40` | Producer-Side Capture Emission Budget                                                                                 | none     |     5 |
-| [x]  | `D00 T04 §41` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                                               | none     |     1 |
+| [/]  | `D00 T04 §41` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                                               | none     |     1 |
 | [x]  | `D00 T04 §42` | Structural Reap-Grace Assertions Instead of a Wall-Clock Margin                                                       | none     |     3 |
 | [x]  | `D00 T04 §43` | Distinguishable Identity Kind for Aggregate Refusals                                                                  | none     |     4 |
-| [x]  | `D00 T04 §44` | Close the Residual Completeness Gaps §37's Review Found                                                               | none     |     4 |
+| [/]  | `D00 T04 §44` | Close the Residual Completeness Gaps §37's Review Found                                                               | none     |     4 |
 | [x]  | `D00 T04 §45` | Reader Leases for a Resolved Generation                                                                               | none     |     5 |
 | [x]  | `D00 T04 §46` | Inode-Safe Classification in the Pointer Sweep                                                                        | none     |     4 |
-| [x]  | `D00 T04 §47` | End-to-End Proof of the Loader's Identity-Mismatch Branch                                                             | none     |     7 |
+| [/]  | `D00 T04 §47` | End-to-End Proof of the Loader's Identity-Mismatch Branch                                                             | none     |     7 |
 | [x]  | `D00 T04 §48` | Wire-Published Facts the Host Enforces: Write Identity, Spawn Expectation, Chunk Bound                                | none     |     4 |
 | [x]  | `D00 T04 §49` | Run-Boundary Fence for Emitters That Outlive Their Binary                                                             | none     |     4 |
 | [x]  | `D00 T04 §50` | Per-Child Loader Evidence: Ring-3 Entry and Stage Flags in the Child, Not in Globals                                  | none     |     4 |
@@ -183,7 +183,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T06 §26` | Domain-Code Resolution Picks a Directory by Cache Order                                                               | none     |     4 |
 | [x]  | `D00 T06 §27` | Effective-History Identity: Replace Refs and Grafts                                                                   | none     |     6 |
 | [x]  | `D00 T06 §28` | Section-Level Readiness: Verbs That Consult the Dependency Evidence the Graph Actually Has                            | none     |     6 |
-| [x]  | `D00 T06 §29` | `--fix-line-numbers` Reports Success Over Targets It Could Not Resolve                                                | none     |     5 |
+| [/]  | `D00 T06 §29` | `--fix-line-numbers` Reports Success Over Targets It Could Not Resolve                                                | none     |     5 |
 | [x]  | `D00 T06 §30` | `--watch` Never Ticks on a History Change for the History-Consuming Verbs                                             | none     |     9 |
 | [x]  | `D00 T06 §31` | An Equal-Count Shallow Boundary Still Moves `created_at` Under an Unchanged Identity                                  | none     |     6 |
 | [x]  | `D00 T06 §32` | In-File Anchor Links Are Checked by Nothing                                                                           | none     |     4 |
@@ -195,7 +195,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T06 §38` | Every Gate Parser Adopts the Shared Fence Tracker                                                                     | none     |    12 |
 | [x]  | `D00 T06 §39` | The Shared Fence Tracker Becomes Container-Aware                                                                      | none     |     6 |
 | [x]  | `D00 T06 §40` | An Inputs Section Marker Keeps Its Closing Backtick, So One Dependency Is Two Edges                                   | none     |     4 |
-| [x]  | `D00 T06 §41` | The Two Mutating Repair Tools Adopt the Shared Fence Tracker                                                          | none     |     6 |
+| [/]  | `D00 T06 §41` | The Two Mutating Repair Tools Adopt the Shared Fence Tracker                                                          | none     |     6 |
 | [x]  | `D00 T06 §42` | HTML Blocks Join the Tracker, and the Terminal Contract Carries the Block Kind                                        | none     |     8 |
 | [x]  | `D00 T06 §43` | Finish the One-Contract Consolidation Across the Consumer Closure                                                     | none     |     3 |
 | [x]  | `D00 T06 §44` | The Inline Scanner Honours CommonMark Precedence, and the Table Cell Reaches It Unmodified                            | none     |    10 |
@@ -211,7 +211,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T06 §54` | The Gate Adjudicates the WORKING TREE While the Push Carries the COMMIT                                               | none     |     4 |
 | [x]  | `D00 T06 §55` | The Byte-Identical Path Pays for a Full Base Checkout It Does Not Need                                                | none     |     6 |
 | [x]  | `D00 T06 §56` | The Resolver Walks Leak What the Tree Spawns on the Path Where They SUCCEED                                           | none     |     6 |
-| [x]  | `D00 T06 §57` | The Hook Certifies Repository HEAD, Not the Commit Being Pushed                                                       | none     |     4 |
+| [/]  | `D00 T06 §57` | The Hook Certifies Repository HEAD, Not the Commit Being Pushed                                                       | none     |     4 |
 | [x]  | `D00 T06 §58` | Head-Versus-Tree Checks Section 54 Made Unreachable Are Retired or Re-Fixtured                                        | none     |     5 |
 | [x]  | `D00 T06 §59` | The Identity-Gate Fixture Group Pays for a Whole Repository and Proves Less Than It Claims                            | none     |     6 |
 | [x]  | `D00 T06 §60` | Every Name-Resolved Use of TMP_DIR Is Still a Name                                                                    | none     |     5 |
@@ -240,7 +240,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T07 §23` | Injected-Clock Deadline Coverage and the Non-Dumpable-Child Reap Blind Spot                                           | none     |     7 |
 | [x]  | `D00 T07 §24` | Single-Pass Procfs Cleanup in the Teardown Sweep                                                                      | none     |     4 |
 | [x]  | `D00 T07 §25` | Restart-Publish Confirmed-Dead Gate and Single-Flight Teardown                                                        | none     |     7 |
-| [x]  | `D00 T07 §26` | Teardown Verdict Propagation and a Non-Reaping Liveness Probe                                                         | none     |     6 |
+| [/]  | `D00 T07 §26` | Teardown Verdict Propagation and a Non-Reaping Liveness Probe                                                         | none     |     6 |
 | [x]  | `D00 T08 §1`  | Codex MCP Wiring + Cross-Config Drift Validator                                                                       | none     |    10 |
 | [x]  | `D00 T08 §2`  | Codex Invocation Policy: No `--model` / `--effort` From Claude                                                        | none     |     7 |
 | [x]  | `D00 T08 §3`  | `receiving-code-review` Hard Gate: State File + Post-Codex Hook Block                                                 | none     |    10 |
@@ -272,14 +272,14 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T08 §29` | Standardize PreToolUse Prefix-Allowlist Across Gates                                                                  | none     |     7 |
 | [x]  | `D00 T08 §30` | Shell-Aware Codex Dispatch Segmentation in `_review_kind`                                                             | none     |     9 |
 | [x]  | `D00 T08 §31` | Post-Commit Hook Concurrency: Serialize Build/Smoke via flock                                                         | none     |     5 |
-| [x]  | `D00 T08 §32` | Grammar-Accurate Shell Segmentation for the Gate Exemptions                                                           | none     |     4 |
+| [/]  | `D00 T08 §32` | Grammar-Accurate Shell Segmentation for the Gate Exemptions                                                           | none     |     4 |
 | [x]  | `D00 T08 §33` | Section-commit gate reads an untokenizable commit line as a commit                                                    | none     |     8 |
 | [x]  | `D00 T08 §34` | Section-commit gate test wiring that kernel sources can satisfy                                                       | none     |     5 |
 | [/]  | `D00 T08 §35` | Cross-section review of a closed TODO file                                                                            | none     |     4 |
 | [x]  | `D00 T08 §36` | Second-boot leg in the smoke matrix                                                                                   | none     |     4 |
 | [x]  | `D00 T08 §37` | Syscall argument counts in the ABI fingerprint                                                                        | none     |     5 |
 | [x]  | `D00 T08 §38` | Release-flavor build at the section boundary                                                                          | none     |     8 |
-| [ ]  | `D00 T08 §39` | Re-judge the closed parks under the never-park rule                                                                   | none     |     5 |
+| [/]  | `D00 T08 §39` | Re-judge the closed parks under the never-park rule                                                                   | none     |     5 |
 | [ ]  | `D00 T08 §40` | Pytest-style control-plane tests run in the suite                                                                     | none     |     5 |
 | [ ]  | `D00 T08 §41` | CI jobs run in the pinned image                                                                                       | none     |     5 |
 | [x]  | `D00 T09 §1`  | Preflight Inventory and Risk Register                                                                                 | none     |    10 |
@@ -351,12 +351,12 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T01 §18` | Anti-Rollback Integration in Version Fault Diagnostics                                            | none       |     8 |
 | [x]  | `D01 T01 §19` | Stale-ABI QEMU Fixture Harness                                                                    | none       |    12 |
 | [x]  | `D01 T01 §20` | Bootloader Build Identity                                                                         | none       |     8 |
-| [x]  | `D01 T01 §21` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     5 |
+| [/]  | `D01 T01 §21` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     5 |
 | [/]  | `D01 T01 §22` | Handoff Base in the Deploy-Time ABI Fingerprint                                                   | none       |     9 |
 | [/]  | `D01 T01 §23` | Integrity Coverage for the Handoff Payload Body                                                   | none       |     3 |
 | [x]  | `D01 T01 §24` | Scripted Anti-Rollback NVRAM Fixture Harness                                                      | none       |    17 |
 | [x]  | `D01 T01 §25` | Bounded Retry for a Transient Rollback-Floor Write                                                | none       |     5 |
-| [x]  | `D01 T01 §26` | Enum-VALUE Drift Detection for the Bootloader Mirror                                              | none       |     5 |
+| [/]  | `D01 T01 §26` | Enum-VALUE Drift Detection for the Bootloader Mirror                                              | none       |     5 |
 | [x]  | `D01 T01 §27` | Descriptor Capacity for the Implicit Publishers                                                   | none       |     5 |
 | [x]  | `D01 T01 §28` | Per-Type Payload Length Contract Before Reserving                                                 | none       |    23 |
 | [x]  | `D01 T01 §29` | One Warm-Update Descriptor, Chosen the Same Way by Both Phases                                    | none       |     4 |
@@ -378,7 +378,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T02 §15` | Post-boot SecureBoot Revalidation                                                                 | none       |     6 |
 | [x]  | `D01 T02 §16` | Signed `.initrd` / Recovery / Module PE Sections in UKI                                           | none       |    16 |
 | [x]  | `D01 T02 §17` | SBAT Revocation Metadata in Boot Artifacts                                                        | none       |     6 |
-| [x]  | `D01 T02 §18` | Build Idempotency: UKI SBAT Survives Incremental Rebuild                                          | none       |     6 |
+| [/]  | `D01 T02 §18` | Build Idempotency: UKI SBAT Survives Incremental Rebuild                                          | bare-metal |     6 |
 | [x]  | `D01 T02 §19` | Bootloader `ReadBlocks` IoAlign Compliance                                                        | none       |     4 |
 | [x]  | `D01 T02 §20` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     9 |
 | [x]  | `D01 T03 §1`  | ELF Bounds Checking                                                                               | none       |    11 |
@@ -414,7 +414,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T04 §7`  | UEFI Conformance Profile and EBBR Detection                                                       | none       |     9 |
 | [x]  | `D01 T04 §8`  | Registry and BlackBox Firmware Report                                                             | none       |     5 |
 | [x]  | `D01 T04 §9`  | Firmware Quirk Database                                                                           | none       |     5 |
-| [x]  | `D01 T04 §10` | Firmware Inventory Tests and Host Decoder                                                         | none       |     9 |
+| [x]  | `D01 T04 §10` | Firmware Inventory Tests and Host Decoder                                                         | bare-metal |     9 |
 | [x]  | `D01 T04 §11` | Firmware Inventory Bug-Fix Debt                                                                   | none       |     4 |
 | [x]  | `D01 T04 §12` | Firmware Inventory Refactor Debt                                                                  | none       |     4 |
 | [x]  | `D01 T05 §1`  | Boot Device Identification via LoadedImage                                                        | none       |     7 |
@@ -502,7 +502,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T10 §11` | ~~`boot.conf` Subsystem Skip List~~                                                               | none       |     1 |
 | [x]  | `D01 T10 §12` | Logging and Diagnostic Storage Moved to TODO-24                                                   | none       |     3 |
 | [x]  | `D01 T10 §13` | CPU Feature Minimum Requirements and Verification                                                 | none       |     5 |
-| [x]  | `D01 T10 §14` | Bare-Metal Test Matrix and Validation Plan                                                        | none       |     6 |
+| [x]  | `D01 T10 §14` | Bare-Metal Test Matrix and Validation Plan                                                        | bare-metal |     6 |
 | [x]  | `D01 T10 §15` | Boot Splash Spinner Bare-Metal Fix                                                                | none       |     7 |
 | [x]  | `D01 T10 §16` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     4 |
 | [x]  | `D01 T10 §17` | Emergency-Writer Robustness Residuals (from the §16 review)                                       | none       |     4 |
@@ -516,7 +516,7 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T10 §25` | GS-Validated Per-CPU Identity Cache (split from §20)                                              | none       |     4 |
 | [x]  | `D01 T10 §26` | Attributable Emergency-Ledger Claim (split from §20)                                              | none       |     5 |
 | [x]  | `D01 T10 §27` | Async Worker Quiescence and Terminal Bringup Handshake (from the §21 review)                      | none       |     4 |
-| [x]  | `D01 T10 §28` | Cross-Boot Evidence Durability Across a Hardware Reset (from the §23 review)                      | none       |     2 |
+| [/]  | `D01 T10 §28` | Cross-Boot Evidence Durability Across a Hardware Reset (from the §23 review)                      | bare-metal |     2 |
 | [x]  | `D01 T10 §29` | Abandoned-Reservation Reclamation on a Parking CPU (from the §26 review)                          | none       |     4 |
 | [x]  | `D01 T10 §30` | Panic-Path States That Are Documented But Not Implemented (from the §29 review)                   | none       |     3 |
 | [x]  | `D01 T10 §31` | Guard Page Under the BSP Ring-0 Entry Stack                                                       | none       |     5 |
@@ -560,9 +560,9 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 | [x]  | `D01 T13 §17` | Write-Locked and Monotonic NV Index Primitives                                                    | none       |     6 |
 | [x]  | `D01 T13 §18` | Atomic Boot-Integrity Report Publication                                                          | none       |     7 |
 | [x]  | `D01 T13 §19` | Versioned Baseline Growth and NV Index Migration                                                  | none       |    11 |
-| [x]  | `D01 T13 §20` | BOOTX64.EFI On-Disk Self-Measurement                                                              | none       |     7 |
+| [/]  | `D01 T13 §20` | BOOTX64.EFI On-Disk Self-Measurement                                                              | none       |     7 |
 | [x]  | `D01 T13 §21` | Authenticated NV Index Lifecycle and Anti-Rollback Trust Anchor                                   | none       |     9 |
-| [x]  | `D01 T13 §22` | Bootloader-Side NV Floor Read (EFI_TCG2 Adapter)                                                  | none       |     8 |
+| [/]  | `D01 T13 §22` | Bootloader-Side NV Floor Read (EFI_TCG2 Adapter)                                                  | none       |     8 |
 | [x]  | `D01 T13 §23` | Headless Enrollment Authorization Escape Hatch                                                    | none       |     9 |
 | [x]  | `D01 T13 §24` | Extend the Bounded Sequence and Teardown Proof to Seal and Attestation                            | none       |     7 |
 | [x]  | `D01 T13 §25` | Field-Level Baseline Mismatch Attribution and Status Scoping                                      | none       |     4 |
@@ -753,579 +753,579 @@ Nothing runs until the machine boots, and a boot defect hides every defect behin
 
 The kernel's own model comes straight after boot because every driver, filesystem and user-mode API is written against it: the object manager, processes and threads, the syscall tables, security, the registry, exceptions and the binary loaders.
 
-| Done | Section       | Deliverable                                                                                       | Needs | Items |
-| :--: | ------------- | ------------------------------------------------------------------------------------------------- | ----- | ----: |
-| [x]  | `D02 T01 §1`  | Boot Init Infrastructure                                                                          | none  |    11 |
-| [x]  | `D02 T01 §2`  | Phase 0 -- Critical Init (Interrupts Disabled)                                                    | none  |    21 |
-| [x]  | `D02 T01 §3`  | Phase 1 -- Platform Services (Interrupts Enabled at End)                                          | none  |    25 |
-| [ ]  | `D02 T01 §4`  | Phase 2 -- System Services                                                                        | none  |    23 |
-| [x]  | `D02 T01 §5`  | Phase 3 -- User Platform                                                                          | none  |    11 |
-| [ ]  | `D02 T01 §6`  | Dependency Gates                                                                                  | none  |     5 |
-| [ ]  | `D02 T01 §7`  | Failure Policy                                                                                    | none  |    12 |
-| [x]  | `D02 T01 §8`  | Code Cleanup                                                                                      | none  |    11 |
-| [ ]  | `D02 T01 §9`  | Degraded-Boot Recovery Screen                                                                     | none  |    10 |
-| [x]  | `D02 T01 §10` | POST Code + UEFI Variable Log                                                                     | none  |     9 |
-| [ ]  | `D02 T01 §11` | Deferred Init for Non-Critical Subsystems                                                         | none  |    12 |
-| [ ]  | `D02 T01 §12` | Boot Performance Regression Detection                                                             | none  |    10 |
-| [ ]  | `D02 T01 §13` | Async Subsystem Init (SMP Parallel)                                                               | none  |    15 |
-| [x]  | `D02 T02 §1`  | Boot Argument Schema and Parser                                                                   | none  |     7 |
-| [x]  | `D02 T02 §2`  | `kernel_config_t` Immutable Phase 0 Snapshot                                                      | none  |     6 |
-| [x]  | `D02 T02 §3`  | Registry-Backed Policy Merge                                                                      | none  |     7 |
-| [x]  | `D02 T02 §4`  | ControlSet and LastKnownGood Selection                                                            | none  |     6 |
-| [x]  | `D02 T02 §5`  | Safe Mode and Recovery Policy Object                                                              | none  |     7 |
-| [x]  | `D02 T02 §6`  | Runtime Tunable Registry                                                                          | none  |     7 |
-| [x]  | `D02 T02 §7`  | Feature Flag Gates and Experiment Cohorts                                                         | none  |     6 |
-| [x]  | `D02 T02 §8`  | Native Query/Set Config Syscalls                                                                  | none  |     6 |
-| [x]  | `D02 T02 §9`  | Policy Lock Phases and Tamper Audit                                                               | none  |     7 |
-| [x]  | `D02 T02 §10` | Boot Status Policy and Boot Success Ledger                                                        | none  |     7 |
-| [x]  | `D02 T02 §11` | Config Dump, Tests, and Docs                                                                      | none  |     6 |
-| [ ]  | `D02 T02 §12` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none  |     1 |
-| [ ]  | `D02 T03 §1`  | Freestanding String Library                                                                       | none  |    12 |
-| [ ]  | `D02 T03 §2`  | Complete Floating-Point Math Library                                                              | none  |    15 |
-| [x]  | `D02 T03 §3`  | LZ4 Block Compressor                                                                              | none  |    10 |
-| [x]  | `D02 T03 §4`  | miniz Deflate / Inflate + ZIP                                                                     | none  |    10 |
-| [x]  | `D02 T03 §5`  | Monocypher Crypto Primitives + Kernel CSPRNG                                                      | none  |    13 |
-| [ ]  | `D02 T03 §6`  | cJSON DOM Parser                                                                                  | none  |    11 |
-| [/]  | `D02 T03 §7`  | Mbed TLS Freestanding Port                                                                        | none  |     6 |
-| [x]  | `D02 T03 §8`  | Checksum and Codec Dispatch (CRC32 / CRC32C / base64 / hex)                                       | none  |     7 |
-| [x]  | `D02 T03 §9`  | Zstandard (zstd) Compression                                                                      | none  |     7 |
-| [x]  | `D02 T03 §10` | SHA-3 / SHAKE (Keccak) Hash Family                                                                | none  |     6 |
-| [x]  | `D02 T04 §1`  | Boot-Phase Aware klog Init                                                                        | none  |     6 |
-| [ ]  | `D02 T04 §2`  | Per-Subsystem Log Splitting                                                                       | none  |     9 |
-| [x]  | `D02 T04 §3`  | Per-Subsystem Verbosity Control                                                                   | none  |     6 |
-| [ ]  | `D02 T04 §4`  | Log Rotation                                                                                      | none  |    10 |
-| [x]  | `D02 T04 §5`  | Rate Limiting                                                                                     | none  |     6 |
-| [x]  | `D02 T04 §6`  | Structured JSON Log Events                                                                        | none  |     9 |
-| [x]  | `D02 T04 §7`  | ETW Tracing Syscalls Wired to SSDT                                                                | none  |     9 |
-| [ ]  | `D02 T04 §8`  | Crash-Persistent Log Capture                                                                      | none  |    13 |
-| [x]  | `D02 T04 §9`  | Per-Entry Context Metadata                                                                        | none  |    10 |
-| [ ]  | `D02 T04 §10` | Log Integrity Verification                                                                        | none  |    10 |
-| [/]  | `D02 T04 §11` | ETW Provider Registration and Session Filtering                                                   | none  |     9 |
-| [x]  | `D02 T04 §12` | ETW Advanced Capture -- Stack-Walk, Autologger, Self-Describing Schema                            | none  |     6 |
-| [x]  | `D02 T04 §13` | Rotated-Log Compression                                                                           | none  |     8 |
-| [ ]  | `D02 T04 §14` | Serial Timestamp Render Bound                                                                     | none  |     2 |
-| [ ]  | `D02 T04 §15` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none  |     7 |
-| [ ]  | `D02 T04 §16` | Klog Assertions and Scans That Depend on Nothing Else Having Logged                               | none  |     6 |
-| [ ]  | `D02 T04 §17` | Bounded Wait Until the Sinks Have Caught Up to a Given Sequence                                   | none  |     4 |
-| [ ]  | `D02 T05 §1`  | OBJECT_HEADER and OBJECT_TYPE Infrastructure                                                      | none  |     8 |
-| [x]  | `D02 T05 §2`  | Reference Counting and Object Lifetime                                                            | none  |     6 |
-| [ ]  | `D02 T05 §3`  | Per-Process Handle Table                                                                          | none  |    15 |
-| [ ]  | `D02 T05 §4`  | Object Namespace                                                                                  | none  |    20 |
-| [ ]  | `D02 T05 §5`  | File, Process, Thread object types                                                                | none  |     5 |
-| [ ]  | `D02 T05 §6`  | Synchronisation Object Types                                                                      | none  |    11 |
-| [ ]  | `D02 T05 §7`  | Section (Shared Memory) Object Type                                                               | none  |     9 |
-| [x]  | `D02 T05 §8`  | Security Descriptor Integration                                                                   | none  |     7 |
-| [ ]  | `D02 T05 §10` | Handle Inheritance Across CreateProcess                                                           | none  |     7 |
-| [ ]  | `D02 T05 §11` | Unified Kernel-User Namespace Browser API                                                         | none  |     5 |
-| [x]  | `D02 T05 §12` | Per-Type Object and Handle Statistics                                                             | none  |     9 |
-| [x]  | `D02 T05 §13` | Object Callbacks -- Handle Operation Filtering                                                    | none  |    14 |
-| [ ]  | `D02 T05 §14` | Per-Process Handle Quota                                                                          | none  |     9 |
-| [ ]  | `D02 T05 §15` | Handle Tracing and Leak Detection                                                                 | none  |    12 |
-| [x]  | `D02 T06 §1`  | Executive Headers and Namespace                                                                   | none  |     6 |
-| [x]  | `D02 T06 §2`  | Interlocked SLIST                                                                                 | none  |     6 |
-| [x]  | `D02 T06 §3`  | Rundown Protection                                                                                | none  |     6 |
-| [x]  | `D02 T06 §4`  | Callback Objects                                                                                  | none  |     9 |
-| [x]  | `D02 T06 §5`  | Lookaside Lists (NPaged, Paged, and Ex)                                                           | none  |     7 |
-| [x]  | `D02 T06 §6`  | Fast References                                                                                   | none  |     5 |
-| [x]  | `D02 T06 §7`  | Generic Tables and Bitmaps                                                                        | none  |     6 |
-| [x]  | `D02 T06 §8`  | Push Locks                                                                                        | none  |     4 |
-| [x]  | `D02 T06 §9`  | Fast and Guarded Mutexes                                                                          | none  |     4 |
-| [x]  | `D02 T06 §10` | Executive Resource Wrapper                                                                        | none  |     6 |
-| [x]  | `D02 T06 §11` | Run-Once Initialization                                                                           | none  |     4 |
-| [x]  | `D02 T06 §12` | Worker Items, Delayed Work, and Ex Timers                                                         | none  |     6 |
-| [x]  | `D02 T06 §13` | Bugcheck Reason Callbacks                                                                         | none  |     5 |
-| [x]  | `D02 T06 §14` | Executive Verifier Hooks                                                                          | none  |     5 |
-| [x]  | `D02 T07 §1`  | `KIRQL` Type, Constants, and Core Contract                                                        | none  |     6 |
-| [x]  | `D02 T07 §2`  | Per-CPU IRQL Tracking and Transition Primitives                                                   | none  |     7 |
-| [ ]  | `D02 T07 §3`  | Interrupt Entry/Exit IRQL Integration                                                             | none  |     8 |
-| [x]  | `D02 T07 §4`  | DPC Object Type and Per-CPU Queue                                                                 | none  |     6 |
-| [x]  | `D02 T07 §5`  | DPC Drain Loop at `DISPATCH_LEVEL`                                                                | none  |     7 |
-| [ ]  | `D02 T07 §6`  | Timer/APIC Scheduling Path for DPC Dispatch                                                       | none  |     7 |
-| [x]  | `D02 T07 §7`  | DPC Targeting, Importance, and Flush                                                              | none  |    10 |
-| [x]  | `D02 T07 §8`  | Threaded DPCs (`PASSIVE_LEVEL` DPC Variant)                                                       | none  |     6 |
-| [ ]  | `D02 T07 §9`  | Timer-DPC Association                                                                             | none  |     8 |
-| [ ]  | `D02 T07 §10` | Driver Migration and Workqueue Contract Split                                                     | none  |     8 |
-| [ ]  | `D02 T07 §11` | APC Object Type and Per-Thread Queues                                                             | none  |    13 |
-| [ ]  | `D02 T07 §12` | APC Delivery Mechanism (KiDeliverApc)                                                             | none  |    10 |
-| [ ]  | `D02 T07 §13` | IRQL Violation Traps and Structured Telemetry                                                     | none  |     8 |
-| [ ]  | `D02 T07 §14` | Budgeted DPC/APC Fairness and Starvation Watchdog                                                 | none  |    10 |
-| [ ]  | `D02 T07 §15` | Threaded DPC List Synchronization                                                                 | none  |     9 |
-| [x]  | `D02 T07 §16` | KeFlushQueuedDpcs Threaded DPC Completion                                                         | none  |     6 |
-| [x]  | `D02 T07 §17` | Per-CPU Threaded DPC Worker Affinity                                                              | none  |     6 |
-| [x]  | `D02 T07 §18` | System Worker Thread Pool (Long-Period Periodic Callbacks)                                        | none  |    12 |
-| [x]  | `D02 T07 §19` | Interference-Proof DPC Depth-Accounting Test Seam                                                 | none  |     5 |
-| [x]  | `D02 T08 §1`  | `FILETIME` Type, Epoch Constants, and Conversion Math                                             | none  |     6 |
-| [x]  | `D02 T08 §2`  | Monotonic Nanosecond Clock Source Selection                                                       | none  |     9 |
-| [x]  | `D02 T08 §3`  | Invariant TSC Detection and Per-CPU Offset Calibration                                            | none  |    11 |
-| [x]  | `D02 T08 §4`  | HPET Standalone Driver                                                                            | none  |     7 |
-| [x]  | `D02 T08 §5`  | Wall Clock Init from UEFI GetTime / RTC                                                           | none  |     8 |
-| [x]  | `D02 T08 §6`  | Kernel Time Service                                                                               | none  |     6 |
-| [x]  | `D02 T08 §7`  | Interrupt Time and Unbiased Interrupt Time APIs                                                   | none  |     5 |
-| [x]  | `D02 T08 §8`  | Timer Resolution Management                                                                       | none  |     8 |
-| [x]  | `D02 T08 §9`  | `NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter`                               | none  |     6 |
-| [x]  | `D02 T08 §10` | Precise System Time (`KeQuerySystemTimePrecise`)                                                  | none  |     3 |
-| [x]  | `D02 T08 §11` | Timezone Bias and DST Management                                                                  | none  |     5 |
-| [x]  | `D02 T08 §12` | KUSER_SHARED_DATA Time Field Updates                                                              | none  |    10 |
-| [x]  | `D02 T08 §13` | Filesystem Timestamp Encoding (FAT32 + NTFS)                                                      | none  |     5 |
-| [x]  | `D02 T08 §14` | Suspend/Hibernate Time Bias Tracking                                                              | none  |     6 |
-| [x]  | `D02 T08 §15` | Leap Second Policy                                                                                | none  |     6 |
-| [x]  | `D02 T08 §16` | Coarse Time Fast Path                                                                             | none  |     6 |
-| [x]  | `D02 T08 §17` | NTP Clock Adjustment Hooks                                                                        | none  |     9 |
-| [ ]  | `D02 T08 §18` | Clocksource Quality Watchdog                                                                      | none  |    11 |
-| [x]  | `D02 T08 §19` | NTP Continuous Wall-Time Discipline                                                               | none  |     5 |
-| [x]  | `D02 T09 §1`  | XSAVE / XRSTOR State Management                                                                   | none  |    13 |
-| [x]  | `D02 T09 §2`  | AVX/AVX2 Kernel Memops + Framebuffer Blit                                                         | none  |     6 |
-| [x]  | `D02 T09 §3`  | AVX-512 Opt-In + Future Silicon Detection                                                         | none  |     7 |
-| [x]  | `D02 T09 §4`  | MSR Management Infrastructure                                                                     | none  |     6 |
-| [x]  | `D02 T09 §5`  | UMIP + PKU Protection Keys                                                                        | none  |    10 |
-| [x]  | `D02 T09 §6`  | 1 GiB Huge Pages + Write-Combining PAT                                                            | none  |     8 |
-| [x]  | `D02 T09 §7`  | FRED Unified Event Delivery                                                                       | none  |    10 |
-| [x]  | `D02 T09 §8`  | LKGS Fast GS-Base Swap                                                                            | none  |     6 |
-| [x]  | `D02 T09 §9`  | CPU Topology: Zen Chiplets + Intel Hybrid                                                         | none  |     7 |
-| [x]  | `D02 T09 §10` | Performance Monitoring Counters: Intel + AMD                                                      | none  |    11 |
-| [x]  | `D02 T09 §11` | OSVW Errata + RDTSCP Processor ID Setup                                                           | none  |     5 |
-| [x]  | `D02 T09 §12` | AMD IBS Profiling (Stretch)                                                                       | none  |     8 |
-| [x]  | `D02 T09 §13` | Virtualization Detection (AMD-V + Intel VT-x)                                                     | none  |     4 |
-| [ ]  | `D02 T09 §14` | Boot Self-Benchmark + Auto-Tune                                                                   | none  |    10 |
-| [x]  | `D02 T09 §15` | Future Silicon Extensions                                                                         | none  |     6 |
-| [x]  | `D02 T09 §16` | Boot Page Tables: 1 GiB Pages From entry.asm                                                      | none  |     7 |
-| [x]  | `D02 T09 §17` | AMX Tile State + XFD Dynamic XSAVE                                                                | none  |    11 |
-| [ ]  | `D02 T09 §18` | Split-Lock + Bus-Lock Detection                                                                   | none  |     8 |
-| [x]  | `D02 T09 §19` | Additional CPU Feature Adoption: WAITPKG, SERIALIZE, RDPID                                        | none  |     6 |
-| [ ]  | `D02 T09 §20` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none  |     1 |
-| [x]  | `D02 T10 §1`  | NX Bit: EFER.NXE + PTE NX on All Non-Code Mappings                                                | none  |    10 |
-| [x]  | `D02 T10 §2`  | SMEP & SMAP: CR4 Activation + CLAC/STAC Wrappers                                                  | none  |    13 |
-| [x]  | `D02 T10 §3`  | KPTI Trampoline Page + Per-CPU CR3 Fields                                                         | none  |     5 |
-| [x]  | `D02 T10 §4`  | KPTI SYSCALL CR3 Swap                                                                             | none  |     6 |
-| [x]  | `D02 T10 §5`  | KPTI IDT CR3 Swap (All 256 Vectors)                                                               | none  |     7 |
-| [x]  | `D02 T10 §6`  | KPTI User CR3 Allocation + Context Switch                                                         | none  |     6 |
-| [x]  | `D02 T10 §7`  | PCID: TLB Tagging for No-Flush CR3 Switch                                                         | none  |     6 |
-| [x]  | `D02 T10 §8`  | Spectre Mitigations: IBRS/IBPB + Retpoline                                                        | none  |    12 |
-| [x]  | `D02 T10 §10` | CET Indirect Branch Tracking (IBT / ENDBR64)                                                      | none  |     8 |
-| [x]  | `D02 T10 §11` | Kernel Heap Hardening: Cookies & Redzones                                                         | none  |    10 |
-| [x]  | `D02 T10 §12` | Stack Canaries (`-fstack-protector-strong`)                                                       | none  |     8 |
-| [ ]  | `D02 T10 §13` | Kernel Stack Guard Pages                                                                          | none  |    10 |
-| [x]  | `D02 T10 §14` | KASLR: RDRAND Kernel Load Address                                                                 | none  |     9 |
-| [x]  | `D02 T10 §15` | Enclave and Code Signing Syscalls Wired to SSDT                                                   | none  |    10 |
-| [ ]  | `D02 T10 §16` | Secure Boot Lockdown Enforcement                                                                  | none  |     8 |
-| [ ]  | `D02 T10 §17` | Kernel-Image W^X: .text Read-Only + .rodata RO-After-Init                                         | none  |     9 |
-| [x]  | `D02 T10 §18` | CPU Feature-Flag 128-bit Expansion (`cpu_feature_mask_t`)                                         | none  |     7 |
-| [x]  | `D02 T10 §19` | Microarchitectural Data-Sampling Clears (MDS / TAA / SRBDS / MMIO)                                | none  |     6 |
-| [ ]  | `D02 T10 §20` | kCFI: Software Control-Flow Integrity for Indirect Calls                                          | none  |     6 |
-| [ ]  | `D02 T10 §21` | FORTIFY_SOURCE: Bounds-Checked str/mem Builtins                                                   | none  |     5 |
-| [ ]  | `D02 T10 §22` | stackleak: Erase Kernel Stack on Return to User                                                   | none  |     5 |
-| [ ]  | `D02 T10 §23` | KFENCE: Sampling Use-After-Free / Out-of-Bounds Detector                                          | none  |     6 |
-| [x]  | `D02 T10 §24` | Mitigation Visibility: Queryable Security Posture                                                 | none  |     5 |
-| [x]  | `D02 T10 §25` | Spectre Predictor-Policy Mitigations: SSBD, STIBP, RSB, BHI, ITS, Retbleed                        | none  |    10 |
-| [x]  | `D02 T10 §26` | Release-Build Test-Surface Exclusion                                                              | none  |    11 |
-| [x]  | `D02 T10 §27` | Release-Flavor Proof: Seam-Inventory Gate and CI Attestation                                      | none  |     6 |
-| [x]  | `D02 T10 §28` | Test-Only Translation Units Outside `src/kernel/test/`                                            | none  |     8 |
-| [x]  | `D02 T10 §29` | Guard Unguarded Test-Only Helper Functions in Production TUs                                      | none  |     6 |
-| [x]  | `D02 T10 §30` | Signed CI Attestation for the Release-Flavor Proof Gate                                           | none  |     5 |
-| [ ]  | `D02 T10 §31` | Legacy-Syscall User-Pointer Validation                                                            | none  |     5 |
-| [ ]  | `D02 T10 §32` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none  |     3 |
-| [x]  | `D02 T11 §1`  | TEB Struct and GS Self-Pointer                                                                    | none  |     5 |
-| [x]  | `D02 T11 §2`  | PEB Struct and RTL_USER_PROCESS_PARAMETERS                                                        | none  |     7 |
-| [x]  | `D02 T11 §3`  | swapgs on INT 0x80 Entry and Exit                                                                 | none  |     6 |
-| [x]  | `D02 T11 §4`  | KERNEL_GS_BASE Written at task_exec and Fork                                                      | none  |     7 |
-| [x]  | `D02 T11 §5`  | PEB Allocation and Population at task_exec                                                        | none  |     9 |
-| [x]  | `D02 T11 §6`  | TEB Allocation and Population at Thread Create                                                    | none  |     7 |
-| [x]  | `D02 T11 §7`  | Initial User Stack Frame                                                                          | none  |     6 |
-| [x]  | `D02 T11 §8`  | PEB Ldr (Module List) Basic Population                                                            | none  |     7 |
-| [x]  | `D02 T11 §9`  | TLS Slot Allocation (64 Static Slots)                                                             | none  |     6 |
-| [x]  | `D02 T11 §10` | PEB / TEB Exposed in Ob Namespace                                                                 | none  |     6 |
-| [ ]  | `D02 T11 §11` | KUSER_SHARED_DATA -- Kernel-User Shared Page                                                      | none  |    11 |
-| [x]  | `D02 T11 §12` | TLS Expansion Slots (1024 Dynamic Slots)                                                          | none  |    10 |
-| [x]  | `D02 T11 §13` | Extended Auxiliary Vector (AT_RANDOM, AT_PHDR, AT_PHNUM)                                          | none  |    12 |
-| [x]  | `D02 T11 §14` | User-Mode Thread Bootstrap (uthread_create)                                                       | none  |    11 |
-| [x]  | `D02 T11 §15` | Per-thread TEB Allocation at uthread_create()                                                     | none  |    11 |
-| [/]  | `D02 T11 §17` | PEB x64 Version-Field Offsets                                                                     | none  |     6 |
-| [ ]  | `D02 T11 §18` | Paranoid swapgs Entry for NMI / #DF / #MCE                                                        | none  |     6 |
-| [/]  | `D02 T11 §19` | exec/fork/switch GS-base Staging Correctness and Cost                                             | none  |     6 |
-| [/]  | `D02 T11 §16` | TEB Multi-Page Mapping and User-VA Non-Overlap                                                    | none  |     9 |
-| [ ]  | `D02 T11 §20` | PEB Allocation Robustness and Win32 ABI Handoff                                                   | none  |     7 |
-| [/]  | `D02 T11 §21` | Format-Specific User Startup Frame (ELF / PE / EIF) + Env Unification                             | none  |     3 |
-| [ ]  | `D02 T11 §22` | PEB Ldr Module Identity (DllBase / SizeOfImage / Name)                                            | none  |     3 |
-| [/]  | `D02 T11 §23` | Per-thread TLS Value Storage (Static + Expansion)                                                 | none  |     3 |
-| [ ]  | `D02 T11 §24` | PEB/TEB Ob-Namespace Exposure: Safe Wrapper Objects + Lifecycle                                   | none  |     6 |
-| [ ]  | `D02 T11 §25` | TLS Expansion Mapping Safety and Alloc Race                                                       | none  |     3 |
-| [ ]  | `D02 T11 §26` | auxv Hardening: Classified AT_RANDOM + Validated AT_PHDR                                          | none  |     3 |
-| [ ]  | `D02 T11 §27` | uthread_create Robustness: Guard-page Cleanup + tid Reservation + Stack-size Validation           | none  |     5 |
-| [ ]  | `D02 T11 §28` | Intermittent TEB-without-kernel_gs_base Halt at Ring-3 Entry                                      | none  |     4 |
-| [x]  | `D02 T12 §1`  | NTSTATUS Type and Canonical Status Codes                                                          | none  |     6 |
-| [x]  | `D02 T12 §2`  | SYSCALL/SYSRET Fast Path                                                                          | none  |     8 |
-| [ ]  | `D02 T12 §3`  | INT 0x2E Compatibility Path                                                                       | none  |     7 |
-| [x]  | `D02 T12 §4`  | System Service Descriptor Table (SSDT)                                                            | none  |    11 |
-| [x]  | `D02 T12 §5`  | Nt/Zw Naming and Existing Syscall Migration                                                       | none  |    19 |
-| [ ]  | `D02 T12 §6`  | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile                                    | none  |    15 |
-| [ ]  | `D02 T12 §7`  | NtCreateProcess / NtCreateThread / Process-Thread Lifecycle                                       | none  |    39 |
-| [x]  | `D02 T12 §8`  | Synchronisation Objects + NtWaitForMultipleObjects                                                | none  |    31 |
-| [x]  | `D02 T12 §9`  | Virtual Memory (Alloc, Free, Protect, Lock, Cross-Process)                                        | none  |    17 |
-| [ ]  | `D02 T12 §10` | NtQuerySystemInformation / NtQueryInformationProcess                                              | none  |    15 |
-| [x]  | `D02 T12 §11` | Extended Error Information (IOSB + LastError)                                                     | none  |     6 |
-| [x]  | `D02 T12 §12` | ZwXxx Kernel-Mode Alias Layer                                                                     | none  |     8 |
-| [x]  | `D02 T12 §13` | File Metadata and Device Control                                                                  | none  |    17 |
-| [ ]  | `D02 T12 §16` | Token Open, Query, and Adjust Syscalls                                                            | none  |    11 |
-| [ ]  | `D02 T12 §17` | Directory and Symbolic Link Object Syscalls                                                       | none  |     9 |
-| [ ]  | `D02 T12 §18` | Section and Memory-Mapped File Syscalls                                                           | none  |    11 |
-| [ ]  | `D02 T12 §19` | Timer Control Syscalls                                                                            | none  |    19 |
-| [x]  | `D02 T12 §20` | Legacy LPC Port Syscalls                                                                          | none  |    16 |
-| [x]  | `D02 T12 §21` | Exception and Debug Syscalls                                                                      | none  |     9 |
-| [x]  | `D02 T12 §22` | Power and System Control                                                                          | none  |     7 |
-| [x]  | `D02 T12 §23` | Atom, Locale, and Miscellaneous Syscalls                                                          | none  |    14 |
-| [ ]  | `D02 T12 §24` | Syscall Audit and Tracing Hook                                                                    | none  |     9 |
-| [x]  | `D02 T12 §25` | Per-Process Syscall Filtering                                                                     | none  |     8 |
-| [x]  | `D02 T12 §26` | Kernel-to-User Mode Callback Dispatch                                                             | none  |     7 |
-| [x]  | `D02 T12 §27` | SSDT Integrity Protection                                                                         | none  |     6 |
-| [x]  | `D02 T12 §28` | Extended Directory Enumeration Classes                                                            | none  |     9 |
-| [ ]  | `D02 T12 §29` | Token Lifecycle and SRM Access Check Syscalls                                                     | none  |    21 |
-| [x]  | `D02 T12 §30` | Generic Object Management Syscalls                                                                | none  |    10 |
-| [x]  | `D02 T12 §31` | Modern ALPC Port Syscalls                                                                         | none  |    17 |
-| [ ]  | `D02 T12 §32` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none  |     5 |
-| [ ]  | `D02 T12 §33` | Legacy `SYS_*` Number Allocation Across Roadmaps                                                  | none  |     4 |
-| [x]  | `D02 T13 §1`  | Unicode String Primitive Layer                                                                    | none  |     5 |
-| [x]  | `D02 T13 §2`  | Case Folding and Invariant Compare                                                                | none  |     8 |
-| [x]  | `D02 T13 §3`  | Global and Local Atom Tables                                                                      | none  |     4 |
-| [x]  | `D02 T13 §4`  | NLS Table File Format and Loader                                                                  | none  |     6 |
-| [x]  | `D02 T13 §5`  | Code Page Conversion Providers                                                                    | none  |     9 |
-| [ ]  | `D02 T13 §6`  | Locale and LCID Metadata                                                                          | none  |    10 |
-| [x]  | `D02 T13 §7`  | Sort Keys and Normalization Policy                                                                | none  |     8 |
-| [x]  | `D02 T14 §1`  | Access Rights, API Limits & RegFlushKey                                                           | none  |    19 |
-| [x]  | `D02 T14 §2`  | Advanced Key Operations                                                                           | none  |    12 |
-| [x]  | `D02 T14 §3`  | Change Notifications                                                                              | none  |    15 |
-| [x]  | `D02 T14 §7`  | `regedit` Shell Tool                                                                              | none  |    11 |
-| [x]  | `D02 T14 §8`  | Advanced Hive Features                                                                            | none  |    22 |
-| [x]  | `D02 T14 §9`  | Transactions, Search API & Snapshot/Diff                                                          | none  |    15 |
-| [x]  | `D02 T14 §10` | Performance Optimisations                                                                         | none  |    13 |
-| [x]  | `D02 T14 §11` | KTM Transaction Syscalls Wired to SSDT                                                            | none  |     9 |
-| [x]  | `D02 T14 §12` | Registry Symlink Completion                                                                       | none  |     4 |
-| [x]  | `D02 T14 §13` | Schema-Validated Registry Keys ⭐                                                                 | none  |     6 |
-| [x]  | `D02 T14 §15` | Registry Value Size Expansion (16 KiB Names, 1 MiB Data)                                          | none  |     7 |
-| [ ]  | `D02 T14 §16` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none  |     4 |
-| [x]  | `D02 T15 §1`  | SID & LUID Primitives                                                                             | none  |     7 |
-| [x]  | `D02 T15 §2`  | Privilege Constants & PRIVILEGE_SET                                                               | none  |     4 |
-| [x]  | `D02 T15 §3`  | SECURITY_DESCRIPTOR, ACL & ACE Types                                                              | none  |    29 |
-| [ ]  | `D02 T15 §4`  | ACCESS_TOKEN Object                                                                               | none  |    17 |
-| [ ]  | `D02 T05 §9`  | NtClose / NtDuplicateObject / NtQueryObject                                                       | none  |     8 |
-| [ ]  | `D02 T15 §5`  | SeAccessCheck Engine                                                                              | none  |    22 |
-| [x]  | `D02 T15 §6`  | Mandatory Integrity Control (MIC)                                                                 | none  |    11 |
-| [x]  | `D02 T15 §7`  | Process/Thread Token Assignment & Impersonation                                                   | none  |     9 |
-| [x]  | `D02 T15 §8`  | SePrivilegeCheck & Per-Privilege Enforcement                                                      | none  |    12 |
-| [x]  | `D02 T15 §9`  | UAC Token Split & NtFilterToken                                                                   | none  |     8 |
-| [x]  | `D02 T15 §10` | Win32 Security API Wrappers                                                                       | none  |    22 |
-| [x]  | `D02 T15 §11` | Live Token Inspector                                                                              | none  |     4 |
-| [x]  | `D02 T15 §12` | Security and Token Syscalls Wired to SSDT                                                         | none  |    21 |
-| [x]  | `D02 T15 §13` | Security Descriptor Inheritance (SeAssignSecurity)                                                | none  |     9 |
-| [x]  | `D02 T15 §14` | AppContainer / LowBox Tokens                                                                      | none  |    12 |
-| [x]  | `D02 T15 §15` | Access Denial Explainer                                                                           | none  |     7 |
-| [ ]  | `D02 T15 §16` | Security Primitive Hardening                                                                      | none  |     4 |
-| [x]  | `D02 T16 §1`  | Notification State Object Type                                                                    | none  |     9 |
-| [x]  | `D02 T16 §2`  | Kernel Publish/Subscribe API                                                                      | none  |     9 |
-| [x]  | `D02 T16 §3`  | Waitable User Subscriptions                                                                       | none  |    11 |
-| [x]  | `D02 T16 §4`  | Security and Namespace Policy                                                                     | none  |     7 |
-| [x]  | `D02 T16 §5`  | Built-In State-Name Catalog                                                                       | none  |    10 |
-| [x]  | `D02 T16 §6`  | ETW/klog Bridge                                                                                   | none  |     4 |
-| [ ]  | `D02 T16 §7`  | Coalescing and Payload Retention                                                                  | none  |     8 |
-| [x]  | `D02 T16 §9`  | Diagnostics Browser and Counters                                                                  | none  |     4 |
-| [x]  | `D02 T17 §1`  | `exec_load()` Multi-Format Dispatcher                                                             | none  |    11 |
-| [x]  | `D02 T17 §2`  | Enhanced ELF Loader                                                                               | none  |    13 |
-| [x]  | `D02 T17 §3`  | ELF Security Segments (GNU_STACK, RELRO, GNU_PROPERTY)                                            | none  |    10 |
-| [x]  | `D02 T17 §4`  | EIF Format Specification                                                                          | none  |     9 |
-| [x]  | `D02 T17 §5`  | EIF Kernel Loader                                                                                 | none  |     8 |
-| [x]  | `D02 T17 §6`  | Module List Registration (LDR_DATA_TABLE_ENTRY)                                                   | none  |     8 |
-| [ ]  | `D02 T17 §7`  | PE32+ Header Parser                                                                               | none  |     8 |
-| [ ]  | `D02 T17 §8`  | PE32+ Section Loader + `.pdata` Registration                                                      | none  |    12 |
-| [ ]  | `D02 T17 §9`  | PE32+ Import Table Resolver (Win32 Dispatch)                                                      | none  |     9 |
-| [x]  | `D02 T17 §10` | PE32+ Base Relocation                                                                             | none  |     4 |
-| [x]  | `D02 T17 §11` | PE32+ TLS Directory Processing                                                                    | none  |     6 |
-| [x]  | `D02 T17 §12` | PE32+ Load Config and CFG Bitmap                                                                  | none  |     6 |
-| [ ]  | `D02 T17 §13` | `elf2eif` Host-Side Converter                                                                     | none  |     7 |
-| [x]  | `D02 T17 §14` | ELF Dynamic Linker                                                                                | none  |     8 |
-| [x]  | `D02 T17 §15` | ASLR -- Address Space Layout Randomization                                                        | none  |     7 |
-| [x]  | `D02 T17 §16` | Script/Shebang Interpreter Support                                                                | none  |     5 |
-| [x]  | `D02 T17 §17` | EIF Code Signing                                                                                  | none  |     6 |
-| [x]  | `D02 T17 §18` | ELF `PT_TLS` Template Loading                                                                     | none  |     9 |
-| [x]  | `D02 T17 §19` | PE API-Set + Delay-Load/Bound Import Support                                                      | none  |     7 |
-| [x]  | `D02 T17 §20` | ELF Dynamic Linker -- Advanced (IFUNC, Init/Fini, Versioning, Search Order)                       | none  |     8 |
-| [x]  | `D02 T18 §1`  | `KIMAGE_ENTRY` Data Model                                                                         | none  |     7 |
-| [/]  | `D02 T18 §3`  | Address Range Index                                                                               | none  |     6 |
-| [/]  | `D02 T18 §4`  | Symbol Provider Abstraction                                                                       | none  |     6 |
-| [x]  | `D02 T19 §1`  | Code Integrity Policy Object                                                                      | none  |     9 |
-| [x]  | `D02 T19 §2`  | Image Validation API and Callback                                                                 | none  |     8 |
-| [x]  | `D02 T19 §3`  | Hashing and Signature Provider Bridge                                                             | none  |     5 |
-| [/]  | `D02 T19 §4`  | Embedded Signature Validation                                                                     | none  |     9 |
-| [/]  | `D02 T19 §5`  | Catalog Database                                                                                  | none  |     6 |
-| [x]  | `D02 T19 §6`  | Revocation and Deny Lists                                                                         | none  |     6 |
-| [x]  | `D02 T19 §7`  | Measured-Boot and Secure Boot Binding                                                             | none  |     6 |
-| [x]  | `D02 T19 §8`  | Driver/Module Enforcement                                                                         | none  |     5 |
-| [x]  | `D02 T19 §9`  | User-Mode Image Enforcement                                                                       | none  |     5 |
-| [x]  | `D02 T19 §10` | CI Audit, Telemetry, and Syscalls                                                                 | none  |     5 |
-| [ ]  | `D02 T19 §11` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none  |     5 |
-| [/]  | `D02 T18 §9`  | Provenance, CI, and Hotpatch Metadata                                                             | none  |     7 |
-| [x]  | `D02 T20 §1`  | Range Overlap Validation (Normative Rule 2)                                                       | none  |     5 |
-| [ ]  | `D02 T20 §2`  | Segment Permission Enforcement (R/W/X via PTE)                                                    | none  |     8 |
-| [ ]  | `D02 T20 §3`  | Module Registration for EIF                                                                       | none  |     5 |
-| [x]  | `D02 T20 §4`  | API Version Gating                                                                                | none  |     4 |
-| [x]  | `D02 T20 §5`  | Metadata Section Parser                                                                           | none  |     8 |
-| [x]  | `D02 T20 §6`  | LZ4 Compressed Segments                                                                           | none  |     5 |
-| [/]  | `D02 T20 §7`  | Optional Import Stubs                                                                             | none  |     7 |
-| [x]  | `D02 T20 §8`  | EIF ASLR (load_base=0 Randomization)                                                              | none  |    10 |
-| [ ]  | `D02 T20 §9`  | Per-Process Dispatch Table Isolation                                                              | none  |     8 |
-| [x]  | `D02 T20 §10` | CET Compatibility Flag (Format Reservation)                                                       | none  |     5 |
-| [/]  | `D02 T20 §11` | EIF Signature-Block ABI (Signer Key Delivery)                                                     | none  |     4 |
-| [ ]  | `D02 T20 §12` | Resource Section with SVG Icons                                                                   | none  |     7 |
-| [x]  | `D02 T21 §1`  | Working Directory                                                                                 | none  |    13 |
-| [ ]  | `D02 T21 §2`  | Standard Handle Pre-Wiring at Process Creation                                                    | none  |     8 |
-| [x]  | `D02 T21 §3`  | User-Mode Program Break (brk/sbrk -- Linux Compat)                                                | none  |    12 |
-| [x]  | `D02 T21 §4`  | Process Priority Class                                                                            | none  |     7 |
-| [x]  | `D02 T21 §5`  | Per-Task Scheduling Policy                                                                        | none  |     6 |
-| [/]  | `D02 T21 §6`  | Process Capabilities and Privilege Bitmask                                                        | none  |     6 |
-| [/]  | `D02 T21 §7`  | Capability Inheritance and Drop-Only Policy                                                       | none  |     6 |
-| [x]  | `D02 T21 §8`  | Process Accounting Fields (Times, I/O Counters)                                                   | none  |     8 |
-| [x]  | `D02 T21 §9`  | Per-Process Resource Limits (rlimits)                                                             | none  |    11 |
-| [x]  | `D02 T21 §10` | CPU Affinity per Process                                                                          | none  |     6 |
-| [x]  | `D02 T21 §11` | Per-Process Mitigation Policy                                                                     | none  |     9 |
-| [x]  | `D02 T21 §12` | Pledge/Unveil-Style Process Restriction                                                           | none  |    10 |
-| [x]  | `D02 T21 §13` | Job Object Syscalls Wired to SSDT                                                                 | none  |    14 |
-| [x]  | `D02 T21 §14` | Process Exit Cleanup                                                                              | none  |     7 |
-| [x]  | `D02 T21 §15` | Process Parenting, Reaping, and Wait Semantics                                                    | none  |     9 |
-| [x]  | `D02 T21 §16` | Protected Process Light (PS_PROTECTION)                                                           | none  |     6 |
-| [x]  | `D02 T21 §17` | Process Groups and Sessions                                                                       | none  |     8 |
-| [x]  | `D02 T21 §18` | Rich Wait Variants, NT Multi-Waiter Wake, and Dumpable Policy                                     | none  |     7 |
-| [x]  | `D02 T21 §19` | `task_exec` Commit Point and Kernel-Stack Reclamation                                             | none  |    19 |
-| [ ]  | `D02 T21 §20` | Page-Table Lifetime Across Reap + fork/exec                                                       | none  |    13 |
-| [ ]  | `D02 T21 §21` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none  |    15 |
-| [x]  | `D02 T22 §1`  | Per-Process Environ Storage & Kernel API                                                          | none  |    11 |
-| [x]  | `D02 T22 §2`  | System Default Variables from Registry                                                            | none  |     5 |
-| [x]  | `D02 T22 §3`  | `%VAR%` Expansion                                                                                 | none  |     4 |
-| [ ]  | `D02 T22 §4`  | argv Array: Kernel Storage & Shell Parsing                                                        | none  |    11 |
-| [x]  | `D02 T22 §5`  | Nt/Zw Environment Variable Syscalls                                                               | none  |     4 |
-| [x]  | `D02 T22 §6`  | Win32 API Wrappers                                                                                | none  |    15 |
-| [x]  | `D02 T22 §7`  | Shell Integration: PATH Lookup & SET/ECHO                                                         | none  |    11 |
-| [x]  | `D02 T22 §8`  | `.profile` Startup Script                                                                         | none  |     8 |
-| [x]  | `D02 T22 §9`  | Environment Change Notifications                                                                  | none  |    10 |
-| [x]  | `D02 T22 §10` | Environment Block Sorting & Size Limits                                                           | none  |    13 |
-| [x]  | `D02 T22 §11` | PATHEXT Variable & Extension Search Order                                                         | none  |     5 |
-| [x]  | `D02 T22 §12` | Hidden Drive-Letter Variables (`=C:`, `=D:`)                                                      | none  |     9 |
-| [x]  | `D02 T22 §13` | CreateEnvironmentBlock / DestroyEnvironmentBlock                                                  | none  |     8 |
-| [ ]  | `D02 T22 §14` | SearchPathW / SearchPathA Win32 API                                                               | none  |     8 |
-| [x]  | `D02 T22 §15` | CommandLineToArgvW Win32 API                                                                      | none  |     5 |
-| [x]  | `D02 T22 §16` | Environment Variable Security & Sanitization                                                      | none  |     7 |
-| [x]  | `D02 T22 §17` | App Paths Registry-Based Executable Lookup                                                        | none  |     6 |
-| [x]  | `D02 T22 §18` | cmd.exe Dynamic Pseudo-Variables & Delayed Expansion                                              | none  |     6 |
-| [x]  | `D02 T22 §19` | Rtl Expansion Hardening: Output-Count Wrap & `%=X:%` Parity                                       | none  |     6 |
-| [x]  | `D02 T22 §20` | Rtl Export Prerequisites: Lookup Bound, Foreign-Block Extent, At-Cap Allocation                   | none  |     6 |
-| [x]  | `D02 T22 §21` | ntdll Rtl Environment Exports                                                                     | none  |    12 |
-| [x]  | `D02 T22 §22` | env Allocator Safety and UTF-8 Expansion Budget                                                   | none  |     8 |
-| [x]  | `D02 T22 §23` | Live-Environment Adoption: SetCurrentEnvironment, SetEnvironmentStrings, CreateEnvironmentEx      | none  |    12 |
-| [ ]  | `D02 T22 §24` | Rtl Expansion Completeness: Boundary Copy, Measured Budget, Lookup Cache                          | none  |    15 |
-| [x]  | `D02 T22 §25` | Counted (non-`_U`) Rtl Env Read Forms                                                             | none  |     9 |
-| [x]  | `D02 T23 §1`  | EXCEPTION_RECORD, CONTEXT, and EXCEPTION_POINTERS Types                                           | none  |     8 |
-| [x]  | `D02 T23 §2`  | #PF Triage -- User vs. Kernel Decode, EXCEPTION_RECORD/CONTEXT Build, Dispatch Routing            | none  |     6 |
-| [x]  | `D02 T23 §4`  | Debugger First-Chance / Second-Chance Notification                                                | none  |     9 |
-| [x]  | `D02 T23 §5`  | KiUserExceptionDispatcher -- Ring-3 Exception Delivery                                            | none  |     9 |
-| [ ]  | `D02 T23 §6`  | x64 Table-Based Unwind (`.pdata`, `RtlVirtualUnwind`)                                             | none  |    14 |
-| [x]  | `D02 T23 §7`  | Stack Walking (`RtlCaptureStackBackTrace`, `RtlWalkFrameChain`)                                   | none  |     8 |
-| [x]  | `D02 T23 §8`  | SEH Chain Walk and `__try`/`__except` Frame Dispatch                                              | none  |     5 |
-| [ ]  | `D02 T23 §9`  | RtlUnwindEx -- Unwind to a Target Frame                                                           | none  |     9 |
-| [x]  | `D02 T23 §10` | Vectored Exception Handlers (VEH)                                                                 | none  |     5 |
-| [x]  | `D02 T23 §11` | Vectored Continue Handlers (VCH)                                                                  | none  |     3 |
-| [x]  | `D02 T23 §12` | Unhandled Exception Filter and WER Hook                                                           | none  |     6 |
-| [x]  | `D02 T23 §13` | Kernel Safe Probing (`ProbeForRead`, `ProbeForWrite`)                                             | none  |     5 |
-| [ ]  | `D02 T23 §14` | Kernel-Mode `__try`/`__except` for Drivers                                                        | none  |     8 |
-| [x]  | `D02 T23 §15` | POSIX Signal Delivery from Exceptions (Linux Compat)                                              | none  |     8 |
-| [x]  | `D02 T23 §16` | Exception Dispatch Telemetry                                                                      | none  |     7 |
-| [x]  | `D02 T23 §17` | Guard-Page Stack Auto-Grow -- Commit/Reserve Tracking, Guard Re-Arm, Terminal Overflow            | none  |     5 |
-| [ ]  | `D02 T23 §18` | Unwind Fixtures Independent of Where the Linker Put Real Code                                     | none  |     3 |
-| [x]  | `D02 T23 §19` | Nothing Compiles the EXCEPT_TELEMETRY=off Flavor                                                  | none  |     3 |
-| [ ]  | `D02 T23 §20` | Kernel SEH Cannot Be Armed Without Rewriting Scheduler Thread Metadata                            | none  |     3 |
-| [x]  | `D02 T24 §1`  | Message Header, Port Attributes & Type Codes                                                      | none  |    12 |
-| [x]  | `D02 T24 §2`  | ALPC_PORT Object & Object Manager Registration                                                    | none  |     9 |
-| [x]  | `D02 T24 §3`  | Connection State Machine                                                                          | none  |    15 |
-| [x]  | `D02 T24 §4`  | Synchronous Send+Wait+Receive Engine                                                              | none  |     8 |
-| [x]  | `D02 T24 §5`  | Asynchronous Delivery & Completion List                                                           | none  |    10 |
-| [ ]  | `D02 T24 §6`  | Large Data: Port Sections & View Mapping                                                          | none  |    13 |
-| [ ]  | `D02 T24 §7`  | Security: Client Token Capture & Impersonation                                                    | none  |    11 |
-| [/]  | `D02 T24 §8`  | NtAlpc* SSDT Registration & Stub Retrofit                                                         | none  |    10 |
-| [ ]  | `D02 T24 §9`  | NtAlpc QueryInformation, SetInformation & CancelMessage                                           | none  |     9 |
-| [x]  | `D02 T24 §10` | CSRSS ApiPort Bootstrap                                                                           | none  |     9 |
-| [x]  | `D02 T24 §11` | Message Zones & Resource Reserves (Pre-Allocated Buffers)                                         | none  |     9 |
-| [x]  | `D02 T24 §12` | Live Port Monitor & IPC Profiler                                                                  | none  |     7 |
-| [ ]  | `D02 T24 §13` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none  |     1 |
-| [x]  | `D02 T25 §1`  | Resource Type Registry                                                                            | none  |     5 |
-| [x]  | `D02 T25 §2`  | Quota Block and Charge API                                                                        | none  |     6 |
-| [x]  | `D02 T25 §3`  | Process/Token/Job Ownership Model                                                                 | none  |     7 |
-| [x]  | `D02 T25 §4`  | Receipt Identity (Generation-Tokened Charges)                                                     | none  |    10 |
-| [x]  | `D02 T25 §5`  | Pool and Allocation Quota Integration                                                             | none  |     8 |
-| [x]  | `D02 T25 §6`  | Registry, ALPC, Notification Quotas                                                               | none  |     7 |
-| [x]  | `D02 T25 §7`  | CPU, I/O, and Wakeup Accounting                                                                   | none  |    10 |
-| [x]  | `D02 T25 §8`  | Native Query/Set Quota Syscalls                                                                   | none  |    12 |
-| [x]  | `D02 T25 §9`  | Resource Pressure Events and Recovery Hooks                                                       | none  |     8 |
-| [ ]  | `D02 T25 §10` | Tests, Leak Sweeps, and Dashboards                                                                | none  |    10 |
-| [x]  | `D02 T25 §11` | Charge Ledger and Transactional Adjustment                                                        | none  |     6 |
-| [x]  | `D02 T25 §12` | Resource Pressure Stall Telemetry                                                                 | none  |     9 |
-| [x]  | `D02 T25 §13` | Object Manager Charge Points                                                                      | none  |     5 |
-| [x]  | `D02 T25 §14` | Ledger Lifetime: ISR-Safe Return and Obligation Adoption                                          | none  |     5 |
-| [x]  | `D02 T25 §15` | Charge-Path Cost Reduction                                                                        | none  |     7 |
-| [x]  | `D02 T25 §16` | Charge Attribution and Status Fidelity                                                            | none  |     5 |
-| [x]  | `D02 T25 §17` | Infrastructure-Gated Charge-Path Bounding and Stall Lanes                                         | none  |    16 |
-| [x]  | `D02 T25 §18` | Ledger Obligation Ceiling and Charge-Source Pass-Through                                          | none  |     3 |
-| [x]  | `D02 T25 §19` | Lockless Job Membership and the Live Pressure-Retry Seam                                          | none  |     5 |
-| [ ]  | `D02 T25 §20` | Per-Process Network I/O Accounting                                                                | none  |     4 |
-| [x]  | `D02 T26 §1`  | ACPI Sleep Object Parsing & PM1 State Machine                                                     | none  |    14 |
-| [x]  | `D02 T26 §2`  | C1 Idle Entry: Race-Safe HLT + Per-CPU Idle Accounting                                            | none  |     7 |
-| [x]  | `D02 T26 §3`  | S3: Suspend to RAM                                                                                | none  |    11 |
-| [x]  | `D02 T26 §4`  | S4: Hibernation Image Format and Compression Codec                                                | none  |     8 |
-| [x]  | `D02 T26 §5`  | ACPI Embedded Controller (EC) Driver                                                              | none  |    19 |
-| [x]  | `D02 T26 §6`  | Battery & AC Adapter (ACPI Source Layer)                                                          | none  |     8 |
-| [x]  | `D02 T26 §7`  | Power & Sleep Button Event Dispatch                                                               | none  |    24 |
-| [x]  | `D02 T26 §8`  | PCI Power Management Capability and D0--D3hot State Machine                                       | none  |    19 |
-| [x]  | `D02 T26 §9`  | Driver Power Callbacks & Resume Ordering                                                          | none  |     6 |
-| [x]  | `D02 T26 §10` | S0ix Firmware Advertisement and MWAIT Capability Layer                                            | none  |     7 |
-| [x]  | `D02 T26 §11` | Fast Startup (Hybrid Shutdown / Hiberboot)                                                        | none  |    11 |
-| [ ]  | `D02 T26 §12` | Runtime Device Idle Management                                                                    | none  |    30 |
-| [ ]  | `D02 T26 §13` | Power Request Tracking & Wake Source Management                                                   | none  |    16 |
-| [ ]  | `D02 T26 §17` | Driver Power Query & Veto (IRP_MN_QUERY_POWER)                                                    | none  |     5 |
-| [ ]  | `D02 T26 §20` | Power Syscalls Wired to SSDT                                                                      | none  |     9 |
-| [ ]  | `D02 T26 §21` | Linux `/sys/power` Suspend Variant Parity                                                         | none  |     8 |
-| [ ]  | `D02 T26 §23` | PCIe ASPM and L1 Substates                                                                        | none  |    10 |
-| [ ]  | `D02 T26 §24` | ACPI General-Purpose Event (GPE) Blocks                                                           | none  |    14 |
-| [ ]  | `D02 T26 §25` | Per-CPU Idle-Time Accounting via `NtQuerySystemInformation`                                       | none  |     8 |
-| [x]  | `D02 T26 §26` | Stop-the-World CPU Rendezvous for Sleep Transitions                                               | none  |     6 |
-| [ ]  | `D02 T26 §27` | Rendezvous Safety Residue: Test Seam and the Retract-Side Window                                  | none  |     9 |
-| [x]  | `D02 T26 §28` | S4 Orchestration: Hibernation Image Write and Resume Path                                         | none  |    10 |
-| [ ]  | `D02 T26 §29` | Composite Battery State Model, Power Policy, and Registry Publication                             | none  |    17 |
-| [x]  | `D02 T26 §30` | Battery Charge Limiting and Smart Charging                                                        | none  |     6 |
-| [x]  | `D02 T26 §31` | Lid State and Lid-Close Policy                                                                    | none  |     6 |
-| [x]  | `D02 T26 §32` | Human Presence Detection (HPD)                                                                    | none  |     8 |
-| [ ]  | `D02 T26 §33` | PM Device Registry (`pm_device_t`, `pm_register_device`)                                          | none  |    10 |
-| [ ]  | `D02 T26 §35` | Directed Power (DFx) and DRIPS Residency Accounting                                               | none  |     9 |
-| [ ]  | `D02 T26 §36` | NIC Wake Offloads for Connected Standby (ARP/NS/WoL/Patterns)                                     | none  |     8 |
-| [x]  | `D02 T26 §37` | System Connected Standby Entry (All-CPU S0ix Transition)                                          | none  |     7 |
-| [x]  | `D02 T26 §38` | ACPI Table Discovery: Validate Extents Before Checksumming and Publishing                         | none  |     6 |
-| [ ]  | `D02 T26 §39` | ACPI Root-Pointer Integrity and Validator Unification                                             | none  |     7 |
-| [/]  | `D02 T27 §1`  | Bugcheck Codes & `KeBugCheckEx`                                                                   | none  |    15 |
-| [/]  | `D02 T27 §2`  | FPU/XMM/XSAVE State Capture                                                                       | none  |     6 |
-| [/]  | `D02 T27 §3`  | Module Registry for Crash Dumps                                                                   | none  |     4 |
-| [/]  | `D02 T27 §4`  | MDMP Binary Format: Header, Directory & Stream Types                                              | none  |    11 |
-| [ ]  | `D02 T27 §5`  | Minidump Writer                                                                                   | none  |     8 |
-| [ ]  | `D02 T27 §6`  | Kernel Dump & Full Dump Variants                                                                  | none  |     6 |
-| [ ]  | `D02 T27 §7`  | Raw-Partition Dump Sink (VFS Bypass)                                                              | none  |    10 |
-| [ ]  | `D02 T27 §8`  | Post-Boot Crash Recovery & CrashDumps Archive                                                     | none  |     7 |
-| [ ]  | `D02 T27 §9`  | `dmpanalyze.exe` Crash Analyzer                                                                   | none  |     7 |
-| [ ]  | `D02 T27 §10` | Dump Policy, WinDbg Interoperability & Confidentiality                                            | none  |     9 |
-| [ ]  | `D02 T28 §1`  | TTF Font Rendering in Panic Screen                                                                | none  |     7 |
-| [ ]  | `D02 T28 §2`  | Improved Layout and Visual Hierarchy                                                              | none  |     8 |
-| [ ]  | `D02 T28 §3`  | Crash Context: Last 10 klog Entries Inline                                                        | none  |     6 |
-| [ ]  | `D02 T28 §4`  | Smart QR Code with Compressed Crash Data                                                          | none  |     9 |
-| [ ]  | `D02 T28 §5`  | Auto-Restart Countdown Improvements                                                               | none  |     6 |
-| [ ]  | `D02 T28 §6`  | Crash Analysis Hints On-Screen                                                                    | none  |     3 |
-| [ ]  | `D02 T28 §7`  | Crash Statistics & Loop Protection                                                                | none  |    10 |
-| [ ]  | `D02 T28 §8`  | Safe Mode Suggestion After Repeated Crashes                                                       | none  |     5 |
-| [ ]  | `D02 T28 §9`  | "What Failed" Faulting Module Identification                                                      | none  |     4 |
-| [ ]  | `D02 T28 §10` | Panic Screen Modes (User / Developer / QR)                                                        | none  |     6 |
-| [ ]  | `D02 T28 §11` | Audio Crash Notification (PC Speaker Beep Codes)                                                  | none  |     5 |
-| [ ]  | `D02 T28 §12` | Keyboard-Driven Recovery Actions at Crash Screen                                                  | none  |     8 |
-| [ ]  | `D02 T28 §13` | Dump Collection Progress Percentage                                                               | none  |     7 |
-| [ ]  | `D02 T29 §1`  | Serial Line Setup: 115200 Baud, 8N1, FIFO                                                         | none  |     4 |
-| [ ]  | `D02 T29 §2`  | IRQ-Driven RX Ring Buffer and KD COM Port Selection                                               | none  |     9 |
-| [ ]  | `D02 T29 §3`  | KD Packet Framing: Send / Receive, Checksum, ACK/RESEND                                           | none  |     7 |
-| [ ]  | `D02 T29 §4`  | KD Connection Handshake & Breakin Detection                                                       | none  |     7 |
-| [ ]  | `D02 T29 §5`  | `#DB` / `#BP` Exception Routing to KD, AP Freeze/Thaw                                             | none  |     9 |
-| [ ]  | `D02 T23 §3`  | General Fault-to-Exception Mapping (#DE, #DB, #BP, #OF, #UD, #NP, #SS, #GP, #CP)                  | none  |     9 |
-| [/]  | `D02 T10 §9`  | CET Shadow Stack (Kernel Ring 0)                                                                  | none  |    15 |
-| [/]  | `D02 T18 §5`  | Unwind Metadata Registry                                                                          | none  |     7 |
-| [ ]  | `D02 T29 §6`  | Context Get / Set                                                                                 | none  |     6 |
-| [ ]  | `D02 T29 §7`  | Memory Read / Write                                                                               | none  |     7 |
-| [ ]  | `D02 T29 §8`  | Software Breakpoint Management                                                                    | none  |     8 |
-| [ ]  | `D02 T29 §9`  | Hardware Breakpoints: DR0--DR3, DR7, `#DB` Reporting                                              | none  |     5 |
-| [ ]  | `D02 T29 §10` | Single-Step (RFLAGS.TF) + Continue / Step                                                         | none  |     5 |
-| [ ]  | `D02 T29 §11` | DbgKdGetVersionApi + Module List                                                                  | none  |     6 |
-| [ ]  | `D02 T29 §12` | I/O Port & MSR Read / Write                                                                       | none  |     9 |
-| [ ]  | `D02 T29 §13` | `kd_break()`, Keyboard F12 Breakin & QEMU Guide                                                   | none  |     7 |
-| [ ]  | `D02 T29 §14` | Debug Syscalls Wired to SSDT                                                                      | none  |     8 |
-| [ ]  | `D02 T29 §15` | KD Transport Roadmap, SMP Policy, and Coexistence                                                 | none  |     7 |
-| [/]  | `D02 T18 §8`  | KD/Crash Dump Integration                                                                         | none  |     9 |
-| [ ]  | `D02 T30 §1`  | Health State Model and Registry                                                                   | none  |     4 |
-| [ ]  | `D02 T30 §2`  | Subsystem Heartbeat API                                                                           | none  |     4 |
-| [ ]  | `D02 T30 §3`  | Failure Bucket Taxonomy                                                                           | none  |     4 |
-| [ ]  | `D02 T30 §4`  | Live Kernel Dump Trigger                                                                          | none  |     4 |
-| [ ]  | `D02 T30 §5`  | Degraded-Mode Transition Engine                                                                   | none  |     4 |
-| [ ]  | `D02 T30 §6`  | Recovery Action Dispatcher                                                                        | none  |     6 |
-| [ ]  | `D02 T30 §7`  | Repeated-Failure Escalation                                                                       | none  |     5 |
-| [/]  | `D02 T31 §1`  | per_cpu_data Assembly Offsets                                                                     | none  |     7 |
-| [/]  | `D02 T31 §2`  | boot_config and Early Config Struct Layout                                                        | none  |     8 |
-| [/]  | `D02 T31 §3`  | User ELF Range (0x800000-0x900000) 3-File Sync                                                    | none  |     7 |
-| [/]  | `D02 T31 §4`  | AP Trampoline Data Area Layout (0x8E00)                                                           | none  |     6 |
-| [/]  | `D02 T31 §5`  | Task Interrupt Frame Layout                                                                       | none  |     6 |
-| [/]  | `D02 T31 §6`  | IDT Vector Assignment Collision Detection                                                         | none  |     6 |
-| [/]  | `D02 T31 §7`  | SSDT Service Number Count Stability                                                               | none  |     5 |
-| [/]  | `D02 T31 §8`  | XSAVE/FXSAVE Area Alignment                                                                       | none  |     6 |
-| [/]  | `D02 T31 §9`  | ISR swapgs Symmetry Verification                                                                  | none  |     6 |
-| [/]  | `D02 T31 §10` | Memory Layout Guard Pages                                                                         | none  |    12 |
-| [/]  | `D02 T31 §11` | IXFS Superblock Layout and Magic                                                                  | none  |     7 |
-| [/]  | `D02 T31 §12` | Security Structs (SID, TOKEN, ACL/ACE)                                                            | none  |     9 |
-| [/]  | `D02 T31 §13` | VFS Drive Letter Range and Partition Offsets                                                      | none  |     8 |
-| [/]  | `D02 T31 §14` | exec_pending State Machine Verification                                                           | none  |     6 |
-| [/]  | `D02 T31 §15` | Framebuffer Bare-Metal Safety (5 Rules)                                                           | none  |     7 |
-| [ ]  | `D02 T32 §1`  | Per-CPU SPSC Ring Buffer + Atomic Primitives                                                      | none  |     9 |
-| [ ]  | `D02 T32 §2`  | Lockless `klog_v2()` Enqueue + Format Helpers                                                     | none  |     8 |
-| [ ]  | `D02 T32 §3`  | Priority Lanes + Per-Level Sub-Budgets                                                            | none  |     9 |
-| [ ]  | `D02 T32 §4`  | Fail-Proof FATAL Emergency Path                                                                   | none  |     8 |
-| [ ]  | `D02 T32 §5`  | Configurable Per-Subsystem Rate Limits + Diagnostic Exemption                                     | none  |     8 |
-| [ ]  | `D02 T32 §6`  | Background Drain Worker                                                                           | none  |     9 |
-| [ ]  | `D02 T32 §7`  | Backpressure-Aware Serial Drain + Pressure Counters                                               | none  |     7 |
-| [ ]  | `D02 T32 §8`  | Native Structured Field Wire Format + ETW + JSON Lines Feed                                       | none  |     9 |
-| [ ]  | `D02 T32 §9`  | Boot-Survival Ring Snapshot + Recovery                                                            | none  |     7 |
-| [ ]  | `D02 T32 §10` | v1 -> v2 Migration Switch + Benchmarks + Retire v1                                                | none  |     8 |
-| [x]  | `D02 T33 §1`  | Memory-Map Design + Canonical Layout Decision                                                     | none  |     9 |
-| [ ]  | `D02 T33 §2`  | Direct Map Construction (kernel still low)                                                        | none  |    11 |
-| [/]  | `D02 T33 §3`  | Linker VMA/LMA Split + Higher-Half Jump                                                           | none  |    14 |
-| [/]  | `D02 T33 §4`  | Descriptor Tables + Per-CPU at High Addresses + AP Path                                           | none  |     7 |
-| [/]  | `D02 T33 §5`  | Bootloader / `boot_info` / Framebuffer High Handoff                                               | none  |     8 |
-| [/]  | `D02 T33 §6`  | Per-Process PML4: Kernel High Shared, User Low Private                                            | none  |     7 |
-| [ ]  | `D02 T33 §7`  | Retire the `0x800000` USER_BASE Ceiling + BSS Guard                                               | none  |    35 |
-| [ ]  | `D01 T14 §13` | klog Format-Width Contract, Compiler-Checked                                                      | none  |     4 |
-| [ ]  | `D01 T14 §15` | Anti-Rollback Terminal Give-Up: Durable Record                                                    | none  |     4 |
-| [ ]  | `D01 T14 §17` | Restore Panic Evidence Before Phase 0 Can Overwrite It                                            | none  |     4 |
-| [ ]  | `D01 T14 §19` | Record the Panic-Page Pin Outcome in the `boot_info` Handoff                                      | none  |     5 |
-| [ ]  | `D01 T29 §19` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none  |     3 |
-| [/]  | `D02 T33 §8`  | 5-Level Paging (LA57) Support -- Exceeds Win11                                                    | none  |     6 |
-| [x]  | `D02 T33 §9`  | VMM Walker Conversion -- Route Every Deref Through the HHDM Helper                                | none  |    14 |
-| [x]  | `D02 T33 §10` | Tactical BSS Headroom -- Large Static Pools to Dynamic Allocation                                 | none  |     7 |
-| [ ]  | `D02 T33 §11` | Unpark the Ceiling-Stalled Kernel Queue                                                           | none  |    11 |
-| [x]  | `D02 T33 §12` | Second Tactical BSS Reclamation Pass                                                              | none  |     7 |
-| [x]  | `D02 T33 §13` | Third Tactical Reclamation Pass -- the Trigger Section 12 Named Has Fired                         | none  |     8 |
-| [x]  | `D02 T33 §14` | Fourth Tactical Reclamation Pass -- Reclaim the Test-Only Statics                                 | none  |     8 |
-| [x]  | `D02 T33 §15` | Fifth Tactical Reclamation Pass -- Convert the `pipes` Pool                                       | none  |     4 |
-| [x]  | `D02 T33 §16` | Test-Side Residue of the Fourth Pass -- `s_cap_val`, the 36 KB Stack Locals, and the Scratch Cast | none  |     7 |
-| [ ]  | `D02 T34 §1`  | Mark Expected Test-Path Log Output at Emission                                                    | none  |     5 |
-| [ ]  | `D02 T34 §2`  | Log-Cleanliness Gate in the Kernel Test Runner                                                    | none  |     4 |
-| [/]  | `D02 T34 §3`  | Smoke Test Fails on Any `[FAIL]` in Its Own Log                                                   | none  |     4 |
-| [ ]  | `D02 T34 §4`  | Surface the Platform Blind Spots in the Run Summary                                               | none  |     4 |
-| [/]  | `D02 T34 §5`  | Rate-Limit the Repeat-Offender Warnings That Produce 86% of the Volume                            | none  |     4 |
-| [ ]  | `D02 T35 §1`  | Registry Tree SMP Synchronization and Hive Durability                                             | none  |    14 |
-| [ ]  | `D02 T35 §2`  | Registry Save/Restore Hive Bodies and Transactional Load                                          | none  |     4 |
-| [ ]  | `D02 T35 §3`  | Quota Enforcement and Job Memory Accounting                                                       | none  |     8 |
-| [ ]  | `D02 T35 §4`  | Module Identity and ELF Unwind Registration                                                       | none  |     5 |
-| [ ]  | `D02 T35 §5`  | User-Buffer Hardening on Fault-Recoverable Usercopy                                               | none  |     5 |
-| [ ]  | `D02 T35 §6`  | Boot, Entropy, Config and SRM Leftovers                                                           | none  |    13 |
-| [ ]  | `D02 T12 §14` | Registry Syscalls (Core CRUD)                                                                     | none  |    13 |
-| [ ]  | `D02 T14 §14` | Registry SMP Synchronization                                                                      | none  |    17 |
-| [ ]  | `D02 T14 §4`  | Nt/Zw Registry Syscalls                                                                           | none  |    35 |
-| [ ]  | `D02 T12 §15` | Registry Syscalls (Advanced)                                                                      | none  |     9 |
-| [ ]  | `D02 T12 §34` | Per-service SSDT argument counts                                                                  | none  |     4 |
-| [ ]  | `D02 T13 §8`  | Native Atom/NLS/Locale Syscalls                                                                   | none  |     9 |
-| [ ]  | `D02 T14 §5`  | advapi32.dll Win32 Compatibility                                                                  | none  |    15 |
-| [ ]  | `D02 T14 §6`  | Registry Virtualization & .reg Import/Export                                                      | none  |    11 |
-| [ ]  | `D02 T13 §9`  | Retrofit Kernel Consumers                                                                         | none  |    11 |
-| [ ]  | `D02 T13 §10` | Tests and Compatibility Corpus                                                                    | none  |     9 |
-| [/]  | `D02 T16 §8`  | Native WNF-Compatible Syscall Surface                                                             | none  |     6 |
-| [ ]  | `D02 T16 §10` | Unit/Boot Tests                                                                                   | none  |     6 |
-| [/]  | `D02 T18 §7`  | Image Notifications and Callbacks                                                                 | none  |     8 |
-| [ ]  | `D02 T30 §8`  | Native Health Query/Control APIs                                                                  | none  |     4 |
-| [ ]  | `D02 T30 §9`  | Health Notifications and Dashboards                                                               | none  |     4 |
-| [ ]  | `D02 T30 §10` | Tests and Chaos Scenarios                                                                         | none  |     4 |
+| Done | Section       | Deliverable                                                                                       | Needs      | Items |
+| :--: | ------------- | ------------------------------------------------------------------------------------------------- | ---------- | ----: |
+| [x]  | `D02 T01 §1`  | Boot Init Infrastructure                                                                          | none       |    11 |
+| [x]  | `D02 T01 §2`  | Phase 0 -- Critical Init (Interrupts Disabled)                                                    | none       |    21 |
+| [x]  | `D02 T01 §3`  | Phase 1 -- Platform Services (Interrupts Enabled at End)                                          | none       |    25 |
+| [ ]  | `D02 T01 §4`  | Phase 2 -- System Services                                                                        | none       |    23 |
+| [x]  | `D02 T01 §5`  | Phase 3 -- User Platform                                                                          | none       |    11 |
+| [ ]  | `D02 T01 §6`  | Dependency Gates                                                                                  | none       |     5 |
+| [ ]  | `D02 T01 §7`  | Failure Policy                                                                                    | none       |    12 |
+| [x]  | `D02 T01 §8`  | Code Cleanup                                                                                      | none       |    11 |
+| [ ]  | `D02 T01 §9`  | Degraded-Boot Recovery Screen                                                                     | none       |    10 |
+| [x]  | `D02 T01 §10` | POST Code + UEFI Variable Log                                                                     | none       |     9 |
+| [ ]  | `D02 T01 §11` | Deferred Init for Non-Critical Subsystems                                                         | none       |    12 |
+| [ ]  | `D02 T01 §12` | Boot Performance Regression Detection                                                             | none       |    10 |
+| [ ]  | `D02 T01 §13` | Async Subsystem Init (SMP Parallel)                                                               | none       |    15 |
+| [x]  | `D02 T02 §1`  | Boot Argument Schema and Parser                                                                   | none       |     7 |
+| [x]  | `D02 T02 §2`  | `kernel_config_t` Immutable Phase 0 Snapshot                                                      | none       |     6 |
+| [/]  | `D02 T02 §4`  | ControlSet and LastKnownGood Selection                                                            | none       |     6 |
+| [/]  | `D02 T02 §3`  | Registry-Backed Policy Merge                                                                      | none       |     7 |
+| [x]  | `D02 T02 §5`  | Safe Mode and Recovery Policy Object                                                              | none       |     7 |
+| [x]  | `D02 T02 §6`  | Runtime Tunable Registry                                                                          | none       |     7 |
+| [x]  | `D02 T02 §7`  | Feature Flag Gates and Experiment Cohorts                                                         | none       |     6 |
+| [x]  | `D02 T02 §8`  | Native Query/Set Config Syscalls                                                                  | none       |     6 |
+| [x]  | `D02 T02 §9`  | Policy Lock Phases and Tamper Audit                                                               | none       |     7 |
+| [x]  | `D02 T02 §10` | Boot Status Policy and Boot Success Ledger                                                        | none       |     7 |
+| [x]  | `D02 T02 §11` | Config Dump, Tests, and Docs                                                                      | none       |     6 |
+| [ ]  | `D02 T02 §12` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     1 |
+| [ ]  | `D02 T03 §1`  | Freestanding String Library                                                                       | none       |    12 |
+| [ ]  | `D02 T03 §2`  | Complete Floating-Point Math Library                                                              | none       |    15 |
+| [x]  | `D02 T03 §3`  | LZ4 Block Compressor                                                                              | none       |    10 |
+| [x]  | `D02 T03 §4`  | miniz Deflate / Inflate + ZIP                                                                     | none       |    10 |
+| [x]  | `D02 T03 §5`  | Monocypher Crypto Primitives + Kernel CSPRNG                                                      | none       |    13 |
+| [ ]  | `D02 T03 §6`  | cJSON DOM Parser                                                                                  | none       |    11 |
+| [/]  | `D02 T03 §7`  | Mbed TLS Freestanding Port                                                                        | none       |     6 |
+| [x]  | `D02 T03 §8`  | Checksum and Codec Dispatch (CRC32 / CRC32C / base64 / hex)                                       | none       |     7 |
+| [x]  | `D02 T03 §9`  | Zstandard (zstd) Compression                                                                      | none       |     7 |
+| [x]  | `D02 T03 §10` | SHA-3 / SHAKE (Keccak) Hash Family                                                                | none       |     6 |
+| [x]  | `D02 T04 §1`  | Boot-Phase Aware klog Init                                                                        | none       |     6 |
+| [ ]  | `D02 T04 §2`  | Per-Subsystem Log Splitting                                                                       | none       |     9 |
+| [x]  | `D02 T04 §3`  | Per-Subsystem Verbosity Control                                                                   | none       |     6 |
+| [ ]  | `D02 T04 §4`  | Log Rotation                                                                                      | none       |    10 |
+| [x]  | `D02 T04 §5`  | Rate Limiting                                                                                     | none       |     6 |
+| [x]  | `D02 T04 §6`  | Structured JSON Log Events                                                                        | none       |     9 |
+| [x]  | `D02 T04 §7`  | ETW Tracing Syscalls Wired to SSDT                                                                | none       |     9 |
+| [ ]  | `D02 T04 §8`  | Crash-Persistent Log Capture                                                                      | none       |    13 |
+| [x]  | `D02 T04 §9`  | Per-Entry Context Metadata                                                                        | none       |    10 |
+| [ ]  | `D02 T04 §10` | Log Integrity Verification                                                                        | none       |    10 |
+| [/]  | `D02 T04 §11` | ETW Provider Registration and Session Filtering                                                   | none       |     9 |
+| [x]  | `D02 T04 §12` | ETW Advanced Capture -- Stack-Walk, Autologger, Self-Describing Schema                            | none       |     6 |
+| [x]  | `D02 T04 §13` | Rotated-Log Compression                                                                           | none       |     8 |
+| [ ]  | `D02 T04 §14` | Serial Timestamp Render Bound                                                                     | none       |     2 |
+| [ ]  | `D02 T04 §15` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     7 |
+| [ ]  | `D02 T04 §16` | Klog Assertions and Scans That Depend on Nothing Else Having Logged                               | none       |     6 |
+| [ ]  | `D02 T04 §17` | Bounded Wait Until the Sinks Have Caught Up to a Given Sequence                                   | none       |     4 |
+| [ ]  | `D02 T05 §1`  | OBJECT_HEADER and OBJECT_TYPE Infrastructure                                                      | none       |     8 |
+| [x]  | `D02 T05 §2`  | Reference Counting and Object Lifetime                                                            | none       |     6 |
+| [ ]  | `D02 T05 §3`  | Per-Process Handle Table                                                                          | none       |    15 |
+| [ ]  | `D02 T05 §4`  | Object Namespace                                                                                  | none       |    20 |
+| [ ]  | `D02 T05 §5`  | File, Process, Thread object types                                                                | none       |     5 |
+| [ ]  | `D02 T05 §6`  | Synchronisation Object Types                                                                      | none       |    11 |
+| [ ]  | `D02 T05 §7`  | Section (Shared Memory) Object Type                                                               | none       |     9 |
+| [x]  | `D02 T05 §8`  | Security Descriptor Integration                                                                   | none       |     7 |
+| [ ]  | `D02 T05 §10` | Handle Inheritance Across CreateProcess                                                           | none       |     7 |
+| [ ]  | `D02 T05 §11` | Unified Kernel-User Namespace Browser API                                                         | none       |     5 |
+| [x]  | `D02 T05 §12` | Per-Type Object and Handle Statistics                                                             | none       |     9 |
+| [x]  | `D02 T05 §13` | Object Callbacks -- Handle Operation Filtering                                                    | none       |    14 |
+| [ ]  | `D02 T05 §14` | Per-Process Handle Quota                                                                          | none       |     9 |
+| [ ]  | `D02 T05 §15` | Handle Tracing and Leak Detection                                                                 | none       |    12 |
+| [x]  | `D02 T06 §1`  | Executive Headers and Namespace                                                                   | none       |     6 |
+| [x]  | `D02 T06 §2`  | Interlocked SLIST                                                                                 | none       |     6 |
+| [x]  | `D02 T06 §3`  | Rundown Protection                                                                                | none       |     6 |
+| [x]  | `D02 T06 §4`  | Callback Objects                                                                                  | none       |     9 |
+| [x]  | `D02 T06 §5`  | Lookaside Lists (NPaged, Paged, and Ex)                                                           | none       |     7 |
+| [x]  | `D02 T06 §6`  | Fast References                                                                                   | none       |     5 |
+| [x]  | `D02 T06 §7`  | Generic Tables and Bitmaps                                                                        | none       |     6 |
+| [x]  | `D02 T06 §8`  | Push Locks                                                                                        | none       |     4 |
+| [x]  | `D02 T06 §9`  | Fast and Guarded Mutexes                                                                          | none       |     4 |
+| [x]  | `D02 T06 §10` | Executive Resource Wrapper                                                                        | none       |     6 |
+| [x]  | `D02 T06 §11` | Run-Once Initialization                                                                           | none       |     4 |
+| [x]  | `D02 T06 §12` | Worker Items, Delayed Work, and Ex Timers                                                         | none       |     6 |
+| [x]  | `D02 T06 §13` | Bugcheck Reason Callbacks                                                                         | none       |     5 |
+| [x]  | `D02 T06 §14` | Executive Verifier Hooks                                                                          | none       |     5 |
+| [x]  | `D02 T07 §1`  | `KIRQL` Type, Constants, and Core Contract                                                        | none       |     6 |
+| [x]  | `D02 T07 §2`  | Per-CPU IRQL Tracking and Transition Primitives                                                   | none       |     7 |
+| [ ]  | `D02 T07 §3`  | Interrupt Entry/Exit IRQL Integration                                                             | none       |     8 |
+| [x]  | `D02 T07 §4`  | DPC Object Type and Per-CPU Queue                                                                 | none       |     6 |
+| [x]  | `D02 T07 §5`  | DPC Drain Loop at `DISPATCH_LEVEL`                                                                | none       |     7 |
+| [ ]  | `D02 T07 §6`  | Timer/APIC Scheduling Path for DPC Dispatch                                                       | none       |     7 |
+| [x]  | `D02 T07 §7`  | DPC Targeting, Importance, and Flush                                                              | none       |    10 |
+| [x]  | `D02 T07 §8`  | Threaded DPCs (`PASSIVE_LEVEL` DPC Variant)                                                       | none       |     6 |
+| [ ]  | `D02 T07 §9`  | Timer-DPC Association                                                                             | none       |     8 |
+| [ ]  | `D02 T07 §10` | Driver Migration and Workqueue Contract Split                                                     | none       |     8 |
+| [ ]  | `D02 T07 §11` | APC Object Type and Per-Thread Queues                                                             | none       |    13 |
+| [ ]  | `D02 T07 §12` | APC Delivery Mechanism (KiDeliverApc)                                                             | none       |    10 |
+| [ ]  | `D02 T07 §13` | IRQL Violation Traps and Structured Telemetry                                                     | none       |     8 |
+| [ ]  | `D02 T07 §14` | Budgeted DPC/APC Fairness and Starvation Watchdog                                                 | none       |    10 |
+| [ ]  | `D02 T07 §15` | Threaded DPC List Synchronization                                                                 | none       |     9 |
+| [x]  | `D02 T07 §16` | KeFlushQueuedDpcs Threaded DPC Completion                                                         | none       |     6 |
+| [x]  | `D02 T07 §17` | Per-CPU Threaded DPC Worker Affinity                                                              | none       |     6 |
+| [x]  | `D02 T07 §18` | System Worker Thread Pool (Long-Period Periodic Callbacks)                                        | none       |    12 |
+| [x]  | `D02 T07 §19` | Interference-Proof DPC Depth-Accounting Test Seam                                                 | none       |     5 |
+| [x]  | `D02 T08 §1`  | `FILETIME` Type, Epoch Constants, and Conversion Math                                             | none       |     6 |
+| [x]  | `D02 T08 §2`  | Monotonic Nanosecond Clock Source Selection                                                       | none       |     9 |
+| [x]  | `D02 T08 §3`  | Invariant TSC Detection and Per-CPU Offset Calibration                                            | none       |    11 |
+| [x]  | `D02 T08 §4`  | HPET Standalone Driver                                                                            | none       |     7 |
+| [x]  | `D02 T08 §5`  | Wall Clock Init from UEFI GetTime / RTC                                                           | none       |     8 |
+| [x]  | `D02 T08 §6`  | Kernel Time Service                                                                               | none       |     6 |
+| [x]  | `D02 T08 §7`  | Interrupt Time and Unbiased Interrupt Time APIs                                                   | none       |     5 |
+| [x]  | `D02 T08 §8`  | Timer Resolution Management                                                                       | none       |     8 |
+| [x]  | `D02 T08 §9`  | `NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter`                               | none       |     6 |
+| [x]  | `D02 T08 §10` | Precise System Time (`KeQuerySystemTimePrecise`)                                                  | none       |     3 |
+| [x]  | `D02 T08 §11` | Timezone Bias and DST Management                                                                  | none       |     5 |
+| [x]  | `D02 T08 §12` | KUSER_SHARED_DATA Time Field Updates                                                              | none       |    10 |
+| [x]  | `D02 T08 §13` | Filesystem Timestamp Encoding (FAT32 + NTFS)                                                      | none       |     5 |
+| [x]  | `D02 T08 §14` | Suspend/Hibernate Time Bias Tracking                                                              | none       |     6 |
+| [x]  | `D02 T08 §15` | Leap Second Policy                                                                                | none       |     6 |
+| [x]  | `D02 T08 §16` | Coarse Time Fast Path                                                                             | none       |     6 |
+| [x]  | `D02 T08 §17` | NTP Clock Adjustment Hooks                                                                        | none       |     9 |
+| [ ]  | `D02 T08 §18` | Clocksource Quality Watchdog                                                                      | none       |    11 |
+| [x]  | `D02 T08 §19` | NTP Continuous Wall-Time Discipline                                                               | none       |     5 |
+| [x]  | `D02 T09 §1`  | XSAVE / XRSTOR State Management                                                                   | none       |    13 |
+| [x]  | `D02 T09 §2`  | AVX/AVX2 Kernel Memops + Framebuffer Blit                                                         | none       |     6 |
+| [x]  | `D02 T09 §3`  | AVX-512 Opt-In + Future Silicon Detection                                                         | none       |     7 |
+| [x]  | `D02 T09 §4`  | MSR Management Infrastructure                                                                     | none       |     6 |
+| [x]  | `D02 T09 §5`  | UMIP + PKU Protection Keys                                                                        | none       |    10 |
+| [x]  | `D02 T09 §6`  | 1 GiB Huge Pages + Write-Combining PAT                                                            | none       |     8 |
+| [/]  | `D02 T09 §7`  | FRED Unified Event Delivery                                                                       | bare-metal |    11 |
+| [/]  | `D02 T09 §8`  | LKGS Fast GS-Base Swap                                                                            | bare-metal |     7 |
+| [x]  | `D02 T09 §9`  | CPU Topology: Zen Chiplets + Intel Hybrid                                                         | none       |     7 |
+| [x]  | `D02 T09 §10` | Performance Monitoring Counters: Intel + AMD                                                      | none       |    11 |
+| [x]  | `D02 T09 §11` | OSVW Errata + RDTSCP Processor ID Setup                                                           | none       |     5 |
+| [/]  | `D02 T09 §12` | AMD IBS Profiling (Stretch)                                                                       | bare-metal |     9 |
+| [x]  | `D02 T09 §13` | Virtualization Detection (AMD-V + Intel VT-x)                                                     | none       |     4 |
+| [ ]  | `D02 T09 §14` | Boot Self-Benchmark + Auto-Tune                                                                   | none       |    10 |
+| [x]  | `D02 T09 §15` | Future Silicon Extensions                                                                         | none       |     6 |
+| [/]  | `D02 T09 §16` | Boot Page Tables: 1 GiB Pages From entry.asm                                                      | bare-metal |     7 |
+| [x]  | `D02 T09 §17` | AMX Tile State + XFD Dynamic XSAVE                                                                | none       |    11 |
+| [ ]  | `D02 T09 §18` | Split-Lock + Bus-Lock Detection                                                                   | none       |     8 |
+| [x]  | `D02 T09 §19` | Additional CPU Feature Adoption: WAITPKG, SERIALIZE, RDPID                                        | none       |     6 |
+| [ ]  | `D02 T09 §20` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     1 |
+| [x]  | `D02 T10 §1`  | NX Bit: EFER.NXE + PTE NX on All Non-Code Mappings                                                | none       |    10 |
+| [x]  | `D02 T10 §2`  | SMEP & SMAP: CR4 Activation + CLAC/STAC Wrappers                                                  | none       |    13 |
+| [x]  | `D02 T10 §3`  | KPTI Trampoline Page + Per-CPU CR3 Fields                                                         | none       |     5 |
+| [x]  | `D02 T10 §4`  | KPTI SYSCALL CR3 Swap                                                                             | none       |     6 |
+| [x]  | `D02 T10 §5`  | KPTI IDT CR3 Swap (All 256 Vectors)                                                               | none       |     7 |
+| [x]  | `D02 T10 §6`  | KPTI User CR3 Allocation + Context Switch                                                         | none       |     6 |
+| [x]  | `D02 T10 §7`  | PCID: TLB Tagging for No-Flush CR3 Switch                                                         | none       |     6 |
+| [x]  | `D02 T10 §8`  | Spectre Mitigations: IBRS/IBPB + Retpoline                                                        | none       |    12 |
+| [x]  | `D02 T10 §10` | CET Indirect Branch Tracking (IBT / ENDBR64)                                                      | none       |     8 |
+| [x]  | `D02 T10 §11` | Kernel Heap Hardening: Cookies & Redzones                                                         | none       |    10 |
+| [x]  | `D02 T10 §12` | Stack Canaries (`-fstack-protector-strong`)                                                       | none       |     8 |
+| [ ]  | `D02 T10 §13` | Kernel Stack Guard Pages                                                                          | none       |    10 |
+| [x]  | `D02 T10 §14` | KASLR: RDRAND Kernel Load Address                                                                 | none       |     9 |
+| [x]  | `D02 T10 §15` | Enclave and Code Signing Syscalls Wired to SSDT                                                   | none       |    10 |
+| [ ]  | `D02 T10 §16` | Secure Boot Lockdown Enforcement                                                                  | none       |     8 |
+| [ ]  | `D02 T10 §17` | Kernel-Image W^X: .text Read-Only + .rodata RO-After-Init                                         | none       |     9 |
+| [x]  | `D02 T10 §18` | CPU Feature-Flag 128-bit Expansion (`cpu_feature_mask_t`)                                         | none       |     7 |
+| [x]  | `D02 T10 §19` | Microarchitectural Data-Sampling Clears (MDS / TAA / SRBDS / MMIO)                                | none       |     6 |
+| [ ]  | `D02 T10 §20` | kCFI: Software Control-Flow Integrity for Indirect Calls                                          | none       |     6 |
+| [ ]  | `D02 T10 §21` | FORTIFY_SOURCE: Bounds-Checked str/mem Builtins                                                   | none       |     5 |
+| [ ]  | `D02 T10 §22` | stackleak: Erase Kernel Stack on Return to User                                                   | none       |     5 |
+| [ ]  | `D02 T10 §23` | KFENCE: Sampling Use-After-Free / Out-of-Bounds Detector                                          | none       |     6 |
+| [x]  | `D02 T10 §24` | Mitigation Visibility: Queryable Security Posture                                                 | none       |     5 |
+| [x]  | `D02 T10 §25` | Spectre Predictor-Policy Mitigations: SSBD, STIBP, RSB, BHI, ITS, Retbleed                        | none       |    10 |
+| [x]  | `D02 T10 §26` | Release-Build Test-Surface Exclusion                                                              | none       |    11 |
+| [x]  | `D02 T10 §27` | Release-Flavor Proof: Seam-Inventory Gate and CI Attestation                                      | none       |     6 |
+| [x]  | `D02 T10 §28` | Test-Only Translation Units Outside `src/kernel/test/`                                            | none       |     8 |
+| [/]  | `D02 T10 §29` | Guard Unguarded Test-Only Helper Functions in Production TUs                                      | none       |     6 |
+| [/]  | `D02 T10 §30` | Signed CI Attestation for the Release-Flavor Proof Gate                                           | none       |     5 |
+| [ ]  | `D02 T10 §31` | Legacy-Syscall User-Pointer Validation                                                            | none       |     5 |
+| [ ]  | `D02 T10 §32` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     3 |
+| [x]  | `D02 T11 §1`  | TEB Struct and GS Self-Pointer                                                                    | none       |     5 |
+| [x]  | `D02 T11 §2`  | PEB Struct and RTL_USER_PROCESS_PARAMETERS                                                        | none       |     7 |
+| [x]  | `D02 T11 §3`  | swapgs on INT 0x80 Entry and Exit                                                                 | none       |     6 |
+| [x]  | `D02 T11 §4`  | KERNEL_GS_BASE Written at task_exec and Fork                                                      | none       |     7 |
+| [x]  | `D02 T11 §5`  | PEB Allocation and Population at task_exec                                                        | none       |     9 |
+| [x]  | `D02 T11 §6`  | TEB Allocation and Population at Thread Create                                                    | none       |     7 |
+| [x]  | `D02 T11 §7`  | Initial User Stack Frame                                                                          | none       |     6 |
+| [x]  | `D02 T11 §8`  | PEB Ldr (Module List) Basic Population                                                            | none       |     7 |
+| [x]  | `D02 T11 §9`  | TLS Slot Allocation (64 Static Slots)                                                             | none       |     6 |
+| [x]  | `D02 T11 §10` | PEB / TEB Exposed in Ob Namespace                                                                 | none       |     6 |
+| [ ]  | `D02 T11 §11` | KUSER_SHARED_DATA -- Kernel-User Shared Page                                                      | none       |    11 |
+| [x]  | `D02 T11 §12` | TLS Expansion Slots (1024 Dynamic Slots)                                                          | none       |    10 |
+| [x]  | `D02 T11 §13` | Extended Auxiliary Vector (AT_RANDOM, AT_PHDR, AT_PHNUM)                                          | none       |    12 |
+| [x]  | `D02 T11 §14` | User-Mode Thread Bootstrap (uthread_create)                                                       | none       |    11 |
+| [x]  | `D02 T11 §15` | Per-thread TEB Allocation at uthread_create()                                                     | none       |    11 |
+| [/]  | `D02 T11 §17` | PEB x64 Version-Field Offsets                                                                     | none       |     6 |
+| [ ]  | `D02 T11 §18` | Paranoid swapgs Entry for NMI / #DF / #MCE                                                        | none       |     6 |
+| [/]  | `D02 T11 §19` | exec/fork/switch GS-base Staging Correctness and Cost                                             | none       |     6 |
+| [/]  | `D02 T11 §16` | TEB Multi-Page Mapping and User-VA Non-Overlap                                                    | none       |     9 |
+| [ ]  | `D02 T11 §20` | PEB Allocation Robustness and Win32 ABI Handoff                                                   | none       |     7 |
+| [/]  | `D02 T11 §21` | Format-Specific User Startup Frame (ELF / PE / EIF) + Env Unification                             | none       |     3 |
+| [ ]  | `D02 T11 §22` | PEB Ldr Module Identity (DllBase / SizeOfImage / Name)                                            | none       |     3 |
+| [/]  | `D02 T11 §23` | Per-thread TLS Value Storage (Static + Expansion)                                                 | none       |     3 |
+| [ ]  | `D02 T11 §24` | PEB/TEB Ob-Namespace Exposure: Safe Wrapper Objects + Lifecycle                                   | none       |     6 |
+| [ ]  | `D02 T11 §25` | TLS Expansion Mapping Safety and Alloc Race                                                       | none       |     3 |
+| [ ]  | `D02 T11 §26` | auxv Hardening: Classified AT_RANDOM + Validated AT_PHDR                                          | none       |     3 |
+| [ ]  | `D02 T11 §27` | uthread_create Robustness: Guard-page Cleanup + tid Reservation + Stack-size Validation           | none       |     5 |
+| [ ]  | `D02 T11 §28` | Intermittent TEB-without-kernel_gs_base Halt at Ring-3 Entry                                      | none       |     4 |
+| [x]  | `D02 T12 §1`  | NTSTATUS Type and Canonical Status Codes                                                          | none       |     6 |
+| [x]  | `D02 T12 §2`  | SYSCALL/SYSRET Fast Path                                                                          | none       |     8 |
+| [ ]  | `D02 T12 §3`  | INT 0x2E Compatibility Path                                                                       | none       |     7 |
+| [x]  | `D02 T12 §4`  | System Service Descriptor Table (SSDT)                                                            | none       |    11 |
+| [x]  | `D02 T12 §5`  | Nt/Zw Naming and Existing Syscall Migration                                                       | none       |    19 |
+| [ ]  | `D02 T12 §6`  | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile                                    | none       |    15 |
+| [ ]  | `D02 T12 §7`  | NtCreateProcess / NtCreateThread / Process-Thread Lifecycle                                       | none       |    39 |
+| [x]  | `D02 T12 §8`  | Synchronisation Objects + NtWaitForMultipleObjects                                                | none       |    31 |
+| [x]  | `D02 T12 §9`  | Virtual Memory (Alloc, Free, Protect, Lock, Cross-Process)                                        | none       |    17 |
+| [ ]  | `D02 T12 §10` | NtQuerySystemInformation / NtQueryInformationProcess                                              | none       |    15 |
+| [x]  | `D02 T12 §11` | Extended Error Information (IOSB + LastError)                                                     | none       |     6 |
+| [x]  | `D02 T12 §12` | ZwXxx Kernel-Mode Alias Layer                                                                     | none       |     8 |
+| [x]  | `D02 T12 §13` | File Metadata and Device Control                                                                  | none       |    17 |
+| [ ]  | `D02 T12 §16` | Token Open, Query, and Adjust Syscalls                                                            | none       |    11 |
+| [ ]  | `D02 T12 §17` | Directory and Symbolic Link Object Syscalls                                                       | none       |     9 |
+| [ ]  | `D02 T12 §18` | Section and Memory-Mapped File Syscalls                                                           | none       |    11 |
+| [ ]  | `D02 T12 §19` | Timer Control Syscalls                                                                            | none       |    19 |
+| [x]  | `D02 T12 §20` | Legacy LPC Port Syscalls                                                                          | none       |    16 |
+| [x]  | `D02 T12 §21` | Exception and Debug Syscalls                                                                      | none       |     9 |
+| [x]  | `D02 T12 §22` | Power and System Control                                                                          | none       |     7 |
+| [x]  | `D02 T12 §23` | Atom, Locale, and Miscellaneous Syscalls                                                          | none       |    14 |
+| [ ]  | `D02 T12 §24` | Syscall Audit and Tracing Hook                                                                    | none       |     9 |
+| [x]  | `D02 T12 §25` | Per-Process Syscall Filtering                                                                     | none       |     8 |
+| [x]  | `D02 T12 §26` | Kernel-to-User Mode Callback Dispatch                                                             | none       |     7 |
+| [x]  | `D02 T12 §27` | SSDT Integrity Protection                                                                         | none       |     6 |
+| [x]  | `D02 T12 §28` | Extended Directory Enumeration Classes                                                            | none       |     9 |
+| [ ]  | `D02 T12 §29` | Token Lifecycle and SRM Access Check Syscalls                                                     | none       |    21 |
+| [x]  | `D02 T12 §30` | Generic Object Management Syscalls                                                                | none       |    10 |
+| [x]  | `D02 T12 §31` | Modern ALPC Port Syscalls                                                                         | none       |    17 |
+| [ ]  | `D02 T12 §32` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     5 |
+| [ ]  | `D02 T12 §33` | Legacy `SYS_*` Number Allocation Across Roadmaps                                                  | none       |     4 |
+| [x]  | `D02 T13 §1`  | Unicode String Primitive Layer                                                                    | none       |     5 |
+| [x]  | `D02 T13 §2`  | Case Folding and Invariant Compare                                                                | none       |     8 |
+| [x]  | `D02 T13 §3`  | Global and Local Atom Tables                                                                      | none       |     4 |
+| [x]  | `D02 T13 §4`  | NLS Table File Format and Loader                                                                  | none       |     6 |
+| [x]  | `D02 T13 §5`  | Code Page Conversion Providers                                                                    | none       |     9 |
+| [ ]  | `D02 T13 §6`  | Locale and LCID Metadata                                                                          | none       |    10 |
+| [x]  | `D02 T13 §7`  | Sort Keys and Normalization Policy                                                                | none       |     8 |
+| [x]  | `D02 T14 §1`  | Access Rights, API Limits & RegFlushKey                                                           | none       |    19 |
+| [x]  | `D02 T14 §2`  | Advanced Key Operations                                                                           | none       |    12 |
+| [x]  | `D02 T14 §3`  | Change Notifications                                                                              | none       |    15 |
+| [x]  | `D02 T14 §7`  | `regedit` Shell Tool                                                                              | none       |    11 |
+| [x]  | `D02 T14 §8`  | Advanced Hive Features                                                                            | none       |    22 |
+| [x]  | `D02 T14 §9`  | Transactions, Search API & Snapshot/Diff                                                          | none       |    15 |
+| [x]  | `D02 T14 §10` | Performance Optimisations                                                                         | none       |    13 |
+| [x]  | `D02 T14 §11` | KTM Transaction Syscalls Wired to SSDT                                                            | none       |     9 |
+| [x]  | `D02 T14 §12` | Registry Symlink Completion                                                                       | none       |     4 |
+| [x]  | `D02 T14 §13` | Schema-Validated Registry Keys ⭐                                                                 | none       |     6 |
+| [x]  | `D02 T14 §15` | Registry Value Size Expansion (16 KiB Names, 1 MiB Data)                                          | none       |     7 |
+| [ ]  | `D02 T14 §16` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     4 |
+| [x]  | `D02 T15 §1`  | SID & LUID Primitives                                                                             | none       |     7 |
+| [x]  | `D02 T15 §2`  | Privilege Constants & PRIVILEGE_SET                                                               | none       |     4 |
+| [x]  | `D02 T15 §3`  | SECURITY_DESCRIPTOR, ACL & ACE Types                                                              | none       |    29 |
+| [ ]  | `D02 T15 §4`  | ACCESS_TOKEN Object                                                                               | none       |    17 |
+| [ ]  | `D02 T05 §9`  | NtClose / NtDuplicateObject / NtQueryObject                                                       | none       |     8 |
+| [ ]  | `D02 T15 §5`  | SeAccessCheck Engine                                                                              | none       |    22 |
+| [x]  | `D02 T15 §6`  | Mandatory Integrity Control (MIC)                                                                 | none       |    11 |
+| [x]  | `D02 T15 §7`  | Process/Thread Token Assignment & Impersonation                                                   | none       |     9 |
+| [x]  | `D02 T15 §8`  | SePrivilegeCheck & Per-Privilege Enforcement                                                      | none       |    12 |
+| [x]  | `D02 T15 §9`  | UAC Token Split & NtFilterToken                                                                   | none       |     8 |
+| [x]  | `D02 T15 §10` | Win32 Security API Wrappers                                                                       | none       |    22 |
+| [x]  | `D02 T15 §11` | Live Token Inspector                                                                              | none       |     4 |
+| [x]  | `D02 T15 §12` | Security and Token Syscalls Wired to SSDT                                                         | none       |    21 |
+| [x]  | `D02 T15 §13` | Security Descriptor Inheritance (SeAssignSecurity)                                                | none       |     9 |
+| [x]  | `D02 T15 §14` | AppContainer / LowBox Tokens                                                                      | none       |    12 |
+| [x]  | `D02 T15 §15` | Access Denial Explainer                                                                           | none       |     7 |
+| [ ]  | `D02 T15 §16` | Security Primitive Hardening                                                                      | none       |     4 |
+| [x]  | `D02 T16 §1`  | Notification State Object Type                                                                    | none       |     9 |
+| [x]  | `D02 T16 §2`  | Kernel Publish/Subscribe API                                                                      | none       |     9 |
+| [x]  | `D02 T16 §3`  | Waitable User Subscriptions                                                                       | none       |    11 |
+| [x]  | `D02 T16 §4`  | Security and Namespace Policy                                                                     | none       |     7 |
+| [x]  | `D02 T16 §5`  | Built-In State-Name Catalog                                                                       | none       |    10 |
+| [x]  | `D02 T16 §6`  | ETW/klog Bridge                                                                                   | none       |     4 |
+| [ ]  | `D02 T16 §7`  | Coalescing and Payload Retention                                                                  | none       |     8 |
+| [x]  | `D02 T16 §9`  | Diagnostics Browser and Counters                                                                  | none       |     4 |
+| [x]  | `D02 T17 §1`  | `exec_load()` Multi-Format Dispatcher                                                             | none       |    11 |
+| [x]  | `D02 T17 §2`  | Enhanced ELF Loader                                                                               | none       |    13 |
+| [x]  | `D02 T17 §3`  | ELF Security Segments (GNU_STACK, RELRO, GNU_PROPERTY)                                            | none       |    10 |
+| [x]  | `D02 T17 §4`  | EIF Format Specification                                                                          | none       |     9 |
+| [x]  | `D02 T17 §5`  | EIF Kernel Loader                                                                                 | none       |     8 |
+| [x]  | `D02 T17 §6`  | Module List Registration (LDR_DATA_TABLE_ENTRY)                                                   | none       |     8 |
+| [ ]  | `D02 T17 §7`  | PE32+ Header Parser                                                                               | none       |     8 |
+| [ ]  | `D02 T17 §8`  | PE32+ Section Loader + `.pdata` Registration                                                      | none       |    12 |
+| [ ]  | `D02 T17 §9`  | PE32+ Import Table Resolver (Win32 Dispatch)                                                      | none       |     9 |
+| [x]  | `D02 T17 §10` | PE32+ Base Relocation                                                                             | none       |     4 |
+| [x]  | `D02 T17 §11` | PE32+ TLS Directory Processing                                                                    | none       |     6 |
+| [x]  | `D02 T17 §12` | PE32+ Load Config and CFG Bitmap                                                                  | none       |     6 |
+| [ ]  | `D02 T17 §13` | `elf2eif` Host-Side Converter                                                                     | none       |     7 |
+| [x]  | `D02 T17 §14` | ELF Dynamic Linker                                                                                | none       |     8 |
+| [x]  | `D02 T17 §15` | ASLR -- Address Space Layout Randomization                                                        | none       |     7 |
+| [x]  | `D02 T17 §16` | Script/Shebang Interpreter Support                                                                | none       |     5 |
+| [x]  | `D02 T17 §17` | EIF Code Signing                                                                                  | none       |     6 |
+| [x]  | `D02 T17 §18` | ELF `PT_TLS` Template Loading                                                                     | none       |     9 |
+| [x]  | `D02 T17 §19` | PE API-Set + Delay-Load/Bound Import Support                                                      | none       |     7 |
+| [x]  | `D02 T17 §20` | ELF Dynamic Linker -- Advanced (IFUNC, Init/Fini, Versioning, Search Order)                       | none       |     8 |
+| [x]  | `D02 T18 §1`  | `KIMAGE_ENTRY` Data Model                                                                         | none       |     7 |
+| [/]  | `D02 T18 §3`  | Address Range Index                                                                               | none       |     6 |
+| [/]  | `D02 T18 §4`  | Symbol Provider Abstraction                                                                       | none       |     6 |
+| [x]  | `D02 T19 §1`  | Code Integrity Policy Object                                                                      | none       |     9 |
+| [x]  | `D02 T19 §2`  | Image Validation API and Callback                                                                 | none       |     8 |
+| [x]  | `D02 T19 §3`  | Hashing and Signature Provider Bridge                                                             | none       |     5 |
+| [/]  | `D02 T19 §4`  | Embedded Signature Validation                                                                     | none       |     9 |
+| [/]  | `D02 T19 §5`  | Catalog Database                                                                                  | none       |     6 |
+| [x]  | `D02 T19 §6`  | Revocation and Deny Lists                                                                         | none       |     6 |
+| [x]  | `D02 T19 §7`  | Measured-Boot and Secure Boot Binding                                                             | none       |     6 |
+| [x]  | `D02 T19 §8`  | Driver/Module Enforcement                                                                         | none       |     5 |
+| [x]  | `D02 T19 §9`  | User-Mode Image Enforcement                                                                       | none       |     5 |
+| [x]  | `D02 T19 §10` | CI Audit, Telemetry, and Syscalls                                                                 | none       |     5 |
+| [ ]  | `D02 T19 §11` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     5 |
+| [/]  | `D02 T18 §9`  | Provenance, CI, and Hotpatch Metadata                                                             | none       |     7 |
+| [x]  | `D02 T20 §1`  | Range Overlap Validation (Normative Rule 2)                                                       | none       |     5 |
+| [ ]  | `D02 T20 §2`  | Segment Permission Enforcement (R/W/X via PTE)                                                    | none       |     8 |
+| [ ]  | `D02 T20 §3`  | Module Registration for EIF                                                                       | none       |     5 |
+| [x]  | `D02 T20 §4`  | API Version Gating                                                                                | none       |     4 |
+| [x]  | `D02 T20 §5`  | Metadata Section Parser                                                                           | none       |     8 |
+| [x]  | `D02 T20 §6`  | LZ4 Compressed Segments                                                                           | none       |     5 |
+| [/]  | `D02 T20 §7`  | Optional Import Stubs                                                                             | none       |     7 |
+| [x]  | `D02 T20 §8`  | EIF ASLR (load_base=0 Randomization)                                                              | none       |    10 |
+| [ ]  | `D02 T20 §9`  | Per-Process Dispatch Table Isolation                                                              | none       |     8 |
+| [x]  | `D02 T20 §10` | CET Compatibility Flag (Format Reservation)                                                       | none       |     5 |
+| [/]  | `D02 T20 §11` | EIF Signature-Block ABI (Signer Key Delivery)                                                     | none       |     4 |
+| [ ]  | `D02 T20 §12` | Resource Section with SVG Icons                                                                   | none       |     7 |
+| [x]  | `D02 T21 §1`  | Working Directory                                                                                 | none       |    13 |
+| [ ]  | `D02 T21 §2`  | Standard Handle Pre-Wiring at Process Creation                                                    | none       |     8 |
+| [x]  | `D02 T21 §3`  | User-Mode Program Break (brk/sbrk -- Linux Compat)                                                | none       |    12 |
+| [x]  | `D02 T21 §4`  | Process Priority Class                                                                            | none       |     7 |
+| [x]  | `D02 T21 §5`  | Per-Task Scheduling Policy                                                                        | none       |     6 |
+| [/]  | `D02 T21 §6`  | Process Capabilities and Privilege Bitmask                                                        | none       |     6 |
+| [/]  | `D02 T21 §7`  | Capability Inheritance and Drop-Only Policy                                                       | none       |     6 |
+| [x]  | `D02 T21 §8`  | Process Accounting Fields (Times, I/O Counters)                                                   | none       |     8 |
+| [x]  | `D02 T21 §9`  | Per-Process Resource Limits (rlimits)                                                             | none       |    11 |
+| [x]  | `D02 T21 §10` | CPU Affinity per Process                                                                          | none       |     6 |
+| [x]  | `D02 T21 §11` | Per-Process Mitigation Policy                                                                     | none       |     9 |
+| [x]  | `D02 T21 §12` | Pledge/Unveil-Style Process Restriction                                                           | none       |    10 |
+| [x]  | `D02 T21 §13` | Job Object Syscalls Wired to SSDT                                                                 | none       |    14 |
+| [x]  | `D02 T21 §14` | Process Exit Cleanup                                                                              | none       |     7 |
+| [/]  | `D02 T21 §15` | Process Parenting, Reaping, and Wait Semantics                                                    | none       |     9 |
+| [x]  | `D02 T21 §16` | Protected Process Light (PS_PROTECTION)                                                           | none       |     6 |
+| [x]  | `D02 T21 §17` | Process Groups and Sessions                                                                       | none       |     8 |
+| [x]  | `D02 T21 §18` | Rich Wait Variants, NT Multi-Waiter Wake, and Dumpable Policy                                     | none       |     7 |
+| [x]  | `D02 T21 §19` | `task_exec` Commit Point and Kernel-Stack Reclamation                                             | none       |    19 |
+| [ ]  | `D02 T21 §20` | Page-Table Lifetime Across Reap + fork/exec                                                       | none       |    13 |
+| [ ]  | `D02 T21 §21` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |    15 |
+| [x]  | `D02 T22 §1`  | Per-Process Environ Storage & Kernel API                                                          | none       |    11 |
+| [x]  | `D02 T22 §2`  | System Default Variables from Registry                                                            | none       |     5 |
+| [x]  | `D02 T22 §3`  | `%VAR%` Expansion                                                                                 | none       |     4 |
+| [ ]  | `D02 T22 §4`  | argv Array: Kernel Storage & Shell Parsing                                                        | none       |    11 |
+| [x]  | `D02 T22 §5`  | Nt/Zw Environment Variable Syscalls                                                               | none       |     4 |
+| [x]  | `D02 T22 §6`  | Win32 API Wrappers                                                                                | none       |    15 |
+| [x]  | `D02 T22 §7`  | Shell Integration: PATH Lookup & SET/ECHO                                                         | none       |    11 |
+| [x]  | `D02 T22 §8`  | `.profile` Startup Script                                                                         | none       |     8 |
+| [x]  | `D02 T22 §9`  | Environment Change Notifications                                                                  | none       |    10 |
+| [x]  | `D02 T22 §10` | Environment Block Sorting & Size Limits                                                           | none       |    13 |
+| [x]  | `D02 T22 §11` | PATHEXT Variable & Extension Search Order                                                         | none       |     5 |
+| [x]  | `D02 T22 §12` | Hidden Drive-Letter Variables (`=C:`, `=D:`)                                                      | none       |     9 |
+| [x]  | `D02 T22 §13` | CreateEnvironmentBlock / DestroyEnvironmentBlock                                                  | none       |     8 |
+| [ ]  | `D02 T22 §14` | SearchPathW / SearchPathA Win32 API                                                               | none       |     8 |
+| [x]  | `D02 T22 §15` | CommandLineToArgvW Win32 API                                                                      | none       |     5 |
+| [x]  | `D02 T22 §16` | Environment Variable Security & Sanitization                                                      | none       |     7 |
+| [x]  | `D02 T22 §17` | App Paths Registry-Based Executable Lookup                                                        | none       |     6 |
+| [x]  | `D02 T22 §18` | cmd.exe Dynamic Pseudo-Variables & Delayed Expansion                                              | none       |     6 |
+| [x]  | `D02 T22 §19` | Rtl Expansion Hardening: Output-Count Wrap & `%=X:%` Parity                                       | none       |     6 |
+| [x]  | `D02 T22 §20` | Rtl Export Prerequisites: Lookup Bound, Foreign-Block Extent, At-Cap Allocation                   | none       |     6 |
+| [x]  | `D02 T22 §21` | ntdll Rtl Environment Exports                                                                     | none       |    12 |
+| [x]  | `D02 T22 §22` | env Allocator Safety and UTF-8 Expansion Budget                                                   | none       |     8 |
+| [x]  | `D02 T22 §23` | Live-Environment Adoption: SetCurrentEnvironment, SetEnvironmentStrings, CreateEnvironmentEx      | none       |    12 |
+| [ ]  | `D02 T22 §24` | Rtl Expansion Completeness: Boundary Copy, Measured Budget, Lookup Cache                          | none       |    15 |
+| [x]  | `D02 T22 §25` | Counted (non-`_U`) Rtl Env Read Forms                                                             | none       |     9 |
+| [x]  | `D02 T23 §1`  | EXCEPTION_RECORD, CONTEXT, and EXCEPTION_POINTERS Types                                           | none       |     8 |
+| [x]  | `D02 T23 §2`  | #PF Triage -- User vs. Kernel Decode, EXCEPTION_RECORD/CONTEXT Build, Dispatch Routing            | none       |     6 |
+| [x]  | `D02 T23 §4`  | Debugger First-Chance / Second-Chance Notification                                                | none       |     9 |
+| [x]  | `D02 T23 §5`  | KiUserExceptionDispatcher -- Ring-3 Exception Delivery                                            | none       |     9 |
+| [ ]  | `D02 T23 §6`  | x64 Table-Based Unwind (`.pdata`, `RtlVirtualUnwind`)                                             | none       |    14 |
+| [x]  | `D02 T23 §7`  | Stack Walking (`RtlCaptureStackBackTrace`, `RtlWalkFrameChain`)                                   | none       |     8 |
+| [x]  | `D02 T23 §8`  | SEH Chain Walk and `__try`/`__except` Frame Dispatch                                              | none       |     5 |
+| [ ]  | `D02 T23 §9`  | RtlUnwindEx -- Unwind to a Target Frame                                                           | none       |     9 |
+| [x]  | `D02 T23 §10` | Vectored Exception Handlers (VEH)                                                                 | none       |     5 |
+| [x]  | `D02 T23 §11` | Vectored Continue Handlers (VCH)                                                                  | none       |     3 |
+| [x]  | `D02 T23 §12` | Unhandled Exception Filter and WER Hook                                                           | none       |     6 |
+| [x]  | `D02 T23 §13` | Kernel Safe Probing (`ProbeForRead`, `ProbeForWrite`)                                             | none       |     5 |
+| [ ]  | `D02 T23 §14` | Kernel-Mode `__try`/`__except` for Drivers                                                        | none       |     8 |
+| [x]  | `D02 T23 §15` | POSIX Signal Delivery from Exceptions (Linux Compat)                                              | none       |     8 |
+| [x]  | `D02 T23 §16` | Exception Dispatch Telemetry                                                                      | none       |     7 |
+| [x]  | `D02 T23 §17` | Guard-Page Stack Auto-Grow -- Commit/Reserve Tracking, Guard Re-Arm, Terminal Overflow            | none       |     5 |
+| [ ]  | `D02 T23 §18` | Unwind Fixtures Independent of Where the Linker Put Real Code                                     | none       |     3 |
+| [/]  | `D02 T23 §19` | Nothing Compiles the EXCEPT_TELEMETRY=off Flavor                                                  | none       |     3 |
+| [ ]  | `D02 T23 §20` | Kernel SEH Cannot Be Armed Without Rewriting Scheduler Thread Metadata                            | none       |     3 |
+| [x]  | `D02 T24 §1`  | Message Header, Port Attributes & Type Codes                                                      | none       |    12 |
+| [x]  | `D02 T24 §2`  | ALPC_PORT Object & Object Manager Registration                                                    | none       |     9 |
+| [x]  | `D02 T24 §3`  | Connection State Machine                                                                          | none       |    15 |
+| [x]  | `D02 T24 §4`  | Synchronous Send+Wait+Receive Engine                                                              | none       |     8 |
+| [x]  | `D02 T24 §5`  | Asynchronous Delivery & Completion List                                                           | none       |    10 |
+| [ ]  | `D02 T24 §6`  | Large Data: Port Sections & View Mapping                                                          | none       |    13 |
+| [ ]  | `D02 T24 §7`  | Security: Client Token Capture & Impersonation                                                    | none       |    11 |
+| [/]  | `D02 T24 §8`  | NtAlpc* SSDT Registration & Stub Retrofit                                                         | none       |    10 |
+| [ ]  | `D02 T24 §9`  | NtAlpc QueryInformation, SetInformation & CancelMessage                                           | none       |     9 |
+| [x]  | `D02 T24 §10` | CSRSS ApiPort Bootstrap                                                                           | none       |     9 |
+| [x]  | `D02 T24 §11` | Message Zones & Resource Reserves (Pre-Allocated Buffers)                                         | none       |     9 |
+| [x]  | `D02 T24 §12` | Live Port Monitor & IPC Profiler                                                                  | none       |     7 |
+| [ ]  | `D02 T24 §13` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     1 |
+| [x]  | `D02 T25 §1`  | Resource Type Registry                                                                            | none       |     5 |
+| [x]  | `D02 T25 §2`  | Quota Block and Charge API                                                                        | none       |     6 |
+| [x]  | `D02 T25 §3`  | Process/Token/Job Ownership Model                                                                 | none       |     7 |
+| [x]  | `D02 T25 §4`  | Receipt Identity (Generation-Tokened Charges)                                                     | none       |    10 |
+| [x]  | `D02 T25 §5`  | Pool and Allocation Quota Integration                                                             | none       |     8 |
+| [x]  | `D02 T25 §6`  | Registry, ALPC, Notification Quotas                                                               | none       |     7 |
+| [x]  | `D02 T25 §7`  | CPU, I/O, and Wakeup Accounting                                                                   | none       |    10 |
+| [x]  | `D02 T25 §8`  | Native Query/Set Quota Syscalls                                                                   | none       |    12 |
+| [x]  | `D02 T25 §9`  | Resource Pressure Events and Recovery Hooks                                                       | none       |     8 |
+| [ ]  | `D02 T25 §10` | Tests, Leak Sweeps, and Dashboards                                                                | none       |    10 |
+| [x]  | `D02 T25 §11` | Charge Ledger and Transactional Adjustment                                                        | none       |     6 |
+| [x]  | `D02 T25 §12` | Resource Pressure Stall Telemetry                                                                 | none       |     9 |
+| [x]  | `D02 T25 §13` | Object Manager Charge Points                                                                      | none       |     5 |
+| [x]  | `D02 T25 §14` | Ledger Lifetime: ISR-Safe Return and Obligation Adoption                                          | none       |     5 |
+| [x]  | `D02 T25 §15` | Charge-Path Cost Reduction                                                                        | none       |     7 |
+| [x]  | `D02 T25 §16` | Charge Attribution and Status Fidelity                                                            | none       |     5 |
+| [x]  | `D02 T25 §17` | Infrastructure-Gated Charge-Path Bounding and Stall Lanes                                         | none       |    16 |
+| [x]  | `D02 T25 §18` | Ledger Obligation Ceiling and Charge-Source Pass-Through                                          | none       |     3 |
+| [x]  | `D02 T25 §19` | Lockless Job Membership and the Live Pressure-Retry Seam                                          | none       |     5 |
+| [ ]  | `D02 T25 §20` | Per-Process Network I/O Accounting                                                                | none       |     4 |
+| [x]  | `D02 T26 §1`  | ACPI Sleep Object Parsing & PM1 State Machine                                                     | none       |    14 |
+| [x]  | `D02 T26 §2`  | C1 Idle Entry: Race-Safe HLT + Per-CPU Idle Accounting                                            | none       |     7 |
+| [x]  | `D02 T26 §3`  | S3: Suspend to RAM                                                                                | none       |    11 |
+| [x]  | `D02 T26 §4`  | S4: Hibernation Image Format and Compression Codec                                                | none       |     8 |
+| [x]  | `D02 T26 §5`  | ACPI Embedded Controller (EC) Driver                                                              | none       |    19 |
+| [x]  | `D02 T26 §6`  | Battery & AC Adapter (ACPI Source Layer)                                                          | none       |     8 |
+| [x]  | `D02 T26 §7`  | Power & Sleep Button Event Dispatch                                                               | none       |    24 |
+| [x]  | `D02 T26 §8`  | PCI Power Management Capability and D0--D3hot State Machine                                       | none       |    19 |
+| [x]  | `D02 T26 §9`  | Driver Power Callbacks & Resume Ordering                                                          | none       |     6 |
+| [x]  | `D02 T26 §10` | S0ix Firmware Advertisement and MWAIT Capability Layer                                            | none       |     7 |
+| [x]  | `D02 T26 §11` | Fast Startup (Hybrid Shutdown / Hiberboot)                                                        | none       |    11 |
+| [ ]  | `D02 T26 §12` | Runtime Device Idle Management                                                                    | none       |    30 |
+| [ ]  | `D02 T26 §13` | Power Request Tracking & Wake Source Management                                                   | none       |    16 |
+| [ ]  | `D02 T26 §17` | Driver Power Query & Veto (IRP_MN_QUERY_POWER)                                                    | none       |     5 |
+| [ ]  | `D02 T26 §20` | Power Syscalls Wired to SSDT                                                                      | none       |     9 |
+| [ ]  | `D02 T26 §21` | Linux `/sys/power` Suspend Variant Parity                                                         | none       |     8 |
+| [ ]  | `D02 T26 §23` | PCIe ASPM and L1 Substates                                                                        | none       |    10 |
+| [ ]  | `D02 T26 §24` | ACPI General-Purpose Event (GPE) Blocks                                                           | none       |    14 |
+| [ ]  | `D02 T26 §25` | Per-CPU Idle-Time Accounting via `NtQuerySystemInformation`                                       | none       |     8 |
+| [x]  | `D02 T26 §26` | Stop-the-World CPU Rendezvous for Sleep Transitions                                               | none       |     6 |
+| [ ]  | `D02 T26 §27` | Rendezvous Safety Residue: Test Seam and the Retract-Side Window                                  | none       |     9 |
+| [x]  | `D02 T26 §28` | S4 Orchestration: Hibernation Image Write and Resume Path                                         | none       |    10 |
+| [ ]  | `D02 T26 §29` | Composite Battery State Model, Power Policy, and Registry Publication                             | none       |    17 |
+| [x]  | `D02 T26 §30` | Battery Charge Limiting and Smart Charging                                                        | none       |     6 |
+| [x]  | `D02 T26 §31` | Lid State and Lid-Close Policy                                                                    | none       |     6 |
+| [x]  | `D02 T26 §32` | Human Presence Detection (HPD)                                                                    | none       |     8 |
+| [ ]  | `D02 T26 §33` | PM Device Registry (`pm_device_t`, `pm_register_device`)                                          | none       |    10 |
+| [ ]  | `D02 T26 §35` | Directed Power (DFx) and DRIPS Residency Accounting                                               | none       |     9 |
+| [ ]  | `D02 T26 §36` | NIC Wake Offloads for Connected Standby (ARP/NS/WoL/Patterns)                                     | none       |     8 |
+| [x]  | `D02 T26 §37` | System Connected Standby Entry (All-CPU S0ix Transition)                                          | none       |     7 |
+| [x]  | `D02 T26 §38` | ACPI Table Discovery: Validate Extents Before Checksumming and Publishing                         | none       |     6 |
+| [ ]  | `D02 T26 §39` | ACPI Root-Pointer Integrity and Validator Unification                                             | none       |     7 |
+| [/]  | `D02 T27 §1`  | Bugcheck Codes & `KeBugCheckEx`                                                                   | none       |    15 |
+| [/]  | `D02 T27 §2`  | FPU/XMM/XSAVE State Capture                                                                       | none       |     6 |
+| [/]  | `D02 T27 §3`  | Module Registry for Crash Dumps                                                                   | none       |     4 |
+| [/]  | `D02 T27 §4`  | MDMP Binary Format: Header, Directory & Stream Types                                              | none       |    11 |
+| [ ]  | `D02 T27 §5`  | Minidump Writer                                                                                   | none       |     8 |
+| [ ]  | `D02 T27 §6`  | Kernel Dump & Full Dump Variants                                                                  | none       |     6 |
+| [ ]  | `D02 T27 §7`  | Raw-Partition Dump Sink (VFS Bypass)                                                              | none       |    10 |
+| [ ]  | `D02 T27 §8`  | Post-Boot Crash Recovery & CrashDumps Archive                                                     | none       |     7 |
+| [ ]  | `D02 T27 §9`  | `dmpanalyze.exe` Crash Analyzer                                                                   | none       |     7 |
+| [ ]  | `D02 T27 §10` | Dump Policy, WinDbg Interoperability & Confidentiality                                            | none       |     9 |
+| [ ]  | `D02 T28 §1`  | TTF Font Rendering in Panic Screen                                                                | none       |     7 |
+| [ ]  | `D02 T28 §2`  | Improved Layout and Visual Hierarchy                                                              | none       |     8 |
+| [ ]  | `D02 T28 §3`  | Crash Context: Last 10 klog Entries Inline                                                        | none       |     6 |
+| [ ]  | `D02 T28 §4`  | Smart QR Code with Compressed Crash Data                                                          | none       |     9 |
+| [ ]  | `D02 T28 §5`  | Auto-Restart Countdown Improvements                                                               | none       |     6 |
+| [ ]  | `D02 T28 §6`  | Crash Analysis Hints On-Screen                                                                    | none       |     3 |
+| [ ]  | `D02 T28 §7`  | Crash Statistics & Loop Protection                                                                | none       |    10 |
+| [ ]  | `D02 T28 §8`  | Safe Mode Suggestion After Repeated Crashes                                                       | none       |     5 |
+| [ ]  | `D02 T28 §9`  | "What Failed" Faulting Module Identification                                                      | none       |     4 |
+| [ ]  | `D02 T28 §10` | Panic Screen Modes (User / Developer / QR)                                                        | none       |     6 |
+| [ ]  | `D02 T28 §11` | Audio Crash Notification (PC Speaker Beep Codes)                                                  | none       |     5 |
+| [ ]  | `D02 T28 §12` | Keyboard-Driven Recovery Actions at Crash Screen                                                  | none       |     8 |
+| [ ]  | `D02 T28 §13` | Dump Collection Progress Percentage                                                               | none       |     7 |
+| [ ]  | `D02 T29 §1`  | Serial Line Setup: 115200 Baud, 8N1, FIFO                                                         | none       |     4 |
+| [ ]  | `D02 T29 §2`  | IRQ-Driven RX Ring Buffer and KD COM Port Selection                                               | none       |     9 |
+| [ ]  | `D02 T29 §3`  | KD Packet Framing: Send / Receive, Checksum, ACK/RESEND                                           | none       |     7 |
+| [ ]  | `D02 T29 §4`  | KD Connection Handshake & Breakin Detection                                                       | none       |     7 |
+| [ ]  | `D02 T29 §5`  | `#DB` / `#BP` Exception Routing to KD, AP Freeze/Thaw                                             | none       |     9 |
+| [ ]  | `D02 T23 §3`  | General Fault-to-Exception Mapping (#DE, #DB, #BP, #OF, #UD, #NP, #SS, #GP, #CP)                  | none       |     9 |
+| [/]  | `D02 T10 §9`  | CET Shadow Stack (Kernel Ring 0)                                                                  | none       |    15 |
+| [/]  | `D02 T18 §5`  | Unwind Metadata Registry                                                                          | none       |     7 |
+| [ ]  | `D02 T29 §6`  | Context Get / Set                                                                                 | none       |     6 |
+| [ ]  | `D02 T29 §7`  | Memory Read / Write                                                                               | none       |     7 |
+| [ ]  | `D02 T29 §8`  | Software Breakpoint Management                                                                    | none       |     8 |
+| [ ]  | `D02 T29 §9`  | Hardware Breakpoints: DR0--DR3, DR7, `#DB` Reporting                                              | none       |     5 |
+| [ ]  | `D02 T29 §10` | Single-Step (RFLAGS.TF) + Continue / Step                                                         | none       |     5 |
+| [ ]  | `D02 T29 §11` | DbgKdGetVersionApi + Module List                                                                  | none       |     6 |
+| [ ]  | `D02 T29 §12` | I/O Port & MSR Read / Write                                                                       | none       |     9 |
+| [ ]  | `D02 T29 §13` | `kd_break()`, Keyboard F12 Breakin & QEMU Guide                                                   | none       |     7 |
+| [ ]  | `D02 T29 §14` | Debug Syscalls Wired to SSDT                                                                      | none       |     8 |
+| [ ]  | `D02 T29 §15` | KD Transport Roadmap, SMP Policy, and Coexistence                                                 | none       |     7 |
+| [/]  | `D02 T18 §8`  | KD/Crash Dump Integration                                                                         | none       |     9 |
+| [ ]  | `D02 T30 §1`  | Health State Model and Registry                                                                   | none       |     4 |
+| [ ]  | `D02 T30 §2`  | Subsystem Heartbeat API                                                                           | none       |     4 |
+| [ ]  | `D02 T30 §3`  | Failure Bucket Taxonomy                                                                           | none       |     4 |
+| [ ]  | `D02 T30 §4`  | Live Kernel Dump Trigger                                                                          | none       |     4 |
+| [ ]  | `D02 T30 §5`  | Degraded-Mode Transition Engine                                                                   | none       |     4 |
+| [ ]  | `D02 T30 §6`  | Recovery Action Dispatcher                                                                        | none       |     6 |
+| [ ]  | `D02 T30 §7`  | Repeated-Failure Escalation                                                                       | none       |     5 |
+| [/]  | `D02 T31 §1`  | per_cpu_data Assembly Offsets                                                                     | none       |     7 |
+| [/]  | `D02 T31 §2`  | boot_config and Early Config Struct Layout                                                        | none       |     8 |
+| [/]  | `D02 T31 §3`  | User ELF Range (0x800000-0x900000) 3-File Sync                                                    | none       |     7 |
+| [/]  | `D02 T31 §4`  | AP Trampoline Data Area Layout (0x8E00)                                                           | none       |     6 |
+| [/]  | `D02 T31 §5`  | Task Interrupt Frame Layout                                                                       | none       |     6 |
+| [/]  | `D02 T31 §6`  | IDT Vector Assignment Collision Detection                                                         | none       |     6 |
+| [/]  | `D02 T31 §7`  | SSDT Service Number Count Stability                                                               | none       |     5 |
+| [/]  | `D02 T31 §8`  | XSAVE/FXSAVE Area Alignment                                                                       | none       |     6 |
+| [/]  | `D02 T31 §9`  | ISR swapgs Symmetry Verification                                                                  | none       |     6 |
+| [/]  | `D02 T31 §10` | Memory Layout Guard Pages                                                                         | none       |    12 |
+| [/]  | `D02 T31 §11` | IXFS Superblock Layout and Magic                                                                  | none       |     7 |
+| [/]  | `D02 T31 §12` | Security Structs (SID, TOKEN, ACL/ACE)                                                            | none       |     9 |
+| [/]  | `D02 T31 §13` | VFS Drive Letter Range and Partition Offsets                                                      | none       |     8 |
+| [/]  | `D02 T31 §14` | exec_pending State Machine Verification                                                           | none       |     6 |
+| [/]  | `D02 T31 §15` | Framebuffer Bare-Metal Safety (5 Rules)                                                           | none       |     7 |
+| [ ]  | `D02 T32 §1`  | Per-CPU SPSC Ring Buffer + Atomic Primitives                                                      | none       |     9 |
+| [ ]  | `D02 T32 §2`  | Lockless `klog_v2()` Enqueue + Format Helpers                                                     | none       |     8 |
+| [ ]  | `D02 T32 §3`  | Priority Lanes + Per-Level Sub-Budgets                                                            | none       |     9 |
+| [ ]  | `D02 T32 §4`  | Fail-Proof FATAL Emergency Path                                                                   | none       |     8 |
+| [ ]  | `D02 T32 §5`  | Configurable Per-Subsystem Rate Limits + Diagnostic Exemption                                     | none       |     8 |
+| [ ]  | `D02 T32 §6`  | Background Drain Worker                                                                           | none       |     9 |
+| [ ]  | `D02 T32 §7`  | Backpressure-Aware Serial Drain + Pressure Counters                                               | none       |     7 |
+| [ ]  | `D02 T32 §8`  | Native Structured Field Wire Format + ETW + JSON Lines Feed                                       | none       |     9 |
+| [ ]  | `D02 T32 §9`  | Boot-Survival Ring Snapshot + Recovery                                                            | none       |     7 |
+| [ ]  | `D02 T32 §10` | v1 -> v2 Migration Switch + Benchmarks + Retire v1                                                | none       |     8 |
+| [x]  | `D02 T33 §1`  | Memory-Map Design + Canonical Layout Decision                                                     | none       |     9 |
+| [ ]  | `D02 T33 §2`  | Direct Map Construction (kernel still low)                                                        | none       |    11 |
+| [/]  | `D02 T33 §3`  | Linker VMA/LMA Split + Higher-Half Jump                                                           | none       |    14 |
+| [/]  | `D02 T33 §4`  | Descriptor Tables + Per-CPU at High Addresses + AP Path                                           | none       |     7 |
+| [/]  | `D02 T33 §5`  | Bootloader / `boot_info` / Framebuffer High Handoff                                               | none       |     8 |
+| [/]  | `D02 T33 §6`  | Per-Process PML4: Kernel High Shared, User Low Private                                            | none       |     7 |
+| [ ]  | `D02 T33 §7`  | Retire the `0x800000` USER_BASE Ceiling + BSS Guard                                               | none       |    35 |
+| [ ]  | `D01 T14 §13` | klog Format-Width Contract, Compiler-Checked                                                      | none       |     4 |
+| [ ]  | `D01 T14 §15` | Anti-Rollback Terminal Give-Up: Durable Record                                                    | none       |     4 |
+| [ ]  | `D01 T14 §17` | Restore Panic Evidence Before Phase 0 Can Overwrite It                                            | none       |     4 |
+| [ ]  | `D01 T14 §19` | Record the Panic-Page Pin Outcome in the `boot_info` Handoff                                      | none       |     5 |
+| [ ]  | `D01 T29 §19` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     3 |
+| [/]  | `D02 T33 §8`  | 5-Level Paging (LA57) Support -- Exceeds Win11                                                    | none       |     6 |
+| [x]  | `D02 T33 §9`  | VMM Walker Conversion -- Route Every Deref Through the HHDM Helper                                | none       |    14 |
+| [x]  | `D02 T33 §10` | Tactical BSS Headroom -- Large Static Pools to Dynamic Allocation                                 | none       |     7 |
+| [ ]  | `D02 T33 §11` | Unpark the Ceiling-Stalled Kernel Queue                                                           | none       |    11 |
+| [x]  | `D02 T33 §12` | Second Tactical BSS Reclamation Pass                                                              | none       |     7 |
+| [x]  | `D02 T33 §13` | Third Tactical Reclamation Pass -- the Trigger Section 12 Named Has Fired                         | none       |     8 |
+| [x]  | `D02 T33 §14` | Fourth Tactical Reclamation Pass -- Reclaim the Test-Only Statics                                 | none       |     8 |
+| [x]  | `D02 T33 §15` | Fifth Tactical Reclamation Pass -- Convert the `pipes` Pool                                       | none       |     4 |
+| [x]  | `D02 T33 §16` | Test-Side Residue of the Fourth Pass -- `s_cap_val`, the 36 KB Stack Locals, and the Scratch Cast | none       |     7 |
+| [ ]  | `D02 T34 §1`  | Mark Expected Test-Path Log Output at Emission                                                    | none       |     5 |
+| [ ]  | `D02 T34 §2`  | Log-Cleanliness Gate in the Kernel Test Runner                                                    | none       |     4 |
+| [/]  | `D02 T34 §3`  | Smoke Test Fails on Any `[FAIL]` in Its Own Log                                                   | none       |     4 |
+| [ ]  | `D02 T34 §4`  | Surface the Platform Blind Spots in the Run Summary                                               | none       |     4 |
+| [/]  | `D02 T34 §5`  | Rate-Limit the Repeat-Offender Warnings That Produce 86% of the Volume                            | none       |     4 |
+| [ ]  | `D02 T35 §1`  | Registry Tree SMP Synchronization and Hive Durability                                             | none       |    14 |
+| [ ]  | `D02 T35 §2`  | Registry Save/Restore Hive Bodies and Transactional Load                                          | none       |     4 |
+| [ ]  | `D02 T35 §3`  | Quota Enforcement and Job Memory Accounting                                                       | none       |     8 |
+| [ ]  | `D02 T35 §4`  | Module Identity and ELF Unwind Registration                                                       | none       |     5 |
+| [ ]  | `D02 T35 §5`  | User-Buffer Hardening on Fault-Recoverable Usercopy                                               | none       |     5 |
+| [ ]  | `D02 T35 §6`  | Boot, Entropy, Config and SRM Leftovers                                                           | none       |    13 |
+| [ ]  | `D02 T12 §14` | Registry Syscalls (Core CRUD)                                                                     | none       |    13 |
+| [ ]  | `D02 T14 §14` | Registry SMP Synchronization                                                                      | none       |    17 |
+| [ ]  | `D02 T14 §4`  | Nt/Zw Registry Syscalls                                                                           | none       |    35 |
+| [ ]  | `D02 T12 §15` | Registry Syscalls (Advanced)                                                                      | none       |     9 |
+| [ ]  | `D02 T12 §34` | Per-service SSDT argument counts                                                                  | none       |     4 |
+| [ ]  | `D02 T13 §8`  | Native Atom/NLS/Locale Syscalls                                                                   | none       |     9 |
+| [ ]  | `D02 T14 §5`  | advapi32.dll Win32 Compatibility                                                                  | none       |    15 |
+| [ ]  | `D02 T14 §6`  | Registry Virtualization & .reg Import/Export                                                      | none       |    11 |
+| [ ]  | `D02 T13 §9`  | Retrofit Kernel Consumers                                                                         | none       |    11 |
+| [ ]  | `D02 T13 §10` | Tests and Compatibility Corpus                                                                    | none       |     9 |
+| [/]  | `D02 T16 §8`  | Native WNF-Compatible Syscall Surface                                                             | none       |     6 |
+| [ ]  | `D02 T16 §10` | Unit/Boot Tests                                                                                   | none       |     6 |
+| [/]  | `D02 T18 §7`  | Image Notifications and Callbacks                                                                 | none       |     8 |
+| [ ]  | `D02 T30 §8`  | Native Health Query/Control APIs                                                                  | none       |     4 |
+| [ ]  | `D02 T30 §9`  | Health Notifications and Dashboards                                                               | none       |     4 |
+| [ ]  | `D02 T30 §10` | Tests and Chaos Scenarios                                                                         | none       |     4 |
 
 ### Phase 3 -- Memory and concurrency
 

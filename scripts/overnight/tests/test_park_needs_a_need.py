@@ -51,6 +51,42 @@ def test_only_park_lines_are_read():
                   "The operator decision of 2026-11-10 applies here."]) == []
 
 
+def test_a_park_on_an_answered_question_is_not_refused():
+    """A park that waits only on answered questions is open work to the triage oracle,
+    so the staged check must not refuse it for want of a Need (the closed-park re-judge, 2026-11-13)."""
+    staged = "# Answers\n\n## Q1 (x): asked\n\nA: (run decision, 2026-11-13) yes.\n\n## Q2 (y): open\n"
+    answered = "> **Deferred:** [M] awaiting-answer Q1: the residual is runnable"
+    unanswered = "> **Deferred:** [M] awaiting-answer Q2: still asked"
+    lines = ["## 1. Subject", "", answered, unanswered]
+    added = [(3, answered), (4, unanswered)]
+    assert tsc._parks_on_a_person(lines, lines, added, staged) == [(4, unanswered)]
+    assert tsc._parks_on_a_person(lines, lines, added) == added  # the control: no answers read
+
+
+def test_the_answer_is_read_from_the_staged_snapshot():
+    """The answers come from the index, not the working tree: an answer present only
+    on disk admits nothing, and a staged answer admits the park even when the working
+    copy has lost it (partial staging, both directions)."""
+    answered = "> **Deferred:** [M] awaiting-answer Q1: the residual is runnable"
+    lines = ["## 1. Subject", "", answered]
+    added = [(3, answered)]
+    unanswered_in_index = "# Answers\n\n## Q1 (x): asked\n"
+    answered_in_index = unanswered_in_index + "\nA: (run decision, 2026-11-13) yes.\n"
+    assert tsc._parks_on_a_person(lines, lines, added, unanswered_in_index) == added
+    assert tsc._parks_on_a_person(lines, lines, added, answered_in_index) == []
+
+
+def test_only_a_section_stamp_is_reopened_by_an_answer():
+    """The oracle reopens a section on its Deferred stamp only: an answered `[/]` item
+    or BLOCKED bullet reopens nothing, so it stays a park and is refused."""
+    staged = "# Answers\n\n## Q1 (x): asked\n\nA: (run decision, 2026-11-13) yes.\n"
+    item = "- [/] Deferred: awaiting-answer Q1: implement the selected wire encoding"
+    blocked = "  - BLOCKED awaiting-answer Q1 on the wire encoding"
+    lines = ["## 1. Subject", "", item, blocked]
+    added = [(3, item), (4, blocked)]
+    assert tsc._parks_on_a_person(lines, lines, added, staged) == added
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:
