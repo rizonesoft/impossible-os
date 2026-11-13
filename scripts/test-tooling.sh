@@ -1391,6 +1391,7 @@ _tt_nested_py "$REPO_ROOT/tools/uefi-varstore/test_plant.py" uefi_varstore
 _tt_nested_py "$REPO_ROOT/scripts/site/tests/test_site_live_waits.py" site_live_waits
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_alias_staleness.py" alias_staleness
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_plan.py" todo_plan
+_tt_nested_py "$REPO_ROOT/scripts/tests/test_abort_path_check.py" abort_path_check
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_smoke_screen.py" smoke_screen
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_smoke_double_panic.py" smoke_double_panic
 # test_query_bounds.sh is NOT started here: its MCP sub-test reads the real
@@ -4921,6 +4922,17 @@ if [ -z "$_bo_bad" ]; then
     t_pass "boot_conf_reset_armed  test.sh and test-swtpm.sh arm the boot.conf reset before patching"
 else
     t_fail "boot_conf_reset_armed  a runner patches boot.conf before its reset is armed" "$_bo_bad"
+fi
+# The abort-path proof holds the image lock for its whole run, so another
+# run's artifacts can never stand in for its own: with the lock held it
+# refuses before it boots or deletes anything.
+_ap_out=$(flock -n "$REPO_ROOT/.boot-conf.lock" true && {
+    ( flock -n 8 || exit 2; env -u BOOT_CONF_LOCK_HELD timeout 30 bash "$REPO_ROOT/scripts/test-abort-path.sh" 2>&1; echo "rc=$?" ) 8>"$REPO_ROOT/.boot-conf.lock"
+})
+if <<<"$_ap_out" grep -q 'another run holds the image lock' && <<<"$_ap_out" grep -q '^rc=1$'; then
+    t_pass "abort_path_lock  test-abort-path.sh refuses while another run holds the image"
+else
+    t_fail "abort_path_lock  test-abort-path.sh ran while another run held the image" "$(tail -2 <<<"$_ap_out")"
 fi
 # A failed final reset fails the run and says so: run-with-boot-conf.sh is run
 # whole in a stub project, and the cleanup handlers of test.sh and
