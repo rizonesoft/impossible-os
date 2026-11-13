@@ -4929,10 +4929,16 @@ _bl_mk="$REPO_ROOT/Makefile"
 _bl_bare=$(grep -nE '\$\(QEMU\) \\$' "$_bl_mk" | grep -vF '$(BOOT_LOCKED) $(QEMU)' | cut -d: -f1 | tr '\n' ' ')
 _bl_disk=$(awk '/^\$\(SYSTEM_DISK\):/{f=1} f&&/BOOT_LOCKED\) true/{print "y"; exit} f&&/^$/{exit}' "$_bl_mk")
 _bl_clean=$(awk '/^clean:/{f=1} f&&/BOOT_LOCKED\) true/{print "y"; exit} f&&/^$/{exit}' "$_bl_mk")
-if [ -z "$_bl_bare" ] && [ "$_bl_disk" = "y" ] && [ "$_bl_clean" = "y" ]; then
-    t_pass "boot_locked_recipes  every QEMU recipe holds the image lock; the disk rule and clean check it"
+# ...and every script that starts QEMU and names build/system-disk.img holds it.
+_bl_scripts=""
+while IFS= read -r _bl_f; do
+    case "$_bl_f" in scripts/test-tooling.sh) continue ;; esac
+    grep -q 'boot_conf_lock_hold' "$REPO_ROOT/$_bl_f" || _bl_scripts="$_bl_scripts $_bl_f"
+done < <(cd "$REPO_ROOT" && git ls-files 'scripts/*.sh' 'tools/*.sh' | xargs grep -lE 'qemu-system|\$\{?QEMU' 2>/dev/null | xargs grep -l 'system-disk\.img' 2>/dev/null)
+if [ -z "$_bl_bare" ] && [ "$_bl_disk" = "y" ] && [ "$_bl_clean" = "y" ] && [ -z "$_bl_scripts" ]; then
+    t_pass "boot_locked_recipes  every QEMU recipe and launcher script holds the image lock; the disk rule and clean check it"
 else
-    t_fail "boot_locked_recipes  a recipe boots, rewrites or deletes the image without the lock" "unlocked QEMU lines: ${_bl_bare:-none} disk=${_bl_disk:-n} clean=${_bl_clean:-n}"
+    t_fail "boot_locked_recipes  something boots, rewrites or deletes the image without the lock" "unlocked QEMU lines: ${_bl_bare:-none} disk=${_bl_disk:-n} clean=${_bl_clean:-n} scripts:${_bl_scripts:- none}"
 fi
 
 # run-with-boot-conf.sh restores boot.conf when the boot fails: a stub `make`

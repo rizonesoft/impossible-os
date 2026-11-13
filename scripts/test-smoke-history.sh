@@ -68,6 +68,11 @@ NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Hold .boot-conf.lock for the run: it boots build/system-disk.img itself, so
+# no other run may patch, reset, rebuild or delete it meanwhile
+# (scripts/lib/boot-conf-lock.sh).
+. "$REPO_ROOT/scripts/lib/boot-conf-lock.sh"
+boot_conf_lock_hold "$REPO_ROOT" 9 || exit 1
 BUILD="$REPO_ROOT/build"
 
 CLEAN_DISK="$BUILD/system-disk.img"
