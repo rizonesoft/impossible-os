@@ -34,10 +34,10 @@ if [ -z "$EFI_OFFSET" ]; then
     exit 1
 fi
 
-# One run at a time owns this image's boot.conf. A launcher that patches,
-# boots and resets (scripts/run-with-boot-conf.sh, scripts/run-qemu.sh) holds
-# build/.boot-conf.lock for the whole run and exports BOOT_CONF_LOCK_HELD=1 to
-# its own calls here; any other caller takes the lock for its one write and is
+# One run at a time owns this image's boot.conf. A run that patches, boots and
+# resets holds build/.boot-conf.lock for its whole life through
+# scripts/lib/boot-conf-lock.sh and exports BOOT_CONF_LOCK_HELD=1 to its own
+# calls here; any other caller takes the lock for its one write and is
 # refused while a launcher holds it, so it cannot patch or reset under a boot.
 if [ "${BOOT_CONF_LOCK_HELD:-}" != "1" ] && command -v flock >/dev/null 2>&1; then
     exec 9>"$PROJECT/build/.boot-conf.lock"

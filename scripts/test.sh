@@ -4389,6 +4389,10 @@ fi
 if [ -n "$UTEST_FILTER" ]; then
     PATCH_ARGS+=(utest_filter "$UTEST_FILTER")
 fi
+# Hold the image's boot.conf from this patch until the run exits, so no other
+# launcher patches or resets it under this boot (scripts/lib/boot-conf-lock.sh).
+. "$PROJECT/scripts/lib/boot-conf-lock.sh"
+boot_conf_lock_hold "$PROJECT" 7 || exit 1
 bash "$PROJECT/scripts/patch-boot-conf.sh" "${PATCH_ARGS[@]}" > /dev/null
 
 # Install cleanup trap now that boot.conf is patched. Runs on normal exit,

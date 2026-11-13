@@ -106,6 +106,8 @@ cleanup() {
     bash "$SCRIPT_DIR/patch-boot-conf.sh" reset >/dev/null 2>&1 || true
     exit "$ec"
 }
+. "$SCRIPT_DIR/lib/boot-conf-lock.sh"
+boot_conf_lock_hold "$(dirname "$SCRIPT_DIR")" 9 || exit 1
 trap cleanup EXIT INT TERM
 bash "$SCRIPT_DIR/patch-boot-conf.sh" test 1 test_suite security >/dev/null
 

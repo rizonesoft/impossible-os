@@ -30,13 +30,8 @@ PROJECT="$(dirname "$SCRIPT_DIR")"
 # another shell) would patch or reset the image under this one. It is taken
 # BEFORE the restore trap, so a run that does not get it leaves the other
 # run's boot.conf alone, and held until this script exits.
-mkdir -p "$PROJECT/build"
-exec 9>"$PROJECT/build/.boot-conf.lock"
-if ! flock -n 9; then
-    echo "run-with-boot-conf: another run is booting this image with a patched boot.conf" >&2
-    exit 1
-fi
-export BOOT_CONF_LOCK_HELD=1
+. "$SCRIPT_DIR/lib/boot-conf-lock.sh"
+boot_conf_lock_hold "$PROJECT" 9 || exit 1
 
 # The restore is installed BEFORE the patch, so a patch that fails or is
 # interrupted half way still ends with the default boot.conf (reset rewrites

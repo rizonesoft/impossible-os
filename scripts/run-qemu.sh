@@ -147,12 +147,8 @@ if [ -n "$PATCH_CONF" ]; then
     VAL="${PATCH_CONF##*=}"
     # Hold the image's boot.conf lock (scripts/patch-boot-conf.sh) from the
     # patch through the reset, so no other run patches or resets under us.
-    exec 9>"$PROJECT_DIR/build/.boot-conf.lock"
-    if ! flock -n 9; then
-        echo "[QEMU] another run is booting this image with a patched boot.conf; not patching" >&2
-        exit 1
-    fi
-    export BOOT_CONF_LOCK_HELD=1
+    . "$SCRIPT_DIR/lib/boot-conf-lock.sh"
+    boot_conf_lock_hold "$PROJECT_DIR" 9 || exit 1
     trap 'bash "$SCRIPT_DIR/patch-boot-conf.sh" reset' EXIT
     bash "$SCRIPT_DIR/patch-boot-conf.sh" "$KEY" "$VAL"
 fi
