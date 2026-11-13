@@ -1326,6 +1326,16 @@ Sections are built and tested as the test flavor. A parameter used only under `K
 
 > **Test runner:** `bash scripts/test-tooling.sh` (static-analysis gate block); `bash scripts/static-analysis.sh <file>` for one source.
 
+> **Notes:**
+> - What shipped: the section push release-compiles changed kernel and loader sources, vendored sources (never clang-tidied) and every release unit that includes a changed or deleted header.
+> - How it integrates: `static-analysis-gate.sh` passes sources and headers to `static-analysis.sh`, whose `release_check` runs `release-flavor-check.py` within `STATIC_ANALYSIS_JOBS`.
+> - Downstream effects: a release-only break (ACPICA, a `KERNEL_TESTS`-hidden block, a deleted header) is refused at the push instead of reaching CI's release job.
+> - Canonical doc: [development tooling](../../docs/infrastructure/development-tooling.md).
+> - Scope boundary: proves the release compile; link-level release failures stay with CI `build.yml`.
+
+> **Verified:** 2026-11-13 | commit `b5f9564ae` | 8/8 items | gate block 26/26 (control on the round-2 tree fails the deletion fixture; on the committed tree all five new fixtures) | `--jobs` overlap test PASS, control overlaps | selftest 10/10 | lint exit 0
+> **Quality reviewed:** 2026-11-13 | Codex passes: 5 staged waves of plan, round, performance, completion, then round, performance and completion on committed `b5f9564ae`, all approving | 4M fixed (vendored sources skipped, header-only changes skipped, deleted headers unmatched, job limit ignored), 0 open | scope: N/A (host tooling, no kernel/boot source)
+
 ## 39. Re-judge the closed parks under the never-park rule
 
 > **Spawned-by:** root
@@ -1423,6 +1433,7 @@ Every CI job installs its toolchain with apt on each run. On 2026-11-11 nine Bui
 | 💎  | Post-commit hook concurrency: serialize | ❌ N/A      | ❌ N/A         | ✅ §31 (flock-based serializer; ends stomp-stamp races) |
 | 💎  | Second-boot leg in the smoke matrix     | ❌ N/A      | ❌ N/A         | ✅ §36 (kept-disk boot after a clean ACPI shutdown)     |
 | 💎  | Syscall argument counts in ABI hash     | ❌ N/A      | ❌ N/A         | ✅ §37 (`ARGC_SYS_*` read from the handler AST)         |
+| 💎  | Release compile at the section push     | ❌ N/A      | ❌ N/A         | ✅ §38 (vendored sources and header includers too)      |
 
 > **After §1-§5:** Claude and Codex share the same MCP server set, the same Codex invocation policy, the same hard gates around reviews and section commits. Drift between the two automation sides is detectable.
 > **After §6-§9:** The whole automation surface is auditable in one script. Hook system is documented; MCP usage is doctrine; superpowers plugin behavior is reconciled with Impossible OS rules.
