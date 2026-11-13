@@ -4,7 +4,8 @@
 #
 # Modifies a specific key=value in the EFI partition's boot.conf without
 # rebuilding the entire disk image. Used by scripts/run-with-boot-conf.sh
-# (`make run-unit-tests`, `make run-boot-tests`).
+# (`make run-unit-tests`, `make run-boot-tests`), scripts/run-qemu.sh and the
+# test runners.
 #
 # Usage:
 #   bash scripts/patch-boot-conf.sh <key> <value>
@@ -31,6 +32,19 @@ EFI_OFFSET="$(grep -E '^EFI_OFFSET=[0-9]+$' "$DISK.info" 2>/dev/null | cut -d= -
 if [ -z "$EFI_OFFSET" ]; then
     echo "ERROR: no EFI_OFFSET in $DISK.info. Run 'bash scripts/build.sh' first."
     exit 1
+fi
+
+# One run at a time owns this image's boot.conf. A launcher that patches,
+# boots and resets (scripts/run-with-boot-conf.sh, scripts/run-qemu.sh) holds
+# build/.boot-conf.lock for the whole run and exports BOOT_CONF_LOCK_HELD=1 to
+# its own calls here; any other caller takes the lock for its one write and is
+# refused while a launcher holds it, so it cannot patch or reset under a boot.
+if [ "${BOOT_CONF_LOCK_HELD:-}" != "1" ] && command -v flock >/dev/null 2>&1; then
+    exec 9>"$PROJECT/build/.boot-conf.lock"
+    if ! flock -n 9; then
+        echo "ERROR: another run is booting $DISK with a patched boot.conf (build/.boot-conf.lock)." >&2
+        exit 1
+    fi
 fi
 
 if [ "${1:-}" = "reset" ]; then

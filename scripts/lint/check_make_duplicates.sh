@@ -40,17 +40,19 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/make-dup.XXXXXX")" || exit 2
 trap 'rm -rf "$TMP"' EXIT
 SENTINEL="__check_make_duplicates_parsed__"
 SRC_DIR="$(cd "$(dirname "$MK")" && pwd)"
-MK_NAME="$(basename "$MK")"
+COPY=".check-make-duplicates.mk"
 for entry in "$SRC_DIR"/* "$SRC_DIR"/.[!.]* "$SRC_DIR"/..?*; do
     [ -e "$entry" ] || [ -L "$entry" ] || continue
     name="$(basename "$entry")"
-    case "$name" in build|"$MK_NAME") continue ;; esac
+    # The copy goes to a name no source entry can take, so a mirrored
+    # symlink is never the file written below.
+    case "$name" in build|"$COPY") continue ;; esac
     ln -s "$entry" "$TMP/$name" || { echo "check_make_duplicates: could not mirror $entry" >&2; exit 2; }
 done
 # Each write is checked: a copy that lost the source would hold only the
 # sentinel and pass.
-if ! cat "$MK" > "$TMP/Makefile" \
-   || ! printf '\n.PHONY: %s\n%s:\n\t@echo %s\n' "$SENTINEL" "$SENTINEL" "$SENTINEL" >> "$TMP/Makefile"; then
+if ! cat "$MK" > "$TMP/$COPY" \
+   || ! printf '\n.PHONY: %s\n%s:\n\t@echo %s\n' "$SENTINEL" "$SENTINEL" "$SENTINEL" >> "$TMP/$COPY"; then
     echo "check_make_duplicates: could not copy $MK" >&2
     exit 2
 fi
@@ -59,10 +61,10 @@ fi
 RC=0
 # LC_ALL=C: the warnings matched below are make's English text, and a
 # translated make would otherwise report a duplicate the grep cannot see.
-OUT="$(cd "$TMP" && LC_ALL=C LANGUAGE= timeout 60 make --no-print-directory -f Makefile "$SENTINEL" 2>&1)" || RC=$?
+OUT="$(cd "$TMP" && LC_ALL=C LANGUAGE= timeout 60 make --no-print-directory -f "$COPY" "$SENTINEL" 2>&1)" || RC=$?
 DUP="$(printf '%s\n' "$OUT" | grep -E 'warning: (overriding|ignoring old) recipe for target')"
 if [ -n "$DUP" ]; then
-    printf '%s\n' "$DUP" | sed "s|$TMP/Makefile|$MK|g; s|^Makefile:|$MK:|"
+    printf '%s\n' "$DUP" | sed "s|$TMP/$COPY|$MK|g; s|^$COPY:|$MK:|"
     exit 1
 fi
 if [ "$RC" -ne 0 ] || ! printf '%s\n' "$OUT" | grep -qx "$SENTINEL"; then

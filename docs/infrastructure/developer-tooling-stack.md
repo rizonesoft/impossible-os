@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/setup.sh,scripts/build.sh,scripts/test.sh,scripts/lint.sh,scripts/tooling-doctor.sh,scripts/install-hooks.sh,scripts/run-with-boot-conf.sh,scripts/lint/check_make_duplicates.sh reviewed=2026-11-13 order=2 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/setup.sh,scripts/build.sh,scripts/test.sh,scripts/lint.sh,scripts/tooling-doctor.sh,scripts/install-hooks.sh,scripts/run-with-boot-conf.sh,scripts/patch-boot-conf.sh,scripts/run-qemu.sh,scripts/lint/check_make_duplicates.sh reviewed=2026-11-13T15:20 order=2 -->
 # Developer Tooling Stack
 
 ## What is it?
@@ -73,7 +73,7 @@ That output was measured on 2026-09-28. Before pushing, `CI_PARITY=1 bash script
 | `make run-test DISK=<name>` | Boots with a secondary test disk on AHCI port 1, for filesystem driver testing. |
 | `make run-debug` | Boots paused, waiting for GDB on port 1234. |
 
-`run-unit-tests` and `run-boot-tests` patch boot.conf inside the built image through `scripts/run-with-boot-conf.sh`, boot through `run-only` so nothing rebuilds the disk over the patch, and restore boot.conf when QEMU exits, fails or is interrupted. Lint Check 38 refuses a Makefile target with two recipes: until 2026-11-13 `run-test` and `run-debug` were each defined twice, and make silently ran only the second.
+`run-unit-tests` and `run-boot-tests` patch boot.conf inside the built image through `scripts/run-with-boot-conf.sh`, boot through `run-only` so nothing rebuilds the disk over the patch, and restore boot.conf when QEMU exits, fails or is interrupted. While one of them (or `scripts/run-qemu.sh --debug-tests`/`--test-only`) is booting, it holds `build/.boot-conf.lock`, and every other run that would patch or reset that image's boot.conf through `scripts/patch-boot-conf.sh` is refused. Lint Check 38 refuses a Makefile target with two recipes: until 2026-11-13 `run-test` and `run-debug` were each defined twice, and make silently ran only the second.
 
 ## What is not implemented yet?
 
