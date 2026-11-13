@@ -7,34 +7,49 @@
 # 2026-11-13 run-test and run-debug were each defined twice, and the four
 # warnings on every build trained readers to ignore make's warnings.
 #
-# make itself decides what a duplicate is: the Makefile is parsed (make -n on a
-# target that does not exist, about 0.15 s) and any "overriding recipe" or
-# "ignoring old recipe" warning fails. Pattern rules and double-colon rules do
-# not warn, so they are not refused.
+# make itself decides what a duplicate is: it parses a COPY of the Makefile in
+# an empty temporary directory and runs one sentinel target appended to it.
+# The copy keeps parse-time $(shell ...) and $(wildcard ...) away from the
+# working tree (the root Makefile deletes a stale signing stamp at parse time),
+# and the sentinel proves the parse finished: a $(error), a syntax error or a
+# timeout is a failure to check, never a pass. Any "overriding recipe" or
+# "ignoring old recipe" warning fails. Pattern and double-colon rules do not
+# warn, so they are not refused.
 #
 # Usage: check_make_duplicates.sh [MAKEFILE]   (default: the root Makefile)
-# Exit:  0 clean, 1 duplicates (printed), 2 make could not be run
+# Exit:  0 clean, 1 duplicates (printed), 2 the Makefile could not be checked
 # =============================================================================
 
 set -uo pipefail
 
 MK="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/Makefile}"
-if ! command -v make >/dev/null 2>&1; then
-    echo "check_make_duplicates: make is not installed" >&2
-    exit 2
-fi
+for tool in make timeout; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "check_make_duplicates: $tool is not installed" >&2
+        exit 2
+    fi
+done
 if [ ! -f "$MK" ]; then
     echo "check_make_duplicates: no Makefile at $MK" >&2
     exit 2
 fi
 
-# deadline: a parse-only make is bounded by timeout; 60 s is far above its
-# measured 0.15 s.
-OUT="$(cd "$(dirname "$MK")" && timeout 60 make -n -q --no-print-directory \
-        -f "$MK" __check_make_duplicates_parse_only__ 2>&1)"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/make-dup.XXXXXX")" || exit 2
+trap 'rm -rf "$TMP"' EXIT
+SENTINEL="__check_make_duplicates_parsed__"
+{ cat "$MK"; printf '\n.PHONY: %s\n%s:\n\t@echo %s\n' "$SENTINEL" "$SENTINEL" "$SENTINEL"; } > "$TMP/Makefile"
+
+# deadline: 60 s, far above the measured 0.2 s parse.
+RC=0
+OUT="$(cd "$TMP" && timeout 60 make --no-print-directory -f Makefile "$SENTINEL" 2>&1)" || RC=$?
 DUP="$(printf '%s\n' "$OUT" | grep -E 'warning: (overriding|ignoring old) recipe for target')"
 if [ -n "$DUP" ]; then
-    printf '%s\n' "$DUP"
+    printf '%s\n' "$DUP" | sed "s|$TMP/Makefile|$MK|g; s|^Makefile:|$MK:|"
     exit 1
+fi
+if [ "$RC" -ne 0 ] || ! printf '%s\n' "$OUT" | grep -qx "$SENTINEL"; then
+    echo "check_make_duplicates: make did not finish parsing $MK (exit $RC):" >&2
+    printf '%s\n' "$OUT" | tail -5 >&2
+    exit 2
 fi
 exit 0

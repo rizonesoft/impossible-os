@@ -23,9 +23,15 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT="$(dirname "$SCRIPT_DIR")"
 
-bash "$SCRIPT_DIR/patch-boot-conf.sh" "$1" "$2"
+# The restore is installed BEFORE the patch, so a patch that fails or is
+# interrupted half way still ends with the default boot.conf (reset rewrites
+# the default whatever the disk holds). Ctrl-C reaches QEMU's whole process
+# group, so QEMU stops and the reset runs. A TERM sent to this script alone is
+# held by bash until QEMU exits; the boot is interactive (serial on stdio), so
+# QEMU stays in the foreground rather than being backgrounded to forward it.
 trap 'bash "$SCRIPT_DIR/patch-boot-conf.sh" reset' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+bash "$SCRIPT_DIR/patch-boot-conf.sh" "$1" "$2"
 make -C "$PROJECT" --no-print-directory run-only
