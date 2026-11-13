@@ -4923,6 +4923,23 @@ else
     t_fail "boot_conf_reset_armed  a runner patches boot.conf before its reset is armed" "$_bo_bad"
 fi
 
+# build.sh builds one tree at a time: under a held .build.lock it waits.
+if command -v flock >/dev/null 2>&1; then
+    _bl_d="$(mktemp -d "${TMPDIR:-/tmp}/tt-buildlock.XXXXXX")"
+    mkdir -p "$_bl_d/scripts"; cp "$REPO_ROOT/scripts/build.sh" "$_bl_d/scripts/"
+    # deadline: the holder sleeps at most 30 s and is reaped below.
+    flock --no-fork "$_bl_d/.build.lock" sleep 30 & _bl_hold=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do flock -n "$_bl_d/.build.lock" true 2>/dev/null || break; sleep 0.1; done
+    _bl_out=$(cd "$_bl_d" && timeout 3 bash scripts/build.sh 2>&1); _bl_rc=$?
+    kill "$_bl_hold" 2>/dev/null; wait "$_bl_hold" 2>/dev/null
+    rm -rf "$_bl_d"
+    if [ "$_bl_rc" = "124" ] && <<<"$_bl_out" grep -q 'another build of this tree is running'; then
+        t_pass "build_lock  a second build.sh waits for the first"
+    else
+        t_fail "build_lock  a second build.sh did not wait for the first" "rc=$_bl_rc"
+    fi
+fi
+
 # Every Makefile recipe that runs QEMU does so under $(BOOT_LOCKED); the disk
 # rule builds $@.new and renames it into place under the lock (a running VM
 # keeps its own inode), and clean deletes build/ under the lock.

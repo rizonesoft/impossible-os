@@ -21,6 +21,22 @@ set -uo pipefail
 LOG="build/build.log"
 mkdir -p build
 
+# One build of this tree at a time. Two builds share every object, the log
+# and the staged disk image (build/system-disk.img.new), so a second build
+# waits for the first rather than publishing its half-written image. The lock
+# is released before any run-mode QEMU launch below.
+if command -v flock >/dev/null 2>&1; then
+    exec 8>.build.lock
+    if ! flock -n 8; then
+        echo "build.sh: another build of this tree is running; waiting for it (.build.lock)" >&2
+        # deadline: a build that holds it for 30 minutes is stuck, not slow.
+        if ! flock -w 1800 8; then
+            echo "build.sh: the other build still holds .build.lock after 30 minutes" >&2
+            exit 1
+        fi
+    fi
+fi
+
 # ── Parse arguments ─────────────────────────────────────────────────────────
 DO_CLEAN=false
 DO_RUN=false
@@ -643,6 +659,7 @@ bash scripts/test-coverage.sh --save --quiet 2>/dev/null || true
 # Run-mode failures DO propagate to the script's exit code so CI / hooks can
 # detect QEMU-launch failures separately from build failures. The build sentinel
 # remains authoritative for the build portion.
+exec 8>&-   # the build is done: a VM launched below must not hold .build.lock
 RUN_STATUS=0
 run_make() {
     local target=$1
