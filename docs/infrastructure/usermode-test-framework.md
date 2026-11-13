@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md sources=user/include/test.h,user/test,src/kernel/test/test_usermode.c,include/kernel/test/test_usermode.h,scripts/test.sh reviewed=2026-09-28 order=5 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md sources=user/include/test.h,user/test,src/kernel/test/test_usermode.c,include/kernel/test/test_usermode.h,scripts/test.sh,scripts/test-abort-path.sh reviewed=2026-11-13 order=5 -->
 # User-Mode Test Framework
 
 ## What is it?
@@ -62,6 +62,8 @@ bash scripts/test.sh                               # kernel suites, then every t
 bash scripts/test.sh UTEST_FILTER='test_loader_*'  # only the loader binaries
 bash scripts/test.sh JSON=1                        # also writes build/test-results.json
 ```
+
+A binary named `test_optin_*.exe` is opt-in: no run includes it, not even under a wildcard filter, until `UTEST_FILTER=` names it exactly, and naming it adds it to the default run instead of narrowing to it (GoogleTest's `--gtest_also_run_disabled_tests` works the same way). The rest of the name sets its type, so `test_optin_smoke_*.exe` is a smoke. The default run reports how many it left out (`N opt-in binary/binaries not selected`) without counting them as filtered. The one opt-in binary today, `test_optin_smoke_abort.exe`, fails on purpose: `bash scripts/test-abort-path.sh` boots the suite with it named and checks that the run fails, that `build/test-results.json` says `aborted: true` with `not_run` equal to every binary in the default run, and that the JUnit file carries the suite-abort `<error>` testcase.
 
 The launcher ends the user-mode run with a summary of the form `=== N passed, N failed, N skipped of N total ===`, logged under a per-boot framed tag (`UTEST-<8 hex digits>:`) rather than a bare `UTEST:`. A test binary writes to the same serial line and could print a lookalike, so `scripts/test.sh` accepts only records carrying the frame; consumers must do the same, as [User-Mode Test Output Formats](../testing/usermode-output-formats.md) describes. Which platforms are expected to pass which binaries, and how to treat known-flaky patterns, is in the [User-Mode Test Environment Matrix](../testing/usermode-env-matrix.md).
 

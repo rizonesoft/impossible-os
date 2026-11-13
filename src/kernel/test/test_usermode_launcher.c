@@ -42,6 +42,7 @@
  * forward declarations here rather than promoted to the public header
  * because their only non-test consumer is the launcher itself. */
 int test_usermode_glob_match(const char *pattern, const char *name);
+int test_usermode_filter_selects(const char *filter, const char *name);
 int test_usermode_is_valid_manifest_name(const char *name);
 int test_usermode_classify_name(const char *name);
 int test_usermode_classify_name_span(const char *name, uint32_t span_len);
@@ -501,6 +502,123 @@ static void test_plan_folds_an_identical_duplicate(void)
     TEST_ASSERT_EQ(runs, 1u, "one file with one policy takes one plan slot");
     TEST_ASSERT_EQ(refusals, 0u,
                    "an identical duplicate folds away rather than failing");
+}
+
+/* Opt-in binaries (UTEST_OPT_IN_PREFIX): left out of every run unless the
+ * filter names one exactly, and naming one adds it to the default plan. */
+static void test_opt_in_selection_rule(void)
+{
+    const char *fx = "test_optin_smoke_abort.exe";
+
+    TEST_ASSERT_EQ(test_usermode_filter_selects((const char *)0, fx), 0,
+                   "no filter leaves an opt-in binary out");
+    TEST_ASSERT_EQ(test_usermode_filter_selects("*", fx), 0,
+                   "a bare star does not select an opt-in binary");
+    TEST_ASSERT_EQ(test_usermode_filter_selects("test_*", fx), 0,
+                   "a wildcard over test_ does not select it");
+    TEST_ASSERT_EQ(test_usermode_filter_selects("test_optin_*", fx), 0,
+                   "even a wildcard over the opt-in prefix does not");
+    TEST_ASSERT_EQ(test_usermode_filter_selects("test_optin_other.exe", fx), 0,
+                   "naming a different opt-in binary does not select it");
+    TEST_ASSERT_EQ(test_usermode_filter_selects(fx, fx), 1,
+                   "its exact name selects it");
+    TEST_ASSERT_EQ(test_usermode_filter_selects("TEST_OPTIN_SMOKE_ABORT.EXE", fx), 1,
+                   "case folds as the filesystem does");
+    TEST_ASSERT_EQ(test_usermode_filter_selects(fx, "test_syscall.exe"), 1,
+                   "naming an opt-in binary keeps the default plan (additive)");
+    TEST_ASSERT_EQ(test_usermode_filter_selects((const char *)0, "test_syscall.exe"), 1,
+                   "no filter selects an ordinary binary");
+    TEST_ASSERT_EQ(test_usermode_filter_selects("test_syscall.exe", "test_libc.exe"), 0,
+                   "an ordinary exact filter still narrows");
+    TEST_ASSERT_EQ(test_usermode_filter_selects("test_sys*", "test_syscall.exe"), 1,
+                   "an ordinary glob still matches");
+}
+
+static int u_opt_in_parse(const char *text, const char *filter, uint32_t *runs,
+                          uint32_t *refusals, uint32_t *smoke_refused,
+                          uint32_t *first_type)
+{
+    static char buf[512];
+    uint32_t p = 0;
+
+    while (text[p] && p < sizeof(buf) - 1u) {
+        buf[p] = text[p];
+        p++;
+    }
+    buf[p] = '\0';
+    return test_usermode_manifest_parse(buf, p, filter, runs, refusals,
+                                        (uint32_t *)0, smoke_refused,
+                                        first_type, (uint32_t *)0,
+                                        (uint32_t *)0, (uint32_t *)0);
+}
+
+static void test_opt_in_plan_contents(void)
+{
+    const char *text =
+        "test_optin_smoke_abort.exe\n"
+        "test_smoke_boot.exe\n"
+        "test_a.exe\n"
+        "test_b.exe\n";
+    uint32_t runs = 99, refusals = 99, smoke = 99, first = 99;
+
+    if (!u_opt_in_parse(text, (const char *)0, &runs, &refusals, &smoke, &first)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 3u, "the default plan leaves the opt-in fixture out");
+    TEST_ASSERT_EQ(refusals, 0u, "and does not count it as a failure");
+    TEST_ASSERT_EQ(first, (uint32_t)UTEST_TYPE_SMOKE,
+                   "the first planned binary is the ordinary smoke");
+
+    runs = refusals = smoke = first = 99;
+    if (!u_opt_in_parse(text, "test_optin_smoke_abort.exe", &runs, &refusals,
+                        &smoke, &first)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 4u, "naming the fixture plans it AND the default set");
+    TEST_ASSERT_EQ(first, (uint32_t)UTEST_TYPE_SMOKE,
+                   "test_optin_smoke_ types as smoke with no type= attribute");
+
+    runs = 99;
+    if (!u_opt_in_parse(text, "test_*", &runs, &refusals, &smoke, &first)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 3u, "a wildcard filter never plans the fixture");
+}
+
+/* The smoke provenance of a REFUSED declaration uses the same rule: an
+ * additive filter keeps ordinary refused smokes gating the run, and an
+ * unselected opt-in smoke refusal publishes without aborting the default run. */
+static void test_opt_in_refused_smoke_gate(void)
+{
+    uint32_t runs = 99, refusals = 99, smoke = 99;
+
+    if (!u_opt_in_parse("test_optin_smoke_abort.exe\n"
+                        "test_gate.exe type=smoke expects_tasks=0\n"
+                        "test_a.exe\n",
+                        "test_optin_smoke_abort.exe", &runs, &refusals, &smoke,
+                        (uint32_t *)0)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(refusals, 1u, "the malformed smoke line is refused");
+    TEST_ASSERT_EQ(smoke, 1u,
+                   "under an additive filter a refused ordinary smoke still aborts");
+
+    runs = refusals = smoke = 99;
+    if (!u_opt_in_parse("test_optin_smoke_bad.exe type=smoke expects_tasks=0\n"
+                        "test_a.exe\n",
+                        (const char *)0, &runs, &refusals, &smoke,
+                        (uint32_t *)0)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(refusals, 1u, "an unselected opt-in refusal still publishes");
+    TEST_ASSERT_EQ(smoke, 0u,
+                   "but does not abort the default run it was never part of");
+    TEST_ASSERT_EQ(runs, 1u, "the default run goes ahead");
 }
 
 static void test_plan_refuses_a_conflicting_duplicate(void)
@@ -8721,6 +8839,12 @@ void test_register_usermode_launcher(void)
     test_suite_register_cat("UTEST: a retry drain never erases an earlier stall",
                             test_reap_retry_drain_does_not_erase_an_earlier_stall,
                             TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: opt-in binaries need an exact filter, additively",
+                            test_opt_in_selection_rule, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: the opt-in fixture joins the default plan only when named",
+                            test_opt_in_plan_contents, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: refused smoke gating follows the opt-in rule",
+                            test_opt_in_refused_smoke_gate, TEST_CAT_EXEC);
 }
 
 #endif /* KERNEL_TESTS */

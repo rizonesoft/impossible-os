@@ -1125,14 +1125,15 @@ USER_CFLAGS := --target=x86_64-elf \
                -mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
                -MMD -MP
 
-userland: $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/sysinfo.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe $(SYSROOT)/test_loader_elf.exe $(SYSROOT)/test_loader_pe.exe $(SYSROOT)/test_loader_eif.exe $(SYSROOT)/test_fastpath.exe $(SYSROOT)/test_fastpath_fuzz.exe $(SYSROOT)/test_forge.exe
+userland: $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/sysinfo.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_optin_smoke_abort.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe $(SYSROOT)/test_loader_elf.exe $(SYSROOT)/test_loader_pe.exe $(SYSROOT)/test_loader_eif.exe $(SYSROOT)/test_fastpath.exe $(SYSROOT)/test_fastpath_fuzz.exe $(SYSROOT)/test_forge.exe
 
-$(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/sysinfo.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe $(SYSROOT)/test_loader_elf.exe $(SYSROOT)/test_loader_pe.exe $(SYSROOT)/test_loader_eif.exe $(SYSROOT)/test_fastpath.exe $(SYSROOT)/test_fastpath_fuzz.exe $(SYSROOT)/test_forge.exe &: sysroot user/hello.c user/cmd.c user/sysinfo/sysinfo.c \
+$(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/sysinfo.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_optin_smoke_abort.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe $(SYSROOT)/test_loader_elf.exe $(SYSROOT)/test_loader_pe.exe $(SYSROOT)/test_loader_eif.exe $(SYSROOT)/test_fastpath.exe $(SYSROOT)/test_fastpath_fuzz.exe $(SYSROOT)/test_forge.exe &: sysroot user/hello.c user/cmd.c user/sysinfo/sysinfo.c \
                                                                               user/test/test_harness_smoke.c \
                                                                               user/test/test_forge.c \
                                                                               user/test/test_syscall.c \
                                                                               user/test/test_faultinject.c \
                                                                               user/test/test_smoke_boot.c \
+                                                                              user/test/test_optin_smoke_abort.c \
                                                                               user/test/test_stress_libc.c \
                                                                               user/test/test_perf_syscall.c \
                                                                               user/test/test_libc.c \
@@ -1202,6 +1203,9 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/sysinfo.exe $(SYSROOT)/test_h
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/test/test_smoke_boot.c -o $(BUILD_DIR)/user/test/test_smoke_boot.o
 	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/test/test_smoke_boot.exe \
 		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/test/test_smoke_boot.o $(BUILD_DIR)/user/libc.a
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/test/test_optin_smoke_abort.c -o $(BUILD_DIR)/user/test/test_optin_smoke_abort.o
+	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/test/test_optin_smoke_abort.exe \
+		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/test/test_optin_smoke_abort.o $(BUILD_DIR)/user/libc.a
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/test/test_stress_libc.c -o $(BUILD_DIR)/user/test/test_stress_libc.o
 	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/test/test_stress_libc.exe \
 		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/test/test_stress_libc.o $(BUILD_DIR)/user/libc.a
@@ -1262,6 +1266,7 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/sysinfo.exe $(SYSROOT)/test_h
 	@cp -f $(BUILD_DIR)/user/test/test_syscall.exe $(SYSROOT)/test_syscall.exe
 	@cp -f $(BUILD_DIR)/user/test/test_faultinject.exe $(SYSROOT)/test_faultinject.exe
 	@cp -f $(BUILD_DIR)/user/test/test_smoke_boot.exe $(SYSROOT)/test_smoke_boot.exe
+	@cp -f $(BUILD_DIR)/user/test/test_optin_smoke_abort.exe $(SYSROOT)/test_optin_smoke_abort.exe
 	@cp -f $(BUILD_DIR)/user/test/test_stress_libc.exe $(SYSROOT)/test_stress_libc.exe
 	@cp -f $(BUILD_DIR)/user/test/test_perf_syscall.exe $(SYSROOT)/test_perf_syscall.exe
 	@cp -f $(BUILD_DIR)/user/test/test_libc.exe $(SYSROOT)/test_libc.exe

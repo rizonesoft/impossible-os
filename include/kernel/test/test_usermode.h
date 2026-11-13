@@ -47,6 +47,15 @@
  * iteration is the BINARY's responsibility (see user/test/
  * test_stress_libc.c). Kernel task slots are monotonic so a
  * launcher-side loop would exhaust TASK_MAX (32) after ~20 binaries. */
+/* Opt-in binaries: a filename starting with UTEST_OPT_IN_PREFIX is planned
+ * ONLY when `utest_filter=` names it exactly (no `*`). Naming one is
+ * additive, as GoogleTest's --gtest_also_run_disabled_tests is: the default
+ * plan runs as if no filter were set, plus that binary. Every other filter,
+ * and no filter, leaves opt-in binaries out (manifest and directory alike).
+ * Used for fixtures that must fail on purpose, such as the smoke that proves
+ * the abort path (user/test/test_optin_smoke_abort.c). */
+#define UTEST_OPT_IN_PREFIX "test_optin_"
+
 typedef enum {
     UTEST_TYPE_CORRECTNESS = 0,
     UTEST_TYPE_SMOKE       = 1,

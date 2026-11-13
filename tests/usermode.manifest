@@ -13,6 +13,9 @@
 #   test_stress_*.exe  -> UTEST_TYPE_STRESS      (phase 1; looped stress_iters times)
 #   test_perf_*.exe    -> UTEST_TYPE_PERF        (phase 1; emits [PERF] lines)
 #   anything else      -> UTEST_TYPE_CORRECTNESS (phase 1; default)
+# A `test_optin_` stem marks an opt-in binary: planned only when
+# utest_filter= names it exactly, which adds it to the default plan; the
+# rest of the name types it (`test_optin_smoke_*` is a smoke).
 # An optional `type=<name>` attribute on the line overrides the
 # filename-derived default, e.g.:
 #   test_foo.exe type=smoke     # force `test_foo.exe` into the smoke phase
@@ -32,6 +35,10 @@
 # in boot.conf (TODO-04 §4). Glob matching is supported: `test_smoke_*.exe`.
 
 # §8 smoke phase -- one fast-fail gate for catastrophic boot regressions.
+# Opt-in fixture (UTEST_OPT_IN_PREFIX): never runs unless utest_filter=
+# names it exactly, and then it runs FIRST, ahead of the default plan, so its
+# deliberate smoke FAIL proves the abort path (scripts/test-abort-path.sh).
+test_optin_smoke_abort.exe
 test_smoke_boot.exe
 
 # -17 fast-path transport probes (gs:TEB, KUSD, syscall->SSDT).

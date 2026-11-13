@@ -389,6 +389,38 @@ int test_usermode_glob_match(const char *pattern, const char *name)
                           suffix_len + 1) == 0;
 }
 
+/* The one selection rule `utest_filter=` applies, for every plan source and
+ * for the smoke provenance of a refused declaration (UTEST_OPT_IN_PREFIX in
+ * test_usermode.h). An opt-in name is selected only by a filter that names it
+ * exactly; a filter that names an opt-in binary selects every other name too
+ * (additive); any other filter is the plain glob. */
+static int u_is_opt_in_name(const char *name)
+{
+    return u_strncmp_fold(name, UTEST_OPT_IN_PREFIX,
+                          (uint32_t)(sizeof(UTEST_OPT_IN_PREFIX) - 1u)) == 0;
+}
+
+static int u_has_star(const char *s)
+{
+    while (*s)
+        if (*s++ == '*')
+            return 1;
+    return 0;
+}
+
+int test_usermode_filter_selects(const char *filter, const char *name);
+int test_usermode_filter_selects(const char *filter, const char *name)
+{
+    int filter_names_opt_in = filter && !u_has_star(filter) &&
+                              u_is_opt_in_name(filter);
+
+    if (u_is_opt_in_name(name))
+        return filter_names_opt_in && test_usermode_glob_match(filter, name);
+    if (filter_names_opt_in)
+        return 1;
+    return test_usermode_glob_match(filter, name);
+}
+
 static int u_is_test_binary(const char *name)
 {
     if (!u_starts_with(name, "test_"))
@@ -653,9 +685,22 @@ static void u_wait_report_stall(const char *site, uint64_t detail);
 
 static utest_type_t u_type_for_name(const char *name)
 {
-    if (u_starts_with(name, "test_smoke_"))  return UTEST_TYPE_SMOKE;
-    if (u_starts_with(name, "test_stress_")) return UTEST_TYPE_STRESS;
-    if (u_starts_with(name, "test_perf_"))   return UTEST_TYPE_PERF;
+    /* Past the `test_` stem (or the opt-in stem), the typed prefixes are
+     * the same, so `test_optin_smoke_x.exe` is a smoke with or without a
+     * manifest. Case-sensitive like the typed prefixes always were; a case
+     * variant of an opt-in name still selects as opt-in (the filter folds)
+     * and types as correctness unless its manifest line says `type=`. */
+    const char *rest;
+
+    if (u_starts_with(name, UTEST_OPT_IN_PREFIX))
+        rest = name + (sizeof(UTEST_OPT_IN_PREFIX) - 1u);
+    else if (u_starts_with(name, "test_"))
+        rest = name + (sizeof("test_") - 1u);
+    else
+        return UTEST_TYPE_CORRECTNESS;
+    if (u_starts_with(rest, "smoke_"))  return UTEST_TYPE_SMOKE;
+    if (u_starts_with(rest, "stress_")) return UTEST_TYPE_STRESS;
+    if (u_starts_with(rest, "perf_"))   return UTEST_TYPE_PERF;
     return UTEST_TYPE_CORRECTNESS;
 }
 
@@ -1450,6 +1495,7 @@ struct plan_state {
      * plan because exclusion happens exactly once, at plan time, for both
      * enumeration sources. */
     uint32_t           skipped_by_filter;
+    uint32_t           skipped_opt_in;   /* opt-in names no filter named */
     uintptr_t          block_phys;
     /* 1 = the entry array or the name arena filled. The plan is then no
      * longer the complete enumeration, so nothing may run off it. */
@@ -1925,8 +1971,8 @@ static void u_manifest_parse(struct manifest_state *ms, struct plan_state *ps,
                     ms->refused_smoke_selected[ms->refused_count] =
                         (uint8_t)((verdict == UTEST_NAME_REFUSE_ATTR &&
                                    entry_type == UTEST_TYPE_SMOKE &&
-                                   test_usermode_glob_match(s_filter,
-                                                            name_start))
+                                   test_usermode_filter_selects(s_filter,
+                                                                name_start))
                                   ? 1 : 0);
                     ms->refused_names[ms->refused_count]   = name_start;
                     ms->refused_digest[ms->refused_count]  =
@@ -7813,6 +7859,7 @@ static int u_plan_init(struct plan_state *ps)
     ps->count             = 0;
     ps->names_used        = 0;
     ps->skipped_by_filter = 0;
+    ps->skipped_opt_in = 0;
     ps->smoke_refused     = 0;
     ps->block_phys        = 0;
     ps->overflowed   = 0;
@@ -7967,8 +8014,14 @@ static int u_plan_add_run_klog(struct plan_state *ps, const char *name,
      * among identities the launcher can trust, and letting a name it just
      * declined decide whether it gets reported would hand back the
      * authority the refusal withdrew. */
-    if (!test_usermode_glob_match(s_filter, name)) {
-        ps->skipped_by_filter++;
+    if (!test_usermode_filter_selects(s_filter, name)) {
+        /* An opt-in binary left out is not a filter exclusion the operator
+         * asked for: it is counted apart, so the default run's summary line
+         * keeps its shape and the artifacts are not told a filter ran. */
+        if (u_is_opt_in_name(name))
+            ps->skipped_opt_in++;
+        else
+            ps->skipped_by_filter++;
         return 1;
     }
 
@@ -9463,6 +9516,7 @@ static void u_run_plan(void)
     uint32_t              total_planned = 0;
     uint32_t              total_ran = 0;
     uint32_t              skipped_by_filter = 0;
+    uint32_t              skipped_opt_in = 0;
     /* Per-run refusal counter. Function-local, so the launcher gains no
      * shared mutable state: test_usermode_run is the single enumerator,
      * and a static here would make two runs in one boot collide. It is
@@ -9710,6 +9764,7 @@ static void u_run_plan(void)
 
     total_planned      += plan.count;
     skipped_by_filter   = plan.skipped_by_filter;
+    skipped_opt_in      = plan.skipped_opt_in;
     for (i = 0; i < plan.count; i++)
         if (plan.entries[i].kind == (uint8_t)UTEST_PLAN_RUN)
             total_task_budget += plan.entries[i].expects_tasks;
@@ -10154,6 +10209,12 @@ static void u_run_plan(void)
              (uint64_t)counters[0], (uint64_t)counters[1],
              (uint64_t)counters[2], (uint64_t)total_ran);
     }
+
+    if (skipped_opt_in > 0)
+        klog(LOG_INFO, "UTEST",
+             "%u opt-in binary/binaries not selected (name one exactly in "
+             "utest_filter= to add it to the run)",
+             (uint64_t)skipped_opt_in);
 
     /* TAP plan, emitted LAST. TAP 13 allows the plan at either end of the
      * stream, and only the trailing position can state a count that
