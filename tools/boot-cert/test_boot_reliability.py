@@ -434,6 +434,43 @@ rc = br.run_reliability(mk_args(launcher_cmd=["bash", _MOCK_QEMU], cold=1, warm=
 check("a free lock lets the series run and restores BOOT_CONF_LOCK_HELD",
       rc == 0 and os.environ.get("BOOT_CONF_LOCK_HELD") == _env_before)
 
+# Killed mid-boot, the runner's launcher keeps holding the image lock: the
+# lock's descriptor is passed to it, so no other run can rebuild, clean or
+# patch the image under a VM that outlived its parent.
+import signal  # noqa: E402
+import subprocess  # noqa: E402
+import time  # noqa: E402
+_pidf = os.path.join(_MOCK_DIR, "launcher.pid")
+_mock_hold = os.path.join(_MOCK_DIR, "mock-hold.sh")
+with open(_mock_hold, "w") as fh:
+    fh.write(f'#!/bin/bash\necho $$ > "{_pidf}"\nsleep 20\nexit 3\n')
+_child = subprocess.Popen([sys.executable, "-c", (
+    "import sys, argparse; sys.path.insert(0, %r); import boot_reliability as br; "
+    "br.run_reliability(argparse.Namespace(platform='qemu-tcg', tier='stable', "
+    "row_id='r', cold=1, warm=0, timeout=30, disk='build/system-disk.img', "
+    "test_suite='', boot_conf_patch=[], screenshot=False, no_shell_prompt=False, "
+    "build_id='b', machine_id='m', ts='2026-06-19T00:00:00Z', out=%r, "
+    "allow_skip=False, launcher_cmd=['bash', %r]))") % (
+        HERE, os.path.join(_MOCK_DIR, "out-kill"), _mock_hold)])
+_deadline = time.time() + 10
+while not os.path.exists(_pidf) and time.time() < _deadline:
+    time.sleep(0.1)
+_child.kill()
+_child.wait(timeout=10)
+_still_held = False
+with open(_conf_lock, "w") as _probe:
+    try:
+        fcntl.flock(_probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(_probe, fcntl.LOCK_UN)
+    except BlockingIOError:
+        _still_held = True
+try:
+    with open(_pidf) as fh:
+        os.killpg(int(fh.read().strip()), signal.SIGKILL)
+except (OSError, ValueError):
+    pass
+check("a killed runner's launcher keeps the image lock until it exits", _still_held)
+
 import shutil  # noqa: E402
 shutil.rmtree(_MOCK_DIR, ignore_errors=True)
 

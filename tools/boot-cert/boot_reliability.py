@@ -360,7 +360,7 @@ def _reset_boot_conf():
 
 
 def _run_once(launcher_argv, accepts, disk, timeout_sec, serial_out, vars_path,
-              screenshot):
+              screenshot, keep_fds=()):
     """Invoke one launcher iteration honoring the launcher's accepted flags.
 
     Returns (exit_code, timed_out, serial, captured) where `captured` is True
@@ -411,7 +411,10 @@ def _run_once(launcher_argv, accepts, disk, timeout_sec, serial_out, vars_path,
     _blk = {signal.SIGINT}
     _prev_mask = signal.pthread_sigmask(signal.SIG_BLOCK, _blk)
     try:
-        proc = subprocess.Popen(argv, cwd=REPO_ROOT, start_new_session=True)
+        # keep_fds: the image lock's descriptor, so the launcher and its VM go
+        # on holding the lock even if this process is killed mid-boot.
+        proc = subprocess.Popen(argv, cwd=REPO_ROOT, start_new_session=True,
+                                pass_fds=keep_fds)
     except BaseException:
         signal.pthread_sigmask(signal.SIG_SETMASK, _prev_mask)
         raise
@@ -566,7 +569,8 @@ def run_reliability(args):
                 vars_path = warm_vars if (spec["cold_warm"] and phase == "warm") else None
                 rc, timed_out, serial, captured, oversized = _run_once(
                     launcher, accepts, disk_abs, args.timeout, serial_out,
-                    vars_path, shot)
+                    vars_path, shot,
+                    keep_fds=(conf_fd.fileno(),) if conf_fd is not None else ())
                 if captured:
                     # rc==3 means host SKIP even for a serial-capturing launcher.
                     if rc == 3:
