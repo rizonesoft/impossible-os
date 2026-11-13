@@ -107,7 +107,7 @@ cleanup() {
     [ -n "${QEMU_PID:-}" ] && kill "$QEMU_PID" 2>/dev/null && wait "$QEMU_PID" 2>/dev/null || true
     [ -n "${SWTPM_PID:-}" ] && kill "$SWTPM_PID" 2>/dev/null && wait "$SWTPM_PID" 2>/dev/null || true
     rm -f "$TPM_SOCK" "$TPM_SOCK.ctrl"
-    bash "$SCRIPT_DIR/patch-boot-conf.sh" reset >/dev/null 2>&1 || true
+    boot_conf_restore "$(dirname "$SCRIPT_DIR")" || { [ "$ec" -eq 0 ] && ec=1; }
     exit "$ec"
 }
 trap cleanup EXIT INT TERM

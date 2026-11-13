@@ -4922,6 +4922,33 @@ if [ -z "$_bo_bad" ]; then
 else
     t_fail "boot_conf_reset_armed  a runner patches boot.conf before its reset is armed" "$_bo_bad"
 fi
+# A failed final reset fails the run and says so: run-with-boot-conf.sh is run
+# whole in a stub project, and the cleanup handlers of test.sh and
+# test-swtpm.sh are run against a stub patch-boot-conf.sh whose reset fails.
+_br_d=$(mktemp -d)
+mkdir -p "$_br_d/scripts/lib"
+cp "$REPO_ROOT/scripts/run-with-boot-conf.sh" "$_br_d/scripts/"
+cp "$REPO_ROOT/scripts/lib/boot-conf-lock.sh" "$_br_d/scripts/lib/"
+printf 'run-only:\n\t@true\n' > "$_br_d/Makefile"
+_br_stub() { printf '#!/bin/bash\n[ "$1" = reset ] && exit %s\nexit 0\n' "$1" > "$_br_d/scripts/patch-boot-conf.sh"; }
+_br_bad=""
+_br_stub 1
+_br_out=$(env -u BOOT_CONF_LOCK_HELD bash "$_br_d/scripts/run-with-boot-conf.sh" test 1 2>&1); _br_rc=$?
+{ [ "$_br_rc" -ne 0 ] && <<<"$_br_out" grep -q 'NOT restored'; } || _br_bad="$_br_bad run-with-boot-conf(rc=$_br_rc)"
+_br_stub 0
+env -u BOOT_CONF_LOCK_HELD bash "$_br_d/scripts/run-with-boot-conf.sh" test 1 >/dev/null 2>&1 || _br_bad="$_br_bad run-with-boot-conf-ok"
+_br_stub 1
+for _br_f in scripts/test.sh scripts/test-swtpm.sh; do
+    _br_fn=$(awk '/^cleanup\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$REPO_ROOT/$_br_f")
+    _br_out=$(PROJECT="$_br_d" SCRIPT_DIR="$_br_d/scripts" bash -c '. "$1"; utest_reap_qemu(){ :; }; utest_artifact_guard(){ :; }; eval "$2"; true; cleanup 0' _ "$_br_d/scripts/lib/boot-conf-lock.sh" "$_br_fn" 2>&1); _br_rc=$?
+    { [ "$_br_rc" -ne 0 ] && <<<"$_br_out" grep -q 'NOT restored'; } || _br_bad="$_br_bad $_br_f(rc=$_br_rc)"
+done
+rm -rf "$_br_d"
+if [ -z "$_br_bad" ]; then
+    t_pass "boot_conf_restore_failure  a failed final boot.conf reset fails the run with a diagnostic"
+else
+    t_fail "boot_conf_restore_failure  a failed final boot.conf reset was reported as success" "$_br_bad"
+fi
 
 # build.sh builds one tree at a time: under a held .build.lock it waits.
 if command -v flock >/dev/null 2>&1; then

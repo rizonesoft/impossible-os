@@ -49,3 +49,16 @@ boot_conf_lock_if_under_build() {
     done
     return 0
 }
+
+# boot_conf_restore <project>: put the default boot.conf back on the image
+# (patch-boot-conf.sh reset). A run that patched boot.conf calls it on exit;
+# if the reset fails the image would boot the next run with this run's
+# settings, so it says so on stderr and returns 1, and the caller fails.
+boot_conf_restore() {
+    local out
+    if ! out=$(bash "$1/scripts/patch-boot-conf.sh" reset 2>&1); then
+        [ -n "$out" ] && printf '%s\n' "$out" >&2
+        echo "boot.conf was NOT restored on $1/build/system-disk.img; run: bash scripts/patch-boot-conf.sh reset" >&2
+        return 1
+    fi
+}

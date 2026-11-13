@@ -4411,7 +4411,8 @@ cleanup() {
     # One reap implementation, shared with utest_finalize_record: this handler
     # and the marker must never disagree about whether the VM is gone.
     utest_reap_qemu
-    bash "$PROJECT/scripts/patch-boot-conf.sh" reset > /dev/null 2>&1 || true
+    # A failed restore fails the run: the image would boot the next run armed.
+    boot_conf_restore "$PROJECT" || { [ "$ec" -eq 0 ] && ec=1; }
     # This handler replaced the Step 0 EXIT trap, so it owns the artifact
     # obligation too: an interrupt or an early exit past this point must still
     # leave a document belonging to THIS run.

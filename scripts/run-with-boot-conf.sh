@@ -39,7 +39,8 @@ boot_conf_lock_hold "$PROJECT" 9 || exit 1
 # group, so QEMU stops and the reset runs. A TERM sent to this script alone is
 # held by bash until QEMU exits; the boot is interactive (serial on stdio), so
 # QEMU stays in the foreground rather than being backgrounded to forward it.
-trap 'bash "$SCRIPT_DIR/patch-boot-conf.sh" reset' EXIT
+# A failed restore fails the run (boot_conf_restore reports it).
+trap '_ec=$?; boot_conf_restore "$PROJECT" || { [ "$_ec" -eq 0 ] && _ec=1; }; exit "$_ec"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
