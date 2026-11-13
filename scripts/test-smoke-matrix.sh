@@ -53,6 +53,12 @@ if command -v flock >/dev/null 2>&1 && { exec 8>"$_SM_LOCK"; } 2>/dev/null; then
     fi
 fi
 
+# Hold build/.boot-conf.lock across the build and every leg, so no other run
+# patches or resets the image between or during legs; each leg's
+# test-smoke.sh shares this hold (scripts/lib/boot-conf-lock.sh).
+. "$REPO_ROOT/scripts/lib/boot-conf-lock.sh"
+boot_conf_lock_hold "$REPO_ROOT" 7 || exit 1
+
 GREEN='\033[0;32m'; RED='\033[0;31m'; DIM='\033[0;90m'; CYAN='\033[0;36m'; NC='\033[0m'
 
 # engine:cpus. KVM first: it is the fastest, so a break that both engines see is

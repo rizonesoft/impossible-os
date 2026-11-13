@@ -2,8 +2,11 @@
 # =============================================================================
 # boot-conf-lock.sh -- hold the system disk's boot.conf for one whole run
 #
-# Sourced by every script that patches boot.conf, boots the image and resets
-# it (run-with-boot-conf.sh, run-qemu.sh, test.sh, test-swtpm.sh). The caller
+# Sourced by every script that boots build/system-disk.img or patches its
+# boot.conf: run-with-boot-conf.sh, with-boot-conf-lock.sh (every Makefile
+# QEMU recipe), run-qemu.sh, test.sh, test-swtpm.sh, test-smoke.sh,
+# test-smoke-matrix.sh, test-fs.sh, test-desktop.sh and scripts/machines/{run-qemu-kvm,
+# run-qemu-tcg,boot-test-qemu}.sh. The caller
 # holds build/.boot-conf.lock from before its patch until it exits, and
 # exports BOOT_CONF_LOCK_HELD=1 so its own patch-boot-conf.sh calls do not
 # wait on it; every other patch or reset is refused while it is held, so no
@@ -16,6 +19,9 @@
 
 boot_conf_lock_hold() {
     local project="$1" fd="$2"
+    # A run started by a run that holds it (test-smoke-matrix -> test-smoke,
+    # run-with-boot-conf -> make run-only) shares its parent's hold.
+    [ "${BOOT_CONF_LOCK_HELD:-}" = "1" ] && return 0
     command -v flock >/dev/null 2>&1 || return 0
     mkdir -p "$project/build" || return 1
     eval "exec ${fd}>\"\$project/build/.boot-conf.lock\"" || return 1

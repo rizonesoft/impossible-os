@@ -52,6 +52,10 @@ esac
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD="$REPO_ROOT/build"
+# Hold build/.boot-conf.lock for this run, so no other run patches or resets
+# the image's boot.conf while it boots (scripts/lib/boot-conf-lock.sh).
+. "$SCRIPT_DIR/lib/boot-conf-lock.sh"
+boot_conf_lock_hold "$REPO_ROOT" 9 || exit 1
 
 DISK="$BUILD/system-disk.img"
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"

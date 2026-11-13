@@ -4851,8 +4851,9 @@ fi
 # The control removes the second boot and must fail the same assertion.
 _sm_orch() {  # $1 = matrix script to run; prints "<invocations> <pairs>"
     local d; d="$(mktemp -d "${TMPDIR:-/tmp}/tt-smoke-orch.XXXXXX")"
-    mkdir -p "$d/scripts"
+    mkdir -p "$d/scripts/lib"
     cp "$1" "$d/scripts/test-smoke-matrix.sh"
+    cp "$REPO_ROOT/scripts/lib/boot-conf-lock.sh" "$d/scripts/lib/"
     printf '%s\n' 'mkdir -p build; echo "=== BUILD OK ===" > build/build.log; : > build/system-disk.img; echo "{}" > build/build-receipt.json' > "$d/scripts/build.sh"
     printf '%s\n' 'echo "smp=${SMOKE_SMP:-} tcg=${SMOKE_FORCE_TCG:-} trend=${SMOKE_TREND_BOOTS:-} sd=${SMOKE_SHUTDOWN:-} keep=${SMOKE_KEEP_DISK:-}" >> "$ORCH_LOG"' > "$d/scripts/test-smoke.sh"
     ORCH_LOG="$d/calls" TMPDIR="$d" timeout 60 bash "$d/scripts/test-smoke-matrix.sh" >/dev/null 2>&1
