@@ -1814,7 +1814,7 @@ run-test: all test-disks
 		ls $(BUILD_DIR)/test-disks/optical/*.iso 2>/dev/null | sed "s|$(BUILD_DIR)/test-disks/||;s|\.iso||" | sed 's/^/    /'; \
 		exit 1; \
 	fi; \
-	cp $(OVMF_VARS) $(OVMF_VARS_CP); \
+	$(BOOT_LOCKED) cp $(OVMF_VARS) $(OVMF_VARS_CP) || exit 1; \
 	if echo "$(DISK)" | grep -q "optical/"; then \
 		echo "[TEST] Attaching $$TEST_FILE as ATAPI CD-ROM on AHCI port 1"; \
 		$(BOOT_LOCKED) $(QEMU) \
