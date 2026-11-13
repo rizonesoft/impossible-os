@@ -9651,7 +9651,7 @@ finally:
 PYGUA
 )
 GUA_OK=$(echo "$GUA_OUT" | grep -c "^OK ")
-GUA_EXPECT=110
+GUA_EXPECT=111
 if [ "$GUA_OK" = "$GUA_EXPECT" ]; then
     echo "$GUA_OUT" | grep "^OK " | while IFS= read -r line; do
         [ "$QUIET" = "0" ] && echo -e "  ${GREEN}PASS${NC}  gen_user_abi: $line"
@@ -10778,9 +10778,12 @@ fi
 # target becomes properly incremental, an unlisted contract means the kernel
 # rebuilds against a new hash while stale user binaries survive, and every
 # ring-3 process then aborts at SYS_ABI_HANDSHAKE. Pin the explicit edge now.
+# Matched INSIDE awk: piping the range into `grep -q` lets grep exit on its
+# match while awk is still writing, and under pipefail that SIGPIPE fails the
+# check (red on CI for f55d532ec, after the target grew three lines).
 if grep -qE '\$\(ABI_CONTRACT_H\)' "$REPO_ROOT/Makefile" && \
-   awk '/^\$\(SYSROOT\)\/hello\.exe/,/^\t/' "$REPO_ROOT/Makefile" \
-       | grep -q 'ABI_CONTRACT_H'; then
+   awk '/^\$\(SYSROOT\)\/hello\.exe/,/^\t/ { if (/ABI_CONTRACT_H/) f = 1 } END { exit !f }' \
+       "$REPO_ROOT/Makefile"; then
     t_pass "gen_user_abi: generated contract is a userland build prerequisite"
 else
     t_fail "gen_user_abi: generated contract is a userland build prerequisite" \
@@ -13320,15 +13323,16 @@ else
         "sites=$RID_NSITES kinds=$RID_NLABELS site=[$RID_SITEKINDS] table=[$RID_TABLEKINDS]"
 fi
 
-# Exactly one kind publishes no number. If that ever becomes zero, the
-# unparseable-manifest path has silently gone back to publishing a `0`
-# that reads as "nothing was lost".
-RID_UNVALUED="$(printf '%s\n' "$RID_TABLE" | awk '/^ROW /&&$4=="0"{n++}END{print n+0}')"
-if [ "$RID_UNVALUED" = "1" ]; then
-    t_pass "refusal correlator: exactly one aggregate kind publishes no number"
+# Exactly the kinds whose count is unknowable publish no number: an
+# unparseable manifest and a filter too long for boot.conf (nothing was
+# planned, so any number would read as "nothing was lost"). Named, not
+# counted, so a kind going value-less or regaining a `0` fails by name.
+RID_UNVALUED="$(printf '%s\n' "$RID_TABLE" | awk '/^ROW /&&$4=="0"{print $2}' | sort | tr '\n' ' ')"
+if [ "$RID_UNVALUED" = "FILTER_BAD MANIFEST_BAD " ]; then
+    t_pass "refusal correlator: only MANIFEST_BAD and FILTER_BAD publish no number"
 else
-    t_fail "refusal correlator: exactly one aggregate kind publishes no number" \
-        "found $RID_UNVALUED value-less kind(s)"
+    t_fail "refusal correlator: only MANIFEST_BAD and FILTER_BAD publish no number" \
+        "value-less kinds: [$RID_UNVALUED]"
 fi
 
 RID_AGG_OK=1
