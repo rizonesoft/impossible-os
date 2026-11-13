@@ -1553,8 +1553,8 @@ Implementation found a THIRD case of the same defect and corrected one premise. 
 > - Canonical doc: the exit contract sits in `validate.py`'s CLI header beside `--fix-line-numbers`, restated at the return site; rc 2 explicitly does NOT promise an untouched corpus.
 > - Scope boundary: exit contract and collision refusal only; §32 and §33 were split out before implementation. The hook fix, first parked as control plane, shipped 2026-11-13 in `b96f6fb54`.
 
-> **Verified:** 2026-08-09 | commit `859d96cf0` | 4/5 items | build OK | test_build 514/514, test-tooling 1319/1319, 28326 kernel + 17 user-mode, lint 0 errors
-> **Quality reviewed:** 2026-08-09 | Codex 7x (design, adversarial, test-coverage, adversarial, consistency, perf, re-adversarial) | 3H+8M+0L fixed, 1 open | scope: kernel-code-quality N/A (host-side Python tooling, no kernel surface)
+> **Verified:** 2026-11-13 | commits `859d96cf0`, `b96f6fb54`..`dadeb90ab` | 5/5 items | auto-rewrite fixture 10/10 (against the previous hook: 5 fail) | earlier evidence 2026-08-09: test_build 514/514, test-tooling 1319/1319, lint 0 errors
+> **Quality reviewed:** 2026-11-13 | Codex 9 passes over 3 waves (round, performance, completion) on the hook item, all approve on `dadeb90ab` | 5 P2 + 1 P3 fixed, 0 open | earlier: 2026-08-09 Codex 7x, 3H+8M+0L fixed | scope: host-side Python, no kernel surface
 
 -> XREF: [`TODO-06 §26`](#26-domain-code-resolution-picks-a-directory-by-cache-order) -- the section whose review found this (item: "Commit: `\"todo-graph: domain codes resolve by directory, not by cache order\"`"); it fixed the RESOLVER and deliberately left repair-mode's exit contract alone, because that is a decision about what `--fix-line-numbers` promises rather than about what a reference means.
 -> XREF: [`TODO-06 §23`](#23-validatepy-rebuild-recovery-and-the-baseline-cache) -- the section that owns `validate.py`'s recovery and repair surface (item: "Commit: `\"todo-graph: validate.py rebuild recovery + baseline cache\"`"); it is stamped, so this residue is owned here rather than appended to it.
