@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **926 of 2609 sections complete (35%).** 144 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **927 of 2609 sections complete (35%).** 143 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -50,7 +50,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T01 §10` | Smoke-Test POST16 Assertions                                                                                          | none     |     5 |
 | [x]  | `D00 T01 §11` | Bare Section-Ref Sweep                                                                                                | none     |     5 |
 | [x]  | `D00 T01 §12` | Enforce Required-Tool Version Floors                                                                                  | none     |     8 |
-| [/]  | `D00 T01 §13` | Duplicate-Recipe Sweep in the Root Makefile                                                                           | none     |     4 |
+| [x]  | `D00 T01 §13` | Duplicate-Recipe Sweep in the Root Makefile                                                                           | none     |     5 |
 | [x]  | `D00 T01 §14` | Defect-Finding Tools: Fuzzers, UBSan, Static Analysis, Compile Cache                                                  | none     |    11 |
 | [x]  | `D00 T01 §15` | Static-Analysis Triage and Changed-File Gate                                                                          | none     |     5 |
 | [x]  | `D00 T01 §16` | Fuzz Targets for the Remaining Untrusted-Input Parsers                                                                | none     |     8 |

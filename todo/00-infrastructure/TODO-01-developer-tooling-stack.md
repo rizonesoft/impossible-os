@@ -77,7 +77,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 | 💎  |  10   | Smoke-test POST16 assertions (boot-phase manifest)       | §3             |  [x]   |
 | ⭐  |  11   | Bare section-ref sweep (lint Check 5 zero-allowlist)     | §9             |  [x]   |
 | 💎  |  12   | Enforce required-tool version floors in `--verify`       | §1, §2         |  [x]   |
-| 💎  |  13   | Duplicate-recipe sweep in the root Makefile              | §3             |  [/]   |
+| 💎  |  13   | Duplicate-recipe sweep in the root Makefile              | §3             |  [x]   |
 | 💎  |  14   | Defect-finding tools: fuzzers, UBSan, static analysis    | §3, §7         |  [x]   |
 | 💎  |  15   | Static-analysis triage and changed-file gate             | §14            |  [x]   |
 | 💎  |  16   | Fuzz targets for the remaining untrusted parsers         | §14            |  [x]   |
@@ -443,9 +443,22 @@ Until 2026-11-13, `make` warned on EVERY invocation that it was overriding recip
   - Both boot through a new prerequisite-free `run-only` via `scripts/run-with-boot-conf.sh`, which restores boot.conf on exit, failure or interrupt; the old recursive `make run` rebuilt the disk over the patch.
 - [x] Lint Check 38 (`scripts/lint/check_make_duplicates.sh`): make parses the Makefile and any overriding-recipe warning fails.
 - [x] `scripts/test-tooling.sh` asserts a warning-free `make --dry-run all`, refuses a duplicate in a fixture, and checks boot.conf is restored when the boot fails.
+- [x] One image lock, `.boot-conf.lock`: every boot, image writer, clean and boot.conf patch of an image under `build/` holds it; `build.sh` builds one tree at a time.
+  - Helper: `scripts/lib/boot-conf-lock.sh`. The system disk and the USB/NVMe test images are built as `.new` and renamed into place under the lock; a failed final boot.conf reset fails the run (`boot_conf_restore`); `scripts/test-tooling.sh` (`boot_locked_recipes`) enumerates every caller.
 - [x] Commit: `"make: reconcile duplicate run-test/run-debug recipes and gate the class"`
 
 **Test checkpoint:** `make --dry-run all` emits zero `overriding recipe` / `ignoring old recipe` warnings; `make run-unit-tests` and `make run-boot-tests` boot with their flag and leave boot.conf at its default afterwards; adding a duplicate target fails `scripts/lint.sh`. Test on: build host only.
+
+> **Test runner:** `bash scripts/test-tooling.sh` (make_duplicate_recipes, run_with_boot_conf, boot_conf_reset_armed, boot_conf_restore_failure, boot_locked_recipes, build_lock, build_lock_run_modes, boot_test_qemu_lock) and `python3 tools/boot-cert/test_boot_reliability.py` (70/70); each fixture's control was run against the code it replaced.
+
+> **Notes:**
+> - Shipped: the four recipes split into `run-test`, `run-debug`, `run-unit-tests`, `run-boot-tests`; `run-only`; `scripts/run-with-boot-conf.sh`; lint Check 38; the `.boot-conf.lock` image lock with `scripts/with-boot-conf-lock.sh` and `$(BOOT_LOCKED)`; `.build.lock` in `build.sh`.
+> - Integration: every QEMU recipe and WSL launcher, the test runners, the release and fixture image writers, `boot_reliability.py` and `make clean` share one lock; a nested run shares its parent's hold through `BOOT_CONF_LOCK_HELD=1`.
+> - Scope: Windows-side launchers (`run-qemu.ps1`) and a VirtualBox VM after `startvm` cannot hold a WSL flock; images outside `build/` take no lock. Two raw `make` runs in one tree outside `build.sh` stay unsupported.
+> - Canonical doc: [developer-tooling-stack.md](../../docs/infrastructure/developer-tooling-stack.md).
+
+> **Verified:** 2026-11-13 | commit `35b60405b` + 31 post-ship fixes (to `4204e6035`) | all items | build OK | test.sh 38016 kernel + 17 user-mode PASS, smoke boots (2.7 s), lint exit 0, boot-reliability 70/70
+> **Quality reviewed:** 2026-11-13 | Codex 32 waves (round, performance, reconciliation) | all P1/P2 fixed, 0 open; last wave clean on round and performance, one P3 (this stamp's count) fixed | scope: N/A (host tooling, no kernel or boot code)
 
 ---
 
