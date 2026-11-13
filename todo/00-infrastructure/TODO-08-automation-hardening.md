@@ -103,7 +103,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |  35   |   §35   | Cross-section review of a closed TODO file                                                       | §5                         |  [/]   |
 | 💎  |  36   |   §36   | Second-boot leg in the smoke matrix                                                              | --                         |  [x]   |
 | 💎  |  37   |   §37   | Syscall argument counts in the ABI fingerprint                                                   | --                         |  [x]   |
-| 💎  |  38   |   §38   | Release-flavor build at the section boundary                                                     | --                         |  [ ]   |
+| 💎  |  38   |   §38   | Release-flavor build at the section boundary                                                     | --                         |  [x]   |
 | 💎  |  39   |   §39   | Re-judge the closed parks under the never-park rule                                              | --                         |  [ ]   |
 | 💎  |  40   |   §40   | Pytest-style control-plane tests run in the suite                                                | --                         |  [ ]   |
 | 💎  |  41   |   §41   | CI jobs run in the pinned image                                                                  | --                         |  [ ]   |
@@ -1309,14 +1309,22 @@ Every boot test starts from a fresh image, so anything that depends on what the 
 
 > **Spawned-by:** root
 
-Sections are built and tested as the test flavor. A parameter used only under `KERNEL_TESTS` breaks the release flavor with `-Werror`, and only CI's release job sees it, after the push.
+Sections are built and tested as the test flavor. A parameter used only under `KERNEL_TESTS` breaks the release flavor with `-Werror`; until `6e1f06e00` (2026-11-11) only CI's release job saw it, after the push. The pre-push static-analysis gate now compiles the changed sources as the release flavor. This section measures it and closes the one class it skipped, vendored sources.
 
-- [ ] Add a release-flavor compile (`KERNEL_TESTS` undefined) of the changed kernel and loader sources to the build the section pipeline runs before its commit. Done when a parameter used only under `KERNEL_TESTS` fails locally.
-- [ ] Keep it under 30 seconds on an incremental tree by compiling changed sources only, as `scripts/static-analysis.sh` already does. Done when the measured time is in the commit message.
-- [ ] Unit tests: a fixture source that builds as the test flavor and fails as release. Done when the pipeline step refuses it.
-- [ ] Commit: `"build: a section compiles as the release flavor before it is committed"`
+- [x] The section's one push release-compiles each changed kernel and loader source and refuses the push on an error.
+  - `scripts/static-analysis.sh` through `scripts/release-flavor-check.py`, shipped `6e1f06e00`; at the push, not each commit (`todo/answers.md` Q41).
+- [x] Changed sources only: 0.45 s for one source, 5.3 s for three including `bootx64.c` (measured 2026-11-13).
+- [x] Vendored sources (`src/libs/`, `src/kernel/acpica/`) get the release compile too, still without clang-tidy: ACPICA is release-only, so the test build never compiled a broken edit to it (review round 1).
+- [x] A changed or deleted header is release-compiled through every release unit that includes it, found with `-M` under the release flags; a unit whose listing fails (a deleted header) is compiled, so it fails closed (review rounds 2-3).
+- [x] Listing and compiles run in parallel within `STATIC_ANALYSIS_JOBS` (`--jobs`), never past it (review round 3).
+- [x] Unit tests: `scripts/test-tooling.sh` "gate refuses a source that compiles only with the test seams" and its invalid-instruction twin; a fixture clean under `KERNEL_TESTS` and an error without it is refused.
+- [x] Unit tests: gate fixtures (broken ACPICA source, broken and deleted ACPICA header, clean controls), a `--jobs 1` overlap test, the parser selftest.
+  - Every fixture fails on the previous gate.
+- [x] Commit: `"build: the release-flavor compile covers vendored sources and changed headers"`
 
 **Test checkpoint:** The fixture fails the step, and a full section build stays within its time.
+
+> **Test runner:** `bash scripts/test-tooling.sh` (static-analysis gate block); `bash scripts/static-analysis.sh <file>` for one source.
 
 ## 39. Re-judge the closed parks under the never-park rule
 

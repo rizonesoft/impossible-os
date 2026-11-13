@@ -480,3 +480,12 @@ The pre-push hook ran `scripts/test-tooling.sh` (about 15 minutes) on every push
 - **B:** keep the local pack, which reverses the 2026-08-05 rule only in the receipt case.
 
 A: (operator direction, 2026-11-13) A. Reversal cost: one condition in `.githooks/pre-push` and this paragraph in CLAUDE.md and `docs/infrastructure/development-tooling.md`; the cost it brings back is a red `main` for one CI cycle (about 17 minutes) when the pack fails, which the run fixes first.
+
+## Q41 (00-infrastructure/TODO-08 §38): does the release-flavor compile run at each commit or at the section's push?
+
+Section 38 asked for a release-flavor compile (`KERNEL_TESTS` undefined) before a section's commit. Since `6e1f06e00` (2026-11-11) the pre-push static-analysis gate already compiles every changed kernel and loader source as the release flavor and refuses the push, and a section gets exactly one push, so a release-only defect never reaches `main` or CI. (Review found one class the gate skipped, vendored sources such as ACPICA, which only the release flavor builds; section 38 closed it.) Measured 2026-11-13: 0.45 s for one source, 5.3 s for three including `bootx64.c`.
+
+- **A:** keep it at the push. The push is the section boundary; a defect found there costs one fix commit before the section's only push.
+- **B:** run it again at every commit, which repeats the same compile on each commit of a section for no defect the push cannot catch.
+
+A: (run decision, 2026-11-13) A. Reversal cost: one call to `scripts/release-flavor-check.py` in the post-commit section pipeline (about an hour with its test); nothing in the existing gate changes.

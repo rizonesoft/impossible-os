@@ -36,7 +36,7 @@ TIDY="${CLANG_TIDY:-clang-tidy-19}"
 # nor a diagnostic line carries such a name intact. Refused, not skipped.
 check_name() {
     case "$1" in
-        src/*.c) case "$1" in *[!A-Za-z0-9_./+-]*)
+        src/*.c|src/*.h|include/*.h|abi/*.h|*.inc) case "$1" in *[!A-Za-z0-9_./+-]*)
             printf 'static-analysis: unsupported source name (letters, digits and _ . / + - only): %q\n' "$1" >&2
             exit 2 ;; esac ;;
     esac
@@ -136,13 +136,23 @@ PY
 mapfile -t IN_DB <<<"$DB_LIST"
 
 case "$MODE" in
-    all)     CANDIDATES=("${IN_DB[@]}") ;;
+    all)     # Plus the vendored sources only the release flavor builds (ACPICA).
+             REL_LIST="$(python3 - "$DB_DIR/release/compile_commands.json" "$WORK" <<'PY'
+import json, os, sys
+root = sys.argv[2]
+for e in json.load(open(sys.argv[1])):
+    f = os.path.relpath(os.path.join(e.get("directory", root), e["file"]), root)
+    if f.endswith(".c") and f.startswith(("src/libs/", "src/kernel/acpica/")):
+        print(f)
+PY
+)" || { echo "static-analysis: the release compile database is not readable" >&2; exit 2; }
+             mapfile -t CANDIDATES < <(printf '%s\n' "${IN_DB[@]}" $REL_LIST | sort -u) ;;
     named)   CANDIDATES=("${NAMED[@]}") ;;
     changed)
         BASE="$(git merge-base HEAD origin/main 2>/dev/null || true)"
-        mapfile -t CANDIDATES < <( { [ -n "$BASE" ] && git diff --name-only "$BASE" -- '*.c'; \
-                                     git diff --name-only HEAD -- '*.c'; \
-                                     git ls-files -o --exclude-standard -- '*.c'; } | sort -u)
+        mapfile -t CANDIDATES < <( { [ -n "$BASE" ] && git diff --name-only "$BASE" -- '*.c' '*.h' '*.inc'; \
+                                     git diff --name-only HEAD -- '*.c' '*.h' '*.inc'; \
+                                     git ls-files -o --exclude-standard -- '*.c' '*.h' '*.inc'; } | sort -u)
         ;;
 esac
 
@@ -151,10 +161,16 @@ esac
 declare -A DB_SET=()
 for f in "${IN_DB[@]}"; do DB_SET["$f"]=1; done
 
-FILES=(); UNCOMPILED=()
+FILES=(); UNCOMPILED=(); VENDORED=(); HEADERS=()
 for f in "${CANDIDATES[@]}"; do
     [ -n "$f" ] || continue
     check_name "$f"
+    # A changed header is release-compiled through the translation units that
+    # include it (release-flavor-check.py finds them); a deleted one too, since
+    # its includers are what break. Headers are never analysed on their own.
+    case "$f" in
+        src/*.h|include/*.h|abi/*.h|src/*.inc|include/*.inc) HEADERS+=("$f"); continue ;;
+    esac
     if [ ! -f "$WORK/$f" ]; then
         # A changed-files run meets deleted sources; a source someone named must exist.
         [ "$MODE" = "changed" ] && continue
@@ -162,7 +178,10 @@ for f in "${CANDIDATES[@]}"; do
     fi
     case "$f" in
         src/kernel/test/*) [ "$WITH_TESTS" = "1" ] || continue ;;
-        src/libs/*|src/kernel/acpica/*) continue ;; # vendored
+        # Vendored code is not analysed, but it is still compiled as the release
+        # flavor: ACPICA is built only when KERNEL_TESTS is off, so the test
+        # build never compiles it and only this check can catch a broken edit.
+        src/libs/*|src/kernel/acpica/*) VENDORED+=("$f"); continue ;;
         src/*.c) ;;
         *) continue ;;                              # host tools, user code, the SDK
     esac
@@ -175,14 +194,41 @@ if [ "${#UNCOMPILED[@]}" -ne 0 ]; then
     echo "static-analysis: add the source to the build, or to this script's vendored list" >&2
     exit 2
 fi
+# The release compile reads vendored sources from the release database, and
+# release-flavor-check.py skips one the release flavor does not build.
+JOBS="${STATIC_ANALYSIS_JOBS:-$(nproc 2>/dev/null || echo 4)}"
+release_check() {  # sources...; sets REL_RC and REL_OUT
+    REL_RC=0
+    REL_OUT="$(python3 scripts/release-flavor-check.py --db "$DB_DIR/release/compile_commands.json" \
+        --work "$WORK" --jobs "$JOBS" "$@" 2>&1)" || REL_RC=$?
+    case "$REL_RC" in
+        0|1) ;;
+        *) printf '%s\n' "$REL_OUT" >&2
+           echo "static-analysis: the release-flavor compile could not run; this is not a clean result" >&2
+           exit 2 ;;
+    esac
+}
 if [ "${#FILES[@]}" -eq 0 ]; then
-    echo "static-analysis: nothing to analyze ($MODE)"
-    exit 0
+    if [ "${#VENDORED[@]}" -eq 0 ] && [ "${#HEADERS[@]}" -eq 0 ]; then
+        echo "static-analysis: nothing to analyze ($MODE)"
+        exit 0
+    fi
+    release_check "${VENDORED[@]}" "${HEADERS[@]}"
+    WHAT=""
+    [ "${#VENDORED[@]}" -eq 0 ] || WHAT="${#VENDORED[@]} vendored source(s)"
+    [ "${#HEADERS[@]}" -eq 0 ] || WHAT="${WHAT:+$WHAT and }${#HEADERS[@]} header(s)"
+    WHAT="$WHAT not analysed"
+    if [ "$REL_RC" = "0" ]; then
+        echo "static-analysis: $WHAT, release flavor compiles"
+        exit 0
+    fi
+    printf '%s\n' "$REL_OUT"
+    echo "static-analysis: $WHAT, and the release flavor does not compile"
+    exit 1
 fi
 
 OUT="$(mktemp -t static-analysis.XXXXXX)" || exit 2
 ERR="$(mktemp -t static-analysis-err.XXXXXX)" || exit 2
-JOBS="${STATIC_ANALYSIS_JOBS:-$(nproc 2>/dev/null || echo 4)}"
 # clang-tidy exits 0 when it only WARNS (WarningsAsErrors is empty), so a
 # nonzero status here is the analyzer failing to run or to compile a file,
 # and that must never read as "no findings".
@@ -244,16 +290,8 @@ FINDINGS="$(grep -E '^.+:[0-9]+:[0-9]+: warning: ' "$OUT" \
 # compile, so the same sources are also compiled as the RELEASE flavor builds
 # them (KERNEL_TESTS undefined, -Werror). A source that compiles only with the
 # test seams in place is a defect in the commit, reported with the findings.
-REL_RC=0
-REL_OUT="$(python3 scripts/release-flavor-check.py --db "$DB_DIR/release/compile_commands.json" \
-    --work "$WORK" "${FILES[@]}" 2>&1)" || REL_RC=$?
-case "$REL_RC" in
-    0) ;;
-    1) printf '%s\n' "$REL_OUT" ;;
-    *) printf '%s\n' "$REL_OUT" >&2
-       echo "static-analysis: the release-flavor compile could not run; this is not a clean result" >&2
-       exit 2 ;;
-esac
+release_check "${FILES[@]}" "${VENDORED[@]}" "${HEADERS[@]}"
+[ "$REL_RC" = "0" ] || printf '%s\n' "$REL_OUT"
 
 if [ -z "$FINDINGS" ] && [ "$REL_RC" = "0" ]; then
     echo "static-analysis: ${#FILES[@]} file(s), no findings"

@@ -656,6 +656,32 @@ if python3 "$REPO_ROOT/scripts/gen-compile-db.py" --selftest >/dev/null 2>&1; th
 else
     t_fail "compile-database generator parses dry-run output (selftest)"
 fi
+# The release compile honours its job limit (STATIC_ANALYSIS_JOBS reaches it as
+# --jobs): a fake compiler takes a lock directory for its run, so two at once
+# record an overlap. One job never overlaps; the control, six jobs, must.
+RFC_JOBS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tt-rfc-jobs.XXXXXX")"
+printf '%s\n' '#!/bin/sh' 'd="$(dirname "$0")"' \
+    'if mkdir "$d/lock" 2>/dev/null; then sleep 0.2; rmdir "$d/lock"; else echo x >> "$d/overlaps"; sleep 0.2; fi' \
+    > "$RFC_JOBS_DIR/cc"; chmod +x "$RFC_JOBS_DIR/cc"
+python3 - "$RFC_JOBS_DIR" <<'PYRFC'
+import json, sys
+d = sys.argv[1]
+json.dump([{"directory": d, "file": f"u{i}.c", "arguments": [d + "/cc", "-c", f"u{i}.c"]}
+           for i in range(6)], open(d + "/db.json", "w"))
+PYRFC
+rfc_overlaps() {  # $1 = jobs; prints overlaps recorded
+    rm -f "$RFC_JOBS_DIR/overlaps"
+    python3 "$REPO_ROOT/scripts/release-flavor-check.py" --db "$RFC_JOBS_DIR/db.json" --work "$RFC_JOBS_DIR" \
+        --jobs "$1" u0.c u1.c u2.c u3.c u4.c u5.c >/dev/null 2>&1
+    if [ -f "$RFC_JOBS_DIR/overlaps" ]; then wc -l < "$RFC_JOBS_DIR/overlaps" | tr -d ' '; else echo 0; fi
+}
+RFC_ONE="$(rfc_overlaps 1)"; RFC_SIX="$(rfc_overlaps 6)"
+rm -rf "$RFC_JOBS_DIR"
+if [ "${RFC_ONE:-0}" = "0" ] && [ "${RFC_SIX:-0}" -gt 0 ] 2>/dev/null; then
+    t_pass "release-flavor check runs no more compiles at once than --jobs allows (control: 6 jobs overlap $RFC_SIX)"
+else
+    t_fail "release-flavor check runs no more compiles at once than --jobs allows" "jobs=1 overlaps=$RFC_ONE, jobs=6 overlaps=$RFC_SIX"
+fi
 if python3 "$REPO_ROOT/scripts/release-flavor-check.py" --selftest >/dev/null 2>&1; then
     t_pass "release-flavor check strips outputs from a compile command (selftest)"
 else
@@ -734,7 +760,11 @@ sa_fixture() {
     idx="$(mktemp -t sa-fixture-index.XXXXXX)" || return 1
     GIT_INDEX_FILE="$idx" git -C "$REPO_ROOT" read-tree HEAD || rc=1
     while [ "$rc" = "0" ] && [ "$#" -ge 3 ]; do
-        if [ "$1" = "120000" ]; then
+        if [ "$1" = "delete" ]; then
+            GIT_INDEX_FILE="$idx" git -C "$REPO_ROOT" update-index --force-remove "$2" || rc=1
+            shift 3
+            continue
+        elif [ "$1" = "120000" ]; then
             blob="$(printf '%s' "$3" | git -C "$REPO_ROOT" hash-object -w --stdin)" || rc=1
         else
             blob="$( { git -C "$REPO_ROOT" show "HEAD:$2" 2>/dev/null; printf '%s\n' "$3"; } \
@@ -789,6 +819,21 @@ int sa_gate_release_fixture(int p) { int u; if (p) u = 1; return u; }
 SA_ASM="$(sa_fixture 100644 "$SA_FILE" '#ifndef KERNEL_TESTS
 void sa_gate_release_asm_fixture(void) { __asm__ volatile("sa_gate_no_such_insn"); }
 #endif')"
+# Vendored code is not analysed but is still release-compiled: ACPICA is built
+# only with KERNEL_TESTS off, so the test build never sees a broken edit to it.
+SA_ACPI_FILE="src/kernel/acpica/components/tables/tbfind.c"
+SA_ACPI="$(sa_fixture 100644 "$SA_ACPI_FILE" 'int sa_gate_acpica_fixture(void) { return sa_gate_acpica_undeclared; }')"
+SA_ACPI_OK="$(sa_fixture 100644 "$SA_ACPI_FILE" '/* static-analysis gate fixture: a comment changes nothing */')"
+# A header only release code includes: no source changes, and the test build
+# never compiles an includer, so only the release units that include it can fail.
+SA_VHDR_FILE="src/kernel/acpica/include/platform/acimpossible.h"
+SA_VHDR="$(sa_fixture 100644 "$SA_VHDR_FILE" 'extern int sa_gate_header_fixture[sa_gate_header_undeclared];')"
+SA_VHDR_OK="$(sa_fixture 100644 "$SA_VHDR_FILE" '/* static-analysis gate fixture: a comment changes nothing */')"
+# A deleted header its includers name by a short spelling ("acpixf.h" through an
+# include directory): the dependency listing cannot match it by path, so the
+# units whose listing fails are compiled and the missing include is reported.
+SA_GONE_FILE="src/kernel/acpica/include/acpixf.h"
+SA_GONE="$(sa_fixture delete "$SA_GONE_FILE" '')"
 # The control source includes kernel/abi_hash.h, which reaches a tracked header
 # outside src/ and include/: the snapshot must carry the whole tracked tree.
 SA_OK="$(sa_fixture 100644 src/kernel/time/kusd_time.c '/* static-analysis gate fixture: a comment changes nothing */')"
@@ -886,6 +931,39 @@ else
             t_pass "gate refuses a release-only defect that only code generation rejects (invalid instruction)"
         else
             t_fail "gate refuses a release-only defect that only code generation rejects (invalid instruction)" "exit $SA_R8_RC: $SA_R8"
+        fi
+        SA_R9="$(bash "$SA_GATE" origin "$SA_ACPI" "$SA_HEAD" 2>&1)"; SA_R9_RC=$?
+        if [ "$SA_R9_RC" = "1" ] && grep -qE "^$SA_ACPI_FILE:[0-9]+:[0-9]+: error: use of undeclared identifier 'sa_gate_acpica_undeclared'" <<<"$SA_R9" \
+                && grep -qF "the release flavor does not compile" <<<"$SA_R9"; then
+            t_pass "gate refuses a broken edit to a vendored source only the release flavor builds (ACPICA)"
+        else
+            t_fail "gate refuses a broken edit to a vendored source only the release flavor builds (ACPICA)" "exit $SA_R9_RC: $SA_R9"
+        fi
+        SA_R10="$(bash "$SA_GATE" origin "$SA_ACPI_OK" "$SA_HEAD" 2>&1)"; SA_R10_RC=$?
+        if [ "$SA_R10_RC" = "0" ] && grep -qF "1 vendored source(s) not analysed, release flavor compiles" <<<"$SA_R10"; then
+            t_pass "gate release-compiles a clean vendored edit without analysing it (control)"
+        else
+            t_fail "gate release-compiles a clean vendored edit without analysing it (control)" "exit $SA_R10_RC: $SA_R10"
+        fi
+        SA_R11="$(bash "$SA_GATE" origin "$SA_VHDR" "$SA_HEAD" 2>&1)"; SA_R11_RC=$?
+        if [ "$SA_R11_RC" = "1" ] && grep -qE "^$SA_VHDR_FILE:[0-9]+:[0-9]+: error: use of undeclared identifier 'sa_gate_header_undeclared'" <<<"$SA_R11" \
+                && grep -qF "the release flavor does not compile" <<<"$SA_R11"; then
+            t_pass "gate refuses a header-only change that breaks the release units including it (ACPICA header)"
+        else
+            t_fail "gate refuses a header-only change that breaks the release units including it (ACPICA header)" "exit $SA_R11_RC: ${SA_R11:0:600}"
+        fi
+        SA_R12="$(bash "$SA_GATE" origin "$SA_VHDR_OK" "$SA_HEAD" 2>&1)"; SA_R12_RC=$?
+        if [ "$SA_R12_RC" = "0" ] && grep -qF "1 header(s) not analysed, release flavor compiles" <<<"$SA_R12"; then
+            t_pass "gate release-compiles the includers of a clean header change (control)"
+        else
+            t_fail "gate release-compiles the includers of a clean header change (control)" "exit $SA_R12_RC: ${SA_R12:0:600}"
+        fi
+        SA_R13="$(bash "$SA_GATE" origin "$SA_GONE" "$SA_HEAD" 2>&1)"; SA_R13_RC=$?
+        if [ "$SA_R13_RC" = "1" ] && grep -qE "fatal error: 'acpixf.h' file not found" <<<"$SA_R13" \
+                && grep -qF "the release flavor does not compile" <<<"$SA_R13"; then
+            t_pass "gate refuses a deleted header its release includers still name (fails closed on an unlistable unit)"
+        else
+            t_fail "gate refuses a deleted header its release includers still name (fails closed on an unlistable unit)" "exit $SA_R13_RC: ${SA_R13:0:600}"
         fi
         SA_R6="$(bash "$SA_GATE" origin "$SA_LDR" "$SA_HEAD" 2>&1)"; SA_R6_RC=$?
         if [ "$SA_R6_RC" = "1" ] \

@@ -49,12 +49,15 @@ esac
 # a file so a failed diff refuses instead of reading as "no sources".
 CHANGED="$(mktemp -t static-analysis-gate.XXXXXX)" || exit 1
 trap 'rm -f "$CHANGED"' EXIT
-git -C "$REPO_ROOT" diff -z --name-only --diff-filter=d "$BASE" "$HEAD_OID" -- 'src/*.c' >"$CHANGED" || {
+# Sources, plus headers: a header is release-compiled through the units that
+# include it, and a deleted header too, because its includers are what break.
+{ git -C "$REPO_ROOT" diff -z --name-only --diff-filter=d "$BASE" "$HEAD_OID" -- 'src/*.c' \
+  && git -C "$REPO_ROOT" diff -z --name-only "$BASE" "$HEAD_OID" -- 'src/*.h' 'include/*.h' 'abi/*.h' 'src/*.inc' 'include/*.inc'; } >"$CHANGED" || {
     echo "static-analysis-gate: cannot diff $BASE..$HEAD_OID" >&2; exit 1; }
 FILES=()
 while IFS= read -r -d '' f; do
     case "$f" in
-        ""|src/kernel/test/*|src/libs/*|src/kernel/acpica/*) ;;   # the analysis leaves these out
+        ""|src/kernel/test/*) ;;   # the analysis leaves these out (vendored sources still get the release compile)
         *) FILES+=("$f") ;;
     esac
 done <"$CHANGED"

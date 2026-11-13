@@ -31,10 +31,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 
 # Options that make the compiler write something, with the value they take.
 WRITES_WITH_VALUE = {"-o", "-MF", "-MT", "-MQ"}
 WRITES_BARE = {"-MMD", "-MD", "-MP", "-M", "-MM"}
+HEADER_SUFFIXES = (".h", ".inc")
 DIAG = re.compile(r"^(?P<path>[^:\s][^:]*):(?P<rest>\d+:\d+: (?:warning|error|fatal error): .*)$")
 
 
@@ -60,7 +62,74 @@ def object_compile(argv, obj):
     return out + ["-o", obj]
 
 
-def check(db_path, work, files):
+def dep_command(argv):
+    """The compile's preprocessor dependency listing on stdout: -M lists every
+    header the translation unit includes under these flags. No -MG: a missing
+    header would be listed by its include spelling, not its path, so a deleted
+    one would match nothing. Without it the listing fails, and dependents()
+    compiles that unit, whose real compile names the missing header."""
+    out = object_compile(argv, "unused.o")[:-2]
+    return [a for a in out if a != "-c"] + ["-M"]
+
+
+def parse_deps(text, directory, work):
+    """Repo-relative paths from make-syntax dependency output."""
+    body = text.replace("\\\n", " ")
+    _, _, body = body.partition(": ")
+    paths, cur = set(), ""
+    i = 0
+    while i < len(body):
+        c = body[i]
+        if c == "\\" and i + 1 < len(body) and body[i + 1] == " ":
+            cur += " "
+            i += 2
+            continue
+        if c.isspace():
+            if cur:
+                paths.add(cur)
+            cur = ""
+        else:
+            cur += c
+        i += 1
+    if cur:
+        paths.add(cur)
+    rel = set()
+    for pth in paths:
+        full = os.path.normpath(os.path.join(directory, pth))
+        if full.startswith(work + os.sep):
+            rel.add(os.path.relpath(full, work))
+    return rel
+
+
+def dependents(entries, work, headers, jobs):
+    """{source} of every translation unit that includes one of `headers`, plus
+    every unit whose header listing fails (it includes a header that does not
+    exist, a deleted one among them): failing closed compiles it. Returns
+    (sources, error)."""
+    want = set(headers)
+
+    def one(item):
+        rel, e = item
+        # deadline: 120 s a preprocessor run; the whole database takes seconds.
+        r = subprocess.run(dep_command(e["arguments"]), cwd=e["directory"],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                           errors="replace", timeout=120)
+        if r.returncode != 0:
+            return rel, None, True
+        return rel, parse_deps(r.stdout, e["directory"], work), False
+
+    hits = set()
+    try:
+        with ThreadPoolExecutor(jobs) as ex:
+            for rel, deps, failed in ex.map(one, entries.items()):
+                if failed or deps & want:
+                    hits.add(rel)
+    except (ValueError, OSError, subprocess.TimeoutExpired) as ex:
+        return None, f"cannot list headers: {ex}"
+    return hits, None
+
+
+def check(db_path, work, files, jobs=None):
     try:
         db = json.load(open(db_path, encoding="utf-8"))
     except (OSError, ValueError) as e:
@@ -70,21 +139,42 @@ def check(db_path, work, files):
     for e in db:
         rel = os.path.relpath(os.path.join(e["directory"], e["file"]), work)
         by_file.setdefault(rel, e)
-    failed = checked = 0
-    objs = tempfile.TemporaryDirectory(prefix="release-flavor-check-")
-    for f in files:
-        e = by_file.get(f)
-        if e is None:
-            continue
-        try:
-            argv = object_compile(e["arguments"], os.path.join(objs.name, f"{checked}.o"))
-            # deadline: 300 s a source; the largest compiles in under ten.
-            r = subprocess.run(argv, cwd=e["directory"], stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, text=True, errors="replace", timeout=300)
-        except (ValueError, OSError, subprocess.TimeoutExpired) as ex:
-            print(f"release-flavor-check: could not compile {f}: {ex}", file=sys.stderr)
+    jobs = jobs or os.cpu_count() or 4
+    # A changed header is checked through every release translation unit that
+    # includes it, found under the release flags: a header only release code
+    # includes (ACPICA's), or a block in a shared header the test seams hide,
+    # breaks no test-flavor compile.
+    headers = [f for f in files if f.endswith(HEADER_SUFFIXES)]
+    sources = [f for f in files if not f.endswith(HEADER_SUFFIXES)]
+    via_headers = 0
+    if headers:
+        hits, err = dependents(by_file, work, headers, jobs)
+        if hits is None:
+            print(f"release-flavor-check: {err}", file=sys.stderr)
             return 2
-        checked += 1
+        extra = sorted(hits - set(sources))
+        via_headers = len(extra)
+        sources += extra
+    todo = [(f, by_file[f]) for f in dict.fromkeys(sources) if f in by_file]
+    objs = tempfile.TemporaryDirectory(prefix="release-flavor-check-")
+
+    def compile_one(item):
+        n, (f, e) = item
+        argv = object_compile(e["arguments"], os.path.join(objs.name, f"{n}.o"))
+        # deadline: 300 s a source; the largest compiles in under ten.
+        return f, e, subprocess.run(argv, cwd=e["directory"], stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True, errors="replace",
+                                    timeout=300)
+
+    try:
+        with ThreadPoolExecutor(jobs) as ex:
+            results = list(ex.map(compile_one, enumerate(todo)))
+    except (ValueError, OSError, subprocess.TimeoutExpired) as ex:
+        print(f"release-flavor-check: could not compile: {ex}", file=sys.stderr)
+        return 2
+    failed = 0
+    checked = len(results)
+    for f, e, r in results:
         if r.returncode == 0:
             continue
         failed += 1
@@ -100,7 +190,8 @@ def check(db_path, work, files):
         print(f"release-flavor-check: {failed} of {checked} source(s) do not compile as the "
               f"release flavor (KERNEL_TESTS=off)")
         return 1
-    print(f"release-flavor-check: {checked} source(s) compile as the release flavor")
+    print(f"release-flavor-check: {checked} source(s) compile as the release flavor"
+          + (f" ({via_headers} through {len(headers)} changed header(s))" if headers else ""))
     return 0
 
 
@@ -127,11 +218,18 @@ def selftest():
             return 1
         except ValueError:
             pass
+    deps = parse_deps("a.o: src/a.c include/x.h \\\n  inc/my\\ file.h ../out.h /abs.h\n", "/w/src", "/w")
+    if deps != {"src/src/a.c", "src/include/x.h", "src/inc/my file.h", "out.h"}:
+        print(f"release-flavor-check selftest FAIL: dependency parse gave {sorted(deps)}", file=sys.stderr)
+        return 1
+    if [a for a in dep_command(["cc", "-MMD", "-c", "a.c", "-o", "a.o"]) if a in ("-c", "-o", "-MMD", "-MG")]:
+        print("release-flavor-check selftest FAIL: the dependency command still compiles", file=sys.stderr)
+        return 1
     # The real compiler under -Werror: what the transformation leaves must
     # compile a clean source with no unused-argument complaint.
     cc = next((c for c in ("clang-19", "clang") if shutil.which(c)), None)
     if cc is None:
-        print("release-flavor-check selftest: 6 checks passed (no clang for the compiler cases)")
+        print("release-flavor-check selftest: 8 checks passed (no clang for the compiler cases)")
         return 0
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "a.c")
@@ -161,14 +259,14 @@ def selftest():
             print(f"release-flavor-check selftest FAIL: an invalid instruction gave syntax rc "
                   f"{syntax.returncode} and compile rc {real.returncode}", file=sys.stderr)
             return 1
-    print("release-flavor-check selftest: 8 checks passed")
+    print("release-flavor-check selftest: 10 checks passed")
     return 0
 
 
 def main(argv):
     if "--selftest" in argv:
         return selftest()
-    db = work = None
+    db = work = jobs = None
     files = []
     it = iter(argv)
     for a in it:
@@ -176,6 +274,12 @@ def main(argv):
             db = next(it, None)
         elif a == "--work":
             work = next(it, None)
+        elif a == "--jobs":
+            v = next(it, "")
+            if not v.isdigit() or int(v) < 1:
+                print(f"release-flavor-check: --jobs needs a positive number, not {v!r}", file=sys.stderr)
+                return 2
+            jobs = int(v)
         elif a.startswith("-"):
             print(f"release-flavor-check: unknown option {a}", file=sys.stderr)
             return 2
@@ -184,7 +288,7 @@ def main(argv):
     if not db or not work or not os.path.isdir(work):
         print("release-flavor-check: usage: --db PATH --work ROOT FILE...", file=sys.stderr)
         return 2
-    return check(db, os.path.realpath(work), files)
+    return check(db, os.path.realpath(work), files, jobs)
 
 
 if __name__ == "__main__":
