@@ -39,7 +39,7 @@ There is nothing to run yet. When the first sections land, `python3 scripts/inve
 
 ## What is not implemented yet?
 
-Nothing is implemented yet. The [roadmap file](../../todo/08-graphics-ui/TODO-17-win11-parity-inventory.md) owns all of it: the schema and checker, the reference machine, the capture tool, the baselines, the inventory of each surface (desktop, taskbar, Start, flyouts, window chrome, secure screens, Settings, File Explorer, dialogs, Control Panel, system tools, inbox apps), the shortcut, gesture, metric and motion catalogues, the authoring step that assigns every record to a roadmap section, and the built-OS layout check. The reference machine is built from the Windows 11 image at `R:\11\win11.iso` and stored in `C:\HyperV\ios-win11-ref\`.
+Nothing is implemented yet. The [roadmap file](../../todo/08-graphics-ui/TODO-17-win11-parity-inventory.md) owns all of it: the schema and checker, the reference machine, the capture tool, the baselines, the inventory of each surface (desktop, taskbar, Start, flyouts, window chrome, secure screens, Settings, File Explorer, dialogs, Control Panel, system tools, inbox apps), the shortcut, gesture, metric and motion catalogues, the authoring step that assigns every record to a roadmap section, and the built-OS layout check. The reference machine is built from the Windows 11 image at `R:\11\win11.iso` and stored in `R:\11\ios-win11-ref\`.
 
 ## How does it compare with Windows 11 and Linux?
 

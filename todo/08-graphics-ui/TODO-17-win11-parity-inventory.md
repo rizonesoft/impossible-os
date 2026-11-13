@@ -144,11 +144,11 @@ The record format and the checker every later section writes against. One JSON o
 Positions only mean something against one fixed machine. This section builds that machine and writes down what it is.
 
 > [!NOTE]
-> **Decision, 2026-11-14:** the reference is a clean Hyper-V virtual machine, not the operator's desktop. The shell's surfaces are singletons that hold personal data (pins, recent files, notifications), and a capture that opens Start on a desktop in use disturbs it. Reversal cost: none, the tool takes the machine as a parameter. The installation image is in place: the operator put the Windows 11 ISO at `R:\11\win11.iso` on 2026-11-14 (7.2 GB). The VM, its disk and its checkpoints live in `C:\HyperV\ios-win11-ref\`, beside the existing `C:\HyperV\ImpossibleOS` machine; it is durable, so it does not go on the scratch drive.
+> **Decision, 2026-11-14:** the reference is a clean Hyper-V virtual machine, not the operator's desktop. The shell's surfaces are singletons that hold personal data (pins, recent files, notifications), and a capture that opens Start on a desktop in use disturbs it. Reversal cost: none, the tool takes the machine as a parameter. The installation image is in place: the operator put the Windows 11 ISO at `R:\11\win11.iso` on 2026-11-14 (7.2 GB). The VM, its disk and its checkpoints live in `R:\11\ios-win11-ref\`, beside the image (operator choice, 2026-11-14).
 
 - [ ] Write `scripts/inventory/ref-vm.ps1`: creates the Generation 2 VM `ios-win11-ref` from the ISO with an unattended answer file
   - 4 vCPU, 8 GiB, 80 GiB dynamic disk, TPM enabled, no network after setup
-  - ISO: `R:\11\win11.iso`. VM path: `C:\HyperV\ios-win11-ref\` (configuration, `disk.vhdx`, checkpoints); both are parameters with these defaults
+  - ISO: `R:\11\win11.iso`. VM path: `R:\11\ios-win11-ref\` (configuration, `disk.vhdx`, checkpoints); both are parameters with these defaults
   - The answer file makes one local account `ref` and declines every optional prompt
 - [ ] Set the VM's display to 1920 by 1080 at 100 percent scaling, display language en-US, regional format en-US, dark mode off (the default), and take the checkpoint `clean`
 - [ ] Write `scripts/inventory/ref-run.ps1`: restores the `clean` checkpoint, copies the capture tool in through PowerShell Direct, runs one capture command, and copies the result out
