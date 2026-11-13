@@ -106,10 +106,12 @@ def message_for(rc, stdout: str, stderr: str, timed_out: bool = False):
     if rc == 2:
         # A refusal can come after earlier files were already rewritten
         # (validate.py's exit contract); its ALREADY REWRITTEN list is the
-        # recovery evidence, so it is quoted whole rather than clipped away.
+        # recovery evidence, so it is quoted whole.
         done = [ln for ln in combined.splitlines() if "ALREADY REWRITTEN" in ln]
-        partial = (f" Some files may already be rewritten: {_clip(done[0][done[0].index('ALREADY REWRITTEN'):], 600)}"
-                   if done else "")
+        # Never clipped: it is bounded by the corpus's file count, and a
+        # rerun cannot recover the previous run's write history.
+        partial = (" Some files may already be rewritten: "
+                   + done[0][done[0].index("ALREADY REWRITTEN"):].strip() if done else "")
         return (f"{PREFIX} REFUSED: {_clip(combined)}.{partial} "
                 "Resolve the refusal, then re-run it.")
     return (f"{PREFIX} failed (exit {rc}): {_clip(combined) or 'no output'}. "

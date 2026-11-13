@@ -25,6 +25,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 HOOK = ROOT / ".claude" / "hooks" / "todo_graph_auto_rewrite.py"
 
 RAISE = object()
+LONG_LIST = ", ".join(f"todo/02-kernel-core/TODO-{n:02d}-a-long-subject-name.md" for n in range(40))
 SUMMARY = "[validate.py] fix-line-numbers: 0 update(s), {a} ambiguous, {u} unresolvable target(s), {m} missing item(s); mode=WRITE"
 CLASSES = [
     # label, rc, output, expected substring (None = silent)
@@ -43,6 +44,9 @@ CLASSES = [
     ("a late refusal names the files already rewritten", 2,
      "[validate.py] REFUSED: todo/b.md changed during repair. ALREADY REWRITTEN: todo/a.md",
      "already be rewritten: ALREADY REWRITTEN: todo/a.md"),
+    ("a late refusal keeps every rewritten path", 2,
+     "[validate.py] REFUSED: todo/z.md changed during repair. ALREADY REWRITTEN: " + LONG_LIST,
+     LONG_LIST),
     # RAISE makes the fake die on a real uncaught ImportError (exit 1).
     ("a Python crash is not an incomplete repair", 1, RAISE, "did not finish"),
     ("another exit is a failure, not silence", 3, "Traceback: boom", "failed (exit 3)"),
