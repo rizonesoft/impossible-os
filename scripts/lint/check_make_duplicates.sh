@@ -8,10 +8,12 @@
 # warnings on every build trained readers to ignore make's warnings.
 #
 # make itself decides what a duplicate is: it parses a COPY of the Makefile in
-# an empty temporary directory and runs one sentinel target appended to it.
-# The copy keeps parse-time $(shell ...) and $(wildcard ...) away from the
-# working tree (the root Makefile deletes a stale signing stamp at parse time),
-# and the sentinel proves the parse finished: a $(error), a syntax error or a
+# a temporary directory and runs one sentinel target appended to it. The
+# directory mirrors the Makefile's own directory through symlinks, so source
+# discovery ($(wildcard), $(shell find)) sees the real tree and a recipe over a
+# discovered object is still caught, but build/ is left out: the root Makefile
+# deletes a stale signing stamp under build/ at parse time, and that delete
+# must not run from lint. The sentinel proves the parse finished: a $(error), a syntax error or a
 # timeout is a failure to check, never a pass. Any "overriding recipe" or
 # "ignoring old recipe" warning fails. Pattern and double-colon rules do not
 # warn, so they are not refused.
@@ -37,6 +39,14 @@ fi
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/make-dup.XXXXXX")" || exit 2
 trap 'rm -rf "$TMP"' EXIT
 SENTINEL="__check_make_duplicates_parsed__"
+SRC_DIR="$(cd "$(dirname "$MK")" && pwd)"
+MK_NAME="$(basename "$MK")"
+for entry in "$SRC_DIR"/* "$SRC_DIR"/.[!.]* "$SRC_DIR"/..?*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    name="$(basename "$entry")"
+    case "$name" in build|"$MK_NAME") continue ;; esac
+    ln -s "$entry" "$TMP/$name" || { echo "check_make_duplicates: could not mirror $entry" >&2; exit 2; }
+done
 # Each write is checked: a copy that lost the source would hold only the
 # sentinel and pass.
 if ! cat "$MK" > "$TMP/Makefile" \
