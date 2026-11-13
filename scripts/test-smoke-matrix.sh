@@ -224,18 +224,26 @@ done
 # Every other leg boots a fresh variable store, so none of them sees the
 # ImpossibleCrashLog pointer an update inherits from an older build; on
 # 2026-11-13 one named the new heap guard page and Phase 0 faulted. `guard`
-# plants THIS build's heap guard address, read from a leg above, and must be
-# claimed with the heap placed elsewhere; `mmio` plants the IOAPIC window, in
-# range for the old check, and must be skipped.
-heap_guard="$(grep -ahoE 'guard at 0x[0-9a-f]+' "$LOG_DIR"/*.log 2>/dev/null | head -1 | awk '{print $3}')"
-for leg in "guard|${heap_guard}|claimed" "mmio|0xFEC00000|skipped"; do
+# plants THIS build's heap guard address and must be claimed with the heap
+# placed elsewhere (the claim runs before the heap exists); `stack` plants the
+# loader's boot-stack guard page, which the PMM owns, and `mmio` the IOAPIC
+# window; both are in range for the old check and must be skipped. The two
+# guard addresses come from the serial log of the last leg above, which
+# test-smoke.sh rewrites on every boot; a log older than this run is refused.
+serial="$REPO_ROOT/build/smoke-test.stripped.log"
+heap_guard=""; stack_guard=""
+if [ -f "$serial" ] && [ "$(stat -c %Y "$serial")" -ge "$START_ALL" ]; then
+    heap_guard="$(grep -aoE 'Kernel heap: .*guard at 0x[0-9a-fA-F]+' "$serial" | head -1 | grep -oE '0x[0-9a-fA-F]+$')"
+    stack_guard="$(grep -aoE 'boot stack: guard page installed at 0x[0-9a-fA-F]+' "$serial" | head -1 | grep -oE '0x[0-9a-fA-F]+$')"
+fi
+for leg in "guard|${heap_guard}|claimed" "stack|${stack_guard}|skipped" "mmio|0xFEC00000|skipped"; do
     name="${leg%%|*}"; rest="${leg#*|}"
     addr="${rest%%|*}"; expect="${rest#*|}"
     log="$LOG_DIR/crashptr-$name.log"
     cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-crashptr-$name.XXXXXX")"
     t0=$(date +%s)
     if [ -z "$addr" ]; then
-        echo "SMOKE TEST FAILED: no 'guard at' line in the earlier legs' logs" > "$cap"; rc=1
+        echo "SMOKE TEST FAILED: no $name guard address in this run's serial log ($serial)" > "$cap"; rc=1
     else
         SMOKE_CRASH_NVRAM="$addr" SMOKE_CRASH_NVRAM_EXPECT="$expect" bash scripts/test-smoke.sh > "$cap" 2>&1
         rc=$?
