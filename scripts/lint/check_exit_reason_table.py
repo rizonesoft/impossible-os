@@ -99,19 +99,21 @@ def translate(text):
     return "".join(out), origin
 
 
-def table_names(text):
-    """The names the TASK_EXIT_REASONS table defines, or None if it is absent."""
-    m = TABLE.search(translate(text)[0])
-    if not m:
-        return None
-    return {"TASK_EXIT_" + r for r in ROW.findall(m.group(1))}
+def tables(body):
+    """Each TASK_EXIT_REASONS definition in translated text, as its row names."""
+    return [{"TASK_EXIT_" + r for r in ROW.findall(m.group(1))} for m in TABLE.finditer(body)]
 
 
-def findings(text, path, allowed):
-    # Fast rejection: no file without the prefix (after splices) can name one.
+def scan(text):
+    """Translate a file once; its body and line map, or None when it cannot
+    name the namespace (the fast rejection, done after splice removal)."""
     if "TASK_EXIT_" not in text.replace("\\\n", ""):
-        return []
-    body, origin = translate(text)
+        return None
+    return translate(text)
+
+
+def findings(scanned, path, allowed):
+    body, origin = scanned
     out = []
     for m in IDENT.finditer(body):
         if m.group(0) in allowed:
@@ -119,6 +121,24 @@ def findings(text, path, allowed):
         out.append(f"{path}:{origin[m.start()]}: {m.group(0)} is not a TASK_EXIT_REASONS row "
                    f"(add it as a row in {TABLE_H})")
     return out
+
+
+def judge(texts):
+    """Findings for {path: text}. Exactly ONE table definition may exist among
+    them: a second copy (in `#if 0`, a test header, anywhere) could otherwise
+    authorise rows the compiled table does not have, and choosing between two
+    would need the preprocessor's view of which is live."""
+    scanned = {p: scan(t) for p, t in texts.items()}
+    scanned = {p: v for p, v in scanned.items() if v is not None}
+    defs = [(p, rows) for p, (body, _o) in scanned.items() for rows in tables(body)]
+    if len(defs) != 1:
+        where = ", ".join(p for p, _r in defs) or "none of the files checked"
+        return None, [f"expected exactly one TASK_EXIT_REASONS definition, found {len(defs)} ({where})"]
+    allowed = MACHINERY | defs[0][1]
+    out = []
+    for p, v in scanned.items():
+        out += findings(v, p, allowed)
+    return allowed, out
 
 
 # A table, then one name that is not in it per bypass shape: a #define and
@@ -146,6 +166,12 @@ UTEST_PROBE8 (-1006)
 #define TASK_EXIT_UTEST_PROBE9 (TASK_EXIT_REASON_LAST - 1)
 """
 CONTROL_BAD_COUNT = 9
+# A second definition, inactive or not, is refused outright.
+CONTROL_TWICE = CONTROL_TABLE + """\
+#if 0
+#define TASK_EXIT_REASONS(X) X(KNOWN_A, 1) X(UTEST_PROBE10, 2)
+#endif
+"""
 CONTROL_GOOD = CONTROL_TABLE + """\
 #define TASK_EXIT_REASON_BASE (-1000)
 #define TASK_EXIT_REASON_CONST(name, ord) TASK_EXIT_##name = TASK_EXIT_REASON_BASE - (ord),
@@ -171,13 +197,14 @@ def read(p):
 
 def main(argv):
     if argv[1:] == ["--control"]:
-        allowed = MACHINERY | table_names(CONTROL_TABLE)
-        bad = findings(CONTROL_BAD, "control-bad", allowed)
-        good = findings(CONTROL_GOOD, "control-good", allowed)
-        if len(bad) == CONTROL_BAD_COUNT and not good:
+        _a, bad = judge({"control-bad": CONTROL_BAD})
+        _a, good = judge({"control-good": CONTROL_GOOD})
+        _a, twice = judge({"control-twice": CONTROL_TWICE})
+        if len(bad) == CONTROL_BAD_COUNT and not good and len(twice) == 1 \
+                and "exactly one" in twice[0]:
             return 0
         print(f"control misjudged: {len(bad)} of {CONTROL_BAD_COUNT} names flagged, "
-              f"{len(good)} false positives: {bad + good}", file=sys.stderr)
+              f"{len(good)} false positives, second table: {twice}", file=sys.stderr)
         return 1
     if argv[1:2] == ["--root"] and len(argv) == 3:
         root = argv[2]
@@ -188,26 +215,23 @@ def main(argv):
     else:
         print(__doc__, file=sys.stderr)
         return 2
-    # The table comes from the files checked when one of them holds it (a
-    # mutant header), else from the tree's task.h.
+    # A mutant header passed by name carries its own table; otherwise the
+    # tree's task.h supplies it (and in --root mode it is one of the paths).
     texts, out = {}, []
     for p in paths:
         try:
             texts[p] = read(p)
         except OSError as e:
             out.append(f"{p}: unreadable: {e}")
-    names = next((n for n in map(table_names, texts.values()) if n is not None), None)
-    if names is None:
+    canonical = os.path.normpath(os.path.join(root, TABLE_H))
+    if canonical not in map(os.path.normpath, texts) and not any(
+            "TASK_EXIT_REASONS" in t.replace("\\\n", "") for t in texts.values()):
         try:
-            names = table_names(read(os.path.join(root, TABLE_H)))
-        except OSError:
-            names = None
-    if not names:
-        print(f"no TASK_EXIT_REASONS table found in {TABLE_H}", file=sys.stderr)
-        return 1
-    allowed = MACHINERY | names
-    for p, text in texts.items():
-        out += findings(text, p, allowed)
+            texts[canonical] = read(canonical)
+        except OSError as e:
+            out.append(f"{canonical}: unreadable: {e}")
+    _allowed, found = judge(texts)
+    out += found
     for line in out:
         print(line)
     return 1 if out else 0
