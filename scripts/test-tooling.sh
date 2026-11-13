@@ -4871,6 +4871,49 @@ if [ "$_sm_got" = "27 2" ] && [ "$_sm_ctl" != "27 2" ]; then
 else
     t_fail "smoke_matrix_orchestration  matrix legs or two-boot order wrong" "got '$_sm_got' (want '27 2'), control '$_sm_ctl'"
 fi
+# Make duplicate recipes (lint Check 38). The real Makefile parses with no
+# override warning, a dry `make all` prints none, and a fixture with one target
+# defined twice is refused while double-colon and pattern rules are not.
+if command -v make >/dev/null 2>&1; then
+    _mk_dry=$(cd "$REPO_ROOT" && timeout 120 make --dry-run --no-print-directory all 2>&1 | grep -cE 'warning: (overriding|ignoring old) recipe')
+    _mk_d="$(mktemp -d "${TMPDIR:-/tmp}/tt-make-dup.XXXXXX")"
+    printf 'a:\n\t@echo 1\n%%.o: %%.c\n\t@echo p\nb::\n\t@echo 3\nb::\n\t@echo 4\n' > "$_mk_d/clean.mk"
+    { cat "$_mk_d/clean.mk"; printf 'a:\n\t@echo 2\n'; } > "$_mk_d/dup.mk"
+    bash "$REPO_ROOT/scripts/lint/check_make_duplicates.sh" "$REPO_ROOT/Makefile" >/dev/null 2>&1; _mk_real=$?
+    bash "$REPO_ROOT/scripts/lint/check_make_duplicates.sh" "$_mk_d/clean.mk" >/dev/null 2>&1; _mk_clean=$?
+    _mk_dup_out=$(bash "$REPO_ROOT/scripts/lint/check_make_duplicates.sh" "$_mk_d/dup.mk" 2>&1); _mk_dup=$?
+    rm -rf "$_mk_d"
+    if [ "$_mk_dry" = "0" ] && [ "$_mk_real" = "0" ] && [ "$_mk_clean" = "0" ] && [ "$_mk_dup" = "1" ] \
+       && <<<"$_mk_dup_out" grep -q "overriding recipe for target 'a'"; then
+        t_pass "make_duplicate_recipes  the Makefile has none, and a target defined twice is refused"
+    else
+        t_fail "make_duplicate_recipes  a duplicate recipe passed or the tree has one" "dry-run warnings=$_mk_dry real=$_mk_real clean=$_mk_clean dup=$_mk_dup"
+    fi
+fi
+# run-with-boot-conf.sh restores boot.conf when the boot fails: a stub `make`
+# that exits 3 stands in for QEMU, and the disk's boot.conf must read back as
+# the default afterwards with the boot's status passed through.
+if [ -s "$REPO_ROOT/build/system-disk.img" ] && command -v mtype >/dev/null 2>&1 \
+   && _bc_off="$(grep -E '^EFI_OFFSET=[0-9]+$' "$REPO_ROOT/build/system-disk.img.info" 2>/dev/null | cut -d= -f2)" && [ -n "$_bc_off" ]; then
+    _bc_d="$(mktemp -d "${TMPDIR:-/tmp}/tt-bootconf.XXXXXX")"
+    cp "$REPO_ROOT/build/system-disk.img" "$_bc_d/disk.img"; cp "$REPO_ROOT/build/system-disk.img.info" "$_bc_d/disk.img.info"
+    mkdir -p "$_bc_d/repo/scripts" "$_bc_d/repo/build" "$_bc_d/repo/resources/boot" "$_bc_d/bin"
+    cp "$REPO_ROOT/scripts/run-with-boot-conf.sh" "$REPO_ROOT/scripts/patch-boot-conf.sh" "$_bc_d/repo/scripts/"
+    cp "$REPO_ROOT/resources/boot/boot.conf" "$_bc_d/repo/resources/boot/"
+    mv "$_bc_d/disk.img" "$_bc_d/repo/build/system-disk.img"; mv "$_bc_d/disk.img.info" "$_bc_d/repo/build/system-disk.img.info"
+    printf '#!/bin/sh\nmtype -i "%s@@%s" ::/EFI/ImpossibleOS/boot.conf > "%s"\nexit 3\n' \
+        "$_bc_d/repo/build/system-disk.img" "$_bc_off" "$_bc_d/during" > "$_bc_d/bin/make"
+    chmod +x "$_bc_d/bin/make"
+    PATH="$_bc_d/bin:$PATH" timeout 60 bash "$_bc_d/repo/scripts/run-with-boot-conf.sh" test 1 >/dev/null 2>&1; _bc_rc=$?
+    _bc_after=$(mtype -i "$_bc_d/repo/build/system-disk.img@@$_bc_off" ::/EFI/ImpossibleOS/boot.conf 2>/dev/null)
+    _bc_def=$(cat "$REPO_ROOT/resources/boot/boot.conf")
+    if [ "$_bc_rc" = "3" ] && grep -qE '^test *= *1' "$_bc_d/during" && [ "$_bc_after" = "$_bc_def" ]; then
+        t_pass "run_with_boot_conf  the boot sees test=1 and boot.conf is restored when it fails"
+    else
+        t_fail "run_with_boot_conf  the patch was not seen or not restored" "rc=$_bc_rc during=$(grep -cE '^test *= *1' "$_bc_d/during" 2>/dev/null) restored=$([ "$_bc_after" = "$_bc_def" ] && echo y || echo n)"
+    fi
+    rm -rf "$_bc_d"
+fi
 _sm_out=$(cd "$REPO_ROOT" && SMOKE_TREND_BOOTS=x timeout 60 bash scripts/test-smoke.sh 2>&1); _sm_rc=$?
 if [ "$_sm_rc" = "1" ] && <<<"$_sm_out" grep -q 'SMOKE_TREND_BOOTS=x is not a boot count'; then
     t_pass "smoke_trend_boots_refused  a leg refuses a boot count it cannot check"

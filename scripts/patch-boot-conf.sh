@@ -3,7 +3,8 @@
 # patch-boot-conf.sh -- Patch boot.conf in the system disk image
 #
 # Modifies a specific key=value in the EFI partition's boot.conf without
-# rebuilding the entire disk image. Used by `make run-debug` and `make test`.
+# rebuilding the entire disk image. Used by scripts/run-with-boot-conf.sh
+# (`make run-unit-tests`, `make run-boot-tests`).
 #
 # Usage:
 #   bash scripts/patch-boot-conf.sh <key> <value>

@@ -508,7 +508,7 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-nls test-knf test-except test-quota test-x86 test-desktop test-ex test-visual test-wcag update-ui-refs boot-info-abi test-boot-info-abi test-tooling test-ai-system todo-graph todo-graph-ready todo-graph-blocked todo-graph-render-mermaid todo-graph-mcp lsp-mcp lsp-mcp-selftest
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland uefi-boot sign-efi system-disk test-disks run run-only run-test run-debug run-unit-tests run-boot-tests run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-nls test-knf test-except test-quota test-x86 test-desktop test-ex test-visual test-wcag update-ui-refs boot-info-abi test-boot-info-abi test-tooling test-ai-system todo-graph todo-graph-ready todo-graph-blocked todo-graph-render-mermaid todo-graph-mcp lsp-mcp lsp-mcp-selftest
 
 ## all: Build everything (kernel + userland + system disk + boot_info ABI manifest)
 # check-abi is deliberately NOT listed here: $(ABI_STAMP) now gates every object
@@ -1368,8 +1368,14 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
 	. $@.info && mcopy -i $@@@$$RECOVERY_OFFSET $(KERNEL_BIN) ::kernel.bak
 	@echo "[DISK] $@ created ($(SYSTEM_DISK_SIZE) GPT: EFI + BlackBox + ABMeta + Slot A + Slot B + Recovery)"
 
-## run: Launch QEMU booting from system disk (UEFI via OVMF)
+## run: Build, then launch QEMU booting from system disk (UEFI via OVMF)
 run: all
+	@$(MAKE) --no-print-directory run-only
+
+## run-only: Launch QEMU on the image already built, without building
+##   No prerequisites, so nothing rebuilds the disk between a boot.conf patch
+##   and the boot that is meant to read it (run-unit-tests, run-boot-tests).
+run-only:
 	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@cp -n $(OVMF_CODE) $(BUILD_DIR)/OVMF_CODE_4M.fd 2>/dev/null || true
 	$(QEMU) \
@@ -1390,17 +1396,15 @@ run: all
 		-rtc base=localtime \
 		-no-reboot
 
-## run-debug: Build + boot with debug=1 (unit tests + boot tests run)
-run-debug: all
-	@bash scripts/patch-boot-conf.sh debug 1
-	@$(MAKE) --no-print-directory run
-	@bash scripts/patch-boot-conf.sh reset
+## run-boot-tests: Build, then boot with debug=1 (unit tests + boot tests run)
+##   boot.conf is restored when QEMU exits, fails or is interrupted.
+run-boot-tests: all
+	@bash scripts/run-with-boot-conf.sh debug 1
 
-## run-test: Build + boot with test=1 (unit tests only, then shutdown)
-run-test: all
-	@bash scripts/patch-boot-conf.sh test 1
-	@$(MAKE) --no-print-directory run
-	@bash scripts/patch-boot-conf.sh reset
+## run-unit-tests: Build, then boot with test=1 (unit tests only, then shutdown)
+##   boot.conf is restored when QEMU exits, fails or is interrupted.
+run-unit-tests: all
+	@bash scripts/run-with-boot-conf.sh test 1
 
 ## test: Build, boot QEMU headless, run unit tests, report pass/fail, exit code
 ##   Usage: make test                  # all suites

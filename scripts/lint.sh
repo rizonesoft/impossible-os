@@ -3072,6 +3072,27 @@ if { [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ] || [ -f "$REPO_ROOT/todo/implementa
 fi
 
 # ============================================================================
+# Check 38: no target in the root Makefile has two recipes
+# ============================================================================
+# GNU make keeps the last recipe and drops the earlier one with a warning, so a
+# documented target silently does something else (run-test and run-debug did,
+# until 2026-11-13). make parses the file and decides; see
+# scripts/lint/check_make_duplicates.sh.
+if [ -f "$REPO_ROOT/Makefile" ] && [ "${SKIP_LINT_MAKE_DUPLICATES:-}" != "1" ]; then
+    MKDUP_RC=0
+    MKDUP_OUT="$(bash "$REPO_ROOT/scripts/lint/check_make_duplicates.sh" "$REPO_ROOT/Makefile" 2>&1)" || MKDUP_RC=$?
+    if [ "$MKDUP_RC" -eq 1 ]; then
+        printf '%s\n' "$MKDUP_OUT" | sed 's/^/  /'
+        echo -e "${RED}error${NC}: Check 38 (make duplicates) a Makefile target has two recipes and make silently drops one; give each its own target name"
+        ERRORS=$((ERRORS + 1))
+    elif [ "$MKDUP_RC" -ne 0 ]; then
+        printf '%s\n' "$MKDUP_OUT" | sed 's/^/  /'
+        echo -e "${RED}error${NC}: Check 38 (make duplicates) could not parse the Makefile (exit $MKDUP_RC); the check did not run"
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

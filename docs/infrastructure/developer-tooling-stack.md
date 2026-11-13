@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/setup.sh,scripts/build.sh,scripts/test.sh,scripts/lint.sh,scripts/tooling-doctor.sh,scripts/install-hooks.sh reviewed=2026-09-30T14:20 order=2 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-01-developer-tooling-stack.md sources=scripts/setup.sh,scripts/build.sh,scripts/test.sh,scripts/lint.sh,scripts/tooling-doctor.sh,scripts/install-hooks.sh,scripts/run-with-boot-conf.sh,scripts/lint/check_make_duplicates.sh reviewed=2026-11-13 order=2 -->
 # Developer Tooling Stack
 
 ## What is it?
@@ -62,11 +62,22 @@ bash scripts/tooling-doctor.sh --quiet
 
 That output was measured on 2026-09-28. Before pushing, `CI_PARITY=1 bash scripts/test.sh` runs the suite under the same QEMU package and TCG engine that CI uses; the pre-push hook enforces it.
 
+## Which make targets boot the image in QEMU?
+
+| Target | What it does |
+|---|---|
+| `make run` | Builds, then boots the system disk with a window and serial on stdio. |
+| `make run-only` | Boots the image already built, without building. |
+| `make run-unit-tests` | Builds, then boots once with `test=1` in boot.conf (unit tests, then shutdown). |
+| `make run-boot-tests` | Builds, then boots once with `debug=1` (unit tests and boot tests). |
+| `make run-test DISK=<name>` | Boots with a secondary test disk on AHCI port 1, for filesystem driver testing. |
+| `make run-debug` | Boots paused, waiting for GDB on port 1234. |
+
+`run-unit-tests` and `run-boot-tests` patch boot.conf inside the built image through `scripts/run-with-boot-conf.sh`, boot through `run-only` so nothing rebuilds the disk over the patch, and restore boot.conf when QEMU exits, fails or is interrupted. Lint Check 38 refuses a Makefile target with two recipes: until 2026-11-13 `run-test` and `run-debug` were each defined twice, and make silently ran only the second.
+
 ## What is not implemented yet?
 
-- The root `Makefile` defines `run-test` and `run-debug` twice, so `make` prints overriding-recipe warnings. Reconciling them, and a lint check that stops the class returning, is parked in [Duplicate-Recipe Sweep in the Root Makefile](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#13-duplicate-recipe-sweep-in-the-root-makefile) because the Makefile is operator-only surface for the unattended runner.
-
-Everything else in the roadmap file has shipped.
+Everything in the roadmap file has shipped.
 
 ## How does it compare with Windows 11 and Linux?
 
