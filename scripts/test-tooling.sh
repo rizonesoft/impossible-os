@@ -4923,39 +4923,55 @@ if [ -z "$_bo_bad" ]; then
 else
     t_fail "boot_conf_reset_armed  a runner patches boot.conf before its reset is armed" "$_bo_bad"
 fi
+# The two image-lock refusal checks below run in a disposable checkout (the
+# scripts tree, an empty build/ and a one-commit git repo, which test.sh needs
+# for its identity) whose .boot-conf.lock this shell holds. A refused run
+# still publishes its refusal to the canonical aliases by design, so running
+# it against the real tree would replace the developer's last results; the
+# fixture keeps both checks off the real build/ and off the real image lock.
+# Fixtures live under TMPDIR_HOOK, which the pack's guarded EXIT trap removes.
+_lk_fixture() {
+    local d
+    [ -n "${TMPDIR_HOOK:-}" ] && [ -d "$TMPDIR_HOOK" ] || return 1
+    d=$(mktemp -d "$TMPDIR_HOOK/lockfx-XXXXXX") || return 1
+    cp -r "$REPO_ROOT/scripts" "$d/" && mkdir -p "$d/build" &&
+        git -C "$d" init -q &&
+        git -C "$d" -c user.name=fixture -c user.email=fixture@invalid commit -q --allow-empty -m fixture &&
+        echo "$d"
+}
+
 # The abort-path proof holds the image lock for its whole run, so another
 # run's artifacts can never stand in for its own: with the lock held it
 # refuses before it boots or deletes anything.
-_ap_out=$( ( flock -w 600 8 || { echo "image-busy"; exit 0; }
-    env -u BOOT_CONF_LOCK_HELD timeout 30 bash "$REPO_ROOT/scripts/test-abort-path.sh" 2>&1; echo "rc=$?"
-) 8>"$REPO_ROOT/.boot-conf.lock" )
+_ap_out="fixture-unavailable"
+if _lk_fx=$(_lk_fixture); then
+    _ap_out=$( ( flock -n 8 || { echo "fixture-lock-busy"; exit 0; }
+        env -u BOOT_CONF_LOCK_HELD timeout 30 bash "$_lk_fx/scripts/test-abort-path.sh" 2>&1; echo "rc=$?"
+    ) 8>"$_lk_fx/.boot-conf.lock" )
+fi
 if <<<"$_ap_out" grep -q 'another run holds the image lock' && <<<"$_ap_out" grep -q '^rc=1$'; then
     t_pass "abort_path_lock  test-abort-path.sh refuses while another run holds the image"
 else
     t_fail "abort_path_lock  test-abort-path.sh ran while another run held the image" "$(tail -2 <<<"$_ap_out")"
 fi
+
 # A test.sh refused because another run holds the image leaves that run's
 # serial log (build/test.log) alone: it deletes the log only once it holds
 # the image itself.
-# Everything below runs inside one hold of the image lock (bounded wait), so
-# the probe never touches a live run's log: the backup, the marker, the
-# refused test.sh and the restore all happen while no other run can boot.
-mkdir -p "$REPO_ROOT/build"
-_tl_out=$( (
-    flock -w 600 8 || { echo "image-busy"; exit 0; }
-    log="$REPO_ROOT/build/test.log"; keep=""
-    [ -f "$log" ] && { keep=$(mktemp); cp -p "$log" "$keep"; }
-    echo "held-run-serial-marker" > "$log"
-    env -u BOOT_CONF_LOCK_HELD timeout 60 bash "$REPO_ROOT/scripts/test.sh" QUIET=1 2>&1 | tail -3
-    echo "kept=$(cat "$log" 2>/dev/null || echo '<deleted>')"
-    if [ -n "$keep" ]; then mv -f "$keep" "$log"; else rm -f "$log"; fi
-) 8>"$REPO_ROOT/.boot-conf.lock" )
-_tl_kept=$(sed -n 's/^kept=//p' <<<"$_tl_out")
+_tl_out="fixture-unavailable"; _tl_kept=""
+if _lk_fx=$(_lk_fixture); then
+    echo "held-run-serial-marker" > "$_lk_fx/build/test.log"
+    _tl_out=$( ( flock -n 8 || { echo "fixture-lock-busy"; exit 0; }
+        env -u BOOT_CONF_LOCK_HELD timeout 60 bash "$_lk_fx/scripts/test.sh" QUIET=1 2>&1 | tail -3
+    ) 8>"$_lk_fx/.boot-conf.lock" )
+    _tl_kept=$(cat "$_lk_fx/build/test.log" 2>/dev/null || echo '<deleted>')
+fi
 if <<<"$_tl_out" grep -q 'another run is using' && [ "$_tl_kept" = "held-run-serial-marker" ]; then
     t_pass "test_log_survives_refusal  a test.sh refused by the image lock keeps the holder's serial log"
 else
-    t_fail "test_log_survives_refusal  a refused test.sh deleted or replaced the holder's serial log" "log=${_tl_kept:-<deleted>} $(tail -1 <<<"$_tl_out")"
+    t_fail "test_log_survives_refusal  a refused test.sh deleted or replaced the holder's serial log" "log=${_tl_kept:-<unset>} $(tail -1 <<<"$_tl_out")"
 fi
+
 # A failed final reset fails the run and says so: run-with-boot-conf.sh is run
 # whole in a stub project, and the cleanup handlers of test.sh and
 # test-swtpm.sh are run against a stub patch-boot-conf.sh whose reset fails.
