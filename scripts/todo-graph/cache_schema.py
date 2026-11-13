@@ -2248,11 +2248,21 @@ class ScanResult:
     """
 
     __slots__ = ("lines", "mask", "codes", "terminal", "conts", "cont_exc",
-                 "leafs", "leaf_exc", "_views", "_leaf_views")
+                 "leafs", "leaf_exc", "_views", "_leaf_views",
+                 "fence_opens", "fence_closes")
 
     def __init__(self, lines, mask, codes, terminal, conts=None, cont_exc=None,
-                 leafs=None, leaf_exc=None):
+                 leafs=None, leaf_exc=None, fence_opens=None, fence_closes=None):
         self.lines = lines
+        # FENCED-BLOCK BOUNDARIES, sparse: line index of each fence opener ->
+        # its info string, and the set of explicit closer lines. `codes` says
+        # a line is fenced but not which block it belongs to, so a block that
+        # ends by leaving its container, followed at once by another fence,
+        # looked like one run; a consumer that rebuilt the boundary itself
+        # re-implemented the closer rule wrongly (an indented delimiter is
+        # code, not a closer). One entry per block, not per line.
+        self.fence_opens = {} if fence_opens is None else fence_opens
+        self.fence_closes = set() if fence_closes is None else fence_closes
         self.mask = mask            # the STRUCTURAL projection; the safe default
         self.codes = codes          # bytearray, one KIND CODE per line
         self.terminal = terminal    # `Terminal` or None
@@ -2967,6 +2977,8 @@ def fence_scan(lines):
     depth = 0                # len(containers) when the fence/HTML block opened
     html = None              # the open `HtmlBlockRule`, or None
     open_line = 0            # index of the line that opened `state` / `html`
+    fence_opens = {}         # opener line -> info string (sparse)
+    fence_closes = set()     # explicit closer lines (sparse)
     fence_terminator = ""    # human-facing closer for the open fence
     para_open = False        # the previous line left a paragraph open
     # [first container that may still be provisional, first blockquote index].
@@ -3089,6 +3101,8 @@ def fence_scan(lines):
                 # none cannot change the state -- skip the regex entirely.
                 if "`" in rest or "~" in rest:
                     state = fence_step(state, rest)
+                    if state is None:
+                        fence_closes.add(lineno)
                 out.append(True)
                 codes.append(KIND_CODE_FENCE)
                 continue
@@ -3214,6 +3228,7 @@ def fence_scan(lines):
             state = nxt
             depth = len(containers)
             open_line = lineno
+            fence_opens[lineno] = FENCE_RE.match(rest).group(2).strip()
             fence_terminator = "a closing `%s` run of at least %d" % (
                 nxt[0] * nxt[1], nxt[1])
             out.append(True)
@@ -3328,7 +3343,7 @@ def fence_scan(lines):
     elif html is not None and html.end_rule in _HTML_UNTERMINATABLE:
         terminal = Terminal(html.kind, html.number, html.terminator, open_line)
     return ScanResult(lines, out, codes, terminal, conts, cont_exc,
-                      leafs, leaf_exc)
+                      leafs, leaf_exc, fence_opens, fence_closes)
 
 
 def fence_mask(lines) -> list:

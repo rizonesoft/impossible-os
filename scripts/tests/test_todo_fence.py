@@ -2599,6 +2599,7 @@ def main():
     test_section_identity_shapes_section47()
     test_baseline_fail_closed_section47()
     test_raw_html_is_not_rewritten_section48()
+    test_fence_block_boundaries()
     if _FAILS:
         sys.stderr.write("test_todo_fence FAIL (%d):\n  - %s\n"
                          % (len(_FAILS), "\n  - ".join(_FAILS)))
@@ -4350,6 +4351,28 @@ for name, unit in UNITS:
     # which is what makes the refusal a fix rather than a ritual.
     check("s48 CONTROL split('\\n') and the scan disagree on a VT break",
           len("a\vb\n".split("\n")) != len(tf.scan_text("a\vb\n").lines))
+
+
+def test_fence_block_boundaries():
+    """`fence_opens` / `fence_closes`: the block boundaries `codes` cannot
+    carry, so a consumer never rebuilds the closer rule (TODO format check,
+    2026-11-13)."""
+    tf = load("todo_fence_bounds", "scripts/todo_fence.py")
+    t3 = "`" * 3
+    lines = [f"> {t3}text", "> example", f"{t3}c", "int a;", t3,
+             f"{t3}c", "x", f"    {t3}", "y", t3, "", "~~~~ py extra", "~~~", "~~~~"]
+    r = tf.fence_scan(lines)
+    check("bounds: every opener is recorded with its info string",
+          r.fence_opens == {0: "text", 2: "c", 5: "c", 11: "py extra"})
+    check("bounds: explicit closers are recorded; an indented delimiter and a shorter run are not",
+          r.fence_closes == {4, 9, 13})
+    check("bounds: a block that ends by leaving its container has no closer",
+          1 not in r.fence_closes and 2 in r.fence_opens)
+    check("bounds: an unclosed fence records its opener and no closer",
+          tf.fence_scan([t3, "a"]).fence_opens == {0: ""}
+          and not tf.fence_scan([t3, "a"]).fence_closes)
+    check("bounds: a document with no fence has none",
+          not tf.fence_scan(["# t", "text"]).fence_opens)
 
 
 _ASSERTED = [0]

@@ -2050,7 +2050,9 @@ Split AGAIN 2026-08-11, before code, on the sequencer's SPLIT-RECOMMENDED verdic
 - [x] `.claude/hooks/todo_wrap_reminder.py` takes its fence grammar from the shared tracker
       - Shipped 2026-11-13: both scans use the tracker's prose mask, the projection `todo-reflow.py` repairs with; selftest gains four cases that fail on the old toggle; same verdict on all 257 corpus files.
 - [x] `.claude/hooks/todo_format_check.py` takes its fence grammar from the shared tracker
-      - Found 2026-11-13 by the completion review of the item above: a ```c regex missed tilde fences, ended at a shorter inner run and read a commented block as code. 10 fixtures in `scripts/tests/test_todo_format_check.py`, 4 fail on the old regex; same output on all 257 corpus files.
+      - Found 2026-11-13 by the completion review of the item above: a ```c regex missed tilde fences, ended at a shorter inner run and read a commented block as code.
+      - Block boundaries come from the tracker too: `ScanResult` gains `fence_opens` (opener line -> info string) and `fence_closes`, because `codes` cannot tell a block that ends by leaving its container from the fence after it, and rebuilding the closer rule took an indented delimiter as a closer.
+      - 13 fixtures in `scripts/tests/test_todo_format_check.py` (4 fail on the old regex, 3 on the first adoption); tracker cases in `test_todo_fence.py`; same output on all 257 corpus files.
 - [x] Prove every gate adopter is verdict-neutral before landing
       Run per tool against the pre-change script from `HEAD`, over all 281 files under `todo/`. Three are byte-identical and the fourth changed by exactly five verdicts, every one of them verified.
       - `todo-reachability.py --json`: IDENTICAL, 331 records across 50 files.

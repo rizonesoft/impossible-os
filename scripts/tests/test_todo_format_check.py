@@ -26,6 +26,12 @@ CASES = [
      f"<!-- spec-block-ok: wire format -->\n{T3}c\n{BODY}\n{T3}\n", False),
     ("a long non-C block is silent", f"{T3}text\n{BODY}\n{T3}\n", False),
     ("two blocks written back to back stay two", f"{T3}c\nint a;\n{T3}\n{T3}c\n{BODY}\n{T3}\n", True),
+    ("a C block after a blockquoted fence ends by container exit still warns",
+     f"> {T3}text\n> example\n{T3}c\n{BODY}\n{T3}\n", True),
+    ("a C block after a list-contained fence ends by container exit still warns",
+     f"- item\n  {T3}text\n  example\n{T3}c\n{BODY}\n{T3}\n", True),
+    ("an indented delimiter does not close a C block",
+     f"{T3}c\nint a;\n    {T3}\n{BODY}\n{T3}\n", True),
     ("an N.M label warns", "- [ ] (1.2 Foo) bar\n", True),
     ("an N.M label inside a fence is silent", f"{T3}\n- [ ] (1.2 Foo) bar\n{T3}\n", False),
 ]

@@ -33,30 +33,21 @@ KIND_CODE_FENCE = todo_fence._cache_schema().KIND_CODE_FENCE
 
 lines = all_text.split("\n")
 scan = todo_fence.fence_scan(lines)
-leaves = scan.leaf_views
-OPENER = re.compile(r"^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)")
 
 
 def _fence_blocks():
-    """(opener line index, info word, body line count) per fenced block. The
-    tracker says which lines are fenced; a run of fenced lines is split only
-    where a line closes the block its opener started, so two blocks written
-    back to back stay two."""
-    i, n = 0, len(lines)
-    while i < n:
-        if scan.codes[i] != KIND_CODE_FENCE:
-            i += 1
-            continue
-        m = OPENER.match(leaves[i])
-        run, info = (m.group(1), m.group(2).lower()) if m else ("", "")
-        j = i + 1
-        while j < n and scan.codes[j] == KIND_CODE_FENCE:
-            t = leaves[j].strip()
-            if run and t and set(t) == {run[0]} and len(t) >= len(run):
-                break
+    """(opener line index, info word, body line count) per fenced block, with
+    every boundary taken from the tracker: its openers, its explicit closers,
+    and the end of the fenced run (a block that ends by leaving its container
+    has no closer line). Nothing here re-decides what closes a fence."""
+    n = len(lines)
+    for start in sorted(scan.fence_opens):
+        info = scan.fence_opens[start].split()
+        j = start + 1
+        while (j < n and scan.codes[j] == KIND_CODE_FENCE
+               and j not in scan.fence_opens and j not in scan.fence_closes):
             j += 1
-        yield i, info, j - i - 1
-        i = j + 1
+        yield start, (info[0].lower() if info else ""), j - start - 1
 
 
 bloated_blocks = []
