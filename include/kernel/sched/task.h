@@ -1829,86 +1829,80 @@ uint64_t task_exec_take_pending_frame(struct interrupt_frame *frame);
 _Static_assert(TASK_EXIT_REASON_BASE < -(int)SIG_MAX,
                "kernel exit-reason block overlaps the -(signum) range");
 
-/* The task was terminated because a post-commit exec destroyed its image: past
- * task_exec's commit point there is nothing to return to, so the task is exited
- * rather than handed back a failure. Lets a parent distinguish "the exec commit
- * point killed my child" from a kill, a signal, or the child's own exit -- the
- * distinction the post-commit lifecycle test depends on for an honest oracle. */
-#define TASK_EXIT_EXEC_IMAGE_DESTROYED  (TASK_EXIT_REASON_BASE - 1)
-
-/* The usermode test launcher's loader refused to execute a planned binary
- * because the bytes it read no longer matched the content identity the
- * enumeration plan froze for that entry. Named here rather than in the test
- * header for the reason this block exists: the first version used -7, which
- * is exactly -(SIGBUS-range signum), so a replaced binary and a signal death
- * were indistinguishable to any consumer classifying by status value. */
-#define TASK_EXIT_UTEST_IDENTITY        (TASK_EXIT_REASON_BASE - 2)
-
-/* The usermode test launcher killed a binary for outrunning its wall clock.
- * Assigned by the LAUNCHER (u_wait_with_timeout), never by the binary or by
- * the loader, and it deliberately OVERWRITES SIGKILL's -9 so the reported
- * reason is "ran out of time" rather than "was signalled" -- which is exactly
- * why the marker itself must not live in the signal range. It spent its first
- * life as -6 in include/kernel/test/test_usermode.h, indistinguishable from a
- * SIGABRT-range death; the move here was deferred once on the belief that host
- * artifact parsers keyed on the number, which they do not -- scripts/test.sh
- * keys on the named TIMEOUT verdict token, not on exit=N. */
-#define TASK_EXIT_UTEST_TIMEOUT         (TASK_EXIT_REASON_BASE - 3)
-
-/* The usermode test launcher reaped a task that INHERITED a binary's output
- * capture through fork() and was still alive when the launcher finished
- * waiting on that binary. Assigned by the launcher's run-boundary fence, and
- * deliberately NOT the timeout reason above: a descendant has no wall clock
- * of its own -- the launcher never waited on it -- so reporting it as one
- * that ran out of time would name a deadline that never existed. What
- * actually happened is that its parent's run ended underneath it. */
-#define TASK_EXIT_UTEST_REAPED          (TASK_EXIT_REASON_BASE - 4)
-
-/* The usermode test launcher stopped waiting on a binary because the MONOTONIC
- * CLOCK stopped advancing, not because the binary outran a deadline. Assigned
- * on the same launcher path as the timeout above and deliberately NOT that
- * value: a deadline-driven kill is a statement about the BINARY (it was too
- * slow), while this one is a statement about the MACHINE (the launcher could no
- * longer measure time). Reporting the second as the first sends a reader
- * hunting a hung test that was never hung. */
-#define TASK_EXIT_UTEST_STALLED         (TASK_EXIT_REASON_BASE - 5)
-
-/* How many reasons the block has handed out, and the lowest value in use.
- * Allocate the next reason as TASK_EXIT_REASON_LAST - 1, then bump BOTH of
- * these and add the name to the two asserts below. The pair is what catches
- * the half-done edit: bumping one without the other fails the build. */
-#define TASK_EXIT_REASON_COUNT          5
-#define TASK_EXIT_REASON_LAST           TASK_EXIT_UTEST_STALLED
-
-_Static_assert(TASK_EXIT_REASON_LAST
-                   == TASK_EXIT_REASON_BASE - TASK_EXIT_REASON_COUNT,
-               "TASK_EXIT_REASON_COUNT and _LAST disagree: a reason was added "
-               "or removed without updating both");
-
-/* Layer 1 for the reasons THEMSELVES, not just the block base. The assert
- * above proves the BLOCK clears the signal range; it says nothing about any
- * individual reason, and a reason written as a bare literal (or derived from
- * the wrong base) would sit back inside -(signum) exactly as the timeout
- * marker did for its whole first life.
+/* THE reserved reasons, as one table: X(NAME, ORDINAL, "why").
+ * TASK_EXIT_<NAME> == TASK_EXIT_REASON_BASE - ORDINAL. Everything else in
+ * this block (the constants, the count, _LAST, the per-reason range and
+ * ordinal checks, the classifier bounds and the name lookup) is GENERATED from
+ * these rows, so a reason cannot be added without its bookkeeping: before the
+ * table, a reason defined as TASK_EXIT_REASON_LAST - 1 without bumping the
+ * count built clean and classified as an application status.
  *
- * Scope, stated honestly because the previous wording overstated it: these
- * are HAND-ENUMERATED lists, so they defend the three names written in them,
- * not "every reason automatically". A fourth reason that is defined but never
- * added here is unprotected by the range and distinctness checks -- the
- * COUNT/_LAST pair above is what makes that omission loud, since a new reason
- * allocated below _LAST without bumping both fails to build. */
-_Static_assert(TASK_EXIT_EXEC_IMAGE_DESTROYED < -(int)SIG_MAX
-               && TASK_EXIT_UTEST_IDENTITY < -(int)SIG_MAX
-               && TASK_EXIT_UTEST_TIMEOUT < -(int)SIG_MAX
-               && TASK_EXIT_UTEST_REAPED < -(int)SIG_MAX
-               && TASK_EXIT_UTEST_STALLED < -(int)SIG_MAX,
-               "a reserved exit reason overlaps the -(signum) range");
+ * Add a reason as a new LAST row with the next ordinal. Ordinals are the
+ * published values (TASK_EXIT_EXEC_IMAGE_DESTROYED is in the ring-3 ABI via
+ * scripts/gen-user-abi.py, which reads the enum from clang's AST), so the
+ * check below refuses a row whose ordinal is not its 1-based row position:
+ * a duplicate, a gap or a reorder fails the build instead of renumbering a
+ * published value.
+ *
+ *  EXEC_IMAGE_DESTROYED  a post-commit exec destroyed the task's image, so
+ *                        there is nothing to return to; lets a parent tell
+ *                        "the exec commit point killed my child" from a kill,
+ *                        a signal or the child's own exit.
+ *  UTEST_IDENTITY        the usermode test launcher's loader refused a planned
+ *                        binary whose bytes no longer matched the identity the
+ *                        plan froze. Its first version was -7, a signal-range
+ *                        value.
+ *  UTEST_TIMEOUT         the launcher killed a binary for outrunning its wall
+ *                        clock. Assigned by the LAUNCHER (u_wait_with_timeout),
+ *                        and it deliberately OVERWRITES SIGKILL's -9. Its first
+ *                        life was -6, inside the SIGABRT range.
+ *  UTEST_REAPED          the launcher's run-boundary fence reaped a task that
+ *                        inherited a binary's output capture through fork() and
+ *                        outlived it. Not the timeout: a descendant has no wall
+ *                        clock of its own.
+ *  UTEST_STALLED         the launcher stopped waiting because the MONOTONIC
+ *                        CLOCK stopped advancing, a statement about the
+ *                        machine rather than the binary. */
+#define TASK_EXIT_REASONS(X)                                                  \
+    X(EXEC_IMAGE_DESTROYED, 1)                                                \
+    X(UTEST_IDENTITY,       2)                                                \
+    X(UTEST_TIMEOUT,        3)                                                \
+    X(UTEST_REAPED,         4)                                                \
+    X(UTEST_STALLED,        5)
 
-/* Distinctness is a SEPARATE property from range: two reasons both below
- * -SIG_MAX but equal to each other are indistinguishable to every consumer
- * that classifies by status value, which is the entire point of naming them.
- * Pairwise, so a future reason copy-pasted with an unchanged offset fails the
- * build instead of silently aliasing an existing cause. */
+/* The constants. An enum, so the compiler, not a hand-kept list, owns their
+ * values; a duplicate NAME is a redeclaration error. */
+enum {
+#define TASK_EXIT_REASON_CONST(name, ord) \
+    TASK_EXIT_##name = TASK_EXIT_REASON_BASE - (ord),
+    TASK_EXIT_REASONS(TASK_EXIT_REASON_CONST)
+#undef TASK_EXIT_REASON_CONST
+};
+
+/* The row positions, 0-based, and from them the count. */
+enum {
+#define TASK_EXIT_REASON_ROW(name, ord) TASK_EXIT_REASON_ROW_##name,
+    TASK_EXIT_REASONS(TASK_EXIT_REASON_ROW)
+#undef TASK_EXIT_REASON_ROW
+    TASK_EXIT_REASON_COUNT
+};
+
+/* The lowest value in use, which bounds the classifier. Derived, so it cannot
+ * disagree with the table. */
+#define TASK_EXIT_REASON_LAST  (TASK_EXIT_REASON_BASE - TASK_EXIT_REASON_COUNT)
+
+/* Per row: the ordinal is the row's 1-based position. Together with the
+ * enum's single-definition rule this makes the values dense, distinct and in
+ * [LAST, BASE - 1], so the range and distinctness of every reason, present and
+ * future, follows from the two endpoint checks below rather than from lists
+ * someone has to remember to extend. */
+#define TASK_EXIT_REASON_ORD_CHECK(name, ord)                                 \
+    _Static_assert((ord) == TASK_EXIT_REASON_ROW_##name + 1,                 \
+                   "TASK_EXIT_" #name ": its ordinal is not its 1-based row " \
+                   "position (duplicate, gap or reorder in TASK_EXIT_REASONS)");
+TASK_EXIT_REASONS(TASK_EXIT_REASON_ORD_CHECK)
+#undef TASK_EXIT_REASON_ORD_CHECK
+
 /* Classify a raw waitpid status, so a consumer never hand-rebuilds the
  * boundary. Linux's real answer to this problem is not its bit layout but the
  * WIFEXITED / WIFSIGNALED / WEXITSTATUS macro API on top of it; this kernel
@@ -1949,22 +1943,29 @@ static inline int task_exit_is_app_status(int32_t status)
  * than nothing -- a status answering yes to both would be classified by
  * whichever test a given caller happened to run first. Checked at both block
  * endpoints, which are the only places the ranges could meet. */
+/* The two kernel classes must not overlap, or the predicates above are worse
+ * than nothing -- a status answering yes to both would be classified by
+ * whichever test a given caller happened to run first. Checked at both block
+ * endpoints, which are the only places the ranges could meet; the per-row
+ * ordinal check puts every reason between them. */
 _Static_assert((int)TASK_EXIT_REASON_LAST < -(int)SIG_MAX
                    && (int)(TASK_EXIT_REASON_BASE - 1) < -(int)SIG_MAX,
                "the reserved block overlaps the -(signum) range at an "
                "endpoint, so a status would classify as both");
 
-_Static_assert(TASK_EXIT_EXEC_IMAGE_DESTROYED != TASK_EXIT_UTEST_IDENTITY
-               && TASK_EXIT_EXEC_IMAGE_DESTROYED != TASK_EXIT_UTEST_TIMEOUT
-               && TASK_EXIT_UTEST_IDENTITY != TASK_EXIT_UTEST_TIMEOUT
-               && TASK_EXIT_EXEC_IMAGE_DESTROYED != TASK_EXIT_UTEST_REAPED
-               && TASK_EXIT_UTEST_IDENTITY != TASK_EXIT_UTEST_REAPED
-               && TASK_EXIT_UTEST_TIMEOUT != TASK_EXIT_UTEST_REAPED
-               && TASK_EXIT_EXEC_IMAGE_DESTROYED != TASK_EXIT_UTEST_STALLED
-               && TASK_EXIT_UTEST_IDENTITY != TASK_EXIT_UTEST_STALLED
-               && TASK_EXIT_UTEST_TIMEOUT != TASK_EXIT_UTEST_STALLED
-               && TASK_EXIT_UTEST_REAPED != TASK_EXIT_UTEST_STALLED,
-               "two reserved exit reasons collide on the same value");
+/* The reason's name ("TASK_EXIT_UTEST_TIMEOUT"), or NULL for a status that is
+ * not a reserved reason. For diagnostics that must name a cause rather than
+ * print a number a reader has to look up. */
+static inline const char *task_exit_reason_name(int32_t status)
+{
+    switch (status) {
+#define TASK_EXIT_REASON_NAME(name, ord) \
+    case TASK_EXIT_##name: return "TASK_EXIT_" #name;
+    TASK_EXIT_REASONS(TASK_EXIT_REASON_NAME)
+#undef TASK_EXIT_REASON_NAME
+    default: return (const char *)0;
+    }
+}
 
 #ifdef KERNEL_TESTS
 /* Test seam over the internal kernel-stack free helper, so the reclamation

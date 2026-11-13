@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     520 |     409486 |
-| **Headers** (`.h`)    |     366 |      85604 |
+| **C sources** (`.c`)  |     520 |     409639 |
+| **Headers** (`.h`)    |     366 |      85626 |
 | **Assembly** (`.asm`) |      11 |       1388 |
-| **Subtotal**          | **897** | **496478** |
+| **Subtotal**          | **897** | **496653** |
 
 ## SDK Tools
 
@@ -32,37 +32,37 @@
 
 |                                   |   Files |      Lines |
 | --------------------------------- | ------: | ---------: |
-| **Shell scripts** (`.sh`)         |     121 |     102952 |
+| **Shell scripts** (`.sh`)         |     125 |     103228 |
 | **Batch scripts** (`.bat`)        |      74 |       1054 |
 | **PowerShell** (`.ps1`)           |      18 |       3610 |
-| **Python** (`.py`)                |     312 |     127594 |
+| **Python** (`.py`)                |     314 |     127961 |
 | **JavaScript** (`.js`)            |       2 |        858 |
-| **Include fragments** (`.inc`)    |       7 |       3249 |
-| **Makefile**                      |       3 |       2310 |
+| **Include fragments** (`.inc`)    |       7 |       3250 |
+| **Makefile**                      |       3 |       2325 |
 | **Linker scripts** (`.ld`/`.lds`) |       3 |        200 |
-| **Subtotal**                      | **540** | **241827** |
+| **Subtotal**                      | **546** | **242486** |
 
 ## Documentation & Project Metadata
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     691 |     159512 |
+| **Markdown** (`.md`)        |     691 |     159525 |
 | **JSON** (`.json`)          |      24 |       3117 |
 | **YAML** (`.yml`/`.yaml`)   |      18 |       2348 |
 | **HTML** (`.html`)          |      22 |       3479 |
 | **CSS** (`.css`)            |       1 |        491 |
 | **Config** (`.cfg`/`.conf`) |       1 |        110 |
-| **Subtotal**                | **757** | **169057** |
+| **Subtotal**                | **757** | **169070** |
 
 ## Grand Total
 
 |                                                      |    Files |       Lines |
 | ---------------------------------------------------- | -------: | ----------: |
-| **Core code + tooling**                              | **1444** |  **740024** |
-| **Supporting text + metadata**                       |  **757** |  **169057** |
-| **Written here**                                     | **2201** |  **909081** |
+| **Core code + tooling**                              | **1450** |  **740858** |
+| **Supporting text + metadata**                       |  **757** |  **169070** |
+| **Written here**                                     | **2207** |  **909928** |
 | **Vendored ([third-party](src/libs/PROVENANCE.md))** |      590 |      476328 |
-| **All lines in tree**                                | **2791** | **1385409** |
+| **All lines in tree**                                | **2797** | **1386256** |
 
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -77,15 +77,15 @@
 
 |                       |         Linux |     Windows |         Impossible OS |
 | --------------------- | ------------: | ----------: | --------------------: |
-| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,385,409 |
+| **All lines in tree** |   ~28,000,000 | ~50,000,000 |             1,386,256 |
 | **Developers**        | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**         |      33 years |    40 years | 8 month(s), 12 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 740,024 lines
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), the 740,858 lines
 > written here imply **107 developers** working for **8 month(s), 12 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-11-13 18:57 · commit `774a9dfa2`*
+*Last updated: 2026-11-13 20:33 · commit `87f16b74b`*

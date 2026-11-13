@@ -111,7 +111,9 @@ Usage:
   bash scripts/test.sh XML=1        Emit JUnit XML to build/test-results.xml
   bash scripts/test.sh JSON=1       Emit the launcher's JSON record stream
   bash scripts/test.sh TAP=1        Emit the launcher's TAP producer stream
-  bash scripts/test.sh UTEST_FILTER=test_harness_*  Glob-filter the user-mode binaries
+  bash scripts/test.sh UTEST_FILTER=test_harness_*  Filter the user-mode binaries (a `:`-separated
+                                    pattern list; an opt-in test_optin_*.exe must be named exactly)
+  bash scripts/test.sh UTEST_TIMEOUT_MS=2000  Per-binary wall-clock limit (default 10000, max 65535)
   bash scripts/test.sh --help       Show this help
 
 Categories (SUITE=...):
@@ -156,6 +158,9 @@ TAP_MODE=0
 # not be exercised without hand-editing boot.conf. It is the only way to
 # reach that path on demand, so the contract needs it to be testable.
 UTEST_FILTER=""
+# Per-binary wall-clock limit for the user-mode launcher, in ms; empty keeps
+# the launcher default. boot.conf stores it as 16 bits.
+UTEST_TIMEOUT_MS=""
 
 # Per-suite [COUNT] trace, off unless asked for: it costs ~7s of extra serial
 # on a ~4s suite, which is why no ordinary run pays it.
@@ -198,8 +203,21 @@ for arg in "$@"; do
         JSON=1)   JSON_MODE=1 ;;
         TAP=1)    TAP_MODE=1 ;;
         UTEST_FILTER=*) UTEST_FILTER="${arg#UTEST_FILTER=}" ;;
+        UTEST_TIMEOUT_MS=*) UTEST_TIMEOUT_MS="${arg#UTEST_TIMEOUT_MS=}" ;;
     esac
 done
+
+# boot.conf's utest_filter[] holds 63 bytes (UTEST_FILTER_MAX - 1). A longer
+# value would boot, be refused by the launcher as `utest_filter truncated`,
+# and fail the run after a full build and boot; say so before any of that.
+if [ -n "$UTEST_TIMEOUT_MS" ] && ! { [[ "$UTEST_TIMEOUT_MS" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$UTEST_TIMEOUT_MS" -le 65535 ]; }; then
+    echo "[TEST] UTEST_TIMEOUT_MS must be 1..65535 (got '$UTEST_TIMEOUT_MS')" >&2
+    exit 2
+fi
+if [ "${#UTEST_FILTER}" -gt 63 ]; then
+    echo "[TEST] UTEST_FILTER is ${#UTEST_FILTER} bytes; boot.conf's utest_filter= holds at most 63" >&2
+    exit 2
+fi
 
 # --- Step 0a: Artifact lifecycle, armed before ANY exit ---
 #
@@ -4398,6 +4416,9 @@ fi
 if [ -n "$UTEST_FILTER" ]; then
     PATCH_ARGS+=(utest_filter "$UTEST_FILTER")
 fi
+if [ -n "$UTEST_TIMEOUT_MS" ]; then
+    PATCH_ARGS+=(utest_timeout_ms "$UTEST_TIMEOUT_MS")
+fi
 
 # Install the cleanup trap BEFORE the patch, so a patch that fails or is
 # interrupted after writing still ends with the default boot.conf (reset
@@ -4874,6 +4895,8 @@ if [ -n "$SUITE_FILTER" ]; then
     echo ""
 fi
 
+# Serial lines are printed with printf '%s', never `echo -e`: they carry
+# Windows paths, and `echo -e` turned the `\t` in `C:\test_*.exe` into a tab.
 # Show suite results. QUIET_MODE=1 suppresses per-test [ OK ] lines at the
 # host layer (belt-and-suspenders with the kernel's g_quiet gate in
 # test_runner.c -- if boot.conf patching silently fails and the kernel
@@ -4887,9 +4910,9 @@ fi
     # Strip through the FIRST "TEST: " only: that is the klog tag. A greedy
     # strip cut at a "TEST: " inside the message and showed a stub of the line.
     if echo "$line" | grep -q '\[FAIL\]'; then
-        echo -e "  ${RED}FAIL${RESET}  ${line#*TEST: }"
+        printf '  %bFAIL%b  %s\n' "$RED" "$RESET" "${line#*TEST: }"
     elif [ "$QUIET_MODE" -eq 0 ]; then
-        echo -e "  ${GREEN} OK ${RESET}  ${line#*TEST: }"
+        printf '  %b OK %b  %s\n' "$GREEN" "$RESET" "${line#*TEST: }"
     fi
 done
 
@@ -4897,7 +4920,7 @@ done
 # Shown whole: these carry another subsystem's tag, so there is no TEST tag to
 # strip, and cutting at a "TEST: " inside the message hid which line it was.
 { grep -E '\[FAIL\]' "$TEST_LOG" 2>/dev/null | grep -v '::' || true; } | while IFS= read -r line; do
-    echo -e "  ${RED}FAIL${RESET}  $line"
+    printf '  %bFAIL%b  %s\n' "$RED" "$RESET" "$line"
 done
 
 # --- Step 5b: User-mode UTEST results ---
@@ -5008,7 +5031,7 @@ if [ "$HAS_UTEST" -eq 1 ]; then
           "$TEST_LOG" 2>/dev/null || true; } | while IFS= read -r line; do
         verdict=$(echo "$line" | sed -E "s/.*${UF}//")
         if echo "$verdict" | grep -qE ': (FAIL|TIMEOUT|ISOLATION|LEAK)'; then
-            echo -e "  ${RED}FAIL${RESET}  $verdict"
+            printf '  %bFAIL%b  %s\n' "$RED" "$RESET" "$verdict"
         elif echo "$verdict" | grep -q ': SKIP'; then
             # `|| true` so the while loop body's last command is always
             # success-exit. Under `set -e`, a quiet-mode branch where
@@ -5017,14 +5040,14 @@ if [ "$HAS_UTEST" -eq 1 ]; then
             # at EOF would end the stream with exit 1, firing the
             # cleanup trap with ec=1). Codex adversarial caught this
             # when forcing a TCG run via FORCE_TCG=1 QUIET=1.
-            { [ "$QUIET_MODE" -eq 0 ] && echo -e "  ${YELLOW}SKIP${RESET}  $verdict"; } || true
+            { [ "$QUIET_MODE" -eq 0 ] && printf '  %bSKIP%b  %s\n' "$YELLOW" "$RESET" "$verdict"; } || true
         elif echo "$verdict" | grep -q ': PASS'; then
-            { [ "$QUIET_MODE" -eq 0 ] && echo -e "  ${GREEN} OK ${RESET}  $verdict"; } || true
+            { [ "$QUIET_MODE" -eq 0 ] && printf '  %b OK %b  %s\n' "$GREEN" "$RESET" "$verdict"; } || true
         elif echo "$verdict" | grep -q 'format='; then
             # Show `<name>: format=<FMT>` lines in QUIET too so a loader-
             # routing regression surfaces even when per-binary OK lines
             # are suppressed. Cheap (one line per loader-coverage binary).
-            echo -e "  ${CYAN}FMT ${RESET}  $verdict"
+            printf '  %bFMT %b  %s\n' "$CYAN" "$RESET" "$verdict"
         fi
     done
 

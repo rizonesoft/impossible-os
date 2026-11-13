@@ -137,7 +137,8 @@ struct boot_config {
     char    utest_filter[64];
     /* Per-test isolation knob (S6 of TODO-04). */
     UINT8   utest_isolation;
-    UINT8   _pad_utest2[3];
+    UINT8   utest_filter_truncated; /* value did not fit utest_filter[] */
+    UINT8   _pad_utest2[2];
     /* CI output format knobs (S7 of TODO-04). */
     UINT8   xml;
     UINT8   json;
@@ -168,6 +169,8 @@ _Static_assert(__builtin_offsetof(struct boot_config, utest_filter) == 294,
     "utest_filter must be at byte offset 294 -- TODO-04 S4 stable ABI");
 _Static_assert(__builtin_offsetof(struct boot_config, utest_isolation) == 358,
     "utest_isolation must be at byte offset 358 -- TODO-04 S6 stable ABI");
+_Static_assert(__builtin_offsetof(struct boot_config, utest_filter_truncated) == 359,
+    "utest_filter_truncated must be at byte offset 359 (former padding)");
 _Static_assert(__builtin_offsetof(struct boot_config, xml) == 362,
     "xml must be at byte offset 362 -- TODO-04 S7 stable ABI");
 _Static_assert(__builtin_offsetof(struct boot_config, json) == 363,

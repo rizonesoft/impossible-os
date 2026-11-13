@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md sources=user/include/test.h,user/test,src/kernel/test/test_usermode.c,include/kernel/test/test_usermode.h,scripts/test.sh,scripts/test-abort-path.sh reviewed=2026-11-13 order=5 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md sources=user/include/test.h,user/test,src/kernel/test/test_usermode.c,include/kernel/test/test_usermode.h,scripts/test.sh,scripts/test-abort-path.sh,scripts/test-identity-path.sh,scripts/test-timeout-path.sh,scripts/lib/optin-path-run.sh reviewed=2026-11-13T20:40 order=5 -->
 # User-Mode Test Framework
 
 ## What is it?
@@ -35,8 +35,8 @@ sequenceDiagram
 | `UTEST_BEGIN(name)`, `UTEST_ASSERT(cond, msg)`, `UTEST_SKIP(msg)`, `UTEST_END()` | Write a test binary ([`test.h`](../../user/include/test.h)) |
 | `UTEST_PERF(metric, value_ns)` | Report a performance measurement |
 | `test_usermode_run()`, `test_usermode_set_filter()`, `test_usermode_set_timeout_ms()` | Launcher entry points ([`test_usermode.h`](../../include/kernel/test/test_usermode.h)) |
-| `test=1`, `utest_filter=<glob>`, `utest_timeout_ms=`, `tap=1`, `xml=1`, `json=1` | `boot.conf` keys that select and format a run |
-| `UTEST_FILTER=<glob>`, `TAP=1`, `XML=1`, `JSON=1` | The same settings as [`scripts/test.sh`](../../scripts/test.sh) arguments |
+| `test=1`, `utest_filter=<patterns>`, `utest_timeout_ms=`, `tap=1`, `xml=1`, `json=1` | `boot.conf` keys that select and format a run |
+| `UTEST_FILTER=<patterns>`, `UTEST_TIMEOUT_MS=<ms>`, `TAP=1`, `XML=1`, `JSON=1` | The same settings as [`scripts/test.sh`](../../scripts/test.sh) arguments |
 
 ## How do I use it?
 
@@ -63,7 +63,17 @@ bash scripts/test.sh UTEST_FILTER='test_loader_*'  # only the loader binaries
 bash scripts/test.sh JSON=1                        # also writes build/test-results.json
 ```
 
-A binary named `test_optin_*.exe` is opt-in: no run includes it, not even under a wildcard filter, until `UTEST_FILTER=` names it exactly, and naming it adds it to the default run instead of narrowing to it (GoogleTest's `--gtest_also_run_disabled_tests` works the same way). The rest of the name sets its type, so `test_optin_smoke_*.exe` is a smoke. The default run reports how many it left out (`N opt-in binary/binaries not selected`) without counting them as filtered. The one opt-in binary today, `test_optin_smoke_abort.exe`, fails on purpose: `bash scripts/test-abort-path.sh` boots the suite with it named and checks that the run fails, that `build/test-results.json` says `aborted: true` with `not_run` equal to every binary in the default run, and that the JUnit file carries the suite-abort `<error>` testcase.
+The filter is a `:`-separated list of patterns, each a literal name or a single `*` wildcard (`UTEST_FILTER='test_loader_*:test_syscall.exe'`). It holds at most 63 bytes, the size of boot.conf's `utest_filter=`: `scripts/test.sh` refuses a longer value before it builds, and a hand-written boot.conf that overflows makes the launcher plan nothing and fail the run on `agg_filter_bad_unknown.exe`, never run the prefix that fit. `UTEST_TIMEOUT_MS=` sets the per-binary wall-clock limit (1 to 65535 ms, default 10000).
+
+A binary named `test_optin_*.exe` is opt-in: no run includes it, not even under a wildcard, until a pattern names it exactly, and naming it adds it to the run instead of narrowing it (GoogleTest's `--gtest_also_run_disabled_tests` works the same way). A list of opt-in names alone keeps the default run; an ordinary pattern in the list narrows the ordinary binaries as usual. The rest of the name sets its type, so `test_optin_smoke_*.exe` is a smoke. The default run reports how many it left out (`N opt-in binary/binaries not selected`) without counting them as filtered. The opt-in binaries are fixtures that prove a failure path on a live boot, each with its own script:
+
+| Script | Fixture | What it proves |
+| ------ | ------- | -------------- |
+| `bash scripts/test-abort-path.sh` | `test_optin_smoke_abort.exe` fails as a smoke | the run fails, `build/test-results.json` says `aborted: true` with `not_run` equal to every default binary, and the JUnit file carries the suite-abort `<error>` testcase |
+| `bash scripts/test-identity-path.sh` | `test_optin_swap.exe` rewrites `test_optin_victim.exe` in place after the plan froze its identity | the victim is refused as `planned binary replaced` (one ERROR record in JSON and JUnit), its marker is never published, the counts reconcile, on two boots of the same image (the swap flips a byte, so every boot is a mismatch) |
+| `bash scripts/test-timeout-path.sh` | `test_optin_hang.exe` reaches ring 3 and never exits | it is reaped after `UTEST_TIMEOUT_MS` (default 2000 here) with one FAIL `timeout after <ms>ms`, and serial names its status `TASK_EXIT_UTEST_TIMEOUT` (`<name>: reaped with exit status -1003 (TASK_EXIT_UTEST_TIMEOUT)`), not SIGKILL's `-9` |
+
+Each holds the image lock for its whole run and reads only the artifacts its own run published. The timeout proof covers the forced reap, the only branch a timeout takes while `signal_check()` has no caller; the cooperative branch is proven once signal delivery is wired ([process model extensions](../../todo/02-kernel-core/TODO-21-process-model-extensions.md)).
 
 The launcher ends the user-mode run with a summary of the form `=== N passed, N failed, N skipped of N total ===`, logged under a per-boot framed tag (`UTEST-<8 hex digits>:`) rather than a bare `UTEST:`. A test binary writes to the same serial line and could print a lookalike, so `scripts/test.sh` accepts only records carrying the frame; consumers must do the same, as [User-Mode Test Output Formats](../testing/usermode-output-formats.md) describes. Which platforms are expected to pass which binaries, and how to treat known-flaky patterns, is in the [User-Mode Test Environment Matrix](../testing/usermode-env-matrix.md).
 

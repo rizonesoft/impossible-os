@@ -56,6 +56,11 @@
  * the abort path (user/test/test_optin_smoke_abort.c). */
 #define UTEST_OPT_IN_PREFIX "test_optin_"
 
+/* Capacity of a utest_filter= value including its NUL: boot_config's
+ * utest_filter[] field (include/kernel/boot_info.h), asserted equal in
+ * src/kernel/main/boot_tests.c. The value is a `:`-separated pattern list. */
+#define UTEST_FILTER_MAX 64
+
 typedef enum {
     UTEST_TYPE_CORRECTNESS = 0,
     UTEST_TYPE_SMOKE       = 1,
@@ -211,6 +216,12 @@ int test_usermode_boot_verdict(void);
  * pointed-to string must outlive test_usermode_run(); the launcher
  * does not copy it. */
 void test_usermode_set_filter(const char *filter);
+
+/* Mark the utest_filter= value as truncated (boot.conf held more than
+ * UTEST_FILTER_MAX - 1 bytes). The next run plans no binary and publishes
+ * a counted `utest_filter truncated` refusal, so it fails rather than run a
+ * different set of binaries than was asked for. */
+void test_usermode_set_filter_truncated(int truncated);
 
 /* Set per-binary wall-clock timeout in milliseconds. 0 = use the
  * built-in default (10 000 ms). A binary that does not reach
@@ -599,6 +610,7 @@ void test_usermode_capture_reap_tree_ops(uint32_t owner_pid,
 static inline int test_usermode_run(void) { return UTEST_BOOT_OK; }
 static inline int test_usermode_boot_verdict(void) { return UTEST_BOOT_OK; }
 static inline void test_usermode_set_filter(const char *filter __attribute__((unused))) {}
+static inline void test_usermode_set_filter_truncated(int truncated __attribute__((unused))) {}
 static inline void test_usermode_set_timeout_ms(uint32_t ms __attribute__((unused))) {}
 static inline void test_usermode_set_tap(int enable __attribute__((unused))) {}
 static inline void test_usermode_set_isolation(int enable __attribute__((unused))) {}

@@ -151,6 +151,9 @@ static void u_loader_snapshot(uint32_t pid, struct u_loader_evidence *out)
 
 /* Filter set by -- NULL means "run every test_*.exe". */
 static const char *s_filter;
+/* Set once at boot, before test_usermode_run, by the single boot thread
+ * (boot_tests.c), as s_filter is; read only by the launcher thread after. */
+static int s_filter_truncated;
 
 /* Per-binary wall-clock timeout in ms. 0 = default. */
 static uint32_t s_timeout_ms;
@@ -244,6 +247,11 @@ int test_usermode_color_active(void)
 void test_usermode_set_filter(const char *filter)
 {
     s_filter = (filter && filter[0]) ? filter : (const char *)0;
+}
+
+void test_usermode_set_filter_truncated(int truncated)
+{
+    s_filter_truncated = truncated ? 1 : 0;
 }
 
 void test_usermode_set_timeout_ms(uint32_t ms)
@@ -391,9 +399,15 @@ int test_usermode_glob_match(const char *pattern, const char *name)
 
 /* The one selection rule `utest_filter=` applies, for every plan source and
  * for the smoke provenance of a refused declaration (UTEST_OPT_IN_PREFIX in
- * test_usermode.h). An opt-in name is selected only by a filter that names it
- * exactly; a filter that names an opt-in binary selects every other name too
- * (additive); any other filter is the plain glob. */
+ * test_usermode.h). The value is a `:`-separated list of patterns, as
+ * GoogleTest's --gtest_filter is; empty segments are ignored.
+ *   - An opt-in name is selected only by a star-free pattern equal to it.
+ *   - Such a pattern is an OPT-IN pattern; every other pattern is ORDINARY.
+ *   - An ordinary name is selected when the list holds no ordinary pattern
+ *     (so naming opt-in binaries adds them to the default plan) or when one
+ *     ordinary pattern matches it.
+ * A single pattern therefore keeps its earlier meaning: a plain glob, or one
+ * opt-in name added to everything else. */
 static int u_is_opt_in_name(const char *name)
 {
     return u_strncmp_fold(name, UTEST_OPT_IN_PREFIX,
@@ -411,14 +425,48 @@ static int u_has_star(const char *s)
 int test_usermode_filter_selects(const char *filter, const char *name);
 int test_usermode_filter_selects(const char *filter, const char *name)
 {
-    int filter_names_opt_in = filter && !u_has_star(filter) &&
-                              u_is_opt_in_name(filter);
+    /* One segment, NUL-terminated for the glob. The boot_info field bounds
+     * the whole value, so a segment can never be longer than it. */
+    char seg[UTEST_FILTER_MAX];
+    int name_opt_in = u_is_opt_in_name(name);
+    int saw_ordinary = 0;
+    const char *p = filter;
 
-    if (u_is_opt_in_name(name))
-        return filter_names_opt_in && test_usermode_glob_match(filter, name);
-    if (filter_names_opt_in)
-        return 1;
-    return test_usermode_glob_match(filter, name);
+    if (!filter)
+        return !name_opt_in;
+    while (*p) {
+        uint32_t n = 0;
+
+        while (p[n] && p[n] != ':')
+            n++;
+        if (n > 0 && n < sizeof(seg)) {
+            int opt_in_pattern;
+
+            {
+                uint32_t k;
+                for (k = 0; k < n; k++)
+                    seg[k] = p[k];
+            }
+            seg[n] = '\0';
+            opt_in_pattern = !u_has_star(seg) && u_is_opt_in_name(seg);
+            if (opt_in_pattern) {
+                if (name_opt_in && test_usermode_glob_match(seg, name))
+                    return 1;
+            } else {
+                saw_ordinary = 1;
+                if (!name_opt_in && test_usermode_glob_match(seg, name))
+                    return 1;
+            }
+        } else if (n >= sizeof(seg)) {
+            /* Longer than the field can carry: unreachable from boot.conf,
+             * and treated as an ordinary pattern that matches nothing. */
+            saw_ordinary = 1;
+        }
+        p += n;
+        if (*p == ':')
+            p++;
+    }
+    return !name_opt_in && !saw_ordinary;
 }
 
 static int u_is_test_binary(const char *name)
@@ -3052,6 +3100,11 @@ _Static_assert(UTEST_REASON_BUF == UTEST_ESCALATION_REASON_BUF,
  * bytes, inside the pre-existing UTEST_RSN_SHAPE maximum (29), so the derived
  * name bound is unchanged. */
 #define UTEST_RSN_TASK_CREATE "task_create failed"
+/* boot.conf's utest_filter= value did not fit utest_filter[]. The prefix
+ * that fits would select a different set of binaries, so no binary is
+ * planned and this one aggregate makes the run red. 22 bytes, inside the
+ * UTEST_RSN_SHAPE maximum (29). */
+#define UTEST_RSN_FILTER_CUT "utest_filter truncated"
 #define UTEST_REASON_REFUSAL                                               \
     UTEST_MAX2(UTEST_MAX2(UTEST_MAX2(UTEST_LIT(UTEST_RSN_LENGTH),          \
                                      UTEST_MAX2(UTEST_LIT(UTEST_RSN_CHARSET), \
@@ -3068,7 +3121,8 @@ _Static_assert(UTEST_REASON_BUF == UTEST_ESCALATION_REASON_BUF,
                                      UTEST_MAX2(UTEST_MAX2(UTEST_LIT(UTEST_RSN_UNREADABLE), \
                                                            UTEST_LIT(UTEST_RSN_TASK_CREATE)), \
                                                 UTEST_MAX2(UTEST_LIT(UTEST_RSN_MISMATCH), \
-                                                           UTEST_LIT(UTEST_RSN_UNVERIFIED))))))
+                                                           UTEST_MAX2(UTEST_LIT(UTEST_RSN_UNVERIFIED), \
+                                                                      UTEST_LIT(UTEST_RSN_FILTER_CUT)))))))
 #define UTEST_REASON_MAX                                                   \
     UTEST_MAX2(UTEST_MAX2(UTEST_MAX2(UTEST_REASON_TIMEOUT,                 \
                                      UTEST_REASON_EXIT),                   \
@@ -3453,7 +3507,8 @@ _Static_assert(UTEST_REFUSAL_ID_FIXED + UTEST_REFUSAL_PREFIX_MIN <=
     X(PLAN_KEPT,     "plan_kept",     1)                                   \
     X(MANIFEST_KEPT, "manifest_kept", 1)                                   \
     X(MANIFEST_BAD,  "manifest_bad",  0)                                   \
-    X(GLOB_KEPT,     "glob_kept",     1)
+    X(GLOB_KEPT,     "glob_kept",     1)                                   \
+    X(FILTER_BAD,    "filter_bad",    0)
 
 typedef enum {
 #define UTEST_AGG_ENUM(name, label, has_value) UTEST_AGG_##name,
@@ -8014,6 +8069,12 @@ static int u_plan_add_run_klog(struct plan_state *ps, const char *name,
      * among identities the launcher can trust, and letting a name it just
      * declined decide whether it gets reported would hand back the
      * authority the refusal withdrew. */
+    /* A truncated filter selects nothing: its prefix is not what was asked
+     * for, and the run fails on the `utest_filter truncated` aggregate. */
+    if (s_filter_truncated) {
+        ps->skipped_by_filter++;
+        return 1;
+    }
     if (!test_usermode_filter_selects(s_filter, name)) {
         /* An opt-in binary left out is not a filter exclusion the operator
          * asked for: it is counted apart, so the default run's summary line
@@ -9309,6 +9370,17 @@ static void u_run_one(const char *name, utest_type_t type,
              "%s: FAIL (" UTEST_RSNC_TIMEOUT_PRE "%u" UTEST_RSNC_TIMEOUT_POST ")",
              name_copy, (uint64_t)(s_timeout_ms ? s_timeout_ms
                                                 : UTEST_DEFAULT_TIMEOUT_MS));
+        /* The status the reap left on the child, on its own line: the verdict
+         * names the cause from the `timed_out` flag, so a reap that left
+         * SIGKILL's -9 (or any status but TASK_EXIT_UTEST_TIMEOUT) would print
+         * the same verdict. scripts/test-timeout-path.sh asserts this value. */
+        {
+            const char *why = task_exit_reason_name((int32_t)exit_status);
+
+            utest_record_log(LOG_INFO, "%s: reaped with exit status %d (%s)",
+                             name_copy, (int64_t)exit_status,
+                             why ? why : "not_a_reserved_reason");
+        }
     } else {
         utest_record_log(LOG_ERROR, "%s: FAIL (" UTEST_RSNC_EXIT "%d)",
              name_copy, (int64_t)exit_status);
@@ -9646,6 +9718,8 @@ static void u_run_plan(void)
         total_planned++;
     if (manifest.unreadable)
         total_planned++;
+    if (s_filter_truncated)
+        total_planned++;
 
     /* Glob discovery runs ONLY when no usable manifest exists.
      *
@@ -9957,6 +10031,11 @@ static void u_run_plan(void)
          * where the loss is total. */
         total_ran++;
         u_emit_aggregate(UTEST_RSN_UNREADABLE, UTEST_AGG_MANIFEST_BAD,
+                         0u, &tap_point, counters, &rt);
+    }
+    if (s_filter_truncated) {
+        total_ran++;
+        u_emit_aggregate(UTEST_RSN_FILTER_CUT, UTEST_AGG_FILTER_BAD,
                          0u, &tap_point, counters, &rt);
     }
     if (glob_refusal_overflowed) {

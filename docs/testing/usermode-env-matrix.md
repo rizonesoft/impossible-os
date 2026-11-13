@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md sources=src/kernel/test/test_usermode.c,user/include/test.h,include/kernel/test/test_usermode.h,scripts/test.sh reviewed=2026-09-28 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md sources=src/kernel/test/test_usermode.c,user/include/test.h,include/kernel/test/test_usermode.h,scripts/test.sh reviewed=2026-11-13 -->
 # User-Mode Test Environment Matrix
 
 Canonical platform-expectation matrix for the user-mode test framework.
@@ -38,7 +38,7 @@ behavior diverges between rows, the bare-metal reading wins.
 | Per-binary wall-clock timeout     |  x   |  x   |  x*  |  x   |  x   | *Default 10 s may trip under TCG device load |
 | TAP `1..N` / `ok N` / `not ok N`  |  x   |  x   |  x   |  x   |  x   | Line format is platform-independent         |
 | SKIP on `exit=77`                 |  x   |  x   |  x   |  x   |  x   | kselftest convention                        |
-| `utest_filter=<glob>`             |  x   |  x   |  x   |  x   |  x   | Literal or single `*` wildcard              |
+| `utest_filter=<patterns>`         |  x   |  x   |  x   |  x   |  x   | `:` list, each literal or one `*`; 63 B max |
 | ELF loader                        |  x   |  x   |  x   |  x   |  x   | Baseline format                             |
 | PE32+ loader                      |  x   |  x   |  x   |  x   |  x   | Landing with the binary-format coverage section |
 | EIF loader                        |  x   |  x   |  x   |  x   |  x   | Landing with the binary-format coverage section |

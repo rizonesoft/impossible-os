@@ -588,6 +588,64 @@ static void test_opt_in_plan_contents(void)
     TEST_ASSERT_EQ(runs, 3u, "a wildcard filter never plans the fixture");
 }
 
+/* utest_filter= is a `:`-separated pattern list: exact opt-in names add
+ * binaries, ordinary patterns narrow, and one pattern means what it always did. */
+static void test_filter_pattern_list(void)
+{
+    const char *sw = "test_optin_swap.exe", *vi = "test_optin_victim.exe";
+    const char *both = "test_optin_swap.exe:test_optin_victim.exe";
+
+    TEST_ASSERT_EQ(test_usermode_filter_selects(both, sw), 1, "a listed opt-in name is selected");
+    TEST_ASSERT_EQ(test_usermode_filter_selects(both, vi), 1, "so is the second one");
+    TEST_ASSERT_EQ(test_usermode_filter_selects(both, "test_optin_hang.exe"), 0,
+                   "an unlisted opt-in name is not");
+    TEST_ASSERT_EQ(test_usermode_filter_selects(both, "test_syscall.exe"), 1,
+                   "opt-in names alone keep the default plan");
+    TEST_ASSERT_EQ(test_usermode_filter_selects("test_optin_swap.exe:test_sys*", "test_syscall.exe"), 1,
+                   "an ordinary pattern in the list still matches");
+    TEST_ASSERT_EQ(test_usermode_filter_selects("test_optin_swap.exe:test_sys*", "test_libc.exe"), 0,
+                   "and narrows the ordinary binaries");
+    TEST_ASSERT_EQ(test_usermode_filter_selects("test_optin_swap.exe:test_sys*", sw), 1,
+                   "while still adding the named opt-in binary");
+    TEST_ASSERT_EQ(test_usermode_filter_selects("test_libc.exe:test_syscall.exe", "test_syscall.exe"), 1,
+                   "two ordinary names: either selects");
+    TEST_ASSERT_EQ(test_usermode_filter_selects("test_libc.exe:test_syscall.exe", "test_heap.exe"), 0,
+                   "and nothing else");
+    TEST_ASSERT_EQ(test_usermode_filter_selects("test_optin_*:x", sw), 0,
+                   "a wildcard never selects an opt-in binary, in a list either");
+    TEST_ASSERT_EQ(test_usermode_filter_selects("::test_optin_swap.exe::", "test_syscall.exe"), 1,
+                   "empty segments are ignored");
+    TEST_ASSERT_EQ(test_usermode_filter_selects("::test_optin_swap.exe::", sw), 1,
+                   "including around an opt-in name");
+}
+
+/* A truncated utest_filter= plans no binary at all: the prefix that fit is
+ * not what was asked for. The run fails on the filter_bad aggregate. */
+static void test_filter_truncated_plans_nothing(void)
+{
+    uint32_t runs = 99, refusals = 99, smoke = 99;
+    int ok;
+
+    test_usermode_set_filter_truncated(1);
+    ok = u_opt_in_parse("test_smoke_boot.exe\ntest_a.exe\n", (const char *)0,
+                        &runs, &refusals, &smoke, (uint32_t *)0);
+    test_usermode_set_filter_truncated(0);
+    if (!ok) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 0u, "a truncated filter plans no runnable binary");
+    TEST_ASSERT_EQ(smoke, 0u, "and arms no refused-smoke gate of its own");
+
+    runs = 99;
+    if (!u_opt_in_parse("test_smoke_boot.exe\ntest_a.exe\n", (const char *)0,
+                        &runs, &refusals, &smoke, (uint32_t *)0)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 2u, "clearing the flag restores the plan");
+}
+
 /* The smoke provenance of a REFUSED declaration uses the same rule: an
  * additive filter keeps ordinary refused smokes gating the run, and an
  * unselected opt-in smoke refusal publishes without aborting the default run. */
@@ -1602,8 +1660,8 @@ static void test_every_aggregate_identity_conforms(void)
     uint32_t kinds = test_usermode_aggregate_count();
     uint32_t k, i;
 
-    TEST_ASSERT(kinds == 5u,
-                "the launcher publishes exactly five fail-closed aggregates");
+    TEST_ASSERT(kinds == 6u,
+                "the launcher publishes exactly six fail-closed aggregates");
 
     for (k = 0; k < kinds; k++) {
         const char *label = test_usermode_aggregate_label(k);
@@ -1673,17 +1731,18 @@ static void test_aggregate_unknown_value_is_not_zero(void)
 
     /* Whether a kind carries a number is a property of the KIND, read
      * from the launcher's own table -- no publication site passes it, so
-     * no site can pass the wrong one. Exactly one kind is value-less:
-     * the unparseable manifest, which cannot know its loss on any path. */
+     * no site can pass the wrong one. Exactly two kinds are value-less:
+     * the unparseable manifest, which cannot know its loss on any path, and
+     * the truncated filter, whose lost bytes the loader never kept. */
     for (k = 0; k < kinds; k++) {
         if (test_usermode_aggregate_has_value(k))
             valued++;
         else
             unvalued++;
     }
-    TEST_ASSERT_EQ(unvalued, 1u,
-                   "exactly one aggregate kind publishes no number");
-    TEST_ASSERT_EQ(valued, kinds - 1u,
+    TEST_ASSERT_EQ(unvalued, 2u,
+                   "exactly two aggregate kinds publish no number");
+    TEST_ASSERT_EQ(valued, kinds - 2u,
                    "every other aggregate kind publishes a number");
     /* An unenumerated kind answers 0 rather than reading off the end of
      * the table. */
@@ -8845,6 +8904,10 @@ void test_register_usermode_launcher(void)
                             test_opt_in_plan_contents, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: refused smoke gating follows the opt-in rule",
                             test_opt_in_refused_smoke_gate, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: utest_filter is a colon-separated pattern list",
+                            test_filter_pattern_list, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a truncated utest_filter plans nothing",
+                            test_filter_truncated_plans_nothing, TEST_CAT_EXEC);
 }
 
 #endif /* KERNEL_TESTS */

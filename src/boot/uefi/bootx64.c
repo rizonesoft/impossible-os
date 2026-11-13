@@ -3838,6 +3838,12 @@ static void parse_conf_kv(struct boot_config *cfg,
         for (i = 0; i < sizeof(cfg->utest_filter) - 1 && val[i]; i++)
             cfg->utest_filter[i] = val[i];
         cfg->utest_filter[i] = '\0';
+        /* Never a silent truncation: a shortened filter selects a different
+         * set of binaries. The kernel refuses the run when this is set. */
+        cfg->utest_filter_truncated = val[i] ? 1 : 0;
+        if (val[i])
+            serial_early_print("[WARN] boot.conf: utest_filter= is longer than 63 bytes; "
+                               "the test run will refuse it\r\n");
     }
     else if (ascii_streq(key, "utest_isolation")) {
         cfg->utest_isolation = (UINT8)ascii_atoi(val);

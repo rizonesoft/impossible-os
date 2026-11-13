@@ -17,6 +17,9 @@
 #include "kernel/boot_media.h"
 #include "kernel/test/test.h"
 #include "kernel/test/test_usermode.h"
+
+_Static_assert(sizeof(((struct boot_config *)0)->utest_filter) == UTEST_FILTER_MAX,
+               "UTEST_FILTER_MAX must equal boot_config.utest_filter[]");
 #include "main/main_internal.h"
 
 void boot_tests_run(void)
@@ -136,6 +139,8 @@ void boot_tests_run(void)
         if (g_boot_info.config.test && run_usermode_tests) {
             if (g_boot_info.config.utest_filter[0])
                 test_usermode_set_filter(g_boot_info.config.utest_filter);
+            if (g_boot_info.config.utest_filter_truncated)
+                test_usermode_set_filter_truncated(1);
             if (g_boot_info.config.utest_timeout_ms)
                 test_usermode_set_timeout_ms(
                     g_boot_info.config.utest_timeout_ms);

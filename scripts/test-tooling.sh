@@ -1392,6 +1392,8 @@ _tt_nested_py "$REPO_ROOT/scripts/site/tests/test_site_live_waits.py" site_live_
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_alias_staleness.py" alias_staleness
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_plan.py" todo_plan
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_abort_path_check.py" abort_path_check
+_tt_nested_py "$REPO_ROOT/scripts/tests/test_optin_path_check.py" optin_path_check
+_tt_nested_x "$REPO_ROOT/scripts/tests/test_exit_reason_table.sh" exit_reason_table
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_smoke_screen.py" smoke_screen
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_smoke_double_panic.py" smoke_double_panic
 # test_query_bounds.sh is NOT started here: its MCP sub-test reads the real
@@ -4953,6 +4955,48 @@ if <<<"$_ap_out" grep -q 'another run holds the image lock' && <<<"$_ap_out" gre
     t_pass "abort_path_lock  test-abort-path.sh refuses while another run holds the image"
 else
     t_fail "abort_path_lock  test-abort-path.sh ran while another run held the image" "$(tail -2 <<<"$_ap_out")"
+fi
+
+# The identity and timeout proofs share the abort proof's lock discipline
+# (scripts/lib/optin-path-run.sh): with the image held they refuse at once.
+for _op in identity timeout; do
+    _op_out="fixture-unavailable"
+    if _lk_fx=$(_lk_fixture); then
+        _op_out=$( ( flock -n 8 || { echo "fixture-lock-busy"; exit 0; }
+            env -u BOOT_CONF_LOCK_HELD timeout 30 bash "$_lk_fx/scripts/test-$_op-path.sh" 2>&1; echo "rc=$?"
+        ) 8>"$_lk_fx/.boot-conf.lock" )
+    fi
+    if <<<"$_op_out" grep -q 'another run holds the image lock' && <<<"$_op_out" grep -q '^rc=1$'; then
+        t_pass "${_op}_path_lock  test-$_op-path.sh refuses while another run holds the image"
+    else
+        t_fail "${_op}_path_lock  test-$_op-path.sh ran while another run held the image" "$(tail -2 <<<"$_op_out")"
+    fi
+done
+
+# test.sh refuses a UTEST_FILTER that boot.conf's 63-byte utest_filter= cannot
+# hold, and a UTEST_TIMEOUT_MS outside 1..65535, before it builds or boots
+# anything (the kernel would otherwise refuse the run after a full boot).
+_uf_out="fixture-unavailable"
+if _lk_fx=$(_lk_fixture); then
+    _uf_long=$(printf 'a%.0s' $(seq 1 64))
+    _uf_out=$( { env -u BOOT_CONF_LOCK_HELD timeout 30 bash "$_lk_fx/scripts/test.sh" "UTEST_FILTER=$_uf_long" 2>&1; echo "rc=$?"
+                 env -u BOOT_CONF_LOCK_HELD timeout 30 bash "$_lk_fx/scripts/test.sh" UTEST_TIMEOUT_MS=0 2>&1; echo "rc=$?"
+                 env -u BOOT_CONF_LOCK_HELD timeout 30 bash "$_lk_fx/scripts/test.sh" UTEST_TIMEOUT_MS=65536 2>&1; echo "rc=$?"; } )
+fi
+if [ "$(grep -c '^rc=2$' <<<"$_uf_out")" -eq 3 ] && grep -q 'holds at most 63' <<<"$_uf_out" \
+   && [ "$(grep -c 'must be 1..65535' <<<"$_uf_out")" -eq 2 ]; then
+    t_pass "utest_args_refused  test.sh refuses an over-long UTEST_FILTER and an out-of-range UTEST_TIMEOUT_MS"
+else
+    t_fail "utest_args_refused  test.sh accepted a UTEST_FILTER or UTEST_TIMEOUT_MS boot.conf cannot hold" "$(tr '\n' ' ' <<<"$_uf_out" | tail -c 300)"
+fi
+
+# Serial text is printed with printf '%s', never `echo -e`: it carries Windows
+# paths, and `echo -e` turned the `\t` of `C:\test_*.exe` into a tab.
+_ee=$(grep -nE 'echo -e .*\$\{?(line|verdict)' "$REPO_ROOT/scripts/test.sh" || true)
+if [ -z "$_ee" ]; then
+    t_pass "serial_text_verbatim  test.sh prints serial lines without escape interpretation"
+else
+    t_fail "serial_text_verbatim  test.sh prints serial text through echo -e" "$(head -2 <<<"$_ee")"
 fi
 
 # A test.sh refused because another run holds the image leaves that run's

@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md sources=src/kernel/test/test_usermode.c,include/kernel/test/test_usermode.h,scripts/test.sh,scripts/utest-json-harvest.py,scripts/utest-frame.py,scripts/utest-refusal-id.py reviewed=2026-11-07 -->
+<!-- docs: covers=todo/00-infrastructure/TODO-04-usermode-test-framework.md sources=src/kernel/test/test_usermode.c,include/kernel/test/test_usermode.h,scripts/test.sh,scripts/utest-json-harvest.py,scripts/utest-frame.py,scripts/utest-refusal-id.py reviewed=2026-11-13 -->
 # User-Mode Test Output Formats
 
 The user-mode test launcher emits **four** output streams on serial.
@@ -23,10 +23,10 @@ are all `0`; opt in per-run:
 | `tap=1`            | `1..N` plan line + `ok N - <name>` / `not ok N - <name>` per binary                       |
 | `xml=1`            | `[UTEST-XML] <testsuite>` / `[UTEST-XML] <testcase>` + `[UTEST-XML-SUMMARY]` envelope     |
 | `json=1`           | One `[UTEST-JSON] {...}` per binary + the trailing `run_report`, `summary`, `run_meta` records |
-| `utest_filter=<glob>` | Restrict the run to binaries matching the glob                                        |
+| `utest_filter=<patterns>` | Restrict the run to binaries matching a `:`-separated pattern list (63 bytes max) |
 
 `scripts/test.sh` mirrors these as `QUIET=1`, `XML=1`, `JSON=1`, `TAP=1`,
-`UTEST_FILTER=<glob>` command-line flags and patches them into the booted
+`UTEST_FILTER=<patterns>` and `UTEST_TIMEOUT_MS=<ms>` command-line flags and patches them into the booted
 `boot.conf`.
 
 `XML=1` and `JSON=1` also assemble host-side artifacts --
@@ -1487,7 +1487,7 @@ is corruption, and authenticating one would present a damaged identity as
 genuine launcher output.
 
 The value's **unit lives in the label**, because it is not one semantic
-type across the five paths:
+type across the six paths:
 
 | Identity | Published when | Value |
 |---|---|---|
@@ -1496,6 +1496,7 @@ type across the five paths:
 | `agg_manifest_kept_<n>.exe` | more malformed manifest entries than can be published individually | refusals **retained** before the cap |
 | `agg_manifest_bad_unknown.exe` | the manifest exists but would not parse | **unknown** -- see below |
 | `agg_glob_kept_<n>.exe` | more glob refusals than can be published individually | refusals **retained** before the cap |
+| `agg_filter_bad_unknown.exe` | the `utest_filter=` value was longer than the 63 bytes boot.conf can carry, so no binary was planned | **unknown** (the loader keeps only the prefix that fits) |
 
 Whether a kind publishes a number is a COLUMN in the launcher's table, not
 a per-call-site decision, so exactly one value form is emittable per kind.

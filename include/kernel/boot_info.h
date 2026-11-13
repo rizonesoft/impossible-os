@@ -1519,7 +1519,11 @@ struct boot_config {
      * boot.conf for debugging a broken cleanup hook. Production test
      * runs always isolate. */
     uint8_t  utest_isolation;  /* 0 = disable scratch-dir + Registry wipe + handle-leak */
-    uint8_t  _pad_utest2[3];   /* align following struct fields */
+    /* 1 when boot.conf's utest_filter= value did not fit utest_filter[]: the
+     * loader stores the prefix that fits, and the kernel refuses the run
+     * rather than select a different set of binaries than was asked for. */
+    uint8_t  utest_filter_truncated;
+    uint8_t  _pad_utest2[2];   /* align following struct fields */
     /* CI-friendly output formats (S7 of TODO-04). Both default 0;
      * orthogonal to tap= so a single run with tap=1 xml=1 json=1
      * emits all three formats interleaved on serial and scripts/
@@ -1573,6 +1577,8 @@ _Static_assert(__builtin_offsetof(struct boot_config, utest_filter) == 294,
     "utest_filter must be at byte offset 294 (TODO-04 S4 stable ABI)");
 _Static_assert(__builtin_offsetof(struct boot_config, utest_isolation) == 358,
     "utest_isolation must be at byte offset 358 (TODO-04 S6 stable ABI)");
+_Static_assert(__builtin_offsetof(struct boot_config, utest_filter_truncated) == 359,
+               "utest_filter_truncated must be at byte offset 359 (former padding)");
 _Static_assert(__builtin_offsetof(struct boot_config, xml) == 362,
     "xml must be at byte offset 362 (TODO-04 S7 stable ABI)");
 _Static_assert(__builtin_offsetof(struct boot_config, json) == 363,

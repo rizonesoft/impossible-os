@@ -119,6 +119,7 @@ F(config.utest_timeout_ms);
 F(config.utest_filter);
 F(config.utest_filter[0]);      /* element-size sentinel */
 F(config.utest_isolation);
+F(config.utest_filter_truncated);
 F(config._pad_utest2);
 F(config._pad_utest2[0]);       /* element-size sentinel */
 F(config.xml);

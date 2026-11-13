@@ -39,6 +39,15 @@
 # names it exactly, and then it runs FIRST, ahead of the default plan, so its
 # deliberate smoke FAIL proves the abort path (scripts/test-abort-path.sh).
 test_optin_smoke_abort.exe
+# Opt-in identity pair: swap runs first and rewrites victim in place after
+# the plan froze victim's identity, so victim must be refused as "planned
+# binary replaced" and never run (scripts/test-identity-path.sh). Name both:
+# utest_filter=test_optin_swap.exe:test_optin_victim.exe
+test_optin_swap.exe
+test_optin_victim.exe
+# Opt-in hang: reaches ring 3 and never exits, so it must be reaped with the
+# launcher's timeout status (scripts/test-timeout-path.sh).
+test_optin_hang.exe
 test_smoke_boot.exe
 
 # -17 fast-path transport probes (gs:TEB, KUSD, syscall->SSDT).

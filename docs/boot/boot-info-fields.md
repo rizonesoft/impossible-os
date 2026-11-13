@@ -635,7 +635,8 @@ Mirror struct in [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c). `cm
 | `utest_timeout_ms`  | bootx64 | P0 | user-mode test launcher | runtime | usermode-test-framework | Per-binary wall-clock timeout in ms; `0` = default (10 s). |
 | `utest_filter[64]`  | bootx64 | P0 | user-mode test launcher | runtime | usermode-test-framework | Null-terminated glob/literal filter; empty = run every `test_*.exe`. |
 | `utest_isolation`   | bootx64 | P0 | user-mode test launcher | runtime | usermode-test-framework | `0` disable scratch-dir + Registry wipe + handle-leak check; default `1`. Production runs must stay `1`. |
-| `_pad_utest2[3]`    | bootx64 (zero fill) | P0 | alignment | -- | usermode-test-framework | Zero. |
+| `utest_filter_truncated` | bootx64 | P0 | user-mode test launcher | runtime | usermode-test-framework | `1` when boot.conf's `utest_filter=` value was longer than the 63 bytes `utest_filter[]` holds; the launcher then plans no binary and fails the run on `agg_filter_bad_unknown.exe`. Former padding byte 359. |
+| `_pad_utest2[2]`    | bootx64 (zero fill) | P0 | alignment | -- | usermode-test-framework | Zero. |
 | `xml`               | bootx64 | P0 | user-mode test launcher | runtime | usermode-test-framework | `0 | 1`; emit `[UTEST-XML]` JUnit XML lines. Orthogonal to `tap`/`json`. |
 | `json`              | bootx64 | P0 | user-mode test launcher | runtime | usermode-test-framework | `0 | 1`; emit `[UTEST-JSON]` lines (per-binary + summary). |
 | `stress_iters`      | bootx64 | P0 | reserved (future env-passing syscall) | runtime | usermode-test-framework | `uint16_t`; parsed and plumbed through `test_usermode_set_stress_iters`, no consumer today. `0` = default. |
