@@ -659,11 +659,24 @@ bash scripts/test-coverage.sh --save --quiet 2>/dev/null || true
 # Run-mode failures DO propagate to the script's exit code so CI / hooks can
 # detect QEMU-launch failures separately from build failures. The build sentinel
 # remains authoritative for the build portion.
-exec 8>&-   # the build is done: a VM launched below must not hold .build.lock
+# Run modes: build their extra disks while .build.lock is still held, then
+# release it and launch with every prerequisite marked as already made
+# (`make -o`), so nothing is rebuilt outside the lock and an open VM never
+# blocks another build.
+RUN_AUX=()
+{ $DO_RUN_USB || $DO_RUN_USB_CI; } && RUN_AUX+=(build/test-usb.img)
+{ $DO_RUN_NVME || $DO_RUN_NVME_CI; } && RUN_AUX+=(build/test-nvme.img)
 RUN_STATUS=0
+if [ ${#RUN_AUX[@]} -gt 0 ] && ! make $MAKE_FLAGS "${RUN_AUX[@]}" 2>&1; then
+    RUN_STATUS=1
+    printf ' %b✗ make %s failed%b\n' "$RED" "${RUN_AUX[*]}" "$RESET" >&2
+fi
+exec 8>&-   # the build is done: a VM launched below must not hold .build.lock
+LAUNCH_ONLY=(-o all -o build/test-usb.img -o build/test-nvme.img)
 run_make() {
     local target=$1
-    if ! make $MAKE_FLAGS "$target" 2>&1; then
+    [ "$RUN_STATUS" = 0 ] || return 0
+    if ! make $MAKE_FLAGS "${LAUNCH_ONLY[@]}" "$target" 2>&1; then
         RUN_STATUS=1
         printf ' %b✗ make %s failed%b\n' "$RED" "$target" "$RESET" >&2
     fi

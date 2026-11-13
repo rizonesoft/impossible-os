@@ -4940,6 +4940,19 @@ if command -v flock >/dev/null 2>&1; then
     fi
 fi
 
+# ...and a run mode builds everything under that lock: its extra disks before
+# the release, then a launch with every prerequisite marked made (make -o).
+_bl_b="$REPO_ROOT/scripts/build.sh"
+_bl_rel=$(grep -n '^exec 8>&-' "$_bl_b" | cut -d: -f1)
+_bl_aux=$(grep -n 'make $MAKE_FLAGS "${RUN_AUX\[@\]}"' "$_bl_b" | cut -d: -f1)
+if [ -n "$_bl_rel" ] && [ -n "$_bl_aux" ] && [ "$_bl_aux" -lt "$_bl_rel" ] \
+   && grep -q '^LAUNCH_ONLY=(-o all ' "$_bl_b" \
+   && awk '/^run_make\(\) \{/{f=1} f&&/make \$MAKE_FLAGS/{print; exit}' "$_bl_b" | grep -qF '"${LAUNCH_ONLY[@]}"'; then
+    t_pass "build_lock_run_modes  run modes build under .build.lock and launch without rebuilding"
+else
+    t_fail "build_lock_run_modes  a run mode rebuilds after releasing .build.lock" "release=${_bl_rel:-none} aux=${_bl_aux:-none}"
+fi
+
 # Every Makefile recipe that runs QEMU does so under $(BOOT_LOCKED); the disk
 # rule builds $@.new and renames it into place under the lock (a running VM
 # keeps its own inode), and clean deletes build/ under the lock.
