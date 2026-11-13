@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **925 of 2609 sections complete (35%).** 144 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **926 of 2609 sections complete (35%).** 144 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -808,7 +808,7 @@ The kernel's own model comes straight after boot because every driver, filesyste
 | [ ]  | `D02 T04 §15` | Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)                                           | none       |     7 |
 | [ ]  | `D02 T04 §16` | Klog Assertions and Scans That Depend on Nothing Else Having Logged                               | none       |     6 |
 | [ ]  | `D02 T04 §17` | Bounded Wait Until the Sinks Have Caught Up to a Given Sequence                                   | none       |     4 |
-| [ ]  | `D02 T04 §18` | The Previous Boot's Crash Region Is Claimed Before Any Allocation                                 | none       |     5 |
+| [x]  | `D02 T04 §18` | The Previous Boot's Crash Region Is Claimed Before Any Allocation                                 | none       |     5 |
 | [ ]  | `D02 T05 §1`  | OBJECT_HEADER and OBJECT_TYPE Infrastructure                                                      | none       |     8 |
 | [x]  | `D02 T05 §2`  | Reference Counting and Object Lifetime                                                            | none       |     6 |
 | [ ]  | `D02 T05 §3`  | Per-Process Handle Table                                                                          | none       |    15 |

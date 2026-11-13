@@ -76,7 +76,7 @@ title: "TODO-04 -- System Logging"
 | ⭐  |  15   | Post-ship follow-up backfill (2026-07-31 cohort)                    | --               |  [ ]   |
 | 💎  |  16   | Klog assertions and scans that depend on nothing else having logged | §1               |  [ ]   |
 | ⭐  |  17   | Bounded wait until the sinks have caught up to a given sequence     | §1, §2           |  [ ]   |
-| 💎  |  18   | Previous crash region claimed before any allocation                 | §8               |  [ ]   |
+| 💎  |  18   | Previous crash region claimed before any allocation                 | §8               |  [x]   |
 
 > 💎 = parity -- Windows Event Log and Linux journald/syslog both have these capabilities.
 > ⭐ = exclusive -- HMAC-chained JSON Lines is human-readable AND cryptographically verifiable; beats Windows XML and Linux binary journal.
@@ -623,6 +623,18 @@ A caller can ask klog what the current sequence is (`klog_get_seq`), how much of
 - [x] Commit: `"klog: claim the previous boot's crash region before any allocation"`
 
 **Test checkpoint:** a boot whose store names the current heap guard page reaches `C:\>` with the region claimed and the heap placed elsewhere; stores naming a firmware runtime-services region or an MMIO address reach `C:\>` with the skip warning naming the address. Replay of the claimed region is §8's (its item on the region surviving a warm reset).
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | "Klog: crash previous-region refusal", 0 failures; `bash scripts/test-smoke-matrix.sh` crashptr legs mmio, guard and runtime PASS; `python3 tools/uefi-varstore/test_plant.py` 4/4
+
+> **Notes:**
+> - What shipped: `klog_crash_claim_previous()` in `src/kernel/klog.c` reads and deletes the NVRAM pointer right after `pmm_init` and reserves the 32-frame run only when `klog_crash_prev_refusal()` finds every frame free; recovery reads it through identity-mapped pages, then frees it.
+> - How it integrates: called from `src/kernel/main/boot_hw.c` before `vmm_init` and `heap_init`, so no later owner can be placed over the old region; the get, delete and publish NVRAM results are reported.
+> - Downstream effects: `tools/uefi-varstore/plant.py` plants any variable in a copy of OVMF's store; `SMOKE_CRASH_NVRAM` uses it, and the matrix gains three legs (29 in all).
+> - Canonical doc: [system logging](../../docs/kernel/system-logging.md).
+> - Scope boundary: replay after a warm reset is broken on OVMF and owned by §8's item on the region surviving a warm reset; the loader's boot stack moves between identical boots, so it is covered by the unit test, not a matrix leg.
+
+> **Verified:** 2026-11-13 | commits `82bb8f259`, `a87465ea8`, `61177c4e2` | 6/6 items | build OK | suite 38016 kernel + 17 user-mode PASS | smoke matrix 29/29 | guard boot faults on the old code (`#PF CR2 0xC01000`), claims on the new
+> **Quality reviewed:** 2026-11-13 | Codex passes: plan approved; round, performance and completion on `82bb8f259`, round, performance and reconciliation on `a87465ea8` and `61177c4e2`, the last all approving | 3 findings: guard address read from unpublished logs fixed, owned-region refusal leg added, boot-stack leg replaced by a runtime-region leg after it moved between boots | scope: kernel-code-quality
 
 ## OS Comparison
 
