@@ -4934,6 +4934,23 @@ if <<<"$_ap_out" grep -q 'another run holds the image lock' && <<<"$_ap_out" gre
 else
     t_fail "abort_path_lock  test-abort-path.sh ran while another run held the image" "$(tail -2 <<<"$_ap_out")"
 fi
+# A test.sh refused because another run holds the image leaves that run's
+# serial log (build/test.log) alone: it deletes the log only once it holds
+# the image itself.
+_tl_log="$REPO_ROOT/build/test.log"; _tl_keep=""
+mkdir -p "$REPO_ROOT/build"
+[ -f "$_tl_log" ] && { _tl_keep=$(mktemp); cp -p "$_tl_log" "$_tl_keep"; }
+echo "held-run-serial-marker" > "$_tl_log"
+_tl_out=$(flock -n "$REPO_ROOT/.boot-conf.lock" true && {
+    ( flock -n 8 || exit 2; env -u BOOT_CONF_LOCK_HELD timeout 60 bash "$REPO_ROOT/scripts/test.sh" QUIET=1 2>&1; echo "rc=$?" ) 8>"$REPO_ROOT/.boot-conf.lock"
+})
+_tl_kept=$(cat "$_tl_log" 2>/dev/null)
+if [ -n "$_tl_keep" ]; then mv -f "$_tl_keep" "$_tl_log"; else rm -f "$_tl_log"; fi
+if <<<"$_tl_out" grep -q 'another run is using' && [ "$_tl_kept" = "held-run-serial-marker" ]; then
+    t_pass "test_log_survives_refusal  a test.sh refused by the image lock keeps the holder's serial log"
+else
+    t_fail "test_log_survives_refusal  a refused test.sh deleted or replaced the holder's serial log" "log=${_tl_kept:-<deleted>} $(tail -1 <<<"$_tl_out")"
+fi
 # A failed final reset fails the run and says so: run-with-boot-conf.sh is run
 # whole in a stub project, and the cleanup handlers of test.sh and
 # test-swtpm.sh are run against a stub patch-boot-conf.sh whose reset fails.

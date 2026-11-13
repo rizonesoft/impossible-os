@@ -20,7 +20,6 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT="$(dirname "$SCRIPT_DIR")"
 FIXTURE="test_optin_smoke_abort.exe"
-LOG="$PROJECT/build/test.log"
 
 fail() { echo "[ABORT-PATH] FAIL: $*" >&2; exit 1; }
 
@@ -47,8 +46,12 @@ run_dir=$(sed 's/\x1b\[[0-9;]*m//g' "$out" | sed -n 's#^\[TEST\] JUnit XML writt
 JSON="$run_dir/test-results.json"
 XML="$run_dir/test-results.xml"
 
-grep -aq "$FIXTURE: FAIL" "$LOG" || fail "the fixture was not published FAIL by name"
-grep -aq 'suite ABORT (smoke failed)' "$LOG" || fail "serial does not name the smoke abort"
+# Serial evidence from the framed slice this run saved in its own record,
+# not the shared build/test.log.
+SLICE="$run_dir/runslice"
+[ -s "$SLICE" ] || fail "the run saved no serial slice ($SLICE)"
+grep -aq "$FIXTURE: FAIL" "$SLICE" || fail "the fixture was not published FAIL by name"
+grep -aq 'suite ABORT (smoke failed)' "$SLICE" || fail "serial does not name the smoke abort"
 
 python3 "$SCRIPT_DIR/lib/abort_path_check.py" "$JSON" "$XML" "$FIXTURE" "$expected" "$(basename "$run_dir")" || exit 1
 

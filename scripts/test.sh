@@ -4343,17 +4343,19 @@ if ! { { utest_json_identity; printf '\n'; } > "$RECORD_DIR/.identity.tmp" &&
     exit 1
 fi
 
-# A failed build must not leave the previous run's serial log looking like this
-# run's result: a mutation control whose mutant failed -Werror read as "the tests
-# missed it" three times running (v22, 2026-11-07).
-rm -f "$TEST_LOG"
-
 # Hold the image (.boot-conf.lock, scripts/lib/boot-conf-lock.sh) from before
 # the build that rewrites it until the run exits, so no other run boots,
 # patches or resets it under this one, and this build cannot rewrite a disk
 # another run is booting.
 . "$PROJECT/scripts/lib/boot-conf-lock.sh"
 boot_conf_lock_hold "$PROJECT" 7 || exit 1
+
+# A failed build must not leave the previous run's serial log looking like this
+# run's result: a mutation control whose mutant failed -Werror read as "the tests
+# missed it" three times running (v22, 2026-11-07). Deleted only once the image
+# is held: a run refused above must not destroy the serial log of the run that
+# holds it.
+rm -f "$TEST_LOG"
 
 # --- Step 1: Build ---
 echo -e "${CYAN}${BOLD}[TEST]${RESET} Building kernel..."
