@@ -69,6 +69,15 @@ def test_a_passing_pytest_style_test_passes():
     assert done.returncode == 0 and "== 1 passed, 0 failed ==" in done.stdout, done.stdout
 
 
+def test_a_pytest_file_reports_its_test_count():
+    """The ok line of a file pytest ran carries pytest's count; a plain file's does not."""
+    two = PASSING_PYTEST_STYLE + "\n\ndef test_y(tmp_path):\n    assert tmp_path.is_dir()\n"
+    done = _suite({"test_a.py": two, "test_b.py": PLAIN})
+    assert done.returncode == 0, done.stdout
+    assert "ok   test_a.py (pytest: 2 passed)" in done.stdout, done.stdout
+    assert "ok   test_b.py\n" in done.stdout, done.stdout
+
+
 def test_refusal_without_pytest_such_a_file_fails():
     with tempfile.TemporaryDirectory() as bindir:
         shim = pathlib.Path(bindir) / "python3"  # a python3 that cannot import pytest

@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **923 of 2607 sections complete (35%).** 144 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **923 of 2607 sections complete (35%).** 145 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -280,7 +280,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T08 §37` | Syscall argument counts in the ABI fingerprint                                                                        | none     |     5 |
 | [x]  | `D00 T08 §38` | Release-flavor build at the section boundary                                                                          | none     |     8 |
 | [x]  | `D00 T08 §39` | Re-judge the closed parks under the never-park rule                                                                   | none     |     5 |
-| [ ]  | `D00 T08 §40` | Pytest-style control-plane tests run in the suite                                                                     | none     |     5 |
+| [/]  | `D00 T08 §40` | Pytest-style control-plane tests run in the suite                                                                     | none     |     5 |
 | [ ]  | `D00 T08 §41` | CI jobs run in the pinned image                                                                                       | none     |     5 |
 | [x]  | `D00 T09 §1`  | Preflight Inventory and Risk Register                                                                                 | none     |    10 |
 | [/]  | `D00 T09 §2`  | `rizonetech` Organization Readiness and Policy Parity                                                                 | operator |    11 |

@@ -105,7 +105,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |  37   |   §37   | Syscall argument counts in the ABI fingerprint                                                   | --                         |  [x]   |
 | 💎  |  38   |   §38   | Release-flavor build at the section boundary                                                     | --                         |  [x]   |
 | 💎  |  39   |   §39   | Re-judge the closed parks under the never-park rule                                              | --                         |  [x]   |
-| 💎  |  40   |   §40   | Pytest-style control-plane tests run in the suite                                                | --                         |  [ ]   |
+| 💎  |  40   |   §40   | Pytest-style control-plane tests run in the suite                                                | --                         |  [x]   |
 | 💎  |  41   |   §41   | CI jobs run in the pinned image                                                                  | --                         |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
@@ -1371,15 +1371,18 @@ About 445 `Deferred:` stamps carry no `awaiting-` token, so their sections read 
 
 > **Spawned-by:** root
 
-`scripts/overnight/tests/run-all.sh` runs each file as `python3 <file>`. Six files are written for pytest and have no `__main__` block, so they define their tests and exit 0: `test_review_pin.py` and five more run nothing in the gate.
+`scripts/overnight/tests/run-all.sh` ran each file as `python3 <file>`. Files written for pytest, with no `__main__` block or with fixture tests it never calls, defined their tests and exited 0: `test_review_pin.py` and others ran nothing in the gate.
 
-- [ ] Make `run-all.sh` run a file through `python3 -m pytest -q` when it imports pytest or uses a pytest fixture, and fail when pytest is missing. Done when the six files' tests are counted in the suite's output.
-- [ ] Add pytest to the host bootstrap's required tools (`scripts/setup.sh`) and to the CI image. Done when `bash scripts/setup.sh --verify` names it.
-- [ ] Fix whatever the six files report once they actually run. Done when the suite is green.
-- [ ] Unit tests: a fixture file with one failing pytest test fails the runner. Done when the old runner passes it.
-- [ ] Commit: `"run: the control-plane suite runs its pytest files"`
+- [x] `run-all.sh` sends the tests plain python3 never calls to pytest and fails without pytest (`a48cf547a`, section 33's completion pass); eight files take that route.
+  - Each such file's ok line now carries pytest's count, e.g. `test_review_pin.py (pytest: 65 passed)`.
+- [x] pytest is a bootstrap dependency: `setup.sh --verify` names it, `setup-deps.sh` installs it, and `build.yml`, `release.yml` and `visual-regression.yml` install `python3-pytest` (`f0dc4c9ac`).
+- [x] The eight files pass once they run: the suite is 91/91.
+- [x] Unit tests: `test_run_all_runs_every_test.py` fails the suite on a failing fixture test and without pytest, and checks the count on the ok line; the count test fails on the previous runner.
+- [x] Commit: `"run: the control-plane suite runs its pytest files"`
 
-**Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` reports the six files' test counts.
+**Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` reports each pytest-routed file's test count.
+
+> **Test runner:** `bash scripts/overnight/tests/run-all.sh` (91 files, eight with a pytest count); `python3 scripts/overnight/tests/test_run_all_runs_every_test.py`.
 
 ## 41. CI jobs run in the pinned image
 

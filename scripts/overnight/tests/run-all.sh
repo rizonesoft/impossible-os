@@ -9,9 +9,10 @@
 #
 #     bash scripts/overnight/tests/run-all.sh
 #
-# It runs every test_*.py in this dir 
-# smoke, prints one line per test, and exits nonzero if any test fails. Stdlib
-# + bash only; no pytest dependency (matches the plain-assert house style).
+# It runs every test_*.py in this dir with plain python3, prints one line per file,
+# and exits nonzero if any file fails. Tests plain python3 never calls (fixture
+# tests, a file with no `__main__` runner) then run under pytest, whose count the
+# file's line carries; without pytest such a file fails, never passes.
 set -uo pipefail
 
 # Drop git's per-invocation environment before running anything. When this
@@ -88,10 +89,20 @@ fi
 FAIL=0
 PASS=0
 
-run_one() {
+run_one() {  # run_one [--pytest] NAME CMD...; --pytest reports pytest's own count
+  local counted=0
+  [ "$1" = --pytest ] && { counted=1; shift; }
   local name="$1"; shift
   if out="$("$@" 2>&1)"; then
-    printf '  ok   %s\n' "$name"
+    local summary=""
+    # pytest -q ends with e.g. "36 passed, 1 skipped in 0.42s": that count is the
+    # proof the file's fixture tests ran, so the ok line carries it.
+    [ "$counted" = 1 ] && summary="$(printf '%s\n' "$out" | grep -E '^[0-9]+ (passed|skipped)' | tail -1 | sed -E 's/ in [0-9.]+s.*$//')"
+    if [ -n "$summary" ]; then
+      printf '  ok   %s (pytest: %s)\n' "$name" "$summary"
+    else
+      printf '  ok   %s\n' "$name"
+    fi
     PASS=$((PASS + 1))
   else
     printf '  FAIL %s\n' "$name"
@@ -146,7 +157,7 @@ while IFS= read -r t; do
   if [ "${#extra[@]}" -eq 0 ]; then
     run_one "$(basename "$t")" python3 "$t"
   elif [ "$PYTEST" = 1 ]; then
-    run_one "$(basename "$t")" plain_then_pytest "$t" "${extra[@]/#/$t::}"
+    run_one --pytest "$(basename "$t")" plain_then_pytest "$t" "${extra[@]/#/$t::}"
   else
     run_one "$(basename "$t") (holds tests only pytest runs; pytest is not installed)" false
   fi
