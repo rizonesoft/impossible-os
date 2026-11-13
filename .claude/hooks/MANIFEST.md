@@ -104,7 +104,7 @@
 | Hook | File | Kind | Wrap.sh | Markers | Opt-out | Purpose |
 |---|---|---|---|---|---|---|
 | todo_edit_reminder | `.claude/hooks/todo_edit_reminder.py` | REMINDER | Y | `todo/` | -- | After a TODO `.md` edit, suggests `validate-todo-file` if the change was structural. |
-| todo_format_check | `.claude/hooks/todo_format_check.py` | REMINDER | N | -- | -- | After a TODO `.md` edit, reminds about Implementation Order / OS Comparison / stamp shapes. |
+| todo_format_check | `.claude/hooks/todo_format_check.py` | REMINDER | N | -- | -- | After a TODO `.md` Write/Edit, warns on a fenced C block over 15 lines (opt-out `spec-block-ok`) and on a `(N.M Title)` checklist label; fence state from the shared tracker; fixtures in `scripts/tests/test_todo_format_check.py`. |
 | test_wiring_reminder | `.claude/hooks/test_wiring_reminder.py` | REMINDER | Y | `src/kernel/test/` | -- | After a `test_*.c` edit, reminds the test-wiring checklist (registration, category, runner-init). |
 | test_message_uniqueness | `.claude/hooks/test_message_uniqueness.py` | REMINDER | N | -- | -- | After a `test_*.c` edit, flags duplicate `TEST_ASSERT*` message strings. |
 | test_pending_reminder | `.claude/hooks/test_pending_reminder.py` | REMINDER | N | -- | -- | After a `test_*.c` edit, flags `STATUS_NOT_IMPLEMENTED`-as-expected without `TEST_PENDING`. |

@@ -1387,6 +1387,7 @@ _tt_nested_py "$REPO_ROOT/scripts/tests/test_format_md_tables.py" fmt_tables
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_release_image_binding.py" image_binding
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_fence.py" todo_fence
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_graph_auto_rewrite.py" todo_auto_rewrite
+_tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_format_check.py" todo_format_check
 _tt_nested_py "$REPO_ROOT/scripts/site/tests/test_build.py" site_build
 _tt_nested_py "$REPO_ROOT/tools/uefi-varstore/test_plant.py" uefi_varstore
 _tt_nested_py "$REPO_ROOT/scripts/site/tests/test_site_live_waits.py" site_live_waits
@@ -1501,6 +1502,21 @@ if [ -f "$AUTO_REWRITE_TEST" ]; then
     fi
 else
     t_fail "scripts/tests/test_todo_graph_auto_rewrite.py not found"
+fi
+
+# The TODO format check's fence handling (scripts/tests/test_todo_format_check.py):
+# the real hook per case, fence state from the shared tracker.
+FORMAT_CHECK_TEST="$REPO_ROOT/scripts/tests/test_todo_format_check.py"
+if [ -f "$FORMAT_CHECK_TEST" ]; then
+    FORMAT_CHECK_OUT=$(_tt_nested_collect todo_format_check python3 "$FORMAT_CHECK_TEST")
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/tests/test_todo_format_check.py PASS ($(printf '%s\n' "$FORMAT_CHECK_OUT" | tail -1))"
+    else
+        t_fail "scripts/tests/test_todo_format_check.py FAIL ($(printf '%s\n' "$FORMAT_CHECK_OUT" | grep -E '^FAIL|exited' | cut -c1-120 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_todo_format_check" "$FORMAT_CHECK_OUT"
+    fi
+else
+    t_fail "scripts/tests/test_todo_format_check.py not found"
 fi
 
 # The docs-site generator and drift gate (scripts/site/tests/test_build.py): link

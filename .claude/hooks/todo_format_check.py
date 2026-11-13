@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json, sys, re
+from pathlib import Path
 d = json.load(sys.stdin)
 ti = d.get("tool_input", {})
 tn = d.get("tool_name", "")
@@ -21,25 +22,63 @@ if not texts:
     sys.exit(0)
 all_text = "\n".join(texts)
 
-bloated_blocks = []
-for m in re.finditer(r"```c\b\n(.*?)```", all_text, re.DOTALL):
-    block = m.group(1)
-    block_lines = block.count("\n")
-    if block_lines < 15:
-        continue
-    # spec-block opt-out: <!-- spec-block-ok: ... --> within ~3 lines before the opening ```
-    pre = all_text[max(0, m.start() - 200):m.start()]
-    if "spec-block-ok" in pre:
-        continue
-    line = all_text[:m.start()].count("\n") + 1
-    first_line = block.split("\n", 1)[0][:60]
-    bloated_blocks.append((line, block_lines, first_line))
+# Fence membership comes from the shared tracker (`scripts/todo_fence.py`).
+# Until 2026-11-13 a ```c...``` regex decided it, which missed a tilde fence,
+# ended a block at a shorter inner run, and read a ``` inside an HTML comment
+# as code; a private grammar is the drift the tracker exists to end, so a
+# failed import raises rather than falling back to one.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+import todo_fence  # noqa: E402
+KIND_CODE_FENCE = todo_fence._cache_schema().KIND_CODE_FENCE
 
-# Forbidden parenthesized N.M labels in checklist items
+lines = all_text.split("\n")
+scan = todo_fence.fence_scan(lines)
+leaves = scan.leaf_views
+OPENER = re.compile(r"^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)")
+
+
+def _fence_blocks():
+    """(opener line index, info word, body line count) per fenced block. The
+    tracker says which lines are fenced; a run of fenced lines is split only
+    where a line closes the block its opener started, so two blocks written
+    back to back stay two."""
+    i, n = 0, len(lines)
+    while i < n:
+        if scan.codes[i] != KIND_CODE_FENCE:
+            i += 1
+            continue
+        m = OPENER.match(leaves[i])
+        run, info = (m.group(1), m.group(2).lower()) if m else ("", "")
+        j = i + 1
+        while j < n and scan.codes[j] == KIND_CODE_FENCE:
+            t = leaves[j].strip()
+            if run and t and set(t) == {run[0]} and len(t) >= len(run):
+                break
+            j += 1
+        yield i, info, j - i - 1
+        i = j + 1
+
+
+bloated_blocks = []
+for start, info, body in _fence_blocks():
+    if info != "c" or body < 15:
+        continue
+    # spec-block opt-out: <!-- spec-block-ok: ... --> within 3 lines above the opener
+    if any("spec-block-ok" in ln for ln in lines[max(0, start - 3):start]):
+        continue
+    first_line = lines[start + 1][:60] if start + 1 < len(lines) else ""
+    bloated_blocks.append((start + 1, body, first_line))
+
+# Forbidden parenthesized N.M labels in checklist items (never inside a fence
+# or a comment, where a `- [x] (1.2 ...)` is an example).
 nm_labels = []
-for m in re.finditer(r"^\s*-\s*\[[ x]\]\s*\((\d+\.\d+)\s+([^)]{1,60})\)", all_text, re.MULTILINE):
-    line = all_text[:m.start()].count("\n") + 1
-    nm_labels.append((line, m.group(1), m.group(2)))
+NM = re.compile(r"^\s*-\s*\[[ x]\]\s*\((\d+\.\d+)\s+([^)]{1,60})\)")
+for idx, ln in enumerate(lines):
+    if scan.mask[idx]:
+        continue
+    m = NM.match(ln)
+    if m:
+        nm_labels.append((idx + 1, m.group(1), m.group(2)))
 
 if not bloated_blocks and not nm_labels:
     sys.exit(0)

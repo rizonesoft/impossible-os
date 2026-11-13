@@ -192,7 +192,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T06 §35` | A Same-File Stamp Matches Its Own Text, So Repair Answers With the Stamp's Line                                       | none     |     5 |
 | [x]  | `D00 T06 §36` | The Cache Producer Adopts the Shared Fence Tracker                                                                    | none     |     8 |
 | [x]  | `D00 T06 §37` | One Clause Parser Decides How Many Destinations a Clause Names                                                        | none     |     6 |
-| [x]  | `D00 T06 §38` | Every Gate Parser Adopts the Shared Fence Tracker                                                                     | none     |    12 |
+| [x]  | `D00 T06 §38` | Every Gate Parser Adopts the Shared Fence Tracker                                                                     | none     |    13 |
 | [x]  | `D00 T06 §39` | The Shared Fence Tracker Becomes Container-Aware                                                                      | none     |     6 |
 | [x]  | `D00 T06 §40` | An Inputs Section Marker Keeps Its Closing Backtick, So One Dependency Is Two Edges                                   | none     |     4 |
 | [x]  | `D00 T06 §41` | The Two Mutating Repair Tools Adopt the Shared Fence Tracker                                                          | none     |     6 |
