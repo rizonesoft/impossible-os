@@ -142,13 +142,14 @@ else
 fi
 
 # --- Boot.conf patch (reverted on exit) ---
+# Every boot of the image holds its boot.conf lock (scripts/lib/boot-conf-
+# lock.sh) until QEMU exits, so no other run patches or resets it under this
+# boot, and a patched boot holds it from the patch through the reset.
+. "$SCRIPT_DIR/lib/boot-conf-lock.sh"
+boot_conf_lock_hold "$PROJECT_DIR" 9 || exit 1
 if [ -n "$PATCH_CONF" ]; then
     KEY="${PATCH_CONF%%=*}"
     VAL="${PATCH_CONF##*=}"
-    # Hold the image's boot.conf lock (scripts/patch-boot-conf.sh) from the
-    # patch through the reset, so no other run patches or resets under us.
-    . "$SCRIPT_DIR/lib/boot-conf-lock.sh"
-    boot_conf_lock_hold "$PROJECT_DIR" 9 || exit 1
     trap 'bash "$SCRIPT_DIR/patch-boot-conf.sh" reset' EXIT
     bash "$SCRIPT_DIR/patch-boot-conf.sh" "$KEY" "$VAL"
 fi

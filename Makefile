@@ -1372,13 +1372,18 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
 run: all
 	@$(MAKE) --no-print-directory run-only
 
+# Every recipe that boots $(SYSTEM_DISK) runs QEMU under build/.boot-conf.lock
+# (scripts/with-boot-conf-lock.sh), so no run patches or resets boot.conf
+# while this boot reads it.
+BOOT_LOCKED := bash scripts/with-boot-conf-lock.sh
+
 ## run-only: Launch QEMU on the image already built, without building
 ##   No prerequisites, so nothing rebuilds the disk between a boot.conf patch
 ##   and the boot that is meant to read it (run-unit-tests, run-boot-tests).
 run-only:
 	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@cp -n $(OVMF_CODE) $(BUILD_DIR)/OVMF_CODE_4M.fd 2>/dev/null || true
-	$(QEMU) \
+	$(BOOT_LOCKED) $(QEMU) \
 		-cpu Haswell \
 		-smp 2 \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
@@ -1575,7 +1580,7 @@ $(USB_TEST_IMG):
 run-usb: all $(USB_TEST_IMG)
 	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@echo "[TEST] Launching QEMU with xHCI + USB storage device"
-	$(QEMU) \
+	$(BOOT_LOCKED) $(QEMU) \
 		-cpu Haswell \
 		-smp 2 \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
@@ -1650,7 +1655,7 @@ $(NVME_TEST_IMG):
 run-nvme: all $(NVME_TEST_IMG)
 	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@echo "[TEST] Launching QEMU with NVMe storage device"
-	$(QEMU) \
+	$(BOOT_LOCKED) $(QEMU) \
 		-cpu Haswell \
 		-smp 2 \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
@@ -1706,7 +1711,7 @@ clean-nvme:
 run-1080p: all
 	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@echo "[TEST] Launching QEMU at 1920×1080 (scale=1×)"
-	$(QEMU) \
+	$(BOOT_LOCKED) $(QEMU) \
 		-cpu Haswell \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
@@ -1728,7 +1733,7 @@ run-1080p: all
 run-1440p: all
 	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@echo "[TEST] Launching QEMU at 2560×1440 (scale=2×)"
-	$(QEMU) \
+	$(BOOT_LOCKED) $(QEMU) \
 		-cpu Haswell \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
@@ -1751,7 +1756,7 @@ run-1440p: all
 run-4k: all
 	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@echo "[TEST] Launching QEMU at 3840×2160 via bochs-display (scale=2×)"
-	$(QEMU) \
+	$(BOOT_LOCKED) $(QEMU) \
 		-cpu Haswell \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
@@ -1800,7 +1805,7 @@ run-test: all test-disks
 	cp $(OVMF_VARS) $(OVMF_VARS_CP); \
 	if echo "$(DISK)" | grep -q "optical/"; then \
 		echo "[TEST] Attaching $$TEST_FILE as ATAPI CD-ROM on AHCI port 1"; \
-		$(QEMU) \
+		$(BOOT_LOCKED) $(QEMU) \
 			-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 			-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
 			-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
@@ -1814,7 +1819,7 @@ run-test: all test-disks
 			-device virtio-tablet-pci -rtc base=localtime -no-reboot; \
 	else \
 		echo "[TEST] Attaching $$TEST_FILE on AHCI port 1"; \
-		$(QEMU) \
+		$(BOOT_LOCKED) $(QEMU) \
 			-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 			-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
 			-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
@@ -1831,7 +1836,7 @@ run-test: all test-disks
 ## run-debug: Launch QEMU paused, waiting for GDB on port 1234
 run-debug: all
 	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
-	$(QEMU) \
+	$(BOOT_LOCKED) $(QEMU) \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
 		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
@@ -1851,7 +1856,7 @@ run-debug: all
 ## run-log: Launch QEMU with serial output captured to serial.log
 run-log: all
 	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
-	$(QEMU) \
+	$(BOOT_LOCKED) $(QEMU) \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
 		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \

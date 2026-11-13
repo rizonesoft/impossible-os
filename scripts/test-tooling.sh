@@ -4932,6 +4932,7 @@ if command -v mkfs.fat >/dev/null 2>&1 && command -v mtype >/dev/null 2>&1; then
     mkdir -p "$_bc_d/repo/scripts" "$_bc_d/repo/build" "$_bc_d/repo/resources/boot" "$_bc_d/bin"
     cp "$REPO_ROOT/scripts/run-with-boot-conf.sh" "$REPO_ROOT/scripts/patch-boot-conf.sh" "$_bc_d/repo/scripts/"
     mkdir -p "$_bc_d/repo/scripts/lib"; cp "$REPO_ROOT/scripts/lib/boot-conf-lock.sh" "$_bc_d/repo/scripts/lib/"
+    cp "$REPO_ROOT/scripts/with-boot-conf-lock.sh" "$_bc_d/repo/scripts/"
     cp "$REPO_ROOT/resources/boot/boot.conf" "$_bc_d/repo/resources/boot/"
     _bc_img="$_bc_d/repo/build/system-disk.img"
     mkfs.fat -C "$_bc_img" 4096 >/dev/null 2>&1 \
@@ -4952,15 +4953,24 @@ if command -v mkfs.fat >/dev/null 2>&1 && command -v mtype >/dev/null 2>&1; then
     timeout 60 bash "$_bc_d/repo/scripts/patch-boot-conf.sh" reset >/dev/null 2>&1; _bc_rc4=$?
     # The helper test.sh and test-swtpm.sh hold it through: refused while held.
     _bc_rc5=$(bash -c '. "$1/scripts/lib/boot-conf-lock.sh"; boot_conf_lock_hold "$1" 7 2>/dev/null; echo $?' _ "$_bc_d/repo")
+    # An ordinary boot (with-boot-conf-lock.sh, every Makefile QEMU recipe)
+    # holds the lock too: a patch during it is refused, and the boot itself is
+    # refused while a patching run holds the lock.
+    bash "$_bc_d/repo/scripts/with-boot-conf-lock.sh" true >/dev/null 2>&1; _bc_rc7=$?
     _bc_held=$(mtype -i "$_bc_img" ::/EFI/ImpossibleOS/boot.conf 2>/dev/null | grep -cE '^debug=7')
     kill "$_bc_hold" 2>/dev/null; wait "$_bc_hold" 2>/dev/null
     # ...and held, with the env its own patch calls need, once free.
     _bc_rc6=$(bash -c '. "$1/scripts/lib/boot-conf-lock.sh"; boot_conf_lock_hold "$1" 7 && echo "0$BOOT_CONF_LOCK_HELD"' _ "$_bc_d/repo")
+    # deadline: the boot stand-in sleeps at most 30 s and is reaped below.
+    bash "$_bc_d/repo/scripts/with-boot-conf-lock.sh" sleep 30 & _bc_boot=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do flock -n "$_bc_d/repo/build/.boot-conf.lock" true 2>/dev/null || break; sleep 0.1; done
+    timeout 60 bash "$_bc_d/repo/scripts/patch-boot-conf.sh" test 1 >/dev/null 2>&1; _bc_rc8=$?
+    kill "$_bc_boot" 2>/dev/null; wait "$_bc_boot" 2>/dev/null
     if [ "$_bc_rc" != "0" ] && grep -qE '^test *= *1' "$_bc_d/during" && [ "$_bc_after" = "$_bc_def" ] \
-       && [ "$_bc_rc2" = "1" ] && [ "$_bc_rc3" = "1" ] && [ "$_bc_rc4" = "1" ] && [ "$_bc_rc5" = "1" ] && [ "$_bc_rc6" = "01" ] && [ "$_bc_held" = "1" ]; then
+       && [ "$_bc_rc2" = "1" ] && [ "$_bc_rc3" = "1" ] && [ "$_bc_rc4" = "1" ] && [ "$_bc_rc5" = "1" ] && [ "$_bc_rc6" = "01" ] && [ "$_bc_rc7" = "1" ] && [ "$_bc_rc8" = "1" ] && [ "$_bc_held" = "1" ]; then
         t_pass "run_with_boot_conf  the boot sees test=1, boot.conf is restored when it fails, no other run patches or resets under it"
     else
-        t_fail "run_with_boot_conf  the patch was not seen, not restored, or a second run touched it" "rc=$_bc_rc during=$(grep -cE '^test *= *1' "$_bc_d/during" 2>/dev/null) restored=$([ "$_bc_after" = "$_bc_def" ] && echo y || echo n) second=$_bc_rc2 patch=$_bc_rc3 reset=$_bc_rc4 helper-held=$_bc_rc5 helper-free=$_bc_rc6 held=$_bc_held"
+        t_fail "run_with_boot_conf  the patch was not seen, not restored, or a second run touched it" "rc=$_bc_rc during=$(grep -cE '^test *= *1' "$_bc_d/during" 2>/dev/null) restored=$([ "$_bc_after" = "$_bc_def" ] && echo y || echo n) second=$_bc_rc2 patch=$_bc_rc3 reset=$_bc_rc4 helper-held=$_bc_rc5 helper-free=$_bc_rc6 boot-held=$_bc_rc7 patch-during-boot=$_bc_rc8 held=$_bc_held"
     fi
     rm -rf "$_bc_d"
 fi
