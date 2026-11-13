@@ -435,6 +435,13 @@ with open(_conf_lock, "w") as _holder:
                                     out=os.path.join(_MOCK_DIR, "out-held")))
 check("a held .boot-conf.lock refuses the series (rc 1) before any boot",
       rc == 1 and not os.path.exists(_marker))
+with open(_conf_lock, "w") as _holder:
+    fcntl.flock(_holder, fcntl.LOCK_EX)
+    rc = br.run_reliability(mk_args(launcher_cmd=["bash", _mock_mark], cold=1, warm=0,
+                                    disk="build/release-under-test.img",
+                                    out=os.path.join(_MOCK_DIR, "out-held-build")))
+check("a held lock also refuses an image under build/ (clean deletes it)",
+      rc == 1 and not os.path.exists(_marker))
 rc = br.run_reliability(mk_args(launcher_cmd=["bash", _MOCK_QEMU], cold=1, warm=0,
                                 out=os.path.join(_MOCK_DIR, "out-free")))
 check("a free lock lets the series run and restores BOOT_CONF_LOCK_HELD",

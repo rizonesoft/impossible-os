@@ -538,12 +538,15 @@ def run_reliability(args):
     # the image between those writes, so no other run may patch, reset,
     # rebuild or boot it meanwhile. Children (the launcher, patch-boot-conf.sh)
     # share the hold through BOOT_CONF_LOCK_HELD=1.
-    # Only the canonical image has a boot.conf to reset and a lock to hold; a
-    # supplied --disk (a release artifact) is booted as it is.
+    # Only the canonical image has a boot.conf to reset. The lock covers every
+    # image under build/, which `make clean` deletes under it; a supplied
+    # --disk elsewhere (a release artifact) is booted as it is.
     canonical = disk_abs == os.path.abspath(os.path.join(REPO_ROOT, DEFAULT_DISK))
+    under_build = os.path.realpath(disk_abs).startswith(
+        os.path.realpath(os.path.join(REPO_ROOT, "build")) + os.sep)
     conf_fd = None
     prior_held = os.environ.get("BOOT_CONF_LOCK_HELD")
-    if canonical and prior_held != "1":
+    if (canonical or under_build) and prior_held != "1":
         conf_fd = open(os.path.join(REPO_ROOT, ".boot-conf.lock"), "w")
         try:
             fcntl.flock(conf_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

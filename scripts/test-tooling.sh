@@ -4940,19 +4940,22 @@ if command -v flock >/dev/null 2>&1; then
     fi
 fi
 
-# boot-test-qemu.sh takes the image lock only for the canonical image: under a
-# holder a custom --disk is not refused, the canonical one is.
+# boot-test-qemu.sh takes the image lock for images under build/ (which clean
+# deletes): under a holder a --disk elsewhere is not refused, the canonical
+# image and another image under build/ are.
 if command -v flock >/dev/null 2>&1; then
     # deadline: the holder sleeps at most 30 s and is reaped below.
     flock --no-fork "$REPO_ROOT/.boot-conf.lock" sleep 30 & _bt_hold=$!
     for _ in 1 2 3 4 5 6 7 8 9 10; do flock -n "$REPO_ROOT/.boot-conf.lock" true 2>/dev/null || break; sleep 0.1; done
-    _bt_custom=$(timeout 20 bash "$REPO_ROOT/scripts/machines/boot-test-qemu.sh" --disk "$REPO_ROOT/build/no-such-release.img" --timeout 1 2>&1 >/dev/null)
+    _bt_custom=$(timeout 20 bash "$REPO_ROOT/scripts/machines/boot-test-qemu.sh" --disk "${TMPDIR:-/tmp}/no-such-release.img" --timeout 1 2>&1 >/dev/null)
+    _bt_inbuild=$(timeout 20 bash "$REPO_ROOT/scripts/machines/boot-test-qemu.sh" --disk "$REPO_ROOT/build/no-such-release.img" --timeout 1 2>&1 >/dev/null)
     _bt_canon=$(timeout 20 bash "$REPO_ROOT/scripts/machines/boot-test-qemu.sh" --timeout 1 2>&1 >/dev/null); _bt_rc=$?
     kill "$_bt_hold" 2>/dev/null; wait "$_bt_hold" 2>/dev/null
-    if ! <<<"$_bt_custom" grep -q 'another run' && [ "$_bt_rc" = 1 ] && <<<"$_bt_canon" grep -q 'another run'; then
-        t_pass "boot_test_qemu_lock  the launcher locks only the canonical image"
+    if ! <<<"$_bt_custom" grep -q 'another run' && [ "$_bt_rc" = 1 ] && <<<"$_bt_canon" grep -q 'another run' \
+       && <<<"$_bt_inbuild" grep -q 'another run'; then
+        t_pass "boot_test_qemu_lock  the launcher locks images under build/ and only those"
     else
-        t_fail "boot_test_qemu_lock  the launcher refused a custom disk or booted the held canonical one" "canonical rc=$_bt_rc"
+        t_fail "boot_test_qemu_lock  the launcher refused an outside disk or booted a held image under build/" "canonical rc=$_bt_rc"
     fi
 fi
 
