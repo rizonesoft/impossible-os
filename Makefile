@@ -1618,7 +1618,8 @@ QEMU_TIMEOUT ?= 30
 run-usb-ci: all $(USB_TEST_IMG)
 	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@echo "[TEST] Launching headless QEMU with xHCI + USB storage ($(QEMU_TIMEOUT)s timeout)"
-	@timeout $(QEMU_TIMEOUT) $(BOOT_LOCKED) $(QEMU) \
+	@# The lock is taken outside the tolerated timeout, so a refusal fails the recipe.
+	@$(BOOT_LOCKED) sh -c 'timeout "$$@" 2>/dev/null; true' _ $(QEMU_TIMEOUT) $(QEMU) \
 		-cpu Haswell \
 		-smp 2 \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
@@ -1636,7 +1637,7 @@ run-usb-ci: all $(USB_TEST_IMG)
 		-netdev user,id=net0 \
 		-device virtio-tablet-pci \
 		-rtc base=localtime \
-		-no-reboot 2>/dev/null; true
+		-no-reboot
 	@echo ""
 	@echo "───── Serial output (USB) ─────"
 	@grep -E 'xhci|usb' build/serial.log 2>/dev/null || echo "(no USB output found)"
@@ -1644,7 +1645,7 @@ run-usb-ci: all $(USB_TEST_IMG)
 
 ## clean-usb: Remove test USB disk image
 clean-usb:
-	rm -f $(USB_TEST_IMG)
+	$(BOOT_LOCKED) rm -f $(USB_TEST_IMG)
 
 ## ── NVMe test targets ────────────────────────────────────────────────────────
 
@@ -1689,7 +1690,8 @@ run-nvme: all $(NVME_TEST_IMG)
 run-nvme-ci: all $(NVME_TEST_IMG)
 	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@echo "[TEST] Launching headless QEMU with NVMe storage ($(QEMU_TIMEOUT)s timeout)"
-	@timeout $(QEMU_TIMEOUT) $(BOOT_LOCKED) $(QEMU) \
+	@# The lock is taken outside the tolerated timeout, so a refusal fails the recipe.
+	@$(BOOT_LOCKED) sh -c 'timeout "$$@" 2>/dev/null; true' _ $(QEMU_TIMEOUT) $(QEMU) \
 		-cpu Haswell \
 		-smp 2 \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
@@ -1706,7 +1708,7 @@ run-nvme-ci: all $(NVME_TEST_IMG)
 		-netdev user,id=net0 \
 		-device virtio-tablet-pci \
 		-rtc base=localtime \
-		-no-reboot 2>/dev/null; true
+		-no-reboot
 	@echo ""
 	@echo "───── Serial output (NVMe) ─────"
 	@grep -iE 'nvme|01:08' build/serial.log 2>/dev/null || echo "(no NVMe output found)"
@@ -1714,7 +1716,7 @@ run-nvme-ci: all $(NVME_TEST_IMG)
 
 ## clean-nvme: Remove test NVMe disk image
 clean-nvme:
-	rm -f $(NVME_TEST_IMG)
+	$(BOOT_LOCKED) rm -f $(NVME_TEST_IMG)
 
 ## run-1080p: Test at 1920×1080 — HiDPI scale stays 1× (≤1080p) but different from 720p
 ## Serial output: [SPLASH] 1920x1080  scale=1x  font=16px

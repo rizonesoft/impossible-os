@@ -4976,10 +4976,17 @@ fi
 # rule builds $@.new and renames it into place under the lock (a running VM
 # keeps its own inode), and clean deletes build/ under the lock.
 _bl_mk="$REPO_ROOT/Makefile"
-_bl_bare=$(grep -nE '\$\(QEMU\) \\$' "$_bl_mk" | grep -vF '$(BOOT_LOCKED) $(QEMU)' | cut -d: -f1 | tr '\n' ' ')
+_bl_bare=$(grep -nE '\$\(QEMU\) \\$' "$_bl_mk" | grep -vF '$(BOOT_LOCKED)' | cut -d: -f1 | tr '\n' ' ')
+# A launch whose failures are tolerated (`; true`) must take the lock outside
+# that tolerance, or a refusal would read as a successful boot.
+_bl_bare="$_bl_bare$(grep -nF 'timeout $(QEMU_TIMEOUT) $(BOOT_LOCKED)' "$_bl_mk" | cut -d: -f1 | tr '\n' ' ')"
 # The disk rule writes only $@.new and publishes it by a rename under the lock.
 _bl_disk=$(awk '/^\$\(SYSTEM_DISK\):/{f=1} f&&/-o \$@ |\$@@@|\$@\.info/{bad=1} f&&/BOOT_LOCKED\) sh -c .mv /{pub=1} f&&/^$/{exit} END{print (pub&&!bad)?"y":"n"}' "$_bl_mk")
 _bl_clean=$(awk '/^clean:/{f=1} f&&/BOOT_LOCKED\) rm -rf \$\(BUILD_DIR\)/{print "y"; exit} f&&/^$/{exit}' "$_bl_mk")
+# The test-image cleans delete under the lock too.
+for _bl_t in clean-usb clean-nvme; do
+    awk -v t="$_bl_t:" '$1==t{f=1;next} f&&/BOOT_LOCKED\) rm -f/{ok=1} f&&/^$/{exit} END{exit !ok}' "$_bl_mk" || _bl_clean="n ($_bl_t)"
+done
 # .DELETE_ON_ERROR must never unlink the published image a VM may have written.
 grep -qE '^\.PRECIOUS:.*\$\(SYSTEM_DISK\)' "$_bl_mk" || _bl_disk="n (not .PRECIOUS)"
 # ...and every script that starts QEMU and names build/system-disk.img holds it.
