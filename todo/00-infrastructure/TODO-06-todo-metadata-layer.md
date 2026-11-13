@@ -1536,10 +1536,10 @@ Implementation found a THIRD case of the same defect and corrected one premise. 
       - The collision fixture carries a fifth, independently repairable stamp. Without it every stamp was unrepairable anyway, so a late-refusing build produced an identical rc, message, hash and stale count -- the fixture could not see the ordering it documents (Codex test-coverage, [high]).
       - Budget fixtures assert EXACT counts (100 listed, 1 suppression line, exact totals under `--quiet`) and cover both rare classes under an ambiguity flood. A `-le` bound plus `grep -q` had left an off-by-one cap and a per-diagnostic suppression line -- which restores the O(n) growth -- both green (Codex re-adversarial, [medium]).
       - Two mutation fixtures FAILED CLOSED when these fixes moved the code they patch, which is the designed behavior; they were repaired to pin structure rather than message prose.
-- [/] The auto-rewrite hook still swallows the two new failure classes -- operator-gated
-      [`.claude/hooks/todo_graph_auto_rewrite.py:61`](../../.claude/hooks/todo_graph_auto_rewrite.py) emits its systemMessage only when `returncode == 1 AND "ambiguous" in combined`, then returns 0 regardless, so an unresolvable-or-missing-only run stays silent for the one caller that runs automatically. Raised by BOTH the design and adversarial reviews.
-      - BLOCKER: `.claude/hooks/**` is control plane, which an unattended run may not edit; only an attended session can land it. Owned by §6, which created the hook, but §6 is stamped -- so it is parked here rather than appended there.
-      - The fix is small and known: surface every non-zero result, with distinct messages for rc 1 (incomplete) and rc 2 (refused), update the exit-contract comment at line 61 and the `.claude/hooks/MANIFEST.md` row, and add an end-to-end fixture per class.
+- [x] The auto-rewrite hook surfaces every non-zero repair result
+      - [`todo_graph_auto_rewrite.py`](../../.claude/hooks/todo_graph_auto_rewrite.py) maps rc 1 to "left stamps it could not repair" (summary line plus the first named FAIL), rc 2 to a refusal, any other exit, a timeout or a launch failure to "not checked"; rc 0 stays silent.
+      - The old test was worse than filed: it keyed on "ambiguous", which the summary always prints ("0 ambiguous"), so every incomplete run was misreported as an ambiguity and a refusal or crash was silent.
+      - [`test_todo_graph_auto_rewrite.py`](../../scripts/tests/test_todo_graph_auto_rewrite.py) runs the real hook over a fake validator per class (7 cases, in the tooling pack); against the previous hook 5 fail.
 - [x] Commit: `"todo-graph: repair mode fails visibly on targets it cannot resolve"`
 
 **Test checkpoint:** a repair run over a corpus with one unresolvable target exits non-zero (or warns, per the recorded contract) instead of 0; a repair run over a resolver-key-colliding corpus refuses up front; `bash scripts/todo-graph/tests/test_build.sh` green.
@@ -1554,7 +1554,6 @@ Implementation found a THIRD case of the same defect and corrected one premise. 
 > - Scope boundary: exit contract and collision refusal only; §32 and §33 were split out before implementation, and the hook fix is control plane.
 
 > **Verified:** 2026-08-09 | commit `859d96cf0` | 4/5 items | build OK | test_build 514/514, test-tooling 1319/1319, 28326 kernel + 17 user-mode, lint 0 errors
-> **Deferred:** awaiting-answer Q42 (`todo/answers.md`, the receipt-surface guard is gone): [H] the auto-rewrite hook surfaces rc 1 only when the output contains "ambiguous", so it still discards the unresolvable and missing-item classes for the one caller that runs automatically (reason: `.claude/hooks/**` is control plane an unattended run may not edit) -> XREF: 00-infrastructure/TODO-06 §29 (item: "The auto-rewrite hook still swallows the two new failure classes -- operator-gated" at line 1539)
 > **Quality reviewed:** 2026-08-09 | Codex 7x (design, adversarial, test-coverage, adversarial, consistency, perf, re-adversarial) | 3H+8M+0L fixed, 1 open | scope: kernel-code-quality N/A (host-side Python tooling, no kernel surface)
 
 -> XREF: [`TODO-06 §26`](#26-domain-code-resolution-picks-a-directory-by-cache-order) -- the section whose review found this (item: "Commit: `\"todo-graph: domain codes resolve by directory, not by cache order\"`"); it fixed the RESOLVER and deliberately left repair-mode's exit contract alone, because that is a decision about what `--fix-line-numbers` promises rather than about what a reference means.

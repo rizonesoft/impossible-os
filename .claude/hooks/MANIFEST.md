@@ -111,7 +111,7 @@
 | skill_claudemd_sync_reminder | `.claude/hooks/skill_claudemd_sync_reminder.py` | REMINDER | Y | `.claude/skills/` | -- | After a skill `.md` edit, nudges to keep CLAUDE.md Skills table in sync if structural. |
 | scope_gap_dedup_check | `.claude/hooks/scope_gap_dedup_check.py` | REMINDER | N | -- | -- | After a TODO edit, flags scope-gap dedup misses against existing TODOs. |
 | accepted_xref_warn | `.claude/hooks/accepted_xref_warn.py` | REMINDER | N | -- | -- | After a TODO edit, warns on Accepted/Deferred XREFs lacking concrete parentheticals (commit-time blocker is `accepted_xref_block`). |
-| todo_graph_auto_rewrite | `.claude/hooks/todo_graph_auto_rewrite.py` | SIDE-EFFECT | N | -- | -- | After a TODO `.md` edit, runs `todo-graph/validate.py --fix-line-numbers --write` to keep stamp parentheticals fresh. Surfaces ambiguity via systemMessage. |
+| todo_graph_auto_rewrite | `.claude/hooks/todo_graph_auto_rewrite.py` | SIDE-EFFECT | N | -- | -- | After a TODO `.md` edit, runs `todo-graph/validate.py --fix-line-numbers --write` to keep stamp parentheticals fresh. Surfaces every non-zero result via systemMessage: rc 1 incomplete (ambiguous, unresolvable or missing-item stamps), rc 2 refused, anything else or a timeout as unfinished; fixtures in `scripts/tests/test_todo_graph_auto_rewrite.py`. |
 
 ## Helper Modules (imported by hooks, not invoked directly)
 
