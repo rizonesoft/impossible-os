@@ -1549,9 +1549,9 @@ Implementation found a THIRD case of the same defect and corrected one premise. 
 > **Notes:**
 > - Shipped: repair mode names every stamp it could not repair, counts a third class (`missing_items`), exits 1 on any of the three, and refuses at rc 2 on a resolver-key collision.
 > - Runs through `main()`'s single call site (`fix_line_numbers` now returns a 5-tuple) and the existing `_refuse` path; no gate or CI job invokes repair mode.
-> - Downstream: 125 previously-silent live failures (50 unresolvable, 75 missing) now emit diagnostics -- but only to a caller that reads them; the auto-rewrite hook still discards them.
+> - Downstream: 125 previously-silent live failures (50 unresolvable, 75 missing) now emit diagnostics, and since 2026-11-13 the auto-rewrite hook reports each incomplete, refused or crashed run to the session that made the edit.
 > - Canonical doc: the exit contract sits in `validate.py`'s CLI header beside `--fix-line-numbers`, restated at the return site; rc 2 explicitly does NOT promise an untouched corpus.
-> - Scope boundary: exit contract and collision refusal only; §32 and §33 were split out before implementation, and the hook fix is control plane.
+> - Scope boundary: exit contract and collision refusal only; §32 and §33 were split out before implementation. The hook fix, first parked as control plane, shipped 2026-11-13 in `b96f6fb54`.
 
 > **Verified:** 2026-08-09 | commit `859d96cf0` | 4/5 items | build OK | test_build 514/514, test-tooling 1319/1319, 28326 kernel + 17 user-mode, lint 0 errors
 > **Quality reviewed:** 2026-08-09 | Codex 7x (design, adversarial, test-coverage, adversarial, consistency, perf, re-adversarial) | 3H+8M+0L fixed, 1 open | scope: kernel-code-quality N/A (host-side Python tooling, no kernel surface)
@@ -1560,7 +1560,7 @@ Implementation found a THIRD case of the same defect and corrected one premise. 
 -> XREF: [`TODO-06 §23`](#23-validatepy-rebuild-recovery-and-the-baseline-cache) -- the section that owns `validate.py`'s recovery and repair surface (item: "Commit: `\"todo-graph: validate.py rebuild recovery + baseline cache\"`"); it is stamped, so this residue is owned here rather than appended to it.
 -> XREF: [`TODO-06 §32`](#32-in-file-anchor-links-are-checked-by-nothing) -- split out of this section before implementation (item: "Commit: `\"todo-graph: in-file anchor links validated against the file's own headings\"`"); it is a per-file check that needs no cache, no resolver and no repair mode, so it shares nothing with this section but the review that found it.
 -> XREF: [`TODO-06 §33`](#33-stamp-target-capture-splits-a-link-whose-label-contains-a-space) -- split out of this section before implementation (item: "Commit: `\"todo-graph: stamp-target capture takes a whole markdown link\"`"); it is a PRODUCER-side extraction fix with corpus-wide blast radius, where this section is a consumer-side exit-contract decision.
--> XREF: [`TODO-06 §6`](#6-ci-gate-and-make-target) -- the section that created the auto-rewrite hook parked above (item: "Commit: `\"ci/todo-graph: gate todo/ commits on graph validation (with diff + auto-rewrite)\"`"); it is stamped, so the hook's exit-code handling is parked here as operator-gated rather than appended there.
+-> XREF: [`TODO-06 §6`](#6-ci-gate-and-make-target) -- the section that created the auto-rewrite hook whose exit handling this section corrected (item: "Commit: `\"ci/todo-graph: gate todo/ commits on graph validation (with diff + auto-rewrite)\"`"); it is stamped, so the hook's exit-code handling is parked here as operator-gated rather than appended there.
 
 ---
 

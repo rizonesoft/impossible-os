@@ -24,6 +24,7 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 HOOK = ROOT / ".claude" / "hooks" / "todo_graph_auto_rewrite.py"
 
+RAISE = object()
 SUMMARY = "[validate.py] fix-line-numbers: 0 update(s), {a} ambiguous, {u} unresolvable target(s), {m} missing item(s); mode=WRITE"
 CLASSES = [
     # label, rc, output, expected substring (None = silent)
@@ -37,9 +38,14 @@ CLASSES = [
     ("a missing item alone is incomplete", 1,
      "[validate.py] FAIL fix-line-numbers: item 'gone' not found in t.md\n" + SUMMARY.format(a=0, u=0, m=1),
      "left stamps it could not repair"),
-    ("a refusal says nothing changed", 2,
-     "[validate.py] REFUSED: duplicate resolver key (00, 4)", "REFUSED before repairing any stamp"),
-    ("a crash is a failure, not silence", 3, "Traceback: boom", "failed (exit 3)"),
+    ("an early refusal is a refusal", 2,
+     "[validate.py] REFUSED: duplicate resolver key (00, 4)", "REFUSED: "),
+    ("a late refusal names the files already rewritten", 2,
+     "[validate.py] REFUSED: todo/b.md changed during repair. ALREADY REWRITTEN: todo/a.md",
+     "already be rewritten: ALREADY REWRITTEN: todo/a.md"),
+    # RAISE makes the fake die on a real uncaught ImportError (exit 1).
+    ("a Python crash is not an incomplete repair", 1, RAISE, "did not finish"),
+    ("another exit is a failure, not silence", 3, "Traceback: boom", "failed (exit 3)"),
 ]
 
 
@@ -48,7 +54,10 @@ def run_class(rc, output):
         subprocess.run(["git", "init", "-q", tmp], check=True, timeout=30)
         fake = pathlib.Path(tmp, "scripts", "todo-graph", "validate.py")
         fake.parent.mkdir(parents=True)
-        fake.write_text(f"import sys\nsys.stdout.write({output!r})\nsys.exit({rc})\n")
+        if output is RAISE:
+            fake.write_text("import no_such_module_for_this_fixture\n")
+        else:
+            fake.write_text(f"import sys\nsys.stdout.write({output!r})\nsys.exit({rc})\n")
         event = {"tool_input": {"file_path": os.path.join(tmp, "todo", "x", "TODO-01.md")}}
         proc = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event),
                               capture_output=True, text=True, cwd=tmp, timeout=60)
@@ -61,8 +70,12 @@ def main():
     for label, rc, output, want in CLASSES:
         code, msg = run_class(rc, output)
         ok = code == 0 and ((want is None and msg is None) or (want and msg and want in msg))
-        if ok and rc == 1 and "ambiguous item" not in output:
+        if ok and rc == 1 and (output is RAISE or "ambiguous item" not in output):
             ok = "ambiguous item-name" not in msg  # not misreported as an ambiguity
+        if ok and (output is RAISE or "fix-line-numbers: " not in output):
+            ok = "safe rewrites were applied" not in msg  # never claims an unfinished run repaired anything
+        if ok and rc == 2:
+            ok = "changed nothing" not in msg and "before repairing" not in msg
         bad += not ok
         print(f"{'PASS' if ok else 'FAIL'} {label} (hook exit {code}, message {msg!r:.100})")
     # A timeout cannot be reached end-to-end inside the 15 s budget cheaply, so

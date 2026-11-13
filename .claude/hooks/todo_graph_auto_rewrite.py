@@ -7,8 +7,10 @@
 #   rc 0  every stamp examined is correct -> silent
 #   rc 1  the repair RAN and is INCOMPLETE (ambiguous, unresolvable or
 #         missing-item stamps; the safe rewrites were still applied)
-#   rc 2  REFUSED before the repair pass (e.g. a resolver-key collision)
-#   any other rc, a timeout or a launch failure: the repair did not finish
+#   rc 2  REFUSED (e.g. a resolver-key collision); files written before a
+#         late refusal are named on its ALREADY REWRITTEN line
+#   an rc 1 without the completion summary (a Python crash), any other rc,
+#   a timeout or a launch failure: the repair did not finish
 # Until 2026-11-13 only an rc 1 whose output said "ambiguous" was shown,
 # so the unresolvable and missing-item classes reached nobody.
 #
@@ -92,20 +94,26 @@ def message_for(rc, stdout: str, stderr: str, timed_out: bool = False):
                 "scripts/todo-graph/validate.py --fix-line-numbers --write")
     if rc == 0:
         return None
-    if rc == 1:
-        m = SUMMARY.search(combined)
+    m = SUMMARY.search(combined)
+    if rc == 1 and m:
+        # The summary line is printed only when the repair pass finished, so
+        # an rc 1 without it is an ordinary crash (Python exits 1 on an
+        # uncaught exception), not an incomplete repair.
         fails = [ln for ln in combined.splitlines() if "FAIL fix-line-numbers:" in ln]
         first = f" First: {_clip(fails[0], 200)}" if fails else ""
-        summary = _clip(m.group(0)) if m else _clip(combined)
-        return (f"{PREFIX} left stamps it could not repair ({summary}).{first} "
+        return (f"{PREFIX} left stamps it could not repair ({_clip(m.group(0))}).{first} "
                 "Fix each named stamp parenthetical by hand; the safe rewrites were applied.")
     if rc == 2:
-        # rc 2 refuses before the repair pass; it does not promise an
-        # untouched corpus (validate.py's exit contract), so neither does this.
-        return (f"{PREFIX} REFUSED before repairing any stamp: {_clip(combined)}. "
+        # A refusal can come after earlier files were already rewritten
+        # (validate.py's exit contract); its ALREADY REWRITTEN list is the
+        # recovery evidence, so it is quoted whole rather than clipped away.
+        done = [ln for ln in combined.splitlines() if "ALREADY REWRITTEN" in ln]
+        partial = (f" Some files may already be rewritten: {_clip(done[0][done[0].index('ALREADY REWRITTEN'):], 600)}"
+                   if done else "")
+        return (f"{PREFIX} REFUSED: {_clip(combined)}.{partial} "
                 "Resolve the refusal, then re-run it.")
     return (f"{PREFIX} failed (exit {rc}): {_clip(combined) or 'no output'}. "
-            "Stamp line numbers were not checked.")
+            "It did not finish, so which stamps it repaired is unknown.")
 
 
 if __name__ == "__main__":

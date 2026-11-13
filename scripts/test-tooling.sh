@@ -1487,6 +1487,22 @@ else
     t_fail "scripts/tests/test_todo_fence.py not found"
 fi
 
+# The TODO auto-rewrite hook's exit mapping
+# (scripts/tests/test_todo_graph_auto_rewrite.py): the real hook over a fake
+# validator per exit class; each case prints PASS or FAIL on its own line.
+AUTO_REWRITE_TEST="$REPO_ROOT/scripts/tests/test_todo_graph_auto_rewrite.py"
+if [ -f "$AUTO_REWRITE_TEST" ]; then
+    AUTO_REWRITE_OUT=$(_tt_nested_collect todo_auto_rewrite python3 "$AUTO_REWRITE_TEST")
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/tests/test_todo_graph_auto_rewrite.py PASS ($(printf '%s\n' "$AUTO_REWRITE_OUT" | tail -1))"
+    else
+        t_fail "scripts/tests/test_todo_graph_auto_rewrite.py FAIL ($(printf '%s\n' "$AUTO_REWRITE_OUT" | grep '^FAIL' | cut -c1-120 | tr '\n' ' '))"
+        _tt_nested_fail_detail "test_todo_graph_auto_rewrite" "$AUTO_REWRITE_OUT"
+    fi
+else
+    t_fail "scripts/tests/test_todo_graph_auto_rewrite.py not found"
+fi
+
 # The docs-site generator and drift gate (scripts/site/tests/test_build.py): link
 # and anchor rules (tracked files only, same-page and encoded anchors, raw HTML
 # href/src via a tag scanner), project regions, the shrink-only coverage baseline
