@@ -514,3 +514,13 @@ Section 39 listed the parks that waited on an operator decision. The mandate han
 - **j (02-kernel-core/TODO-03 §9):** the run vendors zstd itself (an upstream release, the BSD arm of its BSD/GPLv2 licence, `src/libs/PROVENANCE.md` and `CREDITS.md` rows); the run has network, so "headless no network" no longer holds. The allocation path and the consumer workspace stay ordinary prerequisites of that section. Reversal: remove the vendored tree and its two rows.
 
 A: (run decision, 2026-11-13) as listed. Each stamp carries `awaiting-answer Q43`, so its section is open work.
+
+## Q44 (00-infrastructure/TODO-08 §41): how does a section that publishes the CI image keep to one push?
+
+Section 41 moves the CI jobs into an image pinned by digest. The digest exists only after the image is published, and the image is published by a workflow on `main`, so the commit that pins it cannot be the commit that first builds it. The rule is one push per section, watched to green.
+
+- **A:** two pushes for this section only. Push 1 adds the image, its toolchain manifest and the publishing workflow and changes no job; push 2 pins the digest the publish printed, removes every install step and adds the scanner. Each push is watched to green.
+- **B:** publish from this machine with a personal token, which puts a credential in play and builds the shipped toolchain outside CI.
+- **C:** build the image inside `build.yml` on every run, which is the install-at-run-time failure the section removes.
+
+A: (run decision, 2026-11-13) A. Later toolchain changes need two pushes the same way (publish, then pin), which is the property the section asks for: the toolchain moves only when a digest changes. Reversal cost: none; the pin can return to a runner label in one commit.

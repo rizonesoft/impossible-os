@@ -511,7 +511,7 @@ fi
 if ! command -v python3 >/dev/null 2>&1; then
     t_fail "python3 available for YAML parse" "install python3"
 else
-    for wf in build.yml release.yml pages.yml labeler.yml stale.yml; do
+    for wf in build.yml release.yml pages.yml labeler.yml stale.yml ci-image.yml; do
         path="$REPO_ROOT/.github/workflows/$wf"
         if [ ! -f "$path" ]; then
             t_fail ".github/workflows/$wf exists"

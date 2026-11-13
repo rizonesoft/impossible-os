@@ -1,0 +1,64 @@
+# The CI toolchain: every apt package the pinned CI image holds, one per line.
+#
+# scripts/ci/toolchain.sh installs exactly this list into the image built from
+# scripts/ci/image/Dockerfile, and the CI jobs run in that image by digest, so no
+# job installs a package at run time. scripts/ci/check-pinned-image.py reads it.
+# A tool a job needs goes here, including one the hosted runner used to supply.
+#
+# @LLVM@ is the LLVM major version, set in scripts/ci/toolchain.sh.
+
+# Compiler and linker (setup.sh sentinels; clangd for the LSP-MCP bridge tests,
+# clang-tidy for the static-analysis gate fixtures, libclang-rt for the host fuzz targets).
+clang-@LLVM@
+clangd-@LLVM@
+clang-tidy-@LLVM@
+lld-@LLVM@
+llvm-@LLVM@
+libclang-rt-@LLVM@-dev
+
+# Build.
+make
+gawk
+gcc
+nasm
+ccache
+bear
+mtools
+dosfstools
+fdisk
+
+# Boot and test.
+ovmf
+qemu-system-x86
+qemu-utils
+netcat-openbsd
+
+# Python tooling (jsonschema: the todo-graph build; pytest: the control-plane suite;
+# numpy, pil, skimage: visual regression).
+python3
+python3-yaml
+python3-jsonschema
+python3-pytest
+python3-numpy
+python3-pil
+python3-skimage
+pipx
+
+# Visual regression.
+imagemagick
+tesseract-ocr
+
+# Supplied by the hosted runner until 2026-11-13, needed by the jobs and suites.
+git
+gh
+nodejs
+ca-certificates
+jq
+zip
+unzip
+xz-utils
+zstd
+file
+procps
+psmisc
+curl

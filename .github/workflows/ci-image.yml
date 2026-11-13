@@ -1,0 +1,73 @@
+# Impossible OS: CI image
+#
+# Builds and publishes the pinned CI image (scripts/ci/image/Dockerfile) when its
+# inputs change. The other workflows run their jobs in it by digest; moving them to
+# a new image is a commit that changes that digest, never a rebuild in place.
+
+name: CI image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/ci/image/**
+      - scripts/ci/toolchain.sh
+      - scripts/ci/toolchain-packages.txt
+      - scripts/ci-qemu-version.txt
+      - .github/workflows/ci-image.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ci-image
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  publish:
+    name: Build and publish the CI image
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build the image
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/impossible-os-ci"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker build -f scripts/ci/image/Dockerfile -t "$IMAGE:$GITHUB_SHA" .
+
+      # The CI-parity gate compares the local QEMU with this file, so the file
+      # must name the QEMU the image holds.
+      - name: The image's QEMU is the one scripts/ci-qemu-version.txt records
+        run: |
+          want="$(grep -vE '^[[:space:]]*(#|$)' scripts/ci-qemu-version.txt | head -1 | tr -d '[:space:]')"
+          got="$(docker run --rm "$IMAGE:$GITHUB_SHA" qemu-system-x86_64 --version | head -1)"
+          echo "image: $got; recorded: $want"
+          if [[ "$got" != *"version $want"* ]]; then
+            echo "::error::the image holds '$got' but scripts/ci-qemu-version.txt records $want"
+            exit 1
+          fi
+
+      - name: The toolchain passes setup.sh --verify as the unprivileged user
+        run: docker run --rm -u 1001 -v "$PWD:/w" -w /w "$IMAGE:$GITHUB_SHA" bash scripts/setup.sh --verify
+
+      - name: Publish
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:$GITHUB_SHA"
+          digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$GITHUB_SHA")"
+          echo "::notice title=CI image::$digest"
+          printf '### CI image\n\n`%s`\n\nPin it with `container: image: %s`.\n' "$digest" "$digest" >> "$GITHUB_STEP_SUMMARY"
