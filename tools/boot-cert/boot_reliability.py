@@ -354,8 +354,9 @@ def _apply_boot_conf(patches, test_suite):
 
 
 def _reset_boot_conf():
-    subprocess.run(["bash", "scripts/patch-boot-conf.sh", "reset"],
-                   cwd=REPO_ROOT, check=False)
+    """Restore the default boot.conf; returns the patch script's exit status."""
+    return subprocess.run(["bash", "scripts/patch-boot-conf.sh", "reset"],
+                          cwd=REPO_ROOT, check=False).returncode
 
 
 def _run_once(launcher_argv, accepts, disk, timeout_sec, serial_out, vars_path,
@@ -529,12 +530,34 @@ def run_reliability(args):
             lock_fd.close()
         lock_fd = None
 
+    # Hold the canonical image's boot.conf lock (scripts/lib/boot-conf-lock.sh)
+    # for the whole series: this run resets and patches boot.conf and boots
+    # the image between those writes, so no other run may patch, reset,
+    # rebuild or boot it meanwhile. Children (the launcher, patch-boot-conf.sh)
+    # share the hold through BOOT_CONF_LOCK_HELD=1.
+    conf_fd = None
+    prior_held = os.environ.get("BOOT_CONF_LOCK_HELD")
+    if prior_held != "1":
+        conf_fd = open(os.path.join(REPO_ROOT, ".boot-conf.lock"), "w")
+        try:
+            fcntl.flock(conf_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            conf_fd.close()
+            if lock_fd is not None:
+                lock_fd.close()
+            sys.stderr.write("boot-reliability: another run is using "
+                             "build/system-disk.img (.boot-conf.lock)\n")
+            return 1
+        os.environ["BOOT_CONF_LOCK_HELD"] = "1"
+
     patched = bool(args.boot_conf_patch or args.test_suite)
     phases = [("cold", args.cold)] + ([("warm", args.warm)] if args.warm else [])
+    restore_failed = False
     try:
         for phase, count in phases:
             if phase == "cold":
-                _reset_boot_conf()
+                if _reset_boot_conf() != 0:
+                    raise RuntimeError("boot-reliability: could not reset boot.conf before the cold series")
                 _apply_boot_conf(args.boot_conf_patch, args.test_suite)
             for _ in range(count):
                 serial_out = os.path.join(out_dir, f"serial-{idx:03d}-{phase}.log")
@@ -571,8 +594,14 @@ def run_reliability(args):
     finally:
         # Always restore boot.conf even if a launcher raised mid-series, so a
         # crashed run can never leave the certified image patched for the next.
-        if patched:
-            _reset_boot_conf()
+        if patched and _reset_boot_conf() != 0:
+            restore_failed = True
+        if conf_fd is not None:
+            conf_fd.close()
+            if prior_held is None:
+                os.environ.pop("BOOT_CONF_LOCK_HELD", None)
+            else:
+                os.environ["BOOT_CONF_LOCK_HELD"] = prior_held
         if lock_fd is not None:
             try:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -605,6 +634,10 @@ def run_reliability(args):
     # whole-run skip (nothing actually booted -- e.g. host lacks the VM) is a
     # HARD FAIL for a release gate unless the caller opted in with --allow-skip,
     # so CI cannot ship without ever exercising the boot-reliability gate.
+    if restore_failed:
+        sys.stderr.write("boot-reliability: boot.conf could not be restored after the run; "
+                         "run `bash scripts/patch-boot-conf.sh reset`\n")
+        return 1
     if rel["decision"] in ("pass", "degraded"):
         return 0
     if rel["decision"] == "skip":

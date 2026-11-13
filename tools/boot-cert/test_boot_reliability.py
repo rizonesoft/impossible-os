@@ -413,6 +413,27 @@ check("relative --disk locks under REPO_ROOT regardless of cwd",
       os.path.exists(_lockf))
 shutil_cwd = __import__("shutil"); shutil_cwd.rmtree(_tmpcwd, ignore_errors=True)
 
+# The image's boot.conf lock (scripts/lib/boot-conf-lock.sh): while another run
+# holds it, a series is refused before it resets, patches or boots anything;
+# once free, a series holds it and leaves the environment as it found it.
+import fcntl  # noqa: E402
+_conf_lock = os.path.join(_REPO_ROOT, ".boot-conf.lock")
+_marker = os.path.join(_MOCK_DIR, "launched")
+_mock_mark = os.path.join(_MOCK_DIR, "mock-mark.sh")
+with open(_mock_mark, "w") as fh:
+    fh.write(f'#!/bin/bash\n: > "{_marker}"\nexit 3\n')
+_env_before = os.environ.get("BOOT_CONF_LOCK_HELD")
+with open(_conf_lock, "w") as _holder:
+    fcntl.flock(_holder, fcntl.LOCK_EX)
+    rc = br.run_reliability(mk_args(launcher_cmd=["bash", _mock_mark], cold=1, warm=0,
+                                    out=os.path.join(_MOCK_DIR, "out-held")))
+check("a held .boot-conf.lock refuses the series (rc 1) before any boot",
+      rc == 1 and not os.path.exists(_marker))
+rc = br.run_reliability(mk_args(launcher_cmd=["bash", _MOCK_QEMU], cold=1, warm=0,
+                                out=os.path.join(_MOCK_DIR, "out-free")))
+check("a free lock lets the series run and restores BOOT_CONF_LOCK_HELD",
+      rc == 0 and os.environ.get("BOOT_CONF_LOCK_HELD") == _env_before)
+
 import shutil  # noqa: E402
 shutil.rmtree(_MOCK_DIR, ignore_errors=True)
 

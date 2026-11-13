@@ -1306,18 +1306,20 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
                 tools/make-system-disk.c tools/mkfs-ixfs.c scripts/stage-esp-loader.sh scripts/secure-boot/shim-hash-check.sh \
                 $(SYSROOT)/hello.exe
 	@echo "[DISK] Building system disk..."
-	@# Never rewrite a disk a run is booting: make-system-disk truncates it.
-	@$(BOOT_LOCKED) true
+	@# The image is built as $@.new and published by one rename under the image
+	@# lock at the end, so a run booting the old image keeps its own inode and
+	@# is never truncated, and no run's boot.conf patch is replaced mid-run.
+	@rm -f $@.new $@.new.info
 	@mkdir -p $(BUILD_DIR)/tools
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-system-disk tools/make-system-disk.c
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/mkfs-ixfs tools/mkfs-ixfs.c
 	@# Step 1: Create GPT image with partition table (EFI + BlackBox + IXFS)
-	$(BUILD_DIR)/tools/make-system-disk -o $@ -s $(SYSTEM_DISK_SIZE) --efi-size $(EFI_SIZE) --ab
+	$(BUILD_DIR)/tools/make-system-disk -o $@.new -s $(SYSTEM_DISK_SIZE) --efi-size $(EFI_SIZE) --ab
 	@# Step 2: Format EFI partition as FAT32 and copy boot files
 	@# Bound the ESP FAT to EFI_SIZE (the trailing block count); without it
 	@# mkfs.fat sizes the filesystem from offset-to-EOF, which on the grown A/B
 	@# disk would overrun BlackBox + the metadata + both slots.
-	. $@.info && mkfs.fat -F 32 -s 1 --offset $$(( $$EFI_OFFSET / 512 )) $@ $$(( $$EFI_SIZE / 1024 ))
+	. $@.new.info && mkfs.fat -F 32 -s 1 --offset $$(( $$EFI_OFFSET / 512 )) $@.new $$(( $$EFI_SIZE / 1024 ))
 	@mkdir -p $(BUILD_DIR)/efi_staging/EFI/BOOT
 	@mkdir -p $(BUILD_DIR)/efi_staging/boot
 	@# --- EFI chain-load layout ---
@@ -1330,21 +1332,21 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
 	@cp $(KERNEL_BIN) $(BUILD_DIR)/efi_staging/boot/kernel.exe
 	@mkdir -p $(BUILD_DIR)/efi_staging/EFI/ImpossibleOS
 	@cp resources/boot/boot.conf $(BUILD_DIR)/efi_staging/EFI/ImpossibleOS/boot.conf
-	mcopy -i $@@@$(EFI_OFFSET) -s $(BUILD_DIR)/efi_staging/* ::
+	mcopy -i $@.new@@$(EFI_OFFSET) -s $(BUILD_DIR)/efi_staging/* ::
 	@rm -rf $(BUILD_DIR)/efi_staging
 	@# Step 2b: Format BlackBox FAT32 from the GENERATED .info offset/size.
 	@# EFI + IXFS already source their realized offsets from .info; the Makefile
 	@# BB_OFFSET/BB_SIZE defaults only line up when --efi-size is unchanged, so a
 	@# non-default EFI_SIZE would otherwise format BlackBox at the wrong byte offset.
-	. $@.info && mkfs.fat -F 32 -n "BLACKBOX" -s 1 --offset $$(( $$BB_OFFSET / 512 )) $@ $$(( $$BB_SIZE / 1024 ))
-	. $@.info && mmd -i $@@@$$BB_OFFSET ::Logs ::Boot ::Crash ::Perf ::Diag ::Tools
-	. $@.info && mmd -i $@@@$$BB_OFFSET ::Crash/WER ::Logs/Serial
+	. $@.new.info && mkfs.fat -F 32 -n "BLACKBOX" -s 1 --offset $$(( $$BB_OFFSET / 512 )) $@.new $$(( $$BB_SIZE / 1024 ))
+	. $@.new.info && mmd -i $@.new@@$$BB_OFFSET ::Logs ::Boot ::Crash ::Perf ::Diag ::Tools
+	. $@.new.info && mmd -i $@.new@@$$BB_OFFSET ::Crash/WER ::Logs/Serial
 	@# Round-trip marker for test_fileio.exe. Static content built into the
 	@# FAT32 image; user-mode reads it back via X:\Diag\blackbox-marker.txt
 	@# to prove BPB validate + mount + dir-cache + file-open + read all
 	@# work end-to-end. 11 bytes, no NUL, no newline.
 	@printf "BlackBox-v1" > $(BUILD_DIR)/blackbox-marker.txt
-	. $@.info && mcopy -i $@@@$$BB_OFFSET $(BUILD_DIR)/blackbox-marker.txt ::Diag/blackbox-marker.txt
+	. $@.new.info && mcopy -i $@.new@@$$BB_OFFSET $(BUILD_DIR)/blackbox-marker.txt ::Diag/blackbox-marker.txt
 	@rm -f $(BUILD_DIR)/blackbox-marker.txt
 	@# Step 3: Format IXFS Slot A + Slot B from the GENERATED .info offsets.
 	@# A/B mode shifts IXFS past the metadata partition, so the offsets must come
@@ -1355,19 +1357,20 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
 	@# disk adapter lands.
 	@mkdir -p $(BUILD_DIR)/sysroot/Impossible/System/Logs/Serial
 	@cp $(BUILD_DIR)/kernel.sym $(BUILD_DIR)/sysroot/Impossible/System/kernel.sym
-	. $@.info && $(BUILD_DIR)/tools/mkfs-ixfs \
-		-o $@ -s $$IXFS_SIZE -l "Impossible OS" \
+	. $@.new.info && $(BUILD_DIR)/tools/mkfs-ixfs \
+		-o $@.new -s $$IXFS_SIZE -l "Impossible OS" \
 		--offset $$IXFS_OFFSET --populate $(BUILD_DIR)/sysroot
-	. $@.info && $(BUILD_DIR)/tools/mkfs-ixfs \
-		-o $@ -s $$IXFS_B_SIZE -l "Impossible OS" \
+	. $@.new.info && $(BUILD_DIR)/tools/mkfs-ixfs \
+		-o $@.new -s $$IXFS_B_SIZE -l "Impossible OS" \
 		--offset $$IXFS_B_OFFSET --populate $(BUILD_DIR)/sysroot
 	@# Step 4: Recovery partition (FAT32, so the firmware can later load the
 	@# recovery.exe UEFI app). Populated now with kernel.bak = the last
 	@# known-good kernel; recovery.exe + ixfs-fsck land with the recovery
 	@# bootloader + fsck tool. The GPT entry is marked read-only (attribute
 	@# bit 60) by make-system-disk; the FAT here is the on-disk content.
-	. $@.info && mkfs.fat -F 32 -n "RECOVERY" -s 1 --offset $$(( $$RECOVERY_OFFSET / 512 )) $@ $$(( $$RECOVERY_SIZE / 1024 ))
-	. $@.info && mcopy -i $@@@$$RECOVERY_OFFSET $(KERNEL_BIN) ::kernel.bak
+	. $@.new.info && mkfs.fat -F 32 -n "RECOVERY" -s 1 --offset $$(( $$RECOVERY_OFFSET / 512 )) $@.new $$(( $$RECOVERY_SIZE / 1024 ))
+	. $@.new.info && mcopy -i $@.new@@$$RECOVERY_OFFSET $(KERNEL_BIN) ::kernel.bak
+	$(BOOT_LOCKED) sh -c 'mv -f "$$1.new.info" "$$1.info" && mv -f "$$1.new" "$$1"' _ $@
 	@echo "[DISK] $@ created ($(SYSTEM_DISK_SIZE) GPT: EFI + BlackBox + ABMeta + Slot A + Slot B + Recovery)"
 
 ## run: Build, then launch QEMU booting from system disk (UEFI via OVMF)
@@ -1881,9 +1884,8 @@ test-disks: system-disk
 
 ## clean: Remove all build artifacts
 clean:
-	@# Never delete the disk a run is booting.
-	@$(BOOT_LOCKED) true
-	rm -rf $(BUILD_DIR)
+	@# Never delete the image a run is using: the delete itself holds the lock.
+	$(BOOT_LOCKED) rm -rf $(BUILD_DIR)
 	rm -f $(BUILD_INFO_H)
 	$(MAKE) -C src/boot/uefi clean
 	@echo "[CLEAN] Build directory removed"

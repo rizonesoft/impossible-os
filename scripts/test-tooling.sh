@@ -4923,12 +4923,14 @@ else
     t_fail "boot_conf_reset_armed  a runner patches boot.conf before its reset is armed" "$_bo_bad"
 fi
 
-# Every Makefile recipe that runs QEMU does so under $(BOOT_LOCKED), and the
-# disk-image rule and clean check the lock before they rewrite or delete it.
+# Every Makefile recipe that runs QEMU does so under $(BOOT_LOCKED); the disk
+# rule builds $@.new and renames it into place under the lock (a running VM
+# keeps its own inode), and clean deletes build/ under the lock.
 _bl_mk="$REPO_ROOT/Makefile"
 _bl_bare=$(grep -nE '\$\(QEMU\) \\$' "$_bl_mk" | grep -vF '$(BOOT_LOCKED) $(QEMU)' | cut -d: -f1 | tr '\n' ' ')
-_bl_disk=$(awk '/^\$\(SYSTEM_DISK\):/{f=1} f&&/BOOT_LOCKED\) true/{print "y"; exit} f&&/^$/{exit}' "$_bl_mk")
-_bl_clean=$(awk '/^clean:/{f=1} f&&/BOOT_LOCKED\) true/{print "y"; exit} f&&/^$/{exit}' "$_bl_mk")
+# The disk rule writes only $@.new and publishes it by a rename under the lock.
+_bl_disk=$(awk '/^\$\(SYSTEM_DISK\):/{f=1} f&&/-o \$@ |\$@@@|\$@\.info/{bad=1} f&&/BOOT_LOCKED\) sh -c .mv /{pub=1} f&&/^$/{exit} END{print (pub&&!bad)?"y":"n"}' "$_bl_mk")
+_bl_clean=$(awk '/^clean:/{f=1} f&&/BOOT_LOCKED\) rm -rf \$\(BUILD_DIR\)/{print "y"; exit} f&&/^$/{exit}' "$_bl_mk")
 # ...and every script that starts QEMU and names build/system-disk.img holds it.
 _bl_scripts=""
 while IFS= read -r _bl_f; do
@@ -4936,7 +4938,7 @@ while IFS= read -r _bl_f; do
     grep -q 'boot_conf_lock_hold' "$REPO_ROOT/$_bl_f" || _bl_scripts="$_bl_scripts $_bl_f"
 done < <(cd "$REPO_ROOT" && git ls-files 'scripts/*.sh' 'tools/*.sh' | xargs grep -lE 'qemu-system|\$\{?QEMU' 2>/dev/null | xargs grep -l 'system-disk\.img' 2>/dev/null)
 if [ -z "$_bl_bare" ] && [ "$_bl_disk" = "y" ] && [ "$_bl_clean" = "y" ] && [ -z "$_bl_scripts" ]; then
-    t_pass "boot_locked_recipes  every QEMU recipe and launcher script holds the image lock; the disk rule and clean check it"
+    t_pass "boot_locked_recipes  every QEMU recipe and launcher holds the image lock; the disk is published and cleaned under it"
 else
     t_fail "boot_locked_recipes  something boots, rewrites or deletes the image without the lock" "unlocked QEMU lines: ${_bl_bare:-none} disk=${_bl_disk:-n} clean=${_bl_clean:-n} scripts:${_bl_scripts:- none}"
 fi
