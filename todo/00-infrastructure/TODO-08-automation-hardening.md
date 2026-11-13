@@ -1384,6 +1384,16 @@ About 445 `Deferred:` stamps carry no `awaiting-` token, so their sections read 
 
 > **Test runner:** `bash scripts/overnight/tests/run-all.sh` (91 files, eight with a pytest count); `python3 scripts/overnight/tests/test_run_all_runs_every_test.py`.
 
+> **Notes:**
+> - What shipped: `run-all.sh` runs the tests plain python3 never calls under pytest, fails without pytest, and prints each such file's pytest count; pytest is a bootstrap and CI dependency.
+> - How it integrates: `run_one --pytest` is set only on the pytest route; the routing and dependency work landed in `a48cf547a` and `f0dc4c9ac` during section 33's completion pass.
+> - Downstream effects: a pytest-routed file that ran no test, or fewer than expected, is visible in the commit and push gate's output instead of reading `ok`.
+> - Canonical doc: [development tooling](../../docs/infrastructure/development-tooling.md#local-ci-hooks).
+> - Scope boundary: the control-plane suite only; other suites keep their own runners.
+
+> **Verified:** 2026-11-13 | commit `0731efdbf` | 5/5 items | run-all.sh 91/91 with eight pytest counts (`test_review_pin.py` 65) | test_run_all_runs_every_test.py OK; the count test fails on the previous runner | lint exit 0
+> **Quality reviewed:** 2026-11-13 | Codex passes: plan and round on the staged diff, then round, performance and completion on committed `0731efdbf`, all approving | 0 findings | scope: N/A (host tooling, no kernel/boot source)
+
 ## 41. CI jobs run in the pinned image
 
 > **Spawned-by:** root
