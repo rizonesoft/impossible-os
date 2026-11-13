@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **927 of 2609 sections complete (35%).** 143 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **928 of 2609 sections complete (35%).** 142 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -101,7 +101,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 | [x]  | `D00 T04 §21` | Naming Fork's Child-PML4 Allocation, and Failing That Fork Closed                                                     | none     |     5 |
 | [x]  | `D00 T04 §22` | Honest Machine Artifacts for Skipped Sub-Tests                                                                        | none     |     8 |
 | [x]  | `D00 T04 §23` | Generated Exit-Status ABI for Ring-3 Assertions                                                                       | none     |     3 |
-| [/]  | `D00 T04 §24` | Host-Side JSON Artifact File and Abort-Aware Summaries                                                                | none     |     6 |
+| [x]  | `D00 T04 §24` | Host-Side JSON Artifact File and Abort-Aware Summaries                                                                | none     |     6 |
 | [x]  | `D00 T04 §25` | Non-Forgeable Launcher Record Framing                                                                                 | none     |     8 |
 | [x]  | `D00 T04 §26` | Generator Hardening: Preprocessor-Faithful Constant Extraction                                                        | none     |    11 |
 | [x]  | `D00 T04 §27` | Artifact Consumer Completeness: Run Identity and the Record Name Bound                                                | none     |     5 |
