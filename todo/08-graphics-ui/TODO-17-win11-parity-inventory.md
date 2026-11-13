@@ -11,7 +11,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 > **Goal:** "The same thing, in the same place" becomes measurable. A machine-readable inventory in `docs/design/inventory/` lists every visible element of the Windows 11 interface (shell surfaces, Settings pages, File Explorer, common dialogs, Control Panel, system tools, inbox utilities, shortcuts, gestures, metrics and motion) as one record per element: its name, kind, parent, order, control type, position at a fixed capture profile, and its behaviour in our own words. Every interface section in the roadmap then cites inventory ids, every record is owned by exactly one section that builds it, and a coverage report shows how much of the reference Impossible OS implements. The inventory also records where Windows 11 is inconsistent with itself and the one rule Impossible OS ships instead.
 
 > [!IMPORTANT]
-> **Current state:** Measured 2026-11-14. No inventory, schema, capture tool or baseline exists. The design spec ([`docs/design/shell.md`](../../docs/design/shell.md), [`controls.md`](../../docs/design/controls.md), [`tokens.json`](../../docs/design/tokens.json)) describes the shell from memory and public measurements, not from a captured reference. The operator's host is Windows 11 Pro 26H2, build 26300.9818 (an Insider build), with Python 3.14 at `C:\Python314\python.exe`, reachable from WSL through interop. No reference virtual machine exists. The sister project at `D:\Office` already runs this method for Microsoft 365 (schema, capture tool, baseline, coverage and ownership check); its design is the model, its code is not copied.
+> **Current state:** Measured 2026-11-14. No inventory, schema, capture tool or baseline exists. The design spec ([`docs/design/shell.md`](../../docs/design/shell.md), [`controls.md`](../../docs/design/controls.md), [`tokens.json`](../../docs/design/tokens.json)) describes the shell from memory and public measurements, not from a captured reference. The operator's host is Windows 11 Pro 26H2, build 26300.9818 (an Insider build), with Python 3.14 at `C:\Python314\python.exe`, reachable from WSL through interop. No reference virtual machine exists yet; its installation image is at `R:\11\win11.iso`. The sister project at `D:\Office` already runs this method for Microsoft 365 (schema, capture tool, baseline, coverage and ownership check); its design is the model, its code is not copied.
 
 > [!NOTE]
 > **Owner direction, 2026-11-14:** the Impossible OS interface is modelled 1:1 on Windows 11, leaving out anything copyrighted, and is made more consistent than the original wherever Windows 11 disagrees with itself. The inventory follows the Office inventory method, and nothing is skipped: a surface found during capture that no section below names gets a new section here, filed last.
@@ -139,17 +139,16 @@ The record format and the checker every later section writes against. One JSON o
 
 ## 2. Reference Build and Capture Profile
 
-**Needs:** operator
-
 **Design:** n/a -- pins the reference machine, it draws nothing
 
 Positions only mean something against one fixed machine. This section builds that machine and writes down what it is.
 
 > [!NOTE]
-> **Decision, 2026-11-14:** the reference is a clean Hyper-V virtual machine, not the operator's desktop. The shell's surfaces are singletons that hold personal data (pins, recent files, notifications), and a capture that opens Start on a desktop in use disturbs it. Reversal cost: none, the tool takes the machine as a parameter. The one thing outside the run is the Windows 11 installation image: the operator places a retail Windows 11 Pro ISO at `R:\scratch\win11-ref\win11.iso`.
+> **Decision, 2026-11-14:** the reference is a clean Hyper-V virtual machine, not the operator's desktop. The shell's surfaces are singletons that hold personal data (pins, recent files, notifications), and a capture that opens Start on a desktop in use disturbs it. Reversal cost: none, the tool takes the machine as a parameter. The installation image is in place: the operator put the Windows 11 ISO at `R:\11\win11.iso` on 2026-11-14 (7.2 GB). The VM, its disk and its checkpoints live in `C:\HyperV\ios-win11-ref\`, beside the existing `C:\HyperV\ImpossibleOS` machine; it is durable, so it does not go on the scratch drive.
 
 - [ ] Write `scripts/inventory/ref-vm.ps1`: creates the Generation 2 VM `ios-win11-ref` from the ISO with an unattended answer file
   - 4 vCPU, 8 GiB, 80 GiB dynamic disk, TPM enabled, no network after setup
+  - ISO: `R:\11\win11.iso`. VM path: `C:\HyperV\ios-win11-ref\` (configuration, `disk.vhdx`, checkpoints); both are parameters with these defaults
   - The answer file makes one local account `ref` and declines every optional prompt
 - [ ] Set the VM's display to 1920 by 1080 at 100 percent scaling, display language en-US, regional format en-US, dark mode off (the default), and take the checkpoint `clean`
 - [ ] Write `scripts/inventory/ref-run.ps1`: restores the `clean` checkpoint, copies the capture tool in through PowerShell Direct, runs one capture command, and copies the result out
@@ -159,7 +158,7 @@ Positions only mean something against one fixed machine. This section builds tha
 - [ ] Record the second and third profiles used by §49: `fhd-100-dark` (dark mode) and `fhd-150` (150 percent scaling)
 - [ ] State the rule in `REFERENCE.md`: every captured record carries the build in `capturedFrom`, and a capture from any other build is a new reference recorded there first
 - [ ] Add `ref-vm.ps1 --verify`: exits 0 only when the VM exists, the checkpoint exists and every profile value holds
-- [/] Run `ref-vm.ps1` against the operator's ISO and record the build (waits on the operator placing the ISO; everything above is built and tested against a stub VM name first)
+- [ ] Run `ref-vm.ps1` against `R:\11\win11.iso` and record the edition and build it installs in `REFERENCE.md`
 - [ ] Commit: `"inventory: reference machine and capture profile"`
 
 **Test checkpoint:** `powershell.exe -File scripts/inventory/ref-vm.ps1 --verify` prints `ref-vm: ios-win11-ref ok, profile fhd-100` and exits 0. `REFERENCE.md` names one build. Platform: the operator's Windows host with Hyper-V.
