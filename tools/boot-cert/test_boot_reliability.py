@@ -403,6 +403,8 @@ br.SERIAL_READ_CAP = _orig_cap
 # Non-repo-cwd: --disk is relative, but the flock + launched image must both
 # resolve under REPO_ROOT, not the caller cwd (re-adversarial finding).
 _lockf = os.path.join(_REPO_ROOT, "build", "system-disk.img.boot-cert.lock")
+# A fresh checkout has no build/ yet; the runner locks beside the image there.
+os.makedirs(os.path.dirname(_lockf), exist_ok=True)
 try:
     os.remove(_lockf)
 except OSError:
