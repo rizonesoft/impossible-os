@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **923 of 2607 sections complete (35%).** 144 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **922 of 2607 sections complete (35%).** 145 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -788,7 +788,7 @@ The kernel's own model comes straight after boot because every driver, filesyste
 | [ ]  | `D02 T03 §6`  | cJSON DOM Parser                                                                                  | none       |    11 |
 | [/]  | `D02 T03 §7`  | Mbed TLS Freestanding Port                                                                        | none       |     6 |
 | [x]  | `D02 T03 §8`  | Checksum and Codec Dispatch (CRC32 / CRC32C / base64 / hex)                                       | none       |     7 |
-| [x]  | `D02 T03 §9`  | Zstandard (zstd) Compression                                                                      | none       |     7 |
+| [/]  | `D02 T03 §9`  | Zstandard (zstd) Compression                                                                      | none       |     7 |
 | [x]  | `D02 T03 §10` | SHA-3 / SHAKE (Keccak) Hash Family                                                                | none       |     6 |
 | [x]  | `D02 T04 §1`  | Boot-Phase Aware klog Init                                                                        | none       |     6 |
 | [ ]  | `D02 T04 §2`  | Per-Subsystem Log Splitting                                                                       | none       |     9 |

@@ -47,6 +47,20 @@ def test_an_answered_question_reopens_the_section():
         assert kinds == {"DA"} and cls == st.NEEDS_WORK, (stamp, kinds, cls)
 
 
+def test_an_unresolved_separate_stamp_still_blocks():
+    """An answered stamp does not lift a separate stamp that still waits on hardware."""
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / "todo" / "01-x").mkdir(parents=True)
+        (root / "todo" / "answers.md").write_text("# Answers\n\n## Q1 (x): asked\n\nA: (run decision, 2026-11-13) yes.\n")
+        md = root / "todo" / "01-x" / "TODO-01-x.md"
+        md.write_text("## 1. One\n\n> **Deferred:** [M] awaiting-answer Q1: decided\n"
+                      "> **Deferred:** [M] awaiting-hardware: the run on silicon\n")
+        kinds = st.section_stamps(str(md))[1]
+        assert {"DA", "DR"} <= kinds, kinds
+        assert st.classify_section({"status": "x", "n": 1}, {1: kinds}) == st.BLOCKED
+
+
 def test_an_answered_question_reopens_a_reviewed_section():
     """Verified and Quality-reviewed do not hide a residual whose question is answered:
     dropping the stamp left the section DONE and the residual unread (the closed-park re-judge, 2026-11-13)."""

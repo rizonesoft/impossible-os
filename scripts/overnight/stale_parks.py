@@ -201,12 +201,14 @@ def _selftest() -> int:
         "## 14. Fourteen\n> **Deferred:** [M] receipt-surface Makefiles stay attended\n"
         "## 15. Fifteen\n> **Deferred:** [M] blocked on a redesign, and AMX has no bare-metal platform in the matrix\n"
         "## 16. Sixteen\n> **Deferred:** [M] AMX has no bare metal platform in the matrix\n"
+        "## 17. Seventeen\n> **Deferred:** [H] not vendored (reason: infra -- operator fetch + consumer workspace)\n"
+        "## 18. Eighteen\n> **Deferred:** [H] fail-closed is a new refusal -- an operator policy call\n"
         "## 4. Four\n> **Deferred:** [M] awaiting-operator design decision\n"
         "## 5. Five\n> **Deferred:** [H] blocked on the loader wiring another section owns\n"
         "## 8. Eight\n> **Deferred:** [M] fix edits the Makefile, receipt surface an unattended run may not touch\n"
         "## 6. Six\n- [/] verify on bare metal\n"
         "```\n## 7. Seven\n> **Deferred:** operator decision in a fence\n```\n")})
-    if [(c["section"], c["waits_on"]) for c in closed] != [(1, "person"), (2, "machine"), (10, "retired-guard"), (12, "person"), (13, "person"), (14, "retired-guard"), (15, "machine"), (16, "machine"), (8, "retired-guard")]:
+    if [(c["section"], c["waits_on"]) for c in closed] != [(1, "person"), (2, "machine"), (10, "retired-guard"), (12, "person"), (13, "person"), (14, "retired-guard"), (15, "machine"), (16, "machine"), (17, "person"), (18, "person"), (8, "retired-guard")]:
         fails.append(f"closed {closed}")
     print(f"stale_parks selftest: {fails or 'OK'}")
     return 1 if fails else 0

@@ -198,7 +198,10 @@ def audit(root: Path) -> list:
                 sec = int(sm.group(1)) if sm else (secs[0] if len(secs) == 1 else None)
                 if sec is None:
                     continue
-                if {"V", "Q"} <= stamps_of(tgt).get(sec, set()):
+                tgt_stamps = stamps_of(tgt).get(sec, set())
+                # Shipped means reviewed AND done to the oracle: a reviewed target an
+                # answered park reopened (DA) is open work again, not a shipped owner.
+                if {"V", "Q"} <= tgt_stamps and _section_is_parked(tgt_stamps):
                     csec = _containing_section(lines, i - 1)
                     parked = _section_is_parked(src_stamps.get(csec, set())) \
                         if csec is not None else False

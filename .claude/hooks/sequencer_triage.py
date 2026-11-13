@@ -361,10 +361,10 @@ def classify_section(section, stamps):
     if st not in ("x", "/"):
         return NEEDS_WORK
     kinds = stamps.get(n, frozenset())
+    if "DR" in kinds:
+        return BLOCKED  # still waits on something unresolved, answered stamps or not
     if "DA" in kinds:
         return NEEDS_WORK  # a park whose question is answered: the answer is the instruction
-    if "DR" in kinds:
-        return BLOCKED
     if "D" in kinds:
         return DONE
     if "V" in kinds and "Q" in kinds:

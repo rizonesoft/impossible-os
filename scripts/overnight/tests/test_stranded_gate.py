@@ -135,6 +135,27 @@ def test_parked_means_what_the_oracle_calls_done():
     check("recoverable-deferred-not-parked", sd._section_is_parked({"D", "DR"}) is False)
 
 
+def test_a_reopened_owner_is_not_shipped():
+    """An item parked on an owner section that an answered park reopened is not
+    reported as unblocked: the owner is open work again."""
+    sys.path.insert(0, str(REPO / "scripts/overnight"))
+    import stranded_deferrals as sd
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "todo" / "01-a").mkdir(parents=True)
+        (root / "todo" / "answers.md").write_text("# Answers\n\n## Q1 (x): asked\n\nA: (run decision, 2026-11-13) yes.\n")
+        owner = ("## 1. Owner\n\n- [x] done\n\n> **Verified:** 2026-11-13\n> **Quality reviewed:** 2026-11-13\n"
+                 "> **Deferred:** [M] awaiting-answer Q1: the residual\n")
+        (root / "todo" / "01-a" / "TODO-02-owner.md").write_text(owner)
+        (root / "todo" / "01-a" / "TODO-01-src.md").write_text(
+            "## 1. Source\n\n- [/] wait for it -> XREF: 01-a/TODO-02-owner.md \u00a71\n")
+        reopened = [e for e in sd.audit(root) if e["target"].endswith("TODO-02-owner.md")]
+        (root / "todo" / "01-a" / "TODO-02-owner.md").write_text(owner.replace("awaiting-answer Q1: ", ""))
+        shipped = [e for e in sd.audit(root) if e["target"].endswith("TODO-02-owner.md")]
+        check("reopened-owner-not-shipped", reopened == [])
+        check("control-shipped-owner-listed", len(shipped) == 1)
+
+
 def test_gate_refuses_a_closed_park_until_it_names_a_need():
     """The never-park rule at fixpoint (the closed-park re-judge, 2026-11-13): a Deferred stamp that waits
     on a person or a machine refuses the gate until its section names a `**Needs:**`
@@ -194,6 +215,7 @@ if __name__ == "__main__":
     test_fixpoint_wires_the_gate()
     test_gate_refuses_a_closed_park_until_it_names_a_need()
     test_parked_means_what_the_oracle_calls_done()
+    test_a_reopened_owner_is_not_shipped()
     if FAILS:
         for f in FAILS:
             print("FAIL:", f, file=sys.stderr)

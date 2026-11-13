@@ -686,7 +686,7 @@ _REVIEW_SPAWN_RE = re.compile(
 # park is not refused.
 _WAITS_ON_PERSON_RE = re.compile(
     r"\b(?:awaiting-answer|awaiting-operator|awaiting the operator|operator-gated|operator-reserved|"
-    r"user-reserved|operator decision|owner decision)\b", re.I)
+    r"user-reserved|operator decision|owner decision|operator policy (?:decision|call)|operator fetch)\b", re.I)
 _PARK_SHAPE_RE = re.compile(r"^(?:- \[/\] |> \*\*Deferred:\*\*|\s+- BLOCKED\b)")
 _NEEDS_SOMETHING_RE = re.compile(r"^\*\*Needs:\*\*[ \t]*(?!none\b)\S")
 _DEFERRED_STAMP_RE = re.compile(r"^>\s*\*\*Deferred:\*\*")  # the oracle's DEFERRED_RE

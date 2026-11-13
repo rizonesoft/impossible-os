@@ -398,7 +398,7 @@ Zstandard is now a first-class compression baseline on both platforms: Linux shi
 > - DEFERRED whole-section: zstd source is NOT vendored and the headless runner has no network to fetch it -- needs an operator interactive-fetch (the path that vendored LZ4/miniz/mbedtls).
 > - Second blocker: zstd's CCtx + multi-MB decode window far exceed the 4 KiB `kmalloc` ceiling and per-call `pmm` is unsynchronized (the §3/§4 allocator blocker), so the port needs a caller-provided workspace owned by the IXFS consumer.
 > - Scope boundary: §3 owns LZ4 (speed codec); §9 owns the zstd ratio codec; IXFS §3 selects `algo=2` once both source + workspace land.
-> **Deferred:** [H] zstd freestanding port -- source not vendored (headless no network) + no SMP-safe allocation path (CCtx/window exceed kmalloc ceiling, pmm unsynchronized) + no consumer-owned workspace yet (reason: infra -- operator fetch + consumer workspace) -> XREF: 05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3 (item: "ixfs_compress_block(algo, in_buf, in_len, out_buf, out_size)")
+> **Deferred:** awaiting-answer Q43 (`todo/answers.md` item j, decided): [H] zstd freestanding port -- source not vendored (headless no network) + no SMP-safe allocation path (CCtx/window exceed kmalloc ceiling, pmm unsynchronized) + no consumer-owned workspace yet (reason: infra -- operator fetch + consumer workspace) -> XREF: 05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3 (item: "ixfs_compress_block(algo, in_buf, in_len, out_buf, out_size)")
 
 ---
 
