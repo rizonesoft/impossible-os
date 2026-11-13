@@ -21,46 +21,53 @@ defined symbols in build/kernel.map and FAILS if the intersection is non-empty.
 """
 
 import argparse
-import glob
 import json
 import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-# Basenames whose presence in compile_commands.json legitimately depends on the
-# flavor the database was generated at, so they are exempt from the coverage
-# check below: the three whole-file-guarded extra test TUs compile to nothing at
-# KERNEL_TESTS=off (pruned), and the release-only provenance marker is linked
-# ONLY at off. Everything else is an unconditional production TU.
-FLAVOR_CONDITIONAL = {
-    "ntfs_test.c", "ixfs_test.c", "test_threads.c", "provenance_release.c",
-}
+def is_compile(args):
+    """An object-producing compile. bear records every compiler run, including the
+    build-time analyses the build itself makes (scripts/gen-user-abi.py runs a
+    -fsyntax-only AST query over src/kernel/sched/syscall.c), so the database can
+    hold a second entry for a TU that compiles nothing. Only -c with -o does."""
+    return "-c" in args and "-o" in args
+
+
+def db_flavor(cc, repo):
+    """The KERNEL_TESTS flavor the database records: build.sh writes it from one
+    clean build, and the test flavor passes -DKERNEL_TESTS to every kernel compile."""
+    for e in cc:
+        if is_kernel_tu(e, repo) and "-DKERNEL_TESTS" in e["arguments"]:
+            return "on"
+    return "off"
+
+
+def expected_sources(repo, flavor):
+    """Every kernel C source the Makefile compiles at this flavor, as real paths.
+    The Makefile owns that list (its excludes, the ACPICA flavor rule, the pruned
+    test TUs, the release-only provenance marker), so it is asked, not re-derived."""
+    res = subprocess.run(
+        ["make", "-s", "--no-print-directory", "-C", repo, "print-kernel-c-srcs",
+         f"KERNEL_TESTS={flavor}"],
+        capture_output=True, text=True, timeout=120)
+    if res.returncode != 0 or not res.stdout.split():
+        raise RuntimeError(f"make print-kernel-c-srcs KERNEL_TESTS={flavor} failed "
+                           f"(rc={res.returncode}): {res.stderr.strip()[-400:]}")
+    return {os.path.realpath(os.path.join(repo, p)) for p in res.stdout.split()}
 
 
 def check_db_coverage(cc, repo):
-    """Fail-closed on a stale/incomplete compile database (F9): every
-    unconditional production kernel .c on disk (src/kernel, src/libc,
-    src/desktop; excluding test directories) MUST appear in compile_commands.json.
-    A TU missing from a stale DB would silently drop its seams from the PART A
-    inventory. Returns the list of uncovered files (empty == complete).
-
-    src/libs is intentionally not checked: only vendored, exclusion-gated TUs
-    live there (no KERNEL_TESTS seams), and replicating the Makefile's per-lib
-    exclusion list would be fragile. Per-flag drift within a covered TU is out of
-    scope (a signed database fingerprint is tracked in section 29)."""
-    db_files = {os.path.realpath(e["file"]) for e in cc if e.get("file")}
-    missing = []
-    for base in ("kernel", "libc", "desktop"):
-        root = os.path.join(repo, "src", base)
-        for path in glob.glob(os.path.join(root, "**", "*.c"), recursive=True):
-            if (os.sep + "test" + os.sep) in path:
-                continue
-            if os.path.basename(path) in FLAVOR_CONDITIONAL:
-                continue
-            if os.path.realpath(path) not in db_files:
-                missing.append(path)
-    return sorted(missing)
+    """Fail-closed on a stale/incomplete compile database (F9): every kernel C
+    source the Makefile compiles at the database's flavor MUST have a compile
+    entry. A TU missing from a stale DB would silently drop its seams from the
+    PART A inventory. Returns the list of uncovered files (empty == complete).
+    Per-flag drift within a covered TU is out of scope (a signed database
+    fingerprint is tracked in section 29)."""
+    db_files = {os.path.realpath(e["file"]) for e in cc
+                if e.get("file") and is_compile(e.get("arguments") or [])}
+    return sorted(expected_sources(repo, db_flavor(cc, repo)) - db_files)
 
 
 def is_kernel_tu(entry, repo):
@@ -69,7 +76,7 @@ def is_kernel_tu(entry, repo):
     entirely (Makefile filter-out) and re-proven absent by the link-trace gate
     (check-release-symbols.sh Part B), so they need not enter the symbol diff."""
     args = entry.get("arguments") or []
-    if not args:
+    if not args or not is_compile(args):
         return False
     if "clang" not in os.path.basename(args[0]):
         return False
@@ -169,7 +176,11 @@ def main():
 
     # F9: refuse a stale/incomplete compile database before deriving anything --
     # a missing production TU would silently drop its seams from the inventory.
-    uncovered = check_db_coverage(cc, args.repo)
+    try:
+        uncovered = check_db_coverage(cc, args.repo)
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+        print(f"[seam-inventory] cannot judge database coverage: {e}", file=sys.stderr)
+        return 4
     if uncovered:
         print(f"[seam-inventory] STALE/INCOMPLETE compile_commands.json: "
               f"{len(uncovered)} production TU(s) missing (rebuild clean):",

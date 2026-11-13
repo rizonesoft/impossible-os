@@ -1442,6 +1442,17 @@ check-abi:
 print-abi-cppflags:
 	@printf '%s\n' $(KERNEL_TU_FLAGS)
 
+## print-kernel-c-srcs: every kernel C source this flavor compiles, one per line:
+## C_SRCS after its flavor prunes, plus the vendored ACPICA list. The release
+## seam gate (scripts/lib/release-seam-inventory.py) checks compile_commands.json
+## against it, so the Makefile stays the only author of what a flavor compiles;
+## a glob over src/ cannot know that rsdump.c and utprint.c are excluded or that
+## ACPICA follows the flavor. Pass KERNEL_TESTS=on|off. NO prerequisites: it
+## answers on a clean tree.
+.PHONY: print-kernel-c-srcs
+print-kernel-c-srcs:
+	@printf '%s\n' $(C_SRCS) $(ACPICA_SRCS)
+
 ## print-user-cflags: the ring-3 counterpart. scripts/gen-user-abi.py validates
 ## user/include/abi_numbers.h by PREPROCESSING it, and validating under
 ## different flags than the real compile is fail-open: -O2 alone defines

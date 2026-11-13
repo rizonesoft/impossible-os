@@ -567,6 +567,13 @@ else
         python3 "$SCRIPT_DIR/ci/check-compile-cache.py" --selftest "$REPO_ROOT/.github/workflows"
 fi
 
+# The release gate reads compile_commands.json as bear writes it: an analysis run
+# recorded beside a TU's compile is not that compile, and the expected TU set is
+# the Makefile's own (2026-11-13: both broke the release-flavor proof).
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[release compile database]${NC}"
+assert_exit_zero "release gate reads the compile database as bear writes it" \
+    python3 "$SCRIPT_DIR/lib/tests/test_release_compile_db.py"
+
 # ============================================================================
 # Kernel UBSan flavor contract
 # ============================================================================

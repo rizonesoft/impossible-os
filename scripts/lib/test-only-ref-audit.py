@@ -101,8 +101,13 @@ def read_extra_test_basenames(repo):
 
 
 def _is_clang_kernel_c(entry, repo):
+    """A clang x86_64-elf compile of a .c under src/. -c with -o is required:
+    bear also records the build's own analyses (gen-user-abi.py's -fsyntax-only
+    AST query over sched/syscall.c), and that entry compiles nothing."""
     args = entry.get("arguments") or []
-    if not args or "clang" not in os.path.basename(args[0]):
+    if not args or "-c" not in args or "-o" not in args:
+        return False
+    if "clang" not in os.path.basename(args[0]):
         return False
     if not any("x86_64-elf" in a for a in args):
         return False
