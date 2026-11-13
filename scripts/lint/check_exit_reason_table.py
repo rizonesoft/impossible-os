@@ -39,9 +39,11 @@ MACHINERY = {
 TABLE_H = os.path.join("include", "kernel", "sched", "task.h")
 IDENT = re.compile(r"\bTASK_EXIT_[A-Za-z0-9_]*")
 # Matched on TRANSLATED text, where the table's splices are gone and a
-# commented-out row is a space: only a row the compiler sees counts.
-TABLE = re.compile(r"#[ \t]*define[ \t]+TASK_EXIT_REASONS[ \t]*\(X\)([^\n]*)")
-ROW = re.compile(r"\bX\(\s*([A-Za-z0-9_]+)\s*,")
+# commented-out row is a space: only a row the compiler sees counts. A
+# definition is counted by NAME alone, whatever its parameter spelling, so no
+# second copy can hide from the one-table rule.
+TABLE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+TASK_EXIT_REASONS\b([^\n]*)", re.M)
+PARAMS = re.compile(r"\([ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*\)(.*)")
 
 
 def translate(text):
@@ -100,8 +102,18 @@ def translate(text):
 
 
 def tables(body):
-    """Each TASK_EXIT_REASONS definition in translated text, as its row names."""
-    return [{"TASK_EXIT_" + r for r in ROW.findall(m.group(1))} for m in TABLE.finditer(body)]
+    """Each TASK_EXIT_REASONS definition in translated text: its row names, or
+    None for a definition whose parameter list this check cannot read (which
+    fails closed rather than being skipped)."""
+    out = []
+    for m in TABLE.finditer(body):
+        pm = PARAMS.match(m.group(1))
+        if not pm:
+            out.append(None)
+            continue
+        row = re.compile(r"\b" + re.escape(pm.group(1)) + r"[ \t]*\([ \t]*([A-Za-z0-9_]+)[ \t]*,")
+        out.append({"TASK_EXIT_" + r for r in row.findall(pm.group(2))})
+    return out
 
 
 def scan(text):
@@ -134,6 +146,8 @@ def judge(texts):
     if len(defs) != 1:
         where = ", ".join(p for p, _r in defs) or "none of the files checked"
         return None, [f"expected exactly one TASK_EXIT_REASONS definition, found {len(defs)} ({where})"]
+    if defs[0][1] is None:
+        return None, [f"{defs[0][0]}: TASK_EXIT_REASONS is not defined as a one-parameter table"]
     allowed = MACHINERY | defs[0][1]
     out = []
     for p, v in scanned.items():
@@ -166,11 +180,15 @@ UTEST_PROBE8 (-1006)
 #define TASK_EXIT_UTEST_PROBE9 (TASK_EXIT_REASON_LAST - 1)
 """
 CONTROL_BAD_COUNT = 9
-# A second definition, inactive or not, is refused outright.
+# A second definition, inactive or not and however its parameters are
+# spelled, is refused outright; so is one whose parameters cannot be read.
 CONTROL_TWICE = CONTROL_TABLE + """\
 #if 0
-#define TASK_EXIT_REASONS(X) X(KNOWN_A, 1) X(UTEST_PROBE10, 2)
+#define TASK_EXIT_REASONS( Y ) Y(KNOWN_A, 1) Y(UTEST_PROBE10, 2)
 #endif
+"""
+CONTROL_UNREAD = """\
+#define TASK_EXIT_REASONS X(KNOWN_A, 1)
 """
 CONTROL_GOOD = CONTROL_TABLE + """\
 #define TASK_EXIT_REASON_BASE (-1000)
@@ -200,11 +218,17 @@ def main(argv):
         _a, bad = judge({"control-bad": CONTROL_BAD})
         _a, good = judge({"control-good": CONTROL_GOOD})
         _a, twice = judge({"control-twice": CONTROL_TWICE})
+        _a, unread = judge({"control-unread": CONTROL_UNREAD})
+        _a, spaced = judge({"control-spaced": CONTROL_TABLE.replace("(X)", "( X )")
+                            + "#define TASK_EXIT_UTEST_PROBE11 (-1006)\n"})
         if len(bad) == CONTROL_BAD_COUNT and not good and len(twice) == 1 \
-                and "exactly one" in twice[0]:
+                and "exactly one" in twice[0] and len(unread) == 1 \
+                and "one-parameter" in unread[0] and len(spaced) == 1 \
+                and "PROBE11" in spaced[0]:
             return 0
         print(f"control misjudged: {len(bad)} of {CONTROL_BAD_COUNT} names flagged, "
-              f"{len(good)} false positives, second table: {twice}", file=sys.stderr)
+              f"{len(good)} false positives, second table: {twice}, "
+              f"unreadable table: {unread}, spaced parameter: {spaced}", file=sys.stderr)
         return 1
     if argv[1:2] == ["--root"] and len(argv) == 3:
         root = argv[2]
