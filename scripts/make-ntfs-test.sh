@@ -22,6 +22,11 @@ set -e
 OUT="${1:-build/test-disks}"
 IMG="$OUT/ntfs.img"
 IMG_SIZE_MB=32
+# An image under build/ is written under .boot-conf.lock, so no build, clean
+# or boot of the same tree touches it meanwhile (scripts/lib/boot-conf-lock.sh).
+_LOCK_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$_LOCK_ROOT/scripts/lib/boot-conf-lock.sh"
+boot_conf_lock_if_under_build "$_LOCK_ROOT" 9 "$IMG" || exit 1
 
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'

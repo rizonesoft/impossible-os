@@ -5000,6 +5000,13 @@ done < <(cd "$REPO_ROOT" && {
     # ...and release scripts that write one (an --out image; build-manifest.sh
     # writes a manifest, not an image)
     git ls-files 'scripts/release/*.sh' | grep -vE '/test-|/build-manifest\.sh$' | xargs grep -l -- '--out)' 2>/dev/null
+    # ...and any script that makes a disk image under build/. Readers of an
+    # image (write-usb.sh copies it to a device, read-blackbox.sh reads it,
+    # setup.sh only installs tools) and patch-boot-conf.sh (takes the lock
+    # itself with flock) are not image writers here.
+    git ls-files 'scripts/*.sh' 'tools/*.sh' | grep -vE '/test-|test-tooling\.sh$|/(write-usb|read-blackbox|setup|patch-boot-conf)\.sh$' \
+        | xargs grep -lE 'mkntfs|mkfs\.|truncate -s|cp --reflink|sgdisk|qemu-img (create|convert)|convertfromraw|mkfs-ixfs|make-system-disk' 2>/dev/null \
+        | xargs grep -lE 'build/|\$BUILD|BUILD_DIR|FIXTURES_DIR' 2>/dev/null
 } | sort -u)
 if [ -z "$_bl_bare" ] && [ "$_bl_disk" = "y" ] && [ "$_bl_clean" = "y" ] && [ -z "$_bl_scripts" ]; then
     t_pass "boot_locked_recipes  every QEMU recipe and launcher holds the image lock; the disk is published and cleaned under it"

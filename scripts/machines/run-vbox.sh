@@ -20,6 +20,13 @@ BUILD="$REPO_ROOT/build"
 
 DISK_RAW="$BUILD/system-disk.img"
 DISK_VDI="$BUILD/system-disk.vdi"
+# Convert under .boot-conf.lock: the raw image is read and the VDI written under
+# build/ while no build, clean or WSL-side boot may change them
+# (scripts/lib/boot-conf-lock.sh). VirtualBox runs the VM detached once
+# startvm returns, so the VM's lifetime is outside any WSL lock, as for the
+# Windows-side launchers.
+. "$REPO_ROOT/scripts/lib/boot-conf-lock.sh"
+boot_conf_lock_if_under_build "$REPO_ROOT" 9 "$DISK_VDI" || exit 1
 OVMF_CODE="$BUILD/OVMF_CODE_4M.fd"
 OVMF_VARS="$BUILD/OVMF_VARS_4M.fd"
 

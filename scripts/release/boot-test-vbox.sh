@@ -63,6 +63,11 @@ while [ "$#" -gt 0 ]; do
         *) err "unknown arg: $1"; usage >&2; exit 2 ;;
     esac
 done
+# Prepare the image under .boot-conf.lock when it lies under build/
+# (scripts/lib/boot-conf-lock.sh). VirtualBox runs the VM detached, so its
+# lifetime is outside any WSL lock, as for the Windows-side launchers.
+. "$REPO_ROOT/scripts/lib/boot-conf-lock.sh"
+boot_conf_lock_if_under_build "$REPO_ROOT" 9 "$DISK" || exit 1
 
 if ! command -v VBoxManage >/dev/null; then
     skip "VBoxManage not found on PATH; install VirtualBox to enable VDI boot validation"

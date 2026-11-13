@@ -19,6 +19,11 @@ set -e
 
 OUT="${1:-build/test-disks}"
 BUILD="${2:-build}"
+# An image under build/ is written under .boot-conf.lock, so no build, clean
+# or boot of the same tree touches it meanwhile (scripts/lib/boot-conf-lock.sh).
+_LOCK_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$_LOCK_ROOT/scripts/lib/boot-conf-lock.sh"
+boot_conf_lock_if_under_build "$_LOCK_ROOT" 9 "$OUT/fat32.img" || exit 1
 MKFS_IXFS="${BUILD}/tools/mkfs-ixfs"
 
 GREEN='\033[0;32m'

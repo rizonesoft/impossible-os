@@ -57,6 +57,10 @@ fi
 
 mkdir -p "$FIXTURES_DIR"
 OUT="$FIXTURES_DIR/stale-${VARIANT}-disk.img"
+# An image under build/ is written under .boot-conf.lock, so no build, clean
+# or boot of the same tree touches it meanwhile (scripts/lib/boot-conf-lock.sh).
+. "$REPO_ROOT/scripts/lib/boot-conf-lock.sh"
+boot_conf_lock_if_under_build "$REPO_ROOT" 9 "$OUT" || exit 1
 # Use --reflink=auto to copy-on-write on btrfs/xfs/etc. (instant +
 # zero-cost until mcopy mutates the fixture); --sparse=always
 # preserves holes. On filesystems without reflink support cp falls
