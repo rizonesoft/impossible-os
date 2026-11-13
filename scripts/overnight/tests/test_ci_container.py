@@ -18,7 +18,7 @@ def test_the_tier_runs_ci_s_image_as_ci_s_uid():
     image = yaml.safe_load(WF)["jobs"]["build"]["container"]["image"]
     assert re.fullmatch(r"ghcr\.io/[a-z0-9-]+/impossible-os-ci@sha256:[0-9a-f]{64}", image), image
     assert "apt-get" not in TIER and "ci_container_setup" not in TIER
-    assert "-u 1001:1001" in TIER
+    assert "--init -u 1001:1001" in TIER, "CI runs the container with an init (check-pinned-image.py), so the tier does too"
     assert not (REPO / "scripts/ci_container_setup.py").exists(), "retired with the install steps"
 
 

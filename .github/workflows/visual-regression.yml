@@ -69,7 +69,8 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-      options: --user 1001:1001
+      # --init: GitHub makes `tail -f /dev/null` PID 1, which never reaps an orphan.
+      options: --init --user 1001:1001
     timeout-minutes: 45
 
     steps:
@@ -85,15 +86,18 @@ jobs:
       # cache lives in the runner's home, never a root-owned path (unprivileged
       # tar cannot restore those). A cache-service fault costs a cold compile,
       # not the job.
+      # The key starts ccache-image-: a cache saved by a job on the hosted runner
+      # stored its paths relative to /home/runner/work/..., so restoring one in the
+      # container wrote to /.cache (2026-11-13). Container saves restore cleanly.
       - name: Restore compile cache
         uses: actions/cache@v4
         continue-on-error: true
         with:
           path: ~/.cache/ccache
-          key: ccache-${{ runner.os }}-llvm${{ env.LLVM_VERSION }}-visual-${{ github.sha }}
+          key: ccache-image-${{ runner.os }}-llvm${{ env.LLVM_VERSION }}-visual-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-llvm${{ env.LLVM_VERSION }}-visual-
-            ccache-${{ runner.os }}-llvm${{ env.LLVM_VERSION }}-tests-on-
+            ccache-image-${{ runner.os }}-llvm${{ env.LLVM_VERSION }}-visual-
+            ccache-image-${{ runner.os }}-llvm${{ env.LLVM_VERSION }}-tests-on-
 
       - name: Configure compile cache
         run: |

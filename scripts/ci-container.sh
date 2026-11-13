@@ -47,7 +47,7 @@ chmod -R a+rX "$TMP"
 mkdir -p build
 echo "ci-container: $IMAGE, HEAD $(git rev-parse --short HEAD), log build/ci-container.log"
 rc=0
-timeout 4500 docker run --rm -u 1001:1001 -e HOME=/home/runner -v "$TMP:/ci:ro" "$IMAGE" bash /ci/run.sh \
+timeout 4500 docker run --rm --init -u 1001:1001 -e HOME=/home/runner -v "$TMP:/ci:ro" "$IMAGE" bash /ci/run.sh \
     > build/ci-container.log 2>&1 || rc=$?
 tail -5 build/ci-container.log
 echo "ci-container: rc=$rc"

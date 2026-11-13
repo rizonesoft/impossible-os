@@ -38,7 +38,8 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-      options: --user 1001:1001
+      # --init: GitHub makes `tail -f /dev/null` PID 1, which never reaps an orphan.
+      options: --init --user 1001:1001
     timeout-minutes: 40
     # A release is compiled from source: no cache is restored (check-compile-cache.py),
     # and the image's ccache is not used either, as before the image held one.

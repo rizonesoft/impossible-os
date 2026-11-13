@@ -11,7 +11,10 @@ install step and no project code ran. In each workflow this checks, it refuses:
   * a container image not pinned by `@sha256:` digest;
   * two different digests, since then two toolchains are tested;
   * a migrated workflow whose run steps do not default to bash (a container
-    step otherwise runs under sh, and `[[ ... =~ ... ]]` stops parsing).
+    step otherwise runs under sh, and `[[ ... =~ ... ]]` stops parsing);
+  * a container that is not `--init` as uid 1001: GitHub starts the container
+    with `tail -f /dev/null` as PID 1, which never reaps an orphan, so the
+    LSP bridge's process-reaping tests saw zombies as live (2026-11-13).
 
 Usage: check-pinned-image.py [WORKFLOWS_DIR]
        check-pinned-image.py --selftest [WORKFLOWS_DIR]
@@ -72,6 +75,9 @@ def problems(workflows: dict) -> list:
                 out.append(f"{name}: job {jname} image {image!r} is not pinned by @sha256 digest")
                 continue
             digests.setdefault(image, []).append(f"{name}:{jname}")
+            opts = str((job.get("container") or {}).get("options", "")).split()
+            if "--init" not in opts or "--user" not in opts or opts[opts.index("--user") + 1:][:1] != ["1001:1001"]:
+                out.append(f"{name}: job {jname} container options must include --init and --user 1001:1001")
             if shell != "bash":
                 out.append(f"{name}: run steps of a container job must default to bash (defaults.run.shell)")
     if len(digests) > 1:
@@ -96,6 +102,8 @@ def selftest(root: Path) -> int:
         "not pinned by @sha256": lambda w: w[name]["jobs"][job].__setitem__("container", {"image": "ghcr.io/x/y:latest"}),
         "more than one CI image digest": lambda w: w[name]["jobs"][job].__setitem__("container", {"image": "ghcr.io/x/y@sha256:" + "0" * 64}),
         "must default to bash": lambda w: w[name].pop("defaults"),
+        "must include --init": lambda w: w[name]["jobs"][job]["container"].__setitem__("options", "--user 1001:1001"),
+        "must include --init (user)": lambda w: w[name]["jobs"][job]["container"].__setitem__("options", "--init"),
     }
     for i, run in enumerate(("apt-get -o Acquire::Retries=3 install -y zip",
                              "python3 -m pip --quiet install PyYAML",
