@@ -76,6 +76,7 @@ title: "TODO-04 -- System Logging"
 | ⭐  |  15   | Post-ship follow-up backfill (2026-07-31 cohort)                    | --               |  [ ]   |
 | 💎  |  16   | Klog assertions and scans that depend on nothing else having logged | §1               |  [ ]   |
 | ⭐  |  17   | Bounded wait until the sinks have caught up to a given sequence     | §1, §2           |  [ ]   |
+| 💎  |  18   | Previous crash region claimed before any allocation                 | §8               |  [ ]   |
 
 > 💎 = parity -- Windows Event Log and Linux journald/syslog both have these capabilities.
 > ⭐ = exclusive -- HMAC-chained JSON Lines is human-readable AND cryptographically verifiable; beats Windows XML and Linux binary journal.
@@ -297,10 +298,9 @@ Reserve a physical memory region at boot so the ring buffer survives a kernel pa
   - The panic owner is same-CPU re-entrant and CLI does not block NMI or machine-check entry, so a nested panic reaches `klog_crash_serialize_region` while a complete record from the outer invocation is already published. It clears the magic and rewrites the entries in place; if it then faults or resets before republishing, the outer record is gone.
   - TODO-10 §28 narrowed this by NOT flushing the magic clear, so the zero is usually still only in cache. That is a narrowing, not a fix: ordinary cache replacement can write the line back at any point during serialization, and TODO-10 §28 does not own this region.
   - The closure is a protocol that never overwrites a complete record in place -- two slots plus a generation to choose between them, or claim arbitration like the panic evidence page's. Both change the on-region format that `klog_crash_recover` and the NVRAM pointer contract describe, so this is a design, not a patch.
-- [ ] The previous boot crash region is never reserved in PMM before recovery reads it, and both `uefi_set_variable` results are discarded -> XREF: `01-boot-platform/TODO-10` §28 (item: "PARKED: the klog crash region overwrites").
-  - `klog_crash_recover` is called from `boot_hw.c` AFTER PMM, VMM and heap init, and PMM is first-fit, so a boot whose layout shifted can hand the previous run to another allocation before recovery dereferences it. The address check proves the range sits inside the boot identity map, never that it is unowned. The crash log is then silently lost, or read as whatever now occupies those pages.
-  - The NVRAM deletion at the top of recovery is what prevents a stale pointer being followed next boot, but its `uefi_set_variable` status is discarded (`klog.c:572`), as is the one publishing the new region's address (`klog.c:705`). A failed delete leaves a later boot chasing an address that may by then hold live allocations.
-  - Both halves are pre-existing and predate the cross-boot durability work: TODO-10 §28 made the region's CONTENTS durable, which is orthogonal to who owns the pages. The closure is to read and validate the pointer before any allocator consumer runs and reserve the whole run in PMM, then check both NVRAM results.
+- [ ] The crash region survives a warm reset on OVMF: the double-race leg's second boot claims the published region (0xc03000) but finds no valid magic, so no `[CRASH-PREV]` replays.
+  - No leg checked the replay before 2026-11-13. Find what overwrites the region between the panic and the next kernel (firmware use of low RAM is the first suspect), then add a matrix assertion on `[CRASH-PREV]`.
+- [x] Moved to §18: the previous boot's crash region is claimed before any allocation, and both NVRAM results are checked.
 - [x] Commit: `"kernel: crash-persistent klog capture via reserved physical memory"`
 
 > [!NOTE]
@@ -605,6 +605,24 @@ A caller can ask klog what the current sequence is (`klog_get_seq`), how much of
 **Test checkpoint:** a caller that emits a record and then waits for its sequence observes the record in `kernel.log` when the wait returns reached; a wait against a sequence no one will emit returns its timeout verdict within the stated bound; and deferred-flush mode is unchanged across both. Test on: QEMU TCG, QEMU KVM.
 
 > **Notes:** Unparked 2026-11-07 on `02-kernel-core/TODO-33` s11's sweep: `scripts/overnight/bss-headroom.py` measures a `.text` budget of 153647 bytes at `9b55ec6f0`, `__kernel_end` 0x7da000. Re-measure at implementation; the guard still applies. Earlier measurement, kept for its costs: [M] 2026-09-03 -- parked BEFORE implementation on the kernel image ceiling; no code was written and the tree was left green. MEASURED at `56e11533e`: `__kernel_end` page-aligns to `0x7ff000`, one page under `USER_BASE`, with a `.text` budget of 95 bytes (`scripts/overnight/bss-headroom.py`, `precision: section-exact`). A new public `klog_flush_until()` plus its per-sink cursor logic cannot fit in that.
+
+## 18. The Previous Boot's Crash Region Is Claimed Before Any Allocation
+
+> **Spawned-by:** section 8 (split): its item on PMM ownership of the previous region, moved here after an operator boot report on 2026-11-13.
+
+**User impact:** a machine updated from an older build died in Phase 0 on its first boot of the new one, with no kernel handler: the NVRAM pointer to the previous crash region named 0xC01000, which the new layout made the heap guard page.
+
+`klog_crash_recover()` runs after PMM, VMM and heap init and dereferences the NVRAM-supplied address after checking only alignment and that it lies in `[USER_ELF_END, BOOT_INFO_EARLY_MAP_END)`. On 2026-11-13 the heap sat at 0xA01000 to 0xC01000 with its guard page unmapped, so a pointer stored by an older build page-faulted on QEMU TCG and VirtualBox (`RIP 0x24CE9E`, `CR2 0xC01000`, two variable stores written two months apart). The smoke test and the matrix boot from a fresh store, so no gate held a stale pointer. The fix is to claim the run when nothing else has allocated yet, so the layout can never be placed over it.
+
+- [x] Claim the previous run right after `pmm_init`, before `vmm_init` and `heap_init` allocate: `klog_crash_claim_previous()`.
+  - Reserves the run only when all 32 frames are free in the PMM (usable RAM this boot does not own); anything else is skipped with a warning naming the address and why.
+- [x] Read the claimed run only through pages proven identity-mapped, then release it to the allocator.
+- [x] Check both NVRAM results: a failed get, delete or publish of this boot's region is reported on serial.
+- [x] Plant the variable in the smoke test's store with `tools/uefi-varstore/plant.py` (OVMF authenticated variable format).
+  - `SMOKE_CRASH_NVRAM` plants it; the matrix `crashptr-guard` leg plants the heap guard read from an earlier leg's log and `crashptr-mmio` plants 0xFEC00000. The guard leg faults on the old code.
+- [x] Commit: `"klog: claim the previous boot's crash region before any allocation"`
+
+**Test checkpoint:** a boot whose store names the current heap guard page reaches `C:\>` with the region claimed and the heap placed elsewhere; a store naming an MMIO address reaches `C:\>` with the skip warning. Replay of the claimed region is §8's (its item on the region surviving a warm reset).
 
 ## OS Comparison
 

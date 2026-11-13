@@ -776,6 +776,7 @@ int klog_disk_enable(void)
 
 #include "kernel/boot_init.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/vmm.h"         /* vmm_get_physical: the claimed run is still mapped */
 #include "kernel/mm/user_range.h"   /* USER_ELF_END (0x900000) crash-region floor */
 #include "kernel/kchecksum.h"       /* kcrc32 -- the tree's one table-driven CRC-32 */
 
@@ -1013,18 +1014,11 @@ static const uint16_t s_crash_varname[] = {
 
 /* Acquire and zero the recovered-entry pool, or return NULL to degrade.
  *
- * WHY THIS RETRIES. pmm_alloc_contiguous is a FIRST-FIT scan from frame 0 with
- * no cursor (src/kernel/mm/pmm.c), and the previous boot allocated its own
- * 32-frame crash region from the same scan at the same boot stage. This boot
- * never reserves that region, so a single request here comes back with the very
- * run holding it -- not occasionally, but on the ordinary crash-then-reboot
- * path, which would make the overlap guard fire every time and silently retire
- * crash_recovery.log. So on overlap we HOLD the colliding run, ask again (the
- * scan now steps past it), and only then give the first one back UNTOUCHED.
- *
- * The frames are never written before the overlap verdict: pmm_alloc_contiguous
- * only sets bitmap bits, so an allocation that turns out to overlap costs
- * nothing and is handed back with the previous boot's evidence intact.
+ * The previous boot's run is RESERVED by klog_crash_claim_previous() before
+ * this runs, so the PMM cannot hand it back here. The overlap test below is
+ * that invariant checked, not a case expected to happen: a hit means the
+ * claim did not reserve what recovery is about to read, and the pool is
+ * refused rather than zeroed over the evidence.
  *
  * Everything here runs in boot_phase0, single-CPU with interrupts disabled, so
  * the unlocked PMM bitmap has no concurrent mutator. */
@@ -1042,21 +1036,11 @@ static klog_crash_entry_t *klog_recovered_pool_acquire(uint64_t prev_phys,
 
     pool = (klog_crash_entry_t *)pmm_alloc_pages_hhdm(pool_bytes, &phys, &pages);
     if (pool && phys < prev_end && prev_phys < phys + pages * PMM_FRAME_SIZE) {
-        /* Colliding run stays HELD across the second request, which is the only
-         * reason first-fit returns something different. */
-        uintptr_t held_phys  = phys;
-        uint64_t  held_pages = pages;
-        klog_crash_entry_t *alt;
-
-        phys = 0; pages = 0;
-        alt = (klog_crash_entry_t *)pmm_alloc_pages_hhdm(pool_bytes, &phys, &pages);
-        pmm_free_contiguous(held_phys, held_pages);
-        pool = alt;
-
-        if (pool && phys < prev_end && prev_phys < phys + pages * PMM_FRAME_SIZE) {
-            pmm_free_contiguous(phys, pages);
-            pool = (klog_crash_entry_t *)0;
-        }
+        klog(LOG_ERROR, "CRASH",
+             "recovered-entry pool %p overlaps the claimed previous region %p",
+             (uint64_t)phys, prev_phys);
+        pmm_free_contiguous(phys, pages);
+        pool = (klog_crash_entry_t *)0;
     }
 
     if (!pool) {
@@ -1077,38 +1061,119 @@ static klog_crash_entry_t *klog_recovered_pool_acquire(uint64_t prev_phys,
     return pool;
 }
 
+/* The previous boot's crash region, as klog_crash_claim_previous() left it.
+ * Written once in boot_phase0 (single CPU, interrupts off, before the APs
+ * start) and read by klog_crash_recover() later in the same phase; no other
+ * accessor, so no lock. */
+static uint64_t    s_prev_phys;          /* claimed run, 0 when none          */
+static uint64_t    s_prev_skip_addr;     /* refused pointer, for the warning  */
+static const char *s_prev_skip_why;      /* why it was refused, NULL if not   */
+static uint64_t    s_prev_get_status;    /* failed read other than NOT_FOUND  */
+static uint64_t    s_prev_delete_status; /* failed delete of the pointer      */
+
+const char *klog_crash_prev_refusal(uint64_t phys)
+{
+    const uint64_t bytes = (uint64_t)KLOG_CRASH_PAGES * PMM_FRAME_SIZE;
+
+    /* A region from pmm_alloc_contiguous is page-aligned and sits above the
+     * low kernel/user window, and the WHOLE run must lie inside the boot
+     * identity map with no overflow, because recovery reads it by its
+     * physical address. */
+    if ((phys & (PMM_FRAME_SIZE - 1)) != 0 || phys < USER_ELF_END ||
+        phys > BOOT_INFO_EARLY_MAP_END - bytes)
+        return "not page-aligned or outside the boot identity map";
+
+    /* Ownership. pmm_init starts every frame used and frees only usable
+     * memory types, then re-reserves what the loader handed over, so a free
+     * frame here is usable RAM nothing in this boot owns: not the kernel
+     * image, a loader payload, firmware memory or an MMIO hole. Asked before
+     * vmm_init and heap_init, it also rules out every later owner, because
+     * the claim reserves the run before they allocate. */
+    for (uint64_t off = 0; off < bytes; off += PMM_FRAME_SIZE) {
+        if (!pmm_frame_is_free((uintptr_t)(phys + off)))
+            return "frames owned by this boot or not usable RAM";
+    }
+    return (const char *)0;
+}
+
+void klog_crash_claim_previous(void)
+{
+    uint64_t prev = 0;
+    uint64_t sz = sizeof(prev);
+    uint32_t attrs = 0;
+    uint64_t status = uefi_get_variable(&s_crash_guid, s_crash_varname,
+                                        &attrs, &sz, &prev);
+
+    if (status != 0) {
+        if (status != UEFI_NOT_FOUND)
+            s_prev_get_status = status;
+        return;
+    }
+    if (sz != sizeof(prev) || prev == 0) {
+        s_prev_skip_addr = prev;
+        s_prev_skip_why  = "the NVRAM value is not one address";
+    } else {
+        const char *why = klog_crash_prev_refusal(prev);
+        if (why) {
+            s_prev_skip_addr = prev;
+            s_prev_skip_why  = why;
+        } else {
+            pmm_mark_region_used((uintptr_t)prev,
+                                 (uint64_t)KLOG_CRASH_PAGES * PMM_FRAME_SIZE);
+            s_prev_phys = prev;
+        }
+    }
+
+    /* Delete the pointer whatever its fate, so the next boot cannot follow it
+     * again: a crash before this boot publishes its own region must not leave
+     * a pointer to memory this boot has since reused. */
+    s_prev_delete_status = uefi_set_variable(&s_crash_guid, s_crash_varname,
+                                             CRASH_NVRAM_ATTRS, 0, (const void *)0);
+}
+
+/* Every page of the claimed run must still be identity-mapped when recovery
+ * reads it: the claim proved ownership before vmm_init, not the mapping
+ * vmm_init built. vmm_get_physical answers 0 for "not mapped"; frame 0 is
+ * below USER_ELF_END, so 0 is never a valid answer here. */
+static int klog_crash_run_identity_mapped(uint64_t phys)
+{
+    for (uint64_t off = 0; off < (uint64_t)KLOG_CRASH_PAGES * PMM_FRAME_SIZE;
+         off += PMM_FRAME_SIZE) {
+        if (vmm_get_physical((uintptr_t)(phys + off)) != (uintptr_t)(phys + off))
+            return 0;
+    }
+    return 1;
+}
+
 void klog_crash_recover(void)
 {
     s_recovered_count = 0;
 
     POST16(POST16_CRASHLOG);
 
-    /* Step 1: Read previous crash region address from NVRAM */
-    uint64_t prev_phys = 0;
+    /* Step 1: the previous region, claimed (or refused) by
+     * klog_crash_claim_previous() before anything else allocated. */
+    uint64_t prev_phys = s_prev_phys;
     {
-        uint64_t sz = sizeof(prev_phys);
-        uint32_t attrs = 0;
-        uint64_t status = uefi_get_variable(&s_crash_guid, s_crash_varname,
-                                            &attrs, &sz, &prev_phys);
-        if (status == 0 && sz == sizeof(prev_phys) && prev_phys != 0) {
-            /* Delete NVRAM variable immediately to prevent stale-address
-             * crash loops if the stored physical address now overlaps a
-             * guard page or unmapped region (memory layout shifts between
-             * builds as BSS grows). */
-            uefi_set_variable(&s_crash_guid, s_crash_varname,
-                              CRASH_NVRAM_ATTRS, 0, (const void *)0);
-
-            /* Sanity check the NVRAM-supplied physical address before
-             * dereferencing it: a crash region from pmm_alloc_contiguous is
-             * page-aligned, above the kernel+heap+user area (>= USER_ELF_END
-             * 0x900000), and the WHOLE [prev_phys, prev_phys + 128 KiB) range
-             * must sit inside the boot identity map (< BOOT_INFO_EARLY_MAP_END,
-             * no overflow). A stale/crafted value outside that window would fault
-             * or hit MMIO/unowned memory in Phase 0 before any header/CRC check. */
-            if ((prev_phys & 0xFFF) != 0 || prev_phys < USER_ELF_END ||
-                prev_phys > BOOT_INFO_EARLY_MAP_END - (uint64_t)KLOG_CRASH_PAGES * 4096) {
+        if (s_prev_get_status != 0)
+            klog(LOG_WARN, "boot",
+                 "crash recovery: reading the NVRAM pointer failed (status %p)",
+                 s_prev_get_status);
+        if (s_prev_delete_status != 0)
+            klog(LOG_WARN, "boot",
+                 "crash recovery: deleting the NVRAM pointer failed (status %p); "
+                 "a later boot may follow it again",
+                 s_prev_delete_status);
+        if (s_prev_skip_why)
+            klog(LOG_WARN, "boot",
+                 "crash recovery: NVRAM address %p skipped -- %s",
+                 s_prev_skip_addr, s_prev_skip_why);
+        if (prev_phys != 0) {
+            klog(LOG_INFO, "boot",
+                 "crash recovery: previous region %p claimed", prev_phys);
+            if (!klog_crash_run_identity_mapped(prev_phys)) {
                 klog(LOG_WARN, "boot",
-                     "crash recovery: stale/out-of-range NVRAM address %p -- skipped",
+                     "crash recovery: NVRAM address %p skipped -- not identity-mapped",
                      prev_phys);
                 goto crash_alloc;
             }
@@ -1135,20 +1200,14 @@ void klog_crash_recover(void)
 
                     if (actual_crc == expected_crc) {
                         /* Back the recovered-entry pool with frames reached
-                         * through the HHDM, HERE and not at function entry.
-                         *
-                         * ORDERING IS THE WHOLE POINT. The previous boot's crash
-                         * region is named only by an NVRAM variable and is NOT
-                         * reserved in this boot's PMM bitmap, so the allocator
-                         * is free to hand back the very run holding it.
-                         * Allocating before prev_phys was read would erase the
-                         * evidence this function exists to recover. By here
-                         * prev_phys is validated, the magic and CRC have passed
-                         * and count > 0, so the extent to avoid is known and the
-                         * pool is only bought when there is something to put in
-                         * it -- a clean boot with no prior crash now allocates
-                         * nothing at all. The collision handling, the zeroing
-                         * and the degrade policy live in the helper. */
+                         * through the HHDM, HERE and not at function entry: by
+                         * here the magic and CRC have passed and count > 0, so
+                         * the pool is only bought when there is something to
+                         * put in it -- a clean boot with no prior crash
+                         * allocates nothing at all. The previous run is
+                         * reserved by the claim, so the allocator cannot hand
+                         * it back; the helper checks that and owns the zeroing
+                         * and the degrade policy. */
                         if (!s_recovered) {
                             const uint32_t pool_bytes = (uint32_t)
                                 ((uint64_t)KLOG_RECOVERED_MAX * sizeof(klog_crash_entry_t));
@@ -1189,14 +1248,9 @@ void klog_crash_recover(void)
                              * they contain a terminator. The evidence restore
                              * path sanitizes the same class of field.
                              *
-                             * The termination must NOT be written through
-                             * `src`. That points into the PREVIOUS boot's
-                             * physical run, named only by an NVRAM variable,
-                             * and this boot never reserved it -- recovery runs
-                             * after PMM, VMM and heap init, so those pages may
-                             * already be allocated to live structures. The
-                             * check upstream proves the address is mapped, not
-                             * that it is still ours. Sanitize an OWNED copy. */
+                             * The termination is written to the COPY, not
+                             * through `src`: the region is evidence and is
+                             * left exactly as the previous boot wrote it. */
                             klog_crash_entry_t e = src[i];
 
                             e.subsystem[sizeof e.subsystem - 1u] = '\0';
@@ -1214,26 +1268,23 @@ void klog_crash_recover(void)
                         serial_write("[CRASH-PREV] recovery failed: CRC32 mismatch\n");
                     }
                 }
-                /* The old header is deliberately NOT cleared here. This boot
-                 * does not own that memory: `prev_phys` names the PREVIOUS
-                 * boot's run, recovery runs after PMM, VMM and heap init, and
-                 * the check above proves only that the address is mapped, not
-                 * that it is still unallocated. A store there can land in a
-                 * live kernel structure.
-                 *
-                 * Nothing needs the clear. Replay is already prevented by
-                 * deleting the NVRAM variable above, which happens before this
-                 * region is read at all, so the next boot has no pointer to
-                 * find it with. And if the allocator happens to hand this same
-                 * run back as this boot's crash region, the full zeroing of
-                 * the new region below clears the magic through a pointer we
-                 * do own. */
+                /* The old header is not cleared here. Replay is already
+                 * prevented by the claim deleting the NVRAM variable before
+                 * this region was read, so the next boot has no pointer to
+                 * find it with, and if the allocator hands this run back as
+                 * this boot's crash region below, the full zeroing clears the
+                 * magic. */
             }
         }
     }
 
 crash_alloc:
-    ;  /* C11 requires a statement after a label */
+    /* The claimed run has been read; give it back so this boot's region (or
+     * anything else) can use it. */
+    if (s_prev_phys != 0) {
+        pmm_free_contiguous((uintptr_t)s_prev_phys, KLOG_CRASH_PAGES);
+        s_prev_phys = 0;
+    }
     /* Step 2: Allocate fresh crash persistence region for THIS boot */
     uint64_t phys = pmm_alloc_contiguous(KLOG_CRASH_PAGES);
 
@@ -1285,8 +1336,15 @@ crash_alloc:
     cache_writeback_range(s_crash_region, sizeof(klog_crash_header_t));
 
     /* Save this region's address to NVRAM so next boot can find it */
-    uefi_set_variable(&s_crash_guid, s_crash_varname,
-                      CRASH_NVRAM_ATTRS, sizeof(phys), &phys);
+    {
+        uint64_t st = uefi_set_variable(&s_crash_guid, s_crash_varname,
+                                        CRASH_NVRAM_ATTRS, sizeof(phys), &phys);
+        if (st != 0)
+            klog(LOG_WARN, "boot",
+                 "crash recovery: publishing this boot's region %p failed (status %p); "
+                 "the next boot cannot recover a crash from this one",
+                 phys, st);
+    }
 
     POST16(POST16_CRASHLOG_ALLOC);
     POST16(POST16_CRASHLOG_DONE);

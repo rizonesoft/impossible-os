@@ -220,6 +220,39 @@ for leg in VALID:valid:SMOKE_VALID_STORE=1 \
     fi
 done
 
+# Stale crash-region pointer fixtures, one boot each on the default engine.
+# Every other leg boots a fresh variable store, so none of them sees the
+# ImpossibleCrashLog pointer an update inherits from an older build; on
+# 2026-11-13 one named the new heap guard page and Phase 0 faulted. `guard`
+# plants THIS build's heap guard address, read from a leg above, and must be
+# claimed with the heap placed elsewhere; `mmio` plants the IOAPIC window, in
+# range for the old check, and must be skipped.
+heap_guard="$(grep -ahoE 'guard at 0x[0-9a-f]+' "$LOG_DIR"/*.log 2>/dev/null | head -1 | awk '{print $3}')"
+for leg in "guard|${heap_guard}|claimed" "mmio|0xFEC00000|skipped"; do
+    name="${leg%%|*}"; rest="${leg#*|}"
+    addr="${rest%%|*}"; expect="${rest#*|}"
+    log="$LOG_DIR/crashptr-$name.log"
+    cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-crashptr-$name.XXXXXX")"
+    t0=$(date +%s)
+    if [ -z "$addr" ]; then
+        echo "SMOKE TEST FAILED: no 'guard at' line in the earlier legs' logs" > "$cap"; rc=1
+    else
+        SMOKE_CRASH_NVRAM="$addr" SMOKE_CRASH_NVRAM_EXPECT="$expect" bash scripts/test-smoke.sh > "$cap" 2>&1
+        rc=$?
+    fi
+    CAPTURES="$CAPTURES $cap:$log"
+    dur=$(( $(date +%s) - t0 ))
+    if [ "$rc" = "0" ]; then
+        PASS=$((PASS + 1))
+        printf "  ${GREEN}PASS${NC}  crashptr %-8s %2ds   ${DIM}%s${NC}\n" "$name" "$dur" "$log"
+    else
+        FAIL=$((FAIL + 1)); FAILED_LEGS="$FAILED_LEGS crashptr:$name"
+        printf "  ${RED}FAIL${NC}  crashptr %-8s %2ds   ${DIM}%s${NC}\n" "$name" "$dur" "$log"
+        reason=$(grep -a 'SMOKE TEST FAILED' "$cap" 2>/dev/null | head -1)
+        [ -n "$reason" ] && printf "        ${DIM}%s${NC}\n" "$reason"
+    fi
+done
+
 # Forced-degradation fixture (resilient-boot roadmap), one boot on the default engine.
 # Every other leg boots a healthy machine, so a non-critical init that FAILS was
 # never booted: this one makes rtc_init() fail for real and requires the boot to

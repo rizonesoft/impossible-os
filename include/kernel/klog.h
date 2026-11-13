@@ -572,6 +572,27 @@ _Static_assert(sizeof(klog_crash_entry_t) == 164,
  * Called from panic_screen() after BSOD render, before halt. */
 void klog_crash_persist(void);
 
+/* Claim the PREVIOUS boot's crash region before anything else allocates.
+ * Called from boot_phase0 right after pmm_init() and before vmm_init() and
+ * heap_init(): reads and deletes the ImpossibleCrashLog NVRAM pointer, and
+ * reserves the run in the PMM only when klog_crash_prev_refusal() accepts
+ * it. klog_crash_recover() later reads only a claimed run and reports the
+ * outcome. Single CPU, interrupts off: the APs are not started yet.
+ *
+ * Why here: the pointer was written by an older build, so it can name memory
+ * the current layout gives to something else. On 2026-11-13 it named the new
+ * heap guard page and the first boot faulted in Phase 0. Claimed before the
+ * heap exists, the run can never be placed under the heap or its guard. */
+void klog_crash_claim_previous(void);
+
+/* Why `phys` cannot be claimed as the previous crash region, or NULL when it
+ * can: page-aligned, the whole KLOG_CRASH_PAGES run inside the boot identity
+ * map at or above USER_ELF_END with no overflow, and every frame free in the
+ * PMM (usable RAM this boot does not own: pmm_init starts all-used and frees
+ * only usable memory types). Pure query over the live PMM bitmap; mutates
+ * nothing, so it is testable. */
+const char *klog_crash_prev_refusal(uint64_t phys);
+
 /* The serialize-and-publish half of klog_crash_persist(), against a
  * CALLER-SUPPLIED region. Returns the number of entries written, clamped to
  * what the region holds.

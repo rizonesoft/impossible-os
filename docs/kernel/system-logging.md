@@ -1,4 +1,4 @@
-<!-- docs: covers=todo/02-kernel-core/TODO-04-system-logging.md sources=src/kernel/klog.c,src/kernel/klog_disk.c,include/kernel/klog.h,src/kernel/etw.c,include/kernel/etw.h,src/kernel/test/test_klog.c reviewed=2026-09-28 order=4 -->
+<!-- docs: covers=todo/02-kernel-core/TODO-04-system-logging.md sources=src/kernel/klog.c,src/kernel/klog_disk.c,include/kernel/klog.h,src/kernel/etw.c,include/kernel/etw.h,src/kernel/test/test_klog.c reviewed=2026-11-13 order=4 -->
 # System Logging (klog)
 
 ## What is it?
@@ -13,7 +13,7 @@ Every `klog()` call goes through one path. It checks a per-subsystem verbosity o
 
 On disk, a flush writes each entry to `kernel.log` and, through an 18-entry tag-to-file table in [`klog_disk.c`](../../src/kernel/klog_disk.c), to one of six subsystem files (`network.log`, `boot.log`, `fs.log`, `mm.log`, `drivers.log`, `security.log`); an unmatched tag goes to `kernel.log` only. The same flush writes each entry as one JSON object per line to `X:\Logs\events.jsonl`. These files rotate once they pass a size threshold (4 MB by default), keeping 3 generations by default (at most 9). Rotated generations are LZ4-compressed to `.N.lz4` by default, with a CRC32 and a staged rename, so a failed compression falls back to a plain `.N`.
 
-A separate path survives a panic. `klog_crash_persist()` copies the newest ring entries, with no heap or VFS use, into a 128 KiB region reserved with `pmm_alloc_contiguous()` (`KLOG_CRASH_PAGES`) whose address is kept in a UEFI NVRAM variable. On the next boot, `klog_crash_recover()` validates the region's magic and CRC32 early in Phase 0 and replays it to serial with a `[CRASH-PREV]` prefix; once the VFS is up, `klog_crash_write_to_disk()` writes the entries to `X:\Crash\crash_recovery.log`.
+A separate path survives a panic. `klog_crash_persist()` copies the newest ring entries, with no heap or VFS use, into a 128 KiB region reserved with `pmm_alloc_contiguous()` (`KLOG_CRASH_PAGES`) whose address is kept in a UEFI NVRAM variable. On the next boot, `klog_crash_claim_previous()` reads and deletes that variable right after `pmm_init()`, before anything else allocates, and reserves the run only when every frame is free in the PMM, which means usable RAM this boot does not own. A pointer an older build left behind can name memory the new layout uses: on 2026-11-13 one named the new heap guard page and the first boot faulted in Phase 0. A refused pointer is skipped with a warning naming the address and the reason. `klog_crash_recover()` then validates the claimed region's magic and CRC32, still in Phase 0, reads it only through pages it has proven identity-mapped, and replays it to serial with a `[CRASH-PREV]` prefix; once the VFS is up, `klog_crash_write_to_disk()` writes the entries to `X:\Crash\crash_recovery.log`.
 
 ETW starts in Phase 3: `etw_init()` and `etw_register_ssdt()` register seven `NtTrace*` system calls at service numbers 0x01D0 to 0x01D6 ([`etw.h`](../../include/kernel/etw.h)). Up to 8 sessions (`ETW_MAX_SESSIONS`), each with a 4 KB circular buffer, share one spinlock, and every handler copies user data in before taking it.
 
@@ -26,7 +26,7 @@ ETW starts in Phase 3: `etw_init()` and `etw_register_ssdt()` register seven `Nt
 | `klog_early_init()`, `klog_disk_enable()` | Phase 0 and Phase 2 initialization ([`klog.c`](../../src/kernel/klog.c)) |
 | `klog_set_level()`, `klog_get_level()`, `klog_remove_override()` | Per-subsystem verbosity |
 | `klog_get_ring()`, `klog_get_ring_snapshot()`, `klog_get_seq()` | Ring buffer access for the debug console and tests |
-| `klog_crash_persist()`, `klog_crash_recover()`, `klog_crash_write_to_disk()` | Panic capture, next-boot recovery and disk replay |
+| `klog_crash_persist()`, `klog_crash_claim_previous()`, `klog_crash_recover()`, `klog_crash_write_to_disk()` | Panic capture, claiming the previous region, next-boot recovery and disk replay |
 | `klog_decompress_rotated()`, `klog_compress_buffer()` | LZ4 encode and decode for rotated archives |
 | `NtTraceEvent`, `NtTraceControl`, `NtCreateTrace`, `NtQueryTrace`, `NtUpdateTrace`, `NtStopTrace`, `NtFlushTrace` | ETW system calls ([`etw.c`](../../src/kernel/etw.c)) |
 | `SYS_LOG` | User-mode `sys_log(level, msg, len)` entry point |

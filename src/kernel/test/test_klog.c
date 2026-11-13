@@ -17,6 +17,10 @@
 #include "kernel/nt/service_numbers.h"
 #include "libc/string.h"        /* strcmp for the rendered-record assertions */
 #include "kernel/test/poison_tail.h"  /* boundary fixture for the short-tag overread check */
+#include "kernel/mm/pmm.h"
+#include "kernel/mm/heap.h"
+#include "kernel/mm/user_range.h"
+#include "kernel/boot_info.h"
 
 /* KLOG_DEC_DIGITS_MAX's correctness, at every width it can be handed.
  *
@@ -827,6 +831,60 @@ static void test_klog_crash_header_size(void)
                 "klog_crash_header_t has all required fields");
 }
 
+/* The previous-region claim refuses what this boot owns (2026-11-13: an
+ * older build's pointer named the new heap guard page and Phase 0 faulted). */
+#define CRASH_REFUSE_RANGE "not page-aligned or outside the boot identity map"
+#define CRASH_REFUSE_OWNED "frames owned by this boot or not usable RAM"
+
+static int crash_refusal_is(uint64_t phys, const char *want)
+{
+    const char *got = klog_crash_prev_refusal(phys);
+    return got && strcmp(got, want) == 0;
+}
+
+static void test_klog_crash_prev_refusal(void)
+{
+    const uint64_t run = (uint64_t)KLOG_CRASH_PAGES * PMM_FRAME_SIZE;
+    uintptr_t phys = pmm_alloc_contiguous(KLOG_CRASH_PAGES);
+    void *heap_obj = kmalloc(64);
+
+    if (!phys || !heap_obj) {
+        if (phys) pmm_free_contiguous(phys, KLOG_CRASH_PAGES);
+        if (heap_obj) kfree(heap_obj);
+        TEST_SKIP("no 32-frame run or heap object for the claim fixture");
+        return;
+    }
+
+    /* Owned by this boot: a live PMM run and a kernel heap page. */
+    TEST_ASSERT(phys < USER_ELF_END || crash_refusal_is(phys, CRASH_REFUSE_OWNED),
+                "a run this boot allocated is refused as owned");
+    TEST_ASSERT(crash_refusal_is((uint64_t)(uintptr_t)heap_obj & ~(uint64_t)0xFFF,
+                                 CRASH_REFUSE_OWNED),
+                "a kernel heap page is refused as owned");
+    kfree(heap_obj);
+
+    /* The same run, given back, is claimable: free usable RAM in the window. */
+    pmm_free_contiguous(phys, KLOG_CRASH_PAGES);
+    if (phys >= USER_ELF_END && phys <= BOOT_INFO_EARLY_MAP_END - run)
+        TEST_ASSERT(klog_crash_prev_refusal(phys) == (const char *)0,
+                    "a free run inside the identity map is claimable");
+
+    /* Not RAM: the IOAPIC window is in range for the old check. */
+    TEST_ASSERT(crash_refusal_is(0xFEC00000ULL, CRASH_REFUSE_OWNED),
+                "an MMIO address is refused as not usable RAM");
+
+    /* Shape and range, decided before any frame is read. */
+    TEST_ASSERT(crash_refusal_is(phys + 8, CRASH_REFUSE_RANGE),
+                "a misaligned address is refused");
+    TEST_ASSERT(crash_refusal_is(USER_ELF_END - PMM_FRAME_SIZE, CRASH_REFUSE_RANGE),
+                "an address below USER_ELF_END is refused");
+    TEST_ASSERT(crash_refusal_is(BOOT_INFO_EARLY_MAP_END - run + PMM_FRAME_SIZE,
+                                 CRASH_REFUSE_RANGE),
+                "a run ending past the identity map is refused");
+    TEST_ASSERT(crash_refusal_is(~(uint64_t)0xFFF, CRASH_REFUSE_RANGE),
+                "an address that would wrap is refused");
+}
+
 static void test_klog_crash_post_codes(void)
 {
     TEST_ASSERT(POST16_CRASHLOG != 0, "POST16_CRASHLOG is non-zero");
@@ -1487,6 +1545,7 @@ void test_register_klog(void)
     test_suite_register_cat("Klog: ring wrap", test_klog_ring_wrap, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash header size", test_klog_crash_header_size, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: crash POST codes", test_klog_crash_post_codes, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: crash previous-region refusal", test_klog_crash_prev_refusal, TEST_CAT_BOOT);
 
     /* Crash persistence: deeper checks */
     test_suite_register_cat("Klog: crash entry layout", test_klog_crash_entry_layout, TEST_CAT_BOOT);

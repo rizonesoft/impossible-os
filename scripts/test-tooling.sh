@@ -1387,6 +1387,7 @@ _tt_nested_py "$REPO_ROOT/scripts/tests/test_format_md_tables.py" fmt_tables
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_release_image_binding.py" image_binding
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_fence.py" todo_fence
 _tt_nested_py "$REPO_ROOT/scripts/site/tests/test_build.py" site_build
+_tt_nested_py "$REPO_ROOT/tools/uefi-varstore/test_plant.py" uefi_varstore
 _tt_nested_py "$REPO_ROOT/scripts/site/tests/test_site_live_waits.py" site_live_waits
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_alias_staleness.py" alias_staleness
 _tt_nested_py "$REPO_ROOT/scripts/tests/test_todo_plan.py" todo_plan

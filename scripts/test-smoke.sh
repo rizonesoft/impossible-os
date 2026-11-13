@@ -751,6 +751,29 @@ else
     cp "$OVMF_VARS_SRC" "$OVMF_VARS_CP"
 fi
 
+# ---- Optional stale crash-region pointer (SMOKE_CRASH_NVRAM=<address>) -----
+# Plants ImpossibleCrashLog, the NVRAM pointer to the previous boot's klog
+# crash region, as an older build would have left it. Every other leg boots a
+# fresh store, so no gate saw the pointer an update inherits: on 2026-11-13 one
+# named the new heap guard page and the first boot faulted in Phase 0.
+# SMOKE_CRASH_NVRAM_EXPECT=claimed|skipped is the line the kernel must print.
+CRASH_NVRAM="${SMOKE_CRASH_NVRAM:-}"
+CRASH_NVRAM_EXPECT="${SMOKE_CRASH_NVRAM_EXPECT:-}"
+if [ -n "$CRASH_NVRAM" ]; then
+    case "$CRASH_NVRAM_EXPECT" in claimed|skipped) ;; *)
+        echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_NVRAM needs SMOKE_CRASH_NVRAM_EXPECT=claimed or skipped${NC}"; exit 1 ;;
+    esac
+    if ! CRASH_NVRAM_HEX="$(python3 -c 'import sys; print("0x%016x" % int(sys.argv[1], 0))' "$CRASH_NVRAM" 2>/dev/null)"; then
+        echo -e "${RED}SMOKE TEST FAILED: SMOKE_CRASH_NVRAM=$CRASH_NVRAM is not an address${NC}"; exit 1
+    fi
+    CRASH_NVRAM_LE="$(python3 -c 'import struct, sys; print(struct.pack("<Q", int(sys.argv[1], 0)).hex())' "$CRASH_NVRAM")"
+    if ! python3 "$REPO_ROOT/tools/uefi-varstore/plant.py" "$OVMF_VARS_CP" ImpossibleCrashLog \
+            494d504f-5354-4f53-504f-535447554944 "$CRASH_NVRAM_LE"; then
+        echo -e "${RED}SMOKE TEST FAILED: could not plant ImpossibleCrashLog in $OVMF_VARS_CP${NC}"; exit 1
+    fi
+    echo -e "  ${DIM}planted ImpossibleCrashLog = $CRASH_NVRAM_HEX (expect: $CRASH_NVRAM_EXPECT)${NC}"
+fi
+
 # ---- Optional corrupt-boot-entry-store fixture ----------------------------
 # Proves the rejected-store notice actually renders instead of the machine
 # falling back to the in-firmware entry in silence.
@@ -1571,6 +1594,25 @@ if [ -n "$DEGRADE" ] && [ "$BOOT_PASSED" = true ]; then
         FAIL_REASON="SMOKE_DEGRADE=fb: VRAM changed after the refusal, or the driver did not read as an empty surface"
     else
         echo -e "  ${GREEN}✓${NC} forced ${DEG_UP} failure recorded and boot still reached the prompt"
+    fi
+fi
+
+# ---- Stale crash-region pointer verdict (SMOKE_CRASH_NVRAM) ----------------
+if [ -n "$CRASH_NVRAM" ] && [ "$BOOT_PASSED" = true ]; then
+    strip_ansi
+    if [ "$CRASH_NVRAM_EXPECT" = claimed ]; then
+        CRASH_NVRAM_LINE="crash recovery: previous region $CRASH_NVRAM_HEX claimed"
+    else
+        CRASH_NVRAM_LINE="crash recovery: NVRAM address $CRASH_NVRAM_HEX skipped"
+    fi
+    if ! grep -qF -- "$CRASH_NVRAM_LINE" "$STRIPPED_LOG" 2>/dev/null; then
+        BOOT_PASSED=false; BOOT_FAILED=true
+        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: no '$CRASH_NVRAM_LINE' line"
+    elif grep -qF -- "guard at $CRASH_NVRAM_HEX" "$STRIPPED_LOG" 2>/dev/null; then
+        BOOT_PASSED=false; BOOT_FAILED=true
+        FAIL_REASON="SMOKE_CRASH_NVRAM=$CRASH_NVRAM_HEX: the heap guard was still placed on the planted region"
+    else
+        echo -e "  ${GREEN}✓${NC} stale crash-region pointer $CRASH_NVRAM_HEX $CRASH_NVRAM_EXPECT and the boot reached the prompt"
     fi
 fi
 
