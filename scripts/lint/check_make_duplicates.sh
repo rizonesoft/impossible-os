@@ -37,7 +37,13 @@ fi
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/make-dup.XXXXXX")" || exit 2
 trap 'rm -rf "$TMP"' EXIT
 SENTINEL="__check_make_duplicates_parsed__"
-{ cat "$MK"; printf '\n.PHONY: %s\n%s:\n\t@echo %s\n' "$SENTINEL" "$SENTINEL" "$SENTINEL"; } > "$TMP/Makefile"
+# Each write is checked: a copy that lost the source would hold only the
+# sentinel and pass.
+if ! cat "$MK" > "$TMP/Makefile" \
+   || ! printf '\n.PHONY: %s\n%s:\n\t@echo %s\n' "$SENTINEL" "$SENTINEL" "$SENTINEL" >> "$TMP/Makefile"; then
+    echo "check_make_duplicates: could not copy $MK" >&2
+    exit 2
+fi
 
 # deadline: 60 s, far above the measured 0.2 s parse.
 RC=0

@@ -4881,15 +4881,18 @@ if command -v make >/dev/null 2>&1; then
     { cat "$_mk_d/clean.mk"; printf 'a:\n\t@echo 2\n'; } > "$_mk_d/dup.mk"
     { printf '$(error parse failed)\n'; cat "$_mk_d/dup.mk"; } > "$_mk_d/err.mk"
     bash "$REPO_ROOT/scripts/lint/check_make_duplicates.sh" "$_mk_d/err.mk" >/dev/null 2>&1; _mk_err=$?
+    cp "$_mk_d/dup.mk" "$_mk_d/unreadable.mk"; chmod 000 "$_mk_d/unreadable.mk"
+    bash "$REPO_ROOT/scripts/lint/check_make_duplicates.sh" "$_mk_d/unreadable.mk" >/dev/null 2>&1; _mk_unread=$?
+    [ "$(id -u)" = "0" ] && _mk_unread=2   # root reads a mode-000 file; nothing to prove
     bash "$REPO_ROOT/scripts/lint/check_make_duplicates.sh" "$REPO_ROOT/Makefile" >/dev/null 2>&1; _mk_real=$?
     bash "$REPO_ROOT/scripts/lint/check_make_duplicates.sh" "$_mk_d/clean.mk" >/dev/null 2>&1; _mk_clean=$?
     _mk_dup_out=$(bash "$REPO_ROOT/scripts/lint/check_make_duplicates.sh" "$_mk_d/dup.mk" 2>&1); _mk_dup=$?
-    rm -rf "$_mk_d"
-    if [ "$_mk_dry" = "0" ] && [ "$_mk_real" = "0" ] && [ "$_mk_clean" = "0" ] && [ "$_mk_dup" = "1" ] && [ "$_mk_err" = "2" ] \
+    chmod 600 "$_mk_d/unreadable.mk" 2>/dev/null; rm -rf "$_mk_d"
+    if [ "$_mk_dry" = "0" ] && [ "$_mk_real" = "0" ] && [ "$_mk_clean" = "0" ] && [ "$_mk_dup" = "1" ] && [ "$_mk_err" = "2" ] && [ "$_mk_unread" = "2" ] \
        && <<<"$_mk_dup_out" grep -q "overriding recipe for target 'a'"; then
         t_pass "make_duplicate_recipes  the Makefile has none, a target defined twice is refused, a failed parse is not a pass"
     else
-        t_fail "make_duplicate_recipes  a duplicate recipe or a failed parse passed, or the tree has one" "dry-run warnings=$_mk_dry real=$_mk_real clean=$_mk_clean dup=$_mk_dup parse-error=$_mk_err"
+        t_fail "make_duplicate_recipes  a duplicate recipe or a failed parse passed, or the tree has one" "dry-run warnings=$_mk_dry real=$_mk_real clean=$_mk_clean dup=$_mk_dup parse-error=$_mk_err unreadable=$_mk_unread"
     fi
 fi
 # run-with-boot-conf.sh restores boot.conf when the boot fails: a stub `make`
