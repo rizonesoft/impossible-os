@@ -4923,6 +4923,18 @@ else
     t_fail "boot_conf_reset_armed  a runner patches boot.conf before its reset is armed" "$_bo_bad"
 fi
 
+# Every Makefile recipe that runs QEMU does so under $(BOOT_LOCKED), and the
+# disk-image rule and clean check the lock before they rewrite or delete it.
+_bl_mk="$REPO_ROOT/Makefile"
+_bl_bare=$(grep -nE '\$\(QEMU\) \\$' "$_bl_mk" | grep -vF '$(BOOT_LOCKED) $(QEMU)' | cut -d: -f1 | tr '\n' ' ')
+_bl_disk=$(awk '/^\$\(SYSTEM_DISK\):/{f=1} f&&/BOOT_LOCKED\) true/{print "y"; exit} f&&/^$/{exit}' "$_bl_mk")
+_bl_clean=$(awk '/^clean:/{f=1} f&&/BOOT_LOCKED\) true/{print "y"; exit} f&&/^$/{exit}' "$_bl_mk")
+if [ -z "$_bl_bare" ] && [ "$_bl_disk" = "y" ] && [ "$_bl_clean" = "y" ]; then
+    t_pass "boot_locked_recipes  every QEMU recipe holds the image lock; the disk rule and clean check it"
+else
+    t_fail "boot_locked_recipes  a recipe boots, rewrites or deletes the image without the lock" "unlocked QEMU lines: ${_bl_bare:-none} disk=${_bl_disk:-n} clean=${_bl_clean:-n}"
+fi
+
 # run-with-boot-conf.sh restores boot.conf when the boot fails: a stub `make`
 # that exits 3 stands in for QEMU, on a 4 MiB FAT image laid out like the EFI
 # partition, and boot.conf must read back as the default afterwards with the

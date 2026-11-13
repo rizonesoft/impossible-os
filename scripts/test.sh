@@ -4348,6 +4348,13 @@ fi
 # missed it" three times running (v22, 2026-11-07).
 rm -f "$TEST_LOG"
 
+# Hold the image (.boot-conf.lock, scripts/lib/boot-conf-lock.sh) from before
+# the build that rewrites it until the run exits, so no other run boots,
+# patches or resets it under this one, and this build cannot rewrite a disk
+# another run is booting.
+. "$PROJECT/scripts/lib/boot-conf-lock.sh"
+boot_conf_lock_hold "$PROJECT" 7 || exit 1
+
 # --- Step 1: Build ---
 echo -e "${CYAN}${BOLD}[TEST]${RESET} Building kernel..."
 if ! bash "$PROJECT/scripts/build.sh" > /dev/null 2>&1; then
@@ -4389,10 +4396,6 @@ fi
 if [ -n "$UTEST_FILTER" ]; then
     PATCH_ARGS+=(utest_filter "$UTEST_FILTER")
 fi
-# Hold the image's boot.conf from this patch until the run exits, so no other
-# launcher patches or resets it under this boot (scripts/lib/boot-conf-lock.sh).
-. "$PROJECT/scripts/lib/boot-conf-lock.sh"
-boot_conf_lock_hold "$PROJECT" 7 || exit 1
 
 # Install the cleanup trap BEFORE the patch, so a patch that fails or is
 # interrupted after writing still ends with the default boot.conf (reset

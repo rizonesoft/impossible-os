@@ -87,6 +87,10 @@ fi
 
 # ---- Step 1: Build + patch boot.conf for the security suite ----
 echo -e "${CYAN}[1/3]${NC} Building + arming the security suite..."
+# Hold the image from before its build until this run exits
+# (scripts/lib/boot-conf-lock.sh).
+. "$SCRIPT_DIR/lib/boot-conf-lock.sh"
+boot_conf_lock_hold "$(dirname "$SCRIPT_DIR")" 9 || exit 1
 bash "$SCRIPT_DIR/build.sh" >/dev/null 2>&1 || { echo -e "${RED}build failed${NC}"; exit 1; }
 [ -f "$DISK" ] || { echo -e "${RED}$DISK not found${NC}"; exit 1; }
 [ -f "$OVMF_CODE" ] || { echo -e "${RED}OVMF not found at $OVMF_CODE${NC}"; exit 1; }
@@ -106,8 +110,6 @@ cleanup() {
     bash "$SCRIPT_DIR/patch-boot-conf.sh" reset >/dev/null 2>&1 || true
     exit "$ec"
 }
-. "$SCRIPT_DIR/lib/boot-conf-lock.sh"
-boot_conf_lock_hold "$(dirname "$SCRIPT_DIR")" 9 || exit 1
 trap cleanup EXIT INT TERM
 bash "$SCRIPT_DIR/patch-boot-conf.sh" test 1 test_suite security >/dev/null
 

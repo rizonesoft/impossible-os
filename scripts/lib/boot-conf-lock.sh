@@ -6,7 +6,9 @@
 # boot.conf: run-with-boot-conf.sh, with-boot-conf-lock.sh (every Makefile
 # QEMU recipe), run-qemu.sh, test.sh, test-swtpm.sh, test-smoke.sh,
 # test-smoke-matrix.sh, test-fs.sh, test-desktop.sh, test-visual-regression.sh and scripts/machines/{run-qemu-kvm,
-# run-qemu-tcg,boot-test-qemu}.sh. The caller
+# run-qemu-tcg,boot-test-qemu}.sh and the rollback / stale-ABI fixtures under
+# scripts/debug/. Building or cleaning the image checks it first (Makefile).
+# The caller
 # holds .boot-conf.lock (at the worktree root, never under build/, which
 # `build.sh clean` deletes) from before its patch until it exits, and
 # exports BOOT_CONF_LOCK_HELD=1 so its own patch-boot-conf.sh calls do not
@@ -27,7 +29,7 @@ boot_conf_lock_hold() {
     eval "exec ${fd}>\"\$project/.boot-conf.lock\"" || return 1
     if ! flock -n "$fd"; then
         eval "exec ${fd}>&-"
-        echo "another run is booting $project/build/system-disk.img with a patched boot.conf (.boot-conf.lock)" >&2
+        echo "another run is using $project/build/system-disk.img (.boot-conf.lock); wait for it to finish" >&2
         return 1
     fi
     export BOOT_CONF_LOCK_HELD=1

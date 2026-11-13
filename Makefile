@@ -1306,6 +1306,8 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
                 tools/make-system-disk.c tools/mkfs-ixfs.c scripts/stage-esp-loader.sh scripts/secure-boot/shim-hash-check.sh \
                 $(SYSROOT)/hello.exe
 	@echo "[DISK] Building system disk..."
+	@# Never rewrite a disk a run is booting: make-system-disk truncates it.
+	@$(BOOT_LOCKED) true
 	@mkdir -p $(BUILD_DIR)/tools
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-system-disk tools/make-system-disk.c
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/mkfs-ixfs tools/mkfs-ixfs.c
@@ -1608,7 +1610,7 @@ QEMU_TIMEOUT ?= 30
 run-usb-ci: all $(USB_TEST_IMG)
 	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@echo "[TEST] Launching headless QEMU with xHCI + USB storage ($(QEMU_TIMEOUT)s timeout)"
-	@timeout $(QEMU_TIMEOUT) $(QEMU) \
+	@timeout $(QEMU_TIMEOUT) $(BOOT_LOCKED) $(QEMU) \
 		-cpu Haswell \
 		-smp 2 \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
@@ -1679,7 +1681,7 @@ run-nvme: all $(NVME_TEST_IMG)
 run-nvme-ci: all $(NVME_TEST_IMG)
 	@cp -n $(OVMF_VARS) $(OVMF_VARS_CP) 2>/dev/null || true
 	@echo "[TEST] Launching headless QEMU with NVMe storage ($(QEMU_TIMEOUT)s timeout)"
-	@timeout $(QEMU_TIMEOUT) $(QEMU) \
+	@timeout $(QEMU_TIMEOUT) $(BOOT_LOCKED) $(QEMU) \
 		-cpu Haswell \
 		-smp 2 \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
@@ -1879,6 +1881,8 @@ test-disks: system-disk
 
 ## clean: Remove all build artifacts
 clean:
+	@# Never delete the disk a run is booting.
+	@$(BOOT_LOCKED) true
 	rm -rf $(BUILD_DIR)
 	rm -f $(BUILD_INFO_H)
 	$(MAKE) -C src/boot/uefi clean

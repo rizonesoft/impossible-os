@@ -43,6 +43,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+# These fixtures boot build/system-disk.img itself; hold .boot-conf.lock for the
+# run so no other run patches, resets or rewrites it under them
+# (scripts/lib/boot-conf-lock.sh).
+. "$REPO_ROOT/scripts/lib/boot-conf-lock.sh"
+boot_conf_lock_hold "$REPO_ROOT" 9 || exit 1
 BUILD_DIR="$REPO_ROOT/build"
 FIXTURES_DIR="$BUILD_DIR/fixtures/rollback"
 
