@@ -12,7 +12,7 @@ LABEL org.opencontainers.image.source="https://github.com/rizonesoft/impossible-
       org.opencontainers.image.description="Impossible OS CI toolchain" \
       org.opencontainers.image.licenses="GPL-3.0-only"
 
-COPY scripts/ci/toolchain.sh scripts/ci/toolchain-packages.txt /tmp/ci/
+COPY scripts/ci/toolchain.sh scripts/ci/apt-install.sh scripts/ci/toolchain-packages.txt /tmp/ci/
 RUN bash /tmp/ci/toolchain.sh && rm -rf /tmp/ci
 
 # The suites run unprivileged, as they do on a developer host: several assert that

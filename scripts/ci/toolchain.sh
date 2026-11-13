@@ -6,7 +6,8 @@
 # Until 2026-11-13 every job installed this with apt on every run, and nine Build
 # runs in a row on 2026-11-11 failed in that step because the runner could not
 # resolve the Ubuntu mirror. A mirror outage now fails an image build, which is
-# retried, and never a job.
+# retried, and never a job. The install still goes through scripts/ci/apt-install.sh,
+# so a stalled mirror is abandoned and retried instead of holding the build.
 set -euo pipefail
 
 LLVM_VERSION=19
@@ -16,19 +17,22 @@ LIST="$HERE/toolchain-packages.txt"
 
 [ "$(id -u)" = 0 ] || { echo "toolchain.sh: run as root (image build only)" >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
-APT=(-o Acquire::Retries=5 -o Acquire::http::Timeout=30)
-
-apt-get update "${APT[@]}"
+APT=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30)
 
 # Ubuntu 26.04 defaults to uutils coreutils, whose `timeout -s KILL` leaves a
-# stalled child running, so the identity gate's time bounds stop holding. The
-# swap removes an Essential package, so it goes first and on its own.
+# stalled child running, so the identity gate's time bounds stop holding and
+# apt-install.sh's own bounds with them. The swap removes an Essential package,
+# so it goes first, on its own, with plain apt-get.
+apt-get update "${APT[@]}"
 apt-get install -y --allow-remove-essential "${APT[@]}" coreutils-from-gnu coreutils-from-uutils-
 timeout --version | grep -q 'GNU coreutils'
 
 mapfile -t PACKAGES < <(sed -e 's/#.*//' -e "s/@LLVM@/$LLVM_VERSION/g" "$LIST" | awk 'NF {print $1}')
 [ "${#PACKAGES[@]}" -gt 0 ] || { echo "toolchain.sh: no packages in $LIST" >&2; exit 1; }
-apt-get install -y "${APT[@]}" "${PACKAGES[@]}"
+# The whole toolchain is about 1 GB of packages and 4 GB unpacked, so each phase
+# gets more than a job's few packages need; the worst case still fits the
+# publishing job (test_ci_toolchain_install.py recomputes it).
+APT_DOWNLOAD_SECONDS=600 APT_INSTALL_SECONDS=900 bash "$HERE/apt-install.sh" "${PACKAGES[@]}"
 
 # ruff lints the Python tooling (lint Check 35); pinned, installed for every user.
 PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install "ruff==$RUFF_VERSION"

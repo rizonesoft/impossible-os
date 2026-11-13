@@ -27,6 +27,9 @@
 set -uo pipefail
 
 [ $# -gt 0 ] || { echo "usage: apt-install.sh <package>..." >&2; exit 1; }
+# Root (the CI image build, scripts/ci/toolchain.sh) runs apt directly; the base
+# image has no sudo. A runner user goes through sudo.
+if [ "$(id -u)" = 0 ]; then SUDO=(); else SUDO=(sudo -E); fi
 export DEBIAN_FRONTEND=noninteractive
 OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30)
 ATTEMPTS="${APT_INSTALL_ATTEMPTS:-3}"
@@ -43,29 +46,29 @@ for n in $(seq 1 "$ATTEMPTS"); do
     # order: an index update that has to fetch every list again, as it does
     # right after a mirror switch, may run into the download's share.
     t_start=$(date +%s)
-    if sudo -E timeout -k 10 "$((UPDATE_CAP + DOWNLOAD_CAP - 10))" apt-get update "${OPTS[@]}" \
+    if "${SUDO[@]}" timeout -k 10 "$((UPDATE_CAP + DOWNLOAD_CAP - 10))" apt-get update "${OPTS[@]}" \
         && left=$((UPDATE_CAP + DOWNLOAD_CAP - ($(date +%s) - t_start))) && [ "$left" -ge 10 ] \
-        && sudo -E timeout -k 10 "$left" apt-get install -y --download-only "${OPTS[@]}" "$@"; then
+        && "${SUDO[@]}" timeout -k 10 "$left" apt-get install -y --download-only "${OPTS[@]}" "$@"; then
         echo "apt-install: packages downloaded; installing"
-        if sudo -E timeout -k 10 "$INSTALL_CAP" apt-get install -y --no-download "${OPTS[@]}" "$@"; then
+        if "${SUDO[@]}" timeout -k 10 "$INSTALL_CAP" apt-get install -y --no-download "${OPTS[@]}" "$@"; then
             exit 0
         fi
         echo "apt-install: the install failed after a complete download: $*" >&2
         exit 1
     fi
     echo "apt-install: download attempt $n failed or stalled" >&2
-    sudo killall -q apt-get 2>/dev/null || true
-    sudo rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock
+    "${SUDO[@]}" killall -q apt-get 2>/dev/null || true
+    "${SUDO[@]}" rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock
     # A retry against the same mirror does not help when this runner's route to
     # it is what is broken: on 2026-11-10 one job failed all three attempts on
     # azure.archive.ubuntu.com while two jobs beside it downloaded in seconds.
     # After the first failure, point apt at the primary archive instead.
     # GitHub's runners name the mirror in /etc/apt/apt-mirrors.txt (the sources
     # point at that list), other hosts in the sources themselves.
-    if [ "$n" = "1" ] && sudo grep -rqsF "$MIRROR" /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d; then
+    if [ "$n" = "1" ] && "${SUDO[@]}" grep -rqsF "$MIRROR" /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d; then
         echo "apt-install: switching from $MIRROR to $FALLBACK_MIRROR" >&2
         for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*; do
-            [ -f "$f" ] && sudo sed -i "s|//$MIRROR/|//$FALLBACK_MIRROR/|g" "$f"
+            [ -f "$f" ] && "${SUDO[@]}" sed -i "s|//$MIRROR/|//$FALLBACK_MIRROR/|g" "$f"
         done
     fi
     [ "$n" -lt "$ATTEMPTS" ] && sleep $((n * 5))
