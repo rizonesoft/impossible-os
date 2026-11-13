@@ -107,6 +107,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |  39   |   §39   | Re-judge the closed parks under the never-park rule                                              | --                         |  [x]   |
 | 💎  |  40   |   §40   | Pytest-style control-plane tests run in the suite                                                | --                         |  [x]   |
 | 💎  |  41   |   §41   | CI jobs run in the pinned image                                                                  | --                         |  [x]   |
+| 💎  |  42   |   §42   | The graph jobs run in a small pinned image                                                       | §41                        |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -1412,6 +1413,32 @@ Every CI job installs its toolchain with apt on each run. On 2026-11-11 nine Bui
 - [x] Commit: `"ci: the build jobs run in the pinned image and need no package mirror"`
 
 **Test checkpoint:** A Build run on `main` is green with no package-install step in its log.
+
+> **Test runner:** `python3 scripts/ci/check-pinned-image.py --selftest`; `python3 -m pytest -q scripts/overnight/tests/test_ci_toolchain_install.py scripts/overnight/tests/test_ci_container.py`; `python3 scripts/lib/tests/test_release_compile_db.py`; `CI_CONTAINER=1 bash scripts/ci-container.sh --tooling` for the image itself.
+
+> **Notes:**
+> - What shipped: one image (`scripts/ci/image/Dockerfile`, package list in `scripts/ci/toolchain-packages.txt`) holds the CI toolchain; every checkout job runs it by digest as uid 1001 and installs nothing, so a package-mirror outage cannot fail a job.
+> - How it integrates: `ci-image.yml` builds, checks QEMU (`scripts/ci/check-qemu-version.py`) and `setup.sh --verify`, then publishes; moving the toolchain is publish, then a digest commit (`todo/answers.md` Q44). `scripts/ci-container.sh` runs the same digest locally.
+> - Downstream effects: the release-flavor proof had been broken since March by bear's analysis entry and the ACPICA excludes; it now reads the database as written and passes in the image.
+> - Canonical doc: [development tooling](../../docs/infrastructure/development-tooling.md#local-ci-hooks), "The CI image".
+> - Scope boundary: the graph jobs pull the full image too; a small image for them is section 42.
+
+> **Verified:** 2026-11-13 | commit `db2bf1d62` | 7/7 items | check-pinned-image selftest OK and refuses the old workflows | test_ci_toolchain_install 7/7, the QEMU case fails on the substring rule | test_release_compile_db 4/4, fails on the old seam gate | candidate image: CI tier as uid 1001 (lint, tooling 1392/1392, clean build, 37982 kernel + 17 user-mode PASS) and release.yml rehearsal (proof PASS) | control-plane suite 91/91
+> **Quality reviewed:** 2026-11-13 | Codex passes: round (2 rounds) on the staged diff, performance and completion on `9ece40d6c`, then round, performance and reconciliation on `db2bf1d62`, all approving | 3 findings: install-scanner bypass and QEMU substring compare fixed; graph jobs pulling the full image filed as section 42 | scope: N/A (CI and host tooling, no kernel/boot source)
+
+## 42. The graph jobs run in a small pinned image
+
+> **Spawned-by:** §41 (review)
+> **User impact:** every push that touches `todo/` pulls the 4.5 GB build image twice for jobs that need only git, gh and Python; the `validate` job has a five-minute timeout, so a slow pull can turn a clean push red.
+
+The two `todo-graph.yml` jobs moved into the CI image in section 41. Before that they installed only the coreutils swap and PyYAML, so they need none of LLVM, QEMU or the visual-test stack.
+
+- [ ] Publish a small image from `ci-image.yml` and pin it in both graph jobs. Done when their cold container start is measured before and after.
+  - It holds only what they need: GNU coreutils, git, gh, python3-yaml, python3-jsonschema, jq.
+- [ ] `scripts/ci/check-pinned-image.py` accepts exactly the two published images, each for its own jobs. Done when its selftest refuses the graph image in `build.yml`.
+- [ ] Commit: `"ci: the graph jobs run in a small pinned image"`
+
+**Test checkpoint:** a `todo-graph.yml` run on `main` is green in the small image and its container start is faster than the build image's.
 
 ## Format Quick Reference
 
