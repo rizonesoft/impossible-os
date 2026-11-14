@@ -243,6 +243,8 @@ The inventory holds facts. Names of controls, their order, their sizes and their
 > - `ms-hashes.txt` came from `make-ms-hashes.ps1` on build 26300.9711: 20,339 files under `C:\Windows`, Program Files, `C:\ProgramData` and every inbox app package, 8,113 distinct; the 19 folders only SYSTEM may list hold no interface assets. All 295 tracked assets pass.
 > - `names.json` holds 12 replaced names (the eight above plus Windows Update, Windows Backup, Microsoft 365 and Microsoft Teams); lint Check 40 runs both checkers on every lint.
 > - Rule page: `docs/design/inventory/index.md#what-does-it-never-hold`.
+> **Verified:** 2026-11-14 | commit `3c6f13097` | 8/8 items | 70 + 12 tests OK, `bash scripts/lint.sh` 0 errors, Check 40 refused a planted 120-character label, 295 tracked assets clean against 8,113 reference hashes
+> **Quality reviewed:** 2026-11-14 | Codex 7x (plan, round 2x, performance 2x, completion 2x) | 0H+3M fixed, 0 open | scope: N/A (host tooling, no kernel surface)
 
 **Test checkpoint:** a fixture record with a 120-character label fails with `label is a sentence`; a fixture with a Microsoft link fails with `link in record`. `bash scripts/lint.sh` passes on the clean tree.
 
