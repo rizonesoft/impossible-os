@@ -27,9 +27,8 @@ import json
 import os
 import pathlib
 import signal
+import subprocess
 import sys
-import time
-import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
 
@@ -47,7 +46,6 @@ core = _load("baseline_core")
 INVENTORY = capture.INVENTORY
 FETCH_TIMEOUT = 60   # deadline: the whole download, one JSON file of about 200 KB from GitHub
 FETCH_STALL = 15     # deadline: one wait on the socket
-FETCH_CHUNK = 1 << 16
 FETCH_MAX = 8 << 20  # the Gallery file is about 200 KB; a larger answer is not it
 GUEST_TIMEOUT = 600
 
@@ -67,10 +65,7 @@ def gallery_rows(fetch=None):
     """The controls baseline from the pinned Gallery commit."""
     g = core.GALLERY
     url = f"https://raw.githubusercontent.com/{g['repo']}/{g['commit']}/{g['path']}"
-    if fetch is None:
-        def fetch(u):
-            with urllib.request.urlopen(u, timeout=FETCH_STALL) as r:  # deadline: FETCH_STALL a wait, FETCH_TIMEOUT in all
-                return read_bounded(r, u)
+    fetch = fetch or fetch_bounded
     try:
         data = json.loads(fetch(url).decode("utf-8-sig"))
     except (OSError, ValueError) as exc:
@@ -78,22 +73,34 @@ def gallery_rows(fetch=None):
     return core.control_rows(data)
 
 
-def read_bounded(resp, what, clock=time.monotonic):
-    """The whole response, or SourceError once it passes FETCH_MAX bytes or
-    FETCH_TIMEOUT seconds in total. A socket timeout bounds one wait only, so a
-    source that keeps trickling is cut off here; the caller's `with` closes it.
-    This runs under the capture lock, which no stalled download may hold."""
-    end = clock() + FETCH_TIMEOUT
-    data = bytearray()
-    while True:
-        chunk = resp.read(FETCH_CHUNK)
-        if not chunk:
-            return bytes(data)
-        data += chunk
-        if len(data) > FETCH_MAX:
-            raise core.SourceError(f"controls: {what} is larger than {FETCH_MAX} bytes")
-        if clock() > end:
-            raise core.SourceError(f"controls: {what} did not finish within {FETCH_TIMEOUT} s")
+_FETCHER = """
+import sys, urllib.request
+with urllib.request.urlopen(sys.argv[1], timeout=float(sys.argv[3])) as r:
+    sys.stdout.buffer.write(r.read(int(sys.argv[2]) + 1))
+"""
+
+
+def fetch_bounded(url, total=None, cap=None):
+    """The bytes at `url`, or SourceError once the download passes `total`
+    seconds from start to finish or `cap` bytes.
+
+    A socket timeout bounds one wait, and a buffered read can make many of them,
+    so a source that trickles could hold the capture lock for hours. The
+    download therefore runs in a child process that is killed at the deadline:
+    connecting, the headers and the body are all inside it."""
+    total = FETCH_TIMEOUT if total is None else total
+    cap = FETCH_MAX if cap is None else cap
+    try:
+        r = subprocess.run([sys.executable, "-I", "-c", _FETCHER, url, str(cap), str(min(FETCH_STALL, total))],
+                           capture_output=True, timeout=total)   # deadline: total; run() kills the one child
+    except subprocess.TimeoutExpired:
+        raise core.SourceError(f"controls: {url} did not finish within {total} s") from None
+    if r.returncode != 0:
+        tail = r.stderr.decode("utf-8", "replace").strip().splitlines()[-1:]
+        raise core.SourceError(f"controls: {url} could not be fetched ({' '.join(tail) or r.returncode})")
+    if len(r.stdout) > cap:
+        raise core.SourceError(f"controls: {url} is larger than {cap} bytes")
+    return r.stdout
 
 
 def received(out, rc, build):

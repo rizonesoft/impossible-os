@@ -229,6 +229,31 @@ class Baselines(unittest.TestCase):
         self.assertIn("absent-matched", self.rules({**base, "settings/home.json": rows,
                                                     "REFERENCE.md": absent(("settings", "a", "gone"))}))
 
+    def test_an_unsound_absence_never_counts_and_is_reported_under_the_owner(self):
+        base = {"known-folders/baseline.json": bl("known-folders", ["a", "b"], owner="explorer"),
+                "explorer/x.json": [rec("win11.explorer.x", surface="explorer", kind="surface", baselineId="known-folders:a")],
+                "taskbar/bar.json": three()}
+        cases = {"absent-reason": absent(("known-folders", "b", " ")),
+                 "absent-orphan": absent(("known-folders", "zz", "why")),
+                 "absent-duplicate": absent(("known-folders", "b", "x"), ("known-folders", "b", "y")),
+                 "absent-matched": absent(("known-folders", "a", "gone"))}
+        for rule, table in cases.items():
+            with self.subTest(rule):
+                files = {**base, "REFERENCE.md": table}
+                for scope in ((), ("--surface", "explorer"), ("--surface", "known-folders")):
+                    r, out = self.report(files, *scope)
+                    self.assertIn(rule, [e["rule"] for e in out["errors"]], scope)
+                    c = out["baselines"]["known-folders"]
+                    self.assertEqual(c["matched"] + c["absent"] + c["unmatched"], 2, c)
+                    self.assertEqual((c["matched"], c["absent"]), (1, 1 if rule == "absent-duplicate" else 0), c)
+                _, out = self.report(files, "--surface", "taskbar")
+                self.assertNotIn(rule, [e["rule"] for e in out["errors"]])
+
+    def test_a_broken_absent_table_is_reported_under_every_surface(self):
+        table = ["## Which baseline rows are absent?", "", "| Baseline | Row |", "| --- | --- |", "| `settings` | `a` |"]
+        files = {"settings/baseline.json": bl("settings", ["a"]), "taskbar/bar.json": three(), "REFERENCE.md": table}
+        self.assertIn("absent-table", self.rules(files, "--surface", "taskbar"))
+
     def test_baseline_missing_and_baseline_id_together_are_refused(self):
         rows = [rec("win11.settings.x", surface="settings", kind="surface", baselineId="settings:a", baselineMissing=True)]
         self.assertIn("baseline-both", self.rules({"settings/baseline.json": bl("settings", ["a"]), "settings/home.json": rows}))

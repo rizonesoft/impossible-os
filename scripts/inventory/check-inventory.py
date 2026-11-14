@@ -283,8 +283,16 @@ def load_baselines(root, surface, build, err):
     return out
 
 
-def load_absent(root, baselines, err, report):
-    """{(baseline, row): (line, reason)} from the REFERENCE.md absent table."""
+def load_absent(root, baselines, err, surface):
+    """{(baseline, row): (line, reason)} from the REFERENCE.md absent table.
+
+    Only a sound entry is returned, so an entry that names nothing, gives no
+    reason or repeats another never counts a row as absent. An entry is reported
+    under the surface that owns its baseline, as the baseline itself is; a
+    table that cannot be read is reported under every surface."""
+    def scoped(name):
+        return surface is None or surface in (name, baseline_core.OWNERS.get(name))
+
     path = root / "REFERENCE.md"
     out = {}
     if not path.is_file():
@@ -302,26 +310,30 @@ def load_absent(root, baselines, err, report):
             table.append((n + 1, [c.strip() for c in lines[n].strip().strip("|").split("|")]))
     if not table:
         return out
-    if table[0][1] != ABSENT_COLUMNS:
-        if report:
-            err(path, table[0][0], "absent-table", f"the absent table's columns are {' | '.join(ABSENT_COLUMNS)}")
+    if table[0][1] != ABSENT_COLUMNS or len(table) < 2:
+        err(path, table[0][0], "absent-table", f"the absent table's columns are {' | '.join(ABSENT_COLUMNS)}")
         return out
+    first = {}
     for n, cells in table[2:]:
         if len(cells) != 3:
-            if report:
-                err(path, n, "absent-table", "an absent row has three cells: baseline, row, reason")
+            err(path, n, "absent-table", "an absent row has three cells: baseline, row, reason")
             continue
         name, row, reason = (c.strip("`") for c in cells)
-        if report:
-            if name not in baselines:
-                err(path, n, "absent-orphan", f"{name} is not a baseline")
-            elif row not in baselines[name]["rows"]:
-                err(path, n, "absent-orphan", f"{name} has no row {row}")
-            if not reason.strip():
-                err(path, n, "absent-reason", f"{name}:{row} is listed absent without a reason")
-            if (name, row) in out:
-                err(path, n, "absent-duplicate", f"{name}:{row} is also listed at line {out[(name, row)][0]}")
-        out.setdefault((name, row), (n, reason))
+        problem = None
+        if name not in baselines:
+            problem = "absent-orphan", f"{name} is not a baseline"
+        elif row not in baselines[name]["rows"]:
+            problem = "absent-orphan", f"{name} has no row {row}"
+        elif not reason.strip():
+            problem = "absent-reason", f"{name}:{row} is listed absent without a reason"
+        elif (name, row) in first:
+            problem = "absent-duplicate", f"{name}:{row} is also listed at line {first[(name, row)]}"
+        first.setdefault((name, row), n)
+        if problem:
+            if scoped(name):
+                err(path, n, *problem)
+            continue
+        out[(name, row)] = (n, reason)
     return out
 
 
@@ -468,10 +480,12 @@ def check(root, surface=None):
                     f"baseline read from {read_from}: capture it again on the reference build")
             continue
         matched[name].add(row)
-    absent = load_absent(root, baselines, err, report=surface is None)
-    for (name, row), (n, _) in absent.items():
-        if row in matched.get(name, ()):
-            if surface is None:
+    absent = load_absent(root, baselines, err, surface)
+    for (name, row), (n, _) in list(absent.items()):
+        if row in matched[name]:
+            # A matched row is counted once, as matched.
+            del absent[(name, row)]
+            if baselines[name]["mine"]:
                 err(root / "REFERENCE.md", n, "absent-matched", f"{name}:{row} is listed absent and a record matches it")
     captured = {p.parent.name for p, _, obj, _ in records.values()}
     summary = {}

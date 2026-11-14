@@ -149,30 +149,63 @@ class Controls(unittest.TestCase):
         with self.assertRaises(core.SourceError):
             baselines.gallery_rows(lambda u: b"not json")
 
-    def test_a_trickling_download_is_cut_off_at_the_total_deadline(self):
-        class Trickle:
-            def __init__(self):
-                self.now = 0.0
+    def serve(self, handler):
+        """A local HTTP server answering every request with handler(wfile)."""
+        import http.server
+        import threading
 
-            def read(self, n):
-                self.now += 10      # each chunk arrives inside the socket timeout
-                return b"x"
-        t = Trickle()
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                try:
+                    handler(self)
+                except OSError:
+                    pass                # the client was killed at its deadline
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        srv.daemon_threads = True
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        return f"http://127.0.0.1:{srv.server_address[1]}/x"
+
+    def test_a_trickling_body_is_cut_off_at_the_total_deadline(self):
+        import time
+
+        def trickle(h):                 # a byte every 0.1 s, far inside any socket timeout, for 30 s
+            h.send_response(200)
+            h.send_header("Content-Length", "1000000")
+            h.end_headers()
+            for _ in range(300):
+                h.wfile.write(b"x")
+                h.wfile.flush()
+                time.sleep(0.1)
+        start = time.monotonic()
+        with self.assertRaisesRegex(core.SourceError, "did not finish within 1"):
+            baselines.fetch_bounded(self.serve(trickle), total=1)
+        self.assertLess(time.monotonic() - start, 10)
+
+    def test_delayed_headers_are_inside_the_deadline(self):
+        import time
+        start = time.monotonic()
         with self.assertRaisesRegex(core.SourceError, "did not finish"):
-            baselines.read_bounded(t, "url", clock=lambda: t.now)
-        self.assertLessEqual(t.now, baselines.FETCH_TIMEOUT + 20)
+            baselines.fetch_bounded(self.serve(lambda h: time.sleep(30)), total=1)
+        self.assertLess(time.monotonic() - start, 10)
 
-    def test_an_oversized_download_is_refused_and_a_whole_one_returned(self):
-        class Body:
-            def __init__(self, chunks):
-                self.chunks = list(chunks)
-
-            def read(self, n):
-                return self.chunks.pop(0) if self.chunks else b""
-        self.assertEqual(baselines.read_bounded(Body([b"ab", b"c"]), "url"), b"abc")
-        with self.assertRaisesRegex(core.SourceError, "larger"):
-            baselines.read_bounded(Body([b"x" * (baselines.FETCH_MAX + 1)]), "url")
-
+    def test_a_whole_body_is_returned_and_an_oversized_or_failed_one_refused(self):
+        def body(n, status=200):
+            def send(h):
+                h.send_response(status)
+                h.send_header("Content-Length", str(n))
+                h.end_headers()
+                h.wfile.write(b"x" * n)
+            return send
+        self.assertEqual(baselines.fetch_bounded(self.serve(body(5)), total=20), b"xxxxx")
+        with self.assertRaisesRegex(core.SourceError, "larger than 4"):
+            baselines.fetch_bounded(self.serve(body(50)), total=20, cap=4)
+        with self.assertRaisesRegex(core.SourceError, "could not be fetched"):
+            baselines.fetch_bounded(self.serve(body(0, status=404)), total=20)
 
 class ClassicControls(unittest.TestCase):
     def test_only_names_under_the_version_prefix_count(self):
