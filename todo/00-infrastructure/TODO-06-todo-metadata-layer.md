@@ -2046,7 +2046,7 @@ Split AGAIN 2026-08-11, before code, on the sequencer's SPLIT-RECOMMENDED verdic
 - [x] `.claude/hooks/sequencer_triage.py` attributes stamps through the shared tracker
       - Already shipped: `section_stamps` and `file_lifecycle` both walk `_scan_sections`, which takes the tracker's mask, leaf views and blockquote state; closed 2026-11-13 on that evidence.
 - [x] `scripts/overnight/section_slice.py` skips fenced and commented headings
-      - Shipped 2026-11-13: `section_block` skips lines the tracker's structural mask marks; selftest gains three cases that fail on the old slicer; byte-identical over 2,597 corpus sections.
+      - Shipped 2026-11-13: `section_block` skips lines the tracker's structural mask marks; selftest gains three cases that fail on the old slicer; byte-identical over 2,597 corpus sections. An unclosed fence or comment is refused (`require_closed`), and `section-manifest.py` and `section-pack.py` report it as an error rather than slicing past it.
 - [x] `.claude/hooks/todo_wrap_reminder.py` takes its fence grammar from the shared tracker
       - Shipped 2026-11-13: both scans use the tracker's prose mask, the projection `todo-reflow.py` repairs with; selftest gains four cases that fail on the old toggle; same verdict on all 257 corpus files.
 - [x] `.claude/hooks/todo_format_check.py` takes its fence grammar from the shared tracker

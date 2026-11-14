@@ -325,7 +325,11 @@ def main(argv) -> int:
     except OSError as exc:
         print(json.dumps({"error": f"unreadable TODO: {exc}"}))
         return 1
-    block = section_block(text, n)
+    try:
+        block = section_block(text, n)
+    except RuntimeError as exc:  # UnclosedDocument: no boundary can be trusted
+        print(json.dumps({"error": f"cannot slice {todo_rel}: {exc}"}))
+        return 1
     if not block:
         print(json.dumps({"error": f"section {n} not found in {todo_rel}"}))
         return 1

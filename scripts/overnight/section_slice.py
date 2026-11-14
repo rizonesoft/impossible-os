@@ -83,12 +83,19 @@ def section_block(text: str, n: int) -> str:
     the file.
 
     Returns "" when the section is absent. The heading line itself is
-    included, matching the behavior both callers already relied on."""
+    included, matching the behavior both callers already relied on. Raises
+    `UnclosedDocument` (a RuntimeError) when the document has an unclosed fence
+    or HTML comment, since no section boundary after it can be trusted."""
     lines = text.splitlines()
     # A heading inside a fence or an HTML comment is an example, not a
     # boundary: the shared tracker's STRUCTURAL mask says which lines count.
     # Until 2026-11-13 a fenced `## N.` example ended the real section early.
-    mask = _fence().fence_scan(lines).mask
+    scan = _fence().fence_scan(lines)
+    # An unclosed fence or comment masks to EOF, so every boundary after it
+    # would vanish and a slice would silently swallow later sections. Refuse
+    # instead (raises UnclosedDocument), as the producer and the gates do.
+    scan.require_closed()
+    mask = scan.mask
     start = None
     for i, ln in enumerate(lines):
         if mask[i]:
@@ -171,6 +178,14 @@ def _selftest() -> int:
     check("- [ ] b" in section_block(fenced, 1), "a fenced or commented heading ended the section")
     check(section_block(fenced, 2).startswith("## 2. Two"), "a fenced heading was taken as the section start")
     check(section_block(fenced, 3) == "", "a commented heading was found as a section")
+    # An unclosed fence or comment is refused, not sliced past.
+    for bad, what in (("## 1. One\n```\n## 2. Two\n", "fence"),
+                      ("## 1. One\n<!--\n## 2. Two\n", "comment")):
+        try:
+            section_block(bad, 1)
+            check(False, f"an unclosed {what} was sliced instead of refused")
+        except RuntimeError:
+            pass
     for f in failures:
         print(f"FAIL: {f}")
     print(f"section_slice selftest: {'PASS' if not failures else 'FAIL'} "
