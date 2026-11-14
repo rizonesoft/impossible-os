@@ -8,6 +8,8 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 
 # TODO-17 -- Windows 11 Parity Inventory
 
+> **Validated:** 2026-11-14 | validate-todo-file clean (structure / IO table / XREF / test wiring)
+
 > **Goal:** "The same thing, in the same place" becomes measurable. A machine-readable inventory in `docs/design/inventory/` lists every visible element of the Windows 11 interface (shell surfaces, Settings pages, File Explorer, common dialogs, Control Panel, system tools, inbox utilities, shortcuts, gestures, metrics and motion) as one record per element: its name, kind, parent, order, control type, position at a fixed capture profile, and its behaviour in our own words. Every interface section in the roadmap then cites inventory ids, every record is owned by exactly one section that builds it, and a coverage report shows how much of the reference Impossible OS implements. The inventory also records where Windows 11 is inconsistent with itself and the one rule Impossible OS ships instead.
 
 > [!IMPORTANT]
@@ -15,6 +17,9 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 
 > [!NOTE]
 > **The standard is pixel-perfect (owner direction, 2026-11-14).** Every geometry, colour, material and motion of the built interface matches the Windows 11 reference exactly, and only what is copyrighted is replaced by original work: icons, fonts, wallpaper, sounds and wording. Those replaced regions are the only pixels allowed to differ, and they must occupy the same rectangles: an icon the same size in the same place, text with the same metrics so every line breaks and ends where the reference does. §16 proves the structure and §18 proves the pixels.
+
+> [!IMPORTANT]
+> **Capture once (owner direction, 2026-11-14).** The capture campaign of §8 to §14 takes 100 percent of the reference in one pass: every record, every baseline row, and the screenshot of every surface in every state and profile. Every later comparison (§16, §17, §18) reads those stored captures and never starts the VM. The VM is started again only to capture something the campaign missed, recorded as a capture gap, never to compare an implementation against something already captured. The VM, its checkpoint and the capture tools (§2, §3) are kept after the campaign for that purpose and are never cleaned up.
 
 > **Owner direction, 2026-11-14:** the inventory runs first in the plan and is wanted fast, so capture work is grouped: each of §8 to §14 covers one group of surfaces and is reviewed and pushed once. The Impossible OS interface is modelled 1:1 on Windows 11, leaving out anything copyrighted, and is made more consistent than the original wherever Windows 11 disagrees with itself. The inventory follows the Office inventory method, and nothing is skipped: a surface found during capture that no section below names gets a new section here, filed last.
 
@@ -24,14 +29,14 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 - Windows UI Automation (UIA): names, control types, automation ids, class names and bounding rectangles of every element.
 - [`docs/design/shell.md`](../../docs/design/shell.md), [`docs/design/controls.md`](../../docs/design/controls.md), [`docs/design/tokens.json`](../../docs/design/tokens.json): the spec the inventory corrects in §17.
 - [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh): the pack the host tests of §1, §3 and §7 join as a nested suite.
-- Legal boundary: the inventory records names, positions, types, ids, shortcuts and numbers, with behaviour written in our own words. It never commits Microsoft icons, screenshots, sounds, fonts, wallpaper or help text; screenshots stay in the session scratch directory. The rule and its checker are §4.
+- Legal boundary: the inventory records names, positions, types, ids, shortcuts and numbers, with behaviour written in our own words. It never commits Microsoft icons, screenshots, sounds, fonts, wallpaper or help text; screenshots stay outside the repository in `R:\11\ref-shots\` (§3), with only their hash manifest committed. The rule and its checker are §4.
 - Vendor verdict: the capture tool is a new host script on the `comtypes` UIA bindings (MIT). The completeness baselines of §5 are read from the reference machine's own files and Registry, plus the control list of the WinUI Gallery (MIT; read its LICENSE file before importing). Nothing else is vendored.
 - -> XREF: `TODO-07-ui-accessibility-automation-ime.md §1,§6` -- the semantic tree and automation transport that §16 reads to compare the built OS against the inventory
 - -> XREF: `TODO-18-ui-framework-engines.md §1` -- the engines the inventoried surfaces are built on; §15 assigns records to them
 - -> XREF: `TODO-19-fluent-component-library.md §1` -- the controls the inventory's control records are owned by
 - -> XREF: `TODO-03-theme-system.md §9` -- the Fluent token corpus that §17 re-measures from captured values
 - -> XREF: `D00 T05 §6,§9` -- reference screenshot comparison stays the pixel check; this inventory is the structural check beside it
-- -> XREF: `D09 T11 §1` -- the Control Panel framework that owns the applets inventoried in §13
+- -> XREF: `D09 T11 §1,§3,§4` -- the Control Panel framework and the applets inventoried in §13
 
 ## Outcome
 
@@ -107,6 +112,8 @@ The record format and the checker every later section writes against. One JSON o
 
 **Test checkpoint:** `python3 scripts/inventory/check-inventory.py` prints `inventory: 0 records, 0 errors` and exits 0 on the empty tree. Each failing fixture exits 1 and names its rule. `python3 scripts/site/build.py --check` passes.
 
+---
+
 ## 2. Reference Build and Capture Profile
 
 > **Spawned-by:** root
@@ -135,6 +142,8 @@ Positions only mean something against one fixed machine. This section builds tha
 
 **Test checkpoint:** `powershell.exe -File scripts/inventory/ref-vm.ps1 --verify` prints `ref-vm: ios-win11-ref ok, profile fhd-100` and exits 0. `REFERENCE.md` names one build. Platform: the operator's Windows host with Hyper-V.
 
+---
+
 ## 3. UIA Capture Tool
 
 > **Spawned-by:** root
@@ -154,11 +163,15 @@ One tool walks a surface's UI Automation tree and writes records. It reads struc
   - Such lists hold files, apps, devices, networks or accounts; each is one record with `controlType: list` and no children, named in the module's `ENVIRONMENT_LISTS`
 - [ ] Add `--merge`: carries the hand-written fields (`behaviour`, `disposition`, `inconsistency`) across a re-capture by `id`, refreshes every captured fact, and keeps no record the capture did not see
 - [ ] Run `check-inventory.py` on the result before writing it; a file that fails is not published
+- [ ] Save a screenshot with every capture: each surface in each state and profile to `R:\11\ref-shots\<surface>\<state>.<profile>.png`
+  - Commit only the manifest `docs/design/inventory/shots.json` (surface, state, profile, size, SHA-256); `--verify-shots` re-hashes the store and names every missing or changed file
 - [ ] Record an element UIA exposes no name for under its `uiaId` or class, and list it in `build/inventory/<surface>-unnamed.json` for a hand-written label
 - [ ] Write `scripts/inventory/tests/test_capture.py` against a recorded UIA tree fixture (a JSON dump, no live window) and wire it into `scripts/test-tooling.sh`
 - [ ] Commit: `"inventory: UI Automation capture tool"`
 
 **Test checkpoint:** inside the reference VM, `python capture-ui.py --surface notepad-smoke --out notepad.json` writes at least 40 records and `check-inventory.py` passes on them; with the display at 125 percent the same command exits 2 with `profile fhd-100: scaling is 125, expected 100`. The fixture tests pass on Linux with no Windows present.
+
+---
 
 ## 4. Microsoft-Free Rule
 
@@ -174,13 +187,15 @@ The inventory holds facts. Names of controls, their order, their sizes and their
 - [ ] Every `behaviour` is written in our own words from using the control; the capture tool never fills it
 - [ ] Add to `check-inventory.py`: refuse a `label` longer than 80 characters (a sentence, not a name), any `http` link, and any `behaviour` that equals a `label`
 - [ ] Add `scripts/inventory/check-no-ms-assets.py`: refuses a staged image, sound, font or cursor file whose bytes match a file of the reference VM
-  - The hash list is `build/inventory/ms-hashes.txt`, made by `ref-run.ps1` from the VM's `C:\Windows`, never committed
+  - The hash list `scripts/inventory/ms-hashes.txt` (SHA-256 and size only, no bytes) is made once by `ref-run.ps1` from the VM's `C:\Windows` during the campaign and committed, so the check runs in CI without the VM
 - [ ] Record replaced trade mark names in `docs/design/inventory/names.json`: the reference name, our name, and the reason
   - Microsoft Store, OneDrive, Copilot, Edge, Xbox, Microsoft account, Windows Hello, Windows Security
 - [ ] Add lint coverage: `scripts/lint.sh` runs `check-inventory.py` when a file under `docs/design/inventory/` is staged
 - [ ] Commit: `"inventory: facts only, no Microsoft text or assets"`
 
 **Test checkpoint:** a fixture record with a 120-character label fails with `label is a sentence`; a fixture with a Microsoft link fails with `link in record`. `bash scripts/lint.sh` passes on the clean tree.
+
+---
 
 ## 5. Completeness Baselines
 
@@ -205,6 +220,8 @@ A capture proves what it saw. A baseline proves nothing was missed: an independe
 - [ ] Commit: `"inventory: completeness baselines from the reference build"`
 
 **Test checkpoint:** `python3 scripts/inventory/check-inventory.py --baselines` prints one line per baseline with its row count, and every count is above zero: `settings`, `control-panel`, `known-folders`, `start-apps`, `controls`, `classic-controls`, `shell-commands`.
+
+---
 
 ## 6. Record Dispositions and Consistency Ledger
 
@@ -235,6 +252,8 @@ Two decisions are made per record, once, and written on it: what we do with it, 
 
 **Test checkpoint:** a fixture record without `disposition` fails; a fixture `inconsistency` naming an undefined ledger id fails. `consistency.json` holds at least the seven seeded entries and passes its own schema.
 
+---
+
 ## 7. Coverage Report and Ownership Check
 
 > **Spawned-by:** root
@@ -248,13 +267,17 @@ The report is the measure of progress, and the ownership check is the proof that
 - [ ] Define ownership: a roadmap section owns a record when its body carries `**Inventory:** <id or id prefix>`; a prefix owns every record under it that no longer prefix owns
 - [ ] Add `--owners --check`: exits 1 listing every `build` or `equivalent` record with no owner and every record with two owners of the same prefix length
 - [ ] Define implemented: a record counts when its owning section is shipped with both stamps
-  - Read from the classifier in `scripts/overnight/sequencer_triage.py`: reuse its function, do not restate its rule
+  - Read from the classifier in `.claude/hooks/sequencer_triage.py`: reuse its function, do not restate its rule
 - [ ] Make the pre-commit lint refuse a stale `COVERAGE.md` when an inventory file or a TODO file is staged
+- [ ] Add `--campaign --check`: exits 1 naming every surface, state and profile with no records or no shot, every baseline row unmatched and every `unnamed` element without a label
+  - The campaign of §8 to §14 ends, and the VM is shut down, only when it exits 0; a later miss is filed as a capture gap in `REFERENCE.md`
 - [ ] Write `docs/design/inventory/authoring.json`: the surface to owning-file map §15 fills, read by the report to print pending surfaces
 - [ ] Write `scripts/inventory/tests/test_report.py` with a three-record fixture tree: one owned, one ownerless, one doubly owned
 - [ ] Commit: `"inventory: coverage report and 1:1 ownership check"`
 
 **Test checkpoint:** on the fixture tree, `inventory-report.py --owners --check` exits 1 and prints exactly two lines, `no owner: win11.fixture.b` and `two owners: win11.fixture.c`. On the real tree `COVERAGE.md` regenerates byte-identically twice in a row.
+
+---
 
 ## 8. Shell Surfaces Inventory: Desktop, Taskbar, Start and Flyouts
 
@@ -357,6 +380,8 @@ One item is one surface: write its capture module, run it in the reference VM, h
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and `inventory-report.py` lists every file this section names with a record count above zero. Platform: the reference VM for capture; the checker runs on Linux.
 
+---
+
 ## 9. Shell Surfaces Inventory: Windows, Session Screens and Overlays
 
 > **Spawned-by:** root
@@ -425,6 +450,8 @@ One item is one surface: write its capture module, run it in the reference VM, h
 - [ ] Commit: `"inventory: shell surfaces inventory captured"` (one commit per surface file, the last one closes the section)
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and `inventory-report.py` lists every file this section names with a record count above zero. Platform: the reference VM for capture; the checker runs on Linux.
+
+---
 
 ## 10. Settings Inventory: Frame, System, Devices, Network and Personalization
 
@@ -519,6 +546,8 @@ One item is one surface: write its capture module, run it in the reference VM, h
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and `inventory-report.py` lists every file this section names with a record count above zero. Platform: the reference VM for capture; the checker runs on Linux.
 
+---
+
 ## 11. Settings Inventory: Apps, Accounts, Language, Gaming, Accessibility, Privacy and Update
 
 > **Spawned-by:** root
@@ -612,6 +641,8 @@ One item is one surface: write its capture module, run it in the reference VM, h
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and `inventory-report.py` lists every file this section names with a record count above zero. Platform: the reference VM for capture; the checker runs on Linux.
 
+---
+
 ## 12. File Explorer and Common Dialogs Inventory
 
 > **Spawned-by:** root
@@ -692,6 +723,8 @@ One item is one surface: write its capture module, run it in the reference VM, h
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and `inventory-report.py` lists every file this section names with a record count above zero. Platform: the reference VM for capture; the checker runs on Linux.
 
+---
+
 ## 13. Control Panel, System Tools and Inbox Apps Inventory
 
 > **Spawned-by:** root
@@ -722,7 +755,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Every remaining applet with disposition `build`: the page or sheet, every tab, every control
     - Programs and Features, Windows Features, Default Programs, User Accounts, Credential Manager, Indexing Options, File History, Backup and Restore, Recovery, Internet Options, Devices and Printers, Fonts
     - Ease of Access Center, Network and Sharing Center, Firewall, Security and Maintenance, Storage Spaces, Work Folders, Speech Recognition, Colour Management, AutoPlay, Troubleshooting
-  - Record each sheet's home under the ledger decision of §13
+  - Record each sheet's home under the Settings and Control Panel ledger entry of §6, as for the applets above
   - Split this section into one section per applet group if the record count passes 1,500, filing the new sections last in this file
   - Done when: `check-inventory.py --surface control-panel` passes; every applet of §13 with disposition `build` has at least one `dialog` or `page` record here, and each `dialogTab` has a matching `itemCount`.
 - [ ] Task Manager: writes `docs/design/inventory/tools/task-manager.json`
@@ -778,7 +811,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Paint: the menu, the toolbar groups in order, every tool and shape by name, the colour palette size, the canvas handles, the status bar, and the layers pane
     - Groups: selection, image, tools, brushes, shapes, size, colours, layers
   - Paint dialogs: resize and skew, image properties, edit colours, save formats list, and the assistant features with their disposition
-  - Reconcile each app against the app TODO that will own it (`D09 T10`, `D11 T08`, `D11 T09`, `D10 T02`) and note in §15 where two files claim one app
+  - Reconcile each app against the app TODO that will own it (`D11 T08`, `D11 T09`, `D10 T02`; `D09 T10` is now a pointer to `D11 T08`) and note in §15 where two files claim one app
   - Done when: `check-inventory.py --surface apps` passes; every menu has an `itemCount`, every calculator key has a `shortcut`, and the three files together name no record without a `disposition`.
 - [ ] Inbox Apps: Capture, Media, Clock and Terminal: writes `docs/design/inventory/apps/snipping.json`, `media.json`, `clock.json`, `terminal.json`
   - Snipping Tool: the main window (new, mode list, delay list, record toggle), the editor's toolbar, and its settings page
@@ -800,11 +833,13 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - The accessibility flyout on the sign-in screen and in quick settings: the switch list
   - Record the system-wide effects each tool has on other surfaces as `behaviour` on the tool's record
     - The focus highlight, the text cursor indicator, colour filters applied at the compositor
-  - Reconcile against `D10 T06 §1` to `§8` and `T07 §3`, and note gaps in §15
+  - Reconcile against `D10 T06 §1` to `§8` , `T07 §3` (the screen-reader hooks Narrator sits on) and `D11 T13 §4` (the On-Screen Keyboard), and note gaps in §15
   - Done when: `check-inventory.py --surface tools` passes; the on-screen keyboard has one record per key with a contiguous `order` per row, and every Narrator command has a `shortcut`.
 - [ ] Commit: `"inventory: control panel, system tools and inbox apps inventory captured"` (one commit per surface file, the last one closes the section)
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and `inventory-report.py` lists every file this section names with a record count above zero. Platform: the reference VM for capture; the checker runs on Linux.
+
+---
 
 ## 14. Shortcut, Gesture, Metric, Motion and State Catalogues
 
@@ -869,6 +904,8 @@ One item is one surface: write its capture module, run it in the reference VM, h
 
 **Test checkpoint:** every surface item's own "Done when" line holds, `python3 scripts/inventory/check-inventory.py` exits 0 over the whole tree, and `inventory-report.py` lists every file this section names with a record count above zero. Platform: the reference VM for capture; the checker runs on Linux.
 
+---
+
 ## 15. Inventory-to-Roadmap Authoring
 
 > **Spawned-by:** root
@@ -887,14 +924,16 @@ The step that turns records into precise work: every record ends up owned by exa
   - Each item names one record id, the control from `TODO-19` it is built with, its position rule and its `behaviour`
 - [ ] Generate each new section's item skeleton from the records (`author-sections.py --draft`), then rewrite it by hand: the script proposes, the author decides
 - [ ] File the missing owners found during capture, each through `/create-todo` with a reciprocal XREF here
-  - A Settings app shell (no file owns it today), a consoles frame, the secure screens, first-run setup pages, and any inbox app with no file
-- [ ] Resolve any double ownership the capture finds (the eight inbox apps were settled on 2026-11-14: `11-apps` owns them)
+  - The Settings pages beyond the frame (`D09 T11 §2` owns the navigation frame and applet rows, not the System, Personalization and other pages), a consoles frame, the secure screens, first-run setup pages, and any inbox app with no file
+- [ ] Resolve any double ownership the capture finds (the 2026-11-14 audit moved the apps that had two homes into `11-apps` and left pointers behind)
   - Name one owner per app and turn the other into an XREF, never by deleting shipped work
 - [ ] Run `python3 scripts/todo-plan.py --sync` and rebuild the todo-graph cache after each surface, and commit one surface per commit
 - [ ] Finish when `inventory-report.py --owners --check` exits 0
 - [ ] Commit: `"todo: every inventory record owned by one section"`
 
 **Test checkpoint:** `python3 scripts/inventory/inventory-report.py --owners --check` exits 0 with `owners: N records, 0 without owner, 0 with two owners`. `bash scripts/lint.sh` passes, including Checks 22, 23, 30 and 37.
+
+---
 
 ## 16. Built-OS Layout Check
 
@@ -905,16 +944,19 @@ The step that turns records into precise work: every record ends up owned by exa
 The inventory measures the reference; this measures Impossible OS against it, so "1:1" is a number and a regression is a failing test.
 
 - [ ] Write `scripts/inventory/layout-check.py`: boots the image under QEMU at 1920 by 1080 and reads the automation tree through the transport of `TODO-07 §6`
-  - Each element maps to an inventory record by the `inventoryId` its automation node carries
+  - Each element maps to an inventory record by the `inventoryId` its automation node carries (`TODO-07 §1`)
 - [ ] Compare per record: present, order under its parent, control type, label, and bounds with no tolerance: a `metric` record and an element's bounds match the reference to the pixel at each capture profile
 - [ ] Skip a record whose `disposition` is `excluded`, and compare an `equivalent` on presence and position only
 - [ ] Apply the consistency ledger: a record with an `inconsistency` id is compared against the ledger's `rule` value, not the captured variant
 - [ ] Write the result to `build/inventory/layout-report.json` and print `layout: N matched, M differ, K missing` with the first 20 differences
-- [ ] Add the check to the smoke matrix as an advisory leg until the first surface is fully owned and built, then make it blocking for surfaces listed in `docs/design/inventory/enforced.json`
+- [ ] Add the check to the smoke matrix as an advisory leg, blocking only for the surfaces listed in `docs/design/inventory/enforced.json`
+  - Create `enforced.json` empty here; a surface is appended once every record it holds is owned and built
 - [ ] Write a fixture test: a recorded automation tree with one moved control must report exactly one difference
 - [ ] Commit: `"inventory: built-OS layout check against the reference"`
 
 **Test checkpoint:** on the fixture, `layout-check.py --tree fixture.json` prints `layout: 11 matched, 1 differ, 0 missing` and exits 1. On the built image the command completes and writes `build/inventory/layout-report.json`. Test on: QEMU TCG and KVM.
+
+---
 
 ## 17. Design Spec Reconciliation
 
@@ -948,8 +990,9 @@ The spec was written before the reference was measured. This section makes it ag
 
 The layout check proves every element is in the right place. This proves the pixels: the built surface is compared with a screenshot of the reference, and only the replaced copyrighted regions may differ.
 
-- [ ] Add `ref-run.ps1 --shots`: captures each surface of §8 to §13 in each state and profile to `R:\11\ref-shots\<surface>\<state>.<profile>.png`
-  - The screenshots are Microsoft's pixels: they stay outside the repository and are never committed; `check-no-ms-assets.py` of §4 refuses them
+- [ ] Read the reference screenshots §3 saved during the campaign, through `shots.json`; never start the VM
+  - A surface or state with no shot is a capture gap filed in `REFERENCE.md`, not a reason to capture during a comparison
+  - The screenshots are Microsoft's pixels: they stay outside the repository; `check-no-ms-assets.py` of §4 refuses them
 - [ ] Write `scripts/inventory/pixel-check.py --surface <name>`: renders the same surface and state in Impossible OS under the headless compositor at the same profile and compares it with the reference screenshot
 - [ ] Build the mask from the inventory: regions whose record is an icon, an image, a wallpaper area or a text run are masked; every other pixel is compared
 - [ ] Unmasked pixels must be equal: no geometry tolerance, exact colour for solid fills, and a difference of at most 2 per channel inside blurred backdrop and shadow areas
@@ -959,7 +1002,7 @@ The layout check proves every element is in the right place. This proves the pix
 - [ ] Wire it beside the layout check: advisory until a surface is fully built, then blocking for the surfaces listed in `docs/design/inventory/enforced.json`
 - [ ] Commit: `"inventory: pixel comparison against reference screenshots"`
 
-**Test checkpoint:** with a fixture reference and a fixture render that differ by one pixel outside any mask, `pixel-check.py --fixture` prints `pixel: 1 surfaces, 1 differ` and exits 1; the same pair differing only inside a text mask with equal ink boxes exits 0. Platform: reference screenshots from the reference VM; the comparison runs on Linux against QEMU TCG.
+**Test checkpoint:** with a fixture reference and a fixture render that differ by one pixel outside any mask, `pixel-check.py --fixture` prints `pixel: 1 surfaces, 1 differ` and exits 1; the same pair differing only inside a text mask with equal ink boxes exits 0. Platform: reference screenshots from the campaign store; the comparison runs on Linux against QEMU TCG and never starts the VM.
 
 ---
 
@@ -967,14 +1010,16 @@ The layout check proves every element is in the right place. This proves the pix
 
 | ⭐  | Feature                                 | 🪟 Win11                   | 🐧 Linux             | 🚀 Impossible OS     |
 | --- | --------------------------------------- | -------------------------- | -------------------- | -------------------- |
-| 💎  | Machine-readable UI tree                | ✅ UI Automation           | ✅ AT-SPI            | ⬜ Planned -- T07 §1 |
-| 💎  | Published design measurements           | ⚠️ Partial design docs     | ⚠️ GNOME HIG, prose  | ⬜ Planned -- §17    |
-| ⭐  | Every element inventoried as data       | ❌ None                    | ❌ None              | ⬜ Planned -- §8-§14 |
-| ⭐  | Every element owned by one work item    | ❌ None                    | ❌ None              | ⬜ Planned -- §15    |
-| ⭐  | One rule where the original has several | ❌ Two menus, two settings | ⚠️ Varies by toolkit | ⬜ Planned -- §6     |
-| ⭐  | Built shell checked against a reference | ❌ None                    | ❌ None              | ⬜ Planned -- §16    |
+| 💎  | Machine-readable UI tree                | ✅ UI Automation           | ✅ AT-SPI            | ⬜ Planned in T07 §1 |
+| 💎  | Published design measurements           | ⚠️ Partial design docs     | ⚠️ GNOME HIG, prose  | ⬜ Planned in §17    |
+| ⭐  | Every element inventoried as data       | ❌ None                    | ❌ None              | ⬜ Planned in §8-§14 |
+| ⭐  | Every element owned by one work item    | ❌ None                    | ❌ None              | ⬜ Planned in §15    |
+| ⭐  | One rule where the original has several | ❌ Two menus, two settings | ⚠️ Varies by toolkit | ⬜ Planned in §6     |
+| ⭐  | Built shell checked against a reference | ❌ None                    | ❌ None              | ⬜ Planned in §16    |
 
 > **After §1-§7:** the method exists and can measure anything. **After §8-§14:** the whole Windows 11 interface is data. **After §15-§17:** every element has an owner, the spec is measured, and the built OS is checked against the reference on every boot matrix run.
+
+---
 
 ## Unit Tests
 
@@ -992,6 +1037,8 @@ The layout check proves every element is in the right place. This proves the pix
 - [ ] Register the suite in `scripts/test-tooling.sh` and add its paths to the scoped-pack triggers
 - [ ] Commit: `"test: inventory tooling suite"`
 
+---
+
 ## Verification
 
 - [ ] `python3 scripts/inventory/check-inventory.py` exits 0 over the whole inventory and prints the total record count
@@ -1001,3 +1048,5 @@ The layout check proves every element is in the right place. This proves the pix
 - [ ] `git grep -n -i -E 'microsoft\.com|learn\.microsoft' -- docs/design/inventory` prints nothing
 - [ ] `bash scripts/test-tooling.sh --quiet` passes with the inventory suite listed
 - [ ] `python3 scripts/inventory/layout-check.py` runs on QEMU TCG and KVM and writes its report; WHPX, VirtualBox and bare metal are not needed, the tool reads the automation tree and no hardware
+
+**Test runner:** N/A (host tooling, no kernel or user-mode suite) | validation: `scripts/inventory/tests/` as a nested suite of `scripts/test-tooling.sh`

@@ -61,6 +61,8 @@ Create the canonical semantic tree that turns windows and controls into accessib
 - [ ] Extend control and window metadata so names, descriptions, checked/selected/expanded states, current values, and supported actions are published through one API
 - [ ] Upgrade the simple `ctrl_get_accessible_name/role()` plan from `TODO-05 §8` into real provider-backed node data instead of loose string helpers
 - [ ] Add explicit lifetime rules and stable node IDs so assistive and automation clients can survive redraws and focus changes
+- [ ] Carry an optional `inventoryId` on each node: the Windows 11 inventory record the control builds, set where the control is created
+  - `TODO-17-win11-parity-inventory.md §16` matches built nodes to records by it; a node with none is reported, never guessed
 - [ ] Log node-tree rebuilds and invalid node references with `klog(LOG_INFO, "UIA", ...)` or `LOG_WARN` when invariants are violated
 - [ ] Commit: `"uia: semantic tree foundation -- nodes, roles, states, values, action descriptors"`
 
