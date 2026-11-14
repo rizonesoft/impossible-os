@@ -27,15 +27,15 @@ Exit 2 on a bad argument or a log that cannot be read or written.
 import argparse
 import json
 import pathlib
-import re
 import sys
 import time
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "scripts"))
+import todo_fence  # noqa: E402  (the one rule for what a `## N.` heading is, and what is inside a fence)
 LOG = pathlib.Path(".claude") / "overnight" / "second-review-log.jsonl"
 MARK = "second: unavailable"
 STAMP = "> **Quality reviewed:**"      # the line the stamp gate accepts the mark on (section_commit_gate.py)
-HEADING = re.compile(r"^## (\d+)\.")
 TRIAL = 10
 VERDICTS = ("fixed", "rejected", "filed")
 NEEDS_NOTE = {"rejected": "the code evidence", "filed": "the tracked item that owns it"}
@@ -97,11 +97,13 @@ def main(argv=None):
     if args.verb == "unavailable":
         owed = []
         for path in sorted((root / "todo").rglob("*.md")):
+            scan = todo_fence.scan_text(path.read_text(encoding="utf-8", errors="replace"))
             section = None
-            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-                m = HEADING.match(line)
-                if m:
-                    section = m.group(1)
+            for line, masked in zip(scan.lines, scan.mask):
+                if masked:
+                    continue        # inside a fence or a comment: an example, not a heading or a stamp
+                if todo_fence.is_h2(line):
+                    section = todo_fence.classify_heading(line).n      # None for a heading with no number
                 elif MARK in line and line.startswith(STAMP) and section is not None:
                     owed.append(f"{path.relative_to(root).as_posix()} section {section}")
         print("\n".join(owed))

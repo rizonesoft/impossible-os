@@ -80,3 +80,7 @@ def test_the_sections_marked_unavailable_are_listed_for_a_later_read(tmp_path):
                              "> **Quality reviewed:** 2026-11-14 | Codex 4x, Gemini 2x\n")
     r = _run(root, "unavailable")
     assert r.returncode == 1 and r.stdout.strip() == f"{TODO} section 7"
+    # A stamp quoted in a fence, or under a heading with no number, is not a section's stamp.
+    (root / TODO).write_text("# X\n\n## 7. Seven\n\n```\n> **Quality reviewed:** x | second: unavailable\n```\n\n"
+                             "## History\n\n> **Quality reviewed:** x | second: unavailable\n")
+    assert _run(root, "unavailable").returncode == 0
