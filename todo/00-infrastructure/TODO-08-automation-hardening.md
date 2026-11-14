@@ -109,6 +109,8 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |  41   |   §41   | CI jobs run in the pinned image                                                                  | --                         |  [x]   |
 | 💎  |  42   |   §42   | The graph jobs run in a small pinned image                                                       | §41                        |  [ ]   |
 | 💎  |  43   |   §43   | The control-plane commit gate tests the staged commit                                            | none                       |  [ ]   |
+| ⭐  |  44   |   §44   | A second reviewer reads kernel, boot, security and ABI sections                                  | none                       |  [ ]   |
+| ⭐  |  45   |   §45   | A reviewer outage leaves a review owed and the run continues                                     | §44                        |  [ ]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -1454,6 +1456,50 @@ The two `todo-graph.yml` jobs moved into the CI image in section 41. Before that
 - [ ] Commit: `"hooks: the control-plane gate tests the staged commit"`
 
 **Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes, and the two fixture commits above get the opposite verdicts they get today.
+
+## 44. A second reviewer reads kernel, boot, security and ABI sections
+
+> **Spawned-by:** root
+> **User impact:** the costliest defects here passed every review by one model (the loader that ignored its relocations, the exec race that survived 297 commits). A second model with different blind spots reads the sections where a miss is most expensive, without reopening the first reviewer's loop.
+
+Operator decisions 2026-11-14: Gemini 4 Carbon reads a section after Astra's wave is clean; it is wired now and measured on real sections; it applies to sections that change `src/kernel/`, `include/kernel/`, `src/boot/`, or a security or ABI surface; at most three rounds (find, confirm the repair, one more if the repair is wrong); Gemini confirms repairs and Astra reads a repair again only when it is large; an unavailable Gemini is retried, marked and never blocks.
+
+- [ ] Add `[second]` to `.conclave/reviewers.toml`, validated by `scripts/review_pin.py`: the reviewer (`cli = "agy"`, its model), `paths`, `round_cap = 3`, `retries = 3`, `small_fix_lines = 50`.
+  - Done when `review_pin.py --second-applies --paths-file F` exits 0 for a kernel path and 1 for a `scripts/` path, and a pin with a second reviewer equal to the first is refused.
+- [ ] Write `scripts/second-review-dispatch.sh` for a `[review-kind: second]` pass: the reviewer reads a throwaway clone of HEAD (it has no read-only mode), with a nine-minute limit and `retries` attempts.
+  - Done when the receipt in `manifest.jsonl` carries `route`, `head`, `rc`, `highest` and `unavailable`, a review with no `HIGHEST:` line is incomplete, and the working tree is byte-identical after a pass.
+- [ ] Teach the stamp gate (`.claude/hooks/section_commit_gate.py`) the second pass.
+  - Done when all of these hold on fixtures:
+  - A section whose changed files fall under `[second] paths` is refused its stamp without a `second` receipt that covers the candidate and ended below a blocking level
+  - An `unavailable` receipt is accepted only when the stamp line carries `second: unavailable`
+  - Astra's round, performance and last pass may predate HEAD when a clean `second` receipt covers HEAD and at most `small_fix_lines` lines a pass reads changed since; a larger change still needs them at HEAD
+  - A section outside the paths is judged exactly as before
+- [ ] Record what the second reviewer is worth: `scripts/overnight/second-review-log.py record|stats|unavailable` keeps each finding's verdict (fixed, rejected with evidence, filed) and lists stamps marked unavailable for a later pass.
+  - Done when `stats` prints, per section, findings raised and findings that were real, and its total after ten sections is the evidence for keeping, narrowing or dropping the reviewer.
+- [ ] Say how to run it in `.claude/skills/three-pass-review.md`, `CLAUDE.md` (Model Roles) and `docs/infrastructure/ai-system.md`; add the new files to `scripts/overnight/control-plane-manifest.txt`
+- [ ] Commit: `"review: a second reviewer reads kernel, boot, security and ABI sections"`
+
+**Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes with the new fixtures; a live `second` pass on one shipped kernel section returns a checked receipt; `python3 scripts/review_pin.py --check` passes.
+
+## 45. A reviewer outage leaves a review owed and the run continues
+
+> **Spawned-by:** root
+> **User impact:** the run is unattended first. Today an unavailable reviewer stalls the section it was on, and with it the run; an outage must cost a delay in stamping, never a stopped run, and never an unreviewed stamp or push.
+
+Operator decision 2026-11-14: when Astra is unavailable the section is committed locally and marked "review owed", the run moves to the next section, owed reviews are done first when Astra answers, and nothing unreviewed is pushed.
+
+- [ ] `scripts/codex-dispatch.sh` tells an unavailable reviewer from a failed review: exit 4 and a receipt with `unavailable: true` when the reviewer never produced a turn.
+  - Done when a fixture companion that exits before its first turn yields exit 4, and a review that ran and found defects does not.
+- [ ] `scripts/overnight/review_owed.py add|list|clear|probe` keeps the owed sections (TODO, section, commit) and `probe` says whether the reviewer answers.
+  - Done when `add` after three exit-4 results spread over at least 30 minutes is accepted, an earlier `add` is refused, and `clear` requires the section's stamp.
+- [ ] The run may start the next section while a review is owed: the phase guard and the stop guard accept an owed section as handled, and `sequencer_triage.py --next` returns owed sections first once `probe` succeeds.
+  - Done when a fixture run with the reviewer down builds two sections and stamps neither, and with it back reviews the older one first.
+- [ ] `.githooks/pre-push` refuses a push while any section is owed, naming it.
+  - Done when a fixture push with one owed section is refused and passes after `clear`.
+- [ ] Say so in `.claude/skills/overnight-sequencer/SKILL.md`, `.claude/skills/three-pass-review.md` and the comment block of `.conclave/reviewers.toml` ("an outage is never an approval" stays true: it is a delay)
+- [ ] Commit: `"run: a reviewer outage leaves a review owed and the run continues"`
+
+**Test checkpoint:** `bash scripts/overnight/tests/run-all.sh` passes with the new fixtures, and the two-section fixture run above ends with both sections owed, none stamped and nothing pushed.
 
 ## Format Quick Reference
 
