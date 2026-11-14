@@ -379,6 +379,21 @@ def merge(old, new, ambiguous):
     return out, dropped
 
 
+def unbind(records, live):
+    """Drop each baselineId that names no row in `live` (a set of "name:row").
+
+    Returns (records, unbound ids). A re-capture on a new reference build
+    carries the old matches; a row that build no longer has cannot be matched,
+    so the record goes back to unmatched for a person to bind again."""
+    out, unbound = [], []
+    for r in records:
+        if "baselineId" in r and r["baselineId"] not in live:
+            r = {k: v for k, v in r.items() if k != "baselineId"}
+            unbound.append(r["id"])
+        out.append(r)
+    return out, unbound
+
+
 class FixtureElement:
     """An element read from a recorded tree (capture-ui.py --dump), for tests."""
 

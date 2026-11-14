@@ -485,6 +485,14 @@ class Merge(unittest.TestCase):
             core.merge([{"id": "s.btn--2", "label": "Btn", "baselineId": "settings:S1"}],
                        [{"id": "s.btn--2", "label": "Btn"}], ["s.btn--2"])
 
+    def test_a_match_to_a_row_the_build_dropped_is_unbound(self):
+        recs = [{"id": "a.b", "baselineId": "settings:S1"}, {"id": "a.c", "baselineId": "settings:Gone", "behaviour": "x"},
+                {"id": "a.d", "baselineMissing": True}, {"id": "a.e"}]
+        out, unbound = core.unbind(recs, {"settings:S1"})
+        self.assertEqual(out, [{"id": "a.b", "baselineId": "settings:S1"}, {"id": "a.c", "behaviour": "x"},
+                               {"id": "a.d", "baselineMissing": True}, {"id": "a.e"}])
+        self.assertEqual(unbound, ["a.c"])
+
     def test_a_note_never_lands_on_an_ambiguous_id(self):
         # An inserted twin shifts the positional suffix: the old note on btn-2 would
         # move to a different control, so the merge refuses.

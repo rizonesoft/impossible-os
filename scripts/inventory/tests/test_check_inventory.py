@@ -208,6 +208,13 @@ class Baselines(unittest.TestCase):
         self.assertEqual(errors(step), [])
         out = json.loads(run(step, "--baselines", "--json").stdout)["baselines"]["settings"]
         self.assertEqual((out["matched"], out["unmatched"], out["stale"]), (0, 1, 1))
+        # A row B no longer has: the old record is stale, not an orphan, so the baselines still publish...
+        gone = {**ref(B), "settings/baseline.json": bl("settings", ["b"]), "settings/home.json": at(A)}
+        self.assertEqual(errors(gone), [])
+        out = json.loads(run(gone, "--baselines", "--json").stdout)["baselines"]["settings"]
+        self.assertEqual((out["rows"], out["matched"], out["unmatched"], out["stale"]), (1, 0, 1, 0))
+        # ...while a capture of B naming it is an orphan (capture.py unbinds it on --merge).
+        self.assertEqual(errors({**gone, "settings/home.json": at(B)}), ["baseline-orphan"])
         # ...and the re-capture on B matches again.
         done = {**ref(B), "settings/baseline.json": bl("settings", ["a"]), "settings/home.json": at(B)}
         out = json.loads(run(done, "--baselines", "--json").stdout)["baselines"]["settings"]

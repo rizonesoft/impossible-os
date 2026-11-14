@@ -480,18 +480,26 @@ def check(root, surface=None):
             continue
         name, _, row = obj["baselineId"].partition(":")
         b = baselines.get(name)
-        if b is None or row not in b["rows"]:
+        orphan = f"{rid}: baselineId {obj['baselineId']} names no baseline row"
+        if b is None:
             if mine:
-                err(path, n, "baseline-orphan", f"{rid}: baselineId {obj['baselineId']} names no baseline row")
+                err(path, n, "baseline-orphan", orphan)
             continue
         read_from = b["header"].get("build")
         if read_from is not None and obj["capturedFrom"] != read_from:
+            # Staleness is judged before the row: a row the new build no longer
+            # has is not this old record's error, and the re-capture unbinds it.
             # A capture of another build is stale evidence: it never counts, and
             # the row stays open until the surface is captured again. It is not an
             # error, or a new reference build could be reached from neither side:
             # the new baselines would fail on the old records, and a re-capture
             # on the old baselines.
-            stale[name].add(row)
+            if row in b["rows"]:
+                stale[name].add(row)
+            continue
+        if row not in b["rows"]:
+            if mine:
+                err(path, n, "baseline-orphan", orphan)
             continue
         # Any surface's record may match a row (the settings index lists the classic
         # Control Panel entries, which are captured under control-panel); the owner

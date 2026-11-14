@@ -19,7 +19,8 @@ Runs on the host (WSL), drives the VM through ref-run.ps1:
    --merge the hand-written fields (behaviour, disposition, inconsistency and the
    baseline match, baselineId or baselineMissing) are
    carried across by id, every captured fact is refreshed, and a record the
-   capture did not see is dropped (named on stdout). A note that would land on an
+   capture did not see is dropped (named on stdout), and a carried match to a
+   baseline row the build no longer has is removed (named on stdout). A note that would land on an
    ambiguous id stops the merge.
 4. Runs check-inventory.py over a scratch copy of the inventory holding the new
    file; a file that fails is not published.
@@ -201,6 +202,19 @@ def received(out, rc):
     return meta, new
 
 
+def baseline_rows():
+    """Every "name:row" the published baselines hold, or None when one cannot
+    be read (then no match is touched and check-inventory.py reports the file)."""
+    live = set()
+    try:
+        for path in sorted(INVENTORY.glob("*/baseline.json")):
+            lines = path.read_text(encoding="utf-8").splitlines()[1:]
+            live.update(f"{path.parent.name}:{json.loads(line)['id']}" for line in lines if line.strip())
+    except (OSError, ValueError, KeyError, TypeError):
+        return None  # fail-direction: None keeps every match; the checker then refuses the unreadable baseline
+    return live
+
+
 def build_file(target, new, meta, do_merge):
     """The records to publish, or raise SystemExit with the reason and exit code."""
     if not meta.get("complete"):
@@ -215,6 +229,11 @@ def build_file(target, new, meta, do_merge):
     except ValueError as exc:
         print(f"capture: {exc}")
         raise SystemExit(1) from None
+    live = baseline_rows()
+    if live is not None:
+        records, unbound = core.unbind(records, live)
+        for rid in unbound:
+            print(f"capture: {rid} matched a baseline row this build no longer has; its match is removed")
     for rid in dropped:
         print(f"capture: dropped {rid}, which the capture no longer sees, with its hand-written fields")
     return records
