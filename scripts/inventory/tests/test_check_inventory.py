@@ -721,6 +721,12 @@ class Decisions(unittest.TestCase):
         self.fails(files, "merged-target: win11.control-panel.frame.sound.volume: mergedInto win11.settings.frame.gone names no record")
         files = panel(); files["settings/a.json"][2].update(disposition="excluded", reason="cloud")
         self.fails(files, "which is itself excluded; nothing holds the option")
+        files = panel(); files["settings/a.json"][0].update(disposition="excluded", reason="cloud")
+        r = self.fails(files, "merged-target: win11.control-panel.frame.sound.volume: mergedInto win11.settings.frame.sound.volume, "
+                              "which sits under a replaced or excluded record")
+        self.assertIn("placed-target: win11.control-panel.frame.sound.scheme: placedUnder win11.settings.frame.sound, "
+                      "which sits under a replaced or excluded record", r.stdout)
+        self.assertIn("unplaced: win11.settings.frame.sound:", r.stdout)
         files = panel(); files["control-panel/a.json"][2]["mergedInto"] = "win11.control-panel.frame.sound.volume"
         self.fails(files, "which is itself replaced")
 
@@ -741,7 +747,7 @@ class Decisions(unittest.TestCase):
         files = panel(); files["control-panel/a.json"][3]["placedUnder"] = "win11.settings.frame.sound.volume"
         self.fails(files, "placedUnder names a page or group, and win11.settings.frame.sound.volume is a setting")
         files = panel(); files["control-panel/a.json"][3]["placedUnder"] = "win11.control-panel.frame.sound"
-        self.fails(files, "which is not built")
+        self.fails(files, "which is itself replaced; a place is built")
         files = panel(); files["control-panel/a.json"][2].update(placedUnder="win11.settings.frame.sound")
         self.fails(files, "schema")   # a replaced record is merged, never placed
 
@@ -769,6 +775,45 @@ class Decisions(unittest.TestCase):
                                                  parent="win11.control-panel.frame.sound", placedUnder=scheme))
         r = decide(files)
         self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_a_merge_target_under_a_replaced_home_is_found_from_the_source_surface(self):
+        files = panel()
+        files["settings/a.json"][0].update(disposition="replaced")
+        for args in ((), ("--surface", "control-panel")):
+            with self.subTest(args=args):
+                r = self.fails(files, "merged-target: win11.control-panel.frame.sound.volume: mergedInto "
+                                      "win11.settings.frame.sound.volume, which sits under a replaced or excluded record", *args)
+                self.assertIn("placed-target: win11.control-panel.frame.sound.scheme", r.stdout)
+
+    def test_a_placement_maps_a_record_to_a_built_page(self):
+        def with_placement(source, page):
+            files = panel()
+            files["consistency.json"] = ledger(entry("home", "win11.settings.frame", "win11.control-panel.frame", kind="home",
+                                                     design="shell.md#settings-frame", placement={source: page}))
+            return files
+        r = decide(with_placement("win11.control-panel.frame.sound", "win11.settings.frame.sound"))
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.fails(with_placement("win11.control-panel.frame.gone", "win11.settings.frame.sound"),
+                   "ledger-placement: home: placement names win11.control-panel.frame.gone, which is no record")
+        self.fails(with_placement("win11.control-panel.frame.sound", "win11.settings.frame.sound.volume"),
+                   "which is not a built page")
+        self.fails(with_placement("win11.control-panel.frame.sound", "win11.control-panel.frame.sound"),
+                   "which is not a built page")
+        self.fails(with_placement("win11.control-panel.frame.sound", "not an id"), "ledger: home: placement")
+
+    def test_a_long_chain_is_walked_in_linear_time(self):
+        import time
+        lines = [rec("win11.taskbar.deep", kind="surface", itemCount=1, disposition="replaced", inconsistency="deep")]
+        for i in range(4000):
+            lines.append(rec(f"win11.taskbar.d{i}", kind="group",
+                             parent=lines[-1]["id"], itemCount=1, disposition="replaced", inconsistency="deep"))
+        lines[-1].pop("itemCount")
+        files = {"taskbar/deep.json": lines, "taskbar/bar.json": three(),
+                 "consistency.json": ledger(entry("deep", "win11.taskbar.deep", "win11.taskbar.bar"))}
+        start = time.monotonic()
+        r = decide(files)
+        self.assertEqual(r.returncode, 0, r.stdout[:2000])
+        self.assertLess(time.monotonic() - start, 20)
 
     def test_ledger_faults(self):
         base = {"taskbar/bar.json": three()}
@@ -879,6 +924,12 @@ class Index(unittest.TestCase):
         design.write_text("# Shell\n")   # the unstaged fault
         self.assertEqual(self.check().returncode, 1)
         self.assertEqual(self.check("--index").returncode, 0)
+
+    def test_index_takes_no_design_root(self):
+        self.write(three()); self.git("add", "-A")
+        r = self.check("--index", "--design-root", str(self.repo))
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("takes no --design-root", r.stderr)
 
     def test_no_schema_staged(self):
         self.write(three())

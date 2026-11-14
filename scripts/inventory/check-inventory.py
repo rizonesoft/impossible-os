@@ -39,8 +39,12 @@ is evidence-bound: its inconsistency names an entry with two or more variants,
 and the record is one of them or sits under one. Nothing is lost by replacing:
 a replaced setting is mergedInto a setting, a replaced page or dialogTab into a
 page, the target neither replaced nor excluded; and a built record whose
-captured home is replaced names where it lives in placedUnder (a page or group
-that is itself built), or sits under a record that does.
+captured home is replaced or excluded names where it lives in placedUnder (a
+page or group that is itself built), or sits under a record that does. A place
+or a merge target is followed to its end: it never sits under a replaced or
+excluded record and never leads back to itself. A home entry's placement maps a
+record of the replaced home (a Control Panel category) to the built page that
+takes what has no page of its own.
 
 Cross-record rules over the whole tree: a duplicate id, a parent that names no
 record, a parent cycle, an order used twice under one parent, an itemCount that
@@ -592,24 +596,26 @@ def check(root, surface=None, allow_undecided=False, design_root=None):
         return records[rid][2].get("disposition")
 
     # Where a record ends up in Impossible OS: follow placedUnder where a record
-    # has one and its captured parent otherwise. "replaced" when that chain meets a
-    # replaced record (nothing built holds it), "cycle" when it never ends (a place
-    # under itself, or under what sits under it), else "ok". One walk per chain.
+    # has one and its captured parent otherwise. "gone" when that chain meets a
+    # replaced or excluded record (nothing built holds it), "cycle" when it never
+    # ends (a place under itself, or under what sits under it), else "ok". One
+    # walk per chain, and a set beside the walk so a long chain stays linear.
     fate = {}
 
     def fate_of(rid):
-        walk = []
+        walk, on_walk = [], set()
         node = rid
         while node in records and node not in fate:
-            if node in walk:
+            if node in on_walk:
                 for w in walk:
                     fate[w] = "cycle"
                 break
             obj = records[node][2]
-            if obj.get("disposition") == "replaced":
-                fate[node] = "replaced"
+            if obj.get("disposition") in GONE:
+                fate[node] = "gone"
                 break
             walk.append(node)
+            on_walk.add(node)
             node = obj.get("placedUnder", obj.get("parent"))
         found = fate.get(node, "ok")
         for w in walk:
@@ -619,18 +625,38 @@ def check(root, surface=None, allow_undecided=False, design_root=None):
     under = {}   # (entry, record) -> the record is a variant of the entry or sits under one
 
     def under_variant(name, rid):
-        walk = []
+        walk, on_walk = [], set()
         node = rid
-        while node in records and (name, node) not in under and node not in walk:
+        while node in records and (name, node) not in under and node not in on_walk:
             if node in variants[name]:
                 under[(name, node)] = True
                 break
             walk.append(node)
+            on_walk.add(node)
             node = records[node][2].get("parent")
         found = under.get((name, node), False)
         for w in walk:
             under[(name, w)] = found
         return under.get((name, rid), False)
+
+    def unbuilt(target):
+        """Why nothing built holds `target`, or None."""
+        if disposition(target) in GONE:
+            return f"which is itself {disposition(target)}"
+        if fate_of(target) == "cycle":
+            return "whose place leads back to itself"
+        if fate_of(target) == "gone":
+            return "which sits under a replaced or excluded record"
+        return None
+
+    if surface is None:
+        for name, entry in ledger.items():
+            for source, page in entry.get("placement", {}).items():
+                for rid in (source, page):
+                    if rid not in records:
+                        err(root / LEDGER_FILE, 1, "ledger-placement", f"{name}: placement names {rid}, which is no record")
+                if page in records and (records[page][2]["kind"] != "page" or unbuilt(page)):
+                    err(root / LEDGER_FILE, 1, "ledger-placement", f"{name}: placement sends {source} to {page}, which is not a built page")
 
     for rid, (path, n, obj, mine) in records.items():
         if not mine:
@@ -652,8 +678,8 @@ def check(root, surface=None, allow_undecided=False, design_root=None):
             want = MERGE_KINDS.get(obj["kind"])
             if target not in records:
                 err(path, n, "merged-target", f"{rid}: mergedInto {target} names no record")
-            elif disposition(target) in GONE:
-                err(path, n, "merged-target", f"{rid}: mergedInto {target}, which is itself {disposition(target)}; nothing holds the option")
+            elif unbuilt(target):
+                err(path, n, "merged-target", f"{rid}: mergedInto {target}, {unbuilt(target)}; nothing holds the option")
             elif want is None:
                 err(path, n, "merged-target", f"{rid}: only a page, dialogTab or setting is mergedInto another record")
             elif records[target][2]["kind"] != want:
@@ -666,10 +692,10 @@ def check(root, surface=None, allow_undecided=False, design_root=None):
                 err(path, n, "placed-target", f"{rid}: placedUnder names a page or group, and {place} is a {records[place][2]['kind']}")
             elif fate_of(place) == "cycle":
                 err(path, n, "placed-target", f"{rid}: placedUnder {place} leads back to itself; a place ends at a built surface")
-            elif disposition(place) in GONE or fate_of(place) == "replaced":
-                err(path, n, "placed-target", f"{rid}: placedUnder {place}, which is not built: it is replaced or excluded, or sits under a replaced record")
-        elif state in ("build", "equivalent") and obj["kind"] not in CATALOGUE_KINDS and fate_of(rid) == "replaced":
-            err(path, n, "unplaced", f"{rid}: built, but its captured home is replaced; name where it lives in placedUnder")
+            elif unbuilt(place):
+                err(path, n, "placed-target", f"{rid}: placedUnder {place}, {unbuilt(place)}; a place is built")
+        elif state in ("build", "equivalent") and obj["kind"] not in CATALOGUE_KINDS and fate_of(rid) == "gone":
+            err(path, n, "unplaced", f"{rid}: built, but its captured home is replaced or excluded; name where it lives in placedUnder")
 
     # Baselines: every row is matched by a record, documented absent, or open.
     ref = root / "reference.json"
@@ -749,6 +775,11 @@ def main(argv=None):
     ap.add_argument("--design-root", help="the folder a ledger design is read from (default: the inventory's parent)")
     ap.add_argument("--root", default=str(DEFAULT_ROOT), help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
+    if args.index and args.design_root:
+        # The staged design pages are the ones beside the staged inventory; another
+        # folder would be judged by working-tree bytes, which --index exists to rule out.
+        print("check-inventory: --index reads the design pages staged beside the inventory; it takes no --design-root", file=sys.stderr)
+        return 2
     if args.index:
         return from_index(args)
     root = pathlib.Path(args.root)

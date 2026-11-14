@@ -309,14 +309,17 @@ Two decisions are made per record, once, and written on it: what we do with it, 
 - [x] `disposition` is required on every non-catalogue record: `build`, `equivalent`, `replaced` or `excluded` (with a `reason`); a fresh capture is checked with `--allow-undecided`, a commit is not
   - `equivalent` covers a Microsoft cloud service, account, store or assistant, and a surface on hardware that no stand-in and no host can show (an absent row of §19)
 - [x] `replaced` is evidence-bound: its `inconsistency` names an entry with two or more captured variants, and the record is one of them or sits under one
-- [x] Nothing is lost by replacing: `mergedInto` takes a replaced setting to a setting and a replaced page or dialog tab to a page, the target neither replaced nor excluded
+- [x] Nothing is lost by replacing: `mergedInto` takes a replaced setting to a setting and a replaced page or dialog tab to a page, the target built
+  - A target or a place is followed to its end: one that is replaced or excluded, sits under such a record, or leads back to itself is refused on the record that names it
   - A setting only the replaced home has keeps `build` and names its page or group in `placedUnder`; a built record under a replaced home with no place is refused, and so is a place that leads back to itself
   - `HAND_FIELDS` of `capture_core.py` carries `reason`, `mergedInto` and `placedUnder` across a re-capture
 - [x] `docs/design/inventory/consistency.json`: entries of the schema's `$defs/ledgerEntry` with `id`, `kind` (`look`, `flow`, `home`), `question`, `variants`, `rule`, `reason`, and `design` on a `flow` or `home` entry
-  - The checker resolves `design` to a heading under `docs/design/` by the site build's anchor rule; `--design-root` names the folder for a scratch copy, and `--index` reads the pages as staged
+  - The checker resolves `design` to a heading under `docs/design/` by the site build's anchor rule; `--design-root` names the folder for a scratch copy, and `--index` reads the pages as staged and refuses `--design-root`
+  - A `home` entry's `placement` maps a record of the replaced home to the built page that takes its settings with no page of their own; the checker requires both to be records and the page built
   - Entries are seeded with no variants; §8 to §13 fill them as each surface is captured
 - [x] Seven `look` entries: `context-menus`, `dialog-generations`, `title-bars`, `control-metrics`, `dark-mode`, `keyboard-access`, `tool-frame` (management consoles stay separate tools in one frame)
 - [x] The `home` entry `settings-home`: Settings is the one program and holds every setting; no Control Panel window is built, and its name and entry points open the matching page
+  - The category map for a setting with no related-settings link is `placement`, filled by §13 from the captured categories, not written from memory
   - Placement, tools and other vendors' applets: [`shell.md#settings-and-control-panel-frame`](../../docs/design/shell.md#settings-and-control-panel-frame)
 - [x] The `flow` entry `hello-enrolment`: one enrolment flow behind the four captured entry points, specified in [`shell.md#sign-in-method-enrolment`](../../docs/design/shell.md#sign-in-method-enrolment)
   - §8 to §13 add a `flow` entry wherever two captured flows answer one question; none is added on judgment alone
@@ -326,7 +329,7 @@ Two decisions are made per record, once, and written on it: what we do with it, 
 
 **Test checkpoint:** a fixture record without `disposition` fails; a fixture `inconsistency` naming an undefined ledger id fails; a fixture `replaced` record under a one-variant entry fails; a fixture `replaced` setting with no `mergedInto` fails, and several settings merged into one page fail. `consistency.json` holds at least the nine seeded entries and passes its own schema.
 
-> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_check_inventory.py` (118 cases pass), `python3 scripts/inventory/tests/test_capture.py` (81 cases pass), `python3 scripts/inventory/tests/test_baselines.py` (38 cases pass)
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_check_inventory.py` (122 cases pass), `python3 scripts/inventory/tests/test_capture.py` (81 cases pass), `python3 scripts/inventory/tests/test_baselines.py` (38 cases pass)
 > **Notes:**
 > - `check-inventory.py` reads `consistency.json`, validates each entry, and holds every record's disposition to the rules above; ledger faults are reported on a whole-tree check, record faults under the record's surface.
 > - `capture.py` and `baselines.py` check their scratch copy with `--allow-undecided --design-root`, so a fresh capture publishes and an undecided record still cannot be committed.
@@ -834,6 +837,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Capture each category's second-level page: its headings and task links
   - Mark each applet page `replaced` under the `settings-home` ledger entry of §6, with `mergedInto` naming the Settings page of §10 to §11 that holds it; a setting with no Settings twin stays `build` with `placedUnder`
     - Record the Settings page whose "Related settings" link opens the applet: it is where a Control Panel-only setting lands
+    - Fill `placement` of `settings-home`: each captured category record to the Settings page that takes its settings with no such link
   - Capture the Windows Tools folder: every entry by name, matched to the sections of §13 that inventory it
   - Capture the task pane links on the left of applet pages as a frame
   - Done when: `check-inventory.py --surface control-panel` passes; `check-inventory.py --baselines` shows zero unmatched `control-panel` rows, and every applet record carries `mergedInto`.
@@ -1157,7 +1161,7 @@ Capture once only works if the campaign knows, before it starts, every surface, 
   - A valid three-record file passes and prints `3 records, 0 errors`
   - A duplicate `id`, an orphan `parent`, a `parent` cycle, a repeated `order`, a wrong `itemCount`, a `bounds` without `captureProfile` and an unknown `source` each exit 1 naming the rule
   - A label of 81 characters, a link, a missing `disposition` and an undefined `inconsistency` id each exit 1
-  - Done across §1, §4, §5 and §6: 118 cases
+  - Done across §1, §4, §5 and §6: 122 cases
 - [x] Create `scripts/inventory/tests/test_capture.py` (§3)
 - [x] Create `scripts/inventory/tests/test_baselines.py` (§5)
 - [ ] Create `scripts/inventory/tests/test_report.py` and `test_layout_check.py` with the fixtures named in §7 and §16

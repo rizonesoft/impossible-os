@@ -530,6 +530,16 @@
           "type": "string",
           "minLength": 1
         },
+        "placement": {
+          "description": "On a home entry: a record of the replaced home (a Control Panel category) to the built page that takes its settings with no page of their own. Filled when the replaced home is captured.",
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/recordId"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/recordId"
+          }
+        },
         "design": {
           "description": "The docs/design page and heading that describes ours, as file.md#anchor.",
           "type": "string",
