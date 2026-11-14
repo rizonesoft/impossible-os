@@ -40,7 +40,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ref-common.ps1')
 
 # fhd-100: the profile every canonical record is captured under.
-$FhdProfile = [ordered]@{ width = 1920; height = 1080; dpi = 96; uiLanguage = 'en-US'; format = 'en-US'; appsLight = 1; systemLight = 1; taskbarCentred = $true }
+$FhdProfile = [ordered]@{ width = 1920; height = 1080; dpi = 96; monitors = 1; uiLanguage = 'en-US'; format = 'en-US'; appsLight = 1; systemLight = 1; accent = 'FFD47800'; accentOnSurfaces = 0; taskbarCentred = $true }
 $GenericProKey = 'VK7JG-NPHTM-C97JM-9MPGT-3V66T'  # Microsoft's published generic install key: installs Pro, activates nothing
 
 function New-AnswerIso([string]$Dir, [string]$IsoOut, [string]$Label) {
@@ -273,12 +273,20 @@ function Complete-Oobe([string]$pw) {
         Write-Ref 'sysprep is completing setup'
         Wait-Until -TimeoutSec 1800 -EverySec 20 -What 'the ref desktop' -Test { (Get-GuestKvp $Name)['ios-desktop'] -eq 'ready' } | Out-Null
     } finally {
-        # Cleared so a later restore of pre-oobe stays on the setup page.
-        Set-HostKvp $Name 'ios-oobe-go' -Remove
-        if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
-        $drive = Get-VMDvdDrive -VMName $Name | Where-Object { $_.Path -eq $oobeIso }
-        if ($drive) { Set-VMDvdDrive -VMName $Name -ControllerNumber $drive.ControllerNumber -ControllerLocation $drive.ControllerLocation -Path $null }
-        if (Test-Path -LiteralPath $oobeIso) { Remove-Item -LiteralPath $oobeIso -Force }
+        # Each step is tried on its own, so a failed KVP removal cannot leave the
+        # password media behind. ios-oobe-go is cleared so a later restore of
+        # pre-oobe stays on the setup page.
+        $failed = @()
+        try { Set-HostKvp $Name 'ios-oobe-go' -Remove } catch { $failed += "clearing ios-oobe-go: $($_.Exception.Message)" }
+        try { if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force } } catch { $failed += "removing $($stage): $($_.Exception.Message)" }
+        try {
+            $drive = Get-VMDvdDrive -VMName $Name | Where-Object { $_.Path -eq $oobeIso }
+            if ($drive) { Set-VMDvdDrive -VMName $Name -ControllerNumber $drive.ControllerNumber -ControllerLocation $drive.ControllerLocation -Path $null }
+        } catch { $failed += "detaching $($oobeIso): $($_.Exception.Message)" }
+        try { if (Test-Path -LiteralPath $oobeIso) { Remove-Item -LiteralPath $oobeIso -Force } } catch { $failed += "deleting $($oobeIso): $($_.Exception.Message)" }
+        if (Test-Path -LiteralPath $oobeIso) { $failed += "$oobeIso, which holds the ref password, is still on disk; delete it by hand" }
+        foreach ($f in $failed) { Write-Ref "cleanup: $f" }
+        if ($failed.Count) { throw "OOBE cleanup failed: $($failed -join '; ')" }
     }
     Write-Ref 'ref is signed in'
 }
@@ -304,22 +312,23 @@ function Complete-Clean() {
             Send-RefFile $s (Join-Path $PSScriptRoot "guest\$f") "C:\ios\probe\$f"
         }
         # First sign-in opens Start on this build (seen 2026-11-14). Every capture
-        # starts from clean, so clean must show the bare desktop with focus.
-        $quiet = $false
-        for ($try = 1; $try -le 5 -and -not $quiet; $try++) {
+        # starts from clean, so clean must show the bare desktop with focus, and
+        # the whole profile is checked here, before the old clean is touched.
+        $problems = @('not checked')
+        for ($try = 1; $try -le 5 -and $problems.Count; $try++) {
             Start-Sleep -Seconds 20
             Send-RefKey $Name 0x1B
             Start-Sleep -Seconds 3
-            $r = Invoke-RefInteractive $s $script:ProfileProbe 300
-            $seen = $r.Output.Trim() | ConvertFrom-Json
-            $quiet = $script:QuietForeground -contains $seen.foreground
-            Write-Ref "profile before checkpoint (try $try): $($r.Output.Trim())"
+            $problems = @(Get-ProfileProblems $s)
+            Write-Ref "profile before checkpoint (try $try): $($script:SeenJson)"
         }
-        if (-not $quiet) { throw "the desktop never took focus; the foreground is $($seen.foreground)" }
+        if ($problems.Count) { throw "clean not taken: $($problems -join '; ')" }
     } finally { Remove-PSSession $s }
-    $old = Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq 'clean' }
-    if ($old) { Remove-VMSnapshot -VMName $Name -Name 'clean' }
-    Checkpoint-VM -Name $Name -SnapshotName 'clean'
+    # The old clean is replaced only once its successor exists.
+    if (Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq 'clean-next' }) { Remove-VMSnapshot -VMName $Name -Name 'clean-next' }
+    Checkpoint-VM -Name $Name -SnapshotName 'clean-next'
+    if (Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq 'clean' }) { Remove-VMSnapshot -VMName $Name -Name 'clean' }
+    Rename-VMSnapshot -VMName $Name -Name 'clean-next' -NewName 'clean'
     Write-Ref 'checkpoint clean taken'
     Stop-VM -Name $Name -TurnOff -Force
 }
@@ -337,14 +346,7 @@ function Invoke-Verify() {
     if ($problems.Count -eq 0) {
         $s = Start-RefFrom $Name $VmPath 'clean'
         try {
-            $r = Invoke-RefInteractive $s $script:ProfileProbe 300
-            $seen = $r.Output.Trim() | ConvertFrom-Json
-            if ($script:QuietForeground -notcontains $seen.foreground) { $problems += "the foreground is $($seen.foreground), not the desktop" }
-            foreach ($k in $FhdProfile.Keys) {
-                if ("$($seen.$k)" -ne "$($FhdProfile[$k])") { $problems += "$k is $($seen.$k), want $($FhdProfile[$k])" }
-            }
-            if ($seen.session -eq 0) { $problems += 'the probe ran in session 0, not the desktop' }
-            $script:Seen = $seen
+            $problems += @(Get-ProfileProblems $s)
         } finally { Remove-PSSession $s; Stop-VM -Name $Name -TurnOff -Force }
     }
     if ($problems.Count) {
@@ -353,6 +355,26 @@ function Invoke-Verify() {
     }
     Write-Host "ref-vm: $Name ok, profile fhd-100 (Windows 11 $($script:Seen.edition) $($script:Seen.displayVersion) build $($script:Seen.build))"
     exit 0
+}
+
+# Everything that must hold in clean: the reference identity, the fhd-100 values
+# read inside ref's session, and the bare desktop with focus.
+function Get-ProfileProblems($Session) {
+    $r = Invoke-RefInteractive $Session $script:ProfileProbe 300
+    $script:SeenJson = $r.Output.Trim()
+    $seen = $script:SeenJson | ConvertFrom-Json
+    $script:Seen = $seen
+    $problems = @()
+    $want = Get-RefIdentity
+    foreach ($k in 'edition', 'displayVersion', 'build') {
+        if ("$($seen.$k)" -ne "$($want.$k)") { $problems += "$k is $($seen.$k), docs/design/inventory/reference.json says $($want.$k)" }
+    }
+    foreach ($k in $FhdProfile.Keys) {
+        if ("$($seen.$k)" -ne "$($FhdProfile[$k])") { $problems += "$k is $($seen.$k), want $($FhdProfile[$k])" }
+    }
+    if ($script:QuietForeground -notcontains $seen.foreground) { $problems += "the foreground is $($seen.foreground), not the desktop" }
+    if ($seen.session -eq 0) { $problems += 'the probe ran in session 0, not the desktop' }
+    return $problems
 }
 
 # Take clean again from pre-oobe: the same restore a replay of first-run setup
@@ -368,6 +390,7 @@ function Invoke-Reclean() {
     Complete-Clean
 }
 
+Enter-RefLock $VmPath $Name
 $script:ProfileProbe = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ios\probe\probe-profile.ps1'
 $script:QuietForeground = @('Progman', 'WorkerW', 'Shell_TrayWnd')
 if ($Verify) { Invoke-Verify } elseif ($Reclean) { Invoke-Reclean; Invoke-Verify } else { Invoke-Build; Invoke-Verify }

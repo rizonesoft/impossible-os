@@ -162,6 +162,8 @@ Positions only mean something against one fixed machine. This section builds tha
 - [x] State the rule in `REFERENCE.md`: every captured record carries the build in `capturedFrom`, and a capture from any other build is a new reference recorded there first
 - [x] Add `ref-vm.ps1 -Verify`: exits 0 only when the VM and both checkpoints exist and every profile value holds, read inside the interactive session (effective resolution, DPI, theme, language)
 - [x] `clean` shows the bare desktop with focus (first sign-in opens Start on 26300), and capture commands draw no window of their own; `-Verify` checks the foreground
+- [x] Pin the reference identity in `docs/design/inventory/reference.json`; `-Verify`, `clean` and every `ref-run.ps1` refuse another build (review)
+- [x] Review hardening: one run per VM (lock), `clean` replaced only after its successor passes, password media cleaned even when a step fails, a fresh `-Out` per run, accent and monitor count read back
 - [x] Add `ref-vm.ps1 -Reclean`: takes `clean` again from `pre-oobe` without reinstalling, so a profile or probe change costs minutes, not an install
 - [x] Run `ref-vm.ps1` against `R:\11\win11.iso` and record the edition and build it installs in `REFERENCE.md`
 - [x] Commit: `"inventory: reference machine and capture profile"`
@@ -173,7 +175,7 @@ Positions only mean something against one fixed machine. This section builds tha
 > **Notes:**
 > - Built `ios-win11-ref` (Windows 11 Pro 26H2, build 26300.9711) unattended from `R:\11\win11.iso`, with checkpoints `pre-oobe` and `clean`; the profile `fhd-100` is read back inside `ref`'s session.
 > - Setup needs no keyboard: a SYSTEM watcher reports through Hyper-V key-value exchange, and the host's `ios-oobe-go` value tells it to run sysprep from the OOBE media. Typed keys landed in the setup page, and `msoobe`, `OOBEInProgress` and `ImageState` do not mark that page on 26300.
-> - `ref-run.ps1` runs each command under a headless console in an interactive task and moves files as bytes over PowerShell Direct (`Copy-Item -ToSession` fails from the WSL share).
+> - `ref-run.ps1` runs each command under a headless console in an interactive task and moves each tree as one zip over PowerShell Direct (`Copy-Item -ToSession` fails from the WSL share); it refuses a used `-Out`, a held VM and a guest that is not the build in `reference.json`.
 > - Restores grant the VM read access again to the media in its own folder; `-Reclean` replays setup from `pre-oobe` in about 3 minutes, which §19's first-run replay reuses.
 > - Canonical doc: [REFERENCE.md](../../docs/design/inventory/REFERENCE.md). The VM and tools are kept after capture for anything missed.
 
@@ -187,6 +189,9 @@ Positions only mean something against one fixed machine. This section builds tha
 
 One tool walks a surface's UI Automation tree and writes records. It reads structure and never reads what a person typed or chose.
 
+- [ ] Provision the capture runtime offline, so `clean` holds Python and `comtypes` (filed by the §2 completion review)
+  - The VM has no network: the host fetches the Windows embeddable Python (PSF) and the `comtypes` wheel (MIT) and records both in `src/libs/PROVENANCE.md` and `CREDITS.md`
+  - `ref-vm.ps1 -Reclean` installs them into `clean`; done when `ref-run.ps1 -Command 'python -c "import comtypes"'` exits 0
 - [ ] Write `scripts/inventory/capture-ui.py` for Windows Python on `comtypes`: `--surface <name> --out <file>`; it refuses to run when any value of the capture profile does not hold, naming the value
 - [ ] Walk from the root element the surface module names and emit one record per element
   - Fields: `kind`, `label`, `parent`, `order`, `controlType`, `uiaId`, `className`, `source: uia:<build>`

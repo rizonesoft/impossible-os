@@ -13,6 +13,11 @@ Add-Type -Namespace Ios -Name Native -MemberDefinition @'
 $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
 $theme = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
 $adv = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+$dwm = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\DWM'
+$accent = 'none'
+if ($null -ne $dwm.AccentColor) { $accent = '{0:X8}' -f [uint32]([int64]$dwm.AccentColor -band 0xFFFFFFFF) }
+$prevalence = 0
+if ($null -ne $theme.ColorPrevalence) { $prevalence = [int]$theme.ColorPrevalence }
 $align = 1
 if ($null -ne $adv.TaskbarAl) { $align = [int]$adv.TaskbarAl }
 # The window with focus, by class: the desktop (Progman or WorkerW) or the
@@ -25,11 +30,14 @@ $cls = New-Object System.Text.StringBuilder 256
     build = "$($cv.CurrentBuild).$($cv.UBR)"
     width = [Ios.Native]::GetSystemMetrics(0)
     height = [Ios.Native]::GetSystemMetrics(1)
+    monitors = [Ios.Native]::GetSystemMetrics(80)
     dpi = [Ios.Native]::GetDpiForSystem()
     uiLanguage = (Get-UICulture).Name
     format = (Get-Culture).Name
     appsLight = [int]$theme.AppsUseLightTheme
     systemLight = [int]$theme.SystemUsesLightTheme
+    accent = $accent
+    accentOnSurfaces = $prevalence
     taskbarCentred = ($align -eq 1)
     session = (Get-Process -Id $PID).SessionId
     foreground = $cls.ToString()

@@ -10,7 +10,9 @@ PowerShell Direct, runs -Command inside ref's interactive desktop session (an
 interactive scheduled task, so UI Automation, input and screen capture see the
 real shell), waits for its exit code, copies C:\ios\out to -Out and turns the VM
 off, so the next run starts from the same checkpoint. Exits with the command's
-exit code; 3 when the VM never became reachable.
+exit code; 2 when -Out is not a new empty folder, 3 when the VM never became
+reachable, 4 when another run holds the VM, 5 when the guest is not the build
+docs/design/inventory/reference.json names.
 
     powershell.exe -File scripts\inventory\ref-run.ps1 -Command 'python C:\ios\in\capture-ui.py --surface notepad-smoke --out C:\ios\out\notepad.json' -In tools -Out R:\11\out
     powershell.exe -File scripts\inventory\ref-run.ps1 -Proof -Out R:\11\out   # the Notepad UI Automation and screenshot proof
@@ -31,7 +33,12 @@ $ErrorActionPreference = 'Stop'
 
 if ($Proof) { $Command = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ios\probe\probe-notepad.ps1' }
 if (-not $Command) { Write-Host 'ref-run: give -Command or -Proof'; exit 2 }
+# Each run gets its own empty folder, so its output never mixes with an earlier one.
+if ((Test-Path -LiteralPath $Out) -and @(Get-ChildItem -LiteralPath $Out -Force).Count) {
+    Write-Host "ref-run: $Out is not empty; give a new folder for each run"; exit 2
+}
 New-Item -ItemType Directory -Path $Out -Force | Out-Null
+Enter-RefLock $VmPath $Name
 
 try { $s = Start-RefFrom $Name $VmPath $Checkpoint } catch { Write-Host "ref-run: $($_.Exception.Message)"; exit 3 }
 try {
@@ -41,13 +48,19 @@ try {
             New-Item -ItemType Directory -Path $d | Out-Null
         }
     }
-    if ($In) { Send-RefTree $s $In 'C:\ios\in' }
-    $r = Invoke-RefInteractive $s $Command $TimeoutSec
-    $n = Receive-RefTree $s 'C:\ios\out' $Out
-    if ($r.Output) { Set-Content -LiteralPath (Join-Path $Out 'stdout.txt') -Value $r.Output }
-    Write-Host "ref-run: exit $($r.ExitCode); $n file(s) in $Out"
-    if ($r.Output) { Write-Host $r.Output.Trim() }
-    $code = $r.ExitCode
+    $wrong = @(Test-RefIdentity $s)
+    if ($wrong.Count) {
+        foreach ($w in $wrong) { Write-Host "ref-run: $w" }
+        $code = 5
+    } else {
+        if ($In) { Send-RefTree $s $In 'C:\ios\in' }
+        $r = Invoke-RefInteractive $s $Command $TimeoutSec
+        $n = Receive-RefTree $s 'C:\ios\out' $Out
+        Set-Content -LiteralPath (Join-Path $Out 'stdout.txt') -Value $r.Output
+        Write-Host "ref-run: exit $($r.ExitCode); $n file(s) in $Out"
+        if ($r.Output) { Write-Host $r.Output.Trim() }
+        $code = $r.ExitCode
+    }
 } finally {
     Remove-PSSession $s
     Stop-VM -Name $Name -TurnOff -Force

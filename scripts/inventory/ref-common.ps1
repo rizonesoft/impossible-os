@@ -82,7 +82,11 @@ function Set-HostKvp([string]$Name, [string]$Key, [string]$Value = '', [switch]$
     if ($r.ReturnValue -eq 0) { return }
     if ($r.ReturnValue -ne 4096) { throw "KVP $Key failed: $($r.ReturnValue)" }
     $job = [wmi]$r.Job
-    while ($job.JobState -eq 3 -or $job.JobState -eq 4) { Start-Sleep -Milliseconds 300; $job = [wmi]$r.Job }
+    $deadline = (Get-Date).AddSeconds(120)
+    while ($job.JobState -eq 3 -or $job.JobState -eq 4) {
+        if ((Get-Date) -gt $deadline) { throw "KVP $Key job still in state $($job.JobState) after 120 s" }
+        Start-Sleep -Milliseconds 300; $job = [wmi]$r.Job
+    }
     if ($job.JobState -ne 7) { throw "KVP $Key job failed: $($job.ErrorDescription)" }
 }
 
@@ -126,6 +130,37 @@ function Protect-RefPath([string]$Path) {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     & icacls.exe $Path /inheritance:r /grant:r "${me}:(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "icacls failed on $Path" }
+}
+
+# One operation per VM at a time: two runs would restore each other's checkpoint
+# and share C:\ios\run. The handle is held until the process exits.
+function Enter-RefLock([string]$VmPath, [string]$Name) {
+    New-Item -ItemType Directory -Path $VmPath -Force | Out-Null
+    try {
+        $script:RefLock = [IO.File]::Open((Join-Path $VmPath 'ref.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+    } catch [IO.IOException] {
+        Write-Host "ref: another ref-vm or ref-run is using $Name"
+        exit 4
+    }
+}
+
+# The reference build the inventory is pinned to, from the repository.
+function Get-RefIdentity() {
+    return Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\docs\design\inventory\reference.json') -Raw | ConvertFrom-Json
+}
+
+# The guest's edition, version and build, read over the session.
+function Test-RefIdentity($Session) {
+    $want = Get-RefIdentity
+    $seen = Invoke-Command -Session $Session -ScriptBlock {
+        $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+        @{ edition = $cv.EditionID; displayVersion = $cv.DisplayVersion; build = "$($cv.CurrentBuild).$($cv.UBR)" }
+    }
+    $problems = @()
+    foreach ($k in 'edition', 'displayVersion', 'build') {
+        if ("$($seen[$k])" -ne "$($want.$k)") { $problems += "$k is $($seen[$k]), reference.json says $($want.$k)" }
+    }
+    return $problems
 }
 
 function Get-RefCredential([string]$VmPath) {
@@ -176,7 +211,8 @@ function Invoke-RefInteractive($Session, [string]$CommandLine, [int]$TimeoutSec 
 
 # Copy files into or out of the guest as bytes over the session. Copy-Item
 # -ToSession fails with "The request is not supported" when the source is on the
-# WSL share this repository lives on (seen 2026-11-14).
+# WSL share this repository lives on (seen 2026-11-14). Trees move as one zip, so
+# the cost is one remote call, not one per file.
 function Send-RefFile($Session, [string]$Source, [string]$Destination) {
     $bytes = [IO.File]::ReadAllBytes($Source)
     Invoke-Command -Session $Session -ArgumentList $bytes, $Destination -ScriptBlock {
@@ -187,28 +223,46 @@ function Send-RefFile($Session, [string]$Source, [string]$Destination) {
 }
 
 function Send-RefTree($Session, [string]$Source, [string]$Destination) {
-    $root = (Resolve-Path -LiteralPath $Source).ProviderPath.TrimEnd('\')
-    foreach ($f in Get-ChildItem -LiteralPath $root -Recurse -File) {
-        Send-RefFile $Session $f.FullName (Join-Path $Destination $f.FullName.Substring($root.Length + 1))
-    }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $root = (Resolve-Path -LiteralPath $Source).ProviderPath
+    $zip = Join-Path $env:TEMP "ios-in-$PID.zip"
+    if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+    try {
+        [IO.Compression.ZipFile]::CreateFromDirectory($root, $zip)
+        Invoke-Command -Session $Session -ArgumentList ([IO.File]::ReadAllBytes($zip)), $Destination -ScriptBlock {
+            param([byte[]]$b, $to)
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $z = Join-Path $env:TEMP 'ios-in.zip'
+            [IO.File]::WriteAllBytes($z, $b)
+            [IO.Compression.ZipFile]::ExtractToDirectory($z, $to)
+            Remove-Item -LiteralPath $z -Force
+        }
+    } finally { if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force } }
 }
 
+# Returns the number of files received. $Destination must not hold earlier output.
 function Receive-RefTree($Session, [string]$Source, [string]$Destination) {
-    $files = Invoke-Command -Session $Session -ArgumentList $Source -ScriptBlock {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $bytes = Invoke-Command -Session $Session -ArgumentList $Source -ScriptBlock {
         param($from)
-        Get-ChildItem -LiteralPath $from -Recurse -File | ForEach-Object {
-            @{ Rel = $_.FullName.Substring($from.TrimEnd('\').Length + 1); Bytes = [IO.File]::ReadAllBytes($_.FullName) } }
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $z = Join-Path $env:TEMP 'ios-out.zip'
+        if (Test-Path -LiteralPath $z) { Remove-Item -LiteralPath $z -Force }
+        [IO.Compression.ZipFile]::CreateFromDirectory($from, $z)
+        $b = [IO.File]::ReadAllBytes($z)
+        Remove-Item -LiteralPath $z -Force
+        , $b
     }
-    foreach ($f in @($files)) {
-        if (-not $f) { continue }
-        $to = Join-Path $Destination $f.Rel
-        New-Item -ItemType Directory -Path (Split-Path -Parent $to) -Force | Out-Null
-        [IO.File]::WriteAllBytes($to, [byte[]]$f.Bytes)
-    }
-    return @($files).Count
+    $zip = Join-Path $env:TEMP "ios-out-$PID.zip"
+    try {
+        [IO.File]::WriteAllBytes($zip, [byte[]]$bytes)
+        $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+        try { $count = @($archive.Entries | Where-Object { $_.Name }).Count } finally { $archive.Dispose() }
+        [IO.Compression.ZipFile]::ExtractToDirectory($zip, $Destination)
+    } finally { if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force } }
+    return $count
 }
 
-# Restore a checkpoint and return a PowerShell Direct session to the running desktop.
 # Restore a checkpoint and start the VM from it. Hyper-V opens attached media as
 # the VM's own account, and the VM folder does not inherit its access entries
 # (Protect-RefPath), so the entry is granted again for every attached file in

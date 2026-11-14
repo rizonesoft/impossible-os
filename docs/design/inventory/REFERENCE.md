@@ -1,4 +1,4 @@
-<!-- docs: sources=scripts/inventory/ref-vm.ps1,scripts/inventory/ref-run.ps1,scripts/inventory/ref-common.ps1,scripts/inventory/guest reviewed=2026-11-14 -->
+<!-- docs: sources=docs/design/inventory/reference.json,scripts/inventory/ref-vm.ps1,scripts/inventory/ref-run.ps1,scripts/inventory/ref-common.ps1,scripts/inventory/guest reviewed=2026-11-14 -->
 # Windows 11 Reference Machine
 
 Every record in the inventory is read from one machine: a clean Hyper-V virtual machine running one pinned Windows 11 build under one capture profile. A position or a size only means something against that machine, so this page names it, and a capture from anything else is refused until it is recorded here first.
@@ -14,11 +14,11 @@ Every record in the inventory is read from one machine: a clean Hyper-V virtual 
 | Read on | 2026-11-14 |
 | Installed from | `R:\11\win11.iso`, en-US, `install.esd` |
 
-The values come from `ref-vm.ps1 -Verify`, which prints `ref-vm: ios-win11-ref ok, profile fhd-100 (Windows 11 Professional 26H2 build 26300.9711)` when the machine matches.
+The machine-readable copy is [`reference.json`](reference.json). `ref-vm.ps1` refuses to take or verify `clean`, and `ref-run.ps1` refuses to capture (exit 5), when the guest's edition, version or build differs from it. The values come from `ref-vm.ps1 -Verify`, which prints `ref-vm: ios-win11-ref ok, profile fhd-100 (Windows 11 Professional 26H2 build 26300.9711)` when the machine matches.
 
 ## What is the rule for a new build?
 
-Every captured record carries the build it was read from in `capturedFrom`, as `26300.9711`. A capture from any other build is a new reference: build the machine from the new image, add its row to this page, and only then capture. Records from two builds never share a surface file, and a record is never "updated" to a new build without being captured again.
+Every captured record carries the build it was read from in `capturedFrom`, as `26300.9711`. A capture from any other build is a new reference: build the machine from the new image (`-Rebuild` installs it and stops before `clean`, because the build differs), record the new build in `reference.json` and on this page, run `-Reclean`, and only then capture. Records from two builds never share a surface file, and a record is never "updated" to a new build without being captured again.
 
 ## What is the capture profile?
 
@@ -31,12 +31,12 @@ Every captured record carries the build it was read from in `capturedFrom`, as `
 | Display language | en-US |
 | Regional format | en-US |
 | Theme | light for apps and system (the Windows default) |
-| Accent | the default |
+| Accent | the default, `FFD47800` (DWM `AccentColor`), not shown on Start and taskbar |
 | Taskbar | the default, centred |
 | Focus at capture start | the bare desktop: no Start, Search or app window open |
 | Session | `ref`'s interactive console session, never session 0 |
 
-`ref-vm.ps1 -Verify` reads the resolution, DPI, languages, theme, taskbar alignment, focus and session from inside that session (resolution and DPI through a per-monitor DPI-aware process) and fails on any difference. The accent and the single monitor are set by the build and not read back.
+`ref-vm.ps1 -Verify` reads every value in this table from inside that session (resolution, monitor count and DPI through a per-monitor DPI-aware process) and fails on any difference; `clean` is only taken when the same check passes.
 
 ## Which other profiles exist?
 
@@ -69,6 +69,6 @@ powershell.exe -File scripts\inventory\ref-vm.ps1 -Verify     # exits 0 when the
 powershell.exe -File scripts\inventory\ref-run.ps1 -Proof -Out R:\11\out
 ```
 
-`ref-run.ps1` restores `clean`, copies its inputs to `C:\ios\in`, runs one command in `ref`'s desktop (an interactive scheduled task under a headless console, so it draws no window of its own), waits for its exit code, copies `C:\ios\out` back and turns the VM off. Each capture therefore starts from the same desktop. `-Proof` runs the end-to-end check: it starts Notepad, finds its window through UI Automation and saves a screenshot. `pre-oobe` exists so first-run setup can be captured again at any time.
+`ref-run.ps1` takes a new, empty `-Out` folder for each run, holds the VM for itself, restores `clean`, checks the build, copies its inputs to `C:\ios\in` as one zip, runs one command in `ref`'s desktop (an interactive scheduled task under a headless console, so it draws no window of its own), waits for its exit code, copies `C:\ios\out` back and turns the VM off. Each capture therefore starts from the same desktop. `-Proof` runs the end-to-end check: it starts Notepad, finds its window through UI Automation and saves a screenshot. `pre-oobe` exists so first-run setup can be captured again at any time.
 
 The machine and the tools are kept after the inventory is captured, so anything missed can be captured later from the same build.
