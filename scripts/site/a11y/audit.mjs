@@ -389,7 +389,21 @@ function currentFindings() {
 // not failures, but counted per rule and printed, so the audit never passes over
 // them silently.
 const needsReview = {};
+// A page is measured at rest: an entrance fade or slide is a moment, not a state a reader
+// is left with, and measured part way through it reads as faint text (2026-11-14, the hero
+// h1 on a slow runner). Infinite animations (the background glows) never end, so they are
+// not waited for; a bound keeps a page whose animations never settle from stalling here.
+const SETTLE_MS = 5000;
+async function settle(page) {
+  await page.evaluate((ms) => Promise.race([
+    Promise.all(document.getAnimations()
+      .filter((a) => a.effect && Number.isFinite(a.effect.getComputedTiming().endTime))
+      .map((a) => a.finished.catch(() => {}))),
+    new Promise((ok) => setTimeout(ok, ms))]), SETTLE_MS);
+}
+
 async function axeFindings(page) {
+  await settle(page);
   if (!(await page.evaluate(() => typeof window.axe === 'object'))) await page.addScriptTag({ content: AXE });
   // WORKAROUND: axe-core 4.13 compares the authored text colour with the forced background
   // (#f0f4ff on #ffffff) while the browser paints the system text colour (black), so
@@ -433,9 +447,12 @@ async function auditVariant(browser, base, urls, v, findings, landing = false) {
       const tag = `${url} [${vname(v)}]`;
       try {
         await page.goto(base + url, { waitUntil: 'load' });
+        // Motion first: axe waits for finite animations to end, and one that ignores reduced
+        // motion is only visible while it runs. Checked again after, for one started later.
+        const motion = v.mode === 'reduced' ? await page.evaluate(motionFindings) : [];
         const got = [...await axeFindings(page), ...await skipFindings(page)];
         if (!landing) got.push(...await page.evaluate(currentFindings));
-        if (v.mode === 'reduced') got.push(...await page.evaluate(motionFindings));
+        if (v.mode === 'reduced') got.push(...new Set([...motion, ...await page.evaluate(motionFindings)]));
         got.push(...await focusFindings(page, memo));
         got.forEach((f) => findings.push(`${tag} ${f}`));
       } catch (e) {
@@ -657,6 +674,9 @@ async function control(root) {
     '<div class="planted-box"><a id="planted-clipped" href="#planted-contrast">Planted ring its container clips</a></div>' +
     '<p><a id="planted-forced" href="#planted-contrast">Planted ring only a shadow draws</a></p>' +
     '<p id="planted-motion">Planted spinning text</p><p id="planted-slide">Planted sliding text</p>' +
+    // A finite script animation: no animation-name to read, so only a check made while it runs sees it.
+    '<p id="planted-script-motion">Planted script-animated text</p><script>document.getElementById(\'planted-script-motion\')' +
+    '.animate([{ transform: \'translateX(0)\' }, { transform: \'translateX(1px)\' }], { duration: 4000 });</script>' +
     '<div id="planted-smooth" tabindex="0">Planted smooth scroller<br><br><br><br><br><br>end</div>' +
     // Twins of one look, the passing one first, so a verdict shared between them would hide the defect.
     '<p><a class="planted-bar" id="planted-baron" href="#planted-contrast">A correct bar</a></p>' +
@@ -687,6 +707,9 @@ async function control(root) {
   const home = homeSrc.replace(/<a class="skip-link"[^>]*>[^<]*<\/a>/, '').replace('</body>',
     '<style>a#planted-home:focus-visible { outline: none; }</style>' +
     '<p id="planted-home-contrast" style="color: #9aa3ad; background: #ffffff">Planted low-contrast text.</p>' +
+    // Readable text that fades in, as the hero does: a frame of the fade is not what a reader is left with.
+    '<style>@keyframes planted-fade { from { opacity: 0.05; } } #planted-home-fade { animation: planted-fade 3s ease-out both; }</style>' +
+    '<p id="planted-home-fade" style="color: #0f172a; background: #ffffff">A correct paragraph that fades in.</p>' +
     '<p><a id="planted-home" href="#planted-home-contrast">Planted home link without a focus ring</a></p></body>');
   if (home === homeSrc || home.includes('class="skip-link"')) throw new Error('control: could not plant into index.html');
   const server = await serve(root, { '/docs/index.html': a, '/docs/coverage.html': b, '/docs/planted-unlisted.html': src,
@@ -732,6 +755,7 @@ async function control(root) {
                 ['clipped focus ring', /focus-visible: no focus indicator on a#planted-clipped(?![\w-])/],
                 ['forced-colors focus ring', /\[desktop dark forced\] focus-visible: no focus indicator on a#planted-forced(?![\w-])/],
                 ['reduced-motion animation', /\[desktop light reduced\] motion: keyframe animation on p#planted-motion/],
+                ['reduced-motion finite script animation', /\[desktop light reduced\] motion: running animation on p#planted-script-motion/],
                 ['reduced-motion transition', /\[desktop light reduced\] motion: transition of transform on p#planted-slide/],
                 ['reduced-motion nested smooth scrolling', /\[desktop light reduced\] motion: smooth scrolling on div#planted-smooth/],
                 ['hidden pseudo-element indicator', /\[desktop light\] focus-visible: no focus indicator on a#planted-baroff(?![\w-])/],
@@ -757,6 +781,7 @@ async function control(root) {
   if (plain.some((f) => /focus-visible: .*#planted-unclipped(?![\w-])/.test(f))) missed.push('(false failure on the unclipped twin of the clipped ring)');
   // The forced-colors plant is a defect only there: seen elsewhere it would prove nothing about that mode.
   if (findings.some((f) => /\[desktop (light|dark)\] focus-visible: .*#planted-forced(?![\w-])/.test(f))) missed.push('(the forced-colors plant failed outside forced colours)');
+  if (findings.some((f) => /color-contrast .*#planted-home-fade(?![\w-])/.test(f))) missed.push('(contrast measured part way through a fade-in)');
   if (findings.some((f) => /\/index\.html .*aria-current/.test(f) && !f.includes('/docs/'))) missed.push('(aria-current checked on a landing page)');
   if (findings.some((f) => /focus-measure: /.test(f))) missed.push('(a focus measurement failed)');
   if (missed.length) {
