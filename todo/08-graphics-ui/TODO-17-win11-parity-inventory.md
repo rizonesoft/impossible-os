@@ -275,18 +275,20 @@ A capture proves what it saw. A baseline proves nothing was missed: an independe
 - [x] `controls` baseline from the WinUI Gallery at commit `6de91fec`, MIT notice in `CREDITS.md` (111 rows)
 - [x] `classic-controls` baseline from the classes comctl32 6 registers in the session (28 rows)
 - [x] `shell-commands` baseline from the `shell:` names and the four verb keys (155 rows)
-- [x] Each file records its source and build; `check-inventory.py` accounts for every row (matched, absent in `REFERENCE.md`, pending or unmatched)
+- [x] Each file records its source and its reference build (`controls`: its pinned upstream commit); `check-inventory.py` accounts for every row (matched, absent in `REFERENCE.md`, pending or unmatched)
 - [x] Commit: `"inventory: completeness baselines from the reference build"`
 
 **Test checkpoint:** `python3 scripts/inventory/check-inventory.py --baselines` prints one line per baseline with its row count, and every count is above zero: `settings`, `control-panel`, `known-folders`, `start-apps`, `controls`, `classic-controls`, `shell-commands`.
 
-> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_baselines.py` (24 cases), `python3 scripts/inventory/tests/test_check_inventory.py` (84 cases), live `python3 scripts/inventory/baselines.py` on the reference VM, then `check-inventory.py --baselines` prints all seven with rows above zero.
+> **Test runner:** N/A (host tooling) | validation: `python3 scripts/inventory/tests/test_baselines.py` (38 cases pass), `python3 scripts/inventory/tests/test_check_inventory.py` (94 cases pass), `python3 scripts/inventory/tests/test_capture.py` (81 cases pass), live `python3 scripts/inventory/baselines.py` on the reference VM, then `check-inventory.py --baselines` prints all seven with rows above zero.
 > **Notes:**
 > - `scripts/inventory/baselines.py` runs `guest/read-baselines.py` in the VM (fresh `clean`, capture lock), refuses a partial read or one from a build other than `reference.json`'s, imports the pinned Gallery list, checks all seven in a scratch inventory and swaps them in together through `capture.swap`.
 > - `baseline_core.py` holds the row rule for each source, shared by the guest and the host tests; rows carry facts only, and the Microsoft source files never leave the VM.
 > - The classic controls are found without a name list: every atom-table name that resolves under the comctl32 6 module and carries its side-by-side version prefix.
-> - `check-inventory.py` validates each header and row, ties a `baselineId` match to the baseline's build (an old capture never counts against a newer baseline), parses the absent table in `REFERENCE.md`, and `--baselines` reports matched, absent, pending and unmatched per baseline; a missing baseline is an error.
-> - Fixed on the way: `capture_core.write_records` and `capture.swap` left a `.tmp` file behind when a rename failed; both now remove it.
+> - `check-inventory.py` validates each header and row, counts a match or a documented absence only when it comes from the reference build (older evidence is stale: reported, never counted, never an error, so a new build is reached by `reference.json`, `baselines.py`, then `--merge` captures), parses the absent table in `REFERENCE.md` (Baseline, Row, Build, Reason), and `--baselines` reports matched, absent, pending, unmatched and stale per baseline; a missing baseline is an error there.
+> - A record of any surface may match a row; the owner surface answers for the rows still open. `--merge` carries a match and removes it only when its baseline no longer has the row.
+> - A source is read whole or the read fails: an unknown settings element, a Gallery group without items, a directory listing or class lookup that fails, and a Gallery download past 60 s all publish nothing.
+> - Fixed on the way: `capture_core.write_records` and `capture.swap` left a `.tmp` file behind when a rename failed, and `swap` removed its journal outside the rollback; fixed, with a failure at the commit point rolling back.
 > - Docs: [Windows 11 Inventory](../../docs/design/inventory/index.md#how-is-completeness-proved).
 
 ---
