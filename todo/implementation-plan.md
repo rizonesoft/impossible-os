@@ -2040,7 +2040,7 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T01 §7`  | SVG Runtime Renderer (Vendored plutovg and plutosvg)                    | none  |     8 |
 | [ ]  | `D08 T01 §8`  | Icon Engine (Build-Time Generator and Validator)                        | none  |    10 |
 | [ ]  | `D08 T01 §9`  | Missing Icons -- Detect, Draft-Generate, and Queue for Polish           | none  |     9 |
-| [ ]  | `D08 T01 §10` | Automatic Icon Polish and Promotion                                     | none  |     9 |
+| [ ]  | `D08 T01 §10` | Automatic Icon Polish and Promotion                                     | none  |    10 |
 | [ ]  | `D08 T02 §1`  | Font Catalog, Enumeration, Install/Remove, and Default Stacks           | none  |    10 |
 | [ ]  | `D08 T02 §2`  | Fallback Chains, Emoji, and Color-Font Support                          | none  |     7 |
 | [ ]  | `D08 T02 §3`  | Shaping, Bidi, Line-Break, and Paragraph Layout Engine                  | none  |     7 |
