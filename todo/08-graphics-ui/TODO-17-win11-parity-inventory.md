@@ -301,28 +301,47 @@ A capture proves what it saw. A baseline proves nothing was missed: an independe
 
 **Design:** n/a -- decisions about records, it draws nothing
 
-Two decisions are made per record, once, and written on it: what we do with it, and which rule it follows where the original has two.
+Two decisions are made per record, once, and written on it: what we do with it, and which rule it follows where the original has two. Names and places stay 1:1 with Windows 11; where Windows 11 disagrees with itself, what sits behind the name is one design of ours (operator decisions 2026-11-14).
 
 > [!TIP]
-> Windows 11 ships two context menus, two settings programs, three generations of dialogs and four title bar heights. The ledger is where Impossible OS does better: one rule per question, written down before anything is built.
+> Windows 11 ships two context menus, two settings programs, three generations of dialogs, four title bar heights and four sign-in enrolment wizards. The ledger is where Impossible OS does better: one rule per question, written down before anything is built.
 
 - [ ] Add `disposition` to the checker as required on every non-catalogue record
-  - `build` (as captured), `equivalent` (our own version of something tied to a Microsoft cloud service, account, store or assistant) or `excluded` (with a `reason`)
-- [ ] Write `docs/design/inventory/consistency.json`: one entry per inconsistency with `id`, `question`, `variants` (the record ids that disagree), `rule` (what Impossible OS does) and `reason`
-- [ ] Seed the ledger with the known disagreements, each resolved to one rule
+  - `build` (as captured), `equivalent` (our own version of something we cannot take), `replaced` (captured in full and not built: one design of ours takes its place) or `excluded` (with a `reason`)
+  - `equivalent` covers a Microsoft cloud service, account, store or assistant, and a surface on hardware that no stand-in and no host can show (an absent row of §19)
+- [ ] Make `replaced` evidence-bound in the checker, so pixel-perfect stays the default
+  - The record names its ledger entry in `inconsistency`, and that entry lists at least two captured records that answer one question differently
+  - A fixture `replaced` record whose entry has one variant fails
+- [ ] Add `mergedInto` to the schema and to `HAND_FIELDS` of `capture_core.py`: the id of the record that now holds a `replaced` `page`, `dialogTab` or `setting`
+  - The checker refuses a missing target, an undefined one and one that is itself `replaced` or `excluded`: this is the proof that no option was lost
+- [ ] Write `docs/design/inventory/consistency.json`: one entry per inconsistency with `id`, `kind`, `question`, `variants` (the record ids that disagree), `rule` (what Impossible OS does) and `reason`
+  - `kind` is `look` (how a thing is drawn), `flow` (the steps behind an entry point) or `home` (where a thing lives)
+  - A `flow` or `home` entry carries `design`, an anchor under `docs/design/` that the checker resolves
+- [ ] Seed the `look` entries, each resolved to one rule
   - Context menus: the modern menu with a "more options" classic menu behind it. Rule: one menu, every verb in it, grouped and ordered by one scheme
-  - Settings and Control Panel: the same setting reachable in two programs with two layouts. Rule: one setting has one page; the Control Panel frame lists the same pages
   - Dialog generations: property sheets, task dialogs and modern content dialogs. Rule: one dialog frame, one button order, one spacing scale
   - Title bars: 32, 40 and 48 pixel bars and three caption button styles. Rule: one height per density and one caption style
   - Corner radii, focus rectangles, scroll bars, tooltips and menu fonts that differ between old and new programs. Rule: the token in `tokens.json`, everywhere
   - Dark mode gaps: dialogs and tools that stay light. Rule: every surface follows the theme
   - Keyboard: access keys present in old dialogs and missing in new pages. Rule: every command has an access key and every page is reachable by keyboard alone
+  - Management consoles (Device Manager, Disk Management, Services, Event Viewer, Task Scheduler, Computer Management): each its own old frame. Rule: they stay separate tools under their Windows names, in one tool frame with the one dialog style
+- [ ] Seed the `home` entry `settings-home`: the same setting reachable in Settings and in Control Panel, and settings that only Control Panel or an old property sheet holds
+  - Rule: Settings is the one program and holds every setting, the Control Panel-only ones included; no Control Panel window is built
+  - Every Control Panel and property-sheet record is captured, marked `replaced` and carries `mergedInto`
+  - Placement: a Control Panel-only setting joins the Settings page whose captured "Related settings" link opens it, in a group at the foot of that page; with no such link, the page mapped from its Control Panel category, the mapping written in the entry
+  - Entry points stay `build`: the Control Panel name, `control.exe`, each `.cpl` and canonical name, and the Start and search entries open the matching Settings page
+  - Where a management console and a Settings page change the same thing, both are views of one setting and the page links to the tool
+  - An applet another vendor installs is listed in Settings under the category it registers for, or in a last "More settings" group, and opens in its own window
+- [ ] Seed the `flow` entry `hello-enrolment`: PIN, face, fingerprint and security key are four wizards. Rule: one enrolment flow behind the four captured entry points
+  - §8 to §13 add a `flow` entry wherever two captured flows answer one question; none is added on judgment alone
 - [ ] Add `inconsistency` on a record as the ledger id it belongs to; the checker refuses an id the ledger does not define and a ledger variant that names no record
-- [ ] Write the disposition rule for cloud-tied records in `REFERENCE.md`
-  - Sign-in with a Microsoft account, the Store, cloud file sync, the assistant, the news feed, advertising and telemetry consent pages
+- [ ] Write the disposition rules in `REFERENCE.md`
+  - Cloud-tied records: sign-in with a Microsoft account, the Store, cloud file sync, the assistant, the news feed, advertising and telemetry consent pages
+  - Absent hardware: the record is hand-written from the nearest captured sibling named on the absent row, with the component library's controls
+  - Names and places: the entry points of a `replaced` flow keep their captured name, place and order
 - [ ] Commit: `"inventory: dispositions and the consistency ledger"`
 
-**Test checkpoint:** a fixture record without `disposition` fails; a fixture `inconsistency` naming an undefined ledger id fails. `consistency.json` holds at least the seven seeded entries and passes its own schema.
+**Test checkpoint:** a fixture record without `disposition` fails; a fixture `inconsistency` naming an undefined ledger id fails; a fixture `replaced` record under a one-variant entry fails; a fixture `replaced` setting with no `mergedInto` fails. `consistency.json` holds at least the nine seeded entries and passes its own schema.
 
 ---
 
@@ -338,6 +357,7 @@ The report is the measure of progress, and the ownership check is the proof that
   - Records per surface and kind, dispositions per surface, baseline rows matched, absent, pending and unmatched, and implemented counts
 - [ ] Define ownership: a roadmap section owns a record when its body carries `**Inventory:** <id or id prefix>`; a prefix owns every record under it that no longer prefix owns
 - [ ] Add `--owners --check`: exits 1 listing every `build` or `equivalent` record with no owner and every record with two owners of the same prefix length
+  - A `replaced` record needs no owner: its `mergedInto` target does, and the report counts `replaced` records apart from built ones
 - [ ] Define implemented: a record counts when its owning section is shipped with both stamps
   - Read from the classifier in `.claude/hooks/sequencer_triage.py`: reuse its function, do not restate its rule
 - [ ] Make the pre-commit lint refuse a stale `COVERAGE.md` when an inventory file or a TODO file is staged
@@ -820,11 +840,11 @@ One item is one surface: write its capture module, run it in the reference VM, h
   - Capture the Control Panel window: the address bar, the search box, "View by" (category, large icons, small icons), and the category layout (eight categories with their task links)
   - Capture the all-items list in icon view: every applet by canonical name, in order, matched to the `control-panel` baseline
   - Capture each category's second-level page: its headings and task links
-  - Decide each applet's home under the Settings and Control Panel ledger entry of §6
-    - Which Settings page of §10 to §11 owns the same setting, and what the Control Panel entry opens in Impossible OS
+  - Mark each applet `replaced` under the `settings-home` ledger entry of §6, with `mergedInto` naming the Settings page of §10 to §11 that holds it
+    - Record the Settings page whose "Related settings" link opens the applet: it is where a Control Panel-only setting lands
   - Capture the Windows Tools folder: every entry by name, matched to the sections of §13 that inventory it
   - Capture the task pane links on the left of applet pages as a frame
-  - Done when: `check-inventory.py --surface control-panel` passes; `check-inventory.py --baselines` shows zero unmatched `control-panel` rows, and every applet record names its home.
+  - Done when: `check-inventory.py --surface control-panel` passes; `check-inventory.py --baselines` shows zero unmatched `control-panel` rows, and every applet record carries `mergedInto`.
 - [ ] Control Panel Property Sheets: writes `docs/design/inventory/control-panel/sheets.json`
   - Sound: Playback, Recording, Sounds, Communications tabs, a device's Properties sheet and each of its tabs, and the sound event list as event names
   - Mouse and Keyboard properties: every tab and control (buttons, pointers and the scheme list, pointer options, wheel, hardware; speed, hardware)
@@ -1079,6 +1099,7 @@ The layout check proves every element is in the right place. This proves the pix
 - [ ] Unmasked pixels must be equal: no geometry tolerance, exact colour for solid fills, and a difference of at most 2 per channel inside blurred backdrop and shadow areas
 - [ ] Masked text regions are compared by their ink box: same origin, same advance width and same line count as the reference, using the text metrics recorded in §14
 - [ ] Masked icon and image regions are compared by rectangle only: same position and size
+- [ ] Skip every region whose record is `replaced` or `equivalent`: it has no reference pixels to match, and §16's layout check holds it to its design instead
 - [ ] Output `build/inventory/pixel-report.json` and `pixel: N surfaces, M differ` with, per differing surface, the count of differing pixels and their bounding boxes; write a difference image to the scratch directory, never to the repository
 - [ ] Wire it beside the layout check: advisory until a surface is fully built, then blocking for the surfaces listed in `docs/design/inventory/enforced.json`
 - [ ] Commit: `"inventory: pixel comparison against reference screenshots"`
@@ -1093,12 +1114,11 @@ The layout check proves every element is in the right place. This proves the pix
 
 **Design:** n/a -- prepares the reference machine and its expected captures, it draws nothing
 
-**Needs:** bare-metal
-
-Capture once only works if the campaign knows, before it starts, every surface, state and profile it must take, and the VM can actually show each one. This section writes that list and builds the fixtures that make each entry reachable.
+Capture once only works if the campaign knows, before it starts, every surface, state and profile it must take, and the VM can actually show each one. This section writes that list and builds the fixtures that make each entry reachable. No physical laptop is used (operator decision 2026-11-14): a hardware-gated surface is shown by a stand-in in the VM, captured on the operator's Windows host, or recorded absent and designed as ours.
 
 - [ ] Write `docs/design/inventory/expected.json`, the capture matrix, before any surface is captured
   - One row per surface, state and profile, with its prerequisite fixture and the evidence it needs (records, shot, recording); §7's `--campaign --check` reconciles against it and fails on any row without evidence
+  - A hardware-gated row carries `source`: `stand-in`, `host` or `absent`
 - [ ] Keep the setup flow replayable: run §9's First-Run Setup capture from §2's `pre-oobe` checkpoint, for both the local-account and the network branches
 - [ ] Extend the profile matrix in `REFERENCE.md` and `ref-vm.ps1 -Verify`: 100, 125, 150, 175 and 200 percent scaling, light and dark, all four contrast themes, and text size 150 percent
   - Add `fhd-100-rtl` (Arabic display language, installed from the language pack while setup still has network) for every frame surface, and a 2560 by 1080 wide and a 1080 by 1920 tall viewport for snap layouts
@@ -1110,11 +1130,15 @@ Capture once only works if the campaign knows, before it starts, every surface, 
   - Update checking, downloading, installing, failed and pending restart; network authentication and discovery failure; loading, timeout, validation error and disconnected states of Settings pages
 - [ ] Add notification fixtures: a script that posts deterministic toasts in several groups, with long text and overflow, captured expanded, collapsed and at text size 150 percent
 - [ ] Prove a device stand-in for each hardware-gated surface (battery and its states, brightness, lid, touchpad, pen, touch, rotation and tablet posture)
-  - Hyper-V's virtual battery on a prerelease configuration version, and a clone of the reference disk under QEMU with `virtio-multitouch` and a tablet device; each proven stand-in is a fixture row in `expected.json`
-- [ ] Capture what no stand-in can show on a physical Windows 11 laptop installed from the same image at the same profiles, recorded as `hand:<build>` with screenshots in the same store
+  - Hyper-V's virtual battery on a prerelease configuration version, and a clone of the reference disk under QEMU with `virtio-multitouch` and a tablet device; each proven stand-in is a `stand-in` row in `expected.json`
+- [ ] Move the reference VM to the host's build (26300.9818) before any host capture: re-pin §2's `reference.json` and re-run §5's baselines, so host and VM records share one build
+- [ ] Capture on the operator's Windows host what the VM cannot show and the host has: Bluetooth, the camera and the discrete graphics pages, recorded as `hand:<build>` with screenshots in the same store
+  - Wi-Fi is captured the same way once the host has its USB adapter; until then its rows are `absent`, and the capture replaces them
+- [ ] Record every surface that no stand-in and no host can show (fingerprint and face enrolment, and each stand-in above that fails its proof) as an absent row in `REFERENCE.md` naming its nearest captured sibling
+  - §6 gives such a surface the `equivalent` disposition and it is designed as ours; nothing waits on hardware
 - [ ] Commit: `"inventory: capture matrix, fixtures and device stand-ins"`
 
-**Test checkpoint:** `python3 scripts/inventory/inventory-report.py --campaign --check` against a fixture tree fails naming the row when one whole surface is deleted, and again when one state of one profile is deleted; `ref-vm.ps1 --verify` reports every profile of the matrix; every hardware-gated row of `expected.json` names a proven stand-in or the physical capture. Platform: the operator's Windows host with Hyper-V, and the physical laptop for the rows no stand-in covers.
+**Test checkpoint:** `python3 scripts/inventory/inventory-report.py --campaign --check` against a fixture tree fails naming the row when one whole surface is deleted, and again when one state of one profile is deleted; `ref-vm.ps1 --verify` reports every profile of the matrix; every hardware-gated row of `expected.json` names a proven stand-in, a host capture or an absent row of `REFERENCE.md`. Platform: the operator's Windows host with Hyper-V.
 
 ---
 

@@ -7,7 +7,7 @@ The parity inventory is a machine-readable list of every visible element of the 
 
 ## How does it work?
 
-A capture tool walks the UI Automation tree of a clean Windows 11 reference virtual machine at one fixed display profile and writes records. Completeness baselines, read from the reference machine's own lists, prove that no page, applet or control was missed. Each record then gets a disposition (build it, build our own equivalent, or exclude it) and an owner: exactly one roadmap section that builds it.
+A capture tool walks the UI Automation tree of a clean Windows 11 reference virtual machine at one fixed display profile and writes records. Completeness baselines, read from the reference machine's own lists, prove that no page, applet or control was missed. Each record then gets a disposition (build it, build our own equivalent, replace it with one design of ours, or exclude it) and an owner: exactly one roadmap section that builds it.
 
 ```mermaid
 flowchart LR
@@ -20,7 +20,7 @@ flowchart LR
   Records --> Layout[Built-OS layout check]
 ```
 
-Where Windows 11 disagrees with itself, a consistency ledger records the variants and the single rule Impossible OS ships instead.
+Where Windows 11 disagrees with itself, a consistency ledger records the variants and the single rule Impossible OS ships instead. A record may be replaced only when the ledger names at least two captured records that disagree, so matching Windows 11 stays the default. The largest such rule: Settings is the one home for every setting, and the Control Panel name and its entry points open the matching Settings page. No physical laptop is used; a surface that needs hardware is shown by a stand-in in the virtual machine, captured on the Windows host, or recorded absent and designed as ours.
 
 ## What are its interfaces?
 
