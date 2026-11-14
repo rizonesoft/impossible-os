@@ -336,6 +336,8 @@ Two decisions are made per record, once, and written on it: what we do with it, 
 > - Plan review changed the design: a merge target has the same role as what it replaces, and a setting with no Settings twin stays a built, owned record with `placedUnder`.
 > - Downstream: §7 counts `replaced` apart and owns each `flow` and `home` entry; §13 marks Control Panel records; §18 skips what has no reference pixels.
 > - Docs: [Windows 11 Inventory](../../docs/design/inventory/index.md#how-are-decisions-recorded).
+> **Verified:** 2026-11-14 | commit `d3accfe3a` | 10/10 items | `check-inventory.py` 0 errors with the nine-entry ledger, 123 + 81 + 38 tests OK, 50,000 records check in 6.96 s (6.98 s before the section), `bash scripts/lint.sh` 0 errors
+> **Quality reviewed:** 2026-11-14 | Codex 11x (plan, round 4x, performance 3x, completion, reconciliation 2x) | 0H+10M+0L fixed, 0 open | scope: N/A (host tooling, no kernel surface)
 
 ---
 
