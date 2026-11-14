@@ -153,14 +153,14 @@ class Baselines(unittest.TestCase):
     def test_rows_are_counted_pending_until_the_owner_is_captured(self):
         r, out = self.report({"settings/baseline.json": bl("settings", ["a", "b"])})
         self.assertEqual(out["baselines"]["settings"],
-                         {"owner": "settings", "rows": 2, "matched": 0, "absent": 0, "pending": 2, "unmatched": 0, "stale": 0})
+                         {"owner": "settings", "rows": 2, "matched": 0, "absent": 0, "pending": 2, "unmatched": 0, "stale": 0, "removed": []})
 
     def test_a_captured_owner_turns_its_open_rows_unmatched(self):
         rows = [rec("win11.settings.x", surface="settings", kind="surface", baselineId="settings:a")]
         _, out = self.report({"settings/baseline.json": bl("settings", ["a", "b", "c"]),
                               "settings/home.json": rows, "REFERENCE.md": absent(("settings", "c", "not in this edition"))})
         self.assertEqual(out["baselines"]["settings"],
-                         {"owner": "settings", "rows": 3, "matched": 1, "absent": 1, "pending": 0, "unmatched": 1, "stale": 0})
+                         {"owner": "settings", "rows": 3, "matched": 1, "absent": 1, "pending": 0, "unmatched": 1, "stale": 0, "removed": []})
 
     def test_the_text_report_prints_one_line_per_baseline(self):
         r = run({**REF, "settings/baseline.json": bl("settings", ["a"]),
@@ -188,7 +188,7 @@ class Baselines(unittest.TestCase):
                   source="uia:26300.9000", capturedFrom="26300.9000")
         r, out = self.report({"settings/baseline.json": bl("settings", ["a"]), "settings/home.json": [old]})
         self.assertEqual(out["baselines"]["settings"],
-                         {"owner": "settings", "rows": 1, "matched": 0, "absent": 0, "pending": 0, "unmatched": 1, "stale": 1})
+                         {"owner": "settings", "rows": 1, "matched": 0, "absent": 0, "pending": 0, "unmatched": 1, "stale": 1, "removed": []})
         r = run({**REF, "settings/baseline.json": bl("settings", ["a"]), "settings/home.json": [old]}, "--baselines")
         self.assertIn("1 of the open rows have a match or an absence from another build", r.stdout)
 
@@ -212,7 +212,8 @@ class Baselines(unittest.TestCase):
         gone = {**ref(B), "settings/baseline.json": bl("settings", ["b"]), "settings/home.json": at(A)}
         self.assertEqual(errors(gone), [])
         out = json.loads(run(gone, "--baselines", "--json").stdout)["baselines"]["settings"]
-        self.assertEqual((out["rows"], out["matched"], out["unmatched"], out["stale"]), (1, 0, 1, 0))
+        self.assertEqual((out["rows"], out["matched"], out["unmatched"], out["stale"], out["removed"]), (1, 0, 1, 0, ["a"]))
+        self.assertIn("names 1 row(s) this build no longer has: a", run(gone, "--baselines").stdout)
         # ...while a capture of B naming it is an orphan (capture.py unbinds it on --merge).
         self.assertEqual(errors({**gone, "settings/home.json": at(B)}), ["baseline-orphan"])
         # ...and the re-capture on B matches again.
@@ -310,14 +311,15 @@ class Baselines(unittest.TestCase):
         r, out = self.report({**base, "REFERENCE.md": absent(("settings", "a", "gated off"), build="26300.9000")})
         self.assertEqual([e["rule"] for e in out["errors"] if e["rule"] != "baseline-missing"], [])
         self.assertEqual(out["baselines"]["settings"],
-                         {"owner": "settings", "rows": 2, "matched": 0, "absent": 0, "pending": 0, "unmatched": 2, "stale": 1})
+                         {"owner": "settings", "rows": 2, "matched": 0, "absent": 0, "pending": 0, "unmatched": 2, "stale": 1, "removed": []})
         _, out = self.report({**base, "REFERENCE.md": absent(("settings", "a", "gated off"))})
         self.assertEqual((out["baselines"]["settings"]["absent"], out["baselines"]["settings"]["unmatched"],
                           out["baselines"]["settings"]["stale"]), (1, 1, 0))
         # A row the new build removed: the old entry is stale, not an orphan, so the new baselines publish.
         r, out = self.report({**base, "REFERENCE.md": absent(("settings", "gone", "gated off"), build="26300.9000")})
         self.assertEqual([e["rule"] for e in out["errors"] if e["rule"] != "baseline-missing"], [])
-        self.assertEqual((out["baselines"]["settings"]["absent"], out["baselines"]["settings"]["stale"]), (0, 0))
+        got = out["baselines"]["settings"]
+        self.assertEqual((got["absent"], got["stale"], got["removed"]), (0, 0, ["gone"]))
         self.assertIn("absent-orphan", self.rules({**base, "REFERENCE.md": absent(("settings", "gone", "gated off"))}))
         for bad in ("", "26H2", "build 9711"):
             self.assertIn("absent-build", self.rules({**base, "REFERENCE.md": absent(("settings", "a", "why"), build=bad)}))
@@ -329,7 +331,7 @@ class Baselines(unittest.TestCase):
         r, out = self.report(files)
         self.assertNotIn("baseline-orphan", [e["rule"] for e in out["errors"]])
         self.assertEqual(out["baselines"]["settings"],
-                         {"owner": "settings", "rows": 2, "matched": 1, "absent": 0, "pending": 1, "unmatched": 0, "stale": 0})
+                         {"owner": "settings", "rows": 2, "matched": 1, "absent": 0, "pending": 1, "unmatched": 0, "stale": 0, "removed": []})
         files["settings/home.json"] = [rec("win11.settings.y", surface="settings", kind="surface")]
         _, out = self.report(files)
         self.assertEqual((out["baselines"]["settings"]["pending"], out["baselines"]["settings"]["unmatched"]), (0, 1))

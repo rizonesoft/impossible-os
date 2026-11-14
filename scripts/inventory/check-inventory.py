@@ -343,8 +343,7 @@ def load_absent(root, baselines, err, surface, build):
         elif checked != build:
             # Staleness is judged before the row, as for a match: a row the new
             # build no longer has is not this old entry's error.
-            if row in baselines[name]["rows"]:
-                old.add((name, row))
+            old.add((name, row))
             continue
         elif row not in baselines[name]["rows"]:
             problem = "absent-orphan", f"{name} has no row {row}"
@@ -508,8 +507,7 @@ def check(root, surface=None):
             # error, or a new reference build could be reached from neither side:
             # the new baselines would fail on the old records, and a re-capture
             # on the old baselines.
-            if row in b["rows"]:
-                stale[name].add(row)
+            stale[name].add(row)
             continue
         if row not in b["rows"]:
             if mine:
@@ -537,7 +535,10 @@ def check(root, surface=None):
         owner = b["header"].get("owner")
         open_ = left if owner in captured else 0
         summary[name] = {"owner": owner, "rows": len(rows), "matched": len(matched[name]), "absent": len(gone),
-                         "pending": left - open_, "unmatched": open_, "stale": len(stale[name] - matched[name] - gone)}
+                         "pending": left - open_, "unmatched": open_, "stale": len((stale[name] & rows) - matched[name] - gone),
+                         # Old evidence for a row this build no longer has: nothing to count, but
+                         # named, so the entry is reconciled instead of forgotten.
+                         "removed": sorted(stale[name] - rows)}
 
     errors.sort(key=lambda e: (e["file"], e["line"], e["rule"]))
     return count, len(observations), errors, summary
@@ -579,7 +580,9 @@ def main(argv=None):
                 print(f"baseline {name}: {c['rows']} rows, {c['matched']} matched, {c['absent']} absent, "
                       f"{c['pending']} pending, {c['unmatched']} unmatched (owner {c['owner']})"
                       + (f"; {c['stale']} of the open rows have a match or an absence from another build, "
-                         "capture or check again" if c["stale"] else ""))
+                         "capture or check again" if c["stale"] else "")
+                      + (f"; evidence from another build names {len(c['removed'])} row(s) this build no longer has: "
+                         f"{', '.join(c['removed'])}" if c["removed"] else ""))
         for e in errors[:PRINT_CAP]:
             print(f"{e['file']}:{e['line']}: {e['rule']}: {e['message']}")
         if len(errors) > PRINT_CAP:
