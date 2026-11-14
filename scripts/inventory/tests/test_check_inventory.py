@@ -153,14 +153,14 @@ class Baselines(unittest.TestCase):
     def test_rows_are_counted_pending_until_the_owner_is_captured(self):
         r, out = self.report({"settings/baseline.json": bl("settings", ["a", "b"])})
         self.assertEqual(out["baselines"]["settings"],
-                         {"owner": "settings", "rows": 2, "matched": 0, "absent": 0, "pending": 2, "unmatched": 0})
+                         {"owner": "settings", "rows": 2, "matched": 0, "absent": 0, "pending": 2, "unmatched": 0, "stale": 0})
 
     def test_a_captured_owner_turns_its_open_rows_unmatched(self):
         rows = [rec("win11.settings.x", surface="settings", kind="surface", baselineId="settings:a")]
         _, out = self.report({"settings/baseline.json": bl("settings", ["a", "b", "c"]),
                               "settings/home.json": rows, "REFERENCE.md": absent(("settings", "c", "not in this edition"))})
         self.assertEqual(out["baselines"]["settings"],
-                         {"owner": "settings", "rows": 3, "matched": 1, "absent": 1, "pending": 0, "unmatched": 1})
+                         {"owner": "settings", "rows": 3, "matched": 1, "absent": 1, "pending": 0, "unmatched": 1, "stale": 0})
 
     def test_the_text_report_prints_one_line_per_baseline(self):
         r = run({**REF, "settings/baseline.json": bl("settings", ["a"]),
@@ -187,8 +187,31 @@ class Baselines(unittest.TestCase):
         old = rec("win11.settings.x", surface="settings", kind="surface", baselineId="settings:a",
                   source="uia:26300.9000", capturedFrom="26300.9000")
         r, out = self.report({"settings/baseline.json": bl("settings", ["a"]), "settings/home.json": [old]})
-        self.assertIn("baseline-build", [e["rule"] for e in out["errors"]])
-        self.assertEqual(out["baselines"]["settings"]["matched"], 0)
+        self.assertEqual(out["baselines"]["settings"],
+                         {"owner": "settings", "rows": 1, "matched": 0, "absent": 0, "pending": 0, "unmatched": 1, "stale": 1})
+        r = run({**REF, "settings/baseline.json": bl("settings", ["a"]), "settings/home.json": [old]}, "--baselines")
+        self.assertIn("1 of the open rows have a match from another build", r.stdout)
+
+    def test_a_new_reference_build_is_reached_by_baselines_then_captures(self):
+        A, up = "26300.9000", {"repo": "o/r", "commit": SHA, "license": "MIT"}
+        ref = lambda b: {"reference.json": [{"edition": "Professional", "displayVersion": "26H2", "build": b}]}
+        at = lambda b: [rec("win11.settings.x", surface="settings", kind="surface", baselineId="settings:a",
+                            source=f"uia:{b}", capturedFrom=b)]
+        errors = lambda files: [e["rule"] for e in json.loads(run(files, "--json").stdout)["errors"]]
+        # Build A, matched.
+        self.assertEqual(errors({**ref(A), "settings/baseline.json": bl("settings", ["a"], build=A), "settings/home.json": at(A)}), [])
+        # reference.json moves to B: the old baselines are refused until they are read again...
+        self.assertEqual(errors({**ref(B), "settings/baseline.json": bl("settings", ["a"], build=A), "settings/home.json": at(A)}),
+                         ["baseline-header"])
+        # ...the new baselines publish over the old records, which no longer count...
+        step = {**ref(B), "settings/baseline.json": bl("settings", ["a"]), "settings/home.json": at(A)}
+        self.assertEqual(errors(step), [])
+        out = json.loads(run(step, "--baselines", "--json").stdout)["baselines"]["settings"]
+        self.assertEqual((out["matched"], out["unmatched"], out["stale"]), (0, 1, 1))
+        # ...and the re-capture on B matches again.
+        done = {**ref(B), "settings/baseline.json": bl("settings", ["a"]), "settings/home.json": at(B)}
+        out = json.loads(run(done, "--baselines", "--json").stdout)["baselines"]["settings"]
+        self.assertEqual((out["matched"], out["unmatched"], out["stale"]), (1, 0, 0))
 
     def test_a_baseline_from_another_build_is_refused(self):
         self.assertIn("baseline-header", self.rules({"settings/baseline.json": bl("settings", ["a"], build="26300.1")}))
@@ -210,10 +233,7 @@ class Baselines(unittest.TestCase):
 
     def test_a_machine_baseline_cannot_trade_its_build_for_an_upstream(self):
         up = {"repo": "o/r", "commit": SHA, "license": "MIT"}
-        old = rec("win11.settings.x", surface="settings", kind="surface", baselineId="settings:a",
-                  source="uia:26300.9000", capturedFrom="26300.9000")
-        r, out = self.report({"settings/baseline.json": bl("settings", ["a"], build=None, upstream=up),
-                              "settings/home.json": [old]})
+        r, out = self.report({"settings/baseline.json": bl("settings", ["a"], build=None, upstream=up)})
         self.assertIn("baseline-header", [e["rule"] for e in out["errors"]])
         self.assertEqual(r.returncode, 1)
         self.assertIn("baseline-header", self.rules({"controls/baseline.json": bl("controls", ["a"])}))
@@ -283,7 +303,7 @@ class Baselines(unittest.TestCase):
         r, out = self.report(files)
         self.assertNotIn("baseline-orphan", [e["rule"] for e in out["errors"]])
         self.assertEqual(out["baselines"]["settings"],
-                         {"owner": "settings", "rows": 2, "matched": 1, "absent": 0, "pending": 1, "unmatched": 0})
+                         {"owner": "settings", "rows": 2, "matched": 1, "absent": 0, "pending": 1, "unmatched": 0, "stale": 0})
         files["settings/home.json"] = [rec("win11.settings.y", surface="settings", kind="surface")]
         _, out = self.report(files)
         self.assertEqual((out["baselines"]["settings"]["pending"], out["baselines"]["settings"]["unmatched"]), (0, 1))

@@ -16,8 +16,10 @@ header, every other line one row with a unique id. The header names a baseline
 baseline_core.OWNERS knows, its owner surface, its source, and either the build
 it was read from (which must be the build reference.json names) or the upstream
 it was imported from. A record's baselineId (<baseline>:<row id>) must name a
-row, and a record matching a build-read baseline must be captured from that
-build. The table under "Which baseline rows are absent?" in REFERENCE.md lists
+row. A record captured from another build than a build-read baseline is stale:
+it never counts as a match and its row stays open, without being an error, so
+a new reference build is reached by reading the baselines again and then
+capturing again. The table under "Which baseline rows are absent?" in REFERENCE.md lists
 rows documented as absent, each with a reason. --baselines prints, per
 baseline, its rows and how many are matched, absent, pending (the owner surface
 has no records yet) or unmatched (the owner was captured and the row was not).
@@ -468,6 +470,7 @@ def check(root, surface=None):
     build = json.loads(ref.read_text(encoding="utf-8")).get("build") if ref.is_file() else None
     baselines = load_baselines(root, surface, build, err)
     matched = {name: set() for name in baselines}
+    stale = {name: set() for name in baselines}
     for rid, (path, n, obj, mine) in records.items():
         if obj.get("baselineMissing") and "baselineId" in obj:
             if mine:
@@ -483,9 +486,12 @@ def check(root, surface=None):
             continue
         read_from = b["header"].get("build")
         if read_from is not None and obj["capturedFrom"] != read_from:
-            if mine:
-                err(path, n, "baseline-build", f"{rid}: captured from {obj['capturedFrom']} but matches the {name} "
-                    f"baseline read from {read_from}: capture it again on the reference build")
+            # A capture of another build is stale evidence: it never counts, and
+            # the row stays open until the surface is captured again. It is not an
+            # error, or a new reference build could be reached from neither side:
+            # the new baselines would fail on the old records, and a re-capture
+            # on the old baselines.
+            stale[name].add(row)
             continue
         # Any surface's record may match a row (the settings index lists the classic
         # Control Panel entries, which are captured under control-panel); the owner
@@ -507,7 +513,7 @@ def check(root, surface=None):
         owner = b["header"].get("owner")
         open_ = left if owner in captured else 0
         summary[name] = {"owner": owner, "rows": len(rows), "matched": len(matched[name]), "absent": len(gone),
-                         "pending": left - open_, "unmatched": open_}
+                         "pending": left - open_, "unmatched": open_, "stale": len(stale[name] - matched[name] - gone)}
 
     errors.sort(key=lambda e: (e["file"], e["line"], e["rule"]))
     return count, len(observations), errors, summary
@@ -547,7 +553,8 @@ def main(argv=None):
         if args.baselines:
             for name, c in sorted(summary.items()):
                 print(f"baseline {name}: {c['rows']} rows, {c['matched']} matched, {c['absent']} absent, "
-                      f"{c['pending']} pending, {c['unmatched']} unmatched (owner {c['owner']})")
+                      f"{c['pending']} pending, {c['unmatched']} unmatched (owner {c['owner']})"
+                      + (f"; {c['stale']} of the open rows have a match from another build, capture again" if c["stale"] else ""))
         for e in errors[:PRINT_CAP]:
             print(f"{e['file']}:{e['line']}: {e['rule']}: {e['message']}")
         if len(errors) > PRINT_CAP:
