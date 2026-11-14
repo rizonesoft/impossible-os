@@ -251,6 +251,26 @@ def guest_output(tmp, **over):
     (tmp / "baselines.json").write_text(json.dumps(got), encoding="utf-8")
 
 
+class ClassWalk(unittest.TestCase):
+    ATOMS = {0xC001: "6.0!Button", 0xC002: "CF_NAME", 0xC004: "6.0!Edit"}
+    CLASSES = {"6.0!Button", "6.0!Edit"}
+
+    def walk(self, name_err=core.NO_SUCH_ATOM, class_err=core.NO_SUCH_CLASS):
+        return core.registered_classes(
+            range(0xC000, 0xC006),
+            lambda a: (self.ATOMS[a], 0) if a in self.ATOMS else (None, name_err),
+            lambda n: (True, 0) if n in self.CLASSES else (False, class_err))
+
+    def test_unused_atoms_and_names_that_are_not_classes_are_skipped(self):
+        self.assertEqual(self.walk(), ["6.0!Button", "6.0!Edit"])
+
+    def test_a_lookup_that_fails_after_a_good_one_is_a_failed_read(self):
+        # Out of memory (8) or access denied (5) is not "no class": the list would be short.
+        for kw in ({"name_err": 8}, {"class_err": 8}, {"class_err": 5}, {"name_err": 0}, {"class_err": 0}):
+            with self.assertRaises(core.SourceError):
+                self.walk(**kw)
+
+
 class Received(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp())

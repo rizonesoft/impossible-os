@@ -224,6 +224,34 @@ def control_rows(gallery):
     return _unique(rows, "controls")
 
 
+# What the two lookups of the class walk answer when there is nothing to find
+# (measured on 26300.9711: 16,008 unused atoms, 318 names that are not classes,
+# and no other code). Any other failure is a failed read, never "no class".
+NO_SUCH_ATOM = 6      # ERROR_INVALID_HANDLE from GetClipboardFormatNameW
+NO_SUCH_CLASS = 1411  # ERROR_CLASS_DOES_NOT_EXIST from GetClassInfoExW
+
+
+def registered_classes(atoms, name_of, is_class):
+    """The names in the user atom table that are window classes.
+
+    name_of(atom) -> (name or None, last error); is_class(name) -> (bool, last
+    error). A lookup that fails for any reason but "nothing there" raises
+    SourceError, so a shortened list is never taken for the whole one."""
+    names = []
+    for atom in atoms:
+        name, err = name_of(atom)
+        if name is None:
+            if err != NO_SUCH_ATOM:
+                raise SourceError(f"classic-controls: reading atom {atom:#x} failed (error {err})")
+            continue
+        found, err = is_class(name)
+        if found:
+            names.append(name)
+        elif err != NO_SUCH_CLASS:
+            raise SourceError(f"classic-controls: looking up class {name!r} failed (error {err})")
+    return names
+
+
 def classic_control_rows(class_names, version):
     """Rows of the window classes comctl32 version 6 registers.
 

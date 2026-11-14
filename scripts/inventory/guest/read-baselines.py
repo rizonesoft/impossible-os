@@ -149,12 +149,22 @@ def read_classic_controls():
     if len(parts) < 4 or "common-controls" not in parts[1]:
         raise core.SourceError(f"classic-controls: comctl32 loaded from {path.value}, not a common-controls assembly")
     version = parts[3]
-    names, buf = [], ctypes.create_unicode_buffer(256)
-    for atom in USER_ATOMS:
+    buf = ctypes.create_unicode_buffer(256)
+
+    def name_of(atom):
+        ctypes.set_last_error(0)
         if u32.GetClipboardFormatNameW(atom, buf, 256):
-            wc = WNDCLASSEXW(cbSize=ctypes.sizeof(WNDCLASSEXW))
-            if u32.GetClassInfoExW(w.HINSTANCE(module), buf.value, ctypes.byref(wc)):
-                names.append(buf.value)
+            return buf.value, 0
+        return None, ctypes.get_last_error()
+
+    def is_class(name):
+        wc = WNDCLASSEXW(cbSize=ctypes.sizeof(WNDCLASSEXW))
+        ctypes.set_last_error(0)
+        if u32.GetClassInfoExW(w.HINSTANCE(module), name, ctypes.byref(wc)):
+            return True, 0
+        return False, ctypes.get_last_error()
+
+    names = core.registered_classes(USER_ATOMS, name_of, is_class)
     return {"source": f"comctl32 {version} ({folder})",
             "rows": core.classic_control_rows(names, version)}
 
