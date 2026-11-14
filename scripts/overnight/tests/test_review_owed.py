@@ -462,40 +462,42 @@ def _rollover(fx):
 
 def test_an_owed_review_is_not_a_failed_rollover(tmp_path):
     fx = _guard_fixture(tmp_path)
-    r = _rollover(fx)
-    assert "1 commit(s) not pushed" in r.stderr, r.stderr
-    (fx / ".claude/state/review-owed.json").write_text(json.dumps(
-        [{"todo": "todo/00-infrastructure/TODO-01-fixture.md", "section": 1, "base": "b", "since": 1}]))
-    r = _rollover(fx)
-    assert "not pushed" not in r.stderr, r.stderr
-    # The whole sequence, with the real producer. A dispatch that failed at the backend leaves the review
-    # state unreceived; the section is recorded as owed; its commit goes through the gate's opt-out, whose
-    # reset must write the skip down even though there was nothing to un-receive.
-    import section_commit_gate as gate
+    todo = "todo/00-infrastructure/TODO-01-fixture.md"
     review = fx / ".claude/state/last-codex-review.json"
+    # The whole sequence with the real tools. A dispatch failed at the backend and left the review state
+    # unreceived; with nothing recorded, the section's unpushed commit and that state both refuse a rollover.
     review.write_text(json.dumps({"received": False, "trigger": "a dispatch that failed at the backend"}))
-    gate._reset_review_state(fx)
-    assert json.loads(review.read_text())["skipped_section_commit"] is True
-    assert json.loads(review.read_text())["received"] is False
-    assert "outstanding Codex review" not in _rollover(fx).stderr
-    # The same skip after a review that had been received marks it as it always did.
-    review.write_text(json.dumps({"received": True}))
-    gate._reset_review_state(fx)
-    assert json.loads(review.read_text()) == {"received": False, "skipped_section_commit": True}
-    assert "outstanding Codex review" not in _rollover(fx).stderr
-    # A review that really is unread still holds the rollover, debt or no debt.
+    r = _rollover(fx)
+    assert "1 commit(s) not pushed" in r.stderr and "outstanding Codex review not yet received" in r.stderr, r.stderr
+    # The outage is confirmed and the section recorded as owed: recording it is what marks the failed
+    # dispatch, whichever commit path the section's code then takes.
+    _reviewer(fx, down=True)
+    owed = subprocess.run([sys.executable, str(SCRIPT), "--root", str(fx), "add", "--todo", todo, "--section", "1"],
+                          capture_output=True, text=True, timeout=60)
+    assert owed.returncode == 0, owed.stderr
+    assert json.loads(review.read_text()) == {"received": False, "trigger": "a dispatch that failed at the backend",
+                                              "outage_debt": True}
+    r = _rollover(fx)
+    assert "not pushed" not in r.stderr and "outstanding Codex review" not in r.stderr, r.stderr
+    # The reviewer comes back and a review is dispatched: a fresh record, with no mark. It is held to the rule
+    # until it is received, debt or no debt.
     review.write_text(json.dumps({"received": False}))
     assert "outstanding Codex review not yet received" in _rollover(fx).stderr
-    # With no debt recorded a skip never touches an unread review: it stays unread.
-    (fx / ".claude/state/review-owed.json").write_text("[]")
-    gate._reset_review_state(fx)
-    assert "skipped_section_commit" not in json.loads(review.read_text())
-    # An empty record, or one that cannot be read, is no debt: the ordinary refusals stand.
-    review.write_text(json.dumps({"received": False, "skipped_section_commit": True}))
+    review.write_text(json.dumps({"received": True}))
+    assert "outstanding Codex review" not in _rollover(fx).stderr
+    # A received review is never marked, and recording a second debt marks only an unreceived one.
+    _git(fx, "commit", "-q", "--allow-empty", "-m", "more work")
+    review.write_text(json.dumps({"received": True}))
+    (fx / todo).write_text((fx / todo).read_text() + "\n## 2. Next\n\n- [ ] item\n")
+    assert subprocess.run([sys.executable, str(SCRIPT), "--root", str(fx), "add", "--todo", todo, "--section", "2"],
+                          capture_output=True, text=True, timeout=60).returncode == 0
+    assert "outage_debt" not in json.loads(review.read_text())
+    # An empty record, or one that cannot be read, is no debt: the ordinary refusals stand, mark or no mark.
+    review.write_text(json.dumps({"received": False, "outage_debt": True}))
     for text in ("[]", "{"):
         (fx / ".claude/state/review-owed.json").write_text(text)
         r = _rollover(fx)
-        assert "1 commit(s) not pushed" in r.stderr and "outstanding Codex review not yet received" in r.stderr
+        assert "commit(s) not pushed" in r.stderr and "outstanding Codex review not yet received" in r.stderr
 
 
 # ---- the pre-push hook ----

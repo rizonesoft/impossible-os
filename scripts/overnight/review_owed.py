@@ -17,7 +17,10 @@ answers again. An outage is a delay, never an approval.
 add     before the section's first edit. Refused unless `probe` reports an outage now. Records the section and
         its base: the commit its checked plan pass was dispatched at when it has one (the outage came at
         review time), else HEAD (the commit before its code). Adding a section already recorded changes
-        nothing, so the first base stands and an interrupted run may call it again.
+        nothing, so the first base stands and an interrupted run may call it again. The outage is confirmed
+        at this moment, so the dispatch record that failed with it (.claude/state/last-codex-review.json,
+        unreceived) is marked `outage_debt` here: the rollover then knows it is this debt and not a review
+        waiting to be read.
 list    one line a section: `<todo> section <N> base <sha>`.
 gate    exit 0 when nothing is owed, 1 naming each owed section, 2 when the record cannot be read (a caller
         that guards a push refuses on both).
@@ -76,6 +79,32 @@ def save(root, records):
     try:
         with os.fdopen(fd, "w") as fh:
             fh.write(json.dumps(records, indent=1) + "\n")
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+REVIEW_STATE = pathlib.Path(".claude") / "state" / "last-codex-review.json"
+
+
+def mark_failed_dispatch(root):
+    """Mark the unreceived dispatch record as the confirmed outage's (see `add`). Nothing to mark is fine."""
+    path = pathlib.Path(root) / REVIEW_STATE
+    try:
+        state = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return
+    if not isinstance(state, dict) or state.get("received") is True or state.get("outage_debt") is True:
+        return
+    state["outage_debt"] = True
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".last-codex-review-")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(json.dumps(state))
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -212,6 +241,7 @@ def main(argv=None):
                 return refuse(f"the section's plan pass was dispatched at {base[:10]}, which is not in this history")
             records.append({"todo": args.todo, "section": args.section, "base": base, "since": int(time.time())})
             save(root, records)
+            mark_failed_dispatch(root)
             print(f"review owed: {args.todo} section {args.section} from {base[:10]}; build it, commit it, move on")
             return 0
         if not listed:

@@ -927,11 +927,12 @@ def _rollover_failures(root: Path, state: dict) -> list:
     if review_state.exists():
         try:
             rs = json.loads(review_state.read_text())
-            # A section built while the reviewer was down is committed through the
-            # gate's opt-out, which marks the last review used up (received false,
-            # skipped_section_commit true). That is the recorded debt, not a review
-            # waiting to be read; a review that really is unread has no such mark.
-            owed_skip = rs.get("skipped_section_commit") is True and _reviews_owed(root)
+            # During a reviewer outage the last dispatch failed at the backend: there
+            # was no review to receive. When that outage is confirmed and the section
+            # is recorded as owed, review_owed.py marks this record `outage_debt`. It
+            # is the recorded debt, not a review waiting to be read. A dispatch that
+            # runs later writes a fresh record with no mark, and is held to the rule.
+            owed_skip = rs.get("outage_debt") is True and _reviews_owed(root)
             if rs.get("received") is not True and not owed_skip:
                 fails.append("outstanding Codex review not yet received")
         except (OSError, ValueError):
