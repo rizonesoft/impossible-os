@@ -60,6 +60,7 @@ MAX_PASSES = 4                 # a surface gets this many walks to repeat itself
 MAX_DEPTH = 40
 MAX_RECORDS = 20000
 MAX_VISITS = 4 * MAX_RECORDS   # elements read, excluded and hosting ones included
+POSITIONAL = "--"              # marks a segment told apart only by position; slug() never makes it
 
 
 class Incomplete(Exception):
@@ -107,7 +108,10 @@ def _segment(el, identity=(), values=()):
         if s:
             return s
     # A live value never names an id: it would publish the value and move with it.
-    name = "" if any(matches(el, spec) for spec in values) else slug(clean(el.name))
+    # Nor does a sentence: help text is withheld from the label, so from the id too.
+    label = clean(el.name)
+    withheld = len(label) > LABEL_MAX or any(matches(el, spec) for spec in values)
+    name = "" if withheld else slug(label)
     return name or slug(el.class_name) or slug(el.control_type) or "element"
 
 
@@ -141,7 +145,11 @@ def walk(root, *, surface, build, profile, root_slug, root_label, root_kind="sur
 
     identity is the surface module's IDENTITY: (spec, segment) pairs that name an
     element whose automation id, name and class do not tell it from a sibling.
+    Each segment must be a slug, so it can never look positional.
     """
+    for _, seg in identity:
+        if seg != slug(seg) or not seg:
+            raise ValueError(f"IDENTITY segment {seg!r} is not a slug (lower-case letters, digits, single hyphens)")
     cap = Capture()
     origin = root.bounds
 
@@ -190,7 +198,7 @@ def walk(root, *, surface, build, profile, root_slug, root_label, root_kind="sur
         ones that are never recorded.
         """
         out = []
-        for k in el.children():
+        for k in el.children(limit=MAX_VISITS - visits[0]):
             visits[0] += 1
             if visits[0] > MAX_VISITS:
                 raise Incomplete(f"more than {MAX_VISITS} elements read; the surface module must name a smaller root")
@@ -207,10 +215,11 @@ def walk(root, *, surface, build, profile, root_slug, root_label, root_kind="sur
 
     def ids_for(parent_id, kids):
         """Ids for siblings. Look-alike siblings are told apart by position, and
-        every one of them carries its number, the first included (twin-1, twin-2):
-        an unsuffixed id therefore always names an element with no look-alike, so
-        a note written on twin-1 can never pass to the survivor when the group
-        shrinks to one (it becomes plain twin, and the note is dropped by name)."""
+        every one of them carries its number behind a double hyphen, the first
+        included (twin--1, twin--2). slug() folds every run of other characters
+        to one hyphen and IDENTITY segments must be slugs, so no name can make
+        "--": a positional id is recognisable in any capture, old or new, and a
+        note written on one is never carried (see merge)."""
         segs = [_segment(k, identity, values) for k in kids]
         total = {}
         for s in segs:
@@ -222,9 +231,7 @@ def walk(root, *, surface, build, profile, root_slug, root_label, root_kind="sur
                 out.append(s)
                 continue
             seen[s] = seen.get(s, 0) + 1
-            rid = f"{s}-{seen[s]}"
-            if rid in total:
-                raise Incomplete(f"{parent_id}.{rid}: a positional id meets a sibling's own name; IDENTITY must name them")
+            rid = f"{s}{POSITIONAL}{seen[s]}"
             out.append(rid)
             cap.ambiguous.append(f"{parent_id}.{rid}")
         return [f"{parent_id}.{rid}" for rid in out]
@@ -312,8 +319,9 @@ def merge(old, new, ambiguous):
     amb = set(ambiguous)
 
     def under_ambiguous(rid):
+        # Positional in this capture or in the one that wrote the note: both carry "--".
         parts = rid.split(".")
-        return any(".".join(parts[:n]) in amb for n in range(1, len(parts) + 1))
+        return POSITIONAL in rid or any(".".join(parts[:n]) in amb for n in range(1, len(parts) + 1))
 
     by_id = {r["id"]: r for r in old}
     out = []
@@ -345,8 +353,11 @@ class FixtureElement:
         self.can_expand = "expands" in d or d.get("expandFails", False)
         self.open = False
 
-    def children(self):
-        return [FixtureElement(c) for c in self.d.get("children", [])]
+    def children(self, limit=None):
+        kids = self.d.get("children", [])
+        if limit is not None and len(kids) > limit:
+            raise Incomplete(f"{self.name or self.automation_id}: {len(kids)} children, more than the {limit} left to read")
+        return [FixtureElement(c) for c in kids]
 
     def expand(self):
         if self.d.get("expandFails"):

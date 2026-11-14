@@ -80,7 +80,7 @@ class Strict:
             raise AssertionError(f"the walk read {attr}")
         value = getattr(self._inner, attr)
         if attr in ("children", "expand"):
-            return lambda: [Strict(k) for k in value()]
+            return lambda **kw: [Strict(k) for k in value(**kw)]
         return value
 
 
@@ -190,6 +190,23 @@ class NeverData(unittest.TestCase):
         d = core.dump(core.FixtureElement(t))
         core.confirm_dump(d, cap, surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
 
+    def test_a_wide_element_is_refused_before_its_children_are_made(self):
+        made = []
+        real = core.FixtureElement.__init__
+
+        def count(self, d):
+            made.append(1)
+            real(self, d)
+        wide = node("Root", "Window", children=[node("", "ToolTip") for _ in range(core.MAX_VISITS + 1)])
+        core.FixtureElement.__init__ = count
+        try:
+            with self.assertRaises(core.Incomplete):
+                core.walk(core.FixtureElement(wide), surface="s", build="1.2", profile="p", root_slug="r",
+                          root_label="R")
+        finally:
+            core.FixtureElement.__init__ = real
+        self.assertEqual(len(made), 1)                # the root only
+
     def test_reading_is_bounded_even_when_nothing_is_recorded(self):
         panes = [node("", "Pane") for _ in range(core.MAX_VISITS + 1)]
         t = node("Root", "Window", children=[node("", "Pane", children=panes)])
@@ -237,14 +254,26 @@ class Identity(unittest.TestCase):
 
     def test_siblings_sharing_a_segment_are_ambiguous(self):
         cap = self.run_walk(self.twins("", ""))
-        self.assertEqual(cap.ambiguous, ["win11.s.r.btn-1", "win11.s.r.btn-2"])
+        self.assertEqual(cap.ambiguous, ["win11.s.r.btn--1", "win11.s.r.btn--2"])
         self.assertEqual([r["id"] for r in cap.records[1:]], cap.ambiguous)
 
-    def test_a_positional_id_never_meets_a_real_one(self):
+    def test_no_name_can_make_a_positional_id(self):
         t = node("Root", "Window", children=[node("", "Button", "Twin"), node("", "Button", "Twin"),
-                                             node("", "Button", "Twin-1")])
-        with self.assertRaises(core.Incomplete):
-            self.run_walk(t)
+                                             node("", "Button", "Twin--1"), node("Twin - 1", "Button")])
+        # Names that spell "--" fold to one hyphen and so form their own pair.
+        ids = [r["id"] for r in self.run_walk(t).records[1:]]
+        self.assertEqual(ids, ["win11.s.r.twin--1", "win11.s.r.twin--2", "win11.s.r.twin-1--1", "win11.s.r.twin-1--2"])
+
+    def test_identity_segments_must_be_slugs(self):
+        t = node("Root", "Window", children=[node("A", "Button")])
+        with self.assertRaises(ValueError):
+            self.run_walk(t, identity=[({"name": "A"}, "first--1")])
+
+    def test_a_sentence_never_names_an_id(self):
+        prose = "Use this button to open the document you were working on most recently, in a new tab"
+        t = node("Root", "Window", children=[node(prose, "Button", children=[node("OK", "Button")])])
+        cap = self.run_walk(t)
+        self.assertNotIn("recently", json.dumps(cap.records))
 
     def test_a_live_value_never_names_an_id(self):
         # A Text with no automation id is named by its name; when that name is a
@@ -320,10 +349,10 @@ class Merge(unittest.TestCase):
         t = node("Root", "Window", children=[node("", "Group", "Twin", children=[node("Apply", "Button")]),
                                              node("", "Group", "Twin", children=[node("Apply", "Button")])])
         cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
-        old = [dict(r, behaviour="Saves.") if r["id"] == "win11.s.r.twin-1.apply" else r for r in cap.records]
+        old = [dict(r, behaviour="Saves.") if r["id"] == "win11.s.r.twin--1.apply" else r for r in cap.records]
         with self.assertRaises(ValueError) as ex:
             core.merge(old, cap.records, cap.ambiguous)
-        self.assertIn("win11.s.r.twin-1.apply", str(ex.exception))
+        self.assertIn("win11.s.r.twin--1.apply", str(ex.exception))
 
     def test_a_group_that_shrinks_to_one_drops_its_note(self):
         # Delete and Save share an automation id; Delete carries a note. Delete
@@ -337,7 +366,20 @@ class Merge(unittest.TestCase):
         after = cap_of("Save")
         out, dropped = core.merge(old, after.records, after.ambiguous)
         self.assertNotIn("Deletes the document.", json.dumps(out))
-        self.assertEqual(dropped, ["win11.s.r.twin-1"])
+        self.assertEqual(dropped, ["win11.s.r.twin--1"])
+
+    def test_a_positional_note_never_passes_to_a_real_name(self):
+        # Two look-alikes, the first annotated; next capture holds one control
+        # genuinely named Twin-1, with a child. Neither may inherit the note.
+        t = node("Root", "Window", children=[node("", "Group", "Twin", children=[node("Apply", "Button")]),
+                                             node("", "Group", "Twin")])
+        before = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+        old = [dict(r, behaviour="Saves.") if r["id"].startswith("win11.s.r.twin--1") else r for r in before.records]
+        t2 = node("Root", "Window", children=[node("", "Group", "Twin-1", children=[node("Apply", "Button")])])
+        after = core.walk(core.FixtureElement(t2), surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+        out, dropped = core.merge(old, after.records, after.ambiguous)
+        self.assertNotIn("Saves.", json.dumps(out))
+        self.assertEqual(sorted(dropped), ["win11.s.r.twin--1", "win11.s.r.twin--1.apply"])
 
     def test_an_existing_file_needs_merge(self):
         tmp = pathlib.Path(tempfile.mkdtemp())

@@ -183,9 +183,19 @@ class Live:
         """A LiveElement for a raw element, its properties fetched in one call."""
         return LiveElement(self, el.BuildUpdatedCache(self.cache))
 
-    def children(self, el, condition=None):
+    def children(self, el, condition=None, limit=core.MAX_RECORDS):
+        """el's children, refused past `limit` before one wrapper is made.
+
+        The children come in one FindAllBuildCache call, never one round trip
+        per element: an element-by-element walk is what made a poll take seconds
+        before the CacheRequest (2026-11-14), and it would slow every surface to
+        spare only one that fails the capture anyway.
+        """
         found = el.FindAllBuildCache(TREE_CHILDREN, condition or self.control_view, self.cache)
-        return [LiveElement(self, found.GetElement(i)) for i in range(found.Length)] if found else []
+        n = found.Length if found else 0
+        if n > limit:
+            raise core.Incomplete(f"{n} children under one element, more than the {limit} left to read")
+        return [LiveElement(self, found.GetElement(i)) for i in range(n)]
 
     def hosts(self, pid):
         """Where process `pid` shows popups: its top-level popup windows (a Win32 menu,
@@ -209,7 +219,10 @@ class Live:
         out = {}
         for host in self.hosts(pid):
             found = host.FindAll(TREE_ELEMENT | TREE_DESCENDANTS, self.visible_popup)
-            for j in range(found.Length if found else 0):
+            n = found.Length if found else 0
+            if n > core.MAX_RECORDS:
+                raise core.Incomplete(f"{n} popup containers in one host")
+            for j in range(n):
                 e = found.GetElement(j)
                 out[tuple(e.GetRuntimeId())] = e
         return out
@@ -239,8 +252,8 @@ class LiveElement:
         self.pid = el.CachedProcessId
         self._opened = {}
 
-    def children(self):
-        return self.live.children(self.el)
+    def children(self, limit=core.MAX_RECORDS):
+        return self.live.children(self.el, limit=limit)
 
     def _pattern(self):
         return self.el.GetCurrentPattern(EXPAND_COLLAPSE).QueryInterface(self.live.UIA.IUIAutomationExpandCollapsePattern)
