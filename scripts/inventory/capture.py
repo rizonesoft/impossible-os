@@ -46,6 +46,7 @@ import json
 import os
 import pathlib
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -117,13 +118,25 @@ def run_guest(surface, profile, timeout, fixture=False):
                                      "-Command", cmd], capture_output=True, text=True, timeout=timeout + RUN_MARGIN)
     except subprocess.TimeoutExpired:
         # ref-run outlived every bound of its own; turn the VM off unless a live run holds it.
-        stop = subprocess.run(runner + ["-Stop"], capture_output=True, text=True, timeout=600)  # deadline: Stop-VM -TurnOff
-        print(f"capture: ref-run did not finish within {timeout + RUN_MARGIN} s; " + stop.stdout.replace("\r", "").strip())
+        print(f"capture: ref-run did not finish within {timeout + RUN_MARGIN} s; " + stop_vm(runner))
         return out, 3
+    except KeyboardInterrupt:
+        # subprocess.run has killed the runner, whose own finally may not run.
+        print("capture: interrupted; " + stop_vm(runner))
+        raise
     finally:
         shutil.rmtree(stage, ignore_errors=True)
     print(r.stdout.replace("\r", "").strip())
     return out, r.returncode
+
+
+def stop_vm(runner):
+    """ref-run -Stop: the VM off unless a live run still holds it. Returns its message."""
+    try:
+        stop = subprocess.run(runner + ["-Stop"], capture_output=True, text=True, timeout=600)  # deadline: Stop-VM -TurnOff
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"ref-run -Stop failed ({exc}); turn the VM off with ref-run.ps1 -Stop"
+    return stop.stdout.replace("\r", "").strip() or f"ref-run -Stop exited {stop.returncode}"
 
 
 def check_scratch(rel_file, records):
@@ -325,6 +338,9 @@ def main(argv=None):
     if args.file.startswith("baseline"):
         # check-inventory.py reads a baseline* file as completeness rows and skips its records.
         ap.error(f"--file {args.file!r}: names starting with baseline are completeness baselines, not record files")
+    # A terminated capture cleans up as an interrupted one does (stop_vm, the
+    # publication rollback), instead of dying with the VM running.
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
         with exclusive(LOCK):
             return capture_and_publish(args)

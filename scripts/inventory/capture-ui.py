@@ -212,7 +212,14 @@ class Live:
             if top.class_name in POPUP_WINDOWS or top.control_type in ("Menu", "List"):
                 out.append(top.el)
             else:
-                out.extend(k.el for k in self.children(top.el) if "Popup" in k.class_name and not k.offscreen)
+                try:
+                    kids = self.children(top.el)
+                except self.COMError:
+                    # A top-level window that closed between the listing and this
+                    # read (a tooltip, a closing flyout; seen 2026-11-14). The next
+                    # poll looks again, and settling needs three equal polls.
+                    continue
+                out.extend(k.el for k in kids if "Popup" in k.class_name and not k.offscreen)
         return out
 
     def popups(self, pid):
@@ -423,13 +430,15 @@ def main(argv=None):
         meta.update(complete=True, passes=passes, records=len(cap.records), unnamed=cap.unnamed,
                     ambiguous=cap.ambiguous, skipped=cap.skipped, states=cap.states)
         code = 0
-    except core.Incomplete as exc:
-        meta["incomplete"] = str(exc)
-        print(f"capture-ui: incomplete: {exc}")
+    except (core.Incomplete, live.COMError) as exc:
+        # A UI Automation call that fails mid-walk (an element gone, a provider
+        # that stopped answering) leaves the capture unproven, never half-taken.
+        meta["incomplete"] = str(exc) if isinstance(exc, core.Incomplete) else f"UI Automation failed: {exc}"
+        print(f"capture-ui: incomplete: {meta['incomplete']}")
     finally:
         try:
             mod.close(ctx)
-        except core.Incomplete as exc:
+        except (core.Incomplete, live.COMError) as exc:
             meta["complete"] = False
             meta["incomplete"] = f"close: {exc}"
             code = 3

@@ -23,6 +23,7 @@ import shutil
 import struct
 import sys
 import tempfile
+import types
 import unittest
 import zlib
 
@@ -290,6 +291,30 @@ class Popups(unittest.TestCase):
             raise core.Incomplete("parent unreadable")
         with self.assertRaises(core.Incomplete):                 # a read that fails
             core.outermost({"a": "a"}, broken)
+
+
+class LiveHosts(unittest.TestCase):
+    """guest.Live.hosts over a stub provider (no Windows): a top-level window
+    that closes mid-read is skipped, and the rest are still searched."""
+
+    def test_a_window_that_closes_mid_read_is_skipped(self):
+        class Gone(Exception):
+            pass
+
+        def top(name, cls):
+            return types.SimpleNamespace(el=name, offscreen=False, class_name=cls, control_type="Window")
+        live = object.__new__(guest.Live)
+        live.COMError = Gone
+        live.uia = types.SimpleNamespace(GetRootElement=lambda: "root", CreatePropertyCondition=lambda *a: None)
+        kids = {"root": [top("tip", "TooltipWindow"), top("main", "Notepad")],
+                "main": [types.SimpleNamespace(el="host", class_name="PopupHost", offscreen=False)]}
+
+        def children(el, condition=None, limit=None):
+            if el == "tip":
+                raise Gone("element not available")
+            return kids[el]
+        live.children = children
+        self.assertEqual(live.hosts(1234), ["host"])
 
 
 class Unnamed(unittest.TestCase):
@@ -744,6 +769,25 @@ class Serial(unittest.TestCase):
         self.assertIn("-Stop", calls[1][0])
         self.assertIn("is off", out.getvalue())
         self.assertEqual([p.name for p in self.tmp.iterdir() if p.name.endswith("-in")], [])   # staging removed
+
+
+    def test_an_interrupted_capture_stops_the_vm(self):
+        calls = []
+        real_run, real_work, real_win = capture.subprocess.run, capture.WORK, capture.winpath
+
+        def fake(cmd, **kw):
+            calls.append(cmd)
+            if "-Stop" in cmd:
+                return capture.subprocess.CompletedProcess(cmd, 0, "ref-run: ios-win11-ref is off", "")
+            raise KeyboardInterrupt
+        capture.subprocess.run, capture.WORK, capture.winpath = fake, self.tmp, str
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out, self.assertRaises(KeyboardInterrupt):
+                capture.run_guest("notepad-smoke", "fhd-100", 900)
+        finally:
+            capture.subprocess.run, capture.WORK, capture.winpath = real_run, real_work, real_win
+        self.assertEqual(sum("-Stop" in c for c in calls), 1)
+        self.assertIn("interrupted; ref-run: ios-win11-ref is off", out.getvalue())
 
 
 class States(unittest.TestCase):
