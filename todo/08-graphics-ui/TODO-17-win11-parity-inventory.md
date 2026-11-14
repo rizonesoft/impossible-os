@@ -14,6 +14,8 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 > **Current state:** Measured 2026-11-14. No inventory, schema, capture tool or baseline exists. The design spec ([`docs/design/shell.md`](../../docs/design/shell.md), [`controls.md`](../../docs/design/controls.md), [`tokens.json`](../../docs/design/tokens.json)) describes the shell from memory and public measurements, not from a captured reference. The operator's host is Windows 11 Pro 26H2, build 26300.9818 (an Insider build), with Python 3.14 at `C:\Python314\python.exe`, reachable from WSL through interop. No reference virtual machine exists yet; its installation image is at `R:\11\win11.iso`. The sister project at `D:\Office` already runs this method for Microsoft 365 (schema, capture tool, baseline, coverage and ownership check); its design is the model, its code is not copied.
 
 > [!NOTE]
+> **The standard is pixel-perfect (owner direction, 2026-11-14).** Every geometry, colour, material and motion of the built interface matches the Windows 11 reference exactly, and only what is copyrighted is replaced by original work: icons, fonts, wallpaper, sounds and wording. Those replaced regions are the only pixels allowed to differ, and they must occupy the same rectangles: an icon the same size in the same place, text with the same metrics so every line breaks and ends where the reference does. §16 proves the structure and §18 proves the pixels.
+
 > **Owner direction, 2026-11-14:** the inventory runs first in the plan and is wanted fast, so capture work is grouped: each of §8 to §14 covers one group of surfaces and is reviewed and pushed once. The Impossible OS interface is modelled 1:1 on Windows 11, leaving out anything copyrighted, and is made more consistent than the original wherever Windows 11 disagrees with itself. The inventory follows the Office inventory method, and nothing is skipped: a surface found during capture that no section below names gets a new section here, filed last.
 
 ## Inputs
@@ -74,6 +76,7 @@ title: "TODO-17 -- Windows 11 Parity Inventory"
 | ⭐  |  15   | §15 Inventory-to-Roadmap Authoring                                                          | §6, §7, §14  |  [ ]   |
 | ⭐  |  16   | §16 Built-OS Layout Check                                                                   | §7, T07 §6   |  [ ]   |
 | ⭐  |  17   | §17 Design Spec Reconciliation                                                              | §8, §9, §14  |  [ ]   |
+| ⭐  |  18   | §18 Pixel Comparison Against Reference Screenshots                                          | §14, §16     |  [ ]   |
 
 > 💎 = parity work: it measures what Windows 11 already does.
 > ⭐ = exclusive work: the consistency ledger, the 1:1 ownership proof and the built-OS check have no Windows or Linux counterpart.
@@ -837,6 +840,7 @@ One item is one surface: write its capture module, run it in the reference VM, h
 - [ ] Metrics, Motion, Sound and Cursor Catalogue: writes `docs/design/inventory/system/metrics.json`, `motion.json`, `sounds.json`, `cursors.json`
   - Add `capture-ui.py --metrics`: reads every system metric and every system parameter that is a size, a time or a count, and writes one `metric` record each with the name it was read by
   - Record the system colour roles (the element names, not the values) and the type ramp: each named text style's size, weight and line height as measured from the reference surfaces
+  - Record text metrics per type ramp style as numbers: ascent, descent, line gap, and the advance width of each printable ASCII character and of 20 fixed test strings, so a metric-compatible font can be proven to lay out identically
   - Add `scripts/inventory/measure-motion.py`: records a surface into the scratch directory and writes one `motion` record
     - It records at the display's refresh rate, tracks one edge of the moving element, and writes duration, distance and the nearest cubic curve
     - The recording is deleted after measurement
@@ -902,7 +906,7 @@ The inventory measures the reference; this measures Impossible OS against it, so
 
 - [ ] Write `scripts/inventory/layout-check.py`: boots the image under QEMU at 1920 by 1080 and reads the automation tree through the transport of `TODO-07 §6`
   - Each element maps to an inventory record by the `inventoryId` its automation node carries
-- [ ] Compare per record: present, order under its parent, control type, label, and bounds within a tolerance of 1 pixel for `metric` records and 2 pixels for element bounds
+- [ ] Compare per record: present, order under its parent, control type, label, and bounds with no tolerance: a `metric` record and an element's bounds match the reference to the pixel at each capture profile
 - [ ] Skip a record whose `disposition` is `excluded`, and compare an `equivalent` on presence and position only
 - [ ] Apply the consistency ledger: a record with an `inconsistency` id is compared against the ledger's `rule` value, not the captured variant
 - [ ] Write the result to `build/inventory/layout-report.json` and print `layout: N matched, M differ, K missing` with the first 20 differences
@@ -935,6 +939,27 @@ The spec was written before the reference was measured. This section makes it ag
 
 ---
 
+
+## 18. Pixel Comparison Against Reference Screenshots
+
+> **Spawned-by:** root
+
+**Design:** n/a -- a comparison tool, it draws nothing
+
+The layout check proves every element is in the right place. This proves the pixels: the built surface is compared with a screenshot of the reference, and only the replaced copyrighted regions may differ.
+
+- [ ] Add `ref-run.ps1 --shots`: captures each surface of §8 to §13 in each state and profile to `R:\11\ref-shots\<surface>\<state>.<profile>.png`
+  - The screenshots are Microsoft's pixels: they stay outside the repository and are never committed; `check-no-ms-assets.py` of §4 refuses them
+- [ ] Write `scripts/inventory/pixel-check.py --surface <name>`: renders the same surface and state in Impossible OS under the headless compositor at the same profile and compares it with the reference screenshot
+- [ ] Build the mask from the inventory: regions whose record is an icon, an image, a wallpaper area or a text run are masked; every other pixel is compared
+- [ ] Unmasked pixels must be equal: no geometry tolerance, exact colour for solid fills, and a difference of at most 2 per channel inside blurred backdrop and shadow areas
+- [ ] Masked text regions are compared by their ink box: same origin, same advance width and same line count as the reference, using the text metrics recorded in §14
+- [ ] Masked icon and image regions are compared by rectangle only: same position and size
+- [ ] Output `build/inventory/pixel-report.json` and `pixel: N surfaces, M differ` with, per differing surface, the count of differing pixels and their bounding boxes; write a difference image to the scratch directory, never to the repository
+- [ ] Wire it beside the layout check: advisory until a surface is fully built, then blocking for the surfaces listed in `docs/design/inventory/enforced.json`
+- [ ] Commit: `"inventory: pixel comparison against reference screenshots"`
+
+**Test checkpoint:** with a fixture reference and a fixture render that differ by one pixel outside any mask, `pixel-check.py --fixture` prints `pixel: 1 surfaces, 1 differ` and exits 1; the same pair differing only inside a text mask with equal ink boxes exits 0. Platform: reference screenshots from the reference VM; the comparison runs on Linux against QEMU TCG.
 
 ---
 

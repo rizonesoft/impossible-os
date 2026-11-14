@@ -70,6 +70,8 @@ Create the catalog layer that turns "slot 0/1/2" into a real system font invento
 - [ ] Default stacks and type ramp follow the design tokens (`docs/design/tokens.json` `type`): UI face Selawik (`type.family_ui`, registered under the `Segoe UI` / `Segoe UI Variable` aliases), monospace face Cascadia Code (`type.family_mono`)
   - The type ramp is exposed as `THEME_TYPE_*` in `include/desktop/theme_tokens.h`: caption 12/16, body 14/20, body_strong 14/20 600, body_large 18/24, subtitle 20/28 600, title 28/36 600, title_large 40/52 600, display 68/92 600
   - Shell and app text request sizes and weights by ramp name (e.g. `THEME_TYPE_BODY_SIZE`), never raw pixel sizes
+- [ ] Prove the UI face lays out like the reference: its advances and line metrics equal the text metrics in the Windows 11 inventory (`TODO-17` §14)
+  - A metrics-override table corrects any glyph that differs, so every line breaks where Windows 11 breaks it
 - [ ] Add install/remove/refresh helpers for `.ttf`, `.otf`, and future collection files, including boot-time rescan of `C:\Impossible\Fonts\`
 - [ ] Retire or strictly quarantine `src/desktop/font.c` bitmap rendering so legacy ASCII drawing cannot silently bypass the main font stack
 - [ ] Emit `klog(LOG_INFO, "FONT", ...)` lines for catalog reload, added families, and failed font probes

@@ -2,7 +2,7 @@
 
 The order to build every roadmap section in, from today to the release. Every numbered section of every TODO file appears in exactly one row.
 
-> **Progress:** **968 of 2701 sections complete (35%).** 126 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
+> **Progress:** **968 of 2702 sections complete (35%).** 126 more are shipped or in progress and still owed work or review. Derived by `python3 scripts/todo-plan.py --sync`, never edited by hand.
 
 **How to use this.** Ask for the next rows instead of reading this file, which is long: `python3 scripts/todo-plan.py --next 5` prints the first rows that can be built now (open, every dependency done, not parked), in plan order. A row is a complete instruction. Copy it and paste it:
 
@@ -2040,7 +2040,7 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T01 §7`  | SVG Runtime Renderer (Vendored plutovg and plutosvg)                    | none  |     8 |
 | [ ]  | `D08 T01 §8`  | Icon Engine (Build-Time Generator and Validator)                        | none  |    10 |
 | [ ]  | `D08 T01 §9`  | Missing Icons -- Detect, Draft-Generate, and Queue for Polish           | none  |     9 |
-| [ ]  | `D08 T02 §1`  | Font Catalog, Enumeration, Install/Remove, and Default Stacks           | none  |     9 |
+| [ ]  | `D08 T02 §1`  | Font Catalog, Enumeration, Install/Remove, and Default Stacks           | none  |    10 |
 | [ ]  | `D08 T02 §2`  | Fallback Chains, Emoji, and Color-Font Support                          | none  |     7 |
 | [ ]  | `D08 T02 §3`  | Shaping, Bidi, Line-Break, and Paragraph Layout Engine                  | none  |     7 |
 | [ ]  | `D08 T02 §4`  | Caret, Hit-Test, Selection, and Composition-Aware Text Editing Services | none  |     8 |
@@ -2088,6 +2088,7 @@ GDI, the compositor, fonts, text and the controls sit on the desktop foundation 
 | [ ]  | `D08 T07 §5`  | Win32 and Platform-Service Wiring                                       | none  |     6 |
 | [ ]  | `D08 T07 §6`  | Deterministic Automation Transport for Testing and Assistive Tooling    | none  |     6 |
 | [ ]  | `D08 T17 §16` | Built-OS Layout Check                                                   | none  |     8 |
+| [ ]  | `D08 T17 §18` | Pixel Comparison Against Reference Screenshots                          | none  |     9 |
 | [ ]  | `D08 T08 §2`  | Window Decorations                                                      | none  |    11 |
 | [ ]  | `D08 T08 §1`  | Minimize / Maximize / Restore                                           | none  |    11 |
 | [ ]  | `D08 T08 §3`  | Snap Layouts                                                            | none  |     6 |
