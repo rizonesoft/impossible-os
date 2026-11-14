@@ -238,7 +238,10 @@ def load_baselines(root, surface, build, err):
     """{name: {"header", "rows": {id: line}, "path", "mine"}} for every baseline file."""
     out = {}
     for path in sorted(root.glob("*/baseline*.json")):
-        mine = surface is None or path.parent.name == surface
+        # A baseline belongs to the surface that accounts for it (known-folders
+        # to explorer), and to its own folder when it is named as the surface.
+        folder = path.parent.name
+        mine = surface is None or surface in (folder, baseline_core.OWNERS.get(folder))
         if path.name != BASELINE_FILE:
             if mine:
                 err(path, 1, "baseline-name", f"a baseline file is named {BASELINE_FILE}, not {path.name}")

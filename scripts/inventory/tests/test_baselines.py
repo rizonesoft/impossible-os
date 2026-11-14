@@ -114,6 +114,17 @@ class StartApps(unittest.TestCase):
         with self.assertRaises(core.SourceError):
             core.start_app_rows([{"Name": "A"}])
 
+    def test_the_command_stops_on_the_first_error(self):
+        self.assertIn("$ErrorActionPreference = 'Stop'", core.START_APPS_COMMAND)
+
+    def test_a_partial_list_beside_an_error_is_a_failed_read(self):
+        part = json.dumps([{"AppID": "a!b", "Name": "A"}])
+        self.assertEqual(len(core.start_apps_from(0, part, "")), 1)
+        for rc, out, err in ((0, part, "Get-StartApps : enumeration failed"), (1, part, ""), (0, "", ""),
+                             (0, '{"AppID": "a"}', ""), (0, '["a"]', "")):
+            with self.assertRaises(core.SourceError):
+                core.start_apps_from(rc, out, err)
+
 
 GALLERY = {"Groups": [{"UniqueId": "Fundamentals", "IsSpecialSection": True, "Items": [{"UniqueId": "Binding", "Title": "B"}]},
                       {"UniqueId": "BasicInput", "Items": [{"UniqueId": "Button", "Title": "Button", "Description": "prose"}]}]}
@@ -137,6 +148,30 @@ class Controls(unittest.TestCase):
         self.assertIn(core.GALLERY["commit"], seen[0])
         with self.assertRaises(core.SourceError):
             baselines.gallery_rows(lambda u: b"not json")
+
+    def test_a_trickling_download_is_cut_off_at_the_total_deadline(self):
+        class Trickle:
+            def __init__(self):
+                self.now = 0.0
+
+            def read(self, n):
+                self.now += 10      # each chunk arrives inside the socket timeout
+                return b"x"
+        t = Trickle()
+        with self.assertRaisesRegex(core.SourceError, "did not finish"):
+            baselines.read_bounded(t, "url", clock=lambda: t.now)
+        self.assertLessEqual(t.now, baselines.FETCH_TIMEOUT + 20)
+
+    def test_an_oversized_download_is_refused_and_a_whole_one_returned(self):
+        class Body:
+            def __init__(self, chunks):
+                self.chunks = list(chunks)
+
+            def read(self, n):
+                return self.chunks.pop(0) if self.chunks else b""
+        self.assertEqual(baselines.read_bounded(Body([b"ab", b"c"]), "url"), b"abc")
+        with self.assertRaisesRegex(core.SourceError, "larger"):
+            baselines.read_bounded(Body([b"x" * (baselines.FETCH_MAX + 1)]), "url")
 
 
 class ClassicControls(unittest.TestCase):

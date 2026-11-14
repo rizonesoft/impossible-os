@@ -28,6 +28,7 @@ import os
 import pathlib
 import signal
 import sys
+import time
 import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -44,7 +45,9 @@ capture = _load("capture")
 core = _load("baseline_core")
 
 INVENTORY = capture.INVENTORY
-FETCH_TIMEOUT = 60   # deadline: one JSON file of about 200 KB from GitHub
+FETCH_TIMEOUT = 60   # deadline: the whole download, one JSON file of about 200 KB from GitHub
+FETCH_STALL = 15     # deadline: one wait on the socket
+FETCH_CHUNK = 1 << 16
 FETCH_MAX = 8 << 20  # the Gallery file is about 200 KB; a larger answer is not it
 GUEST_TIMEOUT = 600
 
@@ -66,16 +69,31 @@ def gallery_rows(fetch=None):
     url = f"https://raw.githubusercontent.com/{g['repo']}/{g['commit']}/{g['path']}"
     if fetch is None:
         def fetch(u):
-            with urllib.request.urlopen(u, timeout=FETCH_TIMEOUT) as r:  # deadline: FETCH_TIMEOUT
-                data = r.read(FETCH_MAX + 1)
-            if len(data) > FETCH_MAX:
-                raise core.SourceError(f"controls: {u} is larger than {FETCH_MAX} bytes")
-            return data
+            with urllib.request.urlopen(u, timeout=FETCH_STALL) as r:  # deadline: FETCH_STALL a wait, FETCH_TIMEOUT in all
+                return read_bounded(r, u)
     try:
         data = json.loads(fetch(url).decode("utf-8-sig"))
     except (OSError, ValueError) as exc:
         raise core.SourceError(f"controls: the Gallery list could not be read ({exc})") from None
     return core.control_rows(data)
+
+
+def read_bounded(resp, what, clock=time.monotonic):
+    """The whole response, or SourceError once it passes FETCH_MAX bytes or
+    FETCH_TIMEOUT seconds in total. A socket timeout bounds one wait only, so a
+    source that keeps trickling is cut off here; the caller's `with` closes it.
+    This runs under the capture lock, which no stalled download may hold."""
+    end = clock() + FETCH_TIMEOUT
+    data = bytearray()
+    while True:
+        chunk = resp.read(FETCH_CHUNK)
+        if not chunk:
+            return bytes(data)
+        data += chunk
+        if len(data) > FETCH_MAX:
+            raise core.SourceError(f"controls: {what} is larger than {FETCH_MAX} bytes")
+        if clock() > end:
+            raise core.SourceError(f"controls: {what} did not finish within {FETCH_TIMEOUT} s")
 
 
 def received(out, rc, build):

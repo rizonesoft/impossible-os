@@ -240,6 +240,19 @@ class Baselines(unittest.TestCase):
         r = run({**REF, **files}, "--surface", "settings", "--json")
         self.assertEqual([e["rule"] for e in json.loads(r.stdout)["errors"]], ["baseline-duplicate"])
 
+    def test_a_baseline_is_checked_under_the_surface_that_owns_it(self):
+        # known-folders and shell-commands are explorer's, start-apps is start's, the two control lists system's.
+        for name, owner in (("known-folders", "explorer"), ("shell-commands", "explorer"), ("start-apps", "start"),
+                            ("controls", "system"), ("classic-controls", "system")):
+            with self.subTest(name):
+                dup = bl(name, ["a", "a"], owner=owner)
+                self.assertEqual(self.rules({f"{name}/baseline.json": dup, f"{owner}/x.json": []}, "--surface", owner)
+                                 [:1], ["baseline-duplicate"])
+                bad = bl(name, ["a"], owner=owner, extra=1) + ['{"no": "id"}']
+                rules = self.rules({f"{name}/baseline.json": bad, f"{owner}/x.json": []}, "--surface", owner)
+                self.assertIn("baseline-header", rules)
+                self.assertIn("baseline-row", rules)
+
     def test_the_published_baselines_are_clean(self):
         r = subprocess.run([sys.executable, str(SCRIPT), "--baselines"], capture_output=True, text=True, timeout=120)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

@@ -93,13 +93,10 @@ def read_known_folders():
 
 
 def read_start_apps():
-    r = subprocess.run(["powershell.exe", "-NoProfile", "-Command",
-                        "Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress"],
+    r = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", core.START_APPS_COMMAND],
                        capture_output=True, text=True, encoding="utf-8", timeout=START_APPS_TIMEOUT)
-    if r.returncode != 0:
-        raise core.SourceError(f"start-apps: Get-StartApps failed: {r.stderr.strip()}")
-    apps = json.loads(r.stdout)
-    return {"source": "Get-StartApps", "rows": core.start_app_rows(apps if isinstance(apps, list) else [apps])}
+    return {"source": "Get-StartApps",
+            "rows": core.start_app_rows(core.start_apps_from(r.returncode, r.stdout, r.stderr))}
 
 
 class ACTCTXW(ctypes.Structure):

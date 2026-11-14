@@ -13,6 +13,7 @@ line 1 is its header ({"baseline", "owner", "source", "build" or "upstream",
 only (identifiers, names, paths, categories), never a description, keyword or
 help string.
 """
+import json
 import re
 import xml.etree.ElementTree as ET
 
@@ -150,6 +151,27 @@ def known_folder_rows(folders):
                 row[field] = values[value].lower() if field == "parent" else values[value]
         rows.append(row)
     return _unique(rows, "known-folders")
+
+
+# Any error stops the pipeline and fails the process, so a partial list never
+# reaches ConvertTo-Json; the @() keeps a single app an array.
+START_APPS_COMMAND = ("$ErrorActionPreference = 'Stop'; "
+                      "ConvertTo-Json -Compress -InputObject @(Get-StartApps | Select-Object Name, AppID)")
+
+
+def start_apps_from(returncode, stdout, stderr):
+    """The app list Get-StartApps printed, or SourceError: a non-zero exit, any
+    error text or output that is not a JSON list is a failed read, never a
+    short list."""
+    if returncode != 0 or stderr.strip():
+        raise SourceError(f"start-apps: Get-StartApps failed (exit {returncode}): {stderr.strip()[:300]}")
+    try:
+        apps = json.loads(stdout)
+    except ValueError as exc:
+        raise SourceError(f"start-apps: Get-StartApps printed no JSON ({exc})") from None
+    if not isinstance(apps, list) or not all(isinstance(a, dict) for a in apps):
+        raise SourceError("start-apps: Get-StartApps did not print a list of apps")
+    return apps
 
 
 def start_app_rows(apps):
