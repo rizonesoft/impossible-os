@@ -317,6 +317,59 @@ class LiveHosts(unittest.TestCase):
         self.assertEqual(live.hosts(1234), ["host"])
 
 
+class LiveExpand(unittest.TestCase):
+    """guest.LiveElement.expand over a stub provider: settling holds out for the
+    whole popup set, re-discovered on every poll."""
+
+    def entry(self, name):
+        return types.SimpleNamespace(control_type="MenuItem", name=name, automation_id="", bounds=(0, 0, 1, 1))
+
+    def element(self, discoveries):
+        """discoveries: one (popups, complete) per call of popups(), the last repeated."""
+        seq = list(discoveries)
+        live = types.SimpleNamespace(discovery_complete=True)
+
+        def popups(pid):
+            found, live.discovery_complete = seq.pop(0) if len(seq) > 1 else seq[0]
+            return dict(found)
+        live.popups = popups
+        live.wrap = lambda e: types.SimpleNamespace(control_type="Menu", name=e, automation_id="", class_name="")
+        live.children = lambda e, **kw: [self.entry(f"{e}-item")]
+        el = object.__new__(guest.LiveElement)
+        el.live, el.pid, el.name, el.automation_id, el._opened = live, 1, "File", "", {}
+        el._pattern = lambda: types.SimpleNamespace(Expand=lambda: None)
+        el.children = lambda **kw: []
+        return el
+
+    def setUp(self):
+        self.sleep = guest.time.sleep
+        guest.time.sleep = lambda s: None
+
+    def tearDown(self):
+        guest.time.sleep = self.sleep
+
+    def test_a_host_found_late_is_waited_for(self):
+        a, ab = {("a",): "A"}, {("a",): "A", ("b",): "B"}
+        el = self.element([({}, True), (a, True), (a, True), (ab, True), (ab, True), (ab, True)])
+        names = [i.name for i in el.expand()]
+        self.assertEqual(names, ["A-item", "B-item"])
+
+    def test_a_failed_host_read_never_counts_as_settled(self):
+        a, ab = {("a",): "A"}, {("a",): "A", ("b",): "B"}
+        el = self.element([({}, True), (a, False), (a, False), (a, False), (ab, True), (ab, True), (ab, True)])
+        self.assertEqual([i.name for i in el.expand()], ["A-item", "B-item"])
+
+    def test_a_host_that_always_fails_ends_incomplete(self):
+        real = guest.SETTLE_S
+        guest.SETTLE_S = 0.05
+        try:
+            el = self.element([({}, True), ({("a",): "A"}, False)])
+            with self.assertRaises(guest.core.Incomplete):
+                el.expand()
+        finally:
+            guest.SETTLE_S = real
+
+
 class Unnamed(unittest.TestCase):
     def test_unnamed_elements_fall_back_to_their_id_or_class_and_are_listed(self):
         cap = walk()

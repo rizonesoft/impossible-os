@@ -204,6 +204,7 @@ class Live:
         carry as direct children (a WinUI PopupHost bridge, seen 2026-11-14 on
         Notepad). Only these are searched, never a whole window's content, so the
         cost of a poll does not grow with the surface."""
+        self.discovery_complete = True
         out = []
         tops = self.children(self.uia.GetRootElement(), self.uia.CreatePropertyCondition(PROP_PROCESS_ID, pid))
         for top in tops:
@@ -216,8 +217,10 @@ class Live:
                     kids = self.children(top.el)
                 except self.COMError:
                     # A top-level window that closed between the listing and this
-                    # read (a tooltip, a closing flyout; seen 2026-11-14). The next
-                    # poll looks again, and settling needs three equal polls.
+                    # read (a tooltip, a closing flyout; seen 2026-11-14). This
+                    # discovery is incomplete: expand() does not count the poll
+                    # toward settling, and the next poll looks again.
+                    self.discovery_complete = False
                     continue
                 out.extend(k.el for k in kids if "Popup" in k.class_name and not k.offscreen)
         return out
@@ -280,16 +283,25 @@ class LiveElement:
     def expand(self, skip=None):
         """Open, wait for the entries to settle, return them. A popup container
         that `skip` accepts (an environment list) is returned itself, rows unread."""
-        before = self.live.popups(self.pid)
+        for _ in range(MIN_POLLS):            # what was open before, read whole
+            before = self.live.popups(self.pid)
+            if getattr(self.live, "discovery_complete", True):
+                break
+            time.sleep(POLL_S)
+        else:
+            raise core.Incomplete(f"{self.name or self.automation_id}: the popups open before it could not be read")
         self._pattern().Expand()
         last, stable, counts = None, 0, []
         deadline = time.monotonic() + SETTLE_S
         while len(counts) < MIN_POLLS or time.monotonic() < deadline:
             time.sleep(POLL_S)
-            items = self._entries(before, skip)
+            keys, items = self._entries(before, skip)
             counts.append(len(items))
-            sig = tuple((i.control_type, i.name, i.automation_id, i.bounds) for i in items)
-            if items and sig == last:
+            # The popup set is part of what must hold still: a host found late, or
+            # one whose read failed this poll (keys None), resets the count.
+            sig = None if keys is None else (keys, tuple((i.control_type, i.name, i.automation_id, i.bounds)
+                                                         for i in items))
+            if items and sig is not None and sig == last:
                 stable += 1
                 if stable >= 2:                # three equal polls: open and done animating
                     return items
@@ -300,18 +312,23 @@ class LiveElement:
                               f"{SETTLE_S:.0f} s (entries per poll: {counts}; new popups: {len(self._opened)})")
 
     def _entries(self, before, skip=None):
-        # A Win32 menu or a WinUI flyout opens as a new Menu or List container in
-        # the same process; a combo box may also show its list as its own children.
-        # Once the new container is found it is read directly, not searched for again.
-        if not self._opened:
-            self._opened = {k: e for k, e in self.live.popups(self.pid).items() if k not in before}
-        if self._opened:
+        """(popup keys, entries) for one poll; keys is None when discovery was
+        incomplete. A Win32 menu or a WinUI flyout opens as a new Menu or List
+        container in the same process, found again on every poll (the search is
+        scoped to popup hosts, so it stays cheap); a combo box may instead show
+        its list as its own children. Every popup ever opened is kept in
+        _opened, so collapse() waits for all of them to go."""
+        now = {k: e for k, e in self.live.popups(self.pid).items() if k not in before}
+        complete = getattr(self.live, "discovery_complete", True)
+        self._opened.update(now)
+        if now:
             out = []
-            for e in self._opened.values():
+            for e in now.values():
                 box = self.live.wrap(e)
                 out.extend([box] if skip and skip(box) else self.live.children(e))
-            return out
-        return [c for c in self.children() if c.control_type in ("ListItem", "MenuItem") and not c.offscreen]
+        else:
+            out = [c for c in self.children() if c.control_type in ("ListItem", "MenuItem") and not c.offscreen]
+        return (tuple(sorted(now)) if complete else None), out
 
     def _closed(self):
         try:
