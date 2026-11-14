@@ -218,6 +218,8 @@ One tool walks a surface's UI Automation tree and writes records. It reads struc
 > - Screenshots: the resting state is named after the file's root (`window.fhd-100.png`), and `shots.json` entries name their record file, so a capture replaces only its own file and profile's entries.
 > - Notepad: 76 records in 3 walks, 8 screenshots, byte-identical across three VM sessions; that run's tree and records are the test fixtures, so the walk over the fixture must equal the live capture.
 > - Page: `docs/design/inventory/index.md#how-is-a-surface-captured`.
+> **Verified:** 2026-11-14 | commit `caf813fa0` | 13/13 items | 78 tests OK, live `capture.py --surface notepad-smoke --dry-run` 76 records byte-identical to the fixture, live 125 percent session refused with exit 2, live interrupt left the VM off
+> **Quality reviewed:** 2026-11-14 | Codex 31x (plan, round 14x, performance 14x, completion, reconciliation) | 0H+27M+1L found, all fixed but one rejected (an incremental TreeWalker: one cross-process call per element), 0 open | scope: N/A (host tooling, no kernel surface)
 
 **Test checkpoint:** `python3 scripts/inventory/capture.py --surface notepad-smoke --file window --dry-run` captures at least 40 records in the reference VM and `check-inventory.py` passes on them; with the display at 125 percent the same capture exits 2 with `profile fhd-100: scaling is 125, expected 100`. The fixture tests pass on Linux with no Windows present.
 
