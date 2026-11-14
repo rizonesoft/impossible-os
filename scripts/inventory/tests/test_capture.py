@@ -182,6 +182,20 @@ class NeverData(unittest.TestCase):
         withheld = [u for u in cap.unnamed if u["why"] == "name is a live value"]
         self.assertEqual(len(withheld), 6)
 
+    def test_an_unnamed_teaching_tip_pane_is_pruned_whole(self):
+        tip = node("", "Pane", cls="Microsoft.UI.Xaml.Controls.TeachingTip", children=[node("Try it", "Text")])
+        t = node("Root", "Window", children=[tip, node("OK", "Button")])
+        cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+        self.assertEqual([r["label"] for r in cap.records[1:]], ["OK"])
+        d = core.dump(core.FixtureElement(t))
+        core.confirm_dump(d, cap, surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+
+    def test_reading_is_bounded_even_when_nothing_is_recorded(self):
+        panes = [node("", "Pane") for _ in range(core.MAX_VISITS + 1)]
+        t = node("Root", "Window", children=[node("", "Pane", children=panes)])
+        with self.assertRaises(core.Incomplete):
+            core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
+
     def test_tooltips_teaching_tips_and_prose_are_skipped(self):
         t = node("Root", "Window", bounds=(0, 0, 500, 500), children=[
             node("Help", "ToolTip"), node("", "Pane", "Tip", "Microsoft.UI.Xaml.Controls.TeachingTip"),
@@ -223,7 +237,14 @@ class Identity(unittest.TestCase):
 
     def test_siblings_sharing_a_segment_are_ambiguous(self):
         cap = self.run_walk(self.twins("", ""))
-        self.assertEqual(cap.ambiguous, ["win11.s.r.btn", "win11.s.r.btn-2"])
+        self.assertEqual(cap.ambiguous, ["win11.s.r.btn-1", "win11.s.r.btn-2"])
+        self.assertEqual([r["id"] for r in cap.records[1:]], cap.ambiguous)
+
+    def test_a_positional_id_never_meets_a_real_one(self):
+        t = node("Root", "Window", children=[node("", "Button", "Twin"), node("", "Button", "Twin"),
+                                             node("", "Button", "Twin-1")])
+        with self.assertRaises(core.Incomplete):
+            self.run_walk(t)
 
     def test_a_live_value_never_names_an_id(self):
         # A Text with no automation id is named by its name; when that name is a
@@ -299,10 +320,24 @@ class Merge(unittest.TestCase):
         t = node("Root", "Window", children=[node("", "Group", "Twin", children=[node("Apply", "Button")]),
                                              node("", "Group", "Twin", children=[node("Apply", "Button")])])
         cap = core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r", root_label="R")
-        old = [dict(r, behaviour="Saves.") if r["id"] == "win11.s.r.twin.apply" else r for r in cap.records]
+        old = [dict(r, behaviour="Saves.") if r["id"] == "win11.s.r.twin-1.apply" else r for r in cap.records]
         with self.assertRaises(ValueError) as ex:
             core.merge(old, cap.records, cap.ambiguous)
-        self.assertIn("win11.s.r.twin.apply", str(ex.exception))
+        self.assertIn("win11.s.r.twin-1.apply", str(ex.exception))
+
+    def test_a_group_that_shrinks_to_one_drops_its_note(self):
+        # Delete and Save share an automation id; Delete carries a note. Delete
+        # is removed: Save must not inherit "Deletes the document."
+        def cap_of(*names):
+            t = node("Root", "Window", children=[node(n, "Button", "Twin") for n in names])
+            return core.walk(core.FixtureElement(t), surface="s", build="1.2", profile="p", root_slug="r",
+                             root_label="R")
+        before = cap_of("Delete", "Save")
+        old = [dict(r, behaviour="Deletes the document.") if r.get("label") == "Delete" else r for r in before.records]
+        after = cap_of("Save")
+        out, dropped = core.merge(old, after.records, after.ambiguous)
+        self.assertNotIn("Deletes the document.", json.dumps(out))
+        self.assertEqual(dropped, ["win11.s.r.twin-1"])
 
     def test_an_existing_file_needs_merge(self):
         tmp = pathlib.Path(tempfile.mkdtemp())
@@ -421,6 +456,27 @@ class Shots(unittest.TestCase):
             self.publish([{"id": "win11.notepad-smoke.window", "label": "New"}])
         self.assertEqual({p: p.read_bytes() for p in before}, before)
         leftovers = [p.name for p in self.tmp.rglob("*") if p.name.endswith((".tmp", ".staged"))]
+        self.assertEqual(leftovers, [])
+
+    def test_a_failure_during_the_swap_puts_everything_back(self):
+        self.publish([{"id": "win11.notepad-smoke.window", "label": "Notepad", "behaviour": "ours"}])
+        before = {p: p.read_bytes() for p in (self.target, self.manifest, self.store / "notepad-smoke" / "rest.fhd-100.png")}
+        real = capture.os.replace
+        calls = []
+
+        def flaky(src, dst):
+            calls.append(dst)
+            if str(src).endswith(".staged"):          # the records, swapped last
+                raise OSError("disk gone")
+            return real(src, dst)
+        capture.os.replace = flaky
+        try:
+            with self.assertRaises(OSError):
+                self.publish([{"id": "win11.notepad-smoke.window", "label": "New"}])
+        finally:
+            capture.os.replace = real
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        leftovers = [p.name for p in self.tmp.rglob("*") if p.name.endswith((".tmp", ".staged", ".old"))]
         self.assertEqual(leftovers, [])
 
     def test_a_failed_record_write_leaves_the_file_whole(self):

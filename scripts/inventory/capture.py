@@ -30,8 +30,9 @@ keeps the walked tree (tree.json in the raw output) for a test fixture; it costs
 one more walk, so an ordinary capture does not take it.
 
 Publishing stages every file first (records, screenshots, manifest) and then
-replaces each atomically, records last: a failure before that point leaves the
-previous publication exactly as it was.
+swaps them in, records last, keeping each replaced file aside until every swap
+has succeeded: a failure at any point leaves the previous publication exactly as
+it was.
 """
 import argparse
 import hashlib
@@ -147,8 +148,11 @@ def publish(target, records, surface, out, states, manifest_path, store):
     """Publish records and screenshots together, or leave the old publication alone.
 
     Stage: copy every screenshot next to its destination under a temporary name,
-    write the new manifest and the new records beside theirs. Only then replace:
-    screenshots, manifest, records, each with os.replace.
+    write the new manifest and the new records beside theirs. Then swap: each
+    existing destination is first moved aside to <name>.old, then the staged file
+    takes its place. A failure part way through the swap puts every file back as
+    it was (new ones removed, the .old copies restored) and re-raises; only a
+    swap that completes deletes the .old copies.
     """
     manifest = [e for e in load_manifest(manifest_path) if e["surface"] != surface]
     dest = store / surface
@@ -177,8 +181,27 @@ def publish(target, records, surface, out, states, manifest_path, store):
         for tmp, _ in staged:
             tmp.unlink(missing_ok=True)
         raise
-    for tmp, final in staged:
-        os.replace(tmp, final)
+    swapped = []
+    try:
+        for tmp, final in staged:
+            old = final.with_name(final.name + ".old")
+            had = final.exists()
+            if had:
+                os.replace(final, old)
+            swapped.append((final, old, had))
+            os.replace(tmp, final)
+    except BaseException:
+        for final, old, had in reversed(swapped):
+            if had:
+                os.replace(old, final)
+            else:
+                final.unlink(missing_ok=True)
+        for tmp, _ in staged:
+            tmp.unlink(missing_ok=True)
+        raise
+    for _, old, had in swapped:
+        if had:
+            old.unlink(missing_ok=True)
 
 
 def main(argv=None):

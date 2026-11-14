@@ -59,6 +59,7 @@ LABEL_MAX = 80                 # longer is a sentence (section 4)
 MAX_PASSES = 4                 # a surface gets this many walks to repeat itself
 MAX_DEPTH = 40
 MAX_RECORDS = 20000
+MAX_VISITS = 4 * MAX_RECORDS   # elements read, excluded and hosting ones included
 
 
 class Incomplete(Exception):
@@ -178,30 +179,54 @@ def walk(root, *, surface, build, profile, root_slug, root_label, root_kind="sur
         cap.records.append(r)
         return r
 
+    visits = [0]
+
     def interface_children(el, depth):
-        """el's children with hosting panes replaced by their own children."""
+        """el's children with hosting panes replaced by their own children.
+
+        Exclusion comes first, so an excluded element (a teaching tip, a tooltip,
+        anything offscreen) is pruned with its subtree even when it is also an
+        unnamed pane. Every element read counts against MAX_VISITS, including the
+        ones that are never recorded.
+        """
         out = []
         for k in el.children():
-            if is_hosting(k) and not k.offscreen:
+            visits[0] += 1
+            if visits[0] > MAX_VISITS:
+                raise Incomplete(f"more than {MAX_VISITS} elements read; the surface module must name a smaller root")
+            if not keep(k):
+                continue
+            if is_hosting(k):
                 if depth > MAX_DEPTH:
                     raise Incomplete(f"hosting panes nest deeper than {MAX_DEPTH} levels")
                 cap.skipped["hosting"] += 1
                 out.extend(interface_children(k, depth + 1))
-            elif keep(k):
+            else:
                 out.append(k)
         return out
 
     def ids_for(parent_id, kids):
+        """Ids for siblings. Look-alike siblings are told apart by position, and
+        every one of them carries its number, the first included (twin-1, twin-2):
+        an unsuffixed id therefore always names an element with no look-alike, so
+        a note written on twin-1 can never pass to the survivor when the group
+        shrinks to one (it becomes plain twin, and the note is dropped by name)."""
         segs = [_segment(k, identity, values) for k in kids]
+        total = {}
+        for s in segs:
+            total[s] = total.get(s, 0) + 1
         seen = {}
         out = []
         for s in segs:
+            if total[s] == 1:
+                out.append(s)
+                continue
             seen[s] = seen.get(s, 0) + 1
-            out.append(s if seen[s] == 1 else f"{s}-{seen[s]}")
-        ambiguous = {s for s, n in seen.items() if n > 1}
-        for s, rid in zip(segs, out):
-            if s in ambiguous:
-                cap.ambiguous.append(f"{parent_id}.{rid}")
+            rid = f"{s}-{seen[s]}"
+            if rid in total:
+                raise Incomplete(f"{parent_id}.{rid}: a positional id meets a sibling's own name; IDENTITY must name them")
+            out.append(rid)
+            cap.ambiguous.append(f"{parent_id}.{rid}")
         return [f"{parent_id}.{rid}" for rid in out]
 
     def keep(el):
