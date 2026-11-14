@@ -70,7 +70,8 @@ GIT_TIMEOUT = 120  # deadline: the staged inventory is a few hundred small files
 NAME_FIELDS = ("reference", "ours", "reason")
 BASELINE_FILE = "baseline.json"
 ABSENT_HEADING = "## Which baseline rows are absent?"
-ABSENT_COLUMNS = ["Baseline", "Row", "Reason"]
+ABSENT_COLUMNS = ["Baseline", "Row", "Build", "Reason"]
+ABSENT_BUILD = re.compile(r"^\d+\.\d+$")
 HEADER_FIELDS = {"baseline", "owner", "source", "build", "upstream", "files"}
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 DELIMITER = re.compile(r"^:?-{3,}:?$")
@@ -290,25 +291,30 @@ def load_baselines(root, surface, build, err):
     return out
 
 
-def load_absent(root, baselines, err, surface):
-    """{(baseline, row): (line, reason)} from the REFERENCE.md absent table.
+def load_absent(root, baselines, err, surface, build):
+    """({(baseline, row): (line, reason)}, {(baseline, row)} gone stale) from the
+    REFERENCE.md absent table.
 
     Only a sound entry is returned, so an entry that names nothing, gives no
-    reason or repeats another never counts a row as absent. An entry is reported
+    reason or repeats another never counts a row as absent. An entry names the
+    build the absence was checked on; one checked on another build than
+    `build` (reference.json's) is stale, like a match from another build: it
+    counts nothing and the row is open until it is checked again, without
+    being an error. An entry is reported
     under the surface that owns its baseline, as the baseline itself is; a
     table that cannot be read is reported under every surface."""
     def scoped(name):
         return surface is None or surface in (name, baseline_core.OWNERS.get(name))
 
     path = root / "REFERENCE.md"
-    out = {}
+    out, old = {}, set()
     if not path.is_file():
-        return out
+        return out, old
     lines = path.read_text(encoding="utf-8").split("\n")
     try:
         start = lines.index(ABSENT_HEADING)
     except ValueError:
-        return out
+        return out, old
     table = []
     for n in range(start + 1, len(lines)):
         if lines[n].startswith("## "):
@@ -316,24 +322,26 @@ def load_absent(root, baselines, err, surface):
         if lines[n].startswith("|"):
             table.append((n + 1, [c.strip() for c in lines[n].strip().strip("|").split("|")]))
     if not table:
-        return out
+        return out, old
     if table[0][1] != ABSENT_COLUMNS:
         err(path, table[0][0], "absent-table", f"the absent table's columns are {' | '.join(ABSENT_COLUMNS)}")
-        return out
-    if len(table) < 2 or len(table[1][1]) != 3 or not all(DELIMITER.match(c) for c in table[1][1]):
-        err(path, table[0][0], "absent-table", "the header row is followed by a delimiter row (| --- | --- | --- |)")
-        return out
+        return out, old
+    if len(table) < 2 or len(table[1][1]) != 4 or not all(DELIMITER.match(c) for c in table[1][1]):
+        err(path, table[0][0], "absent-table", "the header row is followed by a delimiter row (| --- | --- | --- | --- |)")
+        return out, old
     first = {}
     for n, cells in table[2:]:
-        if len(cells) != 3:
-            err(path, n, "absent-table", "an absent row has three cells: baseline, row, reason")
+        if len(cells) != 4:
+            err(path, n, "absent-table", "an absent row has four cells: baseline, row, build, reason")
             continue
-        name, row, reason = (c.strip("`") for c in cells)
+        name, row, checked, reason = (c.strip("`") for c in cells)
         problem = None
         if name not in baselines:
             problem = "absent-orphan", f"{name} is not a baseline"
         elif row not in baselines[name]["rows"]:
             problem = "absent-orphan", f"{name} has no row {row}"
+        elif not ABSENT_BUILD.match(checked):
+            problem = "absent-build", f"{name}:{row} names no build the absence was checked on (like 26300.9711)"
         elif not reason.strip():
             problem = "absent-reason", f"{name}:{row} is listed absent without a reason"
         elif (name, row) in first:
@@ -343,8 +351,11 @@ def load_absent(root, baselines, err, surface):
             if scoped(name):
                 err(path, n, *problem)
             continue
+        if checked != build:
+            old.add((name, row))
+            continue
         out[(name, row)] = (n, reason)
-    return out
+    return out, old
 
 
 def check(root, surface=None):
@@ -505,7 +516,9 @@ def check(root, surface=None):
         # Control Panel entries, which are captured under control-panel); the owner
         # is who answers for the rows still open, not who alone may match one.
         matched[name].add(row)
-    absent = load_absent(root, baselines, err, surface)
+    absent, old = load_absent(root, baselines, err, surface, build)
+    for name, row in old:
+        stale[name].add(row)
     for (name, row), (n, _) in list(absent.items()):
         if row in matched[name]:
             # A matched row is counted once, as matched.
@@ -562,7 +575,8 @@ def main(argv=None):
             for name, c in sorted(summary.items()):
                 print(f"baseline {name}: {c['rows']} rows, {c['matched']} matched, {c['absent']} absent, "
                       f"{c['pending']} pending, {c['unmatched']} unmatched (owner {c['owner']})"
-                      + (f"; {c['stale']} of the open rows have a match from another build, capture again" if c["stale"] else ""))
+                      + (f"; {c['stale']} of the open rows have a match or an absence from another build, "
+                         "capture or check again" if c["stale"] else ""))
         for e in errors[:PRINT_CAP]:
             print(f"{e['file']}:{e['line']}: {e['rule']}: {e['message']}")
         if len(errors) > PRINT_CAP:

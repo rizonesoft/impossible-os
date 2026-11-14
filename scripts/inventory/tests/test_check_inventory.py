@@ -130,10 +130,10 @@ def bl(name, rows, **header):
     return [{k: v for k, v in h.items() if v is not None}] + [{"id": r} for r in rows]
 
 
-def absent(*rows):
-    body = "\n".join(f"| `{b}` | `{r}` | {why} |" for b, r, why in rows)
+def absent(*rows, build=B):
+    body = "\n".join(f"| `{b}` | `{r}` | {build} | {why} |" for b, r, why in rows)
     return ["# Reference", "", "## Which baseline rows are absent?", "",
-            "| Baseline | Row | Reason |", "| --- | --- | --- |", body, "", "## Next", ""]
+            "| Baseline | Row | Build | Reason |", "| --- | --- | --- | --- |", body, "", "## Next", ""]
 
 
 def taskbar_with(**kw):
@@ -190,7 +190,7 @@ class Baselines(unittest.TestCase):
         self.assertEqual(out["baselines"]["settings"],
                          {"owner": "settings", "rows": 1, "matched": 0, "absent": 0, "pending": 0, "unmatched": 1, "stale": 1})
         r = run({**REF, "settings/baseline.json": bl("settings", ["a"]), "settings/home.json": [old]}, "--baselines")
-        self.assertIn("1 of the open rows have a match from another build", r.stdout)
+        self.assertIn("1 of the open rows have a match or an absence from another build", r.stdout)
 
     def test_a_new_reference_build_is_reached_by_baselines_then_captures(self):
         A, up = "26300.9000", {"repo": "o/r", "commit": SHA, "license": "MIT"}
@@ -287,21 +287,35 @@ class Baselines(unittest.TestCase):
                 self.assertNotIn(rule, [e["rule"] for e in out["errors"]])
 
     def test_a_broken_absent_table_is_reported_under_every_surface(self):
-        table = ["## Which baseline rows are absent?", "", "| Baseline | Row |", "| --- | --- |", "| `settings` | `a` |"]
+        table = ["## Which baseline rows are absent?", "", "| Baseline | Row | Reason |", "| --- | --- | --- |", "| `settings` | `a` | gone |"]
         files = {"settings/baseline.json": bl("settings", ["a"]), "taskbar/bar.json": three(), "REFERENCE.md": table}
         self.assertIn("absent-table", self.rules(files, "--surface", "taskbar"))
 
     def test_an_absent_table_without_its_delimiter_row_is_refused(self):
         base = {"settings/baseline.json": bl("settings", ["a", "b"]), "taskbar/bar.json": three()}
-        head = ["## Which baseline rows are absent?", "", "| Baseline | Row | Reason |"]
-        rows = ["| `settings` | `a` | gone |", "| `settings` | `b` | gone |"]
-        for table in (head + rows, head + ["| --- | --- |"] + rows, head + ["| - | - | - |"] + rows, head):
+        head = ["## Which baseline rows are absent?", "", "| Baseline | Row | Build | Reason |"]
+        rows = [f"| `settings` | `a` | {B} | gone |", f"| `settings` | `b` | {B} | gone |"]
+        for table in (head + rows, head + ["| --- | --- | --- |"] + rows, head + ["| - | - | - | - |"] + rows, head):
             for scope in ((), ("--surface", "taskbar")):
                 r, out = self.report({**base, "REFERENCE.md": table}, *scope)
                 self.assertIn("absent-table", [e["rule"] for e in out["errors"]], table)
                 self.assertEqual(out["baselines"]["settings"]["absent"], 0)
-        _, out = self.report({**base, "REFERENCE.md": head + ["| :--- | ---: | :---: |"] + rows})
+        _, out = self.report({**base, "REFERENCE.md": head + ["| :--- | ---: | :---: | --- |"] + rows})
         self.assertEqual(out["baselines"]["settings"]["absent"], 2)
+
+    def test_an_absence_checked_on_another_build_is_stale_and_counts_nothing(self):
+        # The row survived the build change; whether the new build shows it has not been checked.
+        base = {"settings/baseline.json": bl("settings", ["a", "b"]),
+                "settings/home.json": [rec("win11.settings.y", surface="settings", kind="surface")]}
+        r, out = self.report({**base, "REFERENCE.md": absent(("settings", "a", "gated off"), build="26300.9000")})
+        self.assertEqual([e["rule"] for e in out["errors"] if e["rule"] != "baseline-missing"], [])
+        self.assertEqual(out["baselines"]["settings"],
+                         {"owner": "settings", "rows": 2, "matched": 0, "absent": 0, "pending": 0, "unmatched": 2, "stale": 1})
+        _, out = self.report({**base, "REFERENCE.md": absent(("settings", "a", "gated off"))})
+        self.assertEqual((out["baselines"]["settings"]["absent"], out["baselines"]["settings"]["unmatched"],
+                          out["baselines"]["settings"]["stale"]), (1, 1, 0))
+        for bad in ("", "26H2", "build 9711"):
+            self.assertIn("absent-build", self.rules({**base, "REFERENCE.md": absent(("settings", "a", "why"), build=bad)}))
 
     def test_a_record_of_another_surface_may_match_and_the_owner_answers_for_the_rest(self):
         # The settings index lists classic Control Panel entries, captured under control-panel.

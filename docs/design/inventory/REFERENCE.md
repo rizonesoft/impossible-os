@@ -75,7 +75,7 @@ The machine and the tools are kept after the inventory is captured, so anything 
 
 ## Which baseline rows are absent?
 
-A row of a completeness baseline that the reference build lists but no surface shows (a setting gated off in this edition, a verb whose handler is not installed) is documented here, with the reason, instead of being matched by a captured record. `check-inventory.py` refuses a row listed here that a record also matches, a row that names nothing, and a row without a reason.
+A row of a completeness baseline that the reference build lists but no surface shows (a setting gated off in this edition, a verb whose handler is not installed) is documented here, with the build the absence was checked on and the reason, instead of being matched by a captured record. `check-inventory.py` refuses a row listed here that a record also matches, a row that names nothing, and a row without a build or a reason. An absence checked on another build than the reference build counts nothing until it is checked again and its build updated.
 
-| Baseline | Row | Reason |
-| --- | --- | --- |
+| Baseline | Row | Build | Reason |
+| --- | --- | --- | --- |
