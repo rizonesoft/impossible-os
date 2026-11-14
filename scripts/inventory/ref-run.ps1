@@ -16,20 +16,34 @@ docs/design/inventory/reference.json names.
 
     powershell.exe -File scripts\inventory\ref-run.ps1 -Command 'python C:\ios\in\capture-ui.py --surface notepad-smoke --out C:\ios\out\notepad.json' -In tools -Out R:\11\out
     powershell.exe -File scripts\inventory\ref-run.ps1 -Proof -Out R:\11\out   # the Notepad UI Automation and screenshot proof
+    powershell.exe -File scripts\inventory\ref-run.ps1 -Stop                    # turn the VM off after a killed run
+
+-Stop takes the VM lock first, so it turns off only a VM no live run holds: a
+run still working keeps it (exit 4), and a run that was killed left its lock
+abandoned, which -Stop takes over. Exits 0 when the VM is off.
 #>
 [CmdletBinding()]
 param(
     [string]$Command,
     [string]$In,
-    [Parameter(Mandatory = $true)][string]$Out,
+    [string]$Out,
     [string]$Checkpoint = 'clean',
     [string]$VmPath = 'R:\11\ios-win11-ref',
     [string]$Name = 'ios-win11-ref',
     [int]$TimeoutSec = 900,
-    [switch]$Proof
+    [switch]$Proof,
+    [switch]$Stop
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ref-common.ps1')
+
+if ($Stop) {
+    Enter-RefLock $Name
+    if ((Get-VM -Name $Name).State -ne 'Off') { Stop-VM -Name $Name -TurnOff -Force }
+    Write-Host "ref-run: $Name is off"
+    exit 0
+}
+if (-not $Out) { Write-Host 'ref-run: give -Out'; exit 2 }
 
 if ($Proof) { $Command = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ios\probe\probe-notepad.ps1' }
 if (-not $Command) { Write-Host 'ref-run: give -Command or -Proof'; exit 2 }

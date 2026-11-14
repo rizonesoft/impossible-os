@@ -10,6 +10,9 @@ Runs on the host (WSL), drives the VM through ref-run.ps1:
 
 1. Stages capture-ui.py, capture_core.py, the surface module and profiles.json,
    and runs capture-ui.py on a fresh restore of clean.
+   One capture runs at a time (build/inventory/capture.lock, exit 4 when held),
+   and ref-run gets its timeout plus a margin before the host gives up and runs
+   ref-run -Stop, which turns the VM off only when no live run holds it.
 2. Refuses a capture that says it is incomplete (exit 3): nothing is published
    and nothing is deleted from what was published before.
 3. Builds the new file: without --merge an existing file is refused (exit 2); with
@@ -35,6 +38,8 @@ has succeeded: a failure at any point leaves the previous publication exactly as
 it was.
 """
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -56,7 +61,11 @@ INVENTORY = REPO / "docs" / "design" / "inventory"
 SHOTS_MANIFEST = INVENTORY / "shots.json"
 STORE = pathlib.Path("/mnt/r/11/ref-shots")
 WORK = pathlib.Path("/mnt/r/11/captures")
-RUN_TIMEOUT = 3600   # deadline: ref-run.ps1 holds its own per-command timeout inside this
+# deadline: ref-run.ps1 bounds the guest command by --timeout and its session by
+# 600 s; this margin covers restore, transfer and teardown on top, so ref-run's
+# own finally (which turns the VM off) always gets to run before the host gives up.
+RUN_MARGIN = 1800
+LOCK = REPO / "build" / "inventory" / "capture.lock"
 
 
 def winpath(p):
@@ -101,10 +110,17 @@ def run_guest(surface, profile, timeout, fixture=False):
            f"--shots C:\\ios\\out\\shots --meta C:\\ios\\out\\meta.json")
     if fixture:
         cmd += " --dump C:\\ios\\out\\tree.json"
-    r = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", winpath(HERE / "ref-run.ps1"),
-                        "-In", winpath(stage), "-Out", winpath(out), "-TimeoutSec", str(timeout), "-Command", cmd],
-                       capture_output=True, text=True, timeout=RUN_TIMEOUT)
-    shutil.rmtree(stage)
+    runner = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", winpath(HERE / "ref-run.ps1")]
+    try:
+        r = subprocess.run(runner + ["-In", winpath(stage), "-Out", winpath(out), "-TimeoutSec", str(timeout),
+                                     "-Command", cmd], capture_output=True, text=True, timeout=timeout + RUN_MARGIN)
+    except subprocess.TimeoutExpired:
+        # ref-run outlived every bound of its own; turn the VM off unless a live run holds it.
+        stop = subprocess.run(runner + ["-Stop"], capture_output=True, text=True, timeout=600)  # deadline: Stop-VM -TurnOff
+        print(f"capture: ref-run did not finish within {timeout + RUN_MARGIN} s; " + stop.stdout.replace("\r", "").strip())
+        return out, 3
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
     print(r.stdout.replace("\r", "").strip())
     return out, r.returncode
 
@@ -198,7 +214,7 @@ def publish(target, records, surface, out, states, manifest_path, store):
         for s in states:
             src = out / "shots" / surface / s["file"]
             state, profile = s["file"][: -len(".png")].rsplit(".", 1)
-            tmp = dest / f".{s['file']}.tmp"
+            tmp = dest / f".{s['file']}.{os.getpid()}.tmp"
             shutil.copyfile(src, tmp)
             staged.append((tmp, dest / s["file"]))
             if sha256(tmp) != sha256(src):
@@ -206,10 +222,10 @@ def publish(target, records, surface, out, states, manifest_path, store):
             manifest.append({"surface": surface, "state": state, "profile": profile, "width": s["width"],
                              "height": s["height"], "size": src.stat().st_size, "sha256": sha256(src)})
         manifest.sort(key=lambda e: (e["surface"], e["state"], e["profile"]))
-        man_tmp = manifest_path.with_name(manifest_path.name + ".tmp")
+        man_tmp = manifest_path.with_name(f"{manifest_path.name}.{os.getpid()}.tmp")
         man_tmp.write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
         staged.append((man_tmp, manifest_path))
-        rec_tmp = target.with_name(target.name + ".staged")
+        rec_tmp = target.with_name(f"{target.name}.{os.getpid()}.staged")
         core.write_records(rec_tmp, records)
         staged.append((rec_tmp, target))
     except BaseException:
@@ -219,7 +235,7 @@ def publish(target, records, surface, out, states, manifest_path, store):
     swapped = []
     try:
         for tmp, final in staged:
-            old = final.with_name(final.name + ".old")
+            old = final.with_name(f"{final.name}.{os.getpid()}.old")
             had = final.exists()
             if had:
                 os.replace(final, old)
@@ -237,6 +253,20 @@ def publish(target, records, surface, out, states, manifest_path, store):
     for _, old, had in swapped:
         if had:
             old.unlink(missing_ok=True)
+
+
+@contextlib.contextmanager
+def exclusive(path):
+    """Hold the capture lock for a whole run, from the guest to the last swap.
+
+    ref-run's VM lock ends when the guest does; this one also covers the merge,
+    the check and publication, which read and rewrite shared files (shots.json,
+    a surface's record file). Raises BlockingIOError when another run holds it.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
 
 
 def main(argv=None):
@@ -258,6 +288,15 @@ def main(argv=None):
         return 1 if bad else 0
     if not args.surface or not args.file:
         ap.error("--surface and --file are required")
+    try:
+        with exclusive(LOCK):
+            return capture_and_publish(args)
+    except BlockingIOError:
+        print(f"capture: another capture holds {LOCK}; run one at a time")
+        return 4
+
+
+def capture_and_publish(args):
     out, rc = run_guest(args.surface, args.profile, args.timeout, args.fixture)
     if rc == 2:
         return 2

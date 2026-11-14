@@ -597,6 +597,46 @@ class Received(unittest.TestCase):
             capture.received(self.out, 0)
 
 
+class Serial(unittest.TestCase):
+    """One capture at a time, and a host deadline that never strands the VM."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def test_a_second_capture_is_refused_while_one_runs(self):
+        lock = self.tmp / "capture.lock"
+        with capture.exclusive(lock):
+            with self.assertRaises(BlockingIOError):
+                with capture.exclusive(lock):
+                    pass
+        with capture.exclusive(lock):              # released again
+            pass
+
+    def test_the_host_deadline_covers_the_guest_and_stops_the_vm_after(self):
+        calls = []
+        real_run, real_work, real_win = capture.subprocess.run, capture.WORK, capture.winpath
+
+        def fake(cmd, **kw):
+            calls.append((cmd, kw.get("timeout")))
+            if "-Stop" in cmd:
+                return capture.subprocess.CompletedProcess(cmd, 0, "ref-run: ios-win11-ref is off\r\n", "")
+            raise capture.subprocess.TimeoutExpired(cmd, kw["timeout"])
+        capture.subprocess.run, capture.WORK, capture.winpath = fake, self.tmp, str
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                _, rc = capture.run_guest("notepad-smoke", "fhd-100", 900)
+        finally:
+            capture.subprocess.run, capture.WORK, capture.winpath = real_run, real_work, real_win
+        self.assertEqual(rc, 3)
+        self.assertEqual(calls[0][1], 900 + capture.RUN_MARGIN)
+        self.assertIn("-Stop", calls[1][0])
+        self.assertIn("is off", out.getvalue())
+        self.assertEqual([p.name for p in self.tmp.iterdir() if p.name.endswith("-in")], [])   # staging removed
+
+
 class States(unittest.TestCase):
     def test_state_names_follow_ids_one_to_one(self):
         t = node("Root", "Window", children=[node("", "MenuItem", "a-b", expands=[node("X", "MenuItem")]),
