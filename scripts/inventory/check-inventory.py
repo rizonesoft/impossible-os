@@ -26,11 +26,13 @@ Exit 0 when clean, 1 on any error, 2 on a usage error.
 """
 import argparse
 import json
+import math
 import pathlib
 import sys
 
 try:
     from jsonschema import Draft202012Validator
+    from referencing import Registry, Resource
 except ImportError:  # fail-direction: a missing validator is an error, never a pass
     print("check-inventory: the jsonschema package is required (scripts/setup-deps.sh installs it)", file=sys.stderr)
     sys.exit(2)
@@ -50,51 +52,68 @@ def classify(path):
     return "record", None
 
 
+class NonFinite(ValueError):
+    pass
+
+
+def _constant(name):
+    raise NonFinite(name)
+
+
+def _float(text):
+    value = float(text)
+    if not math.isfinite(value):
+        raise NonFinite(text)
+    return value
+
+
 def load(root, surface):
-    """Yield (path, line number, object or None, error text or None)."""
-    folders = [root / surface] if surface else sorted(p for p in root.iterdir() if p.is_dir())
-    for folder in folders:
+    """Yield (path, line, kind, profile, in scope, object or None, error or None).
+
+    Every folder's canonical records are read, because parents and observations
+    resolve across the whole tree. Observation files outside the selected surface
+    are skipped unopened: nothing in scope can depend on them.
+    """
+    for folder in sorted(p for p in root.iterdir() if p.is_dir()):
+        mine = surface is None or folder.name == surface
         for path in sorted(folder.glob("*.json")):
             kind, profile = classify(path)
-            if kind == "baseline":
+            if kind == "baseline" or (kind == "observation" and not mine):
                 continue
             with path.open(encoding="utf-8") as fh:
                 for n, line in enumerate(fh, 1):
                     if not line.strip():
-                        yield path, n, kind, profile, None, "blank-line: a record file holds one object per line and no blank lines"
+                        yield path, n, kind, profile, mine, None, "blank-line: a record file holds one object per line and no blank lines"
                         continue
                     try:
-                        obj = json.loads(line)
-                    except json.JSONDecodeError as exc:
-                        yield path, n, kind, profile, None, f"json: {exc.msg}"
+                        obj = json.loads(line, parse_constant=_constant, parse_float=_float)
+                    except NonFinite as exc:
+                        yield path, n, kind, profile, mine, None, f"non-finite: {exc} is not a finite JSON number"
                         continue
-                    yield path, n, kind, profile, obj, None
+                    except json.JSONDecodeError as exc:
+                        yield path, n, kind, profile, mine, None, f"json: {exc.msg}"
+                        continue
+                    yield path, n, kind, profile, mine, obj, None
 
 
 def check(root, surface=None):
     schema = json.loads((root / "schema.json").read_text(encoding="utf-8"))
     record_v = Draft202012Validator(schema)
-    obs_schema = dict(schema["$defs"]["observation"])
-    obs_schema["$defs"] = schema["$defs"]
-    obs_schema["properties"] = dict(obs_schema["properties"])
-    obs_schema["properties"]["measure"] = schema["properties"]["measure"]
-    obs_v = Draft202012Validator(obs_schema)
+    registry = Registry().with_resource(schema["$id"], Resource.from_contents(schema))
+    obs_v = Draft202012Validator({"$ref": schema["$id"] + "#/$defs/observation"}, registry=registry)
 
     errors = []
 
     def err(path, line, rule, message):
-        errors.append({"file": str(path.relative_to(root)) if path else None, "line": line, "rule": rule, "message": message})
+        errors.append({"file": str(path.relative_to(root)), "line": line, "rule": rule, "message": message})
 
-    # Parents and observations resolve across the whole tree even with --surface.
-    scope = list(load(root, surface))
-    whole = scope if surface is None else list(load(root, None))
-    in_scope = {(str(p), n) for p, n, *_ in scope}
+    def where(path, line):
+        return f"{path.relative_to(root)}:{line}"
 
-    records = {}       # id -> (path, line, obj)
-    observations = {}  # (id, profile) -> (path, line)
-    obs_list = []
-    for path, n, kind, profile, obj, parse_error in whole:
-        mine = (str(path), n) in in_scope
+    by_id = {}       # id -> [(path, line, obj, in scope)], file order
+    observations = []
+    count = 0
+    for path, n, kind, profile, mine, obj, parse_error in load(root, surface):
         if parse_error:
             if mine:
                 err(path, n, parse_error.split(":", 1)[0], parse_error)
@@ -104,76 +123,88 @@ def check(root, surface=None):
         if schema_errors:
             if mine:
                 for e in schema_errors:
-                    where = "/".join(str(x) for x in e.absolute_path) or "(record)"
-                    err(path, n, "schema", f"{where}: {e.message}")
+                    at = "/".join(str(x) for x in e.absolute_path) or "(record)"
+                    err(path, n, "schema", f"{at}: {e.message}")
             continue
         if kind == "record":
-            if obj["id"] in records:
-                if mine:
-                    first = records[obj["id"]]
-                    err(path, n, "duplicate-id", f"{obj['id']} is already defined at {first[0].relative_to(root)}:{first[1]}")
-                continue
-            records[obj["id"]] = (path, n, obj)
+            by_id.setdefault(obj["id"], []).append((path, n, obj, mine))
+            count += mine
         else:
-            obs_list.append((path, n, profile, obj, mine))
+            observations.append((path, n, profile, obj))
+
+    # A conflict is reported at every in-scope member of it, so checking one
+    # surface finds a clash with another surface whichever side sorts first.
+    for rid, members in by_id.items():
+        if len(members) > 1:
+            for path, n, _, mine in members:
+                if mine:
+                    others = ", ".join(where(p, m) for p, m, _, _ in members if (p, m) != (path, n))
+                    err(path, n, "duplicate-id", f"{rid} is also defined at {others}")
+    records = {rid: members[0] for rid, members in by_id.items()}
 
     children = {}
-    for rid, (path, n, obj) in records.items():
+    for rid, (path, n, obj, mine) in records.items():
         parent = obj.get("parent")
         if parent is None:
             continue
         children.setdefault(parent, []).append(rid)
-        if parent not in records and (str(path), n) in in_scope:
+        if parent not in records and mine:
             err(path, n, "orphan-parent", f"{rid}: parent {parent} names no record")
 
-    # Cycles: walk each chain once; a node seen twice on the current walk is a cycle.
-    state = {}  # id -> 1 on the current walk, 2 finished
+    # Cycles: walk each chain once; a node met again on the same walk closes a
+    # cycle, which is reported at its first in-scope member.
+    state = {}
     for start in records:
         walk = []
         node = start
-        while node in records and state.get(node) is None:
+        while node in records and node not in state:
             state[node] = 1
             walk.append(node)
             node = records[node][2].get("parent")
-        if node in records and state.get(node) == 1:
-            path, n, _ = records[node]
-            if (str(path), n) in in_scope:
-                cycle = walk[walk.index(node):]
-                err(path, n, "parent-cycle", " -> ".join(cycle + [node]))
+        if node in records and state[node] == 1:
+            cycle = walk[walk.index(node):]
+            at = next((c for c in cycle if records[c][3]), None)
+            if at is not None:
+                path, n, _, _ = records[at]
+                i = cycle.index(at)
+                err(path, n, "parent-cycle", " -> ".join(cycle[i:] + cycle[:i] + [at]))
         for w in walk:
             state[w] = 2
 
     for parent, kids in children.items():
-        seen = {}
-        for rid in sorted(kids, key=lambda k: (str(records[k][0]), records[k][1])):
-            path, n, obj = records[rid]
-            o = obj["order"]
-            if o in seen and (str(path), n) in in_scope:
-                err(path, n, "duplicate-order", f"{rid}: order {o} under {parent} is already used by {seen[o]}")
-            seen.setdefault(o, rid)
+        by_order = {}
+        for rid in kids:
+            by_order.setdefault(records[rid][2]["order"], []).append(rid)
+        for order, same in by_order.items():
+            if len(same) > 1:
+                for rid in same:
+                    path, n, _, mine = records[rid]
+                    if mine:
+                        others = ", ".join(o for o in same if o != rid)
+                        err(path, n, "duplicate-order", f"{rid}: order {order} under {parent} is also used by {others}")
 
-    for rid, (path, n, obj) in records.items():
-        if "itemCount" in obj and (str(path), n) in in_scope:
+    for rid, (path, n, obj, mine) in records.items():
+        if "itemCount" in obj and mine:
             have = len(children.get(rid, []))
             if have != obj["itemCount"]:
                 err(path, n, "item-count", f"{rid}: itemCount {obj['itemCount']} but {have} child record(s) present")
 
-    for path, n, profile, obj, mine in obs_list:
-        if not mine:
-            continue
+    # Observations are read only from the selected surface, so every one is in scope.
+    seen = {}
+    for path, n, profile, obj in observations:
         if obj["captureProfile"] != profile:
             err(path, n, "observation-profile", f"{obj['id']}: captureProfile {obj['captureProfile']} in a file named for {profile}")
         if obj["id"] not in records:
             err(path, n, "observation-orphan", f"{obj['id']} names no record")
-        key = (obj["id"], obj["captureProfile"])
-        if key in observations:
-            first = observations[key]
-            err(path, n, "duplicate-observation", f"{obj['id']} at {obj['captureProfile']} is already observed at {first[0].relative_to(root)}:{first[1]}")
-        else:
-            observations[key] = (path, n)
+        seen.setdefault((obj["id"], obj["captureProfile"]), []).append((path, n))
+    for (oid, prof), members in seen.items():
+        if len(members) > 1:
+            for path, n in members:
+                others = ", ".join(where(p, m) for p, m in members if (p, m) != (path, n))
+                err(path, n, "duplicate-observation", f"{oid} at {prof} is also observed at {others}")
 
-    count = sum(1 for p, n, kind, _, obj, e in scope if kind == "record" and obj is not None and e is None)
-    return count, len([o for o in obs_list if o[4]]), errors
+    errors.sort(key=lambda e: (e["file"], e["line"], e["rule"]))
+    return count, len(observations), errors
 
 
 def main(argv=None):

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Fixtures for scripts/inventory/check-inventory.py: one failing tree per rule
-and passing trees, each run through the real script as a subprocess.
+"""Fixtures for scripts/inventory/check-inventory.py: one failing tree per rule,
+cross-surface conflicts checked from each side, and passing trees, each run
+through the real script as a subprocess.
 
     python3 scripts/inventory/tests/test_check_inventory.py
 """
@@ -86,6 +87,24 @@ class Passing(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertIn("inventory: 3 records, 0 errors", r.stdout)
 
+    def test_downstream_fields(self):
+        t = three() + [rec("win11.taskbar.bar.copy", kind="shortcut", parent="win11.taskbar.bar", order=2,
+                           shortcut="Ctrl+C", shortcutScope="control", overridable=True, session="enhanced"),
+                       rec("win11.taskbar.bar.hover", kind="state", parent="win11.taskbar.bar", order=3, state="selected-hover"),
+                       rec("win11.taskbar.bar.pad", kind="metric", parent="win11.taskbar.bar", order=4,
+                           measure={"value": 12, "unit": "px", "scaling": "snapped"})]
+        t[0]["itemCount"] = 5
+        obs = [{"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "capturedFrom": B, "session": "enhanced",
+                "bounds": {"x": 0, "y": 0, "width": 60, "height": 60},
+                "textMetrics": {"sizePx": 21, "ascent": 22, "descent": 6, "lineGap": 0, "advances": {"a": 10.6}}}]
+        r = run({"taskbar/bar.json": t, "taskbar/bar.fhd-150.json": obs})
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_scoped_check_skips_other_surfaces_observations(self):
+        r = run({"taskbar/bar.json": three(), "start/menu.json": [rec("win11.start.x", surface="start")],
+                 "start/menu.fhd-150.json": ["{not json"]}, "--surface", "taskbar")
+        self.assertEqual(r.returncode, 0, r.stdout)
+
     def test_baseline_file_is_left_to_section_5(self):
         r = run({"settings/baseline.json": ['{"not": "a record"}']})
         self.assertEqual(r.returncode, 0, r.stdout)
@@ -165,6 +184,43 @@ class Failing(unittest.TestCase):
         r = run(files, "--surface", "start")
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertIn("inventory: 1 records, 0 errors", r.stdout)
+
+    def test_malformed_json(self):
+        self.fails({"taskbar/bar.json": ['{"id": "win11.taskbar.x",']}, "json")
+
+    def test_nonfinite_numbers(self):
+        for bad in ("NaN", "Infinity", "-Infinity", "1e999"):
+            line = json.dumps(rec("win11.taskbar.h", kind="metric", measure={"value": 0, "unit": "px"})).replace('"value": 0', f'"value": {bad}')
+            with self.subTest(bad=bad):
+                self.fails({"taskbar/bar.json": [line]}, "non-finite")
+                obs = '{"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150", "capturedFrom": "%s", "bounds": {"x": 0, "y": 0, "width": 1, "height": 1}, "measure": {"value": %s, "unit": "px"}}' % (B, bad)
+                self.fails({"taskbar/bar.json": three(), "taskbar/bar.fhd-150.json": [obs]}, "non-finite")
+
+    def test_duplicate_observation(self):
+        o = {"id": "win11.taskbar.bar.start", "captureProfile": "fhd-150",
+             "bounds": {"x": 0, "y": 0, "width": 1, "height": 1}, "capturedFrom": B}
+        self.fails({"taskbar/bar.json": three(), "taskbar/bar.fhd-150.json": [o],
+                    "taskbar/more.fhd-150.json": [o]}, "duplicate-observation")
+
+    def test_shortcut_scope_without_shortcut(self):
+        t = three(); t[1]["shortcutScope"] = "global"
+        self.fails({"taskbar/bar.json": t}, "schema")
+
+    def test_cross_surface_conflicts_found_from_either_side(self):
+        cases = {
+            "duplicate-id": {"a/x.json": [rec("win11.a.dup", surface="a")], "b/x.json": [rec("win11.a.dup", surface="b")]},
+            "parent-cycle": {"a/x.json": [rec("win11.a.p", surface="a", parent="win11.b.q")],
+                             "b/x.json": [rec("win11.b.q", surface="b", parent="win11.a.p")]},
+            "duplicate-order": {"a/x.json": [rec("win11.a.root", surface="a", kind="surface"),
+                                             rec("win11.a.root.one", surface="a", parent="win11.a.root")],
+                                "b/x.json": [rec("win11.b.two", surface="b", parent="win11.a.root")]},
+        }
+        for rule, files in cases.items():
+            for side in ("a", "b"):
+                with self.subTest(rule=rule, surface=side):
+                    self.fails(files, rule, "--surface", side)
+        r = run({**cases["duplicate-id"], "c/x.json": [rec("win11.c.ok", surface="c")]}, "--surface", "c")
+        self.assertEqual(r.returncode, 0, r.stdout)
 
     def test_first_50_errors_are_printed(self):
         lines = [rec(f"win11.taskbar.x{i}", parent="win11.taskbar.none", order=i) for i in range(60)]

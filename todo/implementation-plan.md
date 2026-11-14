@@ -38,7 +38,7 @@ Everything later is proven by these gates, so they come first: the build and ana
 
 | Done | Section       | Deliverable                                                                                                           | Needs      | Items |
 | :--: | ------------- | --------------------------------------------------------------------------------------------------------------------- | ---------- | ----: |
-| [/]  | `D08 T17 §1`  | Inventory Schema and Checker                                                                                          | none       |     9 |
+| [/]  | `D08 T17 §1`  | Inventory Schema and Checker                                                                                          | none       |    11 |
 | [ ]  | `D08 T17 §2`  | Reference Build and Capture Profile                                                                                   | none       |     9 |
 | [ ]  | `D08 T17 §4`  | Microsoft-Free Rule                                                                                                   | none       |     7 |
 | [ ]  | `D08 T17 §3`  | UIA Capture Tool                                                                                                      | none       |    11 |
