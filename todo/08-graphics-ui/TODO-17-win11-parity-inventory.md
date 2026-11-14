@@ -290,8 +290,8 @@ A capture proves what it saw. A baseline proves nothing was missed: an independe
 > - A source is read whole or the read fails: an unknown settings element, a Gallery group without items, a directory listing or class lookup that fails, and a Gallery download past 60 s all publish nothing.
 > - Fixed on the way: `capture_core.write_records` and `capture.swap` left a `.tmp` file behind when a rename failed, and `swap` removed its journal outside the rollback; fixed, with a failure at the commit point rolling back.
 > - Docs: [Windows 11 Inventory](../../docs/design/inventory/index.md#how-is-completeness-proved).
-> **Verified:** 2026-11-14 | commit `e32d90bc1` | 9/9 items | `check-inventory.py --baselines` prints all seven (2,028 rows, 0 errors), 38 + 94 + 81 tests OK, live `baselines.py` read byte-identical four times, `bash scripts/lint.sh` 0 errors
-> **Quality reviewed:** 2026-11-14 | Codex 37x (plan, round 17x, performance 17x, completion, reconciliation) | 0H+19M+2L fixed, 1M rejected with evidence (any surface may match a row), 0 open | scope: N/A (host tooling, no kernel surface)
+> **Verified:** 2026-11-14 | commit `99c3a8e42` | 9/9 items | `check-inventory.py --baselines` prints all seven (2,028 rows, 0 errors), 38 + 95 + 81 tests OK, `test_todo_fence.py` 720 assertions OK, live `baselines.py` read byte-identical four times, `bash scripts/lint.sh` 0 errors
+> **Quality reviewed:** 2026-11-14 | Codex 39x (plan, round 18x, performance 18x, completion, reconciliation) | 0H+19M+2L fixed, 1 red CI fixed (shared heading rule), 1M rejected with evidence (any surface may match a row), 0 open | scope: N/A (host tooling, no kernel surface)
 
 ---
 
