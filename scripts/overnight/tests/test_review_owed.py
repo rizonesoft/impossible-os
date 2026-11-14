@@ -485,6 +485,21 @@ def test_an_owed_review_is_not_a_failed_rollover(tmp_path):
     assert "outstanding Codex review not yet received" in _rollover(fx).stderr
     review.write_text(json.dumps({"received": True}))
     assert "outstanding Codex review" not in _rollover(fx).stderr
+    # A long outage: the owed section's review is tried again and fails again, which writes a fresh, unmarked
+    # record. Asking `add` again keeps the first base and marks that record; with the reviewer answering it
+    # marks nothing.
+    again = [sys.executable, str(SCRIPT), "--root", str(fx), "add", "--todo", todo, "--section", "1"]
+    base = json.loads((fx / ".claude/state/review-owed.json").read_text())[0]["base"]
+    review.write_text(json.dumps({"received": False}))
+    _reviewer(fx, down=False)
+    assert subprocess.run(again, capture_output=True, text=True, timeout=60).returncode == 0
+    assert "outage_debt" not in json.loads(review.read_text())
+    assert "outstanding Codex review not yet received" in _rollover(fx).stderr
+    _reviewer(fx, down=True)
+    assert subprocess.run(again, capture_output=True, text=True, timeout=60).returncode == 0
+    assert json.loads(review.read_text()) == {"received": False, "outage_debt": True}
+    assert json.loads((fx / ".claude/state/review-owed.json").read_text())[0]["base"] == base
+    assert "outstanding Codex review" not in _rollover(fx).stderr
     # A received review is never marked, and recording a second debt marks only an unreceived one.
     _git(fx, "commit", "-q", "--allow-empty", "-m", "more work")
     review.write_text(json.dumps({"received": True}))

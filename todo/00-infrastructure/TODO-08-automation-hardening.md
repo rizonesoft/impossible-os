@@ -1521,7 +1521,7 @@ What exists today: `scripts/overnight/codex-outage-check.py` already says when t
   - The packet marks an owed section `review_owed` and a recovered one `review_first`; `scripts/overnight/advance-work.py` never names the first, even as its fallback, and names the second ahead of everything else
   - The reviewer is probed by one process with a two-second wait, inside the Stop hook's five; no answer in time changes nothing
 - [x] The phase guard's rollover accepts unpushed commits while a review is owed, so an owed section is never counted as a failed rollover and reverted (`.claude/hooks/run_phase_guard.py`, a frozen file: edited attended)
-  - `add` marks the dispatch record that failed with the outage (`outage_debt` in `last-codex-review.json`), so the rollover tells that debt from a review waiting to be read, whichever commit path the section's code takes; a later dispatch writes a fresh, unmarked record
+  - `add` marks the dispatch record that failed with the outage (`outage_debt` in `last-codex-review.json`), so the rollover tells that debt from a review waiting to be read, whichever commit path the section's code takes; a later dispatch writes a fresh, unmarked record, and `add` again marks it when that retry fails with the outage too
 - [x] `.githooks/pre-push` refuses a push while any section is owed, naming it, before every costly gate; a record that cannot be read refuses too
 - [x] The steps are in `.claude/skills/overnight-sequencer/SKILL.md` (the outage rule) and `.claude/skills/three-pass-review.md` ("When the reviewer is down")
 - [x] Commit: `"run: a reviewer outage leaves a review owed and the run continues"`

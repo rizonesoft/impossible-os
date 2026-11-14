@@ -183,6 +183,8 @@ bash scripts/overnight/wait-for-codex-verdict.sh --max 540 <logFile>   # + tool 
      takes the recorded base itself, tells the reviewer the range, and refuses another
      base; the second reviewer's dispatcher and the stamp gate use the same one. Stamp it, then
      `python3 scripts/overnight/review_owed.py clear --todo <todo-path> --section <N>`.
+     If the owed section's review fails at the backend again (exit 75 again), run the same
+     `add` again: it keeps the first base and marks the new failed dispatch, and the run moves on.
   5. **Push once every debt is cleared.** The sections built meanwhile go out in that push.
   `review_owed.py list` shows what is open.
 - **Every review prompt starts with a LITERAL `[review-kind: X]`** -- never

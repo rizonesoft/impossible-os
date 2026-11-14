@@ -20,7 +20,8 @@ add     before the section's first edit. Refused unless `probe` reports an outag
         nothing, so the first base stands and an interrupted run may call it again. The outage is confirmed
         at this moment, so the dispatch record that failed with it (.claude/state/last-codex-review.json,
         unreceived) is marked `outage_debt` here: the rollover then knows it is this debt and not a review
-        waiting to be read.
+        waiting to be read. When an owed section's review is tried again and fails again, `add` again marks
+        that new record the same way.
 list    one line a section: `<todo> section <N> base <sha>`.
 gate    exit 0 when nothing is owed, 1 naming each owed section, 2 when the record cannot be read (a caller
         that guards a push refuses on both).
@@ -226,7 +227,13 @@ def main(argv=None):
         listed = any(e["todo"] == args.todo and e["section"] == args.section for e in records)
         if args.verb == "add":
             if listed:
-                return 0                # the first base stands; an interrupted run may ask again
+                # The first base stands. Asked again, the section's review was retried and failed again, or
+                # the run stopped between the two writes below: when the outage is confirmed now, the
+                # dispatch record that failed with it is marked as the first one was.
+                down, _why = outage(root, args.now)
+                if down:
+                    mark_failed_dispatch(root)
+                return 0
             if verified:
                 return refuse(f"{args.todo} section {args.section} is already stamped; it owes no review")
             down, _why = outage(root, args.now)
