@@ -33,7 +33,10 @@ model = "gpt-6-astra"
 # The second reviewer (operator decisions 2026-11-14). A different model reads a section after Astra's passes
 # are clean, where a miss costs most: the costliest defects here had passed every review by one model.
 #   - It reads only sections whose changed files fall under `paths`: kernel, boot, and the security and ABI
-#     surfaces. Each pass takes about five minutes.
+#     surfaces on both sides of the system call boundary (`user/include/`, `user/lib/`).
+#   - A pass may take `limit_seconds`. A one-file question took five minutes; the first live pass over a
+#     real section's range did not finish in nine (2026-11-14). A pass that runs out of time is not retried:
+#     the same work would run out again.
 #   - At most `round_cap` passes a section: find, confirm the repair, and one more if the repair is wrong.
 #     What is still open then is filed as a tracked item and the section ships.
 #   - It confirms its own repairs. Astra reads a repair again only when more than `small_fix_lines` lines
@@ -49,10 +52,11 @@ model = "gemini-4-carbon-medium"
 
 [second]
 reviewer = "carbon"
-paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/"]
+paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/", "user/lib/"]
 round_cap = 3
 retries = 3
 small_fix_lines = 50
+limit_seconds = 1500
 
 [routes]
 claude = ["astra"]

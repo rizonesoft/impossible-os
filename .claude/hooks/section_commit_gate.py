@@ -2506,6 +2506,25 @@ def _second_complete(receipt: dict) -> bool:
         and isinstance(receipt.get("head"), str) and len(receipt["head"]) >= 7
 
 
+def _second_spent(lines: list[str], todo: str, section: str) -> int:
+    """Complete second passes for one section, over the whole manifest.
+
+    Counted exactly as scripts/second_review_dispatch.py counts them before it refuses a pass beyond the cap:
+    every readable line, a damaged one skipped. The two must agree, or the dispatcher would refuse a pass the
+    gate still asks for. Which receipt is TRUSTED as the newest is a separate question, answered below.
+    """
+    spent = 0
+    for line in lines:
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict) and e.get("todo") == todo and e.get("kind") == _SECOND_KIND \
+                and str(e.get("section", "")) == section and _second_complete(e):
+            spent += 1
+    return spent
+
+
 def _second_receipts(root: Path, todo: str, section: str, cap: int = 0) -> tuple[dict | None, int, int, bool]:
     """(newest second receipt, its age, complete second passes spent, readable) for one section.
 
@@ -2531,17 +2550,16 @@ def _second_receipts(root: Path, todo: str, section: str, cap: int = 0) -> tuple
             e = json.loads(line)
         except ValueError:
             if '"todo": "' not in line or f'"todo": "{todo}"' in line:
-                return (newest, newest_age, spent, False)
+                return (newest, newest_age, _second_spent(lines, todo, section), False)
             continue
         if not isinstance(e, dict) or e.get("todo") != todo or e.get("kind") != _SECOND_KIND \
                 or str(e.get("section", "")) != section:
             continue
         if newest is None:
             newest, newest_age = e, age
-        if _second_complete(e):
-            spent += 1
-            if last_complete is None:
-                last_complete = (e, age)
+        if _second_complete(e) and last_complete is None:
+            last_complete = (e, age)
+    spent = _second_spent(lines, todo, section)
     if cap and spent >= cap and newest is not None and not _second_complete(newest) and last_complete is not None:
         newest, newest_age = last_complete
     return (newest, newest_age, spent, True)

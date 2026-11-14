@@ -20,7 +20,9 @@ What a pass is held to:
   - The reviewer's CLI has no read-only mode, so it runs in a throwaway clone. After the run the clone must
     still be exactly the candidate (same HEAD, nothing changed, nothing added): a reviewer that repaired a
     defect in its copy and then called it clean has reviewed something else, and that attempt counts for nothing.
-  - Each attempt has a time limit and its whole process group is killed at the limit.
+  - Each attempt has the pin's time limit and an output limit, and its whole process group is killed at
+    either. The reviewer's output goes to a file, never into memory. An attempt that ran out of time is not
+    retried: the same work would run out again.
   - A review ends with `HIGHEST: P1`, `P2`, `P3` or `none`, or the pass is incomplete.
   - The candidate is identified before the run and checked again after it.
 The receipt goes to the reviews manifest the commit gate reads, with kind `second`.
@@ -30,7 +32,8 @@ Exit 0 a checked pass (or the section is outside the second reviewer's paths: no
 (the stamp may then carry `second: unavailable`).
 
 Environment: REVIEW_BASE (optional, checked against the plan pass); CODEX_REVIEWS_DIR (the reviews directory, as for codex-dispatch.sh);
-SECOND_REVIEW_CLI, SECOND_REVIEW_LIMIT, SECOND_REVIEW_GRACE and SECOND_REVIEW_RETRY_WAIT (seconds) for tests.
+SECOND_REVIEW_CLI, SECOND_REVIEW_LIMIT, SECOND_REVIEW_GRACE, SECOND_REVIEW_RETRY_WAIT (seconds) and
+SECOND_REVIEW_MAX_OUTPUT (bytes) for tests.
 """
 import fcntl
 import hashlib
@@ -51,6 +54,7 @@ import review_pin  # noqa: E402  (sibling module)
 ROUTE = "second_review_dispatch.py"
 FIRST_LINE = re.compile(r"^\[review-kind: second\] (todo/\S+\.md) section (\d+)\s*$")
 GIT_TIMEOUT = 120
+MAX_OUTPUT = 64 * 1024 * 1024      # of the reviewer's event stream; a review is a few kilobytes of it
 RULES = """You are the second reviewer of this change. Another reviewer has already passed it; find what it missed.
 Rules of this pass:
 - Read only. Do not edit, create or delete any file, do not commit, and run no command that changes anything.
@@ -59,6 +63,8 @@ Rules of this pass:
 - Report defects only, most severe first, each with file:line and what breaks. No style remarks.
 - Tag every finding P1 (wrong result, crash, data loss or a security hole), P2 (a real defect of lesser reach)
   or P3 (minor).
+- You have {minutes} minutes. Read the diff first, then the code around what it changes; when time is short,
+  report what you have found rather than reading further.
 - End with exactly one line: HIGHEST: P1, HIGHEST: P2, HIGHEST: P3 or HIGHEST: none"""
 
 
@@ -101,45 +107,59 @@ def _stop(signum, _frame):
     raise Terminated(signum)
 
 
-def attempt(root, head, cli, model, prompt, limit, grace):
+def attempt(root, head, cli, model, prompt, limit, grace, max_output):
     """One run of the reviewer in a fresh clone of the candidate.
 
     Returns (response, why): the review text and "", or None and why this attempt gave none
-    ("unavailable: ..." or "mutated: ...").
+    ("unavailable: ...", "timeout: ..." or "mutated: ...").
     """
     scratch = pathlib.Path(tempfile.mkdtemp(prefix="second-review-"))
-    clone = scratch / "repo"
+    clone, stream = scratch / "repo", scratch / "events"
     try:
         made = subprocess.run(["git", "clone", "--quiet", "--no-hardlinks", str(root), str(clone)],
                               capture_output=True, text=True, timeout=GIT_TIMEOUT)
         if made.returncode != 0 or git(clone, "checkout", "--quiet", "--detach", head).returncode != 0:
             return None, "unavailable: the candidate could not be cloned"
-        # The reviewer gets a process group of its own so that it and its helpers can be killed together. It
-        # is not detached: the dispatcher waits for it, and kills the group at the limit or when stopped.
-        proc = subprocess.Popen([cli, "-p", prompt, "--model", model, "--sandbox", "--output-format", "stream-json",
-                                 "--print-timeout", f"{limit}s"], cwd=str(clone), stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, text=True,
-                                start_new_session=True)  # LIFECYCLE-WAIVER: a REVIEW's own group, not the session
-        try:
-            out, _ = proc.communicate(timeout=limit + grace)
-        except subprocess.TimeoutExpired:
-            out = ""
-        finally:
-            # The reviewer starts helpers of its own; none may outlive the attempt.
+        why = ""
+        with stream.open("wb") as out:
+            # The reviewer gets a process group of its own so that it and its helpers can be killed together.
+            # It is not detached: the dispatcher waits for it, and kills the group at a limit or when stopped.
+            proc = subprocess.Popen([cli, "-p", prompt, "--model", model, "--sandbox", "--output-format",
+                                     "stream-json", "--print-timeout", f"{limit}s"], cwd=str(clone), stdout=out,
+                                    stderr=subprocess.DEVNULL,
+                                    start_new_session=True)  # LIFECYCLE-WAIVER: a REVIEW's own group, not the session
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-            proc.wait()
+                deadline = time.monotonic() + limit + grace
+                while proc.poll() is None:
+                    if time.monotonic() >= deadline:
+                        why = f"timeout: the reviewer did not finish in {limit} s"
+                        break
+                    if stream.stat().st_size > max_output:
+                        why = f"unavailable: the reviewer wrote more than {max_output} bytes of output"
+                        break
+                    time.sleep(0.2)
+            finally:
+                # The reviewer starts helpers of its own; none may outlive the attempt.
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                proc.wait()
+        if not why and stream.stat().st_size > max_output:
+            why = f"unavailable: the reviewer wrote more than {max_output} bytes of output"   # it ended between two looks
+        if why:
+            return None, why
         response = None
-        for line in out.splitlines():
-            try:
-                event = json.loads(line)
-            except ValueError:
-                continue
-            result = event.get("result") if isinstance(event, dict) else None
-            if isinstance(result, dict) and result.get("status") == "SUCCESS" and isinstance(result.get("response"), str):
-                response = result["response"]
+        with stream.open("r", errors="replace") as events:
+            for line in events:         # one event a line; only the last successful result is kept
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                result = event.get("result") if isinstance(event, dict) else None
+                if isinstance(result, dict) and result.get("status") == "SUCCESS" \
+                        and isinstance(result.get("response"), str):
+                    response = result["response"]
         if response is None or not response.strip():
             return None, "unavailable: the reviewer returned no result"
         now = git(clone, "rev-parse", "HEAD")
@@ -245,22 +265,24 @@ def run(root, reviews, manifest, pin, todo, section, base, head, prompt):
         return 2
 
     cli = os.environ.get("SECOND_REVIEW_CLI") or second["cli"]
-    limit = int(os.environ.get("SECOND_REVIEW_LIMIT") or 540)
+    limit = int(os.environ.get("SECOND_REVIEW_LIMIT") or second["limit_seconds"])
+    max_output = int(os.environ.get("SECOND_REVIEW_MAX_OUTPUT") or MAX_OUTPUT)
     wait = float(os.environ.get("SECOND_REVIEW_RETRY_WAIT") or 20)
     grace = float(os.environ.get("SECOND_REVIEW_GRACE") or 30)   # past the CLI's own limit, before it is killed
-    full = prompt + "\n\n" + RULES.format(base=base, head=head)
+    full = prompt + "\n\n" + RULES.format(base=base, head=head, minutes=max(1, limit // 60))
     stamp = time.strftime("%Y%m%d-%H%M%S")
     log = reviews / f"{stamp}-{os.getpid()}-second-direct.out"
     notes, response, mutated = [], None, False
     for n in range(1, second["retries"] + 1):
-        response, why = attempt(root, head, cli, second["model"], full, limit, grace)
+        response, why = attempt(root, head, cli, second["model"], full, limit, grace, max_output)
         if response is not None:
             break
         notes.append(f"attempt {n}: {why}")
         say(notes[-1])
         mutated = mutated or why.startswith("mutated")
-        if n < second["retries"]:
-            time.sleep(wait)
+        if why.startswith("timeout") or n == second["retries"]:
+            break                       # the same work would run out of time again
+        time.sleep(wait)
 
     rc, level = 0, ""
     if response is None:
@@ -295,7 +317,7 @@ def run(root, reviews, manifest, pin, todo, section, base, head, prompt):
         say(f"the receipt could not be written to {manifest}: {exc}; the pass will not be credited")
         return 3
     if rc == 4:
-        say(f"the second reviewer was unavailable on all {second['retries']} attempts; the stamp may say "
+        say("the second reviewer gave no review (unavailable, or out of time); the stamp may say "
             "`second: unavailable` and the section is read later")
     return rc
 

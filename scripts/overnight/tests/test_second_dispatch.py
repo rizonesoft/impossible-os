@@ -34,6 +34,13 @@ if mode == "hang":
     pathlib.Path(os.environ["FAKE_CHILD"]).write_text(str(child.pid))
     time.sleep(60)
     sys.exit(0)
+if mode == "noisy":
+    # Bounded: about 40 MB at most, then it ends by itself.
+    chunk = json.dumps({"event": "progress", "text": "x" * 4000})
+    for _ in range(10000):
+        print(chunk, flush=True)
+    answer("HIGHEST: none\n")
+    sys.exit(0)
 if mode == "edit":
     pathlib.Path("src/kernel/a.c").write_text("int a = 2; /* repaired by the reviewer */\n")
 if mode == "add":
@@ -177,12 +184,24 @@ def test_an_unavailable_reviewer_is_retried_then_recorded_and_never_a_clean_pass
     assert len(_calls(root)) == 2 and _receipts(root)[-1]["rc"] == 0
 
 
+def test_a_reviewer_that_floods_its_output_is_stopped_at_the_cap(tmp_path):
+    root, base, fake = _repo(tmp_path)
+    r = _run(root, base, fake, "noisy", SECOND_REVIEW_MAX_OUTPUT="200000", SECOND_REVIEW_LIMIT="30")
+    assert r.returncode == 4, r.stderr
+    assert "more than 200000 bytes of output" in r.stderr
+    assert _receipts(root)[-1]["unavailable"] is True
+    for call in _calls(root):
+        assert not pathlib.Path(call["cwd"]).exists()
+
+
 def test_a_hung_reviewer_is_killed_with_its_children(tmp_path):
     root, base, fake = _repo(tmp_path)
     start = time.monotonic()
     r = _run(root, base, fake, "hang")
     assert r.returncode == 4, r.stderr
     assert time.monotonic() - start < 30
+    # Out of time is not retried: the same work would run out again.
+    assert "did not finish in 2 s" in r.stderr and len(_calls(root)) == 1
     for pid in [c["pid"] for c in _calls(root)] + [int((root.parent / "fake.child").read_text())]:
         try:
             os.kill(pid, 0)

@@ -20,27 +20,40 @@ def _tree(tmp_path, body="# X\n\n## 7. Seven\n\n## 8. Eight\n"):
     return tmp_path
 
 
-def test_a_section_is_recorded_once_and_the_total_says_when_to_decide(tmp_path):
+FOUND = ("--finding", "fixed: the retry count is read before the lock",
+         "--finding", "rejected: the buffer can overflow | it is static-asserted at 64 bytes, vmm.c:212",
+         "--finding", "filed: no test for the error path | the memory manager roadmap, error-path item")
+
+
+def test_each_finding_keeps_its_verdict_and_the_totals_come_from_them(tmp_path):
     root = _tree(tmp_path)
-    r = _run(root, "record", "--todo", TODO, "--section", "7", "--raised", "3", "--real", "2", "--rejected", "1")
+    r = _run(root, "record", "--todo", TODO, "--section", "7", *FOUND)
     assert r.returncode == 0, r.stderr
     assert f"{TODO} section 7: raised 3, real 2, rejected 1" in r.stdout
     assert "1 of 10 sections, raised 3, real 2, rejected 1 (9 more before deciding)" in r.stdout
-    # Recorded again, the section counts once, as its latest line.
-    _run(root, "record", "--todo", TODO, "--section", "7", "--raised", "1", "--real", "1", "--rejected", "0")
+    listing = _run(root, "stats", "--findings").stdout
+    assert "  fixed: the retry count is read before the lock" in listing
+    assert "  rejected: the buffer can overflow | it is static-asserted at 64 bytes, vmm.c:212" in listing
+    assert "  filed: no test for the error path | the memory manager roadmap, error-path item" in listing
+    # Recorded again, the section counts once, as its latest line. No finding at all is a record too.
+    _run(root, "record", "--todo", TODO, "--section", "7", "--finding", "fixed: one thing")
     for n in range(8, 17):
-        assert _run(root, "record", "--todo", TODO, "--section", str(n), "--raised", "0", "--real", "0",
-                    "--rejected", "0").returncode == 0
+        assert _run(root, "record", "--todo", TODO, "--section", str(n)).returncode == 0
     r = _run(root, "stats")
     assert r.returncode == 0 and "10 of 10 sections, raised 1, real 1, rejected 0 (decide: keep, narrow or drop)" in r.stdout
 
 
-def test_refusal_counts_that_do_not_add_up_and_a_todo_that_does_not_exist(tmp_path):
+def test_refusal_a_finding_without_a_verdict_or_its_evidence_and_a_todo_that_does_not_exist(tmp_path):
     root = _tree(tmp_path)
-    for args in (("--raised", "3", "--real", "1", "--rejected", "1"), ("--raised", "0", "--real", "-1", "--rejected", "1")):
-        r = _run(root, "record", "--todo", TODO, "--section", "7", *args)
-        assert r.returncode == 2 and "must equal raised" in r.stderr
-    r = _run(root, "record", "--todo", "todo/none.md", "--section", "7", "--raised", "0", "--real", "0", "--rejected", "0")
+    for finding, needle in (("the lock is wrong", "starts with fixed, rejected or filed"),
+                            ("ignored: the lock is wrong", "starts with fixed, rejected or filed"),
+                            ("fixed:", "says what was found"),
+                            ("rejected: the lock is wrong", "the code evidence"),
+                            ("rejected: the lock is wrong | ", "the code evidence"),
+                            ("filed: no test", "the tracked item")):
+        r = _run(root, "record", "--todo", TODO, "--section", "7", "--finding", finding)
+        assert r.returncode == 2 and needle in r.stderr, (finding, r.stderr)
+    r = _run(root, "record", "--todo", "todo/none.md", "--section", "7")
     assert r.returncode == 2 and "no such TODO" in r.stderr
     assert not (root / ".claude").exists()
 
@@ -49,9 +62,14 @@ def test_refusal_a_damaged_log_is_reported_not_skipped(tmp_path):
     root = _tree(tmp_path)
     log = root / ".claude/overnight/second-review-log.jsonl"
     log.parent.mkdir(parents=True)
-    log.write_text('{"todo": "x", "section": 7, "raised": 1, "real": 1, "rejected": 0}\n{not json\n')
-    r = _run(root, "stats")
-    assert r.returncode == 2 and "cannot be read" in r.stderr
+    good = '{"todo": "x", "section": 7, "findings": [{"verdict": "fixed", "finding": "f", "note": ""}]}\n'
+    for bad in ("{not json\n", '{"todo": "x", "section": 7, "raised": 1}\n',
+                '{"todo": "x", "section": 7, "findings": [{"verdict": "maybe", "finding": "f"}]}\n'):
+        log.write_text(good + bad)
+        r = _run(root, "stats")
+        assert r.returncode == 2 and "cannot be read" in r.stderr, bad
+    log.write_text(good)
+    assert _run(root, "stats").returncode == 0
 
 
 def test_the_sections_marked_unavailable_are_listed_for_a_later_read(tmp_path):

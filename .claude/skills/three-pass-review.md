@@ -96,14 +96,14 @@ A fix made after a pass means that pass has not read the candidate: commit the f
 
 ## The second reviewer
 
-A different model (Gemini 4 Carbon, `[second]` in the pin) reads a section after Astra's wave is clean, when the section changed files under the pin's paths: `src/kernel/`, `include/kernel/`, `src/boot/`, `include/boot/`, `user/include/`. Every other section is reviewed exactly as above.
+A different model (Gemini 4 Carbon, `[second]` in the pin) reads a section after Astra's wave is clean, when the section changed files under the pin's paths: `src/kernel/`, `include/kernel/`, `src/boot/`, `include/boot/`, `user/include/`, `user/lib/`. Every other section is reviewed exactly as above.
 
 ```bash
 python3 scripts/second_review_dispatch.py '[review-kind: second] <todo-path> section <N>
 <the two or three risks specific to this section>'
 ```
 
-- Run it in the background (`run_in_background: true`): a pass takes about five minutes and has a nine-minute limit. Commit the candidate first; the reviewer reads a copy of HEAD.
+- Run it in the background (`run_in_background: true`): a pass may take the pin's `limit_seconds` (25 minutes). Commit the candidate first and change no tracked file while it runs; the reviewer reads a copy of HEAD, and a candidate that moved makes the pass incomplete.
 - It reads the whole section, from the commit the section's plan pass was dispatched at; that base is read from the reviews manifest, so set no `REVIEW_BASE`.
 - One pass a section at a time: a second dispatch while one is running is refused.
 - It prints `not in scope` and dispatches nothing when no changed file is under the paths.
@@ -112,14 +112,14 @@ python3 scripts/second_review_dispatch.py '[review-kind: second] <todo-path> sec
 | ---- | ------- | ---- |
 | 0 | a checked pass; its `HIGHEST:` level is on the receipt | receive the findings (`superpowers:receiving-code-review`), fix what is real |
 | 3 | no single `HIGHEST:` line, the reviewer changed its copy, or the candidate moved | dispatch it again |
-| 4 | unavailable on all three attempts | stamp with `second: unavailable` on the section's `> **Quality reviewed:**` line (nowhere else counts) and carry on |
+| 4 | no review: unavailable on all three attempts, or out of time (not retried) | stamp with `second: unavailable` on the section's `> **Quality reviewed:**` line (nowhere else counts) and carry on |
 | 2 | refused before dispatch (a dirty tree, no plan pass, another pass running, or its three passes are spent) | fix what the message names |
 
 - **Three passes at most:** find, confirm the repair, and one more only when the repair is still wrong. After the third, file what is open as a tracked item and stamp.
 - **It confirms its own repairs.** After a fix for a second-review finding, commit and dispatch the second pass again; do not dispatch Astra's wave again. The stamp accepts Astra's passes from before the repair when the second pass is clean on the final candidate and no more than `small_fix_lines` (50) lines a pass reads changed since them.
 - **A large or structural repair goes back to Astra.** More than 50 lines, or a change to locking, memory lifetime or an ABI whatever its size: dispatch `round`, `performance` and `reconciliation` on the repaired candidate, then the second pass. The gate enforces the line count; the structural call is yours.
 - **A repair after the third pass** is read by Astra's wave on the repaired candidate; there is no fourth second pass.
-- **Record what it was worth** once the section's second review is finished: `python3 scripts/overnight/second-review-log.py record --todo <todo-path> --section <N> --raised A --real B --rejected C`. After ten sections `stats` is the evidence for keeping it, narrowing its paths or dropping it. `unavailable` lists the stamps still owed a read.
+- **Record what it was worth** once the section's second review is finished: `python3 scripts/overnight/second-review-log.py record --todo <todo-path> --section <N>` with one `--finding` per finding: `'fixed: <what>'`, `'rejected: <what> | <the code evidence>'` or `'filed: <what> | <the tracked item>'` (none when it found nothing). After ten sections `stats` (`--findings` lists each one) is the evidence for keeping it, narrowing its paths or dropping it. `unavailable` lists the stamps still owed a read.
 - In the stamp, name its passes beside Astra's: `Codex 5x (...), Gemini 2x`.
 
 ## Which rules a section is on

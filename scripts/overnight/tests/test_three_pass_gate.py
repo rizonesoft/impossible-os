@@ -506,6 +506,26 @@ def test_an_overlapping_pass_that_lands_after_the_last_one_cannot_wedge_the_sect
     assert not ok and "no checked, complete receipt" in why, why
 
 
+def test_a_damaged_manifest_line_does_not_make_the_gate_and_the_dispatcher_count_differently(tmp_path):
+    root, h = _history(tmp_path, second=True)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("second_review_dispatch", REPO / "scripts/second_review_dispatch.py")
+    dispatcher = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dispatcher)
+    spent = [dict(_second(h["build"], 5, highest="P2")[1], base=h["plan"]),
+             dict(_second(h["fix"], 6, highest="P2")[1], base=h["plan"]),
+             dict(_second(h["final"], 7, highest="P2")[1], base=h["plan"])]
+    # A line cut short while it was written, between the first complete pass and the other two.
+    damaged = json.dumps(spent[0]) + "\n" + '{"todo": "' + TODO + '", "kind": "sec\n' \
+        + "".join(json.dumps(r) + "\n" for r in spent[1:])
+    # The cap is spent by both counts, so the section ships with what is open filed.
+    assert _judge(root, manifest_head=damaged, **{k: (v[0], v[1] + 10) for k, v in _good(h).items()}) == (True, "")
+    manifest = root / gate._PASS_MANIFEST
+    manifest.write_text(damaged)
+    assert dispatcher.spent(manifest, TODO, "7") == 3
+    assert gate._second_receipts(root, TODO, "7", 3)[2] == 3
+
+
 def test_a_section_outside_the_second_reviewers_paths_is_judged_as_before(tmp_path):
     root, h = _history(tmp_path, second=True, source="scripts/a.sh")
     assert _judge(root, **_good(h)) == (True, "")

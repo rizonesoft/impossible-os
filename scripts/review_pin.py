@@ -63,7 +63,7 @@ SEVERITIES = ("P1", "P2", "P3")
 # scheduled by the pin's policy and never counts toward pass_cap.
 SECOND_KIND = "second"
 SECOND_CLI = "agy"
-SECOND_KEYS = {"reviewer", "paths", "round_cap", "retries", "small_fix_lines"}
+SECOND_KEYS = {"reviewer", "paths", "round_cap", "retries", "small_fix_lines", "limit_seconds"}
 
 
 class Refused(Exception):
@@ -132,7 +132,7 @@ def load_pin(path=PIN, data=None):
               isinstance(p, str) and p and not p.startswith(("/", ".")) and ".." not in p.split("/") for p in paths),
               "[second] needs paths = repository-relative prefixes")
         numbers = {}
-        for key, low in (("round_cap", 1), ("retries", 1), ("small_fix_lines", 0)):
+        for key, low in (("round_cap", 1), ("retries", 1), ("small_fix_lines", 0), ("limit_seconds", 60)):
             value = second_raw[key]
             _need(type(value) is int and value >= low, f"[second] {key} must be a whole number of at least {low}")
             numbers[key] = value

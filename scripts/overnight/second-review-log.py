@@ -6,14 +6,19 @@ Owner: todo/00-infrastructure/TODO-08-automation-hardening.md section 44.
 The second reviewer was wired on real sections rather than replayed first (operator decision 2026-11-14), so
 its record on those sections is the evidence for keeping it, narrowing its paths or dropping it.
 
-    python3 scripts/overnight/second-review-log.py record --todo todo/<path>.md --section N --raised A --real B --rejected C
-    python3 scripts/overnight/second-review-log.py stats
+    python3 scripts/overnight/second-review-log.py record --todo todo/<path>.md --section N \\
+        --finding 'fixed: <what it found>' --finding 'rejected: <what it found> | <the code evidence>' \\
+        --finding 'filed: <what it found> | <the tracked item that owns it>'
+    python3 scripts/overnight/second-review-log.py stats [--findings]
     python3 scripts/overnight/second-review-log.py unavailable
 
-record       one line per section, once its second review is finished: the findings it raised, how many were
-             real (fixed, or filed as a tracked item) and how many were rejected with code evidence. real plus
-             rejected must equal raised. A section recorded twice counts once, as its latest line.
+record       one line per section, once its second review is finished, holding every finding it raised and
+             what became of it: `fixed`, `rejected` (with the code evidence after ` | `) or `filed` (with the
+             tracked item after ` | `). No --finding records a section it found nothing in. The totals are
+             worked out from the findings: real is fixed plus filed. A section recorded twice counts once, as
+             its latest line.
 stats        per section and in total: raised, real, rejected; and how many sections of the ten are in.
+             --findings also prints each finding, so the judgments behind the totals can be checked.
 unavailable  every stamp under todo/ that says `second: unavailable`, as `<todo> section <N>`: the sections to
              read when the reviewer answers again. Exit 1 when there is one, 0 when none.
 
@@ -32,6 +37,28 @@ MARK = "second: unavailable"
 STAMP = "> **Quality reviewed:**"      # the line the stamp gate accepts the mark on (section_commit_gate.py)
 HEADING = re.compile(r"^## (\d+)\.")
 TRIAL = 10
+VERDICTS = ("fixed", "rejected", "filed")
+NEEDS_NOTE = {"rejected": "the code evidence", "filed": "the tracked item that owns it"}
+
+
+def parse_finding(text):
+    """{'verdict', 'finding', 'note'} from `verdict: finding | note`, or a message saying what is wrong."""
+    verdict, sep, rest = text.partition(":")
+    verdict = verdict.strip()
+    if not sep or verdict not in VERDICTS:
+        return f"a finding starts with {', '.join(VERDICTS[:-1])} or {VERDICTS[-1]} and a colon: {text!r}"
+    finding, _, note = (part.strip() for part in rest.partition("|"))
+    if not finding:
+        return f"a finding says what was found: {text!r}"
+    if verdict in NEEDS_NOTE and not note:
+        return f"a {verdict} finding gives {NEEDS_NOTE[verdict]} after ` | `: {text!r}"
+    return {"verdict": verdict, "finding": finding, "note": note}
+
+
+def totals(record):
+    found = record["findings"]
+    rejected = sum(f["verdict"] == "rejected" for f in found)
+    return {"raised": len(found), "real": len(found) - rejected, "rejected": rejected}
 
 
 def load(path):
@@ -45,7 +72,9 @@ def load(path):
         if not line.strip():
             continue
         e = json.loads(line)        # a line that is not JSON is a damaged record: say so, do not skip it
-        if not isinstance(e, dict) or not all(isinstance(e.get(k), int) for k in ("section", "raised", "real", "rejected")):
+        if not isinstance(e, dict) or not isinstance(e.get("section"), int) or not isinstance(e.get("findings"), list) \
+                or not all(isinstance(f, dict) and f.get("verdict") in VERDICTS and isinstance(f.get("finding"), str)
+                           for f in e["findings"]):
             raise ValueError(f"line {n} is not a section record")
         out[(e.get("todo"), e["section"])] = e
     return out
@@ -57,9 +86,8 @@ def main(argv=None):
     rec = sub.add_parser("record")
     rec.add_argument("--todo", required=True)
     rec.add_argument("--section", type=int, required=True)
-    for name in ("raised", "real", "rejected"):
-        rec.add_argument(f"--{name}", type=int, required=True)
-    sub.add_parser("stats")
+    rec.add_argument("--finding", action="append", default=[])
+    sub.add_parser("stats").add_argument("--findings", action="store_true")
     sub.add_parser("unavailable")
     ap.add_argument("--root", default=str(REPO), help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
@@ -89,11 +117,12 @@ def main(argv=None):
         if not (root / args.todo).is_file():
             print(f"second-review-log: no such TODO: {args.todo}", file=sys.stderr)
             return 2
-        if min(args.raised, args.real, args.rejected) < 0 or args.real + args.rejected != args.raised:
-            print("second-review-log: real plus rejected must equal raised, none below 0", file=sys.stderr)
+        found = [parse_finding(text) for text in args.finding]
+        wrong = [f for f in found if isinstance(f, str)]
+        if wrong:
+            print("second-review-log: " + "; ".join(wrong), file=sys.stderr)
             return 2
-        line = {"ts": int(time.time()), "todo": args.todo, "section": args.section, "raised": args.raised,
-                "real": args.real, "rejected": args.rejected}
+        line = {"ts": int(time.time()), "todo": args.todo, "section": args.section, "findings": found}
         try:
             log.parent.mkdir(parents=True, exist_ok=True)
             with log.open("a") as fh:
@@ -105,9 +134,13 @@ def main(argv=None):
 
     total = {"raised": 0, "real": 0, "rejected": 0}
     for (todo, section), e in records.items():
-        print(f"{todo} section {section}: raised {e['raised']}, real {e['real']}, rejected {e['rejected']}")
+        counts = totals(e)
+        print(f"{todo} section {section}: raised {counts['raised']}, real {counts['real']}, rejected {counts['rejected']}")
+        if getattr(args, "findings", False):
+            for f in e["findings"]:
+                print(f"  {f['verdict']}: {f['finding']}" + (f" | {f['note']}" if f["note"] else ""))
         for key in total:
-            total[key] += e[key]
+            total[key] += counts[key]
     done = len(records)
     verdict = "decide: keep, narrow or drop" if done >= TRIAL else f"{TRIAL - done} more before deciding"
     print(f"second reviewer: {done} of {TRIAL} sections, raised {total['raised']}, real {total['real']}, "

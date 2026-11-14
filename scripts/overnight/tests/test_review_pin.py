@@ -701,11 +701,13 @@ def _without_second(text=GOOD):
 def test_the_repository_pin_names_a_second_reviewer_for_the_expensive_paths():
     second = _pin()["second"]
     assert (second["reviewer"], second["cli"], second["model"]) == ("carbon", "agy", "gemini-4-carbon-medium")
-    assert (second["round_cap"], second["retries"], second["small_fix_lines"]) == (3, 3, 50)
+    assert (second["round_cap"], second["retries"], second["small_fix_lines"], second["limit_seconds"]) == (3, 3, 50, 1500)
     assert {"src/kernel/", "include/kernel/", "src/boot/"} <= set(second["paths"])
     pin = _pin()
     assert rp.second_applies(pin, ["docs/x.md", "src/kernel/mm/pmm.c"])
     assert rp.second_applies(pin, ["user/include/syscall.h"])
+    # The ABI has a user side too: the startup code that performs the handshake.
+    assert rp.second_applies(pin, ["user/lib/crt_init.c"])
     assert not rp.second_applies(pin, ["scripts/x.py", "docs/kernel/x.md", "todo/x.md"])
     assert not rp.second_applies(pin, [])
     # Its pass is no part of the schedule: no kind, no lens, nothing toward pass_cap.
@@ -731,9 +733,12 @@ def test_a_pin_without_a_second_reviewer_is_the_pin_as_it_was():
     ("small_fix_lines = 50", "small_fix_lines = true"),
     ("small_fix_lines = 50\n", ""),
     ("small_fix_lines = 50", "small_fix_lines = 50\nlenses = []"),
-    ('paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/"]', "paths = []"),
-    ('paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/"]', 'paths = ["/etc/"]'),
-    ('paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/"]', 'paths = ["../x/"]'),
+    ("limit_seconds = 1500", "limit_seconds = 30"),
+    ("limit_seconds = 1500", 'limit_seconds = "1500"'),
+    ("limit_seconds = 1500\n", ""),
+    ('paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/", "user/lib/"]', "paths = []"),
+    ('paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/", "user/lib/"]', 'paths = ["/etc/"]'),
+    ('paths = ["src/kernel/", "include/kernel/", "src/boot/", "include/boot/", "user/include/", "user/lib/"]', 'paths = ["../x/"]'),
     ("[second]", "[third]"),
     ('[reviewers.carbon]\ncli = "agy"\nmodel = "gemini-4-carbon-medium"\n', ""),   # [second] names no reviewer entry
 ])
