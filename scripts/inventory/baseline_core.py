@@ -13,7 +13,9 @@ line 1 is its header ({"baseline", "owner", "source", "build" or "upstream",
 only (identifiers, names, paths, categories), never a description, keyword or
 help string.
 """
+import fnmatch
 import json
+import os
 import re
 import xml.etree.ElementTree as ET
 
@@ -60,6 +62,19 @@ def _unique(rows, name):
     if not seen:
         raise SourceError(f"{name}: the source yielded no rows")
     return [seen[k] for k in sorted(seen)]
+
+
+def matching_files(directory, pattern, listdir=os.listdir):
+    """The names in `directory` that match `pattern`, sorted.
+
+    The listing either succeeds whole or raises SourceError. glob.glob is not
+    used: it swallows an error met while listing and returns what it had read,
+    which would publish a baseline from some of the source files."""
+    try:
+        names = listdir(directory)
+    except OSError as exc:
+        raise SourceError(f"{directory} could not be listed ({exc})") from None
+    return sorted(n for n in names if fnmatch.fnmatch(n.lower(), pattern.lower()))
 
 
 def settings_rows(files):

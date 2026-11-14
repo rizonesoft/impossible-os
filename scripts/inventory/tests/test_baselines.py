@@ -251,6 +251,25 @@ def guest_output(tmp, **over):
     (tmp / "baselines.json").write_text(json.dumps(got), encoding="utf-8")
 
 
+class MatchingFiles(unittest.TestCase):
+    def test_names_are_filtered_and_sorted(self):
+        got = core.matching_files("d", "AllSystemSettings_*.xml",
+                                  listdir=lambda d: ["b.txt", "AllSystemSettings_{B}.xml", "allsystemsettings_{A}.XML"])
+        self.assertEqual(got, ["AllSystemSettings_{B}.xml", "allsystemsettings_{A}.XML"])
+
+    def test_a_listing_that_fails_is_a_failed_read(self):
+        def broken(d):
+            raise PermissionError("denied")
+        with self.assertRaises(core.SourceError):
+            core.matching_files("d", "*.xml", listdir=broken)
+
+    def test_the_guest_reader_does_not_use_glob(self):
+        # glob.glob returns the names read before a listing error, as if they were all.
+        src = (HERE / "guest" / "read-baselines.py").read_text(encoding="utf-8")
+        self.assertNotIn("glob.glob", src)
+        self.assertNotIn("import glob", src)
+
+
 class ClassWalk(unittest.TestCase):
     ATOMS = {0xC001: "6.0!Button", 0xC002: "CF_NAME", 0xC004: "6.0!Edit"}
     CLASSES = {"6.0!Button", "6.0!Edit"}

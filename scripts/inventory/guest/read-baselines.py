@@ -14,7 +14,6 @@ the VM: only the rows leave it.
 """
 import argparse
 import ctypes
-import glob
 import hashlib
 import importlib.util
 import json
@@ -29,7 +28,9 @@ _spec = importlib.util.spec_from_file_location(
 core = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(core)
 
-SETTINGS_GLOB = r"C:\Windows\ImmersiveControlPanel\Settings\AllSystemSettings_*.xml"
+SETTINGS_DIR = r"C:\Windows\ImmersiveControlPanel\Settings"
+SETTINGS_PATTERN = "AllSystemSettings_*.xml"
+SETTINGS_GLOB = SETTINGS_DIR + "\\" + SETTINGS_PATTERN
 NAMESPACE = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace"
 FOLDERS = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FolderDescriptions"
 CC6_MANIFEST = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -64,10 +65,9 @@ def build():
 
 def read_settings():
     files = []
-    for path in sorted(glob.glob(SETTINGS_GLOB)):
-        with open(path, "rb") as fh:
-            data = fh.read()
-        files.append((os.path.basename(path), data))
+    for name in core.matching_files(SETTINGS_DIR, SETTINGS_PATTERN):
+        with open(os.path.join(SETTINGS_DIR, name), "rb") as fh:
+            files.append((name, fh.read()))
     if not files:
         raise core.SourceError(f"settings: no file matches {SETTINGS_GLOB}")
     return {"source": SETTINGS_GLOB, "rows": core.settings_rows(files),
@@ -79,11 +79,11 @@ def read_control_panel():
     for key in subkeys(winreg.HKEY_LOCAL_MACHINE, NAMESPACE):
         try:
             name = values(winreg.HKEY_CLASSES_ROOT, f"CLSID\\{key}").get("System.ApplicationName")
-        except OSError:
+        except FileNotFoundError:  # an applet whose CLSID key is not registered has no canonical name
             name = None
         namespace.append((key, name))
     system32 = os.path.join(os.environ["SystemRoot"], "System32")
-    cpls = sorted(f for f in os.listdir(system32) if f.lower().endswith(".cpl"))
+    cpls = core.matching_files(system32, "*.cpl")
     return {"source": f"HKLM\\{NAMESPACE}; {system32}\\*.cpl", "rows": core.control_panel_rows(namespace, cpls)}
 
 
